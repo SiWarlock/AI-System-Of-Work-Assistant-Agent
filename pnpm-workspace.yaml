@@ -2,9 +2,11 @@ packages:
   - "packages/*"
   - "apps/*"
 
-# pnpm 11 gates dependency build scripts; explicitly allow esbuild (vitest's bundler).
+# pnpm 11 gates dependency build scripts; explicitly allow esbuild (vitest's bundler)
+# and better-sqlite3 (native SQLite driver — needs its node-gyp build to run).
 allowBuilds:
   esbuild: true
+  better-sqlite3: true
 
 # pnpm 11's pre-run deps verification re-runs install and trips on the build gate;
 # disable it so `pnpm test`/`typecheck` run directly.
