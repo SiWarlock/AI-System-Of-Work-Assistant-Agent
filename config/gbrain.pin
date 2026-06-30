@@ -1,56 +1,49 @@
-# config/gbrain.pin — known-good GBrain version pin (OQ-006 / ARCHITECTURE.md §13, §4.7)
+# config/gbrain.pin — typed GbrainPin (Appendix A / ARCHITECTURE.md §13, §6, task 4.20)
 # ---------------------------------------------------------------------------
 # PURPOSE
 #   GBrain is a per-workspace, PGLite-based knowledge engine (upstream repo:
-#   https://github.com/garrytan/gbrain.git). It is DERIVED from the canonical
+#   https://github.com/garrytan/gbrain.git). It is DERIVED from canonical
 #   Markdown and is rebuildable. The GBrain adapter (packages/knowledge,
-#   task 4.7) performs a STARTUP VERSION-PIN CHECK: it reads this file and
+#   task 4.7/4.20) performs a STARTUP VERSION-PIN CHECK: it reads this file and
 #   verifies the running GBrain's commit SHA == gbrain_sha below.
-#     - match    -> GBrain enabled.
-#     - mismatch -> the adapter REFUSES to enable GBrain and surfaces a
-#                   degraded System Health item. It MUST NOT silently run an
+#     - match    -> read/index surface enabled (against this pinned build).
+#     - mismatch -> the adapter degrades that brain to read-only/index-only and
+#                   surfaces a System Health item; never silently runs an
 #                   unpinned binary (§4.7, §13). Fail-closed by design.
 #
-# FORMAT (parseable key = value; '#' begins a comment; blank lines ignored)
-#   gbrain_sha        40-hex git commit SHA of the validated GBrain build.
-#   gbrain_tag        human-readable release tag for the same commit (optional).
-#   gbrain_repo       upstream clone URL the SHA is resolved against.
-#   index_schema_ver  `gbrain doctor --json` schema_version of the index format
-#                     this app's parity/rebuild logic was validated against.
-#   validated_on      ISO date the 4-condition round-trip (below) went green.
-#   validation_ref    path to the spike/eval report recording that green run.
+# WRITE-THROUGH (2026-06-29 amendment, docs/design/gbrain-write-through-divergence.md):
+#   write_through_enabled is a SEPARATE gate from the version pin. The
+#   read/index/serving surface runs against the pinned SHA; WRITE-THROUGH stays
+#   OFF (read-only/index-only fallback, §6) until the per-workspace enablement
+#   gate passes: the four §12 GO conditions green LIVE against THIS SHA, the
+#   read-token-rejects-write conformance (task 12.22) + the fail-closed suite
+#   (task 12.23), a full re-index from Markdown, an embedding key present, and
+#   no cron/autopilot bound (§13). A dirty/failed ParityReport auto-reverts the
+#   workspace to Markdown-provenanced-only serving.
 #
-# STATUS: PLACEHOLDER — NOT YET A BINDING PIN.
-#   gbrain_sha is intentionally left as PENDING_LIVE_VALIDATION. The §4.7
-#   startup check treats that sentinel as "no validated pin" -> GBrain stays
-#   DISABLED/degraded (the safe read-only-by-default posture, §6/§14.5) until
-#   a real SHA is filled by the procedure below. Do NOT fabricate this value.
+# FORMAT (typed GbrainPin; parseable key = value; '#' comment; blanks ignored)
+#   gbrain_sha            40-hex git commit SHA of the pinned GBrain build.
+#   gbrain_tag            human-readable release tag for the same commit.
+#   gbrain_repo           upstream clone URL the SHA is resolved against.
+#   index_schema_ver      `gbrain doctor --json` schema_version of the index format.
+#   write_through_enabled bool; default false = read-only/index-only fallback.
+#                         Flips true ONLY at the §13 / task-12.22 enablement gate.
+#   validated_on          ISO date the four-condition round-trip went green LIVE
+#                         (a Phase-12 acceptance; PENDING until then).
+#   validation_ref        path to the design spec / eval report.
 #
-# HOW TO FILL (capture procedure — run when GBrain + an embedding key + the
-# Phase-4 KnowledgeWriter are available; see docs/spikes/0.2-gbrain-roundtrip.md):
-#   1. Install the candidate build at a chosen commit:
-#        ~/.claude/skills/gstack/bin/gstack-gbrain-install \
-#            --install-dir ~/gbrain --pinned-commit <candidate_sha>
-#   2. Capture the exact build identity:
-#        ( cd ~/gbrain && git rev-parse HEAD )        # -> gbrain_sha
-#        gbrain --version                             # cross-check vs gbrain_tag
-#        gbrain doctor --json | jq .schema_version    # -> index_schema_ver
-#   3. Run the four §19 round-trip GO conditions GREEN against this build
-#      (the §12 GBrain compatibility/parity contract suite + a full re-index
-#      from Markdown — ARCHITECTURE.md §13 pin-bump gate). ONLY then promote
-#      the candidate SHA into gbrain_sha and set validated_on/validation_ref.
-#
-# CANDIDATE REFERENCES (REAL, sourced — NOT yet validated for this project):
-#   - gstack known-good pin (the user's existing gbrain install path pins this):
-#       08b3698e90532b7b66c445e6b1d8cdfe71822802   # gbrain v0.18.2
-#   - upstream HEAD observed 2026-06-29 (moving target, do not pin blindly):
-#       814258dda67945ffec9457a1e73980e947b7e462
-#   These are starting points for step 1; neither is binding until the
-#   4-condition round-trip is green per the §13 pin-bump gate.
+# STATUS (2026-06-30): SHA captured against the INSTALLED dev build (gbrain
+#   0.35.1.0); the read/index surface develops against it. write_through_enabled
+#   stays FALSE and validated_on is PENDING_PHASE12 — the live four-condition +
+#   §12 compatibility validation has NOT run yet (it is a Phase-12 acceptance,
+#   tasks 12.7 / 12.22 / 12.23). Do NOT flip write_through_enabled by hand;
+#   it is promoted only by the gate. Retires the prior v0.18.2 /
+#   PENDING_LIVE_VALIDATION sentinel.
 
-gbrain_sha       = PENDING_LIVE_VALIDATION
-gbrain_tag       = PENDING_LIVE_VALIDATION
-gbrain_repo      = https://github.com/garrytan/gbrain.git
-index_schema_ver = PENDING_LIVE_VALIDATION
-validated_on     = PENDING_LIVE_VALIDATION
-validation_ref   = docs/spikes/0.2-gbrain-roundtrip.md
+gbrain_sha            = 3933eb6a7915cb5495b8057b75567e2b1588b5ac
+gbrain_tag            = 0.35.1.0
+gbrain_repo           = https://github.com/garrytan/gbrain.git
+index_schema_ver      = 2
+write_through_enabled = false
+validated_on          = PENDING_PHASE12
+validation_ref        = docs/design/gbrain-write-through-divergence.md
