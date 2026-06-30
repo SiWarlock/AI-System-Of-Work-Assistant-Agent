@@ -1,0 +1,266 @@
+// Operational-store repository interface CONTRACTS (Unit 1.14, §4 / REQ-D-002).
+//
+// PURE TypeScript: this file imports NO drizzle (no driver), ONLY type-level
+// contracts from `@sow/contracts`. That keeps the §2.5 import direction intact —
+// `packages/domain` can depend on these interfaces without pulling a database
+// driver (REQ-D-002: domain depends on repository interfaces, never a concrete
+// adapter). The SQLite + Postgres implementations and the both-dialect
+// repository CONTRACT SUITE live in §4 / Phase-2 / worker (REQ-D-003) — OUT OF
+// SCOPE here.
+//
+// ERROR CONVENTION (§16): every method returns a typed `Result<T, DbError>` and
+// NEVER throws across the boundary; `DbError.code` is an enumerable closed set.
+// Methods are async (`Promise<...>`) because the implementations perform I/O —
+// the PURITY rule (no clock/random/I/O) governs `packages/domain` builders, not
+// these I/O-describing interfaces.
+//
+// CLASSIFICATION (§4 boundaries) is stated per repository:
+//   - OPERATIONAL TRUTH (not rebuildable): event log, audit, approvals, outbox,
+//     connector cursors, workflow-run registry, provider state, workspace config.
+//   - REBUILDABLE: read models (droppable + rebuildable from operational truth +
+//     Markdown).
+//   - DERIVED: GCL projections (rebuildable from the GCL master + source facts).
+// APPEND-ONLY / TOMBSTONE domains expose no in-place mutator beyond status
+// transitions; that is encoded in the method set + the comments below.
+import type {
+  Approval,
+  AuditRecord,
+  GclProjection,
+  ProviderProfile,
+  Result,
+  WorkflowRunRef,
+  Workspace,
+} from "@sow/contracts";
+
+// --- typed error surface (enumerable codes; never thrown) ---
+
+/** Closed, enumerable failure taxonomy for every repository operation. */
+export type DbErrorCode =
+  | "not_found"
+  | "conflict" // PK/unique violation OR optimistic-concurrency revision mismatch
+  | "constraint_violation"
+  | "serialization_failure" // transaction retry-able (§4)
+  | "unavailable" // §4 DB-unavailable degraded mode
+  | "unknown";
+
+export interface DbError {
+  readonly code: DbErrorCode;
+  readonly message: string;
+  /** Underlying driver cause, kept opaque so callers never depend on a driver. */
+  readonly cause?: unknown;
+}
+
+/** Convenience alias — every repository method resolves to this shape. */
+export type DbResult<T> = Promise<Result<T, DbError>>;
+
+// --- operational DTOs for domains with no 1:1 frozen Appendix-A model ---
+// (These are operational records, deliberately NOT frozen seam contracts.)
+
+/** Append-only control-plane event-journal record (§4/§16). */
+export interface EventLogRecord {
+  readonly eventId: string;
+  readonly eventName: string;
+  readonly workspaceId?: string;
+  readonly correlationId?: string;
+  readonly workflowId?: string;
+  /** SUMMARY/metadata only — never raw content (§16). */
+  readonly payload?: unknown;
+  readonly occurredAt: string;
+  readonly recordedAt: string;
+}
+
+/** External-write outbox entry (§8/§9): a ProposedAction + envelope + receipt. */
+export interface OutboxEntry {
+  readonly outboxId: string;
+  readonly actionRef: string;
+  readonly workspaceId: string;
+  readonly targetSystem: string;
+  readonly canonicalObjectKey: string;
+  readonly idempotencyKey: string;
+  readonly payloadHash: string;
+  /** §9 Proposed-External-Action machine state. */
+  readonly status: string;
+  /** To-dispatch payload (no secrets — Keychain refs resolved at dispatch). */
+  readonly payload?: unknown;
+  /** WriteReceipt once committed (exactly-once proof, §8). */
+  readonly writeReceipt?: unknown;
+  readonly attempts: number;
+  readonly enqueuedAt: string;
+  readonly nextAttemptAt?: string;
+  readonly updatedAt: string;
+}
+
+/** Per-connector × per-workspace sync cursor (§8 Connector Gateway). */
+export interface ConnectorCursorRecord {
+  readonly connectorId: string;
+  readonly workspaceId: string;
+  readonly cursor?: string;
+  readonly status: string;
+  readonly lastSyncAt?: string;
+  readonly nextSyncAt?: string;
+  readonly updatedAt: string;
+}
+
+/** Rebuildable dashboard/UI read-model record (§4/§16). */
+export interface ReadModelRecord {
+  readonly readModelKey: string;
+  readonly workspaceId?: string;
+  /** SUMMARY/metadata only. */
+  readonly data: unknown;
+  readonly rebuiltAt: string;
+}
+
+// --- repository contracts (one per operational-store domain) ---
+
+/**
+ * Workspace config — OPERATIONAL TRUTH, MUTABLE (not append-only, not
+ * rebuildable). The owner edits governance posture; `upsert` persists the whole
+ * validated aggregate.
+ */
+export interface WorkspaceConfigRepository {
+  get(id: Workspace["id"]): DbResult<Workspace>;
+  list(): DbResult<Workspace[]>;
+  upsert(workspace: Workspace): DbResult<Workspace>;
+}
+
+/**
+ * Event log — OPERATIONAL TRUTH, APPEND-ONLY. No update/delete in place; reads
+ * are forward scans. Records are never mutated after `append`.
+ */
+export interface EventLogRepository {
+  append(record: EventLogRecord): DbResult<void>;
+  /** Forward scan after `afterEventId` (null = from the start), capped by `limit`. */
+  readSince(afterEventId: string | null, limit: number): DbResult<EventLogRecord[]>;
+  byWorkflow(workflowId: WorkflowRunRef["workflowId"]): DbResult<EventLogRecord[]>;
+}
+
+/**
+ * Workflow-run registry — OPERATIONAL TRUTH (idempotent replay reuses the run,
+ * §9). MUTABLE `state`; `auditRefs` grow append-only. Co-located with the event
+ * log domain (no dedicated Unit-1.14 file) — see schema/event-log.ts.
+ */
+export interface WorkflowRunRefRepository {
+  create(ref: WorkflowRunRef): DbResult<WorkflowRunRef>;
+  get(workflowId: WorkflowRunRef["workflowId"]): DbResult<WorkflowRunRef>;
+  /** Idempotency lookup — drives replay reuse (returns not_found when novel). */
+  getByIdempotencyKey(idempotencyKey: WorkflowRunRef["idempotencyKey"]): DbResult<WorkflowRunRef>;
+  updateState(workflowId: WorkflowRunRef["workflowId"], state: WorkflowRunRef["state"]): DbResult<WorkflowRunRef>;
+  appendAuditRef(workflowId: WorkflowRunRef["workflowId"], auditRef: WorkflowRunRef["auditRefs"][number]): DbResult<WorkflowRunRef>;
+}
+
+/**
+ * Audit trail — OPERATIONAL TRUTH, APPEND-ONLY. `append` is the only writer;
+ * corrections are new records, never in-place edits. Records carry SUMMARIES +
+ * a payload hash, never raw content (§16) — see schema/audit.ts.
+ */
+export interface AuditRepository {
+  append(record: AuditRecord): DbResult<void>;
+  /** Filtered forward query (e.g. by actor/event/ref), capped by `limit`. */
+  query(filter: AuditQuery, limit: number): DbResult<AuditRecord[]>;
+}
+
+/** Narrow audit query — every field optional (AND-combined). */
+export interface AuditQuery {
+  readonly actor?: string;
+  readonly event?: string;
+  /** Match records whose `refs` include this opaque ref. */
+  readonly ref?: string;
+}
+
+/**
+ * Approvals inbox — OPERATIONAL TRUTH. Append-on-create, then MUTABLE status via
+ * EXACTLY-ONCE transitions (REQ-F-012); a terminal status (approved|edited|
+ * rejected|expired) is the TOMBSTONE — there is no hard delete.
+ */
+export interface ApprovalRepository {
+  create(approval: Approval): DbResult<Approval>;
+  get(id: Approval["id"]): DbResult<Approval>;
+  listByStatus(status: Approval["status"]): DbResult<Approval[]>;
+  /**
+   * Apply a single approval transition EXACTLY ONCE. `expectedFromStatus` makes
+   * the write a compare-and-set: a mismatch returns a `conflict` (the transition
+   * already applied / the record moved) so a replay is an idempotent no-op.
+   */
+  applyTransition(
+    id: Approval["id"],
+    expectedFromStatus: Approval["status"],
+    next: Approval,
+  ): DbResult<Approval>;
+}
+
+/**
+ * External-write outbox — OPERATIONAL TRUTH. Append-on-enqueue; status advances
+ * through the §9 machine; a terminal status (receipt_recorded|rejected|expired)
+ * is the TOMBSTONE. Replay reuses a recorded receipt → zero duplicate external
+ * writes (§8).
+ */
+export interface OutboxRepository {
+  enqueue(entry: OutboxEntry): DbResult<OutboxEntry>;
+  get(outboxId: string): DbResult<OutboxEntry>;
+  /** Idempotency lookup — the §8 replay gate (returns not_found when novel). */
+  getByIdempotencyKey(idempotencyKey: string): DbResult<OutboxEntry>;
+  /** Entries awaiting dispatch/retry whose nextAttemptAt has elapsed. */
+  listDue(now: string, limit: number): DbResult<OutboxEntry[]>;
+  /** Advance an entry's status / receipt / backoff bookkeeping (no hard delete). */
+  update(entry: OutboxEntry): DbResult<OutboxEntry>;
+}
+
+/**
+ * Connector cursors — OPERATIONAL TRUTH (a lost cursor forces a full re-sync, so
+ * it is not rebuildable). One cursor per (connectorId, workspaceId); `upsert`
+ * advances it.
+ */
+export interface ConnectorCursorRepository {
+  get(connectorId: string, workspaceId: string): DbResult<ConnectorCursorRecord>;
+  upsert(record: ConnectorCursorRecord): DbResult<ConnectorCursorRecord>;
+  listByConnector(connectorId: string): DbResult<ConnectorCursorRecord[]>;
+}
+
+/**
+ * Provider state — OPERATIONAL STATE, MUTABLE (conformanceStatus updated by §12
+ * runs). Keyed by (provider, endpoint, model). NO secret material (REQ-S-003) —
+ * see schema/provider-state.ts.
+ */
+export interface ProviderStateRepository {
+  get(
+    provider: ProviderProfile["provider"],
+    endpoint: ProviderProfile["endpoint"],
+    model: ProviderProfile["model"],
+  ): DbResult<ProviderProfile>;
+  list(): DbResult<ProviderProfile[]>;
+  upsert(profile: ProviderProfile): DbResult<ProviderProfile>;
+  setConformanceStatus(
+    provider: ProviderProfile["provider"],
+    endpoint: ProviderProfile["endpoint"],
+    model: ProviderProfile["model"],
+    conformanceStatus: ProviderProfile["conformanceStatus"],
+  ): DbResult<ProviderProfile>;
+}
+
+/**
+ * Read models — REBUILDABLE (§4/§16): the whole store can be dropped and rebuilt
+ * from operational truth + Markdown. `rebuild`/`clear` exist precisely because
+ * these rows are derived, not authoritative.
+ */
+export interface ReadModelRepository {
+  get(readModelKey: string, workspaceId: string | null): DbResult<ReadModelRecord>;
+  put(record: ReadModelRecord): DbResult<ReadModelRecord>;
+  /** Drop a read-model family ahead of a rebuild (rebuildable, not truth). */
+  clear(readModelKey: string): DbResult<void>;
+}
+
+/**
+ * GCL projections — DERIVED (rebuildable from the GCL master + source facts).
+ * The SINGLE cross-workspace read path (WS-8); rows are sanitized views, never
+ * raw content — see schema/gcl-projections.ts.
+ */
+export interface GclProjectionRepository {
+  get(
+    workspaceId: GclProjection["workspaceId"],
+    projectionType: GclProjection["projectionType"],
+    visibilityLevel: GclProjection["visibilityLevel"],
+  ): DbResult<GclProjection>;
+  upsert(projection: GclProjection): DbResult<GclProjection>;
+  listByWorkspace(workspaceId: GclProjection["workspaceId"]): DbResult<GclProjection[]>;
+  listByVisibility(visibilityLevel: GclProjection["visibilityLevel"]): DbResult<GclProjection[]>;
+}
