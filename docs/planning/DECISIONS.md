@@ -18,6 +18,9 @@ Status: rough-draft decision log for `/arch-finalize`.
 | Workspace Markdown | Repo/vault per workspace | Locked | Aligns trust boundary, Obsidian use, Git backup, and raw data isolation | Monorepo subdirectories |
 | Global Markdown | Separate sanitized Global/Coordination repo | Locked | Keeps global briefs inspectable without raw workspace leakage | DB-only GCL |
 | GBrain topology | Brain per workspace | Locked | Strongest retrieval boundary and aligns with vault-per-workspace | Source-scoped personal brain |
+| GBrain write-through | Write-through ON in V1, fail-closed (divergence/parity layer); DB-canonical reversal rejected | Locked (2026-06-30, ADR-007) | Owner wants gbrain generative features; safe via bytes-from-Markdown serving + gbrain-independent derive + HMAC stamp + OS one-writer; reverses the Phase-0 read-only deferral | Per-workspace `writeThroughEnabled` OFF → read-only/index-only (the named §6 fallback) |
+| Stream primitive | WebSocket (tRPC v11 subscription) | Locked (2026-06-30) | Phase-0 spike 0.5: WS/SSE both lossless; WS wins on loopback auth (token off the URL) | SSE via httpSubscriptionLink (validated drop-in) |
+| Hermes surface | Hybrid: one-shot CLI subprocess + Kanban (RT-7) | Locked (2026-06-30) | Phase-0 spike 0.3: live meeting-close mock passed; lowest lifecycle friction | Claude Agent SDK carries the meeting.close critical path |
 | Cross-context UX | Sanitized grouped global summaries with drill-down | Locked | Preserves usable global views without raw cross-brain retrieval | Always ask workspace first |
 | Workflow engine | Temporal owns product workflows | Locked | Durable retries, schedules, approval waits, restart recovery | Custom scheduler not recommended |
 | Hermes autonomy | Hermes cron/Kanban allowed through gateways | Locked | Owner runs Hermes; gateways enforce safety rather than banning scheduler | Disable standalone Hermes autonomy |
@@ -103,4 +106,14 @@ Decision: freeze shared contracts first, then parallelize worker/storage/workflo
 Rationale: the scaffold expects a §2.5 DAG and shared-contract inventory. This system has independent areas only after model/schema/API contracts are stable.
 
 Fallback: mostly serial build if team-mode overhead outweighs wall-clock benefit.
+
+## ADR-007 - GBrain Write-Through & Divergence/Parity Layer (V1)
+
+Status: Locked (2026-06-30). Reverses the Phase-0 read-only/index-only deferral; supersedes the "GBrain read-only/index-only branch" no-go in the Phase-0 spike criteria.
+
+Decision: GBrain write-through ships ON in V1, fail-closed. Markdown stays the only canonical truth and KnowledgeWriter its only autonomous writer (DB-canonical reversal was considered and rejected). gbrain is DB-first natively, so SoW inverts by policy: the GBrain DB is a pointer/ranking index only; serving re-hydrates answer bytes from committed Markdown; the canonical "what should exist" set is derived by a SoW-owned, gbrain-independent Markdown parser. Three safety legs — bytes-from-Markdown serving (default-deny), gbrain-independent allow-set + unforgeable HMAC provenance stamp (SecretsPort key the generative/runtime never hold), and OS-level one-writer lockdown (vault read-only mount + ACL for every gbrain process). gbrain's generative features (synthesize/dream/patterns/Minions) survive as a propose-only source: output → GBrainProposedFact → validation → KnowledgeMutationPlan → KnowledgeWriter → Markdown. `writeThroughEnabled` is per-workspace, default OFF (read-only/index-only fallback) until the four GO conditions pass live against the pinned gbrain SHA.
+
+Rationale: owner wants gbrain's generative value without surrendering the no-hidden-brain / egress-enforceability / Obsidian-durability properties that depend on Markdown-canonical. Adversarially hardened (8-agent design workflow: ground → 3 designs → 3 safety critics → synthesis). Full spec: `docs/design/gbrain-write-through-divergence.md`. Contract: ARCHITECTURE.md §6/§12/§13/§16/Appendix A; build: IMPLEMENTATION_PLAN.md Phase-4 4.14–4.20 + Phase-12 12.7/12.22/12.23.
+
+Fallback: per-workspace `writeThroughEnabled` stays OFF → GBrain runs read-only/index-only (still DoD-satisfying, REQ-D-001) if containment can't be proven for a workspace.
 

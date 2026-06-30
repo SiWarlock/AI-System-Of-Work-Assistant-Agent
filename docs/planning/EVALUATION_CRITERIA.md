@@ -14,7 +14,8 @@ V1 is done when the system runs locally/self-hosted on a Mac, proves the meeting
 | Replay safety | Duplicate notes/tasks/events | 0 duplicates | Meeting replay and connector replay tests |
 | Knowledge writes | Approved semantic writes persist or are visible in retry/error outbox | 100% | KnowledgeWriter acceptance |
 | Obsidian compatibility | Repos remain valid and editable | 100% of test mutations | Markdown syntax + Obsidian reload smoke |
-| GBrain parity | DB-only semantic facts | 0 unreconciled | Parity/divergence tests |
+| GBrain parity (write-through, fail-closed) | DB-only/unstamped facts ever served as truth | 0 served (all quarantined as parity_defect); the 4 GO conditions green | §12 divergence suite (12.7) — bytes-from-Markdown + signed-stamp + allow-set + adversarial borrowed-stamp/forged-hash/malicious-gbrain |
+| Write-through enablement | `writeThroughEnabled` flips ON only when proven | per-workspace, default OFF until 4 GO green + pin promoted + read-token-rejects-write | enablement-gate (12.22) + fail-closed (12.23) suites |
 | Retrieval | Relevant context | 90%+ benchmark success | KN-10 retrieval eval |
 | Workspace leakage | Raw Employer Work in personal/global outputs | 0 without explicit permission | WS-7 adversarial suite |
 | Prompt injection | Mutating tool access from untrusted content | 0 | ING-7 job-admission tests |
@@ -43,7 +44,7 @@ V1 is done when the system runs locally/self-hosted on a Mac, proves the meeting
 | Electron shell + worker | Renderer/main/worker lifecycle, secure IPC, loopback worker API, restart handling | Reopen shell/process ADR |
 | Storage adapters | Same repository contract passes against SQLite and Postgres | Reduce Postgres to V1.1 only or redesign storage abstraction |
 | Provider conformance | Claude/OpenAI/OpenRouter/Ollama/LM Studio pass selected capability schemas or are scoped per capability | Provider remains configured but disabled for failing capabilities |
-| GBrain round trip | No non-KnowledgeWriter Markdown mutation; parity and reindex pass | GBrain read-only/index-only branch |
+| GBrain round trip | No non-KnowledgeWriter Markdown mutation; parity and reindex pass | **Superseded by the 2026-06-30 write-through amendment:** write-through ships behind the fail-closed divergence layer (Phase-4 4.14–4.20); read-only/index-only is the per-workspace default-until-enabled fallback. Spec: `docs/design/gbrain-write-through-divergence.md`. |
 | Hermes adapter | Bounded job with logs/cancel/schema/control passes | Claude/cloud provider path remains critical; Hermes tracked before DoD |
 | Meeting synthetic | Full meeting closeout against fixture reaches notes/proposals/audit | Re-sequence meeting closeout risk before broad connectors |
 | NotebookLM API | Supported direct CRUD/query/export documented | Drive-backed fallback remains V1 |
