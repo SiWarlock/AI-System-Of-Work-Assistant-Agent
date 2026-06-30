@@ -1,0 +1,193 @@
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workflowRunId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workspaceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "capability": {
+      "type": "string",
+      "minLength": 1
+    },
+    "contextRefs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "refKind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ref": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "refKind",
+          "ref"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "outputSchemaId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "toolPolicy": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "read_only",
+            "scoped_write"
+          ]
+        },
+        "allowedTools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "deniedTools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "allowsMutating": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "mode",
+        "allowedTools",
+        "deniedTools",
+        "allowsMutating"
+      ],
+      "additionalProperties": false
+    },
+    "providerRoute": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "runtime": {
+              "type": "string",
+              "minLength": 1
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1
+            },
+            "endpoint": {
+              "type": "string",
+              "minLength": 1
+            },
+            "egressClass": {
+              "type": "string",
+              "enum": [
+                "local",
+                "cloud"
+              ]
+            }
+          },
+          "required": [
+            "runtime",
+            "model",
+            "endpoint",
+            "egressClass"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string",
+              "enum": [
+                "claude",
+                "openai",
+                "openrouter",
+                "ollama",
+                "lm_studio"
+              ]
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1
+            },
+            "endpoint": {
+              "type": "string",
+              "minLength": 1
+            },
+            "egressClass": {
+              "type": "string",
+              "enum": [
+                "local",
+                "cloud"
+              ]
+            }
+          },
+          "required": [
+            "provider",
+            "model",
+            "endpoint",
+            "egressClass"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "trustLevel": {
+      "type": "string",
+      "enum": [
+        "trusted",
+        "untrusted"
+      ]
+    },
+    "carriesRawContent": {
+      "type": "boolean"
+    },
+    "maxRuntimeSeconds": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "maxCostUsd": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "id",
+    "workflowRunId",
+    "workspaceId",
+    "capability",
+    "contextRefs",
+    "outputSchemaId",
+    "toolPolicy",
+    "providerRoute",
+    "trustLevel",
+    "carriesRawContent",
+    "maxRuntimeSeconds",
+    "idempotencyKey"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:agent-job"
+}

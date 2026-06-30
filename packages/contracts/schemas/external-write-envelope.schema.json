@@ -1,0 +1,81 @@
+{
+  "type": "object",
+  "properties": {
+    "actionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "targetSystem": {
+      "type": "string",
+      "enum": [
+        "calendar",
+        "todoist",
+        "linear",
+        "asana",
+        "drive",
+        "github",
+        "telegram"
+      ]
+    },
+    "canonicalObjectKey": {
+      "type": "string",
+      "minLength": 1
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 1
+    },
+    "preconditions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "payloadHash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "writeReceipt": {
+      "type": "object",
+      "properties": {
+        "externalObjectId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "externalUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "recordedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "rawRef": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "externalObjectId",
+        "recordedAt"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "actionId",
+    "targetSystem",
+    "canonicalObjectKey",
+    "idempotencyKey",
+    "preconditions",
+    "payloadHash"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:external-write-envelope"
+}

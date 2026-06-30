@@ -1,0 +1,7 @@
+[
+  "auditRefs",
+  "idempotencyKey",
+  "state",
+  "trigger",
+  "workflowId"
+]

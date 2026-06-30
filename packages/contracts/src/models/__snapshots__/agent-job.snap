@@ -1,0 +1,15 @@
+[
+  "capability",
+  "carriesRawContent",
+  "contextRefs",
+  "id",
+  "idempotencyKey",
+  "maxCostUsd",
+  "maxRuntimeSeconds",
+  "outputSchemaId",
+  "providerRoute",
+  "toolPolicy",
+  "trustLevel",
+  "workflowRunId",
+  "workspaceId"
+]

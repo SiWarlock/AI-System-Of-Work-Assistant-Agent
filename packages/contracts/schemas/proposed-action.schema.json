@@ -1,0 +1,48 @@
+{
+  "type": "object",
+  "properties": {
+    "actionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "targetSystem": {
+      "type": "string",
+      "enum": [
+        "calendar",
+        "todoist",
+        "linear",
+        "asana",
+        "drive",
+        "github",
+        "telegram"
+      ]
+    },
+    "canonicalObjectKey": {
+      "type": "string",
+      "minLength": 1
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": {}
+    },
+    "approvalPolicy": {
+      "type": "string",
+      "minLength": 1
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "actionId",
+    "targetSystem",
+    "canonicalObjectKey",
+    "payload",
+    "approvalPolicy",
+    "idempotencyKey"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:proposed-action"
+}

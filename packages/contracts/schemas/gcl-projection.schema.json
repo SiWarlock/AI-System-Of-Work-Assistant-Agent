@@ -1,0 +1,56 @@
+{
+  "type": "object",
+  "properties": {
+    "workspaceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "visibilityLevel": {
+      "type": "string",
+      "enum": [
+        "isolated",
+        "coordination",
+        "sanitized",
+        "full"
+      ]
+    },
+    "projectionType": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sanitizedPayload": {
+      "type": "object",
+      "additionalProperties": {}
+    },
+    "sourceRefs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sourceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "span": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "sourceId"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "workspaceId",
+    "visibilityLevel",
+    "projectionType",
+    "sanitizedPayload",
+    "sourceRefs"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:gcl-projection"
+}

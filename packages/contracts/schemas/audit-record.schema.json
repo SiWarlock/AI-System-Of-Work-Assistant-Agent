@@ -1,0 +1,59 @@
+{
+  "type": "object",
+  "properties": {
+    "actor": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event": {
+      "type": "string",
+      "minLength": 1
+    },
+    "refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "payloadHash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "beforeSummary": {
+      "type": "string"
+    },
+    "afterSummary": {
+      "type": "string"
+    },
+    "timestamps": {
+      "type": "object",
+      "properties": {
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "recordedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "occurredAt"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "actor",
+    "event",
+    "refs",
+    "payloadHash",
+    "beforeSummary",
+    "afterSummary",
+    "timestamps"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:audit-record"
+}

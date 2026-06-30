@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "externalObjectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "externalUrl": {
+      "type": "string",
+      "format": "uri"
+    },
+    "recordedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "rawRef": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "externalObjectId",
+    "recordedAt"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:write-receipt"
+}

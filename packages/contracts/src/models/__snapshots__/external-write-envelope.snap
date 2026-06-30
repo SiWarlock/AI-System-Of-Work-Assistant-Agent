@@ -1,0 +1,10 @@
+[
+  "actionId",
+  "approvalId",
+  "canonicalObjectKey",
+  "idempotencyKey",
+  "payloadHash",
+  "preconditions",
+  "targetSystem",
+  "writeReceipt"
+]

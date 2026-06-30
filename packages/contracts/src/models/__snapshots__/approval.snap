@@ -1,0 +1,10 @@
+[
+  "actionRef",
+  "actor",
+  "channel",
+  "expiresAt",
+  "id",
+  "payloadHash",
+  "snoozeUntil",
+  "status"
+]

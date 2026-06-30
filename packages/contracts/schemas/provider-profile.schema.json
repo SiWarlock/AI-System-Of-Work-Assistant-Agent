@@ -1,0 +1,72 @@
+{
+  "type": "object",
+  "properties": {
+    "provider": {
+      "type": "string",
+      "enum": [
+        "claude",
+        "openai",
+        "openrouter",
+        "ollama",
+        "lm_studio"
+      ]
+    },
+    "endpoint": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "egressClass": {
+      "type": "string",
+      "enum": [
+        "local",
+        "cloud"
+      ]
+    },
+    "costCaps": {
+      "type": "object",
+      "properties": {
+        "maxCostUsd": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "maxRuntimeSeconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "conformanceStatus": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "passing",
+        "failing",
+        "disabled"
+      ]
+    }
+  },
+  "required": [
+    "provider",
+    "endpoint",
+    "model",
+    "capabilities",
+    "egressClass",
+    "costCaps",
+    "conformanceStatus"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:provider-profile"
+}

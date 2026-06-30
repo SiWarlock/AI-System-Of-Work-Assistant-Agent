@@ -1,0 +1,59 @@
+{
+  "type": "object",
+  "properties": {
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "notebookKey": {
+      "type": "string",
+      "minLength": 1
+    },
+    "driveFolderId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "managedDocIds": {
+      "type": "object",
+      "properties": {
+        "00_brief": {
+          "type": "string",
+          "minLength": 1
+        },
+        "01_decisions": {
+          "type": "string",
+          "minLength": 1
+        },
+        "02_meetings": {
+          "type": "string",
+          "minLength": 1
+        },
+        "03_research": {
+          "type": "string",
+          "minLength": 1
+        },
+        "04_open_questions": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "00_brief",
+        "01_decisions",
+        "02_meetings",
+        "03_research",
+        "04_open_questions"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "projectId",
+    "notebookKey",
+    "driveFolderId",
+    "managedDocIds"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:notebook-mapping"
+}

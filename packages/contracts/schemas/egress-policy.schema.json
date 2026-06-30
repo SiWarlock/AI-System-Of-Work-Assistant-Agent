@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "properties": {
+    "workspaceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "allowedProcessors": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "rawContentAllowedProcessors": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "employerRawEgressAcknowledged": {
+      "type": "boolean"
+    },
+    "acknowledgedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "workspaceId",
+    "allowedProcessors",
+    "rawContentAllowedProcessors",
+    "employerRawEgressAcknowledged"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:egress-policy"
+}

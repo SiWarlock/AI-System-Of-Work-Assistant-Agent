@@ -1,0 +1,8 @@
+[
+  "actionId",
+  "approvalPolicy",
+  "canonicalObjectKey",
+  "idempotencyKey",
+  "payload",
+  "targetSystem"
+]

@@ -1,0 +1,119 @@
+{
+  "type": "object",
+  "properties": {
+    "workspaceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "allowedProviders": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "claude",
+          "openai",
+          "openrouter",
+          "ollama",
+          "lm_studio"
+        ]
+      }
+    },
+    "capabilityDefaults": {
+      "type": "object",
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "runtime": {
+                "type": "string",
+                "minLength": 1
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "endpoint": {
+                "type": "string",
+                "minLength": 1
+              },
+              "egressClass": {
+                "type": "string",
+                "enum": [
+                  "local",
+                  "cloud"
+                ]
+              }
+            },
+            "required": [
+              "runtime",
+              "model",
+              "endpoint",
+              "egressClass"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": [
+                  "claude",
+                  "openai",
+                  "openrouter",
+                  "ollama",
+                  "lm_studio"
+                ]
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "endpoint": {
+                "type": "string",
+                "minLength": 1
+              },
+              "egressClass": {
+                "type": "string",
+                "enum": [
+                  "local",
+                  "cloud"
+                ]
+              }
+            },
+            "required": [
+              "provider",
+              "model",
+              "endpoint",
+              "egressClass"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "rawCloudEgressEnabled": {
+      "type": "boolean"
+    },
+    "localProviderPreference": {
+      "type": "string",
+      "enum": [
+        "claude",
+        "openai",
+        "openrouter",
+        "ollama",
+        "lm_studio"
+      ]
+    }
+  },
+  "required": [
+    "workspaceId",
+    "allowedProviders",
+    "capabilityDefaults",
+    "rawCloudEgressEnabled"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:provider-matrix"
+}
