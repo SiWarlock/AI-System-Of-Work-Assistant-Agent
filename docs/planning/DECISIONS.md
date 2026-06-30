@@ -35,6 +35,7 @@ Status: rough-draft decision log for `/arch-finalize`.
 | Provider routing | Workspace + capability matrix | Locked | Privacy/cost/capability vary by workspace and job | Global defaults |
 | Provider output | Strict JSON Schema gate before side effects | Locked | Prevents provider variance from reaching write layers | Repair pass later if needed |
 | Contract authoring | Zod-as-source: one `.strict()` Zod schema → `z.infer` TS type + generated strict JSON Schema (ajv-strict gate) + frozen field-set snapshot | Locked (2026-06-30, ADR-008) | Single source ⇒ TS/Zod/JSON-Schema cannot drift; the candidate-data gate (REQ-S-006) compiles the generated schemas | Hand-author all three with a field-name parity test |
+| DB schema source | Single-dialect Drizzle `sqlite-core` source + portable column types; pure repo interfaces; pg-core mirror + both-dialect contract suite deferred to Phase 2 | Locked (2026-06-30, ADR-009) | SQLite is the V1 default (§13); Drizzle has no truly dialect-neutral builder, so author the portable source now and mirror at adapter time | Dual per-dialect table defs from a shared column-spec factory |
 | Testing | Contract/eval-heavy | Locked | Privacy/idempotency/provider/storage risks are load-bearing | Balanced standard testing |
 | Parallelization | Parallel after contracts | Locked | Shared contracts must freeze before tracks split | Mostly serial |
 
@@ -136,4 +137,18 @@ Decision: **Zod-as-source.** Per model: one `.strict()` Zod schema → `export t
 What would change it: if `declaration`-emit ergonomics or JSON-Schema fidelity of generation prove unworkable, fall back to hand-authoring with a field-name parity test.
 
 Implementation: `packages/contracts/src/schema/{emit,field-set,registry}.ts`, `packages/domain/src/validation/schema-gate.ts`, `packages/contracts/test/_helpers/freeze.ts`. Built 2026-06-30 (IMPLEMENTATION_PLAN.md tasks 1.2–1.9 + the 27-model freeze).
+
+**Consequence (candidate-data gate composition).** Because `zod-to-json-schema` drops `.refine`, the ajv `validate()` gate is **structural-only** and does not enforce cross-field invariants (e.g. read_only⇒!allowsMutating, KMP non-empty sourceRefs, egress ack⇔acknowledgedAt, Divergence HARD-floor). The candidate-data gate (safety rule 2) is therefore the **composition** ajv `validate()` + the model's Zod `parse` + the §3 universal rules (`packages/domain/src/validation/universal-rules.ts` + no-inference) + the §5/§6/§7 predicates — never ajv alone. Pinned by `packages/domain/test/fixtures/fixtures.test.ts` (full ajv+Zod biconditional). Open Finding for §5/§7/§9 wiring.
+
+## ADR-009 - Operational-Store DB Schema Source (single-dialect now, mirror at adapter time)
+
+Status: Locked (2026-06-30). Scope: Phase-1 task 1.14 (`@sow/db` schema source + repository interfaces). The concrete adapters, migrations, and the both-dialect contract suite are Phase-2/§4 (REQ-D-003).
+
+Context: §4 requires SQLite (local) **and** standard Postgres adapters from day one, both passing one repository contract suite. Drizzle has no single dialect-neutral table builder — tables are declared per-dialect (`drizzle-orm/sqlite-core` vs `pg-core`). Phase 1 must freeze a schema *source* + the repository *interfaces* (the durable cross-track contract) without yet building the adapters.
+
+Decision: author the Phase-1 schema source once in `drizzle-orm/sqlite-core` (SQLite is the V1 default, §13) using only **portable column types** (text, integer, `integer({mode:'boolean'})`, `text({mode:'json'})` for nested values, ISO-text timestamps) — no pg-only `jsonb`/`uuid`/`serial`. Repository interface contracts are pure TypeScript (no Drizzle import) so domain can depend on interfaces, never a driver (§2.5). A column-name parity drift-guard asserts the 6 directly-persisted flat models' table columns match their frozen contract field-sets. The **pg-core mirror + migrations + the both-dialect repository contract suite are Phase-2/worker.**
+
+Rationale: freezes the load-bearing contract (interfaces + column-name parity) now while keeping the table source minimal and portable; avoids prematurely committing to a dual-definition mechanism before the adapters exist. SourceEnvelope persists as event-log payloads (per `DATA_MODEL.md`), not a flat config table, so it is excluded from the flat-parity set by design.
+
+What would change it: if Phase-2 finds the portable-types subset too restrictive, switch to dual per-dialect table definitions generated from a shared column-spec factory (the fallback).
 

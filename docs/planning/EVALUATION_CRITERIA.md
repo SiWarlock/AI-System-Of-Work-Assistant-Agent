@@ -33,6 +33,7 @@ V1 is done when the system runs locally/self-hosted on a Mac, proves the meeting
 - Any runtime/provider can write Markdown or external systems directly.
 - GBrain is allowed to become semantic source of truth.
 - Provider outputs can reach side-effect layers before schema validation.
+- The ajv structural `validate()` gate is treated as the COMPLETE candidate-data gate (it omits Zod `.refine` cross-field invariants); a safe pipeline must compose ajv + the model's Zod parse + the §3 universal rules + the §5/§6/§7 predicates.
 - Electron renderer has direct access to filesystem, DB, secrets, or provider credentials.
 - SQLite-only assumptions make Postgres adapter fake or untested.
 - Final DoD is satisfied with mocks in place of real integrations.
