@@ -1,0 +1,11 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+
+# pnpm 11 gates dependency build scripts; explicitly allow esbuild (vitest's bundler).
+allowBuilds:
+  esbuild: true
+
+# pnpm 11's pre-run deps verification re-runs install and trips on the build gate;
+# disable it so `pnpm test`/`typecheck` run directly.
+verifyDepsBeforeRun: false

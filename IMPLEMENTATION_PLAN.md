@@ -19,7 +19,7 @@
 
 **GBrain write-through amendment — DONE (2026-06-29).** Owner approved shipping GBrain **write-through in V1**, fail-closed (reversing the 0.2 read-only deferral). `ARCHITECTURE.md` (§6/§12/§13/§16/Appendix A/§2.5/Spec-Anchor) + this plan (Phase-4 4.6/4.7/4.9 amended + **4.14–4.20 new**; Phase-12 12.7 amended + **12.22/12.23 new**; 11.3/11.5 amended) amended from the design spec `docs/design/gbrain-write-through-divergence.md`. gbrain **0.35.1.0** installed locally for Phase-4. The **9 new + 2 amended contract models** must be frozen in Phase 1.
 
-**Next session target:** Phase 1 — Shared Contracts & Domain (the forced-serial bottleneck; freeze the base Appendix-A models **+ the 9 new GBrain write-through/divergence seam models** + the 2 amended ones + JSON-Schema snapshots before any track forks). Phase-0 fold-forward decisions **RATIFIED into the contract (2026-06-30):** WebSocket → §10 (OQ-002); Hermes hybrid surface + provider conformance → §7 (OQ-003/007); perf SLOs + cost/concurrency caps → §18 OQ-table (OQ-004/Perf-pass); the Hermes empty-`-t`→full-toolset security caveat banked as `packages/providers/LESSONS.md` §1 (+ CLAUDE.md index). Contract is now fully settled for Phase 1.
+**Phase 1 — IN PROGRESS (started 2026-06-30).** Shared Contracts & Domain (the forced-serial bottleneck; freeze the base Appendix-A models **+ the 9 new GBrain write-through/divergence seam models** + the 2 amended ones + JSON-Schema snapshots before any track forks). **Task 1.1 DONE (TDD-green):** monorepo bootstrapped (pnpm workspaces + Turbo + Vitest + strict tsconfig; `@sow/contracts` + `@sow/domain` skeletons, pure/no app-side imports) + shared primitives (branded opaque IDs that reject empty/whitespace, exact-literal enums + guards, `Result<T,E>` envelope, event-name catalog) — 9 tests pass, `pnpm typecheck` clean; pnpm-11.5 build-gate resolved in `pnpm-workspace.yaml`. **Next:** 1.2 JSON-Schema gate → 1.3–1.9 contract models (incl. the 11 write-through seam models) → 1.10 key builders → 1.11 validators → 1.12/1.13 state machines → 1.14 Drizzle schema → 1.15 seam fixtures. Phase-0 fold-forward decisions **RATIFIED into the contract (2026-06-30):** WebSocket → §10 (OQ-002); Hermes hybrid surface + provider conformance → §7 (OQ-003/007); perf SLOs + cost/concurrency caps → §18 OQ-table (OQ-004/Perf-pass); the Hermes empty-`-t`→full-toolset security caveat banked as `packages/providers/LESSONS.md` §1 (+ CLAUDE.md index). Contract is now fully settled for Phase 1.
 
 
 ---
@@ -219,14 +219,14 @@ Executed row-by-row by `/phase-exit <phase>`:
 **Track:** contract · **Depends on (phases):** 0
 
 ### 1.1 — Package scaffold + shared primitives, enums, typed-result envelope, event-name catalog
-- [ ] Branded/opaque ID types (WorkspaceId, AgentJobId, ActionId, PlanId, SourceId, ApprovalId, WorkflowId, AuditId) prevent cross-assignment at compile time; runtime constructors reject empty/whitespace.
-- [ ] Shared enums with exact literal membership: WorkspaceType (employer_work|personal_business|personal_life), DataOwner (employer|user|client), VisibilityLevel (isolated|coordination|sanitized|full), ProviderId (claude|openai|openrouter|ollama|lm_studio), egressClass (local|cloud); ProcessorId and ToolId as branded strings (concrete catalogs unspecified upstream — see arch_gaps).
-- [ ] Typed Result<T,E> envelope with explicit, enumerable failure variants (§16 error-handling convention): no throw-based control flow across subsystem boundaries; every failure carries a typed code.
-- [ ] Event-name catalog as a const union (workflow status, approval update, System Health, read-model change) — single source of truth for the §10 push stream; renderer-importable and carries no secrets/raw data.
-- [ ] packages/contracts and packages/domain are pure: import nothing app- or adapter-side (import-direction rule §2.5); a lint/boundary check pins this.
-- [ ] Files: NEW packages/contracts/package.json, packages/contracts/tsconfig.json, packages/contracts/src/index.ts, packages/contracts/src/primitives/ids.ts, packages/contracts/src/primitives/enums.ts, packages/contracts/src/primitives/result.ts, packages/contracts/src/events/catalog.ts; NEW packages/domain/package.json, packages/domain/tsconfig.json, packages/domain/src/index.ts
-- [ ] Cross-doc invariant: none
-- [ ] Depends on: none
+- [x] Branded/opaque ID types (WorkspaceId, AgentJobId, ActionId, PlanId, SourceId, ApprovalId, WorkflowId, AuditId) prevent cross-assignment at compile time; runtime constructors reject empty/whitespace.
+- [x] Shared enums with exact literal membership: WorkspaceType (employer_work|personal_business|personal_life), DataOwner (employer|user|client), VisibilityLevel (isolated|coordination|sanitized|full), ProviderId (claude|openai|openrouter|ollama|lm_studio), egressClass (local|cloud); ProcessorId and ToolId as branded strings (concrete catalogs unspecified upstream — see arch_gaps).
+- [x] Typed Result<T,E> envelope with explicit, enumerable failure variants (§16 error-handling convention): no throw-based control flow across subsystem boundaries; every failure carries a typed code.
+- [x] Event-name catalog as a const union (workflow status, approval update, System Health, read-model change) — single source of truth for the §10 push stream; renderer-importable and carries no secrets/raw data.
+- [x] packages/contracts and packages/domain are pure: import nothing app- or adapter-side (import-direction rule §2.5); a lint/boundary check pins this.
+- [x] Files: NEW packages/contracts/package.json, packages/contracts/tsconfig.json, packages/contracts/src/index.ts, packages/contracts/src/primitives/ids.ts, packages/contracts/src/primitives/enums.ts, packages/contracts/src/primitives/result.ts, packages/contracts/src/events/catalog.ts; NEW packages/domain/package.json, packages/domain/tsconfig.json, packages/domain/src/index.ts
+- [x] Cross-doc invariant: none
+- [x] Depends on: none
 
 ### 1.2 — JSON Schema validation gate + schema registry (REQ-S-006)
 - [ ] A schema registry maps schemaId -> compiled JSON Schema validator; an unknown schemaId is a typed rejection, never a silent pass-through.
