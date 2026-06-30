@@ -1,0 +1,56 @@
+# config/gbrain.pin — known-good GBrain version pin (OQ-006 / ARCHITECTURE.md §13, §4.7)
+# ---------------------------------------------------------------------------
+# PURPOSE
+#   GBrain is a per-workspace, PGLite-based knowledge engine (upstream repo:
+#   https://github.com/garrytan/gbrain.git). It is DERIVED from the canonical
+#   Markdown and is rebuildable. The GBrain adapter (packages/knowledge,
+#   task 4.7) performs a STARTUP VERSION-PIN CHECK: it reads this file and
+#   verifies the running GBrain's commit SHA == gbrain_sha below.
+#     - match    -> GBrain enabled.
+#     - mismatch -> the adapter REFUSES to enable GBrain and surfaces a
+#                   degraded System Health item. It MUST NOT silently run an
+#                   unpinned binary (§4.7, §13). Fail-closed by design.
+#
+# FORMAT (parseable key = value; '#' begins a comment; blank lines ignored)
+#   gbrain_sha        40-hex git commit SHA of the validated GBrain build.
+#   gbrain_tag        human-readable release tag for the same commit (optional).
+#   gbrain_repo       upstream clone URL the SHA is resolved against.
+#   index_schema_ver  `gbrain doctor --json` schema_version of the index format
+#                     this app's parity/rebuild logic was validated against.
+#   validated_on      ISO date the 4-condition round-trip (below) went green.
+#   validation_ref    path to the spike/eval report recording that green run.
+#
+# STATUS: PLACEHOLDER — NOT YET A BINDING PIN.
+#   gbrain_sha is intentionally left as PENDING_LIVE_VALIDATION. The §4.7
+#   startup check treats that sentinel as "no validated pin" -> GBrain stays
+#   DISABLED/degraded (the safe read-only-by-default posture, §6/§14.5) until
+#   a real SHA is filled by the procedure below. Do NOT fabricate this value.
+#
+# HOW TO FILL (capture procedure — run when GBrain + an embedding key + the
+# Phase-4 KnowledgeWriter are available; see docs/spikes/0.2-gbrain-roundtrip.md):
+#   1. Install the candidate build at a chosen commit:
+#        ~/.claude/skills/gstack/bin/gstack-gbrain-install \
+#            --install-dir ~/gbrain --pinned-commit <candidate_sha>
+#   2. Capture the exact build identity:
+#        ( cd ~/gbrain && git rev-parse HEAD )        # -> gbrain_sha
+#        gbrain --version                             # cross-check vs gbrain_tag
+#        gbrain doctor --json | jq .schema_version    # -> index_schema_ver
+#   3. Run the four §19 round-trip GO conditions GREEN against this build
+#      (the §12 GBrain compatibility/parity contract suite + a full re-index
+#      from Markdown — ARCHITECTURE.md §13 pin-bump gate). ONLY then promote
+#      the candidate SHA into gbrain_sha and set validated_on/validation_ref.
+#
+# CANDIDATE REFERENCES (REAL, sourced — NOT yet validated for this project):
+#   - gstack known-good pin (the user's existing gbrain install path pins this):
+#       08b3698e90532b7b66c445e6b1d8cdfe71822802   # gbrain v0.18.2
+#   - upstream HEAD observed 2026-06-29 (moving target, do not pin blindly):
+#       814258dda67945ffec9457a1e73980e947b7e462
+#   These are starting points for step 1; neither is binding until the
+#   4-condition round-trip is green per the §13 pin-bump gate.
+
+gbrain_sha       = PENDING_LIVE_VALIDATION
+gbrain_tag       = PENDING_LIVE_VALIDATION
+gbrain_repo      = https://github.com/garrytan/gbrain.git
+index_schema_ver = PENDING_LIVE_VALIDATION
+validated_on     = PENDING_LIVE_VALIDATION
+validation_ref   = docs/spikes/0.2-gbrain-roundtrip.md

@@ -1,0 +1,231 @@
+{
+  "$schema": "internal://sow/config/providers.defaults",
+  "schemaVersion": 1,
+  "spike": "0.4-provider-conformance",
+  "generatedAt": "2026-06-29",
+  "provenance": {
+    "anthropicModelIdsAndPricing": "Claude API reference (claude-api skill), Current Models table cached 2026-06-04 — authoritative",
+    "openaiCapabilities": "Context7 /websites/developers_openai — Structured Outputs + function calling (queried 2026-06-29)",
+    "ollamaCapabilities": "Context7 /llmstxt/ollama_llms_txt — docs.ollama.com structured-outputs + tool-calling (queried 2026-06-29)",
+    "openrouterCapabilities": "Context7 /websites/openrouter_ai — openrouter.ai/docs structured-outputs + tool-calling (queried 2026-06-29)",
+    "lmstudioCapabilities": "Operator knowledge (OpenAI-compatible response_format json_schema) — NOT yet validated; see liveValidationGate"
+  },
+  "notes": [
+    "conformanceStatus is now LIVE-VERIFIED for two OpenRouter routes (Phase 0 0.4 empirical re-run, 2026-06-29): openrouter/deepseek/deepseek-v4-pro and openrouter/anthropic/claude-haiku-4.5 both passed structured-output (json_schema strict) AND tool-use probes (raw responses in scratchpad/phase0/0.4-rerun, captured via the operator's OpenRouter key). All OTHER pairs (claude native, openai, openrouter/claude-sonnet-4-6, openrouter/gpt-4o-mini, ollama, lmstudio) remain conformanceStatus 'unknown' — no live probe ran for them (no native Anthropic/OpenAI key, local Ollama/LM Studio deferred). Per ARCHITECTURE.md §7/§12 a pair must pass the conformance harness before it is matrix-eligible; the broker MUST treat 'unknown' as ineligible. Note: the two verified routes are validated via OpenRouter ROUTING; a native claude-agent-sdk runtime-conformance check stays a Phase-5 gate.",
+    "Secrets are Keychain references only (REQ-S-003). No API key value appears in this file; 'secretRef' names a SecretsPort/Keychain service entry that an operator must create.",
+    "Local providers (ollama, lmstudio) carry egressClass 'local' — the only legal route for unacknowledged Employer-Work raw content (§5 egress veto). OpenRouter is its OWN processor (egressClass cloud), never an OpenAI alias (safety rule 5).",
+    "Budget enforcement reads pricing + caps FROM this file (ARCHITECTURE.md §5.4 — must not hardcode). Cloud per-token prices other than Anthropic are intentionally null + sourced; an operator fills them from the cited pricing page (do not invent)."
+  ],
+
+  "providers": {
+    "claude": {
+      "kind": "model-provider",
+      "displayName": "Anthropic Claude (ModelProviderPort)",
+      "endpoint": "https://api.anthropic.com",
+      "egressClass": "cloud",
+      "secretRef": "sow.provider.anthropic",
+      "structuredOutput": {
+        "mode": "native_json_schema",
+        "detail": "output_config.format = { type: json_schema } and/or strict tool use (strict:true). Constrained decoding. HIGH fidelity.",
+        "fidelity": "high"
+      },
+      "toolUse": { "supported": true, "mode": "native_parallel", "fidelity": "high" },
+      "pinnedModels": {
+        "claude-opus-4-8":   { "contextWindow": 1000000, "maxOutput": 128000, "structuredOutput": true, "toolUse": true, "conformanceStatus": "unknown" },
+        "claude-sonnet-4-6": { "contextWindow": 1000000, "maxOutput": 64000,  "structuredOutput": true, "toolUse": true, "conformanceStatus": "unknown" },
+        "claude-haiku-4-5":  { "contextWindow": 200000,  "maxOutput": 64000,  "structuredOutput": true, "toolUse": true, "conformanceStatus": "unknown" }
+      }
+    },
+
+    "openai": {
+      "kind": "model-provider",
+      "displayName": "OpenAI",
+      "endpoint": "https://api.openai.com/v1",
+      "egressClass": "cloud",
+      "secretRef": "sow.provider.openai",
+      "structuredOutput": {
+        "mode": "native_json_schema_strict",
+        "detail": "response_format = { type: json_schema, json_schema: { strict: true, schema } }. Supported on gpt-4o-mini, gpt-4o-2024-08-06 and later incl. GPT-5 family / gpt-5.5. HIGH fidelity.",
+        "fidelity": "high"
+      },
+      "toolUse": { "supported": true, "mode": "native_function_calling", "fidelity": "high" },
+      "pinnedModels": {
+        "gpt-5.5":      { "contextWindow": 1000000, "structuredOutput": true, "toolUse": true, "conformanceStatus": "unknown" },
+        "gpt-4o-mini":  { "structuredOutput": true, "toolUse": true, "conformanceStatus": "unknown" }
+      }
+    },
+
+    "openrouter": {
+      "kind": "model-provider",
+      "displayName": "OpenRouter (independent processor)",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "egressClass": "cloud",
+      "isOwnProcessor": true,
+      "secretRef": "sow.provider.openrouter",
+      "modelIdFormat": "<author>/<slug> (e.g. openai/gpt-4o-mini, anthropic/claude-sonnet-4-6)",
+      "structuredOutput": {
+        "mode": "per_model_json_schema_strict",
+        "detail": "response_format json_object (basic) or json_schema strict (per model). Support is MODEL-SPECIFIC; filter with GET /api/v1/models?supported_parameters=structured_outputs. Fidelity depends on the routed underlying model.",
+        "fidelity": "model-dependent"
+      },
+      "toolUse": { "supported": true, "mode": "per_model_function_calling", "detail": "Filter with ?supported_parameters=tools", "fidelity": "model-dependent" },
+      "pinnedModels": {
+        "deepseek/deepseek-v4-pro": {
+          "structuredOutput": true,
+          "toolUse": true,
+          "conformanceStatus": "passing",
+          "contextWindow": 1048576,
+          "supportedParameters": ["response_format", "structured_outputs", "tools", "tool_choice"],
+          "conformanceProbe": {
+            "ran_at_note": "Phase 0 0.4 empirical re-run",
+            "structured_output": true,
+            "tool_use": true,
+            "structured_output_mode": "json_schema strict (response_format)",
+            "raw_evidence": "scratchpad/phase0/0.4-rerun/deepseek-deepseek-v4-pro-structured.json + deepseek-deepseek-v4-pro-tool.json"
+          }
+        },
+        "anthropic/claude-haiku-4.5": {
+          "structuredOutput": true,
+          "toolUse": true,
+          "conformanceStatus": "passing",
+          "contextWindow": 200000,
+          "supportedParameters": ["response_format", "structured_outputs", "tools", "tool_choice"],
+          "conformanceProbe": {
+            "ran_at_note": "Phase 0 0.4 empirical re-run",
+            "structured_output": true,
+            "tool_use": true,
+            "structured_output_mode": "json_schema strict (response_format)",
+            "raw_evidence": "scratchpad/phase0/0.4-rerun/anthropic-claude-haiku-4-5-structured.json + anthropic-claude-haiku-4-5-tool.json",
+            "note": "Claude conformance here is validated via OpenRouter ROUTING only; a native claude-agent-sdk / api.anthropic.com runtime-conformance check remains a Phase-5 gate (no ANTHROPIC_API_KEY at probe time)."
+          }
+        },
+        "anthropic/claude-sonnet-4-6": { "structuredOutput": true, "toolUse": true, "conformanceStatus": "unknown", "note": "research-pinned; not probed in 0.4 re-run (probed haiku-4.5 as the cheap Claude route)." },
+        "openai/gpt-4o-mini":          { "structuredOutput": true, "toolUse": true, "conformanceStatus": "unknown", "note": "research-pinned; not probed in 0.4 re-run." }
+      }
+    },
+
+    "ollama": {
+      "kind": "model-provider",
+      "displayName": "Ollama (local, zero-egress)",
+      "endpoint": "http://localhost:11434",
+      "openAICompatEndpoint": "http://localhost:11434/v1",
+      "egressClass": "local",
+      "secretRef": null,
+      "structuredOutput": {
+        "mode": "format_json_schema",
+        "detail": "/api/chat with `format` = a JSON Schema object (Ollama >= 0.5). Also OpenAI-compat response_format on /v1. Fidelity is model-dependent.",
+        "fidelity": "model-dependent"
+      },
+      "toolUse": { "supported": true, "mode": "tools_array", "detail": "Tools array on /api/chat; supported by tool-capable models (qwen3, llama3.1+, gpt-oss).", "fidelity": "model-dependent" },
+      "pinnedModels": {
+        "qwen3":    { "structuredOutput": true, "toolUse": true,  "conformanceStatus": "unknown", "note": "recommended local default for structured-output + tool-use" },
+        "llama3.2": { "structuredOutput": true, "toolUse": false, "conformanceStatus": "unknown", "note": "small/fast, classify-tier" }
+      }
+    },
+
+    "lmstudio": {
+      "kind": "model-provider",
+      "displayName": "LM Studio (local, zero-egress)",
+      "endpoint": "http://localhost:1234/v1",
+      "egressClass": "local",
+      "secretRef": null,
+      "structuredOutput": {
+        "mode": "openai_compat_json_schema",
+        "detail": "OpenAI-compatible response_format = { type: json_schema, json_schema: { strict, schema } }. RESEARCH-ONLY in this spike — not validated against a running endpoint.",
+        "fidelity": "unverified"
+      },
+      "toolUse": { "supported": true, "mode": "openai_compat_function_calling", "fidelity": "unverified" },
+      "pinnedModels": {
+        "qwen2.5-7b-instruct": { "structuredOutput": true, "toolUse": true, "conformanceStatus": "unknown", "note": "placeholder; LM Studio model ids are user-loaded" }
+      }
+    }
+  },
+
+  "capabilityDefaults": {
+    "_comment": "Seeds ProviderMatrix.capabilityDefaults: Record<Capability, ProviderRoute>. ProviderRoute = exactly one of {provider|runtime}, plus model, endpoint, egressClass. 'cloudPreferred' is the default; 'localZeroEgress' is the §5-veto-legal route for unacknowledged Employer-Work raw content. All routes start conformanceStatus=unknown (broker treats as ineligible until §12 harness flips to passing).",
+
+    "meeting.close": {
+      "cloudPreferred":  { "runtime": "claude-agent-sdk", "model": "claude-opus-4-8", "endpoint": "https://api.anthropic.com", "egressClass": "cloud" },
+      "localZeroEgress": { "runtime": "hermes",           "model": "qwen3",          "endpoint": "http://localhost:11434", "egressClass": "local", "note": "Hermes runtime surface decided in Spike 0.3; route flagged pending that go/no-go." },
+      "rationale": "Proof-spine critical path needs tool-policy/structured-output/subagent semantics → AgentRuntimePort, highest-quality model. DoD requires >=1 conformant provider/runtime for this capability (ARCHITECTURE.md §7)."
+    },
+    "extraction": {
+      "cloudPreferred":  { "provider": "claude", "model": "claude-sonnet-4-6", "endpoint": "https://api.anthropic.com", "egressClass": "cloud" },
+      "localZeroEgress": { "provider": "ollama", "model": "qwen3",            "endpoint": "http://localhost:11434", "egressClass": "local" },
+      "rationale": "Schema-validated latent extraction; Sonnet 4.6 balances cost/quality, strong structured-output fidelity."
+    },
+    "synthesis": {
+      "cloudPreferred":  { "provider": "claude", "model": "claude-sonnet-4-6", "endpoint": "https://api.anthropic.com", "egressClass": "cloud" },
+      "localZeroEgress": { "provider": "ollama", "model": "qwen3",            "endpoint": "http://localhost:11434", "egressClass": "local" },
+      "premiumAlt":      { "provider": "claude", "model": "claude-opus-4-8",  "endpoint": "https://api.anthropic.com", "egressClass": "cloud", "note": "use when synthesis quality dominates cost (e.g. weekly/monthly reviews)." }
+    },
+    "cheap.classify": {
+      "cloudPreferred":  { "provider": "claude", "model": "claude-haiku-4-5", "endpoint": "https://api.anthropic.com", "egressClass": "cloud" },
+      "localZeroEgress": { "provider": "ollama", "model": "llama3.2",         "endpoint": "http://localhost:11434", "egressClass": "local" },
+      "rationale": "Routing/triage classification; Haiku 4.5 is the cheapest Claude tier ($1/$5 per MTok) and supports structured output."
+    },
+    "copilot.qa": {
+      "cloudPreferred":  { "provider": "claude", "model": "claude-sonnet-4-6", "endpoint": "https://api.anthropic.com", "egressClass": "cloud" },
+      "localZeroEgress": { "provider": "ollama", "model": "qwen3",            "endpoint": "http://localhost:11434", "egressClass": "local" },
+      "rationale": "Read-path Q&A with citations, no side effects (ARCHITECTURE.md §9 flow 13)."
+    }
+  },
+
+  "budgets": {
+    "_comment": "COST-1/2 (REQ-S-007). maxRuntimeSeconds is always required per job; maxCostUsd default applies to any LLM-calling job that lacks one (COST-2). Enforcement reads these values from config (ARCHITECTURE.md §5.4).",
+    "defaultMaxCostUsd": 0.50,
+    "defaultMaxRuntimeSeconds": 120,
+    "perCapability": {
+      "meeting.close":  { "maxCostUsd": 0.50, "maxRuntimeSeconds": 300 },
+      "extraction":     { "maxCostUsd": 0.25, "maxRuntimeSeconds": 120 },
+      "synthesis":      { "maxCostUsd": 0.25, "maxRuntimeSeconds": 180 },
+      "cheap.classify": { "maxCostUsd": 0.05, "maxRuntimeSeconds": 60  },
+      "copilot.qa":     { "maxCostUsd": 0.15, "maxRuntimeSeconds": 90  }
+    },
+    "derivation": "Conservative. A representative meeting.close on Opus 4.8 (~50k input + ~8k output) estimates 50000*5/1e6 + 8000*25/1e6 = $0.45 < $0.50 cap. classify/extraction tiers scaled down. OQ-004 perf-budget pass (Spike 0.6) may refine."
+  },
+
+  "costEstimation": {
+    "method": "token_metered",
+    "formula": "estUsd = promptTokens * inUsdPerMTok / 1e6 + completionTokens * outUsdPerMTok / 1e6, accumulated over a job's provider calls; cancel on breach (COST-1, no partial side effect).",
+    "priceSourceByProvider": {
+      "claude": "Claude API reference (claude-api skill) Current Models table, cached 2026-06-04 — authoritative; values below.",
+      "openai": "https://openai.com/api/pricing/ — operator must fill (do not invent).",
+      "openrouter": "Per-model, dynamic: GET https://openrouter.ai/api/v1/models returns each model's pricing; meter should read live. Static page: https://openrouter.ai/models",
+      "ollama": "local, $0",
+      "lmstudio": "local, $0"
+    },
+    "pricing": {
+      "_unit": "USD per 1,000,000 tokens (in = prompt/input, out = completion/output)",
+      "claude": {
+        "claude-fable-5":    { "inUsdPerMTok": 10, "outUsdPerMTok": 50 },
+        "claude-opus-4-8":   { "inUsdPerMTok": 5,  "outUsdPerMTok": 25 },
+        "claude-opus-4-7":   { "inUsdPerMTok": 5,  "outUsdPerMTok": 25 },
+        "claude-sonnet-4-6": { "inUsdPerMTok": 3,  "outUsdPerMTok": 15 },
+        "claude-haiku-4-5":  { "inUsdPerMTok": 1,  "outUsdPerMTok": 5 }
+      },
+      "openai": {
+        "gpt-5.5":     { "inUsdPerMTok": null, "outUsdPerMTok": null, "source": "TBD operator — https://openai.com/api/pricing/" },
+        "gpt-4o-mini": { "inUsdPerMTok": null, "outUsdPerMTok": null, "source": "TBD operator — https://openai.com/api/pricing/" }
+      },
+      "openrouter": { "_note": "dynamic per-model; read from /api/v1/models at runtime; do not hardcode." },
+      "ollama":   { "_localZeroCost": 0 },
+      "lmstudio": { "_localZeroCost": 0 }
+    }
+  },
+
+  "liveValidationGate": {
+    "status": "PARTIALLY-SATISFIED",
+    "what": "Run the conformance harness (ARCHITECTURE.md §12, Spike→Phase-5 §5.10) against each provider x capability x pinned-model pair to flip conformanceStatus unknown -> passing; failing pairs disabled.",
+    "liveVerified": [
+      "openrouter/deepseek/deepseek-v4-pro — structured-output (json_schema strict) + tool-use both PASSING (Phase 0 0.4 empirical re-run, 2026-06-29; raw: scratchpad/phase0/0.4-rerun/deepseek-deepseek-v4-pro-{structured,tool}.json)",
+      "openrouter/anthropic/claude-haiku-4.5 — structured-output (json_schema strict) + tool-use both PASSING (same run; raw: scratchpad/phase0/0.4-rerun/anthropic-claude-haiku-4-5-{structured,tool}.json). Validated via OpenRouter routing only."
+    ],
+    "stillBlockedOn": [
+      "Native Anthropic Claude (api.anthropic.com) + native OpenAI conformance — no ANTHROPIC_API_KEY / OPENAI_API_KEY at probe time. Claude conformance proven here is via OpenRouter ROUTING; a native claude-agent-sdk runtime-conformance check remains a Phase-5 gate.",
+      "Local providers (ollama :11434 / lmstudio :1234) — DEFERRED by operator decision to a later pass (reduce local resource overhead); not probed in this re-run.",
+      "OpenRouter routes NOT probed in this pass (anthropic/claude-sonnet-4-6, openai/gpt-4o-mini) — still 'unknown'.",
+      "Operator-supplied OpenAI per-token prices to complete costEstimation.pricing (OpenRouter prices are dynamic per-model via /api/v1/models)."
+    ]
+  }
+}
