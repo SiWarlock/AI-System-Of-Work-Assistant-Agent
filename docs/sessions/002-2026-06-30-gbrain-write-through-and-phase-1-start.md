@@ -60,6 +60,8 @@ This session took the build from "Phase 0 closed" to "Phase 1 underway," with on
 | `cf8ada9` | GBrain write-through + divergence amendment |
 | `cb8ad14` | Phase-0 decisions folded into the contract |
 | `6f00419` | Phase 1 task 1.1 — monorepo scaffold + shared primitives |
+| `319232f` | this session-002 handoff doc |
+| `0914f11` | orchestrate-end reconciliation (DECISIONS/EVALUATION_CRITERIA sync; Decisions→Log; Carry-forward) |
 
 ## 7. Ops notes / gotchas (for the next session)
 
