@@ -1,3 +1,4 @@
+// spec(§9) — DOMAIN_MODEL.md state machine (phase-exit spec coverage)
 // Source state machine (task 1.12 / DOMAIN_MODEL.md §Source). PURE/TOTAL — the
 // engine never throws; illegal edges, leaving a terminal state, and off-alphabet
 // targets (e.g. the forbidden `external_write`) all return a typed err(...).

@@ -1,3 +1,4 @@
+// spec(§9) — DOMAIN_MODEL.md state machine (phase-exit spec coverage)
 // Proposed External Action machine self-test (task 1.13, DOMAIN_MODEL.md
 // §Proposed External Action). PURE + TOTAL: built on the foundation primitive,
 // so it never throws — illegal edges, terminal exits, and off-alphabet states

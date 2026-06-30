@@ -1,3 +1,4 @@
+// spec(§9) — DOMAIN_MODEL.md state machine (phase-exit spec coverage)
 // Meeting Closeout state machine (DOMAIN_MODEL.md §Meeting Closeout, task 1.12).
 // PURE + TOTAL: legal edges return ok(to); illegal edges return a typed
 // err(illegal_transition); leaving a terminal returns err(terminal_state); an

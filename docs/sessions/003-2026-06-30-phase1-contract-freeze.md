@@ -97,8 +97,9 @@ Continued in the same session (the owner said to keep going). A **second Workflo
 - [x] Acceptance / `/preflight`: `pnpm test` (728) + `pnpm typecheck` green. (Pure contracts/domain — no runtime smoke.) ESLint/format steps are still `tsc`-placeholders (carry-forward).
 - [x] Cross-doc invariants verified — no model field change; SourceEnvelope parity reconciled in-plan.
 - [x] Dependency audit (`pnpm audit --prod`) clean after the drizzle bump.
-- [x] Arch-drift + reachability: covered by the in-workflow adversarial consistency-critic (driftDetected items addressed) + the synthesis orphan-check (barrels export all; tests reach all symbols). The standalone `arch-drift-auditor`/`reachability-auditor` subagents were **not** separately dispatched this round (the in-workflow critic + synthesis covered the surface; note for a stricter future gate).
-- [x] Whole-system security: the one security-relevant finding (gate composition) is captured + carried forward; egress/tool-policy/gate models are contracts only — live enforcement lands at §5/§7.
+- [x] Arch-drift audit: `arch-drift-auditor` dispatched → **CLEAR** (0 DRIFT; all 27 snapshots field-verified; 1 STALE-DOC fixed — DOMAIN_MODEL.md §Approval `deferred` edges; 5 AMBIGUOUS state-machine arch_gaps flagged in code, pin at §9/Phase-7). Report: `docs/audits/phase1-arch-drift.md`.
+- [x] Reachability audit: **judgment-WAIVED** — foundational contract phase has no production entry points yet (apps/worker land Phase 2+); exports are barrel-wired + test-covered (synthesis orphan-check clean). Re-run once a consuming app exists.
+- [x] Whole-system security: `security-reviewer` dispatched → **CLEAR** (7/7 invariant passes; 1 medium non-blocking gate-composition finding — Lesson 3 + carry-forward; secrets clean). Report: `docs/audits/phase1-security.md`.
 - [x] Session doc lists files; commits pushed.
 
 ### Commit map (Part 2)

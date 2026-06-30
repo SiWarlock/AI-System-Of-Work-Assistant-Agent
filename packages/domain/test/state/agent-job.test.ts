@@ -1,3 +1,4 @@
+// spec(§9) — DOMAIN_MODEL.md state machine (phase-exit spec coverage)
 // AgentJob state machine (DOMAIN_MODEL.md §Agent Job) — PURE + TOTAL.
 // created -> admitted -> provider_selected -> running -> schema_validated
 //   -> accepted | rejected | cancelled_budget | failed_retryable | failed_terminal

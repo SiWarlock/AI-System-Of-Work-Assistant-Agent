@@ -1,3 +1,4 @@
+// spec(§9) — DOMAIN_MODEL.md state machine (phase-exit spec coverage)
 // Approval state-machine self-test (PURE, TOTAL — no clock/random/IO).
 // DOMAIN_MODEL.md §Approval: pending -> approved | edited | rejected | deferred
 // | expired. deferred is NON-TERMINAL (deferred -> pending | expired); the other

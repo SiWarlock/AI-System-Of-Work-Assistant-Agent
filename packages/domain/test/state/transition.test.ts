@@ -1,3 +1,4 @@
+// spec(§9) — DOMAIN_MODEL.md state machine (phase-exit spec coverage)
 // Foundation primitive self-test (PURE, TOTAL): the shared state-machine engine
 // every one of the 6 domain machines builds on. Uses a tiny 3-state fixture.
 import { describe, it, expect } from "vitest";

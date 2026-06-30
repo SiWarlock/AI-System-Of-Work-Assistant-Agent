@@ -66,6 +66,8 @@ Failure/recovery states:
 
 `pending -> approved | edited | rejected | deferred | expired`
 
+`deferred` is **non-terminal**: `deferred -> pending | expired` (re-surfaces after snooze; auto-expires after the window). Terminal: `approved | edited | rejected | expired`. Re-applying a terminal transition is an idempotent no-op (exactly-once across Mac+Telegram, REQ-F-012). (Binding source: ARCHITECTURE.md §9; implemented in `packages/domain/src/state/approval.ts`.)
+
 ## Business Rules and Invariants
 
 - [locked decision] Markdown is canonical semantic truth.

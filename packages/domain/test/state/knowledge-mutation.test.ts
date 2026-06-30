@@ -1,3 +1,4 @@
+// spec(§9) — DOMAIN_MODEL.md state machine (phase-exit spec coverage)
 // Knowledge Mutation state machine (DOMAIN_MODEL.md §Knowledge Mutation).
 // PURE/TOTAL self-test built on the Foundation defineMachine primitive.
 //
