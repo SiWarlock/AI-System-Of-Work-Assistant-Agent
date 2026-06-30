@@ -22,6 +22,7 @@ V1 is done when the system runs locally/self-hosted on a Mac, proves the meeting
 | Calendar safety | Scheduling proposals check all configured availability | 100% | Doctor appointment flow |
 | Approval visibility | Pending external side effects visible in Mac and/or Telegram | 100% | Approval flow e2e |
 | Sleep/wake lifecycle | Missed schedules and in-flight workflows resume correctly | one collapsed run, no duplicate side effects | macOS sleep/restart tests |
+| Contract freeze (Phase 1) | Every Appendix-A seam model has a frozen field-set snapshot + a registered, ajv-strict-compiling JSON Schema; field-sets match Appendix A; no drift | 27/27 frozen; registry compiles all; driftDetected=false | Per-model `spec(§)`-tagged snapshot tests + `registry-all.test.ts` (REQ-S-006 coverage) |
 | Provider conformance | Provider output schema validity | 100% for accepted outputs | Provider matrix tests |
 | Storage portability | SQLite and Postgres operational adapters behave equivalently | contract suite green on both | Drizzle migration/repository tests |
 | Install reproducibility | Fresh install on clean Mac | success | Clean install script + sample workspace |

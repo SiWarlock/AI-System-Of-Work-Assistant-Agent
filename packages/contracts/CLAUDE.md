@@ -126,9 +126,35 @@ Several typed models in this codebase are **contracts** mirrored in `ARCHITECTUR
 
 | Model | `ARCHITECTURE.md` section | Notes |
 |---|---|---|
-| <model> | §X | <field summary> |
+| EgressPolicy | §3, §5 | workspaceId, allowedProcessors[], rawContentAllowedProcessors[], employerRawEgressAcknowledged, acknowledgedAt? — refine: acknowledgedAt ⇔ acknowledged. |
+| ToolPolicy | §3, §5, §7 | mode(read_only\|scoped_write), allowedTools[], deniedTools[], allowsMutating — read_only ⇒ !allowsMutating; deniedTools-precedence helper. |
+| Capability / ProviderRoute | §3, §7 | Capability = open branded id (zod-brands). ProviderRoute = union {runtime}⊕{provider} + model, endpoint, egressClass. |
+| ProviderProfile | §3, §4, §7 | provider, endpoint, model, capabilities[], egressClass, costCaps, conformanceStatus — NO inline-secret field (REQ-S-003). |
+| ProviderMatrix | §3, §5, §7 | workspaceId, allowedProviders[], capabilityDefaults: Record<Capability,ProviderRoute>, rawCloudEgressEnabled, localProviderPreference? — provider-routes ⊆ allowedProviders. |
+| Workspace | §3, §6 | id, name, type, dataOwner, markdownRepoPath, gbrainBrainId, defaultVisibility, egressPolicy, providerMatrix — id≡egressPolicy.workspaceId≡providerMatrix.workspaceId; defaultWorkspace() safe-default factory. |
+| AgentJob | §3, §7, §9 | +trustLevel, +carriesRawContent; COST-1 budget pins; embeds ToolPolicy+ProviderRoute; isRegisteredOutputSchema() registry predicate. |
+| KnowledgeMutationPlan | §3, §6, §7 | +provenanceOrigin, +gbrainProposalRef?, +signedProvenanceStamp? (LIFECYCLE flag: KW writes stamp at commit; modeled optional). REQ-F-006 reject-on-empty sourceRefs. |
+| ProposedAction | §3, §8, §9 | actionId, targetSystem, canonicalObjectKey, payload, approvalPolicy, idempotencyKey. |
+| ExternalWriteEnvelope | §3, §8 | embeds WriteReceipt?; envelope↔ProposedAction linkage helper; preconditions (arch_gap, open). |
+| WriteReceipt | §8 | externalObjectId, externalUrl?, recordedAt, rawRef? — exactly-once external-write proof. |
+| SourceEnvelope | §3, §8, §9 | sourceId, workspaceId(req), origin, contentHash, type, sensitivity, routingHints. |
+| GclProjection | §3, §5, §6, §11 | workspaceId+visibilityLevel(req), projectionType, sanitizedPayload (no raw-content keys), sourceRefs. |
+| Approval | §3, §9, §10, §11 | id, actionRef, status(6), actor, channel(mac\|telegram), payloadHash, snoozeUntil?, expiresAt? — snooze ⇔ deferred. |
+| AuditRecord | §3, §4, §16 | actor, event, refs, payloadHash, before/afterSummary (summaries only — no raw content), timestamps. |
+| WorkflowRunRef | §3, §9 | workflowId, trigger, state, idempotencyKey, auditRefs[]. |
+| HealthItem | §16, §10, §11 | +sync_lagging/+rebuild_divergence failureClasses, +parityReportRef?, +factIdentity?; state(open\|acknowledged\|resolved); severity open (arch_gap). |
+| NotebookMapping | §8, §9 | projectId, notebookKey, driveFolderId, managedDocIds{00_brief,01_decisions,02_meetings,03_research,04_open_questions}. |
+| SemanticFact | §6, §12 | factIdentity (content-independent), factKind, workspaceId, mdContentSha, revisionId. |
+| FactProvenance | §6, §12 | origin(4), kwRevision?, originPath?, mdContentSha?, stampSig?, gbrainLinkSource?(nullable). |
+| SignedProvenanceStamp | §6, §12 | kwRevision, originPath, mdContentSha, writerActor=literal 'KnowledgeWriter', sourceEventRef, committedAt, sig (HMAC). |
+| ParityReport | §6, §12, §16 | reportId, workspaceId, reconciledAtRevision, gbrainSchemaVersion, counts, oracleFactCount?, divergences: Divergence[], cleanForServing, coverageComplete. |
+| Divergence | §6, §12 | factIdentity, divergenceClass(7), severityFloor(hard\|soft), mdContentSha?, dbContentHash?, remediation(4) — db_only/unstamped ⇒ hard. |
+| QuarantineRecord | §6, §16 | factIdentity, workspaceId, divergenceRef(id, not embed), divergenceClass, capturedDbDigest, remediationState(5), healthItemId, auditRef, planId?. |
+| GBrainProposedFact | §6, §7 | proposalId, workspaceId, factKind, proposedContent(open), evidenceRefs: CanonicalSourceRef[] (≥1; canonical-only), confidence∈[0,1], generatedBy(4), requiresApproval=default true. |
+| GbrainReadGrant / GbrainServePolicy | §6, §7 | workspaceId, brainId, transport='http', scope=['read'], tokenRef, allowedOps[], federationScope='workspace_only', generativeCycleEnabled=false, pinnedSha, indexSchemaVersion (alias: one schema, one $id). |
+| GbrainPin | §6, §13 | gbrainSha(40-hex), gbrainTag, gbrainRepo, indexSchemaVersion(int≥0), validatedOn(date\|PENDING sentinel), validationRef, writeThroughEnabled=default false. Mirrors config/gbrain.pin (camel↔snake parser is Phase-4 task 4.20). |
 
-<!-- Starts empty (or with the first model if one exists). Populated as contract models land. -->
+> **All 27 frozen 2026-06-30 (Phase 1, tasks 1.2–1.9).** Authoring = ADR-008 Zod-as-source: each model is `XSchema` (`.strict()`) → `z.infer` type → generated `schemas/<kebab>.schema.json` → frozen `__snapshots__/<kebab>.snap` (top-level field-name set) → registered in the ajv-strict registry. **A field add/remove/rename requires editing `ARCHITECTURE.md` Appendix A + the model's schema + its `.snap` in the same round** — `registry-all.test.ts` + the per-model snapshot test fail otherwise. Shared sub-shapes (`ContextRef`/`SourceRef`/`NoteCreate`/`NotePatch`/`LinkMutation`/`FrontmatterPatch`/`CanonicalSourceRef`) live in `src/models/shared-shapes.ts`; shared enums in `src/models/shared-enums.ts`; brands in `src/primitives/zod-brands.ts` — never re-declare them inline.
 
 ## Module organization
 
@@ -164,7 +190,8 @@ Lessons start at §1.
 
 | # | Date | Topic | Rule (one-liner) |
 |--:|---|---|---|
-| | | | |
+| 1 | 2026-06-30 | Branded `z.infer` + `declaration:true` → TS4023 | A model whose Zod schema embeds a branded ID must export an explicit `interface` + annotate the schema `z.ZodType<Out, ZodTypeDef, In>` — never rely on bare `z.infer` for the exported type. |
+| 2 | 2026-06-30 | Zod-as-source contract recipe (ADR-008) | Each Appendix-A model ships 4 files (`.ts`/`schemas/*.schema.json`/`__snapshots__/*.snap`/test); JSON Schema is generated (never hand-written); import shared brands/enums/sub-shapes — never re-declare them inline. |
 
 <!-- Starts empty. Each row links to its `LESSONS.md` anchor. -->
 

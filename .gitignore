@@ -11,6 +11,10 @@ node_modules/
 .pnpm-debug.log*
 # (commit pnpm-lock.yaml, package.json, turbo.json, tsconfig*.json)
 
+# ── Local code-intelligence tool caches (per-machine, not committed) ──
+.codegraph/
+.tokensave/
+
 # ── Build / cache outputs ─────────────────────────────────────
 dist/
 build/

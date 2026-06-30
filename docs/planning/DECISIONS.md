@@ -34,6 +34,7 @@ Status: rough-draft decision log for `/arch-finalize`.
 | Local models | Optional zero-egress path, not release gate | Locked | Prevents local model quality from blocking V1 | Required zero-egress path |
 | Provider routing | Workspace + capability matrix | Locked | Privacy/cost/capability vary by workspace and job | Global defaults |
 | Provider output | Strict JSON Schema gate before side effects | Locked | Prevents provider variance from reaching write layers | Repair pass later if needed |
+| Contract authoring | Zod-as-source: one `.strict()` Zod schema → `z.infer` TS type + generated strict JSON Schema (ajv-strict gate) + frozen field-set snapshot | Locked (2026-06-30, ADR-008) | Single source ⇒ TS/Zod/JSON-Schema cannot drift; the candidate-data gate (REQ-S-006) compiles the generated schemas | Hand-author all three with a field-name parity test |
 | Testing | Contract/eval-heavy | Locked | Privacy/idempotency/provider/storage risks are load-bearing | Balanced standard testing |
 | Parallelization | Parallel after contracts | Locked | Shared contracts must freeze before tracks split | Mostly serial |
 
@@ -116,4 +117,23 @@ Decision: GBrain write-through ships ON in V1, fail-closed. Markdown stays the o
 Rationale: owner wants gbrain's generative value without surrendering the no-hidden-brain / egress-enforceability / Obsidian-durability properties that depend on Markdown-canonical. Adversarially hardened (8-agent design workflow: ground → 3 designs → 3 safety critics → synthesis). Full spec: `docs/design/gbrain-write-through-divergence.md`. Contract: ARCHITECTURE.md §6/§12/§13/§16/Appendix A; build: IMPLEMENTATION_PLAN.md Phase-4 4.14–4.20 + Phase-12 12.7/12.22/12.23.
 
 Fallback: per-workspace `writeThroughEnabled` stays OFF → GBrain runs read-only/index-only (still DoD-satisfying, REQ-D-001) if containment can't be proven for a workspace.
+
+## ADR-008 - Contract Authoring Model (Zod-as-source)
+
+Status: Locked (2026-06-30). Governs how every `packages/contracts` Appendix-A model is authored across all six build tracks.
+
+Context: each frozen seam model needs three coherent representations — a runtime-safe TypeScript type (for compile-time safety downstream), a runtime validator (Zod), and a strict JSON Schema (the candidate-data gate, REQ-S-006). Hand-authoring all three invites silent drift between them, which is exactly the cross-track Finding the §2.5 freeze exists to prevent.
+
+Options considered:
+
+| Option | Pros | Cons |
+|---|---|---|
+| Zod-as-source | One authored artifact per model; TS type = `z.infer`, JSON Schema = generated (`zod-to-json-schema`, `additionalProperties:false` from `.strict()`); the three representations are structurally incapable of drifting; shared sub-shapes authored once and imported | Adds `zod-to-json-schema` dep; `.refine` conditional invariants are not expressible in JSON Schema (enforced by Zod + tests instead); branded `z.infer` types need an explicit-interface workaround under `declaration: true` (TS4023) |
+| Hand-author all three | No codegen dependency | Three sources to keep in sync per model; drift caught by a parity test (detective) rather than prevented (structural) |
+
+Decision: **Zod-as-source.** Per model: one `.strict()` Zod schema → `export type X = z.infer<…>` → `emitJsonSchema(XSchema, X_SCHEMA_ID)` writes a self-contained draft-07 JSON Schema; the ajv-strict registry (`defaultSchemaRegistry`) compiles every `schemas/*.schema.json` by `$id`; the domain `validate(output, schemaId)` gate is the candidate-data boundary. Each model also ships a hand-authored field-set snapshot (`__snapshots__/<model>.snap`) that freezes the top-level field-name set; a field change forces a visible snapshot diff. Conditional invariants live in `.refine()` + tests (JSON Schema stays structural); deeper validators are Phase-1 task 1.11.
+
+What would change it: if `declaration`-emit ergonomics or JSON-Schema fidelity of generation prove unworkable, fall back to hand-authoring with a field-name parity test.
+
+Implementation: `packages/contracts/src/schema/{emit,field-set,registry}.ts`, `packages/domain/src/validation/schema-gate.ts`, `packages/contracts/test/_helpers/freeze.ts`. Built 2026-06-30 (IMPLEMENTATION_PLAN.md tasks 1.2–1.9 + the 27-model freeze).
 
