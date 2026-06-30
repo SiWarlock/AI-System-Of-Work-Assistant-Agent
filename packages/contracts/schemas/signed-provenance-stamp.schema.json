@@ -1,0 +1,45 @@
+{
+  "type": "object",
+  "properties": {
+    "kwRevision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "originPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mdContentSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "writerActor": {
+      "type": "string",
+      "const": "KnowledgeWriter"
+    },
+    "sourceEventRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "committedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sig": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "kwRevision",
+    "originPath",
+    "mdContentSha",
+    "writerActor",
+    "sourceEventRef",
+    "committedAt",
+    "sig"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:signed-provenance-stamp"
+}

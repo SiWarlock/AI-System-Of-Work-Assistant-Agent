@@ -1,0 +1,271 @@
+{
+  "type": "object",
+  "properties": {
+    "planId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workspaceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceRefs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sourceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "span": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "sourceId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "creates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "body": {
+            "type": "string"
+          },
+          "frontmatter": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "path",
+          "body"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "patches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "regionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "newBody": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "regionId",
+          "newBody"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "linkMutations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "add",
+              "remove"
+            ]
+          },
+          "srcPath": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dstSlug": {
+            "type": "string",
+            "minLength": 1
+          },
+          "field": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "op",
+          "srcPath",
+          "dstSlug"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "frontmatterUpdates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "key": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {}
+        },
+        "required": [
+          "path",
+          "key"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "externalActionProposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "actionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "targetSystem": {
+            "type": "string",
+            "enum": [
+              "calendar",
+              "todoist",
+              "linear",
+              "asana",
+              "drive",
+              "github",
+              "telegram"
+            ]
+          },
+          "canonicalObjectKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "approvalPolicy": {
+            "type": "string",
+            "minLength": 1
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "actionId",
+          "targetSystem",
+          "canonicalObjectKey",
+          "payload",
+          "approvalPolicy",
+          "idempotencyKey"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "requiresApproval": {
+      "type": "boolean"
+    },
+    "provenanceOrigin": {
+      "type": "string",
+      "enum": [
+        "human",
+        "meeting_close",
+        "ingestion",
+        "gbrain_proposal",
+        "parity_remediation"
+      ]
+    },
+    "gbrainProposalRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "signedProvenanceStamp": {
+      "type": "object",
+      "properties": {
+        "kwRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "originPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mdContentSha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "writerActor": {
+          "type": "string",
+          "const": "KnowledgeWriter"
+        },
+        "sourceEventRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "committedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "sig": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "kwRevision",
+        "originPath",
+        "mdContentSha",
+        "writerActor",
+        "sourceEventRef",
+        "committedAt",
+        "sig"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "planId",
+    "workspaceId",
+    "sourceRefs",
+    "creates",
+    "patches",
+    "linkMutations",
+    "frontmatterUpdates",
+    "externalActionProposals",
+    "confidence",
+    "requiresApproval",
+    "provenanceOrigin"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:knowledge-mutation-plan"
+}

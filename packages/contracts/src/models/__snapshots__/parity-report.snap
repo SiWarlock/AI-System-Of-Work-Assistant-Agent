@@ -1,0 +1,12 @@
+[
+  "canonicalFactCount",
+  "cleanForServing",
+  "coverageComplete",
+  "dbFactCount",
+  "divergences",
+  "gbrainSchemaVersion",
+  "oracleFactCount",
+  "reconciledAtRevision",
+  "reportId",
+  "workspaceId"
+]

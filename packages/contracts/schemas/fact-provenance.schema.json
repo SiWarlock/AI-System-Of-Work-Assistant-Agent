@@ -1,0 +1,51 @@
+{
+  "type": "object",
+  "properties": {
+    "origin": {
+      "type": "string",
+      "enum": [
+        "markdown",
+        "frontmatter",
+        "db_only",
+        "generative_unmaterialized"
+      ]
+    },
+    "kwRevision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "originPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mdContentSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "stampSig": {
+      "type": "string",
+      "minLength": 1
+    },
+    "gbrainLinkSource": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "markdown",
+            "frontmatter",
+            "manual"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "origin"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:fact-provenance"
+}

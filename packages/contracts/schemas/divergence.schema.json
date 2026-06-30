@@ -1,0 +1,54 @@
+{
+  "type": "object",
+  "properties": {
+    "factIdentity": {
+      "type": "string",
+      "pattern": "^(?:page:.+|link:.+->.+:.+|timeline:.+:.+|tag:.+:.+)$"
+    },
+    "divergenceClass": {
+      "type": "string",
+      "enum": [
+        "db_only",
+        "unstamped",
+        "content_mismatch",
+        "md_only",
+        "edge_db_only",
+        "edge_md_only",
+        "stale_revision"
+      ]
+    },
+    "severityFloor": {
+      "type": "string",
+      "enum": [
+        "hard",
+        "soft"
+      ]
+    },
+    "mdContentSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "dbContentHash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "remediation": {
+      "type": "string",
+      "enum": [
+        "resync",
+        "materialize",
+        "purge",
+        "review"
+      ]
+    }
+  },
+  "required": [
+    "factIdentity",
+    "divergenceClass",
+    "severityFloor",
+    "remediation"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:divergence"
+}

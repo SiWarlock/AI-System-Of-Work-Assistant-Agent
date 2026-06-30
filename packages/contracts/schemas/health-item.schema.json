@@ -1,0 +1,72 @@
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "failureClass": {
+      "type": "string",
+      "enum": [
+        "connector_unreachable",
+        "write_through_failed",
+        "budget_breach",
+        "missed_or_late_schedule",
+        "schema_rejection",
+        "worker_down",
+        "parity_defect",
+        "conflict_review",
+        "sync_lagging",
+        "rebuild_divergence"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1
+    },
+    "auditRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "openedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "open",
+        "acknowledged",
+        "resolved"
+      ]
+    },
+    "resolvedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "parityReportRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "factIdentity": {
+      "type": "string",
+      "pattern": "^(?:page:.+|link:.+->.+:.+|timeline:.+:.+|tag:.+:.+)$"
+    }
+  },
+  "required": [
+    "id",
+    "failureClass",
+    "severity",
+    "message",
+    "auditRef",
+    "openedAt",
+    "state"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:health-item"
+}

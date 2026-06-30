@@ -1,0 +1,72 @@
+{
+  "type": "object",
+  "properties": {
+    "workspaceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "brainId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "transport": {
+      "type": "string",
+      "const": "http"
+    },
+    "scope": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "const": "read"
+      }
+    },
+    "tokenRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "allowedOps": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "search",
+          "graph",
+          "timeline",
+          "schema_read",
+          "health",
+          "contained_synthesis"
+        ]
+      }
+    },
+    "federationScope": {
+      "type": "string",
+      "const": "workspace_only"
+    },
+    "generativeCycleEnabled": {
+      "type": "boolean",
+      "const": false
+    },
+    "pinnedSha": {
+      "type": "string",
+      "minLength": 1
+    },
+    "indexSchemaVersion": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "workspaceId",
+    "brainId",
+    "transport",
+    "scope",
+    "tokenRef",
+    "allowedOps",
+    "federationScope",
+    "generativeCycleEnabled",
+    "pinnedSha",
+    "indexSchemaVersion"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:gbrain-read-grant"
+}

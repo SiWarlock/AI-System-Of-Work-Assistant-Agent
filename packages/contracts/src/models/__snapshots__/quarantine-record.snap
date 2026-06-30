@@ -1,0 +1,11 @@
+[
+  "auditRef",
+  "capturedDbDigest",
+  "divergenceClass",
+  "divergenceRef",
+  "factIdentity",
+  "healthItemId",
+  "planId",
+  "remediationState",
+  "workspaceId"
+]

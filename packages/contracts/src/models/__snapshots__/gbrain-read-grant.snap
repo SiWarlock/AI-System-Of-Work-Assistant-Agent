@@ -1,0 +1,12 @@
+[
+  "allowedOps",
+  "brainId",
+  "federationScope",
+  "generativeCycleEnabled",
+  "indexSchemaVersion",
+  "pinnedSha",
+  "scope",
+  "tokenRef",
+  "transport",
+  "workspaceId"
+]

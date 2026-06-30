@@ -1,0 +1,68 @@
+{
+  "type": "object",
+  "properties": {
+    "factIdentity": {
+      "type": "string",
+      "pattern": "^(?:page:.+|link:.+->.+:.+|timeline:.+:.+|tag:.+:.+)$"
+    },
+    "workspaceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "divergenceRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "divergenceClass": {
+      "type": "string",
+      "enum": [
+        "db_only",
+        "unstamped",
+        "content_mismatch",
+        "md_only",
+        "edge_db_only",
+        "edge_md_only",
+        "stale_revision"
+      ]
+    },
+    "capturedDbDigest": {
+      "type": "string",
+      "minLength": 1
+    },
+    "remediationState": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "materializing",
+        "materialized",
+        "purged",
+        "dismissed"
+      ]
+    },
+    "healthItemId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "auditRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "planId": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "factIdentity",
+    "workspaceId",
+    "divergenceRef",
+    "divergenceClass",
+    "capturedDbDigest",
+    "remediationState",
+    "healthItemId",
+    "auditRef"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:quarantine-record"
+}

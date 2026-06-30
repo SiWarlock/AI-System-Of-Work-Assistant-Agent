@@ -1,0 +1,41 @@
+{
+  "type": "object",
+  "properties": {
+    "factIdentity": {
+      "type": "string",
+      "pattern": "^(?:page:.+|link:.+->.+:.+|timeline:.+:.+|tag:.+:.+)$"
+    },
+    "factKind": {
+      "type": "string",
+      "enum": [
+        "page",
+        "link",
+        "timeline",
+        "tag",
+        "frontmatter_value"
+      ]
+    },
+    "workspaceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mdContentSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "revisionId": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "factIdentity",
+    "factKind",
+    "workspaceId",
+    "mdContentSha",
+    "revisionId"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:semantic-fact"
+}
