@@ -202,7 +202,7 @@ flowchart TD
 
 **Budget enforcement (REQ-S-007 / COST-1/2).** Every `AgentJob` enforces `maxRuntimeSeconds` and, when set, `maxCostUsd`: breach cancels the job, records it (§16.3-audit), surfaces a System Health item (OBS-2), and leaves no partial uncommitted side effect. The Broker applies a configurable **default** cap to LLM-calling jobs that lack one (COST-2). Aggregate per-workspace/global spend caps with auto-pause are V1.1 (§15).
 
-**Conformance is the contract.** OpenAI-compatible endpoints are **not** assumed behaviorally identical; each provider × capability × pinned-model pair must pass conformance (§12) before it is eligible in the matrix; failing pairs are disabled. Local providers are an **optional zero-egress path, not a release gate**. **Phase-0 spikes (named here):** *Hermes Adapter Surface* (API server vs TUI gateway vs Python wrapper vs Kanban vs hybrid — OQ-007; no-go branch: Claude SDK / another agentic runtime carries the critical path, Hermes stays required+DoD-tested but not first-install gating) and *Provider conformance* (pin exact provider/model pairs; pricing/model-IDs/limits/structured-output fidelity are volatile, OQ-003).
+**Conformance is the contract.** OpenAI-compatible endpoints are **not** assumed behaviorally identical; each provider × capability × pinned-model pair must pass conformance (§12) before it is eligible in the matrix; failing pairs are disabled. Local providers are an **optional zero-egress path, not a release gate**. **Phase-0 spikes (named here):** *Hermes Adapter Surface* (API server vs TUI gateway vs Python wrapper vs Kanban vs hybrid — OQ-007; no-go branch: Claude SDK / another agentic runtime carries the critical path, Hermes stays required+DoD-tested but not first-install gating) and *Provider conformance* (pin exact provider/model pairs; pricing/model-IDs/limits/structured-output fidelity are volatile, OQ-003). **Resolved (Phase 0):** the Hermes surface is **HYBRID** — a one-shot CLI subprocess (`hermes chat -q … -Q -t <readonly> -m … --provider …`) as the primary synchronous `HermesRuntimeAdapter` (a live meeting-close mock passed: clean JSON, schema gate, no-inference held, SIGTERM cancel = no side effect), plus Kanban for the §9 RT-7 autonomous-automation path. **⚠ Security invariant (banked, `packages/providers/LESSONS.md`):** an *empty* `-t` toolset silently falls back to the user's full (mutating) config toolset — a read-only / untrusted-content (ING-7) Hermes run MUST pass an **explicit minimal toolset**, never empty. Provider conformance resolved: default models per capability + caps recorded in `config/providers.defaults.json`; OpenRouter `deepseek/deepseek-v4-pro` + `anthropic/claude-haiku-4.5` are live-verified conformance-passing; OpenRouter is its own processor, never an OpenAI alias (§5).
 
 ## §8 — Connector & Tool Gateways
 
@@ -236,7 +236,7 @@ flowchart TD
 
 ## §10 — Local App API
 
-**Responsibilities.** Expose typed worker commands/queries and a status/event stream to Electron. **tRPC** for TypeScript-native commands/queries; a single push stream (WS or SSE — chosen in the Phase-0 API spike, OQ-002) for workflow status, approval updates, System Health, and read-model changes.
+**Responsibilities.** Expose typed worker commands/queries and a status/event stream to Electron. **tRPC** for TypeScript-native commands/queries (`httpBatchLink` over loopback); a single push stream over **WebSocket** — a tRPC v11 subscription (`applyWSSHandler`/`wsLink`) — for workflow status, approval updates, System Health, and read-model changes (**resolved by the Phase-0 API spike, OQ-002**: both WS and SSE validated lossless under disconnect via a transport-agnostic router (`tracked(eventId)` + `lastEventId` + bounded replay buffer); **WS wins on loopback auth** — the per-launch session token rides the first socket message, never a URL, honoring the §16 secrets-in-logs rule; SSE via `httpSubscriptionLink` is the validated drop-in fallback). Consumers are **idempotent by event id** (at-least-once); the server async-iterable is bounded by the replay window. See `docs/spikes/0.5-api-stream.md`.
 
 **Boundaries & auth.** Loopback-only **and** session-token-authenticated (§5) on every call and on the stream handshake, with Origin/Host allowlist. The renderer receives **UI-safe projections**, never secrets or unfiltered raw data. Privileged app-lifecycle and file-picker operations stay on preload IPC / main. Reconnection/backpressure semantics are pinned in the API spike.
 
@@ -335,15 +335,15 @@ Tooling: **pnpm workspaces + Turbo**, TypeScript strict, Drizzle migrations, JSO
 | ID | Question | Disposition |
 |---|---|---|
 | OQ-001 | Electron signing/notarization for V1 | **Resolved:** unsigned build-from-source V1; signed+notarized V1.1 (§13/§15). |
-| OQ-002 | Worker stream primitive (WS vs SSE) | Phase-0 API spike (§10). |
-| OQ-003 | Default models per provider/capability | Phase-0 provider conformance; not locked (§7). |
-| OQ-004 | Default `maxRuntimeSeconds`/`maxCostUsd` per capability | Phase-0 perf/budget pass (below). |
-| OQ-006 | Known-good GBrain SHA | Phase-0 GBrain spike; pin recorded in repo config (§13). |
-| OQ-007 | Hermes integration surface | Phase-0 Hermes Adapter Surface spike (§7), with no-go branch. |
+| OQ-002 | Worker stream primitive (WS vs SSE) | **Resolved (spike 0.5):** WebSocket (tRPC v11 subscription); SSE the validated drop-in fallback (§10). |
+| OQ-003 | Default models per provider/capability | **Resolved (spike 0.4):** defaults + caps in `config/providers.defaults.json`; OpenRouter `deepseek/deepseek-v4-pro` + `anthropic/claude-haiku-4.5` live-verified conformance-passing (§7). |
+| OQ-004 | Default `maxRuntimeSeconds`/`maxCostUsd` per capability | **Resolved (spike 0.6):** per-capability caps set (`config/providers.defaults.json`); global `maxCostUsd` 0.50, `meeting.close` 1.0; local runtime ×3 multiplier. |
+| OQ-006 | Known-good GBrain SHA | **Superseded by the write-through amendment:** typed `GbrainPin` re-captured vs gbrain 0.35.1.0 (sha 3933eb6a, schema_version 2); the validated pin + `writeThroughEnabled` are gated by §13 / tasks 12.22/12.23. |
+| OQ-007 | Hermes integration surface | **Resolved (spike 0.3):** HYBRID — one-shot CLI subprocess (primary) + Kanban (RT-7); empty-`-t`→full-toolset security caveat banked (§7). |
 | OQ-010 | Global repo Obsidian-vault by default | Default yes; editable + reconciled (§6). |
 | OQ-011 | First source adapter (YouTube vs podcast) | YouTube first (implementation detail). |
 | OQ-012 | NotebookLM managed-doc depth | 00–04 pack (§8). |
-| Perf-pass | Meeting-closeout E2E latency, Copilot/approval round-trip, ingress→workflow-start, single-machine concurrency cap, default per-job cost cap | **Deferred to a Phase-0 perf budget pass** (owner decision); the three PRD budgets (dashboard <2s, KW→GBrain ≤60s p95, KW→dashboard ≤10s p95) remain hard gates. |
+| Perf-pass | Meeting-closeout E2E latency, Copilot/approval round-trip, ingress→workflow-start, single-machine concurrency cap, default per-job cost cap | **Resolved (spike 0.6) — advisory SLOs SET, enforcement deferred to a measured Phase-7/12 pass:** meeting-close E2E p95 ≤180s cloud/600s local; Copilot TTFT ≤3s, full ≤20s cloud/45s local; approval state-reflect ≤2s, external-write ≤10s; ingress→wf-start ≤2s; concurrency 4 cloud / 1 local AgentJobs (Temporal 16 activity / 32 wf-task slots). The three PRD budgets (dashboard <2s, KW→GBrain ≤60s p95, KW→dashboard ≤10s p95) remain hard gates. |
 
 ---
 

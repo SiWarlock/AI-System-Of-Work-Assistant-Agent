@@ -160,7 +160,7 @@ Lessons start at §1.
 
 | # | Date | Topic | Rule (one-liner) |
 |--:|---|---|---|
-| | | | |
+| [1](LESSONS.md#1) | 2026-06-30 | Hermes empty toolset → full mutating fallback | A read-only / ING-7 Hermes run MUST pass an explicit, asserted-non-empty minimal toolset; empty `-t` silently falls back to the full (mutating) config toolset. |
 
 <!-- Starts empty. Each row links to its `LESSONS.md` anchor. -->
 

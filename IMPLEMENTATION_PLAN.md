@@ -19,7 +19,7 @@
 
 **GBrain write-through amendment — DONE (2026-06-29).** Owner approved shipping GBrain **write-through in V1**, fail-closed (reversing the 0.2 read-only deferral). `ARCHITECTURE.md` (§6/§12/§13/§16/Appendix A/§2.5/Spec-Anchor) + this plan (Phase-4 4.6/4.7/4.9 amended + **4.14–4.20 new**; Phase-12 12.7 amended + **12.22/12.23 new**; 11.3/11.5 amended) amended from the design spec `docs/design/gbrain-write-through-divergence.md`. gbrain **0.35.1.0** installed locally for Phase-4. The **9 new + 2 amended contract models** must be frozen in Phase 1.
 
-**Next session target:** Phase 1 — Shared Contracts & Domain (the forced-serial bottleneck; freeze the base Appendix-A models **+ the 9 new GBrain write-through/divergence seam models** + the 2 amended ones + JSON-Schema snapshots before any track forks). Fold-forward decisions from Phase 0 (WS over SSE for §10; perf SLOs + cost caps; Hermes hybrid surface + the empty-toolset caveat; default models per capability) should be ratified into `ARCHITECTURE.md`/`DECISIONS.md`/area `LESSONS.md` before/at Phase 1 start — see session doc §"Fold-forward".
+**Next session target:** Phase 1 — Shared Contracts & Domain (the forced-serial bottleneck; freeze the base Appendix-A models **+ the 9 new GBrain write-through/divergence seam models** + the 2 amended ones + JSON-Schema snapshots before any track forks). Phase-0 fold-forward decisions **RATIFIED into the contract (2026-06-30):** WebSocket → §10 (OQ-002); Hermes hybrid surface + provider conformance → §7 (OQ-003/007); perf SLOs + cost/concurrency caps → §18 OQ-table (OQ-004/Perf-pass); the Hermes empty-`-t`→full-toolset security caveat banked as `packages/providers/LESSONS.md` §1 (+ CLAUDE.md index). Contract is now fully settled for Phase 1.
 
 
 ---
