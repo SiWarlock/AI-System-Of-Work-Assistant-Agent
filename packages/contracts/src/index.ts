@@ -53,3 +53,7 @@ export * from "./models/tool-policy";
 export * from "./models/workflow-run-ref";
 export * from "./models/workspace";
 export * from "./models/write-receipt";
+
+// --- contract-test fixtures (valid + invalid instances + FIXTURES registry) ---
+// No symbol collides with the frozen surface above (verified at wiring time).
+export * from "./fixtures/index";
