@@ -1,0 +1,48 @@
+{
+  "dimension": "Performance budgets / hot paths",
+  "summary": "Partial coverage with real gaps: CONSTRAINTS.md carries the three PRD-stated budgets, but the binding ARCHITECTURE_DRAFT.md has no NFR/Performance-Budgets section, never binds the budgets to owning components, omits the perf/sync-latency benchmark suites, and several implied hot paths (meeting-closeout end-to-end latency, Copilot response, agent concurrency cap) have no budget at all.",
+  "findings": [
+    {
+      "severity": "important",
+      "finding": "The binding architecture draft has no Non-Functional / Performance-Budgets section at all. The three PRD-stated budgets (dashboard sub-2s after cache warmup; KnowledgeWriter->GBrain search visibility <=60s p95; KnowledgeWriter->dashboard read-model visibility <=10s p95) appear only in the CONSTRAINTS.md planning artifact, never in ARCHITECTURE_DRAFT.md, and are never bound to the components that must meet them (read-model projector in \u00a74/worker, GBrain adapter in \u00a76, dashboard surfaces in \u00a711). For a production-grade build the contract must carry these budgets and assign ownership/measurement points; otherwise tasks-gen has no anchored target to implement against.",
+      "evidence": "PRD \u00a717 (lines 1004, 1010) + \u00a75.4 (line 209); REQ-NF-002/003 (REQUIREMENTS.md lines 30-31); budgets present in CONSTRAINTS.md \u00a7Performance Budgets (lines 54-58) but absent from ARCHITECTURE_DRAFT.md (section list \u00a71-\u00a718 + Appendix A has no NFR/perf section; grep for latency/p95/60s/10s in the draft returns only the AgentJob cost/runtime 'budgets' field at line 445)",
+      "proposed_fix": "Carry an explicit answer into final ARCHITECTURE.md (deferral is a valid recorded answer the owner can confirm).",
+      "anchor": "New \u00a7Non-Functional Requirements / Performance Budgets"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "Add a Performance Budgets subsection to ARCHITECTURE.md that restates each PRD budget, names the owning component, and names the p95 measurement point: (1) dashboard normal-view load sub-2s after warm cache, served from read models with NO live LLM call (defines a 'warm cache' precondition and cold-start exemption); (2) KnowledgeWriter-commit -> GBrain-search-visible <=60s p95, measured at the GBrain index/embed pipeline; (3) KnowledgeWriter-commit -> dashboard-read-model-visible <=10s p95, measured at the read-model projector. Each budget links to the System Health exceedance signal (OBS-2) so a breach is observable, not silent.",
+      "evidence": "PRD \u00a717 Observability (line 1010) requires exceedances surfaced in System Health; \u00a720.1 'Knowledge write' AUTO test (line 1103) fails a write whose derived surfaces exceed the window; ARCHITECTURE_DRAFT.md \u00a74 (line 144) and \u00a711 (lines 298-300) own read models / dashboard but state no budget",
+      "proposed_fix": "Insert the subsection with the three budgets, owning components, p95 measurement points, and the System Health breach link.",
+      "anchor": "New \u00a7Performance Budgets"
+    },
+    {
+      "severity": "important",
+      "finding": "The Eval and Test Harness section omits the performance and sync-latency benchmark suites that REQ-NF-002 and REQ-NF-003 explicitly require. REQ-NF-002's test is 'Performance smoke/benchmark' and REQ-NF-003's is 'Sync-latency benchmark', and \u00a720.1's 'Knowledge write' AUTO test asserts derived-surface visibility within the <=60s/<=10s windows \u2014 yet \u00a712's Required-suites list jumps from EVAL-1 accuracy/retrieval benchmarks straight past any latency benchmark. Under the production-grade posture (dim 9 required) the p95 latency budgets are unverifiable as drafted.",
+      "evidence": "REQUIREMENTS.md lines 30-31 (test columns 'Performance smoke/benchmark', 'Sync-latency benchmark'); PRD \u00a720.1 line 1103; ARCHITECTURE_DRAFT.md \u00a712 Required suites (lines 319-333) lists no performance/latency suite",
+      "proposed_fix": "Add a 'Performance & sync-latency benchmark' suite to \u00a712 that measures the three budgets at their p95 points and fails on breach (wired to the \u00a720.1 knowledge-write window assertion).",
+      "anchor": "\u00a712 - Eval and Test Harness"
+    },
+    {
+      "severity": "question-for-human",
+      "finding": "Meeting closeout is named the primary proof-spine hot path, but no end-to-end latency/duration budget exists anywhere in the PRD or artifacts \u2014 only the per-job maxRuntimeSeconds cost-cap kill-switch (a budget-overrun guard, not a UX latency target) and the accuracy metric (90%+ routing). The \u00a711.1 ten-step workflow ends 'Dashboard and Telegram summarize the result' with no bound on how soon the user sees the closeout. This is an implied hot path with no budget; deferral is a valid recorded answer, but it must be recorded, not silently absent.",
+      "evidence": "PRD \u00a711.1 (lines 685-696), \u00a75.3/\u00a79.4 closeout as P0 (line 186), \u00a713.1 maxRuntimeSeconds (line 801); no closeout time budget in PRD \u00a717 or CONSTRAINTS.md \u00a7Performance Budgets",
+      "proposed_fix": "Ask the owner for a target meeting-closeout end-to-end latency (e.g., p95 from Granola event ingress to dashboard/Telegram summary), or record an explicit deferral with rationale.",
+      "anchor": "New \u00a7Performance Budgets"
+    },
+    {
+      "severity": "question-for-human",
+      "finding": "Interactive hot paths other than the dashboard have no budget: the Copilot agent query/response (\u00a711 Copilot surface), the approval-action round-trip (Mac/Telegram approve -> effect), and event-ingress -> workflow-start latency (Granola/message lands -> workflow begins). The only named interactive budget is the sub-2s dashboard load; Copilot and approvals are user-facing interactions with no latency target. Deferral is acceptable but should be recorded.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a711 (lines 301, 303) lists Copilot and Approval Inbox; PRD \u00a717 Performance (line 1004) budgets only the dashboard load; CONSTRAINTS.md \u00a7Performance Budgets names no interactive budget beyond the dashboard",
+      "proposed_fix": "Ask the owner whether Copilot response, approval round-trip, and ingress->workflow-start get latency targets, or record explicit deferral.",
+      "anchor": "New \u00a7Performance Budgets"
+    },
+    {
+      "severity": "question-for-human",
+      "finding": "Maximum concurrent agent jobs per local machine is unset, yet it gates whether the <=10s/<=60s p95 budgets hold under contention on a single Mac. RT-7 requires the control plane to 'cap concurrent agent runs against a single-machine resource budget', but no concurrency number or sizing model exists, and the architecture draft does not name the cap mechanism. CONSTRAINTS.md already flags this (plus default per-job maxCostUsd and provider timeout/retry defaults) as open. Throughput cap is load-bearing for the latency NFRs and the COST-1 budget enforcement.",
+      "evidence": "PRD RT-7 (line 487) 'cap concurrent agent runs against a single-machine resource budget'; CONSTRAINTS.md lines 62-64 ('[open question] Maximum concurrent agent jobs per local machine', default maxCostUsd, provider timeout/retry); ARCHITECTURE_DRAFT.md names no concurrency cap mechanism",
+      "proposed_fix": "Ask the owner for a concurrency cap (or a resource-budget sizing rule) and default per-job maxCostUsd / provider timeout-retry defaults, or record explicit deferral; then name the cap mechanism in the broker/control-plane section.",
+      "anchor": "\u00a77 - Provider and Runtime Broker"
+    }
+  ]
+}

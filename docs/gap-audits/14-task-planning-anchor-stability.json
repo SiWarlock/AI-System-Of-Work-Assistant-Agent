@@ -1,0 +1,55 @@
+{
+  "dimension": "Task-planning anchor stability",
+  "summary": "Mostly recoverable but there is a real gap: no explicit draft\u2192final anchor remap exists, and the scaffold template's numbering convention (Exec Summary unnumbered, \u00a71=Goals) plus the required drop of meta \u00a716 will silently shift \u00a717/\u00a718 and break the five downstream docs that cite \u00a72.5, \u00a72\u2013\u00a713, \u00a717, and Appendix A unless the remap is pinned deliberately.",
+  "findings": [
+    {
+      "severity": "important",
+      "finding": "No explicit draft\u2192final anchor remap table exists. The draft's \u00a71..\u00a718 scheme does not match the binding scaffold template, and five downstream docs hard-cite architecture anchors that tasks-gen and cross-doc-invariants will resolve against. Without a pinned remap, finalization will renumber load-bearing anchors and silently break those citations.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a71..\u00a718 + Appendix A; scaffold/templates/ARCHITECTURE.md lines 30-107 (Exec summary UNNUMBERED, \u00a71=Goals, Spec Anchor Index unnumbered); externally-cited arch anchors: DIAGRAM_PLAN.md lines 22,43,60,77,94,111,127,142,160 (\u00a72,\u00a72.5,\u00a73-\u00a713,\u00a717,Appendix A), DECISIONS.md:103 (\u00a72.5), STAKEHOLDERS.md:11 (\u00a72.5, spec anchor index, Appendix A), RISKS.md:23 (Appendix A), CLAUDE_CODE_HANDOFF.md:96,119,123 (\u00a72.5, Appendix A)",
+      "proposed_fix": "Add an explicit draft\u2192final anchor remap to the finalization notes and HOLD these anchors stable in ARCHITECTURE.md: \u00a72 (System overview), \u00a72.5 (DAG & seams), \u00a73 Shared Contracts, \u00a74 Operational Storage, \u00a75 Policy/Security/Egress, \u00a76 Knowledge/Markdown/GBrain/GCL, \u00a77 Provider & Runtime Broker, \u00a78 Connector & Tool Gateways, \u00a79 Temporal Workflows, \u00a710 Local App API, \u00a711 Electron Desktop UI, \u00a712 Eval & Test Harness, \u00a713 Deployment & Install, \u00a717 Repo Scaffold, and Appendix A. Any anchor that must move requires a lockstep edit to the citing doc.",
+      "anchor": "All of \u00a72\u2013\u00a713, \u00a717, Appendix A"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "Draft \u00a71 (Executive Summary) and \u00a71A (Goals and Non-Goals) collide with the scaffold template, which leaves Executive summary UNNUMBERED and assigns \u00a71 = Goals & non-goals. This top-of-doc remap is safe (nothing external cites \u00a71 or \u00a71A), but must be done deliberately so it does not cascade into renumbering \u00a72+.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a71 (line 11) and \u00a71A (line 21) vs scaffold/templates/ARCHITECTURE.md line 30 (## Executive summary, unnumbered) and line 40 (## \u00a71 \u2014 Goals & non-goals); no downstream doc references \u00a71 or \u00a71A (grep of docs/planning)",
+      "proposed_fix": "Map draft \u00a71 Executive Summary \u2192 unnumbered 'Executive summary'; map draft \u00a71A Goals and Non-Goals \u2192 \u00a71 Goals & non-goals. Keep \u00a72 and \u00a72.5 fixed so the subsystem block \u00a73+ does not shift.",
+      "anchor": "Executive summary / \u00a71"
+    },
+    {
+      "severity": "important",
+      "finding": "Draft \u00a716 'Architecture Gap Audit Targets for /arch-finalize' is meta/process content (instructions to the finalizer) and must be DROPPED from the binding ARCHITECTURE.md. The hazard is that dropping it opens a numbering gap and the natural reflex is to slide \u00a717 (Repo Scaffold) and \u00a718 (Spec Anchor Index) up into \u00a716/\u00a717 \u2014 which breaks DIAGRAM_PLAN sub-diagram 7's \u00a717 citation.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a716 lines 379-390 (checklist addressed to /arch-finalize); DIAGRAM_PLAN.md:142 spec anchors '\u00a72.5, \u00a717, Appendix A' for sub-diagram 7 (Parallel Build Track DAG)",
+      "proposed_fix": "Drop \u00a716 entirely (do not carry it as content). Fill the \u00a716 slot with the template's \u00a7<N> Cross-cutting concerns / \u00a7<N+1> Open questions so that \u00a717 Repo Scaffold KEEPS its number, preserving the DIAGRAM_PLAN \u00a717 reference without a lockstep edit.",
+      "anchor": "\u00a716 (dropped) / \u00a717 Repo Scaffold"
+    },
+    {
+      "severity": "question-for-human",
+      "finding": "Draft \u00a717 'Repo Scaffold' is cited by DIAGRAM_PLAN sub-diagram 7, but the scaffold template has no numbered 'Repo Scaffold' section \u2014 repo-shape content tends to land in an appendix or unnumbered area. The finalizer must decide whether repo scaffold keeps a stable numbered \u00a717 anchor or whether DIAGRAM_PLAN.md:142 is re-pointed.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a717 lines 392-422; scaffold/templates/ARCHITECTURE.md (no Repo Scaffold heading in lines 30-107); DIAGRAM_PLAN.md:142",
+      "proposed_fix": "Preferred: retain a numbered \u00a717 \u2014 Repo Scaffold section in ARCHITECTURE.md so the diagram anchor stays valid. If repo scaffold instead becomes unnumbered/appendix, update DIAGRAM_PLAN.md sub-diagram 7 spec-anchor line in the same change.",
+      "anchor": "\u00a717 Repo Scaffold"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "Draft \u00a718 'Spec Anchor Index' is a NUMBERED section, but the scaffold template places 'Spec Anchor Index' as an UNNUMBERED section before Appendix A. Beyond renaming/renumbering, the index's right column maps REQ-* ranges to \u00a7 anchors (e.g. REQ-S-001..006 \u2192 \u00a75,\u00a77,\u00a78,\u00a712); after any anchor remap this column must be regenerated, since tasks-gen and cross-doc-invariants resolve requirements-to-section through this table.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a718 lines 424-437 (numbered table); scaffold/templates/ARCHITECTURE.md line 89 (## Spec Anchor Index, unnumbered); STAKEHOLDERS.md:11 names 'spec anchor index' as the tasks-gen contract",
+      "proposed_fix": "Convert \u00a718 to the template's unnumbered 'Spec Anchor Index' and regenerate every \u00a7 value in the right column against the final anchor numbers after the remap. Verify each REQ-ID range still resolves to an existing section heading.",
+      "anchor": "Spec Anchor Index"
+    },
+    {
+      "severity": "nice-to-have",
+      "finding": "REQUIREMENTS.md's many \u00a7-references (e.g. \u00a79.1, \u00a711.1, \u00a717, \u00a720.1) are PRD source anchors, not architecture anchors, so they are NOT affected by architecture renumbering. Worth stating explicitly in the finalization notes so a reviewer does not mistakenly try to 'fix' them when the architecture sections move, and so the inverse mapping (\u00a718 index \u2192 REQ-IDs) only depends on the stable REQ-ID column in REQUIREMENTS.md.",
+      "evidence": "REQUIREMENTS.md Source column lines 9-90 cite PRD sections (\u00a79.1, \u00a711.1, \u00a717, \u00a719.1, \u00a720.1) which exist only in system_of_work_assistant_prd_v0_3.md, not in ARCHITECTURE_DRAFT.md",
+      "proposed_fix": "In the Spec Anchor Index note, state that REQUIREMENTS.md \u00a7-refs are PRD anchors (stable, untouched) and only the architecture \u00a7-column of the index is regenerated on remap.",
+      "anchor": "Spec Anchor Index"
+    },
+    {
+      "severity": "nice-to-have",
+      "finding": "\u00a72.5 is already aligned (present verbatim in both draft and template, line 50) and is the single most-cited cross-doc anchor (DIAGRAM_PLAN, DECISIONS, STAKEHOLDERS, CLAUDE_CODE_HANDOFF). It must be preserved as the exact literal '\u00a72.5' (sub-decimal anchor) and not normalized to a plain integer during finalization.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a72.5 line 74; scaffold/templates/ARCHITECTURE.md line 50; cited at DIAGRAM_PLAN.md:142, DECISIONS.md:103, STAKEHOLDERS.md:11, CLAUDE_CODE_HANDOFF.md:96,119",
+      "proposed_fix": "Keep the literal '\u00a72.5 \u2014 Subsystem dependency DAG & parallelization seams' heading string unchanged so anchor links resolve.",
+      "anchor": "\u00a72.5"
+    }
+  ]
+}

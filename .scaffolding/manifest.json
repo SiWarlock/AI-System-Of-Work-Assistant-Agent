@@ -1,0 +1,597 @@
+{
+  "schemaVersion": 2,
+  "scaffoldingRepo": "/Users/dreddy/Documents/Dev/AI-tools/SoW/SoW-build/scaffold",
+  "generatedFromSha": "2556dd23632de17bcc213b7b14f4fe7f7a296adf",
+  "generatedFromRef": "main",
+  "generatorModel": "claude-opus-4-8",
+  "generatedAt": "2026-06-29T12:00:00Z",
+  "lastUpgradedFromSha": null,
+  "lastUpgradedAt": null,
+  "mode": "team",
+  "posture": "production-grade",
+  "track": null,
+  "tracks": [
+    "contract",
+    "worker",
+    "providers-integrations",
+    "knowledge",
+    "desktop",
+    "eval-security"
+  ],
+  "optionalCommands": [
+    "eval"
+  ],
+  "optionalSubagents": [
+    "code-quality-reviewer",
+    "security-reviewer",
+    "reachability-auditor",
+    "arch-drift-auditor",
+    "brief-drafter"
+  ],
+  "productionGates": {
+    "gitleaksBlocking": false,
+    "dependencyAudit": true,
+    "wholeSystemSecurity": true,
+    "perfBudget": false
+  },
+  "placeholders": {
+    "PROJECT_NAME": "System of Work Assistant",
+    "PROJECT_TAGLINE": "A Mac-first, local-first, self-hosted personal operating system for employer work, side projects, and personal life.",
+    "ARCHITECTURE_SENTENCE": "governed local control plane \u2014 candidate-data-in, validated-and-policed-out; Markdown is the only canonical semantic truth and KnowledgeWriter is its only autonomous writer.",
+    "REPO_DIRNAME": "SoW-build",
+    "GIT_REMOTE": "none configured",
+    "AI_TRAILER": "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+    "TASK_TRACKER": "IMPLEMENTATION_PLAN.md",
+    "ARCH_DOC": "ARCHITECTURE.md",
+    "PHASE_IDS": "0\u201312 (phase) / N.x (task)",
+    "SECURITY_REVIEW_POLICY": "invariant",
+    "CODE_QUALITY_REVIEW_POLICY": "every-slice",
+    "RUNTIME": "Node 22 LTS + TypeScript 5.x",
+    "PKG_MANAGER": "pnpm + Turbo",
+    "VALIDATION_LIB": "Zod + JSON Schema (ajv)",
+    "LINT": "ESLint",
+    "TYPECHECKER": "tsc --noEmit",
+    "TEST_RUNNER": "Vitest",
+    "AUDIT_CMD": "pnpm audit --prod",
+    "TEST_CLASSES": "unit|integration|e2e|contract|conformance|eval"
+  },
+  "codeAreas": [
+    {
+      "CODE_AREA": "packages/contracts/",
+      "CODE_AREA_NAME": "contract \u2014 shared contracts & domain",
+      "CODE_AREA_BASENAME": "contracts",
+      "RUNTIME": "Node 22 + TS 5.x",
+      "PKG_MANAGER": "pnpm",
+      "TEST_CMD": "pnpm test",
+      "TYPECHECK_CMD": "pnpm typecheck",
+      "BUILD_CMD": "pnpm build",
+      "AUDIT_CMD": "pnpm audit --prod"
+    },
+    {
+      "CODE_AREA": "apps/worker/",
+      "CODE_AREA_NAME": "worker \u2014 storage/Temporal/API",
+      "CODE_AREA_BASENAME": "worker",
+      "RUNTIME": "Node 22 + TS 5.x",
+      "PKG_MANAGER": "pnpm",
+      "TEST_CMD": "pnpm test",
+      "TYPECHECK_CMD": "pnpm typecheck",
+      "BUILD_CMD": "pnpm build",
+      "AUDIT_CMD": "pnpm audit --prod"
+    },
+    {
+      "CODE_AREA": "packages/providers/",
+      "CODE_AREA_NAME": "providers-integrations \u2014 providers/policy/gateways",
+      "CODE_AREA_BASENAME": "providers",
+      "RUNTIME": "Node 22 + TS 5.x",
+      "PKG_MANAGER": "pnpm",
+      "TEST_CMD": "pnpm test",
+      "TYPECHECK_CMD": "pnpm typecheck",
+      "BUILD_CMD": "pnpm build",
+      "AUDIT_CMD": "pnpm audit --prod"
+    },
+    {
+      "CODE_AREA": "packages/knowledge/",
+      "CODE_AREA_NAME": "knowledge \u2014 KnowledgeWriter/GBrain/GCL",
+      "CODE_AREA_BASENAME": "knowledge",
+      "RUNTIME": "Node 22 + TS 5.x",
+      "PKG_MANAGER": "pnpm",
+      "TEST_CMD": "pnpm test",
+      "TYPECHECK_CMD": "pnpm typecheck",
+      "BUILD_CMD": "pnpm build",
+      "AUDIT_CMD": "pnpm audit --prod"
+    },
+    {
+      "CODE_AREA": "apps/desktop/",
+      "CODE_AREA_NAME": "desktop \u2014 Electron UI",
+      "CODE_AREA_BASENAME": "desktop",
+      "RUNTIME": "Node 22 + TS 5.x",
+      "PKG_MANAGER": "pnpm",
+      "TEST_CMD": "pnpm test",
+      "TYPECHECK_CMD": "pnpm typecheck",
+      "BUILD_CMD": "pnpm build",
+      "AUDIT_CMD": "pnpm audit --prod"
+    },
+    {
+      "CODE_AREA": "packages/evals/",
+      "CODE_AREA_NAME": "eval-security \u2014 eval & test harness",
+      "CODE_AREA_BASENAME": "evals",
+      "RUNTIME": "Node 22 + TS 5.x",
+      "PKG_MANAGER": "pnpm",
+      "TEST_CMD": "pnpm test",
+      "TYPECHECK_CMD": "pnpm typecheck",
+      "BUILD_CMD": "pnpm build",
+      "AUDIT_CMD": "pnpm audit --prod"
+    }
+  ],
+  "generatedFiles": [
+    {
+      "dest": "packages/contracts/CLAUDE.md",
+      "template": "templates/area-CLAUDE.md",
+      "kind": "mixed",
+      "area": "packages/contracts/"
+    },
+    {
+      "dest": "packages/contracts/LESSONS.md",
+      "template": "templates/area-LESSONS.md",
+      "kind": "accreted",
+      "area": "packages/contracts/"
+    },
+    {
+      "dest": "apps/worker/CLAUDE.md",
+      "template": "templates/area-CLAUDE.md",
+      "kind": "mixed",
+      "area": "apps/worker/"
+    },
+    {
+      "dest": "apps/worker/LESSONS.md",
+      "template": "templates/area-LESSONS.md",
+      "kind": "accreted",
+      "area": "apps/worker/"
+    },
+    {
+      "dest": "packages/providers/CLAUDE.md",
+      "template": "templates/area-CLAUDE.md",
+      "kind": "mixed",
+      "area": "packages/providers/"
+    },
+    {
+      "dest": "packages/providers/LESSONS.md",
+      "template": "templates/area-LESSONS.md",
+      "kind": "accreted",
+      "area": "packages/providers/"
+    },
+    {
+      "dest": "packages/knowledge/CLAUDE.md",
+      "template": "templates/area-CLAUDE.md",
+      "kind": "mixed",
+      "area": "packages/knowledge/"
+    },
+    {
+      "dest": "packages/knowledge/LESSONS.md",
+      "template": "templates/area-LESSONS.md",
+      "kind": "accreted",
+      "area": "packages/knowledge/"
+    },
+    {
+      "dest": "apps/desktop/CLAUDE.md",
+      "template": "templates/area-CLAUDE.md",
+      "kind": "mixed",
+      "area": "apps/desktop/"
+    },
+    {
+      "dest": "apps/desktop/LESSONS.md",
+      "template": "templates/area-LESSONS.md",
+      "kind": "accreted",
+      "area": "apps/desktop/"
+    },
+    {
+      "dest": "packages/evals/CLAUDE.md",
+      "template": "templates/area-CLAUDE.md",
+      "kind": "mixed",
+      "area": "packages/evals/"
+    },
+    {
+      "dest": "packages/evals/LESSONS.md",
+      "template": "templates/area-LESSONS.md",
+      "kind": "accreted",
+      "area": "packages/evals/"
+    },
+    {
+      "dest": "docs/orchestrator-briefing.md",
+      "template": "templates/docs/orchestrator-briefing.md",
+      "kind": "mixed"
+    },
+    {
+      "dest": "docs/team-protocol.md",
+      "template": "templates/docs/team-protocol.md",
+      "kind": "mixed"
+    },
+    {
+      "dest": "docs/tdd-brief-template.md",
+      "template": "templates/docs/tdd-brief-template.md",
+      "kind": "mixed"
+    },
+    {
+      "dest": "docs/scaffolding-reference.md",
+      "template": "templates/docs/scaffolding-reference.md",
+      "kind": "mixed"
+    },
+    {
+      "dest": ".claude/commands/team-start.md",
+      "template": "templates/.claude/commands/team-start.md",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": ".claude/commands/team-end.md",
+      "template": "templates/.claude/commands/team-end.md",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": ".claude/commands/orchestrate-start.md",
+      "template": "templates/.claude/commands/orchestrate-start.md",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": ".claude/commands/orchestrate-end.md",
+      "template": "templates/.claude/commands/orchestrate-end.md",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": ".claude/commands/session-start.md",
+      "template": "templates/.claude/commands/session-start.md",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": ".claude/commands/session-end.md",
+      "template": "templates/.claude/commands/session-end.md",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": ".claude/commands/tdd.md",
+      "template": "templates/.claude/commands/tdd.md",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": ".claude/commands/phase-exit.md",
+      "template": "templates/.claude/commands/phase-exit.md",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": ".claude/commands/check-arch.md",
+      "template": "templates/.claude/commands/check-arch.md",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": ".claude/commands/wired.md",
+      "template": "templates/.claude/commands/wired.md",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": ".claude/commands/context-check.md",
+      "template": "templates/.claude/commands/context-check.md",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": ".claude/commands/eval.md",
+      "template": "templates/.claude/commands/eval.md",
+      "kind": "mixed"
+    },
+    {
+      "dest": ".claude/agents/README.md",
+      "template": "templates/.claude/agents/README.md",
+      "kind": "mixed"
+    },
+    {
+      "dest": ".claude/agents/code-quality-reviewer.md",
+      "template": "templates/.claude/agents/code-quality-reviewer.md",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": ".claude/agents/security-reviewer.md",
+      "template": "templates/.claude/agents/security-reviewer.md",
+      "kind": "mixed"
+    },
+    {
+      "dest": ".claude/agents/reachability-auditor.md",
+      "template": "templates/.claude/agents/reachability-auditor.md",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": ".claude/agents/arch-drift-auditor.md",
+      "template": "templates/.claude/agents/arch-drift-auditor.md",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": ".claude/agents/brief-drafter.md",
+      "template": "templates/.claude/agents/brief-drafter.md",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": "scripts/spec-lint.sh",
+      "template": "templates/scripts/spec-lint.sh",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": "scripts/guards/git-guard.sh",
+      "template": "templates/scripts/guards/git-guard.sh",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": "scripts/guards/secrets-guard.sh",
+      "template": "templates/scripts/guards/secrets-guard.sh",
+      "kind": "verbatim"
+    },
+    {
+      "dest": "scripts/guards/territory-guard.sh",
+      "template": "templates/scripts/guards/territory-guard.sh",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": "scripts/hooks/team-event-log.sh",
+      "template": "templates/scripts/hooks/team-event-log.sh",
+      "kind": "verbatim"
+    },
+    {
+      "dest": ".gitleaksignore",
+      "template": "templates/.gitleaksignore",
+      "kind": "accreted"
+    },
+    {
+      "dest": ".claude/settings.json",
+      "template": "templates/.claude/settings.json",
+      "kind": "verbatim"
+    },
+    {
+      "dest": ".scaffolding/README.md",
+      "template": "templates/.scaffolding/README.md",
+      "kind": "verbatim"
+    },
+    {
+      "dest": "CLAUDE.md",
+      "template": "templates/CLAUDE.md",
+      "kind": "mixed"
+    },
+    {
+      "dest": ".claude/commands/preflight.md",
+      "template": "templates/.claude/commands/preflight.md",
+      "kind": "placeholder-only"
+    },
+    {
+      "dest": ".claude/commands/run-tests.md",
+      "template": "templates/.claude/commands/run-tests.md",
+      "kind": "mixed"
+    },
+    {
+      "dest": "IMPLEMENTATION_PLAN.md",
+      "template": "templates/IMPLEMENTATION_PLAN.md",
+      "kind": "accreted"
+    },
+    {
+      "dest": "ARCHITECTURE.md",
+      "template": "templates/ARCHITECTURE.md",
+      "kind": "user-canonical"
+    }
+  ],
+  "exampleBlocks": [
+    {
+      "file": "packages/contracts/CLAUDE.md",
+      "id": "area-stack",
+      "status": "customized"
+    },
+    {
+      "file": "packages/contracts/CLAUDE.md",
+      "id": "forbidden-patterns",
+      "status": "customized"
+    },
+    {
+      "file": "packages/contracts/CLAUDE.md",
+      "id": "module-layout",
+      "status": "customized"
+    },
+    {
+      "file": "packages/contracts/CLAUDE.md",
+      "id": "area-subagent-candidates",
+      "status": "illustrative"
+    },
+    {
+      "file": "apps/worker/CLAUDE.md",
+      "id": "area-stack",
+      "status": "customized"
+    },
+    {
+      "file": "apps/worker/CLAUDE.md",
+      "id": "forbidden-patterns",
+      "status": "customized"
+    },
+    {
+      "file": "apps/worker/CLAUDE.md",
+      "id": "module-layout",
+      "status": "customized"
+    },
+    {
+      "file": "apps/worker/CLAUDE.md",
+      "id": "area-subagent-candidates",
+      "status": "illustrative"
+    },
+    {
+      "file": "packages/providers/CLAUDE.md",
+      "id": "area-stack",
+      "status": "customized"
+    },
+    {
+      "file": "packages/providers/CLAUDE.md",
+      "id": "forbidden-patterns",
+      "status": "customized"
+    },
+    {
+      "file": "packages/providers/CLAUDE.md",
+      "id": "module-layout",
+      "status": "customized"
+    },
+    {
+      "file": "packages/providers/CLAUDE.md",
+      "id": "area-subagent-candidates",
+      "status": "illustrative"
+    },
+    {
+      "file": "packages/knowledge/CLAUDE.md",
+      "id": "area-stack",
+      "status": "customized"
+    },
+    {
+      "file": "packages/knowledge/CLAUDE.md",
+      "id": "forbidden-patterns",
+      "status": "customized"
+    },
+    {
+      "file": "packages/knowledge/CLAUDE.md",
+      "id": "module-layout",
+      "status": "customized"
+    },
+    {
+      "file": "packages/knowledge/CLAUDE.md",
+      "id": "area-subagent-candidates",
+      "status": "illustrative"
+    },
+    {
+      "file": "apps/desktop/CLAUDE.md",
+      "id": "area-stack",
+      "status": "customized"
+    },
+    {
+      "file": "apps/desktop/CLAUDE.md",
+      "id": "forbidden-patterns",
+      "status": "customized"
+    },
+    {
+      "file": "apps/desktop/CLAUDE.md",
+      "id": "module-layout",
+      "status": "customized"
+    },
+    {
+      "file": "apps/desktop/CLAUDE.md",
+      "id": "area-subagent-candidates",
+      "status": "illustrative"
+    },
+    {
+      "file": "packages/evals/CLAUDE.md",
+      "id": "area-stack",
+      "status": "customized"
+    },
+    {
+      "file": "packages/evals/CLAUDE.md",
+      "id": "forbidden-patterns",
+      "status": "customized"
+    },
+    {
+      "file": "packages/evals/CLAUDE.md",
+      "id": "module-layout",
+      "status": "customized"
+    },
+    {
+      "file": "packages/evals/CLAUDE.md",
+      "id": "area-subagent-candidates",
+      "status": "illustrative"
+    },
+    {
+      "file": "docs/orchestrator-briefing.md",
+      "id": "who-the-user-is",
+      "status": "customized"
+    },
+    {
+      "file": "docs/orchestrator-briefing.md",
+      "id": "project-context",
+      "status": "customized"
+    },
+    {
+      "file": "docs/orchestrator-briefing.md",
+      "id": "project-conventions",
+      "status": "customized"
+    },
+    {
+      "file": "docs/team-protocol.md",
+      "id": "code-areas",
+      "status": "customized"
+    },
+    {
+      "file": "docs/tdd-brief-template.md",
+      "id": "tdd-brief-worked-example",
+      "status": "illustrative"
+    },
+    {
+      "file": "docs/tdd-brief-template.md",
+      "id": "project-specific-pitfalls",
+      "status": "illustrative"
+    },
+    {
+      "file": "docs/scaffolding-reference.md",
+      "id": "inventory-extension",
+      "status": "illustrative"
+    },
+    {
+      "file": "docs/scaffolding-reference.md",
+      "id": "instance-conventions",
+      "status": "customized"
+    },
+    {
+      "file": ".claude/commands/eval.md",
+      "id": "eval-body",
+      "status": "customized"
+    },
+    {
+      "file": ".claude/agents/README.md",
+      "id": "starter-subagent-inventory",
+      "status": "customized"
+    },
+    {
+      "file": ".claude/agents/security-reviewer.md",
+      "id": "safety-invariant-cross-checks",
+      "status": "customized"
+    },
+    {
+      "file": "CLAUDE.md",
+      "id": "project-structure",
+      "status": "customized"
+    },
+    {
+      "file": "CLAUDE.md",
+      "id": "tech-stack",
+      "status": "customized"
+    },
+    {
+      "file": "CLAUDE.md",
+      "id": "strict-typing-posture",
+      "status": "customized"
+    },
+    {
+      "file": "CLAUDE.md",
+      "id": "tdd-scope",
+      "status": "customized"
+    },
+    {
+      "file": "CLAUDE.md",
+      "id": "key-safety-rules",
+      "status": "customized"
+    },
+    {
+      "file": ".claude/commands/run-tests.md",
+      "id": "test-class-discipline-notes",
+      "status": "customized"
+    },
+    {
+      "file": "IMPLEMENTATION_PLAN.md",
+      "id": "deliverable-map",
+      "status": "customized"
+    },
+    {
+      "file": "IMPLEMENTATION_PLAN.md",
+      "id": "parallelization-plan",
+      "status": "customized"
+    },
+    {
+      "file": "IMPLEMENTATION_PLAN.md",
+      "id": "task-entry-format",
+      "status": "illustrative"
+    }
+  ]
+}

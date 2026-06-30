@@ -1,0 +1,76 @@
+{
+  "dimension": "User/system flow coverage",
+  "summary": "Partial coverage. The five PRD \u00a711 workflows and the meeting/scheduling/ingestion/project-sync/approval/deletion/provider-job paths are all present in both USER_FLOWS.md and the draft. But several in-scope P0/P1 requirements and use cases have NO documented user/system flow: weekly/monthly review, Ingestion Inbox triage resolution, connector sync & health, System Health surfacing (a \u00a720.1 acceptance test), Hermes autonomous automation, NotebookLM managed-doc sync, Copilot Q&A/retrieval, first-run onboarding/connector-auth, and the Employer-Work egress acknowledgment. These are realizable by existing draft components but are unspecified as flows, so tasks-gen would have no flow to decompose.",
+  "findings": [
+    {
+      "severity": "important",
+      "finding": "Weekly/monthly review has no flow of its own; it is collapsed into the daily brief. BRF-1 (P0) requires daily, weekly, AND monthly briefs, and use case \u00a75.3 'Weekly/monthly review' (P1) has distinct semantics \u2014 summarize progress, decisions, RECURRING blockers, commitments, and project adjustments over a period \u2014 that a daily brief does not capture. USER_FLOWS.md only documents 'Flow 2 - Daily Brief'; PRD \u00a711 only documents \u00a711.4 Daily Brief; the draft lists 'Daily/weekly/monthly brief' as one undifferentiated workflow.",
+      "evidence": "USER_FLOWS.md Flow 2 (lines 27-44, only daily); PRD \u00a79.7 BRF-1 (line 535), \u00a75.3 (line 193); ARCHITECTURE_DRAFT.md \u00a79 Core workflows (line 266)",
+      "proposed_fix": "Add a distinct Weekly/Monthly Review flow specifying period-windowed inputs (period meetings/decisions/commitments, project progress deltas, recurring-blocker detection), workspace + global outputs to Markdown, GCL Visibility-Gate path for the global view, and LIFE-2 catch-up semantics. Anchor it as a separate core workflow in \u00a79.",
+      "anchor": "\u00a79 Temporal Workflows and Automation"
+    },
+    {
+      "severity": "important",
+      "finding": "No flow describes the user RESOLVING the Ingestion Inbox. Every ingestion/meeting flow ends low-confidence items by parking them in the Ingestion Inbox (ING-4 P0), but neither USER_FLOWS nor the draft documents the triage-resolution journey: user reviews a parked item, confirms/overrides workspace+project routing, sets sensitivity, and releases it for processing. The Inbox is listed only as a UI surface and a dead-end park state.",
+      "evidence": "USER_FLOWS.md Flow 4 step 4 (line 70) and Flow 1 step 3 (line 14) only PARK items; PRD \u00a79.6 ING-4 (line 521), \u00a78.1 Ingestion Inbox (line 418); ARCHITECTURE_DRAFT.md \u00a711 Ingestion Inbox (line 302) is surface-only",
+      "proposed_fix": "Add an Inbox Triage / Routing-Resolution flow: trigger = user disposition of a parked SourceEnvelope; steps cover re-classify workspace/project, apply user routing override, then re-enter the source-ingestion pipeline (re-using the same idempotency key so re-processing is replay-safe). Note it for both Mac and Telegram.",
+      "anchor": "\u00a79 Temporal Workflows and Automation / \u00a711 Ingestion Inbox"
+    },
+    {
+      "severity": "important",
+      "finding": "Connector sync & health has no flow. The draft \u00a79 lists 'Connector sync and health' as a core workflow, but USER_FLOWS.md has no corresponding flow \u2014 connector sync only appears as a TRIGGER inside Flow 1/Flow 2. The LIFE-4 / REQ-I-005 (P0) behavior (unreachable connector -> queue inbound syncs, hold outbound writes in retry/write outbox with bounded backoff, surface in System Health, no silent drops) is unspecified as a flow.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a79 (line 272, named but not elaborated); USER_FLOWS.md has no connector-sync flow (referenced only as trigger, lines 8, 30); PRD \u00a79.8 LIFE-4 (line 548), \u00a712.1 connector reachability note (line 765), REQUIREMENTS.md REQ-I-005 (line 74)",
+      "proposed_fix": "Add a Connector Sync & Health flow: scheduled/wake-triggered poll per connector, cursor advance, health/reachability signal emission, and the unreachable branch (queue inbound, hold outbound in write outbox, exponential backoff, drain on reconnect, surface in System Health). Reference LIFE-4/LIFE-6 wake hooks.",
+      "anchor": "\u00a78 Connector and Tool Gateways / \u00a79"
+    },
+    {
+      "severity": "important",
+      "finding": "No System Health surfacing flow, despite it being an explicit \u00a720.1 acceptance test. OBS-1/OBS-2 (P0) require each failure class (connector outage, failed/blocked write-through, budget breach, missed/late schedule, schema-validation rejection) to raise a distinct, correctly-typed, persistent health item linked to its audit record. The draft has System Health only as a UI surface (\u00a711) and a test suite reference (\u00a712); no flow describes how a failure becomes a health item and clears.",
+      "evidence": "PRD \u00a720.1 'System Health surfacing' acceptance test (line 1113), \u00a79.9 OBS-1/OBS-2 (lines 557-558); ARCHITECTURE_DRAFT.md \u00a711 System Health (line 306, surface only), \u00a712 (line 332, test only) \u2014 no \u00a79 workflow",
+      "proposed_fix": "Add a System Health surfacing flow (or an explicit cross-cutting subsection) mapping each failure class -> distinct typed health item -> link to audit record -> persistence-until-resolved/acknowledged -> clearance. Tie OBS-2 failure classes to their emitting components (Connector Gateway, KnowledgeWriter, Runtime Broker, Temporal scheduler, schema gate).",
+      "anchor": "\u00a79 / \u00a711 System Health"
+    },
+    {
+      "severity": "important",
+      "finding": "Hermes autonomous automation has no flow, even though REQUIREMENTS.md REQ-F-014 names a 'Related Flow: Automation' that does not exist in USER_FLOWS.md. RT-7 (P0) permits Hermes cron/Kanban autonomous schedulers provided every external side effect routes through Tool Gateway and every semantic write through KnowledgeWriter. The draft \u00a79 Hermes notes assert this but no flow demonstrates the gateway-routed path for a Hermes-INITIATED (non-Temporal) automation, which is exactly where duplicate/ungoverned/hidden-brain writes must be proven impossible.",
+      "evidence": "REQUIREMENTS.md REQ-F-014 Related Flow 'Automation' (line 22) \u2014 absent from USER_FLOWS.md; PRD \u00a79.3 RT-7 (line 487); ARCHITECTURE_DRAFT.md \u00a79 Hermes (lines 274-278, assertion not flow)",
+      "proposed_fix": "Add a Hermes Autonomous Automation flow: Hermes cron/Kanban fires -> produces ProposedAction/KnowledgeMutationPlan only -> Tool Gateway (envelope+idempotency+approval) for external writes and KnowledgeWriter for semantic writes -> dedup/one-writer enforced at the gateways regardless of which scheduler fired. State that it is NOT the product-workflow source of truth (Temporal is).",
+      "anchor": "\u00a79 Temporal Workflows and Automation"
+    },
+    {
+      "severity": "important",
+      "finding": "NotebookLM managed-doc sync is a P0 deliverable (NLM-2) and an AgentJob capability (notebooklm.sync) but is not a core workflow anywhere \u2014 it appears only as an OPTIONAL substep of source ingestion (Flow 4 step 7) and under draft \u00a78 Notebook, and is absent from the draft \u00a79 core-workflow list. The create/update of the 00-04 managed Drive docs per project and the user re-sync step (continuous auto-sync explicitly NOT assumed) has no flow.",
+      "evidence": "USER_FLOWS.md Flow 4 step 7 (line 73, optional substep); PRD \u00a79.7 NLM-2 (line 534, P0), \u00a712.2 Drive-backed pack (lines 771-783), \u00a713.1 capability notebooklm.sync (line 796); ARCHITECTURE_DRAFT.md \u00a79 core list omits it (lines 264-272), only \u00a78 Notebook (lines 250-253)",
+      "proposed_fix": "Add a NotebookLM Managed-Doc Sync flow: project-pack trigger -> assemble brief/decision/meeting/research/open-questions doc bodies from Markdown -> Tool Gateway/NotebookPort write to managed Drive docs (idempotent upsert per notebookMapping) -> surface 'user must re-add/refresh NotebookLM source' state since arbitrary-doc auto-sync is not assumed. List it as a core workflow in \u00a79.",
+      "anchor": "\u00a79 core workflows / \u00a78 Notebook"
+    },
+    {
+      "severity": "important",
+      "finding": "No Copilot / ask-the-assistant Q&A flow exists, despite Copilot being a primary surface (\u00a78.1: ask questions, explain project state) and Telegram quick-questions (\u00a78.2). All eight USER_FLOWS are write/ingest/schedule flows; there is no interactive workspace-scoped retrieval+synthesis read flow \u2014 even though GBrain retrieval has its own \u00a720.1 'Retrieval relevance' acceptance test and KN-10. A Copilot query must enforce WS-8 (single-brain caller-workspace query, or GCL Visibility Gate for any cross-workspace ask), which is exactly the boundary a flow should pin.",
+      "evidence": "USER_FLOWS.md (8 flows, none is a read/Q&A flow); PRD \u00a78.1 Copilot (line 417), \u00a78.2 Telegram quick questions (line 426), \u00a720.1 Retrieval relevance (line 1109), \u00a79.1 WS-8 (line 460); ARCHITECTURE_DRAFT.md \u00a711 Copilot (line 301, surface only)",
+      "proposed_fix": "Add a Copilot Q&A / Retrieval flow: user question (Mac or Telegram) -> workspace scoping -> single-brain GBrain search/think within caller workspace, OR GCL Visibility-Gate assembly for cross-workspace asks (no direct cross-brain query) -> schema-validated synthesized answer with citations -> read-only, emits no semantic/external writes. Pin the WS-8 deny-by-default boundary.",
+      "anchor": "\u00a76 GCL/GBrain reads / \u00a79 / \u00a711 Copilot"
+    },
+    {
+      "severity": "important",
+      "finding": "No first-run onboarding / setup flow. Nearly every flow lists 'workspace/project registry configured', 'connectors healthy', 'GBrain brain available', and 'provider matrix configured' as PRECONDITIONS, but no flow documents how those preconditions are established: connector OAuth authorization, per-workspace GBrain brain creation, workspace preset selection (WS-6), provider-matrix configuration, and the sample-workspace demo. \u00a720.1 requires a clean-install run executing the sample workspace demo on Claude SDK. For a production-grade build this onboarding journey is load-bearing and undocumented.",
+      "evidence": "USER_FLOWS.md Flow 1 Preconditions (line 9) and similar throughout treat setup as given; PRD \u00a720.1 open-source install + sample workspace demo (line 1107), \u00a79.1 WS-6 presets (line 458); ARCHITECTURE_DRAFT.md \u00a713 Install (lines 337-344) covers process startup but not a user onboarding flow",
+      "proposed_fix": "Add a First-Run Onboarding / Connector Authorization flow: install/launch -> create workspaces from preset (WS-6) -> per-workspace OAuth connector authorization (Connector Gateway, Keychain secret store) -> per-workspace GBrain brain init -> provider-matrix + egress-policy configuration -> sample-workspace demo. This also gives the \u00a720.1 install test a flow to follow.",
+      "anchor": "\u00a713 Deployment and Install Strategy"
+    },
+    {
+      "severity": "important",
+      "finding": "The Employer-Work third-party egress acknowledgment has no flow, even though it is a user decision surface that GATES the \u00a720.2 employer meeting-closeout DoD. \u00a716.5/REQ-S-002: Employer Work defaults to NO raw-content cloud egress; the user must explicitly enable a surfaced per-workspace acknowledgment (default off), and a job is egress-blocked until then. No flow shows the user being prompted on an egress-blocked job or enabling the acknowledgment, and what happens to the blocked job.",
+      "evidence": "PRD \u00a716.5 (line 995, esp. last sentence tying it to \u00a720.2 DoD), REQUIREMENTS.md REQ-S-002 (line 51); ARCHITECTURE_DRAFT.md \u00a75 (lines 166-167) and \u00a711 (line 312) show egress as policy/status only, no acknowledgment flow",
+      "proposed_fix": "Add an Egress Acknowledgment flow (or a branch on the meeting-closeout/agent-job flow): Runtime Broker/Tool Gateway detects raw Employer-Work egress required + acknowledgment off -> blocks the job, surfaces a System Health/approval prompt -> user enables per-workspace egress acknowledgment in workspace settings -> blocked job resumes idempotently. Make the default-off and surfaced-status explicit.",
+      "anchor": "\u00a75 Policy, Security, and Egress / \u00a79"
+    },
+    {
+      "severity": "nice-to-have",
+      "finding": "Telegram voice-memo capture + transcription pipeline (\u00a78.2) and standalone task routing (use case \u00a75.3 P0, capability task.route) are folded into generic source ingestion / parent flows with no dedicated treatment. Voice transcription has retention implications (RET-1: raw audio deleted after audited synthesis) that a generic ingestion flow does not surface, and task routing (MTG-6/TASK-1..4 workspace+type routing to Todoist/Linear/Asana) is only ever a substep of meeting/ingestion flows.",
+      "evidence": "PRD \u00a78.2 voice memo pipeline (line 430), RET-1 raw-audio deletion (line 566), \u00a75.3 Task routing P0 (line 189), \u00a713.1 capability task.route (line 796); USER_FLOWS.md only embeds these (Flow 4 step 2 line 68; Flow 1 step 8 line 19)",
+      "proposed_fix": "Either (a) add brief explicit sub-flows for voice capture->transcription->RET-1 raw-audio purge and for standalone task routing, or (b) state in \u00a79 that these are intentionally embedded substeps of ingestion/meeting flows and cite where their requirements are satisfied, so tasks-gen does not treat them as missing.",
+      "anchor": "\u00a79 / \u00a78"
+    }
+  ]
+}

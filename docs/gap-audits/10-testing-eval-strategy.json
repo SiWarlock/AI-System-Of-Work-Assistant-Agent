@@ -1,0 +1,55 @@
+{
+  "dimension": "Testing/eval strategy",
+  "summary": "Partially covered: the contract/eval-heavy skeleton is right, but draft \u00a712's suite inventory omits ~8 must-ship DoD acceptance tests from PRD \u00a720.1, has no performance/latency or CI/release-gate posture, and EVAL-1 corpus sizes plus LLM-nondeterminism reproducibility are not specified concretely enough to act as phase exits.",
+  "findings": [
+    {
+      "severity": "critical",
+      "finding": "Draft \u00a712 'Required suites' is missing several DoD-required acceptance suites that PRD \u00a720.1 lists as must-ship and \u00a720.2 names in the Definition of Done. Absent from \u00a712: (a) calendar-conflict / all-availability-sources safety (PRD \u00a720.1 'Cross-calendar scheduling'; \u00a75.4 Calendar conflict safety 100%; REQ-F-009), (b) project-progress deterministic parser test ensuring no model-only percentages (PRD \u00a720.1 'Project progress'; REQ-F-011), (c) retention/deletion cross-store purge across Markdown+GBrain+event store (PRD \u00a720.1 'Retention purge'; REQ-F-013/RET-2/3), (d) budget-cap COST-1 cancel-with-no-partial-side-effect (PRD \u00a720.1 'Budget cap'; \u00a75.4 Budget enforcement 100%), (e) Hermes standalone-automation routing-through-gateway replay test (PRD \u00a720.1 'Hermes standalone automation'/RT-7; REQ-F-014), (f) egress-acknowledgment ON/OFF test (PRD \u00a720.1 'Egress acknowledgment'/\u00a716.5; REQ-S-002), (g) System Health surfacing test for connector outage/failed write-through/missed schedule (PRD \u00a720.1 'System Health surfacing'; OBS). Because \u00a720.2 DoD explicitly requires these behaviors, the architecture's test posture cannot certify DoD as written. These are not covered by the generic 'Tool Gateway idempotency' / 'Connector outage' rows.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a712 lines 315-333 (suite list); PRD system_of_work_assistant_prd_v0_3.md \u00a720.1 lines ~1090-1130 and \u00a720.2 DoD",
+      "proposed_fix": "Expand final ARCHITECTURE.md \u00a712 to a one-to-one mapping table from each PRD \u00a720.1 acceptance test and \u00a75.4 metric to a named suite/fixture, adding the seven missing suites above. Make the \u00a718 Spec-Anchor Index row REQ-T-001..003 point at the enumerated suites rather than just \u00a712.",
+      "anchor": "ARCHITECTURE.md \u00a712 Eval and Test Harness"
+    },
+    {
+      "severity": "critical",
+      "finding": "No performance/latency benchmark suite is defined anywhere, yet two must-ship NFRs are quantitative: dashboard normal views <2s after cache warmup (REQ-NF-002) and KnowledgeWriter-commit-to-GBrain-search p95 \u226460s / dashboard read-model p95 \u226410s (REQ-NF-003, PRD \u00a75.4 'Knowledge sync latency', \u00a720.1 'Knowledge write' which FAILS the test if the window is exceeded). \u00a712 names no latency/perf harness and the EVALUATION_CRITERIA acceptance matrix has no sync-latency or dashboard-load row, so these p95 gates are unmeasurable and untestable as specified. For a production-grade build this is an under-built production concern.",
+      "evidence": "REQUIREMENTS.md REQ-NF-002 line 30, REQ-NF-003 line 31; EVALUATION_CRITERIA.md acceptance matrix lines 11-27 (no latency row); ARCHITECTURE_DRAFT.md \u00a712 lines 319-333 (no perf suite)",
+      "proposed_fix": "Add a 'Performance & latency benchmark' suite to \u00a712 that instruments the KnowledgeWriter\u2192GBrain\u2192read-model pipeline for p95 and dashboard warm-load timing, with the \u226460s/\u226410s/<2s thresholds as recorded pass criteria, and add the matching rows to the EVALUATION_CRITERIA acceptance matrix.",
+      "anchor": "ARCHITECTURE.md \u00a712 Eval and Test Harness"
+    },
+    {
+      "severity": "important",
+      "finding": "EVAL-1 corpus sizes and the 90% gates are not carried into the architecture as concrete phase-exit criteria. PRD \u00a79.12 sets default sizes (\u226520 meeting transcripts, \u226530 retrieval queries, owner-confirmable) but neither ARCHITECTURE_DRAFT \u00a712 nor EVALUATION_CRITERIA restates these numbers; the acceptance matrix says '90%+ on EVAL-1 meeting corpus' with no corpus size and no statement of whether scoring <90% BLOCKS release (it is absent from 'Reviewer Rejection Conditions'). As written, /tasks-gen and Phase-0/Phase-4 exits cannot be checked objectively.",
+      "evidence": "PRD \u00a79.12 EVAL-1 line 583 ('\u226520 transcripts, \u226530 queries'); EVALUATION_CRITERIA.md lines 13,18 (targets without sizes); EVALUATION_CRITERIA.md lines 28-37 (rejection conditions omit sub-90% eval)",
+      "proposed_fix": "In final \u00a712 / EVALUATION_CRITERIA, restate the \u226520/\u226530 sizes (plus a committed leakage-set size), and explicitly declare the 90% meeting-routing and 90% retrieval thresholds as blocking release gates (add to Reviewer Rejection Conditions: 'EVAL-1 below committed threshold blocks V1').",
+      "anchor": "ARCHITECTURE.md \u00a712 Eval and Test Harness"
+    },
+    {
+      "severity": "important",
+      "finding": "No reproducibility strategy for nondeterministic LLM outputs is specified, yet PRD demands the harness compute metrics 'reproducibly across runs' with 'stable numbers'. A grep of the draft and EVALUATION_CRITERIA finds no mention of temperature pinning, recorded/cassette provider responses, fixed seeds, or multi-run thresholds. Without this, EVAL-1 numbers and provider-conformance results will flap and the 90% gates become non-deterministic \u2014 a fundamental testability gap for an LLM-heavy system.",
+      "evidence": "PRD \u00a720.1 'Evaluation set' line ~1116 and \u00a79.12 ('reproducibly'/'stable numbers'); no matches for nondetermin/temperature/cassette/seed/judge in ARCHITECTURE_DRAFT.md or EVALUATION_CRITERIA.md (scan returned empty)",
+      "proposed_fix": "Add an 'Eval determinism' subsection to \u00a712 specifying how reproducibility is achieved (e.g. recorded provider-response fixtures for the eval corpus, temperature=0 where supported, N-run pass thresholds for inherently nondeterministic capabilities) so 'stable numbers across runs' is an enforceable property.",
+      "anchor": "ARCHITECTURE.md \u00a712 Eval and Test Harness"
+    },
+    {
+      "severity": "important",
+      "finding": "No CI / test-automation harness or release-gate mapping is defined. \u00a712 lists suites but never says which suites are blocking gates, where/when they run (CI vs local), or that the SQLite+Postgres contract suite and provider-conformance matrix execute in CI on every change. The locked 'Postgres adapter must pass same contract suite (no permanent stub)' intent IS enforced in principle (EVALUATION_CRITERIA rejection 'SQLite-only assumptions make Postgres adapter fake or untested' + storage-portability 'contract suite green on both' + Phase-0 spike), but nothing guarantees Postgres is actually exercised continuously rather than rotting to a local-only afterthought. For a production-grade build the absence of any CI definition is an under-built production concern.",
+      "evidence": "EVALUATION_CRITERIA.md line 25 (storage portability) + line 35 (rejection) + lines 39-50 (Phase-0 spikes) enforce the contract; ARCHITECTURE_DRAFT.md \u00a713 Deployment lines 335-358 and \u00a712 contain no CI/pipeline/release-gate text (scan for CI/pipeline/coverage returned empty)",
+      "proposed_fix": "Add a \u00a712 (or \u00a713) subsection defining the CI pipeline: which suites are blocking release gates, that the dual-adapter contract suite and provider-conformance matrix run in CI against a real Postgres container, and that local-provider (Ollama/LM Studio) conformance failures scope-disable rather than block (per the locked decision).",
+      "anchor": "ARCHITECTURE.md \u00a712 Eval and Test Harness"
+    },
+    {
+      "severity": "nice-to-have",
+      "finding": "The scoring methodology for meeting-closeout extraction is unspecified. PRD provides gold workspace/project/decision/task labels, but the architecture never says how extracted decisions/tasks are scored against gold (exact-match vs semantic-match vs LLM-judge precision/recall). The headline '90%+ routing' is deterministic (label match) and fine, but the decision/task-extraction quality dimension of the same corpus has no defined metric, so that part of EVAL-1 is not yet measurable.",
+      "evidence": "PRD \u00a79.12 line 583 (gold decision/task labels); EVALUATION_CRITERIA.md line 13 (only 'routing and extraction' at 90%, method unstated)",
+      "proposed_fix": "In \u00a712 specify the extraction scoring method (e.g. precision/recall against gold task/decision sets with a defined match function), separate from the routing-accuracy number.",
+      "anchor": "ARCHITECTURE.md \u00a712 Eval and Test Harness"
+    },
+    {
+      "severity": "question-for-human",
+      "finding": "The adversarial cross-workspace leakage corpus has no committed size. PRD \u00a79.12 sizes only the meeting transcripts (\u226520) and retrieval queries (\u226530); the leakage set (reused by WS-7 and the \u00a716/\u00a719 red-team) is left unsized, so the WS-7 '0 leakage' gate has no defined number of cases that constitutes a sufficient phase exit. Only the owner can set the minimum bar.",
+      "evidence": "PRD \u00a79.12 EVAL-1 line 583 (sizes given only for transcripts/queries; leakage set unsized); EVALUATION_CRITERIA.md line 19 (WS-7 target '0' with no corpus size)",
+      "proposed_fix": "Ask the owner to commit a minimum leakage/exfiltration case count (covering the five \u00a716.1 injection vectors plus the cross-workspace disclosure case) so WS-7 has a concrete phase-exit; record it in \u00a712 and EVALUATION_CRITERIA.",
+      "anchor": "ARCHITECTURE.md \u00a712 Eval and Test Harness"
+    }
+  ]
+}

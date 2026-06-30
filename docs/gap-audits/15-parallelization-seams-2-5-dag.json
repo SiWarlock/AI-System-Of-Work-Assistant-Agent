@@ -1,0 +1,55 @@
+{
+  "dimension": "Parallelization seams / \u00a72.5 DAG",
+  "summary": "The \u00a72.5 DAG is acyclic and well-formed, but the \"6 independent tracks after contract freeze\" claim is overstated: \u00a75 Policy is a fan-out hub miscategorized into the eval-security sink track (hidden cross-edge), and the shared-contracts freeze list is data-model-only \u2014 it omits the capability output schemas, service port interfaces, and repository interfaces that DAG edges actually cross. Several gaps to fix before tasks-gen.",
+  "findings": [
+    {
+      "severity": "important",
+      "finding": "Hidden cross-edge collapses two 'independent' tracks: \u00a75 Policy/Security/Egress (node Sec) is assigned to the eval-security track, but the DAG shows Sec -> P, Sec -> X, Sec -> K. The policy ENGINE is therefore a fan-out hub that three other tracks (providers-integrations via P and X, knowledge via K) hard-depend on, yet it is bundled with the eval HARNESS, which is a pure DAG sink (E). These two components have opposite DAG roles. As written, the eval-security track sits on the critical path of three tracks, so the 'genuinely independent after contract freeze' claim is false for it.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a72.5 DAG lines 89-91 (Sec-->P, Sec-->X, Sec-->K) vs seam list line 112 ('Track eval-security: ... security gates')",
+      "proposed_fix": "Split \u00a75 into (a) policy/security CONTRACTS+interfaces (EgressPolicy, ToolPolicy, ProviderMatrix gate, VisibilityLevel) frozen with \u00a73 contracts, and (b) a policy-engine implementation that is either its own early-fanning-out track or co-located with worker \u2014 and keep only the eval/leakage/injection/conformance suites in the eval-security track. Stop describing eval-security as independent; mark it a downstream sink that depends on Sec/K/P/X/W.",
+      "anchor": "\u00a72.5"
+    },
+    {
+      "severity": "important",
+      "finding": "The single most load-bearing cross-track contract \u2014 the per-capability output JSON Schemas behind the strict-schema gate \u2014 is missing from the \u00a72.5 shared-contracts freeze list. These schemas are crossed by P->W (workflows consume normalized output), P->E (provider conformance evals), and feed knowledge (provider output -> KnowledgeMutationPlan). If they are not frozen-before-fork, providers, workflows, knowledge, and eval tracks cannot fork without churn.",
+      "evidence": "Freeze list ARCHITECTURE_DRAFT.md \u00a72.5 line 116 (no schema entry) vs \u00a73 line 130 ('JSON Schemas used for provider/runtime outputs') and DATA_MODEL.md AgentJob.outputSchemaId line 65",
+      "proposed_fix": "Add the capability output schema registry to the freeze list, plus the supporting Capability enum and ProviderRoute type, and state that schema IDs are stable/versioned at freeze time.",
+      "anchor": "\u00a72.5"
+    },
+    {
+      "severity": "important",
+      "finding": "The shared-contracts freeze list names only DATA models; the SERVICE PORT interfaces that DAG edges cross are not frozen. Edges K->W, P->W, X->W, and A->U require frozen interfaces for KnowledgeWriter, ToolGateway, ConnectorGateway, ModelProviderPort, the GBrain adapter, and the tRPC router/event-stream contract. Worker-track workflows import these ports from the knowledge and providers-integrations tracks; without frozen ports the tracks cannot be developed in parallel against stable boundaries.",
+      "evidence": "Freeze list ARCHITECTURE_DRAFT.md \u00a72.5 line 116 (data models only) vs cross-track edges lines 92-95 and responsibilities \u00a76/\u00a77/\u00a78/\u00a710",
+      "proposed_fix": "Add the service port interfaces (KnowledgeWriter, ToolGateway, ConnectorGateway, ModelProviderPort, GBrain adapter, tRPC router + event names) to the freeze-before-fork inventory, distinct from the data contracts.",
+      "anchor": "\u00a72.5"
+    },
+    {
+      "severity": "important",
+      "finding": "Storage fan-in is hidden in the DAG and its decoupling contract is absent from the freeze list. \u00a74 operational storage persists audit, approvals, outboxes, connector cursors, provider conformance, GCL projections, and read models \u2014 meaning knowledge (K), providers (P), and integrations (X) all depend on storage. But the DAG shows storage (S) with only the edge S->W, hiding K->S/P->S/X->S. DATA_MODEL resolves this via 'Domain services depend on repository interfaces, not a concrete DB driver,' yet those repository interfaces are not in the \u00a72.5 freeze list and \u00a74 storage is placed in the worker track.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a72.5 DAG lines 88 (only S-->W) vs \u00a74 line 144 and DATA_MODEL.md Operational Store Domains lines 26-34 + Migration rules lines 110-112",
+      "proposed_fix": "Add repository interfaces to the frozen-contracts layer (so K/P/X persistence edges resolve to a frozen interface, preserving track independence) and clarify that storage IMPLEMENTATION is a worker-track artifact while its interfaces freeze with \u00a73 contracts. Optionally annotate the suppressed K/P/X -> repo-interface edges.",
+      "anchor": "\u00a72.5"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "Arrow-direction semantics are inconsistent within \u00a72.5. The prose import-rule uses dependency-direction arrows (apps -> services -> contracts), but the diagram uses prerequisite/freeze-order arrows (contracts C -> everything; W -> A -> U). Under a literal dependency reading the diagram would assert 'contracts depend on storage/adapters,' contradicting the very next clause ('domain/contracts import no app or adapter code'). Additionally the prose chain's last hop 'contracts/domain -> infrastructure adapters' is backwards \u2014 adapters implement and depend on contracts.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a72.5 line 76 (import rule) vs diagram lines 79-96 (W-->A, A-->U)",
+      "proposed_fix": "Add a one-line caption: 'Arrows show build-order / prerequisite direction (reverse of import direction).' Correct the import-rule chain to '... contracts/domain; infrastructure adapters -> contracts/domain (adapters implement contracts).'",
+      "anchor": "\u00a72.5"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "ADR-006 and \u00a72.5 disagree on the track list. ADR-006 names four groupings \u2014 worker/storage/workflows, desktop UI/API, integrations/providers, eval/security \u2014 with NO standalone 'knowledge' track and with App API grouped into desktop. \u00a72.5 names six tracks including a standalone 'knowledge' track and folds the tRPC API into the worker track. This changes ownership and fork boundaries (who owns knowledge; whether App API forks with worker or desktop).",
+      "evidence": "DECISIONS.md ADR-006 line 101 vs ARCHITECTURE_DRAFT.md \u00a72.5 seam list lines 107-112",
+      "proposed_fix": "Make the ADR-006 and \u00a72.5 track lists identical. Decide explicitly: knowledge as its own track (recommended given KnowledgeWriter/GBrain/GCL coherence) and App API frozen as a contract (router types) so desktop and worker can both code against it.",
+      "anchor": "\u00a72.5"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "The freeze inventory is not reconciled with Appendix A and DATA_MODEL. \u00a72.5 lists ToolPolicy, ProposedAction, and WorkflowRunRef, which are not standalone Appendix A rows (they appear only as fields), while omitting cross-seam contracts that DATA_MODEL defines: EgressPolicy (crosses Sec->K/P/X), VisibilityLevel/defaultVisibility (crosses Sec->K and GCL projections), ContextRef, ProviderRoute, Capability, WriteReceipt, and SourceRef. EgressPolicy and VisibilityLevel in particular are crossed by the policy fan-out edges and must be frozen.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a72.5 freeze list line 116 + Appendix A lines 442-451 vs DATA_MODEL.md Core Contract Sketches lines 39-95",
+      "proposed_fix": "Promote EgressPolicy, VisibilityLevel, ContextRef, ProviderRoute, Capability, WriteReceipt, and SourceRef to named freeze-before-fork rows (or fields of frozen models), and ensure every contract named in \u00a72.5 has a corresponding Appendix A / DATA_MODEL definition so the freeze list and model inventory are 1:1.",
+      "anchor": "\u00a72.5"
+    }
+  ]
+}

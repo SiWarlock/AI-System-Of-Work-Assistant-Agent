@@ -1,0 +1,129 @@
+# ─────────────────────────────────────────────────────────────
+# System of Work Assistant — TypeScript monorepo (pnpm + Turbo),
+# Electron desktop + Node/TS control-plane worker, Temporal,
+# GBrain (PGLite), Drizzle, Vitest. macOS-first.
+# ─────────────────────────────────────────────────────────────
+
+# ── Dependencies ──────────────────────────────────────────────
+node_modules/
+.pnpm/
+.pnpm-store/
+.pnpm-debug.log*
+# (commit pnpm-lock.yaml, package.json, turbo.json, tsconfig*.json)
+
+# ── Build / cache outputs ─────────────────────────────────────
+dist/
+build/
+out/
+lib/
+.turbo/
+.vite/
+*.tsbuildinfo
+.cache/
+.eslintcache
+.stylelintcache
+
+# ── Electron (apps/desktop) build + packaged artifacts ────────
+dist-electron/
+release/
+apps/desktop/out/
+apps/desktop/release/
+*.app/
+*.dmg
+*.pkg
+*.zip
+*.AppImage
+
+# ── Tests / coverage ──────────────────────────────────────────
+coverage/
+*.lcov
+.vitest/
+.nyc_output/
+test-results/
+playwright-report/
+.playwright/
+
+# ── Secrets & environment (Keychain is the real secret store;
+#    .env is dev-only/non-secret config — ignored to be safe) ──
+.env
+.env.*
+!.env.example
+!.env.sample
+*.local
+.envrc
+# never commit raw key/credential material
+*.pem
+*.key
+secrets/
+
+# ── Local runtime state (must NOT be committed) ───────────────
+# Operational store (SQLite local mode) + WAL/SHM sidecars
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+# Temporal local dev server persistence
+.temporal/
+temporal*.db*
+# GBrain per-workspace brains (PGLite) + indexes
+.pglite/
+*.pglite
+.gbrain/
+brains/
+# generic local data / scratch
+data/
+.data/
+tmp/
+.tmp/
+
+# ── Workspace knowledge (SEPARATE Git repos / user data) ──────
+# Each workspace Markdown vault is its own repo — not part of
+# this code repo. Ignore any local vaults checked out in-tree.
+vaults/
+*.vault/
+# Obsidian per-machine workspace state (if a vault is opened here)
+.obsidian/workspace*.json
+.obsidian/cache
+.obsidian/.trash/
+
+# ── Scaffolding tool checkout (embedded git repo) ─────────────
+# `scaffold/` is the agent-team scaffolding checkout used by
+# /scaffold-generate, with its own .git. Keep it out of this repo.
+# (.scaffolding/manifest.json records its path for upgrades.)
+scaffold/
+
+# ── Logs / temp ───────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.pid
+*.seed
+*.tgz
+
+# ── Editors / IDE ─────────────────────────────────────────────
+.idea/
+*.swp
+*.swo
+*~
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+
+# ── macOS ─────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# ── Kept on purpose (do NOT add ignores for these) ────────────
+# CLAUDE.md · ARCHITECTURE.md · IMPLEMENTATION_PLAN.md
+# .claude/ (commands, agents, settings.json) · scripts/
+# docs/ (incl. planning/, archive/, briefs|sessions|runbooks .gitkeep)
+# .scaffolding/manifest.json + README.md · .gitleaksignore

@@ -1,0 +1,618 @@
+{
+  "rows": [
+    {
+      "prd_item": "WS-1: support >=3 logical workspaces (Employer Work, Personal Business, Personal Life)",
+      "prd_anchor": "\u00a79.1 WS-1",
+      "covered_by": "REQ-F-001",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "WS-2: assign workspace before durable processing",
+      "prd_anchor": "\u00a79.1 WS-2",
+      "covered_by": "REQ-F-002",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "WS-3: maintain global coordination metadata (availability, deadlines, cross-workspace priorities, identity matching)",
+      "prd_anchor": "\u00a79.1 WS-3",
+      "covered_by": "REQ-F-001, REQ-F-009",
+      "status": "covered",
+      "note": "identity-matching/identity-map not called out in any REQ acceptance signal; otherwise covered by GCL boundary + scheduling reqs"
+    },
+    {
+      "prd_item": "WS-4: prevent raw Employer Work content from appearing in other workspaces by default",
+      "prd_anchor": "\u00a79.1 WS-4",
+      "covered_by": "REQ-F-001, REQ-F-005, REQ-F-008",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "WS-5: support user-approved explicit cross-workspace links (Level-3)",
+      "prd_anchor": "\u00a79.1 WS-5",
+      "covered_by": "gap",
+      "status": "gap",
+      "note": "REQ-F-005 covers cross-workspace READS through GCL, but no REQ covers creating/approving explicit cross-workspace links (\u00a76.3 Level 3). P1."
+    },
+    {
+      "prd_item": "WS-6: open-source users choose Simple/Professional/Founder/Advanced workspace presets",
+      "prd_anchor": "\u00a79.1 WS-6",
+      "covered_by": "gap",
+      "status": "gap",
+      "note": "Phase 10 mentions 'sample workspace presets' but no REQ-* covers user-selectable workspace presets. P1."
+    },
+    {
+      "prd_item": "WS-7: pass adversarial leakage suite (0 raw Employer Work in other-workspace outputs)",
+      "prd_anchor": "\u00a79.1 WS-7",
+      "covered_by": "REQ-F-008, REQ-T-001",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "WS-8: workspace-scoped GBrain retrieval; GCL single Visibility Gate; no direct cross-brain queries",
+      "prd_anchor": "\u00a79.1 WS-8",
+      "covered_by": "REQ-F-005, REQ-UX-002",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "KN-1: GBrain required in V1 as the knowledge engine",
+      "prd_anchor": "\u00a79.2 KN-1",
+      "covered_by": "REQ-F-005, REQ-D-001",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "KN-2: GBrain provides search, think/synthesis, graph, timelines, schema, health, MCP, Minions, dream-cycle",
+      "prd_anchor": "\u00a79.2 KN-2",
+      "covered_by": "gap",
+      "status": "gap",
+      "note": "REQ-F-005/REQ-D-001 establish GBrain presence + derived/rebuildable, but NO REQ enumerates the required knowledge-engine capability surface (think/graph/timeline/schema/health/MCP/Minions/dream). P0."
+    },
+    {
+      "prd_item": "KN-3: semantic knowledge in Obsidian-compatible Markdown Git repos",
+      "prd_anchor": "\u00a79.2 KN-3",
+      "covered_by": "REQ-F-003",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "KN-4: KnowledgeWriter is the only direct writer of durable semantic Markdown",
+      "prd_anchor": "\u00a79.2 KN-4",
+      "covered_by": "REQ-F-006",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "KN-5: proposed semantic changes submit a KnowledgeMutationPlan, never write directly",
+      "prd_anchor": "\u00a79.2 KN-5",
+      "covered_by": "REQ-F-006, REQ-S-001, REQ-S-006",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "KN-6: every approved semantic change auditable and linked to source evidence",
+      "prd_anchor": "\u00a79.2 KN-6",
+      "covered_by": "REQ-F-006, REQ-D-002",
+      "status": "covered",
+      "note": "audit covered by REQ-D-002; source-evidence linkage implied by KnowledgeMutationPlan.sourceRefs but not an explicit REQ acceptance signal"
+    },
+    {
+      "prd_item": "KN-7: human-owned note sections shall not be overwritten by the assistant",
+      "prd_anchor": "\u00a79.2 KN-7",
+      "covered_by": "gap",
+      "status": "gap",
+      "note": "\u00a720.1 has a 'Human-section preservation' acceptance test but NO REQ-* covers the human-owned-section non-overwrite guarantee. P0."
+    },
+    {
+      "prd_item": "KN-8: assistant-generated sections use explicit start/end markers and stable IDs",
+      "prd_anchor": "\u00a79.2 KN-8",
+      "covered_by": "gap",
+      "status": "gap",
+      "note": "No REQ-* covers assistant-section markers/stable IDs (prerequisite for KN-7 preservation). P1."
+    },
+    {
+      "prd_item": "KN-9: GBrain performs NO direct Markdown writes (native write-through disabled/intercepted)",
+      "prd_anchor": "\u00a79.2 KN-9",
+      "covered_by": "REQ-F-006",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "KN-10: GBrain retrieval returns >=1 relevant item for 90%+ of benchmark query set",
+      "prd_anchor": "\u00a79.2 KN-10",
+      "covered_by": "REQ-T-001",
+      "status": "covered",
+      "note": "measured via EVAL corpora; no standalone functional retrieval-relevance REQ but measurement is covered"
+    },
+    {
+      "prd_item": "RT-1: AgentRuntimePort with Hermes and Claude Agent SDK adapters in V1",
+      "prd_anchor": "\u00a79.3 RT-1",
+      "covered_by": "REQ-I-002, REQ-I-003",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "RT-2: agent jobs specify workspace, capability, context, tool policy, max runtime, max cost, output schema, idempotency key",
+      "prd_anchor": "\u00a79.3 RT-2",
+      "covered_by": "REQ-S-001, REQ-S-006, REQ-NF-001",
+      "status": "covered",
+      "note": "tool policy/schema/idempotency covered; max runtime + max cost fields lack a covering REQ \u2014 see COST-1 gap"
+    },
+    {
+      "prd_item": "RT-3: agent results validated against schema before side effects",
+      "prd_anchor": "\u00a79.3 RT-3",
+      "covered_by": "REQ-S-006",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "RT-4: Temporal orchestrates cross-system workflows and approval waits",
+      "prd_anchor": "\u00a79.3 RT-4",
+      "covered_by": "REQ-NF-006, REQ-F-012",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "RT-5: GBrain Minions for GBrain-internal jobs only unless explicitly bridged",
+      "prd_anchor": "\u00a79.3 RT-5",
+      "covered_by": "REQ-F-006, REQ-F-014",
+      "status": "covered",
+      "note": "Minions-internal restriction implied by one-writer (REQ-F-006); no dedicated REQ naming Minion job scope"
+    },
+    {
+      "prd_item": "RT-6: Hermes cron/Kanban supported but not replacing Temporal as workflow source of truth",
+      "prd_anchor": "\u00a79.3 RT-6",
+      "covered_by": "REQ-F-014",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "RT-7: Hermes autonomous schedulers allowed; all external writes via Tool Gateway, all semantic writes via KnowledgeWriter",
+      "prd_anchor": "\u00a79.3 RT-7",
+      "covered_by": "REQ-F-014",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "MTG-1: ingest Granola meetings; correlate to calendar/workspace/project/attendees/history",
+      "prd_anchor": "\u00a79.4 MTG-1",
+      "covered_by": "REQ-F-007",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "MTG-2: create/update one canonical meeting note per meeting",
+      "prd_anchor": "\u00a79.4 MTG-2",
+      "covered_by": "REQ-F-007",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "MTG-3: extract decisions, commitments, risks, open questions, follow-ups, project state changes",
+      "prd_anchor": "\u00a79.4 MTG-3",
+      "covered_by": "REQ-F-007",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "MTG-4: never infer task owners or due dates; mark TBD or route for clarification",
+      "prd_anchor": "\u00a79.4 MTG-4",
+      "covered_by": "gap",
+      "status": "gap",
+      "note": "No REQ-* covers the no-inference / mark-TBD data-integrity rule for unstated owners/due dates. P0."
+    },
+    {
+      "prd_item": "MTG-5: update project/person/decision/daily notes through KnowledgeWriter",
+      "prd_anchor": "\u00a79.4 MTG-5",
+      "covered_by": "REQ-F-007, REQ-F-006",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "MTG-6: route task proposals to Todoist/Linear/Asana per workspace/project policy",
+      "prd_anchor": "\u00a79.4 MTG-6",
+      "covered_by": "REQ-F-007",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "MTG-7: propose calendar follow-ups; apply low-risk writes automatically only when policy allows",
+      "prd_anchor": "\u00a79.4 MTG-7",
+      "covered_by": "REQ-F-009",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "PRJ-1: all projects share a common project model across workspaces",
+      "prd_anchor": "\u00a79.5 PRJ-1",
+      "covered_by": "REQ-F-011",
+      "status": "covered",
+      "note": "shared project model assumed via project registry (Phase 1) + REQ-F-011; no REQ explicitly mandates a single common model"
+    },
+    {
+      "prd_item": "PRJ-2: projects have stable IDs, workspace IDs, aliases, status, outcome, owner, task/calendar/source mappings, progress providers",
+      "prd_anchor": "\u00a79.5 PRJ-2",
+      "covered_by": "REQ-F-011",
+      "status": "covered",
+      "note": "object shape lives in DATA_MODEL \u00a710.2; no dedicated REQ-* enumerates the Project field set"
+    },
+    {
+      "prd_item": "PRJ-3: technical projects support IMPLEMENTATION_PLAN.md progress providers",
+      "prd_anchor": "\u00a79.5 PRJ-3",
+      "covered_by": "REQ-F-011",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "PRJ-4: deterministic progress from providers, not invented model percentages",
+      "prd_anchor": "\u00a79.5 PRJ-4",
+      "covered_by": "REQ-F-011",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "TASK-1: personal-life/personal-business tasks route to Todoist by default",
+      "prd_anchor": "\u00a79.5 TASK-1",
+      "covered_by": "REQ-F-007",
+      "status": "covered",
+      "note": "task routing policy not a dedicated REQ; task creation/routing covered by meeting-closeout REQ-F-007"
+    },
+    {
+      "prd_item": "TASK-2: technical work tasks route to Linear when configured",
+      "prd_anchor": "\u00a79.5 TASK-2",
+      "covered_by": "REQ-F-007",
+      "status": "covered",
+      "note": "as above"
+    },
+    {
+      "prd_item": "TASK-3: operations/general work tasks route to Asana when configured",
+      "prd_anchor": "\u00a79.5 TASK-3",
+      "covered_by": "REQ-F-007",
+      "status": "covered",
+      "note": "as above"
+    },
+    {
+      "prd_item": "TASK-4: tasks assigned to others/shared systems require approval unless configured otherwise",
+      "prd_anchor": "\u00a79.5 TASK-4",
+      "covered_by": "REQ-F-012",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "ING-1: canonical ingestion event (source ID, workspace, content hash, origin, type, tags, sensitivity, routing hints)",
+      "prd_anchor": "\u00a79.6 ING-1",
+      "covered_by": "REQ-F-010",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "ING-2: support Granola/Telegram/file/URL/YouTube/podcast/PDF/OCR/web/GitHub/Drive sources",
+      "prd_anchor": "\u00a79.6 ING-2",
+      "covered_by": "REQ-F-010",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "ING-3: port YouTube/podcast extraction from Obsidian Second Brain into source adapters",
+      "prd_anchor": "\u00a79.6 ING-3",
+      "covered_by": "REQ-F-010",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "ING-4: low-confidence routing stays in ingestion inbox",
+      "prd_anchor": "\u00a79.6 ING-4",
+      "covered_by": "REQ-F-010",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "ING-5: imported content treated as untrusted; cannot instruct agents/tools",
+      "prd_anchor": "\u00a79.6 ING-5",
+      "covered_by": "REQ-S-001",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "ING-6: deduplicate by content hash, external ID, source URI, workflow idempotency key",
+      "prd_anchor": "\u00a79.6 ING-6",
+      "covered_by": "REQ-F-010, REQ-NF-001",
+      "status": "covered",
+      "note": "idempotency via REQ-NF-001; content-hash/external-ID dedup implied by REQ-F-010 SourceEnvelope, not an explicit REQ field"
+    },
+    {
+      "prd_item": "ING-7: untrusted-content agents run tool-stripped, rejected at job admission if declaring mutating tools",
+      "prd_anchor": "\u00a79.6 ING-7",
+      "covered_by": "REQ-S-001",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "CAL-1: read all configured calendars for availability and conflict detection",
+      "prd_anchor": "\u00a79.7 CAL-1",
+      "covered_by": "REQ-F-009",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "CAL-2: private focus blocks/non-shared reminders may be created automatically when policy allows",
+      "prd_anchor": "\u00a79.7 CAL-2",
+      "covered_by": "REQ-F-009",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "CAL-3: inviting others/changing/cancelling shared meetings requires approval",
+      "prd_anchor": "\u00a79.7 CAL-3",
+      "covered_by": "REQ-F-012",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "NLM-1: NotebookLM API spike (V1.1 candidate, not V1 deliverable)",
+      "prd_anchor": "\u00a79.7 NLM-1",
+      "covered_by": "REQ-I-004, REQ-DEF-002",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "NLM-2: V1 ships Drive-backed managed-docs path",
+      "prd_anchor": "\u00a79.7 NLM-2",
+      "covered_by": "REQ-I-004",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "BRF-1: generate global and workspace-specific daily/weekly/monthly briefs",
+      "prd_anchor": "\u00a79.7 BRF-1",
+      "covered_by": "REQ-F-008",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "BRF-2: briefs saved to Markdown and displayed in Mac dashboard",
+      "prd_anchor": "\u00a79.7 BRF-2",
+      "covered_by": "REQ-F-008",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "BRF-3: briefs cite/link supporting notes/tasks/events/sources",
+      "prd_anchor": "\u00a79.7 BRF-3",
+      "covered_by": "REQ-F-008",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "LIFE-1: single active instance via exclusive lease; second launch read-only/refuses; stale lock recoverable",
+      "prd_anchor": "\u00a79.8 LIFE-1",
+      "covered_by": "REQ-NF-006",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "LIFE-2: durable Temporal schedules with catch-up; missed firings run once-collapsed within max-staleness window",
+      "prd_anchor": "\u00a79.8 LIFE-2",
+      "covered_by": "REQ-NF-006",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "LIFE-3: in-flight workflows resume with exactly-once side effects via write envelope",
+      "prd_anchor": "\u00a79.8 LIFE-3",
+      "covered_by": "REQ-NF-006, REQ-NF-001",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "LIFE-4: connector-unreachable queue/retry inbound + outbound write outbox; surfaced in System Health",
+      "prd_anchor": "\u00a79.8 LIFE-4",
+      "covered_by": "REQ-NF-006, REQ-I-005",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "LIFE-5: clock-jump correctness via persisted last-run bookkeeping (monotonic)",
+      "prd_anchor": "\u00a79.8 LIFE-5",
+      "covered_by": "REQ-NF-006",
+      "status": "covered",
+      "note": "clock-jump/NTP-correction specifics not called out in REQ acceptance signal; subsumed under restart/sleep durability. P1."
+    },
+    {
+      "prd_item": "LIFE-6: wake hooks subscribe to OS sleep/wake/power + network events to trigger catch-up",
+      "prd_anchor": "\u00a79.8 LIFE-6",
+      "covered_by": "REQ-NF-006",
+      "status": "covered",
+      "note": "OS power/network-event subscription not explicitly named in a REQ. P1."
+    },
+    {
+      "prd_item": "LIFE-7: record/display per scheduled workflow last successful run and next scheduled run",
+      "prd_anchor": "\u00a79.8 LIFE-7",
+      "covered_by": "REQ-UX-001",
+      "status": "covered",
+      "note": "covered by System Health surface (REQ-UX-001); last/next-run fields not enumerated in a REQ. P1."
+    },
+    {
+      "prd_item": "OBS-1: System Health displays connector status, GBrain health, workflow run status, queue depth, failed write-throughs, sync lag, agent cost, approval backlog",
+      "prd_anchor": "\u00a79.9 OBS-1",
+      "covered_by": "REQ-UX-001, REQ-NF-001",
+      "status": "covered",
+      "note": "System Health surface covered; the specific minimum field set is not enumerated in any REQ acceptance signal"
+    },
+    {
+      "prd_item": "OBS-2: each failure class surfaces a distinct, linked, persistent System Health item",
+      "prd_anchor": "\u00a79.9 OBS-2",
+      "covered_by": "REQ-UX-001",
+      "status": "covered",
+      "note": "distinct-per-failure-class surfacing + persistence-until-resolved not explicitly required by any REQ; only the surface exists"
+    },
+    {
+      "prd_item": "RET-1: configurable retention policy with documented default for assistant-held raw capture (raw audio deleted after synthesis; 30-day prune default)",
+      "prd_anchor": "\u00a79.10 RET-1",
+      "covered_by": "gap",
+      "status": "gap",
+      "note": "REQ-F-013 covers only RET-2 user-initiated deletion. NO REQ-* covers the default/configurable retention policy and auto-prune of raw payloads. Named in \u00a720.2 DoD. P0."
+    },
+    {
+      "prd_item": "RET-2: user-initiated cross-store deletion purges Markdown/GBrain/event store + tombstones audit",
+      "prd_anchor": "\u00a79.10 RET-2",
+      "covered_by": "REQ-F-013",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "RET-3: automated pruning never deletes human-owned sections or derived semantic notes",
+      "prd_anchor": "\u00a79.10 RET-3",
+      "covered_by": "gap",
+      "status": "gap",
+      "note": "No REQ-* covers retention-pruning safety constraints (no deletion of human-owned/derived notes). P1."
+    },
+    {
+      "prd_item": "COST-1: every agent job enforces maxRuntimeSeconds and maxCostUsd; exceed cancels, records, surfaces, no partial side effect",
+      "prd_anchor": "\u00a79.11 COST-1",
+      "covered_by": "gap",
+      "status": "gap",
+      "note": "NO REQ-* covers per-job runtime/cost-cap enforcement. REQ-NF-001 lists generic hardening but not budget caps. Named in \u00a75.4 metric, \u00a720.1 Budget-cap test, \u00a720.2 DoD. P0."
+    },
+    {
+      "prd_item": "COST-2: Agent Runtime Broker applies a configurable DEFAULT cost cap to LLM jobs lacking one",
+      "prd_anchor": "\u00a79.11 COST-2",
+      "covered_by": "gap",
+      "status": "gap",
+      "note": "No REQ-* covers the default-cap-for-uncapped-LLM-jobs behavior. P1."
+    },
+    {
+      "prd_item": "EVAL-1: versioned evaluation set + repeatable harness computing \u00a75.4 metrics (meeting-closeout, retrieval, leakage corpora)",
+      "prd_anchor": "\u00a79.12 EVAL-1",
+      "covered_by": "REQ-T-001",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "Third-Party Egress Policy: per-workspace egressPolicy; Employer Work no raw egress until explicit ack; enforced at Tool Gateway/Broker; shown in System Health",
+      "prd_anchor": "\u00a716.5",
+      "covered_by": "REQ-S-002",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "DoD: user can run system locally/self-hosted with documented setup",
+      "prd_anchor": "\u00a720.2",
+      "covered_by": "REQ-NF-005",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "DoD: Mac app shows global and workspace-specific dashboard data",
+      "prd_anchor": "\u00a720.2",
+      "covered_by": "REQ-UX-001, REQ-UX-002",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "DoD: Claude SDK reference runtime carries critical path; Hermes passes same bounded-job conformance (required)",
+      "prd_anchor": "\u00a720.2",
+      "covered_by": "REQ-I-002, REQ-I-003",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "DoD: GBrain required, configured, providing search/think/graph/health (read-only sufficient)",
+      "prd_anchor": "\u00a720.2",
+      "covered_by": "REQ-F-005, REQ-D-001",
+      "status": "covered",
+      "note": "see KN-2 gap re: capability-surface enumeration"
+    },
+    {
+      "prd_item": "DoD: Markdown repos open in Obsidian and remain valid after system writes",
+      "prd_anchor": "\u00a720.2",
+      "covered_by": "REQ-F-003, REQ-UX-003",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "DoD: Granola meeting closeout works end-to-end (Employer Work branch requires \u00a716.5 egress ack)",
+      "prd_anchor": "\u00a720.2",
+      "covered_by": "REQ-F-007, REQ-S-002",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "DoD: Calendar/Todoist/Linear/Asana writes governed by policy and idempotency",
+      "prd_anchor": "\u00a720.2",
+      "covered_by": "REQ-F-007, REQ-F-009, REQ-NF-001",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "DoD: daily brief and weekly review generated and saved",
+      "prd_anchor": "\u00a720.2",
+      "covered_by": "REQ-F-008",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "DoD: approval inbox works from Mac and Telegram",
+      "prd_anchor": "\u00a720.2",
+      "covered_by": "REQ-F-012, REQ-UX-004",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "DoD: at least one YouTube/podcast source adapter operational or explicitly deferred with a ticket",
+      "prd_anchor": "\u00a720.2",
+      "covered_by": "REQ-F-010",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "DoD: after sleep/restart, missed schedules catch up once; in-flight workflows resume; single active instance",
+      "prd_anchor": "\u00a720.2",
+      "covered_by": "REQ-NF-006",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "DoD: user-initiated cross-store deletion (RET-2) and default retention policy (RET-1) work",
+      "prd_anchor": "\u00a720.2",
+      "covered_by": "REQ-F-013",
+      "status": "gap",
+      "note": "RET-2 covered by REQ-F-013; the RET-1 default-retention-policy half of this DoD bullet has NO covering REQ (see RET-1 gap). P0."
+    },
+    {
+      "prd_item": "DoD: every agent job enforces its runtime/cost caps (COST-1)",
+      "prd_anchor": "\u00a720.2",
+      "covered_by": "gap",
+      "status": "gap",
+      "note": "Same as COST-1 gap \u2014 no REQ-* covers runtime/cost-cap enforcement. P0."
+    },
+    {
+      "prd_item": "DoD: EVAL-1 evaluation set exists and computes \u00a75.4 statistical metrics",
+      "prd_anchor": "\u00a720.2",
+      "covered_by": "REQ-T-001",
+      "status": "covered",
+      "note": ""
+    },
+    {
+      "prd_item": "DoD: untrusted-content agents tool-stripped + rejected at admission (ING-7); cross-workspace reads via Visibility Gate (WS-8)",
+      "prd_anchor": "\u00a720.2",
+      "covered_by": "REQ-S-001, REQ-F-005",
+      "status": "covered",
+      "note": ""
+    }
+  ],
+  "gaps": [
+    "WS-5 (\u00a79.1, P1): user-approved explicit cross-workspace links (\u00a76.3 Level 3) \u2014 no covering REQ. REQ-F-005 covers cross-workspace READS via GCL but not the creation/approval of explicit links.",
+    "WS-6 (\u00a79.1, P1): user-selectable workspace presets (Simple/Professional/Founder/Advanced) \u2014 no covering REQ. Phase 10 mentions 'sample workspace presets' but no REQ-* binds the feature.",
+    "KN-2 (\u00a79.2, P0): GBrain knowledge-engine capability surface (search, think/synthesis, graph, timelines, schema, health, MCP, Minions, dream) \u2014 no REQ enumerates the required capabilities. REQ-F-005/REQ-D-001 only establish GBrain presence + derived/rebuildable.",
+    "KN-7 (\u00a79.2, P0): human-owned note sections must not be overwritten \u2014 no covering REQ, despite a \u00a720.1 'Human-section preservation' acceptance test that has nothing to trace to.",
+    "KN-8 (\u00a79.2, P1): assistant-generated sections use explicit start/end markers + stable IDs \u2014 no covering REQ (prerequisite mechanism for KN-7).",
+    "MTG-4 (\u00a79.4, P0): never infer task owners/due dates when unstated \u2014 mark TBD or route for clarification \u2014 no covering REQ. A meeting-closeout data-integrity rule with no traceable requirement.",
+    "RET-1 (\u00a79.10, P0): configurable retention policy with documented default for assistant-held raw capture (raw audio deleted after synthesis; 30-day prune default) \u2014 no covering REQ. REQ-F-013 covers only RET-2 deletion; the RET-1 half of the \u00a720.2 DoD bullet is unbacked.",
+    "RET-3 (\u00a79.10, P1): automated retention pruning must never delete human-owned sections or derived semantic notes \u2014 no covering REQ.",
+    "COST-1 (\u00a79.11, P0): per-job maxRuntimeSeconds/maxCostUsd enforcement (cancel, record, surface, no partial side effect) \u2014 no covering REQ. This is a \u00a75.4 success metric, a \u00a720.1 acceptance test, AND a \u00a720.2 DoD bullet, yet REQUIREMENTS.md has no budget-enforcement requirement (REQ-NF-001 lists only generic hardening).",
+    "COST-2 (\u00a79.11, P1): Agent Runtime Broker applies a configurable DEFAULT cost cap to LLM jobs lacking one \u2014 no covering REQ."
+  ]
+}

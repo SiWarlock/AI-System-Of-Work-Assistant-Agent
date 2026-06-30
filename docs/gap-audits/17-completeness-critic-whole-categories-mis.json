@@ -1,0 +1,83 @@
+{
+  "dimension": "Completeness critic \u2014 whole categories missing from the draft + planning set",
+  "summary": "Several production-grade whole-categories are absent or only named-as-data, not designed: backup/restore & disaster recovery (critical), the identity map's population/resolution mechanism, first-run onboarding + a Settings surface, GBrain cold-start bootstrap indexing, timezone handling for calendar coordination, application log/telemetry storage & retention, renderer error/degraded UX, and the Obsidian-Sync/out-of-band-writer interaction; a11y/i18n and a cost ledger are silently omitted rather than explicitly scoped.",
+  "findings": [
+    {
+      "severity": "critical",
+      "finding": "No backup / restore / disaster-recovery strategy for operational truth. The operational DB holds event log, audit, approvals, outboxes, and connector cursors \u2014 these are operational TRUTH, not rebuildable (only read models are flagged rebuildable). Temporal's persistent SQLite (in-flight workflow history) is likewise local-only. If the Mac's disk dies, approvals/outboxes/audit/in-flight workflows are gone, with no recovery path defined. The per-workspace Markdown repos are repeatedly justified by 'Git backup' (DECISIONS.md:18) but NO git-remote/push policy, backup cadence, or restore procedure is specified anywhere. For a production-grade single-owner system that is the owner's entire system of work, this is a missing whole category.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a74 (operational store domains list \u2014 no backup); DATA_MODEL.md:13,26-34 (event log/audit/approvals/outboxes operational, only read models 'rebuildable'); DATA_MODEL.md:115 (Temporal/GBrain self-managed); DECISIONS.md:18 ('Git backup' rationale with no remote/push spec); PRD \u00a717 Reliability/Portability (no backup/restore NFR)",
+      "proposed_fix": "Add an ARCHITECTURE.md \u00a7Backup & Recovery: (1) require a configured git remote + push policy (or documented local-only acceptance) for each workspace repo and the Global/Coordination repo; (2) define a backup mechanism + cadence for the operational DB, Temporal persistence, and Keychain export guidance; (3) define a restore/rebuild runbook (operational DB from backup, GBrain re-index from Markdown, read models rebuild) and an acceptance test analogous to the EVAL/clean-install tests.",
+      "anchor": "\u00a74 Operational Storage / new \u00a7Backup & Recovery; \u00a713 Deployment & Install"
+    },
+    {
+      "severity": "important",
+      "finding": "The cross-workspace identity map is named as stored data in six places but has no design: nothing specifies HOW the same person or company in two workspaces is matched, who curates the linkage, how merges/splits/disambiguation work, or how identity resolution respects WS-4 isolation (matching 'Maya' in Employer Work to 'Maya' in Personal could itself be a leakage vector). WS-3 only says the system 'shall maintain ... identity matching' with no mechanism, no contract, and no workflow.",
+      "evidence": "PRD WS-3 (\u00a79.1, 'identity matching' \u2014 no mechanism); DOMAIN_MODEL.md:10,17 (Person workspace-scoped; 'GCL identity map stores sanitized cross-workspace links'); DATA_MODEL.md:10,34; ARCHITECTURE_DRAFT.md:210 (GCL 'Stores identity map' \u2014 storage only, no resolution logic); THREAT_MODEL.md:14",
+      "proposed_fix": "Add an Identity Resolution subsection under \u00a76 (Knowledge/GCL): define the identity-map contract (person/company canonical id, per-workspace aliases/external IDs, link provenance + visibility level), the population path (deterministic-first matching with human-approved links per WS-5, never auto-blended), and an explicit statement that identity linkage is itself gated by \u00a76.3 levels so it cannot become a leakage channel.",
+      "anchor": "\u00a76 Knowledge / GCL (Identity Resolution)"
+    },
+    {
+      "severity": "important",
+      "finding": "No first-run onboarding flow and no Settings surface. The 9 enumerated renderer surfaces (\u00a711) include no onboarding wizard and no Settings/Configuration screen, yet first run requires: creating the three workspaces, choosing repo paths, OAuth-connecting every connector, selecting providers and the per-workspace provider matrix, toggling the Employer-Work egress acknowledgment, and creating/locating GBrain brains. WS-6 presets and Phase-10 install hardening assume this exists but never specify the surface. The egress acknowledgment is said to live in 'workspace settings' (\u00a716.5) but no Settings surface is listed.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a711 (surfaces list \u2014 no Onboarding, no Settings); PRD \u00a78.1 (same 9 surfaces); PRD \u00a716.5 ('shown in System Health and workspace settings' \u2014 settings surface never enumerated); PRD WS-6, \u00a718.1 Phase 10 (presets/install hardening assume a setup flow)",
+      "proposed_fix": "Add Onboarding/Setup-Wizard and Settings to the \u00a711 surface inventory with their data flows (connector OAuth, repo-path picker via preload/main, provider-matrix + egress-policy editing, workspace creation, GBrain brain init), and tie the egress-acknowledgment toggle and provider matrix to the Settings surface.",
+      "anchor": "\u00a711 Electron Desktop UI"
+    },
+    {
+      "severity": "important",
+      "finding": "GBrain cold-start / initial-index bootstrapping is unspecified. The GBrain Round-Trip and parity spikes cover steady-state write-through and reconciliation, but nothing covers the FIRST index build over an existing (possibly large) Obsidian vault at install: indexing duration, progress UX, partial-failure/resume, and what the app shows while the brain is still warming. The still-open 'brain-per-workspace vs source' question (\u00a719.1) and brain-per-workspace decision directly bear on how N brains get bootstrapped on first run.",
+      "evidence": "PRD \u00a719 (GBrain Round Trip / Full Capability Bridge spikes \u2014 steady-state only); ARCHITECTURE_DRAFT.md \u00a76 (GBrain rules \u2014 re-index/parity but no initial bootstrap); PRD \u00a718.1 Phase 2 ('GBrain PGLite, GBrainAdapter' \u2014 no cold-start index step); \u00a719.1 still-open brain-vs-source question",
+      "proposed_fix": "Add a GBrain bootstrap subsection to \u00a76: initial full-index workflow per workspace brain (durable, resumable, progress-surfaced in System Health), behavior of dependent surfaces while indexing, and an acceptance bullet for first-run indexing of a seeded vault.",
+      "anchor": "\u00a76 Knowledge / GBrain"
+    },
+    {
+      "severity": "important",
+      "finding": "Timezone / calendar-time handling is an unaddressed whole category. LIFE-5 handles monotonic-clock correctness for SCHEDULE catch-up, but cross-calendar scheduling (CAL-1, P0) and brief 'intended-date' tagging have no timezone model: multiple calendars potentially in different zones, DST transitions, owner travel, and 'busy/free' comparison across workspaces all require explicit timezone normalization. Nothing in the PRD or artifacts names a timezone strategy.",
+      "evidence": "PRD LIFE-5 (clock-jump for schedules only); PRD CAL-1/\u00a711.2/\u00a76.4 (cross-calendar busy/free, P0 \u2014 no tz); PRD LIFE-2 ('tagged with the intended date' \u2014 no tz); grep of docs/planning: no timezone/DST/tz references anywhere",
+      "proposed_fix": "Add a Time & Timezone subsection (under \u00a79 Workflows or \u00a73 Domain): canonical UTC storage + per-calendar/zone normalization for availability and scheduling, DST-safe comparisons, and an explicit owner-home-timezone config; add a scheduling acceptance case crossing a DST boundary / differing calendar zones.",
+      "anchor": "\u00a73 Domain / \u00a79 Temporal Workflows (Time handling)"
+    },
+    {
+      "severity": "important",
+      "finding": "Application log/telemetry storage, rotation, and retention are undefined, and there is no explicit no-external-telemetry stance. Audit records and per-job AgentLogEntry are specified, but the operational LOGS of the control-plane worker and Electron main (crash logs, connector/provider debug logs) have no defined location, rotation, size cap, or retention. RET-1 covers raw capture but not logs. For a privacy-centric local app, the absence of an explicit 'no external telemetry/crash-reporting egress' decision is itself a gap.",
+      "evidence": "PRD \u00a716.3 (audit only); PRD AgentResult.logs (\u00a713.1, per-job); PRD RET-1 (raw capture retention, not logs); PRD \u00a79.9/\u00a717 Observability (System Health surfacing, not log persistence); grep: no log-rotation/telemetry references",
+      "proposed_fix": "Add a Logging & Telemetry subsection: log destinations + rotation/size caps + retention for worker and Electron main, redaction rules (no secrets/raw workspace content in logs), and an explicit decision that there is NO outbound telemetry/crash reporting (or, if any, that it is opt-in and egress-policy-gated).",
+      "anchor": "\u00a75 Policy/Security or \u00a79.9 Observability (Logging & Telemetry)"
+    },
+    {
+      "severity": "important",
+      "finding": "Renderer error / empty / degraded-mode UX is unspecified. \u00a711 lists surfaces and happy-path UX rules but never defines what the renderer shows when the worker/tRPC connection is lost, when the operational DB is in degraded mode (\u00a74 mentions degraded mode only on the worker side), during long operations (GBrain indexing, connector outage), or empty/first-run states. For a production desktop app this is a required whole category.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a711 (surfaces + UX rules, no error/empty/loading/degraded states); ARCHITECTURE_DRAFT.md \u00a74 ('app enters degraded mode, surfaces System Health' \u2014 worker-side only); \u00a710 (event stream/tRPC \u2014 no reconnect UX)",
+      "proposed_fix": "Add an Error & Degraded-State UX subsection to \u00a711: worker-disconnect/reconnect behavior, degraded-mode banner driven by System Health, loading/empty states for each surface, and how schema-rejection/outbox failures surface to the user (linking OBS-2 items).",
+      "anchor": "\u00a711 Electron Desktop UI"
+    },
+    {
+      "severity": "question-for-human",
+      "finding": "Interaction of out-of-band vault writers (Obsidian Sync / iCloud / git pull) with KnowledgeWriter's compare-revision precondition is unaddressed. KnowledgeWriter assumes the only concurrent writers are itself and the human editing in Obsidian; but a single owner commonly runs Obsidian Sync or iCloud or a git remote on the same vault, which writes the working tree out-of-band and can change on-disk revisions between read and write. Multi-machine is deferred to V1.2, but a single user with Obsidian Sync enabled is a realistic V1 reality the design does not take a stance on.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a76 KnowledgeWriter rules ('compare-revision preconditions'); PRD \u00a714.2 (compare-revision window assumes single fs writer); PRD \u00a718.3 V1.2 ('Multi-machine sync hardening'); grep: no Obsidian-Sync / iCloud / git-pull conflict handling in any doc",
+      "proposed_fix": "Owner decision required: is Obsidian Sync/iCloud/git-remote on the vault a SUPPORTED V1 configuration? If yes, the architecture must define how out-of-band working-tree changes are detected/reconciled with compare-revision (e.g., fs-watch + re-read on conflict). If no, state it as an explicit V1 constraint/non-goal.",
+      "anchor": "\u00a76 Knowledge / KnowledgeWriter; CONSTRAINTS"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "Accessibility (a11y) and internationalization (i18n) are silently absent \u2014 never mentioned in the PRD or any artifact. For a single technical owner they are reasonably descoped, but a production-grade architecture should state that explicitly rather than leave it as a silent omission, so /tasks-gen does not have to guess.",
+      "evidence": "grep of PRD + docs/planning: zero matches for accessibility/a11y/wcag/i18n/localization/screen reader",
+      "proposed_fix": "Add a one-line explicit V1 non-goal in ARCHITECTURE.md \u00a7Goals/Non-Goals: 'Accessibility-conformance (WCAG) and i18n/localization are out of scope for the single-owner V1; UI is English-only and not audited for a11y.' Keeps it a deliberate decision, not an accidental gap.",
+      "anchor": "\u00a71A Goals and Non-Goals"
+    },
+    {
+      "severity": "nice-to-have",
+      "finding": "No cost/usage accounting (ledger) surface. Per-job cost is recorded in audit and a single 'agent cost' appears in System Health, but there is no historical usage/spend ledger (per-workspace, per-provider, over time). Aggregate spend caps are explicitly V1.1, so this is not blocking, but a minimal usage view is implied by COST data already being persisted.",
+      "evidence": "PRD COST-1/COST-2 (\u00a79.11, per-job only); PRD \u00a79.9 OBS-1 ('agent cost' in System Health); DATA_MODEL.md:32 (provider state 'cost/runtime defaults'); \u00a718.3 (aggregate caps \u2192 V1.1)",
+      "proposed_fix": "Note in \u00a711/System Health that per-job cost records persist and a basic per-workspace/per-provider usage rollup view is available (read model), even though enforcement of aggregate caps is V1.1.",
+      "anchor": "\u00a711 / \u00a79.9 Observability"
+    },
+    {
+      "severity": "nice-to-have",
+      "finding": "Config-content versioning/migration and import/export are not addressed. Drizzle migrations cover DB schema, but evolution of config CONTENT (e.g., adding a capability to ProviderMatrix, changing EgressPolicy shape, new connector fields) and the ability to export/import workspace config for the 'open-source installable' goal are not specified.",
+      "evidence": "DATA_MODEL.md:108-116 (Migration rules cover DB schema only); DATA_MODEL.md:26 (Workspace config domain); PRD \u00a75.2/WS-6 (open-source installability, presets) \u2014 no config export/import or config-version field",
+      "proposed_fix": "Add a config schemaVersion + forward-migration note for workspace/provider/egress config, and an export/import path to support presets and reinstall, under \u00a73/\u00a74.",
+      "anchor": "\u00a73 Contracts / \u00a74 Operational Storage"
+    }
+  ]
+}

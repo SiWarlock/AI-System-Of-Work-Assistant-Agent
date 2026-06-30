@@ -1,0 +1,12 @@
+# .gitleaksignore — seeded by scaffold-generate (the project accretes real entries over time).
+#
+# TDD fixtures are false-positive-heavy by nature (fake keys in test data, recorded HTTP cassettes,
+# example configs). When secrets-guard blocks a commit on a FIXTURE value:
+#   1. Confirm it is genuinely fake/test-only (a real secret gets rotated, never ignored).
+#   2. Take the `Fingerprint:` line from the gitleaks finding output.
+#   3. Append it below, one fingerprint per line, with a trailing comment saying what it is.
+#   4. Re-run the commit — the hook re-scans and passes.
+# Never ignore by rule-id or path glob — fingerprints pin one specific finding, which is the point.
+#
+# Example (delete once real entries exist):
+# 0123456789abcdef0123456789abcdef01234567:tests/fixtures/stripe-cassette.json:generic-api-key:12  # recorded test cassette, fake key

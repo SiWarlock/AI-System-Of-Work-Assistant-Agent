@@ -1,0 +1,76 @@
+{
+  "dimension": "Lifecycle states & state machines",
+  "summary": "Partially covered: DOMAIN_MODEL.md carries six state machines (Source, Meeting Closeout, Knowledge Mutation, Proposed External Action, Agent Job, Approval), but they live only in the planning artifact (the ARCHITECTURE_DRAFT names \"state machines\" but pins none), several P0 lifecycles are missing entirely (cross-store deletion/tombstone saga, raw-source retention/pruning, GBrain quarantine/mode, instance-lease, schedule catch-up/coalesce), and the existing machines have load-bearing gaps and disjoint seams (Approval never connects to dispatch/applied; \"deferred\" treated as terminal; ING-7 admission-rejection not an explicit state; replay/pre-write-existence-match not modeled).",
+  "findings": [
+    {
+      "severity": "important",
+      "finding": "No cross-store deletion / tombstone state machine exists for the P0 user-initiated deletion workflow. RET-2 / REQ-F-013 require purging a source/meeting/project across four stores (Markdown via KnowledgeWriter, GBrain index/graph, control-plane event store) and tombstoning the audit trail \u2014 a multi-store saga with partial-failure modes (e.g., Markdown purged but GBrain delete failed \u2192 inconsistent/orphaned index). None of the six state machines model deletion, and DATA_MODEL's lifecycle rule states only the happy path ('Deleted source/meeting/project is purged/tombstoned across...').",
+      "evidence": "PRD \u00a79.10 RET-2 (lines 562-568) and REQ-F-013 (REQUIREMENTS.md line 21); DATA_MODEL.md Data Lifecycle Rules line 105; ARCHITECTURE_DRAFT.md \u00a79 line 272 lists 'Retention/deletion' as a workflow with no states; DOMAIN_MODEL.md State Machines (lines 36-67) has no deletion machine",
+      "proposed_fix": "Add a Deletion/Tombstone state machine to the final ARCHITECTURE.md \u00a7domain (e.g. requested -> markdown_purged -> gbrain_purged -> opstore_purged -> read_models_purged -> audit_tombstoned -> completed, with per-store *_purge_failed -> compensating/retry states) and specify the saga's idempotency + partial-failure surfacing in System Health (OBS-2).",
+      "anchor": "\u00a73 Shared Contracts and Domain / \u00a79 Workflows"
+    },
+    {
+      "severity": "important",
+      "finding": "The Approval state machine terminates at the human decision and is disjoint from the action it gates \u2014 it never connects to dispatch/'applied'. Approval SM is 'pending -> approved | edited | rejected | deferred | expired'; ProposedAction SM separately starts 'proposed -> approval_required | auto_allowed -> ... -> dispatched -> receipt_recorded'. The join (approved/edited Approval -> precondition_checked -> dispatched -> applied) is never drawn, so an 'applied' terminal and the edited-payload feedback (an edited approval changes the payload, hence payloadHash, idempotencyKey, and canonicalObjectKey) are unmodeled. The dimension's expected 'applied' approval state is absent.",
+      "evidence": "DOMAIN_MODEL.md Approval SM (lines 65-67) and Proposed External Action SM (lines 57-59); PRD line 1104 ('can be edited, approved, rejected, and audited'); DATA_MODEL.md ExternalWriteEnvelope payloadHash/idempotencyKey (lines 86-95)",
+      "proposed_fix": "Wire the Approval SM to the ProposedAction/ExternalWriteEnvelope SM: add transitions approved|edited -> (dispatch path) and an 'applied' (or reuse receipt_recorded) terminal; specify that 'edited' recomputes payloadHash and re-derives the idempotency envelope before dispatch.",
+      "anchor": "\u00a73 Domain / \u00a78 Tool Gateway"
+    },
+    {
+      "severity": "important",
+      "finding": "ExternalWriteEnvelope lifecycle does not model replay/resume or the pre-write existence-check match. LIFE-3 (P0) requires in-flight workflows to resume with exactly-once side effects by reusing the envelope, and ING-6/\u00a716.1 require a pre-write existence check by canonical object key (vendor create-tools lack native idempotency keys) that reuses the matched object on hit. The ProposedAction SM ('... precondition_checked -> dispatched -> receipt_recorded | retry_queued') has no explicit 'replayed/resumed' or 'existing_object_matched/deduplicated' state, so the core idempotency guarantee has no state representation.",
+      "evidence": "PRD \u00a79.8 LIFE-3 and \u00a716.1 duplicate-write mitigation / ING-6 (lines ~957); ARCHITECTURE_DRAFT.md \u00a78 line 248 ('Supports replay without duplicates'); DOMAIN_MODEL.md Proposed External Action SM lines 57-59",
+      "proposed_fix": "Extend the ExternalWriteEnvelope/ProposedAction SM with explicit states for resume/replay (re-enter at precondition_checked using persisted envelope) and pre-write-existence-match (existing_object_matched -> receipt_recorded without a new create), and assert these in the Tool Gateway idempotency/replay tests (\u00a712).",
+      "anchor": "\u00a78 Tool Gateway"
+    },
+    {
+      "severity": "important",
+      "finding": "AgentJob has no explicit admission-rejection state for the P0 ING-7 control. ING-7 requires the control plane to REJECT at job admission any untrusted-content job declaring a mutating tool. The AgentJob SM ('created -> admitted -> provider_selected -> running -> schema_validated -> accepted | rejected | ...') folds 'rejected' into the post-run schema-rejection terminal; there is no distinct admission_rejected state, so the security-critical gate is invisible in the lifecycle and could be conflated with schema rejection in tasks/tests.",
+      "evidence": "PRD ING-7 (line 524) and \u00a716.1 prompt-injection mitigation; DOMAIN_MODEL.md Agent Job SM lines 61-63",
+      "proposed_fix": "Add a distinct 'admission_rejected' (tool-policy/ING-7) terminal separate from schema 'rejected', and an explicit admission gate transition (created -> admitted | admission_rejected) so tasks-gen and the job-admission test target it directly.",
+      "anchor": "\u00a75 Policy / \u00a77 Runtime Broker"
+    },
+    {
+      "severity": "important",
+      "finding": "GBrain parity 'quarantine' and the read-only-vs-write-through operating mode are not modeled as states. The PRD names a quarantine action ('any DB-only semantic fact is quarantined and the GBrain index is re-built from Markdown') and a binary operating mode gated by the Phase-0 parity spike (READ-ONLY/index-only fallback vs write-through-enabled). The Knowledge Mutation SM ends at 'indexed | sync_lagging | parity_defect' with no quarantine state and no recovery path out of parity_defect (quarantine -> rebuild-from-Markdown -> re-indexed), and no GBrain-brain mode state machine exists.",
+      "evidence": "PRD \u00a710.1 line 599 (quarantine) and \u00a714.5/\u00a721 read-only fallback; ARCHITECTURE_DRAFT.md \u00a76 lines 203-206; DOMAIN_MODEL.md Knowledge Mutation SM lines 53-55",
+      "proposed_fix": "Add (a) a GBrain brain mode state (write_through_enabled | read_only_fallback, transitioned by parity-spike pass/fail) and (b) a recovery path for parity_defect (parity_defect -> quarantined -> rebuilt_from_markdown -> re-indexed) to the final ARCHITECTURE.md \u00a76.",
+      "anchor": "\u00a76 Knowledge and GBrain"
+    },
+    {
+      "severity": "important",
+      "finding": "Workflow availability lifecycle (LIFE-1/LIFE-2, both P0) is described prose-only with no state model. The single-active-instance lease has implicit states (active / attached-read-only / refused / stale-recovered) and the durable-schedule catch-up has implicit states (scheduled / missed-during-sleep / coalesced / caught-up-once / fired) \u2014 these are app-level (not Temporal-internal) and govern correctness on wake. The WorkflowRun entity carries a 'state' field but no enumerated states, and DOMAIN_MODEL has no machine for schedules, leases, or workflow runs.",
+      "evidence": "PRD \u00a79.8 LIFE-1 (lease) and LIFE-2 (catch-up/coalesce); ARCHITECTURE_DRAFT.md \u00a79 lines 260-261; DOMAIN_MODEL.md WorkflowRun row (line 22) has 'state' but no enumeration; no schedule/lease SM in lines 36-67",
+      "proposed_fix": "Add explicit instance-lease and schedule-catch-up state machines (or state enumerations) to \u00a79, distinguishing app-owned states from Temporal-managed run history, so the \u00a712 sleep/wake/restart tests have named transitions to assert.",
+      "anchor": "\u00a79 Temporal Workflows and Automation"
+    },
+    {
+      "severity": "important",
+      "finding": "Meeting Closeout (the primary proof spine) lists failure/recovery states as a flat unwired set and does not model partial external-action application. A closeout proposes multiple external actions (notes, tasks, calendar proposals); 'external_actions_pending | external_actions_applied' is binary, with no partial-success state (some applied, some retrying/rejected) and the failure states (needs_routing_review, provider_failed, schema_rejected, write_conflict, approval_pending, outbox_retry, completed_with_warnings) have no defined source/target transitions.",
+      "evidence": "DOMAIN_MODEL.md Meeting Closeout SM lines 46-51; PRD \u00a711.1 / REQ-F-007 closeout spine; ARCHITECTURE_DRAFT.md \u00a71 line 19 (meeting closeout proof spine)",
+      "proposed_fix": "In the final ARCHITECTURE.md, wire the closeout failure states into explicit transitions and add a partial-application state (external_actions_partially_applied) so 'completed_with_warnings' has a defined origin and the proof-spine eval can assert mixed-outcome handling.",
+      "anchor": "\u00a79 Workflows / \u00a712 Eval"
+    },
+    {
+      "severity": "important",
+      "finding": "SourceEnvelope lifecycle has no retention/pruning/tombstone states despite RET-1 (P0). The Source SM ends at 'applied | rejected | failed_*' but RET-1 requires assistant-held raw capture (audio, OCR intermediates, cached payloads) to be deleted after audited synthesis or pruned after a configurable window \u2014 a retention lifecycle (retained -> pruned/purged) absent from the machine, and externally-authoritative sources (kept as links, never re-stored) have a different terminal than re-stored captures.",
+      "evidence": "PRD \u00a79.10 RET-1 (lines ~563); DOMAIN_MODEL.md Source SM lines 38-44; DATA_MODEL.md line 105 (purge/tombstone happy path)",
+      "proposed_fix": "Extend the Source/SourceEnvelope SM with retention terminals (raw_retained -> raw_pruned after window | raw_deleted_post_synthesis) and distinguish link-only (externally-authoritative) sources from assistant-held captures.",
+      "anchor": "\u00a78 Connector Gateway / \u00a76 Knowledge"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "The state machines exist only in the DOMAIN_MODEL.md planning artifact; the binding ARCHITECTURE_DRAFT references 'state machines' (in packages/domain) but pins none of them. The final binding ARCHITECTURE.md should carry the canonical, anchored state machines so tasks-gen and /tdd have a single source of truth rather than deriving them from a non-binding artifact.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a73 line 130 ('packages/domain: pure domain rules, state machines') and \u00a717 line 402; the only enumerated machines are in DOMAIN_MODEL.md lines 36-67",
+      "proposed_fix": "Port the six (plus the new deletion/lease/schedule/GBrain-mode) state machines into a dedicated 'Lifecycle States & State Machines' section of the final ARCHITECTURE.md with section anchors, and have packages/domain reference those anchors.",
+      "anchor": "\u00a73 Shared Contracts and Domain"
+    },
+    {
+      "severity": "question-for-human",
+      "finding": "The 'deferred' approval state is modeled as a terminal sibling of approved/rejected/expired, but its operational semantics are undefined: does a deferred approval re-surface after a snooze interval, return to 'pending', or auto-expire, and what is the default defer/expiry duration? PRD lists 'defer' as a user action in the Approval Inbox but gives no re-surface/timeout policy. This is a product decision (expiry/snooze window) the owner must set.",
+      "evidence": "DOMAIN_MODEL.md Approval SM line 67 ('deferred' as terminal); PRD \u00a78.1 line 419 ('Approve, edit, reject, or defer'); DATA_MODEL.md Approvals row line 29 ('status, channel, payload hash, expiry')",
+      "proposed_fix": "Owner to specify defer semantics: re-surface interval, whether deferred -> pending or deferred -> expired on timeout, and default expiry window; then make 'deferred' a non-terminal state with explicit deferred -> pending / deferred -> expired transitions.",
+      "anchor": "\u00a73 Domain / \u00a710-11 Approval Inbox"
+    }
+  ]
+}

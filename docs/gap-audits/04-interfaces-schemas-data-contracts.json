@@ -1,0 +1,97 @@
+{
+  "dimension": "Interfaces / schemas / data contracts",
+  "summary": "Partially covered: the 5 \"headline\" contracts (Workspace, ProviderMatrix, AgentJob, KnowledgeMutationPlan, ExternalWriteEnvelope) have TS field sketches, but ~9 of the 15 required cross-track contracts are referenced-only with no field definition and no owning \u00a7. Two of the undefined ones (EgressPolicy, ToolPolicy) gate P0 security/DoD controls, so this dimension has critical gaps before contract-track freeze.",
+  "findings": [
+    {
+      "severity": "critical",
+      "finding": "EgressPolicy is a required cross-track contract that gates a P0 security/DoD control (Employer Work raw-content egress acknowledgment), yet it is never defined with fields. It appears only as a type reference (Workspace.egressPolicy: EgressPolicy) in DATA_MODEL.md and PRD \u00a710.2; its shape (permitted processors, per-processor raw-content-allowed flag, acknowledgment/opt-in state, enforcement point) is nowhere specified.",
+      "evidence": "DATA_MODEL.md L48 (egressPolicy: EgressPolicy) and ARCHITECTURE_DRAFT.md Appendix A (no EgressPolicy row); PRD L617 'egressPolicy: EgressPolicy // permitted external processors (\u00a716.5)' and L995/L1213 (A4) describe semantics but no field-level contract",
+      "proposed_fix": "In final \u00a73/\u00a75 add a concrete EgressPolicy contract: { workspaceId, allowedProcessors: ProcessorId[], rawContentAllowedProcessors: ProcessorId[], employerRawEgressAcknowledged: boolean, acknowledgedAt? } with an owning \u00a75 (Policy/Security/Egress), and define the relationship to ProviderMatrix.rawCloudEgressEnabled (currently a duplicate/overlapping flag).",
+      "anchor": "\u00a75 Policy, Security, and Egress (+ \u00a73 contract listing)"
+    },
+    {
+      "severity": "critical",
+      "finding": "ToolPolicy is referenced as a shared contract and as AgentJob.toolPolicy but is never defined with fields. The ING-7 job-admission gate (P0) must REJECT any untrusted-content job 'declaring a mutating tool' \u2014 that gate cannot be specified or tested without a defined ToolPolicy shape (allowed tool set, read-only marker, mutating classification).",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a72.5 shared-contracts list (L116) and DATA_MODEL.md L67 (toolPolicy: ToolPolicy) reference it; PRD ING-7 L524 and AgentJob \u00a713.1 L800 require it; no ToolPolicy field definition exists in any artifact, and Appendix A has no ToolPolicy row",
+      "proposed_fix": "Define ToolPolicy in \u00a73 (e.g. { mode: 'read_only' | 'scoped_write', allowedTools: ToolId[], deniedTools: ToolId[], allowsMutating: boolean }) and state in \u00a75/\u00a77 the admission-gate predicate that rejects untrusted-content jobs whose ToolPolicy admits any mutating tool.",
+      "anchor": "\u00a73 Shared Contracts (referenced by \u00a75 admission gate)"
+    },
+    {
+      "severity": "important",
+      "finding": "ProviderRoute is a core routing contract (AgentJob.providerRoute, ProviderMatrix.capabilityDefaults: Record<Capability, ProviderRoute>) but its fields are never defined anywhere. Without it the provider-matrix and per-job routing contracts are unbuildable.",
+      "evidence": "DATA_MODEL.md L54 (capabilityDefaults: Record<Capability, ProviderRoute>) and L68 (providerRoute: ProviderRoute); no ProviderRoute definition in DATA_MODEL, DOMAIN_MODEL, draft, or PRD; no Appendix A row",
+      "proposed_fix": "Add ProviderRoute to \u00a73/\u00a77 with fields such as { providerId: ProviderId, model: string, runtime: 'claude-agent-sdk' | 'hermes' | 'deterministic', endpointRef?, egressClass: 'cloud' | 'local', costDefaults? }.",
+      "anchor": "\u00a77 Provider and Runtime Broker (+ \u00a73)"
+    },
+    {
+      "severity": "important",
+      "finding": "Capability is the key type for the entire provider matrix and AgentJob routing, but the architecture treats it as an opaque type with no enumeration. The PRD enumerates exactly six values; the draft/DATA_MODEL never pin them, so Record<Capability, ProviderRoute> and capability-keyed conformance tests have no defined key set.",
+      "evidence": "DATA_MODEL.md L54/L62 use Capability opaquely; PRD \u00a713.1 L796 enumerates 'meeting.close | daily.brief | project.sync | source.ingest | task.route | notebooklm.sync'; ARCHITECTURE_DRAFT.md never lists the capability set",
+      "proposed_fix": "Enumerate the Capability union in \u00a73 (reconciled with PRD \u00a713.1's six values), and note whether the set is closed for V1 (provider conformance and the matrix are keyed off it).",
+      "anchor": "\u00a73 Shared Contracts"
+    },
+    {
+      "severity": "important",
+      "finding": "ProposedAction has only a prose field-summary (no TS sketch) and its relationship to ExternalWriteEnvelope is undefined. Both carry targetSystem/canonicalObjectKey/idempotencyKey, but the mapping from agent-emitted ProposedAction to the Tool-Gateway ExternalWriteEnvelope (who fills idempotency/precondition/payloadHash, and when) is never specified \u2014 a load-bearing seam between the providers and integrations tracks.",
+      "evidence": "DOMAIN_MODEL.md L19 (ProposedAction summary), KnowledgeMutationPlan.externalActionProposals: ProposedAction[] in DATA_MODEL.md L82; ExternalWriteEnvelope defined separately in DATA_MODEL.md L86-95; PRD \u00a713.1 L812 AgentResult.proposedActions; no ProposedAction TS and no ProposedAction->ExternalWriteEnvelope transform documented",
+      "proposed_fix": "Add a ProposedAction TS contract and a \u00a78 subsection defining the deterministic ProposedAction -> ExternalWriteEnvelope construction (which side computes canonicalObjectKey/idempotencyKey/payloadHash and when approvalId is bound).",
+      "anchor": "\u00a78 Connector and Tool Gateways"
+    },
+    {
+      "severity": "important",
+      "finding": "AgentResult \u2014 the runtime output contract carrying status, output, citations, proposedActions, and knowledgeMutationPlan \u2014 is defined in the PRD but is entirely absent from DATA_MODEL.md, DOMAIN_MODEL.md, the \u00a72.5 shared-contract list, and Appendix A. It is the cross-track hand-off from the provider broker to KnowledgeWriter/Tool Gateway and must be a frozen contract.",
+      "evidence": "PRD \u00a713.1 L806-815 defines AgentResult; not present in DATA_MODEL.md Core Contract Sketches, DOMAIN_MODEL.md entity table, ARCHITECTURE_DRAFT.md \u00a72.5 (L116) or Appendix A (L441-451)",
+      "proposed_fix": "Add AgentResult to \u00a73/\u00a77 and Appendix A, including its status enum (succeeded | failed | needs_clarification | needs_approval) and the schema-gate boundary that converts it to candidate KnowledgeMutationPlan/ProposedAction.",
+      "anchor": "\u00a77 Provider and Runtime Broker (+ Appendix A)"
+    },
+    {
+      "severity": "important",
+      "finding": "SourceEnvelope is a required shared contract with no TS field definition, and there is an unreconciled three-name collision: DOMAIN_MODEL entity 'Source', shared contract 'SourceEnvelope', and reference type 'SourceRef' (used in KnowledgeMutationPlan.sourceRefs and AgentResult.citations). Their relationship and which is persisted vs referenced is never stated.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a72.5 L116 + Appendix A L448 list SourceEnvelope by summary only; DOMAIN_MODEL.md L13 defines 'Source' entity; DATA_MODEL.md L80/L100 use SourceRef and 'SourceEnvelope is registered before extraction'; USER_FLOWS.md L67 and PRD L715 enumerate SourceEnvelope fields; no TS contract and no Source/SourceEnvelope/SourceRef reconciliation",
+      "proposed_fix": "Define SourceEnvelope (sourceId, workspaceId, origin, type, contentHash, sensitivity, userTags, routingHints) and SourceRef as a TS contract in \u00a73, and state explicitly that Source(entity) is the persisted record, SourceEnvelope the registration contract, SourceRef the pointer.",
+      "anchor": "\u00a73 Shared Contracts (+ \u00a78 ingestion)"
+    },
+    {
+      "severity": "important",
+      "finding": "WorkflowRunRef is in the \u00a72.5 shared-contract list but is defined nowhere and is missing from Appendix A; meanwhile DOMAIN_MODEL names a 'WorkflowRun' entity and AgentJob.workflowRunId is typed as a bare string. The cross-track audit/workflow reference contract is thus three inconsistent things (WorkflowRunRef vs WorkflowRun vs workflowRunId: string).",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a72.5 L116 lists WorkflowRunRef; DOMAIN_MODEL.md L22 'WorkflowRun' entity; DATA_MODEL.md L60 'workflowRunId: string'; no WorkflowRunRef definition and no Appendix A row",
+      "proposed_fix": "Define WorkflowRunRef ({ workflowId, runId, trigger? }) in \u00a73, use it (not a bare string) in AgentJob/AuditRecord, and reconcile naming with the WorkflowRun entity.",
+      "anchor": "\u00a73 Shared Contracts (+ \u00a79 Temporal)"
+    },
+    {
+      "severity": "important",
+      "finding": "AuditRecord \u2014 a production-grade required contract \u2014 has only a prose field summary and no TS/schema definition, despite the build posture making audit a non-deferred concern. Fields (actor, event, refs, payloadHash, before/after summary, timestamps) are listed but not pinned to a contract or an immutability/tombstone schema.",
+      "evidence": "DOMAIN_MODEL.md L24 + ARCHITECTURE_DRAFT.md Appendix A L451 give summary only; DATA_MODEL.md L28 Audit domain says 'immutable/tombstoned for deletion'; no TS contract; \u00a715 lists audit as 'Not deferred' (L377)",
+      "proposed_fix": "Add a concrete AuditRecord TS contract in \u00a73/\u00a74 with the immutability + deletion-tombstone fields, and reference the WorkflowRunRef/SourceRef/Approval ref types it carries.",
+      "anchor": "\u00a74 Operational Storage (+ \u00a73)"
+    },
+    {
+      "severity": "important",
+      "finding": "The DATA_MODEL Workspace sketch drops several load-bearing routing fields present in the PRD \u00a710.2 Workspace: calendars (CalendarAccount[]), taskSystems (TaskSystemMapping), notebookPolicy (NotebookPolicy), and gbrainSourceId. These feed connector routing and the GBrain brain-vs-source decision, so the architecture's Workspace contract is silently narrower than ground truth.",
+      "evidence": "DATA_MODEL.md L39-49 Workspace omits calendars/taskSystems/notebookPolicy/gbrainSourceId; PRD \u00a710.2 L606-618 includes them",
+      "proposed_fix": "Reconcile the \u00a73 Workspace contract with PRD \u00a710.2 \u2014 either re-add calendars/taskSystems/notebookPolicy/gbrainSourceId or explicitly state they are normalized into separate config contracts and link them.",
+      "anchor": "\u00a73 Shared Contracts (+ \u00a76)"
+    },
+    {
+      "severity": "important",
+      "finding": "Numerous referenced sub-contracts are used inside the defined sketches but never themselves defined, leaving the contract track unable to freeze: NoteCreate, NotePatch, LinkMutation, FrontmatterPatch (KnowledgeMutationPlan), WriteReceipt (ExternalWriteEnvelope/PRD \u00a716.1), ContextRef (AgentJob), ProviderId, and PRD-side ExternalRef/CalendarAccount/TaskSystemMapping/NotebookPolicy/ProgressProvider/AgentLogEntry.",
+      "evidence": "DATA_MODEL.md L73-95 (NoteCreate/NotePatch/LinkMutation/FrontmatterPatch/WriteReceipt), L65/L63 (ContextRef/ProviderId); PRD \u00a710.2 L614-633 and \u00a713.1 L798-814; none defined in any artifact",
+      "proposed_fix": "Add a \u00a73 'sub-contracts' subsection (or a contracts appendix) defining each referenced type, or explicitly mark which are deferred to the contracts-track implementation with a placeholder schema id.",
+      "anchor": "\u00a73 Shared Contracts"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "Appendix A 'Model / Contract Inventory' is incomplete relative to the \u00a72.5 shared-contract list and the contracts this dimension must cover: it has no rows for ToolPolicy, ProposedAction, Capability, ProviderRoute, EgressPolicy, WorkflowRunRef, or AgentResult, and several existing rows give no owning \u00a7 for the undefined ones. The owning-\u00a7 assignment that finalize requires is therefore missing for ~half the required contracts.",
+      "evidence": "ARCHITECTURE_DRAFT.md Appendix A L441-451 (rows: Workspace, ProviderMatrix, AgentJob, KnowledgeMutationPlan, ExternalWriteEnvelope, SourceEnvelope, GclProjection, Approval, AuditRecord) vs \u00a72.5 list L116 and task contract set",
+      "proposed_fix": "Expand Appendix A into the canonical contract registry: one row per required contract (incl. ToolPolicy, ProposedAction, Capability, ProviderRoute, EgressPolicy, WorkflowRunRef, AgentResult), each with full fields and a single owning \u00a7; make it the index the contracts track freezes against.",
+      "anchor": "Appendix A - Model/Contract Inventory"
+    },
+    {
+      "severity": "nice-to-have",
+      "finding": "GclProjection and Approval are listed with prose field summaries but no TS sketch, and the visibility enum is not reconciled: Workspace.defaultVisibility uses isolated|coordination|sanitized|full, while GclProjection 'visibility' and the per-note frontmatter cross-workspace-visibility (PRD \u00a710.3) are not stated to share that enum.",
+      "evidence": "ARCHITECTURE_DRAFT.md Appendix A L449-450; DATA_MODEL.md L46 (defaultVisibility enum) vs L34 GCL projections; PRD \u00a710.3 L677 cross-workspace-visibility: sanitized; no shared VisibilityLevel type defined",
+      "proposed_fix": "Define a single VisibilityLevel enum in \u00a73 reused by Workspace.defaultVisibility, GclProjection.visibility, and note frontmatter, and add TS sketches for GclProjection and Approval (incl. Approval.expiry, which DATA_MODEL L29 implies but the summary omits).",
+      "anchor": "\u00a73 / \u00a76 GCL"
+    }
+  ]
+}

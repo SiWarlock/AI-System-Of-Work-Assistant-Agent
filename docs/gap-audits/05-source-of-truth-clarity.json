@@ -1,0 +1,48 @@
+{
+  "dimension": "Source-of-truth clarity",
+  "summary": "Workspace-level homes (Markdown=canonical, GBrain=derived, Temporal=workflow, op-DB=ledger, Keychain=secrets, external systems=authoritative) are crisp \u2014 but the GCL DB vs Global/Coordination Markdown repo boundary is NOT crisp: direction of derivation, who writes the global Markdown, identity-map authoritative home/rebuildability, and deletion propagation into GCL are all unspecified or internally contradictory.",
+  "findings": [
+    {
+      "severity": "important",
+      "finding": "GCL DB is labeled 'Authoritative System' in the same column as the canonical Workspace Markdown vault, contradicting the system's foundational principle that Markdown is canonical and every DB is a derived, rebuildable store. DATA_MODEL even self-contradicts: line 10 calls the GCL DB authoritative, while line 34 lists 'GCL projections' as a derived operational-store domain 'rebuildable from canonical records.' The draft never declares which GCL data is authoritative-native vs derived-and-rebuildable, so tasks-gen cannot know whether a GCL row can be safely dropped and rebuilt.",
+      "evidence": "DATA_MODEL.md line 10 (GCL operational DB = 'Authoritative System') vs DATA_MODEL.md line 34 (GCL projections 'rebuildable from canonical records'); ARCHITECTURE_DRAFT.md \u00a74 line 150 ('Does not store semantic truth; Markdown does')",
+      "proposed_fix": "Split the GCL row in the source-of-truth matrix by data class: (a) sanitized summaries / deadlines / priority labels = DERIVED from workspace Markdown via sanitization, rebuildable; (b) busy/free = DERIVED from Calendar connector (external authoritative), rebuildable; (c) identity map = see next finding. State the rebuild source for each so 'GCL DB' is never flatly 'authoritative.'",
+      "anchor": "\u00a76 Knowledge/GBrain/GCL (source-of-truth matrix); \u00a74 Operational Storage"
+    },
+    {
+      "severity": "question-for-human",
+      "finding": "The direction of truth between the GCL DB and the Global/Coordination Markdown repo is contradictory across artifacts. DATA_MODEL says the Markdown is a one-way derived copy of the DB ('copied to Global/Coordination Markdown for inspectability') \u2014 DB is master. But REQ-UX-003 makes the 'sanitized global coordination Markdown' a first-class Obsidian surface ('notes visible/editable in Obsidian'), implying it is human-editable and therefore at least partly authoritative. These cannot both hold: if the global Markdown is regenerated from the GCL DB, human Obsidian edits are silently clobbered (violating the human-owned-section preservation invariant); if edits are authoritative, the GCL DB is not the source. The owner locked that BOTH stores exist (DECISIONS line 19, rejecting 'DB-only GCL') but did not lock which is authoritative.",
+      "evidence": "DATA_MODEL.md line 10 ('copied to Global/Coordination Markdown for inspectability'); REQUIREMENTS.md REQ-UX-003 line 63; DECISIONS.md line 19; ARCHITECTURE_DRAFT.md \u00a76 lines 189-190",
+      "proposed_fix": "Owner must decide: is the Global/Coordination Markdown a READ-ONLY rendered projection of the GCL DB (recommended \u2014 preserves DB-as-master and avoids a second editable truth), or a human-editable surface whose edits feed back into the GCL DB? Then the final ARCHITECTURE must state the directionality and, if read-only, mark it non-editable in Obsidian to avoid the clobber path.",
+      "anchor": "\u00a76 Knowledge/GBrain/GCL"
+    },
+    {
+      "severity": "important",
+      "finding": "No artifact names the WRITER of the Global/Coordination Markdown repo. The source-of-truth matrix scopes 'KnowledgeWriter is sole autonomous writer' to the workspace vault only; the GCL rules in draft \u00a76 describe what GCL stores and reads but never say which component commits the global Markdown. This leaves a second Markdown repo with an undefined one-writer owner, directly undercutting the 'one autonomous writer per Markdown repo' invariant that the whole knowledge architecture rests on.",
+      "evidence": "DATA_MODEL.md line 9 (KnowledgeWriter sole writer \u2014 workspace row only) vs line 10 (global row, no writer named); ARCHITECTURE_DRAFT.md \u00a76 lines 207-212 (GCL rules name no writer); grep of all planning docs returns no 'writer of Global Markdown'",
+      "proposed_fix": "Declare the sole autonomous writer of the Global/Coordination Markdown repo (a GCL projection-renderer or KnowledgeWriter in a 'global' mode) and apply the same atomic-write / human-section-preservation / audit rules used for workspace vaults.",
+      "anchor": "\u00a76 Knowledge/GBrain/GCL"
+    },
+    {
+      "severity": "important",
+      "finding": "The cross-workspace identity map (person-A-in-Employer == person-A-in-Personal) has no authoritative home or rebuild source. It is cross-workspace native state with NO single-workspace Markdown origin (a sanitized projection cannot reconstruct the merge decisions), yet it is lumped into 'projections' in the GCL DB \u2014 implying derived/rebuildable when it is not. If the GCL DB is ever rebuilt 'from canonical records,' identity merges would be lost. The PRD lists the identity map as GCL content but never assigns it an authoritative store or a recovery story.",
+      "evidence": "DATA_MODEL.md line 10 ('identity map' inside GCL projections); ARCHITECTURE_DRAFT.md \u00a76 line 210; PRD \u00a77 workspace table line 227 and WS-3 line 455 (GCL 'identity matching') \u2014 neither assigns authoritative home/rebuildability",
+      "proposed_fix": "Designate the identity map as authoritative-native GCL state (NOT a rebuildable projection), give it its own durable backing (or persist the human/assistant merge decisions to the Global Markdown as the recoverable source), and exclude it from the 'GCL is fully rebuildable' guarantee.",
+      "anchor": "\u00a76 Knowledge/GBrain/GCL; \u00a74 Operational Storage"
+    },
+    {
+      "severity": "important",
+      "finding": "Deletion / retention propagation omits the GCL DB and the Global/Coordination Markdown. Both the DATA_MODEL lifecycle rule and the PRD RET-2 deletion path enumerate Markdown + GBrain + operational/event store + audit, but neither names the GCL sanitized projections or the global Markdown. A deleted person/project would leave orphaned sanitized copies in GCL \u2014 a retention AND leakage exposure (the GCL is explicitly a sanitized copy of workspace content and an attack-surface asset in the threat model).",
+      "evidence": "DATA_MODEL.md line 105 (purge list omits GCL/global Markdown); PRD \u00a79.10 RET-2 / line 991 (same omission); THREAT_MODEL.md line 14 (GCL projections + identity map are an asset)",
+      "proposed_fix": "Add GCL projections, the identity map, and the Global/Coordination Markdown repo to the cross-store deletion fan-out (purge/tombstone), and add a test asserting no GCL/global-Markdown residue after a RET-2 deletion.",
+      "anchor": "\u00a76 Knowledge/GBrain/GCL; \u00a74 Operational Storage (data-lifecycle rules)"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "The PRD's canonical \u00a710.1 Source-of-Truth Matrix has NO row for the GCL DB or the Global/Coordination Markdown repo at all, even though both are load-bearing stores in the locked architecture. DATA_MODEL.md added them but the binding matrix the final ARCHITECTURE inherits from does not list them, so the most authoritative reference is silent on two of the system's most isolation-critical stores.",
+      "evidence": "PRD \u00a710.1 lines 591-601 (rows for Calendar/Todoist/Linear/Asana/Granola/Markdown/GBrain/Temporal/NotebookLM only \u2014 no GCL, no Global Markdown); DATA_MODEL.md lines 9-18 (does include them)",
+      "proposed_fix": "In the final ARCHITECTURE source-of-truth matrix, add explicit rows for (1) GCL DB coordination metadata \u2014 authoritative-native for identity map, derived-rebuildable for the rest, with rebuild source named \u2014 and (2) Global/Coordination Markdown \u2014 read-only render vs editable per the owner decision above \u2014 so every store has one stated home and direction of derivation.",
+      "anchor": "\u00a76 Knowledge/GBrain/GCL (source-of-truth matrix)"
+    }
+  ]
+}

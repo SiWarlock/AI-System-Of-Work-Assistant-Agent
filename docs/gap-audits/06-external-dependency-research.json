@@ -1,0 +1,69 @@
+{
+  "dimension": "External dependency research",
+  "summary": "Partially covered: RESEARCH.md researched the core stack (Electron, Temporal, Drizzle, tRPC, providers, NotebookLM, GBrain/Hermes) and honestly tags each with a \"spike required / remaining risk\", but the architecture draft never carries those open items forward into a named Phase-0 spike/gate inventory, and several volatile externals (provider model-IDs/pricing/limits/structured-output fidelity, GBrain SHA pin, NotebookLM Drive-refresh, Granola/connector APIs, Electron signing) are left unresolved without an explicit gate the binding ARCHITECTURE.md can anchor.",
+  "findings": [
+    {
+      "severity": "important",
+      "finding": "The four model providers added beyond the PRD's Claude reference (OpenAI, OpenRouter, Ollama, LM Studio) have NO named Phase-0 conformance spike anywhere, and their model-IDs, pricing, context limits, and structured-output fidelity are unpinned. RESEARCH.md R-005 explicitly demands 'Phase-0 provider conformance must pin exact provider/model pairs', but the PRD \u00a719 spike table contains no provider-matrix spike and the architecture draft only lists 'provider conformance' as a test track, not a gated Phase-0 spike that pins these volatile values.",
+      "evidence": "RESEARCH.md R-005 remaining risk (lines 137-138); OQ-003/OQ-004 (OPEN_QUESTIONS.md lines 11-12); PRD \u00a719 spike table (system_of_work_assistant_prd_v0_3.md lines 1062-1075 \u2014 no provider-matrix spike); ARCHITECTURE_DRAFT.md \u00a77 (lines 214-235) + \u00a712 line 322 (test only)",
+      "proposed_fix": "Add a named 'Model Provider Conformance' Phase-0 spike to the binding ARCHITECTURE.md spike inventory: pin exact provider/model pairs per capability, record pricing/context-limit/tool-call/structured-output-fidelity results, and feed a config-held provider matrix (resolving OQ-003/OQ-004 defaults). Name the no-go branch: disable the failing provider/capability pair, Claude SDK critical path unaffected.",
+      "anchor": "\u00a77 Provider and Runtime Broker / new Phase-0 Spike inventory"
+    },
+    {
+      "severity": "important",
+      "finding": "Structured-output fidelity varies across the locked provider set (Claude tool-use-based, OpenAI native strict json_schema, OpenRouter passthrough of heterogeneous backends, Ollama/LM Studio model-dependent), yet the architecture's load-bearing 'strict JSON Schema gate before side effects' assumes providers can emit schema-valid output and names no repair/retry strategy for providers that cannot guarantee it. This is an unresearched external-behavior dependency, not just an internal design choice.",
+      "evidence": "RESEARCH.md R-005 (line 138, 'structured output fidelity... volatile'); DECISIONS.md ADR-004 (lines 77-85, strict schema gate); ARCHITECTURE_DRAFT.md \u00a77 strict side-effect rule (lines 232-235)",
+      "proposed_fix": "In \u00a77, require the provider conformance spike to measure per-provider structured-output fidelity and specify the broker's behavior when native strict-schema output is unavailable (e.g., schema-prompt + validate + bounded repair-retry, else fail the job) rather than assuming uniform schema compliance.",
+      "anchor": "\u00a77 Provider and Runtime Broker"
+    },
+    {
+      "severity": "important",
+      "finding": "The committed V1 NotebookLM path (Drive-backed managed docs) depends on an unvalidated assumption about NotebookLM's Drive-source refresh behavior \u2014 i.e. whether NotebookLM re-ingests updated managed Drive docs automatically or requires manual user re-import (the PRD already corrected an earlier 'auto-sync' claim). The \u00a719 'NotebookLM API' spike only covers the DEFERRED direct-API CRUD path, so the actually-shipping path has no validating spike.",
+      "evidence": "RESEARCH.md R-006 remaining risk (line 159, 'Drive doc refresh behavior and user workflow must be tested'); PRD \u00a719 NotebookLM API spike (line 1068, direct-API only); PRD line 29 (auto-sync claim corrected); ARCHITECTURE_DRAFT.md \u00a78 Notebook (lines 250-253)",
+      "proposed_fix": "Add a Phase-0 'NotebookLM Drive-refresh' validation distinct from the direct-API spike: confirm whether managed-Drive-doc updates surface in NotebookLM without manual re-import, and document the resulting user workflow/limits in \u00a78. Flag the refresh behavior as the V1 risk, not the deferred API.",
+      "anchor": "\u00a78 Connector and Tool Gateways (Notebook)"
+    },
+    {
+      "severity": "important",
+      "finding": "External SaaS connector APIs are entirely absent from RESEARCH.md \u2014 there is no research entry for Granola, Calendar, Todoist, Linear, Asana, Drive/Docs, GitHub, or Telegram (rate limits, scopes, MCP availability, endpoint behavior). Granola in particular feeds the locked P0 meeting-closeout proof spine and has its own PRD \u00a719 spike, yet it is unresearched and the architecture draft \u00a78 lists connectors without naming the Granola connector spike.",
+      "evidence": "RESEARCH.md covers only R-001..R-007 (no connector entry); PRD \u00a719 'Granola Connector' spike (line 1069); PRD \u00a722.1 (line 1196, 'Vendor APIs for Granola, Calendar... should be checked'); meeting-closeout locked as proof spine (DECISIONS.md line 11); ARCHITECTURE_DRAFT.md \u00a78 (lines 239-247)",
+      "proposed_fix": "Name a Phase-0 Granola connector spike (transcript/metadata/decisions/actions pull + calendar correlation) in \u00a78 since it gates the P0 proof spine, and add a tracked 'connector API revalidation' item (rate limits/scopes/MCP-vs-REST) for the remaining connectors per PRD \u00a722.1.",
+      "anchor": "\u00a78 Connector and Tool Gateways"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "The PRD requires a pinned GBrain known-good version with the SHA recorded in repo config and a compatibility/contract gate, but the architecture draft's GBrain rules and deployment sections never mention version pinning or the contract gate \u2014 only write-through containment.",
+      "evidence": "PRD \u00a718.1 Phase 0 (line 1023, 'GBrain known-good version selected and pinned (SHA recorded in repo config)') and Phase 2 (line 1025, 'GBrain compatibility contract test green against the pinned version'); OQ-006 (line 14); ARCHITECTURE_DRAFT.md \u00a76 GBrain rules (lines 202-206) and \u00a713 (lines 341-342) omit the pin/contract gate",
+      "proposed_fix": "Add to \u00a76/\u00a713: pin a GBrain commit/tag (SHA in repo config) and gate GBrain-dependent phases on a GBrain compatibility contract test against that pinned version. The exact SHA is a Phase-0 GBrain-spike output (carry OQ-006 as a question-for-human until the spike runs).",
+      "anchor": "\u00a76 Knowledge/GBrain and \u00a713 Deployment"
+    },
+    {
+      "severity": "question-for-human",
+      "finding": "The Hermes integration surface is unresolved \u2014 API server vs TUI gateway vs Python wrapper vs Kanban vs hybrid \u2014 and the architecture draft names the Hermes adapter without naming the surface-selection spike or its no-go branch. This is a load-bearing external-integration decision the owner/spike must make; do not assume a surface.",
+      "evidence": "OQ-007 (OPEN_QUESTIONS.md line 15); PRD \u00a719 'Hermes Adapter Surface' spike (line 1064); RESEARCH.md R-007 (lines 178-182); ARCHITECTURE_DRAFT.md \u00a77 (line 230) names adapter only",
+      "proposed_fix": "Carry OQ-007 as a question-for-human and name the 'Hermes Adapter Surface' Phase-0 spike in \u00a77 with its parallel-track no-go branch (Claude SDK remains critical path; Hermes required+DoD-tested but not first-install gating per PRD \u00a720.1).",
+      "anchor": "\u00a77 Provider and Runtime Broker (Hermes adapter)"
+    },
+    {
+      "severity": "question-for-human",
+      "finding": "Electron signing/notarization, hardened-runtime entitlements, and packaging of the spawned Node worker + Temporal dev-server + GBrain subprocesses are unresolved and absent from the architecture draft's deployment section. For a production-grade build this is load-bearing: hardened runtime / Gatekeeper / library-validation can block subprocess spawning on other Macs, directly affecting the open-source clean-install reproducibility DoD.",
+      "evidence": "OQ-001 (line 9); RESEARCH.md R-001 remaining risk (line 42, 'Packaging/supervision/signing details require Phase-0 shell spike'); PRD \u00a713.3 (line 410, 'signed/notarized builds later if useful'); install reproducibility metric/DoD (PRD lines 211, 1122); ARCHITECTURE_DRAFT.md \u00a713 (lines 335-344) silent on signing",
+      "proposed_fix": "Carry OQ-001 as a question-for-human (signed+notarized vs documented unsigned local build for V1) and name a Phase-0 Electron shell/packaging spike in \u00a713 that validates code-signing/notarization + hardened-runtime entitlements against spawning the worker/Temporal/GBrain subprocesses, tied to the clean-install acceptance test.",
+      "anchor": "\u00a713 Deployment and Install Strategy"
+    },
+    {
+      "severity": "nice-to-have",
+      "finding": "The macOS wake-hook mechanism that triggers Temporal schedule catch-up and in-flight resume is named as a remaining risk in research but the architecture draft says 'resume on wake' without naming the detection mechanism (e.g., NSWorkspace didWake / power-management notifications) that the LIFE-1..6 requirements depend on.",
+      "evidence": "RESEARCH.md R-002 remaining risk (line 66, 'OS wake hooks require implementation validation'); PRD \u00a719 Sleep/Wake Lifecycle spike (line 1072) + \u00a721 LIFE-1..6 (line 1147); ARCHITECTURE_DRAFT.md \u00a79 (lines 260-262)",
+      "proposed_fix": "In \u00a79/\u00a713, name the macOS wake-detection mechanism the worker uses (power/NSWorkspace wake notification) feeding Temporal catch-up + outbox replay, and reference the existing Sleep/Wake Lifecycle spike as its validation gate.",
+      "anchor": "\u00a79 Temporal Workflows and Automation"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "The architecture draft has no consolidated Phase-0 external-dependency spike/gate section; it implicitly defers to PRD \u00a718.1/\u00a719 but never restates the spikes, their go/no-go criteria, or their named fallback branches. Since every RESEARCH.md finding ends in 'spike required'/'remaining risk', the binding ARCHITECTURE.md needs one place that enumerates these external-dependency gates and what each no-go triggers.",
+      "evidence": "ARCHITECTURE_DRAFT.md has \u00a713 deploy, \u00a715 scope, \u00a716 audit targets but no spike inventory; RESEARCH.md R-001..R-007 all end with spike/remaining-risk lines; PRD \u00a718.1 Phase 0 (line 1023) and \u00a719 (lines 1060-1075) hold the canonical spike list",
+      "proposed_fix": "Add a 'Phase-0 Spikes & External-Dependency Gates' section to the binding ARCHITECTURE.md restating each spike (GBrain Round Trip, GBrain Full Capability Bridge, Provider Conformance, Hermes Adapter Surface, NotebookLM API + Drive-refresh, Granola Connector, Sleep/Wake Lifecycle, Electron packaging/signing) with go/no-go and the fallback branch each no-go selects, classified critical-path vs parallel vs non-blocking.",
+      "anchor": "new \u00a7Phase-0 Spikes / cross-ref \u00a713, \u00a716"
+    }
+  ]
+}

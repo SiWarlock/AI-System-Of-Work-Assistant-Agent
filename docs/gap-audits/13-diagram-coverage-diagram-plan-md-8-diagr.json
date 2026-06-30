@@ -1,0 +1,48 @@
+{
+  "dimension": "Diagram coverage \u2014 DIAGRAM_PLAN.md (8 diagrams) vs final architecture needs",
+  "summary": "Mostly covered for the structural/topology and proof-spine flows, but three load-bearing diagrams are missing (AgentJob lifecycle state machine, cross-store deletion saga, worker supervision/sleep-wake lifecycle), several DOMAIN_MODEL state machines are only rendered as sequence diagrams (losing recovery/branch states), and every \"Spec anchors\" reference points at draft section numbers that must be remapped to final ARCHITECTURE.md anchors with no placement guidance.",
+  "findings": [
+    {
+      "severity": "important",
+      "finding": "No diagram for the AgentJob lifecycle state machine. DOMAIN_MODEL defines a 10-state machine with admission control and budget/retry/terminal branches (created -> admitted -> provider_selected -> running -> schema_validated -> accepted | rejected | cancelled_budget | failed_retryable | failed_terminal), and ING-7 job-admission tool-stripping is a security-critical transition. The 8 planned diagrams only show AgentJob as a single node inside the meeting sequence (#1) and provider routing (#3) flows; its lifecycle (especially admission rejection and budget cancellation) is never drawn.",
+      "evidence": "docs/planning/DOMAIN_MODEL.md \u00a7State Machines 'Agent Job' (lines 61-63); DIAGRAM_PLAN.md sub-diagrams #1 and #3 (lines 28-79) reference AgentJob only as a flow node; PRD \u00a7ING-7 / WS admission referenced in prd line 13",
+      "proposed_fix": "Add a Mermaid stateDiagram-v2 for AgentJob lifecycle (admission/tool-stripping, provider selection, schema-validate, budget-cancel, retryable vs terminal failure), anchored to the final ARCHITECTURE.md Provider/Runtime Broker section (draft \u00a77).",
+      "anchor": "Provider and Runtime Broker (draft \u00a77)"
+    },
+    {
+      "severity": "important",
+      "finding": "No diagram for the cross-store deletion saga. RET-2/REQ-F-013 is a P0 multi-store compensating purge (Markdown via KnowledgeWriter, GBrain index/graph, control-plane event store, audit tombstone, external links) with explicit failure/compensation states (partial purge, GBrain purge failure, dangling external refs) and a hard acceptance proof ('re-indexing from Markdown does not resurrect it'). For a production-grade build this distributed compensating operation is exactly what a diagram should make concrete, yet none of the 8 diagrams covers it.",
+      "evidence": "docs/planning/USER_FLOWS.md Flow 7 (lines 109-123); docs/planning/REQUIREMENTS.md REQ-F-013 (line 21); ARCHITECTURE_DRAFT.md \u00a79 'Retention/deletion' (line 272); PRD \u00a79.10 RET-2 (line 567) and acceptance 'Cross-store deletion' (lines 1074, 1114); DIAGRAM_PLAN.md has no matching diagram",
+      "proposed_fix": "Add a Mermaid sequenceDiagram or stateDiagram-v2 for the deletion saga showing per-store removal order, audit tombstone, and compensating-failure handling, anchored to the Temporal Workflows / Knowledge sections (draft \u00a79/\u00a76).",
+      "anchor": "Temporal Workflows and Automation (draft \u00a79)"
+    },
+    {
+      "severity": "important",
+      "finding": "No diagram for worker supervision / sleep-wake-restart lifecycle. PRD \u00a79.8 LIFE-1..7 (P0) plus \u00a713 deployment require: Electron main supervising the control-plane worker, single-active-instance lease, durable-schedule catch-up (run-once-collapsed), in-flight Temporal resume with exactly-once envelope reuse, ordered on-wake replay (KnowledgeWriter writes before GBrain index jobs), and DB-unavailable degraded mode. This is the single biggest local-first risk per the PRD, but no diagram depicts the worker/process lifecycle, supervision, or wake catch-up sequence.",
+      "evidence": "PRD \u00a79.8 LIFE-1..6 (lines 545-550), on-wake ordering (line 876), \u00a720.2 sleep/wake proofs (lines 1108, 1132); ARCHITECTURE_DRAFT.md \u00a713 (lines 335-344) and \u00a74 degraded mode (lines 156-159); DOMAIN_MODEL invariant on separate persistence (line 81); DIAGRAM_PLAN.md has no lifecycle/supervision diagram",
+      "proposed_fix": "Add a Mermaid stateDiagram-v2 (or sequenceDiagram) for worker supervision/lifecycle: launch + lease acquisition, normal run, sleep/quit, wake -> catch-up evaluation -> ordered replay -> in-flight resume, and DB-unavailable degraded mode. Anchor to the Deployment/Lifecycle section (draft \u00a713).",
+      "anchor": "Deployment and Install Strategy / Lifecycle (draft \u00a713)"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "Every 'Spec anchors' line in DIAGRAM_PLAN.md references ARCHITECTURE_DRAFT.md section numbers (\u00a72, \u00a72.5, \u00a73..\u00a711, \u00a717, Appendix A) \u2014 including the Full-Scope diagram literally citing 'ARCHITECTURE_DRAFT.md \u00a72'. When /arch-finalize emits the binding ARCHITECTURE.md from the template, sections will be renumbered/restructured, so these anchors will dangle. The plan also gives only 'Spec anchors' (what each diagram relates to), never a placement anchor (which final \u00a7 embeds each diagram), so there is no instruction on where each of the 8 diagrams should live.",
+      "evidence": "DIAGRAM_PLAN.md lines 22, 43, 60, 77, 94, 111, 127, 142, 160 (all cite draft \u00a7 numbers; line 22 names the draft file directly)",
+      "proposed_fix": "During finalization, remap each diagram's 'Spec anchors' to the final ARCHITECTURE.md section IDs and add an explicit 'Placement: \u00a7X' field per diagram so /tasks-gen and reviewers know where each diagram is embedded.",
+      "anchor": "Spec Anchor Index (draft \u00a718) and each diagram-bearing section"
+    },
+    {
+      "severity": "nice-to-have",
+      "finding": "Three DOMAIN_MODEL state machines are only (at best) rendered as sequence/flow diagrams, which lose their failure/recovery branch states. Meeting Closeout (#1 sequenceDiagram) omits recovery states needs_routing_review/provider_failed/schema_rejected/write_conflict/approval_pending/outbox_retry/completed_with_warnings; Knowledge Mutation (#4 sequenceDiagram) omits sync_lagging/parity_defect; the Approval and Source state machines have no dedicated state diagram at all (Approval is only implied inside #5 External Write Envelope).",
+      "evidence": "docs/planning/DOMAIN_MODEL.md \u00a7State Machines (lines 46-67: Meeting Closeout, Knowledge Mutation, Source, Approval); DIAGRAM_PLAN.md #1 (sequenceDiagram, line 44), #4 (sequenceDiagram, line 95), #5 (line 112)",
+      "proposed_fix": "Either add small stateDiagram-v2 companions for Meeting Closeout (with recovery states), Knowledge Mutation (parity/sync-lag), Approval, and Source ingestion, or explicitly note in DIAGRAM_PLAN that these state machines are documented as tables only \u2014 don't leave them implicitly 'covered' by a happy-path sequence diagram.",
+      "anchor": "Knowledge and GBrain (draft \u00a76); Provider/Runtime (draft \u00a77); Connector/Tool Gateways (draft \u00a78)"
+    },
+    {
+      "severity": "nice-to-have",
+      "finding": "Diagram #7 'Parallel Build Track DAG' risks duplicating the \u00a72.5 'Subsystem Dependency DAG' already embedded in the draft (both flowchart TD over the same \u00a73..\u00a712 subsystems). Without a clear distinction the final doc may carry two near-identical DAGs that drift.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a72.5 dependency DAG already present (lines 78-103); DIAGRAM_PLAN.md #7 Parallel Build Track DAG (lines 131-144, spec anchors \u00a72.5/\u00a717/Appendix A)",
+      "proposed_fix": "Clarify that #7 is a team/build-track sequencing DAG (contract-first, integration order) distinct from \u00a72.5's import-direction dependency DAG, or merge them with an overlay; ensure only one canonical dependency DAG is the source of truth.",
+      "anchor": "Subsystem Dependency DAG (draft \u00a72.5) / Repo Scaffold (draft \u00a717)"
+    }
+  ]
+}

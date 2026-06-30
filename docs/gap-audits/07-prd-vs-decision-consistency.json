@@ -1,0 +1,41 @@
+{
+  "dimension": "PRD-vs-decision consistency",
+  "summary": "Mostly reconciled, but one load-bearing gap: the PRD's AgentRuntimePort (Claude Agent SDK + Hermes, RT-1 P0) and the newly-locked ModelProviderPort (Claude/OpenAI/OpenRouter/Ollama/LM Studio) are two distinct abstraction layers that the draft collapses without defining their relationship; plus several stale PRD passages (Tauri wording, \u00a719.1 open questions already locked, egress-processor enumeration) still need explicit reconciliation in the final ARCHITECTURE.md.",
+  "findings": [
+    {
+      "severity": "critical",
+      "finding": "AgentRuntimePort (PRD) vs ModelProviderPort (locked decision) are two different abstraction layers and their relationship is undefined. The PRD builds the runtime layer entirely around AgentRuntimePort with exactly two agentic runtime adapters \u2014 ClaudeAgentSdkRuntimeAdapter and HermesRuntimeAdapter (PRD \u00a71.1 line 57; \u00a713 lines 348/362; RT-1 P0 line 481) \u2014 which provide tool permissions, MCP/GBrain access, structured outputs, and subagents. DECISIONS.md ADR-004 adds a NEW port, ModelProviderPort, spanning Claude/OpenAI/OpenRouter/Ollama/LM Studio. The draft \u00a77 mermaid (line 56) shows 'Agent Runtime Broker -> ModelProviderPort' and '-> Hermes Adapter' but NEVER names AgentRuntimePort or ClaudeAgentSdkRuntimeAdapter, and never says whether OpenAI/OpenRouter/Ollama/LM Studio are full agentic runtimes (tool-use, MCP GBrain, structured outputs) or just raw model-call providers. 'Claude' appears both as a ModelProviderPort entry (draft line 56) and as 'Claude via Claude Agent SDK' the reference runtime (draft \u00a77 line 226), which conflates the two layers. RT-1 (P0) has no row in the draft's \u00a718 Spec Anchor Index. The final architecture cannot define the \u00a77 port contracts, capability matrix, or conformance suites until this is settled.",
+      "evidence": "PRD \u00a71.1 line 57, \u00a713 lines 348/362, RT-1 line 481, \u00a720.2 line 1124; DECISIONS.md ADR-004 lines 77-85; ARCHITECTURE_DRAFT.md \u00a77 lines 56, 110, 214-235; \u00a718 lines 426-437 (no RT-1/AgentRuntimePort row); REQUIREMENTS.md REQ-F-015 line 23",
+      "proposed_fix": "In the final ARCHITECTURE.md \u00a77, explicitly define BOTH ports and their layering: AgentRuntimePort (agentic runtimes: ClaudeAgentSdkRuntimeAdapter + HermesRuntimeAdapter, carrying tool-policy/MCP/structured-output/subagent semantics per RT-1) and ModelProviderPort (raw model providers: Claude/OpenAI/OpenRouter/Ollama/LM Studio). State precisely whether ModelProviderPort sits UNDER the agent runtime (model substitution within the Claude Agent SDK / a generic agent loop) or is a PARALLEL non-agentic path, and which capabilities each non-Claude provider must satisfy to run agentic jobs. Add an RT-1/AgentRuntimePort row to the \u00a718 anchor index.",
+      "anchor": "\u00a77 Provider and Runtime Broker"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "PRD still names Tauri in four load-bearing passages, contradicting the locked Electron decision. The draft \u00a716.1 only flags 'reconcile Tauri references' as a gap-audit target; the final ARCHITECTURE.md should carry the explicit reconciliation so tasks-gen does not inherit stale stack wording.",
+      "evidence": "PRD line 410 ('built with Tauri, React, and TypeScript'), line 830 ('align with Tauri/React/TypeScript stack'), line 852 ('the Tauri/React/TypeScript stack (\u00a713.3) aligns natively'), line 1039 ('Mac-first Tauri app'); DECISIONS.md ADR-001 lines 37-53; ARCHITECTURE_DRAFT.md \u00a716 line 383",
+      "proposed_fix": "Add an explicit reconciliation note in ARCHITECTURE.md (\u00a7 deployment/desktop-shell) stating that PRD lines 410/830/852/1039 'Tauri' are superseded by the locked Electron decision (ADR-001), and that the React/TypeScript stack alignment argument carries over unchanged to Electron.",
+      "anchor": "\u00a713 Deployment / \u00a71A desktop shell"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "PRD \u00a719.1 still lists two questions as 'Still open' that the locked decisions have already resolved, so the PRD's own open-question section is internally stale against DECISIONS.md. (1) 'Should personal-business be its own GBrain brain or a source inside a personal-owned brain' is resolved by ADR-002 / RQ-006 (brain per workspace, Locked). (2) 'Should Markdown repos be one repo per workspace or a monorepo' is resolved by RQ-005 (repo/vault per workspace, Locked). The planning OPEN_QUESTIONS.md correctly carries both as 'Resolved During Planning' (RQ-005/RQ-006), confirming only the PRD text is stale.",
+      "evidence": "PRD \u00a719.1 lines 1089-1090 ('Still open'); DECISIONS.md ADR-002 lines 55-63, summary rows lines 18 & 20; OPEN_QUESTIONS.md RQ-005/RQ-006 lines 35-36",
+      "proposed_fix": "In ARCHITECTURE.md note that PRD \u00a719.1's two remaining open questions (brain-vs-source, repo-vs-monorepo) are now CLOSED by the locked decisions (brain per workspace; repo/vault per workspace) and reference ADR-002 / RQ-005 / RQ-006. Do not re-open either as a design choice.",
+      "anchor": "\u00a76 Knowledge / GBrain"
+    },
+    {
+      "severity": "question-for-human",
+      "finding": "The reference/critical-path runtime designation is left hedged in the new multi-provider world. The draft \u00a77 says 'Claude via Claude Agent SDK remains reference/critical-path cloud runtime UNLESS finalization changes it' (RESEARCH.md line 118 repeats the same hedge), but PRD \u00a720.2 DoD firmly states Claude SDK is the V1 reference runtime carrying the meeting-closeout critical path. The locked 'Model providers' decision adds provider breadth with workspace+capability routing but does not explicitly re-affirm Claude as the critical-path runtime (its only fallback note is 'Claude-only critical path'). With per-workspace provider routing now possible, it is undecided whether the meeting-closeout critical path may be routed to OpenAI/local providers or must remain on Claude Agent SDK per PRD \u00a720.2. This is load-bearing for the DoD and only the owner can decide.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a77 line 226 ('unless finalization changes it'); RESEARCH.md line 118; PRD \u00a720.2 line 1124, \u00a71.1 line 57; DECISIONS.md 'Model providers' / 'Provider routing' rows lines 30-32",
+      "proposed_fix": "Owner to confirm: does Claude Agent SDK remain the fixed reference/critical-path runtime for the meeting-closeout DoD (PRD \u00a720.2), or may the provider matrix route that critical path to another provider? Then remove the 'unless finalization changes it' hedge in \u00a77 and state the resolved answer.",
+      "anchor": "\u00a77 Provider and Runtime Broker / DoD"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "PRD \u00a716.5/\u00a710.2 egress-policy text enumerates external processors for the two-runtime world only ('the configured cloud-LLM runtime (Claude Agent SDK -> Anthropic API, or a cloud Hermes endpoint)'), and is stale against the locked multi-provider matrix where OpenAI and OpenRouter are additional distinct cloud processors. The draft \u00a75 already handles this correctly (OpenRouter 'treated as its own processor'; cloud providers 'must be named in workspace egress policy'), so the gap is only that the PRD's processor enumeration was not updated when ModelProviderPort was locked.",
+      "evidence": "PRD \u00a716.5 line 995; DECISIONS.md ADR-004 lines 77-85; ARCHITECTURE_DRAFT.md \u00a75 lines 176-180",
+      "proposed_fix": "In ARCHITECTURE.md \u00a75 (egress), state that the egressPolicy processor enumeration supersedes PRD \u00a716.5's two-runtime phrasing and must list each enabled cloud provider (Anthropic, OpenAI, OpenRouter, plus any cloud Hermes endpoint) as an independent named processor, with Ollama/LM Studio as local/zero-egress.",
+      "anchor": "\u00a75 Policy, Security, and Egress"
+    }
+  ]
+}

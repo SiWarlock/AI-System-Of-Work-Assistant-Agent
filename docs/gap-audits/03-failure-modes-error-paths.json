@@ -1,0 +1,69 @@
+{
+  "dimension": "Failure modes & error paths",
+  "summary": "Partial coverage: connector outage, Temporal resume, provider schema-fail, KnowledgeWriter conflict, GBrain divergence, and DB-unavailable/migration are well specified (PRD LIFE-1..6, OBS-1/2, \u00a714.5, \u00a716.1; DOMAIN_MODEL state machines). But four production failure paths are absent from BOTH draft and source docs \u2014 Keychain locked, supervised-worker crash/restart policy, Temporal process unavailable, and partial cross-store deletion compensation \u2014 plus three under-specified runtime degradations (provider fallback, GBrain-process-unavailable retrieval, outbox give-up/dead-letter).",
+  "findings": [
+    {
+      "severity": "critical",
+      "finding": "Keychain locked / unavailable is an undefined failure path. Secrets live only in macOS Keychain (DECISIONS.md ADR; REQ-S-003), so a locked Keychain (screen-locked, fresh boot before unlock, or denied access prompt) makes every cloud provider key and every connector OAuth token unreachable at once \u2014 silently failing all provider jobs and connector syncs. No degraded behavior, retry-on-unlock, or user prompt is specified.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a75/\u00a713 and DATA_MODEL.md:18 reference Keychain secrets but never a locked/unavailable path; grep of PRD (lines 65, 380, 959, 1083) shows Keychain defined as the store but no locked-state error path; THREAT_MODEL.md trust-boundary table has no Keychain-unavailable row.",
+      "proposed_fix": "Add a SecretsPort failure path: on Keychain locked/denied, mark affected providers/connectors degraded in System Health (distinct OBS-2-class item), hold dependent jobs in a retryable state, and re-attempt on unlock (wire to LIFE-6 wake/power hooks). Define whether the app prompts for unlock or waits passively (owner UX call).",
+      "anchor": "\u00a75 Policy/Security (SecretsPort) and Failure Modes section"
+    },
+    {
+      "severity": "critical",
+      "finding": "Supervised control-plane worker crash has no restart/supervision policy. The draft says Electron main 'supervises' the Node/TS worker but never defines the restart strategy, backoff, crash-loop detection/give-up, what the renderer shows while the worker is down, or the disposition of any side effect in flight at crash time. LIFE-1 covers the single-instance lease and stale-lock recovery but not worker respawn semantics.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a71, \u00a713 ('supervises control-plane worker') and DECISIONS.md row 'Process model'; CONSTRAINTS.md/DATA_MODEL grep shows no 'supervis'/'restart'/'crash' entries; PRD grep for 'worker.*(crash|restart|supervis)' returns only resume-on-restart (lines 698, 1003), not a supervision policy.",
+      "proposed_fix": "Specify the main-process supervision contract: restart-with-bounded-backoff, crash-loop threshold that surfaces a System Health/UI 'worker down' state instead of looping, lease re-acquisition on respawn (LIFE-1), and that in-flight side effects are recovered via Temporal resume + \u00a716.1 envelope on the new worker.",
+      "anchor": "\u00a713 Deployment / new Worker Supervision subsection"
+    },
+    {
+      "severity": "critical",
+      "finding": "Temporal local server unavailable has no degraded mode. \u00a74 defines DB-unavailable (degraded mode, queue, System Health) and migration-mismatch (block + repair) paths, but the parallel dependency \u2014 the local Temporal dev server failing to start or crashing \u2014 has no equivalent. Since all product workflows and durable schedules run on Temporal, its unavailability halts the entire control plane with no defined surfacing or recovery.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a74 'Failure modes' covers DB only; \u00a713 'Worker starts/connects to local Temporal dev server' with no failure branch; \u00a79 lists no Temporal-down path. PRD grep for 'temporal.*(down|unavail|crash)' finds none.",
+      "proposed_fix": "Add a Temporal-unavailable failure mode mirroring \u00a74 DB handling: worker enters degraded mode, blocks workflow dispatch, surfaces a distinct System Health item, retries connection with backoff, and reports a repair path if the embedded server cannot start.",
+      "anchor": "\u00a79 Temporal Workflows / \u00a713 Deployment Failure Modes"
+    },
+    {
+      "severity": "critical",
+      "finding": "Partial cross-store deletion has no compensation/saga design. REQ-F-013 and PRD \u00a720 require deletion across Markdown + GBrain index/graph + event store + read models + external links to be 'atomically (or compensatably)' purged with no orphans/resurrection, and Flow 7 lists failure states (partial purge, GBrain purge failure, dangling external refs) \u2014 but the draft only names 'Retention/deletion' as a \u00a79 workflow with zero detail on ordering, compensation, idempotent re-drive, or crash recovery mid-deletion. There is no deletion state machine in DOMAIN_MODEL either.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a79 lists 'Retention/deletion' with no design; REQUIREMENTS.md REQ-F-013; USER_FLOWS.md Flow 7 'Failure States: partial purge, write conflict, GBrain purge failure, dangling external refs'; PRD lines 1074, 1114 (acceptance) demand compensatable purge; DOMAIN_MODEL.md state machines (lines 40,51,59,63) have no deletion lifecycle.",
+      "proposed_fix": "Specify a deletion saga: deterministic deletion plan, ordered steps (Markdown tombstone via KnowledgeWriter as commit point \u2192 GBrain purge/re-index \u2192 event-store tombstone \u2192 read-model + external-ref reconciliation), per-step idempotency, compensating/retry states for partial failure surfaced in System Health, and a re-index-does-not-resurrect invariant.",
+      "anchor": "\u00a76 Knowledge / \u00a79 Retention-Deletion workflow"
+    },
+    {
+      "severity": "important",
+      "finding": "Provider-unavailable runtime fallback is undefined. The provider matrix lists allowedProviders per workspace but no ordering or fallback chain, and Flow 8 lists 'provider unavailable' as a failure state without a runtime disposition. When the critical-path provider (Claude) is down mid-job, it is unspecified whether the broker fails the job (failed_retryable/terminal), retries, or falls back to another allowed provider \u2014 and provider fallback could change egress class, which interacts with Employer-Work egress policy.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a77 'Select runtime/provider/model' and Appendix A ProviderMatrix (allowedProviders, no order); USER_FLOWS.md Flow 8 'Failure States: provider unavailable'; DOMAIN_MODEL.md:63 has provider_selected/failed_retryable but no fallback rule; OQ-003/OQ-004 cover model/budget defaults, not failover.",
+      "proposed_fix": "Define the broker's provider-unavailable behavior: whether an ordered fallback within the egress-compatible allowed set is attempted (and that fallback must re-check egress class), the retry/backoff bound, and the terminal disposition (job \u2192 failed_terminal + System Health) when no provider is available.",
+      "anchor": "\u00a77 Provider and Runtime Broker"
+    },
+    {
+      "severity": "important",
+      "finding": "GBrain process unavailable at retrieval time has no defined degradation. The draft addresses GBrain divergence/parity and the write-through containment fallback (read-only) thoroughly, but not the case where the GBrain process/sidecar is simply down when a workflow needs retrieval/graph context. Flow 1 preconditions say 'GBrain workspace brain available or degraded' yet 'degraded' retrieval semantics (block the closeout, proceed with reduced context, or queue) are never specified.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a76 covers parity/divergence and read-only fallback only; USER_FLOWS.md Flow 1 preconditions 'available or degraded' with no semantics; DOMAIN_MODEL.md:63 AgentJob lifecycle has no GBrain-unavailable branch; PRD \u00a717 OBS-1 surfaces 'GBrain health' but not workflow disposition.",
+      "proposed_fix": "Specify GBrain-unavailable behavior per retrieval-dependent workflow: retry with backoff, surface GBrain-down in System Health, and define whether the meeting-closeout/brief blocks (queues) or proceeds in a clearly-flagged reduced-context mode that cannot silently degrade evidence requirements.",
+      "anchor": "\u00a76 Knowledge and GBrain"
+    },
+    {
+      "severity": "important",
+      "finding": "Outbox retry give-up / dead-letter policy is undefined. DATA_MODEL enumerates four outboxes and DOMAIN_MODEL defines failed_terminal/cancelled_budget terminal states, but no doc defines the transition criteria \u2014 max attempts, backoff ceiling, or poison-item handling \u2014 that move a retryable item to terminal. PRD OBS-2 keeps failure items visible 'until resolved or acknowledged' with no dead-letter path, so a permanently-failing write (e.g., precondition that never clears) or a never-validating provider output could retry indefinitely.",
+      "evidence": "DATA_MODEL.md:30 (four outboxes), DOMAIN_MODEL.md:40/51/63 (failed_terminal, cancelled_budget) but no give-up criteria; CONSTRAINTS.md:64 flags 'provider-specific timeout/retry defaults' as an OPEN question; ARCHITECTURE_DRAFT.md \u00a74/\u00a77/\u00a78 mention 'retry' without bounds; PRD OBS-2 (line 558) has no dead-letter.",
+      "proposed_fix": "Define per-outbox retry policy: max attempts / max staleness, backoff ceiling, and a dead-letter/terminal transition that surfaces a distinct System Health item and stops looping (mapping to DOMAIN_MODEL failed_terminal), so no item retries forever.",
+      "anchor": "\u00a74 Operational Storage / \u00a78 Gateways"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "The draft refers to 'outboxes' generically (\u00a71, \u00a74) without enumerating them, even though DATA_MODEL already lists four distinct outboxes with different retry semantics. The final ARCHITECTURE.md should name them and the PRD's two-channel distinction (failed Markdown write-through vs GBrain sync lag, both on the \u00a716.1 retry outbox).",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a74 'outboxes' (unenumerated) vs DATA_MODEL.md:30 'KnowledgeWriter retries, Tool Gateway retries, connector retries, GBrain sync retries'; PRD line 874 distinguishes failed write-through from GBrain sync lag sharing the \u00a716.1 outbox.",
+      "proposed_fix": "In \u00a74, enumerate the outbox taxonomy (KnowledgeWriter write outbox, Tool Gateway write outbox, connector read/sync queue, GBrain re-index outbox), each with its retry/backoff/dead-letter policy and its distinct OBS-2 System Health surface.",
+      "anchor": "\u00a74 Operational Storage"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "Failure-mode handling is scattered (only \u00a74 has an explicit 'Failure modes' block) while DOMAIN_MODEL already defines the relevant terminal/error states (provider_failed, schema_rejected, write_conflict, cancelled_budget, failed_retryable, failed_terminal). The binding ARCHITECTURE.md would benefit from one consolidated Failure Modes & Error Paths section that maps each named failure (connector outage, provider unavailable/schema-fail/budget, worker/Temporal crash, GBrain unavailable/divergent, KnowledgeWriter conflict, DB unavailable/migration, partial deletion, Keychain locked) to its detection, retry/outbox/compensation, terminal state, and System Health item.",
+      "evidence": "ARCHITECTURE_DRAFT.md has explicit 'Failure modes' only in \u00a74; DOMAIN_MODEL.md:51/63 already names the error states; PRD OBS-2 (line 558) enumerates required distinct failure classes.",
+      "proposed_fix": "Add a consolidated 'Failure Modes & Error Paths' section to ARCHITECTURE.md cross-referencing DOMAIN_MODEL state machines and OBS-2 classes, with a table: failure \u2192 detection \u2192 retry/outbox/compensation \u2192 terminal disposition \u2192 System Health surface.",
+      "anchor": "New \u00a7Failure Modes and Error Paths"
+    }
+  ]
+}

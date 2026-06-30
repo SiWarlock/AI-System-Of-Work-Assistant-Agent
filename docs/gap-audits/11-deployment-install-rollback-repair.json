@@ -1,0 +1,76 @@
+{
+  "dimension": "Deployment / install / rollback / repair",
+  "summary": "Significant gaps: \u00a713 is a thin \"fresh local install\" sketch that leaves the production deploy spine under-built \u2014 no signing/notarization resolution (OQ-001), no GBrain version-pin upgrade gate, no migration rollback/recovery, no doctor/repair command, no process supervision/restart policy, no secrets bootstrap, and no app upgrade path.",
+  "findings": [
+    {
+      "severity": "critical",
+      "finding": "GBrain version-pin and its UPGRADE gate are entirely absent from the architecture. The PRD makes pinning a Phase-0 gate and the compat contract version-bound, so bumping the pin is a real deploy operation (re-run compat contract + re-index from Markdown) \u2014 yet the draft never names where the SHA lives or how a pin upgrade is gated.",
+      "evidence": "PRD \u00a717 Phase 0 'GBrain known-good version selected and pinned (SHA recorded in repo config)' and Phase 2 'GBrain compatibility contract test green against the pinned version' (system_of_work_assistant_prd_v0_3.md:1020,1025); ARCHITECTURE_DRAFT.md \u00a713 (lines 335-350) and \u00a717 (392-422) mention neither GBrain pinning nor an upgrade gate.",
+      "proposed_fix": "Add to \u00a713: record the pinned GBrain SHA in repo config; the GBrain process must verify the running version matches the pin at startup (mismatch \u21d2 block/degrade + System Health). Define the pin-upgrade gate: bump SHA only after the \u00a712 GBrain compatibility/parity contract suite is green and a full re-index-from-Markdown succeeds.",
+      "anchor": "\u00a713 Deployment and Install Strategy"
+    },
+    {
+      "severity": "critical",
+      "finding": "Migration apply/ROLLBACK and partial-migration recovery are undefined. \u00a74 only says a migration mismatch 'blocks worker and reports repair instructions' \u2014 there is no down-migration/rollback, no backup-before-migrate, no behavior when a migration fails mid-apply (partial schema), and no app-version<->schema-version compatibility check on upgrade. Drizzle is forward-only by default; the operational store holds load-bearing audit/approvals/outbox state, so a failed migration with no recovery is an under-built production concern.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a74 'Migration mismatch: startup blocks worker and reports repair instructions' (line 158); \u00a712 lists only 'Drizzle migration/repository contract tests' (line 321) \u2014 no rollback/recovery test. OQ focus explicitly names 'migration apply/rollback'.",
+      "proposed_fix": "Specify in \u00a713: backup operational DB before applying migrations; migrations run transactionally where the engine allows; on failed/partial apply, restore from the pre-migration backup and refuse to start with a typed repair message; record app-version<->schema-version compatibility and refuse to run a newer schema against older app code.",
+      "anchor": "\u00a74 Operational Storage / \u00a713"
+    },
+    {
+      "severity": "important",
+      "finding": "No doctor/repair command is specified anywhere in the architecture, despite RISKS naming a 'doctor command' as a primary mitigation and \u00a74 referencing 'repair instructions'. The architecture defines neither the command, its health checks, nor what it can repair (DB, Temporal, GBrain pin, secrets, loopback ports).",
+      "evidence": "RISKS.md RISK-013 mitigation 'Clean install test from Phase 1, doctor command, presets, docs' (line 19); ARCHITECTURE_DRAFT.md \u00a74 'reports repair instructions' (158) and \u00a713 (335-350) define no such command.",
+      "proposed_fix": "Add a \u00a713 'doctor/repair' subsection: a single command that checks worker/Temporal/GBrain liveness, schema/migration state, GBrain pin match, Keychain secret presence, loopback port availability, and Markdown<->GBrain parity; outputs typed findings and offers bounded auto-repairs (re-index GBrain from Markdown, re-bind ports, re-run pending migration after backup).",
+      "anchor": "\u00a713 Deployment and Install Strategy"
+    },
+    {
+      "severity": "important",
+      "finding": "Process supervision/restart policy for the three long-lived local services (control-plane worker, local Temporal dev server, GBrain process/sidecar) is unstated. \u00a713 says main 'supervises' the worker and GBrain runs as a 'process/sidecar', but there is no restart policy, crash backoff, crash-loop handling, or liveness/health probe \u2014 and no defined behavior when the Temporal server or GBrain process dies (degrade? restart? surface System Health?). LIFE-1 lease + Temporal resume cover workflow durability, not OS-process supervision.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a713 lines 339-342 ('supervises control-plane worker', 'GBrain runs as single-owner local process/sidecar per workspace brain'); \u00a74 only covers 'DB unavailable' degraded mode (157). No restart/backoff/liveness spec.",
+      "proposed_fix": "Define a supervision tree in \u00a713: main owns worker; worker owns/monitors Temporal dev server and GBrain processes; specify restart-with-exponential-backoff, a crash-loop ceiling that flips the app to degraded mode + System Health item, and liveness probes for each service.",
+      "anchor": "\u00a713 Deployment and Install Strategy"
+    },
+    {
+      "severity": "important",
+      "finding": "Secrets bootstrap on a fresh install is unstated. \u00a713 says connectors use Keychain-stored credentials, but there is no first-run bootstrap: how the Keychain service/namespace is created, what happens when required secrets are absent (provider/connector disabled and surfaced vs hard fail), and how an unsigned build-from-source obtains Keychain access. This is on the clean-install acceptance path.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a713 'External connectors use user-configured credentials stored in Keychain' (line 343); \u00a75 KeychainSecretsAdapter referenced but no bootstrap flow; PRD \u00a720.1 'Open-source install' / REQ-NF-005 require fresh-install success (REQUIREMENTS.md:33).",
+      "proposed_fix": "Add a \u00a713 first-run secrets bootstrap: create the Keychain service namespace, run with zero secrets by default (each missing-secret provider/connector starts disabled and is surfaced in System Health rather than crashing), and document how Keychain access is granted for an unsigned from-source build.",
+      "anchor": "\u00a713 Deployment and Install Strategy"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "\u00a713 omits the signing/notarization decision entirely; it lives only as an unresolved open question. Production-grade install must record the V1 packaging target and Gatekeeper handling. OQ-001's documented default is 'unsigned local build, document the unsigned path'.",
+      "evidence": "OPEN_QUESTIONS.md OQ-001 'What exact Electron packaging/signing/notarization target is required for V1? ... Document unsigned local build path' (line 9); ARCHITECTURE_DRAFT.md \u00a713 (335-350) says nothing about signing, notarization, or Gatekeeper quarantine.",
+      "proposed_fix": "In \u00a713 state the V1 default: ships as an unsigned build-from-source (no Developer ID signing / notarization); document the Gatekeeper quarantine implication (xattr quarantine removal / right-click-open) for users; signed+notarized DMG distribution is explicitly deferred to V1.1.",
+      "anchor": "\u00a713 Deployment and Install Strategy"
+    },
+    {
+      "severity": "question-for-human",
+      "finding": "Packaging target for V1 is owner-load-bearing and unresolved (OQ-001): is an unsigned build-from-source acceptable for ALL V1 users, or is a signed + notarized distributable required for any of them? This decides whether an Apple Developer ID + notarization pipeline is in V1 scope.",
+      "evidence": "OPEN_QUESTIONS.md OQ-001 (line 9) marks this open with resolution deferred to '/arch-finalize or install spike'; no DECISIONS.md entry locks a packaging/signing target.",
+      "proposed_fix": "Owner confirms: unsigned build-from-source only for V1 (notarization deferred) vs a signed/notarized DMG in V1 scope. Do not invent \u2014 record the answer in DECISIONS.md and \u00a713.",
+      "anchor": "\u00a713 Deployment and Install Strategy"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "There is no app UPGRADE path \u2014 \u00a713 covers fresh install only. A production OSS app needs an upgrade runbook and a statement of what state survives an upgrade.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a713 'V1 local' bullets (337-344) and \u00a715 deferred list (361-373) describe install but no upgrade; PRD \u00a717 Phase 10 is 'Install hardening' (line 1033), still install-only.",
+      "proposed_fix": "Add a \u00a713 upgrade runbook: git pull -> pnpm install -> backup + drizzle migrate -> GBrain pin check/re-index if SHA changed -> restart supervised services; enumerate surviving state (Markdown via git, operational DB migrated, Temporal history, GBrain index rebuildable from Markdown).",
+      "anchor": "\u00a713 Deployment and Install Strategy"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "The packaging toolchain is unspecified and the PRD phase plan still names the obsolete 'Tauri' bundler. With Electron locked, \u00a713/\u00a717 should name the Electron packaging toolchain that produces the distributable.",
+      "evidence": "PRD \u00a717 Phase 1 still lists 'Tauri' among components kept green (system_of_work_assistant_prd_v0_3.md:1024) and \u00a711 'built with Tauri' (line 410); ARCHITECTURE_DRAFT.md \u00a717 tooling list (415-422) names pnpm/Turbo/Drizzle but no Electron packager.",
+      "proposed_fix": "Reconcile the stale Tauri wording and specify the Electron packaging toolchain (e.g. electron-builder or electron-forge) producing the local DMG/app bundle; note it replaces Tauri bundling throughout.",
+      "anchor": "\u00a717 Repo Scaffold / \u00a713"
+    },
+    {
+      "severity": "nice-to-have",
+      "finding": "Backup/restore (disaster-recovery posture) for the non-Markdown stores is unstated. Markdown is git-backed and GBrain is rebuildable from Markdown, but the operational SQLite/Postgres store holds load-bearing audit/approvals/outbox/cursor state whose loss is not recoverable from Markdown, and Temporal persistent state is not addressed.",
+      "evidence": "DECISIONS.md notes 'Git backup' only for workspace Markdown (line 18); ARCHITECTURE_DRAFT.md \u00a74 lists operational store contents 'events, audit, approvals, outboxes, connector cursors...' (144) but \u00a713 gives no backup/restore for it or Temporal state.",
+      "proposed_fix": "State a backup/restore posture in \u00a713: which stores are reconstructible (GBrain from Markdown), which need explicit backup (operational DB audit/approvals/outbox), and the restore steps after disk loss or corruption.",
+      "anchor": "\u00a713 Deployment and Install Strategy"
+    }
+  ]
+}

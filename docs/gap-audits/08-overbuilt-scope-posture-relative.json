@@ -1,0 +1,27 @@
+{
+  "dimension": "Overbuilt scope (posture-relative)",
+  "summary": "Well-scoped overall: the items the focus flags as overbuild candidates (5-provider matrix, dual SQLite+Postgres, GCL Markdown repo + GCL DB) are all LOCKED in DECISIONS and traceable to PRD, so justified \u2014 not gold-plating. One real posture-relative overbuild: local-model conformance is pulled into V1 release-gating despite being a locked non-gate. Plus two minor items.",
+  "findings": [
+    {
+      "severity": "important",
+      "finding": "The draft makes full provider conformance a V1 release-gating requirement across ALL five providers, which sweeps the local providers (Ollama, LM Studio) into the DoD gate. \u00a712 lists 'Provider conformance tests for every enabled provider/capability/model' as a required suite and REQ-I-001 marks all five providers 'must-ship'. This contradicts the locked decision that local models are an 'Optional zero-egress path, not release gate' (DECISIONS line 31; CONSTRAINTS line 47: 'not V1 critical release gate'). Gating V1 DoD on Ollama/LM Studio conformance is overbuilt test/release scope relative to the agreed posture, and the non-gating status is never stated as an explicit deferral \u2014 \u00a715 'Not deferred' even lists 'provider schema validation' without carving out local-model conformance.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a712 ('Provider conformance tests for every enabled provider/capability/model'); \u00a77 ('Ollama and LM Studio adapters support local optional zero-egress paths'); REQUIREMENTS.md REQ-I-001 (must-ship, all five); DECISIONS.md line 31; CONSTRAINTS.md line 47",
+      "proposed_fix": "In \u00a712 and \u00a715, explicitly scope provider conformance gating to cloud/critical-path providers (Claude critical-path; OpenAI/OpenRouter when enabled) and mark Ollama/LM Studio conformance as best-effort / non-gating for V1 DoD, with failing local pairs disabled per ADR-004 fallback rather than blocking release. Add a one-line deferral note so the non-gate status is explicit.",
+      "anchor": "\u00a712 Eval and Test Harness / \u00a715 Scope Boundaries"
+    },
+    {
+      "severity": "nice-to-have",
+      "finding": "Provider conformance scoped 'for every enabled provider/capability/model' is unbounded \u2014 'every model' across five providers is an open-ended combinatorial matrix that exceeds what the locked posture needs. CONSTRAINTS already says capabilities 'must be verified in Phase 0 conformance spikes against pinned versions/models', i.e. a small pinned set, not every model.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a712 ('every enabled provider/capability/model'); CONSTRAINTS.md line 50 ('pinned versions/models')",
+      "proposed_fix": "Bound the conformance matrix to the Phase-0 pinned model set per provider rather than 'every model'; expanding to additional models is post-V1 / on-demand.",
+      "anchor": "\u00a712 Eval and Test Harness"
+    },
+    {
+      "severity": "nice-to-have",
+      "finding": "The repo scaffold adds a speculative 'packages/ui/ shared UI primitives if needed' package. Nothing in the PRD or DECISIONS calls for a shared UI-primitive package (V1 has a single Electron desktop app, single owner), so this is pre-emptive structure. The 'if needed' hedge already signals it is not load-bearing.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a717 Repo Scaffold ('ui/  shared UI primitives if needed')",
+      "proposed_fix": "Drop packages/ui from the V1 scaffold (or explicitly mark it deferred until a second UI surface or extracted primitive genuinely exists); keep desktop UI inside apps/desktop for V1.",
+      "anchor": "\u00a717 Repo Scaffold"
+    }
+  ]
+}

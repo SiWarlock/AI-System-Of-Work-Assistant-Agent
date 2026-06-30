@@ -1,0 +1,69 @@
+{
+  "dimension": "Under-built for production posture (authn/z, validation, idempotency, observability, logging/redaction, secrets, deploy/install/repair/rollback, migration safety)",
+  "summary": "Partially covered: idempotency, schema gates, and secrets-in-Markdown scanning are strong, but the architecture DRAFT omits or under-builds several production controls that its own companion artifacts (THREAT_MODEL, RISKS, REQ-NF-001) require \u2014 most critically worker-API caller authentication and a structured-logging/redaction pipeline.",
+  "findings": [
+    {
+      "severity": "critical",
+      "finding": "The renderer->worker loopback API has no specified caller authentication. The architecture draft repeatedly says the worker API 'binds loopback only' but never specifies a session token, origin allowlist, or per-launch shared secret that the renderer must present. Loopback binding is NOT authentication: any local process, and a malicious visited web page via DNS-rebinding/CSRF, can reach a 127.0.0.1 tRPC port that exposes raw workspace data and side-effecting commands. THREAT_MODEL.md and RISKS.md both assume this control exists; the binding architecture drops it.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a75 ('Worker API binds loopback only and exposes typed commands/queries/events') and \u00a710 ('Worker API is loopback-only') \u2014 no auth mentioned; vs THREAT_MODEL.md line 22 (controls = 'loopback binding, origin/session checks, typed tRPC') and RISKS.md RISK-005 ('loopback API auth/origin checks')",
+      "proposed_fix": "Add to \u00a75/\u00a710 a renderer->worker authentication requirement: a per-launch session secret minted by Electron main, injected via preload, and required on every tRPC call + event-stream subscription; plus an Origin/Host header allowlist to defeat DNS-rebinding. State that unauthenticated loopback callers are rejected.",
+      "anchor": "\u00a75 Policy, Security, and Egress / \u00a710 Local App API"
+    },
+    {
+      "severity": "critical",
+      "finding": "No structured-logging or log-redaction architecture. The threat model lists 'log redaction' as the mitigation that keeps secrets and raw workspace content out of logs, but the architecture draft has no logging/telemetry section, no redaction policy, and no statement that provider prompts / raw Employer Work content / AgentResult.logs are excluded or scrubbed from logs. Provider prompts carry raw confidential content; unredacted logs are an uncontrolled egress/leak surface that bypasses the \u00a716.5 egress gate.",
+      "evidence": "ARCHITECTURE_DRAFT.md has no logging section (\u00a79.9/\u00a712 cover System Health UI only); THREAT_MODEL.md line 41 ('Secrets written to Markdown or logs' -> mitigation 'log redaction'); PRD \u00a713.1 AgentResult.logs and prompt fields can carry raw content",
+      "proposed_fix": "Add an observability/logging subsystem section: structured logs with correlation/workflow-run IDs, a mandatory redaction layer that strips credential-shaped strings and raw-content fields before any log sink, an explicit rule that prompts/raw payloads are never logged at default level, and that logs honor the same workspace egress policy as providers.",
+      "anchor": "new \u00a7 observability/logging (extends \u00a79.9 OBS / \u00a712)"
+    },
+    {
+      "severity": "important",
+      "finding": "Install doctor / repair / app-upgrade / rollback path is under-built. The draft \u00a713 covers only first-run clean install; \u00a74 says a migration mismatch 'reports repair instructions' but no repair/doctor command is architected, and there is no app version-upgrade data-migration path or rollback story. REQ-NF-001 explicitly puts 'deploy/rollback' in scope, RISKS.md RISK-013 names a 'doctor command', and PRD \u00a716.1 names an 'install doctor'.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a713 (clean install only) and \u00a74 ('Migration mismatch: startup blocks worker and reports repair instructions'); REQUIREMENTS.md REQ-NF-001 ('deploy/rollback'); RISKS.md RISK-013 ('doctor command'); RISK-009 fallback 'Manual resume/health repair path'; PRD \u00a716.1 'install doctor'",
+      "proposed_fix": "Add to \u00a713 a doctor/repair command (verifies prerequisites, DB/migration state, Temporal/GBrain reachability, Keychain access, connector auth, lease/lock health and recovers stale locks) and an app-upgrade/rollback subsection covering version-pinned runtime bumps (PRD \u00a717 Maintainability), operational-DB migration on upgrade, and rollback/downgrade behavior.",
+      "anchor": "\u00a713 Deployment and Install Strategy"
+    },
+    {
+      "severity": "important",
+      "finding": "Migration safety for the operational store is thin: no backup-before-migrate, no forward-only/transactional migration policy, and no operational-DB backup/recovery strategy. The operational store holds approvals, outboxes, connector cursors, and audit \u2014 losing it on a failed migration or file corruption loses in-flight external-side-effect state, yet (unlike Markdown, which is Git-backed) it has no named backup path. Drift between SQLite/Postgres migrations is only covered by contract tests, not a safety policy.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a74 ('Migration mismatch: startup blocks worker'); DATA_MODEL.md 'Migration and Compatibility Rules' (lines 108-115, Drizzle tested on both dialects only); \u00a74 lists outboxes/approvals/audit as operational-store contents",
+      "proposed_fix": "Specify in \u00a74/\u00a713: forward-only, transactional Drizzle migrations with a pre-migration backup/snapshot of the operational store, a recovery path if migration fails mid-flight, and a stated backup/restore strategy for the operational SQLite file (approvals/outbox/audit) parallel to Markdown's Git backup.",
+      "anchor": "\u00a74 Operational Storage / \u00a713"
+    },
+    {
+      "severity": "important",
+      "finding": "SecretsPort / KeychainSecretsAdapter is absent from the architecture draft's component model and repo scaffold. The draft only asserts negatively that the store 'does not store secrets; Keychain does' (\u00a74) but never specs the secrets abstraction, the key-retrieval flow into providers/connectors, or a package home \u2014 even though provider keys and OAuth tokens are top-listed assets and PRD \u00a77.3 defines SecretsPort.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a74 boundary line and \u00a717 repo scaffold (no secrets package/port); vs PRD \u00a77.3 ('SecretsPort -> KeychainSecretsAdapter'); THREAT_MODEL.md assets ('Provider API keys and connector OAuth tokens'); REQUIREMENTS.md REQ-S-003",
+      "proposed_fix": "Add SecretsPort/KeychainSecretsAdapter to the \u00a75 security architecture and the \u00a717 scaffold (e.g., packages/policy or packages/secrets); describe how worker retrieves keys at use-time, that keys never enter renderer/logs, and the dev-only .env non-secret boundary.",
+      "anchor": "\u00a75 / \u00a717 Repo Scaffold"
+    },
+    {
+      "severity": "important",
+      "finding": "Renderer rendering of untrusted content and Content-Security-Policy is not addressed. The renderer displays meeting transcripts, source text, and assistant notes \u2014 all untrusted/imported content \u2014 so XSS in the renderer is the exact path that turns the missing worker-API auth (finding 1) into raw-data exfiltration. The draft's Electron-security list (context isolation, no Node integration, narrow preload) does not include a CSP or a safe untrusted-content/markdown rendering requirement.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a75 'Electron security' bullets (no CSP, no untrusted-render rule); \u00a711 surfaces render Ingestion Inbox / meeting notes / Copilot output; THREAT_MODEL.md line 21 failure mode 'XSS invokes privileged operation'",
+      "proposed_fix": "Add to \u00a75/\u00a711 a strict renderer Content-Security-Policy (no remote script, no eval) and a requirement that imported/untrusted content is rendered through a sanitizing markdown pipeline, never as raw HTML.",
+      "anchor": "\u00a75 / \u00a711 Electron Desktop UI"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "The worker API is described as 'typed tRPC / typed commands' but typed is compile-time only; runtime input validation on commands crossing the untrusted renderer boundary is not stated. The strong JSON-Schema discipline applied to provider output is not mirrored on the renderer->worker command boundary.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a710 ('Use tRPC for TypeScript-native commands and queries'); \u00a73 validation rules cover model output/external writes but not API command inputs",
+      "proposed_fix": "Add a \u00a73/\u00a710 rule: every worker API command and query input is validated at runtime (e.g., zod schemas on the tRPC procedures) and rejected on failure, since the renderer is an untrusted boundary.",
+      "anchor": "\u00a710 / \u00a73 Validation rules"
+    },
+    {
+      "severity": "proposed-edit",
+      "finding": "Observability is specified as a UI surface but not as an emitting subsystem. PRD OBS-1/OBS-2 enumerate the exact System Health metrics and the distinct, persistent, audit-linked failure items required, but the draft only lists 'System Health' as a \u00a711 UI surface and a \u00a712 test; no architecture component is named that collects/emits these metrics and failure items.",
+      "evidence": "ARCHITECTURE_DRAFT.md \u00a711 (System Health surface) and \u00a712 (tests) only; PRD \u00a79.9 OBS-1/OBS-2 (connector status, GBrain health, workflow runs, queue depth, failed write-throughs, sync lag, cost, approval backlog; distinct persistent failure items)",
+      "proposed_fix": "Add a brief observability/health subsystem in \u00a74 or a new section mapping each OBS-1/OBS-2 metric and failure class to the worker component that emits it and to the read model the \u00a711 surface consumes.",
+      "anchor": "\u00a711 / \u00a712 / new \u00a7observability"
+    },
+    {
+      "severity": "question-for-human",
+      "finding": "Encryption-at-rest of the operational store is unspecified. The operational SQLite DB holds raw cached payloads (RET-1), audit before/after summaries, source-envelope content, and event content \u2014 confidential Employer Work data that is NOT in Keychain and NOT Git-backed. ASM-009 locks 'macOS session + Keychain sufficient' for AUTH but does not address payload-at-rest encryption. Is FileVault the assumed control, or should the app encrypt the operational store (e.g., SQLCipher) given Employer Work confidentiality requirements?",
+      "evidence": "DATA_MODEL.md line 18 (only secrets are Keychain-protected; payloads not addressed); PRD \u00a79.10 RET-1 (assistant-held raw payloads cached up to 30 days); ASM-009 (auth only); \u00a74 operational-store contents",
+      "proposed_fix": "Owner decision: (a) rely on FileVault full-disk encryption as the documented at-rest control and state that assumption in the architecture + install docs, or (b) require app-level encryption of the operational store (e.g., SQLCipher) and Temporal/local DB files. Do not invent the answer.",
+      "anchor": "\u00a74 Operational Storage / \u00a75 security defaults"
+    }
+  ]
+}
