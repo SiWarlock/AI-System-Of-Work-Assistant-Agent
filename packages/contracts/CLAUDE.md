@@ -138,7 +138,7 @@ Several typed models in this codebase are **contracts** mirrored in `ARCHITECTUR
 | ExternalWriteEnvelope | §3, §8 | embeds WriteReceipt?; envelope↔ProposedAction linkage helper; preconditions (arch_gap, open). |
 | WriteReceipt | §8 | externalObjectId, externalUrl?, recordedAt, rawRef? — exactly-once external-write proof. |
 | SourceEnvelope | §3, §8, §9 | sourceId, workspaceId(req), origin, contentHash, type, sensitivity, routingHints. |
-| GclProjection | §3, §5, §6, §11 | workspaceId+visibilityLevel(req), projectionType, sanitizedPayload (no raw-content keys), sourceRefs. |
+| GclProjection | §3, §5, §6, §11 | workspaceId+visibilityLevel(req), projectionType, sanitizedPayload (raw-content gate is KEY-NAME-INDEPENDENT: rejects raw-content-shaped key OR any multi-line/over-length string value, recursive — tightened 2026-07-01), sourceRefs. |
 | Approval | §3, §9, §10, §11 | id, actionRef, status(6), actor, channel(mac\|telegram), payloadHash, snoozeUntil?, expiresAt? — snooze ⇔ deferred. |
 | AuditRecord | §3, §4, §16 | actor, event, refs, payloadHash, before/afterSummary (summaries only — no raw content), timestamps. |
 | WorkflowRunRef | §3, §9 | workflowId, trigger, state, idempotencyKey, auditRefs[]. |

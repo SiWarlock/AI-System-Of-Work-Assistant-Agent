@@ -160,4 +160,28 @@ describe("GclProjection contract — spec(§3/§5/§6/§11)", () => {
     });
     expect(bad.success).toBe(false);
   });
+
+  // ── REGRESSION (adversarial verify): the raw-content gate is KEY-NAME-INDEPENDENT.
+  // The prior 3-key denylist let verbatim raw content ride ANY other key name. Now a
+  // multi-line or over-length string value is rejected regardless of key, recursively.
+  const proj = (sanitizedPayload: Record<string, unknown>) => ({
+    workspaceId: "ws-employer",
+    visibilityLevel: "coordination",
+    projectionType: "busy_free_window",
+    sanitizedPayload,
+    sourceRefs: [],
+  });
+  it("rejects a MULTI-LINE string value under a non-denylist key", () => {
+    expect(GclProjectionSchema.safeParse(proj({ summary: "line one\nline two — raw transcript" })).success).toBe(false);
+  });
+  it("rejects an OVER-LENGTH string value under a non-denylist key", () => {
+    expect(GclProjectionSchema.safeParse(proj({ digest: "x".repeat(1025) })).success).toBe(false);
+  });
+  it("rejects raw content nested under a non-denylist key (recursive scan)", () => {
+    expect(GclProjectionSchema.safeParse(proj({ meta: { detail: "para one\npara two" } })).success).toBe(false);
+    expect(GclProjectionSchema.safeParse(proj({ items: [{ transcript: "verbatim" }] })).success).toBe(false);
+  });
+  it("still ACCEPTS short single-line summary values (no false positive)", () => {
+    expect(GclProjectionSchema.safeParse(proj({ busySlots: 3, label: "Standup", priority: 2 })).success).toBe(true);
+  });
 });

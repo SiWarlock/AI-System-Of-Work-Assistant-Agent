@@ -58,6 +58,25 @@ const planWithCreate = (
   creates: [{ path, body }],
 });
 
+describe("applyPlan — secure-by-default gates (regression)", () => {
+  // spec(§6) — REGRESSION (adversarial verify): the ownership + secret-scan hooks
+  // formerly DEFAULTED to pass-through no-ops, so an uninjected caller got NO
+  // enforcement (fail-OPEN). They now default to the REAL predicates. A plan whose
+  // body carries a secret-shaped value is REJECTED even with NO injected secretScan.
+  it("rejects a secret-bearing plan via the REAL default scanner (no injected secretScan)", async () => {
+    const vault = new MemoryVaultFs();
+    const d = deps(vault); // deps() injects neither ownershipCheck nor secretScan
+    const plan = planWithCreate("notes/leak.md", "this note has a secret value inside");
+    const r = await applyPlan(cmd(plan), d);
+    expect(isOk(r)).toBe(false);
+    if (isOk(r)) return;
+    expect(r.error.code).toBe("secret_found");
+    // fail-closed: nothing committed, no revision recorded
+    expect(vault.snapshot()["notes/leak.md"]).toBeUndefined();
+    expect(d.revisions.recordCalls).toBe(0);
+  });
+});
+
 describe("applyPlan — happy path", () => {
   it("commits a valid plan atomically and records exactly one revision + audit", async () => {
     const vault = new MemoryVaultFs();

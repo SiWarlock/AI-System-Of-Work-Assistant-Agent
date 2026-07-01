@@ -15,16 +15,40 @@ import type { SourceRef } from "./shared-shapes";
 /** Stable JSON-Schema `$id` for the schema registry. */
 export const GCL_PROJECTION_SCHEMA_ID = "sow:gcl-projection" as const;
 
-// arch_gap: the raw-content-shaped denylist below is the PINNED shape-gate floor
-// (1.8 bullet 3 — "the schema forbids raw-content-shaped fields by construction").
-// The full per-projectionType allowed-field MAP (which keys each projectionType
-// may carry) is unspecified upstream; full leakage enforcement lives in §5/§6.
-// We forbid the three named raw-content-shaped keys (case-insensitively) rather
-// than invent a closed allowed-field taxonomy.
-const RAW_CONTENT_SHAPED_KEYS: ReadonlySet<string> = new Set(["rawcontent", "body", "content"]);
+// Leakage shape-gate (1.8 bullet 3 — "the schema forbids raw-content-shaped fields
+// by construction"). A sanitized cross-workspace projection carries only SHORT,
+// SINGLE-LINE summary values (busy/free, deadlines, priority metadata, one-line
+// sanitized summaries — §6). Verbatim raw workspace content (note bodies,
+// transcripts, emails) is multi-line and/or long-form. So the gate is
+// KEY-NAME-INDEPENDENT: it scans EVERY value recursively (nested objects + arrays)
+// and rejects any string that is multi-line OR exceeds the summary length cap,
+// regardless of key name — closing the prior hole where raw content could ride any
+// key OTHER than the three named ones (a workspace-isolation breach, safety rule 4).
+// A broadened explicit key denylist is kept as a fast, named signal for the
+// obvious cases. arch_gap: the full per-projectionType allowed-field MAP is
+// unspecified upstream; full leakage enforcement lives in §5/§6.
+const MAX_SUMMARY_VALUE_LEN = 1024;
 
-const carriesRawContentShapedKey = (payload: Record<string, unknown>): boolean =>
-  Object.keys(payload).some((k) => RAW_CONTENT_SHAPED_KEYS.has(k.toLowerCase()));
+const RAW_CONTENT_SHAPED_KEYS: ReadonlySet<string> = new Set([
+  "rawcontent", "raw", "body", "content", "text", "transcript",
+  "markdown", "html", "note", "notes", "message", "email", "prompt", "payload",
+]);
+
+const isRawContentShaped = (value: unknown, key?: string): boolean => {
+  if (typeof key === "string" && RAW_CONTENT_SHAPED_KEYS.has(key.toLowerCase())) return true;
+  if (typeof value === "string") {
+    // A sanitized summary is short + single-line; verbatim raw content is not.
+    return value.length > MAX_SUMMARY_VALUE_LEN || /[\r\n]/.test(value);
+  }
+  if (Array.isArray(value)) return value.some((v) => isRawContentShaped(v));
+  if (value !== null && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>).some(([k, v]) => isRawContentShaped(v, k));
+  }
+  return false;
+};
+
+const carriesRawContent = (payload: Record<string, unknown>): boolean =>
+  Object.entries(payload).some(([k, v]) => isRawContentShaped(v, k));
 
 // Explicit output interface + annotation: the inferred type would otherwise force
 // the declaration emitter to name `ids.ts`'s module-private `__brand` symbol
@@ -64,11 +88,12 @@ export const GclProjectionSchema: z.ZodType<GclProjection, z.ZodTypeDef, GclProj
     sourceRefs: z.array(SourceRefSchema),
   })
   .strict()
-  // Leakage shape gate: sanitizedPayload must not carry a raw-content-shaped key
-  // (rawContent / body / content, case-insensitive) — a raw-content field on a
-  // GCL projection is a workspace-isolation breach (safety rule 4 / §6 WS-8).
-  .refine((p) => !carriesRawContentShapedKey(p.sanitizedPayload), {
+  // Leakage shape gate (KEY-NAME-INDEPENDENT): sanitizedPayload must carry only
+  // short, single-line summary values — no raw-content-shaped key AND no multi-line
+  // or over-length string value anywhere (recursively). Raw content on a GCL
+  // projection is a workspace-isolation breach (safety rule 4 / §6 WS-8).
+  .refine((p) => !carriesRawContent(p.sanitizedPayload), {
     message:
-      "sanitizedPayload must not carry a raw-content-shaped key (rawContent/body/content) — GCL projections are sanitized (§6 Visibility Gate)",
+      "sanitizedPayload must carry only short single-line summary values — no raw-content-shaped key and no multi-line/over-length string (GCL projections are sanitized, §6 Visibility Gate)",
     path: ["sanitizedPayload"],
   });

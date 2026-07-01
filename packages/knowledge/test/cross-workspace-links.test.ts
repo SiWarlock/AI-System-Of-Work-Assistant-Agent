@@ -26,6 +26,39 @@ const C = "ws-c";
 const FULL: VisibilityLevel = "full";
 const AT = "2026-07-01T00:00:00.000Z";
 
+// spec(§6) — REGRESSION (adversarial verify): a Level-3 raw-crossing link backed
+// by a TIME-BOXED owner Approval must stop authorizing once the approval expires;
+// the prior gate ignored `Approval.expiresAt` entirely (indefinite raw crossing).
+describe("Level-3 link expiry (regression) — a time-boxed grant never authorizes indefinitely", () => {
+  const expiring = (expiresAt: string): Approval => ({ ...approval("approved", "appr-exp"), expiresAt });
+  const PAST = "2026-06-30T00:00:00.000Z"; // before AT
+  const FUTURE = "2026-07-02T00:00:00.000Z"; // after AT
+  const LATER = "2026-07-03T00:00:00.000Z"; // after FUTURE
+
+  it("REJECTS recording a link whose approval already expired at record time", () => {
+    const map = new CrossWorkspaceLinkMap();
+    const r = map.recordLink({ fromWorkspaceId: A, toWorkspaceId: B, unlockedVisibility: FULL, approval: expiring(PAST), recordedAt: AT });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe("approval_expired");
+    expect(map.getLink(A, B)).toBeUndefined();
+  });
+
+  it("authorizes BEFORE expiry, DENIES after (time-boxed link)", () => {
+    const map = new CrossWorkspaceLinkMap();
+    expect(map.recordLink({ fromWorkspaceId: A, toWorkspaceId: B, unlockedVisibility: FULL, approval: expiring(FUTURE), recordedAt: AT }).ok).toBe(true);
+    expect(map.authorizeCrossWorkspaceRawRead({ fromWorkspaceId: A, toWorkspaceId: B, at: AT }).ok).toBe(true);
+    const after = map.authorizeCrossWorkspaceRawRead({ fromWorkspaceId: A, toWorkspaceId: B, at: LATER });
+    expect(after.ok).toBe(false);
+    if (!after.ok) expect(after.error.code).toBe("direct_cross_workspace_raw_denied");
+  });
+
+  it("a time-boxed link with NO request time is DENIED (fail-closed — cannot verify)", () => {
+    const map = new CrossWorkspaceLinkMap();
+    map.recordLink({ fromWorkspaceId: A, toWorkspaceId: B, unlockedVisibility: FULL, approval: expiring(FUTURE), recordedAt: AT });
+    expect(map.authorizeCrossWorkspaceRawRead({ fromWorkspaceId: A, toWorkspaceId: B }).ok).toBe(false);
+  });
+});
+
 describe("CrossWorkspaceLinkMap.recordLink — recording a Level-3 owner-approved link", () => {
   it("records an approved link capturing the approval ref, both endpoints, and the unlocked visibility", () => {
     const map = new CrossWorkspaceLinkMap();

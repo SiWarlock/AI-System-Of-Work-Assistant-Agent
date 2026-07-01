@@ -50,6 +50,12 @@ import {
   type RevisionId,
   type VaultSnapshot,
 } from "./revision";
+// Secure-by-default: the REAL ownership + secret predicates are the applyPlan
+// defaults (a caller may still override via deps). ownership.ts / secret-scan.ts
+// import only TYPES from this module (erased at runtime) so these value imports
+// create no runtime cycle.
+import { enforceHumanOwnership } from "./ownership";
+import { scanForSecrets } from "./secret-scan";
 
 // ── injected hooks (tasks 4.2 / 4.3) ────────────────────────────────────────
 
@@ -149,8 +155,8 @@ export type WriteFailure =
 
 // ── the writer ───────────────────────────────────────────────────────────────
 
-const ownershipPass: OwnershipCheck = () => ok(undefined);
-const secretScanPass: SecretScan = () => ok(undefined);
+// (The former pass-through no-op defaults were a fail-OPEN hole — an uninjected
+// caller got NO ownership/secret enforcement. Defaults are now the real predicates.)
 
 /**
  * Apply one KnowledgeMutationPlan atomically. See the module header for the
@@ -161,8 +167,8 @@ export async function applyPlan(
   command: KnowledgeWriteCommand,
   deps: KnowledgeWriterDeps,
 ): Promise<Result<WriteSuccess, WriteFailure>> {
-  const ownership = deps.ownershipCheck ?? ownershipPass;
-  const scan = deps.secretScan ?? secretScanPass;
+  const ownership = deps.ownershipCheck ?? enforceHumanOwnership;
+  const scan = deps.secretScan ?? scanForSecrets;
 
   // 1 — idempotent replay: a prior commit for this key returns without any new
   // write or second AuditRecord (§6 idempotency).

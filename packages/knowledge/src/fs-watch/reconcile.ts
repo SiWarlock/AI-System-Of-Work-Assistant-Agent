@@ -137,6 +137,7 @@ export type ConflictReason =
   | "new_assistant_domain_file"
   | "assistant_file_removed"
   | "malformed_markers"
+  | "rollback_to_prior_kw_state"
   | "unattributed_change";
 
 export type Attribution =
@@ -202,10 +203,30 @@ function matchesKwWrite(
   currentSha: string,
   view: JournalView,
   verify: KwSigVerifier,
-): RevisionId | undefined {
-  const candidates = [...(view.committed.get(path) ?? []), ...(view.pending.get(path) ?? [])];
-  const hit = candidates.find((e) => e.contentSha === currentSha && verify(e));
-  return hit?.revisionId;
+): { readonly revisionId: RevisionId; readonly stale: boolean } | undefined {
+  // A landing in-flight (pending) write matching the current bytes = a fresh KW write.
+  const pendingHit = (view.pending.get(path) ?? []).find(
+    (e) => e.contentSha === currentSha && verify(e),
+  );
+  if (pendingHit !== undefined) return { revisionId: pendingHit.revisionId, stale: false };
+
+  // The HEAD committed entry (the expected on-disk state after the last KW write)
+  // matching = a clean landed write. The write-journal is chronological, so the
+  // head is the LAST entry for the path.
+  const committed = view.committed.get(path) ?? [];
+  const head = committed[committed.length - 1];
+  if (head !== undefined && head.contentSha === currentSha && verify(head)) {
+    return { revisionId: head.revisionId, stale: false };
+  }
+
+  // Current bytes match a SUPERSEDED (non-head) committed entry: the file was
+  // reverted out-of-band to a PRIOR KW state (a rollback). Attributing this as a
+  // fresh KW write would clean-advance the base and silently LOSE the newer
+  // content — so flag it stale (→ conflict-review), never a clean advance.
+  const staleHit = committed.slice(0, -1).find((e) => e.contentSha === currentSha && verify(e));
+  if (staleHit !== undefined) return { revisionId: staleHit.revisionId, stale: true };
+
+  return undefined;
 }
 
 /** Classify one working-tree mutation into exactly one `Attribution`. */
@@ -219,9 +240,14 @@ function classify(
   // A verified KW write to the current bytes always attributes to KW (a landed
   // commit reflected on disk), whether the file was added or modified.
   if (mutation.currentContent !== undefined) {
-    const rev = matchesKwWrite(path, fileContentSha(mutation.currentContent), view, verify);
-    if (rev !== undefined) {
-      return { class: "kw_write", path, revisionId: rev };
+    const m = matchesKwWrite(path, fileContentSha(mutation.currentContent), view, verify);
+    if (m !== undefined) {
+      if (m.stale) {
+        // Out-of-band rollback to a prior KW state — conflict-review, never a
+        // clean base advance (the lost-update guard).
+        return { class: "conflict", path, reason: "rollback_to_prior_kw_state" };
+      }
+      return { class: "kw_write", path, revisionId: m.revisionId };
     }
   }
 

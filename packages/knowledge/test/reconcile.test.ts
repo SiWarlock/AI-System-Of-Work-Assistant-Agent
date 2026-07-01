@@ -102,6 +102,27 @@ describe("reconcileVault — clean advances", () => {
     expect(out.healthItems).toHaveLength(0);
   });
 
+  // spec(§6) — REGRESSION (adversarial verify): an out-of-band ROLLBACK of a KW
+  // note to a PRIOR KW-committed byte-state must NOT be misattributed as a fresh
+  // KW write (which would clean-advance the base + silently lose the newer
+  // content). It is a conflict-review — the lost-update guard.
+  it("a rollback to a PRIOR KW state is a conflict, not a clean advance (no lost update)", () => {
+    const v1 = "kw body one";
+    const v2 = "kw body two";
+    const rev1 = computeRevisionId(snap({ "note.md": v1 }));
+    const rev2 = computeRevisionId(snap({ "note.md": v2 }));
+    const base = snap({ "note.md": v2 }); // base = the newer (current) KW state
+    const cur = snap({ "note.md": v1 }); // on-disk reverted to the OLDER KW state
+    const out = reconcileVault(
+      { baseRevisionId: rev2, baseSnapshot: base, currentSnapshot: cur },
+      // journal chronological: v1 (older) then v2 (head).
+      deps([kwCommitted("note.md", v1, rev1), kwCommitted("note.md", v2, rev2)]),
+    );
+    expect(out.kind).toBe("conflict_review");
+    expect(out.conflicts[0]).toMatchObject({ reason: "rollback_to_prior_kw_state" });
+    expect(out.baseRevisionId).toBe(rev2); // base NOT advanced to the stale rev
+  });
+
   it("a human-owned-REGION edit (assistant regions byte-stable) clean-advances", () => {
     const base = snap({ "note.md": withRegion("Human intro.", "assistant body") });
     // Human edits their own prose; the assistant region is byte-identical.
