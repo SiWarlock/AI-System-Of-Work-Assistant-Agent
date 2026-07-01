@@ -3,7 +3,9 @@
 - **Date:** 2026-07-01
 - **Predecessor:** `005-2026-07-01-phase3-policy-security-egress.md` (Phase 3 — §5 policy, CLEAR)
 - **Operating model:** single-operator, Workflow-driven (Claude Code, ultracode). Two concurrent Workflows.
-- **Outcome:** **Phases 4 + 5 BUILT + adversarially verified, committed + pushed — NOT yet formally certified.** Phase 5's 2 findings are fixed; Phase 4 has 4 open findings (documented). `/phase-exit 4` + `/phase-exit 5` + the Phase-4 finding-fixes + Phase 6 pend a fresh session.
+- **Outcome:** **Phases 4 + 5 BUILT + adversarially verified + FIXED + CERTIFIED (same session).** `/phase-exit 4`: CLEAR and `/phase-exit 5`: CLEAR — all 4 reviewer sub-agents CLEAR. Phase 5's 2 findings + Phase 4's 4 findings (+ a Phase-4-security NUL-separator auditability finding) all fixed + regression-tested. **PHASES 0–5 CERTIFIED.** Only **Phase 6 (§8 Gateways)** remains for a fresh session.
+
+> **UPDATE (same session, later):** the initial plan deferred the fixes + certification to a fresh session, but the user chose to finish 4+5 exit in-session. All findings were fixed (incl. finding #3 as a proper frozen-contract change, and finding #4 secure-by-default), regression-tested (repo-wide 1790 green), and both phases certified via the 4 reviewer sub-agents (all CLEAR). See "Certification" below.
 
 > **Cold-start note:** self-contained. Resuming → read this doc + `IMPLEMENTATION_PLAN.md` (Currently-in-progress + the PHASE-4 PRE-CERTIFICATION BLOCKERS in Carry-forward) + memory `system-of-work-prd`, then use the **Resume prompt** at the bottom.
 
@@ -37,25 +39,34 @@ The user chose to fork **Phase 4 (§6 Knowledge)** and **Phase 5 (§7 Broker)** 
 
 Both Workflows ran concurrently and completed. **Phase 4 hit burst-stalls** (agents 4.2, 4.5, 4.16, 4.17 stalled + auto-retried; all self-recovered — see memory `workflow-fanout-burst-stall-repair`). Phase 5 ran clean. The `pnpm install` race I flagged did not materialize (the two foundation installs didn't collide). Adversarial verify again earned its keep on Phase 5 (a real egress-veto-doesn't-bind-execution gap that 232 unit tests missed).
 
+## Certification (added same session)
+
+The 6 findings were all fixed + regression-tested (repo-wide **1790** green; typecheck + audit clean), then both phases certified via 4 reviewer sub-agents — **all CLEAR**:
+
+- **Phase-4 fixes (`84c3c7e`):** fs-watch rollback lost-update (HEAD-only KW attribution + `rollback_to_prior_kw_state` conflict) · GCL Level-3 link honors `Approval.expiresAt` (fail-closed via `req.at`) · **`GclProjection` raw-content gate → KEY-NAME-INDEPENDENT** (frozen-contract change: recursive scan rejecting a raw-content-shaped key OR any multi-line/>1024 string; ARCHITECTURE Appendix A + `contracts/CLAUDE.md` updated; schema + snapshot unchanged) · KnowledgeWriter secure-by-default (real ownership + secret-scan defaults).
+- **Phase-5 fixes (`ac9f9b8`):** the vetted matrix route is threaded as the job's effective route into execution + budget (the veto now binds the executed target; COST-1/2 meters it).
+- **`/phase-exit 4`: CLEAR** — arch-drift 13 anchors 0 DRIFT/0 STALE/0 AMBIGUOUS (the write-through 7 invariants all confirmed); security rules 1/2/4/7 PASS. **1 medium auditability finding fixed** (`944c76f`): three files (`revision.ts`, `canonical-fact-deriver.ts`, `cross-workspace-links.ts`) used a literal NUL byte separator → git binary → unreviewable diffs; swapped for `String.fromCharCode(0)` (the codebase's own convention), behavior-preserving.
+- **`/phase-exit 5`: CLEAR** — arch-drift 0 DRIFT / 1 STALE-DOC (`provider_routing_unavailable` FailureClass → carry-forward) / 1 AMBIGUOUS (broker-vs-§9 budget-health); security strict-side-effect + rule 5/6/7 + COST-1/2 PASS. *(Phase-5 security run 1 hit a transient API error; the retry landed CLEAR.)*
+- Reports: `docs/audits/phase{4,5}-{arch-drift,security}.md`.
+
 ## Commit map
 
 | Commit | What |
 |---|---|
 | `aecb8f1` | feat(knowledge): Phase 4 §6 — `@sow/knowledge` (70 files) |
 | `ac9f9b8` | feat(providers): Phase 5 §7 — `@sow/providers` + eval harness (74 files) |
-| _(this doc + plan/memory sync)_ | close-out |
+| `84c3c7e` | fix(knowledge): the 4 Phase-4 adversarial-verify findings + regression tests |
+| `944c76f` | fix(knowledge): literal NUL separators → `String.fromCharCode(0)` (auditability) |
+| _(this doc + plan/DECISIONS/memory sync)_ | close-out |
 
 ---
 
-## Resume prompt (cold start → finish 4/5 certification, then Phase 6)
+## Resume prompt (cold start → Phase 6)
 
-> Resume the System of Work Assistant build (repo: SoW-build, `main`, pushed to origin). **Phases 0–3 are COMPLETE + certified. Phases 4 + 5 are BUILT + adversarially verified + committed but NOT yet formally certified.** Read `docs/sessions/006-…` (this handoff) + `005-…`, memory `system-of-work-prd` + `solo-session-full-closeout` + `workflow-concurrency-rate-limits` + `workflow-fanout-burst-stall-repair`, and `IMPLEMENTATION_PLAN.md` (Currently-in-progress + the **PHASE-4 PRE-CERTIFICATION BLOCKERS** list in Carry-forward). Repo-wide 1781 tests green; typecheck clean.
+> Resume the System of Work Assistant build (repo: SoW-build, `main`, pushed to origin). **Phases 0–5 are COMPLETE and CERTIFIED** (Phase 4 §6 knowledge + Phase 5 §7 broker both `/phase-exit`-CLEAR, all 4 reviewer sub-agents CLEAR; all findings fixed + regression-tested). Read `docs/sessions/006-…` (this handoff, incl. the Certification section) + `005-…`, memory `system-of-work-prd` + `solo-session-full-closeout` + `workflow-concurrency-rate-limits` + `workflow-fanout-burst-stall-repair`, and `IMPLEMENTATION_PLAN.md` (Currently-in-progress + Carry-forward + Phase 6). **Repo-wide 1790 tests green; typecheck clean; audit clean.**
 >
-> **Do, in order:**
-> 1. **Fix the 4 Phase-4 findings** (all in `packages/knowledge`, precise file:line in the plan Carry-forward) with regression tests encoding each — like the Phase-3/Phase-5 adversarial-regressions suites: (1) fs-watch rollback lost-update misattribution; (2) GCL Level-3 link must honor `Approval.expiresAt`/status; (3) `GclProjection` raw-content 3-key denylist → a positive/stronger sanitization guarantee (this one is a **frozen-contract change** — edit ARCHITECTURE Appendix A + `gcl-projection.ts` schema + its snapshot in the same round, per the frozen-contract discipline); (4) KnowledgeWriter secret-scan/ownership must default to the real predicates or fail-CLOSED, not pass-through. Start with #4 (safety) + #2 (clear). Commit per fix.
-> 2. **Formal `/phase-exit 4` + `/phase-exit 5`** — dispatch the arch-drift + security reviewer sub-agents for each (they write `docs/audits/phase{4,5}-{arch-drift,security}.md`); materialize each checklist; certify CLEAR (reachability judgment-waived — no production consumer until §9 workflows/Phase 7). Confirm the Phase-4 serving/quarantine safety invariants + Phase-5 strict-side-effect/egress-binding hold post-fix.
-> 3. **Then Phase 6 — §8 Connector & Tool Gateways** (`packages/integrations`, critical path 3→6→7): the Connector Gateway (external reads, cursors, retry/backoff, connector-unreachable queue/drain) + the **Tool Gateway** (the ONLY external-write path: external-write envelope with idempotencyKey + canonicalObjectKey + pre-write existence check + write receipt → zero duplicate external writes) + NotebookPort. Depends on 1+3 (satisfied). Consumes `@sow/policy` (approval/tool policy) + the frozen `ProposedAction`/`ExternalWriteEnvelope`/`WriteReceipt`/`NotebookMapping`.
+> **Do: Phase 6 — §8 Connector & Tool Gateways** (`packages/integrations`, on the critical path 3→6→7). The **Connector Gateway** (external READS: connector auth scoping, cursors, retry/backoff, health signals; connector-unreachable → queue + bounded-exponential-backoff + drain-on-reconnect, no silent drops) + the **Tool Gateway** (the ONLY external-write path — the external-write envelope: approval policy + `idempotencyKey` + `canonicalObjectKey` + **pre-write existence check** [vendor create-tools lack native idempotency → match-by-canonical-key-then-reuse-on-hit] + payload hash + **write receipt**; replay reuses the receipt/matched object → **zero duplicate external writes**; outbox holds during connector outage) + NotebookPort (`notebooklm.sync` managed-doc upsert). Depends on 1+3 (satisfied). Consumes `@sow/policy` (approval/tool policy) + the frozen `ProposedAction`/`ExternalWriteEnvelope`/`WriteReceipt`/`NotebookMapping`/`SourceEnvelope`. Spec: ARCHITECTURE §8 + IMPLEMENTATION_PLAN §6. **Reuse the Phase-3 candidate-data gate composition** (`admitCandidateJob` pattern — ajv + Zod + §3 rules) for any provider/agent output; never ajv alone.
 >
-> **Carry forward (see plan):** candidate-data gate composition still open for §9 (§5/§7 discharged — reuse `admitCandidateJob`/the composed gate pattern); `policy_denial`/`egress_status`/`provider_routing_unavailable` OBS-2 health classes (named constants; pin as `FailureClass` members if §16 wants them); the Phase-7 broker must supply `resolveRoute`'s `localConfig`; session-auth apps/* wiring → Phase 7/9; `db_unavailable` OBS-2 add; HealthItem persistence → Phase 10 (approved); ESLint+Prettier still placeholders.
+> **Carry forward (see plan Carry-forward):** candidate-data gate composition still open for §9 (§5/§7 discharged); the OBS-2 `FailureClass` named-constant arch_gaps (`policy_denial`/`egress_status`/`provider_routing_unavailable`/`db_unavailable` — pin as enum members if §16 wants distinct items); the §7 broker (Phase 7) must supply `resolveRoute`'s `localConfig` + decide broker-vs-§9 budget-health attachment; session-auth apps/* wiring → Phase 7/9; HealthItem persistence → Phase 10 (approved); ESLint+Prettier still placeholders.
 >
 > **Method:** single-operator + Workflow fan-outs (≤2 concurrent, narrow batches, retry only failed agents — memory `workflow-concurrency-rate-limits`); TDD; a strong adversarial-verify stage on safety-critical phases (it has caught a CRITICAL or HIGH gate-bypass in every phase so far); Zod-as-source for new contracts; commit per batch (explicit `git add`, Conventional Commits + `Co-Authored-By: Claude Opus 4.8 (1M context)`; allowlist TDD-fixture secrets by fingerprint in `.gitleaksignore` with full-line comments); push origin/main. **Full close-out per memory `solo-session-full-closeout`.** Effort: ultracode. Don't touch `.env`/`scaffold/`.
