@@ -18,3 +18,9 @@ packages/knowledge/test/secret-scan.test.ts:generic-api-key:26
 packages/providers/test/claude-provider.test.ts:generic-api-key:180
 # fake GitHub PAT testing provider-boundary log redaction (task 5.6)
 packages/providers/test/provider-log-redaction.test.ts:github-pat:27
+
+# ── Phase 6 §8 TDD fixtures (fake keys that EXERCISE the gateway redaction / no-leak assertions) ──
+# fake sk-live key testing that the Connector Gateway never leaks a secret to the safe log (task 6.1)
+packages/integrations/test/connector-gateway.test.ts:generic-api-key:249
+# fake Google AIza key testing the broadened gateway-log redaction (Phase-6 finding-2 fix)
+packages/integrations/test/gateway-redaction-credentials.test.ts:generic-api-key:13

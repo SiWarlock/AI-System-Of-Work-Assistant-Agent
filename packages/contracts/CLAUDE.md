@@ -135,7 +135,7 @@ Several typed models in this codebase are **contracts** mirrored in `ARCHITECTUR
 | AgentJob | §3, §7, §9 | +trustLevel, +carriesRawContent; COST-1 budget pins; embeds ToolPolicy+ProviderRoute; isRegisteredOutputSchema() registry predicate. |
 | KnowledgeMutationPlan | §3, §6, §7 | +provenanceOrigin, +gbrainProposalRef?, +signedProvenanceStamp? (LIFECYCLE flag: KW writes stamp at commit; modeled optional). REQ-F-006 reject-on-empty sourceRefs. |
 | ProposedAction | §3, §8, §9 | actionId, targetSystem, canonicalObjectKey, payload, approvalPolicy, idempotencyKey. |
-| ExternalWriteEnvelope | §3, §8 | embeds WriteReceipt?; envelope↔ProposedAction linkage helper; preconditions (arch_gap, open). |
+| ExternalWriteEnvelope | §3, §8 | embeds WriteReceipt? + approvalId?; envelope↔ProposedAction linkage helper; preconditions (arch_gap, open). |
 | WriteReceipt | §8 | externalObjectId, externalUrl?, recordedAt, rawRef? — exactly-once external-write proof. |
 | SourceEnvelope | §3, §8, §9 | sourceId, workspaceId(req), origin, contentHash, type, sensitivity, routingHints. |
 | GclProjection | §3, §5, §6, §11 | workspaceId+visibilityLevel(req), projectionType, sanitizedPayload (raw-content gate is KEY-NAME-INDEPENDENT: rejects raw-content-shaped key OR any multi-line/over-length string value, recursive — tightened 2026-07-01), sourceRefs. |
