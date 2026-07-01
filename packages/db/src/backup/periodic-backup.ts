@@ -101,7 +101,7 @@ export interface OpStoreSnapshot {
 export interface OpStoreBackupEngine {
   readonly dialect: MigrationDialect;
   /** Capture the live operational DB to bytes + an operational-truth row digest. */
-  capture(): Result<OpStoreSnapshot, DbError>;
+  capture(): Promise<Result<OpStoreSnapshot, DbError>>;
 }
 
 /** Metadata + bytes handed to a {@link BackupSink} for durable local persistence. */
@@ -216,11 +216,11 @@ export function isBackupDue(
  * Pure orchestration over the injected {@link OpStoreBackupEngine} +
  * {@link BackupSink}; deterministic given its inputs (the injected `now`).
  */
-export function runPeriodicBackup(
+export async function runPeriodicBackup(
   engine: OpStoreBackupEngine,
   sink: BackupSink,
   opts: PeriodicBackupOptions,
-): Result<PeriodicBackupOutcome, PeriodicBackupFailure> {
+): Promise<Result<PeriodicBackupOutcome, PeriodicBackupFailure>> {
   const keep = opts.keep ?? DEFAULT_BACKUP_RETENTION;
 
   // 1) Cadence — read the persisted last-run marker (the newest artifact).
@@ -249,7 +249,7 @@ export function runPeriodicBackup(
   }
 
   // 2) Capture the live operational DB.
-  const snapshot = engine.capture();
+  const snapshot = await engine.capture();
   if (isErr(snapshot)) {
     return err({
       kind: "periodic_backup_failure",
@@ -363,7 +363,7 @@ class SqliteBackupEngine implements OpStoreBackupEngine {
     this.#tables = tables;
   }
 
-  capture(): Result<OpStoreSnapshot, DbError> {
+  async capture(): Promise<Result<OpStoreSnapshot, DbError>> {
     let bytes: Buffer;
     try {
       bytes = this.#conn.serialize();

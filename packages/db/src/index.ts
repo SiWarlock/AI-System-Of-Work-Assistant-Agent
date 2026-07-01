@@ -33,13 +33,26 @@ export * from "./adapters/postgres/index";
 export * from "./invariants/operational-truth";
 
 // --- migration lifecycle + version compatibility ---
+// runner.ts is the dialect-aware lifecycle (MigrationDialect / MigrationEngine
+// / applyMigrations); the sqlite- and pg-engine modules are its two dialect
+// engine factories. Their exported names are dialect-prefixed and disjoint
+// (createSqliteMigrationEngine / SqliteMigrationEngine vs.
+// createPgMigrationEngine / PgMigrationEngine / SCHEMA_VERSION_TABLE — the
+// latter exists only in pg-engine), so flat `export *` of both is safe.
 export * from "./migrate/runner";
 export * from "./migrate/version-compat";
 export * from "./migrate/sqlite-engine";
+export * from "./migrate/pg-engine";
 
 // --- degraded-mode wrapper ---
 export * from "./health/degraded-mode";
 
 // --- backup / restore API ---
+// periodic-backup + restore carry the SQLite path (sqliteRowDigest /
+// createSqliteBackupEngine / createSqliteRestoreEngine, SqliteStore); pg-ops
+// carries the Postgres/PGlite mirror (pgRowDigest / createPgBackupEngine /
+// createPgRestoreEngine, PgStore / PgBackupEngine / PgRestoreEngine). Names
+// are dialect-prefixed and disjoint, so flat `export *` is safe.
 export * from "./backup/periodic-backup";
 export * from "./backup/restore";
+export * from "./backup/pg-ops";

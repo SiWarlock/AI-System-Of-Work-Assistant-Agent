@@ -57,7 +57,24 @@ import type {
   WorkspaceConfigRepository,
 } from "../../repositories/interfaces";
 import * as schema from "../../schema/pg/index";
-import { conflict, notFound, toDbError } from "./errors";
+import {
+  casVerdictToResult,
+  decideApprovalCas,
+  invariantToDbErrorCode,
+  type CasVerdict,
+} from "../../invariants/operational-truth";
+import { notFound, toDbError } from "./errors";
+
+/**
+ * Bridge the pure invariant CAS verdict onto the adapter's §16 DbError taxonomy.
+ * The exactly-once SEMANTICS live once in `decideApprovalCas`/`casVerdictToResult`
+ * (unit 2.5, shared by both dialects); this only re-codes an InvariantViolation as
+ * the adapter's enumerable DbError so the rejection re-emits cleanly.
+ */
+function casDbResult<T>(verdict: CasVerdict, applied: T, current: T): Result<T, DbError> {
+  const r = casVerdictToResult(verdict, applied, current);
+  return r.ok ? r : err({ code: invariantToDbErrorCode(r.error.code), message: r.error.message });
+}
 
 /** All ten Postgres repositories returned by the factory (one per §4 domain). */
 export interface PostgresRepositories {
@@ -357,6 +374,20 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
       }),
     applyTransition: (id, expectedFromStatus, next) =>
       run(async () => {
+        // Exactly-once CAS (REQ-F-012, §9), decided by the shared 2.5 invariant so
+        // sqlite + pg agree: a true replay (expected==current && target==current)
+        // is an idempotent no-op returning ok(current); a stale different-target CAS
+        // (or a move out of a tombstoned/terminal record) is a typed conflict; an
+        // absent record is not_found. Never a double-apply, never a resurrection.
+        const currentRows = await db.select().from(schema.approvals).where(eq(schema.approvals.id, id)).limit(1);
+        const currentRow = currentRows[0];
+        if (!currentRow) return err(notFound(`approval ${id}`));
+        const current = toApproval(currentRow);
+        const verdict = decideApprovalCas(current.status, expectedFromStatus, next.status);
+        if (verdict.kind !== "apply") return casDbResult(verdict, current, current);
+        // Winner: perform the conditional write (WHERE status=expectedFrom is the
+        // atomic compare half). `apply` implies current===expectedFrom, so the row
+        // matches; a missing row means a concurrent writer moved it → stale.
         const rows = await db
           .update(schema.approvals)
           .set({
@@ -371,12 +402,9 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
           .where(and(eq(schema.approvals.id, id), eq(schema.approvals.status, expectedFromStatus)))
           .returning();
         const row = rows[0];
-        if (row) return ok(toApproval(row));
-        // CAS lost: distinguish "moved already" (idempotent conflict) from "absent".
-        const existing = await db.select().from(schema.approvals).where(eq(schema.approvals.id, id)).limit(1);
-        return existing[0]
-          ? err(conflict(`approval ${id} not in expected status ${expectedFromStatus}`))
-          : err(notFound(`approval ${id}`));
+        return row
+          ? casDbResult({ kind: "apply" }, toApproval(row), current)
+          : casDbResult({ kind: "stale_conflict" }, current, current);
       }),
   };
 

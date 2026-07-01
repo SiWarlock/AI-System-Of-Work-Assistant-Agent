@@ -463,12 +463,15 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(got.expiresAt).toBeUndefined();
     });
 
-    it("applyTransition is EXACTLY ONCE: the winning CAS applies, the replay is a typed conflict no-op", async () => {
+    it("applyTransition is EXACTLY ONCE: the winning CAS applies, a true replay is an idempotent no-op returning ok(current)", async () => {
       unwrap(await repos.approvals.create(validApproval));
       const next: Approval = { ...validApproval, status: "approved" };
       expect(unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", next)).status).toBe("approved");
-      const replay = await repos.approvals.applyTransition(validApproval.id, "pending", next);
-      expect(unwrapErr(replay).code).toBe("conflict");
+      // A TRUE replay (same expectedFrom + same target as the landed transition) is
+      // an idempotent no-op: it returns ok(current), NOT a second apply and NOT a
+      // conflict — matching the Approval domain machine's idempotentTerminalReentry.
+      const replay = unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", next));
+      expect(replay.status).toBe("approved");
       expect(unwrap(await repos.approvals.get(validApproval.id)).status).toBe("approved");
     });
 
@@ -702,16 +705,19 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(trail.map((r) => r.event)).toEqual(["knowledge.write", "knowledge.write.corrected"]);
     });
 
-    it("Invariant 3 — approval transitions are EXACTLY-ONCE: concurrent contenders → one wins, the stale CAS loses (no double-apply)", async () => {
+    it("Invariant 3 — approval transitions are EXACTLY-ONCE: a true replay is an idempotent no-op, a stale different-target CAS loses (no double-apply)", async () => {
       unwrap(await repos.approvals.create(validApproval)); // status: pending
       const approve: Approval = { ...validApproval, status: "approved" };
       const reject: Approval = { ...validApproval, status: "rejected" };
       // Contender A (e.g. Mac) wins the pending→approved compare-and-set.
       expect(unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", approve)).status).toBe("approved");
+      // A TRUE replay of the winning transition (same expectedFrom + same target)
+      // is an idempotent no-op: ok(current), never a second apply (REQ-F-012).
+      expect(unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", approve)).status).toBe("approved");
       // Contender B (e.g. Telegram) arrives with the SAME, now-stale `pending`
-      // expectation → it loses; there is no second apply.
+      // expectation but a DIFFERENT target (reject) → it loses; no second apply.
       expect(unwrapErr(await repos.approvals.applyTransition(validApproval.id, "pending", reject)).code).toBe("conflict");
-      // Exactly-once: the persisted verdict is the winner's, unchanged by the loser.
+      // Exactly-once: the persisted verdict is the winner's, unchanged by replay/loser.
       expect(unwrap(await repos.approvals.get(validApproval.id)).status).toBe("approved");
     });
 

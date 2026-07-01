@@ -250,13 +250,18 @@ describe("ApprovalRepository (sqlite)", () => {
     expect(got.expiresAt).toBeUndefined();
   });
 
-  it("applyTransition is EXACTLY ONCE: the winning CAS applies, the replay is a typed conflict no-op", async () => {
+  it("applyTransition is EXACTLY ONCE: the winning CAS applies, a true replay is an idempotent no-op, a stale different-target CAS loses", async () => {
     unwrap(await repos.approvals.create(validApproval));
-    const next: Approval = { ...validApproval, status: "approved" };
-    expect(unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", next)).status).toBe("approved");
-    // record is now `approved`; a replay from the stale `pending` expectation loses
-    const replay = await repos.approvals.applyTransition(validApproval.id, "pending", next);
-    expect(unwrapErr(replay).code).toBe("conflict");
+    const approve: Approval = { ...validApproval, status: "approved" };
+    const reject: Approval = { ...validApproval, status: "rejected" };
+    expect(unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", approve)).status).toBe("approved");
+    // A TRUE replay (same expectedFrom + same target as the landed transition) is an
+    // idempotent no-op returning ok(current) — never a second apply, never a conflict
+    // (matches the Approval domain machine's idempotentTerminalReentry, REQ-F-012).
+    expect(unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", approve)).status).toBe("approved");
+    // A stale CAS with the same now-stale `pending` expectation but a DIFFERENT target loses.
+    const stale = await repos.approvals.applyTransition(validApproval.id, "pending", reject);
+    expect(unwrapErr(stale).code).toBe("conflict");
     // and the persisted status is unchanged (no second apply)
     expect(unwrap(await repos.approvals.get(validApproval.id)).status).toBe("approved");
   });

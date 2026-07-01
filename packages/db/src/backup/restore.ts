@@ -55,9 +55,9 @@ export interface RebuiltStore<S> {
  */
 export interface RestoreEngine<S> {
   readonly dialect: MigrationDialect;
-  rebuild(bytes: Buffer): Result<RebuiltStore<S>, DbError>;
+  rebuild(bytes: Buffer): Promise<Result<RebuiltStore<S>, DbError>>;
   /** Release a rebuilt handle the orchestrator is discarding (best-effort). */
-  dispose?(store: S): void;
+  dispose?(store: S): void | Promise<void>;
 }
 
 /** The two consistency facts the integrity gate checks. */
@@ -120,11 +120,11 @@ export interface RestoreOptions {
  * Pure orchestration over the injected {@link BackupSink} + {@link RestoreEngine};
  * the meaningful recovery target is the not-rebuildable operational-truth set (§4).
  */
-export function restoreFromBackup<S>(
+export async function restoreFromBackup<S>(
   sink: BackupSink,
   engine: RestoreEngine<S>,
   opts: RestoreOptions = {},
-): Result<RestoreOutcome<S>, RestoreFailure> {
+): Promise<Result<RestoreOutcome<S>, RestoreFailure>> {
   // 1) Resolve the target artifact.
   const listed = sink.list();
   if (isErr(listed)) {
@@ -170,7 +170,7 @@ export function restoreFromBackup<S>(
   }
 
   // 3) Rebuild a live store from the bytes.
-  const rebuilt = engine.rebuild(bytes.value);
+  const rebuilt = await engine.rebuild(bytes.value);
   if (isErr(rebuilt)) {
     return err({
       kind: "restore_failure",
@@ -189,7 +189,7 @@ export function restoreFromBackup<S>(
   const bytesMatched = rebuilt.value.bytes.equals(bytes.value);
   const verification: RestoreVerification = { bytesMatched, rowDigestMatched };
   if (!rowDigestMatched) {
-    engine.dispose?.(rebuilt.value.store);
+    await engine.dispose?.(rebuilt.value.store);
     return err({
       kind: "restore_failure",
       reason: "integrity_check_failed",
@@ -227,7 +227,7 @@ class SqliteRestoreEngine implements RestoreEngine<SqliteStore> {
     this.#tables = tables;
   }
 
-  rebuild(bytes: Buffer): Result<RebuiltStore<SqliteStore>, DbError> {
+  async rebuild(bytes: Buffer): Promise<Result<RebuiltStore<SqliteStore>, DbError>> {
     let conn: Conn;
     try {
       // better-sqlite3 deserializes a serialized image directly from the Buffer.

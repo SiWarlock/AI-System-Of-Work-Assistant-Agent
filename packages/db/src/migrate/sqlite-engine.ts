@@ -58,7 +58,7 @@ class SqliteMigrationEngine implements MigrationEngine {
     return this.#conn;
   }
 
-  backup(): Result<MigrationBackup, DbError> {
+  async backup(): Promise<Result<MigrationBackup, DbError>> {
     try {
       const snapshot = this.#conn.serialize();
       return ok({
@@ -71,7 +71,7 @@ class SqliteMigrationEngine implements MigrationEngine {
     }
   }
 
-  migrate(migrationsFolder: string): Result<MigrationApplied, DbError> {
+  async migrate(migrationsFolder: string): Promise<Result<MigrationApplied, DbError>> {
     try {
       const before = this.#appliedCount();
       drizzleMigrate(drizzle(this.#conn), { migrationsFolder });
@@ -84,7 +84,7 @@ class SqliteMigrationEngine implements MigrationEngine {
     }
   }
 
-  restore(backup: MigrationBackup): Result<void, DbError> {
+  async restore(backup: MigrationBackup): Promise<Result<void, DbError>> {
     if (!Buffer.isBuffer(backup.snapshot)) {
       return err({
         code: "unknown",
@@ -108,7 +108,7 @@ class SqliteMigrationEngine implements MigrationEngine {
     }
   }
 
-  recordApply(schemaVersion: number): Result<void, DbError> {
+  async recordApply(schemaVersion: number): Promise<Result<void, DbError>> {
     try {
       // PRAGMA does not accept bound parameters; the value is a safe integer.
       this.#conn.pragma(`user_version = ${Math.trunc(schemaVersion)}`);

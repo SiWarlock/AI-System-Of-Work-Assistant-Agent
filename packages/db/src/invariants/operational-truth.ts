@@ -1,10 +1,17 @@
 // Unit 2.5 — operational-truth invariants (§4 boundary + DATA_MODEL).
 //
 // PURE TypeScript — no Drizzle, no driver, no clock/random/I/O. These are the
-// REUSABLE guard helpers + predicates + typed contract that the SQLite and
-// Postgres adapters IMPORT and WIRE at their write paths. This unit owns the
-// invariant TESTS (test/invariants/operational-truth.test.ts); the adapters
-// consume the guards so both dialects uphold the SAME invariants by construction.
+// REUSABLE guard helpers + predicates + typed contract for the operational-store
+// invariants. WIRING (as of the Phase-2 reconcile): both the SQLite and Postgres
+// adapters IMPORT `decideApprovalCas` + `casVerdictToResult` and call them at
+// their `applyTransition` write path, so the exactly-once approval CAS (Invariant
+// 3) has ONE shared implementation across dialects. The append-only (Inv. 1),
+// immutable/tombstone (Inv. 2), and rebuild-exclusion (Inv. 4) guards are upheld
+// STRUCTURALLY at the adapter surface (no in-place mutator/delete is exposed on
+// those repos) and are additionally available here for any caller that must
+// gate a write explicitly. This unit owns the invariant TESTS
+// (test/invariants/operational-truth.test.ts); the parameterized repository
+// contract suite (test/contract) exercises the wired CAS through both adapters.
 //
 // Four load-bearing invariants (§4 boundary / §16 Backup & Recovery / DATA_MODEL
 // "Operational Store Domains"):

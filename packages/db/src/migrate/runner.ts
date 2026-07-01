@@ -59,14 +59,14 @@ export interface MigrationApplied {
 export interface MigrationEngine {
   readonly dialect: MigrationDialect;
   /** Capture the MANDATORY pre-migration backup (§4). */
-  backup(): Result<MigrationBackup, DbError>;
+  backup(): Promise<Result<MigrationBackup, DbError>>;
   /** Apply all pending migrations from `migrationsFolder`, transactionally where
    *  the engine supports it. Returns the count newly applied. */
-  migrate(migrationsFolder: string): Result<MigrationApplied, DbError>;
+  migrate(migrationsFolder: string): Promise<Result<MigrationApplied, DbError>>;
   /** Restore the operational DB to a previously-captured backup (rollback path). */
-  restore(backup: MigrationBackup): Result<void, DbError>;
+  restore(backup: MigrationBackup): Promise<Result<void, DbError>>;
   /** Record a successful apply by persisting the on-disk schema-version marker. */
-  recordApply(schemaVersion: number): Result<void, DbError>;
+  recordApply(schemaVersion: number): Promise<Result<void, DbError>>;
 }
 
 /** Options for {@link applyMigrations}. */
@@ -134,15 +134,15 @@ export interface MigrationFailure {
  *             operational-DB lifecycle handle for backup/migrate/restore/record).
  * @param opts the migrations folder + optional target schema version.
  */
-export function applyMigrations(
+export async function applyMigrations(
   db: MigrationEngine,
   opts: ApplyMigrationsOptions,
-): Result<MigrationOutcome, MigrationFailure> {
+): Promise<Result<MigrationOutcome, MigrationFailure>> {
   const targetSchemaVersion = opts.schemaVersion ?? CURRENT_SCHEMA_VERSION;
 
   // 1) MANDATORY backup-before-migrate (§4). No backup in hand ⇒ fail closed:
   //    refuse to apply anything (nothing is touched).
-  const backup = db.backup();
+  const backup = await db.backup();
   if (isErr(backup)) {
     return err({
       kind: "migration_failure",
@@ -159,10 +159,10 @@ export function applyMigrations(
   }
 
   // 2) Apply (transactional where the engine supports it).
-  const applied = db.migrate(opts.migrationsFolder);
+  const applied = await db.migrate(opts.migrationsFolder);
   if (isErr(applied)) {
     // 3) FAILED apply ⇒ restore from the pre-migration backup; refuse to start.
-    const restored = db.restore(backup.value);
+    const restored = await db.restore(backup.value);
     if (isErr(restored)) {
       // Apply failed AND restore failed — the catastrophic path. Manual recovery.
       return err({
@@ -197,7 +197,7 @@ export function applyMigrations(
   }
 
   // 4) Record the successful apply (schema-version marker).
-  const recorded = db.recordApply(targetSchemaVersion);
+  const recorded = await db.recordApply(targetSchemaVersion);
   if (isErr(recorded)) {
     return err({
       kind: "migration_failure",
