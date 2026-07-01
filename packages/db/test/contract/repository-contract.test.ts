@@ -1,3 +1,4 @@
+// spec(§12) — Drizzle repository contract-test posture (both-dialect, REQ-D-003)
 // Unit 2.9 — THE REPOSITORY CONTRACT SUITE (the Phase-2 capstone, REQ-D-003 / §12).
 //
 // ONE parameterized suite that runs IDENTICALLY against BOTH operational-store

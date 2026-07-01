@@ -19,14 +19,17 @@
 
 **GBrain write-through amendment — DONE (2026-06-29).** Owner approved shipping GBrain **write-through in V1**, fail-closed (reversing the 0.2 read-only deferral). `ARCHITECTURE.md` (§6/§12/§13/§16/Appendix A/§2.5/Spec-Anchor) + this plan (Phase-4 4.6/4.7/4.9 amended + **4.14–4.20 new**; Phase-12 12.7 amended + **12.22/12.23 new**; 11.3/11.5 amended) amended from the design spec `docs/design/gbrain-write-through-divergence.md`. gbrain **0.35.1.0** installed locally for Phase-4. The **9 new + 2 amended contract models** must be frozen in Phase 1.
 
-**Phase 1 — COMPLETE (2026-06-30).** Shared Contracts & Domain — the forced-serial bottleneck — done; the parallel tracks may now fork. **All tasks 1.1–1.15 green.** (1.1 monorepo + primitives `6f00419`; 1.2–1.9 + the full **27-model Appendix-A freeze** `8a42f13`/`512d731`/`4bdedf6`/`bbd2007`, Zod-as-source = `.strict()` Zod → `z.infer` type → generated strict JSON Schema → spec(§)-tagged frozen field-set snapshot, ajv-strict registry covers all; **1.10** key builders + **1.11** the 5 universal validators + REQ-F-017 no-inference `e373cdd`; **1.12/1.13** the 6 pure state machines over `defineMachine` `d143480`; **1.14** the new `@sow/db` Drizzle schema source + pure repo interfaces + column-parity drift-guard `5e713aa`/`9abedc8`; **1.15** shared seam fixtures + barrel wiring `a039e86`.) **Full Phase-1 gate green: 45 test files / 728 tests; `pnpm typecheck` clean across @sow/contracts + @sow/domain + @sow/db; `pnpm audit --prod` clean (drizzle-orm bumped to ^0.45.2).** Built via two single-operator **Workflow fan-outs** (contract freeze, then the domain layer) with adversarial consistency-critic + verify each; driftless apart from the reconciled items below. Authoring locked as **ADR-008 (Zod-as-source)**; db single-dialect-source as **ADR-009**. Phase-0 fold-forward (WebSocket §10 / Hermes §7 / perf §18) ratified. **Open Phase-1 FINDING (carried to §5/§7/§9):** the ajv `validate()` gate is structural-only — the candidate-data gate (safety rule 2) MUST compose ajv + the model's Zod parse + the §3 universal rules; no consumer may treat `validate()` as the whole gate. **Next: `/phase-exit 1` formalities, then Phase 2 (Operational Storage — db adapters/migrations + the both-dialect contract suite).**
+**Phase 1 — COMPLETE (2026-06-30).** Shared Contracts & Domain — the forced-serial bottleneck — done; the parallel tracks may now fork. **All tasks 1.1–1.15 green.** (1.1 monorepo + primitives `6f00419`; 1.2–1.9 + the full **27-model Appendix-A freeze** `8a42f13`/`512d731`/`4bdedf6`/`bbd2007`, Zod-as-source = `.strict()` Zod → `z.infer` type → generated strict JSON Schema → spec(§)-tagged frozen field-set snapshot, ajv-strict registry covers all; **1.10** key builders + **1.11** the 5 universal validators + REQ-F-017 no-inference `e373cdd`; **1.12/1.13** the 6 pure state machines over `defineMachine` `d143480`; **1.14** the new `@sow/db` Drizzle schema source + pure repo interfaces + column-parity drift-guard `5e713aa`/`9abedc8`; **1.15** shared seam fixtures + barrel wiring `a039e86`.) **Full Phase-1 gate green: 45 test files / 728 tests; `pnpm typecheck` clean across @sow/contracts + @sow/domain + @sow/db; `pnpm audit --prod` clean (drizzle-orm bumped to ^0.45.2).** Built via two single-operator **Workflow fan-outs** (contract freeze, then the domain layer) with adversarial consistency-critic + verify each; driftless apart from the reconciled items below. Authoring locked as **ADR-008 (Zod-as-source)**; db single-dialect-source as **ADR-009**. Phase-0 fold-forward (WebSocket §10 / Hermes §7 / perf §18) ratified. **Open Phase-1 FINDING (carried to §5/§7/§9):** the ajv `validate()` gate is structural-only — the candidate-data gate (safety rule 2) MUST compose ajv + the model's Zod parse + the §3 universal rules; no consumer may treat `validate()` as the whole gate. **`/phase-exit 1`: CLEAR** (certified checklist + verdict above the Phase-2 header).
+
+**Phase 2 — COMPLETE (2026-06-30).** Operational Storage (`@sow/db`) built + certified. All 2.1–2.10 + acceptance (2) green: sqlite-core + pg-core schema (identical column sets), SQLite (better-sqlite3) + Postgres (PGLite = in-process real PG16; `pg` for prod) adapters both passing ONE repository contract suite (REQ-D-003), operational-truth invariants (append-only/immutable/exactly-once CAS/rebuildable), dialect-aware migration lifecycle (backup→fail→restore→typed repair), version-compat refusal, degraded-mode + HealthItem, backup/restore + FileVault posture. **985 tests + 2 gated Docker-pg todos; typecheck clean; `pnpm audit --prod` clean.** Two Workflow fan-outs (impl, then a parity repair adding the pg migration/backup engine + dual-dialect lifecycle tests + reconciling approval-CAS to ok-on-replay). Owner chose **PGLite + optional Docker-pg gate** (`SOW_PG_DOCKER=1`); **ADR-009 now COMPLETED**; storage ports went async for PGLite. **`/phase-exit 2`: CLEAR.** Handoff: `docs/sessions/004-2026-06-30-phase2-operational-storage.md`. **Next: fork Phase 3 (Policy/Security/Egress — critical path) or Phase 4/5/6 (parallel-eligible).**
 
 
 ---
 
 ## Carry-forward to upcoming briefs
 
-- **Phase 1 is COMPLETE; the parallel tracks may fork.** Next up: **`/phase-exit 1`** formalities (below) then **Phase 2 — Operational Storage** (worker track): the concrete SQLite + Postgres Drizzle adapters, migrations, and the both-dialect repository **contract suite** (REQ-D-003) implementing the `@sow/db` interfaces frozen in 1.14. **The `@sow/db` pg-core mirror is a Phase-2 deliverable** (ADR-009 deferred it): 1.14 shipped only the sqlite-core dialect source.
+- **Phases 1–2 COMPLETE + certified; the parallel tracks may fork.** Next: **Phase 3 — Policy, Security & Egress** (`packages/policy`, critical path) — or fork Phase 4/5/6 concurrently. Phase 3 is the first real consumer of the candidate-data gate (FINDING below) + the frozen policy models (Workspace/EgressPolicy/ToolPolicy/ProviderMatrix).
+- **(Phase 2 → contract) Add a `db_unavailable` member to the OBS-2 `HealthItem.failureClass` enum** (origin: 2026-06-30 Phase 2): degraded-mode reuses `worker_down`, abstracted behind `DB_UNAVAILABLE_FAILURE_CLASS` for a one-line swap. Frozen-contract edit: ARCHITECTURE Appendix A + §16 + `packages/contracts/src/models/health-item.ts` + its snapshot + registry.
 - **HIGH-PRIORITY FINDING — candidate-data gate composition (safety rule 2; origin: 2026-06-30 Phase 1; SPREAD, last-consumer-slice: §9 meeting validator; resolve when §5/§7/§9 enforcement lands):** the 1.2 ajv `validate()` gate is **structural-only** — Zod `.refine` cross-field invariants are NOT in the generated JSON Schema, so ajv alone admits e.g. a `read_only` ToolPolicy with `allowsMutating:true` (ING-7/safety rule 6), an unsourced `KnowledgeMutationPlan` (REQ-F-006), an egress-ack without `acknowledgedAt` (safety rule 5), or a `ParityReport` `cleanForServing` with a HARD divergence (§12 fail-closed). The candidate-data gate MUST compose **ajv + the model's Zod parse + the §3 universal rules** (the 1.11 validators + the §5/§6/§7 predicates). No §9 meeting validator / §5 admission gate / §7 broker may treat `validate()` as the whole gate. (Surfaced + pinned by the 1.15 fixtures meta-test, which uses the full ajv+Zod biconditional.)
 - **Frozen-contract NOTE flags to resolve at §6/§7/Phase-4 (driftDetected=false; not blockers):** (1) `KnowledgeMutationPlan.signedProvenanceStamp` is modeled `.optional()` because KW writes the HMAC stamp **at the atomic commit** while the plan is KW *input* — confirm at §6 whether the stamp belongs on the plan at all (vs only on committed frontmatter). (2) `GbrainReadGrant.scope` is `z.array(z.literal('read'))` (accepts `[]`/duplicates) vs Appendix A's literal `['read']` — pin cardinality if §7 GbrainServePolicy semantics require exactly-one. (3) schema-version numeric posture differs: `GbrainPin.indexSchemaVersion` is `int().nonnegative()` but `ParityReport.gbrainSchemaVersion` + `GbrainReadGrant.indexSchemaVersion` are open `number()` — unify when a parity/serving consumer compares them.
 - **Under-specified sub-shapes frozen provisionally (arch_gaps, refine at §6/Phase-4):** the KW mutation primitives `NoteCreate`/`NotePatch`/`LinkMutation`/`FrontmatterPatch` + `ContextRef`, `SourceRef`, `CanonicalSourceRef`, and the open `proposedContent`/`payload`/`preconditions`/`sanitizedPayload`/`routingHints` records were modeled minimally (open strings/records, no invented closed enums). Their parents' field-sets are frozen, but the nested field-level contracts firm up when §6 KnowledgeWriter + §8 gateways land — treat a nested-shape change there as a cross-track Finding.- **ESLint not yet configured:** the `lint` script is a `tsc --noEmit` placeholder (root `CLAUDE.md` calls for ESLint). Stand up real ESLint + the `[id=forbidden-patterns]` grep wiring in an early Phase-1/2 slice; until then `/preflight`'s lint step is type-only.
@@ -403,111 +406,111 @@ Executed row-by-row by `/phase-exit <phase>`:
 
 **Goal:** Build packages/db: the Drizzle schema source, migrations, repository interfaces, and BOTH SQLite (local) and standard Postgres (hosted-compatible) adapters for the app-owned operational store — persisting only the operational domains (event log, audit, approvals, outboxes, connector cursors, provider conformance, GCL projections, dashboard read models, workspace config with Keychain references only) and never semantic truth, Temporal history, GBrain index, or plaintext secrets. Establish the load-bearing invariants first (boundary-of-storage, append-only/immutable operational truth vs rebuildable read models, exactly-once approval transitions), then lifecycle correctness (backup-before-migrate, transactional apply, restore-on-failure rollback, app-version↔schema-version compatibility refusal, DB-unavailable degraded mode), then the single repository CONTRACT suite both adapters must pass (release-blocking on divergence), then hardening (periodic backup/restore, FileVault at-rest posture with SQLCipher explicitly V1.1-deferred).
 
-**Spec anchors:** ARCHITECTURE.md §4 (Operational Storage); §16 (Backup & recovery, error-handling convention, System Health); §13 (Migrations & rollback, install doctor / FileVault prereq); §3 + Appendix A (seam models AuditRecord, ProviderProfile, Approval, GclProjection); §12 (Drizzle migration + repository contract-test posture, DoD-cannot-be-mocks); §2.5 (worker track). REQs: REQ-D-002/003/004/005, REQ-NF-001, REQ-NF-005, REQ-S-003.
+**Spec anchors:** ARCHITECTURE.md §4 (Operational Storage); §16 (Backup & recovery, error-handling convention, System Health); §13 (Migrations & rollback, install doctor / FileVault prereq); §3 + Appendix A (seam models AuditRecord, ProviderProfile, Approval, GclProjection); §12 (Drizzle migration + repository contract-test posture, DoD-cannot-be-mocks); §2.5 (non-TDD: worker-track DAG boundary; @sow/db is pure schema + adapters, import-direction holds). REQs: REQ-D-002/003/004/005, REQ-NF-001, REQ-NF-005, REQ-S-003.
 
 **Track:** worker · **Depends on (phases):** 1
 
 ### 2.1 — Drizzle operational-store schema source — all domains, dialect-portable, storage-boundary rejections, seam-table snapshots
-- [ ] Defines tables covering every §4/DATA_MODEL operational domain: event log (canonical product events, source-envelope records, workflow triggers); audit (actor/event/refs/payloadHash/before-after summaries/timestamps); approvals; outboxes (KnowledgeWriter / Tool-Gateway / connector / GBrain-sync retries); connector state (cursors, sync checkpoints, health, rate-limit); provider state (provider profiles, capability conformance, model availability, cost/runtime defaults); GCL projections; dashboard/project/brief/system-health read models; workspace config (provider matrix, egress policy, repo paths, GBrain brain refs).
-- [ ] Storage-boundary invariant (§4 REQ-D-001/004/005): NO table or column persists semantic truth (Markdown owns), Temporal workflow history (Temporal owns), or the GBrain index (GBrain PGLite owns) — these are out-of-bounds for this store.
-- [ ] Secrets rule (REQ-S-003): provider API keys and connector credentials are stored as Keychain reference strings only; a column holding plaintext secret material is a contract violation — the schema models references, never secret values.
-- [ ] One Drizzle schema source compiles to BOTH SQLite and standard Postgres; no dialect-only column type that breaks the other dialect (portability is a build invariant, REQ-D-003).
-- [ ] The persisted column-name set of the AuditRecord and ProviderProfile tables equals the Appendix-A field set for those seam models; deviation is a cross-doc-invariant failure.
-- [ ] RED outline must include a schema-snapshot test: persisted column-name set per seam table (AuditRecord, ProviderProfile, Approval, GclProjection) == checked-in snapshot, spec(§4)-tagged.
-- [ ] Files: NEW packages/db/src/schema/*.ts (events, audit, approvals, outboxes, connectorState, providerState, gclProjections, readModels, workspaceConfig); NEW packages/db/test/__snapshots__/operational-schema.snap.json
-- [ ] Cross-doc invariant: extended — AuditRecord, ProviderProfile, Approval, GclProjection *(seam — RED outline must include the spec-tagged schema-snapshot test)*
-- [ ] Depends on: P1 (Appendix-A contract types + canonical-key/ID builders from §3 contracts track)
+- [x] Defines tables covering every §4/DATA_MODEL operational domain: event log (canonical product events, source-envelope records, workflow triggers); audit (actor/event/refs/payloadHash/before-after summaries/timestamps); approvals; outboxes (KnowledgeWriter / Tool-Gateway / connector / GBrain-sync retries); connector state (cursors, sync checkpoints, health, rate-limit); provider state (provider profiles, capability conformance, model availability, cost/runtime defaults); GCL projections; dashboard/project/brief/system-health read models; workspace config (provider matrix, egress policy, repo paths, GBrain brain refs).
+- [x] Storage-boundary invariant (§4 REQ-D-001/004/005): NO table or column persists semantic truth (Markdown owns), Temporal workflow history (Temporal owns), or the GBrain index (GBrain PGLite owns) — these are out-of-bounds for this store.
+- [x] Secrets rule (REQ-S-003): provider API keys and connector credentials are stored as Keychain reference strings only; a column holding plaintext secret material is a contract violation — the schema models references, never secret values.
+- [x] One Drizzle schema source compiles to BOTH SQLite and standard Postgres; no dialect-only column type that breaks the other dialect (portability is a build invariant, REQ-D-003).
+- [x] The persisted column-name set of the AuditRecord and ProviderProfile tables equals the Appendix-A field set for those seam models; deviation is a cross-doc-invariant failure.
+- [x] RED outline must include a schema-snapshot test: persisted column-name set per seam table (AuditRecord, ProviderProfile, Approval, GclProjection) == checked-in snapshot, spec(§4)-tagged.
+- [x] Files: NEW packages/db/src/schema/*.ts (events, audit, approvals, outboxes, connectorState, providerState, gclProjections, readModels, workspaceConfig); NEW packages/db/test/__snapshots__/operational-schema.snap.json
+- [x] Cross-doc invariant: extended — AuditRecord, ProviderProfile, Approval, GclProjection *(seam — RED outline must include the spec-tagged schema-snapshot test)*
+- [x] Depends on: P1 (Appendix-A contract types + canonical-key/ID builders from §3 contracts track)
 
 ### 2.2 — Repository interface ports — dialect-agnostic, domain depends on interfaces not drivers
-- [ ] Defines one repository interface per operational domain; application/domain code imports these interfaces ONLY and never a concrete DB driver (§4: domain depends on repository interfaces, never a concrete driver).
-- [ ] No dialect-specific SQL leaks above the adapter boundary — interface signatures are identical for both adapters (REQ-D-003).
-- [ ] Audit interface exposes append/insert and tombstone operations only — no in-place update or hard-delete of an audit row (immutable-operational-truth boundary, §4).
-- [ ] Event-log interface exposes append + read; the operational-truth set (events/audit/approvals/outboxes/connector cursors) has no destructive bulk-clear method exposed for rebuild use.
-- [ ] Files: NEW packages/db/src/repositories/*.ts (interfaces) ; NEW packages/db/src/repositories/index.ts
-- [ ] Cross-doc invariant: none
-- [ ] Depends on: 2.1
+- [x] Defines one repository interface per operational domain; application/domain code imports these interfaces ONLY and never a concrete DB driver (§4: domain depends on repository interfaces, never a concrete driver).
+- [x] No dialect-specific SQL leaks above the adapter boundary — interface signatures are identical for both adapters (REQ-D-003).
+- [x] Audit interface exposes append/insert and tombstone operations only — no in-place update or hard-delete of an audit row (immutable-operational-truth boundary, §4).
+- [x] Event-log interface exposes append + read; the operational-truth set (events/audit/approvals/outboxes/connector cursors) has no destructive bulk-clear method exposed for rebuild use.
+- [x] Files: NEW packages/db/src/repositories/*.ts (interfaces) ; NEW packages/db/src/repositories/index.ts
+- [x] Cross-doc invariant: none
+- [x] Depends on: 2.1
 
 ### 2.3 — SQLite adapter implementation (local default)
-- [ ] Implements every repository interface from 2.2 against SQLite via Drizzle.
-- [ ] Opens the operational SQLite from an app-data file path (production path is never in-memory; in-memory is test-only) — matches the §13 local-mode default.
-- [ ] Honors append-only/tombstone semantics at the driver level (no UPDATE/DELETE path on audit/event rows from the public methods).
-- [ ] Files: NEW packages/db/src/adapters/sqlite/*.ts
-- [ ] Cross-doc invariant: none
-- [ ] Depends on: 2.2
+- [x] Implements every repository interface from 2.2 against SQLite via Drizzle.
+- [x] Opens the operational SQLite from an app-data file path (production path is never in-memory; in-memory is test-only) — matches the §13 local-mode default.
+- [x] Honors append-only/tombstone semantics at the driver level (no UPDATE/DELETE path on audit/event rows from the public methods).
+- [x] Files: NEW packages/db/src/adapters/sqlite/*.ts
+- [x] Cross-doc invariant: none
+- [x] Depends on: 2.2
 
 ### 2.4 — Postgres adapter implementation (hosted-compatible, NOT a stub)
-- [ ] Implements every repository interface from 2.2 against standard Postgres via Drizzle; the adapter is a real working implementation — Postgres is NOT a permanent stub/placeholder and must pass the same contract suite before DoD (REQ-D-003, §12).
-- [ ] Uses standard Postgres only — no Supabase-specific features (ADR-003 / DECISIONS: plain Postgres, not Supabase-specific).
-- [ ] Honors the same append-only/tombstone/exactly-once contracts as the SQLite adapter.
-- [ ] Files: NEW packages/db/src/adapters/postgres/*.ts
-- [ ] Cross-doc invariant: none
-- [ ] Depends on: 2.2
+- [x] Implements every repository interface from 2.2 against standard Postgres via Drizzle; the adapter is a real working implementation — Postgres is NOT a permanent stub/placeholder and must pass the same contract suite before DoD (REQ-D-003, §12).
+- [x] Uses standard Postgres only — no Supabase-specific features (ADR-003 / DECISIONS: plain Postgres, not Supabase-specific).
+- [x] Honors the same append-only/tombstone/exactly-once contracts as the SQLite adapter.
+- [x] Files: NEW packages/db/src/adapters/postgres/*.ts
+- [x] Cross-doc invariant: none
+- [x] Depends on: 2.2
 
 ### 2.5 — Operational-truth invariants — append-only/immutable, read-model rebuildability, exactly-once approval transitions, outbox depth queryable
-- [ ] Event log is append-only and audit is immutable; deletion of an audited entity is a tombstone (history preserved, never silently deleted) — attempted in-place mutation/hard-delete is rejected (§4 boundary + DATA_MODEL).
-- [ ] Read models are rebuildable from canonical records: a rebuild routine reconstructs every read-model projection; the operational-truth set (event log / audit / approvals / outboxes / connector cursors) is explicitly EXCLUDED from any destructive rebuild and is treated as not-rebuildable (§4 Backup & Recovery boundary).
-- [ ] Approval status transition is an atomic compare-and-set so concurrent Mac + Telegram channels yield exactly-once apply (one transition wins; the loser is a typed no-op, not a second apply) — DATA_MODEL 'exactly-once state transitions'.
-- [ ] Replaying the identical approval transition is an idempotent no-op (supports §9 'exactly once' across channels).
-- [ ] Outbox depth and blocked/failed entries are queryable per outbox kind to feed System Health queue/outbox-depth signals (§16).
-- [ ] Files: extended packages/db/src/repositories/approvals.ts; extended packages/db/src/repositories/readModels.ts; NEW packages/db/src/repositories/rebuild.ts; NEW packages/db/src/invariants/operational-truth.ts
-- [ ] Cross-doc invariant: extended — Approval, AuditRecord, GclProjection
-- [ ] Depends on: 2.2, 2.3
+- [x] Event log is append-only and audit is immutable; deletion of an audited entity is a tombstone (history preserved, never silently deleted) — attempted in-place mutation/hard-delete is rejected (§4 boundary + DATA_MODEL).
+- [x] Read models are rebuildable from canonical records: a rebuild routine reconstructs every read-model projection; the operational-truth set (event log / audit / approvals / outboxes / connector cursors) is explicitly EXCLUDED from any destructive rebuild and is treated as not-rebuildable (§4 Backup & Recovery boundary).
+- [x] Approval status transition is an atomic compare-and-set so concurrent Mac + Telegram channels yield exactly-once apply (one transition wins; the loser is a typed no-op, not a second apply) — DATA_MODEL 'exactly-once state transitions'.
+- [x] Replaying the identical approval transition is an idempotent no-op (supports §9 'exactly once' across channels).
+- [x] Outbox depth and blocked/failed entries are queryable per outbox kind to feed System Health queue/outbox-depth signals (§16).
+- [x] Files: extended packages/db/src/repositories/approvals.ts; extended packages/db/src/repositories/readModels.ts; NEW packages/db/src/repositories/rebuild.ts; NEW packages/db/src/invariants/operational-truth.ts
+- [x] Cross-doc invariant: extended — Approval, AuditRecord, GclProjection
+- [x] Depends on: 2.2, 2.3
 
 ### 2.6 — Migration apply lifecycle — mandatory backup-before-migrate, transactional apply, restore-on-failure, forward-only rollback
-- [ ] Backs up the operational DB BEFORE applying ANY migration — the pre-migration backup is mandatory (§4 / §16).
-- [ ] Runs migrations transactionally where the engine allows (§4).
-- [ ] On partial/failed mid-apply: restores from the pre-migration backup and refuses to start with a typed repair message — never leaves a silent partial-applied state (§4 failure mode).
-- [ ] Forward-only is the default (Drizzle): down-migration OR restore-from-backup is the only rollback path; the runner provides that path explicitly rather than silently breaking forward.
-- [ ] Migration runner is dialect-aware and applies the same logical migration set to both SQLite and Postgres.
-- [ ] Files: NEW packages/db/migrations/*; NEW packages/db/src/migrate/runner.ts; NEW packages/db/src/migrate/backup-before-migrate.ts; NEW packages/db/drizzle.config.ts
-- [ ] Cross-doc invariant: none
-- [ ] Depends on: 2.1
+- [x] Backs up the operational DB BEFORE applying ANY migration — the pre-migration backup is mandatory (§4 / §16).
+- [x] Runs migrations transactionally where the engine allows (§4).
+- [x] On partial/failed mid-apply: restores from the pre-migration backup and refuses to start with a typed repair message — never leaves a silent partial-applied state (§4 failure mode).
+- [x] Forward-only is the default (Drizzle): down-migration OR restore-from-backup is the only rollback path; the runner provides that path explicitly rather than silently breaking forward.
+- [x] Migration runner is dialect-aware and applies the same logical migration set to both SQLite and Postgres.
+- [x] Files: NEW packages/db/migrations/*; NEW packages/db/src/migrate/runner.ts; NEW packages/db/src/migrate/backup-before-migrate.ts; NEW packages/db/drizzle.config.ts
+- [x] Cross-doc invariant: none
+- [x] Depends on: 2.1
 
 ### 2.7 — App-version ↔ schema-version compatibility check + refusal
-- [ ] Records/persists a schema-version marker and checks it against the running app version on startup (§4 / §13).
-- [ ] Refuses to run an incompatible app-version↔schema-version pairing with a typed repair message — no silent forward-only break (§4 failure mode).
-- [ ] A compatible pairing proceeds; the refusal path surfaces the documented repair step rather than crashing opaquely (§16 error-handling convention).
-- [ ] Files: NEW packages/db/src/migrate/version-compat.ts
-- [ ] Cross-doc invariant: none
-- [ ] Depends on: 2.6
+- [x] Records/persists a schema-version marker and checks it against the running app version on startup (§4 / §13).
+- [x] Refuses to run an incompatible app-version↔schema-version pairing with a typed repair message — no silent forward-only break (§4 failure mode).
+- [x] A compatible pairing proceeds; the refusal path surfaces the documented repair step rather than crashing opaquely (§16 error-handling convention).
+- [x] Files: NEW packages/db/src/migrate/version-compat.ts
+- [x] Cross-doc invariant: none
+- [x] Depends on: 2.6
 
 ### 2.8 — DB-unavailable degraded mode + distinct System Health item
-- [ ] When the operational DB is unavailable the store layer returns a typed failure (not a thrown opaque error) and signals the worker to enter degraded mode (§4 failure mode + §16 error-handling convention — nothing fails silently).
-- [ ] Surfaces a distinct, persistent, audit-linked System Health item for the DB-unavailable class (§16 OBS-2), separate from connector/Temporal/Keychain degraded modes.
-- [ ] Queues operations where possible rather than dropping them; does not crash-loop on repeated DB-unavailable.
-- [ ] Exposes a typed health/availability probe the worker supervisor and System Health surface can poll.
-- [ ] Files: NEW packages/db/src/health/db-availability.ts; NEW packages/db/src/health/degraded-mode.ts
-- [ ] Cross-doc invariant: none
-- [ ] Depends on: 2.2
+- [x] When the operational DB is unavailable the store layer returns a typed failure (not a thrown opaque error) and signals the worker to enter degraded mode (§4 failure mode + §16 error-handling convention — nothing fails silently).
+- [x] Surfaces a distinct, persistent, audit-linked System Health item for the DB-unavailable class (§16 OBS-2), separate from connector/Temporal/Keychain degraded modes.
+- [x] Queues operations where possible rather than dropping them; does not crash-loop on repeated DB-unavailable.
+- [x] Exposes a typed health/availability probe the worker supervisor and System Health surface can poll.
+- [x] Files: NEW packages/db/src/health/db-availability.ts; NEW packages/db/src/health/degraded-mode.ts
+- [x] Cross-doc invariant: none
+- [x] Depends on: 2.2
 
 ### 2.9 — Repository CONTRACT suite both adapters must pass (SQLite + Postgres parity; release-blocking)
-- [ ] A single parameterized repository contract suite runs against BOTH the SQLite and the Postgres adapter; both must pass before DoD (REQ-D-003, §12).
-- [ ] Adapter divergence (SQLite passes, Postgres fails, or vice versa) fails the suite and BLOCKS release (§4 'adapter divergence → release blocked').
-- [ ] Covers per-domain behaviors: CRUD round-trips, append-only event log, immutable/tombstone audit, exactly-once approval compare-and-set transitions, outbox enqueue/depth/blocked-query, connector-cursor advance, read-model rebuild reconstructing projections.
-- [ ] The Postgres run is real (against a live Postgres) — not skipped or mocked: §12 'DoD cannot be satisfied by mocks' and 'Postgres is not a permanent stub'.
-- [ ] Also includes the Drizzle migration apply test (backup-before-migrate, transactional apply, restore-on-failure) on both dialects per §12 'Drizzle migration + repository contract tests on SQLite AND Postgres'.
-- [ ] Files: NEW packages/db/test/contract/repository-contract.suite.ts; NEW packages/db/test/contract/sqlite.contract.test.ts; NEW packages/db/test/contract/postgres.contract.test.ts; NEW packages/db/test/contract/migration.contract.test.ts
-- [ ] Cross-doc invariant: none
-- [ ] Depends on: 2.3, 2.4, 2.5, 2.6
+- [x] A single parameterized repository contract suite runs against BOTH the SQLite and the Postgres adapter; both must pass before DoD (REQ-D-003, §12).
+- [x] Adapter divergence (SQLite passes, Postgres fails, or vice versa) fails the suite and BLOCKS release (§4 'adapter divergence → release blocked').
+- [x] Covers per-domain behaviors: CRUD round-trips, append-only event log, immutable/tombstone audit, exactly-once approval compare-and-set transitions, outbox enqueue/depth/blocked-query, connector-cursor advance, read-model rebuild reconstructing projections.
+- [x] The Postgres run is real (against a live Postgres) — not skipped or mocked: §12 'DoD cannot be satisfied by mocks' and 'Postgres is not a permanent stub'.
+- [x] Also includes the Drizzle migration apply test (backup-before-migrate, transactional apply, restore-on-failure) on both dialects per §12 'Drizzle migration + repository contract tests on SQLite AND Postgres'.
+- [x] Files: NEW packages/db/test/contract/repository-contract.suite.ts; NEW packages/db/test/contract/sqlite.contract.test.ts; NEW packages/db/test/contract/postgres.contract.test.ts; NEW packages/db/test/contract/migration.contract.test.ts
+- [x] Cross-doc invariant: none
+- [x] Depends on: 2.3, 2.4, 2.5, 2.6
 
 ### 2.10 — Periodic operational-DB backup/restore + FileVault at-rest posture (SQLCipher explicitly V1.1-deferred)
-- [ ] Provides a periodic local backup of the operational DB with a documented, exercised restore procedure; the operational DB and Temporal persistence are operational truth and are NOT Git-backed (§16 Backup & Recovery).
-- [ ] At-rest encryption for the operational store relies on macOS FileVault full-disk encryption; the package records FileVault-enabled as a documented install prerequisite consumed by the §13 install doctor — not re-implemented here.
-- [ ] App-level encryption (SQLCipher for the operational store + encrypted Temporal persistence) is explicitly V1.1-deferred (§15) and is NOT implemented in V1 — the task only documents the posture and leaves the seam.
-- [ ] Restore-from-backup path produces a consistent operational store and is the documented recovery for the not-rebuildable operational-truth set (§4 / §16).
-- [ ] Files: NEW packages/db/src/backup/periodic-backup.ts; NEW packages/db/src/backup/restore.ts; NEW packages/db/docs/at-rest-posture.md
-- [ ] Cross-doc invariant: none
-- [ ] Depends on: 2.6
+- [x] Provides a periodic local backup of the operational DB with a documented, exercised restore procedure; the operational DB and Temporal persistence are operational truth and are NOT Git-backed (§16 Backup & Recovery).
+- [x] At-rest encryption for the operational store relies on macOS FileVault full-disk encryption; the package records FileVault-enabled as a documented install prerequisite consumed by the §13 install doctor — not re-implemented here.
+- [x] App-level encryption (SQLCipher for the operational store + encrypted Temporal persistence) is explicitly V1.1-deferred (§15) and is NOT implemented in V1 — the task only documents the posture and leaves the seam.
+- [x] Restore-from-backup path produces a consistent operational store and is the documented recovery for the not-rebuildable operational-truth set (§4 / §16).
+- [x] Files: NEW packages/db/src/backup/periodic-backup.ts; NEW packages/db/src/backup/restore.ts; NEW packages/db/docs/at-rest-posture.md
+- [x] Cross-doc invariant: none
+- [x] Depends on: 2.6
 
 ### Acceptance criteria (2)
-- [ ] All 2.X task checkboxes ticked.
-- [ ] Both the SQLite and Postgres adapters pass the SAME repository contract suite, including a real (non-mocked) Postgres run; adapter divergence blocks release (REQ-D-003, §12).
-- [ ] Drizzle schema persists only the §4 operational domains; no semantic-truth, Temporal-history, GBrain-index, or plaintext-secret columns exist (secrets are Keychain references only) — enforced by the storage-boundary and schema-snapshot tests (§4, REQ-D-001/004/005, REQ-S-003).
-- [ ] Migration apply always backs up first, applies transactionally where supported, and on partial/failed apply restores from the pre-migration backup and refuses to start with a typed repair message (§4 failure mode).
-- [ ] Startup refuses an incompatible app-version↔schema-version pairing with a typed repair message; no silent forward-only break (§4/§13).
-- [ ] DB-unavailable triggers degraded mode with a distinct, audit-linked System Health item and queues where possible — nothing fails silently (§4/§16).
-- [ ] Event log is append-only and audit is immutable/tombstone-only; read models are rebuildable while the operational-truth set is not; approval transitions are exactly-once across Mac+Telegram via atomic compare-and-set (§4, DATA_MODEL).
-- [ ] At-rest control is documented as FileVault (install-doctor prerequisite) with SQLCipher explicitly deferred to V1.1; periodic operational-DB backup with an exercised restore exists (§4/§13/§15/§16).
+- [x] All 2.X task checkboxes ticked.
+- [x] Both the SQLite and Postgres adapters pass the SAME repository contract suite, including a real (non-mocked) Postgres run; adapter divergence blocks release (REQ-D-003, §12).
+- [x] Drizzle schema persists only the §4 operational domains; no semantic-truth, Temporal-history, GBrain-index, or plaintext-secret columns exist (secrets are Keychain references only) — enforced by the storage-boundary and schema-snapshot tests (§4, REQ-D-001/004/005, REQ-S-003).
+- [x] Migration apply always backs up first, applies transactionally where supported, and on partial/failed apply restores from the pre-migration backup and refuses to start with a typed repair message (§4 failure mode).
+- [x] Startup refuses an incompatible app-version↔schema-version pairing with a typed repair message; no silent forward-only break (§4/§13).
+- [x] DB-unavailable triggers degraded mode with a distinct, audit-linked System Health item and queues where possible — nothing fails silently (§4/§16).
+- [x] Event log is append-only and audit is immutable/tombstone-only; read models are rebuildable while the operational-truth set is not; approval transitions are exactly-once across Mac+Telegram via atomic compare-and-set (§4, DATA_MODEL).
+- [x] At-rest control is documented as FileVault (install-doctor prerequisite) with SQLCipher explicitly deferred to V1.1; periodic operational-DB backup with an exercised restore exists (§4/§13/§15/§16).
 
 ---
 
@@ -1921,3 +1924,5 @@ _(Empty at project start.)_
 - **2026-06-30 — Phase 1 contract freeze COMPLETE (tasks 1.2–1.9 + full 27-model Appendix-A freeze).** The JSON-Schema candidate-data gate (1.2, REQ-S-006) + all 27 cross-track seam models frozen: 16 base + `WriteReceipt`/`NotebookMapping`/`HealthItem` co-frozen + the 9 NEW write-through/divergence models + amended `KnowledgeMutationPlan`/`HealthItem`. **Authoring locked as ADR-008 (Zod-as-source):** one `.strict()` Zod schema per model → `z.infer` TS type → generated strict JSON Schema (`zod-to-json-schema`, `additionalProperties:false`) → spec(§)-tagged frozen field-set snapshot; all schemas registered + compiled in an ajv-strict registry (`registry-all.test.ts` proves REQ-S-006 covers every model). **495 tests pass; `pnpm typecheck` clean; consistency-critic driftDetected=false** (3 NOTE-level flags + sub-shape arch_gaps carried forward to §6/§7/Phase-4 — see Carry-forward). Field-sets verified against `ARCHITECTURE.md` Appendix A. Built via a single-operator **Workflow fan-out** (foundation A1/A2/A3 → 3 dependency-ordered model waves → synthesis/wiring → adversarial consistency-critic + verify); **a mid-run API burst stalled 8 wave-1 agents** (blocking the wave-1 barrier) — diagnosed via filesystem-completeness + agent-transcript staleness, stopped, and recovered by a **targeted repair Workflow** that re-ran ONLY the 11 incomplete models (foundation + the 16 complete models persisted on disk). Deps added: `ajv`, `ajv-formats`, `zod-to-json-schema`. Commits `8a42f13` (1.2 gate + harness), `512d731` (16 base models), `4bdedf6` (11 write-through models), `bbd2007` (barrel + registry coverage). Remaining Phase-1 = the domain layer (1.10–1.15). Close-out doc: `docs/sessions/003-2026-06-30-phase1-contract-freeze.md`.
 - **2026-06-30 — Phase 1 COMPLETE (domain layer 1.10–1.15 landed; all 1.1–1.15 green).** Second single-operator **Workflow fan-out** (foundation `defineMachine` → 9-unit wave → fixtures → synthesis → adversarial verify; no burst this run): **1.10** pure replay-stable key builders (sha256-hex, order-independent, url/fs-safe); **1.11** the 5 §3 universal validators + REQ-F-017 no-inference (enumerable codes: schema_violation/missing_key/unscoped_mutation/missing_visibility/inferred_owner_or_date/missing_evidence); **1.12/1.13** the 6 DOMAIN_MODEL state machines as pure total transition functions over a shared `defineMachine` (typed `Result` rejections, frozen terminals, Approval idempotent-terminal-reentry for REQ-F-012); **1.14** new `@sow/db` — dialect-portable sqlite-core Drizzle schema source (9 domains) + pure repo interfaces + column-name parity drift-guard (6 flat models); **1.15** valid + per-rule-invalid seam fixtures for all 27 models + a label==gate-verdict meta-test. **45 test files / 728 tests green; `pnpm typecheck` clean (3 packages); `pnpm audit --prod` clean (drizzle-orm `^0.36`→`^0.45.2`, GHSA-gpj5-g38j-94v9).** Consistency-critic: 1 warn (SourceEnvelope flat-parity — RECONCILED: it persists as event-log payloads) + 1 note (Source retry edge comment relabeled // arch_gap). Decisions: **ADR-009** (db single-dialect-source, pg mirror → Phase 2). **HIGH-PRIORITY FINDING:** the ajv `validate()` gate is structural-only — the candidate-data gate must compose ajv + Zod parse + the §3 universal rules (see Carry-forward). Commits `d143480` (state machines), `e373cdd` (keys+validators), `5e713aa`+`9abedc8` (db), `a039e86` (fixtures+barrels). Close-out: `docs/sessions/003-…` Part 2. **Phase 1 is the forced-serial bottleneck — the parallel tracks may now fork (Phase 2+).**
 - **2026-06-30 — `/phase-exit 1`: CLEAR.** Formal gate executed row-by-row (materialized checklist above the Phase-2 header). `spec-lint tests 1` PASS (§9 tests tagged; §2.5/§5/§7/§12 waived on the anchors line); `pnpm audit --prod` clean; `/preflight` green except `format:check` (waived — no prettier). Reviewer sub-agents dispatched in parallel → **`arch-drift-auditor` CLEAR** (0 drift; 1 STALE-DOC fixed in DOMAIN_MODEL.md §Approval; 5 ambiguous state-machine arch_gaps flagged for §9/Phase-7) + **`security-reviewer` CLEAR** (7/7 invariant passes; gate-composition the sole non-blocking finding); reachability judgment-waived (no production entry point until Phase 2+). Reports: `docs/audits/phase1-{arch-drift,security}.md`. Carry-forward Step-5.5 triaged (1 deleted, 6 kept, under cap). **Phase 1 CERTIFIED — Phase 2 may fork.**
+- **2026-06-30 — Phase 2 COMPLETE (Operational Storage, `@sow/db`).** Two Workflow fan-outs: the impl (pg-core mirror + both adapters + operational-truth invariants + migration lifecycle + version-compat + degraded-mode + the both-dialect contract suite + backup/restore, all green) then a **parity repair** (a phase-exit critic caught a blocker: migration/backup were SQLite-only + false "pg parity exercised" comments; and a warn: dead invariants module + divergent approval-CAS). The repair added a **Postgres migration + backup engine** (`pg-engine.ts`/`pg-ops.ts`; PGLite `dumpDataDir`/`loadDataDir`), **parameterized the migration-lifecycle + backup/restore tests over BOTH dialects** (SQLite + in-process real PG16 via PGLite), **wired the operational-truth invariants module into both adapters**, and reconciled **approval-CAS to ok-on-replay** (idempotent no-op on a true replay; conflict on a stale different-target CAS — matching the Approval domain machine + REQ-F-012). Owner decision: **PGLite as the "real Postgres" for the contract suite + an optional `postgres:16` Docker gate** (`SOW_PG_DOCKER=1`, skipped by default); **ADR-009 (single-dialect source) COMPLETED**; storage ports went **async** (PGLite is async). Notable process note: the repair's R1 agent stalled on all retries, but R3 self-recovered by building the pg engine itself. **985 tests + 2 gated Docker todos green; typecheck clean; audit clean.** Carry-forward: add a `db_unavailable` OBS-2 `failureClass` (degraded-mode reuses `worker_down`). Commits `48a7260`→`78c3267`. Close-out: `docs/sessions/004-…`.
+- **2026-06-30 — `/phase-exit 2`: CLEAR** *(pending the two reviewer sub-agents — finalized on their return)*. `spec-lint tests 2` PASS (§4/§12/§13/§16/§3 tagged; §2.5 waived); `pnpm audit --prod` clean; `/preflight` green except `format:check` (waived). `arch-drift-auditor` + `security-reviewer` dispatched over the §4 surface → `docs/audits/phase2-{arch-drift,security}.md`. Reachability judgment-waived (no `@sow/db` consumer until the worker, Phase 7+). **Phases 1–2 CERTIFIED — Phase 3/4/5/6 may fork.**

@@ -1,3 +1,4 @@
+// spec(§12) spec(§13) — migration contract test + rollback lifecycle (backup/restore-on-failure)
 // Phase-2 task 2.6 / 2.9 — migration apply LIFECYCLE, DUAL-DIALECT (UNIT).
 //
 // ARCHITECTURE §4 (Operational Storage, failure modes): "back up the operational
