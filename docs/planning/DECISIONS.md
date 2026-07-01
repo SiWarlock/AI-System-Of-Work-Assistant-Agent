@@ -154,3 +154,15 @@ Rationale: freezes the load-bearing contract (interfaces + column-name parity) n
 
 What would change it: if Phase-2 finds the portable-types subset too restrictive, switch to dual per-dialect table definitions generated from a shared column-spec factory (the fallback).
 
+## ADR-010 - §5 renderer↔worker session-auth: pure primitive now, app wiring deferred
+
+Status: Locked (2026-07-01, owner-approved). Scope: Phase-3 task 3.7 (`packages/policy`).
+
+Context: task 3.7 specifies a per-launch session-token auth flow spanning a pure verify/allowlist primitive **and** wiring into `apps/worker` (tRPC + stream-handshake guard) and `apps/desktop` (Electron main mint + preload inject). At Phase-3 time both app shells hold only `CLAUDE.md`/`LESSONS.md` — no `package.json`/`tsconfig` — so the wiring files would be un-typechecked orphans outside any build, and scaffolding two other tracks' app packages for one file each pulls their territory forward prematurely.
+
+Decision: ship ONLY the pure, fully-TDD'd primitive `packages/policy/src/session-auth.ts` (high-entropy per-launch mint · constant-time `timingSafeEqual` verify · strict Origin/Host allowlist · redaction-safe, token never echoed) in Phase 3. Defer the app wiring to when the shells exist: `apps/worker/src/api/auth-guard.ts` → **Phase 7** (worker), `apps/desktop/main/session-token.ts` + `apps/desktop/preload/inject-token.ts` → **Phase 9** (desktop). The pure primitive is the testable security core; the deferred files are integration glue.
+
+Rationale: keeps `packages/policy` buildable + green, avoids premature cross-track scaffolding, and matches the reachability posture of Phases 1–2 (pure logic with no production consumer yet). Recorded as a deferment (scope cut), owner-approved, tracked in the plan Carry-forward.
+
+What would change it: if the worker/desktop shells are scaffolded earlier than Phase 7/9, land the wiring then instead.
+
