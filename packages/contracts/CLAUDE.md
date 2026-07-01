@@ -193,6 +193,7 @@ Lessons start at §1.
 | 1 | 2026-06-30 | Branded `z.infer` + `declaration:true` → TS4023 | A model whose Zod schema embeds a branded ID must export an explicit `interface` + annotate the schema `z.ZodType<Out, ZodTypeDef, In>` — never rely on bare `z.infer` for the exported type. |
 | 2 | 2026-06-30 | Zod-as-source contract recipe (ADR-008) | Each Appendix-A model ships 4 files (`.ts`/`schemas/*.schema.json`/`__snapshots__/*.snap`/test); JSON Schema is generated (never hand-written); import shared brands/enums/sub-shapes — never re-declare them inline. |
 | 3 | 2026-06-30 | ajv `validate()` is structural-only — gate is a composition | `zod-to-json-schema` drops `.refine`; the candidate-data gate = ajv `validate()` + the model's Zod parse + the §3 universal rules + the §5/§6/§7 predicates — never ajv alone. |
+| 4 | 2026-07-01 | Isolate the URL authority before extracting host in a security predicate | A loopback/SSRF/allowlist gate parsing an untrusted endpoint must strip path/query/fragment + backslash to isolate the authority BEFORE stripping userinfo/host — userinfo-first is spoofable (`http://evil.com/@127.0.0.1` → fake loopback → Phase-3 egress-veto bypass). Green unit tests ≠ safe; gate it with an adversarial-verify pass + regression tests. |
 
 <!-- Starts empty. Each row links to its `LESSONS.md` anchor. -->
 
