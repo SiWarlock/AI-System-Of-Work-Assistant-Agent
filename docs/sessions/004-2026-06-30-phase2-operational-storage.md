@@ -49,7 +49,7 @@ The Phase-2 implementation ran clean (no burst). The **parity repair** hit an ag
 - [x] Spec coverage — `spec-lint tests 2` PASS (§4/§12/§13/§16/§3 tagged; §2.5 waived — worker-track structural).
 - [x] Dependency audit — `pnpm audit --prod` clean.
 - [x] Reachability — judgment-waived (still no production entry point consuming `@sow/db`; apps/worker land Phase 7+). Re-run once the worker exists.
-- [x] Arch-drift + security auditors — dispatched (reports in `docs/audits/phase2-*.md`); verdict recorded in the Log.
+- [x] Arch-drift + security auditors — **both CLEAR** (`docs/audits/phase2-{arch-drift,security}.md`). Arch-drift surfaced one §16 finding — HealthItems are operational truth but persisted **in-memory only** — **owner-approved as a deferment to Phase 10** (System Health/observability owns the `health_items` table + backup there). Security flagged 3 low + 2 info hardening items (carry-forward: bound audit reads, atomic `appendAuditRef`, digest table-name allow-list, §16-redact driver errors, drop the test docker-password literal).
 - [x] Session doc (this) + commits pushed.
 
 ## Commit map (Phase 2)
