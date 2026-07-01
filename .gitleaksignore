@@ -10,3 +10,11 @@
 #
 # Example (delete once real entries exist):
 # 0123456789abcdef0123456789abcdef01234567:tests/fixtures/stripe-cassette.json:generic-api-key:12  # recorded test cassette, fake key
+
+# ── Phase 4/5 TDD fixtures (fake keys that EXERCISE the scanners/redaction) ──
+# fake sk- key testing the KnowledgeWriter blocking secret scan (task 4.3)
+packages/knowledge/test/secret-scan.test.ts:generic-api-key:26
+# fake provider key in the Claude ModelProviderPort adapter test (task 5.7)
+packages/providers/test/claude-provider.test.ts:generic-api-key:180
+# fake GitHub PAT testing provider-boundary log redaction (task 5.6)
+packages/providers/test/provider-log-redaction.test.ts:github-pat:27
