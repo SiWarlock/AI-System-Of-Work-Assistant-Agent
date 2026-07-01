@@ -1,0 +1,7 @@
+{
+  "decisions": ["Adopt migration plan A", "Defer connector work to Phase 6"],
+  "actionItems": [
+    { "title": "Email Acme the revised SoW", "owner": "TBD" },
+    { "title": "Book the Phase-6 kickoff", "owner": "TBD" }
+  ]
+}

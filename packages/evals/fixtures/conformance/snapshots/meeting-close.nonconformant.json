@@ -1,0 +1,6 @@
+{
+  "decisions": ["Adopt migration plan A"],
+  "actionItems": [
+    { "title": "Email Acme the revised SoW", "assignee": "Dana" }
+  ]
+}

@@ -54,6 +54,9 @@ export * from "./models/workflow-run-ref";
 export * from "./models/workspace";
 export * from "./models/write-receipt";
 
+// --- provider conformance (Phase 5, task 5.10) ---
+export * from "./provider/conformance-result";
+
 // --- contract-test fixtures (valid + invalid instances + FIXTURES registry) ---
 // No symbol collides with the frozen surface above (verified at wiring time).
 export * from "./fixtures/index";

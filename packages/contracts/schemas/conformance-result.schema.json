@@ -1,0 +1,60 @@
+{
+  "type": "object",
+  "properties": {
+    "subjectKind": {
+      "type": "string",
+      "enum": [
+        "provider",
+        "runtime"
+      ]
+    },
+    "subjectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "capability": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "egressClass": {
+      "type": "string",
+      "enum": [
+        "local",
+        "cloud"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "passing",
+        "failing",
+        "disabled"
+      ]
+    },
+    "detail": {
+      "type": "string",
+      "minLength": 1
+    },
+    "checkedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "subjectKind",
+    "subjectId",
+    "capability",
+    "model",
+    "egressClass",
+    "status",
+    "checkedAt"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:conformance-result"
+}

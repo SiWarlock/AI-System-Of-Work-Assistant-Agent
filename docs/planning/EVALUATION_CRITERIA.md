@@ -16,6 +16,8 @@ V1 is done when the system runs locally/self-hosted on a Mac, proves the meeting
 | Obsidian compatibility | Repos remain valid and editable | 100% of test mutations | Markdown syntax + Obsidian reload smoke |
 | GBrain parity (write-through, fail-closed) | DB-only/unstamped facts ever served as truth | 0 served (all quarantined as parity_defect); the 4 GO conditions green | §12 divergence suite (12.7) — bytes-from-Markdown + signed-stamp + allow-set + adversarial borrowed-stamp/forged-hash/malicious-gbrain |
 | Write-through enablement | `writeThroughEnabled` flips ON only when proven | per-workspace, default OFF until 4 GO green + pin promoted + read-token-rejects-write | enablement-gate (12.22) + fail-closed (12.23) suites |
+| Sync latency — GBrain search visibility (REQ-NF-003) | KnowledgeWriter commit → fact visible via GBrain search, p95 | ≤ 60s p95 | Knowledge-sync latency benchmark (`packages/evals/src/benchmarks/knowledge-sync-latency.bench.ts`, §12 sole timing-assertion path) |
+| Sync latency — dashboard read-model (REQ-NF-003) | KnowledgeWriter commit → fact reflected in dashboard read-model, p95 | ≤ 10s p95 | Same knowledge-sync latency benchmark (per-stage) |
 | Retrieval | Relevant context | 90%+ benchmark success | KN-10 retrieval eval |
 | Workspace leakage | Raw Employer Work in personal/global outputs | 0 without explicit permission | WS-7 adversarial suite |
 | Prompt injection | Mutating tool access from untrusted content | 0 | ING-7 job-admission tests |

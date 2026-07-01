@@ -38,6 +38,7 @@ import type { QuarantineRecord } from "../models/quarantine-record";
 import type { GBrainProposedFact } from "../models/gbrain-proposed-fact";
 import type { GbrainReadGrant } from "../models/gbrain-read-grant";
 import type { GbrainPin } from "../models/gbrain-pin";
+import type { ConformanceResult } from "../provider/conformance-result";
 
 // ── Deterministic literal constants (no clock/random) ────────────────────────
 /** 64-char lowercase-hex (sha256-shaped) for `MdContentSha`. */
@@ -129,6 +130,17 @@ export const validAgentJob: AgentJob = {
   maxRuntimeSeconds: 300,
   maxCostUsd: 5,
   idempotencyKey: "idem-job-001",
+};
+
+// ── 7b. ConformanceResult (task 5.10 — passing cloud provider pair) ──────────
+export const validConformanceResult: ConformanceResult = {
+  subjectKind: "provider",
+  subjectId: "openrouter",
+  capability: "meeting.close" as Capability,
+  model: "anthropic/claude-haiku-4.5",
+  egressClass: "cloud",
+  status: "passing",
+  checkedAt: T0,
 };
 
 // ── 8. KnowledgeMutationPlan (non-empty sourceRefs) ──────────────────────────

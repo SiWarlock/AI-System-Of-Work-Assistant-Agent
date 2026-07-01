@@ -36,6 +36,7 @@ import {
   validGBrainProposedFact,
   validGbrainReadGrant,
   validGbrainPin,
+  validConformanceResult,
 } from "./valid";
 import {
   invalidToolPolicyMutatingReadOnly,
@@ -101,6 +102,7 @@ export const FIXTURES: readonly FixtureEntry[] = [
   { model: "GBrainProposedFact", schemaId: "sow:gbrain-proposed-fact", instance: validGBrainProposedFact, valid: true },
   { model: "GbrainReadGrant", schemaId: "sow:gbrain-read-grant", instance: validGbrainReadGrant, valid: true },
   { model: "GbrainPin", schemaId: "sow:gbrain-pin", instance: validGbrainPin, valid: true },
+  { model: "ConformanceResult", schemaId: "sow:conformance-result", instance: validConformanceResult, valid: true },
 
   // ── INVALID — one per pinned rejection rule ───────────────────────────────
   { model: "ToolPolicy", schemaId: "sow:tool-policy", instance: invalidToolPolicyMutatingReadOnly, valid: false, rejectedBy: "refine" },

@@ -61,6 +61,7 @@ import {
   GBrainProposedFactSchema,
   GbrainReadGrantSchema,
   GbrainPinSchema,
+  ConformanceResultSchema,
 } from "@sow/contracts";
 
 // schemaId ($id) -> the AUTHORITATIVE Zod schema (refines included). Keyed by the
@@ -93,6 +94,7 @@ const ZOD_BY_ID: Record<string, ZodTypeAny> = {
   "sow:gbrain-proposed-fact": GBrainProposedFactSchema,
   "sow:gbrain-read-grant": GbrainReadGrantSchema,
   "sow:gbrain-pin": GbrainPinSchema,
+  "sow:conformance-result": ConformanceResultSchema,
 };
 
 const zodFor = (schemaId: string): ZodTypeAny => {
