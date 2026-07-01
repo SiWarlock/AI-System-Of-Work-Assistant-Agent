@@ -1,0 +1,96 @@
+{
+  "workspaceConfig": [
+    "dataOwner",
+    "defaultVisibility",
+    "egressPolicy",
+    "gbrainBrainId",
+    "id",
+    "markdownRepoPath",
+    "name",
+    "providerMatrix",
+    "type"
+  ],
+  "eventLog": [
+    "correlationId",
+    "eventId",
+    "eventName",
+    "occurredAt",
+    "payload",
+    "recordedAt",
+    "workflowId",
+    "workspaceId"
+  ],
+  "workflowRunRefs": [
+    "auditRefs",
+    "idempotencyKey",
+    "state",
+    "trigger",
+    "workflowId"
+  ],
+  "auditRecords": [
+    "actor",
+    "afterSummary",
+    "beforeSummary",
+    "event",
+    "payloadHash",
+    "refs",
+    "timestamps"
+  ],
+  "approvals": [
+    "actionRef",
+    "actor",
+    "channel",
+    "expiresAt",
+    "id",
+    "payloadHash",
+    "snoozeUntil",
+    "status"
+  ],
+  "outbox": [
+    "actionRef",
+    "attempts",
+    "canonicalObjectKey",
+    "enqueuedAt",
+    "idempotencyKey",
+    "nextAttemptAt",
+    "outboxId",
+    "payload",
+    "payloadHash",
+    "status",
+    "targetSystem",
+    "updatedAt",
+    "workspaceId",
+    "writeReceipt"
+  ],
+  "connectorCursors": [
+    "connectorId",
+    "cursor",
+    "lastSyncAt",
+    "nextSyncAt",
+    "status",
+    "updatedAt",
+    "workspaceId"
+  ],
+  "providerProfiles": [
+    "capabilities",
+    "conformanceStatus",
+    "costCaps",
+    "egressClass",
+    "endpoint",
+    "model",
+    "provider"
+  ],
+  "readModels": [
+    "data",
+    "readModelKey",
+    "rebuiltAt",
+    "workspaceId"
+  ],
+  "gclProjections": [
+    "projectionType",
+    "sanitizedPayload",
+    "sourceRefs",
+    "visibilityLevel",
+    "workspaceId"
+  ]
+}
