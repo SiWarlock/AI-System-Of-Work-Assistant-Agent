@@ -11,6 +11,7 @@
 export * from "./primitives/ids";
 export * from "./primitives/enums";
 export * from "./primitives/result";
+export * from "./primitives/failure";
 export * from "./primitives/zod-brands";
 
 // --- events ---
@@ -56,6 +57,16 @@ export * from "./models/write-receipt";
 
 // --- provider conformance (Phase 5, task 5.10) ---
 export * from "./provider/conformance-result";
+
+// --- observability (Phase 10.1: LogRecord type + redaction-marker vocabulary) ---
+export * from "./observability/log-record";
+
+// --- local app API surface (Phase 8.2: push-stream event catalog + UI-safe projections) ---
+export * from "./api/ui-safe";
+export * from "./api/events";
+
+// --- config (Phase 10.7: non-secret config schema + secret-shape load guard) ---
+export * from "./config/config-schema";
 
 // --- contract-test fixtures (valid + invalid instances + FIXTURES registry) ---
 // No symbol collides with the frozen surface above (verified at wiring time).
