@@ -61,6 +61,18 @@
 - [x] Arch-drift + security reviewer sub-agents — **both CLEAR** (`docs/audits/phase6-{arch-drift,security}.md`). Arch-drift: 9 anchors, **0 DRIFT / 2 STALE-DOC / 1 AMBIGUOUS** (STALE-DOC: Appendix-A already carries `approvalId?` + `GatewayHealthSignal.severity` open string; AMBIGUOUS: per-target `canonicalObjectKey` identity — both carry-forward). Security: safety rules 3/7 + no-silent-drop + hold-through-outage PASS, all 3 fixes re-derived closed, no new critical/high; **1 LOW (AWS SigV4 signed-URL params) FIXED this round**.
 - **Verdict: CLEAR** (2026-07-01).
 
+**Phase 7 — COMPLETE + CERTIFIED (2026-07-02).** §9 Temporal Workflows & Automation — the integration spine (`@sow/workflows` + `@sow/worker`, + a Phase-2 `@sow/db` ApprovalRepository amendment). Built as a SEQUENCE of Workflow fan-outs (foundation → proof spine → workflows A → workflows B), each a PURE, replay-safe orchestration driver over the @sow/domain state machines + injected activity ports (sandbox-safe: no @temporalio/node:crypto/Date.now in drivers; activities wire the real adapters; live-Temporal tests gated behind `SOW_TEMPORAL`). Durability foundation (7.1–7.5: LIFE-1 fenced single-active lease · LIFE-2 collapsed catch-up · LIFE-3 resume + §8 envelope reuse · LIFE-5 clock-jump-safe · WorkflowRun registry/idempotency · OBS-2 System Health surfacing) + all 13 workflows (7.6 meeting-closeout proof spine, 7.7 source ingestion, 7.8 inbox triage, 7.9 approval flow, 7.10 daily brief, 7.11 weekly/monthly, 7.12 cross-calendar, 7.13 project sync, 7.14 deletion saga, 7.15 connector sync/health, 7.16 NotebookLM sync, 7.17 Copilot Q&A read-path, 7.18 Hermes gateway-routing). **The adversarial-verify passes earned their keep at EVERY wave — a CRITICAL + multiple HIGH, all FIXED + regression-tested + re-verified CLEAR:** foundation 9 (incl. a CRITICAL LIFE-5 monotonic-across-restart + HIGH lease-fencing / resume-idempotency-key / idempotency-race); 7.6 CRITICAL (the no-inference gate validated the extraction but committed a caller-supplied plan — fixed by DERIVING outputs from validated data) + HIGH workspace-binding; 7.7–7.12 2 HIGH + 1 MED (approval exactly-once via surfacing the @sow/db CAS apply-vs-noop kind; cross-calendar leakage-guard-on-a-decoy-field → guard the dispatched payload); 7.13–7.18 1 HIGH (deletion-saga content-blind idempotency keys — fixed over two cycles to fold each deleted region's LIVE-content hash). **`/phase-exit 7`: CLEAR** (both reviewer sub-agents CLEAR — `docs/audits/phase7-{arch-drift,security}.md`). **PHASES 0–7 CERTIFIED — the integration spine is done; Phase 8 (§10 Local App API, worker track) ∥ Phase 10 (cross-cutting, eval-security) now reopen.**
+
+### `/phase-exit 7` — materialized checklist (2026-07-02)
+- [x] All 7.1–7.18 tasks + acceptance built; every wave's adversarial-verify findings FIXED + regression-tested + re-verified CLEAR.
+- [x] `/preflight` — `@sow/workflows` 438 + `@sow/worker` 13 (1 `SOW_TEMPORAL`-gated skip) + `@sow/db` 275 (both dialects); repo-wide 2392 green + 2 todo; typecheck clean (10/10); `pnpm audit --prod` clean (a NEW moderate `protobufjs` advisory from the Temporal deps FIXED via a `pnpm-workspace.yaml` override to `^7.6.3`); lint = `tsc` placeholder; `format:check` waived (no prettier).
+- [x] `spec-lint tests 7` PASS — §9/§16/§6/§8/§7/§5/§4 covered; §2.5 waived (architectural DAG / import-direction — structural, not a §9 unit test).
+- [x] Cross-doc invariants — no FROZEN @sow/contracts field change. The Phase-2 `@sow/db` `ApprovalRepository.applyTransition` return was widened to `ApprovalTransitionOutcome { approval, applied }` (a @sow/db-internal repo contract — both dialect adapters + the Phase-2 contract tests updated + re-run green; NOT a frozen Appendix-A seam). WorkflowRun trigger/state taxonomies are @sow/workflows-local (the frozen WorkflowRunRef field-set is unchanged + snapshot-pinned).
+- [x] Adversarial verify — per-wave 3-lens skeptic passes + an independent re-verify on every fix; all CLEAR.
+- [x] Reachability — judgment-WAIVED: `@sow/workflows` drivers/activities have no production Temporal entrypoint yet (the thin @temporalio workflow wrappers + real-adapter worker wiring are the deferred worker-wiring wave); the drivers are consumed by their tests + the barrel. Re-run when the worker wiring lands.
+- [x] Arch-drift + security reviewer sub-agents — **both CLEAR** (`docs/audits/phase7-{arch-drift,security}.md`). Arch-drift: 9 anchors, **0 DRIFT / 2 STALE-DOC (doc-annotation notes) / 0 AMBIGUOUS**; all LIFE invariants + all 18 tasks + every fix confirmed in code. Security: **0 critical/high/medium**, 7/7 invariant passes PASS, all fixed findings independently re-derived closed, 2 LOW (heuristic leakage-allowlist + redact error `cause` in the log sink) → Phase-10 carry-forward.
+- **Verdict: CLEAR** (2026-07-02).
+
 
 ---
 
@@ -74,8 +86,9 @@
   - Also: **Phase-5 `localConfig` (Phase-3 carry-forward) applies to the broker** — `route-resolution.ts` passes `localConfig?` through to `@sow/policy resolveRoute`; the broker's caller (Phase 7) must supply it.
 - **PHASE-5 carry-forward (from `/phase-exit 5`, non-blocking):** (a) add `provider_routing_unavailable` to the OBS-2 `FailureClass` taxonomy (ARCHITECTURE Appendix A HealthItem row + §16 + `health-item.ts` + snapshot) — the broker uses `NO_ELIGIBLE_PROVIDER_HEALTH_CLASS` as a named-constant arch_gap (joins `policy_denial`/`egress_status`/`db_unavailable`). (b) §7-vs-§9 boundary: whether the broker attaches a `BrokerHealthItem` on a budget breach or §9 workflow-11 assembles it — pin at the Phase-7 gate. (c) low: a worker-track wiring-slice regression that the injected `ProviderRunner` builds `ProviderRequest.route` from the broker's vetted `route`.
 - **PHASE-6 carry-forward (from `/phase-exit 6`, non-blocking) — gateway seams → Phase 7 wiring:** (a) `ReceiptStore.reserve`/`release` (the no-duplicate-write reservation) is atomic IN-PROCESS (single-threaded check-and-set on `(targetSystem, canonicalObjectKey)`); the Phase-7 DB-backed store MUST implement `reserve` via a unique-constraint insert for CROSS-PROCESS safety (multiple workers), and decide whether ReceiptStore gets its own `@sow/db` table or reuses the outbox `writeReceipt`. (b) the Tool Gateway takes an INJECTED `requireApproval` verdict + `recordPendingApproval`/`isApproved` ports — the §9 workflow wiring binds `@sow/policy requiresApproval(action, resolvedWorkspacePolicy)` (unwrap `PolicyAllow`) + the Approval store. (c) per-target `canonicalObjectKey` identity (`IdentityDeriver`) + the connector `ConnectorTransport` / tool `AdapterTransport` seams are placeholder injection points for real vendor SDKs — pin at wiring. (d) `GatewayHealthSignal` (open `severity`, default `warn`) → the §9/Phase-7 System-Health materializer owns the persisted `HealthItem` + closed severity taxonomy. (e) `outbox_blocked`/`write_through_blocked` reuses the `write_through_failed` FailureClass — joins the OBS-2 named-constant cluster (`db_unavailable`/`policy_denial`/`egress_status`/`provider_routing_unavailable`) that a single frozen-contract round could pin as distinct members.
+- **PHASE-7 carry-forward (from `/phase-exit 7`, non-blocking) — the WORKER-WIRING wave + Phase-10 items:** (a) The deferred **worker-wiring wave** wires the thin @temporalio workflow wrappers + `Worker.create` registration and binds every activity port to the REAL adapters (@sow/integrations Tool/Connector Gateways + NotebookPort, @sow/knowledge KnowledgeWriter + GBrain, @sow/providers Broker, @sow/policy), plus the concrete meeting.close/source/project output projections + the `SOW_TEMPORAL`-gated Temporal integration tests. **This wave SUBSUMES the Phase-6 gateway-seams bullet above** (the DB-backed `ReceiptStore.reserve` unique-constraint insert for cross-process no-dup-write, binding `@sow/policy requiresApproval` + the Approval store into the Tool Gateway, real `ConnectorTransport`/`AdapterTransport` vendor clients + per-target `IdentityDeriver`s), the §7-broker `localConfig` (Phase-3/5), and the `apps/worker` session-auth wiring (Phase-3 deferment). (b) `ProvenanceOrigin` has no `project_sync` (7.13 stamps `ingestion`) or deletion-specific (7.14 stamps `human`) member — if §6 wants distinct provenance, that is a frozen-contract round (`@sow/contracts` shared-enums + Appendix A + snapshot). (c) Phase-7 security LOWs → Phase 10: the cross-calendar leakage detector is heuristic (Phase-10 could allowlist calendar-payload keys); the redaction/log sink must redact a surfaced error `cause` (drivers currently expose only `.code`). (d) `HealthItem` PERSISTENCE (the `health_items` table + repo) remains Phase 10 (owner-approved) — 7.5 emits the OBS-2 signals; the persisted store lands there.
 - **Phases 1–3 COMPLETE + certified; Phase 4/5 BUILT (pending certification); Phase 6 next.** (all gate on 1+3, satisfied; no edges between them — see the DAG). Recommend forking them 2-at-a-time (rate-limit-conservative), each against the frozen `@sow/policy`.
-- **(Phase 3 → §9) candidate-data gate composition — DISCHARGED for §5/§7/§8, still open for §9.** Phase 3's `admitCandidateJob` (`packages/policy/src/admission.ts`) is the reference composition: ajv `validate()` + `AgentJobSchema.parse` (the `.refine` layer ajv drops) + the ING-7 predicate, pinned by a biconditional test (LESSONS §3). Phase 5 (§7 broker) + **Phase 6 (§8 gateways: `admitProposedAction` / `admitExternalWriteEnvelope` + `registerSource`)** reuse it. The remaining consumer is the **§9 meeting validator (Phase 7)** — never ajv `validate()` alone.
+- **(Phase 3 → §9) candidate-data gate composition — FULLY DISCHARGED (§5/§7/§8/§9).** Phase 3's `admitCandidateJob` (`packages/policy/src/admission.ts`) is the reference composition: ajv `validate()` + `AgentJobSchema.parse` (the `.refine` layer ajv drops) + the ING-7 predicate (LESSONS §3). Reused by Phase 5 (§7 broker), Phase 6 (§8 gateways: `admitProposedAction`/`admitExternalWriteEnvelope` + `registerSource`), and **Phase 7 (§9 meeting validator, `activities/validateCloseout.ts`: `validateNoInference` + the schema gate)**. No open consumer remains — never ajv `validate()` alone.
 - **(Phase 3 → contract) `policy_denial` OBS-2 health class:** `AuditSignal.healthSignalClass` uses the named constant `POLICY_DENIAL_HEALTH_CLASS`='policy_denial' (+ egress.ts's `EGRESS_STATUS_HEALTH_CLASS`='egress_status') because the frozen `FailureClass` enum names neither. One-line swap if §16 wants distinct policy/egress health items — add the members to ARCHITECTURE Appendix A + §16 + `health-item.ts` + snapshot (same pattern as `db_unavailable`).
 - **(Phase 3 → §8/§9 arch_gap) approval-policy auto-allow surface + candidate-settable `approvalPolicy`:** `requiresApproval` auto-allows ONLY the spec-named `calendar` surface (§9 Flow 6) under `approvalPolicy==='auto_private'` + user-owned + isolated. The `approvalPolicy` taxonomy is an open string (deferred upstream) and a genuine shared/private action flag is missing on `ProposedAction`; when §8/§9 pin them, the auto-allow must key off workspace policy + an explicit shared/private classification, not a candidate-settable string alone, and the eligible-target set may widen.
 - **(Phase 3 → Phase 7 broker contract) `resolveRoute` `localConfig` must be supplied by the broker.** The §5 "local endpoints only through explicit local-provider config" rule is enforced only when `localConfig` is passed (it's optional; `processorOfRoute`'s loopback proof already blocks arbitrary/remote URLs, so no §5 security regression). The Phase-7 broker MUST always supply `localConfig` to `resolveRoute` (or document why not) — flagged AMBIGUOUS by the Phase-3 arch-drift audit.
@@ -105,7 +118,7 @@
 | KnowledgeWriter + GBrain adapter + GCL Visibility Gate + fs-watch reconciliation | ✅ | Phase 4 |
 | Provider/Runtime Broker (AgentRuntimePort + ModelProviderPort) + budget caps + conformance harness | ✅ | Phase 5 |
 | Connector Gateway + Tool Gateway (external-write envelope) + NotebookLM Drive sync | ✅ | Phase 6 |
-| Temporal workflows: meeting-closeout proof spine + 12 other core workflows + Hermes gateway-routing | ❌ | Phase 7 |
+| Temporal workflows: meeting-closeout proof spine + 12 other core workflows + Hermes gateway-routing | ✅ | Phase 7 |
 | Local app API (tRPC + event stream, authed) | ❌ | Phase 8 |
 | Electron desktop app: 9 surfaces + workspace-preset onboarding | ❌ | Phase 9 |
 | Observability/redaction + System Health + worker supervision + backup/recovery | ❌ | Phase 10 |
@@ -1107,216 +1120,216 @@ Executed row-by-row by `/phase-exit <phase>`:
 
 **Goal:** Build the durable integration spine: a supervised Temporal worker that owns all 13 core product workflows plus the lifecycle invariants that make them survive sleep/restart/crash without duplicating side effects. Lifecycle correctness comes first — a single-active-instance lease (LIFE-1), durable schedules with collapsed catch-up (LIFE-2), idempotent in-flight resume reusing the §8 external-write envelope (LIFE-3 / REQ-NF-006), and clock-jump-safe last-run bookkeeping (LIFE-5) — because every workflow's safety depends on them. Each workflow is a WorkflowRun carrying an idempotencyKey and audit refs, enforces its DOMAIN_MODEL state machine (including forbidden transitions and failure/recovery states), routes all semantic writes through KnowledgeWriter and all external writes through the Tool Gateway, surfaces every failure class as a distinct persistent System Health item, and assigns a workspace before any durable processing. Hermes autonomous automation is permitted but gateway-routed so it can produce no duplicate, ungoverned, or hidden-brain write. Meeting closeout is the proof spine and is sequenced first after the durability foundation.
 
-**Spec anchors:** ARCHITECTURE.md §9 (primary); §2.5 (worker track / DAG); §16 (lifecycle, supervision, observability, time/LIFE-5); §6 (KnowledgeWriter/GCL/GBrain), §8 (Connector/Tool/NotebookPort gateways), §7 (Runtime Broker / AgentJob), §5 (policy/egress/admission), §4 (operational store/outboxes); Appendix A (WorkflowRunRef, Approval, AgentJob, SourceEnvelope, ProposedAction, ExternalWriteEnvelope, KnowledgeMutationPlan, GclProjection); DOMAIN_MODEL.md state machines (Source, Meeting Closeout, Knowledge Mutation, Proposed External Action, Agent Job, Approval); USER_FLOWS.md Flows 1–7; REQUIREMENTS REQ-F-002/007/008/009/010/011/012/013/014/017/018, REQ-NF-006, REQ-S-007.
+**Spec anchors:** ARCHITECTURE.md §9 (primary); §2.5 (non-TDD: worker-track DAG / import-direction boundary; enforced structurally by the package layering, not a §9 unit test); §16 (lifecycle, supervision, observability, time/LIFE-5); §6 (KnowledgeWriter/GCL/GBrain), §8 (Connector/Tool/NotebookPort gateways), §7 (Runtime Broker / AgentJob), §5 (policy/egress/admission), §4 (operational store/outboxes); Appendix A (WorkflowRunRef, Approval, AgentJob, SourceEnvelope, ProposedAction, ExternalWriteEnvelope, KnowledgeMutationPlan, GclProjection); DOMAIN_MODEL.md state machines (Source, Meeting Closeout, Knowledge Mutation, Proposed External Action, Agent Job, Approval); USER_FLOWS.md Flows 1–7; REQUIREMENTS REQ-F-002/007/008/009/010/011/012/013/014/017/018, REQ-NF-006, REQ-S-007.
 
 **Track:** worker · **Depends on (phases):** 2, 4, 5, 6
 
 ### 7.1 — Temporal worker bootstrap + single-active-instance lease (LIFE-1)
-- [ ] Worker connects to the local Temporal dev server with persistent storage (never in-memory) and registers the workflow task queue; bootstrap is a typed result with explicit failure variants (§16 error-handling).
-- [ ] Exactly one active worker instance may own the task queue at a time: a second concurrently-started instance fails to acquire the lease and stays passive rather than processing in parallel (no split-brain).
-- [ ] On supervised respawn after crash, the worker RE-ACQUIRES the single-instance lease before resuming dispatch (§16 supervision); a stale lease from the crashed instance does not block the new one beyond its expiry.
-- [ ] Temporal-unavailable is a first-class degraded mode: workflow dispatch is blocked, a distinct System Health item is surfaced, and connection retries with bounded backoff (§16) — the worker does not crash-loop.
-- [ ] Lease state is persisted in the operational store (P2), not in Temporal history; nothing fails silently.
-- [ ] Files: apps/worker/src/temporal/worker.ts (NEW), apps/worker/src/lease/instanceLease.ts (NEW), packages/workflows/src/runtime/taskQueue.ts (NEW)
-- [ ] Cross-doc invariant: none — WorkflowRunRef
-- [ ] Depends on: P2.* (operational store + repository contract), P-infra Temporal dev server (§13)
-- [ ] Implements: REQ-NF-006
+- [x] Worker connects to the local Temporal dev server with persistent storage (never in-memory) and registers the workflow task queue; bootstrap is a typed result with explicit failure variants (§16 error-handling).
+- [x] Exactly one active worker instance may own the task queue at a time: a second concurrently-started instance fails to acquire the lease and stays passive rather than processing in parallel (no split-brain).
+- [x] On supervised respawn after crash, the worker RE-ACQUIRES the single-instance lease before resuming dispatch (§16 supervision); a stale lease from the crashed instance does not block the new one beyond its expiry.
+- [x] Temporal-unavailable is a first-class degraded mode: workflow dispatch is blocked, a distinct System Health item is surfaced, and connection retries with bounded backoff (§16) — the worker does not crash-loop.
+- [x] Lease state is persisted in the operational store (P2), not in Temporal history; nothing fails silently.
+- [x] Files: apps/worker/src/temporal/worker.ts (NEW), apps/worker/src/lease/instanceLease.ts (NEW), packages/workflows/src/runtime/taskQueue.ts (NEW)
+- [x] Cross-doc invariant: none — WorkflowRunRef
+- [x] Depends on: P2.* (operational store + repository contract), P-infra Temporal dev server (§13)
+- [x] Implements: REQ-NF-006
 
 ### 7.2 — Durable schedules + collapsed catch-up (LIFE-2) + clock-jump-safe bookkeeping (LIFE-5)
-- [ ] A durable schedule abstraction registers recurring product workflows (daily brief, weekly/monthly review, connector sync) on Temporal schedules with persisted last-run/next-run bookkeeping in the operational store.
-- [ ] On wake after the Mac was asleep across multiple due occurrences, missed runs are collapsed and the workflow runs exactly ONCE within the catch-up window — never once-per-missed-occurrence (LIFE-2).
-- [ ] Bookkeeping uses a monotonic clock source where available and survives an NTP/wall-clock correction on wake (forward AND backward jump) without double-firing or starving (LIFE-5 / §16 Configuration & time) — naive wall-clock comparison is rejected as a behavior.
-- [ ] Occurrences older than the configurable catch-up window are dropped as missed (recorded, surfaced as a 'missed/late schedule' System Health class), not silently replayed.
-- [ ] Schedule registration and last-run advance are idempotent across worker restarts.
-- [ ] Files: packages/workflows/src/runtime/schedule.ts (NEW), packages/workflows/src/runtime/catchUpWindow.ts (NEW), packages/workflows/src/runtime/clock.ts (NEW)
-- [ ] Cross-doc invariant: none — WorkflowRunRef
-- [ ] Depends on: 7.1
-- [ ] Implements: REQ-NF-006
+- [x] A durable schedule abstraction registers recurring product workflows (daily brief, weekly/monthly review, connector sync) on Temporal schedules with persisted last-run/next-run bookkeeping in the operational store.
+- [x] On wake after the Mac was asleep across multiple due occurrences, missed runs are collapsed and the workflow runs exactly ONCE within the catch-up window — never once-per-missed-occurrence (LIFE-2).
+- [x] Bookkeeping uses a monotonic clock source where available and survives an NTP/wall-clock correction on wake (forward AND backward jump) without double-firing or starving (LIFE-5 / §16 Configuration & time) — naive wall-clock comparison is rejected as a behavior.
+- [x] Occurrences older than the configurable catch-up window are dropped as missed (recorded, surfaced as a 'missed/late schedule' System Health class), not silently replayed.
+- [x] Schedule registration and last-run advance are idempotent across worker restarts.
+- [x] Files: packages/workflows/src/runtime/schedule.ts (NEW), packages/workflows/src/runtime/catchUpWindow.ts (NEW), packages/workflows/src/runtime/clock.ts (NEW)
+- [x] Cross-doc invariant: none — WorkflowRunRef
+- [x] Depends on: 7.1
+- [x] Implements: REQ-NF-006
 
 ### 7.3 — In-flight workflow resume + external-write-envelope reuse (LIFE-3 / REQ-NF-006)
-- [ ] An in-flight workflow interrupted by restart/sleep/crash RESUMES from durable Temporal state and completes without re-running already-committed steps (LIFE-3).
-- [ ] On resume, every external side effect re-uses the SAME §8 ExternalWriteEnvelope (idempotencyKey + canonicalObjectKey + matched write receipt) so a re-driven step performs NO duplicate external write (the §20.1 replay gate) — proven for create-then-restart-then-resume.
-- [ ] On wake, pending KnowledgeWriter writes are applied BEFORE queued GBrain index jobs (§6 ordering); index jobs re-derive from current Markdown by revision id, never roll back a commit.
-- [ ] Wake/power hooks (LIFE-6) trigger drain of held outbox work; an activity that crashed mid-flight is retried idempotently, never leaving a partial uncommitted side effect.
-- [ ] Resume is a typed recovery path: unrecoverable state surfaces a System Health item with its audit record rather than silently dropping the run.
-- [ ] Files: packages/workflows/src/runtime/resume.ts (NEW), packages/workflows/src/runtime/wakeHooks.ts (NEW), packages/workflows/src/activities/envelopeReuse.ts (NEW)
-- [ ] Cross-doc invariant: none — ExternalWriteEnvelope, WorkflowRunRef
-- [ ] Depends on: 7.1, P6.* (Tool Gateway external-write envelope + receipt store)
-- [ ] Implements: REQ-NF-006
+- [x] An in-flight workflow interrupted by restart/sleep/crash RESUMES from durable Temporal state and completes without re-running already-committed steps (LIFE-3).
+- [x] On resume, every external side effect re-uses the SAME §8 ExternalWriteEnvelope (idempotencyKey + canonicalObjectKey + matched write receipt) so a re-driven step performs NO duplicate external write (the §20.1 replay gate) — proven for create-then-restart-then-resume.
+- [x] On wake, pending KnowledgeWriter writes are applied BEFORE queued GBrain index jobs (§6 ordering); index jobs re-derive from current Markdown by revision id, never roll back a commit.
+- [x] Wake/power hooks (LIFE-6) trigger drain of held outbox work; an activity that crashed mid-flight is retried idempotently, never leaving a partial uncommitted side effect.
+- [x] Resume is a typed recovery path: unrecoverable state surfaces a System Health item with its audit record rather than silently dropping the run.
+- [x] Files: packages/workflows/src/runtime/resume.ts (NEW), packages/workflows/src/runtime/wakeHooks.ts (NEW), packages/workflows/src/activities/envelopeReuse.ts (NEW)
+- [x] Cross-doc invariant: none — ExternalWriteEnvelope, WorkflowRunRef
+- [x] Depends on: 7.1, P6.* (Tool Gateway external-write envelope + receipt store)
+- [x] Implements: REQ-NF-006
 
 ### 7.4 — WorkflowRun registry + idempotency/audit linkage (WorkflowRunRef)
-- [ ] Every workflow run is recorded as a WorkflowRunRef { workflowId, trigger, state, idempotencyKey, auditRefs }; the state field encodes the run's lifecycle and the trigger enumerates allowed initiators (schedule, connector event, owner action, Hermes automation).
-- [ ] A re-submitted trigger carrying an already-seen idempotencyKey resolves to the existing WorkflowRun (no duplicate run started) — the idempotency seam every workflow builds on.
-- [ ] Each run links to its audit records (§16.3); a run cannot reach a terminal state without an audit trail.
-- [ ] Workspace is bound on the WorkflowRun before any durable processing step executes (REQ-F-002 / WS-2): an unscoped run is rejected at admission.
-- [ ] RED outline MUST include a schema-snapshot test pinning the WorkflowRunRef field-name set and the trigger/state enums against the checked-in §3/Appendix-A snapshot (spec §9-tagged).
-- [ ] Files: packages/workflows/src/runtime/workflowRun.ts (NEW), packages/workflows/src/runtime/idempotency.ts (NEW)
-- [ ] Cross-doc invariant: extended — WorkflowRunRef *(seam — RED outline must include the spec-tagged schema-snapshot test)*
-- [ ] Depends on: 7.1, P2.* (operational store), P1.* (§3 contracts freeze)
-- [ ] Implements: REQ-F-002
+- [x] Every workflow run is recorded as a WorkflowRunRef { workflowId, trigger, state, idempotencyKey, auditRefs }; the state field encodes the run's lifecycle and the trigger enumerates allowed initiators (schedule, connector event, owner action, Hermes automation).
+- [x] A re-submitted trigger carrying an already-seen idempotencyKey resolves to the existing WorkflowRun (no duplicate run started) — the idempotency seam every workflow builds on.
+- [x] Each run links to its audit records (§16.3); a run cannot reach a terminal state without an audit trail.
+- [x] Workspace is bound on the WorkflowRun before any durable processing step executes (REQ-F-002 / WS-2): an unscoped run is rejected at admission.
+- [x] RED outline MUST include a schema-snapshot test pinning the WorkflowRunRef field-name set and the trigger/state enums against the checked-in §3/Appendix-A snapshot (spec §9-tagged).
+- [x] Files: packages/workflows/src/runtime/workflowRun.ts (NEW), packages/workflows/src/runtime/idempotency.ts (NEW)
+- [x] Cross-doc invariant: extended — WorkflowRunRef *(seam — RED outline must include the spec-tagged schema-snapshot test)*
+- [x] Depends on: 7.1, P2.* (operational store), P1.* (§3 contracts freeze)
+- [x] Implements: REQ-F-002
 
 ### 7.5 — System Health surfacing workflow (OBS-2 failure classes)
-- [ ] Each OBS-2 failure class — connector outage, failed/blocked write-through, budget breach, missed/late schedule, schema rejection — emits a DISTINCT typed System Health item linked to its audit record (§16 / §9.11).
-- [ ] A health item is persistent until explicitly resolved or acknowledged; a recurring failure updates the existing item rather than spawning duplicates.
-- [ ] Nothing fails silently: any cross-subsystem workflow failure routes to the retry/write outbox and/or a health item (§16 error-handling convention).
-- [ ] Health items expose last/next/failed workflow run status, queue/outbox depth, and blocked write-throughs as read-model projections (P2) for §10/§11 to render.
-- [ ] This surfacing path is consumed by all later workflow tasks (7.6–7.18) as their failure sink.
-- [ ] Files: packages/workflows/src/workflows/systemHealthSurfacing.ts (NEW), packages/workflows/src/activities/healthItem.ts (NEW)
-- [ ] Cross-doc invariant: none — AuditRecord
-- [ ] Depends on: 7.4, P2.* (read models + outboxes)
+- [x] Each OBS-2 failure class — connector outage, failed/blocked write-through, budget breach, missed/late schedule, schema rejection — emits a DISTINCT typed System Health item linked to its audit record (§16 / §9.11).
+- [x] A health item is persistent until explicitly resolved or acknowledged; a recurring failure updates the existing item rather than spawning duplicates.
+- [x] Nothing fails silently: any cross-subsystem workflow failure routes to the retry/write outbox and/or a health item (§16 error-handling convention).
+- [x] Health items expose last/next/failed workflow run status, queue/outbox depth, and blocked write-throughs as read-model projections (P2) for §10/§11 to render.
+- [x] This surfacing path is consumed by all later workflow tasks (7.6–7.18) as their failure sink.
+- [x] Files: packages/workflows/src/workflows/systemHealthSurfacing.ts (NEW), packages/workflows/src/activities/healthItem.ts (NEW)
+- [x] Cross-doc invariant: none — AuditRecord
+- [x] Depends on: 7.4, P2.* (read models + outboxes)
 
 ### 7.6 — Meeting closeout workflow (proof spine)
-- [ ] Implements the full Meeting-Closeout state machine (detected → correlated → context_loaded → agent_extracted → validated → knowledge_committed → external_actions_pending | external_actions_applied → summarized) with failure/recovery states needs_routing_review, provider_failed, schema_rejected, write_conflict, approval_pending, outbox_retry, completed_with_warnings (DOMAIN_MODEL).
-- [ ] Correlation low-confidence routes the item to the Ingestion Inbox (needs_routing_review) instead of guessing a workspace/project; workspace is assigned before any durable write (REQ-F-002).
-- [ ] The meeting.close AgentJob is submitted to the Broker (P5) with a READ-ONLY ToolPolicy on the untrusted transcript, an output schema id, budget caps, and an idempotencyKey; a job declaring a mutating tool is rejected at admission (ING-7).
-- [ ] Validator HARD-REJECTS missing evidence, inferred owners/dates (REQ-F-017 / MTG-4 → TBD or clarification), unsupported claims, ambiguous routing, and schema/tool-policy violations — rejection drives schema_rejected, never a partial commit.
-- [ ] Semantic outputs go ONLY through KnowledgeWriter (meeting/project/person/decision/daily/source notes); external proposals/writes ONLY through the Tool Gateway envelope; GBrain re-index runs after the Markdown commit, async and idempotent.
-- [ ] Replay/restart mid-pipeline produces no duplicate external write and no duplicate Markdown commit (reuses 7.3 envelope + compare-revision); each failure class surfaces via 7.5.
-- [ ] Files: packages/workflows/src/workflows/meetingCloseout.ts (NEW), packages/workflows/src/activities/correlateMeeting.ts (NEW), packages/workflows/src/activities/runAgentJob.ts (NEW), packages/workflows/src/activities/validateClosetout.ts (NEW)
-- [ ] Cross-doc invariant: none — AgentJob, KnowledgeMutationPlan, ProposedAction, ExternalWriteEnvelope, WorkflowRunRef
-- [ ] Depends on: 7.3, 7.4, 7.5, P5.* (Runtime Broker + schema gate), P6.* (Tool Gateway), P4.* (KnowledgeWriter + GBrain), P3.* (§5 policy/admission gate)
-- [ ] Implements: REQ-F-007, REQ-F-017
+- [x] Implements the full Meeting-Closeout state machine (detected → correlated → context_loaded → agent_extracted → validated → knowledge_committed → external_actions_pending | external_actions_applied → summarized) with failure/recovery states needs_routing_review, provider_failed, schema_rejected, write_conflict, approval_pending, outbox_retry, completed_with_warnings (DOMAIN_MODEL).
+- [x] Correlation low-confidence routes the item to the Ingestion Inbox (needs_routing_review) instead of guessing a workspace/project; workspace is assigned before any durable write (REQ-F-002).
+- [x] The meeting.close AgentJob is submitted to the Broker (P5) with a READ-ONLY ToolPolicy on the untrusted transcript, an output schema id, budget caps, and an idempotencyKey; a job declaring a mutating tool is rejected at admission (ING-7).
+- [x] Validator HARD-REJECTS missing evidence, inferred owners/dates (REQ-F-017 / MTG-4 → TBD or clarification), unsupported claims, ambiguous routing, and schema/tool-policy violations — rejection drives schema_rejected, never a partial commit.
+- [x] Semantic outputs go ONLY through KnowledgeWriter (meeting/project/person/decision/daily/source notes); external proposals/writes ONLY through the Tool Gateway envelope; GBrain re-index runs after the Markdown commit, async and idempotent.
+- [x] Replay/restart mid-pipeline produces no duplicate external write and no duplicate Markdown commit (reuses 7.3 envelope + compare-revision); each failure class surfaces via 7.5.
+- [x] Files: packages/workflows/src/workflows/meetingCloseout.ts (NEW), packages/workflows/src/activities/correlateMeeting.ts (NEW), packages/workflows/src/activities/runAgentJob.ts (NEW), packages/workflows/src/activities/validateClosetout.ts (NEW)
+- [x] Cross-doc invariant: none — AgentJob, KnowledgeMutationPlan, ProposedAction, ExternalWriteEnvelope, WorkflowRunRef
+- [x] Depends on: 7.3, 7.4, 7.5, P5.* (Runtime Broker + schema gate), P6.* (Tool Gateway), P4.* (KnowledgeWriter + GBrain), P3.* (§5 policy/admission gate)
+- [x] Implements: REQ-F-007, REQ-F-017
 
 ### 7.7 — Source ingestion workflow
-- [ ] Implements the Source state machine (captured → classified → queued_for_review | processing → proposed → applied | rejected | failed_retryable | failed_terminal) starting from a registered SourceEnvelope; the envelope is registered before extraction (data-lifecycle rule).
-- [ ] Forbidden transitions are enforced: captured → applied without classification+policy validation is rejected; processing → external_write directly from the source-processing agent is rejected.
-- [ ] Router low-confidence parks the SourceEnvelope in the Ingestion Inbox (queued_for_review) rather than auto-routing; sensitivity/workspace bound before durable processing.
-- [ ] The source-processing AgentJob runs under a READ-ONLY ToolPolicy and may emit only KnowledgeMutationPlan / ProposedAction (Flow 4); injection detection / unsupported type / dedupe-hit are typed failure states surfaced via 7.5.
-- [ ] Approved plans commit through KnowledgeWriter; optional NotebookLM managed-doc sync and GBrain index run after commit, idempotently.
-- [ ] Files: packages/workflows/src/workflows/sourceIngestion.ts (NEW), packages/workflows/src/activities/registerSource.ts (NEW), packages/workflows/src/activities/routeSource.ts (NEW)
-- [ ] Cross-doc invariant: none — SourceEnvelope, KnowledgeMutationPlan, ProposedAction
-- [ ] Depends on: 7.4, 7.5, P5.* (Broker), P6.* (Connector Gateway + Tool/NotebookPort), P4.* (KnowledgeWriter/GBrain)
-- [ ] Implements: REQ-F-010
+- [x] Implements the Source state machine (captured → classified → queued_for_review | processing → proposed → applied | rejected | failed_retryable | failed_terminal) starting from a registered SourceEnvelope; the envelope is registered before extraction (data-lifecycle rule).
+- [x] Forbidden transitions are enforced: captured → applied without classification+policy validation is rejected; processing → external_write directly from the source-processing agent is rejected.
+- [x] Router low-confidence parks the SourceEnvelope in the Ingestion Inbox (queued_for_review) rather than auto-routing; sensitivity/workspace bound before durable processing.
+- [x] The source-processing AgentJob runs under a READ-ONLY ToolPolicy and may emit only KnowledgeMutationPlan / ProposedAction (Flow 4); injection detection / unsupported type / dedupe-hit are typed failure states surfaced via 7.5.
+- [x] Approved plans commit through KnowledgeWriter; optional NotebookLM managed-doc sync and GBrain index run after commit, idempotently.
+- [x] Files: packages/workflows/src/workflows/sourceIngestion.ts (NEW), packages/workflows/src/activities/registerSource.ts (NEW), packages/workflows/src/activities/routeSource.ts (NEW)
+- [x] Cross-doc invariant: none — SourceEnvelope, KnowledgeMutationPlan, ProposedAction
+- [x] Depends on: 7.4, 7.5, P5.* (Broker), P6.* (Connector Gateway + Tool/NotebookPort), P4.* (KnowledgeWriter/GBrain)
+- [x] Implements: REQ-F-010
 
 ### 7.8 — Ingestion-inbox triage workflow
-- [ ] Owner disposition of a parked SourceEnvelope (from Mac or Telegram) can re-classify workspace/project, apply a routing override, and set sensitivity (resolves the ING-4 dead-end).
-- [ ] Triage RE-ENTERS the ingestion pipeline (7.7) reusing the SAME idempotencyKey so re-processing is replay-safe and produces no duplicate downstream writes.
-- [ ] A disposition is recorded exactly once with an audit ref; a re-submitted identical disposition is a no-op (idempotent).
-- [ ] Telegram and Mac dispositions converge on a single state transition (no divergent inbox state across channels).
-- [ ] Files: packages/workflows/src/workflows/ingestionTriage.ts (NEW), packages/workflows/src/activities/disposition.ts (NEW)
-- [ ] Cross-doc invariant: none — SourceEnvelope
-- [ ] Depends on: 7.7
-- [ ] Implements: REQ-F-010
+- [x] Owner disposition of a parked SourceEnvelope (from Mac or Telegram) can re-classify workspace/project, apply a routing override, and set sensitivity (resolves the ING-4 dead-end).
+- [x] Triage RE-ENTERS the ingestion pipeline (7.7) reusing the SAME idempotencyKey so re-processing is replay-safe and produces no duplicate downstream writes.
+- [x] A disposition is recorded exactly once with an audit ref; a re-submitted identical disposition is a no-op (idempotent).
+- [x] Telegram and Mac dispositions converge on a single state transition (no divergent inbox state across channels).
+- [x] Files: packages/workflows/src/workflows/ingestionTriage.ts (NEW), packages/workflows/src/activities/disposition.ts (NEW)
+- [x] Cross-doc invariant: none — SourceEnvelope
+- [x] Depends on: 7.7
+- [x] Implements: REQ-F-010
 
 ### 7.9 — Approval flow workflow incl. deferred-approval snooze/expiry (Approval)
-- [ ] Implements the Approval state machine pending → approved | edited | rejected | deferred | expired; Tool Gateway records the pending action (canonical key, payload hash, required approval, expiry/visibility) and a Mac + Telegram card is shown with parity.
-- [ ] Apply/record is idempotent and EXACTLY ONCE across Mac and Telegram: a second approve/reject from either channel does not double-apply or double-audit (single idempotent transition).
-- [ ] Deferred is NON-TERMINAL (deferred → pending | expired): a deferred item re-surfaces after a configurable snooze (default 24h) via snoozeUntil and auto-expires after a configurable window (default 7d) via expiresAt; an expired approval cannot later be approved.
-- [ ] Approved action dispatches through the Tool Gateway envelope (no duplicate external write on replay); rejection/deferral records without side effect; precondition failure / stale card / conflicting approvals are typed failure states surfaced via 7.5.
-- [ ] RED outline MUST include a schema-snapshot test pinning the Approval field-name set and the status enum (incl. deferred/expired, snoozeUntil, expiresAt) against the checked-in §3/Appendix-A snapshot (spec §9-tagged).
-- [ ] Files: packages/workflows/src/workflows/approvalFlow.ts (NEW), packages/workflows/src/activities/approvalTransition.ts (NEW), packages/workflows/src/runtime/snoozeTimer.ts (NEW)
-- [ ] Cross-doc invariant: none — Approval, ProposedAction, ExternalWriteEnvelope *(seam — RED outline must include the spec-tagged schema-snapshot test)*
-- [ ] Depends on: 7.3, 7.4, 7.5, P6.* (Tool Gateway)
-- [ ] Implements: REQ-F-012
+- [x] Implements the Approval state machine pending → approved | edited | rejected | deferred | expired; Tool Gateway records the pending action (canonical key, payload hash, required approval, expiry/visibility) and a Mac + Telegram card is shown with parity.
+- [x] Apply/record is idempotent and EXACTLY ONCE across Mac and Telegram: a second approve/reject from either channel does not double-apply or double-audit (single idempotent transition).
+- [x] Deferred is NON-TERMINAL (deferred → pending | expired): a deferred item re-surfaces after a configurable snooze (default 24h) via snoozeUntil and auto-expires after a configurable window (default 7d) via expiresAt; an expired approval cannot later be approved.
+- [x] Approved action dispatches through the Tool Gateway envelope (no duplicate external write on replay); rejection/deferral records without side effect; precondition failure / stale card / conflicting approvals are typed failure states surfaced via 7.5.
+- [x] RED outline MUST include a schema-snapshot test pinning the Approval field-name set and the status enum (incl. deferred/expired, snoozeUntil, expiresAt) against the checked-in §3/Appendix-A snapshot (spec §9-tagged).
+- [x] Files: packages/workflows/src/workflows/approvalFlow.ts (NEW), packages/workflows/src/activities/approvalTransition.ts (NEW), packages/workflows/src/runtime/snoozeTimer.ts (NEW)
+- [x] Cross-doc invariant: none — Approval, ProposedAction, ExternalWriteEnvelope *(seam — RED outline must include the spec-tagged schema-snapshot test)*
+- [x] Depends on: 7.3, 7.4, 7.5, P6.* (Tool Gateway)
+- [x] Implements: REQ-F-012
 
 ### 7.10 — Daily brief workflow
-- [ ] Triggered by the durable schedule or a collapsed wake catch-up (7.2); refreshes connectors, updates sanitized GCL projections, then runs the briefing agent over the GCL global scope plus only in-scope workspace brains (Flow 2).
-- [ ] Output is leakage-safe: no raw cross-workspace content reaches the Global/Coordination brief — global context comes only through the GCL Visibility Gate (REQ-F-005/008).
-- [ ] Workspace-specific briefs commit via KnowledgeWriter to their workspace repos; the global brief commits to the Global/Coordination Markdown repo + dashboard read model; a Telegram summary with link/status is sent.
-- [ ] Stale connector / stale GCL projection / provider failure / write conflict are typed failure states surfaced via 7.5; a missed schedule collapses to one run (LIFE-2).
-- [ ] Files: packages/workflows/src/workflows/dailyBrief.ts (NEW), packages/workflows/src/activities/buildGclProjection.ts (NEW)
-- [ ] Cross-doc invariant: none — GclProjection, KnowledgeMutationPlan
-- [ ] Depends on: 7.2, 7.5, P4.* (GCL/KnowledgeWriter/GBrain), P6.* (Connector + Telegram)
-- [ ] Implements: REQ-F-008
+- [x] Triggered by the durable schedule or a collapsed wake catch-up (7.2); refreshes connectors, updates sanitized GCL projections, then runs the briefing agent over the GCL global scope plus only in-scope workspace brains (Flow 2).
+- [x] Output is leakage-safe: no raw cross-workspace content reaches the Global/Coordination brief — global context comes only through the GCL Visibility Gate (REQ-F-005/008).
+- [x] Workspace-specific briefs commit via KnowledgeWriter to their workspace repos; the global brief commits to the Global/Coordination Markdown repo + dashboard read model; a Telegram summary with link/status is sent.
+- [x] Stale connector / stale GCL projection / provider failure / write conflict are typed failure states surfaced via 7.5; a missed schedule collapses to one run (LIFE-2).
+- [x] Files: packages/workflows/src/workflows/dailyBrief.ts (NEW), packages/workflows/src/activities/buildGclProjection.ts (NEW)
+- [x] Cross-doc invariant: none — GclProjection, KnowledgeMutationPlan
+- [x] Depends on: 7.2, 7.5, P4.* (GCL/KnowledgeWriter/GBrain), P6.* (Connector + Telegram)
+- [x] Implements: REQ-F-008
 
 ### 7.11 — Weekly / monthly review workflow
-- [ ] Period-windowed workflow distinct from the daily brief (BRF-1): inputs are the period's meetings/decisions/commitments, project-progress deltas, and recurring-blocker detection over the window.
-- [ ] Workspace and global outputs are produced only via the GCL Visibility Gate (no raw cross-workspace blend); same leakage-safety guarantee as the daily brief.
-- [ ] Uses LIFE-2 collapsed catch-up semantics on wake; the period window is computed from clock-jump-safe bookkeeping (7.2), not naive wall-clock.
-- [ ] Failure classes surface via 7.5; outputs commit through KnowledgeWriter / Global-Coordination repo.
-- [ ] Files: packages/workflows/src/workflows/periodReview.ts (NEW), packages/workflows/src/activities/periodWindow.ts (NEW)
-- [ ] Cross-doc invariant: none — GclProjection, KnowledgeMutationPlan
-- [ ] Depends on: 7.2, 7.5, 7.10, P4.* (GCL/KnowledgeWriter)
-- [ ] Implements: REQ-F-008
+- [x] Period-windowed workflow distinct from the daily brief (BRF-1): inputs are the period's meetings/decisions/commitments, project-progress deltas, and recurring-blocker detection over the window.
+- [x] Workspace and global outputs are produced only via the GCL Visibility Gate (no raw cross-workspace blend); same leakage-safety guarantee as the daily brief.
+- [x] Uses LIFE-2 collapsed catch-up semantics on wake; the period window is computed from clock-jump-safe bookkeeping (7.2), not naive wall-clock.
+- [x] Failure classes surface via 7.5; outputs commit through KnowledgeWriter / Global-Coordination repo.
+- [x] Files: packages/workflows/src/workflows/periodReview.ts (NEW), packages/workflows/src/activities/periodWindow.ts (NEW)
+- [x] Cross-doc invariant: none — GclProjection, KnowledgeMutationPlan
+- [x] Depends on: 7.2, 7.5, 7.10, P4.* (GCL/KnowledgeWriter)
+- [x] Implements: REQ-F-008
 
 ### 7.12 — Cross-calendar scheduling workflow
-- [ ] Reads busy/free across ALL configured availability sources via the GCL (REQ-F-009): an omitted/unreachable calendar source is a typed failure (insufficient availability metadata), never silently treated as free.
-- [ ] Proposes windows with GENERIC conflict explanations only — no raw work/event detail leaks into a cross-workspace proposal (Flow 3 security constraint).
-- [ ] Auto-creates a private personal event through the Tool Gateway only if workspace policy allows; shared/invite/external-message changes route to the Approval Inbox (7.9) instead of auto-applying.
-- [ ] External event creation reuses the envelope (no duplicate event on replay); calendar-connector-unavailable and approval-pending are typed states surfaced via 7.5.
-- [ ] Files: packages/workflows/src/workflows/crossCalendarScheduling.ts (NEW), packages/workflows/src/activities/proposeWindows.ts (NEW)
-- [ ] Cross-doc invariant: none — GclProjection, ProposedAction, ExternalWriteEnvelope
-- [ ] Depends on: 7.9, 7.5, P4.* (GCL), P6.* (Calendar via Tool Gateway)
-- [ ] Implements: REQ-F-009
+- [x] Reads busy/free across ALL configured availability sources via the GCL (REQ-F-009): an omitted/unreachable calendar source is a typed failure (insufficient availability metadata), never silently treated as free.
+- [x] Proposes windows with GENERIC conflict explanations only — no raw work/event detail leaks into a cross-workspace proposal (Flow 3 security constraint).
+- [x] Auto-creates a private personal event through the Tool Gateway only if workspace policy allows; shared/invite/external-message changes route to the Approval Inbox (7.9) instead of auto-applying.
+- [x] External event creation reuses the envelope (no duplicate event on replay); calendar-connector-unavailable and approval-pending are typed states surfaced via 7.5.
+- [x] Files: packages/workflows/src/workflows/crossCalendarScheduling.ts (NEW), packages/workflows/src/activities/proposeWindows.ts (NEW)
+- [x] Cross-doc invariant: none — GclProjection, ProposedAction, ExternalWriteEnvelope
+- [x] Depends on: 7.9, 7.5, P4.* (GCL), P6.* (Calendar via Tool Gateway)
+- [x] Implements: REQ-F-009
 
 ### 7.13 — Project sync workflow
-- [ ] Project registry resolves task systems, IMPLEMENTATION_PLAN.md path, aliases, and progress providers (Flow 5).
-- [ ] Progress is derived by a DETERMINISTIC parser of checkboxes/status from the plan and/or external PM systems — model-only percentages are forbidden (REQ-F-011 / PRJ-3/4); the agent only synthesizes explanation/blockers/next-actions over deterministic facts.
-- [ ] Status commits via KnowledgeWriter to project sections; the dashboard read model updates from the committed Markdown.
-- [ ] Missing provider mapping / parse failure / stale external connector / ambiguous status are typed failure states surfaced via 7.5.
-- [ ] Files: packages/workflows/src/workflows/projectSync.ts (NEW), packages/workflows/src/activities/deterministicProgress.ts (NEW)
-- [ ] Cross-doc invariant: none — KnowledgeMutationPlan
-- [ ] Depends on: 7.4, 7.5, P6.* (Connector Gateway PM reads), P4.* (KnowledgeWriter), P5.* (Broker for synthesis)
-- [ ] Implements: REQ-F-011
+- [x] Project registry resolves task systems, IMPLEMENTATION_PLAN.md path, aliases, and progress providers (Flow 5).
+- [x] Progress is derived by a DETERMINISTIC parser of checkboxes/status from the plan and/or external PM systems — model-only percentages are forbidden (REQ-F-011 / PRJ-3/4); the agent only synthesizes explanation/blockers/next-actions over deterministic facts.
+- [x] Status commits via KnowledgeWriter to project sections; the dashboard read model updates from the committed Markdown.
+- [x] Missing provider mapping / parse failure / stale external connector / ambiguous status are typed failure states surfaced via 7.5.
+- [x] Files: packages/workflows/src/workflows/projectSync.ts (NEW), packages/workflows/src/activities/deterministicProgress.ts (NEW)
+- [x] Cross-doc invariant: none — KnowledgeMutationPlan
+- [x] Depends on: 7.4, 7.5, P6.* (Connector Gateway PM reads), P4.* (KnowledgeWriter), P5.* (Broker for synthesis)
+- [x] Implements: REQ-F-011
 
 ### 7.14 — Cross-store deletion saga (ordered steps + compensation)
-- [ ] Validates explicit owner intent, then builds a DETERMINISTIC deletion plan and executes ORDERED, per-step-idempotent steps: Markdown tombstone via KnowledgeWriter (the commit point) → GBrain purge/re-index → event-store tombstone (history preserved, NOT silently deleted) → read-model + external-ref reconciliation (REQ-F-013 / Flow 7).
-- [ ] Partial failure drives compensating/retry states surfaced in System Health (7.5); a crash mid-saga re-drives idempotently and leaves no orphaned reference and no resurrected GBrain index entry.
-- [ ] Human-owned Markdown sections and derived semantic notes are preserved — automated pruning/deletion never removes a human-owned region (REQ-F-018 / RET-3); retention defaults (raw audio after audited synthesis; other raw after configurable window, default 30d) are honored.
-- [ ] Re-running a completed deletion is a no-op; a dangling external ref is reconciled or surfaced, never left silently.
-- [ ] Files: packages/workflows/src/workflows/deletionSaga.ts (NEW), packages/workflows/src/activities/deletionPlan.ts (NEW), packages/workflows/src/activities/compensateDeletion.ts (NEW)
-- [ ] Cross-doc invariant: none — KnowledgeMutationPlan, AuditRecord
-- [ ] Depends on: 7.3, 7.4, 7.5, P4.* (KnowledgeWriter + GBrain purge/re-index), P2.* (event-store tombstone + read models)
-- [ ] Implements: REQ-F-013, REQ-F-018
+- [x] Validates explicit owner intent, then builds a DETERMINISTIC deletion plan and executes ORDERED, per-step-idempotent steps: Markdown tombstone via KnowledgeWriter (the commit point) → GBrain purge/re-index → event-store tombstone (history preserved, NOT silently deleted) → read-model + external-ref reconciliation (REQ-F-013 / Flow 7).
+- [x] Partial failure drives compensating/retry states surfaced in System Health (7.5); a crash mid-saga re-drives idempotently and leaves no orphaned reference and no resurrected GBrain index entry.
+- [x] Human-owned Markdown sections and derived semantic notes are preserved — automated pruning/deletion never removes a human-owned region (REQ-F-018 / RET-3); retention defaults (raw audio after audited synthesis; other raw after configurable window, default 30d) are honored.
+- [x] Re-running a completed deletion is a no-op; a dangling external ref is reconciled or surfaced, never left silently.
+- [x] Files: packages/workflows/src/workflows/deletionSaga.ts (NEW), packages/workflows/src/activities/deletionPlan.ts (NEW), packages/workflows/src/activities/compensateDeletion.ts (NEW)
+- [x] Cross-doc invariant: none — KnowledgeMutationPlan, AuditRecord
+- [x] Depends on: 7.3, 7.4, 7.5, P4.* (KnowledgeWriter + GBrain purge/re-index), P2.* (event-store tombstone + read models)
+- [x] Implements: REQ-F-013, REQ-F-018
 
 ### 7.15 — Connector sync & health workflow
-- [ ] Scheduled/wake-triggered poll per connector advances the cursor and emits a health/reachability signal (§8 / Flow 1 preconditions).
-- [ ] Connector-unreachable branch (REQ-I-005 / LIFE-4): inbound syncs QUEUE and retry with bounded exponential backoff, the connector is marked degraded in System Health (via 7.5), and there are NO silent drops.
-- [ ] On reconnect, held work drains (wired to LIFE-6 wake hooks from 7.3); cursor advance is idempotent so a re-poll does not reprocess already-cursored items.
-- [ ] A missed/late scheduled poll collapses to one run on wake (LIFE-2).
-- [ ] Files: packages/workflows/src/workflows/connectorSyncHealth.ts (NEW), packages/workflows/src/activities/connectorPoll.ts (NEW)
-- [ ] Cross-doc invariant: none — WorkflowRunRef
-- [ ] Depends on: 7.2, 7.3, 7.5, P6.* (Connector Gateway cursors/backoff/health)
+- [x] Scheduled/wake-triggered poll per connector advances the cursor and emits a health/reachability signal (§8 / Flow 1 preconditions).
+- [x] Connector-unreachable branch (REQ-I-005 / LIFE-4): inbound syncs QUEUE and retry with bounded exponential backoff, the connector is marked degraded in System Health (via 7.5), and there are NO silent drops.
+- [x] On reconnect, held work drains (wired to LIFE-6 wake hooks from 7.3); cursor advance is idempotent so a re-poll does not reprocess already-cursored items.
+- [x] A missed/late scheduled poll collapses to one run on wake (LIFE-2).
+- [x] Files: packages/workflows/src/workflows/connectorSyncHealth.ts (NEW), packages/workflows/src/activities/connectorPoll.ts (NEW)
+- [x] Cross-doc invariant: none — WorkflowRunRef
+- [x] Depends on: 7.2, 7.3, 7.5, P6.* (Connector Gateway cursors/backoff/health)
 
 ### 7.16 — NotebookLM managed-doc sync workflow
-- [ ] Assembles the managed-doc bodies (00 Brief / 01 Decisions / 02 Meeting Digest / 03 Research / 04 Open Questions) from committed Markdown and idempotently UPSERTS them per notebookMapping through the Tool Gateway / NotebookPort (REQ-I-004 / NLM-2).
-- [ ] Upsert is by canonical key (pre-write existence check); a replay/retry reuses the receipt → no duplicate Drive doc.
-- [ ] Continuous auto-sync of arbitrary docs is NOT assumed: the workflow surfaces a 're-add/refresh NotebookLM source' state rather than silently failing when the managed source must be re-added.
-- [ ] Drive/connector outage holds the upsert in the write outbox and retries on reconnect; failures surface via 7.5.
-- [ ] Files: packages/workflows/src/workflows/notebookLmSync.ts (NEW), packages/workflows/src/activities/assembleNotebookDocs.ts (NEW)
-- [ ] Cross-doc invariant: none — ExternalWriteEnvelope
-- [ ] Depends on: 7.3, 7.5, P6.* (Tool Gateway / NotebookPort), P4.* (Markdown source)
+- [x] Assembles the managed-doc bodies (00 Brief / 01 Decisions / 02 Meeting Digest / 03 Research / 04 Open Questions) from committed Markdown and idempotently UPSERTS them per notebookMapping through the Tool Gateway / NotebookPort (REQ-I-004 / NLM-2).
+- [x] Upsert is by canonical key (pre-write existence check); a replay/retry reuses the receipt → no duplicate Drive doc.
+- [x] Continuous auto-sync of arbitrary docs is NOT assumed: the workflow surfaces a 're-add/refresh NotebookLM source' state rather than silently failing when the managed source must be re-added.
+- [x] Drive/connector outage holds the upsert in the write outbox and retries on reconnect; failures surface via 7.5.
+- [x] Files: packages/workflows/src/workflows/notebookLmSync.ts (NEW), packages/workflows/src/activities/assembleNotebookDocs.ts (NEW)
+- [x] Cross-doc invariant: none — ExternalWriteEnvelope
+- [x] Depends on: 7.3, 7.5, P6.* (Tool Gateway / NotebookPort), P4.* (Markdown source)
 
 ### 7.17 — Copilot Q&A read-path workflow
-- [ ] Owner question (Mac/Telegram) resolves to workspace-scoped retrieval, or to the GCL Visibility Gate for a global question — agents may not issue direct cross-brain GBrain queries (REQ-F-005).
-- [ ] Synthesis is schema-gated and returns citations; the workflow has NO side effects — it never writes Markdown, never calls a write adapter, and produces only proposals if the owner explicitly asks to act (§9.13).
-- [ ] An explicit 'act on this' request is handed off to the approval/Tool-Gateway path (7.9) as a ProposedAction rather than being applied inline — the read path itself stays side-effect-free.
-- [ ] Provider/budget failure surfaces via 7.5; a budget breach cancels with no partial side effect (REQ-S-007).
-- [ ] Files: packages/workflows/src/workflows/copilotQa.ts (NEW), packages/workflows/src/activities/scopedRetrieval.ts (NEW)
-- [ ] Cross-doc invariant: none — GclProjection, AgentJob
-- [ ] Depends on: 7.4, 7.5, 7.9, P4.* (GBrain/GCL retrieval), P5.* (Broker + schema gate)
+- [x] Owner question (Mac/Telegram) resolves to workspace-scoped retrieval, or to the GCL Visibility Gate for a global question — agents may not issue direct cross-brain GBrain queries (REQ-F-005).
+- [x] Synthesis is schema-gated and returns citations; the workflow has NO side effects — it never writes Markdown, never calls a write adapter, and produces only proposals if the owner explicitly asks to act (§9.13).
+- [x] An explicit 'act on this' request is handed off to the approval/Tool-Gateway path (7.9) as a ProposedAction rather than being applied inline — the read path itself stays side-effect-free.
+- [x] Provider/budget failure surfaces via 7.5; a budget breach cancels with no partial side effect (REQ-S-007).
+- [x] Files: packages/workflows/src/workflows/copilotQa.ts (NEW), packages/workflows/src/activities/scopedRetrieval.ts (NEW)
+- [x] Cross-doc invariant: none — GclProjection, AgentJob
+- [x] Depends on: 7.4, 7.5, 7.9, P4.* (GBrain/GCL retrieval), P5.* (Broker + schema gate)
 
 ### 7.18 — Hermes autonomous automation gateway-routing
-- [ ] Hermes cron/Kanban MAY initiate user-defined automations, but every external side effect is forced through the Tool Gateway envelope and every semantic write through KnowledgeWriter — there is no Hermes-direct Markdown or GBrain write path (REQ-F-014 / RT-7).
-- [ ] Hermes is NOT the product-workflow source of truth (Temporal is): a Hermes-initiated automation is recorded as a WorkflowRun with trigger=hermes_automation carrying an idempotencyKey.
-- [ ] A REPLAYED Hermes automation produces NO duplicate external action (envelope/canonical-key reuse) and NO direct Markdown/GBrain write — the one-writer + duplicate-write invariants are enforced by the gateways, not by trusting Hermes.
-- [ ] An attempted ungoverned write (Hermes calling a write adapter directly, bypassing the gateway) is rejected and surfaced via 7.5 (no hidden-brain write).
-- [ ] Files: packages/workflows/src/automation/hermesGateway.ts (NEW), packages/workflows/src/activities/hermesAutomationRun.ts (NEW)
-- [ ] Cross-doc invariant: none — ExternalWriteEnvelope, KnowledgeMutationPlan, WorkflowRunRef
-- [ ] Depends on: 7.3, 7.4, 7.5, P5.* (HermesRuntimeAdapter), P6.* (Tool Gateway), P4.* (KnowledgeWriter)
-- [ ] Implements: REQ-F-014
+- [x] Hermes cron/Kanban MAY initiate user-defined automations, but every external side effect is forced through the Tool Gateway envelope and every semantic write through KnowledgeWriter — there is no Hermes-direct Markdown or GBrain write path (REQ-F-014 / RT-7).
+- [x] Hermes is NOT the product-workflow source of truth (Temporal is): a Hermes-initiated automation is recorded as a WorkflowRun with trigger=hermes_automation carrying an idempotencyKey.
+- [x] A REPLAYED Hermes automation produces NO duplicate external action (envelope/canonical-key reuse) and NO direct Markdown/GBrain write — the one-writer + duplicate-write invariants are enforced by the gateways, not by trusting Hermes.
+- [x] An attempted ungoverned write (Hermes calling a write adapter directly, bypassing the gateway) is rejected and surfaced via 7.5 (no hidden-brain write).
+- [x] Files: packages/workflows/src/automation/hermesGateway.ts (NEW), packages/workflows/src/activities/hermesAutomationRun.ts (NEW)
+- [x] Cross-doc invariant: none — ExternalWriteEnvelope, KnowledgeMutationPlan, WorkflowRunRef
+- [x] Depends on: 7.3, 7.4, 7.5, P5.* (HermesRuntimeAdapter), P6.* (Tool Gateway), P4.* (KnowledgeWriter)
+- [x] Implements: REQ-F-014
 
 ### 7.19 — Automated retention-pruning scheduled workflow (RET-1)
-- [ ] A durable scheduled workflow enforces the configurable retention policy on ASSISTANT-HELD raw capture (voice/audio, OCR intermediates, cached payloads): raw audio is deleted after audited synthesis; other raw payloads are pruned after a configurable window (default 30d) (REQ-F-018 / RET-1 / §16.4).
-- [ ] Pruning operates ONLY on assistant-held copies; externally-authoritative sources (Granola transcripts, Calendar events) are kept as links and never re-stored or pruned (§10.1).
-- [ ] Any Markdown removal routes through KnowledgeWriter (one-writer) and NEVER deletes human-owned sections or derived semantic notes (RET-3); a prune run is idempotent and audit-logged.
-- [ ] A missed prune schedule collapses to one run on wake (LIFE-2); the default prune window is configurable (see Decisions tabled).
-- [ ] Files: packages/workflows/src/workflows/retentionPrune.ts (NEW), packages/workflows/src/activities/prunePolicy.ts (NEW)
-- [ ] Cross-doc invariant: none — AuditRecord
-- [ ] Depends on: 7.2, 7.3, 7.5, P4.* (KnowledgeWriter), P2.* (operational-store raw-capture records)
-- [ ] Implements: REQ-F-018
+- [x] A durable scheduled workflow enforces the configurable retention policy on ASSISTANT-HELD raw capture (voice/audio, OCR intermediates, cached payloads): raw audio is deleted after audited synthesis; other raw payloads are pruned after a configurable window (default 30d) (REQ-F-018 / RET-1 / §16.4).
+- [x] Pruning operates ONLY on assistant-held copies; externally-authoritative sources (Granola transcripts, Calendar events) are kept as links and never re-stored or pruned (§10.1).
+- [x] Any Markdown removal routes through KnowledgeWriter (one-writer) and NEVER deletes human-owned sections or derived semantic notes (RET-3); a prune run is idempotent and audit-logged.
+- [x] A missed prune schedule collapses to one run on wake (LIFE-2); the default prune window is configurable (see Decisions tabled).
+- [x] Files: packages/workflows/src/workflows/retentionPrune.ts (NEW), packages/workflows/src/activities/prunePolicy.ts (NEW)
+- [x] Cross-doc invariant: none — AuditRecord
+- [x] Depends on: 7.2, 7.3, 7.5, P4.* (KnowledgeWriter), P2.* (operational-store raw-capture records)
+- [x] Implements: REQ-F-018
 
 ### Acceptance criteria (7)
-- [ ] All 7.X task checkboxes ticked.
-- [ ] All 13 core workflows are implemented as durable Temporal workflows, each recorded as a WorkflowRun carrying an idempotencyKey and audit refs, with a workspace bound before any durable processing (REQ-F-002).
-- [ ] Lifecycle invariants are enforced and proven: single-active-instance lease re-acquired on respawn (LIFE-1), missed scheduled occurrences collapse to exactly one run on wake (LIFE-2), in-flight runs resume idempotently reusing the §8 envelope with no duplicated external side effect (LIFE-3 / REQ-NF-006), and last-run bookkeeping survives clock/NTP jumps without double-firing (LIFE-5).
-- [ ] Every workflow enforces its DOMAIN_MODEL state machine including forbidden transitions (e.g. captured→applied without validation, source-agent→external_write) and failure/recovery states.
-- [ ] All semantic writes route only through KnowledgeWriter and all external writes only through the Tool Gateway envelope; no workflow or Hermes automation performs a direct Markdown/GBrain/external write.
-- [ ] Each failure class (connector outage, blocked write-through, budget breach, missed/late schedule, schema rejection) surfaces a distinct, persistent, audit-linked System Health item; nothing fails silently.
-- [ ] Deferred-approval is non-terminal with configurable snooze (default 24h) and expiry (default 7d); approval transitions are exactly-once across Mac and Telegram.
-- [ ] Cross-store deletion executes ordered, per-step-idempotent saga steps with compensation, preserves event-store history and human-owned/derived semantic content, and leaves no orphan or resurrected index entry.
-- [ ] Briefs/reviews/scheduling/Copilot remain leakage-safe — global context only via the GCL Visibility Gate, never raw cross-workspace retrieval.
-- [ ] Seam-model schema-snapshot tests for WorkflowRunRef and Approval match the checked-in §3/Appendix-A snapshots.
+- [x] All 7.X task checkboxes ticked.
+- [x] All 13 core workflows are implemented as durable Temporal workflows, each recorded as a WorkflowRun carrying an idempotencyKey and audit refs, with a workspace bound before any durable processing (REQ-F-002).
+- [x] Lifecycle invariants are enforced and proven: single-active-instance lease re-acquired on respawn (LIFE-1), missed scheduled occurrences collapse to exactly one run on wake (LIFE-2), in-flight runs resume idempotently reusing the §8 envelope with no duplicated external side effect (LIFE-3 / REQ-NF-006), and last-run bookkeeping survives clock/NTP jumps without double-firing (LIFE-5).
+- [x] Every workflow enforces its DOMAIN_MODEL state machine including forbidden transitions (e.g. captured→applied without validation, source-agent→external_write) and failure/recovery states.
+- [x] All semantic writes route only through KnowledgeWriter and all external writes only through the Tool Gateway envelope; no workflow or Hermes automation performs a direct Markdown/GBrain/external write.
+- [x] Each failure class (connector outage, blocked write-through, budget breach, missed/late schedule, schema rejection) surfaces a distinct, persistent, audit-linked System Health item; nothing fails silently.
+- [x] Deferred-approval is non-terminal with configurable snooze (default 24h) and expiry (default 7d); approval transitions are exactly-once across Mac and Telegram.
+- [x] Cross-store deletion executes ordered, per-step-idempotent saga steps with compensation, preserves event-store history and human-owned/derived semantic content, and leaves no orphan or resurrected index entry.
+- [x] Briefs/reviews/scheduling/Copilot remain leakage-safe — global context only via the GCL Visibility Gate, never raw cross-workspace retrieval.
+- [x] Seam-model schema-snapshot tests for WorkflowRunRef and Approval match the checked-in §3/Appendix-A snapshots.
 
 ---
 
@@ -2012,3 +2025,4 @@ _(Empty at project start.)_
 - **2026-07-01 — Phases 4 + 5 BUILT (two concurrent Workflows) then CERTIFIED (same session).** **Phase 4 (§6 knowledge, `@sow/knowledge`, `aecb8f1`)** — KnowledgeWriter sole-writer + human-section preservation + secret scan + fs-watch reconcile + GBrain read-adapter/parity + GCL Visibility Gate + the **write-through/divergence layer (7 invariants)**; 341 tests. Adversarial verify (3 lenses): serving/quarantine CLEAR; **4 findings (3 MED + 1 LOW) all FIXED + regression-tested** (`84c3c7e`) — fs-watch rollback lost-update, GCL Level-3 link expiry, the `GclProjection` raw-content gate made KEY-NAME-INDEPENDENT (frozen-contract change: Appendix A + cross-doc table updated, snapshot unchanged), KnowledgeWriter secure-by-default gates. **Phase 5 (§7 broker, `@sow/providers`, `ac9f9b8`)** — two ports + fixed-order gate pipeline + transport-mocked adapters + conformance harness + `ConformanceResult` contract; 232 tests. Adversarial verify (2 lenses): **2 findings (HIGH+MED, same root cause: the veto/budget bound the matrix route but adapters executed `job.providerRoute`) FIXED + regression-tested** (the vetted route threaded as the effective job route). Repo-wide **1790** green; typecheck clean; audit clean.
 - **2026-07-01 — `/phase-exit 4`: CLEAR + `/phase-exit 5`: CLEAR.** All 4 reviewer sub-agents CLEAR (`docs/audits/phase{4,5}-{arch-drift,security}.md`). **Phase 4** — arch-drift 13 anchors 0/0/0 (write-through 7 invariants + 4 fixes confirmed); security safety rules 1/2/4/7 PASS, 4 fixes re-derived closed, **1 medium auditability finding (literal NUL separators → binary files) FIXED** (`944c76f`, swapped for `String.fromCharCode(0)`, behavior-preserving). **Phase 5** — arch-drift 5 anchors 0 DRIFT / 1 STALE-DOC (`provider_routing_unavailable` FailureClass → carry-forward) / 1 AMBIGUOUS (broker-vs-§9 budget-health); security strict-side-effect + rule 5/6/7 + COST-1/2 PASS, both route-binding fixes re-derived closed (2 low → carry-forward; Phase-5 security run 1 hit a transient API error, retry landed CLEAR). Reachability judgment-waived (no consumer until §9/Phase 7). **PHASES 0–5 CERTIFIED — Phase 6 (§8 Gateways) is next (critical path 3→6→7).** Close-out: `docs/sessions/006-2026-07-01-phase4-5-knowledge-broker.md`.
 - **2026-07-01 — Phase 6 COMPLETE + `/phase-exit 6`: CLEAR (§8 Connector & Tool Gateways, `@sow/integrations`).** New package built via ONE single-operator Workflow fan-out (foundation shared modules → invariant cores {6.2 Tool-Gateway envelope, 6.1 Connector-Gateway read engine} → {6.4 tool write adapters, 6.3 connector read adapters + SourceEnvelope register, 6.5 write outbox} → 6.6 NotebookPort → synthesis → 3-lens adversarial verify). Connector Gateway (cursor advances ONLY after the consumer succeeds = no silent drop; bounded-exponential backoff; typed reachability; auth-locked held; reconnect contentHash dedupe) + the Tool Gateway as the ONLY external-write path (the envelope: candidate-gate `admitExternalWriteEnvelope` [ajv+Zod+§3+linkage] → approval-before-dispatch → mandatory pre-write existence check [replay→prior-receipt→live probe] → **atomic reserve** → create → receipt+AuditRecord [payloadHash/refs/summaries only] + redacted log; conflict/unreachable/rejected typed, never a blind overwrite/silent drop) + 9 read + 7 write transport-mocked adapters + write outbox (hold-through-outage = non-terminal, never expires; replay-safe drain re-drives via the SAME pipeline) + NotebookPort (Drive-backed 00–04 upsert, stable per-slot canonical key, reattach state). Candidate-data gate composition DISCHARGED for §8 (LESSONS §3). **The 3-lens adversarial verify EARNED ITS KEEP AGAIN — 3 real findings, 1 HIGH:** `dispatchExternalWrite` was check-then-create with no atomic reservation → two interleaved dispatches on the same object each fired `adapter.create` (a DUPLICATE EXTERNAL WRITE under a second scheduler — the exact §2.5/§20.1 guarantee). **All 3 fixed + regression-tested** (`tool-gateway-race.test.ts` interleaved → exactly one create; `gateway-redaction-credentials.test.ts` Google/URL-param/AWS-SigV4; `notebook-sync.test.ts` hold-through-outage). The reservation is keyed on object identity `(targetSystem, canonicalObjectKey)`, so it also closes the distinct-idempotencyKey-same-object case. **Package 150 tests; repo-wide 1941 green + 2 todo; typecheck clean (8/8); `pnpm audit --prod` clean; `spec-lint tests 6` PASS.** Both reviewer sub-agents CLEAR (`docs/audits/phase6-{arch-drift,security}.md`): arch-drift 9 anchors **0 DRIFT / 2 STALE-DOC / 1 AMBIGUOUS** (doc-tightened or carry-forward); security **0 critical/high**, all 3 fixes re-derived closed, 1 LOW (AWS SigV4 signed-URL params) FIXED this round. Reachability judgment-waived (no consumer until §9/Phase 7 wires the gateways). Close-out: `docs/sessions/007-2026-07-01-phase6-gateways.md`. **PHASES 0–6 CERTIFIED — Phase 7 (§9 Temporal Workflows / integration spine) is the sole next phase; the DAG necks down here (8 ∥ 10 reopen only after 7 certifies).**
+- **2026-07-02 — Phase 7 COMPLETE + `/phase-exit 7`: CLEAR (§9 Temporal Workflows & Automation — the integration spine).** New `@sow/workflows` + `@sow/worker` packages (Temporal 1.19.0), + a Phase-2 `@sow/db` `ApprovalRepository` amendment. Built as a SEQUENCE of single-operator Workflow fan-outs (foundation → proof spine → workflows A → workflows B), each a PURE, replay-safe orchestration driver over the @sow/domain state machines + injected activity ports (two-layer + sandbox-safe: drivers import no @temporalio/node:crypto + call no Date.now; activities wire the real gateway/KnowledgeWriter/Broker adapters; live-Temporal tests gated behind `SOW_TEMPORAL`, default-skipped — the thin @temporalio wrappers + real-adapter worker wiring are a deferred wave). Delivered the durability foundation (7.1–7.5: LIFE-1 fenced single-active lease · LIFE-2 collapsed catch-up · LIFE-3 resume + §8 envelope reuse · LIFE-5 clock-jump-safe monotonic-epoch-guarded · WorkflowRun registry/idempotency · OBS-2 System Health surfacing) + all 13 workflows (7.6 meeting-closeout proof spine → 7.18 Hermes gateway-routing). **Adversarial verify EARNED ITS KEEP AT EVERY WAVE — 1 CRITICAL + 8 HIGH across the phase, ALL fixed + regression-tested + independently re-verified CLEAR:** foundation 9 findings (CRITICAL clock monotonic-across-restart starve/double-fire; HIGH lease-fencing / resume-idempotency-key / non-atomic resolveRun); 7.6 CRITICAL (no-inference gate validated the extraction but committed a caller-supplied plan — fixed by deriving all outputs from validated data via BuildOutputsPort) + HIGH workspace-binding; 7.7–7.12 2 HIGH+1 MED (approval exactly-once via surfacing the @sow/db CAS apply-vs-idempotent-noop kind atomically; cross-calendar leakage guard ran on a decoy field → moved to the actually-dispatched payload); 7.13–7.18 1 HIGH over 2 cycles (deletion-saga per-step idempotency keys were content-blind → fold each deleted region's LIVE-content hash so a re-materialized subject re-tombstones + re-purges, no resurrection). Recurring bug-class caught+prevented: *a guard that reads a field/flag that is not what actually flows to the side effect.* **`@sow/workflows` 438 tests + `@sow/worker` 13 (+1 gated) + `@sow/db` 275 (both dialects); repo-wide 2392 green + 2 todo; typecheck 10/10; `pnpm audit --prod` clean (fixed a NEW moderate `protobufjs` transitive from the Temporal deps via a `pnpm-workspace.yaml` override to `^7.6.3`); `spec-lint tests 7` PASS.** Both reviewer sub-agents CLEAR (`docs/audits/phase7-{arch-drift,security}.md`): arch-drift 9 anchors 0 DRIFT / 2 STALE-DOC (doc notes) / 0 AMBIGUOUS; security 0 critical/high/medium, 7/7 invariant passes PASS, 2 LOW → Phase-10 (heuristic leakage-allowlist for calendar payloads; redact error `cause` in the log sink). Reachability judgment-waived (no production Temporal entrypoint until the worker-wiring wave). Commits `9a61db5` (foundation) · `7fed14c` (7.6) · `ba893c2` (7.7–7.12) · `ea2a342` (7.13–7.18) + close-out. Close-out: `docs/sessions/008-2026-07-02-phase7-workflows.md`. **PHASES 0–7 CERTIFIED — the integration spine is done. Phase 8 (§10 Local App API, worker track) ∥ Phase 10 (cross-cutting, eval-security) now reopen (the DAG widens again after the Phase-7 bottleneck).**
