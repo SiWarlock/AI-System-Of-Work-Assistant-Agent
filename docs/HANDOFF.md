@@ -1,13 +1,13 @@
 # System of Work Assistant — Build Handoff (current state)
 
-> **Single current-state entry point.** Updated 2026-07-02, after Phase 7 certified + pushed. For per-phase detail see `docs/sessions/NNN-*`; for binding project decisions see memory `system-of-work-prd`; the authoritative task tracker is `IMPLEMENTATION_PLAN.md`.
+> **Single current-state entry point.** Updated 2026-07-02, after the worker-wiring proof spine landed (Phases 0–7 certified; 3 §9 drivers now run live on real Temporal). For per-phase detail see `docs/sessions/NNN-*`; for binding project decisions see memory `system-of-work-prd`; the authoritative task tracker is `IMPLEMENTATION_PLAN.md`.
 
 ## TL;DR
 
-- **Repo:** `SoW-build`, branch `main`, **everything committed + pushed to origin/main** (HEAD `af2ea0f`; remote `git@github.com:SiWarlock/AI-System-Of-Work-Assistant-Agent.git`). Working tree clean.
-- **Phases 0–7 are COMPLETE and CERTIFIED.** The §9 integration spine (Temporal Workflows) — the forced-serial bottleneck the whole project converged into — is done.
-- **Repo-wide: 2392 tests green + 2 todo; typecheck 10/10 packages clean; `pnpm audit --prod` clean.**
-- **Next:** the DAG has widened again — **Phase 8 (§10 Local App API)** ∥ **Phase 10 (cross-cutting)** reopen, but **do the deferred worker-wiring wave first** (see below).
+- **Repo:** `SoW-build`, branch `main`, **everything committed + pushed to origin/main** (HEAD `11d7e6b`; remote `git@github.com:SiWarlock/AI-System-Of-Work-Assistant-Agent.git`). Working tree clean.
+- **Phases 0–7 are COMPLETE and CERTIFIED**, and the **worker-wiring proof spine is DONE (2026-07-02)** — the 3 fully-wireable §9 drivers (meeting-closeout, approval-flow, ingestion-triage) now RUN live on a real Temporal worker over real adapters (`SOW_TEMPORAL=1` 4/4).
+- **Repo-wide: 2447 tests green + 5 gated skip + 2 todo; typecheck 10/10 packages clean; `pnpm audit --prod` clean.**
+- **Next:** **Phase 8 (§10 Local App API, worker track)** ∥ **Phase 10 (cross-cutting, eval-security)** — different tracks, may run 2 concurrent Workflows. (The worker-wiring wave was scoped to the proof spine; the other 10 drivers' 40 fake-only activities are deferred by natural phase — see `worker-wiring-scope` memory + session 009.)
 
 ## What the product is
 
@@ -47,7 +47,7 @@ A Mac-first, local-first, self-hosted personal operating system — a **governed
 
 ## What's next (in order)
 
-1. **WORKER-WIRING wave (prerequisite — do first).** The Phase-7 workflow *drivers* are pure + fully fake-tested but **nothing runs them yet.** Wire: the thin `@temporalio/workflow` wrappers + `Worker.create` registration (`apps/worker`) + bind every activity port to the REAL adapters (`@sow/integrations` Tool/Connector Gateways + NotebookPort, `@sow/knowledge` KnowledgeWriter + GBrain, `@sow/providers` Broker, `@sow/policy`) + the concrete meeting.close/source/project output projections + the `SOW_TEMPORAL`-gated integration tests. **Subsumes** the Phase-6 gateway seams (DB-backed `ReceiptStore.reserve` via a unique-constraint insert for cross-process no-dup-write; bind `@sow/policy requiresApproval` + the Approval store into the Tool Gateway; real vendor transports + `IdentityDeriver`s), the §7-broker `localConfig`, and the `apps/worker` session-auth wiring (Phase-3 deferment).
+1. **WORKER-WIRING wave — proof spine DONE (2026-07-02, `d755c7b`+`11d7e6b`; session 009).** The 3 fully-wireable §9 drivers (meeting-closeout, approval-flow, ingestion-triage) run live on a real Temporal worker: WW-1 DB cross-process no-dup-write (`ReceiptStore.reserve` unique-constraint insert + `workflowRunRefs.idempotencyKey` closing `resolveRun`'s race), WW-2/3 the real `meetingOutputsProjection` + `apps/worker` composition root (real KnowledgeWriter/Broker/Tool-Gateway/policy/db, deterministic vendor stubs) + `@temporalio` wrappers + `Worker.create` + `SOW_TEMPORAL` integration test (4/4). **Scoped to the proof spine** — deferred by natural phase (session-009 carry-forward): the other 10 drivers' **40 fake-only activities** (agent-runners/synthesizers → eval/Phase 12; read-model/dashboard/notify → Phase 8/9; deterministic remainder → follow-on), real vendor SDK transports, session-auth → Phase 8.1, workflow-safe `@sow/contracts`/`@sow/domain` barrels, sole-writer (`@sow/knowledge`) path containment.
 2. **Phase 8 — §10 Local App API** (worker track; depends 7): loopback tRPC API + WebSocket event stream for the desktop renderer; per-launch session-token auth; read models + System Health surface for §11.
 3. **Phase 10 — Cross-cutting** (eval-security track; depends 2,7): non-bypassable structured logging + mandatory redaction sink; the persistent System Health `health_items` table + repo (the Phase-2/7 HealthItem-persistence deferment); worker supervision; Temporal-unavailable + Keychain-locked degraded modes; backup/recovery; config/time.
 
