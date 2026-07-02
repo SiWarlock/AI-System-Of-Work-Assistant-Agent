@@ -54,9 +54,12 @@ export interface ResolveRunOutcome {
  * the ORIGINAL create error (a genuine `unscoped_run` never reaches create — WS-2
  * rejects it before persistence — or a real persist failure).
  *
- * arch_gap (Phase 10): the cross-process guarantee depends on the real @sow/db
- * workflow-run table carrying a UNIQUE index on idempotencyKey. The in-memory fake
- * already models it; the concrete unique constraint is a Phase-10 carry-forward.
+ * CROSS-PROCESS GUARANTEE (WW-1, delivered): the real @sow/db `workflow_run_refs`
+ * table now carries a UNIQUE constraint on idempotencyKey, and both the SQLite and
+ * Postgres `create` adapters surface a duplicate-idempotencyKey insert as a typed
+ * `conflict` (INSERT … ON CONFLICT DO NOTHING + empty-returning) — the same contract
+ * the in-memory fake already modeled. So the create-then-reconcile re-read below is
+ * exact-once ACROSS PROCESSES, not just within one worker.
  */
 export async function resolveRun(
   input: ResolveRunInput,

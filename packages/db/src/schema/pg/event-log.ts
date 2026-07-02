@@ -26,10 +26,15 @@ export const eventLog = pgTable("event_log", {
 });
 
 // --- workflow-run registry (PARITY ↔ WorkflowRunRef) ---
+// WW-1 (B) no-double-run guard (§9 / LIFE-3): `idempotencyKey` carries a UNIQUE
+// constraint (parity twin of the sqlite mirror) so a duplicate-idempotencyKey
+// `create` from a racing worker fails the atomic unique-key INSERT → typed
+// `conflict`; the loser reconciles to the winner. `.unique()` adds a constraint,
+// NOT a column, so ↔ WorkflowRunRef parity holds.
 export const workflowRunRefs = pgTable("workflow_run_refs", {
   workflowId: text().$type<WorkflowRunRef["workflowId"]>().primaryKey(),
   trigger: text().notNull(),
   state: text().notNull(),
-  idempotencyKey: text().notNull(),
+  idempotencyKey: text().notNull().unique(),
   auditRefs: json().$type<WorkflowRunRef["auditRefs"]>().notNull(),
 });

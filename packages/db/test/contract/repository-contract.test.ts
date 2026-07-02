@@ -43,6 +43,7 @@ import {
   type AuditId,
   type Result,
   type WorkflowId,
+  type WorkflowRunRef,
   type WorkspaceId,
 } from "@sow/contracts";
 import type {
@@ -62,6 +63,8 @@ import type {
   ReadModelRepository,
   WorkflowRunRefRepository,
   WorkspaceConfigRepository,
+  WriteReceiptRepository,
+  WriteReceiptRow,
 } from "../../src/repositories/interfaces";
 import { createSqliteRepositories } from "../../src/adapters/sqlite/index";
 import { createPostgresRepositories } from "../../src/adapters/postgres/index";
@@ -85,6 +88,7 @@ interface OperationalRepositories {
   readonly providerState: ProviderStateRepository;
   readonly readModels: ReadModelRepository;
   readonly gclProjections: GclProjectionRepository;
+  readonly writeReceipts: WriteReceiptRepository;
 }
 
 interface AdapterHandle {
@@ -152,6 +156,7 @@ const PG_TABLES: readonly PgTable[] = [
   pgSchema.providerProfiles,
   pgSchema.readModels,
   pgSchema.gclProjections,
+  pgSchema.writeReceipts,
 ];
 
 function pgDdlStatements(): string[] {
@@ -161,11 +166,18 @@ function pgDdlStatements(): string[] {
       let def = `"${col.name}" ${col.getSQLType()}`;
       if (col.notNull) def += " NOT NULL";
       if (col.primary) def += " PRIMARY KEY";
+      if (col.isUnique) def += " UNIQUE";
       return def;
     });
     for (const pk of cfg.primaryKeys) {
       const cols = pk.columns.map((c) => `"${c.name}"`).join(", ");
       defs.push(`PRIMARY KEY (${cols})`);
+    }
+    // Table-level UNIQUE constraints (WW-1: workflow_run_refs.idempotencyKey +
+    // write_receipts.idempotencyKey) — the cross-process no-double-write guard.
+    for (const uq of cfg.uniqueConstraints) {
+      const cols = uq.columns.map((c) => `"${c.name}"`).join(", ");
+      defs.push(`UNIQUE (${cols})`);
     }
     return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (\n  ${defs.join(",\n  ")}\n);`;
   });
@@ -290,6 +302,20 @@ function readModel(over: Partial<ReadModelRecord> & Pick<ReadModelRecord, "readM
     ...over,
   };
 }
+function writeReceiptRow(
+  over: Partial<WriteReceiptRow> &
+    Pick<WriteReceiptRow, "targetSystem" | "canonicalObjectKey" | "idempotencyKey">,
+): WriteReceiptRow {
+  return {
+    payloadHash: "sha256:deadbeef",
+    receipt: {
+      externalObjectId: `ext-${over.canonicalObjectKey}`,
+      recordedAt: "2026-06-30T00:00:05.000Z",
+    },
+    recordedAt: "2026-06-30T00:00:05.000Z",
+    ...over,
+  };
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // THE PARAMETERIZED CONTRACT — one authoring, run once per adapter fixture.
@@ -319,6 +345,7 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(typeof repos.providerState.upsert).toBe("function");
       expect(typeof repos.readModels.put).toBe("function");
       expect(typeof repos.gclProjections.upsert).toBe("function");
+      expect(typeof repos.writeReceipts.reserve).toBe("function");
     });
   });
 
@@ -415,6 +442,25 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
     it("create with a duplicate workflowId is a typed conflict", async () => {
       unwrap(await repos.workflowRunRefs.create(validWorkflowRunRef));
       expect(unwrapErr(await repos.workflowRunRefs.create(validWorkflowRunRef)).code).toBe("conflict");
+    });
+
+    // WW-1 (B) no-double-run guard (§9 / LIFE-3): a SECOND create carrying the SAME
+    // idempotencyKey but a DIFFERENT workflowId must be a typed `conflict` (the loser
+    // of the cross-process race), NOT a silent second insert (which would start a
+    // duplicate run). getByIdempotencyKey then returns the FIRST (winner) row so
+    // resolveRun can reconcile the loser to the winner (exactly-once).
+    it("create with a duplicate idempotencyKey (different workflowId) is a typed conflict; the winner row survives", async () => {
+      unwrap(await repos.workflowRunRefs.create(validWorkflowRunRef));
+      const dupKey: WorkflowRunRef = {
+        ...validWorkflowRunRef,
+        workflowId: "wf-would-be-dup" as WorkflowId,
+      };
+      expect(unwrapErr(await repos.workflowRunRefs.create(dupKey)).code).toBe("conflict");
+      // The winner (first) row is the one indexed by the idempotencyKey — the loser's
+      // candidate workflowId was NEVER persisted (no duplicate run).
+      const byKey = unwrap(await repos.workflowRunRefs.getByIdempotencyKey(validWorkflowRunRef.idempotencyKey));
+      expect(byKey.workflowId).toBe(validWorkflowRunRef.workflowId);
+      expect(unwrapErr(await repos.workflowRunRefs.get("wf-would-be-dup" as WorkflowId)).code).toBe("not_found");
     });
 
     it("updateState on a missing workflow returns not_found", async () => {
@@ -678,6 +724,167 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
     });
   });
 
+  // ── write receipts (WW-1: the no-duplicate-external-write reserve, safety rule 3) ─
+  // The DB-backed reserve() is the CROSS-PROCESS backstop the in-process ReceiptStore
+  // cannot give: reserve INSERTs a placeholder under a UNIQUE (targetSystem,
+  // canonicalObjectKey) key. The winner (INSERTed) gets {kind:"reserved"} and may
+  // create; a concurrent reserve BEFORE the receipt lands gets {kind:"in_progress"}
+  // (another worker mid-write — must NOT create); after put(receipt) a reserve gets
+  // {kind:"committed"} with the record (reuse it → zero duplicate external write).
+  describe("WriteReceiptRepository (WW-1 reserve — safety rule 3)", () => {
+    it("first reserve WINS ({kind:'reserved'}); a second reserve BEFORE put is {kind:'in_progress'}", async () => {
+      const first = unwrap(await repos.writeReceipts.reserve("todoist", "todoist:task:x"));
+      expect(first.kind).toBe("reserved");
+      // Second worker races on the SAME object identity before any receipt is put:
+      // it must NOT win the reservation (no create), it observes in_progress.
+      const second = unwrap(await repos.writeReceipts.reserve("todoist", "todoist:task:x"));
+      expect(second.kind).toBe("in_progress");
+    });
+
+    it("after put(receipt) a reserve is {kind:'committed'} carrying the record (reuse, zero dup write)", async () => {
+      unwrap(await repos.writeReceipts.reserve("linear", "linear:issue:7"));
+      unwrap(
+        await repos.writeReceipts.put(
+          writeReceiptRow({
+            targetSystem: "linear",
+            canonicalObjectKey: "linear:issue:7",
+            idempotencyKey: "idem-linear-7",
+          }),
+        ),
+      );
+      const outcome = unwrap(await repos.writeReceipts.reserve("linear", "linear:issue:7"));
+      expect(outcome.kind).toBe("committed");
+      if (outcome.kind !== "committed") return;
+      expect(outcome.record.idempotencyKey).toBe("idem-linear-7");
+      expect(outcome.record.receipt).toEqual({
+        externalObjectId: "ext-linear:issue:7",
+        recordedAt: "2026-06-30T00:00:05.000Z",
+      });
+    });
+
+    it("getByIdempotencyKey / getByCanonicalObjectKey round-trip a committed receipt; misses are not_found", async () => {
+      unwrap(await repos.writeReceipts.reserve("github", "github:issue:42"));
+      unwrap(
+        await repos.writeReceipts.put(
+          writeReceiptRow({
+            targetSystem: "github",
+            canonicalObjectKey: "github:issue:42",
+            idempotencyKey: "idem-gh-42",
+          }),
+        ),
+      );
+      expect(unwrap(await repos.writeReceipts.getByIdempotencyKey("idem-gh-42")).canonicalObjectKey).toBe(
+        "github:issue:42",
+      );
+      expect(unwrap(await repos.writeReceipts.getByCanonicalObjectKey("github", "github:issue:42")).idempotencyKey).toBe(
+        "idem-gh-42",
+      );
+      expect(unwrapErr(await repos.writeReceipts.getByIdempotencyKey("nope")).code).toBe("not_found");
+      expect(unwrapErr(await repos.writeReceipts.getByCanonicalObjectKey("github", "nope")).code).toBe("not_found");
+    });
+
+    it("release frees a still-RESERVED placeholder so a retry can re-reserve", async () => {
+      expect(unwrap(await repos.writeReceipts.reserve("todoist", "todoist:task:r")).kind).toBe("reserved");
+      // The create faulted before a receipt landed → release the reservation.
+      unwrap(await repos.writeReceipts.release("todoist", "todoist:task:r"));
+      // A later retry / outbox drain may now re-claim it and win again.
+      expect(unwrap(await repos.writeReceipts.reserve("todoist", "todoist:task:r")).kind).toBe("reserved");
+    });
+
+    it("release REFUSES to delete a COMMITTED row (a committed reservation stays committed)", async () => {
+      unwrap(await repos.writeReceipts.reserve("linear", "linear:issue:c"));
+      unwrap(
+        await repos.writeReceipts.put(
+          writeReceiptRow({
+            targetSystem: "linear",
+            canonicalObjectKey: "linear:issue:c",
+            idempotencyKey: "idem-linear-c",
+          }),
+        ),
+      );
+      // release must be a no-op on a committed row — NEVER delete the exactly-once proof.
+      unwrap(await repos.writeReceipts.release("linear", "linear:issue:c"));
+      // Still committed: a reserve reuses the receipt (never re-opens the create path).
+      const after = unwrap(await repos.writeReceipts.reserve("linear", "linear:issue:c"));
+      expect(after.kind).toBe("committed");
+      if (after.kind !== "committed") return;
+      expect(after.record.idempotencyKey).toBe("idem-linear-c");
+    });
+
+    it("put is idempotent — upgrading a reservation to committed twice keeps ONE committed row", async () => {
+      unwrap(await repos.writeReceipts.reserve("drive", "drive:file:z"));
+      const row = writeReceiptRow({
+        targetSystem: "drive",
+        canonicalObjectKey: "drive:file:z",
+        idempotencyKey: "idem-drive-z",
+      });
+      unwrap(await repos.writeReceipts.put(row));
+      // A replayed put for the same object identity must not conflict — idempotent upgrade.
+      unwrap(await repos.writeReceipts.put(row));
+      const outcome = unwrap(await repos.writeReceipts.reserve("drive", "drive:file:z"));
+      expect(outcome.kind).toBe("committed");
+    });
+
+    it("idempotencyKey is GLOBALLY UNIQUE: reusing it for a DIFFERENT object identity is a typed conflict", async () => {
+      unwrap(await repos.writeReceipts.reserve("todoist", "todoist:task:a"));
+      unwrap(
+        await repos.writeReceipts.put(
+          writeReceiptRow({
+            targetSystem: "todoist",
+            canonicalObjectKey: "todoist:task:a",
+            idempotencyKey: "idem-shared",
+          }),
+        ),
+      );
+      // A different object identity must NOT be committable under the SAME idempotencyKey.
+      unwrap(await repos.writeReceipts.reserve("todoist", "todoist:task:b"));
+      expect(
+        unwrapErr(
+          await repos.writeReceipts.put(
+            writeReceiptRow({
+              targetSystem: "todoist",
+              canonicalObjectKey: "todoist:task:b",
+              idempotencyKey: "idem-shared",
+            }),
+          ),
+        ).code,
+      ).toBe("conflict");
+    });
+
+    it("distinct object identities that COLLIDE under a naive colon-joined synthetic key each reserve + commit independently (WW-1 injective-identity regression)", async () => {
+      // Regression for the adversarial-verify HIGH: a synthetic placeholder key
+      // `reserve:${targetSystem}:${canonicalObjectKey}` is NOT injective —
+      // ('slack','C123:456') and ('slack:C123','456') both fold to the SAME
+      // 'reserve:slack:C123:456'. The second, never-reserved object must NOT be
+      // blocked by a spurious UNIQUE(idempotencyKey) collision. With NULL placeholders
+      // (object identity = the composite PK) both reserve cleanly, on BOTH dialects.
+      const a = unwrap(await repos.writeReceipts.reserve("slack", "C123:456"));
+      expect(a.kind).toBe("reserved");
+      const b = unwrap(await repos.writeReceipts.reserve("slack:C123", "456"));
+      expect(b.kind).toBe("reserved"); // NOT a spurious conflict / in_progress
+      // Both commit independently under distinct real replay keys.
+      unwrap(
+        await repos.writeReceipts.put(
+          writeReceiptRow({ targetSystem: "slack", canonicalObjectKey: "C123:456", idempotencyKey: "idem-slack-a" }),
+        ),
+      );
+      unwrap(
+        await repos.writeReceipts.put(
+          writeReceiptRow({ targetSystem: "slack:C123", canonicalObjectKey: "456", idempotencyKey: "idem-slack-b" }),
+        ),
+      );
+      expect(unwrap(await repos.writeReceipts.getByCanonicalObjectKey("slack", "C123:456")).idempotencyKey).toBe(
+        "idem-slack-a",
+      );
+      expect(unwrap(await repos.writeReceipts.getByCanonicalObjectKey("slack:C123", "456")).idempotencyKey).toBe(
+        "idem-slack-b",
+      );
+      // A later reserve on each now observes its OWN committed receipt (no cross-talk).
+      expect(unwrap(await repos.writeReceipts.reserve("slack", "C123:456")).kind).toBe("committed");
+      expect(unwrap(await repos.writeReceipts.reserve("slack:C123", "456")).kind).toBe("committed");
+    });
+  });
+
   // ══════════════════════════════════════════════════════════════════════════════
   // OPERATIONAL-TRUTH INVARIANTS (unit 2.5) — exercised THROUGH the adapters so the
   // SAME behavior holds on both dialects (the divergence-blocking core of 2.9).
@@ -771,6 +978,8 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
         unwrapErr(await repos.providerState.get("claude", "https://absent", "m-absent")),
         unwrapErr(await repos.readModels.get("rm-absent", null)),
         unwrapErr(await repos.gclProjections.get("ws-absent" as WorkspaceId, "nope", "coordination")),
+        unwrapErr(await repos.writeReceipts.getByIdempotencyKey("wr-absent")),
+        unwrapErr(await repos.writeReceipts.getByCanonicalObjectKey("todoist", "wr-absent")),
       ];
       for (const e of errs) {
         expect(DB_ERROR_CODES).toContain(e.code);

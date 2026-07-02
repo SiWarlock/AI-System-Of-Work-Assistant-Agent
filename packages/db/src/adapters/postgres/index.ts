@@ -54,17 +54,21 @@ import type {
   ProviderStateRepository,
   ReadModelRecord,
   ReadModelRepository,
+  ReserveOutcome,
   WorkflowRunRefRepository,
   WorkspaceConfigRepository,
+  WriteReceiptRepository,
+  WriteReceiptRow,
 } from "../../repositories/interfaces";
 import * as schema from "../../schema/pg/index";
 import {
   casVerdictToOutcome,
   decideApprovalCas,
+  decideReserve,
   invariantToDbErrorCode,
   type CasVerdict,
 } from "../../invariants/operational-truth";
-import { notFound, toDbError } from "./errors";
+import { conflict, notFound, toDbError } from "./errors";
 
 /**
  * Bridge the pure invariant CAS verdict onto the adapter's §16 DbError taxonomy,
@@ -86,7 +90,7 @@ function casDbResult(
     : err({ code: invariantToDbErrorCode(r.error.code), message: r.error.message });
 }
 
-/** All ten Postgres repositories returned by the factory (one per §4 domain). */
+/** All Postgres repositories returned by the factory (one per §4 domain + WW-1 receipts). */
 export interface PostgresRepositories {
   readonly workspaceConfig: WorkspaceConfigRepository;
   readonly eventLog: EventLogRepository;
@@ -98,6 +102,7 @@ export interface PostgresRepositories {
   readonly providerState: ProviderStateRepository;
   readonly readModels: ReadModelRepository;
   readonly gclProjections: GclProjectionRepository;
+  readonly writeReceipts: WriteReceiptRepository;
 }
 
 // §9 Proposed-External-Action TERMINAL states — a tombstoned outbox entry never
@@ -121,6 +126,7 @@ type ApprovalRow = typeof schema.approvals.$inferSelect;
 type OutboxRow = typeof schema.outbox.$inferSelect;
 type CursorRow = typeof schema.connectorCursors.$inferSelect;
 type ReadModelRow = typeof schema.readModels.$inferSelect;
+type WriteReceiptDbRow = typeof schema.writeReceipts.$inferSelect;
 
 function toEventLog(r: EventLogRow): EventLogRecord {
   return {
@@ -186,6 +192,28 @@ function toReadModel(r: ReadModelRow): ReadModelRecord {
     data: r.data,
     rebuiltAt: r.rebuiltAt,
   };
+}
+
+function toWriteReceipt(r: WriteReceiptDbRow): WriteReceiptRow {
+  if (r.idempotencyKey === null) {
+    // Invariant: toWriteReceipt is only called on a COMMITTED row (receiptPresent),
+    // which always carries the real key set by `put`. A reserved placeholder's NULL
+    // key must never surface as a committed receipt — fail closed if it somehow does.
+    throw new Error("invariant: committed write-receipt row has a null idempotencyKey");
+  }
+  return {
+    targetSystem: r.targetSystem,
+    canonicalObjectKey: r.canonicalObjectKey,
+    idempotencyKey: r.idempotencyKey,
+    payloadHash: r.payloadHash,
+    receipt: (r.receipt ?? undefined) as WriteReceiptRow["receipt"],
+    recordedAt: r.recordedAt,
+  };
+}
+
+/** A stored receipt row is COMMITTED iff its `receipt` proof is present (§8). */
+function receiptPresent(r: WriteReceiptDbRow): boolean {
+  return r.receipt !== null && r.receipt !== undefined;
 }
 
 // ── the factory ──────────────────────────────────────────────────────────────
@@ -284,7 +312,15 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
   const workflowRunRefs: WorkflowRunRefRepository = {
     create: (ref) =>
       run(async () => {
-        await db.insert(schema.workflowRunRefs).values(ref);
+        // WW-1 (B) no-double-run guard (§9 / LIFE-3), parity with sqlite: INSERT …
+        // ON CONFLICT DO NOTHING over BOTH unique keys (workflowId PK AND
+        // idempotencyKey UNIQUE); an empty `.returning()` == a lost race → typed
+        // `conflict`. Exactly one racing worker wins; the loser reconciles to the
+        // winner (resolveRun re-reads by idempotencyKey → reused).
+        const inserted = await db.insert(schema.workflowRunRefs).values(ref).onConflictDoNothing().returning();
+        if (inserted.length === 0) {
+          return err(conflict(`workflow run conflict (duplicate workflowId or idempotencyKey): ${ref.workflowId}`));
+        }
         return ok(ref);
       }),
     get: (workflowId) =>
@@ -676,6 +712,130 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
       }),
   };
 
+  // WW-1 (A) write-receipt index — the cross-process no-duplicate-external-write
+  // backstop (§8 / safety rule 3). BEHAVIORAL PARITY with the sqlite adapter: same
+  // reserve/put/release/lookup semantics via the SHARED pure `decideReserve`; only
+  // the dialect mechanics differ (async Promises; single-row reads via `.limit(1)`).
+  const objectIdentity = (targetSystem: string, canonicalObjectKey: string) =>
+    and(
+      eq(schema.writeReceipts.targetSystem, targetSystem),
+      eq(schema.writeReceipts.canonicalObjectKey, canonicalObjectKey),
+    );
+
+  const writeReceipts: WriteReceiptRepository = {
+    reserve: (targetSystem, canonicalObjectKey) =>
+      run(async (): Promise<Result<ReserveOutcome, DbError>> => {
+        // Atomic claim: INSERT a receipt-less placeholder ON CONFLICT DO NOTHING over
+        // the (targetSystem, canonicalObjectKey) PK. An empty `.returning()` == the
+        // row already existed (this caller LOST the race) — same lost-race idiom as
+        // applyTransition. The winner INSERTed → `reserved`.
+        const insertedRows = await db
+          .insert(schema.writeReceipts)
+          .values({
+            targetSystem,
+            canonicalObjectKey,
+            // A reserved placeholder carries NO replay key (NULL) — a synthetic key
+            // derived from (targetSystem, canonicalObjectKey) is NOT injective
+            // (colon-delimited canonical keys collide: ('slack','a:b') and
+            // ('slack:a','b') both -> 'slack:a:b') and could also collide with a real
+            // committed key, tripping UNIQUE(idempotencyKey) for an object never
+            // reserved. NULL sidesteps both: UNIQUE admits many NULLs, and the object
+            // identity (composite PK) is the reserve's uniqueness key. `put` sets the
+            // real key at commit.
+            idempotencyKey: null,
+            payloadHash: "",
+            receipt: null,
+            recordedAt: new Date(0).toISOString(),
+          })
+          .onConflictDoNothing({ target: [schema.writeReceipts.targetSystem, schema.writeReceipts.canonicalObjectKey] })
+          .returning();
+        if (insertedRows.length > 0) {
+          return ok({ kind: decideReserve({ inserted: true, existingReceiptPresent: false }) } as ReserveOutcome);
+        }
+        // Lost the INSERT race → re-read the existing row and classify committed vs
+        // in_progress by whether a receipt is present.
+        const existingRows = await db
+          .select()
+          .from(schema.writeReceipts)
+          .where(objectIdentity(targetSystem, canonicalObjectKey))
+          .limit(1);
+        const existing = existingRows[0];
+        if (!existing) {
+          // Row vanished between the failed INSERT and the re-read (a concurrent
+          // release of a placeholder) → in_progress; the caller must NOT create.
+          return ok({ kind: "in_progress" } as ReserveOutcome);
+        }
+        const kind = decideReserve({ inserted: false, existingReceiptPresent: receiptPresent(existing) });
+        return kind === "committed"
+          ? ok({ kind: "committed", record: toWriteReceipt(existing) })
+          : ok({ kind } as ReserveOutcome);
+      }),
+    getByIdempotencyKey: (idempotencyKey) =>
+      run(async () => {
+        const rows = await db
+          .select()
+          .from(schema.writeReceipts)
+          .where(eq(schema.writeReceipts.idempotencyKey, idempotencyKey))
+          .limit(1);
+        const row = rows[0];
+        // Only a COMMITTED row is a real receipt; a reservation placeholder carries a
+        // synthetic idempotencyKey and no receipt, so it never matches a real lookup.
+        return row && receiptPresent(row)
+          ? ok(toWriteReceipt(row))
+          : err(notFound(`write-receipt idempotencyKey ${idempotencyKey}`));
+      }),
+    getByCanonicalObjectKey: (targetSystem, canonicalObjectKey) =>
+      run(async () => {
+        const rows = await db
+          .select()
+          .from(schema.writeReceipts)
+          .where(objectIdentity(targetSystem, canonicalObjectKey))
+          .limit(1);
+        const row = rows[0];
+        return row && receiptPresent(row)
+          ? ok(toWriteReceipt(row))
+          : err(notFound(`write-receipt ${targetSystem}/${canonicalObjectKey}`));
+      }),
+    put: (row) =>
+      run(async (): Promise<Result<void, DbError>> => {
+        // Upgrade reserved → committed for the object identity (idempotent). ON
+        // CONFLICT (composite PK) DO UPDATE writes the committed envelope + receipt.
+        // A duplicate idempotencyKey pointing at a DIFFERENT object identity trips the
+        // UNIQUE(idempotencyKey) constraint → the driver throws → `run` maps it to a
+        // typed `conflict` (23505; the key is globally unique).
+        await db
+          .insert(schema.writeReceipts)
+          .values({
+            targetSystem: row.targetSystem,
+            canonicalObjectKey: row.canonicalObjectKey,
+            idempotencyKey: row.idempotencyKey,
+            payloadHash: row.payloadHash,
+            receipt: row.receipt ?? null,
+            recordedAt: row.recordedAt,
+          })
+          .onConflictDoUpdate({
+            target: [schema.writeReceipts.targetSystem, schema.writeReceipts.canonicalObjectKey],
+            set: {
+              idempotencyKey: row.idempotencyKey,
+              payloadHash: row.payloadHash,
+              receipt: row.receipt ?? null,
+              recordedAt: row.recordedAt,
+            },
+          });
+        return ok(undefined);
+      }),
+    release: (targetSystem, canonicalObjectKey) =>
+      run(async (): Promise<Result<void, DbError>> => {
+        // Delete ONLY a still-reserved (receipt-less) placeholder so a retry can
+        // re-reserve. NEVER delete a committed row — the receipt IS the exactly-once
+        // proof; removing it would re-open a duplicate external write (safety rule 3).
+        await db
+          .delete(schema.writeReceipts)
+          .where(and(objectIdentity(targetSystem, canonicalObjectKey), isNull(schema.writeReceipts.receipt)));
+        return ok(undefined);
+      }),
+  };
+
   return {
     workspaceConfig,
     eventLog,
@@ -687,5 +847,6 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
     providerState,
     readModels,
     gclProjections,
+    writeReceipts,
   };
 }

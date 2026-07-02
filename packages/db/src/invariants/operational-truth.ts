@@ -322,3 +322,38 @@ export function assertRebuildTarget(domain: OperationalDomain): Result<void, Inv
     message: `'${domain}' is operational truth and is NOT rebuildable; it is excluded from any destructive rebuild and recovered only from backup (§4 / §16)`,
   });
 }
+
+// --- WW-1: write-receipt RESERVE classification (§8 / safety rule 3) ---------
+
+/**
+ * The three KINDS a write-receipt `reserve` resolves to — the closed cross-process
+ * no-duplicate-external-write verdict (WW-1, §8 / safety rule 3). Mirrors the
+ * `ReserveOutcome` union in `repositories/interfaces.ts` at the KIND level (the
+ * adapter attaches the committed `record`); kept here so BOTH the sqlite and
+ * postgres adapters classify the SAME atomic-INSERT outcome IDENTICALLY (the §4
+ * "adapter divergence → release blocked" bar).
+ */
+export type ReserveKind = "reserved" | "in_progress" | "committed";
+
+/**
+ * Decide a write-receipt reserve from the two observed facts of the atomic
+ * UNIQUE-key INSERT on the object identity (targetSystem, canonicalObjectKey). PURE
+ * — the adapter performs the `INSERT … ON CONFLICT DO NOTHING` (whose empty
+ * `.returning()` == the row already existed, the SAME lost-race idiom as
+ * `applyTransition`), re-reads the pre-existing row, and calls this to interpret the
+ * outcome the same way on both dialects:
+ *   - `inserted: true`               → `reserved`   (this caller won; it may create).
+ *   - existing row WITH a receipt     → `committed`  (already written; reuse it).
+ *   - existing row WITHOUT a receipt  → `in_progress` (another worker mid-write; do
+ *                                                       NOT create — hold/retry).
+ * Two concurrent reserves for the same object can NEVER both be `reserved`: exactly
+ * one INSERT lands (`inserted: true`); the other sees the row and is classified
+ * in_progress/committed.
+ */
+export function decideReserve(input: {
+  readonly inserted: boolean;
+  readonly existingReceiptPresent: boolean;
+}): ReserveKind {
+  if (input.inserted) return "reserved";
+  return input.existingReceiptPresent ? "committed" : "in_progress";
+}

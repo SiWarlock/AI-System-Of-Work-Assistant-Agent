@@ -104,3 +104,16 @@ CREATE TABLE "gcl_projections" (
 	"sourceRefs" json NOT NULL,
 	CONSTRAINT "gcl_projections_workspaceId_projectionType_visibilityLevel_pk" PRIMARY KEY("workspaceId","projectionType","visibilityLevel")
 );
+--> statement-breakpoint
+CREATE TABLE "write_receipts" (
+	"targetSystem" text NOT NULL,
+	"canonicalObjectKey" text NOT NULL,
+	"idempotencyKey" text,
+	"payloadHash" text NOT NULL,
+	"receipt" json,
+	"recordedAt" text NOT NULL,
+	CONSTRAINT "write_receipts_targetSystem_canonicalObjectKey_pk" PRIMARY KEY("targetSystem","canonicalObjectKey"),
+	CONSTRAINT "write_receipts_idempotencyKey_unique" UNIQUE("idempotencyKey")
+);
+--> statement-breakpoint
+ALTER TABLE "workflow_run_refs" ADD CONSTRAINT "workflow_run_refs_idempotencyKey_unique" UNIQUE("idempotencyKey");

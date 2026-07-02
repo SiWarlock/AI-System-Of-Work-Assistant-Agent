@@ -50,10 +50,16 @@ export const eventLog = sqliteTable("event_log", {
 });
 
 // --- workflow-run registry (PARITY ↔ WorkflowRunRef) ---
+// WW-1 (B) no-double-run guard (§9 / LIFE-3): `idempotencyKey` carries a UNIQUE
+// constraint so two workers that BOTH observe getByIdempotencyKey==not_found and
+// both attempt `create` cannot BOTH insert (a duplicate run). The atomic
+// unique-key INSERT lets exactly one win; the loser gets a typed `conflict` and
+// reconciles to the winner (resolveRun re-reads by idempotencyKey → reused:true).
+// `.unique()` adds a constraint, NOT a column, so ↔ WorkflowRunRef parity holds.
 export const workflowRunRefs = sqliteTable("workflow_run_refs", {
   workflowId: text().$type<WorkflowRunRef["workflowId"]>().primaryKey(),
   trigger: text().notNull(),
   state: text().notNull(),
-  idempotencyKey: text().notNull(),
+  idempotencyKey: text().notNull().unique(),
   auditRefs: text({ mode: "json" }).$type<WorkflowRunRef["auditRefs"]>().notNull(),
 });

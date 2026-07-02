@@ -30,6 +30,7 @@ import type {
   Result,
   WorkflowRunRef,
   Workspace,
+  WriteReceipt,
 } from "@sow/contracts";
 
 // --- typed error surface (enumerable codes; never thrown) ---
@@ -109,6 +110,41 @@ export interface ReadModelRecord {
   readonly data: unknown;
   readonly rebuiltAt: string;
 }
+
+/**
+ * One persisted external-write RECEIPT INDEX row (WW-1, §8 / safety rule 3).
+ * Indexed by the OBJECT IDENTITY (targetSystem + canonicalObjectKey — the reserve's
+ * unique key) AND the GLOBALLY-UNIQUE §8 replay key (idempotencyKey). `receipt` is
+ * the vendor proof-of-write, ABSENT until the write commits (a row with no receipt
+ * is a live RESERVATION — another worker mid-write). `targetSystem` is an OPEN
+ * string at this boundary (the enum lives in @sow/contracts; the worker adapter
+ * maps it), matching the outbox row's `targetSystem` convention.
+ */
+export interface WriteReceiptRow {
+  readonly targetSystem: string;
+  readonly canonicalObjectKey: string;
+  readonly idempotencyKey: string;
+  readonly payloadHash: string;
+  /** The vendor WriteReceipt proof — ABSENT while reserved, present once committed. */
+  readonly receipt?: WriteReceipt;
+  readonly recordedAt: string;
+}
+
+/**
+ * The outcome of an atomic `reserve` on the write-receipt index (WW-1, §8 / safety
+ * rule 3). A CLOSED union that classes what the caller MUST do — this is the
+ * cross-process no-duplicate-external-write gate:
+ *   - `reserved`    — THIS caller INSERTed the placeholder: it is the WINNER and is
+ *                     the ONLY caller permitted to issue the external create.
+ *   - `in_progress` — a row exists but has NO receipt yet: another worker is
+ *                     mid-write. The caller must NOT create (hold/retry).
+ *   - `committed`   — a row exists WITH a receipt: the object was already written.
+ *                     Reuse the receipt (`record`) → ZERO duplicate external write.
+ */
+export type ReserveOutcome =
+  | { readonly kind: "reserved" }
+  | { readonly kind: "in_progress" }
+  | { readonly kind: "committed"; readonly record: WriteReceiptRow };
 
 // --- repository contracts (one per operational-store domain) ---
 
@@ -290,4 +326,47 @@ export interface GclProjectionRepository {
   upsert(projection: GclProjection): DbResult<GclProjection>;
   listByWorkspace(workspaceId: GclProjection["workspaceId"]): DbResult<GclProjection[]>;
   listByVisibility(visibilityLevel: GclProjection["visibilityLevel"]): DbResult<GclProjection[]>;
+}
+
+/**
+ * Write-receipt index — OPERATIONAL TRUTH (WW-1, §8 / safety rule 3). The
+ * cross-process backstop the §8 Tool Gateway's in-process `ReceiptStore` cannot
+ * give: `reserve` is a UNIQUE-CONSTRAINT INSERT on the object identity
+ * (targetSystem, canonicalObjectKey), so at most ONE concurrent caller across ALL
+ * processes wins the right to create the external object → zero duplicate external
+ * writes. The row is APPEND-on-reserve, then MUTABLE reserved → committed via
+ * `put`; NOT rebuildable (a lost receipt would re-open a committed write to a
+ * duplicate). This interface uses ONLY @sow/contracts / @sow/db-local types — it
+ * MUST NOT import @sow/integrations (wrong dependency direction; the worker layer
+ * adapts this @sow/db repo onto the integrations `ReceiptStore` interface).
+ */
+export interface WriteReceiptRepository {
+  /**
+   * Atomically claim the exclusive right to CREATE the object identified by
+   * (targetSystem, canonicalObjectKey). Backed by an `INSERT … ON CONFLICT DO
+   * NOTHING` on the composite key: an INSERT that lands → `{kind:"reserved"}` (this
+   * caller is the winner). An empty result (the row already existed) is re-read and
+   * classified by whether a receipt is present → `{kind:"committed", record}` (reuse
+   * it) or `{kind:"in_progress"}` (another worker mid-write; do NOT create). Two
+   * concurrent reserves for the same object NEVER both get `{kind:"reserved"}`.
+   */
+  reserve(targetSystem: string, canonicalObjectKey: string): DbResult<ReserveOutcome>;
+  /** Replay lookup by the §8 idempotency key (returns not_found when unseen). */
+  getByIdempotencyKey(idempotencyKey: string): DbResult<WriteReceiptRow>;
+  /** Pre-write existence check by object identity (returns not_found when unseen). */
+  getByCanonicalObjectKey(targetSystem: string, canonicalObjectKey: string): DbResult<WriteReceiptRow>;
+  /**
+   * Record the receipt once the external write commits — UPGRADES the reserved
+   * placeholder to committed (idempotent: a replayed put for the same object
+   * identity is a no-op, never a conflict). A duplicate idempotencyKey pointing at a
+   * DIFFERENT object identity is a typed `conflict` (the key is globally unique).
+   */
+  put(row: WriteReceiptRow): DbResult<void>;
+  /**
+   * Release a still-RESERVED placeholder (the create faulted) so a retry may
+   * re-reserve. NEVER deletes a COMMITTED row (a receipt supersedes the reservation
+   * — deleting the exactly-once proof would re-open a duplicate write); a release on
+   * a committed row is a safe no-op.
+   */
+  release(targetSystem: string, canonicalObjectKey: string): DbResult<void>;
 }

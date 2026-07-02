@@ -44,17 +44,21 @@ import type {
   ProviderStateRepository,
   ReadModelRecord,
   ReadModelRepository,
+  ReserveOutcome,
   WorkflowRunRefRepository,
   WorkspaceConfigRepository,
+  WriteReceiptRepository,
+  WriteReceiptRow,
 } from "../../repositories/interfaces";
 import * as schema from "../../schema/index";
 import {
   casVerdictToOutcome,
   decideApprovalCas,
+  decideReserve,
   invariantToDbErrorCode,
   type CasVerdict,
 } from "../../invariants/operational-truth";
-import { notFound, toDbError } from "./errors";
+import { conflict, notFound, toDbError } from "./errors";
 
 /**
  * Bridge the pure invariant CAS verdict onto the adapter's §16 DbError taxonomy,
@@ -76,7 +80,7 @@ function casDbResult(
     : err({ code: invariantToDbErrorCode(r.error.code), message: r.error.message });
 }
 
-/** All ten SQLite repositories returned by the factory (one per §4 domain). */
+/** All SQLite repositories returned by the factory (one per §4 domain + WW-1 receipts). */
 export interface SqliteRepositories {
   readonly workspaceConfig: WorkspaceConfigRepository;
   readonly eventLog: EventLogRepository;
@@ -88,6 +92,7 @@ export interface SqliteRepositories {
   readonly providerState: ProviderStateRepository;
   readonly readModels: ReadModelRepository;
   readonly gclProjections: GclProjectionRepository;
+  readonly writeReceipts: WriteReceiptRepository;
 }
 
 // §9 Proposed-External-Action TERMINAL states — a tombstoned outbox entry never
@@ -109,6 +114,7 @@ type ApprovalRow = typeof schema.approvals.$inferSelect;
 type OutboxRow = typeof schema.outbox.$inferSelect;
 type CursorRow = typeof schema.connectorCursors.$inferSelect;
 type ReadModelRow = typeof schema.readModels.$inferSelect;
+type WriteReceiptDbRow = typeof schema.writeReceipts.$inferSelect;
 
 function toEventLog(r: EventLogRow): EventLogRecord {
   return {
@@ -174,6 +180,28 @@ function toReadModel(r: ReadModelRow): ReadModelRecord {
     data: r.data,
     rebuiltAt: r.rebuiltAt,
   };
+}
+
+function toWriteReceipt(r: WriteReceiptDbRow): WriteReceiptRow {
+  if (r.idempotencyKey === null) {
+    // Invariant: toWriteReceipt is only called on a COMMITTED row (receiptPresent),
+    // which always carries the real key set by `put`. A reserved placeholder's NULL
+    // key must never surface as a committed receipt — fail closed if it somehow does.
+    throw new Error("invariant: committed write-receipt row has a null idempotencyKey");
+  }
+  return {
+    targetSystem: r.targetSystem,
+    canonicalObjectKey: r.canonicalObjectKey,
+    idempotencyKey: r.idempotencyKey,
+    payloadHash: r.payloadHash,
+    receipt: (r.receipt ?? undefined) as WriteReceiptRow["receipt"],
+    recordedAt: r.recordedAt,
+  };
+}
+
+/** A stored receipt row is COMMITTED iff its `receipt` proof is present (§8). */
+function receiptPresent(r: WriteReceiptDbRow): boolean {
+  return r.receipt !== null && r.receipt !== undefined;
 }
 
 // ── the factory ──────────────────────────────────────────────────────────────
@@ -261,7 +289,16 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
   const workflowRunRefs: WorkflowRunRefRepository = {
     create: (ref) =>
       run(() => {
-        db.insert(schema.workflowRunRefs).values(ref).run();
+        // WW-1 (B) no-double-run guard (§9 / LIFE-3): INSERT … ON CONFLICT DO NOTHING
+        // over BOTH unique keys (the workflowId PK AND the idempotencyKey UNIQUE), then
+        // an empty `.returning()` == a lost race (the SAME lost-race idiom as
+        // applyTransition). Two workers that both saw getByIdempotencyKey==not_found
+        // cannot BOTH insert: exactly one wins; the loser gets a typed `conflict` and
+        // reconciles to the winner (resolveRun re-reads by idempotencyKey → reused).
+        const inserted = db.insert(schema.workflowRunRefs).values(ref).onConflictDoNothing().returning().all();
+        if (inserted.length === 0) {
+          return err(conflict(`workflow run conflict (duplicate workflowId or idempotencyKey): ${ref.workflowId}`));
+        }
         return ok(ref);
       }),
     get: (workflowId) =>
@@ -628,6 +665,117 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
       }),
   };
 
+  // WW-1 (A) write-receipt index — the cross-process no-duplicate-external-write
+  // backstop (§8 / safety rule 3). reserve is a UNIQUE-key INSERT on the object
+  // identity; the shared pure `decideReserve` classes the outcome so sqlite + pg
+  // agree.
+  const objectIdentity = (targetSystem: string, canonicalObjectKey: string) =>
+    and(
+      eq(schema.writeReceipts.targetSystem, targetSystem),
+      eq(schema.writeReceipts.canonicalObjectKey, canonicalObjectKey),
+    );
+
+  const writeReceipts: WriteReceiptRepository = {
+    reserve: (targetSystem, canonicalObjectKey) =>
+      run((): Result<ReserveOutcome, DbError> => {
+        // Atomic claim: INSERT a receipt-less placeholder ON CONFLICT DO NOTHING over
+        // the (targetSystem, canonicalObjectKey) PK. An empty `.returning()` == the
+        // row already existed (this caller LOST the race) — the same lost-race idiom
+        // as applyTransition. The winner INSERTed → `reserved`.
+        const insertedRows = db
+          .insert(schema.writeReceipts)
+          .values({
+            targetSystem,
+            canonicalObjectKey,
+            // Placeholder envelope fields; `put` overwrites them with the committed
+            // envelope. A reserved placeholder carries NO replay key (NULL) — a
+            // synthetic key derived from (targetSystem, canonicalObjectKey) is NOT
+            // injective (colon-delimited canonical keys collide: ('slack','a:b') and
+            // ('slack:a','b') both -> 'slack:a:b') and could also collide with a real
+            // committed key, tripping UNIQUE(idempotencyKey) for an object that was
+            // never reserved. NULL sidesteps both: UNIQUE admits many NULLs, and the
+            // object identity (composite PK) is the reserve's uniqueness key.
+            idempotencyKey: null,
+            payloadHash: "",
+            receipt: null,
+            recordedAt: new Date(0).toISOString(),
+          })
+          .onConflictDoNothing({ target: [schema.writeReceipts.targetSystem, schema.writeReceipts.canonicalObjectKey] })
+          .returning()
+          .all();
+        if (insertedRows.length > 0) {
+          return ok({ kind: decideReserve({ inserted: true, existingReceiptPresent: false }) } as ReserveOutcome);
+        }
+        // Lost the INSERT race → re-read the existing row and classify committed
+        // (receipt present → reuse) vs in_progress (no receipt → another worker mid-write).
+        const existing = db.select().from(schema.writeReceipts).where(objectIdentity(targetSystem, canonicalObjectKey)).get();
+        if (!existing) {
+          // The row vanished between the failed INSERT and the re-read (a concurrent
+          // release of a placeholder). Treat as in_progress — the caller must NOT
+          // create; a retry will re-reserve cleanly.
+          return ok({ kind: "in_progress" } as ReserveOutcome);
+        }
+        const kind = decideReserve({ inserted: false, existingReceiptPresent: receiptPresent(existing) });
+        return kind === "committed"
+          ? ok({ kind: "committed", record: toWriteReceipt(existing) })
+          : ok({ kind } as ReserveOutcome);
+      }),
+    getByIdempotencyKey: (idempotencyKey) =>
+      run(() => {
+        const row = db.select().from(schema.writeReceipts).where(eq(schema.writeReceipts.idempotencyKey, idempotencyKey)).get();
+        // Only a COMMITTED row is a real receipt; a reservation placeholder carries a
+        // synthetic idempotencyKey and no receipt, so it never matches a real lookup.
+        return row && receiptPresent(row)
+          ? ok(toWriteReceipt(row))
+          : err(notFound(`write-receipt idempotencyKey ${idempotencyKey}`));
+      }),
+    getByCanonicalObjectKey: (targetSystem, canonicalObjectKey) =>
+      run(() => {
+        const row = db.select().from(schema.writeReceipts).where(objectIdentity(targetSystem, canonicalObjectKey)).get();
+        return row && receiptPresent(row)
+          ? ok(toWriteReceipt(row))
+          : err(notFound(`write-receipt ${targetSystem}/${canonicalObjectKey}`));
+      }),
+    put: (row) =>
+      run((): Result<void, DbError> => {
+        // Upgrade reserved → committed for the object identity (idempotent). ON
+        // CONFLICT (the composite PK) DO UPDATE writes the committed envelope +
+        // receipt. A duplicate idempotencyKey pointing at a DIFFERENT object identity
+        // trips the UNIQUE(idempotencyKey) constraint → the driver throws → `run`
+        // maps it to a typed `conflict` (the key is globally unique).
+        db.insert(schema.writeReceipts)
+          .values({
+            targetSystem: row.targetSystem,
+            canonicalObjectKey: row.canonicalObjectKey,
+            idempotencyKey: row.idempotencyKey,
+            payloadHash: row.payloadHash,
+            receipt: row.receipt ?? null,
+            recordedAt: row.recordedAt,
+          })
+          .onConflictDoUpdate({
+            target: [schema.writeReceipts.targetSystem, schema.writeReceipts.canonicalObjectKey],
+            set: {
+              idempotencyKey: row.idempotencyKey,
+              payloadHash: row.payloadHash,
+              receipt: row.receipt ?? null,
+              recordedAt: row.recordedAt,
+            },
+          })
+          .run();
+        return ok(undefined);
+      }),
+    release: (targetSystem, canonicalObjectKey) =>
+      run((): Result<void, DbError> => {
+        // Delete ONLY a still-reserved (receipt-less) placeholder so a retry can
+        // re-reserve. NEVER delete a committed row — the receipt IS the exactly-once
+        // proof; removing it would re-open a duplicate external write (safety rule 3).
+        db.delete(schema.writeReceipts)
+          .where(and(objectIdentity(targetSystem, canonicalObjectKey), isNull(schema.writeReceipts.receipt)))
+          .run();
+        return ok(undefined);
+      }),
+  };
+
   return {
     workspaceConfig,
     eventLog,
@@ -639,5 +787,6 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
     providerState,
     readModels,
     gclProjections,
+    writeReceipts,
   };
 }

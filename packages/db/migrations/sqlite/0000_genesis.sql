@@ -104,3 +104,17 @@ CREATE TABLE `gcl_projections` (
 	`sourceRefs` text NOT NULL,
 	PRIMARY KEY(`workspaceId`, `projectionType`, `visibilityLevel`)
 );
+--> statement-breakpoint
+CREATE TABLE `write_receipts` (
+	`targetSystem` text NOT NULL,
+	`canonicalObjectKey` text NOT NULL,
+	`idempotencyKey` text,
+	`payloadHash` text NOT NULL,
+	`receipt` text,
+	`recordedAt` text NOT NULL,
+	PRIMARY KEY(`targetSystem`, `canonicalObjectKey`)
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `write_receipts_idempotencyKey_unique` ON `write_receipts` (`idempotencyKey`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `workflow_run_refs_idempotencyKey_unique` ON `workflow_run_refs` (`idempotencyKey`);

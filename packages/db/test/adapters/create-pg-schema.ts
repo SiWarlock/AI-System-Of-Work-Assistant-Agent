@@ -24,6 +24,7 @@ const TABLES: readonly PgTable[] = [
   schema.providerProfiles,
   schema.readModels,
   schema.gclProjections,
+  schema.writeReceipts,
 ];
 
 /** Emit `CREATE TABLE` for one pg-core Drizzle table, mirroring its column + PK config. */
@@ -33,11 +34,18 @@ function buildCreateTable(table: PgTable): string {
     let def = `"${col.name}" ${col.getSQLType()}`;
     if (col.notNull) def += " NOT NULL";
     if (col.primary) def += " PRIMARY KEY";
+    if (col.isUnique) def += " UNIQUE";
     return def;
   });
   for (const pk of cfg.primaryKeys) {
     const cols = pk.columns.map((c) => `"${c.name}"`).join(", ");
     defs.push(`PRIMARY KEY (${cols})`);
+  }
+  // Table-level UNIQUE constraints (WW-1 cross-process no-double-write guard:
+  // workflow_run_refs.idempotencyKey + write_receipts.idempotencyKey).
+  for (const uq of cfg.uniqueConstraints) {
+    const cols = uq.columns.map((c) => `"${c.name}"`).join(", ");
+    defs.push(`UNIQUE (${cols})`);
   }
   return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (\n  ${defs.join(",\n  ")}\n);`;
 }
