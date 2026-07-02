@@ -4,9 +4,9 @@
 
 ## TL;DR
 
-- **Repo:** `SoW-build`, branch `main`, **everything committed + pushed to origin/main** (HEAD `11d7e6b`; remote `git@github.com:SiWarlock/AI-System-Of-Work-Assistant-Agent.git`). Working tree clean.
-- **Phases 0–7 are COMPLETE and CERTIFIED**, and the **worker-wiring proof spine is DONE (2026-07-02)** — the 3 fully-wireable §9 drivers (meeting-closeout, approval-flow, ingestion-triage) now RUN live on a real Temporal worker over real adapters (`SOW_TEMPORAL=1` 4/4).
-- **Repo-wide: 2447 tests green + 5 gated skip + 2 todo; typecheck 10/10 packages clean; `pnpm audit --prod` clean.**
+- **Repo:** `SoW-build`, branch `main`, **everything committed + pushed to origin/main** (latest code commit `c06975d` + the session-009 close-out docs on top; remote `git@github.com:SiWarlock/AI-System-Of-Work-Assistant-Agent.git`). Working tree clean.
+- **Phases 0–7 are COMPLETE and CERTIFIED**, and the **worker-wiring proof spine is DONE + phase-exit CLEAR (2026-07-02)** — the 3 fully-wireable §9 drivers (meeting-closeout, approval-flow, ingestion-triage) now RUN live on a real Temporal worker over real adapters (`SOW_TEMPORAL=1` 4/4). Formal phase-exit auditors all **CLEAR** (`docs/audits/worker-wiring-{arch-drift,security,reachability}.md`); the **Phase-7 reachability waiver is discharged** for the wired paths.
+- **Repo-wide: 2448 tests green + 5 gated skip + 2 todo; typecheck 10/10 packages clean; `pnpm audit --prod` clean.**
 - **Next:** **Phase 8 (§10 Local App API, worker track)** ∥ **Phase 10 (cross-cutting, eval-security)** — different tracks, may run 2 concurrent Workflows. (The worker-wiring wave was scoped to the proof spine; the other 10 drivers' 40 fake-only activities are deferred by natural phase — see `worker-wiring-scope` memory + session 009.)
 
 ## What the product is
