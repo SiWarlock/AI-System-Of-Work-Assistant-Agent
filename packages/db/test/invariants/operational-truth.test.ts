@@ -192,6 +192,22 @@ describe("Invariant 4 — read-model rebuildability vs operational truth (§4)",
       }
     }
   });
+
+  it("write_receipts is operational truth (WW-1 exactly-once proof) — never rebuildable, refused as a rebuild target", () => {
+    // Losing the external-write receipts would let a rebuilt worker re-issue an
+    // already-committed external write (safety rule 3), so write_receipts is
+    // authoritative truth, not a read model — the type-level rebuild guard must
+    // cover it (arch-drift phase-exit STALE-DOC: it was missing from the union).
+    expect(durabilityOf("write_receipts")).toBe("operational_truth");
+    expect(isRebuildable("write_receipts")).toBe(false);
+    expect(isOperationalTruth("write_receipts")).toBe(true);
+    const r = assertRebuildTarget("write_receipts");
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) {
+      expect(r.error.code).toBe("rebuild_truth_excluded");
+      expect(r.error.domain).toBe("write_receipts");
+    }
+  });
 });
 
 // --- DbError mapping: adapters re-emit invariant violations as DbError -------

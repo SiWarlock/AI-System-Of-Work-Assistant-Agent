@@ -48,6 +48,7 @@ export type OperationalDomain =
   | "workflow_runs"
   | "provider_state"
   | "workspace_config"
+  | "write_receipts"
   | "read_models"
   | "gcl_projections";
 
@@ -76,10 +77,13 @@ export const OPERATIONAL_TRUTH_DOMAINS = [
 /**
  * Per-domain durability. The §4 five are operational truth; read models are
  * rebuildable; GCL projections are derived (re-derivable). Workflow runs,
- * provider state, and workspace config are operational state that is likewise
- * NOT a read-model and therefore NOT a rebuild target — classified as
+ * provider state, workspace config, and write_receipts are operational state that
+ * is likewise NOT a read-model and therefore NOT a rebuild target — classified as
  * operational_truth so a rebuild never drops them (matches the repository
- * interface classification, §4).
+ * interface classification, §4). write_receipts holds the external-write
+ * exactly-once proofs (WW-1 / §8 / safety rule 3): losing it would let a rebuilt
+ * worker re-issue an already-committed external write, so it is authoritative
+ * truth that MUST survive a rebuild, never re-derivable.
  */
 export const DOMAIN_DURABILITY: Record<OperationalDomain, DurabilityClass> = {
   event_log: "operational_truth",
@@ -90,6 +94,7 @@ export const DOMAIN_DURABILITY: Record<OperationalDomain, DurabilityClass> = {
   workflow_runs: "operational_truth",
   provider_state: "operational_truth",
   workspace_config: "operational_truth",
+  write_receipts: "operational_truth",
   read_models: "rebuildable",
   gcl_projections: "derived",
 };
