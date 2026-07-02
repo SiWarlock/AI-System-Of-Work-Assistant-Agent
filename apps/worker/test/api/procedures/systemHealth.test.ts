@@ -152,6 +152,41 @@ describe("buildSystemHealthRouter — Employer-Work egress status (REQ-S-002)", 
       expect(res.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
     }
   });
+
+  it("an over-broad port result cannot leak extra fields — only the allowlisted egress fields cross", async () => {
+    // A port (or a future @sow/db binding) that returns an OVER-BROAD object with
+    // an extra, non-UI-safe key must not ride that key out to the renderer. The
+    // procedure reconstructs the egress status from ONLY the allowlisted fields.
+    const leakyValue = {
+      workspaceId: KNOWN_WORKSPACE,
+      employerRawEgressAcknowledged: true,
+      zeroEgressOnly: false,
+      // Adversarial extra keys the port must NOT be able to leak through.
+      rawEmployerContent: "secret quarterly numbers",
+      keychainRef: "kc-ref://keychain/session-token",
+    };
+    const leakyPort = fakePort({
+      egressStatus: () =>
+        ok(leakyValue) as ReturnType<SystemHealthQueryPort["egressStatus"]>,
+    });
+    const caller = makeCaller(leakyPort);
+    const res = await caller.health.egressStatus({ workspaceId: KNOWN_WORKSPACE });
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) {
+      // Only the three allowlisted fields cross — the injected keys are gone.
+      expect(fieldSet(res.value)).toEqual([
+        "employerRawEgressAcknowledged",
+        "workspaceId",
+        "zeroEgressOnly",
+      ]);
+      expect(asRecord(res.value).rawEmployerContent).toBeUndefined();
+      expect(asRecord(res.value).keychainRef).toBeUndefined();
+      // The allowlisted values are preserved verbatim.
+      expect(res.value.workspaceId).toBe(KNOWN_WORKSPACE);
+      expect(res.value.employerRawEgressAcknowledged).toBe(true);
+      expect(res.value.zeroEgressOnly).toBe(false);
+    }
+  });
 });
 
 describe("buildSystemHealthRouter — §16 boundary", () => {

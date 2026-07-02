@@ -15,7 +15,7 @@ import { processorId } from "@sow/contracts";
 const LOCAL_PROVIDERS: ReadonlySet<ProviderId> = new Set<ProviderId>(["ollama", "lm_studio"]);
 
 /** The substring before the earliest of `delimiters`, or the whole string if none occur. */
-function firstSegment(str: string, delimiters: string): string {
+export function firstSegment(str: string, delimiters: string): string {
   let cut = str.length;
   for (const d of delimiters) {
     const i = str.indexOf(d);
@@ -25,12 +25,27 @@ function firstSegment(str: string, delimiters: string): string {
 }
 
 /**
- * Extract the host from an endpoint string, or null if unparseable. Handles
- * `scheme://`, protocol-relative `//`, `user@`, `host:port`, bracketed IPv6
- * (`[::1]:port`), bare IPv6 literals, and trailing `/path?query#frag`. Lowercased.
- * Pure; never throws (returns null on anything it can't reduce to a host).
+ * Isolate the AUTHORITY (`host[:port]`, lowercased) from an endpoint / URL /
+ * Origin string, or null if it can't be reduced to a non-empty authority.
+ *
+ * THIS IS THE Lesson-4-SAFE URL-authority isolator — the SINGLE vetted copy
+ * (root CLAUDE.md Lesson 4). The ORDER of stripping is a SECURITY BOUNDARY:
+ *   1. strip an explicit `scheme://` (or protocol-relative `//`) prefix,
+ *   2. strip path / query / fragment — delimiter set `/?#\` (backslash is a
+ *      path separator under the WHATWG special-scheme rule),
+ *   3. strip userinfo — the LAST `@` separates userinfo from host.
+ * Step 2 MUST precede step 3: an `@` that appears AFTER the first `/ ? # \` is
+ * part of the path/query/fragment, NOT userinfo. Stripping userinfo first was
+ * the loopback-spoof hole — `evil.com/@127.0.0.1` was misread as host
+ * `127.0.0.1`. Do NOT reorder these steps.
+ *
+ * The PORT IS PRESERVED (unlike {@link extractHost}) — a port-aware allowlist
+ * (e.g. the worker's Origin/Host allowlist whose entries carry `:port`) needs
+ * `host:port` so an off-port caller does not collapse onto an on-port entry.
+ * Bracketed / bare IPv6 literals are preserved as written (brackets kept).
+ * Pure; never throws.
  */
-function extractHost(raw: string): string | null {
+export function extractAuthority(raw: string): string | null {
   let s = raw.trim();
   if (s.length === 0) return null;
 
@@ -52,28 +67,50 @@ function extractHost(raw: string): string | null {
   if (s.length === 0) return null;
 
   // Within the authority, strip userinfo (`user:pass@host`) — the LAST `@`
-  // separates userinfo from host (WHATWG). The host is what matters for loopback.
+  // separates userinfo from host (WHATWG). The host[:port] is what remains.
   const at = s.lastIndexOf("@");
   if (at >= 0) s = s.slice(at + 1);
   if (s.length === 0) return null;
+
+  return s.toLowerCase();
+}
+
+/**
+ * Extract the bare host from an endpoint string, or null if unparseable — the
+ * {@link extractAuthority} authority with the port stripped (and IPv6 brackets
+ * removed). Handles `scheme://`, protocol-relative `//`, `user@`, `host:port`,
+ * bracketed IPv6 (`[::1]:port`), bare IPv6 literals, and `/path?query#frag`.
+ * Lowercased. Pure; never throws (returns null on anything it can't reduce).
+ */
+export function extractHost(raw: string): string | null {
+  const authority = extractAuthority(raw);
+  if (authority === null || authority.length === 0) return null;
+  const s = authority;
 
   // Bracketed IPv6: `[::1]` or `[::1]:port` → the inner literal.
   if (s.startsWith("[")) {
     const close = s.indexOf("]");
     if (close < 0) return null;
-    return s.slice(1, close).toLowerCase();
+    return s.slice(1, close);
   }
 
   const colons = (s.match(/:/g) ?? []).length;
   // A bare IPv6 literal (no brackets) has ≥2 colons and carries no port → as-is.
-  if (colons >= 2) return s.toLowerCase();
+  if (colons >= 2) return s;
   // `host:port` → strip the single port.
-  if (colons === 1) return s.slice(0, s.indexOf(":")).toLowerCase();
-  return s.toLowerCase();
+  if (colons === 1) return s.slice(0, s.indexOf(":"));
+  return s;
 }
 
-/** True iff `host` is a loopback host: `localhost`, `::1`, or the 127.0.0.0/8 range. */
-function isLoopbackHost(host: string): boolean {
+/**
+ * True iff `host` is a loopback host: `localhost`, `::1` (and its long form), or
+ * an address in the IPv4 127.0.0.0/8 range. The EXACT four-octet match on the
+ * 127-range rejects the prefix/suffix spoofs `127.0.0.1.attacker.com` /
+ * `localhost.evil.com` (extra labels ⇒ no match). `host` is expected already
+ * lowercased (as {@link extractHost} / the worker bind-addr normalizer yield).
+ * This is the SINGLE vetted loopback predicate (root CLAUDE.md Lesson 4). Pure.
+ */
+export function isLoopbackHost(host: string): boolean {
   if (host === "localhost") return true;
   if (host === "::1" || host === "0:0:0:0:0:0:0:1") return true;
   // IPv4 loopback range 127.0.0.0/8. The EXACT four-octet match rejects the

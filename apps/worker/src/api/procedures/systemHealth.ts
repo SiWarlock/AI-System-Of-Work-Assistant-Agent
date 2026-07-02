@@ -56,9 +56,10 @@ export interface UiSafeEgressStatus {
  * The System-Health read-model source. READ-ONLY; each method returns a typed
  * `Result`. `healthItems` hands back FROZEN {@link HealthItem} records — the
  * procedure does the UI-safe projection, so the redaction boundary lives in ONE
- * place (the 8.2 projector). `egressStatus` returns the UI-safe egress shape
- * directly (no domain secret to drop); an unknown workspace is the port's typed
- * not-found err (fail-closed, no partial raw leak), NOT a throw.
+ * place (the 8.2 projector). `egressStatus` returns the UI-safe egress shape; the
+ * procedure RE-PROJECTS it to the allowlisted fields (defense-in-depth — an
+ * over-broad port result cannot leak an extra field). An unknown workspace is the
+ * port's typed not-found err (fail-closed, no partial raw leak), NOT a throw.
  *
  * The integrator binds this to the @sow/db read-models + the egress-policy read;
  * unit tests inject a fake.
@@ -107,6 +108,28 @@ function projectHealthItems(
   return r.ok ? ok(r.value.map(toUiSafeHealthItem)) : r;
 }
 
+/**
+ * Reconstruct a UI-safe egress status from ONLY the three allowlisted fields.
+ * Defense-in-depth: like every other query surface, the egress status is
+ * re-projected rather than passed through verbatim — so a port (or a future
+ * @sow/db binding) that returned an OVER-BROAD object cannot leak an extra field
+ * (raw content, a secret, an internal ref) onto the renderer. Pure; no throw.
+ */
+function toUiSafeEgressStatus(status: UiSafeEgressStatus): UiSafeEgressStatus {
+  return {
+    workspaceId: status.workspaceId,
+    employerRawEgressAcknowledged: status.employerRawEgressAcknowledged,
+    zeroEgressOnly: status.zeroEgressOnly,
+  };
+}
+
+/** Map a port's egress-status `Result` through the UI-safe egress reconstruction. */
+function projectEgressStatus(
+  r: Result<UiSafeEgressStatus, FailureVariant>,
+): Result<UiSafeEgressStatus, FailureVariant> {
+  return r.ok ? ok(toUiSafeEgressStatus(r.value)) : r;
+}
+
 // ── Router factory ────────────────────────────────────────────────────────────
 
 /**
@@ -126,11 +149,13 @@ export function buildSystemHealthRouter(deps: SystemHealthRouterDeps) {
       ),
     ),
 
-    /** Employer-Work egress-acknowledgment status (REQ-S-002); unknown ws → err. */
+    /** Employer-Work egress-acknowledgment status (REQ-S-002); unknown ws → err.
+     *  Re-projected to the allowlisted egress fields — no verbatim pass-through, so
+     *  an over-broad port result cannot leak an extra field to the renderer. */
     egressStatus: publicProcedure.input(parseWorkspaceInput).query(
       authedResolver<WorkspaceInput, UiSafeEgressStatus>(
         (_ctx, input): Result<UiSafeEgressStatus, FailureVariant> =>
-          systemHealth.egressStatus(input.workspaceId),
+          projectEgressStatus(systemHealth.egressStatus(input.workspaceId)),
       ),
     ),
   });

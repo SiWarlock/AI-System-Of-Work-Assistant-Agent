@@ -10,24 +10,14 @@
 // §16: never throws — returns a typed Result. FAIL-CLOSED: a missing / empty /
 // unparseable / suffix-spoofed address ⇒ refuse. The check is on the raw BIND
 // address (host, no URL), so we validate it as a host literal directly.
+//
+// converge-url-authority: the loopback-host predicate is the SINGLE vetted copy
+// exported by @sow/policy (isLoopbackHost) — NOT a worker-local re-implementation
+// (root CLAUDE.md Lesson 4: two copies of a security predicate can drift). The
+// bind address is a bare host literal, so we normalize (trim + lowercase) and
+// hand it straight to the shared predicate.
 import { ok, err, type Result, type FailureVariant, failure } from "@sow/contracts";
-
-/**
- * True iff `host` is a loopback host literal: `localhost`, `::1` (and its long
- * form), or an address in the IPv4 127.0.0.0/8 range. The EXACT four-octet match
- * on the 127-range rejects the suffix-spoof `127.0.0.1.attacker.com` (extra
- * labels ⇒ no match); `localhost` must be exact so `localhost.evil.com` fails.
- */
-function isLoopbackAddr(host: string): boolean {
-  if (host === "localhost") return true;
-  if (host === "::1" || host === "0:0:0:0:0:0:0:1") return true;
-  const m = host.match(/^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (m === null) return false;
-  return m.slice(1).every((oct) => {
-    const n = Number(oct);
-    return n >= 0 && n <= 255;
-  });
-}
+import { isLoopbackHost } from "@sow/policy";
 
 /**
  * Assert that `addr` is a loopback bind address. Refuses `0.0.0.0` / `::`
@@ -44,7 +34,7 @@ export function assertLoopbackBind(
   if (typeof addr !== "string") return refused();
   const host = addr.trim().toLowerCase();
   if (host.length === 0) return refused();
-  if (!isLoopbackAddr(host)) return refused();
+  if (!isLoopbackHost(host)) return refused();
   return ok({ addr: host });
 }
 
