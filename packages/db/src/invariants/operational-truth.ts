@@ -264,6 +264,48 @@ export function casVerdictToResult<T>(
   }
 }
 
+/**
+ * The value of a resolved CAS `ok` outcome, carrying the apply-vs-noop `kind` the
+ * caller needs for exactly-once. This SURFACES the distinction `casVerdictToResult`
+ * collapses (both `apply` and `idempotent_noop` return `ok`) so the caller learns
+ * whether IT caused the durable transition.
+ */
+export interface CasOutcome<T> {
+  /** The record after the CAS resolved (next on apply; current on a no-op). */
+  readonly value: T;
+  /** True IFF this CAS caused a genuine durable transition (`apply`). */
+  readonly applied: boolean;
+}
+
+/**
+ * Map a CAS verdict onto a typed `Result<CasOutcome<T>, InvariantViolation>` that
+ * THREADS the apply-vs-noop kind (closing the exactly-once TOCTOU — REQ-F-012, §9):
+ *   - `apply`           → ok({ value: applied, applied: true })  (genuine transition)
+ *   - `idempotent_noop` → ok({ value: current, applied: false }) (replay / same-target
+ *                          contender — did NOT cause the transition; NO durable write)
+ *   - `stale_conflict`  → err(stale_transition) (the loser; never a 2nd apply)
+ * Both `ok` outcomes keep replay idempotent (no error); only `applied` differs.
+ */
+export function casVerdictToOutcome<T>(
+  verdict: CasVerdict,
+  applied: T,
+  current: T,
+): Result<CasOutcome<T>, InvariantViolation> {
+  switch (verdict.kind) {
+    case "apply":
+      return ok({ value: applied, applied: true });
+    case "idempotent_noop":
+      return ok({ value: current, applied: false });
+    case "stale_conflict":
+      return err({
+        code: "stale_transition",
+        domain: "approvals",
+        message:
+          "approval transition lost the compare-and-set (stale expectedStatus or tombstoned record); no second apply (REQ-F-012, §9)",
+      });
+  }
+}
+
 // --- Invariant 4: read models REBUILDABLE, operational truth is NOT ----------
 
 /**

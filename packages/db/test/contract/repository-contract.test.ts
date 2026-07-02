@@ -464,15 +464,22 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(got.expiresAt).toBeUndefined();
     });
 
-    it("applyTransition is EXACTLY ONCE: the winning CAS applies, a true replay is an idempotent no-op returning ok(current)", async () => {
+    it("applyTransition is EXACTLY ONCE: the winning CAS applies (applied:true), a true replay is an idempotent no-op (applied:false) returning ok(current)", async () => {
       unwrap(await repos.approvals.create(validApproval));
       const next: Approval = { ...validApproval, status: "approved" };
-      expect(unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", next)).status).toBe("approved");
+      // A GENUINE durable transition: the record moves to the target AND `applied` is
+      // true — this caller caused it (only it may drive a downstream dispatch).
+      const first = unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", next));
+      expect(first.approval.status).toBe("approved");
+      expect(first.applied).toBe(true);
       // A TRUE replay (same expectedFrom + same target as the landed transition) is
-      // an idempotent no-op: it returns ok(current), NOT a second apply and NOT a
-      // conflict — matching the Approval domain machine's idempotentTerminalReentry.
+      // an idempotent no-op: it returns ok(current) with `applied` FALSE (it did NOT
+      // cause the transition), NOT a second apply and NOT a conflict — matching the
+      // Approval domain machine's idempotentTerminalReentry AND closing the
+      // exactly-once TOCTOU (the caller learns it must not dispatch again).
       const replay = unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", next));
-      expect(replay.status).toBe("approved");
+      expect(replay.approval.status).toBe("approved");
+      expect(replay.applied).toBe(false);
       expect(unwrap(await repos.approvals.get(validApproval.id)).status).toBe("approved");
     });
 
@@ -710,11 +717,17 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       unwrap(await repos.approvals.create(validApproval)); // status: pending
       const approve: Approval = { ...validApproval, status: "approved" };
       const reject: Approval = { ...validApproval, status: "rejected" };
-      // Contender A (e.g. Mac) wins the pending→approved compare-and-set.
-      expect(unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", approve)).status).toBe("approved");
+      // Contender A (e.g. Mac) wins the pending→approved compare-and-set —
+      // a GENUINE durable transition → applied:true (only it may dispatch).
+      const won = unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", approve));
+      expect(won.approval.status).toBe("approved");
+      expect(won.applied).toBe(true);
       // A TRUE replay of the winning transition (same expectedFrom + same target)
-      // is an idempotent no-op: ok(current), never a second apply (REQ-F-012).
-      expect(unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", approve)).status).toBe("approved");
+      // is an idempotent no-op: ok(current) with applied:FALSE (it did NOT cause the
+      // transition, so it must not dispatch), never a second apply (REQ-F-012).
+      const replay = unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", approve));
+      expect(replay.approval.status).toBe("approved");
+      expect(replay.applied).toBe(false);
       // Contender B (e.g. Telegram) arrives with the SAME, now-stale `pending`
       // expectation but a DIFFERENT target (reject) → it loses; no second apply.
       expect(unwrapErr(await repos.approvals.applyTransition(validApproval.id, "pending", reject)).code).toBe("conflict");

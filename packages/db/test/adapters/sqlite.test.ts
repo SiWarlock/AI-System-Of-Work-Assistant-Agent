@@ -254,11 +254,16 @@ describe("ApprovalRepository (sqlite)", () => {
     unwrap(await repos.approvals.create(validApproval));
     const approve: Approval = { ...validApproval, status: "approved" };
     const reject: Approval = { ...validApproval, status: "rejected" };
-    expect(unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", approve)).status).toBe("approved");
+    const first = unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", approve));
+    expect(first.approval.status).toBe("approved");
+    expect(first.applied).toBe(true); // a GENUINE durable transition — this caller caused it
     // A TRUE replay (same expectedFrom + same target as the landed transition) is an
-    // idempotent no-op returning ok(current) — never a second apply, never a conflict
-    // (matches the Approval domain machine's idempotentTerminalReentry, REQ-F-012).
-    expect(unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", approve)).status).toBe("approved");
+    // idempotent no-op returning ok(current) with `applied` FALSE — never a second
+    // apply, never a conflict (matches idempotentTerminalReentry, REQ-F-012) and
+    // surfaces that this call did NOT cause the transition (closes the TOCTOU).
+    const replay = unwrap(await repos.approvals.applyTransition(validApproval.id, "pending", approve));
+    expect(replay.approval.status).toBe("approved");
+    expect(replay.applied).toBe(false);
     // A stale CAS with the same now-stale `pending` expectation but a DIFFERENT target loses.
     const stale = await repos.approvals.applyTransition(validApproval.id, "pending", reject);
     expect(unwrapErr(stale).code).toBe("conflict");

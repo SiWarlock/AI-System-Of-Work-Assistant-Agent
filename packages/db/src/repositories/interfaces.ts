@@ -168,6 +168,24 @@ export interface AuditQuery {
 }
 
 /**
+ * The outcome of an EXACTLY-ONCE approval compare-and-set. `approval` is the
+ * record AFTER the operation resolved. `applied` distinguishes the two `ok`
+ * outcomes the CAS produces and is LOAD-BEARING for exactly-once callers:
+ *   - `applied: true`  — THIS call caused a genuine durable transition
+ *                        (current === expectedFrom → the record moved to `next`).
+ *   - `applied: false` — an idempotent no-op: the desired end-state ALREADY held
+ *                        (a Temporal replay OR a concurrent second-channel CAS that
+ *                        did NOT cause the transition). `approval` is the current
+ *                        already-applied record; NO durable write happened.
+ * Only the genuine transitioner (`applied: true`) may drive a downstream side
+ * effect (dispatch) — a no-op contender must NOT (REQ-F-012, §9 exactly-once).
+ */
+export interface ApprovalTransitionOutcome {
+  readonly approval: Approval;
+  readonly applied: boolean;
+}
+
+/**
  * Approvals inbox — OPERATIONAL TRUTH. Append-on-create, then MUTABLE status via
  * EXACTLY-ONCE transitions (REQ-F-012); a terminal status (approved|edited|
  * rejected|expired) is the TOMBSTONE — there is no hard delete.
@@ -178,14 +196,23 @@ export interface ApprovalRepository {
   listByStatus(status: Approval["status"]): DbResult<Approval[]>;
   /**
    * Apply a single approval transition EXACTLY ONCE. `expectedFromStatus` makes
-   * the write a compare-and-set: a mismatch returns a `conflict` (the transition
-   * already applied / the record moved) so a replay is an idempotent no-op.
+   * the write a compare-and-set. The `ok` outcome carries `applied`:
+   *   - a genuine durable transition (current === expectedFrom) → `applied: true`
+   *     with the NEXT record;
+   *   - an idempotent no-op (the record already sits in the target — a replay OR a
+   *     concurrent same-target contender) → `applied: false` with the CURRENT
+   *     record and NO durable write;
+   *   - a stale/lost CAS (the record moved to a DIFFERENT non-target state, or is a
+   *     different tombstone) → a typed `conflict`;
+   *   - an absent record → `not_found`.
+   * Surfacing `applied` closes the exactly-once TOCTOU: the caller learns whether
+   * IT caused the transition (and may dispatch) vs merely observed it already done.
    */
   applyTransition(
     id: Approval["id"],
     expectedFromStatus: Approval["status"],
     next: Approval,
-  ): DbResult<Approval>;
+  ): DbResult<ApprovalTransitionOutcome>;
 }
 
 /**

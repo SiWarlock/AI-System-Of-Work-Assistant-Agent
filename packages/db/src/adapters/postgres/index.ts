@@ -40,6 +40,7 @@ import type {
 } from "@sow/contracts";
 import type {
   ApprovalRepository,
+  ApprovalTransitionOutcome,
   AuditQuery,
   AuditRepository,
   ConnectorCursorRecord,
@@ -58,7 +59,7 @@ import type {
 } from "../../repositories/interfaces";
 import * as schema from "../../schema/pg/index";
 import {
-  casVerdictToResult,
+  casVerdictToOutcome,
   decideApprovalCas,
   invariantToDbErrorCode,
   type CasVerdict,
@@ -66,14 +67,23 @@ import {
 import { notFound, toDbError } from "./errors";
 
 /**
- * Bridge the pure invariant CAS verdict onto the adapter's §16 DbError taxonomy.
- * The exactly-once SEMANTICS live once in `decideApprovalCas`/`casVerdictToResult`
+ * Bridge the pure invariant CAS verdict onto the adapter's §16 DbError taxonomy,
+ * SURFACING the apply-vs-noop `applied` flag (exactly-once, REQ-F-012 — closes the
+ * TOCTOU: a genuine durable transition returns `applied:true`; an idempotent no-op
+ * — replay OR concurrent same-target contender — returns `applied:false`, both `ok`).
+ * The exactly-once SEMANTICS live once in `decideApprovalCas`/`casVerdictToOutcome`
  * (unit 2.5, shared by both dialects); this only re-codes an InvariantViolation as
  * the adapter's enumerable DbError so the rejection re-emits cleanly.
  */
-function casDbResult<T>(verdict: CasVerdict, applied: T, current: T): Result<T, DbError> {
-  const r = casVerdictToResult(verdict, applied, current);
-  return r.ok ? r : err({ code: invariantToDbErrorCode(r.error.code), message: r.error.message });
+function casDbResult(
+  verdict: CasVerdict,
+  applied: Approval,
+  current: Approval,
+): Result<ApprovalTransitionOutcome, DbError> {
+  const r = casVerdictToOutcome(verdict, applied, current);
+  return r.ok
+    ? ok({ approval: r.value.value, applied: r.value.applied })
+    : err({ code: invariantToDbErrorCode(r.error.code), message: r.error.message });
 }
 
 /** All ten Postgres repositories returned by the factory (one per §4 domain). */
