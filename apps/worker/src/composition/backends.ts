@@ -1,0 +1,698 @@
+// @sow/worker — the proof-spine COMPOSITION ROOT (backends half).
+//
+// This module binds the pure @sow/workflows activity factories to the REAL
+// downstream adapters (@sow/db · @sow/knowledge · @sow/integrations · @sow/providers
+// · @sow/policy) and marks every per-vendor TRANSPORT as a clearly-labelled
+// injection point. It is the ONLY place in the worker allowed to open a database,
+// a vault, or a vendor client — the activities themselves stay effect-injected and
+// unit-testable (root CLAUDE.md two-layer split).
+//
+// IMPORT DIRECTION (root CLAUDE.md §2.5): apps/worker may import every @sow/*
+// package. It NEVER makes @sow/db import @sow/integrations — the ReceiptStore
+// adapter below is exactly the worker-layer bridge the @sow/db
+// `WriteReceiptRepository` doc calls for ("the worker layer adapts this @sow/db repo
+// onto the integrations `ReceiptStore` interface").
+//
+// TRANSPORT INJECTION POINTS (carry-forward): the real vendor SDKs (a model
+// provider HTTP client, a per-target write client, the GBrain index client, the
+// correlation signal source) are NOT this slice. Each seam below is a DETERMINISTIC
+// STUB marked `// REAL-SDK INJECTION POINT (carry-forward: vendor transport)` so the
+// spine is provably wired end-to-end now and the real transports drop in later
+// without touching the activities.
+//
+// §16: every adapter method returns a typed value / Result — nothing throws across
+// a boundary the activities consume.
+import { mkdtempSync, existsSync } from "node:fs";
+import { readFile, readdir, writeFile, rename, rm, mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, dirname, relative, resolve, sep } from "node:path";
+import { createRequire } from "node:module";
+
+import { isOk, isErr, actionId as makeActionId } from "@sow/contracts";
+import type {
+  ProposedAction,
+  ExternalWriteEnvelope,
+  TargetSystem,
+  WriteReceipt,
+  HealthItem,
+  FailureClass,
+  AuditId,
+} from "@sow/contracts";
+
+// ── @sow/db: the real operational store (sqlite + genesis migration) ──────────
+import {
+  createSqliteRepositories,
+  createSqliteMigrationEngine,
+  applyMigrations,
+  type SqliteRepositories,
+  type WriteReceiptRepository,
+  type ReserveOutcome,
+  type WriteReceiptRow,
+  type DbError,
+} from "@sow/db";
+
+// ── @sow/integrations: the Tool Gateway seams the worker adapts onto ──────────
+import type {
+  ReceiptStore,
+  ReceiptRecord,
+  ReceiptReservation,
+} from "@sow/integrations";
+import {
+  makeTargetWriteAdapter,
+  type AdapterTransport,
+  type AdapterTransportRequest,
+  type TransportResponse,
+  type TargetWriteAdapter,
+} from "@sow/integrations";
+
+// ── @sow/knowledge: the sole Markdown writer + the GBrain index seam ──────────
+import type { VaultFs } from "@sow/knowledge";
+import type {
+  IndexApplyClient,
+  IndexApplyRequest,
+  IndexApplyReceipt,
+  IndexApplyError,
+} from "@sow/knowledge";
+import type { Result } from "@sow/contracts";
+import { ok, err } from "@sow/contracts";
+
+// ── @sow/providers: the Broker + its deterministic gate stubs ─────────────────
+import {
+  createBroker,
+  makeAgentResult,
+  type Broker,
+  type BrokerJobRequest,
+  type BrokerOutcome,
+  type ProviderRunner,
+  type HealthGate,
+  type BudgetGate,
+  type SchemaGate,
+  type BrokerCandidate,
+  type EnforcedBudget,
+} from "@sow/providers";
+import type { AgentResult } from "@sow/providers";
+
+// ── @sow/policy: the fail-closed approval unwrap ──────────────────────────────
+import {
+  requiresApproval,
+  isAllow,
+  buildAuditSignal,
+  type PolicyDecision,
+  type ApprovalVerdict,
+  type ResolvedWorkspacePolicy,
+  type LocalProviderConfig,
+} from "@sow/policy";
+
+// ── @sow/workflows: the operational HealthItemStore port ──────────────────────
+import type { HealthItemStore } from "@sow/workflows/ports/operational";
+
+// ---------------------------------------------------------------------------
+// (0) config
+// ---------------------------------------------------------------------------
+
+/**
+ * Worker-backend configuration. A tmpdir vault + an in-memory sqlite are the
+ * defaults so a test (or a first-boot smoke run) needs no external state; a real
+ * deployment passes a durable `dbPath` + `vaultRoot`.
+ */
+export interface BackendsConfig {
+  /** better-sqlite3 database path. `:memory:` (the default) is fine for tests. */
+  readonly dbPath?: string;
+  /** Vault root the KnowledgeWriter commits under. Defaults to a fresh tmpdir. */
+  readonly vaultRoot?: string;
+  /** Wall clock (ISO-8601). Defaults to `() => new Date().toISOString()`. */
+  readonly now?: () => string;
+  /**
+   * The single local zero-egress endpoint the broker's localConfig admits. The
+   * Phase-3/5 carry-forward requires localConfig ALWAYS be supplied to the broker
+   * (never undefined), so the meeting.close job can never silently widen to a cloud
+   * route.
+   */
+  readonly allowedLocalEndpoints?: readonly string[];
+}
+
+// ---------------------------------------------------------------------------
+// (1) sqlite open + genesis migration
+// ---------------------------------------------------------------------------
+
+const require_ = createRequire(import.meta.url);
+
+/** Resolve the @sow/db genesis SQLite migrations folder from the installed package. */
+function resolveSqliteMigrationsFolder(): string {
+  // @sow/db ships `migrations/sqlite/{meta/_journal.json,0000_genesis.sql}`. Resolve
+  // the package entry (`.../packages/db/src/index.ts`) then ascend to the package root
+  // (the parent of `src`) and take its `migrations/sqlite` sibling. Drizzle's migrator
+  // reads `meta/_journal.json` under the folder, so that is the presence guard.
+  const dbEntry = require_.resolve("@sow/db");
+  let dir = dirname(dbEntry); // .../packages/db/src
+  for (let i = 0; i < 8; i += 1) {
+    const candidate = join(dir, "migrations", "sqlite");
+    if (existsSync(join(candidate, "meta", "_journal.json"))) {
+      return candidate;
+    }
+    dir = dirname(dir);
+  }
+  throw new Error("could not locate @sow/db migrations/sqlite genesis folder");
+}
+
+/** A live sqlite handle + the repositories built over it. */
+export interface OpenDatabase {
+  readonly db: unknown; // the drizzle BetterSQLite3Database (opaque here)
+  readonly conn: { close(): void };
+  readonly repos: SqliteRepositories;
+}
+
+/**
+ * Open better-sqlite3, run the genesis migration through the REAL §4 lifecycle
+ * (createSqliteMigrationEngine → applyMigrations), and build the operational-store
+ * repositories. The genesis migration materializes the write_receipts table + the
+ * (targetSystem, canonicalObjectKey) / idempotencyKey unique indexes the exactly-once
+ * gate relies on. Throws only on a genuine unrecoverable open/migrate fault (a
+ * composition-root boot failure is the one place a throw is appropriate — there is
+ * no caller to fold it for).
+ */
+export async function openDatabase(config: BackendsConfig = {}): Promise<OpenDatabase> {
+  // better-sqlite3 + drizzle are loaded through the worker's own resolution so the
+  // native binding is the workspace-hoisted one.
+  const Database = require_("better-sqlite3") as new (path: string) => {
+    close(): void;
+  };
+  const { drizzle } = require_("drizzle-orm/better-sqlite3") as {
+    drizzle: (conn: unknown) => unknown;
+  };
+
+  const conn = new Database(config.dbPath ?? ":memory:");
+  const engine = createSqliteMigrationEngine(conn as never);
+  const migrated = await applyMigrations(engine, {
+    migrationsFolder: resolveSqliteMigrationsFolder(),
+  });
+  if (isErr(migrated)) {
+    throw new Error(
+      `worker composition: genesis migration failed (${migrated.error.reason}): ${migrated.error.message}`,
+    );
+  }
+  // The engine owns the live connection (restore swaps it) — read it back.
+  const live = engine.connection as unknown as { close(): void };
+  const db = drizzle(live);
+  const repos = createSqliteRepositories(db as never);
+  return { db, conn: live, repos };
+}
+
+// ---------------------------------------------------------------------------
+// (2) VaultFs — a real filesystem-backed vault for the KnowledgeWriter
+// ---------------------------------------------------------------------------
+
+/**
+ * A real, filesystem-backed {@link VaultFs} rooted at `root`. Paths are
+ * vault-relative; `read` returns `undefined` for a missing file (never throws for
+ * absence); `remove` is a no-op on an absent file. A tmpdir root is fine for tests;
+ * a deployment passes the workspace's markdownRepoPath.
+ */
+export function createFsVault(root: string): VaultFs {
+  const rootResolved = resolve(root);
+  const abs = (p: string): string => {
+    const full = resolve(root, p);
+    // Containment (safety rule 4 / WS-4 — defense-in-depth): every vault path MUST
+    // stay UNDER the vault root. `resolve` normalizes `..` and lets an absolute `p`
+    // win, so a traversal (`../ws-other/x`) or absolute (`/etc/x`) path is refused
+    // here — the sole writer never writes outside the bound workspace vault, no
+    // matter who produced the path. Fail-closed: the throw surfaces as a
+    // KnowledgeWriter commit_failed (a typed WriteFailure), never a stray write.
+    if (full !== rootResolved && !full.startsWith(rootResolved + sep)) {
+      throw new Error(`vault path escapes the vault root (refused): ${p}`);
+    }
+    return full;
+  };
+  return {
+    async read(path: string): Promise<string | undefined> {
+      try {
+        return await readFile(abs(path), "utf8");
+      } catch {
+        return undefined;
+      }
+    },
+    async list(): Promise<string[]> {
+      const out: string[] = [];
+      const walk = async (dir: string): Promise<void> => {
+        let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
+        try {
+          entries = (await readdir(dir, { withFileTypes: true })) as never;
+        } catch {
+          return;
+        }
+        for (const e of entries) {
+          const name = String(e.name);
+          const full = join(dir, name);
+          if (e.isDirectory()) {
+            await walk(full);
+          } else if (e.isFile() && name.endsWith(".md")) {
+            out.push(relative(root, full).split(sep).join("/"));
+          }
+        }
+      };
+      await walk(root);
+      return out.sort();
+    },
+    async write(path: string, content: string): Promise<void> {
+      const full = abs(path);
+      await mkdir(dirname(full), { recursive: true });
+      await writeFile(full, content, "utf8");
+    },
+    async rename(from: string, to: string): Promise<void> {
+      const target = abs(to);
+      await mkdir(dirname(target), { recursive: true });
+      await rename(abs(from), target);
+    },
+    async remove(path: string): Promise<void> {
+      await rm(abs(path), { force: true });
+    },
+  };
+}
+
+/** Create a fresh throwaway vault root under the OS tmpdir (test/first-boot use). */
+export function makeTmpVaultRoot(): string {
+  return mkdtempSync(join(tmpdir(), "sow-vault-"));
+}
+
+// ---------------------------------------------------------------------------
+// (3) HealthItemStore — in-memory (Phase-10 carry-forward: persistent store)
+// ---------------------------------------------------------------------------
+
+/**
+ * An IN-MEMORY {@link HealthItemStore} keyed on the materializer's dedupe key
+ * (`failureClass|subjectRef`, which the materializer uses as the item id). A
+ * re-`put` under the same id is an UPSERT so a recurring failure never spawns a
+ * duplicate item (§9.11).
+ *
+ * CARRY-FORWARD (Phase 10): the durable HealthItem table is not in @sow/db yet — the
+ * §9 operational store owns it. This in-memory store is the interim binding so the
+ * spine's failure sink is wired now; swap it for the P2-backed adapter in Phase 10.
+ */
+export function createInMemoryHealthItemStore(): HealthItemStore {
+  const byId = new Map<string, HealthItem>();
+  return {
+    getByDedupeKey(dedupeKey: string): Promise<HealthItem | undefined> {
+      return Promise.resolve(byId.get(dedupeKey));
+    },
+    put(item: HealthItem): Promise<void> {
+      byId.set(item.id, item);
+      return Promise.resolve();
+    },
+    list(): Promise<HealthItem[]> {
+      return Promise.resolve([...byId.values()]);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// (4) ReceiptStore adapter — @sow/db WriteReceiptRepository → @sow/integrations
+// ---------------------------------------------------------------------------
+
+/** Map a @sow/db WriteReceiptRow onto the @sow/integrations ReceiptRecord (faithful). */
+function rowToReceiptRecord(row: WriteReceiptRow): ReceiptRecord | undefined {
+  // A row WITHOUT a receipt is a live RESERVATION (another worker mid-write) — it is
+  // NOT proof of an existing object, so it must NOT surface as a ReceiptRecord (that
+  // would let the existence check treat a bare reservation as a committed write and
+  // wrongly skip the create). Only a COMMITTED (receipt-present) row is a record.
+  if (row.receipt === undefined) return undefined;
+  return {
+    idempotencyKey: row.idempotencyKey,
+    canonicalObjectKey: row.canonicalObjectKey,
+    // @sow/db keeps targetSystem an OPEN string at the boundary; the integrations
+    // ReceiptRecord types it as TargetSystem — this is the worker's map point.
+    targetSystem: row.targetSystem as TargetSystem,
+    payloadHash: row.payloadHash,
+    receipt: row.receipt,
+    recordedAt: row.recordedAt,
+  };
+}
+
+/** Map an integrations ReceiptRecord back onto the @sow/db WriteReceiptRow (faithful). */
+function receiptRecordToRow(rec: ReceiptRecord): WriteReceiptRow {
+  return {
+    targetSystem: String(rec.targetSystem),
+    canonicalObjectKey: rec.canonicalObjectKey,
+    idempotencyKey: rec.idempotencyKey,
+    payloadHash: rec.payloadHash,
+    receipt: rec.receipt,
+    recordedAt: rec.recordedAt,
+  };
+}
+
+/**
+ * Adapt the @sow/db {@link WriteReceiptRepository} onto the @sow/integrations
+ * {@link ReceiptStore} the Tool Gateway consults (the worker-layer bridge; @sow/db
+ * MUST NOT import @sow/integrations). The critical, safety-bearing mapping:
+ *
+ *   • `reserve` — a @sow/db `{kind:"committed", record}` (a receipt already exists)
+ *     maps to the integrations `{kind:"committed", record}` so a REPLAY REUSES the
+ *     receipt and NEVER issues a second external create (safety rule 3 / inv-5). A
+ *     `reserved` / `in_progress` outcome maps 1:1.
+ *   • `getByIdempotencyKey` / `getByCanonicalObjectKey` — a @sow/db `not_found` is a
+ *     MISS → `undefined` (a lookup miss is not an error); a reserved-but-receiptless
+ *     row is also `undefined` (not a committed object).
+ *   • `put` — record the receipt (upgrades the reservation to committed).
+ *   • `release` — release a still-reserved placeholder on the fault path.
+ *
+ * Every @sow/db `DbError` on a genuine miss folds to `undefined`; a real fault is
+ * surfaced by rejecting the promise only where the ReceiptStore contract cannot
+ * express it (the gateway is fail-closed above this seam).
+ */
+export function createReceiptStoreAdapter(repo: WriteReceiptRepository): ReceiptStore {
+  return {
+    async getByIdempotencyKey(k: string): Promise<ReceiptRecord | undefined> {
+      const r = await repo.getByIdempotencyKey(k);
+      if (isErr(r)) return undefined; // not_found (or any lookup fault) → miss
+      return rowToReceiptRecord(r.value);
+    },
+    async getByCanonicalObjectKey(
+      targetSystem: TargetSystem,
+      k: string,
+    ): Promise<ReceiptRecord | undefined> {
+      const r = await repo.getByCanonicalObjectKey(String(targetSystem), k);
+      if (isErr(r)) return undefined;
+      return rowToReceiptRecord(r.value);
+    },
+    async reserve(
+      targetSystem: TargetSystem,
+      canonicalObjectKey: string,
+    ): Promise<ReceiptReservation> {
+      const r = await repo.reserve(String(targetSystem), canonicalObjectKey);
+      if (isErr(r)) {
+        // A reserve fault cannot be expressed as a reservation kind; fail closed by
+        // reporting `in_progress` so the gateway HOLDS + retries and NEVER creates a
+        // possible duplicate.
+        return { kind: "in_progress" };
+      }
+      const outcome: ReserveOutcome = r.value;
+      if (outcome.kind === "committed") {
+        const record = rowToReceiptRecord(outcome.record);
+        // A committed reserve ALWAYS carries a receipt; if the row were receiptless
+        // it would be a data defect — fail closed to in_progress rather than reuse an
+        // absent receipt.
+        if (record === undefined) return { kind: "in_progress" };
+        return { kind: "committed", record };
+      }
+      return outcome.kind === "reserved"
+        ? { kind: "reserved" }
+        : { kind: "in_progress" };
+    },
+    async release(targetSystem: TargetSystem, canonicalObjectKey: string): Promise<void> {
+      await repo.release(String(targetSystem), canonicalObjectKey);
+    },
+    async put(r: ReceiptRecord): Promise<void> {
+      await repo.put(receiptRecordToRow(r));
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// (5) The approval seam — fail-closed sync unwrap over @sow/policy
+// ---------------------------------------------------------------------------
+
+/**
+ * The gateway's `requireApproval` seam: a SYNC, bare-verdict predicate. It unwraps
+ * the @sow/policy {@link requiresApproval} PolicyDecision — `isAllow ? d.value :
+ * { requiresApproval: true }` — so a policy DENY FAILS CLOSED (approval required,
+ * never an auto-apply of an unclassifiable action; safety rule 2 / REQ-F-012). The
+ * resolved workspace posture is captured at bind time.
+ */
+export function makeRequireApproval(
+  resolved: ResolvedWorkspacePolicy,
+): (action: ProposedAction) => ApprovalVerdict {
+  return (action: ProposedAction): ApprovalVerdict => {
+    const decision: PolicyDecision<ApprovalVerdict> = requiresApproval(action, resolved);
+    return isAllow(decision) ? decision.value : { requiresApproval: true };
+  };
+}
+
+// ---------------------------------------------------------------------------
+// (6) Deterministic-stub TRANSPORTS (each a real-SDK injection point)
+// ---------------------------------------------------------------------------
+
+/**
+ * The candidate extraction the meeting.close job's provider run yields. Injected so a
+ * test pins a deterministic meeting output; the real transport streams a model's
+ * extraction here later.
+ */
+export interface StubMeetingExtraction {
+  readonly candidateOutput: unknown;
+}
+
+/**
+ * A deterministic {@link ProviderRunner} that returns a FIXED candidate AgentResult
+ * for the meeting.close job — no real model call. The broker's other gates
+ * (health/budget/schema) are also deterministic stubs below.
+ *
+ * // REAL-SDK INJECTION POINT (carry-forward: vendor transport)
+ * Swap this for the ModelProviderPort / AgentRuntimePort HTTP transport that drives a
+ * real provider; the broker's fixed-order gate pipeline (admission → route → egress
+ * veto → health → budget → run → schema) is unchanged.
+ */
+export function createStubProviderRunner(extraction: StubMeetingExtraction): ProviderRunner {
+  return (_route, _job, _budget, _signal) =>
+    Promise.resolve(
+      ok({
+        value: makeAgentResult({
+          status: "completed",
+          candidateOutput: extraction.candidateOutput,
+          usage: { runtimeSeconds: 1 },
+          logs: [],
+        }),
+      }),
+    );
+}
+
+/**
+ * A deterministic health gate that always PROCEEDS (the injected model endpoint is
+ * assumed reachable in this stub). Real health/model-availability probing is the 5.9
+ * gate the providers track owns.
+ *
+ * // REAL-SDK INJECTION POINT (carry-forward: vendor transport)
+ */
+export const stubHealthGate: HealthGate = () => ok({ value: undefined });
+
+/**
+ * A deterministic budget gate: derive the job's declared runtime cap pre-run, and
+ * never breach post-run (the stub run consumes 1s). Real COST-1/COST-2 accounting is
+ * the 5.4 gate.
+ *
+ * // REAL-SDK INJECTION POINT (carry-forward: vendor transport)
+ */
+export const stubBudgetGate: BudgetGate = {
+  pre(job): ReturnType<BudgetGate["pre"]> {
+    const budget: EnforcedBudget = {
+      maxRuntimeSeconds: job.maxRuntimeSeconds,
+      ...(job.maxCostUsd !== undefined ? { maxCostUsd: job.maxCostUsd } : {}),
+    };
+    return ok({ value: budget });
+  },
+  post(): ReturnType<BudgetGate["post"]> {
+    return ok({ value: undefined });
+  },
+};
+
+/**
+ * The schema/tool gate the broker runs on the candidate. This deterministic stub
+ * accepts the candidate and emits it as a KnowledgeMutationPlan-shaped candidate ONLY
+ * when the candidate carries one; otherwise it emits a proposed_action-shaped
+ * candidate. For the meeting.close spine we care only that the broker ACCEPTS and
+ * hands a candidate to `mapCandidate`, so the stub wraps the run's candidateOutput.
+ *
+ * // REAL-SDK INJECTION POINT (carry-forward: vendor transport)
+ * The real 5.5 schema gate validates the candidate against the AgentJob.outputSchemaId
+ * registered schema before it is ever emitted.
+ */
+export function createStubSchemaGate(
+  toCandidate: (candidateOutput: unknown) => BrokerCandidate,
+): SchemaGate {
+  return (_job, result): ReturnType<SchemaGate> =>
+    ok({ value: toCandidate(result.candidateOutput) });
+}
+
+/**
+ * A deterministic {@link AdapterTransport} (the per-target write client seam). It
+ * models the three vendor ops (query / create / update) against an IN-MEMORY object
+ * table keyed by canonicalObjectKey, so a create is idempotent within the process and
+ * an existence probe hits a prior write — the Tool Gateway's reserve-then-create gate
+ * observes a real, deterministic vendor.
+ *
+ * // REAL-SDK INJECTION POINT (carry-forward: vendor transport)
+ * Swap this for the real per-vendor HTTP/API client (calendar/todoist/linear/…); the
+ * §8 envelope pipeline (candidate-gate → approval → existence check → reserve →
+ * create → receipt) is unchanged.
+ */
+export function createStubAdapterTransport(): AdapterTransport {
+  const objects = new Map<string, { externalObjectId: string }>();
+  return (req: AdapterTransportRequest): Promise<TransportResponse> => {
+    const key = req.canonicalObjectKey;
+    if (req.op === "query") {
+      const hit = objects.get(key);
+      return Promise.resolve(
+        hit === undefined
+          ? { ok: true, object: null }
+          : { ok: true, object: { externalObjectId: hit.externalObjectId } },
+      );
+    }
+    if (req.op === "create") {
+      const existing = objects.get(key);
+      if (existing !== undefined) {
+        return Promise.resolve({
+          ok: true,
+          object: { externalObjectId: existing.externalObjectId },
+          deduped: true,
+        });
+      }
+      const externalObjectId = `stub-obj:${req.targetSystem}:${key}`;
+      objects.set(key, { externalObjectId });
+      return Promise.resolve({ ok: true, object: { externalObjectId } });
+    }
+    // update
+    const externalObjectId = objects.get(key)?.externalObjectId ?? `stub-obj:${req.targetSystem}:${key}`;
+    objects.set(key, { externalObjectId });
+    return Promise.resolve({ ok: true, object: { externalObjectId } });
+  };
+}
+
+/**
+ * A deterministic {@link IndexApplyClient} (the write-side GBrain index seam). It
+ * ACKs every apply idempotently (per (workspaceId, revisionId)) with no duplicate
+ * nodes, so the reindex activity has a real, deterministic index client behind it.
+ *
+ * // REAL-SDK INJECTION POINT (carry-forward: vendor transport)
+ * Swap this for the single-owner GBrain index write client (the sole-issuer worker
+ * path, distinct from the read-only runtime adapter).
+ */
+export function createStubIndexApplyClient(): IndexApplyClient {
+  const applied = new Set<string>();
+  return {
+    applyRevision(
+      request: IndexApplyRequest,
+    ): Promise<Result<IndexApplyReceipt, IndexApplyError>> {
+      const key = `${request.workspaceId}:${request.revisionId}`;
+      const mutated = !applied.has(key);
+      applied.add(key);
+      const receipt: IndexApplyReceipt = {
+        workspaceId: request.workspaceId,
+        revisionId: request.revisionId,
+        nodeCount: request.facts.length,
+        mutated,
+      };
+      return Promise.resolve(ok(receipt));
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// (7) The assembled backends bundle
+// ---------------------------------------------------------------------------
+
+/**
+ * The concrete adapters buildProofSpineActivities binds the activity factories over.
+ * Assembled ONCE at worker boot; every field is a real adapter or a clearly-marked
+ * deterministic-stub transport.
+ */
+export interface ProofSpineBackends {
+  /** The live sqlite operational store (write_receipts + genesis migrated). */
+  readonly repos: SqliteRepositories;
+  /** The @sow/integrations ReceiptStore over the @sow/db write-receipt repo. */
+  readonly receiptStore: ReceiptStore;
+  /** The filesystem-backed vault the KnowledgeWriter commits under. */
+  readonly vault: VaultFs;
+  /** The in-memory §9 health-item store (Phase-10: persistent). */
+  readonly healthItems: HealthItemStore;
+  /** The §7 Broker (deterministic gate stubs; localConfig always supplied). */
+  readonly broker: Broker;
+  /** The per-target write adapter (deterministic transport). */
+  readonly writeAdapter: TargetWriteAdapter;
+  /** The GBrain index client (deterministic transport). */
+  readonly indexClient: IndexApplyClient;
+  /** The local-provider config ALWAYS handed to the broker (never undefined). */
+  readonly localConfig: LocalProviderConfig;
+  /** Injected wall clock (ISO-8601). */
+  readonly now: () => string;
+  /** A close handle for the sqlite connection (test teardown). */
+  readonly close: () => void;
+}
+
+/**
+ * The candidate the stub broker emits for the meeting.close job. It wraps the run's
+ * candidateOutput as a proposed_action-shaped candidate so `createBroker` accepts it;
+ * `mapCandidate` (in buildActivities) turns the accepted BrokerOutcome into the
+ * meeting AgentExtraction the spine validates.
+ */
+function meetingSchemaCandidate(candidateOutput: unknown): BrokerCandidate {
+  // The spine's mapCandidate reads the accepted outcome, not this candidate's shape,
+  // so we wrap it as a proposed_action carrying the candidate output for traceability.
+  const action: ProposedAction = {
+    actionId: makeActionId("stub:meeting.close:candidate"),
+    targetSystem: "todoist",
+    canonicalObjectKey: "stub:meeting.close",
+    payload: { candidateOutput },
+    approvalPolicy: "auto",
+    idempotencyKey: "stub:meeting.close:candidate",
+  };
+  return { kind: "proposed_action", action };
+}
+
+/**
+ * Assemble the proof-spine backends: open sqlite (+ genesis migrate), build the
+ * filesystem vault, the in-memory health store, the ReceiptStore adapter, and the
+ * §7 broker over deterministic gate stubs — with localConfig ALWAYS supplied. The
+ * caller (buildProofSpineActivities) binds the activity factories over this bundle.
+ */
+export async function assembleBackends(
+  config: BackendsConfig = {},
+  extraction: StubMeetingExtraction = { candidateOutput: {} },
+): Promise<ProofSpineBackends> {
+  const now = config.now ?? ((): string => new Date().toISOString());
+  const opened = await openDatabase(config);
+  const vault = createFsVault(config.vaultRoot ?? makeTmpVaultRoot());
+  const healthItems = createInMemoryHealthItemStore();
+  const receiptStore = createReceiptStoreAdapter(opened.repos.writeReceipts);
+
+  const localConfig: LocalProviderConfig = {
+    allowedLocalEndpoints:
+      config.allowedLocalEndpoints !== undefined
+        ? [...config.allowedLocalEndpoints]
+        : ["http://127.0.0.1:11434"],
+  };
+
+  const broker = createBroker({
+    health: stubHealthGate,
+    budget: stubBudgetGate,
+    run: createStubProviderRunner(extraction),
+    schema: createStubSchemaGate(meetingSchemaCandidate),
+  });
+
+  const writeAdapter = makeTargetWriteAdapter(
+    { targetSystem: "todoist" as TargetSystem, deriveIdentity: (env) => ({ key: env.canonicalObjectKey }) },
+    { transport: createStubAdapterTransport(), clock: now },
+  );
+
+  const indexClient = createStubIndexApplyClient();
+
+  return {
+    repos: opened.repos,
+    receiptStore,
+    vault,
+    healthItems,
+    broker,
+    writeAdapter,
+    indexClient,
+    localConfig,
+    now,
+    close: () => {
+      try {
+        opened.conn.close();
+      } catch {
+        /* best-effort */
+      }
+    },
+  };
+}
+
+// Re-export the buildAuditSignal helper so buildActivities can mint audit signals
+// for the health sinks without re-importing @sow/policy.
+export { buildAuditSignal };
+export type { AuditId, FailureClass, HealthItem, ResolvedWorkspacePolicy, BrokerJobRequest, BrokerOutcome, DbError };

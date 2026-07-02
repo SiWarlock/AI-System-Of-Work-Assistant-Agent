@@ -80,6 +80,7 @@ export * from "./activities/correlateMeeting";
 export * from "./activities/runAgentJob";
 export * from "./activities/validateCloseout";
 export * from "./activities/buildOutputs";
+export * from "./activities/projections/meetingOutputs";
 export * from "./activities/commitKnowledge";
 export * from "./activities/proposeExternalActions";
 export * from "./activities/reindexGbrain";

@@ -139,6 +139,32 @@ export function decideBootstrap(
 
 // --- the THIN gated live bootstrap ----------------------------------------
 
+/**
+ * A live NativeConnection, narrowed to what the registration hook needs. Typed
+ * structurally (not as the @temporalio class) so this pure module's type graph does
+ * NOT pull @temporalio into the default suite — the concrete connection is created
+ * inside the dynamic import below and handed to the hook.
+ */
+export interface LiveConnection {
+  close(): Promise<void>;
+}
+
+/**
+ * The registration hook the composition root supplies (registerWorker.ts). On a
+ * SUCCESSFUL connect the bootstrap hands the live connection to this hook, which
+ * does the @temporalio `Worker.create({ connection, taskQueue, workflowsPath,
+ * activities })` + `worker.run()` — closing the gap where the bootstrap previously
+ * connected then dropped the connection before ever registering workflows +
+ * activities. Kept as an INJECTED callback so `worker.ts` stays free of the
+ * composition import (backends open a DB / vault) in its pure module graph. It
+ * OWNS the connection lifetime once handed it (it closes it on worker shutdown).
+ * Returns when the worker has stopped (or rejects if registration/run failed).
+ */
+export type RegisterWorkerHook = (
+  connection: LiveConnection,
+  taskQueue: SowTaskQueue,
+) => Promise<void>;
+
 /** Options for the live (SOW_TEMPORAL-gated) worker bootstrap. */
 export interface BootstrapWorkerOptions {
   /** Temporal dev-server address, e.g. "127.0.0.1:7233" (persistent server). */
@@ -148,6 +174,14 @@ export interface BootstrapWorkerOptions {
   readonly now: Clock["now"];
   /** Bound the connect loop so a permanent outage degrades, never spins. */
   readonly maxConnectAttempts: number;
+  /**
+   * OPTIONAL registration hook (registerWorker.ts). When supplied, a successful
+   * connect hands the live connection to it (Worker.create + run) instead of closing
+   * it — this is the wiring that makes the worker actually register workflows +
+   * activities. When ABSENT the bootstrap keeps its original connect-and-close smoke
+   * behavior (the existing default gate), so nothing that omits the hook changes.
+   */
+  readonly onConnected?: RegisterWorkerHook;
 }
 
 /**
@@ -172,9 +206,16 @@ export async function bootstrapWorker(
       const connection = await NativeConnection.connect({
         address: options.address,
       });
-      // A live connection is the readiness signal; the caller wires
-      // Worker.create(registration) next (out of scope for this slice's gate).
-      await connection.close();
+      // A live connection is the readiness signal. If a registration hook was
+      // supplied, HAND IT the connection so it runs Worker.create + run (the hook
+      // owns + closes the connection on shutdown) — this is the wiring that actually
+      // registers the workflows + activities. If no hook, keep the original
+      // connect-and-close smoke behavior (the existing default gate).
+      if (options.onConnected !== undefined) {
+        await options.onConnected(connection, options.taskQueue);
+      } else {
+        await connection.close();
+      }
       outcome = { connected: true };
     } catch (cause) {
       lastReason = cause instanceof Error ? cause.message : String(cause);
