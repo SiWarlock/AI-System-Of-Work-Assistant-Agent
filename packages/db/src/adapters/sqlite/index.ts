@@ -17,13 +17,14 @@
 // append-only logs expose no in-place mutate/delete, approvals advance by an
 // atomic compare-and-set, and only the REBUILDABLE read-model store exposes a
 // destructive `clear`.
-import { and, asc, eq, isNull, lte, notInArray, or, sql, gt } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, lte, notInArray, or, sql, gt } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { err, ok, type Result } from "@sow/contracts";
 import type {
   Approval,
   AuditRecord,
   GclProjection,
+  HealthItem,
   ProviderProfile,
   Workspace,
   WorkflowRunRef,
@@ -39,12 +40,17 @@ import type {
   EventLogRecord,
   EventLogRepository,
   GclProjectionRepository,
+  HealthItemRepository,
+  InstanceLeaseRepository,
+  LeaseRecordRow,
   OutboxEntry,
   OutboxRepository,
   ProviderStateRepository,
   ReadModelRecord,
   ReadModelRepository,
   ReserveOutcome,
+  ScheduleBookkeepingRecord,
+  ScheduleBookkeepingRepository,
   WorkflowRunRefRepository,
   WorkspaceConfigRepository,
   WriteReceiptRepository,
@@ -54,6 +60,7 @@ import * as schema from "../../schema/index";
 import {
   casVerdictToOutcome,
   decideApprovalCas,
+  decideLeaseCas,
   decideReserve,
   invariantToDbErrorCode,
   type CasVerdict,
@@ -93,6 +100,9 @@ export interface SqliteRepositories {
   readonly readModels: ReadModelRepository;
   readonly gclProjections: GclProjectionRepository;
   readonly writeReceipts: WriteReceiptRepository;
+  readonly healthItems: HealthItemRepository;
+  readonly scheduleBookkeeping: ScheduleBookkeepingRepository;
+  readonly instanceLeases: InstanceLeaseRepository;
 }
 
 // §9 Proposed-External-Action TERMINAL states — a tombstoned outbox entry never
@@ -202,6 +212,46 @@ function toWriteReceipt(r: WriteReceiptDbRow): WriteReceiptRow {
 /** A stored receipt row is COMMITTED iff its `receipt` proof is present (§8). */
 function receiptPresent(r: WriteReceiptDbRow): boolean {
   return r.receipt !== null && r.receipt !== undefined;
+}
+
+// Phase-10 durability row types + mappers (DB NULL → contract `undefined`).
+type HealthItemDbRow = typeof schema.healthItems.$inferSelect;
+type ScheduleBookkeepingDbRow = typeof schema.scheduleBookkeeping.$inferSelect;
+type LeaseDbRow = typeof schema.instanceLeases.$inferSelect;
+
+/** Row → the frozen HealthItem seam model (drops the persistence-only dedupe cols). */
+function toHealthItem(r: HealthItemDbRow): HealthItem {
+  return {
+    id: r.id,
+    failureClass: r.failureClass as HealthItem["failureClass"],
+    severity: r.severity,
+    message: r.message,
+    auditRef: r.auditRef as HealthItem["auditRef"],
+    openedAt: r.openedAt,
+    state: r.state as HealthItem["state"],
+    resolvedAt: r.resolvedAt ?? undefined,
+    parityReportRef: (r.parityReportRef ?? undefined) as HealthItem["parityReportRef"],
+    factIdentity: (r.factIdentity ?? undefined) as HealthItem["factIdentity"],
+  };
+}
+
+function toScheduleBookkeeping(r: ScheduleBookkeepingDbRow): ScheduleBookkeepingRecord {
+  return {
+    scheduleId: r.scheduleId,
+    lastRunWall: r.lastRunWall,
+    lastRunMonotonicMs: r.lastRunMonotonicMs ?? undefined,
+    lastRunMonotonicEpoch: r.lastRunMonotonicEpoch ?? undefined,
+  };
+}
+
+function toLease(r: LeaseDbRow): LeaseRecordRow {
+  return {
+    taskQueue: r.taskQueue,
+    ownerId: r.ownerId,
+    acquiredAt: r.acquiredAt,
+    expiresAt: r.expiresAt,
+    generation: r.generation,
+  };
 }
 
 // ── the factory ──────────────────────────────────────────────────────────────
@@ -776,6 +826,155 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
       }),
   };
 
+  // Phase-10: System-Health item store (OBS-1/OBS-2, §10.3 dedupe upsert).
+  const healthItems: HealthItemRepository = {
+    getByDedupeKey: (dedupeKey) =>
+      run(() => {
+        const row = db.select().from(schema.healthItems).where(eq(schema.healthItems.dedupeKey, dedupeKey)).get();
+        return row ? ok(toHealthItem(row)) : err(notFound(`health item ${dedupeKey}`));
+      }),
+    put: (item, dedupeKey, subjectRef, lastSeen) =>
+      run(() => {
+        // §10.3 dedupe upsert on the dedupe key: first sight INSERTs (count 1); a
+        // repeat UPDATEs the existing row — bump occurrenceCount, refresh lastSeen,
+        // overwrite the mutable lifecycle fields, PRESERVE the original openedAt (the
+        // conflict `set` deliberately omits openedAt + occurrenceCount-reset).
+        db.insert(schema.healthItems)
+          .values({
+            dedupeKey,
+            subjectRef,
+            id: item.id,
+            failureClass: item.failureClass,
+            severity: item.severity,
+            message: item.message,
+            auditRef: item.auditRef,
+            openedAt: item.openedAt,
+            state: item.state,
+            resolvedAt: item.resolvedAt ?? null,
+            parityReportRef: item.parityReportRef ?? null,
+            factIdentity: item.factIdentity ?? null,
+            lastSeen,
+            occurrenceCount: 1,
+          })
+          .onConflictDoUpdate({
+            target: schema.healthItems.dedupeKey,
+            set: {
+              // Lifecycle + latest-observation fields refresh; openedAt stays put.
+              id: item.id,
+              severity: item.severity,
+              message: item.message,
+              auditRef: item.auditRef,
+              state: item.state,
+              resolvedAt: item.resolvedAt ?? null,
+              parityReportRef: item.parityReportRef ?? null,
+              factIdentity: item.factIdentity ?? null,
+              lastSeen,
+              occurrenceCount: sql`${schema.healthItems.occurrenceCount} + 1`,
+            },
+          })
+          .run();
+        return ok(undefined);
+      }),
+    list: () =>
+      run(() => {
+        const rows = db
+          .select()
+          .from(schema.healthItems)
+          .orderBy(desc(schema.healthItems.lastSeen), asc(schema.healthItems.dedupeKey))
+          .all();
+        return ok(rows.map(toHealthItem));
+      }),
+  };
+
+  // Phase-10: durable-schedule bookkeeping store (LIFE-5).
+  const scheduleBookkeeping: ScheduleBookkeepingRepository = {
+    getBookkeeping: (scheduleId) =>
+      run(() => {
+        const row = db
+          .select()
+          .from(schema.scheduleBookkeeping)
+          .where(eq(schema.scheduleBookkeeping.scheduleId, scheduleId))
+          .get();
+        return row ? ok(toScheduleBookkeeping(row)) : err(notFound(`schedule ${scheduleId}`));
+      }),
+    put: (bookkeeping) =>
+      run(() => {
+        db.insert(schema.scheduleBookkeeping)
+          .values({
+            scheduleId: bookkeeping.scheduleId,
+            lastRunWall: bookkeeping.lastRunWall,
+            lastRunMonotonicMs: bookkeeping.lastRunMonotonicMs ?? null,
+            lastRunMonotonicEpoch: bookkeeping.lastRunMonotonicEpoch ?? null,
+          })
+          .onConflictDoUpdate({
+            target: schema.scheduleBookkeeping.scheduleId,
+            set: {
+              lastRunWall: bookkeeping.lastRunWall,
+              lastRunMonotonicMs: bookkeeping.lastRunMonotonicMs ?? null,
+              lastRunMonotonicEpoch: bookkeeping.lastRunMonotonicEpoch ?? null,
+            },
+          })
+          .run();
+        return ok(undefined);
+      }),
+  };
+
+  // Phase-10: single-active-instance lease store (LIFE-1) — atomic CAS acquire/renew.
+  const instanceLeases: InstanceLeaseRepository = {
+    get: (taskQueue) =>
+      run(() => {
+        const row = db.select().from(schema.instanceLeases).where(eq(schema.instanceLeases.taskQueue, taskQueue)).get();
+        return row ? ok(toLease(row)) : err(notFound(`lease ${taskQueue}`));
+      }),
+    compareAndSet: (expected, next) =>
+      run((): Result<boolean, DbError> => {
+        if (expected === undefined) {
+          // FIRST ACQUIRE: atomic INSERT … ON CONFLICT DO NOTHING on the taskQueue PK.
+          // An empty `.returning()` == the slot was already taken (this caller LOST).
+          const inserted = db
+            .insert(schema.instanceLeases)
+            .values({
+              taskQueue: next.taskQueue,
+              ownerId: next.ownerId,
+              acquiredAt: next.acquiredAt,
+              expiresAt: next.expiresAt,
+              generation: next.generation,
+            })
+            .onConflictDoNothing({ target: schema.instanceLeases.taskQueue })
+            .returning()
+            .all();
+          return ok(decideLeaseCas({ expected: undefined, stored: inserted.length > 0 ? undefined : next }));
+          // NB: on a WIN (inserted) the shared verdict is decideLeaseCas(undefined,
+          // undefined)=true; on a LOSS we pass a non-undefined `stored` so the verdict
+          // is false — the pure helper is the single source of the win/lose decision.
+        }
+        // RENEW / RE-ACQUIRE: atomic UPDATE … WHERE every expected field matches (the
+        // compare half). Rows affected ⇒ the stored row equalled `expected` ⇒ win.
+        const rows = db
+          .update(schema.instanceLeases)
+          .set({
+            ownerId: next.ownerId,
+            acquiredAt: next.acquiredAt,
+            expiresAt: next.expiresAt,
+            generation: next.generation,
+          })
+          .where(
+            and(
+              eq(schema.instanceLeases.taskQueue, expected.taskQueue),
+              eq(schema.instanceLeases.ownerId, expected.ownerId),
+              eq(schema.instanceLeases.acquiredAt, expected.acquiredAt),
+              eq(schema.instanceLeases.expiresAt, expected.expiresAt),
+              eq(schema.instanceLeases.generation, expected.generation),
+            ),
+          )
+          .returning()
+          .all();
+        // Interpret via the shared pure verdict: a matched-and-updated row is the WIN;
+        // 0 rows means the stored record diverged from `expected` → LOSS.
+        return ok(decideLeaseCas({ expected, stored: rows.length > 0 ? expected : undefined }));
+      }),
+  };
+
   return {
     workspaceConfig,
     eventLog,
@@ -788,5 +987,8 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
     readModels,
     gclProjections,
     writeReceipts,
+    healthItems,
+    scheduleBookkeeping,
+    instanceLeases,
   };
 }

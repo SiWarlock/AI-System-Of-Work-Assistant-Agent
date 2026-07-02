@@ -25,6 +25,10 @@ const TABLES: readonly PgTable[] = [
   schema.readModels,
   schema.gclProjections,
   schema.writeReceipts,
+  // Phase-10 durability tables (LIFE-1 / LIFE-5 / OBS-2).
+  schema.healthItems,
+  schema.scheduleBookkeeping,
+  schema.instanceLeases,
 ];
 
 /** Emit `CREATE TABLE` for one pg-core Drizzle table, mirroring its column + PK config. */

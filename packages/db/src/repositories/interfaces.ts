@@ -26,6 +26,7 @@ import type {
   Approval,
   AuditRecord,
   GclProjection,
+  HealthItem,
   ProviderProfile,
   Result,
   WorkflowRunRef,
@@ -109,6 +110,44 @@ export interface ReadModelRecord {
   /** SUMMARY/metadata only. */
   readonly data: unknown;
   readonly rebuiltAt: string;
+}
+
+// --- Phase-10 durability DTOs (LIFE-1 / LIFE-5 / OBS-2) ---
+// The concrete persistence rows behind the Phase-7 @sow/workflows in-memory fake
+// ports (HealthItemStore / ScheduleStore / InstanceLeaseStore). These DTOs live in
+// @sow/db (NOT imported from @sow/workflows — that would invert the package
+// dependency direction) and are STRUCTURALLY compatible with the port DTOs so the
+// worker layer adapts a @sow/db repo onto each port (mirrors how the write-receipt
+// repo is adapted onto the integrations `ReceiptStore`).
+
+/**
+ * Durable per-schedule bookkeeping (LIFE-5) — the last run's wall-clock reading
+ * plus its OPTIONAL clock-jump-safe monotonic reading + epoch. Catch-up compares
+ * the monotonic delta only when the epoch matches (a prior-boot reading is
+ * ignored); the wall reading is the display/first-run fallback. Structurally the
+ * @sow/workflows `ScheduleBookkeeping` port DTO.
+ */
+export interface ScheduleBookkeepingRecord {
+  readonly scheduleId: string;
+  readonly lastRunWall: string;
+  readonly lastRunMonotonicMs?: number;
+  readonly lastRunMonotonicEpoch?: string;
+}
+
+/**
+ * A single-active-instance lease row (LIFE-1). One row per Temporal task queue;
+ * `ownerId` is the worker instance currently holding it; `expiresAt` is the ISO
+ * fence past which the lease is stale + reclaimable; `generation` is the
+ * monotonically-increasing FENCING TOKEN (bumped on a fresh acquire, preserved on
+ * a same-owner renew) that closes the sleep-paused-prior-holder window TTL alone
+ * cannot. Structurally the @sow/workflows `LeaseRecord` port DTO.
+ */
+export interface LeaseRecordRow {
+  readonly taskQueue: string;
+  readonly ownerId: string;
+  readonly acquiredAt: string;
+  readonly expiresAt: string;
+  readonly generation: number;
 }
 
 /**
@@ -369,4 +408,66 @@ export interface WriteReceiptRepository {
    * a committed row is a safe no-op.
    */
   release(targetSystem: string, canonicalObjectKey: string): DbResult<void>;
+}
+
+/**
+ * System-Health item store (OBS-1/OBS-2) — OPERATIONAL TRUTH, MUTABLE via a
+ * DEDUPE UPSERT keyed on a caller-supplied dedupe key ((failureClass, subjectRef)
+ * per §10.3): repeated failures of the SAME class do NOT spawn duplicate items —
+ * they bump `occurrenceCount` + refresh `lastSeen` and the mutable lifecycle
+ * fields (state → open|acknowledged|resolved, severity, message, resolvedAt),
+ * PRESERVING the original `openedAt`. NOT rebuildable (a lost item drops an open
+ * failure's audit-linked history). The stored `HealthItem` is the frozen
+ * @sow/contracts seam model; the dedupe key + lastSeen + occurrenceCount are
+ * persistence-only columns not part of the model. Adapts onto the @sow/workflows
+ * `HealthItemStore` port (get-by-dedupe / put / list) at the worker layer.
+ */
+export interface HealthItemRepository {
+  /** Dedupe lookup — the §10.3 identity gate (returns not_found when unseen). */
+  getByDedupeKey(dedupeKey: string): DbResult<HealthItem>;
+  /**
+   * Upsert the item under `dedupeKey` (the §10.3 identity; `subjectRef` is the
+   * dedupe subject stored alongside it). First sight INSERTs (occurrenceCount 1);
+   * a repeat UPDATEs the existing row (occurrenceCount + 1, lastSeen refreshed,
+   * lifecycle fields overwritten, openedAt preserved) — never a duplicate row.
+   */
+  put(item: HealthItem, dedupeKey: string, subjectRef: string, lastSeen: string): DbResult<void>;
+  /** The dashboard set — every item, most-recently-seen first. */
+  list(): DbResult<HealthItem[]>;
+}
+
+/**
+ * Durable-schedule bookkeeping store (LIFE-5) — OPERATIONAL TRUTH, MUTABLE via an
+ * upsert keyed on `scheduleId`. `getBookkeeping` returns the last-run readings the
+ * clock-jump-safe catch-up compares against; `put` advances them. NOT rebuildable
+ * (a lost row re-fires or starves a schedule). Adapts onto the @sow/workflows
+ * `ScheduleStore` port at the worker layer.
+ */
+export interface ScheduleBookkeepingRepository {
+  getBookkeeping(scheduleId: string): DbResult<ScheduleBookkeepingRecord>;
+  put(bookkeeping: ScheduleBookkeepingRecord): DbResult<void>;
+}
+
+/**
+ * Single-active-instance lease store (LIFE-1) — OPERATIONAL TRUTH, MUTABLE via an
+ * ATOMIC compare-and-set. `compareAndSet` commits `next` IFF the currently-stored
+ * row equals `expected` (an absent lease is `expected: undefined` — first acquire),
+ * returning `true` on success and `false` when another instance won the race —
+ * contention is a boolean verdict, NEVER a throw (§16). The CAS SEMANTICS live once
+ * in the pure `decideLeaseCas`/`leaseRecordsEqual` (shared by both dialects so they
+ * provably agree). NOT rebuildable (a lost lease breaks the exactly-once spine).
+ * Adapts onto the @sow/workflows `InstanceLeaseStore` port at the worker layer.
+ */
+export interface InstanceLeaseRepository {
+  get(taskQueue: string): DbResult<LeaseRecordRow>;
+  /**
+   * Atomically acquire/renew: commit `next` IFF the stored record equals `expected`
+   * (`expected: undefined` = first acquire against an empty slot). `ok(true)` = this
+   * caller won the lease; `ok(false)` = it lost the race (another instance holds it).
+   * A driver/store failure is a typed `err(DbError)` (never a throw across §16).
+   */
+  compareAndSet(
+    expected: LeaseRecordRow | undefined,
+    next: LeaseRecordRow,
+  ): DbResult<boolean>;
 }

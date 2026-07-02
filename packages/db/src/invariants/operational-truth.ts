@@ -34,7 +34,7 @@
 // onto the adapter's enumerable `DbErrorCode` so the rejection re-emits cleanly.
 import { err, ok, type Result } from "@sow/contracts";
 import type { ApprovalStatus } from "@sow/contracts";
-import type { DbErrorCode } from "../repositories/interfaces";
+import type { DbErrorCode, LeaseRecordRow } from "../repositories/interfaces";
 
 // --- operational-store domains + their durability class (§4 boundaries) ------
 
@@ -49,6 +49,11 @@ export type OperationalDomain =
   | "provider_state"
   | "workspace_config"
   | "write_receipts"
+  // Phase-10 durability tables (LIFE-1 / LIFE-5 / OBS-2) backing the Phase-7
+  // in-memory fake ports (health_items / schedule_bookkeeping / instance_leases).
+  | "health_items"
+  | "schedule_bookkeeping"
+  | "instance_leases"
   | "read_models"
   | "gcl_projections";
 
@@ -95,6 +100,17 @@ export const DOMAIN_DURABILITY: Record<OperationalDomain, DurabilityClass> = {
   provider_state: "operational_truth",
   workspace_config: "operational_truth",
   write_receipts: "operational_truth",
+  // Phase-10 durability tables — authoritative operational state, NOT read models:
+  //   - health_items: the System-Health dedupe/lifecycle records (OBS-1/OBS-2); a
+  //     lost item drops an open failure's audit-linked history.
+  //   - schedule_bookkeeping: LIFE-5 last-run wall+monotonic readings; a lost row
+  //     re-fires or starves a schedule (the clock-jump-safe catch-up loses its base).
+  //   - instance_leases: LIFE-1 single-active-instance lease + fencing token; a lost
+  //     lease lets two workers process concurrently (the exactly-once spine breaks).
+  // None is re-derivable from Markdown/truth, so all are excluded from a rebuild.
+  health_items: "operational_truth",
+  schedule_bookkeeping: "operational_truth",
+  instance_leases: "operational_truth",
   read_models: "rebuildable",
   gcl_projections: "derived",
 };
@@ -361,4 +377,54 @@ export function decideReserve(input: {
 }): ReserveKind {
   if (input.inserted) return "reserved";
   return input.existingReceiptPresent ? "committed" : "in_progress";
+}
+
+// --- LIFE-1: single-active-instance lease compare-and-set (§9 durability) -----
+
+/**
+ * Full structural equality over EVERY fenced field of a lease record — the
+ * "compare" half of the lease compare-and-set. A renew/re-acquire only wins when
+ * the stored row matches the caller's expectation EXACTLY (owner + timestamps +
+ * fencing generation), so a stale holder whose `generation` moved on cannot renew
+ * a lease a newer holder already took. `undefined` expresses the EMPTY slot (a
+ * first-acquire expectation): two empties are vacuously equal; an empty never
+ * equals a concrete row (and vice versa).
+ */
+export function leaseRecordsEqual(
+  a: LeaseRecordRow | undefined,
+  b: LeaseRecordRow | undefined,
+): boolean {
+  if (a === undefined || b === undefined) return a === b; // both undefined ⇒ equal
+  return (
+    a.taskQueue === b.taskQueue &&
+    a.ownerId === b.ownerId &&
+    a.acquiredAt === b.acquiredAt &&
+    a.expiresAt === b.expiresAt &&
+    a.generation === b.generation
+  );
+}
+
+/**
+ * The two observed facts of a lease compare-and-set: the caller's `expected`
+ * pre-image (`undefined` = it expects an EMPTY slot / first acquire) and the
+ * `stored` row currently in the table (`undefined` = the slot is empty).
+ */
+export interface LeaseCasFacts {
+  readonly expected: LeaseRecordRow | undefined;
+  readonly stored: LeaseRecordRow | undefined;
+}
+
+/**
+ * Decide a single-active-instance lease compare-and-set (LIFE-1). PURE — the
+ * adapter performs the ATOMIC conditional write (an `INSERT … ON CONFLICT DO
+ * NOTHING` for the first-acquire case, or an `UPDATE … WHERE <all expected fields
+ * match>` for a renew/re-acquire) and calls this to interpret the outcome the SAME
+ * way on both dialects. The CAS WINS (`true`) IFF the currently-stored record
+ * equals the caller's expectation (an empty expectation against an empty slot, or
+ * an exact pre-image match); any divergence — a slot already taken, a lease moved
+ * to a newer owner/generation, or a reclaimed slot — LOSES (`false`). Contention
+ * is a boolean verdict, NEVER a throw (§16 fail-closed) — the loser retries.
+ */
+export function decideLeaseCas(facts: LeaseCasFacts): boolean {
+  return leaseRecordsEqual(facts.expected, facts.stored);
 }

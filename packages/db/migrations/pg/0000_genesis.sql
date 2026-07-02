@@ -117,3 +117,35 @@ CREATE TABLE "write_receipts" (
 );
 --> statement-breakpoint
 ALTER TABLE "workflow_run_refs" ADD CONSTRAINT "workflow_run_refs_idempotencyKey_unique" UNIQUE("idempotencyKey");
+--> statement-breakpoint
+CREATE TABLE "health_items" (
+	"dedupeKey" text PRIMARY KEY NOT NULL,
+	"subjectRef" text NOT NULL,
+	"id" text NOT NULL,
+	"failureClass" text NOT NULL,
+	"severity" text NOT NULL,
+	"message" text NOT NULL,
+	"auditRef" text NOT NULL,
+	"openedAt" text NOT NULL,
+	"state" text NOT NULL,
+	"resolvedAt" text,
+	"parityReportRef" text,
+	"factIdentity" text,
+	"lastSeen" text NOT NULL,
+	"occurrenceCount" integer NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "schedule_bookkeeping" (
+	"scheduleId" text PRIMARY KEY NOT NULL,
+	"lastRunWall" text NOT NULL,
+	"lastRunMonotonicMs" integer,
+	"lastRunMonotonicEpoch" text
+);
+--> statement-breakpoint
+CREATE TABLE "instance_leases" (
+	"taskQueue" text PRIMARY KEY NOT NULL,
+	"ownerId" text NOT NULL,
+	"acquiredAt" text NOT NULL,
+	"expiresAt" text NOT NULL,
+	"generation" integer NOT NULL
+);

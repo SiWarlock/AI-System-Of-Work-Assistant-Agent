@@ -35,12 +35,14 @@ import {
   validApproval,
   validAuditRecord,
   validGclProjection,
+  validHealthItem,
   validProviderProfile,
   validWorkflowRunRef,
   validWorkspace,
   type Approval,
   type ApprovalId,
   type AuditId,
+  type HealthItem,
   type Result,
   type WorkflowId,
   type WorkflowRunRef,
@@ -56,11 +58,16 @@ import type {
   EventLogRecord,
   EventLogRepository,
   GclProjectionRepository,
+  HealthItemRepository,
+  InstanceLeaseRepository,
+  LeaseRecordRow,
   OutboxEntry,
   OutboxRepository,
   ProviderStateRepository,
   ReadModelRecord,
   ReadModelRepository,
+  ScheduleBookkeepingRecord,
+  ScheduleBookkeepingRepository,
   WorkflowRunRefRepository,
   WorkspaceConfigRepository,
   WriteReceiptRepository,
@@ -89,6 +96,9 @@ interface OperationalRepositories {
   readonly readModels: ReadModelRepository;
   readonly gclProjections: GclProjectionRepository;
   readonly writeReceipts: WriteReceiptRepository;
+  readonly healthItems: HealthItemRepository;
+  readonly scheduleBookkeeping: ScheduleBookkeepingRepository;
+  readonly instanceLeases: InstanceLeaseRepository;
 }
 
 interface AdapterHandle {
@@ -157,6 +167,9 @@ const PG_TABLES: readonly PgTable[] = [
   pgSchema.readModels,
   pgSchema.gclProjections,
   pgSchema.writeReceipts,
+  pgSchema.healthItems,
+  pgSchema.scheduleBookkeeping,
+  pgSchema.instanceLeases,
 ];
 
 function pgDdlStatements(): string[] {
@@ -316,6 +329,26 @@ function writeReceiptRow(
     ...over,
   };
 }
+function health(over: Partial<HealthItem> = {}): HealthItem {
+  return { ...validHealthItem, ...over };
+}
+function bk(
+  over: Partial<ScheduleBookkeepingRecord> & Pick<ScheduleBookkeepingRecord, "scheduleId">,
+): ScheduleBookkeepingRecord {
+  return {
+    lastRunWall: "2026-06-30T00:00:00.000Z",
+    ...over,
+  };
+}
+function lease(over: Partial<LeaseRecordRow> & Pick<LeaseRecordRow, "taskQueue">): LeaseRecordRow {
+  return {
+    ownerId: "worker-A",
+    acquiredAt: "2026-06-30T00:00:00.000Z",
+    expiresAt: "2026-06-30T00:00:30.000Z",
+    generation: 1,
+    ...over,
+  };
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // THE PARAMETERIZED CONTRACT — one authoring, run once per adapter fixture.
@@ -346,6 +379,9 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(typeof repos.readModels.put).toBe("function");
       expect(typeof repos.gclProjections.upsert).toBe("function");
       expect(typeof repos.writeReceipts.reserve).toBe("function");
+      expect(typeof repos.healthItems.put).toBe("function");
+      expect(typeof repos.scheduleBookkeeping.put).toBe("function");
+      expect(typeof repos.instanceLeases.compareAndSet).toBe("function");
     });
   });
 
@@ -885,6 +921,169 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
     });
   });
 
+  // ── health items (OBS-1/OBS-2: §10.3 dedupe upsert + lifecycle) ──────────────
+  // The DB-backed HealthItemStore is the Phase-10 concrete table behind the Phase-7
+  // in-memory fake: one DISTINCT item per dedupe key ((failureClass, subjectRef)),
+  // so a repeat failure of the SAME class UPSERTs (bumps occurrenceCount, refreshes
+  // lastSeen, advances the lifecycle) rather than spawning a duplicate item.
+  describe("HealthItemRepository (OBS-2 §10.3 dedupe)", () => {
+    it("first put INSERTs; getByDedupeKey round-trips the frozen HealthItem model", async () => {
+      const item = health({ id: "h1", failureClass: "parity_defect", message: "DB-only fact" });
+      unwrap(await repos.healthItems.put(item, "parity_defect::fact-7", "fact-7", "2026-06-30T00:00:01.000Z"));
+      const got = unwrap(await repos.healthItems.getByDedupeKey("parity_defect::fact-7"));
+      expect(got).toEqual(item);
+    });
+
+    it("getByDedupeKey on an unseen key is a typed not_found (never throws)", async () => {
+      expect(unwrapErr(await repos.healthItems.getByDedupeKey("never")).code).toBe("not_found");
+    });
+
+    it("a repeat put under the SAME dedupe key UPSERTs (no duplicate) — one item in list, lifecycle advances", async () => {
+      const key = "sync_lagging::gcal";
+      const first = health({ id: "h1", failureClass: "sync_lagging", state: "open", message: "sync behind" });
+      unwrap(await repos.healthItems.put(first, key, "gcal", "2026-06-30T00:00:01.000Z"));
+      // Same class recurs → same dedupe key → the SAME item advances (acknowledged),
+      // NOT a second row. openedAt is preserved from the first sighting.
+      const again = health({ id: "h1", failureClass: "sync_lagging", state: "acknowledged", message: "still behind" });
+      unwrap(await repos.healthItems.put(again, key, "gcal", "2026-06-30T00:05:00.000Z"));
+      const all = unwrap(await repos.healthItems.list());
+      expect(all).toHaveLength(1); // deduped — never a duplicate item
+      const got = unwrap(await repos.healthItems.getByDedupeKey(key));
+      expect(got.state).toBe("acknowledged");
+      expect(got.message).toBe("still behind");
+      expect(got.openedAt).toBe(first.openedAt); // openedAt preserved across the dedupe
+    });
+
+    it("two DISTINCT dedupe keys are two DISTINCT items; list is most-recently-seen first", async () => {
+      unwrap(await repos.healthItems.put(health({ id: "a", failureClass: "parity_defect" }), "k-a", "sa", "2026-06-30T00:00:01.000Z"));
+      unwrap(await repos.healthItems.put(health({ id: "b", failureClass: "sync_lagging" }), "k-b", "sb", "2026-06-30T00:00:09.000Z"));
+      const all = unwrap(await repos.healthItems.list());
+      expect(all.map((h) => h.id)).toEqual(["b", "a"]); // b seen later → first
+    });
+
+    it("a resolved item round-trips resolvedAt (state ⇔ resolvedAt lifecycle coupling)", async () => {
+      const resolved = health({
+        id: "h1",
+        failureClass: "parity_defect",
+        state: "resolved",
+        resolvedAt: "2026-06-30T01:00:00.000Z",
+      });
+      unwrap(await repos.healthItems.put(resolved, "k-res", "s-res", "2026-06-30T01:00:00.000Z"));
+      const got = unwrap(await repos.healthItems.getByDedupeKey("k-res"));
+      expect(got.state).toBe("resolved");
+      expect(got.resolvedAt).toBe("2026-06-30T01:00:00.000Z");
+    });
+  });
+
+  // ── schedule bookkeeping (LIFE-5: last-run wall + clock-jump-safe monotonic) ──
+  describe("ScheduleBookkeepingRepository (LIFE-5)", () => {
+    it("put → getBookkeeping round-trips wall + optional monotonic pair", async () => {
+      unwrap(
+        await repos.scheduleBookkeeping.put(
+          bk({
+            scheduleId: "daily-rollup",
+            lastRunWall: "2026-06-30T06:00:00.000Z",
+            lastRunMonotonicMs: 123456,
+            lastRunMonotonicEpoch: "boot-1",
+          }),
+        ),
+      );
+      const got = unwrap(await repos.scheduleBookkeeping.getBookkeeping("daily-rollup"));
+      expect(got).toEqual({
+        scheduleId: "daily-rollup",
+        lastRunWall: "2026-06-30T06:00:00.000Z",
+        lastRunMonotonicMs: 123456,
+        lastRunMonotonicEpoch: "boot-1",
+      });
+    });
+
+    it("the first run has no monotonic reading — optional fields round-trip NULL→undefined", async () => {
+      unwrap(await repos.scheduleBookkeeping.put(bk({ scheduleId: "hourly", lastRunWall: "2026-06-30T07:00:00.000Z" })));
+      const got = unwrap(await repos.scheduleBookkeeping.getBookkeeping("hourly"));
+      expect(got.lastRunMonotonicMs).toBeUndefined();
+      expect(got.lastRunMonotonicEpoch).toBeUndefined();
+    });
+
+    it("a second put for the same schedule UPDATEs in place (advances the reading)", async () => {
+      unwrap(await repos.scheduleBookkeeping.put(bk({ scheduleId: "s1", lastRunWall: "2026-06-30T00:00:00.000Z" })));
+      unwrap(
+        await repos.scheduleBookkeeping.put(
+          bk({ scheduleId: "s1", lastRunWall: "2026-06-30T01:00:00.000Z", lastRunMonotonicMs: 999, lastRunMonotonicEpoch: "boot-2" }),
+        ),
+      );
+      const got = unwrap(await repos.scheduleBookkeeping.getBookkeeping("s1"));
+      expect(got.lastRunWall).toBe("2026-06-30T01:00:00.000Z");
+      expect(got.lastRunMonotonicMs).toBe(999);
+    });
+
+    it("getBookkeeping on an unseen schedule is a typed not_found", async () => {
+      expect(unwrapErr(await repos.scheduleBookkeeping.getBookkeeping("nope")).code).toBe("not_found");
+    });
+  });
+
+  // ── instance leases (LIFE-1: single-active-instance atomic compare-and-set) ───
+  // compareAndSet is the atomic acquire/renew: it commits IFF the stored record
+  // equals `expected` (undefined = first acquire). Contention is ok(false), NEVER a
+  // throw — the loser retries. The win/lose decision is the shared pure decideLeaseCas.
+  describe("InstanceLeaseRepository (LIFE-1 compareAndSet)", () => {
+    it("FIRST acquire (expected undefined) WINS on an empty slot; get round-trips the record", async () => {
+      const l = lease({ taskQueue: "sow-main", ownerId: "worker-A", generation: 1 });
+      expect(unwrap(await repos.instanceLeases.compareAndSet(undefined, l))).toBe(true);
+      expect(unwrap(await repos.instanceLeases.get("sow-main"))).toEqual(l);
+    });
+
+    it("a SECOND first-acquire against an already-held slot LOSES (ok(false), no throw)", async () => {
+      unwrap(await repos.instanceLeases.compareAndSet(undefined, lease({ taskQueue: "sow-main", ownerId: "worker-A" })));
+      // Contender B also thinks the slot is empty → it LOSES the race (no double-hold).
+      const lost = unwrap(
+        await repos.instanceLeases.compareAndSet(undefined, lease({ taskQueue: "sow-main", ownerId: "worker-B" })),
+      );
+      expect(lost).toBe(false);
+      // The original holder is unchanged (no silent overwrite).
+      expect(unwrap(await repos.instanceLeases.get("sow-main")).ownerId).toBe("worker-A");
+    });
+
+    it("RENEW WINS when the stored record EXACTLY matches expected; the fencing generation bumps", async () => {
+      const held = lease({ taskQueue: "sow-main", ownerId: "worker-A", generation: 1 });
+      unwrap(await repos.instanceLeases.compareAndSet(undefined, held));
+      // Same owner renews from its exact held record → wins; generation advances.
+      const renewed = lease({ taskQueue: "sow-main", ownerId: "worker-A", generation: 2, expiresAt: "2026-06-30T00:01:00.000Z" });
+      expect(unwrap(await repos.instanceLeases.compareAndSet(held, renewed))).toBe(true);
+      const got = unwrap(await repos.instanceLeases.get("sow-main"));
+      expect(got.generation).toBe(2);
+      expect(got.expiresAt).toBe("2026-06-30T00:01:00.000Z");
+    });
+
+    it("a stale RENEW (expected no longer matches the stored record) LOSES — no overwrite", async () => {
+      const held = lease({ taskQueue: "sow-main", ownerId: "worker-A", generation: 1 });
+      unwrap(await repos.instanceLeases.compareAndSet(undefined, held));
+      // Worker A took over to generation 2 (a legitimate renew).
+      const gen2 = lease({ taskQueue: "sow-main", ownerId: "worker-A", generation: 2 });
+      unwrap(await repos.instanceLeases.compareAndSet(held, gen2));
+      // Worker B tries to renew from the now-STALE gen-1 pre-image → it LOSES (the
+      // fencing generation moved on); the stored record is untouched.
+      const stale = lease({ taskQueue: "sow-main", ownerId: "worker-B", generation: 2 });
+      expect(unwrap(await repos.instanceLeases.compareAndSet(held, stale))).toBe(false);
+      const got = unwrap(await repos.instanceLeases.get("sow-main"));
+      expect(got.ownerId).toBe("worker-A");
+      expect(got.generation).toBe(2);
+    });
+
+    it("reclaim: a fresh acquire that matches the CURRENT record takes over from an expired holder", async () => {
+      const a = lease({ taskQueue: "sow-main", ownerId: "worker-A", generation: 1 });
+      unwrap(await repos.instanceLeases.compareAndSet(undefined, a));
+      // Worker B observes A's (expired) lease and CAS-swaps itself in from A's exact
+      // record — the takeover wins because expected == the stored record.
+      const b = lease({ taskQueue: "sow-main", ownerId: "worker-B", generation: 2, acquiredAt: "2026-06-30T00:02:00.000Z" });
+      expect(unwrap(await repos.instanceLeases.compareAndSet(a, b))).toBe(true);
+      expect(unwrap(await repos.instanceLeases.get("sow-main")).ownerId).toBe("worker-B");
+    });
+
+    it("get on an unheld task queue is a typed not_found", async () => {
+      expect(unwrapErr(await repos.instanceLeases.get("no-queue")).code).toBe("not_found");
+    });
+  });
+
   // ══════════════════════════════════════════════════════════════════════════════
   // OPERATIONAL-TRUTH INVARIANTS (unit 2.5) — exercised THROUGH the adapters so the
   // SAME behavior holds on both dialects (the divergence-blocking core of 2.9).
@@ -980,6 +1179,9 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
         unwrapErr(await repos.gclProjections.get("ws-absent" as WorkspaceId, "nope", "coordination")),
         unwrapErr(await repos.writeReceipts.getByIdempotencyKey("wr-absent")),
         unwrapErr(await repos.writeReceipts.getByCanonicalObjectKey("todoist", "wr-absent")),
+        unwrapErr(await repos.healthItems.getByDedupeKey("hi-absent")),
+        unwrapErr(await repos.scheduleBookkeeping.getBookkeeping("sched-absent")),
+        unwrapErr(await repos.instanceLeases.get("lease-absent")),
       ];
       for (const e of errs) {
         expect(DB_ERROR_CODES).toContain(e.code);

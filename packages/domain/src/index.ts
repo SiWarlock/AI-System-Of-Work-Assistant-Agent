@@ -7,6 +7,9 @@
 // `export *` is safe under verbatimModuleSyntax. No symbol collides across these
 // modules (verified at wiring time).
 
+// --- redaction (task 10.1: the canonical pure redactor — providers depend on this) ---
+export * from "./redaction/redact";
+
 // --- validation ---
 export * from "./validation/schema-gate";
 export * from "./validation/universal-rules";
@@ -15,6 +18,9 @@ export * from "./validation/no-inference";
 // --- keys ---
 export * from "./keys/canonical-key";
 export * from "./keys/idempotency-key";
+
+// --- error routing (10.2: FailureVariant → retry/outbox/health, totality-enforced) ---
+export * from "./error-routing/route-failure";
 
 // --- state (transition core + the 6 machines) ---
 export * from "./state/transition";

@@ -30,9 +30,13 @@ import {
   decideApprovalCas,
   casVerdictToResult,
   invariantToDbErrorCode,
+  decideLeaseCas,
+  leaseRecordsEqual,
   type OperationalDomain,
   type InvariantViolation,
+  type LeaseCasFacts,
 } from "../../src/invariants/operational-truth";
+import type { LeaseRecordRow } from "../../src/repositories/interfaces";
 
 // --- Invariant 1: event log is APPEND-ONLY -----------------------------------
 
@@ -207,6 +211,73 @@ describe("Invariant 4 — read-model rebuildability vs operational truth (§4)",
       expect(r.error.code).toBe("rebuild_truth_excluded");
       expect(r.error.domain).toBe("write_receipts");
     }
+  });
+
+  // Phase-10 durability tables (LIFE-1 / LIFE-5 / OBS-2) — the concrete
+  // health_items / schedule_bookkeeping / instance_leases tables backing the
+  // Phase-7 in-memory fake ports. Each is authoritative operational truth (a
+  // lost lease double-fires the single-active-instance guard; a lost schedule
+  // bookkeeping re-runs or starves a schedule; a lost health item drops a
+  // dedupe/lifecycle record) — never a read model, excluded from any rebuild.
+  it.each(["health_items", "schedule_bookkeeping", "instance_leases"] as const)(
+    "%s is operational truth (Phase-10 durability table) — never rebuildable, refused as a rebuild target",
+    (domain) => {
+      expect(durabilityOf(domain)).toBe("operational_truth");
+      expect(isRebuildable(domain)).toBe(false);
+      expect(isOperationalTruth(domain)).toBe(true);
+      const r = assertRebuildTarget(domain);
+      expect(isErr(r)).toBe(true);
+      if (isErr(r)) {
+        expect(r.error.code).toBe("rebuild_truth_excluded");
+        expect(r.error.domain).toBe(domain);
+      }
+    },
+  );
+});
+
+// --- LIFE-1 single-active-instance lease compare-and-set (pure helper) --------
+
+describe("LIFE-1 — instance-lease compare-and-set (pure, shared by both dialects)", () => {
+  const base: LeaseRecordRow = {
+    taskQueue: "sow-main",
+    ownerId: "worker-A",
+    acquiredAt: "2026-06-30T00:00:00.000Z",
+    expiresAt: "2026-06-30T00:00:30.000Z",
+    generation: 1,
+  };
+
+  it("leaseRecordsEqual is a full structural equality over every fenced field", () => {
+    expect(leaseRecordsEqual(base, { ...base })).toBe(true);
+    expect(leaseRecordsEqual(base, { ...base, ownerId: "worker-B" })).toBe(false);
+    expect(leaseRecordsEqual(base, { ...base, generation: 2 })).toBe(false);
+    expect(leaseRecordsEqual(base, { ...base, expiresAt: "2026-06-30T00:01:00.000Z" })).toBe(false);
+    // undefined expectation (first acquire) never equals a concrete stored row.
+    expect(leaseRecordsEqual(undefined, base)).toBe(false);
+    expect(leaseRecordsEqual(base, undefined)).toBe(false);
+    // both absent — vacuously equal (first-acquire expectation vs empty slot).
+    expect(leaseRecordsEqual(undefined, undefined)).toBe(true);
+  });
+
+  it("FIRST acquire (expected undefined) WINS iff the slot is empty", () => {
+    // No row present + no expectation → this caller may INSERT.
+    expect(decideLeaseCas({ expected: undefined, stored: undefined })).toBe(true);
+    // A row already exists but the caller expected an empty slot → it LOST the race.
+    expect(decideLeaseCas({ expected: undefined, stored: base })).toBe(false);
+  });
+
+  it("RENEW / re-acquire (expected present) WINS iff the stored row EXACTLY equals the expectation", () => {
+    // The owner renews from the exact record it holds → wins.
+    expect(decideLeaseCas({ expected: base, stored: base })).toBe(true);
+    // Another instance took over (ownerId/generation moved) → this CAS loses.
+    expect(decideLeaseCas({ expected: base, stored: { ...base, ownerId: "worker-B", generation: 2 } })).toBe(false);
+    // The slot the caller expected to hold is now empty (reclaimed) → loses.
+    expect(decideLeaseCas({ expected: base, stored: undefined })).toBe(false);
+  });
+
+  it("contention is a boolean verdict, NEVER a throw (§16 fail-closed)", () => {
+    const facts: LeaseCasFacts = { expected: base, stored: { ...base, generation: 9 } };
+    expect(() => decideLeaseCas(facts)).not.toThrow();
+    expect(decideLeaseCas(facts)).toBe(false);
   });
 });
 

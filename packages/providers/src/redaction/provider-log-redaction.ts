@@ -9,14 +9,21 @@
 // correlation/workflow-run IDs + a typed status + credential-scrubbed diagnostic
 // lines survive (`buildSafeProviderLog`).
 //
-// Mirrors the @sow/policy redaction approach (audit-signal `isRedactionSafe`: the
-// credential-prefix / sensitive-keyword / URL-userinfo patterns) rather than
-// importing it — policy's `isRedactionSafe` operates on an `AuditSignal` shape,
-// whereas the provider boundary scrubs arbitrary diagnostic strings + log lines.
+// GENERALIZED (task 10.1): the credential-shape DETECTORS + scrub PATTERNS now live
+// once in the pure @sow/domain redactor (`redaction-rules.ts`); this module imports
+// them instead of keeping a second copy. Only the provider-boundary MARKERS
+// (`REDACTED` / `DROPPED_FIELD`) and the provider-specific record shape
+// (`buildSafeProviderLog`) remain local — the detector logic is single-sourced.
 //
 // PURE + DETERMINISTIC: no clock, no I/O, no throw across a boundary. A field
 // that cannot be made safe is DROPPED (fail-safe), never logged raw.
 
+import {
+  looksUnsafe,
+  PEM_BLOCK,
+  URL_USERINFO_SEGMENT,
+  CREDENTIAL_TOKEN,
+} from "@sow/domain";
 import type { AgentLogEntry } from "../ports/agent-result";
 
 // --- placeholders -----------------------------------------------------------
@@ -29,35 +36,14 @@ export const REDACTED = "[REDACTED]" as const;
  * that still trips a sensitive-keyword or an unrecognized credential shape after
  * scrubbing). Fail-safe: the field is dropped rather than emitted raw. Chosen so
  * it is itself redaction-safe (no credential prefix / sensitive keyword / userinfo).
+ * Value equals the frozen `@sow/contracts` REDACTED_FIELD marker.
  */
 export const DROPPED_FIELD = "[REDACTED:field-dropped]" as const;
 
-// --- detection (mirrors @sow/policy audit-signal) ---------------------------
-
-// Credential-shaped prefixes (provider API keys, cloud creds, PEM blocks, JWTs).
-// A content hash such as "sha256:deadbeef" does NOT match any of these.
-const CREDENTIAL_PREFIX =
-  /(sk-[a-z0-9]|sk_(live|test)|xox[baprs]-|gh[pousr]_|AKIA[0-9A-Z]{16}|-----BEGIN|eyJ[A-Za-z0-9_-]{10,}\.)/i;
-
-// Sensitive keywords that indicate a raw-content / secret leak. Deliberately omits
-// "token" so a structured status code (e.g. AUTH_TOKEN_INVALID) is not a false hit.
-const SENSITIVE_KEYWORD =
-  /\b(pass(word|wd)|secret|api[_-]?key|bearer|credential|private[_ -]?key|passphrase)\b/i;
-
-// A URL userinfo credential (`scheme://user:pass@host` or `//user:pass@host`).
-const URL_USERINFO_CREDENTIAL = /\/\/[^/\s:@]+:[^/\s@]+@/;
-
-function looksUnsafe(s: string): boolean {
-  return (
-    CREDENTIAL_PREFIX.test(s) ||
-    SENSITIVE_KEYWORD.test(s) ||
-    URL_USERINFO_CREDENTIAL.test(s)
-  );
-}
-
 /**
  * True iff the string carries no credential-shaped substring and no raw-content /
- * secret marker — i.e. it is safe to emit to a log sink verbatim. Pure.
+ * secret marker — i.e. it is safe to emit to a log sink verbatim. Delegates to the
+ * single-sourced domain detector. Pure.
  */
 export function isProviderLogSafe(value: string): boolean {
   return !looksUnsafe(value);
@@ -65,28 +51,14 @@ export function isProviderLogSafe(value: string): boolean {
 
 // --- scrubbing --------------------------------------------------------------
 
-// A full PEM block (BEGIN … END). Matched (and removed) first so the residual
-// key material never survives; the surrounding CREDENTIAL_PREFIX `-----BEGIN`
-// check then guards a truncated/BEGIN-only block via the fail-safe drop.
-const PEM_BLOCK = /-----BEGIN[\s\S]*?-----END[^-]*-----/g;
-
-// A URL basic-auth `user:pass@` segment — the credential portion is replaced,
-// the host is preserved for diagnostics.
-const URL_USERINFO_SEGMENT = /(\/\/)[^/\s:@]+:[^/\s@]+@/g;
-
-// Recognized credential TOKENS (the concrete shapes CREDENTIAL_PREFIX detects).
-// Replacing the whole token with a placeholder both scrubs the secret and clears
-// the prefix so the scrubbed result is redaction-safe.
-const CREDENTIAL_TOKEN =
-  /(sk-[A-Za-z0-9][A-Za-z0-9_-]{6,}|sk_(?:live|test)_[A-Za-z0-9]{6,}|xox[baprs]-[A-Za-z0-9-]{6,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}(?:\.[A-Za-z0-9_-]+)?)/g;
-
 /**
  * Scrub credential-shaped substrings from a diagnostic string. Recognized shapes
  * (API-key tokens, PEM blocks, URL basic-auth) are replaced with `REDACTED`,
  * preserving the surrounding non-sensitive text. If the result STILL trips the
  * safety net (an unrecognized credential shape or a residual sensitive keyword
  * such as `password`/`secret`), the whole field is UNREDACTABLE and is dropped to
- * `DROPPED_FIELD` — never emitted raw. Idempotent + pure.
+ * `DROPPED_FIELD` — never emitted raw. Idempotent + pure. Uses the single-sourced
+ * @sow/domain patterns + detector; keeps the provider-boundary MARKERS local.
  */
 export function redactString(value: string): string {
   const scrubbed = value
