@@ -1,13 +1,13 @@
 # System of Work Assistant — Build Handoff (current state)
 
-> **Single current-state entry point.** Updated 2026-07-02, after the worker-wiring proof spine landed (Phases 0–7 certified; 3 §9 drivers now run live on real Temporal). For per-phase detail see `docs/sessions/NNN-*`; for binding project decisions see memory `system-of-work-prd`; the authoritative task tracker is `IMPLEMENTATION_PLAN.md`.
+> **Single current-state entry point.** Updated 2026-07-02, after **Phase 8 (§10 Local App API) + Phase 10 (§16 cross-cutting)** landed + certified (Phases 0–8 + 10 certified; the worker-wiring proof spine runs live on real Temporal). For per-phase detail see `docs/sessions/NNN-*`; for binding project decisions see memory `system-of-work-prd`; the authoritative task tracker is `IMPLEMENTATION_PLAN.md`.
 
 ## TL;DR
 
-- **Repo:** `SoW-build`, branch `main`, **everything committed + pushed to origin/main** (latest code commit `c06975d` + the session-009 close-out docs on top; remote `git@github.com:SiWarlock/AI-System-Of-Work-Assistant-Agent.git`). Working tree clean.
-- **Phases 0–7 are COMPLETE and CERTIFIED**, and the **worker-wiring proof spine is DONE + phase-exit CLEAR (2026-07-02)** — the 3 fully-wireable §9 drivers (meeting-closeout, approval-flow, ingestion-triage) now RUN live on a real Temporal worker over real adapters (`SOW_TEMPORAL=1` 4/4). Formal phase-exit auditors all **CLEAR** (`docs/audits/worker-wiring-{arch-drift,security,reachability}.md`); the **Phase-7 reachability waiver is discharged** for the wired paths.
-- **Repo-wide: 2448 tests green + 5 gated skip + 2 todo; typecheck 10/10 packages clean; `pnpm audit --prod` clean.**
-- **Next:** **Phase 8 (§10 Local App API, worker track)** ∥ **Phase 10 (cross-cutting, eval-security)** — different tracks, may run 2 concurrent Workflows. (The worker-wiring wave was scoped to the proof spine; the other 10 drivers' 40 fake-only activities are deferred by natural phase — see `worker-wiring-scope` memory + session 009.)
+- **Repo:** `SoW-build`, branch `main`, **everything committed + pushed to origin/main** (latest code commit `2a54480` + the session-010 close-out docs on top; remote `git@github.com:SiWarlock/AI-System-Of-Work-Assistant-Agent.git`). Working tree clean.
+- **Phases 0–8 + 10 are COMPLETE and CERTIFIED.** **Phase 8 (§10 Local App API)** — loopback tRPC + WS push-stream, per-launch session-token + Origin/Host auth (constant-time, anti-DNS-rebind, loopback-only), UI-safe projection field-allowlist (WS-8/§10), read-model queries + commands (approval exactly-once cross-channel), `tracked()`/`lastEventId` stream with fail-closed over-horizon resync, §12 auth/leakage suites + the <2s dashboard benchmark. **Phase 10 (§16 cross-cutting)** — non-bypassable redaction+logger, error-routing taxonomy, 3 persistent operational-truth tables (health/schedule/lease), System-Health surface, worker supervision + degraded modes + backup/recovery + config/time. Both **`/phase-exit`: CLEAR** (all 6 auditors — `docs/audits/phase{8,10}-{arch-drift,security,reachability}.md`).
+- **Repo-wide: 2973 tests green + 5 gated skip + 2 todo; typecheck 10/10 packages clean; `pnpm audit --prod` clean.**
+- **Next:** the **Phase-8/10 app-shell wiring wave** (mount the loopback API server + live authed round-trip test + swap the persistent stores into the live composition — the direct analog of the worker-wiring wave that followed Phase 7), then **Phase 9 (Electron Desktop UI, desktop track)** which consumes the §10 API + owns the Electron-main supervisor spawn + renderer WS handshake. (Deferrals documented in `IMPLEMENTATION_PLAN.md` Carry-forward + session 010.)
 
 ## What the product is
 
@@ -25,6 +25,10 @@ A Mac-first, local-first, self-hosted personal operating system — a **governed
 | 5 | `@sow/providers` | Broker (ModelProviderPort + AgentRuntimePort) + fixed-order gate pipeline + egress veto + conformance harness |
 | 6 | `@sow/integrations` | Connector Gateway (reads, no silent drops) + Tool Gateway (the ONLY external-write path: envelope + atomic reserve → zero duplicate writes) + NotebookPort |
 | 7 | `@sow/workflows`, `@sow/worker` (+ `@sow/db` amend) | §9 durability foundation (LIFE-1/2/3/5) + all 13 Temporal workflows |
+| 8 | `@sow/worker` (`api/**`), `@sow/policy`, `@sow/contracts` (`api/**`), `@sow/evals` | §10 Local App API — loopback tRPC + single WS push stream, session-token/Origin auth, UI-safe projection boundary, queries + commands, reconnect/backpressure, §12 auth/leakage suites + <2s benchmark |
+| 10 | `@sow/domain`, `@sow/db`, `@sow/worker`, `@sow/contracts`, `@sow/evals` | §16 cross-cutting — mandatory redaction+logger, error-routing taxonomy, 3 operational-truth tables (health/schedule/lease), System-Health surface, supervision + degraded modes + backup/recovery + config/time |
+
+*(Phase 9 — Electron Desktop UI, desktop track — is the remaining pre-11 phase; it consumes §10 + owns the supervisor spawn + renderer WS wiring.)*
 
 ## Architecture + patterns that MUST carry forward
 
@@ -47,16 +51,14 @@ A Mac-first, local-first, self-hosted personal operating system — a **governed
 
 ## What's next (in order)
 
-1. **WORKER-WIRING wave — proof spine DONE (2026-07-02, `d755c7b`+`11d7e6b`; session 009).** The 3 fully-wireable §9 drivers (meeting-closeout, approval-flow, ingestion-triage) run live on a real Temporal worker: WW-1 DB cross-process no-dup-write (`ReceiptStore.reserve` unique-constraint insert + `workflowRunRefs.idempotencyKey` closing `resolveRun`'s race), WW-2/3 the real `meetingOutputsProjection` + `apps/worker` composition root (real KnowledgeWriter/Broker/Tool-Gateway/policy/db, deterministic vendor stubs) + `@temporalio` wrappers + `Worker.create` + `SOW_TEMPORAL` integration test (4/4). **Scoped to the proof spine** — deferred by natural phase (session-009 carry-forward): the other 10 drivers' **40 fake-only activities** (agent-runners/synthesizers → eval/Phase 12; read-model/dashboard/notify → Phase 8/9; deterministic remainder → follow-on), real vendor SDK transports, session-auth → Phase 8.1, workflow-safe `@sow/contracts`/`@sow/domain` barrels, sole-writer (`@sow/knowledge`) path containment.
-2. **Phase 8 — §10 Local App API** (worker track; depends 7): loopback tRPC API + WebSocket event stream for the desktop renderer; per-launch session-token auth; read models + System Health surface for §11.
-3. **Phase 10 — Cross-cutting** (eval-security track; depends 2,7): non-bypassable structured logging + mandatory redaction sink; the persistent System Health `health_items` table + repo (the Phase-2/7 HealthItem-persistence deferment); worker supervision; Temporal-unavailable + Keychain-locked degraded modes; backup/recovery; config/time.
-
-Phase 8 ∥ Phase 10 are different tracks → may run 2 concurrent Workflows.
+1. **Phase-8/10 APP-SHELL WIRING wave (the direct analog of worker-wiring after Phase 7).** Mount the loopback tRPC+WS API server in the running worker bootstrap (compose the query/command/systemHealth routers + push stream into `appRouter`, run `createApiServer`+`applyWSSHandler` behind the 8.1 `makeAuthInterceptor` + `assertLoopbackBind`); swap the persistent `@sow/db` `{healthItems,scheduleBookkeeping,instanceLeases}` stores into the live proof-spine composition (currently in-memory); wire `createLogger`/`createHealthSurface`/supervision+degraded/backup into the composition root; add an in-process SOW-gated authed round-trip integration test (spike-0.5 Live-validation gate). This discharges the Phase-8/10 reachability waiver. (Full carry-forward list — fencing token, accepted redaction residual, doc STALE-DOCs, eval-suite registration, EVALUATION_CRITERIA row — in `IMPLEMENTATION_PLAN.md` Carry-forward.)
+2. **Phase 9 — Electron Desktop UI** (desktop track; depends 9,2): the nine UI surfaces over the §10 API; the renderer contextIsolation/preload security shell; the Electron-main worker-supervisor SPAWN (feeds `decideRestart`, calls `reacquireLease`+`recoverRun` on respawn); the mint/inject session-token + renderer WS handshake.
+3. **Phase 11 — Deployment/Install/Rollback** (desktop track; depends 9,2): the V1 boot sequence + install doctor + the backup cron scheduler.
 
 ## Open carry-forward (non-blocking; see IMPLEMENTATION_PLAN "Carry-forward")
 
 - `ProvenanceOrigin` has no `project_sync`/deletion member (7.13→`ingestion`, 7.14→`human`) — frozen-contract round if §6 wants distinct.
-- Phase-7 security LOWs → Phase 10: heuristic cross-calendar leakage detector could allowlist calendar-payload keys; the redaction/log sink must redact a surfaced error `cause` (drivers currently expose only `.code`).
+- Phase-7 security LOWs: the redaction/log sink now redacts a surfaced error `cause` (**✅ done in Phase 10.1** — `redactError` gates `.code` through the per-field classifier); the heuristic cross-calendar leakage detector allowlist remains open (Phase-10+ hardening). New Phase-8/10 carry-forward (app-shell wiring wave, lease-fencing token, accepted redaction residual, doc STALE-DOCs, eval-suite registration) is in `IMPLEMENTATION_PLAN.md` Carry-forward.
 - OBS-2 `FailureClass` named-constant cluster (`policy_denial`/`egress_status`/`provider_routing_unavailable`/`outbox_blocked`/`db_unavailable`) — pin as distinct enum members in one round if §16 wants them distinct.
 - ESLint + Prettier still `tsc`/waived placeholders (`format:check` waived phase-wide).
 - Also authored this session (out of build track): UI/UX design docs for Claude Design at `docs/design/ui-ux/{ui-ux-spec,design-system}.md` (aesthetic: calm governed control plane; first screen: Today / Command Center).
@@ -69,4 +71,4 @@ Phase 8 ∥ Phase 10 are different tracks → may run 2 concurrent Workflows.
 
 ## Resume prompt
 
-See the full cold-start resume prompt at the bottom of `docs/sessions/008-2026-07-02-phase7-workflows.md` (Phase 8 ∥ Phase 10 + the worker-wiring prerequisite), and the same is echoed in-chat at handoff.
+See the resume pointer at the bottom of `docs/sessions/010-2026-07-02-phase8-phase10-local-api-crosscutting.md` (the Phase-8/10 app-shell wiring wave + Phase 9), and the same is echoed in-chat at handoff.
