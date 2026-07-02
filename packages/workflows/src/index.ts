@@ -30,6 +30,21 @@
 // ReviewUpdateDashboardPort, ReviewNotifyPort, + their *Error/*ErrorCode/*Result
 // siblings). dailyBrief's names are kept as the canonical port surface.
 //
+// COLLISIONS RESOLVED (synthesis, 7.13–7.18 workflows-B): the newer, less-central
+// workflow-B modules were renamed where a name met an already-committed central
+// surface (structurally distinct in every case — different context/candidate types):
+//   • ports/projectSync.ts  — Propose{Result,ActionsPort,Error,ErrorCode} collided
+//     with the CENTRAL 7.6 ports/meetingCloseout.ts, UpdateDashboard{Port,Error,
+//     ErrorCode} with ports/dailyBrief.ts, and Synthesize{Failure,FailureCode} with
+//     ports/copilotQa.ts — all prefixed `ProjectSync…` (projectSync keeps only its
+//     own-domain names). meetingCloseout/dailyBrief/copilotQa keep the base names.
+//   • ports/copilotQa.ts    — RouteToApprovalPort collided with the CENTRAL 7.11
+//     ports/crossCalendarScheduling.ts → renamed `QaRouteToApprovalPort`.
+//   • activities/scopedRetrieval.ts — GateRejection / ProjectionGate collided with
+//     the committed activities/buildGclProjection.ts → renamed `ScopedGateRejection`
+//     / `ScopedProjectionGate` (scopedRetrieval carries CandidateGlobalProjection;
+//     buildGclProjection carries CandidateProjection).
+//
 // Deep subpath imports (`@sow/workflows/ports/operational`,
 // `@sow/workflows/runtime/taskQueue`) remain available via the package `exports` map
 // ("./*") and are used by @sow/worker.
@@ -42,6 +57,9 @@ export * from "./ports/crossCalendarScheduling";
 export * from "./ports/dailyBrief";
 export * from "./ports/ingestionTriage";
 export * from "./ports/sourceIngestion";
+// 7.13–7.18 workflows-B port surfaces
+export * from "./ports/copilotQa";
+export * from "./ports/projectSync";
 
 // --- src/runtime/ — PURE deterministic lifecycle logic ----------------------
 export * from "./runtime/taskQueue";
@@ -73,6 +91,14 @@ export * from "./activities/periodWindow";
 export * from "./activities/proposeWindows";
 export * from "./activities/registerSource";
 export * from "./activities/routeSource";
+// 7.13–7.18 workflows-B activity adapters
+export * from "./activities/connectorPoll";
+export * from "./activities/scopedRetrieval";
+export * from "./activities/deletionPlan";
+export * from "./activities/compensateDeletion";
+export * from "./activities/hermesRoute";
+export * from "./activities/assembleNotebookDocs";
+export * from "./activities/deterministicProgress";
 
 // --- src/workflows/ — PURE orchestration drivers ----------------------------
 export * from "./workflows/systemHealthSurfacing";
@@ -85,3 +111,10 @@ export * from "./workflows/dailyBrief";
 export * from "./workflows/ingestionTriage";
 export * from "./workflows/periodReview";
 export * from "./workflows/sourceIngestion";
+// 7.13–7.18 workflows B
+export * from "./workflows/connectorSyncHealth";
+export * from "./workflows/copilotQa";
+export * from "./workflows/deletionSaga";
+export * from "./workflows/hermesAutomation";
+export * from "./workflows/notebookLmSync";
+export * from "./workflows/projectSync";
