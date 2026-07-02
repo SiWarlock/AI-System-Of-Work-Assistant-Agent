@@ -7,6 +7,19 @@ packages:
 allowBuilds:
   esbuild: true
   better-sqlite3: true
+  '@swc/core': set this to true or false
+  protobufjs: set this to true or false
+
+minimumReleaseAgeExclude:
+  - '@temporalio/activity@1.19.0'
+  - '@temporalio/client@1.19.0'
+  - '@temporalio/common@1.19.0'
+  - '@temporalio/core-bridge@1.19.0'
+  - '@temporalio/nexus@1.19.0'
+  - '@temporalio/proto@1.19.0'
+  - '@temporalio/testing@1.19.0'
+  - '@temporalio/worker@1.19.0'
+  - '@temporalio/workflow@1.19.0'
 
 # pnpm 11's pre-run deps verification re-runs install and trips on the build gate;
 # disable it so `pnpm test`/`typecheck` run directly.
