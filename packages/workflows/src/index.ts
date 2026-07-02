@@ -27,6 +27,8 @@
 
 // --- src/ports/ — the shared operational port surface -----------------------
 export * from "./ports/operational";
+// 7.6 MEETING-CLOSEOUT activity ports (pure, workflow-safe SEAM).
+export * from "./ports/meetingCloseout";
 
 // --- src/runtime/ — the PURE, deterministic lifecycle logic -----------------
 export * from "./runtime/taskQueue";
@@ -41,6 +43,16 @@ export * from "./runtime/wakeHooks";
 // --- src/activities/ — activity implementations (worker-side I/O) ------------
 export * from "./activities/healthItem";
 export * from "./activities/envelopeReuse";
+// 7.6 MEETING-CLOSEOUT activities (fold the real adapters onto the pure ports).
+export * from "./activities/correlateMeeting";
+export * from "./activities/runAgentJob";
+export * from "./activities/validateCloseout";
+export * from "./activities/buildOutputs";
+export * from "./activities/commitKnowledge";
+export * from "./activities/proposeExternalActions";
+export * from "./activities/reindexGbrain";
 
 // --- src/workflows/ — orchestration drivers / (later) thin Temporal defs -----
 export * from "./workflows/systemHealthSurfacing";
+// 7.6 MEETING-CLOSEOUT — the pure orchestration DRIVER (the proof spine).
+export * from "./workflows/meetingCloseout";
