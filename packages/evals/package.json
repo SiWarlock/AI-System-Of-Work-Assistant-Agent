@@ -16,8 +16,13 @@
   },
   "dependencies": {
     "@sow/contracts": "workspace:*",
+    "@sow/db": "workspace:*",
     "@sow/domain": "workspace:*",
-    "@sow/providers": "workspace:*"
+    "@sow/integrations": "workspace:*",
+    "@sow/policy": "workspace:*",
+    "@sow/providers": "workspace:*",
+    "@sow/workflows": "workspace:*",
+    "@sow/worker": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

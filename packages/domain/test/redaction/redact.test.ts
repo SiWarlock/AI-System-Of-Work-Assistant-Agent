@@ -20,6 +20,7 @@ import {
   redactRecord,
   redactError,
   SAFE_FIELD_ALLOWLIST,
+  RAW_CONTENT_MAX_LEN,
 } from "../../src/redaction/redact";
 
 // ── secret-fixture corpus ────────────────────────────────────────────────────
@@ -191,5 +192,254 @@ describe("redactError — strip secret/prompt/raw from message + stack + cause",
     const out = redactError("raw thrown string with sk-Abc123Def456Ghi789Jkl");
     expect(out.message).not.toContain("sk-Abc123Def456Ghi789Jkl");
     expect(isRedactionSafe(out.message)).toBe(true);
+  });
+});
+
+// ── positive-shape classifier — the fail-safe root-cause regression ──────────
+// spec(§10.1: "an unrecognized/unclassifiable field defaults to redacted, never
+// passed through" — a POSITIVE allowlist, NOT a length/multiline heuristic).
+//
+// adversarial-verify REFUTED the prior length heuristic (`looksLikeRawContent =
+// includes("\n") || length > 512`): a SHORT SINGLE-LINE raw Employer-Work value
+// (safety rule 5) or free-form diagnostic (safety rule 7) slipped through under an
+// allowlisted field / inside an Error message. The classifier now passes a STRING
+// ONLY if it is provably a bounded, whitespace-free STRUCTURED token; ANY free-form
+// value (internal whitespace / over cap) is redacted regardless of length.
+describe("redactRecord — positive-shape classifier (SHORT single-line raw is REDACTED)", () => {
+  it("REDACTS a SHORT single-line raw Employer-Work value under an allowlisted field", () => {
+    // one line, well under 512 chars, but free-form prose — must NOT pass through.
+    const shortRaw = "acquire ACME for 1.2B keep it quiet";
+    for (const field of ["status", "kind", "code", "failureClass", "errorMessage"]) {
+      const out = redactRecord({ [field]: shortRaw });
+      expect(out[field]).toBe(REDACTED_RAW);
+      expect(String(out[field])).not.toContain("ACME");
+    }
+  });
+
+  it("REDACTS a free-form diagnostic MESSAGE at DEFAULT level (no debug relaxation)", () => {
+    const msg = "connection to the employer database was refused unexpectedly";
+    const out = redactRecord({ errorMessage: msg });
+    expect(out["errorMessage"]).toBe(REDACTED_RAW);
+    const dbg = redactRecord({ errorMessage: msg }, { debug: true });
+    expect(dbg["errorMessage"]).toBe(REDACTED_RAW);
+  });
+
+  it("redacts a free-form value at length 511, 512, AND 513 (no length-only pass path)", () => {
+    // a free-form value (internal whitespace) is raw at EVERY length — the prior
+    // off-by-one at exactly 512 (strict >) is gone; shape decides, not length.
+    for (const len of [RAW_CONTENT_MAX_LEN - 1, RAW_CONTENT_MAX_LEN, RAW_CONTENT_MAX_LEN + 1]) {
+      const freeForm = "word ".repeat(Math.ceil(len / 5)).slice(0, len);
+      expect(freeForm.length).toBe(len);
+      const out = redactRecord({ status: freeForm });
+      expect(out["status"]).toBe(REDACTED_RAW);
+    }
+  });
+
+  it("PASSES bounded structured tokens through: id, lower_snake enum, UPPER code, dotted event, ISO ts, number, boolean", () => {
+    const out = redactRecord({
+      correlationId: "corr-123",
+      status: "completed", // lower_snake enum
+      kind: "meeting_close", // lower_snake enum
+      code: "REVISION_STALE", // UPPER_SNAKE code
+      event: "workflow.status", // dotted event name
+      ts: "2026-07-02T16:43:41.123Z", // ISO-8601 timestamp
+      durationMs: 42, // number
+      retryable: true, // boolean
+    });
+    expect(out["correlationId"]).toBe("corr-123");
+    expect(out["status"]).toBe("completed");
+    expect(out["kind"]).toBe("meeting_close");
+    expect(out["code"]).toBe("REVISION_STALE");
+    expect(out["event"]).toBe("workflow.status");
+    expect(out["ts"]).toBe("2026-07-02T16:43:41.123Z");
+    expect(out["durationMs"]).toBe(42);
+    expect(out["retryable"]).toBe(true);
+  });
+
+  it("still scrubs a credential-shaped string under an allowlisted field to the credential marker", () => {
+    const out = redactRecord({ code: "sk-Abc123Def456Ghi789Jkl" });
+    expect(String(out["code"])).not.toContain("sk-Abc123Def456Ghi789Jkl");
+    expect(String(out["code"])).toContain(REDACTED_CREDENTIAL);
+  });
+});
+
+describe("redactError — a SHORT single-line raw sentence in message/stack/cause is REDACTED", () => {
+  it("REDACTS a short single-line raw sentence in an Error MESSAGE (not passed verbatim)", () => {
+    const e = new Error("acquire ACME for 1.2B keep this internal");
+    const out = redactError(e);
+    expect(out.message).toBe(REDACTED_RAW);
+    expect(out.message).not.toContain("ACME");
+  });
+
+  it("REDACTS a short single-line raw sentence embedded in the STACK", () => {
+    const e = new Error("boom");
+    e.stack = "employer roadmap Q3 revenue plan leaked into a stack frame";
+    const out = redactError(e);
+    if (out.stack !== undefined) {
+      expect(out.stack).toBe(REDACTED_RAW);
+      expect(out.stack).not.toContain("revenue");
+    }
+  });
+
+  it("does NOT surface a free-form raw cause .code (a code with internal whitespace is not a safe token)", () => {
+    const e = new Error("stale", { cause: { code: "the secret employer plan is to acquire ACME" } });
+    const out = redactError(e);
+    const serialized = JSON.stringify(out);
+    expect(serialized).not.toContain("ACME");
+  });
+});
+
+// ── per-field TYPE/vocabulary classifier — the whitespace-free residual ──────
+// spec(§16, safety rule 5 / rule 7). Iteration-1 replaced the length heuristic
+// with a purely SYNTACTIC token-shape gate (SAFE_STRUCTURED_TOKEN). Independent
+// re-verify REFUTED it: a WHITESPACE-FREE raw value still passes shape alone —
+// shape cannot tell `ACME` (raw employer codename) from `todoist` (safe enum),
+// `824193` (OTP) from a count, or an opaque base64url token from an id. The gate
+// must validate by TYPE per field (frozen-enum membership / id charset / number /
+// timestamp), never by generic shape. A value is emitted UN-redacted ONLY when it
+// is PROVABLY safe by type; every other whitespace-free token is REDACTED.
+describe("redactRecord — whitespace-free raw leaks are REDACTED by per-field type gate", () => {
+  it("REDACTS a single-word raw Employer-Work codename under a diagnostic field (shape ≠ safety)", () => {
+    // `ACME` is a bounded, whitespace-free token (passes the old shape gate) but is
+    // NOT a member of any frozen enum for these fields → raw content, must redact.
+    for (const field of ["status", "kind", "code", "failureClass"]) {
+      const out = redactRecord({ [field]: "ACME" });
+      expect(out[field]).toBe(REDACTED_RAW);
+      expect(String(out[field])).not.toContain("ACME");
+    }
+  });
+
+  it("REDACTS a raw person surname / project name under a diagnostic field", () => {
+    for (const field of ["status", "kind", "code"]) {
+      const surname = redactRecord({ [field]: "Nakamura" });
+      expect(surname[field]).toBe(REDACTED_RAW);
+      const project = redactRecord({ [field]: "Redwood" });
+      expect(project[field]).toBe(REDACTED_RAW);
+    }
+  });
+
+  it("REDACTS an opaque secret with NO credential prefix (base64url token) under a NON-id field", () => {
+    // a base64url bearer/session token: whitespace-free, no recognized prefix, so the
+    // credential net misses it AND the old shape gate passed it. It is NOT a frozen
+    // enum member and NOT under an id-named key → raw, must redact.
+    const opaque = "dGhpcyImcyBhIHNlY3JldCBiZWFyZXIgdG9rZW4";
+    for (const field of ["status", "code", "kind"]) {
+      const out = redactRecord({ [field]: opaque });
+      expect(out[field]).toBe(REDACTED_RAW);
+      expect(String(out[field])).not.toContain(opaque);
+    }
+  });
+
+  it("REDACTS a numeric OTP / PIN string under a NON-id field (shape ≠ count)", () => {
+    // `824193` is a whitespace-free token that the old gate passed. A numeric STRING
+    // under status/code is an OTP/PIN, not a numeric count → raw, must redact. (A real
+    // numeric count is a `number`, not a string — see the number-passes test below.)
+    for (const field of ["status", "code", "kind"]) {
+      const out = redactRecord({ [field]: "824193" });
+      expect(out[field]).toBe(REDACTED_RAW);
+      expect(String(out[field])).not.toContain("824193");
+    }
+  });
+
+  it("REDACTS a raw value under `providerId` — an enum field whose Id-suffix must NOT defeat enum validation (re-verify HIGH)", () => {
+    // `providerId` ends in `Id` but is a FIXED categorical enum (ProviderId), not a
+    // system-generated id. The dedicated enum case must win over the generic
+    // id-named short-circuit, else a raw codename / OTP / opaque token leaks here.
+    for (const raw of ["ACME", "824193", "dGhpcyImcyBhIHNlY3JldA"]) {
+      const out = redactRecord({ providerId: raw });
+      expect(out.providerId).toBe(REDACTED_RAW);
+      expect(String(out.providerId)).not.toContain(raw);
+    }
+    // A real ProviderId member still passes (traceability preserved).
+    expect(redactRecord({ providerId: "claude" }).providerId).toBe("claude");
+    // A genuinely system-generated id under a NON-enum id field still passes.
+    expect(redactRecord({ correlationId: "corr-123" }).correlationId).toBe("corr-123");
+  });
+
+  it("PASSES real frozen-enum members under their diagnostic fields", () => {
+    const out = redactRecord({
+      level: "info", // LogLevel member
+      failureClass: "connector_unreachable", // FailureClass member
+      state: "open", // HealthState member
+      event: "workflow.status", // EventName member
+      kind: "meeting_close", // ProvenanceOrigin member
+      status: "completed", // known lifecycle status
+      provider: "claude", // ProviderId member
+      targetSystem: "todoist", // TargetSystem member
+    });
+    expect(out["level"]).toBe("info");
+    expect(out["failureClass"]).toBe("connector_unreachable");
+    expect(out["state"]).toBe("open");
+    expect(out["event"]).toBe("workflow.status");
+    expect(out["kind"]).toBe("meeting_close");
+    expect(out["status"]).toBe("completed");
+    expect(out["provider"]).toBe("claude");
+    expect(out["targetSystem"]).toBe("todoist");
+  });
+
+  it("PASSES an UPPER_SNAKE code (has an underscore) but REDACTS a bare word under `code`", () => {
+    expect(redactRecord({ code: "REVISION_STALE" })["code"]).toBe("REVISION_STALE");
+    expect(redactRecord({ code: "AUTH_DENIED" })["code"]).toBe("AUTH_DENIED");
+    // a bare word without an underscore is NOT a structured code → raw
+    expect(redactRecord({ code: "ACME" })["code"]).toBe(REDACTED_RAW);
+    expect(redactRecord({ code: "todoistlike" })["code"]).toBe(REDACTED_RAW);
+  });
+
+  it("PASSES a real id under an id-named field but REDACTS a bare word under a non-id field", () => {
+    // §16: correlation/workflow-run/workspace/*Id/*Ref are system-generated ids and
+    // are explicitly loggable; they pass on the bounded id charset.
+    expect(redactRecord({ correlationId: "corr-123" })["correlationId"]).toBe("corr-123");
+    expect(redactRecord({ workflowRunId: "wf-9" })["workflowRunId"]).toBe("wf-9");
+    expect(redactRecord({ workspaceId: "employer-work" })["workspaceId"]).toBe("employer-work");
+    // the SAME token `ACME` under a non-id diagnostic field is redacted
+    expect(redactRecord({ status: "ACME" })["status"]).toBe(REDACTED_RAW);
+  });
+
+  it("PASSES numbers, booleans, null, and ISO-8601 timestamps by TYPE", () => {
+    const out = redactRecord({
+      durationMs: 42,
+      count: 824193, // a real numeric count is a number, and passes
+      retryable: false,
+      ts: "2026-07-02T16:43:41.123Z",
+    });
+    expect(out["durationMs"]).toBe(42);
+    expect(out["count"]).toBe(824193);
+    expect(out["retryable"]).toBe(false);
+    expect(out["ts"]).toBe("2026-07-02T16:43:41.123Z");
+  });
+
+  it("ACCEPTED RESIDUAL: a secret MIS-LABELLED under an id-named field passes (§16 call-site discipline)", () => {
+    // Documented boundary: correlation/workflow-run ids are system-generated from the
+    // id-builders and never carry raw content, so an id-named field passes on the id
+    // charset. A caller that deliberately places a secret under `correlationId` bypasses
+    // this — that is call-site discipline (secrets resolve only via SecretsPort), not a
+    // classifier gap. This test PINS the accepted boundary so a future tightening is a
+    // conscious choice, not an accident.
+    const out = redactRecord({ correlationId: "abc123def456" });
+    expect(out["correlationId"]).toBe("abc123def456");
+  });
+});
+
+describe("redactError — a bare word is NOT accepted as a cause .code", () => {
+  it("does NOT surface a bare single-word cause .code (ACME is not a structured code)", () => {
+    const e = new Error("stale", { cause: { code: "ACME" } });
+    const out = redactError(e);
+    expect(out.causeCode).toBeUndefined();
+    expect(JSON.stringify(out)).not.toContain("ACME");
+  });
+
+  it("does NOT surface a numeric OTP masquerading as a cause .code", () => {
+    const e = new Error("stale", { cause: { code: "824193" } });
+    const out = redactError(e);
+    expect(out.causeCode).toBeUndefined();
+  });
+
+  it("still surfaces a real UPPER_SNAKE cause .code (REVISION_STALE / AUTH_DENIED)", () => {
+    expect(redactError(new Error("s", { cause: { code: "REVISION_STALE" } })).causeCode).toBe(
+      "REVISION_STALE",
+    );
+    expect(redactError(new Error("s", { cause: { code: "AUTH_DENIED" } })).causeCode).toBe(
+      "AUTH_DENIED",
+    );
   });
 });

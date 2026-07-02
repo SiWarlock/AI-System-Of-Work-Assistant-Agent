@@ -165,12 +165,27 @@ importers:
       '@sow/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@sow/db':
+        specifier: workspace:*
+        version: link:../db
       '@sow/domain':
         specifier: workspace:*
         version: link:../domain
+      '@sow/integrations':
+        specifier: workspace:*
+        version: link:../integrations
+      '@sow/policy':
+        specifier: workspace:*
+        version: link:../policy
       '@sow/providers':
         specifier: workspace:*
         version: link:../providers
+      '@sow/worker':
+        specifier: workspace:*
+        version: link:../../apps/worker
+      '@sow/workflows':
+        specifier: workspace:*
+        version: link:../workflows
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

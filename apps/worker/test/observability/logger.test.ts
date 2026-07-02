@@ -74,6 +74,41 @@ describe("createLogger — the redaction chokepoint", () => {
     ).toBe(true);
   });
 
+  it("drops a SHORT single-line raw value under an allowlisted field before the sink (positive-shape)", () => {
+    // adversarial-verify: a short single-line raw Employer-Work sentence (§5) or
+    // free-form diagnostic (rule 7) must NOT reach the sink verbatim — the prior
+    // length/multiline heuristic passed it through. The chokepoint stays fail-safe.
+    const { sink, records } = capture();
+    const log = createLogger(sink);
+    log.info("agent.dispatch", {
+      fields: { status: "acquire ACME for 1.2B keep it quiet", code: "db refused connection" },
+    });
+    const f = records[0]!.fields as Record<string, unknown>;
+    expect(f["status"]).toBe(REDACTED_RAW);
+    expect(f["code"]).toBe(REDACTED_RAW);
+    expect(JSON.stringify(records[0])).not.toContain("ACME");
+  });
+
+  it("still passes bounded structured tokens through the field allowlist (no over-redaction)", () => {
+    const { sink, records } = capture();
+    const log = createLogger(sink);
+    log.info("workflow.status", {
+      fields: {
+        status: "completed",
+        code: "REVISION_STALE",
+        event: "workflow.status",
+        durationMs: 42,
+        retryable: true,
+      },
+    });
+    const f = records[0]!.fields as Record<string, unknown>;
+    expect(f["status"]).toBe("completed");
+    expect(f["code"]).toBe("REVISION_STALE");
+    expect(f["event"]).toBe("workflow.status");
+    expect(f["durationMs"]).toBe(42);
+    expect(f["retryable"]).toBe(true);
+  });
+
   it("redacts a secret carried by a thrown Error (message/stack/cause) before the record", () => {
     const { sink, records } = capture();
     const log = createLogger(sink);
@@ -117,6 +152,63 @@ describe("createLogger — the redaction chokepoint", () => {
       // and every emitted record is a valid LogRecord
       expect(logRecordSchema.safeParse(rec).success).toBe(true);
     }
+  });
+
+  it("drops a whitespace-free raw value (codename / OTP / opaque token) before the sink (per-field type gate)", () => {
+    // independent re-verify: the prior SYNTACTIC token-shape gate passed any
+    // whitespace-free `[A-Za-z0-9_:.+-]` token. A single-word employer codename, a
+    // numeric OTP string, and an opaque base64url token are all whitespace-free but
+    // NOT frozen-enum members under these fields → must be redacted at the chokepoint.
+    const { sink, records } = capture();
+    const log = createLogger(sink);
+    log.info("agent.dispatch", {
+      fields: {
+        status: "ACME", // raw employer codename
+        code: "824193", // numeric OTP string
+        kind: "dGhpcyImcyBhc2VjcmV0", // opaque base64url token
+      },
+    });
+    const f = records[0]!.fields as Record<string, unknown>;
+    expect(f["status"]).toBe(REDACTED_RAW);
+    expect(f["code"]).toBe(REDACTED_RAW);
+    expect(f["kind"]).toBe(REDACTED_RAW);
+    const serialized = JSON.stringify(records[0]);
+    expect(serialized).not.toContain("ACME");
+    expect(serialized).not.toContain("824193");
+    expect(serialized).not.toContain("dGhpcyImcyBhc2VjcmV0");
+  });
+
+  it("passes real frozen-enum members + ids + numbers through, but not bare words", () => {
+    const { sink, records } = capture();
+    const log = createLogger(sink);
+    log.info("workflow.status", {
+      correlationId: "corr-9",
+      fields: {
+        level: "info",
+        failureClass: "connector_unreachable",
+        state: "open",
+        event: "workflow.status",
+        provider: "claude",
+        count: 42,
+      },
+    });
+    const f = records[0]!.fields as Record<string, unknown>;
+    expect(f["level"]).toBe("info");
+    expect(f["failureClass"]).toBe("connector_unreachable");
+    expect(f["state"]).toBe("open");
+    expect(f["event"]).toBe("workflow.status");
+    expect(f["provider"]).toBe("claude");
+    expect(f["count"]).toBe(42);
+    expect(records[0]!.correlationId).toBe("corr-9");
+  });
+
+  it("does not surface a bare-word cause .code from an error (ACME is not a structured code)", () => {
+    const { sink, records } = capture();
+    const log = createLogger(sink);
+    log.errorFrom("kw.reject", new Error("stale", { cause: { code: "ACME" } }));
+    const f = records[0]!.fields as Record<string, unknown>;
+    expect(f["code"]).toBeUndefined();
+    expect(JSON.stringify(records[0])).not.toContain("ACME");
   });
 
   it("the only exported surface is a factory over a sink — the sink type takes a LogRecord", () => {
