@@ -1,4 +1,4 @@
-import type { StreamEvent } from "@sow/contracts";
+import type { StreamEvent } from "@sow/contracts/api/events";
 import type { ConnectionStatus, UiSafeStoreState } from "./index";
 
 // Pure reducers that fold validated UI-safe StreamEvents into the store. Every

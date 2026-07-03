@@ -1,9 +1,11 @@
+// Subpath imports (not the index barrel): the barrel pulls schema/registry.ts,
+// which uses node:fs and cannot be bundled into the browser renderer.
 import type {
   UiSafeApproval,
   UiSafeHealthItem,
   UiSafeWorkflowRunRef,
   UiSafeDashboardCard,
-} from "@sow/contracts";
+} from "@sow/contracts/api/ui-safe";
 
 // The renderer store holds ONLY UI-safe projections delivered over the §10 push
 // stream — never secrets, Keychain refs, or unfiltered raw content (§10 boundary,

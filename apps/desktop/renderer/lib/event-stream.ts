@@ -1,4 +1,4 @@
-import { streamEventSchema, type StreamEvent } from "@sow/contracts";
+import { streamEventSchema, type StreamEvent } from "@sow/contracts/api/events";
 import type { Store, UiSafeStoreState } from "../store";
 import { applyStreamEvent, withConnection } from "../store/projections";
 

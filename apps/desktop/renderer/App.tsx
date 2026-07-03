@@ -1,19 +1,27 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useSyncExternalStore, type ReactElement } from "react";
+import { Today } from "./surfaces/today/Today";
+import { createUiSafeStore } from "./store";
+import { seedDevStore } from "./dev/seed";
 
-// Increment-1 shell-boot proof: renders the hardened renderer and exercises the
-// narrow preload bridge. The Global Today surface (9.4) replaces this next.
+// The renderer's single UI-safe store (app singleton — one window).
+const store = createUiSafeStore();
+
 export function App(): ReactElement {
-  const [version, setVersion] = useState<string>("…");
-
   useEffect(() => {
-    void window.sow.app.getVersion().then(setVersion);
+    // Dev: hydrate with sample UI-safe projections so Today renders populated.
+    // 9.4b (production): connect the live event stream (createEventStream + the
+    // tRPC wsLink transport) using the { baseUrl, token, origin } main hands over
+    // the preload bridge, and issue the initial read-model queries.
+    if (import.meta.env.DEV) seedDevStore(store);
   }, []);
 
+  const state = useSyncExternalStore(store.subscribe, store.getSnapshot);
+
   return (
-    <div className="boot">
-      <h1>System of Work</h1>
-      <p>macOS Liquid Glass shell — hardened renderer online.</p>
-      <p className="mono">app v{version}</p>
-    </div>
+    <Today
+      connection={state.connection}
+      cards={[...state.cards.values()]}
+      health={[...state.health.values()]}
+    />
   );
 }
