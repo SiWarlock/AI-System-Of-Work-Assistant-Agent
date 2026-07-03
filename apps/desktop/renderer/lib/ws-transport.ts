@@ -25,6 +25,7 @@ export function createWsStreamTransport(
       const sub = (client as any).stream.onEvent.subscribe(
         lastEventId !== null ? { lastEventId } : {},
         {
+          onStarted: () => handlers.onStarted?.(),
           onData: (item: { id: string; data: unknown }) => handlers.onData(item.data),
           onError: (err: unknown) => handlers.onError(err),
           onComplete: () => handlers.onComplete(),

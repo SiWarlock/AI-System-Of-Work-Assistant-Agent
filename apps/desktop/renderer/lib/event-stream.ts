@@ -30,6 +30,8 @@ export function validateStreamEvent(raw: unknown): StreamEvent | null {
 // wsLink subscription (token via connectionParams, resume from lastEventId).
 
 export interface StreamSubscribeHandlers {
+  /** The subscription is established (WS open + confirmed) — before any event. */
+  readonly onStarted?: () => void;
   readonly onData: (raw: unknown) => void;
   readonly onError: (err: unknown) => void;
   readonly onComplete: () => void;
@@ -68,8 +70,16 @@ export function createEventStream(deps: EventStreamDeps): EventStream {
     const lastEventId = deps.store.getSnapshot().lastEventId;
     unsub = deps.transport.subscribe(
       {
+        onStarted: () => {
+          // The subscription is established (WS open + handshake authenticated) —
+          // go live even before the first event, so an empty read-model (a
+          // Temporal-degraded first render) still reads as connected, not a
+          // perpetual "connecting".
+          setConn("live");
+          attempt = 0;
+        },
         onData: (raw) => {
-          // First data proves the socket is live + the handshake authenticated.
+          // First data also proves the socket is live + the handshake authenticated.
           setConn("live");
           attempt = 0;
           const event = validateStreamEvent(raw);
