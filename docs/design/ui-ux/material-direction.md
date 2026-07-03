@@ -6,6 +6,7 @@
 > - [`mockups/today-macos-liquid-glass.html`](./mockups/today-macos-liquid-glass.html) — Today dashboard (the base language).
 > - [`mockups/approvals-macos.html`](./mockups/approvals-macos.html) — Approvals (master–detail; the governance heartbeat: "exactly what will happen" + no-inference TBD + runs-once + egress).
 > - [`mockups/calendar-macos.html`](./mockups/calendar-macos.html) — Calendar week view (governance-aware events; proposed writes shown as dashed "pending approval" blocks).
+> - [`mockups/today-macos-dark.html`](./mockups/today-macos-dark.html) — Today in the **dark** theme (frosted charcoal). Light is default; dark is supported.
 >
 > Still **open** (to decide later in the discussion — see bottom): dark mode, and how the 3 workspace accents live under an all-blue Apple palette.
 
@@ -78,7 +79,9 @@ These bugs recurred because each screen re-invented spacing. LOCKED rules — ev
 
 - **Three-pane shell:** left nav rail · center content · right **Copilot sidebar**. Unified toolbar carries traffic lights, workspace switcher, `⌘K` search, **egress pill**, gear.
 - **Copilot = persistent right sidebar** on every screen — collapsible to a thin rail, and **expandable to a full-screen conversation**. It is NOT a separate nav page.
-- **Workspace model:** the toolbar **workspace switcher scopes the whole app** — the active workspace (Employer-Work / Personal-Business / Personal-Life) drives every page. A **"Global"** scope aggregates across the three, and any cross-workspace read passes the **GCL Visibility Gate** (safety rule 4 — never a raw blend). Active workspace shown by the switcher + a subtle scope indicator (tint treatment still open, below).
+- **Workspace model:** the toolbar **workspace switcher scopes the whole app** — the active workspace (Employer-Work / Personal-Business / Personal-Life) drives every page. A **"Global"** scope aggregates across the three, and any cross-workspace read passes the **GCL Visibility Gate** (safety rule 4 — never a raw blend).
+- **Workspace identity — Treatment 1 (subtle scope), LOCKED:** the app accent stays **system-blue for every workspace**. The active workspace is expressed ONLY by the **switcher dot** + a thin **scope line** under the toolbar — no control re-tint (selected pills, buttons, counts stay blue in all brains, keeping the locked look consistent). Isolation stays legible without three differently-colored apps.
+  - **Workspace colors** (dot + scope line only): Employer-Work = blue `#0a84ff` · Personal-Business = emerald `#1fae6b` · Personal-Life = **indigo `#5e5ce6`**. *(Indigo replaces the original amber, which collided with the warning/degraded semantic color.)*
 - **Sidebar structure — Option B (config tucked in Settings):**
   - **WORK:** Today (home) · Calendar · Approvals · Inbox · Knowledge · Projects · **Health**
   - divider → **Settings** (contains **Connectors · Models · Audit · Workspaces** + preferences).
@@ -86,8 +89,31 @@ These bugs recurred because each screen re-invented spacing. LOCKED rules — ev
 - **Home:** Today. **Recent Changes** folds into Today ("Recent activity") + Audit — not a separate page.
 - **Settled page inventory:** Today · Calendar · Approvals · Inbox · Knowledge · Projects · Health · Settings (→ Connectors · Models · Audit · Workspaces). Copilot = sidebar (not a page).
 
-## Still open (decide later in the discussion)
-1. **Dark mode.** Owner chose **light-first**. A real dark variant (frosted charcoal glass) is TBD — light is the default and the priority.
-2. **Workspace identity vs. all-blue palette.** The 3 workspaces had accents (Employer = steel blue, Personal-Business = emerald, Personal-Life = amber). Under an all-Apple-blue app accent, the likely resolution: **keep system-blue as the app accent**, express the active workspace as a **small scoped indicator** (the switcher dot + a subtle scope tint), not a full re-theme — so you always know which brain you're in without three different-colored apps. Confirm when we design the workspace-scope model.
+## Prototype-first build order (Phase 9) — LOCKED
+
+Build in this order so each step de-risks the next; everything hangs off the shell:
+
+1. **The app shell + Today** — window chrome (traffic lights, unified toolbar, `hiddenInset`), real macOS **vibrancy**, the Option-B nav sidebar + blue **scope line**, the collapsible **Copilot sidebar** frame, and the Today dashboard (home). This establishes every reusable primitive (glass panes, nav pill, cards, grouped lists, segmented control, chips, mono-for-data).
+2. **Approvals** — the governance heartbeat + the highest-value interaction (the "exactly what will happen" + approve/edit/reject/defer flow). Proves the command path + UI-safe projections end-to-end.
+3. **Calendar** — validates the language on a non-card layout (time grid) and the cross-screen governance loop (proposed writes surfacing as pending blocks).
+4. **The inheriting pages** — Inbox · Knowledge · Projects · Health · Settings (→ Connectors · Models · Audit · Workspaces). These reuse the locked patterns and need only light per-page notes, not fresh design.
+
+## Dark mode (SUPPORTED — light is the default) 2026-07-03
+
+Adopted. **Light is the default**; a **frosted-charcoal dark** theme is a first-class variant. Reference: [`mockups/today-macos-dark.html`](./mockups/today-macos-dark.html). Same structure/idioms as light — only the material re-tints:
+
+- **Wallpaper:** deep blue-charcoal (not flat black) so the glass still refracts faint color.
+- **Panes:** dark translucent — sidebar/Copilot `rgba(30,33,44,0.55)` · content `rgba(28,31,42,0.5)` · card `rgba(36,40,52,0.55)` · card-solid `rgba(44,48,62,0.72)`; blur/saturate as light; faint top rim `inset 0 1px 0 rgba(255,255,255,0.08)`, hairlines `rgba(255,255,255,0.08)`.
+- **Text:** `#f2f2f7` / `#a1a1aa` / `#6b6b73`; mono data `#c7c7cf`.
+- **Accent:** system-blue kept, **brightened** on dark → `#409cff` for text/links/counts (pill/button base stays `#0a84ff`).
+- **Semantic:** warn `#ff9f0a` (text `#ffb340`), good `#30d158` (text `#4ee06f`) — tuned to read on dark.
+- Sheen/specular carried a touch brighter than a literal swap so the glass doesn't flatten into opaque cards.
+- Real build: pair with Electron `vibrancy` dark materials; honor `prefers-color-scheme`.
+
+## Design discussion — COMPLETE (2026-07-03)
+
+Everything load-bearing is decided and captured: aesthetic · tokens · spacing/overflow discipline · shell · navigation (sidebar Option B) · page inventory · Copilot placement (sidebar) · workspace model + identity (Treatment 1, blue/emerald/indigo) · dark mode · prototype-first order. Four reference mockups (Today light + dark · Approvals · Calendar) match the spec.
+
+**Deferred to just-in-time (Phase 9 build):** per-page layout notes for the inheriting pages — Inbox · Knowledge · Projects · Health · Settings (→ Connectors · Models · Audit · Workspaces) — designed as each is built, since they reuse the locked patterns rather than needing bespoke exploration.
 
 _When the whole UI/UX discussion converges, this folds into `design-system.md` as the token layer._
