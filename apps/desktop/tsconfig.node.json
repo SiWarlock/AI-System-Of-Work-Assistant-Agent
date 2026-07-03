@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "include": ["main", "preload", "test", "electron.vite.config.ts", "vitest.config.ts"]
+}

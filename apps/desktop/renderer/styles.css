@@ -1,0 +1,61 @@
+:root {
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, monospace;
+  --label: #1d1d1f;
+  --label-2: #46464b;
+  --accent-ink: #0064d6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font);
+  color: var(--label);
+  -webkit-font-smoothing: antialiased;
+  /* Transparent so the real macOS window vibrancy shows through the panes. */
+  background: transparent;
+}
+
+.boot {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  /* Soft pastel wash as a fallback behind the system vibrancy. */
+  background:
+    radial-gradient(1000px 700px at 12% -10%, rgba(207, 224, 244, 0.6), transparent 60%),
+    radial-gradient(900px 700px at 92% 4%, rgba(211, 236, 231, 0.6), transparent 58%),
+    linear-gradient(155deg, rgba(238, 243, 251, 0.5), rgba(231, 226, 240, 0.5));
+}
+
+.boot h1 {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.boot p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--label-2);
+}
+
+.boot .mono {
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--accent-ink);
+}

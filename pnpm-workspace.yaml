@@ -7,6 +7,8 @@ packages:
 allowBuilds:
   esbuild: true
   better-sqlite3: true
+  # Electron's postinstall downloads the platform binary; required to launch the desktop app.
+  electron: true
   # @temporalio/worker's swc bundler + protobufjs postinstall ship prebuilt/fallback
   # artifacts, so their build scripts are not needed for our (gated-Temporal) worker path.
   '@swc/core': false
