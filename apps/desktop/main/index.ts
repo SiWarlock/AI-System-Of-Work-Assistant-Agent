@@ -1,11 +1,26 @@
 import { app, BrowserWindow, session, protocol, net } from "electron";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { fork } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createMainWindow } from "./window";
 import { installCsp } from "./security";
 import { registerIpcHandlers } from "./ipc";
 import { sessionToken } from "./session-token";
 import { resolveAppRequest } from "./app-protocol";
+import {
+  WORKER_LOOPBACK_HOST,
+  WORKER_LOOPBACK_PORT,
+  buildWorkerAllowlist,
+  workerConnection,
+} from "./worker-launch";
+import {
+  createWorkerSupervisor,
+  type WorkerSupervisor,
+  type WorkerHostConfig,
+  type WorkerHostConnection,
+  type WorkerChild,
+} from "./worker-supervisor";
 
 const isDev = typeof process.env["ELECTRON_RENDERER_URL"] === "string";
 
@@ -33,6 +48,55 @@ function registerAppProtocol(): void {
   });
 }
 
+// ── worker child supervision (9.4b D4) ───────────────────────────────────────
+// Main spawns the built worker-host as a supervised background child. It runs under
+// SYSTEM node (not the Electron binary) so the worker's native deps (better-sqlite3)
+// keep their system-node ABI in dev — packaging moves this to Electron utilityProcess
+// + @electron/rebuild. The child resolves the built @sow/* dist via --conditions and
+// the resolve-loader; the launch config (token / allowlist / pinned port) is injected
+// over the child IPC channel (never env/argv — the token is a secret).
+let supervisor: WorkerSupervisor | null = null;
+
+function startWorker(): void {
+  const mode = isDev ? "dev" : "prod";
+  const devUrl = process.env["ELECTRON_RENDERER_URL"];
+  const allowlist = buildWorkerAllowlist(mode, WORKER_LOOPBACK_PORT, devUrl);
+  const config: WorkerHostConfig = {
+    token: sessionToken.get(),
+    launchId: randomUUID(),
+    origins: allowlist.origins,
+    hosts: allowlist.hosts,
+    apiHost: WORKER_LOOPBACK_HOST,
+    apiPort: WORKER_LOOPBACK_PORT,
+    // dbPath omitted → :memory:; vaultRoot omitted → tmpdir. Persistence is a follow-up.
+  };
+  const entryPath = join(__dirname, "../worker/desktop-host.mjs");
+  const loaderPath = join(__dirname, "../../worker-host/register-loader.mjs");
+  const nodeBin = process.env["SOW_WORKER_NODE"] ?? "node";
+
+  supervisor = createWorkerSupervisor({
+    fork: (): WorkerChild =>
+      fork(entryPath, [], {
+        execPath: nodeBin,
+        execArgv: ["--conditions=sow-built", "--import", loaderPath],
+        stdio: ["ignore", "inherit", "inherit", "ipc"],
+      }) as unknown as WorkerChild,
+    config,
+    connection: workerConnection(WORKER_LOOPBACK_PORT),
+    scheduleRestart: (ms, run) => {
+      const timer = setTimeout(run, ms);
+      return () => clearTimeout(timer);
+    },
+    log: (event, fields) => console.log(`[worker] ${event}`, fields ?? ""),
+  });
+  supervisor.start();
+}
+
+/** The current worker connection ({ httpUrl, wsUrl, token }) for the preload bridge (9.4b D5). */
+export function getWorkerConnection(): WorkerHostConnection | null {
+  return supervisor?.connection() ?? null;
+}
+
 // Single-instance lock: a second launch focuses the existing window rather than
 // spawning a rival process (each launch would otherwise mint its own token).
 const gotLock = app.requestSingleInstanceLock();
@@ -55,11 +119,17 @@ if (!gotLock) {
     installCsp(session.defaultSession, isDev);
     if (!isDev) registerAppProtocol();
     registerIpcHandlers();
+    startWorker();
     createMainWindow();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
     });
+  });
+
+  // Tear the worker child down cleanly on quit so no orphan process leaks.
+  app.on("before-quit", () => {
+    supervisor?.stop();
   });
 
   app.on("window-all-closed", () => {

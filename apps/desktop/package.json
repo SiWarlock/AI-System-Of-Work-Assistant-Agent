@@ -4,9 +4,10 @@
   "private": true,
   "main": "out/main/index.js",
   "scripts": {
+    "build:sow": "pnpm --filter @sow/contracts --filter @sow/domain --filter @sow/policy --filter @sow/db --filter @sow/workflows --filter @sow/knowledge --filter @sow/providers --filter @sow/integrations --filter @sow/worker run build",
     "build:worker": "node worker-host.build.mjs",
-    "dev": "pnpm run build:worker && electron-vite dev",
-    "build": "electron-vite build && pnpm run build:worker",
+    "dev": "pnpm run build:sow && pnpm run build:worker && electron-vite dev",
+    "build": "pnpm run build:sow && electron-vite build && pnpm run build:worker",
     "preview": "electron-vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
