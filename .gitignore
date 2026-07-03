@@ -32,6 +32,8 @@ dist-electron/
 release/
 apps/desktop/out/
 apps/desktop/release/
+# renderer/lib is SOURCE (per the Phase-9 file plan), not a `lib/` build dir.
+!apps/desktop/renderer/lib/
 *.app/
 *.dmg
 *.pkg

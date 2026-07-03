@@ -1,4 +1,4 @@
 {
   "$comment": "Checked-in snapshot of the privileged preload IPC surface. The snapshot test fails if the live bridge (preload/bridge.ts) invokes any channel not listed here. Adding a privileged channel MUST update this file in the same change.",
-  "channels": ["app:getVersion"]
+  "channels": ["app:getVersion", "session:getToken"]
 }

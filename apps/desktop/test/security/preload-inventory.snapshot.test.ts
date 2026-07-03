@@ -32,10 +32,13 @@ describe("preload API inventory (§5/§11 — privileged-surface drift guard)", 
   });
 
   it("exposes no database / filesystem / secrets / connector channels", () => {
-    const forbidden = /db|sql|drizzle|fs|file|secret|keychain|connector|token|exec|shell/i;
-    // (session-token arrives in 9.2 via its own audited channel; until then the
-    // surface must carry nothing matching a privileged-data pattern.)
+    const forbidden = /db|sql|drizzle|fs|file|secret|keychain|connector|exec|shell/i;
     const offenders = inventory.channels.filter((c) => forbidden.test(c));
     expect(offenders).toEqual([]);
+  });
+
+  it("the ONLY token-bearing channel is the audited per-launch session token", () => {
+    const tokenChannels = inventory.channels.filter((c) => /token/i.test(c));
+    expect(tokenChannels).toEqual(["session:getToken"]);
   });
 });
