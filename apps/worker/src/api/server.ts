@@ -27,46 +27,99 @@ import {
 } from "./auth/interceptor";
 import type { SessionToken } from "@sow/policy";
 import type { WorkerOriginAllowlist } from "./auth/originAllowlist";
+import { buildQueryRouter, type ReadModelQueryPort } from "./procedures/queries";
+import {
+  buildCommandRouter,
+  type ApprovalCommandPort,
+  type TriagePort,
+  type DispatchApprovalFn,
+  type NowFn,
+} from "./procedures/commands";
+import {
+  buildSystemHealthRouter,
+  type SystemHealthQueryPort,
+} from "./procedures/systemHealth";
+import { createPushStream, type PushStream } from "./stream/pushStream";
+import type { StreamPublisherOptions } from "./stream/eventClasses";
 
 /**
  * Dependencies for {@link createApiServer}. `expectedToken` is the current-launch
  * token (minted by Electron main, INJECTED here — never minted in the worker);
  * `allowlist` is the strict Origin/Host anti-rebind allowlist. NO secret is
  * stored on the returned server beyond the interceptor's closure.
+ *
+ * The MOUNT wave extends this with the query/command/systemHealth router deps +
+ * the push-stream publisher options, so `createApiServer` composes the FULL local
+ * control-plane surface (not just the always-present `health` seam):
+ *   - `readModel`   — the read-model query port (fake in tests, `createDbReadModelQueryPort` at boot);
+ *   - `systemHealth`— the System-Health query port (OBS-2 items + egress status);
+ *   - `approvals` + `dispatchApproval` + `now` — the exactly-once approval command surface;
+ *   - `triage`     — the ingestion re-entry command port;
+ *   - `streamPublisherOptions?` — bounded replay window for the push stream (optional).
  */
 export interface ApiServerDeps {
   readonly expectedToken: SessionToken;
   readonly allowlist: WorkerOriginAllowlist;
+  readonly readModel: ReadModelQueryPort;
+  readonly systemHealth: SystemHealthQueryPort;
+  readonly approvals: ApprovalCommandPort;
+  readonly dispatchApproval: DispatchApprovalFn;
+  readonly triage: TriagePort;
+  readonly now: NowFn;
+  readonly streamPublisherOptions?: StreamPublisherOptions;
 }
 
-// ── The root router composition ──────────────────────────────────────────────
-// The record below is the seam 8.3 (query router) + 8.4 (command router) extend:
-// they add their sub-routers here. Kept as a single place so the integrator's
-// wiring stays a one-line change and `AppRouter` tracks the set. The type is left
-// to inference (an explicit annotation would lose each sub-router's procedure map).
-const appRouter = router({
-  health: healthRouter,
-  // query: buildQueryRouter(...),     // ← 8.3 mounts here
-  // command: buildCommandRouter(...), // ← 8.4 mounts here
-});
+/**
+ * Compose the root `appRouter` from the procedure-module routers, mounting the
+ * MOUNT-wave seam (`query` / `command` / `systemHealth`) alongside the always-
+ * present `health` router. The type is left to inference so each sub-router keeps
+ * its full procedure map; `AppRouter = typeof appRouter` (below) tracks the full
+ * surface for the renderer's typed client.
+ *
+ * The push-stream `onEvent` subscription lives on its OWN router (built from the
+ * publisher), mounted here under `stream` so the WS transport and the loopback
+ * caller share ONE composed router — mirroring how `pushStream.ts` documents the
+ * integrator deriving `AppRouter` from `typeof` the composed router.
+ */
+function composeAppRouter(deps: ApiServerDeps, pushStream: PushStream) {
+  return router({
+    health: healthRouter,
+    query: buildQueryRouter({ readModel: deps.readModel }),
+    command: buildCommandRouter({
+      approvals: deps.approvals,
+      dispatchApproval: deps.dispatchApproval,
+      triage: deps.triage,
+      now: deps.now,
+    }),
+    systemHealth: buildSystemHealthRouter({ systemHealth: deps.systemHealth }),
+    stream: pushStream.router,
+  });
+}
 
-/** The renderer's typed client target (Phase 9). */
-export type AppRouter = typeof appRouter;
+/**
+ * The FULL composed root router type (health + query + command + systemHealth +
+ * stream). Derived from a representative `composeAppRouter` instantiation so the
+ * renderer's typed client sees every mounted procedure. The runtime value is built
+ * per-server in {@link createApiServer} (it closes over the injected ports); this
+ * type is the static shape they all share.
+ */
+export type AppRouter = ReturnType<typeof composeAppRouter>;
 
-// The loopback caller factory for the composed router. Built ONCE at module scope
-// (the router shape is static); each request gets a fresh caller bound to its
-// per-request context. `ApiCaller` is derived from this VALUE so the caller keeps
-// the full decorated procedure map (`.health.ping`, …) — re-applying the factory
-// generic to `AppRouter` (a BuiltRouter) instead widens it to a bare RouterRecord.
-const appCallerFactory = createCallerFactory(appRouter);
-
-/** The loopback caller shape for {@link AppRouter} (derived from the factory value). */
-export type ApiCaller = ReturnType<typeof appCallerFactory>;
+// The loopback caller shape for {@link AppRouter}. A `BuiltRouter` carries its OWN
+// caller factory as `.createCaller` (`RouterCaller<TRoot, TRecord>`), so the fully
+// decorated loopback caller is simply its ReturnType — no `createCallerFactory`
+// generic re-application (which would raise the TS2344 on a `BuiltRouter`). The
+// runtime `createCallerFactory(appRouter)` below produces exactly this type.
+/** The loopback caller shape for {@link AppRouter} (`.health.ping`, `.query.*`, `.command.*`, …). */
+export type ApiCaller = ReturnType<AppRouter["createCaller"]>;
 
 /**
  * The assembled server. `appRouter` is the composed root router; `createCaller`
  * is a loopback caller that runs the auth interceptor in the context factory
  * (BEFORE any resolver) from the raw request inputs, then invokes the router.
+ * `interceptor` + `pushStream` are exposed so the REAL transport (`api/mount.ts`)
+ * reuses the SAME composed interceptor for its HTTP/WS context factories and feeds
+ * the SAME publisher the `stream` router subscribes over.
  */
 export interface ApiServer {
   readonly appRouter: AppRouter;
@@ -76,20 +129,42 @@ export interface ApiServer {
    * runs HERE, before any resolver; its typed outcome is stored on the context.
    */
   readonly createCaller: (req: AuthInterceptorInput) => ApiCaller;
+  /** The composed 8.1 auth interceptor (the transport reuses THIS, never re-builds it). */
+  readonly interceptor: AuthInterceptor;
+  /** The push stream whose `onEvent` router is mounted at `stream`; the worker feeds `publisher`. */
+  readonly pushStream: PushStream;
 }
 
 /**
- * Build the worker API server. Assembles the root `appRouter` and returns a
- * `createCaller` that admits a request only after the 8.1 interceptor passes —
- * on failure the resolver sees a typed `err(FailureVariant)` on `ctx.auth` and
- * returns it as data (never throws, §16). The renderer imports {@link AppRouter}
- * for its typed client.
+ * Build the worker API server. Assembles the FULL root `appRouter` (health + query
+ * + command + systemHealth + stream) and returns a `createCaller` that admits a
+ * request only after the 8.1 interceptor passes — on failure the resolver sees a
+ * typed `err(FailureVariant)` on `ctx.auth` and returns it as data (never throws,
+ * §16). The renderer imports {@link AppRouter} for its typed client; `api/mount.ts`
+ * imports `interceptor` + `pushStream` to wire the real loopback transport.
  */
 export function createApiServer(deps: ApiServerDeps): ApiServer {
   const interceptor: AuthInterceptor = makeAuthInterceptor({
     expectedToken: deps.expectedToken,
     allowlist: deps.allowlist,
   });
+
+  // The push stream carries the single `onEvent` subscription procedure; the worker
+  // feeds its `publisher` from workflow/approval/health/read-model changes. Built
+  // with the composed interceptor so the WS handshake runs the SAME auth gate.
+  const pushStream = createPushStream({
+    interceptor,
+    ...(deps.streamPublisherOptions !== undefined
+      ? { publisherOptions: deps.streamPublisherOptions }
+      : {}),
+  });
+
+  const appRouter = composeAppRouter(deps, pushStream);
+  // Build the caller factory from the router VALUE — `createCallerFactory` infers
+  // its `TRecord` from the argument (the pattern the loopback caller needs to keep
+  // the full decorated procedure map). No generic type-arg (that would re-bind the
+  // ROOT, not the record) — see the `ApiCaller` derivation above.
+  const appCallerFactory = createCallerFactory(appRouter);
 
   const createCaller = (req: AuthInterceptorInput): ApiCaller => {
     // Run the interceptor in the CONTEXT FACTORY — before any resolver. The
@@ -100,5 +175,5 @@ export function createApiServer(deps: ApiServerDeps): ApiServer {
     return appCallerFactory(context);
   };
 
-  return { appRouter, createCaller };
+  return { appRouter, createCaller, interceptor, pushStream };
 }

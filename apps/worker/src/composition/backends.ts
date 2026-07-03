@@ -37,6 +37,7 @@ import type {
   HealthItem,
   FailureClass,
   AuditId,
+  LogRecord,
 } from "@sow/contracts";
 
 // ── @sow/db: the real operational store (sqlite + genesis migration) ──────────
@@ -103,8 +104,20 @@ import {
   type LocalProviderConfig,
 } from "@sow/policy";
 
-// ── @sow/workflows: the operational HealthItemStore port ──────────────────────
-import type { HealthItemStore } from "@sow/workflows/ports/operational";
+// ── @sow/workflows: the operational persistence ports (health · schedule · lease) ─
+import type {
+  HealthItemStore,
+  ScheduleStore,
+  InstanceLeaseStore,
+} from "@sow/workflows/ports/operational";
+
+// ── worker composition: the operational-truth store adapters + the logger seam ─
+import {
+  createHealthItemStoreAdapter,
+  createScheduleStoreAdapter,
+  createInstanceLeaseStoreAdapter,
+} from "./store-adapters";
+import { createLogger, type Logger, type LogSink } from "../observability/logger";
 
 // ---------------------------------------------------------------------------
 // (0) config
@@ -129,6 +142,13 @@ export interface BackendsConfig {
    * route.
    */
   readonly allowedLocalEndpoints?: readonly string[];
+  /**
+   * The REDACTED-log sink `createLogger` writes to. Defaults to an NDJSON line per
+   * record on `process.stderr` (the standard structured-log destination — every
+   * record is already redaction-safe, so no raw content or secret reaches it). A test
+   * injects a capture sink; a deployment may point it at a file/collector.
+   */
+  readonly logSink?: LogSink;
 }
 
 // ---------------------------------------------------------------------------
@@ -284,9 +304,11 @@ export function makeTmpVaultRoot(): string {
  * re-`put` under the same id is an UPSERT so a recurring failure never spawns a
  * duplicate item (§9.11).
  *
- * CARRY-FORWARD (Phase 10): the durable HealthItem table is not in @sow/db yet — the
- * §9 operational store owns it. This in-memory store is the interim binding so the
- * spine's failure sink is wired now; swap it for the P2-backed adapter in Phase 10.
+ * @deprecated (Phase 10) The assembled default now PERSISTS to the migrated sqlite
+ * `health_items` table via `createHealthItemStoreAdapter` (store-adapters.ts) — the
+ * durable HealthItem table shipped in @sow/db. This in-memory store is retained ONLY
+ * for unit fakes that want a store with no sqlite dependency; production composition
+ * no longer uses it.
  */
 export function createInMemoryHealthItemStore(): HealthItemStore {
   const byId = new Map<string, HealthItem>();
@@ -599,8 +621,17 @@ export interface ProofSpineBackends {
   readonly receiptStore: ReceiptStore;
   /** The filesystem-backed vault the KnowledgeWriter commits under. */
   readonly vault: VaultFs;
-  /** The in-memory §9 health-item store (Phase-10: persistent). */
+  /**
+   * The §9 health-item store — now PERSISTENT: backed by the migrated sqlite
+   * `health_items` table via `createHealthItemStoreAdapter` (Phase-10 wiring).
+   */
   readonly healthItems: HealthItemStore;
+  /** The LIFE-5 durable-schedule bookkeeping store (sqlite-backed). */
+  readonly scheduleStore: ScheduleStore;
+  /** The LIFE-1 single-active-instance lease store (sqlite-backed, atomic CAS). */
+  readonly instanceLeaseStore: InstanceLeaseStore;
+  /** The single redacting structured logger (over a real sink). */
+  readonly logger: Logger;
   /** The §7 Broker (deterministic gate stubs; localConfig always supplied). */
   readonly broker: Broker;
   /** The per-target write adapter (deterministic transport). */
@@ -636,10 +667,21 @@ function meetingSchemaCandidate(candidateOutput: unknown): BrokerCandidate {
 }
 
 /**
+ * The default {@link LogSink}: one NDJSON line per redacted record on stderr. The
+ * record is ALREADY redaction-safe (createLogger runs the domain redactor before the
+ * sink), so serializing it carries no raw content or secret. Kept off stdout so it
+ * never mixes with a stdout data channel.
+ */
+export const defaultLogSink: LogSink = (record: LogRecord): void => {
+  process.stderr.write(`${JSON.stringify(record)}\n`);
+};
+
+/**
  * Assemble the proof-spine backends: open sqlite (+ genesis migrate), build the
- * filesystem vault, the in-memory health store, the ReceiptStore adapter, and the
- * §7 broker over deterministic gate stubs — with localConfig ALWAYS supplied. The
- * caller (buildProofSpineActivities) binds the activity factories over this bundle.
+ * filesystem vault, the PERSISTENT sqlite-backed operational stores (health · schedule
+ * · lease), the redacting logger, the ReceiptStore adapter, and the §7 broker over
+ * deterministic gate stubs — with localConfig ALWAYS supplied. The caller
+ * (buildProofSpineActivities) binds the activity factories over this bundle.
  */
 export async function assembleBackends(
   config: BackendsConfig = {},
@@ -648,7 +690,17 @@ export async function assembleBackends(
   const now = config.now ?? ((): string => new Date().toISOString());
   const opened = await openDatabase(config);
   const vault = createFsVault(config.vaultRoot ?? makeTmpVaultRoot());
-  const healthItems = createInMemoryHealthItemStore();
+
+  // The single redacting logger over a real sink (default: NDJSON on stderr). The
+  // sink only ever receives already-redacted, schema-valid LogRecords.
+  const logger = createLogger(config.logSink ?? defaultLogSink);
+
+  // The §9 operational-truth stores now PERSIST to the migrated sqlite tables (the
+  // Phase-10 carry-forward the in-memory HealthItemStore left). `now` supplies the
+  // §10.3 lastSeen the health port's bare put(item) omits.
+  const healthItems = createHealthItemStoreAdapter(opened.repos.healthItems, now);
+  const scheduleStore = createScheduleStoreAdapter(opened.repos.scheduleBookkeeping);
+  const instanceLeaseStore = createInstanceLeaseStoreAdapter(opened.repos.instanceLeases);
   const receiptStore = createReceiptStoreAdapter(opened.repos.writeReceipts);
 
   const localConfig: LocalProviderConfig = {
@@ -677,6 +729,9 @@ export async function assembleBackends(
     receiptStore,
     vault,
     healthItems,
+    scheduleStore,
+    instanceLeaseStore,
+    logger,
     broker,
     writeAdapter,
     indexClient,

@@ -59,6 +59,44 @@ const INTERCEPTOR: AuthInterceptor = makeAuthInterceptor({
   allowlist: ALLOWLIST,
 });
 
+// The MOUNT wave extended `createApiServer`'s deps with the query/command/
+// systemHealth router ports. The AUTH suite exercises ONLY the `health.ping` seam
+// (the same authedResolver gate) — so the router ports are empty no-op fakes: the
+// full surface is COMPOSED (proving the gate is uniform across it), but no query/
+// command handler is reached on any reject vector (the gate fails first). Each fake
+// is §16-safe (a typed err / a benign empty) if a resolver ever did reach it.
+const emptyErr = {
+  ok: false as const,
+  error: { kind: "validation_rejected" as const, message: "unwired-in-suite", retryable: false },
+};
+function serverDeps() {
+  return {
+    expectedToken: EXPECTED,
+    allowlist: ALLOWLIST,
+    readModel: {
+      dashboardCards: () => emptyErr,
+      workspaceCards: () => emptyErr,
+      projectCards: () => emptyErr,
+      ingestionInbox: () => emptyErr,
+      approvalInbox: () => emptyErr,
+      copilotSurface: () => emptyErr,
+      globalSurface: () => emptyErr,
+    },
+    systemHealth: {
+      healthItems: () => emptyErr,
+      egressStatus: () => emptyErr,
+    },
+    approvals: makeTripwirePort(),
+    dispatchApproval: async () => ({ ok: true as const, value: undefined }),
+    triage: {
+      async reenterIngestion(input: { idempotencyKey: string }) {
+        return { ok: true as const, value: { idempotencyKey: input.idempotencyKey } };
+      },
+    },
+    now: () => "2026-07-02T00:00:00.000Z",
+  };
+}
+
 // ── A command port that RECORDS whether it was ever touched ──────────────────
 // The exactly-once gate is proven elsewhere; here the port is a TRIP-WIRE: on a
 // rejected auth the command handler must NOT run, so `get`/`applyTransition` must
@@ -143,7 +181,7 @@ export async function runAuthSuite(): Promise<SuiteResult> {
   for (const v of REJECT_VECTORS) {
     // (a) the query boundary (health seam — the same authedResolver gate).
     try {
-      const server = createApiServer({ expectedToken: EXPECTED, allowlist: ALLOWLIST });
+      const server = createApiServer(serverDeps());
       const r = await server
         .createCaller({ token: v.token, origin: v.origin, host: v.host })
         .health.ping();
@@ -190,7 +228,7 @@ export async function runAuthSuite(): Promise<SuiteResult> {
   // A positive control: a fully-valid caller IS admitted at both boundaries — so a
   // suite that rejects everything (a broken interceptor) cannot pass by accident.
   try {
-    const server = createApiServer({ expectedToken: EXPECTED, allowlist: ALLOWLIST });
+    const server = createApiServer(serverDeps());
     const ok = await server
       .createCaller({ token: EXPECTED.value, origin: GOOD_ORIGIN, host: GOOD_HOST })
       .health.ping();

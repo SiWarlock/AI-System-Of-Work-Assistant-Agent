@@ -60,6 +60,15 @@ import {
  * returns a typed `Result` — an unknown / out-of-scope workspace is the port's
  * typed `err(FailureVariant)` (fail-closed, no partial raw leak), NOT a throw.
  *
+ * ASYNC-TOLERANT (the MOUNT wiring). Every method returns `MaybeAsyncResult` =
+ * `Result | Promise<Result>`. The in-memory unit-test fake returns a SYNC `Result`
+ * (still assignable); the REAL @sow/db binding (`api/adapters/readModel.ts`) is
+ * fundamentally ASYNC (`Promise<Result<…, DbError>>`). Each resolver `await`s the
+ * port before projecting, and `authedResolver` already awaits an async handler — so
+ * the same router serves BOTH the sync fake and the async @sow/db port with no
+ * projector or resolver divergence. This is the seam the app-shell mount binds the
+ * real read-model port behind (`createDbReadModelQueryPort`).
+ *
  * The integrator binds this to the @sow/db read-models (that is the wiring step;
  * unit tests inject a fake). The port hands back FROZEN domain records (Approval /
  * WorkflowRunRef / GclProjection) or the dashboard-card source superset — the
@@ -68,34 +77,37 @@ import {
  */
 export interface ReadModelQueryPort {
   /** Global Today dashboard cards (cross-workspace-safe read-model summaries). */
-  readonly dashboardCards: () => Result<readonly DashboardCardSource[], FailureVariant>;
+  readonly dashboardCards: () => MaybeAsyncResult<readonly DashboardCardSource[]>;
   /** Workspace-scoped dashboard cards; unknown workspace → typed err. */
   readonly workspaceCards: (
     workspaceId: string,
-  ) => Result<readonly DashboardCardSource[], FailureVariant>;
+  ) => MaybeAsyncResult<readonly DashboardCardSource[]>;
   /** Project-scoped dashboard cards; unknown workspace → typed err. */
   readonly projectCards: (
     workspaceId: string,
     projectId: string,
-  ) => Result<readonly DashboardCardSource[], FailureVariant>;
+  ) => MaybeAsyncResult<readonly DashboardCardSource[]>;
   /** Ingestion inbox (pending imported-content approvals); unknown workspace → err. */
   readonly ingestionInbox: (
     workspaceId: string,
-  ) => Result<readonly Approval[], FailureVariant>;
+  ) => MaybeAsyncResult<readonly Approval[]>;
   /** Approval inbox (pending external-action approvals); unknown workspace → err. */
   readonly approvalInbox: (
     workspaceId: string,
-  ) => Result<readonly Approval[], FailureVariant>;
+  ) => MaybeAsyncResult<readonly Approval[]>;
   /** Copilot read surface (recent workflow runs for the workspace); unknown → err. */
   readonly copilotSurface: (
     workspaceId: string,
-  ) => Result<readonly WorkflowRunRef[], FailureVariant>;
+  ) => MaybeAsyncResult<readonly WorkflowRunRef[]>;
   /**
    * Global cross-workspace surface — GCL sanitized projections ONLY (the single
    * cross-workspace read path, WS-8). Never raw cross-workspace content inline.
    */
-  readonly globalSurface: () => Result<readonly GclProjection[], FailureVariant>;
+  readonly globalSurface: () => MaybeAsyncResult<readonly GclProjection[]>;
 }
+
+/** A port result that may be delivered synchronously (the fake) or async (@sow/db). */
+type MaybeAsyncResult<T> = Result<T, FailureVariant> | Promise<Result<T, FailureVariant>>;
 
 /** Dependencies for {@link buildQueryRouter}. */
 export interface QueryRouterDeps {
@@ -105,11 +117,11 @@ export interface QueryRouterDeps {
 // ── Input shapes + plain-function validators (§3 universal boundary rule) ─────
 
 /** A workspace-scoped query input. */
-interface WorkspaceInput {
+export interface WorkspaceInput {
   readonly workspaceId: string;
 }
 /** A project-scoped query input. */
-interface ProjectInput {
+export interface ProjectInput {
   readonly workspaceId: string;
   readonly projectId: string;
 }
@@ -208,56 +220,56 @@ export function buildQueryRouter(deps: QueryRouterDeps) {
     /** Global Today dashboard — UI-safe cards. */
     dashboard: publicProcedure.query(
       authedResolver<undefined, readonly UiSafeDashboardCard[]>(
-        (): Result<readonly UiSafeDashboardCard[], FailureVariant> =>
-          projectCards(readModel.dashboardCards()),
+        async (): Promise<Result<readonly UiSafeDashboardCard[], FailureVariant>> =>
+          projectCards(await readModel.dashboardCards()),
       ),
     ),
 
     /** Workspace surface — UI-safe cards; unknown workspace → typed err. */
     workspace: publicProcedure.input(parseWorkspaceInput).query(
       authedResolver<WorkspaceInput, readonly UiSafeDashboardCard[]>(
-        (_ctx, input): Result<readonly UiSafeDashboardCard[], FailureVariant> =>
-          projectCards(readModel.workspaceCards(input.workspaceId)),
+        async (_ctx, input): Promise<Result<readonly UiSafeDashboardCard[], FailureVariant>> =>
+          projectCards(await readModel.workspaceCards(input.workspaceId)),
       ),
     ),
 
     /** Project surface — UI-safe cards; unknown workspace → typed err. */
     project: publicProcedure.input(parseProjectInput).query(
       authedResolver<ProjectInput, readonly UiSafeDashboardCard[]>(
-        (_ctx, input): Result<readonly UiSafeDashboardCard[], FailureVariant> =>
-          projectCards(readModel.projectCards(input.workspaceId, input.projectId)),
+        async (_ctx, input): Promise<Result<readonly UiSafeDashboardCard[], FailureVariant>> =>
+          projectCards(await readModel.projectCards(input.workspaceId, input.projectId)),
       ),
     ),
 
     /** Ingestion inbox — UI-safe Approval cards; unknown workspace → typed err. */
     ingestionInbox: publicProcedure.input(parseWorkspaceInput).query(
       authedResolver<WorkspaceInput, readonly UiSafeApproval[]>(
-        (_ctx, input): Result<readonly UiSafeApproval[], FailureVariant> =>
-          projectApprovals(readModel.ingestionInbox(input.workspaceId)),
+        async (_ctx, input): Promise<Result<readonly UiSafeApproval[], FailureVariant>> =>
+          projectApprovals(await readModel.ingestionInbox(input.workspaceId)),
       ),
     ),
 
     /** Approval inbox — UI-safe Approval cards; unknown workspace → typed err. */
     approvalInbox: publicProcedure.input(parseWorkspaceInput).query(
       authedResolver<WorkspaceInput, readonly UiSafeApproval[]>(
-        (_ctx, input): Result<readonly UiSafeApproval[], FailureVariant> =>
-          projectApprovals(readModel.approvalInbox(input.workspaceId)),
+        async (_ctx, input): Promise<Result<readonly UiSafeApproval[], FailureVariant>> =>
+          projectApprovals(await readModel.approvalInbox(input.workspaceId)),
       ),
     ),
 
     /** Copilot read surface — UI-safe WorkflowRunRef cards; unknown workspace → err. */
     copilot: publicProcedure.input(parseWorkspaceInput).query(
       authedResolver<WorkspaceInput, readonly UiSafeWorkflowRunRef[]>(
-        (_ctx, input): Result<readonly UiSafeWorkflowRunRef[], FailureVariant> =>
-          projectRuns(readModel.copilotSurface(input.workspaceId)),
+        async (_ctx, input): Promise<Result<readonly UiSafeWorkflowRunRef[], FailureVariant>> =>
+          projectRuns(await readModel.copilotSurface(input.workspaceId)),
       ),
     ),
 
     /** Global cross-workspace surface — GCL sanitized grouped projections ONLY. */
     global: publicProcedure.query(
       authedResolver<undefined, readonly GclProjection[]>(
-        (): Result<readonly GclProjection[], FailureVariant> =>
-          sanitizeGlobal(readModel.globalSurface()),
+        async (): Promise<Result<readonly GclProjection[], FailureVariant>> =>
+          sanitizeGlobal(await readModel.globalSurface()),
       ),
     ),
   });

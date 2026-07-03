@@ -217,15 +217,55 @@ const ALLOWLIST: WorkerOriginAllowlist = {
   hosts: ["localhost:5173"],
 };
 
+// The MOUNT wave extended `ApiServerDeps` with the query/command/systemHealth
+// router ports. These bootstrap tests exercise ONLY `health.ping` + the auth
+// boundary, so the router ports are empty no-op fakes — the mounted routers are
+// present (proving composition) but never called by these cases. A typed `err`
+// keeps every fake §16-safe if a resolver ever did reach one.
+const emptyErr: Result<never, FailureVariant> = {
+  ok: false,
+  error: { kind: "validation_rejected", message: "unwired-in-test", retryable: false },
+};
+function makeServerDeps(over: { expectedToken?: SessionToken } = {}) {
+  return {
+    expectedToken: over.expectedToken ?? EXPECTED,
+    allowlist: ALLOWLIST,
+    readModel: {
+      dashboardCards: () => emptyErr,
+      workspaceCards: () => emptyErr,
+      projectCards: () => emptyErr,
+      ingestionInbox: () => emptyErr,
+      approvalInbox: () => emptyErr,
+      copilotSurface: () => emptyErr,
+      globalSurface: () => emptyErr,
+    },
+    systemHealth: {
+      healthItems: () => emptyErr,
+      egressStatus: () => emptyErr,
+    },
+    approvals: {
+      get: () => Promise.resolve({ ok: false, error: { code: "not_found", message: "unwired" } } as never),
+      applyTransition: () =>
+        Promise.resolve({ ok: false, error: { code: "not_found", message: "unwired" } } as never),
+    },
+    dispatchApproval: () => Promise.resolve({ ok: true, value: undefined } as never),
+    triage: {
+      reenterIngestion: (input: { idempotencyKey: string }) =>
+        Promise.resolve({ ok: true, value: { idempotencyKey: input.idempotencyKey } } as never),
+    },
+    now: () => "2026-07-02T00:00:00.000Z",
+  };
+}
+
 describe("createApiServer — typed-error boundary (§16)", () => {
   it("exposes a caller factory + the composed appRouter", () => {
-    const server = createApiServer({ expectedToken: EXPECTED, allowlist: ALLOWLIST });
+    const server = createApiServer(makeServerDeps());
     expect(typeof server.createCaller).toBe("function");
     expect(server.appRouter).toBeDefined();
   });
 
   it("a health-probe procedure returns a typed Result ok, never throwing", async () => {
-    const server = createApiServer({ expectedToken: EXPECTED, allowlist: ALLOWLIST });
+    const server = createApiServer(makeServerDeps());
     const caller = server.createCaller({
       token: EXPECTED.value,
       origin: "http://localhost:5173",
@@ -237,7 +277,7 @@ describe("createApiServer — typed-error boundary (§16)", () => {
   });
 
   it("an unauthenticated call is rejected as a typed err(FailureVariant), NOT a raw throw", async () => {
-    const server = createApiServer({ expectedToken: EXPECTED, allowlist: ALLOWLIST });
+    const server = createApiServer(makeServerDeps());
     const caller = server.createCaller({
       token: WRONG.value, // wrong token ⇒ interceptor rejects pre-resolver
       origin: "http://localhost:5173",
@@ -256,7 +296,7 @@ describe("createApiServer — typed-error boundary (§16)", () => {
   });
 
   it("a wrong-Origin call is rejected as a typed err (FORBIDDEN-equivalent), not a throw", async () => {
-    const server = createApiServer({ expectedToken: EXPECTED, allowlist: ALLOWLIST });
+    const server = createApiServer(makeServerDeps());
     const caller = server.createCaller({
       token: EXPECTED.value,
       origin: "http://evil.com",

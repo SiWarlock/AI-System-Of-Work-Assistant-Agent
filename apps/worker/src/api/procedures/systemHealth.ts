@@ -66,12 +66,20 @@ export interface UiSafeEgressStatus {
  */
 export interface SystemHealthQueryPort {
   /** OBS-2 typed HealthItems across the lifecycle (open / acknowledged / resolved). */
-  readonly healthItems: () => Result<readonly HealthItem[], FailureVariant>;
+  readonly healthItems: () => MaybeAsyncResult<readonly HealthItem[]>;
   /** Employer-Work egress-acknowledgment status; unknown workspace → typed err. */
   readonly egressStatus: (
     workspaceId: string,
-  ) => Result<UiSafeEgressStatus, FailureVariant>;
+  ) => MaybeAsyncResult<UiSafeEgressStatus>;
 }
+
+/**
+ * A port result delivered synchronously (the in-memory unit-test fake) or async (the
+ * real @sow/db / health-surface binding at boot). Each resolver `await`s it before
+ * projecting and `authedResolver` already awaits an async handler — so the same
+ * router serves both. Mirrors the async-tolerant widening on `ReadModelQueryPort`.
+ */
+type MaybeAsyncResult<T> = Result<T, FailureVariant> | Promise<Result<T, FailureVariant>>;
 
 /** Dependencies for {@link buildSystemHealthRouter}. */
 export interface SystemHealthRouterDeps {
@@ -81,7 +89,7 @@ export interface SystemHealthRouterDeps {
 // ── Input shape + plain-function validator (§3 universal boundary rule) ───────
 
 /** A workspace-scoped query input. */
-interface WorkspaceInput {
+export interface WorkspaceInput {
   readonly workspaceId: string;
 }
 
@@ -144,8 +152,8 @@ export function buildSystemHealthRouter(deps: SystemHealthRouterDeps) {
     /** OBS-2 typed HealthItems projected to UI-safe (audit-linked ref-only). */
     items: publicProcedure.query(
       authedResolver<undefined, readonly UiSafeHealthItem[]>(
-        (): Result<readonly UiSafeHealthItem[], FailureVariant> =>
-          projectHealthItems(systemHealth.healthItems()),
+        async (): Promise<Result<readonly UiSafeHealthItem[], FailureVariant>> =>
+          projectHealthItems(await systemHealth.healthItems()),
       ),
     ),
 
@@ -154,8 +162,8 @@ export function buildSystemHealthRouter(deps: SystemHealthRouterDeps) {
      *  an over-broad port result cannot leak an extra field to the renderer. */
     egressStatus: publicProcedure.input(parseWorkspaceInput).query(
       authedResolver<WorkspaceInput, UiSafeEgressStatus>(
-        (_ctx, input): Result<UiSafeEgressStatus, FailureVariant> =>
-          projectEgressStatus(systemHealth.egressStatus(input.workspaceId)),
+        async (_ctx, input): Promise<Result<UiSafeEgressStatus, FailureVariant>> =>
+          projectEgressStatus(await systemHealth.egressStatus(input.workspaceId)),
       ),
     ),
   });
