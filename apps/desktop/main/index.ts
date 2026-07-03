@@ -18,9 +18,9 @@ import {
   createWorkerSupervisor,
   type WorkerSupervisor,
   type WorkerHostConfig,
-  type WorkerHostConnection,
   type WorkerChild,
 } from "./worker-supervisor";
+import { setWorkerEndpoint } from "./worker-holder";
 
 const isDev = typeof process.env["ELECTRON_RENDERER_URL"] === "string";
 
@@ -90,11 +90,9 @@ function startWorker(): void {
     log: (event, fields) => console.log(`[worker] ${event}`, fields ?? ""),
   });
   supervisor.start();
-}
-
-/** The current worker connection ({ httpUrl, wsUrl, token }) for the preload bridge (9.4b D5). */
-export function getWorkerConnection(): WorkerHostConnection | null {
-  return supervisor?.connection() ?? null;
+  // Publish the non-secret loopback endpoint for the preload bridge (D5). The token
+  // stays on the separate audited session:getToken channel (one token-bearing channel).
+  setWorkerEndpoint(workerConnection(WORKER_LOOPBACK_PORT));
 }
 
 // Single-instance lock: a second launch focuses the existing window rather than

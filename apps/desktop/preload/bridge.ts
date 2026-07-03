@@ -9,6 +9,12 @@
 
 export type InvokeFn = (channel: string, ...args: unknown[]) => Promise<unknown>;
 
+/** The non-secret loopback worker endpoint the renderer's tRPC client targets. */
+export interface WorkerEndpoint {
+  readonly httpUrl: string;
+  readonly wsUrl: string;
+}
+
 export interface SowBridge {
   readonly app: {
     /** The running app version (a benign lifecycle read — the bridge seed). */
@@ -22,6 +28,14 @@ export interface SowBridge {
      */
     readonly getToken: () => Promise<string>;
   };
+  readonly worker: {
+    /**
+     * The loopback worker endpoint `{ httpUrl, wsUrl }` once main has spawned it,
+     * else null (9.4b / task 9.4b-D5). Carries NO token — the renderer pairs it
+     * with `session.getToken()`, keeping exactly one token-bearing channel.
+     */
+    readonly getConnection: () => Promise<WorkerEndpoint | null>;
+  };
 }
 
 export function buildSowBridge(invoke: InvokeFn): SowBridge {
@@ -32,11 +46,18 @@ export function buildSowBridge(invoke: InvokeFn): SowBridge {
     session: {
       getToken: () => invoke("session:getToken") as Promise<string>,
     },
+    worker: {
+      getConnection: () => invoke("worker:getConnection") as Promise<WorkerEndpoint | null>,
+    },
   };
 }
 
 // The flat, checked-in set of privileged channels the bridge may invoke — the
 // SINGLE SOURCE mirrored by preload/inventory.json and pinned by the snapshot
 // test. Adding a capability MUST extend this list AND inventory.json together.
-export const PRELOAD_CHANNELS = ["app:getVersion", "session:getToken"] as const;
+export const PRELOAD_CHANNELS = [
+  "app:getVersion",
+  "session:getToken",
+  "worker:getConnection",
+] as const;
 export type PreloadChannel = (typeof PRELOAD_CHANNELS)[number];
