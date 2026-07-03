@@ -6,6 +6,7 @@ import {
   streamEventSchema,
   type StreamEvent,
 } from "@sow/contracts";
+import type { UiSafeDashboardCard, UiSafeHealthItem } from "@sow/contracts/api/ui-safe";
 
 // Real enum members pulled off the frozen schemas, so fixtures are genuinely
 // schema-valid (they round-trip through streamEventSchema.parse below).
@@ -49,4 +50,14 @@ export function cardEvent(seq: number, eventId: string, cardId = "card-1"): Stre
     eventId,
     payload: { cardId, kind: "approvals", title: "Approvals", status: "ok", count: 3, updatedAt: ISO },
   });
+}
+
+// The UI-safe read-model shapes an initial query returns (same payloads the stream
+// carries), for the hydrate reducers.
+export function uiSafeCard(cardId = "card-1"): UiSafeDashboardCard {
+  return { cardId, kind: "approvals", title: "Approvals", status: "ok", count: 3, updatedAt: ISO };
+}
+
+export function uiSafeHealthItem(id = "h-1"): UiSafeHealthItem {
+  return { id, failureClass, severity: "warning", state: healthState, openedAt: ISO };
 }

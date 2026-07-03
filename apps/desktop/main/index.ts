@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
 import { createMainWindow } from "./window";
 import { installCsp } from "./security";
 import { registerIpcHandlers } from "./ipc";
@@ -61,6 +62,9 @@ function startWorker(): void {
   const mode = isDev ? "dev" : "prod";
   const devUrl = process.env["ELECTRON_RENDERER_URL"];
   const allowlist = buildWorkerAllowlist(mode, WORKER_LOOPBACK_PORT, devUrl);
+  const userData = app.getPath("userData");
+  const vaultRoot = join(userData, "vault");
+  mkdirSync(vaultRoot, { recursive: true });
   const config: WorkerHostConfig = {
     token: sessionToken.get(),
     launchId: randomUUID(),
@@ -68,7 +72,9 @@ function startWorker(): void {
     hosts: allowlist.hosts,
     apiHost: WORKER_LOOPBACK_HOST,
     apiPort: WORKER_LOOPBACK_PORT,
-    // dbPath omitted → :memory:; vaultRoot omitted → tmpdir. Persistence is a follow-up.
+    // Persist the operational store + vault under the app's userData (survives launches).
+    dbPath: join(userData, "sow.db"),
+    vaultRoot,
   };
   const entryPath = join(__dirname, "../worker/desktop-host.mjs");
   const loaderPath = join(__dirname, "../../worker-host/register-loader.mjs");

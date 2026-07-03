@@ -1,7 +1,50 @@
 import { describe, it, expect } from "vitest";
 import { initialStoreState } from "../../renderer/store";
-import { applyStreamEvent, withConnection, isGap } from "../../renderer/store/projections";
-import { approvalEvent, healthEvent, workflowEvent, cardEvent } from "./fixtures";
+import {
+  applyStreamEvent,
+  withConnection,
+  isGap,
+  hydrateCards,
+  hydrateHealth,
+} from "../../renderer/store/projections";
+import {
+  approvalEvent,
+  healthEvent,
+  workflowEvent,
+  cardEvent,
+  uiSafeCard,
+  uiSafeHealthItem,
+} from "./fixtures";
+
+describe("initial hydrate (9.4b — fold a read-model query snapshot)", () => {
+  it("hydrateCards upserts cards by cardId; a later stream event stays a clean upsert", () => {
+    let s = initialStoreState;
+    s = hydrateCards(s, [uiSafeCard("card-1"), uiSafeCard("card-2")]);
+    expect([...s.cards.keys()].sort()).toEqual(["card-1", "card-2"]);
+    // A subsequent stream change for card-1 upserts (no duplicate, no lastEventId drift from hydrate).
+    s = applyStreamEvent(s, cardEvent(1, "e1", "card-1"));
+    expect(s.cards.size).toBe(2);
+    expect(s.lastEventId).toBe("e1");
+  });
+
+  it("hydrateHealth upserts items by id", () => {
+    let s = initialStoreState;
+    s = hydrateHealth(s, [uiSafeHealthItem("h-1"), uiSafeHealthItem("h-2")]);
+    expect([...s.health.keys()].sort()).toEqual(["h-1", "h-2"]);
+  });
+
+  it("an empty snapshot is a no-op (same reference — no needless re-render)", () => {
+    const s = initialStoreState;
+    expect(hydrateCards(s, [])).toBe(s);
+    expect(hydrateHealth(s, [])).toBe(s);
+  });
+
+  it("hydrate does NOT advance the resume cursor (it is a snapshot, not a stream event)", () => {
+    const s = hydrateCards(initialStoreState, [uiSafeCard("card-1")]);
+    expect(s.lastEventId).toBeNull();
+    expect(s.lastSeq).toBeNull();
+  });
+});
 
 describe("store projections (9.3 — fold UI-safe events)", () => {
   it("routes each event class into its keyed collection", () => {

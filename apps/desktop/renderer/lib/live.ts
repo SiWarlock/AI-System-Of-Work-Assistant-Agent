@@ -1,5 +1,8 @@
+import type { CreateTRPCClient } from "@trpc/client";
+import type { AnyTRPCRouter } from "@trpc/server";
 import type { SowBridge } from "../../preload/bridge";
 import type { Store, UiSafeStoreState } from "../store";
+import { hydrateCards, hydrateHealth } from "../store/projections";
 import { createEventStream } from "./event-stream";
 import { createLiveClient } from "./live-client";
 import { createWsStreamTransport } from "./ws-transport";
@@ -34,8 +37,30 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<(() => 
   });
   stream.start();
 
+  // Initial read-model hydrate — persisted data shows on load; the live stream then
+  // keeps it current. Best-effort: a query failure just leaves the store to the
+  // stream. The dashboard query is server-projected to UiSafeDashboardCard and
+  // systemHealth.items to UiSafeHealthItem, so both fold in directly.
+  void hydrate(live.client, store);
+
   return () => {
     stream.stop();
     live.close();
   };
+}
+
+async function hydrate(
+  client: CreateTRPCClient<AnyTRPCRouter>,
+  store: Store<UiSafeStoreState>,
+): Promise<void> {
+  try {
+    // Generic-router client (full AppRouter typing deferred) → dynamic access.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const c = client as any;
+    const [cardsR, healthR] = await Promise.all([c.query.dashboard.query(), c.systemHealth.items.query()]);
+    if (cardsR?.ok === true) store.dispatch((s) => hydrateCards(s, cardsR.value));
+    if (healthR?.ok === true) store.dispatch((s) => hydrateHealth(s, healthR.value));
+  } catch {
+    // Best-effort snapshot — the live stream is the source of truth.
+  }
 }

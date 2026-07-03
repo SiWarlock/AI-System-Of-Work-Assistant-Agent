@@ -1,4 +1,5 @@
 import type { StreamEvent } from "@sow/contracts/api/events";
+import type { UiSafeDashboardCard, UiSafeHealthItem } from "@sow/contracts/api/ui-safe";
 import type { ConnectionStatus, UiSafeStoreState } from "./index";
 
 // Pure reducers that fold validated UI-safe StreamEvents into the store. Every
@@ -46,4 +47,32 @@ export function applyStreamEvent(state: UiSafeStoreState, event: StreamEvent): U
       return state;
     }
   }
+}
+
+// ── initial hydrate (9.4b) ───────────────────────────────────────────────────
+// Bulk-upsert the read-model an INITIAL query returns (persisted data shows on
+// load; the live stream then keeps it current). Keyed identically to the stream
+// reducers, so a subsequent stream event for the same id is a clean upsert. The
+// resume cursor is untouched — hydrate is a snapshot, not a stream event.
+
+/** Fold an initial dashboard-cards query result into state (upsert by cardId). */
+export function hydrateCards(
+  state: UiSafeStoreState,
+  cards: readonly UiSafeDashboardCard[],
+): UiSafeStoreState {
+  if (cards.length === 0) return state;
+  const next = new Map(state.cards);
+  for (const card of cards) next.set(card.cardId, card);
+  return { ...state, cards: next };
+}
+
+/** Fold an initial System-Health query result into state (upsert by id). */
+export function hydrateHealth(
+  state: UiSafeStoreState,
+  items: readonly UiSafeHealthItem[],
+): UiSafeStoreState {
+  if (items.length === 0) return state;
+  const next = new Map(state.health);
+  for (const item of items) next.set(item.id, item);
+  return { ...state, health: next };
 }
