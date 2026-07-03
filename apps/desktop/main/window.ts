@@ -9,7 +9,7 @@ const isDev = typeof RENDERER_URL === "string" && RENDERER_URL.length > 0;
 // The single origin the renderer is ever permitted to sit at.
 function isAllowedNavigation(url: string): boolean {
   if (isDev) return url.startsWith(RENDERER_URL as string);
-  return url.startsWith("file://");
+  return url.startsWith("app://sow");
 }
 
 export function createMainWindow(): BrowserWindow {
@@ -53,7 +53,9 @@ export function createMainWindow(): BrowserWindow {
   if (isDev) {
     void win.loadURL(RENDERER_URL as string);
   } else {
-    void win.loadFile(join(__dirname, "../renderer/index.html"));
+    // Prod: the app://sow privileged scheme (registered in main) serves the bundle,
+    // giving the renderer a real tuple origin instead of file://'s opaque null.
+    void win.loadURL("app://sow/");
   }
 
   return win;
