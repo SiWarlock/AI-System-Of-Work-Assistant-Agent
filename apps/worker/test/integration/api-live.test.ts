@@ -22,7 +22,7 @@
 // adapters, which the QA-stage adapter tests already cover). Each socket case tears
 // its client + server down so no port leaks.
 import { describe, it, expect } from "vitest";
-import { createServer } from "node:http";
+import { createServer, request } from "node:http";
 import type { AddressInfo } from "node:net";
 import WebSocket from "ws";
 import {
@@ -132,6 +132,44 @@ function originFor(port: number): string {
 }
 function allowlistFor(port: number): WorkerOriginAllowlist {
   return { origins: [originFor(port)], hosts: [`127.0.0.1:${port}`] };
+}
+
+/** The native renderer's Origin (packaged app:// scheme) — a DISTINCT origin from the loopback worker. */
+const RENDERER_ORIGIN = "app://sow";
+
+/** A CROSS-ORIGIN allowlist: the renderer Origin admitted ALONGSIDE the loopback Host (9.4b). */
+function crossOriginAllowlistFor(port: number): WorkerOriginAllowlist {
+  return { origins: [RENDERER_ORIGIN], hosts: [`127.0.0.1:${port}`] };
+}
+
+/** Send a raw CORS preflight (OPTIONS) with an arbitrary Origin; capture status + reflected ACAO. */
+function preflight(port: number, origin: string): Promise<{ status: number; acao: string | undefined }> {
+  return new Promise((resolve, reject) => {
+    const req = request(
+      {
+        host: "127.0.0.1",
+        port,
+        method: "OPTIONS",
+        path: "/",
+        headers: {
+          origin,
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "authorization",
+        },
+      },
+      (res) => {
+        res.resume(); // drain the (empty) body
+        res.on("end", () =>
+          resolve({
+            status: res.statusCode ?? 0,
+            acao: res.headers["access-control-allow-origin"] as string | undefined,
+          }),
+        );
+      },
+    );
+    req.once("error", reject);
+    req.end();
+  });
 }
 
 /** Build an HTTP tRPC client that presents `token` (bearer) + `origin`. */
@@ -388,5 +426,69 @@ describe.skipIf(!SOW_API)("live loopback transport — auth + query + stream + b
     // A non-loopback host is refused with the typed error, no socket opened.
     const badDeps: StartApiServerOptions = { ...serverDeps(EXPECTED, allowlistFor(0), 0), host: "0.0.0.0" };
     await expect(startApiServer(badDeps)).rejects.toBeInstanceOf(LoopbackBindRefusedError);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9.4b — the NATIVE cross-origin renderer (a distinct trusted client). The page
+// Origin (app://sow) is never the loopback Host (127.0.0.1:<port>), so these pin
+// that the REAL transport ADMITS that pairing over sockets AND answers the CORS
+// preflight the browser sends — the same-origin cases above never exercised either.
+describe.skipIf(!SOW_API)("live loopback transport — native cross-origin renderer (9.4b)", () => {
+  it("ADMITS the renderer over HTTP: app://sow Origin + loopback Host + valid token → ok([])", async () => {
+    const port = await reserveLoopbackPort();
+    let server: RunningApiServer | undefined;
+    try {
+      server = await startApiServer(serverDeps(EXPECTED, crossOriginAllowlistFor(port), port));
+      const client = httpClient(port, EXPECTED.value, RENDERER_ORIGIN);
+      const r: Result<readonly unknown[], FailureVariant> = await client.query.dashboard.query();
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.value).toHaveLength(0);
+    } finally {
+      await server?.close();
+    }
+  });
+
+  it("ADMITS the renderer WS stream: app://sow Origin + valid token → the event flows", async () => {
+    const port = await reserveLoopbackPort();
+    let server: RunningApiServer | undefined;
+    let wsClose: (() => void) | undefined;
+    try {
+      server = await startApiServer(serverDeps(EXPECTED, crossOriginAllowlistFor(port), port));
+      const { client, wsClose: close } = fullClient(port, EXPECTED.value, RENDERER_ORIGIN);
+      wsClose = close;
+      const ev = server.publisher.publishHealth(healthItem("h-xorigin"));
+      const items = await collectStream(client, {}, 1, 2500);
+      expect(items.map((i) => i.id)).toContain(ev?.eventId);
+    } finally {
+      wsClose?.();
+      await server?.close();
+    }
+  });
+
+  it("CORS preflight — an allowlisted Origin gets 204 + the EXACT ACAO (never *)", async () => {
+    const port = await reserveLoopbackPort();
+    let server: RunningApiServer | undefined;
+    try {
+      server = await startApiServer(serverDeps(EXPECTED, crossOriginAllowlistFor(port), port));
+      const { status, acao } = await preflight(port, RENDERER_ORIGIN);
+      expect(status).toBe(204);
+      expect(acao).toBe(RENDERER_ORIGIN);
+    } finally {
+      await server?.close();
+    }
+  });
+
+  it("CORS preflight — a FOREIGN Origin gets 204 but NO ACAO (the browser blocks it)", async () => {
+    const port = await reserveLoopbackPort();
+    let server: RunningApiServer | undefined;
+    try {
+      server = await startApiServer(serverDeps(EXPECTED, crossOriginAllowlistFor(port), port));
+      const { status, acao } = await preflight(port, "http://evil.example.com");
+      expect(status).toBe(204);
+      expect(acao).toBeUndefined();
+    } finally {
+      await server?.close();
+    }
   });
 });

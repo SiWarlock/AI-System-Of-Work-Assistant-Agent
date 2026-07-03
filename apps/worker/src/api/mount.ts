@@ -34,10 +34,13 @@
 // startup fault — a non-loopback bind refusal, or a socket that cannot listen). No
 // per-request throw crosses the boundary — the interceptor + `authedResolver` keep
 // every request/handshake a typed Result.
-import { createHTTPServer, type CreateHTTPContextOptions } from "@trpc/server/adapters/standalone";
+import { createHTTPHandler, type CreateHTTPContextOptions } from "@trpc/server/adapters/standalone";
 import { applyWSSHandler, type CreateWSSContextFnOptions } from "@trpc/server/adapters/ws";
 import { WebSocketServer } from "ws";
+import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+
+import { resolveCors } from "./auth/cors";
 
 import { isErr } from "@sow/contracts";
 import { createApiServer, type ApiServerDeps, type AppRouter } from "./server";
@@ -175,11 +178,27 @@ export function startApiServer(opts: StartApiServerOptions): Promise<RunningApiS
   const httpContext = makeHttpContext(api.interceptor);
   const wsContext = makeWsContext(api.interceptor);
 
-  // The HTTP server for queries/commands (httpBatchLink-compatible). The
-  // `createContext` runs the interceptor pre-resolver from the bearer + Origin/Host.
-  const httpServer = createHTTPServer({
+  // The HTTP server for queries/commands (httpBatchLink-compatible). We wrap the
+  // tRPC standalone request handler in our OWN http.Server so we can answer the
+  // browser's cross-origin CORS PREFLIGHT (OPTIONS) and reflect an EXACT allowlisted
+  // Origin on every response (9.4b): the renderer is a distinct origin, so without
+  // this the browser blocks its reads. CORS is only the browser-facing read control
+  // — `createContext` still runs the token/Origin/Host interceptor on every actual
+  // request before any resolver, and only `opts.allowlist.origins` are ever
+  // reflected (never `*`, never credentials — see auth/cors.ts).
+  const trpcHandler = createHTTPHandler({
     router: api.appRouter,
     createContext: httpContext,
+  });
+  const httpServer = createServer((req, res) => {
+    const cors = resolveCors(req.method, headerValue(req.headers.origin), opts.allowlist.origins);
+    for (const [key, value] of Object.entries(cors.headers)) res.setHeader(key, value);
+    if (cors.shortCircuitStatus !== undefined) {
+      res.statusCode = cors.shortCircuitStatus;
+      res.end();
+      return;
+    }
+    trpcHandler(req, res);
   });
 
   // The WS server for the push-stream subscription. `noServer: false` + an explicit
