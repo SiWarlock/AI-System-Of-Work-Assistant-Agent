@@ -161,7 +161,8 @@ Lessons start at §1.
 
 | # | Date | Topic | Rule (one-liner) |
 |--:|---|---|---|
-| | | | |
+| [1](LESSONS.md#1) | 2026-07-03 | Build source-TS pkgs structure-preserving for a spawned child | A package that reads data files via `import.meta.url` must build structure-preserving (tsc, `dist` mirrors `src`) behind a `sow-built` export condition + a child-only extension-appending ESM resolve-loader — never bundle it (bundling breaks the `../../schemas` relative resolve + CJS kills `import.meta.url`). |
+| [2](LESSONS.md#2) | 2026-07-03 | Electron `fork` uses the Electron binary → native-ABI mismatch | In Electron, `child_process.fork` a Node child with `execPath` = system node (not the default Electron binary) so native-module ABIs match the dev/test toolchain; move to `utilityProcess` + `@electron/rebuild` only at packaging. |
 
 <!-- Starts empty. Each row links to its `LESSONS.md` anchor. -->
 
