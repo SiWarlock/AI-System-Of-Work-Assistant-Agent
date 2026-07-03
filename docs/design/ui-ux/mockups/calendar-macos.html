@@ -1,0 +1,1197 @@
+<title>Calendar — SoW (macOS Liquid Glass)</title>
+<style>
+  :root {
+    /* ── system materials (verbatim from locked reference) ─────────── */
+    --accent: #0a84ff;
+    --accent-ink: #0064d6;
+    --label: #1d1d1f;
+    --label-2: #46464b;
+    --label-3: #6b6b73;
+    --hair: rgba(255,255,255,0.35);
+    --hair-strong: rgba(255,255,255,0.5);
+    --hair-dark: rgba(0,0,0,0.06);
+    --warn: #ff9f0a;
+    --warn-ink: #b25e00;
+    --good: #34c759;
+    --good-ink: #1a7f37;
+
+    --sidebar: rgba(255,255,255,0.46);
+    --content: rgba(255,255,255,0.5);
+    --copilot: rgba(255,255,255,0.46);
+    --card: rgba(255,255,255,0.5);
+    --card-solid: rgba(255,255,255,0.92);
+
+    --glass-ring: inset 0 0 0 1px rgba(255,255,255,0.55);
+    --glass-glow: inset 0 1px 0 rgba(255,255,255,0.7),
+                  inset 0 -14px 26px -14px rgba(255,255,255,0.28);
+    --sheen: linear-gradient(125deg,
+              rgba(255,255,255,0.42) 0%,
+              rgba(255,255,255,0.10) 18%,
+              rgba(255,255,255,0) 42%,
+              rgba(255,255,255,0) 62%,
+              rgba(255,255,255,0.06) 82%,
+              rgba(255,255,255,0.22) 100%);
+
+    --radius-win: 16px;
+    --radius-card: 15px;
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", system-ui, sans-serif;
+    --mono: "SF Mono", ui-monospace, "Menlo", "JetBrains Mono", monospace;
+
+    /* Calendar-specific */
+    --hour-h: 60px;      /* 1 hour = 60px */
+    --grid-start: 8;     /* 8 AM */
+    --today-col: 2;      /* TUE = column 2 (1-indexed) */
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+
+  .desktop {
+    min-height: 100vh;
+    font-family: var(--font);
+    color: var(--label);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    display: flex;
+    flex-direction: column;
+    background:
+      radial-gradient(1150px 800px at 8% -10%, #cfe0f4 0%, rgba(207,224,244,0) 58%),
+      radial-gradient(1050px 820px at 97% 2%, #d3ece7 0%, rgba(211,236,231,0) 56%),
+      radial-gradient(1250px 1000px at 85% 114%, #ddd6ee 0%, rgba(221,214,238,0) 60%),
+      radial-gradient(980px 880px at 12% 120%, #ecdfe9 0%, rgba(236,223,233,0) 55%),
+      radial-gradient(900px 900px at 50% 46%, #e0eef7 0%, rgba(224,238,247,0) 60%),
+      linear-gradient(155deg, #e6edf6 0%, #e4ebf2 45%, #e7e2f0 100%);
+  }
+
+  /* ── fake menu bar ─────────────────────────────────────────────── */
+  .menubar {
+    height: 26px; flex: 0 0 26px;
+    display: flex; align-items: center; gap: 20px;
+    padding: 0 16px;
+    font-size: 13px; color: #1d1d1f;
+    background: rgba(255,255,255,0.5);
+    backdrop-filter: saturate(180%) blur(30px);
+    -webkit-backdrop-filter: saturate(180%) blur(30px);
+    border-bottom: 0.5px solid rgba(0,0,0,0.06);
+  }
+  .menubar .apple { font-size: 14px; opacity: 0.95; }
+  .menubar .app-name { font-weight: 600; }
+  .menubar .menu { color: #1d1d1f; opacity: 0.82; }
+  .menubar .spacer { flex: 1; }
+  .menubar .status { display: flex; align-items: center; gap: 14px; opacity: 0.95; font-variant-numeric: tabular-nums; }
+  .menubar .status svg { width: 16px; height: 16px; }
+
+  /* ── stage ─────────────────────────────────────────────────────── */
+  .stage {
+    flex: 1; display: flex;
+    align-items: center; justify-content: center;
+    padding: 26px 28px 32px; min-height: 0;
+  }
+
+  /* ── window ────────────────────────────────────────────────────── */
+  .window {
+    position: relative;
+    width: min(1220px, 100%);
+    height: min(842px, calc(100vh - 96px));
+    border-radius: var(--radius-win);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    border: 0.5px solid rgba(255,255,255,0.4);
+    box-shadow:
+      var(--glass-ring),
+      0 40px 90px -20px rgba(10,20,60,0.55),
+      0 16px 34px -14px rgba(10,20,60,0.4);
+    background: transparent;
+  }
+  .window::after {
+    content: "";
+    position: absolute; inset: 0;
+    pointer-events: none;
+    background: var(--sheen);
+    mix-blend-mode: screen;
+    opacity: 0.3; z-index: 5;
+    border-radius: inherit;
+  }
+
+  /* ── unified toolbar ────────────────────────────────────────────── */
+  .titlebar {
+    position: relative;
+    height: 52px; flex: 0 0 52px;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 14px;
+    background: rgba(255,255,255,0.26);
+    backdrop-filter: saturate(160%) blur(50px);
+    -webkit-backdrop-filter: saturate(160%) blur(50px);
+    border-bottom: 0.5px solid rgba(255,255,255,0.28);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+  }
+  .traffic { display: flex; gap: 8px; padding-right: 6px; }
+  .traffic i {
+    width: 12px; height: 12px; border-radius: 50%; display: block;
+    box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.14), inset 0 1.5px 1px rgba(255,255,255,0.55);
+  }
+  .traffic .r { background: radial-gradient(circle at 32% 28%, #ff8a83, #ff5f57); }
+  .traffic .y { background: radial-gradient(circle at 32% 28%, #ffd257, #febc2e); }
+  .traffic .g { background: radial-gradient(circle at 32% 28%, #6ee87f, #28c840); }
+
+  .ws-switch {
+    display: flex; align-items: center; gap: 8px;
+    height: 30px; padding: 0 8px 0 10px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.55), rgba(255,255,255,0.28));
+    border: 0.5px solid rgba(255,255,255,0.5);
+    border-radius: 999px;
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.85),
+      inset 0 0 0 0.5px rgba(255,255,255,0.4),
+      0 2px 6px -2px rgba(10,20,60,0.28);
+    font-size: 13px; font-weight: 590; color: var(--label); cursor: default;
+  }
+  .ws-switch .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px rgba(10,132,255,0.22), inset 0 1px 1px rgba(255,255,255,0.6); }
+  .ws-switch .chev { color: var(--label-3); display: flex; }
+
+  .tb-spacer { flex: 1; }
+
+  .tb-search {
+    display: flex; align-items: center; gap: 8px;
+    width: min(420px, 38vw); height: 30px; padding: 0 10px;
+    background: rgba(255,255,255,0.22);
+    border: 0.5px solid rgba(255,255,255,0.4);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 2px rgba(10,20,60,0.12), inset 0 1px 0 rgba(255,255,255,0.4);
+    color: var(--label-2); font-size: 13px;
+  }
+  .tb-search .kbd { margin-left: auto; display: flex; gap: 2px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--label-3); }
+  .tb-search svg { width: 15px; height: 15px; }
+
+  .egress {
+    display: flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 11px; border-radius: 999px;
+    background: linear-gradient(180deg, rgba(52,199,89,0.32), rgba(52,199,89,0.16));
+    border: 0.5px solid rgba(52,199,89,0.4);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), inset 0 0 0 0.5px rgba(255,255,255,0.3);
+    color: var(--good-ink); font-size: 12.5px; font-weight: 600;
+  }
+  .egress svg { width: 14px; height: 14px; }
+  .egress .mono { font-family: var(--mono); font-weight: 500; }
+
+  .gear { width: 30px; height: 30px; border-radius: 999px; display: grid; place-items: center; color: var(--label-2); }
+  .gear svg { width: 18px; height: 18px; }
+
+  /* ── body: three panes ──────────────────────────────────────────── */
+  .body { position: relative; flex: 1; display: flex; min-height: 0; z-index: 1; }
+
+  /* ── nav sidebar ────────────────────────────────────────────────── */
+  .sidebar {
+    position: relative;
+    width: 236px; flex: 0 0 236px;
+    padding: 12px 12px 16px;
+    background: var(--sidebar);
+    backdrop-filter: saturate(160%) blur(50px);
+    -webkit-backdrop-filter: saturate(160%) blur(50px);
+    border-right: 0.5px solid rgba(255,255,255,0.26);
+    box-shadow: inset 1px 0 0 rgba(255,255,255,0.4);
+    overflow-y: auto;
+  }
+  .nav-section { margin-top: 12px; padding: 0 8px 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--label-3); }
+  .nav-section:first-child { margin-top: 2px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    height: 30px; padding: 0 8px; margin: 1px 0;
+    border-radius: 999px; font-size: 13.5px; font-weight: 500; color: #2a2a2c;
+    cursor: default;
+  }
+  .nav-item svg { width: 17px; height: 17px; color: var(--label-2); flex: 0 0 17px; }
+  .nav-item .label { flex: 1; }
+  .nav-item:hover { background: rgba(255,255,255,0.34); box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), inset 0 0 0 0.5px rgba(255,255,255,0.3); }
+  .nav-item.sel {
+    background: linear-gradient(180deg, #3d9bff 0%, #0a84ff 55%, #0072ee 100%);
+    color: #fff; font-weight: 590;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.7),
+      inset 0 0 0 0.5px rgba(255,255,255,0.35),
+      inset 0 -8px 14px -8px rgba(0,40,120,0.5),
+      0 3px 9px -2px rgba(10,90,220,0.55);
+  }
+  .nav-item.sel svg { color: #fff; }
+  .badge {
+    min-width: 20px; height: 18px; padding: 0 6px; border-radius: 999px;
+    background: rgba(255,255,255,0.42); color: var(--label-2);
+    box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.5);
+    font-size: 11.5px; font-weight: 600; display: grid; place-items: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .nav-item.sel .badge { background: rgba(255,255,255,0.32); color: #fff; box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.4); }
+  .dot-warn { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px rgba(255,159,10,0.22), inset 0 1px 1px rgba(255,255,255,0.6); }
+
+  /* ── content pane ───────────────────────────────────────────────── */
+  .content {
+    position: relative;
+    flex: 1; min-width: 0;
+    background: var(--content);
+    backdrop-filter: saturate(200%) blur(40px);
+    -webkit-backdrop-filter: saturate(200%) blur(40px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── calendar toolbar row (A) ───────────────────────────────────── */
+  .cal-toolbar {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px 12px;
+    border-bottom: 0.5px solid rgba(0,0,0,0.055);
+  }
+
+  /* macOS segmented control */
+  .segmented { display: flex; gap: 2px; padding: 2px; background: rgba(255,255,255,0.24); border: 0.5px solid rgba(255,255,255,0.4); border-radius: 999px; box-shadow: inset 0 1px 2px rgba(10,20,60,0.12); }
+  .seg { padding: 4px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 540; color: var(--label-2); cursor: default; white-space: nowrap; }
+  .seg.on { background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(255,255,255,0.72)); color: var(--label); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px rgba(10,20,60,0.18), 0 0 0 0.5px rgba(255,255,255,0.4); }
+
+  .cal-nav-cluster {
+    display: flex; align-items: center; gap: 6px; margin-left: 16px;
+  }
+  .cal-date-range {
+    font-size: 17px; font-weight: 680; letter-spacing: -0.015em;
+    color: var(--label); white-space: nowrap;
+  }
+  .cal-nav-btn {
+    width: 26px; height: 26px; border-radius: 999px;
+    display: grid; place-items: center;
+    background: rgba(255,255,255,0.3);
+    border: 0.5px solid rgba(255,255,255,0.45);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.65);
+    color: var(--label-2); cursor: default;
+  }
+  .cal-nav-btn svg { width: 14px; height: 14px; }
+  .cal-today-pill {
+    padding: 3px 11px; height: 26px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0.5));
+    border: 0.5px solid rgba(255,255,255,0.6);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px -1px rgba(10,20,60,0.16);
+    font-size: 12.5px; font-weight: 560; color: var(--label); cursor: default;
+    display: flex; align-items: center;
+  }
+
+  .cal-spacer { flex: 1; }
+
+  /* workspace scope chip */
+  .ws-scope-chip {
+    padding: 3px 10px; border-radius: 999px;
+    background: rgba(10,132,255,0.10); border: 0.5px solid rgba(10,132,255,0.22);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
+    font-size: 12px; font-weight: 600; color: var(--accent-ink);
+    white-space: nowrap;
+  }
+
+  /* ── calendar grid container ────────────────────────────────────── */
+  .cal-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* All-day lane */
+  .allday-lane {
+    flex: 0 0 auto;
+    display: grid;
+    grid-template-columns: 52px repeat(5, 1fr);
+    border-bottom: 0.5px solid rgba(0,0,0,0.07);
+    background: rgba(255,255,255,0.18);
+  }
+  .allday-gutter {
+    display: flex; align-items: center; justify-content: flex-end;
+    padding-right: 8px; white-space: nowrap;
+    font-family: var(--mono); font-size: 10px; color: var(--label-3);
+    border-right: 0.5px solid rgba(0,0,0,0.07);
+    min-height: 32px;
+  }
+  .allday-cell {
+    padding: 4px 6px;
+    border-right: 0.5px solid rgba(0,0,0,0.05);
+  }
+  .allday-cell:last-child { border-right: none; }
+  .allday-cell.today-col { background: rgba(10,132,255,0.04); }
+
+  .allday-chip {
+    display: inline-flex; align-items: center;
+    padding: 2px 8px; border-radius: 5px;
+    background: rgba(180,180,190,0.18); border: 0.5px solid rgba(150,150,160,0.22);
+    font-size: 11.5px; font-weight: 500; color: var(--label-3);
+    white-space: nowrap;
+  }
+
+  /* Day header row */
+  .day-header-row {
+    flex: 0 0 auto;
+    display: grid;
+    grid-template-columns: 52px repeat(5, 1fr);
+    border-bottom: 0.5px solid rgba(0,0,0,0.08);
+  }
+  .day-header-gutter {
+    border-right: 0.5px solid rgba(0,0,0,0.07);
+  }
+  .day-header-cell {
+    padding: 6px 8px;
+    text-align: center;
+    border-right: 0.5px solid rgba(0,0,0,0.05);
+    cursor: default;
+  }
+  .day-header-cell:last-child { border-right: none; }
+  .day-header-cell.today-col {
+    background: rgba(10,132,255,0.06);
+  }
+  .day-wd {
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--label-3);
+  }
+  .day-header-cell.today-col .day-wd { color: var(--accent-ink); }
+  .day-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 50%;
+    font-size: 16px; font-weight: 600; margin-top: 1px;
+    color: var(--label);
+  }
+  .day-header-cell.today-col .day-num {
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 2px 6px -1px rgba(10,90,220,0.45), inset 0 1px 0 rgba(255,255,255,0.5);
+  }
+
+  /* Scrollable time grid */
+  .time-grid-scroll {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    position: relative;
+  }
+
+  .time-grid {
+    display: grid;
+    grid-template-columns: 52px repeat(5, 1fr);
+    /* 10 hours × 60px = 600px */
+    height: 600px;
+    position: relative;
+  }
+
+  /* Time gutter */
+  .time-gutter {
+    position: relative;
+    border-right: 0.5px solid rgba(0,0,0,0.07);
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .time-label {
+    position: absolute;
+    right: 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--label-3);
+    transform: translateY(-50%);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Day columns */
+  .day-col {
+    position: relative;
+    border-right: 0.5px solid rgba(0,0,0,0.05);
+  }
+  .day-col:last-child { border-right: none; }
+  .day-col.today-col { background: rgba(10,132,255,0.025); }
+
+  /* Horizontal hour gridlines — drawn as pseudo elements on each cell */
+  .hour-line {
+    position: absolute;
+    left: 0; right: 0;
+    border-top: 0.5px solid rgba(0,0,0,0.055);
+    pointer-events: none;
+  }
+
+  /* ── calendar event blocks ──────────────────────────────────────── */
+  .cal-event {
+    position: absolute;
+    left: 5px; right: 5px;
+    border-radius: 8px;
+    padding: 5px 8px 7px;
+    overflow: hidden;
+    cursor: default;
+    min-height: 60px !important;
+
+    /* default: frosted blue glass */
+    background: linear-gradient(180deg, rgba(10,132,255,0.22), rgba(10,132,255,0.14));
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    border: 0.5px solid rgba(10,132,255,0.32);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.7),
+      inset 0 0 0 0.5px rgba(255,255,255,0.3),
+      0 2px 6px -2px rgba(10,132,255,0.22);
+
+    /* left accent stripe */
+    border-left: 3px solid var(--accent);
+  }
+  .cal-event::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.45; border-radius: inherit; z-index: 0;
+  }
+  .cal-event > * { position: relative; z-index: 1; }
+
+  .cal-event.amber {
+    background: linear-gradient(180deg, rgba(255,159,10,0.2), rgba(255,159,10,0.11));
+    border: 0.5px solid rgba(255,159,10,0.35);
+    border-left: 3px solid var(--warn);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.65), 0 2px 6px -2px rgba(255,159,10,0.2);
+  }
+  .cal-event.amber .evt-time { color: var(--warn-ink); }
+  .cal-event.amber .evt-title { color: #7a4200; }
+
+  /* SELECTED event: lifted + ring */
+  .cal-event.selected {
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.8),
+      inset 0 0 0 0.5px rgba(255,255,255,0.4),
+      0 0 0 2px var(--accent),
+      0 8px 20px -6px rgba(10,90,220,0.4);
+    z-index: 20;
+    transform: translateY(-1px);
+  }
+  .cal-event.amber.selected {
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.8),
+      0 0 0 2px var(--warn),
+      0 8px 20px -6px rgba(255,159,10,0.35);
+  }
+
+  /* TENTATIVE / proposed: dashed outline, not filled */
+  .cal-event.tentative {
+    background: rgba(255,255,255,0.18);
+    border: 1.5px dashed rgba(10,132,255,0.5);
+    border-left: none;
+    border-radius: 8px;
+    box-shadow: none;
+  }
+  .cal-event.tentative .evt-title { color: var(--accent-ink); }
+  .cal-event.tentative .evt-time { color: var(--accent-ink); opacity: 0.75; }
+
+  /* FOCUS HOLD: hatched fill */
+  .cal-event.hold {
+    background:
+      repeating-linear-gradient(
+        -45deg,
+        rgba(10,132,255,0.06) 0px,
+        rgba(10,132,255,0.06) 4px,
+        rgba(255,255,255,0.06) 4px,
+        rgba(255,255,255,0.06) 8px
+      );
+    border-left: 3px solid rgba(10,132,255,0.4);
+    border-color: rgba(10,132,255,0.22);
+  }
+  .cal-event.hold .evt-title { color: var(--label-2); }
+  .cal-event.hold .evt-time { color: var(--label-3); }
+
+  .evt-time {
+    font-family: var(--mono);
+    font-size: 10px; font-weight: 500;
+    color: var(--accent-ink);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+  }
+  .evt-title {
+    font-size: 12px; font-weight: 600;
+    color: var(--label);
+    line-height: 1.25;
+    margin-top: 1px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .evt-chips {
+    display: flex; align-items: center; gap: 4px; margin-top: 3px; flex-wrap: nowrap; overflow: hidden;
+  }
+  .evt-chip {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 1px 7px; border-radius: 999px;
+    font-size: 10px; font-weight: 600;
+    white-space: nowrap;
+    min-width: 0; max-width: 100%; overflow: hidden; flex: 0 1 auto;
+  }
+  .evt-chip.good {
+    background: rgba(52,199,89,0.2); color: var(--good-ink);
+    border: 0.5px solid rgba(52,199,89,0.3);
+  }
+  .evt-chip.muted {
+    background: rgba(120,120,130,0.15); color: var(--label-3);
+    border: 0.5px solid rgba(120,120,130,0.2);
+  }
+  .evt-chip.amber {
+    background: rgba(255,159,10,0.18); color: var(--warn-ink);
+    border: 0.5px solid rgba(255,159,10,0.28);
+  }
+  .evt-chip.blue {
+    background: rgba(10,132,255,0.14); color: var(--accent-ink);
+    border: 0.5px solid rgba(10,132,255,0.22);
+  }
+  .evt-attendees {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-family: var(--mono); font-size: 10px; color: var(--label-3); margin-left: auto;
+  }
+  .evt-attendees svg { width: 10px; height: 10px; }
+
+  /* ── current-time line (today column only) ──────────────────────── */
+  .now-line {
+    position: absolute;
+    left: -4px; right: 0;
+    top: 300px; /* 13:00 → (13-8)×60 = 300px */
+    height: 2px;
+    background: #ff3b30;
+    pointer-events: none;
+    z-index: 15;
+  }
+  .now-dot {
+    position: absolute;
+    left: -4px; top: -4px;
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #ff3b30;
+    box-shadow: 0 0 0 2px rgba(255,59,48,0.25);
+  }
+
+  /* ── copilot collapsed rail ──────────────────────────────────────── */
+  .copilot-rail {
+    position: relative;
+    width: 52px; flex: 0 0 52px;
+    background: var(--copilot);
+    backdrop-filter: saturate(160%) blur(50px);
+    -webkit-backdrop-filter: saturate(160%) blur(50px);
+    border-left: 0.5px solid rgba(255,255,255,0.26);
+    box-shadow: inset -1px 0 0 rgba(255,255,255,0.35), inset 1px 0 0 rgba(255,255,255,0.4);
+    display: flex; flex-direction: column;
+    align-items: center; padding: 14px 0 14px;
+  }
+  .copilot-rail::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.3; border-radius: 0; z-index: 0;
+  }
+  .copilot-rail > * { position: relative; z-index: 1; }
+
+  .rail-spark {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: linear-gradient(135deg, #7bc0ff, #0a84ff);
+    display: grid; place-items: center;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 2px 5px rgba(10,132,255,0.5);
+    flex: 0 0 30px;
+  }
+  .rail-spark svg { width: 17px; height: 17px; color: #fff; }
+
+  .rail-expand {
+    width: 26px; height: 26px; border-radius: 999px;
+    display: grid; place-items: center; margin-top: 8px;
+    background: rgba(255,255,255,0.3);
+    border: 0.5px solid rgba(255,255,255,0.45);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+    color: var(--label-3); flex: 0 0 26px;
+  }
+  .rail-expand svg { width: 13px; height: 13px; }
+
+  .rail-label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--label-3); margin-top: 18px; user-select: none;
+  }
+
+  /* ── selected-event popover ─────────────────────────────────────── */
+  .event-popover {
+    position: absolute;
+    /* anchored to the right of the selected event in col 2 (TUE);
+       placed as a positioned child of .time-grid-scroll (via .cal-body position:relative wrapper) */
+    top: 160px;     /* roughly near the 11 AM event */
+    right: 0;
+    width: 360px;
+    background: var(--card-solid);
+    border: 0.5px solid rgba(255,255,255,0.55);
+    border-radius: var(--radius-card);
+    box-shadow:
+      var(--glass-ring),
+      var(--glass-glow),
+      0 16px 36px -10px rgba(10,20,60,0.35);
+    z-index: 40;
+    overflow: hidden;
+  }
+  .event-popover::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.45; border-radius: inherit; z-index: 0;
+  }
+  .event-popover > * { position: relative; z-index: 1; }
+
+  .pop-head {
+    padding: 13px 14px 10px;
+    border-bottom: 0.5px solid rgba(0,0,0,0.055);
+  }
+  .pop-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; color: var(--label); }
+  .pop-when {
+    margin-top: 3px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--label-2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pop-body { padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+
+  .pop-row {
+    display: flex; align-items: flex-start; gap: 8px;
+    font-size: 12.5px; color: var(--label-2);
+  }
+  .pop-row svg { width: 14px; height: 14px; flex: 0 0 14px; margin-top: 1px; color: var(--label-3); }
+  .pop-row-label { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--label-3); margin-bottom: 2px; }
+  .pop-row-val { font-size: 12.5px; color: var(--label); font-weight: 500; }
+
+  .gov-section {
+    background: rgba(255,255,255,0.45);
+    border: 0.5px solid rgba(255,255,255,0.5);
+    border-radius: 10px;
+    padding: 8px 10px;
+    display: flex; flex-direction: column; gap: 5px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+  }
+  .gov-row {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 12px; color: var(--label-2);
+  }
+  .gov-dot {
+    width: 6px; height: 6px; border-radius: 50%; flex: 0 0 6px;
+  }
+  .gov-dot.amber { background: var(--warn); box-shadow: 0 0 0 2px rgba(255,159,10,0.2); }
+  .gov-dot.muted { background: var(--label-3); }
+  .gov-dot.warn-flag { background: var(--warn); }
+  .gov-label-text { flex: 1; }
+  .gov-val { font-family: var(--mono); font-size: 11px; color: var(--label-3); }
+  .gov-flag {
+    font-size: 11px; font-weight: 600; color: var(--warn-ink);
+    background: rgba(255,159,10,0.14); border: 0.5px solid rgba(255,159,10,0.28);
+    border-radius: 999px; padding: 1px 6px;
+  }
+
+  .pop-provenance {
+    font-family: var(--mono); font-size: 10.5px; color: var(--label-3);
+    line-height: 1.5;
+  }
+
+  .pop-ws-chip {
+    display: inline-flex;
+    padding: 2px 8px; border-radius: 999px;
+    background: rgba(10,132,255,0.10); border: 0.5px solid rgba(10,132,255,0.2);
+    font-size: 11px; font-weight: 600; color: var(--accent-ink);
+  }
+
+  .pop-actions {
+    padding: 12px 16px 16px;
+    border-top: 0.5px solid rgba(0,0,0,0.05);
+    display: flex; gap: 8px;
+  }
+  .btn-primary {
+    flex: 1;
+    height: 30px; padding: 0 14px;
+    background: linear-gradient(180deg, #3d9bff 0%, #0a84ff 55%, #0072ee 100%);
+    border: none; border-radius: 8px;
+    color: #fff; font-size: 12.5px; font-weight: 600;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.55), 0 2px 5px -1px rgba(10,90,220,0.45);
+    cursor: default; font-family: var(--font); white-space: nowrap;
+  }
+  .btn-ghost {
+    height: 30px; padding: 0 14px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.85), rgba(255,255,255,0.65));
+    border: 0.5px solid rgba(10,132,255,0.35);
+    border-radius: 8px;
+    color: var(--accent-ink); font-size: 12.5px; font-weight: 540;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px -1px rgba(10,20,60,0.14);
+    cursor: default; font-family: var(--font); white-space: nowrap;
+  }
+
+  /* ── footer status strip (D) ────────────────────────────────────── */
+  .cal-footer {
+    flex: 0 0 auto;
+    padding: 5px 20px;
+    border-top: 0.5px solid rgba(0,0,0,0.055);
+    background: rgba(255,255,255,0.18);
+    font-family: var(--mono);
+    font-size: 10.5px; color: var(--label-3);
+    font-variant-numeric: tabular-nums;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .footer-sep { opacity: 0.4; }
+
+  /* ── layout utility for the popover container ───────────────────── */
+  .cal-grid-wrapper {
+    position: relative;
+    flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+  }
+
+  /* keyboard focus */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cal-event { transition: none; transform: none !important; }
+  }
+</style>
+
+<div class="desktop">
+
+  <!-- menu bar -->
+  <div class="menubar">
+    <span class="apple">&#63743;</span>
+    <span class="app-name">System of Work</span>
+    <span class="menu">File</span>
+    <span class="menu">Edit</span>
+    <span class="menu">View</span>
+    <span class="menu">Workspace</span>
+    <span class="menu">Window</span>
+    <span class="menu">Help</span>
+    <span class="spacer"></span>
+    <span class="status">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.5a15 15 0 0 1 20 0"/><path d="M5 12a10 10 0 0 1 14 0"/><path d="M8.5 15.5a5 5 0 0 1 7 0"/><circle cx="12" cy="19" r="0.6" fill="currentColor"/></svg>
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 8a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><rect x="19" y="10" width="2" height="4" rx="1"/></svg>
+      <span>Tue 11:00 AM</span>
+    </span>
+  </div>
+
+  <div class="stage">
+    <div class="window">
+
+      <!-- unified toolbar (verbatim from reference) -->
+      <div class="titlebar">
+        <div class="traffic"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+        <div class="ws-switch">
+          <span class="dot"></span>
+          <span>Employer-Work</span>
+          <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9l4-4 4 4"/><path d="M16 15l-4 4-4-4"/></svg></span>
+        </div>
+        <div class="tb-spacer"></div>
+        <div class="tb-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <span>Search or run a command</span>
+          <span class="kbd">&#8984;K</span>
+        </div>
+        <div class="tb-spacer"></div>
+        <div class="egress">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
+          <span>Egress:&nbsp;<span class="mono">local-only</span></span>
+        </div>
+        <div class="gear">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1M18.4 18.4l-2.1-2.1M7.7 7.7L5.6 5.6"/></svg>
+        </div>
+      </div>
+
+      <!-- three-pane body -->
+      <div class="body">
+
+        <!-- nav sidebar — Calendar is now the selected row -->
+        <nav class="sidebar">
+          <div class="nav-section">Work</div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/></svg>
+            <span class="label">Today</span>
+          </div>
+          <!-- Calendar: selected -->
+          <div class="nav-item sel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3"/></svg>
+            <span class="label">Calendar</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>
+            <span class="label">Approvals</span>
+            <span class="badge">3</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 13.5L6 5.5a2 2 0 0 1 1.9-1.5h8.2A2 2 0 0 1 18 5.5l2.5 8"/><path d="M3.5 13.5V18a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-4.5"/><path d="M3.5 13.5h5l1.5 2.5h4l1.5-2.5h5"/></svg>
+            <span class="label">Inbox</span>
+            <span class="badge">5</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2.5 2.5 0 0 1 2.5 2.5v12.5H7.5A2.5 2.5 0 0 1 5 19z"/><path d="M18.5 16H7.5A2.5 2.5 0 0 0 5 18.5"/></svg>
+            <span class="label">Knowledge</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.5l2 2.5H18a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 18 19.5H6a2.5 2.5 0 0 1-2.5-2.5z"/></svg>
+            <span class="label">Projects</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 5.5h15a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5H10l-4 3.5V16.5H4.5A1.5 1.5 0 0 1 3 15V7a1.5 1.5 0 0 1 1.5-1.5z"/></svg>
+            <span class="label">Copilot</span>
+          </div>
+
+          <div class="nav-section">Governance</div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>
+            <span class="label">Health</span>
+            <span class="dot-warn"></span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15l-3 3a3 3 0 0 1-4.2-4.2l3-3"/><path d="M15 9l3-3a3 3 0 0 0-4.2-4.2l-3 3"/><path d="M9 15l6-6"/></svg>
+            <span class="label">Connectors</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/><path d="M9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3"/></svg>
+            <span class="label">Models</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h9l5 5v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1z"/><path d="M7.5 12l2 2 4-4.5"/><path d="M7.5 16.5h6"/></svg>
+            <span class="label">Audit</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4"/><path d="M4 16.5l8 4 8-4"/></svg>
+            <span class="label">Workspaces</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1M18.4 18.4l-2.1-2.1M7.7 7.7L5.6 5.6"/></svg>
+            <span class="label">Settings</span>
+          </div>
+        </nav>
+
+        <!-- content: calendar -->
+        <main class="content">
+
+          <!-- A. Calendar toolbar -->
+          <div class="cal-toolbar">
+            <div class="segmented">
+              <span class="seg">Day</span>
+              <span class="seg on">Week</span>
+              <span class="seg">Month</span>
+            </div>
+            <div class="cal-nav-cluster">
+              <div class="cal-nav-btn" aria-label="Previous week">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+              </div>
+              <div class="cal-today-pill">Today</div>
+              <div class="cal-nav-btn" aria-label="Next week">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+              </div>
+              <span class="cal-date-range">June 30 – July 4, 2026</span>
+            </div>
+            <div class="cal-spacer"></div>
+            <div class="ws-scope-chip">Employer-Work</div>
+          </div>
+
+          <!-- B + C. Calendar grid + popover -->
+          <div class="cal-grid-wrapper">
+            <div class="cal-body">
+
+              <!-- All-day lane -->
+              <div class="allday-lane">
+                <div class="allday-gutter">all-day</div>
+                <!-- MON 30 -->
+                <div class="allday-cell"></div>
+                <!-- TUE 1 (today) -->
+                <div class="allday-cell today-col"></div>
+                <!-- WED 2 -->
+                <div class="allday-cell"></div>
+                <!-- THU 3 -->
+                <div class="allday-cell"></div>
+                <!-- FRI 4 -->
+                <div class="allday-cell">
+                  <span class="allday-chip">Independence Day (US)</span>
+                </div>
+              </div>
+
+              <!-- Day header row -->
+              <div class="day-header-row">
+                <div class="day-header-gutter"></div>
+                <div class="day-header-cell">
+                  <div class="day-wd">MON</div>
+                  <div><span class="day-num">30</span></div>
+                </div>
+                <div class="day-header-cell today-col">
+                  <div class="day-wd">TUE</div>
+                  <div><span class="day-num">1</span></div>
+                </div>
+                <div class="day-header-cell">
+                  <div class="day-wd">WED</div>
+                  <div><span class="day-num">2</span></div>
+                </div>
+                <div class="day-header-cell">
+                  <div class="day-wd">THU</div>
+                  <div><span class="day-num">3</span></div>
+                </div>
+                <div class="day-header-cell">
+                  <div class="day-wd">FRI</div>
+                  <div><span class="day-num">4</span></div>
+                </div>
+              </div>
+
+              <!-- Time grid (scrollable) -->
+              <div class="time-grid-scroll">
+                <div class="time-grid">
+
+                  <!-- Time gutter + hour labels -->
+                  <!-- hour lines are drawn in each day column -->
+                  <div class="time-gutter">
+                    <!-- Labels: top aligned to each hour line -->
+                    <!-- 8 AM → top:0, 9 AM → 60, 10 AM → 120 ... 6 PM → 600 -->
+                    <span class="time-label" style="top:0px">8 AM</span>
+                    <span class="time-label" style="top:60px">9 AM</span>
+                    <span class="time-label" style="top:120px">10 AM</span>
+                    <span class="time-label" style="top:180px">11 AM</span>
+                    <span class="time-label" style="top:240px">Noon</span>
+                    <span class="time-label" style="top:300px">1 PM</span>
+                    <span class="time-label" style="top:360px">2 PM</span>
+                    <span class="time-label" style="top:420px">3 PM</span>
+                    <span class="time-label" style="top:480px">4 PM</span>
+                    <span class="time-label" style="top:540px">5 PM</span>
+                    <span class="time-label" style="top:600px">6 PM</span>
+                  </div>
+
+                  <!-- MON 30 -->
+                  <div class="day-col">
+                    <!-- Hour gridlines -->
+                    <div class="hour-line" style="top:0px"></div>
+                    <div class="hour-line" style="top:60px"></div>
+                    <div class="hour-line" style="top:120px"></div>
+                    <div class="hour-line" style="top:180px"></div>
+                    <div class="hour-line" style="top:240px"></div>
+                    <div class="hour-line" style="top:300px"></div>
+                    <div class="hour-line" style="top:360px"></div>
+                    <div class="hour-line" style="top:420px"></div>
+                    <div class="hour-line" style="top:480px"></div>
+                    <div class="hour-line" style="top:540px"></div>
+
+                    <!-- MON: Arch sync standup 10:00–10:30 → top=(10-8)*60=120, h=0.5*60=30 -->
+                    <div class="cal-event" style="top:120px; height:30px; min-height:26px;">
+                      <div class="evt-time">10:00</div>
+                      <div class="evt-title">Arch sync standup</div>
+                      <div class="evt-chips">
+                        <span class="evt-chip good">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width:9px;height:9px;"><path d="M20 6L9 17l-5-5"/></svg>
+                          landed · 3 decisions
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- TUE 1 (today) -->
+                  <div class="day-col today-col">
+                    <!-- Hour gridlines -->
+                    <div class="hour-line" style="top:0px"></div>
+                    <div class="hour-line" style="top:60px"></div>
+                    <div class="hour-line" style="top:120px"></div>
+                    <div class="hour-line" style="top:180px"></div>
+                    <div class="hour-line" style="top:240px"></div>
+                    <div class="hour-line" style="top:300px"></div>
+                    <div class="hour-line" style="top:360px"></div>
+                    <div class="hour-line" style="top:420px"></div>
+                    <div class="hour-line" style="top:480px"></div>
+                    <div class="hour-line" style="top:540px"></div>
+
+                    <!-- TUE: Standup 09:30–10:00 → top=(9.5-8)*60=90, h=0.5*60=30 -->
+                    <div class="cal-event" style="top:90px; height:30px; min-height:26px;">
+                      <div class="evt-time">09:30</div>
+                      <div class="evt-title">Standup</div>
+                      <div class="evt-chips">
+                        <span class="evt-chip muted">transcript pending</span>
+                      </div>
+                    </div>
+
+                    <!-- TUE: Vendor review 11:00–12:00 → top=(11-8)*60=180, h=60 — SELECTED + AMBER -->
+                    <div class="cal-event amber selected" style="top:180px; height:60px;">
+                      <div class="evt-time">11:00–12:00</div>
+                      <div class="evt-title">Vendor review</div>
+                      <div class="evt-chips">
+                        <span class="evt-chip amber">needs close-out</span>
+                        <span class="evt-attendees">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 20c0-2.5-2.24-4.5-5-4.5S7 17.5 7 20"/><circle cx="12" cy="9" r="3.5"/><path d="M22 20c0-2-1.8-3.7-4-4.2"/><circle cx="19" cy="8" r="2.8"/></svg>
+                          4
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- TUE: 1:1 with Priya 15:00–15:30 → top=(15-8)*60=420, h=30 -->
+                    <div class="cal-event" style="top:420px; height:30px; min-height:26px;">
+                      <div class="evt-time">15:00</div>
+                      <div class="evt-title">1:1 with Priya</div>
+                    </div>
+
+                    <!-- Current-time line at 13:00 → top=300px -->
+                    <div class="now-line">
+                      <div class="now-dot"></div>
+                    </div>
+                  </div>
+
+                  <!-- WED 2 -->
+                  <div class="day-col">
+                    <div class="hour-line" style="top:0px"></div>
+                    <div class="hour-line" style="top:60px"></div>
+                    <div class="hour-line" style="top:120px"></div>
+                    <div class="hour-line" style="top:180px"></div>
+                    <div class="hour-line" style="top:240px"></div>
+                    <div class="hour-line" style="top:300px"></div>
+                    <div class="hour-line" style="top:360px"></div>
+                    <div class="hour-line" style="top:420px"></div>
+                    <div class="hour-line" style="top:480px"></div>
+                    <div class="hour-line" style="top:540px"></div>
+
+                    <!-- WED: Vendor review follow-up 14:00–14:30 → top=(14-8)*60=360, h=30 — TENTATIVE -->
+                    <div class="cal-event tentative" style="top:360px; height:30px; min-height:26px;">
+                      <div class="evt-time">14:00</div>
+                      <div class="evt-title">Vendor review follow-up</div>
+                      <div class="evt-chips">
+                        <span class="evt-chip blue">pending approval</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- THU 3 -->
+                  <div class="day-col">
+                    <div class="hour-line" style="top:0px"></div>
+                    <div class="hour-line" style="top:60px"></div>
+                    <div class="hour-line" style="top:120px"></div>
+                    <div class="hour-line" style="top:180px"></div>
+                    <div class="hour-line" style="top:240px"></div>
+                    <div class="hour-line" style="top:300px"></div>
+                    <div class="hour-line" style="top:360px"></div>
+                    <div class="hour-line" style="top:420px"></div>
+                    <div class="hour-line" style="top:480px"></div>
+                    <div class="hour-line" style="top:540px"></div>
+
+                    <!-- THU: Standup 09:30–10:00 → top=90, h=30 -->
+                    <div class="cal-event" style="top:90px; height:30px; min-height:26px;">
+                      <div class="evt-time">09:30</div>
+                      <div class="evt-title">Standup</div>
+                    </div>
+
+                    <!-- THU: Roadmap sync 13:00–14:00 → top=(13-8)*60=300, h=60 -->
+                    <div class="cal-event" style="top:300px; height:60px;">
+                      <div class="evt-time">13:00–14:00</div>
+                      <div class="evt-title">Roadmap sync</div>
+                    </div>
+                  </div>
+
+                  <!-- FRI 4 -->
+                  <div class="day-col">
+                    <div class="hour-line" style="top:0px"></div>
+                    <div class="hour-line" style="top:60px"></div>
+                    <div class="hour-line" style="top:120px"></div>
+                    <div class="hour-line" style="top:180px"></div>
+                    <div class="hour-line" style="top:240px"></div>
+                    <div class="hour-line" style="top:300px"></div>
+                    <div class="hour-line" style="top:360px"></div>
+                    <div class="hour-line" style="top:420px"></div>
+                    <div class="hour-line" style="top:480px"></div>
+                    <div class="hour-line" style="top:540px"></div>
+
+                    <!-- FRI: Focus hold 10:00–11:00 → top=120, h=60 -->
+                    <div class="cal-event hold" style="top:120px; height:60px;">
+                      <div class="evt-time">10:00–11:00</div>
+                      <div class="evt-title">Focus: ENG-482 auth fix</div>
+                      <div class="evt-chips">
+                        <span class="evt-chip muted">hold</span>
+                      </div>
+                    </div>
+                  </div>
+
+                </div><!-- /time-grid -->
+              </div><!-- /time-grid-scroll -->
+
+            </div><!-- /cal-body -->
+
+            <!-- C. Selected-event detail popover -->
+            <!-- Positioned at right edge of content, vertically near 11 AM -->
+            <div class="event-popover" style="top: 204px;">
+
+              <div class="pop-head">
+                <div class="pop-title">Vendor review</div>
+                <div class="pop-when">Tue, Jul 1 · 11:00–12:00 PM</div>
+              </div>
+
+              <div class="pop-body">
+
+                <!-- Attendees -->
+                <div class="pop-row">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17 20c0-2.5-2.24-4.5-5-4.5S7 17.5 7 20"/><circle cx="12" cy="9" r="3.5"/><path d="M22 20c0-2-1.8-3.7-4-4.2"/><circle cx="19" cy="8" r="2.8"/></svg>
+                  <div>
+                    <div class="pop-row-label">Attendees</div>
+                    <div class="pop-row-val">4 people</div>
+                  </div>
+                </div>
+
+                <!-- Governance section -->
+                <div class="gov-section">
+                  <div style="font-size:10.5px; font-weight:700; letter-spacing:0.05em; text-transform:uppercase; color:var(--label-3); margin-bottom:3px;">Governance</div>
+
+                  <div class="gov-row">
+                    <span class="gov-dot amber"></span>
+                    <span class="gov-label-text">Transcript — Granola</span>
+                    <span class="gov-flag">degraded, pending</span>
+                  </div>
+
+                  <div class="gov-row">
+                    <span class="gov-dot muted"></span>
+                    <span class="gov-label-text">Decisions</span>
+                    <span class="gov-val">none yet</span>
+                  </div>
+
+                  <div class="gov-row">
+                    <span class="gov-dot warn-flag"></span>
+                    <span class="gov-label-text">Status</span>
+                    <span class="gov-flag">needs close-out</span>
+                  </div>
+                </div>
+
+                <!-- Provenance -->
+                <div class="pop-row">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15l-3 3a3 3 0 0 1-4.2-4.2l3-3"/><path d="M15 9l3-3a3 3 0 0 0-4.2-4.2l-3 3"/><path d="M9 15l6-6"/></svg>
+                  <div>
+                    <div class="pop-row-label">Provenance</div>
+                    <div class="pop-provenance">Google Calendar · synced cursor 2026-07-01 · 2h ago</div>
+                  </div>
+                </div>
+
+                <!-- Workspace -->
+                <div>
+                  <span class="pop-ws-chip">Employer-Work</span>
+                </div>
+
+              </div><!-- /pop-body -->
+
+              <div class="pop-actions">
+                <button class="btn-primary">Close out review</button>
+                <button class="btn-ghost">Prep with Copilot →</button>
+              </div>
+
+            </div><!-- /event-popover -->
+
+          </div><!-- /cal-grid-wrapper -->
+
+          <!-- D. Footer status strip -->
+          <div class="cal-footer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;flex:0 0 12px;"><path d="M9 15l-3 3a3 3 0 0 1-4.2-4.2l3-3"/><path d="M15 9l3-3a3 3 0 0 0-4.2-4.2l-3 3"/><path d="M9 15l6-6"/></svg>
+            Synced from Google Calendar
+            <span class="footer-sep">·</span>
+            Employer-Work
+            <span class="footer-sep">·</span>
+            cursor 2026-07-01
+            <span class="footer-sep">·</span>
+            2h ago
+          </div>
+
+        </main><!-- /content -->
+
+        <!-- Copilot collapsed rail (verbatim from Approvals reference) -->
+        <aside class="copilot-rail">
+          <div class="rail-spark">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.8 5.4a4 4 0 0 0 2.8 2.8L22 12l-5.4 1.8a4 4 0 0 0-2.8 2.8L12 22l-1.8-5.4a4 4 0 0 0-2.8-2.8L2 12l5.4-1.8a4 4 0 0 0 2.8-2.8z"/></svg>
+          </div>
+          <div class="rail-expand">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+          </div>
+          <div class="rail-label">Copilot</div>
+        </aside>
+
+      </div><!-- /body -->
+    </div><!-- /window -->
+  </div><!-- /stage -->
+</div><!-- /desktop -->

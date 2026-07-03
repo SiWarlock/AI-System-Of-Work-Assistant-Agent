@@ -1,0 +1,915 @@
+<title>Approvals — SoW (macOS Liquid Glass)</title>
+<style>
+  :root {
+    /* ── system materials (verbatim from locked reference) ─────────── */
+    --accent: #0a84ff;
+    --accent-ink: #0064d6;
+    --label: #1d1d1f;
+    --label-2: #46464b;
+    --label-3: #6b6b73;
+    --hair: rgba(255,255,255,0.35);
+    --hair-strong: rgba(255,255,255,0.5);
+    --hair-dark: rgba(0,0,0,0.06);
+    --warn: #ff9f0a;
+    --warn-ink: #b25e00;
+    --good: #34c759;
+    --good-ink: #1a7f37;
+
+    --sidebar: rgba(255,255,255,0.46);
+    --content: rgba(255,255,255,0.5);
+    --copilot: rgba(255,255,255,0.46);
+    --card: rgba(255,255,255,0.5);
+    --card-solid: rgba(255,255,255,0.64);
+
+    --glass-ring: inset 0 0 0 1px rgba(255,255,255,0.55);
+    --glass-glow: inset 0 1px 0 rgba(255,255,255,0.7),
+                  inset 0 -14px 26px -14px rgba(255,255,255,0.28);
+    --sheen: linear-gradient(125deg,
+              rgba(255,255,255,0.42) 0%,
+              rgba(255,255,255,0.10) 18%,
+              rgba(255,255,255,0) 42%,
+              rgba(255,255,255,0) 62%,
+              rgba(255,255,255,0.06) 82%,
+              rgba(255,255,255,0.22) 100%);
+
+    --radius-win: 16px;
+    --radius-card: 15px;
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", system-ui, sans-serif;
+    --mono: "SF Mono", ui-monospace, "Menlo", "JetBrains Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+
+  .desktop {
+    min-height: 100vh;
+    font-family: var(--font);
+    color: var(--label);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    display: flex;
+    flex-direction: column;
+    background:
+      radial-gradient(1150px 800px at 8% -10%, #cfe0f4 0%, rgba(207,224,244,0) 58%),
+      radial-gradient(1050px 820px at 97% 2%, #d3ece7 0%, rgba(211,236,231,0) 56%),
+      radial-gradient(1250px 1000px at 85% 114%, #ddd6ee 0%, rgba(221,214,238,0) 60%),
+      radial-gradient(980px 880px at 12% 120%, #ecdfe9 0%, rgba(236,223,233,0) 55%),
+      radial-gradient(900px 900px at 50% 46%, #e0eef7 0%, rgba(224,238,247,0) 60%),
+      linear-gradient(155deg, #e6edf6 0%, #e4ebf2 45%, #e7e2f0 100%);
+  }
+
+  /* ── fake menu bar ─────────────────────────────────────────────── */
+  .menubar {
+    height: 26px; flex: 0 0 26px;
+    display: flex; align-items: center; gap: 20px;
+    padding: 0 16px;
+    font-size: 13px; color: #1d1d1f;
+    background: rgba(255,255,255,0.5);
+    backdrop-filter: saturate(180%) blur(30px);
+    -webkit-backdrop-filter: saturate(180%) blur(30px);
+    border-bottom: 0.5px solid rgba(0,0,0,0.06);
+  }
+  .menubar .apple { font-size: 14px; opacity: 0.95; }
+  .menubar .app-name { font-weight: 600; }
+  .menubar .menu { color: #1d1d1f; opacity: 0.82; }
+  .menubar .spacer { flex: 1; }
+  .menubar .status { display: flex; align-items: center; gap: 14px; opacity: 0.95; font-variant-numeric: tabular-nums; }
+  .menubar .status svg { width: 16px; height: 16px; }
+
+  /* ── stage ─────────────────────────────────────────────────────── */
+  .stage {
+    flex: 1; display: flex;
+    align-items: center; justify-content: center;
+    padding: 26px 28px 32px; min-height: 0;
+  }
+
+  /* ── window ────────────────────────────────────────────────────── */
+  .window {
+    position: relative;
+    width: min(1220px, 100%);
+    height: min(842px, calc(100vh - 96px));
+    border-radius: var(--radius-win);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    border: 0.5px solid rgba(255,255,255,0.4);
+    box-shadow:
+      var(--glass-ring),
+      0 40px 90px -20px rgba(10,20,60,0.55),
+      0 16px 34px -14px rgba(10,20,60,0.4);
+    background: transparent;
+  }
+  .window::after {
+    content: "";
+    position: absolute; inset: 0;
+    pointer-events: none;
+    background: var(--sheen);
+    mix-blend-mode: screen;
+    opacity: 0.3; z-index: 5;
+    border-radius: inherit;
+  }
+
+  /* ── unified toolbar ────────────────────────────────────────────── */
+  .titlebar {
+    position: relative;
+    height: 52px; flex: 0 0 52px;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 14px;
+    background: rgba(255,255,255,0.26);
+    backdrop-filter: saturate(160%) blur(50px);
+    -webkit-backdrop-filter: saturate(160%) blur(50px);
+    border-bottom: 0.5px solid rgba(255,255,255,0.28);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+  }
+  .traffic { display: flex; gap: 8px; padding-right: 6px; }
+  .traffic i {
+    width: 12px; height: 12px; border-radius: 50%; display: block;
+    box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.14), inset 0 1.5px 1px rgba(255,255,255,0.55);
+  }
+  .traffic .r { background: radial-gradient(circle at 32% 28%, #ff8a83, #ff5f57); }
+  .traffic .y { background: radial-gradient(circle at 32% 28%, #ffd257, #febc2e); }
+  .traffic .g { background: radial-gradient(circle at 32% 28%, #6ee87f, #28c840); }
+
+  .ws-switch {
+    display: flex; align-items: center; gap: 8px;
+    height: 30px; padding: 0 8px 0 10px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.55), rgba(255,255,255,0.28));
+    border: 0.5px solid rgba(255,255,255,0.5);
+    border-radius: 999px;
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.85),
+      inset 0 0 0 0.5px rgba(255,255,255,0.4),
+      0 2px 6px -2px rgba(10,20,60,0.28);
+    font-size: 13px; font-weight: 590; color: var(--label); cursor: default;
+  }
+  .ws-switch .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px rgba(10,132,255,0.22), inset 0 1px 1px rgba(255,255,255,0.6); }
+  .ws-switch .chev { color: var(--label-3); display: flex; }
+
+  .tb-spacer { flex: 1; }
+
+  .tb-search {
+    display: flex; align-items: center; gap: 8px;
+    width: min(420px, 38vw); height: 30px; padding: 0 10px;
+    background: rgba(255,255,255,0.22);
+    border: 0.5px solid rgba(255,255,255,0.4);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 2px rgba(10,20,60,0.12), inset 0 1px 0 rgba(255,255,255,0.4);
+    color: var(--label-2); font-size: 13px;
+  }
+  .tb-search .kbd { margin-left: auto; display: flex; gap: 2px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--label-3); }
+  .tb-search svg { width: 15px; height: 15px; }
+
+  .egress {
+    display: flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 11px; border-radius: 999px;
+    background: linear-gradient(180deg, rgba(52,199,89,0.32), rgba(52,199,89,0.16));
+    border: 0.5px solid rgba(52,199,89,0.4);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), inset 0 0 0 0.5px rgba(255,255,255,0.3);
+    color: var(--good-ink); font-size: 12.5px; font-weight: 600;
+  }
+  .egress svg { width: 14px; height: 14px; }
+  .egress .mono { font-family: var(--mono); font-weight: 500; }
+
+  .gear { width: 30px; height: 30px; border-radius: 999px; display: grid; place-items: center; color: var(--label-2); }
+  .gear svg { width: 18px; height: 18px; }
+
+  /* ── three-pane body ────────────────────────────────────────────── */
+  .body { position: relative; flex: 1; display: flex; min-height: 0; z-index: 1; }
+
+  /* ── nav sidebar ────────────────────────────────────────────────── */
+  .sidebar {
+    position: relative;
+    width: 236px; flex: 0 0 236px;
+    padding: 12px 12px 16px;
+    background: var(--sidebar);
+    backdrop-filter: saturate(160%) blur(50px);
+    -webkit-backdrop-filter: saturate(160%) blur(50px);
+    border-right: 0.5px solid rgba(255,255,255,0.26);
+    box-shadow: inset 1px 0 0 rgba(255,255,255,0.4);
+    overflow-y: auto;
+  }
+  .nav-section { margin-top: 12px; padding: 0 8px 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--label-3); }
+  .nav-section:first-child { margin-top: 2px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    height: 30px; padding: 0 8px; margin: 1px 0;
+    border-radius: 999px; font-size: 13.5px; font-weight: 500; color: #2a2a2c;
+    cursor: default;
+  }
+  .nav-item svg { width: 17px; height: 17px; color: var(--label-2); flex: 0 0 17px; }
+  .nav-item .label { flex: 1; }
+  .nav-item:hover { background: rgba(255,255,255,0.34); box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), inset 0 0 0 0.5px rgba(255,255,255,0.3); }
+  .nav-item.sel {
+    background: linear-gradient(180deg, #3d9bff 0%, #0a84ff 55%, #0072ee 100%);
+    color: #fff; font-weight: 590;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.7),
+      inset 0 0 0 0.5px rgba(255,255,255,0.35),
+      inset 0 -8px 14px -8px rgba(0,40,120,0.5),
+      0 3px 9px -2px rgba(10,90,220,0.55);
+  }
+  .nav-item.sel svg { color: #fff; }
+  .badge {
+    min-width: 20px; height: 18px; padding: 0 6px; border-radius: 999px;
+    background: rgba(255,255,255,0.42); color: var(--label-2);
+    box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.5);
+    font-size: 11.5px; font-weight: 600; display: grid; place-items: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .nav-item.sel .badge { background: rgba(255,255,255,0.32); color: #fff; box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.4); }
+  .dot-warn { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px rgba(255,159,10,0.22), inset 0 1px 1px rgba(255,255,255,0.6); }
+
+  /* ── content pane (outer shell, holds the master-detail) ─────────── */
+  .content {
+    position: relative;
+    flex: 1; min-width: 0;
+    background: var(--content);
+    backdrop-filter: saturate(200%) blur(40px);
+    -webkit-backdrop-filter: saturate(200%) blur(40px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── approvals page header (above master-detail) ──────────────── */
+  .approvals-header {
+    flex: 0 0 auto;
+    padding: 22px 26px 14px;
+    border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    display: flex; align-items: center; gap: 14px;
+  }
+  .approvals-header h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+  .approvals-count { font-size: 14px; color: var(--label-2); margin-left: 2px; }
+
+  /* macOS segmented control */
+  .segmented { display: flex; gap: 2px; padding: 2px; background: rgba(255,255,255,0.24); border: 0.5px solid rgba(255,255,255,0.4); border-radius: 999px; box-shadow: inset 0 1px 2px rgba(10,20,60,0.12); margin-left: auto; }
+  .seg { padding: 4px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 540; color: var(--label-2); cursor: default; }
+  .seg.on { background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(255,255,255,0.72)); color: var(--label); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px rgba(10,20,60,0.18), 0 0 0 0.5px rgba(255,255,255,0.4); }
+
+  /* ── master-detail split ─────────────────────────────────────────── */
+  .master-detail {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* ── approval list (master) ──────────────────────────────────────── */
+  .approval-list {
+    width: 296px; flex: 0 0 296px;
+    border-right: 0.5px solid rgba(0,0,0,0.07);
+    overflow-y: auto;
+    padding: 10px 10px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+
+  /* List item glass card — macOS selected = filled accent, no left bar */
+  .apv-item {
+    position: relative;
+    padding: 11px 13px 12px;
+    border-radius: 12px;
+    cursor: default;
+    transition: background 0.12s ease;
+  }
+  .apv-item:not(.sel):hover {
+    background: rgba(255,255,255,0.48);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), inset 0 0 0 0.5px rgba(255,255,255,0.4);
+  }
+  /* Selected: accent filled pill (macOS native idiom) */
+  .apv-item.sel {
+    background: linear-gradient(180deg, #3d9bff 0%, #0a84ff 55%, #0072ee 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.62),
+      inset 0 0 0 0.5px rgba(255,255,255,0.3),
+      inset 0 -8px 14px -8px rgba(0,40,120,0.5),
+      0 3px 9px -2px rgba(10,90,220,0.5);
+  }
+
+  .apv-item-top { display: flex; align-items: flex-start; gap: 8px; }
+  .apv-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-top: 5px; flex: 0 0 7px; box-shadow: 0 0 0 2px rgba(10,132,255,0.22); }
+  .apv-item.sel .apv-status-dot { background: rgba(255,255,255,0.9); box-shadow: 0 0 0 2px rgba(255,255,255,0.3); }
+  .apv-title { font-size: 13.5px; font-weight: 590; color: var(--label); line-height: 1.3; flex: 1; }
+  .apv-item.sel .apv-title { color: #fff; }
+
+  .apv-sub { margin-top: 3px; font-size: 12px; color: var(--label-3); padding-left: 15px; }
+  .apv-item.sel .apv-sub { color: rgba(255,255,255,0.75); }
+
+  .apv-meta { display: flex; align-items: center; gap: 6px; margin-top: 6px; padding-left: 15px; flex-wrap: wrap; }
+
+  /* Channel badge — small pill */
+  .ch-badge {
+    padding: 2px 7px; border-radius: 999px;
+    background: rgba(255,255,255,0.38); border: 0.5px solid rgba(255,255,255,0.5);
+    font-size: 11px; font-weight: 560; color: var(--label-2);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+  }
+  .apv-item.sel .ch-badge { background: rgba(255,255,255,0.22); border-color: rgba(255,255,255,0.35); color: rgba(255,255,255,0.88); }
+
+  /* Timer */
+  .apv-timer { display: flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 540; color: var(--warn-ink); margin-left: auto; }
+  .apv-timer svg { width: 12px; height: 12px; }
+  .apv-item.sel .apv-timer { color: rgba(255,255,255,0.88); }
+
+  /* Snoozed state text */
+  .apv-snoozed { font-size: 11.5px; color: var(--label-3); margin-left: auto; }
+
+  /* Separator between pending/snoozed groups */
+  .list-divider {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--label-3); padding: 8px 4px 4px;
+  }
+
+  /* ── approval detail wrapper (right column, flex column) ────────── */
+  .approval-detail-col {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* ── approval detail scrollable area ────────────────────────────── */
+  .approval-detail {
+    flex: 1; min-width: 0;
+    overflow-y: auto;
+    padding: 26px 28px 20px;
+  }
+
+  /* Detail header */
+  .detail-header { margin-bottom: 18px; }
+  .detail-title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .detail-title { font-size: 22px; font-weight: 700; letter-spacing: -0.025em; margin: 0; }
+  .status-pill {
+    padding: 3px 11px; border-radius: 999px;
+    background: linear-gradient(180deg, rgba(10,132,255,0.18), rgba(10,132,255,0.10));
+    border: 0.5px solid rgba(10,132,255,0.3);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
+    font-size: 12px; font-weight: 600; color: var(--accent-ink);
+  }
+  .detail-provenance {
+    margin-top: 7px; font-family: var(--mono); font-size: 12px; color: var(--label-3);
+    line-height: 1.5;
+  }
+  .detail-provenance b { color: var(--label-2); font-weight: 600; }
+
+  /* Section label */
+  .detail-section-label {
+    font-size: 11.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--label-3); margin-bottom: 8px; margin-top: 0;
+  }
+
+  /* ── "Exactly what will happen" governance card ───────────────── */
+  .governance-card {
+    position: relative;
+    background: var(--card-solid);
+    backdrop-filter: blur(30px) saturate(180%);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    border: 0.5px solid rgba(255,255,255,0.5);
+    border-radius: var(--radius-card);
+    overflow: hidden;
+    margin-bottom: 12px;
+    box-shadow:
+      var(--glass-ring),
+      var(--glass-glow),
+      0 8px 22px -12px rgba(10,20,60,0.22);
+  }
+  .governance-card::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.45; border-radius: inherit; z-index: 0;
+  }
+  .governance-card > * { position: relative; z-index: 1; }
+
+  .gov-card-head {
+    padding: 13px 16px 11px;
+    border-bottom: 0.5px solid rgba(0,0,0,0.055);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .gov-card-label {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase;
+    color: var(--label-2);
+  }
+  .gov-card-target {
+    display: flex; align-items: center; gap: 8px; margin-left: auto;
+  }
+  .gov-card-target svg { width: 15px; height: 15px; color: var(--label-3); }
+  .target-service {
+    font-size: 13px; font-weight: 600; color: var(--label);
+  }
+  .target-team {
+    font-size: 12.5px; color: var(--label-2);
+  }
+  .ws-chip {
+    padding: 2px 8px; border-radius: 999px;
+    background: rgba(10,132,255,0.10); border: 0.5px solid rgba(10,132,255,0.22);
+    font-size: 11.5px; font-weight: 600; color: var(--accent-ink);
+  }
+
+  /* Diff field rows */
+  .diff-table { width: 100%; border-collapse: collapse; }
+  .diff-row {
+    border-top: 0.5px solid rgba(0,0,0,0.04);
+  }
+  .diff-row:first-child { border-top: none; }
+  .diff-cell-plus {
+    width: 24px; padding: 9px 4px 9px 14px;
+    font-family: var(--mono); font-size: 12.5px; color: var(--good-ink);
+    font-weight: 700; vertical-align: top;
+  }
+  .diff-cell-key {
+    padding: 9px 10px 9px 0;
+    font-family: var(--mono); font-size: 12px; color: var(--label-3);
+    font-weight: 500; width: 108px; vertical-align: top;
+    white-space: nowrap;
+  }
+  .diff-cell-val {
+    padding: 9px 14px 9px 0;
+    font-size: 13.5px; font-weight: 500; color: var(--label);
+    vertical-align: top;
+    line-height: 1.35;
+  }
+  .diff-cell-val .mono-val { font-family: var(--mono); font-size: 12.5px; }
+  .diff-cell-val .tag-pill {
+    display: inline-block; margin: 0 3px 0 0;
+    padding: 1px 7px; border-radius: 5px;
+    background: rgba(0,0,0,0.06); font-family: var(--mono); font-size: 11.5px;
+    color: var(--label-2); font-weight: 500;
+  }
+
+  /* Green tint on diff rows — will-create state */
+  .diff-row.create { background: rgba(52,199,89,0.055); }
+
+  /* TBD / no-inference row — amber calm state */
+  .diff-row.tbd-row { background: rgba(255,159,10,0.07); }
+  .diff-row.tbd-row .diff-cell-plus { color: var(--warn-ink); }
+  .tbd-val {
+    display: flex; align-items: center; gap: 6px;
+  }
+  .tbd-label { color: var(--warn-ink); font-weight: 600; font-family: var(--mono); font-size: 12.5px; }
+  .tbd-hint {
+    font-size: 11.5px; color: var(--warn-ink); opacity: 0.75;
+    background: rgba(255,159,10,0.12); border: 0.5px solid rgba(255,159,10,0.28);
+    border-radius: 999px; padding: 1px 7px; font-weight: 500;
+  }
+
+  /* ── runs-once strip ──────────────────────────────────────────── */
+  .runs-once-strip {
+    position: relative;
+    background: var(--card-solid);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 0.5px solid rgba(255,255,255,0.46);
+    border-radius: 11px;
+    padding: 10px 14px;
+    display: flex; align-items: flex-start; gap: 10px;
+    margin-bottom: 10px;
+    box-shadow: var(--glass-ring), 0 3px 9px -4px rgba(10,20,60,0.14);
+  }
+  .runs-once-strip::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.35; border-radius: inherit;
+  }
+  .runs-once-strip > * { position: relative; z-index: 1; }
+  .runs-once-icon { flex: 0 0 16px; margin-top: 1px; color: var(--label-3); }
+  .runs-once-icon svg { width: 15px; height: 15px; }
+  .runs-once-body { flex: 1; }
+  .runs-once-key { font-family: var(--mono); font-size: 12px; color: var(--label-2); font-weight: 600; }
+  .runs-once-copy { margin-top: 3px; font-size: 12.5px; color: var(--label-3); line-height: 1.45; }
+
+  /* ── egress line ──────────────────────────────────────────────── */
+  .egress-line {
+    position: relative;
+    display: flex; align-items: center; gap: 10px;
+    background: linear-gradient(180deg, rgba(52,199,89,0.12), rgba(52,199,89,0.06));
+    border: 0.5px solid rgba(52,199,89,0.25);
+    border-radius: 11px;
+    padding: 10px 14px;
+    margin-bottom: 10px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
+  }
+  .egress-line svg { width: 16px; height: 16px; color: var(--good-ink); flex: 0 0 16px; }
+  .egress-line-text { font-size: 13px; color: var(--good-ink); line-height: 1.4; }
+  .egress-line-text strong { font-weight: 650; }
+
+  /* ── sticky action row — lives at the bottom of .approval-detail-col ── */
+  .action-bar {
+    flex: 0 0 auto;
+    padding: 12px 28px 16px;
+    background: linear-gradient(to bottom, rgba(242,246,251,0) 0%, rgba(242,246,251,0.88) 32%);
+    backdrop-filter: blur(10px) saturate(160%);
+    -webkit-backdrop-filter: blur(10px) saturate(160%);
+    border-top: 0.5px solid rgba(255,255,255,0.45);
+    display: flex; flex-direction: column; gap: 7px;
+    z-index: 10;
+  }
+  .action-buttons { display: flex; align-items: center; gap: 8px; }
+
+  /* Approve — primary filled blue */
+  .btn-approve {
+    height: 32px; padding: 0 20px;
+    background: linear-gradient(180deg, #3d9bff 0%, #0a84ff 55%, #0072ee 100%);
+    border: none; border-radius: 8px;
+    color: #fff; font-size: 14px; font-weight: 600;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), 0 2px 6px -1px rgba(10,90,220,0.5);
+    cursor: default; font-family: var(--font);
+  }
+
+  /* Secondary buttons — glass */
+  .btn-secondary {
+    height: 32px; padding: 0 16px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0.52));
+    border: 0.5px solid rgba(255,255,255,0.6);
+    border-radius: 8px;
+    color: var(--label); font-size: 14px; font-weight: 500;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px -1px rgba(10,20,60,0.18);
+    cursor: default; font-family: var(--font);
+  }
+  .btn-reject {
+    height: 32px; padding: 0 16px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0.52));
+    border: 0.5px solid rgba(255,255,255,0.6);
+    border-radius: 8px;
+    color: #d32210; font-size: 14px; font-weight: 500;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px -1px rgba(10,20,60,0.18);
+    cursor: default; font-family: var(--font);
+  }
+  .btn-defer {
+    height: 32px; padding: 0 16px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0.52));
+    border: 0.5px solid rgba(255,255,255,0.6);
+    border-radius: 8px;
+    color: var(--label-2); font-size: 14px; font-weight: 500;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px -1px rgba(10,20,60,0.18);
+    cursor: default; font-family: var(--font);
+  }
+
+  .channel-parity { font-size: 11.5px; color: var(--label-3); }
+
+  /* ── copilot collapsed rail ──────────────────────────────────── */
+  .copilot-rail {
+    position: relative;
+    width: 52px; flex: 0 0 52px;
+    background: var(--copilot);
+    backdrop-filter: saturate(160%) blur(50px);
+    -webkit-backdrop-filter: saturate(160%) blur(50px);
+    border-left: 0.5px solid rgba(255,255,255,0.26);
+    box-shadow: inset -1px 0 0 rgba(255,255,255,0.35), inset 1px 0 0 rgba(255,255,255,0.4);
+    display: flex; flex-direction: column;
+    align-items: center; padding: 14px 0 14px;
+    gap: 0;
+  }
+  /* Rail sheen */
+  .copilot-rail::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.3; border-radius: 0; z-index: 0;
+  }
+  .copilot-rail > * { position: relative; z-index: 1; }
+
+  /* Sparkle icon — gradient rounded square */
+  .rail-spark {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: linear-gradient(135deg, #7bc0ff, #0a84ff);
+    display: grid; place-items: center;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 2px 5px rgba(10,132,255,0.5);
+    flex: 0 0 30px;
+  }
+  .rail-spark svg { width: 17px; height: 17px; color: #fff; }
+
+  /* Expand chevron */
+  .rail-expand {
+    width: 26px; height: 26px; border-radius: 999px;
+    display: grid; place-items: center; margin-top: 8px;
+    background: rgba(255,255,255,0.3);
+    border: 0.5px solid rgba(255,255,255,0.45);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+    color: var(--label-3);
+    flex: 0 0 26px;
+  }
+  .rail-expand svg { width: 13px; height: 13px; }
+
+  /* Rotated "Copilot" label */
+  .rail-label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--label-3); margin-top: 18px; user-select: none;
+  }
+
+  /* Keyboard focus */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .apv-item { transition: none; }
+  }
+</style>
+
+<div class="desktop">
+
+  <!-- menu bar -->
+  <div class="menubar">
+    <span class="apple">&#63743;</span>
+    <span class="app-name">System of Work</span>
+    <span class="menu">File</span>
+    <span class="menu">Edit</span>
+    <span class="menu">View</span>
+    <span class="menu">Workspace</span>
+    <span class="menu">Window</span>
+    <span class="menu">Help</span>
+    <span class="spacer"></span>
+    <span class="status">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.5a15 15 0 0 1 20 0"/><path d="M5 12a10 10 0 0 1 14 0"/><path d="M8.5 15.5a5 5 0 0 1 7 0"/><circle cx="12" cy="19" r="0.6" fill="currentColor"/></svg>
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 8a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><rect x="19" y="10" width="2" height="4" rx="1"/></svg>
+      <span>Wed 11:55 PM</span>
+    </span>
+  </div>
+
+  <div class="stage">
+    <div class="window">
+
+      <!-- unified toolbar (identical to reference) -->
+      <div class="titlebar">
+        <div class="traffic"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+        <div class="ws-switch">
+          <span class="dot"></span>
+          <span>Employer-Work</span>
+          <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9l4-4 4 4"/><path d="M16 15l-4 4-4-4"/></svg></span>
+        </div>
+        <div class="tb-spacer"></div>
+        <div class="tb-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <span>Search or run a command</span>
+          <span class="kbd">&#8984;K</span>
+        </div>
+        <div class="tb-spacer"></div>
+        <div class="egress">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
+          <span>Egress:&nbsp;<span class="mono">local-only</span></span>
+        </div>
+        <div class="gear">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1M18.4 18.4l-2.1-2.1M7.7 7.7L5.6 5.6"/></svg>
+        </div>
+      </div>
+
+      <!-- three-pane body -->
+      <div class="body">
+
+        <!-- nav sidebar — Approvals is now the selected row -->
+        <nav class="sidebar">
+          <div class="nav-section">Work</div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/></svg>
+            <span class="label">Today</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3"/></svg>
+            <span class="label">Calendar</span>
+          </div>
+          <!-- Approvals: selected -->
+          <div class="nav-item sel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>
+            <span class="label">Approvals</span>
+            <span class="badge">3</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 13.5L6 5.5a2 2 0 0 1 1.9-1.5h8.2A2 2 0 0 1 18 5.5l2.5 8"/><path d="M3.5 13.5V18a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-4.5"/><path d="M3.5 13.5h5l1.5 2.5h4l1.5-2.5h5"/></svg>
+            <span class="label">Inbox</span>
+            <span class="badge">5</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2.5 2.5 0 0 1 2.5 2.5v12.5H7.5A2.5 2.5 0 0 1 5 19z"/><path d="M18.5 16H7.5A2.5 2.5 0 0 0 5 18.5"/></svg>
+            <span class="label">Knowledge</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.5l2 2.5H18a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 18 19.5H6a2.5 2.5 0 0 1-2.5-2.5z"/></svg>
+            <span class="label">Projects</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 5.5h15a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5H10l-4 3.5V16.5H4.5A1.5 1.5 0 0 1 3 15V7a1.5 1.5 0 0 1 1.5-1.5z"/></svg>
+            <span class="label">Copilot</span>
+          </div>
+
+          <div class="nav-section">Governance</div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>
+            <span class="label">Health</span>
+            <span class="dot-warn"></span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15l-3 3a3 3 0 0 1-4.2-4.2l3-3"/><path d="M15 9l3-3a3 3 0 0 0-4.2-4.2l-3 3"/><path d="M9 15l6-6"/></svg>
+            <span class="label">Connectors</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/><path d="M9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3"/></svg>
+            <span class="label">Models</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h9l5 5v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1z"/><path d="M7.5 12l2 2 4-4.5"/><path d="M7.5 16.5h6"/></svg>
+            <span class="label">Audit</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4"/><path d="M4 16.5l8 4 8-4"/></svg>
+            <span class="label">Workspaces</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1M18.4 18.4l-2.1-2.1M7.7 7.7L5.6 5.6"/></svg>
+            <span class="label">Settings</span>
+          </div>
+        </nav>
+
+        <!-- content pane: approvals page header + master-detail -->
+        <main class="content">
+
+          <!-- page header -->
+          <div class="approvals-header">
+            <h1>Approvals</h1>
+            <span class="approvals-count">3 pending</span>
+            <div class="segmented" style="margin-left: auto;">
+              <span class="seg on">Pending</span>
+              <span class="seg">Snoozed</span>
+              <span class="seg">Resolved</span>
+            </div>
+          </div>
+
+          <!-- master–detail split -->
+          <div class="master-detail">
+
+            <!-- approval list (master) -->
+            <div class="approval-list">
+
+              <!-- item 1: SELECTED -->
+              <div class="apv-item sel">
+                <div class="apv-item-top">
+                  <span class="apv-status-dot"></span>
+                  <span class="apv-title">Create Linear issue ENG-482</span>
+                </div>
+                <div class="apv-sub">Linear · Employer-Work</div>
+                <div class="apv-meta">
+                  <span class="ch-badge">Mac + Telegram</span>
+                  <span class="apv-timer">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5l3 2"/></svg>
+                    expires in 3h
+                  </span>
+                </div>
+              </div>
+
+              <!-- item 2 -->
+              <div class="apv-item">
+                <div class="apv-item-top">
+                  <span class="apv-status-dot"></span>
+                  <span class="apv-title">Send calendar invite — Vendor review follow-up</span>
+                </div>
+                <div class="apv-sub">Google Calendar · Employer-Work</div>
+                <div class="apv-meta">
+                  <span class="ch-badge">Mac + Telegram</span>
+                  <span class="apv-timer">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5l3 2"/></svg>
+                    expires in 6h
+                  </span>
+                </div>
+              </div>
+
+              <!-- divider -->
+              <div class="list-divider">Snoozed</div>
+
+              <!-- item 3: snoozed -->
+              <div class="apv-item">
+                <div class="apv-item-top">
+                  <span class="apv-status-dot" style="background: var(--label-3); box-shadow: none;"></span>
+                  <span class="apv-title" style="color: var(--label-2); font-weight: 500;">Post standup recap to Slack #eng</span>
+                </div>
+                <div class="apv-sub">Slack · Employer-Work</div>
+                <div class="apv-meta">
+                  <span class="apv-snoozed">Snoozed until 4:00 PM</span>
+                </div>
+              </div>
+
+            </div><!-- /approval-list -->
+
+            <!-- approval detail column (right): scrollable body + sticky action bar -->
+            <div class="approval-detail-col">
+            <div class="approval-detail">
+
+              <!-- 1. Header -->
+              <div class="detail-header">
+                <div class="detail-title-row">
+                  <h2 class="detail-title">Create Linear issue</h2>
+                  <span class="status-pill">Pending your approval</span>
+                </div>
+                <div class="detail-provenance">
+                  Proposed by <b>Copilot</b> · source <span style="font-family:var(--mono);font-size:12px;">meeting-2026-06-30-arch-sync.md</span> <span style="opacity:0.7;">(rev 0c4)</span>
+                </div>
+              </div>
+
+              <!-- 2. "Exactly what will happen" governance card -->
+              <p class="detail-section-label">Exactly what will happen</p>
+              <div class="governance-card">
+                <!-- target row -->
+                <div class="gov-card-head">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;color:var(--label-3);flex:0 0 16px;"><path d="M14 4h6v6M20 4l-8 8M11 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-5"/></svg>
+                  <span class="gov-card-label">Write to</span>
+                  <div class="gov-card-target">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 4h13a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M8 10h8M8 14h5"/></svg>
+                    <span class="target-service">Linear</span>
+                    <span class="target-team">· team Engineering (ENG)</span>
+                    <span class="ws-chip">Employer-Work</span>
+                  </div>
+                </div>
+
+                <!-- diff field rows -->
+                <table class="diff-table">
+                  <tbody>
+                    <tr class="diff-row create">
+                      <td class="diff-cell-plus">+</td>
+                      <td class="diff-cell-key">Title</td>
+                      <td class="diff-cell-val">Auth timeout on token refresh</td>
+                    </tr>
+                    <tr class="diff-row create">
+                      <td class="diff-cell-plus">+</td>
+                      <td class="diff-cell-key">Identifier</td>
+                      <td class="diff-cell-val"><span class="mono-val">ENG-482</span></td>
+                    </tr>
+                    <tr class="diff-row create">
+                      <td class="diff-cell-plus">+</td>
+                      <td class="diff-cell-key">Priority</td>
+                      <td class="diff-cell-val">High</td>
+                    </tr>
+                    <tr class="diff-row tbd-row">
+                      <td class="diff-cell-plus">+</td>
+                      <td class="diff-cell-key">Assignee</td>
+                      <td class="diff-cell-val">
+                        <div class="tbd-val">
+                          <span class="tbd-label">TBD</span>
+                          <span class="tbd-hint">needs you — not set</span>
+                        </div>
+                      </td>
+                    </tr>
+                    <tr class="diff-row create">
+                      <td class="diff-cell-plus">+</td>
+                      <td class="diff-cell-key">Labels</td>
+                      <td class="diff-cell-val">
+                        <span class="tag-pill">bug</span>
+                        <span class="tag-pill">auth</span>
+                      </td>
+                    </tr>
+                    <tr class="diff-row create">
+                      <td class="diff-cell-plus">+</td>
+                      <td class="diff-cell-key">Description</td>
+                      <td class="diff-cell-val" style="color:var(--label-2);font-size:13px;line-height:1.45;">Users hit 401 ~15 min after login; token refresh not firing on idle. Surfaced in the arch-sync standup on 2026-06-30.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div><!-- /governance-card -->
+
+              <!-- 3. Runs-once / no-duplicate strip -->
+              <div class="runs-once-strip">
+                <span class="runs-once-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v6h-6"/></svg>
+                </span>
+                <div class="runs-once-body">
+                  <div class="runs-once-key">linear:eng:create:8f2a1c</div>
+                  <div class="runs-once-copy">Runs exactly once — a write receipt is recorded on success; a retry or re-approval reuses the receipt, so the issue can never be created twice.</div>
+                </div>
+              </div>
+
+              <!-- 4. Egress line -->
+              <div class="egress-line">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
+                <div class="egress-line-text">Issue text is sent to Linear (external) via the Tool Gateway. No cloud model is involved — <strong>Egress: local-only</strong> is preserved.</div>
+              </div>
+
+            </div><!-- /approval-detail -->
+
+            <!-- sticky action bar at bottom of detail column -->
+            <div class="action-bar">
+              <div class="action-buttons">
+                <button class="btn-approve">Approve</button>
+                <button class="btn-secondary">Edit fields</button>
+                <button class="btn-reject">Reject</button>
+                <button class="btn-defer">Defer ▾</button>
+              </div>
+              <div class="channel-parity">Mirrored to Telegram — reply ✅ approve · ✏️ edit · ✗ reject</div>
+            </div>
+
+            </div><!-- /approval-detail-col -->
+
+          </div><!-- /master-detail -->
+
+        </main><!-- /content -->
+
+        <!-- copilot collapsed rail -->
+        <aside class="copilot-rail">
+          <div class="rail-spark">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.8 5.4a4 4 0 0 0 2.8 2.8L22 12l-5.4 1.8a4 4 0 0 0-2.8 2.8L12 22l-1.8-5.4a4 4 0 0 0-2.8-2.8L2 12l5.4-1.8a4 4 0 0 0 2.8-2.8z"/></svg>
+          </div>
+          <div class="rail-expand">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+          </div>
+          <div class="rail-label">Copilot</div>
+        </aside>
+
+      </div><!-- /body -->
+    </div><!-- /window -->
+  </div><!-- /stage -->
+</div><!-- /desktop -->
