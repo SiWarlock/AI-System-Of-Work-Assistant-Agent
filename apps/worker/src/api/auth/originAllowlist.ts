@@ -63,23 +63,31 @@ export function checkOrigin(
   }
 
   const rawOrigin = origin.trim();
-  const originHostToken = extractAuthority(origin);
+  // Parse BOTH authorities up front (Lesson-4-safe isolation). This is the
+  // FAIL-CLOSED parseability guard: an unparseable Origin/Host (e.g. `null` from a
+  // `file://` page, or garbage) is refused before it can reach the matcher.
+  const originAuthority = extractAuthority(origin);
   const hostToken = extractAuthority(host);
-  if (rawOrigin.length === 0 || originHostToken === null || hostToken === null) {
+  if (rawOrigin.length === 0 || originAuthority === null || hostToken === null) {
     return rejected();
   }
 
-  // Cross-check: the Origin's authority MUST equal the Host header's authority.
-  // (Both are still matched against the allowlist independently below — this is a
-  // defense-in-depth consistency gate on top of the exact-match decision.)
-  if (originHostToken !== hostToken) {
-    return rejected();
-  }
-
-  // Delegate the exact-match decision to the frozen policy predicate. We match the
-  // FULL raw Origin (scheme-bearing) against `origins`, and the isolated Host
-  // token against `hosts` — so a userinfo-spoofed origin (whose raw form isn't
-  // on-list) is rejected, and its host cannot be forged past the isolation above.
+  // INDEPENDENT allowlisting (native-client topology — 9.4b). The renderer is a
+  // distinct trusted origin, NOT same-origin with the loopback worker, so the
+  // request Origin (the page: `app://sow`, or `http://localhost:5173` in dev) and
+  // the request Host (the worker target: `127.0.0.1:<port>`) are LEGITIMATELY
+  // different authorities. We match each against the allowlist on its own — the
+  // FULL raw Origin (scheme-bearing) against `origins`, and the Lesson-4-isolated
+  // Host token against `hosts`.
+  //
+  // There is deliberately NO Origin==Host equality check. It encoded a same-origin
+  // *web app* assumption that never held for a native client, and it caught
+  // nothing the two exact-match allowlists don't already catch: a rebind/CSRF page
+  // cannot get its Origin onto `origins`, and an off-list (rebind) Host is refused
+  // on `hosts`. A userinfo-spoofed Origin (whose raw form isn't on-list) still
+  // fails the exact-origin match, and its host cannot be forged past the isolation
+  // above. DO NOT "restore" the equality check — it would re-break the renderer
+  // without adding protection.
   const decision = isOriginAllowed(rawOrigin, hostToken, allowlist);
   if (isAllow(decision)) {
     return ok({ ok: true });

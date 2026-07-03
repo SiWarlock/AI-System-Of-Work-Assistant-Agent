@@ -143,6 +143,66 @@ describe("originAllowlist.checkOrigin (Lesson-4-safe authority isolation)", () =
   });
 });
 
+describe("checkOrigin — distinct trusted local client (9.4b: Origin + Host allowlisted INDEPENDENTLY)", () => {
+  // The Electron renderer is a genuinely DIFFERENT origin than the loopback
+  // worker: the page's Origin (app://sow in prod, http://localhost:5173 in dev)
+  // is NEVER the request TARGET's Host (127.0.0.1:<port>). The gate must admit
+  // that legitimate native-client cross-origin pairing while still blocking
+  // rebind + CSRF — so the request Origin and the request Host are EACH matched
+  // against the allowlist independently. There is NO Origin==Host equality
+  // requirement: that encoded a same-origin *web app* assumption which never
+  // held for a native client, and it caught nothing the two independent
+  // allowlists don't already catch (verified below).
+  it("ADMITS the packaged renderer: allowlisted Origin (app://sow) + allowlisted loopback Host", () => {
+    const r = checkOrigin("app://sow", "127.0.0.1:5173", ALLOWLIST);
+    expect(isOk(r)).toBe(true);
+  });
+
+  it("ADMITS the dev renderer: http://localhost:5173 Origin + the loopback worker Host", () => {
+    const r = checkOrigin("http://localhost:5173", "127.0.0.1:5173", ALLOWLIST);
+    expect(isOk(r)).toBe(true);
+  });
+
+  it("still REJECTS a rebinding/CSRF attacker Origin even with our real loopback Host", () => {
+    // The attacker cannot get its Origin onto the strict origins allowlist, so a
+    // page at http://evil.com hitting our loopback Host is refused on the Origin.
+    const r = checkOrigin("http://evil.com", "127.0.0.1:5173", ALLOWLIST);
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.kind).toBe("validation_rejected");
+  });
+
+  it("still REJECTS a valid-looking Origin paired with an off-list (rebind) Host", () => {
+    // Anti-rebind on the Host side survives independent matching: an off-list
+    // Host is refused even when the Origin is one of ours.
+    const r = checkOrigin("app://sow", "evil.com:1234", ALLOWLIST);
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.kind).toBe("validation_rejected");
+  });
+
+  it("still REJECTS the Lesson-4 userinfo-spoof Origin against a real loopback Host", () => {
+    // `http://evil.com/@127.0.0.1:5173` has REAL host evil.com (the `@` is in the
+    // PATH). Its raw form is not on the origins allowlist ⇒ refused; the spoof
+    // cannot forge an on-list Origin.
+    const r = checkOrigin("http://evil.com/@127.0.0.1:5173", "127.0.0.1:5173", ALLOWLIST);
+    expect(isErr(r)).toBe(true);
+  });
+
+  // Exact-match strictness on the Origin is now LOAD-BEARING (the Origin==Host
+  // equality backstop is gone). The Origin is matched as the full, scheme-bearing,
+  // NON-lowercased raw string, so a near-miss variant of an allowlisted Origin must
+  // NOT be admitted. These pin that a future normalization/loosening can't silently
+  // widen the CSRF surface. (security-reviewer Q3, 9.4b.)
+  it("REJECTS a trailing-slash variant of an allowlisted Origin (exact-match strict)", () => {
+    const r = checkOrigin("app://sow/", "127.0.0.1:5173", ALLOWLIST);
+    expect(isErr(r)).toBe(true);
+  });
+
+  it("REJECTS an uppercase-scheme/host variant of an allowlisted Origin (exact-match strict)", () => {
+    const r = checkOrigin("APP://SOW", "127.0.0.1:5173", ALLOWLIST);
+    expect(isErr(r)).toBe(true);
+  });
+});
+
 describe("loopbackBind.assertLoopbackBind (REQ-NF-004)", () => {
   it("accepts a loopback bind address", () => {
     for (const addr of ["127.0.0.1", "::1", "localhost"]) {
