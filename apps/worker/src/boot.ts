@@ -89,7 +89,7 @@ import {
   type OpDbBackupPort,
   type TemporalPersistenceBackupPort,
 } from "./backup/operational-backup";
-import { bootstrapWorker } from "./temporal/worker";
+import { bootstrapWorker, decideBootstrap } from "./temporal/worker";
 import type { BootstrapReady, BootstrapDegraded } from "./temporal/worker";
 import {
   makeProofSpineRegisterHook,
@@ -122,8 +122,14 @@ export interface BootConfig extends BackendsConfig {
   readonly apiHost?: string;
   /** Loopback bind port — defaults to 0 (ephemeral); a deployment pins one. */
   readonly apiPort?: number;
-  /** Resolved job identity + workspace posture the Temporal activities bind under. */
-  readonly proofSpineParams: ProofSpineParams;
+  /**
+   * Resolved job identity + workspace posture the Temporal activities bind under.
+   * OPTIONAL: required only to REGISTER workflows on a successful Temporal connect.
+   * A desktop first-render (9.4b) boots WITHOUT it — the control-plane API + backends
+   * come up and `connectTemporal` degrades cleanly (Temporal-unavailable) rather than
+   * registering; the proof-spine pipeline supplies it later.
+   */
+  readonly proofSpineParams?: ProofSpineParams;
   /** The ingestion re-entry dispatch (Temporal / Tool-Gateway) — replay-safe (ING-4). */
   readonly triageDispatch: TriageDispatchFn;
   /** The approved-approval downstream dispatch (drives the side effect of an APPLIED approval). */
@@ -296,20 +302,40 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // The Temporal registration hook: on a successful connect, register the workflows
   // + activities over the resolved proof-spine params (backends re-assembled inside
   // the hook per the registerWorker contract — it owns the connection lifetime).
-  const registerHook = makeProofSpineRegisterHook({
-    params: config.proofSpineParams,
-    backendsConfig,
-    ...(config.stubExtraction !== undefined ? { stubExtraction: config.stubExtraction } : {}),
-  });
+  // Built ONLY when proof-spine params are supplied; absent them there is no identity
+  // to register under and connectTemporal degrades instead (see below).
+  const registerHook =
+    config.proofSpineParams !== undefined
+      ? makeProofSpineRegisterHook({
+          params: config.proofSpineParams,
+          backendsConfig,
+          ...(config.stubExtraction !== undefined ? { stubExtraction: config.stubExtraction } : {}),
+        })
+      : undefined;
 
-  const connectTemporal = (): Promise<Result<BootstrapReady, BootstrapDegraded>> =>
-    bootstrapWorker({
+  const connectTemporal = (): Promise<Result<BootstrapReady, BootstrapDegraded>> => {
+    // No proof-spine identity → nothing to register. Degrade cleanly WITHOUT a real
+    // Temporal contact and WITHOUT a throw (§16): the API + backends stay up; the
+    // supervisor sees Temporal-unavailable and the pipeline is wired later.
+    if (registerHook === undefined) {
+      return Promise.resolve(
+        decideBootstrap(
+          {
+            connected: false,
+            reason: "proof-spine params not configured — Temporal registration skipped",
+          },
+          { now: backends.now(), taskQueue: PROOF_SPINE_TASK_QUEUE, attempt: 0 },
+        ),
+      );
+    }
+    return bootstrapWorker({
       address: config.temporalAddress ?? "127.0.0.1:7233",
       taskQueue: PROOF_SPINE_TASK_QUEUE,
       now: backends.now,
       maxConnectAttempts: config.maxConnectAttempts ?? 5,
       onConnected: registerHook,
     });
+  };
 
   let closed = false;
   const close = async (): Promise<void> => {
