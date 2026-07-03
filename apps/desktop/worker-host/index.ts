@@ -59,10 +59,19 @@ async function start(config: WorkerHostConfig): Promise<void> {
       // NO proofSpineParams → boots the control-plane API only; connectTemporal
       // degrades cleanly (the proof-spine pipeline is wired later).
     });
-    // Drive one connect so the degraded worker_down System-Health item surfaces (the
-    // UI shows Temporal unavailable until the pipeline lands). It degrades WITHOUT a
-    // real Temporal contact and never throws (§16), so fire-and-forget is safe.
-    void booted.connectTemporal();
+    // Drive one connect: with no proof-spine params it degrades cleanly (no real
+    // Temporal contact, no throw — §16). Persist the resulting worker_down health
+    // item so System Health surfaces "Temporal unavailable" — the renderer's initial
+    // hydrate reads the health store (a fresh stream subscribe does NOT replay
+    // pre-subscribe events, so persisting is the reliable surface). Best-effort.
+    const bootstrap = await booted.connectTemporal();
+    if (!bootstrap.ok) {
+      try {
+        await booted.backends.healthItems.put(bootstrap.error.healthItem);
+      } catch {
+        // Non-fatal — the API + live stream are up regardless.
+      }
+    }
     send({ type: "ready", port: booted.api.port });
   } catch (err) {
     send({ type: "error", message: err instanceof Error ? err.message : String(err) });
