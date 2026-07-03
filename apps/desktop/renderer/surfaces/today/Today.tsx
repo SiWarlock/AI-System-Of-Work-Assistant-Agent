@@ -89,7 +89,6 @@ function DashboardCards({ cards }: { readonly cards: readonly UiSafeDashboardCar
             {card.count}
           </div>
           <div className="sow-card-name">{card.title}</div>
-          <div className="sow-card-sub">{card.status}</div>
         </div>
       ))}
     </div>
@@ -97,6 +96,12 @@ function DashboardCards({ cards }: { readonly cards: readonly UiSafeDashboardCar
 }
 
 // ── System health ──────────────────────────────────────────────────────────
+
+/** Render an enum token ("connector_unreachable") as readable text ("Connector unreachable"). */
+function humanizeToken(token: string): string {
+  const spaced = token.replace(/[_-]+/g, " ").trim();
+  return spaced.length === 0 ? token : spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
 
 function HealthSection({ health }: { readonly health: readonly UiSafeHealthItem[] }): ReactElement {
   if (health.length === 0) {
@@ -125,9 +130,9 @@ function HealthSection({ health }: { readonly health: readonly UiSafeHealthItem[
             </svg>
           </span>
           <div className="sow-callout-body">
-            <div className="sow-callout-title">{item.failureClass}</div>
+            <div className="sow-callout-title">{humanizeToken(item.failureClass)}</div>
             <div className="sow-callout-sub">
-              {item.severity} · {item.state}
+              {item.severity} · {humanizeToken(item.state)}
             </div>
           </div>
         </div>

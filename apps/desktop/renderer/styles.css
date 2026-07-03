@@ -116,8 +116,14 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  /* Transparent — real macOS vibrancy shows through pane backdrops. */
-  background: transparent;
+  /* The locked pastel Liquid-Glass wallpaper, painted by the app so the frosted
+     panes read bright + glassy on ANY desktop (not window vibrancy, which went gray). */
+  background:
+    radial-gradient(1150px 800px at 8% -10%, #cfe0f4 0%, rgba(207, 224, 244, 0) 58%),
+    radial-gradient(1050px 820px at 97% 2%, #d3ece7 0%, rgba(211, 236, 231, 0) 56%),
+    radial-gradient(1250px 1000px at 85% 114%, #ddd6ee 0%, rgba(221, 214, 238, 0) 60%),
+    radial-gradient(980px 880px at 12% 120%, #ecdfe9 0%, rgba(236, 223, 233, 0) 55%),
+    linear-gradient(155deg, #e6edf6 0%, #e4ebf2 45%, #e7e2f0 100%);
 }
 
 /* ── Unified toolbar / titlebar ──────────────────────────────────────────── */

@@ -19,12 +19,14 @@ export function createMainWindow(): BrowserWindow {
     minWidth: 980,
     minHeight: 640,
     show: false,
-    // macOS-native Liquid Glass shell (per the locked design): real inset
-    // traffic lights + unified toolbar, real system vibrancy behind the panes.
+    // macOS-native shell (per the locked design): real inset traffic lights +
+    // unified toolbar. The RENDERER paints the locked pastel Liquid-Glass base
+    // (bright + desktop-independent) rather than window `vibrancy` — window
+    // vibrancy samples whatever desktop sits behind the window, which washed the
+    // bright design to a flat gray. Painting our own wallpaper keeps the frosted
+    // panes reading as the locked design on any desktop.
     titleBarStyle: "hiddenInset",
-    vibrancy: "sidebar",
-    visualEffectState: "active",
-    backgroundColor: "#00000000",
+    backgroundColor: "#eaeef6",
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       // ── Security baseline (§5 / REQ-S-004) ──────────────────────────────
