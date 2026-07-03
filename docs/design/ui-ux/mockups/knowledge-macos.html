@@ -1,0 +1,1030 @@
+<title>Knowledge — SoW (macOS Liquid Glass)</title>
+<style>
+  :root {
+    /* ── system materials (verbatim from locked reference) ─────────── */
+    --accent: #0a84ff;
+    --accent-ink: #0064d6;
+    --label: #1d1d1f;
+    --label-2: #46464b;
+    --label-3: #6b6b73;
+    --hair: rgba(255,255,255,0.35);
+    --hair-strong: rgba(255,255,255,0.5);
+    --hair-dark: rgba(0,0,0,0.06);
+    --warn: #ff9f0a;
+    --warn-ink: #b25e00;
+    --good: #34c759;
+    --good-ink: #1a7f37;
+
+    --sidebar: rgba(255,255,255,0.46);
+    --content: rgba(255,255,255,0.5);
+    --copilot: rgba(255,255,255,0.46);
+    --card: rgba(255,255,255,0.5);
+    --card-solid: rgba(255,255,255,0.64);
+
+    --glass-ring: inset 0 0 0 1px rgba(255,255,255,0.55);
+    --glass-glow: inset 0 1px 0 rgba(255,255,255,0.7),
+                  inset 0 -14px 26px -14px rgba(255,255,255,0.28);
+    --sheen: linear-gradient(125deg,
+              rgba(255,255,255,0.42) 0%,
+              rgba(255,255,255,0.10) 18%,
+              rgba(255,255,255,0) 42%,
+              rgba(255,255,255,0) 62%,
+              rgba(255,255,255,0.06) 82%,
+              rgba(255,255,255,0.22) 100%);
+
+    --radius-win: 16px;
+    --radius-card: 15px;
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", system-ui, sans-serif;
+    --mono: "SF Mono", ui-monospace, "Menlo", "JetBrains Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+
+  .desktop {
+    min-height: 100vh;
+    font-family: var(--font);
+    color: var(--label);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    display: flex;
+    flex-direction: column;
+    background:
+      radial-gradient(1150px 800px at 8% -10%, #cfe0f4 0%, rgba(207,224,244,0) 58%),
+      radial-gradient(1050px 820px at 97% 2%, #d3ece7 0%, rgba(211,236,231,0) 56%),
+      radial-gradient(1250px 1000px at 85% 114%, #ddd6ee 0%, rgba(221,214,238,0) 60%),
+      radial-gradient(980px 880px at 12% 120%, #ecdfe9 0%, rgba(236,223,233,0) 55%),
+      radial-gradient(900px 900px at 50% 46%, #e0eef7 0%, rgba(224,238,247,0) 60%),
+      linear-gradient(155deg, #e6edf6 0%, #e4ebf2 45%, #e7e2f0 100%);
+  }
+
+  /* ── fake menu bar ─────────────────────────────────────────────── */
+  .menubar {
+    height: 26px; flex: 0 0 26px;
+    display: flex; align-items: center; gap: 20px;
+    padding: 0 16px;
+    font-size: 13px; color: #1d1d1f;
+    background: rgba(255,255,255,0.5);
+    backdrop-filter: saturate(180%) blur(30px);
+    -webkit-backdrop-filter: saturate(180%) blur(30px);
+    border-bottom: 0.5px solid rgba(0,0,0,0.06);
+  }
+  .menubar .apple { font-size: 14px; opacity: 0.95; }
+  .menubar .app-name { font-weight: 600; }
+  .menubar .menu { color: #1d1d1f; opacity: 0.82; }
+  .menubar .spacer { flex: 1; }
+  .menubar .status { display: flex; align-items: center; gap: 14px; opacity: 0.95; font-variant-numeric: tabular-nums; }
+  .menubar .status svg { width: 16px; height: 16px; }
+
+  /* ── stage ─────────────────────────────────────────────────────── */
+  .stage {
+    flex: 1; display: flex;
+    align-items: center; justify-content: center;
+    padding: 26px 28px 32px; min-height: 0;
+  }
+
+  /* ── window ────────────────────────────────────────────────────── */
+  .window {
+    position: relative;
+    width: min(1220px, 100%);
+    height: min(842px, calc(100vh - 96px));
+    border-radius: var(--radius-win);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    border: 0.5px solid rgba(255,255,255,0.4);
+    box-shadow:
+      var(--glass-ring),
+      0 40px 90px -20px rgba(10,20,60,0.55),
+      0 16px 34px -14px rgba(10,20,60,0.4);
+    background: transparent;
+  }
+  .window::after {
+    content: "";
+    position: absolute; inset: 0;
+    pointer-events: none;
+    background: var(--sheen);
+    mix-blend-mode: screen;
+    opacity: 0.3; z-index: 5;
+    border-radius: inherit;
+  }
+
+  /* ── unified toolbar (verbatim) ─────────────────────────────────── */
+  .titlebar {
+    position: relative;
+    height: 52px; flex: 0 0 52px;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 14px;
+    background: rgba(255,255,255,0.26);
+    backdrop-filter: saturate(160%) blur(50px);
+    -webkit-backdrop-filter: saturate(160%) blur(50px);
+    border-bottom: 0.5px solid rgba(255,255,255,0.28);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+  }
+  .traffic { display: flex; gap: 8px; padding-right: 6px; }
+  .traffic i {
+    width: 12px; height: 12px; border-radius: 50%; display: block;
+    box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.14), inset 0 1.5px 1px rgba(255,255,255,0.55);
+  }
+  .traffic .r { background: radial-gradient(circle at 32% 28%, #ff8a83, #ff5f57); }
+  .traffic .y { background: radial-gradient(circle at 32% 28%, #ffd257, #febc2e); }
+  .traffic .g { background: radial-gradient(circle at 32% 28%, #6ee87f, #28c840); }
+
+  .ws-switch {
+    display: flex; align-items: center; gap: 8px;
+    height: 30px; padding: 0 8px 0 10px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.55), rgba(255,255,255,0.28));
+    border: 0.5px solid rgba(255,255,255,0.5);
+    border-radius: 999px;
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.85),
+      inset 0 0 0 0.5px rgba(255,255,255,0.4),
+      0 2px 6px -2px rgba(10,20,60,0.28);
+    font-size: 13px; font-weight: 590; color: var(--label); cursor: default;
+  }
+  .ws-switch .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px rgba(10,132,255,0.22), inset 0 1px 1px rgba(255,255,255,0.6); }
+  .ws-switch .chev { color: var(--label-3); display: flex; }
+
+  .tb-spacer { flex: 1; }
+
+  .tb-search {
+    display: flex; align-items: center; gap: 8px;
+    width: min(420px, 38vw); height: 30px; padding: 0 10px;
+    background: rgba(255,255,255,0.22);
+    border: 0.5px solid rgba(255,255,255,0.4);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 2px rgba(10,20,60,0.12), inset 0 1px 0 rgba(255,255,255,0.4);
+    color: var(--label-2); font-size: 13px;
+  }
+  .tb-search .kbd { margin-left: auto; display: flex; gap: 2px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--label-3); }
+  .tb-search svg { width: 15px; height: 15px; }
+
+  .egress {
+    display: flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 11px; border-radius: 999px;
+    background: linear-gradient(180deg, rgba(52,199,89,0.32), rgba(52,199,89,0.16));
+    border: 0.5px solid rgba(52,199,89,0.4);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), inset 0 0 0 0.5px rgba(255,255,255,0.3);
+    color: var(--good-ink); font-size: 12.5px; font-weight: 600;
+  }
+  .egress svg { width: 14px; height: 14px; }
+  .egress .mono { font-family: var(--mono); font-weight: 500; }
+
+  .gear { width: 30px; height: 30px; border-radius: 999px; display: grid; place-items: center; color: var(--label-2); }
+  .gear svg { width: 18px; height: 18px; }
+
+  /* ── three-pane body ────────────────────────────────────────────── */
+  .body { position: relative; flex: 1; display: flex; min-height: 0; z-index: 1; }
+
+  /* ── nav sidebar (verbatim) ─────────────────────────────────────── */
+  .sidebar {
+    position: relative;
+    width: 236px; flex: 0 0 236px;
+    padding: 12px 12px 16px;
+    background: var(--sidebar);
+    backdrop-filter: saturate(160%) blur(50px);
+    -webkit-backdrop-filter: saturate(160%) blur(50px);
+    border-right: 0.5px solid rgba(255,255,255,0.26);
+    box-shadow: inset 1px 0 0 rgba(255,255,255,0.4);
+    overflow-y: auto;
+  }
+  .nav-section { margin-top: 12px; padding: 0 8px 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--label-3); }
+  .nav-section:first-child { margin-top: 2px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    height: 30px; padding: 0 8px; margin: 1px 0;
+    border-radius: 999px; font-size: 13.5px; font-weight: 500; color: #2a2a2c;
+    cursor: default;
+  }
+  .nav-item svg { width: 17px; height: 17px; color: var(--label-2); flex: 0 0 17px; }
+  .nav-item .label { flex: 1; }
+  .nav-item:hover { background: rgba(255,255,255,0.34); box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), inset 0 0 0 0.5px rgba(255,255,255,0.3); }
+  .nav-item.sel {
+    background: linear-gradient(180deg, #3d9bff 0%, #0a84ff 55%, #0072ee 100%);
+    color: #fff; font-weight: 590;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.7),
+      inset 0 0 0 0.5px rgba(255,255,255,0.35),
+      inset 0 -8px 14px -8px rgba(0,40,120,0.5),
+      0 3px 9px -2px rgba(10,90,220,0.55);
+  }
+  .nav-item.sel svg { color: #fff; }
+  .badge {
+    min-width: 20px; height: 18px; padding: 0 6px; border-radius: 999px;
+    background: rgba(255,255,255,0.42); color: var(--label-2);
+    box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.5);
+    font-size: 11.5px; font-weight: 600; display: grid; place-items: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .nav-item.sel .badge { background: rgba(255,255,255,0.32); color: #fff; box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.4); }
+  .dot-warn { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px rgba(255,159,10,0.22), inset 0 1px 1px rgba(255,255,255,0.6); }
+  .nav-divider { height: 0.5px; background: rgba(0,0,0,0.10); margin: 6px 8px; }
+  .nav-hint { padding: 2px 8px 4px; font-size: 11px; color: var(--label-3); letter-spacing: 0.01em; line-height: 1.4; }
+
+  /* ── scope line (verbatim) ──────────────────────────────────────── */
+  .scope-line {
+    height: 2px; flex: 0 0 2px;
+    background: linear-gradient(90deg, #0a84ff 0%, rgba(10,132,255,0) 80%);
+  }
+
+  /* ── macOS segmented control (verbatim) ─────────────────────────── */
+  .segmented { display: flex; gap: 2px; padding: 2px; background: rgba(255,255,255,0.24); border: 0.5px solid rgba(255,255,255,0.4); border-radius: 999px; box-shadow: inset 0 1px 2px rgba(10,20,60,0.12); }
+  .seg { padding: 4px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 540; color: var(--label-2); cursor: default; }
+  .seg.on { background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(255,255,255,0.72)); color: var(--label); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px rgba(10,20,60,0.18), 0 0 0 0.5px rgba(255,255,255,0.4); }
+
+  /* ── copilot collapsed rail (verbatim from approvals-macos.html) ── */
+  .copilot-rail {
+    position: relative;
+    width: 52px; flex: 0 0 52px;
+    background: var(--copilot);
+    backdrop-filter: saturate(160%) blur(50px);
+    -webkit-backdrop-filter: saturate(160%) blur(50px);
+    border-left: 0.5px solid rgba(255,255,255,0.26);
+    box-shadow: inset -1px 0 0 rgba(255,255,255,0.35), inset 1px 0 0 rgba(255,255,255,0.4);
+    display: flex; flex-direction: column;
+    align-items: center; padding: 14px 0 14px;
+    gap: 0;
+  }
+  .copilot-rail::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.3; border-radius: 0; z-index: 0;
+  }
+  .copilot-rail > * { position: relative; z-index: 1; }
+  .rail-spark {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: linear-gradient(135deg, #7bc0ff, #0a84ff);
+    display: grid; place-items: center;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 2px 5px rgba(10,132,255,0.5);
+    flex: 0 0 30px;
+  }
+  .rail-spark svg { width: 17px; height: 17px; color: #fff; }
+  .rail-expand {
+    width: 26px; height: 26px; border-radius: 999px;
+    display: grid; place-items: center; margin-top: 8px;
+    background: rgba(255,255,255,0.3);
+    border: 0.5px solid rgba(255,255,255,0.45);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+    color: var(--label-3);
+    flex: 0 0 26px;
+  }
+  .rail-expand svg { width: 13px; height: 13px; }
+  .rail-label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--label-3); margin-top: 18px; user-select: none;
+  }
+
+  /* ── content pane: Knowledge master–detail ──────────────────────── */
+  .content {
+    position: relative;
+    flex: 1; min-width: 0;
+    background: var(--content);
+    backdrop-filter: saturate(200%) blur(40px);
+    -webkit-backdrop-filter: saturate(200%) blur(40px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── knowledge page header (above master-detail) ────────────────── */
+  .knowledge-header {
+    flex: 0 0 auto;
+    padding: 20px 22px 13px;
+    border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    display: flex; align-items: center; gap: 12px;
+  }
+  .knowledge-header h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+
+  /* ── master–detail split ────────────────────────────────────────── */
+  .master-detail {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* ── note navigator (left, ~300px) ─────────────────────────────── */
+  .note-navigator {
+    width: 300px; flex: 0 0 300px;
+    border-right: 0.5px solid rgba(0,0,0,0.07);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Navigator search bar */
+  .nav-search {
+    flex: 0 0 auto;
+    padding: 12px 12px 8px;
+    border-bottom: 0.5px solid rgba(255,255,255,0.3);
+  }
+  .nav-search-field {
+    display: flex; align-items: center; gap: 8px;
+    height: 30px; padding: 0 10px;
+    background: rgba(255,255,255,0.22);
+    border: 0.5px solid rgba(255,255,255,0.4);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 2px rgba(10,20,60,0.12), inset 0 1px 0 rgba(255,255,255,0.4);
+    color: var(--label-3); font-size: 13px;
+    width: 100%;
+  }
+  .nav-search-field svg { width: 14px; height: 14px; flex: 0 0 14px; }
+  .nav-search-field .ks-kbd {
+    margin-left: auto;
+    font-family: var(--mono); font-size: 11px; color: var(--label-3);
+    background: rgba(255,255,255,0.3); border: 0.5px solid rgba(255,255,255,0.5);
+    border-radius: 5px; padding: 1px 5px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), 0 1px 1px rgba(10,20,60,0.08);
+  }
+
+  /* Navigator filter segmented control */
+  .nav-filter {
+    flex: 0 0 auto;
+    padding: 8px 12px 9px;
+    border-bottom: 0.5px solid rgba(0,0,0,0.05);
+  }
+  .nav-filter .segmented {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .nav-filter .seg {
+    flex: 1; text-align: center;
+    padding: 4px 6px;
+    font-size: 11.5px;
+  }
+
+  /* Note list scroll container */
+  .note-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 8px;
+  }
+
+  /* Individual note row */
+  .note-row {
+    display: flex; align-items: center; gap: 9px;
+    padding: 9px 10px;
+    border-radius: 10px;
+    cursor: default;
+    min-height: 48px;
+  }
+  .note-row:not(.sel):hover {
+    background: rgba(255,255,255,0.48);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), inset 0 0 0 0.5px rgba(255,255,255,0.4);
+  }
+  .note-row.sel {
+    background: linear-gradient(180deg, #3d9bff 0%, #0a84ff 55%, #0072ee 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.62),
+      inset 0 0 0 0.5px rgba(255,255,255,0.3),
+      inset 0 -8px 14px -8px rgba(0,40,120,0.5),
+      0 3px 9px -2px rgba(10,90,220,0.5);
+  }
+
+  /* File icon dot (colored by type) */
+  .note-icon {
+    width: 28px; height: 28px; flex: 0 0 28px;
+    border-radius: 7px;
+    display: grid; place-items: center;
+    background: rgba(255,255,255,0.4);
+    border: 0.5px solid rgba(255,255,255,0.5);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 1px 2px rgba(10,20,60,0.10);
+  }
+  .note-icon svg { width: 15px; height: 15px; }
+  .note-row.sel .note-icon {
+    background: rgba(255,255,255,0.22);
+    border-color: rgba(255,255,255,0.35);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);
+  }
+
+  /* Icon tint by type */
+  .note-icon.type-decision svg,
+  .note-icon.type-meeting svg,
+  .note-icon.type-note svg,
+  .note-icon.type-plan svg { color: var(--label-3); }
+  .note-row.sel .note-icon svg { color: rgba(255,255,255,0.88); }
+
+  /* Middle: filename + type chip */
+  .note-body { flex: 1; min-width: 0; }
+  .note-filename {
+    font-family: var(--mono); font-size: 11.5px; font-weight: 500;
+    color: var(--label); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    line-height: 1.3;
+  }
+  .note-row.sel .note-filename { color: #fff; }
+
+  .note-chips { display: flex; align-items: center; gap: 5px; margin-top: 3px; flex-wrap: nowrap; }
+
+  .type-chip {
+    display: inline-flex; align-items: center;
+    padding: 1px 7px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600; white-space: nowrap;
+    letter-spacing: 0.01em;
+  }
+  .type-chip.decision,
+  .type-chip.meeting,
+  .type-chip.note,
+  .type-chip.plan { background: rgba(120,120,128,0.14); color: var(--label-2); border: 0.5px solid rgba(0,0,0,0.06); font-family: var(--mono); font-weight: 500; }
+  .note-row.sel .type-chip {
+    background: rgba(255,255,255,0.22); color: rgba(255,255,255,0.9);
+    border-color: rgba(255,255,255,0.3);
+  }
+
+  /* Right: rev + age */
+  .note-meta {
+    font-family: var(--mono); font-size: 10.5px; color: var(--label-3);
+    text-align: right; white-space: nowrap; flex: 0 0 auto;
+    line-height: 1.5;
+  }
+  .note-meta .rev { display: block; }
+  .note-meta .age { display: block; }
+  .note-row.sel .note-meta { color: rgba(255,255,255,0.75); }
+
+  /* ── note reader (right, fills remaining) ───────────────────────── */
+  .note-reader {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Reader scroll area */
+  .reader-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 28px 36px;
+  }
+
+  /* 1. Title row */
+  .reader-title-row {
+    display: flex; align-items: flex-start; gap: 14px;
+    margin-bottom: 14px;
+  }
+  .reader-title {
+    flex: 1; min-width: 0;
+    margin: 0;
+    font-size: 22px; font-weight: 700; letter-spacing: -0.025em;
+    line-height: 1.25;
+    color: var(--label);
+    /* Single-line ellipsis removed — title needs to wrap on smaller screens */
+  }
+  .reader-actions {
+    display: flex; align-items: center; gap: 6px;
+    flex: 0 0 auto; padding-top: 2px;
+  }
+
+  /* Primary action button: Open in Obsidian */
+  .btn-obsidian {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 13px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.82), rgba(255,255,255,0.62));
+    border: 0.5px solid rgba(255,255,255,0.65);
+    border-radius: 7px;
+    font-size: 12.5px; font-weight: 590; color: var(--label);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.85), 0 1px 3px -1px rgba(10,20,60,0.18);
+    cursor: default; font-family: var(--font); white-space: nowrap;
+  }
+  .btn-obsidian svg { width: 13px; height: 13px; color: var(--label-2); }
+
+  /* Secondary buttons */
+  .btn-ask-copilot {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 28px; padding: 0 12px;
+    background: linear-gradient(180deg, rgba(10,132,255,0.15), rgba(10,132,255,0.08));
+    border: 0.5px solid rgba(10,132,255,0.28);
+    border-radius: 7px;
+    font-size: 12.5px; font-weight: 590; color: var(--accent-ink);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+    cursor: default; font-family: var(--font); white-space: nowrap;
+  }
+  .btn-ask-copilot svg { width: 12px; height: 12px; }
+
+  .btn-history {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 28px; padding: 0 10px;
+    background: rgba(255,255,255,0.3);
+    border: 0.5px solid rgba(255,255,255,0.5);
+    border-radius: 7px;
+    font-size: 12.5px; font-weight: 500; color: var(--label-2);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+    cursor: default; font-family: var(--font); white-space: nowrap;
+  }
+  .btn-history svg { width: 12px; height: 12px; }
+
+  /* 2. Metadata strip */
+  .reader-meta-strip {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 7px;
+    margin-bottom: 18px;
+    padding-bottom: 14px;
+    border-bottom: 0.5px solid rgba(0,0,0,0.07);
+  }
+
+  /* Type chip in metadata strip — slightly larger */
+  .meta-type-chip {
+    display: inline-flex; align-items: center;
+    padding: 2px 9px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 560; font-family: var(--mono);
+    background: rgba(120,120,128,0.14); color: var(--label-2);
+    border: 0.5px solid rgba(0,0,0,0.06);
+  }
+
+  /* Tag chips */
+  .tag-chip {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 2px 8px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 500;
+    background: rgba(255,255,255,0.4); color: var(--label-2);
+    border: 0.5px solid rgba(255,255,255,0.5);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+    font-family: var(--mono);
+  }
+  .tag-chip svg { width: 11px; height: 11px; color: var(--label-3); }
+
+  /* Mono provenance line */
+  .meta-provenance {
+    font-family: var(--mono); font-size: 11px; color: var(--label-3);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* Read-only hint */
+  .meta-ro-hint {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 9px; border-radius: 999px;
+    font-size: 11px; font-weight: 500; color: var(--label-3);
+    background: rgba(0,0,0,0.04);
+    border: 0.5px solid rgba(0,0,0,0.07);
+    font-family: var(--mono);
+    white-space: nowrap;
+  }
+
+  /* ── reading surface — near-solid card ──────────────────────────── */
+  .reading-surface {
+    position: relative;
+    background: rgba(255,255,255,0.72);
+    border: 0.5px solid rgba(255,255,255,0.55);
+    border-radius: var(--radius-card);
+    padding: 22px 26px;
+    max-width: 68ch;
+    box-shadow:
+      var(--glass-ring),
+      var(--glass-glow),
+      0 8px 22px -12px rgba(10,20,60,0.18);
+    overflow: hidden;
+  }
+  .reading-surface::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.3; border-radius: inherit; z-index: 0;
+  }
+  .reading-surface > * { position: relative; z-index: 1; }
+
+  /* Status callout inside markdown */
+  .md-status-callout {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 6px 12px; border-radius: 8px;
+    background: rgba(52,199,89,0.10);
+    border: 0.5px solid rgba(52,199,89,0.28);
+    font-size: 13px; font-weight: 600; color: var(--good-ink);
+    margin-bottom: 16px;
+  }
+  .md-status-callout svg { width: 13px; height: 13px; }
+
+  /* Rendered markdown typography */
+  .md-body { font-size: 14px; line-height: 1.65; color: #2a2a2c; }
+  .md-h2 {
+    font-size: 13.5px; font-weight: 720; letter-spacing: 0.005em;
+    color: var(--label); margin: 18px 0 6px;
+    text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px;
+    color: var(--label-3);
+  }
+  .md-h2:first-of-type { margin-top: 0; }
+  .md-p { margin: 0 0 10px; }
+  .md-ul { margin: 0 0 10px; padding-left: 20px; }
+  .md-ul li { margin-bottom: 5px; }
+  .md-strong { font-weight: 650; color: var(--label); }
+
+  /* ── backlinks section ──────────────────────────────────────────── */
+  .backlinks-section {
+    margin-top: 18px; max-width: 68ch;
+  }
+  .backlinks-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--label-3); margin-bottom: 8px;
+  }
+  .backlinks-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+  .backlink-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 11px;
+    background: rgba(255,255,255,0.5);
+    border: 0.5px solid rgba(255,255,255,0.55);
+    border-radius: 9px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--label-2);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 1px 3px -1px rgba(10,20,60,0.12);
+    cursor: default;
+  }
+  .backlink-chip:hover {
+    background: rgba(255,255,255,0.7);
+    color: var(--accent-ink);
+  }
+  .backlink-chip svg { width: 12px; height: 12px; color: var(--accent-ink); }
+
+  /* ── provenance callout ─────────────────────────────────────────── */
+  .provenance-callout {
+    position: relative;
+    margin-top: 16px; max-width: 68ch;
+    background: rgba(255,255,255,0.42);
+    border: 0.5px solid rgba(255,255,255,0.5);
+    border-left: 2.5px solid rgba(0,0,0,0.14);
+    border-radius: 10px;
+    padding: 10px 14px;
+    overflow: hidden;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), 0 2px 6px -2px rgba(10,20,60,0.1);
+  }
+  .provenance-callout::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.25; border-radius: inherit;
+  }
+  .provenance-callout > * { position: relative; z-index: 1; }
+  .provenance-text {
+    font-family: var(--mono); font-size: 11px; color: var(--label-3); line-height: 1.55;
+  }
+  .provenance-text b { color: var(--label-2); font-weight: 600; }
+
+  /* ── keyboard focus ─────────────────────────────────────────────── */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .note-row { transition: none; }
+  }
+</style>
+
+<div class="desktop">
+
+  <!-- menu bar (verbatim) -->
+  <div class="menubar">
+    <span class="apple">&#63743;</span>
+    <span class="app-name">System of Work</span>
+    <span class="menu">File</span>
+    <span class="menu">Edit</span>
+    <span class="menu">View</span>
+    <span class="menu">Workspace</span>
+    <span class="menu">Window</span>
+    <span class="menu">Help</span>
+    <span class="spacer"></span>
+    <span class="status">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.5a15 15 0 0 1 20 0"/><path d="M5 12a10 10 0 0 1 14 0"/><path d="M8.5 15.5a5 5 0 0 1 7 0"/><circle cx="12" cy="19" r="0.6" fill="currentColor"/></svg>
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 8a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><rect x="19" y="10" width="2" height="4" rx="1"/></svg>
+      <span>Wed 11:55 PM</span>
+    </span>
+  </div>
+
+  <div class="stage">
+    <div class="window">
+
+      <!-- unified toolbar (verbatim) -->
+      <div class="titlebar">
+        <div class="traffic"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+        <div class="ws-switch">
+          <span class="dot"></span>
+          <span>Employer-Work</span>
+          <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9l4-4 4 4"/><path d="M16 15l-4 4-4-4"/></svg></span>
+        </div>
+        <div class="tb-spacer"></div>
+        <div class="tb-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <span>Search or run a command</span>
+          <span class="kbd">&#8984;K</span>
+        </div>
+        <div class="tb-spacer"></div>
+        <div class="egress">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
+          <span>Egress:&nbsp;<span class="mono">local-only</span></span>
+        </div>
+        <div class="gear">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1M18.4 18.4l-2.1-2.1M7.7 7.7L5.6 5.6"/></svg>
+        </div>
+      </div>
+
+      <!-- workspace scope line: Employer-Work = blue (Knowledge is workspace-scoped) -->
+      <div class="scope-line"></div>
+
+      <!-- three-pane body -->
+      <div class="body">
+
+        <!-- nav sidebar — Knowledge is the selected row -->
+        <nav class="sidebar">
+          <div class="nav-section">Work</div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/></svg>
+            <span class="label">Today</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3"/></svg>
+            <span class="label">Calendar</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>
+            <span class="label">Approvals</span>
+            <span class="badge">3</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 13.5L6 5.5a2 2 0 0 1 1.9-1.5h8.2A2 2 0 0 1 18 5.5l2.5 8"/><path d="M3.5 13.5V18a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-4.5"/><path d="M3.5 13.5h5l1.5 2.5h4l1.5-2.5h5"/></svg>
+            <span class="label">Inbox</span>
+            <span class="badge">5</span>
+          </div>
+          <!-- Knowledge: selected -->
+          <div class="nav-item sel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2.5 2.5 0 0 1 2.5 2.5v12.5H7.5A2.5 2.5 0 0 1 5 19z"/><path d="M18.5 16H7.5A2.5 2.5 0 0 0 5 18.5"/></svg>
+            <span class="label">Knowledge</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.5l2 2.5H18a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 18 19.5H6a2.5 2.5 0 0 1-2.5-2.5z"/></svg>
+            <span class="label">Projects</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>
+            <span class="label">Health</span>
+            <span class="dot-warn"></span>
+          </div>
+          <div class="nav-divider"></div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1M18.4 18.4l-2.1-2.1M7.7 7.7L5.6 5.6"/></svg>
+            <span class="label">Settings</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;color:var(--label-3);flex:0 0 13px"><path d="M9 6l6 6-6 6"/></svg>
+          </div>
+          <div class="nav-hint">Connectors · Models · Audit · Workspaces</div>
+        </nav>
+
+        <!-- content pane: Knowledge master–detail -->
+        <main class="content">
+
+          <!-- page header -->
+          <div class="knowledge-header">
+            <h1>Knowledge</h1>
+          </div>
+
+          <!-- master–detail split -->
+          <div class="master-detail">
+
+            <!-- note navigator (left ~300px) -->
+            <div class="note-navigator">
+
+              <!-- search field -->
+              <div class="nav-search">
+                <div class="nav-search-field">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+                  <span style="flex:1;color:var(--label-3);">Search knowledge…</span>
+                  <span class="ks-kbd">&#8984;K</span>
+                </div>
+              </div>
+
+              <!-- filter segmented control -->
+              <div class="nav-filter">
+                <div class="segmented">
+                  <span class="seg on">All</span>
+                  <span class="seg">Decisions</span>
+                  <span class="seg">Meetings</span>
+                  <span class="seg">Notes</span>
+                  <span class="seg">Plans</span>
+                </div>
+              </div>
+
+              <!-- note list -->
+              <div class="note-list">
+
+                <!-- 1. SELECTED: decision-adopt-pgvector.md -->
+                <div class="note-row sel">
+                  <div class="note-icon type-decision">
+                    <!-- document icon -->
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 15h4"/></svg>
+                  </div>
+                  <div class="note-body">
+                    <div class="note-filename">decision-adopt-pgvector.md</div>
+                    <div class="note-chips">
+                      <span class="type-chip decision">Decision</span>
+                    </div>
+                  </div>
+                  <div class="note-meta">
+                    <span class="rev">rev 0b9</span>
+                    <span class="age">6h</span>
+                  </div>
+                </div>
+
+                <!-- 2. meeting-2026-06-30-arch-sync.md -->
+                <div class="note-row">
+                  <div class="note-icon type-meeting">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 15h4"/></svg>
+                  </div>
+                  <div class="note-body">
+                    <div class="note-filename">meeting-2026-06-30-arch-sync.md</div>
+                    <div class="note-chips">
+                      <span class="type-chip meeting">Meeting</span>
+                    </div>
+                  </div>
+                  <div class="note-meta">
+                    <span class="rev">rev 0c4</span>
+                    <span class="age">18h</span>
+                  </div>
+                </div>
+
+                <!-- 3. decision-adopt-postgres.md -->
+                <div class="note-row">
+                  <div class="note-icon type-decision">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 15h4"/></svg>
+                  </div>
+                  <div class="note-body">
+                    <div class="note-filename">decision-adopt-postgres.md</div>
+                    <div class="note-chips">
+                      <span class="type-chip decision">Decision</span>
+                    </div>
+                  </div>
+                  <div class="note-meta">
+                    <span class="rev">rev 0a2</span>
+                    <span class="age">2d</span>
+                  </div>
+                </div>
+
+                <!-- 4. auth-timeout-blocker.md -->
+                <div class="note-row">
+                  <div class="note-icon type-note">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 15h4"/></svg>
+                  </div>
+                  <div class="note-body">
+                    <div class="note-filename">auth-timeout-blocker.md</div>
+                    <div class="note-chips">
+                      <span class="type-chip note">Note</span>
+                    </div>
+                  </div>
+                  <div class="note-meta">
+                    <span class="rev">rev 011</span>
+                    <span class="age">1d</span>
+                  </div>
+                </div>
+
+                <!-- 5. sow-roadmap.md -->
+                <div class="note-row">
+                  <div class="note-icon type-plan">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 15h4"/></svg>
+                  </div>
+                  <div class="note-body">
+                    <div class="note-filename">sow-roadmap.md</div>
+                    <div class="note-chips">
+                      <span class="type-chip plan">Plan</span>
+                    </div>
+                  </div>
+                  <div class="note-meta">
+                    <span class="rev">rev 03f</span>
+                    <span class="age">3d</span>
+                  </div>
+                </div>
+
+                <!-- 6. code-note-knowledgewriter.md -->
+                <div class="note-row">
+                  <div class="note-icon type-note">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 15h4"/></svg>
+                  </div>
+                  <div class="note-body">
+                    <div class="note-filename">code-note-knowledgewriter.md</div>
+                    <div class="note-chips">
+                      <span class="type-chip note">Note</span>
+                    </div>
+                  </div>
+                  <div class="note-meta">
+                    <span class="rev">rev 018</span>
+                    <span class="age">4d</span>
+                  </div>
+                </div>
+
+              </div><!-- /note-list -->
+            </div><!-- /note-navigator -->
+
+            <!-- note reader (right, fills remaining) -->
+            <div class="note-reader">
+              <div class="reader-scroll">
+
+                <!-- 1. Title row -->
+                <div class="reader-title-row">
+                  <h2 class="reader-title">Adopt pgvector for the local knowledge graph</h2>
+                  <div class="reader-actions">
+                    <!-- Open in Obsidian -->
+                    <button class="btn-obsidian">
+                      <!-- external-link / document glyph -->
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-8 8M11 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-5"/></svg>
+                      Open in Obsidian
+                    </button>
+                    <!-- Ask Copilot -->
+                    <button class="btn-ask-copilot">
+                      <!-- sparkle -->
+                      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.8 5.4a4 4 0 0 0 2.8 2.8L22 12l-5.4 1.8a4 4 0 0 0-2.8 2.8L12 22l-1.8-5.4a4 4 0 0 0-2.8-2.8L2 12l5.4-1.8a4 4 0 0 0 2.8-2.8z"/></svg>
+                      Ask Copilot
+                    </button>
+                    <!-- History -->
+                    <button class="btn-history">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5l3 2"/></svg>
+                      History
+                    </button>
+                  </div>
+                </div>
+
+                <!-- 2. Metadata strip -->
+                <div class="reader-meta-strip">
+                  <span class="meta-type-chip">Decision</span>
+                  <span class="tag-chip">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15l9.5-9.5a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L9 20H4z"/><path d="M14 5l5 5"/></svg>
+                    #architecture
+                  </span>
+                  <span class="tag-chip">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15l9.5-9.5a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L9 20H4z"/><path d="M14 5l5 5"/></svg>
+                    #knowledge
+                  </span>
+                  <span class="tag-chip">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15l9.5-9.5a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L9 20H4z"/><path d="M14 5l5 5"/></svg>
+                    #database
+                  </span>
+                  <span class="meta-provenance">KnowledgeWriter · rev 0b9 · 2026-06-30 · Employer-Work/architecture/</span>
+                  <span class="meta-ro-hint">Canonical Markdown — edit in Obsidian</span>
+                </div>
+
+                <!-- 3. Rendered markdown body -->
+                <div class="reading-surface">
+                  <div class="md-body">
+
+                    <!-- Status line -->
+                    <div class="md-status-callout">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>
+                      <strong>Status:</strong>&nbsp;Accepted · 2026-06-30
+                    </div>
+
+                    <div class="md-h2">Decision</div>
+                    <p class="md-p">Use <strong class="md-strong">pgvector</strong> (the Postgres extension) as the vector store for the local knowledge graph, instead of running qdrant.</p>
+
+                    <div class="md-h2">Context</div>
+                    <p class="md-p">The GBrain needs a local vector store for embeddings. Running a second database service adds operational + backup burden on a single-user, local-first machine.</p>
+
+                    <div class="md-h2">Rationale</div>
+                    <ul class="md-ul">
+                      <li>Keeps everything in the local Postgres we already run — one service to operate, migrate, and back up.</li>
+                      <li>pgvector recall + p95 latency are competitive at our scale (~1M vectors).</li>
+                      <li>Simpler failure + recovery story — one store, one backup.</li>
+                    </ul>
+
+                    <div class="md-h2">Alternatives considered</div>
+                    <ul class="md-ul">
+                      <li><strong class="md-strong">qdrant</strong> — rejected: a second service to run and back up.</li>
+                      <li><strong class="md-strong">sqlite-vss</strong> — rejected: maturity + concurrency concerns.</li>
+                    </ul>
+
+                    <div class="md-h2">Consequences</div>
+                    <ul class="md-ul">
+                      <li>GBrain writes embeddings into Postgres via pgvector.</li>
+                      <li>Add the pgvector extension to the DB migration.</li>
+                    </ul>
+
+                  </div>
+                </div><!-- /reading-surface -->
+
+                <!-- 4. Backlinks -->
+                <div class="backlinks-section">
+                  <div class="backlinks-label">Linked mentions</div>
+                  <div class="backlinks-chips">
+                    <div class="backlink-chip">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                      meeting-2026-06-30-arch-sync.md
+                    </div>
+                    <div class="backlink-chip">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                      decision-adopt-postgres.md
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 5. Provenance callout -->
+                <div class="provenance-callout">
+                  <div class="provenance-text">
+                    Authored by <b>KnowledgeWriter</b> from <b>meeting-2026-06-30-arch-sync.md</b> (rev 0c4) · filed 2026-06-30.
+                  </div>
+                </div>
+
+              </div><!-- /reader-scroll -->
+            </div><!-- /note-reader -->
+
+          </div><!-- /master-detail -->
+        </main><!-- /content -->
+
+        <!-- copilot collapsed rail (verbatim from approvals-macos.html) -->
+        <aside class="copilot-rail">
+          <div class="rail-spark">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.8 5.4a4 4 0 0 0 2.8 2.8L22 12l-5.4 1.8a4 4 0 0 0-2.8 2.8L12 22l-1.8-5.4a4 4 0 0 0-2.8-2.8L2 12l5.4-1.8a4 4 0 0 0 2.8-2.8z"/></svg>
+          </div>
+          <div class="rail-expand">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+          </div>
+          <div class="rail-label">Copilot</div>
+        </aside>
+
+      </div><!-- /body -->
+    </div><!-- /window -->
+  </div><!-- /stage -->
+</div><!-- /desktop -->

@@ -1,0 +1,981 @@
+<title>Inbox — SoW (macOS Liquid Glass)</title>
+<style>
+  :root {
+    /* ── system materials (verbatim from locked reference) ─────────── */
+    --accent: #0a84ff;
+    --accent-ink: #0064d6;
+    --label: #1d1d1f;
+    --label-2: #46464b;
+    --label-3: #6b6b73;
+    --hair: rgba(255,255,255,0.35);
+    --hair-strong: rgba(255,255,255,0.5);
+    --hair-dark: rgba(0,0,0,0.06);
+    --warn: #ff9f0a;
+    --warn-ink: #b25e00;
+    --good: #34c759;
+    --good-ink: #1a7f37;
+
+    /* workspace accent colors */
+    --ws-employer: #0a84ff;
+    --ws-employer-bg: rgba(10,132,255,0.10);
+    --ws-personal-biz: #1fae6b;
+    --ws-personal-biz-bg: rgba(31,174,107,0.10);
+    --ws-personal-life: #5e5ce6;
+    --ws-personal-life-bg: rgba(94,92,230,0.10);
+
+    /* Liquid-glass surface tints */
+    --sidebar: rgba(255,255,255,0.46);
+    --content: rgba(255,255,255,0.5);
+    --copilot: rgba(255,255,255,0.46);
+    --card: rgba(255,255,255,0.5);
+    --card-solid: rgba(255,255,255,0.84);
+
+    /* Reusable liquid-glass specular kit */
+    --glass-ring: inset 0 0 0 1px rgba(255,255,255,0.55);
+    --glass-glow: inset 0 1px 0 rgba(255,255,255,0.7),
+                  inset 0 -14px 26px -14px rgba(255,255,255,0.28);
+    --sheen: linear-gradient(125deg,
+              rgba(255,255,255,0.42) 0%,
+              rgba(255,255,255,0.10) 18%,
+              rgba(255,255,255,0) 42%,
+              rgba(255,255,255,0) 62%,
+              rgba(255,255,255,0.06) 82%,
+              rgba(255,255,255,0.22) 100%);
+
+    --radius-win: 16px;
+    --radius-card: 15px;
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", system-ui, sans-serif;
+    --mono: "SF Mono", ui-monospace, "Menlo", "JetBrains Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+
+  .desktop {
+    min-height: 100vh;
+    font-family: var(--font);
+    color: var(--label);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    display: flex;
+    flex-direction: column;
+    background:
+      radial-gradient(1150px 800px at 8% -10%, #cfe0f4 0%, rgba(207,224,244,0) 58%),
+      radial-gradient(1050px 820px at 97% 2%, #d3ece7 0%, rgba(211,236,231,0) 56%),
+      radial-gradient(1250px 1000px at 85% 114%, #ddd6ee 0%, rgba(221,214,238,0) 60%),
+      radial-gradient(980px 880px at 12% 120%, #ecdfe9 0%, rgba(236,223,233,0) 55%),
+      radial-gradient(900px 900px at 50% 46%, #e0eef7 0%, rgba(224,238,247,0) 60%),
+      linear-gradient(155deg, #e6edf6 0%, #e4ebf2 45%, #e7e2f0 100%);
+  }
+
+  /* ── fake menu bar ─────────────────────────────────────────────── */
+  .menubar {
+    height: 26px; flex: 0 0 26px;
+    display: flex; align-items: center; gap: 20px;
+    padding: 0 16px;
+    font-size: 13px; color: #1d1d1f;
+    background: rgba(255,255,255,0.5);
+    backdrop-filter: saturate(180%) blur(30px);
+    -webkit-backdrop-filter: saturate(180%) blur(30px);
+    border-bottom: 0.5px solid rgba(0,0,0,0.06);
+  }
+  .menubar .apple { font-size: 14px; opacity: 0.95; }
+  .menubar .app-name { font-weight: 600; }
+  .menubar .menu { color: #1d1d1f; opacity: 0.82; }
+  .menubar .spacer { flex: 1; }
+  .menubar .status { display: flex; align-items: center; gap: 14px; opacity: 0.95; font-variant-numeric: tabular-nums; }
+  .menubar .status svg { width: 16px; height: 16px; }
+
+  /* ── stage ─────────────────────────────────────────────────────── */
+  .stage {
+    flex: 1; display: flex;
+    align-items: center; justify-content: center;
+    padding: 26px 28px 32px; min-height: 0;
+  }
+
+  /* ── window ────────────────────────────────────────────────────── */
+  .window {
+    position: relative;
+    width: min(1220px, 100%);
+    height: min(842px, calc(100vh - 96px));
+    border-radius: var(--radius-win);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    border: 0.5px solid rgba(255,255,255,0.4);
+    box-shadow:
+      var(--glass-ring),
+      0 40px 90px -20px rgba(10,20,60,0.55),
+      0 16px 34px -14px rgba(10,20,60,0.4);
+    background: transparent;
+  }
+  .window::after {
+    content: "";
+    position: absolute; inset: 0;
+    pointer-events: none;
+    background: var(--sheen);
+    mix-blend-mode: screen;
+    opacity: 0.3; z-index: 5;
+    border-radius: inherit;
+  }
+
+  /* ── unified toolbar ────────────────────────────────────────────── */
+  .titlebar {
+    position: relative;
+    height: 52px; flex: 0 0 52px;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 14px;
+    background: rgba(255,255,255,0.26);
+    backdrop-filter: saturate(160%) blur(50px);
+    -webkit-backdrop-filter: saturate(160%) blur(50px);
+    border-bottom: 0.5px solid rgba(255,255,255,0.28);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+  }
+  .traffic { display: flex; gap: 8px; padding-right: 6px; }
+  .traffic i {
+    width: 12px; height: 12px; border-radius: 50%; display: block;
+    box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.14), inset 0 1.5px 1px rgba(255,255,255,0.55);
+  }
+  .traffic .r { background: radial-gradient(circle at 32% 28%, #ff8a83, #ff5f57); }
+  .traffic .y { background: radial-gradient(circle at 32% 28%, #ffd257, #febc2e); }
+  .traffic .g { background: radial-gradient(circle at 32% 28%, #6ee87f, #28c840); }
+
+  /* workspace switcher — neutral gray dot for Global/pre-workspace */
+  .ws-switch {
+    display: flex; align-items: center; gap: 8px;
+    height: 30px; padding: 0 8px 0 10px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.55), rgba(255,255,255,0.28));
+    border: 0.5px solid rgba(255,255,255,0.5);
+    border-radius: 999px;
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.85),
+      inset 0 0 0 0.5px rgba(255,255,255,0.4),
+      0 2px 6px -2px rgba(10,20,60,0.28);
+    font-size: 13px; font-weight: 590; color: var(--label); cursor: default;
+  }
+  .ws-switch .dot-gray {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #8c8c96;
+    box-shadow: 0 0 0 2px rgba(140,140,150,0.22), inset 0 1px 1px rgba(255,255,255,0.6);
+  }
+  .ws-switch .chev { color: var(--label-3); display: flex; }
+
+  .tb-spacer { flex: 1; }
+
+  .tb-search {
+    display: flex; align-items: center; gap: 8px;
+    width: min(420px, 38vw); height: 30px; padding: 0 10px;
+    background: rgba(255,255,255,0.22);
+    border: 0.5px solid rgba(255,255,255,0.4);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 2px rgba(10,20,60,0.12), inset 0 1px 0 rgba(255,255,255,0.4);
+    color: var(--label-2); font-size: 13px;
+  }
+  .tb-search .kbd { margin-left: auto; display: flex; gap: 2px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--label-3); }
+  .tb-search svg { width: 15px; height: 15px; }
+
+  .egress {
+    display: flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 11px; border-radius: 999px;
+    background: linear-gradient(180deg, rgba(52,199,89,0.32), rgba(52,199,89,0.16));
+    border: 0.5px solid rgba(52,199,89,0.4);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), inset 0 0 0 0.5px rgba(255,255,255,0.3);
+    color: var(--good-ink); font-size: 12.5px; font-weight: 600;
+  }
+  .egress svg { width: 14px; height: 14px; }
+  .egress .mono { font-family: var(--mono); font-weight: 500; }
+
+  .gear { width: 30px; height: 30px; border-radius: 999px; display: grid; place-items: center; color: var(--label-2); }
+  .gear svg { width: 18px; height: 18px; }
+
+  /* ── workspace scope line — NEUTRAL GRAY for Global/pre-workspace ── */
+  .scope-line {
+    height: 2px; flex: 0 0 2px;
+    background: linear-gradient(90deg, rgba(140,140,150,0.6), rgba(140,140,150,0));
+  }
+
+  /* ── three-pane body ────────────────────────────────────────────── */
+  .body { position: relative; flex: 1; display: flex; min-height: 0; z-index: 1; }
+
+  /* ── nav sidebar ────────────────────────────────────────────────── */
+  .sidebar {
+    position: relative;
+    width: 236px; flex: 0 0 236px;
+    padding: 12px 12px 16px;
+    background: var(--sidebar);
+    backdrop-filter: saturate(160%) blur(50px);
+    -webkit-backdrop-filter: saturate(160%) blur(50px);
+    border-right: 0.5px solid rgba(255,255,255,0.26);
+    box-shadow: inset 1px 0 0 rgba(255,255,255,0.4);
+    overflow-y: auto;
+  }
+  .nav-section { margin-top: 12px; padding: 0 8px 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--label-3); }
+  .nav-section:first-child { margin-top: 2px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    height: 30px; padding: 0 8px; margin: 1px 0;
+    border-radius: 999px; font-size: 13.5px; font-weight: 500; color: #2a2a2c;
+    cursor: default;
+  }
+  .nav-item svg { width: 17px; height: 17px; color: var(--label-2); flex: 0 0 17px; }
+  .nav-item .label { flex: 1; }
+  .nav-item:hover { background: rgba(255,255,255,0.34); box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), inset 0 0 0 0.5px rgba(255,255,255,0.3); }
+  .nav-item.sel {
+    background: linear-gradient(180deg, #3d9bff 0%, #0a84ff 55%, #0072ee 100%);
+    color: #fff; font-weight: 590;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.7),
+      inset 0 0 0 0.5px rgba(255,255,255,0.35),
+      inset 0 -8px 14px -8px rgba(0,40,120,0.5),
+      0 3px 9px -2px rgba(10,90,220,0.55);
+  }
+  .nav-item.sel svg { color: #fff; }
+  .badge {
+    min-width: 20px; height: 18px; padding: 0 6px; border-radius: 999px;
+    background: rgba(255,255,255,0.42); color: var(--label-2);
+    box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.5);
+    font-size: 11.5px; font-weight: 600; display: grid; place-items: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .nav-item.sel .badge { background: rgba(255,255,255,0.32); color: #fff; box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.4); }
+  .dot-warn { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px rgba(255,159,10,0.22), inset 0 1px 1px rgba(255,255,255,0.6); }
+  .nav-divider { height: 0.5px; background: rgba(0,0,0,0.10); margin: 6px 8px; }
+  .nav-hint { padding: 2px 8px 4px; font-size: 11px; color: var(--label-3); letter-spacing: 0.01em; line-height: 1.4; }
+
+  /* ── content pane ─────────────────────────────────────────────── */
+  .content {
+    position: relative;
+    flex: 1; min-width: 0;
+    background: var(--content);
+    backdrop-filter: saturate(200%) blur(40px);
+    -webkit-backdrop-filter: saturate(200%) blur(40px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── inbox page header ────────────────────────────────────────── */
+  .inbox-header {
+    flex: 0 0 auto;
+    padding: 20px 24px 13px;
+    border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    display: flex; align-items: center; gap: 12px;
+  }
+  .inbox-header h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+  .inbox-count { font-size: 14px; color: var(--label-2); }
+
+  /* macOS segmented control */
+  .segmented { display: flex; gap: 2px; padding: 2px; background: rgba(255,255,255,0.24); border: 0.5px solid rgba(255,255,255,0.4); border-radius: 999px; box-shadow: inset 0 1px 2px rgba(10,20,60,0.12); margin-left: auto; }
+  .seg { padding: 4px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 540; color: var(--label-2); cursor: default; white-space: nowrap; }
+  .seg.on { background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(255,255,255,0.72)); color: var(--label); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px rgba(10,20,60,0.18), 0 0 0 0.5px rgba(255,255,255,0.4); }
+
+  /* ── master-detail split ─────────────────────────────────────── */
+  .master-detail { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+
+  /* ── queue (master / left) ───────────────────────────────────── */
+  .queue {
+    width: 320px; flex: 0 0 320px;
+    border-right: 0.5px solid rgba(0,0,0,0.07);
+    overflow-y: auto;
+    padding: 10px 10px;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+
+  /* Group eyebrow label */
+  .queue-group-label {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--label-3); padding: 10px 5px 5px;
+  }
+  .queue-group-label:first-child { padding-top: 4px; }
+
+  /* Queue item glass card */
+  .q-item {
+    position: relative;
+    padding: 10px 12px 11px;
+    border-radius: 11px;
+    cursor: default;
+    transition: background 0.12s ease;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .q-item:not(.sel):hover {
+    background: rgba(255,255,255,0.48);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), inset 0 0 0 0.5px rgba(255,255,255,0.4);
+  }
+  /* Selected: accent filled */
+  .q-item.sel {
+    background: linear-gradient(180deg, #3d9bff 0%, #0a84ff 55%, #0072ee 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.62),
+      inset 0 0 0 0.5px rgba(255,255,255,0.3),
+      inset 0 -8px 14px -8px rgba(0,40,120,0.5),
+      0 3px 9px -2px rgba(10,90,220,0.5);
+  }
+
+  .q-item-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .q-source-icon { flex: 0 0 20px; width: 20px; height: 20px; display: grid; place-items: center; color: var(--label-3); }
+  .q-item.sel .q-source-icon { color: rgba(255,255,255,0.85); }
+  .q-source-icon svg { width: 16px; height: 16px; }
+  .q-source-name { font-size: 11.5px; font-weight: 560; color: var(--label-3); white-space: nowrap; }
+  .q-item.sel .q-source-name { color: rgba(255,255,255,0.8); }
+  .q-time { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--label-3); white-space: nowrap; flex: 0 0 auto; }
+  .q-item.sel .q-time { color: rgba(255,255,255,0.75); }
+
+  .q-subject { font-size: 13px; font-weight: 580; color: var(--label); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 28px; }
+  .q-item.sel .q-subject { color: #fff; }
+
+  .q-markers { display: flex; align-items: center; gap: 7px; padding-left: 28px; }
+
+  /* Trust shield badge */
+  .trust-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 7px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600;
+  }
+  .trust-badge svg { width: 11px; height: 11px; }
+  .trust-badge.trusted {
+    background: rgba(0,0,0,0.05);
+    color: var(--label-3);
+    border: 0.5px solid rgba(0,0,0,0.08);
+  }
+  .trust-badge.untrusted {
+    background: rgba(255,159,10,0.14);
+    color: var(--warn-ink);
+    border: 0.5px solid rgba(255,159,10,0.28);
+  }
+  .q-item.sel .trust-badge.trusted {
+    background: rgba(255,255,255,0.18);
+    color: rgba(255,255,255,0.75);
+    border-color: rgba(255,255,255,0.25);
+  }
+  .q-item.sel .trust-badge.untrusted {
+    background: rgba(255,220,100,0.22);
+    color: rgba(255,240,160,0.95);
+    border-color: rgba(255,220,100,0.35);
+  }
+
+  /* Workspace suggestion dot */
+  .ws-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
+  }
+  .ws-dot.employer { background: var(--ws-employer); }
+  .ws-dot.personal-biz { background: var(--ws-personal-biz); }
+  .ws-dot.personal-life { background: var(--ws-personal-life); }
+
+  .ws-dot-label {
+    font-size: 10.5px; color: var(--label-3);
+  }
+  .q-item.sel .ws-dot-label { color: rgba(255,255,255,0.72); }
+
+  /* ── detail pane (right) ─────────────────────────────────────── */
+  .detail-col {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column;
+    overflow: hidden; position: relative;
+  }
+
+  .detail-scroll {
+    flex: 1; overflow-y: auto;
+    padding: 24px 28px 24px;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+
+  /* ── Detail 1: header ────────────────────────────────────────── */
+  .detail-header { display: flex; flex-direction: column; gap: 5px; }
+  .detail-title { font-size: 21px; font-weight: 700; letter-spacing: -0.025em; margin: 0; line-height: 1.2; }
+  .detail-source-line { font-family: var(--mono); font-size: 12px; color: var(--label-3); line-height: 1.4; }
+
+  /* ── Detail 2: untrusted banner ─────────────────────────────── */
+  .untrusted-banner {
+    position: relative;
+    display: flex; align-items: flex-start; gap: 11px;
+    background: linear-gradient(180deg, rgba(255,200,80,0.16), rgba(255,175,40,0.09));
+    border: 0.5px solid rgba(255,159,10,0.32);
+    border-radius: 11px;
+    padding: 11px 14px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.55);
+    overflow: hidden;
+  }
+  .untrusted-banner::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.35; border-radius: inherit;
+  }
+  .untrusted-banner > * { position: relative; z-index: 1; }
+  .banner-icon { flex: 0 0 22px; width: 22px; height: 22px; display: grid; place-items: center; margin-top: 0.5px; color: var(--warn-ink); }
+  .banner-icon svg { width: 18px; height: 18px; }
+  .banner-text { flex: 1; }
+  .banner-title { font-size: 13px; font-weight: 640; color: var(--warn-ink); }
+  .banner-body { margin-top: 2px; font-size: 12.5px; color: #7a4400; line-height: 1.45; }
+
+  /* ── Detail 3: content preview ──────────────────────────────── */
+  .preview-card {
+    position: relative;
+    background: var(--card-solid);
+    border: 0.5px solid rgba(255,255,255,0.55);
+    border-radius: var(--radius-card);
+    overflow: hidden;
+    box-shadow:
+      var(--glass-ring),
+      var(--glass-glow),
+      0 6px 18px -10px rgba(10,20,60,0.2);
+  }
+  .preview-card::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.4; border-radius: inherit; z-index: 0;
+  }
+  .preview-card > * { position: relative; z-index: 1; }
+  .preview-card-head {
+    padding: 9px 14px 8px;
+    border-bottom: 0.5px solid rgba(0,0,0,0.055);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .preview-label { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--label-3); }
+  .inert-pill {
+    padding: 1px 7px; border-radius: 999px;
+    background: rgba(0,0,0,0.05); border: 0.5px solid rgba(0,0,0,0.08);
+    font-size: 10.5px; font-weight: 560; color: var(--label-3);
+    margin-left: auto;
+  }
+  .preview-body {
+    padding: 12px 16px 14px;
+    font-size: 13.5px; color: #3a3a40; line-height: 1.55;
+  }
+  .preview-body .preview-fade {
+    color: var(--label-3); font-size: 13px;
+  }
+
+  /* ── Detail 4: triage panel ─────────────────────────────────── */
+  .triage-card {
+    position: relative;
+    background: var(--card-solid);
+    border: 0.5px solid rgba(255,255,255,0.55);
+    border-radius: var(--radius-card);
+    overflow: hidden;
+    box-shadow:
+      var(--glass-ring),
+      var(--glass-glow),
+      0 6px 18px -10px rgba(10,20,60,0.2);
+  }
+  .triage-card::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.4; border-radius: inherit; z-index: 0;
+  }
+  .triage-card > * { position: relative; z-index: 1; }
+  .triage-card-head {
+    padding: 10px 16px 9px;
+    border-bottom: 0.5px solid rgba(0,0,0,0.055);
+  }
+  .triage-card-head-label { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--label-3); }
+  .triage-body { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+
+  /* Triage row */
+  .triage-row { display: flex; flex-direction: column; gap: 7px; }
+  .triage-row-label { font-size: 12px; font-weight: 640; color: var(--label-2); letter-spacing: 0.01em; }
+
+  /* Workspace pills */
+  .ws-pills { display: flex; gap: 8px; flex-wrap: wrap; }
+  .ws-pill {
+    display: flex; align-items: center; gap: 7px;
+    padding: 6px 13px 6px 10px;
+    border-radius: 999px;
+    font-size: 13px; font-weight: 540; color: var(--label);
+    background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0.52));
+    border: 0.5px solid rgba(255,255,255,0.6);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px -1px rgba(10,20,60,0.15);
+    cursor: default;
+    position: relative;
+  }
+  /* Selected workspace pill */
+  .ws-pill.selected-ws {
+    background: linear-gradient(180deg, rgba(31,174,107,0.18), rgba(31,174,107,0.10));
+    border: 0.5px solid rgba(31,174,107,0.38);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 0 0 1.5px rgba(31,174,107,0.22), 0 2px 6px -2px rgba(31,174,107,0.2);
+    font-weight: 600;
+    color: #0d6640;
+  }
+  .ws-pill .ws-dot { flex: 0 0 9px; width: 9px; height: 9px; }
+  .ws-pill .suggested-tag {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+    color: var(--ws-personal-biz);
+    background: rgba(31,174,107,0.12);
+    border: 0.5px solid rgba(31,174,107,0.25);
+    border-radius: 999px;
+    padding: 1px 6px;
+    margin-left: 2px;
+  }
+
+  /* File-as type picker */
+  .type-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+  .type-pill {
+    display: flex; align-items: center; gap: 5px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 12.5px; font-weight: 540; color: var(--label-2);
+    background: linear-gradient(180deg, rgba(255,255,255,0.6), rgba(255,255,255,0.4));
+    border: 0.5px solid rgba(255,255,255,0.55);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.75), 0 1px 2px -1px rgba(10,20,60,0.12);
+    cursor: default;
+  }
+  .type-pill.selected-type {
+    background: linear-gradient(180deg, rgba(10,132,255,0.18), rgba(10,132,255,0.10));
+    border: 0.5px solid rgba(10,132,255,0.3);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), 0 0 0 1.5px rgba(10,132,255,0.18);
+    color: var(--accent-ink); font-weight: 600;
+  }
+  .detected-tag {
+    font-size: 9.5px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+    color: var(--accent-ink);
+    background: rgba(10,132,255,0.10);
+    border: 0.5px solid rgba(10,132,255,0.22);
+    border-radius: 999px;
+    padding: 1px 5px;
+  }
+
+  /* Triage divider */
+  .triage-divider { height: 0.5px; background: rgba(0,0,0,0.06); margin: 0 -16px; }
+
+  /* Action buttons row */
+  .action-row { display: flex; align-items: center; gap: 8px; }
+  .btn-primary {
+    height: 32px; padding: 0 20px;
+    background: linear-gradient(180deg, #3d9bff 0%, #0a84ff 55%, #0072ee 100%);
+    border: none; border-radius: 8px;
+    color: #fff; font-size: 14px; font-weight: 600;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), 0 2px 6px -1px rgba(10,90,220,0.5);
+    cursor: default; font-family: var(--font);
+  }
+  .btn-danger-text {
+    height: 32px; padding: 0 14px;
+    background: transparent;
+    border: 0.5px solid rgba(211,34,16,0.22);
+    border-radius: 8px;
+    color: #d32210; font-size: 14px; font-weight: 500;
+    box-shadow: none;
+    cursor: default; font-family: var(--font);
+  }
+  .btn-neutral {
+    height: 32px; padding: 0 14px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0.52));
+    border: 0.5px solid rgba(255,255,255,0.6);
+    border-radius: 8px;
+    color: var(--label-2); font-size: 14px; font-weight: 500;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px -1px rgba(10,20,60,0.18);
+    cursor: default; font-family: var(--font);
+  }
+
+  .triage-footnote {
+    font-family: var(--mono);
+    font-size: 11px; color: var(--label-3); line-height: 1.45;
+    margin-top: 2px;
+  }
+
+  /* ── Detail 5: provenance line ───────────────────────────────── */
+  .provenance-line {
+    font-family: var(--mono);
+    font-size: 11.5px; color: var(--label-3); line-height: 1.5;
+    padding: 0 2px;
+  }
+
+  /* ── copilot collapsed rail (verbatim from approvals) ─────────── */
+  .copilot-rail {
+    position: relative;
+    width: 52px; flex: 0 0 52px;
+    background: var(--copilot);
+    backdrop-filter: saturate(160%) blur(50px);
+    -webkit-backdrop-filter: saturate(160%) blur(50px);
+    border-left: 0.5px solid rgba(255,255,255,0.26);
+    box-shadow: inset -1px 0 0 rgba(255,255,255,0.35), inset 1px 0 0 rgba(255,255,255,0.4);
+    display: flex; flex-direction: column;
+    align-items: center; padding: 14px 0 14px;
+    gap: 0;
+  }
+  .copilot-rail::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.3; border-radius: 0; z-index: 0;
+  }
+  .copilot-rail > * { position: relative; z-index: 1; }
+  .rail-spark {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: linear-gradient(135deg, #7bc0ff, #0a84ff);
+    display: grid; place-items: center;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 2px 5px rgba(10,132,255,0.5);
+    flex: 0 0 30px;
+  }
+  .rail-spark svg { width: 17px; height: 17px; color: #fff; }
+  .rail-expand {
+    width: 26px; height: 26px; border-radius: 999px;
+    display: grid; place-items: center; margin-top: 8px;
+    background: rgba(255,255,255,0.3);
+    border: 0.5px solid rgba(255,255,255,0.45);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+    color: var(--label-3);
+    flex: 0 0 26px;
+  }
+  .rail-expand svg { width: 13px; height: 13px; }
+  .rail-label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--label-3); margin-top: 18px; user-select: none;
+  }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    .q-item { transition: none; }
+  }
+</style>
+
+<div class="desktop">
+
+  <!-- menu bar -->
+  <div class="menubar">
+    <span class="apple">&#63743;</span>
+    <span class="app-name">System of Work</span>
+    <span class="menu">File</span>
+    <span class="menu">Edit</span>
+    <span class="menu">View</span>
+    <span class="menu">Workspace</span>
+    <span class="menu">Window</span>
+    <span class="menu">Help</span>
+    <span class="spacer"></span>
+    <span class="status">
+      <!-- wi-fi -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.5a15 15 0 0 1 20 0"/><path d="M5 12a10 10 0 0 1 14 0"/><path d="M8.5 15.5a5 5 0 0 1 7 0"/><circle cx="12" cy="19" r="0.6" fill="currentColor"/></svg>
+      <!-- battery -->
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 8a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><rect x="19" y="10" width="2" height="4" rx="1"/></svg>
+      <span>Wed 11:55 PM</span>
+    </span>
+  </div>
+
+  <div class="stage">
+    <div class="window">
+
+      <!-- unified toolbar — Global workspace, neutral gray dot -->
+      <div class="titlebar">
+        <div class="traffic"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+        <div class="ws-switch">
+          <span class="dot-gray"></span>
+          <span>Global</span>
+          <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9l4-4 4 4"/><path d="M16 15l-4 4-4-4"/></svg></span>
+        </div>
+        <div class="tb-spacer"></div>
+        <div class="tb-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <span>Search or run a command</span>
+          <span class="kbd">&#8984;K</span>
+        </div>
+        <div class="tb-spacer"></div>
+        <div class="egress">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
+          <span>Egress:&nbsp;<span class="mono">local-only</span></span>
+        </div>
+        <div class="gear">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1M18.4 18.4l-2.1-2.1M7.7 7.7L5.6 5.6"/></svg>
+        </div>
+      </div>
+
+      <!-- workspace scope line: NEUTRAL GRAY — pre-workspace staging surface -->
+      <div class="scope-line"></div>
+
+      <!-- three-pane body -->
+      <div class="body">
+
+        <!-- nav sidebar — Inbox is selected -->
+        <nav class="sidebar">
+          <div class="nav-section">Work</div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/></svg>
+            <span class="label">Today</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3"/></svg>
+            <span class="label">Calendar</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>
+            <span class="label">Approvals</span>
+            <span class="badge">3</span>
+          </div>
+          <!-- Inbox: selected -->
+          <div class="nav-item sel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 13.5L6 5.5a2 2 0 0 1 1.9-1.5h8.2A2 2 0 0 1 18 5.5l2.5 8"/><path d="M3.5 13.5V18a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-4.5"/><path d="M3.5 13.5h5l1.5 2.5h4l1.5-2.5h5"/></svg>
+            <span class="label">Inbox</span>
+            <span class="badge">5</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2.5 2.5 0 0 1 2.5 2.5v12.5H7.5A2.5 2.5 0 0 1 5 19z"/><path d="M18.5 16H7.5A2.5 2.5 0 0 0 5 18.5"/></svg>
+            <span class="label">Knowledge</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.5l2 2.5H18a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 18 19.5H6a2.5 2.5 0 0 1-2.5-2.5z"/></svg>
+            <span class="label">Projects</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>
+            <span class="label">Health</span>
+            <span class="dot-warn"></span>
+          </div>
+
+          <div class="nav-divider"></div>
+
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1M18.4 18.4l-2.1-2.1M7.7 7.7L5.6 5.6"/></svg>
+            <span class="label">Settings</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;color:var(--label-3);flex:0 0 13px"><path d="M9 6l6 6-6 6"/></svg>
+          </div>
+          <div class="nav-hint">Connectors · Models · Audit · Workspaces</div>
+        </nav>
+
+        <!-- content pane: inbox header + master-detail -->
+        <main class="content">
+
+          <!-- page header -->
+          <div class="inbox-header">
+            <h1>Inbox</h1>
+            <span class="inbox-count">5 to triage</span>
+            <div class="segmented">
+              <span class="seg on">All</span>
+              <span class="seg">Needs workspace</span>
+              <span class="seg">Untrusted</span>
+            </div>
+          </div>
+
+          <!-- master–detail split -->
+          <div class="master-detail">
+
+            <!-- queue (master / left) -->
+            <div class="queue">
+
+              <!-- GROUP: NEEDS A WORKSPACE -->
+              <div class="queue-group-label">Needs a Workspace (2)</div>
+
+              <!-- item 1: Telegram voice memo -->
+              <div class="q-item">
+                <div class="q-item-top">
+                  <span class="q-source-icon">
+                    <!-- message/telegram bubble icon -->
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 5L2 12.5l7 1.5"/><path d="M9 14l3 6 2-5 5-3"/><path d="M9 14l5-4"/></svg>
+                  </span>
+                  <span class="q-source-name">Telegram</span>
+                  <span class="q-time">6h ago</span>
+                </div>
+                <div class="q-subject">voice memo: SoW pricing idea</div>
+                <div class="q-markers">
+                  <span class="trust-badge untrusted">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3.5v5c0 4.5-3.3 7.5-8 9-4.7-1.5-8-4.5-8-9v-5z"/></svg>
+                    untrusted
+                  </span>
+                </div>
+              </div>
+
+              <!-- item 2: Web capture -->
+              <div class="q-item">
+                <div class="q-item-top">
+                  <span class="q-source-icon">
+                    <!-- globe/web icon -->
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M2 12h20M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>
+                  </span>
+                  <span class="q-source-name">Web capture</span>
+                  <span class="q-time">8h ago</span>
+                </div>
+                <div class="q-subject">Founder equity basics</div>
+                <div class="q-markers">
+                  <span class="trust-badge untrusted">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3.5v5c0 4.5-3.3 7.5-8 9-4.7-1.5-8-4.5-8-9v-5z"/></svg>
+                    untrusted
+                  </span>
+                </div>
+              </div>
+
+              <!-- GROUP: SUGGESTED -->
+              <div class="queue-group-label">Suggested (3)</div>
+
+              <!-- item 3: Web clip — SELECTED -->
+              <div class="q-item sel">
+                <div class="q-item-top">
+                  <span class="q-source-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M2 12h20M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>
+                  </span>
+                  <span class="q-source-name">Web clip</span>
+                  <span class="q-time">3h ago</span>
+                </div>
+                <div class="q-subject">pgvector vs qdrant — benchmark</div>
+                <div class="q-markers">
+                  <span class="trust-badge untrusted">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3.5v5c0 4.5-3.3 7.5-8 9-4.7-1.5-8-4.5-8-9v-5z"/></svg>
+                    untrusted
+                  </span>
+                  <span class="ws-dot personal-biz"></span>
+                  <span class="ws-dot-label">Personal-Business</span>
+                </div>
+              </div>
+
+              <!-- item 4: Granola standup -->
+              <div class="q-item">
+                <div class="q-item-top">
+                  <span class="q-source-icon">
+                    <!-- document/notes icon -->
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 16h4"/></svg>
+                  </span>
+                  <span class="q-source-name">Granola</span>
+                  <span class="q-time">1h ago</span>
+                </div>
+                <div class="q-subject">Standup transcript — Jul 2</div>
+                <div class="q-markers">
+                  <span class="trust-badge trusted">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3.5v5c0 4.5-3.3 7.5-8 9-4.7-1.5-8-4.5-8-9v-5z"/><path d="M9 12l2 2 4-4"/></svg>
+                    trusted
+                  </span>
+                  <span class="ws-dot employer"></span>
+                  <span class="ws-dot-label">Employer-Work</span>
+                </div>
+              </div>
+
+              <!-- item 5: Gmail -->
+              <div class="q-item">
+                <div class="q-item-top">
+                  <span class="q-source-icon">
+                    <!-- envelope/mail icon -->
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3 7.5l9 6 9-6"/></svg>
+                  </span>
+                  <span class="q-source-name">Gmail</span>
+                  <span class="q-time">22m ago</span>
+                </div>
+                <div class="q-subject">Re: Vendor SOW — redlines</div>
+                <div class="q-markers">
+                  <span class="trust-badge trusted">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3.5v5c0 4.5-3.3 7.5-8 9-4.7-1.5-8-4.5-8-9v-5z"/><path d="M9 12l2 2 4-4"/></svg>
+                    trusted
+                  </span>
+                  <span class="ws-dot employer"></span>
+                  <span class="ws-dot-label">Employer-Work</span>
+                </div>
+              </div>
+
+            </div><!-- /queue -->
+
+            <!-- detail column (right) -->
+            <div class="detail-col">
+              <div class="detail-scroll">
+
+                <!-- 1. Header -->
+                <div class="detail-header">
+                  <h2 class="detail-title">pgvector vs qdrant — benchmark</h2>
+                  <div class="detail-source-line">Web capture &nbsp;·&nbsp; example.com/benchmarks &nbsp;·&nbsp; 3h ago &nbsp;·&nbsp; via Browser connector</div>
+                </div>
+
+                <!-- 2. Untrusted banner — ING-7 rule made visible -->
+                <div class="untrusted-banner">
+                  <span class="banner-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3.5v5c0 4.5-3.3 7.5-8 9-4.7-1.5-8-4.5-8-9v-5z"/><path d="M12 10v4M12 16.5v.5"/></svg>
+                  </span>
+                  <div class="banner-text">
+                    <div class="banner-title">Imported from the web — opened read-only</div>
+                    <div class="banner-body">Links are inert and no agent tool will act on this content until you file it. This item is isolated per the untrusted-content rule (ING-7).</div>
+                  </div>
+                </div>
+
+                <!-- 3. Content preview -->
+                <div class="preview-card">
+                  <div class="preview-card-head">
+                    <span class="preview-label">Preview</span>
+                    <span class="inert-pill">inert · links disabled</span>
+                  </div>
+                  <div class="preview-body">
+                    Benchmark comparing pgvector and qdrant for local RAG at ~1M vectors: recall, p95 latency, and memory footprint across three embedding dimensions. Conclusion: pgvector is competitive on recall and avoids a second service, making it the lower-ops choice for local-first setups.
+                    <span class="preview-fade"> [inert preview — content not yet filed]</span>
+                  </div>
+                </div>
+
+                <!-- 4. Triage panel -->
+                <div class="triage-card">
+                  <div class="triage-card-head">
+                    <span class="triage-card-head-label">Triage</span>
+                  </div>
+                  <div class="triage-body">
+
+                    <!-- Assign workspace -->
+                    <div class="triage-row">
+                      <div class="triage-row-label">Assign workspace</div>
+                      <div class="ws-pills">
+                        <div class="ws-pill">
+                          <span class="ws-dot employer"></span>
+                          Employer-Work
+                        </div>
+                        <!-- Personal-Business: highlighted as suggestion, awaiting human confirm -->
+                        <div class="ws-pill selected-ws">
+                          <span class="ws-dot personal-biz"></span>
+                          Personal-Business
+                          <span class="suggested-tag">Suggested</span>
+                        </div>
+                        <div class="ws-pill">
+                          <span class="ws-dot personal-life"></span>
+                          Personal-Life
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="triage-divider"></div>
+
+                    <!-- File as -->
+                    <div class="triage-row">
+                      <div class="triage-row-label">File as</div>
+                      <div class="type-pills">
+                        <div class="type-pill selected-type">
+                          Reference
+                          <span class="detected-tag">detected</span>
+                        </div>
+                        <div class="type-pill">Decision</div>
+                        <div class="type-pill">Meeting note</div>
+                        <div class="type-pill">Task</div>
+                      </div>
+                    </div>
+
+                    <div class="triage-divider"></div>
+
+                    <!-- Actions -->
+                    <div class="triage-row">
+                      <div class="action-row">
+                        <button class="btn-primary">Accept &amp; file</button>
+                        <button class="btn-danger-text">Discard</button>
+                        <button class="btn-neutral">Defer</button>
+                      </div>
+                      <div class="triage-footnote">
+                        On accept, KnowledgeWriter files this into personal-business/… after the validation gate — nothing is written until it passes.
+                      </div>
+                    </div>
+
+                  </div><!-- /triage-body -->
+                </div><!-- /triage-card -->
+
+                <!-- 5. Provenance line -->
+                <div class="provenance-line">
+                  Web capture &nbsp;·&nbsp; cursor 2026-07-02T21:14 &nbsp;·&nbsp; Browser connector
+                </div>
+
+              </div><!-- /detail-scroll -->
+            </div><!-- /detail-col -->
+
+          </div><!-- /master-detail -->
+        </main><!-- /content -->
+
+        <!-- copilot collapsed rail (verbatim from approvals-macos.html) -->
+        <aside class="copilot-rail">
+          <div class="rail-spark">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.8 5.4a4 4 0 0 0 2.8 2.8L22 12l-5.4 1.8a4 4 0 0 0-2.8 2.8L12 22l-1.8-5.4a4 4 0 0 0-2.8-2.8L2 12l5.4-1.8a4 4 0 0 0 2.8-2.8z"/></svg>
+          </div>
+          <div class="rail-expand">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+          </div>
+          <div class="rail-label">Copilot</div>
+        </aside>
+
+      </div><!-- /body -->
+    </div><!-- /window -->
+  </div><!-- /stage -->
+</div><!-- /desktop -->

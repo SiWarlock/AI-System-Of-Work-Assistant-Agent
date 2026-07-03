@@ -1,0 +1,948 @@
+<title>Projects — SoW (macOS Liquid Glass)</title>
+<style>
+  :root {
+    /* ── system materials (verbatim from locked reference) ─────────── */
+    --accent: #0a84ff;
+    --accent-ink: #0064d6;
+    --label: #1d1d1f;
+    --label-2: #46464b;
+    --label-3: #6b6b73;
+    --hair: rgba(255,255,255,0.35);
+    --hair-strong: rgba(255,255,255,0.5);
+    --hair-dark: rgba(0,0,0,0.06);
+    --warn: #ff9f0a;
+    --warn-ink: #b25e00;
+    --good: #34c759;
+    --good-ink: #1a7f37;
+
+    --sidebar: rgba(255,255,255,0.46);
+    --content: rgba(255,255,255,0.5);
+    --copilot: rgba(255,255,255,0.46);
+    --card: rgba(255,255,255,0.5);
+    --card-solid: rgba(255,255,255,0.64);
+
+    --glass-ring: inset 0 0 0 1px rgba(255,255,255,0.55);
+    --glass-glow: inset 0 1px 0 rgba(255,255,255,0.7),
+                  inset 0 -14px 26px -14px rgba(255,255,255,0.28);
+    --sheen: linear-gradient(125deg,
+              rgba(255,255,255,0.42) 0%,
+              rgba(255,255,255,0.10) 18%,
+              rgba(255,255,255,0) 42%,
+              rgba(255,255,255,0) 62%,
+              rgba(255,255,255,0.06) 82%,
+              rgba(255,255,255,0.22) 100%);
+
+    --radius-win: 16px;
+    --radius-card: 15px;
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", system-ui, sans-serif;
+    --mono: "SF Mono", ui-monospace, "Menlo", "JetBrains Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+
+  .desktop {
+    min-height: 100vh;
+    font-family: var(--font);
+    color: var(--label);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    display: flex;
+    flex-direction: column;
+    background:
+      radial-gradient(1150px 800px at 8% -10%, #cfe0f4 0%, rgba(207,224,244,0) 58%),
+      radial-gradient(1050px 820px at 97% 2%, #d3ece7 0%, rgba(211,236,231,0) 56%),
+      radial-gradient(1250px 1000px at 85% 114%, #ddd6ee 0%, rgba(221,214,238,0) 60%),
+      radial-gradient(980px 880px at 12% 120%, #ecdfe9 0%, rgba(236,223,233,0) 55%),
+      radial-gradient(900px 900px at 50% 46%, #e0eef7 0%, rgba(224,238,247,0) 60%),
+      linear-gradient(155deg, #e6edf6 0%, #e4ebf2 45%, #e7e2f0 100%);
+  }
+
+  /* ── fake menu bar ─────────────────────────────────────────────── */
+  .menubar {
+    height: 26px; flex: 0 0 26px;
+    display: flex; align-items: center; gap: 20px;
+    padding: 0 16px;
+    font-size: 13px; color: #1d1d1f;
+    background: rgba(255,255,255,0.5);
+    backdrop-filter: saturate(180%) blur(30px);
+    -webkit-backdrop-filter: saturate(180%) blur(30px);
+    border-bottom: 0.5px solid rgba(0,0,0,0.06);
+  }
+  .menubar .apple { font-size: 14px; opacity: 0.95; }
+  .menubar .app-name { font-weight: 600; }
+  .menubar .menu { color: #1d1d1f; opacity: 0.82; }
+  .menubar .spacer { flex: 1; }
+  .menubar .status { display: flex; align-items: center; gap: 14px; opacity: 0.95; font-variant-numeric: tabular-nums; }
+  .menubar .status svg { width: 16px; height: 16px; }
+
+  /* ── stage ─────────────────────────────────────────────────────── */
+  .stage {
+    flex: 1; display: flex;
+    align-items: center; justify-content: center;
+    padding: 26px 28px 32px; min-height: 0;
+  }
+
+  /* ── window ────────────────────────────────────────────────────── */
+  .window {
+    position: relative;
+    width: min(1220px, 100%);
+    height: min(842px, calc(100vh - 96px));
+    border-radius: var(--radius-win);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    border: 0.5px solid rgba(255,255,255,0.4);
+    box-shadow:
+      var(--glass-ring),
+      0 40px 90px -20px rgba(10,20,60,0.55),
+      0 16px 34px -14px rgba(10,20,60,0.4);
+    background: transparent;
+  }
+  .window::after {
+    content: "";
+    position: absolute; inset: 0;
+    pointer-events: none;
+    background: var(--sheen);
+    mix-blend-mode: screen;
+    opacity: 0.3; z-index: 5;
+    border-radius: inherit;
+  }
+
+  /* ── unified toolbar (verbatim from locked reference) ──────────── */
+  .titlebar {
+    position: relative;
+    height: 52px; flex: 0 0 52px;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 14px;
+    background: rgba(255,255,255,0.26);
+    backdrop-filter: saturate(160%) blur(50px);
+    -webkit-backdrop-filter: saturate(160%) blur(50px);
+    border-bottom: 0.5px solid rgba(255,255,255,0.28);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+  }
+  .traffic { display: flex; gap: 8px; padding-right: 6px; }
+  .traffic i {
+    width: 12px; height: 12px; border-radius: 50%; display: block;
+    box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.14), inset 0 1.5px 1px rgba(255,255,255,0.55);
+  }
+  .traffic .r { background: radial-gradient(circle at 32% 28%, #ff8a83, #ff5f57); }
+  .traffic .y { background: radial-gradient(circle at 32% 28%, #ffd257, #febc2e); }
+  .traffic .g { background: radial-gradient(circle at 32% 28%, #6ee87f, #28c840); }
+
+  .ws-switch {
+    display: flex; align-items: center; gap: 8px;
+    height: 30px; padding: 0 8px 0 10px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.55), rgba(255,255,255,0.28));
+    border: 0.5px solid rgba(255,255,255,0.5);
+    border-radius: 999px;
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.85),
+      inset 0 0 0 0.5px rgba(255,255,255,0.4),
+      0 2px 6px -2px rgba(10,20,60,0.28);
+    font-size: 13px; font-weight: 590; color: var(--label); cursor: default;
+  }
+  .ws-switch .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px rgba(10,132,255,0.22), inset 0 1px 1px rgba(255,255,255,0.6); }
+  .ws-switch .chev { color: var(--label-3); display: flex; }
+
+  .tb-spacer { flex: 1; }
+
+  .tb-search {
+    display: flex; align-items: center; gap: 8px;
+    width: min(420px, 38vw); height: 30px; padding: 0 10px;
+    background: rgba(255,255,255,0.22);
+    border: 0.5px solid rgba(255,255,255,0.4);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 2px rgba(10,20,60,0.12), inset 0 1px 0 rgba(255,255,255,0.4);
+    color: var(--label-2); font-size: 13px;
+  }
+  .tb-search .kbd { margin-left: auto; display: flex; gap: 2px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--label-3); }
+  .tb-search svg { width: 15px; height: 15px; }
+
+  .egress {
+    display: flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 11px; border-radius: 999px;
+    background: linear-gradient(180deg, rgba(52,199,89,0.32), rgba(52,199,89,0.16));
+    border: 0.5px solid rgba(52,199,89,0.4);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), inset 0 0 0 0.5px rgba(255,255,255,0.3);
+    color: var(--good-ink); font-size: 12.5px; font-weight: 600;
+  }
+  .egress svg { width: 14px; height: 14px; }
+  .egress .mono { font-family: var(--mono); font-weight: 500; }
+
+  .gear { width: 30px; height: 30px; border-radius: 999px; display: grid; place-items: center; color: var(--label-2); cursor: default; }
+  .gear svg { width: 18px; height: 18px; }
+
+  /* ── workspace scope line (Projects = workspace-scoped = blue) ── */
+  .scope-line {
+    height: 2px; flex: 0 0 2px;
+    background: linear-gradient(90deg, #0a84ff 0%, rgba(10,132,255,0) 80%);
+  }
+
+  /* ── three-pane body ────────────────────────────────────────────── */
+  .body { position: relative; flex: 1; display: flex; min-height: 0; z-index: 1; }
+
+  /* ── nav sidebar (verbatim from locked reference) ───────────────── */
+  .sidebar {
+    position: relative;
+    width: 236px; flex: 0 0 236px;
+    padding: 12px 12px 16px;
+    background: var(--sidebar);
+    backdrop-filter: saturate(160%) blur(50px);
+    -webkit-backdrop-filter: saturate(160%) blur(50px);
+    border-right: 0.5px solid rgba(255,255,255,0.26);
+    box-shadow: inset 1px 0 0 rgba(255,255,255,0.4);
+    overflow-y: auto;
+  }
+  .nav-section { margin-top: 12px; padding: 0 8px 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--label-3); }
+  .nav-section:first-child { margin-top: 2px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    height: 30px; padding: 0 8px; margin: 1px 0;
+    border-radius: 999px; font-size: 13.5px; font-weight: 500; color: #2a2a2c;
+    cursor: default;
+  }
+  .nav-item svg { width: 17px; height: 17px; color: var(--label-2); flex: 0 0 17px; }
+  .nav-item .label { flex: 1; }
+  .nav-item:hover { background: rgba(255,255,255,0.34); box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), inset 0 0 0 0.5px rgba(255,255,255,0.3); }
+  .nav-item.sel {
+    background: linear-gradient(180deg, #3d9bff 0%, #0a84ff 55%, #0072ee 100%);
+    color: #fff; font-weight: 590;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.7),
+      inset 0 0 0 0.5px rgba(255,255,255,0.35),
+      inset 0 -8px 14px -8px rgba(0,40,120,0.5),
+      0 3px 9px -2px rgba(10,90,220,0.55);
+  }
+  .nav-item.sel svg { color: #fff; }
+  .badge {
+    min-width: 20px; height: 18px; padding: 0 6px; border-radius: 999px;
+    background: rgba(255,255,255,0.42); color: var(--label-2);
+    box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.5);
+    font-size: 11.5px; font-weight: 600; display: grid; place-items: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .nav-item.sel .badge { background: rgba(255,255,255,0.32); color: #fff; box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.4); }
+  .dot-warn { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px rgba(255,159,10,0.22), inset 0 1px 1px rgba(255,255,255,0.6); }
+  .nav-divider { height: 0.5px; background: rgba(0,0,0,0.10); margin: 6px 8px; }
+  .nav-hint { padding: 2px 8px 4px; font-size: 11px; color: var(--label-3); letter-spacing: 0.01em; line-height: 1.4; }
+
+  /* ── content pane: holds the projects master-detail ────────────── */
+  .content {
+    position: relative;
+    flex: 1; min-width: 0;
+    background: var(--content);
+    backdrop-filter: saturate(200%) blur(40px);
+    -webkit-backdrop-filter: saturate(200%) blur(40px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── projects page header (above master-detail split) ────────── */
+  .projects-header {
+    flex: 0 0 auto;
+    padding: 22px 26px 14px;
+    border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .projects-header h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+  .projects-count { font-size: 14px; color: var(--label-2); }
+
+  /* ── master-detail split ────────────────────────────────────────── */
+  .master-detail {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* ── project list (master, ~300px) ─────────────────────────────── */
+  .project-list {
+    width: 300px; flex: 0 0 300px;
+    border-right: 0.5px solid rgba(0,0,0,0.07);
+    overflow-y: auto;
+    padding: 10px 10px;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+
+  .proj-item {
+    position: relative;
+    padding: 11px 13px 12px;
+    border-radius: 12px;
+    cursor: default;
+    transition: background 0.12s ease;
+  }
+  .proj-item:not(.sel):hover {
+    background: rgba(255,255,255,0.48);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), inset 0 0 0 0.5px rgba(255,255,255,0.4);
+  }
+  .proj-item.sel {
+    background: linear-gradient(180deg, #3d9bff 0%, #0a84ff 55%, #0072ee 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.62),
+      inset 0 0 0 0.5px rgba(255,255,255,0.3),
+      inset 0 -8px 14px -8px rgba(0,40,120,0.5),
+      0 3px 9px -2px rgba(10,90,220,0.5);
+  }
+
+  .proj-item-top { display: flex; align-items: center; gap: 8px; }
+
+  /* Status dot: green = on track, amber = at risk */
+  .status-dot {
+    width: 7px; height: 7px; border-radius: 50%; flex: 0 0 7px; margin-top: 1px;
+  }
+  .status-dot.good { background: var(--good); box-shadow: 0 0 0 2px rgba(52,199,89,0.22); }
+  .status-dot.warn { background: var(--warn); box-shadow: 0 0 0 2px rgba(255,159,10,0.22); }
+  .proj-item.sel .status-dot { box-shadow: 0 0 0 2px rgba(255,255,255,0.3); }
+  .proj-item.sel .status-dot.good { background: rgba(255,255,255,0.9); }
+  .proj-item.sel .status-dot.warn { background: rgba(255,220,140,0.95); }
+
+  .proj-name { font-size: 13.5px; font-weight: 590; color: var(--label); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .proj-item.sel .proj-name { color: #fff; }
+
+  .proj-updated { font-family: var(--mono); font-size: 11.5px; color: var(--label-3); flex: 0 0 auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .proj-item.sel .proj-updated { color: rgba(255,255,255,0.7); }
+
+  .proj-sub { margin-top: 3px; font-size: 12px; color: var(--label-3); padding-left: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .proj-item.sel .proj-sub { color: rgba(255,255,255,0.72); }
+
+  /* ── project dashboard (right column, scrollable) ─────────────── */
+  .project-detail {
+    flex: 1; min-width: 0;
+    overflow-y: auto;
+    padding: 24px 28px 40px;
+  }
+
+  /* Detail header */
+  .detail-head {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+    margin-bottom: 20px;
+  }
+  .detail-head-left { flex: 1; min-width: 0; }
+  .detail-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .detail-title { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.025em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .detail-summary { margin-top: 5px; font-size: 13.5px; color: var(--label-2); line-height: 1.45; max-width: 58ch; }
+
+  /* Status pill — amber "At risk" */
+  .status-pill-warn {
+    padding: 3px 11px; border-radius: 999px;
+    background: linear-gradient(180deg, rgba(255,159,10,0.22), rgba(255,159,10,0.12));
+    border: 0.5px solid rgba(255,159,10,0.35);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
+    font-size: 12px; font-weight: 600; color: var(--warn-ink);
+    white-space: nowrap; flex: 0 0 auto;
+  }
+
+  /* Workspace chip — subtle tinted blue */
+  .ws-chip {
+    padding: 2px 8px; border-radius: 999px;
+    background: rgba(10,132,255,0.09); border: 0.5px solid rgba(10,132,255,0.20);
+    font-size: 11.5px; font-weight: 600; color: var(--accent-ink);
+    white-space: nowrap; flex: 0 0 auto;
+  }
+
+  /* "Ask Copilot" secondary button */
+  .btn-ask-copilot {
+    display: flex; align-items: center; gap: 6px;
+    height: 30px; padding: 0 13px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0.52));
+    border: 0.5px solid rgba(255,255,255,0.6);
+    border-radius: 8px;
+    color: var(--accent-ink); font-size: 13px; font-weight: 560;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px -1px rgba(10,20,60,0.18);
+    cursor: default; font-family: var(--font);
+    flex: 0 0 auto; white-space: nowrap;
+  }
+  .btn-ask-copilot svg { width: 14px; height: 14px; }
+
+  /* Section labels — matching .section-label from locked reference */
+  .section-label {
+    font-size: 13px; font-weight: 680; color: var(--label);
+    margin: 22px 0 10px; letter-spacing: -0.01em;
+  }
+  .section-label:first-of-type { margin-top: 0; }
+
+  /* ── stat cards row — 4-column compact strip ───────────────────── */
+  .stat-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 2px;
+  }
+
+  .stat-card {
+    position: relative;
+    background: var(--card);
+    backdrop-filter: blur(30px) saturate(200%);
+    -webkit-backdrop-filter: blur(30px) saturate(200%);
+    border: 0.5px solid rgba(255,255,255,0.4);
+    border-radius: var(--radius-card);
+    padding: 13px 14px 12px;
+    box-shadow:
+      var(--glass-ring),
+      var(--glass-glow),
+      0 8px 22px -12px rgba(10,20,60,0.28);
+    overflow: hidden;
+    transition: transform 0.16s ease, box-shadow 0.16s ease;
+  }
+  .stat-card::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.6; border-radius: inherit; z-index: 0;
+  }
+  .stat-card > * { position: relative; z-index: 1; }
+  .stat-card:hover { transform: translateY(-1px); box-shadow: var(--glass-ring), var(--glass-glow), 0 14px 30px -12px rgba(10,20,60,0.36); }
+
+  .stat-num {
+    font-size: 28px; font-weight: 700; line-height: 1; letter-spacing: -0.03em;
+    color: var(--accent-ink); font-variant-numeric: tabular-nums;
+  }
+  .stat-num.warn-num { color: var(--warn-ink); }
+  .stat-name { margin-top: 6px; font-size: 12.5px; font-weight: 650; color: var(--label); }
+  .stat-sub { margin-top: 2px; font-size: 11.5px; color: var(--label-2); line-height: 1.3; }
+
+  /* ── blocker callout — verbatim .callout from locked reference ── */
+  .callout {
+    position: relative;
+    display: flex; align-items: center; gap: 13px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.4), rgba(255,246,232,0.3));
+    backdrop-filter: blur(30px) saturate(200%);
+    -webkit-backdrop-filter: blur(30px) saturate(200%);
+    border: 0.5px solid rgba(255,255,255,0.4);
+    border-left: 3px solid var(--warn);
+    border-radius: var(--radius-card);
+    padding: 14px 16px;
+    overflow: hidden;
+    box-shadow:
+      var(--glass-ring),
+      var(--glass-glow),
+      0 8px 22px -12px rgba(10,20,60,0.26);
+  }
+  .callout::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.5; border-radius: inherit; z-index: 0;
+  }
+  .callout > * { position: relative; z-index: 1; }
+  .callout .ico {
+    width: 30px; height: 30px; border-radius: 999px;
+    background: linear-gradient(180deg, rgba(255,159,10,0.28), rgba(255,159,10,0.14));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), inset 0 0 0 0.5px rgba(255,255,255,0.3);
+    display: grid; place-items: center; flex: 0 0 30px;
+  }
+  .callout .ico svg { width: 18px; height: 18px; color: var(--warn-ink); }
+  .callout .c-body { flex: 1; }
+  .callout .c-title { font-size: 14px; font-weight: 620; }
+  .callout .c-sub { margin-top: 2px; font-family: var(--mono); font-size: 12.5px; color: var(--label-2); }
+  .callout .c-link { font-size: 13px; color: var(--accent-ink); font-weight: 560; white-space: nowrap; }
+
+  /* ── grouped inset list (tasks) — verbatim .grouped from locked ref */
+  .grouped {
+    position: relative;
+    background: var(--card);
+    backdrop-filter: blur(30px) saturate(200%);
+    -webkit-backdrop-filter: blur(30px) saturate(200%);
+    border: 0.5px solid rgba(255,255,255,0.4);
+    border-radius: var(--radius-card);
+    overflow: hidden;
+    box-shadow:
+      var(--glass-ring),
+      var(--glass-glow),
+      0 8px 22px -12px rgba(10,20,60,0.28);
+  }
+  .grouped::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.5; border-radius: inherit; z-index: 0;
+  }
+
+  /* Task row */
+  .task-row {
+    position: relative; z-index: 1;
+    display: flex; align-items: center; gap: 0;
+    padding: 10px 16px;
+    border-top: 0.5px solid rgba(255,255,255,0.28);
+    font-size: 13.5px;
+    min-height: 42px;
+  }
+  .task-row:first-child { border-top: none; }
+
+  .task-check { flex: 0 0 22px; color: var(--label-3); display: flex; align-items: center; }
+  .task-check svg { width: 16px; height: 16px; }
+
+  .task-title { flex: 1; font-weight: 520; color: var(--label); line-height: 1.3; padding-right: 12px; }
+
+  /* Owner cell */
+  .task-owner {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 5px;
+    font-size: 12.5px; color: var(--label-2); width: 100px;
+  }
+  .task-owner svg { width: 14px; height: 14px; color: var(--label-3); flex: 0 0 14px; }
+
+  /* Due date cell */
+  .task-due {
+    flex: 0 0 72px; text-align: right;
+    font-family: var(--mono); font-size: 12px; color: var(--label-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* TBD owner/date — amber "needs you" style */
+  .tbd-inline {
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .tbd-val {
+    color: var(--warn-ink); font-weight: 600;
+    font-family: var(--mono); font-size: 12px;
+  }
+  .tbd-hint {
+    font-size: 11px; color: var(--warn-ink); opacity: 0.8;
+    background: rgba(255,159,10,0.12); border: 0.5px solid rgba(255,159,10,0.28);
+    border-radius: 999px; padding: 1px 6px; font-weight: 500; font-family: var(--font);
+    white-space: nowrap;
+  }
+
+  /* "pending approval" chip — blue */
+  .chip-pending {
+    display: inline-flex; align-items: center;
+    padding: 1px 7px; border-radius: 999px;
+    background: rgba(10,132,255,0.10); border: 0.5px solid rgba(10,132,255,0.22);
+    font-size: 11px; font-weight: 600; color: var(--accent-ink); font-family: var(--font);
+    white-space: nowrap; flex: 0 0 auto; margin-left: 6px;
+  }
+
+  /* ── decisions list ─────────────────────────────────────────────── */
+  .decisions-list {
+    position: relative;
+    background: var(--card);
+    backdrop-filter: blur(30px) saturate(200%);
+    -webkit-backdrop-filter: blur(30px) saturate(200%);
+    border: 0.5px solid rgba(255,255,255,0.4);
+    border-radius: var(--radius-card);
+    overflow: hidden;
+    box-shadow:
+      var(--glass-ring),
+      var(--glass-glow),
+      0 8px 22px -12px rgba(10,20,60,0.24);
+  }
+  .decisions-list::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.45; border-radius: inherit; z-index: 0;
+  }
+  .dec-row {
+    position: relative; z-index: 1;
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px;
+    border-top: 0.5px solid rgba(255,255,255,0.28);
+    font-size: 13.5px;
+  }
+  .dec-row:first-child { border-top: none; }
+  .dec-icon { flex: 0 0 18px; color: var(--accent-ink); display: flex; align-items: center; }
+  .dec-icon svg { width: 15px; height: 15px; }
+  .dec-file { font-family: var(--mono); font-size: 12px; color: var(--label-3); white-space: nowrap; flex: 0 0 auto; }
+  .dec-title { flex: 1; color: var(--label); font-weight: 500; font-size: 13px; }
+  .dec-age { font-family: var(--mono); font-size: 11.5px; color: var(--label-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* ── linked knowledge chips ─────────────────────────────────────── */
+  .knowledge-chips {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    align-items: center;
+  }
+  .know-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px;
+    background: rgba(255,255,255,0.38); border: 0.5px solid rgba(255,255,255,0.5);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.65);
+    font-family: var(--mono); font-size: 11.5px; color: var(--label-2);
+    cursor: default;
+    transition: background 0.1s ease;
+  }
+  .know-chip:hover { background: rgba(255,255,255,0.55); }
+  .know-chip svg { width: 12px; height: 12px; color: var(--accent-ink); flex: 0 0 12px; }
+
+  /* ── copilot collapsed rail (verbatim from approvals-macos.html) ── */
+  .copilot-rail {
+    position: relative;
+    width: 52px; flex: 0 0 52px;
+    background: var(--copilot);
+    backdrop-filter: saturate(160%) blur(50px);
+    -webkit-backdrop-filter: saturate(160%) blur(50px);
+    border-left: 0.5px solid rgba(255,255,255,0.26);
+    box-shadow: inset -1px 0 0 rgba(255,255,255,0.35), inset 1px 0 0 rgba(255,255,255,0.4);
+    display: flex; flex-direction: column;
+    align-items: center; padding: 14px 0;
+    gap: 0;
+  }
+  .copilot-rail::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--sheen); opacity: 0.3; border-radius: 0; z-index: 0;
+  }
+  .copilot-rail > * { position: relative; z-index: 1; }
+
+  .rail-spark {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: linear-gradient(135deg, #7bc0ff, #0a84ff);
+    display: grid; place-items: center;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 2px 5px rgba(10,132,255,0.5);
+    flex: 0 0 30px;
+  }
+  .rail-spark svg { width: 17px; height: 17px; color: #fff; }
+
+  .rail-expand {
+    width: 26px; height: 26px; border-radius: 999px;
+    display: grid; place-items: center; margin-top: 8px;
+    background: rgba(255,255,255,0.3);
+    border: 0.5px solid rgba(255,255,255,0.45);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+    color: var(--label-3);
+    flex: 0 0 26px;
+  }
+  .rail-expand svg { width: 13px; height: 13px; }
+
+  .rail-label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--label-3); margin-top: 18px; user-select: none;
+  }
+
+  /* keyboard focus */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .proj-item, .stat-card { transition: none; }
+  }
+</style>
+
+<div class="desktop">
+
+  <!-- menu bar -->
+  <div class="menubar">
+    <span class="apple">&#63743;</span>
+    <span class="app-name">System of Work</span>
+    <span class="menu">File</span>
+    <span class="menu">Edit</span>
+    <span class="menu">View</span>
+    <span class="menu">Workspace</span>
+    <span class="menu">Window</span>
+    <span class="menu">Help</span>
+    <span class="spacer"></span>
+    <span class="status">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.5a15 15 0 0 1 20 0"/><path d="M5 12a10 10 0 0 1 14 0"/><path d="M8.5 15.5a5 5 0 0 1 7 0"/><circle cx="12" cy="19" r="0.6" fill="currentColor"/></svg>
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 8a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><rect x="19" y="10" width="2" height="4" rx="1"/></svg>
+      <span>Thu 2:10 PM</span>
+    </span>
+  </div>
+
+  <div class="stage">
+    <div class="window">
+
+      <!-- unified toolbar (verbatim) -->
+      <div class="titlebar">
+        <div class="traffic"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+        <div class="ws-switch">
+          <span class="dot"></span>
+          <span>Employer-Work</span>
+          <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9l4-4 4 4"/><path d="M16 15l-4 4-4-4"/></svg></span>
+        </div>
+        <div class="tb-spacer"></div>
+        <div class="tb-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <span>Search or run a command</span>
+          <span class="kbd">&#8984;K</span>
+        </div>
+        <div class="tb-spacer"></div>
+        <div class="egress">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
+          <span>Egress:&nbsp;<span class="mono">local-only</span></span>
+        </div>
+        <div class="gear">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1M18.4 18.4l-2.1-2.1M7.7 7.7L5.6 5.6"/></svg>
+        </div>
+      </div>
+
+      <!-- workspace scope line: Employer-Work = blue -->
+      <div class="scope-line"></div>
+
+      <!-- three-pane body -->
+      <div class="body">
+
+        <!-- nav sidebar — Projects is selected -->
+        <nav class="sidebar">
+          <div class="nav-section">Work</div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/></svg>
+            <span class="label">Today</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3"/></svg>
+            <span class="label">Calendar</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>
+            <span class="label">Approvals</span>
+            <span class="badge">3</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 13.5L6 5.5a2 2 0 0 1 1.9-1.5h8.2A2 2 0 0 1 18 5.5l2.5 8"/><path d="M3.5 13.5V18a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-4.5"/><path d="M3.5 13.5h5l1.5 2.5h4l1.5-2.5h5"/></svg>
+            <span class="label">Inbox</span>
+            <span class="badge">5</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2.5 2.5 0 0 1 2.5 2.5v12.5H7.5A2.5 2.5 0 0 1 5 19z"/><path d="M18.5 16H7.5A2.5 2.5 0 0 0 5 18.5"/></svg>
+            <span class="label">Knowledge</span>
+          </div>
+          <!-- Projects: SELECTED -->
+          <div class="nav-item sel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.5l2 2.5H18a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 18 19.5H6a2.5 2.5 0 0 1-2.5-2.5z"/></svg>
+            <span class="label">Projects</span>
+          </div>
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>
+            <span class="label">Health</span>
+            <span class="dot-warn"></span>
+          </div>
+
+          <div class="nav-divider"></div>
+
+          <div class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1M18.4 18.4l-2.1-2.1M7.7 7.7L5.6 5.6"/></svg>
+            <span class="label">Settings</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;color:var(--label-3);flex:0 0 13px;"><path d="M9 6l6 6-6 6"/></svg>
+          </div>
+          <div class="nav-hint">Connectors · Models · Audit · Workspaces</div>
+        </nav>
+
+        <!-- content pane -->
+        <main class="content">
+
+          <!-- page header -->
+          <div class="projects-header">
+            <h1>Projects</h1>
+            <span class="projects-count">4 active</span>
+          </div>
+
+          <!-- master–detail split -->
+          <div class="master-detail">
+
+            <!-- project list (master) -->
+            <div class="project-list">
+
+              <!-- 1. Vendor migration — SELECTED, amber/at-risk -->
+              <div class="proj-item sel">
+                <div class="proj-item-top">
+                  <span class="status-dot warn"></span>
+                  <span class="proj-name">Vendor migration</span>
+                  <span class="proj-updated">2h</span>
+                </div>
+                <div class="proj-sub">1 blocker · 6 open tasks</div>
+              </div>
+
+              <!-- 2. Auth reliability — green/on-track -->
+              <div class="proj-item">
+                <div class="proj-item-top">
+                  <span class="status-dot good"></span>
+                  <span class="proj-name">Auth reliability</span>
+                  <span class="proj-updated">1d</span>
+                </div>
+                <div class="proj-sub">ENG-482 in review</div>
+              </div>
+
+              <!-- 3. Q3 planning — green -->
+              <div class="proj-item">
+                <div class="proj-item-top">
+                  <span class="status-dot good"></span>
+                  <span class="proj-name">Q3 planning</span>
+                  <span class="proj-updated">3d</span>
+                </div>
+                <div class="proj-sub">roadmap drafting</div>
+              </div>
+
+              <!-- 4. Knowledge graph — green -->
+              <div class="proj-item">
+                <div class="proj-item-top">
+                  <span class="status-dot good"></span>
+                  <span class="proj-name">Knowledge graph (GBrain)</span>
+                  <span class="proj-updated">2d</span>
+                </div>
+                <div class="proj-sub">pgvector adopted</div>
+              </div>
+
+            </div><!-- /project-list -->
+
+            <!-- project dashboard (right, scrollable) -->
+            <div class="project-detail">
+
+              <!-- 1. Header -->
+              <div class="detail-head">
+                <div class="detail-head-left">
+                  <div class="detail-title-row">
+                    <h2 class="detail-title">Vendor migration</h2>
+                    <span class="status-pill-warn">At risk</span>
+                    <span class="ws-chip">Employer-Work</span>
+                  </div>
+                  <div class="detail-summary">Migrate off the legacy vendor before Q3. One blocker needs your attention.</div>
+                </div>
+                <button class="btn-ask-copilot">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.8 5.4a4 4 0 0 0 2.8 2.8L22 12l-5.4 1.8a4 4 0 0 0-2.8 2.8L12 22l-1.8-5.4a4 4 0 0 0-2.8-2.8L2 12l5.4-1.8a4 4 0 0 0 2.8-2.8z"/></svg>
+                  Ask Copilot
+                </button>
+              </div>
+
+              <!-- 2. Stat row -->
+              <div class="section-label" style="margin-top: 0;">Overview</div>
+              <div class="stat-strip">
+                <div class="stat-card">
+                  <div class="stat-num">6</div>
+                  <div class="stat-name">Open tasks</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-num warn-num">1</div>
+                  <div class="stat-name">Blocker</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-num">3</div>
+                  <div class="stat-name">Decisions</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-num" style="font-size:17px;line-height:1.15;margin-top:2px;">Jul 1</div>
+                  <div class="stat-name">Next milestone</div>
+                  <div class="stat-sub">Review close-out</div>
+                </div>
+              </div>
+
+              <!-- 3. Blocker callout -->
+              <div class="section-label">Blockers (1)</div>
+              <div class="callout">
+                <span class="ico">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l9 15.5H3z"/><path d="M12 10v4.5M12 17.2v.3"/></svg>
+                </span>
+                <div class="c-body">
+                  <div class="c-title">Vendor review needs close-out</div>
+                  <div class="c-sub">from the Tue 11:00 meeting</div>
+                </div>
+                <span class="c-link">Resolve &#8594;</span>
+              </div>
+
+              <!-- 4. Open tasks -->
+              <div class="section-label">Open tasks</div>
+              <div class="grouped">
+
+                <!-- task 1 -->
+                <div class="task-row">
+                  <span class="task-check">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/></svg>
+                  </span>
+                  <span class="task-title">Send SOW redlines to legal</span>
+                  <span class="task-owner">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c0-4 3.4-7 7.5-7s7.5 3 7.5 7"/></svg>
+                    You
+                  </span>
+                  <span class="task-due">Jul 2</span>
+                </div>
+
+                <!-- task 2 — TBD owner + pending approval chip -->
+                <div class="task-row">
+                  <span class="task-check">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/></svg>
+                  </span>
+                  <span class="task-title">
+                    Create Linear issue ENG-482 (auth timeout)
+                    <span class="chip-pending">pending approval</span>
+                  </span>
+                  <span class="task-owner">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c0-4 3.4-7 7.5-7s7.5 3 7.5 7"/></svg>
+                    <span class="tbd-inline"><span class="tbd-val">TBD</span></span>
+                  </span>
+                  <span class="task-due" style="color: transparent;">—</span>
+                </div>
+
+                <!-- task 3 — TBD due date -->
+                <div class="task-row">
+                  <span class="task-check">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/></svg>
+                  </span>
+                  <span class="task-title">Schedule cutover window</span>
+                  <span class="task-owner">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c0-4 3.4-7 7.5-7s7.5 3 7.5 7"/></svg>
+                    You
+                  </span>
+                  <span class="task-due">
+                    <span class="tbd-val">TBD</span>
+                  </span>
+                </div>
+
+                <!-- task 4 -->
+                <div class="task-row">
+                  <span class="task-check">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/></svg>
+                  </span>
+                  <span class="task-title">Confirm data export format</span>
+                  <span class="task-owner">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c0-4 3.4-7 7.5-7s7.5 3 7.5 7"/></svg>
+                    You
+                  </span>
+                  <span class="task-due">Jul 5</span>
+                </div>
+
+              </div><!-- /grouped tasks -->
+
+              <!-- 5. Recent decisions -->
+              <div class="section-label">Recent decisions</div>
+              <div class="decisions-list">
+                <div class="dec-row">
+                  <span class="dec-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>
+                  </span>
+                  <span class="dec-file">decision-sow-redlines.md</span>
+                  <span class="dec-title">SOW redlines accepted</span>
+                  <span class="dec-age">1d</span>
+                </div>
+                <div class="dec-row">
+                  <span class="dec-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>
+                  </span>
+                  <span class="dec-file">decision-cutover-date.md</span>
+                  <span class="dec-title">Cutover set: Aug 15</span>
+                  <span class="dec-age">3d</span>
+                </div>
+              </div>
+
+              <!-- 6. Linked knowledge -->
+              <div class="section-label">Linked knowledge</div>
+              <div class="knowledge-chips">
+                <span class="know-chip">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>
+                  meeting-2026-07-01-vendor-review.md
+                </span>
+                <span class="know-chip">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>
+                  sow-roadmap.md
+                </span>
+              </div>
+
+            </div><!-- /project-detail -->
+
+          </div><!-- /master-detail -->
+
+        </main><!-- /content -->
+
+        <!-- copilot collapsed rail (verbatim from approvals-macos.html) -->
+        <aside class="copilot-rail">
+          <div class="rail-spark">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.8 5.4a4 4 0 0 0 2.8 2.8L22 12l-5.4 1.8a4 4 0 0 0-2.8 2.8L12 22l-1.8-5.4a4 4 0 0 0-2.8-2.8L2 12l5.4-1.8a4 4 0 0 0 2.8-2.8z"/></svg>
+          </div>
+          <div class="rail-expand">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+          </div>
+          <div class="rail-label">Copilot</div>
+        </aside>
+
+      </div><!-- /body -->
+    </div><!-- /window -->
+  </div><!-- /stage -->
+</div><!-- /desktop -->

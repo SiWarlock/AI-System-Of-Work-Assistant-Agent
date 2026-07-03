@@ -2,11 +2,16 @@
 
 > **Status: LOCKED** on the *aesthetic / material* axis by the owner. Supersedes the old dark "control-plane / Linear-Raycast, no-glassmorphism" look in `design-system.md` (that doc's *information-architecture + governance-legibility* thinking still stands; only the surface is re-skinned).
 >
-> **Canonical reference mockups** (owner-approved 2026-07-03) — open on a Mac (real SF Pro). These three are the source of truth for the look; the tokens below are extracted from them:
+> **Canonical reference mockups** (owner-approved 2026-07-03) — open on a Mac (real SF Pro). These are the source of truth for the look; the tokens below are extracted from them:
 > - [`mockups/today-macos-liquid-glass.html`](./mockups/today-macos-liquid-glass.html) — Today dashboard (the base language).
 > - [`mockups/approvals-macos.html`](./mockups/approvals-macos.html) — Approvals (master–detail; the governance heartbeat: "exactly what will happen" + no-inference TBD + runs-once + egress).
 > - [`mockups/calendar-macos.html`](./mockups/calendar-macos.html) — Calendar week view (governance-aware events; proposed writes shown as dashed "pending approval" blocks).
+> - [`mockups/inbox-macos.html`](./mockups/inbox-macos.html) — Inbox / ingestion triage (pre-workspace staging; **neutral "Global" scope**; workspace assignment; ING-7 untrusted-content banner; file → KnowledgeWriter + gate).
+> - [`mockups/knowledge-macos.html`](./mockups/knowledge-macos.html) — Knowledge (reader/browser over canonical Markdown; provenance + rev + backlinks; **Open in Obsidian** is the edit path).
+> - [`mockups/projects-macos.html`](./mockups/projects-macos.html) — Projects dashboard (cross-screen loop: blockers, pending-approval tasks, TBD owners/dates, decisions linking to Knowledge).
 > - [`mockups/today-macos-dark.html`](./mockups/today-macos-dark.html) — Today in the **dark** theme (frosted charcoal). Light is default; dark is supported.
+>
+> **Reserved-color rule (from the type-color reconciliation):** color means only **workspace** (blue/emerald/indigo) or **status** (warn amber / good green / accent blue). Classifiers like note-type render as **neutral mono tags**, never a colored dot — so a hue never ambiguously means two things.
 >
 > Still **open** (to decide later in the discussion — see bottom): dark mode, and how the 3 workspace accents live under an all-blue Apple palette.
 
@@ -112,8 +117,8 @@ Adopted. **Light is the default**; a **frosted-charcoal dark** theme is a first-
 
 ## Design discussion — COMPLETE (2026-07-03)
 
-Everything load-bearing is decided and captured: aesthetic · tokens · spacing/overflow discipline · shell · navigation (sidebar Option B) · page inventory · Copilot placement (sidebar) · workspace model + identity (Treatment 1, blue/emerald/indigo) · dark mode · prototype-first order. Four reference mockups (Today light + dark · Approvals · Calendar) match the spec.
+Everything load-bearing is decided and captured: aesthetic · tokens · spacing/overflow discipline · reserved-color rule · shell · navigation (sidebar Option B) · page inventory · Copilot placement (sidebar) · workspace model + identity (Treatment 1, blue/emerald/indigo) · dark mode · prototype-first order. **Seven reference mockups** — Today (light + dark) · Approvals · Calendar · Inbox · Knowledge · Projects — match the spec, covering every genuinely-distinct surface.
 
-**Deferred to just-in-time (Phase 9 build):** per-page layout notes for the inheriting pages — Inbox · Knowledge · Projects · Health · Settings (→ Connectors · Models · Audit · Workspaces) — designed as each is built, since they reuse the locked patterns rather than needing bespoke exploration.
+**Deferred to just-in-time (Phase 9 build):** **Health** and **Settings** (→ Connectors · Models · Audit · Workspaces). The owner opted not to design these — they're the most pattern-inheriting surfaces (System-Health cards already exist on Today; Settings/config are standard list + form), so they'll be laid out during the build from the locked components.
 
 _When the whole UI/UX discussion converges, this folds into `design-system.md` as the token layer._
