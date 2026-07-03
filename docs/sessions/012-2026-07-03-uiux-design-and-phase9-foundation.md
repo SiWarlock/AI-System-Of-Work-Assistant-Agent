@@ -35,3 +35,19 @@ The next slice is the live-worker integration + Today render. Starting map:
 5. **Port the Today mockup to React** over the store (reuse `material-direction.md` tokens); render from `UiSafeDashboardCard[]` + health + approvals.
 
 **Deferred (carry-forward):** the renderer's client is typed against tRPC's generic router — full end-to-end procedure typing needs `@sow/worker` to emit a `.d.ts` type entry (importing its source-inferred `AppRouter` drags `packages/db` source into the renderer's DOM tsconfig: node `Buffer` vs DOM `BlobPart`). A worker-track follow-up; rendered data stays typed via `@sow/contracts`.
+
+## 9.4a — running Today (DONE — `f5a0b37` + look-fix `f9f749a`)
+
+The Today surface renders in a REAL hardened Electron window over the UI-safe store:
+- `renderer/surfaces/today/Today.tsx` — ported from the locked mockup, adapted for the real window (no fake macOS chrome — the OS provides hiddenInset traffic lights; draggable toolbar; connection-status pill from the store; Option-B nav + blue scope line + collapsed Copilot rail). "Waiting on you" renders from `UiSafeDashboardCard[]`; System Health from `UiSafeHealthItem[]`; empty states when no data.
+- `renderer/App.tsx` renders Today via `useSyncExternalStore`; `renderer/dev/seed.ts` (DEV-only, gated on `import.meta.env.DEV`) hydrates sample UI-safe projections so Today shows populated pre-worker.
+- **Look fix (`f9f749a`):** the app PAINTS the locked pastel wallpaper (`.sow-shell`) + frosted panes — NOT window `vibrancy`, which sampled the desktop and washed the design gray. See the LESSON in `material-direction.md`.
+- Renderer imports `@sow/contracts` via SUBPATHS (`api/events`, `api/ui-safe`, `models/shared-enums`) — the index barrel pulls `schema/registry.ts` (node:fs), which cannot bundle for the browser.
+
+**Verified:** typecheck clean · 31/31 tests · production build · **runs** (`pnpm --filter @sow/desktop dev` → a bright, on-design Today window with real inset traffic lights, seeded data, and a green "Live" pill).
+
+## RESUME — 9.4b (the live worker) is next
+
+The store side is a drop-in; the remaining work is the live-worker integration — the 5-point map in "Resume pointer — 9.4" above: (1) spawn `@sow/worker` as a supervised child process via `bootWorker`; (2) plumb `{ baseUrl, token, origin }` to the renderer over a NEW preload channel (extend bridge + inventory + snapshot); (3) Origin/Host allowlist alignment (register the renderer's page origin — a custom `app://` protocol — in the allowlist main hands `bootWorker`); (4) wire the real tRPC wsLink transport into `createEventStream` + the httpBatchLink query client; (5) replace the dev seed with the live stream. Then 9.5–9.14 (the other surfaces reuse the locked mockups + the store/patterns already built).
+
+**Phase-9 commits this session:** `543e61a` (9.1) · `0788b1d` (9.2) · `2940fef` (9.3) · `f5a0b37` (9.4a) · `f9f749a` (9.4a look fix).

@@ -60,12 +60,11 @@ Semantic color (good/warn/critical) is **separate from the accent** and never co
 
 ## HARD build requirement (Phase 9 — do not drop)
 The web `backdrop-filter` is only an **approximation**. The shipped Electron app MUST use the **real macOS system material**:
-- `BrowserWindow`: **`vibrancy: 'sidebar'`** (nav/Copilot panes) / **`'under-window'`** (window base), **`visualEffectState: 'active'`**, transparent window background so the material shows.
-- **`titleBarStyle: 'hiddenInset'`** for real inset traffic lights + unified toolbar.
+- **The app PAINTS its own locked pastel wallpaper + frosted panes** (the mockups' `backdrop-filter` glass over a painted gradient). This is the BASE and it reads bright/glassy on any desktop.
+- **`titleBarStyle: 'hiddenInset'`** for real inset traffic lights + a unified toolbar; an **opaque** window with a light `backgroundColor`.
 - Provide a **solid-fill fallback** for `prefers-reduced-transparency` / reduced-motion.
-- *(Confirm exact option names against current Electron docs at build time.)*
 
-Net: the real app looks **more** glassy than the mockup, not less.
+> ⚠️ **LESSON (2026-07-03, from the running Phase-9 build).** Do NOT rely on window `vibrancy` for the material. `vibrancy: 'sidebar'` + a transparent window samples whatever DESKTOP sits behind the window, which washed the bright design to a flat **gray** (desktop-dependent). The earlier note here ("pair with real vibrancy → looks *more* glassy") was WRONG. The app must **paint its own bright base**; vibrancy is at most an optional flourish layered *under* the painted design — never the base.
 
 ## Spacing & overflow discipline (LOCKED — learned 2026-07-03)
 
