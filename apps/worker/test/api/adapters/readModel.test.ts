@@ -254,6 +254,34 @@ describe("createDbReadModelQueryPort — workspace-scoped card + copilot surface
       expect(res.value[0]!.idempotencyKey).toBe("idem-1");
     }
   });
+
+  it("recentChanges: KNOWN ws reads seeded rows (malformed dropped); absent → empty; UNKNOWN → fail-closed", async () => {
+    const o = await freshDb();
+    await seedRegistry(o, [KNOWN_WS]);
+    let port = createDbReadModelQueryPort(o.repos);
+    // absent → empty ok
+    let res = await port.recentChanges(KNOWN_WS);
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value).toEqual([]);
+
+    await seedReadModel(o, READ_MODEL_KEYS.recentChanges, KNOWN_WS, {
+      changes: [
+        { changeId: "chg-1", kind: "commit", summary: "committed a.md rev 0c4", occurredAt: "2026-07-03T00:00:00.000Z" },
+        // A structurally malformed row (missing occurredAt) is dropped by the transport guard.
+        { changeId: "chg-bad", kind: "commit", summary: "no timestamp" },
+      ],
+    });
+    port = createDbReadModelQueryPort(o.repos);
+    res = await port.recentChanges(KNOWN_WS);
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) {
+      expect(res.value.length).toBe(1); // malformed row dropped
+      expect(res.value[0]!.changeId).toBe("chg-1");
+    }
+
+    const unknown = await port.recentChanges(UNKNOWN_WS);
+    expect(isErr(unknown)).toBe(true); // fail-closed (WS-8)
+  });
 });
 
 // ── inbox surfaces (pending approvals; fail-closed on unknown workspace) ──────

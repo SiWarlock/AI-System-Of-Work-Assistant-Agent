@@ -240,6 +240,7 @@ function makeServerDeps(over: { expectedToken?: SessionToken } = {}) {
       approvalInbox: () => emptyErr,
       copilotSurface: () => emptyErr,
       globalSurface: () => emptyErr,
+      recentChanges: () => emptyErr,
     },
     systemHealth: {
       healthItems: () => emptyErr,

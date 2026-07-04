@@ -181,6 +181,16 @@ function fakePort(overrides: Partial<ReadModelQueryPort> = {}): ReadModelQueryPo
 
     globalSurface: (): Result<readonly GclProjection[], FailureVariant> =>
       ok([fakeGclProjection()]),
+
+    // Candidate rows in NON-descending order (older first) so the procedure's server-side
+    // re-sort is observable; unknown workspace → typed not-found (fail-closed).
+    recentChanges: (workspaceId) =>
+      workspaceId === KNOWN_WORKSPACE
+        ? ok([
+            { changeId: "chg_older", kind: "commit", summary: "committed b.md rev 0c4", occurredAt: "2026-07-02T00:00:00.000Z" },
+            { changeId: "chg_newer", kind: "sync", summary: "synced cursor 2026-07-03", occurredAt: "2026-07-03T00:00:00.000Z" },
+          ])
+        : err(notFoundWorkspace(workspaceId)),
   };
   return { ...base, ...overrides };
 }
@@ -260,6 +270,80 @@ describe("buildQueryRouter — UI-safe read-model serving (§10/§13)", () => {
       const card = res.value[0]!;
       expect(fieldSet(card)).toEqual([...UI_SAFE_ALLOWLIST.workflowRunRef].sort());
       expect(asRecord(card).auditRefs).toBeUndefined();
+    }
+  });
+
+  it("recentChanges returns UI-safe rows for a KNOWN workspace, RE-SORTED descending by occurredAt", async () => {
+    const caller = makeCaller(fakePort());
+    const res = await caller.query.recentChanges({ workspaceId: KNOWN_WORKSPACE });
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) {
+      // The port returned [older, newer]; the procedure re-sorts DESC (newest first).
+      expect(res.value.map((c) => c.changeId)).toEqual(["chg_newer", "chg_older"]);
+      expect(fieldSet(res.value[0]!)).toEqual([...UI_SAFE_ALLOWLIST.recentChange].sort());
+    }
+  });
+
+  it("recentChanges for an UNKNOWN workspace fails CLOSED (typed err, no inline row)", async () => {
+    const caller = makeCaller(fakePort());
+    const res = await caller.query.recentChanges({ workspaceId: UNKNOWN_WORKSPACE });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
+  });
+
+  it("recentChanges fails CLOSED if ANY row has a multi-line summary (re-validation leak gate)", async () => {
+    const caller = makeCaller(
+      fakePort({
+        // A multi-line summary is the shape of leaked raw content — the frozen
+        // UiSafeRecentChangeSchema must reject it, failing the WHOLE result closed.
+        recentChanges: () =>
+          ok([
+            {
+              changeId: "chg_leak",
+              kind: "commit",
+              summary: "line one\nverbatim raw content that leaked",
+              occurredAt: "2026-07-03T00:00:00.000Z",
+            },
+          ]),
+      }),
+    );
+    const res = await caller.query.recentChanges({ workspaceId: KNOWN_WORKSPACE });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("RECENT_CHANGE_SANITIZATION_REJECTED");
+  });
+
+  it("recentChanges sorts by INSTANT, not lexicographically (variable ISO fractional precision)", async () => {
+    const caller = makeCaller(
+      fakePort({
+        recentChanges: () =>
+          ok([
+            { changeId: "chg_nofrac", kind: "commit", summary: "no fractional seconds", occurredAt: "2026-07-03T00:00:00Z" },
+            { changeId: "chg_frac", kind: "commit", summary: "half a second later", occurredAt: "2026-07-03T00:00:00.500Z" },
+          ]),
+      }),
+    );
+    const res = await caller.query.recentChanges({ workspaceId: KNOWN_WORKSPACE });
+    expect(isOk(res)).toBe(true);
+    // ".500Z" is chronologically LATER → must sort first (DESC by instant). A lexicographic
+    // sort would wrongly rank "...00Z" first ('Z' > '.').
+    if (isOk(res)) expect(res.value.map((c) => c.changeId)).toEqual(["chg_frac", "chg_nofrac"]);
+  });
+
+  it("recentChanges CAPS at 50, keeping the newest rows (server cap AFTER sort)", async () => {
+    // 51 rows, ascending time; the oldest (chg_0) must fall below the cap, newest first.
+    const rows = Array.from({ length: 51 }, (_, i) => ({
+      changeId: `chg_${i}`,
+      kind: "commit",
+      summary: `change ${i}`,
+      occurredAt: `2026-07-01T00:00:${String(i).padStart(2, "0")}.000Z`,
+    }));
+    const caller = makeCaller(fakePort({ recentChanges: () => ok(rows) }));
+    const res = await caller.query.recentChanges({ workspaceId: KNOWN_WORKSPACE });
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) {
+      expect(res.value.length).toBe(50); // capped
+      expect(res.value[0]!.changeId).toBe("chg_50"); // newest first
+      expect(res.value.some((c) => c.changeId === "chg_0")).toBe(false); // oldest dropped
     }
   });
 });

@@ -36,6 +36,7 @@ import {
   type Approval,
   type WorkflowRunRef,
   type GclProjection,
+  type UiSafeRecentChange,
 } from "@sow/contracts";
 import type {
   ReadModelRepository,
@@ -60,6 +61,8 @@ export const READ_MODEL_KEYS = {
   project: "project_cards",
   /** Copilot recent-runs read surface (workspaceId-scoped). */
   copilot: "copilot_runs",
+  /** Recent Changes — workspace-scoped audit-linked activity rows (§9.5). */
+  recentChanges: "recent_changes",
   /** GCL sanitized cross-workspace surface (workspaceId = null). */
   global: "global_surface",
   /**
@@ -194,6 +197,36 @@ function readProjections(data: unknown): readonly GclProjection[] {
   return out;
 }
 
+/**
+ * Read the `changes` array off the recent-changes read-model payload → candidate
+ * UiSafeRecentChange[]. A malformed payload → `[]`. Copies ONLY the four allowlisted
+ * field names — a stray raw field on a row never rides through. The single-line `summary`
+ * re-validation (the leak gate) still happens in `queries.ts`'s `sanitizeRecentChanges`
+ * (the frozen UiSafeRecentChangeSchema) — this guard only narrows the transport shape.
+ */
+function readRecentChanges(data: unknown): readonly UiSafeRecentChange[] {
+  const rows = pluckArray(data, "changes");
+  const out: UiSafeRecentChange[] = [];
+  for (const row of rows) {
+    if (typeof row !== "object" || row === null) continue;
+    const r = row as Record<string, unknown>;
+    if (
+      typeof r["changeId"] === "string" &&
+      typeof r["kind"] === "string" &&
+      typeof r["summary"] === "string" &&
+      typeof r["occurredAt"] === "string"
+    ) {
+      out.push({
+        changeId: r["changeId"],
+        kind: r["kind"],
+        summary: r["summary"],
+        occurredAt: r["occurredAt"],
+      });
+    }
+  }
+  return out;
+}
+
 /** Pull `data[key]` as an array; anything else (absent / non-array) → `[]`. */
 function pluckArray(data: unknown, key: string): readonly unknown[] {
   if (typeof data !== "object" || data === null) return [];
@@ -284,6 +317,9 @@ export interface DbReadModelQueryPortAsync {
     workspaceId: string,
   ) => Promise<Result<readonly WorkflowRunRef[], FailureVariant>>;
   readonly globalSurface: () => Promise<Result<readonly GclProjection[], FailureVariant>>;
+  readonly recentChanges: (
+    workspaceId: string,
+  ) => Promise<Result<readonly UiSafeRecentChange[], FailureVariant>>;
 }
 
 /**
@@ -378,6 +414,21 @@ export function createDbReadModelQueryPort(
       const rm = await getReadModel(readModels, READ_MODEL_KEYS.copilot, workspaceId);
       if (isErr(rm)) return rm;
       return ok(rm.value === undefined ? [] : readRunRefs(rm.value.data));
+    },
+
+    async recentChanges(
+      workspaceId: string,
+    ): Promise<Result<readonly UiSafeRecentChange[], FailureVariant>> {
+      // Workspace-scoped, fail-closed (unknown workspace never reaches the rows). An
+      // absent row is an EMPTY ok list. The candidate rows are RE-VALIDATED (single-line
+      // summary leak gate) by `queries.ts`'s sanitizeRecentChanges against the frozen
+      // UiSafeRecentChangeSchema — this binding only narrows the transport shape.
+      const known = await resolveKnownWorkspace(readModels, workspaceId);
+      if (isErr(known)) return known;
+      if (!known.value) return err(unknownWorkspace());
+      const rm = await getReadModel(readModels, READ_MODEL_KEYS.recentChanges, workspaceId);
+      if (isErr(rm)) return rm;
+      return ok(rm.value === undefined ? [] : readRecentChanges(rm.value.data));
     },
 
     async globalSurface(): Promise<Result<readonly GclProjection[], FailureVariant>> {

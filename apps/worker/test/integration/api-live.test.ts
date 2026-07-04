@@ -83,6 +83,7 @@ const emptyReadModel: ReadModelQueryPort = {
   approvalInbox: () => ({ ok: true, value: [] }),
   copilotSurface: () => ({ ok: true, value: [] }),
   globalSurface: () => ({ ok: true, value: [] }),
+  recentChanges: () => ({ ok: true, value: [] }),
 };
 
 /** An empty System-Health port (no items; a fail-closed egress default). */

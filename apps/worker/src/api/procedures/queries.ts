@@ -45,6 +45,8 @@ import {
   type UiSafeDashboardCard,
   type UiSafeWorkflowRunRef,
   type UiSafeGclProjection,
+  type UiSafeRecentChange,
+  UiSafeRecentChangeSchema,
 } from "@sow/contracts";
 import { router, publicProcedure, authedResolver } from "../router";
 import {
@@ -107,6 +109,17 @@ export interface ReadModelQueryPort {
    * cross-workspace read path, WS-8). Never raw cross-workspace content inline.
    */
   readonly globalSurface: () => MaybeAsyncResult<readonly GclProjection[]>;
+  /**
+   * Workspace-scoped "Recent activity" rows (§9.5) — candidate UiSafeRecentChange
+   * summaries the WRITE-time projector produced (redaction-by-type at projection time).
+   * Unknown workspace → typed err (fail-closed). The procedure RE-VALIDATES each row
+   * through `UiSafeRecentChangeSchema` (defense-in-depth, mirroring the global surface),
+   * then re-sorts descending + caps. NOT a cross-workspace path — Global scope shows
+   * nothing here (recent changes never blend across workspaces; §6/WS-8).
+   */
+  readonly recentChanges: (
+    workspaceId: string,
+  ) => MaybeAsyncResult<readonly UiSafeRecentChange[]>;
 }
 
 /** A port result that may be delivered synchronously (the fake) or async (@sow/db). */
@@ -244,6 +257,44 @@ function projectGlobal(
   return sanitized.ok ? ok(sanitized.value.map(toUiSafeGclProjection)) : sanitized;
 }
 
+/** Max Recent-activity rows the surface serves (server-capped — never trust JSON length). */
+const RECENT_CHANGES_CAP = 50;
+
+/**
+ * The Recent Changes read boundary (§9.5): RE-VALIDATE each candidate row through the
+ * frozen `UiSafeRecentChangeSchema` (defense-in-depth over the write-time projector, whose
+ * single-line `summary` bound is the sole structural gate), fail CLOSED on ANY poisoned row
+ * (a multi-line / over-length summary is the shape of a leak — one bad row rejects the whole
+ * result rather than partially serving), THEN re-sort DESCENDING by `occurredAt` (never trust
+ * the stored JSON ordering) and CAP. Redaction-safe: a rejection crosses only a stable code,
+ * never the raw row. Mirrors {@link sanitizeGlobal}.
+ */
+function sanitizeRecentChanges(
+  r: Result<readonly UiSafeRecentChange[], FailureVariant>,
+): Result<readonly UiSafeRecentChange[], FailureVariant> {
+  if (!r.ok) return r;
+  const out: UiSafeRecentChange[] = [];
+  for (const change of r.value) {
+    const parsed = UiSafeRecentChangeSchema.safeParse(change);
+    if (!parsed.success) {
+      return err(
+        failure("validation_rejected", "recent-change row failed sanitization", {
+          cause: { code: "RECENT_CHANGE_SANITIZATION_REJECTED" },
+        }),
+      );
+    }
+    out.push(parsed.data);
+  }
+  // Descending by the parsed INSTANT (never a lexicographic string compare): the schema's
+  // `.datetime()` admits VARIABLE fractional-second precision, under which lexicographic
+  // order diverges from chronological (e.g. "…00Z" vs "…00.500Z" — '.' < 'Z' would rank the
+  // genuinely-later row as older, and could push a truly-newest row below the cap). Every
+  // row here already passed `z.string().datetime()`, so `Date.parse` yields a finite instant.
+  // Sort BEFORE the cap so the newest 50 survive.
+  out.sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
+  return ok(out.slice(0, RECENT_CHANGES_CAP));
+}
+
 /**
  * §9.4 policy-gated drill-down (the SAFETY CORE). From a global item the owner may
  * open the underlying WORKSPACE-SCOPED context — but ONLY when the projection's
@@ -347,6 +398,18 @@ export function buildQueryRouter(deps: QueryRouterDeps) {
       authedResolver<WorkspaceInput, readonly UiSafeWorkflowRunRef[]>(
         async (_ctx, input): Promise<Result<readonly UiSafeWorkflowRunRef[], FailureVariant>> =>
           projectRuns(await readModel.copilotSurface(input.workspaceId)),
+      ),
+    ),
+
+    /**
+     * Recent Changes (§9.5) — workspace-scoped audit-linked activity, re-validated +
+     * re-sorted descending by occurredAt + capped. Unknown workspace → typed err
+     * (fail-closed). NOT a cross-workspace path (Global scope shows nothing here; §6/WS-8).
+     */
+    recentChanges: publicProcedure.input(parseWorkspaceInput).query(
+      authedResolver<WorkspaceInput, readonly UiSafeRecentChange[]>(
+        async (_ctx, input): Promise<Result<readonly UiSafeRecentChange[], FailureVariant>> =>
+          sanitizeRecentChanges(await readModel.recentChanges(input.workspaceId)),
       ),
     ),
 
