@@ -1,6 +1,6 @@
 // §9.6 A2/A3 — Copilot retrieval (WS-8 fail-closed) + governed synthesis (egress veto + stub).
 import { describe, it, expect } from "vitest";
-import { isOk, isErr } from "@sow/contracts";
+import { ok, err, isOk, isErr, failure } from "@sow/contracts";
 import type { AgentJob, DataOwner, EgressPolicy, ProviderRoute, WorkspaceType } from "@sow/contracts";
 import { processorId } from "@sow/contracts";
 import {
@@ -8,7 +8,12 @@ import {
   enforceRetrievalScope,
   guardCopilotEgress,
   createStubSynthesis,
+  toUiSafeCopilotAnswer,
+  answerCopilotQuestion,
   type RetrievedContext,
+  type CandidateCopilotAnswer,
+  type CopilotDeps,
+  type CopilotSynthesisPort,
 } from "../../../src/api/procedures/copilot";
 
 const WS = "ws-employer";
@@ -236,5 +241,96 @@ describe("createStubSynthesis — honest interim, cites sources, NEVER echoes ra
       expect(r.value.answer.length).toBeGreaterThan(0);
       expect(r.value.citations).toEqual([]);
     }
+  });
+});
+
+// ── A4: the candidate-data gate (toUiSafeCopilotAnswer) + the ask orchestration ───────────
+describe("toUiSafeCopilotAnswer — candidate-data + WS-8 leakage gate (A1)", () => {
+  const goodCandidate: CandidateCopilotAnswer = {
+    answer: ["Two decisions were logged.", "The SLA was adopted."],
+    citations: [{ citationId: "src:note-1", title: "Vendor review — decisions" }],
+  };
+
+  it("accepts a well-formed candidate and returns a validated UiSafeCopilotAnswer", () => {
+    const r = toUiSafeCopilotAnswer(goodCandidate);
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.answer).toEqual(goodCandidate.answer);
+      expect(r.value.citations[0]?.citationId).toBe("src:note-1");
+    }
+  });
+
+  it("NORMALIZES a multi-line answer block to single-line (redact-by-type shape defense)", () => {
+    const r = toUiSafeCopilotAnswer({ ...goodCandidate, answer: ["line one\nleaked second line"] });
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.answer[0]).toBe("line one leaked second line"); // collapsed, single-line
+  });
+
+  it("REJECTS a candidate whose citationId is a path/URL (leak-shaped; fails the opaque-ref gate)", () => {
+    const r = toUiSafeCopilotAnswer({
+      ...goodCandidate,
+      citations: [{ citationId: "/Users/x/secret.md", title: "x" }],
+    });
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.kind).toBe("schema_rejected");
+  });
+
+  it("REJECTS a candidate with an EMPTY answer (never serve a contentless answer)", () => {
+    const r = toUiSafeCopilotAnswer({ ...goodCandidate, answer: [] });
+    expect(isErr(r)).toBe(true);
+  });
+});
+
+describe("answerCopilotQuestion — the read-only ask orchestration (retrieve → scope → synth → gate)", () => {
+  const deps = (ctx: RetrievedContext): CopilotDeps => ({
+    retrieval: createFixtureRetrieval({ [WS]: ctx }),
+    synthesis: createStubSynthesis(),
+  });
+
+  it("answers a KNOWN workspace with a validated, cited UiSafeCopilotAnswer", async () => {
+    const r = await answerCopilotQuestion(deps(ctx(WS)), { workspaceId: WS, question: "what did we decide?" });
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.answer.length).toBeGreaterThan(0);
+      expect(r.value.citations[0]?.citationId).toBe("src:note-1");
+    }
+  });
+
+  it("fails CLOSED for an UNKNOWN workspace (retrieval err short-circuits — never synthesizes)", async () => {
+    const r = await answerCopilotQuestion(deps(ctx(WS)), { workspaceId: OTHER, question: "anything" });
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
+  });
+
+  it("fails CLOSED when retrieval returns FOREIGN-scoped context (WS-8 defense-in-depth)", async () => {
+    // A mis-keyed fixture: retrieve(WS) yields context scoped to OTHER → the scope guard rejects.
+    const r = await answerCopilotQuestion(deps(ctx(OTHER)), { workspaceId: WS, question: "q" });
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("RETRIEVAL_SCOPE_MISMATCH");
+  });
+
+  it("fails CLOSED when SYNTHESIS errors — the answer is never partially served", async () => {
+    const failingSynth: CopilotSynthesisPort = {
+      synthesize: () => err(failure("provider_failed", "synthesis unavailable", { cause: { code: "SYNTH_DOWN" } })),
+    };
+    const r = await answerCopilotQuestion(
+      { retrieval: createFixtureRetrieval({ [WS]: ctx(WS) }), synthesis: failingSynth },
+      { workspaceId: WS, question: "q" },
+    );
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("SYNTH_DOWN");
+  });
+
+  it("fails CLOSED when the synthesized candidate FAILS the UI-safe gate (rejected, not served)", async () => {
+    // A synthesizer emitting a leak-shaped citationId → the candidate-data gate must reject it.
+    const leakySynth: CopilotSynthesisPort = {
+      synthesize: () => ok({ answer: ["x"], citations: [{ citationId: "https://leak.example/doc", title: "t" }] }),
+    };
+    const r = await answerCopilotQuestion(
+      { retrieval: createFixtureRetrieval({ [WS]: ctx(WS) }), synthesis: leakySynth },
+      { workspaceId: WS, question: "q" },
+    );
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("COPILOT_ANSWER_REJECTED");
   });
 });

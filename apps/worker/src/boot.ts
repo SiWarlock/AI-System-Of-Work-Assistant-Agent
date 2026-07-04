@@ -59,6 +59,12 @@ import {
 import type {
   ReadModelQueryPort,
 } from "./api/procedures/queries";
+import {
+  createFixtureRetrieval,
+  createStubSynthesis,
+  type CopilotDeps,
+  type RetrievedContext,
+} from "./api/procedures/copilot";
 import type { SystemHealthQueryPort, UiSafeEgressStatus } from "./api/procedures/systemHealth";
 import type {
   ApprovalCommandPort,
@@ -274,12 +280,30 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   const triage: TriagePort = createDbTriagePort(config.triageDispatch);
   const systemHealth = createSystemHealthQueryPort(backends);
 
+  // 2.5) The INTERIM Copilot ask backend (§4.6). The real GBrain/GCL retrieval + the governed LLM
+  //   synthesis are deferred (the app runs over stubs; no passage-serving read-model exists yet).
+  //   The fixture retrieval returns an EMPTY-but-valid context for each dev-provision SPEC's
+  //   workspace (regardless of whether that spec's provisioning succeeded — the context is empty
+  //   either way) — so a configured workspace gets an honest "nothing found yet" answer instead of
+  //   an error — and fails CLOSED for any other workspace (WS-8). The stub synthesis cites nothing
+  //   and never echoes raw content. When devProvision is off, the map is empty (every ask fails
+  //   closed — there is genuinely no knowledge wired).
+  const copilotFixtures: Record<string, RetrievedContext> = {};
+  for (const spec of config.devProvision ?? []) {
+    copilotFixtures[spec.workspaceId] = { workspaceId: spec.workspaceId, blocks: [], sources: [] };
+  }
+  const copilot: CopilotDeps = {
+    retrieval: createFixtureRetrieval(copilotFixtures),
+    synthesis: createStubSynthesis(),
+  };
+
   // 3) The real loopback transport (HTTP + WS) behind the injected token + allowlist.
   //    A non-loopback bind is refused inside `startApiServer` (REQ-NF-004).
   const api = await startApiServer({
     expectedToken: config.sessionToken,
     allowlist: config.allowlist,
     readModel,
+    copilot,
     systemHealth,
     approvals,
     dispatchApproval: config.dispatchApproval,

@@ -49,9 +49,15 @@ import {
   UiSafeRecentChangeSchema,
   type UiSafeProjectDashboard,
   UiSafeProjectDashboardSchema,
+  type UiSafeCopilotAnswer,
 } from "@sow/contracts";
 import { computePercent } from "@sow/workflows";
 import { router, publicProcedure, authedResolver } from "../router";
+import {
+  answerCopilotQuestion,
+  type CopilotDeps,
+  type CopilotAskInput,
+} from "./copilot";
 import {
   toUiSafeApproval,
   toUiSafeWorkflowRunRef,
@@ -140,6 +146,8 @@ type MaybeAsyncResult<T> = Result<T, FailureVariant> | Promise<Result<T, Failure
 /** Dependencies for {@link buildQueryRouter}. */
 export interface QueryRouterDeps {
   readonly readModel: ReadModelQueryPort;
+  /** The Copilot ask backend (retrieval + synthesis ports) for `query.copilotAsk` (§4.6). */
+  readonly copilot: CopilotDeps;
 }
 
 // ── Input shapes + plain-function validators (§3 universal boundary rule) ─────
@@ -180,6 +188,22 @@ function parseProjectInput(value: unknown): ProjectInput {
   return {
     workspaceId: requireString(source, "workspaceId"),
     projectId: requireString(source, "projectId"),
+  };
+}
+
+/** Upper bound on a Copilot question (transport-layer input-surface cap; defense-in-depth for the
+ *  real GBrain/model adapter's prompt-size / cost surface — the interim stub ignores the text). */
+const MAX_QUESTION_CHARS = 4000;
+
+/** tRPC plain-function validator narrowing an unknown payload → CopilotAskInput (§4.6). */
+function parseAskInput(value: unknown): CopilotAskInput {
+  if (typeof value !== "object" || value === null) throw new Error("invalid_input");
+  const source = value as Record<string, unknown>;
+  const question = requireString(source, "question");
+  if (question.length > MAX_QUESTION_CHARS) throw new Error("invalid_input");
+  return {
+    workspaceId: requireString(source, "workspaceId"),
+    question,
   };
 }
 
@@ -405,7 +429,7 @@ async function resolveGlobalDrillDown(
  * FailureVariant>`.
  */
 export function buildQueryRouter(deps: QueryRouterDeps) {
-  const { readModel } = deps;
+  const { readModel, copilot } = deps;
   return router({
     /** Global Today dashboard — UI-safe cards. */
     dashboard: publicProcedure.query(
@@ -452,6 +476,19 @@ export function buildQueryRouter(deps: QueryRouterDeps) {
       authedResolver<WorkspaceInput, readonly UiSafeWorkflowRunRef[]>(
         async (_ctx, input): Promise<Result<readonly UiSafeWorkflowRunRef[], FailureVariant>> =>
           projectRuns(await readModel.copilotSurface(input.workspaceId)),
+      ),
+    ),
+
+    /**
+     * Copilot Q&A (§4.6) — READ-ONLY, cited, NO side effects. Retrieves a SINGLE workspace's
+     * knowledge (WS-8; unknown/foreign workspace → typed err, fail-closed), synthesizes a candidate
+     * answer, and gates it through `UiSafeCopilotAnswerSchema` before serving. An implied action
+     * becomes a proposal routed to Approvals — never a direct write.
+     */
+    copilotAsk: publicProcedure.input(parseAskInput).query(
+      authedResolver<CopilotAskInput, UiSafeCopilotAnswer>(
+        (_ctx, input): Promise<Result<UiSafeCopilotAnswer, FailureVariant>> =>
+          answerCopilotQuestion(copilot, input),
       ),
     ),
 

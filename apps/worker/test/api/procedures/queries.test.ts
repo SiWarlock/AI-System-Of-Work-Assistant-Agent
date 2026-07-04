@@ -35,6 +35,11 @@ import {
   buildQueryRouter,
   type ReadModelQueryPort,
 } from "../../../src/api/procedures/queries";
+import {
+  createFixtureRetrieval,
+  createStubSynthesis,
+  type CopilotDeps,
+} from "../../../src/api/procedures/copilot";
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -214,9 +219,28 @@ const validFakeProject = {
   updatedAt: "2026-07-04T00:00:00.000Z",
 };
 
+// The interim Copilot ask backend for the caller: a fixture that knows KNOWN_WORKSPACE (with a
+// citable source) + the stub synthesizer. Any other workspace fails closed (WS-8).
+function fakeCopilot(): CopilotDeps {
+  return {
+    retrieval: createFixtureRetrieval({
+      [KNOWN_WORKSPACE]: {
+        workspaceId: KNOWN_WORKSPACE,
+        blocks: ["A decision was logged on the vendor review."],
+        sources: [{ citationId: "src:note-1", title: "Vendor review — decisions" }],
+      },
+    }),
+    synthesis: createStubSynthesis(),
+  };
+}
+
 // Build an in-process caller over a router that mounts ONLY the query router.
-function makeCaller(port: ReadModelQueryPort, ctx: ApiContext = AUTHED_CTX) {
-  const appRouter = router({ query: buildQueryRouter({ readModel: port }) });
+function makeCaller(
+  port: ReadModelQueryPort,
+  ctx: ApiContext = AUTHED_CTX,
+  copilot: CopilotDeps = fakeCopilot(),
+) {
+  const appRouter = router({ query: buildQueryRouter({ readModel: port, copilot }) });
   const factory = createCallerFactory(appRouter);
   return factory(ctx);
 }
@@ -256,6 +280,34 @@ describe("buildQueryRouter — UI-safe read-model serving (§10/§13)", () => {
     if (isOk(res)) {
       expect(fieldSet(res.value[0]!)).toEqual([...UI_SAFE_ALLOWLIST.dashboardCard].sort());
     }
+  });
+
+  it("copilotAsk (§4.6) answers a KNOWN workspace with a validated, cited UiSafeCopilotAnswer", async () => {
+    const caller = makeCaller(fakePort());
+    const res = await caller.query.copilotAsk({ workspaceId: KNOWN_WORKSPACE, question: "what did we decide?" });
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) {
+      // Only the UI-safe allowlisted keys crossed — no raw context/prompt.
+      expect(fieldSet(res.value)).toEqual([...UI_SAFE_ALLOWLIST.copilotAnswer].sort());
+      expect(res.value.answer.length).toBeGreaterThan(0);
+      expect(res.value.citations[0]!.citationId).toBe("src:note-1");
+      expect(fieldSet(res.value.citations[0]!)).toEqual([...UI_SAFE_ALLOWLIST.citation].sort());
+    }
+  });
+
+  it("copilotAsk fails CLOSED for an UNKNOWN workspace (typed err, never synthesizes — WS-8)", async () => {
+    const caller = makeCaller(fakePort());
+    const res = await caller.query.copilotAsk({ workspaceId: UNKNOWN_WORKSPACE, question: "anything" });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
+  });
+
+  it("copilotAsk rejects an over-long question at the input boundary (bounded input surface)", async () => {
+    const caller = makeCaller(fakePort());
+    // > MAX_QUESTION_CHARS (4000) → the transport-layer parser rejects before any retrieval/synthesis.
+    await expect(
+      caller.query.copilotAsk({ workspaceId: KNOWN_WORKSPACE, question: "x".repeat(4001) }),
+    ).rejects.toThrow();
   });
 
   it("ingestion inbox returns UI-safe Approval cards only (actor / payloadHash dropped)", async () => {

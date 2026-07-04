@@ -11,7 +11,17 @@
 // read-model does not exist yet). The fixture-backed retrieval here is the honest interim (like the
 // dev-provisioner), wired into `query.copilotAsk` at A4.
 
-import { ok, err, failure, type Result, type FailureVariant } from "@sow/contracts";
+import {
+  ok,
+  err,
+  isOk,
+  failure,
+  collapseToSummaryLine,
+  UiSafeCopilotAnswerSchema,
+  type Result,
+  type FailureVariant,
+  type UiSafeCopilotAnswer,
+} from "@sow/contracts";
 import type { AgentJob, DataOwner, EgressPolicy, ProviderRoute, WorkspaceType } from "@sow/contracts";
 import { isAllow } from "@sow/policy";
 import { vetoJobEgress } from "@sow/providers";
@@ -179,4 +189,79 @@ export function createStubSynthesis(): CopilotSynthesisPort {
       return ok({ answer, citations: context.sources });
     },
   };
+}
+
+// ── A4 — the ask orchestration + the candidate-data / UI-safe gate ──────────────
+//
+// `query.copilotAsk` calls `answerCopilotQuestion` behind the 8.1 auth gate. The orchestration is
+// READ-ONLY (§4.6, §13) — no side effects — and fails CLOSED at every step (unknown workspace,
+// scope mismatch, synthesis failure, gate rejection). The redaction/validation boundary lives HERE
+// (the procedure), mirroring the sibling read procedures: the ports hand back candidate data, and
+// `toUiSafeCopilotAnswer` is the ONE place a candidate becomes servable UI-safe data.
+
+/** The Copilot ask deps — the retrieval + synthesis ports, injected (fakes in tests, interim in boot). */
+export interface CopilotDeps {
+  readonly retrieval: CopilotRetrievalPort;
+  readonly synthesis: CopilotSynthesisPort;
+}
+
+/** The validated ask input (narrowed at the procedure boundary). */
+export interface CopilotAskInput {
+  readonly workspaceId: string;
+  readonly question: string;
+}
+
+/**
+ * The candidate-data gate (rule 2) + the WS-8 leakage gate (A1): project a CANDIDATE answer to the
+ * servable `UiSafeCopilotAnswer`. Each answer block + citation TITLE is normalized through
+ * `collapseToSummaryLine` (the redact-by-type SHAPE defense — single-line, ≤1024, matching the
+ * write-side projectors so read/write can't drift); the OPAQUE `citationId` passes through untouched
+ * so the schema's `uiSafeOpaqueRef` can REJECT a path/URL. The whole shape is then validated against
+ * `UiSafeCopilotAnswerSchema` — a candidate that fails (empty answer, over-cap, leak-shaped
+ * citationId/title) is REJECTED (never served), fail-closed.
+ */
+export function toUiSafeCopilotAnswer(
+  candidate: CandidateCopilotAnswer,
+): Result<UiSafeCopilotAnswer, FailureVariant> {
+  const projected = {
+    answer: candidate.answer.map(collapseToSummaryLine),
+    citations: candidate.citations.map((c) => ({
+      citationId: c.citationId,
+      title: collapseToSummaryLine(c.title),
+    })),
+  };
+  const parsed = UiSafeCopilotAnswerSchema.safeParse(projected);
+  if (!parsed.success) {
+    return err(
+      failure("schema_rejected", "copilot answer failed the UI-safe candidate-data gate", {
+        cause: { code: "COPILOT_ANSWER_REJECTED" },
+      }),
+    );
+  }
+  return ok(parsed.data);
+}
+
+/**
+ * The Copilot ask orchestration (§4.6, read-only): retrieve workspace-scoped context → RE-ENFORCE
+ * the WS-8 scope guard (defense-in-depth over ANY adapter) → synthesize a candidate → project +
+ * validate → `UiSafeCopilotAnswer`. Any step's typed err short-circuits (fail-closed); NO side
+ * effects, and an implied action would become a ProposedAction routed to Approvals — never a write.
+ *
+ * EGRESS NOTE (safety rule 5): the interim synthesis is a LOCAL stub (no provider, no network) → no
+ * egress occurs, so no egress guard runs here. When a REAL model/runtime synthesis adapter lands (it
+ * selects a provider route), it MUST call `guardCopilotEgress` at route selection with the
+ * AUTHORITATIVE Workspace record's posture (type + egress policy resolved from the workspaceId,
+ * NEVER client input) BEFORE any provider call — the fail-closed Employer-Work egress veto.
+ */
+export async function answerCopilotQuestion(
+  deps: CopilotDeps,
+  input: CopilotAskInput,
+): Promise<Result<UiSafeCopilotAnswer, FailureVariant>> {
+  const retrieved = await deps.retrieval.retrieve(input.workspaceId, input.question);
+  if (!isOk(retrieved)) return retrieved;
+  const scoped = enforceRetrievalScope(input.workspaceId, retrieved.value);
+  if (!isOk(scoped)) return scoped;
+  const candidate = await deps.synthesis.synthesize(input.workspaceId, input.question, scoped.value);
+  if (!isOk(candidate)) return candidate;
+  return toUiSafeCopilotAnswer(candidate.value);
 }

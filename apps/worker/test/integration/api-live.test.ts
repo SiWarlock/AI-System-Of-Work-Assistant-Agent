@@ -45,6 +45,7 @@ import {
 import type { AppRouter } from "../../src/api/server";
 import type { WorkerOriginAllowlist } from "../../src/api/auth/originAllowlist";
 import type { ReadModelQueryPort } from "../../src/api/procedures/queries";
+import { createFixtureRetrieval, createStubSynthesis } from "../../src/api/procedures/copilot";
 import type { SystemHealthQueryPort } from "../../src/api/procedures/systemHealth";
 import type {
   ApprovalCommandPort,
@@ -118,6 +119,7 @@ function serverDeps(
     expectedToken,
     allowlist,
     readModel: emptyReadModel,
+    copilot: { retrieval: createFixtureRetrieval({}), synthesis: createStubSynthesis() },
     systemHealth: emptySystemHealth,
     approvals: noopApprovals,
     dispatchApproval: noopDispatch,
