@@ -57,3 +57,14 @@ To run `@sow/worker` (source-TS + native deps) as a spawned child process, the i
 For DEV, fork the worker child with `execPath` = system node (`fork(entry, [], { execPath: process.env.SOW_WORKER_NODE ?? "node", ... })`) so native deps keep the system-node ABI the test suite already uses. Packaging is where Electron-ABI native code belongs: `utilityProcess.fork` + `@electron/rebuild` for the packaged app, which is a separate, package-time step (deferred by design — it would red-line the system-node test suite if done in dev).
 
 **Rule:** in Electron, `child_process.fork` a Node child with `execPath` set to system node (not the default Electron binary) so native-module ABIs match the dev/test toolchain; move to `utilityProcess` + `@electron/rebuild` only at packaging.
+
+## <a id="3"></a>3. The desktop `test/` dir compiles under the NODE tsconfig (no DOM) — keep `window`-free renderer logic in its own module so tests can import it
+
+**Date:** 2026-07-03.
+**Source slice:** §9.5 slice-2 liveness (`db4b559`).
+
+The desktop package splits typecheck across two tsconfigs: `tsconfig.web.json` (lib `DOM`, `include: ["renderer", …]`) and `tsconfig.node.json` (lib `ES2023`, **no DOM**, `include: ["main", "preload", "test", …]`). Note the whole `test/` dir — including `test/renderer/*` — is compiled under the **node** config. So a renderer module that references `window` (e.g. `lib/live.ts`, which reaches the `window.sow` preload bridge) typechecks fine when only imported from `renderer/` (web config), but the instant a **test** imports it, `tsc -p tsconfig.node.json` compiles that module without the DOM lib and errors `TS2304: Cannot find name 'window'`.
+
+This bit when adding `createScopeRefresher` to `live.ts` and importing it from a new test: the test dragged `live.ts` (and its `window` usage) into node compilation. The fix was architectural, not a lib tweak — `createScopeRefresher` has **no** `window`/bridge dependency (it needs only a tRPC client + the store), so it belongs in its own `renderer/lib/scope-refresh.ts`. `live.ts` imports it; the test imports the window-free module directly; node-config compilation stays clean. Bonus: better separation (the pure refresh logic isn't coupled to the bridge module).
+
+**Rule:** renderer logic you want to unit-test must not transitively reference `window`/DOM globals, because `test/` compiles under the DOM-less node tsconfig — extract `window`-free, dependency-injected logic (client/store in, no bridge) into its own module and import THAT from the test, leaving the `window`-coupled glue (`live.ts`) imported only from `renderer/`.
