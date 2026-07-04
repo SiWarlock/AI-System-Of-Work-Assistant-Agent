@@ -2,6 +2,7 @@
 
 > **This is a PROSPECTIVE handoff** (written at the close of session 019 for the next session),
 > not a retrospective session doc. Predecessor: `019-2026-07-04-projects-and-recent-changes-surfaces.md`.
+> **Successor (this handoff was EXECUTED in): `021-2026-07-04-dedicated-projects-page.md` — the dedicated Projects page + routing/AppShell foundation SHIPPED (R1–R3, HEAD `f86d2d0`).**
 > **Read the ⚠️ CORRECTION section of 019 first.**
 
 ---
