@@ -6,6 +6,7 @@ export * from "./conformance/conformance-core";
 export * from "./conformance/provider-conformance";
 export * from "./conformance/runtime-conformance";
 export * from "./conformance/matrix-eligibility";
+export * from "./conformance/pinned-models";
 
 // EVAL-1 harness core (§12/§20.1, task 12.1): the criteria registry (§20.1 1:1
 // map), the scoring runner (threshold + DoD-honesty), and the versioned corpus
