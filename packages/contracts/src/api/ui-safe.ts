@@ -19,8 +19,20 @@ import {
   channelSchema,
   failureClassSchema,
   healthStateSchema,
+  VisibilityLevelSchema,
 } from "../models/shared-enums";
 import type { ApprovalStatus, Channel, FailureClass, HealthState } from "../models/shared-enums";
+import type { VisibilityLevel } from "../primitives/enums";
+
+// A UI-safe display summary line: short + SINGLE-LINE. Multi-line / long-form is the
+// shape of leaked raw content, so it is rejected at this seam too (defense in depth —
+// the GCL gate already bounds sanitizedPayload values, this re-bounds the projected
+// summary). 1024 mirrors the GCL gate's MAX_SUMMARY_VALUE_LEN.
+const uiSafeSummaryLine = z
+  .string()
+  .min(1)
+  .max(1024)
+  .refine((s) => !/[\r\n]/.test(s), { message: "summary must be single-line" });
 
 // Compile-time exact-type equality (bidirectional assignability). Used to pin
 // each schema's inferred output to its standalone interface without a
@@ -131,6 +143,39 @@ export const UiSafeDashboardCardSchema = z
   })
   .strict();
 
+// ── UiSafeGclProjection ──────────────────────────────────────────────────────
+// The Global-Today (§9.4) cross-workspace item — the ONE UI-safe shape on the WS-8
+// cross-workspace read path, so the highest workspace-isolation risk. A source
+// GclProjection is ALREADY gate-sanitized, but its `sanitizedPayload` is an OPEN
+// record (arbitrary keys) and its `sourceRefs` are INTERNAL refs — neither may cross
+// verbatim. So this shape carries only KNOWN, bounded fields:
+//   - `workspaceId`     : the source workspace (also the renderer's grouping key);
+//   - `visibilityLevel` : the §5 level — DRIVES whether a raw drill-down is allowed;
+//   - `projectionType`  : the open summary category (e.g. "deadlines");
+//   - `summary`         : ONE short single-line sanitized summary (projector-built,
+//                         re-bounded here — no raw payload passthrough);
+//   - `drillable`       : whether the level permits a worker-mediated raw drill-down
+//                         (an AFFORDANCE HINT only — the worker re-checks + enforces;
+//                         the renderer is untrusted and merely hides/shows the link).
+// DROPPED from GclProjection: `sanitizedPayload` (open record) + `sourceRefs`.
+export interface UiSafeGclProjection {
+  workspaceId: string;
+  visibilityLevel: VisibilityLevel;
+  projectionType: string;
+  summary: string;
+  drillable: boolean;
+}
+
+export const UiSafeGclProjectionSchema = z
+  .object({
+    workspaceId: z.string().min(1),
+    visibilityLevel: VisibilityLevelSchema,
+    projectionType: z.string().min(1),
+    summary: uiSafeSummaryLine,
+    drillable: z.boolean(),
+  })
+  .strict();
+
 // ── Schema ⇄ interface parity guards (compile-time; erased at runtime) ───────
 // Each asserts the schema's inferred output EXACTLY equals its standalone
 // interface — so the interface and the runtime validator can never drift apart.
@@ -139,7 +184,8 @@ const _uiSafeParity: [
   Exact<z.infer<typeof UiSafeHealthItemSchema>, UiSafeHealthItem>,
   Exact<z.infer<typeof UiSafeWorkflowRunRefSchema>, UiSafeWorkflowRunRef>,
   Exact<z.infer<typeof UiSafeDashboardCardSchema>, UiSafeDashboardCard>,
-] = [true, true, true, true];
+  Exact<z.infer<typeof UiSafeGclProjectionSchema>, UiSafeGclProjection>,
+] = [true, true, true, true, true];
 void _uiSafeParity;
 
 // ── Checked-in allowlist — THE source of truth ───────────────────────────────
@@ -152,4 +198,5 @@ export const UI_SAFE_ALLOWLIST = {
   healthItem: ["failureClass", "id", "openedAt", "resolvedAt", "severity", "state"],
   workflowRunRef: ["idempotencyKey", "state", "trigger", "workflowId"],
   dashboardCard: ["cardId", "count", "kind", "status", "title", "updatedAt"],
+  gclProjection: ["drillable", "projectionType", "summary", "visibilityLevel", "workspaceId"],
 } as const;

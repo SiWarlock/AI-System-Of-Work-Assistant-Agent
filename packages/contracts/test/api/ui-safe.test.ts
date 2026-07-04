@@ -11,6 +11,7 @@ import {
   UiSafeHealthItemSchema,
   UiSafeWorkflowRunRefSchema,
   UiSafeDashboardCardSchema,
+  UiSafeGclProjectionSchema,
   UI_SAFE_ALLOWLIST,
 } from "../../src/api/ui-safe";
 
@@ -34,6 +35,7 @@ const PROJECTIONS = [
   ["healthItem", UiSafeHealthItemSchema, UI_SAFE_ALLOWLIST.healthItem] as const,
   ["workflowRunRef", UiSafeWorkflowRunRefSchema, UI_SAFE_ALLOWLIST.workflowRunRef] as const,
   ["dashboardCard", UiSafeDashboardCardSchema, UI_SAFE_ALLOWLIST.dashboardCard] as const,
+  ["gclProjection", UiSafeGclProjectionSchema, UI_SAFE_ALLOWLIST.gclProjection] as const,
 ] as const;
 
 describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage gate)", () => {
@@ -78,6 +80,16 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
 
   it("UiSafeWorkflowRunRef omits auditRefs (internal audit trail)", () => {
     expect(UI_SAFE_ALLOWLIST.workflowRunRef).not.toContain("auditRefs");
+  });
+
+  // The Global-Today (§9.4) GCL surface is the highest workspace-isolation risk: it
+  // is the ONLY cross-workspace read path. The UI-safe shape must carry NEITHER the
+  // open `sanitizedPayload` record (arbitrary keys — even gate-sanitized, an open
+  // passthrough defeats the explicit-allowlist boundary) NOR the internal
+  // `sourceRefs` (they identify raw source objects; drill-down is worker-mediated).
+  it("UiSafeGclProjection omits sanitizedPayload (open record) + sourceRefs (internal refs)", () => {
+    expect(UI_SAFE_ALLOWLIST.gclProjection).not.toContain("sanitizedPayload");
+    expect(UI_SAFE_ALLOWLIST.gclProjection).not.toContain("sourceRefs");
   });
 
   // ── Behaviors: each schema accepts a valid sample + rejects unknown keys ─────
@@ -133,6 +145,52 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
     expect(UiSafeDashboardCardSchema.safeParse(sample).success).toBe(true);
     expect(
       UiSafeDashboardCardSchema.safeParse({ ...sample, rawContent: "x" }).success,
+    ).toBe(false);
+  });
+
+  it("UiSafeGclProjectionSchema accepts a valid sample + rejects a sanitizedPayload passthrough", () => {
+    const sample = {
+      workspaceId: "ws-employer",
+      visibilityLevel: "sanitized",
+      projectionType: "deadlines",
+      summary: "2 deadlines this week",
+      drillable: true,
+    };
+    expect(UiSafeGclProjectionSchema.safeParse(sample).success).toBe(true);
+    // The open source record must NOT ride through as an unknown key (.strict()).
+    expect(
+      UiSafeGclProjectionSchema.safeParse({ ...sample, sanitizedPayload: { x: 1 } }).success,
+    ).toBe(false);
+    // Internal source refs must NOT ride through either.
+    expect(
+      UiSafeGclProjectionSchema.safeParse({ ...sample, sourceRefs: [{ sourceId: "s1" }] }).success,
+    ).toBe(false);
+  });
+
+  it("UiSafeGclProjectionSchema rejects a multi-line summary (single-line defense-in-depth)", () => {
+    const base = {
+      workspaceId: "ws-employer",
+      visibilityLevel: "sanitized",
+      projectionType: "deadlines",
+      drillable: false,
+    };
+    // A multi-line value is the shape of leaked raw content — reject it at the UI seam
+    // too, not only at the GCL gate.
+    expect(
+      UiSafeGclProjectionSchema.safeParse({ ...base, summary: "line one\nline two" }).success,
+    ).toBe(false);
+    expect(UiSafeGclProjectionSchema.safeParse({ ...base, summary: "one line" }).success).toBe(true);
+  });
+
+  it("UiSafeGclProjectionSchema rejects an out-of-set visibilityLevel", () => {
+    expect(
+      UiSafeGclProjectionSchema.safeParse({
+        workspaceId: "ws-employer",
+        visibilityLevel: "not-a-level",
+        projectionType: "deadlines",
+        summary: "2 deadlines this week",
+        drillable: true,
+      }).success,
     ).toBe(false);
   });
 
