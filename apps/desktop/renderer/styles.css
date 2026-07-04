@@ -1717,3 +1717,29 @@ body {
   color: var(--label-3);
   margin-bottom: 7px;
 }
+
+/* ── Copilot Employer-Work cloud-egress notice (§9.6-real P1.3, safety rule 5) ── */
+.sow-copilot-egress-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 0.5px solid rgba(255, 159, 10, 0.4);
+  background: rgba(255, 159, 10, 0.1);
+  color: var(--warn-ink);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.sow-copilot-egress-notice svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  margin-top: 1px;
+}
+
+.sow-copilot-egress-notice strong {
+  font-weight: 600;
+}

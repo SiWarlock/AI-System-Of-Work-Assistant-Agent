@@ -104,6 +104,40 @@ describe("Copilot panel — transcript bubbles + citations (§4.6, rendered from
   });
 });
 
+describe("Copilot panel — Employer-Work egress notice (§9.6-real P1.3, safety rule 5)", () => {
+  it("a turn carrying egressProcessor shows the cloud-egress notice banner (processor + cloud + Employer-Work)", () => {
+    const turns: readonly CopilotTurnView[] = [
+      { id: "e1", question: "q", answer: "an answer synthesized on the cloud", citations: [], egressProcessor: "claude" },
+    ];
+    renderCopilot({ scope: "employer-work", turns });
+    const notice = document.querySelector(".sow-copilot-egress-notice");
+    expect(notice).not.toBeNull();
+    expect(notice?.textContent).toMatch(/claude/i);
+    expect(notice?.textContent).toMatch(/cloud/i);
+    expect(notice?.textContent).toMatch(/employer-work/i);
+  });
+
+  it("a turn WITHOUT egressProcessor renders NO egress notice (false branch — local/no-egress answer)", () => {
+    const turns: readonly CopilotTurnView[] = [
+      { id: "n1", question: "q", answer: "a local answer", citations: [] },
+    ];
+    renderCopilot({ scope: "employer-work", turns });
+    expect(document.querySelector(".sow-copilot-egress-notice")).toBeNull();
+  });
+
+  it("a LIVE answer carrying egressProcessor threads the notice onto the rendered turn", async () => {
+    const onAsk = vi.fn().mockResolvedValue({
+      ok: true as const,
+      answer: { answer: ["Answered on the cloud."], citations: [], egressProcessor: "claude" },
+    });
+    renderCopilot({ scope: "employer-work", onAsk });
+    fireEvent.change(screen.getByRole("textbox", { name: /ask copilot/i }), { target: { value: "q" } });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    await screen.findByText("Answered on the cloud.");
+    expect(document.querySelector(".sow-copilot-egress-notice")).not.toBeNull();
+  });
+});
+
 describe("Copilot panel — collapse control", () => {
   it("clicking Collapse calls onCollapse", () => {
     const onCollapse = vi.fn();
