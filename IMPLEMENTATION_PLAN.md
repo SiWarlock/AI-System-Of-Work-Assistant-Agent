@@ -1,6 +1,6 @@
 # IMPLEMENTATION_PLAN.md — System of Work Assistant
 
-> **Phase note.** Spec-anchored build plan decomposed from the binding `ARCHITECTURE.md` (production-grade). 13 phases (0–12), 138 tasks across 6 parallel tracks; the §3 contracts phase (Phase 1) is the forced-serial bottleneck and the §9 workflows phase (Phase 7) is the integration spine. Locked decisions live in `docs/planning/DECISIONS.md`; every phase anchors to `ARCHITECTURE.md §` sections — drift surfaces at TDD Step 9. Living sections (Currently-in-progress, Carry-forward, Log, Trims, Decisions-tabled) accrete through real `/tdd` work; the Parallelization plan is authored here.
+> **Phase note.** Spec-anchored build plan decomposed from the binding `ARCHITECTURE.md` (production-grade). 14 phases (0–13), 147 tasks across 6 parallel tracks (Phase 13 = Obsidian-Second-Brain inheritance, folded in 2026-07-04); the §3 contracts phase (Phase 1) is the forced-serial bottleneck and the §9 workflows phase (Phase 7) is the integration spine. Locked decisions live in `docs/planning/DECISIONS.md`; every phase anchors to `ARCHITECTURE.md §` sections — drift surfaces at TDD Step 9. Living sections (Currently-in-progress, Carry-forward, Log, Trims, Decisions-tabled) accrete through real `/tdd` work; the Parallelization plan is authored here.
 
 > **Reading discipline.** Read by section, not whole. Living sections are bounded/pruned at `/orchestrate-end`.
 
@@ -163,6 +163,7 @@
 | Observability/redaction + System Health + worker supervision + backup/recovery | ✅ built + certified (composition wiring deferred to app-shell wave) | Phase 10 |
 | Install/packaging (unsigned build-from-source) + GBrain pin-upgrade gate + doctor/repair + clean-install | ❌ | Phase 11 |
 | Eval & test harness: 1:1 PRD §20.1 suites + EVAL-1 corpora + perf benchmark + DoD certification | ❌ | Phase 12 |
+| OSB inheritance: source extractors (YouTube/podcast/web/file) + governed capture (git/telegram) + local retrieval + read-only vault MCP + typed Project model + tiered-autonomy synthesis + workspace-gated NotebookLM + osb-pin/eval-gate | ❌ (proposal; prototypes committed `aaa5f3f`) | Phase 13 |
 
 <!-- ▲ END EXAMPLE BLOCK [id=deliverable-map] ▲ -->
 
@@ -186,7 +187,7 @@ flowchart TD
     P2[Phase 2 — §4 Storage]; P7[Phase 7 — §9 Workflows — integration spine]; P8[Phase 8 — §10 API]
   end
   subgraph provint[Track: providers-integrations]
-    P3[Phase 3 — §5 Policy/Security]; P5[Phase 5 — §7 Providers]; P6[Phase 6 — §8 Gateways]
+    P3[Phase 3 — §5 Policy/Security]; P5[Phase 5 — §7 Providers]; P6[Phase 6 — §8 Gateways]; P13[Phase 13 — OSB inheritance]
   end
   subgraph knowledge[Track: knowledge]
     P4[Phase 4 — §6 Knowledge/GBrain/GCL]
@@ -213,6 +214,10 @@ flowchart TD
   P7 --> P12
   P9 --> P12
   P11 --> P12
+  P4 --> P13
+  P5 --> P13
+  P6 --> P13
+  P9 --> P13
 ```
 
 > **Critical path:** Phase 0 → 1 → 3 → 6 → 7 → 8 → 9 → 11 → 12 (9 phases — the serial floor; staff it first). **Forced-serial bottlenecks:** **Phase 1 (§3 contracts)** — every track waits on the frozen contract; and **Phase 7 (§9 workflows)** — the integration spine every feature track (storage, knowledge, providers, gateways) converges into.
@@ -223,12 +228,12 @@ flowchart TD
 |---|---|---|---|---|
 | contract | 1 | `packages/contracts`, `packages/domain` | `../SoW-build-contract` (`track/contract`) | `contract-contracts-orchestrator` / `-implementer` |
 | worker | 2, 7, 8 | `packages/db`, `packages/workflows`, `apps/worker` | `../SoW-build-worker` (`track/worker`) | `worker-workflows-orchestrator` / `-implementer` |
-| providers-integrations | 3, 5, 6 | `packages/policy`, `packages/providers`, `packages/integrations` | `../SoW-build-provint` (`track/providers-integrations`) | `providers-integrations-policy-orchestrator` / `-implementer` |
+| providers-integrations | 3, 5, 6, 13 | `packages/policy`, `packages/providers`, `packages/integrations` | `../SoW-build-provint` (`track/providers-integrations`) | `providers-integrations-policy-orchestrator` / `-implementer` |
 | knowledge | 4 | `packages/knowledge` | `../SoW-build-knowledge` (`track/knowledge`) | `knowledge-knowledge-orchestrator` / `-implementer` |
 | desktop | 9, 11 | `apps/desktop` | `../SoW-build-desktop` (`track/desktop`) | `desktop-desktop-orchestrator` / `-implementer` |
 | eval-security | 10, 12 | `packages/evals` | `../SoW-build-evalsec` (`track/eval-security`) | `eval-security-evals-orchestrator` / `-implementer` |
 
-**Integration / merge order** (DAG topological): 1 (contract — freeze first) → 2 ∥ 3 → 4 ∥ 5 ∥ 6 → 7 (spine) → 8 → 9 → 10 ∥ 11 → 12 (DoD certification last).
+**Integration / merge order** (DAG topological): 1 (contract — freeze first) → 2 ∥ 3 → 4 ∥ 5 ∥ 6 → 7 (spine) → 8 → 9 → 10 ∥ 11 → 12 (DoD certification last); **13 (OSB inheritance)** attaches after 9 (+4/5/6) — cross-track: providers-integrations (primary) + knowledge (§13.3/13.8) + contract (§13.5 Project frozen-contract round).
 
 **Shared contracts across tracks** (freeze before fork — Appendix-A models crossing a §2.5 edge): `Workspace`, `ProviderMatrix`, `EgressPolicy`, `ToolPolicy`, `Capability`, `ProviderRoute`, `AgentJob`, `KnowledgeMutationPlan`, `ProposedAction`, `ExternalWriteEnvelope`, `SourceEnvelope`, `Approval`, `GclProjection`, `AuditRecord`, `WorkflowRunRef`, `ProviderProfile` — **plus the GBrain write-through/divergence seam models** `SemanticFact`, `FactProvenance`, `SignedProvenanceStamp`, `ParityReport`, `Divergence`, `QuarantineRecord`, `GBrainProposedFact`, `GbrainReadGrant`/`GbrainServePolicy`, `GbrainPin` (9 NEW), and the **amended** `KnowledgeMutationPlan` (+`provenanceOrigin`/`gbrainProposalRef`/`signedProvenanceStamp`) + `HealthItem` (+`sync_lagging`/`rebuild_divergence`/`parityReportRef`/`factIdentity`) — all defined + schema-snapshot-frozen in Phase 1.
 
@@ -2029,6 +2034,97 @@ Executed row-by-row by `/phase-exit <phase>`:
 
 ---
 
+## Phase 13 — Source Extractors & Knowledge Ingestion (Obsidian Second Brain inheritance)
+
+**Goal:** Inherit `obsidian-second-brain`'s fetch/analyze capabilities under SoW governance — YouTube/podcast/web/file source extractors, local semantic retrieval, a read-only vault MCP connector, a typed Project model + state machine, governed "capture as I work" (git + telegram triggers), tiered-autonomy living-vault synthesis, and workspace-gated NotebookLM grounding — plus a version-pin + 3-part eval-gate so SoW stays current as obsidian-second-brain (and gbrain) grow. **The one governing rule:** inherit extractors/analyzers as `SourceIngestionPort` adapters that emit CANDIDATE DATA and never write; route model calls through `ModelProviderPort` + the egress veto; every mutation flows candidate-gate → `KnowledgeMutationPlan` → `KnowledgeWriter` (sole writer) → Approval Inbox. Full design: `docs/planning/PHASE-13-PROPOSAL-osb-inheritance.md` + `docs/planning/osb-integration-architecture.md`.
+
+**Spec anchors:** `ARCHITECTURE.md` §6 (KnowledgeWriter/GBrain/GCL, candidate-data gate), §5 (egress veto, ModelProviderPort), §8 (SourceIngestionPort/Connector Gateway, Tool Gateway envelope), §7 (AgentRuntimePort, ING-7 admission), §12/§13 (pin + eval-gate); PRD `ING-2`/`ING-3` (P1 source adapters, YouTube first-to-ship, §20.1 DoD), `REQ-F-011` (Project), `REQ-F-005`/`WS-8` (GCL); `OQ-011`. Owner decisions 2026-07-04: §13.8 tiered autonomy revises "generative = propose-only"; §13.9 NotebookLM workspace-gated (NOT rejected).
+**Track:** providers-integrations (primary) · knowledge (§13.3/§13.8) · contract (§13.5) · **Depends on (phases):** 6, 5, 4, 1, 9
+> Order within phase: **13.1 → 13.2 ∥ 13.3 ∥ 13.4 → 13.5 → 13.6 → 13.7 ∥ 13.8 ∥ 13.9.** Slots in AFTER the Phase-9 §9.5 Project-dashboard slice; §13.5 is a frozen-contract round that UNBLOCKS that surface — coordinate with the desktop track, do not race.
+
+### 13.1 — Anti-corruption layer + osb version-pin + 3-part eval-gate (do FIRST)
+- [ ] `config/osb.pin` records the upstream release tag (`v0.11.1`) + a content-SHA of the vendored subtree (the artifact has zero git tags — pin release + subtree hash); a bump is a deliberate act, never silent.
+- [ ] Only vault-agnostic libs are vendored under `vendor/osb/` — no osb commands, no osb writers; SoW depends on the internal `SourceIngestionPort`, never osb's command surface (anti-corruption layer).
+- [ ] A version bump must PASS 3 gates before it lands: (a) write-path conformance — grep-guard + boundary test proving no vendored path reaches a vault write; (b) egress-leakage eval — no adapter reaches a cloud endpoint under employer-work ack-OFF; (c) retrieval eval reusing osb's `retrieval_eval.py` case format (no ranking regression vs the recorded bar).
+- [ ] Files: `config/osb.pin` (NEW) · `vendor/osb/` (NEW, vault-agnostic libs) · `packages/evals/src/osb/{conformance,egress-leakage,retrieval}.ts` (NEW)
+- [ ] Cross-doc invariant: none (mirrors the `config/gbrain.pin` pin pattern + Hermes-pin re-validation precedent, LESSON providers#1)
+- [ ] Depends on: P12 (eval-harness pattern), P5 (ModelProviderPort for the egress-leakage eval)
+
+### 13.2 — Source extractor adapters (emit-only): YouTube / podcast / web / file
+- [ ] Each adapter shells to the pinned vendored Python in an added `--emit-json`/`--no-save` mode (the `vault.write_note` tail stripped) and maps the result to a candidate `SourceEnvelope`; EMIT-ONLY (never writes); passes `registerSource()` (ajv+Zod, workspaceId required, Flow-4 dedupe); a fault is a typed `Result` err, never a throw.
+- [ ] The summarize/transcription step (Grok/Perplexity/Whisper) is a `ModelProviderPort` call the egress veto can fail closed; YouTube `--visual` frames + local Whisper stay zero-egress; transcript/article content is untrusted → extraction agent runs read-only (ING-7).
+- [ ] YouTube is delivered (OQ-011 first-to-ship) — closes the §20.1 DoD "≥1 YouTube-or-podcast adapter operational or a deferral ticket" gap.
+- [ ] Files: `packages/integrations/src/connectors/adapters/{youtube-source,podcast-source,web-research,file-source}.ts` (`youtube-source.ts` prototype committed `aaa5f3f`) · `vendor/osb/*.py` (patched `--emit-json`)
+- [ ] Cross-doc invariant: none (`SourceEnvelope.type` is an open string — `youtube_video`/`podcast`/`web_article`/`file` need no frozen-contract change)
+- [ ] Depends on: 13.1, P6 (registerSource / Connector Gateway), P5 (ModelProviderPort + egress veto)
+
+### 13.3 — Local retrieval + eval harness (GBrain-aligned)
+- [ ] osb's local semantic search (Ollama `mxbai-embed-large`, RRF fusion) is wrapped behind `ModelProviderPort(Ollama/LM Studio)` as GBrain's local-zero-egress retrieval path.
+- [ ] The embedding index lives OUTSIDE the canonical Markdown tree (a rebuildable artifact — GBrain's derived/read-only posture); default backend is local; the `openai` cloud embed backend is denied for employer-work.
+- [ ] `retrieval_eval.py` is ported into `packages/evals` as the pin re-validation bar (§13.1c) — recorded bar: hybrid recall@10 ≥ ~0.91 on realistic queries.
+- [ ] Files: `packages/knowledge/src/gbrain/local-embed.ts` (NEW) · `packages/evals/src/retrieval/` (NEW)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: 13.1, P4 (GBrain adapter/index), P5 (ModelProviderPort)
+
+### 13.4 — Read-only vault MCP connector (per workspace)
+- [ ] The vault MCP connector registers ONLY the read tools (`obsidian_search`/`read_note`/`backlinks`/`vault_health`/`validate_note`); the 3 write tools are NOT registered — no MCP path can write Markdown (KN-4/KN-9).
+- [ ] One server process per workspace vault (isolation); reads flow through the Connector Gateway.
+- [ ] Files: `packages/integrations/src/connectors/adapters/obsidian-vault-mcp.ts` (NEW)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: 13.1, P6 (Connector Gateway)
+
+### 13.5 — Typed Project model + state machine (FROZEN-CONTRACT round) — G8
+- [ ] A typed `Project` seam model is added (Appendix A) with osb's frontmatter schema + bi-temporal timeline (event-time vs transaction-time; status appended, never overwritten), plus JSON Schema + spec-tagged schema-snapshot.
+- [ ] A 7th domain state machine (Project) enforces transitions (idea→planning→active→…); a `project_capture` member is added to `ProvenanceOrigin`.
+- [ ] FROZEN-CONTRACT ROUND: `ARCHITECTURE.md` Appendix A + the schema-snapshot are edited in the SAME round (contract-track/orchestrator territory); UNBLOCKS the Phase-9 §9.5 Project dashboard — **coordinate with the desktop track, do not race.**
+- [ ] Files: `packages/contracts/src/models/project.ts` (+schema+snapshot+test) · `packages/domain/src/state/project.ts` (NEW) · `packages/contracts/src/models/shared-enums.ts` (extended) · `ARCHITECTURE.md` Appendix A (row) · this file's shared-contracts list
+- [ ] Cross-doc invariant: **Project (NEW Appendix-A seam model) + ProvenanceOrigin extension** — `ARCHITECTURE.md` Appendix A + §6 + schema-snapshot, same round
+- [ ] Depends on: 1 (contract-freeze pattern), P4 (KnowledgeWriter consumes Project mutations)
+
+### 13.6 — Governed "capture as I work" write-through source (git + telegram) — G4
+- [ ] A `capture-source` adapter maps a capture (git coding-session OR telegram mobile) → candidate `SourceEnvelope` through `registerSource()`; emit-only, never writes. (Prototype committed `aaa5f3f`.)
+- [ ] Git captures are trusted (`routingHints.trustLevel='trusted'`, deterministic — may auto-apply per §13.8); telegram captures are untrusted (`trustLevel='untrusted'` → downstream ING-7 read-only) and sender-allowlisted (fail-closed on an unknown sender).
+- [ ] Triggers ship in trust order: (1) git commit-hook/scheduled (deterministic, no egress); (2) session-end/PostCompact hook POSTing to the worker loopback API; (3) explicit `/capture`; (4) telegram bot (reuses the built `telegram-capture` connector; ING-7 + sender allowlist + size/rate limits). Symmetric with the Telegram approval channel.
+- [ ] Extraction runs via `ModelProviderPort` + egress veto (employer-repo session ⇒ local model or fail closed); output is candidate → `KnowledgeMutationPlan` → `KnowledgeWriter` → Approval Inbox (propose-only default, tiered auto per §13.8). NO autonomous unattended writer.
+- [ ] Files: `packages/integrations/src/connectors/adapters/capture-source.ts` (committed `aaa5f3f`) · `vendor/osb/{architect_scan,mine_commit_decisions}.py` wrappers · `apps/worker` capture-trigger ingress + repo→workspace map (NEW) · reuses `ingestionTriage` workflow
+- [ ] Cross-doc invariant: none (`coding_session`/`telegram_capture` are open `SourceEnvelope.type` values; trust via routingHints → AgentJob.trustLevel)
+- [ ] Depends on: 13.1, 13.5 (Project-scoped captures), P6 (registerSource / telegram-capture connector), P7 (ingestionTriage), P5 (egress veto)
+
+### 13.7 — Adopt governance-hardening primitives
+- [ ] Block-provenance distillation `(src: Bn)` + segregated-inference strengthen the candidate gate / no-inference validator (a claim with no traceable source is dropped).
+- [ ] osb's `@generated`/`@user` sentinel-marker vocabulary is adopted for KnowledgeWriter's marker-bounded human-section preservation (Obsidian-compat).
+- [ ] Files: `packages/domain/src/validation/` (extended) · `packages/knowledge/src/knowledge-writer/` (extended: sentinel markers)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: 13.2/13.6 (candidate producers to harden)
+
+### 13.8 — Living-vault autonomous synthesis (TIERED AUTONOMY) — OWNER DECISION 2026-07-04
+- [ ] Revises "generative = propose-only" → tiered autonomy: additive/derived writes (new synthesis notes, links, backlinks, timelines, `@generated`-region refreshes) AUTO-apply; edits to a human-relevant claim + external side effects PROPOSE. Autonomy is safe by confinement (can't touch `@user` regions) + attribution + reversibility, all through KnowledgeWriter (never a 2nd writer).
+- [ ] Anti-clutter: a synthesis run posts ONE digest receipt (counts + [review] [undo batch]) with one-action batch-undo (KnowledgeWriter revisions); confident reconciliations auto-apply, only ambiguous conflicts queue.
+- [ ] The synthesizing model obeys the workspace egress veto (employer-work ack-OFF ⇒ local model).
+- [ ] Files: `packages/knowledge/src/synthesis/` (NEW: confined synthesis planner → KnowledgeMutationPlans) · `apps/worker` scheduled synthesis activity (NEW)
+- [ ] Cross-doc invariant: **`ARCHITECTURE.md` §6 "generative = propose-only" stance revised** to "generative = confined-auto, propose for human-truth edits" (owner-approved; orchestrator edits §6 note same round)
+- [ ] Depends on: P4 (KnowledgeWriter + GBrain), 13.3 (retrieval feeds synthesis)
+
+### 13.9 — NotebookLM cloud grounding (WORKSPACE-GATED) — OWNER DECISION 2026-07-04
+- [ ] NotebookLM is NOT rejected — workspace-gated: `personal_business`/`personal_life` work freely; `employer_work` works with the per-workspace egress acknowledgment ON (explicit, logged), and FAILS CLOSED with it OFF.
+- [ ] The upload is scoped to the CURRENT workspace's notes only (isolation; GCL still forbids raw cross-workspace content in one call) and goes through the Tool Gateway envelope (idempotency + receipt; ephemeral store force-deleted after); the returned grounded synthesis is candidate → gate → KnowledgeWriter.
+- [ ] An employer-work invocation with ack-OFF fails closed (proven by the egress-leakage eval); a personal-workspace invocation succeeds; the upload never includes another workspace's notes.
+- [ ] Files: `packages/integrations/src/tools/adapters/notebooklm-ground.ts` (NEW; Gemini File Search as a `ModelProviderPort` cloud processor behind the Tool Gateway)
+- [ ] Cross-doc invariant: none (uses existing `EgressPolicy` ack + Tool Gateway envelope)
+- [ ] Depends on: 13.1, P6 (Tool Gateway), P5 (ModelProviderPort + egress veto)
+
+### Acceptance criteria (13)
+- [ ] All 13.X task checkboxes ticked.
+- [ ] Every source-extractor + capture adapter is EMIT-ONLY — a boundary test + grep-guard prove no Phase-13 path reaches a vault write; all mutations route through KnowledgeWriter (13.1a, 13.2, 13.6).
+- [ ] The egress-leakage eval passes: no Phase-13 adapter reaches a cloud endpoint under employer-work ack-OFF; NotebookLM + cloud summarizers fail closed there (13.1b, 13.2, 13.9).
+- [ ] `config/osb.pin` exists and a version bump runs the 3-part gate before landing (13.1).
+- [ ] The typed Project model + state machine + schema-snapshot are frozen (Appendix A same round); the §9.5 Project-dashboard contract dependency is satisfied (13.5).
+- [ ] YouTube (+ ≥1 other) source adapter is operational, closing the §20.1 DoD gap (13.2).
+- [ ] Tiered-autonomy synthesis: additive writes auto-apply with a digest+undo; a `@user` region is provably never overwritten (13.8).
+- [ ] All Phase-13 model calls route through `ModelProviderPort` (no hardcoded vendor endpoint); no direct osb writer or command surface is imported (anti-corruption layer).
+
+---
+
 ## Trims / Nice-to-Haves Catalog
 
 _(Empty at project start.)_
@@ -2070,3 +2166,4 @@ _(Empty at project start.)_
 - **2026-07-02 — Phase 7 COMPLETE + `/phase-exit 7`: CLEAR (§9 Temporal Workflows & Automation — the integration spine).** New `@sow/workflows` + `@sow/worker` packages (Temporal 1.19.0), + a Phase-2 `@sow/db` `ApprovalRepository` amendment. Built as a SEQUENCE of single-operator Workflow fan-outs (foundation → proof spine → workflows A → workflows B), each a PURE, replay-safe orchestration driver over the @sow/domain state machines + injected activity ports (two-layer + sandbox-safe: drivers import no @temporalio/node:crypto + call no Date.now; activities wire the real gateway/KnowledgeWriter/Broker adapters; live-Temporal tests gated behind `SOW_TEMPORAL`, default-skipped — the thin @temporalio wrappers + real-adapter worker wiring are a deferred wave). Delivered the durability foundation (7.1–7.5: LIFE-1 fenced single-active lease · LIFE-2 collapsed catch-up · LIFE-3 resume + §8 envelope reuse · LIFE-5 clock-jump-safe monotonic-epoch-guarded · WorkflowRun registry/idempotency · OBS-2 System Health surfacing) + all 13 workflows (7.6 meeting-closeout proof spine → 7.18 Hermes gateway-routing). **Adversarial verify EARNED ITS KEEP AT EVERY WAVE — 1 CRITICAL + 8 HIGH across the phase, ALL fixed + regression-tested + independently re-verified CLEAR:** foundation 9 findings (CRITICAL clock monotonic-across-restart starve/double-fire; HIGH lease-fencing / resume-idempotency-key / non-atomic resolveRun); 7.6 CRITICAL (no-inference gate validated the extraction but committed a caller-supplied plan — fixed by deriving all outputs from validated data via BuildOutputsPort) + HIGH workspace-binding; 7.7–7.12 2 HIGH+1 MED (approval exactly-once via surfacing the @sow/db CAS apply-vs-idempotent-noop kind atomically; cross-calendar leakage guard ran on a decoy field → moved to the actually-dispatched payload); 7.13–7.18 1 HIGH over 2 cycles (deletion-saga per-step idempotency keys were content-blind → fold each deleted region's LIVE-content hash so a re-materialized subject re-tombstones + re-purges, no resurrection). Recurring bug-class caught+prevented: *a guard that reads a field/flag that is not what actually flows to the side effect.* **`@sow/workflows` 438 tests + `@sow/worker` 13 (+1 gated) + `@sow/db` 275 (both dialects); repo-wide 2392 green + 2 todo; typecheck 10/10; `pnpm audit --prod` clean (fixed a NEW moderate `protobufjs` transitive from the Temporal deps via a `pnpm-workspace.yaml` override to `^7.6.3`); `spec-lint tests 7` PASS.** Both reviewer sub-agents CLEAR (`docs/audits/phase7-{arch-drift,security}.md`): arch-drift 9 anchors 0 DRIFT / 2 STALE-DOC (doc notes) / 0 AMBIGUOUS; security 0 critical/high/medium, 7/7 invariant passes PASS, 2 LOW → Phase-10 (heuristic leakage-allowlist for calendar payloads; redact error `cause` in the log sink). Reachability judgment-waived (no production Temporal entrypoint until the worker-wiring wave). Commits `9a61db5` (foundation) · `7fed14c` (7.6) · `ba893c2` (7.7–7.12) · `ea2a342` (7.13–7.18) + close-out. Close-out: `docs/sessions/008-2026-07-02-phase7-workflows.md`. **PHASES 0–7 CERTIFIED — the integration spine is done. Phase 8 (§10 Local App API, worker track) ∥ Phase 10 (cross-cutting, eval-security) now reopen (the DAG widens again after the Phase-7 bottleneck).**
 - **2026-07-04 — §9.5 surfaces round (sessions 017–019) + a scope-cut CORRECTION.** Push-path workspace ISOLATION + LIVENESS on `read_model.change` (017, `39132ea`/`db4b559`); DATA-UNLOCK D1 — a dev-provisioner turns local Markdown into REAL workspace read-model data via the deterministic checkbox parser + fail-closed registry (018, `6ae8036`) + a Fable design fan-out for the 3 remaining targets; **③ Recent Changes DONE** + **② Project-dashboard DATA path DONE** (019, 8 slices `4246f66`…`271ff00`, all security-reviewed 0-critical/high; + an `@sow/evals` fake-port fix `e2aea09` caught by the repo-wide gate). Decisions made: `UiSafe*` projections are NOT Appendix-A seam models (allowlist is their source of truth, no ARCHITECTURE coordination); the REQ-F-011 cross-field progress check lives worker-side (contracts can't import `computePercent`; an object `.refine` breaks the freeze test's `.shape`). **Scope shift / CORRECTION:** ② was interim-shipped as a Today `ProjectsSection` with the dedicated Projects PAGE (locked design §4.5) + the renderer routing/AppShell foundation **DEFERRED — a UNILATERAL SCOPE CUT the OWNER REJECTED (2026-07-04).** ②'s checkbox reverted to `[ ]` (partial: data path done, page missing). **Next session target: build the DEDICATED Projects PAGE + the routing/AppShell foundation** (also unblocks the 9.6–9.14 dedicated pages) — full plan + resume prompt in `docs/sessions/020-2026-07-04-RESUME-dedicated-projects-page.md`. New blockers: none. HEAD `b53c518`, pushed origin/main; repo-wide `turbo lint typecheck test` 42/42 green. Reference: implementer session docs `017/018/019-2026-07-0{3,4}-…`.
 - **2026-07-04 — §9.5 the scope-cut FIX: dedicated Projects PAGE + renderer routing/AppShell foundation SHIPPED (session 021).** Executed the 020 resume handoff. **R1** hand-rolled route store (`Route` union + pure `navigate` reducer; route INDEPENDENT of scope; frozen `DEFAULT_ROUTE`; test-first) `c1f585d`. **R2** extracted the persistent shell into `chrome/AppShell` — the §9.4 scope switcher (ARIA listbox + dismissal) + WS-8 Global gate + worker-enforced drill-down moved **VERBATIM**; `App` now mounts the active surface as `{children}`; the left-rail Today/Projects items became routable `NavLink`s (scope-preserving). **Security-review CONFIRMED all 4 invariants preserved, 0 general findings** `c379f84`. **R3** the dedicated Projects PAGE (`surfaces/projects/`) — master list → detail with deterministic progress (REQ-F-011: DISPLAYS the SERVER `percentComplete`, never a UI computation), blockers/waiting/next/evidence; WS-8 two empty states (Global "Select a workspace" gated on `scope==="global"`, vs a workspace's empty-until-data); selection via `route.projectId` (window-free `resolveSelectedProject`, test-first); removed the Today `ProjectsSection` + dead CSS. **Security-review CONFIRMED all 5 invariants, 0 findings** `f86d2d0`. Decisions made: hand-rolled routing (no router lib); route≠scope (SCOPE gates DATA, ROUTE selects SURFACE); R2 kept a pure behavior-preserving extraction (stub for the projects route) so the security-sensitive shell move could be reviewed in isolation before R3. Scope shifts: **② now COMPLETE** (the scope cut is corrected + reverted-checkbox re-ticked). New follow-ups (Carry-forward): the §4.5 managed doc-pack 00–04 is a **surfaced owner deferment** (blocked on a Drive connector + doc-pack read-model — asked via `AskUserQuestion`, owner away, proceeded with core, re-askable — NOT a silent cut); a Phase-9 JSX-render test harness + a listbox a11y pass are flagged follow-ups. The AppShell + `Route` model **unblock the 9.6–9.14 dedicated pages**. Next session target: owner direction (doc-pack decision · 9.6 Copilot / next surface · real projectors). Reference: implementer session doc `021-2026-07-04-dedicated-projects-page.md`.
+- **2026-07-04 — Phase 13 (Obsidian Second Brain inheritance) FOLDED INTO THE PLAN (proposal).** Added Phase 13 (§13.1–13.9) + registered it: header count (14 phases / 147 tasks), Deliverable map, Phase/track DAG (`P13`, edges from 4/5/6/9), Track map (providers-integrations primary; cross-track knowledge §13.3/13.8, contract §13.5). Governing rule: inherit osb extractors/analyzers as `SourceIngestionPort` adapters that emit CANDIDATE DATA → `registerSource` gate → `KnowledgeMutationPlan` → `KnowledgeWriter`; NEVER an osb writer. Owner decisions folded in: §13.8 tiered-autonomy synthesis (revises "generative = propose-only" → confined-auto for additive/`@generated` writes, propose for human-truth edits, digest + batch-undo) and §13.9 workspace-gated NotebookLM (NOT rejected; employer-work needs egress-ack ON, else fail closed). Two governed emit-only source-adapter PROTOTYPES already committed (`aaa5f3f`): `youtube-source` (G1) + `capture-source` (G4: git-trusted + telegram-untrusted/sender-allowlisted/ING-7), both proven through the real `registerSource` gate (165 integration tests green, typecheck clean). **Additive only — no impact on the in-flight Phase-9 desktop/dashboard work:** touches no existing phase/task, no `apps/desktop`, no `apps/worker`; §13.5 (typed Project model) is a FUTURE frozen-contract round that UNBLOCKS the §9.5 dashboard, flagged coordinate-don't-race. Design: `docs/planning/PHASE-13-PROPOSAL-osb-inheritance.md` + `docs/planning/osb-integration-architecture.md`.
