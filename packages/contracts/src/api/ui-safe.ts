@@ -41,6 +41,17 @@ const uiSafeSummaryLine = z
     message: "summary must be single-line",
   });
 
+// An OPAQUE canonical reference id: a short scheme:token-style handle with NO path, URL, or
+// whitespace characters — so a projector cannot smuggle a filesystem path (`/Users/…`) or URL
+// (`https://…`) through an evidence ref (WS-8 / secrets #7). Allows `src:plan-abc123`,
+// `sha256:deadbeef`, `abc123`; rejects anything containing `/` or whitespace. Capped short (an
+// id, not free text). The remaining opacity/non-enumerability is a projector obligation.
+const uiSafeOpaqueRef = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, "evidence ref must be an opaque id (no path/URL/whitespace)");
+
 // Compile-time exact-type equality (bidirectional assignability). Used to pin
 // each schema's inferred output to its standalone interface without a
 // `z.ZodType<T>` annotation (which would hide `.shape` from the freeze test).
@@ -227,6 +238,71 @@ export const UiSafeRecentChangeSchema = z
   })
   .strict();
 
+// ── UiSafeProjectProgress ────────────────────────────────────────────────────
+// The DETERMINISTIC progress of a project (§9.5, REQ-F-011): counts PARSED from real task
+// state (GFM checkboxes) by the worker's `computePercent`/`countCheckboxes` — NEVER a
+// model-inferred percentage. The renderer only DISPLAYS `percentComplete`; it never divides.
+// The schema pins the STRUCTURE (integer counts, percent ∈ [0,100]); the CROSS-FIELD
+// invariants are enforced worker-side at the re-validation boundary (an object-level `.refine`
+// would collapse `.shape`, which the allowlist freeze test reads — Lesson §3: the gate is a
+// composition, not the schema alone): (a) `percent === computePercent(counts)` — the worker
+// owns `computePercent`, @sow/contracts is pure and cannot import it; (b) `completedCount <=
+// totalCount`; (c) `totalCount === 0 ⇒ percent === 0` (a task-less project is 0%, never an
+// inferred 100%). S2/S3 MUST re-derive + reject a mismatch before emit (REQ-F-011).
+export interface UiSafeProjectProgress {
+  completedCount: number;
+  totalCount: number;
+  percentComplete: number;
+}
+
+export const UiSafeProjectProgressSchema = z
+  .object({
+    completedCount: z.number().int().min(0),
+    totalCount: z.number().int().min(0),
+    percentComplete: z.number().int().min(0).max(100),
+  })
+  .strict();
+
+// ── UiSafeProjectDashboard ───────────────────────────────────────────────────
+// A dedicated Projects-surface card (§9.5, Flow 5, locked design §4.5). Carries the
+// deterministic progress plus the project's evidence-backed prose (blockers / waiting items /
+// next actions) and opaque evidence refs. The prose fields originate ONLY from a
+// no-inference-gated `ValidatedNarrative` upstream; each entry is re-bounded single-line here
+// (defense-in-depth — a multi-line entry is the shape of leaked raw content). `evidenceRefs`
+// are OPAQUE canonical ids (never file paths / URLs — the GCL precedent dropped `sourceRefs`).
+// DROPS `workspaceId` (the renderer knows the scope; a card can't self-misattribute — like
+// UiSafeDashboardCard) and `progressSources` (per-source names can be file paths).
+export interface UiSafeProjectDashboard {
+  projectId: string;
+  title: string;
+  status: string;
+  progress: UiSafeProjectProgress;
+  blockers: readonly string[];
+  waitingItems: readonly string[];
+  nextActions: readonly string[];
+  evidenceRefs: readonly string[];
+  updatedAt: string;
+}
+
+export const UiSafeProjectDashboardSchema = z
+  .object({
+    projectId: z.string().min(1),
+    title: uiSafeSummaryLine,
+    status: z.string().min(1),
+    progress: UiSafeProjectProgressSchema,
+    // Array LENGTHS are capped (not just each element): the per-element single-line bound
+    // alone is defeated by CHUNKING — a raw document re-assembled as N×single-line fragments
+    // (also a §10 push-stream DoS). Each prose element is single-line ≤1024; evidenceRefs are
+    // opaque-id-grammar (no path/URL). REDACT-BY-TYPE of the prose content itself (a raw
+    // single-line secret/path/codename) is a downstream projector obligation (Lesson §5).
+    blockers: z.array(uiSafeSummaryLine).max(50).readonly(),
+    waitingItems: z.array(uiSafeSummaryLine).max(50).readonly(),
+    nextActions: z.array(uiSafeSummaryLine).max(50).readonly(),
+    evidenceRefs: z.array(uiSafeOpaqueRef).max(50).readonly(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+
 // ── Schema ⇄ interface parity guards (compile-time; erased at runtime) ───────
 // Each asserts the schema's inferred output EXACTLY equals its standalone
 // interface — so the interface and the runtime validator can never drift apart.
@@ -237,7 +313,9 @@ const _uiSafeParity: [
   Exact<z.infer<typeof UiSafeDashboardCardSchema>, UiSafeDashboardCard>,
   Exact<z.infer<typeof UiSafeGclProjectionSchema>, UiSafeGclProjection>,
   Exact<z.infer<typeof UiSafeRecentChangeSchema>, UiSafeRecentChange>,
-] = [true, true, true, true, true, true];
+  Exact<z.infer<typeof UiSafeProjectProgressSchema>, UiSafeProjectProgress>,
+  Exact<z.infer<typeof UiSafeProjectDashboardSchema>, UiSafeProjectDashboard>,
+] = [true, true, true, true, true, true, true, true];
 void _uiSafeParity;
 
 // ── Checked-in allowlist — THE source of truth ───────────────────────────────
@@ -252,4 +330,16 @@ export const UI_SAFE_ALLOWLIST = {
   dashboardCard: ["cardId", "count", "kind", "status", "title", "updatedAt"],
   gclProjection: ["drillable", "projectionType", "summary", "visibilityLevel", "workspaceId"],
   recentChange: ["changeId", "kind", "occurredAt", "summary"],
+  projectProgress: ["completedCount", "percentComplete", "totalCount"],
+  projectDashboard: [
+    "blockers",
+    "evidenceRefs",
+    "nextActions",
+    "progress",
+    "projectId",
+    "status",
+    "title",
+    "updatedAt",
+    "waitingItems",
+  ],
 } as const;

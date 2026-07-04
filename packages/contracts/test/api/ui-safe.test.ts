@@ -13,6 +13,8 @@ import {
   UiSafeDashboardCardSchema,
   UiSafeGclProjectionSchema,
   UiSafeRecentChangeSchema,
+  UiSafeProjectProgressSchema,
+  UiSafeProjectDashboardSchema,
   UI_SAFE_ALLOWLIST,
 } from "../../src/api/ui-safe";
 
@@ -38,6 +40,8 @@ const PROJECTIONS = [
   ["dashboardCard", UiSafeDashboardCardSchema, UI_SAFE_ALLOWLIST.dashboardCard] as const,
   ["gclProjection", UiSafeGclProjectionSchema, UI_SAFE_ALLOWLIST.gclProjection] as const,
   ["recentChange", UiSafeRecentChangeSchema, UI_SAFE_ALLOWLIST.recentChange] as const,
+  ["projectProgress", UiSafeProjectProgressSchema, UI_SAFE_ALLOWLIST.projectProgress] as const,
+  ["projectDashboard", UiSafeProjectDashboardSchema, UI_SAFE_ALLOWLIST.projectDashboard] as const,
 ] as const;
 
 describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage gate)", () => {
@@ -235,6 +239,66 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
     expect(UiSafeRecentChangeSchema.safeParse({ ...base, summary: "a\u2028b" }).success).toBe(false);
     expect(UiSafeRecentChangeSchema.safeParse({ ...base, summary: "a\u0085b" }).success).toBe(false);
     expect(UiSafeRecentChangeSchema.safeParse({ ...base, summary: "one line" }).success).toBe(true);
+  });
+
+  // Project dashboard (§9.5) surfaces DETERMINISTIC progress (REQ-F-011 — parsed counts,
+  // never an inferred %). It drops `workspaceId` (renderer knows the scope; a card can't
+  // self-misattribute — like UiSafeDashboardCard) and `progressSources` (per-source names
+  // can be file paths). Prose fields (blockers/waiting/next) + evidenceRefs are single-line
+  // bounded; evidenceRefs are opaque canonical ids, never paths/URLs.
+  const validProject = {
+    projectId: "prj-1",
+    title: "Auth redesign",
+    status: "on-track",
+    progress: { completedCount: 2, totalCount: 5, percentComplete: 40 },
+    blockers: ["waiting on vendor SSO cert"],
+    waitingItems: ["review from Priya"],
+    nextActions: ["wire the callback route"],
+    evidenceRefs: ["src:plan-abc123"],
+    updatedAt: "2026-07-04T00:00:00.000Z",
+  };
+
+  it("UiSafeProjectDashboard omits workspaceId + progressSources + raw refs (no cross-scope / path leak)", () => {
+    expect(UI_SAFE_ALLOWLIST.projectDashboard).not.toContain("workspaceId");
+    expect(UI_SAFE_ALLOWLIST.projectDashboard).not.toContain("progressSources");
+    expect(UI_SAFE_ALLOWLIST.projectDashboard).not.toContain("sourceRefs");
+    expect(UI_SAFE_ALLOWLIST.projectDashboard).not.toContain("payloadHash");
+  });
+
+  it("UiSafeProjectDashboardSchema accepts a valid sample + rejects workspaceId / multi-line prose", () => {
+    expect(UiSafeProjectDashboardSchema.safeParse(validProject).success).toBe(true);
+    // .strict() rejects a workspaceId passthrough (blend-prevention).
+    expect(UiSafeProjectDashboardSchema.safeParse({ ...validProject, workspaceId: "employer-work" }).success).toBe(false);
+    // A prose element must be single-line (no raw-content leak through blockers/waiting/next).
+    expect(UiSafeProjectDashboardSchema.safeParse({ ...validProject, blockers: ["line one\nleaked raw"] }).success).toBe(false);
+  });
+
+  it("UiSafeProjectDashboard rejects a path/URL evidenceRef (opaque-id grammar) + caps array lengths", () => {
+    // A projector must not smuggle a filesystem path or URL through an evidence ref (WS-8/#7).
+    expect(UiSafeProjectDashboardSchema.safeParse({ ...validProject, evidenceRefs: ["/Users/x/secret-plan.md"] }).success).toBe(false);
+    expect(UiSafeProjectDashboardSchema.safeParse({ ...validProject, evidenceRefs: ["https://internal.acme.corp/doc"] }).success).toBe(false);
+    // Array LENGTHS are capped — a raw doc can't be chunk-smuggled as N single-line elements.
+    expect(UiSafeProjectDashboardSchema.safeParse({ ...validProject, evidenceRefs: Array(51).fill("src:x") }).success).toBe(false);
+    expect(UiSafeProjectDashboardSchema.safeParse({ ...validProject, blockers: Array(51).fill("b") }).success).toBe(false);
+  });
+
+  it("UiSafeProjectDashboard accepts empty prose/evidence arrays (a project may have none)", () => {
+    expect(
+      UiSafeProjectDashboardSchema.safeParse({
+        ...validProject,
+        blockers: [],
+        waitingItems: [],
+        nextActions: [],
+        evidenceRefs: [],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("UiSafeProjectProgressSchema pins the deterministic count fields (REQ-F-011: int counts, 0-100 percent)", () => {
+    expect(UiSafeProjectProgressSchema.safeParse({ completedCount: 2, totalCount: 5, percentComplete: 40 }).success).toBe(true);
+    expect(UiSafeProjectProgressSchema.safeParse({ completedCount: 2, totalCount: 5, percentComplete: 140 }).success).toBe(false);
+    expect(UiSafeProjectProgressSchema.safeParse({ completedCount: 2.5, totalCount: 5, percentComplete: 40 }).success).toBe(false);
+    expect(UiSafeProjectProgressSchema.safeParse({ completedCount: 2, totalCount: 5, percentComplete: 40, raw: "x" }).success).toBe(false);
   });
 
   // ── Constraint: enum-typed fields reject an out-of-set value ─────────────────
