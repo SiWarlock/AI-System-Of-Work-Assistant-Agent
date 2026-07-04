@@ -76,19 +76,28 @@ const deps: CopilotDeps = {
 
 // ── 1. Read-only / no side effects (§4.6) ─────────────────────────────────────
 describe("Copilot governance — read-only / no side effects (§4.6)", () => {
-  it("a served answer carries ONLY {answer, citations} — no action/write/execution field", () => {
-    // The UI-safe allowlist is the frozen surface: it names no execution/write/apply field, so a
-    // Copilot answer structurally cannot carry a side effect (an action becomes an Approvals proposal).
-    expect([...UI_SAFE_ALLOWLIST.copilotAnswer].sort()).toEqual(["answer", "citations"]);
+  it("the served answer surface carries ONLY answer/citations + the egress notice — no action/write/execution field", () => {
+    // The UI-safe allowlist is the frozen surface: answer + citations + an OPTIONAL `egressProcessor`
+    // (a read-only egress NOTICE label — §9.6 real-model follow-up, safety rule 5). It names no
+    // execution/write/apply field, so a Copilot answer structurally cannot carry a side effect (an
+    // action becomes an Approvals proposal instead).
+    expect([...UI_SAFE_ALLOWLIST.copilotAnswer].sort()).toEqual(["answer", "citations", "egressProcessor"]);
     for (const forbidden of ["action", "execute", "apply", "write", "mutation", "sideEffect", "proposal"]) {
       expect(UI_SAFE_ALLOWLIST.copilotAnswer).not.toContain(forbidden);
     }
   });
 
-  it("the served answer's runtime field set equals the allowlist (no field smuggled)", async () => {
+  it("the served answer's runtime field set is a SUBSET of the allowlist (no field smuggled)", async () => {
     const r = await answerCopilotQuestion(deps, { workspaceId: WS_EMPLOYER, question: "q" });
     expect(isOk(r)).toBe(true);
-    if (isOk(r)) expect(Object.keys(r.value).sort()).toEqual([...UI_SAFE_ALLOWLIST.copilotAnswer].sort());
+    if (isOk(r)) {
+      // Every served key is allowlisted (nothing smuggled). `egressProcessor` is OPTIONAL — OMITTED
+      // for this local/no-egress stub answer — so the served set is a subset, not an exact match.
+      const allowed = new Set<string>(UI_SAFE_ALLOWLIST.copilotAnswer);
+      for (const k of Object.keys(r.value)) expect(allowed.has(k), `key ${k} allowlisted`).toBe(true);
+      expect(r.value).toHaveProperty("answer");
+      expect(r.value).toHaveProperty("citations");
+    }
   });
 });
 

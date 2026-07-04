@@ -433,4 +433,16 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
     expect(UiSafeCopilotAnswerSchema.safeParse({ ...validAnswer, citations: Array(20).fill(validCitation) }).success).toBe(true);
     expect(UiSafeCopilotAnswerSchema.safeParse({ ...validAnswer, citations: Array(21).fill(validCitation) }).success).toBe(false);
   });
+
+  it("UiSafeCopilotAnswer.egressProcessor is an OPTIONAL single-line notice label (safety rule 5 / §9.6 follow-up)", () => {
+    // Absent by default (a local/zero-egress answer, or non-Employer-Work cloud egress — no notice).
+    expect(validAnswer).not.toHaveProperty("egressProcessor");
+    expect(UiSafeCopilotAnswerSchema.safeParse(validAnswer).success).toBe(true);
+    // Present → the Employer-Work cloud-egress NOTICE; the value is the processor label.
+    expect(UiSafeCopilotAnswerSchema.safeParse({ ...validAnswer, egressProcessor: "anthropic" }).success).toBe(true);
+    // Redact-by-type: a multi-line / leak-shaped processor label is rejected (never a content carrier).
+    expect(UiSafeCopilotAnswerSchema.safeParse({ ...validAnswer, egressProcessor: "anthropic\nleaked raw note" }).success).toBe(false);
+    // It IS on the allowlist (the freeze test pins the full key set); it is NOT a raw-content field.
+    expect(UI_SAFE_ALLOWLIST.copilotAnswer).toContain("egressProcessor");
+  });
 });

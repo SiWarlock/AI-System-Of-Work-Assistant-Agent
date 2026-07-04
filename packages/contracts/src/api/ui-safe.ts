@@ -414,9 +414,17 @@ export const UiSafeCitationSchema = z
 // as single-line fragments (a semantic property). The worker synthesis/projector (A3) therefore
 // MUST NOT pass retrieved raw context through verbatim and MUST apply the no-inference / redact-
 // by-type discipline when composing each answer block. This comment is that obligation's handoff.
+// `egressProcessor` (§9.6 real-model follow-up / safety rule 5): OPTIONAL. Its PRESENCE is the
+// Employer-Work egress NOTICE — set ONLY when raw Employer-Work content was synthesized by a CLOUD
+// processor with egress acknowledged ON (the owner-chosen "cloud is fine WITH a notice" posture).
+// The value is the processor LABEL (e.g. "anthropic") the content egressed to — server-derived from
+// the guarded ProviderRoute, NEVER raw content — so the renderer can surface a distinct consent
+// banner. ABSENT for a local/zero-egress answer AND for non-Employer-Work cloud egress (those need
+// no special notice). A single-line bounded label (redact-by-type: never multi-line / over-length).
 export interface UiSafeCopilotAnswer {
   answer: readonly string[];
   citations: readonly UiSafeCitation[];
+  egressProcessor?: string;
 }
 
 export const UiSafeCopilotAnswerSchema = z
@@ -427,6 +435,7 @@ export const UiSafeCopilotAnswerSchema = z
     // raw document can't be chunk-smuggled as N×single-line fragments (also a §10 push DoS).
     answer: z.array(uiSafeSummaryLine).min(1).max(40).readonly(),
     citations: z.array(UiSafeCitationSchema).max(20).readonly(),
+    egressProcessor: uiSafeSummaryLine.optional(),
   })
   .strict();
 
@@ -475,5 +484,5 @@ export const UI_SAFE_ALLOWLIST = {
     "waitingItems",
   ],
   citation: ["citationId", "title"],
-  copilotAnswer: ["answer", "citations"],
+  copilotAnswer: ["answer", "citations", "egressProcessor"],
 } as const;

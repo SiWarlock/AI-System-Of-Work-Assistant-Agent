@@ -287,8 +287,12 @@ describe("buildQueryRouter — UI-safe read-model serving (§10/§13)", () => {
     const res = await caller.query.copilotAsk({ workspaceId: KNOWN_WORKSPACE, question: "what did we decide?" });
     expect(isOk(res)).toBe(true);
     if (isOk(res)) {
-      // Only the UI-safe allowlisted keys crossed — no raw context/prompt.
-      expect(fieldSet(res.value)).toEqual([...UI_SAFE_ALLOWLIST.copilotAnswer].sort());
+      // Only UI-safe allowlisted keys crossed — no raw context/prompt. `egressProcessor` is an
+      // OPTIONAL notice OMITTED for this local/no-egress interim answer (a SUBSET of the allowlist).
+      assertSubsetOfAllowlist(res.value, UI_SAFE_ALLOWLIST.copilotAnswer);
+      expect(res.value).toHaveProperty("answer");
+      expect(res.value).toHaveProperty("citations");
+      expect(asRecord(res.value)["egressProcessor"]).toBeUndefined();
       expect(res.value.answer.length).toBeGreaterThan(0);
       expect(res.value.citations[0]!.citationId).toBe("src:note-1");
       expect(fieldSet(res.value.citations[0]!)).toEqual([...UI_SAFE_ALLOWLIST.citation].sort());
