@@ -2042,6 +2042,7 @@ Executed row-by-row by `/phase-exit <phase>`:
 **Spec anchors:** `ARCHITECTURE.md` §6 (KnowledgeWriter/GBrain/GCL, candidate-data gate), §5 (egress veto, ModelProviderPort), §8 (SourceIngestionPort/Connector Gateway, Tool Gateway envelope), §7 (AgentRuntimePort, ING-7 admission), §12/§13 (pin + eval-gate); PRD `ING-2`/`ING-3` (P1 source adapters, YouTube first-to-ship, §20.1 DoD), `REQ-F-011` (Project), `REQ-F-005`/`WS-8` (GCL); `OQ-011`. Owner decisions 2026-07-04: §13.8 tiered autonomy revises "generative = propose-only"; §13.9 NotebookLM workspace-gated (NOT rejected).
 **Track:** providers-integrations (primary) · knowledge (§13.3/§13.8) · contract (§13.5) · **Depends on (phases):** 6, 5, 4, 1, 9
 > Order within phase: **13.1 → 13.2 ∥ 13.3 ∥ 13.4 → 13.5 → 13.6 → 13.7 ∥ 13.8 ∥ 13.9.** Slots in AFTER the Phase-9 §9.5 Project-dashboard slice; §13.5 is a frozen-contract round that UNBLOCKS that surface — coordinate with the desktop track, do not race.
+> **Desktop-track UI follow-ups** (Phase 13 = engine; the desktop track renders). Most Phase-13 UI folds into already-designed §9.x surfaces (see each task's `UI surface` note). Three GENUINELY-NEW affordances to build when their host surface is ready — filed here so they're not lost: **(1)** the §13.8 **auto-tier digest-receipt with per-line undo** (no Phase-9 equivalent — Recent activity / Settings→Audit are read-only); **(2)** an **"add a source" quick-capture input** (paste URL / drop file) — a pre-existing design gap, needed for §13.2; **(3)** an **autonomy-tier toggle** (auto vs propose, per workspace) in Settings → Workspaces. All consume Phase-13 read-models/APIs; none expand Phase-13 backend scope. §13.4/§13.7 are headless.
 
 ### 13.1 — Anti-corruption layer + osb version-pin + 3-part eval-gate (do FIRST)
 - [ ] `config/osb.pin` records the upstream release tag (`v0.11.1`) + a content-SHA of the vendored subtree (the artifact has zero git tags — pin release + subtree hash); a bump is a deliberate act, never silent.
@@ -2058,6 +2059,7 @@ Executed row-by-row by `/phase-exit <phase>`:
 - [ ] Files: `packages/integrations/src/connectors/adapters/{youtube-source,podcast-source,web-research,file-source}.ts` (`youtube-source.ts` prototype committed `aaa5f3f`) · `vendor/osb/*.py` (patched `--emit-json`)
 - [ ] Cross-doc invariant: none (`SourceEnvelope.type` is an open string — `youtube_video`/`podcast`/`web_article`/`file` need no frozen-contract change)
 - [ ] Depends on: 13.1, P6 (registerSource / Connector Gateway), P5 (ModelProviderPort + egress veto)
+- [ ] UI surface (desktop track renders; this task = engine): **Inbox** (ingestion triage, §9.7) — extracted items become triage rows. Net-new affordance: an **"add a source"** input (paste URL / drop file).
 
 ### 13.3 — Local retrieval + eval harness (GBrain-aligned)
 - [ ] osb's local semantic search (Ollama `mxbai-embed-large`, RRF fusion) is wrapped behind `ModelProviderPort(Ollama/LM Studio)` as GBrain's local-zero-egress retrieval path.
@@ -2066,6 +2068,7 @@ Executed row-by-row by `/phase-exit <phase>`:
 - [ ] Files: `packages/knowledge/src/gbrain/local-embed.ts` (NEW) · `packages/evals/src/retrieval/` (NEW)
 - [ ] Cross-doc invariant: none
 - [ ] Depends on: 13.1, P4 (GBrain adapter/index), P5 (ModelProviderPort)
+- [ ] UI surface: **⌘K palette** + **Copilot** sidebar (§9.6) + **Knowledge** browser — retrieval is the engine under these existing surfaces; opt. a semantic-vs-keyword mode in ⌘K.
 
 ### 13.4 — Read-only vault MCP connector (per workspace)
 - [ ] The vault MCP connector registers ONLY the read tools (`obsidian_search`/`read_note`/`backlinks`/`vault_health`/`validate_note`); the 3 write tools are NOT registered — no MCP path can write Markdown (KN-4/KN-9).
@@ -2073,6 +2076,7 @@ Executed row-by-row by `/phase-exit <phase>`:
 - [ ] Files: `packages/integrations/src/connectors/adapters/obsidian-vault-mcp.ts` (NEW)
 - [ ] Cross-doc invariant: none
 - [ ] Depends on: 13.1, P6 (Connector Gateway)
+- [ ] UI surface: none (headless read port) — at most a read-only status row in **Settings → Connectors**.
 
 ### 13.5 — Typed Project model + state machine (FROZEN-CONTRACT round) — G8
 - [ ] A typed `Project` seam model is added (Appendix A) with osb's frontmatter schema + bi-temporal timeline (event-time vs transaction-time; status appended, never overwritten), plus JSON Schema + spec-tagged schema-snapshot.
@@ -2081,6 +2085,7 @@ Executed row-by-row by `/phase-exit <phase>`:
 - [ ] Files: `packages/contracts/src/models/project.ts` (+schema+snapshot+test) · `packages/domain/src/state/project.ts` (NEW) · `packages/contracts/src/models/shared-enums.ts` (extended) · `ARCHITECTURE.md` Appendix A (row) · this file's shared-contracts list
 - [ ] Cross-doc invariant: **Project (NEW Appendix-A seam model) + ProvenanceOrigin extension** — `ARCHITECTURE.md` Appendix A + §6 + schema-snapshot, same round
 - [ ] Depends on: 1 (contract-freeze pattern), P4 (KnowledgeWriter consumes Project mutations)
+- [ ] UI surface: **Projects** page (§9.5, BUILT) — the typed state machine makes the existing progress/status/blockers honest; opt. a lifecycle-state chip.
 
 ### 13.6 — Governed "capture as I work" write-through source (git + telegram) — G4
 - [ ] A `capture-source` adapter maps a capture (git coding-session OR telegram mobile) → candidate `SourceEnvelope` through `registerSource()`; emit-only, never writes. (Prototype committed `aaa5f3f`.)
@@ -2090,6 +2095,7 @@ Executed row-by-row by `/phase-exit <phase>`:
 - [ ] Files: `packages/integrations/src/connectors/adapters/capture-source.ts` (committed `aaa5f3f`) · `vendor/osb/{architect_scan,mine_commit_decisions}.py` wrappers · `apps/worker` capture-trigger ingress + repo→workspace map (NEW) · reuses `ingestionTriage` workflow
 - [ ] Cross-doc invariant: none (`coding_session`/`telegram_capture` are open `SourceEnvelope.type` values; trust via routingHints → AgentJob.trustLevel)
 - [ ] Depends on: 13.1, 13.5 (Project-scoped captures), P6 (registerSource / telegram-capture connector), P7 (ingestionTriage), P5 (egress veto)
+- [ ] UI surface: **Approval Inbox** (§9.8) for proposed notes · **Today** Recent activity for committed captures · per-trigger enable/allowlist in **Settings**.
 
 ### 13.7 — Adopt governance-hardening primitives
 - [ ] Block-provenance distillation `(src: Bn)` + segregated-inference strengthen the candidate gate / no-inference validator (a claim with no traceable source is dropped).
@@ -2097,6 +2103,7 @@ Executed row-by-row by `/phase-exit <phase>`:
 - [ ] Files: `packages/domain/src/validation/` (extended) · `packages/knowledge/src/knowledge-writer/` (extended: sentinel markers)
 - [ ] Cross-doc invariant: none
 - [ ] Depends on: 13.2/13.6 (candidate producers to harden)
+- [ ] UI surface: none (headless defense-in-depth) — effects show only indirectly via **System Health** rejection rows.
 
 ### 13.8 — Living-vault autonomous synthesis (TIERED AUTONOMY) — OWNER DECISION 2026-07-04
 - [ ] Revises "generative = propose-only" → tiered autonomy: additive/derived writes (new synthesis notes, links, backlinks, timelines, `@generated`-region refreshes) AUTO-apply; edits to a human-relevant claim + external side effects PROPOSE. Autonomy is safe by confinement (can't touch `@user` regions) + attribution + reversibility, all through KnowledgeWriter (never a 2nd writer).
@@ -2105,6 +2112,7 @@ Executed row-by-row by `/phase-exit <phase>`:
 - [ ] Files: `packages/knowledge/src/synthesis/` (NEW: confined synthesis planner → KnowledgeMutationPlans) · `apps/worker` scheduled synthesis activity (NEW)
 - [ ] Cross-doc invariant: **`ARCHITECTURE.md` §6 "generative = propose-only" stance revised** to "generative = confined-auto, propose for human-truth edits" (owner-approved; orchestrator edits §6 note same round)
 - [ ] Depends on: P4 (KnowledgeWriter + GBrain), 13.3 (retrieval feeds synthesis)
+- [ ] UI surface: 'propose' tier → **Approvals** (§9.8); 'auto' tier → a **NEW digest-receipt-with-undo** (no Phase-9 equivalent); tier toggle in **Settings → Workspaces**. ← the one net-new UI object.
 
 ### 13.9 — NotebookLM cloud grounding (WORKSPACE-GATED) — OWNER DECISION 2026-07-04
 - [ ] NotebookLM is NOT rejected — workspace-gated: `personal_business`/`personal_life` work freely; `employer_work` works with the per-workspace egress acknowledgment ON (explicit, logged), and FAILS CLOSED with it OFF.
@@ -2113,6 +2121,7 @@ Executed row-by-row by `/phase-exit <phase>`:
 - [ ] Files: `packages/integrations/src/tools/adapters/notebooklm-ground.ts` (NEW; Gemini File Search as a `ModelProviderPort` cloud processor behind the Tool Gateway)
 - [ ] Cross-doc invariant: none (uses existing `EgressPolicy` ack + Tool Gateway envelope)
 - [ ] Depends on: 13.1, P6 (Tool Gateway), P5 (ModelProviderPort + egress veto)
+- [ ] UI surface: **Projects doc-pack** (00–04, already BUILT — DP-1/2/3 `241e048`/`a729520`/`ce62c38`; Phase 13 + a Drive adapter feed its LIVE path, discharging the §4.5 doc-pack carry-forward) + egress-ack in **Settings → Workspaces** + toolbar egress pill.
 
 ### Acceptance criteria (13)
 - [ ] All 13.X task checkboxes ticked.
