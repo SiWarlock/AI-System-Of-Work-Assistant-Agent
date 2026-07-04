@@ -22,6 +22,7 @@ import {
   type Approval,
   type HealthItem,
   type WorkflowRunRef,
+  type GclProjection,
   type FailureVariant,
   type Result,
 } from "@sow/contracts";
@@ -31,6 +32,7 @@ import {
   toUiSafeHealthItem,
   toUiSafeWorkflowRunRef,
   toUiSafeDashboardCard,
+  toUiSafeGclProjection,
   type DashboardCardSource,
 } from "../../src/api/projections/uiSafe";
 import { createApiServer } from "../../src/api/server";
@@ -256,6 +258,49 @@ function makeServerDeps(over: { expectedToken?: SessionToken } = {}) {
     now: () => "2026-07-02T00:00:00.000Z",
   };
 }
+
+function baseGclProjection(over: Record<string, unknown> = {}): GclProjection {
+  return {
+    workspaceId: "ws-employer",
+    visibilityLevel: "sanitized",
+    projectionType: "deadlines",
+    sanitizedPayload: { headline: "2 deadlines this week", count: 2 },
+    sourceRefs: [{ sourceId: "src-1" }],
+    ...over,
+  } as unknown as GclProjection;
+}
+
+describe("toUiSafeGclProjection — WS-8 field allowlist + drill gate", () => {
+  it("projects EXACTLY the allowlisted GclProjection field set", () => {
+    const out = toUiSafeGclProjection(baseGclProjection());
+    expect(fieldSet(out)).toEqual([...UI_SAFE_ALLOWLIST.gclProjection].sort());
+  });
+
+  it("NEVER leaks sanitizedPayload (open record) or sourceRefs (internal refs), even with an adversarial extra key", () => {
+    // Adversarial: a secret-shaped extra key injected onto the source record.
+    const tainted = baseGclProjection({ secretToken: "sk-DEADBEEF" });
+    const out = asRecord(toUiSafeGclProjection(tainted));
+    expect(fieldSet(out)).toEqual([...UI_SAFE_ALLOWLIST.gclProjection].sort());
+    expect(out["sanitizedPayload"]).toBeUndefined();
+    expect(out["sourceRefs"]).toBeUndefined();
+    expect(out["secretToken"]).toBeUndefined();
+  });
+
+  it("derives `drillable` from the shared visibility gate — true ONLY at 'full'", () => {
+    expect(toUiSafeGclProjection(baseGclProjection({ visibilityLevel: "full" })).drillable).toBe(true);
+    expect(toUiSafeGclProjection(baseGclProjection({ visibilityLevel: "sanitized" })).drillable).toBe(false);
+    expect(toUiSafeGclProjection(baseGclProjection({ visibilityLevel: "coordination" })).drillable).toBe(false);
+    expect(toUiSafeGclProjection(baseGclProjection({ visibilityLevel: "isolated" })).drillable).toBe(false);
+  });
+
+  it("builds a NON-EMPTY SINGLE-LINE summary; falls back to projectionType when the payload has no scalar", () => {
+    const s1 = toUiSafeGclProjection(baseGclProjection()).summary;
+    expect(s1.length).toBeGreaterThan(0);
+    expect(/[\r\n]/.test(s1)).toBe(false);
+    // An empty payload must NOT yield an empty summary (the UI-safe schema requires min 1).
+    expect(toUiSafeGclProjection(baseGclProjection({ sanitizedPayload: {} })).summary).toBe("deadlines");
+  });
+});
 
 describe("createApiServer — typed-error boundary (§16)", () => {
   it("exposes a caller factory + the composed appRouter", () => {

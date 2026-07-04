@@ -44,12 +44,14 @@ import {
   type UiSafeApproval,
   type UiSafeDashboardCard,
   type UiSafeWorkflowRunRef,
+  type UiSafeGclProjection,
 } from "@sow/contracts";
 import { router, publicProcedure, authedResolver } from "../router";
 import {
   toUiSafeApproval,
   toUiSafeWorkflowRunRef,
   toUiSafeDashboardCard,
+  toUiSafeGclProjection,
   type DashboardCardSource,
 } from "../projections/uiSafe";
 
@@ -205,6 +207,21 @@ function sanitizeGlobal(
   return ok(out);
 }
 
+/**
+ * The global-surface projection boundary: re-validate through the frozen §6 gate
+ * ({@link sanitizeGlobal}) THEN map each surviving projection to its UI-safe shape.
+ * The renderer receives ONLY `UiSafeGclProjection[]` — never the raw `GclProjection`
+ * (its open `sanitizedPayload` + internal `sourceRefs` are dropped by the projector),
+ * so the global cross-workspace surface goes through the SAME 8.2 allowlist boundary
+ * as every other query (previously the one procedure that shipped raw domain records).
+ */
+function projectGlobal(
+  r: Result<readonly GclProjection[], FailureVariant>,
+): Result<readonly UiSafeGclProjection[], FailureVariant> {
+  const sanitized = sanitizeGlobal(r);
+  return sanitized.ok ? ok(sanitized.value.map(toUiSafeGclProjection)) : sanitized;
+}
+
 // ── Router factory ────────────────────────────────────────────────────────────
 
 /**
@@ -265,11 +282,11 @@ export function buildQueryRouter(deps: QueryRouterDeps) {
       ),
     ),
 
-    /** Global cross-workspace surface — GCL sanitized grouped projections ONLY. */
+    /** Global cross-workspace surface — UI-safe GCL sanitized projections ONLY. */
     global: publicProcedure.query(
-      authedResolver<undefined, readonly GclProjection[]>(
-        async (): Promise<Result<readonly GclProjection[], FailureVariant>> =>
-          sanitizeGlobal(await readModel.globalSurface()),
+      authedResolver<undefined, readonly UiSafeGclProjection[]>(
+        async (): Promise<Result<readonly UiSafeGclProjection[], FailureVariant>> =>
+          projectGlobal(await readModel.globalSurface()),
       ),
     ),
   });

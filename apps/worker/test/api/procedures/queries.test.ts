@@ -293,22 +293,24 @@ describe("buildQueryRouter — unknown / out-of-scope workspace fails closed (§
 });
 
 describe("buildQueryRouter — global surface is GCL sanitized (REQ-UX-002 / §6)", () => {
-  it("global query returns GCL sanitized grouped projections — refs/summaries, never raw content inline", async () => {
+  it("global query returns UI-SAFE sanitized projections — a summary + drill flag, NEVER the raw record", async () => {
     const caller = makeCaller(fakePort());
     const res = await caller.query.global();
     expect(isOk(res)).toBe(true);
     if (isOk(res)) {
       expect(res.value.length).toBe(1);
       const proj = res.value[0]!;
-      // The sanitized projection surfaces the visibility-scoped shape + drill-down
-      // refs; every payload value is a SHORT single-line summary (§6 gate).
       expect(proj.visibilityLevel).toBe("sanitized");
-      expect(Array.isArray(proj.sourceRefs)).toBe(true);
-      for (const v of Object.values(proj.sanitizedPayload)) {
-        expect(typeof v).toBe("string");
-        // no multi-line raw content ever inlined
-        expect(/[\r\n]/.test(v as string)).toBe(false);
-      }
+      // UI-safe: a short SINGLE-LINE summary — never the open sanitizedPayload record.
+      expect(typeof proj.summary).toBe("string");
+      expect(proj.summary.length).toBeGreaterThan(0);
+      expect(/[\r\n]/.test(proj.summary)).toBe(false);
+      // drillable is the shared §5 gate: a `sanitized` (< full) projection is NOT drillable.
+      expect(proj.drillable).toBe(false);
+      // The raw record's open/internal fields NEVER cross the UI-safe boundary.
+      const asRec = proj as unknown as Record<string, unknown>;
+      expect(asRec["sanitizedPayload"]).toBeUndefined();
+      expect(asRec["sourceRefs"]).toBeUndefined();
     }
   });
 

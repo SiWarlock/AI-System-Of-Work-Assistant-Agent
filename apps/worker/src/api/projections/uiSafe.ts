@@ -17,11 +17,14 @@ import type {
   Approval,
   HealthItem,
   WorkflowRunRef,
+  GclProjection,
   UiSafeApproval,
   UiSafeHealthItem,
   UiSafeWorkflowRunRef,
   UiSafeDashboardCard,
+  UiSafeGclProjection,
 } from "@sow/contracts";
+import { permitsRawDrillDown } from "@sow/policy";
 
 /**
  * Copy an OPTIONAL field only when it is defined — so an absent optional field is
@@ -121,5 +124,53 @@ export function toUiSafeDashboardCard(card: DashboardCardSource): UiSafeDashboar
     status: card.status,
     count: card.count,
     updatedAt: card.updatedAt,
+  };
+}
+
+/**
+ * Build ONE short single-line display summary from an (already gate-sanitized)
+ * GclProjection `sanitizedPayload`. Prefer an explicit `summary`/`headline` string;
+ * else join the scalar values; and if the payload yields nothing, fall back to
+ * `projectionType` so the summary is NEVER empty (the UI-safe schema requires min 1).
+ * Newlines are collapsed to spaces (single-line seam) and the result is capped at the
+ * 1024 the UI-safe schema allows. The payload values are ALREADY bounded by the §6 GCL
+ * gate, so this only reshapes them for display — no raw content is introduced.
+ */
+function buildGclSummary(payload: Record<string, unknown>, fallback: string): string {
+  const preferred = payload["summary"] ?? payload["headline"];
+  let text: string;
+  if (typeof preferred === "string" && preferred.trim().length > 0) {
+    text = preferred;
+  } else {
+    const parts: string[] = [];
+    for (const v of Object.values(payload)) {
+      if (typeof v === "string" && v.trim().length > 0) parts.push(v);
+      else if (typeof v === "number" || typeof v === "boolean") parts.push(String(v));
+    }
+    text = parts.join(" · ");
+  }
+  const oneLine = text.replace(/\s*[\r\n]+\s*/g, " ").trim();
+  const summary = oneLine.length > 0 ? oneLine : fallback;
+  return summary.length > 1024 ? summary.slice(0, 1024) : summary;
+}
+
+/**
+ * Project a {@link GclProjection} (the WS-8 cross-workspace read path — the highest
+ * isolation risk) to a {@link UiSafeGclProjection}. Copies ONLY the allowlisted names
+ * (`workspaceId`, `visibilityLevel`, `projectionType`, `summary`, `drillable`) and
+ * DERIVES the two non-copied fields:
+ *   - `summary`   — a bounded single-line display line from `sanitizedPayload` (the
+ *                   open record itself NEVER crosses — see {@link buildGclSummary});
+ *   - `drillable` — the shared §5 gate `permitsRawDrillDown` (full-only), so the
+ *                   affordance HINT can never diverge from the worker's enforcement.
+ * DROPS `sanitizedPayload` (open record) and `sourceRefs` (internal refs) entirely.
+ */
+export function toUiSafeGclProjection(projection: GclProjection): UiSafeGclProjection {
+  return {
+    workspaceId: projection.workspaceId,
+    visibilityLevel: projection.visibilityLevel,
+    projectionType: projection.projectionType,
+    summary: buildGclSummary(projection.sanitizedPayload, projection.projectionType),
+    drillable: permitsRawDrillDown(projection.visibilityLevel),
   };
 }
