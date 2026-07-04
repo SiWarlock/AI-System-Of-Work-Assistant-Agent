@@ -54,6 +54,7 @@ import {
   toUiSafeGclProjection,
   type DashboardCardSource,
 } from "../projections/uiSafe";
+import { permitsRawDrillDown } from "@sow/policy";
 
 // ── Port ──────────────────────────────────────────────────────────────────────
 
@@ -157,6 +158,27 @@ function parseProjectInput(value: unknown): ProjectInput {
   };
 }
 
+/** A drill-down pointer into a global item: which workspace's projection to drill. */
+export interface GlobalDrillInput {
+  readonly workspaceId: string;
+  readonly projectionType: string;
+}
+
+/**
+ * Validator for the drill-down input. Reads ONLY `workspaceId` + `projectionType` —
+ * any `visibilityLevel` / `drillable` a caller tries to smuggle in is IGNORED, so a
+ * renderer can never force a drill; the worker re-derives the level from the server's
+ * own global surface (see {@link resolveGlobalDrillDown}).
+ */
+function parseGlobalDrillInput(value: unknown): GlobalDrillInput {
+  if (typeof value !== "object" || value === null) throw new Error("invalid_input");
+  const source = value as Record<string, unknown>;
+  return {
+    workspaceId: requireString(source, "workspaceId"),
+    projectionType: requireString(source, "projectionType"),
+  };
+}
+
 // ── Internal helpers (pure; map a port Result → a UI-safe projection Result) ──
 
 /** Map a port's card `Result` through the UI-safe dashboard-card projector. */
@@ -220,6 +242,52 @@ function projectGlobal(
 ): Result<readonly UiSafeGclProjection[], FailureVariant> {
   const sanitized = sanitizeGlobal(r);
   return sanitized.ok ? ok(sanitized.value.map(toUiSafeGclProjection)) : sanitized;
+}
+
+/**
+ * §9.4 policy-gated drill-down (the SAFETY CORE). From a global item the owner may
+ * open the underlying WORKSPACE-SCOPED context — but ONLY when the projection's
+ * visibility level permits (`full`), and ONLY as a single-workspace read.
+ *
+ * Enforced ENTIRELY server-side:
+ *   1. Re-read + re-validate the global surface through the §6 gate ({@link
+ *      sanitizeGlobal}) — a leaky projection fails closed before any drill.
+ *   2. Find the projection(s) matching the (workspaceId, projectionType) POINTER the
+ *      renderer supplied; none → `DRILL_TARGET_NOT_FOUND` (no partial leak).
+ *   3. FAIL-CLOSED: every matching projection must pass `permitsRawDrillDown`
+ *      (full-only); any below-full match → `DRILL_NOT_PERMITTED`, no context served.
+ *      The level is re-derived from the SERVER projection, never from renderer input.
+ *   4. Permitted → the target workspace's read-model via `workspaceCards(workspaceId)`
+ *      — a single-workspace query, structurally never a blended cross-brain read
+ *      (safety rule 4 / WS-8). The result is UI-safe (dashboard cards).
+ */
+async function resolveGlobalDrillDown(
+  readModel: ReadModelQueryPort,
+  input: GlobalDrillInput,
+): Promise<Result<readonly UiSafeDashboardCard[], FailureVariant>> {
+  const sanitized = sanitizeGlobal(await readModel.globalSurface());
+  if (!sanitized.ok) return sanitized;
+
+  const matches = sanitized.value.filter(
+    (p) => p.workspaceId === input.workspaceId && p.projectionType === input.projectionType,
+  );
+  if (matches.length === 0) {
+    return err(
+      failure("validation_rejected", "no such global projection to drill into", {
+        cause: { code: "DRILL_TARGET_NOT_FOUND" },
+      }),
+    );
+  }
+  // Fail-closed: EVERY matching projection must authorize a raw drill-down.
+  if (!matches.every((p) => permitsRawDrillDown(p.visibilityLevel))) {
+    return err(
+      failure("validation_rejected", "drill-down not permitted at this visibility level", {
+        cause: { code: "DRILL_NOT_PERMITTED" },
+      }),
+    );
+  }
+  // Workspace-scoped read (exactly one workspace — never blended).
+  return projectCards(await readModel.workspaceCards(input.workspaceId));
 }
 
 // ── Router factory ────────────────────────────────────────────────────────────
@@ -287,6 +355,18 @@ export function buildQueryRouter(deps: QueryRouterDeps) {
       authedResolver<undefined, readonly UiSafeGclProjection[]>(
         async (): Promise<Result<readonly UiSafeGclProjection[], FailureVariant>> =>
           projectGlobal(await readModel.globalSurface()),
+      ),
+    ),
+
+    /**
+     * Policy-gated drill-down from a global item into WORKSPACE-SCOPED context — only
+     * when the projection's visibility level permits (§9.4). A single-workspace read,
+     * never a blended cross-brain query; the gate is re-derived server-side.
+     */
+    globalDrillDown: publicProcedure.input(parseGlobalDrillInput).query(
+      authedResolver<GlobalDrillInput, readonly UiSafeDashboardCard[]>(
+        async (_ctx, input): Promise<Result<readonly UiSafeDashboardCard[], FailureVariant>> =>
+          resolveGlobalDrillDown(readModel, input),
       ),
     ),
   });

@@ -333,6 +333,107 @@ describe("buildQueryRouter — global surface is GCL sanitized (REQ-UX-002 / §6
   });
 });
 
+describe("buildQueryRouter — globalDrillDown (SAFETY: workspace-scoped, visibility-gated)", () => {
+  const proj = (workspaceId: string, projectionType: string, visibilityLevel: string): GclProjection => ({
+    workspaceId: workspaceId as GclProjection["workspaceId"],
+    visibilityLevel: visibilityLevel as GclProjection["visibilityLevel"],
+    projectionType,
+    sanitizedPayload: { summary: "busy 9-11" },
+    sourceRefs: [],
+  });
+
+  it("PERMITS a drill-down at 'full' → returns the WORKSPACE-SCOPED cards (one workspace, never blended)", async () => {
+    const caller = makeCaller(
+      fakePort({ globalSurface: () => ok([proj(KNOWN_WORKSPACE, "calendar_busy", "full")]) }),
+    );
+    const res = await caller.query.globalDrillDown({
+      workspaceId: KNOWN_WORKSPACE,
+      projectionType: "calendar_busy",
+    });
+    expect(isOk(res)).toBe(true);
+    // The fake returns cards ONLY for KNOWN_WORKSPACE, so an other-workspace / blended
+    // read is structurally impossible — the drill is a single-workspace query.
+    if (isOk(res)) expect(res.value.map((c) => c.cardId)).toEqual(["card_ws"]);
+  });
+
+  it("DENIES a drill-down below 'full' (sanitized / coordination / isolated) — no cards, typed err", async () => {
+    for (const level of ["sanitized", "coordination", "isolated"] as const) {
+      const caller = makeCaller(
+        fakePort({ globalSurface: () => ok([proj(KNOWN_WORKSPACE, "calendar_busy", level)]) }),
+      );
+      const res = await caller.query.globalDrillDown({
+        workspaceId: KNOWN_WORKSPACE,
+        projectionType: "calendar_busy",
+      });
+      expect(isErr(res)).toBe(true);
+      if (isErr(res)) expect(res.error.cause?.code).toBe("DRILL_NOT_PERMITTED");
+    }
+  });
+
+  it("IGNORES a renderer-SPOOFED visibility level in the input — the gate re-derives from the SERVER projection", async () => {
+    // The input carries only workspaceId + projectionType; a spoofed `visibilityLevel`
+    // / `drillable` must not force a drill. Server projection is `sanitized` → deny.
+    const caller = makeCaller(
+      fakePort({ globalSurface: () => ok([proj(KNOWN_WORKSPACE, "calendar_busy", "sanitized")]) }),
+    );
+    const res = await caller.query.globalDrillDown({
+      workspaceId: KNOWN_WORKSPACE,
+      projectionType: "calendar_busy",
+      visibilityLevel: "full",
+      drillable: true,
+    } as never);
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("DRILL_NOT_PERMITTED");
+  });
+
+  it("FAILS CLOSED on mixed levels — if ANY matching projection is below full, the drill is denied", async () => {
+    const caller = makeCaller(
+      fakePort({
+        globalSurface: () =>
+          ok([
+            proj(KNOWN_WORKSPACE, "calendar_busy", "full"),
+            proj(KNOWN_WORKSPACE, "calendar_busy", "sanitized"),
+          ]),
+      }),
+    );
+    const res = await caller.query.globalDrillDown({
+      workspaceId: KNOWN_WORKSPACE,
+      projectionType: "calendar_busy",
+    });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("DRILL_NOT_PERMITTED");
+  });
+
+  it("returns DRILL_TARGET_NOT_FOUND when no global projection matches (never a partial leak / probe)", async () => {
+    const caller = makeCaller(
+      fakePort({ globalSurface: () => ok([proj("ws_employer", "calendar_busy", "full")]) }),
+    );
+    const res = await caller.query.globalDrillDown({
+      workspaceId: KNOWN_WORKSPACE,
+      projectionType: "calendar_busy",
+    });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("DRILL_TARGET_NOT_FOUND");
+  });
+
+  it("a leaky (multi-line) global projection fails the §6 gate BEFORE any drill is served", async () => {
+    const leaky: GclProjection = {
+      workspaceId: KNOWN_WORKSPACE as GclProjection["workspaceId"],
+      visibilityLevel: "full",
+      projectionType: "note",
+      sanitizedPayload: { body: "line one\nverbatim raw" },
+      sourceRefs: [],
+    };
+    const caller = makeCaller(fakePort({ globalSurface: () => ok([leaky]) }));
+    const res = await caller.query.globalDrillDown({
+      workspaceId: KNOWN_WORKSPACE,
+      projectionType: "note",
+    });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.kind).toBe("validation_rejected");
+  });
+});
+
 describe("buildQueryRouter — auth gate + §16 boundary", () => {
   it("an UNAUTHENTICATED caller gets the interceptor's typed err as data (never throws)", async () => {
     const caller = makeCaller(fakePort(), UNAUTH_CTX);
