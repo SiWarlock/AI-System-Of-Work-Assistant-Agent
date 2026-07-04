@@ -31,6 +31,9 @@ import {
   guardCopilotEgress,
   createFixtureRetrieval,
   createStubSynthesis,
+  createLocalWorkspacePosture,
+  createLocalRouteSelector,
+  localWorkspacePosture,
   type CandidateCopilotAnswer,
   type CopilotDeps,
   type RetrievedContext,
@@ -72,6 +75,14 @@ const allFixtures: Readonly<Record<string, RetrievedContext>> = {
 const deps: CopilotDeps = {
   retrieval: createFixtureRetrieval(allFixtures),
   synthesis: createStubSynthesis(),
+  // All three workspaces resolve to a local posture + a local route ⇒ the egress decision allows
+  // with no notice, so the leakage battery still serves the interim {answer, citations}.
+  workspacePosture: createLocalWorkspacePosture({
+    [WS_EMPLOYER]: localWorkspacePosture(WS_EMPLOYER, "employer_work"),
+    [WS_PERSONAL]: localWorkspacePosture(WS_PERSONAL),
+    [WS_LIFE]: localWorkspacePosture(WS_LIFE, "personal_life"),
+  }),
+  routeSelector: createLocalRouteSelector(),
 };
 
 // ── 1. Read-only / no side effects (§4.6) ─────────────────────────────────────
@@ -131,6 +142,9 @@ describe("Copilot governance — WS-8 workspace isolation (no cross-workspace le
     const misKeyed: CopilotDeps = {
       retrieval: createFixtureRetrieval({ [WS_EMPLOYER]: ctx(WS_PERSONAL, "personal") }),
       synthesis: createStubSynthesis(),
+      // Scope guard rejects BEFORE posture resolution, so an empty posture map is unreached here.
+      workspacePosture: createLocalWorkspacePosture({}),
+      routeSelector: createLocalRouteSelector(),
     };
     const r = await answerCopilotQuestion(misKeyed, { workspaceId: WS_EMPLOYER, question: "q" });
     expect(isErr(r)).toBe(true);

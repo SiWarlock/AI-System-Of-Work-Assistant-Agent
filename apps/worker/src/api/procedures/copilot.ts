@@ -276,6 +276,27 @@ const INTERIM_LOCAL_ROUTE: ProviderRoute = {
 };
 
 /**
+ * Build a WorkspacePosture with a FAIL-CLOSED egress policy (no acknowledged raw egress, empty
+ * processor allowlists). Interim/fixture convenience — `boot` (dev-provision) + the copilot fixtures
+ * use it; the AUTHORITATIVE posture comes from `WorkspaceConfigRepository.get(id)` when it lands.
+ */
+export function localWorkspacePosture(
+  workspaceId: string,
+  type: WorkspaceType = "personal_business",
+): WorkspacePosture {
+  return {
+    type,
+    dataOwner: type === "employer_work" ? "employer" : "user",
+    egress: {
+      workspaceId: workspaceId as WorkspaceId,
+      allowedProcessors: [],
+      rawContentAllowedProcessors: [],
+      employerRawEgressAcknowledged: false,
+    },
+  };
+}
+
+/**
  * Interim posture resolver: an own-key (prototype-safe) lookup over an injected map; a miss (unknown
  * workspace, or a prototype key like "__proto__") FAILS CLOSED with WORKSPACE_NOT_FOUND (mirrors
  * `createFixtureRetrieval`). The real adapter reads `WorkspaceConfigRepository.get(workspaceId)`.
@@ -340,6 +361,10 @@ export function createStubSynthesis(): CopilotSynthesisPort {
 export interface CopilotDeps {
   readonly retrieval: CopilotRetrievalPort;
   readonly synthesis: CopilotSynthesisPort;
+  /** Resolve the AUTHORITATIVE Workspace posture by workspaceId (server-side) — the egress veto's input. */
+  readonly workspacePosture: WorkspacePostureResolver;
+  /** Select the candidate ProviderRoute the synthesis would egress to (interim: a genuine local route). */
+  readonly routeSelector: EgressRouteSelector;
 }
 
 /** The validated ask input (narrowed at the procedure boundary). */
@@ -359,6 +384,7 @@ export interface CopilotAskInput {
  */
 export function toUiSafeCopilotAnswer(
   candidate: CandidateCopilotAnswer,
+  egressProcessor?: string,
 ): Result<UiSafeCopilotAnswer, FailureVariant> {
   const projected = {
     answer: candidate.answer.map(collapseToSummaryLine),
@@ -366,6 +392,10 @@ export function toUiSafeCopilotAnswer(
       citationId: c.citationId,
       title: collapseToSummaryLine(c.title),
     })),
+    // The server-derived Employer-Work egress notice (present only for employer-work cloud egress).
+    // NOT collapsed — a leak-shaped label is a BUG and must HARD-REJECT via the strict schema
+    // (`uiSafeSummaryLine.optional()`), never be silently normalized into something servable.
+    ...(egressProcessor !== undefined ? { egressProcessor } : {}),
   };
   const parsed = UiSafeCopilotAnswerSchema.safeParse(projected);
   if (!parsed.success) {
@@ -384,11 +414,13 @@ export function toUiSafeCopilotAnswer(
  * validate → `UiSafeCopilotAnswer`. Any step's typed err short-circuits (fail-closed); NO side
  * effects, and an implied action would become a ProposedAction routed to Approvals — never a write.
  *
- * EGRESS NOTE (safety rule 5): the interim synthesis is a LOCAL stub (no provider, no network) → no
- * egress occurs, so no egress guard runs here. When a REAL model/runtime synthesis adapter lands (it
- * selects a provider route), it MUST call `guardCopilotEgress` at route selection with the
- * AUTHORITATIVE Workspace record's posture (type + egress policy resolved from the workspaceId,
- * NEVER client input) BEFORE any provider call — the fail-closed Employer-Work egress veto.
+ * EGRESS DECISION (safety rule 5, P1.2b): the AUTHORITATIVE Workspace posture is resolved by
+ * `input.workspaceId` SERVER-SIDE (never from client input — `CopilotAskInput` carries no posture),
+ * the candidate route is selected, and the fail-closed Employer-Work egress veto runs BEFORE any
+ * synthesis. A denied egress (e.g. employer-work cloud with ack OFF) fails closed here — no provider
+ * call. The derived `egressProcessor` notice threads onto the answer (present only for employer-work
+ * cloud egress). The interim synthesis is a LOCAL stub so the interim decision always allows with no
+ * notice; the real model/runtime synthesis adapter swaps in behind the same route selector.
  */
 export async function answerCopilotQuestion(
   deps: CopilotDeps,
@@ -398,7 +430,20 @@ export async function answerCopilotQuestion(
   if (!isOk(retrieved)) return retrieved;
   const scoped = enforceRetrievalScope(input.workspaceId, retrieved.value);
   if (!isOk(scoped)) return scoped;
+
+  // Egress decision BEFORE synthesis — authoritative posture resolved by workspaceId (server-side).
+  const posture = await deps.workspacePosture.resolve(input.workspaceId);
+  if (!isOk(posture)) return posture; // unknown workspace → fail closed (WORKSPACE_NOT_FOUND)
+  const route = await deps.routeSelector.select(input.workspaceId, posture.value);
+  if (!isOk(route)) return route;
+  const decision = decideCopilotEgress({
+    job: buildCopilotJob(input.workspaceId, route.value),
+    route: route.value,
+    posture: posture.value,
+  });
+  if (!isOk(decision)) return decision; // veto DENY (e.g. employer-work cloud, ack OFF) → no synthesis
+
   const candidate = await deps.synthesis.synthesize(input.workspaceId, input.question, scoped.value);
   if (!isOk(candidate)) return candidate;
-  return toUiSafeCopilotAnswer(candidate.value);
+  return toUiSafeCopilotAnswer(candidate.value, decision.value.egressProcessor);
 }
