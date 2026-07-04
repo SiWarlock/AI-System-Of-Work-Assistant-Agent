@@ -1,6 +1,6 @@
 # RESUME HANDOFF — post-§9.6-Copilot (pick the next track)
 
-> **PROSPECTIVE handoff** (written for the next session, post-compaction). Predecessor: `025-2026-07-04-copilot-qa-end-to-end.md`.
+> **PROSPECTIVE handoff** (written for the next session, post-compaction). Predecessor: `025-2026-07-04-copilot-qa-end-to-end.md`. Successor: `027-2026-07-04-approvals-page.md` (Track picked: 9.8 Approvals page — DONE; real Copilot model path queued next).
 > §9.6 Copilot Q&A is DONE end-to-end + pushed. The owner's "b-d" queue is complete (b = Copilot ✅ sess 025 · c = recent_changes interim ✅ sess 023 · d = UI test harness ✅ sess 022). "Whatever is next" is now genuinely open — this doc lays out the candidate tracks so the next session can confirm one with the owner and start.
 
 ---
