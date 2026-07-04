@@ -158,15 +158,18 @@ export function createHealthItemStoreAdapter(
  *
  *   Consequently `getByDedupeKey`/`list` cannot honestly reconstruct
  *   `occurrenceCount`/`lastSeen` (the bare store does not read those columns back), so
- *   they are surfaced as `1` / `openedAt`. This is SAFE ONLY because nothing reads
- *   them back through this wrapper: the degraded controller reads only
- *   `recorded.value.item`; the surface's recurrence logic reads `prior.item.state`
- *   (honest — the frozen item carries it) and its own recomputed occurrenceCount is
- *   then dropped by `put` above; and the `systemHealth` query reads the bare
- *   `healthItems.list()`, never `surface.list()`. `occurrenceCount` is not even on the
- *   UI-safe projection. If a future caller starts depending on a round-tripped
- *   occurrenceCount/lastSeen HERE, extend `HealthItemRepository` to read those columns
- *   back rather than trusting these placeholders.
+ *   they are surfaced as `1` / `openedAt`. The surface DOES read those placeholders
+ *   today — `enrichAndPersist` uses `prior.occurrenceCount` on a recurrence, and
+ *   `persistLifecycleTransition` uses `prior.occurrenceCount`/`prior.lastSeen` on an
+ *   acknowledge/resolve — but every such read flows ONLY into a `record.occurrenceCount`
+ *   /`record.lastSeen` that `put` above DROPS (it forwards only `record.item`; the repo
+ *   re-derives both columns), so a placeholder never reaches a PERSISTED value. It
+ *   likewise never reaches a lifecycle DECISION (those read `prior.item.state`, honest —
+ *   the frozen item carries it) nor a UI-VISIBLE value (the `systemHealth` query reads
+ *   the bare `healthItems.list()`, never `surface.list()`, and `occurrenceCount` is not
+ *   on the UI-safe projection). If a future caller ever PERSISTS or DISPLAYS a
+ *   round-tripped occurrenceCount/lastSeen sourced HERE, extend `HealthItemRepository`
+ *   to read those columns back rather than trusting these placeholders.
  *
  * Fault handling is inherited: the bare adapter REJECTS on a real DbError, so a store
  * fault propagates as a rejection (fail-closed) that the surface folds to a typed

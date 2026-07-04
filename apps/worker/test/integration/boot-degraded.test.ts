@@ -69,7 +69,10 @@ describe.skipIf(!SOW_API)("bootWorker — desktop first-render (no proofSpinePar
       });
 
       // The desktop worker-host drives this after boot, before announcing readiness.
-      const out = await reportInitialConnect(booted, { now: booted.backends.now() });
+      const out = await reportInitialConnect(booted, {
+        now: booted.backends.now(),
+        logger: booted.backends.logger,
+      });
       expect(out.degraded).toBe(true);
 
       // The systemHealth query reads backends.healthItems.list() — the SAME store the

@@ -70,7 +70,10 @@ async function start(config: WorkerHostConfig): Promise<void> {
     // initial health hydrate (a fresh null-cursor stream subscribe does not replay a
     // pre-subscribe publish). With no proof-spine params the connect resolves without a
     // network round-trip, so awaiting adds negligible latency.
-    await boot.reportInitialConnect(booted, { now: booted.backends.now() });
+    await boot.reportInitialConnect(booted, {
+      now: booted.backends.now(),
+      logger: booted.backends.logger,
+    });
     send({ type: "ready", port: booted.api.port });
   } catch (err) {
     send({ type: "error", message: err instanceof Error ? err.message : String(err) });

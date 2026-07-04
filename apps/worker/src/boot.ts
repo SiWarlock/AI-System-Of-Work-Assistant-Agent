@@ -335,17 +335,27 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
  *
  * Never throws (§16): a health-persist fault inside `onConnectionLost` folds to a typed
  * err the controller owns; this driver still reports `degraded: true` so the supervisor
- * backs off rather than crash-looping. The Phase-9 worker-host awaits this BEFORE
+ * backs off rather than crash-looping. But a persist fault means the worker_down item
+ * silently did NOT land — the renderer would still read "All systems healthy" for the
+ * exact case this exists to fix — so the fault is WARN-logged (the only observability
+ * path; the caller discards the Result). The Phase-9 worker-host awaits this BEFORE
  * announcing readiness, so the item is persisted before the renderer's initial health
  * hydrate (a fresh null-cursor stream subscribe does not replay a pre-subscribe publish).
  */
 export async function reportInitialConnect(
   booted: Pick<BootedWorker, "connectTemporal" | "degraded">,
-  at: { readonly now: string },
+  opts: { readonly now: string; readonly logger: Logger },
 ): Promise<{ readonly degraded: boolean }> {
-  const result = await booted.connectTemporal();
-  if (result.ok) return { degraded: false };
+  const connect = await booted.connectTemporal();
+  if (connect.ok) return { degraded: false };
   // Degraded: record the outage (empty recent-failure ledger → first-probe backoff).
-  await booted.degraded.onConnectionLost({ now: at.now, recentFailures: [] });
+  const recorded = await booted.degraded.onConnectionLost({ now: opts.now, recentFailures: [] });
+  if (!recorded.ok) {
+    // The item did not persist — surface it so a fail-closed "All systems healthy" is
+    // never silent. Only the enum code is logged (no raw content / secret — safety 7).
+    opts.logger.warn("worker.degraded.health_record_failed", {
+      fields: { code: recorded.error.code },
+    });
+  }
   return { degraded: true };
 }
