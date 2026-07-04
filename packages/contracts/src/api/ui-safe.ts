@@ -41,6 +41,37 @@ const uiSafeSummaryLine = z
     message: "summary must be single-line",
   });
 
+/**
+ * Collapse an arbitrary string into a value GUARANTEED to satisfy the `summary` gate above
+ * (single-line, <=1024). A projector building a `UiSafeRecentChange.summary` — the SOLE
+ * structural bound for that shape — MUST run its composed line through this: a raw title can
+ * carry a line terminator or exceed the cap, and because `sanitizeRecentChanges` fails the
+ * WHOLE list on one unservable row, an un-normalized summary would take the entire Recent-
+ * activity surface offline. Co-located with `uiSafeSummaryLine` so the write-side normalizer
+ * and the read-side validator cannot drift: it neutralizes the EXACT same newline family the
+ * gate rejects (plain \\s misses U+0085 / NEL), collapses whitespace runs, trims, and clamps
+ * to the 1024 cap. (min-length is the caller's responsibility — the suffix is always non-empty.)
+ */
+export function collapseToSummaryLine(s: string): string {
+  // The exact newline family `uiSafeSummaryLine` rejects: CR, LF, VT, FF, NEL, LS, PS.
+  // (charCode-based, not a regex — a plain `\s` class misses NEL / U+0085.)
+  const newline = new Set([0x0d, 0x0a, 0x0b, 0x0c, 0x85, 0x2028, 0x2029]);
+  let out = "";
+  let prevSpace = false;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if (newline.has(cp) || cp === 0x20 || cp === 0x09) {
+      if (!prevSpace) out += " "; // collapse any run of newline-family / space / tab to one space
+      prevSpace = true;
+    } else {
+      out += ch;
+      prevSpace = false;
+    }
+  }
+  return out.trim().slice(0, 1024);
+}
+
+
 // An OPAQUE canonical reference id: a short scheme:token-style handle with NO path, URL, or
 // whitespace characters — so a projector cannot smuggle a filesystem path (`/Users/…`) or URL
 // (`https://…`) through an evidence ref (WS-8 / secrets #7). Allows `src:plan-abc123`,

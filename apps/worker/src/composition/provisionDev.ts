@@ -16,7 +16,12 @@
 import { ok, err, isErr, type Result } from "@sow/contracts";
 import { countCheckboxes, computePercent } from "@sow/workflows";
 import type { ReadModelRepository } from "@sow/db";
-import { MANAGED_DOC_SLOTS, type UiSafeProjectDashboard } from "@sow/contracts";
+import {
+  MANAGED_DOC_SLOTS,
+  collapseToSummaryLine,
+  type UiSafeProjectDashboard,
+  type UiSafeRecentChange,
+} from "@sow/contracts";
 import { READ_MODEL_KEYS } from "../api/adapters/readModel";
 import type { DashboardCardSource } from "../api/projections/uiSafe";
 
@@ -171,6 +176,73 @@ async function upsertProjectRow(
 }
 
 /**
+ * Build the INTERIM workspace-scoped recent-change row for a dev-provisioned project sync
+ * (§9.5 Recent activity). NOT audit-driven: it reflects the REAL deterministic checkbox sync
+ * that just ran, so Today's Recent activity shows real data under devProvision. (The
+ * audit-driven projector is blocked on Temporal running + an audit workspace-scoping
+ * decision — surfaced to the owner; this is the honest unblocked interim.) `changeId` is
+ * stable per (workspace, note) so a re-provision UPSERTS. `summary` is collapsed to a SINGLE
+ * line — the read-side `UiSafeRecentChangeSchema` rejects multi-line, so a note title with a
+ * newline would otherwise make the row unservable.
+ */
+export function buildSyncRecentChange(
+  spec: DevProvisionSpec,
+  tally: { readonly completed: number; readonly total: number },
+  percent: number,
+  at: string,
+): UiSafeRecentChange {
+  const title = spec.projectTitle ?? spec.notePath;
+  // Normalize through the SHARED gate-mirror so the summary always passes the read-side
+  // UiSafeRecentChangeSchema (single-line incl. U+0085, ≤1024) — one bad row would fail the
+  // whole recent-changes list.
+  const summary = collapseToSummaryLine(`${title} — synced ${tally.completed}/${tally.total} tasks (${percent}%)`);
+  return {
+    changeId: `${spec.workspaceId}:sync:${spec.notePath}`,
+    kind: "project-synced",
+    summary,
+    occurredAt: at,
+  };
+}
+
+/** Read the `changes` array off the recent-changes read-model payload (thin transport narrowing). */
+function readChanges(data: unknown): readonly UiSafeRecentChange[] {
+  if (typeof data !== "object" || data === null) return [];
+  const arr = (data as Record<string, unknown>)["changes"];
+  if (!Array.isArray(arr)) return [];
+  return arr.filter(
+    (row): row is UiSafeRecentChange =>
+      typeof row === "object" && row !== null && typeof (row as Record<string, unknown>)["changeId"] === "string",
+  );
+}
+
+/**
+ * UPSERT one recent-change row (by `changeId`) into the workspace's `recent_changes` read-model,
+ * preserving siblings. Same not-found-vs-fault discipline as `upsertProjectRow`. The written row
+ * is a candidate that `query.recentChanges`'s `sanitizeRecentChanges` re-validates (single-line
+ * summary leak gate, DESC-by-instant, cap) before it reaches the renderer.
+ */
+async function upsertRecentChangeRow(
+  readModels: ReadModelRepository,
+  workspaceId: string,
+  change: UiSafeRecentChange,
+  at: string,
+): Promise<Result<void, DevProvisionError>> {
+  const existing = await readModels.get(READ_MODEL_KEYS.recentChanges, workspaceId);
+  if (isErr(existing) && existing.error.code !== "not_found") {
+    return err({ code: "store_fault", message: "recent-changes get failed" });
+  }
+  const prior = existing.ok ? readChanges(existing.value.data) : [];
+  const changes = [...prior.filter((c) => c.changeId !== change.changeId), change];
+  const put = await readModels.put({
+    readModelKey: READ_MODEL_KEYS.recentChanges,
+    workspaceId,
+    data: { changes },
+    rebuiltAt: at,
+  });
+  return put.ok ? ok(undefined) : err({ code: "store_fault", message: "recent-changes put failed" });
+}
+
+/**
  * Provision ONE dev workspace from a local Markdown note: parse its checkboxes
  * deterministically, upsert a project card into the workspace + project + global-dashboard
  * read-models, and register the workspace as known. Fails closed on a missing note or an
@@ -247,6 +319,15 @@ export async function provisionDevWorkspace(
   };
   const projDashPut = await upsertProjectRow(readModels, spec.workspaceId, projectDashboard, at);
   if (!projDashPut.ok) return projDashPut;
+
+  // §9.5 Recent activity — a REAL workspace-scoped recent-change reflecting this sync (interim).
+  const rcPut = await upsertRecentChangeRow(
+    readModels,
+    spec.workspaceId,
+    buildSyncRecentChange(spec, tally, percent, at),
+    at,
+  );
+  if (!rcPut.ok) return rcPut;
 
   const reg = await registerWorkspace(readModels, spec.workspaceId, at);
   if (!reg.ok) return reg;

@@ -8,7 +8,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { isErr } from "@sow/contracts";
 import { assembleBackends, type ProofSpineBackends } from "../src/composition/backends";
 import { createDbReadModelQueryPort } from "../src/api/adapters/readModel";
-import { provisionDevWorkspace } from "../src/composition/provisionDev";
+import { provisionDevWorkspace, buildSyncRecentChange } from "../src/composition/provisionDev";
 
 const NOW = "2026-07-04T00:00:00.000Z";
 // 2 completed / 5 total → computePercent(2,5) === 40.
@@ -85,6 +85,54 @@ describe("provisionDevWorkspace (data-unlock D1 — real read-model data from lo
         "04 Open Questions",
       ]);
     }
+  });
+
+  it("buildSyncRecentChange: stable id + a SINGLE-LINE servable summary (collapses newlines in the title)", () => {
+    const c = buildSyncRecentChange(
+      { workspaceId: "employer-work", notePath: "roadmap.md", projectTitle: "Road\nmap" },
+      { completed: 3, total: 5 },
+      60,
+      "2026-07-04T00:00:00.000Z",
+    );
+    expect(c.changeId).toBe("employer-work:sync:roadmap.md"); // stable per (workspace, note) → re-provision upserts
+    expect(c.kind).toBe("project-synced");
+    expect(c.occurredAt).toBe("2026-07-04T00:00:00.000Z");
+    expect(c.summary).not.toMatch(/[\r\n]/); // single-line — the read-side schema rejects multi-line
+    expect(c.summary).toContain("3/5");
+    expect(c.summary).toContain("60%");
+    // An over-long title is CLAMPED via the shared normalizer so the row stays servable
+    // (one unservable row would fail the whole recent-changes list).
+    const long = buildSyncRecentChange(
+      { workspaceId: "w", notePath: "n.md", projectTitle: "x".repeat(5000) },
+      { completed: 1, total: 1 },
+      100,
+      "2026-07-04T00:00:00.000Z",
+    );
+    expect(long.summary.length).toBeLessThanOrEqual(1024);
+  });
+
+  it("provisioning writes a REAL workspace-scoped recent-change row (Today Recent activity lights up)", async () => {
+    const b = await fresh();
+    await b.vault.write("roadmap.md", NOTE_40); // 2/5 → 40%
+    const res = await provisionDevWorkspace(deps(b), {
+      workspaceId: "employer-work",
+      notePath: "roadmap.md",
+      projectTitle: "Roadmap",
+    });
+    expect(res.ok).toBe(true);
+    const changes = await port(b).recentChanges("employer-work");
+    expect(changes.ok).toBe(true);
+    if (changes.ok) {
+      expect(changes.value).toHaveLength(1);
+      const c = changes.value[0]!;
+      expect(c.changeId).toBe("employer-work:sync:roadmap.md");
+      expect(c.kind).toBe("project-synced");
+      expect(c.summary).toContain("Roadmap");
+      expect(c.occurredAt).toBeTruthy();
+    }
+    // Recent changes are WORKSPACE-scoped (WS-8): an unknown workspace is empty/fail-closed.
+    const other = await port(b).recentChanges("personal-life");
+    expect(other.ok ? other.value : []).toEqual([]);
   });
 
   it("registers ONLY the provisioned workspace — an unprovisioned scope still fails closed (WS-8)", async () => {

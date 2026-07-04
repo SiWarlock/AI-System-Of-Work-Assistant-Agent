@@ -16,6 +16,7 @@ import {
   UiSafeProjectProgressSchema,
   UiSafeManagedDocSchema,
   UiSafeProjectDashboardSchema,
+  collapseToSummaryLine,
   UI_SAFE_ALLOWLIST,
 } from "../../src/api/ui-safe";
 
@@ -331,6 +332,21 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
     expect(UiSafeProjectDashboardSchema.safeParse({ ...validProject, docPack: Array(6).fill(validManagedDoc) }).success).toBe(false);
     // A bad managed doc inside the pack fails the whole dashboard (element validation).
     expect(UiSafeProjectDashboardSchema.safeParse({ ...validProject, docPack: [{ ...validManagedDoc, slot: "bogus" }] }).success).toBe(false);
+  });
+
+  it("collapseToSummaryLine ALWAYS yields a value the summary gate accepts (full newline family incl. U+0085 + 1024 cap)", () => {
+    const okRow = (summary: string): boolean =>
+      UiSafeRecentChangeSchema.safeParse({ changeId: "c", kind: "k", summary, occurredAt: "2026-07-04T00:00:00.000Z" }).success;
+    // Every terminator the read-side gate rejects — INCLUDING U+0085 (NEL), which JS `\s` does NOT match.
+    for (const term of [0x0d, 0x0a, 0x0b, 0x0c, 0x85, 0x2028, 0x2029].map((c) => String.fromCodePoint(c))) {
+      const collapsed = collapseToSummaryLine(`a${term}b`);
+      expect(collapsed).not.toMatch(/[\r\n\u000B\u000C\u0085\u2028\u2029]/);
+      expect(okRow(collapsed)).toBe(true);
+    }
+    // An over-long input is clamped under the 1024 cap (so it can't fail the whole recent-changes list).
+    const long = collapseToSummaryLine("x".repeat(5000));
+    expect(long.length).toBeLessThanOrEqual(1024);
+    expect(okRow(long)).toBe(true);
   });
 
   // ── Constraint: enum-typed fields reject an out-of-set value ─────────────────
