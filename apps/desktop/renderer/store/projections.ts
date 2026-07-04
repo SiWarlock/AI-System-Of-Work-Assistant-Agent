@@ -91,7 +91,8 @@ export function hydrateHealth(
 // ── Global (§9.4) cross-workspace surface ────────────────────────────────────
 // `query.global` returns the WHOLE current global surface, so hydrate REPLACES the
 // snapshot (unlike the upsert reducers) — a projection that dropped off the surface
-// must disappear. Empty→empty is a ref-stable no-op.
+// must disappear, INCLUDING a full retraction (non-empty → empty replaces with []).
+// Only empty→empty is a ref-stable no-op (nothing changed).
 
 /** Replace the Global-scope GCL snapshot with the latest query.global result. */
 export function hydrateGlobal(

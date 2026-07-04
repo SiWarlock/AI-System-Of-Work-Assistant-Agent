@@ -26,6 +26,8 @@ export interface ScopeMeta {
 
 export const WORKSPACE_SCOPES: readonly ScopeMeta[] = [
   { id: "global", label: "All (Global)", workspaceId: null, accent: "#0a84ff" },
+  // Employer-Work shares the system-blue accent BY DESIGN (locked): Employer-Work IS
+  // the blue workspace; emerald/indigo distinguish the other two. Not a placeholder.
   { id: "employer-work", label: "Employer-Work", workspaceId: "employer-work", accent: "#0a84ff" },
   { id: "personal-business", label: "Personal-Business", workspaceId: "personal-business", accent: "#1fae6b" },
   { id: "personal-life", label: "Personal-Life", workspaceId: "personal-life", accent: "#5e5ce6" },

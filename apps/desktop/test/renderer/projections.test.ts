@@ -126,6 +126,13 @@ describe("Global (§9.4) surface — hydrate + group", () => {
     expect(hydrateGlobal(initialStoreState, [])).toBe(initialStoreState);
   });
 
+  it("hydrateGlobal non-empty→empty RETRACTS (a full retraction replaces with [], new state)", () => {
+    const populated = hydrateGlobal(initialStoreState, [gcl("ws-a", "deadlines")]);
+    const retracted = hydrateGlobal(populated, []);
+    expect(retracted).not.toBe(populated); // a real change → new state (needed re-render)
+    expect(retracted.global).toEqual([]);
+  });
+
   it("groupGlobalByWorkspace groups by workspaceId, preserving first-seen order", () => {
     const groups = groupGlobalByWorkspace([
       gcl("ws-b", "calendar"),

@@ -11,7 +11,7 @@
 //   - @sow/contracts                  — UiSafe* (types only)
 // NEVER import electron, node, or @sow/worker from a renderer file.
 
-import { useState, type CSSProperties, type ReactElement } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from "react";
 import type { ConnectionStatus } from "../../store";
 import { WORKSPACE_SCOPES, scopeMeta, type WorkspaceScope } from "../../store/scope";
 import { groupGlobalByWorkspace } from "../../store/projections";
@@ -49,11 +49,32 @@ function ScopeSwitcher({
 }): ReactElement {
   const [open, setOpen] = useState(false);
   const current = scopeMeta(scope);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Close the pull-down on any outside click (the ARIA listbox dismissal the menu
+  // otherwise lacks — Escape + selection close it, but a click elsewhere would leave
+  // it stuck open over the content). Registered only while open.
+  useEffect(() => {
+    if (!open) return;
+    const onDocMouseDown = (e: MouseEvent): void => {
+      if (wrapRef.current !== null && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [open]);
+
   return (
     <div
       className="sow-ws-switch-wrap"
+      ref={wrapRef}
       onKeyDown={(e) => {
         if (e.key === "Escape") setOpen(false);
+      }}
+      onBlur={(e) => {
+        // Also close on keyboard tab-away (focus leaves the switcher entirely).
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
       }}
     >
       <button
@@ -270,7 +291,7 @@ function GlobalGroups({
             </div>
             <div className="sow-grouped" role="list" aria-label={`${label} — across workspaces`}>
               {group.items.map((item, i) => (
-                <div className="sow-row sow-global-row" role="listitem" key={`${item.projectionType}-${String(i)}`}>
+                <div className="sow-row sow-global-row" role="listitem" key={`${item.workspaceId}-${item.projectionType}-${String(i)}`}>
                   <span className="sow-global-type">{humanizeToken(item.projectionType)}</span>
                   <span className="sow-global-summary">{item.summary}</span>
                   {item.drillable ? (
