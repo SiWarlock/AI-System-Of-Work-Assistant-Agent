@@ -2,6 +2,7 @@
 
 - **Date:** 2026-07-04 · **Mode:** single-operator (build) · **Tracks:** contract · worker · desktop · eval-security
 - **Predecessor:** `018-2026-07-04-data-unlock-d1-and-surfaces-design.md` (HEAD `3af4f0a`)
+- **Successor:** `020-2026-07-04-RESUME-dedicated-projects-page.md` (the fix-the-scope-cut handoff)
 - **HEAD at close:** `e2aea09` · **8 commits this doc covers** (`4246f66`…`e2aea09`)
 - **Gate at close:** repo-wide `turbo typecheck test` **31/31 green** (contracts 611 · worker 355/19-skip · desktop 101 · db 331 · evals green; api-live + boot-provision green under SOW_API=1) · tree clean (+ 3 stray untracked files NOT mine — a `youtube-source.ts` + a PHASE-13 proposal from another session; left untouched)
 - **Reviews:** 8 subagent pairs (security + code-quality per slice) — every slice **0 critical/high**; all findings fixed in-slice or documented-deferred.
@@ -33,9 +34,21 @@ Plus `e2aea09` — **fix(evals):** the two `@sow/evals` fake `ReadModelQueryPort
 
 With `devProvision` on + a vault note: select a **workspace scope** → Today shows a real project card with the deterministic checkbox percent as a progress bar + a real dashboard card. **Global** Today's cards/GCL/projects/recent-activity stay empty (workspace-scoped surfaces never blend cross-workspace; WS-8). Recent activity stays empty until a real audit-record projector runs (deferred).
 
+## ⚠️ CORRECTION — ② is NOT complete: the dedicated Projects PAGE is REQUIRED (owner ruling)
+
+**A scope-cut mistake was made this session and is corrected here.** ② Project dashboard was
+delivered as a Projects **section on Today** with the renderer routing/AppShell foundation
+DEFERRED. That deferral was decided unilaterally — the wrong call: the **locked design (§4.5)
+specifies a dedicated Projects PAGE**, and a scope cut is an owner decision, never the
+implementer's. **Owner ruling (2026-07-04): the dedicated Projects page IS required; ② is NOT
+done.** The DATA path (contract · `query.projectList` · dev-provisioner writer · REQ-F-011
+enforcement) is complete and correct — but the SURFACE must become a dedicated page. This is the
+**#1 next task** (see the §9.5-routing handoff doc + resume prompt). It also unblocks the
+9.6–9.14 dedicated pages.
+
 ## Deferred (documented, NOT silently dropped)
 
-- **The dedicated Projects PAGE + the renderer routing/AppShell foundation** (which also unblocks the 9.6–9.14 dedicated pages). ② was delivered as a Projects **section on Today** — this satisfies the acceptance bullet (deterministic progress from the read-model, never an inferred %) without a big refactor of the working, security-reviewed Today shell. **The routing foundation is the top follow-up.**
+- **The dedicated Projects PAGE + the renderer routing/AppShell foundation** — see the CORRECTION above. This is REQUIRED work (locked design §4.5), the top next task, NOT a valid deferral. The Today `ProjectsSection` is an interim data-display that will move into the dedicated page.
 - **The real recent_changes + project-dashboard PROJECTORS** (read audit records / run project-sync → write the read-models with model-synthesized prose). The dev-provisioner is the interim real-data writer for projects; recent_changes has no writer yet. Downstream obligations recorded in the contracts (redact-by-type prose, non-enumerable evidence refs, drill scope-ownership re-check).
 - **Live push updates** for recentChanges + projects (they hydrate on scope switch, not on read_model.change — same-workspace staleness, self-heals, no blend).
 - **Shared `workspaceScopedRead<T>` read-model helper** — the resolve→get→read block is now ~5 copies; flagged repeatedly, extraction due at the next touch.
