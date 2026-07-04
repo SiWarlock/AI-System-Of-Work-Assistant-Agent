@@ -10,8 +10,8 @@
     "build": "pnpm run build:sow && electron-vite build && pnpm run build:worker",
     "preview": "electron-vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "lint": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.testdom.json",
+    "lint": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.testdom.json"
   },
   "dependencies": {
     "@sow/contracts": "workspace:*",
@@ -21,6 +21,8 @@
   },
   "devDependencies": {
     "@sow/worker": "workspace:*",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
     "@trpc/server": "^11.18.0",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
@@ -28,6 +30,7 @@
     "electron": "^32.2.0",
     "electron-vite": "^2.3.0",
     "esbuild": "^0.21.5",
+    "jsdom": "^25.0.1",
     "typescript": "^5.6.3",
     "vite": "^5.4.9",
     "vitest": "^2.1.3"
