@@ -380,6 +380,56 @@ export const UiSafeProjectDashboardSchema = z
   })
   .strict();
 
+// ── UiSafeCitation ────────────────────────────────────────────────────────────
+// A single cited source for a Copilot answer (§4.6). An OPAQUE canonical ref + a display title
+// ONLY — never the cited note's raw content, a snippet, a filesystem path, or a URL (the GCL / #7
+// precedent: an external id / path is not UI-safe). The renderer shows `title` in a mono chip; a
+// worker-mediated, workspace-scoped action resolves `citationId` if the user opens the source.
+// DROPS `workspaceId` (the renderer knows the scope) + any content / snippet / excerpt / url.
+export interface UiSafeCitation {
+  citationId: string;
+  title: string;
+}
+
+export const UiSafeCitationSchema = z
+  .object({
+    citationId: uiSafeOpaqueRef,
+    title: uiSafeSummaryLine,
+  })
+  .strict();
+
+// ── UiSafeCopilotAnswer ───────────────────────────────────────────────────────
+// The read-only, CITED answer Copilot returns (§4.6). NO side effects: if the answer implies an
+// action, that becomes a ProposedAction routed to Approvals — never carried on this shape. The
+// synthesized answer is candidate data (validated at this seam) split into single-line-bounded
+// display blocks: bounding BOTH the per-block length (≤1024, single-line) AND the block COUNT
+// defeats chunk-smuggling — a raw document re-assembled as N×single-line fragments (also a §10
+// push DoS) — the same defense as the dashboard prose arrays. `citations` MAY be empty (the
+// workspace held no answer). DROPS the raw retrieval `context`, the model `prompt`, and
+// `workspaceId` — none is UI-safe (§16 renderer boundary / candidate-data gate).
+//
+// REDACT-BY-TYPE HANDOFF (Lesson §5, mirroring UiSafeProjectDashboard): `answer` is LITERALLY
+// synthesized from retrieved raw notes, so verbatim echo is its natural failure mode — the
+// structural gate here CANNOT tell legitimate synthesized prose from raw note content re-flowed
+// as single-line fragments (a semantic property). The worker synthesis/projector (A3) therefore
+// MUST NOT pass retrieved raw context through verbatim and MUST apply the no-inference / redact-
+// by-type discipline when composing each answer block. This comment is that obligation's handoff.
+export interface UiSafeCopilotAnswer {
+  answer: readonly string[];
+  citations: readonly UiSafeCitation[];
+}
+
+export const UiSafeCopilotAnswerSchema = z
+  .object({
+    // Caps are intentionally TIGHTER than the sibling prose arrays' 50 (blockers/nextActions/…):
+    // one Copilot turn is a single reply, not a project's full backlog — ≤40 single-line blocks is
+    // a generous answer, and ≤20 citations a generous source set. Both bound BOTH dimensions so a
+    // raw document can't be chunk-smuggled as N×single-line fragments (also a §10 push DoS).
+    answer: z.array(uiSafeSummaryLine).min(1).max(40).readonly(),
+    citations: z.array(UiSafeCitationSchema).max(20).readonly(),
+  })
+  .strict();
+
 // ── Schema ⇄ interface parity guards (compile-time; erased at runtime) ───────
 // Each asserts the schema's inferred output EXACTLY equals its standalone
 // interface — so the interface and the runtime validator can never drift apart.
@@ -393,7 +443,9 @@ const _uiSafeParity: [
   Exact<z.infer<typeof UiSafeProjectProgressSchema>, UiSafeProjectProgress>,
   Exact<z.infer<typeof UiSafeManagedDocSchema>, UiSafeManagedDoc>,
   Exact<z.infer<typeof UiSafeProjectDashboardSchema>, UiSafeProjectDashboard>,
-] = [true, true, true, true, true, true, true, true, true];
+  Exact<z.infer<typeof UiSafeCitationSchema>, UiSafeCitation>,
+  Exact<z.infer<typeof UiSafeCopilotAnswerSchema>, UiSafeCopilotAnswer>,
+] = [true, true, true, true, true, true, true, true, true, true, true];
 void _uiSafeParity;
 
 // ── Checked-in allowlist — THE source of truth ───────────────────────────────
@@ -422,4 +474,6 @@ export const UI_SAFE_ALLOWLIST = {
     "updatedAt",
     "waitingItems",
   ],
+  citation: ["citationId", "title"],
+  copilotAnswer: ["answer", "citations"],
 } as const;

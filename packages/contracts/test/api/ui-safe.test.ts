@@ -16,6 +16,8 @@ import {
   UiSafeProjectProgressSchema,
   UiSafeManagedDocSchema,
   UiSafeProjectDashboardSchema,
+  UiSafeCitationSchema,
+  UiSafeCopilotAnswerSchema,
   collapseToSummaryLine,
   UI_SAFE_ALLOWLIST,
 } from "../../src/api/ui-safe";
@@ -45,6 +47,8 @@ const PROJECTIONS = [
   ["projectProgress", UiSafeProjectProgressSchema, UI_SAFE_ALLOWLIST.projectProgress] as const,
   ["managedDoc", UiSafeManagedDocSchema, UI_SAFE_ALLOWLIST.managedDoc] as const,
   ["projectDashboard", UiSafeProjectDashboardSchema, UI_SAFE_ALLOWLIST.projectDashboard] as const,
+  ["citation", UiSafeCitationSchema, UI_SAFE_ALLOWLIST.citation] as const,
+  ["copilotAnswer", UiSafeCopilotAnswerSchema, UI_SAFE_ALLOWLIST.copilotAnswer] as const,
 ] as const;
 
 describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage gate)", () => {
@@ -371,5 +375,62 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
         openedAt: "2026-06-30T00:00:00.000Z",
       }).success,
     ).toBe(false);
+  });
+
+  // ── UiSafeCitation + UiSafeCopilotAnswer (§4.6 Copilot Q&A — cited, NO raw content) ──────
+  // Copilot returns a synthesized answer WITH citations and NO side effects. At this UI-safe seam
+  // the answer is prose split into single-line-bounded display blocks (both dimensions capped, like
+  // the dashboard prose arrays — a raw document can't be chunk-smuggled), and each citation is an
+  // OPAQUE canonical ref + a display title ONLY — never the cited note's raw content, path, or URL.
+  const validCitation = { citationId: "src:note-abc123", title: "Vendor review — decisions" };
+  const validAnswer = {
+    answer: ["Two decisions were logged:", "adopt the new SLA, and defer the pricing change."],
+    citations: [validCitation],
+  };
+
+  it("UiSafeCitation carries ONLY an opaque id + display title (no content/snippet/path/url/workspaceId)", () => {
+    expect(UI_SAFE_ALLOWLIST.citation).not.toContain("content");
+    expect(UI_SAFE_ALLOWLIST.citation).not.toContain("snippet");
+    expect(UI_SAFE_ALLOWLIST.citation).not.toContain("path");
+    expect(UI_SAFE_ALLOWLIST.citation).not.toContain("url");
+    expect(UI_SAFE_ALLOWLIST.citation).not.toContain("workspaceId");
+  });
+
+  it("UiSafeCitationSchema accepts a valid citation; rejects a path/URL id, a raw-content passthrough, a multi-line title", () => {
+    expect(UiSafeCitationSchema.safeParse(validCitation).success).toBe(true);
+    // The citation id is an OPAQUE canonical ref — never a filesystem path or URL (WS-8/#7).
+    expect(UiSafeCitationSchema.safeParse({ ...validCitation, citationId: "/Users/x/secret.md" }).success).toBe(false);
+    expect(UiSafeCitationSchema.safeParse({ ...validCitation, citationId: "https://internal.acme/doc" }).success).toBe(false);
+    // .strict() — the cited note's raw content / a source snippet must NOT ride through as an unknown key.
+    expect(UiSafeCitationSchema.safeParse({ ...validCitation, content: "raw note body" }).success).toBe(false);
+    // A multi-line title is the shape of a raw-content leak.
+    expect(UiSafeCitationSchema.safeParse({ ...validCitation, title: "Vendor review\nleaked body" }).success).toBe(false);
+  });
+
+  it("UiSafeCopilotAnswer omits raw context / prompt / workspaceId (a cited answer, not a content dump)", () => {
+    expect(UI_SAFE_ALLOWLIST.copilotAnswer).not.toContain("context");
+    expect(UI_SAFE_ALLOWLIST.copilotAnswer).not.toContain("retrievedContent");
+    expect(UI_SAFE_ALLOWLIST.copilotAnswer).not.toContain("prompt");
+    expect(UI_SAFE_ALLOWLIST.copilotAnswer).not.toContain("workspaceId");
+  });
+
+  it("UiSafeCopilotAnswerSchema accepts a valid cited answer (incl. zero citations); rejects unknown keys + multi-line blocks", () => {
+    expect(UiSafeCopilotAnswerSchema.safeParse(validAnswer).success).toBe(true);
+    // An answer may cite nothing (found nothing in the workspace) — still valid.
+    expect(UiSafeCopilotAnswerSchema.safeParse({ ...validAnswer, citations: [] }).success).toBe(true);
+    // .strict() — the raw retrieval context / model prompt must NOT ride through the answer.
+    expect(UiSafeCopilotAnswerSchema.safeParse({ ...validAnswer, context: "raw workspace notes" }).success).toBe(false);
+    // Each answer block is single-line bounded (a multi-line block is the shape of a raw-content dump).
+    expect(UiSafeCopilotAnswerSchema.safeParse({ ...validAnswer, answer: ["line one\nleaked raw"] }).success).toBe(false);
+  });
+
+  it("UiSafeCopilotAnswer requires a non-empty answer + caps BOTH dimensions at the exact boundary (no chunk-smuggling)", () => {
+    // An answer must have at least one block.
+    expect(UiSafeCopilotAnswerSchema.safeParse({ ...validAnswer, answer: [] }).success).toBe(false);
+    // Boundary: exactly 40 blocks / 20 citations ACCEPT; one over REJECTS (pins the inclusive .max).
+    expect(UiSafeCopilotAnswerSchema.safeParse({ ...validAnswer, answer: Array(40).fill("a line") }).success).toBe(true);
+    expect(UiSafeCopilotAnswerSchema.safeParse({ ...validAnswer, answer: Array(41).fill("a line") }).success).toBe(false);
+    expect(UiSafeCopilotAnswerSchema.safeParse({ ...validAnswer, citations: Array(20).fill(validCitation) }).success).toBe(true);
+    expect(UiSafeCopilotAnswerSchema.safeParse({ ...validAnswer, citations: Array(21).fill(validCitation) }).success).toBe(false);
   });
 });
