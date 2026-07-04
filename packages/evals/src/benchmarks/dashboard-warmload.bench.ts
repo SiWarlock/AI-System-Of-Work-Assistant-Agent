@@ -174,6 +174,8 @@ export function makeRepresentativeReadModel(
     approvalInbox: outOfScope,
     copilotSurface: outOfScope,
     globalSurface: outOfScope,
+    recentChanges: outOfScope,
+    projectDashboards: outOfScope,
   };
 }
 

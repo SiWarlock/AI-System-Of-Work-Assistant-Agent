@@ -81,6 +81,8 @@ function serverDeps() {
       approvalInbox: () => emptyErr,
       copilotSurface: () => emptyErr,
       globalSurface: () => emptyErr,
+      recentChanges: () => emptyErr,
+      projectDashboards: () => emptyErr,
     },
     systemHealth: {
       healthItems: () => emptyErr,
