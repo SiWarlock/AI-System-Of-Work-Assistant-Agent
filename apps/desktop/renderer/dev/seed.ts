@@ -31,6 +31,34 @@ const SEED_EVENTS: readonly StreamEvent[] = [
     eventId: "seed-3",
     payload: { id: "granola", failureClass, severity: "warning", state: healthState, openedAt: ISO },
   },
+  // §9.8: sample pending approvals so the Approval-inbox surface renders populated in
+  // dev-without-worker (UI-safe shape — the same `approval.update` payload the stream
+  // carries: ids + status + channel + timing only, no raw content).
+  {
+    name: "approval.update",
+    seq: 4,
+    eventId: "seed-4",
+    payload: { id: "apr-cal-1", actionRef: "calendar.create:team-sync", status: "pending", channel: "mac" },
+  },
+  {
+    name: "approval.update",
+    seq: 5,
+    eventId: "seed-5",
+    payload: { id: "apr-mail-1", actionRef: "gmail.send:draft-4c2", status: "pending", channel: "mac" },
+  },
+  {
+    name: "approval.update",
+    seq: 6,
+    eventId: "seed-6",
+    payload: {
+      id: "apr-linear-1",
+      actionRef: "linear.create:ENG-311",
+      status: "deferred",
+      channel: "telegram",
+      snoozeUntil: "2026-07-05T09:00:00.000Z",
+      expiresAt: "2026-07-10T09:00:00.000Z",
+    },
+  },
 ];
 
 export function seedDevStore(store: Store<UiSafeStoreState>): void {

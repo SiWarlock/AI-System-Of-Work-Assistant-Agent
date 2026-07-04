@@ -1,22 +1,25 @@
 import type { CreateTRPCClient } from "@trpc/client";
 import type { AnyTRPCRouter } from "@trpc/server";
+import { UiSafeApprovalSchema, type UiSafeApproval } from "@sow/contracts/api/ui-safe";
 import type { SowBridge } from "../../preload/bridge";
 import type { Store, UiSafeStoreState } from "../store";
 import {
   hydrateCards,
   hydrateHealth,
   hydrateGlobal,
+  hydrateApprovals,
   replaceCards,
   replaceRecentChanges,
   replaceProjects,
 } from "../store/projections";
-import { scopeMeta, type WorkspaceScope } from "../store/scope";
+import { scopeMeta, WORKSPACE_SCOPES, type WorkspaceScope } from "../store/scope";
 import { createEventStream } from "./event-stream";
 import { createScopeRefresher } from "./scope-refresh";
 import { createLiveClient } from "./live-client";
 import { createWsStreamTransport } from "./ws-transport";
 import { createDrillDown, type DrillResult } from "./drilldown";
 import { createAskCopilot, type AskResult } from "./copilot-ask";
+import { createApprovalDecision, type ApprovalDecision, type DecisionResult } from "./approval-decision";
 
 /** The live-session handle: stop the stream + drill-down (§9.4) + scope-aware re-hydrate (§9.5). */
 export interface StartLiveHandle {
@@ -26,6 +29,8 @@ export interface StartLiveHandle {
   readonly hydrateScope: (scope: WorkspaceScope) => Promise<void>;
   /** Ask Copilot a question (§9.6, wired to query.copilotAsk); fails closed to {ok:false}. */
   readonly askCopilot: (workspaceId: string, question: string) => Promise<AskResult>;
+  /** Decide an approval (§9.8, wired to command.decideApproval, mac channel); fails closed to {ok:false}. */
+  readonly decideApproval: (approvalId: string, decision: ApprovalDecision) => Promise<DecisionResult>;
 }
 
 // Connect the UI-safe store to the LIVE worker over the §10 push stream (9.4b E).
@@ -77,6 +82,7 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
     drillDown: createDrillDown(live.client),
     hydrateScope: (scope: WorkspaceScope): Promise<void> => hydrateScope(live.client, store, scope),
     askCopilot: createAskCopilot(live.client),
+    decideApproval: createApprovalDecision(live.client),
   };
 }
 
@@ -168,5 +174,49 @@ async function hydrate(
     if (globalR?.ok === true) store.dispatch((s) => hydrateGlobal(s, globalR.value));
   } catch {
     // Best-effort snapshot — the live stream is the source of truth.
+  }
+  await hydrateApprovalInbox(client, store);
+}
+
+/**
+ * Seed the GLOBAL approval inbox (§9.8) on cold load. `query.approvalInbox` is
+ * per-workspace (WS-8 — each query is workspace-scoped server-side), so the global
+ * inbox is assembled by fanning out over the KNOWN workspace scopes and merging the
+ * (already UI-safe) results by id via `hydrateApprovals`. `allSettled` so one
+ * workspace's failure never drops the others; best-effort — the live `approval.update`
+ * stream + each decision's authoritative record keep the inbox current afterward.
+ *
+ * This only reshapes what the server already returns as UI-safe — no raw content
+ * crosses (`UiSafeApproval` carries ids + status + channel + timing only), which is
+ * why a single cross-scope inbox is WS-8-safe.
+ */
+async function hydrateApprovalInbox(
+  client: CreateTRPCClient<AnyTRPCRouter>,
+  store: Store<UiSafeStoreState>,
+): Promise<void> {
+  const workspaceIds = WORKSPACE_SCOPES.map((m) => m.workspaceId).filter(
+    (id): id is string => id !== null,
+  );
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const c = client as any;
+    const results = await Promise.allSettled(
+      workspaceIds.map((workspaceId) => c.query.approvalInbox.query({ workspaceId })),
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled" && r.value?.ok === true && Array.isArray(r.value.value)) {
+        // Re-validate each record against the UI-safe schema (.strict) before it enters
+        // the store — the same defense-in-depth the stream path applies; a leaky/malformed
+        // record (a server-projector regression) is DROPPED, never folded into the inbox.
+        const valid: UiSafeApproval[] = [];
+        for (const a of r.value.value) {
+          const parsed = UiSafeApprovalSchema.safeParse(a);
+          if (parsed.success) valid.push(parsed.data);
+        }
+        if (valid.length > 0) store.dispatch((s) => hydrateApprovals(s, valid));
+      }
+    }
+  } catch {
+    // Best-effort — the live stream remains the source of truth.
   }
 }
