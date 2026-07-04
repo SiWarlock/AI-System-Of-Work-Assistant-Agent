@@ -288,6 +288,20 @@ export const UiSafeManagedDocSchema = z
   })
   .strict();
 
+/**
+ * The five canonical managed-doc slots (§4.5) in display order, with default display titles.
+ * The SINGLE source of truth for the slot set + labels: the worker's doc-pack writer builds
+ * the pack from this, and the renderer overlays the read-model's link/sync state onto these
+ * ordered slots so the page always shows the full pack (robust to a partial read-model).
+ */
+export const MANAGED_DOC_SLOTS: readonly { readonly slot: UiSafeManagedDoc["slot"]; readonly title: string }[] = [
+  { slot: "00_brief", title: "00 Brief" },
+  { slot: "01_decisions", title: "01 Decisions" },
+  { slot: "02_meetings", title: "02 Meeting Digest" },
+  { slot: "03_research", title: "03 Research" },
+  { slot: "04_open_questions", title: "04 Open Questions" },
+];
+
 // ── UiSafeProjectDashboard ───────────────────────────────────────────────────
 // A dedicated Projects-surface card (§9.5, Flow 5, locked design §4.5). Carries the
 // deterministic progress plus the project's evidence-backed prose (blockers / waiting items /

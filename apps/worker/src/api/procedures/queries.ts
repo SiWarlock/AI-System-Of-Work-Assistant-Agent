@@ -330,6 +330,13 @@ function sanitizeProjectDashboards(
     const consistent =
       p.completedCount <= p.totalCount && p.percentComplete === computePercent(p.completedCount, p.totalCount);
     if (!consistent) return err(projectDashboardRejected());
+    // §4.5 doc-pack slot UNIQUENESS: each of the 5 canonical slots appears at most once. A
+    // duplicate slot is a projector defect (two rows for the same managed doc) — reject
+    // fail-closed, the same worker-side posture as the REQ-F-011 check above (the pure
+    // contract can't enforce it — an object `.refine` would collapse `.shape`, read by the
+    // allowlist freeze test).
+    const slots = parsed.data.docPack.map((d) => d.slot);
+    if (new Set(slots).size !== slots.length) return err(projectDashboardRejected());
     out.push(parsed.data);
   }
   return ok(out);

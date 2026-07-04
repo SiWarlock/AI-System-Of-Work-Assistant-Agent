@@ -27,6 +27,7 @@ import {
   type Approval,
   type WorkflowRunRef,
   type GclProjection,
+  type UiSafeManagedDoc,
 } from "@sow/contracts";
 import { createCallerFactory, router, type ApiContext } from "../../../src/api/trpc";
 import type { AuthedContext } from "../../../src/api/auth/sessionAuth";
@@ -209,7 +210,7 @@ const validFakeProject = {
   waitingItems: [],
   nextActions: ["wire the callback route"],
   evidenceRefs: ["src:plan-abc123"],
-  docPack: [],
+  docPack: [] as UiSafeManagedDoc[],
   updatedAt: "2026-07-04T00:00:00.000Z",
 };
 
@@ -407,6 +408,37 @@ describe("buildQueryRouter — UI-safe read-model serving (§10/§13)", () => {
     const res = await caller.query.projectList({ workspaceId: KNOWN_WORKSPACE });
     expect(isErr(res)).toBe(true);
     if (isErr(res)) expect(res.error.cause?.code).toBe("PROJECT_DASHBOARD_SANITIZATION_REJECTED");
+  });
+
+  it("projectList REJECTS a docPack with a DUPLICATE slot (§4.5 slot-uniqueness is worker-enforced — the contract can't via .refine)", async () => {
+    const dup: typeof validFakeProject = {
+      ...validFakeProject,
+      docPack: [
+        { slot: "00_brief", title: "00 Brief", linkState: "unlinked", syncState: "unknown" },
+        { slot: "00_brief", title: "00 Brief (dup)", linkState: "linked", syncState: "synced" },
+      ],
+    };
+    const caller = makeCaller(fakePort({ projectDashboards: () => ok([dup]) }));
+    const res = await caller.query.projectList({ workspaceId: KNOWN_WORKSPACE });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("PROJECT_DASHBOARD_SANITIZATION_REJECTED");
+  });
+
+  it("projectList ACCEPTS a full valid 5-slot docPack (all slots distinct)", async () => {
+    const full: typeof validFakeProject = {
+      ...validFakeProject,
+      docPack: [
+        { slot: "00_brief", title: "00 Brief", linkState: "unlinked", syncState: "unknown" },
+        { slot: "01_decisions", title: "01 Decisions", linkState: "unlinked", syncState: "unknown" },
+        { slot: "02_meetings", title: "02 Meeting Digest", linkState: "unlinked", syncState: "unknown" },
+        { slot: "03_research", title: "03 Research", linkState: "unlinked", syncState: "unknown" },
+        { slot: "04_open_questions", title: "04 Open Questions", linkState: "unlinked", syncState: "unknown" },
+      ],
+    };
+    const caller = makeCaller(fakePort({ projectDashboards: () => ok([full]) }));
+    const res = await caller.query.projectList({ workspaceId: KNOWN_WORKSPACE });
+    expect(isErr(res)).toBe(false);
+    if (!isErr(res)) expect(res.value[0]?.docPack).toHaveLength(5);
   });
 });
 

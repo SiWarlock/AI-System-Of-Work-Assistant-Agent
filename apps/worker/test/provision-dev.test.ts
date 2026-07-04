@@ -66,6 +66,24 @@ describe("provisionDevWorkspace (data-unlock D1 — real read-model data from lo
       expect(p.progress).toEqual({ completedCount: 2, totalCount: 5, percentComplete: 40 });
       expect(p.status).toBe("in-progress"); // 0 < 40 < 100
       expect(p.blockers).toEqual([]); // no dev model synthesis
+      // §4.5: the full 5-slot managed doc pack, all UNLINKED/UNKNOWN — honest pre-connector
+      // state (no Drive connector exists), never a synthetic "synced".
+      expect(p.docPack.map((d) => d.slot)).toEqual([
+        "00_brief",
+        "01_decisions",
+        "02_meetings",
+        "03_research",
+        "04_open_questions",
+      ]);
+      expect(p.docPack.every((d) => d.linkState === "unlinked" && d.syncState === "unknown")).toBe(true);
+      // Pin the §4.5 display titles so a MANAGED_DOC_SLOTS title drift is caught here.
+      expect(p.docPack.map((d) => d.title)).toEqual([
+        "00 Brief",
+        "01 Decisions",
+        "02 Meeting Digest",
+        "03 Research",
+        "04 Open Questions",
+      ]);
     }
   });
 

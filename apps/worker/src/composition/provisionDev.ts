@@ -16,7 +16,7 @@
 import { ok, err, isErr, type Result } from "@sow/contracts";
 import { countCheckboxes, computePercent } from "@sow/workflows";
 import type { ReadModelRepository } from "@sow/db";
-import type { UiSafeProjectDashboard } from "@sow/contracts";
+import { MANAGED_DOC_SLOTS, type UiSafeProjectDashboard } from "@sow/contracts";
 import { READ_MODEL_KEYS } from "../api/adapters/readModel";
 import type { DashboardCardSource } from "../api/projections/uiSafe";
 
@@ -234,7 +234,15 @@ export async function provisionDevWorkspace(
     waitingItems: [],
     nextActions: [],
     evidenceRefs: [],
-    docPack: [], // real 5-slot unlinked pack lands in the doc-pack writer slice (DP-2)
+    // The full 5-slot managed doc pack (§4.5), all UNLINKED/UNKNOWN — the honest pre-connector
+    // state: no Drive connector exists to link/sync a NotebookLM doc, so nothing is "synced".
+    // A real doc-pack projector (Drive-backed) replaces this once a connector lands.
+    docPack: MANAGED_DOC_SLOTS.map((s) => ({
+      slot: s.slot,
+      title: s.title,
+      linkState: "unlinked" as const,
+      syncState: "unknown" as const,
+    })),
     updatedAt: at,
   };
   const projDashPut = await upsertProjectRow(readModels, spec.workspaceId, projectDashboard, at);
