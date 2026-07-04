@@ -77,6 +77,22 @@ export function hydrateCards(
   return { ...state, cards: next };
 }
 
+/**
+ * REPLACE the cards with a scope's snapshot (clear the prior scope's cards first) —
+ * used on a scope change so switching scope NEVER blends the previous scope's cards
+ * under the new scope (§9.5 workspace isolation). Distinct from the upsert `hydrateCards`.
+ * Empty→empty is a ref-stable no-op.
+ */
+export function replaceCards(
+  state: UiSafeStoreState,
+  cards: readonly UiSafeDashboardCard[],
+): UiSafeStoreState {
+  if (cards.length === 0 && state.cards.size === 0) return state;
+  const next = new Map<string, UiSafeDashboardCard>();
+  for (const card of cards) next.set(card.cardId, card);
+  return { ...state, cards: next };
+}
+
 /** Fold an initial System-Health query result into state (upsert by id). */
 export function hydrateHealth(
   state: UiSafeStoreState,

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useSyncExternalStore, type ReactElement } from "react";
 import { Today } from "./surfaces/today/Today";
 import { createUiSafeStore } from "./store";
-import { setScope, hydrateCards } from "./store/projections";
+import { setScope } from "./store/projections";
 import { WORKSPACE_SCOPES, type WorkspaceScope } from "./store/scope";
 import { startLive, type StartLiveHandle } from "./lib/live";
 import { seedDevStore } from "./dev/seed";
@@ -37,12 +37,22 @@ export function App(): ReactElement {
   // §9.4 policy-gated drill-down: REQUEST the worker-enforced query; on a permitted
   // result fold the workspace-scoped cards in + switch scope to that workspace. A
   // denial / no-bridge is a safe no-op — the worker enforces, the renderer only asks.
+  // Scope change (§9.5): set the scope, then re-hydrate the scope-appropriate reads
+  // (the live handle clears + re-queries, so nothing blends across scopes).
+  const onScopeChange = (scope: WorkspaceScope): void => {
+    store.dispatch((st) => setScope(st, scope));
+    void liveRef.current?.hydrateScope(scope);
+  };
+
+  // Drill-down = the worker-enforced PERMISSION gate. On a permitted result, navigate
+  // to that workspace's scope (a within-workspace read re-loads its cards via
+  // hydrateScope); on a denial we do nothing. The gated cards themselves are the same
+  // workspace read the scope switch performs, so no separate hydrate is needed.
   const onDrillDown = (workspaceId: string, projectionType: string): void => {
     void liveRef.current?.drillDown(workspaceId, projectionType).then((r) => {
       if (!r.ok) return;
-      store.dispatch((st) => hydrateCards(st, r.cards));
       const scope = WORKSPACE_SCOPES.find((m) => m.workspaceId === workspaceId);
-      if (scope) store.dispatch((st) => setScope(st, scope.id));
+      if (scope) onScopeChange(scope.id);
     });
   };
 
@@ -50,7 +60,7 @@ export function App(): ReactElement {
     <Today
       connection={state.connection}
       scope={state.scope}
-      onScopeChange={(scope: WorkspaceScope): void => store.dispatch((st) => setScope(st, scope))}
+      onScopeChange={onScopeChange}
       cards={[...state.cards.values()]}
       health={[...state.health.values()]}
       global={state.global}

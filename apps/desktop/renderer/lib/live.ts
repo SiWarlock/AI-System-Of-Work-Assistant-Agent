@@ -2,16 +2,19 @@ import type { CreateTRPCClient } from "@trpc/client";
 import type { AnyTRPCRouter } from "@trpc/server";
 import type { SowBridge } from "../../preload/bridge";
 import type { Store, UiSafeStoreState } from "../store";
-import { hydrateCards, hydrateHealth, hydrateGlobal } from "../store/projections";
+import { hydrateCards, hydrateHealth, hydrateGlobal, replaceCards } from "../store/projections";
+import { scopeMeta, type WorkspaceScope } from "../store/scope";
 import { createEventStream } from "./event-stream";
 import { createLiveClient } from "./live-client";
 import { createWsStreamTransport } from "./ws-transport";
 import { createDrillDown, type DrillResult } from "./drilldown";
 
-/** The live-session handle: stop the stream + the policy-gated drill-down caller (§9.4). */
+/** The live-session handle: stop the stream + drill-down (§9.4) + scope-aware re-hydrate (§9.5). */
 export interface StartLiveHandle {
   readonly stop: () => void;
   readonly drillDown: (workspaceId: string, projectionType: string) => Promise<DrillResult>;
+  /** Re-hydrate for a scope (called on a scope change) — clears then re-queries, no blend. */
+  readonly hydrateScope: (scope: WorkspaceScope) => Promise<void>;
 }
 
 // Connect the UI-safe store to the LIVE worker over the §10 push stream (9.4b E).
@@ -56,7 +59,50 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
       live.close();
     },
     drillDown: createDrillDown(live.client),
+    hydrateScope: (scope: WorkspaceScope): Promise<void> => hydrateScope(live.client, store, scope),
   };
+}
+
+/**
+ * Re-hydrate the store for a scope change (§9.5). CLEARS the prior scope's cards + the
+ * Global GCL FIRST — so switching scope never blends the previous scope's data under
+ * the new one, even if the re-query errors (an unknown/placeholder workspace) — then
+ * re-queries the scope-appropriate read-model: Global → the cross-workspace aggregate
+ * (dashboard) + the GCL surface; a workspace scope → that ONE workspace's cards.
+ *
+ * A stale-scope guard drops a superseded result (a fast A→B→A switch): the store's
+ * current `scope` must still equal the requested one before any dispatch.
+ *
+ * FOLLOW-UP: the STREAM push path is not yet scope-filtered — a read_model.change event
+ * still upserts regardless of scope (UiSafeDashboardCard carries no workspaceId to
+ * filter on). Scope-correct streaming needs either a per-subscription server scope or a
+ * workspaceId on the card. This slice makes the PULL (query) path scope-correct.
+ */
+async function hydrateScope(
+  client: CreateTRPCClient<AnyTRPCRouter>,
+  store: Store<UiSafeStoreState>,
+  scope: WorkspaceScope,
+): Promise<void> {
+  const meta = scopeMeta(scope);
+  // Clear immediately — no stale cross-scope cards/GCL linger while the query runs.
+  store.dispatch((s) => replaceCards(s, []));
+  store.dispatch((s) => hydrateGlobal(s, []));
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const c = client as any;
+    if (meta.workspaceId === null) {
+      const [cardsR, globalR] = await Promise.all([c.query.dashboard.query(), c.query.global.query()]);
+      if (store.getSnapshot().scope !== scope) return; // superseded by a newer scope
+      if (cardsR?.ok === true) store.dispatch((s) => replaceCards(s, cardsR.value));
+      if (globalR?.ok === true) store.dispatch((s) => hydrateGlobal(s, globalR.value));
+    } else {
+      const cardsR = await c.query.workspace.query({ workspaceId: meta.workspaceId });
+      if (store.getSnapshot().scope !== scope) return; // superseded by a newer scope
+      if (cardsR?.ok === true) store.dispatch((s) => replaceCards(s, cardsR.value));
+    }
+  } catch {
+    // Best-effort — the cleared state stands; the live stream remains the source of truth.
+  }
 }
 
 async function hydrate(

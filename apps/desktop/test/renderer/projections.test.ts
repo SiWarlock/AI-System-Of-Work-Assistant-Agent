@@ -6,6 +6,7 @@ import {
   setScope,
   isGap,
   hydrateCards,
+  replaceCards,
   hydrateHealth,
   hydrateGlobal,
   groupGlobalByWorkspace,
@@ -29,6 +30,18 @@ describe("initial hydrate (9.4b — fold a read-model query snapshot)", () => {
     s = applyStreamEvent(s, cardEvent(1, "e1", "card-1"));
     expect(s.cards.size).toBe(2);
     expect(s.lastEventId).toBe("e1");
+  });
+
+  it("replaceCards REPLACES (no blend) — a scope change clears the prior scope's cards", () => {
+    // Populate with a "global" scope's cards, then replace with a workspace's — the
+    // global card must NOT linger under the workspace scope (§9.5 no cross-scope blend).
+    const global = hydrateCards(initialStoreState, [uiSafeCard("global-1"), uiSafeCard("global-2")]);
+    const workspace = replaceCards(global, [uiSafeCard("ws-1")]);
+    expect([...workspace.cards.keys()]).toEqual(["ws-1"]);
+    // Replacing with empty clears entirely; empty→empty is a ref-stable no-op.
+    const cleared = replaceCards(workspace, []);
+    expect(cleared.cards.size).toBe(0);
+    expect(replaceCards(cleared, [])).toBe(cleared);
   });
 
   it("hydrateHealth upserts items by id", () => {
