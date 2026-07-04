@@ -16,6 +16,7 @@
 import { ok, err, isErr, type Result } from "@sow/contracts";
 import { countCheckboxes, computePercent } from "@sow/workflows";
 import type { ReadModelRepository } from "@sow/db";
+import type { UiSafeProjectDashboard } from "@sow/contracts";
 import { READ_MODEL_KEYS } from "../api/adapters/readModel";
 import type { DashboardCardSource } from "../api/projections/uiSafe";
 
@@ -131,6 +132,44 @@ async function registerWorkspace(
   return put.ok ? ok(undefined) : err({ code: "store_fault", message: "workspace registry put failed" });
 }
 
+/** Read the `projects` array off the project-dashboards payload; malformed/absent → `[]`. */
+function readProjects(data: unknown): readonly UiSafeProjectDashboard[] {
+  if (typeof data !== "object" || data === null) return [];
+  const arr = (data as Record<string, unknown>)["projects"];
+  if (!Array.isArray(arr)) return [];
+  return arr.filter(
+    (row): row is UiSafeProjectDashboard =>
+      typeof row === "object" && row !== null && typeof (row as Record<string, unknown>)["projectId"] === "string",
+  );
+}
+
+/**
+ * UPSERT one project dashboard (by `projectId`) into the workspace's `project_dashboards`
+ * row, preserving any sibling projects. Same not-found-vs-fault discipline as `upsertCardRow`.
+ * The written row is a candidate that `query.projectList`'s `sanitizeProjectDashboards`
+ * re-validates (incl. the REQ-F-011 progress checks) before it ever reaches the renderer.
+ */
+async function upsertProjectRow(
+  readModels: ReadModelRepository,
+  workspaceId: string,
+  project: UiSafeProjectDashboard,
+  at: string,
+): Promise<Result<void, DevProvisionError>> {
+  const existing = await readModels.get(READ_MODEL_KEYS.projectDashboards, workspaceId);
+  if (isErr(existing) && existing.error.code !== "not_found") {
+    return err({ code: "store_fault", message: "project-dashboards get failed" });
+  }
+  const prior = existing.ok ? readProjects(existing.value.data) : [];
+  const projects = [...prior.filter((p) => p.projectId !== project.projectId), project];
+  const put = await readModels.put({
+    readModelKey: READ_MODEL_KEYS.projectDashboards,
+    workspaceId,
+    data: { projects },
+    rebuiltAt: at,
+  });
+  return put.ok ? ok(undefined) : err({ code: "store_fault", message: "project-dashboards put failed" });
+}
+
 /**
  * Provision ONE dev workspace from a local Markdown note: parse its checkboxes
  * deterministically, upsert a project card into the workspace + project + global-dashboard
@@ -179,6 +218,27 @@ export async function provisionDevWorkspace(
   if (!wsPut.ok) return wsPut;
   const projPut = await upsertCardRow(readModels, READ_MODEL_KEYS.project, spec.workspaceId, card, at);
   if (!projPut.ok) return projPut;
+
+  // The rich Projects-surface row (§9.5): the SAME deterministic percent, now as a real
+  // UiSafeProjectDashboard. Prose fields are empty — the dev provisioner runs NO model
+  // synthesis (blockers/waiting/next come only from a no-inference-gated ValidatedNarrative,
+  // which a real project-sync workflow produces — deferred). `progress` is consistent by
+  // construction (percent === computePercent(counts), completed <= total), so it passes the
+  // REQ-F-011 re-validation in query.projectList. Status is a deterministic display token.
+  const projectDashboard: UiSafeProjectDashboard = {
+    projectId: `${spec.workspaceId}:${spec.notePath}`,
+    title: spec.projectTitle ?? spec.notePath,
+    status: percent === 100 ? "done" : percent === 0 ? "not-started" : "in-progress",
+    progress: { completedCount: tally.completed, totalCount: tally.total, percentComplete: percent },
+    blockers: [],
+    waitingItems: [],
+    nextActions: [],
+    evidenceRefs: [],
+    updatedAt: at,
+  };
+  const projDashPut = await upsertProjectRow(readModels, spec.workspaceId, projectDashboard, at);
+  if (!projDashPut.ok) return projDashPut;
+
   const reg = await registerWorkspace(readModels, spec.workspaceId, at);
   if (!reg.ok) return reg;
 

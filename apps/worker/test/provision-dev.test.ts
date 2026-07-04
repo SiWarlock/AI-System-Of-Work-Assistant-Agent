@@ -53,6 +53,22 @@ describe("provisionDevWorkspace (data-unlock D1 — real read-model data from lo
     }
   });
 
+  it("writes a real project dashboard with DETERMINISTIC progress (the query.projectList path)", async () => {
+    const b = await fresh();
+    await b.vault.write("alpha.md", NOTE_40); // 2/5 → 40%
+    await provisionDevWorkspace(deps(b), { workspaceId: "employer-work", notePath: "alpha.md", projectTitle: "Alpha" });
+    const projects = await port(b).projectDashboards("employer-work");
+    expect(projects.ok).toBe(true);
+    if (projects.ok) {
+      expect(projects.value.length).toBe(1);
+      const p = projects.value[0]!;
+      expect(p.title).toBe("Alpha");
+      expect(p.progress).toEqual({ completedCount: 2, totalCount: 5, percentComplete: 40 });
+      expect(p.status).toBe("in-progress"); // 0 < 40 < 100
+      expect(p.blockers).toEqual([]); // no dev model synthesis
+    }
+  });
+
   it("registers ONLY the provisioned workspace — an unprovisioned scope still fails closed (WS-8)", async () => {
     const b = await fresh();
     await b.vault.write("alpha.md", NOTE_40);
