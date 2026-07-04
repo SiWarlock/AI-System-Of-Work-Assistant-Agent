@@ -68,6 +68,7 @@ import type {
 import type { Logger } from "./observability/logger";
 import { createHealthSurface, type HealthSurface } from "./health/surface";
 import { createPersistentHealthSurfaceStore } from "./composition/store-adapters";
+import { provisionDevWorkspace, type DevProvisionSpec } from "./composition/provisionDev";
 import {
   createTemporalUnavailabilityController,
   DEFAULT_TEMPORAL_UNAVAILABLE_CONFIG,
@@ -135,6 +136,15 @@ export interface BootConfig extends BackendsConfig {
   readonly temporalAddress?: string;
   /** Bound the Temporal connect loop so a permanent outage degrades, never spins. Default 5. */
   readonly maxConnectAttempts?: number;
+  /**
+   * DEV-ONLY data unlock (OFF by default). When supplied, each spec turns a local vault
+   * Markdown note into REAL read-model rows (deterministic checkbox parse + the fail-closed
+   * workspace registry) so the wired-but-empty Today / workspace / project surfaces show
+   * genuine content without vendor I/O — honoring the §9.4 "empty-until-data, no seed"
+   * decision (the data is derived from real files, not a DB seed). Best-effort at boot: a
+   * per-spec failure is logged and skipped; it never blocks the control plane coming up.
+   */
+  readonly devProvision?: readonly DevProvisionSpec[];
 }
 
 /** The assembled live control plane the app shell drives. */
@@ -224,6 +234,36 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     ...(config.logSink !== undefined ? { logSink: config.logSink } : {}),
   };
   const backends = await assembleBackends(backendsConfig, config.stubExtraction);
+
+  // 1.5) DEV data-unlock (OFF by default). When dev-provision specs are supplied, turn
+  //   local vault Markdown into REAL read-model rows so the wired-but-empty surfaces show
+  //   genuine content (deterministic parse + fail-closed registry — NOT a seed). Best-effort:
+  //   a per-spec failure is logged and skipped; it never blocks the control plane booting.
+  if (config.devProvision !== undefined && config.devProvision.length > 0) {
+    for (const spec of config.devProvision) {
+      try {
+        const provisioned = await provisionDevWorkspace(
+          { readModels: backends.repos.readModels, vault: backends.vault, now: backends.now },
+          spec,
+        );
+        if (provisioned.ok) {
+          backends.logger.info("dev.provision.ok", {
+            fields: { workspaceId: spec.workspaceId, notePath: spec.notePath },
+          });
+        } else {
+          backends.logger.warn("dev.provision.skip", {
+            fields: { workspaceId: spec.workspaceId, code: provisioned.error.code },
+          });
+        }
+      } catch {
+        // Defense-in-depth: even a contract-violating throw from a backend must not block
+        // the control plane coming up (the provisioner returns typed Results by contract).
+        backends.logger.warn("dev.provision.skip", {
+          fields: { workspaceId: spec.workspaceId, code: "threw" },
+        });
+      }
+    }
+  }
 
   // 2) The REAL @sow/db port adapters behind the query/command surface.
   const readModel: ReadModelQueryPort = createDbReadModelQueryPort({
