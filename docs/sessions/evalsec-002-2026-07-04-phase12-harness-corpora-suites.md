@@ -49,3 +49,21 @@ into EVALUATION_CRITERIA. Coordinate before touching packages/{knowledge,integra
 After any suite fan-out, run the FULL-package tsc (agents only vitest their own file).
 Trailer: Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 ```
+
+---
+
+## Addendum — same session continued (12.19 / 12.5 / 12.21)
+
+Three more tasks landed after the checkpoint above:
+
+| Commit | Task | Deliverable |
+|---|---|---|
+| `73daf1b` | **12.19** | Temporal sleep/wake/restart + worker-supervision (`suites/lifecycle/`, 18) — real `@sow/workflows` catchUpWindow (collapse-to-one, NTP-backward survival) + `@sow/worker` recovery/supervision/lease/degraded controllers. Builds **SLEEP_THROUGH_BRIEF_RESUME** (dodPass=true, deterministic). |
+| `73daf1b` | **12.5** | Conformance pinned-models + release-gate (`suites/conformance/` + `src/conformance/pinned-models.ts`, 12) — real matrixEligibility/releaseBlockingFailures/meetingCloseDoD; ≥1-conformant-for-`meeting.close` gate, no OpenAI↔OpenRouter contagion, local optional. Scores PROVIDER_CONFORMANCE + RUNTIME_CONFORMANCE honestly (real-required → dodPass=false from fixture gate). |
+| `f7db2bd` | **12.21** | Latency budgets wired to EVAL-1 (`test/perf/latency-budgets.test.ts`, 9) — registered thresholds mirror the bench budget consts (drift guard), regression-past-budget fails, value derived from the real `assess*` cores, DoD honesty (real-required → dodPass=false; real-timing stays on the `*.bench` cadence). |
+
+**State now:** **388 evals tests green**, `tsc` clean, tree clean. **§20.1 acceptance suites built: 11/19** (added SLEEP_THROUGH_BRIEF_RESUME). 12.5 + 12.21 complete the conformance-gate + latency-metric wiring.
+
+**Remaining §20.1 acceptance rows without a suite (8):** Meeting closeout replay, Workspace routing, Knowledge write (→ 12.16 e2e, real-integration), Approval flow (no dedicated suite yet — buildable deterministically over the approval state machine), Open-source install (→ 12.20, Phase-11-gated), Retrieval relevance (real gbrain), GBrain parity (→ 12.7, real gbrain), Human-section preservation (→ 12.6, packages/knowledge — coordinate w/ dashboard track).
+
+**Cleanest next (packages/evals, no collision):** **Approval flow** suite (deterministic, over the approval state machine + Tool Gateway — closes another §20.1 row) is the last big one buildable without real integrations or cross-track coordination. After that, the remaining rows are real-integration-gated (12.16/retrieval/12.7) or cross-package (12.6/12.8/12.4) or Phase-11-gated (12.18/12.20).
