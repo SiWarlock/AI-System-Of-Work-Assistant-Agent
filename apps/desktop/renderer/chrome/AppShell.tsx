@@ -32,6 +32,8 @@ export interface AppShellProps {
   readonly onNavigate: (route: Route) => void;
   /** Ask Copilot a question (§9.6). Present → the Copilot composer is LIVE; absent → disabled scaffold. */
   readonly onAskCopilot?: (question: string) => Promise<AskResult>;
+  /** The pending-approval count (§9.8) for the Approvals nav badge; 0/undefined → no pill. */
+  readonly pendingApprovalCount?: number;
   /** The active surface, rendered in the content pane. */
   readonly children: ReactNode;
 }
@@ -184,21 +186,25 @@ function ConnectionPill({ connection }: { readonly connection: ConnectionStatus 
 // ── Left-rail nav item ─────────────────────────────────────────────────────
 
 /**
- * A routable left-rail nav item (Today / Projects). Route-derived active state; Enter/Space
- * + click both navigate (mirrors the scope switcher's div-as-interactive keyboard pattern).
- * Navigation is scope-preserving — it only selects the surface.
+ * A routable left-rail nav item (Today / Projects / Approvals). Route-derived active state;
+ * Enter/Space + click both navigate (mirrors the scope switcher's div-as-interactive keyboard
+ * pattern). Navigation is scope-preserving — it only selects the surface. An optional `badge`
+ * renders a count pill (e.g. the pending-approvals count).
  */
 function NavLink({
   surface,
   label,
   active,
   onNavigate,
+  badge,
   children,
 }: {
   readonly surface: Route["surface"];
   readonly label: string;
   readonly active: boolean;
   readonly onNavigate: (route: Route) => void;
+  /** An optional count pill (e.g. the pending-approvals count); rendered only when > 0. */
+  readonly badge?: number;
   readonly children: ReactNode;
 }): ReactElement {
   const go = (): void => onNavigate({ surface });
@@ -218,6 +224,10 @@ function NavLink({
     >
       {children}
       <span className="sow-nav-label">{label}</span>
+      {badge !== undefined && badge > 0 ? (
+        // Include the nav noun so the pill alone is meaningful to a screen reader ("4 pending approvals").
+        <span className="sow-badge" aria-label={`${badge} pending ${label.toLowerCase()}`}>{badge}</span>
+      ) : null}
     </div>
   );
 }
@@ -225,7 +235,7 @@ function NavLink({
 // ── The shell ──────────────────────────────────────────────────────────────
 
 export function AppShell(props: AppShellProps): ReactElement {
-  const { connection, scope, onScopeChange, route, onNavigate, onAskCopilot, children } = props;
+  const { connection, scope, onScopeChange, route, onNavigate, onAskCopilot, pendingApprovalCount, children } = props;
 
   // Copilot right-sidebar chrome state (§4.6): collapsed (thin rail) ⇄ expanded (chat panel).
   // Owned here like the scope switcher's local open state — orthogonal to BOTH route and scope
@@ -331,15 +341,19 @@ export function AppShell(props: AppShellProps): ReactElement {
             <span className="sow-nav-label">Calendar</span>
           </div>
 
-          {/* Approvals */}
-          <div className="sow-nav-item" role="link" tabIndex={0}>
+          {/* Approvals — routable (§9.8), with a live pending-count badge */}
+          <NavLink
+            surface="approvals"
+            label="Approvals"
+            active={route.surface === "approvals"}
+            onNavigate={onNavigate}
+            badge={pendingApprovalCount}
+          >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="8.5" />
               <path d="M8.5 12l2.5 2.5 4.5-5" />
             </svg>
-            <span className="sow-nav-label">Approvals</span>
-            <span className="sow-badge" aria-label="3 pending approvals">3</span>
-          </div>
+          </NavLink>
 
           {/* Inbox */}
           <div className="sow-nav-item" role="link" tabIndex={0}>

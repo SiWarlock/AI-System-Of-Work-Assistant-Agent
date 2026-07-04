@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, within } from "@testing-library/react";
 import { AppShell, type AppShellProps } from "../renderer/chrome/AppShell";
 
 afterEach(cleanup);
@@ -69,6 +69,42 @@ describe("AppShell — left-rail routing (§9.5, the R2 nav wiring)", () => {
       </AppShell>,
     );
     expect(screen.getByText("ACTIVE-SURFACE-BODY")).toBeTruthy();
+  });
+
+  it("Approvals is a routable nav item (§9.8) — clicking navigates, and it marks active on route", () => {
+    const onNavigate = vi.fn();
+    const { rerender } = render(
+      <AppShell {...base} onNavigate={onNavigate}>
+        <div>content</div>
+      </AppShell>,
+    );
+    fireEvent.click(screen.getByText("Approvals"));
+    expect(onNavigate).toHaveBeenCalledWith({ surface: "approvals" });
+    // aria-current follows the route.
+    rerender(
+      <AppShell {...base} route={{ surface: "approvals" }} onNavigate={onNavigate}>
+        <div>content</div>
+      </AppShell>,
+    );
+    expect(screen.getByText("Approvals").closest(".sow-nav-item")?.getAttribute("aria-current")).toBe("page");
+  });
+
+  it("the Approvals nav badge reflects the pending count — shown when > 0, absent when 0 (§9.8)", () => {
+    const { rerender } = render(
+      <AppShell {...base} pendingApprovalCount={4}>
+        <div>content</div>
+      </AppShell>,
+    );
+    const nav = screen.getByText("Approvals").closest(".sow-nav-item") as HTMLElement;
+    expect(within(nav).getByText("4")).toBeTruthy();
+    // 0 → no badge pill (an empty inbox shows no count).
+    rerender(
+      <AppShell {...base} pendingApprovalCount={0}>
+        <div>content</div>
+      </AppShell>,
+    );
+    const nav0 = screen.getByText("Approvals").closest(".sow-nav-item") as HTMLElement;
+    expect(within(nav0).queryByText("0")).toBeNull();
   });
 });
 

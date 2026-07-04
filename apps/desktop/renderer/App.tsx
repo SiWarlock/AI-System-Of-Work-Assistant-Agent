@@ -1,13 +1,15 @@
-import { useEffect, useRef, useSyncExternalStore, type ReactElement } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactElement } from "react";
 import { AppShell } from "./chrome/AppShell";
 import { Today } from "./surfaces/today/Today";
 import { Projects } from "./surfaces/projects/Projects";
+import { Approvals } from "./surfaces/approvals/Approvals";
 import { createUiSafeStore } from "./store";
-import { setScope, navigate } from "./store/projections";
+import { setScope, navigate, hydrateApprovals } from "./store/projections";
 import { WORKSPACE_SCOPES, resolveWorkspaceId, type WorkspaceScope } from "./store/scope";
 import type { Route } from "./store/route";
 import { startLive, type StartLiveHandle } from "./lib/live";
 import type { AskResult } from "./lib/copilot-ask";
+import type { ApprovalDecision } from "./lib/approval-decision";
 import { seedDevStore } from "./dev/seed";
 
 // The renderer's single UI-safe store (app singleton — one window).
@@ -15,6 +17,11 @@ const store = createUiSafeStore();
 
 export function App(): ReactElement {
   const liveRef = useRef<StartLiveHandle | null>(null);
+  // Whether a REAL live worker handle exists (reactive — drives affordances that must be
+  // disabled without a worker, e.g. the approval-decision buttons). Distinct from the
+  // `connection` status: the dev-seed fallback sets connection="live" for a populated demo
+  // even though there is NO handle, so gating on `connection` would render dead controls.
+  const [hasLiveWorker, setHasLiveWorker] = useState(false);
 
   useEffect(() => {
     // Connect the live worker over the §10 push stream (9.4b E). When there is no
@@ -27,12 +34,14 @@ export function App(): ReactElement {
         return;
       }
       liveRef.current = handle;
+      setHasLiveWorker(handle !== null);
       if (handle === null && import.meta.env.DEV) seedDevStore(store);
     });
     return () => {
       cancelled = true;
       liveRef.current?.stop();
       liveRef.current = null;
+      setHasLiveWorker(false);
     };
   }, []);
 
@@ -80,6 +89,22 @@ export function App(): ReactElement {
     return liveRef.current.askCopilot(workspaceId, question);
   };
 
+  // §9.8 approval decision: REQUEST the worker's exactly-once transition (mac channel). On a
+  // decided (or idempotent no-op) result, fold the worker's authoritative UI-safe record into
+  // the inbox Map — the item transitions in place (approved/rejected drop it from the inbox;
+  // deferred moves it to snoozed). A failed decision / no live worker is a safe no-op — the
+  // worker owns the CAS + one-writer dispatch; the renderer only asks.
+  const onDecideApproval = (approvalId: string, decision: ApprovalDecision): void => {
+    const handle = liveRef.current;
+    if (handle === null) return;
+    void handle.decideApproval(approvalId, decision).then((r) => {
+      if (r.ok) store.dispatch((s) => hydrateApprovals(s, [r.approval]));
+    });
+  };
+
+  const approvals = [...state.approvals.values()];
+  const pendingApprovalCount = approvals.filter((a) => a.status === "pending").length;
+
   const selectedProjectId =
     state.route.surface === "projects" ? state.route.projectId : undefined;
 
@@ -91,8 +116,16 @@ export function App(): ReactElement {
       route={state.route}
       onNavigate={onNavigate}
       onAskCopilot={onAskCopilot}
+      pendingApprovalCount={pendingApprovalCount}
     >
-      {state.route.surface === "projects" ? (
+      {state.route.surface === "approvals" ? (
+        <Approvals
+          approvals={approvals}
+          // Enabled only over a REAL live worker (the decision needs the CAS); no worker
+          // (incl. the dev-seed demo) → disabled buttons, never a silently no-op control.
+          onDecide={hasLiveWorker ? onDecideApproval : undefined}
+        />
+      ) : state.route.surface === "projects" ? (
         <Projects
           scope={state.scope}
           projects={state.projects}
