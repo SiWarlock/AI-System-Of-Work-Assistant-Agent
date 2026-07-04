@@ -7,6 +7,7 @@ import {
   type StreamEvent,
 } from "@sow/contracts";
 import type {
+  UiSafeApproval,
   UiSafeDashboardCard,
   UiSafeHealthItem,
   UiSafeRecentChange,
@@ -61,6 +62,13 @@ export function cardEvent(seq: number, eventId: string, cardId = "card-1"): Stre
 // carries), for the hydrate reducers.
 export function uiSafeCard(cardId = "card-1"): UiSafeDashboardCard {
   return { cardId, kind: "approvals", title: "Approvals", status: "ok", count: 3, updatedAt: ISO };
+}
+
+export function uiSafeApproval(
+  id = "app-1",
+  overrides: Partial<UiSafeApproval> = {},
+): UiSafeApproval {
+  return { id, actionRef: "act-1", status, channel, ...overrides };
 }
 
 export function uiSafeHealthItem(id = "h-1"): UiSafeHealthItem {

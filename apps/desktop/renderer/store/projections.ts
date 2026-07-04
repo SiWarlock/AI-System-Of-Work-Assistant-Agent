@@ -1,5 +1,6 @@
 import type { StreamEvent } from "@sow/contracts/api/events";
 import type {
+  UiSafeApproval,
   UiSafeDashboardCard,
   UiSafeHealthItem,
   UiSafeGclProjection,
@@ -144,6 +145,28 @@ export function replaceProjects(
 ): UiSafeStoreState {
   if (projects.length === 0 && state.projects.length === 0) return state;
   return { ...state, projects };
+}
+
+/**
+ * Fold approvals into the GLOBAL inbox Map (upsert by id) — used both to seed the inbox
+ * from an initial `query.approvalInbox` snapshot on cold load AND to fold the authoritative
+ * post-decision record `command.decideApproval` returns (a re-query is unnecessary; the
+ * returned record IS the new truth). Keyed identically to the `approval.update` stream
+ * reducer, so a subsequent stream event for the same id is a clean upsert.
+ *
+ * The inbox is NOT scope-cleared (unlike cards/recentChanges/projects): `UiSafeApproval`
+ * carries only ids + status + channel + timing — no raw workspace content — so a single
+ * cross-scope inbox is WS-8-safe by construction. Empty→no-op (same ref); the resume cursor
+ * is untouched (hydrate is a snapshot, not a stream event).
+ */
+export function hydrateApprovals(
+  state: UiSafeStoreState,
+  approvals: readonly UiSafeApproval[],
+): UiSafeStoreState {
+  if (approvals.length === 0) return state;
+  const next = new Map(state.approvals);
+  for (const approval of approvals) next.set(approval.id, approval);
+  return { ...state, approvals: next };
 }
 
 /** Fold an initial System-Health query result into state (upsert by id). */

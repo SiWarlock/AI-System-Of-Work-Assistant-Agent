@@ -8,6 +8,7 @@ import {
   hydrateCards,
   replaceCards,
   hydrateHealth,
+  hydrateApprovals,
   hydrateGlobal,
   groupGlobalByWorkspace,
   replaceRecentChanges,
@@ -20,6 +21,7 @@ import {
   workflowEvent,
   cardEvent,
   uiSafeCard,
+  uiSafeApproval,
   uiSafeHealthItem,
   uiSafeRecentChange,
   uiSafeProjectDashboard,
@@ -52,6 +54,37 @@ describe("initial hydrate (9.4b — fold a read-model query snapshot)", () => {
     let s = initialStoreState;
     s = hydrateHealth(s, [uiSafeHealthItem("h-1"), uiSafeHealthItem("h-2")]);
     expect([...s.health.keys()].sort()).toEqual(["h-1", "h-2"]);
+  });
+
+  it("hydrateApprovals upserts the global inbox by id; a later approval.update stays a clean upsert", () => {
+    // §9.8: the Approval inbox is a GLOBAL, stream-fed Map (UiSafeApproval carries no raw
+    // content, so it is not scope-cleared). The cold-load hydrate bulk-upserts by id, keyed
+    // identically to the `approval.update` stream reducer, so a later event is a clean upsert.
+    let s = initialStoreState;
+    s = hydrateApprovals(s, [uiSafeApproval("app-1"), uiSafeApproval("app-2")]);
+    expect([...s.approvals.keys()].sort()).toEqual(["app-1", "app-2"]);
+    // A later stream update for app-1 upserts (no duplicate) and does not disturb the resume cursor set below.
+    s = applyStreamEvent(s, approvalEvent(1, "e1", "app-1"));
+    expect(s.approvals.size).toBe(2);
+    expect(s.lastEventId).toBe("e1");
+  });
+
+  it("hydrateApprovals folds an authoritative post-decision record (upsert by id changes status)", () => {
+    // The decision command returns the UI-safe record AFTER the CAS; folding it back updates the
+    // inbox in place (a re-query is unnecessary — the returned record IS the new truth).
+    let s = hydrateApprovals(initialStoreState, [uiSafeApproval("app-1")]);
+    expect(s.approvals.get("app-1")?.status).toBe("pending");
+    s = hydrateApprovals(s, [uiSafeApproval("app-1", { status: "approved" })]);
+    expect(s.approvals.size).toBe(1);
+    expect(s.approvals.get("app-1")?.status).toBe("approved");
+  });
+
+  it("hydrateApprovals empty→no-op (same ref) and does NOT advance the resume cursor", () => {
+    const s = initialStoreState;
+    expect(hydrateApprovals(s, [])).toBe(s);
+    const one = hydrateApprovals(s, [uiSafeApproval("app-1")]);
+    expect(one.lastEventId).toBeNull();
+    expect(one.lastSeq).toBeNull();
   });
 
   it("replaceRecentChanges REPLACES the scoped recent-activity list (no blend across scopes)", () => {

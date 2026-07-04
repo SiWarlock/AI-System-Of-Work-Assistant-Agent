@@ -12,7 +12,8 @@
 
 export type Route =
   | { readonly surface: "today" }
-  | { readonly surface: "projects"; readonly projectId?: string };
+  | { readonly surface: "projects"; readonly projectId?: string }
+  | { readonly surface: "approvals" };
 
 /**
  * The surface mounted on launch: Today (home). Frozen — it is shared by reference across

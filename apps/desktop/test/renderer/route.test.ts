@@ -55,4 +55,19 @@ describe("route model (§9.5 routing foundation — surface selection, independe
     expect(routeEquals({ surface: "projects", projectId: "p1" }, { surface: "projects", projectId: "p2" })).toBe(false);
     expect(routeEquals({ surface: "projects" }, { surface: "projects", projectId: "p1" })).toBe(false);
   });
+
+  it("approvals is a routable surface — navigable, structural-equal, distinct from other surfaces", () => {
+    // §9.8: the Approval inbox mounts as its own surface (id-less, like Today).
+    const s = navigate(initialStoreState, { surface: "approvals" });
+    expect(s.route).toEqual({ surface: "approvals" });
+    // Navigating to a surface never touches the (global, stream-fed) approvals slice or scope.
+    expect(s.approvals).toBe(initialStoreState.approvals);
+    expect(s.scope).toBe(initialStoreState.scope);
+    // Ref-stable no-op on re-navigate to the same surface.
+    expect(navigate(s, { surface: "approvals" })).toBe(s);
+    // Structural equality — same surface true, cross-surface false (both directions).
+    expect(routeEquals({ surface: "approvals" }, { surface: "approvals" })).toBe(true);
+    expect(routeEquals({ surface: "approvals" }, { surface: "today" })).toBe(false);
+    expect(routeEquals({ surface: "projects" }, { surface: "approvals" })).toBe(false);
+  });
 });
