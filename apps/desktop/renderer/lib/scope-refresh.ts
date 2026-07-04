@@ -1,0 +1,47 @@
+import type { CreateTRPCClient } from "@trpc/client";
+import type { AnyTRPCRouter } from "@trpc/server";
+import type { Store, UiSafeStoreState } from "../store";
+import { replaceCards } from "../store/projections";
+import { scopeMeta, type WorkspaceScope } from "../store/scope";
+
+// Push-path liveness for a workspace scope (§9.5). Lives in its own module (no `window`/
+// bridge dependency — just a client + store) so it stays unit-testable without the DOM.
+
+/**
+ * Push-path LIVENESS for a workspace scope (§9.5). `applyStreamEvent` suppresses a
+ * read_model.change card in a workspace scope (isolation — the card carries no
+ * workspaceId), so on each such push we re-query THAT scope's cards through the
+ * scope-correct pull path (query.workspace) and replace — keeping the tab live rather
+ * than frozen on its entry snapshot. Global scope is a no-op: it stays live via the
+ * reducer's direct fold (its `cards` ARE the query.dashboard aggregate the push emits).
+ *
+ * Unlike a scope CHANGE (`hydrateScope`), a same-scope refresh does NOT clear first — so
+ * it never flickers. Two guards keep it correct under a burst:
+ *  - LATEST-WINS: a monotonic token drops an older in-flight query that resolves after a
+ *    newer one (never overwrites fresh cards with stale).
+ *  - STALE-SCOPE: a result whose scope was switched away mid-flight is dropped.
+ * Backpressure coalesces read_model.change at the source, so refreshes stay bounded.
+ */
+export function createScopeRefresher(
+  client: CreateTRPCClient<AnyTRPCRouter>,
+  store: Store<UiSafeStoreState>,
+): { refresh: (scope: WorkspaceScope) => Promise<void> } {
+  let latest = 0;
+  return {
+    refresh: async (scope: WorkspaceScope): Promise<void> => {
+      const meta = scopeMeta(scope);
+      if (meta.workspaceId === null) return; // Global stays live via the direct fold
+      const token = ++latest;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const c = client as any;
+        const cardsR = await c.query.workspace.query({ workspaceId: meta.workspaceId });
+        if (token !== latest) return; // superseded by a newer refresh (latest-wins)
+        if (store.getSnapshot().scope !== scope) return; // scope switched away mid-flight
+        if (cardsR?.ok === true) store.dispatch((s) => replaceCards(s, cardsR.value));
+      } catch {
+        // Best-effort — the prior snapshot stands; the next push/scope-change refreshes.
+      }
+    },
+  };
+}

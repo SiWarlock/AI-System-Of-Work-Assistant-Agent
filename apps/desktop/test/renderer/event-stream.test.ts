@@ -10,7 +10,7 @@ import {
   type StreamSubscribeHandlers,
 } from "../../renderer/lib/event-stream";
 import { createUiSafeStore } from "../../renderer/store";
-import { approvalEvent } from "./fixtures";
+import { approvalEvent, healthEvent, workflowEvent, cardEvent } from "./fixtures";
 
 describe("reconnect policy (9.3)", () => {
   it("backoff is exponential from the base and always positive", () => {
@@ -132,5 +132,43 @@ describe("event stream controller (9.3)", () => {
     es.start();
     es.stop();
     expect(ft.unsubscribed()).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("read_model.change liveness hook (§9.5 — push-path workspace refresh)", () => {
+  function countingStream(): { fired: () => number; emit: (raw: unknown) => void } {
+    const store = createUiSafeStore();
+    const ft = fakeTransport();
+    let fired = 0;
+    const es = createEventStream({
+      store,
+      transport: ft.transport,
+      scheduleReconnect: () => () => {},
+      onReadModelChange: () => {
+        fired += 1;
+      },
+    });
+    es.start();
+    return { fired: () => fired, emit: ft.emit };
+  }
+
+  it("fires onReadModelChange after a read_model.change is applied", () => {
+    const s = countingStream();
+    s.emit(cardEvent(1, "e1", "c1"));
+    expect(s.fired()).toBe(1);
+  });
+
+  it("does NOT fire for other event classes (approval/health/workflow)", () => {
+    const s = countingStream();
+    s.emit(approvalEvent(1, "e1", "a1"));
+    s.emit(healthEvent(2, "e2", "h1"));
+    s.emit(workflowEvent(3, "e3", "w1"));
+    expect(s.fired()).toBe(0);
+  });
+
+  it("does NOT fire for a schema-invalid frame (dropped before dispatch)", () => {
+    const s = countingStream();
+    s.emit({ name: "read_model.change", payload: { nope: true } });
+    expect(s.fired()).toBe(0);
   });
 });

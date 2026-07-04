@@ -47,6 +47,13 @@ export interface EventStreamDeps {
   readonly transport: StreamTransport;
   /** Schedule `run` after `ms`; returns a canceler. Injected so tests are deterministic. */
   readonly scheduleReconnect: (ms: number, run: () => void) => () => void;
+  /**
+   * Fired AFTER a `read_model.change` has been applied to the store — the push-path
+   * liveness hook (§9.5). In a workspace scope the reducer only advances the cursor
+   * (it never blends the card), so `live.ts` uses this to re-hydrate the scoped pull
+   * path and keep the tab live. Optional (tests/global-only callers omit it).
+   */
+  readonly onReadModelChange?: () => void;
 }
 
 export interface EventStream {
@@ -83,7 +90,13 @@ export function createEventStream(deps: EventStreamDeps): EventStream {
           setConn("live");
           attempt = 0;
           const event = validateStreamEvent(raw);
-          if (event !== null) deps.store.dispatch((s) => applyStreamEvent(s, event));
+          if (event !== null) {
+            deps.store.dispatch((s) => applyStreamEvent(s, event));
+            // Liveness hook (§9.5): the reducer suppresses a read_model.change card in a
+            // workspace scope (isolation), so signal the pull-path re-hydrate here — AFTER
+            // the cursor has advanced. Fires only for this event class.
+            if (event.name === "read_model.change") deps.onReadModelChange?.();
+          }
           // A frame that fails the schema is DROPPED — never hydrates the store.
         },
         onError: () => scheduleRetry(),

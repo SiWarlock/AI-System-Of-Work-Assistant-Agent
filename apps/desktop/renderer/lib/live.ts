@@ -5,6 +5,7 @@ import type { Store, UiSafeStoreState } from "../store";
 import { hydrateCards, hydrateHealth, hydrateGlobal, replaceCards } from "../store/projections";
 import { scopeMeta, type WorkspaceScope } from "../store/scope";
 import { createEventStream } from "./event-stream";
+import { createScopeRefresher } from "./scope-refresh";
 import { createLiveClient } from "./live-client";
 import { createWsStreamTransport } from "./ws-transport";
 import { createDrillDown, type DrillResult } from "./drilldown";
@@ -37,6 +38,7 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
 
   const token = await bridge.session.getToken();
   const live = createLiveClient({ httpUrl: endpoint.httpUrl, wsUrl: endpoint.wsUrl, token });
+  const refresher = createScopeRefresher(live.client, store);
   const stream = createEventStream({
     store,
     transport: createWsStreamTransport(live.client),
@@ -44,6 +46,10 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
       const timer = setTimeout(run, ms);
       return () => clearTimeout(timer);
     },
+    // Push-path liveness (§9.5): a read_model.change is suppressed in a workspace scope
+    // (isolation), so re-hydrate that scope's cards through the scope-correct pull path.
+    // Reads the CURRENT scope at fire time; a no-op in Global (it stays live via the fold).
+    onReadModelChange: () => void refresher.refresh(store.getSnapshot().scope),
   });
   stream.start();
 
@@ -77,10 +83,15 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
  * read_model.change into `cards` ONLY in Global scope (where `cards` is the
  * cross-workspace dashboard aggregate the push emits); in a workspace scope it advances
  * the resume cursor but never blends the card (UiSafeDashboardCard carries no
- * workspaceId), so no foreign workspace's card can surface under the tab. FOLLOW-UP:
- * LIVE in-workspace push updates (re-hydrating the scoped pull path on a push signal, or
- * a per-subscription server scope / workspaceId on the card) — a workspace scope stays
- * on its pull-hydrated snapshot until the next scope switch.
+ * workspaceId), so no foreign workspace's card can surface under the tab. Workspace-scope
+ * LIVENESS is then restored by `createScopeRefresher` (in `./scope-refresh`, wired above
+ * in `startLive`), which re-hydrates the scoped pull path on each such push.
+ *
+ * KNOWN follow-up: this scope-change re-hydrate and the push-refresh apply `replaceCards`
+ * through INDEPENDENT latest-wins tokens, so on a rare same-scope race (a switch into B
+ * whose slow initial query resolves AFTER a fast push-refresh for B) the older result can
+ * transiently overwrite the newer — scope-correct (B-under-B), non-isolation, self-healing
+ * on the next push. A shared generation token (or an AbortController) would close it.
  */
 async function hydrateScope(
   client: CreateTRPCClient<AnyTRPCRouter>,
