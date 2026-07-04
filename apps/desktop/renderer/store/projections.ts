@@ -8,6 +8,7 @@ import type {
 } from "@sow/contracts/api/ui-safe";
 import type { ConnectionStatus, UiSafeStoreState } from "./index";
 import { isWorkspaceScope, type WorkspaceScope } from "./scope";
+import { routeEquals, type Route } from "./route";
 
 // Pure reducers that fold validated UI-safe StreamEvents into the store. Every
 // payload is an allowlisted `UiSafe*` shape (the wire is validated by
@@ -31,6 +32,17 @@ export function withConnection(
 export function setScope(state: UiSafeStoreState, scope: WorkspaceScope): UiSafeStoreState {
   if (state.scope === scope) return state;
   return { ...state, scope };
+}
+
+/**
+ * Set the mounted SURFACE (left-rail nav; §9.5). Ref-stable no-op when the route is
+ * structurally unchanged. INDEPENDENT of scope — never touches the `scope` slice or any
+ * scope-hydrated data (cards / projects / recentChanges): the route only chooses which
+ * surface renders that already-hydrated data.
+ */
+export function navigate(state: UiSafeStoreState, route: Route): UiSafeStoreState {
+  if (routeEquals(state.route, route)) return state;
+  return { ...state, route };
 }
 
 /** True when `event.seq` is not the immediate successor of the last applied seq (a dropped event). */
