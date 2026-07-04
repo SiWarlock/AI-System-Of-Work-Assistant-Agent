@@ -59,17 +59,18 @@ async function start(config: WorkerHostConfig): Promise<void> {
       // NO proofSpineParams → boots the control-plane API only; connectTemporal
       // degrades cleanly (the proof-spine pipeline is wired later).
     });
-    // Drive one connect: with no proof-spine params it degrades cleanly (no real
-    // Temporal contact, no throw — §16). Fire-and-forget — the API + live stream are
-    // up regardless.
+    // Drive the initial Temporal connect. With no proof-spine params it degrades
+    // cleanly (no real Temporal contact, no throw — §16). On the degraded variant this
+    // records an operator-visible worker_down System-Health item via the degraded
+    // controller — persisted through the surface into the SAME health_items table the
+    // systemHealth query reads — so the renderer's "System health" shows "Worker down"
+    // instead of a false "All systems healthy".
     //
-    // FOLLOW-UP: surfacing this worker_down item in System Health must go through the
-    // health SURFACE materializer (createHealthSurface — it owns the dedupeKey
-    // (failureClass|subjectRef) / subjectRef / lastSeen bookkeeping that the sqlite
-    // health store's 4-arg put requires; a direct put(item) is the wrong contract and
-    // the in-memory 1-arg store is deprecated/unused in production). Until then System
-    // Health reads empty — a defensible "All systems healthy" (the control plane IS up).
-    void booted.connectTemporal();
+    // AWAITED before announcing readiness so the item is persisted BEFORE the renderer's
+    // initial health hydrate (a fresh null-cursor stream subscribe does not replay a
+    // pre-subscribe publish). With no proof-spine params the connect resolves without a
+    // network round-trip, so awaiting adds negligible latency.
+    await boot.reportInitialConnect(booted, { now: booted.backends.now() });
     send({ type: "ready", port: booted.api.port });
   } catch (err) {
     send({ type: "error", message: err instanceof Error ? err.message : String(err) });
