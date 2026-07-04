@@ -13,9 +13,10 @@
 // NEVER import electron, node, or @sow/worker from a renderer file.
 
 import { type ReactElement } from "react";
-import type { UiSafeProjectDashboard } from "@sow/contracts/api/ui-safe";
+import type { UiSafeProjectDashboard, UiSafeManagedDoc } from "@sow/contracts/api/ui-safe";
 import type { WorkspaceScope } from "../../store/scope";
 import { resolveSelectedProject } from "./select";
+import { resolveDocPack } from "./docpack";
 
 export interface ProjectsProps {
   /** The active workspace scope — Projects is workspace-scoped (WS-8). */
@@ -89,6 +90,46 @@ function ProjectListItem({
   );
 }
 
+/**
+ * The managed NotebookLM doc pack (§4.5): the 5 canonical slots (00–04) with link + sync
+ * state, always shown in full (the resolver overlays the read-model onto the canonical slots).
+ * The re-add/refresh affordance is present per §4.5 but DISABLED until a Drive connector exists
+ * (nothing to link/sync yet) — honest, not a dead button pretending to work. `linkState` /
+ * `syncState` are display tokens straight from the projection; no doc id/url is ever exposed.
+ */
+function ManagedDocPack({ docPack }: { readonly docPack: readonly UiSafeManagedDoc[] }): ReactElement {
+  const docs = resolveDocPack(docPack);
+  const anyLinked = docs.some((d) => d.linkState === "linked");
+  return (
+    <div className="sow-docpack">
+      <span className="sow-project-items-label">Managed docs</span>
+      <ul className="sow-docpack-list" role="list">
+        {docs.map((d) => (
+          <li className="sow-docpack-row" role="listitem" key={d.slot} data-slot={d.slot}>
+            <span className="sow-docpack-title">{d.title}</span>
+            <span className={`sow-docpack-state sow-docpack-state--${d.linkState}`}>
+              {d.linkState === "linked" ? d.syncState : "unlinked"}
+            </span>
+            {d.linkState === "unlinked" ? (
+              <button
+                className="sow-docpack-readd"
+                type="button"
+                disabled
+                title="Connect a Google Drive connector to link the managed NotebookLM docs"
+              >
+                Re-add
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      {!anyLinked ? (
+        <div className="sow-docpack-hint">Connect a Google Drive connector to link the managed NotebookLM docs (00–04).</div>
+      ) : null}
+    </div>
+  );
+}
+
 /** The detail pane for the selected project — full deterministic-progress breakdown. */
 function ProjectDetail({ project }: { readonly project: UiSafeProjectDashboard }): ReactElement {
   return (
@@ -122,6 +163,7 @@ function ProjectDetail({ project }: { readonly project: UiSafeProjectDashboard }
           ))}
         </div>
       )}
+      <ManagedDocPack docPack={project.docPack} />
     </div>
   );
 }
