@@ -241,6 +241,7 @@ function makeServerDeps(over: { expectedToken?: SessionToken } = {}) {
       copilotSurface: () => emptyErr,
       globalSurface: () => emptyErr,
       recentChanges: () => emptyErr,
+      projectDashboards: () => emptyErr,
     },
     systemHealth: {
       healthItems: () => emptyErr,

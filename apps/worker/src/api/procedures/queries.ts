@@ -47,7 +47,10 @@ import {
   type UiSafeGclProjection,
   type UiSafeRecentChange,
   UiSafeRecentChangeSchema,
+  type UiSafeProjectDashboard,
+  UiSafeProjectDashboardSchema,
 } from "@sow/contracts";
+import { computePercent } from "@sow/workflows";
 import { router, publicProcedure, authedResolver } from "../router";
 import {
   toUiSafeApproval,
@@ -120,6 +123,15 @@ export interface ReadModelQueryPort {
   readonly recentChanges: (
     workspaceId: string,
   ) => MaybeAsyncResult<readonly UiSafeRecentChange[]>;
+  /**
+   * Workspace-scoped Project dashboards (§9.5) — candidate UiSafeProjectDashboard rows the
+   * write-time projector produced. Unknown workspace → typed err (fail-closed). The procedure
+   * RE-VALIDATES each row through UiSafeProjectDashboardSchema AND re-derives the deterministic
+   * progress (REQ-F-011) before serving. NOT a cross-workspace path.
+   */
+  readonly projectDashboards: (
+    workspaceId: string,
+  ) => MaybeAsyncResult<readonly UiSafeProjectDashboard[]>;
 }
 
 /** A port result that may be delivered synchronously (the fake) or async (@sow/db). */
@@ -296,6 +308,41 @@ function sanitizeRecentChanges(
 }
 
 /**
+ * The Project dashboards read boundary (§9.5). Two-stage, fail-CLOSED on any bad row:
+ *  1. Structural re-validation through the frozen `UiSafeProjectDashboardSchema` (the schema
+ *     enforces field shape + single-line prose + the opaque-ref grammar + array caps).
+ *  2. The REQ-F-011 CROSS-FIELD progress checks the pure contract can't carry (Lesson §3, the
+ *     contract can't import `computePercent`): the served `percentComplete` MUST equal the
+ *     count-derived deterministic percent, `completedCount <= totalCount`, and a task-less
+ *     project (`totalCount === 0`) MUST be 0% — never an inferred 100%. A model-driven or
+ *     tampered inconsistent triple is rejected, so the renderer only ever displays a verified
+ *     deterministic percent. Mirrors {@link sanitizeGlobal}/{@link sanitizeRecentChanges}.
+ */
+function sanitizeProjectDashboards(
+  r: Result<readonly UiSafeProjectDashboard[], FailureVariant>,
+): Result<readonly UiSafeProjectDashboard[], FailureVariant> {
+  if (!r.ok) return r;
+  const out: UiSafeProjectDashboard[] = [];
+  for (const project of r.value) {
+    const parsed = UiSafeProjectDashboardSchema.safeParse(project);
+    if (!parsed.success) return err(projectDashboardRejected());
+    const p = parsed.data.progress;
+    const consistent =
+      p.completedCount <= p.totalCount && p.percentComplete === computePercent(p.completedCount, p.totalCount);
+    if (!consistent) return err(projectDashboardRejected());
+    out.push(parsed.data);
+  }
+  return ok(out);
+}
+
+/** A redaction-safe rejection for a poisoned project-dashboard row (never the raw row). */
+function projectDashboardRejected(): FailureVariant {
+  return failure("validation_rejected", "project-dashboard row failed sanitization", {
+    cause: { code: "PROJECT_DASHBOARD_SANITIZATION_REJECTED" },
+  });
+}
+
+/**
  * §9.4 policy-gated drill-down (the SAFETY CORE). From a global item the owner may
  * open the underlying WORKSPACE-SCOPED context — but ONLY when the projection's
  * visibility level permits (`full`), and ONLY as a single-workspace read.
@@ -410,6 +457,18 @@ export function buildQueryRouter(deps: QueryRouterDeps) {
       authedResolver<WorkspaceInput, readonly UiSafeRecentChange[]>(
         async (_ctx, input): Promise<Result<readonly UiSafeRecentChange[], FailureVariant>> =>
           sanitizeRecentChanges(await readModel.recentChanges(input.workspaceId)),
+      ),
+    ),
+
+    /**
+     * Project dashboards (§9.5) — the workspace's projects with DETERMINISTIC progress,
+     * re-validated + REQ-F-011-checked. Unknown workspace → typed err (fail-closed). NOT a
+     * cross-workspace path (the renderer supplies the scope; Global shows no projects here).
+     */
+    projectList: publicProcedure.input(parseWorkspaceInput).query(
+      authedResolver<WorkspaceInput, readonly UiSafeProjectDashboard[]>(
+        async (_ctx, input): Promise<Result<readonly UiSafeProjectDashboard[], FailureVariant>> =>
+          sanitizeProjectDashboards(await readModel.projectDashboards(input.workspaceId)),
       ),
     ),
 

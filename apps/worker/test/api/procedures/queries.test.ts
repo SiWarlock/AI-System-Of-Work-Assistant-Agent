@@ -191,9 +191,26 @@ function fakePort(overrides: Partial<ReadModelQueryPort> = {}): ReadModelQueryPo
             { changeId: "chg_newer", kind: "sync", summary: "synced cursor 2026-07-03", occurredAt: "2026-07-03T00:00:00.000Z" },
           ])
         : err(notFoundWorkspace(workspaceId)),
+
+    projectDashboards: (workspaceId) =>
+      workspaceId === KNOWN_WORKSPACE ? ok([validFakeProject]) : err(notFoundWorkspace(workspaceId)),
   };
   return { ...base, ...overrides };
 }
+
+// A valid UiSafeProjectDashboard candidate whose progress is deterministically consistent
+// (percent === computePercent(2, 5) === 40) — the REQ-F-011 tests perturb `progress`.
+const validFakeProject = {
+  projectId: "prj-1",
+  title: "Auth redesign",
+  status: "on-track",
+  progress: { completedCount: 2, totalCount: 5, percentComplete: 40 },
+  blockers: ["waiting on vendor SSO cert"],
+  waitingItems: [],
+  nextActions: ["wire the callback route"],
+  evidenceRefs: ["src:plan-abc123"],
+  updatedAt: "2026-07-04T00:00:00.000Z",
+};
 
 // Build an in-process caller over a router that mounts ONLY the query router.
 function makeCaller(port: ReadModelQueryPort, ctx: ApiContext = AUTHED_CTX) {
@@ -345,6 +362,50 @@ describe("buildQueryRouter — UI-safe read-model serving (§10/§13)", () => {
       expect(res.value[0]!.changeId).toBe("chg_50"); // newest first
       expect(res.value.some((c) => c.changeId === "chg_0")).toBe(false); // oldest dropped
     }
+  });
+
+  it("projectList returns re-validated UI-safe project dashboards for a KNOWN workspace", async () => {
+    const caller = makeCaller(fakePort());
+    const res = await caller.query.projectList({ workspaceId: KNOWN_WORKSPACE });
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) {
+      expect(res.value.length).toBe(1);
+      expect(fieldSet(res.value[0]!)).toEqual([...UI_SAFE_ALLOWLIST.projectDashboard].sort());
+      expect(res.value[0]!.progress.percentComplete).toBe(40);
+    }
+  });
+
+  it("projectList for an UNKNOWN workspace fails CLOSED (typed err)", async () => {
+    const caller = makeCaller(fakePort());
+    const res = await caller.query.projectList({ workspaceId: UNKNOWN_WORKSPACE });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
+  });
+
+  it("projectList REJECTS an inconsistent progress triple (REQ-F-011: percent === count-derived)", async () => {
+    const bad = { ...validFakeProject, progress: { completedCount: 2, totalCount: 5, percentComplete: 99 } };
+    const caller = makeCaller(fakePort({ projectDashboards: () => ok([bad]) }));
+    const res = await caller.query.projectList({ workspaceId: KNOWN_WORKSPACE });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("PROJECT_DASHBOARD_SANITIZATION_REJECTED");
+  });
+
+  it("projectList REJECTS a task-less project claiming 100% (REQ-F-011: totalCount 0 ⇒ 0%)", async () => {
+    const bad = { ...validFakeProject, progress: { completedCount: 0, totalCount: 0, percentComplete: 100 } };
+    const caller = makeCaller(fakePort({ projectDashboards: () => ok([bad]) }));
+    const res = await caller.query.projectList({ workspaceId: KNOWN_WORKSPACE });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("PROJECT_DASHBOARD_SANITIZATION_REJECTED");
+  });
+
+  it("projectList REJECTS completedCount > totalCount even when the percent happens to match (count-ordering check)", async () => {
+    // computePercent(6, 5) CLAMPS to 100, so percentComplete: 100 passes the equality clause —
+    // ONLY the `completedCount <= totalCount` check catches this impossible triple.
+    const bad = { ...validFakeProject, progress: { completedCount: 6, totalCount: 5, percentComplete: 100 } };
+    const caller = makeCaller(fakePort({ projectDashboards: () => ok([bad]) }));
+    const res = await caller.query.projectList({ workspaceId: KNOWN_WORKSPACE });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("PROJECT_DASHBOARD_SANITIZATION_REJECTED");
   });
 });
 

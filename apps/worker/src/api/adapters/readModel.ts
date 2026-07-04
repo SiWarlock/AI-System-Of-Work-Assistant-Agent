@@ -37,6 +37,7 @@ import {
   type WorkflowRunRef,
   type GclProjection,
   type UiSafeRecentChange,
+  type UiSafeProjectDashboard,
 } from "@sow/contracts";
 import type {
   ReadModelRepository,
@@ -63,6 +64,8 @@ export const READ_MODEL_KEYS = {
   copilot: "copilot_runs",
   /** Recent Changes — workspace-scoped audit-linked activity rows (§9.5). */
   recentChanges: "recent_changes",
+  /** Project dashboards — workspace-scoped deterministic-progress project cards (§9.5). */
+  projectDashboards: "project_dashboards",
   /** GCL sanitized cross-workspace surface (workspaceId = null). */
   global: "global_surface",
   /**
@@ -227,6 +230,28 @@ function readRecentChanges(data: unknown): readonly UiSafeRecentChange[] {
   return out;
 }
 
+/**
+ * Read the `projects` array off the project-dashboards read-model payload → candidate
+ * UiSafeProjectDashboard[]. A malformed payload → `[]`; a non-object row is dropped. This is
+ * a THIN transport narrowing only — every field (and the REQ-F-011 cross-field progress
+ * checks) is re-validated by `queries.ts`'s `sanitizeProjectDashboards` against the frozen
+ * UiSafeProjectDashboardSchema before it reaches the renderer.
+ *
+ * INTENTIONAL divergence from `readRecentChanges`: that guard field-copies and silently DROPS
+ * a malformed row; this one passes any object row through so the re-validation fails the WHOLE
+ * list CLOSED on a bad row — the safer choice for this richer nested shape (a malformed nested
+ * progress/prose row is better treated as tampering than silently dropped).
+ */
+function readProjectDashboards(data: unknown): readonly UiSafeProjectDashboard[] {
+  const out: UiSafeProjectDashboard[] = [];
+  for (const row of pluckArray(data, "projects")) {
+    if (typeof row === "object" && row !== null) {
+      out.push(row as UiSafeProjectDashboard); // candidate — re-validated downstream
+    }
+  }
+  return out;
+}
+
 /** Pull `data[key]` as an array; anything else (absent / non-array) → `[]`. */
 function pluckArray(data: unknown, key: string): readonly unknown[] {
   if (typeof data !== "object" || data === null) return [];
@@ -320,6 +345,9 @@ export interface DbReadModelQueryPortAsync {
   readonly recentChanges: (
     workspaceId: string,
   ) => Promise<Result<readonly UiSafeRecentChange[], FailureVariant>>;
+  readonly projectDashboards: (
+    workspaceId: string,
+  ) => Promise<Result<readonly UiSafeProjectDashboard[], FailureVariant>>;
 }
 
 /**
@@ -429,6 +457,19 @@ export function createDbReadModelQueryPort(
       const rm = await getReadModel(readModels, READ_MODEL_KEYS.recentChanges, workspaceId);
       if (isErr(rm)) return rm;
       return ok(rm.value === undefined ? [] : readRecentChanges(rm.value.data));
+    },
+
+    async projectDashboards(
+      workspaceId: string,
+    ): Promise<Result<readonly UiSafeProjectDashboard[], FailureVariant>> {
+      // Workspace-scoped, fail-closed. Candidate rows are re-validated (incl. the REQ-F-011
+      // cross-field progress checks) by queries.ts's sanitizeProjectDashboards.
+      const known = await resolveKnownWorkspace(readModels, workspaceId);
+      if (isErr(known)) return known;
+      if (!known.value) return err(unknownWorkspace());
+      const rm = await getReadModel(readModels, READ_MODEL_KEYS.projectDashboards, workspaceId);
+      if (isErr(rm)) return rm;
+      return ok(rm.value === undefined ? [] : readProjectDashboards(rm.value.data));
     },
 
     async globalSurface(): Promise<Result<readonly GclProjection[], FailureVariant>> {

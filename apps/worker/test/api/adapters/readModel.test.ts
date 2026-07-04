@@ -282,6 +282,42 @@ describe("createDbReadModelQueryPort — workspace-scoped card + copilot surface
     const unknown = await port.recentChanges(UNKNOWN_WS);
     expect(isErr(unknown)).toBe(true); // fail-closed (WS-8)
   });
+
+  it("projectDashboards: KNOWN ws reads seeded projects; absent → empty; UNKNOWN → fail-closed", async () => {
+    const o = await freshDb();
+    await seedRegistry(o, [KNOWN_WS]);
+    let port = createDbReadModelQueryPort(o.repos);
+    let res = await port.projectDashboards(KNOWN_WS);
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value).toEqual([]); // absent → empty
+
+    await seedReadModel(o, READ_MODEL_KEYS.projectDashboards, KNOWN_WS, {
+      projects: [
+        {
+          projectId: "prj-1",
+          title: "Auth redesign",
+          status: "on-track",
+          progress: { completedCount: 2, totalCount: 5, percentComplete: 40 },
+          blockers: [],
+          waitingItems: [],
+          nextActions: [],
+          evidenceRefs: [],
+          updatedAt: "2026-07-04T00:00:00.000Z",
+        },
+        "not-an-object", // a non-object row is dropped by the transport guard
+      ],
+    });
+    port = createDbReadModelQueryPort(o.repos);
+    res = await port.projectDashboards(KNOWN_WS);
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) {
+      expect(res.value.length).toBe(1); // malformed row dropped
+      expect(res.value[0]!.projectId).toBe("prj-1");
+    }
+
+    const unknown = await port.projectDashboards(UNKNOWN_WS);
+    expect(isErr(unknown)).toBe(true); // fail-closed (WS-8)
+  });
 });
 
 // ── inbox surfaces (pending approvals; fail-closed on unknown workspace) ──────
