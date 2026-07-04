@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-04 · **Mode:** single-operator (build) · **Tracks:** contract · worker · desktop
 - **Predecessor:** `021-2026-07-04-dedicated-projects-page.md` (HEAD at start `7ce7be7`)
-- **Successor:** _(none yet)_
+- **Successor:** `023-2026-07-04-interim-recent-changes-projector.md` (c: interim recent_changes projector)
 - **HEAD at close:** `d1667c8` · **4 slice commits** (`241e048` DP-1 · `a729520` DP-2 · `ce62c38` DP-3 · `d1667c8` harness)
 - **Gate at close:** repo-wide `turbo typecheck test` **31/31**; desktop suite **127** (node tier + 13 jsdom render tests); contracts 51/51; renderer bundles; tree clean (+ untracked files from a parallel session — `youtube-source.*`, `capture-source.*`, `PHASE-13-PROPOSAL-…` — left untouched).
 - **Reviews:** 5 subagent reviews across 4 slices — DP-1 security (leakage gate HOLDS, 0 crit/high/med) + code-quality (1 med fixed); DP-2 security (serving gate holds, 0 findings) + code-quality (1 low fixed); DP-3 security (0 findings) + code-quality (3 low deferred); d code-quality (1 med + 3 low, med + 2 low addressed in-slice). No critical/high anywhere.
