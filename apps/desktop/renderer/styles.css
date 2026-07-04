@@ -1062,3 +1062,69 @@ body {
   outline-offset: 2px;
   border-radius: 4px;
 }
+
+/* ── Global (§9.4) cross-workspace grouped surface ──────────────────────── */
+.sow-global-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-bottom: 4px;
+}
+
+.sow-global-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.sow-global-group-name {
+  font-size: 13px;
+  font-weight: 640;
+  color: var(--label);
+  letter-spacing: 0.1px;
+}
+
+.sow-global-row {
+  gap: 12px;
+}
+
+.sow-global-type {
+  font-size: 13px;
+  font-weight: 590;
+  color: var(--label);
+  min-width: 128px;
+  flex: 0 0 auto;
+}
+
+.sow-global-summary {
+  flex: 1;
+  font-size: 13px;
+  color: var(--label-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sow-global-drill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  color: var(--accent-ink);
+  cursor: default;
+  flex: 0 0 22px;
+}
+
+.sow-global-drill:hover,
+.sow-global-drill:focus-visible {
+  background: rgba(10, 132, 255, 0.12);
+  outline: none;
+}
+
+.sow-global-drill svg {
+  width: 15px;
+  height: 15px;
+}

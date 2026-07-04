@@ -14,7 +14,12 @@
 import { useState, type CSSProperties, type ReactElement } from "react";
 import type { ConnectionStatus } from "../../store";
 import { WORKSPACE_SCOPES, scopeMeta, type WorkspaceScope } from "../../store/scope";
-import type { UiSafeDashboardCard, UiSafeHealthItem } from "@sow/contracts/api/ui-safe";
+import { groupGlobalByWorkspace } from "../../store/projections";
+import type {
+  UiSafeDashboardCard,
+  UiSafeHealthItem,
+  UiSafeGclProjection,
+} from "@sow/contracts/api/ui-safe";
 
 export interface TodayProps {
   readonly connection: ConnectionStatus;
@@ -22,6 +27,10 @@ export interface TodayProps {
   readonly onScopeChange: (scope: WorkspaceScope) => void;
   readonly cards: readonly UiSafeDashboardCard[];
   readonly health: readonly UiSafeHealthItem[];
+  /** The Global-scope cross-workspace GCL surface (§9.4). */
+  readonly global: readonly UiSafeGclProjection[];
+  /** Request a policy-gated drill-down into a workspace's context (worker-enforced). */
+  readonly onDrillDown: (workspaceId: string, projectionType: string) => void;
 }
 
 /** Set the subtle per-workspace accent via a CSS var (dot + scope line only). */
@@ -225,6 +234,67 @@ function HealthSection({ health }: { readonly health: readonly UiSafeHealthItem[
   );
 }
 
+// ── Global (§9.4) cross-workspace grouped surface ──────────────────────────
+
+function GlobalGroups({
+  global,
+  onDrillDown,
+}: {
+  readonly global: readonly UiSafeGclProjection[];
+  readonly onDrillDown: (workspaceId: string, projectionType: string) => void;
+}): ReactElement {
+  const groups = groupGlobalByWorkspace(global);
+  if (groups.length === 0) {
+    return (
+      <div className="sow-empty" role="status">
+        Nothing across your workspaces yet
+      </div>
+    );
+  }
+  return (
+    <div className="sow-global-groups">
+      {groups.map((group) => {
+        // Resolve the workspace's label + subtle accent; unknown ids (pre-onboarding)
+        // fall back to the raw id + the app blue.
+        const meta = WORKSPACE_SCOPES.find((m) => m.workspaceId === group.workspaceId);
+        const label = meta?.label ?? group.workspaceId;
+        return (
+          <section
+            className="sow-global-group"
+            key={group.workspaceId}
+            style={accentVar(meta?.accent ?? "#0a84ff")}
+          >
+            <div className="sow-global-group-head">
+              <span className="sow-ws-dot" aria-hidden="true" />
+              <span className="sow-global-group-name">{label}</span>
+            </div>
+            <div className="sow-grouped" role="list" aria-label={`${label} — across workspaces`}>
+              {group.items.map((item, i) => (
+                <div className="sow-row sow-global-row" role="listitem" key={`${item.projectionType}-${String(i)}`}>
+                  <span className="sow-global-type">{humanizeToken(item.projectionType)}</span>
+                  <span className="sow-global-summary">{item.summary}</span>
+                  {item.drillable ? (
+                    <button
+                      className="sow-global-drill"
+                      type="button"
+                      aria-label={`Open ${label} — ${humanizeToken(item.projectionType)}`}
+                      onClick={() => onDrillDown(item.workspaceId, item.projectionType)}
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M9 6l6 6-6 6" />
+                      </svg>
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Today date subtitle ────────────────────────────────────────────────────
 
 function todayLabel(): string {
@@ -238,7 +308,7 @@ function todayLabel(): string {
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function Today(props: TodayProps): ReactElement {
-  const { connection, scope, onScopeChange, cards, health } = props;
+  const { connection, scope, onScopeChange, cards, health, global, onDrillDown } = props;
 
   return (
     <div className="sow-shell">
@@ -397,6 +467,15 @@ export function Today(props: TodayProps): ReactElement {
               <div className="sow-subtitle">{todayLabel()}</div>
             </div>
           </div>
+
+          {/* Across your workspaces — the §9.4 Global GCL surface (Global scope only).
+              Sanitized grouped results; drill-down is worker-enforced + workspace-scoped. */}
+          {scope === "global" ? (
+            <>
+              <div className="sow-section-label">Across your workspaces</div>
+              <GlobalGroups global={global} onDrillDown={onDrillDown} />
+            </>
+          ) : null}
 
           {/* Daily brief — static illustrative content (§ material-direction.md) */}
           <div className="sow-section-label">Daily brief</div>

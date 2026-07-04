@@ -5,6 +5,7 @@ import type {
   UiSafeHealthItem,
   UiSafeWorkflowRunRef,
   UiSafeDashboardCard,
+  UiSafeGclProjection,
 } from "@sow/contracts/api/ui-safe";
 import { DEFAULT_SCOPE, type WorkspaceScope } from "./scope";
 
@@ -24,6 +25,8 @@ export interface UiSafeStoreState {
   readonly health: ReadonlyMap<string, UiSafeHealthItem>;
   readonly workflows: ReadonlyMap<string, UiSafeWorkflowRunRef>;
   readonly cards: ReadonlyMap<string, UiSafeDashboardCard>;
+  /** The Global-scope cross-workspace GCL surface (query.global snapshot; §9.4). */
+  readonly global: readonly UiSafeGclProjection[];
   /** The last stream `eventId` applied — a resumed subscription replays from here. */
   readonly lastEventId: string | null;
   /** The last per-stream `seq` applied — a gap (seq != last + 1) signals a dropped event. */
@@ -37,6 +40,7 @@ export const initialStoreState: UiSafeStoreState = {
   health: new Map(),
   workflows: new Map(),
   cards: new Map(),
+  global: [],
   lastEventId: null,
   lastSeq: null,
 };

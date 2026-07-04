@@ -7,7 +7,10 @@ import {
   isGap,
   hydrateCards,
   hydrateHealth,
+  hydrateGlobal,
+  groupGlobalByWorkspace,
 } from "../../renderer/store/projections";
+import type { UiSafeGclProjection } from "@sow/contracts/api/ui-safe";
 import {
   approvalEvent,
   healthEvent,
@@ -99,5 +102,42 @@ describe("store projections (9.3 — fold UI-safe events)", () => {
     const s = applyStreamEvent(initialStoreState, approvalEvent(1, "e1"));
     expect(isGap(s, approvalEvent(2, "e2"))).toBe(false);
     expect(isGap(s, approvalEvent(5, "e5"))).toBe(true);
+  });
+});
+
+describe("Global (§9.4) surface — hydrate + group", () => {
+  const gcl = (workspaceId: string, projectionType: string, drillable = false): UiSafeGclProjection => ({
+    workspaceId,
+    visibilityLevel: drillable ? "full" : "sanitized",
+    projectionType,
+    summary: `${projectionType} summary`,
+    drillable,
+  });
+
+  it("hydrateGlobal REPLACES the snapshot (a dropped projection disappears)", () => {
+    const s1 = hydrateGlobal(initialStoreState, [gcl("ws-a", "deadlines"), gcl("ws-b", "calendar")]);
+    expect(s1.global).toHaveLength(2);
+    // A later snapshot with fewer items REPLACES — not merges.
+    const s2 = hydrateGlobal(s1, [gcl("ws-a", "deadlines")]);
+    expect(s2.global.map((p) => p.workspaceId)).toEqual(["ws-a"]);
+  });
+
+  it("hydrateGlobal empty→empty is a ref-stable no-op", () => {
+    expect(hydrateGlobal(initialStoreState, [])).toBe(initialStoreState);
+  });
+
+  it("groupGlobalByWorkspace groups by workspaceId, preserving first-seen order", () => {
+    const groups = groupGlobalByWorkspace([
+      gcl("ws-b", "calendar"),
+      gcl("ws-a", "deadlines"),
+      gcl("ws-b", "blockers"),
+    ]);
+    expect(groups.map((g) => g.workspaceId)).toEqual(["ws-b", "ws-a"]);
+    expect(groups[0]?.items.map((i) => i.projectionType)).toEqual(["calendar", "blockers"]);
+    expect(groups[1]?.items).toHaveLength(1);
+  });
+
+  it("groupGlobalByWorkspace on an empty surface is an empty group list", () => {
+    expect(groupGlobalByWorkspace([])).toEqual([]);
   });
 });

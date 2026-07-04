@@ -1,5 +1,9 @@
 import type { StreamEvent } from "@sow/contracts/api/events";
-import type { UiSafeDashboardCard, UiSafeHealthItem } from "@sow/contracts/api/ui-safe";
+import type {
+  UiSafeDashboardCard,
+  UiSafeHealthItem,
+  UiSafeGclProjection,
+} from "@sow/contracts/api/ui-safe";
 import type { ConnectionStatus, UiSafeStoreState } from "./index";
 import type { WorkspaceScope } from "./scope";
 
@@ -82,4 +86,45 @@ export function hydrateHealth(
   const next = new Map(state.health);
   for (const item of items) next.set(item.id, item);
   return { ...state, health: next };
+}
+
+// ── Global (§9.4) cross-workspace surface ────────────────────────────────────
+// `query.global` returns the WHOLE current global surface, so hydrate REPLACES the
+// snapshot (unlike the upsert reducers) — a projection that dropped off the surface
+// must disappear. Empty→empty is a ref-stable no-op.
+
+/** Replace the Global-scope GCL snapshot with the latest query.global result. */
+export function hydrateGlobal(
+  state: UiSafeStoreState,
+  projections: readonly UiSafeGclProjection[],
+): UiSafeStoreState {
+  if (projections.length === 0 && state.global.length === 0) return state;
+  return { ...state, global: [...projections] };
+}
+
+/** A workspace's grouped Global items (the §9.4 "sanitized grouped results"). */
+export interface GlobalGroup {
+  readonly workspaceId: string;
+  readonly items: readonly UiSafeGclProjection[];
+}
+
+/** Group Global projections by workspaceId, preserving first-seen workspace order. */
+export function groupGlobalByWorkspace(
+  projections: readonly UiSafeGclProjection[],
+): readonly GlobalGroup[] {
+  const order: string[] = [];
+  const byWs = new Map<string, UiSafeGclProjection[]>();
+  for (const p of projections) {
+    let bucket = byWs.get(p.workspaceId);
+    if (bucket === undefined) {
+      bucket = [];
+      byWs.set(p.workspaceId, bucket);
+      order.push(p.workspaceId);
+    }
+    bucket.push(p);
+  }
+  return order.map((workspaceId) => ({
+    workspaceId,
+    items: byWs.get(workspaceId) ?? [],
+  }));
 }
