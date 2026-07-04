@@ -68,3 +68,20 @@ The desktop package splits typecheck across two tsconfigs: `tsconfig.web.json` (
 This bit when adding `createScopeRefresher` to `live.ts` and importing it from a new test: the test dragged `live.ts` (and its `window` usage) into node compilation. The fix was architectural, not a lib tweak — `createScopeRefresher` has **no** `window`/bridge dependency (it needs only a tRPC client + the store), so it belongs in its own `renderer/lib/scope-refresh.ts`. `live.ts` imports it; the test imports the window-free module directly; node-config compilation stays clean. Bonus: better separation (the pure refresh logic isn't coupled to the bridge module).
 
 **Rule:** renderer logic you want to unit-test must not transitively reference `window`/DOM globals, because `test/` compiles under the DOM-less node tsconfig — extract `window`-free, dependency-injected logic (client/store in, no bridge) into its own module and import THAT from the test, leaving the `window`-coupled glue (`live.ts`) imported only from `renderer/`.
+
+## <a id="4"></a>4. Add JSX-render tests as a SECOND tier — a `test-dom/` dir + jsdom + its own tsconfig — never by loosening the node tier
+
+**Date:** 2026-07-04.
+**Source slice:** session 022 harness (`d1667c8`).
+
+Lesson §3 keeps the `test/` tier DOM-less so window-free logic is the testable unit. But some behavior only exists in a mounted component — the left-rail nav dispatching `onNavigate` on click, the §9.4 scope switcher's open/select/Escape/outside-mousedown dismissal, the WS-8 empty-state branch a surface picks. Two prior reviews flagged that this UI wiring had **zero** automated coverage (review-verified only). The wrong fix is to add DOM lib to `tsconfig.node.json` / switch the vitest env to jsdom — that silently drops the DOM-less guarantee §3 depends on (a `window` reference would stop erroring, so window-coupled logic could sneak into a "pure" module untested-for-portability).
+
+The right fix is a **parallel second tier** that leaves the node tier exactly as-is:
+- `test-dom/*.test.tsx` — render tests, each with a `// @vitest-environment jsdom` docblock (the global vitest env stays `node`; only these files get a DOM).
+- `tsconfig.testdom.json` — `lib: ["…","DOM","DOM.Iterable"]` + `jsx: "react-jsx"` + `include: ["test-dom"]` **only**. Scoping the include to `test-dom` (not `renderer`) matters: including `renderer` drags in `App.tsx`, whose `import.meta.env` needs `vite/client` and fails otherwise — the imported components (`AppShell`/`Projects`/…) are still type-checked **transitively** through the tests' imports, so there's no coverage hole. Add `vite/client` to `types` as a cheap guard for any transitively-pulled Vite feature.
+- `vitest.config.ts` — add `test-dom/**/*.{test,spec}.tsx` to `include` + the `@vitejs/plugin-react` plugin (JSX transform); keep `environment: "node"` as the default. Wire `tsconfig.testdom.json` into the `typecheck`/`lint` scripts (a third `tsc -p`).
+- Deps: `@testing-library/react` + `@testing-library/dom` + `jsdom` (dev). Assert with plain vitest `expect` + Testing-Library queries (`getByRole`/`getByText`) — no `@testing-library/jest-dom` needed; `afterEach(cleanup)`.
+
+A render test that mounts the extracted-verbatim shell (the §9.4 switcher) is worth more than the assertion in the commit message: it **proves** an "moved structure, not behavior" refactor claim instead of trusting it.
+
+**Rule:** cover component behavior with a **second** jsdom test tier (`test-dom/` + `tsconfig.testdom.json` + per-file `@vitest-environment jsdom`), never by adding DOM to the node tier — and scope the DOM tsconfig's `include` to `test-dom` so `App.tsx`'s `import.meta.env` isn't dragged in (components are checked transitively).
