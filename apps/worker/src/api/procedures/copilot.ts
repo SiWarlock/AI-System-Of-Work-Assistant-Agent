@@ -12,6 +12,9 @@
 // dev-provisioner), wired into `query.copilotAsk` at A4.
 
 import { ok, err, failure, type Result, type FailureVariant } from "@sow/contracts";
+import type { AgentJob, DataOwner, EgressPolicy, ProviderRoute, WorkspaceType } from "@sow/contracts";
+import { isAllow } from "@sow/policy";
+import { vetoJobEgress } from "@sow/providers";
 
 /** A port result delivered sync (the in-memory fixture / test fake) or async (the real adapter). */
 export type MaybeAsyncResult<T> = Result<T, FailureVariant> | Promise<Result<T, FailureVariant>>;
@@ -92,6 +95,88 @@ export function createFixtureRetrieval(
       const context = fixtures[workspaceId];
       if (context === undefined) return err(unknownWorkspace());
       return enforceRetrievalScope(workspaceId, context);
+    },
+  };
+}
+
+// ── A3 — governed synthesis (egress veto + candidate answer) ────────────────────
+//
+// The WRITE-of-the-answer half. Copilot READS ONLY (§4.6) — synthesis has NO side effects; it
+// produces a CANDIDATE answer that A4 validates against `UiSafeCopilotAnswerSchema` (candidate-data
+// gate) before serving, and any implied ACTION becomes a ProposedAction routed to Approvals (never
+// a direct write). The real synthesis routes (question + retrieved context) through
+// ModelProviderPort/AgentRuntimePort — deferred (the app runs over stubs); its PROSE is EVAL-tested
+// (A6), not unit-tested. What IS deterministic + TDD-tested here: the Employer-Work EGRESS VETO and
+// the interim stub's redact-by-type safety.
+
+/** The candidate answer a synthesizer produces (PRE-validation). A4 gates it → UiSafeCopilotAnswer. */
+export interface CandidateCopilotAnswer {
+  readonly answer: readonly string[];
+  readonly citations: readonly RetrievedSource[];
+}
+
+/** The governed synthesis port — turns retrieved context into a candidate answer. No side effects. */
+export interface CopilotSynthesisPort {
+  readonly synthesize: (
+    workspaceId: string,
+    question: string,
+    context: RetrievedContext,
+  ) => MaybeAsyncResult<CandidateCopilotAnswer>;
+}
+
+/**
+ * The Employer-Work raw-content egress VETO for Copilot synthesis (safety rule 5 / hard denial #1).
+ * REUSES the broker's certified composition `vetoJobEgress` (@sow/providers) — which itself
+ * delegates to @sow/policy `egressVeto` (never re-implemented: OpenRouter is its own processor not
+ * an OpenAI alias, a tunneled-'local' route whose endpoint is remote FAILS CLOSED, NO cloud
+ * fallback) AND adds the narrow-only DEFENSE-IN-DEPTH guard ("no later gate can re-open it": a
+ * widened/substituted route on an allow fails closed rather than trusting a route the veto rewrote).
+ *
+ * A Copilot synthesis job READS raw workspace notes, so it ALWAYS carries raw content — the guard
+ * FORCES `carriesRawContent: true` so a caller can't (accidentally or maliciously) bypass the veto
+ * by declaring the job carries none. Under employer-work + ack OFF the only eligible route is a
+ * loopback-local provider; anything else denies (fail closed).
+ */
+export function guardCopilotEgress(params: {
+  readonly job: AgentJob;
+  readonly route: ProviderRoute;
+  readonly egress: EgressPolicy;
+  readonly workspace: { readonly type: WorkspaceType; readonly dataOwner: DataOwner };
+}): Result<ProviderRoute, FailureVariant> {
+  const job: AgentJob = { ...params.job, carriesRawContent: true };
+  const decision = vetoJobEgress(job, params.route, params.egress, params.workspace);
+  if (isAllow(decision)) return ok(decision.value);
+  return err(
+    failure("validation_rejected", "Copilot synthesis route denied by the egress veto", {
+      cause: { code: decision.reason },
+    }),
+  );
+}
+
+/**
+ * The interim STUB synthesizer (honest pre-LLM state; the real synthesis through the model/runtime
+ * ports is deferred — the app runs over stubs). It produces a SAFE, DETERMINISTIC candidate that
+ * CITES the retrieved sources but NEVER echoes a raw `block` verbatim (the A1 redact-by-type
+ * obligation) — so no raw note content can leak even in the interim. It has NO side effects.
+ */
+export function createStubSynthesis(): CopilotSynthesisPort {
+  return {
+    synthesize: (
+      _workspaceId,
+      _question,
+      context,
+    ): Result<CandidateCopilotAnswer, FailureVariant> => {
+      const n = context.sources.length;
+      const answer =
+        n === 0
+          ? ["I couldn't find anything in this workspace to answer that yet."]
+          : [
+              `I found ${String(n)} relevant note${n === 1 ? "" : "s"} in this workspace.`,
+              "A full answer needs the language model, which isn't wired up yet — see the cited sources below.",
+            ];
+      // Cites the retrieved sources (opaque ref + title only); the raw `context.blocks` are read by
+      // the real model but NEVER surfaced here.
+      return ok({ answer, citations: context.sources });
     },
   };
 }

@@ -1,9 +1,13 @@
-// §9.6 A2 — Copilot workspace-scoped knowledge retrieval (WS-8 fail-closed).
+// §9.6 A2/A3 — Copilot retrieval (WS-8 fail-closed) + governed synthesis (egress veto + stub).
 import { describe, it, expect } from "vitest";
 import { isOk, isErr } from "@sow/contracts";
+import type { AgentJob, DataOwner, EgressPolicy, ProviderRoute, WorkspaceType } from "@sow/contracts";
+import { processorId } from "@sow/contracts";
 import {
   createFixtureRetrieval,
   enforceRetrievalScope,
+  guardCopilotEgress,
+  createStubSynthesis,
   type RetrievedContext,
 } from "../../../src/api/procedures/copilot";
 
@@ -77,5 +81,160 @@ describe("enforceRetrievalScope — cross-workspace guard (defense-in-depth WS-8
     const r = enforceRetrievalScope(WS, null as unknown as RetrievedContext);
     expect(isErr(r)).toBe(true);
     if (isErr(r)) expect(r.error.cause?.code).toBe("RETRIEVAL_SCOPE_MISMATCH");
+  });
+});
+
+// ── A3: governed synthesis — the Employer-Work egress veto + the interim stub ─────────────
+const cloudRoute: ProviderRoute = {
+  provider: "claude",
+  model: "claude-opus-4",
+  endpoint: "https://api.anthropic.com",
+  egressClass: "cloud",
+};
+const localRoute: ProviderRoute = {
+  provider: "ollama",
+  model: "llama3.1",
+  endpoint: "http://127.0.0.1:11434",
+  egressClass: "local",
+};
+const tunneledLocalRoute: ProviderRoute = {
+  // egressClass claims 'local' but the endpoint is remote — the exfil hole the veto must catch.
+  provider: "ollama",
+  model: "llama3.1",
+  endpoint: "https://exfil.example.com:11434",
+  egressClass: "local",
+};
+
+const copilotJob = (over: Partial<AgentJob> = {}): AgentJob => ({
+  id: "job-copilot-001" as AgentJob["id"],
+  workflowRunId: "wf-copilot-001" as AgentJob["workflowRunId"],
+  workspaceId: "ws-001" as AgentJob["workspaceId"],
+  capability: "meeting.close" as AgentJob["capability"],
+  contextRefs: [{ refKind: "source", ref: "src:1" }],
+  outputSchemaId: "sow:knowledge-mutation-plan",
+  toolPolicy: { mode: "read_only", allowedTools: [], deniedTools: [], allowsMutating: false },
+  providerRoute: cloudRoute,
+  trustLevel: "trusted",
+  carriesRawContent: true,
+  maxRuntimeSeconds: 300,
+  idempotencyKey: "idem-copilot-001",
+  ...over,
+});
+
+const egressPolicy = (over: Partial<EgressPolicy> = {}): EgressPolicy => ({
+  workspaceId: "ws-001" as EgressPolicy["workspaceId"],
+  allowedProcessors: [processorId("claude")],
+  rawContentAllowedProcessors: [processorId("claude")],
+  employerRawEgressAcknowledged: false,
+  ...over,
+});
+
+const employerWs: { type: WorkspaceType; dataOwner: DataOwner } = { type: "employer_work", dataOwner: "employer" };
+const personalWs: { type: WorkspaceType; dataOwner: DataOwner } = { type: "personal_business", dataOwner: "user" };
+
+describe("guardCopilotEgress — Employer-Work raw-egress veto (safety rule 5, reuses egressVeto)", () => {
+  it("DENIES a CLOUD route for employer-work raw content with egress-ack OFF (fail closed, no cloud fallback)", () => {
+    const r = guardCopilotEgress({
+      job: copilotJob(),
+      route: cloudRoute,
+      egress: egressPolicy({ employerRawEgressAcknowledged: false }),
+      workspace: employerWs,
+    });
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
+  });
+
+  it("ALLOWS a genuine loopback-LOCAL route for employer-work raw content with ack OFF", () => {
+    const r = guardCopilotEgress({
+      job: copilotJob(),
+      route: localRoute,
+      egress: egressPolicy({ employerRawEgressAcknowledged: false }),
+      workspace: employerWs,
+    });
+    expect(isOk(r)).toBe(true);
+    // The permitted route is the SAME one handed in — the veto narrows/denies, never substitutes.
+    if (isOk(r)) expect(r.value).toEqual(localRoute);
+  });
+
+  it("DENIES a TUNNELED-'local' route (remote endpoint) for employer raw + ack OFF — the exfil hole", () => {
+    const r = guardCopilotEgress({
+      job: copilotJob(),
+      route: tunneledLocalRoute,
+      egress: egressPolicy({ employerRawEgressAcknowledged: false }),
+      workspace: employerWs,
+    });
+    expect(isErr(r)).toBe(true);
+    // The most safety-critical case — pin WHICH denial fired (the raw-egress veto, not the allowlist).
+    if (isErr(r)) expect(r.error.cause?.code).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
+  });
+
+  it("ALLOWS a cloud route once egress-ack is ON (allowlisted processor)", () => {
+    const r = guardCopilotEgress({
+      job: copilotJob(),
+      route: cloudRoute,
+      egress: egressPolicy({ employerRawEgressAcknowledged: true }),
+      workspace: employerWs,
+    });
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value).toEqual(cloudRoute);
+  });
+
+  it("ALLOWS a personal-workspace cloud route (allowlisted; no employer veto)", () => {
+    const r = guardCopilotEgress({
+      job: copilotJob({ workspaceId: "ws-personal" as AgentJob["workspaceId"] }),
+      route: cloudRoute,
+      egress: egressPolicy({ workspaceId: "ws-personal" as EgressPolicy["workspaceId"] }),
+      workspace: personalWs,
+    });
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value).toEqual(cloudRoute);
+  });
+
+  it("FORCES carriesRawContent — a caller can't bypass the veto by declaring the job carries none", () => {
+    // Even with carriesRawContent:false on the job, the guard treats Copilot as raw-content-bearing,
+    // so an employer cloud route with ack OFF is STILL denied (no bypass).
+    const r = guardCopilotEgress({
+      job: copilotJob({ carriesRawContent: false }),
+      route: cloudRoute,
+      egress: egressPolicy({ employerRawEgressAcknowledged: false }),
+      workspace: employerWs,
+    });
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
+  });
+});
+
+describe("createStubSynthesis — honest interim, cites sources, NEVER echoes raw blocks (A1 redact-by-type)", () => {
+  const RAW = "RAW_SECRET_BLOCK_should_never_surface";
+  const withSources: RetrievedContext = {
+    workspaceId: WS,
+    blocks: [RAW],
+    sources: [
+      { citationId: "src:note-1", title: "Vendor review — decisions" },
+      { citationId: "src:note-2", title: "Pricing memo" },
+    ],
+  };
+
+  it("produces a cited candidate answer WITHOUT echoing any raw block verbatim", async () => {
+    const synth = createStubSynthesis();
+    const r = await synth.synthesize(WS, "what did we decide?", withSources);
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.answer.length).toBeGreaterThan(0);
+      // Cites the retrieved sources.
+      expect(r.value.citations).toEqual(withSources.sources);
+      // NEVER echoes a raw block into the answer (the A1 redact-by-type obligation).
+      expect(r.value.answer.some((b) => b.includes(RAW))).toBe(false);
+    }
+  });
+
+  it("returns a 'nothing found' candidate with NO citations when retrieval is empty", async () => {
+    const synth = createStubSynthesis();
+    const r = await synth.synthesize(WS, "obscure question", { workspaceId: WS, blocks: [], sources: [] });
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.answer.length).toBeGreaterThan(0);
+      expect(r.value.citations).toEqual([]);
+    }
   });
 });
