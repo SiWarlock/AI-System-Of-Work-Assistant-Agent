@@ -397,7 +397,7 @@ export function AppShell(props: AppShellProps): ReactElement {
 
         {/* ── Copilot right sidebar — collapsed (thin rail) ⇄ expanded (chat panel) ── */}
         {copilotOpen ? (
-          <Copilot onCollapse={collapseCopilot} />
+          <Copilot scope={scope} onCollapse={collapseCopilot} />
         ) : (
           <aside className="sow-copilot-rail" aria-label="Copilot (collapsed)">
             {/* Gradient sparkle icon */}

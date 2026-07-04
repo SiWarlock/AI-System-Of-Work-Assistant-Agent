@@ -60,3 +60,18 @@ export function isWorkspaceScope(scope: WorkspaceScope): boolean {
   const meta = BY_ID.get(scope);
   return meta === undefined || meta.workspaceId !== null;
 }
+
+/**
+ * The query `workspaceId` for a scope that targets a single RECOGNIZED workspace, else `null`.
+ *
+ * This is the fail-closed gate for the ASK / read direction — the MIRROR of `isWorkspaceScope`
+ * (which fails closed for the push-FOLD direction). Here `null` means "not a queryable single
+ * workspace": Global → null (cross-workspace, no single id) AND any UNKNOWN / out-of-union scope
+ * → null (not recognized). Only the three known workspaces return their id. Use THIS — not
+ * `isWorkspaceScope` — wherever an unknown scope must NOT be treated as a queryable workspace
+ * (the Copilot ask gate; A5's per-scope read): `isWorkspaceScope` returns `true` for an unknown
+ * value, which is the wrong direction for gating a read.
+ */
+export function resolveWorkspaceId(scope: WorkspaceScope): string | null {
+  return BY_ID.get(scope)?.workspaceId ?? null;
+}
