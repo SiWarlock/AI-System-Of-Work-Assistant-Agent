@@ -1,8 +1,10 @@
 import { useEffect, useRef, useSyncExternalStore, type ReactElement } from "react";
+import { AppShell } from "./chrome/AppShell";
 import { Today } from "./surfaces/today/Today";
 import { createUiSafeStore } from "./store";
-import { setScope } from "./store/projections";
+import { setScope, navigate } from "./store/projections";
 import { WORKSPACE_SCOPES, type WorkspaceScope } from "./store/scope";
+import type { Route } from "./store/route";
 import { startLive, type StartLiveHandle } from "./lib/live";
 import { seedDevStore } from "./dev/seed";
 
@@ -56,17 +58,43 @@ export function App(): ReactElement {
     });
   };
 
+  // §9.5 routing: select the mounted SURFACE (left-rail nav). Scope-preserving — `navigate`
+  // never touches the scope or the scope-hydrated read-models.
+  const onNavigate = (route: Route): void => {
+    store.dispatch((st) => navigate(st, route));
+  };
+
   return (
-    <Today
+    <AppShell
       connection={state.connection}
       scope={state.scope}
       onScopeChange={onScopeChange}
-      cards={[...state.cards.values()]}
-      health={[...state.health.values()]}
-      global={state.global}
-      recentChanges={state.recentChanges}
-      projects={state.projects}
-      onDrillDown={onDrillDown}
-    />
+      route={state.route}
+      onNavigate={onNavigate}
+    >
+      {state.route.surface === "projects" ? (
+        // Interim stub — the real dedicated Projects page lands in R3 (§9.5).
+        <main className="sow-content" aria-label="Projects">
+          <div className="sow-page-head">
+            <div>
+              <h1>Projects</h1>
+            </div>
+          </div>
+          <div className="sow-empty" role="status">
+            Projects page coming up next
+          </div>
+        </main>
+      ) : (
+        <Today
+          scope={state.scope}
+          cards={[...state.cards.values()]}
+          health={[...state.health.values()]}
+          global={state.global}
+          recentChanges={state.recentChanges}
+          projects={state.projects}
+          onDrillDown={onDrillDown}
+        />
+      )}
+    </AppShell>
   );
 }
