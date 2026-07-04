@@ -1,6 +1,7 @@
 import { useEffect, useRef, useSyncExternalStore, type ReactElement } from "react";
 import { AppShell } from "./chrome/AppShell";
 import { Today } from "./surfaces/today/Today";
+import { Projects } from "./surfaces/projects/Projects";
 import { createUiSafeStore } from "./store";
 import { setScope, navigate } from "./store/projections";
 import { WORKSPACE_SCOPES, type WorkspaceScope } from "./store/scope";
@@ -64,6 +65,14 @@ export function App(): ReactElement {
     store.dispatch((st) => navigate(st, route));
   };
 
+  // Select a project's detail — carries the id in the route (scope-preserving; §9.5).
+  const onSelectProject = (projectId: string): void => {
+    store.dispatch((st) => navigate(st, { surface: "projects", projectId }));
+  };
+
+  const selectedProjectId =
+    state.route.surface === "projects" ? state.route.projectId : undefined;
+
   return (
     <AppShell
       connection={state.connection}
@@ -73,17 +82,12 @@ export function App(): ReactElement {
       onNavigate={onNavigate}
     >
       {state.route.surface === "projects" ? (
-        // Interim stub — the real dedicated Projects page lands in R3 (§9.5).
-        <main className="sow-content" aria-label="Projects">
-          <div className="sow-page-head">
-            <div>
-              <h1>Projects</h1>
-            </div>
-          </div>
-          <div className="sow-empty" role="status">
-            Projects page coming up next
-          </div>
-        </main>
+        <Projects
+          scope={state.scope}
+          projects={state.projects}
+          selectedProjectId={selectedProjectId}
+          onSelectProject={onSelectProject}
+        />
       ) : (
         <Today
           scope={state.scope}
@@ -91,7 +95,6 @@ export function App(): ReactElement {
           health={[...state.health.values()]}
           global={state.global}
           recentChanges={state.recentChanges}
-          projects={state.projects}
           onDrillDown={onDrillDown}
         />
       )}
