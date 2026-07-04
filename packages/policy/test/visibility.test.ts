@@ -2,12 +2,18 @@
 // visibility validation (fail-closed MALFORMED + VISIBILITY_EXCEEDS_SOURCE); hard
 // denial #2 — direct cross-workspace/cross-brain RAW retrieval DENY (REQ-F-005/F-020).
 import { describe, it, expect } from "vitest";
-import { defaultWorkspace, type GclProjection, type Workspace } from "@sow/contracts";
+import {
+  defaultWorkspace,
+  type GclProjection,
+  type Workspace,
+  type VisibilityLevel,
+} from "@sow/contracts";
 import {
   visibilityRank,
   isWithinDefault,
   validateProjectionVisibility,
   denyDirectCrossWorkspaceRaw,
+  permitsRawDrillDown,
 } from "../src/visibility";
 import { isRedactionSafe } from "../src/audit-signal";
 
@@ -174,5 +180,29 @@ describe("denyDirectCrossWorkspaceRaw (hard denial #2)", () => {
     });
     expect(d.decision).toBe("deny");
     if (d.decision === "deny") expect(d.reason).toBe("DIRECT_CROSS_WORKSPACE_RAW_RETRIEVAL");
+  });
+});
+
+// The §9.4 Global-Today drill-down gate: whether a projection's visibility level
+// permits opening WORKSPACE-SCOPED RAW context. Only `full` (the top of the lattice —
+// the sole level authorizing raw/full exposure) permits it; everything below is a
+// sanitized-only cross-workspace exposure, so a raw drill-down is denied. FAIL-CLOSED
+// on any unrecognized value. Shared by the worker projector (affordance hint) AND the
+// worker drill-down query (enforcement) so the hint can never diverge from the gate.
+describe("permitsRawDrillDown", () => {
+  it("permits a raw drill-down ONLY at 'full'", () => {
+    expect(permitsRawDrillDown("full")).toBe(true);
+  });
+
+  it("DENIES a raw drill-down at every level below full", () => {
+    expect(permitsRawDrillDown("isolated")).toBe(false);
+    expect(permitsRawDrillDown("coordination")).toBe(false);
+    expect(permitsRawDrillDown("sanitized")).toBe(false);
+  });
+
+  it("fails closed on an unrecognized / malformed level (never permits raw)", () => {
+    expect(permitsRawDrillDown("not-a-level" as unknown as VisibilityLevel)).toBe(false);
+    expect(permitsRawDrillDown(undefined as unknown as VisibilityLevel)).toBe(false);
+    expect(permitsRawDrillDown("" as unknown as VisibilityLevel)).toBe(false);
   });
 });

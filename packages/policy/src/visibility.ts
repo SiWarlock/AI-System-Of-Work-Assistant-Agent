@@ -41,6 +41,26 @@ export function isWithinDefault(
   return visibilityRank(projectionLevel) <= visibilityRank(workspaceDefault);
 }
 
+/**
+ * §9.4 Global-Today drill-down gate: does a projection's visibility level permit
+ * opening WORKSPACE-SCOPED RAW context from the global surface?
+ *
+ * ONLY `full` — the top of the lattice, the sole level that authorizes raw/full
+ * exposure. Every level below (`isolated`/`coordination`/`sanitized`) is a
+ * sanitized-only cross-workspace exposure, so drilling to raw would exceed what the
+ * workspace authorized for the global surface; it is denied (the owner can still open
+ * that workspace directly via its own scope — a within-workspace read — but the GLOBAL
+ * drill is a deliberate boundary crossing and stays conservative).
+ *
+ * FAIL-CLOSED: the strict `=== "full"` returns false for ANY other value, including a
+ * malformed/unrecognized one — never permits raw on a bad input. Shared by the worker
+ * UI-safe projector (the `drillable` affordance HINT) AND the worker drill-down query
+ * (the ENFORCEMENT) so the hint can never diverge from the gate.
+ */
+export function permitsRawDrillDown(level: VisibilityLevel): boolean {
+  return level === "full";
+}
+
 // A payloadHash-shaped code (not a real content hash — policy is pure and has no
 // hasher outside session-auth). Redaction-safe: a fixed decision-kind marker; the
 // projection/workspace identity rides the refs.
