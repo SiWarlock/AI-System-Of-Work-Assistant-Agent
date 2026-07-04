@@ -1,0 +1,909 @@
+[
+  {
+    "id": "seg1-sprint-planning-checkout",
+    "sensitivity": "internal",
+    "noInference": false,
+    "transcript": "Priya: Alright, sprint 34 planning. We've got the checkout-refactor epic as the top priority this cycle. Let's size it. Marco, you've been in that code most — what's your read?\nMarco: The payment-adapter split is the big one. I think it's a solid week of work once we settle the interface. I can take it.\nPriya: Good. Let's lock that decision — the payment-adapter split is the sprint's primary deliverable, everything else is secondary. Marco owns it, target end of sprint, that's July 17th.\nMarco: Works. I'll have the interface RFC up by Monday the 6th so people can react before I go deep.\nPriya: Perfect. Second thing — the flaky checkout e2e suite. It's been red intermittently for two weeks and it's eroding trust in CI. Dana, can you own stabilizing it?\nDana: Yeah, I'll take it. Give me until July 10th, I want to add proper retry-with-diagnostics instead of just muting the tests.\nPriya: Agreed, and let's make it a decision: we do NOT mute flaky tests, we fix or quarantine with a tracking ticket. Dana by the 10th.\nDana: Noted.\nPriya: Last, the coupon-service is at 40% test coverage. Marco, once the adapter lands, bump coupon coverage to 80 percent — due July 24th, the day after sprint if needed.\nMarco: Fine, I'll slot it after the adapter.\nPriya: Great, that's the sprint. Ship it.",
+    "gold": {
+      "workspace": "employer-work",
+      "project": "checkout-refactor",
+      "decisions": [
+        "The payment-adapter split is sprint 34's primary deliverable; all other work is secondary.",
+        "Flaky tests are never muted — they are fixed or quarantined with a tracking ticket."
+      ],
+      "tasks": [
+        {
+          "title": "Complete the payment-adapter split",
+          "owner": "Marco",
+          "due": "2026-07-17",
+          "evidenceRef": "Priya: 'the payment-adapter split is the sprint's primary deliverable... Marco owns it, target end of sprint, that's July 17th.'"
+        },
+        {
+          "title": "Publish the payment-adapter interface RFC",
+          "owner": "Marco",
+          "due": "2026-07-06",
+          "evidenceRef": "Marco: 'I'll have the interface RFC up by Monday the 6th so people can react before I go deep.'"
+        },
+        {
+          "title": "Stabilize the flaky checkout e2e suite with retry-with-diagnostics",
+          "owner": "Dana",
+          "due": "2026-07-10",
+          "evidenceRef": "Dana: 'I'll take it. Give me until July 10th, I want to add proper retry-with-diagnostics instead of just muting the tests.'"
+        },
+        {
+          "title": "Raise coupon-service test coverage to 80%",
+          "owner": "Marco",
+          "due": "2026-07-24",
+          "evidenceRef": "Priya: 'bump coupon coverage to 80 percent — due July 24th, the day after sprint if needed.'"
+        }
+      ],
+      "notes": [
+        "Coupon-service currently sits at 40% test coverage.",
+        "The flaky checkout e2e suite has been intermittently red for two weeks, eroding CI trust."
+      ],
+      "requiresClarification": false
+    }
+  },
+  {
+    "id": "seg1-incident-retro-db-outage",
+    "sensitivity": "confidential",
+    "noInference": true,
+    "transcript": "Sam: This is the retro for INC-2291, the two-hour Postgres connection-pool exhaustion that took down the orders API on July 1st. No blame, let's get the facts. Root cause?\nLena: The connection pool max was 20, and the new reporting job opened long-lived connections without releasing them. Under peak load we starved the app connections.\nSam: So the trigger was the reporting job merged Tuesday. Let's record that as the confirmed root cause: unbounded long-lived connections from the reporting job exhausted the pool.\nLena: Agreed.\nSam: Action items. First, add a separate connection pool for background jobs so they can't starve the API. Lena, you're the closest — can you own that?\nLena: Yes, I'll own it. I'll need to check with infra on limits before I commit a date, so date's open for now.\nSam: Okay, owner Lena, due date TBD until infra confirms. Second — we had no alert on pool saturation, we found out from customer reports. We need a saturation alert at 80% utilization. I'll take that one, due July 8th.\nLena: That would've saved us an hour.\nSam: Third, decision: all background jobs must use the dedicated pool going forward — that's a standing rule, not a one-off. And someone needs to write the runbook for pool exhaustion. We'll assign that owner next standup — leave it open.\nLena: Sounds good.\nSam: Also noting: MTTR was 118 minutes, mostly detection time. That's our headline metric to improve.",
+    "gold": {
+      "workspace": "employer-work",
+      "project": "orders-api-reliability",
+      "decisions": [
+        "Confirmed root cause of INC-2291: unbounded long-lived connections from the new reporting job exhausted the Postgres connection pool.",
+        "All background jobs must use the dedicated connection pool going forward (standing rule)."
+      ],
+      "tasks": [
+        {
+          "title": "Add a separate connection pool for background jobs",
+          "owner": "Lena",
+          "due": "TBD",
+          "evidenceRef": "Lena: 'I'll own it. I'll need to check with infra on limits before I commit a date, so date's open for now.' Sam: 'owner Lena, due date TBD until infra confirms.'"
+        },
+        {
+          "title": "Add a pool-saturation alert at 80% utilization",
+          "owner": "Sam",
+          "due": "2026-07-08",
+          "evidenceRef": "Sam: 'We need a saturation alert at 80% utilization. I'll take that one, due July 8th.'"
+        },
+        {
+          "title": "Write the runbook for connection-pool exhaustion",
+          "owner": "TBD",
+          "due": "TBD",
+          "evidenceRef": "Sam: 'someone needs to write the runbook for pool exhaustion. We'll assign that owner next standup — leave it open.'"
+        }
+      ],
+      "notes": [
+        "INC-2291 was a two-hour Postgres connection-pool exhaustion outage of the orders API on 2026-07-01.",
+        "MTTR was 118 minutes, dominated by detection time; the outage was found via customer reports, not alerting."
+      ],
+      "requiresClarification": true
+    }
+  },
+  {
+    "id": "seg1-arch-review-event-bus",
+    "sensitivity": "internal",
+    "noInference": false,
+    "transcript": "Ravi: Architecture review for the notifications rework. The proposal is to move from synchronous HTTP calls to an event-driven bus. Kim, walk us through the choice.\nKim: Right now the checkout service calls notifications synchronously, so a slow email provider adds latency to checkout. The proposal is to publish a domain event and let a consumer handle delivery async.\nRavi: What bus? Kafka or SQS?\nKim: I'm leaning SQS — we're already on AWS, lower operational overhead, and we don't need Kafka's replay-from-offset semantics here.\nRavi: I agree. Let's decide it: we adopt SQS for the notifications event bus; Kafka is over-provisioned for this use case. Documented.\nKim: I'll write the ADR capturing that. I'll have it done by July 9th.\nRavi: Good. One concern — ordering. Notifications don't strictly need ordering, correct?\nKim: Correct, each notification is independent, so we accept at-least-once with idempotent consumers.\nRavi: Then second decision: consumers must be idempotent using a dedup key on the event ID. Kim, add a proof-of-concept idempotent consumer, due July 16th.\nKim: Will do.\nRavi: Last item — we need a load test comparing p99 checkout latency before and after. Tomas, can you own the load test?\nTomas: Yes, I'll build it. I'll target July 20th so we have data before the go/no-go.\nRavi: Perfect. That's the review — three items, all owned.",
+    "gold": {
+      "workspace": "employer-work",
+      "project": "notifications-rework",
+      "decisions": [
+        "Adopt SQS for the notifications event bus; Kafka is over-provisioned for this use case.",
+        "Notification consumers must be idempotent, using a dedup key on the event ID (at-least-once delivery accepted)."
+      ],
+      "tasks": [
+        {
+          "title": "Write the ADR for the SQS event-bus decision",
+          "owner": "Kim",
+          "due": "2026-07-09",
+          "evidenceRef": "Kim: 'I'll write the ADR capturing that. I'll have it done by July 9th.'"
+        },
+        {
+          "title": "Build a proof-of-concept idempotent consumer with event-ID dedup",
+          "owner": "Kim",
+          "due": "2026-07-16",
+          "evidenceRef": "Ravi: 'add a proof-of-concept idempotent consumer, due July 16th.' Kim: 'Will do.'"
+        },
+        {
+          "title": "Build a load test comparing p99 checkout latency before and after the rework",
+          "owner": "Tomas",
+          "due": "2026-07-20",
+          "evidenceRef": "Tomas: 'Yes, I'll build it. I'll target July 20th so we have data before the go/no-go.'"
+        }
+      ],
+      "notes": [
+        "Current design calls notifications synchronously from checkout, so a slow email provider adds latency to the checkout path.",
+        "Notifications are independent and do not require strict ordering, which is why at-least-once with idempotent consumers is acceptable."
+      ],
+      "requiresClarification": false
+    }
+  },
+  {
+    "id": "seg1-sprint-planning-mobile-perf",
+    "sensitivity": "internal",
+    "noInference": true,
+    "transcript": "Nadia: Sprint 12 planning for the mobile team. The big theme is cold-start performance — we're at 4.1 seconds on the p90 device and product wants under 2.5.\nOmar: The biggest cost is the synchronous config fetch on launch. If we cache the last-known config and hydrate in the background, we cut most of that.\nNadia: Let's make that the anchor decision: cold start blocks on nothing network-bound; we ship with cached config and hydrate async. Omar, you own the config-cache change.\nOmar: I'll take it. I can commit to July 15th.\nNadia: Great. Next — we've got a memory leak in the image carousel that QA flagged. We need someone on it, but I don't want to overload Omar. Let's put it on the board and pick an owner at grooming Thursday.\nOmar: The leak is real, I reproduced it — retained view controllers in the carousel.\nNadia: Right, so the task is clear, just no owner yet. Due date we'll set to July 18th regardless of who takes it.\nOmar: Fine.\nNadia: Third, we should add a cold-start performance regression test to CI so we don't backslide. Nadia — that's me — I'll own it, due July 22nd.\nOmar: Good, that closes the loop.\nNadia: Noting for the record: current p90 cold start is 4.1s, target is 2.5s. That's the number we report on.",
+    "gold": {
+      "workspace": "employer-work",
+      "project": "mobile-performance",
+      "decisions": [
+        "Cold start must not block on anything network-bound; the app ships with cached config and hydrates asynchronously."
+      ],
+      "tasks": [
+        {
+          "title": "Implement the config-cache change (cached config + async hydrate)",
+          "owner": "Omar",
+          "due": "2026-07-15",
+          "evidenceRef": "Omar: 'I'll take it. I can commit to July 15th.'"
+        },
+        {
+          "title": "Fix the image-carousel memory leak (retained view controllers)",
+          "owner": "TBD",
+          "due": "2026-07-18",
+          "evidenceRef": "Nadia: 'I don't want to overload Omar... pick an owner at grooming Thursday... Due date we'll set to July 18th regardless of who takes it.'"
+        },
+        {
+          "title": "Add a cold-start performance regression test to CI",
+          "owner": "Nadia",
+          "due": "2026-07-22",
+          "evidenceRef": "Nadia: 'that's me — I'll own it, due July 22nd.'"
+        }
+      ],
+      "notes": [
+        "Current p90 cold-start time is 4.1s; product target is under 2.5s.",
+        "The carousel memory leak was reproduced and traced to retained view controllers in the carousel."
+      ],
+      "requiresClarification": true
+    }
+  },
+  {
+    "id": "seg1-incident-retro-deploy-rollback",
+    "sensitivity": "confidential",
+    "noInference": false,
+    "transcript": "Grace: Retro for the botched 3.7 deploy last night. We shipped a migration that locked the users table for eleven minutes during peak. Facts first — Hassan?\nHassan: The migration added a NOT NULL column with a default, and on our Postgres version that rewrites the whole table under an ACCESS EXCLUSIVE lock. 40 million rows, so eleven minutes of lock.\nGrace: So the confirmed cause is a full-table-rewrite migration run online during peak traffic. Let's record that.\nHassan: Yes. The safe pattern is add-nullable, backfill in batches, then set not-null — three steps, none locking.\nGrace: Decision, then: all schema migrations must use the expand-contract pattern and are forbidden from running full-table rewrites online. That's a hard rule now.\nHassan: Strongly agree.\nGrace: Actions. Hassan, write a migration lint check that fails CI on any single-statement NOT NULL add against a large table. You own it, due July 14th.\nHassan: I'll build it, July 14th works.\nGrace: Second — we deployed during peak because our deploy window policy is informal. Decision: deploys with migrations only run in the low-traffic window, 2 to 5am. And Priya will document that policy — Priya, due July 11th.\nPriya: Got it, I'll write it up by the 11th.\nGrace: Third, we need to backfill the column we half-migrated. Hassan, finish the backfill safely, due July 9th.\nHassan: Already scripted, I'll run it the 9th.\nGrace: For the record, customer-facing impact was eleven minutes of failed writes, roughly 12,000 users affected.",
+    "gold": {
+      "workspace": "employer-work",
+      "project": "deploy-safety",
+      "decisions": [
+        "Confirmed cause of the 3.7 incident: a full-table-rewrite migration (NOT NULL column add) run online during peak traffic held an ACCESS EXCLUSIVE lock for eleven minutes.",
+        "All schema migrations must use the expand-contract pattern; full-table rewrites are forbidden from running online.",
+        "Deploys that include migrations only run in the low-traffic window (2-5am)."
+      ],
+      "tasks": [
+        {
+          "title": "Write a migration lint check that fails CI on single-statement NOT NULL adds to large tables",
+          "owner": "Hassan",
+          "due": "2026-07-14",
+          "evidenceRef": "Grace: 'write a migration lint check that fails CI on any single-statement NOT NULL add against a large table. You own it, due July 14th.'"
+        },
+        {
+          "title": "Document the migration deploy-window policy (2-5am only)",
+          "owner": "Priya",
+          "due": "2026-07-11",
+          "evidenceRef": "Grace: 'Priya will document that policy — Priya, due July 11th.' Priya: 'I'll write it up by the 11th.'"
+        },
+        {
+          "title": "Safely finish the backfill of the half-migrated column",
+          "owner": "Hassan",
+          "due": "2026-07-09",
+          "evidenceRef": "Grace: 'finish the backfill safely, due July 9th.' Hassan: 'Already scripted, I'll run it the 9th.'"
+        }
+      ],
+      "notes": [
+        "The locking migration ran against a 40-million-row users table on a Postgres version that rewrites the table for a NOT NULL-with-default add.",
+        "Customer-facing impact was eleven minutes of failed writes affecting roughly 12,000 users.",
+        "The safe pattern named was add-nullable, batched backfill, then set not-null."
+      ],
+      "requiresClarification": false
+    }
+  },
+  {
+    "id": "seg1-arch-review-auth-service",
+    "sensitivity": "confidential",
+    "noInference": true,
+    "transcript": "Elena: Architecture review for extracting auth into its own service. Today it's a library embedded in the monolith. Diego, the case for extraction?\nDiego: Two teams now need auth logic and they're stepping on each other in the monolith. A standalone service with a stable API decouples them. The risk is added network latency on every request.\nElena: How do we handle that latency?\nDiego: Short-lived signed tokens validated locally — the service issues them, callers verify the signature without a round trip. Only issuance and refresh hit the network.\nElena: Good. Decision: we extract auth as a standalone service using locally-verifiable signed tokens, so hot-path verification stays in-process. Recorded.\nDiego: I'll draft the token format and key-rotation design. Due July 17th.\nElena: On key rotation — that's security-sensitive. We need a rotation runbook and someone from security to review the design. I'll reach out to the security team for a reviewer; owner for that review is open until they name someone. Target July 24th for their sign-off.\nDiego: Makes sense, I don't want to guess who on their side.\nElena: Right, owner TBD on the security review. Second decision: keys rotate every 90 days with overlapping validity windows so there's no hard cutover.\nDiego: Agreed.\nElena: And we need a migration plan to move the monolith off the embedded library without a big-bang cutover. Diego, own the migration plan, due July 21st.\nDiego: I'll do strangler-style, incremental. July 21st.\nElena: Noted that the current embedded library is duplicated across two teams' code paths — that duplication is the core pain we're solving.",
+    "gold": {
+      "workspace": "employer-work",
+      "project": "auth-service-extraction",
+      "decisions": [
+        "Extract auth as a standalone service using locally-verifiable signed tokens so hot-path verification stays in-process; only issuance and refresh make network calls.",
+        "Signing keys rotate every 90 days with overlapping validity windows to avoid a hard cutover."
+      ],
+      "tasks": [
+        {
+          "title": "Draft the token format and key-rotation design",
+          "owner": "Diego",
+          "due": "2026-07-17",
+          "evidenceRef": "Diego: 'I'll draft the token format and key-rotation design. Due July 17th.'"
+        },
+        {
+          "title": "Security review of the key-rotation design plus rotation runbook",
+          "owner": "TBD",
+          "due": "2026-07-24",
+          "evidenceRef": "Elena: 'owner for that review is open until they name someone. Target July 24th for their sign-off... owner TBD on the security review.'"
+        },
+        {
+          "title": "Write the incremental (strangler-style) migration plan off the embedded library",
+          "owner": "Diego",
+          "due": "2026-07-21",
+          "evidenceRef": "Elena: 'own the migration plan, due July 21st.' Diego: 'I'll do strangler-style, incremental. July 21st.'"
+        }
+      ],
+      "notes": [
+        "Auth is currently an embedded library duplicated across two teams' code paths, which is the core pain being solved.",
+        "The primary risk of extraction is added network latency per request, mitigated by locally-verifiable signed tokens."
+      ],
+      "requiresClarification": true
+    }
+  },
+  {
+    "id": "seg2-emp-client-acme-qbr",
+    "sensitivity": "confidential",
+    "noInference": false,
+    "transcript": "Priya: Thanks everyone for joining the Q3 business review for the Acme account. Let's start with the renewal. Acme's CFO wants the contract signed before their fiscal close.\nDaniel (Acme): Right, our fiscal year ends September 30th. We need the redlined MSA back before then so legal can process it.\nPriya: Understood. Marcus, can you turn the redlines around and send the final MSA to Acme legal by 2026-09-18?\nMarcus: Yes, I'll own the redlines and get the MSA to their legal team by the 18th.\nDaniel: On pricing — we agreed on the two-year term at the discounted rate, correct?\nPriya: Correct. Decision: we're locking Acme into the 24-month term at the 15% volume discount. That's final on our side.\nDaniel: Good. One more thing — the SSO integration was flagged as a blocker by our security team.\nPriya: Noted. Aisha, please scope the Okta SSO integration and deliver the technical spec to Daniel by 2026-09-25.\nAisha: Got it, I'll write the SSO scope doc and send it to Daniel by the 25th.\nDaniel: Perfect. If those two land, we're clear to sign.\nPriya: Great. Let's also note that Acme is expanding to their EU offices next year, so data residency will come up — flagging it now for planning.\nDaniel: Yes, EU data residency will be a real requirement for the expansion.\nPriya: Noted for next quarter. Thanks all.",
+    "gold": {
+      "workspace": "employer-work",
+      "project": "acme-account",
+      "decisions": [
+        "Lock Acme into a 24-month contract term at the 15% volume discount (final on our side).",
+        "Proceed to signature once the redlined MSA and the SSO technical spec are delivered."
+      ],
+      "tasks": [
+        {
+          "title": "Turn around redlines and send the final MSA to Acme legal",
+          "owner": "Marcus",
+          "due": "2026-09-18",
+          "evidenceRef": "Marcus: \"Yes, I'll own the redlines and get the MSA to their legal team by the 18th.\" / Priya set due 2026-09-18."
+        },
+        {
+          "title": "Scope the Okta SSO integration and deliver the technical spec to Daniel",
+          "owner": "Aisha",
+          "due": "2026-09-25",
+          "evidenceRef": "Aisha: \"Got it, I'll write the SSO scope doc and send it to Daniel by the 25th.\" / Priya: \"deliver the technical spec to Daniel by 2026-09-25.\""
+        }
+      ],
+      "notes": [
+        "Acme fiscal year ends 2026-09-30; renewal must be signed before their fiscal close.",
+        "EU data residency will be a requirement when Acme expands to EU offices next year — flagged for next-quarter planning."
+      ],
+      "requiresClarification": false
+    }
+  },
+  {
+    "id": "seg2-pb-partner-sync-brewhaus",
+    "sensitivity": "internal",
+    "noInference": true,
+    "transcript": "Cody: Hey Ravi, thanks for hopping on. This is the weekly Brewhaus co-founder sync for our side project. Let's cover the launch.\nRavi: Sounds good. Where are we on the landing page?\nCody: Design's done. Decision: we're going with the dark 'liquid glass' theme for the hero, not the light one — it tested better with the beta group.\nRavi: Agreed, dark hero it is. Who's building it out?\nCody: I'll take the front-end build. I can commit to owning that.\nRavi: When do you think you'll have the hero live?\nCody: Honestly I need to check my other commitments first — I can't put a firm date on it yet.\nRavi: Okay, we'll pin the date once you've looked. What about the payment integration?\nCody: We need Stripe wired up before we can charge. Ravi, can you own the Stripe integration?\nRavi: Yeah, I'll take Stripe. I'll have it done by 2026-08-15.\nCody: Perfect. And let's decide on pricing — I think we go with a single $9/month tier at launch, no annual option yet.\nRavi: Agreed, single monthly tier for launch. Keep it simple.\nCody: One note — we should revisit an annual plan after we hit 100 paying users.\nRavi: Good call, park that for later. Alright, talk next week.",
+    "gold": {
+      "workspace": "personal-business",
+      "project": "brewhaus",
+      "decisions": [
+        "Use the dark 'liquid glass' hero theme for the landing page (it tested better with the beta group), not the light one.",
+        "Launch with a single $9/month pricing tier and no annual option at launch."
+      ],
+      "tasks": [
+        {
+          "title": "Build out the landing-page front end (dark liquid-glass hero)",
+          "owner": "Cody",
+          "due": "TBD",
+          "evidenceRef": "Cody: \"I'll take the front-end build. I can commit to owning that.\" Due unstated — Cody: \"I can't put a firm date on it yet.\""
+        },
+        {
+          "title": "Wire up the Stripe payment integration",
+          "owner": "Ravi",
+          "due": "2026-08-15",
+          "evidenceRef": "Ravi: \"Yeah, I'll take Stripe. I'll have it done by 2026-08-15.\""
+        }
+      ],
+      "notes": [
+        "Revisit adding an annual plan after Brewhaus reaches 100 paying users."
+      ],
+      "requiresClarification": true
+    }
+  },
+  {
+    "id": "seg2-emp-client-northwind-incident",
+    "sensitivity": "confidential",
+    "noInference": true,
+    "transcript": "Lena: This is the incident post-call with Northwind after last week's outage. Let's align on remediation before I send the RCA.\nTom (Northwind): Appreciate it. Our board is asking what caused the four-hour downtime.\nLena: The root cause was a misconfigured failover in the primary region. Decision: we're committing to a multi-region active-active setup so a single region failure never takes you down again.\nTom: That's what we need to hear. When will the RCA document be delivered?\nLena: Sofia, please write the formal RCA and send it to Tom by 2026-07-10.\nSofia: Understood, I'll deliver the RCA to Tom by the 10th.\nTom: And the active-active migration — who owns that and when does it land?\nLena: Raj will own the active-active migration engineering. Raj, do we have a target date?\nRaj: I need to size the work with the platform team before I can give a date — I don't want to commit to a timeline I can't hit.\nLena: Fair. We'll confirm the migration date after your sizing. Tom, is that acceptable?\nTom: Yes, as long as the RCA lands on time and we get the date within two weeks.\nLena: Agreed. Also note — Northwind wants a service-credit for the outage per the SLA; I'll flag that to our account team.\nTom: Thank you. That covers it.",
+    "gold": {
+      "workspace": "employer-work",
+      "project": "northwind-account",
+      "decisions": [
+        "Root cause of the four-hour outage was a misconfigured failover in the primary region.",
+        "Commit to a multi-region active-active architecture so a single region failure cannot take Northwind down again."
+      ],
+      "tasks": [
+        {
+          "title": "Write and deliver the formal RCA document to Tom",
+          "owner": "Sofia",
+          "due": "2026-07-10",
+          "evidenceRef": "Sofia: \"Understood, I'll deliver the RCA to Tom by the 10th.\" / Lena: \"send it to Tom by 2026-07-10.\""
+        },
+        {
+          "title": "Own the active-active migration engineering",
+          "owner": "Raj",
+          "due": "TBD",
+          "evidenceRef": "Lena: \"Raj will own the active-active migration engineering.\" Due unstated — Raj: \"I don't want to commit to a timeline I can't hit\"; Lena: \"We'll confirm the migration date after your sizing.\""
+        }
+      ],
+      "notes": [
+        "Northwind is requesting an SLA service credit for the outage; Lena will flag it to the account team.",
+        "Migration target date to be confirmed within two weeks per Tom's condition."
+      ],
+      "requiresClarification": true
+    }
+  },
+  {
+    "id": "seg2-pb-partner-sync-podcast",
+    "sensitivity": "internal",
+    "noInference": false,
+    "transcript": "Cody: Alright, weekly sync for the podcast side venture. Maya, you're producing, I'm on distribution. Let's plan season two.\nMaya: Sounds good. First decision — are we staying weekly or going biweekly?\nCody: I've thought about it. Decision: we go biweekly for season two so we can raise production quality. Weekly was burning us out.\nMaya: Totally agree, biweekly. Next, the guest list.\nCody: I'll handle guest outreach and booking. I'll have the first four guests confirmed by 2026-08-01.\nMaya: Great. I'll own the audio editing pipeline — I'm switching us to Descript. I'll have the new workflow documented and ready by 2026-07-20.\nCody: Nice. And sponsorship?\nMaya: Let's decide — do we take the mattress company's offer?\nCody: Decision: yes, we accept the mattress sponsor for a three-episode trial. The rate is fair.\nMaya: Agreed, three-episode trial. I'll send them the insertion order.\nCody: Actually let me own the sponsor contract since I handle distribution. I'll send the signed insertion order by 2026-07-25.\nMaya: Perfect, all yours. One note — our RSS host is getting expensive; we should compare alternatives before season three.\nCody: Noted, we'll review hosting later. Good sync.",
+    "gold": {
+      "workspace": "personal-business",
+      "project": "podcast-season-two",
+      "decisions": [
+        "Move to a biweekly release cadence for season two to raise production quality (weekly was causing burnout).",
+        "Accept the mattress company sponsorship as a three-episode trial at the offered rate."
+      ],
+      "tasks": [
+        {
+          "title": "Handle guest outreach and confirm the first four guests",
+          "owner": "Cody",
+          "due": "2026-08-01",
+          "evidenceRef": "Cody: \"I'll handle guest outreach and booking. I'll have the first four guests confirmed by 2026-08-01.\""
+        },
+        {
+          "title": "Document the new Descript audio-editing workflow",
+          "owner": "Maya",
+          "due": "2026-07-20",
+          "evidenceRef": "Maya: \"I'll own the audio editing pipeline — I'm switching us to Descript. I'll have the new workflow documented and ready by 2026-07-20.\""
+        },
+        {
+          "title": "Send the signed sponsor insertion order to the mattress company",
+          "owner": "Cody",
+          "due": "2026-07-25",
+          "evidenceRef": "Cody: \"let me own the sponsor contract... I'll send the signed insertion order by 2026-07-25.\""
+        }
+      ],
+      "notes": [
+        "RSS host is getting expensive; compare hosting alternatives before season three."
+      ],
+      "requiresClarification": false
+    }
+  },
+  {
+    "id": "seg2-emp-client-globex-onboarding",
+    "sensitivity": "confidential",
+    "noInference": true,
+    "transcript": "Owen: This is the kickoff/closeout for onboarding Globex onto the platform. Let's lock the migration plan.\nHannah (Globex): Thanks. Our biggest concern is data migration from the legacy CRM without downtime.\nOwen: Understood. Decision: we'll run a phased migration — read-only shadow first, then cutover on a weekend so business hours are never affected.\nHannah: That works for us. Who leads the migration?\nOwen: Ben will lead the data migration. Ben, when's the shadow phase ready?\nBen: I'll have the shadow migration running and validated by 2026-10-05.\nHannah: And the cutover date?\nBen: I'd rather not name the cutover weekend until the shadow phase proves clean — I don't want to promise a date I might miss.\nOwen: Reasonable. We'll set the cutover date once shadow validation passes. Hannah, acceptable?\nHannah: Yes. Also, our admins need training before go-live.\nOwen: Decision: we'll deliver two live training sessions for Globex admins, recorded for reuse. Nadia, please schedule and run the admin training.\nNadia: Will do. I'll confirm the two training sessions and send Hannah the calendar invites by 2026-10-12.\nHannah: Great, that covers our concerns.\nOwen: One note — Globex mentioned a possible second business unit joining in Q1; we'll treat that as a separate future engagement.",
+    "gold": {
+      "workspace": "employer-work",
+      "project": "globex-onboarding",
+      "decisions": [
+        "Run a phased data migration — read-only shadow first, then a weekend cutover so business hours are never affected.",
+        "Deliver two live, recorded admin training sessions for Globex before go-live."
+      ],
+      "tasks": [
+        {
+          "title": "Lead the data migration and get the shadow phase running and validated",
+          "owner": "Ben",
+          "due": "2026-10-05",
+          "evidenceRef": "Ben: \"I'll have the shadow migration running and validated by 2026-10-05.\""
+        },
+        {
+          "title": "Set and execute the production cutover",
+          "owner": "Ben",
+          "due": "TBD",
+          "evidenceRef": "Ben: \"I'd rather not name the cutover weekend until the shadow phase proves clean.\" / Owen: \"We'll set the cutover date once shadow validation passes.\""
+        },
+        {
+          "title": "Schedule and run the two admin training sessions and send Hannah the invites",
+          "owner": "Nadia",
+          "due": "2026-10-12",
+          "evidenceRef": "Nadia: \"I'll confirm the two training sessions and send Hannah the calendar invites by 2026-10-12.\""
+        }
+      ],
+      "notes": [
+        "A possible Globex second business unit joining in Q1 will be treated as a separate future engagement."
+      ],
+      "requiresClarification": true
+    }
+  },
+  {
+    "id": "seg2-pb-partner-sync-etsy-shop",
+    "sensitivity": "public",
+    "noInference": false,
+    "transcript": "Cody: Weekly sync for the handmade-goods shop. Elena, you run production, I run the online store. Holiday season planning today.\nElena: Yes. First, inventory — how many candle sets do we make for the holiday rush?\nCody: Decision: we produce 500 candle sets this run, up from 300 last year. Demand data supports it.\nElena: Agreed, 500 units. I'll own production. I'll have all 500 finished and packed by 2026-11-15.\nCody: Perfect, that gives us buffer before the December peak. On the storefront side, I'll rebuild the product photography and update all listings. I'll have the new listings live by 2026-11-01.\nElena: Looks sharp. What about shipping?\nCody: Decision: we offer free shipping over $50 for the holiday period only, then revert in January.\nElena: Agreed, free shipping over $50, holiday only. Who sets that up?\nCody: I'll configure the free-shipping threshold in the store settings by 2026-10-28, same time as the listings work.\nElena: Great. One note — the eco-friendly packaging supplier raised prices; we should source a backup before next year.\nCody: Noted, find a backup packaging supplier for next year. Solid plan, thanks Elena.",
+    "gold": {
+      "workspace": "personal-business",
+      "project": "handmade-shop-holiday",
+      "decisions": [
+        "Produce 500 candle sets this run (up from 300 last year), supported by demand data.",
+        "Offer free shipping on orders over $50 for the holiday period only, reverting in January."
+      ],
+      "tasks": [
+        {
+          "title": "Produce and pack all 500 candle sets",
+          "owner": "Elena",
+          "due": "2026-11-15",
+          "evidenceRef": "Elena: \"I'll own production. I'll have all 500 finished and packed by 2026-11-15.\""
+        },
+        {
+          "title": "Rebuild product photography and update all storefront listings",
+          "owner": "Cody",
+          "due": "2026-11-01",
+          "evidenceRef": "Cody: \"I'll rebuild the product photography and update all listings. I'll have the new listings live by 2026-11-01.\""
+        },
+        {
+          "title": "Configure the free-shipping-over-$50 holiday threshold in store settings",
+          "owner": "Cody",
+          "due": "2026-10-28",
+          "evidenceRef": "Cody: \"I'll configure the free-shipping threshold in the store settings by 2026-10-28.\""
+        }
+      ],
+      "notes": [
+        "Eco-friendly packaging supplier raised prices; source a backup packaging supplier before next year."
+      ],
+      "requiresClarification": false
+    }
+  },
+  {
+    "id": "seg3-01-cardiology-coordination",
+    "sensitivity": "confidential",
+    "noInference": true,
+    "transcript": "Nurse Coordinator: Thanks for joining the care-planning call for your father, Mr. Alvarez. Let's line up next steps after his cardiology visit.\nMaria: Yes, I want to make sure nothing slips. Dr. Okafor said the echocardiogram needs to happen before the next appointment.\nNurse Coordinator: Correct. The echo has to be booked at the imaging center. The center can do it on 2026-03-12 if we call this week.\nMaria: I can call them. I'll get the echocardiogram scheduled for 2026-03-12.\nNurse Coordinator: Good. We also need someone to pick up his new blood-pressure medication from the pharmacy — the prescription was sent over today.\nMaria: My brother David usually handles the pharmacy runs, but I'm not sure he's free this week. Let me check with him.\nNurse Coordinator: We shouldn't leave it hanging — the medication pickup needs an owner. Can you confirm who's doing it and get back to me?\nMaria: I'll confirm, but I honestly don't know yet whether it'll be me or David.\nNurse Coordinator: Understood. One decision from today: we agreed to switch his primary follow-up to the Thursday clinic because parking is easier for him.\nMaria: Agreed, Thursday clinic it is.\nNurse Coordinator: And let's note he's been skipping his morning walk — worth flagging to Dr. Okafor next time, not urgent.\nMaria: Noted. I'll bring it up.",
+    "gold": {
+      "workspace": "personal-life",
+      "project": "Dad Care Coordination",
+      "requiresClarification": true,
+      "decisions": [
+        "Switch Mr. Alvarez's primary cardiology follow-up to the Thursday clinic (easier parking).",
+        "Echocardiogram must be completed before the next cardiology appointment."
+      ],
+      "tasks": [
+        {
+          "title": "Schedule father's echocardiogram at the imaging center for 2026-03-12",
+          "owner": "Maria",
+          "due": "2026-03-12",
+          "evidenceRef": "Maria: \"I can call them. I'll get the echocardiogram scheduled for 2026-03-12.\""
+        },
+        {
+          "title": "Pick up father's new blood-pressure medication from the pharmacy",
+          "owner": "TBD",
+          "due": "TBD",
+          "evidenceRef": "Maria: \"My brother David usually handles the pharmacy runs, but I'm not sure he's free this week... I honestly don't know yet whether it'll be me or David.\""
+        }
+      ],
+      "notes": [
+        "Mr. Alvarez has been skipping his morning walk; Maria will flag it to Dr. Okafor at the next visit (non-urgent).",
+        "Blood-pressure prescription was sent to the pharmacy today."
+      ]
+    }
+  },
+  {
+    "id": "seg3-02-kitchen-renovation",
+    "sensitivity": "internal",
+    "noInference": false,
+    "transcript": "Contractor (Sam): Alright, walkthrough of the kitchen reno. Let's confirm the plan so we can order materials.\nHomeowner (Priya): Sounds good. We settled on the quartz countertop over granite, right?\nSam: Yes — you signed off on the quartz last week, that's locked. I'll place the countertop order.\nPriya: When can you get that in?\nSam: I'll submit the countertop order to the supplier by 2026-04-02 so it arrives before the install week.\nPriya: Perfect. And my husband Raj is handling the appliance side.\nRaj: Right, I'll finalize and purchase the new range and dishwasher by 2026-04-05. I've already picked the models.\nSam: Great. We also need to decide on the backsplash tile. I brought three samples.\nPriya: Let's go with the white subway tile — it's timeless and matches the quartz. Decision made.\nSam: Good. Last thing: the electrician needs access to shut off power during install. Priya, can you be home the morning of the install to let him in?\nPriya: Yes, I'll be home on install morning 2026-04-20 to give the electrician access.\nSam: Then we're set. I'll email the updated timeline tonight.",
+    "gold": {
+      "workspace": "personal-life",
+      "project": "Kitchen Renovation",
+      "requiresClarification": false,
+      "decisions": [
+        "Use quartz countertop over granite (signed off last week).",
+        "Use white subway tile for the backsplash."
+      ],
+      "tasks": [
+        {
+          "title": "Submit the quartz countertop order to the supplier",
+          "owner": "Sam (Contractor)",
+          "due": "2026-04-02",
+          "evidenceRef": "Sam: \"I'll submit the countertop order to the supplier by 2026-04-02 so it arrives before the install week.\""
+        },
+        {
+          "title": "Finalize and purchase the new range and dishwasher",
+          "owner": "Raj",
+          "due": "2026-04-05",
+          "evidenceRef": "Raj: \"I'll finalize and purchase the new range and dishwasher by 2026-04-05.\""
+        },
+        {
+          "title": "Be home on install morning to give the electrician power-shutoff access",
+          "owner": "Priya",
+          "due": "2026-04-20",
+          "evidenceRef": "Priya: \"Yes, I'll be home on install morning 2026-04-20 to give the electrician access.\""
+        }
+      ],
+      "notes": [
+        "Sam will email the updated project timeline the night of the walkthrough.",
+        "Appliance models have already been selected by Raj."
+      ]
+    }
+  },
+  {
+    "id": "seg3-03-family-summer-logistics",
+    "sensitivity": "internal",
+    "noInference": true,
+    "transcript": "Mom (Elena): Okay, family logistics huddle for summer. School's out June 12 and we need childcare and camp sorted.\nDad (Marcus): Agreed. The big decision: are we doing the two-week overnight camp for Leo or the day camp?\nElena: I think day camp — overnight feels too much this year and it's cheaper. Are we agreed?\nMarcus: Agreed, day camp for Leo.\nElena: Good. Someone needs to submit Leo's day-camp registration before the early-bird deadline of 2026-05-01.\nMarcus: I can't this week, I'm traveling. Can Grandma do it, or you?\nElena: Let's figure that out — I'm not sure yet who's submitting the registration. I'll sort out who does it.\nMarcus: Fine. Separately, I'll book the family beach rental for the July trip — I'll lock that in by 2026-05-15.\nElena: Perfect. And Mia's swim lessons — I'll call the rec center to enroll her by 2026-04-25.\nMarcus: Great. Also worth noting, Leo's been asking to try soccer in the fall — let's keep that in mind for later.\nElena: Noted, we'll revisit soccer in August.",
+    "gold": {
+      "workspace": "personal-life",
+      "project": "Family Summer Logistics",
+      "requiresClarification": true,
+      "decisions": [
+        "Enroll Leo in the day camp instead of the two-week overnight camp (too much this year, and cheaper).",
+        "Revisit fall soccer for Leo in August."
+      ],
+      "tasks": [
+        {
+          "title": "Submit Leo's day-camp registration before the early-bird deadline",
+          "owner": "TBD",
+          "due": "2026-05-01",
+          "evidenceRef": "Elena: \"I'm not sure yet who's submitting the registration. I'll sort out who does it.\" (owner unstated; deadline 2026-05-01)"
+        },
+        {
+          "title": "Book the family beach rental for the July trip",
+          "owner": "Marcus",
+          "due": "2026-05-15",
+          "evidenceRef": "Marcus: \"I'll book the family beach rental for the July trip — I'll lock that in by 2026-05-15.\""
+        },
+        {
+          "title": "Call the rec center to enroll Mia in swim lessons",
+          "owner": "Elena",
+          "due": "2026-04-25",
+          "evidenceRef": "Elena: \"Mia's swim lessons — I'll call the rec center to enroll her by 2026-04-25.\""
+        }
+      ],
+      "notes": [
+        "School lets out June 12.",
+        "Leo has expressed interest in trying soccer in the fall."
+      ]
+    }
+  },
+  {
+    "id": "seg3-04-elderly-parent-home-safety",
+    "sensitivity": "confidential",
+    "noInference": false,
+    "transcript": "Occupational Therapist (Dana): Thanks all for the home-safety review for Grandma Rose after her fall. Let's set the modifications.\nDaughter (Karen): Yes. The PT was clear she needs grab bars in the bathroom before she comes home.\nDana: Right. That's the priority. The decision we're confirming: she'll move to the downstairs bedroom permanently so she avoids the stairs.\nKaren: Agreed, downstairs bedroom it is. The stairs are the real risk.\nDana: Good. For the grab bars — Karen, can you arrange the handyman install?\nKaren: Yes, I'll book the handyman to install the bathroom grab bars by 2026-02-28.\nDana: We also want a shower chair and a raised toilet seat ordered.\nSon (Tom): I'll order the shower chair and raised toilet seat online by 2026-02-22.\nDana: Excellent. And someone should schedule the follow-up PT home assessment.\nKaren: I'll call PT and schedule the follow-up home assessment by 2026-03-05.\nDana: One more decision: we agreed to remove the loose hallway rugs entirely — they're a trip hazard.\nTom: Agreed, rugs come out. I'll pull them when I'm there this weekend.\nDana: Note for the record — Rose is a bit resistant to the walker, so encouragement will help.\nKaren: Noted.",
+    "gold": {
+      "workspace": "personal-life",
+      "project": "Grandma Rose Home Safety",
+      "requiresClarification": false,
+      "decisions": [
+        "Move Rose to the downstairs bedroom permanently to avoid the stairs.",
+        "Remove the loose hallway rugs entirely as a trip hazard."
+      ],
+      "tasks": [
+        {
+          "title": "Book the handyman to install bathroom grab bars",
+          "owner": "Karen",
+          "due": "2026-02-28",
+          "evidenceRef": "Karen: \"I'll book the handyman to install the bathroom grab bars by 2026-02-28.\""
+        },
+        {
+          "title": "Order a shower chair and raised toilet seat online",
+          "owner": "Tom",
+          "due": "2026-02-22",
+          "evidenceRef": "Tom: \"I'll order the shower chair and raised toilet seat online by 2026-02-22.\""
+        },
+        {
+          "title": "Call PT to schedule the follow-up home assessment",
+          "owner": "Karen",
+          "due": "2026-03-05",
+          "evidenceRef": "Karen: \"I'll call PT and schedule the follow-up home assessment by 2026-03-05.\""
+        },
+        {
+          "title": "Pull out the loose hallway rugs",
+          "owner": "Tom",
+          "due": "this weekend",
+          "evidenceRef": "Tom: \"Agreed, rugs come out. I'll pull them when I'm there this weekend.\""
+        }
+      ],
+      "notes": [
+        "Grandma Rose is resistant to using the walker; encouragement will help.",
+        "Grab bars are the top priority and must be in before Rose returns home."
+      ]
+    }
+  },
+  {
+    "id": "seg3-06-bathroom-remodel-budget",
+    "sensitivity": "internal",
+    "noInference": false,
+    "transcript": "Designer (Olivia): Welcome to the master-bath remodel budget review. We need to close on scope and money today.\nHomeowner (Greg): Great. The bid came in over budget, so what are we cutting?\nOlivia: We looked at options. The decision on the table: keep the walk-in shower but drop the heated floors to stay under budget.\nGreg: Yeah, heated floors are a luxury we can skip. Agreed — cut the heated floors, keep the walk-in shower.\nOlivia: Good, that saves about four thousand. Now, I need the signed contract back to lock the crew's start date.\nGreg: I'll sign and return the contract by 2026-03-08.\nOlivia: Perfect. My assistant, Ben, will order the vanity and fixtures once the contract's in.\nBen: Right — I'll place the vanity and fixture order by 2026-03-12.\nOlivia: And we need to confirm the plumbing permit with the city.\nGreg: I'll submit the plumbing permit application to the city by 2026-03-10.\nOlivia: Excellent. Last decision: we're going with the matte-black fixtures over brushed nickel — you both liked those.\nGreg: Yes, matte black, final answer.\nOlivia: Noted also that the demo will be dusty, so plan to seal off the hallway. I'll handle the plastic sheeting on demo day.",
+    "gold": {
+      "workspace": "personal-life",
+      "project": "Master Bathroom Remodel",
+      "requiresClarification": false,
+      "decisions": [
+        "Cut the heated floors but keep the walk-in shower to stay under budget (saves ~$4,000).",
+        "Use matte-black fixtures instead of brushed nickel."
+      ],
+      "tasks": [
+        {
+          "title": "Sign and return the remodel contract to lock the crew start date",
+          "owner": "Greg",
+          "due": "2026-03-08",
+          "evidenceRef": "Greg: \"I'll sign and return the contract by 2026-03-08.\""
+        },
+        {
+          "title": "Place the vanity and fixture order",
+          "owner": "Ben",
+          "due": "2026-03-12",
+          "evidenceRef": "Ben: \"I'll place the vanity and fixture order by 2026-03-12.\""
+        },
+        {
+          "title": "Submit the plumbing permit application to the city",
+          "owner": "Greg",
+          "due": "2026-03-10",
+          "evidenceRef": "Greg: \"I'll submit the plumbing permit application to the city by 2026-03-10.\""
+        }
+      ],
+      "notes": [
+        "Demo day will be dusty; Olivia will seal off the hallway with plastic sheeting.",
+        "Vanity/fixture order is contingent on the signed contract being returned first."
+      ]
+    }
+  },
+  {
+    "id": "seg4-01-roadmap-q3-prioritization",
+    "sensitivity": "internal",
+    "noInference": true,
+    "transcript": "Priya: Alright, roadmap sync for InboxZero. We've got three things fighting for Q3 — the Gmail bulk-unsubscribe flow, the mobile app, and the team-plan billing rework. We can realistically ship two.\nDev: I'd cut mobile. Our churn data says power users live in the desktop web app. Bulk-unsubscribe is the number-one feature request, forty-one mentions last quarter.\nPriya: Agreed, mobile slides to Q4. So Q3 is bulk-unsubscribe plus billing rework.\nDev: I can own the bulk-unsubscribe flow. I know the Gmail API scopes already.\nPriya: Good. Get me a technical design doc for that by July 20th.\nDev: Done, July 20th.\nPriya: The billing rework needs an owner too. It touches Stripe, the entitlements table, and the pricing page. Someone needs to scope it.\nDev: Not me, I'm underwater with unsubscribe. Maybe we pull in a contractor?\nPriya: Let's not decide that on the fly. Someone needs to write the billing scoping doc, but let's figure out who after I check the contractor budget.\nDev: Fine. When do you want the scoping doc regardless?\nPriya: End of July, July 31st, whoever picks it up.\nDev: One more — can we at least put out a changelog post announcing bulk-unsubscribe is coming? Builds anticipation.\nPriya: Yes, I'll write the teaser changelog post. I'll aim for right after the design doc lands, so July 22nd.\nDev: Great, that's the plan.",
+    "gold": {
+      "workspace": "personal-business",
+      "project": "InboxZero",
+      "decisions": [
+        "Q3 ships two features: Gmail bulk-unsubscribe flow and team-plan billing rework; the mobile app slips to Q4.",
+        "Bulk-unsubscribe is prioritized over mobile because power users live in the desktop web app and it is the #1 feature request (41 mentions last quarter)."
+      ],
+      "tasks": [
+        {
+          "title": "Write the technical design doc for the Gmail bulk-unsubscribe flow",
+          "owner": "Dev",
+          "due": "2026-07-20",
+          "evidenceRef": "Dev: 'I can own the bulk-unsubscribe flow.' / Priya: 'Get me a technical design doc for that by July 20th.' / Dev: 'Done, July 20th.'"
+        },
+        {
+          "title": "Write the billing rework scoping doc (covering Stripe, entitlements table, pricing page)",
+          "owner": "TBD",
+          "due": "2026-07-31",
+          "evidenceRef": "Priya: 'Someone needs to write the billing scoping doc, but let's figure out who after I check the contractor budget.' / 'End of July, July 31st, whoever picks it up.'"
+        },
+        {
+          "title": "Write and publish the teaser changelog post announcing bulk-unsubscribe is coming",
+          "owner": "Priya",
+          "due": "2026-07-22",
+          "evidenceRef": "Priya: 'Yes, I'll write the teaser changelog post. I'll aim for right after the design doc lands, so July 22nd.'"
+        }
+      ],
+      "notes": [
+        "Mobile app was considered for Q3 but deferred to Q4 based on desktop-centric power-user churn data.",
+        "A contractor may be pulled in for the billing rework; Priya is checking the contractor budget before assigning an owner."
+      ],
+      "requiresClarification": true
+    }
+  },
+  {
+    "id": "seg4-02-customer-interview-synthesis",
+    "sensitivity": "confidential",
+    "noInference": false,
+    "transcript": "Marcus: This is the synthesis session for the eight customer interviews we ran for FieldNotes. Let me start with the big pattern. Six of eight interviewees said onboarding felt overwhelming — too many empty states, no sample data.\nLena: Right, and two of them literally churned in week one because they couldn't tell if the product was working. That's the confidential churn cohort from the paid beta.\nMarcus: So the decision I want to lock: we ship a pre-populated demo workspace on signup, so nobody hits a blank screen.\nLena: Agreed, that's the fix. Demo workspace on signup.\nMarcus: I'll build the seed-data generator for the demo workspace. Get it into staging by August 5th.\nLena: On the pricing thread — three interviewees said twenty-nine dollars a month felt high for a solo user. But the two team accounts said it was cheap.\nMarcus: Let's not change pricing yet, but I want the data captured. Lena, can you write up the pricing-sensitivity findings into a one-pager?\nLena: Yes, I'll have the pricing-sensitivity one-pager to you by July 25th.\nMarcus: Last thing — Interviewee number four asked for a CSV export twice. Feels like a quick win.\nLena: I'll scope the CSV export as a small ticket and size it by July 28th.\nMarcus: Perfect. And keep all of this in the confidential interview folder — these are named beta customers.\nLena: Understood, confidential.",
+    "gold": {
+      "workspace": "personal-business",
+      "project": "FieldNotes",
+      "decisions": [
+        "Ship a pre-populated demo workspace on signup so new users never hit a blank screen, addressing the overwhelming-onboarding pattern from 6 of 8 interviews.",
+        "Do not change the $29/month pricing yet, but capture the pricing-sensitivity data for a later decision."
+      ],
+      "tasks": [
+        {
+          "title": "Build the seed-data generator for the demo workspace and get it into staging",
+          "owner": "Marcus",
+          "due": "2026-08-05",
+          "evidenceRef": "Marcus: 'I'll build the seed-data generator for the demo workspace. Get it into staging by August 5th.'"
+        },
+        {
+          "title": "Write up the pricing-sensitivity findings into a one-pager",
+          "owner": "Lena",
+          "due": "2026-07-25",
+          "evidenceRef": "Lena: 'Yes, I'll have the pricing-sensitivity one-pager to you by July 25th.'"
+        },
+        {
+          "title": "Scope the CSV export as a small ticket and size it",
+          "owner": "Lena",
+          "due": "2026-07-28",
+          "evidenceRef": "Lena: 'I'll scope the CSV export as a small ticket and size it by July 28th.'"
+        }
+      ],
+      "notes": [
+        "6 of 8 interviewees reported onboarding felt overwhelming (too many empty states, no sample data); 2 churned in week one.",
+        "Pricing signal split: 3 solo interviewees found $29/month high; the 2 team accounts found it cheap.",
+        "Interviewee #4 requested CSV export twice.",
+        "All interview data covers named paid-beta customers and must stay in the confidential interview folder."
+      ],
+      "requiresClarification": false
+    }
+  },
+  {
+    "id": "seg4-03-marketing-launch-planning",
+    "sensitivity": "internal",
+    "noInference": true,
+    "transcript": "Sofia: Launch-week planning for the Snipboard 2.0 release. We're targeting a Product Hunt launch. Let's nail down the assets and dates.\nTom: I've got the demo video mostly done. I can have the final cut ready by August 10th.\nSofia: Great, demo video is yours, August 10th. We also need the launch landing page redesigned — new hero, social proof section, pricing table.\nTom: I can't take the landing page too, I'm slammed with the video and the app store copy.\nSofia: Okay. The landing page redesign still has to happen before launch. We'll assign it once we know if the freelance designer is available — I'm waiting to hear back from her.\nTom: What's the hard deadline for the landing page though?\nSofia: It has to be live by August 14th, launch minus three days, no matter who does it.\nTom: Got it. What about the Product Hunt launch date itself?\nSofia: Let's lock August 17th, a Monday. I'll coordinate the hunter and schedule the post.\nTom: I'll handle the app store copy and screenshots. I'll get those submitted for review by August 8th so Apple has time.\nSofia: Perfect. And we should line up the email blast to our waitlist.\nTom: Who's writing that?\nSofia: I'll write the waitlist launch email myself and schedule it for launch morning, August 17th.\nTom: Solid. That's the plan.",
+    "gold": {
+      "workspace": "personal-business",
+      "project": "Snipboard 2.0",
+      "decisions": [
+        "Launch Snipboard 2.0 on Product Hunt on Monday, August 17th, 2026.",
+        "The landing page redesign must go live by August 14th (launch minus three days) regardless of who executes it."
+      ],
+      "tasks": [
+        {
+          "title": "Finish the final cut of the demo video",
+          "owner": "Tom",
+          "due": "2026-08-10",
+          "evidenceRef": "Tom: 'I can have the final cut ready by August 10th.' / Sofia: 'demo video is yours, August 10th.'"
+        },
+        {
+          "title": "Redesign the launch landing page (new hero, social proof section, pricing table)",
+          "owner": "TBD",
+          "due": "2026-08-14",
+          "evidenceRef": "Sofia: 'We'll assign it once we know if the freelance designer is available — I'm waiting to hear back from her.' / 'It has to be live by August 14th, launch minus three days, no matter who does it.'"
+        },
+        {
+          "title": "Submit app store copy and screenshots for Apple review",
+          "owner": "Tom",
+          "due": "2026-08-08",
+          "evidenceRef": "Tom: 'I'll handle the app store copy and screenshots. I'll get those submitted for review by August 8th so Apple has time.'"
+        },
+        {
+          "title": "Write and schedule the waitlist launch email for launch morning",
+          "owner": "Sofia",
+          "due": "2026-08-17",
+          "evidenceRef": "Sofia: 'I'll write the waitlist launch email myself and schedule it for launch morning, August 17th.'"
+        }
+      ],
+      "notes": [
+        "Product Hunt launch date locked for a Monday to maximize visibility.",
+        "Landing page redesign owner is pending the freelance designer's availability (Sofia awaiting reply)."
+      ],
+      "requiresClarification": true
+    }
+  },
+  {
+    "id": "seg4-04-pricing-experiment-decision",
+    "sensitivity": "internal",
+    "noInference": false,
+    "transcript": "Amir: Quick one — results are in from the annual-plan pricing experiment on TidyDocs. We ran two cohorts for three weeks.\nRosa: And the annual discount at twenty percent converted at nearly double the monthly-only cohort. Fifty-one annual signups versus twenty-eight.\nAmir: So the decision is clear: make the annual plan the default, pre-selected toggle on the pricing page, keep the twenty percent discount.\nRosa: Agreed. Annual becomes the default toggle, twenty percent off stays.\nAmir: I'll update the pricing page toggle and push it live by July 18th.\nRosa: I'll update the Stripe products and the checkout flow to match, also by July 18th so they ship together.\nAmir: Good, we ship both on the 18th. We should also update the marketing site copy to emphasize the annual savings.\nRosa: I'll rewrite the pricing section copy on the marketing site by July 21st.\nAmir: And let's write a short internal retro on the experiment so we remember the methodology next time.\nRosa: I'll draft the experiment retro doc by July 23rd.\nAmir: Perfect, everyone's got dates. Done.",
+    "gold": {
+      "workspace": "personal-business",
+      "project": "TidyDocs",
+      "decisions": [
+        "Make the annual plan the default, pre-selected toggle on the pricing page and keep the 20% annual discount, based on the annual cohort converting nearly 2x the monthly-only cohort (51 vs 28 signups).",
+        "Ship the pricing-page toggle change and the Stripe/checkout changes together on July 18th."
+      ],
+      "tasks": [
+        {
+          "title": "Update the pricing page toggle to default to annual and push it live",
+          "owner": "Amir",
+          "due": "2026-07-18",
+          "evidenceRef": "Amir: 'I'll update the pricing page toggle and push it live by July 18th.'"
+        },
+        {
+          "title": "Update the Stripe products and checkout flow to match the annual-default pricing",
+          "owner": "Rosa",
+          "due": "2026-07-18",
+          "evidenceRef": "Rosa: 'I'll update the Stripe products and the checkout flow to match, also by July 18th so they ship together.'"
+        },
+        {
+          "title": "Rewrite the marketing site pricing section copy to emphasize annual savings",
+          "owner": "Rosa",
+          "due": "2026-07-21",
+          "evidenceRef": "Rosa: 'I'll rewrite the pricing section copy on the marketing site by July 21st.'"
+        },
+        {
+          "title": "Draft the internal retro doc on the pricing experiment methodology",
+          "owner": "Rosa",
+          "due": "2026-07-23",
+          "evidenceRef": "Rosa: 'I'll draft the experiment retro doc by July 23rd.'"
+        }
+      ],
+      "notes": [
+        "Experiment ran two cohorts over three weeks; annual-at-20%-off converted nearly double the monthly-only cohort (51 vs 28 signups)."
+      ],
+      "requiresClarification": false
+    }
+  },
+  {
+    "id": "seg4-05-content-marketing-cadence",
+    "sensitivity": "public",
+    "noInference": true,
+    "transcript": "Jordan: Content marketing planning for the PixelPatch blog. We've been sporadic. I want a real cadence for the next quarter.\nWei: Agreed. Data says our two SEO posts drove sixty percent of organic signups. We should double down on SEO how-to content.\nJordan: Decision: we commit to one SEO how-to post per week for the quarter, published every Tuesday.\nWei: Locked. One SEO post a week, Tuesdays.\nJordan: I'll build the keyword-cluster content calendar so we're not guessing topics. I'll have that ready by July 15th.\nWei: I can write the first two posts. I'll get the first draft of post one done by July 17th.\nJordan: Great. We also want to repurpose each post into a Twitter thread and a LinkedIn post. That's a recurring job — but I don't want to hand it to either of us permanently yet.\nWei: Someone should own the social repurposing, but let's decide who after we see if the calendar is even sustainable.\nJordan: Fair. So the social-repurposing owner is open for now. First batch should go out the week of the first post, so by July 21st whoever takes it.\nWei: Works. Last thing — can we set up a simple analytics dashboard to track post-to-signup attribution?\nJordan: Yes, I'll set up the attribution dashboard by July 24th.\nWei: Good plan.",
+    "gold": {
+      "workspace": "personal-business",
+      "project": "PixelPatch",
+      "decisions": [
+        "Commit to a cadence of one SEO how-to blog post per week for the quarter, published every Tuesday, because the two existing SEO posts drove 60% of organic signups.",
+        "Repurpose each blog post into a Twitter thread and a LinkedIn post as a recurring job."
+      ],
+      "tasks": [
+        {
+          "title": "Build the keyword-cluster content calendar for the quarter",
+          "owner": "Jordan",
+          "due": "2026-07-15",
+          "evidenceRef": "Jordan: 'I'll build the keyword-cluster content calendar so we're not guessing topics. I'll have that ready by July 15th.'"
+        },
+        {
+          "title": "Write the first draft of SEO blog post one",
+          "owner": "Wei",
+          "due": "2026-07-17",
+          "evidenceRef": "Wei: 'I can write the first two posts. I'll get the first draft of post one done by July 17th.'"
+        },
+        {
+          "title": "Publish the first batch of social repurposing (Twitter thread + LinkedIn post) for the first blog post",
+          "owner": "TBD",
+          "due": "2026-07-21",
+          "evidenceRef": "Wei: 'Someone should own the social repurposing, but let's decide who after we see if the calendar is even sustainable.' / Jordan: 'the social-repurposing owner is open for now. First batch should go out the week of the first post, so by July 21st whoever takes it.'"
+        },
+        {
+          "title": "Set up an analytics dashboard for post-to-signup attribution",
+          "owner": "Jordan",
+          "due": "2026-07-24",
+          "evidenceRef": "Jordan: 'Yes, I'll set up the attribution dashboard by July 24th.'"
+        }
+      ],
+      "notes": [
+        "Two prior SEO posts drove 60% of organic signups, motivating the SEO-heavy cadence.",
+        "Social-repurposing ownership deferred until the weekly cadence proves sustainable."
+      ],
+      "requiresClarification": true
+    }
+  },
+  {
+    "id": "seg4-06-beta-feedback-triage",
+    "sensitivity": "internal",
+    "noInference": true,
+    "transcript": "Nadia: Beta feedback triage for RouteWise. We've got about thirty pieces of feedback from the closed beta. Let me group them.\nCarl: The loudest cluster is the sync bug — offline edits get overwritten when you reconnect. Four separate users hit it. That's a data-loss bug, it's P0.\nNadia: Agreed, that's the top priority. Decision: we halt new-feature work until the sync data-loss bug is fixed.\nCarl: I'll take the sync bug. I need to reproduce it first, but I'll have a root-cause writeup by July 16th.\nNadia: Good. Next cluster — five users want a dark mode. It's popular but it's not blocking anyone.\nCarl: Let's queue dark mode as post-launch. Not now.\nNadia: Agreed, dark mode is post-launch. Someone should still spec the dark-mode design so it's ready, but it's not urgent — no date yet, and honestly I'm not sure who has the bandwidth.\nCarl: Leave the dark-mode spec unassigned then. We'll slot it after the sync fix.\nNadia: Third — a few users found the export button hard to find. Small UX fix.\nCarl: I'll move the export button to the primary toolbar and ship it by July 19th.\nNadia: And we owe the beta group a status update email so they know we heard them.\nCarl: Agreed — who's sending it?\nNadia: I'll write and send the beta status-update email by July 15th.\nCarl: Great, that covers the triage.",
+    "gold": {
+      "workspace": "personal-business",
+      "project": "RouteWise",
+      "decisions": [
+        "Halt all new-feature work until the sync data-loss bug (offline edits overwritten on reconnect, hit by 4 users) is fixed; it is classified P0.",
+        "Defer dark mode to post-launch — popular (5 requests) but not blocking."
+      ],
+      "tasks": [
+        {
+          "title": "Reproduce the sync data-loss bug and produce a root-cause writeup",
+          "owner": "Carl",
+          "due": "2026-07-16",
+          "evidenceRef": "Carl: 'I'll take the sync bug. I need to reproduce it first, but I'll have a root-cause writeup by July 16th.'"
+        },
+        {
+          "title": "Spec the dark-mode design so it is ready for post-launch",
+          "owner": "TBD",
+          "due": "TBD",
+          "evidenceRef": "Nadia: 'Someone should still spec the dark-mode design so it's ready, but it's not urgent — no date yet, and honestly I'm not sure who has the bandwidth.' / Carl: 'Leave the dark-mode spec unassigned then.'"
+        },
+        {
+          "title": "Move the export button to the primary toolbar and ship it",
+          "owner": "Carl",
+          "due": "2026-07-19",
+          "evidenceRef": "Carl: 'I'll move the export button to the primary toolbar and ship it by July 19th.'"
+        },
+        {
+          "title": "Write and send the beta status-update email to the beta group",
+          "owner": "Nadia",
+          "due": "2026-07-15",
+          "evidenceRef": "Nadia: 'I'll write and send the beta status-update email by July 15th.'"
+        }
+      ],
+      "notes": [
+        "~30 pieces of closed-beta feedback triaged into clusters: sync data-loss bug (P0, 4 users), dark mode (5 requests, deferred), export button discoverability (small UX fix).",
+        "Dark-mode spec is intentionally left unassigned with no date; to be slotted after the sync fix."
+      ],
+      "requiresClarification": true
+    }
+  }
+]

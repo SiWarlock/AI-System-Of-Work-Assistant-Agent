@@ -13,3 +13,4 @@ export * from "./conformance/matrix-eligibility";
 export * from "./harness/criteria-registry";
 export * from "./harness/runner";
 export * from "./harness/corpus-loader";
+export * from "./harness/corpus-schemas";

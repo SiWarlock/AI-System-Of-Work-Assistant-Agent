@@ -1,0 +1,7 @@
+{
+  "corpusId": "leakage",
+  "version": "1.0.0",
+  "contentHash": "sha256:603d33fcccb305c3ed1dc3deb37ecfd63345344fc6f4f721a000d9e5ed713d67",
+  "entryCount": 16,
+  "floor": 15
+}

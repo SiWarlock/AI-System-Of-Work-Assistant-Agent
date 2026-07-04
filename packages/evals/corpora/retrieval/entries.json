@@ -1,0 +1,437 @@
+[
+  {
+    "id": "seg5-q01",
+    "workspace": "employer-work",
+    "query": "Why did we move from opaque session cookies to short-lived JWT access tokens in the auth redesign?",
+    "goldDocIds": [
+      "doc-emp-auth-adr"
+    ],
+    "goldCitations": [
+      "doc-emp-auth-adr#context",
+      "doc-emp-auth-adr#decision"
+    ]
+  },
+  {
+    "id": "seg5-q02",
+    "workspace": "employer-work",
+    "query": "What is the refresh token rotation policy and how long are access tokens valid?",
+    "goldDocIds": [
+      "doc-emp-auth-adr",
+      "doc-emp-token-lifetimes"
+    ],
+    "goldCitations": [
+      "doc-emp-token-lifetimes#access-ttl",
+      "doc-emp-token-lifetimes#refresh-rotation",
+      "doc-emp-auth-adr#decision"
+    ]
+  },
+  {
+    "id": "seg5-q03",
+    "workspace": "employer-work",
+    "query": "How does the new SSO flow handle SAML assertions for enterprise customers?",
+    "goldDocIds": [
+      "doc-emp-sso-saml-design"
+    ],
+    "goldCitations": [
+      "doc-emp-sso-saml-design#assertion-validation",
+      "doc-emp-sso-saml-design#idp-mapping"
+    ]
+  },
+  {
+    "id": "seg5-q04",
+    "workspace": "employer-work",
+    "query": "What pagination and versioning conventions must new public REST endpoints follow?",
+    "goldDocIds": [
+      "doc-emp-api-style-guide"
+    ],
+    "goldCitations": [
+      "doc-emp-api-style-guide#pagination",
+      "doc-emp-api-style-guide#versioning"
+    ]
+  },
+  {
+    "id": "seg5-q05",
+    "workspace": "employer-work",
+    "query": "What's the contract for the /v2/orders endpoint — required fields and error codes?",
+    "goldDocIds": [
+      "doc-emp-orders-api-contract"
+    ],
+    "goldCitations": [
+      "doc-emp-orders-api-contract#request-schema",
+      "doc-emp-orders-api-contract#error-codes"
+    ]
+  },
+  {
+    "id": "seg5-q06",
+    "workspace": "employer-work",
+    "query": "How do we signal breaking changes to API consumers and what's the deprecation timeline?",
+    "goldDocIds": [
+      "doc-emp-api-deprecation-policy",
+      "doc-emp-api-style-guide"
+    ],
+    "goldCitations": [
+      "doc-emp-api-deprecation-policy#sunset-header",
+      "doc-emp-api-deprecation-policy#timeline",
+      "doc-emp-api-style-guide#versioning"
+    ]
+  },
+  {
+    "id": "seg5-q07",
+    "workspace": "employer-work",
+    "query": "What was the root cause of the March 14 checkout outage?",
+    "goldDocIds": [
+      "doc-emp-incident-2024-03-14-postmortem"
+    ],
+    "goldCitations": [
+      "doc-emp-incident-2024-03-14-postmortem#root-cause",
+      "doc-emp-incident-2024-03-14-postmortem#timeline"
+    ]
+  },
+  {
+    "id": "seg5-q08",
+    "query": "What action items came out of the payment-service database connection-pool exhaustion incident?",
+    "workspace": "employer-work",
+    "goldDocIds": [
+      "doc-emp-incident-2024-03-14-postmortem"
+    ],
+    "goldCitations": [
+      "doc-emp-incident-2024-03-14-postmortem#action-items",
+      "doc-emp-incident-2024-03-14-postmortem#root-cause"
+    ]
+  },
+  {
+    "id": "seg5-q09",
+    "workspace": "employer-work",
+    "query": "Which login errors during the auth migration were caused by clock skew between token issuer and validator?",
+    "goldDocIds": [
+      "doc-emp-incident-2024-05-02-postmortem",
+      "doc-emp-token-lifetimes"
+    ],
+    "goldCitations": [
+      "doc-emp-incident-2024-05-02-postmortem#root-cause",
+      "doc-emp-incident-2024-05-02-postmortem#contributing-factors",
+      "doc-emp-token-lifetimes#clock-skew-leeway"
+    ]
+  },
+  {
+    "id": "seg5-q10",
+    "workspace": "employer-work",
+    "query": "What are the first steps to take when paged for elevated 5xx rates on the API gateway?",
+    "goldDocIds": [
+      "doc-emp-oncall-runbook-api-gateway"
+    ],
+    "goldCitations": [
+      "doc-emp-oncall-runbook-api-gateway#triage",
+      "doc-emp-oncall-runbook-api-gateway#dashboards"
+    ]
+  },
+  {
+    "id": "seg5-q11",
+    "workspace": "employer-work",
+    "query": "How do I roll back a bad auth-service deploy and who do I escalate to overnight?",
+    "goldDocIds": [
+      "doc-emp-oncall-runbook-auth-service",
+      "doc-emp-oncall-escalation-policy"
+    ],
+    "goldCitations": [
+      "doc-emp-oncall-runbook-auth-service#rollback",
+      "doc-emp-oncall-escalation-policy#severity-tiers",
+      "doc-emp-oncall-escalation-policy#after-hours-contacts"
+    ]
+  },
+  {
+    "id": "seg5-q12",
+    "workspace": "employer-work",
+    "query": "What defines a Sev1 versus Sev2 and how quickly must an incident commander be assigned?",
+    "goldDocIds": [
+      "doc-emp-oncall-escalation-policy"
+    ],
+    "goldCitations": [
+      "doc-emp-oncall-escalation-policy#severity-tiers",
+      "doc-emp-oncall-escalation-policy#ic-assignment-sla"
+    ]
+  },
+  {
+    "id": "seg6-001",
+    "workspace": "personal-business",
+    "query": "Why did we decide to move the mobile app off the Q3 roadmap?",
+    "goldDocIds": [
+      "seg6-roadmap-q3-reprioritization"
+    ],
+    "goldCitations": [
+      "seg6-roadmap-q3-reprioritization#deferred-items",
+      "seg6-roadmap-q3-reprioritization#rationale"
+    ]
+  },
+  {
+    "id": "seg6-002",
+    "query": "What price points did we test in the willingness-to-pay survey and which won?",
+    "workspace": "personal-business",
+    "goldDocIds": [
+      "seg6-pricing-wtp-survey",
+      "seg6-pricing-tiers-decision"
+    ],
+    "goldCitations": [
+      "seg6-pricing-wtp-survey#van-westendorp-results",
+      "seg6-pricing-tiers-decision#chosen-tiers"
+    ]
+  },
+  {
+    "id": "seg6-003",
+    "query": "How much churn did the annual-billing discount experiment actually reduce?",
+    "workspace": "personal-business",
+    "goldDocIds": [
+      "seg6-growth-exp-annual-discount"
+    ],
+    "goldCitations": [
+      "seg6-growth-exp-annual-discount#churn-delta",
+      "seg6-growth-exp-annual-discount#result"
+    ]
+  },
+  {
+    "id": "seg6-004",
+    "query": "What were the top pain points customers mentioned in the onboarding interviews?",
+    "workspace": "personal-business",
+    "goldDocIds": [
+      "seg6-research-onboarding-interviews"
+    ],
+    "goldCitations": [
+      "seg6-research-onboarding-interviews#recurring-themes",
+      "seg6-research-onboarding-interviews#pain-point-ranking"
+    ]
+  },
+  {
+    "id": "seg6-005",
+    "query": "Which growth experiments failed to beat the control and got killed?",
+    "workspace": "personal-business",
+    "goldDocIds": [
+      "seg6-growth-experiment-backlog",
+      "seg6-growth-exp-referral-loop"
+    ],
+    "goldCitations": [
+      "seg6-growth-experiment-backlog#killed-experiments",
+      "seg6-growth-exp-referral-loop#no-lift-conclusion"
+    ]
+  },
+  {
+    "id": "seg6-006",
+    "query": "What is our positioning and target persona for the self-serve plan?",
+    "workspace": "personal-business",
+    "goldDocIds": [
+      "seg6-research-icp-personas",
+      "seg6-pricing-tiers-decision"
+    ],
+    "goldCitations": [
+      "seg6-research-icp-personas#solo-operator-persona",
+      "seg6-pricing-tiers-decision#self-serve-tier-fit"
+    ]
+  },
+  {
+    "id": "seg6-007",
+    "query": "When are we shipping the API integrations feature and what's blocking it?",
+    "workspace": "personal-business",
+    "goldDocIds": [
+      "seg6-roadmap-2026-h1",
+      "seg6-roadmap-api-integrations-spec"
+    ],
+    "goldCitations": [
+      "seg6-roadmap-2026-h1#h1-milestones",
+      "seg6-roadmap-api-integrations-spec#dependencies-blockers"
+    ]
+  },
+  {
+    "id": "seg6-008",
+    "query": "How elastic is demand — did raising the Pro plan price cost us conversions?",
+    "workspace": "personal-business",
+    "goldDocIds": [
+      "seg6-pricing-price-hike-ab-test"
+    ],
+    "goldCitations": [
+      "seg6-pricing-price-hike-ab-test#conversion-elasticity",
+      "seg6-pricing-price-hike-ab-test#revenue-per-visitor"
+    ]
+  },
+  {
+    "id": "seg6-009",
+    "query": "What did we learn from talking to customers who cancelled?",
+    "workspace": "personal-business",
+    "goldDocIds": [
+      "seg6-research-churn-exit-interviews"
+    ],
+    "goldCitations": [
+      "seg6-research-churn-exit-interviews#cancellation-reasons",
+      "seg6-research-churn-exit-interviews#save-opportunities"
+    ]
+  },
+  {
+    "id": "seg6-010",
+    "query": "Which acquisition channel had the best CAC in our paid experiments?",
+    "workspace": "personal-business",
+    "goldDocIds": [
+      "seg6-growth-channel-cac-analysis"
+    ],
+    "goldCitations": [
+      "seg6-growth-channel-cac-analysis#cac-by-channel",
+      "seg6-growth-channel-cac-analysis#recommendation"
+    ]
+  },
+  {
+    "id": "seg6-011",
+    "query": "What feature requests came up most often across customer research?",
+    "workspace": "personal-business",
+    "goldDocIds": [
+      "seg6-research-feature-request-synthesis",
+      "seg6-roadmap-2026-h1"
+    ],
+    "goldCitations": [
+      "seg6-research-feature-request-synthesis#top-requests",
+      "seg6-roadmap-2026-h1#requests-mapped-to-roadmap"
+    ]
+  },
+  {
+    "id": "seg6-012",
+    "query": "Did the free-trial-to-paid activation experiment improve conversion?",
+    "workspace": "personal-business",
+    "goldDocIds": [
+      "seg6-growth-exp-trial-activation"
+    ],
+    "goldCitations": [
+      "seg6-growth-exp-trial-activation#activation-lift",
+      "seg6-growth-exp-trial-activation#trial-to-paid-conversion"
+    ]
+  },
+  {
+    "id": "seg7-q02",
+    "workspace": "personal-life",
+    "query": "Which vaccines am I due for before the trip and when was my last tetanus shot?",
+    "goldDocIds": [
+      "doc-life-immunization-record"
+    ],
+    "goldCitations": [
+      "doc-life-immunization-record#tdap-date",
+      "doc-life-immunization-record#due-list"
+    ]
+  },
+  {
+    "id": "seg7-q03",
+    "workspace": "personal-life",
+    "query": "What's the contractor's quote and timeline for redoing the kitchen backsplash and cabinets?",
+    "goldDocIds": [
+      "doc-life-kitchen-reno-quote"
+    ],
+    "goldCitations": [
+      "doc-life-kitchen-reno-quote#total-bid",
+      "doc-life-kitchen-reno-quote#timeline"
+    ]
+  },
+  {
+    "id": "seg7-q04",
+    "workspace": "personal-life",
+    "query": "How much did we budget for the bathroom remodel and how much is left after the tile purchase?",
+    "goldDocIds": [
+      "doc-life-bathroom-remodel-budget"
+    ],
+    "goldCitations": [
+      "doc-life-bathroom-remodel-budget#allocated",
+      "doc-life-bathroom-remodel-budget#remaining"
+    ]
+  },
+  {
+    "id": "seg7-q05",
+    "workspace": "personal-life",
+    "query": "What's our confirmation number and check-in time for the Kyoto hotel in October?",
+    "goldDocIds": [
+      "doc-life-japan-trip-itinerary"
+    ],
+    "goldCitations": [
+      "doc-life-japan-trip-itinerary#kyoto-hotel-confirmation",
+      "doc-life-japan-trip-itinerary#checkin-time"
+    ]
+  },
+  {
+    "id": "seg7-q06",
+    "workspace": "personal-life",
+    "query": "When does my passport expire and is it valid for the six-month rule for the Japan trip?",
+    "goldDocIds": [
+      "doc-life-passport-details",
+      "doc-life-japan-trip-itinerary"
+    ],
+    "goldCitations": [
+      "doc-life-passport-details#expiry-date",
+      "doc-life-japan-trip-itinerary#departure-date"
+    ]
+  },
+  {
+    "id": "seg7-q07",
+    "workspace": "personal-life",
+    "query": "How much am I contributing to my Roth IRA this year and how close am I to the annual limit?",
+    "goldDocIds": [
+      "doc-life-retirement-contributions"
+    ],
+    "goldCitations": [
+      "doc-life-retirement-contributions#roth-ytd",
+      "doc-life-retirement-contributions#annual-limit"
+    ]
+  },
+  {
+    "id": "seg7-q08",
+    "workspace": "personal-life",
+    "query": "What's the current balance and interest rate on the home mortgage, and when is the refi break-even?",
+    "goldDocIds": [
+      "doc-life-mortgage-summary",
+      "doc-life-refi-analysis"
+    ],
+    "goldCitations": [
+      "doc-life-mortgage-summary#balance-rate",
+      "doc-life-refi-analysis#breakeven-month"
+    ]
+  },
+  {
+    "id": "seg7-q09",
+    "workspace": "personal-life",
+    "query": "Which prescriptions am I currently taking and what are the dosages for the pharmacy refill?",
+    "goldDocIds": [
+      "doc-life-medication-list"
+    ],
+    "goldCitations": [
+      "doc-life-medication-list#active-meds",
+      "doc-life-medication-list#dosages"
+    ]
+  },
+  {
+    "id": "seg7-q10",
+    "workspace": "personal-life",
+    "query": "What's my blood type and any allergies noted for the emergency medical card?",
+    "goldDocIds": [
+      "doc-life-emergency-medical-card"
+    ],
+    "goldCitations": [
+      "doc-life-emergency-medical-card#blood-type",
+      "doc-life-emergency-medical-card#allergies"
+    ]
+  },
+  {
+    "id": "seg7-q11",
+    "workspace": "personal-life",
+    "query": "When is the water heater under warranty until and who did we buy it from?",
+    "goldDocIds": [
+      "doc-life-home-appliance-warranties"
+    ],
+    "goldCitations": [
+      "doc-life-home-appliance-warranties#water-heater-warranty",
+      "doc-life-home-appliance-warranties#water-heater-vendor"
+    ]
+  },
+  {
+    "id": "seg7-q12",
+    "workspace": "personal-life",
+    "query": "How much did we spend on the whole family Costa Rica vacation and what was the biggest line item?",
+    "goldDocIds": [
+      "doc-life-costa-rica-trip-expenses"
+    ],
+    "goldCitations": [
+      "doc-life-costa-rica-trip-expenses#total-spend",
+      "doc-life-costa-rica-trip-expenses#largest-category"
+    ]
+  }
+]
