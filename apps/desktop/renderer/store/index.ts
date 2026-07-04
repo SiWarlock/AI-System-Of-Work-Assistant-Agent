@@ -6,6 +6,7 @@ import type {
   UiSafeWorkflowRunRef,
   UiSafeDashboardCard,
   UiSafeGclProjection,
+  UiSafeRecentChange,
 } from "@sow/contracts/api/ui-safe";
 import { DEFAULT_SCOPE, type WorkspaceScope } from "./scope";
 
@@ -27,6 +28,11 @@ export interface UiSafeStoreState {
   readonly cards: ReadonlyMap<string, UiSafeDashboardCard>;
   /** The Global-scope cross-workspace GCL surface (query.global snapshot; §9.4). */
   readonly global: readonly UiSafeGclProjection[];
+  /**
+   * The active WORKSPACE scope's Recent activity (query.recentChanges snapshot; §9.5).
+   * Workspace-scoped — cleared to `[]` under Global (recent changes never blend; WS-8).
+   */
+  readonly recentChanges: readonly UiSafeRecentChange[];
   /** The last stream `eventId` applied — a resumed subscription replays from here. */
   readonly lastEventId: string | null;
   /** The last per-stream `seq` applied — a gap (seq != last + 1) signals a dropped event. */
@@ -41,6 +47,7 @@ export const initialStoreState: UiSafeStoreState = {
   workflows: new Map(),
   cards: new Map(),
   global: [],
+  recentChanges: [],
   lastEventId: null,
   lastSeq: null,
 };

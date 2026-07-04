@@ -6,7 +6,11 @@ import {
   streamEventSchema,
   type StreamEvent,
 } from "@sow/contracts";
-import type { UiSafeDashboardCard, UiSafeHealthItem } from "@sow/contracts/api/ui-safe";
+import type {
+  UiSafeDashboardCard,
+  UiSafeHealthItem,
+  UiSafeRecentChange,
+} from "@sow/contracts/api/ui-safe";
 
 // Real enum members pulled off the frozen schemas, so fixtures are genuinely
 // schema-valid (they round-trip through streamEventSchema.parse below).
@@ -60,4 +64,11 @@ export function uiSafeCard(cardId = "card-1"): UiSafeDashboardCard {
 
 export function uiSafeHealthItem(id = "h-1"): UiSafeHealthItem {
   return { id, failureClass, severity: "warning", state: healthState, openedAt: ISO };
+}
+
+export function uiSafeRecentChange(
+  changeId = "chg-1",
+  occurredAt: string = ISO,
+): UiSafeRecentChange {
+  return { changeId, kind: "commit", summary: "committed a.md rev 0c4", occurredAt };
 }

@@ -3,6 +3,7 @@ import type {
   UiSafeDashboardCard,
   UiSafeHealthItem,
   UiSafeGclProjection,
+  UiSafeRecentChange,
 } from "@sow/contracts/api/ui-safe";
 import type { ConnectionStatus, UiSafeStoreState } from "./index";
 import { isWorkspaceScope, type WorkspaceScope } from "./scope";
@@ -100,6 +101,21 @@ export function replaceCards(
   const next = new Map<string, UiSafeDashboardCard>();
   for (const card of cards) next.set(card.cardId, card);
   return { ...state, cards: next };
+}
+
+/**
+ * REPLACE the active workspace scope's Recent activity with a snapshot (§9.5). Like
+ * `replaceCards`, switching scope fully replaces (never blends) — and a scope with no recent
+ * changes (incl. Global, where recent changes never surface; WS-8) clears it to `[]`.
+ * `query.recentChanges` returns the whole scoped list, so this replaces rather than upserts;
+ * only empty→empty is a ref-stable no-op.
+ */
+export function replaceRecentChanges(
+  state: UiSafeStoreState,
+  changes: readonly UiSafeRecentChange[],
+): UiSafeStoreState {
+  if (changes.length === 0 && state.recentChanges.length === 0) return state;
+  return { ...state, recentChanges: changes };
 }
 
 /** Fold an initial System-Health query result into state (upsert by id). */

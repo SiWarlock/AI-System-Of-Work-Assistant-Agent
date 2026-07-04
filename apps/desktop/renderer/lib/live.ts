@@ -2,7 +2,13 @@ import type { CreateTRPCClient } from "@trpc/client";
 import type { AnyTRPCRouter } from "@trpc/server";
 import type { SowBridge } from "../../preload/bridge";
 import type { Store, UiSafeStoreState } from "../store";
-import { hydrateCards, hydrateHealth, hydrateGlobal, replaceCards } from "../store/projections";
+import {
+  hydrateCards,
+  hydrateHealth,
+  hydrateGlobal,
+  replaceCards,
+  replaceRecentChanges,
+} from "../store/projections";
 import { scopeMeta, type WorkspaceScope } from "../store/scope";
 import { createEventStream } from "./event-stream";
 import { createScopeRefresher } from "./scope-refresh";
@@ -99,21 +105,28 @@ async function hydrateScope(
   scope: WorkspaceScope,
 ): Promise<void> {
   const meta = scopeMeta(scope);
-  // Clear immediately — no stale cross-scope cards/GCL linger while the query runs.
+  // Clear immediately — no stale cross-scope cards/GCL/recent-activity linger while the query runs.
   store.dispatch((s) => replaceCards(s, []));
   store.dispatch((s) => hydrateGlobal(s, []));
+  store.dispatch((s) => replaceRecentChanges(s, []));
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const c = client as any;
     if (meta.workspaceId === null) {
+      // Global: dashboard + the gated GCL surface. Recent activity is workspace-scoped
+      // (never a cross-workspace blend; WS-8) — it stays cleared under Global.
       const [cardsR, globalR] = await Promise.all([c.query.dashboard.query(), c.query.global.query()]);
       if (store.getSnapshot().scope !== scope) return; // superseded by a newer scope
       if (cardsR?.ok === true) store.dispatch((s) => replaceCards(s, cardsR.value));
       if (globalR?.ok === true) store.dispatch((s) => hydrateGlobal(s, globalR.value));
     } else {
-      const cardsR = await c.query.workspace.query({ workspaceId: meta.workspaceId });
+      const [cardsR, recentR] = await Promise.all([
+        c.query.workspace.query({ workspaceId: meta.workspaceId }),
+        c.query.recentChanges.query({ workspaceId: meta.workspaceId }),
+      ]);
       if (store.getSnapshot().scope !== scope) return; // superseded by a newer scope
       if (cardsR?.ok === true) store.dispatch((s) => replaceCards(s, cardsR.value));
+      if (recentR?.ok === true) store.dispatch((s) => replaceRecentChanges(s, recentR.value));
     }
   } catch {
     // Best-effort — the cleared state stands; the live stream remains the source of truth.

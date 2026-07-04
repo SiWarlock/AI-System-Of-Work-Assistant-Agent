@@ -965,20 +965,19 @@ body {
   border-top: none;
 }
 
-.sow-activity-who {
+.sow-activity-kind {
   color: var(--accent-ink);
   font-weight: 580;
+  text-transform: capitalize;
 }
 
-.sow-activity-file {
-  font-family: var(--mono);
-  font-size: 12.5px;
+.sow-activity-summary {
+  flex: 1;
+  min-width: 0;
   color: #2a2a2c;
 }
 
-.sow-activity-rev {
-  font-family: var(--mono);
-  font-size: 12px;
+.sow-activity-empty {
   color: var(--label-3);
 }
 

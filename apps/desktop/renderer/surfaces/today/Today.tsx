@@ -19,6 +19,7 @@ import type {
   UiSafeDashboardCard,
   UiSafeHealthItem,
   UiSafeGclProjection,
+  UiSafeRecentChange,
 } from "@sow/contracts/api/ui-safe";
 
 export interface TodayProps {
@@ -29,6 +30,8 @@ export interface TodayProps {
   readonly health: readonly UiSafeHealthItem[];
   /** The Global-scope cross-workspace GCL surface (§9.4). */
   readonly global: readonly UiSafeGclProjection[];
+  /** The active workspace scope's Recent activity (§9.5; empty under Global — WS-8). */
+  readonly recentChanges: readonly UiSafeRecentChange[];
   /** Request a policy-gated drill-down into a workspace's context (worker-enforced). */
   readonly onDrillDown: (workspaceId: string, projectionType: string) => void;
 }
@@ -326,10 +329,64 @@ function todayLabel(): string {
   });
 }
 
+// ── Recent activity (§9.5) ─────────────────────────────────────────────────
+
+/** A short human relative-time from an ISO instant ("just now" / "3h" / "2d"). Display-only. */
+function relativeTime(iso: string): string {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "";
+  const mins = Math.floor((Date.now() - then) / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  return `${Math.floor(hrs / 24)}d`;
+}
+
+/**
+ * Recent activity (§9.5) — a hairline-divided list of the active WORKSPACE scope's committed
+ * knowledge mutations / audit-linked changes (never cards). Workspace-scoped: under Global
+ * scope `changes` is empty (recent changes never blend cross-workspace; WS-8). `summary` is
+ * the worker's single-line projector-built line; `kind` is a display token; `changeId` rides
+ * as a data-attr — the (worker-mediated, scope-checked) audit-drill handle for a later slice.
+ */
+function RecentActivity({
+  changes,
+}: {
+  readonly changes: readonly UiSafeRecentChange[];
+}): ReactElement {
+  if (changes.length === 0) {
+    return (
+      <div className="sow-activity" role="list" aria-label="Recent activity">
+        <div className="sow-activity-row sow-activity-empty" role="listitem">
+          No recent activity yet
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="sow-activity" role="list" aria-label="Recent activity">
+      {changes.map((change) => (
+        <div
+          className="sow-activity-row"
+          role="listitem"
+          key={change.changeId}
+          data-change-id={change.changeId}
+        >
+          <span className="sow-activity-kind">{change.kind}</span>
+          <span className="sow-activity-summary">{change.summary}</span>
+          <span className="sow-activity-when">{relativeTime(change.occurredAt)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function Today(props: TodayProps): ReactElement {
-  const { connection, scope, onScopeChange, cards, health, global, onDrillDown } = props;
+  const { connection, scope, onScopeChange, cards, health, global, recentChanges, onDrillDown } =
+    props;
 
   return (
     <div className="sow-shell">
@@ -545,35 +602,9 @@ export function Today(props: TodayProps): ReactElement {
           <div className="sow-section-label">System health</div>
           <HealthSection health={health} />
 
-          {/* Recent activity — static illustrative content */}
+          {/* Recent activity — workspace-scoped, from props.recentChanges (§9.5) */}
           <div className="sow-section-label">Recent activity</div>
-          <div className="sow-activity" role="list" aria-label="Recent activity">
-            <div className="sow-activity-row" role="listitem">
-              <span className="sow-activity-who">KnowledgeWriter</span>
-              committed
-              <span className="sow-activity-file">meeting-2026-06-30-arch-sync.md</span>
-              <span className="sow-activity-rev">rev 0c4</span>
-              <span className="sow-activity-when">18h</span>
-            </div>
-            <div className="sow-activity-row" role="listitem">
-              <span className="sow-activity-who">You</span>
-              Approved: calendar hold for vendor review
-              <span className="sow-activity-when">1d</span>
-            </div>
-            <div className="sow-activity-row" role="listitem">
-              <span className="sow-activity-who">Calendar</span>
-              connector synced
-              <span className="sow-activity-rev">cursor 2026-07-01</span>
-              <span className="sow-activity-when">2h</span>
-            </div>
-            <div className="sow-activity-row" role="listitem">
-              <span className="sow-activity-who">KnowledgeWriter</span>
-              committed
-              <span className="sow-activity-file">decision-adopt-pgvector.md</span>
-              <span className="sow-activity-rev">rev 0b9</span>
-              <span className="sow-activity-when">1d</span>
-            </div>
-          </div>
+          <RecentActivity changes={recentChanges} />
         </main>
 
         {/* ── Copilot rail — collapsed ───────────────────────────────────── */}

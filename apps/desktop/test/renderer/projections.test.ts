@@ -10,6 +10,7 @@ import {
   hydrateHealth,
   hydrateGlobal,
   groupGlobalByWorkspace,
+  replaceRecentChanges,
 } from "../../renderer/store/projections";
 import type { UiSafeGclProjection } from "@sow/contracts/api/ui-safe";
 import {
@@ -19,6 +20,7 @@ import {
   cardEvent,
   uiSafeCard,
   uiSafeHealthItem,
+  uiSafeRecentChange,
 } from "./fixtures";
 
 describe("initial hydrate (9.4b — fold a read-model query snapshot)", () => {
@@ -48,6 +50,26 @@ describe("initial hydrate (9.4b — fold a read-model query snapshot)", () => {
     let s = initialStoreState;
     s = hydrateHealth(s, [uiSafeHealthItem("h-1"), uiSafeHealthItem("h-2")]);
     expect([...s.health.keys()].sort()).toEqual(["h-1", "h-2"]);
+  });
+
+  it("replaceRecentChanges REPLACES the scoped recent-activity list (no blend across scopes)", () => {
+    // A workspace scope's recent changes must fully replace the prior scope's — never merge
+    // (§9.5 workspace isolation; the list is workspace-scoped, Global shows nothing).
+    const a = replaceRecentChanges(initialStoreState, [uiSafeRecentChange("chg-a1"), uiSafeRecentChange("chg-a2")]);
+    expect(a.recentChanges.map((c) => c.changeId)).toEqual(["chg-a1", "chg-a2"]);
+    const b = replaceRecentChanges(a, [uiSafeRecentChange("chg-b1")]);
+    expect(b.recentChanges.map((c) => c.changeId)).toEqual(["chg-b1"]); // replaced, not merged
+    // Clearing (scope→Global) empties it; empty→empty is a ref-stable no-op.
+    const cleared = replaceRecentChanges(b, []);
+    expect(cleared.recentChanges).toEqual([]);
+    expect(replaceRecentChanges(cleared, [])).toBe(cleared);
+  });
+
+  it("replaceRecentChanges leaves unrelated slices ref-stable", () => {
+    const s = replaceRecentChanges(initialStoreState, [uiSafeRecentChange("chg-1")]);
+    expect(s.cards).toBe(initialStoreState.cards);
+    expect(s.health).toBe(initialStoreState.health);
+    expect(s.global).toBe(initialStoreState.global);
   });
 
   it("an empty snapshot is a no-op (same reference — no needless re-render)", () => {
