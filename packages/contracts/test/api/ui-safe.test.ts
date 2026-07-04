@@ -12,6 +12,7 @@ import {
   UiSafeWorkflowRunRefSchema,
   UiSafeDashboardCardSchema,
   UiSafeGclProjectionSchema,
+  UiSafeRecentChangeSchema,
   UI_SAFE_ALLOWLIST,
 } from "../../src/api/ui-safe";
 
@@ -36,6 +37,7 @@ const PROJECTIONS = [
   ["workflowRunRef", UiSafeWorkflowRunRefSchema, UI_SAFE_ALLOWLIST.workflowRunRef] as const,
   ["dashboardCard", UiSafeDashboardCardSchema, UI_SAFE_ALLOWLIST.dashboardCard] as const,
   ["gclProjection", UiSafeGclProjectionSchema, UI_SAFE_ALLOWLIST.gclProjection] as const,
+  ["recentChange", UiSafeRecentChangeSchema, UI_SAFE_ALLOWLIST.recentChange] as const,
 ] as const;
 
 describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage gate)", () => {
@@ -90,6 +92,23 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
   it("UiSafeGclProjection omits sanitizedPayload (open record) + sourceRefs (internal refs)", () => {
     expect(UI_SAFE_ALLOWLIST.gclProjection).not.toContain("sanitizedPayload");
     expect(UI_SAFE_ALLOWLIST.gclProjection).not.toContain("sourceRefs");
+  });
+
+  // Recent Changes (§9.5) surfaces workspace-scoped audit-linked mutations. It carries a
+  // projector-built single-line `summary` (actor + event + detail folded in, bounded) — NOT
+  // the raw AuditRecord fields. It must drop the content-derived `payloadHash`, the
+  // principal `actor` (identity — dropped like UiSafeApproval), and the internal `auditRef`/
+  // `refs` (internal refs — dropped like UiSafeHealthItem; a raw drill is worker-mediated by
+  // `changeId`). It also carries NO `workspaceId` (mirrors UiSafeDashboardCard — a
+  // pushed/cached item can never blend cross-scope).
+  it("UiSafeRecentChange omits actor + payloadHash + internal refs (auditRef/refs) + workspaceId", () => {
+    expect(UI_SAFE_ALLOWLIST.recentChange).not.toContain("actor");
+    expect(UI_SAFE_ALLOWLIST.recentChange).not.toContain("payloadHash");
+    expect(UI_SAFE_ALLOWLIST.recentChange).not.toContain("auditRef");
+    expect(UI_SAFE_ALLOWLIST.recentChange).not.toContain("refs");
+    expect(UI_SAFE_ALLOWLIST.recentChange).not.toContain("beforeSummary");
+    expect(UI_SAFE_ALLOWLIST.recentChange).not.toContain("afterSummary");
+    expect(UI_SAFE_ALLOWLIST.recentChange).not.toContain("workspaceId");
   });
 
   // ── Behaviors: each schema accepts a valid sample + rejects unknown keys ─────
@@ -192,6 +211,30 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
         drillable: true,
       }).success,
     ).toBe(false);
+  });
+
+  it("UiSafeRecentChangeSchema accepts a valid sample + rejects a payloadHash / actor passthrough", () => {
+    const sample = {
+      changeId: "chg-1",
+      kind: "commit",
+      summary: "KnowledgeWriter committed meeting-2026-06-30-arch-sync.md rev 0c4",
+      occurredAt: "2026-07-04T00:00:00.000Z",
+    };
+    expect(UiSafeRecentChangeSchema.safeParse(sample).success).toBe(true);
+    // Content-derived hash + principal identity must NOT ride through as unknown keys (.strict()).
+    expect(UiSafeRecentChangeSchema.safeParse({ ...sample, payloadHash: "h:1" }).success).toBe(false);
+    expect(UiSafeRecentChangeSchema.safeParse({ ...sample, actor: "alice@corp" }).success).toBe(false);
+    expect(UiSafeRecentChangeSchema.safeParse({ ...sample, auditRef: "aud-9" }).success).toBe(false);
+  });
+
+  it("UiSafeRecentChangeSchema rejects a multi-line summary — incl. the full Unicode newline family (sole structural bound)", () => {
+    const base = { changeId: "chg-1", kind: "commit", occurredAt: "2026-07-04T00:00:00.000Z" };
+    expect(UiSafeRecentChangeSchema.safeParse({ ...base, summary: "line one\nline two" }).success).toBe(false);
+    // U+2028 (line separator) + U+0085 (next line) render as breaks in some surfaces —
+    // `uiSafeSummaryLine` is the ONLY structural bound here (no upstream sanitization gate).
+    expect(UiSafeRecentChangeSchema.safeParse({ ...base, summary: "a\u2028b" }).success).toBe(false);
+    expect(UiSafeRecentChangeSchema.safeParse({ ...base, summary: "a\u0085b" }).success).toBe(false);
+    expect(UiSafeRecentChangeSchema.safeParse({ ...base, summary: "one line" }).success).toBe(true);
   });
 
   // ── Constraint: enum-typed fields reject an out-of-set value ─────────────────

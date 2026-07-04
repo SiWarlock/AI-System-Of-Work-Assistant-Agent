@@ -27,12 +27,19 @@ import type { VisibilityLevel } from "../primitives/enums";
 // A UI-safe display summary line: short + SINGLE-LINE. Multi-line / long-form is the
 // shape of leaked raw content, so it is rejected at this seam too (defense in depth —
 // the GCL gate already bounds sanitizedPayload values, this re-bounds the projected
-// summary). 1024 mirrors the GCL gate's MAX_SUMMARY_VALUE_LEN.
+// summary). 1024 mirrors the GCL gate's MAX_SUMMARY_VALUE_LEN. The line-terminator set
+// covers the FULL Unicode newline family — not just `\r`/`\n` but the vertical tab
+// (U+000B), form feed (U+000C), next-line (U+0085), and the line/paragraph separators
+// (U+2028/U+2029) — because for UiSafeRecentChange this helper is the SOLE structural
+// bound (no upstream sanitization gate, unlike GclProjection): a fragment that renders as
+// a break in some surfaces must not slip through.
 const uiSafeSummaryLine = z
   .string()
   .min(1)
   .max(1024)
-  .refine((s) => !/[\r\n]/.test(s), { message: "summary must be single-line" });
+  .refine((s) => !/[\r\n\u000B\u000C\u0085\u2028\u2029]/.test(s), {
+    message: "summary must be single-line",
+  });
 
 // Compile-time exact-type equality (bidirectional assignability). Used to pin
 // each schema's inferred output to its standalone interface without a
@@ -176,6 +183,50 @@ export const UiSafeGclProjectionSchema = z
   })
   .strict();
 
+// ── UiSafeRecentChange ───────────────────────────────────────────────────────
+// A workspace-scoped "Recent activity" row (§9.5, Flow 5) — a committed knowledge
+// mutation / audit-linked change the renderer lists under Today. The source is an
+// AuditRecord, which carries a content-derived `payloadHash`, a principal `actor`, and
+// internal `refs` — none may cross. So this shape carries only:
+//   - `changeId`   : a projection-local opaque id MINTED BY THE PROJECTOR — the frozen
+//                    AuditRecord carries no id of its own (it is stored under the
+//                    operational store's implicit rowid, a storage-layer artifact outside
+//                    the contract), so the projector assigns a stable, NON-ENUMERABLE
+//                    changeId. It is the renderer's HANDLE for a future worker-mediated
+//                    audit drill (the renderer never interprets it; the worker resolves it
+//                    server-side AND re-checks scope-ownership on every drill — WS-8);
+//   - `kind`       : a short display-category token (open string, like UiSafeDashboardCard
+//                    `kind` — e.g. "commit"/"sync"/"approval"; a display hint, not content);
+//   - `summary`    : ONE projector-built single-line line (actor + event + detail folded in
+//                    and bounded by the projector — no raw AuditRecord field passthrough,
+//                    mirroring UiSafeGclProjection's single bounded summary). PROJECTOR
+//                    OBLIGATION (Lesson §5): redact-by-type every folded fragment; never
+//                    fold raw `beforeSummary`/`afterSummary`/`payloadHash` or a cross-scope
+//                    identity; `.safeParse` through this schema before emit;
+//   - `occurredAt` : ISO datetime, from `AuditRecord.timestamps.occurredAt` (nested;
+//                    NOT the internal `timestamps.recordedAt` persistence stamp) — for
+//                    relative-time display + descending ordering.
+// DROPPED from AuditRecord: `payloadHash` (content-derived — like UiSafeApproval),
+// `actor` (principal identity — like UiSafeApproval), `refs` (internal refs — dropped as
+// UiSafeHealthItem drops its own `auditRef`), `beforeSummary`/`afterSummary` (unbounded raw
+// summaries). Carries NO `workspaceId` (mirrors UiSafeDashboardCard, so a pushed/cached row
+// can never blend cross-scope; the worker scopes the query, not the row).
+export interface UiSafeRecentChange {
+  changeId: string;
+  kind: string;
+  summary: string;
+  occurredAt: string;
+}
+
+export const UiSafeRecentChangeSchema = z
+  .object({
+    changeId: z.string().min(1),
+    kind: z.string().min(1),
+    summary: uiSafeSummaryLine,
+    occurredAt: z.string().datetime(),
+  })
+  .strict();
+
 // ── Schema ⇄ interface parity guards (compile-time; erased at runtime) ───────
 // Each asserts the schema's inferred output EXACTLY equals its standalone
 // interface — so the interface and the runtime validator can never drift apart.
@@ -185,7 +236,8 @@ const _uiSafeParity: [
   Exact<z.infer<typeof UiSafeWorkflowRunRefSchema>, UiSafeWorkflowRunRef>,
   Exact<z.infer<typeof UiSafeDashboardCardSchema>, UiSafeDashboardCard>,
   Exact<z.infer<typeof UiSafeGclProjectionSchema>, UiSafeGclProjection>,
-] = [true, true, true, true, true];
+  Exact<z.infer<typeof UiSafeRecentChangeSchema>, UiSafeRecentChange>,
+] = [true, true, true, true, true, true];
 void _uiSafeParity;
 
 // ── Checked-in allowlist — THE source of truth ───────────────────────────────
@@ -199,4 +251,5 @@ export const UI_SAFE_ALLOWLIST = {
   workflowRunRef: ["idempotencyKey", "state", "trigger", "workflowId"],
   dashboardCard: ["cardId", "count", "kind", "status", "title", "updatedAt"],
   gclProjection: ["drillable", "projectionType", "summary", "visibilityLevel", "workspaceId"],
+  recentChange: ["changeId", "kind", "occurredAt", "summary"],
 } as const;
