@@ -67,3 +67,15 @@ Three more tasks landed after the checkpoint above:
 **Remaining §20.1 acceptance rows without a suite (8):** Meeting closeout replay, Workspace routing, Knowledge write (→ 12.16 e2e, real-integration), Approval flow (no dedicated suite yet — buildable deterministically over the approval state machine), Open-source install (→ 12.20, Phase-11-gated), Retrieval relevance (real gbrain), GBrain parity (→ 12.7, real gbrain), Human-section preservation (→ 12.6, packages/knowledge — coordinate w/ dashboard track).
 
 **Cleanest next (packages/evals, no collision):** **Approval flow** suite (deterministic, over the approval state machine + Tool Gateway — closes another §20.1 row) is the last big one buildable without real integrations or cross-track coordination. After that, the remaining rows are real-integration-gated (12.16/retrieval/12.7) or cross-package (12.6/12.8/12.4) or Phase-11-gated (12.18/12.20).
+
+### Approval flow (`519d229`) + final state
+Added the **Approval flow** §20.1 suite (`suites/approval-flow/`, 10) over the real `@sow/domain` approvalMachine — surfaced-pending → approve/edit/reject/defer, exactly-once across Mac+Telegram (idempotentTerminalReentry no-op), frozen terminals, deferred re-surface, typed illegal-move rejections. Scores APPROVAL_FLOW (dodPass=true).
+
+**FINAL:** **398 evals tests green**, `tsc` clean, tree clean. **§20.1 suites built: 12/19.** This closes out every Phase-12 task buildable **in isolation** on the eval-security track (harness, corpora, all deterministic §20.1 suites, conformance release-gate, latency budgets).
+
+**All remaining Phase-12 work is gated** (not doable on this track alone):
+- **Real-integration-gated** (build runs over stubs): 12.16 meeting-closeout e2e (+ Meeting closeout replay / Workspace routing / Knowledge write §20.1 rows), Retrieval relevance, 12.7 GBrain parity (real gbrain), 12.4 SQLite+**Postgres** contract.
+- **Cross-package, coordinate with dashboard track** (they edit knowledge/integrations/providers): 12.6 (packages/knowledge KW ownership/secret/human-section), 12.8 (packages/integrations Tool Gateway replay/outage). Human-section preservation §20.1 row lives here (12.6).
+- **Phase-11-gated / dashboard territory:** 12.20 clean-install (+ Open-source install row), 12.18 Electron/IPC (apps/desktop), 12.22/12.23 write-through enablement/fail-closed (real gbrain + 4.19/4.20).
+
+**Recommended next move:** merge `track/eval-security` → `main` (coordinate with the dashboard track), reconcile the Phase-12 checkboxes at merge, then tackle the real-integration suites once live vendor I/O / real gbrain / Postgres are wired (that's a Phase-11-adjacent effort, not an isolated-track one).
