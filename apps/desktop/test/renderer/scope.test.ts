@@ -45,4 +45,12 @@ describe("workspace scope model", () => {
   it("scopeMeta is total (defensive fallback on any value, never throws)", () => {
     expect(scopeMeta("not-a-scope" as unknown as WorkspaceScope).id).toBe("global");
   });
+
+  it("isWorkspaceScope fails CLOSED on an unknown scope — the isolation gate suppresses, never blends", () => {
+    // §9.5: unlike scopeMeta's display fallback (fails OPEN to Global's accent), the
+    // read_model.change isolation gate must treat an out-of-union scope (a future
+    // untyped source: persisted last-scope / deep link / IPC) as workspace-scoped, so a
+    // pushed card is SUPPRESSED rather than blended under the wrong tab.
+    expect(isWorkspaceScope("not-a-scope" as unknown as WorkspaceScope)).toBe(true);
+  });
 });

@@ -5,7 +5,7 @@ import type {
   UiSafeGclProjection,
 } from "@sow/contracts/api/ui-safe";
 import type { ConnectionStatus, UiSafeStoreState } from "./index";
-import type { WorkspaceScope } from "./scope";
+import { isWorkspaceScope, type WorkspaceScope } from "./scope";
 
 // Pure reducers that fold validated UI-safe StreamEvents into the store. Every
 // payload is an allowlisted `UiSafe*` shape (the wire is validated by
@@ -50,6 +50,15 @@ export function applyStreamEvent(state: UiSafeStoreState, event: StreamEvent): U
         workflows: cloneSet(state.workflows, event.payload.workflowId, event.payload),
       };
     case "read_model.change":
+      // Workspace isolation (§9.5): a read_model.change carries a `dashboard_cards`
+      // change — the cross-workspace aggregate `cards` holds ONLY in Global scope. In a
+      // workspace scope `cards` holds that ONE workspace's `query.workspace` read-model,
+      // and the pushed card carries no workspaceId, so folding it in could surface a
+      // FOREIGN workspace's card under this tab. Apply it ONLY in Global; in a workspace
+      // scope advance the resume cursor (never re-request a dropped event / no false gap)
+      // but NEVER blend the card. Switching scope re-hydrates the scoped pull path, so no
+      // change is lost. Live in-workspace push updates are a scoped-subscription follow-up.
+      if (isWorkspaceScope(state.scope)) return base;
       return { ...base, cards: cloneSet(state.cards, event.payload.cardId, event.payload) };
     default: {
       // Exhaustiveness: a new §10 event class must be handled above.

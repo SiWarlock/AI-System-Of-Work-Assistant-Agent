@@ -73,10 +73,14 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
  * A stale-scope guard drops a superseded result (a fast A→B→A switch): the store's
  * current `scope` must still equal the requested one before any dispatch.
  *
- * FOLLOW-UP: the STREAM push path is not yet scope-filtered — a read_model.change event
- * still upserts regardless of scope (UiSafeDashboardCard carries no workspaceId to
- * filter on). Scope-correct streaming needs either a per-subscription server scope or a
- * workspaceId on the card. This slice makes the PULL (query) path scope-correct.
+ * The STREAM push path is scope-ISOLATED too (§9.5): `applyStreamEvent` folds a
+ * read_model.change into `cards` ONLY in Global scope (where `cards` is the
+ * cross-workspace dashboard aggregate the push emits); in a workspace scope it advances
+ * the resume cursor but never blends the card (UiSafeDashboardCard carries no
+ * workspaceId), so no foreign workspace's card can surface under the tab. FOLLOW-UP:
+ * LIVE in-workspace push updates (re-hydrating the scoped pull path on a push signal, or
+ * a per-subscription server scope / workspaceId on the card) — a workspace scope stays
+ * on its pull-hydrated snapshot until the next scope switch.
  */
 async function hydrateScope(
   client: CreateTRPCClient<AnyTRPCRouter>,

@@ -45,7 +45,18 @@ export function scopeMeta(scope: WorkspaceScope): ScopeMeta {
   return BY_ID.get(scope) ?? WORKSPACE_SCOPES[0]!;
 }
 
-/** True iff a scope targets a single workspace (has a `workspaceId` to scope reads to). */
+/**
+ * True iff a scope targets a single workspace (has a `workspaceId` to scope reads to).
+ *
+ * This is the workspace-ISOLATION gate for the read_model.change push path (§9.5): a
+ * pushed card is folded into `cards` ONLY when this is false (the Global scope). So it
+ * fails CLOSED — an UNKNOWN scope (an out-of-union value from a future untyped source:
+ * a persisted last-scope, a deep link, an IPC payload) is treated as workspace-scoped →
+ * the push is SUPPRESSED, never blended. Only a RECOGNIZED Global scope (workspaceId ===
+ * null) permits the cross-workspace fold. (Distinct from `scopeMeta`, which fails OPEN to
+ * Global's accent — a safe, never-throw default for DISPLAY, the wrong direction here.)
+ */
 export function isWorkspaceScope(scope: WorkspaceScope): boolean {
-  return scopeMeta(scope).workspaceId !== null;
+  const meta = BY_ID.get(scope);
+  return meta === undefined || meta.workspaceId !== null;
 }
