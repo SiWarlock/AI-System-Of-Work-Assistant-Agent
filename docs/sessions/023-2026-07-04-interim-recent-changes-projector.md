@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-04 · **Mode:** single-operator (build) · **Tracks:** worker · contract
 - **Predecessor:** `022-2026-07-04-docpack-and-ui-test-harness.md` (HEAD at start `a0d8d70`)
-- **Successor:** _(none yet)_
+- **Successor:** `024-2026-07-04-RESUME-copilot.md` (the 9.6 Copilot build handoff — B shell then A backend)
 - **HEAD at close:** `<round-commit>` · **1 slice commit** (`0dc8d4a`)
 - **Gate at close:** repo-wide `turbo typecheck test` **31/31**; contracts 52/52; worker provisioner 10/10.
 - **Reviews:** 2 subagent reviews (security + code-quality). Both caught the SAME real defect (write-side normalizer didn't cover the full newline family the read gate rejects) — **fixed in-slice** via a shared normalizer. No critical/high after the fix.
