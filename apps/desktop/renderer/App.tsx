@@ -4,9 +4,10 @@ import { Today } from "./surfaces/today/Today";
 import { Projects } from "./surfaces/projects/Projects";
 import { createUiSafeStore } from "./store";
 import { setScope, navigate } from "./store/projections";
-import { WORKSPACE_SCOPES, type WorkspaceScope } from "./store/scope";
+import { WORKSPACE_SCOPES, resolveWorkspaceId, type WorkspaceScope } from "./store/scope";
 import type { Route } from "./store/route";
 import { startLive, type StartLiveHandle } from "./lib/live";
+import type { AskResult } from "./lib/copilot-ask";
 import { seedDevStore } from "./dev/seed";
 
 // The renderer's single UI-safe store (app singleton — one window).
@@ -70,6 +71,15 @@ export function App(): ReactElement {
     store.dispatch((st) => navigate(st, { surface: "projects", projectId }));
   };
 
+  // §9.6 Copilot ask: resolve the CURRENT scope's workspaceId (fail-closed for Global / unknown) and
+  // ask the worker. No single workspace or no live bridge → {ok:false}; the worker re-derives its own
+  // workspace scoping + runs the WS-8 / candidate-data gates, so the renderer only requests.
+  const onAskCopilot = (question: string): Promise<AskResult> => {
+    const workspaceId = resolveWorkspaceId(state.scope);
+    if (workspaceId === null || liveRef.current === null) return Promise.resolve({ ok: false });
+    return liveRef.current.askCopilot(workspaceId, question);
+  };
+
   const selectedProjectId =
     state.route.surface === "projects" ? state.route.projectId : undefined;
 
@@ -80,6 +90,7 @@ export function App(): ReactElement {
       onScopeChange={onScopeChange}
       route={state.route}
       onNavigate={onNavigate}
+      onAskCopilot={onAskCopilot}
     >
       {state.route.surface === "projects" ? (
         <Projects

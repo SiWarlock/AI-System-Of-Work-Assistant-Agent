@@ -20,6 +20,7 @@ import { WORKSPACE_SCOPES, scopeMeta, type WorkspaceScope } from "../store/scope
 import type { Route } from "../store/route";
 import { accentVar } from "../lib/accent";
 import { Copilot } from "../surfaces/copilot/Copilot";
+import type { AskResult } from "../lib/copilot-ask";
 
 export interface AppShellProps {
   readonly connection: ConnectionStatus;
@@ -29,6 +30,8 @@ export interface AppShellProps {
   readonly route: Route;
   /** Navigate to a surface (left-rail nav). Never changes scope. */
   readonly onNavigate: (route: Route) => void;
+  /** Ask Copilot a question (§9.6). Present → the Copilot composer is LIVE; absent → disabled scaffold. */
+  readonly onAskCopilot?: (question: string) => Promise<AskResult>;
   /** The active surface, rendered in the content pane. */
   readonly children: ReactNode;
 }
@@ -222,7 +225,7 @@ function NavLink({
 // ── The shell ──────────────────────────────────────────────────────────────
 
 export function AppShell(props: AppShellProps): ReactElement {
-  const { connection, scope, onScopeChange, route, onNavigate, children } = props;
+  const { connection, scope, onScopeChange, route, onNavigate, onAskCopilot, children } = props;
 
   // Copilot right-sidebar chrome state (§4.6): collapsed (thin rail) ⇄ expanded (chat panel).
   // Owned here like the scope switcher's local open state — orthogonal to BOTH route and scope
@@ -397,7 +400,7 @@ export function AppShell(props: AppShellProps): ReactElement {
 
         {/* ── Copilot right sidebar — collapsed (thin rail) ⇄ expanded (chat panel) ── */}
         {copilotOpen ? (
-          <Copilot scope={scope} onCollapse={collapseCopilot} />
+          <Copilot scope={scope} onCollapse={collapseCopilot} onAsk={onAskCopilot} />
         ) : (
           <aside className="sow-copilot-rail" aria-label="Copilot (collapsed)">
             {/* Gradient sparkle icon */}

@@ -2,6 +2,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { Copilot, type CopilotProps, type CopilotTurnView } from "../renderer/surfaces/copilot/Copilot";
+import type { AskResult } from "../renderer/lib/copilot-ask";
 
 afterEach(cleanup);
 
@@ -109,5 +110,75 @@ describe("Copilot panel — collapse control", () => {
     renderCopilot({ scope: "employer-work", onCollapse });
     fireEvent.click(screen.getByRole("button", { name: "Collapse Copilot sidebar" }));
     expect(onCollapse).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── A5: live ask (wired to query.copilotAsk via the onAsk handler) ────────────────────────
+describe("Copilot panel — live ask (onAsk wired; A5)", () => {
+  const okAnswer = {
+    ok: true as const,
+    answer: {
+      answer: ["Two decisions were logged.", "The SLA was adopted."],
+      citations: [{ citationId: "src:note-1", title: "Vendor review — decisions" }],
+    },
+  };
+
+  it("ENABLES the composer when onAsk is provided (disabled scaffold becomes live)", () => {
+    renderCopilot({ scope: "employer-work", onAsk: vi.fn().mockResolvedValue(okAnswer) });
+    expect((screen.getByRole("textbox", { name: /ask copilot/i }) as HTMLTextAreaElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: /send/i }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("submitting a question calls onAsk and renders the answer turn WITH citations", async () => {
+    const onAsk = vi.fn().mockResolvedValue(okAnswer);
+    renderCopilot({ scope: "employer-work", onAsk });
+    fireEvent.change(screen.getByRole("textbox", { name: /ask copilot/i }), {
+      target: { value: "what did we decide?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    expect(onAsk).toHaveBeenCalledWith("what did we decide?");
+    // The answer bubble + question + citation chip appear once the async ask resolves.
+    expect(await screen.findByText(/Two decisions were logged\./)).toBeTruthy();
+    expect(screen.getByText("what did we decide?")).toBeTruthy();
+    expect(screen.getByText("Vendor review — decisions")).toBeTruthy();
+  });
+
+  it("a FAILED ask (fail-closed err) renders an error turn, never a partial/raw answer", async () => {
+    const onAsk = vi.fn().mockResolvedValue({ ok: false });
+    renderCopilot({ scope: "employer-work", onAsk });
+    fireEvent.change(screen.getByRole("textbox", { name: /ask copilot/i }), {
+      target: { value: "something" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    expect(await screen.findByText(/couldn't answer that|something went wrong/i)).toBeTruthy();
+  });
+
+  it("does not submit a blank question (no onAsk call)", () => {
+    const onAsk = vi.fn().mockResolvedValue(okAnswer);
+    renderCopilot({ scope: "employer-work", onAsk });
+    fireEvent.change(screen.getByRole("textbox", { name: /ask copilot/i }), { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    expect(onAsk).not.toHaveBeenCalled();
+  });
+
+  it("does not fire a CONCURRENT ask — the pending guard blocks a second submit while one is in flight", async () => {
+    let resolve!: (v: AskResult) => void;
+    const onAsk = vi.fn().mockReturnValue(new Promise<AskResult>((r) => (resolve = r)));
+    renderCopilot({ scope: "employer-work", onAsk });
+    fireEvent.change(screen.getByRole("textbox", { name: /ask copilot/i }), { target: { value: "q" } });
+    const send = screen.getByRole("button", { name: /send/i });
+    fireEvent.click(send);
+    fireEvent.click(send); // while the first ask is still pending
+    expect(onAsk).toHaveBeenCalledTimes(1);
+    resolve(okAnswer);
+    expect(await screen.findByText(/Two decisions were logged\./)).toBeTruthy();
+  });
+
+  it("clicking a suggestion chip prefills the composer draft (live only)", () => {
+    renderCopilot({ scope: "employer-work", onAsk: vi.fn().mockResolvedValue(okAnswer) });
+    fireEvent.click(screen.getByRole("button", { name: /what decisions did we log/i }));
+    expect((screen.getByRole("textbox", { name: /ask copilot/i }) as HTMLTextAreaElement).value).toMatch(
+      /what decisions did we log/i,
+    );
   });
 });

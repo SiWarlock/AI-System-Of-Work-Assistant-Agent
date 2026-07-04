@@ -11,16 +11,19 @@
 // Load-bearing (§4.6): Copilot READS ONLY. It never writes or sends. Any action becomes a PROPOSAL
 // that routes to Approvals — surfaced by the persistent reminder AND by each turn's proposal row.
 // WS-8: Copilot reads a SINGLE workspace's knowledge; under Global there is no ask (a "pick a
-// workspace" state, not a cross-workspace blend). The live Q&A input is scaffolded but DISABLED
-// until the backend (A) lands + the turns are wired; the render here is empty-until-data (no seed).
+// workspace" state, not a cross-workspace blend). When `onAsk` is provided (A5, wired to
+// query.copilotAsk) the composer is LIVE; without it the input is a disabled scaffold. A failed ask
+// (WS-8 fail-closed / candidate-data gate rejection / transport) folds to a safe error turn — never
+// a partial or raw answer (the worker already gated it; `AskResult` carries only {ok:false}).
 //
 // `CopilotTurnView` is a presentational view-model (not the wire contract) — A5 maps the validated
 // `UiSafeCopilotAnswer`/citations into it, keeping this component free of the schema/registry.
 //
 // NEVER import electron, node, or @sow/worker from a renderer file.
 
-import { useEffect, useRef, type ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { resolveWorkspaceId, type WorkspaceScope } from "../../store/scope";
+import type { AskResult } from "../../lib/copilot-ask";
 
 /** A single cited source, as shown in a citation chip. Opaque ref + display title — NO raw content. */
 export interface CopilotCitationView {
@@ -43,17 +46,25 @@ export interface CopilotProps {
   readonly scope: WorkspaceScope;
   /** Collapse the sidebar back to the thin rail (AppShell owns the open state). */
   readonly onCollapse: () => void;
-  /** The conversation so far. Empty-until-backend (A5 supplies real turns); no synthetic seed. */
+  /**
+   * MOUNT-TIME seed conversation (tests; a future restore). INIT-ONLY — it seeds the internal turn
+   * state once; live asks append. A post-mount change to this prop is NOT reconciled (to reset the
+   * conversation from a new source, remount via `key`). The live app never passes it (no synthetic seed).
+   */
   readonly turns?: readonly CopilotTurnView[];
+  /** Ask a question (A5, wired to query.copilotAsk). Present → the composer is LIVE; absent → disabled scaffold. */
+  readonly onAsk?: (question: string) => Promise<AskResult>;
 }
 
-// A couple of example prompts, shown (disabled) in the empty state to hint at what Copilot answers.
-// Decorative until A5 wires the input; they light up with the composer.
+// Example prompts shown in the empty state. Clickable (prefill the draft) when the composer is live;
+// a decorative disabled hint otherwise.
 const SUGGESTIONS: readonly string[] = [
   "What decisions did we log this week?",
   "What's blocking the vendor review?",
   "Summarize the latest meeting notes.",
 ];
+
+const ASK_FAILED = "Sorry — I couldn't answer that right now. Please try again.";
 
 /** A mono citation chip — the display title of a cited source. Carries no raw content / path / URL. */
 function CitationChip({ title }: { readonly title: string }): ReactElement {
@@ -99,18 +110,48 @@ function CopilotTurn({ turn }: { readonly turn: CopilotTurnView }): ReactElement
   );
 }
 
-/** The disabled composer scaffold — the rounded input + blue send circle. Enabled at A5. */
-function Composer(): ReactElement {
+/** The composer — the rounded input + blue send circle. Enabled when the panel is live (A5). */
+function Composer({
+  value,
+  onChange,
+  onSubmit,
+  disabled,
+  pending,
+  inputRef,
+}: {
+  readonly value: string;
+  readonly onChange: (v: string) => void;
+  readonly onSubmit: () => void;
+  readonly disabled: boolean;
+  readonly pending: boolean;
+  readonly inputRef: React.RefObject<HTMLTextAreaElement>;
+}): ReactElement {
   return (
-    <form className="sow-copilot-composer" onSubmit={(e) => e.preventDefault()}>
+    <form
+      className="sow-copilot-composer"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit();
+      }}
+    >
       <textarea
+        ref={inputRef}
         className="sow-copilot-input"
         aria-label="Ask Copilot"
-        placeholder="Answering is coming up next…"
+        placeholder={disabled ? "Answering is coming up next…" : "Ask about this workspace…"}
         rows={1}
-        disabled
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          // Enter submits; Shift+Enter inserts a newline (standard chat affordance).
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            onSubmit();
+          }
+        }}
       />
-      <button className="sow-copilot-send" type="submit" aria-label="Send" disabled>
+      <button className="sow-copilot-send" type="submit" aria-label="Send" disabled={disabled || pending}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M5 12h13M12 6l6 6-6 6" />
         </svg>
@@ -120,27 +161,66 @@ function Composer(): ReactElement {
 }
 
 export function Copilot(props: CopilotProps): ReactElement {
-  const { scope, onCollapse, turns = [] } = props;
-  const collapseRef = useRef<HTMLButtonElement>(null);
+  const { scope, onCollapse, turns: seedTurns = [], onAsk } = props;
+  const live = onAsk !== undefined;
 
-  // Disclosure focus management: expanding is a subtree swap (the rail's Expand button unmounts),
-  // so move keyboard focus INTO the panel rather than dropping it to <body>. This panel mounts
-  // ONLY as a result of a user expand (AppShell renders it only when open, and Copilot starts
-  // collapsed), so focusing on mount never steals focus on initial app load. The mirror half —
-  // returning focus to the rail's Expand chevron on collapse — lives in AppShell (which owns the
-  // rail). When A5 enables the input, it becomes the natural on-open focus target.
+  const [turns, setTurns] = useState<readonly CopilotTurnView[]>(seedTurns);
+  const [draft, setDraft] = useState("");
+  const [pending, setPending] = useState(false);
+  const turnSeq = useRef(0);
+
+  const collapseRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Disclosure focus management: expanding is a subtree swap (the rail's Expand button unmounts), so
+  // move keyboard focus INTO the panel rather than dropping it to <body>. The panel mounts ONLY on a
+  // user expand (AppShell renders it only when open, Copilot starts collapsed), so focusing on mount
+  // never steals focus on initial app load. When live, the ASK INPUT is the natural on-open target;
+  // otherwise the Collapse control. The mirror half (return focus to the rail on collapse) is AppShell's.
   useEffect(() => {
-    collapseRef.current?.focus();
-  }, []);
+    if (live && inputRef.current !== null) inputRef.current.focus();
+    else collapseRef.current?.focus();
+  }, [live]);
 
   // WS-8: Copilot reads a SINGLE workspace's knowledge. `resolveWorkspaceId` fails CLOSED for the
   // ASK direction — it returns a real id ONLY for one of the three recognized workspaces; Global
   // AND any unknown/out-of-union scope resolve to `null` → the pick-a-workspace state, never a
-  // cross-workspace blend or a query against an unrecognized scope. (NOT `isWorkspaceScope`, which
-  // returns `true` for an unknown value — the wrong direction for gating a read.) A5 reuses this
-  // id to scope the actual `query.copilotAsk`.
+  // cross-workspace blend. (The worker re-derives its own workspace scoping; this only gates the UI.)
   const workspaceId = resolveWorkspaceId(scope);
   const workspaceScoped = workspaceId !== null;
+
+  const submit = (): void => {
+    const q = draft.trim();
+    if (q === "" || onAsk === undefined || pending) return;
+    setDraft("");
+    setPending(true);
+    // `finish` ALWAYS resets `pending` and appends exactly one turn — for a resolve, a rejection, OR
+    // a contract-violating ok-payload (defensive: the worker gates the answer, but if a malformed
+    // `{ok:true}` ever reached here, building the turn would throw and leave the composer stuck
+    // disabled). A failed/malformed ask folds to a safe, generic error turn — NEVER a partial/raw
+    // answer. Live-turn ids use a distinct `ask-` prefix so they can't collide with a seed turn's id.
+    const finish = (result: AskResult): void => {
+      turnSeq.current += 1;
+      const id = `ask-${String(turnSeq.current)}`;
+      let turn: CopilotTurnView;
+      try {
+        turn = result.ok
+          ? {
+              id,
+              question: q,
+              answer: result.answer.answer.join("\n"),
+              citations: result.answer.citations.map((c) => ({ id: c.citationId, title: c.title })),
+            }
+          : { id, question: q, answer: ASK_FAILED, citations: [] };
+      } catch {
+        turn = { id, question: q, answer: ASK_FAILED, citations: [] };
+      }
+      setTurns((prev) => [...prev, turn]);
+      setPending(false);
+    };
+    // createAskCopilot never rejects (it folds to {ok:false}), but guard the rejection path anyway.
+    void onAsk(q).then(finish, () => finish({ ok: false }));
+  };
 
   return (
     <aside className="sow-copilot-panel" aria-label="Copilot">
@@ -175,8 +255,8 @@ export function Copilot(props: CopilotProps): ReactElement {
           <div className="sow-copilot-empty" role="status">
             Copilot reads a single workspace&apos;s knowledge — pick a workspace to ask.
           </div>
-        ) : turns.length === 0 ? (
-          // Empty-until-data (no synthetic seed) — the ask-a-question state + example prompts.
+        ) : turns.length === 0 && !pending ? (
+          // Empty-until-data — the ask-a-question state + example prompts.
           <div className="sow-copilot-empty" role="status">
             <p className="sow-copilot-empty-lead">Ask a question about this workspace&apos;s knowledge. Every answer cites its sources.</p>
             <div className="sow-copilot-suggest" role="group" aria-label="Example questions">
@@ -185,8 +265,9 @@ export function Copilot(props: CopilotProps): ReactElement {
                   key={s}
                   className="sow-copilot-chip"
                   type="button"
-                  disabled
-                  title="Answering is coming up next"
+                  disabled={!live}
+                  title={live ? "Use this question" : "Answering is coming up next"}
+                  onClick={live ? () => setDraft(s) : undefined}
                 >
                   {s}
                 </button>
@@ -198,12 +279,26 @@ export function Copilot(props: CopilotProps): ReactElement {
             {turns.map((turn) => (
               <CopilotTurn key={turn.id} turn={turn} />
             ))}
+            {pending ? (
+              <div className="sow-copilot-thinking" role="status" aria-live="polite">
+                Thinking…
+              </div>
+            ) : null}
           </div>
         )}
       </div>
 
-      {/* Composer — only where an ask is possible (a single workspace). Scaffolded/disabled until A. */}
-      {workspaceScoped ? <Composer /> : null}
+      {/* Composer — only where an ask is possible (a single workspace). Live when `onAsk` is provided. */}
+      {workspaceScoped ? (
+        <Composer
+          value={draft}
+          onChange={setDraft}
+          onSubmit={submit}
+          disabled={!live}
+          pending={pending}
+          inputRef={inputRef}
+        />
+      ) : null}
     </aside>
   );
 }

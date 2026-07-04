@@ -16,6 +16,7 @@ import { createScopeRefresher } from "./scope-refresh";
 import { createLiveClient } from "./live-client";
 import { createWsStreamTransport } from "./ws-transport";
 import { createDrillDown, type DrillResult } from "./drilldown";
+import { createAskCopilot, type AskResult } from "./copilot-ask";
 
 /** The live-session handle: stop the stream + drill-down (§9.4) + scope-aware re-hydrate (§9.5). */
 export interface StartLiveHandle {
@@ -23,6 +24,8 @@ export interface StartLiveHandle {
   readonly drillDown: (workspaceId: string, projectionType: string) => Promise<DrillResult>;
   /** Re-hydrate for a scope (called on a scope change) — clears then re-queries, no blend. */
   readonly hydrateScope: (scope: WorkspaceScope) => Promise<void>;
+  /** Ask Copilot a question (§9.6, wired to query.copilotAsk); fails closed to {ok:false}. */
+  readonly askCopilot: (workspaceId: string, question: string) => Promise<AskResult>;
 }
 
 // Connect the UI-safe store to the LIVE worker over the §10 push stream (9.4b E).
@@ -73,6 +76,7 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
     },
     drillDown: createDrillDown(live.client),
     hydrateScope: (scope: WorkspaceScope): Promise<void> => hydrateScope(live.client, store, scope),
+    askCopilot: createAskCopilot(live.client),
   };
 }
 
