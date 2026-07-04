@@ -38,12 +38,6 @@
 //     (`createOperationalBackupService`) is WIRED into the handle (`backupService`)
 //     but NOT SCHEDULED — the periodic CRON that calls `backupService.run()` on the
 //     `backupCadenceMs` is Phase-11. The service is ready; only its trigger is deferred.
-//   • PERSISTENT HealthSurface store: the degraded controller's `HealthSurface` runs
-//     over an IN-MEMORY `HealthSurfaceStore` here. The base @sow/db `health_items`
-//     table (the systemHealth QUERY port already reads it persistently) does not yet
-//     expose the `SurfacedHealthItem` dedupe-bookkeeping columns as a
-//     `HealthSurfaceStore` adapter — bridging that is a follow-up; the degraded
-//     controller's own health items are therefore process-memory until then.
 import { auditId } from "@sow/contracts";
 import type { Result, FailureVariant, HealthItem, AuditId } from "@sow/contracts";
 import type { SessionToken } from "@sow/policy";
@@ -72,12 +66,8 @@ import type {
   TriagePort,
 } from "./api/procedures/commands";
 import type { Logger } from "./observability/logger";
-import {
-  createHealthSurface,
-  type HealthSurface,
-  type HealthSurfaceStore,
-  type SurfacedHealthItem,
-} from "./health/surface";
+import { createHealthSurface, type HealthSurface } from "./health/surface";
+import { createPersistentHealthSurfaceStore } from "./composition/store-adapters";
 import {
   createTemporalUnavailabilityController,
   DEFAULT_TEMPORAL_UNAVAILABLE_CONFIG,
@@ -209,25 +199,6 @@ function createSystemHealthQueryPort(backends: ProofSpineBackends): SystemHealth
   };
 }
 
-// ── the degraded controller's HealthSurface (in-memory store — residual) ──────
-
-/** An in-memory {@link HealthSurfaceStore} for the degraded controller (residual: persist to @sow/db). */
-function createInMemoryHealthSurfaceStore(): HealthSurfaceStore {
-  const rows = new Map<string, SurfacedHealthItem>();
-  return {
-    getByDedupeKey(dedupeKey: string): Promise<SurfacedHealthItem | undefined> {
-      return Promise.resolve(rows.get(dedupeKey));
-    },
-    put(record: SurfacedHealthItem): Promise<void> {
-      rows.set(record.dedupeKey, record);
-      return Promise.resolve();
-    },
-    list(): Promise<SurfacedHealthItem[]> {
-      return Promise.resolve([...rows.values()]);
-    },
-  };
-}
-
 // ── the live boot ──────────────────────────────────────────────────────────────
 
 /** The audit ref anchoring the degraded controller's worker_down health items. */
@@ -282,7 +253,12 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   //    `dispatch` is bound to a held-job re-drive that logs (the real Temporal
   //    start-workflow is driven by the supervisor's dispatch path — Phase 9); here
   //    it is a no-op sink so a reconnect drains cleanly without a throw.
-  const surface: HealthSurface = createHealthSurface(createInMemoryHealthSurfaceStore());
+  // The degraded controller's HealthSurface PERSISTS to the same migrated sqlite
+  // `health_items` table the systemHealth QUERY reads (backends.healthItems) — so a
+  // Temporal-unavailable worker_down item is operator-visible, not process-memory.
+  const surface: HealthSurface = createHealthSurface(
+    createPersistentHealthSurfaceStore(backends.healthItems),
+  );
   const degraded: TemporalUnavailabilityController = createTemporalUnavailabilityController({
     surface,
     auditRef: BOOT_AUDIT_REF,

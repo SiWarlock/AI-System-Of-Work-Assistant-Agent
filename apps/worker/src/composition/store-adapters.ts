@@ -39,6 +39,7 @@ import type {
   ScheduleBookkeeping,
   LeaseRecord,
 } from "@sow/workflows/ports/operational";
+import type { HealthSurfaceStore, SurfacedHealthItem } from "../health/surface";
 
 // ---------------------------------------------------------------------------
 // fail-closed fault surfacing
@@ -133,6 +134,71 @@ export function createHealthItemStoreAdapter(
       const r = await repo.list();
       if (isErr(r)) throw faultRejection("healthItem.list", r.error);
       return r.value;
+    },
+  };
+}
+
+/**
+ * Bridge the rich §10.3 {@link HealthSurfaceStore} port (what the Temporal-degraded
+ * controller's {@link HealthSurface} persists through) onto the PERSISTENT bare
+ * {@link HealthItemStore} — so a `surface.record(worker_down)` lands in the SAME
+ * migrated sqlite `health_items` table the `systemHealth` query reads (via
+ * `backends.healthItems.list()`). Without this bridge the degraded controller writes
+ * to process memory and the renderer's "System health" shows a false "All systems
+ * healthy" (the gap the reverted `135bd58` left).
+ *
+ * DEDUPE / BOOKKEEPING OWNERSHIP — read this before touching it:
+ *   The @sow/db `HealthItemRepository` ALREADY owns the OBS-2 dedupe UPSERT +
+ *   `occurrenceCount`/`lastSeen` columns (interfaces.ts: first sight INSERT
+ *   occurrenceCount 1; a repeat UPDATEs occurrenceCount+1, refreshes lastSeen,
+ *   preserves openedAt). So `put` delegates the frozen `record.item` straight to the
+ *   bare adapter (which calls `repo.put(item, dedupeKey, subjectRef, now)`); the
+ *   surface's OWN computed `record.occurrenceCount`/`record.lastSeen` are DROPPED —
+ *   the repo is the single source of that bookkeeping (no double-count).
+ *
+ *   Consequently `getByDedupeKey`/`list` cannot honestly reconstruct
+ *   `occurrenceCount`/`lastSeen` (the bare store does not read those columns back), so
+ *   they are surfaced as `1` / `openedAt`. This is SAFE ONLY because nothing reads
+ *   them back through this wrapper: the degraded controller reads only
+ *   `recorded.value.item`; the surface's recurrence logic reads `prior.item.state`
+ *   (honest — the frozen item carries it) and its own recomputed occurrenceCount is
+ *   then dropped by `put` above; and the `systemHealth` query reads the bare
+ *   `healthItems.list()`, never `surface.list()`. `occurrenceCount` is not even on the
+ *   UI-safe projection. If a future caller starts depending on a round-tripped
+ *   occurrenceCount/lastSeen HERE, extend `HealthItemRepository` to read those columns
+ *   back rather than trusting these placeholders.
+ *
+ * Fault handling is inherited: the bare adapter REJECTS on a real DbError, so a store
+ * fault propagates as a rejection (fail-closed) that the surface folds to a typed
+ * `persist_failed` err — never a silent dropped health item.
+ */
+export function createPersistentHealthSurfaceStore(
+  healthItems: HealthItemStore,
+): HealthSurfaceStore {
+  const wrap = (item: HealthItem): SurfacedHealthItem => {
+    const { dedupeKey, subjectRef } = splitDedupeIdentity(item);
+    return {
+      dedupeKey,
+      subjectRef,
+      item,
+      openedAt: item.openedAt,
+      // Placeholders — NOT round-tripped (the repo owns these; see the doc note).
+      lastSeen: item.openedAt,
+      occurrenceCount: 1,
+    };
+  };
+  return {
+    async getByDedupeKey(dedupeKey: string): Promise<SurfacedHealthItem | undefined> {
+      const item = await healthItems.getByDedupeKey(dedupeKey);
+      return item === undefined ? undefined : wrap(item);
+    },
+    put(record: SurfacedHealthItem): Promise<void> {
+      // Repo owns the dedupe UPSERT + occurrenceCount/lastSeen; hand it the frozen item.
+      return healthItems.put(record.item);
+    },
+    async list(): Promise<SurfacedHealthItem[]> {
+      const items = await healthItems.list();
+      return items.map(wrap);
     },
   };
 }
