@@ -65,6 +65,7 @@ export function App(): ReactElement {
       health={[...state.health.values()]}
       global={state.global}
       recentChanges={state.recentChanges}
+      projects={state.projects}
       onDrillDown={onDrillDown}
     />
   );

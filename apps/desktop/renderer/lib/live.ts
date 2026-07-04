@@ -8,6 +8,7 @@ import {
   hydrateGlobal,
   replaceCards,
   replaceRecentChanges,
+  replaceProjects,
 } from "../store/projections";
 import { scopeMeta, type WorkspaceScope } from "../store/scope";
 import { createEventStream } from "./event-stream";
@@ -105,28 +106,40 @@ async function hydrateScope(
   scope: WorkspaceScope,
 ): Promise<void> {
   const meta = scopeMeta(scope);
-  // Clear immediately — no stale cross-scope cards/GCL/recent-activity linger while the query runs.
+  // Clear immediately — no stale cross-scope cards/GCL/recent-activity/projects linger while
+  // the query runs.
   store.dispatch((s) => replaceCards(s, []));
   store.dispatch((s) => hydrateGlobal(s, []));
   store.dispatch((s) => replaceRecentChanges(s, []));
+  store.dispatch((s) => replaceProjects(s, []));
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const c = client as any;
     if (meta.workspaceId === null) {
-      // Global: dashboard + the gated GCL surface. Recent activity is workspace-scoped
-      // (never a cross-workspace blend; WS-8) — it stays cleared under Global.
+      // Global: dashboard + the gated GCL surface. Recent activity AND projects are
+      // workspace-scoped (never a cross-workspace blend; WS-8) — they stay cleared under Global.
       const [cardsR, globalR] = await Promise.all([c.query.dashboard.query(), c.query.global.query()]);
       if (store.getSnapshot().scope !== scope) return; // superseded by a newer scope
       if (cardsR?.ok === true) store.dispatch((s) => replaceCards(s, cardsR.value));
       if (globalR?.ok === true) store.dispatch((s) => hydrateGlobal(s, globalR.value));
     } else {
-      const [cardsR, recentR] = await Promise.all([
+      // allSettled, not all: ONE scoped query's failure (a not-yet-served route, a hiccup)
+      // must NOT drop the other two surfaces — each applies independently iff it resolved ok.
+      const [cardsR, recentR, projectsR] = await Promise.allSettled([
         c.query.workspace.query({ workspaceId: meta.workspaceId }),
         c.query.recentChanges.query({ workspaceId: meta.workspaceId }),
+        c.query.projectList.query({ workspaceId: meta.workspaceId }),
       ]);
       if (store.getSnapshot().scope !== scope) return; // superseded by a newer scope
-      if (cardsR?.ok === true) store.dispatch((s) => replaceCards(s, cardsR.value));
-      if (recentR?.ok === true) store.dispatch((s) => replaceRecentChanges(s, recentR.value));
+      if (cardsR.status === "fulfilled" && cardsR.value?.ok === true) {
+        store.dispatch((s) => replaceCards(s, cardsR.value.value));
+      }
+      if (recentR.status === "fulfilled" && recentR.value?.ok === true) {
+        store.dispatch((s) => replaceRecentChanges(s, recentR.value.value));
+      }
+      if (projectsR.status === "fulfilled" && projectsR.value?.ok === true) {
+        store.dispatch((s) => replaceProjects(s, projectsR.value.value));
+      }
     }
   } catch {
     // Best-effort — the cleared state stands; the live stream remains the source of truth.

@@ -11,6 +11,7 @@ import {
   hydrateGlobal,
   groupGlobalByWorkspace,
   replaceRecentChanges,
+  replaceProjects,
 } from "../../renderer/store/projections";
 import type { UiSafeGclProjection } from "@sow/contracts/api/ui-safe";
 import {
@@ -21,6 +22,7 @@ import {
   uiSafeCard,
   uiSafeHealthItem,
   uiSafeRecentChange,
+  uiSafeProjectDashboard,
 } from "./fixtures";
 
 describe("initial hydrate (9.4b — fold a read-model query snapshot)", () => {
@@ -70,6 +72,16 @@ describe("initial hydrate (9.4b — fold a read-model query snapshot)", () => {
     expect(s.cards).toBe(initialStoreState.cards);
     expect(s.health).toBe(initialStoreState.health);
     expect(s.global).toBe(initialStoreState.global);
+  });
+
+  it("replaceProjects REPLACES the scoped project list (no blend across scopes; empty→empty no-op)", () => {
+    const a = replaceProjects(initialStoreState, [uiSafeProjectDashboard("prj-a1"), uiSafeProjectDashboard("prj-a2")]);
+    expect(a.projects.map((p) => p.projectId)).toEqual(["prj-a1", "prj-a2"]);
+    const b = replaceProjects(a, [uiSafeProjectDashboard("prj-b1")]);
+    expect(b.projects.map((p) => p.projectId)).toEqual(["prj-b1"]); // replaced, not merged
+    const cleared = replaceProjects(b, []);
+    expect(cleared.projects).toEqual([]);
+    expect(replaceProjects(cleared, [])).toBe(cleared); // ref-stable empty no-op
   });
 
   it("an empty snapshot is a no-op (same reference — no needless re-render)", () => {

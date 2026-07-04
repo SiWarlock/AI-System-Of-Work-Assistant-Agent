@@ -10,6 +10,7 @@ import type {
   UiSafeDashboardCard,
   UiSafeHealthItem,
   UiSafeRecentChange,
+  UiSafeProjectDashboard,
 } from "@sow/contracts/api/ui-safe";
 
 // Real enum members pulled off the frozen schemas, so fixtures are genuinely
@@ -71,4 +72,18 @@ export function uiSafeRecentChange(
   occurredAt: string = ISO,
 ): UiSafeRecentChange {
   return { changeId, kind: "commit", summary: "committed a.md rev 0c4", occurredAt };
+}
+
+export function uiSafeProjectDashboard(projectId = "prj-1"): UiSafeProjectDashboard {
+  return {
+    projectId,
+    title: "Auth redesign",
+    status: "in-progress",
+    progress: { completedCount: 2, totalCount: 5, percentComplete: 40 },
+    blockers: ["waiting on vendor SSO cert"],
+    waitingItems: [],
+    nextActions: ["wire the callback route"],
+    evidenceRefs: ["src:plan-abc123"],
+    updatedAt: ISO,
+  };
 }

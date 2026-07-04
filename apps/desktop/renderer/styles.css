@@ -989,6 +989,94 @@ body {
   white-space: nowrap;
 }
 
+/* ── Projects (§9.5) — deterministic-progress project cards ──────────────── */
+.sow-projects {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.sow-project {
+  padding: 12px 14px;
+  border: 0.5px solid var(--hairline, rgba(0, 0, 0, 0.08));
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.sow-project-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.sow-project-title {
+  font-weight: 580;
+  color: #1c1c1e;
+}
+
+.sow-project-status {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--label-3);
+  text-transform: capitalize;
+}
+
+.sow-project-progress {
+  margin-top: 8px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+}
+
+.sow-project-bar {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent-ink, #0a84ff);
+}
+
+.sow-project-counts {
+  margin-top: 5px;
+  font-size: 12.5px;
+  color: var(--label-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.sow-project-items {
+  margin-top: 8px;
+}
+
+.sow-project-items-label {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--label-3);
+}
+
+.sow-project-items-list {
+  margin: 3px 0 0;
+  padding-left: 16px;
+  color: #2a2a2c;
+  font-size: 13px;
+}
+
+.sow-project-evidence {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.sow-evidence-chip {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--label-3);
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.05);
+}
+
 /* ── Copilot rail — collapsed thin rail ──────────────────────────────────── */
 .sow-copilot-rail {
   position: relative;

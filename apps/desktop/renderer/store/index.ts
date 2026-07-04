@@ -7,6 +7,7 @@ import type {
   UiSafeDashboardCard,
   UiSafeGclProjection,
   UiSafeRecentChange,
+  UiSafeProjectDashboard,
 } from "@sow/contracts/api/ui-safe";
 import { DEFAULT_SCOPE, type WorkspaceScope } from "./scope";
 
@@ -33,6 +34,11 @@ export interface UiSafeStoreState {
    * Workspace-scoped — cleared to `[]` under Global (recent changes never blend; WS-8).
    */
   readonly recentChanges: readonly UiSafeRecentChange[];
+  /**
+   * The active WORKSPACE scope's project dashboards (query.projectList snapshot; §9.5).
+   * Workspace-scoped — cleared to `[]` under Global (projects never blend; WS-8).
+   */
+  readonly projects: readonly UiSafeProjectDashboard[];
   /** The last stream `eventId` applied — a resumed subscription replays from here. */
   readonly lastEventId: string | null;
   /** The last per-stream `seq` applied — a gap (seq != last + 1) signals a dropped event. */
@@ -48,6 +54,7 @@ export const initialStoreState: UiSafeStoreState = {
   cards: new Map(),
   global: [],
   recentChanges: [],
+  projects: [],
   lastEventId: null,
   lastSeq: null,
 };

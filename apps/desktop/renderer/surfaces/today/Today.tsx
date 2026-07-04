@@ -20,6 +20,7 @@ import type {
   UiSafeHealthItem,
   UiSafeGclProjection,
   UiSafeRecentChange,
+  UiSafeProjectDashboard,
 } from "@sow/contracts/api/ui-safe";
 
 export interface TodayProps {
@@ -32,6 +33,8 @@ export interface TodayProps {
   readonly global: readonly UiSafeGclProjection[];
   /** The active workspace scope's Recent activity (§9.5; empty under Global — WS-8). */
   readonly recentChanges: readonly UiSafeRecentChange[];
+  /** The active workspace scope's project dashboards (§9.5; empty under Global — WS-8). */
+  readonly projects: readonly UiSafeProjectDashboard[];
   /** Request a policy-gated drill-down into a workspace's context (worker-enforced). */
   readonly onDrillDown: (workspaceId: string, projectionType: string) => void;
 }
@@ -329,6 +332,74 @@ function todayLabel(): string {
   });
 }
 
+// ── Projects (§9.5) ─────────────────────────────────────────────────────────
+
+/** A labelled hairline list of a project's prose items (blockers / waiting / next). */
+function ProjectItems({ label, items }: { readonly label: string; readonly items: readonly string[] }): ReactElement {
+  return (
+    <div className="sow-project-items">
+      <span className="sow-project-items-label">{label}</span>
+      <ul className="sow-project-items-list">
+        {items.map((item, i) => (
+          <li key={i}>{item}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Projects (§9.5, locked design §4.5) — the active WORKSPACE scope's project dashboards with
+ * DETERMINISTIC progress. Workspace-scoped: under Global `projects` is empty (never a
+ * cross-workspace blend; WS-8), so the section does not render. REQ-F-011: the UI only
+ * DISPLAYS the server-provided `percentComplete` (the bar width + the count line) — it never
+ * computes or infers a percentage. Renders nothing when there are no projects (empty-until-data).
+ * (A dedicated Projects PAGE + the routing/AppShell foundation is a deferred follow-up.)
+ */
+function ProjectsSection({ projects }: { readonly projects: readonly UiSafeProjectDashboard[] }): ReactElement | null {
+  if (projects.length === 0) return null;
+  return (
+    <>
+      <div className="sow-section-label">Projects</div>
+      <div className="sow-projects" role="list" aria-label="Projects">
+        {projects.map((p) => (
+          <div className="sow-project" role="listitem" key={p.projectId} data-project-id={p.projectId}>
+            <div className="sow-project-head">
+              <span className="sow-project-title">{p.title}</span>
+              <span className="sow-project-status">{p.status}</span>
+            </div>
+            <div
+              className="sow-project-progress"
+              role="progressbar"
+              aria-valuenow={p.progress.percentComplete}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              {/* width is the SERVER-provided deterministic percent — never a UI computation. */}
+              <div className="sow-project-bar" style={{ width: `${p.progress.percentComplete}%` }} />
+            </div>
+            <div className="sow-project-counts">
+              {p.progress.completedCount}/{p.progress.totalCount} · {p.progress.percentComplete}%
+            </div>
+            {p.blockers.length > 0 && <ProjectItems label="Blockers" items={p.blockers} />}
+            {p.waitingItems.length > 0 && <ProjectItems label="Waiting on" items={p.waitingItems} />}
+            {p.nextActions.length > 0 && <ProjectItems label="Next" items={p.nextActions} />}
+            {p.evidenceRefs.length > 0 && (
+              <div className="sow-project-evidence">
+                {p.evidenceRefs.map((ref, i) => (
+                  <span className="sow-evidence-chip" key={i}>
+                    {ref}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 // ── Recent activity (§9.5) ─────────────────────────────────────────────────
 
 /** A short human relative-time from an ISO instant ("just now" / "3h" / "2d"). Display-only. */
@@ -385,7 +456,7 @@ function RecentActivity({
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function Today(props: TodayProps): ReactElement {
-  const { connection, scope, onScopeChange, cards, health, global, recentChanges, onDrillDown } =
+  const { connection, scope, onScopeChange, cards, health, global, recentChanges, projects, onDrillDown } =
     props;
 
   return (
@@ -601,6 +672,9 @@ export function Today(props: TodayProps): ReactElement {
           {/* System health — driven from props.health */}
           <div className="sow-section-label">System health</div>
           <HealthSection health={health} />
+
+          {/* Projects — workspace-scoped deterministic-progress dashboards (§9.5) */}
+          <ProjectsSection projects={projects} />
 
           {/* Recent activity — workspace-scoped, from props.recentChanges (§9.5) */}
           <div className="sow-section-label">Recent activity</div>

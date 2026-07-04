@@ -4,6 +4,7 @@ import type {
   UiSafeHealthItem,
   UiSafeGclProjection,
   UiSafeRecentChange,
+  UiSafeProjectDashboard,
 } from "@sow/contracts/api/ui-safe";
 import type { ConnectionStatus, UiSafeStoreState } from "./index";
 import { isWorkspaceScope, type WorkspaceScope } from "./scope";
@@ -116,6 +117,21 @@ export function replaceRecentChanges(
 ): UiSafeStoreState {
   if (changes.length === 0 && state.recentChanges.length === 0) return state;
   return { ...state, recentChanges: changes };
+}
+
+/**
+ * REPLACE the active workspace scope's project dashboards with a snapshot (§9.5). Like
+ * `replaceCards`/`replaceRecentChanges`: switching scope fully replaces (never blends), and a
+ * scope with no projects (incl. Global, where projects never surface; WS-8) clears it to `[]`.
+ * `query.projectList` returns the whole scoped list, so this replaces; empty→empty is a
+ * ref-stable no-op.
+ */
+export function replaceProjects(
+  state: UiSafeStoreState,
+  projects: readonly UiSafeProjectDashboard[],
+): UiSafeStoreState {
+  if (projects.length === 0 && state.projects.length === 0) return state;
+  return { ...state, projects };
 }
 
 /** Fold an initial System-Health query result into state (upsert by id). */
