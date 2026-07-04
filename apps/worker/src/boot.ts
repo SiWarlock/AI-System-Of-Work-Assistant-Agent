@@ -323,3 +323,29 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
 
   return { api, backends, logger: backends.logger, degraded, backupService, connectTemporal, close };
 }
+
+/**
+ * Drive the INITIAL Temporal connect and, on the degraded variant, record the outage as
+ * an operator-visible worker_down System-Health item via the degraded controller (which
+ * persists through the surface → the same `health_items` table the systemHealth query
+ * reads). A ready connect does nothing.
+ *
+ * The DEGRADED verdict is `!result.ok` — the connect Result's error variant IS the
+ * degraded state (`BootstrapDegraded`); it is not re-derived from a payload field.
+ *
+ * Never throws (§16): a health-persist fault inside `onConnectionLost` folds to a typed
+ * err the controller owns; this driver still reports `degraded: true` so the supervisor
+ * backs off rather than crash-looping. The Phase-9 worker-host awaits this BEFORE
+ * announcing readiness, so the item is persisted before the renderer's initial health
+ * hydrate (a fresh null-cursor stream subscribe does not replay a pre-subscribe publish).
+ */
+export async function reportInitialConnect(
+  booted: Pick<BootedWorker, "connectTemporal" | "degraded">,
+  at: { readonly now: string },
+): Promise<{ readonly degraded: boolean }> {
+  const result = await booted.connectTemporal();
+  if (result.ok) return { degraded: false };
+  // Degraded: record the outage (empty recent-failure ledger → first-probe backoff).
+  await booted.degraded.onConnectionLost({ now: at.now, recentFailures: [] });
+  return { degraded: true };
+}
