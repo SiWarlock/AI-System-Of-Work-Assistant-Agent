@@ -34,7 +34,10 @@ import {
   failure,
   type Result,
   type FailureVariant,
+  type UiSafeApproval,
 } from "@sow/contracts";
+// The §10 leakage boundary: the ONE place a domain Approval becomes renderer-visible.
+import { toUiSafeApproval } from "../projections/uiSafe";
 import {
   decideApprovalCommand,
   APPROVAL_DECISIONS,
@@ -66,6 +69,22 @@ export type {
   TriageDisposition,
   TriageDispositionResult,
 };
+
+/**
+ * The renderer-facing result of `command.decideApproval` (§9.8). Carries the
+ * exactly-once `applied` flag + the post-CAS approval PROJECTED to UI-safe — the
+ * raw `Approval`'s `actor` + `payloadHash` NEVER cross to the renderer (desktop
+ * boundary; the renderer receives UI-safe projections only, §10 / REQ-S-004). The
+ * client folds `approval` straight into its inbox Map (no re-query — it IS the new
+ * truth). `applied:false` (a replay / cross-channel no-op) still returns the same
+ * UI-safe record. The PRE-projection domain-level result `decideApprovalCommand`
+ * itself returns is {@link ApprovalDecisionResult} (carries the raw `Approval`) —
+ * that stays internal and is never returned across the tRPC boundary.
+ */
+export interface UiSafeApprovalDecisionResult {
+  readonly approval: UiSafeApproval;
+  readonly applied: boolean;
+}
 
 // ── Injected dependencies ───────────────────────────────────────────────────
 
@@ -187,11 +206,21 @@ export function buildCommandRouter(deps: CommandDeps) {
      * already-terminal (expired) item is a typed err with NO state change.
      */
     decideApproval: publicProcedure.input(passthroughInput).mutation(
-      authedResolver<unknown, ApprovalDecisionResult>(
-        async (_ctx, input): Promise<Result<ApprovalDecisionResult, FailureVariant>> => {
+      authedResolver<unknown, UiSafeApprovalDecisionResult>(
+        async (_ctx, input): Promise<Result<UiSafeApprovalDecisionResult, FailureVariant>> => {
           const parsed = parseDecideApproval(input);
           if (!parsed.ok) return err(parsed.error);
-          return decideApprovalCommand({ approvals, dispatchApproval, now }, parsed.value);
+          const decided = await decideApprovalCommand(
+            { approvals, dispatchApproval, now },
+            parsed.value,
+          );
+          if (!decided.ok) return decided;
+          // Project the post-CAS record to UI-safe BEFORE it crosses to the renderer —
+          // drops actor + payloadHash; the `applied` flag rides alongside.
+          return ok({
+            approval: toUiSafeApproval(decided.value.approval),
+            applied: decided.value.applied,
+          });
         },
       ),
     ),

@@ -313,6 +313,75 @@ describe("approve/reject on an already-expired item — typed rejection, NO stat
   });
 });
 
+// ── (a) §9.8 renderer boundary — decideApproval returns a UI-SAFE approval ───
+
+describe("§9.8 renderer boundary — decideApproval returns a UI-safe approval (no actor / payloadHash)", () => {
+  it("the returned approval carries ONLY the UI-safe allowlist; actor + payloadHash are dropped", async () => {
+    // The renderer receives ONLY UI-safe projections (desktop boundary; §10, REQ-S-004).
+    // `decideApproval`'s result must be projected through `toUiSafeApproval` — the raw
+    // Approval's `actor` (approving-principal identity) + `payloadHash` (content-derived hash)
+    // must NEVER cross to the renderer. `defer` is used so the timing fields are populated.
+    const { deps } = makeDeps();
+    const c = caller(deps);
+    const r = await c.command.decideApproval({ approvalId: "apr_1", decision: "defer", channel: "mac" });
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      const a = r.value.approval;
+      // The applied flag still crosses (exactly-once semantics for the caller).
+      expect(r.value.applied).toBe(true);
+      // UI-safe fields present + correct.
+      expect(a.id).toBe("apr_1");
+      expect(a.actionRef).toBe("act_1");
+      expect(a.status).toBe("deferred");
+      expect(a.channel).toBe("mac");
+      expect(typeof a.snoozeUntil).toBe("string");
+      expect(typeof a.expiresAt).toBe("string");
+      // DROPPED domain fields — must NOT reach the renderer.
+      expect("actor" in a).toBe(false);
+      expect("payloadHash" in a).toBe(false);
+      // The projected key set is EXACTLY the UI-safe allowlist — no extra key rides out.
+      expect(Object.keys(a).sort()).toEqual([
+        "actionRef",
+        "channel",
+        "expiresAt",
+        "id",
+        "snoozeUntil",
+        "status",
+      ]);
+    }
+  });
+
+  it("the idempotent NO-OP path (applied:false) is projected too — a replay never leaks the raw record", async () => {
+    // The one `ok({ approval: toUiSafeApproval(...), applied })` return is not branched on
+    // `applied`, so the cross-channel no-op contender gets the SAME projection. Pin it so a
+    // future refactor that special-cases the no-op return can't reintroduce the raw record.
+    const { deps } = makeDeps();
+    const c = caller(deps);
+    await c.command.decideApproval({ approvalId: "apr_1", decision: "approve", channel: "mac" });
+    const noop = await c.command.decideApproval({ approvalId: "apr_1", decision: "approve", channel: "telegram" });
+    expect(isOk(noop)).toBe(true);
+    if (isOk(noop)) {
+      expect(noop.value.applied).toBe(false); // idempotent no-op contender
+      expect("actor" in noop.value.approval).toBe(false);
+      expect("payloadHash" in noop.value.approval).toBe(false);
+      expect(Object.keys(noop.value.approval).sort()).toEqual(["actionRef", "channel", "id", "status"]);
+    }
+  });
+
+  it("a terminal decision (approve) returns a UI-safe approval with no snooze/expiry keys", async () => {
+    // approve is terminal → nextRecord carries no snoozeUntil/expiresAt, so the optional
+    // timing keys are OMITTED (not set to undefined) and actor/payloadHash still never cross.
+    const { deps } = makeDeps();
+    const c = caller(deps);
+    const r = await c.command.decideApproval({ approvalId: "apr_1", decision: "approve", channel: "telegram" });
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(Object.keys(r.value.approval).sort()).toEqual(["actionRef", "channel", "id", "status"]);
+      expect(r.value.approval.status).toBe("approved");
+    }
+  });
+});
+
 // ── (b) ingestion-triage disposition — reuse idempotencyKey ─────────────────
 
 describe("ingestion-triage disposition — re-enters ingestion reusing the SAME idempotencyKey (ING-4)", () => {

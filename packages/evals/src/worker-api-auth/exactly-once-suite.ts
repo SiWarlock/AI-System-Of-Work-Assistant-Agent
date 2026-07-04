@@ -31,7 +31,7 @@ import { createCallerFactory, router, type ApiContext } from "@sow/worker/api/tr
 import {
   buildCommandRouter,
   type ApprovalCommandPort,
-  type ApprovalDecisionResult,
+  type UiSafeApprovalDecisionResult,
   type CommandDeps,
 } from "@sow/worker/api/procedures/commands";
 import { baseApproval } from "./fixtures";
@@ -156,14 +156,14 @@ export async function runExactlyOnceSuite(): Promise<SuiteResult> {
       approvalId: "apr_xchan",
       decision: "approve",
       channel: "mac" satisfies Channel,
-    })) as Result<ApprovalDecisionResult, unknown>;
+    })) as Result<UiSafeApprovalDecisionResult, unknown>;
 
     // Channel 2 (Telegram) applies the SAME decision — the cross-channel double.
     const tgR = (await caller.command.decideApproval({
       approvalId: "apr_xchan",
       decision: "approve",
       channel: "telegram" satisfies Channel,
-    })) as Result<ApprovalDecisionResult, unknown>;
+    })) as Result<UiSafeApprovalDecisionResult, unknown>;
 
     const bothOk = isOk(macR) && isOk(tgR);
     cases.push(
