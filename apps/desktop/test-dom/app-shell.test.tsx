@@ -72,6 +72,84 @@ describe("AppShell — left-rail routing (§9.5, the R2 nav wiring)", () => {
   });
 });
 
+// §4.6 Copilot is the persistent RIGHT SIDEBAR (locked design: "collapsible to a thin rail,
+// expandable to a full-screen conversation — NOT a separate nav page"). AppShell owns the
+// collapsed⇄expanded chrome state (like the scope switcher's local open state) — orthogonal to
+// BOTH route and scope.
+describe("AppShell — Copilot right sidebar expand/collapse (§4.6)", () => {
+  it("is collapsed by default — the thin rail shows, the expanded panel does not", () => {
+    render(
+      <AppShell {...base}>
+        <div>content</div>
+      </AppShell>,
+    );
+    expect(screen.getByRole("complementary", { name: "Copilot (collapsed)" })).toBeTruthy();
+    expect(screen.queryByRole("complementary", { name: "Copilot" })).toBeNull();
+  });
+
+  it("clicking Expand opens the panel and hides the collapsed rail", () => {
+    render(
+      <AppShell {...base}>
+        <div>content</div>
+      </AppShell>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand Copilot sidebar" }));
+    expect(screen.getByRole("complementary", { name: "Copilot" })).toBeTruthy();
+    expect(screen.queryByRole("complementary", { name: "Copilot (collapsed)" })).toBeNull();
+  });
+
+  it("clicking Collapse from the open panel returns to the thin rail", () => {
+    render(
+      <AppShell {...base}>
+        <div>content</div>
+      </AppShell>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand Copilot sidebar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Collapse Copilot sidebar" }));
+    expect(screen.getByRole("complementary", { name: "Copilot (collapsed)" })).toBeTruthy();
+    expect(screen.queryByRole("complementary", { name: "Copilot" })).toBeNull();
+  });
+
+  it("expanding the Copilot sidebar never changes scope or route (chrome state is orthogonal)", () => {
+    const onScopeChange = vi.fn();
+    const onNavigate = vi.fn();
+    render(
+      <AppShell {...base} onScopeChange={onScopeChange} onNavigate={onNavigate}>
+        <div>content</div>
+      </AppShell>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand Copilot sidebar" }));
+    expect(onScopeChange).not.toHaveBeenCalled();
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  // Disclosure focus management: toggling is a subtree swap, so keyboard focus must FOLLOW the
+  // disclosure (into the panel on open, back to the trigger on close) rather than dropping to body.
+  it("moves focus into the panel on expand and back to the rail's Expand chevron on collapse", () => {
+    render(
+      <AppShell {...base}>
+        <div>content</div>
+      </AppShell>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand Copilot sidebar" }));
+    // Focus followed into the panel (its Collapse control), not <body>.
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Collapse Copilot sidebar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Collapse Copilot sidebar" }));
+    // Focus returned to the trigger, not <body>.
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Expand Copilot sidebar" }));
+  });
+
+  it("does not steal focus to the rail on initial mount (no user interaction yet)", () => {
+    render(
+      <AppShell {...base}>
+        <div>content</div>
+      </AppShell>,
+    );
+    // Nothing was toggled — the Expand chevron must NOT have grabbed focus.
+    expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "Expand Copilot sidebar" }));
+  });
+});
+
 // The §9.4 scope switcher was moved VERBATIM from the prior Today shell into AppShell in R2
 // (security-reviewed). These render tests pin its dismissal behavior so the "extraction changes
 // structure, not behavior" claim is verified, not just asserted.

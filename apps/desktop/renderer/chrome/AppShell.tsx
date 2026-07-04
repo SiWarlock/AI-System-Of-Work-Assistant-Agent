@@ -19,6 +19,7 @@ import type { ConnectionStatus } from "../store";
 import { WORKSPACE_SCOPES, scopeMeta, type WorkspaceScope } from "../store/scope";
 import type { Route } from "../store/route";
 import { accentVar } from "../lib/accent";
+import { Copilot } from "../surfaces/copilot/Copilot";
 
 export interface AppShellProps {
   readonly connection: ConnectionStatus;
@@ -223,6 +224,28 @@ function NavLink({
 export function AppShell(props: AppShellProps): ReactElement {
   const { connection, scope, onScopeChange, route, onNavigate, children } = props;
 
+  // Copilot right-sidebar chrome state (§4.6): collapsed (thin rail) ⇄ expanded (chat panel).
+  // Owned here like the scope switcher's local open state — orthogonal to BOTH route and scope
+  // (the panel overlays the current surface on every screen; it never navigates or re-scopes).
+  const [copilotOpen, setCopilotOpen] = useState(false);
+
+  // Disclosure focus management (mirror of Copilot's focus-on-mount): when the user COLLAPSES the
+  // panel, the panel unmounts and focus would drop to <body> — return it to the rail's Expand
+  // chevron instead. Guarded by `returnFocusToRail` so the effect never focuses the chevron on
+  // initial load (copilotOpen starts false with the flag unset).
+  const railChevRef = useRef<HTMLButtonElement>(null);
+  const returnFocusToRail = useRef(false);
+  useEffect(() => {
+    if (!copilotOpen && returnFocusToRail.current) {
+      railChevRef.current?.focus();
+      returnFocusToRail.current = false;
+    }
+  }, [copilotOpen]);
+  const collapseCopilot = (): void => {
+    returnFocusToRail.current = true;
+    setCopilotOpen(false);
+  };
+
   return (
     <div className="sow-shell">
       {/* ── Unified toolbar ─────────────────────────────────────────────── */}
@@ -372,31 +395,37 @@ export function AppShell(props: AppShellProps): ReactElement {
         {/* ── Content pane — the active surface ─────────────────────────── */}
         {children}
 
-        {/* ── Copilot rail — collapsed ───────────────────────────────────── */}
-        <aside className="sow-copilot-rail" aria-label="Copilot (collapsed)">
-          {/* Gradient sparkle icon */}
-          <span className="sow-rail-spark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <path d="M12 2l1.8 5.4a4 4 0 0 0 2.8 2.8L22 12l-5.4 1.8a4 4 0 0 0-2.8 2.8L12 22l-1.8-5.4a4 4 0 0 0-2.8-2.8L2 12l5.4-1.8a4 4 0 0 0 2.8-2.8z" />
-            </svg>
-          </span>
+        {/* ── Copilot right sidebar — collapsed (thin rail) ⇄ expanded (chat panel) ── */}
+        {copilotOpen ? (
+          <Copilot onCollapse={collapseCopilot} />
+        ) : (
+          <aside className="sow-copilot-rail" aria-label="Copilot (collapsed)">
+            {/* Gradient sparkle icon */}
+            <span className="sow-rail-spark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M12 2l1.8 5.4a4 4 0 0 0 2.8 2.8L22 12l-5.4 1.8a4 4 0 0 0-2.8 2.8L12 22l-1.8-5.4a4 4 0 0 0-2.8-2.8L2 12l5.4-1.8a4 4 0 0 0 2.8-2.8z" />
+              </svg>
+            </span>
 
-          {/* Vertical label */}
-          <span className="sow-rail-label" aria-hidden="true">
-            Copilot
-          </span>
+            {/* Vertical label */}
+            <span className="sow-rail-label" aria-hidden="true">
+              Copilot
+            </span>
 
-          {/* Expand chevron */}
-          <button
-            className="sow-rail-chev"
-            type="button"
-            aria-label="Expand Copilot sidebar"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
-          </button>
-        </aside>
+            {/* Expand chevron */}
+            <button
+              ref={railChevRef}
+              className="sow-rail-chev"
+              type="button"
+              aria-label="Expand Copilot sidebar"
+              onClick={() => setCopilotOpen(true)}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+            </button>
+          </aside>
+        )}
 
       </div>
     </div>
