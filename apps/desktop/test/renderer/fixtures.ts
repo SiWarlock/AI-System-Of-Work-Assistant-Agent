@@ -84,6 +84,7 @@ export function uiSafeProjectDashboard(projectId = "prj-1"): UiSafeProjectDashbo
     waitingItems: [],
     nextActions: ["wire the callback route"],
     evidenceRefs: ["src:plan-abc123"],
+    docPack: [],
     updatedAt: ISO,
   };
 }

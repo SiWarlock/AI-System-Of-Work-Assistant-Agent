@@ -209,6 +209,7 @@ const validFakeProject = {
   waitingItems: [],
   nextActions: ["wire the callback route"],
   evidenceRefs: ["src:plan-abc123"],
+  docPack: [],
   updatedAt: "2026-07-04T00:00:00.000Z",
 };
 

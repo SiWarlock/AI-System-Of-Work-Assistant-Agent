@@ -234,6 +234,7 @@ export async function provisionDevWorkspace(
     waitingItems: [],
     nextActions: [],
     evidenceRefs: [],
+    docPack: [], // real 5-slot unlinked pack lands in the doc-pack writer slice (DP-2)
     updatedAt: at,
   };
   const projDashPut = await upsertProjectRow(readModels, spec.workspaceId, projectDashboard, at);

@@ -263,6 +263,31 @@ export const UiSafeProjectProgressSchema = z
   })
   .strict();
 
+// ── UiSafeManagedDoc ─────────────────────────────────────────────────────────
+// One of the five managed NotebookLM docs of a project's doc pack (§4.5): the
+// `NotebookMapping.managedDocIds` slots {00_brief, 01_decisions, 02_meetings, 03_research,
+// 04_open_questions}, projected to LINK + SYNC state ONLY. Deliberately DROPS the Drive
+// document/folder ids + any URL/path (the GCL/#7 precedent — an external id or a Drive path
+// is not UI-safe; the renderer identifies a slot by its enum, never by a Drive handle). The
+// re-add/refresh affordance keys off `slot`; a worker-mediated action resolves the Drive id.
+// `title` is a single-line display label. Until a Drive connector exists every slot is
+// `unlinked`/`unknown` (honest pre-connector state — not a synthetic "synced").
+export interface UiSafeManagedDoc {
+  slot: "00_brief" | "01_decisions" | "02_meetings" | "03_research" | "04_open_questions";
+  title: string;
+  linkState: "linked" | "unlinked";
+  syncState: "synced" | "stale" | "error" | "unknown";
+}
+
+export const UiSafeManagedDocSchema = z
+  .object({
+    slot: z.enum(["00_brief", "01_decisions", "02_meetings", "03_research", "04_open_questions"]),
+    title: uiSafeSummaryLine,
+    linkState: z.enum(["linked", "unlinked"]),
+    syncState: z.enum(["synced", "stale", "error", "unknown"]),
+  })
+  .strict();
+
 // ── UiSafeProjectDashboard ───────────────────────────────────────────────────
 // A dedicated Projects-surface card (§9.5, Flow 5, locked design §4.5). Carries the
 // deterministic progress plus the project's evidence-backed prose (blockers / waiting items /
@@ -281,6 +306,8 @@ export interface UiSafeProjectDashboard {
   waitingItems: readonly string[];
   nextActions: readonly string[];
   evidenceRefs: readonly string[];
+  /** The managed NotebookLM doc pack (§4.5): the 5 slots 00–04, link+sync state only. */
+  docPack: readonly UiSafeManagedDoc[];
   updatedAt: string;
 }
 
@@ -299,6 +326,11 @@ export const UiSafeProjectDashboardSchema = z
     waitingItems: z.array(uiSafeSummaryLine).max(50).readonly(),
     nextActions: z.array(uiSafeSummaryLine).max(50).readonly(),
     evidenceRefs: z.array(uiSafeOpaqueRef).max(50).readonly(),
+    // The managed doc pack (§4.5): at most the 5 canonical slots. Slot UNIQUENESS is a
+    // cross-field invariant to be enforced worker-side in the DP-2 writer/sanitizer slice (a
+    // `.refine` here would collapse `.shape`, which the allowlist freeze test reads — same
+    // pattern as REQ-F-011's worker-side re-derivation).
+    docPack: z.array(UiSafeManagedDocSchema).max(5).readonly(),
     updatedAt: z.string().datetime(),
   })
   .strict();
@@ -314,8 +346,9 @@ const _uiSafeParity: [
   Exact<z.infer<typeof UiSafeGclProjectionSchema>, UiSafeGclProjection>,
   Exact<z.infer<typeof UiSafeRecentChangeSchema>, UiSafeRecentChange>,
   Exact<z.infer<typeof UiSafeProjectProgressSchema>, UiSafeProjectProgress>,
+  Exact<z.infer<typeof UiSafeManagedDocSchema>, UiSafeManagedDoc>,
   Exact<z.infer<typeof UiSafeProjectDashboardSchema>, UiSafeProjectDashboard>,
-] = [true, true, true, true, true, true, true, true];
+] = [true, true, true, true, true, true, true, true, true];
 void _uiSafeParity;
 
 // ── Checked-in allowlist — THE source of truth ───────────────────────────────
@@ -331,8 +364,10 @@ export const UI_SAFE_ALLOWLIST = {
   gclProjection: ["drillable", "projectionType", "summary", "visibilityLevel", "workspaceId"],
   recentChange: ["changeId", "kind", "occurredAt", "summary"],
   projectProgress: ["completedCount", "percentComplete", "totalCount"],
+  managedDoc: ["linkState", "slot", "syncState", "title"],
   projectDashboard: [
     "blockers",
+    "docPack",
     "evidenceRefs",
     "nextActions",
     "progress",

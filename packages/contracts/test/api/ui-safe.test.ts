@@ -14,6 +14,7 @@ import {
   UiSafeGclProjectionSchema,
   UiSafeRecentChangeSchema,
   UiSafeProjectProgressSchema,
+  UiSafeManagedDocSchema,
   UiSafeProjectDashboardSchema,
   UI_SAFE_ALLOWLIST,
 } from "../../src/api/ui-safe";
@@ -41,6 +42,7 @@ const PROJECTIONS = [
   ["gclProjection", UiSafeGclProjectionSchema, UI_SAFE_ALLOWLIST.gclProjection] as const,
   ["recentChange", UiSafeRecentChangeSchema, UI_SAFE_ALLOWLIST.recentChange] as const,
   ["projectProgress", UiSafeProjectProgressSchema, UI_SAFE_ALLOWLIST.projectProgress] as const,
+  ["managedDoc", UiSafeManagedDocSchema, UI_SAFE_ALLOWLIST.managedDoc] as const,
   ["projectDashboard", UiSafeProjectDashboardSchema, UI_SAFE_ALLOWLIST.projectDashboard] as const,
 ] as const;
 
@@ -255,6 +257,7 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
     waitingItems: ["review from Priya"],
     nextActions: ["wire the callback route"],
     evidenceRefs: ["src:plan-abc123"],
+    docPack: [{ slot: "00_brief", title: "00 Brief", linkState: "unlinked", syncState: "unknown" }],
     updatedAt: "2026-07-04T00:00:00.000Z",
   };
 
@@ -299,6 +302,35 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
     expect(UiSafeProjectProgressSchema.safeParse({ completedCount: 2, totalCount: 5, percentComplete: 140 }).success).toBe(false);
     expect(UiSafeProjectProgressSchema.safeParse({ completedCount: 2.5, totalCount: 5, percentComplete: 40 }).success).toBe(false);
     expect(UiSafeProjectProgressSchema.safeParse({ completedCount: 2, totalCount: 5, percentComplete: 40, raw: "x" }).success).toBe(false);
+  });
+
+  // ── UiSafeManagedDoc + docPack (§4.5 managed NotebookLM doc pack 00–04) ─────────
+  const validManagedDoc = { slot: "00_brief", title: "00 Brief", linkState: "unlinked", syncState: "unknown" };
+
+  it("UiSafeManagedDocSchema accepts a valid managed doc; rejects unknown slot/linkState/syncState + extra field", () => {
+    expect(UiSafeManagedDocSchema.safeParse(validManagedDoc).success).toBe(true);
+    expect(UiSafeManagedDocSchema.safeParse({ ...validManagedDoc, slot: "99_bogus" }).success).toBe(false);
+    expect(UiSafeManagedDocSchema.safeParse({ ...validManagedDoc, linkState: "maybe" }).success).toBe(false);
+    expect(UiSafeManagedDocSchema.safeParse({ ...validManagedDoc, syncState: "kinda" }).success).toBe(false);
+    // .strict() — no Drive doc id / folder id / url / path smuggled through the projection.
+    expect(UiSafeManagedDocSchema.safeParse({ ...validManagedDoc, driveDocId: "abc" }).success).toBe(false);
+    // A multi-line title is the shape of a raw-content leak.
+    expect(UiSafeManagedDocSchema.safeParse({ ...validManagedDoc, title: "00 Brief\nleaked" }).success).toBe(false);
+  });
+
+  it("UiSafeManagedDoc allowlist omits Drive ids / folder ids / urls / paths (link+sync state only; WS-8/#7 precedent)", () => {
+    expect(UI_SAFE_ALLOWLIST.managedDoc).not.toContain("driveDocId");
+    expect(UI_SAFE_ALLOWLIST.managedDoc).not.toContain("driveFolderId");
+    expect(UI_SAFE_ALLOWLIST.managedDoc).not.toContain("url");
+    expect(UI_SAFE_ALLOWLIST.managedDoc).not.toContain("path");
+  });
+
+  it("UiSafeProjectDashboard carries a docPack (0..5 managed docs); caps at 5", () => {
+    expect(UiSafeProjectDashboardSchema.safeParse({ ...validProject, docPack: [] }).success).toBe(true);
+    expect(UiSafeProjectDashboardSchema.safeParse(validProject).success).toBe(true); // validProject now carries a docPack
+    expect(UiSafeProjectDashboardSchema.safeParse({ ...validProject, docPack: Array(6).fill(validManagedDoc) }).success).toBe(false);
+    // A bad managed doc inside the pack fails the whole dashboard (element validation).
+    expect(UiSafeProjectDashboardSchema.safeParse({ ...validProject, docPack: [{ ...validManagedDoc, slot: "bogus" }] }).success).toBe(false);
   });
 
   // ── Constraint: enum-typed fields reject an out-of-set value ─────────────────
