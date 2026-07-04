@@ -6,6 +6,7 @@ import type {
   UiSafeWorkflowRunRef,
   UiSafeDashboardCard,
 } from "@sow/contracts/api/ui-safe";
+import { DEFAULT_SCOPE, type WorkspaceScope } from "./scope";
 
 // The renderer store holds ONLY UI-safe projections delivered over the §10 push
 // stream — never secrets, Keychain refs, or unfiltered raw content (§10 boundary,
@@ -17,6 +18,8 @@ export type ConnectionStatus = "connecting" | "live" | "reconnecting" | "worker-
 
 export interface UiSafeStoreState {
   readonly connection: ConnectionStatus;
+  /** The active workspace scope (top-bar switcher). Drives which reads hydrate Today. */
+  readonly scope: WorkspaceScope;
   readonly approvals: ReadonlyMap<string, UiSafeApproval>;
   readonly health: ReadonlyMap<string, UiSafeHealthItem>;
   readonly workflows: ReadonlyMap<string, UiSafeWorkflowRunRef>;
@@ -29,6 +32,7 @@ export interface UiSafeStoreState {
 
 export const initialStoreState: UiSafeStoreState = {
   connection: "connecting",
+  scope: DEFAULT_SCOPE,
   approvals: new Map(),
   health: new Map(),
   workflows: new Map(),

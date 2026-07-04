@@ -3,6 +3,7 @@ import { initialStoreState } from "../../renderer/store";
 import {
   applyStreamEvent,
   withConnection,
+  setScope,
   isGap,
   hydrateCards,
   hydrateHealth,
@@ -77,6 +78,15 @@ describe("store projections (9.3 — fold UI-safe events)", () => {
     let s = applyStreamEvent(initialStoreState, approvalEvent(1, "e1", "a1"));
     s = applyStreamEvent(s, approvalEvent(2, "e2", "a1"));
     expect(s.approvals.size).toBe(1);
+  });
+
+  it("setScope changes only the scope field (no-op returns same ref)", () => {
+    expect(initialStoreState.scope).toBe("global");
+    const scoped = setScope(initialStoreState, "personal-business");
+    expect(scoped.scope).toBe("personal-business");
+    // Unrelated slices are untouched; a no-op returns the same reference.
+    expect(scoped.cards).toBe(initialStoreState.cards);
+    expect(setScope(scoped, "personal-business")).toBe(scoped);
   });
 
   it("withConnection changes only the connection field (no-op returns same ref)", () => {

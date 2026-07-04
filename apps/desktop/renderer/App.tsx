@@ -1,6 +1,8 @@
 import { useEffect, useSyncExternalStore, type ReactElement } from "react";
 import { Today } from "./surfaces/today/Today";
 import { createUiSafeStore } from "./store";
+import { setScope } from "./store/projections";
+import type { WorkspaceScope } from "./store/scope";
 import { startLive } from "./lib/live";
 import { seedDevStore } from "./dev/seed";
 
@@ -33,6 +35,8 @@ export function App(): ReactElement {
   return (
     <Today
       connection={state.connection}
+      scope={state.scope}
+      onScopeChange={(scope: WorkspaceScope): void => store.dispatch((st) => setScope(st, scope))}
       cards={[...state.cards.values()]}
       health={[...state.health.values()]}
     />

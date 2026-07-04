@@ -1,6 +1,7 @@
 import type { StreamEvent } from "@sow/contracts/api/events";
 import type { UiSafeDashboardCard, UiSafeHealthItem } from "@sow/contracts/api/ui-safe";
 import type { ConnectionStatus, UiSafeStoreState } from "./index";
+import type { WorkspaceScope } from "./scope";
 
 // Pure reducers that fold validated UI-safe StreamEvents into the store. Every
 // payload is an allowlisted `UiSafe*` shape (the wire is validated by
@@ -18,6 +19,12 @@ export function withConnection(
 ): UiSafeStoreState {
   if (state.connection === connection) return state;
   return { ...state, connection };
+}
+
+/** Set the active workspace scope (top-bar switcher). Identity when unchanged. */
+export function setScope(state: UiSafeStoreState, scope: WorkspaceScope): UiSafeStoreState {
+  if (state.scope === scope) return state;
+  return { ...state, scope };
 }
 
 /** True when `event.seq` is not the immediate successor of the last applied seq (a dropped event). */

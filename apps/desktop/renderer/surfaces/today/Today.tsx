@@ -11,14 +11,98 @@
 //   - @sow/contracts                  — UiSafe* (types only)
 // NEVER import electron, node, or @sow/worker from a renderer file.
 
-import type { ReactElement } from "react";
+import { useState, type CSSProperties, type ReactElement } from "react";
 import type { ConnectionStatus } from "../../store";
+import { WORKSPACE_SCOPES, scopeMeta, type WorkspaceScope } from "../../store/scope";
 import type { UiSafeDashboardCard, UiSafeHealthItem } from "@sow/contracts/api/ui-safe";
 
 export interface TodayProps {
   readonly connection: ConnectionStatus;
+  readonly scope: WorkspaceScope;
+  readonly onScopeChange: (scope: WorkspaceScope) => void;
   readonly cards: readonly UiSafeDashboardCard[];
   readonly health: readonly UiSafeHealthItem[];
+}
+
+/** Set the subtle per-workspace accent via a CSS var (dot + scope line only). */
+function accentVar(accent: string): CSSProperties {
+  return { ["--sow-ws-accent"]: accent } as CSSProperties;
+}
+
+// ── Workspace scope switcher (top-bar pull-down) ───────────────────────────────
+
+function ScopeSwitcher({
+  scope,
+  onScopeChange,
+}: {
+  readonly scope: WorkspaceScope;
+  readonly onScopeChange: (scope: WorkspaceScope) => void;
+}): ReactElement {
+  const [open, setOpen] = useState(false);
+  const current = scopeMeta(scope);
+  return (
+    <div
+      className="sow-ws-switch-wrap"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") setOpen(false);
+      }}
+    >
+      <button
+        className="sow-ws-switch"
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`Workspace scope: ${current.label}`}
+        style={accentVar(current.accent)}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="sow-ws-dot" aria-hidden="true" />
+        <span>{current.label}</span>
+        <span className="sow-ws-chev" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8 9l4-4 4 4" />
+            <path d="M16 15l-4 4-4-4" />
+          </svg>
+        </span>
+      </button>
+      {open ? (
+        <ul className="sow-ws-menu" role="listbox" aria-label="Workspace scope">
+          {WORKSPACE_SCOPES.map((m) => {
+            const selected = m.id === scope;
+            return (
+              <li
+                key={m.id}
+                role="option"
+                aria-selected={selected}
+                tabIndex={0}
+                className={selected ? "sow-ws-opt sow-ws-opt--sel" : "sow-ws-opt"}
+                style={accentVar(m.accent)}
+                onClick={() => {
+                  onScopeChange(m.id);
+                  setOpen(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onScopeChange(m.id);
+                    setOpen(false);
+                  }
+                }}
+              >
+                <span className="sow-ws-dot" aria-hidden="true" />
+                <span className="sow-ws-opt-label">{m.label}</span>
+                {selected ? (
+                  <svg className="sow-ws-opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M5 12l4 4 10-10" />
+                  </svg>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </div>
+  );
 }
 
 // ── Connection status pill ─────────────────────────────────────────────────
@@ -154,7 +238,7 @@ function todayLabel(): string {
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function Today(props: TodayProps): ReactElement {
-  const { connection, cards, health } = props;
+  const { connection, scope, onScopeChange, cards, health } = props;
 
   return (
     <div className="sow-shell">
@@ -166,22 +250,8 @@ export function Today(props: TodayProps): ReactElement {
           (display: contents) so they opt out of the drag region.
         */}
         <div className="sow-toolbar-nodrag">
-          {/* Workspace switcher */}
-          <button
-            className="sow-ws-switch"
-            type="button"
-            aria-label="Switch workspace: Employer-Work"
-            aria-haspopup="listbox"
-          >
-            <span className="sow-ws-dot" aria-hidden="true" />
-            <span>Employer-Work</span>
-            <span className="sow-ws-chev" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M8 9l4-4 4 4" />
-                <path d="M16 15l-4 4-4-4" />
-              </svg>
-            </span>
-          </button>
+          {/* Workspace scope switcher — All (Global) / the three workspaces */}
+          <ScopeSwitcher scope={scope} onScopeChange={onScopeChange} />
 
           <div className="sow-tb-spacer" />
 
@@ -223,8 +293,8 @@ export function Today(props: TodayProps): ReactElement {
         </div>
       </header>
 
-      {/* ── Workspace scope line ──────────────────────────────────────────── */}
-      <div className="sow-scope-line" aria-hidden="true" />
+      {/* ── Workspace scope line (subtle per-workspace accent) ────────────── */}
+      <div className="sow-scope-line" aria-hidden="true" style={accentVar(scopeMeta(scope).accent)} />
 
       {/* ── Three-pane body ───────────────────────────────────────────────── */}
       <div className="sow-body">
