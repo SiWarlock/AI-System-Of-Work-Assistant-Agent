@@ -1,6 +1,6 @@
 # RESUME HANDOFF — Phase C (tool-enabled Copilot / full agent), continue at C3
 
-> **PROSPECTIVE handoff** for the next session (post-compaction). Predecessor: `035-2026-07-05-phase-c-tool-enabled-copilot-survey-and-c1.md`.
+> **PROSPECTIVE handoff** for the next session (post-compaction). Predecessor: `035-2026-07-05-phase-c-tool-enabled-copilot-survey-and-c1.md`. **Successor (executed): `037-2026-07-05-phase-c-c3-c4-agentic-copilot.md`** (C3 + C4 landed).
 > Everything CODE is DONE + pushed to `origin/main` at **HEAD `3fec0d6`**. Phase C (owner chose Option C — full agent) is **2 of 6 slices done: C1 + C2**. NEXT = **C3** (the agent-runtime Copilot synthesis adapter). Read the memory `sow-copilot-real-model-direction` FIRST — it has the full survey map + gotchas.
 
 ---
