@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-05 · **Mode:** single-operator (build, ultracode) · **Tracks:** worker · desktop
 - **Predecessor:** `032-2026-07-05-RESUME-p3-live-gbrain-wired.md`
-- **Successor:** _(none yet)_
+- **Successor:** `034-2026-07-05-copilot-reachability-and-http-grant-transport.md` (#1 app-reachability + #2 http-grant transport — fixes the PGlite lock)
 - **HEAD at start:** `5f9e658` (docs) / `9cc0ee1` (code) · **HEAD at close:** _(this round's commits)_
 - **Gate at close:** repo-wide `turbo typecheck test` **31/31 tasks green** (worker 490 + desktop 172 + evals 446 + contracts/domain/etc.; 20 worker + 14 evals gated-tier skipped).
 - **Reviews:** security-reviewer **CLEAN** — 0 critical/high/medium; all four load-bearing invariants (WS-8 isolation, secrets/redaction §16, candidate-gate fail-closed, no-throw) PASS; 2 LOW defense-in-depth items (reviewer-marked defer) + 1 informational deployment-invariant note. code-quality-reviewer — 0 high / 2 medium / 1 low; **3 fixed in-slice** (GBRAIN_CLI_EMPTY retryable→false + `echo`-binary test; duplicate-slug page-level citation made intentional + pinned by a test; symmetric empty-string guard on `chunk_text`), **2 lows deferred** (child-env allowlist; pre-cap `.map` bound — both trusted-local-brain hardening).
