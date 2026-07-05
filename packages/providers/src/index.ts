@@ -10,6 +10,7 @@
 // ── ports (5.1) ──────────────────────────────────────────────────────────────
 export * from "./ports/agent-result";
 export * from "./ports/model-provider-port";
+export * from "./model/claude-subscription-completion";
 export * from "./ports/agent-runtime-port";
 
 // ── broker core (5.2 / 5.3 / 5.4 / 5.5 / 5.9) ────────────────────────────────
