@@ -80,8 +80,11 @@ import type { GbrainTokenProvider } from "./api/procedures/copilotGbrainHttp";
 import {
   createAgentRuntimeCopilotSynthesis,
   createClaudeAgentCopilotRunner,
+  deriveCopilotContentTrust,
   gbrainMcpEndpoint,
 } from "./api/procedures/copilotAgentSynthesis";
+import { createApprovalsProposeSink } from "./api/procedures/copilotProposeSink";
+import { createCopilotProposeMcpServer } from "@sow/providers";
 import type { CopilotSynthesisPort } from "./api/procedures/copilot";
 import { createClaudeSubscriptionCompletion } from "@sow/providers";
 import type { SystemHealthQueryPort, UiSafeEgressStatus } from "./api/procedures/systemHealth";
@@ -221,6 +224,16 @@ export interface BootConfig extends BackendsConfig {
    * `copilotRealModel` is off. Dormant unless a serve is running — flip only alongside one.
    */
   readonly copilotAgentMode?: boolean;
+  /**
+   * The Copilot WRITE-VIA-APPROVALS tool (Phase-C C5.3 — OFF by default; requires `copilotAgentMode` too).
+   * When true, the agent MAY hold the `copilot.propose_action` tool, which records a PENDING §9.8 Approval
+   * (never a direct write; the owner approves it). Even with this ON, propose stays STRUCTURALLY OFF at
+   * runtime because the content-trust resolver (`deriveCopilotContentTrust`) is the fail-closed interim
+   * ('untrusted' always) — so a live ask never resolves to a propose-capable job. Real go-live is gated on
+   * C5.4 (per-content provenance + the §9.8 read-model workspace-scoping fix). This flag is ALWAYS an AND-term
+   * with the trust verdict, never a standalone override.
+   */
+  readonly copilotProposeMode?: boolean;
   /**
    * Explicit Copilot workspace set (id + type). Decoupled from `devProvision` (which is SURFACE data).
    * When omitted: devProvision-derived if present, else — on the real path — the 3 well-known scopes
@@ -406,13 +419,30 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     config.copilotRealModel === true && config.copilotAgentMode === true
       ? (): CopilotSynthesisPort => {
           const tokenProvider = sharedGbrainTokenProvider();
+          // C5.3 — the write-via-Approvals seam. The concrete sink records a PENDING §9.8 Approval via a
+          // DIRECT ApprovalRepository write (server-bound workspace registry-validated, first-write-wins,
+          // payloadHash-divergence reject). Injecting sink + the SDK MCP-server factory ENABLES the propose
+          // tool ONLY for a trusted+scoped_write job — but `deriveCopilotContentTrust` is fail-closed
+          // ('untrusted'), so a live ask never becomes propose-capable. Real go-live is a C5.4 gate.
+          const proposeSink = createApprovalsProposeSink({
+            approvals: backends.repos.approvals,
+            workspaceConfig: backends.repos.workspaceConfig,
+            now: backends.now,
+          });
           const runner = createClaudeAgentCopilotRunner({
             servedWorkspaceId: config.copilotGbrainWorkspaceId ?? DEFAULT_GBRAIN_COPILOT_WORKSPACE,
             gbrainMcpUrl: gbrainMcpEndpoint(gbrainHttpBaseUrl),
             getToken: () => tokenProvider.getToken(false),
+            proposeSink,
+            buildProposeMcpServer: createCopilotProposeMcpServer,
             ...(config.copilotBetas !== undefined ? { betas: config.copilotBetas } : {}),
           });
-          return createAgentRuntimeCopilotSynthesis(runner);
+          // proposeEnabled mirrors the flag; resolveContentTrust is the fail-closed interim (propose stays
+          // structurally OFF at runtime regardless of the flag until C5.4 plumbs real per-content provenance).
+          return createAgentRuntimeCopilotSynthesis(runner, {
+            proposeEnabled: config.copilotProposeMode === true,
+            resolveContentTrust: deriveCopilotContentTrust,
+          });
         }
       : undefined;
 
