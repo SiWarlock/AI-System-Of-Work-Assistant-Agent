@@ -28,6 +28,9 @@ import {
   createClaudeCloudRouteSelector,
   cloudCopilotPosture,
   buildCopilotDeps,
+  copilotWorkspaceType,
+  resolveCopilotWorkspaces,
+  WELL_KNOWN_COPILOT_WORKSPACES,
   COPILOT_SYSTEM_PROMPT,
   COPILOT_OUTPUT_SCHEMA,
   DEFAULT_COPILOT_MAX_COST_USD,
@@ -568,6 +571,54 @@ describe("buildCopilotDeps — the flag branch, unit-tested (a flipped ternary c
     const routeR = await deps.routeSelector.select("ws-employer", cloudCopilotPosture("ws-employer", "employer_work"));
     if (isOk(routeR)) await deps.synthesis.synthesize("ws-employer", "q", ctx, routeR.value);
     expect(calls[0]!.betas).toEqual(["context-1m-2025-08-07", "some-other-beta"]);
+  });
+});
+
+describe("resolveCopilotWorkspaces / copilotWorkspaceType — decouple Copilot reachability from devProvision", () => {
+  it("copilotWorkspaceType maps the two personal scopes explicitly; everything else → most-restrictive employer_work", () => {
+    expect(copilotWorkspaceType("personal-business")).toBe("personal_business");
+    expect(copilotWorkspaceType("personal-life")).toBe("personal_life");
+    expect(copilotWorkspaceType("employer-work")).toBe("employer_work");
+    expect(copilotWorkspaceType("acme-corp-subscope")).toBe("employer_work"); // unknown → employer_work
+    expect(copilotWorkspaceType("")).toBe("employer_work");
+  });
+
+  it("WELL_KNOWN_COPILOT_WORKSPACES lists the 3 scopes with correct types", () => {
+    expect(WELL_KNOWN_COPILOT_WORKSPACES).toEqual([
+      { id: "employer-work", type: "employer_work" },
+      { id: "personal-business", type: "personal_business" },
+      { id: "personal-life", type: "personal_life" },
+    ]);
+  });
+
+  it("an EXPLICIT list wins verbatim (highest precedence)", () => {
+    const explicit: readonly CopilotWorkspace[] = [{ id: "personal-business", type: "personal_business" }];
+    expect(resolveCopilotWorkspaces({ explicit, realCopilot: true })).toBe(explicit);
+    // even with devProvision present, explicit still wins
+    expect(
+      resolveCopilotWorkspaces({ explicit, devProvision: [{ workspaceId: "employer-work" }], realCopilot: true }),
+    ).toBe(explicit);
+  });
+
+  it("no explicit + devProvision present → derived from devProvision with correct types (backward compat)", () => {
+    const r = resolveCopilotWorkspaces({
+      devProvision: [{ workspaceId: "employer-work" }, { workspaceId: "personal-business" }],
+      realCopilot: true,
+    });
+    expect(r).toEqual([
+      { id: "employer-work", type: "employer_work" },
+      { id: "personal-business", type: "personal_business" },
+    ]);
+  });
+
+  it("no explicit + no devProvision + realCopilot ON → the 3 well-known scopes (the reachability fix)", () => {
+    expect(resolveCopilotWorkspaces({ realCopilot: true })).toEqual(WELL_KNOWN_COPILOT_WORKSPACES);
+    expect(resolveCopilotWorkspaces({ devProvision: [], realCopilot: true })).toEqual(WELL_KNOWN_COPILOT_WORKSPACES);
+  });
+
+  it("no explicit + no devProvision + realCopilot OFF → empty (interim stub answers nothing, unchanged)", () => {
+    expect(resolveCopilotWorkspaces({ realCopilot: false })).toEqual([]);
+    expect(resolveCopilotWorkspaces({ devProvision: [], realCopilot: false })).toEqual([]);
   });
 });
 

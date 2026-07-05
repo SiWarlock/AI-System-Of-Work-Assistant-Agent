@@ -44,7 +44,6 @@ import type {
   FailureVariant,
   HealthItem,
   AuditId,
-  WorkspaceType,
 } from "@sow/contracts";
 import type { SessionToken } from "@sow/policy";
 
@@ -65,7 +64,8 @@ import {
 import type {
   ReadModelQueryPort,
 } from "./api/procedures/queries";
-import { buildCopilotDeps } from "./api/procedures/copilotClaudeSynthesis";
+import { buildCopilotDeps, resolveCopilotWorkspaces } from "./api/procedures/copilotClaudeSynthesis";
+import type { CopilotWorkspace } from "./api/procedures/copilotClaudeSynthesis";
 import { createGbrainCliExec } from "./api/procedures/copilotGbrainSubprocess";
 import { createClaudeSubscriptionCompletion } from "@sow/providers";
 import type { SystemHealthQueryPort, UiSafeEgressStatus } from "./api/procedures/systemHealth";
@@ -184,6 +184,12 @@ export interface BootConfig extends BackendsConfig {
   readonly copilotGbrainRetrieval?: boolean;
   /** The workspace served from the local brain; defaults to DEFAULT_GBRAIN_COPILOT_WORKSPACE. */
   readonly copilotGbrainWorkspaceId?: string;
+  /**
+   * Explicit Copilot workspace set (id + type). Decoupled from `devProvision` (which is SURFACE data).
+   * When omitted: devProvision-derived if present, else — on the real path — the 3 well-known scopes
+   * (so the Copilot is reachable without a vault note). See `resolveCopilotWorkspaces`.
+   */
+  readonly copilotWorkspaces?: readonly CopilotWorkspace[];
 }
 
 /** The assembled live control plane the app shell drives. */
@@ -326,27 +332,22 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // label the TYPE correctly so the veto's employer branch (and, on the cloud path, the notice) is never
   // dropped. Authoritative source when real config lands: `workspaceConfig.get(id)` (deferred — the
   // dev-provisioner does not seed workspace_config, and no `copilot.answer` ProviderMatrix route exists).
-  const workspaceType = (workspaceId: string): WorkspaceType =>
-    // Match the two PERSONAL scopes explicitly; DEFAULT everything else (incl. "employer-work" AND any
-    // UNRECOGNIZED / sub-scoped employer slug) to the MOST-RESTRICTIVE employer_work — never mislabel an
-    // unknown id as personal, which would drop the veto's employer branch + suppress the notice on cloud.
-    workspaceId === "personal-business"
-      ? "personal_business"
-      : workspaceId === "personal-life"
-        ? "personal_life"
-        : "employer_work";
-
   // P2.4 — the real Copilot model path is a per-launch flag (OFF by default). ON ⇒ Claude SUBSCRIPTION
   // synthesis over a CLOUD Claude route + the CONSENT posture per workspace (an Employer-Work ask egresses
   // to Anthropic WITH the visible notice — the owner's stated posture). OFF ⇒ the deterministic stub over
   // a genuine LOCAL route (nothing egresses; no notice). The whole real-vs-interim decision lives in the
   // unit-tested `buildCopilotDeps`; the subscription client is constructed only on the real path.
+  //
+  // Workspace set is resolved DECOUPLED from devProvision (which is SURFACE data, not Copilot reachability):
+  // an explicit `copilotWorkspaces` wins, else devProvision-derived, else — on the real path — the 3
+  // well-known scopes, so the Copilot answers without needing a vault note (#1 app-reachability).
   const copilot = buildCopilotDeps({
     realCopilot: config.copilotRealModel === true,
-    workspaces: (config.devProvision ?? []).map((spec) => ({
-      id: spec.workspaceId,
-      type: workspaceType(spec.workspaceId),
-    })),
+    workspaces: resolveCopilotWorkspaces({
+      explicit: config.copilotWorkspaces,
+      devProvision: config.devProvision,
+      realCopilot: config.copilotRealModel === true,
+    }),
     model: config.copilotModel,
     betas: config.copilotBetas,
     completion: createClaudeSubscriptionCompletion,

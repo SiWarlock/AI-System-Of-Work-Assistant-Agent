@@ -347,6 +347,51 @@ export interface CopilotWorkspace {
   readonly type: WorkspaceType;
 }
 
+/**
+ * Interim workspace-id → type mapping (the authoritative source is `WorkspaceConfigRepository.get(id)` —
+ * deferred). Match the two PERSONAL scopes explicitly; DEFAULT everything else (incl. `employer-work` and
+ * any unrecognized / sub-scoped employer slug) to the MOST-RESTRICTIVE `employer_work` — never mislabel an
+ * unknown id as personal, which would drop the egress veto's employer branch + suppress the cloud notice.
+ */
+export function copilotWorkspaceType(workspaceId: string): WorkspaceType {
+  return workspaceId === "personal-business"
+    ? "personal_business"
+    : workspaceId === "personal-life"
+      ? "personal_life"
+      : "employer_work";
+}
+
+/**
+ * The 3 well-known workspace scopes the renderer's scope switcher offers (`renderer/store/scope.ts`). The
+ * interim default Copilot workspace set when the real path is on but no explicit list / devProvision is
+ * supplied — so the Copilot is reachable for all 3 scopes (personal-business reads gbrain when P3-live is
+ * on; the others get the fixture-empty fallback) instead of failing closed for lack of any provisioned
+ * workspace. Interim until the authoritative `WorkspaceConfigRepository` workspace registry lands.
+ */
+export const WELL_KNOWN_COPILOT_WORKSPACES: readonly CopilotWorkspace[] = [
+  { id: "employer-work", type: copilotWorkspaceType("employer-work") },
+  { id: "personal-business", type: copilotWorkspaceType("personal-business") },
+  { id: "personal-life", type: copilotWorkspaceType("personal-life") },
+];
+
+/**
+ * Resolve the Copilot workspace set (decoupled from devProvision, which is about SURFACE data, not Copilot
+ * reachability). Precedence: an EXPLICIT list wins; else derive from `devProvision` if present (backward
+ * compat); else, on the real path, the 3 well-known scopes (so the Copilot answers without a vault note);
+ * else empty (the interim stub honestly answers nothing). Pure.
+ */
+export function resolveCopilotWorkspaces(opts: {
+  readonly explicit?: readonly CopilotWorkspace[];
+  readonly devProvision?: readonly { readonly workspaceId: string }[];
+  readonly realCopilot: boolean;
+}): readonly CopilotWorkspace[] {
+  if (opts.explicit !== undefined) return opts.explicit;
+  if (opts.devProvision !== undefined && opts.devProvision.length > 0) {
+    return opts.devProvision.map((s) => ({ id: s.workspaceId, type: copilotWorkspaceType(s.workspaceId) }));
+  }
+  return opts.realCopilot ? WELL_KNOWN_COPILOT_WORKSPACES : [];
+}
+
 /** Inputs for assembling the Copilot deps — the whole real-vs-interim decision, in one tested place. */
 export interface CopilotDepsOptions {
   /** ON ⇒ real Claude-subscription cloud path; OFF ⇒ deterministic stub over a local route. */
