@@ -67,6 +67,12 @@ import type {
 import { buildCopilotDeps, resolveCopilotWorkspaces } from "./api/procedures/copilotClaudeSynthesis";
 import type { CopilotWorkspace } from "./api/procedures/copilotClaudeSynthesis";
 import { createGbrainCliExec } from "./api/procedures/copilotGbrainSubprocess";
+import type { GbrainQueryExec } from "./api/procedures/copilotGbrainSubprocess";
+import {
+  createGbrainHttpExec,
+  createGbrainDcrTokenProvider,
+  DEFAULT_GBRAIN_HTTP_URL,
+} from "./api/procedures/copilotGbrainHttp";
 import { createClaudeSubscriptionCompletion } from "@sow/providers";
 import type { SystemHealthQueryPort, UiSafeEgressStatus } from "./api/procedures/systemHealth";
 import type {
@@ -184,6 +190,17 @@ export interface BootConfig extends BackendsConfig {
   readonly copilotGbrainRetrieval?: boolean;
   /** The workspace served from the local brain; defaults to DEFAULT_GBRAIN_COPILOT_WORKSPACE. */
   readonly copilotGbrainWorkspaceId?: string;
+  /**
+   * Which gbrain read transport to use when `copilotGbrainRetrieval` is on:
+   *   - "subprocess" (default) — shells `gbrain call query` (needs VOYAGE_API_KEY in the WORKER env + no
+   *     concurrent `gbrain serve` on the single-connection PGlite brain);
+   *   - "http" — the MANDATED transport:"http" path: reads over a running `gbrain serve --http` (OAuth 2.1
+   *     via DCR). COEXISTS with a serve (fixes the PGlite-lock finding) and moves VOYAGE_API_KEY to the
+   *     SERVE process. Needs `gbrain serve --http --enable-dcr` reachable at `copilotGbrainHttpUrl`.
+   */
+  readonly copilotGbrainTransport?: "subprocess" | "http";
+  /** The `gbrain serve --http` base URL for the "http" transport; defaults to DEFAULT_GBRAIN_HTTP_URL. */
+  readonly copilotGbrainHttpUrl?: string;
   /**
    * Explicit Copilot workspace set (id + type). Decoupled from `devProvision` (which is SURFACE data).
    * When omitted: devProvision-derived if present, else — on the real path — the 3 well-known scopes
@@ -338,6 +355,19 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // a genuine LOCAL route (nothing egresses; no notice). The whole real-vs-interim decision lives in the
   // unit-tested `buildCopilotDeps`; the subscription client is constructed only on the real path.
   //
+  // The gbrain read seam (#2): OFF ⇒ fixture stub; ON ⇒ the "http" MCP-over-HTTP grant path (default via
+  // DCR self-registration; coexists with a running serve) OR the subprocess CLI. A factory so the chosen
+  // transport is constructed only on the gbrain path.
+  const gbrainExecFactory: (() => GbrainQueryExec) | undefined =
+    config.copilotGbrainRetrieval === true
+      ? config.copilotGbrainTransport === "http"
+        ? (): GbrainQueryExec => {
+            const baseUrl = config.copilotGbrainHttpUrl ?? DEFAULT_GBRAIN_HTTP_URL;
+            return createGbrainHttpExec({ baseUrl, tokenProvider: createGbrainDcrTokenProvider({ baseUrl }) });
+          }
+        : (): GbrainQueryExec => createGbrainCliExec()
+      : undefined;
+
   // Workspace set is resolved DECOUPLED from devProvision (which is SURFACE data, not Copilot reachability):
   // an explicit `copilotWorkspaces` wins, else devProvision-derived, else — on the real path — the 3
   // well-known scopes, so the Copilot answers without needing a vault note (#1 app-reachability).
@@ -351,9 +381,10 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     model: config.copilotModel,
     betas: config.copilotBetas,
     completion: createClaudeSubscriptionCompletion,
-    // P3-live: the real gbrain read seam, constructed ONLY when the flag is on (a factory, so the CLI
-    // transport isn't built off-path). Absent ⇒ retrieval stays the fixture stub.
-    ...(config.copilotGbrainRetrieval === true ? { gbrainExec: () => createGbrainCliExec() } : {}),
+    // P3-live: the real gbrain read seam, constructed ONLY when the flag is on (a factory, so the transport
+    // isn't built off-path). Absent ⇒ retrieval stays the fixture stub. "http" ⇒ the mandated MCP-over-HTTP
+    // grant path (coexists with a running serve); else the subprocess CLI.
+    ...(gbrainExecFactory !== undefined ? { gbrainExec: gbrainExecFactory } : {}),
     ...(config.copilotGbrainWorkspaceId !== undefined
       ? { gbrainWorkspaceId: config.copilotGbrainWorkspaceId }
       : {}),

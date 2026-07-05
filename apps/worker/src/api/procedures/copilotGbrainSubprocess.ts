@@ -8,8 +8,10 @@
 // WS-8 (safety rule 4) holds here BY CONSTRUCTION, not by adapter scoping: exactly ONE workspace
 // (`servedWorkspaceId`, whose content the brain IS) ever triggers a gbrain read; every OTHER workspace is
 // routed to the fixture `fallback` (empty for a known workspace, fail-closed for unknown) and NEVER reads
-// the brain — so a single-brain deployment cannot leak across workspaces through this transport. Real
-// per-workspace isolation still needs a brain/source per workspace (the http-grant path); see the session doc.
+// the brain — so a single-brain deployment cannot leak across workspaces through this transport. NOTE: the
+// http-grant transport (copilotGbrainHttp.ts) adds no per-workspace scoping of its own either — it too
+// rests on the served brain holding ONLY that workspace's content. TRUE per-workspace isolation needs a
+// brain/source PER workspace (a grant + serve per workspace); see the session doc.
 //
 // Split for TDD: `normalizeGbrainHits` (PURE) + `createGbrainSubprocessRetrieval` (PURE composite over an
 // injected `exec` + `fallback`) are unit-tested; `createGbrainCliExec` (child_process) is the imperative
