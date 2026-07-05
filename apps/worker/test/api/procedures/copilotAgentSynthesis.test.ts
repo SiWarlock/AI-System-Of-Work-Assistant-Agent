@@ -30,6 +30,9 @@ import {
   copilotReadToolMcpNames,
   copilotGbrainReadToolMcpNames,
   admitCopilotAgentJob,
+  resolveCopilotAgentCapability,
+  type CopilotContentTrust,
+  type CopilotAgentCapability,
   DEFAULT_COPILOT_AGENT_MAX_COST_USD,
   GBRAIN_MCP_SERVER_NAME,
   gbrainMcpEndpoint,
@@ -210,7 +213,7 @@ describe("toClaudeAgentRuntimeRoute — BIND the veto-cleared route; never re-se
 });
 
 // ── buildCopilotAgentJob ──────────────────────────────────────────────────────
-describe("buildCopilotAgentJob — a schema-valid, ING-7-pure read_only Copilot AgentJob", () => {
+describe("buildCopilotAgentJob — a schema-valid, ING-7-pure read_only Copilot AgentJob (default)", () => {
   const job = buildCopilotAgentJob("personal-business", RUNTIME_ROUTE);
   it("is a schema-valid AgentJob", () => {
     expect(AgentJobSchema.safeParse(job).success).toBe(true);
@@ -223,15 +226,67 @@ describe("buildCopilotAgentJob — a schema-valid, ING-7-pure read_only Copilot 
     );
     expect(copilotReadOnlyPolicyIsPure(job.toolPolicy)).toBe(true);
   });
-  it("carries the runtime route + trusted + raw-content + copilot capability, scoped to the workspace", () => {
+  it("is content-derived UNTRUSTED (read-only agent consumes potentially-untrusted brain content), raw-content, copilot capability, scoped", () => {
     expect(job.providerRoute).toEqual(RUNTIME_ROUTE);
-    expect(job.trustLevel).toBe("trusted");
+    expect(job.trustLevel).toBe("untrusted");
     expect(job.carriesRawContent).toBe(true);
     expect(job.capability).toBe("copilot.answer");
     expect(job.workspaceId).toBe("personal-business");
   });
   it("sets a server-side cost cap (so buildAgentQueryOptions emits maxBudgetUsd)", () => {
     expect(job.maxCostUsd).toBe(DEFAULT_COPILOT_AGENT_MAX_COST_USD);
+  });
+});
+
+// ── content-derived trust + capability (C5.1 — the propose-tool prerequisite) ────
+describe("resolveCopilotAgentCapability — fail-closed: propose ONLY on affirmed-trusted content", () => {
+  const cases: ReadonlyArray<[CopilotContentTrust, boolean, CopilotAgentCapability]> = [
+    ["trusted", true, "propose"],
+    ["trusted", false, "read_only"],
+    ["untrusted", true, "read_only"], // untrusted content NEVER gets propose, even when enabled
+    ["untrusted", false, "read_only"],
+  ];
+  it.each(cases)("contentTrust=%s proposeEnabled=%s ⇒ %s", (contentTrust, proposeEnabled, expected) => {
+    expect(resolveCopilotAgentCapability({ contentTrust, proposeEnabled })).toBe(expected);
+  });
+});
+
+describe("buildCopilotAgentJob — the propose capability (trusted + scoped_write over the C1 agent catalog)", () => {
+  const job = buildCopilotAgentJob("personal-business", RUNTIME_ROUTE, {
+    contentTrust: "trusted",
+    proposeEnabled: true,
+  });
+  it("is schema-valid, scoped_write, and TRUSTED (only ever built for affirmed-trusted content)", () => {
+    expect(AgentJobSchema.safeParse(job).success).toBe(true);
+    expect(job.toolPolicy.mode).toBe("scoped_write");
+    expect(job.toolPolicy.allowsMutating).toBe(true);
+    expect(job.trustLevel).toBe("trusted");
+  });
+  it("carries the write-proposing tool (copilot.propose_action) in its allow-list", () => {
+    expect([...job.toolPolicy.allowedTools].map(String)).toContain("copilot.propose_action");
+  });
+  it("still ADMITS through the C4 ING-7 gate (trusted may hold a scoped_write policy)", () => {
+    expect(isOk(admitCopilotAgentJob(job))).toBe(true);
+  });
+});
+
+describe("buildCopilotAgentJob — the resolver is the ONLY funnel to a propose job (no inconsistent shape)", () => {
+  it("CANNOT build an untrusted propose job: {contentTrust:untrusted, proposeEnabled:true} ⇒ read_only + untrusted", () => {
+    const job = buildCopilotAgentJob("personal-business", RUNTIME_ROUTE, {
+      contentTrust: "untrusted",
+      proposeEnabled: true,
+    });
+    expect(job.toolPolicy.mode).toBe("read_only");
+    expect(job.trustLevel).toBe("untrusted");
+    expect([...job.toolPolicy.allowedTools].map(String)).not.toContain("copilot.propose_action");
+  });
+  it("propose DISABLED on trusted content ⇒ read_only + untrusted", () => {
+    const job = buildCopilotAgentJob("personal-business", RUNTIME_ROUTE, {
+      contentTrust: "trusted",
+      proposeEnabled: false,
+    });
+    expect(job.toolPolicy.mode).toBe("read_only");
+    expect(job.trustLevel).toBe("untrusted");
   });
 });
 
@@ -245,7 +300,7 @@ describe("admitCopilotAgentJob — the ING-7 gate + the read_only-purity clause 
     allowsMutating: false,
   };
 
-  it("ADMITS the trusted read_only Copilot job (the normal C3 path), returning the job unchanged", () => {
+  it("ADMITS the default (untrusted read_only) Copilot job, returning the job unchanged", () => {
     const job = buildCopilotAgentJob("personal-business", RUNTIME_ROUTE);
     const r = admitCopilotAgentJob(job);
     expect(isOk(r)).toBe(true);
@@ -267,8 +322,12 @@ describe("admitCopilotAgentJob — the ING-7 gate + the read_only-purity clause 
 
   it("REJECTS a TRUSTED read_only policy that secretly lists a mutating tool (via the purity check)", () => {
     // A trusted job short-circuits admitJob's trust check, so step 1 ADMITS — copilotReadOnlyPolicyIsPure
-    // (step 2) is what rejects it.
-    const job: AgentJob = { ...buildCopilotAgentJob("personal-business", RUNTIME_ROUTE), toolPolicy: impureReadOnly };
+    // (step 2) is what rejects it. (trustLevel is set EXPLICITLY here — the default job is now untrusted.)
+    const job: AgentJob = {
+      ...buildCopilotAgentJob("personal-business", RUNTIME_ROUTE),
+      trustLevel: "trusted",
+      toolPolicy: impureReadOnly,
+    };
     const r = admitCopilotAgentJob(job);
     expect(isErr(r)).toBe(true);
     if (!isErr(r)) return;

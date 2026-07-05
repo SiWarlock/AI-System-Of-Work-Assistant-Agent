@@ -8,10 +8,11 @@
 //   - the VETO-CLEARED `route` is BOUND, never re-selected (`toClaudeAgentRuntimeRoute` only maps the
 //     provider→runtime discriminant; a non-Claude route fails closed — so the egress veto can't be made
 //     advisory). The route reaching here is the same one `decideCopilotEgress` cleared for cloud egress.
-//   - the AgentJob is READ_ONLY over the C1 catalog (`copilotReadToolPolicy`) — no mutating tool, ING-7-pure.
-//     C4 wires the admission gate (`admitJob(job, isMutatingCopilotTool)` + `copilotReadOnlyPolicyIsPure`)
-//     for the untrusted-content case; C3 already builds the job read-only so the trusted-question path is
-//     safe today.
+//   - the AgentJob's tool policy + trust are CONTENT-derived (C5.1): the default is READ_ONLY over the C1
+//     catalog (`copilotReadToolPolicy`) marked `untrusted` (the agent consumes potentially-untrusted brain
+//     content) — no mutating tool, ING-7-pure; a `propose` job (trusted + scoped_write) is granted ONLY on
+//     affirmed-trusted content. C4's admission gate (`admitJob(job, isMutatingCopilotTool)` +
+//     `copilotReadOnlyPolicyIsPure`) is the backstop — an untrusted+mutating job is hard-rejected.
 //   - the model's `candidateOutput` flows through the SAME grounding reconciliation the completion path uses
 //     (`mapCompletionToCandidate`): a hallucinated citationId is dropped, the authoritative retrieved title
 //     wins. Downstream, `answerCopilotQuestion`'s `toUiSafeCopilotAnswer` gate still re-validates the shape.
@@ -47,6 +48,7 @@ import {
 import type { AgentResult, AgentQueryFn, RuntimeError, RuntimeErrorKind } from "@sow/providers";
 import {
   admitJob,
+  copilotAgentToolPolicy,
   copilotReadToolIds,
   copilotReadToolPolicy,
   copilotReadOnlyPolicyIsPure,
@@ -177,19 +179,73 @@ export function toClaudeAgentRuntimeRoute(route: ProviderRoute): Result<Provider
  */
 export const DEFAULT_COPILOT_AGENT_MAX_COST_USD = 0.5;
 
+// ── content-derived trust + capability (Phase-C C5.1 — the propose-tool prerequisite) ─────────
+//
+// The Copilot agent CONSUMES workspace brain content (retrieved passages + tool reads), which may be
+// UNTRUSTED — a prompt-injected note ingested from an untrusted source could steer the agent. ING-7 (safety
+// rule 6) therefore governs whether the agent may hold a WRITE-capable tool by the trust of that content, NOT
+// by the trust of the question. So the job's `trustLevel` + tool policy are CONTENT-derived:
+//   - read_only  ⇒ trustLevel "untrusted" (ING-7-safe — a read-only agent holds no write tool, so untrusted
+//     content is harmless); the default, fail-closed.
+//   - propose    ⇒ trustLevel "trusted" + scoped_write (the C1 `copilotAgentToolPolicy`, which carries the
+//     `copilot.propose_action` tool). Granted ONLY when the consumed content is AFFIRMED trusted.
+// The propose tool itself is not callable until C5.2/C5.3 wire its handler + allow-list it — C5.1 lands only
+// the trust→capability mapping that gates it. ING-7 admission (C4) is the backstop: an untrusted + scoped_write
+// job is HARD-rejected even if this resolver were bypassed.
+
+/** Whether the agent's consumed brain content is AFFIRMED trusted (owner-governed) or potentially untrusted. */
+export type CopilotContentTrust = "trusted" | "untrusted";
+
+/** The tool capability granted to the Copilot agent job. `propose` = may hold the write-proposing tool. */
+export type CopilotAgentCapability = "read_only" | "propose";
+
 /**
- * Build the Copilot's READ_ONLY AgentJob over a `claude-agent-sdk` runtime route. The tool policy is the C1
- * read catalog (`copilotReadToolPolicy` — no mutating tool, `copilotReadOnlyPolicyIsPure` holds), so even
- * before C4 wires ING-7 admission the job structurally cannot hold a write tool. Carries raw content (it
- * reads workspace notes) and is `trusted` (the QUESTION is trusted user input; C4 marks the job `untrusted`
- * for the imported-content case). Sets `maxCostUsd` so the run has a server-side spend cap. Pure.
+ * Resolve the agent's capability from the CONTENT trust + whether propose is enabled. FAIL-CLOSED: the
+ * `propose` capability (scoped_write + the `copilot.propose_action` tool) is granted ONLY when the consumed
+ * content is affirmed TRUSTED **and** propose is explicitly enabled — otherwise `read_only`. So a
+ * prompt-injected untrusted document can never steer the agent into holding a write tool (safety rule 6). Pure.
  *
- * NOTE (idempotency key): the key is static per workspace because this path drives `runtime.runJob` DIRECTLY
- * (it does NOT go through the Broker's replay ledger today), so the key is inert — no replay collision. If
- * this job is ever routed through the Broker, scope the key to a question hash first, or every subsequent
- * question in a workspace would short-circuit to the first cached answer (tracked follow-up).
+ * ⚠ C5.2/C5.3 PRECONDITION (security-review MEDIUM, LOAD-BEARING — do not make propose callable until met):
+ * a `propose` job STILL carries the gbrain READ tools, so it can tool-fetch MORE brain content mid-run beyond
+ * the worker-retrieved seed. Therefore `contentTrust:"trusted"` is sound ONLY if the ENTIRE tool-reachable
+ * content surface is trusted-provenance (KnowledgeWriter/owner-governed) — a STRICTLY STRONGER condition than
+ * "the seed passages are trusted." It must be derived PER-CONTENT over that whole surface, NOT per-workspace
+ * (an owner's brain routinely holds ingested untrusted notes) and NOT per-question. If ANY reachable passage
+ * is non-KnowledgeWriter/untrusted-provenance, `contentTrust` MUST be `"untrusted"`. Enforce + eval this
+ * before the propose tool is wired callable, or the ING-7 bypass the C4 review closed re-opens.
  */
-export function buildCopilotAgentJob(workspaceId: string, runtimeRoute: ProviderRoute): AgentJob {
+export function resolveCopilotAgentCapability(params: {
+  readonly contentTrust: CopilotContentTrust;
+  readonly proposeEnabled: boolean;
+}): CopilotAgentCapability {
+  return params.contentTrust === "trusted" && params.proposeEnabled ? "propose" : "read_only";
+}
+
+/**
+ * Build the Copilot's AgentJob over a `claude-agent-sdk` runtime route. Its capability is ALWAYS
+ * resolver-derived (fail-closed): pass a `trust` object and `resolveCopilotAgentCapability` decides — the
+ * ONLY way to a `propose` job is `{contentTrust:"trusted", proposeEnabled:true}`. No `trust` arg ⇒ the safe
+ * default: `read_only`. So a caller can NEVER build an untrusted-labeled propose job, nor set the
+ * trust-label/tool-policy inconsistently (they move as one atomic, resolver-gated pair).
+ *   - `read_only` ⇒ C1 read catalog (`copilotReadToolPolicy`, no mutating tool, `copilotReadOnlyPolicyIsPure`
+ *     holds) + `trustLevel:"untrusted"` (the agent consumes potentially-untrusted brain content; read-only is
+ *     ING-7-safe).
+ *   - `propose`   ⇒ C1 `copilotAgentToolPolicy` (scoped_write + the propose tool) + `trustLevel:"trusted"`.
+ * Carries raw content; sets `maxCostUsd`. Pure. (`AgentJob.capability` below is the branded routing id
+ * "copilot.answer" — a DISTINCT concept from the tool capability.)
+ *
+ * NOTE (idempotency key): static per workspace because this path drives `runtime.runJob` DIRECTLY (not through
+ * the Broker's replay ledger), so it is inert — no replay collision. If ever routed through the Broker, scope
+ * the key to a question hash first, or every subsequent question in a workspace would short-circuit to the
+ * first cached answer (tracked follow-up).
+ */
+export function buildCopilotAgentJob(
+  workspaceId: string,
+  runtimeRoute: ProviderRoute,
+  trust?: { readonly contentTrust: CopilotContentTrust; readonly proposeEnabled: boolean },
+): AgentJob {
+  const propose =
+    (trust === undefined ? "read_only" : resolveCopilotAgentCapability(trust)) === "propose";
   return {
     id: `job-copilot-agent-${workspaceId}` as AgentJobId,
     workflowRunId: `wf-copilot-agent-${workspaceId}` as WorkflowId,
@@ -197,9 +253,11 @@ export function buildCopilotAgentJob(workspaceId: string, runtimeRoute: Provider
     capability: "copilot.answer" as Capability,
     contextRefs: [{ refKind: "source", ref: "ref:copilot" }],
     outputSchemaId: "sow:ui-safe-copilot-answer",
-    toolPolicy: copilotReadToolPolicy(),
+    toolPolicy: propose ? copilotAgentToolPolicy() : copilotReadToolPolicy(),
     providerRoute: runtimeRoute,
-    trustLevel: "trusted",
+    // Content-derived (NOT question-derived): a read-only agent treats its consumed content as untrusted;
+    // only an affirmed-trusted, propose-capable job is `trusted`. C4's `admitCopilotAgentJob` is the backstop.
+    trustLevel: propose ? "trusted" : "untrusted",
     carriesRawContent: true,
     maxRuntimeSeconds: 300,
     maxCostUsd: DEFAULT_COPILOT_AGENT_MAX_COST_USD,
@@ -222,8 +280,10 @@ export function buildCopilotAgentJob(workspaceId: string, runtimeRoute: Provider
  *      early-returns `false` REGARDLESS of trust), so a read_only policy that SECRETLY lists a mutating tool —
  *      the ING-7 tool-stripping smuggle vector for untrusted content — would be admitted by (1) alone. This
  *      second check closes it.
- * The C3 job (trusted, read_only over the C1 read catalog) passes both. The payoff is future-facing: an
- * untrusted variant or a C5 scoped_write/propose job is now governed by exactly this gate. Pure.
+ * Both live shapes pass: the DEFAULT job is content-derived `untrusted` + read_only (admitted — a read_only
+ * policy is non-mutating), and a C5.1 `propose` job is `trusted` + scoped_write (admitted — a trusted job may
+ * hold a mutating policy). The gate BITES on the dangerous shapes: an untrusted+mutating job (hard-rejected)
+ * and a read_only policy that smuggles a mutating tool (rejected by the purity check). Pure.
  */
 export function admitCopilotAgentJob(job: AgentJob): Result<AgentJob, FailureVariant> {
   // Defense-in-depth on this PUBLIC gate: re-assert the ToolPolicy cross-field invariant the Zod `.refine`
