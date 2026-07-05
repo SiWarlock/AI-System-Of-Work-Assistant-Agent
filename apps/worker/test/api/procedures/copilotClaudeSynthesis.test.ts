@@ -571,6 +571,96 @@ describe("buildCopilotDeps — the flag branch, unit-tested (a flipped ternary c
   });
 });
 
+describe("buildCopilotDeps — P3-live gbrain retrieval branch (only the served workspace reads gbrain)", () => {
+  const served = "personal-business";
+  const workspaces: readonly CopilotWorkspace[] = [
+    { id: served, type: "personal_business" },
+    { id: "employer-work", type: "employer_work" },
+  ];
+  // A gbrain `call query` hit (only chunk_text/slug/title are mapped; source_id is the SOURCE, not an id).
+  const gbrainHits = [
+    { slug: "sessions/028", chunk_text: "the seed says X", title: "Session 028", source_id: "default" },
+  ];
+  const okCompletion = () => recordingClient(ok({ structuredOutput: goodOutput, costUsd: 0.01 })).client;
+
+  it("real path + gbrainExec: the SERVED workspace reads gbrain; the factory is called EXACTLY once", async () => {
+    let factoryCalls = 0;
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces,
+      completion: okCompletion,
+      gbrainExec: () => {
+        factoryCalls++;
+        return async () => ok(gbrainHits);
+      },
+    });
+    expect(factoryCalls).toBe(1); // the CLI transport is constructed once, only on the gbrain path
+    const r = await deps.retrieval.retrieve(served, "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.blocks).toEqual(["the seed says X"]);
+      expect(r.value.sources).toEqual([{ citationId: "gbrain:sessions:028", title: "Session 028" }]);
+    }
+  });
+
+  it("real path + gbrainExec: a NON-served workspace stays on the fixture (empty) and never reads gbrain (WS-8)", async () => {
+    let execCalls = 0;
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces,
+      completion: okCompletion,
+      gbrainExec: () => async () => {
+        execCalls++;
+        return ok(gbrainHits);
+      },
+    });
+    const r = await deps.retrieval.retrieve("employer-work", "q");
+    expect(execCalls).toBe(0); // no cross-workspace brain read
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.blocks).toEqual([]);
+  });
+
+  it("gbrainExec is IGNORED when realCopilot is OFF (fixture stub; the factory is NEVER called)", async () => {
+    let factoryCalls = 0;
+    const deps = buildCopilotDeps({
+      realCopilot: false,
+      workspaces,
+      completion: okCompletion,
+      gbrainExec: () => {
+        factoryCalls++;
+        return async () => ok(gbrainHits);
+      },
+    });
+    expect(factoryCalls).toBe(0);
+    const r = await deps.retrieval.retrieve(served, "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.blocks).toEqual([]); // fixture empty, not gbrain
+  });
+
+  it("WITHOUT gbrainExec the real path keeps the fixture retrieval (served workspace returns empty, not gbrain)", async () => {
+    const deps = buildCopilotDeps({ realCopilot: true, workspaces, completion: okCompletion });
+    const r = await deps.retrieval.retrieve(served, "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.blocks).toEqual([]);
+  });
+
+  it("honors a gbrainWorkspaceId override (that workspace reads gbrain; personal-business falls back to fixture)", async () => {
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces,
+      completion: okCompletion,
+      gbrainWorkspaceId: "employer-work",
+      gbrainExec: () => async () => ok(gbrainHits),
+    });
+    const rEmp = await deps.retrieval.retrieve("employer-work", "q");
+    expect(isOk(rEmp)).toBe(true);
+    if (isOk(rEmp)) expect(rEmp.value.blocks).toEqual(["the seed says X"]); // now gbrain-served
+    const rPb = await deps.retrieval.retrieve(served, "q");
+    expect(isOk(rPb)).toBe(true);
+    if (isOk(rPb)) expect(rPb.value.blocks).toEqual([]); // now the fixture fallback
+  });
+});
+
 describe("Sonnet 5 1M — the default model + the 1M-context beta (P2.4b)", () => {
   it("the DEFAULT Copilot model is Claude Sonnet 5", async () => {
     const r = await createClaudeCloudRouteSelector().select("ws", cloudCopilotPosture("ws", "employer_work"));

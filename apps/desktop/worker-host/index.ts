@@ -55,6 +55,11 @@ async function start(config: WorkerHostConfig): Promise<void> {
       // To turn OFF (back to the deterministic local stub, nothing egresses), remove these two lines.
       copilotRealModel: true,
       copilotModel: "claude-sonnet-5",
+      // P3-live: the personal-business Copilot reads the LOCAL gbrain (`gbrain call query`) instead of the
+      // empty fixture stub; every other workspace stays on the fixture (WS-8 — only this workspace reads the
+      // single local brain). Needs VOYAGE_API_KEY in the worker env + `gbrain` on PATH (else it fails
+      // closed). To turn OFF (back to the fixture stub), remove this line.
+      copilotGbrainRetrieval: true,
       // No-op dispatch stubs — a first render triggers neither path (no jobs/approvals yet).
       triageDispatch: (input) =>
         Promise.resolve({ ok: true, value: { idempotencyKey: input.idempotencyKey } }),

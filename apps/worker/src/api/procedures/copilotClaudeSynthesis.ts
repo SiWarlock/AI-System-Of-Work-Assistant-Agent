@@ -38,12 +38,18 @@ import {
 import type {
   CandidateCopilotAnswer,
   CopilotDeps,
+  CopilotRetrievalPort,
   CopilotSynthesisPort,
   EgressRouteSelector,
   RetrievedContext,
   RetrievedSource,
   WorkspacePosture,
 } from "./copilot";
+import {
+  createGbrainSubprocessRetrieval,
+  DEFAULT_GBRAIN_COPILOT_WORKSPACE,
+} from "./copilotGbrainSubprocess";
+import type { GbrainQueryExec } from "./copilotGbrainSubprocess";
 
 /**
  * The governed Copilot system prompt. Encodes the grounding contract: answer ONLY from the supplied
@@ -356,6 +362,16 @@ export interface CopilotDepsOptions {
    * client is never even constructed when the flag is off). Boot passes `createClaudeSubscriptionCompletion`.
    */
   readonly completion: () => ClaudeSubscriptionCompletion;
+  /**
+   * OPTIONAL (P3-live) factory for the real gbrain read seam. When present AND `realCopilot` is on, the
+   * ONE served workspace (`gbrainWorkspaceId`) reads the local gbrain; every other workspace stays on the
+   * fixture (WS-8 by construction — see `createGbrainSubprocessRetrieval`). Absent ⇒ retrieval is the
+   * fixture stub on both paths (the pre-P3-live behavior). A FACTORY (not the exec) so the CLI transport
+   * is constructed only when the gbrain path is actually taken.
+   */
+  readonly gbrainExec?: () => GbrainQueryExec;
+  /** The workspace served from the local brain; defaults to DEFAULT_GBRAIN_COPILOT_WORKSPACE. */
+  readonly gbrainWorkspaceId?: string;
 }
 
 /**
@@ -376,8 +392,20 @@ export function buildCopilotDeps(opts: CopilotDepsOptions): CopilotDeps {
       ? cloudCopilotPosture(ws.id, ws.type)
       : localWorkspacePosture(ws.id, ws.type);
   }
+  // Retrieval: the fixture stub by default. On the real path WITH a gbrain exec factory (P3-live), the ONE
+  // served workspace reads the local gbrain and every other stays on the fixture (WS-8 by construction).
+  // The factory is invoked at most once, only when that branch is taken (the CLI is never constructed off-path).
+  const fixtureRetrieval = createFixtureRetrieval(fixtures);
+  const retrieval: CopilotRetrievalPort =
+    opts.realCopilot && opts.gbrainExec !== undefined
+      ? createGbrainSubprocessRetrieval({
+          exec: opts.gbrainExec(),
+          servedWorkspaceId: opts.gbrainWorkspaceId ?? DEFAULT_GBRAIN_COPILOT_WORKSPACE,
+          fallback: fixtureRetrieval,
+        })
+      : fixtureRetrieval;
   return {
-    retrieval: createFixtureRetrieval(fixtures),
+    retrieval,
     synthesis: opts.realCopilot
       ? createClaudeCopilotSynthesis(opts.completion(), { betas: opts.betas })
       : createStubSynthesis(),
