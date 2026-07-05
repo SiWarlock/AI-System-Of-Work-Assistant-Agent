@@ -65,16 +65,8 @@ import {
 import type {
   ReadModelQueryPort,
 } from "./api/procedures/queries";
-import {
-  createFixtureRetrieval,
-  createStubSynthesis,
-  createLocalWorkspacePosture,
-  createLocalRouteSelector,
-  localWorkspacePosture,
-  type CopilotDeps,
-  type RetrievedContext,
-  type WorkspacePosture,
-} from "./api/procedures/copilot";
+import { buildCopilotDeps } from "./api/procedures/copilotClaudeSynthesis";
+import { createClaudeSubscriptionCompletion } from "@sow/providers";
 import type { SystemHealthQueryPort, UiSafeEgressStatus } from "./api/procedures/systemHealth";
 import type {
   ApprovalCommandPort,
@@ -161,6 +153,18 @@ export interface BootConfig extends BackendsConfig {
    * per-spec failure is logged and skipped; it never blocks the control plane coming up.
    */
   readonly devProvision?: readonly DevProvisionSpec[];
+  /**
+   * Real Copilot model path (OFF by default — the interim runs the deterministic stub over a LOCAL
+   * route, so nothing egresses and no notice fires). When true, Copilot synthesis calls the Claude
+   * SUBSCRIPTION completion client over a CLOUD Claude route, and each dev-provisioned workspace gets
+   * the CONSENT posture (`cloudCopilotPosture`) — so an Employer-Work ask egresses to Anthropic WITH
+   * the visible notice (the owner's stated posture: "fine with Employer-Work going to a cloud model, I
+   * just want a notice"). Flipping this to true is the interim consent gesture until the authoritative
+   * per-workspace `WorkspaceConfigRepository` posture lands.
+   */
+  readonly copilotRealModel?: boolean;
+  /** Optional Claude model id for the real Copilot path; defaults to DEFAULT_CLAUDE_COPILOT_MODEL. */
+  readonly copilotModel?: string;
 }
 
 /** The assembled live control plane the app shell drives. */
@@ -299,37 +303,34 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   //   and never echoes raw content. When devProvision is off, the map is empty (every ask fails
   //   closed — there is genuinely no knowledge wired).
   // Interim per-workspace posture (P1.2b): the egress decision resolves the AUTHORITATIVE posture by
-  // workspaceId (server-side). The type is inferred from the well-known scope id + a fail-closed
-  // egress; defense-in-depth — label the TYPE correctly even though the interim LOCAL route yields no
-  // notice, so a future swap to a cloud route selector can't mislabel employer-work as personal. The
-  // AUTHORITATIVE source when real synthesis lands is `workspaceConfig.get(id)` (deferred — the
+  // workspaceId (server-side). The type is inferred from the well-known scope id; defense-in-depth —
+  // label the TYPE correctly so the veto's employer branch (and, on the cloud path, the notice) is never
+  // dropped. Authoritative source when real config lands: `workspaceConfig.get(id)` (deferred — the
   // dev-provisioner does not seed workspace_config, and no `copilot.answer` ProviderMatrix route exists).
-  const devWorkspacePosture = (workspaceId: string): WorkspacePosture => {
+  const workspaceType = (workspaceId: string): WorkspaceType =>
     // Match the two PERSONAL scopes explicitly; DEFAULT everything else (incl. "employer-work" AND any
-    // UNRECOGNIZED / sub-scoped employer slug) to the MOST-RESTRICTIVE employer_work posture — never
-    // mislabel an unknown id as personal, which would drop the veto's employer branch + suppress the
-    // notice if the route selector is later swapped to cloud. Authoritative type: workspaceConfig.get(id).
-    const type: WorkspaceType =
-      workspaceId === "personal-business"
-        ? "personal_business"
-        : workspaceId === "personal-life"
-          ? "personal_life"
-          : "employer_work";
-    return localWorkspacePosture(workspaceId, type);
-  };
-  const copilotFixtures: Record<string, RetrievedContext> = {};
-  const copilotPostures: Record<string, WorkspacePosture> = {};
-  for (const spec of config.devProvision ?? []) {
-    copilotFixtures[spec.workspaceId] = { workspaceId: spec.workspaceId, blocks: [], sources: [] };
-    copilotPostures[spec.workspaceId] = devWorkspacePosture(spec.workspaceId);
-  }
-  const copilot: CopilotDeps = {
-    retrieval: createFixtureRetrieval(copilotFixtures),
-    synthesis: createStubSynthesis(),
-    // Authoritative posture resolved by workspaceId (server-side); interim local route ⇒ allow, no notice.
-    workspacePosture: createLocalWorkspacePosture(copilotPostures),
-    routeSelector: createLocalRouteSelector(),
-  };
+    // UNRECOGNIZED / sub-scoped employer slug) to the MOST-RESTRICTIVE employer_work — never mislabel an
+    // unknown id as personal, which would drop the veto's employer branch + suppress the notice on cloud.
+    workspaceId === "personal-business"
+      ? "personal_business"
+      : workspaceId === "personal-life"
+        ? "personal_life"
+        : "employer_work";
+
+  // P2.4 — the real Copilot model path is a per-launch flag (OFF by default). ON ⇒ Claude SUBSCRIPTION
+  // synthesis over a CLOUD Claude route + the CONSENT posture per workspace (an Employer-Work ask egresses
+  // to Anthropic WITH the visible notice — the owner's stated posture). OFF ⇒ the deterministic stub over
+  // a genuine LOCAL route (nothing egresses; no notice). The whole real-vs-interim decision lives in the
+  // unit-tested `buildCopilotDeps`; the subscription client is constructed only on the real path.
+  const copilot = buildCopilotDeps({
+    realCopilot: config.copilotRealModel === true,
+    workspaces: (config.devProvision ?? []).map((spec) => ({
+      id: spec.workspaceId,
+      type: workspaceType(spec.workspaceId),
+    })),
+    model: config.copilotModel,
+    completion: createClaudeSubscriptionCompletion,
+  });
 
   // 3) The real loopback transport (HTTP + WS) behind the injected token + allowlist.
   //    A non-loopback bind is refused inside `startApiServer` (REQ-NF-004).

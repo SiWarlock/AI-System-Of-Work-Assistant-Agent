@@ -10,7 +10,7 @@
 //     FailureVariant — only a stable cause code + a content-free message).
 // The completion client is a FAKE — no SDK, no network.
 import { describe, it, expect } from "vitest";
-import { ok, err, isOk, isErr } from "@sow/contracts";
+import { ok, err, isOk, isErr, processorId } from "@sow/contracts";
 import type { ProviderRoute, Result } from "@sow/contracts";
 import type {
   ClaudeSubscriptionCompletion,
@@ -19,15 +19,25 @@ import type {
   CompletionError,
 } from "@sow/providers";
 import type { RetrievedContext } from "../../../src/api/procedures/copilot";
+import { decideCopilotEgress, buildCopilotJob } from "../../../src/api/procedures/copilot";
 import {
   createClaudeCopilotSynthesis,
   buildCopilotUserPrompt,
   mapCompletionToCandidate,
   foldCompletionError,
+  createClaudeCloudRouteSelector,
+  cloudCopilotPosture,
+  buildCopilotDeps,
   COPILOT_SYSTEM_PROMPT,
   COPILOT_OUTPUT_SCHEMA,
   DEFAULT_COPILOT_MAX_COST_USD,
+  type CopilotWorkspace,
 } from "../../../src/api/procedures/copilotClaudeSynthesis";
+
+/** Read `provider` off a ProviderRoute union without a cast (only the provider arm carries it). */
+function providerOf(route: ProviderRoute): string | undefined {
+  return "provider" in route ? route.provider : undefined;
+}
 
 const cloudRoute: ProviderRoute = {
   provider: "claude",
@@ -367,5 +377,171 @@ describe("createClaudeCopilotSynthesis — the wired CopilotSynthesisPort over a
     const synth = createClaudeCopilotSynthesis(client, { maxCostUsd: 1.5 });
     await synth.synthesize("ws-employer", "q", ctx, cloudRoute);
     expect(calls[0]!.maxCostUsd).toBe(1.5);
+  });
+});
+
+// ── P2.4: the real cloud route selector + consent posture (wire it live) ─────────────────
+describe("createClaudeCloudRouteSelector — the real cloud Claude provider route", () => {
+  it("selects a Claude PROVIDER route with cloud egress (satisfies the P2.3 adapter guard)", async () => {
+    const sel = createClaudeCloudRouteSelector();
+    const r = await sel.select("ws-employer", cloudCopilotPosture("ws-employer", "employer_work"));
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(providerOf(r.value)).toBe("claude");
+      expect(r.value.egressClass).toBe("cloud");
+    }
+  });
+
+  it("honors a caller-supplied model id", async () => {
+    const sel = createClaudeCloudRouteSelector("claude-sonnet-5");
+    const r = await sel.select("ws", cloudCopilotPosture("ws", "employer_work"));
+    if (isOk(r)) expect(r.value.model).toBe("claude-sonnet-5");
+  });
+
+  it("the selected cloud route is ACCEPTED by the synthesis adapter's Claude-route guard", async () => {
+    const { client } = recordingClient(ok({ structuredOutput: goodOutput, costUsd: 0.01 }));
+    const synth = createClaudeCopilotSynthesis(client);
+    const routeR = await createClaudeCloudRouteSelector().select(
+      "ws-employer",
+      cloudCopilotPosture("ws-employer", "employer_work"),
+    );
+    expect(isOk(routeR)).toBe(true);
+    if (isOk(routeR)) {
+      const r = await synth.synthesize("ws-employer", "q", ctx, routeR.value);
+      expect(isOk(r)).toBe(true); // NOT COPILOT_ROUTE_NOT_CLAUDE — the route + adapter agree
+    }
+  });
+});
+
+describe("cloudCopilotPosture — the interim consent posture (owner accepts employer cloud + notice)", () => {
+  it("allowlists the claude processor for raw content and ACKS employer-work egress", () => {
+    const p = cloudCopilotPosture("ws-employer", "employer_work");
+    expect(p.type).toBe("employer_work");
+    expect(p.egress.employerRawEgressAcknowledged).toBe(true);
+    expect(p.egress.allowedProcessors).toContain(processorId("claude"));
+    expect(p.egress.rawContentAllowedProcessors).toContain(processorId("claude"));
+  });
+
+  it("does NOT ack for a personal workspace (the employer branch never applies)", () => {
+    const p = cloudCopilotPosture("ws-personal", "personal_business");
+    expect(p.egress.employerRawEgressAcknowledged).toBe(false);
+    expect(p.egress.allowedProcessors).toContain(processorId("claude"));
+  });
+});
+
+describe("P2.4 governance outcome: cloud route + consent posture → veto ALLOWS, notice fires", () => {
+  it("employer-work → ALLOW the cloud route WITH the egressProcessor notice (the whole point)", async () => {
+    const posture = cloudCopilotPosture("ws-employer", "employer_work");
+    const routeR = await createClaudeCloudRouteSelector().select("ws-employer", posture);
+    expect(isOk(routeR)).toBe(true);
+    if (isOk(routeR)) {
+      const d = decideCopilotEgress({
+        job: buildCopilotJob("ws-employer", routeR.value),
+        route: routeR.value,
+        posture,
+      });
+      expect(isOk(d)).toBe(true);
+      if (isOk(d)) expect(d.value.egressProcessor).toBe("claude"); // NOTICE fires for real
+    }
+  });
+
+  it("personal-business → ALLOW the cloud route with NO notice (non-employer cloud needs none)", async () => {
+    const posture = cloudCopilotPosture("ws-personal", "personal_business");
+    const routeR = await createClaudeCloudRouteSelector().select("ws-personal", posture);
+    expect(isOk(routeR)).toBe(true);
+    if (isOk(routeR)) {
+      const d = decideCopilotEgress({
+        job: buildCopilotJob("ws-personal", routeR.value),
+        route: routeR.value,
+        posture,
+      });
+      expect(isOk(d)).toBe(true);
+      if (isOk(d)) expect(d.value.egressProcessor).toBeUndefined();
+    }
+  });
+});
+
+describe("buildCopilotDeps — the flag branch, unit-tested (a flipped ternary can't ship silently)", () => {
+  const employer: readonly CopilotWorkspace[] = [{ id: "ws-employer", type: "employer_work" }];
+  const okCompletion = () => recordingClient(ok({ structuredOutput: goodOutput, costUsd: 0.01 })).client;
+
+  it("OFF: fail-closed posture (ack off) + local route (no notice); the completion factory is NEVER called", async () => {
+    let factoryCalls = 0;
+    const deps = buildCopilotDeps({
+      realCopilot: false,
+      workspaces: employer,
+      completion: () => {
+        factoryCalls++;
+        return okCompletion();
+      },
+    });
+    expect(factoryCalls).toBe(0); // the real SDK client is never even constructed when OFF
+
+    const posture = await deps.workspacePosture.resolve("ws-employer");
+    expect(isOk(posture)).toBe(true);
+    if (isOk(posture)) {
+      expect(posture.value.egress.employerRawEgressAcknowledged).toBe(false);
+      const routeR = await deps.routeSelector.select("ws-employer", posture.value);
+      expect(isOk(routeR)).toBe(true);
+      if (isOk(routeR)) {
+        const d = decideCopilotEgress({
+          job: buildCopilotJob("ws-employer", routeR.value),
+          route: routeR.value,
+          posture: posture.value,
+        });
+        expect(isOk(d)).toBe(true);
+        if (isOk(d)) expect(d.value.egressProcessor).toBeUndefined(); // local ⇒ no egress, no notice
+      }
+    }
+  });
+
+  it("ON: consent posture (ack on) + cloud route + real synthesis (fake client); factory called EXACTLY once", async () => {
+    let factoryCalls = 0;
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces: employer,
+      completion: () => {
+        factoryCalls++;
+        return okCompletion();
+      },
+    });
+    expect(factoryCalls).toBe(1);
+
+    const posture = await deps.workspacePosture.resolve("ws-employer");
+    expect(isOk(posture)).toBe(true);
+    if (isOk(posture)) expect(posture.value.egress.employerRawEgressAcknowledged).toBe(true);
+
+    const routeR = await deps.routeSelector.select(
+      "ws-employer",
+      cloudCopilotPosture("ws-employer", "employer_work"),
+    );
+    expect(isOk(routeR)).toBe(true);
+    if (isOk(routeR)) {
+      expect(providerOf(routeR.value)).toBe("claude");
+      // The fake-backed real synthesis produces a reconciled candidate over the cloud route.
+      const synthR = await deps.synthesis.synthesize("ws-employer", "q", ctx, routeR.value);
+      expect(isOk(synthR)).toBe(true);
+      if (isOk(synthR)) expect(synthR.value.citations).toEqual(ctx.sources);
+    }
+  });
+
+  it("threads the model override into the cloud route selector", async () => {
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces: employer,
+      model: "claude-sonnet-5",
+      completion: okCompletion,
+    });
+    const routeR = await deps.routeSelector.select(
+      "ws-employer",
+      cloudCopilotPosture("ws-employer", "employer_work"),
+    );
+    if (isOk(routeR)) expect(routeR.value.model).toBe("claude-sonnet-5");
+  });
+
+  it("with no provisioned workspaces, every posture resolve fails CLOSED (WORKSPACE_NOT_FOUND)", async () => {
+    const deps = buildCopilotDeps({ realCopilot: true, workspaces: [], completion: okCompletion });
+    const posture = await deps.workspacePosture.resolve("ws-employer");
+    expect(isErr(posture)).toBe(true);
   });
 });

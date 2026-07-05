@@ -14,18 +14,35 @@
 //
 // The `route` handed to `synthesize` is the VETO-CLEARED route from `decideCopilotEgress` (P2.1) — the
 // adapter binds to `route.model` and NEVER re-selects, so the egress veto can't be turned advisory.
-import { ok, err, isOk, failure } from "@sow/contracts";
-import type { FailureVariant, FailureVariantKind, ProviderRoute, Result } from "@sow/contracts";
+import { ok, err, isOk, failure, processorId } from "@sow/contracts";
+import type {
+  FailureVariant,
+  FailureVariantKind,
+  ProviderRoute,
+  Result,
+  WorkspaceId,
+  WorkspaceType,
+} from "@sow/contracts";
 import type {
   ClaudeSubscriptionCompletion,
   CompletionError,
   CompletionRequest,
 } from "@sow/providers";
+import {
+  createFixtureRetrieval,
+  createStubSynthesis,
+  createLocalRouteSelector,
+  createLocalWorkspacePosture,
+  localWorkspacePosture,
+} from "./copilot";
 import type {
   CandidateCopilotAnswer,
+  CopilotDeps,
   CopilotSynthesisPort,
+  EgressRouteSelector,
   RetrievedContext,
   RetrievedSource,
+  WorkspacePosture,
 } from "./copilot";
 
 /**
@@ -239,5 +256,120 @@ export function createClaudeCopilotSynthesis(
       if (!isOk(result)) return err(foldCompletionError(result.error));
       return mapCompletionToCandidate(result.value.structuredOutput, context);
     },
+  };
+}
+
+// ── P2.4 — wire it live: the real cloud route selector + the consent posture ─────────────────
+//
+// When the `copilotRealModel` flag is ON, boot swaps its interim `createLocalRouteSelector` /
+// `localWorkspacePosture` for these, so the egress veto classifies synthesis as CLOUD egress and (under
+// employer-work + ack) the notice fires for real. The route MUST be a Claude PROVIDER route — the P2.3
+// adapter guard rejects anything else, and `processorOfRoute` labels it "claude" (the notice processor).
+
+/** The Anthropic cloud endpoint the subscription client egresses to. */
+export const CLAUDE_CLOUD_COPILOT_ENDPOINT = "https://api.anthropic.com";
+
+/**
+ * Default Claude model for Copilot synthesis. Overridable end-to-end via `BootConfig.copilotModel`
+ * (threaded through `buildCopilotDeps` → `createClaudeCloudRouteSelector`). NOTE: verify the exact id
+ * against the current Anthropic / Agent-SDK model catalog before flipping the flag live — a stale id
+ * folds to a typed `CompletionError` (the safe failure mode), never a silent wrong answer.
+ */
+export const DEFAULT_CLAUDE_COPILOT_MODEL = "claude-opus-4-8";
+
+/**
+ * The real cloud Claude PROVIDER route for Copilot synthesis: `provider: "claude"` + `egressClass:
+ * "cloud"`, so `processorOfRoute` labels it "claude" (the notice's processor) and the P2.3 adapter
+ * guard accepts it. Pure.
+ */
+export function buildClaudeCloudCopilotRoute(
+  model: string = DEFAULT_CLAUDE_COPILOT_MODEL,
+): ProviderRoute {
+  return { provider: "claude", model, endpoint: CLAUDE_CLOUD_COPILOT_ENDPOINT, egressClass: "cloud" };
+}
+
+/**
+ * Route selector for the REAL cloud path — always the Claude cloud route. Replaces boot's interim
+ * `createLocalRouteSelector` when the real-model flag is on, so the veto sees cloud egress.
+ */
+export function createClaudeCloudRouteSelector(
+  model: string = DEFAULT_CLAUDE_COPILOT_MODEL,
+): EgressRouteSelector {
+  const route = buildClaudeCloudCopilotRoute(model);
+  return { select: (_workspaceId, _posture): Result<ProviderRoute, FailureVariant> => ok(route) };
+}
+
+/**
+ * The interim CONSENT posture for the real cloud path. Allowlists the Claude processor for raw content
+ * (the veto then ALLOWS the cloud route — the copilot job always carries raw content) and, for
+ * EMPLOYER-WORK, sets `employerRawEgressAcknowledged: true` — the owner's explicit consent ("I'm fine
+ * with Employer-Work going to a cloud model, I just want a notice"). Employer-work then egresses to
+ * Anthropic WITH the visible notice; a personal workspace egresses with none. Interim until the
+ * AUTHORITATIVE `WorkspaceConfigRepository.get(id)` posture lands — the ack becomes a real per-workspace
+ * setting then, not a flag-derived default. Pure.
+ */
+export function cloudCopilotPosture(workspaceId: string, type: WorkspaceType): WorkspacePosture {
+  const claude = processorId("claude");
+  return {
+    type,
+    dataOwner: type === "employer_work" ? "employer" : "user",
+    egress: {
+      workspaceId: workspaceId as WorkspaceId,
+      allowedProcessors: [claude],
+      rawContentAllowedProcessors: [claude],
+      employerRawEgressAcknowledged: type === "employer_work",
+    },
+  };
+}
+
+/** A provisioned workspace + its resolved type — the input `buildCopilotDeps` builds postures over. */
+export interface CopilotWorkspace {
+  readonly id: string;
+  readonly type: WorkspaceType;
+}
+
+/** Inputs for assembling the Copilot deps — the whole real-vs-interim decision, in one tested place. */
+export interface CopilotDepsOptions {
+  /** ON ⇒ real Claude-subscription cloud path; OFF ⇒ deterministic stub over a local route. */
+  readonly realCopilot: boolean;
+  /** The provisioned workspaces (fixtures + postures are built per id). Empty ⇒ every ask fails closed. */
+  readonly workspaces: readonly CopilotWorkspace[];
+  /** Optional model override (BootConfig.copilotModel); defaults to DEFAULT_CLAUDE_COPILOT_MODEL. */
+  readonly model?: string;
+  /**
+   * Factory for the real subscription completion client — invoked ONLY on the real path (so the SDK
+   * client is never even constructed when the flag is off). Boot passes `createClaudeSubscriptionCompletion`.
+   */
+  readonly completion: () => ClaudeSubscriptionCompletion;
+}
+
+/**
+ * Assemble the Copilot ask deps from the flag + provisioned workspaces — the single place the
+ * real-vs-interim wiring is decided, so the branch is UNIT-TESTED (a flipped ternary can't ship
+ * silently). Real path: Claude-subscription synthesis + cloud route + the CONSENT posture per workspace
+ * (employer-work egresses to Anthropic WITH the notice). Interim path: the deterministic stub + a
+ * loopback-local route + the fail-closed `localWorkspacePosture` (nothing egresses). Retrieval is the
+ * fixture read either way; the authoritative posture-by-workspaceId resolution is identical. Pure apart
+ * from the injected `completion` factory (called at most once, only on the real path).
+ */
+export function buildCopilotDeps(opts: CopilotDepsOptions): CopilotDeps {
+  const fixtures: Record<string, RetrievedContext> = {};
+  const postures: Record<string, WorkspacePosture> = {};
+  for (const ws of opts.workspaces) {
+    fixtures[ws.id] = { workspaceId: ws.id, blocks: [], sources: [] };
+    postures[ws.id] = opts.realCopilot
+      ? cloudCopilotPosture(ws.id, ws.type)
+      : localWorkspacePosture(ws.id, ws.type);
+  }
+  return {
+    retrieval: createFixtureRetrieval(fixtures),
+    synthesis: opts.realCopilot
+      ? createClaudeCopilotSynthesis(opts.completion())
+      : createStubSynthesis(),
+    // Authoritative posture resolved by workspaceId (server-side).
+    workspacePosture: createLocalWorkspacePosture(postures),
+    routeSelector: opts.realCopilot
+      ? createClaudeCloudRouteSelector(opts.model)
+      : createLocalRouteSelector(),
   };
 }
