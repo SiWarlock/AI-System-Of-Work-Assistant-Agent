@@ -1,10 +1,11 @@
-# Session 037 — Phase C (tool-enabled Copilot / full agent): C3 + C4
+# Session 037 — Phase C (tool-enabled Copilot / full agent): C3 + C4 + C5.1
 
-- **Date:** 2026-07-05 · **Mode:** single-operator (build, ultracode) · **Track:** worker (C3/C4 land in `apps/worker`)
+- **Date:** 2026-07-05 · **Mode:** single-operator (build, ultracode) · **Track:** worker (`apps/worker`)
 - **Predecessor:** `036-2026-07-05-RESUME-phase-c-c3-agent-runtime-synthesis.md` (the RESUME handoff this session executed)
-- **Successor:** _(next session — C5)_
-- **HEAD at close:** `dac4f95` (C4) atop `a5e62dd` (C3) atop the pre-session `cf160d1`.
-- **Gate at close:** repo-wide `turbo typecheck test` **31/31**; worker **574** (+ the 46-test C3/C4 module); pushed at this close-out.
+- **Successor:** _(next session — C5.2: the propose tool → §9.8 Approvals)_
+- **HEAD at close:** `7c1e9ff` (C5.1) atop `dac4f95` (C4) atop `a5e62dd` (C3) atop the pre-session `cf160d1`.
+- **Gate at close:** repo-wide `turbo typecheck test` **31/31**; worker **583** (+ the 55-test C3/C4/C5.1 module); pushed at close-out.
+- **Owner decision this session:** for C5 (write-via-Approvals), the owner picked **"the model calls a propose tool"** (Option B — most agentic). That makes content-derived trust a hard prerequisite → **C5.1** built it.
 
 ## Why this session existed
 
@@ -25,6 +26,14 @@ The owner chose **Option C — the full agent** for P4 "full tools." Phase C is 
 **File modified:** `copilotAgentSynthesis.ts` — new `admitCopilotAgentJob(job)` composes the C1 catalog into the ING-7 gate that shipped **inert**: `isToolPolicyConsistent` (read_only ⇒ !allowsMutating, DiD on the public surface) + `admitJob(job, isMutatingCopilotTool)` (untrusted + mutating tool → HARD REJECT) + `copilotReadOnlyPolicyIsPure` (catches a read_only policy that secretly lists a mutating tool — the ING-7 tool-stripping smuggle vector `admitsMutating`'s read_only early-return is structurally blind to). Gated into `synthesize` **before** the runner.
 
 **Reviews (2, parallel):** ING-7 correctly enforced, fail-closed, redaction-safe, **no crit/high**. Security confirmed the purity check is the **only catalog-aware ING-7 layer** (the runtime-layer check is catalog-blind) → a real, LIVE activation of C1, discharging the C1 review's "mechanism, unwired" HIGH. Both flagged the same test-gap (the untrusted-smuggle case passed for the wrong reason) — **fixed:** added the load-bearing untrusted+impure-read_only case, the unknown-tool fail-safe case, the inconsistent-policy case, and the admit-path identity assertion.
+
+### C5.1 (`7c1e9ff`) — content-derived trust + capability (the propose prerequisite)
+
+The owner picked Option B ("the model calls a propose tool") for C5, which makes the C4 carry-forward a hard prerequisite: a `scoped_write` propose tool may only be granted on affirmed-trusted content.
+
+**File modified:** `copilotAgentSynthesis.ts` — new `resolveCopilotAgentCapability({contentTrust, proposeEnabled})` (fail-closed: `propose` ONLY when trusted AND enabled, else `read_only`). `buildCopilotAgentJob` now derives capability **through the resolver** (the only funnel — a caller can't hand-pick `propose` or build an inconsistent trust/policy pair): a `read_only` job is content-derived `trustLevel:"untrusted"` (ING-7-safe), a `propose` job is `trusted` + `copilotAgentToolPolicy` (scoped_write + the `copilot.propose_action` tool). **Trust is now CONTENT-derived, not question-derived** — the correction the C4 review demanded.
+
+**Reviews (2, parallel):** no crit/high; the **untrusted-content-can-never-propose invariant holds** (fail-closed resolver + the C4 admit backstop + the invocation-time ING-7 check, which now runs on the untrusted read_only job and passes — strictly safer than the old `trusted` label). Confirmed the propose capability is **inert** this slice (resolver has no production caller; runner allow-list is gbrain-reads-only, so `copilot.propose_action` is not callable). **Folded in-slice:** security#1 (make the resolver the sole funnel — a bypass caller could otherwise build a trusted propose job directly) + the code-quality docstring/header accuracy + the `capability` param-shadow.
 
 ## Decisions made
 
@@ -48,6 +57,6 @@ Clean. C3 + C4 both RED→GREEN (46 deterministic tests: route/tool-name/prompt/
 ## Open follow-ups
 
 - **[Finding — WS-8 residual, shared + pre-existing]** the served gbrain brain is a single COMBINED store; a query against it is not yet filtered to the served workspace's own content. This is the SAME gap the retrieval seam has (`gbrain call query` / the http exec pass no workspace filter) — safe today (the seed holds only the served workspace's content) but needs per-workspace query filtering or a partitioned brain before the store grows to hold multiple workspaces. **Not C3-specific; escalate for both paths.**
-- **[C5 guard-rail — MUST land before the propose tool]** make `job.trustLevel` CONTENT-derived (mark the job `untrusted` when it consumes imported/brain content, splitting question-trust from content-trust) BEFORE C5 grants `copilotAgentToolPolicy` (scoped_write + propose). Deferring the propose *tool* to C5 is safe; deferring this *trust-model correction* past the point propose is added is not.
+- **[C5 guard-rail — trust model DONE in C5.1 (`7c1e9ff`)]** `job.trustLevel` is now CONTENT-derived (read_only ⇒ untrusted; propose ⇒ trusted, resolver-gated). **REMAINING precondition for C5.2/C5.3 (security#2, LOAD-BEARING):** `contentTrust:"trusted"` is sound ONLY if the ENTIRE tool-reachable content surface is trusted-provenance (a propose job keeps the gbrain READ tools, so it can fetch more brain content mid-run beyond the seed). Derive `contentTrust` PER-CONTENT over that whole surface (if ANY reachable passage is non-KnowledgeWriter/untrusted-provenance → `untrusted`) — NOT per-workspace (an owner's brain holds ingested untrusted notes) — and eval it BEFORE the propose tool is wired callable.
 - **[deferred hardening, documented in-code]** token-TTL staleness of the held MCP bearer header (liveness, not a leak — an expired token 401s fail-closed); `route.endpoint` not consumed by the SDK (processor-identity is the operative binding); the static idempotency key (inert — Broker bypassed today).
 - **C5** (propose-writes → §9.8 Approvals: concrete `BuildProposalPort` + `QaRouteToApprovalPort` → `RecordPendingPort`; DERIVED action never client-supplied; idempotency by derived Approval id) → **C6** (skills + wire behind the flag + governance/grounding eval).
