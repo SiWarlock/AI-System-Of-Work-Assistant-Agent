@@ -45,6 +45,8 @@ import {
   COPILOT_AGENT_SYSTEM_PROMPT,
   createAgentRuntimeCopilotSynthesis,
   createClaudeAgentCopilotRunner,
+  deriveCopilotContentTrust,
+  COPILOT_PROPOSE_MCP_TOOL_NAME,
   type CopilotAgentRunner,
   type CopilotPromptContext,
 } from "../../../src/api/procedures/copilotAgentSynthesis";
@@ -483,6 +485,14 @@ describe("createAgentRuntimeCopilotSynthesis — the agentic CopilotSynthesisPor
     expect(f.lastJob()?.toolPolicy.mode).toBe("read_only");
     expect(f.lastPrompt()).toEqual({ question: "q?", context: ctx() });
   });
+  it("C5.3 AND-term: proposeEnabled:true but the fail-closed trust interim ⇒ the job stays read_only (flag alone never grants propose)", async () => {
+    const f = fakeRunner(() => ok(completed({ answer: ["ok"], citations: [] })));
+    // proposeEnabled ON, but the DEFAULT resolveContentTrust (deriveCopilotContentTrust ⇒ untrusted) gates it.
+    const synth = createAgentRuntimeCopilotSynthesis(f.runner, { proposeEnabled: true });
+    await synth.synthesize("personal-business", "q?", ctx(), CLAUDE_ROUTE);
+    expect(f.lastJob()?.toolPolicy.mode).toBe("read_only");
+    expect(f.lastJob()?.trustLevel).toBe("untrusted");
+  });
   it("route guard SHORT-CIRCUITS before the runner (a non-claude route never reaches the agent)", async () => {
     const f = fakeRunner(() => ok(completed({ answer: ["x"], citations: [] })));
     const synth = createAgentRuntimeCopilotSynthesis(f.runner);
@@ -571,6 +581,148 @@ describe("createClaudeAgentCopilotRunner — the real runner's WIRING (injected 
     // the runner returns a raw RuntimeError; the synthesis layer folds auth_unavailable → COPILOT_AGENT_AUTH.
     expect(r.error.kind).toBe("auth_unavailable");
     expect(queried).toBe(false);
+  });
+});
+
+// ── C5.3c: content-trust fail-closed interim + the runner's propose grant ──
+describe("deriveCopilotContentTrust — the fail-closed interim (always untrusted)", () => {
+  it("returns 'untrusted' for any RetrievedContext (propose structurally uncallable on a live ask)", () => {
+    expect(deriveCopilotContentTrust(ctx())).toBe("untrusted");
+    expect(deriveCopilotContentTrust(ctx({ blocks: [], sources: [] }))).toBe("untrusted");
+  });
+});
+
+describe("createClaudeAgentCopilotRunner — the C5.3 propose grant (defense-in-depth)", () => {
+  const proposeJob = buildCopilotAgentJob("personal-business", RUNTIME_ROUTE, {
+    contentTrust: "trusted",
+    proposeEnabled: true,
+  });
+  const readOnlyJob = buildCopilotAgentJob("personal-business", RUNTIME_ROUTE);
+  const prompt: CopilotPromptContext = { question: "act on it", context: ctx() };
+
+  type FakeHandler = (a: unknown) => Promise<{ content: ReadonlyArray<{ type: "text"; text: string }>; isError?: boolean }>;
+  /** A fake propose-MCP-server factory returning an sdk-instance-shaped config + capturing the bound handler. */
+  function fakeProposeServer(): {
+    build: (h: FakeHandler) => { type: "sdk"; name: string; instance: never };
+    handler: () => FakeHandler | undefined;
+  } {
+    let captured: FakeHandler | undefined;
+    return {
+      build: (h) => {
+        captured = h;
+        return { type: "sdk", name: "copilot", instance: {} as never };
+      },
+      handler: () => captured,
+    };
+  }
+  const noopSink = { record: async () => ok({ approvalRef: "appr-1", created: true }) };
+
+  function runnerWith(over: Record<string, unknown>) {
+    return createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => ok("tok-abc"),
+      queryFn: captureQueryFn({ answer: ["ok"], citations: [] }).fn,
+      ...over,
+    });
+  }
+
+  it("GRANTS propose for a SERVED trusted+scoped_write job with sink+factory: allow-list + copilot mcp server present", async () => {
+    const srv = fakeProposeServer();
+    const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => ok("tok-abc"),
+      queryFn: cap.fn,
+      proposeSink: noopSink,
+      buildProposeMcpServer: srv.build,
+    });
+    const r = await runner.run(proposeJob, prompt);
+    expect(isOk(r)).toBe(true);
+    const opts = cap.seen()?.options ?? {};
+    expect(opts["allowedTools"]).toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
+    expect(opts["allowedTools"]).toContain("mcp__gbrain__query"); // gbrain reads still present
+    const servers = opts["mcpServers"] as Record<string, { type?: string }>;
+    expect(servers["copilot"]?.type).toBe("sdk");
+    expect(servers[GBRAIN_MCP_SERVER_NAME]).toBeDefined();
+  });
+
+  it("a SERVED read_only job gets NO propose tool + NO copilot server (default path byte-identical)", async () => {
+    const srv = fakeProposeServer();
+    const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => ok("tok-abc"),
+      queryFn: cap.fn,
+      proposeSink: noopSink,
+      buildProposeMcpServer: srv.build,
+    });
+    await runner.run(readOnlyJob, prompt);
+    const opts = cap.seen()?.options ?? {};
+    expect(opts["allowedTools"]).not.toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
+    expect((opts["mcpServers"] as Record<string, unknown>)["copilot"]).toBeUndefined();
+  });
+
+  it("a trusted+scoped_write job but proposeSink UNDEFINED ⇒ propose NOT granted (fail-closed)", async () => {
+    const srv = fakeProposeServer();
+    const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => ok("tok-abc"),
+      queryFn: cap.fn,
+      buildProposeMcpServer: srv.build, // sink missing
+    });
+    await runner.run(proposeJob, prompt);
+    const opts = cap.seen()?.options ?? {};
+    expect(opts["allowedTools"]).not.toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
+  });
+
+  it("a trusted+scoped_write job for a NON-served workspace ⇒ tool-less, no propose", async () => {
+    const foreignProposeJob = buildCopilotAgentJob("personal-life", RUNTIME_ROUTE, {
+      contentTrust: "trusted",
+      proposeEnabled: true,
+    });
+    const srv = fakeProposeServer();
+    const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => ok("tok-abc"),
+      queryFn: cap.fn,
+      proposeSink: noopSink,
+      buildProposeMcpServer: srv.build,
+    });
+    await runner.run(foreignProposeJob, prompt);
+    const opts = cap.seen()?.options ?? {};
+    expect(opts["allowedTools"]).toEqual([]); // deny-all
+    expect(opts["mcpServers"]).toBeUndefined();
+  });
+
+  it("binds the handler to the SERVER-BOUND job.workspaceId (a model-supplied workspace can't reach the sink)", async () => {
+    const srv = fakeProposeServer();
+    let sinkWorkspace: string | undefined;
+    const spySink = {
+      record: async (input: { workspaceId: string }) => {
+        sinkWorkspace = String(input.workspaceId);
+        return ok({ approvalRef: "appr-1", created: true });
+      },
+    };
+    const runner = runnerWith({ proposeSink: spySink, buildProposeMcpServer: srv.build });
+    await runner.run(proposeJob, prompt);
+    const handler = srv.handler();
+    expect(handler).toBeDefined();
+    // The model supplies ONLY the intent (targetSystem/operation/identity/payload); workspace is NOT an intent
+    // field — it's the server-bound closure value. Invoke with valid args and assert the sink saw job.workspaceId.
+    await handler?.({
+      targetSystem: "todoist",
+      operation: "todoist.create_task",
+      identity: { title: "x" },
+      payload: {},
+    });
+    expect(sinkWorkspace).toBe("personal-business"); // bound from job.workspaceId, never the model
   });
 });
 

@@ -26,7 +26,7 @@
 // fold, and the output mapping are all PURE + unit-tested. `createAgentRuntimeCopilotSynthesis` is tested
 // over a FAKE `CopilotAgentRunner`; `createClaudeAgentCopilotRunner`'s wiring is tested with an injected
 // token + `queryFn`. The real SDK `query()` call is eval/integration-tested, not unit-tested.
-import { ok, err, isOk, failure, isToolPolicyConsistent } from "@sow/contracts";
+import { ok, err, isOk, failure, isToolPolicyConsistent, toolId } from "@sow/contracts";
 import type {
   AgentJob,
   AgentJobId,
@@ -41,11 +41,19 @@ import type {
 } from "@sow/contracts";
 import {
   CLAUDE_AGENT_SDK_RUNTIME_ID,
+  COPILOT_MCP_SERVER_NAME,
   createClaudeAgentSdkRuntime,
   createClaudeAgentSdkTransport,
   runtimeError,
 } from "@sow/providers";
-import type { AgentResult, AgentQueryFn, RuntimeError, RuntimeErrorKind } from "@sow/providers";
+import type {
+  AgentResult,
+  AgentQueryFn,
+  CopilotProposeToolHandler,
+  McpServerConfig,
+  RuntimeError,
+  RuntimeErrorKind,
+} from "@sow/providers";
 import {
   admitJob,
   copilotAgentToolPolicy,
@@ -56,6 +64,8 @@ import {
   isMutatingCopilotTool,
 } from "@sow/policy";
 import type { CandidateCopilotAnswer, CopilotSynthesisPort, RetrievedContext } from "./copilot";
+import { handleCopilotProposeToolCall } from "./copilotPropose";
+import type { CopilotProposeSink } from "./copilotPropose";
 import {
   buildCopilotUserPrompt,
   mapCompletionToCandidate,
@@ -219,6 +229,28 @@ export function resolveCopilotAgentCapability(params: {
   readonly proposeEnabled: boolean;
 }): CopilotAgentCapability {
   return params.contentTrust === "trusted" && params.proposeEnabled ? "propose" : "read_only";
+}
+
+/**
+ * Derive the trust of the Copilot agent's consumed content (C5.3 — the input to
+ * `resolveCopilotAgentCapability`). **FAIL-CLOSED INTERIM: always returns `"untrusted"`.**
+ *
+ * This is load-bearing, not cosmetic: a `propose` (scoped_write) job KEEPS the gbrain read tools, so it can
+ * fetch MORE brain content mid-run beyond the worker-retrieved seed. `contentTrust:"trusted"` is therefore
+ * sound ONLY if the ENTIRE tool-reachable surface is trusted-provenance (KnowledgeWriter/owner-governed) —
+ * a per-content check over the union of the seed AND every LIVE `mcp__gbrain__query` read. A build-time
+ * resolver called before the SDK run structurally CANNOT observe those live reads (a genuine TOCTOU), and the
+ * `RetrievedContext` seed carries NO provenance signal today. So there is no sound "trusted" verdict to give
+ * yet, and returning `"untrusted"` keeps the propose tool STRUCTURALLY uncallable on every live ask (even with
+ * `copilotProposeMode` ON) — the C1/C4 admission backstop stays behind it.
+ *
+ * C5.4 makes this real by EITHER (a) stripping the gbrain read tools from a propose job (seed-only surface ⇒
+ * build-time derivation is sound) OR (b) a read-time hook that revokes propose on the first non-KnowledgeWriter
+ * passage. Until then, DO NOT weaken this to a per-workspace or flag-only verdict — that re-opens the ING-7
+ * bypass C4 closed. Pure.
+ */
+export function deriveCopilotContentTrust(_context: RetrievedContext): CopilotContentTrust {
+  return "untrusted";
 }
 
 /**
@@ -418,11 +450,28 @@ export interface CopilotAgentRunner {
 }
 
 /**
- * The AGENTIC `CopilotSynthesisPort`. Binds the veto-cleared route (fail-closed if not Claude), builds the
- * read_only Copilot AgentJob, runs it through the injected runner, folds a runtime error to a typed failure,
- * and maps the candidate output through the grounding reconciliation. No side effects; never throws.
+ * Options for the agentic synthesis (C5.3). `proposeEnabled` mirrors the boot flag `copilotProposeMode`;
+ * `resolveContentTrust` derives the CONTENT trust from the retrieved context per ask. BOTH default fail-closed
+ * (propose OFF, trust `deriveCopilotContentTrust` ⇒ untrusted), so the DEFAULT boot path never grants propose.
  */
-export function createAgentRuntimeCopilotSynthesis(runner: CopilotAgentRunner): CopilotSynthesisPort {
+export interface AgentSynthesisOpts {
+  readonly proposeEnabled?: boolean;
+  readonly resolveContentTrust?: (context: RetrievedContext) => CopilotContentTrust;
+}
+
+/**
+ * The AGENTIC `CopilotSynthesisPort`. Binds the veto-cleared route (fail-closed if not Claude), derives the
+ * CONTENT trust from the retrieved context (C5.3), builds the Copilot AgentJob at the RESOLVER-gated capability
+ * (propose ONLY on trusted content + `proposeEnabled`; else read_only), runs it through the injected runner,
+ * folds a runtime error to a typed failure, and maps the candidate output through the grounding reconciliation.
+ * With the fail-closed defaults the job is always read_only. No side effects; never throws.
+ */
+export function createAgentRuntimeCopilotSynthesis(
+  runner: CopilotAgentRunner,
+  opts?: AgentSynthesisOpts,
+): CopilotSynthesisPort {
+  const proposeEnabled = opts?.proposeEnabled ?? false;
+  const resolveContentTrust = opts?.resolveContentTrust ?? deriveCopilotContentTrust;
   return {
     synthesize: async (
       workspaceId: string,
@@ -432,7 +481,9 @@ export function createAgentRuntimeCopilotSynthesis(runner: CopilotAgentRunner): 
     ): Promise<Result<CandidateCopilotAnswer, FailureVariant>> => {
       const runtimeRoute = toClaudeAgentRuntimeRoute(route);
       if (!isOk(runtimeRoute)) return runtimeRoute;
-      const job = buildCopilotAgentJob(workspaceId, runtimeRoute.value);
+      // Content-derived capability (C5.1/C5.3): a propose job is granted ONLY on affirmed-trusted content.
+      const contentTrust = resolveContentTrust(context);
+      const job = buildCopilotAgentJob(workspaceId, runtimeRoute.value, { contentTrust, proposeEnabled });
       // ING-7 admission (C4) BEFORE the runner — fail closed on an untrusted+mutating or impure-read_only job.
       const admitted = admitCopilotAgentJob(job);
       if (!isOk(admitted)) return admitted;
@@ -465,7 +516,22 @@ export interface ClaudeAgentCopilotRunnerDeps {
   readonly maxTurns?: number;
   /** Injectable SDK `query()` for tests; the default lazily imports the real SDK inside the transport. */
   readonly queryFn?: AgentQueryFn;
+  /**
+   * OPTIONAL (C5.3) the §9.8 propose sink. Present ⇒ a SERVED trusted+scoped_write job may hold the propose
+   * tool. Absent ⇒ propose is never granted (fail-closed defense-in-depth). Boot injects the concrete
+   * `createApprovalsProposeSink`.
+   */
+  readonly proposeSink?: CopilotProposeSink;
+  /**
+   * OPTIONAL (C5.3) factory that builds the in-process copilot MCP server from a bound tool handler (boot
+   * injects `createCopilotProposeMcpServer` from @sow/providers — keeps the worker's runtime SDK-construction
+   * out of this pure module + unit-testable). Present with `proposeSink` ⇒ propose can be granted.
+   */
+  readonly buildProposeMcpServer?: (handler: CopilotProposeToolHandler) => McpServerConfig;
 }
+
+/** The SDK MCP tool name the propose tool is surfaced as (`mcp__copilot__propose_action`). */
+export const COPILOT_PROPOSE_MCP_TOOL_NAME = copilotToolToMcpName(toolId("copilot.propose_action"));
 
 /**
  * The concrete `CopilotAgentRunner`. WS-8 by construction (parity with `createGbrainSubprocessRetrieval`):
@@ -494,8 +560,10 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
     ): Promise<Result<AgentResult, RuntimeError>> => {
       const served = String(job.workspaceId) === deps.servedWorkspaceId;
       // Only the served workspace may hold the gbrain read tool (WS-8). A non-served workspace runs tool-less.
-      let mcpServers: Record<string, GbrainHttpMcpServer> | undefined;
-      let toolNames: readonly string[] = [];
+      // `mcpServers` is widened to the SDK union so it can carry the gbrain http server AND the in-process
+      // copilot propose server together.
+      const mcpServers: Record<string, McpServerConfig> = {};
+      const toolNames: string[] = [];
       if (served) {
         // No token ⇒ no read tools ⇒ fail closed (never run the agent tool-blind or unauthenticated). The
         // loopback guarantee is TRANSITIVE: `getToken` fails closed (GBRAIN_HTTP_NON_LOOPBACK) for a
@@ -504,9 +572,30 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
         if (!isOk(token)) {
           return err(runtimeError("auth_unavailable", "gbrain MCP token unavailable", { retryable: true }));
         }
-        mcpServers = buildGbrainMcpServers(deps.gbrainMcpUrl, token.value);
-        toolNames = allowedToolNames;
+        Object.assign(mcpServers, buildGbrainMcpServers(deps.gbrainMcpUrl, token.value));
+        toolNames.push(...allowedToolNames);
       }
+      // C5.3 — PROPOSE GRANT (defense-in-depth, ALL required): the workspace is SERVED, the job is
+      // content-derived TRUSTED (not just scoped_write mode — gate on `trustLevel` too so a mode/trust drift
+      // can't grant it) with a scoped_write policy, AND both the sink + server factory are injected. The
+      // handler closure is bound to the SERVER-BOUND `job.workspaceId` (never a model value — the model
+      // supplies only the tool args). With the fail-closed `deriveCopilotContentTrust` interim this branch is
+      // never taken on a live ask; it is exercised by constructing a trusted+propose job directly (tests/eval).
+      const proposeGranted =
+        served &&
+        job.trustLevel === "trusted" &&
+        job.toolPolicy.mode === "scoped_write" &&
+        deps.proposeSink !== undefined &&
+        deps.buildProposeMcpServer !== undefined;
+      if (proposeGranted) {
+        const sink = deps.proposeSink; // narrowed by proposeGranted
+        const workspaceId = job.workspaceId; // SERVER-BOUND (WS-4)
+        const handler: CopilotProposeToolHandler = (args: unknown) =>
+          handleCopilotProposeToolCall(args, { workspaceId, sink });
+        mcpServers[COPILOT_MCP_SERVER_NAME] = deps.buildProposeMcpServer(handler);
+        toolNames.push(COPILOT_PROPOSE_MCP_TOOL_NAME);
+      }
+      const hasServers = Object.keys(mcpServers).length > 0;
       const transport = createClaudeAgentSdkTransport({
         promptBuilder: (): { prompt: string; systemPrompt: string } =>
           buildCopilotAgentPrompt(prompt.question, prompt.context),
@@ -514,7 +603,7 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
         // Empty for a non-served workspace ⇒ `buildCanUseTool([])` denies every tool (deny-all).
         allowedToolNames: toolNames,
         betas,
-        ...(mcpServers !== undefined ? { mcpServers } : {}),
+        ...(hasServers ? { mcpServers } : {}),
         ...(deps.maxTurns !== undefined ? { maxTurns: deps.maxTurns } : {}),
         ...(deps.queryFn !== undefined ? { queryFn: deps.queryFn } : {}),
       });
