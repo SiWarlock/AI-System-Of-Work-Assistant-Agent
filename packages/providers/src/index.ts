@@ -39,4 +39,5 @@ export * from "./model/lmstudio-provider";
 // ── AgentRuntimePort adapters (5.8) ──────────────────────────────────────────
 export * from "./runtime/runtime-support";
 export * from "./runtime/claude-agent-sdk-runtime";
+export * from "./runtime/claude-agent-sdk-transport";
 export * from "./runtime/hermes-runtime";
