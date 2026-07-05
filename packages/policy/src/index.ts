@@ -25,6 +25,8 @@ export * from "./egress";
 // Tool-policy mutation assessment + ING-7 / candidate-data admission gate.
 export * from "./tool-policy";
 export * from "./admission";
+// Phase-C: the Copilot tool catalog + the mutating-tool classifier that closes the ING-7 arch_gap.
+export * from "./copilot-tool-catalog";
 
 // Approval-required predicate + renderer↔worker session-auth primitive.
 export * from "./approval-policy";
