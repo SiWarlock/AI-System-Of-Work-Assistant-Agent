@@ -12,8 +12,10 @@ import {
   deriveCopilotProposedAction,
   routeCopilotProposal,
   proposeCopilotAction,
+  handleCopilotProposeToolCall,
   COPILOT_PROPOSE_APPROVAL_POLICY,
   COPILOT_PROPOSE_PRECONDITION,
+  COPILOT_PROPOSE_TOOL_NAME,
   MAX_PROPOSE_PAYLOAD_CHARS,
   type CopilotProposeIntent,
   type CopilotProposeSink,
@@ -252,6 +254,61 @@ describe("proposeCopilotAction — the full derive → route path the tool handl
     expect(isErr(r)).toBe(true);
     if (!isErr(r)) return;
     expect(r.error.cause?.code).toBe("COPILOT_PROPOSE_MALFORMED");
+    expect(f.calls()).toBe(0);
+  });
+});
+
+// ── C5.2c: handleCopilotProposeToolCall — the model-facing tool handler ──
+describe("handleCopilotProposeToolCall — the copilot.propose_action handler (fail-safe, model-facing)", () => {
+  it("names the SDK tool `propose_action` (→ mcp__copilot__propose_action)", () => {
+    expect(COPILOT_PROPOSE_TOOL_NAME).toBe("propose_action");
+  });
+
+  it("on success tells the model a PENDING approval was recorded (not applied), with no isError", async () => {
+    const f = fakeSink();
+    const res = await handleCopilotProposeToolCall(intent(), { workspaceId: WS, sink: f.sink });
+    expect(res.isError).toBeUndefined();
+    expect(f.calls()).toBe(1);
+    const text = res.content[0]?.text ?? "";
+    expect(text.toLowerCase()).toContain("pending");
+    expect(text.toLowerCase()).toMatch(/approve|approval/);
+    expect(text).toContain("appr-1"); // the opaque approval ref
+  });
+
+  it("on an idempotent re-drive reports ALREADY pending (no duplicate)", async () => {
+    const f = fakeSink({ created: false });
+    const res = await handleCopilotProposeToolCall(intent(), { workspaceId: WS, sink: f.sink });
+    expect(res.isError).toBeUndefined();
+    expect((res.content[0]?.text ?? "").toLowerCase()).toContain("already pending");
+  });
+
+  it("on a MALFORMED intent returns an error result (isError) with a bounded code; the sink is untouched", async () => {
+    const f = fakeSink();
+    const res = await handleCopilotProposeToolCall({ nope: true }, { workspaceId: WS, sink: f.sink });
+    expect(res.isError).toBe(true);
+    expect(res.content[0]?.text ?? "").toContain("COPILOT_PROPOSE_MALFORMED");
+    expect(f.calls()).toBe(0);
+  });
+
+  it("REDACTS a throwing sink — the model sees only COPILOT_PROPOSE_SINK_THREW, never the raw error", async () => {
+    const throwingSink: CopilotProposeSink = {
+      record: async () => {
+        throw new Error("db exploded: secret=hunter2");
+      },
+    };
+    const res = await handleCopilotProposeToolCall(intent(), { workspaceId: WS, sink: throwingSink });
+    expect(res.isError).toBe(true);
+    const text = res.content[0]?.text ?? "";
+    expect(text).toContain("COPILOT_PROPOSE_SINK_THREW");
+    expect(text).not.toContain("secret");
+  });
+
+  it("never throws even on a wildly malformed argument (fail-safe)", async () => {
+    const f = fakeSink();
+    for (const bad of [null, undefined, 42, "str", []]) {
+      const res = await handleCopilotProposeToolCall(bad, { workspaceId: WS, sink: f.sink });
+      expect(res.isError).toBe(true);
+    }
     expect(f.calls()).toBe(0);
   });
 });

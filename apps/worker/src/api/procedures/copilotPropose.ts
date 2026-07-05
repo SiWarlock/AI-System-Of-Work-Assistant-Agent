@@ -281,3 +281,62 @@ export async function proposeCopilotAction(params: {
   if (!isOk(derived)) return derived;
   return routeCopilotProposal({ action: derived.value, workspaceId: params.workspaceId, sink: params.sink });
 }
+
+// ── C5.2c — the copilot.propose_action tool handler (model-facing) ─────────────
+//
+// The in-process MCP tool the agent calls to propose an external write. This handler is the MODEL-FACING
+// surface: it drives the full derive→route path (`proposeCopilotAction`) over the model's UNTRUSTED raw args
+// and returns a CallToolResult-shaped result the model reads — a plain "pending approval" acknowledgement,
+// NEVER a direct write. FAIL-SAFE: `proposeCopilotAction` is fail-closed (never throws), so this never does,
+// and an error surfaces ONLY a stable cause CODE to the model (never raw content / secrets / a stack). The SDK
+// `createSdkMcpServer`/`tool` REGISTRATION (which needs a Zod input shape — the worker has no zod dep) is a
+// thin eval-gated adapter built in C5.3; THIS handler is the deterministic, unit-tested core it wraps.
+
+/** The SDK tool name — exposed to the model as `mcp__copilot__propose_action` (server "copilot"). */
+export const COPILOT_PROPOSE_TOOL_NAME = "propose_action";
+
+/** The model-facing tool description (what the agent reads to decide when/how to call it). */
+export const COPILOT_PROPOSE_TOOL_DESCRIPTION = [
+  "Propose an external write (e.g. create a task, calendar event, or doc) for the owner's approval.",
+  "This NEVER performs the write directly — it records a PENDING approval the owner must approve first.",
+  "Supply: targetSystem (one of the connected systems), operation (e.g. 'todoist.create_task'), identity",
+  "(the object's identifying fields, e.g. { title }), and payload (the write content). Do not invent a",
+  "targetSystem. Use this only when the owner explicitly asked you to act on the answer.",
+].join(" ");
+
+/** The CallToolResult-shaped result the handler returns (structurally compatible with the SDK's tool result). */
+export interface CopilotProposeToolResult {
+  readonly content: ReadonlyArray<{ readonly type: "text"; readonly text: string }>;
+  readonly isError?: boolean;
+}
+
+function toolText(text: string, isError?: boolean): CopilotProposeToolResult {
+  return isError === true
+    ? { content: [{ type: "text", text }], isError: true }
+    : { content: [{ type: "text", text }] };
+}
+
+/**
+ * Handle a `copilot.propose_action` tool call: drive the full derive→route path over the model's UNTRUSTED raw
+ * args, and return a model-facing result. On success the model is told a PENDING approval was recorded (its
+ * opaque ref) and that nothing is applied until the owner approves; an idempotent re-drive reports "already
+ * pending" (no duplicate). On failure the model sees ONLY a bounded cause CODE (never raw content). Fail-safe —
+ * `proposeCopilotAction` never throws, so this never does. `workspaceId` + `sink` are supplied by the runner
+ * (C5.3) from the SERVER-BOUND agent job — never the model.
+ */
+export async function handleCopilotProposeToolCall(
+  rawArgs: unknown,
+  deps: { readonly workspaceId: WorkspaceId; readonly sink: CopilotProposeSink },
+): Promise<CopilotProposeToolResult> {
+  const r = await proposeCopilotAction({ intent: rawArgs, workspaceId: deps.workspaceId, sink: deps.sink });
+  if (isOk(r)) {
+    const { approvalRef, created } = r.value;
+    return toolText(
+      created
+        ? `Recorded a PENDING approval (${approvalRef}). Nothing has been changed — the owner must approve it in the Approvals inbox before it is applied.`
+        : `That proposal is ALREADY pending approval (${approvalRef}) — no duplicate was created. The owner must approve it before it is applied.`,
+    );
+  }
+  const code = r.error.cause?.code ?? r.error.kind;
+  return toolText(`Could not record the proposal (${code}). No action was taken.`, true);
+}
