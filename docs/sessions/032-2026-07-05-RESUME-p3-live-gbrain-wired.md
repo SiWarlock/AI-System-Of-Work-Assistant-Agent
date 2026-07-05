@@ -1,6 +1,6 @@
 # RESUME HANDOFF — P3-live (wire real GBrain retrieval into the worker)
 
-> **PROSPECTIVE handoff** for the next session (post-compaction). Predecessor: `031-2026-07-05-real-copilot-flag-flip-gbrain-eval.md`.
+> **PROSPECTIVE handoff** for the next session (post-compaction). Predecessor: `031-2026-07-05-real-copilot-flag-flip-gbrain-eval.md`. **Successor: `033-2026-07-05-p3-live-gbrain-subprocess-retrieval.md` (P3-live BUILT — subprocess transport wired behind a flag; PGlite single-connection finding).**
 > Everything CODE is DONE + pushed to `origin/main` at **HEAD `9cc0ee1`**. The gbrain SETUP was fixed + seeded this session (outside git). NEXT = **P3-live**: wire real gbrain retrieval into the worker. Read the memory `sow-copilot-real-model-direction` first.
 
 ---
