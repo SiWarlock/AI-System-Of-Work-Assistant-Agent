@@ -1,0 +1,407 @@
+// §9.6 / §7 — Phase-C C3: the AGENTIC Copilot synthesis adapter (worker side).
+//
+// A SECOND implementation of `CopilotSynthesisPort` (from ./copilot) — the sibling of the tool-LESS
+// `createClaudeCopilotSynthesis`. Instead of a one-shot completion, it drives the AgentRuntimePort
+// (`createClaudeAgentSdkRuntime` + the C2 `createClaudeAgentSdkTransport`) with the Copilot's READ tools,
+// so the model can search this workspace's brain (the gbrain `serve --http` MCP endpoint from #2) while it
+// answers. It stays inside every existing gate:
+//   - the VETO-CLEARED `route` is BOUND, never re-selected (`toClaudeAgentRuntimeRoute` only maps the
+//     provider→runtime discriminant; a non-Claude route fails closed — so the egress veto can't be made
+//     advisory). The route reaching here is the same one `decideCopilotEgress` cleared for cloud egress.
+//   - the AgentJob is READ_ONLY over the C1 catalog (`copilotReadToolPolicy`) — no mutating tool, ING-7-pure.
+//     C4 wires the admission gate (`admitJob(job, isMutatingCopilotTool)` + `copilotReadOnlyPolicyIsPure`)
+//     for the untrusted-content case; C3 already builds the job read-only so the trusted-question path is
+//     safe today.
+//   - the model's `candidateOutput` flows through the SAME grounding reconciliation the completion path uses
+//     (`mapCompletionToCandidate`): a hallucinated citationId is dropped, the authoritative retrieved title
+//     wins. Downstream, `answerCopilotQuestion`'s `toUiSafeCopilotAnswer` gate still re-validates the shape.
+//
+// GROUNDING/CITATION SCOPE (C3 limitation, tracked to C6/eval): citations reconcile ONLY against the
+// WORKER-retrieved `context.sources`. Tool-discovered passages inform the model's answer but are NOT yet
+// independently citable — so the agent is instructed to cite only the SUPPLIED passages. Folding a run's
+// tool-retrieved sources into the citable set is a later refinement (needs the tool-result capture).
+//
+// TDD split: the route mapping, the ToolId→MCP-name mapping, the prompt builder, the job build, the error
+// fold, and the output mapping are all PURE + unit-tested. `createAgentRuntimeCopilotSynthesis` is tested
+// over a FAKE `CopilotAgentRunner`; `createClaudeAgentCopilotRunner`'s wiring is tested with an injected
+// token + `queryFn`. The real SDK `query()` call is eval/integration-tested, not unit-tested.
+import { ok, err, isOk, failure } from "@sow/contracts";
+import type {
+  AgentJob,
+  AgentJobId,
+  Capability,
+  FailureVariant,
+  FailureVariantKind,
+  ProviderRoute,
+  Result,
+  ToolId,
+  WorkflowId,
+  WorkspaceId,
+} from "@sow/contracts";
+import {
+  CLAUDE_AGENT_SDK_RUNTIME_ID,
+  createClaudeAgentSdkRuntime,
+  createClaudeAgentSdkTransport,
+  runtimeError,
+} from "@sow/providers";
+import type { AgentResult, AgentQueryFn, RuntimeError, RuntimeErrorKind } from "@sow/providers";
+import { copilotReadToolIds, copilotReadToolPolicy } from "@sow/policy";
+import type { CandidateCopilotAnswer, CopilotSynthesisPort, RetrievedContext } from "./copilot";
+import {
+  buildCopilotUserPrompt,
+  mapCompletionToCandidate,
+  COPILOT_OUTPUT_SCHEMA,
+  DEFAULT_COPILOT_BETAS,
+} from "./copilotClaudeSynthesis";
+
+// ── the C1 ToolId → SDK MCP tool-name mapping ─────────────────────────────────
+//
+// The Claude Agent SDK exposes an MCP server's tools under `mcp__<server>__<tool>`. C1's catalog uses dotted
+// ids (`gbrain.search`, `vault.read`, …). This maps one to the other. The ONE non-identity case: gbrain's
+// semantic-search MCP tool is named `query` (proven live in #2), so `gbrain.search` → `mcp__gbrain__query`.
+// A mismatch here is FAIL-SAFE, not silent: `buildCanUseTool` (C2) denies any tool name NOT in the allow
+// list, so a wrong/absent mapping denies the tool (deny-all) rather than opening an ungoverned one.
+
+/** The SDK MCP server key for the workspace brain (the gbrain `serve --http` endpoint). */
+export const GBRAIN_MCP_SERVER_NAME = "gbrain" as const;
+
+/** Map a C1 dotted ToolId to its SDK MCP tool name (`mcp__<server>__<tool>`). Pure. */
+export function copilotToolToMcpName(id: ToolId): string {
+  const raw = String(id);
+  const dot = raw.indexOf(".");
+  const server = dot === -1 ? raw : raw.slice(0, dot);
+  const op = dot === -1 ? "" : raw.slice(dot + 1);
+  // gbrain's semantic-search MCP tool is `query` (the one gbrain MCP tool proven live in #2).
+  const tool = server === "gbrain" && op === "search" ? "query" : op;
+  return `mcp__${server}__${tool}`;
+}
+
+/** The read-only Copilot agent's SDK allow-list — the whole C1 read catalog mapped to MCP names. Pure. */
+export function copilotReadToolMcpNames(): string[] {
+  return copilotReadToolIds().map(copilotToolToMcpName);
+}
+
+/**
+ * The GBRAIN-backed subset of the read allow-list — the tools the wired gbrain `serve --http` MCP server
+ * actually serves. `vault.read` is EXCLUDED until a vault MCP server is wired: allow-listing a tool for an
+ * absent server is inert under `canUseTool` deny-by-default, but the runner's allow-list should match the
+ * servers it configures (no phantom entries). Pure.
+ */
+export function copilotGbrainReadToolMcpNames(): string[] {
+  return copilotReadToolIds()
+    .filter((t) => String(t).startsWith("gbrain."))
+    .map(copilotToolToMcpName);
+}
+
+// ── the gbrain http MCP server config ─────────────────────────────────────────
+
+/** The MCP endpoint under a `gbrain serve --http` base URL (tolerates a trailing slash). Pure. */
+export function gbrainMcpEndpoint(baseUrl: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/mcp`;
+}
+
+/** One SDK http-MCP server entry (kept structural so the worker needs no direct SDK type dep). */
+export interface GbrainHttpMcpServer {
+  readonly type: "http";
+  readonly url: string;
+  readonly headers: Record<string, string>;
+}
+
+/**
+ * Build the SDK `mcpServers` map for the workspace brain: an http MCP server at `mcpUrl`, authenticated with
+ * the bearer token from the #2 grant. Loopback-only in practice (the token provider guards the URL). Pure.
+ */
+export function buildGbrainMcpServers(
+  mcpUrl: string,
+  bearerToken: string,
+): Record<string, GbrainHttpMcpServer> {
+  return {
+    [GBRAIN_MCP_SERVER_NAME]: {
+      type: "http",
+      url: mcpUrl,
+      headers: { Authorization: `Bearer ${bearerToken}` },
+    },
+  };
+}
+
+// ── route mapping (BIND the veto-cleared route; never re-select) ──────────────
+
+/**
+ * Map the veto-CLEARED Claude PROVIDER route to a `claude-agent-sdk` RUNTIME route (which
+ * `buildClaudeAgentInvocation` requires). Fail-closed defense-in-depth (mirrors the completion adapter's
+ * guard): the agent egresses raw workspace content to Anthropic's cloud, so ONLY a `provider:"claude"` route
+ * is accepted — anything else reaching here is a wiring error and is rejected BEFORE any egress, so the
+ * upstream notice can't name a processor the content never reached. The model/endpoint/egressClass are
+ * BOUND from the passed route (never substituted) — only the discriminant flips provider→runtime, so the
+ * egress veto stays authoritative over exactly the route that egresses. Pure.
+ *
+ * NOTE (endpoint binding, defense-in-depth): the Claude Agent SDK egresses to its OWN configured Anthropic
+ * endpoint (`ANTHROPIC_BASE_URL` / api.anthropic.com), not `route.endpoint` — the SDK `query()` options take
+ * no per-call base URL. So the operative destination binding on this path is PROCESSOR IDENTITY (only a
+ * `provider:"claude"` cloud route is accepted → the SDK reaches Anthropic cloud), exactly as the sibling
+ * completion adapter's guard is processor-identity too. `route.endpoint` is carried for the invocation/veto
+ * record; asserting the SDK base URL equals it is a deferred hardening (operator-env redirection is not a
+ * user-reachable path).
+ */
+export function toClaudeAgentRuntimeRoute(route: ProviderRoute): Result<ProviderRoute, FailureVariant> {
+  if (!("provider" in route) || route.provider !== "claude") {
+    return err(
+      failure("validation_rejected", "copilot agent route is not a Claude provider route", {
+        cause: { code: "COPILOT_ROUTE_NOT_CLAUDE" },
+      }),
+    );
+  }
+  return ok({
+    runtime: CLAUDE_AGENT_SDK_RUNTIME_ID,
+    model: route.model,
+    endpoint: route.endpoint,
+    egressClass: route.egressClass,
+  });
+}
+
+// ── the Copilot AgentJob (read_only over the C1 catalog) ─────────────────────
+
+/**
+ * A conservative per-answer cost ceiling (USD) for the AGENTIC path. Higher than the single-shot completion
+ * default (`DEFAULT_COPILOT_MAX_COST_USD` = 0.25) because an agent run is multi-turn (bounded at 8 turns) and
+ * may issue several tool searches — but still bounded so a pathological/injected question can't run away. It
+ * binds server-side: `buildClaudeAgentInvocation` carries it → `buildAgentQueryOptions` emits `maxBudgetUsd`,
+ * and an over-cap run terminates with a folded (non-silent) `error_max_budget_usd`.
+ */
+export const DEFAULT_COPILOT_AGENT_MAX_COST_USD = 0.5;
+
+/**
+ * Build the Copilot's READ_ONLY AgentJob over a `claude-agent-sdk` runtime route. The tool policy is the C1
+ * read catalog (`copilotReadToolPolicy` — no mutating tool, `copilotReadOnlyPolicyIsPure` holds), so even
+ * before C4 wires ING-7 admission the job structurally cannot hold a write tool. Carries raw content (it
+ * reads workspace notes) and is `trusted` (the QUESTION is trusted user input; C4 marks the job `untrusted`
+ * for the imported-content case). Sets `maxCostUsd` so the run has a server-side spend cap. Pure.
+ *
+ * NOTE (idempotency key): the key is static per workspace because this path drives `runtime.runJob` DIRECTLY
+ * (it does NOT go through the Broker's replay ledger today), so the key is inert — no replay collision. If
+ * this job is ever routed through the Broker, scope the key to a question hash first, or every subsequent
+ * question in a workspace would short-circuit to the first cached answer (tracked follow-up).
+ */
+export function buildCopilotAgentJob(workspaceId: string, runtimeRoute: ProviderRoute): AgentJob {
+  return {
+    id: `job-copilot-agent-${workspaceId}` as AgentJobId,
+    workflowRunId: `wf-copilot-agent-${workspaceId}` as WorkflowId,
+    workspaceId: workspaceId as WorkspaceId,
+    capability: "copilot.answer" as Capability,
+    contextRefs: [{ refKind: "source", ref: "ref:copilot" }],
+    outputSchemaId: "sow:ui-safe-copilot-answer",
+    toolPolicy: copilotReadToolPolicy(),
+    providerRoute: runtimeRoute,
+    trustLevel: "trusted",
+    carriesRawContent: true,
+    maxRuntimeSeconds: 300,
+    maxCostUsd: DEFAULT_COPILOT_AGENT_MAX_COST_USD,
+    idempotencyKey: `idem-copilot-agent-${workspaceId}`,
+  };
+}
+
+// ── the governed agentic prompt ───────────────────────────────────────────────
+
+/**
+ * The governed agentic system prompt. Same grounding contract as the completion path (cite by citationId,
+ * no invention/REQ-F-017), plus: the read-only tools MAY be used to gather more context, but the tools are
+ * READ-ONLY (never propose a write) and citations are limited to the SUPPLIED passages (the C3 citation
+ * scope — see the module header).
+ */
+export const COPILOT_AGENT_SYSTEM_PROMPT = [
+  "You are the System of Work Copilot, a governed READ-ONLY agent answering a question about ONE workspace.",
+  "You are given citationId-tagged context passages. You MAY call the read-only gbrain tools to search this",
+  "workspace's brain for additional context that informs your answer.",
+  "",
+  "Rules:",
+  "- Ground every statement in the supplied passages. Cite each passage you rely on by its exact [citationId]",
+  "  tag, and cite ONLY passages that were supplied to you in this message.",
+  "- Do NOT invent, assume, or infer any fact — an owner, date, status, figure, or name — that the passages",
+  "  do not state. If the answer is not in the context, say you could not find it and return no citations.",
+  "- The tools are READ-ONLY: you may not create, edit, or delete anything, and you must never propose a write.",
+  "- Never include secrets, credentials, access tokens, or raw file paths in your answer.",
+  '- Reply with the structured object { "answer": string[], "citations": [{ "citationId", "title" }] }.',
+].join("\n");
+
+/** Build the run's prompt + system prompt from the question + retrieved context. Pure. */
+export function buildCopilotAgentPrompt(
+  question: string,
+  context: RetrievedContext,
+): { prompt: string; systemPrompt: string } {
+  return { prompt: buildCopilotUserPrompt(question, context), systemPrompt: COPILOT_AGENT_SYSTEM_PROMPT };
+}
+
+// ── error fold + output mapping ───────────────────────────────────────────────
+
+/** kind → (FailureVariant kind, stable cause code). Exhaustive over RuntimeErrorKind. */
+const RUNTIME_ERROR_FOLD: Readonly<
+  Record<RuntimeErrorKind, { readonly kind: FailureVariantKind; readonly code: string }>
+> = {
+  invalid_job: { kind: "validation_rejected", code: "COPILOT_AGENT_INVALID_JOB" },
+  auth_unavailable: { kind: "provider_failed", code: "COPILOT_AGENT_AUTH" },
+  runtime_unavailable: { kind: "provider_failed", code: "COPILOT_AGENT_UNAVAILABLE" },
+  tool_policy_violation: { kind: "validation_rejected", code: "COPILOT_AGENT_TOOL_VIOLATION" },
+  transport_error: { kind: "provider_failed", code: "COPILOT_AGENT_TRANSPORT" },
+  timeout: { kind: "provider_failed", code: "COPILOT_AGENT_TIMEOUT" },
+  cancelled: { kind: "provider_failed", code: "COPILOT_AGENT_CANCELLED" },
+  malformed_output: { kind: "schema_rejected", code: "COPILOT_AGENT_MALFORMED" },
+};
+
+/**
+ * Fold a `RuntimeError` into a `FailureVariant`. Redaction-safe BY CONSTRUCTION: `error.message` is
+ * runtime/SDK-origin and MAY carry prompt/content fragments (§16 / safety 7), so it is DROPPED — the variant
+ * carries only the enum `kind` and a stable UPPER_SNAKE cause code. Preserves `retryable`. Pure.
+ */
+export function foldRuntimeError(error: RuntimeError): FailureVariant {
+  const mapped = RUNTIME_ERROR_FOLD[error.kind];
+  return failure(mapped.kind, `copilot agent synthesis failed: ${error.kind}`, {
+    retryable: error.retryable,
+    cause: { code: mapped.code },
+  });
+}
+
+/**
+ * Map an `AgentResult` to a `CandidateCopilotAnswer`. A cancelled run carries no committable output → fail
+ * closed. A completed run's `candidateOutput` flows through the SAME `mapCompletionToCandidate` grounding
+ * reconciliation the completion path uses (hallucinated cites dropped, authoritative titles win, malformed
+ * shape → schema_rejected). Pure.
+ */
+export function mapAgentResultToCandidate(
+  result: AgentResult,
+  context: RetrievedContext,
+): Result<CandidateCopilotAnswer, FailureVariant> {
+  if (result.status === "cancelled") {
+    return err(
+      failure("provider_failed", "copilot agent run was cancelled", {
+        cause: { code: "COPILOT_AGENT_CANCELLED" },
+      }),
+    );
+  }
+  return mapCompletionToCandidate(result.candidateOutput, context);
+}
+
+// ── the runner seam + the agentic CopilotSynthesisPort ───────────────────────
+
+/** The per-call prompt material (the invocation carries refs, not text — see C2). */
+export interface CopilotPromptContext {
+  readonly question: string;
+  readonly context: RetrievedContext;
+}
+
+/**
+ * The seam between the pure synthesis adapter and the real SDK run. `run` builds the transport (with a
+ * prompt builder closed over THIS call's `prompt`) + the runtime, and drives the job. A fake in tests; the
+ * concrete `createClaudeAgentCopilotRunner` below does the token + SDK I/O. Returns a typed Result — never
+ * throws.
+ */
+export interface CopilotAgentRunner {
+  run(
+    job: AgentJob,
+    prompt: CopilotPromptContext,
+    signal?: AbortSignal,
+  ): Promise<Result<AgentResult, RuntimeError>>;
+}
+
+/**
+ * The AGENTIC `CopilotSynthesisPort`. Binds the veto-cleared route (fail-closed if not Claude), builds the
+ * read_only Copilot AgentJob, runs it through the injected runner, folds a runtime error to a typed failure,
+ * and maps the candidate output through the grounding reconciliation. No side effects; never throws.
+ */
+export function createAgentRuntimeCopilotSynthesis(runner: CopilotAgentRunner): CopilotSynthesisPort {
+  return {
+    synthesize: async (
+      workspaceId: string,
+      question: string,
+      context: RetrievedContext,
+      route: ProviderRoute,
+    ): Promise<Result<CandidateCopilotAnswer, FailureVariant>> => {
+      const runtimeRoute = toClaudeAgentRuntimeRoute(route);
+      if (!isOk(runtimeRoute)) return runtimeRoute;
+      const job = buildCopilotAgentJob(workspaceId, runtimeRoute.value);
+      const run = await runner.run(job, { question, context });
+      if (!isOk(run)) return err(foldRuntimeError(run.error));
+      return mapAgentResultToCandidate(run.value, context);
+    },
+  };
+}
+
+// ── the concrete runner (token → mcpServers → transport → runtime) ───────────
+
+/** Construction deps for the real runner. `getToken` is the #2 grant token seam; `queryFn` injectable for tests. */
+export interface ClaudeAgentCopilotRunnerDeps {
+  /**
+   * The ONE workspace whose brain the gbrain MCP endpoint serves (WS-8 anchor — mirrors the retrieval seam's
+   * `servedWorkspaceId`). ONLY a job for this workspace gets the gbrain read tool; every other workspace runs
+   * TOOL-LESS (see `run`), so the agent path is never a second cross-workspace read around that guard.
+   */
+  readonly servedWorkspaceId: string;
+  /** The gbrain `serve --http` MCP endpoint (e.g. `gbrainMcpEndpoint(baseUrl)`). */
+  readonly gbrainMcpUrl: string;
+  /** Mint/return a bearer token for the gbrain MCP endpoint (the #2 `GbrainTokenProvider.getToken`). */
+  readonly getToken: () => Promise<Result<string, FailureVariant>>;
+  /** SDK MCP allow-list for the SERVED workspace; defaults to `copilotGbrainReadToolMcpNames()` (gbrain-only). */
+  readonly allowedToolNames?: readonly string[];
+  /** SDK beta flags; defaults to `DEFAULT_COPILOT_BETAS` (the 1M-context window). */
+  readonly betas?: readonly string[];
+  /** Bound on agentic turns (defaults to the transport's own default). */
+  readonly maxTurns?: number;
+  /** Injectable SDK `query()` for tests; the default lazily imports the real SDK inside the transport. */
+  readonly queryFn?: AgentQueryFn;
+}
+
+/**
+ * The concrete `CopilotAgentRunner`. WS-8 by construction (parity with `createGbrainSubprocessRetrieval`):
+ * ONLY a job for `servedWorkspaceId` gets the gbrain read tool — for it, fetch a fresh MCP token (fail closed
+ * if unavailable — no SDK call without auth), build the gbrain http MCP server + gbrain read allow-list. Every
+ * OTHER workspace runs TOOL-LESS (no MCP server, empty allow-list ⇒ `canUseTool` deny-all) over its
+ * fixture-empty context, so the agent can never query another workspace's brain. The C2 transport is built
+ * with a prompt builder for THIS call, wrapped in the AgentRuntimePort, and drives the job. The token fetch +
+ * real SDK `query()` are the eval/integration boundary; the wiring is unit-tested with an injected token +
+ * queryFn.
+ *
+ * RESIDUAL (WS-8, shared + pre-existing, escalated as a Finding — NOT C3-specific): the served brain is a
+ * single COMBINED store; a query against it is not yet filtered to the served workspace's own content. This is
+ * the SAME gap the retrieval seam has (`gbrain call query` / the http exec pass no workspace filter) — safe
+ * today because the seeded brain holds only the served workspace's content, but it needs per-workspace query
+ * filtering or a partitioned brain before the store grows to hold multiple workspaces.
+ */
+export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDeps): CopilotAgentRunner {
+  const allowedToolNames = deps.allowedToolNames ?? copilotGbrainReadToolMcpNames();
+  const betas = deps.betas ?? DEFAULT_COPILOT_BETAS;
+  return {
+    run: async (
+      job: AgentJob,
+      prompt: CopilotPromptContext,
+      signal?: AbortSignal,
+    ): Promise<Result<AgentResult, RuntimeError>> => {
+      const served = String(job.workspaceId) === deps.servedWorkspaceId;
+      // Only the served workspace may hold the gbrain read tool (WS-8). A non-served workspace runs tool-less.
+      let mcpServers: Record<string, GbrainHttpMcpServer> | undefined;
+      let toolNames: readonly string[] = [];
+      if (served) {
+        // No token ⇒ no read tools ⇒ fail closed (never run the agent tool-blind or unauthenticated). The
+        // loopback guarantee is TRANSITIVE: `getToken` fails closed (GBRAIN_HTTP_NON_LOOPBACK) for a
+        // non-loopback URL, so the bearer token + workspace content never egress off-box.
+        const token = await deps.getToken();
+        if (!isOk(token)) {
+          return err(runtimeError("auth_unavailable", "gbrain MCP token unavailable", { retryable: true }));
+        }
+        mcpServers = buildGbrainMcpServers(deps.gbrainMcpUrl, token.value);
+        toolNames = allowedToolNames;
+      }
+      const transport = createClaudeAgentSdkTransport({
+        promptBuilder: (): { prompt: string; systemPrompt: string } =>
+          buildCopilotAgentPrompt(prompt.question, prompt.context),
+        outputSchema: COPILOT_OUTPUT_SCHEMA,
+        // Empty for a non-served workspace ⇒ `buildCanUseTool([])` denies every tool (deny-all).
+        allowedToolNames: toolNames,
+        betas,
+        ...(mcpServers !== undefined ? { mcpServers } : {}),
+        ...(deps.maxTurns !== undefined ? { maxTurns: deps.maxTurns } : {}),
+        ...(deps.queryFn !== undefined ? { queryFn: deps.queryFn } : {}),
+      });
+      const runtime = createClaudeAgentSdkRuntime(transport);
+      return runtime.runJob(job, signal);
+    },
+  };
+}

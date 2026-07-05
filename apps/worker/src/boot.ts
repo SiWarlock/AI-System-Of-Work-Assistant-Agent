@@ -66,13 +66,23 @@ import type {
 } from "./api/procedures/queries";
 import { buildCopilotDeps, resolveCopilotWorkspaces } from "./api/procedures/copilotClaudeSynthesis";
 import type { CopilotWorkspace } from "./api/procedures/copilotClaudeSynthesis";
-import { createGbrainCliExec } from "./api/procedures/copilotGbrainSubprocess";
+import {
+  createGbrainCliExec,
+  DEFAULT_GBRAIN_COPILOT_WORKSPACE,
+} from "./api/procedures/copilotGbrainSubprocess";
 import type { GbrainQueryExec } from "./api/procedures/copilotGbrainSubprocess";
 import {
   createGbrainHttpExec,
   createGbrainDcrTokenProvider,
   DEFAULT_GBRAIN_HTTP_URL,
 } from "./api/procedures/copilotGbrainHttp";
+import type { GbrainTokenProvider } from "./api/procedures/copilotGbrainHttp";
+import {
+  createAgentRuntimeCopilotSynthesis,
+  createClaudeAgentCopilotRunner,
+  gbrainMcpEndpoint,
+} from "./api/procedures/copilotAgentSynthesis";
+import type { CopilotSynthesisPort } from "./api/procedures/copilot";
 import { createClaudeSubscriptionCompletion } from "@sow/providers";
 import type { SystemHealthQueryPort, UiSafeEgressStatus } from "./api/procedures/systemHealth";
 import type {
@@ -201,6 +211,16 @@ export interface BootConfig extends BackendsConfig {
   readonly copilotGbrainTransport?: "subprocess" | "http";
   /** The `gbrain serve --http` base URL for the "http" transport; defaults to DEFAULT_GBRAIN_HTTP_URL. */
   readonly copilotGbrainHttpUrl?: string;
+  /**
+   * The AGENTIC Copilot (Phase-C C3 — OFF by default; requires `copilotRealModel` too). When true, Copilot
+   * synthesis runs the model as a governed READ-ONLY AGENT over the AgentRuntimePort (Claude Agent SDK) with
+   * the gbrain `serve --http` MCP endpoint as its read-tool source — so the model can SEARCH this workspace's
+   * brain while it answers, instead of a one-shot tool-less completion. Still bound to the veto-cleared route
+   * + the read_only tool policy + the same grounding reconciliation. Needs `gbrain serve --http --enable-dcr`
+   * reachable at `copilotGbrainHttpUrl` (the MCP endpoint is `${base}/mcp`; auth via DCR). No effect when
+   * `copilotRealModel` is off. Dormant unless a serve is running — flip only alongside one.
+   */
+  readonly copilotAgentMode?: boolean;
   /**
    * Explicit Copilot workspace set (id + type). Decoupled from `devProvision` (which is SURFACE data).
    * When omitted: devProvision-derived if present, else — on the real path — the 3 well-known scopes
@@ -355,17 +375,45 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // a genuine LOCAL route (nothing egresses; no notice). The whole real-vs-interim decision lives in the
   // unit-tested `buildCopilotDeps`; the subscription client is constructed only on the real path.
   //
+  // ONE shared DCR token provider per `gbrain serve --http` process: both the "http" retrieval exec and the
+  // agent-mode MCP grant read the SAME serve, so they share a single OAuth client + token cache/single-flight
+  // (never two independent DCR self-registrations against one server). Memoized — constructed on first use,
+  // only when a gbrain-http path is actually taken (constructing it does no I/O; registration is on getToken).
+  const gbrainHttpBaseUrl = config.copilotGbrainHttpUrl ?? DEFAULT_GBRAIN_HTTP_URL;
+  let memoTokenProvider: GbrainTokenProvider | undefined;
+  const sharedGbrainTokenProvider = (): GbrainTokenProvider => {
+    memoTokenProvider ??= createGbrainDcrTokenProvider({ baseUrl: gbrainHttpBaseUrl });
+    return memoTokenProvider;
+  };
+
   // The gbrain read seam (#2): OFF ⇒ fixture stub; ON ⇒ the "http" MCP-over-HTTP grant path (default via
   // DCR self-registration; coexists with a running serve) OR the subprocess CLI. A factory so the chosen
   // transport is constructed only on the gbrain path.
   const gbrainExecFactory: (() => GbrainQueryExec) | undefined =
     config.copilotGbrainRetrieval === true
       ? config.copilotGbrainTransport === "http"
-        ? (): GbrainQueryExec => {
-            const baseUrl = config.copilotGbrainHttpUrl ?? DEFAULT_GBRAIN_HTTP_URL;
-            return createGbrainHttpExec({ baseUrl, tokenProvider: createGbrainDcrTokenProvider({ baseUrl }) });
-          }
+        ? (): GbrainQueryExec =>
+            createGbrainHttpExec({ baseUrl: gbrainHttpBaseUrl, tokenProvider: sharedGbrainTokenProvider() })
         : (): GbrainQueryExec => createGbrainCliExec()
+      : undefined;
+
+  // The AGENTIC Copilot synthesis (C3): OFF by default. ON ⇒ the model runs as a governed READ-ONLY agent
+  // over the AgentRuntimePort with the gbrain `serve --http` MCP endpoint as its read-tool source (auth via
+  // the shared #2 DCR token seam). A factory so the runtime/transport is constructed ONLY when the agent path
+  // is taken; absent ⇒ the tool-less completion client (the default real path) is unchanged. The runner is
+  // bound to the served workspace (WS-8): only that workspace's ask gets the gbrain tool; others run tool-less.
+  const agentSynthesisFactory: (() => CopilotSynthesisPort) | undefined =
+    config.copilotRealModel === true && config.copilotAgentMode === true
+      ? (): CopilotSynthesisPort => {
+          const tokenProvider = sharedGbrainTokenProvider();
+          const runner = createClaudeAgentCopilotRunner({
+            servedWorkspaceId: config.copilotGbrainWorkspaceId ?? DEFAULT_GBRAIN_COPILOT_WORKSPACE,
+            gbrainMcpUrl: gbrainMcpEndpoint(gbrainHttpBaseUrl),
+            getToken: () => tokenProvider.getToken(false),
+            ...(config.copilotBetas !== undefined ? { betas: config.copilotBetas } : {}),
+          });
+          return createAgentRuntimeCopilotSynthesis(runner);
+        }
       : undefined;
 
   // Workspace set is resolved DECOUPLED from devProvision (which is SURFACE data, not Copilot reachability):
@@ -388,6 +436,8 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     ...(config.copilotGbrainWorkspaceId !== undefined
       ? { gbrainWorkspaceId: config.copilotGbrainWorkspaceId }
       : {}),
+    // C3: the agentic synthesis factory (only built when the flag is on) REPLACES the completion synthesis.
+    ...(agentSynthesisFactory !== undefined ? { agentSynthesis: agentSynthesisFactory } : {}),
   });
 
   // 3) The real loopback transport (HTTP + WS) behind the injected token + allowlist.

@@ -417,6 +417,15 @@ export interface CopilotDepsOptions {
   readonly gbrainExec?: () => GbrainQueryExec;
   /** The workspace served from the local brain; defaults to DEFAULT_GBRAIN_COPILOT_WORKSPACE. */
   readonly gbrainWorkspaceId?: string;
+  /**
+   * OPTIONAL (Phase-C C3) factory for the AGENTIC synthesis port (`createAgentRuntimeCopilotSynthesis` over
+   * the AgentRuntimePort + read tools). When present AND `realCopilot` is on, it REPLACES the tool-less
+   * completion synthesis — the model can search this workspace's brain while it answers, still bound to the
+   * veto-cleared route + the read_only tool policy + the same grounding reconciliation. Absent ⇒ the
+   * completion path (the default real path) is unchanged. A FACTORY so the agent runtime/transport is
+   * constructed only when the agent path is actually taken. Boot builds it from `copilotAgentMode`.
+   */
+  readonly agentSynthesis?: () => CopilotSynthesisPort;
 }
 
 /**
@@ -451,8 +460,15 @@ export function buildCopilotDeps(opts: CopilotDepsOptions): CopilotDeps {
       : fixtureRetrieval;
   return {
     retrieval,
+    // Off the real path: the deterministic stub (nothing egresses; no SDK client / agent runtime built). On
+    // the real path: the AGENTIC synthesis (C3) when a factory is injected — the model searches the brain via
+    // read tools — else the tool-less completion client. Both real variants bind the veto-cleared route +
+    // reconcile citations against the retrieved set. Each factory is invoked at most once, ONLY on the real
+    // path (so neither the SDK client nor the agent runtime is constructed when the flag is off).
     synthesis: opts.realCopilot
-      ? createClaudeCopilotSynthesis(opts.completion(), { betas: opts.betas })
+      ? opts.agentSynthesis !== undefined
+        ? opts.agentSynthesis()
+        : createClaudeCopilotSynthesis(opts.completion(), { betas: opts.betas })
       : createStubSynthesis(),
     // Authoritative posture resolved by workspaceId (server-side).
     workspacePosture: createLocalWorkspacePosture(postures),
