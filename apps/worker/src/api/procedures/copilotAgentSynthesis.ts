@@ -232,25 +232,26 @@ export function resolveCopilotAgentCapability(params: {
 }
 
 /**
- * Derive the trust of the Copilot agent's consumed content (C5.3 — the input to
- * `resolveCopilotAgentCapability`). **FAIL-CLOSED INTERIM: always returns `"untrusted"`.**
+ * Derive the trust of the Copilot agent's consumed content (C5.4) — the input to
+ * `resolveCopilotAgentCapability`. **PER-CONTENT + FAIL-CLOSED: `"trusted"` IFF the retrieval is non-empty
+ * AND EVERY source is explicitly `knowledge_writer`-provenance; otherwise `"untrusted"`.** An empty retrieval,
+ * or a SINGLE source of `imported`/`unknown`/absent provenance, collapses the whole verdict to untrusted — so
+ * a prompt-injected/untrusted passage in the seed can never make the agent propose-capable (safety rule 6).
  *
- * This is load-bearing, not cosmetic: a `propose` (scoped_write) job KEEPS the gbrain read tools, so it can
- * fetch MORE brain content mid-run beyond the worker-retrieved seed. `contentTrust:"trusted"` is therefore
- * sound ONLY if the ENTIRE tool-reachable surface is trusted-provenance (KnowledgeWriter/owner-governed) —
- * a per-content check over the union of the seed AND every LIVE `mcp__gbrain__query` read. A build-time
- * resolver called before the SDK run structurally CANNOT observe those live reads (a genuine TOCTOU), and the
- * `RetrievedContext` seed carries NO provenance signal today. So there is no sound "trusted" verdict to give
- * yet, and returning `"untrusted"` keeps the propose tool STRUCTURALLY uncallable on every live ask (even with
- * `copilotProposeMode` ON) — the C1/C4 admission backstop stays behind it.
+ * This is sound at BUILD TIME **only because a propose job is SEED-ONLY**: the runner STRIPS the gbrain read
+ * tools from a propose-capable job (see `createClaudeAgentCopilotRunner`), so the tool-reachable content
+ * surface equals exactly the seed this function inspects — closing the live-read TOCTOU (a propose agent
+ * cannot fetch more/untrusted content mid-run). Do NOT grant a propose job the gbrain read tools without
+ * moving trust to a read-time hook, or this build-time verdict becomes unsound again.
  *
- * C5.4 makes this real by EITHER (a) stripping the gbrain read tools from a propose job (seed-only surface ⇒
- * build-time derivation is sound) OR (b) a read-time hook that revokes propose on the first non-KnowledgeWriter
- * passage. Until then, DO NOT weaken this to a per-workspace or flag-only verdict — that re-opens the ING-7
- * bypass C4 closed. Pure.
+ * NOTE (current reality): the live gbrain retrieval adapters do not yet PROVE KnowledgeWriter authorship, so
+ * they leave `provenance` ABSENT (⇒ treated as `unknown`) and this returns `"untrusted"` for every live ask
+ * today — propose stays OFF. The moment a retrieval source can carry a verified `knowledge_writer` stamp, the
+ * verdict (and propose) flip on, with no change here. Pure.
  */
-export function deriveCopilotContentTrust(_context: RetrievedContext): CopilotContentTrust {
-  return "untrusted";
+export function deriveCopilotContentTrust(context: RetrievedContext): CopilotContentTrust {
+  if (context.sources.length === 0) return "untrusted";
+  return context.sources.every((s) => s.provenance === "knowledge_writer") ? "trusted" : "untrusted";
 }
 
 /**
@@ -559,12 +560,27 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
       signal?: AbortSignal,
     ): Promise<Result<AgentResult, RuntimeError>> => {
       const served = String(job.workspaceId) === deps.servedWorkspaceId;
-      // Only the served workspace may hold the gbrain read tool (WS-8). A non-served workspace runs tool-less.
-      // `mcpServers` is widened to the SDK union so it can carry the gbrain http server AND the in-process
-      // copilot propose server together.
+      // `mcpServers` is widened to the SDK union so it can carry EITHER the gbrain http server (a read job) OR
+      // the in-process copilot propose server (a propose job) — see the SEED-ONLY rule below.
       const mcpServers: Record<string, McpServerConfig> = {};
       const toolNames: string[] = [];
-      if (served) {
+      // C5.3 — PROPOSE GRANT (defense-in-depth, ALL required): the workspace is SERVED, the job is
+      // content-derived TRUSTED (gate on `trustLevel` too — not just scoped_write mode — so a mode/trust drift
+      // can't grant it) with a scoped_write policy, AND both the sink + server factory are injected. With the
+      // real `deriveCopilotContentTrust` (C5.4) this is only true when EVERY seed source is KnowledgeWriter-
+      // provenance; today's un-provenanced gbrain hits ⇒ untrusted ⇒ this is never true on a live ask.
+      const proposeGranted =
+        served &&
+        job.trustLevel === "trusted" &&
+        job.toolPolicy.mode === "scoped_write" &&
+        deps.proposeSink !== undefined &&
+        deps.buildProposeMcpServer !== undefined;
+      // C5.4 — SEED-ONLY PROPOSE SURFACE: a propose job gets NO gbrain read tools. Its tool-reachable content
+      // surface is exactly the pre-verified seed (which `deriveCopilotContentTrust` already proved all
+      // KnowledgeWriter), so it cannot fetch more/untrusted content mid-run — closing the live-read TOCTOU that
+      // would otherwise make a build-time trust verdict unsound. Only a NON-propose served job reads gbrain
+      // (WS-8: only the served workspace; a non-served workspace runs tool-less).
+      if (served && !proposeGranted) {
         // No token ⇒ no read tools ⇒ fail closed (never run the agent tool-blind or unauthenticated). The
         // loopback guarantee is TRANSITIVE: `getToken` fails closed (GBRAIN_HTTP_NON_LOOPBACK) for a
         // non-loopback URL, so the bearer token + workspace content never egress off-box.
@@ -575,18 +591,6 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
         Object.assign(mcpServers, buildGbrainMcpServers(deps.gbrainMcpUrl, token.value));
         toolNames.push(...allowedToolNames);
       }
-      // C5.3 — PROPOSE GRANT (defense-in-depth, ALL required): the workspace is SERVED, the job is
-      // content-derived TRUSTED (not just scoped_write mode — gate on `trustLevel` too so a mode/trust drift
-      // can't grant it) with a scoped_write policy, AND both the sink + server factory are injected. The
-      // handler closure is bound to the SERVER-BOUND `job.workspaceId` (never a model value — the model
-      // supplies only the tool args). With the fail-closed `deriveCopilotContentTrust` interim this branch is
-      // never taken on a live ask; it is exercised by constructing a trusted+propose job directly (tests/eval).
-      const proposeGranted =
-        served &&
-        job.trustLevel === "trusted" &&
-        job.toolPolicy.mode === "scoped_write" &&
-        deps.proposeSink !== undefined &&
-        deps.buildProposeMcpServer !== undefined;
       if (proposeGranted) {
         const sink = deps.proposeSink; // narrowed by proposeGranted
         const workspaceId = job.workspaceId; // SERVER-BOUND (WS-4)

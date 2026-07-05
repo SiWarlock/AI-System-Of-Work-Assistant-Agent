@@ -422,8 +422,10 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
           // C5.3 — the write-via-Approvals seam. The concrete sink records a PENDING §9.8 Approval via a
           // DIRECT ApprovalRepository write (server-bound workspace registry-validated, first-write-wins,
           // payloadHash-divergence reject). Injecting sink + the SDK MCP-server factory ENABLES the propose
-          // tool ONLY for a trusted+scoped_write job — but `deriveCopilotContentTrust` is fail-closed
-          // ('untrusted'), so a live ask never becomes propose-capable. Real go-live is a C5.4 gate.
+          // tool ONLY for a trusted+scoped_write, SEED-ONLY job (C5.4a). `deriveCopilotContentTrust` is now
+          // REAL (per-source provenance) but no live retrieval adapter stamps `knowledge_writer` yet, so every
+          // live ask is untrusted ⇒ never propose-capable. Go-live rests on a provenance-stamping adapter
+          // (C5.4b) + the §9.8 approvals-inbox workspace-scoping fix.
           const proposeSink = createApprovalsProposeSink({
             approvals: backends.repos.approvals,
             workspaceConfig: backends.repos.workspaceConfig,
@@ -437,8 +439,9 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
             buildProposeMcpServer: createCopilotProposeMcpServer,
             ...(config.copilotBetas !== undefined ? { betas: config.copilotBetas } : {}),
           });
-          // proposeEnabled mirrors the flag; resolveContentTrust is the fail-closed interim (propose stays
-          // structurally OFF at runtime regardless of the flag until C5.4 plumbs real per-content provenance).
+          // proposeEnabled mirrors the flag; resolveContentTrust is the REAL per-source-provenance derivation
+          // (C5.4a). The flag is an AND-term with the trust verdict — so propose stays OFF at runtime until a
+          // live retrieval adapter actually stamps `knowledge_writer` provenance (C5.4b), never a flag-only override.
           return createAgentRuntimeCopilotSynthesis(runner, {
             proposeEnabled: config.copilotProposeMode === true,
             resolveContentTrust: deriveCopilotContentTrust,

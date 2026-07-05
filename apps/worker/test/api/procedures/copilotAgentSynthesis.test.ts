@@ -493,6 +493,16 @@ describe("createAgentRuntimeCopilotSynthesis — the agentic CopilotSynthesisPor
     expect(f.lastJob()?.toolPolicy.mode).toBe("read_only");
     expect(f.lastJob()?.trustLevel).toBe("untrusted");
   });
+  it("C5.4 end-to-end: proposeEnabled + an ALL-KnowledgeWriter context ⇒ the built job IS trusted+scoped_write (propose-capable)", async () => {
+    const f = fakeRunner(() => ok(completed({ answer: ["ok"], citations: [] })));
+    const synth = createAgentRuntimeCopilotSynthesis(f.runner, { proposeEnabled: true });
+    const trustedCtx = ctx({
+      sources: [{ citationId: "gbrain:a", title: "A", provenance: "knowledge_writer" }],
+    });
+    await synth.synthesize("personal-business", "q?", trustedCtx, CLAUDE_ROUTE);
+    expect(f.lastJob()?.trustLevel).toBe("trusted");
+    expect(f.lastJob()?.toolPolicy.mode).toBe("scoped_write");
+  });
   it("route guard SHORT-CIRCUITS before the runner (a non-claude route never reaches the agent)", async () => {
     const f = fakeRunner(() => ok(completed({ answer: ["x"], citations: [] })));
     const synth = createAgentRuntimeCopilotSynthesis(f.runner);
@@ -585,10 +595,32 @@ describe("createClaudeAgentCopilotRunner — the real runner's WIRING (injected 
 });
 
 // ── C5.3c: content-trust fail-closed interim + the runner's propose grant ──
-describe("deriveCopilotContentTrust — the fail-closed interim (always untrusted)", () => {
-  it("returns 'untrusted' for any RetrievedContext (propose structurally uncallable on a live ask)", () => {
-    expect(deriveCopilotContentTrust(ctx())).toBe("untrusted");
+describe("deriveCopilotContentTrust — per-source provenance, fail-closed", () => {
+  it("'trusted' IFF non-empty AND every source is knowledge_writer", () => {
+    const trusted = ctx({
+      sources: [
+        { citationId: "gbrain:a", title: "A", provenance: "knowledge_writer" },
+        { citationId: "gbrain:b", title: "B", provenance: "knowledge_writer" },
+      ],
+    });
+    expect(deriveCopilotContentTrust(trusted)).toBe("trusted");
+  });
+  it("'untrusted' if ANY source is imported/unknown/absent (a single untrusted passage taints the whole)", () => {
+    const mixed = ctx({
+      sources: [
+        { citationId: "gbrain:a", title: "A", provenance: "knowledge_writer" },
+        { citationId: "gbrain:b", title: "B", provenance: "imported" },
+      ],
+    });
+    expect(deriveCopilotContentTrust(mixed)).toBe("untrusted");
+    const bare = ctx({ sources: [{ citationId: "gbrain:a", title: "A" }] }); // no provenance ⇒ untrusted
+    expect(deriveCopilotContentTrust(bare)).toBe("untrusted");
+  });
+  it("'untrusted' on an empty retrieval (nothing to trust)", () => {
     expect(deriveCopilotContentTrust(ctx({ blocks: [], sources: [] }))).toBe("untrusted");
+  });
+  it("today's un-provenanced live ctx() ⇒ untrusted (propose stays OFF until real KW provenance is plumbed)", () => {
+    expect(deriveCopilotContentTrust(ctx())).toBe("untrusted");
   });
 });
 
@@ -627,13 +659,17 @@ describe("createClaudeAgentCopilotRunner — the C5.3 propose grant (defense-in-
     });
   }
 
-  it("GRANTS propose for a SERVED trusted+scoped_write job with sink+factory: allow-list + copilot mcp server present", async () => {
+  it("GRANTS propose SEED-ONLY: the propose tool + copilot server, but NO gbrain read tools/server (TOCTOU-safe)", async () => {
     const srv = fakeProposeServer();
     const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+    let tokenCalls = 0;
     const runner = createClaudeAgentCopilotRunner({
       servedWorkspaceId: "personal-business",
       gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
-      getToken: async () => ok("tok-abc"),
+      getToken: async () => {
+        tokenCalls += 1;
+        return ok("tok-abc");
+      },
       queryFn: cap.fn,
       proposeSink: noopSink,
       buildProposeMcpServer: srv.build,
@@ -641,11 +677,13 @@ describe("createClaudeAgentCopilotRunner — the C5.3 propose grant (defense-in-
     const r = await runner.run(proposeJob, prompt);
     expect(isOk(r)).toBe(true);
     const opts = cap.seen()?.options ?? {};
+    // propose tool present; gbrain read tools STRIPPED (seed-only surface bounds the tool-reachable content).
     expect(opts["allowedTools"]).toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
-    expect(opts["allowedTools"]).toContain("mcp__gbrain__query"); // gbrain reads still present
+    expect(opts["allowedTools"]).not.toContain("mcp__gbrain__query");
     const servers = opts["mcpServers"] as Record<string, { type?: string }>;
     expect(servers["copilot"]?.type).toBe("sdk");
-    expect(servers[GBRAIN_MCP_SERVER_NAME]).toBeDefined();
+    expect(servers[GBRAIN_MCP_SERVER_NAME]).toBeUndefined(); // no gbrain server on a propose job
+    expect(tokenCalls).toBe(0); // no gbrain token minted for a seed-only propose job
   });
 
   it("a SERVED read_only job gets NO propose tool + NO copilot server (default path byte-identical)", async () => {

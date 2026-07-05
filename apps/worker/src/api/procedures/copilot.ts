@@ -40,10 +40,25 @@ import { vetoJobEgress } from "@sow/providers";
 /** A port result delivered sync (the in-memory fixture / test fake) or async (the real adapter). */
 export type MaybeAsyncResult<T> = Result<T, FailureVariant> | Promise<Result<T, FailureVariant>>;
 
+/**
+ * The provenance of a retrieved source's content — the input to the Copilot's content-trust decision
+ * (C5.4). ONLY `knowledge_writer` (owner-governed, KnowledgeWriter-authored canonical Markdown) is
+ * trusted; `imported` (ingested from an untrusted source) and `unknown` (no provenance signal — the
+ * fail-closed default for an un-provenanced gbrain hit) are untrusted. A propose-capable Copilot job may
+ * only ever consume `knowledge_writer` content (see `deriveCopilotContentTrust`).
+ */
+export type SourceProvenance = "knowledge_writer" | "imported" | "unknown";
+
 /** One retrieved source — an opaque canonical ref + a display title (maps to UiSafeCitation at A4). */
 export interface RetrievedSource {
   readonly citationId: string;
   readonly title: string;
+  /**
+   * Provenance of this source's content (C5.4). ABSENT ⇒ treated as `unknown` (untrusted) — so a
+   * retrieval adapter that does not (yet) prove KnowledgeWriter authorship can never make a source
+   * trusted by omission. Only an EXPLICIT `knowledge_writer` counts as trusted.
+   */
+  readonly provenance?: SourceProvenance;
 }
 
 /**
