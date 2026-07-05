@@ -1,6 +1,6 @@
 # RESUME HANDOFF — real Copilot Phase 2 (in progress: P2.3 next)
 
-> **PROSPECTIVE handoff** (for the next session, post-compaction). Predecessor: `028-2026-07-04-real-copilot-P1-egress-governance.md`.
+> **PROSPECTIVE handoff** (for the next session, post-compaction). Predecessor: `028-2026-07-04-real-copilot-P1-egress-governance.md`. **Successor: `030-2026-07-05-real-copilot-P2.3-P2.4.md`** (P2.3 + P2.4 DONE — the resume plan below was executed).
 > Everything below is DONE + pushed to `origin/main` at **HEAD `8e39265`**. The next unit is **P2.3** (the worker synthesis adapter). The single richest context file is the memory `sow-copilot-real-model-direction` — read it first.
 
 ---
