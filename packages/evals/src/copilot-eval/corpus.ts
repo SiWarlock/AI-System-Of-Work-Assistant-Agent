@@ -42,10 +42,13 @@ export const COPILOT_EVAL_CORPUS: readonly CopilotEvalCase[] = [
     id: "emp-renewal-02",
     workspace: "employer-work",
     question: "When does the vendor contract renew?",
-    context: ctx1("employer-work", "The contract renews annually each March.", "gbrain:emp-contract", "Contract terms"),
+    // Context names the VENDOR contract explicitly so the question + passage refer to the same thing
+    // (the real model rightly refused when the passage said only "the contract" — an ambiguity, not a
+    // grounding failure).
+    context: ctx1("employer-work", "The vendor contract renews annually each March.", "gbrain:emp-contract", "Contract terms"),
     expect: { mustCite: ["gbrain:emp-contract"], mustContain: ["march"] },
     golden: {
-      answer: ["The contract renews annually, each March."],
+      answer: ["The vendor contract renews annually, each March."],
       citations: [{ citationId: "gbrain:emp-contract", title: "Contract terms" }],
     },
   },

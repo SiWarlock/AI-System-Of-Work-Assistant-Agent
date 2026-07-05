@@ -98,13 +98,15 @@ export function gradeCopilotAnswer(
     failures.push("cited a citationId not in the retrieved set (hallucinated source)");
   }
 
-  // 2. Refusal: refuse iff the context can't answer. A refusal grounds nothing (no citations).
+  // 2. Refusal: refuse iff the context can't answer. A correct refusal reads as "couldn't find it" and
+  // MAY cite the source showing the topic was discussed-but-unquantified — a GROUNDED refusal-with-context
+  // is high-quality (e.g. "no churn figure was recorded [cite: QBR]"). Any citations it does carry are
+  // still validated by `citationsGrounded`, so a refusal citing an INVENTED source fails there, not here.
   const refusal = isRefusalAnswer(output.answer);
   let refusalCorrect: boolean;
   if (expect.refuse === true) {
-    refusalCorrect = refusal && output.citations.length === 0;
+    refusalCorrect = refusal;
     if (!refusal) failures.push("expected a refusal (context can't answer) but the answer was substantive");
-    else if (output.citations.length > 0) failures.push("refused but still cited sources (a refusal grounds nothing)");
   } else {
     refusalCorrect = !refusal;
     if (refusal) failures.push("refused an answerable case (context supports an answer)");

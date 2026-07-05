@@ -84,13 +84,27 @@ describe("gradeCopilotAnswer — the deterministic grounding + citation grader",
     expect(g.pass).toBe(false);
   });
 
-  it("a refusal that STILL cites sources FAILS (a real refusal grounds nothing)", () => {
+  it("a GROUNDED refusal MAY cite the topic source (a grounded refusal-with-context is correct)", () => {
+    // Real Sonnet behavior: "I couldn't find a figure; the note only flags it as a concern [cite]."
     const out: CopilotModelOutput = {
-      answer: ["I couldn't find that."],
-      citations: [{ citationId: "gbrain:sla-note", title: "Vendor SLA" }],
+      answer: ["I couldn't find a specific figure; the note only flags it as a concern."],
+      citations: [{ citationId: "gbrain:sla-note", title: "Vendor SLA" }], // grounded (in the retrieved set)
     };
     const g = gradeCopilotAnswer(out, context, { refuse: true });
-    expect(g.refusalCorrect).toBe(false);
+    expect(g.refusalCorrect).toBe(true);
+    expect(g.citationsGrounded).toBe(true);
+    expect(g.pass).toBe(true);
+  });
+
+  it("a refusal citing a HALLUCINATED source FAILS via citationsGrounded (not refusalCorrect)", () => {
+    const out: CopilotModelOutput = {
+      answer: ["I couldn't find that."],
+      citations: [{ citationId: "gbrain:INVENTED", title: "x" }],
+    };
+    const g = gradeCopilotAnswer(out, context, { refuse: true });
+    expect(g.refusalCorrect).toBe(true); // it IS a refusal...
+    expect(g.citationsGrounded).toBe(false); // ...but the citation is invented
+    expect(g.pass).toBe(false);
   });
 
   it("an empty citations list is trivially grounded (no invented source)", () => {
