@@ -3,8 +3,8 @@
 - **Date:** 2026-07-05 · **Mode:** single-operator (build, ultracode) · **Track:** worker + providers
 - **Predecessor:** `037-2026-07-05-phase-c-c3-c4-agentic-copilot.md`
 - **Successor:** _(next — C6: skills + flip the flag + governance/grounding eval; and C5.4 make contentTrust real + fix the §9.8 read-model workspace scope)_
-- **HEAD at close:** `1d14524` (C5.3d). C5.2c `e530032` landed first this session; then C5.3a `0be926a` · C5.3b `28a78e9` · C5.3c `41dd26b` · C5.3d `1d14524`.
-- **Gate at close:** repo-wide `turbo typecheck test` **31/31**; worker **624**; providers +5 (copilot-propose-mcp). Pushed at close-out.
+- **HEAD at close:** `3c64052` (C5.4a). This session: C5.2c `e530032` → C5.3a `0be926a` · C5.3b `28a78e9` · C5.3c `41dd26b` · C5.3d `1d14524` → C5.4a `3c64052`.
+- **Gate at close:** repo-wide `turbo typecheck test` **31/31**; worker **628**; providers +5 (copilot-propose-mcp). Pushed at close-out.
 
 ## Why this session existed
 
@@ -57,8 +57,17 @@ Clean. C5.3a (5 tests), C5.3b (8 — all 3 contracts + cross-path id + no-auto-a
 
 `answerCopilotQuestion` → `deps.synthesis` → (boot `copilotAgentMode`) `createAgentRuntimeCopilotSynthesis` → `admitCopilotAgentJob` → runner → (propose-grant branch, when a job is trusted+scoped_write+served) → SDK `query()` with `mcp__copilot__propose_action` → `handleCopilotProposeToolCall` → `proposeCopilotAction` → derive → route → `createApprovalsProposeSink.record` → pending §9.8 Approval. **Wired end-to-end; the propose branch is dormant** (the fail-closed trust interim never yields a propose-capable job on a live ask). This is a flag-gated, trust-gated feature — not a silent gap.
 
-## Open follow-ups
+## C5.4a (`3c64052`) — real content-trust + seed-only propose surface
 
-- **[C5.4 — both BLOCK propose go-live]** (1) the §9.8 read-model workspace-scoping fix; (2) real per-content contentTrust (strip-tools OR read-time hook) + a governance eval that injects a non-KnowledgeWriter passage reachable only via a live tool read and asserts propose is never granted.
-- **[C6]** skills exposure + flip the flag + the governance/grounding eval for the agentic path.
-- **[eval-gated]** the real SDK `query()` driving the propose tool end-to-end (assert it lands within `DEFAULT_MAX_TURNS` while the job keeps gbrain read tools).
+Built the same session (post-C5.3), under the owner's standing "keep going" while they were away — the one remaining path safe to do unilaterally (additive, worker-territory, no frozen-contract change, no design reversal).
+
+- **`deriveCopilotContentTrust` is now REAL** (was a fail-closed stub): `'trusted'` IFF the retrieval is non-empty AND every source is `knowledge_writer`-provenance, else `'untrusted'` — one imported/unknown/absent source taints the whole. `RetrievedSource` (worker-internal, NOT a frozen contract) gains an optional `provenance` field; absent ⇒ untrusted.
+- **A propose job is now SEED-ONLY** — the runner strips the gbrain read tools (the C5.3-workflow verifier's recommended TOCTOU fix). The tool-reachable content surface == the pre-verified seed, so the build-time trust verdict is sound (a propose agent can't fetch more/untrusted content mid-run).
+- **Security review: no crit/high/medium.** Seed-only design confirmed sound (deny-by-default `canUseTool` blocks every built-in incl. WebFetch; no residual read path); derivation fail-closed + taint-correct (empty-guard defeats the vacuous-truth trap; provenance server-side-only). **Propose genuinely still OFF** — no live adapter stamps `knowledge_writer`.
+
+## Open follow-ups (2 are OWNER DECISIONS — deferred, not acted on)
+
+- **[OWNER DECISION] §9.8 approvals inbox scoping** — `pendingApprovals` is global (all cards to every workspace); making it workspace-scoped **reverses the intentional global-inbox design (session 027)** + adds `workspaceId` to the **frozen `Approval` seam contract**. A go-live blocker AND a design/UX decision.
+- **[OWNER DECISION] C6 skills** — expose skill access (the third leg of Option C); needs direction on which skills / what governance.
+- **[C5.4b — the last contentTrust go-live gate]** a retrieval adapter that stamps `knowledge_writer` provenance ONLY on genuinely KnowledgeWriter-authored canonical Markdown (a blanket stamp on gbrain hits re-opens the ING-7 bypass — the C4 admission backstop can't catch a false-trusted job). Depends on wiring the knowledge layer's `admitForServing`/stamp verification into the retrieval seam.
+- **[C6 eval]** the propose-path governance/grounding eval (packages/evals is the eval-security track's territory — coordinate) + the real SDK `query()` end-to-end (eval-gated).
