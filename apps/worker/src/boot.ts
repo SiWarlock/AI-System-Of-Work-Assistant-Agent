@@ -66,6 +66,7 @@ import type {
   ReadModelQueryPort,
 } from "./api/procedures/queries";
 import { buildCopilotDeps } from "./api/procedures/copilotClaudeSynthesis";
+import { createGbrainCliExec } from "./api/procedures/copilotGbrainSubprocess";
 import { createClaudeSubscriptionCompletion } from "@sow/providers";
 import type { SystemHealthQueryPort, UiSafeEgressStatus } from "./api/procedures/systemHealth";
 import type {
@@ -171,6 +172,18 @@ export interface BootConfig extends BackendsConfig {
    * switching to a non-Sonnet family (an incompatible beta+model combo is rejected server-side).
    */
   readonly copilotBetas?: readonly string[];
+  /**
+   * Real GBrain retrieval (P3-live — OFF by default; requires `copilotRealModel` too). When true, the ONE
+   * served workspace (`copilotGbrainWorkspaceId`, default personal-business) reads the LOCAL gbrain via the
+   * `gbrain call query` CLI instead of the empty fixture stub; every OTHER workspace stays on the fixture
+   * (WS-8 by construction — only the served workspace ever reads the single local brain). The worker needs
+   * `VOYAGE_API_KEY` in its env (gbrain embeds the query) and the `gbrain` binary on PATH; a missing
+   * key/binary fails closed (typed fault), never a throw. Interim TEST transport — NOT the mandated
+   * `transport:"http"` GbrainReadGrant path. No effect when `copilotRealModel` is off.
+   */
+  readonly copilotGbrainRetrieval?: boolean;
+  /** The workspace served from the local brain; defaults to DEFAULT_GBRAIN_COPILOT_WORKSPACE. */
+  readonly copilotGbrainWorkspaceId?: string;
 }
 
 /** The assembled live control plane the app shell drives. */
@@ -337,6 +350,12 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     model: config.copilotModel,
     betas: config.copilotBetas,
     completion: createClaudeSubscriptionCompletion,
+    // P3-live: the real gbrain read seam, constructed ONLY when the flag is on (a factory, so the CLI
+    // transport isn't built off-path). Absent ⇒ retrieval stays the fixture stub.
+    ...(config.copilotGbrainRetrieval === true ? { gbrainExec: () => createGbrainCliExec() } : {}),
+    ...(config.copilotGbrainWorkspaceId !== undefined
+      ? { gbrainWorkspaceId: config.copilotGbrainWorkspaceId }
+      : {}),
   });
 
   // 3) The real loopback transport (HTTP + WS) behind the injected token + allowlist.
