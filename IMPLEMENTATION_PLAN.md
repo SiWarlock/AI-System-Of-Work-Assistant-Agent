@@ -1821,31 +1821,31 @@ Executed row-by-row by `/phase-exit <phase>`:
 **Track:** eval-security · **Depends on (phases):** 4, 5, 6, 7, 9, 11
 
 ### 12.1 — EVAL-1 harness core + EVALUATION_CRITERIA 1:1 traceability matrix (foundational invariant)
-- [ ] Reproducible eval runner loads versioned corpora by {corpusId, version}, stamps the corpus id+version into every result, and produces deterministic scored output for a fixed run manifest (REQ-T-001 'reproducible eval run').
-- [ ] EVALUATION_CRITERIA acceptance matrix records every PRD §20.1 acceptance test and the three pinned latency budgets as rows mapped 1:1 to a named suite/fixture; a meta/coverage test HARD-FAILS if any §20.1 row is unmapped OR any registered suite is orphaned (not referenced by a row).
-- [ ] Harness carries a 'real-integration-required' flag per DoD suite so a mock-backed run cannot be reported as DoD-passing (DoD cannot be satisfied by mocks, CONSTRAINTS).
-- [ ] Pass thresholds for accuracy/precision suites are read from EVALUATION_CRITERIA (Phase-0-drafted), never hard-coded in suite logic — the harness fails closed if a referenced threshold is missing rather than defaulting silently.
-- [ ] Files: packages/evals/harness/runner.ts (NEW), packages/evals/harness/corpus-loader.ts (NEW), packages/evals/harness/criteria-registry.ts (NEW), packages/evals/EVALUATION_CRITERIA.md (NEW), packages/evals/test/coverage-matrix.test.ts (NEW)
-- [ ] Cross-doc invariant: none
-- [ ] Depends on: none
+- [x] Reproducible eval runner loads versioned corpora by {corpusId, version}, stamps the corpus id+version into every result, and produces deterministic scored output for a fixed run manifest (REQ-T-001 'reproducible eval run').
+- [x] EVALUATION_CRITERIA acceptance matrix records every PRD §20.1 acceptance test and the three pinned latency budgets as rows mapped 1:1 to a named suite/fixture; a meta/coverage test HARD-FAILS if any §20.1 row is unmapped OR any registered suite is orphaned (not referenced by a row).
+- [x] Harness carries a 'real-integration-required' flag per DoD suite so a mock-backed run cannot be reported as DoD-passing (DoD cannot be satisfied by mocks, CONSTRAINTS).
+- [x] Pass thresholds for accuracy/precision suites are read from EVALUATION_CRITERIA (Phase-0-drafted), never hard-coded in suite logic — the harness fails closed if a referenced threshold is missing rather than defaulting silently.
+- [x] Files: packages/evals/harness/runner.ts (NEW), packages/evals/harness/corpus-loader.ts (NEW), packages/evals/harness/criteria-registry.ts (NEW), packages/evals/EVALUATION_CRITERIA.md (NEW), packages/evals/test/coverage-matrix.test.ts (NEW)
+- [x] Cross-doc invariant: none
+- [x] Depends on: none
 
 ### 12.2 — EVAL-1 corpora: meeting-closeout (≥20 labeled) + retrieval (≥30)
-- [ ] ≥20 labeled meeting transcripts with gold labels for notes/decisions/tasks/owners/dates/evidence-refs; the set INCLUDES no-inference fixtures where owners/due-dates are unstated and the gold label is `TBD` or clarification-routed (REQ-F-017/MTG-4) so the validator hard-reject is measurable.
-- [ ] ≥30 retrieval queries with expected results/citations covering workspace-scoped recall and citation correctness.
-- [ ] Corpora are versioned and checked in (drafted Phase 0, REQ-T-001); the loader rejects an unversioned or hash-mismatched corpus.
-- [ ] Each transcript fixture is tagged with its target workspace + sensitivity so downstream leakage/egress suites can reuse it without re-labeling.
-- [ ] Files: packages/evals/corpora/meeting-closeout/*.json (NEW), packages/evals/corpora/retrieval/*.json (NEW), packages/evals/corpora/meeting-closeout/manifest.json (NEW)
-- [ ] Cross-doc invariant: none — SourceEnvelope, KnowledgeMutationPlan
-- [ ] Depends on: 12.1
+- [x] ≥20 labeled meeting transcripts with gold labels for notes/decisions/tasks/owners/dates/evidence-refs; the set INCLUDES no-inference fixtures where owners/due-dates are unstated and the gold label is `TBD` or clarification-routed (REQ-F-017/MTG-4) so the validator hard-reject is measurable.
+- [x] ≥30 retrieval queries with expected results/citations covering workspace-scoped recall and citation correctness.
+- [x] Corpora are versioned and checked in (drafted Phase 0, REQ-T-001); the loader rejects an unversioned or hash-mismatched corpus.
+- [x] Each transcript fixture is tagged with its target workspace + sensitivity so downstream leakage/egress suites can reuse it without re-labeling.
+- [x] Files: packages/evals/corpora/meeting-closeout/*.json (NEW), packages/evals/corpora/retrieval/*.json (NEW), packages/evals/corpora/meeting-closeout/manifest.json (NEW)
+- [x] Cross-doc invariant: none — SourceEnvelope, KnowledgeMutationPlan
+- [x] Depends on: 12.1
 
 ### 12.3 — Security corpora: prompt-injection red-team (5 vectors + cross-workspace exfil) + leakage (≥15)
-- [ ] Prompt-injection corpus covers all five PRD vectors (transcript, calendar description, web/docs, NotebookLM, Markdown) plus a cross-workspace exfiltration vector.
-- [ ] Leakage corpus has ≥15 cases = the five §16.1 vectors plus the cross-workspace disclosure case (the resolved default), and is recorded in EVALUATION_CRITERIA.
-- [ ] Each injection fixture declares the side-effect it ATTEMPTS to induce (mutating tool call, external write, cross-brain query) so the suite can assert the attempt was rejected pre-validation rather than merely absent.
-- [ ] Corpora are versioned; loader rejects unversioned/hash-mismatched sets.
-- [ ] Files: packages/evals/corpora/injection/*.json (NEW), packages/evals/corpora/leakage/*.json (NEW), packages/evals/corpora/injection/manifest.json (NEW)
-- [ ] Cross-doc invariant: none — ToolPolicy, GclProjection, EgressPolicy
-- [ ] Depends on: 12.1
+- [x] Prompt-injection corpus covers all five PRD vectors (transcript, calendar description, web/docs, NotebookLM, Markdown) plus a cross-workspace exfiltration vector.
+- [x] Leakage corpus has ≥15 cases = the five §16.1 vectors plus the cross-workspace disclosure case (the resolved default), and is recorded in EVALUATION_CRITERIA.
+- [x] Each injection fixture declares the side-effect it ATTEMPTS to induce (mutating tool call, external write, cross-brain query) so the suite can assert the attempt was rejected pre-validation rather than merely absent.
+- [x] Corpora are versioned; loader rejects unversioned/hash-mismatched sets.
+- [x] Files: packages/evals/corpora/injection/*.json (NEW), packages/evals/corpora/leakage/*.json (NEW), packages/evals/corpora/injection/manifest.json (NEW)
+- [x] Cross-doc invariant: none — ToolPolicy, GclProjection, EgressPolicy
+- [x] Depends on: 12.1
 
 ### 12.4 — SQLite + Postgres repository & migration contract suite (Postgres not a permanent stub)
 - [ ] ONE repository contract suite runs against BOTH SQLite and Postgres; a divergence (a case passing on one dialect, failing on the other) BLOCKS release (REQ-D-003, §4).
@@ -1857,13 +1857,13 @@ Executed row-by-row by `/phase-exit <phase>`:
 - [ ] Depends on: P4
 
 ### 12.5 — Provider conformance + runtime adapter conformance harness
-- [ ] Conformance runs per enabled provider × capability × pinned-model pair; a failing pair is disabled/ineligible in the matrix (conformance is the contract; OpenAI-compatible endpoints are NOT assumed behaviorally identical — structured-output fidelity is tested) (§7, REQ-I-001).
-- [ ] Runtime-adapter conformance covers Claude Agent SDK and Hermes (REQ-I-002/003); Hermes is DoD-tested but NOT required for baseline fresh install.
-- [ ] conformanceStatus is recorded per ProviderProfile; the release gate asserts at least one conformant provider/runtime exists for the `meeting.close` capability in the exercised workspace (DoD consequence, §7).
-- [ ] Local providers (Ollama/LM Studio) are exercised as an OPTIONAL zero-egress path, never as a release gate.
-- [ ] Files: packages/evals/conformance/provider-conformance.ts (NEW), packages/evals/conformance/runtime-conformance.ts (NEW), packages/evals/conformance/pinned-models.ts (NEW)
-- [ ] Cross-doc invariant: none — ProviderProfile, ProviderMatrix, Capability, ProviderRoute, AgentJob
-- [ ] Depends on: 12.1, P7
+- [x] Conformance runs per enabled provider × capability × pinned-model pair; a failing pair is disabled/ineligible in the matrix (conformance is the contract; OpenAI-compatible endpoints are NOT assumed behaviorally identical — structured-output fidelity is tested) (§7, REQ-I-001).
+- [x] Runtime-adapter conformance covers Claude Agent SDK and Hermes (REQ-I-002/003); Hermes is DoD-tested but NOT required for baseline fresh install.
+- [x] conformanceStatus is recorded per ProviderProfile; the release gate asserts at least one conformant provider/runtime exists for the `meeting.close` capability in the exercised workspace (DoD consequence, §7).
+- [x] Local providers (Ollama/LM Studio) are exercised as an OPTIONAL zero-egress path, never as a release gate.
+- [x] Files: packages/evals/conformance/provider-conformance.ts (NEW), packages/evals/conformance/runtime-conformance.ts (NEW), packages/evals/conformance/pinned-models.ts (NEW)
+- [x] Cross-doc invariant: none — ProviderProfile, ProviderMatrix, Capability, ProviderRoute, AgentJob
+- [x] Depends on: 12.1, P7
 
 ### 12.6 — KnowledgeWriter ownership/merge/secret + human-section + out-of-band-reconcile suite
 - [ ] Human-owned section preservation (KN-7): an attempted overwrite of a human-owned region is REJECTED and audited; assistant regions are bounded by explicit start/end markers with stable IDs (KN-8) and merges stay inside the markers.
@@ -1893,64 +1893,64 @@ Executed row-by-row by `/phase-exit <phase>`:
 - [ ] Depends on: P7, P9
 
 ### 12.9 — Calendar-conflict / all-availability-sources scheduling safety suite (added §20.1)
-- [ ] Scheduling respects ALL configured availability sources across calendars (the doctor-appointment flow avoids conflicts, REQ-F-009).
-- [ ] Proposals carry only GENERIC conflict explanations — no raw work/cross-workspace detail leaks through the explanation (GCL Visibility Gate).
-- [ ] A private personal event is auto-created only if policy allows; shared/invite/external changes route to the Approval Inbox (not auto-applied).
-- [ ] Insufficient-availability-metadata is a typed failure state, not a silent best-guess.
-- [ ] Files: packages/evals/suites/calendar-conflict/calendar-conflict.test.ts (NEW)
-- [ ] Cross-doc invariant: none — GclProjection, ProposedAction, Approval
-- [ ] Depends on: 12.1, P6, P9
+- [x] Scheduling respects ALL configured availability sources across calendars (the doctor-appointment flow avoids conflicts, REQ-F-009).
+- [x] Proposals carry only GENERIC conflict explanations — no raw work/cross-workspace detail leaks through the explanation (GCL Visibility Gate).
+- [x] A private personal event is auto-created only if policy allows; shared/invite/external changes route to the Approval Inbox (not auto-applied).
+- [x] Insufficient-availability-metadata is a typed failure state, not a silent best-guess.
+- [x] Files: packages/evals/suites/calendar-conflict/calendar-conflict.test.ts (NEW)
+- [x] Cross-doc invariant: none — GclProjection, ProposedAction, Approval
+- [x] Depends on: 12.1, P6, P9
 
 ### 12.10 — Project-progress deterministic-parser suite (added §20.1, REQ-F-011)
-- [ ] Progress percentages are derived DETERMINISTICALLY from IMPLEMENTATION_PLAN.md checkboxes/status and/or external PM systems — the suite hard-fails on any model-only/model-invented percentage.
-- [ ] Agent synthesis may explain blockers/next-actions but the numeric progress is owned by the parser, not the model (parser-vs-model separation asserted).
-- [ ] Missing provider mapping / parse failure / ambiguous status are typed failure states surfaced, not silently zeroed.
-- [ ] Files: packages/evals/suites/project-progress/project-progress.test.ts (NEW)
-- [ ] Cross-doc invariant: none — KnowledgeMutationPlan
-- [ ] Depends on: 12.1, P9
+- [x] Progress percentages are derived DETERMINISTICALLY from IMPLEMENTATION_PLAN.md checkboxes/status and/or external PM systems — the suite hard-fails on any model-only/model-invented percentage.
+- [x] Agent synthesis may explain blockers/next-actions but the numeric progress is owned by the parser, not the model (parser-vs-model separation asserted).
+- [x] Missing provider mapping / parse failure / ambiguous status are typed failure states surfaced, not silently zeroed.
+- [x] Files: packages/evals/suites/project-progress/project-progress.test.ts (NEW)
+- [x] Cross-doc invariant: none — KnowledgeMutationPlan
+- [x] Depends on: 12.1, P9
 
 ### 12.11 — Retention / cross-store deletion purge saga suite (added §20.1, REQ-F-013/018)
-- [ ] Ordered, per-step-idempotent purge: Markdown tombstone via KnowledgeWriter (commit point) → GBrain purge/re-index → event-store tombstone (history preserved, not silently deleted) → read-model + external-ref reconciliation.
-- [ ] Partial failure produces compensating/retry states surfaced in System Health; a crash mid-saga re-drives idempotently with no orphaned reference and no resurrected index entry (Flow 7 failure states).
-- [ ] Retention prune-safety (REQ-F-018): automated pruning NEVER deletes human-owned sections or derived semantic notes; documented default windows (raw audio after audited synthesis; other raw payloads after configurable window) are exercised.
-- [ ] Deletion requires validated explicit user intent before any tombstone step runs.
-- [ ] Files: packages/evals/suites/deletion/deletion-saga.test.ts (NEW), packages/evals/suites/deletion/retention-prune-safety.test.ts (NEW)
-- [ ] Cross-doc invariant: none — KnowledgeMutationPlan, AuditRecord, WorkflowRunRef
-- [ ] Depends on: 12.1, P6, P9
+- [x] Ordered, per-step-idempotent purge: Markdown tombstone via KnowledgeWriter (commit point) → GBrain purge/re-index → event-store tombstone (history preserved, not silently deleted) → read-model + external-ref reconciliation.
+- [x] Partial failure produces compensating/retry states surfaced in System Health; a crash mid-saga re-drives idempotently with no orphaned reference and no resurrected index entry (Flow 7 failure states).
+- [x] Retention prune-safety (REQ-F-018): automated pruning NEVER deletes human-owned sections or derived semantic notes; documented default windows (raw audio after audited synthesis; other raw payloads after configurable window) are exercised.
+- [x] Deletion requires validated explicit user intent before any tombstone step runs.
+- [x] Files: packages/evals/suites/deletion/deletion-saga.test.ts (NEW), packages/evals/suites/deletion/retention-prune-safety.test.ts (NEW)
+- [x] Cross-doc invariant: none — KnowledgeMutationPlan, AuditRecord, WorkflowRunRef
+- [x] Depends on: 12.1, P6, P9
 
 ### 12.12 — Budget-cap COST-1 cancel-with-no-partial-side-effect suite (added §20.1, REQ-S-007)
-- [ ] A maxRuntimeSeconds or maxCostUsd breach CANCELS the job, records it in audit, and surfaces a System Health item (OBS-2).
-- [ ] Crucially: the cancelled job leaves NO partial uncommitted side effect — no Markdown commit, no external write, no orphaned envelope.
-- [ ] The Broker applies a configurable DEFAULT cap to an LLM-calling job that lacks one (COST-2); an uncapped job is never run uncapped.
-- [ ] AgentJob terminal state is `cancelled_budget` (distinct from failed_retryable/failed_terminal).
-- [ ] Files: packages/evals/suites/budget-cap/budget-cap.test.ts (NEW)
-- [ ] Cross-doc invariant: none — AgentJob, AuditRecord
-- [ ] Depends on: 12.1, P7
+- [x] A maxRuntimeSeconds or maxCostUsd breach CANCELS the job, records it in audit, and surfaces a System Health item (OBS-2).
+- [x] Crucially: the cancelled job leaves NO partial uncommitted side effect — no Markdown commit, no external write, no orphaned envelope.
+- [x] The Broker applies a configurable DEFAULT cap to an LLM-calling job that lacks one (COST-2); an uncapped job is never run uncapped.
+- [x] AgentJob terminal state is `cancelled_budget` (distinct from failed_retryable/failed_terminal).
+- [x] Files: packages/evals/suites/budget-cap/budget-cap.test.ts (NEW)
+- [x] Cross-doc invariant: none — AgentJob, AuditRecord
+- [x] Depends on: 12.1, P7
 
 ### 12.13 — Hermes standalone-automation gateway-routing replay suite (added §20.1, RT-7)
-- [ ] A replayed Hermes cron/Kanban automation produces NO duplicate external action (Tool Gateway idempotency enforced) and NO direct Markdown/GBrain write — every semantic write routes through KnowledgeWriter, every external side effect through Tool Gateway.
-- [ ] The suite asserts Hermes is NOT the product-workflow source of truth (Temporal is) — a Hermes-initiated side effect still carries the §8 envelope and KnowledgeWriter plan path.
-- [ ] A direct-write attempt by the Hermes automation (bypassing the gateways) is rejected/blocked, not silently allowed.
-- [ ] Files: packages/evals/suites/hermes-standalone/hermes-gateway-routing.test.ts (NEW)
-- [ ] Cross-doc invariant: none — ExternalWriteEnvelope, KnowledgeMutationPlan, ProposedAction
-- [ ] Depends on: 12.1, P6, P7, P9
+- [x] A replayed Hermes cron/Kanban automation produces NO duplicate external action (Tool Gateway idempotency enforced) and NO direct Markdown/GBrain write — every semantic write routes through KnowledgeWriter, every external side effect through Tool Gateway.
+- [x] The suite asserts Hermes is NOT the product-workflow source of truth (Temporal is) — a Hermes-initiated side effect still carries the §8 envelope and KnowledgeWriter plan path.
+- [x] A direct-write attempt by the Hermes automation (bypassing the gateways) is rejected/blocked, not silently allowed.
+- [x] Files: packages/evals/suites/hermes-standalone/hermes-gateway-routing.test.ts (NEW)
+- [x] Cross-doc invariant: none — ExternalWriteEnvelope, KnowledgeMutationPlan, ProposedAction
+- [x] Depends on: 12.1, P6, P7, P9
 
 ### 12.14 — Egress-acknowledgment ON/OFF suite (added §20.1, REQ-S-002)
-- [ ] OFF (employerRawEgressAcknowledged=false): for an Employer-Work AgentJob carrying raw content the Broker may select ONLY a loopback local provider; if none is available/conformant the job FAILS CLOSED — there is no cloud fallback (the egress veto, evaluated AFTER provider selection).
-- [ ] ON: cloud processors are permitted; egress status is visible in System Health and workspace settings.
-- [ ] OpenRouter is treated as its OWN processor in EgressPolicy (not an OpenAI-compatible alias); a route via OpenRouter under OFF is blocked.
-- [ ] Local Ollama/LM Studio endpoints are non-egress and allowed only via explicit local-provider config (no arbitrary provider URL for sensitive work).
-- [ ] Files: packages/evals/suites/egress-ack/egress-veto.test.ts (NEW)
-- [ ] Cross-doc invariant: none — EgressPolicy, ProviderMatrix, ProviderRoute, AgentJob
-- [ ] Depends on: 12.1, P5, P7
+- [x] OFF (employerRawEgressAcknowledged=false): for an Employer-Work AgentJob carrying raw content the Broker may select ONLY a loopback local provider; if none is available/conformant the job FAILS CLOSED — there is no cloud fallback (the egress veto, evaluated AFTER provider selection).
+- [x] ON: cloud processors are permitted; egress status is visible in System Health and workspace settings.
+- [x] OpenRouter is treated as its OWN processor in EgressPolicy (not an OpenAI-compatible alias); a route via OpenRouter under OFF is blocked.
+- [x] Local Ollama/LM Studio endpoints are non-egress and allowed only via explicit local-provider config (no arbitrary provider URL for sensitive work).
+- [x] Files: packages/evals/suites/egress-ack/egress-veto.test.ts (NEW)
+- [x] Cross-doc invariant: none — EgressPolicy, ProviderMatrix, ProviderRoute, AgentJob
+- [x] Depends on: 12.1, P5, P7
 
 ### 12.15 — System Health surfacing per failure class suite (added §20.1, OBS)
-- [ ] Each OBS-2 failure class — connector outage, failed/blocked write-through, budget breach, missed/late schedule, schema rejection — produces a DISTINCT typed health item linked to its audit record.
-- [ ] Each item is PERSISTENT until resolved/acknowledged (does not auto-clear on transient recovery without resolution).
-- [ ] The suite asserts the redaction invariant at the surfacing layer: health items never expose prompts/raw payloads/credential-shaped strings (§16 redaction).
-- [ ] Files: packages/evals/suites/system-health/health-surfacing.test.ts (NEW)
-- [ ] Cross-doc invariant: none — AuditRecord, WorkflowRunRef
-- [ ] Depends on: 12.1, P4, P9
+- [x] Each OBS-2 failure class — connector outage, failed/blocked write-through, budget breach, missed/late schedule, schema rejection — produces a DISTINCT typed health item linked to its audit record.
+- [x] Each item is PERSISTENT until resolved/acknowledged (does not auto-clear on transient recovery without resolution).
+- [x] The suite asserts the redaction invariant at the surfacing layer: health items never expose prompts/raw payloads/credential-shaped strings (§16 redaction).
+- [x] Files: packages/evals/suites/system-health/health-surfacing.test.ts (NEW)
+- [x] Cross-doc invariant: none — AuditRecord, WorkflowRunRef
+- [x] Depends on: 12.1, P4, P9
 
 ### 12.16 — Meeting-closeout 1:1 acceptance e2e (proof spine) + no-inference validator
 - [ ] Full replay exercises the spine: Granola poll → correlate (low confidence → Ingestion Inbox) → `meeting.close` AgentJob with READ-ONLY tool policy on the untrusted transcript → validator → KnowledgeWriter → Tool Gateway → GBrain re-index → dashboard/Telegram/audit/read-models.
@@ -1962,13 +1962,13 @@ Executed row-by-row by `/phase-exit <phase>`:
 - [ ] Depends on: 12.1, 12.2, 12.5, P6, P7, P9
 
 ### 12.17 — Prompt-injection red-team + WS-7 workspace-leakage suites
-- [ ] Injection corpus (12.3): untrusted content cannot cause any side effect before validation; the ING-7 admission gate REJECTS at job admission any untrusted-content job whose ToolPolicy admits a mutating tool (REQ-S-001).
-- [ ] Leakage corpus ≥15 (12.3): per-workspace GBrain brains + no direct cross-brain queries + GCL-only projections block every cross-workspace disclosure case; an agent attempting a direct cross-brain query is denied.
-- [ ] Each fixture's declared exfiltration/mutation attempt is asserted REJECTED, not merely absent (negative-control discipline).
-- [ ] Results recorded against the EVALUATION_CRITERIA leakage/injection rows.
-- [ ] Files: packages/evals/suites/injection/injection-redteam.test.ts (NEW), packages/evals/suites/leakage/workspace-leakage.test.ts (NEW)
-- [ ] Cross-doc invariant: none — ToolPolicy, GclProjection, AgentJob, EgressPolicy
-- [ ] Depends on: 12.1, 12.3, P5, P6, P7
+- [x] Injection corpus (12.3): untrusted content cannot cause any side effect before validation; the ING-7 admission gate REJECTS at job admission any untrusted-content job whose ToolPolicy admits a mutating tool (REQ-S-001).
+- [x] Leakage corpus ≥15 (12.3): per-workspace GBrain brains + no direct cross-brain queries + GCL-only projections block every cross-workspace disclosure case; an agent attempting a direct cross-brain query is denied.
+- [x] Each fixture's declared exfiltration/mutation attempt is asserted REJECTED, not merely absent (negative-control discipline).
+- [x] Results recorded against the EVALUATION_CRITERIA leakage/injection rows.
+- [x] Files: packages/evals/suites/injection/injection-redteam.test.ts (NEW), packages/evals/suites/leakage/workspace-leakage.test.ts (NEW)
+- [x] Cross-doc invariant: none — ToolPolicy, GclProjection, AgentJob, EgressPolicy
+- [x] Depends on: 12.1, 12.3, P5, P6, P7
 
 ### 12.18 — Electron security/IPC + worker-API session-token/Origin auth suite
 - [ ] Renderer hardening asserted: contextIsolation on, no Node integration, no direct DB/filesystem/secrets/connector access; preload exposes only a narrow typed IPC surface (inventory checked).
@@ -1980,13 +1980,13 @@ Executed row-by-row by `/phase-exit <phase>`:
 - [ ] Depends on: P5, P9, P11
 
 ### 12.19 — Temporal sleep/wake/restart + worker-supervision lifecycle suite
-- [ ] Durable schedules run missed occurrences ONCE, collapsed, on wake within the catch-up window (LIFE-2); catch-up uses persisted last-run bookkeeping (monotonic where available), not naive wall-clock, surviving NTP correction (LIFE-5).
-- [ ] In-flight workflows resume after restart/sleep and reuse the §8 envelope so NO external side effect is duplicated (LIFE-3, REQ-NF-006).
-- [ ] Worker supervision: restart-on-crash with bounded backoff; a crash-loop threshold surfaces a 'worker down' System Health/UI state instead of looping; on respawn the worker re-acquires the single-instance lease (LIFE-1).
-- [ ] Temporal-unavailable and Keychain-locked are exercised as first-class degraded modes (block/hold/retry-with-backoff + repair message), not crashes.
-- [ ] Files: packages/evals/suites/lifecycle/sleep-wake-restart.test.ts (NEW), packages/evals/suites/lifecycle/worker-supervision.test.ts (NEW)
-- [ ] Cross-doc invariant: none — WorkflowRunRef, ExternalWriteEnvelope
-- [ ] Depends on: P9, P11
+- [x] Durable schedules run missed occurrences ONCE, collapsed, on wake within the catch-up window (LIFE-2); catch-up uses persisted last-run bookkeeping (monotonic where available), not naive wall-clock, surviving NTP correction (LIFE-5).
+- [x] In-flight workflows resume after restart/sleep and reuse the §8 envelope so NO external side effect is duplicated (LIFE-3, REQ-NF-006).
+- [x] Worker supervision: restart-on-crash with bounded backoff; a crash-loop threshold surfaces a 'worker down' System Health/UI state instead of looping; on respawn the worker re-acquires the single-instance lease (LIFE-1).
+- [x] Temporal-unavailable and Keychain-locked are exercised as first-class degraded modes (block/hold/retry-with-backoff + repair message), not crashes.
+- [x] Files: packages/evals/suites/lifecycle/sleep-wake-restart.test.ts (NEW), packages/evals/suites/lifecycle/worker-supervision.test.ts (NEW)
+- [x] Cross-doc invariant: none — WorkflowRunRef, ExternalWriteEnvelope
+- [x] Depends on: P9, P11
 
 ### 12.20 — Clean-install acceptance suite (REQ-NF-005)
 - [ ] The doctor/repair command checks prerequisites (Node/pnpm, FileVault on, Keychain reachable, Temporal/GBrain startable, loopback ports free, git remotes configured) and reports TYPED repair steps for each missing prerequisite.
@@ -1998,13 +1998,13 @@ Executed row-by-row by `/phase-exit <phase>`:
 - [ ] Depends on: 12.1, P9, P11
 
 ### 12.21 — Performance & latency benchmark (single discrete budgeted-hot-path benchmark)
-- [ ] ONE benchmark instruments the three budgeted hot paths: dashboard warm-load <2s, KnowledgeWriter→GBrain search-visibility ≤60s p95, KnowledgeWriter→dashboard read-model visibility ≤10s p95 (REQ-NF-002/003).
-- [ ] Timing lives ONLY here — no per-slice/per-suite timing assertions are added to the functional suites above.
-- [ ] Recorded thresholds add matching rows to the EVALUATION_CRITERIA acceptance matrix; a regression past a budget fails the benchmark.
+- [x] ONE benchmark instruments the three budgeted hot paths: dashboard warm-load <2s, KnowledgeWriter→GBrain search-visibility ≤60s p95, KnowledgeWriter→dashboard read-model visibility ≤10s p95 (REQ-NF-002/003).
+- [x] Timing lives ONLY here — no per-slice/per-suite timing assertions are added to the functional suites above.
+- [x] Recorded thresholds add matching rows to the EVALUATION_CRITERIA acceptance matrix; a regression past a budget fails the benchmark.
 - [ ] Measured against real KnowledgeWriter→GBrain→read-model integrations on warmed local cache (not mocks).
 - [ ] Files: packages/evals/perf/latency-budgets.bench.ts (NEW), packages/evals/perf/dashboard-warmload.bench.ts (NEW)
-- [ ] Cross-doc invariant: none — KnowledgeMutationPlan
-- [ ] Depends on: 12.1, P4, P6, P9, P11
+- [x] Cross-doc invariant: none — KnowledgeMutationPlan
+- [x] Depends on: 12.1, P4, P6, P9, P11
 
 ### 12.22 — Write-through enablement gate suite *(implements §12/§13; origin: write-through amendment)*
 - [ ] The issued `GbrainReadGrant` read token REJECTS every `scope:'write'` op (`put_page`/`add_link`/`add_tag`/`delete_page`/`restore_page`/`purge_deleted_pages`/…) against the ACTUAL pinned gbrain SHA (HTTP OAuth scope-lattice conformance — stdio serve is never the runtime surface).
