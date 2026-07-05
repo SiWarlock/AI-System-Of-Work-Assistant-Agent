@@ -19,11 +19,17 @@ import { ok, err, isOk, isErr, failure, toolId, AgentJobSchema } from "@sow/cont
 import type { AgentJob, ProviderRoute, Result, FailureVariant } from "@sow/contracts";
 import { runtimeError } from "@sow/providers";
 import type { AgentResult, RuntimeError, AgentQueryFn } from "@sow/providers";
-import { copilotReadToolIds, copilotReadOnlyPolicyIsPure } from "@sow/policy";
+import {
+  copilotReadToolIds,
+  copilotReadOnlyPolicyIsPure,
+  copilotReadToolPolicy,
+  copilotAgentToolPolicy,
+} from "@sow/policy";
 import {
   copilotToolToMcpName,
   copilotReadToolMcpNames,
   copilotGbrainReadToolMcpNames,
+  admitCopilotAgentJob,
   DEFAULT_COPILOT_AGENT_MAX_COST_USD,
   GBRAIN_MCP_SERVER_NAME,
   gbrainMcpEndpoint,
@@ -226,6 +232,89 @@ describe("buildCopilotAgentJob — a schema-valid, ING-7-pure read_only Copilot 
   });
   it("sets a server-side cost cap (so buildAgentQueryOptions emits maxBudgetUsd)", () => {
     expect(job.maxCostUsd).toBe(DEFAULT_COPILOT_AGENT_MAX_COST_USD);
+  });
+});
+
+// ── admitCopilotAgentJob (C4 — ING-7 admission; activates the C1 catalog) ────
+describe("admitCopilotAgentJob — the ING-7 gate + the read_only-purity clause (activates C1)", () => {
+  /** A read_only policy that is Zod-valid (allowsMutating:false) but SECRETLY lists the mutating propose tool. */
+  const impureReadOnly = {
+    mode: "read_only" as const,
+    allowedTools: [...copilotReadToolPolicy().allowedTools, toolId("copilot.propose_action")],
+    deniedTools: [],
+    allowsMutating: false,
+  };
+
+  it("ADMITS the trusted read_only Copilot job (the normal C3 path), returning the job unchanged", () => {
+    const job = buildCopilotAgentJob("personal-business", RUNTIME_ROUTE);
+    const r = admitCopilotAgentJob(job);
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    expect(r.value).toBe(job); // pass-through identity on the allow path
+  });
+
+  it("REJECTS an UNTRUSTED job that declares a mutating (scoped_write) tool policy (ING-7 hard denial)", () => {
+    const job: AgentJob = {
+      ...buildCopilotAgentJob("personal-business", RUNTIME_ROUTE),
+      trustLevel: "untrusted",
+      toolPolicy: copilotAgentToolPolicy(), // scoped_write + the propose tool
+    };
+    const r = admitCopilotAgentJob(job);
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.cause?.code).toBe("UNTRUSTED_CONTENT_MUTATING_TOOL");
+  });
+
+  it("REJECTS a TRUSTED read_only policy that secretly lists a mutating tool (via the purity check)", () => {
+    // A trusted job short-circuits admitJob's trust check, so step 1 ADMITS — copilotReadOnlyPolicyIsPure
+    // (step 2) is what rejects it.
+    const job: AgentJob = { ...buildCopilotAgentJob("personal-business", RUNTIME_ROUTE), toolPolicy: impureReadOnly };
+    const r = admitCopilotAgentJob(job);
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.cause?.code).toBe("COPILOT_READONLY_POLICY_IMPURE");
+  });
+
+  it("REJECTS an UNTRUSTED read_only policy that secretly lists a mutating tool (the load-bearing ING-7 case)", () => {
+    // The load-bearing case: admitsMutating's read_only EARLY-RETURN blinds admitJob EVEN for untrusted content
+    // (the trust check never gets to fire), so ONLY copilotReadOnlyPolicyIsPure catches the smuggled tool.
+    const job: AgentJob = {
+      ...buildCopilotAgentJob("personal-business", RUNTIME_ROUTE),
+      trustLevel: "untrusted",
+      toolPolicy: impureReadOnly,
+    };
+    const r = admitCopilotAgentJob(job);
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.cause?.code).toBe("COPILOT_READONLY_POLICY_IMPURE");
+  });
+
+  it("REJECTS a read_only policy listing an UNKNOWN tool (pins the fail-safe unknown⇒mutating end-to-end)", () => {
+    const unknownTool = {
+      mode: "read_only" as const,
+      allowedTools: [...copilotReadToolPolicy().allowedTools, toolId("gbrain.unknown_future_op")],
+      deniedTools: [],
+      allowsMutating: false,
+    };
+    const job: AgentJob = { ...buildCopilotAgentJob("personal-business", RUNTIME_ROUTE), toolPolicy: unknownTool };
+    const r = admitCopilotAgentJob(job);
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.cause?.code).toBe("COPILOT_READONLY_POLICY_IMPURE");
+  });
+
+  it("REJECTS an internally INCONSISTENT tool policy (read_only + allowsMutating:true) — defense-in-depth", () => {
+    const inconsistent = {
+      mode: "read_only" as const,
+      allowedTools: [...copilotReadToolPolicy().allowedTools],
+      deniedTools: [],
+      allowsMutating: true, // violates read_only ⇒ !allowsMutating
+    };
+    const job: AgentJob = { ...buildCopilotAgentJob("personal-business", RUNTIME_ROUTE), toolPolicy: inconsistent };
+    const r = admitCopilotAgentJob(job);
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.cause?.code).toBe("COPILOT_TOOLPOLICY_INCONSISTENT");
   });
 });
 

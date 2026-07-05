@@ -25,7 +25,7 @@
 // fold, and the output mapping are all PURE + unit-tested. `createAgentRuntimeCopilotSynthesis` is tested
 // over a FAKE `CopilotAgentRunner`; `createClaudeAgentCopilotRunner`'s wiring is tested with an injected
 // token + `queryFn`. The real SDK `query()` call is eval/integration-tested, not unit-tested.
-import { ok, err, isOk, failure } from "@sow/contracts";
+import { ok, err, isOk, failure, isToolPolicyConsistent } from "@sow/contracts";
 import type {
   AgentJob,
   AgentJobId,
@@ -45,7 +45,14 @@ import {
   runtimeError,
 } from "@sow/providers";
 import type { AgentResult, AgentQueryFn, RuntimeError, RuntimeErrorKind } from "@sow/providers";
-import { copilotReadToolIds, copilotReadToolPolicy } from "@sow/policy";
+import {
+  admitJob,
+  copilotReadToolIds,
+  copilotReadToolPolicy,
+  copilotReadOnlyPolicyIsPure,
+  isDeny,
+  isMutatingCopilotTool,
+} from "@sow/policy";
 import type { CandidateCopilotAnswer, CopilotSynthesisPort, RetrievedContext } from "./copilot";
 import {
   buildCopilotUserPrompt,
@@ -200,6 +207,54 @@ export function buildCopilotAgentJob(workspaceId: string, runtimeRoute: Provider
   };
 }
 
+// ── ING-7 admission (Phase-C C4 — ACTIVATES the C1 catalog's classifier) ─────
+
+/**
+ * Admit the Copilot AgentJob through the ING-7 gate — the enforcement wiring the C1 catalog shipped INERT.
+ * Two checks, both fail-closed:
+ *   1. `admitJob(job, isMutatingCopilotTool)` — the ING-7 predicate (safety rule 6): an UNTRUSTED-content job
+ *      that declares a MUTATING tool policy is a HARD REJECT. `isMutatingCopilotTool` (C1) is the classifier
+ *      the gate needed — fail-safe (an unknown tool ⇒ mutating). It is consulted for a NON-read_only policy
+ *      (scoped_write / `allowsMutating`); `admitsMutating` early-returns for a read_only policy, so a read_only
+ *      policy's unknown/mutating tool is NOT caught here — it is caught by check (2).
+ *   2. `copilotReadOnlyPolicyIsPure(toolPolicy)` — the DEFERRED "read_only ⇒ no mutating tool in the effective
+ *      allow-list" clause. `admitJob`/`admitsMutating` STRUCTURALLY can't see this (their read_only branch
+ *      early-returns `false` REGARDLESS of trust), so a read_only policy that SECRETLY lists a mutating tool —
+ *      the ING-7 tool-stripping smuggle vector for untrusted content — would be admitted by (1) alone. This
+ *      second check closes it.
+ * The C3 job (trusted, read_only over the C1 read catalog) passes both. The payoff is future-facing: an
+ * untrusted variant or a C5 scoped_write/propose job is now governed by exactly this gate. Pure.
+ */
+export function admitCopilotAgentJob(job: AgentJob): Result<AgentJob, FailureVariant> {
+  // Defense-in-depth on this PUBLIC gate: re-assert the ToolPolicy cross-field invariant the Zod `.refine`
+  // enforces (read_only ⇒ !allowsMutating). `admitCopilotAgentJob` takes an already-typed AgentJob and does
+  // NOT re-run the schema gate, so a caller-built read_only policy with `allowsMutating:true` (which
+  // `admitsMutating`'s read_only early-return would otherwise admit) is refused here.
+  if (!isToolPolicyConsistent(job.toolPolicy)) {
+    return err(
+      failure("validation_rejected", "copilot tool policy is internally inconsistent", {
+        cause: { code: "COPILOT_TOOLPOLICY_INCONSISTENT" },
+      }),
+    );
+  }
+  const decision = admitJob(job, isMutatingCopilotTool);
+  if (isDeny(decision)) {
+    return err(
+      failure("validation_rejected", "copilot agent job rejected by the ING-7 admission gate", {
+        cause: { code: decision.reason },
+      }),
+    );
+  }
+  if (!copilotReadOnlyPolicyIsPure(job.toolPolicy)) {
+    return err(
+      failure("validation_rejected", "copilot read_only tool policy lists a mutating tool", {
+        cause: { code: "COPILOT_READONLY_POLICY_IMPURE" },
+      }),
+    );
+  }
+  return ok(job);
+}
+
 // ── the governed agentic prompt ───────────────────────────────────────────────
 
 /**
@@ -318,7 +373,10 @@ export function createAgentRuntimeCopilotSynthesis(runner: CopilotAgentRunner): 
       const runtimeRoute = toClaudeAgentRuntimeRoute(route);
       if (!isOk(runtimeRoute)) return runtimeRoute;
       const job = buildCopilotAgentJob(workspaceId, runtimeRoute.value);
-      const run = await runner.run(job, { question, context });
+      // ING-7 admission (C4) BEFORE the runner — fail closed on an untrusted+mutating or impure-read_only job.
+      const admitted = admitCopilotAgentJob(job);
+      if (!isOk(admitted)) return admitted;
+      const run = await runner.run(admitted.value, { question, context });
       if (!isOk(run)) return err(foldRuntimeError(run.error));
       return mapAgentResultToCandidate(run.value, context);
     },
