@@ -337,7 +337,7 @@ describe("createStubSynthesis — honest interim, cites sources, NEVER echoes ra
 
   it("produces a cited candidate answer WITHOUT echoing any raw block verbatim", async () => {
     const synth = createStubSynthesis();
-    const r = await synth.synthesize(WS, "what did we decide?", withSources);
+    const r = await synth.synthesize(WS, "what did we decide?", withSources, localRoute);
     expect(isOk(r)).toBe(true);
     if (isOk(r)) {
       expect(r.value.answer.length).toBeGreaterThan(0);
@@ -350,7 +350,7 @@ describe("createStubSynthesis — honest interim, cites sources, NEVER echoes ra
 
   it("returns a 'nothing found' candidate with NO citations when retrieval is empty", async () => {
     const synth = createStubSynthesis();
-    const r = await synth.synthesize(WS, "obscure question", { workspaceId: WS, blocks: [], sources: [] });
+    const r = await synth.synthesize(WS, "obscure question", { workspaceId: WS, blocks: [], sources: [] }, localRoute);
     expect(isOk(r)).toBe(true);
     if (isOk(r)) {
       expect(r.value.answer.length).toBeGreaterThan(0);
@@ -531,6 +531,30 @@ describe("answerCopilotQuestion — the read-only ask orchestration (retrieve �
       expect(r.value.egressProcessor).toBeUndefined();
       expect(Object.keys(r.value).sort()).toEqual(["answer", "citations"]);
     }
+  });
+
+  it("P2.1: synthesis receives the veto-CLEARED route (decision.route), never a re-selected one", async () => {
+    // The real synthesis adapter MUST egress to exactly the route the gate cleared, so the veto is
+    // authoritative over the route that actually leaves the box. Pin that the orchestration hands the
+    // selected+vetoed route (here cloudRoute, under employer-work + ack ON) to synthesize.
+    let received: ProviderRoute | null = null;
+    const spySynth: CopilotSynthesisPort = {
+      synthesize: (_ws, _q, _ctx, route) => {
+        received = route;
+        return ok({ answer: ["ok"], citations: [] });
+      },
+    };
+    await answerCopilotQuestion(
+      deps(ctx(WS), {
+        synthesis: spySynth,
+        workspacePosture: createLocalWorkspacePosture({
+          [WS]: posture(employerWs, egressPolicy({ employerRawEgressAcknowledged: true })),
+        }),
+        routeSelector: createLocalRouteSelector(cloudRoute),
+      }),
+      { workspaceId: WS, question: "q" },
+    );
+    expect(received).toBe(cloudRoute);
   });
 });
 

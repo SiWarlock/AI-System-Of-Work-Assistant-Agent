@@ -136,12 +136,18 @@ export interface CandidateCopilotAnswer {
   readonly citations: readonly RetrievedSource[];
 }
 
-/** The governed synthesis port — turns retrieved context into a candidate answer. No side effects. */
+/**
+ * The governed synthesis port — turns retrieved context into a candidate answer. No side effects.
+ * `route` is the veto-CLEARED ProviderRoute (from `decideCopilotEgress`) the synthesizer MUST use —
+ * NOT one it re-selects (else the veto becomes advisory: the gate clears route R while synthesis
+ * calls R′). The interim stub ignores it (it egresses nowhere); the real adapter binds to it.
+ */
 export interface CopilotSynthesisPort {
   readonly synthesize: (
     workspaceId: string,
     question: string,
     context: RetrievedContext,
+    route: ProviderRoute,
   ) => MaybeAsyncResult<CandidateCopilotAnswer>;
 }
 
@@ -333,6 +339,7 @@ export function createStubSynthesis(): CopilotSynthesisPort {
       _workspaceId,
       _question,
       context,
+      _route, // the interim stub egresses nowhere; the real adapter binds to the vetoed route
     ): Result<CandidateCopilotAnswer, FailureVariant> => {
       const n = context.sources.length;
       const answer =
@@ -443,7 +450,14 @@ export async function answerCopilotQuestion(
   });
   if (!isOk(decision)) return decision; // veto DENY (e.g. employer-work cloud, ack OFF) → no synthesis
 
-  const candidate = await deps.synthesis.synthesize(input.workspaceId, input.question, scoped.value);
+  // Synthesis MUST use the veto-CLEARED route (decision.value.route) — never re-select — so the gate
+  // is authoritative over exactly the route that egresses (the P1.2b security carry-forward).
+  const candidate = await deps.synthesis.synthesize(
+    input.workspaceId,
+    input.question,
+    scoped.value,
+    decision.value.route,
+  );
   if (!isOk(candidate)) return candidate;
   return toUiSafeCopilotAnswer(candidate.value, decision.value.egressProcessor);
 }
