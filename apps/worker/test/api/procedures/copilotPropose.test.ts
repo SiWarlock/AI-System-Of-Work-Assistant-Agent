@@ -6,12 +6,18 @@
 // approvalPolicy is forced to require human approval, that the derived action is idempotent by its derived
 // key, and that malformed intent fails closed.
 import { describe, it, expect } from "vitest";
-import { isOk, isErr, ProposedActionSchema } from "@sow/contracts";
+import { ok, err, isOk, isErr, failure, ProposedActionSchema, envelopeMatchesAction } from "@sow/contracts";
+import type { ProposedAction, WorkspaceId } from "@sow/contracts";
 import {
   deriveCopilotProposedAction,
+  routeCopilotProposal,
+  proposeCopilotAction,
   COPILOT_PROPOSE_APPROVAL_POLICY,
+  COPILOT_PROPOSE_PRECONDITION,
   MAX_PROPOSE_PAYLOAD_CHARS,
   type CopilotProposeIntent,
+  type CopilotProposeSink,
+  type CopilotProposeReceipt,
 } from "../../../src/api/procedures/copilotPropose";
 
 function intent(over: Partial<CopilotProposeIntent> = {}): CopilotProposeIntent {
@@ -135,5 +141,117 @@ describe("deriveCopilotProposedAction — DERIVE the canonical action (keys are 
     expect(isErr(r)).toBe(true);
     if (!isErr(r)) return;
     expect(r.error.cause?.code).toBe("COPILOT_PROPOSE_PAYLOAD_TOO_LARGE");
+  });
+});
+
+// ── C5.2b: routeCopilotProposal / proposeCopilotAction → §9.8 Approvals (unconditional) ──
+const WS = "personal-business" as WorkspaceId;
+
+function validAction(): ProposedAction {
+  const r = deriveCopilotProposedAction(intent());
+  if (!isOk(r)) throw new Error("fixture derive failed");
+  return r.value;
+}
+
+/** A fake sink capturing what it recorded; `created` + an optional forced error are injectable. */
+function fakeSink(opts: { created?: boolean; fail?: boolean } = {}): {
+  sink: CopilotProposeSink;
+  calls: () => number;
+  last: () => { action: ProposedAction; workspaceId: string } | undefined;
+} {
+  let n = 0;
+  let last: { action: ProposedAction; workspaceId: string } | undefined;
+  const sink: CopilotProposeSink = {
+    record: async (input) => {
+      n += 1;
+      last = { action: input.action, workspaceId: String(input.workspaceId) };
+      if (opts.fail === true) {
+        return err(failure("connector_unreachable", "approvals sink down", { cause: { code: "SINK_DOWN" } }));
+      }
+      const receipt: CopilotProposeReceipt = { approvalRef: "appr-1", created: opts.created ?? true };
+      return ok(receipt);
+    },
+  };
+  return { sink, calls: () => n, last: () => last };
+}
+
+describe("routeCopilotProposal — records a pending Approval, envelope linkage-pinned to the action", () => {
+  it("builds a linkage-pinned envelope (envelopeMatchesAction) with the copilot precondition and records it pending", async () => {
+    const action = validAction();
+    const f = fakeSink();
+    const captured: { envMatches?: boolean; preconditions?: readonly string[] } = {};
+    // wrap to capture the envelope the sink saw
+    const sink: CopilotProposeSink = {
+      record: async (input) => {
+        captured.envMatches = envelopeMatchesAction(input.envelope, input.action);
+        captured.preconditions = input.envelope.preconditions;
+        return f.sink.record(input);
+      },
+    };
+    const r = await routeCopilotProposal({ action, workspaceId: WS, sink });
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    expect(r.value).toEqual({ approvalRef: "appr-1", created: true });
+    expect(captured.envMatches).toBe(true); // the §8 linkage pin holds (safety rule 3)
+    expect(captured.preconditions).toContain(COPILOT_PROPOSE_PRECONDITION);
+  });
+
+  it("is idempotent by the derived key — a re-drive returns created:false (no second card)", async () => {
+    const f = fakeSink({ created: false });
+    const r = await routeCopilotProposal({ action: validAction(), workspaceId: WS, sink: f.sink });
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    expect(r.value.created).toBe(false);
+  });
+
+  it("passes a sink failure through as a typed FailureVariant", async () => {
+    const f = fakeSink({ fail: true });
+    const r = await routeCopilotProposal({ action: validAction(), workspaceId: WS, sink: f.sink });
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.cause?.code).toBe("SINK_DOWN");
+  });
+
+  it("folds a THROWING sink to a bounded COPILOT_PROPOSE_SINK_THREW (never rejects; discards the raw error)", async () => {
+    const throwingSink: CopilotProposeSink = {
+      record: async () => {
+        throw new Error("db exploded: secret=hunter2");
+      },
+    };
+    const r = await routeCopilotProposal({ action: validAction(), workspaceId: WS, sink: throwingSink });
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.cause?.code).toBe("COPILOT_PROPOSE_SINK_THREW");
+    expect(r.error.message).not.toContain("secret"); // redaction — the raw error is discarded
+  });
+
+  it("routes UNCONDITIONALLY — an action whose approvalPolicy is NOT requires_approval STILL records pending (human gate is structural)", async () => {
+    // carry-forward #1: the routing must not branch on approvalPolicy. Craft an auto-ish policy and confirm it routes.
+    const base = validAction();
+    const autoish = ProposedActionSchema.parse({ ...base, approvalPolicy: "auto_apply" });
+    const f = fakeSink();
+    const r = await routeCopilotProposal({ action: autoish, workspaceId: WS, sink: f.sink });
+    expect(isOk(r)).toBe(true);
+    expect(f.calls()).toBe(1); // recorded pending regardless of the policy string
+  });
+});
+
+describe("proposeCopilotAction — the full derive → route path the tool handler invokes", () => {
+  it("derives from the intent and routes to Approvals", async () => {
+    const f = fakeSink();
+    const r = await proposeCopilotAction({ intent: intent(), workspaceId: WS, sink: f.sink });
+    expect(isOk(r)).toBe(true);
+    expect(f.calls()).toBe(1);
+    expect(f.last()?.action.targetSystem).toBe("todoist");
+    expect(f.last()?.workspaceId).toBe("personal-business");
+  });
+
+  it("SHORT-CIRCUITS on a malformed intent — the sink is never touched (no partial record)", async () => {
+    const f = fakeSink();
+    const r = await proposeCopilotAction({ intent: { nope: true }, workspaceId: WS, sink: f.sink });
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.cause?.code).toBe("COPILOT_PROPOSE_MALFORMED");
+    expect(f.calls()).toBe(0);
   });
 });

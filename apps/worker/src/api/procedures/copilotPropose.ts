@@ -15,10 +15,18 @@
 //     is idempotent).
 // The derived action is re-validated through `ProposedActionSchema` (the candidate-data gate) before it is
 // returned. PURE; never throws (typed Result). No side effects — this module only DERIVES; C5.2b routes.
-import { ok, err, failure, ProposedActionSchema } from "@sow/contracts";
-import type { FailureVariant, ProposedAction, Result, TargetSystem } from "@sow/contracts";
+import { ok, err, isOk, failure, ProposedActionSchema } from "@sow/contracts";
+import type {
+  ExternalWriteEnvelope,
+  FailureVariant,
+  ProposedAction,
+  Result,
+  TargetSystem,
+  WorkspaceId,
+} from "@sow/contracts";
 import { targetSystemSchema } from "@sow/contracts";
 import { buildCanonicalObjectKey, buildIdempotencyKey } from "@sow/domain";
+import { buildEnvelopeFromAction } from "@sow/integrations";
 
 /** A Copilot proposal ALWAYS requires a human approval — the Copilot never auto-applies an external write. */
 export const COPILOT_PROPOSE_APPROVAL_POLICY = "requires_approval";
@@ -169,4 +177,107 @@ export function deriveCopilotProposedAction(intent: unknown): Result<ProposedAct
     );
   }
   return ok(parsed.data);
+}
+
+// ── C5.2b — route the derived proposal → §9.8 Approvals (UNCONDITIONALLY) ──────
+//
+// The read path never applies a write; the ONLY durable artifact of a Copilot proposal is a PENDING Approval
+// card the owner must approve (§9.8, session 027). Routing here (a) builds the §8 ExternalWriteEnvelope from
+// the derived action (reusing @sow/integrations `buildEnvelopeFromAction`, which computes the payloadHash and
+// PROVES the `envelopeMatchesAction` linkage pin), and (b) records it pending through the injected sink —
+// UNCONDITIONALLY. It NEVER inspects `approvalPolicy` to decide auto-vs-human (carry-forward #1: the human
+// gate is STRUCTURAL — everything routes to the pending inbox; `approvalPolicy` is decorative). Idempotent by
+// the DERIVED key (the sink dedupes on `envelope.idempotencyKey`): a re-drive returns `created:false`, never a
+// second card. The concrete sink (RecordPending / ApprovalRepository) is wired in C5.3; here it is injected.
+
+/** The Copilot-specific precondition every proposal card carries — the owner's explicit approval gates it. */
+export const COPILOT_PROPOSE_PRECONDITION = "copilot.proposal.requires_owner_approval";
+
+/** Proof a proposal was recorded as a pending Approval. `created:false` ⇒ an idempotent re-drive (no 2nd card). */
+export interface CopilotProposeReceipt {
+  readonly approvalRef: string;
+  readonly created: boolean;
+}
+
+/**
+ * The seam to §9.8 Approvals: record the (action, envelope) as a PENDING Approval, idempotent by the
+ * envelope's idempotencyKey. A fake in tests; the concrete impl (C5.3) wraps the live RecordPending /
+ * ApprovalRepository recording.
+ *
+ * ⚠ C5.3 CONCRETE-SINK CONTRACT (security-review — the routing layer cannot enforce these):
+ *   (a) WORKSPACE PROVENANCE (safety rule 4): `workspaceId` MUST be the agent-job's SERVER-BOUND workspace
+ *       (never derived from model output), and the sink SHOULD validate it against the workspace registry and
+ *       scope the card by it — the envelope carries NO workspace field, so this is the SOLE attribution.
+ *   (b) PAYLOAD-SWAP TOCTOU (safety rule 3): idempotency is keyed on identity+operation, NOT payload. So the
+ *       sink MUST be first-write-wins / no-op-on-hit and, on a same-idempotencyKey hit whose `payloadHash`
+ *       DIVERGES from the recorded card, REJECT (or record a distinct new card) — NEVER silently overwrite an
+ *       already-recorded (esp. approved) card's payload, or an owner who approved payload A executes A′.
+ *   (c) The sink MUST return a typed Result (never reject) with BOUNDED cause codes + pre-redacted messages;
+ *       and neither it nor the execution path may auto-apply on the decorative `approvalPolicy` string.
+ */
+export interface CopilotProposeSink {
+  record(input: {
+    readonly action: ProposedAction;
+    readonly envelope: ExternalWriteEnvelope;
+    readonly workspaceId: WorkspaceId;
+  }): Promise<Result<CopilotProposeReceipt, FailureVariant>>;
+}
+
+/**
+ * Route an already-DERIVED proposal to §9.8 Approvals: build the envelope (linkage-pinned to the action), then
+ * record it pending through the sink — UNCONDITIONALLY (never branch on `approvalPolicy`). An envelope-build
+ * failure folds to a typed `validation_rejected`; a sink that REJECTS (a mis-behaving concrete impl) is folded
+ * to a bounded `COPILOT_PROPOSE_SINK_THREW` (never lets a raw error/stack escape — §16 redaction + the module's
+ * never-throws contract). `workspaceId` is a branded `WorkspaceId` — the caller (C5.3) owns its provenance +
+ * registry validation. REQUIRES a DERIVED action (the payload-size bound lives in `deriveCopilotProposedAction`;
+ * a non-derived caller bypasses it). No side effect beyond the pending card. Never throws.
+ */
+export async function routeCopilotProposal(params: {
+  readonly action: ProposedAction;
+  readonly workspaceId: WorkspaceId;
+  readonly sink: CopilotProposeSink;
+}): Promise<Result<CopilotProposeReceipt, FailureVariant>> {
+  const envelope = buildEnvelopeFromAction(params.action, {
+    preconditions: [COPILOT_PROPOSE_PRECONDITION],
+  });
+  if (!isOk(envelope)) {
+    return err(
+      failure("validation_rejected", "copilot propose: envelope build failed", {
+        cause: { code: `COPILOT_PROPOSE_ENVELOPE_${envelope.error.code}` },
+      }),
+    );
+  }
+  // UNCONDITIONAL — every derived proposal becomes a pending card. The human gate is structural, not a policy
+  // branch (carry-forward #1). Idempotency is the sink's job, keyed on envelope.idempotencyKey. The sink call
+  // is wrapped so a throwing concrete impl (e.g. a DB fault) folds to a bounded, redaction-safe failure rather
+  // than rejecting up to the agent-facing tool handler.
+  try {
+    return await params.sink.record({
+      action: params.action,
+      envelope: envelope.value,
+      workspaceId: params.workspaceId,
+    });
+  } catch {
+    return err(
+      failure("connector_unreachable", "copilot propose: approvals sink failed", {
+        retryable: true,
+        cause: { code: "COPILOT_PROPOSE_SINK_THREW" },
+      }),
+    );
+  }
+}
+
+/**
+ * The full propose path the `copilot.propose_action` tool handler (C5.2c) invokes: DERIVE the canonical action
+ * from the model's untrusted intent (server keys, fail-closed) → ROUTE it to §9.8 Approvals. A derivation
+ * failure short-circuits BEFORE the sink is touched (no partial record). Never throws.
+ */
+export async function proposeCopilotAction(params: {
+  readonly intent: unknown;
+  readonly workspaceId: WorkspaceId;
+  readonly sink: CopilotProposeSink;
+}): Promise<Result<CopilotProposeReceipt, FailureVariant>> {
+  const derived = deriveCopilotProposedAction(params.intent);
+  if (!isOk(derived)) return derived;
+  return routeCopilotProposal({ action: derived.value, workspaceId: params.workspaceId, sink: params.sink });
 }
