@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-05 · **Mode:** single-operator (build, ultracode) · **Tracks:** policy (C1) · providers/worker (C2+ ahead)
 - **Predecessor:** `034-2026-07-05-copilot-reachability-and-http-grant-transport.md`
-- **Successor:** _(none yet — Phase C continues at C2)_
+- **Successor:** `036-2026-07-05-RESUME-phase-c-c3-agent-runtime-synthesis.md` (C2 done; RESUME handoff for C3)
 - **HEAD at close:** `88b0f7d` (C1) atop `abaa1b3`.
 - **Gate at close:** repo-wide `turbo typecheck test` **31/31** (policy 224, +14 C1). #2/#1 pushed; C1 committed (push at continuation).
 
