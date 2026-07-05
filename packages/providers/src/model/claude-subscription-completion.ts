@@ -16,7 +16,7 @@
 // The SDK is imported TYPE-ONLY at module scope + LAZILY (`await import`) inside the real call, so the
 // PURE `extractCompletion` (the mapping logic — where a bug would silently corrupt an answer) is unit-
 // testable without loading the SDK runtime (which spawns the Claude Code CLI subprocess).
-import type { SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKMessage, SDKResultMessage, SdkBeta } from "@anthropic-ai/claude-agent-sdk";
 import { ok, err } from "@sow/contracts";
 import type { Result } from "@sow/contracts";
 
@@ -28,6 +28,8 @@ export interface CompletionRequest {
   /** JSON Schema for the SDK `outputFormat` — the structured `{answer, citations}` shape. */
   readonly outputSchema: Record<string, unknown>;
   readonly maxCostUsd?: number;
+  /** SDK beta flags, e.g. `["context-1m-2025-08-07"]` for the 1M-token context window (Sonnet). */
+  readonly betas?: readonly string[];
 }
 
 /** Raw completion output. `structuredOutput` is CANDIDATE DATA — the caller's gate validates it. */
@@ -139,6 +141,9 @@ export function createClaudeSubscriptionCompletion(): ClaudeSubscriptionCompleti
             maxTurns: 1,
             abortController: controller,
             ...(req.maxCostUsd !== undefined ? { maxBudgetUsd: req.maxCostUsd } : {}),
+            // The caller vets the flags; cast to the SDK's `SdkBeta[]` at this boundary (e.g. 1M
+            // context). Spread to a fresh mutable array so the SDK can't mutate the caller's readonly one.
+            ...(req.betas !== undefined ? { betas: [...req.betas] as SdkBeta[] } : {}),
           },
         })) {
           messages.push(message);

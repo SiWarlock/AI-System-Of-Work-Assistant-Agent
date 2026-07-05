@@ -165,6 +165,12 @@ export interface BootConfig extends BackendsConfig {
   readonly copilotRealModel?: boolean;
   /** Optional Claude model id for the real Copilot path; defaults to DEFAULT_CLAUDE_COPILOT_MODEL. */
   readonly copilotModel?: string;
+  /**
+   * Optional SDK beta flags for the real Copilot path; defaults to DEFAULT_COPILOT_BETAS (the
+   * 1M-context window, which pairs with the Sonnet default). Override alongside `copilotModel` when
+   * switching to a non-Sonnet family (an incompatible beta+model combo is rejected server-side).
+   */
+  readonly copilotBetas?: readonly string[];
 }
 
 /** The assembled live control plane the app shell drives. */
@@ -329,6 +335,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
       type: workspaceType(spec.workspaceId),
     })),
     model: config.copilotModel,
+    betas: config.copilotBetas,
     completion: createClaudeSubscriptionCompletion,
   });
 

@@ -50,6 +50,11 @@ async function start(config: WorkerHostConfig): Promise<void> {
       allowlist: { origins: config.origins, hosts: config.hosts },
       apiHost: config.apiHost,
       apiPort: config.apiPort,
+      // Real Copilot cloud path ON (owner posture: cloud OK for Employer-Work WITH the visible notice).
+      // Model = Claude Sonnet 5; the synthesis adapter pairs it with the 1M-context beta by default.
+      // To turn OFF (back to the deterministic local stub, nothing egresses), remove these two lines.
+      copilotRealModel: true,
+      copilotModel: "claude-sonnet-5",
       // No-op dispatch stubs — a first render triggers neither path (no jobs/approvals yet).
       triageDispatch: (input) =>
         Promise.resolve({ ok: true, value: { idempotencyKey: input.idempotencyKey } }),

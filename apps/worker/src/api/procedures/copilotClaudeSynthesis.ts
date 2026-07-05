@@ -212,6 +212,8 @@ export function foldCompletionError(error: CompletionError): FailureVariant {
 export interface ClaudeCopilotSynthesisOptions {
   /** Per-answer cost ceiling (USD). Defaults to DEFAULT_COPILOT_MAX_COST_USD. */
   readonly maxCostUsd?: number;
+  /** SDK beta flags. Defaults to DEFAULT_COPILOT_BETAS (the 1M-context window). */
+  readonly betas?: readonly string[];
 }
 
 /**
@@ -225,6 +227,7 @@ export function createClaudeCopilotSynthesis(
   options?: ClaudeCopilotSynthesisOptions,
 ): CopilotSynthesisPort {
   const maxCostUsd = options?.maxCostUsd ?? DEFAULT_COPILOT_MAX_COST_USD;
+  const betas = options?.betas ?? DEFAULT_COPILOT_BETAS;
   return {
     synthesize: async (
       _workspaceId: string,
@@ -251,6 +254,7 @@ export function createClaudeCopilotSynthesis(
         userPrompt: buildCopilotUserPrompt(question, context),
         outputSchema: COPILOT_OUTPUT_SCHEMA,
         maxCostUsd,
+        betas,
       };
       const result = await client.complete(request);
       if (!isOk(result)) return err(foldCompletionError(result.error));
@@ -270,12 +274,21 @@ export function createClaudeCopilotSynthesis(
 export const CLAUDE_CLOUD_COPILOT_ENDPOINT = "https://api.anthropic.com";
 
 /**
- * Default Claude model for Copilot synthesis. Overridable end-to-end via `BootConfig.copilotModel`
- * (threaded through `buildCopilotDeps` → `createClaudeCloudRouteSelector`). NOTE: verify the exact id
- * against the current Anthropic / Agent-SDK model catalog before flipping the flag live — a stale id
- * folds to a typed `CompletionError` (the safe failure mode), never a silent wrong answer.
+ * Default Claude model for Copilot synthesis — Sonnet 5 (owner's choice, paired with the 1M-context
+ * beta below). Overridable end-to-end via `BootConfig.copilotModel` (threaded through `buildCopilotDeps`
+ * → `createClaudeCloudRouteSelector`). NOTE: verify the exact id against the current Anthropic / Agent-SDK
+ * catalog before flipping live — a stale id folds to a typed `CompletionError` (the safe failure), never
+ * a silent wrong answer.
  */
-export const DEFAULT_CLAUDE_COPILOT_MODEL = "claude-opus-4-8";
+export const DEFAULT_CLAUDE_COPILOT_MODEL = "claude-sonnet-5";
+
+/**
+ * Default SDK beta flags for Copilot synthesis — the 1M-token context window (`context-1m-2025-08-07`),
+ * which pairs with the Sonnet default. If the model is overridden to a non-Sonnet family, override
+ * `betas` too — via `BootConfig.copilotBetas` (or `buildCopilotDeps`/`createClaudeCopilotSynthesis`
+ * options) — because an incompatible beta+model combo is rejected server-side (a folded, non-silent error).
+ */
+export const DEFAULT_COPILOT_BETAS: readonly string[] = ["context-1m-2025-08-07"];
 
 /**
  * The real cloud Claude PROVIDER route for Copilot synthesis: `provider: "claude"` + `egressClass:
@@ -336,6 +349,8 @@ export interface CopilotDepsOptions {
   readonly workspaces: readonly CopilotWorkspace[];
   /** Optional model override (BootConfig.copilotModel); defaults to DEFAULT_CLAUDE_COPILOT_MODEL. */
   readonly model?: string;
+  /** Optional SDK beta override; defaults to DEFAULT_COPILOT_BETAS (the 1M-context window). */
+  readonly betas?: readonly string[];
   /**
    * Factory for the real subscription completion client — invoked ONLY on the real path (so the SDK
    * client is never even constructed when the flag is off). Boot passes `createClaudeSubscriptionCompletion`.
@@ -364,7 +379,7 @@ export function buildCopilotDeps(opts: CopilotDepsOptions): CopilotDeps {
   return {
     retrieval: createFixtureRetrieval(fixtures),
     synthesis: opts.realCopilot
-      ? createClaudeCopilotSynthesis(opts.completion())
+      ? createClaudeCopilotSynthesis(opts.completion(), { betas: opts.betas })
       : createStubSynthesis(),
     // Authoritative posture resolved by workspaceId (server-side).
     workspacePosture: createLocalWorkspacePosture(postures),

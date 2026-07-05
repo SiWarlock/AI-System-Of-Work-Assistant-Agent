@@ -544,4 +544,51 @@ describe("buildCopilotDeps — the flag branch, unit-tested (a flipped ternary c
     const posture = await deps.workspacePosture.resolve("ws-employer");
     expect(isErr(posture)).toBe(true);
   });
+
+  it("threads betas into the synthesis request (default 1M-context beta, no explicit override)", async () => {
+    const { client, calls } = recordingClient(ok({ structuredOutput: goodOutput, costUsd: 0.01 }));
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces: employer,
+      completion: () => client,
+    });
+    const routeR = await deps.routeSelector.select("ws-employer", cloudCopilotPosture("ws-employer", "employer_work"));
+    if (isOk(routeR)) await deps.synthesis.synthesize("ws-employer", "q", ctx, routeR.value);
+    expect(calls[0]!.betas).toEqual(["context-1m-2025-08-07"]);
+  });
+
+  it("threads a NON-default betas OVERRIDE through buildCopilotDeps (not just the default)", async () => {
+    const { client, calls } = recordingClient(ok({ structuredOutput: goodOutput, costUsd: 0.01 }));
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces: employer,
+      betas: ["context-1m-2025-08-07", "some-other-beta"],
+      completion: () => client,
+    });
+    const routeR = await deps.routeSelector.select("ws-employer", cloudCopilotPosture("ws-employer", "employer_work"));
+    if (isOk(routeR)) await deps.synthesis.synthesize("ws-employer", "q", ctx, routeR.value);
+    expect(calls[0]!.betas).toEqual(["context-1m-2025-08-07", "some-other-beta"]);
+  });
+});
+
+describe("Sonnet 5 1M — the default model + the 1M-context beta (P2.4b)", () => {
+  it("the DEFAULT Copilot model is Claude Sonnet 5", async () => {
+    const r = await createClaudeCloudRouteSelector().select("ws", cloudCopilotPosture("ws", "employer_work"));
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.model).toBe("claude-sonnet-5");
+  });
+
+  it("requests the 1M-context beta BY DEFAULT", async () => {
+    const { client, calls } = recordingClient(ok({ structuredOutput: goodOutput, costUsd: 0.01 }));
+    const synth = createClaudeCopilotSynthesis(client);
+    await synth.synthesize("ws", "q", ctx, cloudRoute);
+    expect(calls[0]!.betas).toEqual(["context-1m-2025-08-07"]);
+  });
+
+  it("honors a betas override (e.g. [] to disable 1M for a non-Sonnet model)", async () => {
+    const { client, calls } = recordingClient(ok({ structuredOutput: goodOutput, costUsd: 0.01 }));
+    const synth = createClaudeCopilotSynthesis(client, { betas: [] });
+    await synth.synthesize("ws", "q", ctx, cloudRoute);
+    expect(calls[0]!.betas).toEqual([]);
+  });
 });
