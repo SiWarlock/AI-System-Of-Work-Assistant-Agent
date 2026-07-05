@@ -238,6 +238,9 @@ importers:
       '@sow/integrations':
         specifier: workspace:*
         version: link:../integrations
+      '@sow/knowledge':
+        specifier: workspace:*
+        version: link:../knowledge
       '@sow/policy':
         specifier: workspace:*
         version: link:../policy

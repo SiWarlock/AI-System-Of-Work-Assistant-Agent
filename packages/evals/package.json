@@ -19,6 +19,7 @@
     "@sow/db": "workspace:*",
     "@sow/domain": "workspace:*",
     "@sow/integrations": "workspace:*",
+    "@sow/knowledge": "workspace:*",
     "@sow/policy": "workspace:*",
     "@sow/providers": "workspace:*",
     "@sow/workflows": "workspace:*",
