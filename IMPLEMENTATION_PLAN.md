@@ -2015,7 +2015,7 @@ Executed row-by-row by `/phase-exit <phase>`:
 - [ ] Depends on: 12.7, 4.19, 4.20
 
 ### 12.23 — Divergence / serving fail-closed suite *(implements §12; origin: write-through amendment)*
-- [ ] Monotonic apply / out-of-order drain: a lower-revision index apply is a no-op (pointer never regresses); trigger collapse = MAX revision.
+- [x] Monotonic apply / out-of-order drain: a lower-revision index apply is a no-op (pointer never regresses); trigger collapse = MAX revision.
 - [x] Crash-recovery: the allow-set is rebuilt from the gbrain-INDEPENDENT `CanonicalFactDeriver(current Markdown)` — no true fact stranded, no quarantined fact resurrected.
 - [x] Quarantine-as-absence non-resurrection after a one-byte change (content-independent `factIdentity`); `content_mismatch` resolves Markdown-wins (no DB-content laundering into Markdown); signature forgery/copy rejected; reconciler-failure / `coverageComplete=false` degrades to Markdown-provenanced-only serving (never serves the last-known DB set).
 - [x] Files: packages/evals/test/gbrain-failclosed.test.ts (NEW)
