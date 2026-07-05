@@ -2,9 +2,9 @@
 
 - **Date:** 2026-07-05 · **Mode:** single-operator (build, ultracode) · **Track:** worker (`apps/worker`)
 - **Predecessor:** `036-2026-07-05-RESUME-phase-c-c3-agent-runtime-synthesis.md` (the RESUME handoff this session executed)
-- **Successor:** _(next session — C5.2b: route the propose action → §9.8 Approvals)_
-- **HEAD at close:** `2d3988b` (C5.2a) atop `7c1e9ff` (C5.1) atop `dac4f95` (C4) atop `a5e62dd` (C3) atop the pre-session `cf160d1`.
-- **Gate at close:** repo-wide `turbo typecheck test` **31/31**; worker **596** (+ 55-test C3/C4/C5.1 module + 13-test C5.2a module); pushed at close-out.
+- **Successor:** _(next session — C5.2c: the in-process SDK MCP server exposing `copilot.propose_action`)_
+- **HEAD at close:** `add9ae1` (C5.2b) atop `2d3988b` (C5.2a) atop `7c1e9ff` (C5.1) atop `dac4f95` (C4) atop `a5e62dd` (C3) atop the pre-session `cf160d1`.
+- **Gate at close:** repo-wide `turbo typecheck test` **31/31**; worker **603** (+ 55-test C3/C4/C5.1 module + 20-test C5.2a/b propose module); pushed at close-out.
 - **Owner decision this session:** for C5 (write-via-Approvals), the owner picked **"the model calls a propose tool"** (Option B — most agentic). That makes content-derived trust a hard prerequisite → **C5.1** built it.
 
 ## Why this session existed
@@ -41,6 +41,12 @@ The owner picked Option B ("the model calls a propose tool") for C5, which makes
 
 **Review (security, focused):** the derived-never-client-supplied invariant **holds by construction** (no crit). **Fixed the one HIGH** (fail-closed on the UNTRUSTED intent): the module claimed never-throws but consumed `.trim()`/`Object.keys` before any gate — a numeric identity value (the natural update case) threw in `normalizeIdentity`. Now a **hand-written strict guard** `parseCopilotProposeIntent` (the worker has no zod dep, per `copilotClaudeSynthesis`) folds a malformed/non-string/extra-key intent to a typed `COPILOT_PROPOSE_MALFORMED`. Added a payload size cap. _(Code-quality subagent skipped for this micro-slice — cost tuning; self-reviewed.)_
 
+### C5.2b (`add9ae1`) — route the proposal → §9.8 Approvals (unconditional)
+
+**File modified:** `copilotPropose.ts` — `routeCopilotProposal({action, workspaceId, sink})` builds the §8 `ExternalWriteEnvelope` from the derived action (reusing `@sow/integrations` `buildEnvelopeFromAction` — computes `payloadHash`, proves the `envelopeMatchesAction` linkage pin) and records it PENDING through an injected `CopilotProposeSink` **unconditionally** (never branches on `approvalPolicy` — the human gate is structural). `proposeCopilotAction` = derive → route (short-circuits before the sink on a derivation failure).
+
+**Review (security, focused):** no crit/high; the structural-human-gate invariant **holds at the routing layer**. **Fixed 2 mediums:** wrap `sink.record` so a throwing concrete sink folds to a bounded, redaction-safe `COPILOT_PROPOSE_SINK_THREW` (never rejects up to the agent-facing handler); `workspaceId` is now a branded `WorkspaceId` (no silent as-cast). **C5.3 concrete-sink contracts documented** on `CopilotProposeSink` (workspace provenance/registry-validation; the **payload-swap TOCTOU** — first-write-wins + reject a divergent `payloadHash` on a same-key hit; bounded/redacted errors; no auto-apply on `approvalPolicy`).
+
 ## Decisions made
 
 - **Agent path swapped at `buildCopilotDeps` behind `copilotAgentMode` (OFF by default), via an `agentSynthesis` factory** (not by importing the agent module into `copilotClaudeSynthesis.ts`) — breaks the circular import; the real runtime is built only when the flag is on.
@@ -65,7 +71,8 @@ Clean. C3 + C4 both RED→GREEN (46 deterministic tests: route/tool-name/prompt/
 - **[Finding — WS-8 residual, shared + pre-existing]** the served gbrain brain is a single COMBINED store; a query against it is not yet filtered to the served workspace's own content. This is the SAME gap the retrieval seam has (`gbrain call query` / the http exec pass no workspace filter) — safe today (the seed holds only the served workspace's content) but needs per-workspace query filtering or a partitioned brain before the store grows to hold multiple workspaces. **Not C3-specific; escalate for both paths.**
 - **[C5 guard-rail — trust model DONE in C5.1 (`7c1e9ff`)]** `job.trustLevel` is now CONTENT-derived (read_only ⇒ untrusted; propose ⇒ trusted, resolver-gated). **REMAINING precondition for C5.2/C5.3 (security#2, LOAD-BEARING):** `contentTrust:"trusted"` is sound ONLY if the ENTIRE tool-reachable content surface is trusted-provenance (a propose job keeps the gbrain READ tools, so it can fetch more brain content mid-run beyond the seed). Derive `contentTrust` PER-CONTENT over that whole surface (if ANY reachable passage is non-KnowledgeWriter/untrusted-provenance → `untrusted`) — NOT per-workspace (an owner's brain holds ingested untrusted notes) — and eval it BEFORE the propose tool is wired callable.
 - **[deferred hardening, documented in-code]** token-TTL staleness of the held MCP bearer header (liveness, not a leak — an expired token 401s fail-closed); `route.endpoint` not consumed by the SDK (processor-identity is the operative binding); the static idempotency key (inert — Broker bypassed today).
-- **C5.2a DONE (`2d3988b`)** — `deriveCopilotProposedAction` (server-derived keys). **Remaining C5:**
-  - **[C5.2b carry-forward — security MEDIUM #1]** the human gate must be **STRUCTURAL**: route EVERY Copilot proposal to §9.8 Approvals **unconditionally** (via the LIVE-wired `RecordPendingPort`/`createRecordPendingActivity`) — never branch auto/human on the decorative `approvalPolicy` string.
-  - **[C5.2b/C5.3 carry-forward — security MEDIUM #2]** the `idempotencyKey` excludes `payload`, so a 2nd different-content **UPDATE** to the same object+operation silently dedupes — the intent must carry a content/revision token in `identity` for updates (or the caller supersedes, not drops).
-  - **C5.2b** route → Approvals · **C5.2c** the in-process SDK MCP server (`copilot.propose_action`, eval-gated) · **C5.3** wire the propose tool + compute `contentTrust` per the C5.1 precondition · **C6** skills + flag + governance/grounding eval. Design ref: the 7.17 `copilotQa` `BuildProposalPort`/`QaRouteToApprovalPort` ports.
+- **C5.2a (`2d3988b`) + C5.2b (`add9ae1`) DONE** — derivation (server keys) + unconditional routing to §9.8 Approvals. **Remaining C5 (C5.3 must honor these before propose is callable):**
+  - **[C5.3 sink contract — security]** workspace provenance: `workspaceId` MUST be the agent-job server-bound workspace, registry-validated + card-scoped (the envelope has NO workspace field — sole attribution; safety rule 4).
+  - **[C5.3 sink contract — security]** **payload-swap TOCTOU:** the `idempotencyKey` excludes `payload`, so the concrete sink MUST be first-write-wins and REJECT a same-idempotencyKey hit whose `payloadHash` DIVERGES — never overwrite an approved card's payload (approve-A / execute-A′). For updates, the intent must carry a content/revision token in `identity`.
+  - **[C5.3 — security]** contentTrust must be derived PER-CONTENT over the full tool-reachable surface (the C5.1 precondition) before the propose tool is wired callable.
+  - **C5.2c** the in-process SDK MCP server (`copilot.propose_action` → `proposeCopilotAction`, eval-gated) · **C5.3** concrete `CopilotProposeSink` + wire the propose tool + per-content trust · **C6** skills + flag + governance/grounding eval. Design ref: the 7.17 `copilotQa` ports.
