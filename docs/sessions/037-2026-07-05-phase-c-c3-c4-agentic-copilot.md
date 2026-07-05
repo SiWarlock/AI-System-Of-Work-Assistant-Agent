@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-05 · **Mode:** single-operator (build, ultracode) · **Track:** worker (`apps/worker`)
 - **Predecessor:** `036-2026-07-05-RESUME-phase-c-c3-agent-runtime-synthesis.md` (the RESUME handoff this session executed)
-- **Successor:** _(next session — C5.3: SDK `createSdkMcpServer` registration + concrete `CopilotProposeSink` + runner wiring + per-content `contentTrust`)_
+- **Successor:** `038-2026-07-05-phase-c-c5-propose-tool-live-wiring.md` (C5.2c + C5.3 — the propose tool live-wired but OFF)
 - **HEAD at close:** `e530032` (C5.2c) atop `add9ae1` (C5.2b) atop `2d3988b` (C5.2a) atop `7c1e9ff` (C5.1) atop `dac4f95` (C4) atop `a5e62dd` (C3) atop the pre-session `cf160d1`.
 - **Gate at close:** repo-wide `turbo typecheck test` **31/31**; worker **609** (+ 55-test C3/C4/C5.1 module + 26-test C5.2a/b/c propose module); pushed at close-out.
 - **Owner decision this session:** for C5 (write-via-Approvals), the owner picked **"the model calls a propose tool"** (Option B — most agentic). That makes content-derived trust a hard prerequisite → **C5.1** built it.
