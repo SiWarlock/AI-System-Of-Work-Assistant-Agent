@@ -2,9 +2,9 @@
 
 - **Date:** 2026-07-05 · **Mode:** single-operator (build, ultracode) · **Track:** worker (`apps/worker`)
 - **Predecessor:** `036-2026-07-05-RESUME-phase-c-c3-agent-runtime-synthesis.md` (the RESUME handoff this session executed)
-- **Successor:** _(next session — C5.2c: the in-process SDK MCP server exposing `copilot.propose_action`)_
-- **HEAD at close:** `add9ae1` (C5.2b) atop `2d3988b` (C5.2a) atop `7c1e9ff` (C5.1) atop `dac4f95` (C4) atop `a5e62dd` (C3) atop the pre-session `cf160d1`.
-- **Gate at close:** repo-wide `turbo typecheck test` **31/31**; worker **603** (+ 55-test C3/C4/C5.1 module + 20-test C5.2a/b propose module); pushed at close-out.
+- **Successor:** _(next session — C5.3: SDK `createSdkMcpServer` registration + concrete `CopilotProposeSink` + runner wiring + per-content `contentTrust`)_
+- **HEAD at close:** `e530032` (C5.2c) atop `add9ae1` (C5.2b) atop `2d3988b` (C5.2a) atop `7c1e9ff` (C5.1) atop `dac4f95` (C4) atop `a5e62dd` (C3) atop the pre-session `cf160d1`.
+- **Gate at close:** repo-wide `turbo typecheck test` **31/31**; worker **609** (+ 55-test C3/C4/C5.1 module + 26-test C5.2a/b/c propose module); pushed at close-out.
 - **Owner decision this session:** for C5 (write-via-Approvals), the owner picked **"the model calls a propose tool"** (Option B — most agentic). That makes content-derived trust a hard prerequisite → **C5.1** built it.
 
 ## Why this session existed
@@ -46,6 +46,10 @@ The owner picked Option B ("the model calls a propose tool") for C5, which makes
 **File modified:** `copilotPropose.ts` — `routeCopilotProposal({action, workspaceId, sink})` builds the §8 `ExternalWriteEnvelope` from the derived action (reusing `@sow/integrations` `buildEnvelopeFromAction` — computes `payloadHash`, proves the `envelopeMatchesAction` linkage pin) and records it PENDING through an injected `CopilotProposeSink` **unconditionally** (never branches on `approvalPolicy` — the human gate is structural). `proposeCopilotAction` = derive → route (short-circuits before the sink on a derivation failure).
 
 **Review (security, focused):** no crit/high; the structural-human-gate invariant **holds at the routing layer**. **Fixed 2 mediums:** wrap `sink.record` so a throwing concrete sink folds to a bounded, redaction-safe `COPILOT_PROPOSE_SINK_THREW` (never rejects up to the agent-facing handler); `workspaceId` is now a branded `WorkspaceId` (no silent as-cast). **C5.3 concrete-sink contracts documented** on `CopilotProposeSink` (workspace provenance/registry-validation; the **payload-swap TOCTOU** — first-write-wins + reject a divergent `payloadHash` on a same-key hit; bounded/redacted errors; no auto-apply on `approvalPolicy`).
+
+### C5.2c (`e530032`) — the `copilot.propose_action` tool handler (model-facing, fail-safe)
+
+**File modified:** `copilotPropose.ts` — `handleCopilotProposeToolCall(rawArgs, {workspaceId, sink})` drives the full derive→route path over the model's untrusted raw args and returns a `CallToolResult`-shaped result the model reads: a "pending approval recorded, not applied" text on success (idempotent re-drive → "already pending"), a bounded cause CODE + `isError` on failure. Fail-safe (delegates to fail-closed `proposeCopilotAction`) + redaction-safe (only bounded codes / an opaque ref reach the model). + the tool name/description constants. **SDK API surveyed** (node_modules): `createSdkMcpServer` + `tool<Schema extends AnyZodRawShape>` — the `inputSchema` is a **Zod raw shape**, and neither the worker nor providers has a zod dep, so the `createSdkMcpServer`/`tool` registration is a thin **eval-gated adapter deferred to C5.3**. _(Self-reviewed — thin fail-safe formatter; subagent skipped, cost-tuning.)_
 
 ## Decisions made
 
