@@ -85,6 +85,10 @@ export interface GbrainSyncOutboxStore {
    * task 4.6 — pending KW writes apply BEFORE these jobs are drained).
    */
   listDue(now: string, limit: number): DbResult<GbrainSyncOutboxEntry[]>;
+  /** The highest-`enqueuedAt` entry that has reached the `indexed` terminal for this
+   *  workspace (the applied high-water mark), or undefined if none. Used to no-op an
+   *  out-of-order OLDER re-index that would otherwise regress the served index. */
+  indexedHighWater(workspaceId: string): DbResult<GbrainSyncOutboxEntry | undefined>;
 }
 
 /**

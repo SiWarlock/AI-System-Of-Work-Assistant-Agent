@@ -107,8 +107,15 @@ export interface GbrainIndexSyncDeps {
  *   `indexed` (gbrain_sync_queued|sync_lagging → indexed).
  * - `already_indexed` — the entry is the frozen `indexed` terminal; no re-work.
  * - `lagging` — a load/derive/apply failure; durable retry + distinct health item.
+ * - `superseded` — a strictly-newer revision is already indexed; this older entry is
+ *   advanced to the frozen `indexed` terminal WITHOUT re-applying, so the served
+ *   index does not regress.
  */
-export type GbrainIndexOutcomeKind = "indexed" | "already_indexed" | "lagging";
+export type GbrainIndexOutcomeKind =
+  | "indexed"
+  | "already_indexed"
+  | "lagging"
+  | "superseded";
 
 export interface GbrainIndexOutcome {
   readonly kind: GbrainIndexOutcomeKind;
@@ -144,9 +151,9 @@ if (
 /**
  * Apply one post-commit GBrain index job. See the module header for the
  * derived-from-Markdown / idempotent / never-rolls-back contract. Total function:
- * returns a typed outcome (`indexed` | `already_indexed` | `lagging`) and NEVER
- * throws. A failure is always a retryable `lagging` outcome — the correct behavior,
- * since the durable outbox entry + drain-on-wake (task 4.6) retry it.
+ * returns a typed outcome (`indexed` | `already_indexed` | `lagging` | `superseded`)
+ * and NEVER throws. A failure is always a retryable `lagging` outcome — the correct
+ * behavior, since the durable outbox entry + drain-on-wake (task 4.6) retry it.
  */
 export async function applyGbrainIndexJob(
   entry: GbrainSyncOutboxEntry,
@@ -155,6 +162,39 @@ export async function applyGbrainIndexJob(
   // 1 — frozen terminal: an already-indexed entry is done. No re-derive/re-apply.
   if (entry.status === INDEXED_STATE) {
     return { kind: "already_indexed", entry, mutationState: INDEXED_STATE };
+  }
+
+  // 1.5 — monotonic guard (no out-of-order regression): if a STRICTLY-newer revision
+  //     has already reached the `indexed` terminal for this workspace, an older
+  //     re-index (an earlier revision's outbox entry that lagged and now retries on a
+  //     later drain) must NOT re-derive+re-apply — that would roll the served index
+  //     back to older Markdown. `enqueuedAt` is the ordinal: KW commits are serialized,
+  //     so enqueue order == revision order.
+  const highWater = await deps.outbox.indexedHighWater(entry.workspaceId);
+  if (!highWater.ok) {
+    // FAIL CLOSED: we cannot prove non-regression, so do NOT apply. The durable entry
+    // stays enqueued and drain-on-wake retries once the high-water check is available.
+    return lagging(entry, deps, "high-water check unavailable");
+  }
+  const hw = highWater.value;
+  if (
+    hw !== undefined &&
+    hw.revisionId !== entry.revisionId &&
+    hw.enqueuedAt > entry.enqueuedAt // STRICT: an equal-or-newer legitimate apply is NOT dropped
+  ) {
+    // SUPERSEDED: advance this older entry to the frozen `indexed` terminal WITHOUT
+    // calling the index client, so the served index does not regress.
+    const supersededEntry: GbrainSyncOutboxEntry = {
+      ...entry,
+      status: INDEXED_STATE,
+      attempts: entry.attempts,
+      lastAttemptAt: deps.now(),
+    };
+    const persisted = await deps.outbox.update(supersededEntry);
+    if (!persisted.ok) {
+      return lagging(entry, deps, `superseded advance persist failed: ${persisted.error.message}`);
+    }
+    return { kind: "superseded", entry: supersededEntry, mutationState: INDEXED_STATE };
   }
 
   // 2 — load the CURRENT committed Markdown identified by the job's revision id.
@@ -217,8 +257,9 @@ export async function applyGbrainIndexJob(
 /**
  * Adapt the index apply into the task-4.4 `GbrainIndexDispatcher` seam so the
  * post-commit trigger can kick this apply synchronously-async. Maps an `indexed` /
- * `already_indexed` outcome to `ok(void)` and a `lagging` outcome to a typed
- * `GbrainSyncDispatchError` (the trigger then records its own sync_lagging item).
+ * `already_indexed` / `superseded` outcome to `ok(void)` (all three are non-regressing
+ * successes) and a `lagging` outcome to a typed `GbrainSyncDispatchError` (the trigger
+ * then records its own sync_lagging item).
  */
 export function toIndexDispatcher(deps: GbrainIndexSyncDeps): GbrainIndexDispatcher {
   return async (entry: GbrainSyncOutboxEntry): Promise<Result<void, GbrainSyncDispatchError>> => {

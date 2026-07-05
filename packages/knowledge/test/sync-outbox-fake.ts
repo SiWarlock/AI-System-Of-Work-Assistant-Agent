@@ -21,6 +21,7 @@ export class MemoryGbrainSyncOutbox implements GbrainSyncOutboxStore {
   failGetByKey = false;
   failEnqueue = false;
   failUpdate = false;
+  failIndexedHighWater = false;
 
   async getByKey(
     workspaceId: string,
@@ -55,5 +56,20 @@ export class MemoryGbrainSyncOutbox implements GbrainSyncOutboxStore {
       .filter((e) => e.status !== "indexed")
       .slice(0, limit);
     return ok(due);
+  }
+
+  async indexedHighWater(
+    workspaceId: string,
+  ): DbResult<GbrainSyncOutboxEntry | undefined> {
+    if (this.failIndexedHighWater) {
+      return err({ code: "unavailable", message: "outbox indexedHighWater unavailable" });
+    }
+    let hw: GbrainSyncOutboxEntry | undefined;
+    for (const e of this.byId.values()) {
+      if (e.status !== "indexed" || e.workspaceId !== workspaceId) continue;
+      // ISO-8601 timestamps compare correctly as strings (max enqueuedAt = high-water).
+      if (hw === undefined || e.enqueuedAt > hw.enqueuedAt) hw = e;
+    }
+    return ok(hw);
   }
 }

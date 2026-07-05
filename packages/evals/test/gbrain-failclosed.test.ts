@@ -26,22 +26,22 @@
 // seam-level run would be dodPass=false — so this suite asserts the invariants
 // directly against the real deterministic modules instead of scoring a criterion.)
 //
-// KNOWN GAP (23a-ii): the "a LOWER-revision index apply arriving after a higher one
-// is a NO-OP; the applied/served revision pointer never regresses" guard does NOT
-// exist in code. After a genuine search of @sow/knowledge (index-sync,
-// parity/reconciler, serving/rehydration-gate, fs-watch/reconcile, sync-outbox) the
-// ONLY revision-ordering primitive is `collapseToMaxRevision` (a within-burst
-// collapse=MAX, parity/reconciler.ts). `applyGbrainIndexJob` (gbrain/index-sync.ts)
-// holds NO persistent applied-revision / applied-seq pointer and never compares the
-// job's revision against a previously-applied one — a revision id is a CONTENT HASH
-// (computeRevisionId), not an ordinal, so "lower" is only meaningful via the
-// PendingTrigger.seq that only `collapseToMaxRevision` consults. This suite therefore
-// PINS what exists (collapse=MAX + same-rev idempotency + stale-snapshot refusal) and
-// CHARACTERIZES the missing monotonic guard with a clearly-labelled test that asserts
-// the current (unguarded) behaviour — it does not fabricate a passing guard. Expected
-// home for the fix: `applyGbrainIndexJob` / the `IndexApplyClient` seam in
-// gbrain/index-sync.ts (a per-(workspace) applied-seq high-water mark that no-ops a
-// lower-seq apply).
+// MONOTONIC GUARD (23a-ii, formerly a KNOWN GAP — now CLOSED): "a strictly-OLDER
+// re-index apply arriving after a newer one is a NO-OP; the applied/served revision
+// pointer never regresses". `applyGbrainIndexJob` (gbrain/index-sync.ts) now consults a
+// per-(workspace) applied high-water mark — `GbrainSyncOutboxStore.indexedHighWater`,
+// the highest-`enqueuedAt` entry already at the `indexed` terminal. `enqueuedAt` is the
+// ordinal (KW commits serialize, so enqueue order == revision order); a revision id is a
+// CONTENT HASH (computeRevisionId), not an ordinal, so ordering rides `enqueuedAt`, not
+// the hash. When a strictly-newer revision is already indexed, the older entry is
+// SUPERSEDED — advanced to `indexed` WITHOUT re-applying (no client call, no regress).
+// A STRICT `>` on enqueuedAt keeps an equal/newer legitimate apply from being dropped,
+// and a high-water query fault FAILS CLOSED to `lagging` (retryable, never a silent
+// regress). This suite therefore PINS the full monotonic behaviour (collapse=MAX +
+// same-rev idempotency + stale-snapshot refusal + the superseded no-op) rather than
+// characterising an unguarded regression. The within-burst collapse primitive
+// (`collapseToMaxRevision`, parity/reconciler.ts) remains the complementary MAX-seq
+// collapse for a single drain.
 import { describe, it, expect } from "vitest";
 import {
   ok,
@@ -185,6 +185,14 @@ class MemoryOutbox implements GbrainSyncOutboxStore {
   async listDue(_now: string, limit: number): DbResult<GbrainSyncOutboxEntry[]> {
     return ok([...this.byId.values()].filter((e) => e.status !== "indexed").slice(0, limit));
   }
+  async indexedHighWater(ws: string): DbResult<GbrainSyncOutboxEntry | undefined> {
+    let hw: GbrainSyncOutboxEntry | undefined;
+    for (const e of this.byId.values()) {
+      if (e.status !== "indexed" || e.workspaceId !== ws) continue;
+      if (hw === undefined || e.enqueuedAt > hw.enqueuedAt) hw = e;
+    }
+    return ok(hw);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────
@@ -208,13 +216,13 @@ describe("12.23a — monotonic apply / out-of-order drain (real reconciler + ind
     return { snapshot, revId };
   }
 
-  function queuedEntry(revId: KwRevisionId): GbrainSyncOutboxEntry {
+  function queuedEntry(revId: KwRevisionId, enqueuedAt: string = NOW): GbrainSyncOutboxEntry {
     return buildSyncOutboxEntry({
       workspaceId: WS,
       revisionId: revId,
       planId: "plan-1",
       auditRef: "audit-commit-1",
-      enqueuedAt: NOW,
+      enqueuedAt,
     });
   }
 
@@ -289,31 +297,41 @@ describe("12.23a — monotonic apply / out-of-order drain (real reconciler + ind
     expect(client.revByWs.get(WS)).toBeUndefined(); // pointer never moved
   });
 
-  // 23a(ii) — CHARACTERIZATION of the KNOWN GAP (see file header). This asserts the
-  // CURRENT, unguarded behaviour; it is NOT a passing monotonic guard.
-  it("(ii) KNOWN GAP: applyGbrainIndexJob holds no applied-revision pointer, so an out-of-order (older) apply is NOT a no-op and the pointer regresses", async () => {
-    // Conceptually revA is the NEWER committed state (seq 2) and revB the OLDER one
-    // (seq 1) that arrives out of order. `applyGbrainIndexJob` takes no seq and keeps
-    // no high-water mark, so it applies whatever revision its job names.
+  // 23a(ii) — MONOTONIC GUARD (the fix for the former KNOWN GAP; see file header). After a
+  // strictly-NEWER revision is indexed, an out-of-order OLDER apply is SUPERSEDED: it advances
+  // to `indexed` WITHOUT re-applying, so the served revision pointer never regresses.
+  it("(ii) MONOTONIC GUARD: after a NEWER revision is indexed, an out-of-order OLDER apply is superseded (no re-apply, pointer does not regress)", async () => {
+    // revA is the NEWER committed state (later enqueuedAt) and revB the OLDER one (earlier
+    // enqueuedAt) that arrives out of order. KW commits serialize, so enqueue order ==
+    // revision order; the guard consults the indexed high-water mark to no-op the older apply.
+    const NEWER_AT = "2026-07-02T00:00:00.000Z";
+    const OLDER_AT = "2026-07-01T00:00:00.000Z";
     const a = snapshotOf({ "p.md": "the NEWER committed body" });
     const b = snapshotOf({ "p.md": "an OLDER committed body", "q.md": "extra" });
     const client = new FakeIndexClient();
     const outbox = new MemoryOutbox();
 
-    const newer = await applyGbrainIndexJob(queuedEntry(a.revId), mkIndexDeps(new FixedMarkdownSource(a.snapshot), client, outbox));
+    const newer = await applyGbrainIndexJob(
+      queuedEntry(a.revId, NEWER_AT),
+      mkIndexDeps(new FixedMarkdownSource(a.snapshot), client, outbox),
+    );
     expect(newer.kind).toBe("indexed");
     expect(client.revByWs.get(WS)).toBe(a.revId);
+    const applyCallsAfterNewer = client.applyCalls.length;
 
     const olderOutOfOrder = await applyGbrainIndexJob(
-      queuedEntry(b.revId),
+      queuedEntry(b.revId, OLDER_AT),
       mkIndexDeps(new FixedMarkdownSource(b.snapshot), client, outbox),
     );
-    // A monotonic guard WOULD make this a no-op with the pointer pinned at a.revId.
-    // It does not exist: the older apply lands and the served revision pointer regresses.
-    expect(olderOutOfOrder.kind).toBe("indexed");
-    expect(olderOutOfOrder.receipt?.mutated).toBe(true);
-    expect(client.revByWs.get(WS)).toBe(b.revId); // <- regressed (the gap)
-    expect(client.revByWs.get(WS)).not.toBe(a.revId);
+    // The guard makes this a no-op advance: superseded, no re-apply, pointer pinned at a.revId.
+    expect(olderOutOfOrder.kind).toBe("superseded");
+    expect(olderOutOfOrder.mutationState).toBe("indexed");
+    expect(olderOutOfOrder.receipt).toBeUndefined();
+    expect(client.applyCalls.length).toBe(applyCallsAfterNewer); // applyRevision NOT called for the older rev
+    expect(client.revByWs.get(WS)).toBe(a.revId); // served pointer did NOT regress
+    // the older entry is nonetheless advanced to the frozen `indexed` terminal (not left retrying).
+    const stored = await outbox.getByKey(WS, b.revId);
+    expect(stored.ok && stored.value?.status).toBe("indexed");
   });
 });
 

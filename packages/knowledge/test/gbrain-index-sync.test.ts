@@ -54,13 +54,13 @@ function snapshotOf(files: Record<string, string>): {
   return { snapshot, revId };
 }
 
-function queuedEntry(revId: RevisionId): GbrainSyncOutboxEntry {
+function queuedEntry(revId: RevisionId, enqueuedAt: string = NOW): GbrainSyncOutboxEntry {
   return buildSyncOutboxEntry({
     workspaceId: WS,
     revisionId: revId,
     planId: "plan-1",
     auditRef: "audit-commit-1",
-    enqueuedAt: NOW,
+    enqueuedAt,
   });
 }
 
@@ -278,6 +278,72 @@ describe("applyGbrainIndexJob — no stale-revision indexing", () => {
     const outcome = await applyGbrainIndexJob(bogus, deps(source, client, outbox));
     expect(outcome.kind).toBe("lagging");
     expect(client.applyCalls).toEqual([]);
+  });
+});
+
+// ── monotonic high-water guard (no out-of-order regression) ───────────────────
+
+describe("applyGbrainIndexJob — monotonic high-water guard", () => {
+  // Distinct committed states with distinct content hashes and distinct enqueue times.
+  const OLDER = snapshotOf({ "acme-api/old.md": "---\nslug: old\n---\n# Old\n" });
+  const CURRENT = snapshotOf(PAGES);
+  const NEWER = snapshotOf({
+    "acme-api/new.md": "---\nslug: new\n---\n# New\n",
+    "acme-api/extra.md": "---\nslug: extra\n---\n# Extra\n",
+  });
+  const T_OLDER = "2026-07-01T00:00:00.000Z";
+  const T_CURRENT = "2026-07-02T00:00:00.000Z";
+  const T_NEWER = "2026-07-03T00:00:00.000Z";
+
+  it("supersedes an out-of-order OLDER apply after a NEWER revision is indexed (no re-apply, no regress); a genuine forward apply still indexes", async () => {
+    const client = new FakeIndexClient();
+    const outbox = new MemoryGbrainSyncOutbox();
+
+    // rev N (CURRENT) applied + indexed → high-water = N.
+    const nOutcome = await applyGbrainIndexJob(
+      queuedEntry(CURRENT.revId, T_CURRENT),
+      deps(new FakeMarkdownSource(CURRENT.snapshot), client, outbox),
+    );
+    expect(nOutcome.kind).toBe("indexed");
+    expect(client.revByWs.get(WS)).toBe(CURRENT.revId);
+    const applyCallsAfterN = client.applyCalls.length;
+
+    // rev N-1 (OLDER, earlier enqueuedAt) arrives out of order → SUPERSEDED, no re-apply.
+    const olderOutcome = await applyGbrainIndexJob(
+      queuedEntry(OLDER.revId, T_OLDER),
+      deps(new FakeMarkdownSource(OLDER.snapshot), client, outbox),
+    );
+    expect(olderOutcome.kind).toBe("superseded");
+    expect(olderOutcome.mutationState).toBe("indexed");
+    expect(olderOutcome.receipt).toBeUndefined();
+    expect(client.applyCalls.length).toBe(applyCallsAfterN); // applyRevision NOT called for N-1
+    expect(client.revByWs.get(WS)).toBe(CURRENT.revId); // served pointer did not regress
+    // the older entry is still advanced to the frozen `indexed` terminal (not left retrying).
+    const storedOlder = await outbox.getByKey(WS, OLDER.revId);
+    expect(isOk(storedOlder) && storedOlder.value?.status).toBe("indexed");
+
+    // rev N+1 (NEWER, later enqueuedAt) is a legitimate FORWARD apply → still indexes normally.
+    const newerOutcome = await applyGbrainIndexJob(
+      queuedEntry(NEWER.revId, T_NEWER),
+      deps(new FakeMarkdownSource(NEWER.snapshot), client, outbox),
+    );
+    expect(newerOutcome.kind).toBe("indexed");
+    expect(client.applyCalls.length).toBe(applyCallsAfterN + 1); // client CALLED for N+1
+    expect(client.revByWs.get(WS)).toBe(NEWER.revId); // pointer advanced forward
+  });
+
+  it("fails closed to sync_lagging when the high-water query faults (cannot prove non-regression)", async () => {
+    const client = new FakeIndexClient();
+    const outbox = new MemoryGbrainSyncOutbox();
+    outbox.failIndexedHighWater = true;
+
+    const outcome = await applyGbrainIndexJob(
+      queuedEntry(CURRENT.revId, T_CURRENT),
+      deps(new FakeMarkdownSource(CURRENT.snapshot), client, outbox),
+    );
+    expect(outcome.kind).toBe("lagging");
+    expect(outcome.mutationState).toBe("sync_lagging");
+    expect(client.applyCalls).toEqual([]); // never applied without a proven high-water
   });
 });
 
