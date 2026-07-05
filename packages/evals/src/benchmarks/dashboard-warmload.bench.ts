@@ -25,7 +25,12 @@ import { ok, err, isOk, failure } from "@sow/contracts";
 // stand-in: the same `buildQueryRouter` the desktop app calls, the same UI-safe
 // projection, the same `authedResolver` boundary.
 import { buildQueryRouter, type ReadModelQueryPort } from "@sow/worker/api/procedures/queries";
-import { createFixtureRetrieval, createStubSynthesis } from "@sow/worker/api/procedures/copilot";
+import {
+  createFixtureRetrieval,
+  createStubSynthesis,
+  createLocalWorkspacePosture,
+  createLocalRouteSelector,
+} from "@sow/worker/api/procedures/copilot";
 import { router } from "@sow/worker/api/router";
 import { createCallerFactory, type ApiContext } from "@sow/worker/api/trpc";
 import type { AuthedContext } from "@sow/worker/api/auth/sessionAuth";
@@ -222,7 +227,12 @@ export function makeDashboardServeProbe(deps: DashboardServeProbeDeps): Dashboar
     // The dashboard probe never exercises Copilot — an empty-fixture interim satisfies the dep.
     query: buildQueryRouter({
       readModel,
-      copilot: { retrieval: createFixtureRetrieval({}), synthesis: createStubSynthesis() },
+      copilot: {
+        retrieval: createFixtureRetrieval({}),
+        synthesis: createStubSynthesis(),
+        workspacePosture: createLocalWorkspacePosture({}),
+        routeSelector: createLocalRouteSelector(),
+      },
     }),
   });
   const factory = createCallerFactory(appRouter);

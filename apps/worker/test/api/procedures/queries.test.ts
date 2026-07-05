@@ -38,6 +38,9 @@ import {
 import {
   createFixtureRetrieval,
   createStubSynthesis,
+  createLocalWorkspacePosture,
+  createLocalRouteSelector,
+  localWorkspacePosture,
   type CopilotDeps,
 } from "../../../src/api/procedures/copilot";
 
@@ -231,6 +234,10 @@ function fakeCopilot(): CopilotDeps {
       },
     }),
     synthesis: createStubSynthesis(),
+    // §9.6-real P1.2b: KNOWN_WORKSPACE resolves to a local posture + a local route ⇒ the egress
+    // decision allows with no notice, so copilotAsk serves the interim {answer, citations}.
+    workspacePosture: createLocalWorkspacePosture({ [KNOWN_WORKSPACE]: localWorkspacePosture(KNOWN_WORKSPACE) }),
+    routeSelector: createLocalRouteSelector(),
   };
 }
 

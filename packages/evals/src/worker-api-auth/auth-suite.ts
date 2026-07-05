@@ -26,7 +26,12 @@ import { makeAuthInterceptor, type AuthInterceptor } from "@sow/worker/api/auth/
 import { assertLoopbackBind } from "@sow/worker/api/auth/loopbackBind";
 import type { WorkerOriginAllowlist } from "@sow/worker/api/auth/originAllowlist";
 import { createApiServer } from "@sow/worker/api/server";
-import { createFixtureRetrieval, createStubSynthesis } from "@sow/worker/api/procedures/copilot";
+import {
+  createFixtureRetrieval,
+  createStubSynthesis,
+  createLocalWorkspacePosture,
+  createLocalRouteSelector,
+} from "@sow/worker/api/procedures/copilot";
 import { runStreamHandshake } from "@sow/worker/api/stream/handshake";
 import { createPushStream } from "@sow/worker/api/stream/pushStream";
 import { createCallerFactory, router, type ApiContext } from "@sow/worker/api/trpc";
@@ -86,7 +91,12 @@ function serverDeps() {
       projectDashboards: () => emptyErr,
     },
     // Copilot ask backend — never exercised by these AUTH-boundary vectors; empty fixtures suffice.
-    copilot: { retrieval: createFixtureRetrieval({}), synthesis: createStubSynthesis() },
+    copilot: {
+      retrieval: createFixtureRetrieval({}),
+      synthesis: createStubSynthesis(),
+      workspacePosture: createLocalWorkspacePosture({}),
+      routeSelector: createLocalRouteSelector(),
+    },
     systemHealth: {
       healthItems: () => emptyErr,
       egressStatus: () => emptyErr,

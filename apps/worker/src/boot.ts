@@ -39,7 +39,13 @@
 //     but NOT SCHEDULED — the periodic CRON that calls `backupService.run()` on the
 //     `backupCadenceMs` is Phase-11. The service is ready; only its trigger is deferred.
 import { auditId } from "@sow/contracts";
-import type { Result, FailureVariant, HealthItem, AuditId } from "@sow/contracts";
+import type {
+  Result,
+  FailureVariant,
+  HealthItem,
+  AuditId,
+  WorkspaceType,
+} from "@sow/contracts";
 import type { SessionToken } from "@sow/policy";
 
 import {
@@ -62,8 +68,12 @@ import type {
 import {
   createFixtureRetrieval,
   createStubSynthesis,
+  createLocalWorkspacePosture,
+  createLocalRouteSelector,
+  localWorkspacePosture,
   type CopilotDeps,
   type RetrievedContext,
+  type WorkspacePosture,
 } from "./api/procedures/copilot";
 import type { SystemHealthQueryPort, UiSafeEgressStatus } from "./api/procedures/systemHealth";
 import type {
@@ -288,13 +298,37 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   //   an error — and fails CLOSED for any other workspace (WS-8). The stub synthesis cites nothing
   //   and never echoes raw content. When devProvision is off, the map is empty (every ask fails
   //   closed — there is genuinely no knowledge wired).
+  // Interim per-workspace posture (P1.2b): the egress decision resolves the AUTHORITATIVE posture by
+  // workspaceId (server-side). The type is inferred from the well-known scope id + a fail-closed
+  // egress; defense-in-depth — label the TYPE correctly even though the interim LOCAL route yields no
+  // notice, so a future swap to a cloud route selector can't mislabel employer-work as personal. The
+  // AUTHORITATIVE source when real synthesis lands is `workspaceConfig.get(id)` (deferred — the
+  // dev-provisioner does not seed workspace_config, and no `copilot.answer` ProviderMatrix route exists).
+  const devWorkspacePosture = (workspaceId: string): WorkspacePosture => {
+    // Match the two PERSONAL scopes explicitly; DEFAULT everything else (incl. "employer-work" AND any
+    // UNRECOGNIZED / sub-scoped employer slug) to the MOST-RESTRICTIVE employer_work posture — never
+    // mislabel an unknown id as personal, which would drop the veto's employer branch + suppress the
+    // notice if the route selector is later swapped to cloud. Authoritative type: workspaceConfig.get(id).
+    const type: WorkspaceType =
+      workspaceId === "personal-business"
+        ? "personal_business"
+        : workspaceId === "personal-life"
+          ? "personal_life"
+          : "employer_work";
+    return localWorkspacePosture(workspaceId, type);
+  };
   const copilotFixtures: Record<string, RetrievedContext> = {};
+  const copilotPostures: Record<string, WorkspacePosture> = {};
   for (const spec of config.devProvision ?? []) {
     copilotFixtures[spec.workspaceId] = { workspaceId: spec.workspaceId, blocks: [], sources: [] };
+    copilotPostures[spec.workspaceId] = devWorkspacePosture(spec.workspaceId);
   }
   const copilot: CopilotDeps = {
     retrieval: createFixtureRetrieval(copilotFixtures),
     synthesis: createStubSynthesis(),
+    // Authoritative posture resolved by workspaceId (server-side); interim local route ⇒ allow, no notice.
+    workspacePosture: createLocalWorkspacePosture(copilotPostures),
+    routeSelector: createLocalRouteSelector(),
   };
 
   // 3) The real loopback transport (HTTP + WS) behind the injected token + allowlist.

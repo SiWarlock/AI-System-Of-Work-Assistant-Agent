@@ -36,7 +36,12 @@ import {
   type DashboardCardSource,
 } from "../../src/api/projections/uiSafe";
 import { createApiServer } from "../../src/api/server";
-import { createFixtureRetrieval, createStubSynthesis } from "../../src/api/procedures/copilot";
+import {
+  createFixtureRetrieval,
+  createStubSynthesis,
+  createLocalWorkspacePosture,
+  createLocalRouteSelector,
+} from "../../src/api/procedures/copilot";
 import type { WorkerOriginAllowlist } from "../../src/api/auth/originAllowlist";
 
 // The SORTED field-name set actually present on a projected object.
@@ -248,6 +253,8 @@ function makeServerDeps(over: { expectedToken?: SessionToken } = {}) {
     copilot: {
       retrieval: createFixtureRetrieval({}),
       synthesis: createStubSynthesis(),
+      workspacePosture: createLocalWorkspacePosture({}),
+      routeSelector: createLocalRouteSelector(),
     },
     systemHealth: {
       healthItems: () => emptyErr,

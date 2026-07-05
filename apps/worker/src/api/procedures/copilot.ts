@@ -22,8 +22,19 @@ import {
   type FailureVariant,
   type UiSafeCopilotAnswer,
 } from "@sow/contracts";
-import type { AgentJob, DataOwner, EgressPolicy, ProviderRoute, WorkspaceType } from "@sow/contracts";
-import { isAllow } from "@sow/policy";
+import type {
+  AgentJob,
+  AgentJobId,
+  Capability,
+  DataOwner,
+  EgressPolicy,
+  ProcessorId,
+  ProviderRoute,
+  WorkflowId,
+  WorkspaceId,
+  WorkspaceType,
+} from "@sow/contracts";
+import { isAllow, processorOfRoute } from "@sow/policy";
 import { vetoJobEgress } from "@sow/providers";
 
 /** A port result delivered sync (the in-memory fixture / test fake) or async (the real adapter). */
@@ -54,7 +65,7 @@ export interface CopilotRetrievalPort {
 /** Fail-closed err for a workspace the retrieval source doesn't recognize.
  *  Uses the codebase-wide `WORKSPACE_NOT_FOUND` cause code (readModel.ts / systemHealth) so a
  *  consumer switching on the code catches the Copilot path too. */
-function unknownWorkspace(): FailureVariant {
+export function unknownWorkspace(): FailureVariant {
   return failure("validation_rejected", "workspace not found", {
     cause: { code: "WORKSPACE_NOT_FOUND" },
   });
@@ -163,6 +174,153 @@ export function guardCopilotEgress(params: {
   );
 }
 
+// ── P1.2 egress DECISION layer: authoritative posture → route → veto → the notice ───────────
+
+/**
+ * The authoritative governance posture the egress veto reads — resolved SERVER-SIDE from a
+ * workspaceId, NEVER from client input. Deliberately NARROW (exactly the veto's three inputs): a
+ * synthesizer/route-selector handed a posture can't reach `providerMatrix`/`gbrainBrainId`.
+ */
+export interface WorkspacePosture {
+  readonly type: WorkspaceType;
+  readonly dataOwner: DataOwner;
+  readonly egress: EgressPolicy;
+}
+
+/** Resolve the authoritative posture by workspaceId. Unknown workspace → typed err (fail closed). */
+export interface WorkspacePostureResolver {
+  readonly resolve: (workspaceId: string) => MaybeAsyncResult<WorkspacePosture>;
+}
+
+/**
+ * Select the candidate ProviderRoute the (future real) synthesis adapter would call for a workspace.
+ * The interim adapter returns a fixed LOCAL route: no `copilot.answer` capability is registered in
+ * any workspace's ProviderMatrix yet (the route-selection arch gap), so a real matrix-driven resolve
+ * would DENY for every workspace. Swap this adapter behind the port when the matrix entry lands.
+ */
+export interface EgressRouteSelector {
+  readonly select: (
+    workspaceId: string,
+    posture: WorkspacePosture,
+  ) => MaybeAsyncResult<ProviderRoute>;
+}
+
+/** The egress-veto verdict for a Copilot answer: the allowed route + the OPTIONAL Employer-Work notice. */
+export interface EgressDecision {
+  readonly route: ProviderRoute;
+  /**
+   * The processor label — PRESENT iff the allowed route EGRESSES under employer-work (the notice).
+   * Branded `ProcessorId` (from the trusted `processorOfRoute` — a provider/runtime identity, never
+   * raw content); it widens to `string` at the `UiSafeCopilotAnswer.egressProcessor` boundary, where
+   * the strict schema re-validates it (P1.2b — that gate is load-bearing for this field).
+   */
+  readonly egressProcessor?: ProcessorId;
+}
+
+/**
+ * Decide whether a Copilot synthesis may egress, and derive the Employer-Work notice. Runs the
+ * fail-closed veto (which forces carriesRawContent), then classifies the ALLOWED route with the
+ * TRUSTED `processorOfRoute` — NOT the route's own `egressClass` field: a route claiming 'local' on a
+ * REMOTE endpoint still egresses, and trusting the field would MISS the notice (an under-notification
+ * leak). The notice fires iff employer-work AND the allowed route egresses (a non-null processor);
+ * reaching an ALLOW under those conditions already proves egress-ack is ON (else the veto denied).
+ */
+export function decideCopilotEgress(params: {
+  readonly job: AgentJob;
+  readonly route: ProviderRoute;
+  readonly posture: WorkspacePosture;
+}): Result<EgressDecision, FailureVariant> {
+  const guarded = guardCopilotEgress({
+    job: params.job,
+    route: params.route,
+    egress: params.posture.egress,
+    workspace: { type: params.posture.type, dataOwner: params.posture.dataOwner },
+  });
+  if (!isOk(guarded)) return guarded; // veto DENY (e.g. employer-work + cloud + ack OFF) → fail closed
+  const proc = processorOfRoute(guarded.value); // ProcessorId | null — the leak-safe egress classifier
+  if (params.posture.type === "employer_work" && proc !== null) {
+    return ok({ route: guarded.value, egressProcessor: proc }); // employer-work cloud egress → the notice
+  }
+  return ok({ route: guarded.value }); // local, OR non-employer cloud → allow, NO notice
+}
+
+/**
+ * A minimal SCHEMA-VALID, read-only synthetic AgentJob for the egress veto. The veto only reads
+ * `carriesRawContent` (forced true) + the audit ids; the rest just has to satisfy `AgentJobSchema`.
+ * Interim `capability` "copilot.answer" (an open branded id — its ProviderMatrix route is the
+ * deferred arch gap; the interim route selector returns a local route instead).
+ */
+export function buildCopilotJob(workspaceId: string, route: ProviderRoute): AgentJob {
+  return {
+    id: `job-copilot-${workspaceId}` as AgentJobId,
+    workflowRunId: `wf-copilot-${workspaceId}` as WorkflowId,
+    workspaceId: workspaceId as WorkspaceId,
+    capability: "copilot.answer" as Capability,
+    contextRefs: [{ refKind: "source", ref: "ref:copilot" }],
+    outputSchemaId: "sow:ui-safe-copilot-answer",
+    toolPolicy: { mode: "read_only", allowedTools: [], deniedTools: [], allowsMutating: false },
+    providerRoute: route,
+    trustLevel: "trusted",
+    carriesRawContent: true,
+    maxRuntimeSeconds: 300,
+    idempotencyKey: `idem-copilot-${workspaceId}`,
+  };
+}
+
+/** The interim genuine loopback-LOCAL route the route selector defaults to (processorOfRoute → null). */
+const INTERIM_LOCAL_ROUTE: ProviderRoute = {
+  provider: "ollama",
+  model: "llama3.1",
+  endpoint: "http://127.0.0.1:11434",
+  egressClass: "local",
+};
+
+/**
+ * Build a WorkspacePosture with a FAIL-CLOSED egress policy (no acknowledged raw egress, empty
+ * processor allowlists). Interim/fixture convenience — `boot` (dev-provision) + the copilot fixtures
+ * use it; the AUTHORITATIVE posture comes from `WorkspaceConfigRepository.get(id)` when it lands.
+ */
+export function localWorkspacePosture(
+  workspaceId: string,
+  type: WorkspaceType = "personal_business",
+): WorkspacePosture {
+  return {
+    type,
+    dataOwner: type === "employer_work" ? "employer" : "user",
+    egress: {
+      workspaceId: workspaceId as WorkspaceId,
+      allowedProcessors: [],
+      rawContentAllowedProcessors: [],
+      employerRawEgressAcknowledged: false,
+    },
+  };
+}
+
+/**
+ * Interim posture resolver: an own-key (prototype-safe) lookup over an injected map; a miss (unknown
+ * workspace, or a prototype key like "__proto__") FAILS CLOSED with WORKSPACE_NOT_FOUND (mirrors
+ * `createFixtureRetrieval`). The real adapter reads `WorkspaceConfigRepository.get(workspaceId)`.
+ */
+export function createLocalWorkspacePosture(
+  map: Record<string, WorkspacePosture>,
+): WorkspacePostureResolver {
+  return {
+    resolve: (workspaceId): Result<WorkspacePosture, FailureVariant> => {
+      if (!Object.hasOwn(map, workspaceId)) return err(unknownWorkspace());
+      const p = map[workspaceId];
+      if (p === undefined) return err(unknownWorkspace());
+      return ok(p);
+    },
+  };
+}
+
+/** Interim route selector: always the genuine loopback-local route (⇒ the veto allows, no notice). */
+export function createLocalRouteSelector(
+  route: ProviderRoute = INTERIM_LOCAL_ROUTE,
+): EgressRouteSelector {
+  return { select: (_workspaceId, _posture): Result<ProviderRoute, FailureVariant> => ok(route) };
+}
+
 /**
  * The interim STUB synthesizer (honest pre-LLM state; the real synthesis through the model/runtime
  * ports is deferred — the app runs over stubs). It produces a SAFE, DETERMINISTIC candidate that
@@ -203,6 +361,10 @@ export function createStubSynthesis(): CopilotSynthesisPort {
 export interface CopilotDeps {
   readonly retrieval: CopilotRetrievalPort;
   readonly synthesis: CopilotSynthesisPort;
+  /** Resolve the AUTHORITATIVE Workspace posture by workspaceId (server-side) — the egress veto's input. */
+  readonly workspacePosture: WorkspacePostureResolver;
+  /** Select the candidate ProviderRoute the synthesis would egress to (interim: a genuine local route). */
+  readonly routeSelector: EgressRouteSelector;
 }
 
 /** The validated ask input (narrowed at the procedure boundary). */
@@ -222,6 +384,7 @@ export interface CopilotAskInput {
  */
 export function toUiSafeCopilotAnswer(
   candidate: CandidateCopilotAnswer,
+  egressProcessor?: string,
 ): Result<UiSafeCopilotAnswer, FailureVariant> {
   const projected = {
     answer: candidate.answer.map(collapseToSummaryLine),
@@ -229,6 +392,10 @@ export function toUiSafeCopilotAnswer(
       citationId: c.citationId,
       title: collapseToSummaryLine(c.title),
     })),
+    // The server-derived Employer-Work egress notice (present only for employer-work cloud egress).
+    // NOT collapsed — a leak-shaped label is a BUG and must HARD-REJECT via the strict schema
+    // (`uiSafeSummaryLine.optional()`), never be silently normalized into something servable.
+    ...(egressProcessor !== undefined ? { egressProcessor } : {}),
   };
   const parsed = UiSafeCopilotAnswerSchema.safeParse(projected);
   if (!parsed.success) {
@@ -247,11 +414,13 @@ export function toUiSafeCopilotAnswer(
  * validate → `UiSafeCopilotAnswer`. Any step's typed err short-circuits (fail-closed); NO side
  * effects, and an implied action would become a ProposedAction routed to Approvals — never a write.
  *
- * EGRESS NOTE (safety rule 5): the interim synthesis is a LOCAL stub (no provider, no network) → no
- * egress occurs, so no egress guard runs here. When a REAL model/runtime synthesis adapter lands (it
- * selects a provider route), it MUST call `guardCopilotEgress` at route selection with the
- * AUTHORITATIVE Workspace record's posture (type + egress policy resolved from the workspaceId,
- * NEVER client input) BEFORE any provider call — the fail-closed Employer-Work egress veto.
+ * EGRESS DECISION (safety rule 5, P1.2b): the AUTHORITATIVE Workspace posture is resolved by
+ * `input.workspaceId` SERVER-SIDE (never from client input — `CopilotAskInput` carries no posture),
+ * the candidate route is selected, and the fail-closed Employer-Work egress veto runs BEFORE any
+ * synthesis. A denied egress (e.g. employer-work cloud with ack OFF) fails closed here — no provider
+ * call. The derived `egressProcessor` notice threads onto the answer (present only for employer-work
+ * cloud egress). The interim synthesis is a LOCAL stub so the interim decision always allows with no
+ * notice; the real model/runtime synthesis adapter swaps in behind the same route selector.
  */
 export async function answerCopilotQuestion(
   deps: CopilotDeps,
@@ -261,7 +430,20 @@ export async function answerCopilotQuestion(
   if (!isOk(retrieved)) return retrieved;
   const scoped = enforceRetrievalScope(input.workspaceId, retrieved.value);
   if (!isOk(scoped)) return scoped;
+
+  // Egress decision BEFORE synthesis — authoritative posture resolved by workspaceId (server-side).
+  const posture = await deps.workspacePosture.resolve(input.workspaceId);
+  if (!isOk(posture)) return posture; // unknown workspace → fail closed (WORKSPACE_NOT_FOUND)
+  const route = await deps.routeSelector.select(input.workspaceId, posture.value);
+  if (!isOk(route)) return route;
+  const decision = decideCopilotEgress({
+    job: buildCopilotJob(input.workspaceId, route.value),
+    route: route.value,
+    posture: posture.value,
+  });
+  if (!isOk(decision)) return decision; // veto DENY (e.g. employer-work cloud, ack OFF) → no synthesis
+
   const candidate = await deps.synthesis.synthesize(input.workspaceId, input.question, scoped.value);
   if (!isOk(candidate)) return candidate;
-  return toUiSafeCopilotAnswer(candidate.value);
+  return toUiSafeCopilotAnswer(candidate.value, decision.value.egressProcessor);
 }

@@ -39,6 +39,12 @@ export interface CopilotTurnView {
   readonly citations: readonly CopilotCitationView[];
   /** When the answer implies an action: the proposed action's label. It ROUTES TO APPROVALS — never a direct write. */
   readonly proposalLabel?: string;
+  /**
+   * The Employer-Work egress NOTICE (safety rule 5): the cloud processor label this answer's raw
+   * Employer-Work content was synthesized by (egress acknowledged ON). PRESENT only for employer-work
+   * cloud egress — server-derived, never for a local/zero-egress answer. Its presence shows the banner.
+   */
+  readonly egressProcessor?: string;
 }
 
 export interface CopilotProps {
@@ -83,6 +89,18 @@ function CopilotTurn({ turn }: { readonly turn: CopilotTurnView }): ReactElement
       <div className="sow-copilot-bubble sow-copilot-bubble--user">{turn.question}</div>
       <div className="sow-copilot-bubble sow-copilot-bubble--assistant">
         <div className="sow-copilot-answer">{turn.answer}</div>
+        {turn.egressProcessor !== undefined ? (
+          // Safety rule 5: raw Employer-Work content was synthesized by a CLOUD model (egress
+          // acknowledged). A visible consent notice — not fail-closed, per the owner's posture.
+          <div className="sow-copilot-egress-notice" role="note" aria-label="Cloud egress notice">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M17.5 19a4.5 4.5 0 0 0 .5-8.98 6 6 0 0 0-11.64-1.6A4 4 0 0 0 6.5 19h11z" />
+            </svg>
+            <span>
+              Answered using <strong>{turn.egressProcessor}</strong> — a cloud model — on Employer-Work content.
+            </span>
+          </div>
+        ) : null}
         {turn.citations.length > 0 ? (
           <div className="sow-copilot-cites" role="list" aria-label="Citations">
             {turn.citations.map((c) => (
@@ -210,6 +228,8 @@ export function Copilot(props: CopilotProps): ReactElement {
               question: q,
               answer: result.answer.answer.join("\n"),
               citations: result.answer.citations.map((c) => ({ id: c.citationId, title: c.title })),
+              // Thread the server-derived Employer-Work egress notice (present only for cloud egress).
+              egressProcessor: result.answer.egressProcessor,
             }
           : { id, question: q, answer: ASK_FAILED, citations: [] };
       } catch {

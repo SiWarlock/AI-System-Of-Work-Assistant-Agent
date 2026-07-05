@@ -2,11 +2,16 @@
 import { describe, it, expect } from "vitest";
 import { ok, err, isOk, isErr, failure } from "@sow/contracts";
 import type { AgentJob, DataOwner, EgressPolicy, ProviderRoute, WorkspaceType } from "@sow/contracts";
-import { processorId } from "@sow/contracts";
+import { processorId, AgentJobSchema } from "@sow/contracts";
 import {
   createFixtureRetrieval,
   enforceRetrievalScope,
   guardCopilotEgress,
+  decideCopilotEgress,
+  buildCopilotJob,
+  createLocalWorkspacePosture,
+  createLocalRouteSelector,
+  localWorkspacePosture,
   createStubSynthesis,
   toUiSafeCopilotAnswer,
   answerCopilotQuestion,
@@ -14,6 +19,8 @@ import {
   type CandidateCopilotAnswer,
   type CopilotDeps,
   type CopilotSynthesisPort,
+  type WorkspacePosture,
+  type WorkspacePostureResolver,
 } from "../../../src/api/procedures/copilot";
 
 const WS = "ws-employer";
@@ -209,6 +216,114 @@ describe("guardCopilotEgress — Employer-Work raw-egress veto (safety rule 5, r
   });
 });
 
+// ── P1.2a: the egress DECISION layer (posture → route → veto → notice) ────────────────────
+const posture = (
+  ws: { type: WorkspaceType; dataOwner: DataOwner },
+  egress: EgressPolicy,
+): WorkspacePosture => ({ type: ws.type, dataOwner: ws.dataOwner, egress });
+
+describe("decideCopilotEgress — authoritative egress decision + the Employer-Work notice (safety rule 5)", () => {
+  it("employer-work + CLOUD route + ack ON → ALLOW with egressProcessor = the processor label (the notice)", () => {
+    const r = decideCopilotEgress({
+      job: copilotJob(),
+      route: cloudRoute,
+      posture: posture(employerWs, egressPolicy({ employerRawEgressAcknowledged: true })),
+    });
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.egressProcessor).toBe("claude"); // the ProviderId label — the Employer-Work notice is PRESENT
+      expect(r.value.route).toBe(cloudRoute); // identity-preserved allowed route
+    }
+  });
+
+  it("employer-work + CLOUD route + ack OFF → DENY (fail closed, no cloud fallback), NO notice", () => {
+    const r = decideCopilotEgress({
+      job: copilotJob(),
+      route: cloudRoute,
+      posture: posture(employerWs, egressPolicy({ employerRawEgressAcknowledged: false })),
+    });
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
+  });
+
+  it("employer-work + genuine loopback-LOCAL route → ALLOW, NO egressProcessor (local ⇒ no notice)", () => {
+    const r = decideCopilotEgress({
+      job: copilotJob(),
+      route: localRoute,
+      posture: posture(employerWs, egressPolicy({ employerRawEgressAcknowledged: false })),
+    });
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.egressProcessor).toBeUndefined();
+  });
+
+  it("PERSONAL workspace + CLOUD route (allow-listed) → ALLOW, NO egressProcessor (non-employer cloud needs no notice)", () => {
+    const r = decideCopilotEgress({
+      job: copilotJob(),
+      route: cloudRoute,
+      posture: posture(personalWs, egressPolicy({})),
+    });
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.egressProcessor).toBeUndefined();
+  });
+
+  it("employer-work + TUNNELED-LOCAL route (egressClass 'local' but remote endpoint) + ack ON → ALLOW WITH egressProcessor", () => {
+    // The leak-safe predicate: a route claiming egressClass 'local' on a REMOTE endpoint still EGRESSES.
+    // The notice MUST fire (processorOfRoute !== null), NOT be missed by trusting the raw egressClass field.
+    const r = decideCopilotEgress({
+      job: copilotJob(),
+      route: tunneledLocalRoute,
+      posture: posture(
+        employerWs,
+        egressPolicy({
+          employerRawEgressAcknowledged: true,
+          allowedProcessors: [processorId("ollama")],
+          rawContentAllowedProcessors: [processorId("ollama")],
+        }),
+      ),
+    });
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.egressProcessor).toBe("ollama"); // fails if the impl used egressClass === "cloud"
+  });
+});
+
+describe("buildCopilotJob — a schema-valid, read-only synthetic AgentJob for the veto", () => {
+  it("parses clean against AgentJobSchema; read_only tool policy; carriesRawContent true", () => {
+    const job = buildCopilotJob(WS, localRoute);
+    expect(AgentJobSchema.safeParse(job).success).toBe(true);
+    expect(job.toolPolicy.mode).toBe("read_only");
+    expect(job.toolPolicy.allowsMutating).toBe(false);
+    expect(job.carriesRawContent).toBe(true);
+  });
+});
+
+describe("createLocalWorkspacePosture / createLocalRouteSelector — interim fail-closed factories", () => {
+  it("resolves a KNOWN workspace's posture; an UNKNOWN / '__proto__' key fails CLOSED (WORKSPACE_NOT_FOUND)", async () => {
+    const p = posture(employerWs, egressPolicy({ employerRawEgressAcknowledged: true }));
+    const resolver = createLocalWorkspacePosture({ [WS]: p });
+    const known = await resolver.resolve(WS);
+    expect(isOk(known)).toBe(true);
+    if (isOk(known)) expect(known.value.type).toBe("employer_work");
+    const unknown = await resolver.resolve(OTHER);
+    expect(isErr(unknown)).toBe(true);
+    if (isErr(unknown)) expect(unknown.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
+    const proto = await resolver.resolve("__proto__");
+    expect(isErr(proto)).toBe(true);
+  });
+
+  it("the interim route selector yields a genuine LOCAL route (⇒ the veto always allows, no notice)", async () => {
+    const selector = createLocalRouteSelector();
+    const p = posture(employerWs, egressPolicy({ employerRawEgressAcknowledged: false }));
+    const routeR = await selector.select(WS, p);
+    expect(isOk(routeR)).toBe(true);
+    if (isOk(routeR)) {
+      // Feeding the selected local route through the decision yields an ALLOW with no notice.
+      const d = decideCopilotEgress({ job: copilotJob(), route: routeR.value, posture: p });
+      expect(isOk(d)).toBe(true);
+      if (isOk(d)) expect(d.value.egressProcessor).toBeUndefined();
+    }
+  });
+});
+
 describe("createStubSynthesis — honest interim, cites sources, NEVER echoes raw blocks (A1 redact-by-type)", () => {
   const RAW = "RAW_SECRET_BLOCK_should_never_surface";
   const withSources: RetrievedContext = {
@@ -282,9 +397,13 @@ describe("toUiSafeCopilotAnswer — candidate-data + WS-8 leakage gate (A1)", ()
 });
 
 describe("answerCopilotQuestion — the read-only ask orchestration (retrieve → scope → synth → gate)", () => {
-  const deps = (ctx: RetrievedContext): CopilotDeps => ({
+  const deps = (ctx: RetrievedContext, over: Partial<CopilotDeps> = {}): CopilotDeps => ({
     retrieval: createFixtureRetrieval({ [WS]: ctx }),
     synthesis: createStubSynthesis(),
+    // Default: WS resolves to a local posture + a local route ⇒ the decision allows, no notice.
+    workspacePosture: createLocalWorkspacePosture({ [WS]: localWorkspacePosture(WS) }),
+    routeSelector: createLocalRouteSelector(),
+    ...over,
   });
 
   it("answers a KNOWN workspace with a validated, cited UiSafeCopilotAnswer", async () => {
@@ -313,10 +432,10 @@ describe("answerCopilotQuestion — the read-only ask orchestration (retrieve �
     const failingSynth: CopilotSynthesisPort = {
       synthesize: () => err(failure("provider_failed", "synthesis unavailable", { cause: { code: "SYNTH_DOWN" } })),
     };
-    const r = await answerCopilotQuestion(
-      { retrieval: createFixtureRetrieval({ [WS]: ctx(WS) }), synthesis: failingSynth },
-      { workspaceId: WS, question: "q" },
-    );
+    const r = await answerCopilotQuestion(deps(ctx(WS), { synthesis: failingSynth }), {
+      workspaceId: WS,
+      question: "q",
+    });
     expect(isErr(r)).toBe(true);
     if (isErr(r)) expect(r.error.cause?.code).toBe("SYNTH_DOWN");
   });
@@ -326,10 +445,104 @@ describe("answerCopilotQuestion — the read-only ask orchestration (retrieve �
     const leakySynth: CopilotSynthesisPort = {
       synthesize: () => ok({ answer: ["x"], citations: [{ citationId: "https://leak.example/doc", title: "t" }] }),
     };
+    const r = await answerCopilotQuestion(deps(ctx(WS), { synthesis: leakySynth }), {
+      workspaceId: WS,
+      question: "q",
+    });
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("COPILOT_ANSWER_REJECTED");
+  });
+
+  // ── P1.2b: the egress decision is WIRED into the orchestration ──────────────────────────────
+  it("employer-work + cloud route + ack ON → the served answer carries the egressProcessor NOTICE", async () => {
     const r = await answerCopilotQuestion(
-      { retrieval: createFixtureRetrieval({ [WS]: ctx(WS) }), synthesis: leakySynth },
+      deps(ctx(WS), {
+        workspacePosture: createLocalWorkspacePosture({
+          [WS]: posture(employerWs, egressPolicy({ employerRawEgressAcknowledged: true })),
+        }),
+        routeSelector: createLocalRouteSelector(cloudRoute),
+      }),
       { workspaceId: WS, question: "q" },
     );
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.egressProcessor).toBe("claude");
+  });
+
+  it("employer-work + cloud route + ack OFF → fails CLOSED (no cloud fallback) BEFORE synthesis runs", async () => {
+    // The synthesizer MUST NOT be invoked once the veto denies — pin it with a throwing fake.
+    const neverSynth: CopilotSynthesisPort = {
+      synthesize: () => {
+        throw new Error("synthesis must not run after an egress DENY");
+      },
+    };
+    const r = await answerCopilotQuestion(
+      deps(ctx(WS), {
+        synthesis: neverSynth,
+        workspacePosture: createLocalWorkspacePosture({
+          [WS]: posture(employerWs, egressPolicy({ employerRawEgressAcknowledged: false })),
+        }),
+        routeSelector: createLocalRouteSelector(cloudRoute),
+      }),
+      { workspaceId: WS, question: "q" },
+    );
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
+  });
+
+  it("M-1 authority: the posture is fetched from the RESOLVER keyed by input.workspaceId (server-side, not client-supplied)", async () => {
+    // CopilotAskInput carries NO posture (structural). Pin BOTH halves of the authority guarantee: a
+    // SPY resolver records which id it was consulted for, and its authoritative verdict (ack OFF)
+    // governs the outcome — the ask cannot inject a spoofed posture to override it.
+    let askedFor: string | null = null;
+    const spyPosture: WorkspacePostureResolver = {
+      resolve: (workspaceId) => {
+        askedFor = workspaceId;
+        return ok(posture(employerWs, egressPolicy({ employerRawEgressAcknowledged: false })));
+      },
+    };
+    const r = await answerCopilotQuestion(
+      deps(ctx(WS), { workspacePosture: spyPosture, routeSelector: createLocalRouteSelector(cloudRoute) }),
+      { workspaceId: WS, question: "q" },
+    );
+    expect(askedFor).toBe(WS); // resolved by EXACTLY the ask's workspaceId — no other posture source
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
+  });
+
+  it("an UNKNOWN-workspace posture → fails CLOSED (WORKSPACE_NOT_FOUND) before synthesis", async () => {
+    const neverSynth: CopilotSynthesisPort = {
+      synthesize: () => {
+        throw new Error("synthesis must not run when posture resolution fails");
+      },
+    };
+    // Retrieval resolves WS, but the posture resolver has an EMPTY map → posture fails closed.
+    const r = await answerCopilotQuestion(
+      deps(ctx(WS), { synthesis: neverSynth, workspacePosture: createLocalWorkspacePosture({}) }),
+      { workspaceId: WS, question: "q" },
+    );
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
+  });
+
+  it("the interim LOCAL path serves exactly {answer, citations} — no egressProcessor", async () => {
+    const r = await answerCopilotQuestion(deps(ctx(WS)), { workspaceId: WS, question: "q" });
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.egressProcessor).toBeUndefined();
+      expect(Object.keys(r.value).sort()).toEqual(["answer", "citations"]);
+    }
+  });
+});
+
+describe("toUiSafeCopilotAnswer — the egressProcessor notice is schema-gated (leak-shaped label hard-rejected)", () => {
+  const candidate: CandidateCopilotAnswer = { answer: ["ok"], citations: [] };
+  it("a valid processor label threads through to the served answer", () => {
+    const r = toUiSafeCopilotAnswer(candidate, "anthropic");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.egressProcessor).toBe("anthropic");
+  });
+  it("a leak-shaped (multi-line) label is HARD-REJECTED (COPILOT_ANSWER_REJECTED), never normalized", () => {
+    const r = toUiSafeCopilotAnswer(candidate, "anthropic\nleaked raw note");
     expect(isErr(r)).toBe(true);
     if (isErr(r)) expect(r.error.cause?.code).toBe("COPILOT_ANSWER_REJECTED");
   });
