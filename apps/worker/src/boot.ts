@@ -45,7 +45,7 @@ import type {
   HealthItem,
   AuditId,
 } from "@sow/contracts";
-import type { SessionToken } from "@sow/policy";
+import type { SessionToken, LegacyContentPolicy } from "@sow/policy";
 
 import {
   assembleBackends,
@@ -64,7 +64,11 @@ import {
 import type {
   ReadModelQueryPort,
 } from "./api/procedures/queries";
-import { buildCopilotDeps, resolveCopilotWorkspaces } from "./api/procedures/copilotClaudeSynthesis";
+import {
+  buildCopilotDeps,
+  resolveCopilotWorkspaces,
+  buildInterimCopilotScopeRegistry,
+} from "./api/procedures/copilotClaudeSynthesis";
 import type { CopilotWorkspace } from "./api/procedures/copilotClaudeSynthesis";
 import {
   createGbrainCliExec,
@@ -216,6 +220,23 @@ export interface BootConfig extends BackendsConfig {
   readonly copilotGbrainTransport?: "subprocess" | "http";
   /** The `gbrain serve --http` base URL for the "http" transport; defaults to DEFAULT_GBRAIN_HTTP_URL. */
   readonly copilotGbrainHttpUrl?: string;
+  /**
+   * §13.10 gate (a) SC3 — WS-8 per-workspace scoping of the served brain (OFF by default; only effective when
+   * `copilotGbrainRetrieval` + `copilotRealModel` are also on). When true, the P1 retrieval filters each raw
+   * gbrain hit to the served workspace (foreign + legacy-denied dropped) via an INTERIM slug-prefix registry
+   * built from the resolved Copilot workspaces. The legacy posture is `copilotLegacyContentPolicy` (default
+   * fail-closed `{deny}`). On today's single-workspace brain (all content is the served workspace's own legacy
+   * content) this is INERT under `{assign, <served>}` — it lands the mechanism live, not observable enforcement.
+   * The durable WS-8 enabler is ingest-time attribution + per-workspace sources (docs/planning/ws8-*).
+   */
+  readonly copilotWorkspaceScoping?: boolean;
+  /**
+   * The legacy-content posture for `copilotWorkspaceScoping` (only consulted when it is on). `{deny}` (the safe
+   * default) drops every unattributed/legacy hit; `{assign, toWorkspaceId}` treats legacy content as that
+   * workspace's and serves it ONLY when that IS the served workspace (never crosses). `{assign}` is a
+   * transitional bridge, sound only while the brain holds a single workspace's unprefixed content.
+   */
+  readonly copilotLegacyContentPolicy?: LegacyContentPolicy;
   /**
    * The AGENTIC Copilot (Phase-C C3 — OFF by default; requires `copilotRealModel` too). When true, Copilot
    * synthesis runs the model as a governed READ-ONLY AGENT over the AgentRuntimePort (Claude Agent SDK) with
@@ -471,13 +492,24 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // Workspace set is resolved DECOUPLED from devProvision (which is SURFACE data, not Copilot reachability):
   // an explicit `copilotWorkspaces` wins, else devProvision-derived, else — on the real path — the 3
   // well-known scopes, so the Copilot answers without needing a vault note (#1 app-reachability).
+  const copilotWorkspaces = resolveCopilotWorkspaces({
+    explicit: config.copilotWorkspaces,
+    devProvision: config.devProvision,
+    realCopilot: config.copilotRealModel === true,
+  });
+  // SC3 (§13.10 gate a): the WS-8 scope descriptor — built ONLY when the flag is on. The interim registry
+  // maps each resolved workspace to its own slug-prefix; the posture defaults to fail-closed `{deny}`.
+  const denyLegacyPolicy: LegacyContentPolicy = { mode: "deny" }; // fail-closed default (excess-prop-checked)
+  const copilotWorkspaceScope =
+    config.copilotWorkspaceScoping === true
+      ? {
+          registry: buildInterimCopilotScopeRegistry(copilotWorkspaces),
+          policy: config.copilotLegacyContentPolicy ?? denyLegacyPolicy,
+        }
+      : undefined;
   const copilot = buildCopilotDeps({
     realCopilot: config.copilotRealModel === true,
-    workspaces: resolveCopilotWorkspaces({
-      explicit: config.copilotWorkspaces,
-      devProvision: config.devProvision,
-      realCopilot: config.copilotRealModel === true,
-    }),
+    workspaces: copilotWorkspaces,
     model: config.copilotModel,
     betas: config.copilotBetas,
     completion: createClaudeSubscriptionCompletion,
@@ -488,6 +520,9 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     ...(config.copilotGbrainWorkspaceId !== undefined
       ? { gbrainWorkspaceId: config.copilotGbrainWorkspaceId }
       : {}),
+    // SC3: the WS-8 scope descriptor (only when `copilotWorkspaceScoping` is on) — filters the served
+    // workspace's raw gbrain hits before normalize. Absent ⇒ passthrough.
+    ...(copilotWorkspaceScope !== undefined ? { gbrainWorkspaceScope: copilotWorkspaceScope } : {}),
     // C3: the agentic synthesis factory (only built when the flag is on) REPLACES the completion synthesis.
     ...(agentSynthesisFactory !== undefined ? { agentSynthesis: agentSynthesisFactory } : {}),
     ...(servingOracleFactory !== undefined ? { servingOracle: servingOracleFactory } : {}),

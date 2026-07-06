@@ -14,7 +14,7 @@
 //
 // The `route` handed to `synthesize` is the VETO-CLEARED route from `decideCopilotEgress` (P2.1) — the
 // adapter binds to `route.model` and NEVER re-selects, so the egress veto can't be turned advisory.
-import { ok, err, isOk, failure, processorId } from "@sow/contracts";
+import { ok, err, isOk, failure, processorId, workspaceId } from "@sow/contracts";
 import type {
   FailureVariant,
   FailureVariantKind,
@@ -23,6 +23,7 @@ import type {
   WorkspaceId,
   WorkspaceType,
 } from "@sow/contracts";
+import type { WorkspaceScopeRegistry, LegacyContentPolicy } from "@sow/policy";
 import type {
   ClaudeSubscriptionCompletion,
   CompletionError,
@@ -47,6 +48,7 @@ import type {
 } from "./copilot";
 import {
   createGbrainSubprocessRetrieval,
+  createWorkspaceScopeFilter,
   DEFAULT_GBRAIN_COPILOT_WORKSPACE,
 } from "./copilotGbrainSubprocess";
 import type { GbrainQueryExec } from "./copilotGbrainSubprocess";
@@ -377,6 +379,24 @@ export const WELL_KNOWN_COPILOT_WORKSPACES: readonly CopilotWorkspace[] = [
 ];
 
 /**
+ * §13.10 gate (a) SC3 — the INTERIM Copilot workspace-scope registry. Maps each provisioned workspace to a
+ * single slug-prefix = its own id, per the gbrain-workspaces convention (`<workspace>/<area>/<topic>`). This
+ * is a stopgap until an authoritative `WorkspaceConfigRepository` supplies real per-workspace slug-prefixes /
+ * sources — the WS-8 scope filter reads whatever this returns. It carries NO `sourceId`/`brainId` yet (today's
+ * combined brain is one unpartitioned source), so attribution is slug-prefix-only. Pure.
+ */
+export function buildInterimCopilotScopeRegistry(
+  workspaces: readonly CopilotWorkspace[],
+): WorkspaceScopeRegistry {
+  return {
+    descriptors: workspaces.map((ws) => ({
+      workspaceId: workspaceId(ws.id),
+      slugPrefixes: [ws.id],
+    })),
+  };
+}
+
+/**
  * Resolve the Copilot workspace set (decoupled from devProvision, which is about SURFACE data, not Copilot
  * reachability). Precedence: an EXPLICIT list wins; else derive from `devProvision` if present (backward
  * compat); else, on the real path, the 3 well-known scopes (so the Copilot answers without a vault note);
@@ -420,6 +440,23 @@ export interface CopilotDepsOptions {
   /** The workspace served from the local brain; defaults to DEFAULT_GBRAIN_COPILOT_WORKSPACE. */
   readonly gbrainWorkspaceId?: string;
   /**
+   * OPTIONAL (§13.10 gate a, SC3) the WS-8 workspace-scope descriptor. When present AND the gbrain read path
+   * is taken, raw hits are filtered per-workspace before normalize (foreign + legacy-denied dropped), bound
+   * to the SAME `gbrainWorkspaceId` that is served — a single source of truth, so a served-id mismatch cannot
+   * arise. Absent ⇒ no filter (today's passthrough). Boot builds the interim registry (via
+   * `buildInterimCopilotScopeRegistry`) behind the default-OFF `copilotWorkspaceScoping` flag and defaults the
+   * policy to fail-closed `{deny}`. ⚠ POLICY MATTERS on today's brain: its slugs are UNPREFIXED, so under the
+   * default `{deny}` every hit is legacy ⇒ DROPPED (retrieval returns nothing) — flipping the flag on requires
+   * the owner's `{assign, personal-business}` posture (an explicit worker-host `copilotLegacyContentPolicy`)
+   * under which every legacy hit is kept for the served personal-business workspace, i.e. INERT. Either way it
+   * lands the mechanism live+tested, not observable cross-workspace enforcement until content is
+   * prefix-attributed / the brain becomes multi-workspace.
+   */
+  readonly gbrainWorkspaceScope?: {
+    readonly registry: WorkspaceScopeRegistry;
+    readonly policy: LegacyContentPolicy;
+  };
+  /**
    * OPTIONAL (Phase-C C3) factory for the AGENTIC synthesis port (`createAgentRuntimeCopilotSynthesis` over
    * the AgentRuntimePort + read tools). When present AND `realCopilot` is on, it REPLACES the tool-less
    * completion synthesis — the model can search this workspace's brain while it answers, still bound to the
@@ -462,12 +499,26 @@ export function buildCopilotDeps(opts: CopilotDepsOptions): CopilotDeps {
   // served workspace reads the local gbrain and every other stays on the fixture (WS-8 by construction).
   // The factory is invoked at most once, only when that branch is taken (the CLI is never constructed off-path).
   const fixtureRetrieval = createFixtureRetrieval(fixtures);
+  const servedGbrainWorkspaceId = opts.gbrainWorkspaceId ?? DEFAULT_GBRAIN_COPILOT_WORKSPACE;
+  // SC3: the P1 WS-8 scope filter, built from the injected scope descriptor + bound to the SAME served id
+  // used for the retrieval (single source of truth ⇒ a served-id mismatch cannot arise). Absent scope ⇒ no
+  // filter (today's passthrough). Foreign + legacy-denied hits are dropped before the served workspace's
+  // Copilot ever sees them.
+  const scopeFilter =
+    opts.gbrainWorkspaceScope !== undefined
+      ? createWorkspaceScopeFilter(
+          workspaceId(servedGbrainWorkspaceId),
+          opts.gbrainWorkspaceScope.registry,
+          opts.gbrainWorkspaceScope.policy,
+        )
+      : undefined;
   const retrieval: CopilotRetrievalPort =
     opts.realCopilot && opts.gbrainExec !== undefined
       ? createGbrainSubprocessRetrieval({
           exec: opts.gbrainExec(),
-          servedWorkspaceId: opts.gbrainWorkspaceId ?? DEFAULT_GBRAIN_COPILOT_WORKSPACE,
+          servedWorkspaceId: servedGbrainWorkspaceId,
           fallback: fixtureRetrieval,
+          ...(scopeFilter !== undefined ? { scopeFilter } : {}),
         })
       : fixtureRetrieval;
   // C5.4b: on the real path WITH a serving-oracle factory, wrap the chosen retrieval in the provenance-

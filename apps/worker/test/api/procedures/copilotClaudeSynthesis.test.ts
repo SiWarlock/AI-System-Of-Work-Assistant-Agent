@@ -34,6 +34,7 @@ import {
   createClaudeCloudRouteSelector,
   cloudCopilotPosture,
   buildCopilotDeps,
+  buildInterimCopilotScopeRegistry,
   copilotWorkspaceType,
   resolveCopilotWorkspaces,
   WELL_KNOWN_COPILOT_WORKSPACES,
@@ -42,6 +43,9 @@ import {
   DEFAULT_COPILOT_MAX_COST_USD,
   type CopilotWorkspace,
 } from "../../../src/api/procedures/copilotClaudeSynthesis";
+import { workspaceId } from "@sow/contracts";
+import type { GbrainQueryExec } from "../../../src/api/procedures/copilotGbrainSubprocess";
+import type { LegacyContentPolicy } from "@sow/policy";
 
 /** Read `provider` off a ProviderRoute union without a cast (only the provider arm carries it). */
 function providerOf(route: ProviderRoute): string | undefined {
@@ -819,5 +823,97 @@ describe("Sonnet 5 1M — the default model + the 1M-context beta (P2.4b)", () =
     const synth = createClaudeCopilotSynthesis(client, { betas: [] });
     await synth.synthesize("ws", "q", ctx, cloudRoute);
     expect(calls[0]!.betas).toEqual([]);
+  });
+});
+
+// ── SC3 (§13.10 gate a) — the P1 boot wiring: interim registry + gbrainWorkspaceScope ─────────────────
+describe("buildInterimCopilotScopeRegistry — the interim workspace→slug-prefix map (no authoritative source yet)", () => {
+  it("maps each workspace to a single slug-prefix = its own id (the gbrain-workspaces convention)", () => {
+    const reg = buildInterimCopilotScopeRegistry([
+      { id: "employer-work", type: "employer_work" },
+      { id: "personal-business", type: "personal_business" },
+    ]);
+    expect(reg.descriptors).toHaveLength(2);
+    expect(reg.descriptors[0]).toMatchObject({ workspaceId: "employer-work", slugPrefixes: ["employer-work"] });
+    expect(reg.descriptors[1]!.slugPrefixes).toEqual(["personal-business"]);
+  });
+  it("returns an empty registry for no workspaces", () => {
+    expect(buildInterimCopilotScopeRegistry([]).descriptors).toEqual([]);
+  });
+});
+
+describe("buildCopilotDeps — SC3 gbrainWorkspaceScope wires the P1 filter into the served retrieval", () => {
+  const workspaces: CopilotWorkspace[] = [
+    { id: "personal-business", type: "personal_business" },
+    { id: "employer-work", type: "employer_work" },
+  ];
+  const rawHit = (slug: string, chunk: string, title: string): Record<string, unknown> => ({
+    slug,
+    chunk_text: chunk,
+    title,
+    source_id: "default",
+  });
+  const okExec =
+    (hits: unknown): GbrainQueryExec =>
+    async () =>
+      ok(hits);
+  const completion = () => recordingClient(ok({ structuredOutput: goodOutput, costUsd: 0.01 })).client;
+  const ASSIGN_BUSINESS: LegacyContentPolicy = { mode: "assign", toWorkspaceId: workspaceId("personal-business") };
+  const rawWithForeign = [rawHit("personal-business/mine", "mine", "Mine"), rawHit("employer-work/secret", "leak", "Leak")];
+
+  it("with gbrainWorkspaceScope: DROPS the FOREIGN hit from the served workspace's retrieval", async () => {
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces,
+      completion,
+      gbrainExec: () => okExec(rawWithForeign),
+      gbrainWorkspaceId: "personal-business",
+      gbrainWorkspaceScope: { registry: buildInterimCopilotScopeRegistry(workspaces), policy: ASSIGN_BUSINESS },
+    });
+    const r = await deps.retrieval.retrieve("personal-business", "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.blocks).toEqual(["mine"]); // employer hit dropped before the context is built
+      expect(r.value.sources.every((s) => !s.citationId.includes("employer-work"))).toBe(true);
+    }
+  });
+
+  it("WITHOUT gbrainWorkspaceScope: passthrough (back-compat — foreign hit survives)", async () => {
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces,
+      completion,
+      gbrainExec: () => okExec(rawWithForeign),
+      gbrainWorkspaceId: "personal-business",
+    });
+    const r = await deps.retrieval.retrieve("personal-business", "q");
+    expect(isOk(r) && r.value.blocks).toEqual(["mine", "leak"]);
+  });
+
+  it("under the boot DEFAULT {deny}: an unprefixed/legacy hit is DROPPED (⚠ today's whole brain is unprefixed ⇒ zero retrieval — why the owner posture is {assign,personal-business}, not the default)", async () => {
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces,
+      completion,
+      gbrainExec: () => okExec([rawHit("sessions/041", "legacy", "Legacy"), rawHit("personal-business/mine", "mine", "Mine")]),
+      gbrainWorkspaceId: "personal-business",
+      gbrainWorkspaceScope: { registry: buildInterimCopilotScopeRegistry(workspaces), policy: { mode: "deny" } },
+    });
+    const r = await deps.retrieval.retrieve("personal-business", "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.blocks).toEqual(["mine"]); // legacy sessions/041 dropped; only the prefixed hit survives
+  });
+
+  it("the filter is bound to the served id: a legacy hit is KEPT under {assign,personal-business} served=personal-business", async () => {
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces,
+      completion,
+      gbrainExec: () => okExec([rawHit("sessions/041", "legacy", "Legacy")]),
+      gbrainWorkspaceId: "personal-business",
+      gbrainWorkspaceScope: { registry: buildInterimCopilotScopeRegistry(workspaces), policy: ASSIGN_BUSINESS },
+    });
+    const r = await deps.retrieval.retrieve("personal-business", "q");
+    expect(isOk(r) && r.value.blocks).toEqual(["legacy"]);
   });
 });
