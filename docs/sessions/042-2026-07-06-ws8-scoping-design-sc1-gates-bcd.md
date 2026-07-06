@@ -92,7 +92,15 @@ SC8 wires the SC7 proxy so the agent reaches gbrain ONLY through it. A 3-part sl
 
 **Dual review (security + code-quality) — security 0 crit/high/med:** the **MAP-KEY CONTRACT verified HOLDS** (proxy and raw-http branches mutually exclusive under one `gbrain` key; the test asserts the raw http entry is absent + no token minted + the scoped allow-list). Fixes folded in-slice: M1 (one `servedWorkspaceIdStr` feeds both the runner gate and the proxy scope, kept in lockstep), M2 (both partial-config permutations tested), L5 (a mis-routed tool name → `validation_rejected`, not a transient fault).
 
-**The runtime WS-8 tool path is now FULLY BUILT** (SC5a args + SC5b results + SC7 proxy + SC8 wiring), all dormant behind `copilotAgentMode`. **NEXT = SC9** (admission backstop — the 4th defense-in-depth layer) → then the security-review-gated flip.
+**The runtime WS-8 tool path is now FULLY BUILT** (SC5a args + SC5b results + SC7 proxy + SC8 wiring), all dormant behind `copilotAgentMode`.
+
+## SC9 reassessed-out — the admission backstop as specified is MIS-TARGETED
+
+On close inspection of `admitCopilotAgentJob` + the job policy, the originally-planned SC9 ("reject an agentic job whose read allow-list holds an `unscopable` tool on a non-partitioned brain") does NOT fit the architecture: an agentic job's `toolPolicy.allowedTools` is `copilotReadToolIds()` = the **FULL read catalog INCLUDING the unscopable tools** (find_experts/find_anomalies/takes_*/code_*). That list is intentional — it is the **ING-7 mutating-classification surface**, not the exposure set — so the proposed check would reject **EVERY** agentic Copilot job, breaking the legit path rather than hardening it.
+
+The unscopable vector is correctly defended at the **SDK-exposure layer**, at 4 points already: **SC4** `copilotScopedReadToolIds(false)` narrows the read set → **SC8b** drives the SDK allow-list from the fixed 5-op `COPILOT_GBRAIN_PROXY_MCP_NAMES` (structurally never an unscopable op) → **SC5a** arg-denies unscopable (M2) → **SC5b** result-drops-all unscopable (F3). A job-policy admission check adds nothing.
+
+**⇒ SC9 dropped; the runtime WS-8 arc is COMPLETE.** The remaining step — the `copilotAgentMode` flip — is an **OWNER decision (security-review-gated), not a code slice**. Owner-facing gaps to clear first: the **F2 field-fidelity carry-forward** (per-op field allow-listing pinned to gbrain's real result schema → the gate-(c) governance eval) and the **A1 body-embedded residual** (ingest-time). The only non-redundant admission-layer candidate, if the owner wants one, is a scope-resolution consistency check — but SC8b's fail-closed wiring + the served-workspace-only rule largely cover it; propose, don't build speculatively.
 
 ## Open follow-ups (NEXT) — full detail in `docs/team-handoffs/001-2026-07-06-ws8-scoping-resume.md`
 
