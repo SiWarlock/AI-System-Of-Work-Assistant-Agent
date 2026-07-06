@@ -38,13 +38,15 @@
 //     (`createOperationalBackupService`) is WIRED into the handle (`backupService`)
 //     but NOT SCHEDULED — the periodic CRON that calls `backupService.run()` on the
 //     `backupCadenceMs` is Phase-11. The service is ready; only its trigger is deferred.
-import { auditId, workspaceId } from "@sow/contracts";
+import { auditId } from "@sow/contracts";
 import type {
   Result,
   FailureVariant,
   HealthItem,
   AuditId,
+  WorkspaceId,
 } from "@sow/contracts";
+import { descriptorFor } from "@sow/policy";
 import type { SessionToken, LegacyContentPolicy, CopilotWorkspaceScope } from "@sow/policy";
 
 import {
@@ -471,17 +473,29 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
           // gbrain server under the same `gbrain` map key. The exec is the generic MCP-over-HTTP tool-call
           // (raw-envelope) transport (loopback-guarded; mints its own token). NOTE: `copilotWorkspaceScope` is
           // defined below — safe because this factory is LAZY (only invoked post-boot, after that const inits).
-          // ONE served-workspace id for BOTH the runner's `served` gate and the proxy's own-workspace scope —
-          // they MUST stay in lockstep (a desync would scope a different workspace than the one being served).
+          // Option A (MULTI-served): `servedWorkspaceIdStr` is the single-served fallback anchor the runner still
+          // takes; when scoping is on we ALSO inject a per-ASK scope resolver that OVERRIDES it, so ANY registered
+          // workspace's ask reaches the brain scoped to itself (parity with the multi-served retrieval). `wsScope`
+          // is a const ⇒ the `!== undefined` narrowing flows into the resolver closure.
           const servedWorkspaceIdStr = config.copilotGbrainWorkspaceId ?? DEFAULT_GBRAIN_COPILOT_WORKSPACE;
+          const wsScope = copilotWorkspaceScope;
           const gbrainProxyRunnerDeps =
-            copilotWorkspaceScope !== undefined
+            wsScope !== undefined
               ? {
-                  gbrainProxyScope: {
-                    servedWorkspaceId: workspaceId(servedWorkspaceIdStr),
-                    registry: copilotWorkspaceScope.registry,
-                    policy: copilotWorkspaceScope.policy,
-                  } satisfies CopilotWorkspaceScope,
+                  // Resolve the per-ASK WS-8 scope for the asked workspace: a workspace REGISTERED in the scope
+                  // registry gets a scope bound to ITSELF; an unregistered one ⇒ undefined ⇒ the job runs
+                  // tool-less (fail closed). The `as WorkspaceId` cast is pure (never throws §16); `descriptorFor`
+                  // is a pure registry-membership check.
+                  gbrainProxyScopeFor: (askedWs: string): CopilotWorkspaceScope | undefined => {
+                    const descriptor = descriptorFor(wsScope.registry, askedWs as WorkspaceId);
+                    return descriptor === undefined
+                      ? undefined
+                      : {
+                          servedWorkspaceId: descriptor.workspaceId,
+                          registry: wsScope.registry,
+                          policy: wsScope.policy,
+                        };
+                  },
                   gbrainProxyExec: createGbrainMcpToolCallExec({ baseUrl: gbrainHttpBaseUrl, tokenProvider }),
                   buildGbrainProxyMcpServer: createCopilotGbrainProxyMcpServer,
                 }

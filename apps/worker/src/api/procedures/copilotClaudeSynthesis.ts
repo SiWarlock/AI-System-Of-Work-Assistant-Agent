@@ -48,7 +48,7 @@ import type {
 } from "./copilot";
 import {
   createGbrainSubprocessRetrieval,
-  createWorkspaceScopeFilter,
+  createMultiServedGbrainRetrieval,
   DEFAULT_GBRAIN_COPILOT_WORKSPACE,
 } from "./copilotGbrainSubprocess";
 import type { GbrainQueryExec } from "./copilotGbrainSubprocess";
@@ -500,27 +500,34 @@ export function buildCopilotDeps(opts: CopilotDepsOptions): CopilotDeps {
   // The factory is invoked at most once, only when that branch is taken (the CLI is never constructed off-path).
   const fixtureRetrieval = createFixtureRetrieval(fixtures);
   const servedGbrainWorkspaceId = opts.gbrainWorkspaceId ?? DEFAULT_GBRAIN_COPILOT_WORKSPACE;
-  // SC3: the P1 WS-8 scope filter, built from the injected scope descriptor + bound to the SAME served id
-  // used for the retrieval (single source of truth ⇒ a served-id mismatch cannot arise). Absent scope ⇒ no
-  // filter (today's passthrough). Foreign + legacy-denied hits are dropped before the served workspace's
-  // Copilot ever sees them.
-  const scopeFilter =
-    opts.gbrainWorkspaceScope !== undefined
-      ? createWorkspaceScopeFilter(
-          workspaceId(servedGbrainWorkspaceId),
-          opts.gbrainWorkspaceScope.registry,
-          opts.gbrainWorkspaceScope.policy,
-        )
-      : undefined;
-  const retrieval: CopilotRetrievalPort =
-    opts.realCopilot && opts.gbrainExec !== undefined
-      ? createGbrainSubprocessRetrieval({
-          exec: opts.gbrainExec(),
-          servedWorkspaceId: servedGbrainWorkspaceId,
-          fallback: fixtureRetrieval,
-          ...(scopeFilter !== undefined ? { scopeFilter } : {}),
-        })
-      : fixtureRetrieval;
+  // Retrieval selection (the `gbrainExec()` factory is invoked at most once, only on a gbrain path):
+  //   - gbrain OFF (no exec / not real) ⇒ the fixture stub.
+  //   - gbrain ON + workspace scoping ON (`gbrainWorkspaceScope` present) ⇒ Option A MULTI-served: ANY
+  //     registered workspace reads the ONE combined brain, scoped PER-REQUEST to its own content — so a
+  //     workspace ≠ the served default reads the brain (scoped to itself) instead of the empty fixture. WS-8
+  //     holds by the mandatory per-request filter (not by construction), so the F2 field-fidelity + A1
+  //     body-embedded residuals go LIVE for any workspace holding real combined-brain content (INERT today —
+  //     only personal-business has content; keep employer-work OUT of the combined brain until F2 closes).
+  //   - gbrain ON + scoping OFF ⇒ the single-served passthrough (back-compat: only `servedGbrainWorkspaceId`
+  //     reads the brain, unfiltered; every other stays on the fixture).
+  let retrieval: CopilotRetrievalPort;
+  if (opts.realCopilot && opts.gbrainExec !== undefined) {
+    retrieval =
+      opts.gbrainWorkspaceScope !== undefined
+        ? createMultiServedGbrainRetrieval({
+            exec: opts.gbrainExec(),
+            registry: opts.gbrainWorkspaceScope.registry,
+            policy: opts.gbrainWorkspaceScope.policy,
+            fallback: fixtureRetrieval,
+          })
+        : createGbrainSubprocessRetrieval({
+            exec: opts.gbrainExec(),
+            servedWorkspaceId: servedGbrainWorkspaceId,
+            fallback: fixtureRetrieval,
+          });
+  } else {
+    retrieval = fixtureRetrieval;
+  }
   // C5.4b: on the real path WITH a serving-oracle factory, wrap the chosen retrieval in the provenance-
   // stamping decorator so a source is stamped `knowledge_writer` ONLY when the oracle admits it. Absent ⇒
   // UNDECORATED (no source ever stamped ⇒ propose stays OFF). The factory is invoked at most once, on-path.

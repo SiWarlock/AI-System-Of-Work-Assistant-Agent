@@ -917,3 +917,75 @@ describe("buildCopilotDeps — SC3 gbrainWorkspaceScope wires the P1 filter into
     expect(isOk(r) && r.value.blocks).toEqual(["legacy"]);
   });
 });
+
+// ── Option A (single-brain, MULTI-SERVED) — the behavior change: scope-present routes retrieval to the
+//    MULTI-served composite, so a workspace OTHER than the boot-fixed served id reads the brain scoped to
+//    itself (instead of the empty fixture). Scope-absent keeps the single-served path (covered above).
+describe("buildCopilotDeps — Option A multi-served: a NON-served registered workspace reads the brain, scoped to itself", () => {
+  const workspaces: CopilotWorkspace[] = [
+    { id: "personal-business", type: "personal_business" },
+    { id: "employer-work", type: "employer_work" },
+  ];
+  const rawHit = (slug: string, chunk: string, title: string): Record<string, unknown> => ({
+    slug,
+    chunk_text: chunk,
+    title,
+    source_id: "default",
+  });
+  const okExec =
+    (hits: unknown): GbrainQueryExec =>
+    async () =>
+      ok(hits);
+  const completion = () => recordingClient(ok({ structuredOutput: goodOutput, costUsd: 0.01 })).client;
+  const ASSIGN_BUSINESS: LegacyContentPolicy = { mode: "assign", toWorkspaceId: workspaceId("personal-business") };
+  const combined = [rawHit("employer-work/acme", "EW content", "EW"), rawHit("personal-business/mine", "PB content", "PB")];
+
+  it("scope present: asking employer-work (≠ the boot-fixed served personal-business) reads the brain, scoped to employer-work", async () => {
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces,
+      completion,
+      gbrainExec: () => okExec(combined),
+      gbrainWorkspaceId: "personal-business", // the boot default served id — multi-served overrides it PER ASK
+      gbrainWorkspaceScope: { registry: buildInterimCopilotScopeRegistry(workspaces), policy: ASSIGN_BUSINESS },
+    });
+    const r = await deps.retrieval.retrieve("employer-work", "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      // Under single-served this was the EMPTY fixture; multi-served reads the brain scoped to employer-work.
+      expect(r.value.workspaceId).toBe("employer-work");
+      expect(r.value.blocks).toEqual(["EW content"]); // the personal-business hit is FOREIGN to employer-work
+    }
+  });
+
+  it("scope present: the served personal-business still reads its OWN content (own + legacy-assigned; EW dropped)", async () => {
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces,
+      completion,
+      gbrainExec: () => okExec([...combined, rawHit("sessions/041", "legacy", "L")]),
+      gbrainWorkspaceScope: { registry: buildInterimCopilotScopeRegistry(workspaces), policy: ASSIGN_BUSINESS },
+    });
+    const r = await deps.retrieval.retrieve("personal-business", "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.blocks).toEqual(["PB content", "legacy"]); // own + legacy(assigned to PB); EW dropped
+  });
+
+  it("scope present: an UNREGISTERED workspace fails closed (WORKSPACE_NOT_FOUND) and NEVER reads the brain", async () => {
+    let execCalls = 0;
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces,
+      completion,
+      gbrainExec: () => async () => {
+        execCalls += 1;
+        return ok(combined);
+      },
+      gbrainWorkspaceScope: { registry: buildInterimCopilotScopeRegistry(workspaces), policy: ASSIGN_BUSINESS },
+    });
+    const r = await deps.retrieval.retrieve("marketing-team", "q"); // not provisioned / not in the registry
+    expect(execCalls).toBe(0);
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
+  });
+});
