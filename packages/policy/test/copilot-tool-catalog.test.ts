@@ -167,6 +167,11 @@ describe("Tier-1 §13.10 — the gbrain conflict/gap-detection analysis read too
     const KNOWN_GBRAIN_READ_OPS = new Set([
       "search", "graph", "timeline", "schema_read", "health", "contained_synthesis",
       "find_contradictions", "find_anomalies", "find_orphans",
+      // expertise + takes (calibration memory) + code-intelligence — all verified pure reads against the live
+      // gbrain MCP schemas. code_traversal_cache_clear is DELIBERATELY absent (destructive cache op, D8-guarded).
+      "find_experts",
+      "takes_list", "takes_search", "takes_scorecard", "takes_calibration",
+      "code_def", "code_refs", "code_callers", "code_callees", "code_flow", "code_blast",
     ]);
     for (const spec of COPILOT_READ_TOOLS) {
       const raw = String(spec.id);
@@ -174,5 +179,34 @@ describe("Tier-1 §13.10 — the gbrain conflict/gap-detection analysis read too
       const op = raw.slice("gbrain.".length);
       expect(KNOWN_GBRAIN_READ_OPS.has(op)).toBe(true); // unknown gbrain op ⇒ RED ⇒ forced review
     }
+  });
+});
+
+describe("Tier-1 §13.10 — the expertise / calibration / code-intelligence read tools", () => {
+  const READ_IDS = [
+    "gbrain.find_experts",
+    "gbrain.takes_list", "gbrain.takes_search", "gbrain.takes_scorecard", "gbrain.takes_calibration",
+    "gbrain.code_def", "gbrain.code_refs", "gbrain.code_callers", "gbrain.code_callees", "gbrain.code_flow", "gbrain.code_blast",
+  ];
+
+  it("catalogs all 11 as NON-mutating, FROZEN read tools that ride into the read policy", () => {
+    const ids = COPILOT_READ_TOOLS.map((s) => String(s.id));
+    for (const id of READ_IDS) {
+      expect(ids).toContain(id);
+      const spec = COPILOT_READ_TOOLS.find((s) => String(s.id) === id);
+      expect(spec?.mutating).toBe(false);
+      expect(isMutatingCopilotTool(toolId(id))).toBe(false);
+      expect(Object.isFrozen(spec)).toBe(true);
+    }
+    expect(copilotReadToolPolicy().allowedTools.map(String)).toEqual(expect.arrayContaining(READ_IDS));
+    expect(copilotReadOnlyPolicyIsPure(copilotReadToolPolicy())).toBe(true);
+  });
+
+  it("EXCLUDES the destructive gbrain.code_traversal_cache_clear (fail-safe ⇒ mutating)", () => {
+    // code_traversal_cache_clear wipes the code_blast/code_flow traversal cache (a D8 destructive-guarded op).
+    // It is NOT cataloged, so the fail-safe classifier treats it as mutating — a read_only job can never hold it.
+    const ids = COPILOT_READ_TOOLS.map((s) => String(s.id));
+    expect(ids).not.toContain("gbrain.code_traversal_cache_clear");
+    expect(isMutatingCopilotTool(toolId("gbrain.code_traversal_cache_clear"))).toBe(true);
   });
 });

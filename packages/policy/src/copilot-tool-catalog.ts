@@ -66,6 +66,31 @@ export const COPILOT_READ_TOOLS: readonly CopilotToolSpec[] = Object.freeze([
   Object.freeze({ id: toolId("gbrain.find_contradictions"), mutating: false, description: "read cached suspected-contradiction findings for the workspace brain" }),
   Object.freeze({ id: toolId("gbrain.find_anomalies"), mutating: false, description: "read statistical anomalies in the workspace brain" }),
   Object.freeze({ id: toolId("gbrain.find_orphans"), mutating: false, description: "read orphaned / unlinked notes in the workspace brain" }),
+  // Expertise routing + the takes calibration memory. PURE reads (live gbrain MCP: find_experts ranks
+  // person/company pages by expertise via SQL; takes_* list/search/score the owner's claims & bets — no
+  // take-WRITE tool exists in this set). These read the BRAIN, so the same ⚠ WS-8 GO-LIVE GATE above applies
+  // (whole-brain reads against a combined brain leak cross-workspace until per-workspace partitioning lands).
+  Object.freeze({ id: toolId("gbrain.find_experts"), mutating: false, description: "route a topic to who-in-the-brain knows it (ranked person/company pages)" }),
+  Object.freeze({ id: toolId("gbrain.takes_list"), mutating: false, description: "list the owner's takes (typed/weighted/attributed claims)" }),
+  Object.freeze({ id: toolId("gbrain.takes_search"), mutating: false, description: "keyword-search the owner's takes" }),
+  Object.freeze({ id: toolId("gbrain.takes_scorecard"), mutating: false, description: "read the calibration scorecard for resolved bets" }),
+  Object.freeze({ id: toolId("gbrain.takes_calibration"), mutating: false, description: "read the calibration curve for resolved bets" }),
+  // Code intelligence over the indexed code graph. PURE reads (symbol def / refs / callers / callees / flow /
+  // blast-radius). code_flow + code_blast populate an internal traversal MEMOIZATION cache — a non-semantic,
+  // non-external, non-brain-truth side effect (transparent to callers), so `mutating:false` is correct. Its
+  // destructive counterpart `code_traversal_cache_clear` is DELIBERATELY EXCLUDED (a D8-guarded cache wipe;
+  // uncataloged ⇒ the fail-safe classifier treats it as mutating).
+  // ⚠ THE SAME WS-8 GO-LIVE GATE (above) APPLIES: these are source_id-scoped, but `source_id` is a
+  // MODEL-SUPPLIABLE arg and `all_sources` reads across EVERY registered source — so on a combined brain
+  // (where one code index spans e.g. an employer repo + a personal repo) source_id ≠ workspace and a model
+  // could target/enumerate another workspace's source. Go-live must map source→workspace + enforce scope
+  // server-side (same hard blocker + C6 eval item as the brain-reading tools); safe today (dormant + single seed).
+  Object.freeze({ id: toolId("gbrain.code_def"), mutating: false, description: "the definition site(s) of a symbol" }),
+  Object.freeze({ id: toolId("gbrain.code_refs"), mutating: false, description: "every reference to a symbol across the codebase" }),
+  Object.freeze({ id: toolId("gbrain.code_callers"), mutating: false, description: "direct callers of a symbol (call graph)" }),
+  Object.freeze({ id: toolId("gbrain.code_callees"), mutating: false, description: "outbound calls from a symbol (call graph)" }),
+  Object.freeze({ id: toolId("gbrain.code_flow"), mutating: false, description: "ordered execution chain from an entry point to its sinks" }),
+  Object.freeze({ id: toolId("gbrain.code_blast"), mutating: false, description: "transitive callers of a symbol grouped by depth (blast radius)" }),
   Object.freeze({ id: toolId("vault.read"), mutating: false, description: "read a canonical Markdown note by path" }),
 ]);
 

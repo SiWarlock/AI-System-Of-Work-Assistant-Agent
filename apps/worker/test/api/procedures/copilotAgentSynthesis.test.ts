@@ -153,6 +153,18 @@ describe("copilotGbrainReadToolMcpNames — the gbrain-backed subset the runner 
     expect(names).toContain("mcp__gbrain__find_anomalies");
     expect(names).toContain("mcp__gbrain__find_orphans");
   });
+
+  it("Tier-1 §13.10: contains the expertise / takes / code-intel reads (identity map), NOT the cache-clear op", () => {
+    const names = copilotGbrainReadToolMcpNames();
+    expect(names).toContain("mcp__gbrain__find_experts");
+    expect(names).toContain("mcp__gbrain__takes_list");
+    expect(names).toContain("mcp__gbrain__takes_scorecard");
+    expect(names).toContain("mcp__gbrain__code_def");
+    expect(names).toContain("mcp__gbrain__code_callers");
+    expect(names).toContain("mcp__gbrain__code_flow");
+    // the destructive cache-clear op is uncataloged ⇒ never in the read allow-list.
+    expect(names).not.toContain("mcp__gbrain__code_traversal_cache_clear");
+  });
 });
 
 describe("copilotToolToMcpName — FAIL-SAFE on a malformed ToolId (never collides with an allow-listed name)", () => {
