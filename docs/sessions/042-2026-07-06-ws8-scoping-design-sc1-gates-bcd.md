@@ -71,9 +71,21 @@ Workflow `wf_039163e8-07d` (survey→3-designs→judge→4 adversarial verifiers
 
 The **pure-guard trio (SC5a args + SC5b results) is now COMPLETE.** SC6–SC9 are the WIRING slices.
 
+## Continuation — SC6-vs-SC7 decision + SC7 the in-process gbrain-proxy (`d8fc89d`, `2c330b5`)
+
+**SC6-vs-SC7 decision (SDK conformance verified via Context7 `@anthropic-ai/claude-agent-sdk`):** `canUseTool` supports `{behavior:"allow", updatedInput}` (arg-rewrite works), but **PostToolUse result-replacement is UNCONFIRMED** — so SC6 (canUseTool + PostToolUse redaction) can't deliver the RESULT-redaction guarantee. **SC7 (the in-process gbrain-proxy MCP server) is therefore the PRIMARY path and was built first**, enforcing BOTH guards server-side with no SDK-hook dependency. **SC6 (canUseTool arg-policing) is deferred** as redundant defense-in-depth (the proxy already arg-polices) whose value hinges on unverified canUseTool-fires-for-allow-listed semantics. This is a build-order refinement grounded in a verified SDK fact — no UX/API/contract-surface change, so not escalated.
+
+**SC7 DONE (dual-reviewer clean; 0 crit/high/med):**
+- **SC7a** (`d8fc89d`, `apps/worker/src/api/procedures/copilotGbrainProxy.ts`) — `handleCopilotGbrainToolCall(mcpToolName, args, {scope, exec})` = SC5a police → injected exec(scope-corrected args) → SC5b redact. Deny/exec-fault/exec-throw/redacted-empty ALL collapse to one leak-safe empty result (`"[]"`); the internal cause is never surfaced. Security L1 fixed in-slice: the whole body is wrapped in an outer try/catch so never-throws is STRUCTURAL. 14 tests.
+- **SC7b** (`2c330b5`, `packages/providers/src/runtime/copilot-gbrain-proxy-mcp.ts`) — `createCopilotGbrainProxyMcpServer` mirrors the propose-MCP precedent: one `tool()` per scoped read op (query/traverse_graph/find_contradictions/get_recent_salience/get_timeline) under server name `gbrain`, delegating to the injected structural handler. NO mutating/unscopable op exposed; args forwarded UNPARSED; the full `mcp__gbrain__<op>` name is server-reconstructed. 8 tests.
+- **Code-quality M1 (documented in-code):** the SDK zod-parses+STRIPS undeclared model args (`all_sources`/`source_id`) UPSTREAM of the handler, so the per-op shapes double as a positive arg allow-list — SC5a's widening-deny is defense-in-depth on the wired path while its foreign-seed/slugPrefix/source-pin work stays load-bearing.
+- **Security L2 → SC8 MAP-KEY CONTRACT (documented + carried forward):** SC8 must register the proxy under map key `"gbrain"` AND ensure the raw `gbrain serve --http` entry is absent — a different key leaving it present ⇒ model sees BOTH scoped + unscoped tools (full WS-8 bypass); SC8's wiring test must assert the http entry's absence.
+
+**NEXT = SC8** (runner wiring in `copilotAgentSynthesis.ts`) → **SC9** (admission backstop) → then `copilotAgentMode` can flip.
+
 ## Open follow-ups (NEXT) — full detail in `docs/team-handoffs/001-2026-07-06-ws8-scoping-resume.md`
 
-1. ~~**SC5b** result redactor~~ **DONE (`fffd78d`)**. NEXT = **SC6** transport seams (argPolicer + PostToolUse redactor; verify SDK-0.3.201 canUseTool `updatedInput`/PostToolUse `updatedMCPToolOutput`) · **SC7** gbrain-proxy MCP (PRIMARY delivery) · **SC8** runner wiring · **SC9** admission backstop → then `copilotAgentMode` can flip (security-review-gated).
+1. ~~**SC5b** result redactor~~ **DONE (`fffd78d`)** · ~~**SC6** transport seams~~ **DECIDED-OUT** (SDK: PostToolUse result-replacement unconfirmed) · ~~**SC7** gbrain-proxy MCP~~ **DONE (`d8fc89d`+`2c330b5`)**. NEXT = **SC8** runner wiring (`copilotAgentSynthesis.ts`; bind proxy to {scope, http-exec}; ⚠ MAP-KEY CONTRACT — key `"gbrain"` + assert http entry absent; `allowedTools` from `COPILOT_GBRAIN_PROXY_MCP_NAMES`) · **SC9** admission backstop → then `copilotAgentMode` can flip (security-review-gated).
 2. The flagged future work (other tracks): the **ingest-side workspace-attribution rule** (the real WS-8 enabler + the only A1 mitigation); the legacy-migration runbook (owner-run); the workspace-leakage governance eval (eval-security, per the runbook §13.10 gate (c) contract); the SDK-0.3.201 conformance test; `WorkspaceConfigRepository`; Global-scope via the GCL Visibility-Gate union; the Appendix-A `GbrainReadGrant.allowedOps` truth-pass (now OPTIONAL).
 3. Untouched from 041: 13.10a (Copilot→KMP propose path), the real serving oracle (C5.4b go-live), the ~8 Phase-9/10 owner-calls + a Phase-10 `/phase-exit`, Tiers 2–5 + 13.10c Gmail.
 
