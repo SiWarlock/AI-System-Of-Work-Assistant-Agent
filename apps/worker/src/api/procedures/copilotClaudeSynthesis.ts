@@ -50,6 +50,8 @@ import {
   DEFAULT_GBRAIN_COPILOT_WORKSPACE,
 } from "./copilotGbrainSubprocess";
 import type { GbrainQueryExec } from "./copilotGbrainSubprocess";
+import { createProvenanceStampingRetrieval } from "./copilotProvenanceStamp";
+import type { CopilotServingOracle } from "./copilotProvenanceStamp";
 
 /**
  * The governed Copilot system prompt. Encodes the grounding contract: answer ONLY from the supplied
@@ -426,6 +428,16 @@ export interface CopilotDepsOptions {
    * constructed only when the agent path is actually taken. Boot builds it from `copilotAgentMode`.
    */
   readonly agentSynthesis?: () => CopilotSynthesisPort;
+  /**
+   * OPTIONAL (Phase-C C5.4b) factory for the serving oracle that PROVES a retrieved source is
+   * KnowledgeWriter-authored. When present AND `realCopilot` is on, the retrieval is wrapped in the
+   * provenance-stamping decorator, so a source is stamped `knowledge_writer` (⇒ trusted ⇒ propose-eligible)
+   * ONLY when the oracle admits its citationId. Absent ⇒ retrieval is UNDECORATED (no source is ever
+   * stamped ⇒ propose stays OFF — the pre-C5.4b behavior). Boot wires the INTERIM (always-degraded) oracle,
+   * so nothing is stamped today; a real admitForServing-backed oracle is a security-review-gated go-live
+   * event (see `copilotProvenanceStamp.ts` GO-LIVE PRECONDITIONS). A FACTORY so it's built only on-path.
+   */
+  readonly servingOracle?: () => CopilotServingOracle;
 }
 
 /**
@@ -458,8 +470,15 @@ export function buildCopilotDeps(opts: CopilotDepsOptions): CopilotDeps {
           fallback: fixtureRetrieval,
         })
       : fixtureRetrieval;
+  // C5.4b: on the real path WITH a serving-oracle factory, wrap the chosen retrieval in the provenance-
+  // stamping decorator so a source is stamped `knowledge_writer` ONLY when the oracle admits it. Absent ⇒
+  // UNDECORATED (no source ever stamped ⇒ propose stays OFF). The factory is invoked at most once, on-path.
+  const stampedRetrieval: CopilotRetrievalPort =
+    opts.realCopilot && opts.servingOracle !== undefined
+      ? createProvenanceStampingRetrieval({ inner: retrieval, oracle: opts.servingOracle() })
+      : retrieval;
   return {
-    retrieval,
+    retrieval: stampedRetrieval,
     // Off the real path: the deterministic stub (nothing egresses; no SDK client / agent runtime built). On
     // the real path: the AGENTIC synthesis (C3) when a factory is injected — the model searches the brain via
     // read tools — else the tool-less completion client. Both real variants bind the veto-cleared route +

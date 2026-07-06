@@ -20,6 +20,12 @@ import type {
 } from "@sow/providers";
 import type { RetrievedContext } from "../../../src/api/procedures/copilot";
 import { decideCopilotEgress, buildCopilotJob } from "../../../src/api/procedures/copilot";
+import { deriveCopilotContentTrust } from "../../../src/api/procedures/copilotAgentSynthesis";
+import { createInterimDegradedServingOracle } from "../../../src/api/procedures/copilotProvenanceStamp";
+import type {
+  CopilotServingOracle,
+  CopilotServingVerdict,
+} from "../../../src/api/procedures/copilotProvenanceStamp";
 import {
   createClaudeCopilotSynthesis,
   buildCopilotUserPrompt,
@@ -709,6 +715,88 @@ describe("buildCopilotDeps — P3-live gbrain retrieval branch (only the served 
     const rPb = await deps.retrieval.retrieve(served, "q");
     expect(isOk(rPb)).toBe(true);
     if (isOk(rPb)) expect(rPb.value.blocks).toEqual([]); // now the fixture fallback
+  });
+});
+
+describe("buildCopilotDeps — C5.4b provenance-stamping decorator (a flipped ternary can't ship silently)", () => {
+  const served = "personal-business";
+  const workspaces: readonly CopilotWorkspace[] = [{ id: served, type: "personal_business" }];
+  const gbrainHits = [
+    { slug: "sessions/028", chunk_text: "the seed says X", title: "Session 028", source_id: "default" },
+  ];
+  const okCompletion = () => recordingClient(ok({ structuredOutput: goodOutput, costUsd: 0.01 })).client;
+
+  /** A spy serving oracle returning a fixed verdict; records how many times it was consulted. */
+  function spyOracle(verdict: CopilotServingVerdict): { oracle: CopilotServingOracle; calls: () => number } {
+    let n = 0;
+    return {
+      oracle: { admit: () => { n++; return Promise.resolve(ok(verdict)); } },
+      calls: () => n,
+    };
+  }
+
+  it("real path + servingOracle: the retrieval is DECORATED — the oracle is consulted AND a gated verdict stamps knowledge_writer", async () => {
+    const spy = spyOracle({ mode: "gated", admittedCitationIds: new Set(["gbrain:sessions:028"]) });
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces,
+      completion: okCompletion,
+      gbrainExec: () => async () => ok(gbrainHits),
+      servingOracle: () => spy.oracle,
+    });
+    const r = await deps.retrieval.retrieve(served, "q");
+    expect(spy.calls()).toBe(1); // the decorator wraps the retrieval — drop the wrapping and this is 0
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.sources).toEqual([
+        { citationId: "gbrain:sessions:028", title: "Session 028", provenance: "knowledge_writer" },
+      ]);
+      expect(deriveCopilotContentTrust(r.value)).toBe("trusted");
+    }
+  });
+
+  it("real path + the INTERIM oracle: a live gbrain hit is STILL un-stamped ⇒ untrusted (structurally OFF today)", async () => {
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces,
+      completion: okCompletion,
+      gbrainExec: () => async () => ok(gbrainHits),
+      servingOracle: createInterimDegradedServingOracle,
+    });
+    const r = await deps.retrieval.retrieve(served, "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.sources).toEqual([{ citationId: "gbrain:sessions:028", title: "Session 028" }]);
+      expect(deriveCopilotContentTrust(r.value)).toBe("untrusted"); // no live path yields a knowledge_writer stamp
+    }
+  });
+
+  it("servingOracle is IGNORED when realCopilot is OFF (the factory is NEVER called)", async () => {
+    let factoryCalls = 0;
+    const deps = buildCopilotDeps({
+      realCopilot: false,
+      workspaces,
+      completion: okCompletion,
+      servingOracle: () => { factoryCalls++; return createInterimDegradedServingOracle(); },
+    });
+    expect(factoryCalls).toBe(0);
+    const r = await deps.retrieval.retrieve(served, "q");
+    expect(isOk(r)).toBe(true); // interim stub path, unchanged
+  });
+
+  it("WITHOUT servingOracle the real path is UNDECORATED (sources un-provenanced — the pre-C5.4b behavior)", async () => {
+    const deps = buildCopilotDeps({
+      realCopilot: true,
+      workspaces,
+      completion: okCompletion,
+      gbrainExec: () => async () => ok(gbrainHits),
+    });
+    const r = await deps.retrieval.retrieve(served, "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.sources).toEqual([{ citationId: "gbrain:sessions:028", title: "Session 028" }]);
+      expect(deriveCopilotContentTrust(r.value)).toBe("untrusted");
+    }
   });
 });
 

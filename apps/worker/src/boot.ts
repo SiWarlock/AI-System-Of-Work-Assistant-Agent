@@ -84,6 +84,8 @@ import {
   gbrainMcpEndpoint,
 } from "./api/procedures/copilotAgentSynthesis";
 import { createApprovalsProposeSink } from "./api/procedures/copilotProposeSink";
+import { createInterimDegradedServingOracle } from "./api/procedures/copilotProvenanceStamp";
+import type { CopilotServingOracle } from "./api/procedures/copilotProvenanceStamp";
 import { createCopilotProposeMcpServer } from "@sow/providers";
 import type { CopilotSynthesisPort } from "./api/procedures/copilot";
 import { createClaudeSubscriptionCompletion } from "@sow/providers";
@@ -234,6 +236,17 @@ export interface BootConfig extends BackendsConfig {
    * with the trust verdict, never a standalone override.
    */
   readonly copilotProposeMode?: boolean;
+  /**
+   * Copilot PROVENANCE STAMPING (Phase-C C5.4b — OFF by default; effective only WITH `copilotRealModel`).
+   * When true, the retrieval is wrapped in the provenance-stamping decorator fed the INTERIM (always-
+   * degraded) serving oracle — so a source is stamped `knowledge_writer` ONLY when the oracle admits it.
+   * Because boot wires the INTERIM oracle, NOTHING is stamped today ⇒ every ask is untrusted ⇒ propose
+   * stays structurally OFF (the C5.4a pattern: a real mechanism kept OFF by its INPUT). Wiring a REAL
+   * admitForServing-backed oracle here is a security-review-gated go-live event, never a flag flip (see
+   * `copilotProvenanceStamp.ts` GO-LIVE PRECONDITIONS). Turning this ON is safe (it can only make sources
+   * LESS trusted than the un-decorated path); it exists so the decorator sits on the live path pre-go-live.
+   */
+  readonly copilotProvenanceStamping?: boolean;
   /**
    * Explicit Copilot workspace set (id + type). Decoupled from `devProvision` (which is SURFACE data).
    * When omitted: devProvision-derived if present, else — on the real path — the 3 well-known scopes
@@ -449,6 +462,12 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
         }
       : undefined;
 
+  // C5.4b: the provenance-stamping serving oracle — the INTERIM (always-degraded) one, so the decorator sits
+  // on the live path but stamps NOTHING (⇒ untrusted ⇒ propose OFF). A real admitForServing-backed oracle is
+  // a security-review-gated go-live event, NOT a flag flip (a factory, built only when the flag is on).
+  const servingOracleFactory: (() => CopilotServingOracle) | undefined =
+    config.copilotProvenanceStamping === true ? createInterimDegradedServingOracle : undefined;
+
   // Workspace set is resolved DECOUPLED from devProvision (which is SURFACE data, not Copilot reachability):
   // an explicit `copilotWorkspaces` wins, else devProvision-derived, else — on the real path — the 3
   // well-known scopes, so the Copilot answers without needing a vault note (#1 app-reachability).
@@ -471,6 +490,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
       : {}),
     // C3: the agentic synthesis factory (only built when the flag is on) REPLACES the completion synthesis.
     ...(agentSynthesisFactory !== undefined ? { agentSynthesis: agentSynthesisFactory } : {}),
+    ...(servingOracleFactory !== undefined ? { servingOracle: servingOracleFactory } : {}),
   });
 
   // 3) The real loopback transport (HTTP + WS) behind the injected token + allowlist.
