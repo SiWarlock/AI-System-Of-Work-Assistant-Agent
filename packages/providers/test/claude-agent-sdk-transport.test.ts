@@ -31,8 +31,8 @@ function agentJob(over: Record<string, unknown> = {}): AgentJob {
     outputSchemaId: "sow:knowledge-mutation-plan",
     toolPolicy: {
       mode: "read_only",
-      allowedTools: ["gbrain.search", "gbrain.timeline"],
-      deniedTools: ["gbrain.graph"],
+      allowedTools: ["gbrain.search", "gbrain.get_timeline"],
+      deniedTools: ["gbrain.traverse_graph"],
       allowsMutating: false,
     },
     providerRoute: {
@@ -95,19 +95,19 @@ describe("buildAgentQueryOptions — the GOVERNED SDK query options (read-only e
   });
   it("passes the effective allow-list + denied list (default = the invocation's own lists)", () => {
     const o = buildAgentQueryOptions({ inv: inv(), systemPrompt: "s", controller: new AbortController() });
-    expect(o["allowedTools"]).toEqual(["gbrain.search", "gbrain.timeline"]);
-    expect(o["disallowedTools"]).toEqual(["gbrain.graph"]);
+    expect(o["allowedTools"]).toEqual(["gbrain.search", "gbrain.get_timeline"]);
+    expect(o["disallowedTools"]).toEqual(["gbrain.traverse_graph"]);
   });
   it("prefers explicit SDK tool-name mappings when provided (ToolId → mcp__gbrain__query etc.)", () => {
     const o = buildAgentQueryOptions({
       inv: inv(),
       systemPrompt: "s",
       allowedToolNames: ["mcp__gbrain__query"],
-      disallowedToolNames: ["mcp__gbrain__graph"],
+      disallowedToolNames: ["mcp__gbrain__nonexistent_op"],
       controller: new AbortController(),
     });
     expect(o["allowedTools"]).toEqual(["mcp__gbrain__query"]);
-    expect(o["disallowedTools"]).toEqual(["mcp__gbrain__graph"]);
+    expect(o["disallowedTools"]).toEqual(["mcp__gbrain__nonexistent_op"]);
   });
   it("bounds maxTurns (default set; clamps an absurd value)", () => {
     const def = buildAgentQueryOptions({ inv: inv(), systemPrompt: "s", controller: new AbortController() });
@@ -142,7 +142,7 @@ describe("buildCanUseTool — the deterministic deny-by-default guard (version-i
   });
   it("DENIES any non-allow-listed tool — incl. built-ins (Bash/Write) the fictional tools:[] can't stop", async () => {
     const can = buildCanUseTool(["mcp__gbrain__query"]);
-    for (const t of ["Bash", "Write", "WebFetch", "mcp__gbrain__graph"]) {
+    for (const t of ["Bash", "Write", "WebFetch", "mcp__gbrain__nonexistent_op"]) {
       const r = await can(t, {}, {} as never);
       expect(r?.behavior).toBe("deny");
     }

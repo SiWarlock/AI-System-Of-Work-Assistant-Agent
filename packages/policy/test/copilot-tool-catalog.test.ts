@@ -60,7 +60,7 @@ describe("isMutatingCopilotTool — the fail-safe classifier", () => {
   it("includes the gbrain read surface + a vault read", () => {
     const ids = COPILOT_READ_TOOLS.map((s) => String(s.id));
     expect(ids).toContain("gbrain.search");
-    expect(ids).toContain("gbrain.timeline");
+    expect(ids).toContain("gbrain.traverse_graph");
     expect(ids).toContain("vault.read");
   });
   it("the specs are FROZEN — a mutating tool can't be silently downgraded at runtime", () => {
@@ -165,7 +165,13 @@ describe("Tier-1 §13.10 — the gbrain conflict/gap-detection analysis read too
     // review before it can be cataloged as a read. Source of truth for read-ness: the live gbrain MCP tool
     // surface + memory `sow-copilot-skill-catalog` — adding a gbrain.* read tool MUST add its op here.
     const KNOWN_GBRAIN_READ_OPS = new Set([
-      "search", "graph", "timeline", "schema_read", "health", "contained_synthesis",
+      // search (→ the live `query` tool) + the two live graph/history reads. The one-time phantom cleanup
+      // (§13.10 go-live gate d, verified against gbrain v0.35.1's per-op scope classes): graph/timeline were
+      // renamed to the REAL MCP tool names traverse_graph/get_timeline; schema_read + contained_synthesis
+      // had NO live MCP tool; health maps to get_health which requires ADMIN scope (unreachable for the
+      // read-scoped DCR client) — all three pruned. ADMIN-scoped ops do NOT belong here even though they
+      // don't mutate: a catalog entry the served client can never invoke is a phantom allow-list entry.
+      "search", "traverse_graph", "get_timeline",
       "find_contradictions", "find_anomalies", "find_orphans",
       // expertise + takes (calibration memory) + code-intelligence — all verified pure reads against the live
       // gbrain MCP schemas. code_traversal_cache_clear is DELIBERATELY absent (destructive cache op, D8-guarded).
@@ -219,5 +225,46 @@ describe("Tier-1 §13.10 — the expertise / calibration / code-intelligence rea
     const ids = COPILOT_READ_TOOLS.map((s) => String(s.id));
     expect(ids).not.toContain("gbrain.code_traversal_cache_clear");
     expect(isMutatingCopilotTool(toolId("gbrain.code_traversal_cache_clear"))).toBe(true);
+  });
+});
+
+describe("§13.10 go-live gate (d) — phantom-name cleanup (verified against gbrain v0.35.1)", () => {
+  const PRUNED_PHANTOMS = [
+    "gbrain.graph", // renamed → gbrain.traverse_graph (the real MCP tool name)
+    "gbrain.timeline", // renamed → gbrain.get_timeline (the real MCP tool name)
+    "gbrain.schema_read", // NO such live MCP tool
+    "gbrain.contained_synthesis", // NO such live MCP tool
+    "gbrain.health", // the real op get_health requires ADMIN scope — unreachable for the read-scoped client
+  ];
+
+  it("the 5 phantom ids are GONE from the catalog and fall back to fail-safe-mutating", () => {
+    const ids = COPILOT_READ_TOOLS.map((s) => String(s.id));
+    for (const phantom of PRUNED_PHANTOMS) {
+      expect(ids).not.toContain(phantom);
+      expect(isMutatingCopilotTool(toolId(phantom))).toBe(true); // uncataloged ⇒ fail-safe mutating
+      expect(copilotReadToolPolicy().allowedTools.map(String)).not.toContain(phantom);
+    }
+  });
+
+  it("catalogs the two REAL renames as NON-mutating, FROZEN read tools in the read policy", () => {
+    const ids = COPILOT_READ_TOOLS.map((s) => String(s.id));
+    for (const id of ["gbrain.traverse_graph", "gbrain.get_timeline"]) {
+      expect(ids).toContain(id);
+      const spec = COPILOT_READ_TOOLS.find((s) => String(s.id) === id);
+      expect(spec?.mutating).toBe(false);
+      expect(isMutatingCopilotTool(toolId(id))).toBe(false);
+      expect(Object.isFrozen(spec)).toBe(true);
+    }
+    expect(copilotReadOnlyPolicyIsPure(copilotReadToolPolicy())).toBe(true);
+  });
+
+  it("EXCLUDES the ADMIN-scoped ops (get_health/get_stats) — servable-by-scope is a catalog precondition", () => {
+    // gbrain v0.35.1 classes every op read/write/admin and enforces at invocation; the SoW DCR client is
+    // registration-pinned to scope=read. An admin-scoped op in the catalog would be admitted-but-unreachable.
+    const ids = COPILOT_READ_TOOLS.map((s) => String(s.id));
+    expect(ids).not.toContain("gbrain.get_health");
+    expect(ids).not.toContain("gbrain.get_stats");
+    expect(isMutatingCopilotTool(toolId("gbrain.get_health"))).toBe(true);
+    expect(isMutatingCopilotTool(toolId("gbrain.get_stats"))).toBe(true);
   });
 });

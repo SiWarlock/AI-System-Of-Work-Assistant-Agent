@@ -31,23 +31,33 @@ export interface CopilotToolSpec {
 }
 
 /**
- * The read-only tools — the closed GbrainAllowedOp read surface (@sow/knowledge: search/graph/timeline/
- * schema_read/health/contained_synthesis) plus a canonical-Markdown vault read. NONE mutate, so they are
- * safe for an untrusted Copilot (a read_only job). Cross-workspace/global reads are NOT here — those go
- * through the GCL Visibility Gate, never a direct agent tool.
+ * The read-only tools — the LIVE-VERIFIED gbrain read surface. Every entry names a real op reachable by a
+ * read-scoped client on the `gbrain serve --http` MCP endpoint (verified against gbrain v0.35.1's per-op
+ * read/write/admin scope classes), plus a canonical-Markdown vault read. The op-suffix equals the live MCP
+ * tool name for every gbrain entry EXCEPT `gbrain.search`, which `copilotToolToMcpName` maps identity →
+ * `query` (gbrain's semantic-search tool is named `query`, proven live). NONE mutate, so they are safe for
+ * an untrusted Copilot (a read_only job). Cross-workspace/global reads are NOT here — those go through the
+ * GCL Visibility Gate, never a direct agent tool.
+ *
+ * NOTE this catalog is DISTINCT from the frozen Path-1 `GbrainAllowedOp` grant enum (@sow/contracts —
+ * search/graph/timeline/schema_read/health/contained_synthesis, enforced only by @sow/knowledge's
+ * mcp-read-adapter): that enum predates the live verification and carries names with no live MCP tool;
+ * its truth-pass is a flagged FUTURE frozen change (§13.10 go-live gate b), not this catalog's concern.
  */
 // Object.freeze each spec + the array: this is a safety-critical classification source, so a mutation like
 // `COPILOT_PROPOSE_TOOL.mutating = false` (which would silently downgrade a mutating tool) is prevented at
 // runtime, not just by the compile-time `readonly`.
 export const COPILOT_READ_TOOLS: readonly CopilotToolSpec[] = Object.freeze([
   Object.freeze({ id: toolId("gbrain.search"), mutating: false, description: "semantic search over the workspace brain" }),
-  Object.freeze({ id: toolId("gbrain.graph"), mutating: false, description: "read the knowledge-graph neighborhood of a note" }),
-  Object.freeze({ id: toolId("gbrain.timeline"), mutating: false, description: "read the workspace timeline" }),
-  Object.freeze({ id: toolId("gbrain.schema_read"), mutating: false, description: "read the brain's index schema" }),
-  Object.freeze({ id: toolId("gbrain.health"), mutating: false, description: "read brain health / coverage" }),
-  // gbrain.contained_synthesis is read-only BY ARCHITECTURE (one-writer rule + generativeCycleEnabled=false);
-  // the authority is the serve policy's GbrainReadGrant.allowedOps — cross-check when C4 wires the tool.
-  Object.freeze({ id: toolId("gbrain.contained_synthesis"), mutating: false, description: "brain-contained synthesis (read-only)" }),
+  // §13.10 go-live gate (d) — the one-time phantom cleanup (verified against live gbrain v0.35.1):
+  // `graph`/`timeline` were renamed to the REAL MCP tool names below; `schema_read` and
+  // `contained_synthesis` had NO live MCP tool and were pruned; `health` was pruned because the real op
+  // (`get_health`, like `get_stats`) requires ADMIN scope — the SoW DCR client is registration-pinned to
+  // scope=read, so cataloging an admin op would be an admitted-but-unreachable phantom allow-list entry.
+  // Servable-under-read-scope is a catalog PRECONDITION, alongside read-purity.
+  // Both reads take a MODEL-SUPPLIABLE `slug`, so the ⚠ WS-8 GO-LIVE GATE (below) applies to them too.
+  Object.freeze({ id: toolId("gbrain.traverse_graph"), mutating: false, description: "walk the knowledge-graph neighborhood of a note (slug + depth)" }),
+  Object.freeze({ id: toolId("gbrain.get_timeline"), mutating: false, description: "read a note's timeline entries (per-page history; slug-keyed)" }),
   // Tier-1 §13.10 — the conflict/gap-detection analysis reads (led by find_contradictions). PURE reads
   // (verified against the live gbrain MCP: find_contradictions reads the cached run row + never triggers a
   // probe; find_anomalies is statistical; find_orphans is a graph read). Op-suffix == the live gbrain MCP

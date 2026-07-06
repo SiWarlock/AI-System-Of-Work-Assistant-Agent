@@ -116,11 +116,23 @@ describe("copilotToolToMcpName — C1 ToolId → SDK MCP tool name (mcp__<server
   });
   it("maps other gbrain ops identity-on-the-op-name under the gbrain server", () => {
     const byName = new Map(copilotReadToolIds().map((t) => [String(t), copilotToolToMcpName(t)]));
-    expect(byName.get("gbrain.graph")).toBe("mcp__gbrain__graph");
-    expect(byName.get("gbrain.timeline")).toBe("mcp__gbrain__timeline");
-    expect(byName.get("gbrain.schema_read")).toBe("mcp__gbrain__schema_read");
-    expect(byName.get("gbrain.health")).toBe("mcp__gbrain__health");
-    expect(byName.get("gbrain.contained_synthesis")).toBe("mcp__gbrain__contained_synthesis");
+    expect(byName.get("gbrain.traverse_graph")).toBe("mcp__gbrain__traverse_graph");
+    expect(byName.get("gbrain.get_timeline")).toBe("mcp__gbrain__get_timeline");
+    expect(byName.get("gbrain.find_contradictions")).toBe("mcp__gbrain__find_contradictions");
+  });
+  it("gate (d) phantom cleanup: no phantom MCP names survive into the runner allow-list", () => {
+    // the pre-cleanup ids graph/timeline/schema_read/health/contained_synthesis mapped to MCP tool names
+    // that do NOT exist on the live `gbrain serve --http` surface (v0.35.1) — dead allow-list entries.
+    const names = copilotGbrainReadToolMcpNames();
+    for (const phantom of [
+      "mcp__gbrain__graph",
+      "mcp__gbrain__timeline",
+      "mcp__gbrain__schema_read",
+      "mcp__gbrain__health",
+      "mcp__gbrain__contained_synthesis",
+    ]) {
+      expect(names).not.toContain(phantom);
+    }
   });
   it("maps vault.read under the vault server", () => {
     const byName = new Map(copilotReadToolIds().map((t) => [String(t), copilotToolToMcpName(t)]));
