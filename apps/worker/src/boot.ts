@@ -38,14 +38,14 @@
 //     (`createOperationalBackupService`) is WIRED into the handle (`backupService`)
 //     but NOT SCHEDULED — the periodic CRON that calls `backupService.run()` on the
 //     `backupCadenceMs` is Phase-11. The service is ready; only its trigger is deferred.
-import { auditId } from "@sow/contracts";
+import { auditId, workspaceId } from "@sow/contracts";
 import type {
   Result,
   FailureVariant,
   HealthItem,
   AuditId,
 } from "@sow/contracts";
-import type { SessionToken, LegacyContentPolicy } from "@sow/policy";
+import type { SessionToken, LegacyContentPolicy, CopilotWorkspaceScope } from "@sow/policy";
 
 import {
   assembleBackends,
@@ -77,6 +77,7 @@ import {
 import type { GbrainQueryExec } from "./api/procedures/copilotGbrainSubprocess";
 import {
   createGbrainHttpExec,
+  createGbrainMcpToolCallExec,
   createGbrainDcrTokenProvider,
   DEFAULT_GBRAIN_HTTP_URL,
 } from "./api/procedures/copilotGbrainHttp";
@@ -90,7 +91,7 @@ import {
 import { createApprovalsProposeSink } from "./api/procedures/copilotProposeSink";
 import { createInterimDegradedServingOracle } from "./api/procedures/copilotProvenanceStamp";
 import type { CopilotServingOracle } from "./api/procedures/copilotProvenanceStamp";
-import { createCopilotProposeMcpServer } from "@sow/providers";
+import { createCopilotProposeMcpServer, createCopilotGbrainProxyMcpServer } from "@sow/providers";
 import type { CopilotSynthesisPort } from "./api/procedures/copilot";
 import { createClaudeSubscriptionCompletion } from "@sow/providers";
 import type { SystemHealthQueryPort, UiSafeEgressStatus } from "./api/procedures/systemHealth";
@@ -465,12 +466,33 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
             workspaceConfig: backends.repos.workspaceConfig,
             now: backends.now,
           });
+          // SC8 (§13.10 gate a): when workspace scoping is on, the agent reaches gbrain ONLY through the
+          // in-process PROXY — SC5a arg-policing + SC5b result-redaction per call — which REPLACES the raw http
+          // gbrain server under the same `gbrain` map key. The exec is the generic MCP-over-HTTP tool-call
+          // (raw-envelope) transport (loopback-guarded; mints its own token). NOTE: `copilotWorkspaceScope` is
+          // defined below — safe because this factory is LAZY (only invoked post-boot, after that const inits).
+          // ONE served-workspace id for BOTH the runner's `served` gate and the proxy's own-workspace scope —
+          // they MUST stay in lockstep (a desync would scope a different workspace than the one being served).
+          const servedWorkspaceIdStr = config.copilotGbrainWorkspaceId ?? DEFAULT_GBRAIN_COPILOT_WORKSPACE;
+          const gbrainProxyRunnerDeps =
+            copilotWorkspaceScope !== undefined
+              ? {
+                  gbrainProxyScope: {
+                    servedWorkspaceId: workspaceId(servedWorkspaceIdStr),
+                    registry: copilotWorkspaceScope.registry,
+                    policy: copilotWorkspaceScope.policy,
+                  } satisfies CopilotWorkspaceScope,
+                  gbrainProxyExec: createGbrainMcpToolCallExec({ baseUrl: gbrainHttpBaseUrl, tokenProvider }),
+                  buildGbrainProxyMcpServer: createCopilotGbrainProxyMcpServer,
+                }
+              : undefined;
           const runner = createClaudeAgentCopilotRunner({
-            servedWorkspaceId: config.copilotGbrainWorkspaceId ?? DEFAULT_GBRAIN_COPILOT_WORKSPACE,
+            servedWorkspaceId: servedWorkspaceIdStr,
             gbrainMcpUrl: gbrainMcpEndpoint(gbrainHttpBaseUrl),
             getToken: () => tokenProvider.getToken(false),
             proposeSink,
             buildProposeMcpServer: createCopilotProposeMcpServer,
+            ...(gbrainProxyRunnerDeps !== undefined ? gbrainProxyRunnerDeps : {}),
             ...(config.copilotBetas !== undefined ? { betas: config.copilotBetas } : {}),
           });
           // proposeEnabled mirrors the flag; resolveContentTrust is the REAL per-source-provenance derivation
