@@ -139,3 +139,40 @@ describe("ING-7 payoff — admitJob(job, isMutatingCopilotTool) gates the Copilo
     expect(isAllow(d)).toBe(true);
   });
 });
+
+describe("Tier-1 §13.10 — the gbrain conflict/gap-detection analysis read tools", () => {
+  const ANALYSIS_IDS = ["gbrain.find_contradictions", "gbrain.find_anomalies", "gbrain.find_orphans"];
+
+  it("catalogs the 3 tools as NON-mutating, FROZEN read tools that ride into the read policy", () => {
+    const ids = COPILOT_READ_TOOLS.map((s) => String(s.id));
+    for (const id of ANALYSIS_IDS) {
+      expect(ids).toContain(id);
+      const spec = COPILOT_READ_TOOLS.find((s) => String(s.id) === id);
+      expect(spec?.mutating).toBe(false);
+      expect(isMutatingCopilotTool(toolId(id))).toBe(false); // catalog-known, not fail-safe-mutating
+      expect(Object.isFrozen(spec)).toBe(true);
+    }
+    // they ride into the read_only policy — so a read_only Copilot job may hold them, and the surface stays pure.
+    expect(copilotReadToolPolicy().allowedTools.map(String)).toEqual(expect.arrayContaining(ANALYSIS_IDS));
+    expect(copilotReadOnlyPolicyIsPure(copilotReadToolPolicy())).toBe(true);
+  });
+
+  it("DRIFT-LOCK: every gbrain.* read tool maps to a known-READ op (fail-CLOSED allowlist)", () => {
+    // The fail-safe classifier only catches UNKNOWN ids; this guards a future KNOWN-but-mislabeled entry
+    // (mutating:false accidentally set on a genuinely mutating gbrain op — e.g. `think` which can `save`,
+    // or `sync_brain`) from silently entering the read surface. An ALLOWLIST (not a denylist of mutating ops)
+    // is fail-closed: an unrecognized/renamed gbrain op fails this test and FORCES a human read-vs-write
+    // review before it can be cataloged as a read. Source of truth for read-ness: the live gbrain MCP tool
+    // surface + memory `sow-copilot-skill-catalog` — adding a gbrain.* read tool MUST add its op here.
+    const KNOWN_GBRAIN_READ_OPS = new Set([
+      "search", "graph", "timeline", "schema_read", "health", "contained_synthesis",
+      "find_contradictions", "find_anomalies", "find_orphans",
+    ]);
+    for (const spec of COPILOT_READ_TOOLS) {
+      const raw = String(spec.id);
+      if (!raw.startsWith("gbrain.")) continue;
+      const op = raw.slice("gbrain.".length);
+      expect(KNOWN_GBRAIN_READ_OPS.has(op)).toBe(true); // unknown gbrain op ⇒ RED ⇒ forced review
+    }
+  });
+});

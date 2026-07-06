@@ -48,6 +48,24 @@ export const COPILOT_READ_TOOLS: readonly CopilotToolSpec[] = Object.freeze([
   // gbrain.contained_synthesis is read-only BY ARCHITECTURE (one-writer rule + generativeCycleEnabled=false);
   // the authority is the serve policy's GbrainReadGrant.allowedOps — cross-check when C4 wires the tool.
   Object.freeze({ id: toolId("gbrain.contained_synthesis"), mutating: false, description: "brain-contained synthesis (read-only)" }),
+  // Tier-1 §13.10 — the conflict/gap-detection analysis reads (led by find_contradictions). PURE reads
+  // (verified against the live gbrain MCP: find_contradictions reads the cached run row + never triggers a
+  // probe; find_anomalies is statistical; find_orphans is a graph read). Op-suffix == the live gbrain MCP
+  // tool name EXACTLY, so `copilotToolToMcpName` maps them identity → mcp__gbrain__<op>. Surfacing conflicts
+  // BEFORE answering feeds the no-inference posture (REQ-F-017): route to clarification instead of guessing.
+  //
+  // ⚠ WS-8 GO-LIVE GATE (do NOT flip copilotAgentMode against a MULTI-workspace brain until fixed): these
+  // three ENUMERATE THE WHOLE BRAIN with no workspace-scope arg — strictly broader than the query-scoped
+  // search tool. Cross-BRAIN isolation holds by construction (one served endpoint, no brain-selector arg,
+  // deny-all for non-served workspaces), but cross-WORKSPACE isolation rests on the served brain holding ONE
+  // workspace's content. The real local gbrain is a single COMBINED brain (slug/tag-partitioned across all 3
+  // workspaces), so activating these against it would surface every workspace's findings. Go-live requires
+  // per-workspace brain partitioning / server-enforced scope (NOT find_contradictions' optional `slug` arg,
+  // which a model can equally use to TARGET another workspace). Safe today: dormant (copilotAgentMode OFF) +
+  // a single seeded served workspace. Tracked as a hard go-live blocker + a C6 governance-eval item.
+  Object.freeze({ id: toolId("gbrain.find_contradictions"), mutating: false, description: "read cached suspected-contradiction findings for the workspace brain" }),
+  Object.freeze({ id: toolId("gbrain.find_anomalies"), mutating: false, description: "read statistical anomalies in the workspace brain" }),
+  Object.freeze({ id: toolId("gbrain.find_orphans"), mutating: false, description: "read orphaned / unlinked notes in the workspace brain" }),
   Object.freeze({ id: toolId("vault.read"), mutating: false, description: "read a canonical Markdown note by path" }),
 ]);
 

@@ -146,6 +146,13 @@ describe("copilotGbrainReadToolMcpNames — the gbrain-backed subset the runner 
     // strictly fewer than the full catalog (vault.read dropped).
     expect(names.length).toBeLessThan(copilotReadToolMcpNames().length);
   });
+
+  it("Tier-1 §13.10: contains the analysis tools (find_contradictions/anomalies/orphans) by IDENTITY name", () => {
+    const names = copilotGbrainReadToolMcpNames();
+    expect(names).toContain("mcp__gbrain__find_contradictions");
+    expect(names).toContain("mcp__gbrain__find_anomalies");
+    expect(names).toContain("mcp__gbrain__find_orphans");
+  });
 });
 
 describe("copilotToolToMcpName — FAIL-SAFE on a malformed ToolId (never collides with an allow-listed name)", () => {
@@ -549,6 +556,12 @@ describe("createClaudeAgentCopilotRunner — the real runner's WIRING (injected 
     const servers = opts["mcpServers"] as Record<string, { headers: Record<string, string> }>;
     expect(servers[GBRAIN_MCP_SERVER_NAME]?.headers.Authorization).toBe("Bearer tok-abc");
     expect(opts["allowedTools"]).toContain("mcp__gbrain__query");
+    // Tier-1 §13.10: the analysis tools auto-flow from the catalog into the served allow-list via the BOOT
+    // DEFAULT (no explicit `allowedToolNames` here) — if boot ever passes one, this regresses (the catalog
+    // add would silently stop reaching the runner grant → admitted-but-unreachable).
+    expect(opts["allowedTools"]).toContain("mcp__gbrain__find_contradictions");
+    expect(opts["allowedTools"]).toContain("mcp__gbrain__find_anomalies");
+    expect(opts["allowedTools"]).toContain("mcp__gbrain__find_orphans");
     // deny-by-default containment is present (the load-bearing guard from C2)
     expect(typeof opts["canUseTool"]).toBe("function");
   });
@@ -680,6 +693,11 @@ describe("createClaudeAgentCopilotRunner — the C5.3 propose grant (defense-in-
     // propose tool present; gbrain read tools STRIPPED (seed-only surface bounds the tool-reachable content).
     expect(opts["allowedTools"]).toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
     expect(opts["allowedTools"]).not.toContain("mcp__gbrain__query");
+    // Tier-1 §13.10: the analysis tools are stripped too (C5.4a build-time-trust TOCTOU closure holds as the
+    // read surface grows — a propose job's tool-reachable surface stays == the pre-verified seed).
+    expect(opts["allowedTools"]).not.toContain("mcp__gbrain__find_contradictions");
+    expect(opts["allowedTools"]).not.toContain("mcp__gbrain__find_anomalies");
+    expect(opts["allowedTools"]).not.toContain("mcp__gbrain__find_orphans");
     const servers = opts["mcpServers"] as Record<string, { type?: string }>;
     expect(servers["copilot"]?.type).toBe("sdk");
     expect(servers[GBRAIN_MCP_SERVER_NAME]).toBeUndefined(); // no gbrain server on a propose job
