@@ -91,6 +91,11 @@ export const COPILOT_READ_TOOLS: readonly CopilotToolSpec[] = Object.freeze([
   Object.freeze({ id: toolId("gbrain.code_callees"), mutating: false, description: "outbound calls from a symbol (call graph)" }),
   Object.freeze({ id: toolId("gbrain.code_flow"), mutating: false, description: "ordered execution chain from an entry point to its sinks" }),
   Object.freeze({ id: toolId("gbrain.code_blast"), mutating: false, description: "transitive callers of a symbol grouped by depth (blast radius)" }),
+  // Resume-context recency read ("what's been going on / what's hot"): pages ranked by salience over a window.
+  // Whole-brain read ⇒ the same ⚠ WS-8 GO-LIVE GATE (above) applies. NOTE: the sibling `get_recent_transcripts`
+  // is DELIBERATELY EXCLUDED — it is LOCAL-ONLY (rejects remote MCP/http callers with permission_denied), so a
+  // catalog entry would be a dead allow-list entry for the served (http-transport) agent.
+  Object.freeze({ id: toolId("gbrain.get_recent_salience"), mutating: false, description: "recently-salient pages (activity + salience ranked over a window)" }),
   Object.freeze({ id: toolId("vault.read"), mutating: false, description: "read a canonical Markdown note by path" }),
 ]);
 

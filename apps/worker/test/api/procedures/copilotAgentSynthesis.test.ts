@@ -162,8 +162,10 @@ describe("copilotGbrainReadToolMcpNames — the gbrain-backed subset the runner 
     expect(names).toContain("mcp__gbrain__code_def");
     expect(names).toContain("mcp__gbrain__code_callers");
     expect(names).toContain("mcp__gbrain__code_flow");
-    // the destructive cache-clear op is uncataloged ⇒ never in the read allow-list.
+    expect(names).toContain("mcp__gbrain__get_recent_salience");
+    // the destructive cache-clear op + the local-only transcripts op are uncataloged ⇒ never allow-listed.
     expect(names).not.toContain("mcp__gbrain__code_traversal_cache_clear");
+    expect(names).not.toContain("mcp__gbrain__get_recent_transcripts");
   });
 });
 

@@ -172,6 +172,7 @@ describe("Tier-1 §13.10 — the gbrain conflict/gap-detection analysis read too
       "find_experts",
       "takes_list", "takes_search", "takes_scorecard", "takes_calibration",
       "code_def", "code_refs", "code_callers", "code_callees", "code_flow", "code_blast",
+      "get_recent_salience", // resume-context recency read (get_recent_transcripts is EXCLUDED — local-only)
     ]);
     for (const spec of COPILOT_READ_TOOLS) {
       const raw = String(spec.id);
@@ -200,6 +201,16 @@ describe("Tier-1 §13.10 — the expertise / calibration / code-intelligence rea
     }
     expect(copilotReadToolPolicy().allowedTools.map(String)).toEqual(expect.arrayContaining(READ_IDS));
     expect(copilotReadOnlyPolicyIsPure(copilotReadToolPolicy())).toBe(true);
+  });
+
+  it("catalogs gbrain.get_recent_salience (recency read) but EXCLUDES local-only get_recent_transcripts", () => {
+    const ids = COPILOT_READ_TOOLS.map((s) => String(s.id));
+    // salience is a servable read (works over the http MCP transport).
+    expect(ids).toContain("gbrain.get_recent_salience");
+    expect(isMutatingCopilotTool(toolId("gbrain.get_recent_salience"))).toBe(false);
+    // get_recent_transcripts is LOCAL-ONLY (rejects remote MCP/http callers with permission_denied) — cataloging
+    // it would be a dead allow-list entry for the served (http) agent; deliberately excluded.
+    expect(ids).not.toContain("gbrain.get_recent_transcripts");
   });
 
   it("EXCLUDES the destructive gbrain.code_traversal_cache_clear (fail-safe ⇒ mutating)", () => {
