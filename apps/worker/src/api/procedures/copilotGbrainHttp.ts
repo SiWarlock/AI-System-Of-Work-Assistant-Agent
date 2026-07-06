@@ -19,6 +19,7 @@
 import { err, isOk, failure } from "@sow/contracts";
 import type { FailureVariant, Result } from "@sow/contracts";
 import type { GbrainQueryExec } from "./copilotGbrainSubprocess";
+import type { CopilotGbrainToolExec } from "./copilotGbrainProxy";
 
 /** A minimal fetch-like seam (a subset of the global `fetch` — Node 22's Response satisfies it). */
 export type FetchLike = (
@@ -55,18 +56,22 @@ export function isLoopbackUrl(baseUrl: string): boolean {
   return h === "127.0.0.1" || h === "::1" || h === "localhost" || h.startsWith("127.");
 }
 
-/** PURE: the JSON-RPC `tools/call` body for the gbrain `query` tool. */
+/** PURE: a generic JSON-RPC `tools/call` body for an arbitrary gbrain MCP tool (`name` + `arguments`). */
+export function buildMcpToolCallRequest(
+  name: string,
+  args: Record<string, unknown>,
+  id: number,
+): Record<string, unknown> {
+  return { jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } };
+}
+
+/** PURE: the JSON-RPC `tools/call` body for the gbrain `query` tool (a special case of the generic builder). */
 export function buildMcpQueryRequest(
   question: string,
   limit: number,
   id: number,
 ): Record<string, unknown> {
-  return {
-    jsonrpc: "2.0",
-    id,
-    method: "tools/call",
-    params: { name: "query", arguments: { query: question, limit } },
-  };
+  return buildMcpToolCallRequest("query", { query: question, limit }, id);
 }
 
 /**
@@ -108,12 +113,12 @@ function mcpFault(code: string, message: string): FailureVariant {
 }
 
 /**
- * PURE: an MCP `tools/call` envelope → the gbrain hits array (as `unknown`, for `normalizeGbrainHits` +
- * `parseGbrainSearchResult`). gbrain returns the hits as a JSON STRING inside `result.content[0].text`.
- * Fail-closed on a JSON-RPC error, an `isError` tool result, a missing/!text content, or non-JSON text —
- * never fabricates context. Never throws.
+ * PURE: an MCP `tools/call` envelope → the RAW tool RESULT object (`{content, isError?}`) as `unknown`. This
+ * is the shared JSON-RPC→result step: `parseMcpToolCallResult` extends it to the query hits array, and the SC7
+ * proxy's `createGbrainMcpToolCallExec` returns this result object verbatim (SC5b's redactor parses it). Fail-
+ * closed on a JSON-RPC error, an `isError` tool result, or a missing/non-object result. Never throws.
  */
-export function parseMcpToolCallResult(envelope: unknown): Result<unknown, FailureVariant> {
+export function extractMcpResultEnvelope(envelope: unknown): Result<unknown, FailureVariant> {
   if (typeof envelope !== "object" || envelope === null) {
     return err(mcpFault("GBRAIN_HTTP_MALFORMED", "gbrain http reply was not an object"));
   }
@@ -125,10 +130,22 @@ export function parseMcpToolCallResult(envelope: unknown): Result<unknown, Failu
   if (typeof result !== "object" || result === null) {
     return err(mcpFault("GBRAIN_HTTP_MALFORMED", "gbrain http reply has no result"));
   }
-  const res = result as Record<string, unknown>;
-  if (res["isError"] === true) {
-    return err(mcpFault("GBRAIN_HTTP_TOOL_ERROR", "gbrain query tool reported an error"));
+  if ((result as Record<string, unknown>)["isError"] === true) {
+    return err(mcpFault("GBRAIN_HTTP_TOOL_ERROR", "gbrain tool reported an error"));
   }
+  return { ok: true, value: result };
+}
+
+/**
+ * PURE: an MCP `tools/call` envelope → the gbrain hits array (as `unknown`, for `normalizeGbrainHits` +
+ * `parseGbrainSearchResult`). gbrain returns the hits as a JSON STRING inside `result.content[0].text`.
+ * Fail-closed on a JSON-RPC error, an `isError` tool result, a missing/!text content, or non-JSON text —
+ * never fabricates context. Never throws.
+ */
+export function parseMcpToolCallResult(envelope: unknown): Result<unknown, FailureVariant> {
+  const resultEnv = extractMcpResultEnvelope(envelope);
+  if (!isOk(resultEnv)) return resultEnv;
+  const res = resultEnv.value as Record<string, unknown>;
   const content = res["content"];
   if (!Array.isArray(content) || content.length === 0) {
     return err(mcpFault("GBRAIN_HTTP_MALFORMED", "gbrain http reply has no content"));
@@ -169,22 +186,20 @@ function defaultFetch(timeoutMs: number): FetchLike {
 }
 
 /**
- * Build a `GbrainQueryExec` over the gbrain MCP-over-HTTP endpoint. Sends a `tools/call query` with the
- * bearer token; on a 401 it refreshes the token ONCE and retries (a rotated/expired token self-heals);
- * a persistent 401, a non-2xx status, a thrown fetch, a malformed body, or a NON-LOOPBACK baseUrl all fail
- * closed with a typed, redaction-safe fault (the fetch/SDK error is dropped — only a stable code crosses,
- * §16 / safety 7). Never throws. The returned hits feed `normalizeGbrainHits` + `parseGbrainSearchResult`.
+ * Shared MCP-over-HTTP request plumbing (used by BOTH the query exec and the SC7 proxy's generic exec): POST
+ * a JSON-RPC request to `mcpUrl` with a bearer token; on a 401 refresh the token ONCE and retry (a rotated/
+ * expired token self-heals); then parse the SSE/JSON body to the JSON-RPC response envelope. A persistent 401
+ * → non-retryable UNAUTHORIZED; a non-2xx / thrown fetch / malformed body → retryable transport. Fail-closed +
+ * redaction-safe (the fetch/SDK error is DROPPED — only a stable code crosses, §16 / safety 7); never throws.
+ * The caller MUST check loopback (deps-constant) BEFORE calling this — no fetch happens for a non-loopback URL.
  */
-export function createGbrainHttpExec(deps: GbrainHttpExecDeps): GbrainQueryExec {
-  const timeout = deps.timeoutMs ?? 60_000;
-  const doFetch = deps.fetchFn ?? defaultFetch(timeout);
-  const loopback = isLoopbackUrl(deps.baseUrl);
-  const mcpUrl = `${deps.baseUrl}/mcp`;
-  const post = async (
-    token: string,
-    question: string,
-    limit: number,
-  ): Promise<{ readonly status: number; readonly body: string }> => {
+async function postMcpRequest(
+  mcpUrl: string,
+  tokenProvider: GbrainTokenProvider,
+  doFetch: FetchLike,
+  requestBody: Record<string, unknown>,
+): Promise<Result<unknown, FailureVariant>> {
+  const post = async (token: string): Promise<{ readonly status: number; readonly body: string }> => {
     const res = await doFetch(mcpUrl, {
       method: "POST",
       headers: {
@@ -192,10 +207,65 @@ export function createGbrainHttpExec(deps: GbrainHttpExecDeps): GbrainQueryExec 
         "Content-Type": "application/json",
         Accept: "application/json, text/event-stream",
       },
-      body: JSON.stringify(buildMcpQueryRequest(question, limit, 1)),
+      body: JSON.stringify(requestBody),
     });
     return { status: res.status, body: await res.text() };
   };
+  // Whole body in a try so NOTHING throws across the boundary (§16) — incl. a token-provider or a mid-body
+  // `res.text()` rejection. The redaction-safe catch returns only a stable transport code.
+  try {
+    const first = await tokenProvider.getToken(false);
+    if (!isOk(first)) return first; // fail closed (typed) before any fetch
+    let resp = await post(first.value);
+    if (resp.status === 401) {
+      // Token likely expired/rotated — refresh once and retry. A second 401 is a real auth failure.
+      const refreshed = await tokenProvider.getToken(true);
+      if (!isOk(refreshed)) return refreshed;
+      resp = await post(refreshed.value);
+      if (resp.status === 401) {
+        // Deterministic after a fresh token (an immediate re-drive won't self-heal) → NOT retryable.
+        return err(
+          failure("provider_failed", "gbrain http unauthorized after refresh", {
+            cause: { code: "GBRAIN_HTTP_UNAUTHORIZED" },
+          }),
+        );
+      }
+    }
+    if (resp.status < 200 || resp.status >= 300) {
+      return err(
+        failure("degraded_unavailable", "gbrain http non-2xx", {
+          retryable: true,
+          cause: { code: "GBRAIN_HTTP_STATUS" },
+        }),
+      );
+    }
+    const envelope = parseMcpSseBody(resp.body);
+    if (envelope === undefined) {
+      return err(mcpFault("GBRAIN_HTTP_MALFORMED", "gbrain http body did not parse"));
+    }
+    return { ok: true, value: envelope };
+  } catch {
+    // Redaction-safe: drop the fetch/abort/body-read error (may carry the URL/host) — only a stable code.
+    return err(
+      failure("degraded_unavailable", "gbrain http read failed", {
+        retryable: true,
+        cause: { code: "GBRAIN_HTTP_TRANSPORT" },
+      }),
+    );
+  }
+}
+
+/**
+ * Build a `GbrainQueryExec` over the gbrain MCP-over-HTTP endpoint. Sends a `tools/call query` with the
+ * bearer token via the shared `postMcpRequest`; a persistent 401, a non-2xx status, a thrown fetch, a
+ * malformed body, or a NON-LOOPBACK baseUrl all fail closed with a typed, redaction-safe fault. Never throws.
+ * The returned hits feed `normalizeGbrainHits` + `parseGbrainSearchResult`.
+ */
+export function createGbrainHttpExec(deps: GbrainHttpExecDeps): GbrainQueryExec {
+  const timeout = deps.timeoutMs ?? 60_000;
+  const doFetch = deps.fetchFn ?? defaultFetch(timeout);
+  const loopback = isLoopbackUrl(deps.baseUrl);
+  const mcpUrl = `${deps.baseUrl}/mcp`;
   return async (question, limit): Promise<Result<unknown, FailureVariant>> => {
     // Rule 5: the question can carry employer context — refuse to send it off-box (a non-loopback serve
     // read is an un-vetoed egress). Fail closed BEFORE any fetch or token request.
@@ -206,48 +276,50 @@ export function createGbrainHttpExec(deps: GbrainHttpExecDeps): GbrainQueryExec 
         }),
       );
     }
-    // Whole body in a try so NOTHING throws across the boundary (§16) — incl. a token-provider or a
-    // mid-body `res.text()` rejection. The redaction-safe catch returns only a stable transport code.
-    try {
-      const first = await deps.tokenProvider.getToken(false);
-      if (!isOk(first)) return first; // fail closed (typed) before any fetch
-      let resp = await post(first.value, question, limit);
-      if (resp.status === 401) {
-        // Token likely expired/rotated — refresh once and retry. A second 401 is a real auth failure.
-        const refreshed = await deps.tokenProvider.getToken(true);
-        if (!isOk(refreshed)) return refreshed;
-        resp = await post(refreshed.value, question, limit);
-        if (resp.status === 401) {
-          // Deterministic after a fresh token (an immediate re-drive won't self-heal) → NOT retryable.
-          return err(
-            failure("provider_failed", "gbrain http unauthorized after refresh", {
-              cause: { code: "GBRAIN_HTTP_UNAUTHORIZED" },
-            }),
-          );
-        }
-      }
-      if (resp.status < 200 || resp.status >= 300) {
-        return err(
-          failure("degraded_unavailable", "gbrain http non-2xx", {
-            retryable: true,
-            cause: { code: "GBRAIN_HTTP_STATUS" },
-          }),
-        );
-      }
-      const envelope = parseMcpSseBody(resp.body);
-      if (envelope === undefined) {
-        return err(mcpFault("GBRAIN_HTTP_MALFORMED", "gbrain http body did not parse"));
-      }
-      return parseMcpToolCallResult(envelope);
-    } catch {
-      // Redaction-safe: drop the fetch/abort/body-read error (may carry the URL/host) — only a stable code.
+    const envelope = await postMcpRequest(mcpUrl, deps.tokenProvider, doFetch, buildMcpQueryRequest(question, limit, 1));
+    if (!isOk(envelope)) return envelope;
+    return parseMcpToolCallResult(envelope.value);
+  };
+}
+
+/** The `mcp__gbrain__<op>` prefix — the proxy's tool names; the suffix IS the live gbrain MCP tool name. */
+const GBRAIN_MCP_TOOL_PREFIX = "mcp__gbrain__";
+
+/**
+ * Build the SC7 proxy's `CopilotGbrainToolExec` over the gbrain MCP-over-HTTP endpoint. Unlike the query-only
+ * `createGbrainHttpExec`, it calls an ARBITRARY gbrain read op — the op is the `mcp__gbrain__<op>` suffix (the
+ * proxy's tool names ARE the gbrain tool names) — and returns the RAW MCP result envelope
+ * (`{content:[{type:"text",text:"<JSON>"}]}`), which SC5b's `redactGbrainToolResult` then parses + scopes. Same
+ * loopback + bearer + 401-retry plumbing as the query exec (shared `postMcpRequest`). Fail-closed on a
+ * non-gbrain tool name / non-loopback / auth / transport / malformed / JSON-RPC-or-tool error; never throws.
+ */
+export function createGbrainMcpToolCallExec(deps: GbrainHttpExecDeps): CopilotGbrainToolExec {
+  const timeout = deps.timeoutMs ?? 60_000;
+  const doFetch = deps.fetchFn ?? defaultFetch(timeout);
+  const loopback = isLoopbackUrl(deps.baseUrl);
+  const mcpUrl = `${deps.baseUrl}/mcp`;
+  return async (mcpToolName, args): Promise<Result<unknown, FailureVariant>> => {
+    // Rule 5: fail closed BEFORE any fetch — the tool args can carry employer context off-box otherwise.
+    if (!loopback) {
       return err(
-        failure("degraded_unavailable", "gbrain http read failed", {
-          retryable: true,
-          cause: { code: "GBRAIN_HTTP_TRANSPORT" },
+        failure("validation_rejected", "gbrain http base url is not loopback", {
+          cause: { code: "GBRAIN_HTTP_NON_LOOPBACK" },
         }),
       );
     }
+    // The proxy only routes gbrain ops here, but re-derive fail-closed: a non-`mcp__gbrain__` name has no op.
+    // A mis-routed / empty tool name is a STRUCTURAL config mismatch (not a transient degraded read), so it maps
+    // to `validation_rejected` (non-retryable) — mirroring the loopback guard above, not the transport faults.
+    if (!mcpToolName.startsWith(GBRAIN_MCP_TOOL_PREFIX)) {
+      return err(failure("validation_rejected", "not a gbrain MCP tool name", { cause: { code: "GBRAIN_HTTP_NOT_GBRAIN_TOOL" } }));
+    }
+    const op = mcpToolName.slice(GBRAIN_MCP_TOOL_PREFIX.length);
+    if (op.length === 0) {
+      return err(failure("validation_rejected", "empty gbrain op", { cause: { code: "GBRAIN_HTTP_NOT_GBRAIN_TOOL" } }));
+    }
+    const envelope = await postMcpRequest(mcpUrl, deps.tokenProvider, doFetch, buildMcpToolCallRequest(op, args, 1));
+    if (!isOk(envelope)) return envelope;
+    return extractMcpResultEnvelope(envelope.value);
   };
 }
 

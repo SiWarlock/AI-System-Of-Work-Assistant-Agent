@@ -16,9 +16,12 @@ import { parseGbrainSearchResult } from "../../../src/api/procedures/copilotGbra
 import { normalizeGbrainHits } from "../../../src/api/procedures/copilotGbrainSubprocess";
 import {
   buildMcpQueryRequest,
+  buildMcpToolCallRequest,
   parseMcpSseBody,
   parseMcpToolCallResult,
+  extractMcpResultEnvelope,
   createGbrainHttpExec,
+  createGbrainMcpToolCallExec,
   createGbrainDcrTokenProvider,
   isLoopbackUrl,
 } from "../../../src/api/procedures/copilotGbrainHttp";
@@ -404,4 +407,109 @@ describe.skipIf(process.env["SOW_P3_LIVE"] !== "1")("LIVE http transport — rea
       }
     }
   }, 30_000);
+});
+
+// ── SC8a (§13.10 gate a) — the generic MCP-call exec for the SC7 gbrain proxy ────────────────────────────
+
+describe("buildMcpToolCallRequest — a generic JSON-RPC tools/call body", () => {
+  it("wraps an arbitrary op + args (query stays a special case)", () => {
+    expect(buildMcpToolCallRequest("traverse_graph", { slug: "personal-business/x", depth: 2 }, 1)).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "traverse_graph", arguments: { slug: "personal-business/x", depth: 2 } },
+    });
+    // buildMcpQueryRequest is now this builder specialized to `query`
+    expect(buildMcpQueryRequest("q", 3, 1)).toEqual(buildMcpToolCallRequest("query", { query: "q", limit: 3 }, 1));
+  });
+});
+
+describe("extractMcpResultEnvelope — MCP envelope → the RAW tool result object (fail-closed)", () => {
+  it("returns result verbatim (the {content:[…]} envelope SC5b parses), NOT the parsed hits", () => {
+    const env = mcpEnvelope(HITS);
+    const r = extractMcpResultEnvelope(env);
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value).toEqual({ content: [{ type: "text", text: JSON.stringify(HITS) }] });
+  });
+  it("fails closed on a JSON-RPC error / isError tool result / missing result / non-object", () => {
+    expect(isErr(extractMcpResultEnvelope({ jsonrpc: "2.0", id: 1, error: { code: -1, message: "x" } }))).toBe(true);
+    expect(isErr(extractMcpResultEnvelope({ jsonrpc: "2.0", id: 1, result: { content: [], isError: true } }))).toBe(true);
+    expect(isErr(extractMcpResultEnvelope({ jsonrpc: "2.0", id: 1 }))).toBe(true);
+    expect(isErr(extractMcpResultEnvelope("nope"))).toBe(true);
+  });
+});
+
+describe("createGbrainMcpToolCallExec — the SC7 proxy's raw-envelope exec over MCP-over-HTTP", () => {
+  function fakeFetch(script: Array<{ status: number; body: string }>): {
+    readonly fetchFn: FetchLike;
+    readonly calls: Array<{ url: string; auth: string | undefined; body: string }>;
+  } {
+    const calls: Array<{ url: string; auth: string | undefined; body: string }> = [];
+    let i = 0;
+    const fetchFn: FetchLike = async (url, init) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      calls.push({ url, auth: headers["Authorization"], body: String(init?.body ?? "") });
+      const step = script[Math.min(i, script.length - 1)];
+      i++;
+      return { status: step!.status, text: async () => step!.body };
+    };
+    return { fetchFn, calls };
+  }
+
+  it("posts tools/call for the op stripped from mcp__gbrain__<op> and returns the RAW result envelope", async () => {
+    const nodes = [{ slug: "personal-business/root", links: [] }];
+    const { fetchFn, calls } = fakeFetch([{ status: 200, body: sse(mcpEnvelope(nodes)) }]);
+    const exec = createGbrainMcpToolCallExec({ baseUrl: "http://127.0.0.1:8899", tokenProvider: fakeToken("abc"), fetchFn });
+    const r = await exec("mcp__gbrain__traverse_graph", { slug: "personal-business/root", depth: 1 });
+    expect(calls[0]!.url).toBe("http://127.0.0.1:8899/mcp");
+    expect(calls[0]!.auth).toBe("Bearer abc");
+    // the op is the mcp__gbrain__ suffix; the args are forwarded verbatim
+    expect(JSON.parse(calls[0]!.body).params).toEqual({ name: "traverse_graph", arguments: { slug: "personal-business/root", depth: 1 } });
+    expect(isOk(r)).toBe(true);
+    // the RAW envelope (not parsed hits) — exactly what SC5b's redactGbrainToolResult consumes
+    if (isOk(r)) expect(r.value).toEqual({ content: [{ type: "text", text: JSON.stringify(nodes) }] });
+  });
+
+  it("a non-gbrain tool name (and a bare mcp__gbrain__ with no op) fails closed BEFORE any fetch", async () => {
+    const { fetchFn, calls } = fakeFetch([{ status: 200, body: sse(mcpEnvelope([])) }]);
+    const exec = createGbrainMcpToolCallExec({ baseUrl: "http://127.0.0.1:8899", tokenProvider: fakeToken(), fetchFn });
+    for (const bad of ["mcp__vault__read", "mcp__gbrain__"]) {
+      const r = await exec(bad, { path: "x" });
+      expect(isErr(r), bad).toBe(true);
+      if (isErr(r)) {
+        expect(r.error.cause?.code, bad).toBe("GBRAIN_HTTP_NOT_GBRAIN_TOOL");
+        expect(r.error.kind, bad).toBe("validation_rejected"); // a config mismatch, not a transient fault
+      }
+    }
+    expect(calls).toHaveLength(0); // no read happened for either
+  });
+
+  it("a NON-LOOPBACK base url fails closed BEFORE any fetch (no off-box egress of tool args)", async () => {
+    const { fetchFn, calls } = fakeFetch([{ status: 200, body: sse(mcpEnvelope([])) }]);
+    const exec = createGbrainMcpToolCallExec({ baseUrl: "https://gbrain.example.com", tokenProvider: fakeToken(), fetchFn });
+    const r = await exec("mcp__gbrain__query", { query: "q" });
+    expect(calls).toHaveLength(0);
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("GBRAIN_HTTP_NON_LOOPBACK");
+  });
+
+  it("shares the 401→refresh→retry plumbing (a rotated token self-heals)", async () => {
+    const { fetchFn, calls } = fakeFetch([
+      { status: 401, body: "unauthorized" },
+      { status: 200, body: sse(mcpEnvelope([{ slug: "personal-business/a" }])) },
+    ]);
+    const exec = createGbrainMcpToolCallExec({ baseUrl: "http://127.0.0.1:8899", tokenProvider: fakeToken("t"), fetchFn });
+    const r = await exec("mcp__gbrain__query", { query: "q" });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.auth).toBe("Bearer t-r1"); // retry with the refreshed token
+    expect(isOk(r)).toBe(true);
+  });
+
+  it("a JSON-RPC error / tool isError from gbrain fails closed", async () => {
+    const { fetchFn } = fakeFetch([{ status: 200, body: sse({ jsonrpc: "2.0", id: 1, result: { content: [], isError: true } }) }]);
+    const exec = createGbrainMcpToolCallExec({ baseUrl: "http://127.0.0.1:8899", tokenProvider: fakeToken(), fetchFn });
+    const r = await exec("mcp__gbrain__query", { query: "q" });
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("GBRAIN_HTTP_TOOL_ERROR");
+  });
 });
