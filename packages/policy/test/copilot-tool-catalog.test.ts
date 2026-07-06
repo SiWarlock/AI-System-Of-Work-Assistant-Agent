@@ -16,6 +16,10 @@ import {
   copilotReadToolPolicy,
   copilotAgentToolPolicy,
   copilotReadOnlyPolicyIsPure,
+  copilotReadToolIds,
+  copilotToolScopingClass,
+  copilotScopedReadToolIds,
+  COPILOT_TOOL_SCOPING,
 } from "../src/copilot-tool-catalog";
 
 /** A Copilot AgentJob with the given tool policy + trust level (reuses the proven admission.test shape). */
@@ -266,5 +270,89 @@ describe("§13.10 go-live gate (d) — phantom-name cleanup (verified against gb
     expect(ids).not.toContain("gbrain.get_stats");
     expect(isMutatingCopilotTool(toolId("gbrain.get_health"))).toBe(true);
     expect(isMutatingCopilotTool(toolId("gbrain.get_stats"))).toBe(true);
+  });
+});
+
+// ── SC4 (§13.10 gate a) — the P2 workspace-scoping classification + non-partitioned-brain narrowing ──
+describe("copilotToolScopingClass — every read tool is classified (totality; unknown ⇒ unscopable fail-safe)", () => {
+  it("assigns an EXPLICIT class to EVERY cataloged read tool (a missing entry fails loudly, not via fail-safe)", () => {
+    for (const id of copilotReadToolIds()) {
+      // pin EXPLICIT map coverage — a new read tool with no entry must fail here, not silently degrade to
+      // the fail-safe `unscopable` (which would hide a missing-classification bug behind over-denial).
+      expect(Object.prototype.hasOwnProperty.call(COPILOT_TOOL_SCOPING, String(id)), `unclassified: ${String(id)}`).toBe(true);
+      expect(["arg-scopable", "result-filterable", "unscopable"]).toContain(copilotToolScopingClass(id));
+    }
+  });
+  it("has NO stale scoping entry (every classified id is a real read tool)", () => {
+    const readIds = new Set(copilotReadToolIds().map(String));
+    for (const id of Object.keys(COPILOT_TOOL_SCOPING)) expect(readIds.has(id), `stale entry: ${id}`).toBe(true);
+  });
+  it("the scoping record is frozen at runtime (a reclassification cannot silently un-drop a leak-prone tool)", () => {
+    expect(Object.isFrozen(COPILOT_TOOL_SCOPING)).toBe(true);
+  });
+  it("an UNKNOWN tool id classifies unscopable (fail-safe — mirrors isMutatingCopilotTool's unknown⇒mutating)", () => {
+    expect(copilotToolScopingClass(toolId("gbrain.some_new_tool"))).toBe("unscopable");
+    expect(copilotToolScopingClass(toolId("totally.unknown"))).toBe("unscopable");
+  });
+  it("the whole-brain AGGREGATORS are unscopable (no per-item workspace scope)", () => {
+    for (const id of [
+      "gbrain.find_experts",
+      "gbrain.find_anomalies",
+      "gbrain.find_orphans",
+      "gbrain.takes_list",
+      "gbrain.takes_search",
+      "gbrain.takes_scorecard",
+      "gbrain.takes_calibration",
+    ]) {
+      expect(copilotToolScopingClass(toolId(id))).toBe("unscopable");
+    }
+  });
+  it("the code-intelligence reads are unscopable on a combined brain (source-pinning is inert on one 'default' source)", () => {
+    for (const id of ["gbrain.code_def", "gbrain.code_refs", "gbrain.code_callers", "gbrain.code_callees", "gbrain.code_flow", "gbrain.code_blast"]) {
+      expect(copilotToolScopingClass(toolId(id))).toBe("unscopable");
+    }
+  });
+  it("the per-hit-slug reads are result-filterable / arg-scopable (SC5 scopes them, safe on any brain)", () => {
+    expect(copilotToolScopingClass(toolId("gbrain.search"))).toBe("result-filterable");
+    expect(copilotToolScopingClass(toolId("gbrain.traverse_graph"))).toBe("result-filterable");
+    expect(copilotToolScopingClass(toolId("gbrain.find_contradictions"))).toBe("result-filterable");
+    expect(copilotToolScopingClass(toolId("gbrain.get_recent_salience"))).toBe("arg-scopable");
+    expect(copilotToolScopingClass(toolId("gbrain.get_timeline"))).toBe("arg-scopable");
+  });
+});
+
+describe("copilotScopedReadToolIds — deny the unscopable aggregators on a NON-partitioned brain (fail-safe)", () => {
+  it("brainPartitioned=false EXCLUDES every unscopable id, KEEPS the arg-scopable/result-filterable ones", () => {
+    const ids = copilotScopedReadToolIds(false).map(String);
+    // kept — per-hit / arg-scopable, SC5 enforces
+    expect(ids).toContain("gbrain.search");
+    expect(ids).toContain("gbrain.traverse_graph");
+    expect(ids).toContain("gbrain.find_contradictions");
+    expect(ids).toContain("gbrain.get_recent_salience");
+    // dropped — unscopable aggregators + combined-brain code intel
+    for (const denied of [
+      "gbrain.find_experts",
+      "gbrain.find_anomalies",
+      "gbrain.find_orphans",
+      "gbrain.takes_scorecard",
+      "gbrain.takes_calibration",
+      "gbrain.code_def",
+      "gbrain.code_flow",
+    ]) {
+      expect(ids).not.toContain(denied);
+    }
+  });
+  it("brainPartitioned=true RESTORES the server-scopable set (a per-workspace brain scopes the aggregate)", () => {
+    const partitioned = copilotScopedReadToolIds(true).map(String);
+    const nonPartitioned = copilotScopedReadToolIds(false).map(String);
+    expect(partitioned.length).toBeGreaterThan(nonPartitioned.length);
+    expect(partitioned).toContain("gbrain.find_experts");
+    expect(partitioned).toContain("gbrain.code_def");
+    // non-partitioned is a strict subset of partitioned
+    expect(nonPartitioned.every((id) => partitioned.includes(id))).toBe(true);
+  });
+  it("the returned ids are a subset of the read catalog (never invents a tool)", () => {
+    const readIds = copilotReadToolIds().map(String);
+    for (const id of copilotScopedReadToolIds(true).map(String)) expect(readIds).toContain(id);
   });
 });

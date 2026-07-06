@@ -136,6 +136,75 @@ export function copilotAgentToolIds(): ToolId[] {
   return [...copilotReadToolIds(), COPILOT_PROPOSE_TOOL.id];
 }
 
+// ── §13.10 gate (a) SC4 — the P2 workspace-scoping classification (a SEPARATE additive map) ──────────
+//
+// This does NOT mutate the frozen COPILOT_READ_TOOLS specs; it is a parallel classification of HOW each
+// read tool can be workspace-scoped over the combined gbrain brain, and which are safe on a NON-partitioned
+// brain (today's single "default" source):
+//   • result-filterable — results carry a per-hit slug, so SC5's `redactGbrainToolResult` drops foreign
+//     hits post-hoc (safe on any brain): search, traverse_graph, find_contradictions.
+//   • arg-scopable — a per-call arg pins the served workspace's scope (slug seed / slug-prefix), safe on
+//     any brain: get_recent_salience (slugPrefix), get_timeline (seed slug), vault.read (path).
+//   • unscopable — a WHOLE-BRAIN computation with no per-item workspace scope: the aggregators
+//     (find_experts/find_anomalies/find_orphans, takes_*) AND the code-intelligence reads (code_*, whose
+//     only scope lever is source_id, inert on a single-source brain — they would leak cross-workspace code
+//     structure). These are DENIED on a non-partitioned brain; a per-workspace-partitioned brain (Phase B
+//     source_id / Phase C brain-per-workspace) scopes the computation server-side, so they become safe.
+// FAIL-SAFE: an unknown ToolId classifies `unscopable` (mirrors `isMutatingCopilotTool`'s unknown⇒mutating).
+
+/** How a Copilot read tool can be workspace-scoped over the combined brain. */
+export type CopilotToolScopingClass = "arg-scopable" | "result-filterable" | "unscopable";
+
+/**
+ * The workspace-scoping class per read ToolId. FROZEN at runtime (same bar as COPILOT_READ_TOOLS: this is a
+ * safety-critical classification source — a runtime `.code_def = "result-filterable"` would silently un-drop
+ * a leak-prone tool, so it is `Object.freeze`'d, not merely `readonly`). Exported so a totality test can pin
+ * EXPLICIT coverage (a new read tool with no entry must fail the test, not silently fall through the fail-safe).
+ */
+export const COPILOT_TOOL_SCOPING: Readonly<Record<string, CopilotToolScopingClass>> = Object.freeze({
+  "gbrain.search": "result-filterable",
+  "gbrain.traverse_graph": "result-filterable",
+  // ⚠ result-filterable is CONDITIONAL on SC5's A3 fail-close: find_contradictions returns two-sided pairs,
+  // so SC5 MUST drop a pair when EITHER side's slug is foreign / unattributable — a naive per-primary-hit
+  // filter would leak the far side of a cross-workspace contradiction.
+  "gbrain.find_contradictions": "result-filterable",
+  "gbrain.get_timeline": "arg-scopable",
+  "gbrain.get_recent_salience": "arg-scopable",
+  "vault.read": "arg-scopable",
+  "gbrain.find_experts": "unscopable",
+  "gbrain.find_anomalies": "unscopable",
+  "gbrain.find_orphans": "unscopable",
+  "gbrain.takes_list": "unscopable",
+  "gbrain.takes_search": "unscopable",
+  "gbrain.takes_scorecard": "unscopable",
+  "gbrain.takes_calibration": "unscopable",
+  "gbrain.code_def": "unscopable",
+  "gbrain.code_refs": "unscopable",
+  "gbrain.code_callers": "unscopable",
+  "gbrain.code_callees": "unscopable",
+  "gbrain.code_flow": "unscopable",
+  "gbrain.code_blast": "unscopable",
+});
+
+/** Classify how a read ToolId can be workspace-scoped. FAIL-SAFE: unknown ⇒ `unscopable`. Pure. */
+export function copilotToolScopingClass(id: ToolId): CopilotToolScopingClass {
+  return COPILOT_TOOL_SCOPING[String(id)] ?? "unscopable";
+}
+
+/**
+ * The read-tool allow-list narrowed for the served brain's partition state (SC4). On a NON-partitioned
+ * brain (`brainPartitioned=false`, today's single "default" source) the whole-brain `unscopable` tools are
+ * DROPPED — they cannot be scoped to the served workspace, so an agentic Copilot must not hold them. On a
+ * per-workspace-partitioned brain they are restored (the server scopes the computation). The `arg-scopable`
+ * / `result-filterable` tools are always kept (SC5 pins/filters them). Fail-safe: an unknown/unclassified
+ * read tool is `unscopable` ⇒ dropped on a non-partitioned brain. Pure.
+ */
+export function copilotScopedReadToolIds(brainPartitioned: boolean): ToolId[] {
+  return copilotReadToolIds().filter((id) =>
+    copilotToolScopingClass(id) === "unscopable" ? brainPartitioned : true,
+  );
+}
+
 /**
  * The mutating-tool classifier that closes the ING-7 arch_gap. FAIL-SAFE: an UNKNOWN ToolId (not in the
  * catalog) is treated as MUTATING — so an untrusted job carrying an unrecognized tool is REFUSED by
