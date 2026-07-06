@@ -1,7 +1,7 @@
 # Handoff 001 — resume the WS-8 scoping build (SC5b → SC6–SC9)
 
 - **Date:** 2026-07-06 · **From session:** `docs/sessions/042-2026-07-06-ws8-scoping-design-sc1-gates-bcd.md`
-- **HEAD:** `2c330b5` (SC5b + SC7a/SC7b landed on main; push at close-out). **Gate:** repo-wide `turbo typecheck test` 31/31.
+- **HEAD:** `6b47192` (SC5b + SC7 + SC8 landed on main; push at close-out). **Gate:** repo-wide `turbo typecheck test` 31/31.
 - **Design of record:** `docs/planning/ws8-workspace-scoping.md` (the full survey→design→4-verifier output + BUILD-ORDER VERDICT + OWNER-GATED). **Memory:** `sow-copilot-skill-catalog`, `sow-copilot-real-model-direction`.
 
 ## What is DONE (this session, all pushed + dual-reviewer-clean)
@@ -12,11 +12,13 @@
 - **P1 unit LIVE + INERT** — SC1 core (`a0870bb`, `packages/policy/src/copilot-workspace-scope.ts`) · SC2 filter (`369a3b1`, `apps/worker/.../copilotGbrainSubprocess.ts`) · SC3 boot (`8092d80`) · **flipped live** (`12ea650`, worker-host `copilotWorkspaceScoping:true` + `{assign,personal-business}`). On today's single-workspace brain every hit is kept — no change to Copilot output; enforcement live for future prefixed/multi-workspace content.
 - **P2 layer built + DORMANT** (behind `copilotAgentMode` OFF) — SC4 catalog narrowing (`2795a7d`, `copilotScopedReadToolIds`) · SC5a arg policer (`ef369f6`, `packages/policy/src/copilot-arg-policy.ts`) · **SC5b result redactor DONE (`fffd78d`, `packages/policy/src/copilot-result-redaction.ts`)** — `redactGbrainToolResult` folds A2/A3/A4 + fail-closed drop-all; dual-reviewer clean, F1 (non-array `links` fail-OPEN → neutralized to `[]`) + F3 (unscopable op DROPS-ALL on a non-partitioned brain via `copilotToolScopingClass`, mirrors SC5a M2) fixed in-slice; 22 tests; repo-wide 31/31. **⚠ F2 CARRY-FORWARD → gate-(c) eval:** per-op FIELD allow-listing of kept hits/nodes (nested foreign refs under non-`links` keys) needs gbrain's pinned per-op result schema; documented in-code, not reachable today.
 
-## RESUME HERE → SC8 (runner wiring — bind the proxy to the served workspace)
+## RESUME HERE → SC9 (admission backstop — the last P2 slice before the flip)
 
-SC5a+SC5b (pure guards) and SC7a+SC7b (the proxy that composes them) are DONE. **SC6 was DECIDED-OUT** (SDK finding: `canUseTool` supports `updatedInput` but PostToolUse result-replacement is UNCONFIRMED — so the in-process proxy, SC7, is the primary path with no SDK-hook dependency; SC6's canUseTool arg-policing is deferred defense-in-depth, redundant with the proxy). Remaining: **SC8** (wire) → **SC9** (admission backstop) → then `copilotAgentMode` can flip.
+The whole runtime WS-8 tool path is now BUILT + dormant behind `copilotAgentMode`: SC5a args + SC5b results (pure guards) + SC7 proxy (composes them) + **SC8 wiring (DONE)** — the runner reaches gbrain ONLY through the scoped proxy. **SC6 was DECIDED-OUT** (SDK finding: `canUseTool` supports `updatedInput` but PostToolUse result-replacement is UNCONFIRMED; the proxy is the primary path). Only **SC9** remains before the flip.
 
-**SC7 DONE:** SC7a `d8fc89d` (`apps/worker/.../copilotGbrainProxy.ts` — `handleCopilotGbrainToolCall`, SC5a→exec→SC5b, structural never-throws) · SC7b `2c330b5` (`packages/providers/.../copilot-gbrain-proxy-mcp.ts` — `createCopilotGbrainProxyMcpServer`, one tool per scoped op under server `gbrain`, thin/unparsed-forwarding). Dual-reviewer clean; 22 tests.
+**SC9 spec** — extend `admitCopilotAgentJob` (`packages/policy`, the C4 ING-7 admission layer) to also REJECT an agentic Copilot job whose read allow-list holds an `unscopable` tool for the partition state (`copilotToolScopingClass(id)==="unscopable" && !brainPartitioned`) or whose served scope is unresolved — a job-admission backstop mirroring SC4 (allow-list) + SC5a (arg deny) + SC5b (unscopable drop-all). This makes the WS-8 guard defense-in-depth at ALL FOUR layers (catalog / admission / arg / result). TDD; dual-review. After SC9, `copilotAgentMode` can flip (a deliberate, security-review-gated flip).
+
+**SC7 DONE:** SC7a `d8fc89d` · SC7b `2c330b5`. **SC8 DONE (dual-reviewer clean, security 0 crit/high/med):** SC8a `e9b577e` (`copilotGbrainHttp.ts` `createGbrainMcpToolCallExec` — generic MCP call, RAW envelope, shared `postMcpRequest`) · SC8b `27aa0c0` (`copilotAgentSynthesis.ts` — proxy replaces the http entry under the `gbrain` key; partial-config fail-closed) · SC8c `6b47192` (`boot.ts` — builds scope+exec+factory behind the flags). MAP-KEY CONTRACT verified HOLDS (mutually-exclusive branches; test asserts the raw http entry absent).
 
 **SC8 spec (3 sub-slices — verified against the runner `copilotAgentSynthesis.ts` + the http transport `copilotGbrainHttp.ts`):**
 

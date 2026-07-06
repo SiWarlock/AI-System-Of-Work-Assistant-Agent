@@ -83,9 +83,20 @@ The **pure-guard trio (SC5a args + SC5b results) is now COMPLETE.** SC6–SC9 ar
 
 **NEXT = SC8** (runner wiring in `copilotAgentSynthesis.ts`) → **SC9** (admission backstop) → then `copilotAgentMode` can flip.
 
+## Continuation — SC8 the runner + boot wiring (`e9b577e`, `27aa0c0`, `6b47192`, dual-reviewer clean)
+
+SC8 wires the SC7 proxy so the agent reaches gbrain ONLY through it. A 3-part slice (the existing `createGbrainHttpExec` is query-only + returns parsed hits, so a NEW generic exec was needed):
+- **SC8a** (`e9b577e`, `copilotGbrainHttp.ts`) — `createGbrainMcpToolCallExec`: a generic gbrain MCP `tools/call` over http returning the RAW MCP result envelope (op = the `mcp__gbrain__<op>` suffix), which SC5b's redactor parses. Shared `postMcpRequest` extracted from the query exec (rewired, regression-caught by its 30 tests); `extractMcpResultEnvelope` is the shared JSON-RPC→result step. Fail-closed: loopback-before-fetch (Rule 5), op-strip, JSON-RPC/tool-`isError`, never throws. 8 tests.
+- **SC8b** (`27aa0c0`, `copilotAgentSynthesis.ts`) — the runner's proxy branch. When the proxy deps are present, it registers `createCopilotGbrainProxyMcpServer(handler)` under the SAME `gbrain` map key (REPLACING `buildGbrainMcpServers` — never both), drives `allowedTools` from the scoped `COPILOT_GBRAIN_PROXY_MCP_NAMES` (no unscopable ops), and mints NO token (the exec does, per call). A PARTIAL proxy config FAILS CLOSED (`invalid_job`). 4 tests.
+- **SC8c** (`6b47192`, `boot.ts`) — builds the served `CopilotWorkspaceScope` + the SC8a exec + the proxy factory behind `copilotWorkspaceScoping` + `copilotAgentMode` (dormant); lazy-closure forward-reference to `copilotWorkspaceScope` (safe — invoked post-boot).
+
+**Dual review (security + code-quality) — security 0 crit/high/med:** the **MAP-KEY CONTRACT verified HOLDS** (proxy and raw-http branches mutually exclusive under one `gbrain` key; the test asserts the raw http entry is absent + no token minted + the scoped allow-list). Fixes folded in-slice: M1 (one `servedWorkspaceIdStr` feeds both the runner gate and the proxy scope, kept in lockstep), M2 (both partial-config permutations tested), L5 (a mis-routed tool name → `validation_rejected`, not a transient fault).
+
+**The runtime WS-8 tool path is now FULLY BUILT** (SC5a args + SC5b results + SC7 proxy + SC8 wiring), all dormant behind `copilotAgentMode`. **NEXT = SC9** (admission backstop — the 4th defense-in-depth layer) → then the security-review-gated flip.
+
 ## Open follow-ups (NEXT) — full detail in `docs/team-handoffs/001-2026-07-06-ws8-scoping-resume.md`
 
-1. ~~**SC5b** result redactor~~ **DONE (`fffd78d`)** · ~~**SC6** transport seams~~ **DECIDED-OUT** (SDK: PostToolUse result-replacement unconfirmed) · ~~**SC7** gbrain-proxy MCP~~ **DONE (`d8fc89d`+`2c330b5`)**. NEXT = **SC8** runner wiring (`copilotAgentSynthesis.ts`; bind proxy to {scope, http-exec}; ⚠ MAP-KEY CONTRACT — key `"gbrain"` + assert http entry absent; `allowedTools` from `COPILOT_GBRAIN_PROXY_MCP_NAMES`) · **SC9** admission backstop → then `copilotAgentMode` can flip (security-review-gated).
+1. ~~**SC5b** result redactor~~ **DONE (`fffd78d`)** · ~~**SC6** transport seams~~ **DECIDED-OUT** · ~~**SC7** gbrain-proxy MCP~~ **DONE (`d8fc89d`+`2c330b5`)** · ~~**SC8** runner+boot wiring~~ **DONE (`e9b577e`+`27aa0c0`+`6b47192`, MAP-KEY CONTRACT verified)**. NEXT = **SC9** admission backstop (extend `admitCopilotAgentJob` to reject an unscopable-tool/unresolved-scope agentic job — the 4th defense-in-depth layer) → then `copilotAgentMode` can flip (security-review-gated; the runtime path is fully built + dormant).
 2. The flagged future work (other tracks): the **ingest-side workspace-attribution rule** (the real WS-8 enabler + the only A1 mitigation); the legacy-migration runbook (owner-run); the workspace-leakage governance eval (eval-security, per the runbook §13.10 gate (c) contract); the SDK-0.3.201 conformance test; `WorkspaceConfigRepository`; Global-scope via the GCL Visibility-Gate union; the Appendix-A `GbrainReadGrant.allowedOps` truth-pass (now OPTIONAL).
 3. Untouched from 041: 13.10a (Copilot→KMP propose path), the real serving oracle (C5.4b go-live), the ~8 Phase-9/10 owner-calls + a Phase-10 `/phase-exit`, Tiers 2–5 + 13.10c Gmail.
 
