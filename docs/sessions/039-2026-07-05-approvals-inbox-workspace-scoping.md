@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-05 · **Mode:** single-operator (build, ultracode) · **Tracks:** contract + db + worker + desktop
 - **Predecessor:** `038-2026-07-05-phase-c-c5-propose-tool-live-wiring.md`
-- **Successor:** _(next — C5.4b provenance-stamping, then C6 skills — the other 2 of the owner's "do all 3")_
+- **Successor:** `040-2026-07-05-c54b-provenance-stamping-seam.md` (C5.4b — blocker 2 of the owner's "do all 3"; C6 skills is the 3rd, owner-decision-gated)
 - **HEAD at close:** `f57a5a5` (pushed). Prior this session-arc: the `docs(runbooks) 4a5bada` go-live gate.
 - **Gate at close:** repo-wide `turbo typecheck test` **31/31** (41 files across 7 packages). Security-reviewed clean (no crit/high).
 
