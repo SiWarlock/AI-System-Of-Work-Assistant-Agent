@@ -1,10 +1,10 @@
-# Session 042 — §13.10 `copilotAgentMode` go-live gates: (b) verified, (c) noted, (d) done + gate (a) WS-8 design + SC1
+# Session 042 — §13.10 go-live gates (b/c/d) + WS-8 gate (a): design + SC1–SC5a + P1 flipped LIVE
 
-- **Date:** 2026-07-06 · **Mode:** single-operator (build + docs, ultracode) · **Tracks:** policy · docs
+- **Date:** 2026-07-06 · **Mode:** single-operator (build + docs, ultracode → opus) · **Tracks:** policy · worker · desktop · docs
 - **Predecessor:** `041-2026-07-06-skill-catalog-canonical-docs-audit.md`
-- **Successor:** _(next session)_
-- **HEAD at close:** `369a3b1`+ (pushed to origin/main). Session arc: `cf2e973` → SC2 + doc reconcile.
-- **Gate at close:** repo-wide `turbo typecheck test` **31/31** green; all code slices dual-reviewer-clean.
+- **Successor:** `docs/team-handoffs/001-2026-07-06-ws8-scoping-resume.md` (SC5b + SC6–SC9)
+- **HEAD at close:** `12ea650` (pushed to origin/main). Session arc: `cf2e973` → `12ea650` (13 commits).
+- **Gate at close:** repo-wide `turbo typecheck test` **31/31** green; every code slice dual-reviewer-clean.
 
 ## Why this session existed
 
@@ -47,18 +47,29 @@ Workflow `wf_039163e8-07d` (survey→3-designs→judge→4 adversarial verifiers
 3. When/which legacy migration (owner-run, writes to gbrain).
 4. P2 delivery mechanism (in-process proxy vs SDK-native hooks); aggregator reclassification; retire-vs-align the dormant adapter; the 3-brain split. (Full list in the design doc's OWNER-GATED section.)
 
+## Owner decisions this session
+
+- **Build order = RUNTIME-FIRST** (owner delegated "do what's most architecturally correct"). A survey found ingest-attribution INERT today (stubbed KW→gbrain reindex + a separately hand-seeded unprefixed brain), so it's the assign-bridge EXIT, not a prerequisite.
+- **Legacy posture = `{assign, personal-business}`.**
+- **Flip P1 scoping LIVE** — owner directed ("you can flip it on"). Done (`12ea650`).
+
 ## Reachability / current state
 
-- §13.10 gates: (b) verified, (c) eval-contract noted for the eval-security track, (d) done. (a) design done + SC1 landed; SC2–SC9 owner-gated.
-- SC1 is DORMANT (nothing consumes it yet; default-OFF). The live Copilot (tool-less synthesis) is unaffected. `copilotAgentMode` stays OFF.
-- All work pushed to origin/main (HEAD `a0870bb`); working tree clean but for the user's graphify config (`.claude/settings.json`, `CLAUDE.md`, `graphify-out/`) — intentionally not staged.
+- §13.10 gates: (b) verified, (c) eval-contract noted for eval-security, (d) done.
+- **Gate (a) — the P1 unit (SC1 core + SC2 filter + SC3 boot) is LIVE** in worker-host: `copilotWorkspaceScoping: true` + `{assign, personal-business}`. On today's single-workspace brain (99 personal-business pages, all embedded) it is **INERT** — every hit is kept, so the Copilot's answers are unchanged; the enforcement mechanism is now active for future prefixed / multi-workspace content. The tool-less synthesis Copilot path is unaffected.
+- **P2 layer (SC4 catalog-narrowing + SC5a arg-policer) built + DORMANT** behind `copilotAgentMode` (OFF). SC5b–SC9 remain.
+- All work pushed to origin/main (HEAD `12ea650`); working tree clean but for the user's graphify config (`.claude/settings.json`, `CLAUDE.md`, `graphify-out/`) — intentionally not staged.
 
-## Open follow-ups (NEXT)
+## Open follow-ups (NEXT) — full detail in `docs/team-handoffs/001-2026-07-06-ws8-scoping-resume.md`
 
-1. **Owner decisions above** (esp. the A1 residual + the legacy-policy posture) — they gate SC3 and the whole flag-flip.
-2. SC2–SC9 machinery once the posture is chosen (SC5 must fold in A2/A3/A4).
-3. The flagged future work (other tracks): the **ingest-side workspace-attribution rule** (knowledge — the real WS-8 enabler + the only A1 mitigation); the legacy-migration runbook (docs, owner-run); the workspace-leakage governance eval (eval-security, per the runbook §13.10 gate (c) contract); the SDK-0.3.201 conformance test; `WorkspaceConfigRepository`; Global-scope via the GCL Visibility-Gate union; the Appendix-A `GbrainReadGrant.allowedOps` truth-pass (now OPTIONAL).
-4. Untouched from 041: 13.10a (Copilot→KMP propose path), the real serving oracle (C5.4b go-live), the ~8 Phase-9/10 owner-calls + a Phase-10 `/phase-exit`, Tiers 2–5 + 13.10c Gmail.
+1. **SC5b** — the result redactor `redactGbrainToolResult` (the biggest/most-security-critical P2 slice; folds A2/A3/A4). Then **SC6** transport seams · **SC7** gbrain-proxy MCP · **SC8** runner · **SC9** admission backstop → then `copilotAgentMode` can flip.
+2. The flagged future work (other tracks): the **ingest-side workspace-attribution rule** (the real WS-8 enabler + the only A1 mitigation); the legacy-migration runbook (owner-run); the workspace-leakage governance eval (eval-security, per the runbook §13.10 gate (c) contract); the SDK-0.3.201 conformance test; `WorkspaceConfigRepository`; Global-scope via the GCL Visibility-Gate union; the Appendix-A `GbrainReadGrant.allowedOps` truth-pass (now OPTIONAL).
+3. Untouched from 041: 13.10a (Copilot→KMP propose path), the real serving oracle (C5.4b go-live), the ~8 Phase-9/10 owner-calls + a Phase-10 `/phase-exit`, Tiers 2–5 + 13.10c Gmail.
+
+## Carry-forward triage (deferred lows — not blockers)
+
+- SC5a security lows (deferred): the alternate-seed-key assumption for traverse_graph/get_timeline (verify gbrain seeds only on `slug` before flipping `copilotAgentMode`); `vault.read` path-scoping is SC6's job (correctly denied by the gbrain-only arg policer today).
+- The A1 residual (body-embedded foreign content) — owner-facing, ingest-time fix; documented, accepted for the runtime layer.
 
 ## Reference
 
