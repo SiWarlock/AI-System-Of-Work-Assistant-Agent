@@ -1,6 +1,6 @@
 # IMPLEMENTATION_PLAN.md — System of Work Assistant
 
-> **Phase note.** Spec-anchored build plan decomposed from the binding `ARCHITECTURE.md` (production-grade). 14 phases (0–13), 147 tasks across 6 parallel tracks (Phase 13 = Obsidian-Second-Brain inheritance, folded in 2026-07-04); the §3 contracts phase (Phase 1) is the forced-serial bottleneck and the §9 workflows phase (Phase 7) is the integration spine. Locked decisions live in `docs/planning/DECISIONS.md`; every phase anchors to `ARCHITECTURE.md §` sections — drift surfaces at TDD Step 9. Living sections (Currently-in-progress, Carry-forward, Log, Trims, Decisions-tabled) accrete through real `/tdd` work; the Parallelization plan is authored here.
+> **Phase note.** Spec-anchored build plan decomposed from the binding `ARCHITECTURE.md` (production-grade). 14 phases (0–13), ~164 first-class tasks (counted as `### N.M` headings) across 6 parallel tracks (Phase 13 = Obsidian-Second-Brain inheritance **+ the Agentic Copilot arc** — §13.10 skill catalog + §13.11 Phase-C/§9.6-real machinery, promoted from Log-only 2026-07-06); the §3 contracts phase (Phase 1) is the forced-serial bottleneck and the §9 workflows phase (Phase 7) is the integration spine. Locked decisions live in `docs/planning/DECISIONS.md`; every phase anchors to `ARCHITECTURE.md §` sections — drift surfaces at TDD Step 9. Living sections (Currently-in-progress, Carry-forward, Log, Trims, Decisions-tabled) accrete through real `/tdd` work; the Parallelization plan is authored here.
 
 > **Reading discipline.** Read by section, not whole. Living sections are bounded/pruned at `/orchestrate-end`.
 
@@ -160,11 +160,12 @@
 | Connector Gateway + Tool Gateway (external-write envelope) + NotebookLM Drive sync | ✅ | Phase 6 |
 | Temporal workflows: meeting-closeout proof spine + 12 other core workflows + Hermes gateway-routing | ✅ | Phase 7 |
 | Local app API (tRPC + event stream, authed) | ✅ built + certified (mount deferred to app-shell wave) | Phase 8 |
-| Electron desktop app: 9 surfaces + workspace-preset onboarding | ❌ | Phase 9 |
+| Electron desktop app: 9 surfaces + workspace-preset onboarding | ⏳ partial — several surfaces BUILT (§9.4 Today · §9.5 Projects · §9.6 Copilot sidebar · §9.8 Approvals); full set + onboarding pending the Phase-9 audit (task #41) | Phase 9 |
 | Observability/redaction + System Health + worker supervision + backup/recovery | ✅ built + certified (composition wiring deferred to app-shell wave) | Phase 10 |
 | Install/packaging (unsigned build-from-source) + GBrain pin-upgrade gate + doctor/repair + clean-install | ❌ | Phase 11 |
 | Eval & test harness: 1:1 PRD §20.1 suites + EVAL-1 corpora + perf benchmark + DoD certification | ❌ | Phase 12 |
-| OSB inheritance: source extractors (YouTube/podcast/web/file) + governed capture (git/telegram) + local retrieval + read-only vault MCP + typed Project model + tiered-autonomy synthesis + workspace-gated NotebookLM + osb-pin/eval-gate | ❌ (proposal; prototypes committed `aaa5f3f`) | Phase 13 |
+| OSB inheritance: source extractors (YouTube/podcast/web/file) + governed capture (git/telegram) + local retrieval + read-only vault MCP + typed Project model + tiered-autonomy synthesis + workspace-gated NotebookLM + osb-pin/eval-gate | ❌ (proposal; emit-only youtube/capture prototypes `aaa5f3f`) | Phase 13 (§13.1–13.9) |
+| Agentic Copilot & Skill Catalog: real cloud model path + agentic runtime + propose→Approvals + tool/skill catalog + provenance oracle | ⏳ partial — real cloud read path LIVE behind flags; C1–C5.4b + §9.6-real + Tier-1 skill catalog DONE (DORMANT); propose structurally OFF; go-live gates open | Phase 13 (§13.10/§13.11) |
 
 <!-- ▲ END EXAMPLE BLOCK [id=deliverable-map] ▲ -->
 
@@ -188,7 +189,7 @@ flowchart TD
     P2[Phase 2 — §4 Storage]; P7[Phase 7 — §9 Workflows — integration spine]; P8[Phase 8 — §10 API]
   end
   subgraph provint[Track: providers-integrations]
-    P3[Phase 3 — §5 Policy/Security]; P5[Phase 5 — §7 Providers]; P6[Phase 6 — §8 Gateways]; P13[Phase 13 — OSB inheritance]
+    P3[Phase 3 — §5 Policy/Security]; P5[Phase 5 — §7 Providers]; P6[Phase 6 — §8 Gateways]; P13[Phase 13 — OSB + Agentic Copilot]
   end
   subgraph knowledge[Track: knowledge]
     P4[Phase 4 — §6 Knowledge/GBrain/GCL]
@@ -219,6 +220,7 @@ flowchart TD
   P5 --> P13
   P6 --> P13
   P9 --> P13
+  P7 --> P13
 ```
 
 > **Critical path:** Phase 0 → 1 → 3 → 6 → 7 → 8 → 9 → 11 → 12 (9 phases — the serial floor; staff it first). **Forced-serial bottlenecks:** **Phase 1 (§3 contracts)** — every track waits on the frozen contract; and **Phase 7 (§9 workflows)** — the integration spine every feature track (storage, knowledge, providers, gateways) converges into.
@@ -228,13 +230,13 @@ flowchart TD
 | Track | Phases | Code area(s) | Worktree (branch) | Agent-team names |
 |---|---|---|---|---|
 | contract | 1 | `packages/contracts`, `packages/domain` | `../SoW-build-contract` (`track/contract`) | `contract-contracts-orchestrator` / `-implementer` |
-| worker | 2, 7, 8 | `packages/db`, `packages/workflows`, `apps/worker` | `../SoW-build-worker` (`track/worker`) | `worker-workflows-orchestrator` / `-implementer` |
+| worker | 2, 7, 8, 13 | `packages/db`, `packages/workflows`, `apps/worker` | `../SoW-build-worker` (`track/worker`) | `worker-workflows-orchestrator` / `-implementer` |
 | providers-integrations | 3, 5, 6, 13 | `packages/policy`, `packages/providers`, `packages/integrations` | `../SoW-build-provint` (`track/providers-integrations`) | `providers-integrations-policy-orchestrator` / `-implementer` |
-| knowledge | 4 | `packages/knowledge` | `../SoW-build-knowledge` (`track/knowledge`) | `knowledge-knowledge-orchestrator` / `-implementer` |
+| knowledge | 4, 13 | `packages/knowledge` | `../SoW-build-knowledge` (`track/knowledge`) | `knowledge-knowledge-orchestrator` / `-implementer` |
 | desktop | 9, 11 | `apps/desktop` | `../SoW-build-desktop` (`track/desktop`) | `desktop-desktop-orchestrator` / `-implementer` |
-| eval-security | 10, 12 | `packages/evals` | `../SoW-build-evalsec` (`track/eval-security`) | `eval-security-evals-orchestrator` / `-implementer` |
+| eval-security | 10, 12, 13 | `packages/evals` | `../SoW-build-evalsec` (`track/eval-security`) | `eval-security-evals-orchestrator` / `-implementer` |
 
-**Integration / merge order** (DAG topological): 1 (contract — freeze first) → 2 ∥ 3 → 4 ∥ 5 ∥ 6 → 7 (spine) → 8 → 9 → 10 ∥ 11 → 12 (DoD certification last); **13 (OSB inheritance)** attaches after 9 (+4/5/6) — cross-track: providers-integrations (primary) + knowledge (§13.3/13.8) + contract (§13.5 Project frozen-contract round).
+**Integration / merge order** (DAG topological): 1 (contract — freeze first) → 2 ∥ 3 → 4 ∥ 5 ∥ 6 → 7 (spine) → 8 → 9 → 10 ∥ 11 → 12 (DoD certification last); **13 (OSB inheritance + Agentic Copilot arc)** attaches after 9 (+4/5/6/7) — cross-track: **worker** (primary for the §13.11 Copilot machinery + §13.10 catalog wiring) + providers-integrations (OSB extractors; §13.10 catalog/policy + §13.11 runtime) + knowledge (§13.3/13.8 + the serving oracle) + eval-security (§13.11 P2.5 + the C6 governance eval) + contract (§13.5 Project frozen-contract round).
 
 **Shared contracts across tracks** (freeze before fork — Appendix-A models crossing a §2.5 edge): `Workspace`, `ProviderMatrix`, `EgressPolicy`, `ToolPolicy`, `Capability`, `ProviderRoute`, `AgentJob`, `KnowledgeMutationPlan`, `ProposedAction`, `ExternalWriteEnvelope`, `SourceEnvelope`, `Approval`, `GclProjection`, `AuditRecord`, `WorkflowRunRef`, `ProviderProfile` — **plus the GBrain write-through/divergence seam models** `SemanticFact`, `FactProvenance`, `SignedProvenanceStamp`, `ParityReport`, `Divergence`, `QuarantineRecord`, `GBrainProposedFact`, `GbrainReadGrant`/`GbrainServePolicy`, `GbrainPin` (9 NEW), and the **amended** `KnowledgeMutationPlan` (+`provenanceOrigin`/`gbrainProposalRef`/`signedProvenanceStamp`) + `HealthItem` (+`sync_lagging`/`rebuild_divergence`/`parityReportRef`/`factIdentity`) — all defined + schema-snapshot-frozen in Phase 1.
 
@@ -2039,10 +2041,10 @@ Executed row-by-row by `/phase-exit <phase>`:
 
 ## Phase 13 — Source Extractors & Knowledge Ingestion (Obsidian Second Brain inheritance)
 
-**Goal:** Inherit `obsidian-second-brain`'s fetch/analyze capabilities under SoW governance — YouTube/podcast/web/file source extractors, local semantic retrieval, a read-only vault MCP connector, a typed Project model + state machine, governed "capture as I work" (git + telegram triggers), tiered-autonomy living-vault synthesis, and workspace-gated NotebookLM grounding — plus a version-pin + 3-part eval-gate so SoW stays current as obsidian-second-brain (and gbrain) grow. **The one governing rule:** inherit extractors/analyzers as `SourceIngestionPort` adapters that emit CANDIDATE DATA and never write; route model calls through `ModelProviderPort` + the egress veto; every mutation flows candidate-gate → `KnowledgeMutationPlan` → `KnowledgeWriter` (sole writer) → Approval Inbox. Full design: `docs/planning/PHASE-13-PROPOSAL-osb-inheritance.md` + `docs/planning/osb-integration-architecture.md`.
+**Goal:** Inherit `obsidian-second-brain`'s fetch/analyze capabilities under SoW governance — YouTube/podcast/web/file source extractors, local semantic retrieval, a read-only vault MCP connector, a typed Project model + state machine, governed "capture as I work" (git + telegram triggers), tiered-autonomy living-vault synthesis, and workspace-gated NotebookLM grounding — plus a version-pin + 3-part eval-gate so SoW stays current as obsidian-second-brain (and gbrain) grow. **The one governing rule:** inherit extractors/analyzers as `SourceIngestionPort` adapters that emit CANDIDATE DATA and never write; route model calls through `ModelProviderPort` + the egress veto; every mutation flows candidate-gate → `KnowledgeMutationPlan` → `KnowledgeWriter` (sole writer) → Approval Inbox. Full design: `docs/planning/PHASE-13-PROPOSAL-osb-inheritance.md` + `docs/planning/osb-integration-architecture.md`. **This phase also houses the Agentic Copilot arc:** §13.10 (the Copilot Skill Catalog — exposing the gbrain/osb capability surface as governed skills; canonical catalog `docs/planning/copilot-skill-catalog.md`) + §13.11 (the Phase-C C1–C5.4b + §9.6-real machinery — agentic runtime, tool catalog, content-trust, propose→Approvals, provenance oracle), both riding this phase's KnowledgeWriter / candidate-gate / egress-veto rails.
 
 **Spec anchors:** `ARCHITECTURE.md` §6 (KnowledgeWriter/GBrain/GCL, candidate-data gate), §5 (egress veto, ModelProviderPort), §8 (SourceIngestionPort/Connector Gateway, Tool Gateway envelope), §7 (AgentRuntimePort, ING-7 admission), §12/§13 (pin + eval-gate); PRD `ING-2`/`ING-3` (P1 source adapters, YouTube first-to-ship, §20.1 DoD), `REQ-F-011` (Project), `REQ-F-005`/`WS-8` (GCL); `OQ-011`. Owner decisions 2026-07-04: §13.8 tiered autonomy revises "generative = propose-only"; §13.9 NotebookLM workspace-gated (NOT rejected).
-**Track:** providers-integrations (primary) · knowledge (§13.3/§13.8) · contract (§13.5) · **Depends on (phases):** 6, 5, 4, 1, 9
+**Track:** worker (§13.10/§13.11 Copilot machinery) · providers-integrations (primary for OSB extractors; §13.10 catalog/policy + §13.11 runtime) · knowledge (§13.3/§13.8 + the serving oracle) · eval-security (§13.11 P2.5 + the C6 governance eval) · contract (§13.5) · **Depends on (phases):** 7, 6, 5, 4, 1, 9
 > Order within phase: **13.1 → 13.2 ∥ 13.3 ∥ 13.4 → 13.5 → 13.6 → 13.7 ∥ 13.8 ∥ 13.9.** Slots in AFTER the Phase-9 §9.5 Project-dashboard slice; §13.5 is a frozen-contract round that UNBLOCKS that surface — coordinate with the desktop track, do not race.
 > **Desktop-track UI follow-ups** (Phase 13 = engine; the desktop track renders). Most Phase-13 UI folds into already-designed §9.x surfaces (see each task's `UI surface` note). Three GENUINELY-NEW affordances to build when their host surface is ready — filed here so they're not lost: **(1)** the §13.8 **auto-tier digest-receipt with per-line undo** (no Phase-9 equivalent — Recent activity / Settings→Audit are read-only); **(2)** an **"add a source" quick-capture input** (paste URL / drop file) — a pre-existing design gap, needed for §13.2; **(3)** an **autonomy-tier toggle** (auto vs propose, per workspace) in Settings → Workspaces. All consume Phase-13 read-models/APIs; none expand Phase-13 backend scope. §13.4/§13.7 are headless.
 
@@ -2151,6 +2153,29 @@ Sequenced by governance class (every write human-gated ⇒ this is wiring order,
 - [ ] Cross-doc invariant: none for read/synthesis skills (catalog additions, not seam models). 13.10a may touch the propose surface — flag at Step 9 if a contract field changes.
 - [ ] UI surface: the **Copilot right sidebar** (§9.6, BUILT) hosts every skill; ingest-triggers also surface in the **Inbox** (§9.7); semantic-write/external proposals land in **Approvals** (§9.8); the dream-cycle digest lands in the **13.8 digest-receipt-with-undo**.
 
+### 13.11 — The Agentic Copilot arc (Phase-C C1–C5.4b + §9.6-real) — BUILT, DORMANT
+
+**Spec anchors:** `ARCHITECTURE.md` §5 (Copilot tool catalog + catalog-aware ING-7), §6 (Copilot gbrain retrieval transports + serving-oracle seam), §7 (AgentRuntimePort containment + agentic runner), §8 (Copilot propose→Tool-Gateway/§9), §9 workflow #13 (Copilot Q&A pipeline), §10 (`UiSafeCopilotAnswer`), §11 (Copilot sidebar), §13 (enablement ladder). **Track:** worker (primary) · providers-integrations · policy · knowledge · eval-security. **Depends on:** P7 (§9 agent-job admission), P5 (§7 runtime), P9 (§9.6 sidebar). **Status: DELIVERED but DORMANT** — all `copilot*` boot flags default OFF; propose is structurally OFF pending the real serving oracle (§13.10 go-live gates).
+
+> _Canonical promotion of Log-only work: the Phase-C / §9.6-real arc was recorded only in the Log + memory `sow-copilot-real-model-direction`; these are its first-class tasks so the plan — not just the Log — is canonical. §13.10 (skill catalog) sits on top of this machinery._
+
+- [x] **C1 — Copilot tool catalog** (`packages/policy/src/copilot-tool-catalog.ts`): `COPILOT_READ_TOOLS` + `COPILOT_PROPOSE_TOOL`; `isMutatingCopilotTool` fail-safe classifier (unknown ⇒ mutating); `copilotReadOnlyPolicyIsPure`. `88b0f7d`.
+- [x] **C2 — concrete agent runtime/transport** (`packages/providers/src/runtime/claude-agent-sdk-{runtime,transport}.ts`): real SDK `query()` with `canUseTool` **deny-by-default** containment (banked lesson: `tools:[]` is a no-op). `bee9d8e`.
+- [x] **C3 — agentic Copilot synthesis** (`apps/worker/.../copilotAgentSynthesis.ts`): `createAgentRuntimeCopilotSynthesis` + `createClaudeAgentCopilotRunner` — servedWorkspaceId-bound (non-served workspaces run tool-less, the WS-8 fix). `a5e62dd`.
+- [x] **C4 — ING-7 admission wiring** (`admitCopilotAgentJob`): the only catalog-aware ING-7 layer; activates C1. `dac4f95`.
+- [x] **C5.1 — content-derived trust** (`deriveCopilotContentTrust` + `resolveCopilotAgentCapability`): trusted IFF every retrieved source is `knowledge_writer`-provenanced. `7c1e9ff`.
+- [x] **C5.2 — propose derivation → §9.8** (`copilotPropose.ts`: `deriveCopilotProposedAction` server-derived keys · `routeCopilotProposal` · `handleCopilotProposeToolCall`). `2d3988b` / `add9ae1` / `e530032`.
+- [x] **C5.3 — propose wired live** (providers `createCopilotProposeMcpServer` `0be926a` · `createApprovalsProposeSink` w/ payloadHash-divergence TOCTOU reject `28a78e9` · runner grant `41dd26b` · boot flag `1d14524`).
+- [x] **C5.4a — real content-trust + seed-only propose surface** (gbrain read tools stripped on a propose job — the build-time-trust TOCTOU closure). `3c64052`.
+- [x] **C5.4b — provenance-stamping serving-oracle seam** (`copilotProvenanceStamp.ts`: `createProvenanceStampingRetrieval` + `CopilotServingOracle`/`Verdict` + `createInterimDegradedServingOracle`). `d170c3b`.
+- [x] **§9.6-real P1 — Copilot egress governance** (`guardCopilotEgress`/`decideCopilotEgress`/`WorkspacePosture` + `UiSafeCopilotAnswer.egressProcessor` + the Employer-Work consent-notice banner). `27aa649`.
+- [x] **§9.6-real P2 — real Claude-subscription synthesis** (`createClaudeCopilotSynthesis` + `buildCopilotDeps`; P2.4b flipped LIVE — Claude Sonnet 5 + the 1M-context beta). `03a144a` / `185b16d`.
+- [x] **§9.6-real P2.5 — Copilot model-prose eval** (`gradeCopilotAnswer` + a golden corpus, `packages/evals`). `9c84074`.
+- [x] **§9.6-real P3.1 — deterministic gbrain retrieval adapter** (`createGbrainCopilotRetrieval` over the read-only `GbrainReadAdapter`, WS-8 fail-closed) + the subprocess/http transports (`72ab50c` + http-grant `dd4398b`/`452e359`). **P3-live BLOCKED** on a populated/embedded brain + per-workspace grants.
+- [ ] **Enablement ladder — the five default-OFF boot flags** (`apps/worker/src/boot.ts`): `copilotRealModel` → `copilotGbrainRetrieval` (+`copilotGbrainTransport` subprocess|http, the http-grant = the PGLite one-writer fix) → `copilotAgentMode` → `copilotProposeMode` → `copilotProvenanceStamping`. Go-live is a deliberate, security-review-gated flip; propose waits on the **real `admitForServing`-backed serving oracle** (a §13.10 task) + the §13.10 WS-8/enum/eval go-live gates.
+- [ ] Cross-doc invariant: **none new** — the arc's only frozen change is `Approval.workspaceId` (already Appendix-A); `UiSafeCopilotAnswer`/`egressProcessor` is a UI-safe projection; the rest are worker-internal (ARCHITECTURE.md §2.5 cross-seam note + Appendix A). The one FUTURE frozen change is growing `GbrainReadGrant.allowedOps` (§13.10 go-live gate b) + adding `KnowledgeMutationPlan.provenanceOrigin = copilot_propose` when 13.10a lands.
+- [ ] UI surface: the **Copilot right sidebar** (§9.6) — the read path is LIVE over interim stubs; the real cloud/agent/propose/provenance modes are dormant behind the flags.
+
 ### Acceptance criteria (13)
 - [ ] All 13.X task checkboxes ticked.
 - [ ] Every source-extractor + capture adapter is EMIT-ONLY — a boundary test + grep-guard prove no Phase-13 path reaches a vault write; all mutations route through KnowledgeWriter (13.1a, 13.2, 13.6).
@@ -2165,7 +2190,8 @@ Sequenced by governance class (every write human-gated ⇒ this is wiring order,
 
 ## Trims / Nice-to-Haves Catalog
 
-- **The REAL Copilot model path (deferred from §9.6, session 025, 2026-07-04).** §9.6 shipped end-to-end over the app's stubs (interim fixture retrieval + a canned stub synthesis). The real path is a FOLLOW-UP: (1) **real GBrain/GCL retrieval** (needs a passage-serving read-model — none exists yet); (2) **real governed LLM synthesis** through AgentRuntimePort/ModelProviderPort, which MUST call `guardCopilotEgress` at route selection with the **authoritative Workspace record's posture** (type + egress policy resolved by workspaceId, NEVER client input) and bound the `question` length in the synthesis path (both pinned in `apps/worker/src/api/procedures/copilot.ts` — the A3/A4 EGRESS NOTE + review flags); (3) the **model-prose EVAL** (retrieval grounding + citation correctness quality) against a real provider + a labeled corpus (PRD §20.1 / EVAL-1 floors) — documented in `packages/evals/test/conformance/copilot-governance.test.ts`; (4) **Global-Copilot-via-GCL** (today Global fail-closes to "pick a workspace"); (5) the **live propose→Approvals** flow (needs the 9.8 Approvals page + synthesis emitting a proposal). Come-back guidance: the governance (WS-8 / egress veto / candidate-data gate / read-only) is ALREADY built + tested — the follow-up swaps the interim retrieval/synthesis adapters behind the existing ports and wires the deferred egress guard; no contract change needed for the answer shape.
+- **The REAL Copilot model path — ✅ RESOLVED 2026-07-06 → promoted to first-class tasks in §13.11** (originally deferred from §9.6, session 025). Status of the five follow-ups: (2) real governed LLM synthesis **DONE + LIVE** (§13.11 P2, Sonnet-5 1M); (3) model-prose EVAL **DONE** (§13.11 P2.5); (5) propose→Approvals **BUILT** (C5.2/C5.3, dormant); (1) GBrain retrieval **deterministic adapter DONE**, P3-live blocked on a populated brain; (4) Global-Copilot-via-GCL **still open**. Retained here for the come-back guidance only. Original note:
+  - §9.6 shipped end-to-end over the app's stubs (interim fixture retrieval + a canned stub synthesis). The real path is a FOLLOW-UP: (1) **real GBrain/GCL retrieval** (needs a passage-serving read-model — none exists yet); (2) **real governed LLM synthesis** through AgentRuntimePort/ModelProviderPort, which MUST call `guardCopilotEgress` at route selection with the **authoritative Workspace record's posture** (type + egress policy resolved by workspaceId, NEVER client input) and bound the `question` length in the synthesis path (both pinned in `apps/worker/src/api/procedures/copilot.ts` — the A3/A4 EGRESS NOTE + review flags); (3) the **model-prose EVAL** (retrieval grounding + citation correctness quality) against a real provider + a labeled corpus (PRD §20.1 / EVAL-1 floors) — documented in `packages/evals/test/conformance/copilot-governance.test.ts`; (4) **Global-Copilot-via-GCL** (today Global fail-closes to "pick a workspace"); (5) the **live propose→Approvals** flow (needs the 9.8 Approvals page + synthesis emitting a proposal). Come-back guidance: the governance (WS-8 / egress veto / candidate-data gate / read-only) is ALREADY built + tested — the follow-up swaps the interim retrieval/synthesis adapters behind the existing ports and wires the deferred egress guard; no contract change needed for the answer shape.
 
 
 ---
