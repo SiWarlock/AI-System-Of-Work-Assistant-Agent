@@ -72,6 +72,20 @@ async function start(config: WorkerHostConfig): Promise<void> {
       // To turn OFF (back to unfiltered passthrough), remove these two lines.
       copilotWorkspaceScoping: true,
       copilotLegacyContentPolicy: { mode: "assign", toWorkspaceId: workspaceId("personal-business") },
+      // §13.10 gate (a) — the AGENTIC Copilot tool path, LIVE. With copilotRealModel already ON, this switches
+      // Copilot synthesis to the tool-enabled agent (Claude Sonnet 5 may call the gbrain READ tools mid-answer).
+      // Because copilotWorkspaceScoping is ON, those tool calls reach gbrain ONLY through the in-process SCOPED
+      // PROXY (SC5a arg-policing → the read → SC5b result-redaction), never the raw MCP server — so no unscoped /
+      // cross-workspace read is possible. On TODAY's single-workspace brain (all personal-business) the WS-8
+      // scoping + the F2 field-fidelity residual are INERT (no foreign workspace exists), so this adds tool reach
+      // without a WS-8 leak surface. FAILS CLOSED if the http-grant transport (`gbrain serve --http`) is not
+      // reachable — the proxy exec returns empty, never a leak. ⚠ OPERATIONAL: the agentic TOOLS use the http
+      // transport while P1 RETRIEVAL still uses the `gbrain call query` CLI; gbrain's PGlite is single-connection,
+      // so a running `serve --http` and the CLI contend for the DB lock — the clean setup moves retrieval onto the
+      // http transport too (follow-up). ⚠ Before a MULTI-workspace brain: close the F2 field-fidelity gap (gate-(c)
+      // eval) + the A1 body-embedded residual (ingest-time). To turn OFF (back to the completion path, no tools),
+      // remove this line.
+      copilotAgentMode: true,
       // No-op dispatch stubs — a first render triggers neither path (no jobs/approvals yet).
       triageDispatch: (input) =>
         Promise.resolve({ ok: true, value: { idempotencyKey: input.idempotencyKey } }),
