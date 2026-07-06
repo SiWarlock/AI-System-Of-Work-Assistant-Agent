@@ -381,14 +381,20 @@ export function createDbReadModelQueryPort(
     return ok(rm.value === undefined ? [] : readCardSources(rm.value.data));
   };
 
-  /** List PENDING approvals for a KNOWN workspace (fail-closed on unknown). */
+  /**
+   * List PENDING approvals for a KNOWN workspace (fail-closed on unknown), SCOPED to that workspace (WS-4).
+   * Routes through `listByStatusAndWorkspace` (equality filter on the Approval's stored workspaceId) so a
+   * workspace inbox surfaces ONLY its own cards — never another workspace's (the pre-C-scoping global leak).
+   * The renderer's global inbox is preserved: `live.ts hydrateApprovalInbox` fans this over the 3 known
+   * scopes and unions by id — the calls now return DISJOINT partitions whose union is the same set.
+   */
   const pendingApprovals = async (
     workspaceId: string,
   ): Promise<Result<readonly Approval[], FailureVariant>> => {
     const known = await resolveKnownWorkspace(readModels, workspaceId);
     if (isErr(known)) return known;
     if (!known.value) return err(unknownWorkspace());
-    const r = await approvals.listByStatus("pending");
+    const r = await approvals.listByStatusAndWorkspace("pending", workspaceId as Approval["workspaceId"]);
     if (isErr(r)) {
       // A benign empty inbox surfaces as ok([]) from the repo, not not_found; any
       // DbError here is a genuine store fault (§16 degrade, redaction-safe).

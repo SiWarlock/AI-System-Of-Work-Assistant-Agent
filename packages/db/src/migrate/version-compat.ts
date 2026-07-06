@@ -45,7 +45,7 @@ import { err, ok } from "@sow/contracts";
  * lockstep with each schema-changing migration (task 2.6) and recorded against the
  * shipping app version in {@link APP_SCHEMA_COMPAT_TABLE}.
  */
-export const CURRENT_SCHEMA_VERSION = 1 as const;
+export const CURRENT_SCHEMA_VERSION = 2 as const;
 
 /** One recorded app-version → schema-version compatibility band. */
 export interface AppSchemaCompat {
@@ -60,10 +60,20 @@ export interface AppSchemaCompat {
 /**
  * The recorded app-version ↔ schema-version compatibility table (§4/§13). Append a
  * row for every released app version; an un-recorded version refuses (fail-closed)
- * rather than guessing. Genesis: the Phase-2 initial schema (v1).
+ * rather than guessing. Genesis: the Phase-2 initial schema (v1). v2 adds the
+ * §9.8 `approvals.workspaceId` column (migration 0001) — forward-migratable from v1.
+ *
+ * NOTE (pre-existing gap, NOT closed here): `assertSchemaCompatible` has no production
+ * caller today — `openDatabase` applies migrations directly with no preceding compat
+ * gate. So this table + `CURRENT_SCHEMA_VERSION` keep the schema-version METADATA
+ * coherent with the migration set, but the app↔schema version GUARD (worker forbidden
+ * #4's version-check half) is not yet wired. The additive 0001 ALTER is backward-safe
+ * on its own (an old app tolerates the unknown column); wiring the boot gate is tracked
+ * separately.
  */
 export const APP_SCHEMA_COMPAT_TABLE: readonly AppSchemaCompat[] = [
   { appVersion: "0.1.0", targetSchemaVersion: 1, minReadableSchemaVersion: 1 },
+  { appVersion: "0.2.0", targetSchemaVersion: 2, minReadableSchemaVersion: 1 },
 ];
 
 /** Closed, enumerable set of refusal reasons (stable IDs; never reordered). */

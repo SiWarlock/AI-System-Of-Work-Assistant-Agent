@@ -63,6 +63,12 @@ function fakeApprovals(opts: { createError?: DbError; store?: Map<string, Approv
       return Promise.resolve(found ? ok(found) : err({ code: "not_found", message: "no row" } satisfies DbError));
     },
     listByStatus: (): DbResult<Approval[]> => Promise.resolve(ok([])),
+    listByStatusAndWorkspace: (status, workspaceId): DbResult<Approval[]> =>
+      Promise.resolve(
+        ok(
+          [...store.values()].filter((a) => a.status === status && a.workspaceId === workspaceId),
+        ),
+      ),
     // The sink NEVER calls applyTransition (no auto-apply — contract c); it throws if ever invoked, which
     // pins that (contract-c test would fail loudly rather than silently transitioning).
     applyTransition: () => {
@@ -160,6 +166,7 @@ describe("createApprovalsProposeSink — record a pending Approval (direct repos
     store.set(String(id), {
       id,
       actionRef: seed.action.actionId,
+      workspaceId: WS,
       status: "pending",
       actor: COPILOT_PROPOSE_ACTOR,
       channel: "mac",
@@ -195,6 +202,21 @@ describe("createApprovalsProposeSink — record a pending Approval (direct repos
     // a second, DISTINCT card (different derived id) — not deduped against the first workspace's card.
     expect(other.value.created).toBe(true);
     expect(a.store.size).toBe(2);
+  });
+
+  it("WRITE-KEY===READ-KEY — a card recorded for W is returned by listByStatusAndWorkspace('pending', W), and NOT for another workspace", async () => {
+    const a = fakeApprovals();
+    const sink = makeSink(a.repo);
+    await sink.record({ action: fx.action, envelope: fx.envelope, workspaceId: WS });
+    // the SAME W the request carried round-trips through the scoped query (not a hand-passed canonical id).
+    const mine = await a.repo.listByStatusAndWorkspace("pending", WS as Approval["workspaceId"]);
+    expect(isOk(mine)).toBe(true);
+    if (!isOk(mine)) return;
+    expect(mine.value).toHaveLength(1);
+    expect(mine.value[0]?.workspaceId).toBe(WS);
+    // a DIFFERENT workspace's inbox does NOT see it.
+    const other = await a.repo.listByStatusAndWorkspace("pending", "personal-life" as Approval["workspaceId"]);
+    expect(isOk(other) && other.value.length).toBe(0);
   });
 
   it("CROSS-PATH id equality — the sink derives the SAME approval id as createRecordPendingActivity's recipe", async () => {

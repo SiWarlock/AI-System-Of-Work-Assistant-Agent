@@ -98,6 +98,7 @@ export function makeApproval(partial: Partial<Approval> = {}): Approval {
   return {
     id: approvalId("apr-1"),
     actionRef: actionId("act-1"),
+    workspaceId: workspaceId("ws-employer"),
     status: "pending",
     actor: "user:alice",
     channel: "mac",

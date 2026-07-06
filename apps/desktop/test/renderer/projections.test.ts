@@ -69,6 +69,19 @@ describe("initial hydrate (9.4b — fold a read-model query snapshot)", () => {
     expect(s.lastEventId).toBe("e1");
   });
 
+  it("the approval.update fold is INTENTIONALLY global — an update for ANY workspace's card lands in the one Map", () => {
+    // WS-4 regression pin (server-side scoping guard): the renderer approvals Map is deliberately global,
+    // and UiSafeApproval carries NO workspaceId — so this fold is unconditional (unlike read_model.change,
+    // which is scope-guarded). Two cards that originate in DIFFERENT workspaces BOTH appear. If a future
+    // slice makes the inbox scope-follow or adds workspaceId to UiSafeApproval, this test breaks LOUDLY,
+    // forcing that author to scope-guard the approval.update fold (see the comment in projections.ts) rather
+    // than silently re-opening the cross-workspace surfacing the server-side scoping closed.
+    let s = initialStoreState;
+    s = applyStreamEvent(s, approvalEvent(1, "e1", "card-workspace-A"));
+    s = applyStreamEvent(s, approvalEvent(2, "e2", "card-workspace-B"));
+    expect([...s.approvals.keys()].sort()).toEqual(["card-workspace-A", "card-workspace-B"]);
+  });
+
   it("hydrateApprovals folds an authoritative post-decision record (upsert by id changes status)", () => {
     // The decision command returns the UI-safe record AFTER the CAS; folding it back updates the
     // inbox in place (a re-query is unnecessary — the returned record IS the new truth).

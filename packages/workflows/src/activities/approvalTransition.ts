@@ -128,6 +128,9 @@ export function createRecordPendingActivity(
       const pending: Approval = {
         id,
         actionRef: ctx.action.actionId,
+        // WS-4 inbox-scope: the bound/authorized workspace this pending action belongs to (WS-2). Same value
+        // folded into the derived `id` above, so the §9.8 inbox filter (listByStatusAndWorkspace) round-trips.
+        workspaceId: ctx.workspaceId,
         status: "pending",
         actor: deps.actor,
         channel: deps.seedChannel,

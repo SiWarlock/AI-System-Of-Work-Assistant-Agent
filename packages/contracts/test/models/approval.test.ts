@@ -12,6 +12,7 @@ import { loadFieldSnapshot, freezeGenerated } from "../_helpers/freeze";
 const validBase = {
   id: "appr-001",
   actionRef: "act-001",
+  workspaceId: "ws-personal-business",
   status: "approved",
   actor: "user:cody",
   channel: "mac",
@@ -62,6 +63,17 @@ describe("Approval contract — spec(§3/§9/§10/§11)", () => {
 
   it("rejects an empty/whitespace actionRef (branded non-empty)", () => {
     const bad = ApprovalSchema.safeParse({ ...validBase, actionRef: "" });
+    expect(bad.success).toBe(false);
+  });
+
+  it("rejects an empty/whitespace workspaceId (branded non-empty — WS-4 scope attribution)", () => {
+    const bad = ApprovalSchema.safeParse({ ...validBase, workspaceId: "   " });
+    expect(bad.success).toBe(false);
+  });
+
+  it("rejects a MISSING workspaceId (required — an unscoped Approval is unrepresentable)", () => {
+    const { workspaceId: _omit, ...without } = validBase;
+    const bad = ApprovalSchema.safeParse(without);
     expect(bad.success).toBe(false);
   });
 

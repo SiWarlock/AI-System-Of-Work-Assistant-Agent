@@ -155,6 +155,7 @@ function toApproval(r: ApprovalRow): Approval {
   return {
     id: r.id,
     actionRef: r.actionRef,
+    workspaceId: r.workspaceId,
     status: r.status,
     actor: r.actor,
     channel: r.channel,
@@ -467,6 +468,14 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
     listByStatus: (status) =>
       run(async () => {
         const rows = await db.select().from(schema.approvals).where(eq(schema.approvals.status, status));
+        return ok(rows.map(toApproval));
+      }),
+    listByStatusAndWorkspace: (status, workspaceId) =>
+      run(async () => {
+        const rows = await db
+          .select()
+          .from(schema.approvals)
+          .where(and(eq(schema.approvals.status, status), eq(schema.approvals.workspaceId, workspaceId)));
         return ok(rows.map(toApproval));
       }),
     applyTransition: (id, expectedFromStatus, next) =>

@@ -60,10 +60,11 @@ async function seedReadModel(
   if (isErr(r)) throw new Error(`seed read-model failed: ${JSON.stringify(r.error)}`);
 }
 
-function pendingApproval(id: string): Approval {
+function pendingApproval(id: string, workspaceId: string = KNOWN_WS): Approval {
   return {
     id: id as Approval["id"],
     actionRef: `act-${id}` as Approval["actionRef"],
+    workspaceId: workspaceId as Approval["workspaceId"],
     status: "pending",
     actor: "user:cody",
     channel: "mac",
@@ -354,6 +355,36 @@ describe("createDbReadModelQueryPort — ingestion + approval inboxes", () => {
     const res = await port.approvalInbox(KNOWN_WS);
     expect(isOk(res)).toBe(true);
     if (isOk(res)) expect(res.value).toEqual([]);
+  });
+
+  it("WS-4 SCOPING (the fix): workspace A's inbox surfaces ONLY A's pending cards — never workspace B's", async () => {
+    const A = "ws-alpha";
+    const B = "ws-beta";
+    const o = await freshDb();
+    await seedRegistry(o, [A, B]);
+    // one pending card in EACH workspace.
+    if (isErr(await o.repos.approvals.create(pendingApproval("apr-A", A)))) throw new Error("seed A failed");
+    if (isErr(await o.repos.approvals.create(pendingApproval("apr-B", B)))) throw new Error("seed B failed");
+    const port = createDbReadModelQueryPort(o.repos);
+    const inboxA = await port.approvalInbox(A);
+    expect(isOk(inboxA)).toBe(true);
+    if (!isOk(inboxA)) return;
+    // A sees exactly its own card — B's card does NOT leak in (the pre-scoping global-inbox leak, closed).
+    expect(inboxA.value.map((c) => c.id)).toEqual(["apr-A"]);
+    const inboxB = await port.approvalInbox(B);
+    expect(isOk(inboxB) && inboxB.value.map((c) => c.id)).toEqual(["apr-B"]);
+  });
+
+  it("WS-4 fail-closed: a legacy sentinel-workspace card surfaces in NO real workspace inbox", async () => {
+    const o = await freshDb();
+    await seedRegistry(o, [KNOWN_WS]);
+    // simulate a legacy row backfilled to the sentinel (never a real workspace id).
+    if (isErr(await o.repos.approvals.create(pendingApproval("apr-legacy", "__unassigned__"))))
+      throw new Error("seed legacy failed");
+    const port = createDbReadModelQueryPort(o.repos);
+    const res = await port.approvalInbox(KNOWN_WS);
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value).toEqual([]); // the sentinel card leaks into no inbox
   });
 
   it("both inboxes fail closed (typed err, no approvals) for an UNKNOWN workspace", async () => {

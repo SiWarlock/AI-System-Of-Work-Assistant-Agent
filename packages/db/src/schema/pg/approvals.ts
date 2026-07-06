@@ -7,10 +7,17 @@
 // REQ-S-003: no secret column (payload referenced by hash only — `payloadHash`).
 import { pgTable, text } from "drizzle-orm/pg-core";
 import type { Approval } from "@sow/contracts";
+import { UNASSIGNED_WORKSPACE } from "../approvals";
 
 export const approvals = pgTable("approvals", {
   id: text().$type<Approval["id"]>().primaryKey(),
   actionRef: text().$type<Approval["actionRef"]>().notNull(),
+  // WS-4 inbox-scope attribution (frozen Approval field). NOT NULL + sentinel default so
+  // the additive ALTER succeeds on a populated table; every write site supplies a real id.
+  workspaceId: text()
+    .$type<Approval["workspaceId"]>()
+    .notNull()
+    .default(UNASSIGNED_WORKSPACE as Approval["workspaceId"]),
   status: text().$type<Approval["status"]>().notNull(),
   actor: text().notNull(),
   channel: text().$type<Approval["channel"]>().notNull(),

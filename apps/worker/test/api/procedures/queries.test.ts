@@ -87,6 +87,7 @@ function fakeApproval(): Approval {
   return {
     id: "apr_1" as Approval["id"],
     actionRef: "act_1" as Approval["actionRef"],
+    workspaceId: "ws-001" as Approval["workspaceId"],
     status: "pending",
     actor: "user:alice", // DROPPED by the UI-safe projection
     channel: "mac",

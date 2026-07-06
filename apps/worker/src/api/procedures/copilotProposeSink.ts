@@ -137,6 +137,11 @@ export function createApprovalsProposeSink(deps: ApprovalsProposeSinkDeps): Copi
       const pending: Approval = {
         id,
         actionRef: action.actionId,
+        // WS-4 inbox-scope: store the SAME raw `workspaceId` used to DERIVE `id` (above) and QUERIED by
+        // readModel.pendingApprovals — NOT the registry-resolved `ws.value.id`. If workspaceConfig.get ever
+        // canonicalizes (slug→id/alias), storing the resolved id would make the write-key diverge from the
+        // read-key and fail-closed EXCLUDE the card from its own inbox. Write-key === read-key by construction.
+        workspaceId,
         status: "pending",
         actor,
         channel: "mac",

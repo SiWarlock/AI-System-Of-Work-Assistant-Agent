@@ -13,6 +13,7 @@ function approval(status: Approval["status"], id = "appr-1"): Approval {
   return {
     id: id as Approval["id"],
     actionRef: "act-1" as Approval["actionRef"],
+    workspaceId: "ws-a" as Approval["workspaceId"],
     status,
     actor: "owner",
     channel: "mac",

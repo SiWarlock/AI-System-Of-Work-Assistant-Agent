@@ -270,6 +270,16 @@ export interface ApprovalRepository {
   get(id: Approval["id"]): DbResult<Approval>;
   listByStatus(status: Approval["status"]): DbResult<Approval[]>;
   /**
+   * List approvals in `status` for ONE workspace (WS-4 inbox scoping). An EQUALITY
+   * filter on `workspaceId` — the §9.8 inbox path (`readModel.pendingApprovals`)
+   * routes through this so a workspace inbox surfaces ONLY its own cards. Legacy
+   * sentinel-workspace rows never match a real workspace id (fail-closed excluded).
+   */
+  listByStatusAndWorkspace(
+    status: Approval["status"],
+    workspaceId: Approval["workspaceId"],
+  ): DbResult<Approval[]>;
+  /**
    * Apply a single approval transition EXACTLY ONCE. `expectedFromStatus` makes
    * the write a compare-and-set. The `ok` outcome carries `applied`:
    *   - a genuine durable transition (current === expectedFrom) → `applied: true`

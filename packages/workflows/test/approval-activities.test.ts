@@ -57,6 +57,14 @@ class InMemoryApprovalRepo implements ApprovalRepository {
   listByStatus(status: Approval["status"]): DbResult<Approval[]> {
     return Promise.resolve(ok([...this.byId.values()].filter((a) => a.status === status)));
   }
+  listByStatusAndWorkspace(
+    status: Approval["status"],
+    workspaceId: Approval["workspaceId"],
+  ): DbResult<Approval[]> {
+    return Promise.resolve(
+      ok([...this.byId.values()].filter((a) => a.status === status && a.workspaceId === workspaceId)),
+    );
+  }
   applyTransition(
     id: Approval["id"],
     expectedFromStatus: Approval["status"],

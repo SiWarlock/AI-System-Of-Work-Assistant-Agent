@@ -154,6 +154,8 @@ function nextRecord(
   const base: Approval = {
     id: current.id,
     actionRef: current.actionRef,
+    // WS-4: a transition PRESERVES the stored workspace (immutable — carried forward from the current record).
+    workspaceId: current.workspaceId,
     status,
     actor: current.actor,
     channel,

@@ -143,6 +143,7 @@ function toApproval(r: ApprovalRow): Approval {
   return {
     id: r.id,
     actionRef: r.actionRef,
+    workspaceId: r.workspaceId,
     status: r.status,
     actor: r.actor,
     channel: r.channel,
@@ -434,6 +435,15 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
     listByStatus: (status) =>
       run(() => {
         const rows = db.select().from(schema.approvals).where(eq(schema.approvals.status, status)).all();
+        return ok(rows.map(toApproval));
+      }),
+    listByStatusAndWorkspace: (status, workspaceId) =>
+      run(() => {
+        const rows = db
+          .select()
+          .from(schema.approvals)
+          .where(and(eq(schema.approvals.status, status), eq(schema.approvals.workspaceId, workspaceId)))
+          .all();
         return ok(rows.map(toApproval));
       }),
     applyTransition: (id, expectedFromStatus, next) =>

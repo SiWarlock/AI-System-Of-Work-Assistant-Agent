@@ -44,12 +44,23 @@ describe("2.7 assertSchemaCompatible — compatible pairings", () => {
     expect(isOk(assertSchemaCompatible("1.0.0", 4, TABLE))).toBe(true);
   });
 
-  it("the recorded genesis table is self-consistent: current app ↔ CURRENT_SCHEMA_VERSION is compatible", () => {
+  it("the table is self-consistent: the CURRENT (latest) app ↔ CURRENT_SCHEMA_VERSION is compatible", () => {
     expect(APP_SCHEMA_COMPAT_TABLE.length).toBeGreaterThan(0);
+    // The CURRENT shipping app is the LAST row — genesis ([0]) targets an older schema, so as the schema
+    // advances only the latest row is guaranteed compatible with CURRENT_SCHEMA_VERSION.
+    const current = APP_SCHEMA_COMPAT_TABLE[APP_SCHEMA_COMPAT_TABLE.length - 1];
+    expect(current).toBeDefined();
+    if (!current) return;
+    expect(current.targetSchemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(isOk(assertSchemaCompatible(current.appVersion, CURRENT_SCHEMA_VERSION))).toBe(true);
+  });
+
+  it("an OLD app opening a NEWER on-disk schema is REFUSED (schema_ahead_of_app) — additive col tolerated only via a new app", () => {
+    // genesis app (targets v1) vs the current on-disk v2 → schema is ahead of the app → refuse (fail-closed).
     const genesis = APP_SCHEMA_COMPAT_TABLE[0];
     expect(genesis).toBeDefined();
     if (!genesis) return;
-    expect(isOk(assertSchemaCompatible(genesis.appVersion, CURRENT_SCHEMA_VERSION))).toBe(true);
+    expect(isOk(assertSchemaCompatible(genesis.appVersion, CURRENT_SCHEMA_VERSION))).toBe(false);
   });
 });
 

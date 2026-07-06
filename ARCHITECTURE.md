@@ -417,7 +417,7 @@ Cross-doc invariants. A field change requires editing the model's `§` section a
 | ExternalWriteEnvelope | §3, §8 | actionId, targetSystem, canonicalObjectKey, idempotencyKey, preconditions, payloadHash, approvalId?, writeReceipt? |
 | SourceEnvelope | §3, §8, §9 | sourceId, workspaceId, origin, contentHash, type, sensitivity, routingHints |
 | GclProjection | §3, §5, §6, §11 | workspaceId, visibilityLevel, projectionType, sanitizedPayload, sourceRefs — **sanitizedPayload leakage gate is KEY-NAME-INDEPENDENT** (2026-07-01): rejects a raw-content-shaped key OR any multi-line / over-length (>1024) string value anywhere (recursive), so raw content cannot ride an arbitrary key name (safety rule 4 / WS-8) |
-| Approval | §3, §9, §10, §11 | id, actionRef, status(pending\|approved\|edited\|rejected\|deferred\|expired), actor, channel, payloadHash, snoozeUntil?, expiresAt? |
+| Approval | §3, §9, §10, §11 | id, actionRef, workspaceId, status(pending\|approved\|edited\|rejected\|deferred\|expired), actor, channel, payloadHash, snoozeUntil?, expiresAt? — workspaceId is the WS-4 inbox-scope attribution (set at record time from the server-bound ApprovalFlowContext/Copilot-sink workspace; the §9.8 inbox filters on it via `listByStatusAndWorkspace`) |
 | AuditRecord | §3, §4, §16 | actor, event, refs, payloadHash, before/after summary, timestamps |
 | WorkflowRunRef | §3, §9 | workflowId, trigger, state, idempotencyKey, auditRefs |
 | ProviderProfile | §3, §4, §7 | provider, endpoint, model, capabilities, egressClass, costCaps, conformanceStatus (keys in Keychain) |

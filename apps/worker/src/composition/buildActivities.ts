@@ -307,6 +307,8 @@ export function buildProofSpineActivities(
       const approval: Approval = {
         id: makeApprovalIdFromEnvelope(env),
         actionRef: action.actionId,
+        // WS-4 inbox-scope: the meeting-close job's bound workspace (server-side, authoritative).
+        workspaceId: params.meetingJobInputs.workspaceId,
         status: "pending",
         actor: params.commit.actor,
         channel: "mac",

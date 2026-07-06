@@ -39,6 +39,7 @@ function pendingApproval(id: string): Approval {
   return {
     id: id as Approval["id"],
     actionRef: `act-${id}` as Approval["actionRef"],
+    workspaceId: "ws-001" as Approval["workspaceId"],
     status: "pending",
     actor: "user:cody",
     channel: "mac",

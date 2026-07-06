@@ -6,9 +6,9 @@
 // branded ids cause — see below), the JSON Schema is generated via
 // `emitJsonSchema`. PURE — imports only foundation primitives + shared enums.
 import { z } from "zod";
-import { ApprovalIdSchema, ActionIdSchema } from "../primitives/zod-brands";
+import { ApprovalIdSchema, ActionIdSchema, WorkspaceIdSchema } from "../primitives/zod-brands";
 import { approvalStatusSchema, channelSchema } from "./shared-enums";
-import type { ApprovalId, ActionId } from "../primitives/ids";
+import type { ApprovalId, ActionId, WorkspaceId } from "../primitives/ids";
 import type { ApprovalStatus, Channel } from "./shared-enums";
 
 /** Stable JSON-Schema `$id` for the schema registry. */
@@ -22,6 +22,12 @@ export const APPROVAL_SCHEMA_ID = "sow:approval" as const;
 export interface Approval {
   id: ApprovalId;
   actionRef: ActionId;
+  // WS-4/WS-7 scoped-before-surface: the BOUND/AUTHORIZED workspace this pending
+  // action belongs to (set at record time from ApprovalFlowContext.workspaceId /
+  // the server-bound Copilot sink workspaceId — never a client/model value). The
+  // §9.8 inbox filters on this so a workspace inbox surfaces ONLY its own cards;
+  // the branded schema rejects empty/whitespace (fail-closed).
+  workspaceId: WorkspaceId;
   status: ApprovalStatus;
   // arch_gap: the approving-actor identity shape (user vs. agent vs. service
   // principal namespace) is unspecified upstream (§9/§10/§11) — modeled as an
@@ -39,6 +45,7 @@ export interface Approval {
 interface ApprovalInput {
   id: string;
   actionRef: string;
+  workspaceId: string;
   status: ApprovalStatus;
   actor: string;
   channel: Channel;
@@ -51,6 +58,7 @@ export const ApprovalSchema: z.ZodType<Approval, z.ZodTypeDef, ApprovalInput> = 
   .object({
     id: ApprovalIdSchema,
     actionRef: ActionIdSchema,
+    workspaceId: WorkspaceIdSchema,
     status: approvalStatusSchema,
     actor: z.string().min(1),
     channel: channelSchema,

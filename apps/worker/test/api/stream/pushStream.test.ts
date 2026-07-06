@@ -78,6 +78,7 @@ function baseApproval(overrides: Partial<Approval> = {}): Approval {
   return {
     id: "apr_1" as Approval["id"],
     actionRef: "act_1" as Approval["actionRef"],
+    workspaceId: "ws-001" as Approval["workspaceId"],
     status: "pending",
     actor: "user:alice", // DROPPED — approving-principal identity
     channel: "mac",

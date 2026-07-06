@@ -20,9 +20,26 @@
 import { sqliteTable, text } from "drizzle-orm/sqlite-core";
 import type { Approval } from "@sow/contracts";
 
+/**
+ * Sentinel workspace value backfilled onto legacy pending rows when the `workspaceId`
+ * column is added (a NOT NULL column needs a DEFAULT to ALTER a populated table). It is
+ * a NON-workspace value that never equals any real workspace id, so the §9.8
+ * `listByStatusAndWorkspace` equality filter FAIL-CLOSED-EXCLUDES legacy rows from every
+ * inbox (they surface in none, never leak into one). It passes `WorkspaceIdSchema`
+ * (minLength ≥ 1) so read-back never crashes. Shared by both dialect schemas + the 0001
+ * migrations. NEVER backfill a REAL workspace id (would leak legacy rows into that inbox).
+ */
+export const UNASSIGNED_WORKSPACE = "__unassigned__" as const;
+
 export const approvals = sqliteTable("approvals", {
   id: text().$type<Approval["id"]>().primaryKey(),
   actionRef: text().$type<Approval["actionRef"]>().notNull(),
+  // WS-4 inbox-scope attribution (frozen Approval field). NOT NULL + sentinel default so
+  // the additive ALTER succeeds on a populated table; every write site supplies a real id.
+  workspaceId: text()
+    .$type<Approval["workspaceId"]>()
+    .notNull()
+    .default(UNASSIGNED_WORKSPACE as Approval["workspaceId"]),
   status: text().$type<Approval["status"]>().notNull(),
   actor: text().notNull(),
   channel: text().$type<Approval["channel"]>().notNull(),

@@ -56,6 +56,14 @@ export function applyStreamEvent(state: UiSafeStoreState, event: StreamEvent): U
   const base: UiSafeStoreState = { ...state, lastEventId: event.eventId, lastSeq: event.seq };
   switch (event.name) {
     case "approval.update":
+      // UNCONDITIONAL fold — the Approvals inbox is GLOBAL by design (App.tsx passes the whole map with no
+      // scope prop; live.ts hydrateApprovalInbox unions the 3 scoped queries). Per-workspace ISOLATION for
+      // approvals lives ENTIRELY in the UiSafeApproval projection (which carries NO workspaceId + no raw
+      // content), NOT in this stream fold. ⚠ If a future slice adds `workspaceId` to UiSafeApproval (a
+      // per-card workspace label) OR makes the inbox scope-follow, it MUST ALSO scope-guard this fold (mirror
+      // the `read_model.change` case below) — otherwise this unconditional fold silently re-surfaces foreign
+      // workspace cards, re-opening the WS-4 leak the server-side `listByStatusAndWorkspace` scoping closed.
+      // Pinned by the "approvals inbox is intentionally global" test in store/*.test.ts.
       return { ...base, approvals: cloneSet(state.approvals, event.payload.id, event.payload) };
     case "system.health":
       return { ...base, health: cloneSet(state.health, event.payload.id, event.payload) };

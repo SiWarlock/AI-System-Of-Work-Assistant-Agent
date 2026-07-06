@@ -249,7 +249,8 @@ function defineLifecycleSuite<H>(fix: LifecycleFixture<H>): void {
         expect(isOk(r)).toBe(true);
         if (!isOk(r)) return;
         expect(r.value.dialect).toBe(fix.dialect);
-        expect(r.value.applied).toBe(1);
+        // The real migration set is now 0000_genesis + 0001_approvals_workspace_id (both applied from empty).
+        expect(r.value.applied).toBe(2);
         expect(r.value.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
         expect(r.value.backup.dialect).toBe(fix.dialect);
 
