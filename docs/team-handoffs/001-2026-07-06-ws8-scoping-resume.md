@@ -1,7 +1,20 @@
 # Handoff 001 — resume the WS-8 scoping build (SC5b → SC6–SC9)
 
 - **Date:** 2026-07-06 · **From session:** `docs/sessions/042-2026-07-06-ws8-scoping-design-sc1-gates-bcd.md`
-- **HEAD:** `7554086` (SC5b+SC7+SC8 + `copilotAgentMode` flip + Option A SS1/SS3 landed; push at close-out). **Gate:** repo-wide `turbo typecheck test` 31/31.
+- **HEAD:** `a956a92` (SC5b+SC7+SC8 + `copilotAgentMode` flip + Option A SS1/SS3 + **Option A ENABLED** [`MANAGE_GBRAIN_SERVE=true`, loopback bind smoke-verified vs gbrain 0.35.1]). **Gate:** repo-wide `turbo typecheck test` 31/31, clean tree, pushed.
+
+## NEXT SLICE (owner-requested, start AFTER compaction) → MULTI-WORKSPACE SERVING
+
+**Problem:** the app serves exactly ONE workspace. `copilotGbrainWorkspaceId` is fixed at boot (default `personal-business`), and `createGbrainSubprocessRetrieval` (`copilotGbrainSubprocess.ts:127`) returns the empty fixture fallback for EVERY workspace ≠ the served one. So on the single brain, only personal-business surfaces content; asking any other workspace returns nothing. Adding `personal-life/…`-prefixed pages puts them in the brain but they're correctly scoped OUT (never surfaced) until the served workspace can vary.
+
+**Owner context:** "fine with a single brain for now" + "start the multi brain serving." So the immediately-useful slice is **single-brain multi-served** (Option A below); full per-workspace brains (Option B) is the stronger-isolation target. **Resolve this design fork at slice start (AskUserQuestion).**
+
+- **Option A — single-brain, multi-served (recommended for "single brain now"):** let the retrieval serve the ASKED workspace from the one brain, binding the scope filter to that workspace's slug prefix per request (not a fixed served id). Touch points: `createGbrainSubprocessRetrieval`/the http retrieval composite (drop the `workspaceId !== servedWorkspaceId ⇒ fallback` gate; instead read the brain + filter to the asked workspace's prefix via `createWorkspaceScopeFilter` bound per-request), and the agentic proxy scope (bind per served-request, not the one boot-fixed scope). ⚠ Makes F2/A1 LIVE for any workspace with real content in the combined brain — so keep employer-work OUT of this brain until F2 (gate-(c) eval) is closed. Also the legacy `{assign, personal-business}` policy means UNPREFIXED content only ever surfaces for personal-business (other workspaces need prefixed slugs).
+- **Option B — multi-brain (per-workspace isolation, the durable target):** a gbrain brain + `serve` + DCR token provider + exec PER workspace; route `copilotAsk(workspace)` → that workspace's brain. WS-8 by construction; no F2/A1 exposure. Bigger: a supervisor per brain (SS1 already parameterizes baseUrl/port), per-workspace config, and request→brain routing.
+
+**How to ADD a workspace's content TODAY (single brain, pre-slice):** `printf '…' | gbrain put "personal-life/<topic>"` — the `personal-life/` slug prefix attributes it to that workspace in the scope registry. It will sit in the brain correctly scoped-out until the multi-served slice (Option A) or a `copilotGbrainWorkspaceId` switch lets the app serve that workspace. (Registration is automatic — the 3 well-known scopes exist by default.)
+
+## (prior) RESUME context
 - **Design of record:** `docs/planning/ws8-workspace-scoping.md` (the full survey→design→4-verifier output + BUILD-ORDER VERDICT + OWNER-GATED). **Memory:** `sow-copilot-skill-catalog`, `sow-copilot-real-model-direction`.
 
 ## What is DONE (this session, all pushed + dual-reviewer-clean)
