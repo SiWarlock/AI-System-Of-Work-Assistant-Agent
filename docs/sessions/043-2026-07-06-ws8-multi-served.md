@@ -31,6 +31,15 @@ Multi-served is **LIVE on boot** — worker-host already sets `copilotWorkspaceS
 - **Add content:** `printf '…' | gbrain put "personal-life/<topic>"` — surfaces the next time you ask personal-life. **personal-life is safe.**
 - **⚠ Keep EMPLOYER-WORK out of the combined brain until F2 closes** (the gate-(c) governance eval, `packages/evals`, eval-security track).
 
+## F2 field-fidelity — CLOSED (same session, `0e6b000`)
+
+Continued straight into the residual the multi-served work flagged. The SC5b result redactor (`packages/policy/src/copilot-result-redaction.ts`) dropped foreign hits but forwarded KEPT in-workspace items WHOLE, so a nested foreign ref under a non-scrubbed key could ride along. New pure `allowItemFields` reduces every kept hit / traverse_graph node+edge / timeline entry to allow-listed own-content strings + all numeric/boolean scalars, dropping every array, nested object, and non-allow-listed string. **Schema-agnostic** — dissolved the carry-forward's "needs gbrain's pinned per-op result schema" blocker (unknown scalars survive, unknown containers/ref-strings drop).
+
+- **Dual-reviewer:** security-reviewer found a real **dual-alias-key edge leak** — `EDGE_KEEP_STRINGS = {to,target}` kept both alias keys but `edgeTarget` validates only `to`, so `{to: in-workspace, target: employer-work/secret}` forwarded the unvalidated foreign `target`. Fixed in-slice: edges now emit ONLY the single validated target under a canonical `to`; regression test added. code-quality found the reachable non-record `redactTimeline` fallback (fixed: non-records dropped) + test gaps (link_type-dropped assertion, non-record entry). Both then effectively CLEAR.
+- 29 redaction tests; repo-wide 31/31 (policy 317). Path DORMANT + INERT on single-workspace content.
+
+**Result:** F2 STRUCTURAL is closed. The employer-work guard now rests on **A1** (body-embedded foreign content — NOT runtime-fixable, ingest-time) + the **gate-(c) governance eval** (`packages/evals` — certification).
+
 ## Next (deferred — not blockers)
 
-F2 → gate-(c) eval (the gate before employer-work joins the combined brain); A1 → ingest-time; Option B (per-workspace brains) if per-workspace isolation is ever wanted; prior open items (real Copilot model end-to-end app verification, propose go-live C5.4b, C6 skills).
+A1 → ingest-time (the gate before employer-work joins); gate-(c) governance eval (eval-security track, certification); Option B (per-workspace brains) if per-workspace isolation is ever wanted; prior open items (real Copilot model end-to-end app verification, propose go-live C5.4b, C6 skills).

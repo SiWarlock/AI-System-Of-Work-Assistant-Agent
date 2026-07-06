@@ -13,13 +13,17 @@ Owner picked **Option A** ("fine with a single brain for now"). Landed in 3 slic
 
 **LIVE NOW:** worker-host already has `copilotWorkspaceScoping: true` + `{assign, personal-business}`, so multi-served is ACTIVE on boot. Each of the 3 well-known workspaces reads the brain scoped to itself; only personal-business has content today, so personal-life/employer-work asks read the brain filtered-to-empty (safe, honest "nothing found"). `decideHitScope` keeps `{assign}` sound (unprefixed served only to personal-business).
 
-**How to ADD a workspace's content NOW:** `printf '…' | gbrain put "personal-life/<topic>"` — the `personal-life/` slug prefix attributes it, and multi-served surfaces it the next time you ask personal-life. **personal-life is safe to add. Keep EMPLOYER-WORK content OUT of this combined brain until F2 closes** (see below).
+**How to ADD a workspace's content NOW:** `printf '…' | gbrain put "personal-life/<topic>"` — the `personal-life/` slug prefix attributes it, and multi-served surfaces it the next time you ask personal-life. **personal-life is safe to add. Keep EMPLOYER-WORK content OUT of this combined brain until the A1 residual + the gate-(c) certification eval close** (F2 structural field-fidelity is now CLOSED — see below).
+
+## ✅ F2 field-fidelity — CLOSED at runtime (`0e6b000`, security-reviewer CLEAR for WS-8)
+
+`allowItemFields` in the SC5b redactor (`packages/policy/src/copilot-result-redaction.ts`) reduces EVERY kept hit / traverse_graph node+edge / timeline entry to allow-listed own-content strings + all numeric/boolean scalars, DROPPING every array, nested object, and non-allow-listed string — the structural foreign-ref carriers (a `backlinks`/`related`/`neighbors` array, a nested foreign node, a `related_to` slug string, an edge `snippet`/`excerpt`). Edges emit ONLY the single keepSlug-validated target under a canonical `to` (closes a dual-alias-key leak the reviewer found). **Schema-agnostic** — dissolves the old "needs gbrain's pinned per-op result schema" blocker (unknown scalars survive, unknown containers/ref-strings drop). Dual-reviewer clean; 29 policy redaction tests; repo-wide 31/31. Path DORMANT + INERT on single-workspace content.
 
 ## NEXT (owner-gated / deferred — not blockers)
 
-- **F2 field-fidelity → gate-(c) governance eval** (`packages/evals`, eval-security track): a kept in-workspace hit is forwarded WHOLE, so a nested foreign ref under an un-scrubbed key could ride along. INERT today (single-workspace content). **This is the gate before employer-work joins the combined brain** — until it closes, multi-served's F2/A1 residuals are only theoretically live.
-- **A1 body-embedded foreign content** — ingest-time fix only (KnowledgeWriter classification + per-workspace source partitioning).
-- **Option B (per-workspace brains + serve + routing)** — the stronger-isolation target if you ever want employer-work in the Copilot without the F2 gate; WS-8 by construction, no F2/A1 exposure. Bigger (a supervisor + serve + token + exec per brain). Deferred; single brain is fine per owner.
+- **A1 body-embedded foreign content — the remaining gate before employer-work joins the combined brain.** A kept in-workspace page whose BODY verbatim quotes another workspace (F2 handles structural fields; A1 is prose, so NOT runtime-fixable). Ingest-time fix: KnowledgeWriter classification + per-workspace source partitioning.
+- **gate-(c) governance eval** (`packages/evals`, eval-security track) — CERTIFIES no-cross-workspace-leakage per cataloged read (the proof that F2/A1 hold, not the fix). Coordinate with eval-security.
+- **Option B (per-workspace brains + serve + routing)** — the stronger-isolation target if you ever want employer-work in the Copilot without waiting on A1; WS-8 by construction, no A1 exposure. Bigger (a supervisor + serve + token + exec per brain). Deferred; single brain is fine per owner.
 - Prior deferrals still open: real Copilot model verification end-to-end in the running app; propose go-live (C5.4b real serving oracle + the 5 preconditions); C6 skills (owner-decision-gated).
 
 ## (prior) RESUME context
