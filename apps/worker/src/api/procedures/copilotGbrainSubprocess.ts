@@ -20,7 +20,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { err, isOk, failure } from "@sow/contracts";
 import type { FailureVariant, Result, WorkspaceId } from "@sow/contracts";
-import { decideHitScope } from "@sow/policy";
+import { decideHitScope, descriptorFor } from "@sow/policy";
 import type { ScopeHit, WorkspaceScopeRegistry, LegacyContentPolicy } from "@sow/policy";
 import type { CopilotRetrievalPort, RetrievedContext } from "./copilot";
 import { parseGbrainSearchResult, DEFAULT_GBRAIN_RETRIEVAL_LIMIT } from "./copilotGbrainRetrieval";
@@ -171,6 +171,70 @@ export function createWorkspaceScopeFilter(
     return rawHits.filter(
       (item) => decideHitScope(readRawScopeHit(item), servedWorkspaceId, registry, policy).decision === "keep",
     );
+  };
+}
+
+// ── Option A (single-brain, MULTI-SERVED) — the multi-served retrieval composite ──────────────────────
+
+/** Deps for the MULTI-served retrieval: the shared exec + the WS-8 registry/policy + a fail-closed fallback. */
+export interface MultiServedGbrainRetrievalDeps {
+  /** The gbrain read seam (canned in tests; the real CLI/http exec at boot) — the ONE combined brain. */
+  readonly exec: GbrainQueryExec;
+  /** The scope registry: its descriptors are BOTH the read gate (membership) and the per-hit attribution set. */
+  readonly registry: WorkspaceScopeRegistry;
+  /** The legacy-content policy — `{assign,X}` serves unprefixed content ONLY to X (never crossing workspaces). */
+  readonly policy: LegacyContentPolicy;
+  /** Handles every UNREGISTERED workspace (fixture: fail-closed) — the brain is never read for one. */
+  readonly fallback: CopilotRetrievalPort;
+  /** Max passages per query; defaults to DEFAULT_GBRAIN_RETRIEVAL_LIMIT. */
+  readonly limit?: number;
+}
+
+/**
+ * Build a `CopilotRetrievalPort` that reads the ONE combined gbrain for ANY workspace REGISTERED in the scope
+ * registry, scoping the result PER-REQUEST to that workspace's own content; an UNREGISTERED workspace fails
+ * closed to `fallback` (Option A — single-brain, multi-served). This REPLACES the single-served
+ * `createGbrainSubprocessRetrieval` gate (`workspaceId === servedWorkspaceId`) with registry membership
+ * (`descriptorFor`), so a second workspace's ask reads the brain instead of returning the empty fixture.
+ *
+ * WS-8 (safety rule 4) holds by SCOPE FILTERING, not by construction: the brain is NEVER read unscoped — the
+ * per-request filter (bound to the asked workspace's REGISTRY-authoritative descriptor id, server-derived,
+ * never client input) drops every foreign + legacy-denied + indeterminate hit BEFORE normalize. Because the
+ * filter binds the asked workspace as the served one, `decideHitScope`'s legacy branch keeps `{assign,X}`
+ * sound: unprefixed content is served ONLY to X, never to another asked workspace.
+ *
+ * ⚠ RESIDUALS GO LIVE (INERT today — only personal-business holds content): unlike the single-served path
+ * (WS-8 by construction on a single-workspace brain), multi-served makes the F2 field-fidelity gap (per-op
+ * field allow-listing) and the A1 body-embedded-foreign-content residual REACHABLE for any workspace that
+ * holds real content in the combined brain. Keep employer-work OUT of the combined brain until F2 closes
+ * (the gate-(c) governance eval); see docs/planning/ws8-workspace-scoping.md. Never throws (§16).
+ *
+ * COST NOTE: every REGISTERED workspace's ask now triggers a real `exec` (gbrain read) round-trip — filtering
+ * happens AFTER the read — even a workspace that holds ZERO content in the combined brain today (it just gets
+ * an empty filtered result). The single-served path paid this only for the one served workspace; every other
+ * hit the zero-cost fixture. Accepted tradeoff for multi-served; a per-workspace brain (Option B) would avoid
+ * the empty reads.
+ */
+export function createMultiServedGbrainRetrieval(
+  deps: MultiServedGbrainRetrievalDeps,
+): CopilotRetrievalPort {
+  const limit = deps.limit ?? DEFAULT_GBRAIN_RETRIEVAL_LIMIT;
+  return {
+    retrieve: async (workspaceId, question): Promise<Result<RetrievedContext, FailureVariant>> => {
+      // WS-8 read gate: only a workspace REGISTERED in the scope registry may read the brain. An unregistered
+      // (unknown) workspace fails closed to the fixture fallback — the brain is NEVER read for it (no unscoped
+      // read can escape). `descriptorFor` is a pure membership check; the cast never throws (§16).
+      const descriptor = descriptorFor(deps.registry, workspaceId as WorkspaceId);
+      if (descriptor === undefined) return deps.fallback.retrieve(workspaceId, question);
+      const execResult = await deps.exec(question, limit);
+      if (!isOk(execResult)) return execResult; // the exec builds the typed transport fault
+      // MANDATORY per-request scope filter bound to the REGISTRY-authoritative asked-workspace id (server-
+      // derived — never the raw input). No passthrough branch exists: the combined brain is ALWAYS scoped to
+      // the asked workspace before normalize, so a foreign/legacy-denied hit can never reach its answer.
+      const filter = createWorkspaceScopeFilter(descriptor.workspaceId, deps.registry, deps.policy);
+      const scoped = filter(execResult.value);
+      return parseGbrainSearchResult(workspaceId, normalizeGbrainHits(scoped), limit);
+    },
   };
 }
 

@@ -16,6 +16,7 @@ import { mapCompletionToCandidate } from "../../../src/api/procedures/copilotCla
 import {
   normalizeGbrainHits,
   createGbrainSubprocessRetrieval,
+  createMultiServedGbrainRetrieval,
   createGbrainCliExec,
   createWorkspaceScopeFilter,
   DEFAULT_GBRAIN_COPILOT_WORKSPACE,
@@ -418,5 +419,122 @@ describe("createGbrainSubprocessRetrieval — the scopeFilter runs on RAW hits B
       // employer hit dropped (foreign); legacy kept (assign,served) — no cross-workspace content survives
       expect(r.value.blocks).toEqual(["legacy-ok"]);
     }
+  });
+});
+
+// ── Option A (single-brain, MULTI-SERVED) — createMultiServedGbrainRetrieval ───────────────────────────
+//
+// The multi-served composite: ANY workspace REGISTERED in the scope registry reads the ONE combined brain,
+// scoped PER-REQUEST to its own slug prefix; an UNREGISTERED workspace fails closed to the fallback (the
+// brain is NEVER read unscoped). Replaces the single-served `servedWorkspaceId` gate with registry
+// membership (`descriptorFor`), binding a MANDATORY per-request filter to the asked workspace's descriptor
+// id (server-derived). WS-8 by scope filtering (not by construction), so the F2 field-fidelity + A1
+// body-embedded residuals go LIVE for any workspace holding real combined-brain content (INERT today —
+// only personal-business has content). `decideHitScope`'s legacy branch keeps `{assign,X}` sound: unprefixed
+// content is served ONLY to X, never crossing to another asked workspace.
+describe("createMultiServedGbrainRetrieval — every REGISTERED workspace reads the one brain, scoped to itself (WS-8)", () => {
+  const BUSINESS = workspaceId("personal-business");
+  const REGISTRY: WorkspaceScopeRegistry = {
+    descriptors: [
+      { workspaceId: workspaceId("employer-work"), slugPrefixes: ["employer-work"] },
+      { workspaceId: BUSINESS, slugPrefixes: ["personal-business"] },
+      { workspaceId: workspaceId("personal-life"), slugPrefixes: ["personal-life"] },
+    ],
+  };
+  const ASSIGN_BUSINESS: LegacyContentPolicy = { mode: "assign", toWorkspaceId: BUSINESS };
+  const DENY: LegacyContentPolicy = { mode: "deny" };
+  // Empty fixtures ⇒ the fallback fails closed (WORKSPACE_NOT_FOUND) for ANY workspace — so an UNREGISTERED
+  // workspace (the only path that reaches the fallback under multi-served) is provably fail-closed.
+  const fallback = createFixtureRetrieval({});
+  // One combined brain holding all four kinds of content (three prefixed workspaces + unprefixed legacy).
+  const mixedHits = [
+    gbrainHit("personal-business/notes/x", "pb block", "PB Note"),
+    gbrainHit("personal-life/goals/y", "pl block", "PL Goals"),
+    gbrainHit("employer-work/acme/z", "ew block", "EW Secret"),
+    gbrainHit("sessions/041", "legacy block", "Legacy Session"),
+  ];
+
+  it("served personal-business ({assign,PB}): reads the brain, keeps own + legacy, drops the two foreign workspaces", async () => {
+    const { exec, calls } = fakeExec(ok(mixedHits));
+    const retrieval = createMultiServedGbrainRetrieval({ exec, registry: REGISTRY, policy: ASSIGN_BUSINESS, fallback, limit: 8 });
+    const r = await retrieval.retrieve("personal-business", "q");
+    expect(calls).toEqual([{ question: "q", limit: 8 }]); // the brain IS read for a registered workspace
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.workspaceId).toBe("personal-business"); // the WS-8 self-check anchor
+      expect(r.value.blocks).toEqual(["pb block", "legacy block"]); // own + legacy(assigned to PB); no PL/EW
+      expect(r.value.sources).toEqual([
+        { citationId: "gbrain:personal-business:notes:x", title: "PB Note" },
+        { citationId: "gbrain:sessions:041", title: "Legacy Session" },
+      ]);
+    }
+  });
+
+  it("A DIFFERENT registered workspace (personal-life) ALSO reads the brain, scoped to ITSELF — the multi-served behavior", async () => {
+    const { exec, calls } = fakeExec(ok(mixedHits));
+    const retrieval = createMultiServedGbrainRetrieval({ exec, registry: REGISTRY, policy: ASSIGN_BUSINESS, fallback });
+    const r = await retrieval.retrieve("personal-life", "q");
+    expect(calls).toHaveLength(1); // personal-life now reads the one brain (NOT fixture-fallback)
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.workspaceId).toBe("personal-life");
+      // ONLY personal-life-prefixed content: PB + EW dropped (foreign); legacy dropped (assigned to PB≠PL).
+      expect(r.value.blocks).toEqual(["pl block"]);
+      expect(r.value.sources).toEqual([{ citationId: "gbrain:personal-life:goals:y", title: "PL Goals" }]);
+    }
+  });
+
+  it("served employer-work ({assign,PB}): keeps ONLY employer-prefixed content — legacy is NOT rescued to it", async () => {
+    const { exec } = fakeExec(ok(mixedHits));
+    const retrieval = createMultiServedGbrainRetrieval({ exec, registry: REGISTRY, policy: ASSIGN_BUSINESS, fallback });
+    const r = await retrieval.retrieve("employer-work", "q");
+    expect(isOk(r)).toBe(true);
+    // employer-work sees only its own prefix; the unprefixed legacy is PB-assigned ⇒ LEGACY_NOT_SERVED here.
+    if (isOk(r)) expect(r.value.blocks).toEqual(["ew block"]);
+  });
+
+  it("under {deny}: a served workspace keeps ONLY its own prefixed content (legacy dropped)", async () => {
+    const { exec } = fakeExec(ok(mixedHits));
+    const retrieval = createMultiServedGbrainRetrieval({ exec, registry: REGISTRY, policy: DENY, fallback });
+    const r = await retrieval.retrieve("personal-business", "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.blocks).toEqual(["pb block"]); // legacy DENIED, PL/EW foreign
+  });
+
+  it("UNREGISTERED workspace: fails closed to the fallback and NEVER reads the brain", async () => {
+    const { exec, calls } = fakeExec(ok(mixedHits));
+    const retrieval = createMultiServedGbrainRetrieval({ exec, registry: REGISTRY, policy: ASSIGN_BUSINESS, fallback });
+    const r = await retrieval.retrieve("marketing-team", "q"); // not a registered descriptor
+    expect(calls).toEqual([]); // no brain read for an unregistered workspace
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
+  });
+
+  it("a registered workspace with an exec fault propagates the typed err (retryable)", async () => {
+    const fault = failure("degraded_unavailable", "gbrain read failed", {
+      retryable: true,
+      cause: { code: "GBRAIN_CLI_FAULT" },
+    });
+    const { exec } = fakeExec(err(fault));
+    const retrieval = createMultiServedGbrainRetrieval({ exec, registry: REGISTRY, policy: ASSIGN_BUSINESS, fallback });
+    const r = await retrieval.retrieve("personal-business", "q");
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("GBRAIN_CLI_FAULT");
+  });
+
+  it("a non-array exec payload fails CLOSED (parse malformed) even for a registered workspace", async () => {
+    const { exec } = fakeExec(ok({ not: "array" }));
+    const retrieval = createMultiServedGbrainRetrieval({ exec, registry: REGISTRY, policy: ASSIGN_BUSINESS, fallback });
+    const r = await retrieval.retrieve("personal-business", "q");
+    expect(isErr(r)).toBe(true);
+  });
+
+  it("caps the accepted response at the limit", async () => {
+    const many = Array.from({ length: 20 }, (_v, i) => gbrainHit(`personal-business/${i}`, `block ${i}`, `T${i}`));
+    const { exec } = fakeExec(ok(many));
+    const retrieval = createMultiServedGbrainRetrieval({ exec, registry: REGISTRY, policy: ASSIGN_BUSINESS, fallback, limit: 3 });
+    const r = await retrieval.retrieve("personal-business", "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.blocks).toHaveLength(3);
   });
 });
