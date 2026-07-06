@@ -42,6 +42,7 @@ import type {
 import {
   CLAUDE_AGENT_SDK_RUNTIME_ID,
   COPILOT_MCP_SERVER_NAME,
+  COPILOT_GBRAIN_PROXY_MCP_NAMES,
   createClaudeAgentSdkRuntime,
   createClaudeAgentSdkTransport,
   runtimeError,
@@ -49,6 +50,7 @@ import {
 import type {
   AgentResult,
   AgentQueryFn,
+  CopilotGbrainProxyHandler,
   CopilotProposeToolHandler,
   McpServerConfig,
   RuntimeError,
@@ -63,9 +65,12 @@ import {
   isDeny,
   isMutatingCopilotTool,
 } from "@sow/policy";
+import type { CopilotWorkspaceScope } from "@sow/policy";
 import type { CandidateCopilotAnswer, CopilotSynthesisPort, RetrievedContext } from "./copilot";
 import { handleCopilotProposeToolCall } from "./copilotPropose";
 import type { CopilotProposeSink } from "./copilotPropose";
+import { handleCopilotGbrainToolCall } from "./copilotGbrainProxy";
+import type { CopilotGbrainToolExec } from "./copilotGbrainProxy";
 import {
   buildCopilotUserPrompt,
   mapCompletionToCandidate,
@@ -529,6 +534,22 @@ export interface ClaudeAgentCopilotRunnerDeps {
    * out of this pure module + unit-testable). Present with `proposeSink` ⇒ propose can be granted.
    */
   readonly buildProposeMcpServer?: (handler: CopilotProposeToolHandler) => McpServerConfig;
+  /**
+   * OPTIONAL (SC8, §13.10 gate a) the served workspace's WS-8 scope for the in-process gbrain PROXY. Present
+   * (WITH `gbrainProxyExec` + `buildGbrainProxyMcpServer`) ⇒ a SERVED read job reaches gbrain ONLY through the
+   * proxy, which runs SC5a arg-policing + SC5b result-redaction per call — CLOSING the WS-8 combined-brain
+   * residual noted below. Absent ⇒ today's raw http gbrain server (UNSCOPED; the residual applies). A PARTIAL
+   * config (scope set, exec/factory missing) FAILS CLOSED — it never silently falls back to the unscoped path.
+   */
+  readonly gbrainProxyScope?: CopilotWorkspaceScope;
+  /** OPTIONAL (SC8) the generic gbrain MCP-call exec the proxy handler runs (boot: `createGbrainMcpToolCallExec`). */
+  readonly gbrainProxyExec?: CopilotGbrainToolExec;
+  /**
+   * OPTIONAL (SC8) factory that builds the in-process gbrain-proxy MCP server from a bound tool handler (boot
+   * injects `createCopilotGbrainProxyMcpServer` from @sow/providers). Present with the scope + exec ⇒ the proxy
+   * REPLACES the raw http gbrain server under the SAME `gbrain` map key.
+   */
+  readonly buildGbrainProxyMcpServer?: (handler: CopilotGbrainProxyHandler) => McpServerConfig;
 }
 
 /** The SDK MCP tool name the propose tool is surfaced as (`mcp__copilot__propose_action`). */
@@ -581,15 +602,36 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
       // would otherwise make a build-time trust verdict unsound. Only a NON-propose served job reads gbrain
       // (WS-8: only the served workspace; a non-served workspace runs tool-less).
       if (served && !proposeGranted) {
-        // No token ⇒ no read tools ⇒ fail closed (never run the agent tool-blind or unauthenticated). The
-        // loopback guarantee is TRANSITIVE: `getToken` fails closed (GBRAIN_HTTP_NON_LOOPBACK) for a
-        // non-loopback URL, so the bearer token + workspace content never egress off-box.
-        const token = await deps.getToken();
-        if (!isOk(token)) {
-          return err(runtimeError("auth_unavailable", "gbrain MCP token unavailable", { retryable: true }));
+        if (deps.gbrainProxyScope !== undefined) {
+          // SC8 — the WS-8 PROXY path: the model reaches gbrain ONLY through the in-process proxy, which runs
+          // SC5a arg-policing → the exec → SC5b result-redaction per call, bound to the served workspace scope.
+          // Scoping was INTENDED, so a partial config FAILS CLOSED (never silently drop to the unscoped raw http
+          // server). No token is minted HERE — the exec (the http-grant transport) mints its own, loopback-
+          // guarded, per call.
+          if (deps.gbrainProxyExec === undefined || deps.buildGbrainProxyMcpServer === undefined) {
+            return err(runtimeError("invalid_job", "gbrain proxy scope set without exec/factory", { retryable: false }));
+          }
+          const scope = deps.gbrainProxyScope;
+          const exec = deps.gbrainProxyExec;
+          const handler: CopilotGbrainProxyHandler = (mcpToolName: string, args: unknown) =>
+            handleCopilotGbrainToolCall(mcpToolName, args, { scope, exec });
+          // MAP-KEY CONTRACT (security L2): register under the SAME `gbrain` key so the proxy REPLACES the raw
+          // http entry — `buildGbrainMcpServers` is NOT called on this path, so the model never sees BOTH a
+          // scoped and an unscoped `mcp__gbrain__*` surface.
+          mcpServers[GBRAIN_MCP_SERVER_NAME] = deps.buildGbrainProxyMcpServer(handler);
+          toolNames.push(...COPILOT_GBRAIN_PROXY_MCP_NAMES);
+        } else {
+          // Back-compat (no proxy deps): the raw http gbrain server + the gbrain read allow-list (UNSCOPED — the
+          // WS-8 combined-brain residual noted on this runner applies). No token ⇒ no read tools ⇒ fail closed
+          // (never run the agent tool-blind or unauthenticated). The loopback guarantee is TRANSITIVE: `getToken`
+          // fails closed (GBRAIN_HTTP_NON_LOOPBACK) for a non-loopback URL, so the token + content never egress.
+          const token = await deps.getToken();
+          if (!isOk(token)) {
+            return err(runtimeError("auth_unavailable", "gbrain MCP token unavailable", { retryable: true }));
+          }
+          Object.assign(mcpServers, buildGbrainMcpServers(deps.gbrainMcpUrl, token.value));
+          toolNames.push(...allowedToolNames);
         }
-        Object.assign(mcpServers, buildGbrainMcpServers(deps.gbrainMcpUrl, token.value));
-        toolNames.push(...allowedToolNames);
       }
       if (proposeGranted) {
         const sink = deps.proposeSink; // narrowed by proposeGranted

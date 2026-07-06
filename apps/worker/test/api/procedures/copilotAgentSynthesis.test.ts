@@ -15,16 +15,18 @@
 //   - the real runner's WIRING (token → mcpServers → transport → runtime) with an injected token + queryFn.
 // The real SDK `query()` call is eval/integration-tested, not unit-tested.
 import { describe, it, expect } from "vitest";
-import { ok, err, isOk, isErr, failure, toolId, AgentJobSchema } from "@sow/contracts";
+import { ok, err, isOk, isErr, failure, toolId, workspaceId, AgentJobSchema } from "@sow/contracts";
 import type { AgentJob, ProviderRoute, Result, FailureVariant } from "@sow/contracts";
-import { runtimeError } from "@sow/providers";
-import type { AgentResult, RuntimeError, AgentQueryFn } from "@sow/providers";
+import { runtimeError, COPILOT_GBRAIN_PROXY_MCP_NAMES } from "@sow/providers";
+import type { AgentResult, RuntimeError, AgentQueryFn, CopilotGbrainProxyHandler, McpServerConfig } from "@sow/providers";
 import {
   copilotReadToolIds,
   copilotReadOnlyPolicyIsPure,
   copilotReadToolPolicy,
   copilotAgentToolPolicy,
 } from "@sow/policy";
+import type { CopilotWorkspaceScope } from "@sow/policy";
+import type { CopilotGbrainToolExec } from "../../../src/api/procedures/copilotGbrainProxy";
 import {
   copilotToolToMcpName,
   copilotReadToolMcpNames,
@@ -630,6 +632,137 @@ describe("createClaudeAgentCopilotRunner — the real runner's WIRING (injected 
     // the runner returns a raw RuntimeError; the synthesis layer folds auth_unavailable → COPILOT_AGENT_AUTH.
     expect(r.error.kind).toBe("auth_unavailable");
     expect(queried).toBe(false);
+  });
+});
+
+// ── SC8b (§13.10 gate a) — the runner wires the in-process gbrain PROXY (WS-8), replacing the raw http server ──
+describe("createClaudeAgentCopilotRunner — SC8 gbrain PROXY wiring (WS-8)", () => {
+  const job = buildCopilotAgentJob("personal-business", RUNTIME_ROUTE);
+  const prompt: CopilotPromptContext = { question: "q?", context: ctx() };
+  const SCOPE: CopilotWorkspaceScope = {
+    servedWorkspaceId: workspaceId("personal-business"),
+    registry: {
+      descriptors: [
+        { workspaceId: workspaceId("employer-work"), slugPrefixes: ["employer-work"] },
+        { workspaceId: workspaceId("personal-business"), slugPrefixes: ["personal-business"] },
+      ],
+    },
+    policy: { mode: "assign", toWorkspaceId: workspaceId("personal-business") },
+  };
+
+  /** A spy proxy-server factory: captures the bound handler + returns a marker sdk-server config (no http headers). */
+  function spyProxyServer(): { build: (h: CopilotGbrainProxyHandler) => McpServerConfig; marker: McpServerConfig; handler: () => CopilotGbrainProxyHandler | undefined } {
+    let captured: CopilotGbrainProxyHandler | undefined;
+    const marker = { type: "sdk", name: "gbrain", instance: {} } as unknown as McpServerConfig;
+    return {
+      build: (h) => {
+        captured = h;
+        return marker;
+      },
+      marker,
+      handler: () => captured,
+    };
+  }
+
+  it("wires the PROXY under the gbrain key (replacing raw http), mints NO token, and uses the scoped proxy allow-list", async () => {
+    const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+    const srv = spyProxyServer();
+    let tokenCalls = 0;
+    const exec: CopilotGbrainToolExec = async () => ok({ content: [{ type: "text", text: "[]" }] });
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => {
+        tokenCalls += 1;
+        return ok("tok-abc");
+      },
+      queryFn: cap.fn,
+      gbrainProxyScope: SCOPE,
+      gbrainProxyExec: exec,
+      buildGbrainProxyMcpServer: srv.build,
+    });
+    const r = await runner.run(job, prompt);
+    expect(isOk(r)).toBe(true);
+    expect(tokenCalls).toBe(0); // the proxy exec mints its own per call — the runner does NOT
+    const opts = cap.seen()?.options ?? {};
+    const servers = opts["mcpServers"] as Record<string, { headers?: Record<string, string> }>;
+    // MAP-KEY CONTRACT: the gbrain key holds the PROXY marker, NOT a raw http {headers:{Authorization}} server
+    expect(servers[GBRAIN_MCP_SERVER_NAME]).toBe(srv.marker);
+    expect(servers[GBRAIN_MCP_SERVER_NAME]?.headers).toBeUndefined(); // no raw http entry under the key
+    // the allow-list is EXACTLY the scoped proxy set (query IN; the unscopable find_anomalies OUT)
+    expect(opts["allowedTools"]).toEqual([...COPILOT_GBRAIN_PROXY_MCP_NAMES]);
+    expect(opts["allowedTools"]).toContain("mcp__gbrain__query");
+    expect(opts["allowedTools"]).not.toContain("mcp__gbrain__find_anomalies");
+    expect(typeof srv.handler()).toBe("function"); // a handler was bound to the proxy
+  });
+
+  it("the bound handler is SCOPED: a scope-widening arg is denied by SC5a (the exec is never called)", async () => {
+    const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+    const srv = spyProxyServer();
+    let execCalls = 0;
+    const exec: CopilotGbrainToolExec = async () => {
+      execCalls += 1;
+      return ok({ content: [{ type: "text", text: "[]" }] });
+    };
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => ok("tok-abc"),
+      queryFn: cap.fn,
+      gbrainProxyScope: SCOPE,
+      gbrainProxyExec: exec,
+      buildGbrainProxyMcpServer: srv.build,
+    });
+    await runner.run(job, prompt);
+    const handler = srv.handler();
+    expect(handler).toBeDefined();
+    const out = await handler!("mcp__gbrain__query", { query: "q", all_sources: true }); // widening → SC5a deny
+    expect(execCalls).toBe(0); // denied before any read — proves SC5a/SC5b are bound to the served scope
+    expect(out.content[0]?.text).toBe("[]"); // leak-safe empty
+  });
+
+  it("a PARTIAL proxy config (scope set, factory missing) FAILS CLOSED — never the unscoped raw http path", async () => {
+    const cap = captureQueryFn({ answer: ["x"], citations: [] });
+    let tokenCalls = 0;
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => {
+        tokenCalls += 1;
+        return ok("tok-abc");
+      },
+      queryFn: cap.fn,
+      gbrainProxyScope: SCOPE,
+      gbrainProxyExec: async () => ok({ content: [] }),
+      // buildGbrainProxyMcpServer MISSING → partial config
+    });
+    const r = await runner.run(job, prompt);
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.kind).toBe("invalid_job");
+    expect(tokenCalls).toBe(0); // never fell back to the raw http (token) path
+  });
+
+  it("the OTHER partial permutation (exec missing, factory present) ALSO fails closed", async () => {
+    const cap = captureQueryFn({ answer: ["x"], citations: [] });
+    const srv = spyProxyServer();
+    let tokenCalls = 0;
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => {
+        tokenCalls += 1;
+        return ok("tok-abc");
+      },
+      queryFn: cap.fn,
+      gbrainProxyScope: SCOPE,
+      buildGbrainProxyMcpServer: srv.build,
+      // gbrainProxyExec MISSING → the other half of the OR guard
+    });
+    const r = await runner.run(job, prompt);
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.kind).toBe("invalid_job");
+    expect(tokenCalls).toBe(0);
+    expect(srv.handler()).toBeUndefined(); // the factory was never invoked
   });
 });
 
