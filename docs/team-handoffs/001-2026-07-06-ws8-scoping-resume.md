@@ -1,7 +1,7 @@
 # Handoff 001 — resume the WS-8 scoping build (SC5b → SC6–SC9)
 
 - **Date:** 2026-07-06 · **From session:** `docs/sessions/042-2026-07-06-ws8-scoping-design-sc1-gates-bcd.md`
-- **HEAD:** `6b47192` (SC5b + SC7 + SC8 landed on main; push at close-out). **Gate:** repo-wide `turbo typecheck test` 31/31.
+- **HEAD:** `35b8ad4` (SC5b + SC7 + SC8 landed; `copilotAgentMode` FLIPPED LIVE; push at close-out). **Gate:** repo-wide `turbo typecheck test` 31/31.
 - **Design of record:** `docs/planning/ws8-workspace-scoping.md` (the full survey→design→4-verifier output + BUILD-ORDER VERDICT + OWNER-GATED). **Memory:** `sow-copilot-skill-catalog`, `sow-copilot-real-model-direction`.
 
 ## What is DONE (this session, all pushed + dual-reviewer-clean)
@@ -12,9 +12,15 @@
 - **P1 unit LIVE + INERT** — SC1 core (`a0870bb`, `packages/policy/src/copilot-workspace-scope.ts`) · SC2 filter (`369a3b1`, `apps/worker/.../copilotGbrainSubprocess.ts`) · SC3 boot (`8092d80`) · **flipped live** (`12ea650`, worker-host `copilotWorkspaceScoping:true` + `{assign,personal-business}`). On today's single-workspace brain every hit is kept — no change to Copilot output; enforcement live for future prefixed/multi-workspace content.
 - **P2 layer built + DORMANT** (behind `copilotAgentMode` OFF) — SC4 catalog narrowing (`2795a7d`, `copilotScopedReadToolIds`) · SC5a arg policer (`ef369f6`, `packages/policy/src/copilot-arg-policy.ts`) · **SC5b result redactor DONE (`fffd78d`, `packages/policy/src/copilot-result-redaction.ts`)** — `redactGbrainToolResult` folds A2/A3/A4 + fail-closed drop-all; dual-reviewer clean, F1 (non-array `links` fail-OPEN → neutralized to `[]`) + F3 (unscopable op DROPS-ALL on a non-partitioned brain via `copilotToolScopingClass`, mirrors SC5a M2) fixed in-slice; 22 tests; repo-wide 31/31. **⚠ F2 CARRY-FORWARD → gate-(c) eval:** per-op FIELD allow-listing of kept hits/nodes (nested foreign refs under non-`links` keys) needs gbrain's pinned per-op result schema; documented in-code, not reachable today.
 
-## RESUME HERE → the `copilotAgentMode` flip is OWNER-GATED (the runtime WS-8 path is COMPLETE)
+## RESUME HERE → make the agentic TOOLS functional (transport unification) + the multi-workspace WS-8 gaps
 
-The whole runtime WS-8 tool path is BUILT + dormant behind `copilotAgentMode`: SC5a args + SC5b results (pure guards) + SC7 proxy (composes them) + SC8 wiring (the runner reaches gbrain ONLY through the scoped proxy). **SC6 DECIDED-OUT** (SDK: PostToolUse result-replacement unconfirmed). **SC9 REASSESSED-OUT (do NOT build as spec'd).**
+**`copilotAgentMode` is FLIPPED LIVE** (`35b8ad4`, owner-instructed): the runtime WS-8 tool path (SC5a+SC5b+SC7+SC8) is ACTIVE — Copilot synthesis is now the tool-enabled agent, tools routed ONLY through the scoped proxy. WS-8-safe today (single-workspace brain ⇒ scoping + F2 inert); fails closed if `serve --http` unreachable.
+
+**NEXT (to make the tools actually work end-to-end) = transport unification:** the agentic tools use the http-grant transport (`createGbrainMcpToolCallExec`) while P1 retrieval still uses the `gbrain call query` CLI (`createGbrainCliExec`); gbrain's PGlite is single-connection, so `serve --http` running ⇔ the CLI blocks on the DB lock. **Fix: wire `createGbrainHttpExec` into the retrieval composite in `boot.ts` (replacing `createGbrainCliExec`) — the retrieval port already injects a `GbrainQueryExec` and `createGbrainHttpExec` IS one; behind the existing flags.** Then both retrieval + tools share one `serve --http` (one DB connection, no contention). Also requires `gbrain serve --http` to actually be running in the deployment (worker-host doesn't start it — an operational precondition to resolve).
+
+**Then the MULTI-workspace WS-8 hardening (only bites once the brain holds >1 workspace):** the **F2** field-fidelity gap (per-op field allow-listing pinned to gbrain's real result schema → the gate-(c) governance eval, `packages/evals`) + the **A1** body-embedded residual (ingest-time). Both are INERT on today's single-workspace brain.
+
+**Prior decisions (for context):** **SC6 DECIDED-OUT** (SDK: PostToolUse result-replacement unconfirmed). **SC9 REASSESSED-OUT (do NOT build as spec'd).**
 
 **⚠ SC9 finding (why it was dropped):** the originally-planned admission backstop — "reject an agentic job whose allow-list holds an `unscopable` tool on a non-partitioned brain" — is **mis-targeted**. An agentic job's `toolPolicy.allowedTools` is `copilotReadToolIds()` = the **FULL read catalog INCLUDING the unscopable tools** (it is the ING-7 mutating-classification surface, NOT the exposure set), so that check would reject **every** agentic job. The unscopable vector is correctly defended at the SDK-exposure layer at **4 points already**: SC4 `copilotScopedReadToolIds(false)` narrows the read set · SC8b drives the SDK allow-list from the fixed 5-op `COPILOT_GBRAIN_PROXY_MCP_NAMES` (never an unscopable op) · SC5a arg-denies · SC5b result-drops-all. A job-policy admission check adds nothing.
 

@@ -100,7 +100,17 @@ On close inspection of `admitCopilotAgentJob` + the job policy, the originally-p
 
 The unscopable vector is correctly defended at the **SDK-exposure layer**, at 4 points already: **SC4** `copilotScopedReadToolIds(false)` narrows the read set → **SC8b** drives the SDK allow-list from the fixed 5-op `COPILOT_GBRAIN_PROXY_MCP_NAMES` (structurally never an unscopable op) → **SC5a** arg-denies unscopable (M2) → **SC5b** result-drops-all unscopable (F3). A job-policy admission check adds nothing.
 
-**⇒ SC9 dropped; the runtime WS-8 arc is COMPLETE.** The remaining step — the `copilotAgentMode` flip — is an **OWNER decision (security-review-gated), not a code slice**. Owner-facing gaps to clear first: the **F2 field-fidelity carry-forward** (per-op field allow-listing pinned to gbrain's real result schema → the gate-(c) governance eval) and the **A1 body-embedded residual** (ingest-time). The only non-redundant admission-layer candidate, if the owner wants one, is a scope-resolution consistency check — but SC8b's fail-closed wiring + the served-workspace-only rule largely cover it; propose, don't build speculatively.
+**⇒ SC9 dropped; the runtime WS-8 arc is COMPLETE.**
+
+## copilotAgentMode FLIPPED LIVE (`35b8ad4`, owner-instructed "do it")
+
+With `copilotRealModel` + `copilotWorkspaceScoping` already ON, adding `copilotAgentMode: true` to `apps/desktop/worker-host/index.ts` switches Copilot synthesis to the tool-enabled agent — Sonnet 5 may call the gbrain READ tools mid-answer, routed ONLY through the scoped in-process proxy (SC5a→read→SC5b). The whole runtime WS-8 path is now ACTIVE. Repo-wide 31/31.
+
+**Why it's safe today:** the served brain is single-workspace (all personal-business), so the WS-8 scoping + the F2 field-fidelity residual are INERT (no foreign workspace exists to leak) — exactly like the P1 flip. Fails closed if `gbrain serve --http` is unreachable (the proxy exec returns empty, never a leak). Reversible (remove the one line).
+
+**⚠ Operational follow-up (surfaced, not hidden) — to make the agentic TOOLS actually functional end-to-end:** the tools use the http-grant transport (`createGbrainMcpToolCallExec`) while P1 retrieval still uses the `gbrain call query` CLI (`createGbrainCliExec`); gbrain's PGlite is single-connection, so a running `serve --http` and the CLI contend for the DB lock (`serve` off ⇒ tools inert / answers from seed; `serve` on ⇒ tools work but CLI retrieval degrades). Clean fix = wire `createGbrainHttpExec` into the retrieval composite in `boot.ts` (replacing `createGbrainCliExec` — the retrieval port already injects a `GbrainQueryExec` and `createGbrainHttpExec` IS one) so both share one `serve --http`; plus ensure `serve --http` actually runs in the deployment.
+
+**⚠ Multi-workspace WS-8 hardening (INERT today; bites once the brain holds >1 workspace):** F2 field-fidelity (per-op field allow-listing pinned to gbrain's real result schema → the gate-(c) governance eval) + A1 body-embedded residual (ingest-time).
 
 ## Open follow-ups (NEXT) — full detail in `docs/team-handoffs/001-2026-07-06-ws8-scoping-resume.md`
 
