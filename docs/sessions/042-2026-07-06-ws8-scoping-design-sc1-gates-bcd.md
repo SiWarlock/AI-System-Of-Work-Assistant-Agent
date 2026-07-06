@@ -3,7 +3,7 @@
 - **Date:** 2026-07-06 · **Mode:** single-operator (build + docs, ultracode) · **Tracks:** policy · docs
 - **Predecessor:** `041-2026-07-06-skill-catalog-canonical-docs-audit.md`
 - **Successor:** _(next session)_
-- **HEAD at close:** `a0870bb` (pushed to origin/main). Session arc: `cf2e973` → `a0870bb`.
+- **HEAD at close:** `369a3b1`+ (pushed to origin/main). Session arc: `cf2e973` → SC2 + doc reconcile.
 - **Gate at close:** repo-wide `turbo typecheck test` **31/31** green; all code slices dual-reviewer-clean.
 
 ## Why this session existed
@@ -15,6 +15,11 @@ Continued the owner's §13.10 go-live work. NEXT-item 2 (the four `copilotAgentM
 - **`245e4fd` — gate (d): de-phantom the Copilot read-tool catalog.** Empirically probed live gbrain **v0.35.1** (`serve --http --enable-dcr`, DCR→token→`tools/list`+`tools/call`). Renamed `gbrain.graph`→`traverse_graph`, `gbrain.timeline`→`get_timeline` (real read tools); pruned `schema_read`/`contained_synthesis` (no live tool) + `health` (real op `get_health` requires ADMIN scope, unreachable to the read-pinned DCR client). Established **servable-under-read-scope** as a catalog precondition; fail-safe preserved. Dual-reviewer clean (0 crit/high/med; 1 quality MEDIUM folded — narrowed the `search`→`query` exception comment; swapped an arbitrary phantom test fixture).
 - **`eca4760` — docs: reconcile plan/runbook/catalog for gates (b)/(c)/(d).** NEW §13.10 section in `docs/runbooks/copilot-propose-go-live.md` (the authority for all four gates in ladder order); plan §13.10 gate line + §13.11 cross-doc note; `docs/planning/copilot-skill-catalog.md` de-phantomed.
 - **`a0870bb` — gate (a) SC1: the WS-8 workspace-scope core** (`packages/policy/src/copilot-workspace-scope.ts`). `attributeSlug` (segment-wise longest-prefix, boundary-correct + traversal-fail-closed), `attributeHit` (source_id-first/slug), `decideHitScope` (keep/drop under served workspace + `LegacyContentPolicy`), `WorkspaceScopeRegistry` (split-ready descriptor). 27 tests. Dual-reviewer clean (security 0 crit/high/med — fail-closed on every attacked axis; quality 2 mediums folded — tie-reset + multi-prefix + empty-prefix regression tests). Design durable in `docs/planning/ws8-workspace-scoping.md`.
+- **`369a3b1` — gate (a) SC2: the P1 WS-8 scope filter** (`apps/worker/src/api/procedures/copilotGbrainSubprocess.ts`). `createWorkspaceScopeFilter` + optional `scopeFilter?` on `createGbrainSubprocessRetrieval`, applied over the RAW hits BEFORE `normalizeGbrainHits` (both the subprocess AND http transports flow through this ONE composite). Fail-closed `readRawScopeHit`; non-array passthrough. DORMANT (not yet at the live composite — SC3). Dual-reviewer clean (security PASS on all 6 WS-8 attack axes, 0 crit/high/med; quality typeof-guard hardening folded). 662 worker tests green.
+
+## Build-order decision (owner-delegated) — RUNTIME-FIRST
+
+The owner delegated the ingest-first-vs-runtime-first call to me ("do what's most architecturally correct… if 2 is correct before 1 then do 2 then 1, otherwise do 1") + picked `{assign, personal-business}`. A focused survey of the concrete ingest→gbrain→retrieval path settled it: **ingest-attribution is INERT today** — the KnowledgeWriter→gbrain reindex is a stub (`createStubIndexApplyClient`), the KW commit path runs only under degraded/unregistered Temporal workflows, and the Copilot reads a **separately hand-seeded, unprefixed brain** (session-032 `gbrain import docs/`, bypassing KnowledgeWriter) that ingest attribution cannot retroactively re-slug. Per-workspace `source_id` is an owner-run gbrain migration; no authoritative registry populates slug-prefixes. **Verdict: runtime-first (SC2–SC9); ingest-attribution is the documented EXIT from the assign-bridge** (needs de-stubbing KW→gbrain + a re-seed). Full survey verdict in `docs/planning/ws8-workspace-scoping.md` "BUILD-ORDER VERDICT".
 
 ## Gate (b) — the empirical serve --http finding (verified, no code)
 

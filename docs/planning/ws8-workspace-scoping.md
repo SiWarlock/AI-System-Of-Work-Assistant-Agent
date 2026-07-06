@@ -57,6 +57,24 @@ Inject an optional `scopeFilter` into `GbrainSubprocessRetrievalDeps` and apply 
 3. SC4–SC9 — P2 (all under `copilotAgentMode` OFF). **Fold in the A2/A3/A4 fixes** as SC5 requirements (edge+target filtering; fail-closed far-side; server-side field-stripping).
 4. Flagged future work (other tracks / owner-run): Appendix-A frozen truth-pass (contracts); the ingest-side attribution rule (knowledge — **the real WS-8 enabler + the only A1 mitigation**); the legacy-migration runbook (docs, human-run); the workspace-leakage governance eval (eval-security); the SDK-0.3.201 conformance test; `WorkspaceConfigRepository`; Global-scope via the GCL Visibility-Gate union.
 
+## BUILD-ORDER VERDICT (owner delegated the call; session 042) — RUNTIME-FIRST
+
+The owner asked for the architecturally-correct order: ingest-attribution-first (option 2) if correct before the runtime layer, else runtime-first (option 1); legacy posture = `{assign, personal-business}`. A focused survey of the concrete ingest→gbrain→retrieval data path (session 042) settled it:
+
+- **KnowledgeWriter writes a FLAT slug** straight from `NoteCreate.path`; no workspace prefix, no `ws:` tag; `workspaceId` is present at the write site but unused for attribution (`writer.ts`). The ws-prefix rule is *mechanically* buildable there — but landing it changes nothing the Copilot sees, because…
+- **The KW→gbrain reindex is a STUB** (`createStubIndexApplyClient`, `backends.ts:725` — a no-op in-memory ACK; the "REAL-SDK INJECTION POINT" is unfilled), AND the KW commit path runs only under Temporal workflows that are **degraded/unregistered** in the running app.
+- **The Copilot reads a SEPARATE, hand-seeded brain** (session-032 `gbrain import docs/`, bypassing KnowledgeWriter) whose slugs are the repo's `docs/…`/`packages/…` paths — NOT ws-prefixed. Ingest attribution cannot retroactively re-slug an already-seeded brain; only a re-seed can.
+- **Per-workspace `source_id` (Phase B) is absent** (no `sources_add`-per-workspace, no `source_id` on the query seam) and is a config + **owner-run gbrain migration** (writes to gbrain), not a code task.
+- **No authoritative registry** populates slug-prefixes today (`WELL_KNOWN_COPILOT_WORKSPACES` = `{id,type}` only; `Workspace.markdownRepoPath`/`gbrainBrainId` unpopulated; `WorkspaceConfigRepository` unseeded).
+
+**Verdict:** ingest-attribution is currently INERT — it presupposes a de-stubbed KW→gbrain pipeline **and** a re-seed the runtime filter does not need. The runtime layer is the ONLY thing that can enforce WS-8 over the brain the Copilot actually reads today, and `{assign, personal-business}` is purpose-built for exactly this single-workspace state. **So: runtime SC2–SC9 (assign-bridge) FIRST; ingest-attribution + per-workspace sourcing later, as the documented EXIT from the assign-bridge, once the reindex stub is replaced and the served brain is (re)built from KnowledgeWriter output.**
+
+### Build progress (session 042)
+- **SC1 DONE** (`a0870bb`) — the pure scope core (`packages/policy/src/copilot-workspace-scope.ts`).
+- **SC2 DONE** (`369a3b1`) — the P1 scope filter over the raw gbrain hits (`createWorkspaceScopeFilter` + `scopeFilter?` on the composite; both transports flow through it). Dual-reviewer clean. **DORMANT — not yet constructed at the live composite (that is SC3).**
+- **SC3 NEXT** — boot wiring: build the interim registry (the 3 well-known workspaces → slug-prefixes, since no authoritative source exists yet) + thread `createWorkspaceScopeFilter(served, registry, {assign,personal-business})` into `buildCopilotDeps`→`createGbrainSubprocessRetrieval`, behind a default-OFF `copilotWorkspaceScoping` flag. NOTE: on today's brain this is functionally inert (all content is personal-business legacy, all kept) — it lands the mechanism live+tested, not observable enforcement.
+- **SC4–SC9** — the dormant P2 agentic layer (behind `copilotAgentMode`); SC5 must fold in the A2/A3/A4 result-leakage fixes.
+
 ## OWNER-GATED decisions (must NOT be picked on the owner's behalf)
 
 1. **The A1 residual (NEW, load-bearing):** accept that runtime slug-scoping does NOT fully satisfy WS-8 over one combined brain (body-embedded foreign content leaks until ingest-time attribution + source partitioning exist), OR treat A1 as a hard blocker and require the ingest rule + per-workspace source partitioning BEFORE flipping `copilotAgentMode`.
