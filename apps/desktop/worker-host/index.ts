@@ -12,6 +12,7 @@
 // `process.parentPort.postMessage`/`.on("message")` (a small, isolated change).
 import { boot } from "@sow/worker";
 import type { SessionTokenValue } from "@sow/policy";
+import { workspaceId } from "@sow/contracts";
 
 /** The launch config main injects over the child IPC channel. */
 interface WorkerHostConfig {
@@ -60,6 +61,17 @@ async function start(config: WorkerHostConfig): Promise<void> {
       // single local brain). Needs VOYAGE_API_KEY in the worker env + `gbrain` on PATH (else it fails
       // closed). To turn OFF (back to the fixture stub), remove this line.
       copilotGbrainRetrieval: true,
+      // §13.10 gate (a) — WS-8 per-workspace scoping of the served brain, LIVE. The P1 retrieval now filters
+      // every raw gbrain hit to the served workspace (foreign + legacy-denied dropped) before synthesis.
+      // Posture (owner-chosen): {assign, personal-business} — legacy/unprefixed content is served ONLY to the
+      // served personal-business workspace, never crossing to another. On TODAY's single-workspace brain (all
+      // content is personal-business) this is INERT (every hit kept), so it does not change what the Copilot
+      // returns — it activates the enforcement mechanism so future prefixed / multi-workspace content is scoped.
+      // ⚠ The {assign} bridge is sound ONLY while the brain holds a single workspace's unprefixed content; do
+      // NOT save non-personal-business content unprefixed while it is on (see docs/runbooks + ws8-workspace-scoping).
+      // To turn OFF (back to unfiltered passthrough), remove these two lines.
+      copilotWorkspaceScoping: true,
+      copilotLegacyContentPolicy: { mode: "assign", toWorkspaceId: workspaceId("personal-business") },
       // No-op dispatch stubs — a first render triggers neither path (no jobs/approvals yet).
       triageDispatch: (input) =>
         Promise.resolve({ ok: true, value: { idempotencyKey: input.idempotencyKey } }),
