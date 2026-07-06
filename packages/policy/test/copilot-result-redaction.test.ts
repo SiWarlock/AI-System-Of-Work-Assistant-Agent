@@ -243,3 +243,137 @@ describe("redactGbrainToolResult — the P2 WS-8 result guard (pure; never retur
     }
   });
 });
+
+// ── F2 FIELD-FIDELITY (gate-(c) closure) — a KEPT in-workspace item is reduced to its OWN-content strings +
+//    scalars; every structural foreign-ref carrier (a nested object, an array of refs, a foreign-slug string
+//    under a non-allow-listed key, a free-text field beyond the scrubbed `context`) is DROPPED. Schema-agnostic:
+//    unknown scalars survive harmlessly, unknown containers/strings drop — so it needs NO pinned gbrain schema.
+describe("redactGbrainToolResult — F2 field-fidelity (kept items reduced to own-content + scalars)", () => {
+  it("search: a kept hit's foreign-ref CONTAINERS (backlinks array, nested neighbor, related_to string) are STRIPPED; own-content + scalars survive", () => {
+    const hit = {
+      slug: "personal-business/a",
+      title: "A",
+      chunk_text: "my in-workspace content",
+      score: 0.9, // scalar — kept
+      stale: false, // scalar — kept
+      backlinks: ["employer-work/secret1", "employer-work/secret2"], // foreign-ref ARRAY → strip
+      neighbor: { slug: "employer-work/near", title: "foreign neighbour" }, // nested OBJECT → strip
+      related_to: "employer-work/x", // non-allow-listed foreign-ref STRING → strip
+      source_id: "default", // non-allow-listed string → strip (not needed downstream)
+    };
+    const r = redactGbrainToolResult("mcp__gbrain__query", env([hit]), scope);
+    expect(r.failClosed).toBe(false);
+    const kept = parseOut(r.output) as Array<Record<string, unknown>>;
+    expect(kept.length).toBe(1);
+    const h = kept[0]!;
+    expect(h["slug"]).toBe("personal-business/a");
+    expect(h["title"]).toBe("A");
+    expect(h["chunk_text"]).toBe("my in-workspace content");
+    expect(h["score"]).toBe(0.9);
+    expect(h["stale"]).toBe(false);
+    // every structural foreign-ref carrier stripped
+    expect(h["backlinks"]).toBeUndefined();
+    expect(h["neighbor"]).toBeUndefined();
+    expect(h["related_to"]).toBeUndefined();
+    expect(h["source_id"]).toBeUndefined();
+    // no foreign content anywhere in the serialized output
+    expect(JSON.stringify(r.output)).not.toContain("employer-work");
+  });
+
+  it("get_recent_salience: same field-fidelity reduction (a nested foreign ref cannot ride along on a kept hit)", () => {
+    const hit = { slug: "personal-business/a", title: "A", emotional_weight: 0.7, refs: [{ slug: "employer-work/leak" }] };
+    const r = redactGbrainToolResult("mcp__gbrain__get_recent_salience", env([hit]), scope);
+    const h = (parseOut(r.output) as Array<Record<string, unknown>>)[0]!;
+    expect(h["slug"]).toBe("personal-business/a");
+    expect(h["emotional_weight"]).toBe(0.7); // scalar kept
+    expect(h["refs"]).toBeUndefined(); // foreign-ref array stripped
+    expect(JSON.stringify(r.output)).not.toContain("employer-work");
+  });
+
+  it("traverse_graph: a kept node's NON-`links` container (backlinks) is stripped; a kept edge's NON-`context` foreign string (snippet) is stripped", () => {
+    const nodes = [
+      {
+        slug: "personal-business/root",
+        title: "root",
+        depth: 0, // scalar kept
+        backlinks: ["employer-work/foreign-backlink"], // node-level foreign ARRAY beyond `links` → strip
+        neighbors: [{ slug: "employer-work/n" }], // node-level foreign array of objects → strip
+        links: [
+          { to: "personal-business/child", link_type: "ref", context: "ctx", snippet: "SECRET quote from employer-work/leak" },
+        ],
+      },
+    ];
+    const r = redactGbrainToolResult("mcp__gbrain__traverse_graph", env(nodes), scope);
+    expect(r.failClosed).toBe(false);
+    const node = (parseOut(r.output) as Array<Record<string, unknown>>)[0]!;
+    expect(node["slug"]).toBe("personal-business/root");
+    expect(node["depth"]).toBe(0);
+    expect(node["backlinks"]).toBeUndefined(); // node-level foreign array stripped (F2)
+    expect(node["neighbors"]).toBeUndefined();
+    const links = node["links"] as Array<Record<string, unknown>>;
+    expect(links.length).toBe(1);
+    expect(links[0]!["to"]).toBe("personal-business/child"); // in-workspace target ref kept (canonical `to`)
+    expect(links[0]!["context"]).toBeUndefined(); // A2 (already)
+    expect(links[0]!["snippet"]).toBeUndefined(); // F2 — non-allow-listed edge free-text stripped
+    expect(links[0]!["link_type"]).toBeUndefined(); // F2 — relationship label dropped (safety over fidelity)
+    expect(JSON.stringify(r.output)).not.toContain("employer-work");
+  });
+
+  it("traverse_graph: an edge with BOTH `to` (in-workspace) and a foreign `target` ALIAS forwards ONLY the validated target (no alias leak)", () => {
+    // edgeTarget validates the FIRST target key (`to`); keeping a raw second alias `target` would forward a
+    // foreign slug. The canonical re-emit under `to` drops the unvalidated alias.
+    const nodes = [
+      { slug: "personal-business/root", links: [{ to: "personal-business/child", target: "employer-work/secret-project" }] },
+    ];
+    const r = redactGbrainToolResult("mcp__gbrain__traverse_graph", env(nodes), scope);
+    expect(r.failClosed).toBe(false);
+    const node = (parseOut(r.output) as Array<Record<string, unknown>>)[0]!;
+    const links = node["links"] as Array<Record<string, unknown>>;
+    expect(links.length).toBe(1);
+    expect(links[0]!["to"]).toBe("personal-business/child"); // the validated target, canonicalized
+    expect(links[0]!["target"]).toBeUndefined(); // the UNVALIDATED foreign alias key is dropped
+    expect(JSON.stringify(r.output)).not.toContain("employer-work");
+  });
+
+  it("get_timeline: a NON-record entry (bare string / array that could carry a foreign ref) is DROPPED, never forwarded raw", () => {
+    const entries = ["employer-work/leak-string", { date: "2026-01-01", summary: "ok" }, ["employer-work/arr"]];
+    const r = redactGbrainToolResult("mcp__gbrain__get_timeline", env(entries), scope);
+    expect(r.failClosed).toBe(false);
+    expect(r.dropped).toBe(2); // the bare string + the array are dropped (non-records)
+    const kept = parseOut(r.output) as Array<Record<string, unknown>>;
+    expect(kept.length).toBe(1);
+    expect(kept[0]!["summary"]).toBe("ok");
+    expect(JSON.stringify(r.output)).not.toContain("employer-work");
+  });
+
+  it("get_timeline: an entry's foreign-ref CONTAINERS are stripped; own-content (date/summary/detail/source) survives", () => {
+    const entries = [
+      {
+        date: "2026-01-01",
+        summary: "s",
+        detail: "d",
+        source: "note",
+        related_pages: ["employer-work/x"], // foreign-ref array → strip
+        meta: { ref: "employer-work/y" }, // nested object → strip
+      },
+    ];
+    const r = redactGbrainToolResult("mcp__gbrain__get_timeline", env(entries), scope);
+    expect(r.failClosed).toBe(false);
+    const e = (parseOut(r.output) as Array<Record<string, unknown>>)[0]!;
+    expect(e["date"]).toBe("2026-01-01");
+    expect(e["summary"]).toBe("s");
+    expect(e["detail"]).toBe("d");
+    expect(e["source"]).toBe("note");
+    expect(e["related_pages"]).toBeUndefined();
+    expect(e["meta"]).toBeUndefined();
+    expect(JSON.stringify(r.output)).not.toContain("employer-work");
+  });
+
+  it("does not over-strip: an all-scalar-and-own-content hit passes through with all its safe fields", () => {
+    const hit = { slug: "personal-business/a", title: "A", chunk_text: "body", summary: "sum", score: 0.5, page_id: 7, chunk_index: 2 };
+    const r = redactGbrainToolResult("mcp__gbrain__query", env([hit]), scope);
+    const h = (parseOut(r.output) as Array<Record<string, unknown>>)[0]!;
+    // own-content strings + all numeric scalars survive (nothing structural to drop)
+    expect(h).toEqual({ slug: "personal-business/a", title: "A", chunk_text: "body", summary: "sum", score: 0.5, page_id: 7, chunk_index: 2 });
+  });
+});

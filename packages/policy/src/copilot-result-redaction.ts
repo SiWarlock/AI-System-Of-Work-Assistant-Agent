@@ -13,7 +13,11 @@
 //   • A4 (find_contradictions) — strip `resolution_command` and every page/title-naming field; keep only
 //     severity / axis / confidence + opaque in-workspace slug refs.
 // Everything else (search / get_recent_salience) is a generic per-hit slug filter. get_timeline is an
-// in-workspace-seed passthrough (SC5a already denied a foreign seed; entries carry no re-attributable slug).
+// in-workspace-seed read (SC5a already denied a foreign seed; entries carry no re-attributable slug).
+//   • F2 (field-fidelity) — EVERY kept item (hit, traverse_graph node/edge, timeline entry) is reduced to its
+//     own-content strings + scalars via `allowItemFields`; every structural foreign-ref carrier (a nested
+//     object, an array of refs, a foreign-slug string under a non-allow-listed key, an edge free-text beyond
+//     the scrubbed `context`) is DROPPED. Schema-agnostic, so it needs no pinned per-op gbrain result schema.
 // An `unscopable` whole-brain op (find_experts/anomalies/orphans, takes_*, code_*) has no per-item slug, so on
 // a NON-partitioned brain the redactor DROPS-ALL independently (mirrors SC5a's M2) — a genuine last-line guard
 // that never leans on SC4's allow-list or SC5a's arg deny having kept it out.
@@ -109,6 +113,49 @@ function sideSlug(side: unknown): string {
   return "";
 }
 
+// ── F2 field-fidelity — reduce a KEPT item to own-content strings + scalars (gate-(c) closure) ─────────
+
+/** A kept hit/node's own-content STRING fields (identity + body). Any OTHER string is a potential foreign ref. */
+const HIT_KEEP_STRINGS: ReadonlySet<string> = new Set(["slug", "title", "chunk_text", "summary", "content", "text"]);
+/**
+ * A kept EDGE keeps NO raw strings. Its single VALIDATED in-workspace target is re-added canonically under `to`
+ * (see `redactNodeLinks`), so every edge string drops: `context`/`snippet` free-text, relationship labels, AND
+ * an UNVALIDATED `target`/`to` ALIAS key (`edgeTarget` scope-checks only ONE key, so keeping a raw second alias
+ * could forward a foreign slug — the dual-alias-key leak). Scalars still pass (they carry no ref).
+ */
+const EDGE_KEEP_STRINGS: ReadonlySet<string> = new Set<string>();
+/**
+ * A get_timeline entry's own-content strings. A container / other-string (a structural foreign ref) drops. These
+ * kept strings (`summary`/`detail`/`source`/`title`) are user-authored free-text, so — like a hit's `chunk_text`
+ * body — they carry the ACCEPTED A1 residual (own text may NAME another workspace); A1 is an ingest-time fix, not
+ * F2's structural-carrier surface. Timeline has NO per-entry slug to attribute, so nothing more can be validated here.
+ */
+const TIMELINE_KEEP_STRINGS: ReadonlySet<string> = new Set(["date", "summary", "detail", "source", "title"]);
+
+/**
+ * F2 FIELD-FIDELITY — reduce a KEPT (already scope-attributed in-workspace) item to a WS-8-safe field set: keep
+ * the allow-listed OWN-content STRINGS + EVERY numeric/boolean scalar (a number/boolean cannot encode a
+ * followable foreign ref or raw foreign body), and DROP every array, every nested object, and every
+ * non-allow-listed string — the structural foreign-ref carriers (a `backlinks`/`related`/`neighbors` array, a
+ * nested foreign node, a `related_to` slug string, a foreign-quoting `snippet`/`excerpt` beyond the scrubbed
+ * `context`). This closes the F2 residual the module noted (a kept item was forwarded WHOLE).
+ *
+ * SCHEMA-AGNOSTIC by design: an unknown scalar survives harmlessly, an unknown container/string drops — so it
+ * needs NO pinned per-op gbrain result schema (the blocker the carry-forward named), and it is ROBUST to gbrain
+ * adding fields (a new ref field drops; a new number survives). Keeping scalars is sound: a bare number/boolean
+ * is not raw content and is not a ref the scoped tools can dereference (they take slug/query, and any result is
+ * re-scoped). Pure; builds a NEW object (no mutation).
+ */
+function allowItemFields(item: Record<string, unknown>, keepStrings: ReadonlySet<string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(item)) {
+    if (typeof v === "number" || typeof v === "boolean") out[k] = v;
+    else if (typeof v === "string" && keepStrings.has(k)) out[k] = v;
+    // arrays, nested objects, null/undefined, and non-allow-listed strings ⇒ DROPPED (foreign-ref carriers)
+  }
+  return out;
+}
+
 /**
  * Scope a gbrain tool RESULT to the served workspace, folding A2/A3/A4. Pure; never throws; never returns null.
  * @param mcpToolName the live MCP tool name (e.g. `mcp__gbrain__query`); a non-gbrain/mutating/unknown name fail-closes.
@@ -150,28 +197,37 @@ export function redactGbrainToolResult(
     case "get_timeline":
       return redactTimeline(parsed);
     default:
-      // search / get_recent_salience and any other slug-keyed read: generic per-hit filter.
-      // ⚠ FIELD-FIDELITY CARRY-FORWARD (docs/planning/ws8-workspace-scoping.md, gate-(c) eval): a KEPT
-      // in-workspace hit/node is forwarded whole. Nested foreign slug refs under keys OTHER than the ones
-      // scrubbed here (traverse_graph `links[].to`/`target` + edge `context`) — e.g. a `backlinks`/`related`
-      // array, or an edge free-text field named `snippet`/`excerpt` rather than `context` — would survive.
-      // Tightening to a per-op FIELD ALLOW-LIST needs gbrain's PINNED per-op result schema (over-aggressive
-      // whitelisting strips legit in-workspace body); it is deferred to the schema-pinned gate-(c) governance
-      // eval and is NOT reachable today (SC4 allow-list + SC5a arg policer gate the surface; module dormant).
+      // search / get_recent_salience and any other slug-keyed read: generic per-hit filter + F2 field-fidelity
+      // (a kept hit is reduced to own-content + scalars, so a nested foreign ref cannot ride along — the
+      // carry-forward the module used to name here is now CLOSED by `allowItemFields`, schema-agnostically).
       return redactHitCollection(parsed, scope);
   }
 }
 
-/** Generic per-hit slug filter (search / get_recent_salience). Non-array payload ⇒ fail-closed. */
+/**
+ * Generic per-hit slug filter (search / get_recent_salience): drop foreign hits, and F2-reduce each KEPT hit to
+ * its own-content + scalars (a nested foreign ref under a non-allow-listed key cannot ride along). Non-array
+ * payload ⇒ fail-closed.
+ */
 function redactHitCollection(parsed: unknown, scope: CopilotWorkspaceScope): RedactedToolResult {
   if (!Array.isArray(parsed)) return failClosed("MALFORMED_PAYLOAD");
-  const kept = parsed.filter((h) => keepHit(h, scope));
-  return { output: envelopeOf(kept), dropped: parsed.length - kept.length, failClosed: false };
+  const kept: unknown[] = [];
+  let dropped = 0;
+  for (const h of parsed) {
+    if (!keepHit(h, scope)) {
+      dropped++;
+      continue;
+    }
+    // F2: a kept hit is an in-workspace object (keepHit drops non-objects via an empty slug) — reduce its fields.
+    kept.push(isRecord(h) ? allowItemFields(h, HIT_KEEP_STRINGS) : h);
+  }
+  return { output: envelopeOf(kept), dropped, failClosed: false };
 }
 
 /**
- * A2 — traverse_graph: drop foreign NODES by slug; on each kept node, drop edges whose TARGET slug is foreign
- * and strip the edge `context` string. Non-array payload ⇒ fail-closed.
+ * A2 + F2 — traverse_graph: drop foreign NODES by slug; F2-reduce each kept node to own-content + scalars; on
+ * each kept node, drop edges whose TARGET slug is foreign and reduce each survivor to its in-workspace target
+ * ref. Non-array payload ⇒ fail-closed.
  */
 function redactTraverseGraph(parsed: unknown, scope: CopilotWorkspaceScope): RedactedToolResult {
   if (!Array.isArray(parsed)) return failClosed("MALFORMED_PAYLOAD");
@@ -187,17 +243,32 @@ function redactTraverseGraph(parsed: unknown, scope: CopilotWorkspaceScope): Red
   return { output: envelopeOf(kept), dropped, failClosed: false };
 }
 
-/** Filter a kept node's `links[]`: drop foreign-target edges, strip `context` from each survivor. Copy — no mutation. */
+/**
+ * F2 + A2 — reduce a kept node to own-content + scalars (dropping backlinks/neighbors/nested + any non-`links`
+ * foreign ref), then re-attach a filtered `links[]`: drop foreign-target edges and F2-reduce each survivor to
+ * its in-workspace target ref (`to`/`target`) + scalars — which also drops the edge `context` and any
+ * `snippet`/`excerpt` free-text. Copy — no mutation.
+ */
 function redactNodeLinks(node: unknown, scope: CopilotWorkspaceScope): unknown {
   if (!isRecord(node)) return node;
+  const scrubbedNode = allowItemFields(node, HIT_KEEP_STRINGS); // F2: own-content + scalars only (drops `links` too)
   const links = node["links"];
-  if (links === undefined) return node; // no edges to filter
+  if (links === undefined) return scrubbedNode; // no edges to filter
   // FAIL-CLOSED: a present-but-non-array `links` is an unrecognized shape that could embed foreign edges/context
   // (e.g. `links:{to:"employer-work/x",context:"…"}`). NEUTRALIZE it to `[]` — keep the in-workspace node, never
   // forward the malformed blob. (Returning the node verbatim here would be a fail-OPEN leak.)
-  if (!Array.isArray(links)) return { ...node, links: [] };
-  const filtered = links.filter((lnk) => keepSlug(edgeTarget(lnk), scope)).map((lnk) => stripLinkContext(lnk));
-  return { ...node, links: filtered };
+  if (!Array.isArray(links)) return { ...scrubbedNode, links: [] };
+  const filtered = links
+    .filter((lnk) => keepSlug(edgeTarget(lnk), scope))
+    .map((lnk) => {
+      // A survivor's target was validated in-workspace by keepSlug(edgeTarget); `lnk` is therefore a record (a
+      // non-record's edgeTarget is "" ⇒ dropped above, so `: lnk` is unreachable — kept only for TS narrowing).
+      // Re-emit the VALIDATED target canonically under `to` + keep scalars only: this drops context/snippet/
+      // link_type AND any UNVALIDATED second alias key (edgeTarget checks only one), closing the dual-key leak.
+      const target = edgeTarget(lnk);
+      return isRecord(lnk) ? { ...allowItemFields(lnk, EDGE_KEEP_STRINGS), to: target } : lnk;
+    });
+  return { ...scrubbedNode, links: filtered };
 }
 
 /** An edge's target slug lives in `to` (or `target`); missing/non-string ⇒ "" ⇒ dropped (fail-closed). */
@@ -206,14 +277,6 @@ function edgeTarget(lnk: unknown): string {
   if (typeof lnk["to"] === "string") return lnk["to"];
   if (typeof lnk["target"] === "string") return lnk["target"];
   return "";
-}
-
-/** Strip the edge `context` string (it may quote a foreign body) while preserving every other edge field. */
-function stripLinkContext(lnk: unknown): unknown {
-  if (!isRecord(lnk)) return lnk;
-  const { context: _context, ...rest } = lnk;
-  void _context;
-  return rest;
 }
 
 /**
@@ -256,11 +319,18 @@ function a4Strip(pair: Record<string, unknown>, aSlug: string, bSlug: string): R
 }
 
 /**
- * get_timeline: an in-workspace-seed passthrough. SC5a's arg policer already DENIED a foreign seed slug
+ * get_timeline: an in-workspace-seed read. SC5a's arg policer already DENIED a foreign seed slug
  * (FOREIGN_SEED_DENIED), so the entries are the served workspace's own page history — and the entries carry no
- * per-row slug to re-attribute. Defense-in-depth: fail-closed on a non-array shape.
+ * per-row slug to re-attribute. F2 defense-in-depth: reduce each entry to its own-content + scalars, so a
+ * structural foreign ref on an entry (a `related_pages` array, a nested `meta` object) cannot ride along.
+ * Fail-closed on a non-array shape.
  */
 function redactTimeline(parsed: unknown): RedactedToolResult {
   if (!Array.isArray(parsed)) return failClosed("MALFORMED_PAYLOAD");
-  return { output: envelopeOf(parsed), dropped: 0, failClosed: false };
+  // Timeline entries have no per-row slug to attribute, so there is no keep-gate before this reduction (unlike
+  // the hit/edge paths). A NON-record entry (a bare string/array that could itself carry a foreign ref) is
+  // therefore DROPPED here — never forwarded raw — so EVERY forwarded entry is a field-reduced object.
+  const records = parsed.filter(isRecord);
+  const scrubbed = records.map((e) => allowItemFields(e, TIMELINE_KEEP_STRINGS));
+  return { output: envelopeOf(scrubbed), dropped: parsed.length - records.length, failClosed: false };
 }
