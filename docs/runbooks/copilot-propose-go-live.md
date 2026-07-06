@@ -64,6 +64,38 @@ Before flipping the flag, a governance eval for the propose path must be green (
 3. Green the governance eval (eval-security track).
 4. Set `copilotProposeMode: true` (with `copilotAgentMode: true` + `copilotRealModel: true` + a running `gbrain serve --http`). Confirm on a trusted-content ask the job resolves `scoped_write`, the propose tool is in the allow-list, and a proposal lands as a pending card in the CORRECT workspace inbox only.
 
+## §13.10 `copilotAgentMode` go-live gates — the agentic READ path (distinct flag, EARLIER on the ladder)
+
+Everything above gates `copilotProposeMode` (the write-via-Approvals tool). The §13.10 Tier-1 read catalog (the 15 gbrain analysis reads — `find_contradictions/anomalies/orphans`, `find_experts`, `takes_*`, `code_*`, `get_recent_salience`, plus the de-phantomed `traverse_graph`/`get_timeline`) is DORMANT behind the **earlier** ladder flag `copilotAgentMode`. Four gates (a–d) must clear before that flag flips. This section is the authority for their status.
+
+### Gate (b) — `serve --http` op scoping ✅ VERIFIED (session 042)
+
+Probed live against gbrain **v0.35.1** (`serve --http --enable-dcr`, DCR → `client_credentials` → `tools/list` + `tools/call`):
+
+- `serve --http` advertises **63 tools** to any registered client (writes included: `put_page`/`delete_page`/`forget_fact`/`add_tag`/…) — it does **not** scope the advertised list. But it **enforces per-op scope at INVOCATION**, in three classes **read / write / admin**: a write op under a read token → `insufficient_scope`; `get_health`/`get_stats` require **admin**.
+- Scope is **client-asserted at DCR REGISTRATION** (a `"scope":"read"` field in the `/register` body; the `scope` param at `/token` is IGNORED in v0.35.1). SoW's `createGbrainDcrTokenProvider` (`copilotGbrainHttp.ts`) already sends `scope` at registration and defaults to `"read"` — correct. (Caveat: this protects against SoW-side bugs / prompt-injection asking for a write client, **not** against an arbitrary *other* local process registering its own write client — that is the local-trust boundary, out of scope here.)
+- **Conclusion for the frozen `GbrainReadGrant.allowedOps` enum:** it is a **SoW-side Path-1 gate only** (enforced by `@sow/knowledge`'s `mcp-read-adapter`); gbrain never sees it. The Path-2 agentic MCP allow-list (`copilotGbrainReadToolMcpNames()`) bypasses the enum entirely, so **no frozen-enum growth is required for the analysis reads to work.** Growing/truthing that enum stays a *separate, optional* future Appendix-A change (its current members `graph/timeline/schema_read/health/contained_synthesis` are stale vs the live tool names — the same phantoms gate (d) fixed in the Copilot catalog).
+
+### Gate (d) — phantom-name cleanup ✅ DONE (session 042, `245e4fd`)
+
+The Copilot read-tool catalog carried five ids with no live MCP tool. Renamed `gbrain.graph`→`gbrain.traverse_graph` and `gbrain.timeline`→`gbrain.get_timeline` (the real read tools); pruned `gbrain.schema_read`, `gbrain.contained_synthesis` (no live tool), and `gbrain.health` (real op `get_health` is admin-scoped ⇒ unreachable to the read-pinned client). Establishes **servable-under-read-scope** as a catalog precondition. Fail-safe preserved (pruned ids → mutating-by-default → never grantable). Dual-reviewer clean.
+
+### Gate (a) — WS-8 combined-brain per-workspace partitioning ⏳ IN DESIGN (the hard blocker)
+
+The served gbrain brain is ONE combined store (slug/tag-partitioned by owner convention across `employer-work`/`personal-business`/`personal-life`); neither the retrieval seam nor the agentic tool path enforces workspace scope over it. The analysis reads enumerate the whole brain (`find_orphans`/`find_anomalies` fully unscoped; `find_contradictions.slug`, `code_*.source_id`/`all_sources`, `get_recent_salience.slugPrefix`, and `traverse_graph.slug` are **model-suppliable** → can target another workspace; `traverse_graph` can additionally **hop partitions by following graph edges**, so per-hop scope enforcement is required, not just seed validation). Design in progress (survey→design→adversarial-verify workflow); this gate is the true precondition for the flag.
+
+### Gate (c) — governance eval for the analysis/read path (eval-security track — COORDINATE)
+
+`packages/evals` is the eval-security track's territory; this is the scoped hand-off, **not** a build. The propose-path eval (§3 above) and this read-path eval are siblings. The **`copilotAgentMode` read-path** eval must assert:
+
+1. **WS-8 no cross-workspace leakage (the core assertion).** With a served workspace S and foreign content F seeded in another workspace, for EVERY cataloged analysis read: a model-supplied arg that targets F (`source_id`/`all_sources`/foreign `slug`/`slugPrefix`, casing/encoding/`../`/prefix-collision variants like `Employer-Work/…` vs `employer-work/…` or `employer-workX/…`) returns **zero F content** — in results AND in derived strings. Cover `traverse_graph` edge-hops from an in-S seed into F.
+2. **Result-content leakage, not just query scoping.** `find_contradictions` pairs where one side is foreign; `traverse_graph` links/backlinks crossing partitions; `get_recent_salience` titles; timeline entries referencing foreign pages — none may surface, even when the *query* was scoped.
+3. **UI-safe gate strips actionable strings.** `find_contradictions` results carry `resolution_command` strings that NAME mutating gbrain ops — assert the UI-safe answer projection strips them (inert today under deny-by-default, but the gate must hold if the analysis reads ever surface to the user).
+4. **Dormant-until-scoped.** Assert that with `copilotAgentMode` OFF the analysis tools are never in the runner allow-list, and that flipping it ON without the gate-(a) scoping mechanism present fails closed (no tool grant) rather than exposing the unscoped brain.
+5. **Fail-safe on unknown tools/args.** A gbrain upgrade adding a tool/arg the catalog doesn't know must not become reachable (deny-by-default holds).
+
+The exact WS-8 assertions (1–2) firm up once gate (a)'s enforcement mechanism lands — the eval targets that mechanism. Until then this is the contract the eval must meet.
+
 ## Rollback
 
 Set `copilotProposeMode: false` (or `copilotAgentMode: false`). The propose tool leaves the allow-list immediately; in-flight proposals already recorded remain as pending §9.8 cards the owner can reject. No external write can have occurred (the sink only records pending; dispatch-after-approval is the separate §9.8 command path).
