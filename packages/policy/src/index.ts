@@ -29,6 +29,8 @@ export * from "./admission";
 export * from "./copilot-tool-catalog";
 // §13.10 gate (a) SC1: the WS-8 workspace-scope core (attributeSlug / attributeHit / decideHitScope).
 export * from "./copilot-workspace-scope";
+// §13.10 gate (a) SC5a: the P2 arg policer (policeGbrainToolArgs).
+export * from "./copilot-arg-policy";
 
 // Approval-required predicate + renderer↔worker session-auth primitive.
 export * from "./approval-policy";

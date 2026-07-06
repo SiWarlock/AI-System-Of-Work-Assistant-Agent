@@ -217,3 +217,40 @@ export function decideHitScope(
         : { decision: "drop", reason: "LEGACY_NOT_SERVED" };
   }
 }
+
+// ── the shared scope context (threaded through the P1 filter + the P2 arg/result cores) ───────────────
+
+/**
+ * The workspace-scope context: the served workspace + the registry + the legacy policy. Bundled so the P1
+ * filter (SC2) and the P2 arg-policer/result-redactor (SC5) thread ONE value. `servedWorkspaceId` is always
+ * server-bound (never model/client input).
+ */
+export interface CopilotWorkspaceScope {
+  readonly servedWorkspaceId: WorkspaceId;
+  readonly registry: WorkspaceScopeRegistry;
+  readonly policy: LegacyContentPolicy;
+  /**
+   * Whether the served brain is per-workspace-partitioned (Phase B source_id / Phase C brain-per-workspace).
+   * Absent/false ⇒ the ONE combined brain today: the arg policer independently DENIES the `unscopable`
+   * whole-brain tools (defense-in-depth over SC4's allow-list). True ⇒ the server scopes the computation, so
+   * they are permitted. Fail-closed default: treat absent as false.
+   */
+  readonly brainPartitioned?: boolean;
+}
+
+/** The registered descriptor for a workspace, or `undefined` if unregistered. Pure. */
+export function descriptorFor(
+  registry: WorkspaceScopeRegistry,
+  ws: WorkspaceId,
+): WorkspaceScopeDescriptor | undefined {
+  return registry.descriptors.find((d) => d.workspaceId === ws);
+}
+
+/**
+ * The served workspace's SINGLE slug-prefix, or `null` if it has zero or more-than-one prefix (ambiguous ⇒
+ * do not force a scope arg — the result redactor still filters per-hit as defense-in-depth). Pure.
+ */
+export function singleSlugPrefixOf(scope: CopilotWorkspaceScope): string | null {
+  const d = descriptorFor(scope.registry, scope.servedWorkspaceId);
+  return d !== undefined && d.slugPrefixes.length === 1 ? d.slugPrefixes[0]! : null;
+}
