@@ -31,6 +31,9 @@ export * from "./temporal/worker";
 /** The live-boot composition root: `bootWorker(config)` + the `BootedWorker` handle. */
 export * as boot from "./boot";
 
+/** Option A: the local `gbrain serve --http` supervisor (`createGbrainServeSupervisor` + the real spawn/probe seams). */
+export * as gbrainServe from "./gbrainServeSupervisor";
+
 /** The API server composition: `createApiServer`, the composed `AppRouter`, `ApiServerDeps`, `ApiCaller`. */
 export * as apiServer from "./api/server";
 

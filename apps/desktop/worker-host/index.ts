@@ -10,9 +10,29 @@
 // it to Electron `utilityProcess` (Electron Node ABI) + @electron/rebuild — at which
 // point the `process.send`/`process.on("message")` IPC below becomes
 // `process.parentPort.postMessage`/`.on("message")` (a small, isolated change).
-import { boot } from "@sow/worker";
+import { boot, gbrainServe } from "@sow/worker";
 import type { SessionTokenValue } from "@sow/policy";
-import { workspaceId } from "@sow/contracts";
+import { workspaceId, isOk } from "@sow/contracts";
+
+// Option A (app-managed serve): worker-host owns the local `gbrain serve --http --enable-dcr` lifecycle so the
+// agentic Copilot tools + the http retrieval transport share ONE server (one PGlite connection — no CLI/serve
+// DB-lock contention). The capability is fully built + wired; ENABLING is this one flag.
+//
+// ⚠ Default OFF, DELIBERATELY. Flipping ON makes worker-host SPAWN `gbrain serve --http --enable-dcr --port 8899`
+// on every boot (needs `gbrain` on PATH + VOYAGE_API_KEY + an initialized brain). TWO things to verify FIRST
+// (neither could be validated when this shipped):
+//   1. that `gbrain serve --http` actually spawns + becomes ready in your env (else every boot pays the ~10s
+//      readiness timeout, then degrades gracefully to CLI retrieval + fail-closed tools — safe, just slow); and
+//   2. ⚠ SECURITY — that the serve binds LOOPBACK only. gbrain has NO `--host` flag, so the bind interface is
+//      gbrain's default; on an UNTRUSTED LAN a `--enable-dcr` MCP server bound to 0.0.0.0 would expose the local
+//      brain (incl. Employer-Work) to the network, bypassing WS-8 + the egress veto. Confirm with e.g.
+//      `lsof -iTCP:8899 -sTCP:LISTEN` after first boot (expect 127.0.0.1, NOT *). Only then flip this ON.
+// On failure the supervisor fails closed → we omit the http config → retrieval stays on the CLI + tools fail closed.
+const MANAGE_GBRAIN_SERVE = false;
+/** The loopback base url the managed serve binds + both http transports read (matches worker DEFAULT_GBRAIN_HTTP_URL). */
+const GBRAIN_SERVE_BASE_URL = "http://127.0.0.1:8899";
+/** Bound the boot wait for serve-ready so a failed serve degrades in seconds, not the supervisor's 30s default. */
+const GBRAIN_SERVE_READINESS_TIMEOUT_MS = 10_000;
 
 /** The launch config main injects over the child IPC channel. */
 interface WorkerHostConfig {
@@ -41,11 +61,31 @@ function send(msg: HostMessage): void {
 
 let booted: boot.BootedWorker | undefined;
 let starting = false;
+let serveSupervisor: gbrainServe.GbrainServeSupervisor | undefined;
 
 async function start(config: WorkerHostConfig): Promise<void> {
   if (starting || booted !== undefined) return; // config is one-shot; ignore repeats
   starting = true;
   try {
+    // Option A: start the managed `gbrain serve --http` BEFORE bootWorker so its ready URL feeds BOTH http
+    // transports. On success, point retrieval + the agentic tools at it (copilotGbrainHttpUrl + transport
+    // "http"); on failure the supervisor fails closed → we omit those fields → retrieval stays on the CLI and
+    // the agentic tools fail closed (graceful degradation — no throw, boot still succeeds).
+    let gbrainHttpConfig: { readonly copilotGbrainHttpUrl: string; readonly copilotGbrainTransport: "http" } | undefined;
+    if (MANAGE_GBRAIN_SERVE) {
+      serveSupervisor = gbrainServe.createGbrainServeSupervisor({
+        baseUrl: GBRAIN_SERVE_BASE_URL,
+        spawn: gbrainServe.createGbrainServeSpawner(),
+        probe: gbrainServe.createGbrainServeProbe(),
+        sleep: gbrainServe.realSleep,
+        readinessTimeoutMs: GBRAIN_SERVE_READINESS_TIMEOUT_MS,
+      });
+      const serveStarted = await serveSupervisor.start();
+      if (isOk(serveStarted)) {
+        gbrainHttpConfig = { copilotGbrainHttpUrl: GBRAIN_SERVE_BASE_URL, copilotGbrainTransport: "http" };
+      }
+      // else: supervisor already disposed itself on the failed start; leave gbrainHttpConfig undefined.
+    }
     booted = await boot.bootWorker({
       sessionToken: { value: config.token as SessionTokenValue, launchId: config.launchId },
       allowlist: { origins: config.origins, hosts: config.hosts },
@@ -86,6 +126,8 @@ async function start(config: WorkerHostConfig): Promise<void> {
       // eval) + the A1 body-embedded residual (ingest-time). To turn OFF (back to the completion path, no tools),
       // remove this line.
       copilotAgentMode: true,
+      // Option A: when the managed serve came up, route retrieval + tools over it (http); else omitted (CLI + fail-closed).
+      ...(gbrainHttpConfig ?? {}),
       // No-op dispatch stubs — a first render triggers neither path (no jobs/approvals yet).
       triageDispatch: (input) =>
         Promise.resolve({ ok: true, value: { idempotencyKey: input.idempotencyKey } }),
@@ -112,6 +154,18 @@ async function start(config: WorkerHostConfig): Promise<void> {
     });
     send({ type: "ready", port: booted.api.port });
   } catch (err) {
+    // Boot threw AFTER the managed serve may have come up — reap it so we never orphan a gbrain serve holding
+    // port 8899 + the PGlite DB lock (which would wedge a respawn/CLI into a permanently contended state). The
+    // supervisor's dispose is idempotent + never-throws, so this is safe even if the serve never started.
+    if (serveSupervisor !== undefined) {
+      const sup = serveSupervisor;
+      serveSupervisor = undefined;
+      try {
+        await sup.dispose();
+      } catch {
+        // ignore — dispose is best-effort on the error path
+      }
+    }
     send({ type: "error", message: err instanceof Error ? err.message : String(err) });
     process.exitCode = 1;
   } finally {
@@ -121,11 +175,18 @@ async function start(config: WorkerHostConfig): Promise<void> {
 
 async function shutdown(): Promise<void> {
   const b = booted;
+  const sup = serveSupervisor;
   booted = undefined;
+  serveSupervisor = undefined;
   try {
     if (b) await b.close();
   } finally {
-    process.exit(0);
+    try {
+      // Tear down the managed gbrain serve so it releases the port + the PGlite DB lock on worker-host exit.
+      if (sup) await sup.dispose();
+    } finally {
+      process.exit(0);
+    }
   }
 }
 
