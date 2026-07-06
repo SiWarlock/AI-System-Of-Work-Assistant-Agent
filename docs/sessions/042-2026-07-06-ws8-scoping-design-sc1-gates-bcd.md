@@ -57,12 +57,23 @@ Workflow `wf_039163e8-07d` (survey→3-designs→judge→4 adversarial verifiers
 
 - §13.10 gates: (b) verified, (c) eval-contract noted for eval-security, (d) done.
 - **Gate (a) — the P1 unit (SC1 core + SC2 filter + SC3 boot) is LIVE** in worker-host: `copilotWorkspaceScoping: true` + `{assign, personal-business}`. On today's single-workspace brain (99 personal-business pages, all embedded) it is **INERT** — every hit is kept, so the Copilot's answers are unchanged; the enforcement mechanism is now active for future prefixed / multi-workspace content. The tool-less synthesis Copilot path is unaffected.
-- **P2 layer (SC4 catalog-narrowing + SC5a arg-policer) built + DORMANT** behind `copilotAgentMode` (OFF). SC5b–SC9 remain.
-- All work pushed to origin/main (HEAD `12ea650`); working tree clean but for the user's graphify config (`.claude/settings.json`, `CLAUDE.md`, `graphify-out/`) — intentionally not staged.
+- **P2 layer (SC4 catalog-narrowing + SC5a arg-policer + SC5b result-redactor) built + DORMANT** behind `copilotAgentMode` (OFF). SC6–SC9 remain.
+- All work pushed to origin/main; working tree clean but for the user's graphify config (`.claude/settings.json`, `CLAUDE.md`, `graphify-out/`) — intentionally not staged.
+
+## Continuation — SC5b result redactor (`fffd78d`, dual-reviewer clean)
+
+`redactGbrainToolResult(mcpToolName, result, scope)` (`packages/policy/src/copilot-result-redaction.ts`) — the last-line runtime guard that scopes a gbrain MCP tool RESULT to the served workspace before the (dormant) agentic Copilot forwards it. Pure; never throws; never returns null. Parses the live `{content:[{type:"text",text:"<JSON>"}]}` envelope, reuses SC1's `decideHitScope`, and folds all three RESULT-LEAKAGE findings — **A2** (traverse_graph: drop foreign NODES by slug + filter each kept node's edges [drop foreign-target edge + strip edge `context`]), **A3** (find_contradictions: drop a pair if EITHER side is foreign, FAIL-CLOSED far-side), **A4** (strip `resolution_command`/title, keep only severity/axis/confidence + opaque in-workspace slug refs). search/get_recent_salience = generic per-hit filter; get_timeline = in-workspace-seed passthrough. Malformed/unparseable/unknown-tool/wrong-shape ⇒ DROP-ALL empty envelope. 22 unit tests; repo-wide 31/31.
+
+**Dual review (security + code-quality) — both load-bearing MEDIUMs fixed in-slice:**
+- **F1 (fail-OPEN → fixed):** a present-but-non-array `links` field was returned VERBATIM (a malformed `links:{to:"employer-work/x",context:"…"}` blob could leak). Now neutralized to `[]` — the in-workspace node is kept, the malformed blob dropped.
+- **F3 (independence → fixed):** an `unscopable` whole-brain op (find_experts/anomalies/orphans, takes_*, code_*) now DROPS-ALL on a non-partitioned brain via `copilotToolScopingClass`, mirroring SC5a's M2 — a genuine independent last-line guard, never leaning on SC4's allow-list or SC5a's arg deny.
+- **F2 (carry-forward, NOT in-slice):** a kept in-workspace hit/node is forwarded whole, so a nested foreign slug ref under a key OTHER than the scrubbed `links[].to`/`target` + edge `context` (e.g. `backlinks`/`related` arrays, edge free-text named `snippet`/`excerpt`) would survive. Tightening to a per-op FIELD allow-list needs gbrain's PINNED per-op result schema (over-aggressive whitelisting strips legit in-workspace body) → **deferred to the gate-(c) governance eval** (documented in-code + runbook §13.10 gate (c) point 2). Not reachable today (SC4 allow-list + SC5a arg policer gate the surface; module dormant).
+
+The **pure-guard trio (SC5a args + SC5b results) is now COMPLETE.** SC6–SC9 are the WIRING slices.
 
 ## Open follow-ups (NEXT) — full detail in `docs/team-handoffs/001-2026-07-06-ws8-scoping-resume.md`
 
-1. **SC5b** — the result redactor `redactGbrainToolResult` (the biggest/most-security-critical P2 slice; folds A2/A3/A4). Then **SC6** transport seams · **SC7** gbrain-proxy MCP · **SC8** runner · **SC9** admission backstop → then `copilotAgentMode` can flip.
+1. ~~**SC5b** result redactor~~ **DONE (`fffd78d`)**. NEXT = **SC6** transport seams (argPolicer + PostToolUse redactor; verify SDK-0.3.201 canUseTool `updatedInput`/PostToolUse `updatedMCPToolOutput`) · **SC7** gbrain-proxy MCP (PRIMARY delivery) · **SC8** runner wiring · **SC9** admission backstop → then `copilotAgentMode` can flip (security-review-gated).
 2. The flagged future work (other tracks): the **ingest-side workspace-attribution rule** (the real WS-8 enabler + the only A1 mitigation); the legacy-migration runbook (owner-run); the workspace-leakage governance eval (eval-security, per the runbook §13.10 gate (c) contract); the SDK-0.3.201 conformance test; `WorkspaceConfigRepository`; Global-scope via the GCL Visibility-Gate union; the Appendix-A `GbrainReadGrant.allowedOps` truth-pass (now OPTIONAL).
 3. Untouched from 041: 13.10a (Copilot→KMP propose path), the real serving oracle (C5.4b go-live), the ~8 Phase-9/10 owner-calls + a Phase-10 `/phase-exit`, Tiers 2–5 + 13.10c Gmail.
 
