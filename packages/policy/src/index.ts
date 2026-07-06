@@ -27,6 +27,8 @@ export * from "./tool-policy";
 export * from "./admission";
 // Phase-C: the Copilot tool catalog + the mutating-tool classifier that closes the ING-7 arch_gap.
 export * from "./copilot-tool-catalog";
+// §13.10 gate (a) SC1: the WS-8 workspace-scope core (attributeSlug / attributeHit / decideHitScope).
+export * from "./copilot-workspace-scope";
 
 // Approval-required predicate + renderer↔worker session-auth primitive.
 export * from "./approval-policy";
