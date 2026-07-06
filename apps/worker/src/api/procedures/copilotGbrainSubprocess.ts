@@ -19,7 +19,9 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { err, isOk, failure } from "@sow/contracts";
-import type { FailureVariant, Result } from "@sow/contracts";
+import type { FailureVariant, Result, WorkspaceId } from "@sow/contracts";
+import { decideHitScope } from "@sow/policy";
+import type { ScopeHit, WorkspaceScopeRegistry, LegacyContentPolicy } from "@sow/policy";
 import type { CopilotRetrievalPort, RetrievedContext } from "./copilot";
 import { parseGbrainSearchResult, DEFAULT_GBRAIN_RETRIEVAL_LIMIT } from "./copilotGbrainRetrieval";
 
@@ -83,6 +85,15 @@ export function normalizeGbrainHits(raw: unknown): unknown {
   });
 }
 
+/**
+ * SC2 (§13.10 gate a) — an OPTIONAL per-hit workspace-scope filter over the RAW gbrain hit array, applied
+ * BEFORE `normalizeGbrainHits` (which rewrites `slug` `/`→`:` and drops `source_id`). Foreign/legacy-denied
+ * hits are dropped here so the served workspace's Copilot never sees another workspace's brain content
+ * (WS-8). A NON-array input is returned unchanged so the downstream mapper still fails closed on it. Absent
+ * ⇒ today's passthrough (back-compat). Build one with `createWorkspaceScopeFilter`.
+ */
+export type GbrainScopeFilter = (rawHits: unknown) => unknown;
+
 /** Deps for the composite subprocess retrieval. */
 export interface GbrainSubprocessRetrievalDeps {
   /** The gbrain read seam (canned in tests; the real CLI at boot). */
@@ -93,6 +104,8 @@ export interface GbrainSubprocessRetrievalDeps {
   readonly fallback: CopilotRetrievalPort;
   /** Max passages per query; defaults to DEFAULT_GBRAIN_RETRIEVAL_LIMIT. */
   readonly limit?: number;
+  /** SC2: optional WS-8 scope filter over the RAW hits (before normalize). Absent ⇒ passthrough. */
+  readonly scopeFilter?: GbrainScopeFilter;
 }
 
 /**
@@ -116,8 +129,48 @@ export function createGbrainSubprocessRetrieval(
       }
       const execResult = await deps.exec(question, limit);
       if (!isOk(execResult)) return execResult; // the exec builds the typed transport fault
-      return parseGbrainSearchResult(workspaceId, normalizeGbrainHits(execResult.value), limit);
+      // SC2: apply the WS-8 scope filter to the RAW hits BEFORE normalize (where slug+source_id still
+      // exist). Absent filter ⇒ passthrough (back-compat); a non-array is returned unchanged so the
+      // mapper still fails closed on it.
+      const scoped = deps.scopeFilter ? deps.scopeFilter(execResult.value) : execResult.value;
+      return parseGbrainSearchResult(workspaceId, normalizeGbrainHits(scoped), limit);
     },
+  };
+}
+
+// ── SC2 — the WS-8 scope filter over RAW gbrain hits ──────────────────────────────────────────────
+
+/**
+ * Extract the scope-relevant fields from ONE raw gbrain hit (`{slug, source_id, …}`). A non-object or a
+ * hit with no string `slug` yields `{slug:""}` ⇒ `decideHitScope` returns SLUG_INDETERMINATE ⇒ DROP
+ * (fail-closed — a hit we cannot attribute must never be served). `source_id` is the Phase-B lever.
+ */
+function readRawScopeHit(item: unknown): ScopeHit {
+  if (typeof item !== "object" || item === null) return { slug: "" };
+  const rec = item as Record<string, unknown>;
+  const slug = typeof rec["slug"] === "string" ? rec["slug"] : "";
+  const rawSource = rec["source_id"];
+  const sourceId = typeof rawSource === "string" ? rawSource : undefined;
+  return sourceId === undefined ? { slug } : { slug, sourceId };
+}
+
+/**
+ * Build the SC2 P1 scope filter: for each RAW hit, `decideHitScope` keep/drop under the served workspace +
+ * the LegacyContentPolicy, using the hit's raw `slug`/`source_id`. Foreign + legacy-denied + indeterminate
+ * hits are dropped BEFORE normalize, so the served workspace's Copilot never sees another workspace's
+ * content (WS-8). A non-array payload passes through unchanged (the mapper fails closed on it). Pure over
+ * the injected registry/policy; the branded `servedWorkspaceId` is bound here (never model/client input).
+ */
+export function createWorkspaceScopeFilter(
+  servedWorkspaceId: WorkspaceId,
+  registry: WorkspaceScopeRegistry,
+  policy: LegacyContentPolicy,
+): GbrainScopeFilter {
+  return (rawHits: unknown): unknown => {
+    if (!Array.isArray(rawHits)) return rawHits;
+    return rawHits.filter(
+      (item) => decideHitScope(readRawScopeHit(item), servedWorkspaceId, registry, policy).decision === "keep",
+    );
   };
 }
 

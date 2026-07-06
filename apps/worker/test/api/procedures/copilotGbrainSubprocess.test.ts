@@ -17,9 +17,12 @@ import {
   normalizeGbrainHits,
   createGbrainSubprocessRetrieval,
   createGbrainCliExec,
+  createWorkspaceScopeFilter,
   DEFAULT_GBRAIN_COPILOT_WORKSPACE,
 } from "../../../src/api/procedures/copilotGbrainSubprocess";
-import type { GbrainQueryExec } from "../../../src/api/procedures/copilotGbrainSubprocess";
+import type { GbrainQueryExec, GbrainScopeFilter } from "../../../src/api/procedures/copilotGbrainSubprocess";
+import { workspaceId, sourceId } from "@sow/contracts";
+import type { WorkspaceScopeRegistry, LegacyContentPolicy } from "@sow/policy";
 
 /** A gbrain `call query` hit shaped like the live output (only the mapped fields matter). */
 function gbrainHit(
@@ -300,4 +303,120 @@ describe("createGbrainCliExec — the real child_process transport (redaction-sa
     },
     90_000,
   );
+});
+
+// ── SC2 (§13.10 gate a) — the P1 workspace-scope filter over the RAW hit array ────────────────────────
+describe("createWorkspaceScopeFilter — per-hit workspace scoping over the RAW gbrain hits (before normalize)", () => {
+  const BUSINESS = workspaceId("personal-business");
+  const REGISTRY: WorkspaceScopeRegistry = {
+    descriptors: [
+      { workspaceId: workspaceId("employer-work"), slugPrefixes: ["employer-work"] },
+      { workspaceId: BUSINESS, slugPrefixes: ["personal-business"] },
+      { workspaceId: workspaceId("personal-life"), slugPrefixes: ["personal-life"] },
+    ],
+  };
+  const DENY: LegacyContentPolicy = { mode: "deny" };
+  const ASSIGN_BUSINESS: LegacyContentPolicy = { mode: "assign", toWorkspaceId: BUSINESS };
+
+  it("drops a FOREIGN-workspace raw hit, keeps a served-workspace raw hit (by raw slug)", () => {
+    const filter = createWorkspaceScopeFilter(BUSINESS, REGISTRY, DENY);
+    const raw = [
+      gbrainHit("personal-business/notes/x", "mine", "Mine"),
+      gbrainHit("employer-work/acme/secret", "theirs", "Theirs"),
+    ];
+    const out = filter(raw) as Array<Record<string, unknown>>;
+    expect(out).toHaveLength(1);
+    expect(out[0]!["slug"]).toBe("personal-business/notes/x"); // RAW hit preserved (slug not yet normalized)
+  });
+
+  it("legacy (unprefixed) hit: DROPPED under {deny}, KEPT under {assign,served}", () => {
+    const legacy = [gbrainHit("sessions/041", "seed", "S")];
+    expect((createWorkspaceScopeFilter(BUSINESS, REGISTRY, DENY)(legacy) as unknown[]).length).toBe(0);
+    expect((createWorkspaceScopeFilter(BUSINESS, REGISTRY, ASSIGN_BUSINESS)(legacy) as unknown[]).length).toBe(1);
+  });
+
+  it("reads source_id (Phase B) from the RAW hit: a source-pinned hit attributes by source_id", () => {
+    const reg: WorkspaceScopeRegistry = {
+      descriptors: [{ workspaceId: BUSINESS, slugPrefixes: ["personal-business"], sourceId: sourceId("src-b") }],
+    };
+    const raw = [gbrainHit("legacy/unprefixed", "t", "T", { source_id: "src-b" })];
+    expect((createWorkspaceScopeFilter(BUSINESS, reg, DENY)(raw) as unknown[]).length).toBe(1);
+  });
+
+  it("a malformed/traversal/missing-slug raw hit is DROPPED (fail-closed)", () => {
+    const filter = createWorkspaceScopeFilter(BUSINESS, REGISTRY, ASSIGN_BUSINESS);
+    expect((filter([gbrainHit("../employer-work/x", "t", "T")]) as unknown[]).length).toBe(0);
+    expect((filter([{ chunk_text: "no slug", title: "T" }]) as unknown[]).length).toBe(0); // missing slug
+    expect((filter(["not-an-object"]) as unknown[]).length).toBe(0); // non-object hit
+    // pin the readRawScopeHit typeof guards: a NON-STRING slug/source_id must not attribute (drop, not throw).
+    expect((filter([{ slug: 123, chunk_text: "x", title: "T" }]) as unknown[]).length).toBe(0); // slug not a string
+    expect(
+      (filter([{ slug: "employer-work/x", source_id: 42, chunk_text: "x", title: "T" }]) as unknown[]).length,
+    ).toBe(0); // foreign slug + non-string source_id ⇒ ignore source_id, attribute by slug ⇒ FOREIGN drop
+  });
+
+  it("a NON-array input passes through UNCHANGED (so the downstream mapper fails closed on it)", () => {
+    const filter = createWorkspaceScopeFilter(BUSINESS, REGISTRY, DENY);
+    expect(filter({ not: "array" })).toEqual({ not: "array" });
+    expect(filter(null)).toBeNull();
+  });
+});
+
+describe("createGbrainSubprocessRetrieval — the scopeFilter runs on RAW hits BEFORE normalize (SC2 wiring)", () => {
+  const served = "personal-business";
+  const fallback = createFixtureRetrieval({});
+
+  it("applies the scopeFilter to the raw exec payload before normalize+parse (foreign hit never reaches the context)", async () => {
+    const seen: unknown[] = [];
+    const spyFilter: GbrainScopeFilter = (raw) => {
+      seen.push(raw);
+      // drop the employer hit by its RAW slug (proves the filter sees the un-normalized slug)
+      return (raw as Array<Record<string, unknown>>).filter((h) => String(h["slug"]).startsWith("personal-business"));
+    };
+    const raw = [
+      gbrainHit("personal-business/mine", "mine", "Mine"),
+      gbrainHit("employer-work/theirs", "theirs", "Theirs"),
+    ];
+    const { exec } = fakeExec(ok(raw));
+    const retrieval = createGbrainSubprocessRetrieval({ exec, servedWorkspaceId: served, fallback, scopeFilter: spyFilter });
+    const r = await retrieval.retrieve(served, "q");
+    // the filter saw the RAW array (with slugs still '/'-pathed)
+    expect((seen[0] as Array<Record<string, unknown>>)[0]!["slug"]).toBe("personal-business/mine");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.blocks).toEqual(["mine"]); // only the kept hit
+      expect(r.value.sources).toEqual([{ citationId: "gbrain:personal-business:mine", title: "Mine" }]);
+    }
+  });
+
+  it("absent scopeFilter ⇒ byte-identical to today (passthrough — back-compat)", async () => {
+    const raw = [gbrainHit("employer-work/theirs", "theirs", "Theirs")];
+    const { exec } = fakeExec(ok(raw));
+    const noFilter = createGbrainSubprocessRetrieval({ exec, servedWorkspaceId: served, fallback });
+    const r = await noFilter.retrieve(served, "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.blocks).toEqual(["theirs"]); // unfiltered, as before
+  });
+
+  it("a real createWorkspaceScopeFilter drops the foreign hit end-to-end", async () => {
+    const reg: WorkspaceScopeRegistry = {
+      descriptors: [
+        { workspaceId: workspaceId("employer-work"), slugPrefixes: ["employer-work"] },
+        { workspaceId: workspaceId("personal-business"), slugPrefixes: ["personal-business"] },
+      ],
+    };
+    const filter = createWorkspaceScopeFilter(workspaceId("personal-business"), reg, { mode: "assign", toWorkspaceId: workspaceId("personal-business") });
+    const raw = [
+      gbrainHit("employer-work/secret", "leak", "Leak"),
+      gbrainHit("sessions/041", "legacy-ok", "Legacy"),
+    ];
+    const { exec } = fakeExec(ok(raw));
+    const retrieval = createGbrainSubprocessRetrieval({ exec, servedWorkspaceId: served, fallback, scopeFilter: filter });
+    const r = await retrieval.retrieve(served, "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      // employer hit dropped (foreign); legacy kept (assign,served) — no cross-workspace content survives
+      expect(r.value.blocks).toEqual(["legacy-ok"]);
+    }
+  });
 });
