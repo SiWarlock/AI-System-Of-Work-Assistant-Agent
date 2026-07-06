@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-05 · **Mode:** single-operator (build, ultracode) · **Track:** worker
 - **Predecessor:** `039-2026-07-05-approvals-inbox-workspace-scoping.md`
-- **Successor:** _(next — C6 skills, the 3rd of the owner's "do all 3"; blocked on an owner decision — which skills / what governance)_
+- **Successor:** `041-2026-07-06-skill-catalog-canonical-docs-audit.md` (C6 = §13.10 skill catalog + Tier-1 build + the canonical-doc pass + the Phase 9/10 audit)
 - **HEAD at close:** `d170c3b` (C5.4b code) + this session's doc commit. Prior: `4ac7fe0` (039 doc).
 - **Gate at close:** repo-wide `turbo typecheck test` **31/31**; the two touched worker test files **81** (16 decorator + 65 synthesis incl. 4 boot-wiring). Security + code-quality reviews **clean (0 crit/high/med)**.
 
