@@ -1,18 +1,26 @@
-# Handoff 001 — resume the WS-8 scoping build (SC5b → SC6–SC9)
+# Handoff 001 — WS-8 scoping build (SC5b → SC6–SC9 → multi-served)
 
 - **Date:** 2026-07-06 · **From session:** `docs/sessions/042-2026-07-06-ws8-scoping-design-sc1-gates-bcd.md`
-- **HEAD:** `a956a92` (SC5b+SC7+SC8 + `copilotAgentMode` flip + Option A SS1/SS3 + **Option A ENABLED** [`MANAGE_GBRAIN_SERVE=true`, loopback bind smoke-verified vs gbrain 0.35.1]). **Gate:** repo-wide `turbo typecheck test` 31/31, clean tree, pushed.
+- **HEAD:** `31adae0` (multi-served MS1–MS3 on top of SC5b+SC7+SC8 + `copilotAgentMode` flip + Option A SS1/SS3 + serve ENABLED). **Gate:** repo-wide `turbo typecheck test` 31/31, security-reviewer CLEAR for WS-8, code-quality doc-notes folded.
 
-## NEXT SLICE (owner-requested, start AFTER compaction) → MULTI-WORKSPACE SERVING
+## ✅ MULTI-WORKSPACE SERVING — DONE (Option A, single-brain multi-served)
 
-**Problem:** the app serves exactly ONE workspace. `copilotGbrainWorkspaceId` is fixed at boot (default `personal-business`), and `createGbrainSubprocessRetrieval` (`copilotGbrainSubprocess.ts:127`) returns the empty fixture fallback for EVERY workspace ≠ the served one. So on the single brain, only personal-business surfaces content; asking any other workspace returns nothing. Adding `personal-life/…`-prefixed pages puts them in the brain but they're correctly scoped OUT (never surfaced) until the served workspace can vary.
+Owner picked **Option A** ("fine with a single brain for now"). Landed in 3 slices (all WS-8 security-reviewed CLEAR, 0 crit/high/med):
 
-**Owner context:** "fine with a single brain for now" + "start the multi brain serving." So the immediately-useful slice is **single-brain multi-served** (Option A below); full per-workspace brains (Option B) is the stronger-isolation target. **Resolve this design fork at slice start (AskUserQuestion).**
+- **MS1 `daab098`** — `createMultiServedGbrainRetrieval` (`copilotGbrainSubprocess.ts`): the retrieval gate is now registry membership (`descriptorFor`), not a fixed `servedWorkspaceId`. ANY registered workspace reads the ONE brain, scoped PER-REQUEST to its own slug prefix via a MANDATORY filter (no passthrough); unregistered → fixture fallback (no brain read).
+- **MS2 `73592be`** — `gbrainProxyScopeFor` resolver on `createClaudeAgentCopilotRunner` (`copilotAgentSynthesis.ts`): the agentic proxy scope binds per-ASK to the asked workspace (proven by driving the bound handler — a foreign hit is dropped). Precedence over the fixed single-served gate; unregistered → tool-less; partial config → invalid_job.
+- **MS3 `31adae0`** — wiring (`buildCopilotDeps` + `boot.ts`): scope-present ⇒ multi-served composite + `gbrainProxyScopeFor` built from the registry+policy. Scope-absent keeps single-served (byte-identical back-compat).
 
-- **Option A — single-brain, multi-served (recommended for "single brain now"):** let the retrieval serve the ASKED workspace from the one brain, binding the scope filter to that workspace's slug prefix per request (not a fixed served id). Touch points: `createGbrainSubprocessRetrieval`/the http retrieval composite (drop the `workspaceId !== servedWorkspaceId ⇒ fallback` gate; instead read the brain + filter to the asked workspace's prefix via `createWorkspaceScopeFilter` bound per-request), and the agentic proxy scope (bind per served-request, not the one boot-fixed scope). ⚠ Makes F2/A1 LIVE for any workspace with real content in the combined brain — so keep employer-work OUT of this brain until F2 (gate-(c) eval) is closed. Also the legacy `{assign, personal-business}` policy means UNPREFIXED content only ever surfaces for personal-business (other workspaces need prefixed slugs).
-- **Option B — multi-brain (per-workspace isolation, the durable target):** a gbrain brain + `serve` + DCR token provider + exec PER workspace; route `copilotAsk(workspace)` → that workspace's brain. WS-8 by construction; no F2/A1 exposure. Bigger: a supervisor per brain (SS1 already parameterizes baseUrl/port), per-workspace config, and request→brain routing.
+**LIVE NOW:** worker-host already has `copilotWorkspaceScoping: true` + `{assign, personal-business}`, so multi-served is ACTIVE on boot. Each of the 3 well-known workspaces reads the brain scoped to itself; only personal-business has content today, so personal-life/employer-work asks read the brain filtered-to-empty (safe, honest "nothing found"). `decideHitScope` keeps `{assign}` sound (unprefixed served only to personal-business).
 
-**How to ADD a workspace's content TODAY (single brain, pre-slice):** `printf '…' | gbrain put "personal-life/<topic>"` — the `personal-life/` slug prefix attributes it to that workspace in the scope registry. It will sit in the brain correctly scoped-out until the multi-served slice (Option A) or a `copilotGbrainWorkspaceId` switch lets the app serve that workspace. (Registration is automatic — the 3 well-known scopes exist by default.)
+**How to ADD a workspace's content NOW:** `printf '…' | gbrain put "personal-life/<topic>"` — the `personal-life/` slug prefix attributes it, and multi-served surfaces it the next time you ask personal-life. **personal-life is safe to add. Keep EMPLOYER-WORK content OUT of this combined brain until F2 closes** (see below).
+
+## NEXT (owner-gated / deferred — not blockers)
+
+- **F2 field-fidelity → gate-(c) governance eval** (`packages/evals`, eval-security track): a kept in-workspace hit is forwarded WHOLE, so a nested foreign ref under an un-scrubbed key could ride along. INERT today (single-workspace content). **This is the gate before employer-work joins the combined brain** — until it closes, multi-served's F2/A1 residuals are only theoretically live.
+- **A1 body-embedded foreign content** — ingest-time fix only (KnowledgeWriter classification + per-workspace source partitioning).
+- **Option B (per-workspace brains + serve + routing)** — the stronger-isolation target if you ever want employer-work in the Copilot without the F2 gate; WS-8 by construction, no F2/A1 exposure. Bigger (a supervisor + serve + token + exec per brain). Deferred; single brain is fine per owner.
+- Prior deferrals still open: real Copilot model verification end-to-end in the running app; propose go-live (C5.4b real serving oracle + the 5 preconditions); C6 skills (owner-decision-gated).
 
 ## (prior) RESUME context
 - **Design of record:** `docs/planning/ws8-workspace-scoping.md` (the full survey→design→4-verifier output + BUILD-ORDER VERDICT + OWNER-GATED). **Memory:** `sow-copilot-skill-catalog`, `sow-copilot-real-model-direction`.

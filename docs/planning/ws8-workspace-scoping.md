@@ -1,6 +1,6 @@
 # WS-8 per-workspace scoping of the combined gbrain brain — design (§13.10 go-live gate a)
 
-> **Status:** DESIGN COMPLETE + foundation slice SC1 landing. The rest is owner-gated (below).
+> **Status:** DESIGN COMPLETE. SC1–SC8 + `copilotAgentMode` flip + Option-A serve LANDED, and **MULTI-SERVED (Option A, single-brain) LANDED (2026-07-06, `daab098`+`73592be`+`31adae0`, security-reviewer CLEAR for WS-8, 31/31).** The single-served `servedWorkspaceId` gate is replaced by registry membership: ANY registered workspace reads the ONE brain scoped PER-REQUEST to its own slug prefix (`createMultiServedGbrainRetrieval` + the agentic runner's `gbrainProxyScopeFor` resolver; wired in `buildCopilotDeps`+`boot`). LIVE on boot (worker-host `copilotWorkspaceScoping:true`). **WS-8 now holds by SCOPE FILTERING, not by construction** — so F2 field-fidelity + A1 body-embedded go LIVE for any workspace holding real combined-brain content (INERT today; personal-life is safe to add, employer-work stays OUT until the F2 gate-(c) eval closes). Remaining is F2/A1 hardening + Option B (per-workspace brains) if per-workspace isolation is ever wanted.
 > **Method:** survey→3-designs→judge→4 adversarial verifiers (workflow `wf_039163e8-07d`, session 042) + a standalone re-run of the RESULT-LEAKAGE verifier. This doc is the durable synthesis; the workflow transcript is the raw material.
 > **Gate:** this is go-live gate (a) for flipping `copilotAgentMode` — the hard blocker. Gates (b)/(c)/(d) are cleared (see `docs/runbooks/copilot-propose-go-live.md` §13.10).
 

@@ -98,15 +98,20 @@ async function start(config: WorkerHostConfig): Promise<void> {
       // single local brain). Needs VOYAGE_API_KEY in the worker env + `gbrain` on PATH (else it fails
       // closed). To turn OFF (back to the fixture stub), remove this line.
       copilotGbrainRetrieval: true,
-      // §13.10 gate (a) — WS-8 per-workspace scoping of the served brain, LIVE. The P1 retrieval now filters
-      // every raw gbrain hit to the served workspace (foreign + legacy-denied dropped) before synthesis.
-      // Posture (owner-chosen): {assign, personal-business} — legacy/unprefixed content is served ONLY to the
-      // served personal-business workspace, never crossing to another. On TODAY's single-workspace brain (all
-      // content is personal-business) this is INERT (every hit kept), so it does not change what the Copilot
-      // returns — it activates the enforcement mechanism so future prefixed / multi-workspace content is scoped.
-      // ⚠ The {assign} bridge is sound ONLY while the brain holds a single workspace's unprefixed content; do
-      // NOT save non-personal-business content unprefixed while it is on (see docs/runbooks + ws8-workspace-scoping).
-      // To turn OFF (back to unfiltered passthrough), remove these two lines.
+      // §13.10 gate (a) — WS-8 per-workspace scoping of the served brain, LIVE + MULTI-SERVED (Option A). With
+      // the multi-served retrieval landed, this flag now makes EACH registered workspace read the ONE combined
+      // brain scoped PER-REQUEST to its own slug prefix — so asking personal-life/employer-work reads the brain
+      // filtered to that workspace (empty today, since only personal-business holds content), not the empty
+      // fixture. Foreign + legacy-denied hits are dropped before synthesis. Posture (owner-chosen): {assign,
+      // personal-business} — legacy/unprefixed content is served ONLY to the served personal-business workspace,
+      // never crossing to another (decideHitScope enforces this per ask). WS-8 now holds by SCOPE FILTERING (not
+      // by construction), so the F2 field-fidelity + A1 body-embedded residuals are REACHABLE for any workspace
+      // that holds real content in the combined brain — INERT today (only personal-business has content).
+      // ⚠ Two operator guards while this is on: (1) do NOT save non-personal-business content UNPREFIXED (the
+      // {assign} bridge is sound only while the brain holds a single workspace's unprefixed content); (2) keep
+      // EMPLOYER-WORK out of the combined brain until F2 closes (the gate-(c) governance eval) — personal-life
+      // is safe to add (its own prefixed content). See docs/runbooks + docs/planning/ws8-workspace-scoping.md.
+      // To turn OFF (back to single-served, only personal-business reads the brain), remove these two lines.
       copilotWorkspaceScoping: true,
       copilotLegacyContentPolicy: { mode: "assign", toWorkspaceId: workspaceId("personal-business") },
       // §13.10 gate (a) — the AGENTIC Copilot tool path, LIVE. With copilotRealModel already ON, this switches
