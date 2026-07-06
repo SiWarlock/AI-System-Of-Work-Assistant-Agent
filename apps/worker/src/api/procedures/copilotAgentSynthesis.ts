@@ -550,26 +550,48 @@ export interface ClaudeAgentCopilotRunnerDeps {
    * REPLACES the raw http gbrain server under the SAME `gbrain` map key.
    */
   readonly buildGbrainProxyMcpServer?: (handler: CopilotGbrainProxyHandler) => McpServerConfig;
+  /**
+   * OPTIONAL (Option A — single-brain, MULTI-SERVED) resolve the PER-ASK WS-8 proxy scope for the asked
+   * workspace, or `undefined` when it is not registered (⇒ the job runs TOOL-LESS, fail closed). When present
+   * it takes PRECEDENCE over the fixed single-served gate: `served` becomes "the resolver returned a scope for
+   * this workspace", and that per-ask scope (bound to the ASKED workspace, server-derived from the registry)
+   * is what the proxy runs — so ANY registered workspace's ask reads the one brain, scoped to ITSELF. Absent ⇒
+   * today's fixed `servedWorkspaceId` + `gbrainProxyScope` single-served path (back-compat). Still requires
+   * `gbrainProxyExec` + `buildGbrainProxyMcpServer` — a partial config FAILS CLOSED, never the unscoped path.
+   */
+  readonly gbrainProxyScopeFor?: (workspaceId: string) => CopilotWorkspaceScope | undefined;
 }
 
 /** The SDK MCP tool name the propose tool is surfaced as (`mcp__copilot__propose_action`). */
 export const COPILOT_PROPOSE_MCP_TOOL_NAME = copilotToolToMcpName(toolId("copilot.propose_action"));
 
 /**
- * The concrete `CopilotAgentRunner`. WS-8 by construction (parity with `createGbrainSubprocessRetrieval`):
- * ONLY a job for `servedWorkspaceId` gets the gbrain read tool — for it, fetch a fresh MCP token (fail closed
- * if unavailable — no SDK call without auth), build the gbrain http MCP server + gbrain read allow-list. Every
- * OTHER workspace runs TOOL-LESS (no MCP server, empty allow-list ⇒ `canUseTool` deny-all) over its
- * fixture-empty context, so the agent can never query another workspace's brain. The C2 transport is built
- * with a prompt builder for THIS call, wrapped in the AgentRuntimePort, and drives the job. The token fetch +
- * real SDK `query()` are the eval/integration boundary; the wiring is unit-tested with an injected token +
- * queryFn.
+ * The concrete `CopilotAgentRunner`. Which workspaces get the gbrain read tool depends on the mode (parity with
+ * the retrieval seam — single-served `createGbrainSubprocessRetrieval` vs multi-served
+ * `createMultiServedGbrainRetrieval`):
+ *   - SINGLE-served (no `gbrainProxyScopeFor`) — WS-8 by CONSTRUCTION: ONLY a job for `servedWorkspaceId` gets
+ *     the gbrain read tool; every OTHER workspace runs TOOL-LESS (no MCP server, empty allow-list ⇒
+ *     `canUseTool` deny-all) over its fixture-empty context, so the agent can never query another workspace's
+ *     brain.
+ *   - MULTI-served (Option A, `gbrainProxyScopeFor` wired) — WS-8 by SCOPE FILTERING: ANY workspace the
+ *     resolver returns a scope for is served, and its reads go through the in-process gbrain PROXY (SC5a
+ *     arg-policing → the exec → SC5b result-redaction) bound to THAT workspace's own scope; an unregistered
+ *     workspace still runs tool-less (resolver → undefined). So a workspace ≠ the fixed served id reaches the
+ *     brain, scoped to itself — no foreign hit survives the per-ask redaction.
+ * On a served READ job WITHOUT the proxy (single-served back-compat, no `gbrainProxyScope`) the runner instead
+ * fetches a fresh MCP token (fail closed if unavailable — no SDK call without auth) and wires the RAW http
+ * gbrain server + read allow-list. The C2 transport is built with a prompt builder for THIS call, wrapped in
+ * the AgentRuntimePort, and drives the job. The token fetch + real SDK `query()` are the eval/integration
+ * boundary; the wiring is unit-tested with an injected token + queryFn.
  *
- * RESIDUAL (WS-8, shared + pre-existing, escalated as a Finding — NOT C3-specific): the served brain is a
- * single COMBINED store; a query against it is not yet filtered to the served workspace's own content. This is
- * the SAME gap the retrieval seam has (`gbrain call query` / the http exec pass no workspace filter) — safe
- * today because the seeded brain holds only the served workspace's content, but it needs per-workspace query
- * filtering or a partitioned brain before the store grows to hold multiple workspaces.
+ * RESIDUAL (WS-8): the served brain is a single COMBINED store. The SC8 proxy path (both single- and
+ * multi-served with a scope) DOES filter each query result to the (per-ask) served workspace via SC5a/SC5b, so
+ * the "unfiltered combined query" gap is CLOSED on that path. What remains is the F2 field-fidelity gap (a kept
+ * in-workspace hit is forwarded whole, so a nested foreign ref under an un-scrubbed key could ride along) — the
+ * gate-(c) governance eval — and A1 (body-embedded foreign content), an ingest-time fix. Both are INERT while
+ * the brain holds only one workspace's content; keep employer-work OUT of the combined brain until F2 closes.
+ * The legacy back-compat raw-http path (no proxy scope) is still UNFILTERED and rests on that single-workspace
+ * assumption.
  */
 export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDeps): CopilotAgentRunner {
   const allowedToolNames = deps.allowedToolNames ?? copilotGbrainReadToolMcpNames();
@@ -580,7 +602,15 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
       prompt: CopilotPromptContext,
       signal?: AbortSignal,
     ): Promise<Result<AgentResult, RuntimeError>> => {
-      const served = String(job.workspaceId) === deps.servedWorkspaceId;
+      // Option A (MULTI-SERVED): when the resolver is wired, `served` = "the asked workspace is registered
+      // (resolver returned a scope)"; that per-ask scope (bound to the ASKED workspace) is what the proxy runs.
+      // Absent resolver ⇒ today's fixed single-served gate + `gbrainProxyScope`. `perAskScope` is `undefined`
+      // for an unregistered workspace ⇒ tool-less (fail closed). A pure lookup — never throws (§16).
+      const perAskScope = deps.gbrainProxyScopeFor?.(String(job.workspaceId));
+      const served =
+        deps.gbrainProxyScopeFor !== undefined
+          ? perAskScope !== undefined
+          : String(job.workspaceId) === deps.servedWorkspaceId;
       // `mcpServers` is widened to the SDK union so it can carry EITHER the gbrain http server (a read job) OR
       // the in-process copilot propose server (a propose job) — see the SEED-ONLY rule below.
       const mcpServers: Record<string, McpServerConfig> = {};
@@ -590,6 +620,9 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
       // can't grant it) with a scoped_write policy, AND both the sink + server factory are injected. With the
       // real `deriveCopilotContentTrust` (C5.4) this is only true when EVERY seed source is KnowledgeWriter-
       // provenance; today's un-provenanced gbrain hits ⇒ untrusted ⇒ this is never true on a live ask.
+      // NOTE (multi-served): `served` now means "any REGISTERED workspace" (not just the boot-fixed one), so if
+      // `trustLevel` ever flips true at the C5.4b go-live gate the propose surface spans every registered
+      // workspace — each writing to ITS OWN server-bound approvals inbox (§9.8 scoping). Inert today (untrusted).
       const proposeGranted =
         served &&
         job.trustLevel === "trusted" &&
@@ -602,16 +635,19 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
       // would otherwise make a build-time trust verdict unsound. Only a NON-propose served job reads gbrain
       // (WS-8: only the served workspace; a non-served workspace runs tool-less).
       if (served && !proposeGranted) {
-        if (deps.gbrainProxyScope !== undefined) {
+        // Multi-served: the per-ask scope (bound to the ASKED workspace) takes precedence; single-served: the
+        // fixed `gbrainProxyScope`. Under the resolver path `served` already implies `perAskScope !== undefined`.
+        const proxyScope = perAskScope ?? deps.gbrainProxyScope;
+        if (proxyScope !== undefined) {
           // SC8 — the WS-8 PROXY path: the model reaches gbrain ONLY through the in-process proxy, which runs
-          // SC5a arg-policing → the exec → SC5b result-redaction per call, bound to the served workspace scope.
+          // SC5a arg-policing → the exec → SC5b result-redaction per call, bound to the (per-ask) workspace scope.
           // Scoping was INTENDED, so a partial config FAILS CLOSED (never silently drop to the unscoped raw http
           // server). No token is minted HERE — the exec (the http-grant transport) mints its own, loopback-
           // guarded, per call.
           if (deps.gbrainProxyExec === undefined || deps.buildGbrainProxyMcpServer === undefined) {
             return err(runtimeError("invalid_job", "gbrain proxy scope set without exec/factory", { retryable: false }));
           }
-          const scope = deps.gbrainProxyScope;
+          const scope = proxyScope;
           const exec = deps.gbrainProxyExec;
           const handler: CopilotGbrainProxyHandler = (mcpToolName: string, args: unknown) =>
             handleCopilotGbrainToolCall(mcpToolName, args, { scope, exec });

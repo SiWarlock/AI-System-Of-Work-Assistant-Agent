@@ -25,7 +25,7 @@ import {
   copilotReadToolPolicy,
   copilotAgentToolPolicy,
 } from "@sow/policy";
-import type { CopilotWorkspaceScope } from "@sow/policy";
+import type { CopilotWorkspaceScope, WorkspaceScopeRegistry, LegacyContentPolicy } from "@sow/policy";
 import type { CopilotGbrainToolExec } from "../../../src/api/procedures/copilotGbrainProxy";
 import {
   copilotToolToMcpName,
@@ -763,6 +763,114 @@ describe("createClaudeAgentCopilotRunner — SC8 gbrain PROXY wiring (WS-8)", ()
     if (isErr(r)) expect(r.error.kind).toBe("invalid_job");
     expect(tokenCalls).toBe(0);
     expect(srv.handler()).toBeUndefined(); // the factory was never invoked
+  });
+});
+
+// ── Option A (single-brain, MULTI-SERVED) — the runner's per-ASK proxy scope (gbrainProxyScopeFor) ──────
+//
+// Under multi-served, the fixed `servedWorkspaceId` gate is replaced by a per-ask resolver: ANY workspace the
+// resolver returns a scope for is SERVED (its ask gets the scoped gbrain proxy, bound to ITS OWN scope); an
+// unregistered one (resolver → undefined) runs TOOL-LESS. So a workspace OTHER than the boot-fixed served id
+// now reaches the brain — scoped to itself. WS-8 holds via the per-ask scope (proven by driving the bound
+// handler: a foreign hit is dropped for the asked workspace).
+describe("createClaudeAgentCopilotRunner — Option A multi-served proxy scope (gbrainProxyScopeFor)", () => {
+  const REGISTRY: WorkspaceScopeRegistry = {
+    descriptors: [
+      { workspaceId: workspaceId("employer-work"), slugPrefixes: ["employer-work"] },
+      { workspaceId: workspaceId("personal-business"), slugPrefixes: ["personal-business"] },
+      { workspaceId: workspaceId("personal-life"), slugPrefixes: ["personal-life"] },
+    ],
+  };
+  const POLICY: LegacyContentPolicy = { mode: "assign", toWorkspaceId: workspaceId("personal-business") };
+  /** The boot-shaped resolver: a REGISTERED workspace → its own scope (bound to ITSELF); else undefined. */
+  const scopeFor = (ws: string): CopilotWorkspaceScope | undefined => {
+    const d = REGISTRY.descriptors.find((x) => String(x.workspaceId) === ws);
+    return d === undefined ? undefined : { servedWorkspaceId: d.workspaceId, registry: REGISTRY, policy: POLICY };
+  };
+  const prompt: CopilotPromptContext = { question: "q?", context: ctx() };
+
+  function spyProxyServer(): { build: (h: CopilotGbrainProxyHandler) => McpServerConfig; marker: McpServerConfig; handler: () => CopilotGbrainProxyHandler | undefined } {
+    let captured: CopilotGbrainProxyHandler | undefined;
+    const marker = { type: "sdk", name: "gbrain", instance: {} } as unknown as McpServerConfig;
+    return { build: (h) => { captured = h; return marker; }, marker, handler: () => captured };
+  }
+
+  it("a REGISTERED workspace ≠ the fixed served id is served AND scoped to ITSELF (per-ask, not the boot-fixed scope)", async () => {
+    const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+    const srv = spyProxyServer();
+    let tokenCalls = 0;
+    // The exec returns a combined-brain envelope holding BOTH a personal-life and a personal-business hit; the
+    // per-ask redaction (bound to personal-life) must keep only personal-life — proving the scope is the ASKED
+    // workspace's, not the boot-fixed personal-business.
+    const rawHits = [
+      { slug: "personal-life/goals", chunk_text: "PL", title: "PL", source_id: "default" },
+      { slug: "personal-business/notes", chunk_text: "PB", title: "PB", source_id: "default" },
+    ];
+    const exec: CopilotGbrainToolExec = async () => ok({ content: [{ type: "text", text: JSON.stringify(rawHits) }] });
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business", // the boot-fixed served id — the resolver OVERRIDES it per ask
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => { tokenCalls += 1; return ok("tok-abc"); },
+      queryFn: cap.fn,
+      gbrainProxyScopeFor: scopeFor,
+      gbrainProxyExec: exec,
+      buildGbrainProxyMcpServer: srv.build,
+    });
+    const r = await runner.run(buildCopilotAgentJob("personal-life", RUNTIME_ROUTE), prompt);
+    expect(isOk(r)).toBe(true);
+    expect(tokenCalls).toBe(0); // the proxy exec mints its own; the runner does NOT
+    const opts = cap.seen()?.options ?? {};
+    const servers = opts["mcpServers"] as Record<string, { headers?: Record<string, string> }>;
+    expect(servers[GBRAIN_MCP_SERVER_NAME]).toBe(srv.marker); // proxy under the gbrain key (not raw http)
+    expect(opts["allowedTools"]).toEqual([...COPILOT_GBRAIN_PROXY_MCP_NAMES]);
+    // Drive the bound handler: the redaction is scoped to personal-life (the ASKED ws) — the personal-business
+    // hit is FOREIGN and dropped; only the personal-life hit survives.
+    const handler = srv.handler();
+    expect(handler).toBeDefined();
+    const out = await handler!("mcp__gbrain__query", { query: "q" });
+    const survived = JSON.parse(out.content[0]!.text) as Array<{ slug: string }>;
+    expect(survived.map((h) => h.slug)).toEqual(["personal-life/goals"]); // scoped to personal-life, NOT personal-business
+  });
+
+  it("an UNREGISTERED workspace (resolver → undefined) runs TOOL-LESS — no server, deny-all, no token", async () => {
+    const cap = captureQueryFn({ answer: ["from context only"], citations: [] });
+    const srv = spyProxyServer();
+    let tokenCalls = 0;
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => { tokenCalls += 1; return ok("tok-abc"); },
+      queryFn: cap.fn,
+      gbrainProxyScopeFor: scopeFor,
+      gbrainProxyExec: async () => ok({ content: [{ type: "text", text: "[]" }] }),
+      buildGbrainProxyMcpServer: srv.build,
+    });
+    const r = await runner.run(buildCopilotAgentJob("marketing-team", RUNTIME_ROUTE), prompt); // not registered
+    expect(isOk(r)).toBe(true);
+    expect(tokenCalls).toBe(0);
+    const opts = cap.seen()?.options ?? {};
+    expect(opts["mcpServers"]).toBeUndefined(); // no gbrain server
+    expect(opts["allowedTools"]).toEqual([]); // deny-all
+    expect(srv.handler()).toBeUndefined(); // no proxy handler bound
+  });
+
+  it("multi-served + a PARTIAL config (resolver returns a scope, exec missing) FAILS CLOSED (invalid_job)", async () => {
+    const cap = captureQueryFn({ answer: ["x"], citations: [] });
+    const srv = spyProxyServer();
+    let tokenCalls = 0;
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => { tokenCalls += 1; return ok("tok-abc"); },
+      queryFn: cap.fn,
+      gbrainProxyScopeFor: scopeFor,
+      buildGbrainProxyMcpServer: srv.build,
+      // gbrainProxyExec MISSING → partial config on the multi-served path
+    });
+    const r = await runner.run(buildCopilotAgentJob("personal-life", RUNTIME_ROUTE), prompt);
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.kind).toBe("invalid_job");
+    expect(tokenCalls).toBe(0); // never fell back to the raw http (token) path
   });
 });
 
