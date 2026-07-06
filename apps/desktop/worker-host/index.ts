@@ -16,19 +16,16 @@ import { workspaceId, isOk } from "@sow/contracts";
 
 // Option A (app-managed serve): worker-host owns the local `gbrain serve --http --enable-dcr` lifecycle so the
 // agentic Copilot tools + the http retrieval transport share ONE server (one PGlite connection — no CLI/serve
-// DB-lock contention). The capability is fully built + wired; ENABLING is this one flag.
+// DB-lock contention). On boot this SPAWNS `gbrain serve --http --enable-dcr --port 8899` (needs `gbrain` on PATH
+// + VOYAGE_API_KEY + an initialized brain); on failure the supervisor fails closed → we omit the http config →
+// retrieval stays on the CLI + agentic tools fail closed (graceful, ≤10s readiness bound).
 //
-// ⚠ Default OFF, DELIBERATELY. Flipping ON makes worker-host SPAWN `gbrain serve --http --enable-dcr --port 8899`
-// on every boot (needs `gbrain` on PATH + VOYAGE_API_KEY + an initialized brain). TWO things to verify FIRST
-// (neither could be validated when this shipped):
-//   1. that `gbrain serve --http` actually spawns + becomes ready in your env (else every boot pays the ~10s
-//      readiness timeout, then degrades gracefully to CLI retrieval + fail-closed tools — safe, just slow); and
-//   2. ⚠ SECURITY — that the serve binds LOOPBACK only. gbrain has NO `--host` flag, so the bind interface is
-//      gbrain's default; on an UNTRUSTED LAN a `--enable-dcr` MCP server bound to 0.0.0.0 would expose the local
-//      brain (incl. Employer-Work) to the network, bypassing WS-8 + the egress veto. Confirm with e.g.
-//      `lsof -iTCP:8899 -sTCP:LISTEN` after first boot (expect 127.0.0.1, NOT *). Only then flip this ON.
-// On failure the supervisor fails closed → we omit the http config → retrieval stays on the CLI + tools fail closed.
-const MANAGE_GBRAIN_SERVE = false;
+// ✅ ENABLED — verified 2026-07-06 against gbrain 0.35.1: `serve --http --enable-dcr --port 8899` becomes ready
+// (/mcp responds) and BINDS LOOPBACK ONLY (`lsof` + the serve banner both show 127.0.0.1, not 0.0.0.0) — so the
+// SS1 bind-interface residual does not materialize here (gbrain has no `--host` flag, so this rests on gbrain's
+// loopback default: ⚠ RE-VERIFY after a `gbrain upgrade` before trusting it on an untrusted LAN). Flip to `false`
+// to go back to CLI retrieval + http tools that fail closed unless you run serve yourself.
+const MANAGE_GBRAIN_SERVE = true;
 /** The loopback base url the managed serve binds + both http transports read (matches worker DEFAULT_GBRAIN_HTTP_URL). */
 const GBRAIN_SERVE_BASE_URL = "http://127.0.0.1:8899";
 /** Bound the boot wait for serve-ready so a failed serve degrades in seconds, not the supervisor's 30s default. */
