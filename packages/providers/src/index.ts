@@ -42,6 +42,8 @@ export * from "./runtime/claude-agent-sdk-runtime";
 export * from "./runtime/claude-agent-sdk-transport";
 export * from "./runtime/hermes-runtime";
 export * from "./runtime/copilot-propose-mcp";
+// §13.10 gate (a) SC7b: the in-process gbrain-PROXY MCP server (the WS-8 tool-path enforcement point).
+export * from "./runtime/copilot-gbrain-proxy-mcp";
 // Re-export the SDK's MCP server-config union so the worker can type its composed `mcpServers` map (which
 // now mixes an http gbrain server + the in-process sdk-instance copilot server) without a direct SDK dep.
 export type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
