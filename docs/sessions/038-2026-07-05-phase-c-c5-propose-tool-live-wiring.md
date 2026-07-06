@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-05 · **Mode:** single-operator (build, ultracode) · **Track:** worker + providers
 - **Predecessor:** `037-2026-07-05-phase-c-c3-c4-agentic-copilot.md`
-- **Successor:** _(next — C6: skills + flip the flag + governance/grounding eval; and C5.4 make contentTrust real + fix the §9.8 read-model workspace scope)_
+- **Successor:** `039-2026-07-05-approvals-inbox-workspace-scoping.md` (§9.8 inbox scoping — go-live blocker 1 of the owner's "do all 3")
 - **HEAD at close:** `3c64052` (C5.4a). This session: C5.2c `e530032` → C5.3a `0be926a` · C5.3b `28a78e9` · C5.3c `41dd26b` · C5.3d `1d14524` → C5.4a `3c64052`.
 - **Gate at close:** repo-wide `turbo typecheck test` **31/31**; worker **628**; providers +5 (copilot-propose-mcp). Pushed at close-out.
 
