@@ -31,6 +31,8 @@ export * from "./copilot-tool-catalog";
 export * from "./copilot-workspace-scope";
 // §13.10 gate (a) SC5a: the P2 arg policer (policeGbrainToolArgs).
 export * from "./copilot-arg-policy";
+// §13.10 gate (a) SC5b: the P2 result redactor (redactGbrainToolResult).
+export * from "./copilot-result-redaction";
 
 // Approval-required predicate + renderer↔worker session-auth primitive.
 export * from "./approval-policy";
