@@ -1,7 +1,23 @@
-# Handoff 001 — WS-8 scoping build (SC5b → SC6–SC9 → multi-served)
+# Handoff 001 — WS-8 scoping build (SC5b → SC6–SC9 → multi-served → F2 → cert → vault.read)
 
-- **Date:** 2026-07-06 · **From session:** `docs/sessions/042-2026-07-06-ws8-scoping-design-sc1-gates-bcd.md`
-- **HEAD:** `31adae0` (multi-served MS1–MS3 on top of SC5b+SC7+SC8 + `copilotAgentMode` flip + Option A SS1/SS3 + serve ENABLED). **Gate:** repo-wide `turbo typecheck test` 31/31, security-reviewer CLEAR for WS-8, code-quality doc-notes folded.
+- **Date:** 2026-07-06 · **From session:** `docs/sessions/042-2026-07-06-ws8-scoping-design-sc1-gates-bcd.md` (+ session 043 `docs/sessions/043-2026-07-06-ws8-multi-served.md`)
+- **HEAD:** `08a470b` — everything pushed to origin/main, tree clean (except the owner's `.claude/settings.json`, `CLAUDE.md`, `graphify-out/`). **Gate:** repo-wide `turbo typecheck test` 31/31.
+
+## ⏩ RESUME HERE (state at compaction, 2026-07-06)
+
+This session (043) landed, on top of the WS-8 arc, in order — all pushed, all dual-reviewed:
+1. **Multi-served** (`daab098`+`73592be`+`31adae0`) — Option A single-brain multi-served; ANY registered workspace reads the one brain scoped per-ask. LIVE on boot. See memory `sow-copilot-multi-served`.
+2. **F2 field-fidelity CLOSED** (`0e6b000`) — `allowItemFields` reduces every kept gbrain result to own-content+scalars (schema-agnostic; dissolved the pinned-schema blocker).
+3. **WS-8 separation CERTIFIED** (`2601b69`) — end-to-end test, one brain / 3 workspaces / both read paths / all directions.
+4. **Owner accepted employer-work in the combined brain** (`27aa94a`) — guard reversed; A1 body-quote + A1-under-personal-cloud-ask are the accepted residuals; Option B (separate brains) deferred.
+5. **§13.10d `vault.read` BUILT** (`75cf6a8` providers MCP + `f7feb95` worker + `08a470b` docs) — symlink-safe WS-8-scoped page read behind the `copilotVaultRead` boot flag (**OFF**). A symlink-escape CRITICAL was found + fixed in-slice (realpath re-attribution) + RE-VERIFIED CLOSED.
+
+**NEXT (owner-directed "C6 then the real dashboard"), in order:**
+- **(a) Skill introspection — `list_skills`/`get_skill`** (the other half of the owner's C6 pick, still owed). NOT just a handler: needs a catalog entry in `COPILOT_READ_TOOLS` + a NEW **workspace-agnostic** scoping class (the 3 SC4 classes in `copilot-tool-catalog.ts` all assume brain-scoping; skill metadata touches no workspace data) → a small frozen-catalog change. Then an in-process skills MCP + runner/boot wiring (mirror the vault MCP).
+- **(b) The real dashboard** — wire the Today recent-changes + Projects read projectors (currently stub) to real operational-store data. Surfaces exist (session 019); `apps/worker/src/api/adapters/readModel.ts` + `apps/worker/src/api/projections/uiSafe.ts` (`UiSafeRecentChange`, `UiSafeProjectDashboard`). Needs an exploration pass first.
+- **To ACTIVATE vault.read:** set `copilotVaultRead: true` in `apps/desktop/worker-host/index.ts` (like `copilotAgentMode`) — needs the Obsidian vault path wired as `vaultRoot`.
+
+Standing method: survey→design→adversarial-verify for design-uncertain slices; TDD; per-slice commit (explicit `git add`, never `-A`; Conventional Commits + `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`); security+code-quality reviewers per security-touching slice; repo-wide `turbo typecheck test` after any contract change; don't touch `../SoW-build-evalsec`; push at close-out. Canonical trackers: memory `sow-copilot-multi-served`, `sow-copilot-skill-catalog`, `sow-copilot-real-model-direction`.
 
 ## ✅ MULTI-WORKSPACE SERVING — DONE (Option A, single-brain multi-served)
 
