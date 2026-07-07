@@ -100,6 +100,7 @@ export * from "./activities/compensateDeletion";
 export * from "./activities/hermesRoute";
 export * from "./activities/assembleNotebookDocs";
 export * from "./activities/deterministicProgress";
+export * from "./activities/projectDashboard";
 
 // --- src/workflows/ — PURE orchestration drivers ----------------------------
 export * from "./workflows/systemHealthSurfacing";
