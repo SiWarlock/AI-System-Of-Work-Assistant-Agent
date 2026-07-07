@@ -257,9 +257,11 @@ export interface SyncOutputsProjection {
  * the SourceRef the derived plan cites (REQ-F-006: ≥1 sourceRef — the evidence the
  * status was built from), and the plan-identity seed (→ a stable planId, so the
  * derived plan's idempotent-replay key is deterministic across restarts — inv-5).
- * `provenanceOrigin` classifies the plan for the §6 machine (defaults `ingestion`,
- * since project-sync status is derived from ingested/parsed plan facts — arch_gap:
- * ProvenanceOrigin has no dedicated `project_sync` member).
+ * `provenanceOrigin` classifies the plan for the §6 machine. Defaults to `project_sync`
+ * — the dedicated origin for the projectSync workflow's derived mutations (added to
+ * ProvenanceOrigin in §13.5 P1; this closes the prior arch_gap that defaulted to
+ * `ingestion` for want of a project-sync member). A caller may override (e.g.
+ * `project_capture` for a Copilot "capture this as a project" mutation).
  */
 export interface BuildSyncOutputsActivityDeps {
   readonly projection: SyncOutputsProjection;
@@ -314,7 +316,7 @@ export function createBuildSyncOutputsActivity(
         // not a model estimate (REQ-F-011).
         confidence: 1,
         requiresApproval: false,
-        provenanceOrigin: deps.provenanceOrigin ?? "ingestion",
+        provenanceOrigin: deps.provenanceOrigin ?? "project_sync",
       };
 
       const actions: ProjectSyncExternalAction[] = projected.value.actions.map(
