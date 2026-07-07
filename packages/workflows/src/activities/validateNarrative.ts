@@ -21,6 +21,18 @@
 //   So the default concrete port = real no-inference + the brand. A future PINNED narrative-draft schema can be
 //   wired via the injectable `narrativeSchema` hook WITHOUT a port change (it runs first, folding to
 //   `schema_rejected`/`unsupported_claim`); today no such schema exists, so the hook is off by default.
+//
+// ⚠ GO-LIVE PRECONDITION (security review, session 047). The "schema gate already ran upstream" premise is
+//   architecturally intended but NOT YET STRUCTURALLY ENFORCED: there is no concrete production
+//   SynthesizeNarrativePort yet (only the test fake), and nothing asserts the synthesis AgentJob is dispatched
+//   through the Broker (where `createSchemaGate` runs). This is SAFE while dormant — no real model output flows
+//   through this port today. Before the real synthesize activity goes live, two things must land together:
+//     (1) a conformance/eval assertion that the synthesis job IS dispatched via the Broker (so the ajv+Zod gate
+//         provably ran on the raw output — otherwise omitting the re-run here would drop a real gate); AND
+//     (2) a minimal narrative-draft schema wired ON via `narrativeSchema` (e.g. every field is
+//         `{ value: primitive | TBD, evidenceRef? }`) — because the broker validates a DIFFERENT (raw →
+//         normalized-candidate) representation than `draft.fields`, so the derived ExtractionField shape itself
+//         is otherwise only no-inference-checked, never structurally checked. Tracked as a P4-wiring go-live gate.
 import { ok, err } from "@sow/contracts";
 import type { Result } from "@sow/contracts";
 import { validateNoInference } from "@sow/domain";
