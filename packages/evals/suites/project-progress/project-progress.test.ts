@@ -280,18 +280,23 @@ const factsOnlyProjection: SyncOutputsProjection = {
     const proseValue = (name: string): unknown =>
       validated.fields[name] === undefined ? TBD : validated.fields[name]?.value;
     return ok({
-      note: {
-        path: `projects/${String(ws)}/status.md`,
-        body: "project status",
-        frontmatter: {
-          // ★ REQ-F-011: numeric progress from the DETERMINISTIC facts only.
-          percentComplete: progress.percentComplete,
-          completedCount: progress.completedCount,
-          totalCount: progress.totalCount,
-          // prose off the validated narrative
-          explanation: proseValue("explanation"),
-          blockers: proseValue("blockers"),
-          nextActions: proseValue("nextActions"),
+      // §13.5 create-vs-patch: this eval drives the first-sync (create) path — the note-exists probe below
+      // reports false, so the derived plan carries a NoteCreate whose committed frontmatter the test inspects.
+      mutation: {
+        kind: "create",
+        note: {
+          path: `projects/${String(ws)}/status.md`,
+          body: "project status",
+          frontmatter: {
+            // ★ REQ-F-011: numeric progress from the DETERMINISTIC facts only.
+            percentComplete: progress.percentComplete,
+            completedCount: progress.completedCount,
+            totalCount: progress.totalCount,
+            // prose off the validated narrative
+            explanation: proseValue("explanation"),
+            blockers: proseValue("blockers"),
+            nextActions: proseValue("nextActions"),
+          },
         },
       },
       dashboard: { percentComplete: progress.percentComplete },
@@ -318,6 +323,8 @@ const makeDeps = (opts: {
       projection: factsOnlyProjection,
       sourceRef: { sourceId: sourceId("src-plan-1") },
       planIdentity: { project: "acme-api" },
+      // §13.5 create-vs-patch: this eval exercises the first-sync (create) path — the probe reports "absent".
+      noteExists: { exists: () => Promise.resolve(ok(false)) },
     }),
     commit,
     dashboard: new FakeDashboardPort(),

@@ -46,6 +46,7 @@ import {
   FakeUpdateDashboardPort,
   FakeProposePort,
   FakeProjectSyncHealthSink,
+  FakeNoteExistsReader,
   makeProjectSyncContext,
   makeRegistryEntry,
   makeProgress,
@@ -221,13 +222,16 @@ describe("runProjectSync — REQ-F-011 / PRJ-3/4: model percentages are forbidde
     const projection: SyncOutputsProjection = {
       project(validated, prog, ws) {
         return rOk({
-          note: {
-            path: `projects/${String(ws)}/status.md`,
-            body: "status",
-            // ★ number from the DETERMINISTIC facts; prose off the narrative.
-            frontmatter: {
-              percentComplete: prog.percentComplete,
-              explanation: validated.fields.explanation?.value ?? TBD,
+          mutation: {
+            kind: "create",
+            note: {
+              path: `projects/${String(ws)}/status.md`,
+              body: "status",
+              // ★ number from the DETERMINISTIC facts; prose off the narrative.
+              frontmatter: {
+                percentComplete: prog.percentComplete,
+                explanation: validated.fields.explanation?.value ?? TBD,
+              },
             },
           },
           dashboard: { percentComplete: prog.percentComplete },
@@ -240,6 +244,7 @@ describe("runProjectSync — REQ-F-011 / PRJ-3/4: model percentages are forbidde
       projection,
       sourceRef,
       planIdentity: { project: "acme-api" },
+      noteExists: new FakeNoteExistsReader(),
     });
     const deps = makeDeps({ synthesize, parse, buildOutputs, commit: capturingCommit });
 

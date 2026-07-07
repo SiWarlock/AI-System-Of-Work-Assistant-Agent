@@ -33,6 +33,7 @@ import type {
   ExternalWriteEnvelope,
   SourceRef,
   NoteCreate,
+  NotePatch,
   TargetSystem,
   ProvenanceOrigin,
 } from "@sow/contracts";
@@ -49,7 +50,9 @@ import type {
   ProjectSyncExternalAction,
   ValidatedNarrative,
   ProjectIdentity,
+  NoteExistsReader,
 } from "../ports/projectSync";
+import { projectNotePath } from "./projections/noteSlug";
 
 // ===========================================================================
 // (A) The DETERMINISTIC progress parser
@@ -227,9 +230,24 @@ export interface DerivedSyncActionDescriptor {
 }
 
 /**
+ * The committed project-status note mutation the projection emits (§13.5 create-vs-patch):
+ *   • `create` — FIRST sync: a full {@link NoteCreate} (frontmatter + H1 human scaffold + the
+ *     `kw:region:project-status` assistant region).
+ *   • `patch`  — RE-SYNC: a region-scoped {@link NotePatch} rewriting ONLY the `project-status`
+ *     region body, so the H1 + frontmatter + any human content OUTSIDE the region stay byte-stable.
+ *     (A NoteCreate over an existing note would blindly OVERWRITE the whole file at the KnowledgeWriter's
+ *     project step — clobbering human scaffold; the patch is the only safe re-sync mutation.)
+ * The `patch.newBody` is EXACTLY the region inner content the `create` note wraps in the markers, so
+ * create-then-resync (same facts) is byte-idempotent on the region.
+ */
+export type ProjectNoteMutation =
+  | { readonly kind: "create"; readonly note: NoteCreate }
+  | { readonly kind: "patch"; readonly patch: NotePatch };
+
+/**
  * The pure projection the deriver is configured with. It maps a
  * {@link ValidatedNarrative} + the DETERMINISTIC facts + the bound workspaceId onto
- * the project-status note create + the dashboard payload + the external-action
+ * the project-status note mutation + the dashboard payload + the external-action
  * descriptors. It is PURE (no clock/I/O) and MUST return an error rather than guess
  * when it cannot project (fail-closed).
  *
@@ -247,9 +265,13 @@ export interface SyncOutputsProjection {
     identity: ProjectIdentity,
     /** ISO-8601 sync instant (the dashboard `updatedAt` + note "last synced"). */
     updatedAt: string,
+    /** §13.5 create-vs-patch: true ⇒ the canonical note already exists ⇒ emit a region NotePatch
+     *  (re-sync); false ⇒ emit a full NoteCreate (first sync). Supplied by the build activity from a
+     *  WS-8-scoped {@link NoteExistsReader} probe of the SAME `projectNotePath`. */
+    noteExists: boolean,
   ): Result<
     {
-      readonly note: NoteCreate;
+      readonly mutation: ProjectNoteMutation;
       readonly dashboard: Record<string, unknown>;
       readonly actions: readonly DerivedSyncActionDescriptor[];
     },
@@ -273,6 +295,13 @@ export interface BuildSyncOutputsActivityDeps {
   readonly sourceRef: SourceRef;
   readonly planIdentity: Record<string, string>;
   readonly provenanceOrigin?: ProvenanceOrigin;
+  /**
+   * §13.5 create-vs-patch: a WS-8-scoped note-exists probe. The activity derives the note path via the
+   * SINGLE `projectNotePath` authority, probes it, and threads the boolean into the projection so a re-sync
+   * region-PATCHes (preserving human scaffold) instead of overwriting via a NoteCreate. A probe FAILURE
+   * fails the build CLOSED (build_failed, NO commit) — never a guessed create-vs-patch under uncertainty.
+   */
+  readonly noteExists: NoteExistsReader;
 }
 
 /**
@@ -287,17 +316,46 @@ export function createBuildSyncOutputsActivity(
   deps: BuildSyncOutputsActivityDeps,
 ): BuildSyncOutputsPort {
   return {
-    build(
+    async build(
       validated: ValidatedNarrative,
       progress: DeterministicProgress,
       workspaceId: WorkspaceId,
       identity: ProjectIdentity,
       updatedAt: string,
     ): Promise<Result<ProjectSyncOutputs, BuildSyncOutputsFailure>> {
-      const projected = deps.projection.project(validated, progress, workspaceId, identity, updatedAt);
-      if (!projected.ok) {
-        return Promise.resolve(err(projected.error));
+      // §13.5 create-vs-patch — derive the note path via the SINGLE WS-8 authority (fail closed on no safe
+      // anchor), then probe whether the canonical note already exists. The probe path is workspace-rooted, so
+      // it is inherently WS-8-scoped and can never disagree with the projection's mutation target.
+      const path = projectNotePath(workspaceId, identity.projectId);
+      if (path === null) {
+        return err({
+          code: "build_failed",
+          message: "projectId has no safe note-path anchor (sanitizes to empty) — fail-closed",
+        });
       }
+      const existsRes = await deps.noteExists.exists(path);
+      if (!existsRes.ok) {
+        // Fail CLOSED under uncertainty — NEVER guess create-vs-patch (a wrong NoteCreate over an existing
+        // note blindly overwrites human scaffold; a wrong NotePatch over a missing note writes a markers-only file).
+        return err({
+          code: "build_failed",
+          message: `note-exists probe failed (fail-closed): ${existsRes.error.code}`,
+          cause: existsRes.error.cause,
+        });
+      }
+
+      const projected = deps.projection.project(
+        validated,
+        progress,
+        workspaceId,
+        identity,
+        updatedAt,
+        existsRes.value,
+      );
+      if (!projected.ok) {
+        return err(projected.error);
+      }
+      const mutation = projected.value.mutation;
 
       // Stable planId: derived from the injected identity BOUND to the passed
       // workspace, so the same sync replays to the same plan id (inv-5) and a
@@ -314,8 +372,9 @@ export function createBuildSyncOutputsActivity(
         workspaceId,
         // REQ-F-006: the derived plan cites the evidence it was built from.
         sourceRefs: [deps.sourceRef],
-        creates: [projected.value.note],
-        patches: [],
+        // §13.5 create-vs-patch: FIRST sync → a full NoteCreate; RE-SYNC → a region NotePatch (never both).
+        creates: mutation.kind === "create" ? [mutation.note] : [],
+        patches: mutation.kind === "patch" ? [mutation.patch] : [],
         linkMutations: [],
         frontmatterUpdates: [],
         externalActionProposals: [],
@@ -361,7 +420,7 @@ export function createBuildSyncOutputsActivity(
         dashboard: projected.value.dashboard,
         actions,
       };
-      return Promise.resolve(ok(outputs));
+      return ok(outputs);
     },
   };
 }

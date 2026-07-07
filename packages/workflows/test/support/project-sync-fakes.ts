@@ -59,6 +59,8 @@ import type {
   ProjectSyncSurfaceOutcome,
   ProjectSyncHealthSinkError,
   ProjectIdentity,
+  NoteExistsReader,
+  NoteExistsError,
 } from "../../src/ports/projectSync";
 
 // ---------------------------------------------------------------------------
@@ -409,6 +411,33 @@ export class FakeUpdateDashboardPort implements ProjectSyncUpdateDashboardPort {
     }
     this.payloads.push(payload);
     return Promise.resolve(ok(undefined));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FakeNoteExistsReader — the §13.5 create-vs-patch probe
+// ---------------------------------------------------------------------------
+
+export interface FakeNoteExistsConfig {
+  /** What the probe reports (default false → first-sync NoteCreate). */
+  readonly exists?: boolean;
+  /** Force a typed probe failure (→ the build activity fails CLOSED, build_failed). */
+  readonly failWith?: NoteExistsError["code"];
+}
+
+export class FakeNoteExistsReader implements NoteExistsReader {
+  /** Every path probed — proof the activity asked about the workspace-rooted note path (WS-8). */
+  readonly paths: string[] = [];
+  constructor(private readonly config: FakeNoteExistsConfig = {}) {}
+
+  exists(path: string): Promise<Result<boolean, NoteExistsError>> {
+    this.paths.push(path);
+    if (this.config.failWith !== undefined) {
+      return Promise.resolve(
+        err({ code: this.config.failWith, message: `fake note-exists failure: ${this.config.failWith}` }),
+      );
+    }
+    return Promise.resolve(ok(this.config.exists ?? false));
   }
 }
 

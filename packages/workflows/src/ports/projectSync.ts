@@ -420,6 +420,37 @@ export interface BuildSyncOutputsPort {
 }
 
 // ---------------------------------------------------------------------------
+// (2e-bis) NoteExistsReader — §13.5 create-vs-patch: does the canonical note exist yet?
+// ---------------------------------------------------------------------------
+
+/** Closed, enumerable note-exists probe failure set (§16 — never thrown). */
+export type NoteExistsErrorCode = "read_failed";
+
+export interface NoteExistsError {
+  readonly code: NoteExistsErrorCode;
+  readonly message: string;
+  readonly cause?: unknown;
+}
+
+/**
+ * WS-8-scoped note-exists probe backing the projectSync create-vs-patch decision (§13.5). `path` is the
+ * workspace-rooted `projects/<workspaceId>/<leaf>.md` derived by the SINGLE `projectNotePath` authority the
+ * build activity + projection share — so the probe is INHERENTLY workspace-scoped (it can only ever ask about
+ * a path inside the bound workspace) and can never disagree with the mutation's target. Returns `true` IFF the
+ * canonical project-status note already exists:
+ *   • false → the build derives a full {@link ProjectSyncOutputs} NoteCreate (first sync);
+ *   • true  → the build derives a region-scoped NotePatch (re-sync — preserves the human scaffold + any
+ *     content outside the `kw:region:project-status` region; a NoteCreate over an existing note would blindly
+ *     OVERWRITE the whole file at the KnowledgeWriter's project step).
+ * A read failure is a TYPED error, and the build activity fails CLOSED on it (→ build_failed, NO commit): under
+ * uncertainty we NEVER guess create-vs-patch — a wrong NoteCreate clobbers human content, a wrong NotePatch on a
+ * missing note writes a markers-only file. Never throws.
+ */
+export interface NoteExistsReader {
+  exists(path: string): Promise<Result<boolean, NoteExistsError>>;
+}
+
+// ---------------------------------------------------------------------------
 // (2f) CommitStatusPort — inv-4/inv-5: KnowledgeWriter, idempotent replay
 // ---------------------------------------------------------------------------
 

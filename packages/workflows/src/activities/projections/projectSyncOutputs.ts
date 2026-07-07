@@ -14,20 +14,20 @@
 //  • No-inference (REQ-F-017): the note prose renders through the SAME `renderProseLines` helper the dashboard
 //    uses (TBD-skip + single-line collapse + cap) — one shared defense, never a duplicated re-implementation.
 import { ok, err } from "@sow/contracts";
-import type { Result, WorkspaceId, NoteCreate } from "@sow/contracts";
+import type { Result, WorkspaceId, NoteCreate, NotePatch } from "@sow/contracts";
 import { TBD } from "@sow/domain";
 import type { ExtractionField } from "@sow/domain";
 import { buildProjectDashboardPayload, renderProseLines } from "../projectDashboard";
 import type { ProjectDashboardProse } from "../projectDashboard";
 import { computePercent } from "../deterministicProgress";
-import type { SyncOutputsProjection } from "../deterministicProgress";
+import type { SyncOutputsProjection, ProjectNoteMutation } from "../deterministicProgress";
 import type {
   ProjectIdentity,
   DeterministicProgress,
   ValidatedNarrative,
   BuildSyncOutputsFailure,
 } from "../../ports/projectSync";
-import { safeNoteSlug } from "./noteSlug";
+import { projectNotePath } from "./noteSlug";
 
 /** The KN-7 assistant-region id wrapping all sync-mutable note content (frontmatter + H1 stay human scaffold). */
 const PROJECT_STATUS_REGION = "project-status";
@@ -76,17 +76,6 @@ function explanationLine(fields: Record<string, ExtractionField<unknown>>): stri
   return renderProseLines([f])[0];
 }
 
-/**
- * WS-8 note path: `projects/<workspaceId>/<safeLeaf>.md`, where the workspace folder segment is the SERVER-BOUND
- * workspaceId (never the slug) and the leaf is the projectId sanitized by `safeNoteSlug`. Returns null when the
- * projectId sanitizes to empty (no safe anchor) → the caller fails closed. Stable per project (good for re-runs).
- */
-function projectNotePath(workspaceId: WorkspaceId, projectId: string): string | null {
-  const leaf = safeNoteSlug(projectId);
-  if (leaf.length === 0) return null;
-  return `projects/${String(workspaceId)}/${leaf}.md`;
-}
-
 /** Render one Markdown section: header + a bullet per line; omitted entirely when there are no lines. */
 function section(header: string, lines: readonly string[]): string {
   if (lines.length === 0) return "";
@@ -106,8 +95,9 @@ export function createProjectSyncOutputsProjection(): SyncOutputsProjection {
       workspaceId: WorkspaceId,
       identity: ProjectIdentity,
       updatedAt: string,
+      noteExists: boolean,
     ): Result<
-      { note: NoteCreate; dashboard: Record<string, unknown>; actions: readonly never[] },
+      { mutation: ProjectNoteMutation; dashboard: Record<string, unknown>; actions: readonly never[] },
       BuildSyncOutputsFailure
     > {
       // 1. categorize the narrative prose (evidence-only; unknown keys ignored).
@@ -132,10 +122,25 @@ export function createProjectSyncOutputsProjection(): SyncOutputsProjection {
         return err(fail("unmappable_progress", "project identity/timestamp unservable for the dashboard row"));
       }
 
-      // 3. note path — WS-8: rooted at workspaceId, fail-closed on an empty leaf.
+      // 3. note path — WS-8: rooted at workspaceId, fail-closed on an empty leaf. The SAME `projectNotePath`
+      //    authority the build activity's note-exists probe used, so the mutation + probe can never diverge.
       const path = projectNotePath(workspaceId, identity.projectId);
       if (path === null) {
         return err(fail("build_failed", "projectId has no safe note-path anchor (sanitizes to empty)"));
+      }
+
+      // 4. the `project-status` region INNER body — shared by BOTH the NoteCreate full note and the NotePatch
+      //    newBody, so create-then-resync (same facts) is byte-idempotent on the region (percent RE-DERIVED
+      //    via computePercent; prose via the shared renderProseLines — no-inference TBD-skip).
+      const regionBody = composeRegionBody(progress, prose, lead, updatedAt);
+      const envelope = { workspaceId: String(workspaceId), dashboard };
+
+      // 5. create-vs-patch (§13.5). RE-SYNC (the note exists) region-PATCHes ONLY — the H1, frontmatter, and any
+      //    human content OUTSIDE the region stay byte-stable (a NoteCreate over an existing note would blindly
+      //    OVERWRITE the whole file at the KnowledgeWriter's project step). FIRST sync emits the full NoteCreate.
+      if (noteExists) {
+        const patch: NotePatch = { path, regionId: PROJECT_STATUS_REGION, newBody: regionBody };
+        return ok({ mutation: { kind: "patch", patch }, dashboard: envelope, actions: [] });
       }
 
       const note: NoteCreate = {
@@ -149,23 +154,24 @@ export function createProjectSyncOutputsProjection(): SyncOutputsProjection {
           provenanceOrigin: "project_sync",
           title: identity.title,
         },
-        body: composeBody(identity, progress, prose, lead, updatedAt),
+        body: composeFullNote(identity, regionBody),
       };
 
-      // 4. the {workspaceId, dashboard} envelope the real update port re-validates.
-      return ok({ note, dashboard: { workspaceId: String(workspaceId), dashboard }, actions: [] });
+      return ok({ mutation: { kind: "create", note }, dashboard: envelope, actions: [] });
     },
   };
 }
 
 /**
- * Compose the project-status note body: frontmatter + H1 are the stable human scaffold; ALL sync-mutable content
- * is wrapped in the `kw:region:project-status` assistant region (KN-7). The percent is RE-DERIVED via
- * `computePercent` (REQ-F-011 — never verbatim); prose renders via the SHARED `renderProseLines` (no-inference).
- * An empty category omits its whole `## <Header>` section (no bare header).
+ * Compose the INNER body of the `project-status` assistant region — everything BETWEEN the region markers, with
+ * NO H1 and NO markers, and no trailing newline (the marker framing supplies it). This is the SINGLE source of
+ * the region content: {@link composeFullNote} wraps it for a first-sync NoteCreate, and it is used VERBATIM as a
+ * re-sync {@link NotePatch}'s `newBody` — so the KnowledgeWriter's `applyRegionPatch` (`open\n${newBody}\n${close}`)
+ * reconstructs a byte-identical region. The percent is RE-DERIVED via `computePercent` (REQ-F-011 — never
+ * verbatim); prose renders via the SHARED `renderProseLines` (no-inference TBD-skip). An empty category omits its
+ * whole `## <Header>` section (no bare header).
  */
-function composeBody(
-  identity: ProjectIdentity,
+function composeRegionBody(
   progress: DeterministicProgress,
   prose: ProjectDashboardProse,
   lead: string | undefined,
@@ -175,14 +181,26 @@ function composeBody(
   const total = Math.max(0, Math.trunc(progress.totalCount));
   const percent = computePercent(completed, total); // REQ-F-011 — re-derive, never verbatim
   return [
-    `# ${identity.title} — Status\n\n`,
-    `<!-- kw:region:${PROJECT_STATUS_REGION} -->\n`,
     ...(lead !== undefined ? [`${lead}\n\n`] : []),
     `## Progress\n${completed} / ${total} tasks complete (${percent}%)\n\n`,
     section("Blockers", renderProseLines(prose.blockers)),
     section("Waiting on", renderProseLines(prose.waitingItems)),
     section("Next actions", renderProseLines(prose.nextActions)),
-    `_Last synced ${updatedAt}_\n`,
-    `<!-- /kw:region:${PROJECT_STATUS_REGION} -->\n`,
+    `_Last synced ${updatedAt}_`,
   ].join("");
+}
+
+/**
+ * Compose the FULL project-status note body for a first-sync NoteCreate: frontmatter + H1 are the stable human
+ * scaffold (KN-7), and ALL sync-mutable content is the `kw:region:project-status` region wrapping
+ * {@link composeRegionBody}. The marker framing (`open\n${regionBody}\n${close}`) matches the KnowledgeWriter's
+ * `applyRegionPatch`, so a NoteCreate's region and a subsequent NotePatch's region are byte-identical.
+ */
+function composeFullNote(identity: ProjectIdentity, regionBody: string): string {
+  return (
+    `# ${identity.title} — Status\n\n` +
+    `<!-- kw:region:${PROJECT_STATUS_REGION} -->\n` +
+    regionBody +
+    `\n<!-- /kw:region:${PROJECT_STATUS_REGION} -->\n`
+  );
 }
