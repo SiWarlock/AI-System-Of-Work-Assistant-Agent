@@ -111,9 +111,15 @@ describe("KnowledgeMutationPlan contract — spec(§3/§6/§7)", () => {
     expect(KnowledgeMutationPlanSchema.safeParse(bad).success).toBe(false);
   });
 
-  it("rejects a provenanceOrigin outside the 5-value enum", () => {
+  it("rejects a provenanceOrigin outside the ProvenanceOrigin enum", () => {
     const bad = { ...MINIMAL_VALID, provenanceOrigin: "robot" };
     expect(KnowledgeMutationPlanSchema.safeParse(bad).success).toBe(false);
+  });
+
+  // §13.10a — the Copilot semantic-write bridge's origin is an accepted member.
+  it("accepts provenanceOrigin: copilot_propose (§13.10a Copilot semantic-write bridge)", () => {
+    const ok = KnowledgeMutationPlanSchema.safeParse({ ...MINIMAL_VALID, provenanceOrigin: "copilot_propose" });
+    expect(ok.success).toBe(true);
   });
 
   it("rejects an empty/whitespace sourceId in sourceRefs (branded non-empty)", () => {

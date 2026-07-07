@@ -165,7 +165,7 @@ describe("shared enum schemas — exact membership", () => {
     [ProviderIdSchema, ["claude", "openai", "openrouter", "ollama", "lm_studio"]],
     [provenanceOriginSchema, [
       "human", "meeting_close", "ingestion", "gbrain_proposal", "parity_remediation",
-      "project_capture", "project_sync",
+      "project_capture", "project_sync", "copilot_propose",
     ]],
     [projectLifecycleStateSchema, [
       "idea", "planning", "active", "paused", "done", "archived",

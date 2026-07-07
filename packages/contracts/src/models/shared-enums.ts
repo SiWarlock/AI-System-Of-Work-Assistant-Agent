@@ -32,6 +32,11 @@ export const ProvenanceOrigin = [
   // deterministicProgress arch_gap that otherwise defaults a project-sync KMP to "ingestion").
   "project_capture",
   "project_sync",
+  // §13.10a — the Copilot SEMANTIC-WRITE bridge: a KnowledgeMutationPlan the Copilot PROPOSED (model supplies
+  // intent → server derives the validated plan). Distinguishes a human-gated Copilot proposal in the §6
+  // Knowledge-Mutation machine; the plan is recorded pending in §9.8 Approvals and committed by KnowledgeWriter
+  // ONLY on owner approval (never a direct/auto write — safety rules 1+2).
+  "copilot_propose",
 ] as const;
 export const provenanceOriginSchema = z.enum(ProvenanceOrigin);
 export type ProvenanceOrigin = z.infer<typeof provenanceOriginSchema>;

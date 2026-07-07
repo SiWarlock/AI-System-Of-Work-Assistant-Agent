@@ -203,7 +203,8 @@
         "gbrain_proposal",
         "parity_remediation",
         "project_capture",
-        "project_sync"
+        "project_sync",
+        "copilot_propose"
       ]
     },
     "gbrainProposalRef": {
