@@ -39,3 +39,28 @@ export function projectNotePath(workspaceId: WorkspaceId, projectId: string): st
   if (leaf.length === 0) return null;
   return `projects/${ws}/${leaf}.md`;
 }
+
+/**
+ * The KN-7 assistant-region id wrapping ALL sync-mutable content of a project-status note. The SINGLE source of
+ * this id: every writer of a project note (projectSync AND the §13.10a Copilot semantic-write bridge) MUST use
+ * the SAME id so they all target the SAME region of the SAME file — a re-sync / re-proposal region-PATCHes it in
+ * place. A drift between two writers' region ids would silently fork the note into two regions.
+ */
+export const PROJECT_STATUS_REGION = "project-status";
+
+/**
+ * Compose a FULL project-status note body: the `# <title> — Status` H1 human scaffold + the
+ * `kw:region:project-status` assistant region wrapping `regionBody`. The marker framing
+ * (`open\n${regionBody}\n${close}`) matches the KnowledgeWriter's `applyRegionPatch`, so a first-write note's
+ * region and a subsequent region NotePatch (whose `newBody` is the SAME `regionBody`) are byte-identical — a
+ * create-then-patch produces no region drift. Shared by projectSync + the Copilot propose bridge so the H1 +
+ * marker framing stay in lockstep by CONSTRUCTION (not copy-paste).
+ */
+export function composeProjectStatusNote(title: string, regionBody: string): string {
+  return (
+    `# ${title} — Status\n\n` +
+    `<!-- kw:region:${PROJECT_STATUS_REGION} -->\n` +
+    regionBody +
+    `\n<!-- /kw:region:${PROJECT_STATUS_REGION} -->\n`
+  );
+}

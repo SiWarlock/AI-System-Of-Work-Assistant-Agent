@@ -27,10 +27,11 @@ import type {
   ValidatedNarrative,
   BuildSyncOutputsFailure,
 } from "../../ports/projectSync";
-import { projectNotePath } from "./noteSlug";
+import { projectNotePath, PROJECT_STATUS_REGION, composeProjectStatusNote } from "./noteSlug";
 
-/** The KN-7 assistant-region id wrapping all sync-mutable note content (frontmatter + H1 stay human scaffold). */
-const PROJECT_STATUS_REGION = "project-status";
+// The KN-7 region id + full-note framing are the SHARED `noteSlug` conventions (PROJECT_STATUS_REGION +
+// composeProjectStatusNote) so projectSync + the §13.10a Copilot propose bridge target the SAME region by
+// construction (no copy-paste drift). frontmatter + H1 stay human scaffold.
 
 const fail = (code: BuildSyncOutputsFailure["code"], message: string): BuildSyncOutputsFailure => ({ code, message });
 
@@ -154,7 +155,7 @@ export function createProjectSyncOutputsProjection(): SyncOutputsProjection {
           provenanceOrigin: "project_sync",
           title: identity.title,
         },
-        body: composeFullNote(identity, regionBody),
+        body: composeProjectStatusNote(identity.title, regionBody),
       };
 
       return ok({ mutation: { kind: "create", note }, dashboard: envelope, actions: [] });
@@ -188,19 +189,4 @@ function composeRegionBody(
     section("Next actions", renderProseLines(prose.nextActions)),
     `_Last synced ${updatedAt}_`,
   ].join("");
-}
-
-/**
- * Compose the FULL project-status note body for a first-sync NoteCreate: frontmatter + H1 are the stable human
- * scaffold (KN-7), and ALL sync-mutable content is the `kw:region:project-status` region wrapping
- * {@link composeRegionBody}. The marker framing (`open\n${regionBody}\n${close}`) matches the KnowledgeWriter's
- * `applyRegionPatch`, so a NoteCreate's region and a subsequent NotePatch's region are byte-identical.
- */
-function composeFullNote(identity: ProjectIdentity, regionBody: string): string {
-  return (
-    `# ${identity.title} — Status\n\n` +
-    `<!-- kw:region:${PROJECT_STATUS_REGION} -->\n` +
-    regionBody +
-    `\n<!-- /kw:region:${PROJECT_STATUS_REGION} -->\n`
-  );
 }
