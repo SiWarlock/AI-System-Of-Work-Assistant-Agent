@@ -17,8 +17,8 @@
 import { describe, it, expect } from "vitest";
 import { ok, err, isOk, isErr, failure, toolId, workspaceId, AgentJobSchema } from "@sow/contracts";
 import type { AgentJob, ProviderRoute, Result, FailureVariant } from "@sow/contracts";
-import { runtimeError, COPILOT_GBRAIN_PROXY_MCP_NAMES, COPILOT_VAULT_SERVER_NAME, COPILOT_VAULT_MCP_NAMES } from "@sow/providers";
-import type { AgentResult, RuntimeError, AgentQueryFn, CopilotGbrainProxyHandler, McpServerConfig } from "@sow/providers";
+import { runtimeError, COPILOT_GBRAIN_PROXY_MCP_NAMES, COPILOT_VAULT_SERVER_NAME, COPILOT_VAULT_MCP_NAMES, COPILOT_SKILLS_SERVER_NAME, COPILOT_SKILLS_MCP_NAMES } from "@sow/providers";
+import type { AgentResult, RuntimeError, AgentQueryFn, CopilotGbrainProxyHandler, CopilotSkillsProxyHandler, McpServerConfig } from "@sow/providers";
 import {
   copilotReadToolIds,
   copilotReadOnlyPolicyIsPure,
@@ -960,6 +960,82 @@ describe("createClaudeAgentCopilotRunner — vault.read wiring (§13.10d, additi
 function runtimeErrorFault(): import("@sow/contracts").FailureVariant {
   return failure("degraded_unavailable", "not found", { retryable: false, cause: { code: "VAULT_READ_ENOENT" } });
 }
+
+// ── §13.10d — the runner ALSO exposes read-only SKILL self-introspection (workspace-agnostic; no scope) ──────
+describe("createClaudeAgentCopilotRunner — skill introspection wiring (§13.10d, additive to gbrain + vault)", () => {
+  const REGISTRY: WorkspaceScopeRegistry = {
+    descriptors: [{ workspaceId: workspaceId("personal-business"), slugPrefixes: ["personal-business"] }],
+  };
+  const POLICY: LegacyContentPolicy = { mode: "assign", toWorkspaceId: workspaceId("personal-business") };
+  const scopeFor = (ws: string): CopilotWorkspaceScope | undefined => {
+    const d = REGISTRY.descriptors.find((x) => String(x.workspaceId) === ws);
+    return d === undefined ? undefined : { servedWorkspaceId: d.workspaceId, registry: REGISTRY, policy: POLICY };
+  };
+  const prompt: CopilotPromptContext = { question: "q?", context: ctx() };
+  const spyProxyServer = (): { build: (h: unknown) => McpServerConfig; marker: McpServerConfig } => {
+    const marker = { type: "sdk", name: "gbrain", instance: {} } as unknown as McpServerConfig;
+    return { build: () => marker, marker };
+  };
+  const gbrainExec: CopilotGbrainToolExec = async () => ok({ content: [{ type: "text", text: "[]" }] });
+  type SkillsHandler = (op: string, a: unknown) => Promise<{ content: ReadonlyArray<{ type: "text"; text: string }> }>;
+  function spySkillsServer(): { build: (h: SkillsHandler) => McpServerConfig; marker: McpServerConfig; handler: () => SkillsHandler | undefined } {
+    let captured: SkillsHandler | undefined;
+    const marker = { type: "sdk", name: "skills", instance: {} } as unknown as McpServerConfig;
+    return { build: (h) => { captured = h; return marker; }, marker, handler: () => captured };
+  }
+
+  it("with buildSkillsMcpServer: registers mcp__skills__list + mcp__skills__get under the 'skills' key (coexisting) and the bound handler lists skills WITHOUT the propose tool", async () => {
+    const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+    const proxy = spyProxyServer();
+    const skills = spySkillsServer();
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => ok("tok"),
+      queryFn: cap.fn,
+      gbrainProxyScopeFor: scopeFor,
+      gbrainProxyExec: gbrainExec,
+      buildGbrainProxyMcpServer: proxy.build,
+      buildSkillsMcpServer: skills.build,
+    });
+    const r = await runner.run(buildCopilotAgentJob("personal-business", RUNTIME_ROUTE), prompt);
+    expect(isOk(r)).toBe(true);
+    const opts = cap.seen()?.options ?? {};
+    const servers = opts["mcpServers"] as Record<string, unknown>;
+    expect(servers[COPILOT_SKILLS_SERVER_NAME]).toBe(skills.marker); // skills registered under its own key
+    expect(servers["gbrain"]).toBe(proxy.marker); // gbrain still there (coexist)
+    expect(opts["allowedTools"]).toEqual([...COPILOT_GBRAIN_PROXY_MCP_NAMES, ...COPILOT_SKILLS_MCP_NAMES]);
+    // the runner binds the REAL handleCopilotSkillIntrospect: list enumerates the read catalog, get hides propose.
+    const h = skills.handler();
+    expect(h).toBeDefined();
+    const listed = JSON.parse((await h!("list", {})).content[0]!.text) as { skills: Array<{ id: string }> };
+    expect(listed.skills.map((s) => s.id)).toContain("gbrain.search");
+    expect(listed.skills.map((s) => s.id)).not.toContain("copilot.propose_action");
+    const got = JSON.parse((await h!("get", { id: "copilot.propose_action" })).content[0]!.text) as { skill: unknown };
+    expect(got.skill).toBeNull(); // never revealed via get either
+  });
+
+  it("without buildSkillsMcpServer: skills NOT exposed (gbrain-only allow-list)", async () => {
+    const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+    const proxy = spyProxyServer();
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => ok("tok"),
+      queryFn: cap.fn,
+      gbrainProxyScopeFor: scopeFor,
+      gbrainProxyExec: gbrainExec,
+      buildGbrainProxyMcpServer: proxy.build,
+      // buildSkillsMcpServer omitted
+    });
+    const r = await runner.run(buildCopilotAgentJob("personal-business", RUNTIME_ROUTE), prompt);
+    expect(isOk(r)).toBe(true);
+    const opts = cap.seen()?.options ?? {};
+    const servers = opts["mcpServers"] as Record<string, unknown>;
+    expect(servers[COPILOT_SKILLS_SERVER_NAME]).toBeUndefined(); // skills NOT exposed
+    expect(opts["allowedTools"]).toEqual([...COPILOT_GBRAIN_PROXY_MCP_NAMES]); // gbrain only
+  });
+});
 
 // ── C5.3c: content-trust fail-closed interim + the runner's propose grant ──
 describe("deriveCopilotContentTrust — per-source provenance, fail-closed", () => {

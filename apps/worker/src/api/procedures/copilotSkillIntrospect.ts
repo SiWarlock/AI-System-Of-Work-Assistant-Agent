@@ -35,9 +35,6 @@ export interface CopilotSkillDescriptor {
   readonly scoping: CopilotToolScopingClass;
 }
 
-/** The two exposed introspection ops (each is one `mcp__skills__<op>` tool). */
-export type CopilotSkillIntrospectOp = "list" | "get";
-
 /** A stable, leak-safe envelope over an arbitrary JSON-able payload. */
 function envelope(payload: unknown): CopilotSkillIntrospectResult {
   return { content: [{ type: "text", text: JSON.stringify(payload) }] };

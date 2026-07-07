@@ -45,6 +45,8 @@ import {
   COPILOT_GBRAIN_PROXY_MCP_NAMES,
   COPILOT_VAULT_SERVER_NAME,
   COPILOT_VAULT_MCP_NAMES,
+  COPILOT_SKILLS_SERVER_NAME,
+  COPILOT_SKILLS_MCP_NAMES,
   createClaudeAgentSdkRuntime,
   createClaudeAgentSdkTransport,
   runtimeError,
@@ -54,6 +56,7 @@ import type {
   AgentQueryFn,
   CopilotGbrainProxyHandler,
   CopilotVaultProxyHandler,
+  CopilotSkillsProxyHandler,
   CopilotProposeToolHandler,
   McpServerConfig,
   RuntimeError,
@@ -76,6 +79,7 @@ import { handleCopilotGbrainToolCall } from "./copilotGbrainProxy";
 import type { CopilotGbrainToolExec } from "./copilotGbrainProxy";
 import { handleCopilotVaultReadCall } from "./copilotVaultRead";
 import type { CopilotVaultReadFileExec, CopilotVaultRealpathExec } from "./copilotVaultRead";
+import { handleCopilotSkillIntrospect } from "./copilotSkillIntrospect";
 import {
   buildCopilotUserPrompt,
   mapCompletionToCandidate,
@@ -577,6 +581,14 @@ export interface ClaudeAgentCopilotRunnerDeps {
   readonly vaultRealpath?: CopilotVaultRealpathExec;
   /** OPTIONAL (§13.10d) the absolute vault root the vault.read handler guards every read against (traversal). */
   readonly vaultRoot?: string;
+  /**
+   * OPTIONAL (§13.10d) factory building the in-process read-only SKILLS MCP server (skill self-introspection)
+   * from the bound handler (boot injects `createCopilotSkillsMcpServer` from @sow/providers). Present on a
+   * SERVED scoped read job ⇒ the model ALSO gets `mcp__skills__list` + `mcp__skills__get`. Unlike vault, this
+   * needs NO scope/root/reader — the handler reads the STATIC catalog only (workspace-agnostic), so the SINGLE
+   * factory dep is the whole gate (no partial-config permutation to fail closed on).
+   */
+  readonly buildSkillsMcpServer?: (handler: CopilotSkillsProxyHandler) => McpServerConfig;
 }
 
 /** The SDK MCP tool name the propose tool is surfaced as (`mcp__copilot__propose_action`). */
@@ -690,6 +702,17 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
               handleCopilotVaultReadCall(a, { scope, vaultRoot, realpath: vaultRealpath, readFile: vaultReadFile });
             mcpServers[COPILOT_VAULT_SERVER_NAME] = deps.buildVaultMcpServer(vaultHandler);
             toolNames.push(...COPILOT_VAULT_MCP_NAMES);
+          }
+          // §13.10d — ALSO expose read-only SKILL self-introspection under the distinct `skills` server key.
+          // Additive to the gbrain proxy + vault. Unlike vault it binds NO scope (the handler reads the STATIC
+          // catalog only — `workspace-agnostic`), so the SINGLE factory dep is the whole gate. A propose job
+          // never reaches here (seed-only). The handler NEVER reveals the write-proposing tool (list/get over
+          // the read catalog only), so exposing it to an untrusted read job leaks no capability.
+          if (deps.buildSkillsMcpServer !== undefined) {
+            const skillsHandler: CopilotSkillsProxyHandler = (op: string, a: unknown) =>
+              handleCopilotSkillIntrospect(op, a);
+            mcpServers[COPILOT_SKILLS_SERVER_NAME] = deps.buildSkillsMcpServer(skillsHandler);
+            toolNames.push(...COPILOT_SKILLS_MCP_NAMES);
           }
         } else {
           // Back-compat (no proxy deps): the raw http gbrain server + the gbrain read allow-list (UNSCOPED — the

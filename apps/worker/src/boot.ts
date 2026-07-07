@@ -94,7 +94,7 @@ import {
 import { createApprovalsProposeSink } from "./api/procedures/copilotProposeSink";
 import { createInterimDegradedServingOracle } from "./api/procedures/copilotProvenanceStamp";
 import type { CopilotServingOracle } from "./api/procedures/copilotProvenanceStamp";
-import { createCopilotProposeMcpServer, createCopilotGbrainProxyMcpServer, createCopilotVaultMcpServer } from "@sow/providers";
+import { createCopilotProposeMcpServer, createCopilotGbrainProxyMcpServer, createCopilotVaultMcpServer, createCopilotSkillsMcpServer } from "@sow/providers";
 import type { CopilotSynthesisPort } from "./api/procedures/copilot";
 import { createClaudeSubscriptionCompletion } from "@sow/providers";
 import type { SystemHealthQueryPort, UiSafeEgressStatus } from "./api/procedures/systemHealth";
@@ -259,6 +259,14 @@ export interface BootConfig extends BackendsConfig {
    * Needs the Obsidian vault on disk at `vaultRoot`; no effect without it.
    */
   readonly copilotVaultRead?: boolean;
+  /**
+   * §13.10d — read-only SKILL self-introspection (`mcp__skills__list` + `mcp__skills__get`). OFF by default.
+   * When true (AND `copilotAgentMode` + workspace scoping on) the agent ALSO gets tools to enumerate its own
+   * read-skill catalog + read one skill's metadata. This touches NO workspace data (it reads the STATIC tool
+   * catalog), so it is workspace-agnostic + zero-leak — and it NEVER reveals the write-proposing tool. Additive
+   * to the gbrain proxy; needs no vault/disk config.
+   */
+  readonly copilotSkillIntrospection?: boolean;
   /**
    * The Copilot WRITE-VIA-APPROVALS tool (Phase-C C5.3 — OFF by default; requires `copilotAgentMode` too).
    * When true, the agent MAY hold the `copilot.propose_action` tool, which records a PENDING §9.8 Approval
@@ -522,6 +530,14 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
                   vaultRoot: config.vaultRoot,
                 }
               : undefined;
+          // §13.10d — the read-only SKILL self-introspection dep. Gated on `copilotSkillIntrospection` (OFF by
+          // default) + scoping on (`wsScope`; the runner registers it inside the same scoped-proxy branch as
+          // vault). Unlike vault it needs NO scope/root/reader — the handler reads the STATIC catalog only, so
+          // the single factory is the whole dep. Zero-leak (workspace-agnostic) + never reveals the propose tool.
+          const skillsRunnerDeps =
+            config.copilotSkillIntrospection === true && wsScope !== undefined
+              ? { buildSkillsMcpServer: createCopilotSkillsMcpServer }
+              : undefined;
           const runner = createClaudeAgentCopilotRunner({
             servedWorkspaceId: servedWorkspaceIdStr,
             gbrainMcpUrl: gbrainMcpEndpoint(gbrainHttpBaseUrl),
@@ -530,6 +546,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
             buildProposeMcpServer: createCopilotProposeMcpServer,
             ...(gbrainProxyRunnerDeps !== undefined ? gbrainProxyRunnerDeps : {}),
             ...(vaultRunnerDeps !== undefined ? vaultRunnerDeps : {}),
+            ...(skillsRunnerDeps !== undefined ? skillsRunnerDeps : {}),
             ...(config.copilotBetas !== undefined ? { betas: config.copilotBetas } : {}),
           });
           // proposeEnabled mirrors the flag; resolveContentTrust is the REAL per-source-provenance derivation
