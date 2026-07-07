@@ -31,25 +31,27 @@ const projection: SyncOutputsProjection = {
 };
 const sourceRef = { sourceId: "src-1" as SourceId };
 const deps = { projection, sourceRef, planIdentity: { project: "x" } };
+const identity = { projectId: "x", title: "X", slug: "personal-business/x", lifecycleState: "active" as const };
+const AT = "2026-07-07T00:00:00.000Z";
 
 describe("createBuildSyncOutputsActivity — derived-plan provenance (§13.5)", () => {
   it("defaults the derived plan's provenanceOrigin to project_sync (the arch_gap P1 closed)", async () => {
     const port = createBuildSyncOutputsActivity(deps);
-    const r = await port.build(validated, progress, WS);
+    const r = await port.build(validated, progress, WS, identity, AT);
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.value.plan.provenanceOrigin).toBe("project_sync");
   });
 
   it("respects an explicit provenanceOrigin override", async () => {
     const port = createBuildSyncOutputsActivity({ ...deps, provenanceOrigin: "project_capture" });
-    const r = await port.build(validated, progress, WS);
+    const r = await port.build(validated, progress, WS, identity, AT);
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.value.plan.provenanceOrigin).toBe("project_capture");
   });
 
   it("stamps the plan's workspaceId from the PASSED workspace (WS-2/WS-4) + cites the sourceRef (REQ-F-006)", async () => {
     const port = createBuildSyncOutputsActivity(deps);
-    const r = await port.build(validated, progress, WS);
+    const r = await port.build(validated, progress, WS, identity, AT);
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(String(r.value.plan.workspaceId)).toBe("personal-business");

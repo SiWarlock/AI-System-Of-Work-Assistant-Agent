@@ -134,6 +134,10 @@ class FakeRegistryPort implements ResolveRegistryPort {
         workspaceId: this.ws,
         planPath: "employer-work/acme-api/IMPLEMENTATION_PLAN.md",
         progressProviders: [],
+        // §13.5 — the registry now seeds the sync outputs' project identity.
+        title: "Acme API",
+        slug: "employer-work/acme-api",
+        lifecycleState: "active",
       }),
     );
   }

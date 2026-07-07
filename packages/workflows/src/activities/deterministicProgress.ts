@@ -48,6 +48,7 @@ import type {
   ProjectSyncOutputs,
   ProjectSyncExternalAction,
   ValidatedNarrative,
+  ProjectIdentity,
 } from "../ports/projectSync";
 
 // ===========================================================================
@@ -242,6 +243,10 @@ export interface SyncOutputsProjection {
     validated: ValidatedNarrative,
     progress: DeterministicProgress,
     workspaceId: WorkspaceId,
+    /** §13.5 — the server-resolved project identity (registry-derived, WS-8-safe). */
+    identity: ProjectIdentity,
+    /** ISO-8601 sync instant (the dashboard `updatedAt` + note "last synced"). */
+    updatedAt: string,
   ): Result<
     {
       readonly note: NoteCreate;
@@ -286,8 +291,10 @@ export function createBuildSyncOutputsActivity(
       validated: ValidatedNarrative,
       progress: DeterministicProgress,
       workspaceId: WorkspaceId,
+      identity: ProjectIdentity,
+      updatedAt: string,
     ): Promise<Result<ProjectSyncOutputs, BuildSyncOutputsFailure>> {
-      const projected = deps.projection.project(validated, progress, workspaceId);
+      const projected = deps.projection.project(validated, progress, workspaceId, identity, updatedAt);
       if (!projected.ok) {
         return Promise.resolve(err(projected.error));
       }

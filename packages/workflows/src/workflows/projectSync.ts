@@ -72,6 +72,7 @@ import type {
   ProjectSyncProposeActionsPort,
   ProjectSyncHealthSink,
   ProjectSyncFailure,
+  ProjectIdentity,
 } from "../ports/projectSync";
 
 // --- the local project-sync state machine ----------------------------------
@@ -371,7 +372,22 @@ export async function runProjectSync(
   //    The prose comes from the validated narrative; `plan.workspaceId` is stamped
   //    from boundWorkspaceId. A derivation failure folds to schema_rejected with NO
   //    partial commit (buildOutputs runs BEFORE any durable write).
-  const built = await deps.buildOutputs.build(validated.value, progress, boundWorkspaceId);
+  // §13.5 — the server-resolved project identity BOTH outputs need, derived from the registry-bound entry
+  // (never a caller value; WS-8). `updatedAt` is the driver's wall-clock reading (the projection is clockless).
+  const identity: ProjectIdentity = {
+    projectId: registry.projectId,
+    title: registry.title,
+    slug: registry.slug,
+    lifecycleState: registry.lifecycleState,
+  };
+  const updatedAt = deps.clock.now();
+  const built = await deps.buildOutputs.build(
+    validated.value,
+    progress,
+    boundWorkspaceId,
+    identity,
+    updatedAt,
+  );
   if (!isOk(built)) {
     state = advance(state, ["schema_rejected"]);
     return surface(state, `status derivation failed: ${built.error.code}`);

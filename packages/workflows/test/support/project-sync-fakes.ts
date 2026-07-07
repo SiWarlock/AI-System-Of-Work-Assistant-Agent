@@ -58,6 +58,7 @@ import type {
   ProjectSyncFailure,
   ProjectSyncSurfaceOutcome,
   ProjectSyncHealthSinkError,
+  ProjectIdentity,
 } from "../../src/ports/projectSync";
 
 // ---------------------------------------------------------------------------
@@ -86,6 +87,9 @@ export function makeRegistryEntry(
     planPath: "employer-work/acme-api/IMPLEMENTATION_PLAN.md",
     progressProviders: [{ connectorId: "linear-1", remoteHandle: "ACME" }],
     aliases: ["acme"],
+    title: "Acme API",
+    slug: "employer-work/acme-api",
+    lifecycleState: "active",
     ...partial,
   };
 }
@@ -260,6 +264,8 @@ export class FakeBuildSyncOutputsPort implements BuildSyncOutputsPort {
     readonly validated: ValidatedNarrative;
     readonly progress: DeterministicProgress;
     readonly workspaceId: WorkspaceId;
+    readonly identity: ProjectIdentity;
+    readonly updatedAt: string;
   }> = [];
 
   constructor(private readonly config: FakeBuildSyncOutputsConfig = {}) {}
@@ -268,8 +274,10 @@ export class FakeBuildSyncOutputsPort implements BuildSyncOutputsPort {
     validated: ValidatedNarrative,
     progress: DeterministicProgress,
     ws: WorkspaceId,
+    identity: ProjectIdentity,
+    updatedAt: string,
   ): Promise<Result<ProjectSyncOutputs, BuildSyncOutputsFailure>> {
-    this.calls.push({ validated, progress, workspaceId: ws });
+    this.calls.push({ validated, progress, workspaceId: ws, identity, updatedAt });
     if (this.config.failWith !== undefined) {
       return Promise.resolve(
         err({ code: this.config.failWith, message: `fake buildSyncOutputs failure: ${this.config.failWith}` }),
@@ -309,7 +317,9 @@ export class FakeBuildSyncOutputsPort implements BuildSyncOutputsPort {
       externalActionProposals: [],
       confidence: 1,
       requiresApproval: false,
-      provenanceOrigin: "ingestion",
+      // Stay faithful to the real activity's derived-plan provenance (deterministicProgress defaults
+      // project_sync since §13.5 P1 added the member) so the fake can't mask a provenance regression.
+      provenanceOrigin: "project_sync",
     };
 
     const dashboard: Record<string, unknown> = {

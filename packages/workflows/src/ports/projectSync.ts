@@ -38,6 +38,7 @@ import type {
   ExternalWriteEnvelope,
   AuditId,
   FailureClass,
+  ProjectLifecycleState,
 } from "@sow/contracts";
 import type { ExtractionField, NoInferenceRejection } from "@sow/domain";
 
@@ -71,6 +72,32 @@ export interface ProjectRegistryEntry {
   readonly progressProviders: readonly ProgressProvider[];
   /** Optional aliases the registry maps to this project (for cross-referencing). */
   readonly aliases?: readonly string[];
+  /**
+   * §13.5 — the project's DISPLAY title, canonical note SLUG, and current LIFECYCLE state, added so the
+   * sync outputs (the dashboard row + the committed project-status note) can be built without a separate
+   * project-note read. The registry is the pipeline's SERVER-RESOLVED identity + workspace-binding authority
+   * (never caller-controlled), so these seed the note frontmatter / dashboard fields safely. NOTE (deliberate,
+   * scoped): the registry is the INTENT/seed source of `lifecycleState`; the committed note frontmatter is its
+   * reflection — coherent for first-sync seeding + stable re-runs. If lifecycle transitions must flow
+   * note→dashboard, a later `ResolveProjectPort` (reading the Project frontmatter) supersedes this.
+   */
+  readonly title: string;
+  /** Canonical project note slug (display/frontmatter only — the note PATH is derived from workspaceId, WS-8). */
+  readonly slug: string;
+  readonly lifecycleState: ProjectLifecycleState;
+}
+
+/**
+ * The canonical project identity BOTH sync outputs (dashboard row + committed note) need. Carries NO
+ * `workspaceId` — that stays a SEPARATE, server-bound param so an identity value can never smuggle a redirected
+ * workspace (WS-8). Every field is server-resolved from the registry entry (never caller-controlled).
+ */
+export interface ProjectIdentity {
+  readonly projectId: string;
+  readonly title: string;
+  /** Display/frontmatter slug ONLY — the committed note's physical path is rooted at workspaceId, never this. */
+  readonly slug: string;
+  readonly lifecycleState: ProjectLifecycleState;
 }
 
 /**
@@ -384,6 +411,11 @@ export interface BuildSyncOutputsPort {
     validated: ValidatedNarrative,
     progress: DeterministicProgress,
     workspaceId: WorkspaceId,
+    /** §13.5 — the server-resolved project identity both outputs need (registry-derived, WS-8-safe). */
+    identity: ProjectIdentity,
+    /** ISO-8601 sync instant — the dashboard row's `updatedAt` + the note's "last synced" line (the pure
+     *  projection + builder are clockless; the driver supplies the wall-clock reading from its Clock). */
+    updatedAt: string,
   ): Promise<Result<ProjectSyncOutputs, BuildSyncOutputsFailure>>;
 }
 
