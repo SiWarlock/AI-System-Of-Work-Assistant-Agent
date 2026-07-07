@@ -43,6 +43,8 @@ import {
   CLAUDE_AGENT_SDK_RUNTIME_ID,
   COPILOT_MCP_SERVER_NAME,
   COPILOT_GBRAIN_PROXY_MCP_NAMES,
+  COPILOT_VAULT_SERVER_NAME,
+  COPILOT_VAULT_MCP_NAMES,
   createClaudeAgentSdkRuntime,
   createClaudeAgentSdkTransport,
   runtimeError,
@@ -51,6 +53,7 @@ import type {
   AgentResult,
   AgentQueryFn,
   CopilotGbrainProxyHandler,
+  CopilotVaultProxyHandler,
   CopilotProposeToolHandler,
   McpServerConfig,
   RuntimeError,
@@ -71,6 +74,8 @@ import { handleCopilotProposeToolCall } from "./copilotPropose";
 import type { CopilotProposeSink } from "./copilotPropose";
 import { handleCopilotGbrainToolCall } from "./copilotGbrainProxy";
 import type { CopilotGbrainToolExec } from "./copilotGbrainProxy";
+import { handleCopilotVaultReadCall } from "./copilotVaultRead";
+import type { CopilotVaultReadFileExec, CopilotVaultRealpathExec } from "./copilotVaultRead";
 import {
   buildCopilotUserPrompt,
   mapCompletionToCandidate,
@@ -560,6 +565,18 @@ export interface ClaudeAgentCopilotRunnerDeps {
    * `gbrainProxyExec` + `buildGbrainProxyMcpServer` — a partial config FAILS CLOSED, never the unscoped path.
    */
   readonly gbrainProxyScopeFor?: (workspaceId: string) => CopilotWorkspaceScope | undefined;
+  /**
+   * OPTIONAL (§13.10d) factory that builds the in-process read-only VAULT MCP server from a bound handler
+   * (boot injects `createCopilotVaultMcpServer` from @sow/providers). Present WITH `vaultReadFile` + `vaultRoot`
+   * on a SERVED scoped read job ⇒ the model ALSO gets `mcp__vault__read`, bound to the SAME per-ask scope.
+   */
+  readonly buildVaultMcpServer?: (handler: CopilotVaultProxyHandler) => McpServerConfig;
+  /** OPTIONAL (§13.10d) the fs reader seam for vault.read (boot injects the real redaction-safe `fs` reader). */
+  readonly vaultReadFile?: CopilotVaultReadFileExec;
+  /** OPTIONAL (§13.10d) the realpath seam for vault.read's symlink-safe layer (boot injects `createFsRealpath`). */
+  readonly vaultRealpath?: CopilotVaultRealpathExec;
+  /** OPTIONAL (§13.10d) the absolute vault root the vault.read handler guards every read against (traversal). */
+  readonly vaultRoot?: string;
 }
 
 /** The SDK MCP tool name the propose tool is surfaced as (`mcp__copilot__propose_action`). */
@@ -656,6 +673,24 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
           // scoped and an unscoped `mcp__gbrain__*` surface.
           mcpServers[GBRAIN_MCP_SERVER_NAME] = deps.buildGbrainProxyMcpServer(handler);
           toolNames.push(...COPILOT_GBRAIN_PROXY_MCP_NAMES);
+          // §13.10d — ALSO expose the read-only VAULT (page reads) under the distinct `vault` server key, bound
+          // to the SAME per-ask `scope`. Additive to the gbrain proxy. Requires ALL of {factory, readFile,
+          // vaultRoot}; a PARTIAL config SKIPS vault (fail-closed on the capability — the job still runs with
+          // gbrain, never exposes an unbound/unguarded vault). A propose job never reaches here (seed-only).
+          if (
+            deps.buildVaultMcpServer !== undefined &&
+            deps.vaultReadFile !== undefined &&
+            deps.vaultRealpath !== undefined &&
+            deps.vaultRoot !== undefined
+          ) {
+            const vaultRoot = deps.vaultRoot;
+            const vaultReadFile = deps.vaultReadFile;
+            const vaultRealpath = deps.vaultRealpath;
+            const vaultHandler: CopilotVaultProxyHandler = (a: unknown) =>
+              handleCopilotVaultReadCall(a, { scope, vaultRoot, realpath: vaultRealpath, readFile: vaultReadFile });
+            mcpServers[COPILOT_VAULT_SERVER_NAME] = deps.buildVaultMcpServer(vaultHandler);
+            toolNames.push(...COPILOT_VAULT_MCP_NAMES);
+          }
         } else {
           // Back-compat (no proxy deps): the raw http gbrain server + the gbrain read allow-list (UNSCOPED — the
           // WS-8 combined-brain residual noted on this runner applies). No token ⇒ no read tools ⇒ fail closed

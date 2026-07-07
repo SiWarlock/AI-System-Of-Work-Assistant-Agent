@@ -84,6 +84,7 @@ import {
   DEFAULT_GBRAIN_HTTP_URL,
 } from "./api/procedures/copilotGbrainHttp";
 import type { GbrainTokenProvider } from "./api/procedures/copilotGbrainHttp";
+import { createFsVaultReadFileExec, createFsRealpath } from "./api/procedures/copilotVaultRead";
 import {
   createAgentRuntimeCopilotSynthesis,
   createClaudeAgentCopilotRunner,
@@ -93,7 +94,7 @@ import {
 import { createApprovalsProposeSink } from "./api/procedures/copilotProposeSink";
 import { createInterimDegradedServingOracle } from "./api/procedures/copilotProvenanceStamp";
 import type { CopilotServingOracle } from "./api/procedures/copilotProvenanceStamp";
-import { createCopilotProposeMcpServer, createCopilotGbrainProxyMcpServer } from "@sow/providers";
+import { createCopilotProposeMcpServer, createCopilotGbrainProxyMcpServer, createCopilotVaultMcpServer } from "@sow/providers";
 import type { CopilotSynthesisPort } from "./api/procedures/copilot";
 import { createClaudeSubscriptionCompletion } from "@sow/providers";
 import type { SystemHealthQueryPort, UiSafeEgressStatus } from "./api/procedures/systemHealth";
@@ -250,6 +251,14 @@ export interface BootConfig extends BackendsConfig {
    * `copilotRealModel` is off. Dormant unless a serve is running — flip only alongside one.
    */
   readonly copilotAgentMode?: boolean;
+  /**
+   * §13.10d — the read-only VAULT page-read tool (`mcp__vault__read`). OFF by default. When true (AND
+   * `copilotAgentMode` + workspace scoping on AND a `vaultRoot` configured), the agent ALSO gets a
+   * `vault.read` tool to read ONE canonical-Markdown note by path — path-traversal-guarded + WS-8-scoped to
+   * the served workspace (a foreign / traversal path is denied, fail-closed). Additive to the gbrain proxy.
+   * Needs the Obsidian vault on disk at `vaultRoot`; no effect without it.
+   */
+  readonly copilotVaultRead?: boolean;
   /**
    * The Copilot WRITE-VIA-APPROVALS tool (Phase-C C5.3 — OFF by default; requires `copilotAgentMode` too).
    * When true, the agent MAY hold the `copilot.propose_action` tool, which records a PENDING §9.8 Approval
@@ -500,6 +509,19 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
                   buildGbrainProxyMcpServer: createCopilotGbrainProxyMcpServer,
                 }
               : undefined;
+          // §13.10d — the read-only VAULT page-read deps. Gated on `copilotVaultRead` (OFF by default) + a
+          // configured `vaultRoot` + scoping on (`wsScope`; the vault handler needs a per-ask scope, which the
+          // runner binds inside its scoped-proxy branch). All three deps or none — the fs reader is
+          // redaction-safe, and the handler path-guards + WS-8-scopes every read.
+          const vaultRunnerDeps =
+            config.copilotVaultRead === true && config.vaultRoot !== undefined && wsScope !== undefined
+              ? {
+                  buildVaultMcpServer: createCopilotVaultMcpServer,
+                  vaultReadFile: createFsVaultReadFileExec(),
+                  vaultRealpath: createFsRealpath(),
+                  vaultRoot: config.vaultRoot,
+                }
+              : undefined;
           const runner = createClaudeAgentCopilotRunner({
             servedWorkspaceId: servedWorkspaceIdStr,
             gbrainMcpUrl: gbrainMcpEndpoint(gbrainHttpBaseUrl),
@@ -507,6 +529,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
             proposeSink,
             buildProposeMcpServer: createCopilotProposeMcpServer,
             ...(gbrainProxyRunnerDeps !== undefined ? gbrainProxyRunnerDeps : {}),
+            ...(vaultRunnerDeps !== undefined ? vaultRunnerDeps : {}),
             ...(config.copilotBetas !== undefined ? { betas: config.copilotBetas } : {}),
           });
           // proposeEnabled mirrors the flag; resolveContentTrust is the REAL per-source-provenance derivation

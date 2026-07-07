@@ -17,7 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { ok, err, isOk, isErr, failure, toolId, workspaceId, AgentJobSchema } from "@sow/contracts";
 import type { AgentJob, ProviderRoute, Result, FailureVariant } from "@sow/contracts";
-import { runtimeError, COPILOT_GBRAIN_PROXY_MCP_NAMES } from "@sow/providers";
+import { runtimeError, COPILOT_GBRAIN_PROXY_MCP_NAMES, COPILOT_VAULT_SERVER_NAME, COPILOT_VAULT_MCP_NAMES } from "@sow/providers";
 import type { AgentResult, RuntimeError, AgentQueryFn, CopilotGbrainProxyHandler, McpServerConfig } from "@sow/providers";
 import {
   copilotReadToolIds,
@@ -873,6 +873,93 @@ describe("createClaudeAgentCopilotRunner — Option A multi-served proxy scope (
     expect(tokenCalls).toBe(0); // never fell back to the raw http (token) path
   });
 });
+
+// ── §13.10d — the runner ALSO exposes the read-only VAULT (vault.read) bound to the per-ask scope ──────────
+describe("createClaudeAgentCopilotRunner — vault.read wiring (§13.10d, additive to the gbrain proxy)", () => {
+  const REGISTRY: WorkspaceScopeRegistry = {
+    descriptors: [
+      { workspaceId: workspaceId("employer-work"), slugPrefixes: ["employer-work"] },
+      { workspaceId: workspaceId("personal-business"), slugPrefixes: ["personal-business"] },
+    ],
+  };
+  const POLICY: LegacyContentPolicy = { mode: "assign", toWorkspaceId: workspaceId("personal-business") };
+  const scopeFor = (ws: string): CopilotWorkspaceScope | undefined => {
+    const d = REGISTRY.descriptors.find((x) => String(x.workspaceId) === ws);
+    return d === undefined ? undefined : { servedWorkspaceId: d.workspaceId, registry: REGISTRY, policy: POLICY };
+  };
+  const prompt: CopilotPromptContext = { question: "q?", context: ctx() };
+  const spyProxyServer = (): { build: (h: unknown) => McpServerConfig; marker: McpServerConfig } => {
+    const marker = { type: "sdk", name: "gbrain", instance: {} } as unknown as McpServerConfig;
+    return { build: () => marker, marker };
+  };
+  function spyVaultServer(): { build: (h: (a: unknown) => Promise<{ content: ReadonlyArray<{ type: "text"; text: string }> }>) => McpServerConfig; marker: McpServerConfig; handler: () => ((a: unknown) => Promise<{ content: ReadonlyArray<{ type: "text"; text: string }> }>) | undefined } {
+    let captured: ((a: unknown) => Promise<{ content: ReadonlyArray<{ type: "text"; text: string }> }>) | undefined;
+    const marker = { type: "sdk", name: "vault", instance: {} } as unknown as McpServerConfig;
+    return { build: (h) => { captured = h; return marker; }, marker, handler: () => captured };
+  }
+  const gbrainExec: CopilotGbrainToolExec = async () => ok({ content: [{ type: "text", text: "[]" }] });
+
+  it("with ALL vault deps: registers mcp__vault__read under the 'vault' key (coexisting with gbrain) + scopes reads to the asked workspace", async () => {
+    const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+    const proxy = spyProxyServer();
+    const vault = spyVaultServer();
+    const files: Record<string, string> = { "/vault/personal-business/notes/x.md": "PB body", "/vault/employer-work/secret.md": "EW body" };
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => ok("tok"),
+      queryFn: cap.fn,
+      gbrainProxyScopeFor: scopeFor,
+      gbrainProxyExec: gbrainExec,
+      buildGbrainProxyMcpServer: proxy.build,
+      buildVaultMcpServer: vault.build,
+      vaultReadFile: async (abs) => (abs in files ? ok(files[abs]!) : err(runtimeErrorFault())),
+      vaultRealpath: async (p) => ok(p), // identity (no symlinks) — the handler's symlink-safe layer
+      vaultRoot: "/vault",
+    });
+    const r = await runner.run(buildCopilotAgentJob("personal-business", RUNTIME_ROUTE), prompt);
+    expect(isOk(r)).toBe(true);
+    const opts = cap.seen()?.options ?? {};
+    const servers = opts["mcpServers"] as Record<string, unknown>;
+    expect(servers[COPILOT_VAULT_SERVER_NAME]).toBe(vault.marker); // vault registered under its own key
+    expect(servers["gbrain"]).toBe(proxy.marker); // gbrain still there (coexist)
+    expect(opts["allowedTools"]).toEqual([...COPILOT_GBRAIN_PROXY_MCP_NAMES, ...COPILOT_VAULT_MCP_NAMES]);
+    // the bound vault handler is scoped to personal-business: reads its own note, DENIES the employer note.
+    const h = vault.handler();
+    expect(h).toBeDefined();
+    expect((await h!({ path: "personal-business/notes/x" })).content[0]!.text).toBe("PB body");
+    expect((await h!({ path: "employer-work/secret" })).content[0]!.text).toBe(""); // foreign ⇒ denied
+  });
+
+  it("PARTIAL vault config (factory present, vaultRoot missing) SKIPS vault (fail-closed on the capability; gbrain still works)", async () => {
+    const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+    const proxy = spyProxyServer();
+    const vault = spyVaultServer();
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => ok("tok"),
+      queryFn: cap.fn,
+      gbrainProxyScopeFor: scopeFor,
+      gbrainProxyExec: gbrainExec,
+      buildGbrainProxyMcpServer: proxy.build,
+      buildVaultMcpServer: vault.build,
+      vaultReadFile: async () => ok("x"),
+      // vaultRoot MISSING ⇒ partial
+    });
+    const r = await runner.run(buildCopilotAgentJob("personal-business", RUNTIME_ROUTE), prompt);
+    expect(isOk(r)).toBe(true);
+    const opts = cap.seen()?.options ?? {};
+    const servers = opts["mcpServers"] as Record<string, unknown>;
+    expect(servers[COPILOT_VAULT_SERVER_NAME]).toBeUndefined(); // vault NOT exposed on partial
+    expect(vault.handler()).toBeUndefined();
+    expect(opts["allowedTools"]).toEqual([...COPILOT_GBRAIN_PROXY_MCP_NAMES]); // gbrain only
+  });
+});
+
+function runtimeErrorFault(): import("@sow/contracts").FailureVariant {
+  return failure("degraded_unavailable", "not found", { retryable: false, cause: { code: "VAULT_READ_ENOENT" } });
+}
 
 // ── C5.3c: content-trust fail-closed interim + the runner's propose grant ──
 describe("deriveCopilotContentTrust — per-source provenance, fail-closed", () => {
