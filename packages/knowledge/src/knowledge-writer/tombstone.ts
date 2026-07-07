@@ -300,6 +300,8 @@ export async function applyTombstone(
       `${removedRegionCount} region(s) removed` +
       (command.reason !== undefined ? `; ${command.reason}` : ""),
     timestamps: { occurredAt },
+    // WS-8 scope for the §9.5 recent-changes projector — the tombstone command carries its workspaceId.
+    workspaceId: command.workspaceId,
   };
   await deps.audit.append(auditRecord);
 

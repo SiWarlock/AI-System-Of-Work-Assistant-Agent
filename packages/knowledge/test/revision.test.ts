@@ -71,6 +71,25 @@ describe("buildCommitAuditRecord", () => {
     expect(rec.refs).toContain("evt-1");
     expect(rec.actor).toBe("KnowledgeWriter");
   });
+
+  it("folds the plan's workspaceId onto the audit record (WS-8 scope for the §9.5 recent-changes feed)", () => {
+    const rec = buildCommitAuditRecord({
+      actor: "KnowledgeWriter",
+      sourceEventRef: "evt-1",
+      workflowRunRef: wf,
+      idempotencyKey: "idem-1",
+      planId: "plan-1",
+      baseRevisionId: "rev:base",
+      newRevisionId: "rev:new",
+      beforeSummary: "revision rev:base",
+      afterSummary: "1 file changed",
+      payloadHash: hashPayload({ a: 1 }),
+      occurredAt: "2026-07-01T00:00:00.000Z",
+      workspaceId: "employer-work",
+    });
+    expect(rec.workspaceId).toBe("employer-work");
+    expect(() => AuditRecordSchema.parse(rec)).not.toThrow();
+  });
 });
 
 describe("hashPayload", () => {

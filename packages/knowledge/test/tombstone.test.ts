@@ -97,6 +97,8 @@ describe("applyTombstone — whole-note tombstone (not silent delete)", () => {
     expect(d.revisions.recordCalls).toBe(1);
     expect(r.value.revisionId).toBe(revOf(vault));
     expect(d.audit.records[0]!.refs).toContain(r.value.revisionId);
+    // WS-8 scope for the §9.5 recent-changes feed — the tombstone audit carries the command's workspace.
+    expect(d.audit.records[0]!.workspaceId).toBe("ws-1");
   });
 });
 

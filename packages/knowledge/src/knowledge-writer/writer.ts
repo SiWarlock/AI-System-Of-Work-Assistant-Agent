@@ -255,6 +255,8 @@ export async function applyPlan(
     afterSummary: summarize(plan, changes.length),
     payloadHash: hashPayload(plan),
     occurredAt,
+    // WS-8 scope for the §9.5 recent-changes projector — the plan always carries a workspaceId (KN gate).
+    workspaceId: plan.workspaceId,
   });
   await deps.audit.append(auditRecord);
 

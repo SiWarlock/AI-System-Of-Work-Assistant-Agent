@@ -84,6 +84,12 @@ export interface AuditRecordInput {
   readonly afterSummary: string;
   readonly payloadHash: string;
   readonly occurredAt: string;
+  /**
+   * The committing plan's workspace (WS-8 scope for the §9.5 recent-changes projector). Optional on the
+   * input for builder flexibility, but every real commit supplies it — a KnowledgeMutationPlan always
+   * carries a workspaceId (the KN commit gate requires it). Folded onto the AuditRecord's optional field.
+   */
+  readonly workspaceId?: string;
 }
 
 /**
@@ -106,6 +112,9 @@ export function buildCommitAuditRecord(input: AuditRecordInput): AuditRecord {
     beforeSummary: input.beforeSummary,
     afterSummary: input.afterSummary,
     timestamps: { occurredAt: input.occurredAt },
+    // Fold the workspace scope only when supplied — omit the key entirely otherwise (the field is optional
+    // on AuditRecord; a global/unscoped commit stays workspaceId-less rather than carrying `undefined`).
+    ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
   };
 }
 
