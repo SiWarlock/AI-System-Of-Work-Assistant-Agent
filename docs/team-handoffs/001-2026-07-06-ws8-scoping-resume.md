@@ -1,9 +1,27 @@
 # Handoff 001 — WS-8 scoping build (SC5b → SC6–SC9 → multi-served → F2 → cert → vault.read)
 
 - **Date:** 2026-07-06 · **From session:** `docs/sessions/042-2026-07-06-ws8-scoping-design-sc1-gates-bcd.md` (+ session 043 `docs/sessions/043-2026-07-06-ws8-multi-served.md`)
-- **HEAD:** `534c7ed` — C6 pushed; the dashboard Arc-R commits (`66c3bde`→`534c7ed`) are committed (push at this close-out). Tree clean except the owner's `.claude/settings.json`, `CLAUDE.md`, `graphify-out/`. **Gate:** repo-wide `turbo typecheck test` 31/31.
+- **HEAD:** `9d3b1f4` — everything pushed to origin/main (0/0). Tree clean except the owner's `.claude/settings.json`, `CLAUDE.md`, `graphify-out/`. **Gate:** repo-wide `turbo typecheck test` 31/31.
 
-## ⏩ RESUME HERE (state at compaction, 2026-07-06)
+## ⏩⏩ RESUME HERE (state at compaction, 2026-07-07) — the real-dashboard frontier
+
+**Canonical tracker for the current work: memory `sow-dashboard-real-producers`** (fully current). Session docs: 044 (skill-intro), 045 (recent-changes Arc R), 046 (typed Project P1–P3b), 047 (the projectSync projection P3e). Plan: `~/.claude/plans/snazzy-honking-stearns.md`.
+
+**Both dashboard arcs' DETERMINISTIC build is COMPLETE + fully reviewed — what's left is composition wiring + a Temporal decision, not more building.**
+- **Arc R (recent-changes, audit-driven):** R1–R4 DONE (`66c3bde`→`534c7ed`). ⏳ R5 (always-on wiring) Temporal-gated.
+- **Arc P (Projects, typed Project model §13.5):** P1 seam (`517659c`) · P2 7th state machine (`1ddbf10`) · P3a dashboard builder (`63a8d0b`) · P3b read-model update port (`7ba1892`) · P3c ValidateNarrativePort (`ccaebf5` — the schema-gate-redundancy question RESOLVED by investigation: broker owns the schema gate, no-inference is owned here) · P3d provenance arch_gap (`f919565`) · **P3e the concrete `SyncOutputsProjection` (`0ca8dd0`+`30bcfbf`+`05df188`) — design-verified via a survey→design→adversarial-verify Workflow that CAUGHT 3 safety MAJORs (WS-8 slug-as-path traversal, REQ-F-011 note percent, no-inference render dup), all fixed + dual-reviewer RE-VERIFIED HELD (0 crit/high/med).**
+
+**NEXT — task #31 (composition wiring + P4/R5 activation, Temporal-gated):**
+1. Wire the concrete trio (`createProjectSyncOutputsProjection` + `createValidateNarrativePort` + `createProjectDashboardUpdatePort`) into the projectSync activity/driver composition (boot/worker-host), replacing the fakes (`FakeBuildSyncOutputsPort`/`FakeValidateNarrativePort`/`FakeUpdateDashboardPort` in `project-sync-fakes.ts`).
+2. Driver **create-vs-patch re-run split** (the projection always returns `NoteCreate`; on re-sync the driver should region-PATCH `project-status`, not re-create — named follow-up).
+3. **P4** = register the projectSync activities + trigger `runProjectSync`; **R5** = wire the `projectRecentChanges` projector to live audit appends. BOTH need Temporal (app boots degraded) — this is the **owner's deployment fork** (bring Temporal up vs a degraded-mode trigger), not a code-design problem.
+- Deferred: assert the `workspaceId` note-path segment is path-safe (security LOW, defense-in-depth); pin the `sow:project-sync-output` narrative-draft schema + wire it on `createValidateNarrativePort`'s `narrativeSchema` hook (the P3c go-live gate).
+
+**Other high-leverage direction (owner fork):** §13.10a — the **Copilot→KnowledgeMutationPlan bridge** (the Copilot still can't propose a Markdown edit; blocks the whole semantic-write class — the typed Project model now gives it a clean first target). Memory `sow-copilot-skill-catalog` §5.1.
+
+---
+
+## Earlier ⏩ RESUME (state at compaction, 2026-07-06) — the WS-8 / C6 arc
 
 This session (043) landed, on top of the WS-8 arc, in order — all pushed, all dual-reviewed:
 1. **Multi-served** (`daab098`+`73592be`+`31adae0`) — Option A single-brain multi-served; ANY registered workspace reads the one brain scoped per-ask. LIVE on boot. See memory `sow-copilot-multi-served`.
