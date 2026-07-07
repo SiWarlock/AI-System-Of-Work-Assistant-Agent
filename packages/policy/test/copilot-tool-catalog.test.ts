@@ -280,7 +280,7 @@ describe("copilotToolScopingClass — every read tool is classified (totality; u
       // pin EXPLICIT map coverage — a new read tool with no entry must fail here, not silently degrade to
       // the fail-safe `unscopable` (which would hide a missing-classification bug behind over-denial).
       expect(Object.prototype.hasOwnProperty.call(COPILOT_TOOL_SCOPING, String(id)), `unclassified: ${String(id)}`).toBe(true);
-      expect(["arg-scopable", "result-filterable", "unscopable"]).toContain(copilotToolScopingClass(id));
+      expect(["arg-scopable", "result-filterable", "unscopable", "workspace-agnostic"]).toContain(copilotToolScopingClass(id));
     }
   });
   it("has NO stale scoping entry (every classified id is a real read tool)", () => {
@@ -354,5 +354,46 @@ describe("copilotScopedReadToolIds — deny the unscopable aggregators on a NON-
   it("the returned ids are a subset of the read catalog (never invents a tool)", () => {
     const readIds = copilotReadToolIds().map(String);
     for (const id of copilotScopedReadToolIds(true).map(String)) expect(readIds).toContain(id);
+  });
+});
+
+// ── §13.10d — skill self-introspection (list_skills / get_skill): the C6 skill-catalog-over-MCP pattern ──
+// The agent enumerating which read-skills it can invoke + reading one skill's metadata. This touches NO
+// workspace data (it reads the STATIC tool catalog), so it is the genuine case for the FOURTH scoping class
+// `workspace-agnostic` — NOT `arg-scopable` (there is no arg to scope) nor `unscopable` (which would wrongly
+// DENY it on today's non-partitioned brain). Zero write risk; ING-7-safe; identical regardless of workspace.
+describe("§13.10d skill self-introspection — skills.list / skills.get catalog entries", () => {
+  const SKILL_IDS = ["skills.list", "skills.get"];
+
+  it("catalogs skills.list + skills.get as NON-mutating, FROZEN read tools that ride into the read policy", () => {
+    const ids = COPILOT_READ_TOOLS.map((s) => String(s.id));
+    for (const id of SKILL_IDS) {
+      expect(ids).toContain(id);
+      const spec = COPILOT_READ_TOOLS.find((s) => String(s.id) === id);
+      expect(spec?.mutating).toBe(false);
+      expect(isMutatingCopilotTool(toolId(id))).toBe(false); // catalog-known, not fail-safe-mutating
+      expect(Object.isFrozen(spec)).toBe(true);
+    }
+    // they ride into the read_only policy — a read_only Copilot job may hold them, and the surface stays pure.
+    expect(copilotReadToolPolicy().allowedTools.map(String)).toEqual(expect.arrayContaining(SKILL_IDS));
+    expect(copilotReadOnlyPolicyIsPure(copilotReadToolPolicy())).toBe(true);
+  });
+
+  it("classifies both as the NEW workspace-agnostic scoping class (they touch no workspace data)", () => {
+    for (const id of SKILL_IDS) {
+      expect(copilotToolScopingClass(toolId(id))).toBe("workspace-agnostic");
+    }
+  });
+
+  it("workspace-agnostic tools are KEPT on a NON-partitioned brain (unlike the unscopable aggregators)", () => {
+    // The distinguishing property: workspace-agnostic reads carry no cross-workspace leak risk, so — like the
+    // arg-scopable / result-filterable reads and UNLIKE the unscopable aggregators — they survive the
+    // non-partitioned-brain narrowing. A regression that reclassified them `unscopable` would drop them here.
+    const nonPartitioned = copilotScopedReadToolIds(false).map(String);
+    const partitioned = copilotScopedReadToolIds(true).map(String);
+    for (const id of SKILL_IDS) {
+      expect(nonPartitioned).toContain(id); // kept even on today's single 'default' source
+      expect(partitioned).toContain(id);
+    }
   });
 });

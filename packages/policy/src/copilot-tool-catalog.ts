@@ -107,6 +107,12 @@ export const COPILOT_READ_TOOLS: readonly CopilotToolSpec[] = Object.freeze([
   // catalog entry would be a dead allow-list entry for the served (http-transport) agent.
   Object.freeze({ id: toolId("gbrain.get_recent_salience"), mutating: false, description: "recently-salient pages (activity + salience ranked over a window)" }),
   Object.freeze({ id: toolId("vault.read"), mutating: false, description: "read a canonical Markdown note by path" }),
+  // §13.10d skill self-introspection — the C6 skill-catalog-over-MCP pattern (the agent enumerating which
+  // read-skills it can invoke + reading one skill's metadata). These read the STATIC tool catalog, touching
+  // NO workspace data (no brain read, no vault read), so they carry ZERO cross-workspace leak risk and are
+  // classified `workspace-agnostic` below (the 4th scoping class). Pure reads, ING-7-safe, zero approval.
+  Object.freeze({ id: toolId("skills.list"), mutating: false, description: "list the Copilot's own read-skills (id + description) — skill self-introspection" }),
+  Object.freeze({ id: toolId("skills.get"), mutating: false, description: "read one Copilot read-skill's metadata by id" }),
 ]);
 
 /**
@@ -150,10 +156,22 @@ export function copilotAgentToolIds(): ToolId[] {
 //     only scope lever is source_id, inert on a single-source brain — they would leak cross-workspace code
 //     structure). These are DENIED on a non-partitioned brain; a per-workspace-partitioned brain (Phase B
 //     source_id / Phase C brain-per-workspace) scopes the computation server-side, so they become safe.
+//   • workspace-agnostic — the tool touches NO workspace data (reads the STATIC tool catalog, not the brain):
+//     skill self-introspection (skills.list/skills.get). No scope to apply, no leak possible ⇒ kept on ANY brain.
 // FAIL-SAFE: an unknown ToolId classifies `unscopable` (mirrors `isMutatingCopilotTool`'s unknown⇒mutating).
 
-/** How a Copilot read tool can be workspace-scoped over the combined brain. */
-export type CopilotToolScopingClass = "arg-scopable" | "result-filterable" | "unscopable";
+/**
+ * How a Copilot read tool can be workspace-scoped over the combined brain.
+ *   • arg-scopable      — a per-call arg pins the served workspace (slug seed / slug-prefix / path).
+ *   • result-filterable — results carry a per-hit slug, so SC5 drops foreign hits post-hoc.
+ *   • unscopable        — a whole-brain computation with no per-item workspace scope (DENIED non-partitioned).
+ *   • workspace-agnostic — the tool touches NO workspace data (it reads the STATIC tool catalog, not the brain
+ *     or vault), so there is nothing to scope and no cross-workspace leak is possible: safe on ANY brain,
+ *     partitioned or not. This is DISTINCT from `arg-scopable` (which has a real workspace-pinning arg) and
+ *     from `unscopable` (a whole-brain read that WOULD leak until partitioning). Only skill self-introspection
+ *     (skills.list / skills.get) is in this class today.
+ */
+export type CopilotToolScopingClass = "arg-scopable" | "result-filterable" | "unscopable" | "workspace-agnostic";
 
 /**
  * The workspace-scoping class per read ToolId. FROZEN at runtime (same bar as COPILOT_READ_TOOLS: this is a
@@ -184,6 +202,10 @@ export const COPILOT_TOOL_SCOPING: Readonly<Record<string, CopilotToolScopingCla
   "gbrain.code_callees": "unscopable",
   "gbrain.code_flow": "unscopable",
   "gbrain.code_blast": "unscopable",
+  // §13.10d skill self-introspection — no workspace data touched ⇒ the 4th class (safe on any brain, kept on a
+  // non-partitioned one, since there is nothing to leak). NOT `arg-scopable`: there is no workspace-pinning arg.
+  "skills.list": "workspace-agnostic",
+  "skills.get": "workspace-agnostic",
 });
 
 /** Classify how a read ToolId can be workspace-scoped. FAIL-SAFE: unknown ⇒ `unscopable`. Pure. */
@@ -196,8 +218,9 @@ export function copilotToolScopingClass(id: ToolId): CopilotToolScopingClass {
  * brain (`brainPartitioned=false`, today's single "default" source) the whole-brain `unscopable` tools are
  * DROPPED — they cannot be scoped to the served workspace, so an agentic Copilot must not hold them. On a
  * per-workspace-partitioned brain they are restored (the server scopes the computation). The `arg-scopable`
- * / `result-filterable` tools are always kept (SC5 pins/filters them). Fail-safe: an unknown/unclassified
- * read tool is `unscopable` ⇒ dropped on a non-partitioned brain. Pure.
+ * / `result-filterable` / `workspace-agnostic` tools are always kept (SC5 pins/filters the first two; the
+ * last touches no workspace data). Fail-safe: an unknown/unclassified read tool is `unscopable` ⇒ dropped on
+ * a non-partitioned brain. Pure.
  */
 export function copilotScopedReadToolIds(brainPartitioned: boolean): ToolId[] {
   return copilotReadToolIds().filter((id) =>
