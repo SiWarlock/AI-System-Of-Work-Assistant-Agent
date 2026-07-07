@@ -101,6 +101,7 @@ export * from "./activities/hermesRoute";
 export * from "./activities/assembleNotebookDocs";
 export * from "./activities/deterministicProgress";
 export * from "./activities/projectDashboard";
+export * from "./activities/validateNarrative";
 
 // --- src/workflows/ — PURE orchestration drivers ----------------------------
 export * from "./workflows/systemHealthSurfacing";
