@@ -107,10 +107,16 @@ async function start(config: WorkerHostConfig): Promise<void> {
       // never crossing to another (decideHitScope enforces this per ask). WS-8 now holds by SCOPE FILTERING (not
       // by construction), so the F2 field-fidelity + A1 body-embedded residuals are REACHABLE for any workspace
       // that holds real content in the combined brain — INERT today (only personal-business has content).
-      // ⚠ Two operator guards while this is on: (1) do NOT save non-personal-business content UNPREFIXED (the
-      // {assign} bridge is sound only while the brain holds a single workspace's unprefixed content); (2) keep
-      // EMPLOYER-WORK out of the combined brain until F2 closes (the gate-(c) governance eval) — personal-life
-      // is safe to add (its own prefixed content). See docs/runbooks + docs/planning/ws8-workspace-scoping.md.
+      // ⚠ Operator guards while this is on:
+      //   (1) do NOT save non-personal-business content UNPREFIXED (the {assign} bridge is sound only while the
+      //       brain holds a single workspace's unprefixed content — save employer-work/personal-life PREFIXED).
+      //   (2) OWNER ACCEPTED employer-work in the combined brain (2026-07-06, "separate brains later"). F2
+      //       structural field-fidelity is CLOSED (`allowItemFields`), so cross-workspace SURFACING is scoped
+      //       out per ask. Accepted residuals of ONE shared brain: A1 (a page whose BODY verbatim quotes another
+      //       workspace surfaces that text under its own workspace's ask) — and because employer-work egresses to
+      //       the Claude cloud WITH a notice (cloudCopilotPosture), A1 employer text embedded in a PERSONAL page
+      //       egresses under a PERSONAL ask WITHOUT the employer notice. Option B (per-workspace brains) removes
+      //       both, deferred per owner. See docs/planning/ws8-workspace-scoping.md.
       // To turn OFF (back to single-served, only personal-business reads the brain), remove these two lines.
       copilotWorkspaceScoping: true,
       copilotLegacyContentPolicy: { mode: "assign", toWorkspaceId: workspaceId("personal-business") },
