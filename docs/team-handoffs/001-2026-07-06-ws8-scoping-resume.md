@@ -22,7 +22,7 @@ Owner picked **Option A** ("fine with a single brain for now"). Landed in 3 slic
 ## NEXT (owner-gated / deferred — not blockers)
 
 - **A1 body-embedded foreign content — the remaining gate before employer-work joins the combined brain.** A kept in-workspace page whose BODY verbatim quotes another workspace (F2 handles structural fields; A1 is prose, so NOT runtime-fixable). Ingest-time fix: KnowledgeWriter classification + per-workspace source partitioning.
-- **gate-(c) governance eval** (`packages/evals`, eval-security track) — CERTIFIES no-cross-workspace-leakage per cataloged read (the proof that F2/A1 hold, not the fix). Coordinate with eval-security.
+- **gate-(c) certification** — ✅ the COPILOT read paths are now CERTIFIED end-to-end in `apps/worker/test/integration/copilot-ws8-separation.test.ts` (`2601b69`): ONE brain holding all 3 workspaces + legacy, driven through both P1 (answerCopilotQuestion) + P2 (agentic proxy) for every ask direction, exact citation/slug-set + foreign-marker-exclusion assertions (fails on any leak). The BROADER catalog-wide governance eval in `packages/evals` (every cataloged read op, corpus-driven, adversarial) remains eval-security territory — coordinate.
 - **Option B (per-workspace brains + serve + routing)** — the stronger-isolation target if you ever want employer-work in the Copilot without waiting on A1; WS-8 by construction, no A1 exposure. Bigger (a supervisor + serve + token + exec per brain). Deferred; single brain is fine per owner.
 - Prior deferrals still open: real Copilot model verification end-to-end in the running app; propose go-live (C5.4b real serving oracle + the 5 preconditions); C6 skills (owner-decision-gated).
 
