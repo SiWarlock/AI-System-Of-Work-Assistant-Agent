@@ -26,6 +26,7 @@ export * from "./error-routing/route-failure";
 export * from "./state/transition";
 export * from "./state/agent-job";
 export * from "./state/approval";
+export * from "./state/project";
 export * from "./state/knowledge-mutation";
 export * from "./state/meeting-closeout";
 export * from "./state/proposed-action";

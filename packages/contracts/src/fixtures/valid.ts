@@ -10,7 +10,7 @@
 // and type-only for types (verbatimModuleSyntax).
 import type { WorkspaceId, AgentJobId, ActionId, PlanId, SourceId, ApprovalId, WorkflowId, AuditId } from "../primitives/ids";
 import type { ProcessorId, ToolId } from "../primitives/enums";
-import type { Capability, RevisionId, ProposalId, ReportId, BrainId, FactIdentity, MdContentSha } from "../primitives/zod-brands";
+import type { Capability, RevisionId, ProposalId, ReportId, BrainId, ProjectId, FactIdentity, MdContentSha } from "../primitives/zod-brands";
 import type { ToolPolicy } from "../models/tool-policy";
 import type { EgressPolicy } from "../models/egress-policy";
 import type { ProviderRoute } from "../models/provider-route";
@@ -20,6 +20,7 @@ import type { Workspace } from "../models/workspace";
 import type { AgentJob } from "../models/agent-job";
 import type { KnowledgeMutationPlan } from "../models/knowledge-mutation-plan";
 import type { ProposedAction } from "../models/proposed-action";
+import type { Project } from "../models/project";
 import type { ExternalWriteEnvelope } from "../models/external-write-envelope";
 import type { WriteReceipt } from "../models/write-receipt";
 import type { SourceEnvelope } from "../models/source-envelope";
@@ -228,6 +229,21 @@ export const validAuditRecord: AuditRecord = {
   beforeSummary: "no prior note",
   afterSummary: "note created at acme/auth.md",
   timestamps: { occurredAt: T0 },
+};
+
+// ── Project (§13.5) ──────────────────────────────────────────────────────────
+export const validProject: Project = {
+  id: "proj-001" as ProjectId,
+  workspaceId: "ws-employer" as WorkspaceId,
+  slug: "employer-work/projects/auth-redesign",
+  title: "Auth redesign",
+  lifecycleState: "active",
+  timeline: [
+    { state: "idea", eventTime: T0, transactionTime: T0 },
+    { state: "planning", eventTime: T0, transactionTime: T0 },
+    { state: "active", eventTime: T0, transactionTime: T0 },
+  ],
+  provenanceOrigin: "project_capture",
 };
 
 // ── 16. WorkflowRunRef ───────────────────────────────────────────────────────
