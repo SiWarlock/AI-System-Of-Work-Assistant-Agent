@@ -46,20 +46,34 @@ function categoryFields(
   prefix: string,
 ): ExtractionField<string>[] {
   const re = new RegExp(`^${prefix}\\.(\\d+)$`, "u");
-  const hits: Array<[number, ExtractionField<unknown>]> = [];
+  const hits: Array<[number, ExtractionField<string>]> = [];
   for (const [k, f] of Object.entries(fields)) {
     const m = re.exec(k);
-    if (m) hits.push([Number(m[1]), f]);
+    // Only a genuinely-string value (or TBD) is a valid prose field — a non-string value is DROPPED, never
+    // String()-coerced into canonical Markdown (mirrors meetingOutputs' concreteString discipline). The
+    // parsed index is clamped so an absurd (Infinity) index can't make the sort comparator non-deterministic.
+    if (m && isStringField(f)) hits.push([boundedIndex(m[1]!), f]);
   }
   hits.sort((a, b) => a[0] - b[0]);
-  return hits.map(([, f]) => f as ExtractionField<string>);
+  return hits.map(([, f]) => f);
 }
 
-/** The scalar `explanation` prose lead, rendered leak-safe (TBD → undefined). */
+/** A field usable as prose: its value is a real string, or the TBD sentinel (renderProseLines skips TBD). */
+function isStringField(f: ExtractionField<unknown>): f is ExtractionField<string> {
+  return typeof f.value === "string" || f.value === TBD;
+}
+
+/** Parse a positional index, clamped to a sane bound so a pathological key can't yield Infinity/NaN ordering. */
+function boundedIndex(digits: string): number {
+  const n = Number(digits);
+  return Number.isFinite(n) ? Math.min(n, Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
+}
+
+/** The scalar `explanation` prose lead, rendered leak-safe (TBD / non-string / absent → undefined). */
 function explanationLine(fields: Record<string, ExtractionField<unknown>>): string | undefined {
   const f = fields["explanation"];
-  if (f === undefined || f.value === TBD) return undefined;
-  return renderProseLines([f as ExtractionField<string>])[0];
+  if (f === undefined || !isStringField(f) || f.value === TBD) return undefined;
+  return renderProseLines([f])[0];
 }
 
 /**
@@ -144,7 +158,12 @@ export function createProjectSyncOutputsProjection(): SyncOutputsProjection {
   };
 }
 
-/** Compose the note body with the explanation lead threaded explicitly (kept out of composeStatusBody's marker). */
+/**
+ * Compose the project-status note body: frontmatter + H1 are the stable human scaffold; ALL sync-mutable content
+ * is wrapped in the `kw:region:project-status` assistant region (KN-7). The percent is RE-DERIVED via
+ * `computePercent` (REQ-F-011 — never verbatim); prose renders via the SHARED `renderProseLines` (no-inference).
+ * An empty category omits its whole `## <Header>` section (no bare header).
+ */
 function composeBody(
   identity: ProjectIdentity,
   progress: DeterministicProgress,

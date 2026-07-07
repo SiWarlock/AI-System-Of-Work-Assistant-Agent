@@ -121,4 +121,29 @@ describe("createProjectSyncOutputsProjection", () => {
     expect(body).toContain("<!-- kw:region:project-status -->");
     expect(body).toContain("<!-- /kw:region:project-status -->");
   });
+
+  it("omits a category's whole ## section when it has no renderable items (no bare header)", () => {
+    // no blockers/waiting fields at all, and an all-TBD nextActions category → all three headers absent.
+    const body = bodyOf(run({ "nextActions.0": { value: TBD } }));
+    expect(body).not.toContain("## Blockers");
+    expect(body).not.toContain("## Waiting on");
+    expect(body).not.toContain("## Next actions");
+    expect(body).toContain("## Progress"); // Progress is always present
+  });
+
+  it("field-key convention: an index GAP (blockers.0 + blockers.2, no .1) keeps ascending order", () => {
+    const r = run({ "blockers.2": field("third"), "blockers.0": field("first") });
+    if (!isOk(r)) throw new Error("ok");
+    const env = r.value.dashboard as { dashboard: { blockers: string[] } };
+    expect(env.dashboard.blockers).toEqual(["first", "third"]);
+  });
+
+  it("hardening: a NON-STRING field value is DROPPED, never String()-coerced into canonical Markdown", () => {
+    // a mis-typed field (object value) must not render as "[object Object]" in the note or dashboard.
+    const r = run({ "blockers.0": { value: { evil: 1 } as unknown as string, evidenceRef: "x" }, "blockers.1": field("kept") });
+    if (!isOk(r)) throw new Error("ok");
+    const env = r.value.dashboard as { dashboard: { blockers: string[] } };
+    expect(env.dashboard.blockers).toEqual(["kept"]);
+    expect(r.value.note.body).not.toContain("[object Object]");
+  });
 });

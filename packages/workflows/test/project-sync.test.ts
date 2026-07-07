@@ -169,6 +169,34 @@ describe("runProjectSync — happy path", () => {
 
     expect(buildOutputs.calls[0]?.workspaceId).toBe(boundWs);
   });
+
+  it("derives the build IDENTITY from the registry-bound entry (not swapped/defaulted) + supplies the clock's updatedAt", async () => {
+    const buildOutputs = new FakeBuildSyncOutputsPort();
+    const registry = new FakeResolveRegistryPort({
+      result: "resolved",
+      entry: makeRegistryEntry({
+        projectId: "proj-xyz",
+        title: "Project XYZ",
+        slug: "employer-work/xyz",
+        lifecycleState: "planning",
+      }),
+    });
+    const deps = makeDeps({ buildOutputs, registry });
+
+    await runProjectSync(makeInput(), deps);
+
+    // The driver must thread the registry fields into ProjectIdentity, each in the right slot (a regression
+    // that swapped e.g. projectId←workspaceId, or forgot the clock, would pass every other test).
+    const call = buildOutputs.calls[0];
+    expect(call?.identity).toEqual({
+      projectId: "proj-xyz",
+      title: "Project XYZ",
+      slug: "employer-work/xyz",
+      lifecycleState: "planning",
+    });
+    expect(typeof call?.updatedAt).toBe("string");
+    expect(call?.updatedAt.length).toBeGreaterThan(0);
+  });
 });
 
 // --- REQ-F-011: a model-supplied percentage is NEVER the source of the number
