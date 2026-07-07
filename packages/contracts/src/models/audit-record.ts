@@ -50,6 +50,14 @@ export const AuditRecordSchema = z
     beforeSummary: z.string(),
     afterSummary: z.string(),
     timestamps: TimestampsSchema,
+    // OPTIONAL workspace attribution — the WS-8 scope key the audit→recent_changes
+    // projector (§9.5) groups + filters by. OPTIONAL, not required: some
+    // control-plane audit events are GLOBAL (unscoped) — e.g. the Tool-Gateway
+    // external-write audit has no workspaceId in scope. Precedent: EventLogRecord /
+    // LogRecord carry a nullable/optional workspaceId for exactly this reason. Kept
+    // a PLAIN string (not the branded WorkspaceId) to preserve this model's
+    // brand-free `z.infer` purity (see the header note + Lesson §1).
+    workspaceId: z.string().min(1).optional(),
   })
   .strict();
 

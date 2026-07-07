@@ -42,6 +42,22 @@ describe("AuditRecord contract — spec(§3/§4/§16)", () => {
     expect(AuditRecordSchema.safeParse(validFull).success).toBe(true);
   });
 
+  // ── workspaceId (optional; WS-8 scope attribution for the recent-changes projector) ──────────
+  // OPTIONAL, not required — precedent: EventLogRecord/LogRecord carry a nullable/optional workspaceId
+  // for GLOBAL control-plane events (the Tool-Gateway external-write audit has no workspaceId in scope).
+  it("accepts a record WITH a workspaceId (WS-8 scope attribution for the recent-changes feed)", () => {
+    expect(AuditRecordSchema.safeParse({ ...validFull, workspaceId: "employer-work" }).success).toBe(true);
+  });
+
+  it("accepts a record with workspaceId OMITTED (global control-plane audit events are unscoped)", () => {
+    // validFull carries no workspaceId — it must still validate (optional field).
+    expect(AuditRecordSchema.safeParse(validFull).success).toBe(true);
+  });
+
+  it("rejects an empty workspaceId when present (min length 1)", () => {
+    expect(AuditRecordSchema.safeParse({ ...validFull, workspaceId: "" }).success).toBe(false);
+  });
+
   it("accepts a record with recordedAt omitted (only that timestamp is optional)", () => {
     const ok = AuditRecordSchema.safeParse({
       actor: "human:cody",

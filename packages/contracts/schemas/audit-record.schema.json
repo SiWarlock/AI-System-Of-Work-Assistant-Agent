@@ -42,6 +42,10 @@
         "occurredAt"
       ],
       "additionalProperties": false
+    },
+    "workspaceId": {
+      "type": "string",
+      "minLength": 1
     }
   },
   "required": [
