@@ -404,6 +404,8 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
         const conds = [];
         if (filter.actor !== undefined) conds.push(eq(schema.auditRecords.actor, filter.actor));
         if (filter.event !== undefined) conds.push(eq(schema.auditRecords.event, filter.event));
+        if (filter.workspaceId !== undefined)
+          conds.push(eq(schema.auditRecords.workspaceId, filter.workspaceId));
         // arch_gap: audit has no surrogate id (parity bars one) — its only row
         // identity is SQLite's implicit `rowid`, used here for append/forward
         // order. `rowid` is SQLite-only; the Postgres adapter (2.4) needs an

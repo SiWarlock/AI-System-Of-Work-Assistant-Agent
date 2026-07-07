@@ -528,6 +528,20 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       for (let i = 0; i < 5; i++) unwrap(await repos.audit.append({ ...validAuditRecord, refs: [`r${i}`] }));
       expect(unwrap(await repos.audit.query({}, 2))).toHaveLength(2);
     });
+
+    it("round-trips + scope-filters the optional workspaceId (the §9.5 recent-changes projector's WS-8 filter)", async () => {
+      unwrap(await repos.audit.append({ ...validAuditRecord, event: "e.pb", workspaceId: "personal-business" }));
+      unwrap(await repos.audit.append({ ...validAuditRecord, event: "e.ew", workspaceId: "employer-work" }));
+      unwrap(await repos.audit.append({ ...validAuditRecord, event: "e.global" })); // no workspaceId (a global event)
+      // the workspace filter returns ONLY that workspace's rows; a NULL-workspace (global) row is NOT returned.
+      const pb = unwrap(await repos.audit.query({ workspaceId: "personal-business" }, 10));
+      expect(pb).toHaveLength(1);
+      expect(pb[0]?.workspaceId).toBe("personal-business");
+      expect(pb[0]?.event).toBe("e.pb");
+      expect(unwrap(await repos.audit.query({ workspaceId: "employer-work" }, 10))).toHaveLength(1);
+      // an unscoped query still sees all three (incl. the global one, whose workspaceId is null/undefined).
+      expect(unwrap(await repos.audit.query({}, 10))).toHaveLength(3);
+    });
   });
 
   // ── approvals (exactly-once compare-and-set transition) ──────────────────────

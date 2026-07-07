@@ -39,4 +39,9 @@ export const auditRecords = sqliteTable("audit", {
   beforeSummary: text().notNull(),
   afterSummary: text().notNull(),
   timestamps: text({ mode: "json" }).$type<AuditRecord["timestamps"]>().notNull(),
+  // OPTIONAL WS-8 scope attribution (the §9.5 recent-changes projector groups + filters by it).
+  // NULLABLE (no .notNull()) — mirrors the frozen model's optional field: some control-plane audit
+  // events are global (no workspaceId in scope). No sentinel/default needed on an append-only log
+  // (contrast the approvals 0001 NOT-NULL sentinel) — legacy rows are honestly NULL (unscoped).
+  workspaceId: text(),
 });

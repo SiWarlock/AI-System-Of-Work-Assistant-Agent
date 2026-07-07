@@ -34,7 +34,8 @@
     "event",
     "payloadHash",
     "refs",
-    "timestamps"
+    "timestamps",
+    "workspaceId"
   ],
   "approvals": [
     "actionRef",

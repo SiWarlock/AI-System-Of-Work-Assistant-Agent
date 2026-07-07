@@ -240,6 +240,12 @@ export interface AuditQuery {
   readonly event?: string;
   /** Match records whose `refs` include this opaque ref. */
   readonly ref?: string;
+  /**
+   * Match records attributed to this workspace (the §9.5 recent-changes projector's scope filter).
+   * NOTE: this matches on the STORED workspaceId equality — a record with a NULL workspaceId (a global
+   * control-plane event) is NOT returned by a workspace-scoped query, which is the intended WS-8 posture.
+   */
+  readonly workspaceId?: string;
 }
 
 /**

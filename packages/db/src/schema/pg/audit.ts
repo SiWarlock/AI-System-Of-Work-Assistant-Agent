@@ -22,4 +22,7 @@ export const auditRecords = pgTable("audit", {
   beforeSummary: text().notNull(),
   afterSummary: text().notNull(),
   timestamps: json().$type<AuditRecord["timestamps"]>().notNull(),
+  // OPTIONAL WS-8 scope attribution (§9.5 recent-changes projector) — NULLABLE, mirroring the frozen
+  // model's optional field + the sqlite audit mirror. Global control-plane audit events are unscoped.
+  workspaceId: text(),
 });
