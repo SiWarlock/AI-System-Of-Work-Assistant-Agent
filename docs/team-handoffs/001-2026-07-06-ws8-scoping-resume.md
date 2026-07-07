@@ -3,7 +3,19 @@
 - **Date:** 2026-07-06 · **From session:** `docs/sessions/042-2026-07-06-ws8-scoping-design-sc1-gates-bcd.md` (+ session 043 `docs/sessions/043-2026-07-06-ws8-multi-served.md`)
 - **HEAD:** `9d3b1f4` — everything pushed to origin/main (0/0). Tree clean except the owner's `.claude/settings.json`, `CLAUDE.md`, `graphify-out/`. **Gate:** repo-wide `turbo typecheck test` 31/31.
 
-## ⏩⏩ RESUME HERE (state at compaction, 2026-07-07) — the real-dashboard frontier
+## ⏩⏩⏩ RESUME HERE (session 048, 2026-07-07) — §13.10a Copilot→KMP bridge, STOPPED at the Approval-shape decision
+
+**HEAD `d38a319` (4 commits this session, NOT pushed at handoff-write; push at close-out). Gate 31/31 throughout. Canonical tracker: memory `sow-copilot-kmp-bridge`. Session doc: `docs/sessions/048-2026-07-07-create-vs-patch-and-copilot-kmp-bridge.md`. Plan: `~/.claude/plans/snazzy-honking-stearns.md`.**
+
+This session: (1) **create-vs-patch split `9288bcd`** — finished the deterministic dashboard build (the P3e always-NoteCreate re-sync clobber bug, fixed via a WS-8 note-exists probe → NoteCreate|NotePatch; dual-reviewer CLEAR; closed the WS-8 workspace-segment LOW). (2) **Composition Finding** — task #31's "wire the concrete trio" premise is FALSE (6/9 projectSync ports unbuilt, `runProjectSync` composed nowhere; real-integration + Temporal-gated). Owner **picked §13.10a** over the Temporal path. (3) **§13.10a Slices A+B** — the frozen round `ProvenanceOrigin += copilot_propose` (`dd2915b`) + the PURE `deriveCopilotProjectKnowledgePlan` (`d38a319`, `apps/worker/.../copilotProposeKnowledge.ts`): untrusted model project intent → a validated, human-gated KMP for the project note (reuses the create-vs-patch machinery; dual-reviewer security CLEAR). ⚠ the pre-impl design Workflow STALLED — fell back to inline-design→TDD→dual-reviewers (robust).
+
+**⏸ NEXT = the OWNER'S Approval-shape decision (the plan's flagged stop-point), THEN slices 3-7.** `Approval.actionRef` is external-action-only; how does a pending KMP ride §9.8 Approvals? (A) HONEST: pending-KMP store + `Approval` gains a semantic subject (frozen + desktop); (B) LIGHTER: reuse `actionRef` as an opaque ref (no frozen change). After the decision: pending-KMP store → sink→§9.8 Approvals → on-approval→KnowledgeWriter executor (NEW) → `copilot.propose_knowledge` tool/catalog/runner → desktop card. **2 go-live residuals in-code:** verify frontmatter projectId on patch (routing slice); YAML-escape frontmatter (KnowledgeWriter track). Full detail: memory `sow-copilot-kmp-bridge`.
+
+**Dashboard arc (prior) status unchanged:** deterministic build DONE; R5/P4/full-composition DEFERRED (task #31, owner-fork, real-integration+Temporal). Memory `sow-dashboard-real-producers`.
+
+---
+
+## ⏩⏩ RESUME (state at compaction, 2026-07-07) — the real-dashboard frontier
 
 **Canonical tracker for the current work: memory `sow-dashboard-real-producers`** (fully current). Session docs: 044 (skill-intro), 045 (recent-changes Arc R), 046 (typed Project P1–P3b), 047 (the projectSync projection P3e). Plan: `~/.claude/plans/snazzy-honking-stearns.md`.
 
