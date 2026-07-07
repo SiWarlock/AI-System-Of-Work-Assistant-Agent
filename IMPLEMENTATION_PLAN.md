@@ -2083,13 +2083,14 @@ Executed row-by-row by `/phase-exit <phase>`:
 - [ ] UI surface: none (headless read port) — at most a read-only status row in **Settings → Connectors**.
 
 ### 13.5 — Typed Project model + state machine (FROZEN-CONTRACT round) — G8
-- [ ] A typed `Project` seam model is added (Appendix A) with osb's frontmatter schema + bi-temporal timeline (event-time vs transaction-time; status appended, never overwritten), plus JSON Schema + spec-tagged schema-snapshot.
-- [ ] A 7th domain state machine (Project) enforces transitions (idea→planning→active→…); a `project_capture` member is added to `ProvenanceOrigin`.
-- [ ] FROZEN-CONTRACT ROUND: `ARCHITECTURE.md` Appendix A + the schema-snapshot are edited in the SAME round (contract-track/orchestrator territory); UNBLOCKS the Phase-9 §9.5 Project dashboard — **coordinate with the desktop track, do not race.**
-- [ ] Files: `packages/contracts/src/models/project.ts` (+schema+snapshot+test) · `packages/domain/src/state/project.ts` (NEW) · `packages/contracts/src/models/shared-enums.ts` (extended) · `ARCHITECTURE.md` Appendix A (row) · this file's shared-contracts list
-- [ ] Cross-doc invariant: **Project (NEW Appendix-A seam model) + ProvenanceOrigin extension** — `ARCHITECTURE.md` Appendix A + §6 + schema-snapshot, same round
-- [ ] Depends on: 1 (contract-freeze pattern), P4 (KnowledgeWriter consumes Project mutations)
-- [ ] UI surface: **Projects** page (§9.5, BUILT) — the typed state machine makes the existing progress/status/blockers honest; opt. a lifecycle-state chip.
+**✅ P1+P2 DONE (2026-07-06, `517659c` P1 + `1ddbf10` P2, dual-reviewer for the arc pending at P3). P3 (projectSync→dashboard seam) + P4 (Temporal activation) remain — see memory `sow-dashboard-real-producers`.**
+- [x] A typed `Project` seam model is added (Appendix A) with osb's frontmatter schema + bi-temporal timeline (event-time vs transaction-time; status appended, never overwritten), plus JSON Schema + spec-tagged schema-snapshot. **[P1 `517659c`]**
+- [x] A 7th domain state machine (Project) enforces transitions (idea→planning→active→…); a `project_capture` member is added to `ProvenanceOrigin`. **[P2 machine `1ddbf10` + P1 enum `517659c`; also added `project_sync`]**
+- [x] FROZEN-CONTRACT ROUND: `ARCHITECTURE.md` Appendix A + the schema-snapshot are edited in the SAME round (contract-track/orchestrator territory); UNBLOCKS the Phase-9 §9.5 Project dashboard — **coordinate with the desktop track, do not race.** **[P1 — solo owns all roles]**
+- [x] Files: `packages/contracts/src/models/project.ts` (+schema+snapshot+test) · `packages/domain/src/state/project.ts` (NEW) · `packages/contracts/src/models/shared-enums.ts` (extended) · `ARCHITECTURE.md` Appendix A (row) · this file's shared-contracts list
+- [x] Cross-doc invariant: **Project (NEW Appendix-A seam model) + ProvenanceOrigin extension** — `ARCHITECTURE.md` Appendix A + §6 + schema-snapshot, same round
+- [ ] Depends on: 1 (contract-freeze pattern), P4 (KnowledgeWriter consumes Project mutations) — **P3/P4 open**
+- [ ] UI surface: **Projects** page (§9.5, BUILT) — the typed state machine makes the existing progress/status/blockers honest; opt. a lifecycle-state chip. **[the projectSync→UiSafeProjectDashboard seam is P3; live population is P4/Temporal]**
 
 ### 13.6 — Governed "capture as I work" write-through source (git + telegram) — G4
 - [ ] A `capture-source` adapter maps a capture (git coding-session OR telegram mobile) → candidate `SourceEnvelope` through `registerSource()`; emit-only, never writes. (Prototype committed `aaa5f3f`.)
