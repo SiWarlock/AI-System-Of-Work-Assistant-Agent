@@ -51,6 +51,7 @@ import { ok, err } from "@sow/contracts";
 import type { Result, WorkspaceId, NoteCreate } from "@sow/contracts";
 import { TBD } from "@sow/domain";
 import type { ExtractionField } from "@sow/domain";
+import { safeNoteSlug } from "./noteSlug";
 import {
   frontmatterValue,
   isConcrete,
@@ -129,25 +130,9 @@ function concreteString(
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
-/**
- * Reduce a MODEL-CONTROLLED title to a path-safe filename slug. The title is
- * evidence-backed (it passed no-inference) but its CONTENT is untrusted — a title
- * like `../../ws-other/secrets/x` would otherwise be interpolated raw into
- * `note.path` and, after the vault's `join(root, path)`, escape the bound workspace
- * (a cross-workspace / arbitrary-filesystem durable write — safety rule 4 / WS-4).
- * We keep ONLY letters/digits and collapse every other run (path separators `/` `\`,
- * dots — so `..` is impossible — whitespace, control chars, NUL) to a single hyphen.
- * The result therefore contains NO separator and NO `..`, so it can never inject path
- * structure. The raw title is still preserved on `note.title` + frontmatter (display).
- */
-function safeNoteSlug(title: string): string {
-  return title
-    .normalize("NFKD")
-    .replace(/[^\p{L}\p{N}]+/gu, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 120)
-    .replace(/-+$/g, "");
-}
+// `safeNoteSlug` (the path-safe filename sanitizer — a MODEL-CONTROLLED title like `../../ws-other/secrets/x`
+// must never escape the bound workspace after the vault's `join(root, path)`, safety rule 4 / WS-4) is now the
+// shared `./noteSlug` helper, so meeting-closeout + projectSync share ONE adversarially-verified gate.
 
 /**
  * Build the meeting note body from the evidence-backed fields. Pure + deterministic

@@ -48,17 +48,23 @@ export interface ProjectDashboardInput {
 }
 
 /** The per-array element cap (matches the schema's `.max(50)`). */
-const ARRAY_CAP = 50;
+export const PROSE_ARRAY_CAP = 50;
 
-/** Project the pre-categorized ExtractionFields to a bounded string array: skip TBD (unstated), collapse each
- *  concrete value to a single line, cap the count. TBD is the no-inference sentinel — never rendered as prose. */
-function proseArray(fields: readonly ExtractionField<string>[]): string[] {
+/**
+ * Render pre-categorized ExtractionFields to a bounded, leak-safe string array — the LOAD-BEARING no-inference
+ * render defense (REQ-F-017): skip TBD (unstated — never a guess), collapse each concrete value to a SINGLE
+ * line (a multi-line value is the shape of leaked raw content), cap the count. EXPORTED + shared: the concrete
+ * projectSync projection's committed NOTE body MUST render its prose through THIS same helper so the dashboard
+ * row and the canonical Markdown carry byte-identical no-inference defense (never a duplicated re-implementation
+ * where a dropped TBD-skip could commit an unstated value into canonical truth).
+ */
+export function renderProseLines(fields: readonly ExtractionField<string>[]): string[] {
   const out: string[] = [];
   for (const f of fields) {
     if (f.value === TBD) continue; // unstated → not shown (REQ-F-017)
     const line = collapseToSummaryLine(String(f.value));
     if (line.length > 0) out.push(line);
-    if (out.length >= ARRAY_CAP) break;
+    if (out.length >= PROSE_ARRAY_CAP) break;
   }
   return out;
 }
@@ -89,10 +95,10 @@ export function buildProjectDashboardPayload(input: ProjectDashboardInput): UiSa
     // (1) REQ-F-011 — re-derive; never trust an input percent.
     progress: { completedCount, totalCount, percentComplete: computePercent(completedCount, totalCount) },
     // (2) no-inference prose — TBD skipped, single-lined, capped.
-    blockers: proseArray(input.prose.blockers),
-    waitingItems: proseArray(input.prose.waitingItems),
-    nextActions: proseArray(input.prose.nextActions),
-    evidenceRefs: (input.evidenceRefs ?? []).slice(0, ARRAY_CAP),
+    blockers: renderProseLines(input.prose.blockers),
+    waitingItems: renderProseLines(input.prose.waitingItems),
+    nextActions: renderProseLines(input.prose.nextActions),
+    evidenceRefs: (input.evidenceRefs ?? []).slice(0, PROSE_ARRAY_CAP),
     docPack: defaultDocPack(),
     updatedAt: input.updatedAt,
   };
