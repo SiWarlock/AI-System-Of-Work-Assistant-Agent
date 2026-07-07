@@ -201,7 +201,9 @@
         "meeting_close",
         "ingestion",
         "gbrain_proposal",
-        "parity_remediation"
+        "parity_remediation",
+        "project_capture",
+        "project_sync"
       ]
     },
     "gbrainProposalRef": {

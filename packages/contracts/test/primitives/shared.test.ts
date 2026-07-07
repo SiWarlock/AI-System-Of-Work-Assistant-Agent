@@ -36,6 +36,7 @@ import {
   EgressClassSchema,
   ProviderIdSchema,
   provenanceOriginSchema,
+  projectLifecycleStateSchema,
   targetSystemSchema,
   approvalStatusSchema,
   channelSchema,
@@ -164,6 +165,10 @@ describe("shared enum schemas — exact membership", () => {
     [ProviderIdSchema, ["claude", "openai", "openrouter", "ollama", "lm_studio"]],
     [provenanceOriginSchema, [
       "human", "meeting_close", "ingestion", "gbrain_proposal", "parity_remediation",
+      "project_capture", "project_sync",
+    ]],
+    [projectLifecycleStateSchema, [
+      "idea", "planning", "active", "paused", "done", "archived",
     ]],
     [targetSystemSchema, [
       "calendar", "todoist", "linear", "asana", "drive", "github", "telegram",

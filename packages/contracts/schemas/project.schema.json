@@ -1,0 +1,90 @@
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workspaceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "slug": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lifecycleState": {
+      "type": "string",
+      "enum": [
+        "idea",
+        "planning",
+        "active",
+        "paused",
+        "done",
+        "archived"
+      ]
+    },
+    "timeline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "idea",
+              "planning",
+              "active",
+              "paused",
+              "done",
+              "archived"
+            ]
+          },
+          "eventTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "transactionTime": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "state",
+          "eventTime",
+          "transactionTime"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "provenanceOrigin": {
+      "type": "string",
+      "enum": [
+        "human",
+        "meeting_close",
+        "ingestion",
+        "gbrain_proposal",
+        "parity_remediation",
+        "project_capture",
+        "project_sync"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "workspaceId",
+    "slug",
+    "title",
+    "lifecycleState",
+    "timeline",
+    "provenanceOrigin"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:project"
+}

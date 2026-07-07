@@ -27,9 +27,29 @@ export const ProvenanceOrigin = [
   "ingestion",
   "gbrain_proposal",
   "parity_remediation",
+  // §13.5 — the typed Project origins: `project_capture` for a Copilot/ingest "capture this as a project"
+  // mutation, `project_sync` for the projectSync workflow's derived mutations (closes the
+  // deterministicProgress arch_gap that otherwise defaults a project-sync KMP to "ingestion").
+  "project_capture",
+  "project_sync",
 ] as const;
 export const provenanceOriginSchema = z.enum(ProvenanceOrigin);
 export type ProvenanceOrigin = z.infer<typeof provenanceOriginSchema>;
+
+// §13.5 — the typed Project lifecycle (the 7th domain state machine's alphabet). A project moves
+// idea → planning → active, may pause, and ends done (completed) or archived (shelved/abandoned); done +
+// archived are terminal. This enum is the SINGLE source of truth the `packages/domain` project state machine
+// statically asserts equivalence against (mirrors ApprovalStatus ↔ the approval machine).
+export const ProjectLifecycleState = [
+  "idea",
+  "planning",
+  "active",
+  "paused",
+  "done",
+  "archived",
+] as const;
+export const projectLifecycleStateSchema = z.enum(ProjectLifecycleState);
+export type ProjectLifecycleState = z.infer<typeof projectLifecycleStateSchema>;
 
 export const TargetSystem = [
   "calendar",

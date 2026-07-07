@@ -42,6 +42,7 @@ export * from "./models/health-item";
 export * from "./models/knowledge-mutation-plan";
 export * from "./models/notebook-mapping";
 export * from "./models/parity-report";
+export * from "./models/project";
 export * from "./models/proposed-action";
 export * from "./models/provider-matrix";
 export * from "./models/provider-profile";
