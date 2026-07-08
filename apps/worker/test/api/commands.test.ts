@@ -59,6 +59,7 @@ function approval(status: ApprovalStatus, over: Partial<Approval> = {}): Approva
   return {
     id: "apr_1" as Approval["id"],
     actionRef: "act_1" as Approval["actionRef"],
+    subjectKind: "external_action", // §13.10a — external-write card (actionRef only)
     workspaceId: "ws-001" as Approval["workspaceId"],
     status,
     actor: "user:alice",

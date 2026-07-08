@@ -153,7 +153,13 @@ function nextRecord(
   const status = DECISION_TO_STATUS[decision];
   const base: Approval = {
     id: current.id,
+    // §13.10a — a transition PRESERVES the immutable subject (actionRef/planRef/subjectKind) of the
+    // current record; only status/actor/channel/snooze change. Carrying both refs + the discriminator
+    // forward keeps the frozen subject-invariant refine satisfied for BOTH kinds (external_action +
+    // semantic_mutation) across every transition.
     actionRef: current.actionRef,
+    planRef: current.planRef,
+    subjectKind: current.subjectKind,
     // WS-4: a transition PRESERVES the stored workspace (immutable — carried forward from the current record).
     workspaceId: current.workspaceId,
     status,

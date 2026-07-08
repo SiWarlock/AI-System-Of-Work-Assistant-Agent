@@ -61,6 +61,7 @@ function baseApproval(): Approval {
   return {
     id: "apr_1" as Approval["id"],
     actionRef: "act_1" as Approval["actionRef"],
+    subjectKind: "external_action", // §13.10a — external-write card (actionRef only)
     workspaceId: "ws-001" as Approval["workspaceId"],
     status: "pending",
     actor: "user:alice", // DROPPED — approving-principal identity
@@ -140,6 +141,40 @@ describe("toUiSafeApproval — WS-8 field allowlist", () => {
     // Field set is still a subset of the allowlist — nothing extra leaked.
     const allowed: readonly string[] = UI_SAFE_ALLOWLIST.approval;
     expect(fieldSet(out).every((k) => allowed.includes(k))).toBe(true);
+  });
+
+  it("§13.10a — projects a semantic_mutation card WITHOUT actionRef and NEVER leaks planRef", () => {
+    // The new projector branch: a semantic_mutation Approval carries NO actionRef (it
+    // carries a planRef into the pending-KMP store). `assignIfDefined` omits the absent
+    // actionRef (no `undefined`-valued key), and `planRef` is not a UiSafeApproval field so
+    // it can never cross. Exercises the branch this slice added to the WS-8 leakage boundary.
+    const semantic: Approval = {
+      id: "apr_sem" as Approval["id"],
+      planRef: "plan_xyz" as Approval["planRef"],
+      subjectKind: "semantic_mutation",
+      workspaceId: "ws-001" as Approval["workspaceId"],
+      status: "pending",
+      actor: "copilot-agent",
+      channel: "mac",
+      payloadHash: "sha256:kmp-hash",
+      expiresAt: "2026-07-09T00:00:00.000Z",
+    };
+    const out = asRecord(toUiSafeApproval(semantic));
+    // actionRef is OMITTED (not present as an undefined key) for a semantic card.
+    expect(out).not.toHaveProperty("actionRef");
+    // planRef must NEVER surface — it is not an allowlisted UI-safe field.
+    expect(out).not.toHaveProperty("planRef");
+    // subjectKind is a domain discriminator, also not surfaced in this slice.
+    expect(out).not.toHaveProperty("subjectKind");
+    // actor/payloadHash still dropped; the set is still a subset of the allowlist.
+    expect(out).not.toHaveProperty("actor");
+    expect(out).not.toHaveProperty("payloadHash");
+    const allowed: readonly string[] = UI_SAFE_ALLOWLIST.approval;
+    expect(fieldSet(out).every((k) => allowed.includes(k))).toBe(true);
+    // The required non-ref fields still project.
+    for (const req of ["id", "status", "channel"]) {
+      expect(out).toHaveProperty(req);
+    }
   });
 });
 

@@ -44,18 +44,23 @@ function assignIfDefined<T extends object, K extends keyof T>(
 
 /**
  * Project an {@link Approval} to a {@link UiSafeApproval}. Copies ONLY the
- * allowlisted names (`id`, `actionRef`, `status`, `channel`, `snoozeUntil?`,
- * `expiresAt?`). DROPS `actor` (approving-principal identity) and `payloadHash`
- * (content-derived hash) — and any other field present on the record. Branded
- * ids are narrowed to plain strings for the renderer.
+ * allowlisted names (`id`, `actionRef?`, `status`, `channel`, `snoozeUntil?`,
+ * `expiresAt?`). DROPS `actor` (approving-principal identity), `payloadHash`
+ * (content-derived hash), and — §13.10a — `planRef`/`subjectKind` (the semantic
+ * subject is not surfaced this slice) — and any other field present on the record.
+ * Branded ids are narrowed to plain strings for the renderer.
  */
 export function toUiSafeApproval(approval: Approval): UiSafeApproval {
   const out: UiSafeApproval = {
     id: approval.id,
-    actionRef: approval.actionRef,
     status: approval.status,
     channel: approval.channel,
   };
+  // §13.10a — actionRef is optional (present for an external_action card, absent for a
+  // semantic_mutation card, which carries a planRef that is NOT surfaced here). Omit when
+  // absent so the projection stays a clean subset of the allowlist. The semantic-mutation
+  // subject/summary surface lands in Slice H.
+  assignIfDefined(out, "actionRef", approval.actionRef);
   assignIfDefined(out, "snoozeUntil", approval.snoozeUntil);
   assignIfDefined(out, "expiresAt", approval.expiresAt);
   return out;

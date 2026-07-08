@@ -166,6 +166,7 @@ describe("createApprovalsProposeSink — record a pending Approval (direct repos
     store.set(String(id), {
       id,
       actionRef: seed.action.actionId,
+      subjectKind: "external_action", // §13.10a — external-write card (actionRef only)
       workspaceId: WS,
       status: "pending",
       actor: COPILOT_PROPOSE_ACTOR,

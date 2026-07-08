@@ -98,6 +98,10 @@ export function makeApproval(partial: Partial<Approval> = {}): Approval {
   return {
     id: approvalId("apr-1"),
     actionRef: actionId("act-1"),
+    // §13.10a — the default fake is the external-action card (actionRef only). A test
+    // exercising the semantic-mutation subject passes `{ subjectKind: "semantic_mutation",
+    // planRef, actionRef: undefined }` via `partial`.
+    subjectKind: "external_action",
     workspaceId: workspaceId("ws-employer"),
     status: "pending",
     actor: "user:alice",

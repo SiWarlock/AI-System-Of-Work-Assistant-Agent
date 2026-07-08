@@ -128,6 +128,8 @@ export function createRecordPendingActivity(
       const pending: Approval = {
         id,
         actionRef: ctx.action.actionId,
+        // §13.10a — the approval-flow seeds an external-write card (a §8 ProposedAction): external_action.
+        subjectKind: "external_action",
         // WS-4 inbox-scope: the bound/authorized workspace this pending action belongs to (WS-2). Same value
         // folded into the derived `id` above, so the §9.8 inbox filter (listByStatusAndWorkspace) round-trips.
         workspaceId: ctx.workspaceId,

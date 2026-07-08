@@ -137,6 +137,10 @@ export function createApprovalsProposeSink(deps: ApprovalsProposeSinkDeps): Copi
       const pending: Approval = {
         id,
         actionRef: action.actionId,
+        // §13.10a — the Copilot EXTERNAL-write propose sink records an external_action subject (a §8
+        // ProposedAction, referenced by actionRef). The SEMANTIC-write sibling (a KMP → planRef,
+        // subjectKind: "semantic_mutation") is the separate §13.10a KMP-propose sink (Slice E).
+        subjectKind: "external_action",
         // WS-4 inbox-scope: store the SAME raw `workspaceId` used to DERIVE `id` (above) and QUERIED by
         // readModel.pendingApprovals — NOT the registry-resolved `ws.value.id`. If workspaceConfig.get ever
         // canonicalizes (slug→id/alias), storing the resolved id would make the write-key diverge from the

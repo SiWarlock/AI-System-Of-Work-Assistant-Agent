@@ -307,6 +307,8 @@ export function buildProofSpineActivities(
       const approval: Approval = {
         id: makeApprovalIdFromEnvelope(env),
         actionRef: action.actionId,
+        // §13.10a — a Tool-Gateway external write is an external_action subject (actionRef only).
+        subjectKind: "external_action",
         // WS-4 inbox-scope: the meeting-close job's bound workspace (server-side, authoritative).
         workspaceId: params.meetingJobInputs.workspaceId,
         status: "pending",

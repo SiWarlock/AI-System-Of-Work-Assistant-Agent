@@ -31,9 +31,30 @@ import type { Approval } from "@sow/contracts";
  */
 export const UNASSIGNED_WORKSPACE = "__unassigned__" as const;
 
+/**
+ * §13.10a backfill default for the `subjectKind` discriminator: every legacy approval
+ * predates the Copilot semantic-write bridge and IS an external write, so the additive
+ * NOT NULL column defaults to `external_action` — a SEMANTICALLY CORRECT backfill (not a
+ * mere sentinel like UNASSIGNED_WORKSPACE). Shared by both dialect schemas + the 0003
+ * migrations.
+ */
+export const DEFAULT_SUBJECT_KIND = "external_action" as const;
+
 export const approvals = sqliteTable("approvals", {
   id: text().$type<Approval["id"]>().primaryKey(),
-  actionRef: text().$type<Approval["actionRef"]>().notNull(),
+  // §13.10a — actionRef is now OPTIONAL on the model (present iff subjectKind ===
+  // "external_action"; a semantic_mutation card carries a `planRef` instead), so the
+  // column is NULLABLE (no `.notNull()`). The indexed-access `$type` keeps the branded
+  // alias NAMEABLE (a `NonNullable<>` wrapper unwraps it → TS4023 on the exported table).
+  actionRef: text().$type<Approval["actionRef"]>(),
+  // §13.10a — the pending-KMP ref (present iff subjectKind === "semantic_mutation"). Nullable.
+  planRef: text().$type<Approval["planRef"]>(),
+  // §13.10a — the SUBJECT discriminator (external_action | semantic_mutation). NOT NULL +
+  // semantically-correct default so the additive ALTER backfills legacy rows to external_action.
+  subjectKind: text()
+    .$type<Approval["subjectKind"]>()
+    .notNull()
+    .default(DEFAULT_SUBJECT_KIND),
   // WS-4 inbox-scope attribution (frozen Approval field). NOT NULL + sentinel default so
   // the additive ALTER succeeds on a populated table; every write site supplies a real id.
   workspaceId: text()

@@ -13,6 +13,7 @@ function approval(status: Approval["status"], id = "appr-1"): Approval {
   return {
     id: id as Approval["id"],
     actionRef: "act-1" as Approval["actionRef"],
+    subjectKind: "external_action", // §13.10a — external-write card (actionRef only)
     workspaceId: "ws-a" as Approval["workspaceId"],
     status,
     actor: "owner",

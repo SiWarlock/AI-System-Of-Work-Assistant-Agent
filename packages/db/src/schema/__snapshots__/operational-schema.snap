@@ -44,8 +44,10 @@
     "expiresAt",
     "id",
     "payloadHash",
+    "planRef",
     "snoozeUntil",
     "status",
+    "subjectKind",
     "workspaceId"
   ],
   "outbox": [

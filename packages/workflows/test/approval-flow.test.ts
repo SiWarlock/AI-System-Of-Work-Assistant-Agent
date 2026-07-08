@@ -648,8 +648,12 @@ describe("spec(§9) Approval contract drift guard", () => {
       "expiresAt",
       "id",
       "payloadHash",
+      // §13.10a — the semantic-subject fields: planRef (the pending-KMP ref) + subjectKind
+      // (the external_action|semantic_mutation discriminator). actionRef is now optional.
+      "planRef",
       "snoozeUntil",
       "status",
+      "subjectKind",
       "workspaceId",
     ]);
   });

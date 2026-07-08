@@ -154,7 +154,11 @@ function toEventLog(r: EventLogRow): EventLogRecord {
 function toApproval(r: ApprovalRow): Approval {
   return {
     id: r.id,
-    actionRef: r.actionRef,
+    // §13.10a — actionRef/planRef are nullable columns (exactly one is set, per subjectKind);
+    // DB NULL → contract `undefined`. The contract refine re-asserts the subject exclusivity.
+    actionRef: r.actionRef ?? undefined,
+    planRef: r.planRef ?? undefined,
+    subjectKind: r.subjectKind,
     workspaceId: r.workspaceId,
     status: r.status,
     actor: r.actor,
@@ -499,7 +503,12 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
         const rows = await db
           .update(schema.approvals)
           .set({
-            actionRef: next.actionRef,
+            // §13.10a — the subject (actionRef/planRef/subjectKind) is immutable across a status
+            // transition; `next` carries it forward, so writing it here is a faithful no-op that keeps
+            // the row === the transitioned model. Nullable refs use the `?? null` idiom.
+            actionRef: next.actionRef ?? null,
+            planRef: next.planRef ?? null,
+            subjectKind: next.subjectKind,
             status: next.status,
             actor: next.actor,
             channel: next.channel,

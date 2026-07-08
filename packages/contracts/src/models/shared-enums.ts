@@ -83,6 +83,17 @@ export const Channel = ["mac", "telegram"] as const;
 export const channelSchema = z.enum(Channel);
 export type Channel = z.infer<typeof channelSchema>;
 
+// §13.10a — an Approval's SUBJECT discriminator: WHAT kind of thing this pending §9.8 card gates.
+// The inbox originally gated only EXTERNAL writes (a §8 ProposedAction, referenced by
+// `Approval.actionRef`); the Copilot semantic-write bridge adds SEMANTIC mutations (a
+// KnowledgeMutationPlan, referenced by `Approval.planRef`). `subjectKind` is the discriminator the
+// on-approval executor routes off — external_action → the Tool Gateway envelope, semantic_mutation →
+// KnowledgeWriter — and the desktop renders the matching card. The Approval contract's refine binds
+// each kind to EXACTLY its matching ref (see approval.ts), so a mis-routed card is unrepresentable.
+export const ApprovalSubjectKind = ["external_action", "semantic_mutation"] as const;
+export const approvalSubjectKindSchema = z.enum(ApprovalSubjectKind);
+export type ApprovalSubjectKind = z.infer<typeof approvalSubjectKindSchema>;
+
 export const ConformanceStatus = ["unknown", "passing", "failing", "disabled"] as const;
 export const conformanceStatusSchema = z.enum(ConformanceStatus);
 export type ConformanceStatus = z.infer<typeof conformanceStatusSchema>;

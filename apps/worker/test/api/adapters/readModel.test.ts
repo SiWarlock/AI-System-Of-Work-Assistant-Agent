@@ -64,6 +64,7 @@ function pendingApproval(id: string, workspaceId: string = KNOWN_WS): Approval {
   return {
     id: id as Approval["id"],
     actionRef: `act-${id}` as Approval["actionRef"],
+    subjectKind: "external_action", // §13.10a — external-write card (actionRef only)
     workspaceId: workspaceId as Approval["workspaceId"],
     status: "pending",
     actor: "user:cody",

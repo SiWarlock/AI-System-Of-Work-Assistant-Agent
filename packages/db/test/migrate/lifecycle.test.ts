@@ -250,8 +250,10 @@ function defineLifecycleSuite<H>(fix: LifecycleFixture<H>): void {
         if (!isOk(r)) return;
         expect(r.value.dialect).toBe(fix.dialect);
         // The real migration set is now 0000_genesis + 0001_approvals_workspace_id +
-        // 0002_audit_workspace_id (all applied from empty).
-        expect(r.value.applied).toBe(3);
+        // 0002_audit_workspace_id + 0003_approvals_semantic_subject (§13.10a — the
+        // subjectKind/planRef add + actionRef→nullable; SQLite table-recreate, pg ALTER),
+        // all applied from empty.
+        expect(r.value.applied).toBe(4);
         expect(r.value.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
         expect(r.value.backup.dialect).toBe(fix.dialect);
 

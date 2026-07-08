@@ -213,6 +213,7 @@ export const validGclProjection: GclProjection = {
 export const validApproval: Approval = {
   id: "appr-001" as ApprovalId,
   actionRef: "act-001" as ActionId,
+  subjectKind: "external_action",
   workspaceId: "ws-001" as WorkspaceId,
   status: "pending",
   actor: "user:cody",

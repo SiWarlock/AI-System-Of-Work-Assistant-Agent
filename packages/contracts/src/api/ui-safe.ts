@@ -94,9 +94,14 @@ type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 // timing only. DROPPED from the frozen Approval: `actor` (approving-principal
 // identity) and `payloadHash` (a hash over the raw action payload — content-
 // derived, kept off the UI surface).
+// §13.10a: `actionRef` is now OPTIONAL — the frozen Approval made it optional (an
+// external_action card carries actionRef; a semantic_mutation card carries a
+// planRef instead, which is NOT surfaced here). The field-NAME set is unchanged
+// (actionRef stays allowlisted), so the freeze guard is unaffected. The full
+// semantic-mutation card surface (subject/summary) lands in Slice H.
 export interface UiSafeApproval {
   id: string;
-  actionRef: string;
+  actionRef?: string;
   status: ApprovalStatus;
   channel: Channel;
   snoozeUntil?: string;
@@ -110,7 +115,9 @@ export interface UiSafeApproval {
 export const UiSafeApprovalSchema = z
   .object({
     id: z.string().min(1),
-    actionRef: z.string().min(1),
+    // §13.10a — optional (see interface): present for an external_action card, absent for a
+    // semantic_mutation card. Still non-empty when present.
+    actionRef: z.string().min(1).optional(),
     status: approvalStatusSchema,
     channel: channelSchema,
     snoozeUntil: z.string().datetime().optional(),
