@@ -64,6 +64,9 @@ export const NON_REBUILDABLE_BACKUP_DOMAINS = [
   "provider_state",
   "workspace_config",
   "write_receipts",
+  // §13.10a — the pending-KMP store (the semantic-write sibling of outboxes): pending
+  // KnowledgeMutationPlans awaiting owner approval, not re-derivable (safety rules 1+2).
+  "pending_knowledge_mutations",
   "health_items",
   "schedule_bookkeeping",
   "instance_leases",

@@ -27,6 +27,7 @@ import {
 } from "../../src/backup/operational-backup";
 import {
   OPERATIONAL_TRUTH_DOMAINS,
+  DOMAIN_DURABILITY,
   isRebuildable,
   isOperationalTruth,
   type OperationalDomain,
@@ -102,6 +103,18 @@ describe("NON_REBUILDABLE_BACKUP_DOMAINS — the §4/§16 backup contract", () =
       expect(isOperationalTruth(d as OperationalDomain)).toBe(true);
       expect(isRebuildable(d as OperationalDomain)).toBe(false);
     }
+  });
+
+  // REVERSE-DIRECTION drift-guard (the completeness half): EVERY domain the @sow/db
+  // classification calls operational_truth MUST appear in the backup manifest. Without
+  // this, a new operational-truth table (e.g. §13.10a pending_knowledge_mutations) can be
+  // added + classified but silently omitted from backup/restore — the forward-only checks
+  // above never notice a MISSING member. This is the guard that would have caught it.
+  it("every operational_truth domain in the classification is covered by the manifest (no silent omission)", () => {
+    const classifiedTruth = (Object.keys(DOMAIN_DURABILITY) as OperationalDomain[]).filter(isOperationalTruth);
+    const covered = new Set<string>(NON_REBUILDABLE_BACKUP_DOMAINS);
+    const missing = classifiedTruth.filter((d) => !covered.has(d));
+    expect(missing, `operational_truth domains missing from the backup manifest: ${missing.join(", ")}`).toEqual([]);
   });
 });
 

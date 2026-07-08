@@ -49,6 +49,10 @@ export type OperationalDomain =
   | "provider_state"
   | "workspace_config"
   | "write_receipts"
+  // §13.10a — the pending-KMP store: derived KnowledgeMutationPlans recorded pending
+  // owner approval (the semantic-write sibling of `outboxes`). Operational truth — a
+  // lost pending KMP drops an approvable semantic write; NOT re-derivable.
+  | "pending_knowledge_mutations"
   // Phase-10 durability tables (LIFE-1 / LIFE-5 / OBS-2) backing the Phase-7
   // in-memory fake ports (health_items / schedule_bookkeeping / instance_leases).
   | "health_items"
@@ -100,6 +104,9 @@ export const DOMAIN_DURABILITY: Record<OperationalDomain, DurabilityClass> = {
   provider_state: "operational_truth",
   workspace_config: "operational_truth",
   write_receipts: "operational_truth",
+  // §13.10a — the pending-KMP store: a lost pending KMP drops an approvable semantic
+  // write; not re-derivable from Markdown/truth, so it survives a rebuild.
+  pending_knowledge_mutations: "operational_truth",
   // Phase-10 durability tables — authoritative operational state, NOT read models:
   //   - health_items: the System-Health dedupe/lifecycle records (OBS-1/OBS-2); a
   //     lost item drops an open failure's audit-linked history.

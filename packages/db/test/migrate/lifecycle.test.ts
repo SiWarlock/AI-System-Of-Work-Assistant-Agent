@@ -70,6 +70,8 @@ const DOMAIN_TABLES = [
   "audit",
   "approvals",
   "outbox",
+  // §13.10a — the pending-KMP store (the semantic-write sibling of the outbox).
+  "pending_knowledge_mutations",
   "connector_cursors",
   "provider_state",
   "read_models",
@@ -251,9 +253,9 @@ function defineLifecycleSuite<H>(fix: LifecycleFixture<H>): void {
         expect(r.value.dialect).toBe(fix.dialect);
         // The real migration set is now 0000_genesis + 0001_approvals_workspace_id +
         // 0002_audit_workspace_id + 0003_approvals_semantic_subject (§13.10a — the
-        // subjectKind/planRef add + actionRef→nullable; SQLite table-recreate, pg ALTER),
-        // all applied from empty.
-        expect(r.value.applied).toBe(4);
+        // subjectKind/planRef add + actionRef→nullable) + 0004_pending_kmp (§13.10a — the
+        // pending-KMP store CREATE TABLE), all applied from empty.
+        expect(r.value.applied).toBe(5);
         expect(r.value.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
         expect(r.value.backup.dialect).toBe(fix.dialect);
 

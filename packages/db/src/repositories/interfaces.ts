@@ -324,6 +324,58 @@ export interface OutboxRepository {
 }
 
 /**
+ * A §6 KnowledgeMutationPlan recorded PENDING owner approval — the SEMANTIC-write
+ * sibling of the external-write {@link OutboxEntry} (§13.10a). The Copilot KMP-propose
+ * sink (Slice E) records the derived, validated plan keyed by its `planId`; the pending
+ * {@link Approval} carries `subjectKind: "semantic_mutation"` + `planRef === planId`
+ * pointing here; on approval the executor (Slice F) re-fetches by `planId` and commits
+ * the plan through KnowledgeWriter (safety rule 1 — never a direct write).
+ */
+export interface PendingKnowledgeMutation {
+  readonly planId: string;
+  /** WS-8 scope — the plan's server-bound workspace (matches the Approval + the KMP). */
+  readonly workspaceId: string;
+  /**
+   * The serialized KnowledgeMutationPlan. CANDIDATE DATA on read-back: the executor
+   * MUST re-validate it through `KnowledgeMutationPlanSchema` before `applyPlan` (a
+   * stored blob is never trusted — REQ-S-006 / safety rule 2).
+   */
+  readonly plan: unknown;
+  /**
+   * Hash over the plan. MUST equal the pending `Approval.payloadHash` — the §13.10a
+   * TOCTOU gate: the sink first-write-wins, and a same-`planId` record carrying a
+   * DIVERGENT `payloadHash` is rejected (a swapped-plan attack is unrepresentable).
+   */
+  readonly payloadHash: string;
+  /** Lifecycle: `pending` → `committed` | `rejected`. A terminal status is the tombstone. */
+  readonly status: string;
+  readonly recordedAt: string;
+  /** The terminal-transition instant (set when the executor commits or rejects). */
+  readonly settledAt?: string;
+}
+
+/**
+ * Pending-KMP store — OPERATIONAL TRUTH (the semantic-write sibling of the Outbox, not
+ * rebuildable — §4/§16). Append-on-record keyed by `planId`; status advances
+ * `pending → committed | rejected`; a terminal status is the TOMBSTONE. The executor
+ * re-fetches by `planId` on approval and is LIFE-3 resume-idempotent (a replay sees a
+ * `committed` row and skips — no double KnowledgeWriter commit).
+ */
+export interface PendingKnowledgeMutationRepository {
+  /** First-write-wins insert; a duplicate `planId` is a typed `conflict` (idempotency). */
+  record(entry: PendingKnowledgeMutation): DbResult<PendingKnowledgeMutation>;
+  get(planId: string): DbResult<PendingKnowledgeMutation>;
+  /**
+   * Advance ONLY `status` + `settledAt` (no hard delete). `plan`, `payloadHash`,
+   * `workspaceId`, and `recordedAt` are IMMUTABLE post-record — the adapters do NOT
+   * write them in the update set-clause, so a post-approval plan-swap is
+   * unrepresentable on the update path too (§13.10a TOCTOU: the "swapped-plan is
+   * unrepresentable" guarantee holds for BOTH record and update, structurally).
+   */
+  update(entry: PendingKnowledgeMutation): DbResult<PendingKnowledgeMutation>;
+}
+
+/**
  * Connector cursors — OPERATIONAL TRUTH (a lost cursor forces a full re-sync, so
  * it is not rebuildable). One cursor per (connectorId, workspaceId); `upsert`
  * advances it.

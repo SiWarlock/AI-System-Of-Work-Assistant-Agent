@@ -63,6 +63,8 @@ import type {
   LeaseRecordRow,
   OutboxEntry,
   OutboxRepository,
+  PendingKnowledgeMutation,
+  PendingKnowledgeMutationRepository,
   ProviderStateRepository,
   ReadModelRecord,
   ReadModelRepository,
@@ -91,6 +93,7 @@ interface OperationalRepositories {
   readonly audit: AuditRepository;
   readonly approvals: ApprovalRepository;
   readonly outbox: OutboxRepository;
+  readonly pendingKnowledgeMutations: PendingKnowledgeMutationRepository;
   readonly connectorCursors: ConnectorCursorRepository;
   readonly providerState: ProviderStateRepository;
   readonly readModels: ReadModelRepository;
@@ -162,6 +165,7 @@ const PG_TABLES: readonly PgTable[] = [
   pgSchema.auditRecords,
   pgSchema.approvals,
   pgSchema.outbox,
+  pgSchema.pendingKnowledgeMutations,
   pgSchema.connectorCursors,
   pgSchema.providerProfiles,
   pgSchema.readModels,
@@ -298,6 +302,21 @@ function outboxEntry(over: Partial<OutboxEntry> & Pick<OutboxEntry, "outboxId">)
     ...over,
   };
 }
+function pendingKmp(
+  over: Partial<PendingKnowledgeMutation> & Pick<PendingKnowledgeMutation, "planId">,
+): PendingKnowledgeMutation {
+  return {
+    workspaceId: "ws-001",
+    // The `plan` is stored as one JSON column (candidate data on read-back). A minimal
+    // KMP-shaped blob suffices for the store round-trip — the executor (Slice F) is what
+    // re-validates it through KnowledgeMutationPlanSchema.
+    plan: { planId: over.planId, kind: "project-note", creates: [], patches: [] },
+    payloadHash: `sha256:${over.planId}`,
+    status: "pending",
+    recordedAt: "2026-06-30T00:00:00.000Z",
+    ...over,
+  };
+}
 function cursor(
   over: Partial<ConnectorCursorRecord> & Pick<ConnectorCursorRecord, "connectorId" | "workspaceId">,
 ): ConnectorCursorRecord {
@@ -374,6 +393,7 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(typeof repos.audit.append).toBe("function");
       expect(typeof repos.approvals.applyTransition).toBe("function");
       expect(typeof repos.outbox.enqueue).toBe("function");
+      expect(typeof repos.pendingKnowledgeMutations.record).toBe("function");
       expect(typeof repos.connectorCursors.upsert).toBe("function");
       expect(typeof repos.providerState.upsert).toBe("function");
       expect(typeof repos.readModels.put).toBe("function");
@@ -642,6 +662,67 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
     it("enqueue with a duplicate outboxId is a typed conflict", async () => {
       unwrap(await repos.outbox.enqueue(outboxEntry({ outboxId: "o1" })));
       expect(unwrapErr(await repos.outbox.enqueue(outboxEntry({ outboxId: "o1" }))).code).toBe("conflict");
+    });
+  });
+
+  // ── pending-KMP store (§13.10a — the semantic-write sibling of the outbox) ────
+  describe("PendingKnowledgeMutationRepository", () => {
+    it("record → get round-trips the plan JSON + payloadHash + status", async () => {
+      unwrap(await repos.pendingKnowledgeMutations.record(pendingKmp({ planId: "plan-1" })));
+      const got = unwrap(await repos.pendingKnowledgeMutations.get("plan-1"));
+      expect(got.planId).toBe("plan-1");
+      expect(got.workspaceId).toBe("ws-001");
+      expect(got.status).toBe("pending");
+      expect(got.payloadHash).toBe("sha256:plan-1");
+      // The JSON `plan` blob round-trips structurally (candidate data — re-validated downstream).
+      expect(got.plan).toEqual({ planId: "plan-1", kind: "project-note", creates: [], patches: [] });
+      // An optional column absent on record reads back as `undefined` (DB NULL → undefined).
+      expect(got.settledAt).toBeUndefined();
+    });
+
+    it("get on an unknown planId is a typed not_found", async () => {
+      expect(unwrapErr(await repos.pendingKnowledgeMutations.get("never")).code).toBe("not_found");
+    });
+
+    it("record with a duplicate planId is a typed conflict (first-write-wins idempotency)", async () => {
+      unwrap(await repos.pendingKnowledgeMutations.record(pendingKmp({ planId: "plan-1" })));
+      expect(
+        unwrapErr(await repos.pendingKnowledgeMutations.record(pendingKmp({ planId: "plan-1" }))).code,
+      ).toBe("conflict");
+    });
+
+    it("update advances ONLY status + settledAt; plan/payloadHash/workspaceId are IMMUTABLE (§13.10a TOCTOU)", async () => {
+      unwrap(await repos.pendingKnowledgeMutations.record(pendingKmp({ planId: "plan-1" })));
+      // The update call deliberately supplies a DIVERGENT plan / payloadHash / workspaceId
+      // alongside the status advance — a post-approval plan-swap attempt. The store must
+      // advance status + settledAt but leave the recorded plan/hash/workspace UNTOUCHED, so
+      // a swapped plan is unrepresentable on the update path (not just first-write-wins record).
+      unwrap(
+        await repos.pendingKnowledgeMutations.update(
+          pendingKmp({
+            planId: "plan-1",
+            status: "committed",
+            settledAt: "2026-06-30T01:00:00.000Z",
+            plan: { planId: "plan-1", kind: "SWAPPED", creates: [{ path: "evil.md" }], patches: [] },
+            payloadHash: "sha256:SWAPPED",
+            workspaceId: "ws-attacker",
+          }),
+        ),
+      );
+      const got = unwrap(await repos.pendingKnowledgeMutations.get("plan-1"));
+      // status + settledAt DID advance…
+      expect(got.status).toBe("committed");
+      expect(got.settledAt).toBe("2026-06-30T01:00:00.000Z");
+      // …but the recorded subject is UNCHANGED (immutable post-record).
+      expect(got.plan).toEqual({ planId: "plan-1", kind: "project-note", creates: [], patches: [] });
+      expect(got.payloadHash).toBe("sha256:plan-1");
+      expect(got.workspaceId).toBe("ws-001");
+    });
+
+    it("update on an unknown planId is a typed not_found (no upsert)", async () => {
+      expect(
+        unwrapErr(await repos.pendingKnowledgeMutations.update(pendingKmp({ planId: "ghost" }))).code,
+      ).toBe("not_found");
     });
   });
 

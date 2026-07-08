@@ -55,6 +55,8 @@ import type {
   LeaseRecordRow,
   OutboxEntry,
   OutboxRepository,
+  PendingKnowledgeMutation,
+  PendingKnowledgeMutationRepository,
   ProviderStateRepository,
   ReadModelRecord,
   ReadModelRepository,
@@ -105,6 +107,7 @@ export interface PostgresRepositories {
   readonly audit: AuditRepository;
   readonly approvals: ApprovalRepository;
   readonly outbox: OutboxRepository;
+  readonly pendingKnowledgeMutations: PendingKnowledgeMutationRepository;
   readonly connectorCursors: ConnectorCursorRepository;
   readonly providerState: ProviderStateRepository;
   readonly readModels: ReadModelRepository;
@@ -134,6 +137,7 @@ async function run<T>(fn: () => Promise<Result<T, DbError>>): Promise<Result<T, 
 type EventLogRow = typeof schema.eventLog.$inferSelect;
 type ApprovalRow = typeof schema.approvals.$inferSelect;
 type OutboxRow = typeof schema.outbox.$inferSelect;
+type PendingKmpRow = typeof schema.pendingKnowledgeMutations.$inferSelect;
 type CursorRow = typeof schema.connectorCursors.$inferSelect;
 type ReadModelRow = typeof schema.readModels.$inferSelect;
 type WriteReceiptDbRow = typeof schema.writeReceipts.$inferSelect;
@@ -185,6 +189,20 @@ function toOutbox(r: OutboxRow): OutboxEntry {
     enqueuedAt: r.enqueuedAt,
     nextAttemptAt: r.nextAttemptAt ?? undefined,
     updatedAt: r.updatedAt,
+  };
+}
+
+function toPendingKmp(r: PendingKmpRow): PendingKnowledgeMutation {
+  return {
+    planId: r.planId,
+    workspaceId: r.workspaceId,
+    // `plan` is a json column → already a structured value (candidate data — the
+    // executor re-validates through KnowledgeMutationPlanSchema, never trusts it raw).
+    plan: r.plan,
+    payloadHash: r.payloadHash,
+    status: r.status,
+    recordedAt: r.recordedAt,
+    settledAt: r.settledAt ?? undefined,
   };
 }
 
@@ -588,6 +606,44 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
           .returning();
         const row = rows[0];
         return row ? ok(toOutbox(row)) : err(notFound(`outbox ${entry.outboxId}`));
+      }),
+  };
+
+  const pendingKnowledgeMutations: PendingKnowledgeMutationRepository = {
+    record: (entry) =>
+      run(async () => {
+        // First-write-wins insert; a duplicate planId collides on the PK → the driver
+        // throws a UNIQUE violation which `run`/`toDbError` maps to a typed `conflict`
+        // (the §13.10a idempotency gate — mirrors the outbox `enqueue`).
+        await db.insert(schema.pendingKnowledgeMutations).values(entry);
+        return ok(entry);
+      }),
+    get: (planId) =>
+      run(async () => {
+        const rows = await db
+          .select()
+          .from(schema.pendingKnowledgeMutations)
+          .where(eq(schema.pendingKnowledgeMutations.planId, planId))
+          .limit(1);
+        const row = rows[0];
+        return row ? ok(toPendingKmp(row)) : err(notFound(`pending-kmp ${planId}`));
+      }),
+    update: (entry) =>
+      run(async () => {
+        // §13.10a TOCTOU: ONLY `status` + `settledAt` advance on update. `plan`,
+        // `payloadHash`, `workspaceId`, and `recordedAt` are IMMUTABLE post-record
+        // (structurally — never in the set-clause) so a post-approval plan-swap is
+        // unrepresentable on the update path too, not just on first-write-wins record.
+        const rows = await db
+          .update(schema.pendingKnowledgeMutations)
+          .set({
+            status: entry.status,
+            settledAt: entry.settledAt ?? null,
+          })
+          .where(eq(schema.pendingKnowledgeMutations.planId, entry.planId))
+          .returning();
+        const row = rows[0];
+        return row ? ok(toPendingKmp(row)) : err(notFound(`pending-kmp ${entry.planId}`));
       }),
   };
 
@@ -1065,6 +1121,7 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
     audit,
     approvals,
     outbox,
+    pendingKnowledgeMutations,
     connectorCursors,
     providerState,
     readModels,

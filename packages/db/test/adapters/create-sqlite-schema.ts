@@ -20,6 +20,7 @@ const TABLES: readonly SQLiteTable[] = [
   schema.auditRecords,
   schema.approvals,
   schema.outbox,
+  schema.pendingKnowledgeMutations,
   schema.connectorCursors,
   schema.providerProfiles,
   schema.readModels,

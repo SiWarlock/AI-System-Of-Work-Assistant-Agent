@@ -12,6 +12,8 @@ export * from "./event-log";
 export * from "./audit";
 export * from "./approvals";
 export * from "./outboxes";
+// §13.10a — the pending-KMP store (the semantic-write sibling of the outbox).
+export * from "./pending-kmp";
 export * from "./connector-cursors";
 export * from "./provider-state";
 export * from "./read-models";
