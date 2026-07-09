@@ -77,6 +77,14 @@ export interface SemanticMutationDispatchDeps {
    * a read fault is a typed `FailureVariant`.
    */
   readonly readNoteProjectId: NoteProjectIdReader;
+  /**
+   * §13.10a gate 1 (create-clobber) — does a note ALREADY exist at this path, WS-8-scoped? Keyed on REAL
+   * file existence, NOT `projectId` presence: a NoteCreate `renderCreate`-OVERWRITES the whole file, so a
+   * create over ANY pre-existing note (a colliding project note, a human note, a note lacking/mis-framing
+   * `projectId`) is a data-loss write. Using `readNoteProjectId !== undefined` as an existence proxy would
+   * MISS an existing note that carries no parseable `projectId` — so this is a distinct probe. Never throws.
+   */
+  readonly noteExists: NoteExistsProbe;
   /** Injected clock (ISO-8601) — the terminal-transition instant stamped on the settled row. */
   readonly now: () => string;
 }
@@ -94,6 +102,16 @@ export type NoteProjectIdReader = (
   path: string,
   workspaceId: WorkspaceId,
 ) => Promise<Result<string | undefined, FailureVariant>>;
+
+/**
+ * Does a note EXIST at `path` (WS-8-scoped)? `true` ⇒ occupied (a create would overwrite it). Keyed on
+ * real file existence, independent of frontmatter — so a note that lacks or mis-frames `projectId` still
+ * reads as existing. Never throws — a read fault is a typed `FailureVariant` (the executor fails closed).
+ */
+export type NoteExistsProbe = (
+  path: string,
+  workspaceId: WorkspaceId,
+) => Promise<Result<boolean, FailureVariant>>;
 
 /** Redaction-safe rejection: a stable cause code + static message; never a raw cause. */
 function reject(kind: FailureVariant["kind"], code: string, message: string): FailureVariant {
@@ -244,9 +262,11 @@ export function createSemanticMutationDispatch(deps: SemanticMutationDispatchDep
     // project. `safeNoteSlug` is lossy, so distinct raw projectIds can collide onto one note path — a
     // proposal for project B must never touch project A's note. For a PATCH: the existing note's
     // frontmatter `projectId` MUST equal the plan's stamped `expectedProjectId` (Slice B). For a CREATE:
-    // the target path MUST NOT already exist — `renderCreate` OVERWRITES the whole file, so a create over
-    // a note that appeared after derive (same- OR cross-project) is a data-loss write. Both fail CLOSED
-    // (absent expectedProjectId, read fault, a patch mismatch, or an occupied create path).
+    // the target path MUST NOT already EXIST — `renderCreate` OVERWRITES the whole file, so a create over
+    // ANY pre-existing note (a colliding project note, or an ordinary note that carries no `projectId`) is
+    // a data-loss write; the create check keys on REAL existence, NOT `projectId` presence (a `projectId`
+    // proxy would MISS an unattributed note → silent overwrite). Both fail CLOSED (absent expectedProjectId,
+    // read fault, a patch mismatch, or an occupied create path).
     // ⚠ TOCTOU residual (go-live hardening): this reads the target here; KnowledgeWriter re-reads at
     //    commit. The window is one synchronous dispatch (no human gate between) and the compare-revision
     //    precondition guards a concurrent WHOLE-vault change, but does not bind THIS read to the writer's.
@@ -263,9 +283,9 @@ export function createSemanticMutationDispatch(deps: SemanticMutationDispatchDep
         }
       }
       for (const create of plan.creates) {
-        const target = await deps.readNoteProjectId(create.path, plan.workspaceId);
-        if (!isOk(target)) return err(target.error);
-        if (target.value !== undefined) {
+        const exists = await deps.noteExists(create.path, plan.workspaceId);
+        if (!isOk(exists)) return err(exists.error); // read fault → fail-closed
+        if (exists.value) {
           return err(reject("validation_rejected", "SEMANTIC_DISPATCH_CREATE_TARGET_EXISTS", "semantic dispatch: create target note already exists (would overwrite)"));
         }
       }

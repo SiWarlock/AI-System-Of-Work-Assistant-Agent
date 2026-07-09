@@ -4,7 +4,7 @@
 // a direct/auto write (safety rules 1+2). The enforced preconditions (fetch-by-planRef,
 // idempotency, FG-1 WS-8, FG-2 TOCTOU, candidate-data gate) are each pinned below.
 import { describe, it, expect } from "vitest";
-import { ok, err, isOk, failure } from "@sow/contracts";
+import { ok, err, isOk, isErr, failure } from "@sow/contracts";
 import type { Approval, FailureVariant, Result } from "@sow/contracts";
 import type {
   DbError,
@@ -22,6 +22,7 @@ import {
   createApprovalDispatchRouter,
   type SemanticMutationDispatchDeps,
   type NoteProjectIdReader,
+  type NoteExistsProbe,
 } from "../../../src/api/procedures/semanticMutationDispatch";
 import type { DispatchApprovalFn } from "../../../src/api/procedures/approvalCommands";
 
@@ -129,18 +130,25 @@ function makeDispatch(
   opts: {
     kmp?: { getError?: DbError; updateError?: DbError };
     commit?: { failure?: KnowledgeCommitFailure; replayed?: boolean };
-    /** The projectId the frontmatter reader returns for any target (undefined ⇒ note/projectId absent). */
+    /** The projectId the frontmatter reader returns for any PATCH target (undefined ⇒ note/projectId absent). */
     targetProjectId?: string;
-    /** Per-path projectId overrides (for multi-target plans); falls back to targetProjectId. */
+    /** Per-path projectId overrides (for multi-target patch plans); falls back to targetProjectId. */
     targetByPath?: Record<string, string | undefined>;
-    /** A read fault the frontmatter reader returns instead (fail-closed path). */
+    /** A read fault the frontmatter reader returns instead (patch fail-closed path). */
     readError?: FailureVariant;
+    /** Whether a CREATE target already exists (default false ⇒ free). Keys the create-clobber guard. */
+    targetExists?: boolean;
+    /** Per-path existence overrides (for multi-target create plans); falls back to targetExists. */
+    existsByPath?: Record<string, boolean>;
+    /** A read fault the existence probe returns instead (create fail-closed path). */
+    existsError?: FailureVariant;
   } = {},
 ): {
   dispatch: DispatchApprovalFn;
   kmp: ReturnType<typeof fakePendingKmp>;
   commit: ReturnType<typeof fakeCommit>;
   readCalls: { path: string; workspaceId: string }[];
+  existsCalls: { path: string; workspaceId: string }[];
 } {
   const kmp = fakePendingKmp(seed, opts.kmp);
   const commit = fakeCommit(opts.commit);
@@ -151,8 +159,15 @@ function makeDispatch(
     const v = opts.targetByPath !== undefined ? opts.targetByPath[path] : opts.targetProjectId;
     return Promise.resolve(ok(v));
   };
-  const deps: SemanticMutationDispatchDeps = { pendingKmp: kmp.repo, commit: commit.port, readNoteProjectId, now: () => NOW };
-  return { dispatch: createSemanticMutationDispatch(deps), kmp, commit, readCalls };
+  const existsCalls: { path: string; workspaceId: string }[] = [];
+  const noteExists: NoteExistsProbe = (path, workspaceId) => {
+    existsCalls.push({ path, workspaceId: String(workspaceId) });
+    if (opts.existsError !== undefined) return Promise.resolve(err(opts.existsError));
+    const v = opts.existsByPath !== undefined ? (opts.existsByPath[path] ?? false) : (opts.targetExists ?? false);
+    return Promise.resolve(ok(v));
+  };
+  const deps: SemanticMutationDispatchDeps = { pendingKmp: kmp.repo, commit: commit.port, readNoteProjectId, noteExists, now: () => NOW };
+  return { dispatch: createSemanticMutationDispatch(deps), kmp, commit, readCalls, existsCalls };
 }
 
 const assertErr = <T,>(r: Result<T, { kind: string; cause?: { code: string } }>): { kind: string; cause?: { code: string } } => {
@@ -411,19 +426,38 @@ describe("createSemanticMutationDispatch — gate 1 (slug-collision) patch-targe
     expect(commit.calls).toHaveLength(0);
   });
 
-  it("a CREATE whose target path is free commits (and the executor verified the path is empty)", async () => {
-    // validPlan is a single create at Projects/acme.md; targetProjectId undefined ⇒ path is free.
-    const { dispatch, commit, readCalls } = makeDispatch(mkRow());
+  it("a CREATE whose target path is free commits (and the executor probed existence, not projectId)", async () => {
+    // validPlan is a single create at Projects/acme.md; targetExists defaults false ⇒ path is free.
+    const { dispatch, commit, existsCalls } = makeDispatch(mkRow());
     const r = await dispatch(mkApproval());
     expect(isOk(r)).toBe(true);
     expect(commit.calls).toHaveLength(1);
-    expect(readCalls).toEqual([{ path: "Projects/acme.md", workspaceId: "personal-business" }]);
+    // Keyed on REAL existence — the create branch uses the existence probe, not the projectId reader.
+    expect(existsCalls).toEqual([{ path: "Projects/acme.md", workspaceId: "personal-business" }]);
   });
 
-  it("REJECTS a create whose target path ALREADY EXISTS (renderCreate would overwrite a colliding note)", async () => {
-    const { dispatch, commit } = makeDispatch(mkRow(), { targetProjectId: "some-existing-project" });
+  it("REJECTS a create whose target path ALREADY EXISTS (renderCreate would overwrite it)", async () => {
+    const { dispatch, commit } = makeDispatch(mkRow(), { targetExists: true });
     const r = await dispatch(mkApproval());
     expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_CREATE_TARGET_EXISTS");
+    expect(commit.calls).toHaveLength(0);
+  });
+
+  it("REJECTS a create over an existing note that has NO projectId — existence, not id-presence (data-loss guard)", async () => {
+    // The false-accept the existence probe closes: an unattributed note (a human/daily note, or a
+    // note whose projectId is unparseable) occupies the path. A projectId-presence proxy would read
+    // undefined ⇒ "free" ⇒ overwrite. The existence probe reports it occupied ⇒ reject.
+    const { dispatch, commit } = makeDispatch(mkRow(), { targetExists: true, targetProjectId: undefined });
+    const r = await dispatch(mkApproval());
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_CREATE_TARGET_EXISTS");
+    expect(commit.calls).toHaveLength(0);
+  });
+
+  it("fails CLOSED when the create-existence probe faults (no commit)", async () => {
+    const fault = failure("degraded_unavailable", "boom", { retryable: true, cause: { code: "NOTE_PROJECT_ID_READ_FAULT" } });
+    const { dispatch, commit } = makeDispatch(mkRow(), { existsError: fault });
+    const r = await dispatch(mkApproval());
+    expect(isErr(r)).toBe(true);
     expect(commit.calls).toHaveLength(0);
   });
 });
