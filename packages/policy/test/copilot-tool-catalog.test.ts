@@ -12,9 +12,12 @@ import { isAllow, isDeny } from "../src/decision";
 import {
   COPILOT_READ_TOOLS,
   COPILOT_PROPOSE_TOOL,
+  COPILOT_PROPOSE_KNOWLEDGE_TOOL,
   isMutatingCopilotTool,
   copilotReadToolPolicy,
   copilotAgentToolPolicy,
+  copilotKnowledgeAgentToolIds,
+  copilotKnowledgeProposeToolPolicy,
   copilotReadOnlyPolicyIsPure,
   copilotReadToolIds,
   copilotToolScopingClass,
@@ -395,5 +398,53 @@ describe("§13.10d skill self-introspection — skills.list / skills.get catalog
       expect(nonPartitioned).toContain(id); // kept even on today's single 'default' source
       expect(partitioned).toContain(id);
     }
+  });
+});
+
+// ── §13.10a Slice G2 — the copilot.propose_knowledge SEMANTIC-write tool ──────────────────────────────
+// The semantic-write sibling of copilot.propose_action: classified MUTATING (ING-7 refuses it to an
+// untrusted job) and carried in a DECOUPLED knowledge-propose grant (NOT the external agent policy).
+describe("§13.10a — copilot.propose_knowledge (the semantic-write proposing tool)", () => {
+  it("is a FROZEN, MUTATING catalog tool the classifier knows EXPLICITLY (not just fail-safe)", () => {
+    expect(String(COPILOT_PROPOSE_KNOWLEDGE_TOOL.id)).toBe("copilot.propose_knowledge");
+    expect(COPILOT_PROPOSE_KNOWLEDGE_TOOL.mutating).toBe(true);
+    expect(Object.isFrozen(COPILOT_PROPOSE_KNOWLEDGE_TOOL)).toBe(true);
+    expect(isMutatingCopilotTool(COPILOT_PROPOSE_KNOWLEDGE_TOOL.id)).toBe(true);
+  });
+
+  it("is NOT a read tool — a read_only policy secretly listing it is caught as impure", () => {
+    expect(copilotReadToolIds().map(String)).not.toContain("copilot.propose_knowledge");
+    const smuggled: ToolPolicy = {
+      mode: "read_only",
+      allowedTools: [COPILOT_PROPOSE_KNOWLEDGE_TOOL.id],
+      deniedTools: [],
+      allowsMutating: false,
+    };
+    expect(copilotReadOnlyPolicyIsPure(smuggled)).toBe(false);
+  });
+
+  it("the knowledge-propose grant is scoped_write = read tools + propose_knowledge, DECOUPLED from the external grant", () => {
+    const ids = copilotKnowledgeAgentToolIds().map(String);
+    expect(ids).toContain("copilot.propose_knowledge");
+    expect(ids).toEqual(expect.arrayContaining(copilotReadToolIds().map(String)));
+    expect(ids).not.toContain(String(COPILOT_PROPOSE_TOOL.id)); // no external-write tool smuggled in
+    const p = copilotKnowledgeProposeToolPolicy();
+    expect(p.mode).toBe("scoped_write");
+    expect(p.allowsMutating).toBe(true);
+    expect(admitsMutating(p, isMutatingCopilotTool)).toBe(true);
+  });
+
+  it("ING-7 payoff: UNTRUSTED + knowledge-propose → HARD REJECT; TRUSTED → ADMITTED", () => {
+    const untrusted = admitJob(job(copilotKnowledgeProposeToolPolicy(), "untrusted"), isMutatingCopilotTool);
+    expect(isDeny(untrusted)).toBe(true);
+    if (isDeny(untrusted)) expect(untrusted.reason).toBe("UNTRUSTED_CONTENT_MUTATING_TOOL");
+    const trusted = admitJob(job(copilotKnowledgeProposeToolPolicy(), "trusted"), isMutatingCopilotTool);
+    expect(isAllow(trusted)).toBe(true);
+  });
+
+  it("the EXTERNAL agent grant is UNCHANGED (no coupling regression)", () => {
+    const ids = copilotAgentToolPolicy().allowedTools.map(String);
+    expect(ids).toContain(String(COPILOT_PROPOSE_TOOL.id));
+    expect(ids).not.toContain("copilot.propose_knowledge");
   });
 });

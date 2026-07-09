@@ -127,9 +127,22 @@ export const COPILOT_PROPOSE_TOOL: CopilotToolSpec = Object.freeze({
   description: "propose an external write for human approval (routes to §9.8 Approvals; never a direct write)",
 });
 
+/**
+ * §13.10a — the SEMANTIC-write proposing tool. Routes a Copilot-proposed KnowledgeMutationPlan to §9.8
+ * Approvals (NEVER a direct/auto Markdown write — KnowledgeWriter commits it ONLY on owner approval,
+ * safety rules 1+2). Like the external propose tool, an UNTRUSTED agent must not be able to propose writes
+ * (a prompt-injected untrusted document could steer a proposal a human rubber-stamps), so it is classified
+ * MUTATING — ING-7 refuses it to an untrusted Copilot job; only a TRUSTED (scoped_write) job may hold it.
+ */
+export const COPILOT_PROPOSE_KNOWLEDGE_TOOL: CopilotToolSpec = Object.freeze({
+  id: toolId("copilot.propose_knowledge"),
+  mutating: true,
+  description: "propose a project-note semantic write for human approval (routes to §9.8 Approvals; never a direct write)",
+});
+
 /** The full catalog, keyed by the raw tool id. */
 const CATALOG: ReadonlyMap<string, CopilotToolSpec> = new Map(
-  [...COPILOT_READ_TOOLS, COPILOT_PROPOSE_TOOL].map((s) => [s.id as string, s]),
+  [...COPILOT_READ_TOOLS, COPILOT_PROPOSE_TOOL, COPILOT_PROPOSE_KNOWLEDGE_TOOL].map((s) => [s.id as string, s]),
 );
 
 /** The read-only tools' ids — the allow-list for a read-only Copilot job. */
@@ -246,6 +259,21 @@ export function copilotReadToolPolicy(): ToolPolicy {
 /** A scoped_write ToolPolicy adding the write-proposing tool — admissible ONLY for a TRUSTED Copilot job. */
 export function copilotAgentToolPolicy(): ToolPolicy {
   return { mode: "scoped_write", allowedTools: copilotAgentToolIds(), deniedTools: [], allowsMutating: true };
+}
+
+/**
+ * §13.10a — a TRUSTED (scoped_write) knowledge-propose job's allow-list: the read tools PLUS the SEMANTIC-write
+ * proposing tool. DECOUPLED from `copilotAgentToolIds` (the EXTERNAL-write grant): a knowledge-propose agent
+ * does NOT also get `copilot.propose_action`, and vice-versa — a caller that wants a full agent composes both
+ * explicitly. Keeping the two grants separate avoids silently widening the existing external-propose runner.
+ */
+export function copilotKnowledgeAgentToolIds(): ToolId[] {
+  return [...copilotReadToolIds(), COPILOT_PROPOSE_KNOWLEDGE_TOOL.id];
+}
+
+/** A scoped_write ToolPolicy adding the SEMANTIC-write proposing tool — admissible ONLY for a TRUSTED Copilot job. */
+export function copilotKnowledgeProposeToolPolicy(): ToolPolicy {
+  return { mode: "scoped_write", allowedTools: copilotKnowledgeAgentToolIds(), deniedTools: [], allowsMutating: true };
 }
 
 /**
