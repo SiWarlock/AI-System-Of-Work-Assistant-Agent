@@ -34,7 +34,9 @@ export interface SignedProvenanceStamp {
   sourceEventRef: string;
   committedAt: string;
   // arch_gap: sig is "HMAC over (workspaceId, factIdentity, originPath,
-  // mdContentSha, kwRevision)" rendered as hex; the encoding/length is not
+  // mdContentSha)" rendered as hex (scheme v2 — the volatile kwRevision is NOT
+  // bound; see knowledge-writer/provenance-stamp.ts header for why). kwRevision
+  // remains a stored-but-UNSIGNED informational field. The encoding/length is not
   // pinned upstream — modeled as an open non-empty string (NOT a closed regex).
   sig: string;
 }

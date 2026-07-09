@@ -249,11 +249,13 @@ export async function admitForServing(
     }
     const verified = await verifyProvenanceStamp(
       {
+        // The v2 signed binding is CONTENT+LOCATION only — the volatile whole-vault revision is NOT bound
+        // (a stamp must survive an unrelated commit; see provenance-stamp.ts header). Revision-freshness is
+        // enforced by leg (A) above (rehydrated hash == allow-set hash @ current revision) + leg (C) membership.
         workspaceId: df.fact.workspaceId,
         factIdentity: df.fact.factIdentity,
         originPath,
         mdContentSha: df.fact.mdContentSha,
-        kwRevision: df.fact.revisionId,
         stamp: rf.stamp,
       },
       { secrets: deps.secrets, signingKeyRef: deps.signingKeyRef },

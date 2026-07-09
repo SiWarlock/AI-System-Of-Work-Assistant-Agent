@@ -100,7 +100,7 @@ describe("stampProvenance — minting", () => {
     expect(a.value.sig).toBe(b.value.sig);
   });
 
-  it("binds sig to EACH signed field — a change in any of the 5 preimage fields changes sig", async () => {
+  it("binds sig to EACH signed field — a change in any of the 4 content-binding fields changes sig", async () => {
     const port = new FakeSecretsPort({ [REF_A]: KEY_A });
     const base = await stampProvenance(baseInputs(), deps(port));
     expect(base.ok).toBe(true);
@@ -111,7 +111,6 @@ describe("stampProvenance — minting", () => {
       { factIdentity: "page:acme/other" as FactIdentity },
       { originPath: "acme/other.md" },
       { mdContentSha: SHA_2 as MdContentSha },
-      { kwRevision: "rev-002" as RevisionId },
     ];
     for (const v of variants) {
       const r = await stampProvenance(baseInputs(v), deps(port));
@@ -120,11 +119,13 @@ describe("stampProvenance — minting", () => {
     }
   });
 
-  it("does NOT fold sourceEventRef / committedAt into sig (they are outside the signed preimage)", async () => {
+  it("does NOT fold kwRevision / sourceEventRef / committedAt into sig (all outside the signed preimage)", async () => {
     const port = new FakeSecretsPort({ [REF_A]: KEY_A });
     const a = await stampProvenance(baseInputs(), deps(port));
     const b = await stampProvenance(
-      baseInputs({ sourceEventRef: "meeting:999", committedAt: "2027-01-01T00:00:00.000Z" }),
+      // kwRevision is UNSIGNED (v2) — the volatile whole-vault revision must not change the sig, else a stamp
+      // self-invalidates on the next unrelated commit.
+      baseInputs({ kwRevision: "rev-777" as RevisionId, sourceEventRef: "meeting:999", committedAt: "2027-01-01T00:00:00.000Z" }),
       deps(port),
     );
     expect(a.ok && b.ok).toBe(true);
@@ -187,6 +188,24 @@ describe("verifyProvenanceStamp — serve-time content rebinding", () => {
     if (res.ok) expect(res.value).toBe(true);
   });
 
+  it("VERIFIES a stamp whose serve-time kwRevision DIFFERS from mint time (revision is NOT bound)", async () => {
+    // Architectural property (the fix): a stamp binds CONTENT+LOCATION, not the volatile whole-vault revision.
+    // The serving gate re-derives kwRevision = the CURRENT whole-vault revision, which advances on every
+    // unrelated commit. Binding it would self-invalidate every stamp on the next commit. It must NOT be bound:
+    // a note whose content+location is unchanged verifies at ANY later revision.
+    const port = new FakeSecretsPort({ [REF_A]: KEY_A });
+    const minted = await stampProvenance(baseInputs({ kwRevision: "rev-001" as RevisionId }), deps(port));
+    expect(minted.ok).toBe(true);
+    if (!minted.ok) return;
+    const res = await verifyProvenanceStamp(
+      // Same content (mdContentSha) + location (workspaceId/factIdentity/originPath), LATER whole-vault revision.
+      { stamp: minted.value, ...baseInputs({ kwRevision: "rev-999" as RevisionId }) },
+      deps(port),
+    );
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value).toBe(true);
+  });
+
   it("REJECTS a copied stamp bound to different re-derived content (forged bytes → mdContentSha mismatch)", async () => {
     const port = new FakeSecretsPort({ [REF_A]: KEY_A });
     // Attacker copies a genuine, key-valid stamp onto a fabricated page whose
@@ -211,7 +230,8 @@ describe("verifyProvenanceStamp — serve-time content rebinding", () => {
       { factIdentity: "page:acme/evil" as FactIdentity },
       { originPath: "acme/evil.md" },
       { workspaceId: "ws-personal" as WorkspaceId },
-      { kwRevision: "rev-999" as RevisionId },
+      // NOTE: kwRevision is NOT in this list — it is UNSIGNED (v2), so re-deriving it differently does NOT
+      // fail verify (pinned by the "VERIFIES ... kwRevision DIFFERS" test above). Only content+location bind.
     ]) {
       const res = await verifyProvenanceStamp(
         { stamp: genuine.value, ...baseInputs(over) },
@@ -289,16 +309,16 @@ describe("verifyProvenanceStamp — serve-time content rebinding", () => {
   });
 });
 
-// Cross-check: an independent HMAC recompute over the documented 5-field preimage
+// Cross-check: an independent HMAC recompute over the documented 4-field preimage
 // agrees with the stamper — pins the signed preimage as a stable contract that
-// the 4.17 serving gate can re-derive.
+// the 4.17 serving gate can re-derive. v2: the volatile kwRevision is NOT in the preimage.
 describe("preimage stability (independent oracle)", () => {
-  it("matches an independent HMAC-SHA256 over the length-prefixed 5-field preimage", async () => {
+  it("matches an independent HMAC-SHA256 over the length-prefixed 4-field preimage", async () => {
     const port = new FakeSecretsPort({ [REF_A]: KEY_A });
     const minted = await stampProvenance(baseInputs(), deps(port));
     expect(minted.ok).toBe(true);
     if (!minted.ok) return;
-    const fields = ["sow:provenance-stamp:v1", "ws-emp", "page:acme/auth", "acme/auth.md", SHA_1, "rev-001"];
+    const fields = ["sow:provenance-stamp:v2", "ws-emp", "page:acme/auth", "acme/auth.md", SHA_1];
     const preimage = fields.map((f) => `${Buffer.byteLength(f, "utf8")}:${f}`).join(" ");
     const expected = createHmac("sha256", KEY_A).update(preimage, "utf8").digest("hex");
     expect(minted.value.sig).toBe(expected);

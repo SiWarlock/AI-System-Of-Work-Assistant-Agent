@@ -4,14 +4,26 @@
 // KnowledgeWriter's exclusive authorship — turning "Markdown-provenanced" from a
 // copyable label into an UNFORGEABLE property (design doc §2 leg 2, §3 row 2).
 //
-// The signature is
+// The signature is (scheme v2)
 //   sig = HMAC-SHA256(key, PREIMAGE(workspaceId, factIdentity, originPath,
-//                                   mdContentSha, kwRevision))
+//                                   mdContentSha))
 // over a length-prefixed, domain-separated preimage (so no field's bytes can
 // bleed into an adjacent field — a canonicalization/field-injection defense).
-// `sourceEventRef` / `committedAt` ride in the stamp but are deliberately OUTSIDE
-// the signed preimage: the sig protects the content-binding tuple, and 4.17's
-// serving gate re-derives exactly that tuple from committed Markdown to admit.
+// `kwRevision` / `sourceEventRef` / `committedAt` ride in the stamp but are
+// deliberately OUTSIDE the signed preimage: the sig protects the CONTENT+LOCATION
+// tuple, and 4.17's serving gate re-derives exactly that tuple from committed
+// Markdown to admit.
+//
+// WHY kwRevision IS NOT BOUND (v2 — the load-bearing correctness fix). A stamp binds a
+// SINGLE note; `kwRevision` is the WHOLE-VAULT revision (a global content hash of every
+// file), which advances on EVERY commit to ANY note. If the sig bound it, the serving
+// gate — which re-derives `kwRevision` = the CURRENT whole-vault revision — would reject
+// every stamp the instant an unrelated note committed (self-invalidating). Binding it
+// buys NO security: revision-freshness is already enforced by the serving gate's leg A
+// (rehydrated `mdContentSha` must equal the allow-set's `mdContentSha` AT the current
+// revision) and leg C (allow-set membership at the current revision). Stale-content
+// replay is impossible because rehydrate reads the trusted committed vault, not an
+// attacker payload. So the stamp binds only the note-stable content+location tuple.
 //
 // SERVE-TIME CONTENT REBINDING (the load-bearing property): `verifyProvenanceStamp`
 // recomputes the HMAC from the INDEPENDENTLY re-derived tuple (never the stamp's
@@ -87,27 +99,29 @@ export interface StamperDeps {
 // ── signing inputs / outputs ─────────────────────────────────────────────────
 
 /**
- * The full set of stamp inputs. The first five fields form the signed preimage;
- * `sourceEventRef` + `committedAt` are carried unsigned (see module header).
+ * The full set of stamp inputs. The FOUR content-binding fields (workspaceId, factIdentity, originPath,
+ * mdContentSha) form the signed preimage; `kwRevision` + `sourceEventRef` + `committedAt` are carried UNSIGNED
+ * informational metadata in the emitted stamp (see module header — `kwRevision` records the vault revision the
+ * note was committed against, but is NOT part of the security binding).
  */
 export interface StampInputs {
   readonly workspaceId: WorkspaceId;
   readonly factIdentity: FactIdentity;
   readonly originPath: string;
   readonly mdContentSha: MdContentSha;
+  /** UNSIGNED informational metadata (not bound by the sig) — the vault revision at commit. */
   readonly kwRevision: RevisionId;
   readonly sourceEventRef: string;
   /** ISO-8601, supplied by the writer's injected clock. */
   readonly committedAt: string;
 }
 
-/** The five content-binding fields the signature covers. */
+/** The four content-binding fields the signature covers (revision-independent — see module header). */
 export interface SignedTuple {
   readonly workspaceId: WorkspaceId;
   readonly factIdentity: FactIdentity;
   readonly originPath: string;
   readonly mdContentSha: MdContentSha;
-  readonly kwRevision: RevisionId;
 }
 
 /** Serve-time verify inputs: the stamp + the INDEPENDENTLY re-derived tuple. */
@@ -126,14 +140,17 @@ export type VerifyError = SecretUnresolved;
 
 // ── signed preimage (length-prefixed, domain-separated) ──────────────────────
 
-const PREIMAGE_SCHEME = "sow:provenance-stamp:v1";
+// v2: the signed preimage binds CONTENT+LOCATION only (workspaceId, factIdentity, originPath, mdContentSha) —
+// the volatile whole-vault `kwRevision` was REMOVED from the binding (see the module header). The scheme bump
+// domain-separates v2 sigs from any v1 sig so a v1 stamp can never be replayed under v2.
+const PREIMAGE_SCHEME = "sow:provenance-stamp:v2";
 // NUL separator (matches the CanonicalFactDeriver convention). The separator is
 // belt-and-braces only — each field is already utf8-byte-length-prefixed, so the
 // preimage is unambiguous regardless of separator choice.
 const FIELD_SEP = String.fromCharCode(0);
 
 /**
- * Canonical, injection-resistant preimage over the five content-binding fields.
+ * Canonical, injection-resistant preimage over the four content-binding fields.
  * Each field is length-prefixed (`<utf8-byte-length>:<field>`) so no field's
  * bytes can be reinterpreted as part of an adjacent field regardless of the
  * separator; a scheme tag domain-separates this signature from any other HMAC
@@ -146,7 +163,6 @@ function signingPreimage(t: SignedTuple): string {
     t.factIdentity,
     t.originPath,
     t.mdContentSha,
-    t.kwRevision,
   ];
   return fields
     .map((f) => `${Buffer.byteLength(f, "utf8")}:${f}`)
