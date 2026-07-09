@@ -2,7 +2,7 @@
 // revision/audit recording, idempotent replay, typed failure variants (task 4.1)
 import { describe, it, expect } from "vitest";
 import { ok, err, isOk, isErr, validKnowledgeMutationPlan } from "@sow/contracts";
-import type { KnowledgeMutationPlan, WorkflowRunRef } from "@sow/contracts";
+import type { KnowledgeMutationPlan, WorkflowRunRef, Result, FactIdentity, MdContentSha } from "@sow/contracts";
 import { applyPlan } from "../src/knowledge-writer/writer";
 import type {
   KnowledgeWriteCommand,
@@ -11,6 +11,15 @@ import type {
   SecretScan,
 } from "../src/knowledge-writer/writer";
 import { computeRevisionId } from "../src/knowledge-writer/revision";
+import {
+  verifyProvenanceStamp,
+  readStampField,
+  type SecretsPort,
+  type StamperDeps,
+  type SecretUnresolved,
+} from "../src/knowledge-writer/provenance-stamp";
+import { computePageProvenance } from "../src/gbrain/derive/canonical-fact-deriver";
+import { readFrontmatterField } from "../src/knowledge-writer/frontmatter";
 import { MemoryAuditRepo, MemoryRevisionStore, MemoryVaultFs } from "./helpers";
 
 const wf: WorkflowRunRef = {
@@ -327,5 +336,115 @@ describe("applyPlan — injected ownership + secret hooks (ordering + typed vari
     // never writes a partial/sanitized file
     expect(vault.snapshot()).toEqual({});
     expect(d.audit.records).toHaveLength(0);
+  });
+});
+
+describe("applyPlan — gate 4 G1d-2: provenance stamp minting at commit", () => {
+  const KEY = new Uint8Array(32).fill(7);
+  const REF = "kw-provenance-key";
+  class FakeSecretsPort implements SecretsPort {
+    constructor(private readonly keys: Record<string, Uint8Array>) {}
+    resolveSigningKey(ref: string): Promise<Result<Uint8Array, SecretUnresolved>> {
+      const k = this.keys[ref];
+      return Promise.resolve(k !== undefined ? ok(k) : err({ code: "secret_unresolved", ref }));
+    }
+  }
+  const goodSigning = (): StamperDeps => ({ secrets: new FakeSecretsPort({ [REF]: KEY }), signingKeyRef: REF });
+  const badSigning = (): StamperDeps => ({ secrets: new FakeSecretsPort({}), signingKeyRef: REF });
+
+  it("DORMANT — no signing key ⇒ the committed note carries NO kwStamp (byte-identical to today)", async () => {
+    const vault = new MemoryVaultFs();
+    const r = await applyPlan(cmd(planWithCreate("notes/acme.md", "hello")), deps(vault));
+    expect(isOk(r)).toBe(true);
+    const committed = vault.snapshot()["notes/acme.md"];
+    expect(committed).toBe("hello"); // exactly the projected bytes — no stamp embedded
+    expect(readStampField(committed ?? "")).toBeNull();
+  });
+
+  it("ACTIVE — a signing key embeds a kwStamp that VERIFIES over the committed note's own provenance", async () => {
+    const vault = new MemoryVaultFs();
+    const signing = goodSigning();
+    const plan = planWithCreate("notes/acme.md", "hello");
+    const r = await applyPlan(cmd(plan), { ...deps(vault), signing });
+    expect(isOk(r)).toBe(true);
+    const committed = vault.snapshot()["notes/acme.md"] ?? "";
+    const stamp = readStampField(committed);
+    expect(stamp).not.toBeNull();
+    const page = computePageProvenance("notes/acme.md", committed);
+    expect(page).not.toBeNull();
+    if (stamp === null || page === null) return;
+    // End-to-end: the stamp verifies over the tuple re-derived from the COMMITTED note (exactly what the gate does).
+    const verified = await verifyProvenanceStamp(
+      {
+        workspaceId: plan.workspaceId,
+        factIdentity: page.pageIdentity as FactIdentity,
+        originPath: "notes/acme.md",
+        mdContentSha: page.pageSha as MdContentSha,
+        stamp,
+      },
+      signing,
+    );
+    expect(isOk(verified) && verified.value).toBe(true);
+    expect(stamp.writerActor).toBe("KnowledgeWriter");
+  });
+
+  it("ACTIVE — the recorded revision equals computeRevisionId over the COMMITTED (stamped) vault (no next-commit conflict)", async () => {
+    const vault = new MemoryVaultFs();
+    const r = await applyPlan(cmd(planWithCreate("notes/acme.md", "hello")), { ...deps(vault), signing: goodSigning() });
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    // The revision recorded IS the revision of the on-disk STAMPED bytes → the next commit's compare-revision passes.
+    expect(r.value.revisionId).toBe(computeRevisionId(new Map(Object.entries(vault.snapshot()))));
+  });
+
+  it("FAIL-SAFE — an unresolvable signing key leaves the note UNSTAMPED but the write STILL SUCCEEDS", async () => {
+    const vault = new MemoryVaultFs();
+    const r = await applyPlan(cmd(planWithCreate("notes/acme.md", "hello")), { ...deps(vault), signing: badSigning() });
+    expect(isOk(r)).toBe(true); // a stamping fault NEVER blocks the semantic write
+    const committed = vault.snapshot()["notes/acme.md"] ?? "";
+    expect(committed).toBe("hello"); // committed unstamped ⇒ safely untrusted at serving
+    expect(readStampField(committed)).toBeNull();
+  });
+
+  it("ACTIVE — preserves a note's PRE-EXISTING frontmatter through stamping (round-trip + verify)", async () => {
+    const vault = new MemoryVaultFs();
+    const signing = goodSigning();
+    const plan: KnowledgeMutationPlan = {
+      ...validKnowledgeMutationPlan,
+      creates: [{ path: "notes/acme.md", title: "Acme", body: "prose", frontmatter: { owner: "dana" } }],
+      patches: [],
+    };
+    const r = await applyPlan(cmd(plan), { ...deps(vault), signing });
+    expect(isOk(r)).toBe(true);
+    const committed = vault.snapshot()["notes/acme.md"] ?? "";
+    // the pre-existing frontmatter keys survive alongside the added kwStamp (composeNote round-trip preserved)
+    expect(readFrontmatterField(committed, "owner")).toBe("dana");
+    expect(readFrontmatterField(committed, "title")).toBe("Acme");
+    const stamp = readStampField(committed);
+    const page = computePageProvenance("notes/acme.md", committed);
+    expect(stamp).not.toBeNull();
+    if (stamp === null || page === null) return;
+    const verified = await verifyProvenanceStamp(
+      {
+        workspaceId: plan.workspaceId,
+        factIdentity: page.pageIdentity as FactIdentity,
+        originPath: "notes/acme.md",
+        mdContentSha: page.pageSha as MdContentSha,
+        stamp,
+      },
+      signing,
+    );
+    expect(isOk(verified) && verified.value).toBe(true);
+  });
+
+  it("ACTIVE — idempotent replay does NOT re-stamp (second apply returns replayed, vault unchanged)", async () => {
+    const vault = new MemoryVaultFs();
+    const d = { ...deps(vault), signing: goodSigning() };
+    const first = await applyPlan(cmd(planWithCreate("notes/acme.md", "hello")), d);
+    expect(isOk(first)).toBe(true);
+    const afterFirst = vault.snapshot()["notes/acme.md"];
+    const second = await applyPlan(cmd(planWithCreate("notes/acme.md", "hello")), d);
+    expect(isOk(second) && second.value.replayed).toBe(true);
+    expect(vault.snapshot()["notes/acme.md"]).toBe(afterFirst); // no second stamp / no double-write
   });
 });

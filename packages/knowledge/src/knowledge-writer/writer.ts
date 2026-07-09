@@ -30,6 +30,9 @@ import type {
   FrontmatterPatch,
   AuditRecord,
   WorkflowRunRef,
+  FactIdentity,
+  MdContentSha,
+  RevisionId as ContractRevisionId,
 } from "@sow/contracts";
 import {
   KnowledgeMutationPlanSchema,
@@ -58,7 +61,12 @@ import { enforceHumanOwnership } from "./ownership";
 import { scanForSecrets } from "./secret-scan";
 // The on-disk frontmatter format codec (§13.10a gate 2 + its inverse). Kept in one module so the
 // forward serializer and its inverse cannot drift; the region/link projection stays here.
-import { serializeScalar, parseNote, composeNote } from "./frontmatter";
+import { serializeScalar, parseNote, composeNote, KW_STAMP_FRONTMATTER_KEY } from "./frontmatter";
+import { stampProvenance, serializeStampFieldValue } from "./provenance-stamp";
+import type { StamperDeps } from "./provenance-stamp";
+// The SHARED page-hash core (gate 4 G1d-1): the writer mints its stamp through the SAME function
+// deriveCanonicalFacts uses, so the (factIdentity, mdContentSha) bound here == what the serving gate re-derives.
+import { computePageProvenance } from "../gbrain/derive/canonical-fact-deriver";
 
 // ── injected hooks (tasks 4.2 / 4.3) ────────────────────────────────────────
 
@@ -117,6 +125,13 @@ export interface KnowledgeWriterDeps {
   readonly secretScan?: SecretScan;
   /** Schema-registry override (tests); defaults to the process registry. */
   readonly registry?: SchemaRegistry;
+  /**
+   * Gate 4 (G1d-2) provenance-signing seam. When PRESENT, the writer mints a `SignedProvenanceStamp` for each
+   * changed page note and embeds it under the reserved `kwStamp` frontmatter key at commit — the authorship
+   * proof the serving gate re-verifies. When ABSENT (the default / dormant case), the commit is BYTE-IDENTICAL
+   * to today: no stamp is minted or embedded. Provisioned only once a real Keychain signing key exists.
+   */
+  readonly signing?: StamperDeps;
 }
 
 export interface WriteSuccess {
@@ -220,7 +235,9 @@ export async function applyPlan(
     }
   }
 
-  // 6 — blocking secret scan (task 4.3), immediately BEFORE the commit.
+  // 6 — blocking secret scan (task 4.3), immediately BEFORE the commit. Runs over the SEMANTIC changes; the
+  // gate-4 provenance stamp embedded below is machine-generated writer metadata (an HMAC of public fields),
+  // not secret-bearing content, so it is deliberately not re-scanned.
   for (const change of changes) {
     const decision = scan({ path: change.path, content: change.content });
     if (!decision.ok) {
@@ -228,10 +245,27 @@ export async function applyPlan(
     }
   }
 
+  // 6b — gate 4 (G1d-2): embed a KnowledgeWriter authorship stamp into each changed page note. DORMANT unless a
+  // signing key is provisioned (absent ⇒ committedProjected === projected, committedChanges === changes ⇒
+  // byte-identical to today). Runs AFTER ownership + secret (the stamp is the writer's OWN provenance, not a
+  // semantic mutation subject to the human-ownership gate, and not secret-bearing) and BEFORE the commit so the
+  // committed bytes + recorded revision carry it. The stamp binds the page hash over BASE bytes; kwStamp is
+  // carved out of that hash (G1b), so embedding it never perturbs what it signs (⇒ no next-commit conflict).
+  const committedProjected =
+    deps.signing !== undefined
+      ? await embedProvenanceStamps(snapshot, projected, plan, deps.signing, {
+          sourceEventRef: command.sourceEventRef,
+          baseRevision: command.expectedBaseRevision,
+          now: deps.now,
+        })
+      : projected;
+  const committedChanges =
+    deps.signing !== undefined ? diffChanges(snapshot, committedProjected) : changes;
+
   // 7 — atomic all-or-nothing commit (temp-write + rename). The new revision id
   // is the deterministic staging token — no clock/random enters the primitive.
-  const newRevision = computeRevisionId(projected);
-  const committed = await atomicCommit(deps.vault, changes, tokenOf(newRevision));
+  const newRevision = computeRevisionId(committedProjected);
+  const committed = await atomicCommit(deps.vault, committedChanges, tokenOf(newRevision));
   if (!committed.ok) {
     // Both atomic phases (stage_failed / commit_failed) roll the vault back to the
     // prior revision; surface either as the single typed infra-fault variant.
@@ -355,6 +389,59 @@ async function readSnapshot(vault: VaultFs): Promise<VaultSnapshot> {
  */
 export async function readVaultHeadRevision(vault: VaultFs): Promise<RevisionId> {
   return computeRevisionId(await readSnapshot(vault));
+}
+
+/**
+ * Gate 4 (G1d-2) — embed a KnowledgeWriter authorship stamp into each CHANGED page note, returning a stamped
+ * copy of the projected vault. Called only when a signing key is provisioned. For each note whose projected
+ * content differs from the snapshot (a create/update — deletes are absent from `projected`) and ends in `.md`,
+ * mints a stamp binding the SHARED page provenance (identity + hash over the BASE, unstamped bytes via
+ * `computePageProvenance`) and embeds it under the reserved `kwStamp` frontmatter key.
+ *
+ * FAIL-SAFE + never throws: a note with no safe page slug, a mint that errs, or a SecretsPort that throws is
+ * left UNSTAMPED — it commits normally (safely UNTRUSTED at serving). The stamp is best-effort provenance that
+ * NEVER blocks a semantic write and NEVER falsely trusts. `kwStamp` is carved out of the page hash (G1b), so
+ * embedding it does not perturb what it signs (⇒ the committed note re-derives to the SAME hash the gate checks).
+ */
+async function embedProvenanceStamps(
+  snapshot: VaultSnapshot,
+  projected: VaultSnapshot,
+  plan: KnowledgeMutationPlan,
+  signing: StamperDeps,
+  meta: { readonly sourceEventRef: string; readonly baseRevision: RevisionId; readonly now: () => string },
+): Promise<VaultSnapshot> {
+  const stamped = new Map(projected);
+  for (const [path, content] of projected) {
+    if (snapshot.get(path) === content) continue; // unchanged — nothing to stamp
+    if (!path.endsWith(".md")) continue; // only Markdown notes carry a page fact
+    const page = computePageProvenance(path, content);
+    if (page === null) continue; // no safe slug ⇒ not a servable page ⇒ leave unstamped
+    let minted: Awaited<ReturnType<typeof stampProvenance>>;
+    try {
+      minted = await stampProvenance(
+        {
+          workspaceId: plan.workspaceId,
+          factIdentity: page.pageIdentity as FactIdentity,
+          originPath: path,
+          mdContentSha: page.pageSha as MdContentSha,
+          // kwRevision is UNSIGNED informational (G1a) — the base revision the note is committed against; the
+          // writer's RevisionId is an unbranded string, so brand it for the StampInputs shape.
+          kwRevision: meta.baseRevision as unknown as ContractRevisionId,
+          sourceEventRef: meta.sourceEventRef,
+          committedAt: meta.now(),
+        },
+        signing,
+      );
+    } catch {
+      continue; // an unexpected SecretsPort throw ⇒ fail-safe (commit this note unstamped)
+    }
+    if (!minted.ok) continue; // key-unresolved / mint failure ⇒ fail-safe (commit this note unstamped)
+    const { frontmatter, body } = parseNote(content);
+    const nextFrontmatter = new Map(frontmatter);
+    nextFrontmatter.set(KW_STAMP_FRONTMATTER_KEY, serializeStampFieldValue(minted.value));
+    stamped.set(path, composeNote(nextFrontmatter, body));
+  }
+  return stamped;
 }
 
 /**
