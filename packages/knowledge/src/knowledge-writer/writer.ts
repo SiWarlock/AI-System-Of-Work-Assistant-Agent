@@ -346,6 +346,18 @@ async function readSnapshot(vault: VaultFs): Promise<VaultSnapshot> {
 }
 
 /**
+ * Read the current whole-vault revision id LIVE from `vault` — `computeRevisionId ∘ readSnapshot`, the SAME
+ * pair `applyPlan`'s compare-revision precondition uses (step 3 above). The COMMIT-ON-APPROVAL path resolves
+ * its expected base revision to THIS at commit time: a Copilot semantic plan is approved long after propose,
+ * so a FIXED base would spuriously `write_conflict` on any unrelated vault change between the two. Resolving
+ * head-at-commit makes the whole-vault compare a no-op and delegates TARGET integrity to the executor's
+ * gate-1 (`readNoteProjectId` / `noteExists`) — the precise, per-target check. Read-only; never mutates.
+ */
+export async function readVaultHeadRevision(vault: VaultFs): Promise<RevisionId> {
+  return computeRevisionId(await readSnapshot(vault));
+}
+
+/**
  * Fold every mutation kind (creates / frontmatterUpdates / patches / linkMutations)
  * into the post-apply vault. Returns the WHOLE next snapshot so one revision id
  * covers the plan atomically. The precise region-marker + wikilink byte-format is
