@@ -258,6 +258,16 @@ export function createSemanticMutationDispatch(deps: SemanticMutationDispatchDep
       return err(reject("validation_rejected", "SEMANTIC_DISPATCH_PLAN_WORKSPACE_MISMATCH", "semantic dispatch: validated plan workspace mismatch"));
     }
 
+    // (7a) SUPPORTED-KIND gate (defense-in-depth): the Copilot semantic-propose contract emits ONLY creates +
+    // patches (`deriveCopilotProjectKnowledgePlan` hardcodes linkMutations/frontmatterUpdates empty). Gate 1
+    // below covers ONLY those two kinds — so a plan carrying a `frontmatterUpdate`/`linkMutation` would be
+    // UNGUARDED (e.g. a frontmatterUpdate to a note DELETED since propose resurrects a near-empty note, which
+    // the writer's create-branch ownership check permits). Reject any such plan fail-closed. Unreachable via
+    // today's producer; this backstops a future one before it can bypass the target checks.
+    if (plan.frontmatterUpdates.length > 0 || plan.linkMutations.length > 0) {
+      return err(reject("validation_rejected", "SEMANTIC_DISPATCH_UNSUPPORTED_MUTATION_KIND", "semantic dispatch: propose plan carries an unsupported mutation kind (only creates/patches are gate-checked)"));
+    }
+
     // (7b) GATE 1 (slug-collision, §13.10a residual #1): every write TARGET must belong to the intended
     // project. `safeNoteSlug` is lossy, so distinct raw projectIds can collide onto one note path — a
     // proposal for project B must never touch project A's note. For a PATCH: the existing note's

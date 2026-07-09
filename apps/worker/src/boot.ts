@@ -92,6 +92,9 @@ import {
   gbrainMcpEndpoint,
 } from "./api/procedures/copilotAgentSynthesis";
 import { createApprovalsProposeSink } from "./api/procedures/copilotProposeSink";
+// §13.10a G4a — the on-approval SEMANTIC dispatch (approved semantic_mutation card → KnowledgeWriter commit).
+import { createApprovalDispatchRouter } from "./api/procedures/semanticMutationDispatch";
+import { buildSemanticApprovalDispatch } from "./composition/semanticApprovalDispatch";
 import { createInterimDegradedServingOracle } from "./api/procedures/copilotProvenanceStamp";
 import type { CopilotServingOracle } from "./api/procedures/copilotProvenanceStamp";
 import { createCopilotProposeMcpServer, createCopilotGbrainProxyMcpServer, createCopilotVaultMcpServer, createCopilotSkillsMcpServer } from "@sow/providers";
@@ -604,6 +607,35 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     ...(servingOracleFactory !== undefined ? { servingOracle: servingOracleFactory } : {}),
   });
 
+  // §13.10a G4a — route an APPROVED approval to its subject-specific side effect. A `semantic_mutation`
+  // card commits its referenced KMP through KnowledgeWriter (`buildSemanticApprovalDispatch`); everything
+  // else (external_action) keeps the injected `config.dispatchApproval`. The semantic branch is wired ONLY
+  // when the KnowledgeWriter durable path is provisioned (`config.proofSpineParams` carries the
+  // KnowledgeRevisionStore + commit metadata) — the default/Temporal-degraded boot has no writer to commit
+  // through, so it stays external-only. Dormant regardless until a semantic card exists (propose is OFF).
+  const dispatchApproval: DispatchApprovalFn =
+    config.proofSpineParams !== undefined
+      ? createApprovalDispatchRouter({
+          semantic: buildSemanticApprovalDispatch({
+            vault: backends.vault,
+            pendingKmp: backends.repos.pendingKnowledgeMutations,
+            revisions: config.proofSpineParams.revisions,
+            audit: backends.repos.audit,
+            now: backends.now,
+            // APPROVAL-SPECIFIC provenance (audit accuracy): a Copilot-approval commit must NOT be attributed
+            // to the proof-spine's meeting-closeout actor/source. `workflowRunRef` reuses the proof-spine run
+            // ref as a placeholder — an approval-driven commit runs under no workflow (the field is required
+            // metadata; the approval↔plan linkage is carried by the pending-KMP row + the Approval, not here).
+            commit: {
+              actor: "copilot-approval",
+              sourceEventRef: "copilot.propose_knowledge",
+              workflowRunRef: config.proofSpineParams.commit.workflowRunRef,
+            },
+          }),
+          external: config.dispatchApproval,
+        })
+      : config.dispatchApproval;
+
   // 3) The real loopback transport (HTTP + WS) behind the injected token + allowlist.
   //    A non-loopback bind is refused inside `startApiServer` (REQ-NF-004).
   const api = await startApiServer({
@@ -613,7 +645,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     copilot,
     systemHealth,
     approvals,
-    dispatchApproval: config.dispatchApproval,
+    dispatchApproval,
     triage,
     now: backends.now,
     ...(config.apiHost !== undefined ? { host: config.apiHost } : {}),

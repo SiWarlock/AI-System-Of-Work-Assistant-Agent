@@ -460,6 +460,26 @@ describe("createSemanticMutationDispatch — gate 1 (slug-collision) patch-targe
     expect(isErr(r)).toBe(true);
     expect(commit.calls).toHaveLength(0);
   });
+
+  it("REJECTS a plan carrying a frontmatterUpdate (an unsupported, gate-1-UNGUARDED kind) — no commit", async () => {
+    // Gate 1 covers only creates/patches; a frontmatterUpdate to a note deleted since propose would
+    // resurrect it. The Copilot propose contract never emits these, so reject fail-closed (defense-in-depth).
+    const fmPlan = { ...validPlan, frontmatterUpdates: [{ path: "Projects/acme.md", key: "status", value: "x" }] };
+    const fmHash = payloadHash(fmPlan);
+    const { dispatch, commit } = makeDispatch(mkRow({ plan: fmPlan, payloadHash: fmHash }), {});
+    const r = await dispatch(mkApproval({ payloadHash: fmHash }));
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_UNSUPPORTED_MUTATION_KIND");
+    expect(commit.calls).toHaveLength(0);
+  });
+
+  it("REJECTS a plan carrying a linkMutation (unsupported kind) — no commit", async () => {
+    const lmPlan = { ...validPlan, linkMutations: [{ op: "add", srcPath: "Projects/acme.md", dstSlug: "other" }] };
+    const lmHash = payloadHash(lmPlan);
+    const { dispatch, commit } = makeDispatch(mkRow({ plan: lmPlan, payloadHash: lmHash }), {});
+    const r = await dispatch(mkApproval({ payloadHash: lmHash }));
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_UNSUPPORTED_MUTATION_KIND");
+    expect(commit.calls).toHaveLength(0);
+  });
 });
 
 // ── the router ────────────────────────────────────────────────────────────────
