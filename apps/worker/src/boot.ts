@@ -38,12 +38,13 @@
 //     (`createOperationalBackupService`) is WIRED into the handle (`backupService`)
 //     but NOT SCHEDULED — the periodic CRON that calls `backupService.run()` on the
 //     `backupCadenceMs` is Phase-11. The service is ready; only its trigger is deferred.
-import { auditId } from "@sow/contracts";
+import { auditId, sourceId } from "@sow/contracts";
 import type {
   Result,
   FailureVariant,
   HealthItem,
   AuditId,
+  SourceRef,
   WorkspaceId,
 } from "@sow/contracts";
 import { descriptorFor } from "@sow/policy";
@@ -95,9 +96,12 @@ import { createApprovalsProposeSink } from "./api/procedures/copilotProposeSink"
 // §13.10a G4a — the on-approval SEMANTIC dispatch (approved semantic_mutation card → KnowledgeWriter commit).
 import { createApprovalDispatchRouter } from "./api/procedures/semanticMutationDispatch";
 import { buildSemanticApprovalDispatch } from "./composition/semanticApprovalDispatch";
+// §13.10a G4b-3 — the SEMANTIC-write propose deps (dormant behind `copilotProposeKnowledge`).
+import { createApprovalsKnowledgeProposeSink } from "./api/procedures/copilotProposeKnowledgeSink";
+import type { CopilotNoteExistsProbe } from "./api/procedures/copilotProposeKnowledge";
 import { createInterimDegradedServingOracle } from "./api/procedures/copilotProvenanceStamp";
 import type { CopilotServingOracle } from "./api/procedures/copilotProvenanceStamp";
-import { createCopilotProposeMcpServer, createCopilotGbrainProxyMcpServer, createCopilotVaultMcpServer, createCopilotSkillsMcpServer } from "@sow/providers";
+import { createCopilotProposeMcpServer, createCopilotProposeKnowledgeMcpServer, createCopilotGbrainProxyMcpServer, createCopilotVaultMcpServer, createCopilotSkillsMcpServer } from "@sow/providers";
 import type { CopilotSynthesisPort } from "./api/procedures/copilot";
 import { createClaudeSubscriptionCompletion } from "@sow/providers";
 import type { SystemHealthQueryPort, UiSafeEgressStatus } from "./api/procedures/systemHealth";
@@ -280,6 +284,13 @@ export interface BootConfig extends BackendsConfig {
    * with the trust verdict, never a standalone override.
    */
   readonly copilotProposeMode?: boolean;
+  /**
+   * §13.10a — mirror flag for the SEMANTIC-write propose tool (`copilot.propose_knowledge`). OFF by default.
+   * EFFECTIVE only when the dispatch side is provisioned (`proofSpineParams`) — else a proposed card could not
+   * be committed on approval. Mutually exclusive with `copilotProposeMode` (both on ⇒ the capability resolver
+   * fails closed to read_only).
+   */
+  readonly copilotProposeKnowledge?: boolean;
   /**
    * Copilot PROVENANCE STAMPING (Phase-C C5.4b — OFF by default; effective only WITH `copilotRealModel`).
    * When true, the retrieval is wrapped in the provenance-stamping decorator fed the INTERIM (always-
@@ -488,6 +499,20 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
             workspaceConfig: backends.repos.workspaceConfig,
             now: backends.now,
           });
+          // §13.10a G4b-3 — the SEMANTIC-write propose deps (dormant behind `copilotProposeKnowledge`). Mirror
+          // of the external set above: a §9.8 knowledge sink (records the PENDING card + pending-KMP row) + the
+          // G3 MCP server factory + a WS-8 existence probe over the served vault (create-vs-patch at call time;
+          // a read fault throws and is caught fail-closed upstream) + the evidence sourceRef (REQ-F-006). The
+          // runner grants the tool ONLY for a trusted propose_knowledge job — inert today (every live ask is untrusted).
+          const knowledgeProposeSink = createApprovalsKnowledgeProposeSink({
+            approvals: backends.repos.approvals,
+            pendingKmp: backends.repos.pendingKnowledgeMutations,
+            workspaceConfig: backends.repos.workspaceConfig,
+            now: backends.now,
+          });
+          const knowledgeNoteExists: CopilotNoteExistsProbe = async (path) =>
+            (await backends.vault.read(path)) !== undefined;
+          const knowledgeSourceRef: SourceRef = { sourceId: sourceId("copilot.propose_knowledge") };
           // SC8 (§13.10 gate a): when workspace scoping is on, the agent reaches gbrain ONLY through the
           // in-process PROXY — SC5a arg-policing + SC5b result-redaction per call — which REPLACES the raw http
           // gbrain server under the same `gbrain` map key. The exec is the generic MCP-over-HTTP tool-call
@@ -547,6 +572,10 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
             getToken: () => tokenProvider.getToken(false),
             proposeSink,
             buildProposeMcpServer: createCopilotProposeMcpServer,
+            knowledgeProposeSink,
+            buildKnowledgeProposeMcpServer: createCopilotProposeKnowledgeMcpServer,
+            knowledgeNoteExists,
+            knowledgeSourceRef,
             ...(gbrainProxyRunnerDeps !== undefined ? gbrainProxyRunnerDeps : {}),
             ...(vaultRunnerDeps !== undefined ? vaultRunnerDeps : {}),
             ...(skillsRunnerDeps !== undefined ? skillsRunnerDeps : {}),
@@ -557,6 +586,11 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
           // live retrieval adapter actually stamps `knowledge_writer` provenance (C5.4b), never a flag-only override.
           return createAgentRuntimeCopilotSynthesis(runner, {
             proposeEnabled: config.copilotProposeMode === true,
+            // §13.10a — COUPLED to the dispatch side: propose_knowledge stays OFF unless proofSpineParams is
+            // provisioned (the KnowledgeWriter commit path), so an approved semantic card is always committable
+            // (never stranded on the external-only dispatch). Mutually exclusive with proposeEnabled (both on ⇒
+            // the capability resolver fails closed to read_only).
+            knowledgeProposeEnabled: config.copilotProposeKnowledge === true && config.proofSpineParams !== undefined,
             resolveContentTrust: deriveCopilotContentTrust,
           });
         }
