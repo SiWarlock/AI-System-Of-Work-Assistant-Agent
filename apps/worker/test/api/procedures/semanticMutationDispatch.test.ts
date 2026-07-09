@@ -34,7 +34,9 @@ const validPlan: Record<string, unknown> = {
   workspaceId: "personal-business",
   sourceRefs: [{ sourceId: "src-1" }],
   creates: [
-    { path: "Projects/acme.md", title: "Acme", body: "# Acme", frontmatter: { projectId: "acme" } },
+    // The canonical WS-8 note path (projectNotePath("personal-business","acme")) — a real derive never emits
+    // a bare/mis-cased path, and the executor's WS-8 containment gate requires targets inside projects/<ws>/.
+    { path: "projects/personal-business/acme.md", title: "Acme", body: "# Acme", frontmatter: { projectId: "acme" } },
   ],
   patches: [],
   linkMutations: [],
@@ -427,13 +429,13 @@ describe("createSemanticMutationDispatch — gate 1 (slug-collision) patch-targe
   });
 
   it("a CREATE whose target path is free commits (and the executor probed existence, not projectId)", async () => {
-    // validPlan is a single create at Projects/acme.md; targetExists defaults false ⇒ path is free.
+    // validPlan is a single create at projects/personal-business/acme.md; targetExists defaults false ⇒ path is free.
     const { dispatch, commit, existsCalls } = makeDispatch(mkRow());
     const r = await dispatch(mkApproval());
     expect(isOk(r)).toBe(true);
     expect(commit.calls).toHaveLength(1);
     // Keyed on REAL existence — the create branch uses the existence probe, not the projectId reader.
-    expect(existsCalls).toEqual([{ path: "Projects/acme.md", workspaceId: "personal-business" }]);
+    expect(existsCalls).toEqual([{ path: "projects/personal-business/acme.md", workspaceId: "personal-business" }]);
   });
 
   it("REJECTS a create whose target path ALREADY EXISTS (renderCreate would overwrite it)", async () => {
@@ -479,6 +481,132 @@ describe("createSemanticMutationDispatch — gate 1 (slug-collision) patch-targe
     const r = await dispatch(mkApproval({ payloadHash: lmHash }));
     expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_UNSUPPORTED_MUTATION_KIND");
     expect(commit.calls).toHaveLength(0);
+  });
+});
+
+// ── WS-8 path-within-workspace containment (residual #3) ───────────────────────
+
+describe("createSemanticMutationDispatch — WS-8 path-within-workspace containment", () => {
+  // A schema-valid plan whose ONLY target sits at `path` (create) — for asserting the containment gate in
+  // isolation. workspaceId stays personal-business, so a target outside projects/personal-business/ is foreign.
+  const createAt = (path: string): Record<string, unknown> => ({
+    planId: "plan-f-1",
+    workspaceId: "personal-business",
+    sourceRefs: [{ sourceId: "src-1" }],
+    creates: [{ path, title: "Acme", body: "# Acme", frontmatter: { projectId: "acme" } }],
+    patches: [],
+    linkMutations: [],
+    frontmatterUpdates: [],
+    externalActionProposals: [],
+    confidence: 0.5,
+    requiresApproval: true,
+    provenanceOrigin: "copilot_propose",
+    expectedProjectId: "acme",
+  });
+  const patchAt = (path: string): Record<string, unknown> => ({
+    ...createAt(path),
+    creates: [],
+    patches: [{ path, regionId: "project-status", newBody: "status prose" }],
+  });
+  const seedFor = (plan: Record<string, unknown>): PendingKnowledgeMutation => mkRow({ plan, payloadHash: payloadHash(plan) });
+  const apprFor = (plan: Record<string, unknown>): Approval => mkApproval({ payloadHash: payloadHash(plan) });
+
+  it("REJECTS a create whose target sits in ANOTHER workspace's subtree — no existence probe, no commit", async () => {
+    // The vault join(root, path) is verbatim: a stored plan tampered to target projects/employer-work/ would
+    // write into the WRONG workspace tree. The containment gate rejects it BEFORE any I/O (fail-closed).
+    const plan = createAt("projects/employer-work/acme.md");
+    const { dispatch, commit, existsCalls } = makeDispatch(seedFor(plan));
+    const r = await dispatch(apprFor(plan));
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_TARGET_OUTSIDE_WORKSPACE");
+    expect(commit.calls).toHaveLength(0);
+    expect(existsCalls).toHaveLength(0); // rejected before touching the vault
+  });
+
+  it("REJECTS a patch whose target sits in another workspace's subtree — no frontmatter read, no commit", async () => {
+    const plan = patchAt("projects/employer-work/acme.md");
+    const { dispatch, commit, readCalls } = makeDispatch(seedFor(plan), { targetProjectId: "acme" });
+    const r = await dispatch(apprFor(plan));
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_TARGET_OUTSIDE_WORKSPACE");
+    expect(commit.calls).toHaveLength(0);
+    expect(readCalls).toHaveLength(0); // rejected before touching the vault
+  });
+
+  it("REJECTS a create whose path TRAVERSES out of the workspace dir (projects/<ws>/../…)", async () => {
+    const plan = createAt("projects/personal-business/../employer-work/acme.md");
+    const { dispatch, commit, existsCalls } = makeDispatch(seedFor(plan));
+    const r = await dispatch(apprFor(plan));
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_TARGET_OUTSIDE_WORKSPACE");
+    expect(commit.calls).toHaveLength(0);
+    expect(existsCalls).toHaveLength(0);
+  });
+
+  it("REJECTS a create NESTED below the workspace dir (containment requires a DIRECT child note)", async () => {
+    const plan = createAt("projects/personal-business/sub/deep.md");
+    const { dispatch, commit } = makeDispatch(seedFor(plan));
+    const r = await dispatch(apprFor(plan));
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_TARGET_OUTSIDE_WORKSPACE");
+    expect(commit.calls).toHaveLength(0);
+  });
+
+  it("REJECTS a bare/mis-cased path that is not under projects/<ws>/ at all", async () => {
+    const plan = createAt("Projects/acme.md"); // capital P, no workspace segment — the old unrealistic shape
+    const { dispatch, commit } = makeDispatch(seedFor(plan));
+    const r = await dispatch(apprFor(plan));
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_TARGET_OUTSIDE_WORKSPACE");
+    expect(commit.calls).toHaveLength(0);
+  });
+
+  it("REJECTS a prefix-COLLISION sibling workspace (projects/<ws>X/…) — the trailing-slash defense", async () => {
+    // personal-business is a strict prefix of personal-businessX; without the trailing `/` in the ws prefix
+    // this would slip through. The canonical prefix ends in `/`, so the sibling fails startsWith.
+    const plan = createAt("projects/personal-businessX/acme.md");
+    const { dispatch, commit, existsCalls } = makeDispatch(seedFor(plan));
+    const r = await dispatch(apprFor(plan));
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_TARGET_OUTSIDE_WORKSPACE");
+    expect(commit.calls).toHaveLength(0);
+    expect(existsCalls).toHaveLength(0);
+  });
+
+  it("REJECTS a leading-slash ABSOLUTE target (…not under the relative projects/<ws>/ prefix)", async () => {
+    const plan = createAt("/projects/personal-business/acme.md");
+    const { dispatch, commit } = makeDispatch(seedFor(plan));
+    const r = await dispatch(apprFor(plan));
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_TARGET_OUTSIDE_WORKSPACE");
+    expect(commit.calls).toHaveLength(0);
+  });
+
+  it("fails closed with UNSAFE_TARGET_PATH when expectedProjectId slugs to empty (no safe canonical anchor)", async () => {
+    // projectNotePath returns null when the projectId has no safe slug — the executor cannot form a workspace
+    // prefix, so it rejects BEFORE checking any target (distinct code from the containment reject).
+    const plan = { ...createAt("projects/personal-business/x.md"), expectedProjectId: "!!!" };
+    const { dispatch, commit, existsCalls } = makeDispatch(seedFor(plan));
+    const r = await dispatch(apprFor(plan));
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_UNSAFE_TARGET_PATH");
+    expect(commit.calls).toHaveLength(0);
+    expect(existsCalls).toHaveLength(0);
+  });
+
+  it("REJECTS when a LATER create in a multi-create plan is out-of-tree (checks every target)", async () => {
+    const plan = {
+      ...createAt("projects/personal-business/acme.md"),
+      creates: [
+        { path: "projects/personal-business/acme.md", title: "Acme", body: "# Acme", frontmatter: { projectId: "acme" } },
+        { path: "projects/employer-work/leak.md", title: "Leak", body: "# Leak", frontmatter: { projectId: "acme" } },
+      ],
+    };
+    const { dispatch, commit } = makeDispatch(seedFor(plan));
+    const r = await dispatch(apprFor(plan));
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_TARGET_OUTSIDE_WORKSPACE");
+    expect(commit.calls).toHaveLength(0);
+  });
+
+  it("ADMITS the canonical projects/<ws>/<leaf>.md target (containment passes → reaches the existence probe)", async () => {
+    const plan = createAt("projects/personal-business/acme.md");
+    const { dispatch, commit, existsCalls } = makeDispatch(seedFor(plan));
+    const r = await dispatch(apprFor(plan));
+    expect(isOk(r)).toBe(true);
+    expect(commit.calls).toHaveLength(1);
+    expect(existsCalls).toEqual([{ path: "projects/personal-business/acme.md", workspaceId: "personal-business" }]);
   });
 });
 

@@ -15,12 +15,12 @@ import { buildSemanticApprovalDispatch } from "../../src/composition/semanticApp
 
 const NOW = "2026-07-09T00:00:00.000Z";
 
-/** A schema-valid create KMP (passes the executor's candidate re-gate). Target: Projects/acme.md. */
+/** A schema-valid create KMP (passes the executor's candidate re-gate). Target: the canonical WS-8 note path. */
 const validPlan: Record<string, unknown> = {
   planId: "plan-g4-1",
   workspaceId: "personal-business",
   sourceRefs: [{ sourceId: "src-1" }],
-  creates: [{ path: "Projects/acme.md", title: "Acme", body: "# Acme", frontmatter: { projectId: "acme" } }],
+  creates: [{ path: "projects/personal-business/acme.md", title: "Acme", body: "# Acme", frontmatter: { projectId: "acme" } }],
   patches: [],
   linkMutations: [],
   frontmatterUpdates: [],
@@ -109,7 +109,7 @@ describe("buildSemanticApprovalDispatch", () => {
   });
 
   it("REJECTS a create whose target path is OCCUPIED (gate-1 existence probe over the vault) — no commit", async () => {
-    const vault = memVault({ "Projects/acme.md": "---\nprojectId: someone-else\n---\n# Other\n" });
+    const vault = memVault({ "projects/personal-business/acme.md": "---\nprojectId: someone-else\n---\n# Other\n" });
     const applied = recordingApplyPlan();
     const { dispatch, kmp } = build(vault, applied.fn);
     const r = await dispatch(mkApproval());

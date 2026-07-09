@@ -54,6 +54,10 @@ import { failure } from "@sow/contracts";
 import type { DbError, PendingKnowledgeMutation, PendingKnowledgeMutationRepository } from "@sow/db";
 import type { CommitKnowledgePort, KnowledgeCommitFailure } from "@sow/workflows";
 import { payloadHash } from "@sow/integrations";
+// The SINGLE WS-8 note-path authority (`projects/<workspaceId>/<safeLeaf>.md`) — the SAME module the Copilot
+// propose derivation + projectSync use, so the executor's containment gate can never drift from the path the
+// producer emits. Imported from the subpath export (as copilotProposeKnowledge.ts does).
+import { projectNotePath } from "@sow/workflows/activities/projections/noteSlug";
 import type { DispatchApprovalFn } from "./approvalCommands";
 
 /**
@@ -285,7 +289,34 @@ export function createSemanticMutationDispatch(deps: SemanticMutationDispatchDep
       if (expected === undefined) {
         return err(reject("validation_rejected", "SEMANTIC_DISPATCH_MISSING_EXPECTED_PROJECT_ID", "semantic dispatch: propose plan missing expectedProjectId"));
       }
+      // (7b-i) WS-8 path-within-workspace CONTAINMENT (belt-and-suspenders, safety rule 4). The vault does
+      // `join(root, path)` VERBATIM and neither this executor nor the KnowledgeWriter otherwise checks that a
+      // target lies inside the plan's workspace subtree — noteSlug.ts is the SOLE path-safety enforcer on the
+      // PRODUCER side, so a STORED plan whose target was tampered to escape `projects/<ws>/` (a cross-workspace
+      // tree, a `..` traversal, a nested subdir) would otherwise reach the writer. Derive the canonical
+      // `projects/<ws>/` directory from the SAME `projectNotePath` authority (no convention drift) and require
+      // every target to sit DIRECTLY inside it — exactly one path segment after the prefix, so no `/`-escape and
+      // no nesting. This is CONTAINMENT only; target CORRECTNESS (does the note belong to the intended project)
+      // is gate 1 below. The check is the FIRST statement in each loop, so an out-of-tree target fails closed
+      // BEFORE any vault read.
+      const canonicalNote = projectNotePath(plan.workspaceId, expected);
+      if (canonicalNote === null) {
+        return err(reject("validation_rejected", "SEMANTIC_DISPATCH_UNSAFE_TARGET_PATH", "semantic dispatch: could not derive a safe workspace-scoped target path"));
+      }
+      const workspacePrefix = canonicalNote.slice(0, canonicalNote.lastIndexOf("/") + 1);
+      // Directly-inside test: starts with the `projects/<ws>/` prefix (the trailing `/` defends against a
+      // prefix-collision sibling like `projects/<ws>X/…`), then the leaf is a real single-segment filename —
+      // non-empty, not `.`/`..` (a dir/self ref), and free of any further `/` (so no nested subdir and no
+      // `..`-traversal segment can follow). Anything else is out-of-tree → fail closed.
+      const withinWorkspace = (p: string): boolean => {
+        if (!p.startsWith(workspacePrefix)) return false;
+        const leaf = p.slice(workspacePrefix.length);
+        return leaf.length > 0 && leaf !== "." && leaf !== ".." && !leaf.includes("/");
+      };
       for (const patch of plan.patches) {
+        if (!withinWorkspace(patch.path)) {
+          return err(reject("validation_rejected", "SEMANTIC_DISPATCH_TARGET_OUTSIDE_WORKSPACE", "semantic dispatch: patch target path is outside the plan's workspace subtree"));
+        }
         const target = await deps.readNoteProjectId(patch.path, plan.workspaceId);
         if (!isOk(target)) return err(target.error); // read fault → fail-closed (already a redaction-safe variant)
         if (target.value !== expected) {
@@ -293,6 +324,9 @@ export function createSemanticMutationDispatch(deps: SemanticMutationDispatchDep
         }
       }
       for (const create of plan.creates) {
+        if (!withinWorkspace(create.path)) {
+          return err(reject("validation_rejected", "SEMANTIC_DISPATCH_TARGET_OUTSIDE_WORKSPACE", "semantic dispatch: create target path is outside the plan's workspace subtree"));
+        }
         const exists = await deps.noteExists(create.path, plan.workspaceId);
         if (!isOk(exists)) return err(exists.error); // read fault → fail-closed
         if (exists.value) {
