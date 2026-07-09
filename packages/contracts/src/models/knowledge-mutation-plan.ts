@@ -80,6 +80,13 @@ export interface KnowledgeMutationPlan {
   // absent. Modeled `.optional()`; whether it should live on the plan at all (vs.
   // only on committed frontmatter) is flagged for §6/Phase-4 confirmation.
   signedProvenanceStamp?: SignedProvenanceStamp;
+  // §13.10a go-live gate 1 (slug-collision) — the RAW projectId a `copilot_propose` plan's patches are
+  // intended for. VERIFICATION-ONLY: `safeNoteSlug` is lossy, so two projects can slug-collide onto one
+  // note; the on-approval executor reads the target note's frontmatter `projectId` and REJECTS a
+  // NotePatch whose target does not carry this id (so a proposal for project B can never patch project
+  // A's note). Absent on non-propose plans (deterministic producers target a note whose path they just
+  // derived). Optional + NOT refine-coupled to provenanceOrigin here — the executor owns the coupling.
+  expectedProjectId?: string;
 }
 
 // `sourceRefs` element input = the SourceRef input shape (branded sourceId accepts
@@ -100,6 +107,7 @@ interface KnowledgeMutationPlanInput {
   provenanceOrigin: ProvenanceOrigin;
   gbrainProposalRef?: string;
   signedProvenanceStamp?: z.input<typeof SignedProvenanceStampSchema>;
+  expectedProjectId?: string;
 }
 
 export const KnowledgeMutationPlanSchema: z.ZodType<
@@ -121,6 +129,8 @@ export const KnowledgeMutationPlanSchema: z.ZodType<
     provenanceOrigin: provenanceOriginSchema,
     gbrainProposalRef: ProposalIdSchema.optional(),
     signedProvenanceStamp: SignedProvenanceStampSchema.optional(),
+    // §13.10a gate 1 — verification-only raw projectId (the executor enforces the patch-target match).
+    expectedProjectId: z.string().min(1).optional(),
   })
   .strict()
   // REQ-F-006 reject-on-empty (§3 universal rule): a semantic mutation MUST carry

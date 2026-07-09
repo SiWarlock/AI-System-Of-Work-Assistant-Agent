@@ -133,7 +133,7 @@ Several typed models in this codebase are **contracts** mirrored in `ARCHITECTUR
 | ProviderMatrix | §3, §5, §7 | workspaceId, allowedProviders[], capabilityDefaults: Record<Capability,ProviderRoute>, rawCloudEgressEnabled, localProviderPreference? — provider-routes ⊆ allowedProviders. |
 | Workspace | §3, §6 | id, name, type, dataOwner, markdownRepoPath, gbrainBrainId, defaultVisibility, egressPolicy, providerMatrix — id≡egressPolicy.workspaceId≡providerMatrix.workspaceId; defaultWorkspace() safe-default factory. |
 | AgentJob | §3, §7, §9 | +trustLevel, +carriesRawContent; COST-1 budget pins; embeds ToolPolicy+ProviderRoute; isRegisteredOutputSchema() registry predicate. |
-| KnowledgeMutationPlan | §3, §6, §7 | +provenanceOrigin, +gbrainProposalRef?, +signedProvenanceStamp? (LIFECYCLE flag: KW writes stamp at commit; modeled optional). REQ-F-006 reject-on-empty sourceRefs. |
+| KnowledgeMutationPlan | §3, §6, §7 | +provenanceOrigin, +gbrainProposalRef?, +signedProvenanceStamp? (LIFECYCLE flag: KW writes stamp at commit; modeled optional), +expectedProjectId? (§13.10a gate 1 — verification-only raw projectId; executor rejects a NotePatch whose target frontmatter projectId ≠ this). REQ-F-006 reject-on-empty sourceRefs. |
 | ProposedAction | §3, §8, §9 | actionId, targetSystem, canonicalObjectKey, payload, approvalPolicy, idempotencyKey. |
 | ExternalWriteEnvelope | §3, §8 | embeds WriteReceipt? + approvalId?; envelope↔ProposedAction linkage helper; preconditions (arch_gap, open). |
 | WriteReceipt | §8 | externalObjectId, externalUrl?, recordedAt, rawRef? — exactly-once external-write proof. |

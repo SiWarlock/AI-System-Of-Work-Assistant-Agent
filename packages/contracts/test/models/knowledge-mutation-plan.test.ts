@@ -61,6 +61,7 @@ const FULL_VALID = {
     committedAt: "2026-06-30T12:00:00.000Z",
     sig: "deadbeef",
   },
+  expectedProjectId: "acme-corp",
 } as const;
 
 describe("KnowledgeMutationPlan contract — spec(§3/§6/§7)", () => {
@@ -120,6 +121,13 @@ describe("KnowledgeMutationPlan contract — spec(§3/§6/§7)", () => {
   it("accepts provenanceOrigin: copilot_propose (§13.10a Copilot semantic-write bridge)", () => {
     const ok = KnowledgeMutationPlanSchema.safeParse({ ...MINIMAL_VALID, provenanceOrigin: "copilot_propose" });
     expect(ok.success).toBe(true);
+  });
+
+  // §13.10a gate 1 — the optional verification-only projectId (the executor matches it against the
+  // target note's frontmatter on a patch). Optional (absent on non-propose plans); non-empty when present.
+  it("accepts an optional expectedProjectId and rejects an empty one (.min(1))", () => {
+    expect(KnowledgeMutationPlanSchema.safeParse({ ...MINIMAL_VALID, expectedProjectId: "acme-corp" }).success).toBe(true);
+    expect(KnowledgeMutationPlanSchema.safeParse({ ...MINIMAL_VALID, expectedProjectId: "" }).success).toBe(false);
   });
 
   it("rejects an empty/whitespace sourceId in sourceRefs (branded non-empty)", () => {

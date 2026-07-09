@@ -1,6 +1,7 @@
 [
   "confidence",
   "creates",
+  "expectedProjectId",
   "externalActionProposals",
   "frontmatterUpdates",
   "gbrainProposalRef",

@@ -253,6 +253,10 @@
         "sig"
       ],
       "additionalProperties": false
+    },
+    "expectedProjectId": {
+      "type": "string",
+      "minLength": 1
     }
   },
   "required": [
