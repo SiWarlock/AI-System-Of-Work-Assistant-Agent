@@ -38,7 +38,7 @@
 //     (`createOperationalBackupService`) is WIRED into the handle (`backupService`)
 //     but NOT SCHEDULED — the periodic CRON that calls `backupService.run()` on the
 //     `backupCadenceMs` is Phase-11. The service is ready; only its trigger is deferred.
-import { auditId, sourceId } from "@sow/contracts";
+import { auditId, sourceId, isOk } from "@sow/contracts";
 import type {
   Result,
   FailureVariant,
@@ -94,7 +94,10 @@ import {
 } from "./api/procedures/copilotAgentSynthesis";
 import { createApprovalsProposeSink } from "./api/procedures/copilotProposeSink";
 // §13.10a G4a — the on-approval SEMANTIC dispatch (approved semantic_mutation card → KnowledgeWriter commit).
-import { createApprovalDispatchRouter } from "./api/procedures/semanticMutationDispatch";
+import {
+  createApprovalDispatchRouter,
+  reconcileApprovedSemanticMutations,
+} from "./api/procedures/semanticMutationDispatch";
 import { buildSemanticApprovalDispatch } from "./composition/semanticApprovalDispatch";
 // §13.10a G4b-3 — the SEMANTIC-write propose deps (dormant behind `copilotProposeKnowledge`).
 import { createApprovalsKnowledgeProposeSink } from "./api/procedures/copilotProposeKnowledgeSink";
@@ -671,6 +674,38 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
           external: config.dispatchApproval,
         })
       : config.dispatchApproval;
+
+  // 2b) §13.10a hardening residual #1 — approve→dispatch RECOVERY sweep. `decideApprovalCommand` applies the
+  //     approval CAS then dispatches in the SAME call; a crash between them can strand an APPROVED semantic card
+  //     with its pending-KMP row still uncommitted. Re-drive the (idempotent) semantic dispatch once at boot to
+  //     recover any such card. Gated on the semantic branch being wired (proofSpineParams).
+  //
+  //     FIRE-AND-FORGET (does NOT gate serving): recovery must never delay boot. `approved` is a TERMINAL
+  //     approval status, so `listByStatus("approved")` grows monotonically with history and the sweep's cost is
+  //     unbounded — awaiting it would make boot latency scale with the approval log. The executor is idempotent
+  //     (step 4 no-ops a committed row; the writer replays by idempotencyKey) and safe alongside early serving,
+  //     so a detached sweep is sound. Never rejects (the reconciler returns a Result — we only log).
+  //     Dormant today: propose is OFF ⇒ 0 approved semantic cards ⇒ one fast no-op query until go-live.
+  //     ⚠ GO-LIVE OPTIMIZATION: narrow the driver to still-`pending` KMP rows (bounded by uncommitted work) via
+  //       a targeted query instead of enumerating every historically-approved card.
+  if (config.proofSpineParams !== undefined) {
+    void reconcileApprovedSemanticMutations({
+      listApproved: () => backends.repos.approvals.listByStatus("approved"),
+      dispatch: dispatchApproval,
+    }).then((reconciled) => {
+      if (isOk(reconciled)) {
+        const { scanned, settled, failed } = reconciled.value;
+        backends.logger.info("copilot.semantic.reconcile", {
+          // Redaction-safe: counts + the DISTINCT stable failure codes (never an approvalId, path, or content).
+          fields: { scanned, settled, failed: failed.length, failedCodes: [...new Set(failed.map((f) => f.code))] },
+        });
+      } else {
+        backends.logger.warn("copilot.semantic.reconcile.failed", {
+          fields: { code: reconciled.error.cause?.code ?? reconciled.error.kind },
+        });
+      }
+    });
+  }
 
   // 3) The real loopback transport (HTTP + WS) behind the injected token + allowlist.
   //    A non-loopback bind is refused inside `startApiServer` (REQ-NF-004).

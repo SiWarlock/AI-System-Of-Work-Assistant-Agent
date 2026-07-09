@@ -412,3 +412,78 @@ export function createApprovalDispatchRouter(deps: {
   return (approval: Approval): Promise<Result<void, FailureVariant>> =>
     approval.subjectKind === "semantic_mutation" ? deps.semantic(approval) : deps.external(approval);
 }
+
+// ── the approve→dispatch reconciler (§13.10a hardening residual #1) ─────────────
+
+/**
+ * Lists the currently-APPROVED approvals for the reconciler to sweep — the real binding is
+ * `ApprovalRepository.listByStatus` bound to `"approved"`. Returns a redaction-safe `DbError` on failure.
+ */
+export type ListApprovedFn = () => Promise<Result<readonly Approval[], DbError>>;
+
+/**
+ * The outcome of one reconcile sweep. `scanned` = approved semantic_mutation cards found; `settled` = cards
+ * whose re-drive returned OK (a genuine commit OR an idempotent no-op on an already-committed row); `failed` =
+ * the cards whose re-drive erred, each with a STABLE, redaction-safe cause code (never a raw error/path/content).
+ */
+export interface SemanticReconcileReport {
+  readonly scanned: number;
+  readonly settled: number;
+  readonly failed: readonly { readonly approvalId: string; readonly code: string }[];
+}
+
+/**
+ * Approve→dispatch RECONCILER. `decideApprovalCommand` applies the approval CAS and THEN drives the dispatch in
+ * the same call — but the two are NOT atomic: a crash (or a transient dispatch error) between the CAS and the
+ * KnowledgeWriter commit leaves an APPROVED card whose pending-KMP row is still `pending`, its proposed Markdown
+ * never committed. This sweep RE-DRIVES the (idempotent) semantic dispatch for every approved `semantic_mutation`
+ * card, recovering any stranded one.
+ *
+ * IDEMPOTENT by construction: the executor no-ops on an already-committed row (step 4) and the writer replays by
+ * idempotencyKey, so re-driving a healthy card is a cheap no-op. BEST-EFFORT: one card's dispatch error (or even
+ * an unexpected throw from a broken injected dispatch) is recorded with a redaction-safe code and the sweep
+ * continues — a single stuck card never blocks the rest. Never throws (§16): a list failure — or any unexpected
+ * throw — folds to a `FailureVariant`.
+ *
+ * WS-8 (safety rule 4): the sweep is workspace-UNSCOPED (it enumerates every workspace's approved cards) but
+ * leaks nothing — each re-drive commits only into that card's OWN workspace (the executor's FG-1 + the
+ * path-containment gate bind the write to the card's workspace). Only `semantic_mutation` cards are driven
+ * (filtered here), so passing the router (or the semantic branch) is equivalent — an external card is skipped.
+ */
+export async function reconcileApprovedSemanticMutations(deps: {
+  readonly listApproved: ListApprovedFn;
+  readonly dispatch: DispatchApprovalFn;
+}): Promise<Result<SemanticReconcileReport, FailureVariant>> {
+  try {
+    const listed = await deps.listApproved();
+    if (!isOk(listed)) return err(dbErrorToFailure(listed.error));
+    const cards = listed.value.filter((a) => a.subjectKind === "semantic_mutation");
+    let settled = 0;
+    const failed: { approvalId: string; code: string }[] = [];
+    for (const approval of cards) {
+      let outcome: Result<void, FailureVariant>;
+      try {
+        outcome = await deps.dispatch(approval);
+      } catch {
+        // The DispatchApprovalFn contract is never-throws (§16); a throw here is a broken injected dispatch. As
+        // a resilience path the reconciler records it (NO raw error crosses) and keeps sweeping the rest.
+        failed.push({ approvalId: String(approval.id), code: "SEMANTIC_RECONCILE_DISPATCH_THREW" });
+        continue;
+      }
+      if (isOk(outcome)) {
+        settled += 1;
+      } else {
+        failed.push({ approvalId: String(approval.id), code: outcome.error.cause?.code ?? outcome.error.kind });
+      }
+    }
+    return ok({ scanned: cards.length, settled, failed });
+  } catch {
+    // The list port is never-throws by contract; this outer guard makes the whole sweep §16-safe regardless.
+    return err(
+      failure("degraded_unavailable", "semantic reconcile: sweep failed", {
+        retryable: true,
+        cause: { code: "SEMANTIC_RECONCILE_FAILED" },
+      }),
+    );
+  }
+}

@@ -20,9 +20,12 @@ import { payloadHash } from "@sow/integrations";
 import {
   createSemanticMutationDispatch,
   createApprovalDispatchRouter,
+  reconcileApprovedSemanticMutations,
   type SemanticMutationDispatchDeps,
   type SemanticCommitContext,
   type SemanticCommitFactory,
+  type SemanticReconcileReport,
+  type ListApprovedFn,
   type NoteProjectIdReader,
   type NoteExistsProbe,
 } from "../../../src/api/procedures/semanticMutationDispatch";
@@ -643,5 +646,106 @@ describe("createApprovalDispatchRouter — routes by subjectKind", () => {
       status: "approved", actor: "x", channel: "mac", payloadHash: "h",
     } as unknown as Approval);
     expect(seen).toEqual(["semantic:semantic_mutation", "external:external_action"]);
+  });
+});
+
+// ── the approve→dispatch reconciler (residual #1) ──────────────────────────────
+
+describe("reconcileApprovedSemanticMutations — recovers approved-but-uncommitted cards", () => {
+  const semCard = (id: string, planRef: string): Approval => mkApproval({ id, planRef });
+  const extCard = (id: string): Approval =>
+    mkApproval({ id, subjectKind: "external_action", actionRef: `act-${id}`, planRef: undefined });
+  const listing = (cards: Approval[]): ListApprovedFn => () => Promise.resolve(ok(cards));
+  const reportOf = (r: Result<SemanticReconcileReport, FailureVariant>): SemanticReconcileReport => {
+    if (!isOk(r)) throw new Error("expected an ok report");
+    return r.value;
+  };
+
+  const recordingDispatch = (
+    byId: Record<string, Result<void, FailureVariant>> = {},
+  ): { fn: DispatchApprovalFn; seen: string[] } => {
+    const seen: string[] = [];
+    const fn: DispatchApprovalFn = (a) => {
+      seen.push(String(a.id));
+      return Promise.resolve(byId[String(a.id)] ?? ok(undefined));
+    };
+    return { fn, seen };
+  };
+
+  it("re-drives every approved semantic_mutation card and SKIPS external_action cards", async () => {
+    const cards = [semCard("s1", "p1"), extCard("e1"), semCard("s2", "p2")];
+    const d = recordingDispatch();
+    const r = await reconcileApprovedSemanticMutations({ listApproved: listing(cards), dispatch: d.fn });
+    expect(isOk(r)).toBe(true);
+    expect(reportOf(r)).toEqual({ scanned: 2, settled: 2, failed: [] });
+    expect(d.seen).toEqual(["s1", "s2"]); // the external card is never dispatched
+  });
+
+  it("records a card whose re-drive FAILS and KEEPS sweeping (best-effort, redaction-safe code)", async () => {
+    const cards = [semCard("s1", "p1"), semCard("s2", "p2")];
+    const d = recordingDispatch({
+      s1: err(failure("write_conflict", "boom", { cause: { code: "SEMANTIC_DISPATCH_ROW_NOT_PENDING" } })),
+    });
+    const r = await reconcileApprovedSemanticMutations({ listApproved: listing(cards), dispatch: d.fn });
+    const report = reportOf(r);
+    expect(report.scanned).toBe(2);
+    expect(report.settled).toBe(1);
+    expect(report.failed).toEqual([{ approvalId: "s1", code: "SEMANTIC_DISPATCH_ROW_NOT_PENDING" }]);
+    expect(d.seen).toEqual(["s1", "s2"]); // did NOT abort after the failure
+  });
+
+  it("falls back to the failure KIND when a dispatch error carries no cause code", async () => {
+    const d = recordingDispatch({ s1: err(failure("degraded_unavailable", "no code")) });
+    const r = await reconcileApprovedSemanticMutations({ listApproved: listing([semCard("s1", "p1")]), dispatch: d.fn });
+    expect(reportOf(r).failed).toEqual([{ approvalId: "s1", code: "degraded_unavailable" }]);
+  });
+
+  it("swallows a dispatch that THROWS (per-card) and keeps sweeping — never aborts", async () => {
+    const seen: string[] = [];
+    const dispatch: DispatchApprovalFn = (a) => {
+      seen.push(String(a.id));
+      if (String(a.id) === "s1") throw new Error("adapter blew up");
+      return Promise.resolve(ok(undefined));
+    };
+    const cards = [semCard("s1", "p1"), semCard("s2", "p2")];
+    const r = await reconcileApprovedSemanticMutations({ listApproved: listing(cards), dispatch });
+    const report = reportOf(r);
+    expect(report.settled).toBe(1);
+    expect(report.failed).toEqual([{ approvalId: "s1", code: "SEMANTIC_RECONCILE_DISPATCH_THREW" }]);
+    expect(seen).toEqual(["s1", "s2"]);
+  });
+
+  it("folds a listApproved DbError into a redaction-safe FailureVariant (never throws)", async () => {
+    const listApproved: ListApprovedFn = () =>
+      Promise.resolve(err({ code: "unavailable", message: "db down" } satisfies DbError));
+    const d = recordingDispatch();
+    const r = await reconcileApprovedSemanticMutations({ listApproved, dispatch: d.fn });
+    expect(assertErr(r).kind).toBe("degraded_unavailable");
+    expect(d.seen).toEqual([]); // nothing dispatched
+  });
+
+  it("the outer guard catches a listApproved that REJECTS/throws (never escapes §16)", async () => {
+    const listApproved: ListApprovedFn = () => Promise.reject(new Error("port blew up"));
+    const d = recordingDispatch();
+    const r = await reconcileApprovedSemanticMutations({ listApproved, dispatch: d.fn });
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_RECONCILE_FAILED");
+    expect(d.seen).toEqual([]);
+  });
+
+  it("recovers a STRANDED card end-to-end: a pending row is committed by the re-drive (idempotent)", async () => {
+    // The crash-window scenario: the approval is `approved` but the pending-KMP row never committed.
+    const { dispatch, kmp, commit } = makeDispatch(mkRow()); // seed: a pending row
+    const r = await reconcileApprovedSemanticMutations({ listApproved: listing([mkApproval()]), dispatch });
+    expect(reportOf(r)).toEqual({ scanned: 1, settled: 1, failed: [] });
+    expect(commit.calls).toHaveLength(1); // the stranded plan was committed
+    expect(kmp.store.get("plan-f-1")?.status).toBe("committed");
+  });
+
+  it("re-driving an ALREADY-committed card is a cheap no-op (no second commit)", async () => {
+    const { dispatch, kmp, commit } = makeDispatch(mkRow({ status: "committed" }));
+    const r = await reconcileApprovedSemanticMutations({ listApproved: listing([mkApproval()]), dispatch });
+    expect(reportOf(r).settled).toBe(1);
+    expect(commit.calls).toHaveLength(0); // executor step-4 short-circuits — no second write
+    expect(kmp.store.get("plan-f-1")?.status).toBe("committed");
   });
 });
