@@ -73,7 +73,13 @@ import type { DispatchApprovalFn } from "./approvalCommands";
  */
 export interface SemanticMutationDispatchDeps {
   readonly pendingKmp: PendingKnowledgeMutationRepository;
-  readonly commit: CommitKnowledgePort;
+  /**
+   * A PER-APPROVAL commit-port factory — the executor builds the commit port for each dispatch, passing the
+   * authorizing approval's id (see {@link SemanticCommitContext}). The composition folds that id into the
+   * commit's audit metadata so a committed KMP is traceable to the EXACT §9.8 approval that authorized it. The
+   * returned port is the usual idempotent KnowledgeWriter commit (idempotent by the plan's idempotencyKey).
+   */
+  readonly commit: SemanticCommitFactory;
   /**
    * §13.10a gate 1 (slug-collision) — read the target note's frontmatter `projectId`, WS-8-scoped to the
    * given workspace. Returns `undefined` when the note is absent or carries no `projectId`. Used to verify
@@ -116,6 +122,24 @@ export type NoteExistsProbe = (
   path: string,
   workspaceId: WorkspaceId,
 ) => Promise<Result<boolean, FailureVariant>>;
+
+/**
+ * The authorizing context threaded into a semantic commit so the KnowledgeWriter audit trail ties the committed
+ * Markdown back to the EXACT §9.8 approval that authorized it. `approvalId` is the applied Approval's id
+ * (server-owned — never model-supplied). The composition folds it into `sourceEventRef`, which lands in the
+ * AuditRecord + CommittedRevision (see `buildCommitAuditRecord`).
+ */
+export interface SemanticCommitContext {
+  readonly approvalId: string;
+}
+
+/**
+ * A per-approval commit-port factory. The executor calls it once per dispatch with the authorizing approval's
+ * id, so the composition can bind that id into the commit's audit metadata. The returned port is the usual
+ * idempotent KnowledgeWriter commit. Keeping the executor's `commit` dep a factory (not a fixed port) is what
+ * lets the audit trail carry the approval linkage WITHOUT widening the shared `CommitKnowledgePort` contract.
+ */
+export type SemanticCommitFactory = (context: SemanticCommitContext) => CommitKnowledgePort;
 
 /** Redaction-safe rejection: a stable cause code + static message; never a raw cause. */
 function reject(kind: FailureVariant["kind"], code: string, message: string): FailureVariant {
@@ -335,8 +359,10 @@ export function createSemanticMutationDispatch(deps: SemanticMutationDispatchDep
       }
     }
 
-    // (8) Commit through KnowledgeWriter (idempotent by the plan's idempotencyKey; never throws).
-    const committed = await deps.commit.commit(plan);
+    // (8) Commit through KnowledgeWriter (idempotent by the plan's idempotencyKey; never throws). The port is
+    // built PER-APPROVAL so the authorizing approval id threads into the commit's audit trail (audit
+    // completeness: a committed KMP is traceable to the exact §9.8 approval that authorized it).
+    const committed = await deps.commit({ approvalId: String(approval.id) }).commit(plan);
     if (!isOk(committed)) return err(commitFailureToVariant(committed.error));
 
     // (9) Mark the row committed. If THIS write fails after a successful commit, the Markdown is

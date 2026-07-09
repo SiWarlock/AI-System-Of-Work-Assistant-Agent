@@ -66,20 +66,25 @@ export function buildSemanticApprovalDispatch(deps: SemanticApprovalDispatchDeps
     // ownershipCheck + secretScan LEFT UNSET → the writer uses its secure enforceHumanOwnership + scanForSecrets
     // defaults (safety rules 1/7). Never pass a pass-through.
   };
-  const commit = createCommitActivity({
-    applyPlan: deps.applyPlan ?? realApplyPlan,
-    deps: writerDeps,
-    actor: deps.commit.actor,
-    sourceEventRef: deps.commit.sourceEventRef,
-    workflowRunRef: deps.commit.workflowRunRef,
-    // Head-at-commit: resolve the LIVE whole-vault head so the writer's compare-revision passes; a resolver
-    // throw folds to commit_failed (fail-closed — no partial commit).
-    expectedBaseRevision: () => readVaultHeadRevision(deps.vault),
-    deriveIdempotencyKey: (plan) => `kw:commit:${String(plan.planId)}`,
-  });
   return createSemanticMutationDispatch({
     pendingKmp: deps.pendingKmp,
-    commit,
+    // Build the commit port PER-APPROVAL so the authorizing approval id lands in the audit trail. An
+    // approval-driven commit runs under NO workflow, so `workflowRunRef` stays a placeholder; the meaningful
+    // linkage is folded into `sourceEventRef` — which the writer records on BOTH the AuditRecord and the
+    // CommittedRevision — as `<base>#approval:<id>`. So a committed KMP is traceable to the exact §9.8 approval
+    // that authorized it (not only via the pending-KMP row). `#approval:` is an unambiguous, parseable suffix.
+    commit: ({ approvalId }) =>
+      createCommitActivity({
+        applyPlan: deps.applyPlan ?? realApplyPlan,
+        deps: writerDeps,
+        actor: deps.commit.actor,
+        sourceEventRef: `${deps.commit.sourceEventRef}#approval:${approvalId}`,
+        workflowRunRef: deps.commit.workflowRunRef,
+        // Head-at-commit: resolve the LIVE whole-vault head so the writer's compare-revision passes; a resolver
+        // throw folds to commit_failed (fail-closed — no partial commit).
+        expectedBaseRevision: () => readVaultHeadRevision(deps.vault),
+        deriveIdempotencyKey: (plan) => `kw:commit:${String(plan.planId)}`,
+      }),
     readNoteProjectId: createNoteProjectIdReader(readNote),
     noteExists: createNoteExistsProbe(readNote),
     now: deps.now,

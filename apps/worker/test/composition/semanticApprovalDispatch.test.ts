@@ -58,12 +58,14 @@ function memVault(files: Record<string, string>): VaultFs {
     remove: async (p) => { m.delete(p); },
   };
 }
-function recordingApplyPlan(): { fn: ApplyPlanFn; calls: { expectedBaseRevision: string; planId: string }[] } {
-  const calls: { expectedBaseRevision: string; planId: string }[] = [];
+function recordingApplyPlan(): { fn: ApplyPlanFn; calls: { expectedBaseRevision: string; planId: string; sourceEventRef: string }[] } {
+  const calls: { expectedBaseRevision: string; planId: string; sourceEventRef: string }[] = [];
   const fn: ApplyPlanFn = (command) => {
     // `command.plan` is candidate data (typed `unknown` at the writer boundary) — narrow it just to read planId.
     const planId = String((command.plan as { planId?: unknown }).planId);
-    calls.push({ expectedBaseRevision: String(command.expectedBaseRevision), planId });
+    // sourceEventRef is what the writer stamps into the AuditRecord + CommittedRevision — capture it to prove
+    // the authorizing approval id was folded in.
+    calls.push({ expectedBaseRevision: String(command.expectedBaseRevision), planId, sourceEventRef: command.sourceEventRef });
     return Promise.resolve(ok({ revisionId: "rev-new" as WriteSuccess["revisionId"], auditRecord: {} as WriteSuccess["auditRecord"], replayed: false } as WriteSuccess));
   };
   return { fn, calls };
@@ -77,7 +79,7 @@ function build(vault: VaultFs, applyPlan: ApplyPlanFn, seed = mkRow()): { dispat
     revisions: {} as never, // unused by the recording fake applyPlan
     audit: {} as never,
     now: () => NOW,
-    commit: { actor: "copilot-approval", sourceEventRef: "src-appr-1", workflowRunRef: "run-1" as never },
+    commit: { actor: "copilot-approval", sourceEventRef: "copilot.propose_knowledge", workflowRunRef: "run-1" as never },
     applyPlan,
   });
   return { dispatch, kmp };
@@ -94,6 +96,8 @@ describe("buildSemanticApprovalDispatch", () => {
     expect(applied.calls[0]?.planId).toBe("plan-g4-1");
     // Head-at-commit: the base revision handed to the writer is the CURRENT live head (not a fixed value).
     expect(applied.calls[0]?.expectedBaseRevision).toBe(await readVaultHeadRevision(vault));
+    // Audit-trail linkage: the authorizing approval id is folded into the sourceEventRef the writer records.
+    expect(applied.calls[0]?.sourceEventRef).toBe("copilot.propose_knowledge#approval:appr-1");
     expect(kmp.store.get("plan-g4-1")?.status).toBe("committed");
   });
 

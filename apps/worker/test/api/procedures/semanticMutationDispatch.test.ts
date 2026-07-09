@@ -21,6 +21,8 @@ import {
   createSemanticMutationDispatch,
   createApprovalDispatchRouter,
   type SemanticMutationDispatchDeps,
+  type SemanticCommitContext,
+  type SemanticCommitFactory,
   type NoteProjectIdReader,
   type NoteExistsProbe,
 } from "../../../src/api/procedures/semanticMutationDispatch";
@@ -113,10 +115,12 @@ function fakePendingKmp(
 }
 
 function fakeCommit(opts: { failure?: KnowledgeCommitFailure; replayed?: boolean } = {}): {
-  port: CommitKnowledgePort;
+  factory: SemanticCommitFactory;
   calls: Record<string, unknown>[];
+  contexts: SemanticCommitContext[];
 } {
   const calls: Record<string, unknown>[] = [];
+  const contexts: SemanticCommitContext[] = [];
   const port: CommitKnowledgePort = {
     commit: (plan) => {
       calls.push(plan as unknown as Record<string, unknown>);
@@ -124,7 +128,13 @@ function fakeCommit(opts: { failure?: KnowledgeCommitFailure; replayed?: boolean
       return Promise.resolve(ok({ revisionId: "rev-f-1", replayed: opts.replayed ?? false }));
     },
   };
-  return { port, calls };
+  // The executor builds the commit port PER-APPROVAL — record the context each build receives so a test can
+  // pin the authorizing approval id threaded into the audit trail.
+  const factory: SemanticCommitFactory = (ctx) => {
+    contexts.push(ctx);
+    return port;
+  };
+  return { factory, calls, contexts };
 }
 
 function makeDispatch(
@@ -168,7 +178,7 @@ function makeDispatch(
     const v = opts.existsByPath !== undefined ? (opts.existsByPath[path] ?? false) : (opts.targetExists ?? false);
     return Promise.resolve(ok(v));
   };
-  const deps: SemanticMutationDispatchDeps = { pendingKmp: kmp.repo, commit: commit.port, readNoteProjectId, noteExists, now: () => NOW };
+  const deps: SemanticMutationDispatchDeps = { pendingKmp: kmp.repo, commit: commit.factory, readNoteProjectId, noteExists, now: () => NOW };
   return { dispatch: createSemanticMutationDispatch(deps), kmp, commit, readCalls, existsCalls };
 }
 
@@ -187,6 +197,9 @@ describe("createSemanticMutationDispatch — approved commit path", () => {
     // committed exactly once, with the RE-VALIDATED plan (branded planId preserved).
     expect(commit.calls).toHaveLength(1);
     expect(commit.calls[0]?.planId).toBe("plan-f-1");
+    // The commit port was built PER-APPROVAL with the authorizing approval's id (audit-trail linkage).
+    expect(commit.contexts).toHaveLength(1);
+    expect(commit.contexts[0]?.approvalId).toBe("appr-1");
     // row advanced to the terminal committed state with the injected clock's instant.
     const row = kmp.store.get("plan-f-1");
     expect(row?.status).toBe("committed");

@@ -658,8 +658,10 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
             now: backends.now,
             // APPROVAL-SPECIFIC provenance (audit accuracy): a Copilot-approval commit must NOT be attributed
             // to the proof-spine's meeting-closeout actor/source. `workflowRunRef` reuses the proof-spine run
-            // ref as a placeholder — an approval-driven commit runs under no workflow (the field is required
-            // metadata; the approval↔plan linkage is carried by the pending-KMP row + the Approval, not here).
+            // ref as a placeholder — an approval-driven commit runs under no workflow. `sourceEventRef` here is
+            // the BASE ref; the composition builds the commit port per-approval and appends `#approval:<id>` so
+            // the KnowledgeWriter audit trail (AuditRecord + CommittedRevision) ties each committed KMP to the
+            // exact §9.8 approval that authorized it (in addition to the pending-KMP row linkage).
             commit: {
               actor: "copilot-approval",
               sourceEventRef: "copilot.propose_knowledge",
