@@ -14,6 +14,7 @@ import {
 import type { WorkspaceId, RevisionId } from "@sow/contracts";
 import {
   deriveCanonicalFacts,
+  computePageProvenance,
   type CanonicalVaultSnapshot,
   type DerivedFact,
 } from "../src/gbrain/derive/canonical-fact-deriver";
@@ -265,5 +266,45 @@ describe("deriveCanonicalFacts — kwStamp is provenance-only (hash-invisible; g
     expect(byId(rb.value.facts, "page:auth")?.fact.mdContentSha).not.toBe(
       byId(ra.value.facts, "page:auth")?.fact.mdContentSha,
     );
+  });
+});
+
+describe("computePageProvenance — the shared writer/deriver page-hash core (gate 4 G1d)", () => {
+  it("produces the IDENTICAL (pageIdentity, pageSha) that deriveCanonicalFacts derives for the page fact", () => {
+    // The load-bearing property: the writer mints its stamp through this fn, the gate re-derives via
+    // deriveCanonicalFacts — they MUST agree byte-for-byte or no stamp ever verifies.
+    const content = "---\ntitle: Acme Auth\nowner: dana\n---\nSome project prose.\n";
+    const path = "projects/pb/acme.md";
+    const page = computePageProvenance(path, content);
+    expect(page).not.toBeNull();
+    const derived = deriveCanonicalFacts(snap({ [path]: content }));
+    expect(isOk(derived)).toBe(true);
+    if (!isOk(derived) || page === null) return;
+    const pageFact = byId(derived.value.facts, page.pageIdentity);
+    expect(pageFact).toBeDefined();
+    expect(pageFact?.fact.mdContentSha).toBe(page.pageSha);
+    expect(String(pageFact?.fact.factIdentity)).toBe(page.pageIdentity);
+  });
+
+  it("prefers an explicit `slug` frontmatter over the path basename", () => {
+    const viaBasename = computePageProvenance("notes/deep/auth.md", "---\ntitle: T\n---\nb");
+    const viaSlug = computePageProvenance("notes/deep/auth.md", "---\nslug: custom\ntitle: T\n---\nb");
+    expect(viaBasename?.slug).toBe("auth");
+    expect(viaSlug?.slug).toBe("custom");
+    expect(viaSlug?.pageIdentity).toBe("page:custom");
+  });
+
+  it("returns null when the note has no safe slug (empty basename, no frontmatter slug)", () => {
+    expect(computePageProvenance(".md", "body")).toBeNull();
+  });
+
+  it("is stamp-invariant: the SAME (identity, sha) with or without an embedded kwStamp (G1b + G1d together)", () => {
+    const base = "---\ntitle: Acme\n---\nprose";
+    const stamped = '---\ntitle: Acme\nkwStamp: {"sig":"abc"}\n---\nprose';
+    const a = computePageProvenance("projects/pb/acme.md", base);
+    const b = computePageProvenance("projects/pb/acme.md", stamped);
+    expect(a).not.toBeNull();
+    expect(b?.pageSha).toBe(a?.pageSha);
+    expect(b?.pageIdentity).toBe(a?.pageIdentity);
   });
 });

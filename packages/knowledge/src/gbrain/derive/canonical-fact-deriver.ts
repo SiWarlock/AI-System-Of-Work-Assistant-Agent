@@ -219,6 +219,40 @@ function parseTags(value: string): string[] {
 }
 
 /**
+ * The PAGE provenance core for ONE note: its slug, page fact identity (`page:<slug>`), and page mdContentSha —
+ * computed EXACTLY as `deriveCanonicalFacts` does (this IS the function it calls for the page fact). Exported so
+ * the KnowledgeWriter can mint a provenance stamp binding the IDENTICAL (factIdentity, mdContentSha) the serving
+ * gate re-derives at serve time; the two can NEVER drift because both go through this one function (gate 4 G1d).
+ * Returns `null` when the note has no safe slug (an invalid page path). The reserved `kwStamp` key is carved out
+ * of the hash (G1b), so a note yields the SAME result with or without its own stamp embedded — which is what
+ * lets the writer compute the hash over base bytes, mint over it, then embed the stamp without perturbing it.
+ * Pure; never throws.
+ */
+export function computePageProvenance(
+  path: string,
+  content: string,
+): { readonly slug: string; readonly pageIdentity: string; readonly pageSha: string } | null {
+  const { frontmatter, body } = parseNote(content);
+  const fmSlug = frontmatter.get("slug");
+  const slug = fmSlug !== undefined && fmSlug.length > 0 ? fmSlug : basenameSlug(path);
+  if (slug.length === 0) return null;
+  const scalarMeta: Array<readonly [string, string]> = [];
+  for (const [key, value] of frontmatter) {
+    if (key === "slug" || key === "tags" || key === KW_STAMP_FRONTMATTER_KEY) continue;
+    if (wikilinkTargets(value).length > 0) continue; // link-valued keys are not scalar page meta
+    scalarMeta.push([key, value]);
+  }
+  const metaPreimage = scalarMeta
+    .slice()
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
+  const pageSha = sha256hex(`page${NUL}${slug}${NUL}${normalizeText(body)}${NUL}${metaPreimage}`);
+  const pageIdentity = factIdentity({ kind: "page", slug }) as string;
+  return { slug, pageIdentity, pageSha };
+}
+
+/**
  * Derive the canonical SemanticFact set from committed vault Markdown at a revision.
  * Pure, deterministic, gbrain-independent. Returns a typed Result — never throws.
  */
@@ -240,41 +274,27 @@ export function deriveCanonicalFacts(
 
     const { frontmatter, body } = parseNote(content);
 
-    // ── page slug (identity root) ──────────────────────────────────────────
-    const fmSlug = frontmatter.get("slug");
-    const slug = fmSlug !== undefined && fmSlug.length > 0 ? fmSlug : basenameSlug(path);
-    if (slug.length === 0) {
+    // ── page provenance (slug + identity + hash) via the shared writer/deriver core (gate 4 G1d) ──
+    // computePageProvenance IS the sole page-hash authority — the KnowledgeWriter mints its stamp through the
+    // SAME function, so the (factIdentity, mdContentSha) bound at write time and re-derived here can never drift.
+    const page = computePageProvenance(path, content);
+    if (page === null) {
       return err({ code: "invalid_page_path", path });
     }
+    const { slug, pageIdentity, pageSha } = page;
 
-    // ── classify frontmatter: tags key, wikilink-valued keys, scalar meta ──
+    // ── classify frontmatter for LINK facts + read the tags key. The page hash's scalar-meta is computed inside
+    //    computePageProvenance (single source of truth), so it isn't rebuilt here. `slug`/`tags` are
+    //    identity/tag inputs; `kwStamp` is provenance metadata carved out (G1b), BEFORE the wikilink check so a
+    //    `kwStamp: [[x]]` value derives no link fact.
     const tagsRaw = frontmatter.get("tags");
     const frontmatterLinks: Array<{ field: string; dst: string }> = [];
-    const scalarMeta: Array<readonly [string, string]> = [];
     for (const [key, value] of frontmatter) {
-      // `slug`/`tags` are identity/tag inputs (handled above); `kwStamp` is provenance metadata carved out of
-      // the semantic derivation (gate 4 G1b) — it must NOT enter scalarMeta (else it perturbs the page hash the
-      // stamp itself signs) NOR be classified as a link (an attacker-forged stamp value must not inject a fact).
-      // The check precedes the wikilink classification so a `kwStamp: [[x]]` value derives no link fact.
       if (key === "slug" || key === "tags" || key === KW_STAMP_FRONTMATTER_KEY) continue;
-      const dsts = wikilinkTargets(value);
-      if (dsts.length > 0) {
-        for (const dst of dsts) frontmatterLinks.push({ field: key, dst });
-      } else {
-        scalarMeta.push([key, value]);
-      }
+      for (const dst of wikilinkTargets(value)) frontmatterLinks.push({ field: key, dst });
     }
 
-    // ── page fact: body prose + remaining scalar frontmatter metadata ──────
-    const metaPreimage = scalarMeta
-      .slice()
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([k, v]) => `${k}=${v}`)
-      .join("\n");
-    const pageSha = sha256hex(
-      `page${NUL}${slug}${NUL}${normalizeText(body)}${NUL}${metaPreimage}`,
-    );
-    const pageIdentity = factIdentity({ kind: "page", slug }) as string;
+    // ── page fact: body prose + remaining scalar frontmatter metadata (hash from computePageProvenance) ──
     candidates.push({
       identity: pageIdentity,
       path,
