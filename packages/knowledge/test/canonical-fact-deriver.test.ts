@@ -212,3 +212,58 @@ describe("deriveCanonicalFacts — every emitted fact is contract-valid", () => 
     expect(kinds).toEqual(new Set(["page", "link", "tag", "timeline"]));
   });
 });
+
+describe("deriveCanonicalFacts — kwStamp is provenance-only (hash-invisible; gate 4 G1b)", () => {
+  it("a note WITH a kwStamp frontmatter key derives the SAME page mdContentSha as without it", () => {
+    // Resolves the stamp-in-frontmatter circularity: the writer computes the hash over the base bytes, mints a
+    // stamp over it, then embeds the stamp under `kwStamp`. The deriver must skip `kwStamp` so it recomputes the
+    // IDENTICAL hash at serve time (serving-gate leg A: rehydrated sha === allow-set sha).
+    const base = "---\ntitle: Auth\n---\nHello prose.";
+    const stamped = '---\ntitle: Auth\nkwStamp: {"mdContentSha":"deadbeef","sig":"abc123"}\n---\nHello prose.';
+    const a = deriveCanonicalFacts(snap({ "notes/auth.md": base }));
+    const b = deriveCanonicalFacts(snap({ "notes/auth.md": stamped }));
+    expect(isOk(a) && isOk(b)).toBe(true);
+    if (!isOk(a) || !isOk(b)) return;
+    const pa = byId(a.value.facts, "page:auth");
+    const pb = byId(b.value.facts, "page:auth");
+    expect(pb?.fact.mdContentSha).toBe(pa?.fact.mdContentSha);
+  });
+
+  it("the kwStamp key emits NO stray fact (not scalar-meta, not its own fact)", () => {
+    const stamped = '---\ntitle: Auth\nkwStamp: {"sig":"abc"}\n---\nHello prose.';
+    const r = deriveCanonicalFacts(snap({ "notes/auth.md": stamped }));
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    expect(identities(r.value.facts)).toEqual(["page:auth"]);
+  });
+
+  it("a kwStamp VALUE containing a wikilink derives NO link fact (carved out before link classification)", () => {
+    // Defense: an attacker-forged stamp value must not be able to inject a spurious link fact into the allow-set.
+    const stamped = "---\ntitle: Auth\nkwStamp: [[injected]]\n---\nbody";
+    const r = deriveCanonicalFacts(snap({ "notes/auth.md": stamped }));
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    expect(identities(r.value.facts)).toEqual(["page:auth"]);
+  });
+
+  it("kwStamp as the ONLY frontmatter key still derives the page fact (no crash, no stray fact)", () => {
+    const stamped = '---\nkwStamp: {"sig":"z"}\n---\nbody only';
+    const r = deriveCanonicalFacts(snap({ "notes/auth.md": stamped }));
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    expect(identities(r.value.facts)).toEqual(["page:auth"]);
+  });
+
+  it("the carve-out is NOT over-broad — a REAL scalar-meta edit STILL moves the page hash", () => {
+    // Guards against a future carve-out accidentally excluding real content: only kwStamp is hash-invisible.
+    const a = "---\ntitle: Auth\nkwStamp: {\"sig\":\"z\"}\n---\nbody";
+    const b = "---\ntitle: CHANGED\nkwStamp: {\"sig\":\"z\"}\n---\nbody";
+    const ra = deriveCanonicalFacts(snap({ "notes/auth.md": a }));
+    const rb = deriveCanonicalFacts(snap({ "notes/auth.md": b }));
+    expect(isOk(ra) && isOk(rb)).toBe(true);
+    if (!isOk(ra) || !isOk(rb)) return;
+    expect(byId(rb.value.facts, "page:auth")?.fact.mdContentSha).not.toBe(
+      byId(ra.value.facts, "page:auth")?.fact.mdContentSha,
+    );
+  });
+});

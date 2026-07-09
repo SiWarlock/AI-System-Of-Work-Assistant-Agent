@@ -18,6 +18,15 @@
 const FM_FENCE = "---";
 
 /**
+ * The reserved frontmatter key holding a note's `SignedProvenanceStamp` (gate 4 / §13.10a). The stamp is
+ * PROVENANCE metadata, NOT semantic content: the CanonicalFactDeriver carves this key out of the page
+ * `mdContentSha` preimage (so a note derives the SAME hash with or without its stamp — resolving the
+ * stamp-in-frontmatter circularity), and the serving gate reads it back to re-verify authorship. The key
+ * contains NO `:` (so `parseNote`'s first-colon split keeps the compact-JSON value intact on one line).
+ */
+export const KW_STAMP_FRONTMATTER_KEY = "kwStamp";
+
+/**
  * YAML-safe frontmatter scalar serialization (§13.10a go-live gate 2 — the first untrusted→frontmatter
  * exposure). A model/domain-authored STRING is emitted as a plain scalar ONLY when it is unambiguously
  * safe; otherwise it is double-quoted + escaped so a real vault (Obsidian / gbrain ingest) cannot

@@ -40,6 +40,7 @@ import {
   SemanticFactSchema,
   FactProvenanceSchema,
 } from "@sow/contracts";
+import { KW_STAMP_FRONTMATTER_KEY } from "../../knowledge-writer/frontmatter";
 import type {
   Result,
   SemanticFact,
@@ -251,7 +252,11 @@ export function deriveCanonicalFacts(
     const frontmatterLinks: Array<{ field: string; dst: string }> = [];
     const scalarMeta: Array<readonly [string, string]> = [];
     for (const [key, value] of frontmatter) {
-      if (key === "slug" || key === "tags") continue;
+      // `slug`/`tags` are identity/tag inputs (handled above); `kwStamp` is provenance metadata carved out of
+      // the semantic derivation (gate 4 G1b) — it must NOT enter scalarMeta (else it perturbs the page hash the
+      // stamp itself signs) NOR be classified as a link (an attacker-forged stamp value must not inject a fact).
+      // The check precedes the wikilink classification so a `kwStamp: [[x]]` value derives no link fact.
+      if (key === "slug" || key === "tags" || key === KW_STAMP_FRONTMATTER_KEY) continue;
       const dsts = wikilinkTargets(value);
       if (dsts.length > 0) {
         for (const dst of dsts) frontmatterLinks.push({ field: key, dst });
