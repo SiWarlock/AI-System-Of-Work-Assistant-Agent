@@ -124,6 +124,40 @@ export interface CopilotProposeKnowledgeDeps {
 }
 
 /**
+ * A WS-8-scoped existence probe over the DERIVED note path (create-vs-patch). The runner supplies it (a vault
+ * read); a fault MAY throw and is caught + folded fail-closed by `resolveProposeNoteExists`.
+ */
+export type CopilotNoteExistsProbe = (path: string) => Promise<boolean>;
+
+/**
+ * Resolve create-vs-patch at CALL TIME without breaking `deriveCopilotProjectKnowledgePlan`'s purity. The
+ * runner cannot pre-compute `noteExists` (it needs the model-supplied projectId), so this parses the intent's
+ * projectId, derives its note path via the SAME `projectNotePath` WS-8 authority derive uses, and probes
+ * existence; derive then takes the resolved boolean. Fail-closed + never throws: a malformed intent / bad
+ * projectId / unsafe path short-circuits BEFORE the probe, and a probe throw folds to a bounded failure (so
+ * the derive is never reached on an ambiguous existence). Validating only projectId here is sound — derive
+ * re-validates the WHOLE intent (title/lifecycle/summary) as the authority.
+ */
+export async function resolveProposeNoteExists(
+  intent: unknown,
+  deps: { readonly workspaceId: WorkspaceId; readonly noteExists: CopilotNoteExistsProbe },
+): Promise<Result<boolean, FailureVariant>> {
+  const i = parseIntent(intent);
+  if (i === null) return err(fail("COPILOT_PROPOSE_KNOWLEDGE_MALFORMED"));
+  const projectId = i.projectId.trim();
+  if (projectId.length === 0 || !isSafeSingleLine(projectId)) {
+    return err(fail("COPILOT_PROPOSE_KNOWLEDGE_BAD_PROJECT_ID"));
+  }
+  const path = projectNotePath(deps.workspaceId, projectId);
+  if (path === null) return err(fail("COPILOT_PROPOSE_KNOWLEDGE_UNSAFE_PATH"));
+  try {
+    return ok(await deps.noteExists(path));
+  } catch {
+    return err(fail("COPILOT_PROPOSE_KNOWLEDGE_PROBE_FAILED"));
+  }
+}
+
+/**
  * DERIVE the canonical `KnowledgeMutationPlan` from the model's UNTRUSTED project intent (server-derived path/keys;
  * never model-supplied). Fail-closed at every step (never throws — typed Result):
  *   - the intent is STRICT-PARSED first → `COPILOT_PROPOSE_KNOWLEDGE_MALFORMED` on a non-object / extra key /

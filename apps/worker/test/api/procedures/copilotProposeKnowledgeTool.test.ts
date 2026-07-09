@@ -21,10 +21,14 @@ import {
   proposeCopilotKnowledge,
   handleCopilotProposeKnowledgeToolCall,
 } from "../../../src/api/procedures/copilotProposeKnowledgeTool";
+import type { CopilotNoteExistsProbe } from "../../../src/api/procedures/copilotProposeKnowledge";
 
 const WS = "personal-business" as unknown as WorkspaceId;
 const SRC = { sourceId: "src-1" } as unknown as SourceRef;
 const INTENT = { projectId: "acme", title: "Acme", lifecycleState: "active" };
+// noteExists is now a CALL-TIME probe over the derived path (create-vs-patch), not a pre-resolved boolean.
+const noNote: CopilotNoteExistsProbe = async () => false; // create path — target free
+const hasNote: CopilotNoteExistsProbe = async () => true; // patch path — target exists
 
 /** A fake sink: records every (plan, workspaceId) it is handed; returns a configured receipt or throws. */
 function fakeSink(
@@ -52,7 +56,7 @@ const assertErr = <T,>(r: Result<T, FailureVariant>): FailureVariant => {
 describe("proposeCopilotKnowledge — derive → route", () => {
   it("derives a KMP from a valid intent and records it through the sink (server-bound workspace)", async () => {
     const { sink, calls } = fakeSink();
-    const r = await proposeCopilotKnowledge({ intent: INTENT, workspaceId: WS, sourceRef: SRC, noteExists: false, sink });
+    const r = await proposeCopilotKnowledge({ intent: INTENT, workspaceId: WS, sourceRef: SRC, noteExists: noNote, sink });
     expect(isOk(r)).toBe(true);
     expect(calls).toHaveLength(1);
     const plan = calls[0]!.plan;
@@ -69,7 +73,7 @@ describe("proposeCopilotKnowledge — derive → route", () => {
 
   it("threads noteExists=true into a region PATCH (re-proposal never overwrites the whole note)", async () => {
     const { sink, calls } = fakeSink();
-    await proposeCopilotKnowledge({ intent: INTENT, workspaceId: WS, sourceRef: SRC, noteExists: true, sink });
+    await proposeCopilotKnowledge({ intent: INTENT, workspaceId: WS, sourceRef: SRC, noteExists: hasNote, sink });
     const plan = calls[0]!.plan;
     expect(plan.creates).toHaveLength(0);
     expect(plan.patches).toHaveLength(1);
@@ -77,7 +81,7 @@ describe("proposeCopilotKnowledge — derive → route", () => {
 
   it("a malformed intent short-circuits BEFORE the sink (no partial record)", async () => {
     const { sink, calls } = fakeSink();
-    const r = await proposeCopilotKnowledge({ intent: { projectId: 42 }, workspaceId: WS, sourceRef: SRC, noteExists: false, sink });
+    const r = await proposeCopilotKnowledge({ intent: { projectId: 42 }, workspaceId: WS, sourceRef: SRC, noteExists: noNote, sink });
     expect(assertErr(r).cause?.code).toBe("COPILOT_PROPOSE_KNOWLEDGE_MALFORMED");
     expect(calls).toHaveLength(0);
   });
@@ -88,10 +92,34 @@ describe("proposeCopilotKnowledge — derive → route", () => {
       intent: { ...INTENT, workspaceId: "employer-work" },
       workspaceId: WS,
       sourceRef: SRC,
-      noteExists: false,
+      noteExists: noNote,
       sink,
     });
     expect(assertErr(r).cause?.code).toBe("COPILOT_PROPOSE_KNOWLEDGE_MALFORMED");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("resolves noteExists via the CALL-TIME probe over the SERVER-DERIVED path (create-vs-patch)", async () => {
+    const seen: string[] = [];
+    const probe: CopilotNoteExistsProbe = async (path) => {
+      seen.push(path);
+      return true; // the derived note already exists ⇒ a region PATCH
+    };
+    const { sink, calls } = fakeSink();
+    await proposeCopilotKnowledge({ intent: INTENT, workspaceId: WS, sourceRef: SRC, noteExists: probe, sink });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain("acme"); // the probe saw the workspace-rooted derived note path, not a model field
+    expect(calls[0]!.plan.patches).toHaveLength(1);
+    expect(calls[0]!.plan.creates).toHaveLength(0);
+  });
+
+  it("a THROWING existence probe fails CLOSED before the sink (no record)", async () => {
+    const probe: CopilotNoteExistsProbe = async () => {
+      throw new Error("vault read blew up");
+    };
+    const { sink, calls } = fakeSink();
+    const r = await proposeCopilotKnowledge({ intent: INTENT, workspaceId: WS, sourceRef: SRC, noteExists: probe, sink });
+    expect(assertErr(r).cause?.code).toBe("COPILOT_PROPOSE_KNOWLEDGE_PROBE_FAILED");
     expect(calls).toHaveLength(0);
   });
 });
@@ -120,7 +148,7 @@ describe("handleCopilotProposeKnowledgeToolCall — model-facing", () => {
 
   it("success tells the model a PENDING approval was recorded (never a direct write)", async () => {
     const { sink } = fakeSink({ receipt: { approvalRef: "appr-k-9", planRef: "plan-k-9", created: true } });
-    const res = await handleCopilotProposeKnowledgeToolCall(INTENT, { workspaceId: WS, sourceRef: SRC, noteExists: false, sink });
+    const res = await handleCopilotProposeKnowledgeToolCall(INTENT, { workspaceId: WS, sourceRef: SRC, noteExists: noNote, sink });
     expect(res.isError).toBeUndefined();
     expect(res.content[0]?.text).toMatch(/PENDING/);
     expect(res.content[0]?.text).toContain("appr-k-9");
@@ -128,21 +156,21 @@ describe("handleCopilotProposeKnowledgeToolCall — model-facing", () => {
 
   it("an idempotent re-drive reports already-pending (no duplicate)", async () => {
     const { sink } = fakeSink({ receipt: { approvalRef: "appr-k-9", planRef: "plan-k-9", created: false } });
-    const res = await handleCopilotProposeKnowledgeToolCall(INTENT, { workspaceId: WS, sourceRef: SRC, noteExists: false, sink });
+    const res = await handleCopilotProposeKnowledgeToolCall(INTENT, { workspaceId: WS, sourceRef: SRC, noteExists: noNote, sink });
     expect(res.isError).toBeUndefined();
     expect(res.content[0]?.text).toMatch(/ALREADY|already/);
   });
 
   it("stays non-throwing at the tool surface even when the sink throws", async () => {
     const { sink } = fakeSink({ throws: true });
-    const res = await handleCopilotProposeKnowledgeToolCall(INTENT, { workspaceId: WS, sourceRef: SRC, noteExists: false, sink });
+    const res = await handleCopilotProposeKnowledgeToolCall(INTENT, { workspaceId: WS, sourceRef: SRC, noteExists: noNote, sink });
     expect(res.isError).toBe(true);
     expect(res.content[0]?.text).toMatch(/SINK_THREW|UNEXPECTED/);
   });
 
   it("failure surfaces ONLY a bounded cause code to the model (never raw content), and does not touch the sink", async () => {
     const { sink, calls } = fakeSink();
-    const res = await handleCopilotProposeKnowledgeToolCall({ projectId: 42 }, { workspaceId: WS, sourceRef: SRC, noteExists: false, sink });
+    const res = await handleCopilotProposeKnowledgeToolCall({ projectId: 42 }, { workspaceId: WS, sourceRef: SRC, noteExists: noNote, sink });
     expect(res.isError).toBe(true);
     expect(res.content[0]?.text).toContain("COPILOT_PROPOSE_KNOWLEDGE_MALFORMED");
     expect(calls).toHaveLength(0);

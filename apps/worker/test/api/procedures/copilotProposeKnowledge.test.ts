@@ -5,9 +5,12 @@ import { isOk, workspaceId, sourceId, KnowledgeMutationPlanSchema } from "@sow/c
 import type { SourceRef, WorkspaceId } from "@sow/contracts";
 import {
   deriveCopilotProjectKnowledgePlan,
+  resolveProposeNoteExists,
+  type CopilotNoteExistsProbe,
   COPILOT_PROPOSE_KNOWLEDGE_CONFIDENCE,
   MAX_PROPOSE_SUMMARY_CHARS,
 } from "../../../src/api/procedures/copilotProposeKnowledge";
+import { isErr } from "@sow/contracts";
 
 const WS: WorkspaceId = workspaceId("personal-business");
 const SRC: SourceRef = { sourceId: sourceId("src-answer-1") };
@@ -210,5 +213,52 @@ describe("deriveCopilotProjectKnowledgePlan — intent validation fail-closed", 
     expect(r.value.externalActionProposals).toEqual([]);
     expect(r.value.linkMutations).toEqual([]);
     expect(r.value.frontmatterUpdates).toEqual([]);
+  });
+});
+
+describe("resolveProposeNoteExists — call-time create-vs-patch probe (keeps derive pure)", () => {
+  it("returns the probe's result for a valid intent (probe sees the SERVER-DERIVED workspace-rooted path)", async () => {
+    const seen: string[] = [];
+    const probe: CopilotNoteExistsProbe = async (path) => {
+      seen.push(path);
+      return true;
+    };
+    const r = await resolveProposeNoteExists(goodIntent, { workspaceId: WS, noteExists: probe });
+    expect(isOk(r) && r.value).toBe(true);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain("acme-api"); // the derived note path, not a model-supplied path
+  });
+
+  it("NEVER calls the probe on a malformed intent — fail-closed BEFORE any I/O", async () => {
+    let called = false;
+    const probe: CopilotNoteExistsProbe = async () => {
+      called = true;
+      return false;
+    };
+    const r = await resolveProposeNoteExists({ projectId: 42 }, { workspaceId: WS, noteExists: probe });
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect((r.error.cause as { code?: string }).code).toBe("COPILOT_PROPOSE_KNOWLEDGE_MALFORMED");
+    expect(called).toBe(false); // the untrusted intent never reached the probe
+  });
+
+  it("rejects a blank projectId before probing (BAD_PROJECT_ID)", async () => {
+    let called = false;
+    const probe: CopilotNoteExistsProbe = async () => {
+      called = true;
+      return false;
+    };
+    const r = await resolveProposeNoteExists({ ...goodIntent, projectId: "   " }, { workspaceId: WS, noteExists: probe });
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect((r.error.cause as { code?: string }).code).toBe("COPILOT_PROPOSE_KNOWLEDGE_BAD_PROJECT_ID");
+    expect(called).toBe(false);
+  });
+
+  it("folds a THROWING probe to PROBE_FAILED (never throws)", async () => {
+    const probe: CopilotNoteExistsProbe = async () => {
+      throw new Error("vault fault");
+    };
+    const r = await resolveProposeNoteExists(goodIntent, { workspaceId: WS, noteExists: probe });
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect((r.error.cause as { code?: string }).code).toBe("COPILOT_PROPOSE_KNOWLEDGE_PROBE_FAILED");
   });
 });

@@ -31,7 +31,11 @@ import type {
   SourceRef,
   WorkspaceId,
 } from "@sow/contracts";
-import { deriveCopilotProjectKnowledgePlan } from "./copilotProposeKnowledge";
+import {
+  deriveCopilotProjectKnowledgePlan,
+  resolveProposeNoteExists,
+  type CopilotNoteExistsProbe,
+} from "./copilotProposeKnowledge";
 import type {
   CopilotKnowledgeProposeReceipt,
   CopilotKnowledgeProposeSink,
@@ -85,13 +89,20 @@ export async function proposeCopilotKnowledge(params: {
   readonly intent: unknown;
   readonly workspaceId: WorkspaceId;
   readonly sourceRef: SourceRef;
-  readonly noteExists: boolean;
+  readonly noteExists: CopilotNoteExistsProbe;
   readonly sink: CopilotKnowledgeProposeSink;
 }): Promise<Result<CopilotKnowledgeProposeReceipt, FailureVariant>> {
+  // Resolve create-vs-patch at CALL TIME (the runner can't pre-compute it — it needs the model's projectId),
+  // keeping derive PURE. Fail-closed on a malformed intent / unsafe path / probe fault BEFORE any record.
+  const existsRes = await resolveProposeNoteExists(params.intent, {
+    workspaceId: params.workspaceId,
+    noteExists: params.noteExists,
+  });
+  if (!isOk(existsRes)) return existsRes;
   const derived = deriveCopilotProjectKnowledgePlan(params.intent, {
     workspaceId: params.workspaceId,
     sourceRef: params.sourceRef,
-    noteExists: params.noteExists,
+    noteExists: existsRes.value,
   });
   if (!isOk(derived)) return derived;
   return routeCopilotKnowledgeProposal({ plan: derived.value, workspaceId: params.workspaceId, sink: params.sink });
@@ -121,7 +132,7 @@ export async function handleCopilotProposeKnowledgeToolCall(
   deps: {
     readonly workspaceId: WorkspaceId;
     readonly sourceRef: SourceRef;
-    readonly noteExists: boolean;
+    readonly noteExists: CopilotNoteExistsProbe;
     readonly sink: CopilotKnowledgeProposeSink;
   },
 ): Promise<CopilotProposeKnowledgeToolResult> {
