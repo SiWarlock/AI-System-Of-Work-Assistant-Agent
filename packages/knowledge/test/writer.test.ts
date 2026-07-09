@@ -1,7 +1,7 @@
 // spec(§6) — KnowledgeWriter core: composed gate, atomic commit, compare-revision,
 // revision/audit recording, idempotent replay, typed failure variants (task 4.1)
 import { describe, it, expect } from "vitest";
-import { err, isOk, isErr, validKnowledgeMutationPlan } from "@sow/contracts";
+import { ok, err, isOk, isErr, validKnowledgeMutationPlan } from "@sow/contracts";
 import type { KnowledgeMutationPlan, WorkflowRunRef } from "@sow/contracts";
 import { applyPlan } from "../src/knowledge-writer/writer";
 import type {
@@ -93,6 +93,113 @@ describe("applyPlan — happy path", () => {
     expect(d.audit.records).toHaveLength(1);
     expect(d.revisions.recordCalls).toBe(1);
     expect(d.audit.records[0]!.refs).toContain(r.value.revisionId);
+  });
+});
+
+describe("applyPlan — YAML-safe frontmatter serialization (§13.10a go-live gate 2)", () => {
+  // Model/domain-authored frontmatter VALUES (title, projectId, tags…) must serialize as YAML-safe
+  // scalars — a value starting with a YAML indicator or carrying a flow/comment ambiguity would
+  // misparse in a real vault (Obsidian / gbrain ingest). Isolate serialization from the secret/
+  // ownership gates (pass-through) so these tests pin the serializer alone.
+  const openDeps = (vault: MemoryVaultFs): KnowledgeWriterDeps & {
+    revisions: MemoryRevisionStore;
+    audit: MemoryAuditRepo;
+  } => ({ ...deps(vault), secretScan: () => ok(undefined), ownershipCheck: () => ok(undefined) });
+
+  const createPlan = (
+    over: { title?: string; frontmatter?: Record<string, unknown>; path?: string },
+  ): KnowledgeMutationPlan => ({
+    ...validKnowledgeMutationPlan,
+    creates: [{ path: over.path ?? "notes/proj.md", title: over.title, body: "body", frontmatter: over.frontmatter }],
+  });
+
+  const commit = async (plan: KnowledgeMutationPlan, vault: MemoryVaultFs, base = EMPTY_REV, key = "idem-yaml") => {
+    const r = await applyPlan(cmd(plan, base, key), openDeps(vault));
+    expect(isOk(r)).toBe(true);
+    return vault.snapshot();
+  };
+
+  it("QUOTES a value carrying a YAML indicator / flow-ambiguity (colon-space, leading #, brackets)", async () => {
+    const vault = new MemoryVaultFs();
+    const snap = await commit(createPlan({ title: "Q3: Launch", frontmatter: { tags: "#urgent", note: "[draft]" } }), vault);
+    const md = snap["notes/proj.md"]!;
+    // the unsafe forms are NOT written verbatim; they are double-quoted (YAML-safe).
+    expect(md).not.toContain("title: Q3: Launch");
+    expect(md).toContain('title: "Q3: Launch"');
+    expect(md).toContain('tags: "#urgent"');
+    expect(md).toContain('note: "[draft]"');
+  });
+
+  it("leaves a SAFE plain scalar unquoted (no regression / clean vault output)", async () => {
+    const vault = new MemoryVaultFs();
+    const snap = await commit(createPlan({ title: "Acme Corp", frontmatter: { projectId: "acme-corp", lifecycleState: "active" } }), vault);
+    const md = snap["notes/proj.md"]!;
+    expect(md).toContain("title: Acme Corp");
+    expect(md).toContain("projectId: acme-corp");
+    expect(md).toContain("lifecycleState: active");
+  });
+
+  it("QUOTES YAML bool/null keywords + purely-numeric strings so they stay STRINGS", async () => {
+    const vault = new MemoryVaultFs();
+    const snap = await commit(createPlan({ title: "true", frontmatter: { projectId: "42", flag: "null" } }), vault);
+    const md = snap["notes/proj.md"]!;
+    expect(md).toContain('title: "true"');
+    expect(md).toContain('projectId: "42"');
+    expect(md).toContain('flag: "null"');
+  });
+
+  it("QUOTES date-like + hex/octal/binary strings (an unquoted digit-leading scalar is re-TYPED by YAML)", async () => {
+    const vault = new MemoryVaultFs();
+    const snap = await commit(createPlan({ title: "2020-01-01", frontmatter: { hex: "0x1F", oct: "0o17", ver: "3.0" } }), vault);
+    const md = snap["notes/proj.md"]!;
+    expect(md).toContain('title: "2020-01-01"');
+    expect(md).toContain('hex: "0x1F"');
+    expect(md).toContain('oct: "0o17"');
+    expect(md).toContain('ver: "3.0"');
+  });
+
+  it("escapes non-printable control chars inside a quoted value (a strict YAML parser must not reject the block)", async () => {
+    const vault = new MemoryVaultFs();
+    const vt = String.fromCharCode(0x0b); // vertical tab (0x0B) — built here so the source stays clean ASCII
+    const snap = await commit(createPlan({ title: `tab\tvert${vt}x` }), vault);
+    const md = snap["notes/proj.md"]!;
+    // tab → \t (handled), VT (0x0B) → \x0B — never emitted RAW inside the quotes.
+    expect(md).toContain('title: "tab\\tvert\\x0Bx"');
+    // no raw C0/C1 control char survives in the committed note (tab/newline/CR are the only legit ones).
+    const rawControl = new RegExp("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f]", "u");
+    expect(rawControl.test(md)).toBe(false);
+  });
+
+  it("escapes embedded quotes/backslashes inside a double-quoted value", async () => {
+    const vault = new MemoryVaultFs();
+    const snap = await commit(createPlan({ title: 'a "quote" and \\ slash: x' }), vault);
+    const md = snap["notes/proj.md"]!;
+    expect(md).toContain('title: "a \\"quote\\" and \\\\ slash: x"');
+  });
+
+  it("preserves an already-quoted value across a re-commit (no double-quoting round-trip corruption)", async () => {
+    const vault = new MemoryVaultFs();
+    // First commit writes a quoted title. A later FrontmatterPatch on a DIFFERENT key re-parses +
+    // re-composes; the quoted title must survive verbatim (parseNote/composeNote round-trip).
+    await commit(createPlan({ title: "Q3: Launch", frontmatter: { projectId: "acme-corp" } }), vault, EMPTY_REV, "k1");
+    const base = computeRevisionId(new Map(Object.entries(vault.snapshot())));
+    const patchPlan: KnowledgeMutationPlan = {
+      ...validKnowledgeMutationPlan,
+      frontmatterUpdates: [{ path: "notes/proj.md", key: "status", value: "shipped" }],
+    };
+    const snap = await commit(patchPlan, vault, base, "k2");
+    const md = snap["notes/proj.md"]!;
+    expect(md).toContain('title: "Q3: Launch"'); // preserved, NOT '""Q3: Launch""'
+    expect(md).not.toContain('""');
+    expect(md).toContain("status: shipped");
+  });
+
+  it("serializes non-string values unchanged (numbers/booleans as plain YAML scalars)", async () => {
+    const vault = new MemoryVaultFs();
+    const snap = await commit(createPlan({ frontmatter: { count: 3, active: true } }), vault);
+    const md = snap["notes/proj.md"]!;
+    expect(md).toContain("count: 3");
+    expect(md).toContain("active: true");
   });
 });
 

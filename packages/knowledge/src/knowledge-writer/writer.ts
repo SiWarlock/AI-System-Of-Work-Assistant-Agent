@@ -379,7 +379,9 @@ function renderCreate(create: NoteCreate): string {
     fm.set(key, serializeScalar(value));
   }
   if (create.title !== undefined) {
-    fm.set("title", create.title);
+    // Route the title through the SAME YAML-safe serializer (it is model-authored — an unsafe title
+    // must not land as a raw frontmatter value; it formerly bypassed serialization).
+    fm.set("title", serializeScalar(create.title));
   }
   return composeNote(fm, create.body);
 }
@@ -425,9 +427,54 @@ function applyLink(content: string, link: LinkMutation): string {
   return composeNote(frontmatter, nextBody);
 }
 
-/** Minimal deterministic scalar serialization for frontmatter values. */
+/**
+ * YAML-safe frontmatter scalar serialization (§13.10a go-live gate 2 — the first untrusted→frontmatter
+ * exposure). A model/domain-authored STRING is emitted as a plain scalar ONLY when it is unambiguously
+ * safe; otherwise it is double-quoted + escaped so a real vault (Obsidian / gbrain ingest) cannot
+ * misparse a value that starts with a YAML indicator or carries a flow/comment ambiguity (`: `, ` #`,
+ * `[`, `#`, …). The writer's own parseNote/composeNote round-trip stays stable: parseNote reads a value
+ * verbatim and composeNote re-emits it verbatim, so a re-parsed already-quoted value is NEVER
+ * double-quoted (only a fresh set/patch value is re-serialized). Non-string values keep their compact
+ * JSON form (numbers/booleans/null are already valid YAML plain scalars).
+ */
 function serializeScalar(value: unknown): string {
-  return typeof value === "string" ? value : JSON.stringify(value);
+  if (typeof value !== "string") return JSON.stringify(value);
+  return needsYamlQuoting(value) ? yamlDoubleQuote(value) : value;
+}
+
+/** True when a string is NOT an unambiguously-safe YAML plain scalar (⇒ must be double-quoted). */
+function needsYamlQuoting(s: string): boolean {
+  if (s.length === 0) return true; // empty ⇒ must quote
+  if (s !== s.trim()) return true; // leading/trailing whitespace flips a plain scalar's meaning
+  // Safe plain = starts with a LETTER, then only word-chars + space + inert punctuation. Requiring a
+  // LETTER start (never a digit) is load-bearing: it forces EVERY digit-leading value — a number, an
+  // ISO date `2020-01-01`, hex `0x1F`, octal `0o17`, binary `0b101`, a version — down the quote path,
+  // so a real YAML parser (Obsidian / gbrain ingest, YAML 1.1) can never re-TYPE it. Any indicator /
+  // `: ` / ` #` / newline / control char also fails this and is quoted.
+  if (!/^[A-Za-z][\w ./-]*$/u.test(s)) return true;
+  // A letter-leading plain scalar YAML would TYPE as bool/null ⇒ quote to keep it a string.
+  if (/^(y|yes|n|no|true|false|on|off|null)$/iu.test(s)) return true;
+  return false;
+}
+
+/** Escape a string as a YAML double-quoted scalar (the always-safe quoting style). */
+function yamlDoubleQuote(s: string): string {
+  const escaped = s
+    .replace(/\\/gu, "\\\\")
+    .replace(/"/gu, '\\"')
+    .replace(/\n/gu, "\\n")
+    .replace(/\r/gu, "\\r")
+    .replace(/\t/gu, "\\t")
+    // Any REMAINING non-printable char (C0 minus the above, DEL, C1, U+2028/U+2029) → a \xXX / \uXXXX
+    // escape. A raw control char inside `"…"` is NOT `c-printable`, so a strict YAML parser would reject
+    // the whole frontmatter block — escaping keeps the note metadata readable.
+    .replace(new RegExp("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F-\\x9F\\u2028\\u2029]", "gu"), (c) => {
+      const code = c.charCodeAt(0);
+      return code <= 0xff
+        ? `\\x${code.toString(16).toUpperCase().padStart(2, "0")}`
+        : `\\u${code.toString(16).toUpperCase().padStart(4, "0")}`;
+    });
+  return `"${escaped}"`;
 }
 
 interface ParsedNote {
