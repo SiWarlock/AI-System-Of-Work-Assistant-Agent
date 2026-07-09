@@ -49,6 +49,7 @@ import {
   createClaudeAgentCopilotRunner,
   deriveCopilotContentTrust,
   COPILOT_PROPOSE_MCP_TOOL_NAME,
+  COPILOT_PROPOSE_KNOWLEDGE_MCP_TOOL_NAME,
   type CopilotAgentRunner,
   type CopilotPromptContext,
 } from "../../../src/api/procedures/copilotAgentSynthesis";
@@ -324,6 +325,33 @@ describe("buildCopilotAgentJob — the resolver is the ONLY funnel to a propose 
     });
     expect(job.toolPolicy.mode).toBe("read_only");
     expect(job.trustLevel).toBe("untrusted");
+  });
+});
+
+describe("resolveCopilotAgentCapability — §13.10a knowledge-propose (mutually exclusive with external propose)", () => {
+  it("trusted + knowledgeProposeEnabled ⇒ propose_knowledge", () => {
+    expect(resolveCopilotAgentCapability({ contentTrust: "trusted", proposeEnabled: false, knowledgeProposeEnabled: true })).toBe("propose_knowledge");
+  });
+  it("untrusted + knowledgeProposeEnabled ⇒ read_only (never granted on untrusted content)", () => {
+    expect(resolveCopilotAgentCapability({ contentTrust: "untrusted", proposeEnabled: false, knowledgeProposeEnabled: true })).toBe("read_only");
+  });
+  it("BOTH propose flags enabled ⇒ read_only (fail-closed mutual exclusion — never a silent write grant)", () => {
+    expect(resolveCopilotAgentCapability({ contentTrust: "trusted", proposeEnabled: true, knowledgeProposeEnabled: true })).toBe("read_only");
+  });
+});
+
+describe("buildCopilotAgentJob — the propose_knowledge capability (§13.10a semantic-write)", () => {
+  const job = buildCopilotAgentJob("personal-business", RUNTIME_ROUTE, { contentTrust: "trusted", proposeEnabled: false, knowledgeProposeEnabled: true });
+  it("is schema-valid, scoped_write, TRUSTED, and carries copilot.propose_knowledge (NOT propose_action)", () => {
+    expect(AgentJobSchema.safeParse(job).success).toBe(true);
+    expect(job.toolPolicy.mode).toBe("scoped_write");
+    expect(job.trustLevel).toBe("trusted");
+    const tools = [...job.toolPolicy.allowedTools].map(String);
+    expect(tools).toContain("copilot.propose_knowledge");
+    expect(tools).not.toContain("copilot.propose_action");
+  });
+  it("ADMITS through the C4 ING-7 gate (trusted may hold the scoped_write knowledge-propose policy)", () => {
+    expect(isOk(admitCopilotAgentJob(job))).toBe(true);
   });
 });
 
@@ -1262,5 +1290,79 @@ describe("buildCopilotDeps — an injected agentSynthesis factory swaps in the a
     const r = await deps.synthesis.synthesize("personal-business", "q?", ctx(), CLAUDE_ROUTE);
     expect(isOk(r)).toBe(true);
     expect(factoryCalls).toBe(0);
+  });
+});
+
+describe("createClaudeAgentCopilotRunner — §13.10a propose_knowledge grant (SEMANTIC-write)", () => {
+  const kJob = buildCopilotAgentJob("personal-business", RUNTIME_ROUTE, {
+    contentTrust: "trusted",
+    proposeEnabled: false,
+    knowledgeProposeEnabled: true,
+  });
+  const prompt: CopilotPromptContext = { question: "capture the acme status", context: ctx() };
+  const knowledgeDeps = {
+    knowledgeProposeSink: { record: async () => ok({ approvalRef: "a", planRef: "p", created: true }) } as never,
+    buildKnowledgeProposeMcpServer: ((h: unknown) => ({ type: "sdk", name: "copilot", instance: { h } })) as never,
+    knowledgeNoteExists: (async () => false) as never,
+    knowledgeSourceRef: { sourceId: "src-1" } as never,
+  };
+
+  it("grants mcp__copilot__propose_knowledge (SEED-ONLY: no gbrain read tools) for a served trusted knowledge-propose job", async () => {
+    const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => ok("tok"),
+      queryFn: cap.fn,
+      ...knowledgeDeps,
+    });
+    const r = await runner.run(kJob, prompt);
+    expect(isOk(r)).toBe(true);
+    const opts = cap.seen()?.options ?? {};
+    expect(opts["allowedTools"]).toContain(COPILOT_PROPOSE_KNOWLEDGE_MCP_TOOL_NAME);
+    // seed-only: a propose job holds NO gbrain read tool (the TOCTOU strip) and NOT the external propose tool.
+    expect(opts["allowedTools"]).not.toContain("mcp__gbrain__query");
+    expect(opts["allowedTools"]).not.toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
+    const servers = opts["mcpServers"] as Record<string, unknown>;
+    expect(servers["copilot"]).toBeDefined(); // the G3 server registered under the shared name
+  });
+
+  it("does NOT grant propose_knowledge when the knowledge deps are absent (fail-closed)", async () => {
+    const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => ok("tok"),
+      queryFn: cap.fn,
+    });
+    const r = await runner.run(kJob, prompt);
+    expect(isOk(r)).toBe(true);
+    const opts = cap.seen()?.options ?? {};
+    expect(opts["allowedTools"]).not.toContain(COPILOT_PROPOSE_KNOWLEDGE_MCP_TOOL_NAME);
+    // fail-closed: a propose-CAPABLE (trusted+scoped_write) job stays SEED-ONLY even without the grant deps —
+    // it does NOT fall back to holding gbrain read tools (the seed-only strip keys on capability, not the grant).
+    expect(opts["allowedTools"]).not.toContain("mcp__gbrain__query");
+  });
+
+  it("REJECTS (invalid_job) a job whose policy grants BOTH propose tools (mutual exclusion on the shared server)", async () => {
+    const bothJob = {
+      ...kJob,
+      toolPolicy: {
+        mode: "scoped_write" as const,
+        allowedTools: [toolId("copilot.propose_action"), toolId("copilot.propose_knowledge")],
+        deniedTools: [],
+        allowsMutating: true,
+      },
+    };
+    const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => ok("tok"),
+      queryFn: cap.fn,
+      ...knowledgeDeps,
+    });
+    const r = await runner.run(bothJob, prompt);
+    expect(isErr(r)).toBe(true); // never reaches the SDK — the shared "copilot" key can carry one propose tool
   });
 });

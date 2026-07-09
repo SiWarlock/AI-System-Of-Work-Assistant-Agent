@@ -35,6 +35,7 @@ import type {
   FailureVariantKind,
   ProviderRoute,
   Result,
+  SourceRef,
   ToolId,
   WorkflowId,
   WorkspaceId,
@@ -58,6 +59,7 @@ import type {
   CopilotVaultProxyHandler,
   CopilotSkillsProxyHandler,
   CopilotProposeToolHandler,
+  CopilotProposeKnowledgeToolHandler,
   McpServerConfig,
   RuntimeError,
   RuntimeErrorKind,
@@ -65,6 +67,7 @@ import type {
 import {
   admitJob,
   copilotAgentToolPolicy,
+  copilotKnowledgeProposeToolPolicy,
   copilotReadToolIds,
   copilotReadToolPolicy,
   copilotReadOnlyPolicyIsPure,
@@ -75,6 +78,10 @@ import type { CopilotWorkspaceScope } from "@sow/policy";
 import type { CandidateCopilotAnswer, CopilotSynthesisPort, RetrievedContext } from "./copilot";
 import { handleCopilotProposeToolCall } from "./copilotPropose";
 import type { CopilotProposeSink } from "./copilotPropose";
+// §13.10a G4b-2 — the SEMANTIC-write propose grant (mirror of the propose_action grant above).
+import { handleCopilotProposeKnowledgeToolCall } from "./copilotProposeKnowledgeTool";
+import type { CopilotNoteExistsProbe } from "./copilotProposeKnowledge";
+import type { CopilotKnowledgeProposeSink } from "./copilotProposeKnowledgeSink";
 import { handleCopilotGbrainToolCall } from "./copilotGbrainProxy";
 import type { CopilotGbrainToolExec } from "./copilotGbrainProxy";
 import { handleCopilotVaultReadCall } from "./copilotVaultRead";
@@ -220,29 +227,43 @@ export const DEFAULT_COPILOT_AGENT_MAX_COST_USD = 0.5;
 /** Whether the agent's consumed brain content is AFFIRMED trusted (owner-governed) or potentially untrusted. */
 export type CopilotContentTrust = "trusted" | "untrusted";
 
-/** The tool capability granted to the Copilot agent job. `propose` = may hold the write-proposing tool. */
-export type CopilotAgentCapability = "read_only" | "propose";
+/**
+ * The tool capability granted to the Copilot agent job. `propose` = may hold the EXTERNAL-write proposing tool
+ * (`copilot.propose_action`); `propose_knowledge` = may hold the SEMANTIC-write proposing tool
+ * (`copilot.propose_knowledge`, §13.10a). The two propose capabilities are MUTUALLY EXCLUSIVE (a single
+ * synthesis job holds at most one — the SDK MCP servers share the `copilot` name, so only one propose server
+ * registers).
+ */
+export type CopilotAgentCapability = "read_only" | "propose" | "propose_knowledge";
 
 /**
- * Resolve the agent's capability from the CONTENT trust + whether propose is enabled. FAIL-CLOSED: the
- * `propose` capability (scoped_write + the `copilot.propose_action` tool) is granted ONLY when the consumed
- * content is affirmed TRUSTED **and** propose is explicitly enabled — otherwise `read_only`. So a
- * prompt-injected untrusted document can never steer the agent into holding a write tool (safety rule 6). Pure.
+ * Resolve the agent's capability from the CONTENT trust + which propose is enabled. FAIL-CLOSED: a propose
+ * capability (scoped_write + a write-proposing tool) is granted ONLY when the consumed content is affirmed
+ * TRUSTED **and** that propose is explicitly enabled — otherwise `read_only`. So a prompt-injected untrusted
+ * document can never steer the agent into holding a write tool (safety rule 6). Pure.
+ *
+ * MUTUAL EXCLUSION: `proposeEnabled` (external) and `knowledgeProposeEnabled` (semantic) are exclusive — a job
+ * grants AT MOST ONE propose tool (the shared `copilot` MCP server carries one). If BOTH are enabled it is a
+ * misconfiguration and this fails closed to `read_only` — a config error must NEVER silently grant a write
+ * tool. Boot enables at most one; the runner grant also can register at most one propose server.
  *
  * ⚠ C5.2/C5.3 PRECONDITION (security-review MEDIUM, LOAD-BEARING — do not make propose callable until met):
- * a `propose` job STILL carries the gbrain READ tools, so it can tool-fetch MORE brain content mid-run beyond
- * the worker-retrieved seed. Therefore `contentTrust:"trusted"` is sound ONLY if the ENTIRE tool-reachable
- * content surface is trusted-provenance (KnowledgeWriter/owner-governed) — a STRICTLY STRONGER condition than
- * "the seed passages are trusted." It must be derived PER-CONTENT over that whole surface, NOT per-workspace
- * (an owner's brain routinely holds ingested untrusted notes) and NOT per-question. If ANY reachable passage
- * is non-KnowledgeWriter/untrusted-provenance, `contentTrust` MUST be `"untrusted"`. Enforce + eval this
- * before the propose tool is wired callable, or the ING-7 bypass the C4 review closed re-opens.
+ * a propose job STILL carries the gbrain READ tools in its POLICY, so `contentTrust:"trusted"` is sound ONLY if
+ * the ENTIRE tool-reachable content surface is trusted-provenance — derived PER-CONTENT (see
+ * `deriveCopilotContentTrust`), enforced by the runner's SEED-ONLY strip. If ANY reachable passage is
+ * untrusted-provenance, `contentTrust` MUST be `"untrusted"`, or the ING-7 bypass the C4 review closed re-opens.
  */
 export function resolveCopilotAgentCapability(params: {
   readonly contentTrust: CopilotContentTrust;
   readonly proposeEnabled: boolean;
+  readonly knowledgeProposeEnabled?: boolean;
 }): CopilotAgentCapability {
-  return params.contentTrust === "trusted" && params.proposeEnabled ? "propose" : "read_only";
+  if (params.contentTrust !== "trusted") return "read_only";
+  const knowledge = params.knowledgeProposeEnabled === true;
+  if (params.proposeEnabled && knowledge) return "read_only"; // both enabled ⇒ config error ⇒ fail closed
+  if (knowledge) return "propose_knowledge";
+  if (params.proposeEnabled) return "propose";
+  return "read_only";
 }
 
 /**
@@ -289,10 +310,24 @@ export function deriveCopilotContentTrust(context: RetrievedContext): CopilotCon
 export function buildCopilotAgentJob(
   workspaceId: string,
   runtimeRoute: ProviderRoute,
-  trust?: { readonly contentTrust: CopilotContentTrust; readonly proposeEnabled: boolean },
+  trust?: {
+    readonly contentTrust: CopilotContentTrust;
+    readonly proposeEnabled: boolean;
+    readonly knowledgeProposeEnabled?: boolean;
+  },
 ): AgentJob {
-  const propose =
-    (trust === undefined ? "read_only" : resolveCopilotAgentCapability(trust)) === "propose";
+  const capability: CopilotAgentCapability =
+    trust === undefined ? "read_only" : resolveCopilotAgentCapability(trust);
+  // The toolPolicy is the ONE funnel that gates canUseTool + ING-7 admission: external propose →
+  // copilot.propose_action; semantic propose → copilot.propose_knowledge; else read-only. Both propose
+  // policies are scoped_write + trusted (a trusted job may hold a mutating policy — C4 admits it).
+  const toolPolicy =
+    capability === "propose"
+      ? copilotAgentToolPolicy()
+      : capability === "propose_knowledge"
+        ? copilotKnowledgeProposeToolPolicy()
+        : copilotReadToolPolicy();
+  const trusted = capability !== "read_only";
   return {
     id: `job-copilot-agent-${workspaceId}` as AgentJobId,
     workflowRunId: `wf-copilot-agent-${workspaceId}` as WorkflowId,
@@ -300,11 +335,11 @@ export function buildCopilotAgentJob(
     capability: "copilot.answer" as Capability,
     contextRefs: [{ refKind: "source", ref: "ref:copilot" }],
     outputSchemaId: "sow:ui-safe-copilot-answer",
-    toolPolicy: propose ? copilotAgentToolPolicy() : copilotReadToolPolicy(),
+    toolPolicy,
     providerRoute: runtimeRoute,
     // Content-derived (NOT question-derived): a read-only agent treats its consumed content as untrusted;
     // only an affirmed-trusted, propose-capable job is `trusted`. C4's `admitCopilotAgentJob` is the backstop.
-    trustLevel: propose ? "trusted" : "untrusted",
+    trustLevel: trusted ? "trusted" : "untrusted",
     carriesRawContent: true,
     maxRuntimeSeconds: 300,
     maxCostUsd: DEFAULT_COPILOT_AGENT_MAX_COST_USD,
@@ -471,6 +506,12 @@ export interface CopilotAgentRunner {
  */
 export interface AgentSynthesisOpts {
   readonly proposeEnabled?: boolean;
+  /**
+   * §13.10a — mirrors the boot flag `copilotProposeKnowledge`. Grants the SEMANTIC-write propose tool on
+   * affirmed-trusted content. MUTUALLY EXCLUSIVE with `proposeEnabled` (both on ⇒ fail-closed read_only). OFF
+   * by default — the default boot path never grants semantic propose.
+   */
+  readonly knowledgeProposeEnabled?: boolean;
   readonly resolveContentTrust?: (context: RetrievedContext) => CopilotContentTrust;
 }
 
@@ -486,6 +527,7 @@ export function createAgentRuntimeCopilotSynthesis(
   opts?: AgentSynthesisOpts,
 ): CopilotSynthesisPort {
   const proposeEnabled = opts?.proposeEnabled ?? false;
+  const knowledgeProposeEnabled = opts?.knowledgeProposeEnabled ?? false;
   const resolveContentTrust = opts?.resolveContentTrust ?? deriveCopilotContentTrust;
   return {
     synthesize: async (
@@ -498,7 +540,7 @@ export function createAgentRuntimeCopilotSynthesis(
       if (!isOk(runtimeRoute)) return runtimeRoute;
       // Content-derived capability (C5.1/C5.3): a propose job is granted ONLY on affirmed-trusted content.
       const contentTrust = resolveContentTrust(context);
-      const job = buildCopilotAgentJob(workspaceId, runtimeRoute.value, { contentTrust, proposeEnabled });
+      const job = buildCopilotAgentJob(workspaceId, runtimeRoute.value, { contentTrust, proposeEnabled, knowledgeProposeEnabled });
       // ING-7 admission (C4) BEFORE the runner — fail closed on an untrusted+mutating or impure-read_only job.
       const admitted = admitCopilotAgentJob(job);
       if (!isOk(admitted)) return admitted;
@@ -543,6 +585,20 @@ export interface ClaudeAgentCopilotRunnerDeps {
    * out of this pure module + unit-testable). Present with `proposeSink` ⇒ propose can be granted.
    */
   readonly buildProposeMcpServer?: (handler: CopilotProposeToolHandler) => McpServerConfig;
+  /**
+   * §13.10a G4b-2 — the SEMANTIC-write propose deps (mirror of the propose_action set above). ALL FOUR present
+   * ⇒ a SERVED trusted+scoped_write `propose_knowledge`-policy job may hold `copilot.propose_knowledge`; any
+   * absent ⇒ never granted (fail-closed). MUTUALLY EXCLUSIVE with the propose_action grant — both share the
+   * `copilot` MCP server name, so a job whose policy grants BOTH is rejected as an invalid_job (see `run`).
+   *   - `knowledgeProposeSink`     — boot injects `createApprovalsKnowledgeProposeSink` (records the PENDING §9.8 card).
+   *   - `buildKnowledgeProposeMcpServer` — boot injects `createCopilotProposeKnowledgeMcpServer` (@sow/providers).
+   *   - `knowledgeNoteExists`      — the WS-8 existence probe over the vault (create-vs-patch at call time).
+   *   - `knowledgeSourceRef`       — the evidence the derived plan cites (REQ-F-006).
+   */
+  readonly knowledgeProposeSink?: CopilotKnowledgeProposeSink;
+  readonly buildKnowledgeProposeMcpServer?: (handler: CopilotProposeKnowledgeToolHandler) => McpServerConfig;
+  readonly knowledgeNoteExists?: CopilotNoteExistsProbe;
+  readonly knowledgeSourceRef?: SourceRef;
   /**
    * OPTIONAL (SC8, §13.10 gate a) the served workspace's WS-8 scope for the in-process gbrain PROXY. Present
    * (WITH `gbrainProxyExec` + `buildGbrainProxyMcpServer`) ⇒ a SERVED read job reaches gbrain ONLY through the
@@ -594,6 +650,13 @@ export interface ClaudeAgentCopilotRunnerDeps {
 /** The SDK MCP tool name the propose tool is surfaced as (`mcp__copilot__propose_action`). */
 export const COPILOT_PROPOSE_MCP_TOOL_NAME = copilotToolToMcpName(toolId("copilot.propose_action"));
 
+/** The SDK MCP tool name the SEMANTIC-write propose tool is surfaced as (`mcp__copilot__propose_knowledge`). */
+export const COPILOT_PROPOSE_KNOWLEDGE_MCP_TOOL_NAME = copilotToolToMcpName(toolId("copilot.propose_knowledge"));
+
+/** The catalog tool ids the runner uses to tell a propose_action job from a propose_knowledge job (its policy grants exactly one). */
+const PROPOSE_ACTION_TOOL_ID = toolId("copilot.propose_action");
+const PROPOSE_KNOWLEDGE_TOOL_ID = toolId("copilot.propose_knowledge");
+
 /**
  * The concrete `CopilotAgentRunner`. Which workspaces get the gbrain read tool depends on the mode (parity with
  * the retrieval seam — single-served `createGbrainSubprocessRetrieval` vs multi-served
@@ -644,26 +707,42 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
       // the in-process copilot propose server (a propose job) — see the SEED-ONLY rule below.
       const mcpServers: Record<string, McpServerConfig> = {};
       const toolNames: string[] = [];
-      // C5.3 — PROPOSE GRANT (defense-in-depth, ALL required): the workspace is SERVED, the job is
-      // content-derived TRUSTED (gate on `trustLevel` too — not just scoped_write mode — so a mode/trust drift
-      // can't grant it) with a scoped_write policy, AND both the sink + server factory are injected. With the
-      // real `deriveCopilotContentTrust` (C5.4) this is only true when EVERY seed source is KnowledgeWriter-
-      // provenance; today's un-provenanced gbrain hits ⇒ untrusted ⇒ this is never true on a live ask.
-      // NOTE (multi-served): `served` now means "any REGISTERED workspace" (not just the boot-fixed one), so if
-      // `trustLevel` ever flips true at the C5.4b go-live gate the propose surface spans every registered
-      // workspace — each writing to ITS OWN server-bound approvals inbox (§9.8 scoping). Inert today (untrusted).
-      const proposeGranted =
-        served &&
-        job.trustLevel === "trusted" &&
-        job.toolPolicy.mode === "scoped_write" &&
+      // PROPOSE GRANT (defense-in-depth, ALL required): the workspace is SERVED, the job is content-derived
+      // TRUSTED (gate on `trustLevel` too — not just scoped_write mode — so a mode/trust drift can't grant it)
+      // with a scoped_write policy, AND the matching sink + server factory (+ probe/sourceRef for knowledge)
+      // are injected. With the real `deriveCopilotContentTrust` (C5.4) this is only true when EVERY seed source
+      // is KnowledgeWriter-provenance; today's un-provenanced gbrain hits ⇒ untrusted ⇒ never true on a live ask.
+      // §13.10a — the WHICH propose is derived from the JOB'S POLICY (buildCopilotAgentJob picks exactly one
+      // propose tool per the mutually-exclusive capability), NOT from which deps are wired — so a knowledge-
+      // propose job can never trigger the external propose_action grant (or vice-versa).
+      const grantsProposeAction = job.toolPolicy.allowedTools.includes(PROPOSE_ACTION_TOOL_ID);
+      const grantsProposeKnowledge = job.toolPolicy.allowedTools.includes(PROPOSE_KNOWLEDGE_TOOL_ID);
+      // MUTUAL EXCLUSION (the shared `copilot` MCP server carries ONE propose tool): a job whose policy grants
+      // BOTH is a misconfiguration → invalid_job (fail-closed). A well-formed job grants at most one.
+      if (grantsProposeAction && grantsProposeKnowledge) {
+        return err(runtimeError("invalid_job", "job grants both propose tools", { retryable: false }));
+      }
+      const trustedScopedWrite = served && job.trustLevel === "trusted" && job.toolPolicy.mode === "scoped_write";
+      const proposeActionGranted =
+        trustedScopedWrite &&
+        grantsProposeAction &&
         deps.proposeSink !== undefined &&
         deps.buildProposeMcpServer !== undefined;
-      // C5.4 — SEED-ONLY PROPOSE SURFACE: a propose job gets NO gbrain read tools. Its tool-reachable content
-      // surface is exactly the pre-verified seed (which `deriveCopilotContentTrust` already proved all
-      // KnowledgeWriter), so it cannot fetch more/untrusted content mid-run — closing the live-read TOCTOU that
-      // would otherwise make a build-time trust verdict unsound. Only a NON-propose served job reads gbrain
-      // (WS-8: only the served workspace; a non-served workspace runs tool-less).
-      if (served && !proposeGranted) {
+      const proposeKnowledgeGranted =
+        trustedScopedWrite &&
+        grantsProposeKnowledge &&
+        deps.knowledgeProposeSink !== undefined &&
+        deps.buildKnowledgeProposeMcpServer !== undefined &&
+        deps.knowledgeNoteExists !== undefined &&
+        deps.knowledgeSourceRef !== undefined;
+      // C5.4 — SEED-ONLY PROPOSE SURFACE: a propose-CAPABLE job (trusted + scoped_write) gets NO gbrain read
+      // tools. Its tool-reachable content surface is exactly the pre-verified seed (which
+      // `deriveCopilotContentTrust` already proved all KnowledgeWriter), so it cannot fetch more/untrusted
+      // content mid-run — closing the live-read TOCTOU that would make a build-time trust verdict unsound. This
+      // keys on `trustedScopedWrite` (propose-CAPABLE), NOT on the grant firing: if the propose deps are absent
+      // the job stays seed-only + tool-less (fail-closed) rather than falling back to holding read tools. Only a
+      // NON-propose served job reads gbrain (WS-8: only the served workspace; a non-served workspace is tool-less).
+      if (served && !trustedScopedWrite) {
         // Multi-served: the per-ask scope (bound to the ASKED workspace) takes precedence; single-served: the
         // fixed `gbrainProxyScope`. Under the resolver path `served` already implies `perAskScope !== undefined`.
         const proxyScope = perAskScope ?? deps.gbrainProxyScope;
@@ -727,13 +806,28 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
           toolNames.push(...allowedToolNames);
         }
       }
-      if (proposeGranted) {
-        const sink = deps.proposeSink; // narrowed by proposeGranted
+      // EXTERNAL-write propose (propose_action). Keyed on `proposeActionGranted` (narrows the external deps).
+      if (proposeActionGranted) {
+        const sink = deps.proposeSink; // narrowed by proposeActionGranted
         const workspaceId = job.workspaceId; // SERVER-BOUND (WS-4)
         const handler: CopilotProposeToolHandler = (args: unknown) =>
           handleCopilotProposeToolCall(args, { workspaceId, sink });
         mcpServers[COPILOT_MCP_SERVER_NAME] = deps.buildProposeMcpServer(handler);
         toolNames.push(COPILOT_PROPOSE_MCP_TOOL_NAME);
+      }
+      // §13.10a — SEMANTIC-write propose (propose_knowledge). Mutually exclusive with the block above (a job's
+      // policy grants exactly one), so this registers under the SAME `copilot` server key without collision.
+      // The handler is closed over the SERVER-BOUND workspaceId (WS-4 — never a model field) + sourceRef + the
+      // WS-8 note-existence probe (create-vs-patch resolved at call time) + the §9.8 knowledge sink.
+      if (proposeKnowledgeGranted) {
+        const sink = deps.knowledgeProposeSink; // narrowed by proposeKnowledgeGranted
+        const noteExists = deps.knowledgeNoteExists;
+        const sourceRef = deps.knowledgeSourceRef;
+        const workspaceId = job.workspaceId; // SERVER-BOUND (WS-4)
+        const handler: CopilotProposeKnowledgeToolHandler = (args: unknown) =>
+          handleCopilotProposeKnowledgeToolCall(args, { workspaceId, sourceRef, noteExists, sink });
+        mcpServers[COPILOT_MCP_SERVER_NAME] = deps.buildKnowledgeProposeMcpServer(handler);
+        toolNames.push(COPILOT_PROPOSE_KNOWLEDGE_MCP_TOOL_NAME);
       }
       const hasServers = Object.keys(mcpServers).length > 0;
       const transport = createClaudeAgentSdkTransport({
