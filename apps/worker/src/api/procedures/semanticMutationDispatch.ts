@@ -48,7 +48,7 @@
 // behind a boot flag) lands with Slice G's runner + is GATED on the §13.10a go-live gates
 // (see the notes below). This slice is the pure, unit-tested executor.
 import { ok, err, isOk } from "@sow/contracts";
-import type { Approval, KnowledgeMutationPlan, Result, FailureVariant } from "@sow/contracts";
+import type { Approval, KnowledgeMutationPlan, Result, FailureVariant, WorkspaceId } from "@sow/contracts";
 import { KnowledgeMutationPlanSchema } from "@sow/contracts";
 import { failure } from "@sow/contracts";
 import type { DbError, PendingKnowledgeMutation, PendingKnowledgeMutationRepository } from "@sow/db";
@@ -70,9 +70,30 @@ import type { DispatchApprovalFn } from "./approvalCommands";
 export interface SemanticMutationDispatchDeps {
   readonly pendingKmp: PendingKnowledgeMutationRepository;
   readonly commit: CommitKnowledgePort;
+  /**
+   * §13.10a gate 1 (slug-collision) — read the target note's frontmatter `projectId`, WS-8-scoped to the
+   * given workspace. Returns `undefined` when the note is absent or carries no `projectId`. Used to verify
+   * a copilot-propose NotePatch hits the RIGHT project's note (`safeNoteSlug` is lossy). Never throws —
+   * a read fault is a typed `FailureVariant`.
+   */
+  readonly readNoteProjectId: NoteProjectIdReader;
   /** Injected clock (ISO-8601) — the terminal-transition instant stamped on the settled row. */
   readonly now: () => string;
 }
+
+/**
+ * Reads a note's frontmatter `projectId` (WS-8-scoped). `undefined` ⇒ note absent OR no `projectId` key.
+ *
+ * ⚠ CONTRACT (the concrete impl MUST honor — the gate-1 comparison is raw-string equality): return the
+ * UNESCAPED RAW scalar — the inverse of the KnowledgeWriter's frontmatter `serializeScalar`, which quotes
+ * + escapes a value that is not a safe plain scalar (§13.10a gate 2). A reader that returns the QUOTED
+ * on-disk form (e.g. `"2024-x"` for raw `2024-x`) would false-REJECT every legitimate re-proposal of a
+ * project whose id isn't a safe plain scalar. Never throws — a read fault is a typed `FailureVariant`.
+ */
+export type NoteProjectIdReader = (
+  path: string,
+  workspaceId: WorkspaceId,
+) => Promise<Result<string | undefined, FailureVariant>>;
 
 /** Redaction-safe rejection: a stable cause code + static message; never a raw cause. */
 function reject(kind: FailureVariant["kind"], code: string, message: string): FailureVariant {
@@ -219,14 +240,36 @@ export function createSemanticMutationDispatch(deps: SemanticMutationDispatchDep
       return err(reject("validation_rejected", "SEMANTIC_DISPATCH_PLAN_WORKSPACE_MISMATCH", "semantic dispatch: validated plan workspace mismatch"));
     }
 
-    // ⚠ GO-LIVE GATE (slug-collision, §13.10a residual #1): for a NotePatch, verify the EXISTING
-    // note's frontmatter `projectId` === the proposal's projectId before applying — `safeNoteSlug`
-    // is lossy, so two distinct raw projectIds can collide onto one note path and a patch could
-    // hit the WRONG project's note. Not enforceable here yet: the KMP's NotePatch carries no
-    // projectId, so the executor has no reference to compare (Slice B stamps the raw projectId
-    // only into the CREATE frontmatter). Bounded TODAY by the structural human gate (the owner
-    // approves the card). Closing it needs a Slice-B/contract follow-up to carry the intended
-    // projectId to the executor + a note-frontmatter reader dep. Flagged as a go-live precondition.
+    // (7b) GATE 1 (slug-collision, §13.10a residual #1): every write TARGET must belong to the intended
+    // project. `safeNoteSlug` is lossy, so distinct raw projectIds can collide onto one note path — a
+    // proposal for project B must never touch project A's note. For a PATCH: the existing note's
+    // frontmatter `projectId` MUST equal the plan's stamped `expectedProjectId` (Slice B). For a CREATE:
+    // the target path MUST NOT already exist — `renderCreate` OVERWRITES the whole file, so a create over
+    // a note that appeared after derive (same- OR cross-project) is a data-loss write. Both fail CLOSED
+    // (absent expectedProjectId, read fault, a patch mismatch, or an occupied create path).
+    // ⚠ TOCTOU residual (go-live hardening): this reads the target here; KnowledgeWriter re-reads at
+    //    commit. The window is one synchronous dispatch (no human gate between) and the compare-revision
+    //    precondition guards a concurrent WHOLE-vault change, but does not bind THIS read to the writer's.
+    if (plan.patches.length > 0 || plan.creates.length > 0) {
+      const expected = plan.expectedProjectId;
+      if (expected === undefined) {
+        return err(reject("validation_rejected", "SEMANTIC_DISPATCH_MISSING_EXPECTED_PROJECT_ID", "semantic dispatch: propose plan missing expectedProjectId"));
+      }
+      for (const patch of plan.patches) {
+        const target = await deps.readNoteProjectId(patch.path, plan.workspaceId);
+        if (!isOk(target)) return err(target.error); // read fault → fail-closed (already a redaction-safe variant)
+        if (target.value !== expected) {
+          return err(reject("validation_rejected", "SEMANTIC_DISPATCH_PATCH_TARGET_MISMATCH", "semantic dispatch: patch target note does not belong to the intended project"));
+        }
+      }
+      for (const create of plan.creates) {
+        const target = await deps.readNoteProjectId(create.path, plan.workspaceId);
+        if (!isOk(target)) return err(target.error);
+        if (target.value !== undefined) {
+          return err(reject("validation_rejected", "SEMANTIC_DISPATCH_CREATE_TARGET_EXISTS", "semantic dispatch: create target note already exists (would overwrite)"));
+        }
+      }
+    }
 
     // (8) Commit through KnowledgeWriter (idempotent by the plan's idempotencyKey; never throws).
     const committed = await deps.commit.commit(plan);

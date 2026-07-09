@@ -43,6 +43,9 @@ describe("deriveCopilotProjectKnowledgePlan — happy path (first proposal → N
     expect(r.value.requiresApproval).toBe(true);
     expect(r.value.confidence).toBe(COPILOT_PROPOSE_KNOWLEDGE_CONFIDENCE);
     expect(r.value.confidence).toBeLessThan(1); // a proposal is NOT a deterministic fact
+    // §13.10a gate 1 — the intended RAW projectId is stamped for the executor's patch-target check,
+    // and equals the create frontmatter's projectId (they must agree so the check is meaningful).
+    expect(r.value.expectedProjectId).toBe("acme-api");
   });
 
   it("WS-2/WS-4: workspaceId is the SERVER-BOUND workspace; REQ-F-006: cites the passed sourceRef", () => {
@@ -89,6 +92,9 @@ describe("deriveCopilotProjectKnowledgePlan — re-proposal (noteExists → regi
     expect(p.newBody).not.toContain("<!-- kw:region:project-status -->");
     expect(p.newBody).toContain("**Proposed lifecycle:** active");
     expect(p.newBody).not.toMatch(/\d+\s*%/);
+    // §13.10a gate 1 — a PATCH plan MUST carry expectedProjectId (the executor's slug-collision guard
+    // reads the target note's frontmatter projectId and rejects a mismatch before applying the patch).
+    expect(r.value.expectedProjectId).toBe("acme-api");
   });
 
   it("byte-idempotent: the re-propose patch newBody === the create note's region INNER (same intent)", () => {

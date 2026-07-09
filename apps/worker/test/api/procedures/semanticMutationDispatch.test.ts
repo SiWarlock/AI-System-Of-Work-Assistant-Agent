@@ -4,8 +4,8 @@
 // a direct/auto write (safety rules 1+2). The enforced preconditions (fetch-by-planRef,
 // idempotency, FG-1 WS-8, FG-2 TOCTOU, candidate-data gate) are each pinned below.
 import { describe, it, expect } from "vitest";
-import { ok, err, isOk } from "@sow/contracts";
-import type { Approval, Result } from "@sow/contracts";
+import { ok, err, isOk, failure } from "@sow/contracts";
+import type { Approval, FailureVariant, Result } from "@sow/contracts";
 import type {
   DbError,
   DbResult,
@@ -21,6 +21,7 @@ import {
   createSemanticMutationDispatch,
   createApprovalDispatchRouter,
   type SemanticMutationDispatchDeps,
+  type NoteProjectIdReader,
 } from "../../../src/api/procedures/semanticMutationDispatch";
 import type { DispatchApprovalFn } from "../../../src/api/procedures/approvalCommands";
 
@@ -41,6 +42,8 @@ const validPlan: Record<string, unknown> = {
   confidence: 0.5,
   requiresApproval: true,
   provenanceOrigin: "copilot_propose",
+  // §13.10a gate 1 — a copilot-propose plan carries the intended projectId (matches the create frontmatter).
+  expectedProjectId: "acme",
 };
 /** The canonical, replay-stable hash the sink wrote onto BOTH the row + the Approval. */
 const HASH = payloadHash(validPlan);
@@ -126,16 +129,30 @@ function makeDispatch(
   opts: {
     kmp?: { getError?: DbError; updateError?: DbError };
     commit?: { failure?: KnowledgeCommitFailure; replayed?: boolean };
+    /** The projectId the frontmatter reader returns for any target (undefined ⇒ note/projectId absent). */
+    targetProjectId?: string;
+    /** Per-path projectId overrides (for multi-target plans); falls back to targetProjectId. */
+    targetByPath?: Record<string, string | undefined>;
+    /** A read fault the frontmatter reader returns instead (fail-closed path). */
+    readError?: FailureVariant;
   } = {},
 ): {
   dispatch: DispatchApprovalFn;
   kmp: ReturnType<typeof fakePendingKmp>;
   commit: ReturnType<typeof fakeCommit>;
+  readCalls: { path: string; workspaceId: string }[];
 } {
   const kmp = fakePendingKmp(seed, opts.kmp);
   const commit = fakeCommit(opts.commit);
-  const deps: SemanticMutationDispatchDeps = { pendingKmp: kmp.repo, commit: commit.port, now: () => NOW };
-  return { dispatch: createSemanticMutationDispatch(deps), kmp, commit };
+  const readCalls: { path: string; workspaceId: string }[] = [];
+  const readNoteProjectId: NoteProjectIdReader = (path, workspaceId) => {
+    readCalls.push({ path, workspaceId: String(workspaceId) });
+    if (opts.readError !== undefined) return Promise.resolve(err(opts.readError));
+    const v = opts.targetByPath !== undefined ? opts.targetByPath[path] : opts.targetProjectId;
+    return Promise.resolve(ok(v));
+  };
+  const deps: SemanticMutationDispatchDeps = { pendingKmp: kmp.repo, commit: commit.port, readNoteProjectId, now: () => NOW };
+  return { dispatch: createSemanticMutationDispatch(deps), kmp, commit, readCalls };
 }
 
 const assertErr = <T,>(r: Result<T, { kind: string; cause?: { code: string } }>): { kind: string; cause?: { code: string } } => {
@@ -306,6 +323,108 @@ describe("createSemanticMutationDispatch — commit failure + non-approved statu
     expect(isOk(r)).toBe(true);
     expect(commit.calls).toHaveLength(0);
     expect(kmp.store.get("plan-f-1")?.status).toBe("pending");
+  });
+});
+
+// ── gate 1: slug-collision patch-target verification ───────────────────────────
+
+describe("createSemanticMutationDispatch — gate 1 (slug-collision) patch-target verification", () => {
+  const PATCH_PATH = "projects/personal-business/acme.md";
+  const patchPlan = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    planId: "plan-f-1",
+    workspaceId: "personal-business",
+    sourceRefs: [{ sourceId: "src-1" }],
+    creates: [],
+    patches: [{ path: PATCH_PATH, regionId: "kw:project-status", newBody: "status prose" }],
+    linkMutations: [],
+    frontmatterUpdates: [],
+    externalActionProposals: [],
+    confidence: 0.5,
+    requiresApproval: true,
+    provenanceOrigin: "copilot_propose",
+    expectedProjectId: "acme",
+    ...over,
+  });
+  const seedFor = (plan: Record<string, unknown>): PendingKnowledgeMutation => mkRow({ plan, payloadHash: payloadHash(plan) });
+  const apprFor = (plan: Record<string, unknown>): Approval => mkApproval({ payloadHash: payloadHash(plan) });
+
+  it("commits a patch when the target note's projectId MATCHES expectedProjectId (WS-8-scoped read)", async () => {
+    const plan = patchPlan();
+    const { dispatch, commit, kmp, readCalls } = makeDispatch(seedFor(plan), { targetProjectId: "acme" });
+    const r = await dispatch(apprFor(plan));
+    expect(isOk(r)).toBe(true);
+    expect(commit.calls).toHaveLength(1);
+    expect(kmp.store.get("plan-f-1")?.status).toBe("committed");
+    // the reader was consulted for the patch target, scoped to the plan's workspace.
+    expect(readCalls).toEqual([{ path: PATCH_PATH, workspaceId: "personal-business" }]);
+  });
+
+  it("REJECTS a patch whose target note belongs to a DIFFERENT project (slug-collision) — never commits", async () => {
+    const plan = patchPlan();
+    const { dispatch, commit, kmp } = makeDispatch(seedFor(plan), { targetProjectId: "unrelated-project" });
+    const r = await dispatch(apprFor(plan));
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_PATCH_TARGET_MISMATCH");
+    expect(commit.calls).toHaveLength(0);
+    expect(kmp.store.get("plan-f-1")?.status).toBe("pending");
+  });
+
+  it("REJECTS a patch whose target note has NO projectId frontmatter (unattributed) — fail-closed", async () => {
+    const plan = patchPlan();
+    const { dispatch, commit } = makeDispatch(seedFor(plan), { targetProjectId: undefined });
+    const r = await dispatch(apprFor(plan));
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_PATCH_TARGET_MISMATCH");
+    expect(commit.calls).toHaveLength(0);
+  });
+
+  it("fail-closed on a frontmatter read fault (never commits on an unverifiable target)", async () => {
+    const plan = patchPlan();
+    const readError = failure("degraded_unavailable", "vault read failed", { cause: { code: "VAULT_READ_FAULT" } });
+    const { dispatch, commit } = makeDispatch(seedFor(plan), { readError });
+    const r = await dispatch(apprFor(plan));
+    expect(assertErr(r).cause?.code).toBe("VAULT_READ_FAULT");
+    expect(commit.calls).toHaveLength(0);
+  });
+
+  it("REJECTS a patch plan missing expectedProjectId (no verification key ⇒ unsafe to patch)", async () => {
+    const plan = patchPlan();
+    delete plan["expectedProjectId"]; // OMIT (not undefined) so the stored-blob hash round-trips cleanly
+    const { dispatch, commit, readCalls } = makeDispatch(seedFor(plan), { targetProjectId: "acme" });
+    const r = await dispatch(apprFor(plan));
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_MISSING_EXPECTED_PROJECT_ID");
+    expect(commit.calls).toHaveLength(0);
+    expect(readCalls).toHaveLength(0); // short-circuits before any read
+  });
+
+  it("checks EVERY patch — a LATER patch targeting a foreign note rejects the whole commit", async () => {
+    const OTHER = "projects/personal-business/other.md";
+    const plan = patchPlan({
+      patches: [
+        { path: PATCH_PATH, regionId: "kw:project-status", newBody: "a" },
+        { path: OTHER, regionId: "kw:project-status", newBody: "b" },
+      ],
+    });
+    const { dispatch, commit } = makeDispatch(seedFor(plan), {
+      targetByPath: { [PATCH_PATH]: "acme", [OTHER]: "unrelated" },
+    });
+    const r = await dispatch(apprFor(plan));
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_PATCH_TARGET_MISMATCH");
+    expect(commit.calls).toHaveLength(0);
+  });
+
+  it("a CREATE whose target path is free commits (and the executor verified the path is empty)", async () => {
+    // validPlan is a single create at Projects/acme.md; targetProjectId undefined ⇒ path is free.
+    const { dispatch, commit, readCalls } = makeDispatch(mkRow());
+    const r = await dispatch(mkApproval());
+    expect(isOk(r)).toBe(true);
+    expect(commit.calls).toHaveLength(1);
+    expect(readCalls).toEqual([{ path: "Projects/acme.md", workspaceId: "personal-business" }]);
+  });
+
+  it("REJECTS a create whose target path ALREADY EXISTS (renderCreate would overwrite a colliding note)", async () => {
+    const { dispatch, commit } = makeDispatch(mkRow(), { targetProjectId: "some-existing-project" });
+    const r = await dispatch(mkApproval());
+    expect(assertErr(r).cause?.code).toBe("SEMANTIC_DISPATCH_CREATE_TARGET_EXISTS");
+    expect(commit.calls).toHaveLength(0);
   });
 });
 

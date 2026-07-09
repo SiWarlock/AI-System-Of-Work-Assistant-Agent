@@ -236,6 +236,11 @@ export function deriveCopilotProjectKnowledgePlan(
     confidence: COPILOT_PROPOSE_KNOWLEDGE_CONFIDENCE,
     requiresApproval: true,
     provenanceOrigin: "copilot_propose",
+    // §13.10a gate 1 (slug-collision) — stamp the intended RAW projectId (the SAME value written into the
+    // create frontmatter above). On a re-proposal PATCH the on-approval executor compares the target
+    // note's frontmatter `projectId` against this and rejects a mismatch, so a proposal for project B can
+    // never region-patch project A's slug-colliding note. Present on create too (informational/consistent).
+    expectedProjectId: projectId,
   });
   if (!parsed.success) {
     return err(
