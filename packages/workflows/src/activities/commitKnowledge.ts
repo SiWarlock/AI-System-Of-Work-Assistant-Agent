@@ -56,7 +56,17 @@ export interface CommitActivityDeps {
   readonly actor: string;
   readonly sourceEventRef: string;
   readonly workflowRunRef: WorkflowRunRef;
-  readonly expectedBaseRevision: RevisionId;
+  /**
+   * The expected base revision for the writer's compare-revision precondition. A FIXED `RevisionId` (the
+   * proof-spine path — the plan is built + committed inside one run) OR a RESOLVER called PER-COMMIT.
+   *
+   * The resolver is for COMMIT-ON-APPROVAL (§13.10a): a Copilot semantic plan is approved long after propose,
+   * so a fixed base spuriously `write_conflict`s on any unrelated vault change between the two. Passing
+   * `() => readVaultHeadRevision(vault)` resolves the LIVE head at commit time — the whole-vault compare then
+   * passes and TARGET integrity is delegated to the caller's own per-target checks (the executor's gate 1).
+   * The resolver runs inside the §16 boundary: a throw folds to `commit_failed` (never crosses).
+   */
+  readonly expectedBaseRevision: RevisionId | (() => Promise<RevisionId>);
   readonly deriveIdempotencyKey: (plan: KnowledgeMutationPlan) => string;
 }
 
@@ -88,16 +98,42 @@ export function createCommitActivity(deps: CommitActivityDeps): CommitKnowledgeP
     async commit(
       plan: KnowledgeMutationPlan,
     ): Promise<Result<KnowledgeCommitSuccess, KnowledgeCommitFailure>> {
+      // Resolve the expected base revision: a fixed RevisionId, or a per-commit resolver (commit-on-approval
+      // — see the deps doc). The resolver reads the vault, so it runs inside the §16 boundary — a throw folds
+      // to `commit_failed` (retryable), never crosses. A resolver returning the live head makes the writer's
+      // whole-vault compare pass; per-target integrity is the caller's (the executor's gate 1).
+      let expectedBaseRevision: RevisionId;
+      try {
+        expectedBaseRevision =
+          typeof deps.expectedBaseRevision === "function"
+            ? await deps.expectedBaseRevision()
+            : deps.expectedBaseRevision;
+      } catch (cause) {
+        return err({
+          code: "commit_failed",
+          message: "KnowledgeWriter commit: base-revision resolution failed",
+          cause,
+        });
+      }
       const command: KnowledgeWriteCommand = {
         // `plan` is candidate data to the writer — it re-runs the composed gate.
         plan,
-        expectedBaseRevision: deps.expectedBaseRevision,
+        expectedBaseRevision,
         actor: deps.actor,
         sourceEventRef: deps.sourceEventRef,
         workflowRunRef: deps.workflowRunRef,
         idempotencyKey: deps.deriveIdempotencyKey(plan),
       };
-      const result = await deps.applyPlan(command, deps.deps);
+      // §16: `applyPlan` returns a typed Result, but its INJECTED substrate (revision store / audit repo /
+      // vault) could THROW on an infra fault (a dropped connection). On the synchronous approval-dispatch
+      // boundary that throw would escape across the DispatchApprovalFn → tRPC seam, so fold it to
+      // `commit_failed` (retryable) — parity with the resolver catch above. Never throws.
+      let result: Awaited<ReturnType<ApplyPlanFn>>;
+      try {
+        result = await deps.applyPlan(command, deps.deps);
+      } catch (cause) {
+        return err({ code: "commit_failed", message: "KnowledgeWriter commit: apply threw", cause });
+      }
       if (!result.ok) {
         return err({
           code: mapWriteFailure(result.error),
