@@ -17,6 +17,9 @@ export * from "./markdown-vault/atomic-write";
 export * from "./markdown-vault/sections";
 
 // ── knowledge-writer: the provably-sole writer + its ordered commit gates ───────
+// The frontmatter format codec (write-side serialize + its read-side inverse) — `readFrontmatterField`
+// is the deterministic core of gate 1's `readNoteProjectId`. parseNote/composeNote stay writer-internal.
+export { serializeScalar, deserializeScalar, readFrontmatterField } from "./knowledge-writer/frontmatter";
 export * from "./knowledge-writer/revision";
 export * from "./knowledge-writer/ownership";
 export * from "./knowledge-writer/secret-scan";
