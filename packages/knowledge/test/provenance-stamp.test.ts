@@ -1,8 +1,9 @@
 // spec(§6) — SignedProvenanceStamper: HMAC(workspaceId, factIdentity, originPath,
-// mdContentSha, kwRevision) minted via an INJECTED SecretsPort key, with
-// serve-time content rebinding (a copied/forged stamp fails verify). Enforces
-// safety rule 1 (writerActor const) + safety rule 7 (key unreachable, never
-// logged/leaked). Deterministic → strict TDD; typed Results, never throws.
+// mdContentSha) minted via an INJECTED SecretsPort key (v2 — the volatile whole-vault
+// kwRevision is NOT bound), with serve-time content rebinding (a copied/forged stamp
+// fails verify). Enforces safety rule 1 (writerActor const) + safety rule 7 (key
+// unreachable, never logged/leaked). Deterministic → strict TDD; typed Results, never
+// throws. Also covers G1c frontmatter storage (serialize → note → readStampField).
 import { describe, it, expect } from "vitest";
 import { createHmac } from "node:crypto";
 import type {
@@ -16,6 +17,8 @@ import { SignedProvenanceStampSchema } from "@sow/contracts";
 import {
   stampProvenance,
   verifyProvenanceStamp,
+  serializeStampFieldValue,
+  readStampField,
   type SecretsPort,
   type SecretRef,
   type StampInputs,
@@ -322,5 +325,56 @@ describe("preimage stability (independent oracle)", () => {
     const preimage = fields.map((f) => `${Buffer.byteLength(f, "utf8")}:${f}`).join(" ");
     const expected = createHmac("sha256", KEY_A).update(preimage, "utf8").digest("hex");
     expect(minted.value.sig).toBe(expected);
+  });
+});
+
+describe("frontmatter storage (gate 4 G1c)", () => {
+  const mint = async (): Promise<SignedProvenanceStamp> => {
+    const port = new FakeSecretsPort({ [REF_A]: KEY_A });
+    const r = await stampProvenance(baseInputs(), deps(port));
+    if (!r.ok) throw new Error("mint failed");
+    return r.value;
+  };
+
+  it("round-trips a minted stamp through frontmatter: serialize → note → readStampField", async () => {
+    const stamp = await mint();
+    const value = serializeStampFieldValue(stamp);
+    // The reserved key stores compact JSON on ONE physical line, alongside real frontmatter + a body.
+    const note = `---\ntitle: Auth\nkwStamp: ${value}\n---\nHello prose.\n`;
+    expect(value.includes("\n")).toBe(false); // single line — survives the line-based codec
+    expect(readStampField(note)).toEqual(stamp);
+  });
+
+  it("readStampField returns null when the note has no kwStamp key (or no frontmatter)", () => {
+    expect(readStampField("---\ntitle: Auth\n---\nbody")).toBeNull();
+    expect(readStampField("just a body, no frontmatter")).toBeNull();
+  });
+
+  it("readStampField fails closed on a non-JSON kwStamp value", () => {
+    expect(readStampField("---\nkwStamp: not-valid-json\n---\nbody")).toBeNull();
+  });
+
+  it("readStampField fails closed on JSON that does not satisfy the stamp schema", () => {
+    // valid JSON, but missing required stamp fields (sig, writerActor, …) → schema-reject → null.
+    expect(readStampField('---\nkwStamp: {"kwRevision":"rev-1"}\n---\nbody')).toBeNull();
+  });
+
+  it("recovers the stamp from an UNTRUSTED note framed with CRLF + a trailing fence at EOF", async () => {
+    const stamp = await mint();
+    const value = serializeStampFieldValue(stamp);
+    const note = `---\r\ntitle: Auth\r\nkwStamp: ${value}\r\n---`; // CRLF endings, no trailing newline
+    expect(readStampField(note)).toEqual(stamp);
+  });
+
+  it("fails closed on a prototype-pollution kwStamp value AND does not pollute Object.prototype", () => {
+    const note = '---\nkwStamp: {"__proto__":{"polluted":1},"kwRevision":"rev-1"}\n---\nbody';
+    expect(readStampField(note)).toBeNull(); // strict schema rejects the extra own-key
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined(); // Object.prototype untouched
+  });
+
+  it("fails closed on a multi-line kwStamp value (the line-based codec truncates → invalid JSON)", () => {
+    // serializeStampFieldValue always emits ONE line; a hand-written multi-line value must never round-trip.
+    const note = '---\nkwStamp: {"kwRevision":\n"rev-1"}\n---\nbody';
+    expect(readStampField(note)).toBeNull();
   });
 });

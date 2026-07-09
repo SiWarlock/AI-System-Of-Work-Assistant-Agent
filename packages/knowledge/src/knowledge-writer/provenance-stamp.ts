@@ -57,6 +57,7 @@ import type {
   SignedProvenanceStamp,
 } from "@sow/contracts";
 import { SignedProvenanceStampSchema } from "@sow/contracts";
+import { serializeScalar, readFrontmatterField, KW_STAMP_FRONTMATTER_KEY } from "./frontmatter";
 
 // ── injected SecretsPort (safety rule 7) ─────────────────────────────────────
 
@@ -259,6 +260,39 @@ export async function verifyProvenanceStamp(
     return expected;
   }
   return ok(constantTimeHexEqual(expected.value, inputs.stamp.sig));
+}
+
+// ── frontmatter storage (gate 4 G1c — where the stamp lives on disk) ─────────────
+
+/**
+ * Serialize a stamp to the compact-JSON value stored under the reserved `kwStamp` frontmatter key. It is a
+ * single physical line (JSON escapes any newline), so the writer's line-based `composeNote` and the deriver's
+ * first-colon `parseNote` both keep it intact. The deriver carves `kwStamp` out of the page hash (G1b), so
+ * storing this value does NOT perturb the `mdContentSha` the stamp itself signs.
+ */
+export function serializeStampFieldValue(stamp: SignedProvenanceStamp): string {
+  return serializeScalar(stamp);
+}
+
+/**
+ * Read + VALIDATE a note's provenance stamp back from its committed Markdown. Returns the stamp iff the note
+ * carries a `kwStamp` key whose value is JSON that satisfies `SignedProvenanceStampSchema`; otherwise `null`
+ * (no key, non-JSON, or schema-invalid — all fail closed). Reads through `readFrontmatterField`, so an
+ * UNTRUSTED note framed by another tool (BOM / CRLF / trailing-fence-at-EOF) is normalized first. Pure; never
+ * throws. This is the read half the serving gate's `RehydrateFn` (G1e) uses to recover the stamp for
+ * re-verification; validating here means a tampered/garbage stamp value degrades to "no stamp", not a crash.
+ */
+export function readStampField(content: string): SignedProvenanceStamp | null {
+  const raw = readFrontmatterField(content, KW_STAMP_FRONTMATTER_KEY);
+  if (raw === undefined) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null; // non-JSON kwStamp value (hand-edited / corrupt) → fail closed
+  }
+  const result = SignedProvenanceStampSchema.safeParse(parsed);
+  return result.success ? result.data : null;
 }
 
 /**
