@@ -51,6 +51,7 @@ export * from "./gbrain/parity/reconciler";
 // ── gbrain serving: quarantine ledger + Markdown-rehydration serving gate ───────
 export * from "./gbrain/serving/quarantine-ledger";
 export * from "./gbrain/serving/rehydration-gate";
+export * from "./gbrain/serving/vault-rehydrate";
 
 // ── gbrain remediation: generative proposal intake + terminal-directive router ──
 export * from "./gbrain/remediation/generative-proposal-intake";
