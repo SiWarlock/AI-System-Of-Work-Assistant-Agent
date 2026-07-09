@@ -77,3 +77,53 @@ describe("Approvals surface (§9.8) — render behavior", () => {
     expect(screen.getByText(/expires 2026-07-10/i)).toBeTruthy();
   });
 });
+
+describe("Approvals surface (§13.10a Slice H) — semantic-mutation cards", () => {
+  const semantic = (id: string, over: Partial<UiSafeApproval> = {}): UiSafeApproval => ({
+    id,
+    subjectKind: "semantic_mutation",
+    status: "pending",
+    channel: "mac",
+    ...over,
+  });
+
+  it("renders a Copilot-proposed semantic card with a descriptive label (no actionRef) + the decision buttons", () => {
+    render(<Approvals approvals={[semantic("s1")]} onDecide={() => {}} />);
+    const card = document.querySelector('[data-approval-id="s1"]') as HTMLElement;
+    expect(card).toBeTruthy();
+    expect(card.getAttribute("data-subject-kind")).toBe("semantic_mutation");
+    expect(card.className).toContain("sow-approval-card--semantic");
+    // A descriptive label stands in for the (absent) actionRef so the card is never blank.
+    expect(within(card).getByText(/proposed note write/i)).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Approve" })).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Reject" })).toBeTruthy();
+  });
+
+  it("a decision on a semantic card calls onDecide(id, decision) (same idempotent path)", () => {
+    const onDecide = vi.fn();
+    render(<Approvals approvals={[semantic("s1")]} onDecide={onDecide} />);
+    const card = document.querySelector('[data-approval-id="s1"]') as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Approve" }));
+    expect(onDecide).toHaveBeenCalledWith("s1", "approve");
+  });
+
+  it("a semantic card can be snoozed (display-only, descriptive label, no buttons)", () => {
+    render(
+      <Approvals
+        approvals={[semantic("s2", { status: "deferred", snoozeUntil: "2026-07-09T09:00:00.000Z" })]}
+        onDecide={() => {}}
+      />,
+    );
+    const card = document.querySelector('[data-approval-id="s2"]') as HTMLElement;
+    expect(card.className).toContain("sow-approval-card--semantic");
+    expect(within(card).getByText(/proposed note write/i)).toBeTruthy();
+    expect(within(card).queryByRole("button", { name: "Approve" })).toBeNull();
+  });
+
+  it("an external card WITHOUT subjectKind stays backward-compatible (shows actionRef, no semantic class)", () => {
+    render(<Approvals approvals={[apr("e1")]} onDecide={() => {}} />);
+    const card = document.querySelector('[data-approval-id="e1"]') as HTMLElement;
+    expect(within(card).getByText("action:e1")).toBeTruthy();
+    expect(card.className).not.toContain("sow-approval-card--semantic");
+  });
+});

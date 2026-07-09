@@ -16,12 +16,19 @@
 import { z } from "zod";
 import {
   approvalStatusSchema,
+  approvalSubjectKindSchema,
   channelSchema,
   failureClassSchema,
   healthStateSchema,
   VisibilityLevelSchema,
 } from "../models/shared-enums";
-import type { ApprovalStatus, Channel, FailureClass, HealthState } from "../models/shared-enums";
+import type {
+  ApprovalStatus,
+  ApprovalSubjectKind,
+  Channel,
+  FailureClass,
+  HealthState,
+} from "../models/shared-enums";
 import type { VisibilityLevel } from "../primitives/enums";
 
 // A UI-safe display summary line: short + SINGLE-LINE. Multi-line / long-form is the
@@ -102,6 +109,11 @@ type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 export interface UiSafeApproval {
   id: string;
   actionRef?: string;
+  // §13.10a Slice H: the card SUBJECT discriminator (external_action vs semantic_mutation) — a frozen
+  // 2-value enum (no content), so the renderer can branch card shapes (an external-write card vs a
+  // Copilot-proposed semantic-write card). The subject REF (planRef/actionRef) is not the discriminator;
+  // planRef is never surfaced. Optional (mirrors actionRef): absent ⇒ the renderer's external default.
+  subjectKind?: ApprovalSubjectKind;
   status: ApprovalStatus;
   channel: Channel;
   snoozeUntil?: string;
@@ -118,6 +130,8 @@ export const UiSafeApprovalSchema = z
     // §13.10a — optional (see interface): present for an external_action card, absent for a
     // semantic_mutation card. Still non-empty when present.
     actionRef: z.string().min(1).optional(),
+    // §13.10a Slice H — the card discriminator (frozen enum). Optional (mirrors actionRef).
+    subjectKind: approvalSubjectKindSchema.optional(),
     status: approvalStatusSchema,
     channel: channelSchema,
     snoozeUntil: z.string().datetime().optional(),
@@ -470,7 +484,7 @@ void _uiSafeParity;
 // using ONLY these names; the contract test freezes every schema's field set
 // against its entry so a field cannot be silently added to the UI surface later.
 export const UI_SAFE_ALLOWLIST = {
-  approval: ["actionRef", "channel", "expiresAt", "id", "snoozeUntil", "status"],
+  approval: ["actionRef", "channel", "expiresAt", "id", "snoozeUntil", "status", "subjectKind"],
   healthItem: ["failureClass", "id", "openedAt", "resolvedAt", "severity", "state"],
   workflowRunRef: ["idempotencyKey", "state", "trigger", "workflowId"],
   dashboardCard: ["cardId", "count", "kind", "status", "title", "updatedAt"],

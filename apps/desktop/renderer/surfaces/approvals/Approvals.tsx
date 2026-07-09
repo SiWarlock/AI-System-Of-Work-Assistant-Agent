@@ -1,7 +1,8 @@
 // Approvals surface (§9.8, REQ-F-012) — the Approval Inbox that mounts inside the
-// AppShell. A GLOBAL inbox of external-action approvals; the user approves / rejects /
-// defers each with a single idempotent transition (Mac + Telegram parity is enforced
-// server-side — this is the Mac channel).
+// AppShell. A GLOBAL inbox of approvals; the user approves / rejects / defers each with a
+// single idempotent transition (Mac + Telegram parity is enforced server-side — this is
+// the Mac channel). §13.10a: a card is EITHER an external_action write OR a Copilot-proposed
+// semantic_mutation (a Markdown/note write) — the card branches on `subjectKind`.
 //
 // Invariants:
 //   - WS-8: the inbox is safe cross-scope by construction — `UiSafeApproval` carries
@@ -44,6 +45,16 @@ function dayOf(iso: string): string {
   return iso.slice(0, 10);
 }
 
+/**
+ * §13.10a Slice H — the card's human subject line, branched on the subject kind. A `semantic_mutation`
+ * card is a Copilot-PROPOSED Markdown/note write (it carries a planRef, NOT an actionRef, and the ref is
+ * never surfaced), so it gets a fixed descriptive label; an `external_action` card shows its action ref.
+ * An absent subjectKind defaults to the external label (the pre-§13.10a card shape).
+ */
+function cardSubject(a: UiSafeApproval): string {
+  return a.subjectKind === "semantic_mutation" ? "Proposed note write (Copilot)" : (a.actionRef ?? "External action");
+}
+
 /** A pending approval card — the action, its metadata, and the three decision buttons. */
 function PendingCard({
   approval,
@@ -53,10 +64,16 @@ function PendingCard({
   readonly onDecide?: (approvalId: string, decision: ApprovalDecision) => void;
 }): ReactElement {
   const disabled = onDecide === undefined;
+  const semantic = approval.subjectKind === "semantic_mutation";
   return (
-    <li className="sow-approval-card" role="listitem" data-approval-id={approval.id}>
+    <li
+      className={`sow-approval-card${semantic ? " sow-approval-card--semantic" : ""}`}
+      role="listitem"
+      data-approval-id={approval.id}
+      data-subject-kind={approval.subjectKind}
+    >
       <div className="sow-approval-head">
-        <span className="sow-approval-action">{approval.actionRef}</span>
+        <span className="sow-approval-action">{cardSubject(approval)}</span>
         <span className="sow-approval-status sow-approval-status--pending">pending</span>
       </div>
       <div className="sow-approval-meta">
@@ -83,10 +100,16 @@ function PendingCard({
 
 /** A snoozed (deferred) approval card — DISPLAY-ONLY; it re-surfaces to pending on snooze expiry. */
 function SnoozedCard({ approval }: { readonly approval: UiSafeApproval }): ReactElement {
+  const semantic = approval.subjectKind === "semantic_mutation";
   return (
-    <li className="sow-approval-card sow-approval-card--snoozed" role="listitem" data-approval-id={approval.id}>
+    <li
+      className={`sow-approval-card sow-approval-card--snoozed${semantic ? " sow-approval-card--semantic" : ""}`}
+      role="listitem"
+      data-approval-id={approval.id}
+      data-subject-kind={approval.subjectKind}
+    >
       <div className="sow-approval-head">
-        <span className="sow-approval-action">{approval.actionRef}</span>
+        <span className="sow-approval-action">{cardSubject(approval)}</span>
         <span className="sow-approval-status sow-approval-status--deferred">snoozed</span>
       </div>
       <div className="sow-approval-meta">

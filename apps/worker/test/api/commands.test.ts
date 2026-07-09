@@ -342,6 +342,7 @@ describe("§9.8 renderer boundary — decideApproval returns a UI-safe approval 
       expect("actor" in a).toBe(false);
       expect("payloadHash" in a).toBe(false);
       // The projected key set is EXACTLY the UI-safe allowlist — no extra key rides out.
+      // §13.10a Slice H: subjectKind (the frozen-enum card discriminator) is now always projected.
       expect(Object.keys(a).sort()).toEqual([
         "actionRef",
         "channel",
@@ -349,6 +350,7 @@ describe("§9.8 renderer boundary — decideApproval returns a UI-safe approval 
         "id",
         "snoozeUntil",
         "status",
+        "subjectKind",
       ]);
     }
   });
@@ -366,7 +368,7 @@ describe("§9.8 renderer boundary — decideApproval returns a UI-safe approval 
       expect(noop.value.applied).toBe(false); // idempotent no-op contender
       expect("actor" in noop.value.approval).toBe(false);
       expect("payloadHash" in noop.value.approval).toBe(false);
-      expect(Object.keys(noop.value.approval).sort()).toEqual(["actionRef", "channel", "id", "status"]);
+      expect(Object.keys(noop.value.approval).sort()).toEqual(["actionRef", "channel", "id", "status", "subjectKind"]);
     }
   });
 
@@ -378,7 +380,7 @@ describe("§9.8 renderer boundary — decideApproval returns a UI-safe approval 
     const r = await c.command.decideApproval({ approvalId: "apr_1", decision: "approve", channel: "telegram" });
     expect(isOk(r)).toBe(true);
     if (isOk(r)) {
-      expect(Object.keys(r.value.approval).sort()).toEqual(["actionRef", "channel", "id", "status"]);
+      expect(Object.keys(r.value.approval).sort()).toEqual(["actionRef", "channel", "id", "status", "subjectKind"]);
       expect(r.value.approval.status).toBe("approved");
     }
   });

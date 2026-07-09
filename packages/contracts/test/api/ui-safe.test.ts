@@ -84,6 +84,17 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
     expect(UI_SAFE_ALLOWLIST.approval).not.toContain("payloadHash");
   });
 
+  // §13.10a Slice H — the card discriminator (external_action vs semantic_mutation) IS UI-safe (a
+  // frozen 2-value enum, no content), so the renderer can branch card shapes. The subject REF is NOT
+  // surfaced: planRef is an opaque idempotency key, and actionRef is already dropped for a semantic card.
+  it("UiSafeApproval surfaces subjectKind (the card discriminator) but NOT the subject ref planRef", () => {
+    expect(UI_SAFE_ALLOWLIST.approval).toContain("subjectKind");
+    expect(UI_SAFE_ALLOWLIST.approval).not.toContain("planRef");
+    // subjectKind is optional on the UI-safe shape (mirrors actionRef); when present it is the frozen enum.
+    expect(UiSafeApprovalSchema.safeParse({ id: "a", status: "pending", channel: "mac", subjectKind: "semantic_mutation" }).success).toBe(true);
+    expect(UiSafeApprovalSchema.safeParse({ id: "a", status: "pending", channel: "mac", subjectKind: "nope" }).success).toBe(false);
+  });
+
   it("UiSafeHealthItem omits message + internal refs (auditRef/parityReportRef/factIdentity)", () => {
     expect(UI_SAFE_ALLOWLIST.healthItem).not.toContain("message");
     expect(UI_SAFE_ALLOWLIST.healthItem).not.toContain("auditRef");

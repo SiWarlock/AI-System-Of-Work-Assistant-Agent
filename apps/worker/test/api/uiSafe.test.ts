@@ -115,8 +115,8 @@ describe("toUiSafeApproval — WS-8 field allowlist", () => {
     // is a SUBSET of the allowlist — never a SUPERSET.
     const allowed: readonly string[] = UI_SAFE_ALLOWLIST.approval;
     expect(fieldSet(out).every((k) => allowed.includes(k))).toBe(true);
-    // Every REQUIRED allowlisted field is present.
-    for (const req of ["id", "actionRef", "status", "channel"]) {
+    // Every REQUIRED allowlisted field is present. §13.10a Slice H: subjectKind is always projected.
+    for (const req of ["id", "actionRef", "status", "channel", "subjectKind"]) {
       expect(out).toHaveProperty(req);
     }
   });
@@ -143,8 +143,8 @@ describe("toUiSafeApproval — WS-8 field allowlist", () => {
     expect(fieldSet(out).every((k) => allowed.includes(k))).toBe(true);
   });
 
-  it("§13.10a — projects a semantic_mutation card WITHOUT actionRef and NEVER leaks planRef", () => {
-    // The new projector branch: a semantic_mutation Approval carries NO actionRef (it
+  it("§13.10a Slice H — projects a semantic_mutation card WITH subjectKind, WITHOUT actionRef, NEVER leaking planRef", () => {
+    // The projector branch: a semantic_mutation Approval carries NO actionRef (it
     // carries a planRef into the pending-KMP store). `assignIfDefined` omits the absent
     // actionRef (no `undefined`-valued key), and `planRef` is not a UiSafeApproval field so
     // it can never cross. Exercises the branch this slice added to the WS-8 leakage boundary.
@@ -164,8 +164,8 @@ describe("toUiSafeApproval — WS-8 field allowlist", () => {
     expect(out).not.toHaveProperty("actionRef");
     // planRef must NEVER surface — it is not an allowlisted UI-safe field.
     expect(out).not.toHaveProperty("planRef");
-    // subjectKind is a domain discriminator, also not surfaced in this slice.
-    expect(out).not.toHaveProperty("subjectKind");
+    // §13.10a Slice H: subjectKind IS surfaced (the frozen-enum card discriminator) — no content leaks.
+    expect(out.subjectKind).toBe("semantic_mutation");
     // actor/payloadHash still dropped; the set is still a subset of the allowlist.
     expect(out).not.toHaveProperty("actor");
     expect(out).not.toHaveProperty("payloadHash");
