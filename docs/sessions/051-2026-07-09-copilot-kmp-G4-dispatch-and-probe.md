@@ -36,6 +36,17 @@ Both are FULLY DORMANT (trust never returns "trusted" on a live ask; gate 4 serv
 
 Then: **gate 4** (C5.4b serving oracle, eval-security arc) is the only remaining go-live gate.
 
+## Addendum — G4b-2 + G4b-3 landed same session (G4 COMPLETE)
+
+### G4b-2 — runner knowledge-propose capability + grant · `405681e`
+`copilotAgentSynthesis.ts`: `CopilotAgentCapability` gained `propose_knowledge`; `resolveCopilotAgentCapability` gained `knowledgeProposeEnabled` (a propose capability ONLY on affirmed-trusted content; BOTH propose flags ⇒ read_only, fail-closed mutual exclusion). `buildCopilotAgentJob` maps it → `copilotKnowledgeProposeToolPolicy` + trusted. The runner distinguishes the two propose kinds by the JOB'S POLICY (`allowedTools` includes which tool id), NOT which deps are wired — a both-tools policy is rejected `invalid_job` BEFORE either grant. The propose_knowledge handler is closed over the SERVER-BOUND `job.workspaceId` + injected sourceRef + noteExists probe + sink. **HARDENING:** the seed-only read-tool strip now keys on `trustedScopedWrite` (propose-CAPABLE), not on the grant firing — a propose job with absent deps stays seed-only + tool-less (fail-closed) instead of falling back to read tools.
+- **Adversarial review (general-purpose Agent): SHIP — no crit/high/med.** Trust gating, cross-grant isolation, shared-server mutual exclusion, seed-only TOCTOU closure, WS-4 workspaceId binding, and ING-7 admission all hold, layered + fail-closed across resolver + build + admission + runner. Fully dormant.
+
+### G4b-3 — boot flag `copilotProposeKnowledge` (OFF) · `549114c`
+Wires `createApprovalsKnowledgeProposeSink` + `createCopilotProposeKnowledgeMcpServer` + a vault existence probe + the sourceRef as the runner's knowledge deps. `knowledgeProposeEnabled` is COUPLED to the dispatch side (`config.copilotProposeKnowledge === true && config.proofSpineParams !== undefined`) — closes the G4a residual #1 (a proposed card is always committable, never stranded on external-only dispatch). Mutually exclusive with `copilotProposeMode`.
+
+**§13.10a is now WIRED END-TO-END + DORMANT.** The whole bridge exists: a trusted Copilot answer can call `propose_knowledge` → PENDING §9.8 card → owner approval → head-at-commit KnowledgeWriter commit. Dormant because `deriveCopilotContentTrust` returns untrusted for every live gbrain hit (no adapter stamps `knowledge_writer`) AND the flag is OFF. **The ONLY remaining go-live gate is gate 4 — the C5.4b serving oracle (a retrieval adapter that stamps `knowledge_writer` on genuine KnowledgeWriter-authored Markdown), an eval-security-track arc.** Other go-live residuals (approve→dispatch reconciler; approvalId in audit refs; WS-8 path check) are hardening.
+
 ## Method notes carried
 - Reviewer subagents gone → **general-purpose Agent** with security+code-quality prompts (adversarial pass on each safety-critical slice). Per-file `git add`; never staged `.claude/settings.json` / root `CLAUDE.md` / `graphify-out/`. `graphify update .` after code changes.
 - Head-at-commit is safe ONLY because the writer's own ownership/region enforcement runs on live bytes — never weaken those defaults on the approval path.
