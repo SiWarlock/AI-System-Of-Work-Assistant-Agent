@@ -28,4 +28,12 @@ Additive UI-safe frozen round: `UiSafeApproval.subjectKind?` (optional, mirrors 
 - Per-file `git add`; never staged `.claude/settings.json` / root `CLAUDE.md` / `graphify-out/`. `graphify update .` after each code change.
 
 ## State at close
-The §13.10a bridge is **built end-to-end (A–H) and DORMANT.** Nothing exposes the tool to a live model and no dispatcher is wired to `dispatchApproval` (still a no-op stub). Remaining = the live runner-wiring (G3 SDK-MCP adapter + G4 boot flag `copilotProposeKnowledge`) + the go-live gates (slug-collision, YAML-escape, FG-2 persisted-form hashing, C5.4b serving oracle). See `IMPLEMENTATION_PLAN.md` §13.10a + memory `sow-kmp-bridge-finish` / `sow-copilot-kmp-bridge`.
+The §13.10a bridge is **built end-to-end (A–H) and DORMANT.** Nothing exposes the tool to a live model and no dispatcher is wired to `dispatchApproval` (still a no-op stub). Remaining = the live runner-wiring (G3 SDK-MCP adapter + G4 boot flag `copilotProposeKnowledge`) + the go-live gates. See `IMPLEMENTATION_PLAN.md` §13.10a + memory `sow-kmp-bridge-finish` / `sow-copilot-kmp-bridge`.
+
+## Addendum — go-live gates 1/2/3 closed (same session)
+
+After the A–H arc, this session also closed **3 of the 4 §13.10a go-live gates** (all TDD'd, reviewed, pushed):
+- **Gate 2 — YAML-safe frontmatter serialization** (`3011749`, knowledge). `serializeScalar` quotes+escapes unsafe/coercible string values (letter-leading-plain-only ⇒ numbers/dates/hex quoted; all C0/C1 control chars escaped); the create `title` path routed through it. Fixes a latent bug in the LIVE writer, not just the dormant path. Review folded 2 MEDs.
+- **Gate 1 — slug-collision guard** (`1cfa1f4` frozen KMP round `expectedProjectId?` + `09ca3c7` derive-stamp + executor-verify), owner picked the plan-level field. Executor reads each write target's frontmatter `projectId` (WS-8-scoped `readNoteProjectId` port) and rejects a patch to a foreign project's note AND a create whose target path exists (renderCreate overwrites). Review folded the create-clobber vector + the reader↔gate-2 quoting contract.
+- **Gate 3 — FG-2 persisted-form hashing** (`b7e677e`, worker). The sink hashes the round-tripped (persisted) plan so the executor's re-hash always matches, even for a future producer emitting a present-`undefined` value.
+- **Remaining:** gate 4 (C5.4b serving oracle, eval-security arc) + the live wiring. Recommended next: concrete `readNoteProjectId` → G3 SDK adapter → G4 runner/boot flag. HEAD `f2fbebe`; all pushed.
