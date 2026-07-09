@@ -47,7 +47,20 @@
 //       let a single admission stamp all its duplicates. Either dedup at retrieval, or move to per-fact
 //       citationIds (precondition 2), or have the go-live oracle reject/strip a duplicated citationId.
 import { ok, err, isOk, failure } from "@sow/contracts";
-import type { Result, FailureVariant } from "@sow/contracts";
+import type { Result, FailureVariant, RevisionId, WorkspaceId } from "@sow/contracts";
+// The knowledge-layer serving gate + its input/output shapes. The real `admitForServing` is INJECTED as a seam
+// (`AdmitForServingFn`) so the oracle-core stays pure + TDD-able against a fake gate; boot wires the real one.
+import type {
+  ServingRequest,
+  ServingResult,
+  ServingError,
+  ServingCoverage,
+  ServingDeps,
+  RehydrateFn,
+  CanonicalFactSet,
+  QuarantineLedger,
+  DbPointer,
+} from "@sow/knowledge";
 import { enforceRetrievalScope } from "./copilot";
 import type { CopilotRetrievalPort, RetrievedContext, RetrievedSource, SourceProvenance } from "./copilot";
 
@@ -196,5 +209,179 @@ export function createInterimDegradedServingOracle(): CopilotServingOracle {
   return {
     admit: (): Promise<Result<CopilotServingVerdict, FailureVariant>> =>
       Promise.resolve(ok({ mode: "degraded_direct_markdown" })),
+  };
+}
+
+// ── the REAL admitForServing-backed serving oracle (gate 4 — oracle-core) ────────
+//
+// This is the deterministic CORE of the real serving oracle: a PURE adapter that turns a retrieval's
+// `RetrievedContext` into a `CopilotServingVerdict` by consulting the knowledge-layer serving gate
+// (`admitForServing`). It satisfies GO-LIVE PRECONDITIONS 2–5 (see the module header):
+//   • (5) CITATION UNIQUENESS — a citationId appearing more than once in the context is fail-closed EXCLUDED
+//         (the verdict's admitted set is a Set; a single admission would otherwise stamp all its duplicates).
+//   • (2/3) RESOLVER INJECTIVITY / all-or-nothing — each candidate citationId resolves (via the injected,
+//         workspace-scoped resolver) to the SET of factIdentities reachable through it; a non-uniquely-
+//         resolvable citationId (resolver → null / empty) is EXCLUDED, and if two candidates claim the SAME
+//         factIdentity the resolver was not injective for this context → BOTH are excluded (a slug-collision
+//         anomaly). A page is admitted ALL-OR-NOTHING: only if EVERY factIdentity reachable via its citationId
+//         is admitted by the gate.
+//   • (4) SERVING-ERROR MAPPING — a hard `ServingError` (workspace/revision mismatch) maps to an oracle `err`,
+//         NEVER swallowed into an ok verdict, so the decorator's fail-closed passthrough fires.
+// PRECONDITION 1 (content integrity — rebuild `blocks` from proven bytes) is NOT handled here: it needs a
+// `CopilotServingVerdict` shape change to carry admitted content (a separate, owner-gated slice). Until then
+// the gate proves the SOURCES, not the block bytes.
+//
+// DORMANT: this oracle is NOT wired in boot — the interim degraded oracle stays the default. Wiring it requires
+// (a) stamp-minting activated in the KnowledgeWriter commit path, (b) real KnowledgeWriter-authored corpora to
+// stamp, and (c) the worker-side `ServingContextLoader` that assembles a real allow-set / ledger / coverage /
+// rehydrate / signing-key per workspace — each a security-review-gated go-live step, never a flag flip.
+
+/** The knowledge-layer serving gate as an injected seam (the real `admitForServing` fits this shape). */
+export type AdmitForServingFn = (
+  req: ServingRequest,
+  deps: ServingDeps,
+) => Promise<Result<ServingResult, ServingError>>;
+
+/**
+ * Everything the oracle needs to serve ONE workspace at its current revision: the trusted allow-set, the
+ * coverage legs, the quarantine ledger, the Markdown rehydrator, the signing-key access, and an INJECTIVE
+ * citationId → factIdentities resolver (built from the same allow-set). All are assembled by the injected
+ * {@link ServingContextLoader} (the real one is a later worker-wiring slice).
+ */
+export interface WorkspaceServingContext {
+  readonly revisionId: RevisionId;
+  readonly allowSet: CanonicalFactSet;
+  readonly rehydrate: RehydrateFn;
+  readonly quarantine: QuarantineLedger;
+  readonly coverage: ServingCoverage;
+  readonly servingDeps: ServingDeps;
+  /**
+   * Resolve a citationId to the SET of factIdentities reachable through it (a page's facts), or `null` when it
+   * is not uniquely resolvable to a served page. MUST be injective (distinct citationIds → disjoint factId
+   * sets) and MUST withhold (return null) rather than guess; the oracle additionally cross-checks injectivity
+   * for the specific context and fails closed on any overlap.
+   */
+  readonly resolveCitation: (citationId: string) => readonly string[] | null;
+}
+
+/** Loading a workspace's serving context: `ready` with the context, `degraded` (no gated serving), or a fault. */
+export type ServingContextResolution =
+  | { readonly mode: "ready"; readonly context: WorkspaceServingContext }
+  | { readonly mode: "degraded" };
+
+/**
+ * Loads the per-workspace serving context at the current committed revision. Returns `degraded` when the
+ * workspace cannot be gated-served (never indexed, no allow-set, no signing key) — a NORMAL state, not a fault
+ * — and a typed `err` only on an actual load failure. Never throws (the oracle wraps it regardless).
+ */
+export type ServingContextLoader = (
+  workspaceId: string,
+) => Promise<Result<ServingContextResolution, FailureVariant>>;
+
+/** Dependencies for the real serving oracle: the gate seam + the per-workspace context loader. */
+export interface ServingGateOracleDeps {
+  readonly admitForServing: AdmitForServingFn;
+  readonly loadContext: ServingContextLoader;
+}
+
+/** A constant DB-ranking score for gate pointers — the oracle has no DB ranking; admission ignores score. */
+const ORACLE_POINTER_SCORE = 1;
+
+/** Sentinel marking a factIdentity claimed by >1 citationId (injectivity violated for a context). */
+const CONFLICT = Symbol("citation-fact-conflict");
+
+/**
+ * Build the REAL serving oracle over the injected gate seam + context loader. Never throws (§16): a loader/gate
+ * fault, a rejection, or any unexpected throw folds to a typed `err` (⇒ the decorator strips ⇒ untrusted).
+ * Every decision is fail-closed — the DEFAULT is "not admitted".
+ */
+export function createServingGateOracle(deps: ServingGateOracleDeps): CopilotServingOracle {
+  return {
+    admit: async (
+      workspaceId: string,
+      context: RetrievedContext,
+    ): Promise<Result<CopilotServingVerdict, FailureVariant>> => {
+      try {
+        // 1) Load the workspace serving context. A load fault → err (decorator strips); `degraded` → degraded
+        //    verdict WITHOUT consulting the gate (no allow-set to build a request against).
+        const loaded = await deps.loadContext(workspaceId);
+        if (!isOk(loaded)) return loaded;
+        if (loaded.value.mode !== "ready") return ok({ mode: "degraded_direct_markdown" });
+        const ctx = loaded.value.context;
+
+        // 2) PRECONDITION 5 — citation uniqueness. Only citationIds appearing EXACTLY once are candidates; a
+        //    duplicated one is fail-closed excluded (a Set-based admission cannot distinguish its copies).
+        const counts = new Map<string, number>();
+        for (const s of context.sources) counts.set(s.citationId, (counts.get(s.citationId) ?? 0) + 1);
+        const candidates = [...counts.entries()].filter(([, n]) => n === 1).map(([id]) => id);
+
+        // 3) PRECONDITIONS 2/3 — resolve each candidate → its factIdentities. Withhold on null / empty (a
+        //    citation resolving to nothing must NEVER be admitted). Track fact ownership to enforce injectivity
+        //    for THIS context: a factIdentity claimed by two candidates is an anomaly → exclude BOTH.
+        const resolved = new Map<string, readonly string[]>();
+        const factOwner = new Map<string, string | typeof CONFLICT>();
+        for (const cid of candidates) {
+          const factIds = ctx.resolveCitation(cid);
+          if (factIds === null || factIds.length === 0) continue;
+          // Dedup WITHIN a citation before the ownership pass — a resolver repeating a factId for one page must
+          // not self-CONFLICT (drop its own legit page). CONFLICT is reserved for a factId claimed by TWO
+          // DISTINCT citationIds (the real injectivity violation).
+          const uniqueFactIds = [...new Set(factIds)];
+          resolved.set(cid, uniqueFactIds);
+          for (const fid of uniqueFactIds) factOwner.set(fid, factOwner.has(fid) ? CONFLICT : cid);
+        }
+        for (const [cid, factIds] of [...resolved]) {
+          if (factIds.some((fid) => factOwner.get(fid) === CONFLICT)) resolved.delete(cid);
+        }
+        // Nothing resolvable → a gated verdict admitting nothing (honest: the gate found no provable source).
+        if (resolved.size === 0) return ok({ mode: "gated", admittedCitationIds: new Set() });
+
+        // 4) Build the ServingRequest over the UNION of resolved factIdentities. `workspaceId` is the REQUESTED
+        //    one (cast to the brand) — the gate re-checks it against the loaded allow-set's workspace, so a
+        //    context loaded for the wrong workspace is caught as a hard error (not silently served).
+        const factIds = new Set<string>();
+        for (const ids of resolved.values()) for (const fid of ids) factIds.add(fid);
+        const pointers: DbPointer[] = [...factIds].map((factIdentity) => ({
+          factIdentity,
+          score: ORACLE_POINTER_SCORE,
+        }));
+        const req: ServingRequest = {
+          workspaceId: workspaceId as WorkspaceId,
+          revisionId: ctx.revisionId,
+          pointers,
+          allowSet: ctx.allowSet,
+          rehydrate: ctx.rehydrate,
+          quarantine: ctx.quarantine,
+          coverage: ctx.coverage,
+        };
+
+        // 5) PRECONDITION 4 — call the gate; a hard ServingError maps to `err` (never an ok verdict).
+        const served = await deps.admitForServing(req, ctx.servingDeps);
+        if (!isOk(served)) {
+          return err(
+            failure("validation_rejected", "serving gate rejected the request", {
+              cause: { code: `SERVING_${served.error.code.toUpperCase()}` },
+            }),
+          );
+        }
+        if (served.value.mode !== "gated") return ok({ mode: "degraded_direct_markdown" });
+
+        // 6) ALL-OR-NOTHING per page: a citationId is admitted IFF EVERY factIdentity reachable through it is in
+        //    the gate's admitted set. A partially-admitted page stays UNSTAMPED.
+        const admittedFactIds = new Set(served.value.admitted.map((f) => f.factIdentity));
+        const admittedCitationIds = new Set<string>();
+        for (const [cid, ids] of resolved) {
+          if (ids.every((fid) => admittedFactIds.has(fid))) admittedCitationIds.add(cid);
+        }
+        return ok({ mode: "gated", admittedCitationIds });
+      } catch {
+        // §16 — a throwing/rejecting loader or gate never crosses the boundary; fail closed (⇒ untrusted).
+        return err(
+          failure("degraded_unavailable", "serving gate oracle faulted", {
+            cause: { code: "SERVING_ORACLE_FAULT" },
+          }),
+        );
+      }
+    },
   };
 }
