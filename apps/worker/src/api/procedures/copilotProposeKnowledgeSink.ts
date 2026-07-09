@@ -171,7 +171,12 @@ export function createApprovalsKnowledgeProposeSink(
       const planId = String(plan.planId);
       // (b) The canonical, replay-stable hash over the KMP — the SAME value on BOTH rows (the executor's
       // FROZEN-Approval-payloadHash comparison, Slice F, hinges on this).
-      const hash = payloadHash(plan as unknown as Record<string, unknown>);
+      // §13.10a gate 3 (FG-2 robustness): hash the PERSISTED form. `payloadHash` maps a present-`undefined`
+      // key to a sentinel, but the pending-KMP store persists `plan` as JSON — a round-trip DROPS
+      // undefined-valued keys. Hashing the round-tripped form (exactly what the store persists) guarantees
+      // the executor's re-hash of the read-back `row.plan` ALWAYS matches, even for a future producer that
+      // emits a schema-legal present-`undefined` value. (Today's derive emits none, so this is a no-op now.)
+      const hash = payloadHash(JSON.parse(JSON.stringify(plan)) as Record<string, unknown>);
 
       // (b) Record the pending-KMP store FIRST (ordering: no dangling Approval). First-write-wins on planId;
       // a same-planId hit whose hash DIVERGES is rejected here, before the Approval is touched.

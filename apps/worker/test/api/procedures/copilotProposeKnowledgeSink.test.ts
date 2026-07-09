@@ -168,6 +168,25 @@ describe("createApprovalsKnowledgeProposeSink — record a pending semantic-muta
     expect(row?.plan).toEqual(plan);
   });
 
+  it("§13.10a gate 3 (FG-2 robustness) — stamps the PERSISTED-form hash so a present-undefined value can't diverge the executor's re-hash", async () => {
+    // A schema-legal present-`undefined` optional. `payloadHash` maps it to a sentinel, but the store
+    // persists `plan` as JSON — a round-trip DROPS the key. The sink MUST hash the persisted form so the
+    // executor (re-hashing the round-tripped row.plan for FG-2) always matches.
+    const withUndef = { ...kmpFor(), gbrainProposalRef: undefined } as unknown as KnowledgeMutationPlan;
+    const persistedHash = payloadHash(JSON.parse(JSON.stringify(withUndef)) as Record<string, unknown>);
+    const inMemoryHash = payloadHash(withUndef as unknown as Record<string, unknown>);
+    expect(persistedHash).not.toBe(inMemoryHash); // sanity: the present-undefined key makes the forms diverge
+
+    const a = fakeApprovals();
+    const k = fakePendingKmp();
+    const r = await makeSink(a.repo, k.repo).record({ plan: withUndef, workspaceId: WS });
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    // BOTH stores carry the PERSISTED-form hash — what the executor reproduces — NOT the in-memory hash.
+    expect(a.store.get(r.value.approvalRef)?.payloadHash).toBe(persistedHash);
+    expect(k.store.get(String(withUndef.planId))?.payloadHash).toBe(persistedHash);
+  });
+
   it("(a) fails CLOSED on an UNKNOWN workspace — NEITHER store is touched", async () => {
     const a = fakeApprovals();
     const k = fakePendingKmp();
