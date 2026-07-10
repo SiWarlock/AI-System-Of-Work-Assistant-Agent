@@ -102,8 +102,8 @@ import { buildSemanticApprovalDispatch } from "./composition/semanticApprovalDis
 // §13.10a G4b-3 — the SEMANTIC-write propose deps (dormant behind `copilotProposeKnowledge`).
 import { createApprovalsKnowledgeProposeSink } from "./api/procedures/copilotProposeKnowledgeSink";
 import type { CopilotNoteExistsProbe } from "./api/procedures/copilotProposeKnowledge";
-import { createInterimDegradedServingOracle } from "./api/procedures/copilotProvenanceStamp";
 import type { CopilotServingOracle } from "./api/procedures/copilotProvenanceStamp";
+import { selectServingOracleFactory } from "./api/procedures/servingContextLoader";
 import { createCopilotProposeMcpServer, createCopilotProposeKnowledgeMcpServer, createCopilotGbrainProxyMcpServer, createCopilotVaultMcpServer, createCopilotSkillsMcpServer } from "@sow/providers";
 import type { CopilotSynthesisPort } from "./api/procedures/copilot";
 import { createClaudeSubscriptionCompletion } from "@sow/providers";
@@ -602,8 +602,12 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // C5.4b: the provenance-stamping serving oracle — the INTERIM (always-degraded) one, so the decorator sits
   // on the live path but stamps NOTHING (⇒ untrusted ⇒ propose OFF). A real admitForServing-backed oracle is
   // a security-review-gated go-live event, NOT a flag flip (a factory, built only when the flag is on).
-  const servingOracleFactory: (() => CopilotServingOracle) | undefined =
-    config.copilotProvenanceStamping === true ? createInterimDegradedServingOracle : undefined;
+  // DORMANT: the real loader-backed oracle is constructible behind this seam but NEVER selected today — the
+  // selector keeps the interim always-degraded oracle the default until the go-live precondition is armed
+  // (a security-review-gated event; the loader-backed path is proven selectable by servingContextLoader.test).
+  const servingOracleFactory: (() => CopilotServingOracle) | undefined = selectServingOracleFactory({
+    provenanceStampingEnabled: config.copilotProvenanceStamping === true,
+  });
 
   // Workspace set is resolved DECOUPLED from devProvision (which is SURFACE data, not Copilot reachability):
   // an explicit `copilotWorkspaces` wins, else devProvision-derived, else — on the real path — the 3
