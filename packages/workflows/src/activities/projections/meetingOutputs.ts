@@ -51,7 +51,12 @@ import { ok, err } from "@sow/contracts";
 import type { Result, WorkspaceId } from "@sow/contracts";
 import { TBD } from "@sow/domain";
 import type { ExtractionField } from "@sow/domain";
-import { meetingNotePath, MEETING_OUTPUTS_REGION, composeMeetingNote } from "./noteSlug";
+import {
+  meetingNotePath,
+  MEETING_OUTPUTS_REGION,
+  composeMeetingNote,
+  neutralizeRegionMarkers,
+} from "./noteSlug";
 import type { ProjectNoteMutation } from "../deterministicProgress";
 import {
   frontmatterValue,
@@ -152,16 +157,22 @@ export function composeMeetingRegionBody(
   const decisions = frontmatterValue(fields["decisions"]);
   const render = (value: unknown): string =>
     Array.isArray(value) ? value.map((v) => `- ${String(v)}`).join("\n") : String(value);
-  return [
-    `# ${String(title)}`,
-    "",
-    "## Attendees",
-    render(attendees),
-    "",
-    "## Decisions",
-    render(decisions),
-    "",
-  ].join("\n");
+  // Neutralize any `kw:region` marker embedded in the (model-derived) content so it can never forge
+  // or break a region boundary — the SAME shared helper projectSync's composeRegionBody uses. Applied
+  // to the INNER body so BOTH the NoteCreate (wrapped) and the re-close NotePatch newBody (verbatim)
+  // carry the identical neutralized body (create→re-close byte-parity preserved).
+  return neutralizeRegionMarkers(
+    [
+      `# ${String(title)}`,
+      "",
+      "## Attendees",
+      render(attendees),
+      "",
+      "## Decisions",
+      render(decisions),
+      "",
+    ].join("\n"),
+  );
 }
 
 /**

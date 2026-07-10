@@ -8,6 +8,43 @@
 // adversarially-verified implementation rather than each duplicating (and risking drift on) this gate.
 import type { WorkspaceId } from "@sow/contracts";
 
+// A SUPERSET of both region-marker matchers the note is served through: the KnowledgeWriter's
+// `applyRegionPatch` exact `<!-- kw:region:<id> -->` / `<!-- /kw:region:<id> -->` `indexOf` target
+// AND `markdown-vault/sections.ts`'s `MARKER_RE` (the `parseSections` matcher). Case-insensitive,
+// whitespace-tolerant, open OR close, any id — so anything EITHER consumer could read as a boundary
+// is caught. `[^\s>]*` (whitespace-free id) guarantees a nested EXACT marker (which needs spaces)
+// can never hide inside an outer match's id.
+//
+// The leading `[\s/]*` (one char class — whitespace OR the close-marker `/`) is DELIBERATE, NOT
+// `\s*\/?\s*`: two unbounded `\s*` straddling an optional backtrack QUADRATICALLY on a long
+// whitespace run after `<!--` that never completes as a marker (a ReDoS soft-DoS on this
+// untrusted-content, ING-7 path). A single class is linear and still covers ` ` (open) and ` /`
+// (close). All remaining quantifiers act on DISJOINT classes (`[^\s>]` vs `\s`), so no ambiguity.
+const REGION_MARKER_RE = /<!--[\s/]*kw:region:[^\s>]*\s*-->/giu;
+
+/**
+ * Neutralize any `kw:region` boundary-marker string embedded in ASSISTANT CONTENT so it can NEVER
+ * forge or break a region boundary. Escapes each marker's leading `<!--` to `<\!--` — the human
+ * still reads the text (visible, content-preserving; nothing is deleted) but neither
+ * `applyRegionPatch`'s exact-spaced `indexOf` NOR `parseSections`/`MARKER_RE` can match it.
+ *
+ * Runs to a FIXPOINT: escaping `<!--`→`<\!--` only REMOVES `<!--` occurrences (never creates one),
+ * so the `<!--` count is monotone-decreasing ⇒ it terminates; each pass peels one nesting layer (a
+ * greedy `[^\s>]*` id can swallow a nested marker on a single pass, leaving the inner `<!--` for the
+ * next). POST-CONDITION: the result contains NO substring matchable by `REGION_MARKER_RE` (⊇ both
+ * consumers' matchers) ⇒ a content-embedded marker can never be selected as a region boundary.
+ * Idempotent (a clean / already-neutralized string is returned byte-identical); never throws.
+ */
+export function neutralizeRegionMarkers(content: string): string {
+  let out = content;
+  let prev: string;
+  do {
+    prev = out;
+    out = out.replace(REGION_MARKER_RE, (marker) => marker.replace("<!--", "<\\!--"));
+  } while (out !== prev);
+  return out;
+}
+
 export function safeNoteSlug(raw: string): string {
   return raw
     .normalize("NFKD")
@@ -58,7 +95,10 @@ export const PROJECT_STATUS_REGION = "project-status";
  */
 export function composeProjectStatusNote(title: string, regionBody: string): string {
   return (
-    `# ${title} — Status\n\n` +
+    // The H1 is human scaffold OUTSIDE (before) the region — a `kw:region` marker embedded in the
+    // title would be the FIRST marker `applyRegionPatch.indexOf(open)` finds, hijacking the boundary,
+    // so it is neutralized too. `regionBody` arrives already neutralized from its inner-body builder.
+    `# ${neutralizeRegionMarkers(title)} — Status\n\n` +
     `<!-- kw:region:${PROJECT_STATUS_REGION} -->\n` +
     regionBody +
     `\n<!-- /kw:region:${PROJECT_STATUS_REGION} -->\n`

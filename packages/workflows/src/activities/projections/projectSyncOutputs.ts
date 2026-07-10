@@ -27,7 +27,12 @@ import type {
   ValidatedNarrative,
   BuildSyncOutputsFailure,
 } from "../../ports/projectSync";
-import { projectNotePath, PROJECT_STATUS_REGION, composeProjectStatusNote } from "./noteSlug";
+import {
+  projectNotePath,
+  PROJECT_STATUS_REGION,
+  composeProjectStatusNote,
+  neutralizeRegionMarkers,
+} from "./noteSlug";
 
 // The KN-7 region id + full-note framing are the SHARED `noteSlug` conventions (PROJECT_STATUS_REGION +
 // composeProjectStatusNote) so projectSync + the §13.10a Copilot propose bridge target the SAME region by
@@ -172,7 +177,11 @@ export function createProjectSyncOutputsProjection(): SyncOutputsProjection {
  * verbatim); prose renders via the SHARED `renderProseLines` (no-inference TBD-skip). An empty category omits its
  * whole `## <Header>` section (no bare header).
  */
-function composeRegionBody(
+// EXPORTED (mirrors meetingOutputs' `composeMeetingRegionBody`) so the neutralization is directly
+// unit-testable. The inner body — NOT the noteSlug wrapper — is where neutralization must live: the
+// same `regionBody` feeds BOTH the NoteCreate (wrapped by composeProjectStatusNote) and the re-close
+// NotePatch newBody (verbatim), so neutralizing here keeps create→re-close byte-parity.
+export function composeRegionBody(
   progress: DeterministicProgress,
   prose: ProjectDashboardProse,
   lead: string | undefined,
@@ -181,12 +190,16 @@ function composeRegionBody(
   const completed = Math.max(0, Math.trunc(progress.completedCount));
   const total = Math.max(0, Math.trunc(progress.totalCount));
   const percent = computePercent(completed, total); // REQ-F-011 — re-derive, never verbatim
-  return [
-    ...(lead !== undefined ? [`${lead}\n\n`] : []),
-    `## Progress\n${completed} / ${total} tasks complete (${percent}%)\n\n`,
-    section("Blockers", renderProseLines(prose.blockers)),
-    section("Waiting on", renderProseLines(prose.waitingItems)),
-    section("Next actions", renderProseLines(prose.nextActions)),
-    `_Last synced ${updatedAt}_`,
-  ].join("");
+  // Neutralize any `kw:region` marker embedded in the (model-derived) prose/lead so a content marker
+  // can never forge/break a region boundary — the SAME shared helper composeMeetingRegionBody uses.
+  return neutralizeRegionMarkers(
+    [
+      ...(lead !== undefined ? [`${lead}\n\n`] : []),
+      `## Progress\n${completed} / ${total} tasks complete (${percent}%)\n\n`,
+      section("Blockers", renderProseLines(prose.blockers)),
+      section("Waiting on", renderProseLines(prose.waitingItems)),
+      section("Next actions", renderProseLines(prose.nextActions)),
+      `_Last synced ${updatedAt}_`,
+    ].join(""),
+  );
 }
