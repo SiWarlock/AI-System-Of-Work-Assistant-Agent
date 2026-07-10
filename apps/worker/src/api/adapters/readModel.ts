@@ -242,7 +242,7 @@ function readRecentChanges(data: unknown): readonly UiSafeRecentChange[] {
  * lives downstream in `queries.ts`'s `sanitizeIngestionInbox` against the frozen
  * UiSafeIngestionItemSchema. Mirrors {@link readRecentChanges} (field-copy + drop-malformed).
  */
-function readIngestionItems(data: unknown): readonly UiSafeIngestionItem[] {
+export function readIngestionItems(data: unknown): readonly UiSafeIngestionItem[] {
   const rows = pluckArray(data, "items");
   const out: UiSafeIngestionItem[] = [];
   for (const row of rows) {
