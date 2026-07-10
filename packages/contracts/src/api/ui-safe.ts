@@ -460,6 +460,38 @@ export const UiSafeCopilotAnswerSchema = z
   })
   .strict();
 
+// ── UiSafeIngestionItem ───────────────────────────────────────────────────────
+// The §9.7 ingestion-inbox row: a parked imported source (Flow 5 triage) the renderer lists so the
+// owner can act on it. Projected FROM the frozen SourceEnvelope (§8/§9), it carries ONLY:
+//   - `sourceId`    : the opaque source id (the renderer's HANDLE for a worker-mediated action);
+//   - `type`        : the open source-kind display token (e.g. "youtube_video") — a token, NOT content;
+//   - `sensitivity` : the open sensitivity display token (a badge) — a token, NOT content;
+//   - `summary`     : ONE projector-built single-line display line, re-bounded here (no raw payload
+//                     passthrough). EMPTY-UNTIL-PRODUCER: the interim projector derives it from the
+//                     SAFE `type` token; a real write-time producer supplies a redaction-by-type
+//                     display title (Lesson §5) — NEVER the raw `origin`.
+// DROPPED from SourceEnvelope: `origin` (a source URI / filesystem path — the GCL / #7 raw-ref
+// precedent), `contentHash` (content-derived — dropped like UiSafeApproval's payloadHash),
+// `routingHints` (an open record — dropped like GclProjection's sanitizedPayload), and `workspaceId`
+// (the renderer knows its scope — mirrors UiSafeDashboardCard/UiSafeRecentChange, so a pushed/cached
+// row can never blend cross-scope). `state`/`queuedAt` are a DEFERRED additive follow-up (added when
+// the write-time producer that supplies them lands — non-seam, so a later add is not a freeze break).
+export interface UiSafeIngestionItem {
+  sourceId: string;
+  type: string;
+  sensitivity: string;
+  summary: string;
+}
+
+export const UiSafeIngestionItemSchema = z
+  .object({
+    sourceId: z.string().min(1),
+    type: z.string().min(1),
+    sensitivity: z.string().min(1),
+    summary: uiSafeSummaryLine,
+  })
+  .strict();
+
 // ── Schema ⇄ interface parity guards (compile-time; erased at runtime) ───────
 // Each asserts the schema's inferred output EXACTLY equals its standalone
 // interface — so the interface and the runtime validator can never drift apart.
@@ -475,7 +507,8 @@ const _uiSafeParity: [
   Exact<z.infer<typeof UiSafeProjectDashboardSchema>, UiSafeProjectDashboard>,
   Exact<z.infer<typeof UiSafeCitationSchema>, UiSafeCitation>,
   Exact<z.infer<typeof UiSafeCopilotAnswerSchema>, UiSafeCopilotAnswer>,
-] = [true, true, true, true, true, true, true, true, true, true, true];
+  Exact<z.infer<typeof UiSafeIngestionItemSchema>, UiSafeIngestionItem>,
+] = [true, true, true, true, true, true, true, true, true, true, true, true];
 void _uiSafeParity;
 
 // ── Checked-in allowlist — THE source of truth ───────────────────────────────
@@ -506,4 +539,5 @@ export const UI_SAFE_ALLOWLIST = {
   ],
   citation: ["citationId", "title"],
   copilotAnswer: ["answer", "citations", "egressProcessor"],
+  ingestion: ["sensitivity", "sourceId", "summary", "type"],
 } as const;

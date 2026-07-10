@@ -18,12 +18,15 @@ import type {
   HealthItem,
   WorkflowRunRef,
   GclProjection,
+  SourceEnvelope,
   UiSafeApproval,
   UiSafeHealthItem,
   UiSafeWorkflowRunRef,
   UiSafeDashboardCard,
   UiSafeGclProjection,
+  UiSafeIngestionItem,
 } from "@sow/contracts";
+import { collapseToSummaryLine } from "@sow/contracts";
 import { permitsRawDrillDown } from "@sow/policy";
 
 /**
@@ -179,5 +182,34 @@ export function toUiSafeGclProjection(projection: GclProjection): UiSafeGclProje
     projectionType: projection.projectionType,
     summary: buildGclSummary(projection.sanitizedPayload, projection.projectionType),
     drillable: permitsRawDrillDown(projection.visibilityLevel),
+  };
+}
+
+/**
+ * Project a {@link SourceEnvelope} (the frozen ingestion source-register record, §8/§9) to a
+ * {@link UiSafeIngestionItem} — the §9.7 ingestion-inbox row. Copies ONLY the allowlisted names
+ * (`sourceId`, `type`, `sensitivity`) by EXPLICIT field copy (no `...spread`) + DERIVES a bounded
+ * single-line `summary` from the SAFE `type` display token via `collapseToSummaryLine`.
+ *
+ * EMPTY-UNTIL-PRODUCER: the summary is the safe source `type` token; a real write-time producer
+ * supplies a redaction-by-type display title (root CLAUDE.md Lesson §5) — NEVER the raw `origin`.
+ *
+ * DROPS every raw ref on the record: `origin` (a source URI / filesystem path — the GCL / #7 raw-ref
+ * precedent), `contentHash` (content-derived — dropped like UiSafeApproval's payloadHash),
+ * `routingHints` (an open record — dropped like GclProjection's sanitizedPayload), and `workspaceId`
+ * (the renderer knows its scope — mirrors UiSafeDashboardCard/UiSafeRecentChange). This projector is
+ * the drop-rules SEAM the DEFERRED write-time ingestion producer calls; the read path re-validates
+ * every served row through `UiSafeIngestionItemSchema` regardless (defense-in-depth).
+ */
+export function toUiSafeIngestionItem(source: SourceEnvelope): UiSafeIngestionItem {
+  // `type` is an open `min(1)` token — a whitespace-only value collapses to "" and would fail the
+  // read boundary's `uiSafeSummaryLine` gate, fail-closing the WHOLE inbox. Fall back to a non-empty
+  // placeholder so a degenerate source stays visible rather than taking the surface offline.
+  const summary = collapseToSummaryLine(source.type) || "source";
+  return {
+    sourceId: source.sourceId,
+    type: source.type,
+    sensitivity: source.sensitivity,
+    summary,
   };
 }

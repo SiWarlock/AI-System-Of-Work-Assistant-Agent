@@ -18,6 +18,7 @@ import {
   UiSafeProjectDashboardSchema,
   UiSafeCitationSchema,
   UiSafeCopilotAnswerSchema,
+  UiSafeIngestionItemSchema,
   collapseToSummaryLine,
   UI_SAFE_ALLOWLIST,
 } from "../../src/api/ui-safe";
@@ -49,6 +50,7 @@ const PROJECTIONS = [
   ["projectDashboard", UiSafeProjectDashboardSchema, UI_SAFE_ALLOWLIST.projectDashboard] as const,
   ["citation", UiSafeCitationSchema, UI_SAFE_ALLOWLIST.citation] as const,
   ["copilotAnswer", UiSafeCopilotAnswerSchema, UI_SAFE_ALLOWLIST.copilotAnswer] as const,
+  ["ingestion", UiSafeIngestionItemSchema, UI_SAFE_ALLOWLIST.ingestion] as const,
 ] as const;
 
 describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage gate)", () => {
@@ -455,5 +457,39 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
     expect(UiSafeCopilotAnswerSchema.safeParse({ ...validAnswer, egressProcessor: "anthropic\nleaked raw note" }).success).toBe(false);
     // It IS on the allowlist (the freeze test pins the full key set); it is NOT a raw-content field.
     expect(UI_SAFE_ALLOWLIST.copilotAnswer).toContain("egressProcessor");
+  });
+
+  // ── UiSafeIngestionItem (§9.7 / §10/§11 — the ingestion inbox row) ────────────
+  // A parked imported-source row (Flow 5 triage) the renderer lists so the owner can act on it.
+  // Projected FROM the frozen SourceEnvelope, it must DROP every raw ref: `origin` (a source URI /
+  // filesystem path — the GCL/#7 raw-ref precedent), `contentHash` (content-derived — dropped like
+  // UiSafeApproval's payloadHash), `routingHints` (an open record — dropped like GclProjection's
+  // sanitizedPayload), and `workspaceId` (the renderer knows its scope — mirrors
+  // UiSafeDashboardCard/UiSafeRecentChange, so a pushed/cached row can never blend cross-scope).
+  it("UiSafeIngestionItem omits origin + contentHash + routingHints + workspaceId (raw refs / cross-scope)", () => {
+    expect(UI_SAFE_ALLOWLIST.ingestion).not.toContain("origin");
+    expect(UI_SAFE_ALLOWLIST.ingestion).not.toContain("contentHash");
+    expect(UI_SAFE_ALLOWLIST.ingestion).not.toContain("routingHints");
+    expect(UI_SAFE_ALLOWLIST.ingestion).not.toContain("workspaceId");
+  });
+
+  it("UiSafeIngestionItemSchema accepts a valid sample; rejects an origin / contentHash / routingHints / workspaceId passthrough (.strict)", () => {
+    const sample = { sourceId: "src-1", type: "youtube_video", sensitivity: "personal", summary: "youtube_video" };
+    expect(UiSafeIngestionItemSchema.safeParse(sample).success).toBe(true);
+    // No raw source ref rides through as an unknown key.
+    expect(UiSafeIngestionItemSchema.safeParse({ ...sample, origin: "https://youtu.be/abc123" }).success).toBe(false);
+    expect(UiSafeIngestionItemSchema.safeParse({ ...sample, contentHash: "sha256:deadbeef" }).success).toBe(false);
+    expect(UiSafeIngestionItemSchema.safeParse({ ...sample, routingHints: { project: "p" } }).success).toBe(false);
+    expect(UiSafeIngestionItemSchema.safeParse({ ...sample, workspaceId: "employer-work" }).success).toBe(false);
+  });
+
+  it("UiSafeIngestionItemSchema rejects a multi-line / over-length summary (single-line leak gate)", () => {
+    const base = { sourceId: "src-1", type: "youtube_video", sensitivity: "personal" };
+    expect(UiSafeIngestionItemSchema.safeParse({ ...base, summary: "line one\nleaked raw transcript" }).success).toBe(false);
+    // Full Unicode newline family (U+2028 line separator; U+0085 NEL that JS `\s` misses).
+    expect(UiSafeIngestionItemSchema.safeParse({ ...base, summary: "a\u2028b" }).success).toBe(false);
+    expect(UiSafeIngestionItemSchema.safeParse({ ...base, summary: "a\u0085b" }).success).toBe(false);
+    expect(UiSafeIngestionItemSchema.safeParse({ ...base, summary: "x".repeat(1025) }).success).toBe(false);
+    expect(UiSafeIngestionItemSchema.safeParse({ ...base, summary: "one line" }).success).toBe(true);
   });
 });

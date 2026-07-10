@@ -17,12 +17,14 @@
 import { describe, it, expect } from "vitest";
 import {
   UI_SAFE_ALLOWLIST,
+  UiSafeIngestionItemSchema,
   isErr,
   isOk,
   type Approval,
   type HealthItem,
   type WorkflowRunRef,
   type GclProjection,
+  type SourceEnvelope,
   type FailureVariant,
   type Result,
 } from "@sow/contracts";
@@ -33,6 +35,7 @@ import {
   toUiSafeWorkflowRunRef,
   toUiSafeDashboardCard,
   toUiSafeGclProjection,
+  toUiSafeIngestionItem,
   type DashboardCardSource,
 } from "../../src/api/projections/uiSafe";
 import { createApiServer } from "../../src/api/server";
@@ -246,6 +249,73 @@ describe("toUiSafeDashboardCard — WS-8 field allowlist", () => {
     const out = asRecord(toUiSafeDashboardCard(tainted));
     expect(out).not.toHaveProperty("secretPayload");
     expect(fieldSet(out)).toEqual([...UI_SAFE_ALLOWLIST.dashboardCard].sort());
+  });
+});
+
+// A base VALID SourceEnvelope (all frozen fields present; the raw refs are set so the
+// ingestion projector is PROVEN to DROP them).
+function baseSourceEnvelope(): SourceEnvelope {
+  return {
+    sourceId: "src_1" as SourceEnvelope["sourceId"],
+    workspaceId: "ws-001" as SourceEnvelope["workspaceId"], // DROPPED — renderer knows its scope
+    origin: "https://youtu.be/abc123?t=42", // DROPPED — raw source URI (WS-8 / #7 raw-ref precedent)
+    contentHash: "sha256:deadbeef", // DROPPED — content-derived (like UiSafeApproval's payloadHash)
+    type: "youtube_video",
+    sensitivity: "personal",
+    routingHints: { project: "p-1", notePath: "/Users/x/vault/n.md" }, // DROPPED — open record (may carry a path)
+  };
+}
+
+describe("toUiSafeIngestionItem — WS-8 field allowlist (§9.7 ingestion inbox)", () => {
+  it("projects a subset of the allowlisted UiSafeIngestionItem field set", () => {
+    const out = toUiSafeIngestionItem(baseSourceEnvelope());
+    const allowed: readonly string[] = UI_SAFE_ALLOWLIST.ingestion;
+    expect(fieldSet(out).every((k) => allowed.includes(k))).toBe(true);
+    for (const req of ["sourceId", "type", "sensitivity", "summary"]) {
+      expect(out).toHaveProperty(req);
+    }
+  });
+
+  it("does NOT leak origin (raw URI), contentHash, routingHints, or workspaceId", () => {
+    const out = asRecord(toUiSafeIngestionItem(baseSourceEnvelope()));
+    expect(out).not.toHaveProperty("origin");
+    expect(out).not.toHaveProperty("contentHash");
+    expect(out).not.toHaveProperty("routingHints");
+    expect(out).not.toHaveProperty("workspaceId");
+  });
+
+  it("does NOT leak an ADVERSARIALLY-injected extra key (secret / raw content)", () => {
+    const tainted = {
+      ...baseSourceEnvelope(),
+      secret: "kc-ref://keychain/session-token",
+      rawContent: "raw employer transcript body",
+    } as unknown as SourceEnvelope;
+    const out = asRecord(toUiSafeIngestionItem(tainted));
+    expect(out).not.toHaveProperty("secret");
+    expect(out).not.toHaveProperty("rawContent");
+    const allowed: readonly string[] = UI_SAFE_ALLOWLIST.ingestion;
+    expect(fieldSet(out).every((k) => allowed.includes(k))).toBe(true);
+  });
+
+  it("builds a NON-EMPTY SINGLE-LINE bounded summary from the safe `type` token — NEVER the raw origin", () => {
+    const out = toUiSafeIngestionItem(baseSourceEnvelope());
+    expect(out.summary.length).toBeGreaterThan(0);
+    expect(/[\r\n]/.test(out.summary)).toBe(false);
+    // The summary is derived from the SAFE `type` display token, never the dropped raw origin URI.
+    expect(out.summary).toBe("youtube_video");
+    expect(out.summary).not.toContain("youtu.be");
+  });
+
+  it("NEVER emits an empty summary for a degenerate whitespace-only `type` (would else fail-close the inbox)", () => {
+    // SourceEnvelope.type is z.string().min(1) — a single space passes min(1) but collapses to "".
+    // An empty summary fails UiSafeIngestionItemSchema (uiSafeSummaryLine min 1) → the read boundary
+    // would reject the WHOLE inbox. The projector must fall back to a non-empty placeholder.
+    const degenerate = { ...baseSourceEnvelope(), type: "   " } as SourceEnvelope;
+    const out = toUiSafeIngestionItem(degenerate);
+    expect(out.summary.length).toBeGreaterThan(0);
+    expect(/[\r\n]/.test(out.summary)).toBe(false);
+    // And it STILL passes the frozen contract gate (non-empty single-line).
+    expect(UiSafeIngestionItemSchema.safeParse(out).success).toBe(true);
   });
 });
 

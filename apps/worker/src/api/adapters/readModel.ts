@@ -38,6 +38,7 @@ import {
   type GclProjection,
   type UiSafeRecentChange,
   type UiSafeProjectDashboard,
+  type UiSafeIngestionItem,
 } from "@sow/contracts";
 import type {
   ReadModelRepository,
@@ -64,6 +65,8 @@ export const READ_MODEL_KEYS = {
   copilot: "copilot_runs",
   /** Recent Changes — workspace-scoped audit-linked activity rows (§9.5). */
   recentChanges: "recent_changes",
+  /** Ingestion inbox — workspace-scoped parked-source rows (§9.7; empty-until-producer). */
+  ingestion: "ingestion_inbox",
   /** Project dashboards — workspace-scoped deterministic-progress project cards (§9.5). */
   projectDashboards: "project_dashboards",
   /** GCL sanitized cross-workspace surface (workspaceId = null). */
@@ -231,6 +234,38 @@ function readRecentChanges(data: unknown): readonly UiSafeRecentChange[] {
 }
 
 /**
+ * Read the `items` array off the ingestion-inbox read-model payload → candidate UiSafeIngestionItem[]
+ * (§9.7). A malformed payload → `[]`; a structurally-malformed row (a missing/non-string field) is
+ * DROPPED. Copies ONLY the four allowlisted field names by EXPLICIT copy — a stray raw source ref
+ * (origin / contentHash / routingHints) on a stored row can NEVER ride through this narrowing. The
+ * single-line `summary` LEAK GATE (a multi-line / over-length summary fails the whole list CLOSED)
+ * lives downstream in `queries.ts`'s `sanitizeIngestionInbox` against the frozen
+ * UiSafeIngestionItemSchema. Mirrors {@link readRecentChanges} (field-copy + drop-malformed).
+ */
+function readIngestionItems(data: unknown): readonly UiSafeIngestionItem[] {
+  const rows = pluckArray(data, "items");
+  const out: UiSafeIngestionItem[] = [];
+  for (const row of rows) {
+    if (typeof row !== "object" || row === null) continue;
+    const r = row as Record<string, unknown>;
+    if (
+      typeof r["sourceId"] === "string" &&
+      typeof r["type"] === "string" &&
+      typeof r["sensitivity"] === "string" &&
+      typeof r["summary"] === "string"
+    ) {
+      out.push({
+        sourceId: r["sourceId"],
+        type: r["type"],
+        sensitivity: r["sensitivity"],
+        summary: r["summary"],
+      });
+    }
+  }
+  return out;
+}
+
+/**
  * Read the `projects` array off the project-dashboards read-model payload → candidate
  * UiSafeProjectDashboard[]. A malformed payload → `[]`; a non-object row is dropped. This is
  * a THIN transport narrowing only — every field (and the REQ-F-011 cross-field progress
@@ -334,7 +369,7 @@ export interface DbReadModelQueryPortAsync {
   ) => Promise<Result<readonly DashboardCardSource[], FailureVariant>>;
   readonly ingestionInbox: (
     workspaceId: string,
-  ) => Promise<Result<readonly Approval[], FailureVariant>>;
+  ) => Promise<Result<readonly UiSafeIngestionItem[], FailureVariant>>;
   readonly approvalInbox: (
     workspaceId: string,
   ) => Promise<Result<readonly Approval[], FailureVariant>>;
@@ -431,8 +466,21 @@ export function createDbReadModelQueryPort(
       return workspaceScopedCards(READ_MODEL_KEYS.project, workspaceId);
     },
 
-    ingestionInbox(workspaceId: string): Promise<Result<readonly Approval[], FailureVariant>> {
-      return pendingApprovals(workspaceId);
+    async ingestionInbox(
+      workspaceId: string,
+    ): Promise<Result<readonly UiSafeIngestionItem[], FailureVariant>> {
+      // Ingestion inbox (§9.7) — the DEDICATED workspace-scoped read-model row (NOT approvals: the
+      // `ingestionInbox = pendingApprovals` ALIAS is REMOVED). Workspace-scoped + fail-closed: an
+      // unknown workspace never reaches the rows; the row is keyed `(READ_MODEL_KEYS.ingestion,
+      // workspaceId)` so workspace A's rows can never surface for B. EMPTY-UNTIL-PRODUCER: an absent
+      // row → ok([]). Candidate rows are RE-VALIDATED (single-line summary leak gate) downstream by
+      // queries.ts's `sanitizeIngestionInbox`.
+      const known = await resolveKnownWorkspace(readModels, workspaceId);
+      if (isErr(known)) return known;
+      if (!known.value) return err(unknownWorkspace());
+      const rm = await getReadModel(readModels, READ_MODEL_KEYS.ingestion, workspaceId);
+      if (isErr(rm)) return rm;
+      return ok(rm.value === undefined ? [] : readIngestionItems(rm.value.data));
     },
 
     approvalInbox(workspaceId: string): Promise<Result<readonly Approval[], FailureVariant>> {

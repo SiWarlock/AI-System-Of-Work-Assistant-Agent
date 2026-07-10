@@ -49,6 +49,8 @@ import {
   UiSafeRecentChangeSchema,
   type UiSafeProjectDashboard,
   UiSafeProjectDashboardSchema,
+  type UiSafeIngestionItem,
+  UiSafeIngestionItemSchema,
   type UiSafeCopilotAnswer,
 } from "@sow/contracts";
 import { computePercent } from "@sow/workflows";
@@ -101,10 +103,15 @@ export interface ReadModelQueryPort {
     workspaceId: string,
     projectId: string,
   ) => MaybeAsyncResult<readonly DashboardCardSource[]>;
-  /** Ingestion inbox (pending imported-content approvals); unknown workspace → err. */
+  /**
+   * Ingestion inbox (§9.7) — workspace-scoped candidate UiSafeIngestionItem rows a WRITE-time
+   * producer emitted for parked imported sources (Flow 5 triage). Unknown workspace → typed err
+   * (fail-closed). EMPTY-UNTIL-PRODUCER: an absent read-model row → ok([]) (NOT approvals — the
+   * `ingestionInbox = pendingApprovals` alias is REMOVED). NOT a cross-workspace path.
+   */
   readonly ingestionInbox: (
     workspaceId: string,
-  ) => MaybeAsyncResult<readonly Approval[]>;
+  ) => MaybeAsyncResult<readonly UiSafeIngestionItem[]>;
   /** Approval inbox (pending external-action approvals); unknown workspace → err. */
   readonly approvalInbox: (
     workspaceId: string,
@@ -331,6 +338,37 @@ function sanitizeRecentChanges(
   return ok(out.slice(0, RECENT_CHANGES_CAP));
 }
 
+/** Max ingestion-inbox rows the surface serves (server-capped — never trust the stored JSON length). */
+const INGESTION_INBOX_CAP = 100;
+
+/**
+ * The ingestion-inbox read boundary (§9.7): RE-VALIDATE each candidate row through the frozen
+ * `UiSafeIngestionItemSchema` (defense-in-depth over the DEFERRED write-time producer, whose strict
+ * field set + single-line `summary` bound are the structural gates), fail CLOSED on ANY poisoned row
+ * (a multi-line / over-length summary, or a raw source ref smuggled as an extra key, is the shape of a
+ * leak — one bad row rejects the WHOLE result rather than partially serving), THEN cap. Redaction-safe:
+ * a rejection crosses only a stable code, never the raw row. Mirrors {@link sanitizeRecentChanges} (no
+ * re-sort — the minimal ingestion row carries no ordering key yet; `queuedAt` is a deferred follow-up).
+ */
+function sanitizeIngestionInbox(
+  r: Result<readonly UiSafeIngestionItem[], FailureVariant>,
+): Result<readonly UiSafeIngestionItem[], FailureVariant> {
+  if (!r.ok) return r;
+  const out: UiSafeIngestionItem[] = [];
+  for (const item of r.value) {
+    const parsed = UiSafeIngestionItemSchema.safeParse(item);
+    if (!parsed.success) {
+      return err(
+        failure("validation_rejected", "ingestion-inbox row failed sanitization", {
+          cause: { code: "INGESTION_ITEM_SANITIZATION_REJECTED" },
+        }),
+      );
+    }
+    out.push(parsed.data);
+  }
+  return ok(out.slice(0, INGESTION_INBOX_CAP));
+}
+
 /**
  * The Project dashboards read boundary (§9.5). Two-stage, fail-CLOSED on any bad row:
  *  1. Structural re-validation through the frozen `UiSafeProjectDashboardSchema` (the schema
@@ -455,11 +493,11 @@ export function buildQueryRouter(deps: QueryRouterDeps) {
       ),
     ),
 
-    /** Ingestion inbox — UI-safe Approval cards; unknown workspace → typed err. */
+    /** Ingestion inbox (§9.7) — UI-safe ingestion items, re-validated fail-closed; unknown workspace → typed err; empty-until-producer. */
     ingestionInbox: publicProcedure.input(parseWorkspaceInput).query(
-      authedResolver<WorkspaceInput, readonly UiSafeApproval[]>(
-        async (_ctx, input): Promise<Result<readonly UiSafeApproval[], FailureVariant>> =>
-          projectApprovals(await readModel.ingestionInbox(input.workspaceId)),
+      authedResolver<WorkspaceInput, readonly UiSafeIngestionItem[]>(
+        async (_ctx, input): Promise<Result<readonly UiSafeIngestionItem[], FailureVariant>> =>
+          sanitizeIngestionInbox(await readModel.ingestionInbox(input.workspaceId)),
       ),
     ),
 

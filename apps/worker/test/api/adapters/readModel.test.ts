@@ -325,7 +325,7 @@ describe("createDbReadModelQueryPort — workspace-scoped card + copilot surface
 // ── inbox surfaces (pending approvals; fail-closed on unknown workspace) ──────
 
 describe("createDbReadModelQueryPort — ingestion + approval inboxes", () => {
-  it("lists PENDING approvals for a KNOWN workspace", async () => {
+  it("approvalInbox lists PENDING approvals for a KNOWN workspace", async () => {
     const o = await freshDb();
     await seedRegistry(o, [KNOWN_WS]);
     // Seed one pending + one non-pending approval; only pending surfaces.
@@ -338,15 +338,68 @@ describe("createDbReadModelQueryPort — ingestion + approval inboxes", () => {
     if (isErr(cr2)) throw new Error("seed approval2 failed");
 
     const port = createDbReadModelQueryPort(o.repos);
-    for (const surface of [port.ingestionInbox, port.approvalInbox]) {
-      const res = await surface(KNOWN_WS);
-      expect(isOk(res)).toBe(true);
-      if (isOk(res)) {
-        expect(res.value.length).toBe(1);
-        expect(res.value[0]!.id).toBe("apr-1");
-        expect(res.value[0]!.status).toBe("pending");
-      }
+    const res = await port.approvalInbox(KNOWN_WS);
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) {
+      expect(res.value.length).toBe(1);
+      expect(res.value[0]!.id).toBe("apr-1");
+      expect(res.value[0]!.status).toBe("pending");
     }
+  });
+
+  it("ingestionInbox reads the DEDICATED ingestion read-model (NOT approvals): absent → empty; malformed dropped; UNKNOWN → fail-closed", async () => {
+    const o = await freshDb();
+    await seedRegistry(o, [KNOWN_WS]);
+    // A pending approval EXISTS — it must NOT surface on the ingestion path (the alias is removed).
+    if (isErr(await o.repos.approvals.create(pendingApproval("apr-1")))) throw new Error("seed approval failed");
+
+    let port = createDbReadModelQueryPort(o.repos);
+    // Absent ingestion read-model row → empty ok (NOT the pending approval).
+    let res = await port.ingestionInbox(KNOWN_WS);
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value).toEqual([]);
+
+    await seedReadModel(o, READ_MODEL_KEYS.ingestion, KNOWN_WS, {
+      items: [
+        { sourceId: "src-1", type: "youtube_video", sensitivity: "personal", summary: "youtube_video" },
+        // A structurally malformed row (missing summary) is dropped by the transport guard.
+        { sourceId: "src-bad", type: "podcast", sensitivity: "personal" },
+      ],
+    });
+    port = createDbReadModelQueryPort(o.repos);
+    res = await port.ingestionInbox(KNOWN_WS);
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) {
+      expect(res.value.length).toBe(1); // malformed row dropped; the pending approval did NOT surface
+      expect(res.value[0]!.sourceId).toBe("src-1");
+    }
+
+    const unknown = await port.ingestionInbox(UNKNOWN_WS);
+    expect(isErr(unknown)).toBe(true); // fail-closed (WS-8)
+  });
+
+  it("ingestionInbox is WORKSPACE-SCOPED: workspace A's rows NEVER surface for workspace B (WS-8 shared-global-key guard — safety rule 4)", async () => {
+    const o = await freshDb();
+    const A = KNOWN_WS;
+    const B = "ws-B";
+    await seedRegistry(o, [A, B]); // BOTH are known/in-scope (so B is not merely fail-closed-on-unknown)
+    // Seed ONLY workspace A's ingestion read-model with a recognizable row.
+    await seedReadModel(o, READ_MODEL_KEYS.ingestion, A, {
+      items: [{ sourceId: "A-src-secret-1", type: "youtube_video", sensitivity: "personal", summary: "A only" }],
+    });
+
+    const port = createDbReadModelQueryPort(o.repos);
+    // B has NO ingestion row of its own ⇒ empty; A's row must NOT bleed through a shared global key.
+    const resB = await port.ingestionInbox(B);
+    expect(isOk(resB)).toBe(true);
+    if (isOk(resB)) {
+      expect(resB.value).toEqual([]);
+      expect(resB.value.some((r) => r.sourceId === "A-src-secret-1")).toBe(false);
+    }
+    // Non-vacuous positive anchor: A DOES read its own seeded row (the isolation isn't just "both empty").
+    const resA = await port.ingestionInbox(A);
+    expect(isOk(resA)).toBe(true);
+    if (isOk(resA)) expect(resA.value.map((r) => r.sourceId)).toContain("A-src-secret-1");
   });
 
   it("the inbox is an EMPTY ok list for a KNOWN workspace with no pending approvals", async () => {

@@ -28,6 +28,7 @@ import {
   type WorkflowRunRef,
   type GclProjection,
   type UiSafeManagedDoc,
+  type UiSafeIngestionItem,
 } from "@sow/contracts";
 import { createCallerFactory, router, type ApiContext } from "../../../src/api/trpc";
 import type { AuthedContext } from "../../../src/api/auth/sessionAuth";
@@ -93,6 +94,17 @@ function fakeApproval(): Approval {
     actor: "user:alice", // DROPPED by the UI-safe projection
     channel: "mac",
     payloadHash: "sha256:deadbeef", // DROPPED by the UI-safe projection
+  };
+}
+
+// A candidate UiSafeIngestionItem row (§9.7) — the shape the DEDICATED ingestion read-model serves
+// (a write-time producer builds these later; this slice ships the read path empty-until-producer).
+function fakeIngestionItem(): UiSafeIngestionItem {
+  return {
+    sourceId: "src_1",
+    type: "youtube_video",
+    sensitivity: "personal",
+    summary: "youtube_video",
   };
 }
 
@@ -179,8 +191,10 @@ function fakePort(overrides: Partial<ReadModelQueryPort> = {}): ReadModelQueryPo
           ])
         : err(notFoundWorkspace(workspaceId)),
 
+    // Ingestion inbox now serves DEDICATED UiSafeIngestionItem candidates (§9.7) — the approvals
+    // ALIAS is REMOVED (no Approval crosses this path). Unknown workspace → typed err (fail-closed).
     ingestionInbox: (workspaceId) =>
-      workspaceId === KNOWN_WORKSPACE ? ok([fakeApproval()]) : err(notFoundWorkspace(workspaceId)),
+      workspaceId === KNOWN_WORKSPACE ? ok([fakeIngestionItem()]) : err(notFoundWorkspace(workspaceId)),
 
     approvalInbox: (workspaceId) =>
       workspaceId === KNOWN_WORKSPACE ? ok([fakeApproval()]) : err(notFoundWorkspace(workspaceId)),
@@ -323,18 +337,56 @@ describe("buildQueryRouter — UI-safe read-model serving (§10/§13)", () => {
     ).rejects.toThrow();
   });
 
-  it("ingestion inbox returns UI-safe Approval cards only (actor / payloadHash dropped)", async () => {
+  it("ingestion inbox returns DEDICATED UiSafeIngestionItem rows — the approvals ALIAS is REMOVED", async () => {
     const caller = makeCaller(fakePort());
     const res = await caller.query.ingestionInbox({ workspaceId: KNOWN_WORKSPACE });
     expect(isOk(res)).toBe(true);
     if (isOk(res)) {
-      const card = res.value[0]!;
-      // Field set is a SUBSET of the allowlist — absent optionals (snoozeUntil /
-      // expiresAt) are omitted, never added-as-undefined.
-      assertSubsetOfAllowlist(card, UI_SAFE_ALLOWLIST.approval);
-      expect(asRecord(card).actor).toBeUndefined();
-      expect(asRecord(card).payloadHash).toBeUndefined();
+      const item = res.value[0]!;
+      // Field set is a SUBSET of the ingestion allowlist (NOT the approval allowlist).
+      assertSubsetOfAllowlist(item, UI_SAFE_ALLOWLIST.ingestion);
+      expect(item.sourceId).toBe("src_1");
+      // The old alias returned a UiSafeApproval — NONE of its fields cross the ingestion path now.
+      expect(asRecord(item).status).toBeUndefined();
+      expect(asRecord(item).channel).toBeUndefined();
+      expect(asRecord(item).actor).toBeUndefined();
+      expect(asRecord(item).payloadHash).toBeUndefined();
     }
+  });
+
+  it("ingestion inbox is EMPTY-UNTIL-PRODUCER: no ingestion read-model row ⇒ ok([]) (not approvals, not err)", async () => {
+    const caller = makeCaller(fakePort({ ingestionInbox: () => ok([]) }));
+    const res = await caller.query.ingestionInbox({ workspaceId: KNOWN_WORKSPACE });
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value).toEqual([]);
+  });
+
+  it("ingestion inbox re-validates fail-CLOSED: a poisoned (multi-line summary) row ⇒ typed err, never a throw (§16)", async () => {
+    const poisoned: UiSafeIngestionItem = {
+      sourceId: "src_bad",
+      type: "youtube_video",
+      sensitivity: "personal",
+      summary: "line one\nleaked raw transcript body",
+    };
+    const caller = makeCaller(fakePort({ ingestionInbox: () => ok([poisoned]) }));
+    const res = await caller.query.ingestionInbox({ workspaceId: KNOWN_WORKSPACE });
+    // The single-line leak gate rejects the WHOLE result closed (mirror sanitizeRecentChanges) —
+    // a typed err, never a partial serve, never a throw.
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.kind).toBe("validation_rejected");
+  });
+
+  it("ingestion inbox CAPS at 100 rows (server-bounded — never trust the stored JSON length)", async () => {
+    const many: UiSafeIngestionItem[] = Array.from({ length: 150 }, (_, i) => ({
+      sourceId: `src_${i}`,
+      type: "youtube_video",
+      sensitivity: "personal",
+      summary: `item ${i}`,
+    }));
+    const caller = makeCaller(fakePort({ ingestionInbox: () => ok(many) }));
+    const res = await caller.query.ingestionInbox({ workspaceId: KNOWN_WORKSPACE });
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value.length).toBe(100);
   });
 
   it("approval inbox returns UI-safe Approval cards only", async () => {
