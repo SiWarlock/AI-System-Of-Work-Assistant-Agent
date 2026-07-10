@@ -4,7 +4,7 @@
 - **Phase:** 11 (GBrain pin/upgrade & write-through enablement) + Phase 6/9 §6 hardening
 - **Team:** `session-f2673cd5` (orchestrator + implementer, single-track on `main`, autonomous build)
 - **Predecessor:** [`052-2026-07-09-gate4-serving-phase11-doctor-meeting-createpatch.md`](./052-2026-07-09-gate4-serving-phase11-doctor-meeting-createpatch.md)
-- **Successor:** _(next session)_
+- **Successor:** [`054-2026-07-09-frontmatter-marker-safety.md`](./054-2026-07-09-frontmatter-marker-safety.md)
 - **Round:** round 2 of this team session — 2 slices (`c4467ee`, `3daa0c8`); `/orchestrate-end` (orchestrator) pushes after this doc.
 
 ## Why this session existed
