@@ -60,6 +60,7 @@ export * from "./gbrain/remediation/router";
 // ── gbrain enablement: write-through flag + crash-recovery reconciler ───────────
 export * from "./gbrain/enablement/write-through-flag";
 export * from "./gbrain/enablement/crash-recovery-reconciler";
+export * from "./gbrain/enablement/decide-enablement";
 
 // ── gcl: Visibility Gate + projection + cross-workspace links + global reconcile ─
 export * from "./gcl/visibility-gate";
