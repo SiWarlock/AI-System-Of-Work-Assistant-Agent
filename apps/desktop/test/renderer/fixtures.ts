@@ -12,6 +12,7 @@ import type {
   UiSafeHealthItem,
   UiSafeRecentChange,
   UiSafeProjectDashboard,
+  UiSafeIngestionItem,
 } from "@sow/contracts/api/ui-safe";
 
 // Real enum members pulled off the frozen schemas, so fixtures are genuinely
@@ -80,6 +81,13 @@ export function uiSafeRecentChange(
   occurredAt: string = ISO,
 ): UiSafeRecentChange {
   return { changeId, kind: "commit", summary: "committed a.md rev 0c4", occurredAt };
+}
+
+export function uiSafeIngestionItem(
+  sourceId = "src-1",
+  overrides: Partial<UiSafeIngestionItem> = {},
+): UiSafeIngestionItem {
+  return { sourceId, type: "youtube_video", sensitivity: "personal", summary: "youtube_video", ...overrides };
 }
 
 export function uiSafeProjectDashboard(projectId = "prj-1"): UiSafeProjectDashboard {

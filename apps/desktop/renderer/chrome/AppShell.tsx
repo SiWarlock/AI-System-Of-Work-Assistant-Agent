@@ -34,6 +34,8 @@ export interface AppShellProps {
   readonly onAskCopilot?: (question: string) => Promise<AskResult>;
   /** The pending-approval count (§9.8) for the Approvals nav badge; 0/undefined → no pill. */
   readonly pendingApprovalCount?: number;
+  /** The active-scope ingestion-inbox count (§9.7) for the Inbox nav badge; 0/undefined → no pill. */
+  readonly ingestionCount?: number;
   /** The active surface, rendered in the content pane. */
   readonly children: ReactNode;
 }
@@ -235,7 +237,7 @@ function NavLink({
 // ── The shell ──────────────────────────────────────────────────────────────
 
 export function AppShell(props: AppShellProps): ReactElement {
-  const { connection, scope, onScopeChange, route, onNavigate, onAskCopilot, pendingApprovalCount, children } = props;
+  const { connection, scope, onScopeChange, route, onNavigate, onAskCopilot, pendingApprovalCount, ingestionCount, children } = props;
 
   // Copilot right-sidebar chrome state (§4.6): collapsed (thin rail) ⇄ expanded (chat panel).
   // Owned here like the scope switcher's local open state — orthogonal to BOTH route and scope
@@ -355,16 +357,20 @@ export function AppShell(props: AppShellProps): ReactElement {
             </svg>
           </NavLink>
 
-          {/* Inbox */}
-          <div className="sow-nav-item" role="link" tabIndex={0}>
+          {/* Inbox — routable (§9.7 ingestion triage), with a live active-scope count badge */}
+          <NavLink
+            surface="ingestion"
+            label="Inbox"
+            active={route.surface === "ingestion"}
+            onNavigate={onNavigate}
+            badge={ingestionCount}
+          >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M3.5 13.5L6 5.5a2 2 0 0 1 1.9-1.5h8.2A2 2 0 0 1 18 5.5l2.5 8" />
               <path d="M3.5 13.5V18a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-4.5" />
               <path d="M3.5 13.5h5l1.5 2.5h4l1.5-2.5h5" />
             </svg>
-            <span className="sow-nav-label">Inbox</span>
-            <span className="sow-badge" aria-label="5 inbox items">5</span>
-          </div>
+          </NavLink>
 
           {/* Knowledge */}
           <div className="sow-nav-item" role="link" tabIndex={0}>

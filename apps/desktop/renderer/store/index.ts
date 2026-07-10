@@ -8,6 +8,7 @@ import type {
   UiSafeGclProjection,
   UiSafeRecentChange,
   UiSafeProjectDashboard,
+  UiSafeIngestionItem,
 } from "@sow/contracts/api/ui-safe";
 import { DEFAULT_SCOPE, type WorkspaceScope } from "./scope";
 import { DEFAULT_ROUTE, type Route } from "./route";
@@ -46,6 +47,11 @@ export interface UiSafeStoreState {
    * Workspace-scoped — cleared to `[]` under Global (projects never blend; WS-8).
    */
   readonly projects: readonly UiSafeProjectDashboard[];
+  /**
+   * The active WORKSPACE scope's ingestion inbox (query.ingestionInbox snapshot; §9.7).
+   * Workspace-scoped — cleared to `[]` under Global (ingestion never blends; WS-8). Empty-until-producer.
+   */
+  readonly ingestion: readonly UiSafeIngestionItem[];
   /** The last stream `eventId` applied — a resumed subscription replays from here. */
   readonly lastEventId: string | null;
   /** The last per-stream `seq` applied — a gap (seq != last + 1) signals a dropped event. */
@@ -63,6 +69,7 @@ export const initialStoreState: UiSafeStoreState = {
   global: [],
   recentChanges: [],
   projects: [],
+  ingestion: [],
   lastEventId: null,
   lastSeq: null,
 };

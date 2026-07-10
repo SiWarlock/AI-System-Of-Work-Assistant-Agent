@@ -1,6 +1,11 @@
 import type { CreateTRPCClient } from "@trpc/client";
 import type { AnyTRPCRouter } from "@trpc/server";
-import { UiSafeApprovalSchema, type UiSafeApproval } from "@sow/contracts/api/ui-safe";
+import {
+  UiSafeApprovalSchema,
+  type UiSafeApproval,
+  UiSafeIngestionItemSchema,
+  type UiSafeIngestionItem,
+} from "@sow/contracts/api/ui-safe";
 import type { SowBridge } from "../../preload/bridge";
 import type { Store, UiSafeStoreState } from "../store";
 import {
@@ -11,8 +16,9 @@ import {
   replaceCards,
   replaceRecentChanges,
   replaceProjects,
+  replaceIngestion,
 } from "../store/projections";
-import { scopeMeta, WORKSPACE_SCOPES, type WorkspaceScope } from "../store/scope";
+import { scopeMeta, resolveWorkspaceId, WORKSPACE_SCOPES, type WorkspaceScope } from "../store/scope";
 import { createEventStream } from "./event-stream";
 import { createScopeRefresher } from "./scope-refresh";
 import { createLiveClient } from "./live-client";
@@ -122,6 +128,7 @@ async function hydrateScope(
   store.dispatch((s) => hydrateGlobal(s, []));
   store.dispatch((s) => replaceRecentChanges(s, []));
   store.dispatch((s) => replaceProjects(s, []));
+  store.dispatch((s) => replaceIngestion(s, []));
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const c = client as any;
@@ -154,6 +161,10 @@ async function hydrateScope(
   } catch {
     // Best-effort — the cleared state stands; the live stream remains the source of truth.
   }
+  // Re-load the ingestion inbox for the new scope (its own workspace-scope guard + validation;
+  // empty under Global). Serial after the cards/recent/projects fan-out — ingestion is
+  // empty-until-producer, so the extra round-trip is negligible and keeps the load-path un-duplicated.
+  await hydrateIngestionInbox(client, store, scope);
 }
 
 async function hydrate(
@@ -176,6 +187,49 @@ async function hydrate(
     // Best-effort snapshot — the live stream is the source of truth.
   }
   await hydrateApprovalInbox(client, store);
+  // Cold-load the active workspace scope's ingestion inbox (§9.7) — empty under Global.
+  await hydrateIngestionInbox(client, store, store.getSnapshot().scope);
+}
+
+/**
+ * Cold-load the active WORKSPACE scope's ingestion inbox (§9.7) via `query.ingestionInbox`. Ingestion
+ * is workspace-scoped (WS-8) — Global (or any UNRECOGNIZED scope, via the fail-closed `resolveWorkspaceId`)
+ * aggregates NOTHING, so it clears to `[]` WITHOUT a query. Re-validates each record through
+ * `UiSafeIngestionItemSchema` (.strict) before it enters the store — the same defense-in-depth the
+ * approvals/stream paths apply; a leaky/malformed record (a server-projector regression) is DROPPED,
+ * never folded. A superseded scope (a fast switch during the await) is dropped. Best-effort +
+ * never-crashing: a query `err`/throw resolves to the empty state, never a white-screen.
+ * Empty-until-producer — returns `[]` today until the producer's Temporal wiring populates the row.
+ */
+export async function hydrateIngestionInbox(
+  client: CreateTRPCClient<AnyTRPCRouter>,
+  store: Store<UiSafeStoreState>,
+  scope: WorkspaceScope,
+): Promise<void> {
+  const workspaceId = resolveWorkspaceId(scope);
+  if (workspaceId === null) {
+    store.dispatch((s) => replaceIngestion(s, []));
+    return;
+  }
+  try {
+    // Generic-router client (full AppRouter typing deferred) → dynamic access.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const c = client as any;
+    const res = await c.query.ingestionInbox.query({ workspaceId });
+    if (store.getSnapshot().scope !== scope) return; // superseded by a newer scope
+    if (res?.ok === true && Array.isArray(res.value)) {
+      const valid: UiSafeIngestionItem[] = [];
+      for (const it of res.value) {
+        const parsed = UiSafeIngestionItemSchema.safeParse(it);
+        if (parsed.success) valid.push(parsed.data);
+      }
+      store.dispatch((s) => replaceIngestion(s, valid));
+    } else {
+      store.dispatch((s) => replaceIngestion(s, [])); // an err result → empty (don't leave stale)
+    }
+  } catch {
+    store.dispatch((s) => replaceIngestion(s, [])); // best-effort — non-crashing
+  }
 }
 
 /**

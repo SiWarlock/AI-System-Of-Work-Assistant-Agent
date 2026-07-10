@@ -13,6 +13,7 @@ import {
   groupGlobalByWorkspace,
   replaceRecentChanges,
   replaceProjects,
+  replaceIngestion,
 } from "../../renderer/store/projections";
 import type { UiSafeGclProjection } from "@sow/contracts/api/ui-safe";
 import {
@@ -25,6 +26,7 @@ import {
   uiSafeHealthItem,
   uiSafeRecentChange,
   uiSafeProjectDashboard,
+  uiSafeIngestionItem,
 } from "./fixtures";
 
 describe("initial hydrate (9.4b — fold a read-model query snapshot)", () => {
@@ -128,6 +130,25 @@ describe("initial hydrate (9.4b — fold a read-model query snapshot)", () => {
     const cleared = replaceProjects(b, []);
     expect(cleared.projects).toEqual([]);
     expect(replaceProjects(cleared, [])).toBe(cleared); // ref-stable empty no-op
+  });
+
+  it("replaceIngestion REPLACES the scoped ingestion list (no blend across scopes; empty→empty no-op)", () => {
+    const a = replaceIngestion(initialStoreState, [uiSafeIngestionItem("src-a1"), uiSafeIngestionItem("src-a2")]);
+    expect(a.ingestion.map((i) => i.sourceId)).toEqual(["src-a1", "src-a2"]);
+    const b = replaceIngestion(a, [uiSafeIngestionItem("src-b1")]);
+    expect(b.ingestion.map((i) => i.sourceId)).toEqual(["src-b1"]); // replaced, not merged
+    const cleared = replaceIngestion(b, []);
+    expect(cleared.ingestion).toEqual([]);
+    expect(replaceIngestion(cleared, [])).toBe(cleared); // ref-stable empty no-op
+  });
+
+  it("replaceIngestion is a pure mapping — unrelated slices stay ref-stable + the resume cursor is untouched", () => {
+    const s = replaceIngestion(initialStoreState, [uiSafeIngestionItem("src-1")]);
+    expect(s.cards).toBe(initialStoreState.cards);
+    expect(s.recentChanges).toBe(initialStoreState.recentChanges);
+    expect(s.approvals).toBe(initialStoreState.approvals);
+    expect(s.lastEventId).toBeNull();
+    expect(s.lastSeq).toBeNull();
   });
 
   it("an empty snapshot is a no-op (same reference — no needless re-render)", () => {

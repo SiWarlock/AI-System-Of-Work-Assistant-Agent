@@ -3,6 +3,7 @@ import { AppShell } from "./chrome/AppShell";
 import { Today } from "./surfaces/today/Today";
 import { Projects } from "./surfaces/projects/Projects";
 import { Approvals } from "./surfaces/approvals/Approvals";
+import { IngestionInbox } from "./surfaces/ingestion-inbox";
 import { createUiSafeStore } from "./store";
 import { setScope, navigate, hydrateApprovals } from "./store/projections";
 import { WORKSPACE_SCOPES, resolveWorkspaceId, type WorkspaceScope } from "./store/scope";
@@ -117,6 +118,7 @@ export function App(): ReactElement {
       onNavigate={onNavigate}
       onAskCopilot={onAskCopilot}
       pendingApprovalCount={pendingApprovalCount}
+      ingestionCount={state.ingestion.length}
     >
       {state.route.surface === "approvals" ? (
         <Approvals
@@ -125,6 +127,8 @@ export function App(): ReactElement {
           // (incl. the dev-seed demo) → disabled buttons, never a silently no-op control.
           onDecide={hasLiveWorker ? onDecideApproval : undefined}
         />
+      ) : state.route.surface === "ingestion" ? (
+        <IngestionInbox items={state.ingestion} />
       ) : state.route.surface === "projects" ? (
         <Projects
           scope={state.scope}

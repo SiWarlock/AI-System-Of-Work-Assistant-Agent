@@ -6,6 +6,7 @@ import type {
   UiSafeGclProjection,
   UiSafeRecentChange,
   UiSafeProjectDashboard,
+  UiSafeIngestionItem,
 } from "@sow/contracts/api/ui-safe";
 import type { ConnectionStatus, UiSafeStoreState } from "./index";
 import { isWorkspaceScope, type WorkspaceScope } from "./scope";
@@ -153,6 +154,21 @@ export function replaceProjects(
 ): UiSafeStoreState {
   if (projects.length === 0 && state.projects.length === 0) return state;
   return { ...state, projects };
+}
+
+/**
+ * REPLACE the active workspace scope's ingestion inbox (§9.7) with a fresh `query.ingestionInbox`
+ * snapshot — like `replaceProjects`/`replaceRecentChanges`, it is a scope-REPLACE (no blend across
+ * workspaces; WS-8) rather than an upsert. Under Global the caller replaces with `[]` (ingestion never
+ * aggregates cross-workspace). Empty→no-op (same ref — no needless re-render); the resume cursor is
+ * untouched (a hydrate snapshot, not a stream event).
+ */
+export function replaceIngestion(
+  state: UiSafeStoreState,
+  ingestion: readonly UiSafeIngestionItem[],
+): UiSafeStoreState {
+  if (ingestion.length === 0 && state.ingestion.length === 0) return state;
+  return { ...state, ingestion };
 }
 
 /**
