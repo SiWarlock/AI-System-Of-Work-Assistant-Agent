@@ -567,3 +567,43 @@ describe("UI-safe open display-token bounding — spec(§11 uiSafeToken hardenin
     );
   });
 });
+
+// ── UI-safe bounding uniformity sweep (§11) — the last 2 outlier fields ────────
+// Finishes the bounding convention: UiSafeRecentChange.kind is an OPEN TOKEN (uiSafeToken, like the
+// other kind/type/status tokens); UiSafeDashboardCard.title is a TITLE (uiSafeSummaryLine, like the
+// sibling ProjectDashboard/ManagedDoc/Citation titles — NOT the 64-char token cap, which a legit card
+// title exceeds). Field NAMES unchanged — the freeze holds.
+function recentChange(): Record<string, unknown> {
+  return { changeId: "chg-1", kind: "commit", summary: "committed a.md", occurredAt: "2026-06-30T00:00:00.000Z" };
+}
+
+describe("UI-safe bounding uniformity sweep — spec(§11)", () => {
+  it("UiSafeRecentChange.kind: accepts a normal token; rejects multi-line / over-length (>64) / empty", () => {
+    expect(UiSafeRecentChangeSchema.safeParse(recentChange()).success).toBe(true);
+    for (const k of ["commit", "sync", "approvals", "ingestion"]) {
+      expect(UiSafeRecentChangeSchema.safeParse({ ...recentChange(), kind: k }).success).toBe(true);
+    }
+    for (const nl of NEWLINE_FAMILY) {
+      expect(UiSafeRecentChangeSchema.safeParse({ ...recentChange(), kind: `a${nl}b` }).success).toBe(false);
+    }
+    expect(UiSafeRecentChangeSchema.safeParse({ ...recentChange(), kind: "x".repeat(65) }).success).toBe(false);
+    expect(UiSafeRecentChangeSchema.safeParse({ ...recentChange(), kind: "x".repeat(64) }).success).toBe(true);
+    expect(UiSafeRecentChangeSchema.safeParse({ ...recentChange(), kind: "" }).success).toBe(false);
+  });
+
+  it("UiSafeDashboardCard.title: uses the SUMMARY-line bound (a 68-char real title PASSES); rejects multi-line / >1024 / empty", () => {
+    // A real producer card title exceeds 64 (longest is 68 chars) — so `title` must be uiSafeSummaryLine
+    // (1024), NOT the uiSafeToken 64-cap; the token cap would REGRESS this legit title. This pins Q2.
+    const longTitle = "Connect a Google Drive connector to link the managed NotebookLM docs";
+    expect(longTitle.length).toBeGreaterThan(64);
+    expect(UiSafeDashboardCardSchema.safeParse({ ...dashCard(), title: longTitle }).success).toBe(true);
+    expect(UiSafeDashboardCardSchema.safeParse({ ...dashCard(), title: "line one\nline two" }).success).toBe(false);
+    expect(UiSafeDashboardCardSchema.safeParse({ ...dashCard(), title: "x".repeat(1025) }).success).toBe(false);
+    expect(UiSafeDashboardCardSchema.safeParse({ ...dashCard(), title: "" }).success).toBe(false);
+  });
+
+  it("the freeze still holds — recentChange + dashboardCard keep EXACTLY their prior field names", () => {
+    expect(Object.keys(UiSafeRecentChangeSchema.shape).sort()).toEqual([...UI_SAFE_ALLOWLIST.recentChange].sort());
+    expect(Object.keys(UiSafeDashboardCardSchema.shape).sort()).toEqual([...UI_SAFE_ALLOWLIST.dashboardCard].sort());
+  });
+});

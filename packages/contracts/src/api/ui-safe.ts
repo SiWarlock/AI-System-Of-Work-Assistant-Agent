@@ -225,7 +225,7 @@ export const UiSafeDashboardCardSchema = z
   .object({
     cardId: z.string().min(1),
     kind: uiSafeToken,
-    title: z.string().min(1),
+    title: uiSafeSummaryLine,
     status: uiSafeToken,
     count: z.number().int().nonnegative(),
     updatedAt: z.string().datetime(),
@@ -303,7 +303,7 @@ export interface UiSafeRecentChange {
 export const UiSafeRecentChangeSchema = z
   .object({
     changeId: z.string().min(1),
-    kind: z.string().min(1),
+    kind: uiSafeToken,
     summary: uiSafeSummaryLine,
     occurredAt: z.string().datetime(),
   })
