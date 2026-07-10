@@ -92,3 +92,41 @@ The §16 redactor is the mandatory backstop that keeps secrets + raw Employer-Wo
 Meta-lessons: **(a)** raw-content detection from a value's own shape/length is undecidable — a short raw word is indistinguishable from a safe token; classify by the field's KNOWN TYPE (frozen-enum membership / id-field / number / timestamp) and **fail-safe redact everything else**, which is the allowlist the spec actually required. **(b)** a name-based heuristic (an `Id`-suffix rule) can silently **shadow a more specific validator** — order dedicated cases before generic fallbacks. **(c)** there is an irreducible **accepted residual** (a secret a caller mislabels under a genuine system-generated id field) — name it, document why it is bounded (ids come from the id-builders, secrets only from SecretsPort), and **pin it as a test** so any future tightening is deliberate. **(d)** adversarial re-verify **each** fix independently until CLEAR — here it took 3 rounds; the first two "green" fixes still leaked.
 
 **Rule:** A mandatory secrets/raw-content redactor must classify each value by its field's known TYPE (frozen-enum membership, id-under-id-field, number, ISO timestamp) and fail-safe **redact everything else** — never a length or token-shape heuristic (a short whitespace-free raw word is shape-indistinguishable from a safe token); run dedicated field validators before any generic name-suffix rule, document + pin the accepted residual, and re-verify each fix until an independent skeptic cannot leak.
+
+## <a id="6"></a>6. Serving-trust context assembly must be honest-by-construction — page-fact-only citation resolution + coverage DERIVED from real parity (never hardcoded green)
+
+**Date:** 2026-07-09.
+**Source slice:** G1e-2 `createServingContextLoader` (`apps/worker/src/api/procedures/servingContextLoader.ts`) — the worker-side assembly the real gate-4 serving oracle consumes; a safety-critical serving-trust surface, adversarially reviewed SHIP.
+
+The serving oracle stamps a source `knowledge_writer` (⇒ propose-eligible) only when it can PROVE the content is genuine KnowledgeWriter-authored Markdown. The context loader that feeds it must not undermine that proof by construction:
+
+1. **Citation resolution is page-fact-ONLY.** A `citationId` (`gbrain:<slug>`) resolves to exactly the PAGE fact identity (`[page:<slug>]`) — never the note's link/tag/timeline facts. The page is the sole HMAC-stamped + rehydratable unit; a link/tag identity would fail the gate's content-hash leg (page-hash ≠ fact-hash) and, under all-or-nothing admission, drop the whole page. The resolver is INJECTIVE (distinct citationIds → disjoint fact sets) and WITHHOLDS (null) on unknown / malformed / non-uniquely-resolvable slugs — never guesses.
+2. **Coverage is DERIVED + fail-closed, never a constant.** `ServingCoverage` is computed from the real `ParityReport` (cleanForServing/coverageComplete) + the pin-valid + oracle-build-ok legs, and bound to the HEAD committed revision so a STALE-green report (right content, wrong revision) can't defeat the kill-switch. Any absent/dirty leg / unresolved signing key / workspace-id mismatch collapses to `degraded` (a NORMAL cannot-serve state, not a fault); typed `err` is reserved for an actual load fault; the engine never throws (§16). A dormant loader that hardcoded all-green would silently false-admit the instant it's wired.
+
+**Rule:** A serving-trust context assembler resolves citations to the single stamped/rehydratable unit only (page-fact-only, injective, withhold-on-ambiguity) and DERIVES its serving coverage from the real ParityReport + pin/oracle legs bound to the head revision — fail-closed to `degraded` on any absent/dirty/stale/mismatched signal, never hardcode green even while dormant; reserve `err` for load faults, never throw.
+
+## <a id="7"></a>7. A security/governance eval must assert the fail-closed PATH non-vacuously — a positive anchor proves the negatives aren't trivially always-true
+
+**Date:** 2026-07-09.
+**Source slice:** the propose-path governance conformance battery (`packages/evals/test/conformance/copilot-propose-governance.test.ts`, runbook §3); the adversarial review's explicit mandate was to REFUTE vacuousness.
+
+A green security eval is worthless if its assertions pass for the wrong reason. Two failure modes to design out:
+
+1. **Vacuous negatives.** An eval asserting "untrusted content ⇒ propose never granted" passes trivially if EVERYTHING is always untrusted (e.g. the trust resolver is stubbed off). Include a POSITIVE anchor — an all-`knowledge_writer` context that DOES yield `trusted` ⇒ propose — so the negatives are proven meaningful (the machinery CAN grant, and correctly withholds). Verify each assertion by deletion/inversion of the guard it pins (does removing the guard make the test fail?).
+2. **Wrong surface.** Assert the surface the actor actually sees. A leakage test over an internal error OBJECT misses what the MODEL receives — drive the model-facing handler (`handleCopilotProposeToolCall`) with a secret-bearing input and assert its RETURNED text carries no secret, not merely that some internal error is clean.
+
+Deterministic governance (contentTrust fail-closed, no-auto-apply, payload-swap TOCTOU, server-derived keys) is a conformance BATTERY over the committed functions — egress-free, `requiresRealIntegration:false`; the only real-`query()` end-to-end case is `requiresRealIntegration:true` (real egress) and stays a deferred `it.todo`.
+
+**Rule:** A security/governance eval asserts the fail-closed PATH non-vacuously — pair every "denied ⇒ X" negative with a positive anchor proving the grant machinery works, verify each assertion by deleting/inverting its guard, and probe the actual actor-facing surface (the model-facing handler text), not an internal object; keep it deterministic + egress-free and isolate any real-egress case as a gated `it.todo`.
+
+## <a id="8"></a>8. A prerequisite/health check engine is PURE over an injected probe snapshot — and safety-posture checks fail CLOSED to a finding on any absent/unknown probe
+
+**Date:** 2026-07-09.
+**Source slice:** Phase 11.5 install-doctor check-engine (`apps/worker/src/install/doctor.ts` + `checks/*`, `packages/contracts/src/install/doctor-result.ts`); the one-writer posture checks are a REQ-S-NEW-008 / safety-rule-1 surface, adversarially reviewed SHIP.
+
+Splitting the engine from the probes buys determinism + testability + a clean fail-closed default:
+
+1. **Pure over an injected `ProbeSnapshot`.** `runDoctor(snapshot) → DoctorReport` does NO I/O — the real OS/boot probe COLLECTORS (diskutil/Keychain/port-bind/`git remote`/`ps`) are a separate deferred adapter that produces the snapshot. So the whole diagnosis logic (distinct repair per variant, worst-of roll-up, idempotency-as-purity) is unit-drivable with fixtures, and a `safeCheck` try/catch folds any diagnoser throw to a fail-closed `probe_error` finding (§16 never-throws).
+2. **Safety posture fails CLOSED — a writable/mispointed mount is NEVER a silent `ok`.** For the one-writer posture (vault-ACL / gbrain read-only-mount / stray-gbrain-process), an ABSENT/unknown/malformed probe outcome defaults to a `finding`, not `ok` (assume-worst; a missing probe can't confirm the prerequisite). The stray-process finding is redaction-safe BY CONSTRUCTION — it names a closed op-label enum (`serve`/`autopilot`/…; unrecognized ⇒ `"unrecognized-writer"`), never raw args/secrets. Guard with `Array.isArray` before `.length` (strings have `.length` too — a `.length`-truthy check false-passes a string).
+
+**Rule:** A prerequisite/health check engine is a PURE function of an injected probe snapshot (real collectors are a separate deferred adapter) so it's deterministically testable and never throws (`safeCheck`→`probe_error`); safety-posture checks default to a `finding` (fail-closed, assume-worst) on any absent/unknown/malformed probe — a writable/mispointed/stray-writer state is never a silent `ok` — and name detected entities via a closed label enum (redaction-safe by construction).
