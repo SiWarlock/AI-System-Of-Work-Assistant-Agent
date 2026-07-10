@@ -493,3 +493,77 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
     expect(UiSafeIngestionItemSchema.safeParse({ ...base, summary: "one line" }).success).toBe(true);
   });
 });
+
+// ── UI-safe OPEN DISPLAY TOKEN bounding (uiSafeToken hardening — §11) ──────────
+// The open display-token fields (enum-like kind/type/status/sensitivity) are bound by TYPE at the
+// contract to a single-line, length-capped token — defense-in-depth (content-derived fields are
+// already dropped, so no active leak; this closes a UI-injection / display-bloat vector at the
+// boundary even if a producer misbehaves). Shares uiSafeSummaryLine's exact newline family (one guard,
+// no drift), tighter cap (64). Field NAMES/interfaces are unchanged — only the validators tighten.
+const TOKEN_MAX = 64;
+const NEWLINE_FAMILY = ["\n", "\r", "\u000B", "\u000C", "\u0085", "\u2028", "\u2029"] as const;
+
+function dashCard(): Record<string, unknown> {
+  return { cardId: "c1", kind: "global_today", title: "Card", status: "ok", count: 0, updatedAt: "2026-06-30T00:00:00.000Z" };
+}
+function ingItem(): Record<string, unknown> {
+  return { sourceId: "s1", type: "youtube_video", sensitivity: "personal", summary: "youtube_video" };
+}
+function projDash(): Record<string, unknown> {
+  return {
+    projectId: "p1",
+    title: "Proj",
+    status: "active",
+    progress: { completedCount: 1, totalCount: 2, percentComplete: 50 },
+    blockers: [],
+    waitingItems: [],
+    nextActions: [],
+    evidenceRefs: [],
+    docPack: [],
+    updatedAt: "2026-06-30T00:00:00.000Z",
+  };
+}
+
+const TOKEN_FIELDS = [
+  { label: "UiSafeDashboardCard.kind", schema: UiSafeDashboardCardSchema, base: dashCard, field: "kind" },
+  { label: "UiSafeDashboardCard.status", schema: UiSafeDashboardCardSchema, base: dashCard, field: "status" },
+  { label: "UiSafeIngestionItem.type", schema: UiSafeIngestionItemSchema, base: ingItem, field: "type" },
+  { label: "UiSafeIngestionItem.sensitivity", schema: UiSafeIngestionItemSchema, base: ingItem, field: "sensitivity" },
+  { label: "UiSafeProjectDashboard.status", schema: UiSafeProjectDashboardSchema, base: projDash, field: "status" },
+] as const;
+
+describe("UI-safe open display-token bounding — spec(§11 uiSafeToken hardening)", () => {
+  for (const { label, schema, base, field } of TOKEN_FIELDS) {
+    it(`${label}: accepts a normal short token`, () => {
+      expect(schema.safeParse(base()).success).toBe(true);
+      for (const tok of ["meeting", "low", "active", "personal_business", "employer_work"]) {
+        expect(schema.safeParse({ ...base(), [field]: tok }).success).toBe(true);
+      }
+    });
+
+    it(`${label}: rejects a multi-line token (every newline-family char)`, () => {
+      for (const nl of NEWLINE_FAMILY) {
+        expect(schema.safeParse({ ...base(), [field]: `a${nl}b` }).success).toBe(false);
+      }
+    });
+
+    it(`${label}: rejects an over-length token (>${TOKEN_MAX}); ${TOKEN_MAX} is the boundary`, () => {
+      expect(schema.safeParse({ ...base(), [field]: "x".repeat(TOKEN_MAX + 1) }).success).toBe(false);
+      expect(schema.safeParse({ ...base(), [field]: "x".repeat(TOKEN_MAX) }).success).toBe(true);
+    });
+
+    it(`${label}: rejects an empty token (min 1 preserved)`, () => {
+      expect(schema.safeParse({ ...base(), [field]: "" }).success).toBe(false);
+    });
+  }
+
+  it("the freeze still holds — the 3 schemas keep EXACTLY their prior field names (only validators tightened)", () => {
+    expect(Object.keys(UiSafeDashboardCardSchema.shape).sort()).toEqual(
+      [...UI_SAFE_ALLOWLIST.dashboardCard].sort(),
+    );
+    expect(Object.keys(UiSafeIngestionItemSchema.shape).sort()).toEqual([...UI_SAFE_ALLOWLIST.ingestion].sort());
+    expect(Object.keys(UiSafeProjectDashboardSchema.shape).sort()).toEqual(
+      [...UI_SAFE_ALLOWLIST.projectDashboard].sort(),
+    );
+  });
+});

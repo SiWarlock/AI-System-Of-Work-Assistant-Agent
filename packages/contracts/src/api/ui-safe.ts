@@ -40,13 +40,32 @@ import type { VisibilityLevel } from "../primitives/enums";
 // (U+2028/U+2029) — because for UiSafeRecentChange this helper is the SOLE structural
 // bound (no upstream sanitization gate, unlike GclProjection): a fragment that renders as
 // a break in some surfaces must not slip through.
+// ONE shared single-line guard for BOTH single-line UI-safe validators (summary + token) so they
+// can never drift. The newline / line-terminator family: CR, LF, VT (U+000B), FF (U+000C), NEL
+// (U+0085), LS (U+2028), PS (U+2029) — the explicit family is load-bearing (a generic whitespace
+// class misses NEL / U+0085).
+const isSingleLine = (s: string): boolean => !/[\r\n\u000B\u000C\u0085\u2028\u2029]/.test(s);
+
 const uiSafeSummaryLine = z
   .string()
   .min(1)
   .max(1024)
-  .refine((s) => !/[\r\n\u000B\u000C\u0085\u2028\u2029]/.test(s), {
-    message: "summary must be single-line",
-  });
+  .refine(isSingleLine, { message: "summary must be single-line" });
+
+/**
+ * An OPEN DISPLAY TOKEN (enum-like: kind/type/status/sensitivity) — single-line + length-capped.
+ * Redact-by-TYPE at the contract boundary (defense-in-depth, section 11): content-derived fields are
+ * already dropped by the projectors, so there is NO active leak — but the contract now itself rejects
+ * a multi-line / over-length token, closing a UI-injection / display-bloat vector even when a producer
+ * misbehaves. Shares uiSafeSummaryLine EXACT newline family via the one isSingleLine guard (no drift);
+ * tighter cap (a token is a short label, not prose). Deliberately NOT stricter on the charset — these
+ * are OPEN tokens, so only the newline/line-terminator family is barred (matching the summary gate).
+ */
+const uiSafeToken = z
+  .string()
+  .min(1)
+  .max(64)
+  .refine(isSingleLine, { message: "token must be single-line" });
 
 /**
  * Collapse an arbitrary string into a value GUARANTEED to satisfy the `summary` gate above
@@ -205,9 +224,9 @@ export interface UiSafeDashboardCard {
 export const UiSafeDashboardCardSchema = z
   .object({
     cardId: z.string().min(1),
-    kind: z.string().min(1),
+    kind: uiSafeToken,
     title: z.string().min(1),
-    status: z.string().min(1),
+    status: uiSafeToken,
     count: z.number().int().nonnegative(),
     updatedAt: z.string().datetime(),
   })
@@ -381,7 +400,7 @@ export const UiSafeProjectDashboardSchema = z
   .object({
     projectId: z.string().min(1),
     title: uiSafeSummaryLine,
-    status: z.string().min(1),
+    status: uiSafeToken,
     progress: UiSafeProjectProgressSchema,
     // Array LENGTHS are capped (not just each element): the per-element single-line bound
     // alone is defeated by CHUNKING — a raw document re-assembled as N×single-line fragments
@@ -486,8 +505,8 @@ export interface UiSafeIngestionItem {
 export const UiSafeIngestionItemSchema = z
   .object({
     sourceId: z.string().min(1),
-    type: z.string().min(1),
-    sensitivity: z.string().min(1),
+    type: uiSafeToken,
+    sensitivity: uiSafeToken,
     summary: uiSafeSummaryLine,
   })
   .strict();
