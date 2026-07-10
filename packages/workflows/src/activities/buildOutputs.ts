@@ -32,7 +32,6 @@ import type {
   ProposedAction,
   ExternalWriteEnvelope,
   SourceRef,
-  NoteCreate,
   TargetSystem,
   ProvenanceOrigin,
 } from "@sow/contracts";
@@ -45,6 +44,12 @@ import type {
   MeetingExternalActionInput,
   ValidatedExtraction,
 } from "../ports/meetingCloseout";
+import { meetingNotePath } from "./projections/noteSlug";
+import type { ProjectNoteMutation } from "./deterministicProgress";
+import type { NoteExistsReader } from "../ports/projectSync";
+
+/** The meeting field-name convention key the note filename anchors on (must match the projection's TITLE_FIELD). */
+const MEETING_TITLE_FIELD = "title";
 
 /**
  * A deterministic descriptor for ONE external action the deriver wants to propose,
@@ -81,9 +86,13 @@ export interface OutputsProjection {
   project(
     validated: ValidatedExtraction,
     workspaceId: WorkspaceId,
+    /** §9 create-vs-patch: true ⇒ the meeting note already exists ⇒ emit a region NotePatch (re-close); false
+     *  ⇒ a full NoteCreate (first close). Supplied by the build activity from a WS-8-scoped
+     *  {@link NoteExistsReader} probe of the SAME meetingNotePath. */
+    noteExists: boolean,
   ): Result<
     {
-      readonly note: NoteCreate;
+      readonly mutation: ProjectNoteMutation;
       readonly actions: readonly DerivedActionDescriptor[];
     },
     BuildOutputsFailure
@@ -104,6 +113,13 @@ export interface BuildOutputsActivityDeps {
   readonly planIdentity: Record<string, string>;
   readonly provenanceOrigin?: ProvenanceOrigin;
   readonly confidence?: number;
+  /**
+   * §9 create-vs-patch: a WS-8-scoped note-exists probe. The activity derives the meeting-note path via the
+   * SINGLE `meetingNotePath` authority, probes it, and threads the boolean into the projection so a re-close
+   * region-PATCHes (preserving human scaffold) instead of overwriting via a NoteCreate. A probe FAILURE fails the
+   * build CLOSED (build_failed, NO commit) — never a guessed create-vs-patch under uncertainty.
+   */
+  readonly noteExists: NoteExistsReader;
 }
 
 /** True IFF a validated field carries a concrete (non-TBD) value worth stamping. */
@@ -138,14 +154,38 @@ export function createBuildOutputsActivity(
   deps: BuildOutputsActivityDeps,
 ): BuildOutputsPort {
   return {
-    build(
+    async build(
       validated: ValidatedExtraction,
       workspaceId: WorkspaceId,
     ): Promise<Result<MeetingBuiltOutputs, BuildOutputsFailure>> {
-      const projected = deps.projection.project(validated, workspaceId);
-      if (!projected.ok) {
-        return Promise.resolve(err(projected.error));
+      // §9 create-vs-patch — derive the meeting-note path via the SINGLE `meetingNotePath` authority (from the
+      // SAME concrete title the projection anchors on, so the probe + committed mutation can never diverge) and
+      // probe whether the canonical note already exists. The probe path is workspace-rooted (inherently WS-8).
+      // A non-concrete title / empty slug ⇒ null ⇒ SKIP the probe: the projection returns the precise
+      // unmappable_extraction. A probe ERROR fails the build CLOSED (build_failed, NO commit) — never a guessed
+      // create-vs-patch under uncertainty (a wrong NoteCreate clobbers an existing note; a wrong NotePatch writes
+      // a markers-only file to a missing one).
+      const titleField = validated.fields[MEETING_TITLE_FIELD];
+      const notePath = isConcrete(titleField)
+        ? meetingNotePath(workspaceId, String(frontmatterValue(titleField)))
+        : null;
+      let noteExists = false;
+      if (notePath !== null) {
+        const existsRes = await deps.noteExists.exists(notePath);
+        if (!existsRes.ok) {
+          return err({
+            code: "build_failed",
+            message: `meeting note-exists probe failed (fail-closed): ${existsRes.error.code}`,
+          });
+        }
+        noteExists = existsRes.value;
       }
+
+      const projected = deps.projection.project(validated, workspaceId, noteExists);
+      if (!projected.ok) {
+        return err(projected.error);
+      }
+      const mutation = projected.value.mutation;
 
       // Stable planId: derived from the injected identity BOUND to the passed
       // workspace, so the same closeout replays to the same plan id (inv-5) and a
@@ -162,8 +202,9 @@ export function createBuildOutputsActivity(
         workspaceId,
         // REQ-F-006: the derived plan cites the evidence it was built from.
         sourceRefs: [deps.sourceRef],
-        creates: [projected.value.note],
-        patches: [],
+        // §9 create-vs-patch: first close → a full NoteCreate; re-close → a region NotePatch (never both).
+        creates: mutation.kind === "create" ? [mutation.note] : [],
+        patches: mutation.kind === "patch" ? [mutation.patch] : [],
         linkMutations: [],
         frontmatterUpdates: [],
         externalActionProposals: [],
@@ -203,7 +244,7 @@ export function createBuildOutputsActivity(
       );
 
       const outputs: MeetingBuiltOutputs = { plan, actions };
-      return Promise.resolve(ok(outputs));
+      return ok(outputs);
     },
   };
 }

@@ -105,6 +105,8 @@ import type {
   ParkedSourceReader,
   ReenterIngestionPort,
   SourceIngestionRunner,
+  NoteExistsReader,
+  NoteExistsError,
 } from "@sow/workflows";
 import type { BrokerOutcome } from "@sow/providers";
 
@@ -268,10 +270,24 @@ export function buildProofSpineActivities(
   const validate: ValidateExtractionPort = createValidateActivity({ schemaGate });
 
   // (d) buildOutputs — the REAL imported meetingOutputsProjection (WS-2 stamp).
+  // §9 create-vs-patch: a WS-8-scoped note-exists probe over the committed vault — a re-close region-PATCHes the
+  // `meeting-outputs` region instead of clobbering the whole note via a NoteCreate; a vault read fault fails the
+  // build CLOSED (build_failed, no commit — never a guessed create-vs-patch under uncertainty).
+  const meetingNoteExists: NoteExistsReader = {
+    exists: async (path: string): Promise<Result<boolean, NoteExistsError>> => {
+      try {
+        const content = await backends.vault.read(path);
+        return ok(content !== undefined);
+      } catch (cause) {
+        return err({ code: "read_failed", message: "meeting note-exists probe: vault read failed", cause });
+      }
+    },
+  };
   const buildOutputs: BuildOutputsPort = createBuildOutputsActivity({
     projection: meetingOutputsProjection,
     sourceRef: params.sourceRef,
     planIdentity: params.planIdentity,
+    noteExists: meetingNoteExists,
   });
 
   // (e) commit — the REAL KnowledgeWriter applyPlan; REAL ownership+secret defaults.

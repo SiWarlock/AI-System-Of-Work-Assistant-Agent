@@ -48,10 +48,11 @@
 //     present AND concrete (evidence-backed, non-TBD). An index missing either — or
 //     carrying a TBD owner — derives NO action (fail-closed: no guessed owner).
 import { ok, err } from "@sow/contracts";
-import type { Result, WorkspaceId, NoteCreate } from "@sow/contracts";
+import type { Result, WorkspaceId } from "@sow/contracts";
 import { TBD } from "@sow/domain";
 import type { ExtractionField } from "@sow/domain";
-import { safeNoteSlug } from "./noteSlug";
+import { meetingNotePath, MEETING_OUTPUTS_REGION, composeMeetingNote } from "./noteSlug";
+import type { ProjectNoteMutation } from "../deterministicProgress";
 import {
   frontmatterValue,
   isConcrete,
@@ -135,12 +136,15 @@ function concreteString(
 // shared `./noteSlug` helper, so meeting-closeout + projectSync share ONE adversarially-verified gate.
 
 /**
- * Build the meeting note body from the evidence-backed fields. Pure + deterministic
- * — the body is a stable, human-readable rendering of the convention fields (the
- * frontmatter carries the machine-readable copy). A TBD field is rendered as the TBD
- * sentinel, never an invented value (REQ-F-017).
+ * Build the INNER body of the meeting note's assistant `meeting-outputs` region from the evidence-backed fields
+ * — the SINGLE source of the region content: {@link composeMeetingNote} wraps it in the region markers for a
+ * first-close NoteCreate, and it is used VERBATIM as a re-close {@link NotePatch}'s `newBody`, so the region a
+ * create writes and a re-close patches are byte-identical (no drift). Pure + deterministic — a stable,
+ * human-readable rendering of the convention fields (the frontmatter carries the machine-readable copy). A TBD
+ * field is rendered as the TBD sentinel, never an invented value (REQ-F-017). Exported so tests can pin the
+ * create-region === patch-newBody byte-idempotence.
  */
-function composeBody(
+export function composeMeetingRegionBody(
   fields: Record<string, ExtractionField<unknown>>,
 ): string {
   const title = frontmatterValue(fields[TITLE_FIELD]);
@@ -170,8 +174,9 @@ export const meetingOutputsProjection: OutputsProjection = {
   project(
     validated: ValidatedExtraction,
     workspaceId: WorkspaceId,
+    noteExists: boolean,
   ): Result<
-    { readonly note: NoteCreate; readonly actions: readonly DerivedActionDescriptor[] },
+    { readonly mutation: ProjectNoteMutation; readonly actions: readonly DerivedActionDescriptor[] },
     BuildOutputsFailure
   > {
     const fields = validated.fields;
@@ -203,20 +208,27 @@ export const meetingOutputsProjection: OutputsProjection = {
     // that slugs to nothing (all-punctuation, e.g. "../..") has no safe anchor →
     // fail-closed (never a note written to an unintended path).
     const rawTitle = String(frontmatter[TITLE_FIELD]);
-    const slug = safeNoteSlug(rawTitle);
-    if (slug.length === 0) {
+    // WS-8: derive the note path via the SINGLE `meetingNotePath` authority (the SAME one the build activity's
+    // note-exists probe uses, so the mutation + probe can never target a different note). A title with no
+    // path-safe anchor OR an unsafe workspace segment ⇒ null ⇒ fail-closed (never a note at an unintended path).
+    const path = meetingNotePath(workspaceId, rawTitle);
+    if (path === null) {
       return err({
         code: "unmappable_extraction",
         message:
           "meeting.close projection: `title` has no path-safe characters to anchor the note filename (fail-closed, never a traversal-shaped path)",
       });
     }
-    const note: NoteCreate = {
-      path: `meetings/${String(workspaceId)}/${slug}.md`,
-      title: rawTitle,
-      body: composeBody(fields),
-      frontmatter,
-    };
+    // The `meeting-outputs` region INNER body — shared by BOTH the NoteCreate full note and the re-close
+    // NotePatch newBody, so create-then-re-close (same facts) is byte-idempotent on the region.
+    const regionBody = composeMeetingRegionBody(fields);
+    // create-vs-patch (§9 / W1 parity): a RE-CLOSE (the note exists) region-PATCHes ONLY — the frontmatter + any
+    // human content OUTSIDE the markers stay byte-stable (a NoteCreate over an existing note would blindly
+    // OVERWRITE the whole file at the KnowledgeWriter's project step, clobbering human scaffold). A FIRST close
+    // emits the full NoteCreate (which WRITES the region markers so the re-close patch can target them in place).
+    const mutation: ProjectNoteMutation = noteExists
+      ? { kind: "patch", patch: { path, regionId: MEETING_OUTPUTS_REGION, newBody: regionBody } }
+      : { kind: "create", note: { path, title: rawTitle, body: composeMeetingNote(regionBody), frontmatter } };
 
     // actions: one todo-create descriptor per action item that carries BOTH an
     // evidence-backed (concrete, non-TBD) owner AND title. Any other item — missing
@@ -253,7 +265,7 @@ export const meetingOutputsProjection: OutputsProjection = {
       });
     }
 
-    return ok({ note, actions });
+    return ok({ mutation, actions });
   },
 };
 

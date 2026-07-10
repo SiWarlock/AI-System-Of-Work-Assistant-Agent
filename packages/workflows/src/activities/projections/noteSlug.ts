@@ -64,3 +64,42 @@ export function composeProjectStatusNote(title: string, regionBody: string): str
     `\n<!-- /kw:region:${PROJECT_STATUS_REGION} -->\n`
   );
 }
+
+/**
+ * WS-8 canonical meeting-note path: `meetings/<workspaceId>/<safeLeaf>.md`. The workspace-folder segment is the
+ * SERVER-BOUND workspaceId (never a model value) and the leaf is the meeting title run through `safeNoteSlug`
+ * (no separators / no `..` — cannot inject path structure or escape the workspace folder after the vault's
+ * `join(root, note.path)`). Returns null when the title sanitizes to empty (no safe anchor) OR the workspace
+ * SEGMENT is unsafe (`/`,`\`,`..`) → callers MUST fail closed. This is the SINGLE meeting path authority shared
+ * by the projection's committed mutation AND the create-vs-patch note-exists probe, so the two can never check a
+ * different note than they write (mirrors `projectNotePath`).
+ */
+export function meetingNotePath(workspaceId: WorkspaceId, rawTitle: string): string | null {
+  const ws = String(workspaceId);
+  if (ws.length === 0 || ws.includes("/") || ws.includes("\\") || ws.includes("..")) return null;
+  const leaf = safeNoteSlug(rawTitle);
+  if (leaf.length === 0) return null;
+  return `meetings/${ws}/${leaf}.md`;
+}
+
+/**
+ * The KN-7 assistant-region id wrapping the meeting note's committed body. A first-close NoteCreate writes this
+ * region; a re-close region-PATCHes it in place (leaving frontmatter + any human content OUTSIDE the markers
+ * byte-stable). The SINGLE source of the id so the create + the patch always target the SAME region.
+ */
+export const MEETING_OUTPUTS_REGION = "meeting-outputs";
+
+/**
+ * Compose a meeting note body: the assistant `kw:region:meeting-outputs` region wrapping `regionBody` (the full
+ * meeting-closeout render — H1 + Attendees + Decisions). The marker framing (`open\n${regionBody}\n${close}`)
+ * matches the KnowledgeWriter's `applyRegionPatch`, so a first-write note's region and a subsequent region
+ * NotePatch (whose `newBody` is the SAME `regionBody`) are byte-identical — a create-then-re-close produces no
+ * region drift. Content OUTSIDE the markers (frontmatter + any human addition) is preserved on re-close (§6/KN-7).
+ */
+export function composeMeetingNote(regionBody: string): string {
+  return (
+    `<!-- kw:region:${MEETING_OUTPUTS_REGION} -->\n` +
+    regionBody +
+    `\n<!-- /kw:region:${MEETING_OUTPUTS_REGION} -->\n`
+  );
+}

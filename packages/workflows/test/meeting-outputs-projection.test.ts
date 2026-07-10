@@ -31,6 +31,17 @@ import type { ExtractionField } from "@sow/domain";
 import { meetingOutputsProjection } from "../src/activities/projections/meetingOutputs";
 import { createBuildOutputsActivity } from "../src/activities/buildOutputs";
 import type { ValidatedExtraction } from "../src/ports/meetingCloseout";
+import { FakeNoteExistsReader } from "./support/project-sync-fakes";
+
+// create-vs-patch: these unit tests exercise the FIRST-close path (noteExists=false ⇒ a NoteCreate mutation);
+// the re-close (patch) path is pinned in `meeting-outputs-create-vs-patch.test.ts`.
+const _project = meetingOutputsProjection.project.bind(meetingOutputsProjection);
+const projectCreate = (v: ValidatedExtraction, ws: WorkspaceId = WS) => _project(v, ws, false);
+const noteOf = (r: ReturnType<typeof projectCreate>) => {
+  if (!isOk(r)) throw new Error("expected ok");
+  if (r.value.mutation.kind !== "create") throw new Error("expected a create mutation");
+  return r.value.mutation.note;
+};
 
 // ---------------------------------------------------------------------------
 // Fixtures — validated field sets under the meeting.close field-name convention.
@@ -76,25 +87,25 @@ function fullValidated(
 
 describe("spec(§9 WS-2/WS-4) meetingOutputsProjection — the note targets the PASSED workspaceId", () => {
   it("places the note under the PASSED workspace meetings area (not any field)", () => {
-    const res = meetingOutputsProjection.project(fullValidated(), WS);
+    const res = projectCreate(fullValidated(), WS);
     expect(isOk(res)).toBe(true);
     if (!isOk(res)) return;
     // The note path is derived from the passed workspaceId.
-    expect(res.value.note.path).toContain(String(WS));
-    expect(res.value.note.path.startsWith("meetings/")).toBe(true);
+    expect(noteOf(res).path).toContain(String(WS));
+    expect(noteOf(res).path.startsWith("meetings/")).toBe(true);
   });
 
   it("IGNORES a validated field literally named 'workspaceId' carrying a DIFFERENT value (cannot redirect the write)", () => {
     const hijack = fullValidated({
       workspaceId: backed("ws-attacker", "transcript#L99"),
     });
-    const res = meetingOutputsProjection.project(hijack, WS);
+    const res = projectCreate(hijack, WS);
     if (!isOk(res)) throw new Error("expected ok");
     // The path is bound to the PASSED workspace, never the injected field value.
-    expect(res.value.note.path).toContain(String(WS));
-    expect(res.value.note.path).not.toContain("ws-attacker");
+    expect(noteOf(res).path).toContain(String(WS));
+    expect(noteOf(res).path).not.toContain("ws-attacker");
     // The hijack value must never leak into frontmatter as a workspace redirect.
-    expect(res.value.note.frontmatter?.workspaceId).not.toBe("ws-attacker");
+    expect(noteOf(res).frontmatter?.workspaceId).not.toBe("ws-attacker");
   });
 
   it("SLUGS an adversarial `../` title so it cannot inject path traversal into note.path (WS-4 durable-write escape)", () => {
@@ -104,20 +115,20 @@ describe("spec(§9 WS-2/WS-4) meetingOutputsProjection — the note targets the 
     const evil = fullValidated({
       title: backed("../../../ws-personal/secrets/exfil", "transcript#L1"),
     });
-    const res = meetingOutputsProjection.project(evil, WS);
+    const res = projectCreate(evil, WS);
     if (!isOk(res)) throw new Error("expected ok");
-    const p = res.value.note.path;
+    const p = noteOf(res).path;
     expect(p.startsWith(`meetings/${String(WS)}/`)).toBe(true);
     expect(p).not.toContain("..");
     // Exactly meetings/<ws>/<one-filename>.md — the title cannot add a path segment.
     expect(p.split("/")).toHaveLength(3);
     expect(p.endsWith(".md")).toBe(true);
     // The RAW title is still preserved for display (never in the path).
-    expect(res.value.note.title).toBe("../../../ws-personal/secrets/exfil");
+    expect(noteOf(res).title).toBe("../../../ws-personal/secrets/exfil");
   });
 
   it("a title with NO path-safe characters (all traversal punctuation) fails closed → unmappable_extraction (never a stray path)", () => {
-    const res = meetingOutputsProjection.project(
+    const res = projectCreate(
       fullValidated({ title: backed("../..", "transcript#L1") }),
       WS,
     );
@@ -141,9 +152,9 @@ describe("spec(§9 REQ-F-017) meetingOutputsProjection — no-inference: never i
         decisions: backed(["Continue as planned"]),
       },
     };
-    const res = meetingOutputsProjection.project(noOwner, WS);
+    const res = projectCreate(noOwner, WS);
     if (!isOk(res)) throw new Error("expected ok");
-    expect(res.value.note.frontmatter?.owner).toBe(TBD);
+    expect(noteOf(res).frontmatter?.owner).toBe(TBD);
   });
 
   it("an action item MISSING an evidence-backed owner gets NO action (fail-closed, no guessed owner)", () => {
@@ -155,7 +166,7 @@ describe("spec(§9 REQ-F-017) meetingOutputsProjection — no-inference: never i
         "actionItems.0.title": backed("Write the postmortem"),
       },
     };
-    const res = meetingOutputsProjection.project(ownerlessItem, WS);
+    const res = projectCreate(ownerlessItem, WS);
     if (!isOk(res)) throw new Error("expected ok");
     expect(res.value.actions).toHaveLength(0);
   });
@@ -169,7 +180,7 @@ describe("spec(§9 REQ-F-017) meetingOutputsProjection — no-inference: never i
         "actionItems.0.owner": tbd(),
       },
     };
-    const res = meetingOutputsProjection.project(tbdOwner, WS);
+    const res = projectCreate(tbdOwner, WS);
     if (!isOk(res)) throw new Error("expected ok");
     expect(res.value.actions).toHaveLength(0);
   });
@@ -188,7 +199,7 @@ describe("spec(§9 REQ-F-017) meetingOutputsProjection — no-inference: never i
         "actionItems.2.owner": backed("Bob", "transcript#L20"),
       },
     };
-    const res = meetingOutputsProjection.project(mixed, WS);
+    const res = projectCreate(mixed, WS);
     if (!isOk(res)) throw new Error("expected ok");
     expect(res.value.actions).toHaveLength(1);
     const action = res.value.actions[0]!;
@@ -207,15 +218,15 @@ describe("spec(§9 inv-3) meetingOutputsProjection — evidence-only: never fabr
     const withExtra = fullValidated({
       totallyUnknownField: backed("some value", "transcript#L7"),
     });
-    const res = meetingOutputsProjection.project(withExtra, WS);
+    const res = projectCreate(withExtra, WS);
     if (!isOk(res)) throw new Error("expected ok");
-    expect(res.value.note.frontmatter?.totallyUnknownField).toBeUndefined();
+    expect(noteOf(res).frontmatter?.totallyUnknownField).toBeUndefined();
   });
 
   it("frontmatter carries ONLY the convention field names (title/attendees/decisions/owner/dueDate)", () => {
-    const res = meetingOutputsProjection.project(fullValidated(), WS);
+    const res = projectCreate(fullValidated(), WS);
     if (!isOk(res)) throw new Error("expected ok");
-    const keys = Object.keys(res.value.note.frontmatter ?? {}).sort();
+    const keys = Object.keys(noteOf(res).frontmatter ?? {}).sort();
     // No fabricated key beyond the documented convention set.
     const allowed = new Set([
       "title",
@@ -230,9 +241,9 @@ describe("spec(§9 inv-3) meetingOutputsProjection — evidence-only: never fabr
   });
 
   it("an evidence-backed title surfaces its concrete value into frontmatter", () => {
-    const res = meetingOutputsProjection.project(fullValidated(), WS);
+    const res = projectCreate(fullValidated(), WS);
     if (!isOk(res)) throw new Error("expected ok");
-    expect(res.value.note.frontmatter?.title).toBe("Q3 Planning Sync");
+    expect(noteOf(res).frontmatter?.title).toBe("Q3 Planning Sync");
   });
 });
 
@@ -243,7 +254,7 @@ describe("spec(§9 inv-3) meetingOutputsProjection — evidence-only: never fabr
 describe("spec(§9 inv-3) meetingOutputsProjection — fail-closed: no title/evidence ⇒ unmappable_extraction", () => {
   it("an EMPTY validated field set → err(unmappable_extraction), no partial note", () => {
     const empty: ValidatedExtraction = { validated: true, fields: {} };
-    const res = meetingOutputsProjection.project(empty, WS);
+    const res = projectCreate(empty, WS);
     expect(isErr(res)).toBe(true);
     if (!isErr(res)) return;
     expect(res.error.code).toBe("unmappable_extraction");
@@ -254,7 +265,7 @@ describe("spec(§9 inv-3) meetingOutputsProjection — fail-closed: no title/evi
       validated: true,
       fields: { decisions: backed(["something"]) },
     };
-    const res = meetingOutputsProjection.project(untitled, WS);
+    const res = projectCreate(untitled, WS);
     expect(isErr(res)).toBe(true);
     if (!isErr(res)) return;
     expect(res.error.code).toBe("unmappable_extraction");
@@ -265,7 +276,7 @@ describe("spec(§9 inv-3) meetingOutputsProjection — fail-closed: no title/evi
       validated: true,
       fields: { title: tbd(), decisions: backed(["x"]) },
     };
-    const res = meetingOutputsProjection.project(tbdTitle, WS);
+    const res = projectCreate(tbdTitle, WS);
     expect(isErr(res)).toBe(true);
     if (!isErr(res)) return;
     expect(res.error.code).toBe("unmappable_extraction");
@@ -278,8 +289,8 @@ describe("spec(§9 inv-3) meetingOutputsProjection — fail-closed: no title/evi
 
 describe("spec(§9 inv-5) meetingOutputsProjection — deterministic", () => {
   it("same (validated, workspaceId) ⇒ identical note + actions (replay-stable)", () => {
-    const a = meetingOutputsProjection.project(fullValidated(), WS);
-    const b = meetingOutputsProjection.project(fullValidated(), WS);
+    const a = projectCreate(fullValidated(), WS);
+    const b = projectCreate(fullValidated(), WS);
     if (!isOk(a) || !isOk(b)) throw new Error("expected ok");
     expect(b.value).toStrictEqual(a.value);
   });
@@ -296,6 +307,7 @@ describe("spec(§9 WS-2) meetingOutputsProjection ∘ createBuildOutputsActivity
       projection: meetingOutputsProjection,
       sourceRef: meetingSourceRef,
       planIdentity: { closeout: "wf-1" },
+      noteExists: new FakeNoteExistsReader({ exists: false }),
     });
     const res = await port.build(fullValidated(), workspaceId("ws-bound"));
     expect(isOk(res)).toBe(true);
@@ -313,6 +325,7 @@ describe("spec(§9 WS-2) meetingOutputsProjection ∘ createBuildOutputsActivity
       projection: meetingOutputsProjection,
       sourceRef: meetingSourceRef,
       planIdentity: { closeout: "wf-1" },
+      noteExists: new FakeNoteExistsReader({ exists: false }),
     });
     const res = await port.build({ validated: true, fields: {} }, workspaceId("ws-bound"));
     expect(isErr(res)).toBe(true);

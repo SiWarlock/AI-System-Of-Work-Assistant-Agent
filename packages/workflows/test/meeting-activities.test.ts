@@ -52,6 +52,7 @@ import type {
 } from "../src/activities/runAgentJob";
 import { createValidateActivity } from "../src/activities/validateCloseout";
 import { createBuildOutputsActivity } from "../src/activities/buildOutputs";
+import { FakeNoteExistsReader } from "./support/project-sync-fakes";
 import type {
   OutputsProjection,
   DerivedActionDescriptor,
@@ -327,12 +328,15 @@ function noteProjection(): OutputsProjection {
   return {
     project: (validated, ws) =>
       ok({
-        note: {
-          path: `meetings/${String(ws)}/closeout.md`,
-          body: "closeout",
-          frontmatter: {
-            owner: validated.fields.owner?.value,
-            dueDate: validated.fields.dueDate?.value,
+        mutation: {
+          kind: "create",
+          note: {
+            path: `meetings/${String(ws)}/closeout.md`,
+            body: "closeout",
+            frontmatter: {
+              owner: validated.fields.owner?.value,
+              dueDate: validated.fields.dueDate?.value,
+            },
           },
         },
         actions: [
@@ -357,6 +361,7 @@ describe("spec(§9 inv-3/WS-2) buildOutputs activity — outputs DERIVED from va
       projection: noteProjection(),
       sourceRef: meetingSourceRef,
       planIdentity: { closeout: "wf-1" },
+      noteExists: new FakeNoteExistsReader({ exists: false }),
     });
     const res = await port.build(validatedFixture(), workspaceId("ws-bound"));
     expect(isOk(res)).toBe(true);
@@ -371,6 +376,7 @@ describe("spec(§9 inv-3/WS-2) buildOutputs activity — outputs DERIVED from va
       projection: noteProjection(),
       sourceRef: meetingSourceRef,
       planIdentity: { closeout: "wf-1" },
+      noteExists: new FakeNoteExistsReader({ exists: false }),
     });
     const res = await port.build(validatedFixture("Frank"), workspaceId("ws-bound"));
     if (!isOk(res)) return;
@@ -384,6 +390,7 @@ describe("spec(§9 inv-3/WS-2) buildOutputs activity — outputs DERIVED from va
       projection: noteProjection(),
       sourceRef: meetingSourceRef,
       planIdentity: { closeout: "wf-1" },
+      noteExists: new FakeNoteExistsReader({ exists: false }),
     });
     const res = await port.build(validatedFixture(), workspaceId("ws-bound"));
     if (!isOk(res)) return;
@@ -402,6 +409,7 @@ describe("spec(§9 inv-3/WS-2) buildOutputs activity — outputs DERIVED from va
       projection: noteProjection(),
       sourceRef: meetingSourceRef,
       planIdentity: { closeout: "wf-1" },
+      noteExists: new FakeNoteExistsReader({ exists: false }),
     });
     const a = await port.build(validatedFixture(), workspaceId("ws-bound"));
     const b = await port.build(validatedFixture(), workspaceId("ws-bound"));
@@ -420,6 +428,7 @@ describe("spec(§9 inv-3/WS-2) buildOutputs activity — outputs DERIVED from va
       projection: failingProjection,
       sourceRef: meetingSourceRef,
       planIdentity: { closeout: "wf-1" },
+      noteExists: new FakeNoteExistsReader({ exists: false }),
     });
     const res = await port.build(validatedFixture(), workspaceId("ws-bound"));
     expect(isErr(res)).toBe(true);
