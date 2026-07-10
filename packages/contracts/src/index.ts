@@ -69,6 +69,9 @@ export * from "./api/events";
 // --- config (Phase 10.7: non-secret config schema + secret-shape load guard) ---
 export * from "./config/config-schema";
 
+// --- install (Phase 11.5: install-doctor result — additive local result, NOT a frozen seam) ---
+export * from "./install/doctor-result";
+
 // --- contract-test fixtures (valid + invalid instances + FIXTURES registry) ---
 // No symbol collides with the frozen surface above (verified at wiring time).
 export * from "./fixtures/index";
