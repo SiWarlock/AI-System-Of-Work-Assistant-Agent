@@ -3,7 +3,7 @@
 - **Date:** 2026-07-09
 - **Phase:** gate-4 Copilot-serving endgame (G1e-2) + runbook §3 · Phase 11 (opened) · Phase 7 hardening
 - **Predecessor:** [051-2026-07-09-copilot-kmp-G4-dispatch-and-probe.md](051-2026-07-09-copilot-kmp-G4-dispatch-and-probe.md)
-- **Successor:** _(none yet)_
+- **Successor:** [`053-2026-07-09-phase11-enablement-gate-region-marker-neutralization.md`](./053-2026-07-09-phase11-enablement-gate-region-marker-neutralization.md)
 - **Team:** single-track on `main` (orchestrator + implementer). Implementer = worker area.
 
 ## Why this session existed
