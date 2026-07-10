@@ -149,18 +149,27 @@ export function createProjectSyncOutputsProjection(): SyncOutputsProjection {
         return ok({ mutation: { kind: "patch", patch }, dashboard: envelope, actions: [] });
       }
 
+      // Neutralize the MODEL-DERIVED frontmatter values (title AND slug — both come from the resolved
+      // ProjectRegistryEntry, so a `kw:region` marker in either would, once serialized, inject a spurious
+      // region into `parseSections`, which `checkOwnership` scans over the WHOLE note → a fail-closed
+      // `malformed_marker` rejection). `projectId` stays RAW: it is sanitized upstream AND gate-1's
+      // `readNoteProjectId`↔`expectedProjectId` compare depends on the verbatim value. `workspaceId`/
+      // `lifecycleState`/`provenanceOrigin` are server-bound / enum / literal (marker-free). The H1 via
+      // `composeProjectStatusNote` already neutralizes internally (idempotent). Single-authority reuse.
+      const safeTitle = neutralizeRegionMarkers(identity.title);
+      const safeSlug = neutralizeRegionMarkers(identity.slug);
       const note: NoteCreate = {
         path,
-        title: identity.title,
+        title: safeTitle,
         frontmatter: {
           projectId: identity.projectId,
-          slug: identity.slug, // display/frontmatter ONLY — never the physical path (WS-8)
+          slug: safeSlug, // display/frontmatter ONLY — never the physical path (WS-8)
           workspaceId: String(workspaceId),
           lifecycleState: identity.lifecycleState,
           provenanceOrigin: "project_sync",
-          title: identity.title,
+          title: safeTitle,
         },
-        body: composeProjectStatusNote(identity.title, regionBody),
+        body: composeProjectStatusNote(safeTitle, regionBody),
       };
 
       return ok({ mutation: { kind: "create", note }, dashboard: envelope, actions: [] });

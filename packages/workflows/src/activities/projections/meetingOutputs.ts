@@ -56,6 +56,7 @@ import {
   MEETING_OUTPUTS_REGION,
   composeMeetingNote,
   neutralizeRegionMarkers,
+  neutralizeFrontmatterValue,
 } from "./noteSlug";
 import type { ProjectNoteMutation } from "../deterministicProgress";
 import {
@@ -208,7 +209,12 @@ export const meetingOutputsProjection: OutputsProjection = {
     // `workspaceId` is NOT in this set, so it can NEVER redirect the write.
     const frontmatter: Record<string, unknown> = {};
     for (const name of NOTE_FRONTMATTER_FIELDS) {
-      frontmatter[name] = frontmatterValue(fields[name]);
+      // Neutralize the MODEL-DERIVED value: a `kw:region` marker in it would (once `serializeScalar`
+      // YAML-quotes / JSON-stringifies it — neither strips `<!--`) inject a spurious region into
+      // `parseSections`, which `checkOwnership` scans over the WHOLE note (frontmatter included) → a
+      // fail-closed `malformed_marker` rejection. Reuses the single-authority neutralizer (the same
+      // helper the region-body composers use). `rawTitle` below inherits the neutralized title.
+      frontmatter[name] = neutralizeFrontmatterValue(frontmatterValue(fields[name]));
     }
 
     // WS-2/WS-4: the note is placed under the PASSED workspace — the ONLY routing

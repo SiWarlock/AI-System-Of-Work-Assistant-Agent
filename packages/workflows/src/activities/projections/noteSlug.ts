@@ -45,6 +45,24 @@ export function neutralizeRegionMarkers(content: string): string {
   return out;
 }
 
+/**
+ * Neutralize a MODEL-DERIVED frontmatter value before it is serialized: a `kw:region` marker in a
+ * frontmatter value would (once YAML-quoted / JSON-stringified by `serializeScalar`, neither of which
+ * strips `<!--`) inject a spurious region into `parseSections`, which `checkOwnership` scans over the
+ * WHOLE note (frontmatter included) — a fail-closed `malformed_marker` write rejection.
+ *
+ * A thin DISPATCHER over the single authority `neutralizeRegionMarkers` (NOT a second neutralizer):
+ * neutralizes a string, and RECURSES over an array's elements (so a `string[]` — decisions/attendees —
+ * and even a nested array are covered, not relying on the extraction schema's flat-`string[]` shape);
+ * any other value (a TBD sentinel, a number, `undefined`) passes through untouched. Idempotent; a clean
+ * value is returned byte-identical (the common path is unchanged); never throws.
+ */
+export function neutralizeFrontmatterValue(value: unknown): unknown {
+  if (typeof value === "string") return neutralizeRegionMarkers(value);
+  if (Array.isArray(value)) return value.map((el) => neutralizeFrontmatterValue(el));
+  return value;
+}
+
 export function safeNoteSlug(raw: string): string {
   return raw
     .normalize("NFKD")
