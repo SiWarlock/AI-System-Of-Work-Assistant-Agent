@@ -150,7 +150,18 @@ function advance(
 
 // --- failure-class mapping (inv-5: distinct health item per failure class) --
 
-/** Map a source-ingestion resting state to a §16 FailureClass for the health sink. */
+/**
+ * Map a source-ingestion resting STATE to a §16 FailureClass — the DEFAULT used for the
+ * non-terminal park/failure states. `failed_terminal` is deliberately NOT classed here
+ * from the state alone: it conflates several distinct causes (a register-malformed schema
+ * reject, an ING-7/injection/egress agent terminal, an ownership/secret/commit write
+ * failure), so every terminal call site passes an explicit CAUSE-derived class (see
+ * {@link agentFailureClass} / {@link commitFailureClass} + the register-malformed site).
+ * `worker_down` is RESERVED for a genuine supervision/infra failure, which this driver
+ * never produces as a terminal cause — so the `failed_terminal` fallback below (never hit
+ * today; a guard for a future un-classed terminal site) is the generic write_through_failed,
+ * NOT worker_down. inv-5: a distinct health class per CAUSE, not per resting state.
+ */
 function failureClassFor(state: SourceState): FailureClass {
   switch (state) {
     case "queued_for_review":
@@ -160,7 +171,63 @@ function failureClassFor(state: SourceState): FailureClass {
     case "failed_retryable":
       return "write_through_failed";
     case "failed_terminal":
-      return "worker_down";
+    default:
+      return "write_through_failed";
+  }
+}
+
+/**
+ * Map a source-agent failure CODE to the §16 FailureClass its surfaced health item carries
+ * (inv-5 — distinct class per CAUSE, not just per resting state). A source-processing job
+ * that failed at the candidate/policy gate produced NO valid candidate → `schema_rejection`;
+ * provider/budget failures are retryable → `write_through_failed`. The specific cause code
+ * additionally rides the surfaced MESSAGE, so it is never lost where the class is a coarser
+ * bucket.
+ *
+ * arch_gap: the frozen `FailureClass` enum (shared-enums.ts) has NO dedicated SECURITY /
+ * EGRESS member, so `injection_detected` (a prompt-injection / untrusted-content attack) and
+ * `egress_vetoed` (an egress-policy denial) use the least-wrong `schema_rejection` — which
+ * UNDERSTATES a security/egress cause to a class-filtering operator. Pending a frozen-contract
+ * FailureClass expansion (a `security_violation`/`policy_denial`-style member — the
+ * policy_denial/egress_status named-constant precedent); the cause rides the message meanwhile.
+ */
+function agentFailureClass(code: SourceAgentFailureCode): FailureClass {
+  switch (code) {
+    case "provider_failed":
+    case "budget_exceeded":
+      // retryable (failed_retryable) — unchanged. arch_gap: budget_exceeded could map to the
+      // dedicated `budget_breach` member, but that is a non-terminal mapping out of this fix's scope.
+      return "write_through_failed";
+    case "admission_rejected":
+    case "unsupported_type":
+    case "injection_detected": // arch_gap: no SECURITY FailureClass member — understated as schema_rejection
+    case "egress_vetoed": // arch_gap: no EGRESS/policy FailureClass member — understated as schema_rejection
+    case "schema_rejected":
+    default:
+      return "schema_rejection";
+  }
+}
+
+/**
+ * Map a KnowledgeWriter commit failure CODE to the §16 FailureClass its surfaced health item
+ * carries. A KnowledgeWriter refusing or failing a write is a WRITE-THROUGH failure, never
+ * `worker_down` (the worker is up; the write was refused/failed): compare-revision conflict,
+ * ownership refusal, secret-scan refusal, and a generic commit failure all → `write_through_failed`.
+ * A schema reject → `schema_rejection`.
+ *
+ * arch_gap: `ownership_violation` (a WS-isolation refusal) and `secret_found` (a secret-breach
+ * refusal) have no dedicated ISOLATION / SECURITY FailureClass member — least-wrong
+ * `write_through_failed` UNDERSTATES them; pending a frozen-contract FailureClass expansion. The
+ * cause rides the surfaced message meanwhile (safety rules 4/7).
+ */
+function commitFailureClass(code: KnowledgeCommitFailureCode): FailureClass {
+  switch (code) {
+    case "schema_rejected":
+      return "schema_rejection";
+    case "write_conflict":
+    case "ownership_violation": // arch_gap: no ISOLATION FailureClass member — understated as write_through_failed
+    case "secret_found": // arch_gap: no SECURITY FailureClass member — understated as write_through_failed
+    case "commit_failed":
     default:
       return "write_through_failed";
   }
@@ -257,9 +324,13 @@ export async function runSourceIngestion(
   const surface = async (
     failState: SourceState,
     message: string,
+    // The §16 class. Non-terminal callers omit it (the state-based default is correct);
+    // every terminal (failed_terminal) caller passes an explicit CAUSE-derived class
+    // (inv-5) because failed_terminal conflates distinct causes — see failureClassFor.
+    failureClass: FailureClass = failureClassFor(failState),
   ): Promise<SourceIngestionOutcome> => {
     const failure: SourceWorkflowFailure = {
-      failureClass: failureClassFor(failState),
+      failureClass,
       subjectRef: input.run.workflowId,
       message,
       auditRef: input.run.workflowId as unknown as AuditId,
@@ -275,7 +346,14 @@ export async function runSourceIngestion(
   const registered = await deps.register.register(context);
   if (!isOk(registered)) {
     // A malformed source never becomes a durable source — terminal.
-    return surface("failed_terminal", `source registration failed: ${registered.error.code}`);
+    // A register-MALFORMED reject is a DATA-validation failure (schema_rejection), NOT the
+    // worker being down. There is no captured→rejected machine edge, so it rests at
+    // failed_terminal — with the CAUSE-correct class (inv-5; drains the C1 Finding).
+    return surface(
+      "failed_terminal",
+      `source registration failed: ${registered.error.code}`,
+      "schema_rejection",
+    );
   }
   if (registered.value.outcome === "dedupe_hit") {
     // Flow-4 dedupe-hit: the contentHash is already known — a NO-OP. No routing, no
@@ -323,7 +401,11 @@ export async function runSourceIngestion(
     // disposition then resolves off proposed (proposed → rejected | failed_*).
     const failState = agentFailureState(extracted.error.code);
     state = advance(state, ["proposed", failState]);
-    return surface(state, `source-processing job failed: ${extracted.error.code}`);
+    return surface(
+      state,
+      `source-processing job failed: ${extracted.error.code}`,
+      agentFailureClass(extracted.error.code),
+    );
   }
   context = { ...context, extraction: extracted.value };
 
@@ -359,7 +441,11 @@ export async function runSourceIngestion(
   if (!isOk(committed)) {
     const failState = commitFailureState(committed.error.code);
     state = advance(state, [failState]);
-    return surface(state, `knowledge commit failed: ${committed.error.code}`);
+    return surface(
+      state,
+      `knowledge commit failed: ${committed.error.code}`,
+      commitFailureClass(committed.error.code),
+    );
   }
   context = { ...context, revisionId: committed.value.revisionId };
 

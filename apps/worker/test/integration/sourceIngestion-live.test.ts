@@ -316,7 +316,7 @@ describe.skipIf(!SOW_TEMPORAL)(
       expect(outcome.context.revisionId).toBeDefined();
     });
 
-    it("(b) MALFORMED source → the REAL gate rejects → failed_terminal + a distinct health item, no uncaught throw — spec(§16)", async () => {
+    it("(b) MALFORMED source → the REAL gate rejects → failed_terminal + a distinct schema_rejection health item, no uncaught throw — spec(§16)", async () => {
       const before = (await rig().backends.healthItems.list()).length;
       const input: SourceIngestionInput = {
         run: {
@@ -335,8 +335,9 @@ describe.skipIf(!SOW_TEMPORAL)(
         input,
       );
       expect(outcome.state).toBe("failed_terminal");
-      // The driver surfaced a failure (nothing silent) — failed_terminal ⇒ worker_down.
-      expect(outcome.surfaced?.failureClass).toBe("worker_down");
+      // A register-malformed schema reject is a DATA-validation failure — its §16 class is
+      // schema_rejection (the C-fix; cause-aware, NOT the infra-bucket worker_down).
+      expect(outcome.surfaced?.failureClass).toBe("schema_rejection");
       // A REAL persisted health item materialized through the surfacing sink.
       const after = await rig().backends.healthItems.list();
       expect(after.length).toBeGreaterThan(before);
