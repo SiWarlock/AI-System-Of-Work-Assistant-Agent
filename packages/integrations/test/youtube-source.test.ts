@@ -113,6 +113,52 @@ describe("Phase-13 §13.2 — extractYouTubeSource (emit-only source adapter)", 
     expect(res.error.code).toBe("unknown");
   });
 
+  // ── Lesson-11 hardening: adapter-level empty guard + whole-map-under-one-try (parity with web/podcast) ──
+
+  it("fails CLOSED on an EMPTY / whitespace / null / missing transcript on an ok result — adapter-level guard, never a contentless candidate (safety rules 2/6)", async () => {
+    // The transport resolves ok:true but the transcript is unusable WITHOUT signalling no_transcript.
+    // Today youtube relies only on the transport's no_transcript code, so these slip through as a
+    // contentless candidate; the adapter-level guard fails them closed (empty_content), like web/podcast.
+    const base = { videoId: "v", watchUrl: "https://www.youtube.com/watch?v=v", title: "T", channel: "C" };
+    const emptyString = fakeTransport("");
+    const whitespace = fakeTransport("   \n  ");
+    const nullTranscript = (async () => ({ ok: true, video: { ...base, transcript: null } })) as unknown as YouTubeExtractTransport;
+    const missingTranscript = (async () => ({ ok: true, video: base })) as unknown as YouTubeExtractTransport;
+    for (const t of [emptyString, whitespace, nullTranscript, missingTranscript]) {
+      const res = await extractYouTubeSource(input(), t);
+      expect(res.ok).toBe(false);
+      if (res.ok) return;
+      expect(res.error.code).toBe("empty_content");
+    }
+  });
+
+  it("fails CLOSED on a pathological ok-shape — a null video ⇒ empty_content, a field read that THROWS ⇒ 'unknown'; never a throw across the seam (Lesson 11, whole map under one try)", async () => {
+    // (a) a null/absent video — the graceful `video?.transcript` guard classifies it as empty_content.
+    const nullVideo = (async () => ({ ok: true, video: null })) as unknown as YouTubeExtractTransport;
+    const resNull = await extractYouTubeSource(input(), nullVideo);
+    expect(resNull.ok).toBe(false);
+    if (resNull.ok) return;
+    expect(resNull.error.code).toBe("empty_content");
+
+    // (b) a hostile getter that THROWS on field access during the map — proves the WHOLE post-transport
+    //     map (not just the transport call) is under the one try: the throw is caught → typed unknown,
+    //     never propagated across the seam. This is the youtube gap this slice closes.
+    const throwingGetter = (async () => {
+      const video = { videoId: "v", watchUrl: "https://www.youtube.com/watch?v=v", title: "T", channel: "C" };
+      Object.defineProperty(video, "transcript", {
+        enumerable: true,
+        get() {
+          throw new Error("hostile getter");
+        },
+      });
+      return { ok: true, video };
+    }) as unknown as YouTubeExtractTransport;
+    const resThrow = await extractYouTubeSource(input(), throwingGetter);
+    expect(resThrow.ok).toBe(false);
+    if (resThrow.ok) return;
+    expect(resThrow.error.code).toBe("unknown");
+  });
+
   it("does not mutate its input (pure, emit-only — no hidden side effect)", async () => {
     const original = input();
     const frozen = Object.freeze({ ...original });

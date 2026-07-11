@@ -62,64 +62,85 @@ export interface ExtractYouTubeInput {
   readonly sensitivity: string;
 }
 
-/** The CLOSED extraction failure set (§16 — enumerable). */
+/**
+ * The CLOSED extraction failure set (§16 — enumerable). `no_transcript` is the
+ * TRANSPORT-signalled absence (captions unavailable, a `!ok` result); `empty_content`
+ * is the ADAPTER-level guard (a transport resolved `ok` but the transcript is empty /
+ * whitespace / non-string) — defense-in-depth on top of `no_transcript`, matching the
+ * web/podcast siblings.
+ */
 export interface YouTubeExtractError {
-  readonly code: "unreachable" | "no_transcript" | "unknown";
+  readonly code: "unreachable" | "no_transcript" | "empty_content" | "unknown";
   readonly message: string;
 }
 
 /**
- * Extract a YouTube source into a CANDIDATE `RegisterSourceInput` — emit-only,
- * never writes, never throws. On success the returned candidate is exactly the
- * surface `registerSource()` (the candidate gate) consumes; on any transport fault
- * a typed `Result` err. The `contentHash` is a deterministic, replay-stable digest
- * over the video identity + transcript (Flow-4 dedupe key).
+ * Extract a YouTube source into a CANDIDATE `RegisterSourceInput` — emit-only, never
+ * writes, never throws. On success the returned candidate is exactly the surface
+ * `registerSource()` (the candidate gate) consumes; on any transport fault, or an
+ * empty/malformed transcript, a typed `Result` err. The `contentHash` is a
+ * deterministic, replay-stable digest over the video identity + transcript (Flow-4
+ * dedupe key).
  */
 export async function extractYouTubeSource(
   input: ExtractYouTubeInput,
   transport: YouTubeExtractTransport,
 ): Promise<Result<RegisterSourceInput, YouTubeExtractError>> {
-  // Defend the boundary: a transport that THROWS is mapped to a typed err, never
-  // propagated (§16 — nothing throws across this seam).
-  let result: YouTubeExtractResult;
+  // Defend the boundary TOTALLY (§16 — nothing throws across this seam): the WHOLE
+  // transport call + mapping runs under one try. The real (deferred) transport is
+  // UNTRUSTED — it can throw OR resolve `ok` with a pathological shape (a null/
+  // non-string transcript, a null video, a hostile getter) — and every such fault
+  // becomes a typed err, never an uncaught throw (Lesson 11). A `!ok` result and the
+  // empty guard `return` early; a `return` inside a `try` skips the `catch`, so the
+  // typed transport-code errors pass through and the single catch only fires on a
+  // genuine throw.
   try {
-    result = await transport({ watchUrl: input.watchUrl });
+    const result = await transport({ watchUrl: input.watchUrl });
+
+    if (!result.ok) {
+      return err({ code: result.code, message: result.message });
+    }
+
+    const { video } = result;
+
+    // Fail-closed on an empty / whitespace-only / MALFORMED transcript — never emit a
+    // contentless candidate (safety rules 2/6). This is defense-in-depth ON TOP of the
+    // transport's `no_transcript` signal: a transport that resolves `ok` with an empty /
+    // non-string transcript (without signalling `no_transcript`) is still failed closed
+    // here, exactly like web/podcast.
+    if (typeof video?.transcript !== "string" || video.transcript.trim().length === 0) {
+      return err({ code: "empty_content", message: "youtube extraction returned an empty or malformed transcript" });
+    }
+
+    // Dedupe key over the CONTENT (id + transcript) — deterministic + replay-stable
+    // (payloadHash is key-sorted SHA-256). The same video re-extracted yields the
+    // same key → a Flow-4 `dedupe_hit` at the gate, never a duplicate source.
+    const contentHash = payloadHash({ videoId: video.videoId, transcript: video.transcript });
+
+    // Routing hints carry ONLY what is IN the fetched content (metadata) — used by
+    // the ingestion router for correlation. No invented workspace/owner/date.
+    const routingHints: Record<string, unknown> = {
+      videoId: video.videoId,
+      title: video.title,
+      channel: video.channel,
+      ...(video.publishedAt !== undefined ? { publishedAt: video.publishedAt } : {}),
+    };
+
+    // The candidate — passed through the gate next. Scoped fields come from the
+    // caller's policy verbatim (no inference); the type is the frozen-open source
+    // taxonomy value `youtube_video`.
+    const candidate: RegisterSourceInput = {
+      sourceId: input.sourceId,
+      workspaceId: input.workspaceId,
+      origin: video.watchUrl,
+      contentHash,
+      type: "youtube_video",
+      sensitivity: input.sensitivity,
+      routingHints,
+    };
+
+    return ok(candidate);
   } catch (e) {
     return err({ code: "unknown", message: e instanceof Error ? e.message : "transport threw" });
   }
-
-  if (!result.ok) {
-    return err({ code: result.code, message: result.message });
-  }
-
-  const { video } = result;
-
-  // Dedupe key over the CONTENT (id + transcript) — deterministic + replay-stable
-  // (payloadHash is key-sorted SHA-256). The same video re-extracted yields the
-  // same key → a Flow-4 `dedupe_hit` at the gate, never a duplicate source.
-  const contentHash = payloadHash({ videoId: video.videoId, transcript: video.transcript });
-
-  // Routing hints carry ONLY what is IN the fetched content (metadata) — used by
-  // the ingestion router for correlation. No invented workspace/owner/date.
-  const routingHints: Record<string, unknown> = {
-    videoId: video.videoId,
-    title: video.title,
-    channel: video.channel,
-    ...(video.publishedAt !== undefined ? { publishedAt: video.publishedAt } : {}),
-  };
-
-  // The candidate — passed through the gate next. Scoped fields come from the
-  // caller's policy verbatim (no inference); the type is the frozen-open source
-  // taxonomy value `youtube_video`.
-  const candidate: RegisterSourceInput = {
-    sourceId: input.sourceId,
-    workspaceId: input.workspaceId,
-    origin: video.watchUrl,
-    contentHash,
-    type: "youtube_video",
-    sensitivity: input.sensitivity,
-    routingHints,
-  };
-
-  return ok(candidate);
 }
