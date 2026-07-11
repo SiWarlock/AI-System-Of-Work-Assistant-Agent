@@ -27,7 +27,14 @@ const OSB_PIN_PATH = resolve(REPO_ROOT, "config/osb.pin");
 // architecture. A HARDCODED count so a renamed/moved/deleted adapter, or a NEW adapter added without a
 // deliberate bump HERE, fails the count-pin — the scan can never masquerade as "no violations" over a
 // mis-globbed/shrunk surface (Lesson 12 non-vacuity).
-const EXPECTED_CONNECTOR_ADAPTER_COUNT = 16;
+// ACKNOWLEDGED read-edge (one-time cross-track bump — C2 / task 11.8): file-read-transport.ts is the
+// 17th connectors/adapters read-edge. An INDEPENDENT orchestrator-dispatched Step-8 security review
+// CERTIFIED it write-free (0 write surfaces; only realpath/stat/readFile) + candidate-data-only
+// (emit-only; the read STOPS at registerSource(), never writes Markdown/vault/KnowledgeWriter —
+// Safety Rule 1 + Lesson-12 hold). orch7 CERTIFY, 2026-07-11.
+// RECONCILE → eval-security: this one-time cross-track pin bump + the DEFERRED guard-PATTERN prose-FP
+// fix (the `symlink` token → a call-context anchor) belong to the eval-security track.
+const EXPECTED_CONNECTOR_ADAPTER_COUNT = 17;
 
 function loadConnectorAdapterSources(): ReadonlyArray<{ path: string; content: string }> {
   return readdirSync(ADAPTERS_DIR)

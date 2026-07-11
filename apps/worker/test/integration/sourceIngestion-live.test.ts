@@ -19,6 +19,7 @@ import type {
   WorkspaceId,
   WorkflowRunRef,
   SourceRef,
+  SourceEnvelope,
   ProviderRoute,
 } from "@sow/contracts";
 import { TBD } from "@sow/domain";
@@ -32,6 +33,13 @@ import type {
 } from "@sow/workflows";
 import type { CommittedRevision, KnowledgeRevisionStore } from "@sow/knowledge";
 import { computeRevisionId } from "@sow/knowledge";
+// make-it-real C2: the REAL ROOT-confined node:fs transport + the emit-only adapter,
+// deep-imported (kept OFF the barrel/sandbox path — see file-read-transport.ts).
+import { createFileReadTransport } from "@sow/integrations/connectors/adapters/file-read-transport";
+import { extractFileSource } from "@sow/integrations/connectors/adapters/file-source";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { SOW_TEMPORAL } from "../support/temporalGate";
 import {
@@ -365,6 +373,56 @@ describe.skipIf(!SOW_TEMPORAL)(
       expect(first.state).toBe("applied");
       expect(second.state).toBe("applied");
       expect(first.context.revisionId).toBe(second.context.revisionId);
+    });
+
+    it("(d) REAL local file → ROOT-confined transport → extractFileSource → live workflow → applied via the real gate — spec(§9)", async () => {
+      // The C2 end-to-end proof: a REAL temp file under a temp root flows through the
+      // real node:fs transport + the emit-only adapter into a genuine RegisterSourceInput,
+      // then through the live C1 workflow where the REAL registerSource() gate accepts it.
+      const captureBase = await mkdtemp(join(tmpdir(), "sow-c2-e2e-"));
+      try {
+        const root = join(captureBase, "root");
+        await mkdir(root, { recursive: true });
+        await writeFile(join(root, "captured.md"), "# Captured\nReal local file content for C2.", "utf8");
+
+        const transport = createFileReadTransport(root);
+        const candidate = await extractFileSource(
+          { sourceId: "src-c2-file", workspaceId: String(SRC_WS), path: "captured.md", sensitivity: "normal" },
+          transport,
+        );
+        expect(candidate.ok).toBe(true);
+        if (!candidate.ok) return;
+
+        // The candidate (string ids) becomes the workflow's SourceEnvelope context; the
+        // workflow's registerSource leg re-gates it for real.
+        const source: SourceEnvelope = {
+          sourceId: sourceId(candidate.value.sourceId),
+          workspaceId: workspaceId(candidate.value.workspaceId),
+          origin: candidate.value.origin,
+          contentHash: candidate.value.contentHash,
+          type: candidate.value.type,
+          sensitivity: candidate.value.sensitivity,
+          routingHints: candidate.value.routingHints,
+        };
+        const input: SourceIngestionInput = {
+          run: {
+            workflowId: workflowId("wf-src-c2-file"),
+            trigger: "owner_action",
+            idempotencyKey: "run:src:c2:file",
+            workspaceId: String(SRC_WS),
+          },
+          context: { source, envelopes: [] },
+        };
+        const outcome = await rig().execute<SourceIngestionOutcome>(
+          "sourceIngestionWorkflow",
+          "wf-src-c2-file",
+          input,
+        );
+        expect(outcome.state).toBe("applied");
+        expect(outcome.context.revisionId).toBeDefined();
+      } finally {
+        await rm(captureBase, { recursive: true, force: true });
+      }
     });
   },
 );
