@@ -14,6 +14,7 @@ export * from "./redaction/redact";
 export * from "./validation/schema-gate";
 export * from "./validation/universal-rules";
 export * from "./validation/no-inference";
+export * from "./validation/block-provenance";
 
 // --- keys ---
 export * from "./keys/canonical-key";

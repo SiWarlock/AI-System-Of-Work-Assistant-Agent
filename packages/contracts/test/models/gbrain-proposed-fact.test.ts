@@ -60,6 +60,15 @@ describe("GBrainProposedFact contract — spec(§6/§7)", () => {
     ).toBe(true);
   });
 
+  it("accepts an evidence ref carrying an optional numbered `block` back-ref (task 13.7a, additive)", () => {
+    expect(
+      GBrainProposedFactSchema.safeParse({
+        ...valid(),
+        evidenceRefs: [{ kind: "markdown", ref: "acme/note.md", span: "L1-L20", block: "B3" }],
+      }).success,
+    ).toBe(true);
+  });
+
   it("accepts every generatedBy literal (synthesis|dream|patterns|minion)", () => {
     for (const generatedBy of ["synthesis", "dream", "patterns", "minion"]) {
       expect(GBrainProposedFactSchema.safeParse({ ...valid(), generatedBy }).success).toBe(true);

@@ -82,11 +82,16 @@ export type FrontmatterPatch = z.infer<typeof FrontmatterPatchSchema>;
 
 // Must reference already-canonical Markdown OR an ingested SourceEnvelope span;
 // scratch / unmaterialized origins are inadmissible (Appendix A: GBrainProposedFact).
+// `span` is a line/char range; `block` (task 13.7a) is an OPTIONAL enumerated
+// numbered-block back-reference (osb `(src: Bn)`, e.g. "B3") — orthogonal to `span`,
+// the block-provenance granularity for segregated-inference. Optional + opaque
+// (the producer defines the id scheme); a ref without `block` stays valid.
 export const CanonicalSourceRefSchema = z
   .object({
     kind: z.enum(["markdown", "source_envelope"]),
     ref: z.string().min(1),
     span: z.string().min(1).optional(),
+    block: z.string().min(1).optional(),
   })
   .strict();
 export type CanonicalSourceRef = z.infer<typeof CanonicalSourceRefSchema>;

@@ -42,6 +42,10 @@
           "span": {
             "type": "string",
             "minLength": 1
+          },
+          "block": {
+            "type": "string",
+            "minLength": 1
           }
         },
         "required": [

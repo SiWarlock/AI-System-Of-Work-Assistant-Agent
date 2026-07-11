@@ -108,4 +108,23 @@ describe("shared nested sub-shapes (.strict())", () => {
       CanonicalSourceRefSchema.safeParse({ kind: "markdown", ref: "x", y: 1 }),
     ).toMatchObject({ success: false });
   });
+
+  it("CanonicalSourceRefSchema accepts an optional numbered `block` back-ref (task 13.7a, additive)", () => {
+    // a ref WITH block parses + retains it.
+    expect(
+      CanonicalSourceRefSchema.parse({ kind: "markdown", ref: "p.md", span: "L1", block: "B3" }),
+    ).toEqual({ kind: "markdown", ref: "p.md", span: "L1", block: "B3" });
+    // backward-compatible: a ref WITHOUT block still parses (block is optional).
+    expect(CanonicalSourceRefSchema.parse({ kind: "markdown", ref: "p.md" })).toEqual({
+      kind: "markdown",
+      ref: "p.md",
+    });
+    // block, when present, is non-empty (.min(1)); an unknown key is still rejected (.strict()).
+    expect(
+      CanonicalSourceRefSchema.safeParse({ kind: "markdown", ref: "x", block: "" }),
+    ).toMatchObject({ success: false });
+    expect(
+      CanonicalSourceRefSchema.safeParse({ kind: "markdown", ref: "x", block: "B1", z: 1 }),
+    ).toMatchObject({ success: false });
+  });
 });
