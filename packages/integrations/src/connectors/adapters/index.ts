@@ -1,9 +1,10 @@
 // @sow/integrations — slice 6.3 connector-adapter barrel (V1 set).
 //
-// Re-exports the nine concrete read connectors + the shared spec/base. This is a
-// LOCAL barrel for the connectors subtree — NOT the package `src/index.ts` (the
-// Synthesis stage owns that public barrel). The Connector Gateway (6.1) drives any
-// of these `ConnectorPort`s; each is built over an injected transport (6.3).
+// Re-exports the concrete read connectors + the shared spec/base, plus the §13.4
+// read-only Obsidian-vault tool surface (a shape-(A) read-tool-descriptor surface,
+// NOT a ConnectorPort). This is a LOCAL barrel for the connectors subtree — NOT the
+// package `src/index.ts` (the Synthesis stage owns that public barrel). The Connector
+// Gateway (6.1) drives the `ConnectorPort`s; each is built over an injected transport (6.3).
 export { makeConnector } from "./base";
 export type { ConnectorSpec } from "./base";
 export { createCalendarConnector } from "./calendar";
@@ -15,3 +16,20 @@ export { createDriveConnector } from "./drive";
 export { createGithubConnector } from "./github";
 export { createTelegramCaptureConnector } from "./telegram-capture";
 export { createUrlSourceConnector } from "./url-source";
+// §13.4 read-only Obsidian-vault MCP tool surface (shape (A): a read-tool-descriptor surface, not a
+// ConnectorPort — registers only the 5 read tools; the 3 write tools are NOT registered, KN-4/KN-9).
+export {
+  createObsidianVaultReadConnector,
+  OBSIDIAN_VAULT_READ_TOOLS,
+  OBSIDIAN_VAULT_WRITE_TOOL_IDS,
+} from "./obsidian-vault-mcp";
+export type {
+  ObsidianVaultToolSpec,
+  ObsidianVaultConfig,
+  ObsidianVaultTransport,
+  ObsidianVaultReadConnector,
+  VaultReadCall,
+  VaultReadResult,
+  VaultReadError,
+  VaultReadTransportResult,
+} from "./obsidian-vault-mcp";
