@@ -113,6 +113,18 @@ export const FailureClass = [
   "conflict_review",
   "sync_lagging",
   "rebuild_divergence",
+  // §16 C-enum (make-it-real, 2026-07-11): dedicated members for the terminal
+  // SECURITY / POLICY / EGRESS / ISOLATION causes the C-fix (77c717e) mapped to
+  // least-wrong interims. ADDITIVE — every member above is unchanged (no rename/remove).
+  //   • security_violation — a content-safety / secret-scan / injection fail-closed
+  //     (ING-7 untrusted-content attack, KnowledgeWriter secret_found).
+  //   • policy_denial      — a policy/admission refusal (ING-7 mutating-tool at admission).
+  //   • egress_denied      — an egress-policy veto (safety rule 5; the egress_status precedent).
+  //   • isolation_breach   — a workspace-isolation refusal (WS-4 ownership_violation).
+  "security_violation",
+  "policy_denial",
+  "egress_denied",
+  "isolation_breach",
 ] as const;
 export const failureClassSchema = z.enum(FailureClass);
 export type FailureClass = z.infer<typeof failureClassSchema>;

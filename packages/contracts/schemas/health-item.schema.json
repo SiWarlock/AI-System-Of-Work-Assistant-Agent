@@ -17,7 +17,11 @@
         "parity_defect",
         "conflict_review",
         "sync_lagging",
-        "rebuild_divergence"
+        "rebuild_divergence",
+        "security_violation",
+        "policy_denial",
+        "egress_denied",
+        "isolation_breach"
       ]
     },
     "severity": {

@@ -183,6 +183,8 @@ describe("shared enum schemas — exact membership", () => {
       "connector_unreachable", "write_through_failed", "budget_breach",
       "missed_or_late_schedule", "schema_rejection", "worker_down",
       "parity_defect", "conflict_review", "sync_lagging", "rebuild_divergence",
+      // C-enum (make-it-real): additive SECURITY / POLICY / EGRESS / ISOLATION members.
+      "security_violation", "policy_denial", "egress_denied", "isolation_breach",
     ]],
     [factKindSchema, ["page", "link", "timeline", "tag", "frontmatter_value"]],
     [factProvenanceOriginSchema, [

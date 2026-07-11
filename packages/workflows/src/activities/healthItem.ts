@@ -48,6 +48,54 @@ export function healthItemDedupeKey(
 
 /** Conservative default severity (HealthItem.severity is an OPEN string, not an enum). */
 export const HEALTH_ITEM_DEFAULT_SEVERITY = "warn" as const;
+/** Elevated tiers (the severity vocabulary already in use across the health surfaces). */
+const HEALTH_ITEM_SEVERITY_ERROR = "error" as const;
+const HEALTH_ITEM_SEVERITY_CRITICAL = "critical" as const;
+
+/**
+ * The DEFAULT severity for a HealthItem of a given {@link FailureClass}, applied ONLY when
+ * the producer does not supply one (a producer-explicit severity always wins — see
+ * {@link materializeHealthItem}). HealthItem.severity is an OPEN string with a flat `warn`
+ * fallback and no per-class floor, so a terminal SECURITY / ISOLATION cause would otherwise
+ * surface at `warn` (too low). This gives the load-bearing §16 classes a defensible default:
+ *   • security_violation / isolation_breach → `critical` (a content-safety/secret/injection
+ *     or a workspace-isolation breach — the highest tier).
+ *   • policy_denial / egress_denied         → `error`   (a policy/egress refusal).
+ *   • every operational class               → `warn`    (unchanged — no regression).
+ *
+ * EXHAUSTIVE BY DESIGN: the `default` branch's never-assignment (an exhaustiveness check)
+ * makes a FUTURE FailureClass member break tsc HERE — so a new class can NEVER silently
+ * inherit a benign `warn` default (the §16 no-silent-mis-bucket guard, made tsc-enforced).
+ * Pure/deterministic.
+ */
+export function defaultSeverityForFailureClass(failureClass: FailureClass): string {
+  switch (failureClass) {
+    case "security_violation":
+    case "isolation_breach":
+      return HEALTH_ITEM_SEVERITY_CRITICAL;
+    case "policy_denial":
+    case "egress_denied":
+      return HEALTH_ITEM_SEVERITY_ERROR;
+    case "connector_unreachable":
+    case "write_through_failed":
+    case "budget_breach":
+    case "missed_or_late_schedule":
+    case "schema_rejection":
+    case "worker_down":
+    case "parity_defect":
+    case "conflict_review":
+    case "sync_lagging":
+    case "rebuild_divergence":
+      return HEALTH_ITEM_DEFAULT_SEVERITY;
+    default: {
+      // A new FailureClass member reaches here as a non-`never` type → tsc error, forcing
+      // a deliberate severity decision above. The runtime fallback stays conservative.
+      const _exhaustive: never = failureClass;
+      void _exhaustive;
+      return HEALTH_ITEM_DEFAULT_SEVERITY;
+    }
+  }
+}
 
 // --- typed, enumerable error surface (§16) ---------------------------------
 
@@ -72,8 +120,9 @@ const fail = (
 
 /**
  * A single failure occurrence to materialize into a HealthItem. `now` is the
- * INJECTED clock reading (ISO-8601) — no Date.now() here. `severity` is optional
- * (defaults to {@link HEALTH_ITEM_DEFAULT_SEVERITY}).
+ * INJECTED clock reading (ISO-8601) — no Date.now() here. `severity` is optional;
+ * when omitted it defaults per {@link defaultSeverityForFailureClass} for the item's
+ * class (elevated for the §16 security/isolation/policy/egress classes, `warn` otherwise).
  */
 export interface MaterializeHealthItemInput {
   readonly failureClass: FailureClass;
@@ -158,7 +207,9 @@ export async function materializeHealthItem(
   if (!loaded.ok) return loaded;
   const current = loaded.value;
 
-  const severity = input.severity ?? HEALTH_ITEM_DEFAULT_SEVERITY;
+  // Producer-explicit severity wins; otherwise the per-class default elevates the
+  // load-bearing §16 classes (security/isolation → critical, policy/egress → error).
+  const severity = input.severity ?? defaultSeverityForFailureClass(input.failureClass);
 
   let candidate: HealthItem;
   if (current === undefined || isTerminal(current)) {

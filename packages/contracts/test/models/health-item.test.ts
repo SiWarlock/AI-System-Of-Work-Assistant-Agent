@@ -57,16 +57,40 @@ describe("HealthItem contract — spec(§16/§10/§11)", () => {
     expect(ok.success).toBe(true);
   });
 
-  // OBS-2 discriminant set: every one of the 10 failure classes (incl. the two
-  // write-through amendment additions) must parse — cross-track consumers can't
-  // drift the taxonomy.
-  it("accepts every OBS-2 failureClass in the frozen 10-value taxonomy", () => {
+  // OBS-2 discriminant set: every failure class in the frozen taxonomy must parse —
+  // cross-track consumers can't drift the taxonomy.
+  it("accepts every OBS-2 failureClass in the frozen taxonomy", () => {
     for (const fc of FailureClass) {
       const ok = HealthItemSchema.safeParse({ ...openItem, failureClass: fc });
       expect(ok.success, `failureClass ${fc} should parse`).toBe(true);
     }
     expect(FailureClass).toContain("sync_lagging");
     expect(FailureClass).toContain("rebuild_divergence");
+  });
+
+  // C-enum (make-it-real): the §16 taxonomy gains dedicated SECURITY / POLICY / EGRESS /
+  // ISOLATION members (additively) so a terminal security/isolation cause is no longer
+  // labeled with a least-wrong interim. spec(§16).
+  it("includes the new security/policy/egress/isolation members — additive, existing unchanged spec(§16)", () => {
+    for (const fc of ["security_violation", "policy_denial", "egress_denied", "isolation_breach"] as const) {
+      expect(FailureClass).toContain(fc);
+      expect(HealthItemSchema.safeParse({ ...openItem, failureClass: fc }).success).toBe(true);
+    }
+    // ADDITIVE — every prior member survives (no rename/remove).
+    for (const fc of [
+      "connector_unreachable",
+      "write_through_failed",
+      "budget_breach",
+      "missed_or_late_schedule",
+      "schema_rejection",
+      "worker_down",
+      "parity_defect",
+      "conflict_review",
+      "sync_lagging",
+      "rebuild_divergence",
+    ] as const) {
+      expect(FailureClass).toContain(fc);
+    }
   });
 
   it("rejects an unknown top-level key (.strict)", () => {

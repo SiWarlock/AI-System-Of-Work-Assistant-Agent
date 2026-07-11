@@ -593,24 +593,25 @@ describe("runSourceIngestion — cause-aware §16 failure class (inv-5)", () => 
     );
   });
 
-  it("each conflated failed_terminal cause maps to its decided least-wrong class, never worker_down — spec(§16)", async () => {
-    // Agent-stage candidate/policy-gate terminal causes → schema_rejection (no valid
-    // candidate produced). injection/egress ride the least-wrong member + an arch_gap.
+  it("each conflated failed_terminal cause maps to its DEDICATED §16 member, never worker_down — spec(§16)", async () => {
+    // C-enum: the security / policy / egress / isolation terminal causes now have dedicated
+    // FailureClass members (retiring the C-fix least-wrong interims).
     const agent = (rejection: SourceAgentFailureCode): Partial<SourceIngestionDeps> => ({
       agent: new FakeSourceAgentJobPort({ result: "rejected", rejection }),
     });
-    expect(await surfacedClass(agent("admission_rejected"))).toBe("schema_rejection");
+    expect(await surfacedClass(agent("admission_rejected"))).toBe("policy_denial");
+    expect(await surfacedClass(agent("injection_detected"))).toBe("security_violation");
+    expect(await surfacedClass(agent("egress_vetoed"))).toBe("egress_denied");
+    // unsupported_type is a genuine schema/type reject — STAYS schema_rejection.
     expect(await surfacedClass(agent("unsupported_type"))).toBe("schema_rejection");
-    expect(await surfacedClass(agent("injection_detected"))).toBe("schema_rejection");
-    expect(await surfacedClass(agent("egress_vetoed"))).toBe("schema_rejection");
-    // Commit-stage write/isolation/secret terminal causes → write_through_failed.
+    // Commit-stage causes: isolation + secret get dedicated members; commit_failed stays write_through.
     const commit = (failWith: KnowledgeCommitFailureCode): Partial<SourceIngestionDeps> => ({
       commit: new FakeCommitPort({ failWith }),
     });
-    expect(await surfacedClass(commit("ownership_violation"))).toBe("write_through_failed");
-    expect(await surfacedClass(commit("secret_found"))).toBe("write_through_failed");
-    // NONE of the conflated terminal causes is worker_down (reserved for supervision/infra) —
-    // the crux the C1 Finding drained, across the agent, commit, AND register terminal sites.
+    expect(await surfacedClass(commit("ownership_violation"))).toBe("isolation_breach");
+    expect(await surfacedClass(commit("secret_found"))).toBe("security_violation");
+    expect(await surfacedClass(commit("commit_failed"))).toBe("write_through_failed");
+    // NONE of the conflated terminal causes is worker_down (reserved for supervision/infra).
     for (const c of ["admission_rejected", "injection_detected", "unsupported_type", "egress_vetoed"] as const) {
       expect(await surfacedClass(agent(c))).not.toBe("worker_down");
     }
@@ -620,11 +621,10 @@ describe("runSourceIngestion — cause-aware §16 failure class (inv-5)", () => 
     expect(
       await surfacedClass({ register: new FakeRegisterSourcePort({ failWith: "malformed_source" }) }),
     ).not.toBe("worker_down");
-    // The understated SECURITY/egress causes keep their specific cause in the surfaced
-    // MESSAGE — the SOLE mitigation while the class is a coarse least-wrong bucket (pending the
-    // tracked FailureClass enum expansion). A refactor dropping the cause must fail HERE.
+    // The specific cause still rides the surfaced MESSAGE (defense-in-depth alongside the
+    // now-dedicated class) — a refactor dropping the cause must fail HERE.
     const injected = await runSourceIngestion(makeInput(), makeDeps(agent("injection_detected")));
-    expect(injected.surfaced?.failureClass).toBe("schema_rejection");
+    expect(injected.surfaced?.failureClass).toBe("security_violation");
     expect(injected.surfaced?.message).toContain("injection_detected");
   });
 

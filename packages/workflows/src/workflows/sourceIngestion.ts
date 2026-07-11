@@ -178,30 +178,30 @@ function failureClassFor(state: SourceState): FailureClass {
 
 /**
  * Map a source-agent failure CODE to the §16 FailureClass its surfaced health item carries
- * (inv-5 — distinct class per CAUSE, not just per resting state). A source-processing job
- * that failed at the candidate/policy gate produced NO valid candidate → `schema_rejection`;
- * provider/budget failures are retryable → `write_through_failed`. The specific cause code
- * additionally rides the surfaced MESSAGE, so it is never lost where the class is a coarser
- * bucket.
- *
- * arch_gap: the frozen `FailureClass` enum (shared-enums.ts) has NO dedicated SECURITY /
- * EGRESS member, so `injection_detected` (a prompt-injection / untrusted-content attack) and
- * `egress_vetoed` (an egress-policy denial) use the least-wrong `schema_rejection` — which
- * UNDERSTATES a security/egress cause to a class-filtering operator. Pending a frozen-contract
- * FailureClass expansion (a `security_violation`/`policy_denial`-style member — the
- * policy_denial/egress_status named-constant precedent); the cause rides the message meanwhile.
+ * (inv-5 — distinct class per CAUSE, not just per resting state). Now that the OBS-2 taxonomy
+ * has dedicated SECURITY / POLICY / EGRESS members (C-enum), each terminal safety cause is
+ * classed HONESTLY (the C-fix least-wrong interims + their `arch_gap` markers are retired):
+ *   • injection_detected (a prompt-injection / untrusted-content attack) → `security_violation`
+ *   • admission_rejected (ING-7 mutating-tool refused at admission)      → `policy_denial`
+ *   • egress_vetoed      (an egress-policy veto, safety rule 5)          → `egress_denied`
+ *   • unsupported_type   (no processing path — a genuine schema/type reject) → `schema_rejection`
+ *   • provider/budget failures are retryable                            → `write_through_failed`
+ * The specific cause code additionally rides the surfaced MESSAGE (defense in depth).
  */
 function agentFailureClass(code: SourceAgentFailureCode): FailureClass {
   switch (code) {
     case "provider_failed":
     case "budget_exceeded":
-      // retryable (failed_retryable) — unchanged. arch_gap: budget_exceeded could map to the
-      // dedicated `budget_breach` member, but that is a non-terminal mapping out of this fix's scope.
+      // retryable (failed_retryable). NOTE: budget_exceeded could map to the dedicated
+      // `budget_breach` member, but that is a non-terminal mapping out of this slice's scope.
       return "write_through_failed";
+    case "injection_detected":
+      return "security_violation";
     case "admission_rejected":
+      return "policy_denial";
+    case "egress_vetoed":
+      return "egress_denied";
     case "unsupported_type":
-    case "injection_detected": // arch_gap: no SECURITY FailureClass member — understated as schema_rejection
-    case "egress_vetoed": // arch_gap: no EGRESS/policy FailureClass member — understated as schema_rejection
     case "schema_rejected":
     default:
       return "schema_rejection";
@@ -210,23 +210,23 @@ function agentFailureClass(code: SourceAgentFailureCode): FailureClass {
 
 /**
  * Map a KnowledgeWriter commit failure CODE to the §16 FailureClass its surfaced health item
- * carries. A KnowledgeWriter refusing or failing a write is a WRITE-THROUGH failure, never
- * `worker_down` (the worker is up; the write was refused/failed): compare-revision conflict,
- * ownership refusal, secret-scan refusal, and a generic commit failure all → `write_through_failed`.
- * A schema reject → `schema_rejection`.
- *
- * arch_gap: `ownership_violation` (a WS-isolation refusal) and `secret_found` (a secret-breach
- * refusal) have no dedicated ISOLATION / SECURITY FailureClass member — least-wrong
- * `write_through_failed` UNDERSTATES them; pending a frozen-contract FailureClass expansion. The
- * cause rides the surfaced message meanwhile (safety rules 4/7).
+ * carries. A KnowledgeWriter refusing/failing a write is never `worker_down` (the worker is up).
+ * With the C-enum taxonomy, the isolation + secret causes are classed HONESTLY (interims +
+ * `arch_gap` markers retired):
+ *   • secret_found        (a secret-scan refusal — a secret breach) → `security_violation`
+ *   • ownership_violation (a WS-4 workspace-isolation refusal)      → `isolation_breach`
+ *   • commit_failed / write_conflict (a generic/compare-revision write failure) → `write_through_failed`
+ *   • schema_rejected                                             → `schema_rejection`
  */
 function commitFailureClass(code: KnowledgeCommitFailureCode): FailureClass {
   switch (code) {
     case "schema_rejected":
       return "schema_rejection";
+    case "secret_found":
+      return "security_violation";
+    case "ownership_violation":
+      return "isolation_breach";
     case "write_conflict":
-    case "ownership_violation": // arch_gap: no ISOLATION FailureClass member — understated as write_through_failed
-    case "secret_found": // arch_gap: no SECURITY FailureClass member — understated as write_through_failed
     case "commit_failed":
     default:
       return "write_through_failed";

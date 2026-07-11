@@ -23,6 +23,7 @@ import {
   acknowledgeHealthItem,
   healthItemDedupeKey,
   HEALTH_ITEM_DEFAULT_SEVERITY,
+  defaultSeverityForFailureClass,
 } from "../src/activities/healthItem";
 import { FakeClock, InMemoryHealthItemStore } from "./support/fakes";
 
@@ -367,5 +368,63 @@ describe("spec(§16) materializeHealthItem — typed failure, never throws", () 
     expect(isErr(res)).toBe(true);
     if (!isErr(res)) return;
     expect(res.error.code).toBe("persist_failed");
+  });
+});
+
+// --- C-enum: per-class default severity (elevate security/isolation) --------
+
+describe("defaultSeverityForFailureClass + the materializer severity default (§16)", () => {
+  it("elevates security/isolation → critical, policy/egress → error; every existing class stays warn — spec(§16)", () => {
+    expect(defaultSeverityForFailureClass("security_violation")).toBe("critical");
+    expect(defaultSeverityForFailureClass("isolation_breach")).toBe("critical");
+    expect(defaultSeverityForFailureClass("policy_denial")).toBe("error");
+    expect(defaultSeverityForFailureClass("egress_denied")).toBe("error");
+    for (const fc of [
+      "connector_unreachable",
+      "write_through_failed",
+      "budget_breach",
+      "missed_or_late_schedule",
+      "schema_rejection",
+      "worker_down",
+      "parity_defect",
+      "conflict_review",
+      "sync_lagging",
+      "rebuild_divergence",
+    ] as const) {
+      expect(defaultSeverityForFailureClass(fc)).toBe(HEALTH_ITEM_DEFAULT_SEVERITY);
+    }
+  });
+
+  it("a security_violation health item surfaces at critical when the producer omits severity — spec(§16)", async () => {
+    const store = new InMemoryHealthItemStore();
+    const res = await materializeHealthItem(
+      { failureClass: "security_violation", subjectRef: "src-1", message: "injection detected", auditRef: auditId("audit-1"), now: T0 },
+      store,
+    );
+    expect(isOk(res)).toBe(true);
+    if (!isOk(res)) return;
+    expect(res.value.severity).toBe("critical");
+  });
+
+  it("a producer-supplied severity WINS over the class default — spec(§16)", async () => {
+    const store = new InMemoryHealthItemStore();
+    const res = await materializeHealthItem(
+      { failureClass: "security_violation", subjectRef: "src-2", severity: "warn", message: "x", auditRef: auditId("audit-1"), now: T0 },
+      store,
+    );
+    expect(isOk(res)).toBe(true);
+    if (!isOk(res)) return;
+    expect(res.value.severity).toBe("warn");
+  });
+
+  it("an existing class with no severity keeps warn (no regression) — spec(§16)", async () => {
+    const store = new InMemoryHealthItemStore();
+    const res = await materializeHealthItem(
+      { failureClass: "connector_unreachable", subjectRef: "conn-1", message: "x", auditRef: auditId("audit-1"), now: T0 },
+      store,
+    );
+    expect(isOk(res)).toBe(true);
+    if (!isOk(res)) return;
+    expect(res.value.severity).toBe(HEALTH_ITEM_DEFAULT_SEVERITY);
   });
 });
