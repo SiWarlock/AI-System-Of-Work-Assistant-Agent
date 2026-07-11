@@ -1,0 +1,49 @@
+# config/osb.pin — typed OsbPin (ARCHITECTURE.md §13, §6, §8; task 13.1 anti-corruption layer)
+# ---------------------------------------------------------------------------
+# PURPOSE
+#   obsidian-second-brain (OSB) is the upstream source-extractor / retrieval
+#   toolkit (upstream repo:
+#   https://github.com/eugeniughelbur/obsidian-second-brain) that SoW inherits
+#   FROM through an ANTI-CORRUPTION LAYER: its vault-agnostic extractor patterns
+#   are re-implemented as EMIT-ONLY SourceIngestionPort adapters
+#   (packages/integrations/src/connectors/adapters/*-source.ts) that produce
+#   CANDIDATE data through registerSource() and NEVER write the canonical vault
+#   (safety rule 1 — one writer; KnowledgeWriter is the provably-sole autonomous
+#   Markdown writer, §6). SoW depends on the internal SourceIngestionPort, never
+#   OSB's command surface. This pin records the upstream release the inheritance
+#   tracks + a content-SHA of any vendored subtree, so a version bump is a
+#   DELIBERATE act, never silent (mirrors config/gbrain.pin; the Hermes-pin
+#   re-validation precedent, LESSON providers#1).
+#
+# ENFORCEMENT (task 13.1 gate a)
+#   packages/evals/src/osb/anti-corruption-guard.ts `scanForWriteSurfaces`
+#   statically scans the *-source.ts extractor family (and a future vendor/osb/**
+#   tree) for FORBIDDEN write-surface tokens (@sow/knowledge sole-writer import,
+#   node:fs write ops, createFsVault, atomic-vault-commit, Tool-Gateway
+#   ExternalWriteEnvelope). The conformance suite asserts 0 violations AND a
+#   count-pinned scannedCount — never vacuously green.
+#
+# FORMAT (typed OsbPin; parseable key = value; '#' comment; blanks ignored)
+#   osb_tag         upstream OSB release tag the inheritance tracks.
+#   osb_repo        upstream repo URL the tag is resolved against.
+#   subtree_sha     content-SHA (40-hex) of the vendored vendor/osb/ subtree, OR
+#                   the PENDING_NO_SUBTREE sentinel when nothing is vendored.
+#                   validateOsbPin rejects any other value — a bump is never silent.
+#   status          human-readable posture.
+#   validation_ref  path to the governing brief / eval report.
+#
+# STATUS (2026-07-11): DORMANT — no vault-agnostic OSB libs are vendored under
+#   vendor/osb/ yet (direction C: the patterns are inherited as emit-only
+#   adapters, NOT a code subtree), so subtree_sha is the honest
+#   PENDING_NO_SUBTREE sentinel. The live governance surface today is the shipped
+#   *-source.ts extractors, which gate (a) scans for 0 write-surface violations.
+#   A future real vendoring MUST record a real 40-hex subtree_sha here. Gates (b)
+#   egress-leakage + (c) retrieval eval are DEFERRED (real I/O). Do NOT hand-edit
+#   subtree_sha to a fabricated value — it is promoted only by a deliberate,
+#   recorded vendoring.
+
+osb_tag        = v0.11.1
+osb_repo       = https://github.com/eugeniughelbur/obsidian-second-brain.git
+subtree_sha    = PENDING_NO_SUBTREE
+status         = dormant_no_subtree
+validation_ref = docs/briefs/017-13.1-osb-anti-corruption-guard.md
