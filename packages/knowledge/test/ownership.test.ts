@@ -7,7 +7,7 @@ import { isOk, isErr, validKnowledgeMutationPlan } from "@sow/contracts";
 import type { KnowledgeMutationPlan } from "@sow/contracts";
 import { checkOwnership, enforceHumanOwnership } from "../src/knowledge-writer/ownership";
 import type { OwnershipCheckContext } from "../src/knowledge-writer/writer";
-import { renderRegion } from "../src/markdown-vault/sections";
+import { renderRegion, renderUserRegion, renderGeneratedRegion } from "../src/markdown-vault/sections";
 
 const PATH = "notes/a.md";
 
@@ -99,5 +99,60 @@ describe("checkOwnership — human-owned content is protected", () => {
     const next = `intro\n<!-- kw:region:r -->\nunclosed body\ntail`;
     const r = checkOwnership(ctx(prior, next, planPatching("r")));
     expect(isErr(r)).toBe(true);
+  });
+});
+
+// spec(§6 / §13 / task 13.7b) — the `@user`/`@generated` sentinel vocabulary adds protection, never
+// removes it. Human-owned = (unmarked complement) ∪ (`@user` regions); `@generated` == a `kw:region`
+// assistant region. The gate logic is UNCHANGED — this coverage flows through `parseSections`.
+describe("checkOwnership — @user / @generated additive protection (task 13.7b)", () => {
+  it("rejects a write that modifies text INSIDE a @user region (additive explicit human protection)", () => {
+    const prior = `intro\n${renderUserRegion("secret notes")}\ntail`;
+    const next = `intro\n${renderUserRegion("SECRET CHANGED")}\ntail`;
+    const r = checkOwnership(ctx(prior, next, planPatching()));
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.code).toBe("ownership_violation");
+  });
+
+  it("rejects DE-MARKING a @user region — stripping the markers while keeping the inner text (ownership cannot be seized by de-marking)", () => {
+    const prior = renderUserRegion("private");
+    const next = "private"; // markers stripped, inner text byte-identical
+    const r = checkOwnership(ctx(prior, next, planPatching()));
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.code).toBe("ownership_violation");
+  });
+
+  it("treats a @generated region as writer-owned — an untargeted @generated change ⇒ ownership_violation (KN-8, == kw:region)", () => {
+    const prior = renderGeneratedRegion("g", "one");
+    const next = renderGeneratedRegion("g", "TWO"); // g is not targeted by the plan
+    const r = checkOwnership(ctx(prior, next, planPatching()));
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.regionId).toBe("g");
+  });
+
+  it("recognizing @generated does NOT reclassify unmarked human text — prose mentioning the plain words stays human-protected (NO weakening)", () => {
+    const prior = "a note that mentions @generated and @user as plain words";
+    const next = "a DIFFERENT note that mentions @generated and @user as plain words";
+    const r = checkOwnership(ctx(prior, next, planPatching()));
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.code).toBe("ownership_violation"); // unmarked prose is still human-owned + protected
+  });
+
+  it("allows appending a new targeted assistant region next to an untouched @user region", () => {
+    const prior = renderUserRegion("keep me");
+    const next = `${renderUserRegion("keep me")}\n\n${renderRegion("fresh", "generated")}`;
+    const r = checkOwnership(ctx(prior, next, planPatching("fresh")));
+    expect(isOk(r)).toBe(true);
+  });
+
+  it("allows a TARGETED rewrite of a @generated region (writer-owned + refreshable, == kw:region)", () => {
+    const prior = renderGeneratedRegion("g", "one");
+    const next = renderGeneratedRegion("g", "two"); // g IS targeted by the plan
+    const r = checkOwnership(ctx(prior, next, planPatching("g")));
+    expect(isOk(r)).toBe(true);
   });
 });

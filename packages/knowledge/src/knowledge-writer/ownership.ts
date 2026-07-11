@@ -14,6 +14,14 @@
 //   3. a new assistant region no patch targets (no silent invented region);
 //   4. human-owned content deleted, modified, or absorbed into a region (KN-7).
 //
+// §13 osb-interop (task 13.7b) — the `@user`/`@generated` sentinel vocabulary is handled here with
+// ZERO gate-logic change (ADDITIVE-ONLY): it flows through the `sections.ts` region model. A `@user`
+// region parses as a HumanSection, so its full marked span enters `humanOwnedText` → `humanSignature`
+// protects it (condition 4) exactly like the unmarked complement — an explicit human span in ADDITION
+// to the default, never less. A `@generated` region parses as an AssistantSection, so it is governed
+// by the SAME KN-8 byte-stability + targeting rules as a `kw:region` (conditions 2/3). No default is
+// weakened; the four rejection conditions below are unchanged.
+//
 // PURE: no fs/clock/network. Reuses the `sections.ts` region model.
 import { ok, err } from "@sow/contracts";
 import type { Result } from "@sow/contracts";

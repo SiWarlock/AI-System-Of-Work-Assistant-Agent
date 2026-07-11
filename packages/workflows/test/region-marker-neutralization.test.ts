@@ -21,6 +21,17 @@ import {
 } from "../src/activities/projections/noteSlug";
 import { composeMeetingRegionBody } from "../src/activities/projections/meetingOutputs";
 import { composeRegionBody } from "../src/activities/projections/projectSyncOutputs";
+// The REAL parser + marker constructors — imported so the parity test pins the neutralizer against
+// the actual `parseSections` vocabulary (not a local mirror that could drift).
+import {
+  parseSections,
+  regionOpenMarker,
+  regionCloseMarker,
+  userOpenMarker,
+  userCloseMarker,
+  generatedOpenMarker,
+  generatedCloseMarker,
+} from "@sow/knowledge";
 
 const backed = <T>(value: T): ExtractionField<T> => ({ value, evidenceRef: "transcript#L1" });
 
@@ -250,5 +261,59 @@ describe("composeProjectStatusNote — H1 title neutralization (outside the regi
   it("a clean title composes exactly as before (regression pin)", () => {
     const note = composeProjectStatusNote("Clean Project", "body");
     expect(note).toBe(`# Clean Project — Status\n\n${PROJ_OPEN}\nbody\n<!-- /kw:region:${PROJECT_STATUS_REGION} -->\n`);
+  });
+});
+
+// spec(§13 / task 13.7b) — the neutralizer defuses the FULL parser vocabulary (kw:region + the
+// osb-interop @generated/@user families). A recognized-but-undefused marker is a forge vector, so
+// the parity property is pinned against the REAL `parseSections`.
+describe("neutralizeRegionMarkers — @user / @generated parity (Lesson 9 extended, task 13.7b)", () => {
+  const families = [
+    { name: "kw:region", open: regionOpenMarker("x"), close: regionCloseMarker("x"), owns: "assistant" },
+    { name: "@generated", open: generatedOpenMarker("g"), close: generatedCloseMarker("g"), owns: "assistant" },
+    { name: "@user", open: userOpenMarker(), close: userCloseMarker(), owns: "human" },
+  ] as const;
+
+  it("PARITY: the neutralizer defuses EVERY marker form the parser recognizes (no forge vector)", () => {
+    for (const fam of families) {
+      const forged = `human text ${fam.open} injected ${fam.close} tail`;
+
+      // non-vacuity: the REAL parser genuinely recognizes this form as a boundary.
+      const before = parseSections(forged);
+      expect(before.ok).toBe(true);
+      if (!before.ok) continue;
+      if (fam.owns === "assistant") {
+        expect(before.value.some((s) => s.kind === "assistant")).toBe(true);
+      } else {
+        expect(before.value.some((s) => s.kind === "human" && s.text.includes(fam.open))).toBe(true);
+      }
+
+      // defused: after neutralize the raw markers are gone (escaped) and no region can be forged.
+      const after = neutralizeRegionMarkers(forged);
+      expect(after.includes(fam.open)).toBe(false);
+      expect(after.includes(fam.close)).toBe(false);
+      const parsedAfter = parseSections(after);
+      expect(parsedAfter.ok).toBe(true);
+      if (!parsedAfter.ok) continue;
+      expect(parsedAfter.value.some((s) => s.kind === "assistant")).toBe(false);
+      // idempotent (fixpoint) + content visibly preserved.
+      expect(neutralizeRegionMarkers(after)).toBe(after);
+      expect(after).toContain("injected");
+    }
+  });
+
+  it("clean prose containing the plain words '@user'/'@generated' is a byte-identical NO-OP (Lesson-12 false-positive discipline)", () => {
+    const prose = "I use @user and @generated as plain words — not HTML comments — in this note.";
+    expect(neutralizeRegionMarkers(prose)).toBe(prose);
+  });
+
+  it("defuses a crafted nested @user marker to a FIXPOINT (no marker survives per the real parser)", () => {
+    const nasty = `x <!-- <!-- @user --> --> y`;
+    const out = neutralizeRegionMarkers(nasty);
+    expect(neutralizeRegionMarkers(out)).toBe(out); // fixpoint
+    const parsed = parseSections(out);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.some((s) => s.kind === "assistant")).toBe(false);
   });
 });

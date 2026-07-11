@@ -8,24 +8,29 @@
 // adversarially-verified implementation rather than each duplicating (and risking drift on) this gate.
 import type { WorkspaceId } from "@sow/contracts";
 
-// A SUPERSET of both region-marker matchers the note is served through: the KnowledgeWriter's
+// A SUPERSET of every region-marker matcher the note is served through: the KnowledgeWriter's
 // `applyRegionPatch` exact `<!-- kw:region:<id> -->` / `<!-- /kw:region:<id> -->` `indexOf` target
-// AND `markdown-vault/sections.ts`'s `MARKER_RE` (the `parseSections` matcher). Case-insensitive,
-// whitespace-tolerant, open OR close, any id — so anything EITHER consumer could read as a boundary
-// is caught. `[^\s>]*` (whitespace-free id) guarantees a nested EXACT marker (which needs spaces)
-// can never hide inside an outer match's id.
+// AND `markdown-vault/sections.ts`'s `MARKER_RE` (the `parseSections` matcher, whose vocabulary is
+// `kw:region` + the §13 osb-interop `@generated:<id>` / `@user` families). Case-insensitive,
+// whitespace-tolerant, open OR close, any id — so anything ANY consumer could read as a boundary is
+// caught. It is BROADER than the parser on purpose (case-insensitive + `[^\s>]*` zero-or-more id vs
+// the parser's `+`), i.e. neutralizer ⊇ parser — the correct safety direction (defusing a form the
+// parser would ignore is harmless; the reverse is a forge vector). A parser↔neutralizer PARITY test
+// pins that every parser-recognized form is defused here.
 //
 // The leading `[\s/]*` (one char class — whitespace OR the close-marker `/`) is DELIBERATE, NOT
 // `\s*\/?\s*`: two unbounded `\s*` straddling an optional backtrack QUADRATICALLY on a long
 // whitespace run after `<!--` that never completes as a marker (a ReDoS soft-DoS on this
 // untrusted-content, ING-7 path). A single class is linear and still covers ` ` (open) and ` /`
-// (close). All remaining quantifiers act on DISJOINT classes (`[^\s>]` vs `\s`), so no ambiguity.
-const REGION_MARKER_RE = /<!--[\s/]*kw:region:[^\s>]*\s*-->/giu;
+// (close). Each alternation branch starts with a REQUIRED literal (`kw:region:`/`@generated:`/
+// `@user`), so the nullable `[\s/]*` can't overlap it; all remaining quantifiers act on DISJOINT
+// classes (`[^\s>]` vs `\s`), so no ambiguity — linear for the full vocabulary.
+const REGION_MARKER_RE = /<!--[\s/]*(?:kw:region:[^\s>]*|@generated:[^\s>]*|@user)\s*-->/giu;
 
 /**
- * Neutralize any `kw:region` boundary-marker string embedded in ASSISTANT CONTENT so it can NEVER
- * forge or break a region boundary. Escapes each marker's leading `<!--` to `<\!--` — the human
- * still reads the text (visible, content-preserving; nothing is deleted) but neither
+ * Neutralize any `kw:region` / `@generated` / `@user` boundary-marker string embedded in CONTENT so
+ * it can NEVER forge or break a region boundary. Escapes each marker's leading `<!--` to `<\!--` —
+ * the human still reads the text (visible, content-preserving; nothing is deleted) but neither
  * `applyRegionPatch`'s exact-spaced `indexOf` NOR `parseSections`/`MARKER_RE` can match it.
  *
  * Runs to a FIXPOINT: escaping `<!--`→`<\!--` only REMOVES `<!--` occurrences (never creates one),

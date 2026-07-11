@@ -8,11 +8,15 @@ import {
   renderRegion,
   regionOpenMarker,
   regionCloseMarker,
+  renderUserRegion,
+  renderGeneratedRegion,
+  userOpenMarker,
   listRegionIds,
   getRegion,
   humanOwnedText,
   upsertRegionBody,
   type AssistantSection,
+  type HumanSection,
 } from "../src/markdown-vault/sections";
 
 const doc = (id: string, body: string, pre = "intro\n", post = "\noutro") =>
@@ -137,5 +141,94 @@ describe("upsertRegionBody — stable IDs across successive rewrites", () => {
   it("refuses to upsert into a malformed document", () => {
     const r = upsertRegionBody(`${regionOpenMarker("x")}\nunclosed`, "x", "b");
     expect(isErr(r)).toBe(true);
+  });
+});
+
+// spec(§13 / task 13.7b) — the osb-interop `@user` / `@generated` sentinel vocabulary, ADDITIVE to
+// the `kw:region` grammar: `@user` → an explicit HUMAN region; `@generated` → an ASSISTANT region.
+describe("parseSections — @user / @generated sentinel markers (additive)", () => {
+  it("parses a @user region as a HUMAN section (the full marked span is human-owned)", () => {
+    const content = `intro\n${renderUserRegion("my private notes")}\noutro`;
+    const r = parseSections(content);
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    const userSec = r.value.find((s): s is HumanSection => s.kind === "human" && s.text.includes("my private notes"));
+    expect(userSec).toBeDefined();
+    // the full marked span (markers + inner) is the human section — protects the boundary too.
+    expect(userSec?.text).toContain("<!-- @user -->");
+    expect(userSec?.text).toContain("my private notes");
+    expect(userSec?.text).toContain("<!-- /@user -->");
+    // a @user region produces NO assistant region.
+    expect(r.value.some((s) => s.kind === "assistant")).toBe(false);
+  });
+
+  it("parses a @generated region as an ASSISTANT section (writer-owned, == kw:region)", () => {
+    const content = `intro\n${renderGeneratedRegion("g1", "generated body")}\noutro`;
+    const r = parseSections(content);
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    const gen = r.value.find((s): s is AssistantSection => s.kind === "assistant");
+    expect(gen).toBeDefined();
+    expect(gen?.regionId).toBe("g1");
+    expect(gen?.body).toBe("generated body");
+  });
+
+  it("allows multiple sequential @user regions (each an independent human span)", () => {
+    const r = parseSections(`${renderUserRegion("a")}\n${renderUserRegion("b")}`);
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    expect(r.value.every((s) => s.kind === "human")).toBe(true);
+  });
+
+  it("rejects a cross-family close — a @user open closed by a kw:region close ⇒ mismatched_close", () => {
+    const r = parseSections(`${userOpenMarker()}\nx\n${regionCloseMarker("g")}`);
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.reason).toBe("mismatched_close");
+  });
+
+  it("rejects an unclosed @user region", () => {
+    const r = parseSections(`intro\n${userOpenMarker()}\nnotes with no close`);
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.reason).toBe("unclosed_region");
+  });
+
+  it("rejects a kw:region nested inside a @user region (no overlap)", () => {
+    const r = parseSections(`${userOpenMarker()}\n${renderRegion("a", "x")}\n<!-- /@user -->`);
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.reason).toBe("nested_region");
+  });
+
+  it("clean prose containing the plain words '@user'/'@generated' is NOT a marker (no false region)", () => {
+    const r = parseSections("I mention @user and @generated as plain words, not HTML comments.");
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    expect(r.value.every((s) => s.kind === "human")).toBe(true);
+    expect(r.value.some((s) => s.kind === "assistant")).toBe(false);
+  });
+
+  it("rejects a same id shared across kw:region and @generated (shared id space, fail-closed) — both orderings", () => {
+    const a = parseSections(`${renderRegion("x", "a")}\n${renderGeneratedRegion("x", "b")}`);
+    expect(isErr(a)).toBe(true);
+    if (isErr(a)) expect(a.error.reason).toBe("duplicate_region_id");
+    const b = parseSections(`${renderGeneratedRegion("x", "b")}\n${renderRegion("x", "a")}`);
+    expect(isErr(b)).toBe(true);
+    if (isErr(b)) expect(b.error.reason).toBe("duplicate_region_id");
+  });
+
+  it("parses a note mixing all three families in order (kw:region, @user between them, @generated)", () => {
+    const content = `top\n${renderRegion("r", "rb")}\n${renderUserRegion("mine")}\n${renderGeneratedRegion("g", "gb")}\nend`;
+    const r = parseSections(content);
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    // the two writer-owned regions are r and g, in order.
+    const assistantIds = r.value.filter((s): s is AssistantSection => s.kind === "assistant").map((s) => s.regionId);
+    expect(assistantIds).toEqual(["r", "g"]);
+    // the @user span is human and round-trips VERBATIM (markers + inner) through humanOwnedText.
+    const userSpan = r.value.find((s): s is HumanSection => s.kind === "human" && s.text.includes("mine"));
+    expect(userSpan?.text).toBe(renderUserRegion("mine"));
+    expect(humanOwnedText(r.value)).toContain(renderUserRegion("mine"));
   });
 });

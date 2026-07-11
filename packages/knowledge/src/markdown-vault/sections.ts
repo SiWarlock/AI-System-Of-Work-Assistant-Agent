@@ -32,10 +32,52 @@ export function renderRegion(id: string, body: string): string {
   return `${regionOpenMarker(id)}\n${body}\n${regionCloseMarker(id)}`;
 }
 
-// Matches an open (`<!-- kw:region:ID -->`) or close (`<!-- /kw:region:ID -->`)
-// marker. Group 1 is "/" for a close (empty for an open); group 2 is the id.
-// Ids exclude whitespace and `>` so the marker terminator can never be absorbed.
-const MARKER_RE = /<!-- (\/?)kw:region:([^\s>]+) -->/gu;
+// ── §13 osb-vault interop sentinel markers (ADDITIVE to `kw:region`) ─────────────
+// `@generated` is an EXPLICIT opt-into-WRITER-ownership marker (osb-vault interop):
+// a `@generated` region is writer-owned / refreshable, semantically == `kw:region`.
+// Only an EXPLICITLY `@generated`-marked span is writer-owned — unmarked text stays
+// human (the unmarked-complement-is-human default is unchanged), so recognizing
+// `@generated` never reclassifies existing human content.
+/** Opening marker for a `@generated` writer-owned region (osb interop; == `kw:region`). */
+export function generatedOpenMarker(id: string): string {
+  return `<!-- @generated:${id} -->`;
+}
+/** Closing marker for a `@generated` writer-owned region. */
+export function generatedCloseMarker(id: string): string {
+  return `<!-- /@generated:${id} -->`;
+}
+/** Render a `@generated` writer-owned region (parses == a `kw:region` AssistantSection). */
+export function renderGeneratedRegion(id: string, body: string): string {
+  return `${generatedOpenMarker(id)}\n${body}\n${generatedCloseMarker(id)}`;
+}
+
+/** Opening marker for an EXPLICIT `@user` human-owned region (osb interop). */
+export function userOpenMarker(): string {
+  return `<!-- @user -->`;
+}
+/** Closing marker for a `@user` human-owned region. */
+export function userCloseMarker(): string {
+  return `<!-- /@user -->`;
+}
+/**
+ * Render an EXPLICIT `@user` human-owned region. It parses to a HumanSection whose text is the
+ * FULL marked span (markers + body), so the ownership `humanSignature` protects BOTH its content
+ * AND its explicit boundary — a write that edits the body OR strips the markers to seize the span
+ * diverges the signature and is rejected. ADDITIVE: an explicit human span in addition to the
+ * (unchanged) unmarked-complement-is-human default; human-owned = unmarked ∪ `@user`, never less.
+ */
+export function renderUserRegion(body: string): string {
+  return `${userOpenMarker()}\n${body}\n${userCloseMarker()}`;
+}
+
+// Matches an open or close region marker of ANY recognized family:
+//   assistant (writer-owned) : `<!-- kw:region:ID -->` / `<!-- @generated:ID -->`
+//   human     (user-owned)   : `<!-- @user -->`
+// Group 1 is "/" for a close (empty for an open). For an assistant marker, group 2 is the family
+// prefix (`kw:region`|`@generated`) and group 3 is the id (ids exclude whitespace + `>` so the
+// terminator can never be absorbed). For a `@user` marker, group 4 is `@user` (no id). This is a
+// pure ADDITIVE widening: a `kw:region` marker matches exactly as before (group 3 = its id).
+const MARKER_RE = /<!-- (\/?)(?:(kw:region|@generated):([^\s>]+)|(@user)) -->/gu;
 
 export interface HumanSection {
   readonly kind: "human";
@@ -89,11 +131,17 @@ export function parseSections(
   const sections: Section[] = [];
   const seen = new Set<string>();
   let cursor = 0;
-  let open: { id: string; markerStart: number; innerStart: number } | null = null;
+  let open: { family: "assistant" | "user"; id: string; markerStart: number; innerStart: number } | null = null;
 
   for (const m of content.matchAll(MARKER_RE)) {
     const isClose = m[1] === "/";
-    const id = m[2] as string;
+    // family: `@user` (group 4) is a HUMAN region carrying no id; `kw:region`/`@generated`
+    // (group 3 = id) are ASSISTANT (writer-owned) regions. Additive — a `kw:region` still
+    // classifies exactly as before.
+    const isUser = m[4] !== undefined;
+    const family: "assistant" | "user" = isUser ? "user" : "assistant";
+    // `@user` has no id; a fixed sentinel keys its open/close matching. It never enters `seen`.
+    const id = isUser ? "@user" : (m[3] as string);
     const mStart = m.index as number;
     const mEnd = mStart + m[0].length;
 
@@ -101,7 +149,9 @@ export function parseSections(
       if (open !== null) {
         return err(parseError("nested_region", id, mStart));
       }
-      if (seen.has(id)) {
+      // Duplicate-id is an ASSISTANT concern (real, unique ids). `kw:region` + `@generated`
+      // share ONE id space, so a same-id collision across the two fails closed here.
+      if (family === "assistant" && seen.has(id)) {
         return err(parseError("duplicate_region_id", id, mStart));
       }
       if (mStart > cursor) {
@@ -112,25 +162,39 @@ export function parseSections(
           end: mStart,
         });
       }
-      open = { id, markerStart: mStart, innerStart: mEnd };
+      open = { family, id, markerStart: mStart, innerStart: mEnd };
     } else {
       if (open === null) {
         return err(parseError("unexpected_close", id, mStart));
       }
-      if (open.id !== id) {
+      // The close must match the open's FAMILY and id — a `@user` open closed by a
+      // `kw:region`/`@generated` close (or vice-versa) is a mismatched_close.
+      if (open.family !== family || open.id !== id) {
         return err(parseError("mismatched_close", id, mStart));
       }
-      const inner = content.slice(open.innerStart, mStart);
-      const body = inner.replace(/^\n/u, "").replace(/\n$/u, "");
-      sections.push({
-        kind: "assistant",
-        regionId: id,
-        body,
-        raw: content.slice(open.markerStart, mEnd),
-        start: open.markerStart,
-        end: mEnd,
-      });
-      seen.add(id);
+      if (family === "user") {
+        // A `@user` region is HUMAN-owned: the FULL marked span (markers + inner) becomes the
+        // human section, so `humanSignature` protects both its content AND its explicit boundary
+        // (editing the body OR stripping the markers to seize the span diverges the signature).
+        sections.push({
+          kind: "human",
+          text: content.slice(open.markerStart, mEnd),
+          start: open.markerStart,
+          end: mEnd,
+        });
+      } else {
+        const inner = content.slice(open.innerStart, mStart);
+        const body = inner.replace(/^\n/u, "").replace(/\n$/u, "");
+        sections.push({
+          kind: "assistant",
+          regionId: id,
+          body,
+          raw: content.slice(open.markerStart, mEnd),
+          start: open.markerStart,
+          end: mEnd,
+        });
+        seen.add(id);
+      }
       open = null;
       cursor = mEnd;
     }
