@@ -41,6 +41,17 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { Client as TemporalClient } from "@temporalio/client";
+import { auditId } from "@sow/contracts";
+import type { AuditId } from "@sow/contracts";
+import { SOW_CONTROL_PLANE_TASK_QUEUE } from "@sow/workflows/runtime/taskQueue";
+// make-it-real C3a: the degraded-safe dispatch entry + its production Temporal-client adapter.
+import {
+  dispatchSourceIngestion,
+  createTemporalClientStartRun,
+  type DispatchSourceIngestionDeps,
+} from "../../src/temporal/dispatchSourceIngestion";
+
 import { SOW_TEMPORAL } from "../support/temporalGate";
 import {
   assembleBackends,
@@ -61,6 +72,7 @@ const NOW = "2026-07-02T00:00:00.000Z";
 const LOCAL_ENDPOINT = "http://127.0.0.1:11434";
 const MEETING_CAP = "meeting.close";
 const TASK_QUEUE = "sow-control-plane";
+const DISPATCH_AUDIT: AuditId = auditId("source-dispatch:live");
 const EMPTY_VAULT_REVISION = computeRevisionId(new Map());
 
 /** The source-ingestion activity delegate names the sandbox workflow proxies. */
@@ -231,6 +243,8 @@ describe("buildProofSpineActivities — exposes the sourceIngestion delegates", 
 interface SharedRig {
   readonly execute: <R>(workflowType: string, wfId: string, arg: unknown) => Promise<R>;
   readonly backends: ProofSpineBackends;
+  /** The ephemeral env's Temporal Client — drives the C3a dispatch tests via the real adapter. */
+  readonly client: TemporalClient;
 }
 
 let sharedRig: SharedRig | undefined;
@@ -262,6 +276,7 @@ beforeAll(async () => {
 
   sharedRig = {
     backends,
+    client: env.client,
     execute: <R>(workflowType: string, wfId: string, arg: unknown): Promise<R> =>
       env.client.workflow.execute(workflowType, {
         workflowId: wfId,
@@ -424,6 +439,64 @@ describe.skipIf(!SOW_TEMPORAL)(
       } finally {
         await rm(captureBase, { recursive: true, force: true });
       }
+    });
+
+    it("(e) DISPATCH — dispatchSourceIngestion STARTS a run that executes to the terminal state — spec(§9)", async () => {
+      // Drives the PRODUCTION adapter (createTemporalClientStartRun) over the env's real
+      // Temporal Client — the same code boot binds.
+      const deps: DispatchSourceIngestionDeps = {
+        startRun: createTemporalClientStartRun(rig().client),
+        surfaceHealth: () => Promise.resolve(),
+        taskQueue: SOW_CONTROL_PLANE_TASK_QUEUE,
+        auditRef: DISPATCH_AUDIT,
+      };
+      const input: SourceIngestionInput = {
+        run: {
+          workflowId: workflowId("wf-src-dispatch-e"),
+          trigger: "connector_event",
+          idempotencyKey: "run:src:dispatch:e",
+          workspaceId: String(SRC_WS),
+        },
+        context: validSourceCtx(),
+      };
+      const res = await dispatchSourceIngestion(input, deps);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value.dispatched).toBe(true);
+      // The Temporal workflowId IS the run's deterministic idempotencyKey.
+      expect(res.value.workflowId).toBe("run:src:dispatch:e");
+      const outcome = await res.value.handle?.result<SourceIngestionOutcome>();
+      expect(outcome?.state).toBe("applied");
+    });
+
+    it("(f) DEDUPE — two dispatches with the same source key start ONE run — spec(§9)", async () => {
+      const deps: DispatchSourceIngestionDeps = {
+        startRun: createTemporalClientStartRun(rig().client),
+        surfaceHealth: () => Promise.resolve(),
+        taskQueue: SOW_CONTROL_PLANE_TASK_QUEUE,
+        auditRef: DISPATCH_AUDIT,
+      };
+      const mkInput = (): SourceIngestionInput => ({
+        run: {
+          workflowId: workflowId("wf-src-dispatch-f"),
+          trigger: "connector_event",
+          idempotencyKey: "run:src:dispatch:dedupe",
+          workspaceId: String(SRC_WS),
+        },
+        context: validSourceCtx(),
+      });
+      const first = await dispatchSourceIngestion(mkInput(), deps);
+      expect(first.ok).toBe(true);
+      if (!first.ok) return;
+      expect(first.value.dispatched).toBe(true);
+      // Let the first run close, then re-dispatch the SAME key → Temporal workflowId-reuse
+      // REJECT_DUPLICATE → the second start dedupes (no second run), NOT an error.
+      await first.value.handle?.result<SourceIngestionOutcome>();
+      const second = await dispatchSourceIngestion(mkInput(), deps);
+      expect(second.ok).toBe(true);
+      if (!second.ok) return;
+      expect(second.value.dispatched).toBe(false);
+      expect(second.value.deduped).toBe(true);
     });
   },
 );
