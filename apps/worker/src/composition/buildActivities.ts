@@ -30,10 +30,11 @@ import type {
   WorkflowRunRef,
   ProposedAction,
   ExternalWriteEnvelope,
+  KnowledgeMutationPlan,
   Approval,
   AuditId,
 } from "@sow/contracts";
-import { auditId as makeAuditId, sourceId as makeSourceId } from "@sow/contracts";
+import { auditId as makeAuditId, sourceId as makeSourceId, planId as makePlanId } from "@sow/contracts";
 
 // KnowledgeWriter — the SOLE Markdown writer; real ownership+secret defaults kept.
 import { applyPlan } from "@sow/knowledge";
@@ -46,6 +47,11 @@ import type {
 // The §8 Tool Gateway external-write entry + its deps.
 import { dispatchExternalWrite } from "@sow/integrations";
 import type { ExternalWriteDeps, ExternalWriteResult } from "@sow/integrations";
+
+// The REAL §8 source-register candidate gate (ajv structural + Zod .strict() + the
+// Flow-4 dedupe probe). This is the ONE source-ingestion leaf that runs FOR REAL in
+// the make-it-real C1 slice — every other source leaf below is a deterministic fake.
+import { registerSource } from "@sow/integrations";
 
 // The 7.5 failure sink every flow routes through (inv-5).
 import {
@@ -72,6 +78,10 @@ import {
   createRescopeSourceActivity,
   createReenterIngestionActivity,
   meetingOutputsProjection,
+  // source-ingestion (make-it-real C1): the REAL registerSource gate activity + the
+  // real threshold-gated route activity (over a deterministic classifier).
+  createRegisterSourceActivity,
+  createRouteSourceActivity,
 } from "@sow/workflows";
 import type {
   CorrelatePort,
@@ -107,6 +117,22 @@ import type {
   SourceIngestionRunner,
   NoteExistsReader,
   NoteExistsError,
+  // source-ingestion (make-it-real C1) — the driver's leaf ports + shared derive types.
+  RegisterSourcePort,
+  RouteSourcePort,
+  RouteSignals,
+  RouteError,
+  RunSourceAgentJobPort,
+  SourceAgentFailure,
+  IndexGbrainPort,
+  IndexError,
+  ValidatedExtraction,
+  MeetingBuiltOutputs,
+  BuildOutputsFailure,
+  KnowledgeCommitSuccess,
+  KnowledgeCommitFailure,
+  ProposeResult,
+  ProposeError,
 } from "@sow/workflows";
 import type { BrokerOutcome } from "@sow/providers";
 
@@ -126,6 +152,26 @@ import { makeRequireApproval } from "./backends";
  * commit metadata, and the resolved workspace posture the approval predicate reads.
  * Supplied by the Spine phase (or a test) alongside the backends bundle.
  */
+/**
+ * The additive source-ingestion binding (make-it-real C1). OPTIONAL: when absent the
+ * source-ingestion delegates are still registered but fail closed (route parks
+ * low-confidence, the agent rejects) — so the existing proof-spine params/boot are
+ * unchanged. When present it binds the deterministic leaves the C1 live spine drives:
+ * a HIGH-confidence workspace bind (WS-2), the candidate the (faked) source agent
+ * emits, the SourceRef the derived plan cites, and the stable plan-identity seed.
+ * Only `registerSource()` runs for real (guardrail-3); every leaf here is deterministic.
+ */
+export interface SourceIngestionParams {
+  /** The workspace a HIGH-confidence route binds (WS-2). */
+  readonly boundWorkspaceId: WorkspaceId;
+  /** The deterministic candidate extraction the (faked) source agent emits. */
+  readonly extraction: AgentExtraction;
+  /** The SourceRef the derived plan cites (REQ-F-006: ≥1 sourceRef). */
+  readonly sourceRef: SourceRef;
+  /** The stable plan-identity seed (→ deterministic planId; inv-5 replay). */
+  readonly planIdentity: Record<string, string>;
+}
+
 export interface ProofSpineParams {
   /** The resolved workspace posture the fail-closed approval unwrap reads. */
   readonly resolved: ResolvedWorkspacePolicy;
@@ -152,6 +198,12 @@ export interface ProofSpineParams {
   readonly sourceRef: SourceRef;
   /** The stable plan-identity seed (→ deterministic planId; inv-5 replay). */
   readonly planIdentity: Record<string, string>;
+  /**
+   * The additive source-ingestion binding (make-it-real C1). OPTIONAL — absent leaves
+   * the existing proof-spine params/boot unchanged; present binds the C1 live spine's
+   * deterministic leaves (only `registerSource()` runs for real, guardrail-3).
+   */
+  readonly sourceIngestion?: SourceIngestionParams;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +257,33 @@ export interface ProofSpineActivities {
   triageReenter(
     ...args: Parameters<ReenterIngestionPort["reenter"]>
   ): Promise<Awaited<ReturnType<ReenterIngestionPort["reenter"]>>>;
+
+  // ── source-ingestion (make-it-real C1) ──
+  // Only `sourceRegister` runs the REAL registerSource gate; the rest are deterministic
+  // leaves (guardrail-3). `sourceValidate` is intentionally ABSENT — the driver's
+  // validate port is PURE+SYNC and runs IN-SANDBOX (never a proxied activity), exactly
+  // like meeting-closeout.
+  sourceRegister(
+    ...args: Parameters<RegisterSourcePort["register"]>
+  ): Promise<Awaited<ReturnType<RegisterSourcePort["register"]>>>;
+  sourceRoute(
+    ...args: Parameters<RouteSourcePort["route"]>
+  ): Promise<Awaited<ReturnType<RouteSourcePort["route"]>>>;
+  sourceRunAgentJob(
+    ...args: Parameters<RunSourceAgentJobPort["run"]>
+  ): Promise<Awaited<ReturnType<RunSourceAgentJobPort["run"]>>>;
+  sourceBuildOutputs(
+    ...args: Parameters<BuildOutputsPort["build"]>
+  ): Promise<Awaited<ReturnType<BuildOutputsPort["build"]>>>;
+  sourceCommit(
+    ...args: Parameters<CommitKnowledgePort["commit"]>
+  ): Promise<Awaited<ReturnType<CommitKnowledgePort["commit"]>>>;
+  sourcePropose(
+    ...args: Parameters<ProposeActionsPort["propose"]>
+  ): Promise<Awaited<ReturnType<ProposeActionsPort["propose"]>>>;
+  sourceIndex(
+    ...args: Parameters<IndexGbrainPort["index"]>
+  ): Promise<Awaited<ReturnType<IndexGbrainPort["index"]>>>;
 
   // ── infra ports the pure drivers need ──
   /** Route a cross-subsystem failure through health+outbox (inv-5; never silent). */
@@ -494,6 +573,138 @@ export function buildProofSpineActivities(
     runner: ingestionRunner,
   });
 
+  // ── source-ingestion (make-it-real C1) ──────────────────────────────────────
+  // ONLY `sourceRegister` runs the REAL @sow/integrations registerSource candidate
+  // gate; every other leaf here is a DETERMINISTIC fake (guardrail-3). No real vault
+  // write, no model call, no external write, no disk-content read in C1 (C2/C3).
+  const sourceBinding = params.sourceIngestion;
+
+  // (a) register — the REAL §8 gate (ajv structural + Zod .strict() + Flow-4 dedupe).
+  // seenContentHash is a deterministic FRESH probe (no persisted dedupe store in C1);
+  // replay idempotency is proven at the commit layer (inv-5), not here.
+  const sourceRegister: RegisterSourcePort = createRegisterSourceActivity({
+    registerSource,
+    deps: { seenContentHash: (): Promise<boolean> => Promise.resolve(false) },
+  });
+
+  // (b) route — the REAL threshold-gated routeSource activity over a DETERMINISTIC
+  // classifier: a present binding resolves a HIGH-confidence workspace bind (WS-2);
+  // absent → a sub-threshold Ingestion-Inbox park (fail-closed, never auto-routes).
+  const sourceRoute: RouteSourcePort = createRouteSourceActivity({
+    classify: (): Promise<Result<RouteSignals, RouteError>> =>
+      Promise.resolve(
+        sourceBinding !== undefined
+          ? ok({ confidence: 1, workspaceId: sourceBinding.boundWorkspaceId })
+          : ok({ confidence: 0, reason: "no source-ingestion binding (C1)" }),
+      ),
+  });
+
+  // (c) runAgentJob — a DETERMINISTIC accepted candidate (the real broker/model path is
+  // C2/C3). Absent binding → a fail-closed unsupported_type rejection.
+  const sourceAgent: RunSourceAgentJobPort = {
+    run: (): Promise<Result<AgentExtraction, SourceAgentFailure>> =>
+      Promise.resolve(
+        sourceBinding !== undefined
+          ? ok(sourceBinding.extraction)
+          : err({ code: "unsupported_type", message: "no source-ingestion binding (C1)" }),
+      ),
+  };
+
+  // (d) buildOutputs — DETERMINISTICALLY derive a KnowledgeMutationPlan FROM the
+  // validated extraction + the routing-BOUND workspace (WS-2/WS-4 stamp — never a
+  // caller value). `actions: []` so the happy path rests at `applied` without the
+  // external-write stage (C1 scope). A stable planId (per workspace + planIdentity)
+  // makes the commit fake's replay hold (inv-5).
+  const sourceBuildOutputs: BuildOutputsPort = {
+    build: (
+      validated: ValidatedExtraction,
+      ws: WorkspaceId,
+    ): Promise<Result<MeetingBuiltOutputs, BuildOutputsFailure>> => {
+      if (sourceBinding === undefined) {
+        return Promise.resolve(
+          err({ code: "build_failed", message: "no source-ingestion binding (C1)" }),
+        );
+      }
+      const seed = Object.values(sourceBinding.planIdentity).join(":");
+      const plan: KnowledgeMutationPlan = {
+        planId: makePlanId(`plan-source-${String(ws)}-${seed}`),
+        // WS-2/WS-4: stamped from the PASSED (routing-bound) workspace, never a caller field.
+        workspaceId: ws,
+        sourceRefs: [sourceBinding.sourceRef],
+        creates: [
+          {
+            path: `sources/${String(ws)}/ingested.md`,
+            title: "ingested source",
+            body: "source ingestion (C1)",
+            frontmatter: {},
+          },
+        ],
+        patches: [],
+        linkMutations: [],
+        frontmatterUpdates: [],
+        externalActionProposals: [],
+        confidence: 1,
+        requiresApproval: false,
+        provenanceOrigin: "ingestion",
+      };
+      return Promise.resolve(ok({ plan, actions: [] }));
+    },
+  };
+
+  // (e) commit — a DETERMINISTIC fake IDEMPOTENT by the derived planId (a shared,
+  // per-worker Map). NO fs write (C1 scope / owner decision — flag #4): a re-commit of
+  // the same plan REPLAYS the prior revision, so a replay yields ONE durable revision.
+  // The real KnowledgeWriter commit swaps in at C2/C3.
+  const sourceRevisionByPlan = new Map<string, string>();
+  const sourceCommit: CommitKnowledgePort = {
+    commit: (
+      plan: KnowledgeMutationPlan,
+    ): Promise<Result<KnowledgeCommitSuccess, KnowledgeCommitFailure>> => {
+      const key = String(plan.planId);
+      const existing = sourceRevisionByPlan.get(key);
+      if (existing !== undefined) {
+        return Promise.resolve(ok({ revisionId: existing, replayed: true }));
+      }
+      const revisionId = `rev-source-${sourceRevisionByPlan.size + 1}`;
+      sourceRevisionByPlan.set(key, revisionId);
+      return Promise.resolve(ok({ revisionId, replayed: false }));
+    },
+  };
+
+  // (f) propose — DETERMINISTIC reuse-by-key (NOT exercised on the C1 happy path, which
+  // yields actions:[]; wired for completeness so the delegate is registered). A replay
+  // with the same idempotencyKey reuses the prior envelope (zero duplicate write).
+  const sourceReceiptByKey = new Map<string, ExternalWriteEnvelope>();
+  const sourcePropose: ProposeActionsPort = {
+    propose: (
+      action: ProposedAction,
+      env: ExternalWriteEnvelope,
+    ): Promise<Result<ProposeResult, ProposeError>> => {
+      const key = env.idempotencyKey || action.idempotencyKey;
+      const existing = sourceReceiptByKey.get(key);
+      if (existing !== undefined) {
+        return Promise.resolve(ok({ status: "reused", envelope: existing }));
+      }
+      const stamped: ExternalWriteEnvelope = {
+        ...env,
+        writeReceipt: {
+          externalObjectId: `ext-source-${sourceReceiptByKey.size + 1}`,
+          recordedAt: now(),
+        },
+      };
+      sourceReceiptByKey.set(key, stamped);
+      return Promise.resolve(ok({ status: "created", envelope: stamped }));
+    },
+  };
+
+  // (g) index — a DETERMINISTIC GBrain index that runs AFTER the commit and never
+  // rolls it back. Inherently idempotent: it performs no side effect, so re-indexing
+  // the same revision is a no-op (the real idempotent GBrain index lands at C2/C3).
+  const sourceIndexPort: IndexGbrainPort = {
+    index: (_revisionId: string): Promise<Result<void, IndexError>> =>
+      Promise.resolve(ok(undefined)),
+  };
+
   // ── the plain-async-function object Temporal registers ───────────────────────
   return {
     // meeting-closeout
@@ -517,6 +728,16 @@ export function buildProofSpineActivities(
     triageRescopeSource: (disposition) => rescopeSource.rescope(disposition),
     triageReenter: (reScopedSource, idempotencyKey) =>
       reenterIngestion.reenter(reScopedSource, idempotencyKey),
+
+    // source-ingestion (make-it-real C1) — only sourceRegister runs for real.
+    sourceRegister: (ctx) => sourceRegister.register(ctx),
+    sourceRoute: (ctx) => sourceRoute.route(ctx),
+    sourceRunAgentJob: (ctx) => sourceAgent.run(ctx),
+    sourceBuildOutputs: (validated: ValidatedExtraction, workspaceId: WorkspaceId) =>
+      sourceBuildOutputs.build(validated, workspaceId),
+    sourceCommit: (plan) => sourceCommit.commit(plan),
+    sourcePropose: (action, env) => sourcePropose.propose(action, env),
+    sourceIndex: (revisionId) => sourceIndexPort.index(revisionId),
 
     // infra — the failure sink every driver routes through (inv-5).
     surfaceFailure: (failure) => surfaceWorkflowFailure(failure, surfaceDeps),

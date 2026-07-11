@@ -46,6 +46,10 @@ import { ok } from "@sow/contracts/primitives/result";
 import { runMeetingCloseout } from "@sow/workflows/workflows/meetingCloseout";
 import { runApprovalFlow } from "@sow/workflows/workflows/approvalFlow";
 import { runIngestionTriage } from "@sow/workflows/workflows/ingestionTriage";
+// make-it-real C1: the previously-uncalled §9 source-ingestion driver, deep-imported
+// (the barrel re-exports the activity set — node:crypto etc.) so the sandbox graph
+// stays clean, exactly like the three drivers above.
+import { runSourceIngestion } from "@sow/workflows/workflows/sourceIngestion";
 // The validate gate is PURE + SYNC (no-inference + schema gate) — it runs IN-SANDBOX,
 // not as a proxied activity, so the driver's synchronous ValidateExtractionPort
 // contract is honored (an activity proxy is always async).
@@ -88,6 +92,18 @@ import type {
   ReenterIngestionPort,
   TriageHealthSink,
   TriageWorkflowFailure,
+  // the source-ingestion (make-it-real C1) input/deps/outcome + its leaf ports
+  // (BuildOutputsPort / CommitKnowledgePort / ProposeActionsPort are shared with the
+  // meeting flow above — the source-ingestion seam re-exports the SAME derive surface).
+  SourceIngestionInput,
+  SourceIngestionDeps,
+  SourceIngestionOutcome,
+  RegisterSourcePort,
+  RouteSourcePort,
+  RunSourceAgentJobPort,
+  IndexGbrainPort,
+  SourceHealthSink,
+  SourceWorkflowFailure,
 } from "@sow/workflows";
 
 // TYPE-ONLY import of the composition-root activities shape. Types are erased, so
@@ -352,4 +368,57 @@ export async function ingestionTriageWorkflow(
   };
 
   return runIngestionTriage(input, deps);
+}
+
+// ---------------------------------------------------------------------------
+// source-ingestion workflow (make-it-real C1)
+// ---------------------------------------------------------------------------
+
+/**
+ * The source-ingestion workflow: a THIN @temporalio wrapper that adapts the proof-
+ * spine source-ingestion activity proxies onto the {@link SourceIngestionDeps} port
+ * set and runs the pure {@link runSourceIngestion} driver inside the sandbox — the
+ * SAME two-layer shape as the three drivers above. Every port method delegates to
+ * exactly one activity (each a typed-Result delegate — nothing throws across the
+ * boundary, §16). `validate` reuses the module-level PURE in-sandbox port. The health
+ * sink maps the driver's {@link SourceWorkflowFailure} onto the 7.5 `surfaceFailure`
+ * activity; even if surfacing rejects, the driver still returns the resting failure
+ * state (fail-closed). Guardrail-3: only `sourceRegister` runs the REAL registerSource
+ * gate — every other leaf is a deterministic composition-root fake in C1.
+ */
+export async function sourceIngestionWorkflow(
+  input: SourceIngestionInput,
+): Promise<SourceIngestionOutcome> {
+  const register: RegisterSourcePort = { register: (ctx) => activities.sourceRegister(ctx) };
+  const route: RouteSourcePort = { route: (ctx) => activities.sourceRoute(ctx) };
+  const agent: RunSourceAgentJobPort = { run: (ctx) => activities.sourceRunAgentJob(ctx) };
+  // `validate` is the module-level PURE in-sandbox port (see above) — the source seam
+  // re-exports the SAME derive-from-validated surface as meeting-closeout.
+  const buildOutputs: BuildOutputsPort = {
+    build: (validated, workspaceId) => activities.sourceBuildOutputs(validated, workspaceId),
+  };
+  const commit: CommitKnowledgePort = { commit: (plan) => activities.sourceCommit(plan) };
+  const propose: ProposeActionsPort = {
+    propose: (action, env) => activities.sourcePropose(action, env),
+  };
+  const index: IndexGbrainPort = { index: (revisionId) => activities.sourceIndex(revisionId) };
+  const health: SourceHealthSink = {
+    surface: (failure: SourceWorkflowFailure) => activities.surfaceFailure(failure),
+  };
+
+  const deps: SourceIngestionDeps = {
+    register,
+    route,
+    agent,
+    validate,
+    buildOutputs,
+    commit,
+    propose,
+    index,
+    health,
+    runs: sandboxRunRepo(),
+    clock: workflowClock,
+  };
+
+  return runSourceIngestion(input, deps);
 }
