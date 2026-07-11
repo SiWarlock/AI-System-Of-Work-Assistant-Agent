@@ -1,10 +1,12 @@
-// Install-doctor REAL prerequisite-probe collectors (task 11.5-a, §13).
+// Install-doctor REAL local probe collectors (tasks 11.5-a/b, §13).
 //
-// The first Phase-11 real-I/O slice: `collectPrerequisiteProbes` is a PURE data-mapper over
-// two INJECTED ports (a local-command exec + a loopback bind) that fills FIVE ProbeSnapshot
-// fields (nodePnpm / temporalStartable / gbrainStartable / gitRemotes / loopbackPorts) the
-// already-built pure `runDoctor` engine consumes. Same shape as C2/C3a: pure core + injected
-// port + a thin real adapter (probe-adapters.ts).
+// Phase-11 real-I/O: PURE data-mappers over INJECTED ports (a local-command exec + a loopback
+// bind) that fill ProbeSnapshot fields the already-built pure `runDoctor` engine consumes.
+//   • `collectPrerequisiteProbes` (11.5-a) — 5 fields: nodePnpm / temporalStartable /
+//     gbrainStartable / gitRemotes / loopbackPorts.
+//   • `collectSecurityProbes` (11.5-b) — 2 fields: filevault / keychain (macOS security).
+// Same shape as C2/C3a: pure core + injected port + a thin real adapter (probe-adapters.ts).
+// The 3 one-writer POSTURE fields (vaultAcl / gbrainMount / strayGbrainProcess) are 11.5-c.
 //
 // Invariants:
 //   • NEVER THROWS (§16) — every sub-probe runs its injected check under a TOTAL guard; a
@@ -26,6 +28,8 @@ import type {
   GbrainStartableProbe,
   GitRemotesProbe,
   LoopbackPortsProbe,
+  FilevaultProbe,
+  KeychainProbe,
 } from "./probe-snapshot";
 
 /** A FIXED local command to run — a bin + an argv ARRAY (never a shell string / caller-interpolated). */
@@ -147,8 +151,9 @@ async function probeLoopbackPorts(
 /**
  * Collect the FIVE prerequisite probes into a partial {@link ProbeSnapshot} the pure
  * `runDoctor` engine consumes. Pure over the injected ports; NEVER throws; fail-closes each
- * probe to its assume-worst shape. The other five snapshot fields (macOS-security + one-writer
- * POSTURE) are the deferred 11.5-b/c slices — absent here ⇒ `runDoctor` fail-closes them.
+ * probe to its assume-worst shape. The macOS-security fields are filled by `collectSecurityProbes`
+ * (11.5-b, below); the three one-writer POSTURE fields are the deferred 11.5-c slice — absent
+ * fields ⇒ `runDoctor` fail-closes them.
  */
 export async function collectPrerequisiteProbes(
   input: PrerequisiteProbeInput,
@@ -169,11 +174,66 @@ export async function collectPrerequisiteProbes(
   return { nodePnpm, temporalStartable, gbrainStartable, gitRemotes, loopbackPorts };
 }
 
+/** The macOS-security collector's injected input — only the exec port (reused from 11.5-a). */
+export interface SecurityProbeInput {
+  readonly run: RunCommand;
+}
+
 /**
- * Compose the real collector into the pure engine: `collectPrerequisiteProbes → runDoctor`.
- * The doctor CLI / repair COMMAND that calls this is a later 11.5 slice (a documented waiver,
- * as with `runDoctor`'s own build); the real adapters are exercised via the gated test.
+ * FileVault (full-disk encryption) status via `fdesetup status`. Fail-CLOSED: enabled ONLY on
+ * the LINE-ANCHORED "FileVault is On" signal (an "On, but Conversion in progress…" still counts
+ * — it IS on; a stray substring elsewhere in the output does NOT). A macOS TCC "Operation not
+ * permitted" / ENOENT / nonzero / timeout / malformed output ⇒ NOT enabled (assume-worst →
+ * finding), never a fabricated ok. `fdesetup status` emits English regardless of locale; were a
+ * string ever localized, the probe would fail CLOSED (a missed advisory, the safe direction).
+ */
+async function probeFilevault(run: RunCommand): Promise<FilevaultProbe> {
+  const r = await safeRun(run, { bin: "fdesetup", args: ["status"] });
+  // Line-anchored (^…/m): the positive signal must START a line (as `fdesetup` prints it), so a
+  // contrived multi-line output can't smuggle "FileVault is On" mid-line to fabricate enabled.
+  return { enabled: r.ok && /^FileVault is On\b/im.test(r.stdout) };
+}
+
+/**
+ * Keychain SUBSYSTEM REACHABILITY via `security list-keychains` — a READ-ONLY least-privilege
+ * query: it lists the search-list keychain PATHS only, reading NO secret, unlocking nothing,
+ * writing nothing (safety rule 7 — secrets resolve only through the SecretsPort). This is the
+ * INSTALL prerequisite ("the `security` tool works + a keychain exists"); it deliberately does
+ * NOT probe UNLOCK state — a locked-but-present keychain is the §16 RUNTIME degraded concern
+ * (keychain-locked), handled elsewhere, NOT an install-doctor prerequisite. So `reachable` here
+ * means the subsystem responds, and normally holds on a healthy macOS; it fail-closes only when
+ * the tool is absent / TCC-denied / the search list is empty. Reachable ONLY on a clean
+ * non-empty result; any fault ⇒ NOT reachable (assume-worst → finding).
+ */
+async function probeKeychain(run: RunCommand): Promise<KeychainProbe> {
+  const r = await safeRun(run, { bin: "security", args: ["list-keychains"] });
+  return { reachable: r.ok && r.stdout.trim().length > 0 };
+}
+
+/**
+ * Collect the two macOS-security probes (FileVault + Keychain) into a partial ProbeSnapshot.
+ * Reuses the injected {@link RunCommand} (11.5-a's real `execFile` adapter); NEVER throws;
+ * fail-closes each probe to its assume-worst shape on any fault. LOCAL-ONLY (local macOS
+ * tooling, no network).
+ */
+export async function collectSecurityProbes(input: SecurityProbeInput): Promise<Partial<ProbeSnapshot>> {
+  const [filevault, keychain]: [FilevaultProbe, KeychainProbe] = await Promise.all([
+    probeFilevault(input.run),
+    probeKeychain(input.run),
+  ]);
+  return { filevault, keychain };
+}
+
+/**
+ * Compose the real collectors into the pure engine: the prerequisite (11.5-a) + macOS-security
+ * (11.5-b) probes are collected in parallel, merged, and fed to `runDoctor`. The doctor CLI /
+ * repair COMMAND that calls this is a later 11.5 slice (a documented waiver, as with
+ * `runDoctor`'s own build); the real adapters are exercised via the gated tests.
  */
 export async function runPrerequisiteDoctor(input: PrerequisiteProbeInput): Promise<DoctorReport> {
-  return runDoctor(await collectPrerequisiteProbes(input));
+  const [prerequisite, security] = await Promise.all([
+    collectPrerequisiteProbes(input),
+    collectSecurityProbes({ run: input.run }),
+  ]);
+  return runDoctor({ ...prerequisite, ...security });
 }

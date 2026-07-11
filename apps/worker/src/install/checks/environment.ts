@@ -19,7 +19,7 @@ export const DOCTOR_REPAIRS: Readonly<Record<DoctorFailureVariant, string>> = {
   filevault_off:
     "Enable FileVault in System Settings > Privacy & Security (at-rest encryption for the operational store, §4).",
   keychain_unreachable:
-    "Unlock the login Keychain and grant the app Keychain access — secrets resolve only via the SecretsPort.",
+    "Keychain subsystem unavailable — verify the macOS Keychain is present and the `security` tooling responds (a LOCKED keychain is a runtime concern the SecretsPort handles, not an install defect).",
   temporal_not_startable:
     "Start the local Temporal dev server; until then the app runs Temporal-degraded (automation paused).",
   gbrain_not_startable: "Install/start gbrain; until then retrieval degrades to direct-Markdown only.",

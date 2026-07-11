@@ -10,6 +10,7 @@
 import { describe, it, expect } from "vitest";
 import {
   collectPrerequisiteProbes,
+  collectSecurityProbes,
   runPrerequisiteDoctor,
   type CommandRequest,
   type CommandOutcome,
@@ -160,9 +161,117 @@ describe("collectPrerequisiteProbes — real prerequisite probes (fast unit, no 
     expect(status("gbrain_startable")).toBe("ok");
     expect(status("loopback_ports")).toBe("ok");
     expect(status("git_remotes")).toBe("ok");
-    // The DEFERRED probes (11.5-b/c) are not collected yet ⇒ still fail-closed (not ok).
+    // filevault is now collected (11.5-b) but notFound under this all-present PREREQ map ⇒
+    // finding; vault_acl (11.5-c) is still uncollected ⇒ fail-closed. Both remain not-ok.
     expect(status("filevault")).not.toBe("ok");
     expect(status("vault_acl")).not.toBe("ok");
+  });
+});
+
+// ── macOS-security probes (11.5-b) — FileVault + Keychain ───────────────────
+const permDenied: CommandOutcome = { ok: false, code: "nonzero_exit", message: "nonzero_exit" };
+
+describe("collectSecurityProbes — macOS-security probes (fast unit, no subprocess)", () => {
+  it("filevault_enabled_vs_disabled — `fdesetup status` On ⇒ enabled; Off/unknown ⇒ not enabled — spec(§13)", async () => {
+    const on = await collectSecurityProbes({
+      run: fakeRun((r) => (r.bin === "fdesetup" ? found("FileVault is On.\n") : found("x"))).run,
+    });
+    expect(on.filevault).toEqual({ enabled: true });
+
+    const off = await collectSecurityProbes({
+      run: fakeRun((r) => (r.bin === "fdesetup" ? found("FileVault is Off.\n") : found("x"))).run,
+    });
+    expect(off.filevault).toEqual({ enabled: false });
+
+    // Unknown / malformed output ⇒ not enabled (never a fabricated ok).
+    const unknown = await collectSecurityProbes({
+      run: fakeRun((r) => (r.bin === "fdesetup" ? found("some unexpected output\n") : found("x"))).run,
+    });
+    expect(unknown.filevault).toEqual({ enabled: false });
+
+    // "On, but Conversion in progress" still counts as ENABLED (it IS on) — pins the \b-before-comma.
+    const converting = await collectSecurityProbes({
+      run: fakeRun((r) =>
+        r.bin === "fdesetup" ? found("FileVault is On, but Conversion in progress.\n") : found("x"),
+      ).run,
+    });
+    expect(converting.filevault).toEqual({ enabled: true });
+
+    // A hostile MID-LINE "FileVault is On" substring must NOT fabricate enabled (line-anchored).
+    const midline = await collectSecurityProbes({
+      run: fakeRun((r) =>
+        r.bin === "fdesetup" ? found("note: FileVault is On (spoofed); actually FileVault is Off.\n") : found("x"),
+      ).run,
+    });
+    expect(midline.filevault).toEqual({ enabled: false });
+  });
+
+  it("keychain_available_vs_locked — a reachable read-only `security` query ⇒ reachable; a fault ⇒ assume-worst — spec(§13)", async () => {
+    const reachable = await collectSecurityProbes({
+      run: fakeRun((r) =>
+        r.bin === "security" ? found("/Users/x/Library/Keychains/login.keychain-db\n") : found("x"),
+      ).run,
+    });
+    expect(reachable.keychain).toEqual({ reachable: true });
+
+    // A permission-denied / unreachable security query ⇒ not reachable (→ finding).
+    const denied = await collectSecurityProbes({
+      run: fakeRun((r) => (r.bin === "security" ? permDenied : found("x"))).run,
+    });
+    expect(denied.keychain).toEqual({ reachable: false });
+
+    // A clean exit but EMPTY/whitespace output ⇒ not reachable (pins the non-empty guard).
+    const empty = await collectSecurityProbes({
+      run: fakeRun((r) => (r.bin === "security" ? found("   \n") : found("x"))).run,
+    });
+    expect(empty.keychain).toEqual({ reachable: false });
+  });
+
+  it("security_probe_fail_closed_on_tcc_denied — a TCC permission-denied / timeout / thrown result ⇒ assume-worst, NEVER a throw — spec(§16)", async () => {
+    // macOS TCC "Operation not permitted" surfaces as a nonzero exit — fail-closed, not a crash.
+    const tcc = await collectSecurityProbes({ run: fakeRun(() => permDenied).run });
+    expect(tcc.filevault).toEqual({ enabled: false });
+    expect(tcc.keychain).toEqual({ reachable: false });
+
+    // A thrown exec port ⇒ the whole collect RESOLVES (never rejects) to assume-worst.
+    const throwingRun: RunCommand = () => Promise.reject(new Error("boom"));
+    const thrown = await collectSecurityProbes({ run: throwingRun });
+    expect(thrown.filevault).toEqual({ enabled: false });
+    expect(thrown.keychain).toEqual({ reachable: false });
+
+    // A timeout ⇒ assume-worst.
+    const timedOut = await collectSecurityProbes({
+      run: fakeRun(() => ({ ok: false, code: "timeout", message: "timeout" })).run,
+    });
+    expect(timedOut.filevault).toEqual({ enabled: false });
+    expect(timedOut.keychain).toEqual({ reachable: false });
+  });
+
+  it("argv_is_fixed_no_shell — the security probes use a fixed argv ARRAY per probe (no shell / no interpolation) — spec(§13)", async () => {
+    const { run, calls } = fakeRun(() => found("FileVault is On.\n"));
+    await collectSecurityProbes({ run });
+    const fdesetup = calls.find((c) => c.bin === "fdesetup");
+    const security = calls.find((c) => c.bin === "security");
+    expect(fdesetup?.args).toEqual(["status"]);
+    expect(security?.args).toEqual(["list-keychains"]);
+    // No shell metacharacters / interpolation anywhere in the argv.
+    for (const c of calls) {
+      for (const a of c.args) expect(a).not.toMatch(/[;&|`$(){}<>]/);
+    }
+  });
+
+  it("runPrerequisiteDoctor_includes_security_probes — a real fdesetup/security result feeds the engine (filevault/keychain ok) — spec(§13)", async () => {
+    const withSecurity = (req: CommandRequest): CommandOutcome => {
+      if (req.bin === "fdesetup") return found("FileVault is On.\n");
+      if (req.bin === "security") return found("/Users/x/Library/Keychains/login.keychain-db\n");
+      return allPresent(req);
+    };
+    const report = await runPrerequisiteDoctor(
+      inputWith({ run: fakeRun(withSecurity).run, bindLoopback: okBind, loopbackPorts: [3000], localBackupAccepted: true }),
+    );
+    const status = (id: string): string | undefined => report.checks.find((c) => c.check === id)?.status;
+    expect(status("filevault")).toBe("ok");
+    expect(status("keychain")).toBe("ok");
   });
 });
 
@@ -201,6 +310,13 @@ describe.skipIf(!REAL)("probe adapters — REAL execFile + loopback bind (gated)
     const run = createLocalCommandRunner();
     const outcome = await run({ bin: "__sow_no_such_binary_xyz__", args: ["--version"] });
     expect(outcome).toEqual({ ok: false, code: "not_found", message: "not_found" });
+  });
+
+  it("real_security_adapter_on_this_machine — the real fdesetup/security adapters yield well-formed filevault/keychain probes (TCC-denied ⇒ fail-closed) — spec(§13)", async () => {
+    const snap = await collectSecurityProbes({ run: createLocalCommandRunner() });
+    // Well-formed booleans regardless of this machine's actual state / a TCC denial.
+    expect(typeof snap.filevault?.enabled).toBe("boolean");
+    expect(typeof snap.keychain?.reachable).toBe("boolean");
   });
 
   it("real_adapter_collects_local_snapshot — the real execFile/bind adapters yield a well-formed partial snapshot — spec(§13)", async () => {
