@@ -1,0 +1,66 @@
+# /tdd brief — ingestion_inbox_producer (task 9.7-B — write-time producer core: upsert the ingestion_inbox read-model row on park / remove on disposition; dormant, Temporal wiring deferred)
+
+## Feature
+Build the **write-time producer CORE** for the task-9.7 ingestion inbox: a deterministic worker-side projection port that **upserts** the `ingestion_inbox` read-model row (the row `query.ingestionInbox` reads, shipped empty-until-producer in slice 9.7-A) when a `SourceEnvelope` **parks** in `queued_for_review`, and **removes** its entry on triage **disposition**. This makes the ingestion inbox populate. Ships the pure, deterministic core **dormant** — mirroring the recentChanges producer, whose pure projector (`projectRecentChanges`) is built with NO caller because the always-on invocation runs only inside Temporal ("R5"), which stays DEFERRED. The producer stores **already-dropped** `UiSafeIngestionItem`-shaped items (raw refs never persisted at rest), keyed per `(workspaceId, key)` (WS-8), idempotent on re-park.
+
+## Use case + traceability
+- **Task ID:** 9.7 ingestion-inbox producer core (cycle 2 of the Rank-2 task-9.7 multi-cycle arc; 9.7-A shipped the read path). Phase-9 surface backend.
+- **Architecture sections it implements:** `ARCHITECTURE.md §10` (Local App API — read-model serving; this writes the row the §10 query reads) + `§11` (Electron Desktop UI — the UI-safe projection contract, reused as the write-time drop-rules seam) + safety rule **4 (WS-8 workspace isolation)** + the candidate-data/leakage discipline (rule 2 — no raw refs persisted at rest). (The park/disposition EVENTS originate in Temporal Workflows — the deferred always-on wiring; this slice implements only the deterministic §10/§11 producer core.) Implementer confirms the §10/§11 anchor at Step 0.
+- **The proven MIRROR (research-mapped, commit 1dc53e6 + prior):**
+  - **Read path (9.7-A) the producer feeds:** the stored row is a `ReadModelRecord` (`packages/db/src/repositories/interfaces.ts:107-113`) keyed `(READ_MODEL_KEYS.ingestion="ingestion_inbox", workspaceId)` (`apps/worker/src/api/adapters/readModel.ts:69,481`); its `data` blob MUST be `{ items: UiSafeIngestionItem[] }` — narrowed by `readIngestionItems` (`readModel.ts:245-266`, needs string `sourceId`/`type`/`sensitivity`/`summary`), re-validated fail-closed + capped 100 by `sanitizeIngestionInbox` (`queries.ts:353-370`, `INGESTION_INBOX_CAP=100` `queries.ts:342`). Item = `UiSafeIngestionItem` (`packages/contracts/src/api/ui-safe.ts:479-493`; summary single-line ≤1024 via `uiSafeSummaryLine`).
+  - **Upsert pattern to mirror (closest structural match):** `createProjectDashboardUpdatePort(deps).update(payload)` (`apps/worker/src/api/projections/projectDashboardUpdate.ts:59-95`) — a factory returning a port, injected `readModels` + `now`; does `get(key, ws)` → fault-vs-`not_found` guard → narrow existing (`readProjects`) → **filter-by-id + append** (upsert-preserving-siblings) → `put({ readModelKey, workspaceId, data:{…}, rebuiltAt })`. Also `upsertRecentChangeRow` (`apps/worker/src/composition/provisionDev.ts:224-243`) dedups via `filter(c=>c.changeId!==change.changeId)`.
+  - **Drop-rules seam to REUSE:** `toUiSafeIngestionItem` (`apps/worker/src/api/projections/uiSafe.ts`, from 9.7-A) — drops `origin`/`contentHash`/`routingHints`/`workspaceId`, single-line summary from the safe `type` token. The producer applies it at WRITE so raw refs are never persisted.
+- **read_models WRITE API:** `ReadModelRepository { get(key, ws|null); put(record) // upsert by (key, ws); clear(key) }` (`packages/db/src/repositories/interfaces.ts:415-420`) — a **generic KV store, open JSON `data` blob**; no schema change, no migration, no frozen-contract touch.
+- **Park / disposition event surfaces (deferred attach points):** low-confidence PARK → `queued_for_review` routes through the Temporal ingestion workflow (`packages/workflows/src/workflows/sourceIngestion.ts`); disposition-record leaves the inbox via `createRecordDispositionActivity` (`packages/workflows/src/activities/disposition.ts:104-141`, gate `DispositionStore.isParked`) + `RecordDispositionPort.record` (`packages/workflows/src/ports/ingestionTriage.ts:126-129`). Source state `queued_for_review` at `packages/domain/src/state/source.ts:16-28`. Both run ONLY inside Temporal ⇒ always-on wiring is Temporal-gated + DEFERRED (R5-style).
+
+## Scope boundary (IN vs deferred)
+- **IN (this slice):** a NEW deterministic worker projection port (factory + injected `readModels` + `now`) with two operations — **on-park upsert** (build a `UiSafeIngestionItem` via `toUiSafeIngestionItem`, dedup-by-`sourceId`, append to the workspace's `ingestion_inbox` row, create-if-absent) and **on-disposition remove** (filter the `sourceId` out of the row) — WS-8-keyed, fault-vs-`not_found`-guarded, idempotent, storing only already-dropped items. Reuses `toUiSafeIngestionItem` + `readIngestionItems`. Tests over the in-memory `fakeReadModels`.
+- **DEFERRED (named follow-ups — record, don't build):** (1) the **always-on Temporal wiring** — invoking on-park at the ingestion workflow's low-confidence park route + on-disposition at `createRecordDispositionActivity` (R5-style; runs only inside Temporal). (2) the **desktop ingestion-inbox surface mount** (`hydrateIngestionInbox` + triage UI — cycle 3). (3) optional `state`/`queuedAt` on `UiSafeIngestionItem` (non-seam additive, needs an ordering key).
+
+## Acceptance criteria (what "done" means)
+- [ ] NEW `createIngestionInboxProjectionPort(deps: { readModels: ReadModelRepository; now: () => string }) → { recordPark(input); recordDisposition(workspaceId, sourceId) }` in `apps/worker/src/api/projections/ingestionInboxProjection.ts` (mirror `projectDashboardUpdate.ts`). Every method returns a typed `Result` (§16 never-throws) on a `readModels` fault.
+- [ ] **On-park upsert (dedup, drop-rules-at-write):** `recordPark({ workspaceId, source: SourceEnvelope })` builds the item via `toUiSafeIngestionItem` (⇒ the stored blob carries NONE of `origin`/`contentHash`/`routingHints`/`workspaceId`), `get`s the row, **filters out any existing entry with the same `sourceId`**, appends, and `put`s `{ items }`. Absent row ⇒ create with `[item]`. Re-park of the same `sourceId` ⇒ idempotent (one entry, updated).
+- [ ] **On-disposition remove:** `recordDisposition(workspaceId, sourceId)` `get`s the row, filters the `sourceId` out, `put`s. Absent row / missing sourceId ⇒ `ok` no-op (no error).
+- [ ] **WS-8 fail-closed:** both ops key the row per `(READ_MODEL_KEYS.ingestion, workspaceId)`; a park for workspace A never writes/reads workspace B's row. (No cross-workspace path.)
+- [ ] **Fault guard:** a `readModels.get` fault that is NOT `not_found` ⇒ typed `err` (never silently treated as empty); `not_found` ⇒ treated as an empty row (mirror `upsertRecentChangeRow`).
+- [ ] **Round-trips through the read path:** after `recordPark`, `readIngestionItems` + `sanitizeIngestionInbox` over the same row yield the item as a valid `UiSafeIngestionItem` (the write shape satisfies the 9.7-A read contract — no drift).
+- [ ] Worker-scoped `turbo typecheck test` green (this is additive worker code; reuses `@sow/contracts`/`@sow/db` unchanged — run repo-wide typecheck as belt-and-suspenders, but no cross-package contract change).
+
+## RED test outline (write cases first)
+1. `park_creates_row_when_absent` — `recordPark` with no existing row ⇒ row `{items:[item]}` with the item's `sourceId`; only the 4 allowlisted fields present.
+2. `park_drops_raw_refs_at_write` — parking a `SourceEnvelope` with a URL `origin` + `contentHash` + `routingHints` ⇒ the STORED blob carries NONE of them (drop-rules applied at write, not just read).
+3. `park_is_idempotent_by_sourceId` — parking the same `sourceId` twice ⇒ ONE entry (dedup filter), not two.
+4. `disposition_removes_entry` — `recordPark` then `recordDisposition(ws, sourceId)` ⇒ the row no longer lists that `sourceId`; other items untouched.
+5. `disposition_absent_is_noop_ok` — `recordDisposition` on an absent row / unknown sourceId ⇒ `ok`, no throw, no error.
+6. `ws8_isolation` — park into workspace A, then read workspace B's row ⇒ B has none of A's entries (per-`(key,workspaceId)` keying).
+7. `readmodels_fault_is_typed_err` — a `get`/`put` fault (non-`not_found`) ⇒ typed `err` Result, never a throw (§16).
+8. `write_satisfies_read_contract` — after `recordPark`, `readIngestionItems`+`sanitizeIngestionInbox` over the produced row ⇒ a valid `UiSafeIngestionItem[]` (no drift between producer output and the 9.7-A read contract).
+
+## Cross-doc invariant impact
+- **Frozen Appendix-A seam changes: NONE.** `SourceEnvelope` (frozen) is projected FROM; `UiSafeIngestionItem` already landed in 9.7-A; `read_models` is a generic KV store (no `@sow/db` schema/migration change). No generated schema/snapshot, no ajv-registry, no `packages/contracts/CLAUDE.md` cross-doc-table row.
+- **Purely additive worker producer code + tests** (like recentChanges R4). Worker-scoped gate; not a frozen-contract round.
+- **Architecture-doc note candidate:** the §10/§11 ingestion-inbox prose may note the producer core landed (dormant; Temporal always-on wiring + desktop mount deferred). Orchestrator-write.
+
+## Things to flag at Step 2.5 (design questions — default votes)
+1. **Drop-rules at WRITE vs read (safety, load-bearing).** Default vote: apply `toUiSafeIngestionItem` at WRITE so the stored `read_models` blob at rest holds only already-dropped `UiSafeIngestionItem` items — raw `origin`/`contentHash`/`routingHints` are NEVER persisted (defense-in-depth beyond the 9.7-A read-time drop). Confirm.
+2. **Unbounded growth vs write-cap.** Default vote: do NOT cap the stored list at write (dispositions drain it; the read path already caps at 100 for the UI) — a write-cap would silently DROP parked items (a dead-end, violating the 9.7 "no silent drop" intent). Note the consideration; confirm no write-cap.
+3. **Port shape.** Default vote: mirror `projectDashboardUpdate` (a factory returning a port with `recordPark`/`recordDisposition`, injected `readModels`+`now`) rather than two free functions — matches the codebase's read-model-writer convention. Confirm.
+4. **`recordPark` input.** Default vote: take the full `SourceEnvelope` (+ explicit `workspaceId`) and derive the item internally via `toUiSafeIngestionItem` (single drop-rules seam), NOT a pre-built item (so a caller can't smuggle raw fields into the stored blob). Confirm.
+
+## Wiring / entry point (Step 7.5)
+- **Entry point:** the producer core is built **dormant** — its caller (the Temporal ingestion-triage park route + `createRecordDispositionActivity`) is the DEFERRED always-on wiring (R5-style; runs only inside Temporal). Reachability is **judgment-waived** for this slice, exactly like `projectRecentChanges` (built, no caller). Name the future attach points at Step 7.5: `packages/workflows/src/workflows/sourceIngestion.ts` (park route) + `packages/workflows/src/activities/disposition.ts:104-141` (disposition). The read side (`query.ingestionInbox`) is already live and will surface the produced rows the moment the wiring attaches.
+- **Blocks:** the deferred Temporal wiring + the desktop mount depend on this port. Does not block anything else.
+- **Depends on:** 9.7-A (`toUiSafeIngestionItem`, `readIngestionItems`, `READ_MODEL_KEYS.ingestion`, the read contract) + the `ReadModelRepository` (present).
+
+## Estimated commit count
+**1.** The producer port + tests (all worker-side; reuses 9.7-A + `@sow/db` unchanged). Leakage-at-rest + WS-8 surface ⇒ Step-8 review MANDATORY (focused on drop-rules-at-write + WS-8 keying).
+
+## Lessons-logged candidates (implementer flags Step 9)
+- Possible: "an inbox read-model PRODUCER applies the UI-safe drop-rules at WRITE (stores only already-dropped items — no raw refs at rest), upserts per `(workspaceId, key)` with dedup-by-id + fault-vs-not_found guard (mirror `projectDashboardUpdate`), and ships as a dormant deterministic core with the Temporal always-on wiring deferred (mirror `projectRecentChanges`/R5)." Implementer's call (may fold into the 9.7-A UI-safe lesson).
+
+## How to invoke (implementer)
+1. `/tdd` against this brief. Step 0 — read the `projectDashboardUpdate` mirror + `upsertRecentChangeRow` + the 9.7-A read contract (`readIngestionItems`/`sanitizeIngestionInbox`/`toUiSafeIngestionItem`) + the `fakeReadModels` fake (`apps/worker/test/api/projections/projectDashboardUpdate.test.ts:11-27`) to reuse.
+2. Step 2.5 — ping Q1–Q4 (defaults above; Q1 drop-rules-at-write + Q2 no-write-cap are load-bearing) BEFORE writing cases.
+3. RED first (drop-rules-at-write + WS-8 isolation + idempotent-park + write-satisfies-read-contract are load-bearing).
+4. **Step 8 — MANDATORY adversarial review** (general-purpose Agent, security + code-quality): the stored blob at rest carries NO raw `origin`/`contentHash`/`routingHints`; WS-8 per-workspace keying (A's park never touches B's row); disposition/absent-row is a safe no-op (no silent error swallow beyond the intended); §16 never-throws on a `readModels` fault; no drift between producer output and the 9.7-A read contract.
+5. Step 9 — categorized flags (esp. the deferred Temporal always-on wiring + desktop mount) + ship-ask.

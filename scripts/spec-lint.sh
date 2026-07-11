@@ -81,7 +81,7 @@ cmd_brief() {
 
   # 2. Task ID(s) exist in the tracker with unticked work (bundles cite several)
   local task_ids tid
-  task_ids=$(grep -E '^\- \*\*Task ID:?\*\*' "$brief" | grep -oE '[A-Za-z]+[0-9]*\.[0-9]+' | sort -u || true)
+  task_ids=$(grep -E '^\- \*\*Task ID:?\*\*' "$brief" | grep -oE '[A-Za-z]*[0-9]+\.[0-9]+' | sort -u || true)
   [ -n "$task_ids" ] || bad "no Task ID line found (## Use case + traceability)"
   for tid in $task_ids; do
     if ! grep -E "^###+ *${tid}([^0-9]|$)" "$TRACKER" >/dev/null 2>&1; then
