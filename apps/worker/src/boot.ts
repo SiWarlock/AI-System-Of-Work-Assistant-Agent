@@ -135,6 +135,20 @@ import {
   PROOF_SPINE_TASK_QUEUE,
 } from "./temporal/registerWorker";
 import type { ProofSpineParams } from "./composition/buildActivities";
+// §9 make-it-real C3b — the local-vault file-watcher capture trigger + its degraded-safe
+// dispatch. The Temporal Client's first real caller (deferred to here from C3a).
+import { createFileReadTransport } from "@sow/integrations/connectors/adapters/file-read-transport";
+import {
+  dispatchSourceIngestion,
+  createTemporalClientStartRun,
+  type StartWorkflowRun,
+  type DispatchHealthSink,
+} from "./temporal/dispatchSourceIngestion";
+import {
+  startVaultWatcher,
+  type RunningVaultWatcher,
+  type VaultDispatch,
+} from "./watch/vaultWatcher";
 
 // ── config ────────────────────────────────────────────────────────────────────
 
@@ -311,6 +325,21 @@ export interface BootConfig extends BackendsConfig {
    * (so the Copilot is reachable without a vault note). See `resolveCopilotWorkspaces`.
    */
   readonly copilotWorkspaces?: readonly CopilotWorkspace[];
+  /**
+   * §9 make-it-real C3b — the local-vault file-watcher capture trigger (OFF by default).
+   * When supplied AND `vaultRoot` is configured, `bootWorker` starts a real `node:fs`
+   * watcher on the vault root: a `.md` add/change → C2 ROOT-confined capture → C3a dispatch
+   * → a live `sourceIngestion` run (`trigger:"connector_event"`). The binding is the WS-2
+   * policy scope (workspace + sensitivity) — NEVER content-inferred (REQ-F-017). Degraded-
+   * safe: if a loopback Temporal Client cannot be built the watcher still runs and each
+   * capture fails CLOSED (a surfaced worker_down health item), never a crash. The dev-server
+   * RUN is the owner's separate ops step — boot only lands the wiring.
+   */
+  readonly vaultWatch?: {
+    readonly workspaceId: string;
+    readonly sensitivity: string;
+    readonly debounceMs?: number;
+  };
 }
 
 /** The assembled live control plane the app shell drives. */
@@ -791,10 +820,104 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     });
   };
 
+  // §9 make-it-real C3b — the local-vault file-watcher capture trigger (OFF by default).
+  // The Temporal Client's FIRST real caller: build a loopback dispatch Client (degraded-
+  // safe — a connect fault ⇒ startRun undefined ⇒ every capture fails CLOSED with a
+  // surfaced worker_down health item, never a crash), then start a real fs.watch over the
+  // vault root. Stopped on close(). This is the SAME `startVaultWatcher` seam the gated
+  // e2e drives with a TestWorkflowEnvironment client — no dormant code.
+  let vaultWatcher: RunningVaultWatcher | undefined;
+  let vaultDispatchConnection: { close(): Promise<void> } | undefined;
+  if (config.vaultWatch !== undefined && config.vaultRoot !== undefined) {
+    const watchRoot = config.vaultRoot;
+    let startRun: StartWorkflowRun | undefined;
+    try {
+      const { Client, Connection } = await import("@temporalio/client");
+      // LAZY connect — a synchronous handle that NEVER blocks boot on a down Temporal (the
+      // dev-server RUN is the owner's separate ops step). A dispatch attempt lazily connects;
+      // if Temporal is down it fails CLOSED per-capture (C3a typed err + surfaced health item)
+      // and auto-recovers when the server returns — no boot-time connect stall (§16).
+      const connection = Connection.lazy({ address: config.temporalAddress ?? "127.0.0.1:7233" });
+      vaultDispatchConnection = connection;
+      startRun = createTemporalClientStartRun(new Client({ connection }));
+    } catch {
+      // A client-build fault degrades to startRun=undefined ⇒ each capture fails CLOSED via
+      // the degraded dispatch below. Never a crash (§16).
+      backends.logger.warn("vault.watch.temporal_client_unavailable", { fields: { code: "client_build_failed" } });
+    }
+    const vaultDispatchHealth: DispatchHealthSink = async ({
+      failureClass,
+      subjectRef,
+      message,
+      auditRef,
+    }) => {
+      try {
+        await backends.healthItems.put({
+          id: `${failureClass}:${subjectRef}`,
+          failureClass,
+          severity: "error",
+          message,
+          auditRef,
+          openedAt: backends.now(),
+          state: "open",
+        });
+      } catch {
+        // A health-sink fault must never crash boot (§16).
+      }
+    };
+    const vaultDispatch: VaultDispatch = (input) =>
+      dispatchSourceIngestion(input, {
+        ...(startRun !== undefined ? { startRun } : {}),
+        surfaceHealth: vaultDispatchHealth,
+        taskQueue: PROOF_SPINE_TASK_QUEUE,
+        auditRef: BOOT_AUDIT_REF,
+      });
+    vaultWatcher = startVaultWatcher(
+      {
+        vaultRoot: watchRoot,
+        workspaceId: config.vaultWatch.workspaceId,
+        sensitivity: config.vaultWatch.sensitivity,
+      },
+      {
+        transport: createFileReadTransport(watchRoot),
+        dispatch: vaultDispatch,
+        // A synchronous fs.watch start-throw (missing root / fd exhaustion) degrades to a
+        // no-op watcher (never crashes boot, §16); surface it as a redaction-safe code.
+        onWatchError: () =>
+          backends.logger.warn("vault.watch.start_failed", { fields: { code: "watch_unavailable" } }),
+        // Observability for a capture that neither dispatched nor was cleanly ignored (an
+        // unreadable file / internal fault) — the outcome kind + the RELATIVE vault path only
+        // (never the redacted message, which could carry an errno; never content/secret).
+        onCapture: (outcome, relPath) => {
+          if (outcome.kind !== "dispatched" && outcome.kind !== "ignored") {
+            backends.logger.warn("vault.watch.capture_not_dispatched", {
+              fields: { kind: outcome.kind, path: relPath },
+            });
+          }
+        },
+        ...(config.vaultWatch.debounceMs !== undefined
+          ? { debounceMs: config.vaultWatch.debounceMs }
+          : {}),
+      },
+    );
+  } else if (config.vaultWatch !== undefined) {
+    // `vaultWatch` configured but no `vaultRoot` — a misconfiguration; surface it, don't
+    // silently no-op.
+    backends.logger.warn("vault.watch.no_vault_root", { fields: { code: "missing_vault_root" } });
+  }
+
   let closed = false;
   const close = async (): Promise<void> => {
     if (closed) return;
     closed = true;
+    vaultWatcher?.stop();
+    if (vaultDispatchConnection !== undefined) {
+      try {
+        await vaultDispatchConnection.close();
+      } catch {
+        // Best-effort — a dispatch-Connection close fault must not block shutdown.
+      }
+    }
     await api.close();
     backends.close();
   };

@@ -60,8 +60,15 @@ function errnoCode(e: unknown): string | undefined {
   return undefined;
 }
 
-/** True IFF `realTarget` is the real root itself, or sits strictly under it. */
-function isContainedUnder(realRoot: string, realTarget: string): boolean {
+/**
+ * True IFF `realTarget` is the real root itself, or sits strictly under it. Exported
+ * as the ONE authoritative root-confinement predicate (the arbitrary-file-read
+ * boundary): a REAL-path prefix check with a `+ sep` guard against the `/vault` vs
+ * `/vault-evil` sibling-prefix bypass. The C3b vault-watcher's pre-filter shares this
+ * exact predicate (no duplicated safety check) while the transport below stays the
+ * authoritative read-confinement guard. Callers pass REALPATH-resolved absolute paths.
+ */
+export function isContainedUnder(realRoot: string, realTarget: string): boolean {
   if (realTarget === realRoot) return true;
   const rootWithSep = realRoot.endsWith(sep) ? realRoot : realRoot + sep;
   return realTarget.startsWith(rootWithSep);
