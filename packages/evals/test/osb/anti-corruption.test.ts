@@ -10,7 +10,11 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve, join } from "node:path";
 import { isOk, isErr } from "@sow/contracts";
-import { scanForWriteSurfaces, WRITE_SURFACE_TOKENS } from "../../src/osb/anti-corruption-guard";
+import {
+  scanForWriteSurfaces,
+  WRITE_SURFACE_TOKENS,
+  isConnectorAdapterScanFile,
+} from "../../src/osb/anti-corruption-guard";
 import { parseOsbPin, validateOsbPin, OSB_SUBTREE_SENTINEL, type OsbPin } from "../../src/osb/pin";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -18,14 +22,16 @@ const REPO_ROOT = resolve(HERE, "../../../..");
 const ADAPTERS_DIR = resolve(REPO_ROOT, "packages/integrations/src/connectors/adapters");
 const OSB_PIN_PATH = resolve(REPO_ROOT, "config/osb.pin");
 
-// The OSB emit-only source-extractor family — the guard's live scan surface. A HARDCODED count so a
-// renamed/moved/deleted adapter (or a new extractor added without a deliberate bump HERE) fails the
-// count-pin — the scan can never masquerade as "no violations" over a mis-globbed/shrunk surface.
-const EXPECTED_EXTRACTOR_COUNT = 6;
+// The FULL Connector Gateway read edge — every connectors/adapters/*.ts except the index.ts barrel
+// (extractors + the vault read surface + the connector adapters + base.ts), all write-free by
+// architecture. A HARDCODED count so a renamed/moved/deleted adapter, or a NEW adapter added without a
+// deliberate bump HERE, fails the count-pin — the scan can never masquerade as "no violations" over a
+// mis-globbed/shrunk surface (Lesson 12 non-vacuity).
+const EXPECTED_CONNECTOR_ADAPTER_COUNT = 16;
 
-function loadExtractorSources(): ReadonlyArray<{ path: string; content: string }> {
+function loadConnectorAdapterSources(): ReadonlyArray<{ path: string; content: string }> {
   return readdirSync(ADAPTERS_DIR)
-    .filter((f) => f.endsWith("-source.ts"))
+    .filter(isConnectorAdapterScanFile)
     .map((f) => ({ path: join(ADAPTERS_DIR, f), content: readFileSync(join(ADAPTERS_DIR, f), "utf8") }));
 }
 
@@ -101,12 +107,30 @@ describe("Phase-13 §13.1 gate (a) — OSB anti-corruption write-path guard", ()
     expect(res.violations).toEqual([]);
   });
 
-  it("LIVE: the real *-source.ts extractors are clean — 0 violations AND scannedCount === EXPECTED_EXTRACTOR_COUNT (count-pinned, > 0)", () => {
-    const files = loadExtractorSources();
+  it("LIVE: the FULL connectors/adapters read edge is clean — 0 violations AND scannedCount === EXPECTED_CONNECTOR_ADAPTER_COUNT (count-pinned, > 0)", () => {
+    const files = loadConnectorAdapterSources();
     const res = scanForWriteSurfaces(files);
     expect(res.scannedCount).toBeGreaterThan(0);
-    expect(res.scannedCount).toBe(EXPECTED_EXTRACTOR_COUNT);
+    expect(res.scannedCount).toBe(EXPECTED_CONNECTOR_ADAPTER_COUNT);
     expect(res.violations).toEqual([]);
+  });
+
+  it("the Finding's file is now COVERED — obsidian-vault-mcp.ts is in the scanned read-edge set (closes the naming-convention coverage bound)", () => {
+    const scanned = readdirSync(ADAPTERS_DIR).filter(isConnectorAdapterScanFile);
+    expect(scanned).toContain("obsidian-vault-mcp.ts");
+    // and the extractors + a representative connector adapter + the read-edge infra are covered too.
+    expect(scanned).toContain("web-source.ts");
+    expect(scanned).toContain("calendar.ts");
+    expect(scanned).toContain("base.ts");
+  });
+
+  it("isConnectorAdapterScanFile selects the read edge — every .ts adapter, NEVER the index.ts barrel or a non-.ts file", () => {
+    expect(isConnectorAdapterScanFile("asana.ts")).toBe(true);
+    expect(isConnectorAdapterScanFile("obsidian-vault-mcp.ts")).toBe(true);
+    expect(isConnectorAdapterScanFile("base.ts")).toBe(true);
+    expect(isConnectorAdapterScanFile("index.ts")).toBe(false); // the pure re-export barrel is excluded
+    expect(isConnectorAdapterScanFile("README.md")).toBe(false);
+    expect(isConnectorAdapterScanFile("calendar.js")).toBe(false);
   });
 });
 

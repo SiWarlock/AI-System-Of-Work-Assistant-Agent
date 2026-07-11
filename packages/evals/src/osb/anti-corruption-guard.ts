@@ -20,10 +20,16 @@
 // layer. So forbidding all fs writes in the adapter is correct, not over-broad. SCOPE: this guard
 // models the Markdown / fs-vault / Tool-Gateway write surface only; out-of-model vectors
 // (`child_process`, a `@sow/db` DB-only fact) are other guards' concern + the runtime one-writer
-// invariant is the real backstop — this is a defense-in-depth static tripwire. COVERAGE BOUND:
-// the scan surface is keyed on the `*-source.ts` naming convention (+ a hardcoded count-pin); a
-// new source extractor MUST follow that convention to be scanned. Deriving the surface from the
-// SourceIngestionPort registry (so a non-conforming name can't escape) is the named follow-up.
+// invariant is the real backstop — this is a defense-in-depth static tripwire. SCAN SURFACE: the
+// guard's live conformance test scans the ENTIRE Connector Gateway read edge — every
+// `connectors/adapters/*.ts` except the `index.ts` barrel (see `isConnectorAdapterScanFile`),
+// covering the extractors + the vault read surface + the connector adapters + `base.ts` — all
+// write-free by architecture (the external-WRITE Tool-Gateway adapters live in the SEPARATE
+// `tools/adapters/` tree, correctly out of scope). Count-pinned so a moved/renamed/new adapter
+// forces a deliberate bump. Further refinements (a code-derived registry from `adapters/index.ts`
+// exports rather than a directory glob; folding the connector-CORE `port`/`gateway`/`transport`
+// files — which write operational cursors via a repo port, NOT Markdown, so they're outside the
+// write-surface threat model) are named follow-ups.
 
 /**
  * One forbidden write-surface entry: a human-readable `token` label + the `pattern` that
@@ -114,4 +120,16 @@ export function scanForWriteSurfaces(
     }
   }
   return { violations, scannedCount: files.length };
+}
+
+/**
+ * The live scan-surface predicate: a file in `packages/integrations/src/connectors/adapters/` is part
+ * of the guard's scan surface IFF it is a `.ts` adapter and NOT the `index.ts` re-export barrel. This
+ * selects the ENTIRE Connector Gateway read edge (extractors + the vault read surface + the connector
+ * adapters + `base.ts`) — all write-free by architecture. PURE (a filename predicate — no I/O; the
+ * conformance test owns the `readdirSync`). The count-pin backstops its edges: a stray `.d.ts` /
+ * `.test.ts` landing in the dir would bump the scanned count → a deliberate review.
+ */
+export function isConnectorAdapterScanFile(filename: string): boolean {
+  return filename.endsWith(".ts") && filename !== "index.ts";
 }
