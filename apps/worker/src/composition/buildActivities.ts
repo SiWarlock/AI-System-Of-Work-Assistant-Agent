@@ -37,7 +37,9 @@ import type {
 import { auditId as makeAuditId, sourceId as makeSourceId, planId as makePlanId } from "@sow/contracts";
 
 // KnowledgeWriter — the SOLE Markdown writer; real ownership+secret defaults kept.
-import { applyPlan } from "@sow/knowledge";
+// `readVaultHeadRevision` resolves the LIVE vault head for the source commit's compare-revision
+// base (the ingested vault moves between commits — a fixed base would spuriously write_conflict).
+import { applyPlan, readVaultHeadRevision } from "@sow/knowledge";
 import type {
   KnowledgeWriterDeps,
   KnowledgeRevisionStore,
@@ -129,8 +131,6 @@ import type {
   ValidatedExtraction,
   MeetingBuiltOutputs,
   BuildOutputsFailure,
-  KnowledgeCommitSuccess,
-  KnowledgeCommitFailure,
   ProposeResult,
   ProposeError,
 } from "@sow/workflows";
@@ -651,25 +651,28 @@ export function buildProofSpineActivities(
     },
   };
 
-  // (e) commit — a DETERMINISTIC fake IDEMPOTENT by the derived planId (a shared,
-  // per-worker Map). NO fs write (C1 scope / owner decision — flag #4): a re-commit of
-  // the same plan REPLAYS the prior revision, so a replay yields ONE durable revision.
-  // The real KnowledgeWriter commit swaps in at C2/C3.
-  const sourceRevisionByPlan = new Map<string, string>();
-  const sourceCommit: CommitKnowledgePort = {
-    commit: (
-      plan: KnowledgeMutationPlan,
-    ): Promise<Result<KnowledgeCommitSuccess, KnowledgeCommitFailure>> => {
-      const key = String(plan.planId);
-      const existing = sourceRevisionByPlan.get(key);
-      if (existing !== undefined) {
-        return Promise.resolve(ok({ revisionId: existing, replayed: true }));
-      }
-      const revisionId = `rev-source-${sourceRevisionByPlan.size + 1}`;
-      sourceRevisionByPlan.set(key, revisionId);
-      return Promise.resolve(ok({ revisionId, replayed: false }));
-    },
-  };
+  // (e) commit — the REAL KnowledgeWriter `applyPlan` (the SOLE Markdown writer, safety rule 1),
+  // over the DURABLE revisions store (slice 2a, threaded via `params.revisions`) so idempotent-
+  // replay survives a worker restart (the exactly-once substrate). Reuses the meeting commit's real
+  // KnowledgeWriter deps (`knowledgeWriterDeps`: vault + durable revisions + audit; ownershipCheck/
+  // secretScan UNSET → the real enforceHumanOwnership/scanForSecrets — NEVER a pass-through).
+  //   • `expectedBaseRevision` is a RESOLVER reading the LIVE vault head (NOT the meeting's fixed
+  //     `params.commit.expectedBaseRevision`) — the ingested vault moves between commits, so a fixed
+  //     base would spuriously write_conflict. `createCommitActivity` runs it inside the §16 boundary.
+  //   • idempotent by `kw:commit:${planId}`; the source plan's planId incorporates the routing-bound
+  //     workspace (WS-8 — no cross-workspace key collision in the globally-keyed 2a store).
+  //   • fail-closed: a durable-store fault (getByIdempotencyKey/record reject) folds to `commit_failed`
+  //     inside `createCommitActivity` (§16) — never a silent proceed / re-commit.
+  // Metadata is the proof-spine run context (`params.commit` — derived, not caller-supplied → honest audit).
+  const sourceCommit: CommitKnowledgePort = createCommitActivity({
+    applyPlan,
+    deps: knowledgeWriterDeps,
+    actor: params.commit.actor,
+    sourceEventRef: params.commit.sourceEventRef,
+    workflowRunRef: params.commit.workflowRunRef,
+    expectedBaseRevision: () => readVaultHeadRevision(backends.vault),
+    deriveIdempotencyKey: (plan) => `kw:commit:${String(plan.planId)}`,
+  });
 
   // (f) propose — DETERMINISTIC reuse-by-key (NOT exercised on the C1 happy path, which
   // yields actions:[]; wired for completeness so the delegate is registered). A replay

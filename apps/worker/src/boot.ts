@@ -139,6 +139,11 @@ import {
   PROOF_SPINE_TASK_QUEUE,
 } from "./temporal/registerWorker";
 import type { ProofSpineParams } from "./composition/buildActivities";
+// §11.1 slice 2b — the durable KnowledgeRevisionStore adapter (over the 2a operational-store repo),
+// rebound into the proof-spine params post-backends so the ingestion sourceCommit + propose dispatch
+// persist idempotency across a worker restart. Kept OFF the OFF-config path (see withDurableRevisions).
+import { createKnowledgeRevisionStoreAdapter } from "./composition/knowledgeRevisionStore";
+import type { KnowledgeRevisionRepository } from "@sow/db";
 // §9 make-it-real C3b — the local-vault file-watcher capture trigger + its degraded-safe
 // dispatch. The Temporal Client's first real caller (deferred to here from C3a).
 import { createFileReadTransport } from "@sow/integrations/connectors/adapters/file-read-transport";
@@ -515,14 +520,16 @@ export function gateAutoIngest(
  * Build a production ProofSpineParams with a REAL `sourceIngestion` binding (a WS-2 HIGH-confidence bind to
  * `boundWorkspace`) + INERT meeting leaves. The shipped app dispatches ONLY `sourceIngestion` (via the vault
  * watcher); the meeting activities register but are NEVER invoked — so the meeting leaves are fixed
- * deterministic inert values and `revisions` is a fresh in-memory store. This is honest-inert: the production
- * `sourceCommit` is a deterministic in-memory fake keyed on planId (guardrail-3) and never touches this store;
- * only the never-dispatched meeting commit + the OFF propose dispatch reference it.
- * ⚠ DEFERRED RESIDUAL (durable `revisions`): this in-memory store must become durable BEFORE either trigger
- * goes live — (a) a later slice makes `sourceCommit` a real durable KnowledgeWriter commit, OR (b) the propose
- * bridge goes live (`buildSemanticApprovalDispatch` also consumes `proofSpineParams.revisions`, so an approved
- * semantic card's commit would use this non-durable store → idempotency lost across restart). Both dormant today
- * (guardrail-3 fake sourceCommit; propose OFF ⇒ 0 semantic cards).
+ * deterministic inert values.
+ *
+ * `revisions` here is an INERT PLACEHOLDER: `bootWorker` REBINDS it to the DURABLE slice-2a
+ * KnowledgeRevisionStore (over the operational-store repo) via {@link withDurableRevisions} right after it
+ * builds `backends` (the repo does not exist until then), BEFORE the params reach any consumer — so on the ON
+ * path the ingestion `sourceCommit` (now a REAL KnowledgeWriter commit, §6/safety rule 1) AND the dormant
+ * propose dispatch both persist idempotency DURABLY (survives a worker restart). On the OFF path this thunk is
+ * never called (gateAutoIngest returns undefined) ⇒ nothing here is constructed, nothing persists (slice-1
+ * default-OFF invariant). Closes the deferred durable-`revisions` residual — both (a) the real durable
+ * sourceCommit and (b) the propose-path durability.
  */
 export function buildAutoIngestProofSpineParams(boundWorkspace: string): ProofSpineParams {
   const ws: WorkspaceId = workspaceId(boundWorkspace);
@@ -606,6 +613,25 @@ export function buildAutoIngestProofSpineParams(boundWorkspace: string): ProofSp
 }
 
 /**
+ * Rebind the proof-spine params' placeholder `revisions` to the DURABLE slice-2a
+ * {@link KnowledgeRevisionStore} over the operational-store repo (§11.1 slice 2b). This runs inside
+ * `bootWorker` AFTER `backends` is built (the repo does not exist earlier — the params are assembled at the
+ * worker-host before boot), and BEFORE any `proofSpineParams.revisions` consumer, so the ingestion
+ * `sourceCommit` and the dormant propose dispatch both persist idempotency durably (survives a worker restart).
+ *
+ * DEFAULT-OFF PRESERVED (load-bearing): on the OFF/absent-config path `proofSpineParams` is `undefined`, so this
+ * returns `undefined` WITHOUT constructing the durable store adapter — nothing is wired, nothing persists (the
+ * slice-1 owner-opt-in invariant). The store adapter is created ONLY on the ON path.
+ */
+export function withDurableRevisions(
+  proofSpineParams: ProofSpineParams | undefined,
+  revisionRepo: KnowledgeRevisionRepository,
+): ProofSpineParams | undefined {
+  if (proofSpineParams === undefined) return undefined;
+  return { ...proofSpineParams, revisions: createKnowledgeRevisionStoreAdapter(revisionRepo) };
+}
+
+/**
  * Boot the live worker control plane. Assembles the persistent backends, stands up
  * the real loopback API transport over the @sow/db port adapters (behind the injected
  * token + allowlist), wires the redacting logger + the Temporal-unavailable degraded
@@ -625,6 +651,18 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     ...(config.logSink !== undefined ? { logSink: config.logSink } : {}),
   };
   const backends = await assembleBackends(backendsConfig, config.stubExtraction);
+
+  // 1.4) §11.1 slice 2b — DURABLE revisions. Rebind the proof-spine params' placeholder `revisions` to the
+  //   durable slice-2a KnowledgeRevisionStore over `backends.repos.knowledgeRevisions` (the repo exists only now;
+  //   the params were assembled at the worker-host before boot). This runs BEFORE any `proofSpineParams.revisions`
+  //   consumer below (the semantic dispatch + the proof-spine register hook), so the ingestion `sourceCommit` and
+  //   the dormant propose dispatch both persist idempotency durably (survives a worker restart). On the OFF path
+  //   `config.proofSpineParams` is undefined ⇒ `proofSpineParams` is undefined ⇒ the durable store is NEVER
+  //   constructed and NOTHING persists (the slice-1 owner-opt-in invariant is intact).
+  const proofSpineParams = withDurableRevisions(
+    config.proofSpineParams,
+    backends.repos.knowledgeRevisions,
+  );
 
   // 1.5) DEV data-unlock (OFF by default). When dev-provision specs are supplied, turn
   //   local vault Markdown into REAL read-model rows so the wired-but-empty surfaces show
@@ -816,7 +854,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
             // provisioned (the KnowledgeWriter commit path), so an approved semantic card is always committable
             // (never stranded on the external-only dispatch). Mutually exclusive with proposeEnabled (both on ⇒
             // the capability resolver fails closed to read_only).
-            knowledgeProposeEnabled: config.copilotProposeKnowledge === true && config.proofSpineParams !== undefined,
+            knowledgeProposeEnabled: config.copilotProposeKnowledge === true && proofSpineParams !== undefined,
             resolveContentTrust: deriveCopilotContentTrust,
           });
         }
@@ -890,12 +928,12 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // KnowledgeRevisionStore + commit metadata) — the default/Temporal-degraded boot has no writer to commit
   // through, so it stays external-only. Dormant regardless until a semantic card exists (propose is OFF).
   const dispatchApproval: DispatchApprovalFn =
-    config.proofSpineParams !== undefined
+    proofSpineParams !== undefined
       ? createApprovalDispatchRouter({
           semantic: buildSemanticApprovalDispatch({
             vault: backends.vault,
             pendingKmp: backends.repos.pendingKnowledgeMutations,
-            revisions: config.proofSpineParams.revisions,
+            revisions: proofSpineParams.revisions,
             audit: backends.repos.audit,
             now: backends.now,
             // APPROVAL-SPECIFIC provenance (audit accuracy): a Copilot-approval commit must NOT be attributed
@@ -907,7 +945,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
             commit: {
               actor: "copilot-approval",
               sourceEventRef: "copilot.propose_knowledge",
-              workflowRunRef: config.proofSpineParams.commit.workflowRunRef,
+              workflowRunRef: proofSpineParams.commit.workflowRunRef,
             },
           }),
           external: config.dispatchApproval,
@@ -927,7 +965,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   //     Dormant today: propose is OFF ⇒ 0 approved semantic cards ⇒ one fast no-op query until go-live.
   //     ⚠ GO-LIVE OPTIMIZATION: narrow the driver to still-`pending` KMP rows (bounded by uncommitted work) via
   //       a targeted query instead of enumerating every historically-approved card.
-  if (config.proofSpineParams !== undefined) {
+  if (proofSpineParams !== undefined) {
     void reconcileApprovedSemanticMutations({
       listApproved: () => backends.repos.approvals.listByStatus("approved"),
       dispatch: dispatchApproval,
@@ -995,9 +1033,9 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // Built ONLY when proof-spine params are supplied; absent them there is no identity
   // to register under and connectTemporal degrades instead (see below).
   const registerHook =
-    config.proofSpineParams !== undefined
+    proofSpineParams !== undefined
       ? makeProofSpineRegisterHook({
-          params: config.proofSpineParams,
+          params: proofSpineParams,
           backendsConfig,
           ...(config.stubExtraction !== undefined ? { stubExtraction: config.stubExtraction } : {}),
         })
