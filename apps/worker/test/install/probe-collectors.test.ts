@@ -110,6 +110,10 @@ describe("collectPrerequisiteProbes — real prerequisite probes (fast unit, no 
     // The git invocation is the FIXED local, no-network argv — never fetch/ls-remote/update.
     const gitCall = calls.find((c) => c.bin === "git");
     expect(gitCall?.args).toEqual(["remote", "-v"]);
+    // `git` stays BARE (PATH-resolved) by design — it's a version/remote check, not a security-state
+    // probe; users legitimately run a newer non-`/usr/bin/git` (11.5-e Step-2.5 #3). The repoDir rides
+    // as `cwd` (not a positional argv), so there is no `--`-flag-confusion vector to close here.
+    expect(gitCall?.bin).toBe("git");
     expect(gitCall?.cwd).toBe("/vault");
     expect(gitCall?.args).not.toContain("fetch");
     expect(gitCall?.args).not.toContain("ls-remote");
@@ -185,25 +189,25 @@ const permDenied: CommandOutcome = { ok: false, code: "nonzero_exit", message: "
 describe("collectSecurityProbes — macOS-security probes (fast unit, no subprocess)", () => {
   it("filevault_enabled_vs_disabled — `fdesetup status` On ⇒ enabled; Off/unknown ⇒ not enabled — spec(§13)", async () => {
     const on = await collectSecurityProbes({
-      run: fakeRun((r) => (r.bin === "fdesetup" ? found("FileVault is On.\n") : found("x"))).run,
+      run: fakeRun((r) => (r.bin.endsWith("/fdesetup") ? found("FileVault is On.\n") : found("x"))).run,
     });
     expect(on.filevault).toEqual({ enabled: true });
 
     const off = await collectSecurityProbes({
-      run: fakeRun((r) => (r.bin === "fdesetup" ? found("FileVault is Off.\n") : found("x"))).run,
+      run: fakeRun((r) => (r.bin.endsWith("/fdesetup") ? found("FileVault is Off.\n") : found("x"))).run,
     });
     expect(off.filevault).toEqual({ enabled: false });
 
     // Unknown / malformed output ⇒ not enabled (never a fabricated ok).
     const unknown = await collectSecurityProbes({
-      run: fakeRun((r) => (r.bin === "fdesetup" ? found("some unexpected output\n") : found("x"))).run,
+      run: fakeRun((r) => (r.bin.endsWith("/fdesetup") ? found("some unexpected output\n") : found("x"))).run,
     });
     expect(unknown.filevault).toEqual({ enabled: false });
 
     // "On, but Conversion in progress" still counts as ENABLED (it IS on) — pins the \b-before-comma.
     const converting = await collectSecurityProbes({
       run: fakeRun((r) =>
-        r.bin === "fdesetup" ? found("FileVault is On, but Conversion in progress.\n") : found("x"),
+        r.bin.endsWith("/fdesetup") ? found("FileVault is On, but Conversion in progress.\n") : found("x"),
       ).run,
     });
     expect(converting.filevault).toEqual({ enabled: true });
@@ -211,7 +215,7 @@ describe("collectSecurityProbes — macOS-security probes (fast unit, no subproc
     // A hostile MID-LINE "FileVault is On" substring must NOT fabricate enabled (line-anchored).
     const midline = await collectSecurityProbes({
       run: fakeRun((r) =>
-        r.bin === "fdesetup" ? found("note: FileVault is On (spoofed); actually FileVault is Off.\n") : found("x"),
+        r.bin.endsWith("/fdesetup") ? found("note: FileVault is On (spoofed); actually FileVault is Off.\n") : found("x"),
       ).run,
     });
     expect(midline.filevault).toEqual({ enabled: false });
@@ -220,20 +224,20 @@ describe("collectSecurityProbes — macOS-security probes (fast unit, no subproc
   it("keychain_available_vs_locked — a reachable read-only `security` query ⇒ reachable; a fault ⇒ assume-worst — spec(§13)", async () => {
     const reachable = await collectSecurityProbes({
       run: fakeRun((r) =>
-        r.bin === "security" ? found("/Users/x/Library/Keychains/login.keychain-db\n") : found("x"),
+        r.bin.endsWith("/security") ? found("/Users/x/Library/Keychains/login.keychain-db\n") : found("x"),
       ).run,
     });
     expect(reachable.keychain).toEqual({ reachable: true });
 
     // A permission-denied / unreachable security query ⇒ not reachable (→ finding).
     const denied = await collectSecurityProbes({
-      run: fakeRun((r) => (r.bin === "security" ? permDenied : found("x"))).run,
+      run: fakeRun((r) => (r.bin.endsWith("/security") ? permDenied : found("x"))).run,
     });
     expect(denied.keychain).toEqual({ reachable: false });
 
     // A clean exit but EMPTY/whitespace output ⇒ not reachable (pins the non-empty guard).
     const empty = await collectSecurityProbes({
-      run: fakeRun((r) => (r.bin === "security" ? found("   \n") : found("x"))).run,
+      run: fakeRun((r) => (r.bin.endsWith("/security") ? found("   \n") : found("x"))).run,
     });
     expect(empty.keychain).toEqual({ reachable: false });
   });
@@ -261,8 +265,8 @@ describe("collectSecurityProbes — macOS-security probes (fast unit, no subproc
   it("argv_is_fixed_no_shell — the security probes use a fixed argv ARRAY per probe (no shell / no interpolation) — spec(§13)", async () => {
     const { run, calls } = fakeRun(() => found("FileVault is On.\n"));
     await collectSecurityProbes({ run });
-    const fdesetup = calls.find((c) => c.bin === "fdesetup");
-    const security = calls.find((c) => c.bin === "security");
+    const fdesetup = calls.find((c) => c.bin.endsWith("/fdesetup"));
+    const security = calls.find((c) => c.bin.endsWith("/security"));
     expect(fdesetup?.args).toEqual(["status"]);
     expect(security?.args).toEqual(["list-keychains"]);
     // No shell metacharacters / interpolation anywhere in the argv.
@@ -271,10 +275,32 @@ describe("collectSecurityProbes — macOS-security probes (fast unit, no subproc
     }
   });
 
+  it("security_system_probes_use_absolute_bins — fdesetup/security pin their ABSOLUTE macOS system paths so a hostile PATH can't shadow a security-state probe — spec(§13)", async () => {
+    const { run, calls } = fakeRun(() => found("FileVault is On.\n"));
+    await collectSecurityProbes({ run });
+    // The two security-state probes MUST run the fixed-location system tools (PATH-shadow prevention).
+    expect(calls.find((c) => c.args[0] === "status")?.bin).toBe("/usr/bin/fdesetup");
+    expect(calls.find((c) => c.args[0] === "list-keychains")?.bin).toBe("/usr/bin/security");
+    // Neither security probe is left BARE (PATH-resolved) — a bare bin would re-open the shadow vector.
+    expect(calls.some((c) => c.bin === "fdesetup")).toBe(false);
+    expect(calls.some((c) => c.bin === "security")).toBe(false);
+  });
+
+  it("version_presence_bins_stay_bare — node/pnpm/temporal/gbrain stay PATH-resolved (the check IS PATH-presence at the right version); absolutizing would defeat it — spec(§13)", async () => {
+    const { run, calls } = fakeRun(allPresent);
+    await collectPrerequisiteProbes(inputWith({ run }));
+    for (const bin of ["node", "pnpm", "temporal", "gbrain"]) {
+      // The prerequisite is "on PATH at the right version" — so the probe MUST use the bare bin.
+      expect(calls.some((c) => c.bin === bin)).toBe(true);
+      // And it must NOT be over-absolutized to a fixed /…/<bin> path (that would miss a PATH install).
+      expect(calls.some((c) => c.bin.startsWith("/") && c.bin.endsWith("/" + bin))).toBe(false);
+    }
+  });
+
   it("runPrerequisiteDoctor_includes_security_probes — a real fdesetup/security result feeds the engine (filevault/keychain ok) — spec(§13)", async () => {
     const withSecurity = (req: CommandRequest): CommandOutcome => {
-      if (req.bin === "fdesetup") return found("FileVault is On.\n");
-      if (req.bin === "security") return found("/Users/x/Library/Keychains/login.keychain-db\n");
+      if (req.bin.endsWith("/fdesetup")) return found("FileVault is On.\n");
+      if (req.bin.endsWith("/security")) return found("/Users/x/Library/Keychains/login.keychain-db\n");
       return allPresent(req);
     };
     const report = await runPrerequisiteDoctor(

@@ -223,11 +223,31 @@ describe("collectPostureProbes — one-writer posture (fast unit, no subprocess)
     const ls = calls.find((c) => c.bin.endsWith("/ls"));
     const mount = calls.find((c) => c.bin.endsWith("mount"));
     const ps = calls.find((c) => c.bin.endsWith("/ps"));
-    expect(ls?.args).toEqual(["-lde", "/vault"]); // vaultDir a fixed positional arg, not concatenated
+    // `--` end-of-options separator precedes the positional vaultDir (11.5-e): a `-`-leading path
+    // can never be parsed as an `ls` flag. `mount`/`ps` take NO positional path ⇒ no `--` needed.
+    expect(ls?.args).toEqual(["-lde", "--", "/vault"]);
     expect(mount?.args).toEqual([]);
     expect(ps?.args).toEqual(["-Axww", "-o", "command="]);
     // No shell metacharacter in any argv (config never enters a command string).
     for (const c of calls) for (const a of c.args) expect(a).not.toMatch(/[;&|`$(){}<>]/);
+  });
+
+  it("dash_leading_vault_path_is_positional_not_flag — a `-`-leading vaultDir rides as the positional after `--`, never parsed as an ls flag — spec(§13)", async () => {
+    const calls: CommandRequest[] = [];
+    const run: RunCommand = (req) => {
+      calls.push(req);
+      return Promise.resolve(notFound);
+    };
+    // A hostile-looking vaultDir that STARTS with `-` — without `--` it would be read as `ls` flags.
+    await collectPostureProbes(postureInput({ run, vaultDir: "-la" }));
+    const ls = calls.find((c) => c.bin.endsWith("/ls"));
+    expect(ls?.args).toEqual(["-lde", "--", "-la"]);
+    // The separator must precede the path token so `-la` sits in the positional slot, not as a flag.
+    const args = ls?.args ?? [];
+    const sepIdx = args.indexOf("--");
+    const pathIdx = args.lastIndexOf("-la");
+    expect(sepIdx).toBeGreaterThanOrEqual(0);
+    expect(pathIdx).toBeGreaterThan(sepIdx);
   });
 
   it("runPrerequisiteDoctor_includes_posture_probes — the posture probes feed the engine (the full 10-field snapshot) — spec(§13)", async () => {

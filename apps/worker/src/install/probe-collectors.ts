@@ -175,6 +175,13 @@ export interface SecurityProbeInput {
   readonly run: RunCommand;
 }
 
+// The macOS security-STATE tools at their fixed system paths (absolute — a hostile `PATH` can't
+// shadow a security-posture probe; this joins the posture collector's absolute `/bin/ls`·`/sbin/mount`·
+// `/bin/ps`, Lesson 19). The version-PRESENCE bins (node/pnpm/temporal/gbrain/git) stay BARE by
+// design — the check IS "on `PATH` at the right version", so absolutizing them would defeat it.
+const FDESETUP_BIN = "/usr/bin/fdesetup";
+const SECURITY_BIN = "/usr/bin/security";
+
 /**
  * FileVault (full-disk encryption) status via `fdesetup status`. Fail-CLOSED: enabled ONLY on
  * the LINE-ANCHORED "FileVault is On" signal (an "On, but Conversion in progress…" still counts
@@ -184,7 +191,7 @@ export interface SecurityProbeInput {
  * string ever localized, the probe would fail CLOSED (a missed advisory, the safe direction).
  */
 async function probeFilevault(run: RunCommand): Promise<FilevaultProbe> {
-  const r = await safeRun(run, { bin: "fdesetup", args: ["status"] });
+  const r = await safeRun(run, { bin: FDESETUP_BIN, args: ["status"] });
   // Line-anchored (^…/m): the positive signal must START a line (as `fdesetup` prints it), so a
   // contrived multi-line output can't smuggle "FileVault is On" mid-line to fabricate enabled.
   return { enabled: r.ok && /^FileVault is On\b/im.test(r.stdout) };
@@ -202,7 +209,7 @@ async function probeFilevault(run: RunCommand): Promise<FilevaultProbe> {
  * non-empty result; any fault ⇒ NOT reachable (assume-worst → finding).
  */
 async function probeKeychain(run: RunCommand): Promise<KeychainProbe> {
-  const r = await safeRun(run, { bin: "security", args: ["list-keychains"] });
+  const r = await safeRun(run, { bin: SECURITY_BIN, args: ["list-keychains"] });
   return { reachable: r.ok && r.stdout.trim().length > 0 };
 }
 

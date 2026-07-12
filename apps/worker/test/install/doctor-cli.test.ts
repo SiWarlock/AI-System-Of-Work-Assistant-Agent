@@ -115,7 +115,7 @@ describe("doctor-cli — runInstallDoctor composition (fast unit, no subprocess)
     };
     await runInstallDoctor(deps({ run, write: () => {} }));
     // Every command is a known local READ probe — a whitelist; nothing mutating.
-    const readBins = new Set(["node", "pnpm", "temporal", "gbrain", "git", "fdesetup", "security", "/bin/ls", "/sbin/mount", "/bin/ps"]);
+    const readBins = new Set(["node", "pnpm", "temporal", "gbrain", "git", "/usr/bin/fdesetup", "/usr/bin/security", "/bin/ls", "/sbin/mount", "/bin/ps"]);
     for (const c of calls) expect(readBins.has(c.bin)).toBe(true);
     // The git probe is the local no-network form (never fetch/push).
     const git = calls.find((c) => c.bin === "git");
@@ -137,10 +137,11 @@ describe("doctor-cli — runInstallDoctor composition (fast unit, no subprocess)
 
   it("multi_vault_acl_folds_worst_of — a non-sole-write ACL on ANY configured vault ⇒ vault_acl finding; all sole ⇒ ok — spec(§13 REQ-S-NEW-008 completeness)", async () => {
     const config: AppConfig = { operationalDbPath: "/x/db", vaultRootPaths: { a: "/vaultA", b: "/vaultB" } };
-    // The ls fake dispatches on the requested vault path (req.args[1]).
+    // The ls fake dispatches on the requested vault path — the LAST argv token (after the `-lde --`
+    // fixed flags + the `--` end-of-options separator introduced in 11.5-e).
     const lsFor = (perVault: (path: string) => string): RunCommand => (req) =>
       req.bin === "/bin/ls"
-        ? Promise.resolve({ ok: true, stdout: perVault(req.args[1] ?? "") })
+        ? Promise.resolve({ ok: true, stdout: perVault(req.args.at(-1) ?? "") })
         : Promise.resolve(notFound);
 
     // vaultB is group-writable (NOT sole) ⇒ the folded vault_acl is a finding (never a silent ok).

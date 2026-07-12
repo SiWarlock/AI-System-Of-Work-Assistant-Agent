@@ -5,7 +5,7 @@
 // already diagnoses fail-closed — a writable/mispointed brain mount or a stray write-capable
 // gbrain process re-opens the hidden-brain hole (GO #1). This module only PRODUCES the fields
 // (never touches the diagnosers). Real LOCAL macOS checks over the reused injected RunCommand:
-//   • vaultAcl            — `/bin/ls -lde <vaultDir>` → the worker is the SOLE fs write principal
+//   • vaultAcl            — `/bin/ls -lde -- <vaultDir>` → the worker is the SOLE fs write principal
 //                           (owner + POSIX mode + EXTENDED ACLs — the vector `fs.stat` mode bits miss)
 //   • gbrainMount         — `/sbin/mount` → the brain mount is read-only AND at the canonical point
 //   • strayGbrainProcess  — `/bin/ps` scan → each write-capable gbrain writer bound to the canonical
@@ -134,7 +134,9 @@ export async function probeVaultAcl(
   vaultDir: string,
   workerPrincipal: string,
 ): Promise<VaultAclProbe> {
-  const r = await safeRun(run, { bin: LS_BIN, args: ["-lde", vaultDir] });
+  // `--` end-of-options separator precedes the positional vaultDir (Lesson 19 residual): a config
+  // path that happens to start with `-` rides as the positional path, never parsed as an `ls` flag.
+  const r = await safeRun(run, { bin: LS_BIN, args: ["-lde", "--", vaultDir] });
   return { workerIsSoleWritePrincipal: r.ok && parseVaultAclSoleWrite(r.stdout, workerPrincipal) };
 }
 
