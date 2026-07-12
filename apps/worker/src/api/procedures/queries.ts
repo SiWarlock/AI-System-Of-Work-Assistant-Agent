@@ -65,6 +65,7 @@ import {
   type CopilotBriefingDeps,
   type CopilotBriefingInput,
 } from "./copilotBriefing";
+import { answerCopilotConcept, type CopilotConceptInput } from "./copilotConcept";
 import {
   toUiSafeApproval,
   toUiSafeWorkflowRunRef,
@@ -228,6 +229,34 @@ function parseBriefingInput(value: unknown): CopilotBriefingInput {
   if (typeof value !== "object" || value === null) throw new Error("invalid_input");
   const source = value as Record<string, unknown>;
   return { workspaceId: requireString(source, "workspaceId") };
+}
+
+/** A concept term is a short single-line LABEL (not a paragraph question), so its cap is far tighter than a
+ *  Q&A question's — this trims the client-supplied injection surface a concept-synthesis skill carries. */
+const MAX_CONCEPT_CHARS = 200;
+
+/** Every line-break code point: CR/LF + vertical-tab/form-feed + NEL + Unicode line/paragraph separators. A
+ *  concept LABEL has none. A code-point Set (not a regex literal) per the Unicode-in-regex trap (LESSONS). */
+const LINE_BREAK_CODE_POINTS: ReadonlySet<number> = new Set([0x0a, 0x0d, 0x0b, 0x0c, 0x85, 0x2028, 0x2029]);
+
+/** True iff `s` contains NO line-break code point (i.e. it is genuinely single-line). */
+function isSingleLine(s: string): boolean {
+  for (const ch of s) {
+    const cp = ch.codePointAt(0);
+    if (cp !== undefined && LINE_BREAK_CODE_POINTS.has(cp)) return false;
+  }
+  return true;
+}
+
+/** tRPC plain-function validator narrowing an unknown payload → CopilotConceptInput (C6 §13.10 b-2). The
+ *  concept term is CLIENT input folded into the server-fixed directive → bound it: a non-empty single-line
+ *  string ≤ MAX_CONCEPT_CHARS. The single-line reject drops a multi-line injection payload at the boundary. */
+function parseConceptInput(value: unknown): CopilotConceptInput {
+  if (typeof value !== "object" || value === null) throw new Error("invalid_input");
+  const source = value as Record<string, unknown>;
+  const concept = requireString(source, "concept");
+  if (concept.length > MAX_CONCEPT_CHARS || !isSingleLine(concept)) throw new Error("invalid_input");
+  return { workspaceId: requireString(source, "workspaceId"), concept };
 }
 
 /** A drill-down pointer into a global item: which workspace's projection to drill. */
@@ -549,6 +578,18 @@ export function buildQueryRouter(deps: QueryRouterDeps) {
       authedResolver<CopilotBriefingInput, UiSafeCopilotAnswer>(
         (_ctx, input): Promise<Result<UiSafeCopilotAnswer, FailureVariant>> =>
           answerCopilotBriefing(briefing, input),
+      ),
+    ),
+    /**
+     * Copilot on-request concept-synthesis (C6 §13.10 b-2) — READ-ONLY, cited, NO side effects. Retrieves the
+     * asking workspace's KNOWLEDGE for a concept term and synthesizes a governed explanation through the SAME
+     * core as `copilotAsk` (WS-8 re-guard → egress veto → candidate/UI-safe gate). The concept term is CLIENT
+     * input (bounded at `parseConceptInput`), so its injection posture equals Q&A's. Propose bridge untouched.
+     */
+    copilotConcept: publicProcedure.input(parseConceptInput).query(
+      authedResolver<CopilotConceptInput, UiSafeCopilotAnswer>(
+        (_ctx, input): Promise<Result<UiSafeCopilotAnswer, FailureVariant>> =>
+          answerCopilotConcept(copilot, input),
       ),
     ),
     copilotAsk: publicProcedure.input(parseAskInput).query(
