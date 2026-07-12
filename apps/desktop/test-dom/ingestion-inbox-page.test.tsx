@@ -4,11 +4,13 @@
 // workspace scope (empty under Global, WS-8), and mounts on the AppShell route + nav. Renderer-only;
 // consumes the already-shipped UiSafeIngestionItem contract (9.7-A). Second-tier jsdom render harness
 // (apps/desktop LESSONS §4). Empty-until-producer: query returns [] until the deferred producer wiring.
+import { useState, type ReactElement } from "react";
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, screen, cleanup, fireEvent, within } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, within, waitFor } from "@testing-library/react";
 import { IngestionInbox } from "../renderer/surfaces/ingestion-inbox";
 import { AppShell, type AppShellProps } from "../renderer/chrome/AppShell";
 import { hydrateIngestionInbox } from "../renderer/lib/live";
+import { createTriageDisposition, type TriageDisposition } from "../renderer/lib/triage-disposition";
 import { createUiSafeStore } from "../renderer/store";
 import { setScope } from "../renderer/store/projections";
 import type { WorkspaceScope } from "../renderer/store/scope";
@@ -136,5 +138,84 @@ describe("AppShell — Ingestion Inbox route mount (§9.7 / §9.5 nav)", () => {
     );
     const inbox = screen.getByText("Inbox").closest(".sow-nav-item");
     expect(inbox?.getAttribute("aria-current")).toBe("page");
+  });
+});
+
+// ── Disposition ACTION UI (§9.7 triage-resolution) ───────────────────────────
+type DisposeClient = Parameters<typeof createTriageDisposition>[0];
+
+/** A fake tRPC client whose command.disposeTriage.mutate resolves to `result` (structural cast). */
+function disposeClient(result: unknown): DisposeClient {
+  return { command: { disposeTriage: { mutate: async () => result } } } as unknown as DisposeClient;
+}
+
+/**
+ * Mirrors App.tsx's onDispose wiring: the REAL caller over a fake client + the REAL drain
+ * (remove the disposed item on ok). Lets the action tests exercise the full renderer path
+ * (surface → caller → mutation → fold → drain), not a stubbed handler.
+ */
+function InboxHarness({
+  client,
+  initial,
+}: {
+  readonly client: DisposeClient;
+  readonly initial: readonly UiSafeIngestionItem[];
+}): ReactElement {
+  const [items, setItems] = useState<readonly UiSafeIngestionItem[]>(initial);
+  const dispose = createTriageDisposition(client);
+  const onDispose = async (sourceId: string, disposition: TriageDisposition): Promise<boolean> => {
+    const r = await dispose(sourceId, disposition);
+    if (!r.ok) return false;
+    setItems((prev) => prev.filter((it) => it.sourceId !== sourceId));
+    return true;
+  };
+  return <IngestionInbox items={items} onDispose={onDispose} />;
+}
+
+describe("IngestionInbox — triage-resolution ACTION UI (§9.7)", () => {
+  it("disposition_click_invokes_handler — clicking a card action calls onDispose(sourceId, disposition)", () => {
+    // spec(§11) action wiring — the card surfaces per-disposition buttons that call the handler.
+    const onDispose = vi.fn(async () => true);
+    render(<IngestionInbox items={[item("s1")]} onDispose={onDispose} />);
+    const card = document.querySelector('[data-source-id="s1"]') as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Accept" }));
+    expect(onDispose).toHaveBeenCalledWith("s1", "accept");
+  });
+
+  it("action buttons are DISABLED when there is no live worker (onDispose absent) — honest, not a dead control", () => {
+    // spec(§11) mirror Approvals: no worker ⇒ disabled buttons, never a silently no-op control.
+    render(<IngestionInbox items={[item("s1")]} />);
+    const card = document.querySelector('[data-source-id="s1"]') as HTMLElement;
+    const buttons = within(card).getAllByRole("button");
+    expect(buttons.length).toBeGreaterThan(0);
+    expect(buttons.every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
+  });
+
+  it("ok_removes_item — an ok disposition DRAINS the item from the rendered list (no re-query)", async () => {
+    // spec(§11) drain-on-ok: disposeTriage returns no post-state record, so ok ⇒ remove.
+    render(
+      <InboxHarness
+        client={disposeClient({ ok: true, value: { idempotencyKey: "s1:accept" } })}
+        initial={[item("s1"), item("s2")]}
+      />,
+    );
+    const card = document.querySelector('[data-source-id="s1"]') as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Accept" }));
+    await waitFor(() => expect(document.querySelector('[data-source-id="s1"]')).toBeNull());
+    expect(document.querySelector('[data-source-id="s2"]')).toBeTruthy(); // the other item is untouched
+  });
+
+  it("err_retains_item — a failed disposition KEEPS the item + shows a non-blocking error affordance (fail-closed)", async () => {
+    // spec(§16) fail-closed: a failed disposition loses nothing; the item stays with an error affordance.
+    render(
+      <InboxHarness
+        client={disposeClient({ ok: false, error: { kind: "degraded_unavailable", message: "down", retryable: true } })}
+        initial={[item("s1")]}
+      />,
+    );
+    const card = document.querySelector('[data-source-id="s1"]') as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Reject" }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(document.querySelector('[data-source-id="s1"]')).toBeTruthy(); // item REMAINS (nothing dropped)
   });
 });

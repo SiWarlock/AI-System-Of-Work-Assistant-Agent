@@ -26,6 +26,7 @@ import { createWsStreamTransport } from "./ws-transport";
 import { createDrillDown, type DrillResult } from "./drilldown";
 import { createAskCopilot, type AskResult } from "./copilot-ask";
 import { createApprovalDecision, type ApprovalDecision, type DecisionResult } from "./approval-decision";
+import { createTriageDisposition, type TriageDisposition, type DispositionResult } from "./triage-disposition";
 
 /** The live-session handle: stop the stream + drill-down (§9.4) + scope-aware re-hydrate (§9.5). */
 export interface StartLiveHandle {
@@ -37,6 +38,8 @@ export interface StartLiveHandle {
   readonly askCopilot: (workspaceId: string, question: string) => Promise<AskResult>;
   /** Decide an approval (§9.8, wired to command.decideApproval, mac channel); fails closed to {ok:false}. */
   readonly decideApproval: (approvalId: string, decision: ApprovalDecision) => Promise<DecisionResult>;
+  /** Dispose a triage item (§9.7, wired to command.disposeTriage, deterministic key); fails closed to {ok:false}. */
+  readonly disposeTriage: (sourceId: string, disposition: TriageDisposition) => Promise<DispositionResult>;
 }
 
 // Connect the UI-safe store to the LIVE worker over the §10 push stream (9.4b E).
@@ -89,6 +92,7 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
     hydrateScope: (scope: WorkspaceScope): Promise<void> => hydrateScope(live.client, store, scope),
     askCopilot: createAskCopilot(live.client),
     decideApproval: createApprovalDecision(live.client),
+    disposeTriage: createTriageDisposition(live.client),
   };
 }
 

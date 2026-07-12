@@ -5,12 +5,13 @@ import { Projects } from "./surfaces/projects/Projects";
 import { Approvals } from "./surfaces/approvals/Approvals";
 import { IngestionInbox } from "./surfaces/ingestion-inbox";
 import { createUiSafeStore } from "./store";
-import { setScope, navigate, hydrateApprovals } from "./store/projections";
+import { setScope, navigate, hydrateApprovals, replaceIngestion } from "./store/projections";
 import { WORKSPACE_SCOPES, resolveWorkspaceId, type WorkspaceScope } from "./store/scope";
 import type { Route } from "./store/route";
 import { startLive, type StartLiveHandle } from "./lib/live";
 import type { AskResult } from "./lib/copilot-ask";
 import type { ApprovalDecision } from "./lib/approval-decision";
+import type { TriageDisposition } from "./lib/triage-disposition";
 import { seedDevStore } from "./dev/seed";
 
 // The renderer's single UI-safe store (app singleton — one window).
@@ -103,6 +104,21 @@ export function App(): ReactElement {
     });
   };
 
+  // §9.7 triage disposition: REQUEST the worker's replay-safe pipeline re-entry (deterministic
+  // idempotency key, minted caller-side). On ok, DRAIN the item from the workspace-scoped inbox
+  // (`disposeTriage` returns no post-state record — no re-query) via the existing scope-replace
+  // reducer; on a failed/again disposition the item REMAINS (fail closed — the card surfaces the
+  // error). No live worker → `{ ok: false }`, so the card never shows a false drain.
+  const onDisposeTriage = (sourceId: string, disposition: TriageDisposition): Promise<boolean> => {
+    const handle = liveRef.current;
+    if (handle === null) return Promise.resolve(false);
+    return handle.disposeTriage(sourceId, disposition).then((r) => {
+      if (!r.ok) return false;
+      store.dispatch((s) => replaceIngestion(s, s.ingestion.filter((it) => it.sourceId !== sourceId)));
+      return true;
+    });
+  };
+
   const approvals = [...state.approvals.values()];
   const pendingApprovalCount = approvals.filter((a) => a.status === "pending").length;
 
@@ -128,7 +144,10 @@ export function App(): ReactElement {
           onDecide={hasLiveWorker ? onDecideApproval : undefined}
         />
       ) : state.route.surface === "ingestion" ? (
-        <IngestionInbox items={state.ingestion} />
+        <IngestionInbox
+          items={state.ingestion}
+          onDispose={hasLiveWorker ? onDisposeTriage : undefined}
+        />
       ) : state.route.surface === "projects" ? (
         <Projects
           scope={state.scope}
