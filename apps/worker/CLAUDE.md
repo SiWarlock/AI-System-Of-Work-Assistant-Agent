@@ -161,6 +161,9 @@ Lessons start at §1.
 | # | Date | Topic | Rule (one-liner) |
 |--:|---|---|---|
 | 1 | 2026-07-12 | [On-request Copilot synthesis skills reuse a single-sourced governed core](LESSONS.md#1) | An on-request synthesis skill supplies its own retrieval + reuses `runGovernedCopilotSynthesis` (WS-8 re-guard/posture/egress-veto/candidate-gate) — never a re-implemented gate; the retrieval source varies, the safety machinery does not. |
+| 2 | 2026-07-12 | [Activate a built-but-dormant boot capability with a pure fail-safe gate helper](LESSONS.md#2) | Activation = a pure `gate…() → wiring \| undefined` helper (default-OFF, thunk'd deps, owner-config not hardcoded) augmenting `bootWorker` only when opt-in + precondition both present; shipped default stays byte-equivalent to the prior boot. |
+| 3 | 2026-07-12 | [A durable KnowledgeWriter-idempotency store is an operational-store repo, fail-closed both directions](LESSONS.md#3) | The `KnowledgeRevisionStore` must be a real `@sow/db` repo keyed by `idempotencyKey` (UNIQUE, first-write-wins), passing the one repo-contract suite on both dialects, fail-closed on BOTH `getByIdempotencyKey` AND `record` (reject, never mask); the in-memory Map loses exactly-once across restart. |
+| 4 | 2026-07-12 | [Activate a real sole-writer commit by swapping the fake for the existing adapter](LESSONS.md#4) | Swap the fake for `createCommitActivity` over `applyPlan` (real ownership/secret defaults + a live `readVaultHeadRevision` resolver + durable store), behind the same default-OFF gate — never a new writer; verify the existing adapter honors the store's fail-closed. |
 
 <!-- Starts empty. Each row links to its `LESSONS.md` anchor. -->
 

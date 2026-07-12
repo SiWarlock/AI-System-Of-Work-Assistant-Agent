@@ -57,18 +57,21 @@ SOW_TEMPORAL=1 pnpm --filter @sow/worker test    # runs the real-Temporal integr
 
 ---
 
-## 3. Exercise real vault → ingestion — **TEST-GATED (not live in the app yet)**
+## 3. Exercise real vault → ingestion — **WIRED (owner-opt-in, default-OFF; durably persists)**
 
-**How it's meant to work:** a `node:fs` watcher on the vault root → a `.md` add/change → root-confined capture (C2) → dispatch (C3a) → a live `sourceIngestion` Temporal run. Wired in `bootWorker` **only when `config.vaultWatch` AND `config.vaultRoot` are both set** (`boot.ts:896`); degraded-safe if the Temporal client can't build (fails closed with a health item, never crashes — `boot.ts:908-912`).
+**How it works:** a `node:fs` watcher on the vault root → a `.md` add/change → root-confined capture (C2) → dispatch (C3a) → a live `sourceIngestion` Temporal run → a **REAL KnowledgeWriter commit** (durable canonical Markdown), idempotent-replay across restart. The auto-ingest arc (slices 1/2a/2b — `727ab76`/`bbabd5f`/`a6cf0ec`) made this live behind an owner opt-in; `SOW_TEMPORAL=1` end-to-end verified.
 
-**Honest status — TEST-GATED.** Three things must be true AT ONCE for a live drop-a-file-and-see-it-ingested loop, and the shipped app supplies none of them:
-1. **`BootConfig.vaultWatch`** (`{workspaceId, sensitivity, debounceMs?}`, `boot.ts:343-347`) — **OFF by default; the desktop worker-host never sets it** (`apps/desktop/worker-host/index.ts:86-165`).
-2. **A running Temporal dev-server** (§2).
-3. **`proofSpineParams`** so a Temporal worker is registered to run the dispatched `sourceIngestion` (`boot.ts:855-862`) — the worker-host passes none.
+**To turn it on** (the owner's step) — set these env vars in the shell that launches the desktop app (`main/index.ts` reads them → IPC → worker-host → `gateAutoIngest`):
+- `SOW_INGEST_WATCH=1` — the opt-in. **Unset (default) = OFF** → today's degraded boot, byte-unchanged, nothing constructed, nothing persists.
+- `SOW_VAULT_ROOT=/path/to/your/Obsidian/vault` — your REAL vault (default is `<userData>/vault`, NOT your vault).
+- `SOW_TEMPORAL_ADDRESS` — default `127.0.0.1:7233` (override only if your dev-server differs).
+- `SOW_INGEST_WORKSPACE` — default the canonical personal-business workspace.
 
-Also: the desktop app hardcodes `vaultRoot = join(userData, "vault")` (`main/index.ts:66`), **not** the owner's real Obsidian vault — the owner must change that injected `config.vaultRoot` to point at the real vault. Today the loop is verified only under `SOW_TEMPORAL=1 pnpm --filter @sow/worker test` (`vaultWatcher-live.test.ts`).
+Then run a local Temporal dev-server (§2) + launch the app (§1). Drop a `.md` in the vault → captured → `sourceIngestion` runs to `applied` → **durably committed to canonical Markdown by the KnowledgeWriter** (verify in the vault + System Health).
 
-> **This is the ingestion "unbuilt wiring" gap** — Bucket B (resume menu) item. Making it live in the app = set `vaultWatch` + real `vaultRoot` + provide `proofSpineParams` + run a dev-server.
+**Safety:** the write is the sanctioned KnowledgeWriter **sole-writer** path (safety rule 1) — NOT the propose bridge, NOT GBrain write-through. Default-OFF + owner-opt-in IS the activation authorization; `gateAutoIngest` returns undefined when unset so the durable store + commit deps are never even constructed.
+
+> **Known limitation (multi-source):** the current derivation writes every source to a FIXED path `sources/<ws>/ingested.md` — a SINGLE dropped file per workspace persists correctly, but a 2nd DIFFERENT file collides (create-over-existing). Real per-source multi-file ingestion is a named follow-on slice (per-source-path derivation; folds into Tier-3 ingest-triggers).
 
 ---
 
@@ -122,7 +125,7 @@ Deferred/owner-gated (`IMPLEMENTATION_PLAN.md`). Three known swaps when it's bui
 | Worker in Temporal-degraded mode | **WORKS-NOW** | — |
 | Copilot read + synthesis (ask / briefing / concept) | **WORKS-NOW** | `claude` login + `VOYAGE_API_KEY` + `gbrain` serve up |
 | `copilot.vault.read` | **WIRED-BUT-INERT** | point `config.vaultRoot` at the real Obsidian vault |
-| Vault → ingestion (drop `.md` → ingested) | **TEST-GATED** | `vaultWatch` + real `vaultRoot` + `proofSpineParams` + running Temporal |
+| Vault → ingestion (drop `.md` → durably persist) | **WIRED (owner-opt-in)** | `SOW_INGEST_WATCH=1` + `SOW_VAULT_ROOT` + a running local Temporal (single-source per ws; multi-source = follow-on) |
 | Propose / semantic-write | **OFF (hard line)** | C5.4b serving oracle (owner-gated; do NOT flip) |
 | macOS Keychain secrets | **UNBUILT (11.4)** | build `KeychainSecretsAdapter`; interim = env vars + `claude` login |
 | Packaging / notarization | **UNBUILT (11.6/11.7)** | fork→utilityProcess + `@electron/rebuild` + prod paths |

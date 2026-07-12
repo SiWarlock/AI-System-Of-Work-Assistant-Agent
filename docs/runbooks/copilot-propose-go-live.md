@@ -4,6 +4,8 @@
 
 Do not flip this live by flag alone. `copilotProposeMode` is an **AND-term** with the content-trust verdict — it can never grant propose on its own.
 
+> **⚠ Update 2026-07-12 (auto-ingest arc — verify the DESIGNED locks, not incidental barriers).** Before the auto-ingest arc, the shipped desktop app always booted with `proofSpineParams` **undefined**, so the semantic-approval dispatch (which the propose path routes through) was **structurally unreachable regardless of flags** — an *incidental* barrier. As of slices 1/2b, on the **auto-ingest-ON path** (`SOW_INGEST_WATCH=1`) `proofSpineParams` is now **defined** AND its shared `revisions` store is now **durable** (`bbabd5f`/`a6cf0ec`) — both dormant propose preconditions are incidentally satisfied. **Propose is STILL genuinely OFF**, but now by its DESIGNED locks ONLY: `copilotProposeMode`/`copilotProposeKnowledge` unset **AND** the C5.4b content-trust oracle stamping nothing → every ask `untrusted`. **Go-live consequence:** the go-live gate MUST verify the flag + the real content-trust oracle **on the exact config the owner will run** (which may have ingest ON) — do NOT rely on `proofSpineParams`-absence as a barrier; it no longer holds on the ingest-ON path. (The durable revisions store is a strict *improvement* for propose-live, not an activation.)
+
 ## What is already built (Phase C, C1–C5.4a)
 
 | Piece | Where | State |
