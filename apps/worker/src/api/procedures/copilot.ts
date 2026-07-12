@@ -379,14 +379,24 @@ export function createStubSynthesis(): CopilotSynthesisPort {
 // (the procedure), mirroring the sibling read procedures: the ports hand back candidate data, and
 // `toUiSafeCopilotAnswer` is the ONE place a candidate becomes servable UI-safe data.
 
-/** The Copilot ask deps — the retrieval + synthesis ports, injected (fakes in tests, interim in boot). */
-export interface CopilotDeps {
-  readonly retrieval: CopilotRetrievalPort;
+/**
+ * The GOVERNED post-retrieval deps — the shared safety core (authoritative posture → route → egress
+ * veto → synthesis-on-the-veto-cleared-route → candidate/UI-safe gate). Every on-request Copilot
+ * synthesis SKILL (ask, briefing, …) reuses `runGovernedCopilotSynthesis` over these deps, so the
+ * safety machinery is single-sourced and cannot drift between skills. A skill supplies its OWN
+ * retrieval (workspace knowledge vs §9.4 Today read-model) on top.
+ */
+export interface GovernedCopilotSynthesisDeps {
   readonly synthesis: CopilotSynthesisPort;
   /** Resolve the AUTHORITATIVE Workspace posture by workspaceId (server-side) — the egress veto's input. */
   readonly workspacePosture: WorkspacePostureResolver;
   /** Select the candidate ProviderRoute the synthesis would egress to (interim: a genuine local route). */
   readonly routeSelector: EgressRouteSelector;
+}
+
+/** The Copilot ASK deps — the governed core + the workspace-knowledge retrieval port. */
+export interface CopilotDeps extends GovernedCopilotSynthesisDeps {
+  readonly retrieval: CopilotRetrievalPort;
 }
 
 /** The validated ask input (narrowed at the procedure boundary). */
@@ -452,27 +462,36 @@ export async function answerCopilotQuestion(
   if (!isOk(retrieved)) return retrieved;
   const scoped = enforceRetrievalScope(input.workspaceId, retrieved.value);
   if (!isOk(scoped)) return scoped;
+  return runGovernedCopilotSynthesis(deps, input.workspaceId, input.question, scoped.value);
+}
 
-  // Egress decision BEFORE synthesis — authoritative posture resolved by workspaceId (server-side).
-  const posture = await deps.workspacePosture.resolve(input.workspaceId);
+/**
+ * The SINGLE-SOURCED governed synthesis core, reused by every on-request Copilot skill (ask, briefing, …).
+ * Given an ALREADY-scope-guarded context (the caller owns retrieval + `enforceRetrievalScope`), it runs the
+ * safety sequence: resolve the AUTHORITATIVE Workspace posture by `workspaceId` (server-side) → select the
+ * candidate route → run the fail-closed Employer-Work egress veto BEFORE any synthesis (a DENY fails closed,
+ * no provider call) → synthesize on the veto-CLEARED route (`decision.value.route`, NEVER re-selected, so the
+ * gate is authoritative over exactly the route that egresses — the P1.2b carry-forward) → gate the candidate
+ * through `toUiSafeCopilotAnswer`. Extracting this makes the veto+gate impossible to drift between skills.
+ */
+export async function runGovernedCopilotSynthesis(
+  deps: GovernedCopilotSynthesisDeps,
+  workspaceId: string,
+  question: string,
+  scopedContext: RetrievedContext,
+): Promise<Result<UiSafeCopilotAnswer, FailureVariant>> {
+  const posture = await deps.workspacePosture.resolve(workspaceId);
   if (!isOk(posture)) return posture; // unknown workspace → fail closed (WORKSPACE_NOT_FOUND)
-  const route = await deps.routeSelector.select(input.workspaceId, posture.value);
+  const route = await deps.routeSelector.select(workspaceId, posture.value);
   if (!isOk(route)) return route;
   const decision = decideCopilotEgress({
-    job: buildCopilotJob(input.workspaceId, route.value),
+    job: buildCopilotJob(workspaceId, route.value),
     route: route.value,
     posture: posture.value,
   });
   if (!isOk(decision)) return decision; // veto DENY (e.g. employer-work cloud, ack OFF) → no synthesis
 
-  // Synthesis MUST use the veto-CLEARED route (decision.value.route) — never re-select — so the gate
-  // is authoritative over exactly the route that egresses (the P1.2b security carry-forward).
-  const candidate = await deps.synthesis.synthesize(
-    input.workspaceId,
-    input.question,
-    scoped.value,
-    decision.value.route,
-  );
+  const candidate = await deps.synthesis.synthesize(workspaceId, question, scopedContext, decision.value.route);
   if (!isOk(candidate)) return candidate;
   return toUiSafeCopilotAnswer(candidate.value, decision.value.egressProcessor);
 }

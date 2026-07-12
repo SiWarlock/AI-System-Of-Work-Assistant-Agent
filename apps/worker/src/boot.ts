@@ -106,6 +106,7 @@ import type { CopilotServingOracle } from "./api/procedures/copilotProvenanceSta
 import { selectServingOracleFactory } from "./api/procedures/servingContextLoader";
 import { createCopilotProposeMcpServer, createCopilotProposeKnowledgeMcpServer, createCopilotGbrainProxyMcpServer, createCopilotVaultMcpServer, createCopilotSkillsMcpServer } from "@sow/providers";
 import type { CopilotSynthesisPort } from "./api/procedures/copilot";
+import { createReadModelBriefingRetrieval, type CopilotBriefingDeps } from "./api/procedures/copilotBriefing";
 import { createClaudeSubscriptionCompletion } from "@sow/providers";
 import type { SystemHealthQueryPort, UiSafeEgressStatus } from "./api/procedures/systemHealth";
 import type {
@@ -728,6 +729,18 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     ...(servingOracleFactory !== undefined ? { servingOracle: servingOracleFactory } : {}),
   });
 
+  // C6 §13.10 b-1 — the on-request Copilot BRIEFING deps: REUSE the copilot bundle's governed core
+  // (synthesis/posture/routeSelector — the single-sourced veto+gate) + a briefing retrieval over the REAL
+  // §9.4 Today read-model (`readModel` structurally satisfies BriefingTodayPort: recentChanges/ingestion/
+  // approvalInbox). Read-only + WS-8-scoped by construction; empty-until-producer today (the read-model is
+  // real but its producer rows fill in as Phase-9 producers land). Propose bridge untouched.
+  const briefing: CopilotBriefingDeps = {
+    synthesis: copilot.synthesis,
+    workspacePosture: copilot.workspacePosture,
+    routeSelector: copilot.routeSelector,
+    retrieval: createReadModelBriefingRetrieval(readModel),
+  };
+
   // §13.10a G4a — route an APPROVED approval to its subject-specific side effect. A `semantic_mutation`
   // card commits its referenced KMP through KnowledgeWriter (`buildSemanticApprovalDispatch`); everything
   // else (external_action) keeps the injected `config.dispatchApproval`. The semantic branch is wired ONLY
@@ -798,6 +811,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     allowlist: config.allowlist,
     readModel,
     copilot,
+    briefing,
     systemHealth,
     approvals,
     dispatchApproval,

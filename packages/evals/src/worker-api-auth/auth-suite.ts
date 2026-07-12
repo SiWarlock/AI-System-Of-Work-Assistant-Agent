@@ -32,6 +32,7 @@ import {
   createLocalWorkspacePosture,
   createLocalRouteSelector,
 } from "@sow/worker/api/procedures/copilot";
+import { createFixtureBriefingRetrieval } from "@sow/worker/api/procedures/copilotBriefing";
 import { runStreamHandshake } from "@sow/worker/api/stream/handshake";
 import { createPushStream } from "@sow/worker/api/stream/pushStream";
 import { createCallerFactory, router, type ApiContext } from "@sow/worker/api/trpc";
@@ -93,6 +94,13 @@ function serverDeps() {
     // Copilot ask backend — never exercised by these AUTH-boundary vectors; empty fixtures suffice.
     copilot: {
       retrieval: createFixtureRetrieval({}),
+      synthesis: createStubSynthesis(),
+      workspacePosture: createLocalWorkspacePosture({}),
+      routeSelector: createLocalRouteSelector(),
+    },
+    // Copilot briefing backend — likewise never exercised here; empty fixtures suffice.
+    briefing: {
+      retrieval: createFixtureBriefingRetrieval({}),
       synthesis: createStubSynthesis(),
       workspacePosture: createLocalWorkspacePosture({}),
       routeSelector: createLocalRouteSelector(),

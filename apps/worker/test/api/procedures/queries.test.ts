@@ -44,6 +44,10 @@ import {
   localWorkspacePosture,
   type CopilotDeps,
 } from "../../../src/api/procedures/copilot";
+import {
+  createFixtureBriefingRetrieval,
+  type CopilotBriefingDeps,
+} from "../../../src/api/procedures/copilotBriefing";
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -257,13 +261,31 @@ function fakeCopilot(): CopilotDeps {
   };
 }
 
+// The Copilot BRIEFING deps for query.copilotBriefing — a fixture Today context over KNOWN_WORKSPACE +
+// the SAME reused governed-core fakes as fakeCopilot (so the router test exercises the mounted path).
+function fakeBriefing(): CopilotBriefingDeps {
+  return {
+    retrieval: createFixtureBriefingRetrieval({
+      [KNOWN_WORKSPACE]: {
+        workspaceId: KNOWN_WORKSPACE,
+        blocks: ["Recent: a decision was logged.", "2 items awaiting triage."],
+        sources: [{ citationId: "chg:1", title: "Vendor review — decision" }],
+      },
+    }),
+    synthesis: createStubSynthesis(),
+    workspacePosture: createLocalWorkspacePosture({ [KNOWN_WORKSPACE]: localWorkspacePosture(KNOWN_WORKSPACE) }),
+    routeSelector: createLocalRouteSelector(),
+  };
+}
+
 // Build an in-process caller over a router that mounts ONLY the query router.
 function makeCaller(
   port: ReadModelQueryPort,
   ctx: ApiContext = AUTHED_CTX,
   copilot: CopilotDeps = fakeCopilot(),
+  briefing: CopilotBriefingDeps = fakeBriefing(),
 ) {
-  const appRouter = router({ query: buildQueryRouter({ readModel: port, copilot }) });
+  const appRouter = router({ query: buildQueryRouter({ readModel: port, copilot, briefing }) });
   const factory = createCallerFactory(appRouter);
   return factory(ctx);
 }
@@ -335,6 +357,24 @@ describe("buildQueryRouter — UI-safe read-model serving (§10/§13)", () => {
     await expect(
       caller.query.copilotAsk({ workspaceId: KNOWN_WORKSPACE, question: "x".repeat(4001) }),
     ).rejects.toThrow();
+  });
+
+  it("query_copilotBriefing_reachable (C6 b-1) — mounted behind authedResolver; KNOWN ws ⇒ cited UI-safe brief", async () => {
+    const caller = makeCaller(fakePort());
+    const res = await caller.query.copilotBriefing({ workspaceId: KNOWN_WORKSPACE });
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) {
+      assertSubsetOfAllowlist(res.value, UI_SAFE_ALLOWLIST.copilotAnswer);
+      expect(res.value.answer.length).toBeGreaterThan(0);
+      expect(res.value.citations[0]!.citationId).toBe("chg:1");
+    }
+  });
+
+  it("query_copilotBriefing fails CLOSED for an UNKNOWN workspace (WS-8, never synthesizes)", async () => {
+    const caller = makeCaller(fakePort());
+    const res = await caller.query.copilotBriefing({ workspaceId: UNKNOWN_WORKSPACE });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
   });
 
   it("ingestion inbox returns DEDICATED UiSafeIngestionItem rows — the approvals ALIAS is REMOVED", async () => {

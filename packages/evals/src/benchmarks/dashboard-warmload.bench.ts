@@ -31,6 +31,7 @@ import {
   createLocalWorkspacePosture,
   createLocalRouteSelector,
 } from "@sow/worker/api/procedures/copilot";
+import { createFixtureBriefingRetrieval } from "@sow/worker/api/procedures/copilotBriefing";
 import { router } from "@sow/worker/api/router";
 import { createCallerFactory, type ApiContext } from "@sow/worker/api/trpc";
 import type { AuthedContext } from "@sow/worker/api/auth/sessionAuth";
@@ -229,6 +230,12 @@ export function makeDashboardServeProbe(deps: DashboardServeProbeDeps): Dashboar
       readModel,
       copilot: {
         retrieval: createFixtureRetrieval({}),
+        synthesis: createStubSynthesis(),
+        workspacePosture: createLocalWorkspacePosture({}),
+        routeSelector: createLocalRouteSelector(),
+      },
+      briefing: {
+        retrieval: createFixtureBriefingRetrieval({}),
         synthesis: createStubSynthesis(),
         workspacePosture: createLocalWorkspacePosture({}),
         routeSelector: createLocalRouteSelector(),

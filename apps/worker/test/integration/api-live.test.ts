@@ -51,6 +51,7 @@ import {
   createLocalWorkspacePosture,
   createLocalRouteSelector,
 } from "../../src/api/procedures/copilot";
+import { createFixtureBriefingRetrieval } from "../../src/api/procedures/copilotBriefing";
 import type { SystemHealthQueryPort } from "../../src/api/procedures/systemHealth";
 import type {
   ApprovalCommandPort,
@@ -126,6 +127,12 @@ function serverDeps(
     readModel: emptyReadModel,
     copilot: {
       retrieval: createFixtureRetrieval({}),
+      synthesis: createStubSynthesis(),
+      workspacePosture: createLocalWorkspacePosture({}),
+      routeSelector: createLocalRouteSelector(),
+    },
+    briefing: {
+      retrieval: createFixtureBriefingRetrieval({}),
       synthesis: createStubSynthesis(),
       workspacePosture: createLocalWorkspacePosture({}),
       routeSelector: createLocalRouteSelector(),

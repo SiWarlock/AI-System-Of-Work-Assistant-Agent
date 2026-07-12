@@ -61,6 +61,11 @@ import {
   type CopilotAskInput,
 } from "./copilot";
 import {
+  answerCopilotBriefing,
+  type CopilotBriefingDeps,
+  type CopilotBriefingInput,
+} from "./copilotBriefing";
+import {
   toUiSafeApproval,
   toUiSafeWorkflowRunRef,
   toUiSafeDashboardCard,
@@ -155,6 +160,9 @@ export interface QueryRouterDeps {
   readonly readModel: ReadModelQueryPort;
   /** The Copilot ask backend (retrieval + synthesis ports) for `query.copilotAsk` (§4.6). */
   readonly copilot: CopilotDeps;
+  /** The Copilot briefing backend (Today read-model retrieval + the shared governed core) for
+   *  `query.copilotBriefing` (C6 §13.10 b-1). */
+  readonly briefing: CopilotBriefingDeps;
 }
 
 // ── Input shapes + plain-function validators (§3 universal boundary rule) ─────
@@ -212,6 +220,14 @@ function parseAskInput(value: unknown): CopilotAskInput {
     workspaceId: requireString(source, "workspaceId"),
     question,
   };
+}
+
+/** tRPC plain-function validator narrowing an unknown payload → CopilotBriefingInput (C6 §13.10 b-1).
+ *  A briefing takes ONLY a workspaceId — the synthesis directive is server-fixed (no client prompt). */
+function parseBriefingInput(value: unknown): CopilotBriefingInput {
+  if (typeof value !== "object" || value === null) throw new Error("invalid_input");
+  const source = value as Record<string, unknown>;
+  return { workspaceId: requireString(source, "workspaceId") };
 }
 
 /** A drill-down pointer into a global item: which workspace's projection to drill. */
@@ -467,7 +483,7 @@ async function resolveGlobalDrillDown(
  * FailureVariant>`.
  */
 export function buildQueryRouter(deps: QueryRouterDeps) {
-  const { readModel, copilot } = deps;
+  const { readModel, copilot, briefing } = deps;
   return router({
     /** Global Today dashboard — UI-safe cards. */
     dashboard: publicProcedure.query(
@@ -523,6 +539,18 @@ export function buildQueryRouter(deps: QueryRouterDeps) {
      * answer, and gates it through `UiSafeCopilotAnswerSchema` before serving. An implied action
      * becomes a proposal routed to Approvals — never a direct write.
      */
+    /**
+     * Copilot on-request briefing (C6 §13.10 b-1) — READ-ONLY, cited, NO side effects. Assembles the
+     * asking workspace's §9.4 Today read-model into a candidate context and runs it through the SAME
+     * governed synthesis core as `copilotAsk` (WS-8 re-guard → egress veto → candidate/UI-safe gate).
+     * Propose bridge untouched (read-only). Takes ONLY a workspaceId (server-fixed directive).
+     */
+    copilotBriefing: publicProcedure.input(parseBriefingInput).query(
+      authedResolver<CopilotBriefingInput, UiSafeCopilotAnswer>(
+        (_ctx, input): Promise<Result<UiSafeCopilotAnswer, FailureVariant>> =>
+          answerCopilotBriefing(briefing, input),
+      ),
+    ),
     copilotAsk: publicProcedure.input(parseAskInput).query(
       authedResolver<CopilotAskInput, UiSafeCopilotAnswer>(
         (_ctx, input): Promise<Result<UiSafeCopilotAnswer, FailureVariant>> =>

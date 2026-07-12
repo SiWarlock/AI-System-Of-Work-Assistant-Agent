@@ -45,6 +45,7 @@ import {
   createLocalWorkspacePosture,
   createLocalRouteSelector,
 } from "../../src/api/procedures/copilot";
+import { createFixtureBriefingRetrieval } from "../../src/api/procedures/copilotBriefing";
 import type { WorkerOriginAllowlist } from "../../src/api/auth/originAllowlist";
 
 // The SORTED field-name set actually present on a projected object.
@@ -358,6 +359,13 @@ function makeServerDeps(over: { expectedToken?: SessionToken } = {}) {
     // Copilot ask backend — never exercised by these serving tests; empty fixtures fail closed.
     copilot: {
       retrieval: createFixtureRetrieval({}),
+      synthesis: createStubSynthesis(),
+      workspacePosture: createLocalWorkspacePosture({}),
+      routeSelector: createLocalRouteSelector(),
+    },
+    // Copilot briefing backend — never exercised here; empty fixtures fail closed.
+    briefing: {
+      retrieval: createFixtureBriefingRetrieval({}),
       synthesis: createStubSynthesis(),
       workspacePosture: createLocalWorkspacePosture({}),
       routeSelector: createLocalRouteSelector(),

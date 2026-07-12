@@ -29,6 +29,7 @@ import type { SessionToken } from "@sow/policy";
 import type { WorkerOriginAllowlist } from "./auth/originAllowlist";
 import { buildQueryRouter, type ReadModelQueryPort } from "./procedures/queries";
 import type { CopilotDeps } from "./procedures/copilot";
+import type { CopilotBriefingDeps } from "./procedures/copilotBriefing";
 import {
   buildCommandRouter,
   type ApprovalCommandPort,
@@ -64,6 +65,8 @@ export interface ApiServerDeps {
   readonly readModel: ReadModelQueryPort;
   /** The Copilot ask backend (retrieval + synthesis) for `query.copilotAsk` (§4.6). */
   readonly copilot: CopilotDeps;
+  /** The Copilot briefing backend (§9.4 Today retrieval + shared governed core) for `query.copilotBriefing` (C6 §13.10 b-1). */
+  readonly briefing: CopilotBriefingDeps;
   readonly systemHealth: SystemHealthQueryPort;
   readonly approvals: ApprovalCommandPort;
   readonly dispatchApproval: DispatchApprovalFn;
@@ -87,7 +90,7 @@ export interface ApiServerDeps {
 function composeAppRouter(deps: ApiServerDeps, pushStream: PushStream) {
   return router({
     health: healthRouter,
-    query: buildQueryRouter({ readModel: deps.readModel, copilot: deps.copilot }),
+    query: buildQueryRouter({ readModel: deps.readModel, copilot: deps.copilot, briefing: deps.briefing }),
     command: buildCommandRouter({
       approvals: deps.approvals,
       dispatchApproval: deps.dispatchApproval,
