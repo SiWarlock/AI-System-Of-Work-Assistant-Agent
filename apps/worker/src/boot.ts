@@ -149,6 +149,10 @@ import {
   type RunningVaultWatcher,
   type VaultDispatch,
 } from "./watch/vaultWatcher";
+// §13 task 11.3-b — the GBrain version-pin BOOT verify step (closes the 11.3-a reachability waiver).
+import { readFile } from "node:fs/promises";
+import { createGbrainVersionProbe, type GbrainVersionProbe } from "@sow/knowledge";
+import { gbrainStartupVerify } from "./gbrainStartupVerify";
 
 // ── config ────────────────────────────────────────────────────────────────────
 
@@ -340,6 +344,20 @@ export interface BootConfig extends BackendsConfig {
     readonly sensitivity: string;
     readonly debounceMs?: number;
   };
+  /**
+   * §13 task 11.3-b — the GBrain version-pin STARTUP verify (OFF unless configured). When supplied,
+   * `bootWorker` best-effort probes the running gbrain against `config/gbrain.pin` at startup and, on
+   * degrade, surfaces the distinct version-pin System-Health item. NEVER blocks/crashes boot (a
+   * gbrain-unavailable / mismatch / PENDING degrade is the EXPECTED safe outcome). Config presence is
+   * the gate — keeps CI/test boots shell-out-free + deterministic; production supplies `pinPath`. The
+   * write-through flip / serving-oracle re-plumb stay HITL — the only effect is the startup HealthItem.
+   */
+  readonly gbrainStartupVerify?: {
+    /** Path to the `config/gbrain.pin` file (absolute or cwd-relative). */
+    readonly pinPath: string;
+    /** Optional injected probe (tests); default = the real `createGbrainVersionProbe()`. */
+    readonly probe?: GbrainVersionProbe;
+  };
 }
 
 /** The assembled live control plane the app shell drives. */
@@ -408,6 +426,9 @@ function createSystemHealthQueryPort(backends: ProofSpineBackends): SystemHealth
 
 /** The audit ref anchoring the degraded controller's worker_down health items. */
 const BOOT_AUDIT_REF: AuditId = auditId("worker-boot:temporal-degraded");
+// §13 task 11.3-b — a dedicated audit subject for the GBrain version-pin startup verify degrades
+// (distinct from the temporal-degraded subject so audit-by-subject stays precise).
+const GBRAIN_VERIFY_AUDIT_REF: AuditId = auditId("worker-boot:gbrain-version-pin");
 
 /**
  * Boot the live worker control plane. Assembles the persistent backends, stands up
@@ -904,6 +925,23 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     // `vaultWatch` configured but no `vaultRoot` — a misconfiguration; surface it, don't
     // silently no-op.
     backends.logger.warn("vault.watch.no_vault_root", { fields: { code: "missing_vault_root" } });
+  }
+
+  // §13 task 11.3-b — the GBrain version-pin verify (OFF unless configured). FIRE-AND-FORGET +
+  // DEGRADED-SAFE: probes the running gbrain against config/gbrain.pin and surfaces the distinct
+  // version-pin health item on degrade; a probe / pin-load / surface fault is caught + boot continues
+  // (mirrors the reconciler). The ~0.5s `gbrain doctor --json` never gates the control plane. The
+  // write-through flip / serving-oracle stay HITL — the only observable effect is the startup HealthItem.
+  if (config.gbrainStartupVerify !== undefined) {
+    const gv = config.gbrainStartupVerify;
+    void gbrainStartupVerify({
+      readPinText: () => readFile(gv.pinPath, "utf8"),
+      probe: gv.probe ?? createGbrainVersionProbe(),
+      surfaceHealth: (item) => backends.healthItems.put(item),
+      now: backends.now,
+      auditRef: GBRAIN_VERIFY_AUDIT_REF,
+      logger: backends.logger,
+    });
   }
 
   let closed = false;
