@@ -1,5 +1,5 @@
 import type { CreateTRPCClient } from "@trpc/client";
-import type { AnyTRPCRouter } from "@trpc/server";
+import type { AppRouter } from "@sow/worker";
 import type { UiSafeDashboardCard } from "@sow/contracts/api/ui-safe";
 
 // §9.4 policy-gated drill-down (renderer side). The renderer is UNTRUSTED: it only
@@ -14,16 +14,15 @@ export type DrillResult =
 
 /** Build the drill-down caller over a live tRPC client. */
 export function createDrillDown(
-  client: CreateTRPCClient<AnyTRPCRouter>,
+  client: CreateTRPCClient<AppRouter>,
 ): (workspaceId: string, projectionType: string) => Promise<DrillResult> {
   return async (workspaceId: string, projectionType: string): Promise<DrillResult> => {
     try {
-      // Generic-router client (full AppRouter typing deferred) → dynamic access.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const c = client as any;
-      const res = await c.query.globalDrillDown.query({ workspaceId, projectionType });
-      if (res?.ok === true && Array.isArray(res.value)) {
-        return { ok: true, cards: res.value as readonly UiSafeDashboardCard[] };
+      const res = await client.query.globalDrillDown.query({ workspaceId, projectionType });
+      // Defense-in-depth: the type says value is a card array, but a malformed runtime value from a
+      // client/server-projector regression is still folded to { ok: false } (a test pins this).
+      if (res.ok === true && Array.isArray(res.value)) {
+        return { ok: true, cards: res.value };
       }
       // A typed denial (DRILL_NOT_PERMITTED / DRILL_TARGET_NOT_FOUND) → no context.
       return { ok: false };

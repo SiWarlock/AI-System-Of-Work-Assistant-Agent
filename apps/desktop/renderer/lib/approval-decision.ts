@@ -1,5 +1,5 @@
 import type { CreateTRPCClient } from "@trpc/client";
-import type { AnyTRPCRouter } from "@trpc/server";
+import type { AppRouter } from "@sow/worker";
 import { UiSafeApprovalSchema, type UiSafeApproval } from "@sow/contracts/api/ui-safe";
 
 // §9.8 S3 approval decision (renderer side). The renderer is UNTRUSTED: it only
@@ -26,23 +26,22 @@ export type DecisionResult =
 
 /** Build the approval-decision caller over a live tRPC client. */
 export function createApprovalDecision(
-  client: CreateTRPCClient<AnyTRPCRouter>,
+  client: CreateTRPCClient<AppRouter>,
 ): (approvalId: string, decision: ApprovalDecision) => Promise<DecisionResult> {
   return async (approvalId: string, decision: ApprovalDecision): Promise<DecisionResult> => {
     try {
-      // Generic-router client (full AppRouter typing deferred) → dynamic access.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const c = client as any;
-      const res = await c.command.decideApproval.mutate({ approvalId, decision, channel: "mac" });
+      const res = await client.command.decideApproval.mutate({ approvalId, decision, channel: "mac" });
       // Accept only a well-formed ok result whose approval RE-VALIDATES against the
       // UI-safe schema (.strict). Defense-in-depth mirroring the stream path
       // (event-stream.ts safeParses every event): the server already projects to
-      // UI-safe (S2), so this is belt-and-suspenders — a leaky/malformed record from a
-      // future server-projector regression is DROPPED (fold to {ok:false}), never
-      // folded into the inbox with a raw `actor`/`payloadHash`.
-      if (res?.ok === true && res.value != null && typeof res.value === "object") {
+      // UI-safe (S2) + the type now says so, so this is belt-and-suspenders — a
+      // leaky/malformed record from a future server-projector regression is DROPPED
+      // (fold to {ok:false}), never folded into the inbox with a raw `actor`/`payloadHash`.
+      if (res.ok === true && res.value != null && typeof res.value === "object") {
         const parsed = UiSafeApprovalSchema.safeParse(res.value.approval);
         if (parsed.success) {
+          // `applied` is NOT schema-validated (only `approval` is) — keep the strict-boolean
+          // coercion so a malformed non-boolean from a server regression folds to `false`.
           return { ok: true, applied: res.value.applied === true, approval: parsed.data };
         }
       }

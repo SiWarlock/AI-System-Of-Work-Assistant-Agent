@@ -1,5 +1,5 @@
 import type { CreateTRPCClient } from "@trpc/client";
-import type { AnyTRPCRouter } from "@trpc/server";
+import type { AppRouter } from "@sow/worker";
 import {
   UiSafeApprovalSchema,
   type UiSafeApproval,
@@ -117,7 +117,7 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
  * on the next push. A shared generation token (or an AbortController) would close it.
  */
 async function hydrateScope(
-  client: CreateTRPCClient<AnyTRPCRouter>,
+  client: CreateTRPCClient<AppRouter>,
   store: Store<UiSafeStoreState>,
   scope: WorkspaceScope,
 ): Promise<void> {
@@ -130,12 +130,10 @@ async function hydrateScope(
   store.dispatch((s) => replaceProjects(s, []));
   store.dispatch((s) => replaceIngestion(s, []));
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const c = client as any;
     if (meta.workspaceId === null) {
       // Global: dashboard + the gated GCL surface. Recent activity AND projects are
       // workspace-scoped (never a cross-workspace blend; WS-8) — they stay cleared under Global.
-      const [cardsR, globalR] = await Promise.all([c.query.dashboard.query(), c.query.global.query()]);
+      const [cardsR, globalR] = await Promise.all([client.query.dashboard.query(), client.query.global.query()]);
       if (store.getSnapshot().scope !== scope) return; // superseded by a newer scope
       if (cardsR?.ok === true) store.dispatch((s) => replaceCards(s, cardsR.value));
       if (globalR?.ok === true) store.dispatch((s) => hydrateGlobal(s, globalR.value));
@@ -143,19 +141,24 @@ async function hydrateScope(
       // allSettled, not all: ONE scoped query's failure (a not-yet-served route, a hiccup)
       // must NOT drop the other two surfaces — each applies independently iff it resolved ok.
       const [cardsR, recentR, projectsR] = await Promise.allSettled([
-        c.query.workspace.query({ workspaceId: meta.workspaceId }),
-        c.query.recentChanges.query({ workspaceId: meta.workspaceId }),
-        c.query.projectList.query({ workspaceId: meta.workspaceId }),
+        client.query.workspace.query({ workspaceId: meta.workspaceId }),
+        client.query.recentChanges.query({ workspaceId: meta.workspaceId }),
+        client.query.projectList.query({ workspaceId: meta.workspaceId }),
       ]);
       if (store.getSnapshot().scope !== scope) return; // superseded by a newer scope
-      if (cardsR.status === "fulfilled" && cardsR.value?.ok === true) {
-        store.dispatch((s) => replaceCards(s, cardsR.value.value));
+      // Bind each ok payload to a local const BEFORE the dispatch closure — TS preserves a
+      // local-const's narrowing into a closure, but not a nested property access's (`settled.value`).
+      if (cardsR.status === "fulfilled" && cardsR.value.ok === true) {
+        const cards = cardsR.value.value;
+        store.dispatch((s) => replaceCards(s, cards));
       }
-      if (recentR.status === "fulfilled" && recentR.value?.ok === true) {
-        store.dispatch((s) => replaceRecentChanges(s, recentR.value.value));
+      if (recentR.status === "fulfilled" && recentR.value.ok === true) {
+        const changes = recentR.value.value;
+        store.dispatch((s) => replaceRecentChanges(s, changes));
       }
-      if (projectsR.status === "fulfilled" && projectsR.value?.ok === true) {
-        store.dispatch((s) => replaceProjects(s, projectsR.value.value));
+      if (projectsR.status === "fulfilled" && projectsR.value.ok === true) {
+        const projects = projectsR.value.value;
+        store.dispatch((s) => replaceProjects(s, projects));
       }
     }
   } catch {
@@ -168,17 +171,14 @@ async function hydrateScope(
 }
 
 async function hydrate(
-  client: CreateTRPCClient<AnyTRPCRouter>,
+  client: CreateTRPCClient<AppRouter>,
   store: Store<UiSafeStoreState>,
 ): Promise<void> {
   try {
-    // Generic-router client (full AppRouter typing deferred) → dynamic access.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const c = client as any;
     const [cardsR, healthR, globalR] = await Promise.all([
-      c.query.dashboard.query(),
-      c.systemHealth.items.query(),
-      c.query.global.query(),
+      client.query.dashboard.query(),
+      client.systemHealth.items.query(),
+      client.query.global.query(),
     ]);
     if (cardsR?.ok === true) store.dispatch((s) => hydrateCards(s, cardsR.value));
     if (healthR?.ok === true) store.dispatch((s) => hydrateHealth(s, healthR.value));
@@ -202,7 +202,7 @@ async function hydrate(
  * Empty-until-producer — returns `[]` today until the producer's Temporal wiring populates the row.
  */
 export async function hydrateIngestionInbox(
-  client: CreateTRPCClient<AnyTRPCRouter>,
+  client: CreateTRPCClient<AppRouter>,
   store: Store<UiSafeStoreState>,
   scope: WorkspaceScope,
 ): Promise<void> {
@@ -212,10 +212,7 @@ export async function hydrateIngestionInbox(
     return;
   }
   try {
-    // Generic-router client (full AppRouter typing deferred) → dynamic access.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const c = client as any;
-    const res = await c.query.ingestionInbox.query({ workspaceId });
+    const res = await client.query.ingestionInbox.query({ workspaceId });
     if (store.getSnapshot().scope !== scope) return; // superseded by a newer scope
     if (res?.ok === true && Array.isArray(res.value)) {
       const valid: UiSafeIngestionItem[] = [];
@@ -245,20 +242,18 @@ export async function hydrateIngestionInbox(
  * why a single cross-scope inbox is WS-8-safe.
  */
 async function hydrateApprovalInbox(
-  client: CreateTRPCClient<AnyTRPCRouter>,
+  client: CreateTRPCClient<AppRouter>,
   store: Store<UiSafeStoreState>,
 ): Promise<void> {
   const workspaceIds = WORKSPACE_SCOPES.map((m) => m.workspaceId).filter(
     (id): id is string => id !== null,
   );
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const c = client as any;
     const results = await Promise.allSettled(
-      workspaceIds.map((workspaceId) => c.query.approvalInbox.query({ workspaceId })),
+      workspaceIds.map((workspaceId) => client.query.approvalInbox.query({ workspaceId })),
     );
     for (const r of results) {
-      if (r.status === "fulfilled" && r.value?.ok === true && Array.isArray(r.value.value)) {
+      if (r.status === "fulfilled" && r.value.ok === true && Array.isArray(r.value.value)) {
         // Re-validate each record against the UI-safe schema (.strict) before it enters
         // the store — the same defense-in-depth the stream path applies; a leaky/malformed
         // record (a server-projector regression) is DROPPED, never folded into the inbox.

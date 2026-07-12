@@ -6,7 +6,7 @@ import {
   wsLink,
   type CreateTRPCClient,
 } from "@trpc/client";
-import type { AnyTRPCRouter } from "@trpc/server";
+import type { AppRouter } from "@sow/worker";
 import { authHeaders } from "./trpc";
 
 // The LIVE tRPC client for the loopback worker (9.4b E): subscriptions over the
@@ -22,7 +22,7 @@ export interface LiveClientConfig {
 }
 
 export interface LiveClient {
-  readonly client: CreateTRPCClient<AnyTRPCRouter>;
+  readonly client: CreateTRPCClient<AppRouter>;
   /** Close the underlying WS connection (stops reconnect attempts). */
   close(): void;
 }
@@ -32,7 +32,7 @@ export function createLiveClient(config: LiveClientConfig): LiveClient {
     url: config.wsUrl,
     connectionParams: () => ({ token: config.token }),
   });
-  const client = createTRPCClient<AnyTRPCRouter>({
+  const client = createTRPCClient<AppRouter>({
     links: [
       splitLink({
         condition: (op) => op.type === "subscription",

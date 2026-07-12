@@ -1,5 +1,5 @@
 import type { CreateTRPCClient } from "@trpc/client";
-import type { AnyTRPCRouter } from "@trpc/server";
+import type { AppRouter } from "@sow/worker";
 import type { UiSafeCopilotAnswer } from "@sow/contracts/api/ui-safe";
 
 // §9.6 A5 Copilot ask (renderer side). The renderer is UNTRUSTED: it only REQUESTS an answer —
@@ -14,16 +14,14 @@ export type AskResult =
 
 /** Build the Copilot ask caller over a live tRPC client. */
 export function createAskCopilot(
-  client: CreateTRPCClient<AnyTRPCRouter>,
+  client: CreateTRPCClient<AppRouter>,
 ): (workspaceId: string, question: string) => Promise<AskResult> {
   return async (workspaceId: string, question: string): Promise<AskResult> => {
     try {
-      // Generic-router client (full AppRouter typing deferred) → dynamic access.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const c = client as any;
-      const res = await c.query.copilotAsk.query({ workspaceId, question });
-      if (res?.ok === true && res.value !== undefined && res.value !== null) {
-        return { ok: true, answer: res.value as UiSafeCopilotAnswer };
+      const res = await client.query.copilotAsk.query({ workspaceId, question });
+      // Defense-in-depth: fold a malformed ok-without-answer (null/undefined at runtime) to { ok: false }.
+      if (res.ok === true && res.value != null) {
+        return { ok: true, answer: res.value };
       }
       // A typed err (WS-8 fail-closed / candidate-data gate rejection) → no answer.
       return { ok: false };

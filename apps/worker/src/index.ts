@@ -37,6 +37,13 @@ export * as gbrainServe from "./gbrainServeSupervisor";
 /** The API server composition: `createApiServer`, the composed `AppRouter`, `ApiServerDeps`, `ApiCaller`. */
 export * as apiServer from "./api/server";
 
+// Flat TOP-LEVEL type re-export of the composed router shape (task 9-approuter-typing): the desktop
+// renderer's typed tRPC client does `import type { AppRouter } from "@sow/worker"`. Needed for the
+// SOURCE-resolution tiers (the desktop node tier, where `main/` also imports the worker's runtime) —
+// the DOM tiers redirect `@sow/worker` at the built `api/server.d.ts` directly. A TYPE-only re-export
+// can't collide with the `apiServer` namespace runtime values above (it binds no value).
+export type { AppRouter, ApiCaller } from "./api/server";
+
 /** The REAL loopback transport: `startApiServer`, `RunningApiServer`, the loopback-bind refusal. */
 export * as apiMount from "./api/mount";
 

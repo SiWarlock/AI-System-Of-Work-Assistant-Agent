@@ -1,5 +1,6 @@
 import type { CreateTRPCClient } from "@trpc/client";
-import type { AnyTRPCRouter } from "@trpc/server";
+import type { AppRouter } from "@sow/worker";
+import type { StreamEvent } from "@sow/contracts/api/events";
 import type { StreamTransport, StreamSubscribeHandlers } from "./event-stream";
 
 // The real §10 push-stream transport: a tRPC `stream.onEvent` subscription over the
@@ -12,25 +13,44 @@ import type { StreamTransport, StreamSubscribeHandlers } from "./event-stream";
 // `item.data` (the StreamEvent) — never the wrapper — and validateStreamEvent gates
 // it before it touches the store.
 
+/**
+ * The client shape of the worker's `stream.onEvent` subscription procedure. The worker DELIBERATELY
+ * types the `stream` sub-router as `AnyRouter` (see `apps/worker/src/api/stream/pushStream.ts`): the
+ * concrete subscription procedure map is NOT nameable across the worker's `declaration: true` emit
+ * (TS2742) — and that erasure is exactly what makes the AppRouter `.d.ts` this typed client consumes
+ * emittable at all. So `AppRouter["stream"]` carries no `onEvent`, and the renderer adapts to the one
+ * subscription through THIS explicit typed shape (a typed assertion, NOT `any`). The item `data` is
+ * anchored to the canonical `@sow/contracts` `StreamEvent` (so the adapter can't drift from the real
+ * event contract) and is STILL re-validated at runtime by `streamEventSchema` downstream (candidate-data).
+ */
+interface StreamOnEventProc {
+  subscribe(
+    input: { readonly lastEventId?: string },
+    handlers: {
+      readonly onStarted?: () => void;
+      readonly onData: (item: { readonly id: string; readonly data: StreamEvent }) => void;
+      readonly onError: (err: unknown) => void;
+      readonly onComplete: () => void;
+    },
+  ): { readonly unsubscribe: () => void };
+}
+
 /** Build a StreamTransport backed by the worker's tRPC push-stream subscription. */
 export function createWsStreamTransport(
-  client: CreateTRPCClient<AnyTRPCRouter>,
+  client: CreateTRPCClient<AppRouter>,
 ): StreamTransport {
   return {
     subscribe(handlers: StreamSubscribeHandlers, lastEventId: string | null): () => void {
-      // The renderer is typed against a generic router (full AppRouter typing is a
-      // deferred worker-track .d.ts emit), so the concrete procedure is accessed
-      // dynamically — validated at runtime by streamEventSchema downstream.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const sub = (client as any).stream.onEvent.subscribe(
-        lastEventId !== null ? { lastEventId } : {},
-        {
-          onStarted: () => handlers.onStarted?.(),
-          onData: (item: { id: string; data: unknown }) => handlers.onData(item.data),
-          onError: (err: unknown) => handlers.onError(err),
-          onComplete: () => handlers.onComplete(),
-        },
-      );
+      // `stream` is an `AnyRouter` on AppRouter by worker design (see StreamOnEventProc above), so the
+      // subscription is reached via the explicit typed shape. `item.data` (the StreamEvent) is
+      // validated at runtime by streamEventSchema downstream.
+      const streamProc = (client.stream as unknown as { readonly onEvent: StreamOnEventProc }).onEvent;
+      const sub = streamProc.subscribe(lastEventId !== null ? { lastEventId } : {}, {
+        onStarted: () => handlers.onStarted?.(),
+        onData: (item) => handlers.onData(item.data),
+        onError: (err) => handlers.onError(err),
+        onComplete: () => handlers.onComplete(),
+      });
       return () => sub.unsubscribe();
     },
   };

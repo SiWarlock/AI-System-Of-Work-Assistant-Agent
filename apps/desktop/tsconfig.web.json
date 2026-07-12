@@ -6,7 +6,14 @@
     "declarationMap": false,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    // Redirect @sow/worker to its BUILT api/server.d.ts (has AppRouter, DOM-safe) + @sow/db to its
+    // built d.ts — importing the worker SOURCE drags @sow/db node source (Buffer vs DOM BlobPart) into
+    // this DOM program. Requires the worker + db dists exist (turbo typecheck dependsOn ^build).
+    "paths": {
+      "@sow/worker": ["../worker/dist/api/server.d.ts"],
+      "@sow/db": ["../../packages/db/dist/index.d.ts"]
+    }
   },
   "include": ["renderer", "preload/api.d.ts"]
 }

@@ -1,13 +1,10 @@
 import { createTRPCClient, httpBatchLink, type CreateTRPCClient } from "@trpc/client";
-import type { AnyTRPCRouter } from "@trpc/server";
-
-// NOTE (deferred, task 9.x): the client is typed against tRPC's generic router
-// rather than the worker's concrete `AppRouter`. Importing the worker's
-// source-inferred router type drags `packages/db` source into the renderer's DOM
-// tsconfig, where node's `Buffer` conflicts with DOM's `BlobPart`. End-to-end
-// procedure typing needs the worker to emit a `.d.ts` type entry (a worker-track
-// change). The client is fully CORRECT at runtime; rendered DATA stays fully typed
-// via `@sow/contracts` UI-safe types.
+// The renderer's DOM tsconfigs redirect `@sow/worker` to its BUILT `api/server.d.ts` (see the `paths`
+// in tsconfig.web.json / tsconfig.testdom.json) — importing the worker's SOURCE-inferred router would
+// drag `@sow/db` node source into the DOM program (node `Buffer` vs DOM `BlobPart`). Build-order:
+// `turbo typecheck dependsOn ^build`, so the worker/db dist `.d.ts` exist before the desktop typecheck;
+// a bare `tsc`/IDE on a clean tree must build `@sow/worker` + `@sow/db` first.
+import type { AppRouter } from "@sow/worker";
 
 export interface WorkerClientConfig {
   /** The loopback worker base URL, e.g. http://127.0.0.1:<port>. Provided by main (9.4). */
@@ -28,8 +25,8 @@ export function authHeaders(token: string): Record<string, string> {
 }
 
 /** Build the authenticated tRPC client for the loopback worker API. */
-export function createWorkerClient(config: WorkerClientConfig): CreateTRPCClient<AnyTRPCRouter> {
-  return createTRPCClient<AnyTRPCRouter>({
+export function createWorkerClient(config: WorkerClientConfig): CreateTRPCClient<AppRouter> {
+  return createTRPCClient<AppRouter>({
     links: [
       httpBatchLink({
         url: config.url,

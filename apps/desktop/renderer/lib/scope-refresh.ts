@@ -1,5 +1,5 @@
 import type { CreateTRPCClient } from "@trpc/client";
-import type { AnyTRPCRouter } from "@trpc/server";
+import type { AppRouter } from "@sow/worker";
 import type { Store, UiSafeStoreState } from "../store";
 import { replaceCards } from "../store/projections";
 import { scopeMeta, type WorkspaceScope } from "../store/scope";
@@ -23,7 +23,7 @@ import { scopeMeta, type WorkspaceScope } from "../store/scope";
  * Backpressure coalesces read_model.change at the source, so refreshes stay bounded.
  */
 export function createScopeRefresher(
-  client: CreateTRPCClient<AnyTRPCRouter>,
+  client: CreateTRPCClient<AppRouter>,
   store: Store<UiSafeStoreState>,
 ): { refresh: (scope: WorkspaceScope) => Promise<void> } {
   let latest = 0;
@@ -33,12 +33,10 @@ export function createScopeRefresher(
       if (meta.workspaceId === null) return; // Global stays live via the direct fold
       const token = ++latest;
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const c = client as any;
-        const cardsR = await c.query.workspace.query({ workspaceId: meta.workspaceId });
+        const cardsR = await client.query.workspace.query({ workspaceId: meta.workspaceId });
         if (token !== latest) return; // superseded by a newer refresh (latest-wins)
         if (store.getSnapshot().scope !== scope) return; // scope switched away mid-flight
-        if (cardsR?.ok === true) store.dispatch((s) => replaceCards(s, cardsR.value));
+        if (cardsR.ok === true) store.dispatch((s) => replaceCards(s, cardsR.value));
       } catch {
         // Best-effort — the prior snapshot stands; the next push/scope-change refreshes.
       }
