@@ -4,7 +4,7 @@
 - **Phase:** 11 (Deployment / Install · §13) — plus the tail of the make-it-real Option-C arc (§9, task 11.8)
 - **Implementer:** `impl8` (single-track, `main`); team `session-f2673cd5`; orchestrators `orch7` → `orch9` (cycled mid-session), lead-driven close-out
 - **Predecessor:** [`058-2026-07-11-make-it-real-c1-c3a.md`](058-2026-07-11-make-it-real-c1-c3a.md)
-- **Successor session:** _(next implementer — impl10; bin-path hardening / 11.3 pin-verify)_
+- **Successor session:** [060-2026-07-12-impl10-pin-verify-real-and-phase9-pivot.md](060-2026-07-12-impl10-pin-verify-real-and-phase9-pivot.md)
 
 ## Why this session existed
 
