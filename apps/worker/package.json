@@ -5,6 +5,9 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
+  "bin": {
+    "sow-doctor": "./dist/install/bin/doctor.js"
+  },
   "exports": {
     ".": {
       "sow-built": "./dist/index.js",

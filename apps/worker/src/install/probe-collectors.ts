@@ -115,7 +115,8 @@ async function probeStartable(run: RunCommand, bin: string): Promise<{ readonly 
   return { startable: r.ok };
 }
 
-async function probeGitRemotes(
+/** The git-remotes probe for ONE vault repo dir — exported so a multi-vault caller folds it per-vault (11.5-d). */
+export async function probeGitRemotes(
   run: RunCommand,
   repoDir: string,
   localBackupAccepted: boolean,
@@ -233,9 +234,10 @@ export interface InstallDoctorInput extends PrerequisiteProbeInput {
 /**
  * Compose the real collectors into the pure engine: the prerequisite (11.5-a), macOS-security
  * (11.5-b), and one-writer POSTURE (11.5-c) probes are collected in parallel, merged into the full
- * 10-field snapshot, and fed to `runDoctor`. The doctor CLI / repair COMMAND that calls this is a
- * later 11.5 slice (a documented waiver, as with `runDoctor`'s own build); the real adapters are
- * exercised via the gated tests.
+ * 10-field snapshot, and fed to `runDoctor`. This is the SINGLE-vault composition; the 11.5-d CLI
+ * (`runInstallDoctor`) folds the per-vault probes (`probeVaultAcl`/`probeGitRemotes`) across ALL
+ * configured vaults instead, so it composes the collectors directly rather than through this. Kept
+ * as the single-vault convenience + the collector→engine wiring anchor (its tests pin that contract).
  */
 export async function runPrerequisiteDoctor(input: InstallDoctorInput): Promise<DoctorReport> {
   const [prerequisite, security, posture] = await Promise.all([

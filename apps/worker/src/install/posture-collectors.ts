@@ -128,7 +128,8 @@ function parseVaultAclSoleWrite(stdout: string, worker: string): boolean {
   return true;
 }
 
-async function probeVaultAcl(
+/** The vault-ACL probe for ONE vault dir — exported so a multi-vault caller folds it per-vault (11.5-d). */
+export async function probeVaultAcl(
   run: RunCommand,
   vaultDir: string,
   workerPrincipal: string,
