@@ -376,6 +376,51 @@ export interface PendingKnowledgeMutationRepository {
 }
 
 /**
+ * A durable KnowledgeWriter commit record — the persisted shape of the knowledge-layer
+ * `CommittedRevision` (packages/knowledge revision.ts). STRUCTURALLY IDENTICAL to it (the
+ * worker-layer store adapter copies field-for-field so a divergence is a compile error); it
+ * is redefined here because @sow/db MUST NOT import @sow/knowledge (the §2.5 import direction
+ * is knowledge → db, never the reverse). `workflowRunRef` + `auditRecord` are @sow/contracts
+ * seam types — persisted as one json column each; the AuditRecord carries SUMMARIES ONLY (§16).
+ */
+export interface CommittedRevisionRow {
+  readonly revisionId: string;
+  readonly baseRevisionId: string;
+  /** The KnowledgeWriter idempotency key — the store identity (exactly-once PK). */
+  readonly idempotencyKey: string;
+  readonly planId: string;
+  readonly actor: string;
+  readonly sourceEventRef: string;
+  readonly workflowRunRef: WorkflowRunRef;
+  readonly auditRecord: AuditRecord;
+  readonly committedAt: string;
+}
+
+/**
+ * Knowledge-revision store — OPERATIONAL TRUTH (§4 / §6 / §16), the DURABLE substrate behind
+ * the KnowledgeWriter's idempotent-replay short-circuit. Append-only, keyed by the writer's
+ * `idempotencyKey`; NOT rebuildable (a lost row re-opens a duplicate commit). Replaces the
+ * worker's in-memory `Map` stub — the persisted row survives a worker restart (the exactly-once
+ * substrate), which the in-memory map cannot. The worker-layer adapter maps this onto the
+ * @sow/knowledge `KnowledgeRevisionStore` port at the composition root (fail-closed: a real
+ * fault REJECTS — never a false "no prior commit" that would let the writer double-commit).
+ */
+export interface KnowledgeRevisionRepository {
+  /**
+   * Idempotency lookup by the KnowledgeWriter `idempotencyKey` (returns `not_found` when
+   * unseen — the writer reads this BEFORE any write to short-circuit a replay).
+   */
+  getByIdempotencyKey(idempotencyKey: string): DbResult<CommittedRevisionRow>;
+  /**
+   * Persist a freshly committed revision — FIRST-WRITE-WINS, idempotent no-op on a duplicate
+   * `idempotencyKey` (`ok(void)` either way; never two revisions for one key — the exactly-once
+   * substrate). The writer already short-circuits via `getByIdempotencyKey`, so a same-key
+   * `record` is a defensive backstop (a concurrent/replay writer that raced the short-circuit).
+   */
+  record(revision: CommittedRevisionRow): DbResult<void>;
+}
+
+/**
  * Connector cursors — OPERATIONAL TRUTH (a lost cursor forces a full re-sync, so
  * it is not rebuildable). One cursor per (connectorId, workspaceId); `upsert`
  * advances it.

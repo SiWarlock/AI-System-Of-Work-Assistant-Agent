@@ -51,12 +51,14 @@ import {
 import type {
   ApprovalRepository,
   AuditRepository,
+  CommittedRevisionRow,
   ConnectorCursorRecord,
   ConnectorCursorRepository,
   DbError,
   DbErrorCode,
   EventLogRecord,
   EventLogRepository,
+  KnowledgeRevisionRepository,
   GclProjectionRepository,
   HealthItemRepository,
   InstanceLeaseRepository,
@@ -94,6 +96,7 @@ interface OperationalRepositories {
   readonly approvals: ApprovalRepository;
   readonly outbox: OutboxRepository;
   readonly pendingKnowledgeMutations: PendingKnowledgeMutationRepository;
+  readonly knowledgeRevisions: KnowledgeRevisionRepository;
   readonly connectorCursors: ConnectorCursorRepository;
   readonly providerState: ProviderStateRepository;
   readonly readModels: ReadModelRepository;
@@ -166,6 +169,7 @@ const PG_TABLES: readonly PgTable[] = [
   pgSchema.approvals,
   pgSchema.outbox,
   pgSchema.pendingKnowledgeMutations,
+  pgSchema.knowledgeRevisions,
   pgSchema.connectorCursors,
   pgSchema.providerProfiles,
   pgSchema.readModels,
@@ -317,6 +321,25 @@ function pendingKmp(
     ...over,
   };
 }
+/**
+ * A durable KnowledgeWriter commit record keyed by `idempotencyKey`. `workflowRunRef` +
+ * `auditRecord` are the frozen @sow/contracts fixtures (json columns; round-trip lossless).
+ */
+function committedRevisionRow(
+  over: Partial<CommittedRevisionRow> & Pick<CommittedRevisionRow, "idempotencyKey">,
+): CommittedRevisionRow {
+  return {
+    revisionId: "rev:aaaa",
+    baseRevisionId: "rev:0000",
+    planId: "plan-kr-1",
+    actor: "KnowledgeWriter",
+    sourceEventRef: "evt-kr-1",
+    workflowRunRef: validWorkflowRunRef,
+    auditRecord: validAuditRecord,
+    committedAt: "2026-07-12T00:00:00.000Z",
+    ...over,
+  };
+}
 function cursor(
   over: Partial<ConnectorCursorRecord> & Pick<ConnectorCursorRecord, "connectorId" | "workspaceId">,
 ): ConnectorCursorRecord {
@@ -394,6 +417,8 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(typeof repos.approvals.applyTransition).toBe("function");
       expect(typeof repos.outbox.enqueue).toBe("function");
       expect(typeof repos.pendingKnowledgeMutations.record).toBe("function");
+      expect(typeof repos.knowledgeRevisions.record).toBe("function");
+      expect(typeof repos.knowledgeRevisions.getByIdempotencyKey).toBe("function");
       expect(typeof repos.connectorCursors.upsert).toBe("function");
       expect(typeof repos.providerState.upsert).toBe("function");
       expect(typeof repos.readModels.put).toBe("function");
@@ -723,6 +748,51 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(
         unwrapErr(await repos.pendingKnowledgeMutations.update(pendingKmp({ planId: "ghost" }))).code,
       ).toBe("not_found");
+    });
+  });
+
+  // ── knowledge-revision store (§4/§6/§16 — durable KnowledgeWriter idempotency) ─
+  describe("KnowledgeRevisionRepository", () => {
+    it("record → getByIdempotencyKey round-trips all fields (workflowRunRef + auditRecord JSON lossless)", async () => {
+      unwrap(await repos.knowledgeRevisions.record(committedRevisionRow({ idempotencyKey: "idem-1" })));
+      const got = unwrap(await repos.knowledgeRevisions.getByIdempotencyKey("idem-1"));
+      expect(got.idempotencyKey).toBe("idem-1");
+      expect(got.revisionId).toBe("rev:aaaa");
+      expect(got.baseRevisionId).toBe("rev:0000");
+      expect(got.planId).toBe("plan-kr-1");
+      expect(got.actor).toBe("KnowledgeWriter");
+      expect(got.sourceEventRef).toBe("evt-kr-1");
+      expect(got.committedAt).toBe("2026-07-12T00:00:00.000Z");
+      // The two json columns round-trip STRUCTURALLY equal to the frozen contract fixtures.
+      expect(got.workflowRunRef).toEqual(validWorkflowRunRef);
+      expect(got.auditRecord).toEqual(validAuditRecord);
+    });
+
+    it("getByIdempotencyKey on an unknown key is a typed not_found", async () => {
+      expect(unwrapErr(await repos.knowledgeRevisions.getByIdempotencyKey("never")).code).toBe(
+        "not_found",
+      );
+    });
+
+    it("record is FIRST-WRITE-WINS: a duplicate idempotencyKey is an idempotent no-op (ok), original preserved", async () => {
+      unwrap(await repos.knowledgeRevisions.record(committedRevisionRow({ idempotencyKey: "idem-1" })));
+      // A second record for the SAME key with DIVERGENT content is a no-op (ok(void)), NOT a
+      // second row and NOT an error — the exactly-once substrate (§16). The FIRST write wins.
+      unwrap(
+        await repos.knowledgeRevisions.record(
+          committedRevisionRow({
+            idempotencyKey: "idem-1",
+            revisionId: "rev:SWAPPED",
+            planId: "plan-SWAPPED",
+            actor: "attacker",
+          }),
+        ),
+      );
+      const got = unwrap(await repos.knowledgeRevisions.getByIdempotencyKey("idem-1"));
+      // Exactly one revision for the key, and it is the ORIGINAL (never the swapped second write).
+      expect(got.revisionId).toBe("rev:aaaa");
+      expect(got.planId).toBe("plan-kr-1");
+      expect(got.actor).toBe("KnowledgeWriter");
     });
   });
 

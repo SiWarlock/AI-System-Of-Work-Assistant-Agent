@@ -11,8 +11,8 @@ import type { PGlite } from "@electric-sql/pglite";
 import { getTableConfig, type PgTable } from "drizzle-orm/pg-core";
 import * as schema from "../../src/schema/pg/index";
 
-// Explicit table list (deterministic order; the pg schema barrel re-exports exactly
-// these ten operational-store tables — Unit 2.1 / §4, mirroring the sqlite barrel).
+// Explicit table list (deterministic order; the pg schema barrel re-exports each of
+// these operational-store tables — Unit 2.1 / §4, mirroring the sqlite barrel).
 const TABLES: readonly PgTable[] = [
   schema.workspaceConfig,
   schema.eventLog,
@@ -21,6 +21,7 @@ const TABLES: readonly PgTable[] = [
   schema.approvals,
   schema.outbox,
   schema.pendingKnowledgeMutations,
+  schema.knowledgeRevisions,
   schema.connectorCursors,
   schema.providerProfiles,
   schema.readModels,

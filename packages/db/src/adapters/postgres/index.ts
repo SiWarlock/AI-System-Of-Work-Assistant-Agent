@@ -44,6 +44,7 @@ import type {
   ApprovalTransitionOutcome,
   AuditQuery,
   AuditRepository,
+  CommittedRevisionRow,
   ConnectorCursorRecord,
   ConnectorCursorRepository,
   DbError,
@@ -52,6 +53,7 @@ import type {
   GclProjectionRepository,
   HealthItemRepository,
   InstanceLeaseRepository,
+  KnowledgeRevisionRepository,
   LeaseRecordRow,
   OutboxEntry,
   OutboxRepository,
@@ -108,6 +110,7 @@ export interface PostgresRepositories {
   readonly approvals: ApprovalRepository;
   readonly outbox: OutboxRepository;
   readonly pendingKnowledgeMutations: PendingKnowledgeMutationRepository;
+  readonly knowledgeRevisions: KnowledgeRevisionRepository;
   readonly connectorCursors: ConnectorCursorRepository;
   readonly providerState: ProviderStateRepository;
   readonly readModels: ReadModelRepository;
@@ -138,6 +141,7 @@ type EventLogRow = typeof schema.eventLog.$inferSelect;
 type ApprovalRow = typeof schema.approvals.$inferSelect;
 type OutboxRow = typeof schema.outbox.$inferSelect;
 type PendingKmpRow = typeof schema.pendingKnowledgeMutations.$inferSelect;
+type KnowledgeRevisionDbRow = typeof schema.knowledgeRevisions.$inferSelect;
 type CursorRow = typeof schema.connectorCursors.$inferSelect;
 type ReadModelRow = typeof schema.readModels.$inferSelect;
 type WriteReceiptDbRow = typeof schema.writeReceipts.$inferSelect;
@@ -203,6 +207,23 @@ function toPendingKmp(r: PendingKmpRow): PendingKnowledgeMutation {
     status: r.status,
     recordedAt: r.recordedAt,
     settledAt: r.settledAt ?? undefined,
+  };
+}
+
+function toCommittedRevision(r: KnowledgeRevisionDbRow): CommittedRevisionRow {
+  return {
+    revisionId: r.revisionId,
+    baseRevisionId: r.baseRevisionId,
+    idempotencyKey: r.idempotencyKey,
+    planId: r.planId,
+    actor: r.actor,
+    sourceEventRef: r.sourceEventRef,
+    // `workflowRunRef` + `auditRecord` are json columns → already structured values. They were
+    // written verbatim by the KnowledgeWriter (not candidate data), so they are cast back to the
+    // DTO's contract types without re-validation (the writer is the sole author — safety rule 1).
+    workflowRunRef: r.workflowRunRef as CommittedRevisionRow["workflowRunRef"],
+    auditRecord: r.auditRecord as CommittedRevisionRow["auditRecord"],
+    committedAt: r.committedAt,
   };
 }
 
@@ -644,6 +665,33 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
           .returning();
         const row = rows[0];
         return row ? ok(toPendingKmp(row)) : err(notFound(`pending-kmp ${entry.planId}`));
+      }),
+  };
+
+  const knowledgeRevisions: KnowledgeRevisionRepository = {
+    getByIdempotencyKey: (idempotencyKey) =>
+      run(async () => {
+        const rows = await db
+          .select()
+          .from(schema.knowledgeRevisions)
+          .where(eq(schema.knowledgeRevisions.idempotencyKey, idempotencyKey))
+          .limit(1);
+        const row = rows[0];
+        return row
+          ? ok(toCommittedRevision(row))
+          : err(notFound(`knowledge-revision ${idempotencyKey}`));
+      }),
+    record: (revision) =>
+      run(async () => {
+        // FIRST-WRITE-WINS: a duplicate `idempotencyKey` (the PK) is an idempotent NO-OP
+        // (ON CONFLICT DO NOTHING → never two revisions for one key; the exactly-once
+        // substrate, §16). Unlike the outbox/pending-kmp `conflict`-on-duplicate, the
+        // KnowledgeWriter `record` port returns void (no conflict channel) and a same-key
+        // commit IS the same commit — so keeping the FIRST write is the safe, idempotent
+        // result (the writer already short-circuits via `getByIdempotencyKey`; this is the
+        // defensive backstop for a concurrent/replay writer that raced the short-circuit).
+        await db.insert(schema.knowledgeRevisions).values(revision).onConflictDoNothing();
+        return ok(undefined);
       }),
   };
 
@@ -1122,6 +1170,7 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
     approvals,
     outbox,
     pendingKnowledgeMutations,
+    knowledgeRevisions,
     connectorCursors,
     providerState,
     readModels,

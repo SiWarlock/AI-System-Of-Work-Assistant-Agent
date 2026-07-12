@@ -11,8 +11,8 @@ import * as schema from "../../src/schema/index";
 
 type SqliteConnection = InstanceType<typeof DatabaseConstructor>;
 
-// Explicit table list (deterministic order; the schema barrel re-exports exactly
-// these ten operational-store tables — Unit 1.14 / §4).
+// Explicit table list (deterministic order; the schema barrel re-exports each of
+// these operational-store tables — Unit 1.14 / §4).
 const TABLES: readonly SQLiteTable[] = [
   schema.workspaceConfig,
   schema.eventLog,
@@ -21,6 +21,7 @@ const TABLES: readonly SQLiteTable[] = [
   schema.approvals,
   schema.outbox,
   schema.pendingKnowledgeMutations,
+  schema.knowledgeRevisions,
   schema.connectorCursors,
   schema.providerProfiles,
   schema.readModels,

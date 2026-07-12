@@ -14,6 +14,8 @@ export * from "./approvals";
 export * from "./outboxes";
 // §13.10a — the pending-KMP store (the semantic-write sibling of the outbox).
 export * from "./pending-kmp";
+// §6 / §16 — the durable KnowledgeWriter idempotent-replay index (task 11.1).
+export * from "./knowledge-revisions";
 export * from "./connector-cursors";
 export * from "./provider-state";
 export * from "./read-models";
