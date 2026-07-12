@@ -38,6 +38,8 @@ export * from "./gbrain/mcp-read-adapter";
 export * from "./gbrain/index-sync";
 export * from "./gbrain/rebuild";
 export * from "./gbrain/version-pin";
+export * from "./gbrain/startup-verify";
+export * from "./gbrain/gbrain-version-probe";
 export * from "./gbrain/write-fence";
 
 // ── gbrain derive: the gbrain-independent CanonicalFactDeriver (parity reference) ─
