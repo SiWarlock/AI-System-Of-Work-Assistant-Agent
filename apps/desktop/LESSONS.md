@@ -85,3 +85,64 @@ The right fix is a **parallel second tier** that leaves the node tier exactly as
 A render test that mounts the extracted-verbatim shell (the §9.4 switcher) is worth more than the assertion in the commit message: it **proves** an "moved structure, not behavior" refactor claim instead of trusting it.
 
 **Rule:** cover component behavior with a **second** jsdom test tier (`test-dom/` + `tsconfig.testdom.json` + per-file `@vitest-environment jsdom`), never by adding DOM to the node tier — and scope the DOM tsconfig's `include` to `test-dom` so `App.tsx`'s `import.meta.env` isn't dragged in (components are checked transitively).
+
+---
+
+## <a id="5"></a>5. Consume a node-heavy workspace package's inferred type surface via its BUILT `.d.ts` (surgical `paths`), never source — source drags node globals into the DOM program
+
+**Date:** 2026-07-12.
+**Source slice:** task 36 / brief `036-9-approuter-typing-renderer-client` (`4ee886d`).
+
+The renderer's tRPC client was typed against tRPC's generic `AnyTRPCRouter` with 9 `client as any` casts, deferring end-to-end procedure typing. The obvious fix — `import type { AppRouter } from "@sow/worker"` — fails under the desktop DOM tsconfig: resolving `@sow/worker` (and, transitively, `@sow/db`) from SOURCE pulls node-typed source (`node:*`, `Buffer`) into the DOM program, where the node `Buffer` global collides with DOM's `BlobPart`. `skipLibCheck` does NOT help — it skips `.d.ts`, not source. `--explainFiles` pinpointed the exact source-pull: of {contracts, db, domain, policy} reachable from `AppRouter`, only `@sow/db` is node-heavy.
+
+The fix is to consume the node-heavy packages' BUILT declarations, not their source:
+- Flip `declaration: true` in each node-heavy package's `tsconfig.build.json` (`@sow/worker`, `@sow/db`) so `pnpm build` emits `dist/**/*.d.ts`.
+- In the DOM tsconfig(s) — `tsconfig.web.json` **and** `tsconfig.testdom.json` (both DOM tiers pull the client) — add **surgical `paths`** redirecting ONLY the node-heavy specifiers to their built declarations: `@sow/worker` → `../worker/dist/api/server.d.ts` (the narrow file that exports `AppRouter` directly — `index.d.ts` re-drags the whole surface) and `@sow/db` → `../../packages/db/dist/index.d.ts`. Leave DOM-safe packages (contracts/domain/policy) on source. Reading a `.d.ts` under `skipLibCheck` never pulls the node globals the DOM lib conflicts with. `turbo typecheck` `dependsOn: ["^build"]` guarantees the dist declarations exist before the desktop typecheck; a bare local `tsc -p tsconfig.web.json` needs the upstream build first.
+- The node tier (`tsconfig.node.json`) needs NO redirect — no DOM lib ⇒ no `BlobPart` conflict — but it resolves `@sow/worker` from source, so the package's `src/index.ts` must carry a type-only top-level `export type { AppRouter, ApiCaller }` (the runtime entry does `export * as apiServer from "./api/server"`, a namespace — no top-level `AppRouter` without the re-export; type-only, no runtime collision).
+
+**Corollary — an inferred type surface may DELIBERATELY erase a non-nameable member to stay declaration-emittable; the consumer bridges it with a TYPED adapter, not `any`.** `composeAppRouter` mounts the subscription sub-router typed `AnyRouter` on purpose: its concrete procedure map isn't nameable across a `declaration: true` emit (TS2742; `apps/worker/src/api/stream/pushStream.ts:131-139`). So on the emitted `AppRouter`, `stream.onEvent` is erased while query/command/systemHealth type perfectly. The renderer reaches it via a typed, compile-checked adapter — `client.stream as unknown as { onEvent: StreamOnEventProc }`, `StreamOnEventProc` anchored to the `@sow/contracts` `StreamEvent` contract + still `safeParse`d at runtime — NOT `client as any`. Net: end-to-end typing with zero `as any`/`@ts-expect-error` in `renderer/lib`. (Extends Lesson §1's `sow-built`/structure-preserving-`dist` discipline to the TYPE-consumption direction.)
+
+**Corollary — a typing refactor must NOT change runtime behavior.** Concrete router types make some runtime guards look TS-redundant (a field is "always" an array / non-null on the type), but downstream tests + server-regressions still pin those defenses — a desktop test caught a dropped `Array.isArray` fold during this slice. Restore every runtime guard the types make redundant (drilldown `Array.isArray`, copilot/approval null-guards, `applied === true` strict-boolean coercion); the types are a compile-time aid, not a runtime guarantee about what the server actually sent.
+
+**Rule:** consume a node-heavy workspace package's inferred type surface via its BUILT `.d.ts` through surgical `paths` in the DOM tsconfig(s) — never source (source drags `Buffer` into the DOM program → `BlobPart` conflict; `skipLibCheck` skips `.d.ts`, not source); bridge any deliberately-erased (TS2742) member with a typed adapter, not `any`, and keep every runtime guard the concrete types make TS-redundant.
+
+**Pin:** the repo-wide `pnpm -w turbo run typecheck` gate (the web + testdom tiers fail if the `paths` redirect regresses) + `grep -rn "client as any" apps/desktop/renderer` returns 0 (no renderer client casts remain).
+
+---
+
+## <a id="6"></a>6. Renderer command-callers fail closed uniformly, and mint a DETERMINISTIC idempotency key for replay-safe re-entry
+
+**Date:** 2026-07-12.
+**Source slices:** approval-decision (9.8) + triage-disposition (9.7, task 37, `d4f38cf`).
+
+The renderer is UNTRUSTED — it only REQUESTS a mutation; the worker + pipeline own the effect (one-writer, exactly-once, any workspace binding). Two conventions now recur across every renderer command-caller (`createApprovalDecision`, `createTriageDisposition`):
+
+1. **Fail closed uniformly.** A command-caller folds EVERY non-success path — a typed `err` Result, a transport throw, AND a malformed/leaky `ok` (a `.strict()` schema re-validation failure) — to a single `{ ok: false }`, and surfaces nothing. A failed command never shows a partial/stale/leaky result; the UI keeps the item + a non-blocking `role="alert"` affordance. Wrap the `.mutate(...)` in try/catch (transport throw → `{ ok: false }`), and re-validate any returned UI-safe record against its `.strict()` schema (defense-in-depth against a future server-projector regression — the type says it's UI-safe, but a leaky record is DROPPED, never folded into the store).
+
+2. **Mint a DETERMINISTIC idempotency key** when the command re-enters an idempotent pipeline that REUSES the caller's key. `UiSafeIngestionItem` carries no key (raw refs are dropped at the UI-safe boundary) and the worker reuses the caller's key verbatim — so a replay / double-click must land the SAME key → one effect. Derive it purely from stable inputs: `triageIdempotencyKey(sourceId, disposition) = ` `${sourceId}:${disposition}`. NEVER a fresh per-click UUID (defeats dedupe); NEVER surface the key on the UI-safe contract (heavier + the caller-mints model is what the command expects).
+
+**Caveat — the deterministic key dedupes the SAME (target, action), not DISTINCT actions on one target.** A fast Accept-then-Reject on one item mints two DISTINCT keys → two pipeline effects. Closing that (a per-card in-flight disable) is a shared UX-robustness follow-up across Approvals + triage; the same-button double-click is already deduped.
+
+**Rule:** a renderer command-caller returns a typed `{ ok }` result, folds typed-err / transport-throw / malformed-ok all to `{ ok: false }` (surface nothing; keep the item + a `role="alert"` affordance), and — for an idempotent-re-entry command — mints a DETERMINISTIC idempotency key from stable inputs so a replay/double-click lands one effect.
+
+**Pin:** each command-caller has unit tests asserting the ok / typed-err / transport-throw / malformed-ok folds + (for keyed commands) same-input-same-key / distinct-input-distinct-key; the key is a pure function of its inputs.
+
+---
+
+## <a id="7"></a>7. A roving listbox in a POPUP also owns the open/close focus loop — focus-on-open + return-focus-to-trigger + reset-on-open — and the return-focus guard must arm ONLY while open
+
+**Date:** 2026-07-12.
+**Source slice:** ScopeSwitcher popup keyboard loop (task 38, `1110024`). Extends the shared roving-listbox contract (the project-wide roving lesson, `packages/contracts/LESSONS.md#22`; desktop a11y lessons are currently split between that file and this one — reconcile the canonical home at a close-out).
+
+The shared `useRovingListbox` owns the WITHIN-listbox roving-tabindex behavior. When that listbox is rendered inside a POPUP (a menu-button-opens-listbox, e.g. the workspace ScopeSwitcher), the popup ALSO owns a focus loop the roving hook does not:
+- **focus-on-open** — opening moves focus into the listbox onto the active (selected) option (the user should not have to Tab onto it). Drive it from the hook via an OPTIONAL `open?: boolean` — on the false→true edge, reset the roving activeIndex to the selected entry + focus the active option; `undefined` ⇒ unchanged, so an always-visible consumer (Projects) is unaffected.
+- **return-focus-to-trigger** — a KEYBOARD-driven close (Escape or a selection) returns focus to the trigger button; an outside-click or tab-away close does NOT (focus follows the user's action). Implement it component-local (the hook stays trigger-agnostic) — mirror an existing same-file precedent if one exists (here the Copilot-rail `returnFocusToRail`).
+- **reset-on-open** — reopening starts the roving position at the selected option, not a stale prior arrow position (the hook's `open`-edge reset covers this).
+
+**The load-bearing gotcha (a MED caught in review):** the component-local return-focus guard must be ARMED ONLY WHILE OPEN. If the close-key handler (Escape) fires on an always-mounted wrapper even while CLOSED, it arms the guard, the no-op `setOpen(false)` never re-runs the `useEffect([open])`, and the flag LEAKS into a LATER non-keyboard dismissal (outside-click / tab-away) — wrongly returning focus and violating the no-return invariant. Gate the flag-set on `open`.
+
+**Additive-only:** existing security-reviewed dismissals (outside-click / Escape / tab-away) + ARIA semantics stay byte-unchanged — ADD focus management around them.
+
+**Rule:** a roving listbox in a popup adds focus-on-open + return-focus-to-trigger (keyboard-close ONLY) + reset-on-open (via the hook's optional `open`); the component-local return-focus guard arms ONLY while open (else a closed key-press leaks into a later non-keyboard dismissal); keep the existing dismissals/ARIA byte-unchanged.
+
+**Pin:** render tests for focus-on-open / return-focus-on-Escape+select / NO-return-on-outside-click+tab-away / reset-on-reopen / dismissals-still-work / escape-while-closed-doesn't-arm.
