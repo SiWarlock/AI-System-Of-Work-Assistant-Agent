@@ -55,21 +55,40 @@ function ScopeSwitcher({
   const [open, setOpen] = useState(false);
   const current = scopeMeta(scope);
   const wrapRef = useRef<HTMLDivElement>(null);
-  // Roving-tabindex over the scope options: the active (selected) scope is the single tab stop;
-  // arrows browse, Enter/Space selects (explicit selection). Popup focus-on-open is a deferred
-  // follow-up — the user Tabs onto the active option, then arrows.
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  // Return focus to the trigger on a KEYBOARD close (Escape / selection) — NOT on outside-click or
+  // tab-away, where focus follows the user's action (yanking it back would fight the user + alter the
+  // security-reviewed dismissals). Guarded exactly like the Copilot rail's `returnFocusToRail` (below)
+  // so it never fires on the initial closed mount; only the keyboard-close paths raise the flag, so the
+  // dismissal code paths stay byte-unchanged.
+  const returnFocusToButton = useRef(false);
+  // Roving-tabindex over the scope options: the active (selected) scope is the single tab stop; arrows
+  // browse, Enter/Space selects (explicit selection). The optional `open` signal drives popup
+  // focus-on-open (focus the active option) + reset-on-open (roving position back to the selected scope).
   const selectedIndex = WORKSPACE_SCOPES.findIndex((m) => m.id === scope);
   const roving = useRovingListbox({
     count: WORKSPACE_SCOPES.length,
     selectedIndex,
+    open,
     onActivate: (i) => {
       const m = WORKSPACE_SCOPES[i];
       if (m !== undefined) {
         onScopeChange(m.id);
+        returnFocusToButton.current = true; // a selection is a keyboard-loop close → return focus
         setOpen(false);
       }
     },
   });
+
+  // On a keyboard-driven close (the flag set by Escape / selection), return focus to the trigger button
+  // once the popup has closed. Mirror of the Copilot-rail disclosure pattern; a no-op on outside-click /
+  // tab-away closes (the flag stays false) and on the initial mount (starts false).
+  useEffect(() => {
+    if (!open && returnFocusToButton.current) {
+      buttonRef.current?.focus();
+      returnFocusToButton.current = false;
+    }
+  }, [open]);
 
   // Close the pull-down on any outside click (the ARIA listbox dismissal the menu
   // otherwise lacks — Escape + selection close it, but a click elsewhere would leave
@@ -90,16 +109,25 @@ function ScopeSwitcher({
       className="sow-ws-switch-wrap"
       ref={wrapRef}
       onKeyDown={(e) => {
-        if (e.key === "Escape") setOpen(false);
+        if (e.key === "Escape") {
+          // Only ARM return-focus when the popup is actually open (the flag rises solely while open —
+          // matching the Copilot-rail precedent). Escape fires on this always-mounted wrap even when
+          // closed (focus on the trigger); arming then would leave the flag stuck for a LATER
+          // non-keyboard close to consume, wrongly yanking focus back. Guard closes that leak.
+          if (open) returnFocusToButton.current = true;
+          setOpen(false);
+        }
       }}
       onBlur={(e) => {
-        // Also close on keyboard tab-away (focus leaves the switcher entirely).
+        // Also close on keyboard tab-away (focus leaves the switcher entirely). NO return-focus here —
+        // focus already followed the user's tab; the flag stays false (security-reviewed dismissal, unchanged).
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
       }}
     >
       <button
         className="sow-ws-switch"
         type="button"
+        ref={buttonRef}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={`Workspace scope: ${current.label}`}
@@ -131,6 +159,7 @@ function ScopeSwitcher({
                 style={accentVar(m.accent)}
                 onClick={() => {
                   onScopeChange(m.id);
+                  returnFocusToButton.current = true; // click-select is a selection close → return focus (acceptance #2)
                   setOpen(false);
                 }}
               >

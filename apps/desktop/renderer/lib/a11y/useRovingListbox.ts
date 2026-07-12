@@ -33,9 +33,17 @@ export interface UseRovingListboxOptions {
   readonly selectedIndex: number;
   /** Invoked when Enter/Space activates the active option — the surface's existing selection action. */
   readonly onActivate: (index: number) => void;
+  /**
+   * OPTIONAL popup-open signal (§11 a11y). When provided, on a false→true edge the hook resets the
+   * roving activeIndex to the selected entry AND moves focus onto the active option (popup
+   * focus-on-open + reset-on-open, for a listbox rendered inside a pull-down). `undefined` ⇒ an
+   * always-visible listbox (e.g. Projects) that manages no popup focus — no focus is ever moved on
+   * mount/update. Return-focus-to-the-trigger stays the CONSUMER's job (the hook is trigger-agnostic).
+   */
+  readonly open?: boolean;
 }
 
-export function useRovingListbox({ count, selectedIndex, onActivate }: UseRovingListboxOptions): RovingListbox {
+export function useRovingListbox({ count, selectedIndex, onActivate, open }: UseRovingListboxOptions): RovingListbox {
   const entryIndex = selectedIndex >= 0 && selectedIndex < count ? selectedIndex : 0;
   const [activeIndex, setActiveIndex] = useState<number>(entryIndex);
   const optionRefs = useRef<Array<HTMLElement | null>>([]);
@@ -57,6 +65,22 @@ export function useRovingListbox({ count, selectedIndex, onActivate }: UseRoving
   const focusOption = useCallback((index: number): void => {
     optionRefs.current[index]?.focus();
   }, []);
+
+  // Popup focus loop (§11 a11y): when an OPTIONAL `open` signal is supplied, on the false→true edge
+  // reset the roving position to the selected entry AND move focus onto the active option
+  // (focus-on-open + reset-on-open for a pull-down listbox). `open === undefined` — an always-visible
+  // listbox (Projects) — opts out entirely: no focus is ever moved on mount/update. The effect runs
+  // after commit, by which point the just-mounted options' refs are populated, so focusOption lands.
+  const prevOpenRef = useRef(false);
+  useEffect(() => {
+    if (open === undefined) return;
+    const wasOpen = prevOpenRef.current;
+    prevOpenRef.current = open;
+    if (open && !wasOpen) {
+      setActiveIndex(entryIndex);
+      focusOption(entryIndex);
+    }
+  }, [open, entryIndex, focusOption]);
 
   const moveTo = useCallback(
     (index: number): void => {
