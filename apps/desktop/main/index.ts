@@ -63,8 +63,13 @@ function startWorker(): void {
   const devUrl = process.env["ELECTRON_RENDERER_URL"];
   const allowlist = buildWorkerAllowlist(mode, WORKER_LOOPBACK_PORT, devUrl);
   const userData = app.getPath("userData");
-  const vaultRoot = join(userData, "vault");
+  // The vault the app watches: the owner's real Obsidian vault via SOW_VAULT_ROOT, else the userData default.
+  const vaultRoot = process.env["SOW_VAULT_ROOT"] ?? join(userData, "vault");
   mkdirSync(vaultRoot, { recursive: true });
+  // OPEN-THE-GATES auto-ingest opt-in (owner env; default OFF). Read HERE in Electron main (env lives here, not
+  // in the worker-host) and threaded to the worker-host over IPC via WorkerHostConfig — the same path vaultRoot
+  // takes. Unset ⇒ today's degraded boot. `boot.gateAutoIngest` requires BOTH this flag AND vaultRoot to wire.
+  const autoIngest = process.env["SOW_INGEST_WATCH"] === "1" || process.env["SOW_INGEST_WATCH"] === "true";
   const config: WorkerHostConfig = {
     token: sessionToken.get(),
     launchId: randomUUID(),
@@ -75,6 +80,13 @@ function startWorker(): void {
     // Persist the operational store + vault under the app's userData (survives launches).
     dbPath: join(userData, "sow.db"),
     vaultRoot,
+    autoIngest,
+    ...(process.env["SOW_INGEST_WORKSPACE"] !== undefined
+      ? { ingestWorkspaceId: process.env["SOW_INGEST_WORKSPACE"] }
+      : {}),
+    ...(process.env["SOW_TEMPORAL_ADDRESS"] !== undefined
+      ? { temporalAddress: process.env["SOW_TEMPORAL_ADDRESS"] }
+      : {}),
   };
   const entryPath = join(__dirname, "../worker/desktop-host.mjs");
   const loaderPath = join(__dirname, "../../worker-host/register-loader.mjs");

@@ -38,7 +38,7 @@
 //     (`createOperationalBackupService`) is WIRED into the handle (`backupService`)
 //     but NOT SCHEDULED — the periodic CRON that calls `backupService.run()` on the
 //     `backupCadenceMs` is Phase-11. The service is ready; only its trigger is deferred.
-import { auditId, sourceId, isOk } from "@sow/contracts";
+import { auditId, sourceId, isOk, workspaceId, workflowId } from "@sow/contracts";
 import type {
   Result,
   FailureVariant,
@@ -46,9 +46,12 @@ import type {
   AuditId,
   SourceRef,
   WorkspaceId,
+  WorkflowRunRef,
 } from "@sow/contracts";
 import { descriptorFor } from "@sow/policy";
-import type { SessionToken, LegacyContentPolicy, CopilotWorkspaceScope } from "@sow/policy";
+import type { SessionToken, LegacyContentPolicy, CopilotWorkspaceScope, ResolvedWorkspacePolicy } from "@sow/policy";
+import { TBD } from "@sow/domain";
+import type { MeetingJobInputs, AgentExtraction } from "@sow/workflows";
 
 import {
   assembleBackends,
@@ -152,7 +155,7 @@ import {
 } from "./watch/vaultWatcher";
 // §13 task 11.3-b — the GBrain version-pin BOOT verify step (closes the 11.3-a reachability waiver).
 import { readFile } from "node:fs/promises";
-import { createGbrainVersionProbe, type GbrainVersionProbe } from "@sow/knowledge";
+import { createGbrainVersionProbe, computeRevisionId, type GbrainVersionProbe, type KnowledgeRevisionStore, type CommittedRevision } from "@sow/knowledge";
 import { gbrainStartupVerify } from "./gbrainStartupVerify";
 
 // ── config ────────────────────────────────────────────────────────────────────
@@ -461,6 +464,145 @@ export function gateCopilotSkillIntrospectionDeps<T>(
   buildDeps: () => T,
 ): T | undefined {
   return gate.copilotSkillIntrospection === true && scopingActive ? buildDeps() : undefined;
+}
+
+// ── OPEN-THE-GATES slice 1 (task 11.1) — owner-opt-in auto-ingest boot gating ────────────────────────
+// A pure, fail-safe gate (mirror of gateCopilotVaultReadDeps) that activates the built §11.8 vault→ingestion
+// loop ONLY when the owner opt-in is ON AND a vaultRoot is present. Default OFF ⇒ today's exact degraded boot.
+
+/** The ingest workspace ingestion binds to when the owner doesn't override it — the CANONICAL personal-business
+ *  id the rest of the system provisions (gbrain default + the well-known Copilot scopes), NOT an ad-hoc string. */
+export const DEFAULT_INGEST_WORKSPACE: string = DEFAULT_GBRAIN_COPILOT_WORKSPACE;
+
+/** The owner opt-in fields (resolved from env in main/index.ts, threaded via WorkerHostConfig + IPC). */
+export interface AutoIngestGateOpts {
+  readonly autoIngest?: boolean;
+  readonly ingestWorkspaceId?: string;
+  readonly ingestSensitivity?: string;
+  readonly temporalAddress?: string;
+}
+
+/** The wiring gateAutoIngest augments the bootWorker call with when the opt-in is ON — every field is an
+ *  existing BootConfig field, so the worker-host wires all three with one spread. */
+export interface AutoIngestWiring {
+  readonly vaultWatch: { readonly workspaceId: string; readonly sensitivity: string };
+  readonly proofSpineParams: ProofSpineParams;
+  readonly temporalAddress: string;
+}
+
+/**
+ * Build the auto-ingest wiring IFF the owner opt-in is ON AND a `vaultRoot` is present; any missing
+ * precondition ⇒ `undefined` (fail-safe — the shipped default stays byte-equivalent to today's degraded boot:
+ * no watcher, no Temporal worker). Pure; `buildProofSpineParams` is a thunk invoked ONLY on the gated-on path,
+ * so the ProofSpineParams (+ its in-memory revisions store) are NEVER constructed on the OFF path.
+ */
+export function gateAutoIngest(
+  opts: AutoIngestGateOpts,
+  vaultRoot: string | undefined,
+  buildProofSpineParams: (workspaceId: string) => ProofSpineParams,
+): AutoIngestWiring | undefined {
+  if (opts.autoIngest !== true || vaultRoot === undefined) return undefined;
+  const ingestWorkspaceId = opts.ingestWorkspaceId ?? DEFAULT_INGEST_WORKSPACE;
+  const sensitivity = opts.ingestSensitivity ?? "normal";
+  return {
+    vaultWatch: { workspaceId: ingestWorkspaceId, sensitivity },
+    proofSpineParams: buildProofSpineParams(ingestWorkspaceId),
+    temporalAddress: opts.temporalAddress ?? "127.0.0.1:7233",
+  };
+}
+
+/**
+ * Build a production ProofSpineParams with a REAL `sourceIngestion` binding (a WS-2 HIGH-confidence bind to
+ * `boundWorkspace`) + INERT meeting leaves. The shipped app dispatches ONLY `sourceIngestion` (via the vault
+ * watcher); the meeting activities register but are NEVER invoked — so the meeting leaves are fixed
+ * deterministic inert values and `revisions` is a fresh in-memory store. This is honest-inert: the production
+ * `sourceCommit` is a deterministic in-memory fake keyed on planId (guardrail-3) and never touches this store;
+ * only the never-dispatched meeting commit + the OFF propose dispatch reference it.
+ * ⚠ DEFERRED RESIDUAL (durable `revisions`): this in-memory store must become durable BEFORE either trigger
+ * goes live — (a) a later slice makes `sourceCommit` a real durable KnowledgeWriter commit, OR (b) the propose
+ * bridge goes live (`buildSemanticApprovalDispatch` also consumes `proofSpineParams.revisions`, so an approved
+ * semantic card's commit would use this non-durable store → idempotency lost across restart). Both dormant today
+ * (guardrail-3 fake sourceCommit; propose OFF ⇒ 0 semantic cards).
+ */
+export function buildAutoIngestProofSpineParams(boundWorkspace: string): ProofSpineParams {
+  const ws: WorkspaceId = workspaceId(boundWorkspace);
+  const inertRevisions: KnowledgeRevisionStore = (() => {
+    const byKey = new Map<string, CommittedRevision>();
+    return {
+      getByIdempotencyKey: (k: string): Promise<CommittedRevision | undefined> => Promise.resolve(byKey.get(k)),
+      record: (rev: CommittedRevision): Promise<void> => {
+        byKey.set(rev.idempotencyKey, rev);
+        return Promise.resolve();
+      },
+    };
+  })();
+  const inertRunRef: WorkflowRunRef = {
+    workflowId: workflowId("wf-autoingest-inert"),
+    trigger: "owner_action",
+    state: "running",
+    idempotencyKey: "run:autoingest:inert",
+    auditRefs: [],
+  };
+  const inertMeetingJobInputs: MeetingJobInputs = {
+    workflowRunId: workflowId("wf-autoingest-inert"),
+    workspaceId: ws,
+    capability: "meeting.close",
+    outputSchemaId: "sow:meeting.close.output",
+    maxRuntimeSeconds: 30,
+    idempotencyKey: "job:meeting:inert",
+  };
+  const inertMeetingExtraction: AgentExtraction = {
+    fields: { title: { value: "n/a", evidenceRef: "src:inert#0" } },
+  };
+  // The candidate the (faked) source agent emits — no-inference-safe (owner is evidence-backed, dueDate is the
+  // TBD sentinel), so the REAL in-sandbox validate gate PASSES it. This is the one leaf that drives real routing.
+  const sourceExtraction: AgentExtraction = {
+    fields: {
+      owner: { value: "owner", evidenceRef: "source#L1" },
+      dueDate: { value: TBD },
+    },
+    schemaId: "sow:source-ingest-output",
+  };
+  const resolved: ResolvedWorkspacePolicy = {
+    workspaceId: String(ws),
+    type: "personal_business",
+    dataOwner: "user",
+    defaultVisibility: "coordination",
+    egressPolicy: {
+      workspaceId: ws,
+      allowedProcessors: [],
+      rawContentAllowedProcessors: [],
+      employerRawEgressAcknowledged: false,
+    },
+    providerMatrix: {
+      workspaceId: ws,
+      allowedProviders: [],
+      // Empty inert — the meeting.close route is never resolved (the meeting flow registers but never dispatches).
+      capabilityDefaults: {} as ResolvedWorkspacePolicy["providerMatrix"]["capabilityDefaults"],
+      rawCloudEgressEnabled: false,
+    },
+  };
+  return {
+    resolved,
+    correlationSignals: { confidence: 0.95, workspaceId: ws },
+    meetingJobInputs: inertMeetingJobInputs,
+    meetingExtraction: inertMeetingExtraction,
+    revisions: inertRevisions,
+    commit: {
+      actor: "worker:autoingest",
+      sourceEventRef: "evt:autoingest",
+      workflowRunRef: inertRunRef,
+      expectedBaseRevision: computeRevisionId(new Map()),
+    },
+    sourceRef: { sourceId: sourceId("autoingest-meeting-inert") },
+    planIdentity: { closeout: "meeting:inert" },
+    sourceIngestion: {
+      boundWorkspaceId: ws,
+      extraction: sourceExtraction,
+      sourceRef: { sourceId: sourceId("autoingest-src") },
+      planIdentity: { ingest: "source:autoingest" },
+    },
+  };
 }
 
 /**

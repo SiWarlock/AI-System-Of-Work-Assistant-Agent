@@ -45,6 +45,13 @@ interface WorkerHostConfig {
   readonly apiPort: number;
   readonly dbPath?: string;
   readonly vaultRoot?: string;
+  /** OPEN-THE-GATES auto-ingest opt-in (owner env; default OFF). When true + a vaultRoot is present, the host
+   *  wires vaultWatch + proofSpineParams + Temporal into bootWorker to activate live vault→ingestion. */
+  readonly autoIngest?: boolean;
+  /** The workspace ingestion binds to by policy (WS-8); default the canonical personal-business id. */
+  readonly ingestWorkspaceId?: string;
+  /** The local Temporal dev-server address; default 127.0.0.1:7233. */
+  readonly temporalAddress?: string;
 }
 
 /** Messages the host emits back to main. */
@@ -160,8 +167,21 @@ async function start(config: WorkerHostConfig): Promise<void> {
       dispatchApproval: () => Promise.resolve({ ok: true, value: undefined }),
       ...(config.dbPath !== undefined ? { dbPath: config.dbPath } : {}),
       ...(config.vaultRoot !== undefined ? { vaultRoot: config.vaultRoot } : {}),
-      // NO proofSpineParams → boots the control-plane API only; connectTemporal
-      // degrades cleanly (the proof-spine pipeline is wired later).
+      // OPEN-THE-GATES auto-ingest (owner opt-in, default OFF): when `config.autoIngest` is ON AND a vaultRoot is
+      // present, wire vaultWatch + proofSpineParams + temporalAddress → activate the built §11.8 vault→ingestion
+      // loop on the local Temporal dev-server. Default (opt-in OFF or no vaultRoot) ⇒ the gate returns undefined ⇒
+      // NO proofSpineParams / NO vaultWatch — EXACTLY today's degraded boot (control-plane API only; connectTemporal
+      // degrades cleanly, the proof-spine pipeline stays dormant). The proof-spine params are built only when gated on.
+      ...(boot.gateAutoIngest(
+        {
+          autoIngest: config.autoIngest,
+          ingestWorkspaceId: config.ingestWorkspaceId,
+          // sensitivity is not an owner env knob this slice — the gate defaults it to "normal".
+          temporalAddress: config.temporalAddress,
+        },
+        config.vaultRoot,
+        boot.buildAutoIngestProofSpineParams,
+      ) ?? {}),
     });
     // Drive the initial Temporal connect. With no proof-spine params it degrades
     // cleanly (no real Temporal contact, no throw — §16). On the degraded variant this

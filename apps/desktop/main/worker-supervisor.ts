@@ -18,6 +18,10 @@ export interface WorkerHostConfig {
   readonly apiPort: number;
   readonly dbPath?: string;
   readonly vaultRoot?: string;
+  /** OPEN-THE-GATES auto-ingest opt-in (owner env; default OFF) + its config — mirrors worker-host/index.ts. */
+  readonly autoIngest?: boolean;
+  readonly ingestWorkspaceId?: string;
+  readonly temporalAddress?: string;
 }
 
 /** The minimal child-process surface the supervisor drives (a real fork or a fake). */
