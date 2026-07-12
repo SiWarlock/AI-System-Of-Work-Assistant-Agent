@@ -15,6 +15,7 @@
 import { type ReactElement } from "react";
 import type { UiSafeProjectDashboard, UiSafeManagedDoc } from "@sow/contracts/api/ui-safe";
 import type { WorkspaceScope } from "../../store/scope";
+import { useRovingListbox, type RovingOptionProps } from "../../lib/a11y/useRovingListbox";
 import { resolveSelectedProject } from "./select";
 import { resolveDocPack } from "./docpack";
 
@@ -48,26 +49,25 @@ function ProjectListItem({
   project,
   selected,
   onSelect,
+  optionProps,
 }: {
   readonly project: UiSafeProjectDashboard;
   readonly selected: boolean;
   readonly onSelect: (projectId: string) => void;
+  readonly optionProps: RovingOptionProps;
 }): ReactElement {
   const go = (): void => onSelect(project.projectId);
   return (
+    // Keyboard (arrows / Home / End / Enter / Space) is owned by the listbox container via the
+    // shared roving hook; this option only carries the roving `tabIndex`/`ref` + the mouse `onClick`.
     <div
       className={selected ? "sow-projects-list-item sow-projects-list-item--sel" : "sow-projects-list-item"}
       role="option"
       aria-selected={selected}
-      tabIndex={0}
+      tabIndex={optionProps.tabIndex}
+      ref={optionProps.ref}
       data-project-id={project.projectId}
       onClick={go}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          go();
-        }
-      }}
     >
       <div className="sow-projects-list-head">
         <span className="sow-projects-list-title">{project.title}</span>
@@ -171,6 +171,18 @@ function ProjectDetail({ project }: { readonly project: UiSafeProjectDashboard }
 export function Projects(props: ProjectsProps): ReactElement {
   const { scope, projects, selectedProjectId, onSelectProject } = props;
   const selected = resolveSelectedProject(projects, selectedProjectId);
+  // Roving-tabindex over the project options: the active (selected) option is the single tab stop;
+  // arrows browse, Enter/Space opens (explicit selection). Called unconditionally (hooks rule) — the
+  // list only renders under a non-global scope with ≥1 project, but the hook is cheap when unused.
+  const selectedIndex = selected !== undefined ? projects.findIndex((p) => p.projectId === selected.projectId) : -1;
+  const roving = useRovingListbox({
+    count: projects.length,
+    selectedIndex,
+    onActivate: (i) => {
+      const p = projects[i];
+      if (p !== undefined) onSelectProject(p.projectId);
+    },
+  });
 
   return (
     <main className="sow-content" aria-label="Projects">
@@ -197,13 +209,14 @@ export function Projects(props: ProjectsProps): ReactElement {
         </div>
       ) : (
         <div className="sow-projects-page">
-          <div className="sow-projects-list" role="listbox" aria-label="Projects">
-            {projects.map((p) => (
+          <div className="sow-projects-list" role="listbox" aria-label="Projects" {...roving.listboxProps}>
+            {projects.map((p, i) => (
               <ProjectListItem
                 key={p.projectId}
                 project={p}
                 selected={selected?.projectId === p.projectId}
                 onSelect={onSelectProject}
+                optionProps={roving.getOptionProps(i)}
               />
             ))}
           </div>

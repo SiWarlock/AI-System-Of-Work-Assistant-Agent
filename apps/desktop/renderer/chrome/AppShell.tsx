@@ -17,6 +17,7 @@
 import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import type { ConnectionStatus } from "../store";
 import { WORKSPACE_SCOPES, scopeMeta, type WorkspaceScope } from "../store/scope";
+import { useRovingListbox } from "../lib/a11y/useRovingListbox";
 import type { Route } from "../store/route";
 import { accentVar } from "../lib/accent";
 import { Copilot } from "../surfaces/copilot/Copilot";
@@ -54,6 +55,21 @@ function ScopeSwitcher({
   const [open, setOpen] = useState(false);
   const current = scopeMeta(scope);
   const wrapRef = useRef<HTMLDivElement>(null);
+  // Roving-tabindex over the scope options: the active (selected) scope is the single tab stop;
+  // arrows browse, Enter/Space selects (explicit selection). Popup focus-on-open is a deferred
+  // follow-up — the user Tabs onto the active option, then arrows.
+  const selectedIndex = WORKSPACE_SCOPES.findIndex((m) => m.id === scope);
+  const roving = useRovingListbox({
+    count: WORKSPACE_SCOPES.length,
+    selectedIndex,
+    onActivate: (i) => {
+      const m = WORKSPACE_SCOPES[i];
+      if (m !== undefined) {
+        onScopeChange(m.id);
+        setOpen(false);
+      }
+    },
+  });
 
   // Close the pull-down on any outside click (the ARIA listbox dismissal the menu
   // otherwise lacks — Escape + selection close it, but a click elsewhere would leave
@@ -100,27 +116,22 @@ function ScopeSwitcher({
         </span>
       </button>
       {open ? (
-        <ul className="sow-ws-menu" role="listbox" aria-label="Workspace scope">
-          {WORKSPACE_SCOPES.map((m) => {
+        <ul className="sow-ws-menu" role="listbox" aria-label="Workspace scope" {...roving.listboxProps}>
+          {WORKSPACE_SCOPES.map((m, i) => {
             const selected = m.id === scope;
+            const opt = roving.getOptionProps(i);
             return (
               <li
                 key={m.id}
                 role="option"
                 aria-selected={selected}
-                tabIndex={0}
+                tabIndex={opt.tabIndex}
+                ref={opt.ref}
                 className={selected ? "sow-ws-opt sow-ws-opt--sel" : "sow-ws-opt"}
                 style={accentVar(m.accent)}
                 onClick={() => {
                   onScopeChange(m.id);
                   setOpen(false);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    onScopeChange(m.id);
-                    setOpen(false);
-                  }
                 }}
               >
                 <span className="sow-ws-dot" aria-hidden="true" />
