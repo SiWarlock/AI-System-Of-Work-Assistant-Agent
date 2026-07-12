@@ -20,6 +20,8 @@
 //     port binds 127.0.0.1. No network / external / cloud call (the arc's hard line).
 //   • NO INFERENCE — `localBackupAccepted` is a CONFIG input (a policy decision), never probed.
 import { runDoctor } from "./doctor";
+import { collectPostureProbes } from "./posture-collectors";
+import { safeRun } from "./probe-run";
 import type { DoctorReport } from "@sow/contracts";
 import type {
   ProbeSnapshot,
@@ -76,14 +78,7 @@ export const NODE_MIN_MAJOR = 22;
 /** The minimum satisfied pnpm major (workspaces stack). */
 export const PNPM_MIN_MAJOR = 8;
 
-/** Run an injected command TOTALLY — even a thrown port becomes a typed fault (§16 never-throw). */
-async function safeRun(run: RunCommand, req: CommandRequest): Promise<CommandOutcome> {
-  try {
-    return await run(req);
-  } catch {
-    return { ok: false, code: "unknown", message: "exec_threw" };
-  }
-}
+// The §16 never-throw exec guard lives in ./probe-run (shared by every collector — no value cycle).
 
 /**
  * The leading version major from a `--version` output (`v22.4.1` / `9.6.0` → 22 / 9), or
@@ -225,15 +220,33 @@ export async function collectSecurityProbes(input: SecurityProbeInput): Promise<
 }
 
 /**
- * Compose the real collectors into the pure engine: the prerequisite (11.5-a) + macOS-security
- * (11.5-b) probes are collected in parallel, merged, and fed to `runDoctor`. The doctor CLI /
- * repair COMMAND that calls this is a later 11.5 slice (a documented waiver, as with
- * `runDoctor`'s own build); the real adapters are exercised via the gated tests.
+ * The full install-doctor input — the prerequisite/loopback config (11.5-a) plus the one-writer
+ * POSTURE config (11.5-c: the vault dir, canonical brain path, and worker principal). An internal
+ * composition type (not a frozen contract).
  */
-export async function runPrerequisiteDoctor(input: PrerequisiteProbeInput): Promise<DoctorReport> {
-  const [prerequisite, security] = await Promise.all([
+export interface InstallDoctorInput extends PrerequisiteProbeInput {
+  readonly vaultDir: string;
+  readonly canonicalBrainPath: string;
+  readonly workerPrincipal: string;
+}
+
+/**
+ * Compose the real collectors into the pure engine: the prerequisite (11.5-a), macOS-security
+ * (11.5-b), and one-writer POSTURE (11.5-c) probes are collected in parallel, merged into the full
+ * 10-field snapshot, and fed to `runDoctor`. The doctor CLI / repair COMMAND that calls this is a
+ * later 11.5 slice (a documented waiver, as with `runDoctor`'s own build); the real adapters are
+ * exercised via the gated tests.
+ */
+export async function runPrerequisiteDoctor(input: InstallDoctorInput): Promise<DoctorReport> {
+  const [prerequisite, security, posture] = await Promise.all([
     collectPrerequisiteProbes(input),
     collectSecurityProbes({ run: input.run }),
+    collectPostureProbes({
+      run: input.run,
+      vaultDir: input.vaultDir,
+      canonicalBrainPath: input.canonicalBrainPath,
+      workerPrincipal: input.workerPrincipal,
+    }),
   ]);
-  return runDoctor({ ...prerequisite, ...security });
+  return runDoctor({ ...prerequisite, ...security, ...posture });
 }

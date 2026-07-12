@@ -16,7 +16,7 @@ import {
   type CommandOutcome,
   type RunCommand,
   type ProbeLoopbackBind,
-  type PrerequisiteProbeInput,
+  type InstallDoctorInput,
 } from "../../src/install/probe-collectors";
 import { createLocalCommandRunner, createLoopbackBindProbe } from "../../src/install/probe-adapters";
 import { createServer as netCreateServer } from "node:net";
@@ -40,9 +40,20 @@ function fakeRun(map: (req: CommandRequest) => CommandOutcome): {
 const found = (stdout: string): CommandOutcome => ({ ok: true, stdout });
 const notFound: CommandOutcome = { ok: false, code: "not_found", message: "not_found" };
 
-/** Build a full input from a run map + overrides (sane defaults for the other fields). */
-function inputWith(over: Partial<PrerequisiteProbeInput> & { readonly run: RunCommand }): PrerequisiteProbeInput {
-  return { bindLoopback: okBind, loopbackPorts: [], repoDir: "/repo", localBackupAccepted: false, ...over };
+/** Build a full install-doctor input from a run map + overrides (sane defaults for the other fields). */
+function inputWith(
+  over: Partial<InstallDoctorInput> & { readonly run: RunCommand },
+): InstallDoctorInput {
+  return {
+    bindLoopback: okBind,
+    loopbackPorts: [],
+    repoDir: "/repo",
+    localBackupAccepted: false,
+    vaultDir: "/vault",
+    canonicalBrainPath: "/brain",
+    workerPrincipal: "worker",
+    ...over,
+  };
 }
 
 /** The default all-present map (each probe succeeds) — overridden per test. */
@@ -161,8 +172,8 @@ describe("collectPrerequisiteProbes — real prerequisite probes (fast unit, no 
     expect(status("gbrain_startable")).toBe("ok");
     expect(status("loopback_ports")).toBe("ok");
     expect(status("git_remotes")).toBe("ok");
-    // filevault is now collected (11.5-b) but notFound under this all-present PREREQ map ⇒
-    // finding; vault_acl (11.5-c) is still uncollected ⇒ fail-closed. Both remain not-ok.
+    // Both filevault (11.5-b) and vault_acl (11.5-c) are now collected but fault-closed here — the
+    // all-present PREREQ map doesn't mock fdesetup/security/ls, so both fall to notFound ⇒ finding.
     expect(status("filevault")).not.toBe("ok");
     expect(status("vault_acl")).not.toBe("ok");
   });
