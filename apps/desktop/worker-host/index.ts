@@ -134,6 +134,24 @@ async function start(config: WorkerHostConfig): Promise<void> {
       // eval) + the A1 body-embedded residual (ingest-time). To turn OFF (back to the completion path, no tools),
       // remove this line.
       copilotAgentMode: true,
+      // §13.10d GO-LIVE (owner-authorized 2026-07-12, via the lead's AskUserQuestion) — activate the two BUILT +
+      // dual-reviewed read-only Copilot skills on the LIVE cloud Sonnet-5 agent:
+      //   • copilotVaultRead — the agent may read ONE canonical-Markdown note BY PATH, scoped PER-ASK to the
+      //     SERVED workspace: the handler realpath-resolves the path, RE-ATTRIBUTES its owning workspace, and
+      //     DENIES any cross-workspace target (WS-8) + is realpath-confined to `vaultRoot` + READ-ONLY (one
+      //     `read` tool; no write/mutating op exists). NOTE (multi-served runtime, `copilotWorkspaceScoping`):
+      //     on an employer-work-served ask this reads EMPLOYER-WORK notes into the cloud model — the SAME
+      //     employer-work→cloud-with-notice egress posture already LIVE + owner-accepted for gbrain retrieval
+      //     (2026-07-06); vault.read adds no new egress class, only a per-note read within that scoped path.
+      //   • copilotSkillIntrospection — the agent may enumerate its OWN read-skill catalog only (STATIC,
+      //     zero-leak, NEVER reveals the propose tool). Needs no vault/disk config.
+      // `vaultRoot` is an OWNER RUNTIME precondition (the personal-business Obsidian vault path, injected via
+      // config). Until it is set, the boot guard (`gateCopilotVaultReadDeps`) leaves vault.read UNWIRED/inert —
+      // so this flip is SAFE to land before the path is provided (like MANAGE_GBRAIN_SERVE). skill-introspection
+      // is inert-safe too (static catalog). HARD LINE: the write/propose bridge stays OFF — `copilotProposeMode`
+      // / `copilotProposeKnowledge` are deliberately NOT set here. To turn OFF, remove these two lines.
+      copilotVaultRead: true,
+      copilotSkillIntrospection: true,
       // Option A: when the managed serve came up, route retrieval + tools over it (http); else omitted (CLI + fail-closed).
       ...(gbrainHttpConfig ?? {}),
       // No-op dispatch stubs — a first render triggers neither path (no jobs/approvals yet).

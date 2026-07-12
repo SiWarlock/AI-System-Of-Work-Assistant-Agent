@@ -431,6 +431,38 @@ const BOOT_AUDIT_REF: AuditId = auditId("worker-boot:temporal-degraded");
 const GBRAIN_VERIFY_AUDIT_REF: AuditId = auditId("worker-boot:gbrain-version-pin");
 
 /**
+ * §13.10d go-live flag-gating for the read-only VAULT page-read deps. Build them (via `buildDeps`, which
+ * receives the narrowed `vaultRoot`) IFF the flag is on AND a `vaultRoot` is configured AND workspace-scoping
+ * is active (`scopingActive` = `wsScope !== undefined` — the vault handler needs a per-ask WS-8 scope); any
+ * missing precondition ⇒ `undefined` (fail-safe — no vault MCP server wired, the capability is inert). Pure;
+ * `buildDeps` is invoked ONLY on the gated-on path, so the fs execs are constructed only when the tool is live.
+ * Exported for the boot-gating unit test (`test/boot-copilot-read-gating.test.ts`); it has no other consumer.
+ */
+export function gateCopilotVaultReadDeps<T>(
+  gate: { readonly copilotVaultRead?: boolean; readonly vaultRoot?: string },
+  scopingActive: boolean,
+  buildDeps: (vaultRoot: string) => T,
+): T | undefined {
+  return gate.copilotVaultRead === true && gate.vaultRoot !== undefined && scopingActive
+    ? buildDeps(gate.vaultRoot)
+    : undefined;
+}
+
+/**
+ * §13.10d go-live flag-gating for the read-only SKILL self-introspection dep. Build it (via `buildDeps`) IFF
+ * the flag is on AND workspace-scoping is active; else `undefined` (fail-safe). Needs no vaultRoot/reader (the
+ * handler reads the STATIC catalog). Pure; `buildDeps` is invoked ONLY on the gated-on path.
+ * Exported for the boot-gating unit test (`test/boot-copilot-read-gating.test.ts`); it has no other consumer.
+ */
+export function gateCopilotSkillIntrospectionDeps<T>(
+  gate: { readonly copilotSkillIntrospection?: boolean },
+  scopingActive: boolean,
+  buildDeps: () => T,
+): T | undefined {
+  return gate.copilotSkillIntrospection === true && scopingActive ? buildDeps() : undefined;
+}
+
+/**
  * Boot the live worker control plane. Assembles the persistent backends, stands up
  * the real loopback API transport over the @sow/db port adapters (behind the injected
  * token + allowlist), wires the redacting logger + the Temporal-unavailable degraded
@@ -601,24 +633,22 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
           // §13.10d — the read-only VAULT page-read deps. Gated on `copilotVaultRead` (OFF by default) + a
           // configured `vaultRoot` + scoping on (`wsScope`; the vault handler needs a per-ask scope, which the
           // runner binds inside its scoped-proxy branch). All three deps or none — the fs reader is
-          // redaction-safe, and the handler path-guards + WS-8-scopes every read.
-          const vaultRunnerDeps =
-            config.copilotVaultRead === true && config.vaultRoot !== undefined && wsScope !== undefined
-              ? {
-                  buildVaultMcpServer: createCopilotVaultMcpServer,
-                  vaultReadFile: createFsVaultReadFileExec(),
-                  vaultRealpath: createFsRealpath(),
-                  vaultRoot: config.vaultRoot,
-                }
-              : undefined;
+          // redaction-safe, and the handler path-guards + WS-8-scopes every read. The gate is the pure
+          // `gateCopilotVaultReadDeps` helper (fail-safe + unit-tested); the fs execs are constructed inside the
+          // thunk so they exist ONLY on the gated-on/live path.
+          const vaultRunnerDeps = gateCopilotVaultReadDeps(config, wsScope !== undefined, (vaultRoot) => ({
+            buildVaultMcpServer: createCopilotVaultMcpServer,
+            vaultReadFile: createFsVaultReadFileExec(),
+            vaultRealpath: createFsRealpath(),
+            vaultRoot,
+          }));
           // §13.10d — the read-only SKILL self-introspection dep. Gated on `copilotSkillIntrospection` (OFF by
           // default) + scoping on (`wsScope`; the runner registers it inside the same scoped-proxy branch as
           // vault). Unlike vault it needs NO scope/root/reader — the handler reads the STATIC catalog only, so
           // the single factory is the whole dep. Zero-leak (workspace-agnostic) + never reveals the propose tool.
-          const skillsRunnerDeps =
-            config.copilotSkillIntrospection === true && wsScope !== undefined
-              ? { buildSkillsMcpServer: createCopilotSkillsMcpServer }
-              : undefined;
+          const skillsRunnerDeps = gateCopilotSkillIntrospectionDeps(config, wsScope !== undefined, () => ({
+            buildSkillsMcpServer: createCopilotSkillsMcpServer,
+          }));
           const runner = createClaudeAgentCopilotRunner({
             servedWorkspaceId: servedWorkspaceIdStr,
             gbrainMcpUrl: gbrainMcpEndpoint(gbrainHttpBaseUrl),
