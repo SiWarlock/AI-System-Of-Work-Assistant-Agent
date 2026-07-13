@@ -61,6 +61,18 @@ playwright-report/
 *.pem
 *.key
 secrets/
+# 11.4 KeychainSecretsAdapter (task 11.4): the worker's Keychain secrets-adapter SOURCE +
+# TEST live under a `secrets/`-named dir but contain TypeScript CODE, never secret material.
+# Track ONLY the *.ts source/test in those two exact dirs; the `secrets/` rule above plus
+# *.key/*.pem/.env* still ignore ALL real secret files. The pattern per dir is deliberate:
+# (1) un-ignore the dir so git descends, (2) RE-IGNORE every file in it, (3) un-ignore ONLY
+# *.ts — so any .key/.pem/.env/.json/credential file dropped there stays ignored (rule-7).
+!apps/worker/src/secrets/
+apps/worker/src/secrets/**
+!apps/worker/src/secrets/**/*.ts
+!apps/worker/test/secrets/
+apps/worker/test/secrets/**
+!apps/worker/test/secrets/**/*.ts
 
 # ── Local runtime state (must NOT be committed) ───────────────
 # Operational store (SQLite local mode) + WAL/SHM sidecars
