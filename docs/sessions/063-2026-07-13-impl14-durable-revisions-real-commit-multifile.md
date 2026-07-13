@@ -5,7 +5,7 @@
 - **Role:** implementer `impl14` (worker track), team `session-f2673cd5`, single-track on `main`
 - **Orchestrator:** `orch13`
 - **Predecessor:** [`062-2026-07-12-impl12-phase9-pivot-c6-golive-autoingest.md`](062-2026-07-12-impl12-phase9-pivot-c6-golive-autoingest.md)
-- **Successor:** _(impl16 — TBD; cycling out at a clean boundary for the C5.4b arc)_
+- **Successor:** [064-2026-07-13-impl16-c5.4b-serving-oracle-arc.md](064-2026-07-13-impl16-c5.4b-serving-oracle-arc.md)
 
 ## Why this session existed
 
