@@ -5,7 +5,7 @@
 - **Role:** implementer `impl12` (single-track on `main`; team `session-f2673cd5`) — cycled in for `impl10`
 - **Orchestrators:** `orch11` (tasks 37–39) → cycled → `orch13` (tasks 40–43)
 - **Predecessor:** [061-2026-07-12-phase9-pivot-round-seal.md](061-2026-07-12-phase9-pivot-round-seal.md)
-- **Successor:** _(impl14 — open-the-gates slice 2a durable revisions)_
+- **Successor:** [`063-2026-07-13-impl14-durable-revisions-real-commit-multifile.md`](063-2026-07-13-impl14-durable-revisions-real-commit-multifile.md)
 
 ## Why this session existed
 
