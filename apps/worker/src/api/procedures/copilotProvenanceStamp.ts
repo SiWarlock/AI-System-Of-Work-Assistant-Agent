@@ -27,10 +27,13 @@
 //
 // ── GO-LIVE PRECONDITIONS (the real admitForServing-backed oracle sub-slice — NOT this slice) ────────────
 // Before ANY non-interim oracle is wired (a security-review-gated event — safety rules 4/6, ING-7):
-//   (1) CONTENT INTEGRITY — the gated verdict must carry each admitted citation's REHYDRATED
-//       `AdmittedFact.content` + `mdContentSha`, and the go-live path must REBUILD `RetrievedContext.blocks`
-//       from those proven bytes. Otherwise a trusted `provenance` label sits over unverified `blocks[]` bytes
-//       (the model synthesizes over `blocks`, a SEPARATE array from `sources`).
+//   (1) CONTENT INTEGRITY — ✅ HANDLED (C5.4b slice 1): the gated verdict carries each admitted citation's
+//       REHYDRATED `AdmittedFact.content` + `mdContentSha` (the `admitted` map value), and `stampFromVerdict`
+//       REBUILDS `RetrievedContext.blocks` from those proven bytes POSITIONALLY (index-aligned to `sources`,
+//       which the prompt builder pairs 1:1): proven bytes at admitted slots, "" at unadmitted slots; a
+//       gated-but-EMPTY admission leaves the inner blocks UNTOUCHED. So a trusted `provenance` label can no
+//       longer sit over unverified `blocks[]` bytes (the model synthesizes over `blocks`, a SEPARATE array
+//       from `sources`), nor can a proven excerpt be misattributed to the wrong citation.
 //   (2) GRANULARITY — a `citationId` is per-SLUG/PAGE, an `AdmittedFact.factIdentity` is per-FACT (a page
 //       has many: page + link + tag + timeline facts). Stamp a citationId knowledge_writer ONLY if EVERY
 //       fact reachable via that citationId is admitted (all-or-nothing); a partially-admitted page must be
@@ -65,15 +68,28 @@ import { enforceRetrievalScope } from "./copilot";
 import type { CopilotRetrievalPort, RetrievedContext, RetrievedSource, SourceProvenance } from "./copilot";
 
 /**
+ * Proven bytes for ONE admitted citation — the citation's REHYDRATED canonical Markdown `content` plus its
+ * `mdContentSha`, both carried straight from the knowledge-layer gate's `AdmittedFact` (the gate already
+ * proved content-hash + HMAC authorship; we never re-hash). `mdContentSha` is kept as a plain string here —
+ * the worker-internal verdict has no need of the branded `MdContentSha`.
+ */
+export interface AdmittedBytes {
+  readonly content: string;
+  readonly mdContentSha: string;
+}
+
+/**
  * The serving-gate verdict for one retrieval, produced by a `CopilotServingOracle`. A discriminated union:
- * the `"gated"` arm carries the set of citationIds whose bytes the gate ADMITTED (each proven
- * KnowledgeWriter-authored); the `"degraded_direct_markdown"` arm carries NO admitted set at all — so a
- * trusted stamp is structurally unrepresentable under degrade. Mirrors the knowledge layer's `ServingMode`
- * (@sow/knowledge `admitForServing`), which returns `degraded_direct_markdown` with `admitted: []` on ANY
- * non-green serving-coverage leg or an unresolvable signing key.
+ * the `"gated"` arm carries a MAP from each ADMITTED citationId (proven KnowledgeWriter-authored) to its
+ * proven bytes ({@link AdmittedBytes}) — so the decorator can both STAMP the source AND rebuild the block the
+ * model reads from the SAME proven bytes (content integrity, C5.4b precondition 1). The
+ * `"degraded_direct_markdown"` arm carries NO admitted map at all — so a trusted stamp is structurally
+ * unrepresentable under degrade. Mirrors the knowledge layer's `ServingMode` (@sow/knowledge
+ * `admitForServing`), which returns `degraded_direct_markdown` with `admitted: []` on ANY non-green
+ * serving-coverage leg or an unresolvable signing key.
  */
 export type CopilotServingVerdict =
-  | { readonly mode: "gated"; readonly admittedCitationIds: ReadonlySet<string> }
+  | { readonly mode: "gated"; readonly admitted: ReadonlyMap<string, AdmittedBytes> }
   | { readonly mode: "degraded_direct_markdown" };
 
 /**
@@ -116,26 +132,55 @@ function stripAll(context: RetrievedContext): RetrievedContext {
 }
 
 /**
- * Derive each source's provenance from the verdict. Stamp knowledge_writer IFF the verdict is EXPLICITLY
- * gated (discriminated-union `mode === "gated"`, never a truthiness/`in` check) AND the source's citationId
- * is in the admitted set. Fail closed to fully-unstamped when: the verdict is not gated; the admitted set is
- * not a real Set (a malformed verdict); or the admitted set is not a subset of the retrieved citationIds — a
- * foreign admitted id means the oracle admitted against a DIFFERENT context than we are stamping (a TOCTOU
- * anomaly), so the whole verdict is distrusted rather than partially honored.
+ * True iff every value of the admitted map is a well-formed {@link AdmittedBytes} ({content, mdContentSha}
+ * both strings). A malformed value (e.g. a non-string `content` from a buggy/hostile oracle) must never reach
+ * the model as a "proven" block — so a single malformed entry fails the WHOLE verdict closed (see caller).
+ */
+function admittedBytesWellFormed(admitted: ReadonlyMap<string, unknown>): boolean {
+  for (const v of admitted.values()) {
+    if (typeof v !== "object" || v === null) return false;
+    const b = v as { content?: unknown; mdContentSha?: unknown };
+    if (typeof b.content !== "string" || typeof b.mdContentSha !== "string") return false;
+  }
+  return true;
+}
+
+/**
+ * Derive each source's provenance AND the block bytes the model reads from the verdict. Stamp knowledge_writer
+ * IFF the verdict is EXPLICITLY gated (discriminated-union `mode === "gated"`, never a truthiness/`in` check)
+ * AND the source's citationId is in the admitted map; AND — the content-integrity leg (C5.4b precondition 1) —
+ * REBUILD `blocks` from the SAME proven bytes the gate admitted, so a knowledge_writer label can never sit
+ * over an unverified `blocks[]` entry (the model synthesizes over `blocks`, a separate array from `sources`).
+ *
+ * Fail closed to fully-unstamped + blocks-UNTOUCHED (`stripAll`) when: the verdict is not gated; the admitted
+ * value is not a real Map (a malformed verdict); a map value is not well-formed proven bytes; the admitted set
+ * is not a subset of the retrieved citationIds (a foreign id means the oracle admitted against a DIFFERENT
+ * context than we hold — a TOCTOU anomaly, distrust the whole verdict); OR the admitted map is EMPTY (an empty
+ * gate result must not blank the read-only answer — leave the inner blocks as-is). Only a non-empty, well-formed,
+ * subset-clean gated verdict rebuilds blocks.
  */
 function stampFromVerdict(context: RetrievedContext, verdict: CopilotServingVerdict): RetrievedContext {
   if (verdict.mode !== "gated") return stripAll(context);
-  const admitted = verdict.admittedCitationIds;
-  if (!(admitted instanceof Set)) return stripAll(context); // malformed gated verdict — fail closed
-  // Subset-or-fail-closed (C3.4): the admitted set MUST be ⊆ the retrieved citationIds. A stray/foreign id
+  const admitted = verdict.admitted;
+  if (!(admitted instanceof Map)) return stripAll(context); // malformed gated verdict — fail closed
+  if (!admittedBytesWellFormed(admitted)) return stripAll(context); // malformed proven bytes — fail closed
+  // Subset-or-fail-closed (C3.4): the admitted keys MUST be ⊆ the retrieved citationIds. A stray/foreign id
   // signals the oracle saw a different retrieval than the one we hold — distrust the entire verdict.
   const retrievedIds = new Set(context.sources.map((s) => s.citationId));
-  for (const id of admitted) {
+  for (const id of admitted.keys()) {
     if (!retrievedIds.has(id)) return stripAll(context);
   }
+  // Gated-but-EMPTY: nothing admitted ⇒ nothing to stamp AND nothing to rebuild — leave blocks untouched so
+  // an empty gate result does not blank the read-only answer (equivalent to stripAll here).
+  if (admitted.size === 0) return stripAll(context);
+  // Rebuild blocks POSITIONALLY — one entry per source, index-aligned (`blocks.length === sources.length`).
+  // The downstream prompt builder pairs `blocks[i]` to `sources[i]`, so an admitted source's slot carries its
+  // PROVEN bytes and an UNadmitted source's slot carries "" (an empty/blank excerpt). This drops every
+  // unverified byte (the model never reads unproven content) WITHOUT misattributing a proven excerpt to the
+  // wrong citation. Length pinned to sources ⇒ a duplicated source cannot inflate the list.
   return {
     workspaceId: context.workspaceId,
-    blocks: context.blocks,
+    blocks: context.sources.map((s) => admitted.get(s.citationId)?.content ?? ""),
     sources: context.sources.map((s) =>
       admitted.has(s.citationId) ? projectSource(s, "knowledge_writer") : projectSource(s, undefined),
     ),
@@ -216,9 +261,12 @@ export function createInterimDegradedServingOracle(): CopilotServingOracle {
 //
 // This is the deterministic CORE of the real serving oracle: a PURE adapter that turns a retrieval's
 // `RetrievedContext` into a `CopilotServingVerdict` by consulting the knowledge-layer serving gate
-// (`admitForServing`). It satisfies GO-LIVE PRECONDITIONS 2–5 (see the module header):
+// (`admitForServing`). It satisfies GO-LIVE PRECONDITIONS 1–5 (see the module header):
+//   • (1) CONTENT INTEGRITY — each admitted citation carries its REHYDRATED proven bytes
+//         (`AdmittedFact.content` + `.mdContentSha`) into the verdict's admitted MAP, so the decorator rebuilds
+//         `blocks` from the SAME bytes the gate proved (no re-hash — the gate is authoritative).
 //   • (5) CITATION UNIQUENESS — a citationId appearing more than once in the context is fail-closed EXCLUDED
-//         (the verdict's admitted set is a Set; a single admission would otherwise stamp all its duplicates).
+//         (the verdict's admitted map is keyed by citationId; a single admission would otherwise stamp all its duplicates).
 //   • (2/3) RESOLVER INJECTIVITY / all-or-nothing — each candidate citationId resolves (via the injected,
 //         workspace-scoped resolver) to the SET of factIdentities reachable through it; a non-uniquely-
 //         resolvable citationId (resolver → null / empty) is EXCLUDED, and if two candidates claim the SAME
@@ -227,9 +275,6 @@ export function createInterimDegradedServingOracle(): CopilotServingOracle {
 //         is admitted by the gate.
 //   • (4) SERVING-ERROR MAPPING — a hard `ServingError` (workspace/revision mismatch) maps to an oracle `err`,
 //         NEVER swallowed into an ok verdict, so the decorator's fail-closed passthrough fires.
-// PRECONDITION 1 (content integrity — rebuild `blocks` from proven bytes) is NOT handled here: it needs a
-// `CopilotServingVerdict` shape change to carry admitted content (a separate, owner-gated slice). Until then
-// the gate proves the SOURCES, not the block bytes.
 //
 // DORMANT: this oracle is NOT wired in boot — the interim degraded oracle stays the default. Wiring it requires
 // (a) stamp-minting activated in the KnowledgeWriter commit path, (b) real KnowledgeWriter-authored corpora to
@@ -334,7 +379,7 @@ export function createServingGateOracle(deps: ServingGateOracleDeps): CopilotSer
           if (factIds.some((fid) => factOwner.get(fid) === CONFLICT)) resolved.delete(cid);
         }
         // Nothing resolvable → a gated verdict admitting nothing (honest: the gate found no provable source).
-        if (resolved.size === 0) return ok({ mode: "gated", admittedCitationIds: new Set() });
+        if (resolved.size === 0) return ok({ mode: "gated", admitted: new Map<string, AdmittedBytes>() });
 
         // 4) Build the ServingRequest over the UNION of resolved factIdentities. `workspaceId` is the REQUESTED
         //    one (cast to the brand) — the gate re-checks it against the loaded allow-set's workspace, so a
@@ -367,13 +412,21 @@ export function createServingGateOracle(deps: ServingGateOracleDeps): CopilotSer
         if (served.value.mode !== "gated") return ok({ mode: "degraded_direct_markdown" });
 
         // 6) ALL-OR-NOTHING per page: a citationId is admitted IFF EVERY factIdentity reachable through it is in
-        //    the gate's admitted set. A partially-admitted page stays UNSTAMPED.
-        const admittedFactIds = new Set(served.value.admitted.map((f) => f.factIdentity));
-        const admittedCitationIds = new Set<string>();
+        //    the gate's admitted set. A partially-admitted page stays UNSTAMPED. For each admitted citation,
+        //    carry the PROVEN bytes (content integrity, precondition 1) of the PAGE fact = the FIRST resolved
+        //    fact. The production `buildCitationResolver` is page-only (resolves to exactly [page:<slug>]), so
+        //    `ids[0]` IS the page fact AND the only fact — multi-fact resolution is not reachable under today's
+        //    resolver; a future multi-fact-resolver author must revisit this "first == the page fact" assumption.
+        const admittedFacts = new Map(served.value.admitted.map((f) => [f.factIdentity, f]));
+        const admitted = new Map<string, AdmittedBytes>();
         for (const [cid, ids] of resolved) {
-          if (ids.every((fid) => admittedFactIds.has(fid))) admittedCitationIds.add(cid);
+          if (!ids.every((fid) => admittedFacts.has(fid))) continue;
+          const pageFactId = ids[0];
+          const pageFact = pageFactId === undefined ? undefined : admittedFacts.get(pageFactId);
+          if (pageFact === undefined) continue; // unreachable (all ids admitted, ids non-empty) — fail closed
+          admitted.set(cid, { content: pageFact.content, mdContentSha: pageFact.mdContentSha });
         }
-        return ok({ mode: "gated", admittedCitationIds });
+        return ok({ mode: "gated", admitted });
       } catch {
         // §16 — a throwing/rejecting loader or gate never crosses the boundary; fail closed (⇒ untrusted).
         return err(

@@ -334,7 +334,7 @@ async function admittedVia(vaultContent: string): Promise<ReadonlySet<string>> {
   });
   const v = await oracle.admit(WS, retrieval([source("gbrain:acme")]));
   if (!isOk(v)) throw new Error("oracle faulted");
-  return v.value.mode === "gated" ? v.value.admittedCitationIds : new Set();
+  return v.value.mode === "gated" ? new Set(v.value.admitted.keys()) : new Set();
 }
 
 describe("serving-trust END-TO-END: real createServingGateOracle over createServingContextLoader (gate 4 G1e-2)", () => {

@@ -740,7 +740,10 @@ describe("buildCopilotDeps — C5.4b provenance-stamping decorator (a flipped te
   }
 
   it("real path + servingOracle: the retrieval is DECORATED — the oracle is consulted AND a gated verdict stamps knowledge_writer", async () => {
-    const spy = spyOracle({ mode: "gated", admittedCitationIds: new Set(["gbrain:sessions:028"]) });
+    const spy = spyOracle({
+      mode: "gated",
+      admitted: new Map([["gbrain:sessions:028", { content: "PROVEN", mdContentSha: "sha" }]]),
+    });
     const deps = buildCopilotDeps({
       realCopilot: true,
       workspaces,

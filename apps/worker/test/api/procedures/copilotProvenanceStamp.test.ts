@@ -8,10 +8,19 @@
 // backed oracle is a SEPARATE future sub-slice. The interim oracle always degrades, so on every live ask
 // TODAY nothing is stamped ⇒ propose stays structurally OFF (the C5.4a honest-interim pattern).
 //
-// These tests fold the 4 adversarial-verifier corrections that ship in THIS slice:
+// CONTENT INTEGRITY (C5.4b precondition 1 — THIS slice): the gated verdict now carries each admitted
+// citation's REHYDRATED proven bytes (`content` + `mdContentSha`), and the decorator REBUILDS
+// `RetrievedContext.blocks` from those proven bytes POSITIONALLY (index-aligned to `sources`, which the
+// prompt builder pairs 1:1) — so a `knowledge_writer` label can never sit over unverified `blocks[]` bytes
+// (the model synthesizes over `blocks`, a SEPARATE array from `sources`), nor can a proven excerpt be
+// misattributed to the wrong citation. Partial admission blanks the unverified slots to "" (Option A — the
+// model reads no unproven bytes). A gated-but-EMPTY admitted set leaves blocks UNTOUCHED (an empty gate
+// result must not blank the read-only answer).
+//
+// These tests fold the 4 adversarial-verifier corrections that ship in THIS decorator:
 //   • always-OVERWRITE provenance from the verdict (forbid a future inner adapter self-stamping) — C1.3/C4.4
 //   • subset-or-FAIL-CLOSED: a foreign admitted id (oracle saw a different context — TOCTOU) strips all — C3.4
-//   • mode-gated discriminated-union read (a stray admittedCitationIds on a non-gated verdict stamps nothing) — C3.5
+//   • mode-gated discriminated-union read (a stray admitted map on a non-gated verdict stamps nothing) — C3.5
 //   • whole-body no-throw + malformed-sources fail-closed err — C4.1/C4.2
 import { describe, it, expect } from "vitest";
 import { ok, err, isOk, isErr, failure } from "@sow/contracts";
@@ -89,8 +98,20 @@ function spyOracle(verdict: Result<CopilotServingVerdict, FailureVariant>): {
   };
 }
 
+/** Proven bytes for one admitted citation (the gated-arm map value). */
+const proven = (content: string, mdContentSha = `sha:${content}`): { content: string; mdContentSha: string } => ({
+  content,
+  mdContentSha,
+});
+
+/** A gated verdict admitting `ids`, each with a deterministic proven content (`PROVEN:<id>`). */
 const gated = (ids: readonly string[]): Result<CopilotServingVerdict, FailureVariant> =>
-  ok({ mode: "gated", admittedCitationIds: new Set(ids) });
+  ok({ mode: "gated", admitted: new Map(ids.map((id) => [id, proven(`PROVEN:${id}`)])) });
+
+/** A gated verdict admitting each citationId → the EXPLICIT proven content given (for block-rebuild assertions). */
+const gatedWith = (entries: Record<string, string>): Result<CopilotServingVerdict, FailureVariant> =>
+  ok({ mode: "gated", admitted: new Map(Object.entries(entries).map(([id, content]) => [id, proven(content)])) });
+
 const degraded: Result<CopilotServingVerdict, FailureVariant> = ok({
   mode: "degraded_direct_markdown",
 });
@@ -103,14 +124,17 @@ function sourceById(context: RetrievedContext, id: string): RetrievedSource | un
 }
 
 describe("createProvenanceStampingRetrieval — gated admission ⇒ knowledge_writer", () => {
-  it("all-admitted ⇒ every source knowledge_writer ⇒ trusted; blocks + workspaceId preserved", async () => {
-    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a"), src("gbrain:b")], ["blkA", "blkB"])));
-    const deco = createProvenanceStampingRetrieval({ inner: inner.port, oracle: spyOracle(gated(["gbrain:a", "gbrain:b"])).oracle });
+  it("all-admitted ⇒ every source knowledge_writer ⇒ trusted; workspaceId preserved, blocks rebuilt from proven bytes", async () => {
+    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a"), src("gbrain:b")], ["UNVERIFIED-A", "UNVERIFIED-B"])));
+    const deco = createProvenanceStampingRetrieval({
+      inner: inner.port,
+      oracle: spyOracle(gatedWith({ "gbrain:a": "PROVEN A", "gbrain:b": "PROVEN B" })).oracle,
+    });
     const r = await deco.retrieve(WS, "q");
     expect(isOk(r)).toBe(true);
     if (isOk(r)) {
       expect(r.value.sources.every((s) => s.provenance === "knowledge_writer")).toBe(true);
-      expect(r.value.blocks).toEqual(["blkA", "blkB"]);
+      expect(r.value.blocks).toEqual(["PROVEN A", "PROVEN B"]); // rebuilt from the gate's proven bytes
       expect(r.value.workspaceId).toBe(WS);
       expect(deriveCopilotContentTrust(r.value)).toBe("trusted");
     }
@@ -130,6 +154,81 @@ describe("createProvenanceStampingRetrieval — gated admission ⇒ knowledge_wr
   });
 });
 
+describe("createProvenanceStampingRetrieval — CONTENT INTEGRITY (rebuild blocks from proven bytes, C5.4b)", () => {
+  it("FULL admission ⇒ blocks REBUILT to the proven content (retrieved-source order), replacing unverified inner blocks", async () => {
+    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a"), src("gbrain:b")], ["UNVERIFIED-A", "UNVERIFIED-B"])));
+    const deco = createProvenanceStampingRetrieval({
+      inner: inner.port,
+      oracle: spyOracle(gatedWith({ "gbrain:a": "PROVEN A", "gbrain:b": "PROVEN B" })).oracle,
+    });
+    const r = await deco.retrieve(WS, "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.blocks).toEqual(["PROVEN A", "PROVEN B"]);
+  });
+
+  it("PARTIAL admission ⇒ unadmitted slot BLANKED to \"\" positionally (Option A), length pinned to sources", async () => {
+    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a"), src("gbrain:b")], ["UNVERIFIED-A", "UNVERIFIED-B"])));
+    const deco = createProvenanceStampingRetrieval({
+      inner: inner.port,
+      oracle: spyOracle(gatedWith({ "gbrain:a": "PROVEN A" })).oracle, // only a admitted
+    });
+    const r = await deco.retrieve(WS, "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      // index-aligned to sources [a, b]: a's proven bytes at 0, b's unverified block dropped → "" at 1.
+      expect(r.value.blocks).toEqual(["PROVEN A", ""]);
+      expect(r.value.blocks).toHaveLength(r.value.sources.length); // positional pairing preserved
+      expect(sourceById(r.value, "gbrain:a")?.provenance).toBe("knowledge_writer");
+      expect(sourceById(r.value, "gbrain:b")?.provenance).toBeUndefined();
+      expect(deriveCopilotContentTrust(r.value)).toBe("untrusted");
+    }
+  });
+
+  it("blocks follow RETRIEVED-SOURCE order, not admitted-map insertion order", async () => {
+    // sources are [b, a]; the admitted map inserts a before b — output must follow source order (b, a).
+    const inner = fixedInner(ok(ctx(WS, [src("gbrain:b"), src("gbrain:a")], ["x", "y"])));
+    const deco = createProvenanceStampingRetrieval({
+      inner: inner.port,
+      oracle: spyOracle(gatedWith({ "gbrain:a": "PA", "gbrain:b": "PB" })).oracle,
+    });
+    const r = await deco.retrieve(WS, "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.blocks).toEqual(["PB", "PA"]);
+  });
+
+  it("GATED-BUT-EMPTY admitted ⇒ blocks LEFT UNTOUCHED (an empty gate result must not blank the read-only answer)", async () => {
+    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a")], ["INNER-BLOCK"])));
+    const deco = createProvenanceStampingRetrieval({ inner: inner.port, oracle: spyOracle(gated([])).oracle });
+    const r = await deco.retrieve(WS, "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.blocks).toEqual(["INNER-BLOCK"]); // unchanged — read-only answer survives
+      expect(r.value.sources.every((s) => s.provenance === undefined)).toBe(true);
+      expect(deriveCopilotContentTrust(r.value)).toBe("untrusted");
+    }
+  });
+
+  it("a duplicated admitted source ⇒ ALIGNED duplicate blocks (length pinned to sources) + BOTH copies stamped knowledge_writer", async () => {
+    // gbrain:a appears twice in sources; the positional rebuild carries its proven content into BOTH slots
+    // (blocks.length === sources.length — no compaction, so no inflation) and stamps both copies. The real
+    // oracle would never ADMIT a duplicated citationId (precondition 5 excludes it ⇒ untrusted); this pins the
+    // decorator's own behavior against a fake/hostile oracle that does.
+    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a"), src("gbrain:a")], ["u1", "u2"])));
+    const deco = createProvenanceStampingRetrieval({
+      inner: inner.port,
+      oracle: spyOracle(gatedWith({ "gbrain:a": "PROVEN A" })).oracle,
+    });
+    const r = await deco.retrieve(WS, "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.blocks).toEqual(["PROVEN A", "PROVEN A"]);
+      expect(r.value.blocks).toHaveLength(r.value.sources.length);
+      expect(r.value.sources.every((s) => s.provenance === "knowledge_writer")).toBe(true);
+      expect(deriveCopilotContentTrust(r.value)).toBe("trusted");
+    }
+  });
+});
+
 describe("createProvenanceStampingRetrieval — fail-closed to untrusted", () => {
   it("DEGRADED coverage ⇒ zero stamps, sources + blocks preserved ⇒ untrusted", async () => {
     const inner = fixedInner(ok(ctx(WS, [src("gbrain:a"), src("gbrain:b")], ["blkA", "blkB"])));
@@ -139,7 +238,7 @@ describe("createProvenanceStampingRetrieval — fail-closed to untrusted", () =>
     if (isOk(r)) {
       expect(r.value.sources.every((s) => s.provenance === undefined)).toBe(true);
       expect(r.value.sources).toHaveLength(2);
-      expect(r.value.blocks).toEqual(["blkA", "blkB"]);
+      expect(r.value.blocks).toEqual(["blkA", "blkB"]); // untouched (no gated admission)
       expect(deriveCopilotContentTrust(r.value)).toBe("untrusted");
     }
   });
@@ -155,8 +254,8 @@ describe("createProvenanceStampingRetrieval — fail-closed to untrusted", () =>
     }
   });
 
-  it("FOREIGN admitted id (⊄ retrieved — a TOCTOU anomaly) ⇒ strip ALL ⇒ untrusted (C3.4)", async () => {
-    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a"), src("gbrain:b")])));
+  it("FOREIGN admitted id (⊄ retrieved — a TOCTOU anomaly) ⇒ strip ALL ⇒ untrusted (C3.4); blocks untouched", async () => {
+    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a"), src("gbrain:b")], ["blkA", "blkB"])));
     // oracle admits a real id AND a phantom one it must have seen in a DIFFERENT context.
     const deco = createProvenanceStampingRetrieval({ inner: inner.port, oracle: spyOracle(gated(["gbrain:a", "gbrain:zzz"])).oracle });
     const r = await deco.retrieve(WS, "q");
@@ -164,18 +263,20 @@ describe("createProvenanceStampingRetrieval — fail-closed to untrusted", () =>
     if (isOk(r)) {
       // even gbrain:a loses its stamp — the whole verdict is distrusted on the anomaly.
       expect(r.value.sources.every((s) => s.provenance === undefined)).toBe(true);
+      expect(r.value.blocks).toEqual(["blkA", "blkB"]); // no rebuild on a distrusted verdict
       expect(deriveCopilotContentTrust(r.value)).toBe("untrusted");
     }
   });
 
-  it("ORACLE err ⇒ unstamped passthrough (read-only Q&A survives, propose off), never throws", async () => {
-    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a"), src("gbrain:b")])));
+  it("ORACLE err ⇒ unstamped passthrough (read-only Q&A survives, propose off), never throws; blocks untouched", async () => {
+    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a"), src("gbrain:b")], ["blkA", "blkB"])));
     const deco = createProvenanceStampingRetrieval({ inner: inner.port, oracle: spyOracle(oracleErr).oracle });
     const r = await deco.retrieve(WS, "q");
     expect(isOk(r)).toBe(true);
     if (isOk(r)) {
       expect(r.value.sources.every((s) => s.provenance === undefined)).toBe(true);
       expect(r.value.sources).toHaveLength(2);
+      expect(r.value.blocks).toEqual(["blkA", "blkB"]);
       expect(deriveCopilotContentTrust(r.value)).toBe("untrusted");
     }
   });
@@ -219,34 +320,60 @@ describe("createProvenanceStampingRetrieval — always OVERWRITE provenance from
 });
 
 describe("createProvenanceStampingRetrieval — malformed-verdict + malformed-context defenses", () => {
-  it("a NON-gated verdict carrying a STRAY admittedCitationIds still stamps nothing (C3.5)", async () => {
+  it("a NON-gated verdict carrying a STRAY admitted map still stamps nothing (C3.5)", async () => {
     const sneaky: CopilotServingOracle = {
       admit: (): Promise<Result<CopilotServingVerdict, FailureVariant>> =>
         Promise.resolve(
-          ok({ mode: "degraded_direct_markdown", admittedCitationIds: new Set(["gbrain:a"]) } as unknown as CopilotServingVerdict),
+          ok({
+            mode: "degraded_direct_markdown",
+            admitted: new Map([["gbrain:a", proven("SNEAKY")]]),
+          } as unknown as CopilotServingVerdict),
         ),
     };
-    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a")])));
+    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a")], ["INNER"])));
     const deco = createProvenanceStampingRetrieval({ inner: inner.port, oracle: sneaky });
     const r = await deco.retrieve(WS, "q");
     expect(isOk(r)).toBe(true);
     if (isOk(r)) {
       expect(sourceById(r.value, "gbrain:a")?.provenance).toBeUndefined();
+      expect(r.value.blocks).toEqual(["INNER"]); // no rebuild on a non-gated verdict
       expect(deriveCopilotContentTrust(r.value)).toBe("untrusted");
     }
   });
 
-  it("a gated verdict whose admittedCitationIds is NOT a Set ⇒ strip all (fail closed)", async () => {
+  it("a gated verdict whose admitted is NOT a Map ⇒ strip all (fail closed)", async () => {
     const broken: CopilotServingOracle = {
       admit: (): Promise<Result<CopilotServingVerdict, FailureVariant>> =>
-        Promise.resolve(ok({ mode: "gated", admittedCitationIds: ["gbrain:a"] } as unknown as CopilotServingVerdict)),
+        Promise.resolve(ok({ mode: "gated", admitted: ["gbrain:a"] } as unknown as CopilotServingVerdict)),
     };
-    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a")])));
+    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a")], ["INNER"])));
     const deco = createProvenanceStampingRetrieval({ inner: inner.port, oracle: broken });
     const r = await deco.retrieve(WS, "q");
     expect(isOk(r)).toBe(true);
     if (isOk(r)) {
       expect(sourceById(r.value, "gbrain:a")?.provenance).toBeUndefined();
+      expect(r.value.blocks).toEqual(["INNER"]);
+      expect(deriveCopilotContentTrust(r.value)).toBe("untrusted");
+    }
+  });
+
+  it("a gated verdict whose admitted map has a NON-STRING content ⇒ strip all (fail closed)", async () => {
+    const broken: CopilotServingOracle = {
+      admit: (): Promise<Result<CopilotServingVerdict, FailureVariant>> =>
+        Promise.resolve(
+          ok({
+            mode: "gated",
+            admitted: new Map([["gbrain:a", { content: 123, mdContentSha: "s" }]]),
+          } as unknown as CopilotServingVerdict),
+        ),
+    };
+    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a")], ["INNER"])));
+    const deco = createProvenanceStampingRetrieval({ inner: inner.port, oracle: broken });
+    const r = await deco.retrieve(WS, "q");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(sourceById(r.value, "gbrain:a")?.provenance).toBeUndefined();
+      expect(r.value.blocks).toEqual(["INNER"]); // malformed proven bytes never reach the model
       expect(deriveCopilotContentTrust(r.value)).toBe("untrusted");
     }
   });
@@ -254,7 +381,7 @@ describe("createProvenanceStampingRetrieval — malformed-verdict + malformed-co
   it("a structurally-malformed verdict (missing `mode`) degrades to unstamped ⇒ untrusted", async () => {
     const noMode: CopilotServingOracle = {
       admit: (): Promise<Result<CopilotServingVerdict, FailureVariant>> =>
-        Promise.resolve(ok({ admittedCitationIds: new Set(["gbrain:a"]) } as unknown as CopilotServingVerdict)),
+        Promise.resolve(ok({ admitted: new Map([["gbrain:a", proven("X")]]) } as unknown as CopilotServingVerdict)),
     };
     const inner = fixedInner(ok(ctx(WS, [src("gbrain:a")])));
     const r = await createProvenanceStampingRetrieval({ inner: inner.port, oracle: noMode }).retrieve(WS, "q");
@@ -341,12 +468,16 @@ describe("createInterimDegradedServingOracle — the structurally-OFF input", ()
 const REV = "rev-1" as RevisionId;
 const OK_COVERAGE = { cleanForServing: true, coverageComplete: true, pinValid: true, oracleBuildOk: true };
 
-/** A fake serving gate: admits exactly the pointer factIdentities in `admit`, in the given `mode`. */
+/**
+ * A fake serving gate: admits exactly the pointer factIdentities in `admit`, in the given `mode`. Each admitted
+ * fact carries the proven bytes from `content[factIdentity]` (default `{content:"c", sha:"sha"}`).
+ */
 function fakeGate(opts: {
   admit?: readonly string[];
   mode?: "gated" | "degraded_direct_markdown";
   error?: ServingError;
   throws?: boolean;
+  content?: Record<string, { content: string; sha: string }>;
 }): { fn: AdmitForServingFn; reqs: { factIds: string[]; workspaceId: string }[] } {
   const reqs: { factIds: string[]; workspaceId: string }[] = [];
   const fn: AdmitForServingFn = (req) => {
@@ -358,7 +489,15 @@ function fakeGate(opts: {
       mode: opts.mode ?? "gated",
       admitted: req.pointers
         .filter((p) => admitSet.has(p.factIdentity))
-        .map((p) => ({ factIdentity: p.factIdentity, content: "c", mdContentSha: "sha" as never, score: p.score })),
+        .map((p) => {
+          const bytes = opts.content?.[p.factIdentity];
+          return {
+            factIdentity: p.factIdentity,
+            content: bytes?.content ?? "c",
+            mdContentSha: (bytes?.sha ?? "sha") as never,
+            score: p.score,
+          };
+        }),
       withheld: [],
     };
     return Promise.resolve(ok(result));
@@ -389,7 +528,33 @@ const verdictOf = (r: Result<CopilotServingVerdict, FailureVariant>): CopilotSer
   return r.value;
 };
 const admittedSet = (v: CopilotServingVerdict): ReadonlySet<string> =>
-  v.mode === "gated" ? v.admittedCitationIds : new Set();
+  v.mode === "gated" ? new Set(v.admitted.keys()) : new Set();
+const admittedContent = (
+  v: CopilotServingVerdict,
+  cid: string,
+): { content: string; mdContentSha: string } | undefined =>
+  v.mode === "gated" ? v.admitted.get(cid) : undefined;
+
+describe("createServingGateOracle — content integrity (proven bytes carried into the verdict)", () => {
+  it("carries the admitted citation's proven content + mdContentSha into the verdict map", async () => {
+    const oracle = createServingGateOracle({
+      admitForServing: fakeGate({ admit: ["page:a"], content: { "page:a": { content: "PROVEN A", sha: "sha-a" } } }).fn,
+      loadContext: readyLoader({ "gbrain:a": ["page:a"] }),
+    });
+    const v = verdictOf(await oracle.admit(WS, ctx(WS, [src("gbrain:a")])));
+    expect(v.mode).toBe("gated");
+    expect(admittedContent(v, "gbrain:a")).toEqual({ content: "PROVEN A", mdContentSha: "sha-a" });
+  });
+
+  it("a partially-admitted page carries NO proven bytes (absent from the admitted map)", async () => {
+    const oracle = createServingGateOracle({
+      admitForServing: fakeGate({ admit: ["page:a"], content: { "page:a": { content: "PA", sha: "sa" } } }).fn, // tag:a NOT admitted
+      loadContext: readyLoader({ "gbrain:a": ["page:a", "tag:a"] }),
+    });
+    const v = verdictOf(await oracle.admit(WS, ctx(WS, [src("gbrain:a")])));
+    expect(admittedContent(v, "gbrain:a")).toBeUndefined();
+  });
+});
 
 describe("createServingGateOracle — precondition 2/3 (resolve + all-or-nothing per page)", () => {
   it("admits a citationId when EVERY factIdentity reachable via it is admitted by the gate", async () => {
@@ -544,10 +709,10 @@ describe("createServingGateOracle — precondition 4 (serving-error mapping) + d
 });
 
 describe("createServingGateOracle — wired through the decorator (end-to-end trust)", () => {
-  it("a fully-admitted page ⇒ knowledge_writer stamp ⇒ deriveCopilotContentTrust = trusted", async () => {
-    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a")])));
+  it("a fully-admitted page ⇒ knowledge_writer stamp + blocks rebuilt to proven bytes ⇒ trusted", async () => {
+    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a")], ["UNVERIFIED"])));
     const oracle = createServingGateOracle({
-      admitForServing: fakeGate({ admit: ["page:a", "tag:a"] }).fn,
+      admitForServing: fakeGate({ admit: ["page:a", "tag:a"], content: { "page:a": { content: "PROVEN PAGE", sha: "sh" } } }).fn,
       loadContext: readyLoader({ "gbrain:a": ["page:a", "tag:a"] }),
     });
     const deco = createProvenanceStampingRetrieval({ inner: inner.port, oracle });
@@ -555,12 +720,13 @@ describe("createServingGateOracle — wired through the decorator (end-to-end tr
     expect(isOk(r)).toBe(true);
     if (isOk(r)) {
       expect(r.value.sources[0]?.provenance).toBe("knowledge_writer");
+      expect(r.value.blocks).toEqual(["PROVEN PAGE"]); // first resolved (page) fact's proven content
       expect(deriveCopilotContentTrust(r.value)).toBe("trusted");
     }
   });
 
-  it("a partially-admitted page ⇒ NO stamp ⇒ untrusted (propose stays OFF)", async () => {
-    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a")])));
+  it("a partially-admitted page ⇒ NO stamp ⇒ untrusted (propose stays OFF); blocks untouched", async () => {
+    const inner = fixedInner(ok(ctx(WS, [src("gbrain:a")], ["UNVERIFIED"])));
     const oracle = createServingGateOracle({
       admitForServing: fakeGate({ admit: ["page:a"] }).fn, // tag:a withheld
       loadContext: readyLoader({ "gbrain:a": ["page:a", "tag:a"] }),
@@ -570,6 +736,7 @@ describe("createServingGateOracle — wired through the decorator (end-to-end tr
     expect(isOk(r)).toBe(true);
     if (isOk(r)) {
       expect(r.value.sources[0]?.provenance).toBeUndefined();
+      expect(r.value.blocks).toEqual(["UNVERIFIED"]); // gated-but-empty ⇒ blocks left untouched
       expect(deriveCopilotContentTrust(r.value)).toBe("untrusted");
     }
   });
