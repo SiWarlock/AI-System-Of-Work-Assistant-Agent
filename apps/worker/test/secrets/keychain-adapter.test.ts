@@ -10,7 +10,7 @@ import {
   createKeychainSecretsAdapter,
   type KeychainBackend,
   type KeychainBackendError,
-} from "../../src/keychain/keychain-adapter";
+} from "../../src/secrets/keychain-adapter";
 
 const REF = "keychain://sow/kw-signing";
 const KEY = new Uint8Array([9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
