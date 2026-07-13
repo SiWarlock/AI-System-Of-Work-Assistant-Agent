@@ -113,6 +113,7 @@ import {
   buildServedVaultResolver,
 } from "./api/procedures/servingOracleAssembly";
 import { createServingCoverageReader } from "./api/procedures/servingContextBootReaders";
+import { buildKeychainSecrets, type KeychainSecretsGate } from "./secrets/keychain-boot";
 import { createCopilotProposeMcpServer, createCopilotProposeKnowledgeMcpServer, createCopilotGbrainProxyMcpServer, createCopilotVaultMcpServer, createCopilotSkillsMcpServer } from "@sow/providers";
 import type { CopilotSynthesisPort } from "./api/procedures/copilot";
 import { createReadModelBriefingRetrieval, type CopilotBriefingDeps } from "./api/procedures/copilotBriefing";
@@ -354,13 +355,23 @@ export interface BootConfig extends BackendsConfig {
    * policy-layer SecretsPort yet — this injects the SAME knowledge-local port the writer's stamp-mint uses. The
    * pin is ONE coverage leg; the serve-time ParityReport store + rebuild-oracle wiring is the remaining go-live
    * coverage gate (arming ≠ trust — OFF-lock 3, the real reader degrades on `parity===undefined`).
+   * `secrets` is OPTIONAL (11.4 slice 3): boot sources it from the real Keychain adapter (`keychainSecrets`) when
+   * provisioned, falling back to an inline `secrets` (a test injection) — `keychainSecrets?.secrets ?? .secrets`.
    */
   readonly provenanceServingOracle?: {
-    readonly secrets: SecretsPort;
+    readonly secrets?: SecretsPort;
     readonly signingKeyRef: SecretRef;
     readonly pin: GbrainPin;
     readonly resolveRunning?: () => RunningGbrainVersion | undefined;
   };
+  /**
+   * 11.4 Slice 3 — the OWNER-PROVISIONING gate for the real macOS-Keychain `SecretsPort` (default ABSENT ⇒ INERT:
+   * no adapter/backend/`security` process constructed, byte-equivalent boot). When present, `buildKeychainSecrets`
+   * builds the Keychain adapter and boot sources `provenanceServingOracle.secrets` (C5.4b OFF-lock 2) from it. The
+   * first real Keychain touch is owner-gated. `execFile` is a test seam; production omits it (the real bounded
+   * wrapper). NOTE: the `getSecret` provider facade + the Keychain-locked degraded routing land in a Slice-4 follow-up.
+   */
+  readonly keychainSecrets?: KeychainSecretsGate;
   /**
    * Explicit Copilot workspace set (id + type). Decoupled from `devProvision` (which is SURFACE data).
    * When omitted: devProvision-derived if present, else — on the real path — the 3 well-known scopes
@@ -905,6 +916,9 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     servedVaultRoots.set(config.copilotGbrainWorkspaceId, backends.vault);
   }
   const provenanceBundle = config.provenanceServingOracle;
+  // 11.4 Slice 3 — the owner-provisioning gate: build the real Keychain `SecretsPort` ONLY when provisioned (gate
+  // absent ⇒ `undefined`, inert — no adapter/backend/`security` process, byte-equivalent). Sources OFF-lock 2.
+  const keychainSecrets = buildKeychainSecrets(config.keychainSecrets);
   const loaderBackedServingOracle =
     config.copilotProvenanceStamping === true && provenanceBundle !== undefined
       ? buildLoaderBackedServingOracle({
@@ -915,7 +929,9 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
             resolveRunning: provenanceBundle.resolveRunning ?? ((): RunningGbrainVersion | undefined => undefined),
             now: backends.now,
           }),
-          secrets: provenanceBundle.secrets, // OFF-lock 2: absent bundle ⇒ never reaches here ⇒ undefined
+          // OFF-lock 2: the REAL Keychain SecretsPort when provisioned, else the bundle's inline secrets (test),
+          // else undefined ⇒ buildLoaderBackedServingOracle returns undefined ⇒ interim/degraded.
+          secrets: keychainSecrets?.secrets ?? provenanceBundle.secrets,
           signingKeyRef: provenanceBundle.signingKeyRef,
         })
       : undefined;
