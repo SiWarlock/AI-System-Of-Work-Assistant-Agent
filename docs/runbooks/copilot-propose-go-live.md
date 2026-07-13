@@ -30,7 +30,11 @@ Do not flip this live by flag alone. `copilotProposeMode` is an **AND-term** wit
 
 ## Go-live preconditions (ALL required)
 
-### 1. C5.4b — the provenance-stamping seam (SEAM DONE `d170c3b`; the REAL oracle is the remaining gate)
+### 1. C5.4b — the real `admitForServing`-backed serving oracle (CONSTRUCTIBLE-DORMANT — DONE 2026-07-13, arc `4650ad4`+`286910f`+`3d56dc6`)
+
+> **UPDATE 2026-07-13 — the C5.4b constructible-dormant oracle arc is COMPLETE (3 slices, orch15+impl16).** The real oracle is now BUILT, constructible in boot, and proven (crown-jewel e2e) to admit a KnowledgeWriter-stamped source as `trusted` (blocks rebuilt from proven bytes) while rejecting an imported note. It stays OFF behind **three independent OFF-locks** (arming flag unset · no provisioned signing key · real coverage degrades — the last is not config-defeatable). **Precondition 1 (content integrity) is HANDLED** (slice 1 `4650ad4`: the verdict carries admitted proven bytes and the decorator rebuilds `RetrievedContext.blocks` from them, positionally). Slice 2 (`286910f`) built the real committed-vault + honest-interim coverage readers; slice 3 (`3d56dc6`) assembled `loaderBacked` in boot behind the `copilotServingOracleGoLive` arming flag (shipped UNSET). **The remaining go-live is now purely owner-gated provisioning + the flip** (see the Flip procedure below): a provisioned signing key (SecretsPort/Keychain — HITL, 11.4), real KW-authored corpora + a serve-time `ParityReport` store + rebuild-oracle (the coverage gate), then the owner arms `copilotServingOracleGoLive` + `copilotProposeMode`.
+
+The historical seam context (superseded by the arc above):
 
 A source is stamped `provenance: "knowledge_writer"` **only** when its content is genuinely KnowledgeWriter-authored canonical Markdown.
 
@@ -61,7 +65,7 @@ Before flipping the flag, a governance eval for the propose path must be green. 
 
 ## Flip procedure (only after 1–3 are met)
 
-1. ~~Land C5.4b (the provenance-stamping seam).~~ **DONE `d170c3b`.** Then land the **real `admitForServing`-backed oracle** meeting all five preconditions in §1 — verify a KnowledgeWriter-authored source stamps `knowledge_writer` and an imported note does NOT (adversarial test), and that `blocks` are rebuilt from proven bytes.
+1. ~~Land C5.4b (the provenance-stamping seam).~~ **DONE `d170c3b`.** ~~Then land the **real `admitForServing`-backed oracle** meeting all five preconditions in §1 — verify a KnowledgeWriter-authored source stamps `knowledge_writer` and an imported note does NOT (adversarial test), and that `blocks` are rebuilt from proven bytes.~~ **DONE 2026-07-13** (arc `4650ad4`+`286910f`+`3d56dc6`): the real oracle is constructible-dormant, all five preconditions met, and the crown-jewel e2e proves KW-stamped→trusted / imported→withheld with `blocks` rebuilt from proven bytes. **Remaining before the flip (owner-gated provisioning):** (1a) provision the serve-time signing key via the `provenanceServingOracle` boot bundle (SecretsPort/Keychain — HITL 11.4) so `loaderBacked` is constructed (OFF-lock 2); (1b) stand up real KW-authored corpora + a serve-time `ParityReport` store + rebuild-oracle so coverage can go green (OFF-lock 3 — until then the oracle degrades even when armed); (1c) per-workspace vault roots (the shared-single-dev-vault resolver serves only one workspace today, HMAC-backstopped).
 2. ~~Land the §9.8 inbox scoping.~~ **DONE `f57a5a5`** (Option A).
 3. ~~Green the governance eval (eval-security track).~~ **DONE (`e21536c`, 2026-07-09)** — the propose-path governance conformance battery is built + green (assertions 1–4; 5 = deferred `it.todo`).
 4. Set `copilotProposeMode: true` (with `copilotAgentMode: true` + `copilotRealModel: true` + a running `gbrain serve --http`). Confirm on a trusted-content ask the job resolves `scoped_write`, the propose tool is in the allow-list, and a proposal lands as a pending card in the CORRECT workspace inbox only.
