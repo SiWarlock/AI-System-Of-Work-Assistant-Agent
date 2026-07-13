@@ -44,9 +44,13 @@ import type {
 /**
  * Reads a workspace's committed vault snapshot at its head revision — the deriver's input (path→committed
  * Markdown + the head `revisionId`). Returns `undefined` for a never-indexed workspace or when the reader is
- * left unbound (⇒ the loader degrades), preserving dormancy.
+ * left unbound (⇒ the loader degrades), preserving dormancy. SYNC-or-ASYNC (mirrors `CopilotRetrievalPort`):
+ * the in-memory test fake returns a snapshot directly; the real fs-backed reader returns a `Promise` — the
+ * loader `await`s either (a no-op on a non-Promise).
  */
-export type CommittedVaultReader = (workspaceId: string) => CanonicalVaultSnapshot | undefined;
+export type CommittedVaultReader = (
+  workspaceId: string,
+) => CanonicalVaultSnapshot | undefined | Promise<CanonicalVaultSnapshot | undefined>;
 
 /**
  * The RAW serving-coverage inputs for one workspace @ revision — the loader DERIVES the 4-leg
@@ -138,8 +142,9 @@ const degradedResolution = (): Result<ServingContextResolution, FailureVariant> 
 export function createServingContextLoader(deps: ServingContextLoaderDeps): ServingContextLoader {
   return async (workspaceId: string): Promise<Result<ServingContextResolution, FailureVariant>> => {
     try {
-      // 1) committed vault snapshot @ head — never indexed / reader unbound ⇒ degraded.
-      const snapshot = deps.readCommittedVault(workspaceId);
+      // 1) committed vault snapshot @ head — never indexed / reader unbound ⇒ degraded. `await` handles both
+      //    the sync in-memory fake and the async fs-backed reader (no-op on a non-Promise).
+      const snapshot = await deps.readCommittedVault(workspaceId);
       if (snapshot === undefined) return degradedResolution();
 
       // 1a) defense-in-depth (safety rule 4 — workspace isolation): the snapshot MUST describe the REQUESTED
