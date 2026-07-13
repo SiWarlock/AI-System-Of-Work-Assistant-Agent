@@ -74,6 +74,7 @@ import type {
   RunMeetingAgentJobPort,
   ValidateExtractionPort,
   BuildOutputsPort,
+  SourceBuildOutputsPort,
   CommitKnowledgePort,
   ProposeActionsPort,
   ReindexGbrainPort,
@@ -392,10 +393,12 @@ export async function sourceIngestionWorkflow(
   const register: RegisterSourcePort = { register: (ctx) => activities.sourceRegister(ctx) };
   const route: RouteSourcePort = { route: (ctx) => activities.sourceRoute(ctx) };
   const agent: RunSourceAgentJobPort = { run: (ctx) => activities.sourceRunAgentJob(ctx) };
-  // `validate` is the module-level PURE in-sandbox port (see above) — the source seam
-  // re-exports the SAME derive-from-validated surface as meeting-closeout.
-  const buildOutputs: BuildOutputsPort = {
-    build: (validated, workspaceId) => activities.sourceBuildOutputs(validated, workspaceId),
+  // `validate` is the module-level PURE in-sandbox port (see above). Source-ingestion's build
+  // takes the DEDICATED SourceBuildOutputsPort — it carries the per-file source identity so the
+  // note path + planId are derived per dropped file (many files persist per workspace).
+  const buildOutputs: SourceBuildOutputsPort = {
+    build: (validated, workspaceId, source) =>
+      activities.sourceBuildOutputs(validated, workspaceId, source),
   };
   const commit: CommitKnowledgePort = { commit: (plan) => activities.sourceCommit(plan) };
   const propose: ProposeActionsPort = {

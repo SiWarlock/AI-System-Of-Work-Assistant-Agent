@@ -58,7 +58,7 @@ import type {
   RouteSourcePort,
   RunSourceAgentJobPort,
   ValidateExtractionPort,
-  BuildOutputsPort,
+  SourceBuildOutputsPort,
   CommitKnowledgePort,
   ProposeActionsPort,
   IndexGbrainPort,
@@ -96,7 +96,7 @@ export interface SourceIngestionDeps {
   readonly route: RouteSourcePort;
   readonly agent: RunSourceAgentJobPort;
   readonly validate: ValidateExtractionPort;
-  readonly buildOutputs: BuildOutputsPort;
+  readonly buildOutputs: SourceBuildOutputsPort;
   readonly commit: CommitKnowledgePort;
   readonly propose: ProposeActionsPort;
   readonly index: IndexGbrainPort;
@@ -423,7 +423,13 @@ export async function runSourceIngestion(
   //    bypass). The plan is NEVER caller-supplied; `plan.workspaceId` is stamped from
   //    boundWorkspaceId. A derivation failure folds to `rejected` with NO partial
   //    commit (buildOutputs runs BEFORE any durable write).
-  const built = await deps.buildOutputs.build(validated.value, boundWorkspaceId);
+  // Thread the PER-FILE source identity into the build so it derives a distinct content-addressed
+  // note path + planId per dropped file (a fixed path collapses every file to one note). Narrow to
+  // {sourceId, contentHash} — the derivation must never see origin/routingHints (injection surface).
+  const built = await deps.buildOutputs.build(validated.value, boundWorkspaceId, {
+    sourceId: context.source.sourceId,
+    contentHash: context.source.contentHash,
+  });
   if (!isOk(built)) {
     state = advance(state, ["proposed", "rejected"]);
     return surface(state, `output derivation failed: ${built.error.code}`);

@@ -35,6 +35,7 @@ import type {
   Result,
   WorkspaceId,
   SourceEnvelope,
+  SourceId,
   AuditId,
   FailureClass,
 } from "@sow/contracts";
@@ -81,6 +82,45 @@ export type {
   ProposeError,
   ProposeErrorCode,
 };
+
+// ---------------------------------------------------------------------------
+// (2c″) SourceBuildOutputsPort — the source build derives a PER-FILE note (task 11.1)
+// ---------------------------------------------------------------------------
+//
+// Source-ingestion's build DIVERGED from the shared `BuildOutputsPort`: it must derive a distinct
+// per-file note path + planId from the DROPPED FILE's identity, so many files persist per workspace
+// (a fixed path collapses every file to one note). So it takes its OWN port carrying the per-file
+// source identity — leaving the shared `BuildOutputsPort` (meeting-closeout, hermes) byte-unchanged
+// (hermes has no per-file SourceEnvelope to pass; a required source on the shared port would force a
+// dishonest placeholder). This mirrors crossCalendarScheduling / projectSync, which already fork
+// their own build-outputs ports when their build stage diverges.
+
+/**
+ * The NARROW per-file source identity the note path + planId are keyed on — deliberately narrow
+ * (NOT the full {@link SourceEnvelope}) so the path-derivation surface STRUCTURALLY excludes the
+ * attacker-influenceable source fields (`origin`, `routingHints`, `sensitivity`); the derivation can
+ * only ever see the two fields it legitimately keys on. Both are required `SourceEnvelope` fields,
+ * so the driver projects `context.source` trivially.
+ */
+export interface SourceNoteIdentity {
+  readonly sourceId: SourceId;
+  readonly contentHash: string;
+}
+
+/**
+ * Like {@link BuildOutputsPort}, but the build receives the per-file {@link SourceNoteIdentity} so it
+ * derives a distinct, traversal-safe, content-addressed note path + planId per dropped file (a
+ * same-file same-content re-drop derives the same identity ⇒ the durable revision store replays; an
+ * edited file ⇒ a new note). Same return contract as the shared port (a `MeetingBuiltOutputs` plan +
+ * external actions, or a typed `BuildOutputsFailure`); never throws (§16).
+ */
+export interface SourceBuildOutputsPort {
+  build(
+    validated: ValidatedExtraction,
+    workspaceId: WorkspaceId,
+    source: SourceNoteIdentity,
+  ): Promise<Result<MeetingBuiltOutputs, BuildOutputsFailure>>;
+}
 
 // ---------------------------------------------------------------------------
 // (0) The source-ingestion pipeline context

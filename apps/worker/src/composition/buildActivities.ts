@@ -93,6 +93,8 @@ import type {
   MeetingJobInputs,
   ValidateExtractionPort,
   BuildOutputsPort,
+  SourceBuildOutputsPort,
+  SourceNoteIdentity,
   CommitKnowledgePort,
   ProposeActionsPort,
   ReindexGbrainPort,
@@ -141,6 +143,8 @@ import type {
   ResolvedWorkspacePolicy,
 } from "./backends";
 import { makeRequireApproval } from "./backends";
+// The per-file ingestion note-path derivation (traversal-safe, content-addressed) — task 11.1.
+import { deriveSourceNotePath, sourceIdentityDigest } from "./sourceNotePath";
 
 // ---------------------------------------------------------------------------
 // The per-flow binding parameters (identity/config that is not a backend adapter)
@@ -166,9 +170,14 @@ export interface SourceIngestionParams {
   readonly boundWorkspaceId: WorkspaceId;
   /** The deterministic candidate extraction the (faked) source agent emits. */
   readonly extraction: AgentExtraction;
-  /** The SourceRef the derived plan cites (REQ-F-006: ≥1 sourceRef). */
+  /**
+   * NOTE (task 11.1 slice #46): `sourceRef` + `planIdentity` are NO LONGER read by the source build —
+   * the note path, planId, and `sourceRefs` now derive from the PER-FILE `SourceNoteIdentity` threaded
+   * through `SourceBuildOutputsPort` (the fix for the fixed-path collision). They remain on the binding
+   * for now (still constructed at boot + in fixtures); a follow-on may prune them once no caller sets them.
+   */
   readonly sourceRef: SourceRef;
-  /** The stable plan-identity seed (→ deterministic planId; inv-5 replay). */
+  /** See the note on `sourceRef` — retained but unread by the source build after slice #46. */
   readonly planIdentity: Record<string, string>;
 }
 
@@ -273,8 +282,8 @@ export interface ProofSpineActivities {
     ...args: Parameters<RunSourceAgentJobPort["run"]>
   ): Promise<Awaited<ReturnType<RunSourceAgentJobPort["run"]>>>;
   sourceBuildOutputs(
-    ...args: Parameters<BuildOutputsPort["build"]>
-  ): Promise<Awaited<ReturnType<BuildOutputsPort["build"]>>>;
+    ...args: Parameters<SourceBuildOutputsPort["build"]>
+  ): Promise<Awaited<ReturnType<SourceBuildOutputsPort["build"]>>>;
   sourceCommit(
     ...args: Parameters<CommitKnowledgePort["commit"]>
   ): Promise<Awaited<ReturnType<CommitKnowledgePort["commit"]>>>;
@@ -615,26 +624,39 @@ export function buildProofSpineActivities(
   // caller value). `actions: []` so the happy path rests at `applied` without the
   // external-write stage (C1 scope). A stable planId (per workspace + planIdentity)
   // makes the commit fake's replay hold (inv-5).
-  const sourceBuildOutputs: BuildOutputsPort = {
+  const sourceBuildOutputs: SourceBuildOutputsPort = {
     build: (
       validated: ValidatedExtraction,
       ws: WorkspaceId,
+      source: SourceNoteIdentity,
     ): Promise<Result<MeetingBuiltOutputs, BuildOutputsFailure>> => {
       if (sourceBinding === undefined) {
         return Promise.resolve(
           err({ code: "build_failed", message: "no source-ingestion binding (C1)" }),
         );
       }
-      const seed = Object.values(sourceBinding.planIdentity).join(":");
+      // Derive a PER-FILE, traversal-safe, content-addressed note path from the dropped file's
+      // identity (task 11.1) — so DISTINCT files persist as DISTINCT notes (a fixed path collapsed
+      // every file to one). The path fails CLOSED on an unsafe `ws` segment (WorkspaceId is not
+      // charset-validated); a same-file same-content re-drop derives the same path + planId ⇒ the
+      // durable revision store replays (no duplicate); an edited file ⇒ a new note (lossless).
+      const notePath = deriveSourceNotePath(ws, source);
+      if (!notePath.ok) {
+        return Promise.resolve(err({ code: "build_failed", message: notePath.error.message }));
+      }
+      // planId keys on the SAME content-addressed digest as the path, so path ↔ planId stay
+      // consistent (same file+content → replay; edit → new note). Includes `ws` (WS-8 distinct).
+      const digest = sourceIdentityDigest(source);
       const plan: KnowledgeMutationPlan = {
-        planId: makePlanId(`plan-source-${String(ws)}-${seed}`),
-        // WS-2/WS-4: stamped from the PASSED (routing-bound) workspace, never a caller field.
+        planId: makePlanId(`plan-source-${String(ws)}-${digest}`),
+        // WS-2/WS-4: stamped from the PASSED (routing-bound) workspace, never a caller/source field.
         workspaceId: ws,
-        sourceRefs: [sourceBinding.sourceRef],
+        // Honest per-file traceability — the REAL dropped source, not the static boot binding ref.
+        sourceRefs: [{ sourceId: source.sourceId }],
         creates: [
           {
-            path: `sources/${String(ws)}/ingested.md`,
-            title: "ingested source",
+            path: notePath.value,
+            title: `Ingested: ${String(source.sourceId)}`,
             body: "source ingestion (C1)",
             frontmatter: {},
           },
@@ -736,8 +758,11 @@ export function buildProofSpineActivities(
     sourceRegister: (ctx) => sourceRegister.register(ctx),
     sourceRoute: (ctx) => sourceRoute.route(ctx),
     sourceRunAgentJob: (ctx) => sourceAgent.run(ctx),
-    sourceBuildOutputs: (validated: ValidatedExtraction, workspaceId: WorkspaceId) =>
-      sourceBuildOutputs.build(validated, workspaceId),
+    sourceBuildOutputs: (
+      validated: ValidatedExtraction,
+      workspaceId: WorkspaceId,
+      source: SourceNoteIdentity,
+    ) => sourceBuildOutputs.build(validated, workspaceId, source),
     sourceCommit: (plan) => sourceCommit.commit(plan),
     sourcePropose: (action, env) => sourcePropose.propose(action, env),
     sourceIndex: (revisionId) => sourceIndexPort.index(revisionId),

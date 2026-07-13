@@ -18,10 +18,15 @@ import { join } from "node:path";
 
 import { describe, it, expect, afterEach } from "vitest";
 import { ok, err, workspaceId, workflowId, sourceId } from "@sow/contracts";
-import type { WorkspaceId, WorkflowRunRef, SourceRef } from "@sow/contracts";
+import type { WorkspaceId, WorkflowRunRef, SourceRef, SourceId } from "@sow/contracts";
 import { TBD } from "@sow/domain";
 import type { ResolvedWorkspacePolicy } from "@sow/policy";
-import type { ValidatedExtraction, AgentExtraction, MeetingJobInputs } from "@sow/workflows";
+import type {
+  ValidatedExtraction,
+  AgentExtraction,
+  MeetingJobInputs,
+  SourceNoteIdentity,
+} from "@sow/workflows";
 import { computeRevisionId } from "@sow/knowledge";
 import type { KnowledgeRevisionRepository } from "@sow/db";
 import { assembleBackends } from "../../src/composition/backends";
@@ -120,8 +125,17 @@ function tempDbPath(): string {
   return join(dir, "ops.db");
 }
 
-async function derivePlan(acts: ReturnType<typeof buildProofSpineActivities>, ws: WorkspaceId) {
-  const built = await acts.sourceBuildOutputs(VALIDATED, ws);
+// A stable per-file source identity (slice #46: the build derives the note path + planId from it).
+const SRC: SourceNoteIdentity = {
+  sourceId: sourceId("file:ws-src:notes/2b.md") as SourceId,
+  contentHash: "sha256:2b",
+};
+async function derivePlan(
+  acts: ReturnType<typeof buildProofSpineActivities>,
+  ws: WorkspaceId,
+  source: SourceNoteIdentity = SRC,
+) {
+  const built = await acts.sourceBuildOutputs(VALIDATED, ws, source);
   expect(built.ok).toBe(true);
   if (!built.ok) throw new Error("sourceBuildOutputs failed");
   return built.value.plan;
@@ -145,8 +159,11 @@ describe("real sourceCommit — KnowledgeWriter sole-writer commit + durable 2a 
       expect(committed.value.revisionId).toMatch(/^rev:/);
       expect(committed.value.revisionId).not.toMatch(/^rev-source-/);
       expect(committed.value.replayed).toBe(false);
-      // The Markdown is really on disk (the sole-writer commit ran).
-      const onDisk = await backends.vault.read(`sources/${String(SRC_WS)}/ingested.md`);
+      // The Markdown is really on disk (the sole-writer commit ran) — at the per-source note path
+      // the build derived (slice #46: content-addressed under sources/<ws>/, not a fixed name).
+      const notePath = plan.creates[0]?.path;
+      expect(notePath).toMatch(new RegExp(`^sources/${String(SRC_WS)}/[0-9a-f]+\\.md$`));
+      const onDisk = notePath === undefined ? undefined : await backends.vault.read(notePath);
       expect(onDisk).toBeDefined();
       // The durable store recorded the revision under kw:commit:<planId>.
       const rec = await store.getByIdempotencyKey(`kw:commit:${String(plan.planId)}`);

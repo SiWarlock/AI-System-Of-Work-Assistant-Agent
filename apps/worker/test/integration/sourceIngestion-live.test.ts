@@ -391,6 +391,43 @@ describe.skipIf(!SOW_TEMPORAL)(
       expect(first.context.revisionId).toBe(second.context.revisionId);
     });
 
+    it("(g) MULTI-FILE — two DISTINCT sources into one workspace → TWO distinct durable notes (no collision) — spec(§9)", async () => {
+      // The slice-#46 end-to-end: the build now derives a PER-FILE content-addressed note path +
+      // planId from the driver's context.source, so two DIFFERENT dropped files persist as TWO
+      // distinct revisions (the fixed-path C1 collapsed every file to one — this is the fix). A
+      // regression (a shared path/planId) would converge them to ONE revision, so the inequality
+      // below is non-vacuous (contrast with (c), where the SAME source converges to one).
+      const distinctCtx = (sid: string, contentHash: string): SourceIngestionContext => ({
+        source: { ...validSourceCtx().source, sourceId: sourceId(sid), contentHash },
+        envelopes: [],
+      });
+      const mkInput = (wfId: string, sid: string, contentHash: string): SourceIngestionInput => ({
+        run: {
+          workflowId: workflowId(wfId),
+          trigger: "owner_action",
+          idempotencyKey: `run:${sid}`,
+          workspaceId: String(SRC_WS),
+        },
+        context: distinctCtx(sid, contentHash),
+      });
+      const a = await rig().execute<SourceIngestionOutcome>(
+        "sourceIngestionWorkflow",
+        "wf-src-multi-a",
+        mkInput("wf-src-multi-a", "file:ws-src:multi/a.md", "sha256:multi-a"),
+      );
+      const b = await rig().execute<SourceIngestionOutcome>(
+        "sourceIngestionWorkflow",
+        "wf-src-multi-b",
+        mkInput("wf-src-multi-b", "file:ws-src:multi/b.md", "sha256:multi-b"),
+      );
+      expect(a.state).toBe("applied");
+      expect(b.state).toBe("applied");
+      // TWO distinct durable notes — not collapsed to one (the multi-file fix).
+      expect(a.context.revisionId).toBeDefined();
+      expect(b.context.revisionId).toBeDefined();
+      expect(a.context.revisionId).not.toBe(b.context.revisionId);
+    });
+
     it("(d) REAL local file → ROOT-confined transport → extractFileSource → live workflow → applied via the real gate — spec(§9)", async () => {
       // The C2 end-to-end proof: a REAL temp file under a temp root flows through the
       // real node:fs transport + the emit-only adapter into a genuine RegisterSourceInput,
