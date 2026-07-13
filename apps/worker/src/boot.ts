@@ -47,6 +47,7 @@ import type {
   SourceRef,
   WorkspaceId,
   WorkflowRunRef,
+  GbrainPin,
 } from "@sow/contracts";
 import { descriptorFor } from "@sow/policy";
 import type { SessionToken, LegacyContentPolicy, CopilotWorkspaceScope, ResolvedWorkspacePolicy } from "@sow/policy";
@@ -107,6 +108,11 @@ import { createApprovalsKnowledgeProposeSink } from "./api/procedures/copilotPro
 import type { CopilotNoteExistsProbe } from "./api/procedures/copilotProposeKnowledge";
 import type { CopilotServingOracle } from "./api/procedures/copilotProvenanceStamp";
 import { selectServingOracleFactory } from "./api/procedures/servingContextLoader";
+import {
+  buildLoaderBackedServingOracle,
+  buildServedVaultResolver,
+} from "./api/procedures/servingOracleAssembly";
+import { createServingCoverageReader } from "./api/procedures/servingContextBootReaders";
 import { createCopilotProposeMcpServer, createCopilotProposeKnowledgeMcpServer, createCopilotGbrainProxyMcpServer, createCopilotVaultMcpServer, createCopilotSkillsMcpServer } from "@sow/providers";
 import type { CopilotSynthesisPort } from "./api/procedures/copilot";
 import { createReadModelBriefingRetrieval, type CopilotBriefingDeps } from "./api/procedures/copilotBriefing";
@@ -160,7 +166,7 @@ import {
 } from "./watch/vaultWatcher";
 // §13 task 11.3-b — the GBrain version-pin BOOT verify step (closes the 11.3-a reachability waiver).
 import { readFile } from "node:fs/promises";
-import { createGbrainVersionProbe, computeRevisionId, type GbrainVersionProbe, type KnowledgeRevisionStore, type CommittedRevision } from "@sow/knowledge";
+import { createGbrainVersionProbe, computeRevisionId, type GbrainVersionProbe, type KnowledgeRevisionStore, type CommittedRevision, type SecretsPort, type SecretRef, type RunningGbrainVersion, type VaultFs } from "@sow/knowledge";
 import { gbrainStartupVerify } from "./gbrainStartupVerify";
 
 // ── config ────────────────────────────────────────────────────────────────────
@@ -332,6 +338,29 @@ export interface BootConfig extends BackendsConfig {
    * LESS trusted than the un-decorated path); it exists so the decorator sits on the live path pre-go-live.
    */
   readonly copilotProvenanceStamping?: boolean;
+  /**
+   * C5.4b Slice 3 — the go-live ARMING flag for the REAL serving oracle (OFF by default; the flip is the
+   * owner's HARD-LINE go-live crossing — do NOT arm in code). AND-composed by `selectServingOracleFactory`
+   * (`goLiveArmed === true && loaderBacked !== undefined`), never a standalone override. Even armed, the real
+   * oracle stays dormant unless a signing key is provisioned (`provenanceServingOracle`) AND real coverage is
+   * green — THREE independent OFF-locks, each sufficient to keep propose OFF.
+   */
+  readonly copilotServingOracleGoLive?: boolean;
+  /**
+   * C5.4b Slice 3 — the go-live PROVISIONING bundle for the real serving oracle (default ABSENT ⇒ `loaderBacked`
+   * undefined ⇒ OFF-lock 2, STRUCTURAL: the arming flag alone can never arm). Supplies the knowledge-local
+   * SecretsPort + signing-key ref (Keychain adapter = HITL/11.4, unbuilt) and the gbrain pin + running-version
+   * accessor for the coverage reader — all provided at the owner's go-live event. `arch_gap`: no canonical
+   * policy-layer SecretsPort yet — this injects the SAME knowledge-local port the writer's stamp-mint uses. The
+   * pin is ONE coverage leg; the serve-time ParityReport store + rebuild-oracle wiring is the remaining go-live
+   * coverage gate (arming ≠ trust — OFF-lock 3, the real reader degrades on `parity===undefined`).
+   */
+  readonly provenanceServingOracle?: {
+    readonly secrets: SecretsPort;
+    readonly signingKeyRef: SecretRef;
+    readonly pin: GbrainPin;
+    readonly resolveRunning?: () => RunningGbrainVersion | undefined;
+  };
   /**
    * Explicit Copilot workspace set (id + type). Decoupled from `devProvision` (which is SURFACE data).
    * When omitted: devProvision-derived if present, else — on the real path — the 3 well-known scopes
@@ -866,8 +895,34 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // DORMANT: the real loader-backed oracle is constructible behind this seam but NEVER selected today — the
   // selector keeps the interim always-degraded oracle the default until the go-live precondition is armed
   // (a security-review-gated event; the loader-backed path is proven selectable by servingContextLoader.test).
+  // C5.4b Slice 3 — construct the REAL loader-backed oracle DORMANT behind three independent OFF-locks and hand
+  // it to the selector. Ship UNSET: with no arming flag AND no provisioning bundle (the shipped default), the
+  // selector keeps returning the interim always-degraded oracle (behavior byte-equivalent to pre-slice).
+  // WS-8 (safety rule 4): map ONLY the single served workspace to the one dev vault; an UNSET
+  // `copilotGbrainWorkspaceId` ⇒ an EMPTY map ⇒ every workspace degrades (never a shared/default vault).
+  const servedVaultRoots = new Map<string, VaultFs>();
+  if (config.copilotGbrainWorkspaceId !== undefined) {
+    servedVaultRoots.set(config.copilotGbrainWorkspaceId, backends.vault);
+  }
+  const provenanceBundle = config.provenanceServingOracle;
+  const loaderBackedServingOracle =
+    config.copilotProvenanceStamping === true && provenanceBundle !== undefined
+      ? buildLoaderBackedServingOracle({
+          resolveVault: buildServedVaultResolver(servedVaultRoots),
+          // REAL coverage reader (degrades by reality today — OFF-lock 3); the pin is only the pinValid leg.
+          readServingCoverage: createServingCoverageReader({
+            pin: provenanceBundle.pin,
+            resolveRunning: provenanceBundle.resolveRunning ?? ((): RunningGbrainVersion | undefined => undefined),
+            now: backends.now,
+          }),
+          secrets: provenanceBundle.secrets, // OFF-lock 2: absent bundle ⇒ never reaches here ⇒ undefined
+          signingKeyRef: provenanceBundle.signingKeyRef,
+        })
+      : undefined;
   const servingOracleFactory: (() => CopilotServingOracle) | undefined = selectServingOracleFactory({
     provenanceStampingEnabled: config.copilotProvenanceStamping === true,
+    loaderBacked: loaderBackedServingOracle,
+    goLiveArmed: config.copilotServingOracleGoLive === true, // OFF-lock 1 (default unset ⇒ false)
   });
 
   // Workspace set is resolved DECOUPLED from devProvision (which is SURFACE data, not Copilot reachability):
