@@ -115,12 +115,13 @@ import { runReconcileForWorkspace } from "./composition/reconcileDriver";
 import { buildCanonicalFactSet } from "./composition/canonicalFactSet";
 import { buildReconcilerDbProjection } from "./composition/reconcilerDbProjection";
 import { runReconcilePass } from "./composition/parityReconcile";
-import type { RunReconcilePassDeps } from "./composition/parityReconcile";
+import type { RunReconcilePassDeps, ReconcileHealthSink } from "./composition/parityReconcile";
 import {
   buildLoaderBackedServingOracle,
   buildServedVaultResolver,
 } from "./api/procedures/servingOracleAssembly";
-import { createServingCoverageReader } from "./api/procedures/servingContextBootReaders";
+import { createServingCoverageReader, createCommittedVaultReader } from "./api/procedures/servingContextBootReaders";
+import { createParityReportRecorderAdapter } from "./composition/parityReportStore";
 import { buildKeychainSecrets, type KeychainSecretsGate } from "./secrets/keychain-boot";
 import { createCopilotProposeMcpServer, createCopilotProposeKnowledgeMcpServer, createCopilotGbrainProxyMcpServer, createCopilotVaultMcpServer, createCopilotSkillsMcpServer } from "@sow/providers";
 import type { CopilotSynthesisPort } from "./api/procedures/copilot";
@@ -133,7 +134,7 @@ import type {
   TriagePort,
 } from "./api/procedures/commands";
 import type { Logger } from "./observability/logger";
-import { createHealthSurface, type HealthSurface } from "./health/surface";
+import { createHealthSurface, type HealthSurface, type HealthFailure } from "./health/surface";
 import { createPersistentHealthSurfaceStore } from "./composition/store-adapters";
 import { provisionDevWorkspace, type DevProvisionSpec } from "./composition/provisionDev";
 import {
@@ -202,6 +203,10 @@ export interface BootConfig extends BackendsConfig {
   readonly sessionToken: SessionToken;
   /** Renderer Origin/Host allowlist — INJECTED (Phase 9). */
   readonly allowlist: WorkerOriginAllowlist;
+  /** Owner opt-in for the reconcile-TRIGGER arc (task 13.10) — default absent ⇒ `gateReconcile` returns undefined
+   *  (byte-equivalent; NO reconcile machinery constructed). Set ONLY at the owner's ARMING, bundled with the
+   *  transport provisioning + the trigger-source wiring (the HARD LINE). Needs a `vaultRoot` precondition. */
+  readonly reconcile?: boolean;
   /** Loopback bind host — defaults to 127.0.0.1 (a non-loopback host is REFUSED). */
   readonly apiHost?: string;
   /** Loopback bind port — defaults to 0 (ephemeral); a deployment pins one. */
@@ -441,6 +446,9 @@ export interface BootedWorker {
   connectTemporal(): Promise<Result<BootstrapReady, BootstrapDegraded>>;
   /** Gracefully close the API server + the backends (idempotent). */
   close(): Promise<void>;
+  /** The reconcile-TRIGGER wiring (task 13.10) — present ONLY on the armed path (`config.reconcile === true`); the
+   *  shipped default omits it (byte-equivalent). The owner's arming-era trigger source binds to `scheduler`. */
+  readonly reconcile?: ReconcileWiring;
 }
 
 // ── the health/egress query port over the persistent store ────────────────────
@@ -638,6 +646,82 @@ export function gateReconcile(
   });
 
   return { scheduler };
+}
+
+// ── piece F2 — the reconcile health/log sinks bound at the composition root (constraint b/c) ──────────────────
+
+/** Shared deps for the reconcile health/log sinks: an OBS-2 failure recorder (HealthSurface.record at boot —
+ *  mint/dedupe/audit-link, NOT a raw store put), a clock, and audit ids. */
+export interface ReconcileHealthDeps {
+  readonly recordFailure: (failure: HealthFailure) => Promise<unknown>;
+  readonly now: () => string;
+  readonly newAuditId: () => string;
+}
+
+/** A SAFE one-line reconcile-health message — names the class + a code tag + the subject ref; NEVER raw content. */
+function reconcileHealthMessage(failureClass: string, code: string, subjectRef: string): string {
+  return `Reconcile ${failureClass} (${code}) at ${subjectRef} — quarantined; serving withholds until remediated.`;
+}
+
+/**
+ * The passDeps `healthSink`: reproject a reconciler-minted {@link HealthItem} → a {@link HealthFailure} → the OBS-2
+ * recorder. Uses ONLY safe fields — the frozen `failureClass`, a SYNTHESIZED safe message, and a subjectRef from the
+ * item's ids — the item's own free-form message is NEVER forwarded (safety rule 7). NOTE: it SWALLOWS a record
+ * fault (best-effort) rather than PROPAGATING it per piece A's ReconcileHealthSink contract (Lesson 18) — a
+ * deliberate DORMANT-era choice DEFERRED to the arming review: the transport is unbound ⇒ the reconciler emits no
+ * health items ⇒ this sink is inert; and record-before-route means the serve-time ParityReport already landed, so
+ * a dropped OBS-2 item is reduced operator visibility, NOT a serving false-green. The propagate-vs-swallow
+ * semantics + the precise OBS-2 dedupe subjectRef finalize at the arming review, when real health items flow.
+ */
+export function createReconcileHealthSink(deps: ReconcileHealthDeps): ReconcileHealthSink {
+  return {
+    record: async (item: HealthItem): Promise<void> => {
+      const ref = item.factIdentity ?? item.parityReportRef;
+      const subjectRef = ref !== undefined ? String(ref) : "reconcile";
+      const failure: HealthFailure = {
+        failureClass: item.failureClass,
+        subjectRef,
+        message: reconcileHealthMessage(item.failureClass, "parity", subjectRef),
+        auditRef: deps.newAuditId() as AuditId,
+        now: deps.now(),
+      };
+      try {
+        await deps.recordFailure(failure);
+      } catch {
+        /* best-effort — a health-materialization fault never propagates (the reconcile already landed). */
+      }
+    },
+  };
+}
+
+/**
+ * The scheduler's `log` sink: emit the ALREADY-REDACTED summary (piece E), and on a `skipped_derive_error` ALSO
+ * materialize a `parity_defect` {@link HealthItem} from the SAFE `detail` code (never the raw error). Sync +
+ * UNCONDITIONALLY NEVER throws — the WHOLE body is guarded (piece E's flush relies on `log` being non-throwing
+ * regardless of the injected `log`/`recordFailure`): a sync throw OR an async rejection is swallowed (a lost
+ * observability line is fail-safe; the reconcile's durable ParityReport already landed).
+ */
+export function createReconcileLogSink(
+  deps: ReconcileHealthDeps & { readonly log: (summary: LoggedReconcileOutcome) => void },
+): (summary: LoggedReconcileOutcome) => void {
+  return (summary) => {
+    try {
+      deps.log(summary);
+      if (summary.kind === "skipped_derive_error") {
+        const subjectRef = `${summary.workspaceId}‖${summary.revisionId}`;
+        const failure: HealthFailure = {
+          failureClass: "parity_defect",
+          subjectRef,
+          message: reconcileHealthMessage("parity_defect", summary.detail ?? "derive_error", subjectRef),
+          auditRef: deps.newAuditId() as AuditId,
+          now: deps.now(),
+        };
+        void deps.recordFailure(failure).catch(() => {});
+      }
+    } catch {
+      /* best-effort — the log sink MUST NEVER throw (piece E's flush relies on it); swallow any sink fault. */
+    }
+  };
 }
 
 /**
@@ -1183,6 +1267,54 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     config: DEFAULT_TEMPORAL_UNAVAILABLE_CONFIG,
   });
 
+  // ── piece F2 — the reconcile-TRIGGER arc's composition-root gate binding (task 13.10, DORMANT) ──────────────
+  // Default-OFF: `config.reconcile` unset ⇒ `gateReconcile` returns undefined (NO reconcile machinery constructed
+  // — byte-equivalent; the `reconcile` field is omitted from the returned BootedWorker). On the armed path
+  // (owner-gated, NEVER the default) it assembles the scheduler over the never-reject builders; the owner-gated
+  // GbrainReadGrant transport stays UNBOUND (`makeDbAdapter → undefined` ⇒ the db-projection degrades ⇒ even the
+  // armed path records `coverageComplete=false`, never a false-green). The trigger source + flush timing bind at
+  // the owner's ARMING bundle — NOT here; the wiring is exposed on BootedWorker so the arming-era source reaches
+  // it. NO hard line crossed — nothing armed, transport unbound.
+  let reconcileIdSeq = 0;
+  const reconcileHealthDeps = {
+    recordFailure: (failure: HealthFailure): Promise<unknown> => surface.record(failure),
+    now: backends.now,
+    newAuditId: (): string => auditId(`reconcile-audit:${(reconcileIdSeq += 1)}`),
+  };
+  const reconcile = gateReconcile(
+    {
+      reconcile: config.reconcile === true,
+      ...(config.vaultRoot !== undefined ? { vaultRoot: config.vaultRoot } : {}),
+    },
+    {
+      makeReader: () => createCommittedVaultReader({ resolveVault: buildServedVaultResolver(servedVaultRoots) }),
+      makeDbAdapter: () => undefined, // owner-gated GbrainReadGrant transport UNBOUND ⇒ degrade
+      makePassDeps: () => ({
+        reconcilerDeps: {
+          newReportId: (): string => `reconcile-report:${(reconcileIdSeq += 1)}`,
+          newHealthItemId: (): string => `reconcile-health:${(reconcileIdSeq += 1)}`,
+          newAuditId: (): string => auditId(`reconcile-audit:${(reconcileIdSeq += 1)}`),
+          now: backends.now,
+        },
+        recorder: createParityReportRecorderAdapter(backends.repos.parityReports, backends.now),
+        healthSink: createReconcileHealthSink(reconcileHealthDeps),
+      }),
+      makeLog: () =>
+        createReconcileLogSink({
+          ...reconcileHealthDeps,
+          log: (summary): void =>
+            backends.logger.info("reconcile.outcome", {
+              fields: {
+                kind: summary.kind,
+                workspaceId: summary.workspaceId,
+                revisionId: summary.revisionId,
+                detail: summary.detail,
+              },
+            }),
+        }),
+    },
+  );
+
   // 5) The operational-backup service — WIRED but NOT scheduled (the CRON is Phase-11).
   const backupService =
     config.backupPorts !== undefined
@@ -1346,7 +1478,16 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     backends.close();
   };
 
-  return { api, backends, logger: backends.logger, degraded, backupService, connectTemporal, close };
+  return {
+    api,
+    backends,
+    logger: backends.logger,
+    degraded,
+    backupService,
+    connectTemporal,
+    close,
+    ...(reconcile !== undefined ? { reconcile } : {}), // present ONLY on the armed path; omitted by default (byte-equivalent)
+  };
 }
 
 /**
