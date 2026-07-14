@@ -701,12 +701,12 @@ function reconcileHealthMessage(failureClass: string, code: string, subjectRef: 
 /**
  * The passDeps `healthSink`: reproject a reconciler-minted {@link HealthItem} → a {@link HealthFailure} → the OBS-2
  * recorder. Uses ONLY safe fields — the frozen `failureClass`, a SYNTHESIZED safe message, and a subjectRef from the
- * item's ids — the item's own free-form message is NEVER forwarded (safety rule 7). NOTE: it SWALLOWS a record
- * fault (best-effort) rather than PROPAGATING it per piece A's ReconcileHealthSink contract (Lesson 18) — a
- * deliberate DORMANT-era choice DEFERRED to the arming review: the transport is unbound ⇒ the reconciler emits no
- * health items ⇒ this sink is inert; and record-before-route means the serve-time ParityReport already landed, so
- * a dropped OBS-2 item is reduced operator visibility, NOT a serving false-green. The propagate-vs-swallow
- * semantics + the precise OBS-2 dedupe subjectRef finalize at the arming review, when real health items flow.
+ * item's ids — the item's own free-form message is NEVER forwarded (safety rule 7). A `recordFailure` fault
+ * PROPAGATES (rejects) per piece A's ReconcileHealthSink contract (Lesson 18): a health-materialization fault on a
+ * real parity defect must be operator-visible, never silently dropped. Piece A routes health AFTER the
+ * record-only-on-ok gate, so the propagated fault surfaces through the driver as `pass_faulted` (caught, never an
+ * unhandled rejection out of the scheduler's flush). The precise OBS-2 dedupe subjectRef still finalizes at the
+ * arming review, when real health items flow. (Item 7a — the dormant-era best-effort swallow, now resolved.)
  */
 export function createReconcileHealthSink(deps: ReconcileHealthDeps): ReconcileHealthSink {
   return {
@@ -720,18 +720,17 @@ export function createReconcileHealthSink(deps: ReconcileHealthDeps): ReconcileH
         auditRef: deps.newAuditId() as AuditId,
         now: deps.now(),
       };
-      try {
-        await deps.recordFailure(failure);
-      } catch {
-        /* best-effort — a health-materialization fault never propagates (the reconcile already landed). */
-      }
+      // PROPAGATE a record fault (Lesson 18) — a trust-defect signal is never silently dropped; the driver catches
+      // the rejection into `pass_faulted` (piece D), so the fault becomes an operator-visible health item, not a lost line.
+      await deps.recordFailure(failure);
     },
   };
 }
 
 /**
- * The scheduler's `log` sink: emit the ALREADY-REDACTED summary (piece E), and on a `skipped_derive_error` ALSO
- * materialize a `parity_defect` {@link HealthItem} from the SAFE `detail` code (never the raw error). Sync +
+ * The scheduler's `log` sink: emit the ALREADY-REDACTED summary (piece E), and on a `skipped_derive_error` OR a
+ * `pass_faulted` outcome ALSO materialize a `parity_defect` {@link HealthItem} from the SAFE cause code (never the
+ * raw error) — a durable-store / reconcile-pass fault is health-worthy, not log-only (Item 7b, Lesson 18). Sync +
  * UNCONDITIONALLY NEVER throws — the WHOLE body is guarded (piece E's flush relies on `log` being non-throwing
  * regardless of the injected `log`/`recordFailure`): a sync throw OR an async rejection is swallowed (a lost
  * observability line is fail-safe; the reconcile's durable ParityReport already landed).
@@ -739,19 +738,37 @@ export function createReconcileHealthSink(deps: ReconcileHealthDeps): ReconcileH
 export function createReconcileLogSink(
   deps: ReconcileHealthDeps & { readonly log: (summary: LoggedReconcileOutcome) => void },
 ): (summary: LoggedReconcileOutcome) => void {
+  // Fire-and-forget mint of a `parity_defect` HealthItem from ONLY safe fields (safety rule 7): a synthesized
+  // message over `code` (a safe enum / arch_gap token) + a `ws‖rev` subjectRef. Best-effort (`.catch`) so the log
+  // sink stays total; the caller's outer try also guards a synchronous mint fault.
+  const mintParityHealth = (workspaceId: string, revisionId: string, code: string): void => {
+    const subjectRef = `${workspaceId}‖${revisionId}`;
+    const failure: HealthFailure = {
+      failureClass: "parity_defect",
+      subjectRef,
+      message: reconcileHealthMessage("parity_defect", code, subjectRef),
+      auditRef: deps.newAuditId() as AuditId,
+      now: deps.now(),
+    };
+    void deps.recordFailure(failure).catch(() => {});
+  };
   return (summary) => {
     try {
       deps.log(summary);
       if (summary.kind === "skipped_derive_error") {
-        const subjectRef = `${summary.workspaceId}‖${summary.revisionId}`;
-        const failure: HealthFailure = {
-          failureClass: "parity_defect",
-          subjectRef,
-          message: reconcileHealthMessage("parity_defect", summary.detail ?? "derive_error", subjectRef),
-          auditRef: deps.newAuditId() as AuditId,
-          now: deps.now(),
-        };
-        void deps.recordFailure(failure).catch(() => {});
+        mintParityHealth(summary.workspaceId, summary.revisionId, summary.detail ?? "derive_error");
+      } else if (summary.kind === "pass_faulted") {
+        // A durable-store / reconcile-pass fault (Item 7b) is health-worthy. The SAFE cause code rides ONLY via
+        // redactedCause.causeCode (a typed token; message/stack stay OUT — safety rule 7); `pass_faulted` is the
+        // greppable arch_gap tag naming the store-fault cause without inventing a FailureClass member (Lesson 18).
+        const causeCode = summary.redactedCause?.causeCode;
+        // Truthy guard (not `!== undefined`): a falsy causeCode (`undefined` or an empty string) folds to the clean
+        // fixed literal — never a dangling `pass_faulted:` tag in the operator-facing message.
+        mintParityHealth(
+          summary.workspaceId,
+          summary.revisionId,
+          causeCode ? `pass_faulted:${causeCode}` : "pass_faulted",
+        );
       }
     } catch {
       /* best-effort — the log sink MUST NEVER throw (piece E's flush relies on it); swallow any sink fault. */
