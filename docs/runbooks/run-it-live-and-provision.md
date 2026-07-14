@@ -96,7 +96,7 @@ The C6-(a) go-live turned the read+synthesis flags ON in the worker-host (`apps/
 
 **Reachability is closed:** with `copilotRealModel` on, `resolveCopilotWorkspaces` provisions the 3 well-known scopes so a `personal-business` ask resolves a posture and reaches gbrain retrieval **provided** `VOYAGE_API_KEY` + `gbrain` are in the env and the managed serve is up (`boot.ts:329-330,:693-699`).
 
-**The hard line holds — propose/write is OFF and structurally off.** `copilotProposeMode` / `copilotProposeKnowledge` are deliberately unset (`worker-host/index.ts:151`); even if flipped, the interim always-degraded provenance oracle makes every live ask `untrusted` → never propose-capable (`boot.ts:668-690`; see `docs/runbooks/copilot-propose-go-live.md`). **Do not flip these** — the go-live gate is the C5.4b serving oracle (Bucket B).
+**The hard line holds — propose/write is OFF and structurally off.** `copilotProposeMode` / `copilotProposeKnowledge` are deliberately unset (`worker-host/index.ts:158-159`); even if flipped, the interim always-degraded provenance oracle makes every live ask `untrusted` → never propose-capable. **Do not flip these** — going live is a **separate owner-gated ARMING bundle** (provision the signing key into Keychain + bind the reconcile `GbrainReadGrant` transport + real KW corpora + the governance eval + the owner-confirmed flip), documented in `docs/runbooks/copilot-propose-go-live.md`. The C5.4b serving oracle + the full reconcile-TRIGGER machinery (that would feed the serve-time coverage gate) are now **BUILT + DORMANT** — arming them is NOT part of running the read path here.
 
 ---
 
@@ -117,6 +117,21 @@ The C6-(a) go-live turned the read+synthesis flags ON in the worker-host (`apps/
 Deferred/owner-gated (`IMPLEMENTATION_PLAN.md`). Three known swaps when it's built: `child_process.fork` → Electron `utilityProcess` (IPC becomes `process.parentPort`, `worker-host/index.ts:8-12`) + `@electron/rebuild` for `better-sqlite3`'s Electron ABI + the already-coded `app://sow` prod renderer paths (`main/index.ts:35-49`). Detail: `docs/spikes/0.1-electron-packaging.md`.
 
 ---
+
+## Owner-run verification checklist
+
+Run these in order with **your** live login + vault to confirm each capability. These are **OWNER-RUN** steps (they need your `claude` login / `VOYAGE_API_KEY` / real vault — an assistant can't run them without your real credentials, and shouldn't incur real cloud spend on your behalf). Do the §0 prerequisites first.
+
+- [ ] **Prereqs present** — `claude` logged in (a bare `claude` prompt responds); `echo "$VOYAGE_API_KEY"` non-empty; `gbrain` on PATH with an initialized personal-business brain; (optional, for ingest) the `temporal` CLI installed.
+- [ ] **App boots (§1)** — `pnpm --filter @sow/desktop dev` → the window opens. System Health showing **Worker-down / Temporal-degraded is EXPECTED** without a running Temporal — reads don't need it.
+- [ ] **Copilot read + synthesis (§4)** — open the Copilot right-sidebar, ask a question about your workspace → a grounded **Sonnet-5** answer. **WORKS-NOW** given the prereqs; if it errors, it's failing closed on a missing prereq (`claude` login / `VOYAGE_API_KEY` / gbrain serve), not a bug.
+- [ ] **gbrain retrieval** — the answer **cites your notes** (retrieval reached gbrain). Ungrounded/empty answers ⇒ `VOYAGE_API_KEY` / `gbrain` / the managed serve aren't up.
+- [ ] **`copilot.vault.read` (§4)** — launch with `SOW_VAULT_ROOT=/path/to/your/Obsidian/vault`; ask the Copilot to read a specific note → its content. Pointing at a real vault **Just Works** for the served personal-business workspace. (On the default empty `<userData>/vault` the tool is not offered — point at your real vault. Notes for another workspace must sit under a `<slug>/…` top-level dir — WS-8.)
+- [ ] **Auto-ingest — drop `.md` → KW commit (§3)** — set `SOW_INGEST_WATCH=1` + `SOW_VAULT_ROOT` + a running local Temporal (§2), launch, drop a new `.md` into the vault → it lands as a **durable KnowledgeWriter note** (under `sources/<workspace>/…`) and System Health shows the `sourceIngestion` run `applied`. **WIRED (owner-opt-in).** This is a read/ingest capability (owner-approved-live) — it does **not** arm anything.
+- [ ] **Phase-9 features** — Global Today, scope-aware reads, the Projects page, the Approvals inbox render (empty-until-data). **WORKS-NOW.**
+- [ ] **Safety confirm** — no `copilotProposeMode` / `copilotProposeKnowledge` set (propose stays OFF); no signing key provisioned. Employer-Work→cloud egress is owner-relaxed **for the Copilot reads only**; WS-8 cross-workspace isolation stays airtight.
+
+⚠ **Do NOT run the ARMING bundle from this checklist** — provisioning the signing key + the reconcile transport + flipping propose is a **separate owner-gated step** in `docs/runbooks/copilot-propose-go-live.md`. This guide stands up the **read + ingest** path only.
 
 ## Quick reference — what works vs what's blocked
 
