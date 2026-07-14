@@ -4,7 +4,7 @@
 - **Phase:** 11/13 (task 13.10 — the C5.4b `admitForServing`-backed serving oracle; Brick-B of the propose go-live path)
 - **Team:** `session-734f946b`, orchestrator `orch16` + implementer `impl18`
 - **Predecessor:** [066-2026-07-13-impl18-11.1-serve-time-parity-report-store.md](066-2026-07-13-impl18-11.1-serve-time-parity-report-store.md) (B1 store, crash-recovery)
-- **Successor:** _(TBD — fresh orch17 + impl19 for the reconcile-TRIGGER arc)_
+- **Successor:** [068 — impl19: the reconcile-TRIGGER arc (A→F2) + run-path-standup vault-usable gate](068-2026-07-14-impl19-reconcile-trigger-arc-and-runstandup.md)
 - **Commits (this arc, on `main`, each its own atomic mandatory-dual-reviewed slice):**
   - B1 `ca10090` — serve-time ParityReport store (dual-dialect repo + fakeable read-port) — _recovery, detailed in session 066_
   - B2 `daf4fa1` — wire the store into `createServingCoverageReader` (parity leg, async seam, fail-closed)
