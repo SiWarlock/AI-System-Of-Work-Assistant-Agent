@@ -27,6 +27,7 @@ import type {
   AuditRecord,
   GclProjection,
   HealthItem,
+  ParityReport,
   ProviderProfile,
   Result,
   WorkflowRunRef,
@@ -418,6 +419,40 @@ export interface KnowledgeRevisionRepository {
    * `record` is a defensive backstop (a concurrent/replay writer that raced the short-circuit).
    */
   record(revision: CommittedRevisionRow): DbResult<void>;
+}
+
+/**
+ * Parity-report store — OPERATIONAL TRUTH (§4 / §6 / §12 / §16), the durable SERVE-TIME source the
+ * Knowledge-layer serving-gate coverage leg reads. Persists the revision-scoped {@link ParityReport}
+ * the ParityReconciler emits each pass, keyed by `reportId` (the exactly-once PK). NOT rebuildable
+ * (the model header: "not rebuildable — backed up, never reconstructed"). Append-on-record,
+ * first-write-wins; a `ParityReport` is IMMUTABLE per `reportId`. The whole frozen report (incl. its
+ * embedded `Divergence[]`) is stored as ONE json column — CANDIDATE DATA on read-back: the adapter
+ * MUST re-gate it through `ParityReportSchema.parse`, so a corrupt/unparseable blob FAILS CLOSED
+ * (a typed err, never a half-parsed report). The worker-layer adapter maps this onto a narrow
+ * serve-time `ParityReportStore` read-port at the composition root (B2 binds it; DORMANT until then).
+ */
+export interface ParityReportRepository {
+  /**
+   * Persist a reconciliation report — FIRST-WRITE-WINS, idempotent no-op on a duplicate `reportId`
+   * (`ok(void)` either way; never two rows for one report id — a `ParityReport` is immutable
+   * operational truth, §16). `recordedAt` is store-side "latest"-ordering metadata (caller-supplied
+   * via an injected clock; the timestamp-free `ParityReport` carries none). A genuine store fault
+   * (unavailable / serialization_failure / unknown …) is a typed `err(DbError)` — NEVER masked as
+   * `ok` (a silently-dropped report is a §16 nothing-fails-silently hole on the trust substrate).
+   */
+  record(report: ParityReport, recordedAt: string): DbResult<void>;
+  /**
+   * The MOST-RECENTLY-RECORDED report for `(workspaceId, reconciledAtRevision)`, or `ok(undefined)`
+   * when none exists — a TRUE absence, distinguishable from a fault (`err(DbError)`, §16), so the
+   * serve-time coverage reader degrades on a fault without treating it as "no report". Newest-wins
+   * (by `recordedAt`): a re-reconcile at the same revision supersedes. A stored payload that fails
+   * `ParityReportSchema.parse` is a fault (`err`), never a half-parsed report.
+   */
+  getLatestForRevision(
+    workspaceId: string,
+    reconciledAtRevision: string,
+  ): DbResult<ParityReport | undefined>;
 }
 
 /**

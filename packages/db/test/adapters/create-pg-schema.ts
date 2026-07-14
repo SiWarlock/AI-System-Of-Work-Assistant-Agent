@@ -22,6 +22,7 @@ const TABLES: readonly PgTable[] = [
   schema.outbox,
   schema.pendingKnowledgeMutations,
   schema.knowledgeRevisions,
+  schema.parityReports,
   schema.connectorCursors,
   schema.providerProfiles,
   schema.readModels,

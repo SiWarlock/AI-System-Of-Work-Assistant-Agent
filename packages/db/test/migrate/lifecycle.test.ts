@@ -257,8 +257,9 @@ function defineLifecycleSuite<H>(fix: LifecycleFixture<H>): void {
         // 0002_audit_workspace_id + 0003_approvals_semantic_subject (§13.10a — the
         // subjectKind/planRef add + actionRef→nullable) + 0004_pending_kmp (§13.10a — the
         // pending-KMP store CREATE TABLE) + 0005_knowledge_revisions (§6/§16 — the durable
-        // KnowledgeWriter idempotent-replay index CREATE TABLE), all applied from empty.
-        expect(r.value.applied).toBe(6);
+        // KnowledgeWriter idempotent-replay index CREATE TABLE) + 0006_parity_reports (§6/§12/§16 —
+        // the serve-time ParityReport store CREATE TABLE), all applied from empty.
+        expect(r.value.applied).toBe(7);
         expect(r.value.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
         expect(r.value.backup.dialect).toBe(fix.dialect);
 

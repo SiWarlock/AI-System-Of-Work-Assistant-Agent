@@ -34,8 +34,10 @@ import {
   isOk,
   validApproval,
   validAuditRecord,
+  validDivergence,
   validGclProjection,
   validHealthItem,
+  validParityReport,
   validProviderProfile,
   validWorkflowRunRef,
   validWorkspace,
@@ -43,6 +45,7 @@ import {
   type ApprovalId,
   type AuditId,
   type HealthItem,
+  type ParityReport,
   type Result,
   type WorkflowId,
   type WorkflowRunRef,
@@ -65,6 +68,7 @@ import type {
   LeaseRecordRow,
   OutboxEntry,
   OutboxRepository,
+  ParityReportRepository,
   PendingKnowledgeMutation,
   PendingKnowledgeMutationRepository,
   ProviderStateRepository,
@@ -97,6 +101,7 @@ interface OperationalRepositories {
   readonly outbox: OutboxRepository;
   readonly pendingKnowledgeMutations: PendingKnowledgeMutationRepository;
   readonly knowledgeRevisions: KnowledgeRevisionRepository;
+  readonly parityReports: ParityReportRepository;
   readonly connectorCursors: ConnectorCursorRepository;
   readonly providerState: ProviderStateRepository;
   readonly readModels: ReadModelRepository;
@@ -170,6 +175,7 @@ const PG_TABLES: readonly PgTable[] = [
   pgSchema.outbox,
   pgSchema.pendingKnowledgeMutations,
   pgSchema.knowledgeRevisions,
+  pgSchema.parityReports,
   pgSchema.connectorCursors,
   pgSchema.providerProfiles,
   pgSchema.readModels,
@@ -340,6 +346,30 @@ function committedRevisionRow(
     ...over,
   };
 }
+/**
+ * A ParityReport stored as-is in the store's `payload` json column (candidate data on read-back —
+ * the repo re-gates through `ParityReportSchema.parse`). Overrides key on the frozen `validParityReport`;
+ * the branded `reportId`/`workspaceId`/`reconciledAtRevision` accept a plain string via a cast.
+ */
+function parityReport(over: {
+  reportId?: string;
+  workspaceId?: string;
+  reconciledAtRevision?: string;
+  divergences?: ParityReport["divergences"];
+  cleanForServing?: boolean;
+  canonicalFactCount?: number;
+}): ParityReport {
+  return {
+    ...validParityReport,
+    reportId: (over.reportId ?? validParityReport.reportId) as ParityReport["reportId"],
+    workspaceId: (over.workspaceId ?? validParityReport.workspaceId) as ParityReport["workspaceId"],
+    reconciledAtRevision: (over.reconciledAtRevision ??
+      validParityReport.reconciledAtRevision) as ParityReport["reconciledAtRevision"],
+    divergences: over.divergences ?? validParityReport.divergences,
+    cleanForServing: over.cleanForServing ?? validParityReport.cleanForServing,
+    canonicalFactCount: over.canonicalFactCount ?? validParityReport.canonicalFactCount,
+  };
+}
 function cursor(
   over: Partial<ConnectorCursorRecord> & Pick<ConnectorCursorRecord, "connectorId" | "workspaceId">,
 ): ConnectorCursorRecord {
@@ -419,6 +449,8 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(typeof repos.pendingKnowledgeMutations.record).toBe("function");
       expect(typeof repos.knowledgeRevisions.record).toBe("function");
       expect(typeof repos.knowledgeRevisions.getByIdempotencyKey).toBe("function");
+      expect(typeof repos.parityReports.record).toBe("function");
+      expect(typeof repos.parityReports.getLatestForRevision).toBe("function");
       expect(typeof repos.connectorCursors.upsert).toBe("function");
       expect(typeof repos.providerState.upsert).toBe("function");
       expect(typeof repos.readModels.put).toBe("function");
@@ -793,6 +825,115 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(got.revisionId).toBe("rev:aaaa");
       expect(got.planId).toBe("plan-kr-1");
       expect(got.actor).toBe("KnowledgeWriter");
+    });
+  });
+
+  // ── parity-report store (§4/§6/§12/§16 — serve-time coverage source) ──────────
+  describe("ParityReportRepository", () => {
+    it("record → getLatestForRevision round-trips the report schema-parse-equal (incl. divergences[])", async () => {
+      const report = parityReport({
+        reportId: "pr-1",
+        workspaceId: "ws-001",
+        reconciledAtRevision: "rev-1",
+        divergences: [validDivergence],
+        cleanForServing: false,
+      });
+      unwrap(await repos.parityReports.record(report, "2026-07-13T00:00:00.000Z"));
+      const got = unwrap(await repos.parityReports.getLatestForRevision("ws-001", "rev-1"));
+      // The full frozen report round-trips through the payload column, schema-parse-equal.
+      expect(got).toEqual(report);
+    });
+
+    it("getLatestForRevision on an unknown (workspace, revision) is ok(undefined) — a true absence, not an err", async () => {
+      const got = unwrap(await repos.parityReports.getLatestForRevision("ws-nope", "rev-nope"));
+      expect(got).toBeUndefined();
+    });
+
+    it("record is FIRST-WRITE-WINS: a duplicate reportId is an idempotent no-op (ok), original preserved", async () => {
+      unwrap(
+        await repos.parityReports.record(
+          parityReport({ reportId: "pr-idem", workspaceId: "ws-001", reconciledAtRevision: "rev-1" }),
+          "2026-07-13T00:00:00.000Z",
+        ),
+      );
+      // A second record for the SAME reportId with DIVERGENT content, at a LATER recordedAt, is a
+      // no-op (ok) — NOT a second row and NOT an overwrite (a ParityReport is immutable truth, §16).
+      unwrap(
+        await repos.parityReports.record(
+          parityReport({
+            reportId: "pr-idem",
+            workspaceId: "ws-001",
+            reconciledAtRevision: "rev-1",
+            canonicalFactCount: 999,
+          }),
+          "2026-07-13T01:00:00.000Z",
+        ),
+      );
+      const got = unwrap(await repos.parityReports.getLatestForRevision("ws-001", "rev-1"));
+      // Exactly one row for the reportId, and it is the ORIGINAL (never the divergent second write).
+      expect(got?.canonicalFactCount).toBe(10);
+    });
+
+    it("getLatestForRevision returns the NEWEST report (by recordedAt) when two distinct reportIds share a (workspace, revision)", async () => {
+      // DISCRIMINATING order: record the NEWER-recordedAt report FIRST, the older one SECOND — so
+      // insertion (rowid) order is OPPOSITE to recordedAt order. A correct `desc(recordedAt)` impl
+      // returns pr-new; a plausible-but-wrong "latest inserted" (`desc(rowid)`) impl would return
+      // pr-old, so this case actually pins the load-bearing recordedAt ordering (not rowid order).
+      unwrap(
+        await repos.parityReports.record(
+          parityReport({
+            reportId: "pr-new",
+            workspaceId: "ws-nw",
+            reconciledAtRevision: "rev-nw",
+            canonicalFactCount: 42,
+          }),
+          "2026-07-13T02:00:00.000Z",
+        ),
+      );
+      unwrap(
+        await repos.parityReports.record(
+          parityReport({ reportId: "pr-old", workspaceId: "ws-nw", reconciledAtRevision: "rev-nw" }),
+          "2026-07-13T00:00:00.000Z",
+        ),
+      );
+      // A re-reconcile at the same revision supersedes: the serve-time query sees the freshest.
+      const got = unwrap(await repos.parityReports.getLatestForRevision("ws-nw", "rev-nw"));
+      expect(got?.reportId).toBe("pr-new");
+      expect(got?.canonicalFactCount).toBe(42);
+    });
+
+    it("getLatestForRevision breaks a same-recordedAt tie DETERMINISTICALLY (by reportId) — one stable winner, identical on BOTH dialects", async () => {
+      // Two DISTINCT reportIds at the IDENTICAL `recordedAt` for one (workspace, revision). Without a
+      // secondary sort key, `ORDER BY recordedAt DESC LIMIT 1` picks an arbitrary physical row —
+      // SQLite and Postgres can disagree, and a clean report could shadow a dirty one (a trust-gate
+      // defeat). The `desc(reportId)` tiebreak makes "pr-tie-z" the stable winner on both dialects.
+      // Insert the eventual LOSER first so a naive insertion-order impl would pick the wrong row.
+      const SAME = "2026-07-13T05:00:00.000Z";
+      unwrap(
+        await repos.parityReports.record(
+          parityReport({
+            reportId: "pr-tie-a",
+            workspaceId: "ws-tie",
+            reconciledAtRevision: "rev-tie",
+            canonicalFactCount: 1,
+          }),
+          SAME,
+        ),
+      );
+      unwrap(
+        await repos.parityReports.record(
+          parityReport({
+            reportId: "pr-tie-z",
+            workspaceId: "ws-tie",
+            reconciledAtRevision: "rev-tie",
+            canonicalFactCount: 2,
+          }),
+          SAME,
+        ),
+      );
+      const got = unwrap(await repos.parityReports.getLatestForRevision("ws-tie", "rev-tie"));
+      expect(got?.reportId).toBe("pr-tie-z");
+      expect(got?.canonicalFactCount).toBe(2);
     });
   });
 

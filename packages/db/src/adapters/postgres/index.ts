@@ -29,12 +29,13 @@
 // the REBUILDABLE read-model store exposes a destructive `clear`.
 import { and, asc, desc, eq, gt, isNull, lte, notInArray, or, sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
-import { err, ok, type Result } from "@sow/contracts";
+import { err, ok, ParityReportSchema, type Result } from "@sow/contracts";
 import type {
   Approval,
   AuditRecord,
   GclProjection,
   HealthItem,
+  ParityReport,
   ProviderProfile,
   Workspace,
   WorkflowRunRef,
@@ -57,6 +58,7 @@ import type {
   LeaseRecordRow,
   OutboxEntry,
   OutboxRepository,
+  ParityReportRepository,
   PendingKnowledgeMutation,
   PendingKnowledgeMutationRepository,
   ProviderStateRepository,
@@ -111,6 +113,7 @@ export interface PostgresRepositories {
   readonly outbox: OutboxRepository;
   readonly pendingKnowledgeMutations: PendingKnowledgeMutationRepository;
   readonly knowledgeRevisions: KnowledgeRevisionRepository;
+  readonly parityReports: ParityReportRepository;
   readonly connectorCursors: ConnectorCursorRepository;
   readonly providerState: ProviderStateRepository;
   readonly readModels: ReadModelRepository;
@@ -225,6 +228,36 @@ function toCommittedRevision(r: KnowledgeRevisionDbRow): CommittedRevisionRow {
     auditRecord: r.auditRecord as CommittedRevisionRow["auditRecord"],
     committedAt: r.committedAt,
   };
+}
+
+type ParityReportDbRow = typeof schema.parityReports.$inferSelect;
+
+/**
+ * Re-gate a stored parity-report `payload` back to a validated {@link ParityReport}, AND verify its
+ * OWN identity matches the query key. The whole frozen report was persisted as one json column —
+ * CANDIDATE DATA on read-back (§16): a corrupt or unparseable blob (or one violating the model's
+ * `.refine`) THROWS here, which the surrounding `run()` catches into a typed `err` (fail-closed —
+ * never a half-parsed report). Additionally (WS-8 / safety rule 4 defense-in-depth): the parsed
+ * payload's `workspaceId`/`reconciledAtRevision` MUST equal the query-key args — the typed `record`
+ * always writes column ≡ payload, so a disagreement is an out-of-band-tampered/corrupt row → a FAULT
+ * (throw → typed err), NEVER a cross-workspace surface for a query keyed on the denormalized columns.
+ * NOT a verbatim cast like `toCommittedRevision` (the KnowledgeWriter is not this row's sole author).
+ */
+function toParityReport(
+  r: ParityReportDbRow,
+  expectedWorkspaceId: string,
+  expectedReconciledAtRevision: string,
+): ParityReport {
+  const report = ParityReportSchema.parse(r.payload);
+  if (
+    report.workspaceId !== expectedWorkspaceId ||
+    report.reconciledAtRevision !== expectedReconciledAtRevision
+  ) {
+    throw new Error(
+      `parity-report identity mismatch: stored payload (${report.workspaceId}/${report.reconciledAtRevision}) disagrees with query key (${expectedWorkspaceId}/${expectedReconciledAtRevision})`,
+    );
+  }
+  return report;
 }
 
 function toCursor(r: CursorRow): ConnectorCursorRecord {
@@ -692,6 +725,52 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
         // defensive backstop for a concurrent/replay writer that raced the short-circuit).
         await db.insert(schema.knowledgeRevisions).values(revision).onConflictDoNothing();
         return ok(undefined);
+      }),
+  };
+
+  const parityReports: ParityReportRepository = {
+    record: (report, recordedAt) =>
+      run(async () => {
+        // FIRST-WRITE-WINS: a duplicate `reportId` (the PK) is an idempotent NO-OP (ON CONFLICT DO
+        // NOTHING) — a `ParityReport` is IMMUTABLE operational truth, never two rows per report id
+        // (§16). The full frozen report is stored as one json `payload`; the query-key columns are
+        // denormalized copies for the serve-time lookup; `recordedAt` supplies the "latest" ordering.
+        await db
+          .insert(schema.parityReports)
+          .values({
+            reportId: report.reportId,
+            workspaceId: report.workspaceId,
+            reconciledAtRevision: report.reconciledAtRevision,
+            recordedAt,
+            payload: report,
+          })
+          .onConflictDoNothing();
+        return ok(undefined);
+      }),
+    getLatestForRevision: (workspaceId, reconciledAtRevision) =>
+      run(async () => {
+        // The NEWEST report (by `recordedAt`, then `reportId` as a DETERMINISTIC tiebreak) for the
+        // (workspace, revision) pair — a re-reconcile supersedes — or `ok(undefined)` for a TRUE
+        // absence (never reconciled), DISTINCT from a fault (a thrown driver/parse error → the
+        // surrounding run() → typed err). The `reportId` secondary key makes two DISTINCT reports at
+        // the SAME `recordedAt` resolve to ONE stable winner IDENTICAL on both dialects — never an
+        // arbitrary physical-row pick (a trust-gate + dialect-parity concern; mirrors healthItems).
+        // `toParityReport` re-gates the stored payload through `ParityReportSchema.parse` (candidate
+        // data on read-back). NOTE: `recordedAt` is text, so DESC is chronological only if the B3
+        // write-path caller supplies canonical ISO-8601 (UTC, fixed ms precision) via its clock.
+        const rows = await db
+          .select()
+          .from(schema.parityReports)
+          .where(
+            and(
+              eq(schema.parityReports.workspaceId, workspaceId),
+              eq(schema.parityReports.reconciledAtRevision, reconciledAtRevision),
+            ),
+          )
+          .orderBy(desc(schema.parityReports.recordedAt), desc(schema.parityReports.reportId))
+          .limit(1);
+        const row = rows[0];
+        return ok(row ? toParityReport(row, workspaceId, reconciledAtRevision) : undefined);
       }),
   };
 
@@ -1171,6 +1250,7 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
     outbox,
     pendingKnowledgeMutations,
     knowledgeRevisions,
+    parityReports,
     connectorCursors,
     providerState,
     readModels,

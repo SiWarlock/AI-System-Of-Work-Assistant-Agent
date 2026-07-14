@@ -43,6 +43,13 @@
       "when": 1783858083525,
       "tag": "0005_knowledge_revisions",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1783989582295,
+      "tag": "0006_parity_reports",
+      "breakpoints": true
     }
   ]
 }

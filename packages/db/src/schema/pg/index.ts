@@ -16,6 +16,8 @@ export * from "./outboxes";
 export * from "./pending-kmp";
 // §6 / §16 — the durable KnowledgeWriter idempotent-replay index (task 11.1).
 export * from "./knowledge-revisions";
+// §6 / §12 / §16 — the serve-time ParityReport store (serving-coverage source, task 11.1).
+export * from "./parity-reports";
 export * from "./connector-cursors";
 export * from "./provider-state";
 export * from "./read-models";
