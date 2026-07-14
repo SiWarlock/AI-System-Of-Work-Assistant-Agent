@@ -39,7 +39,8 @@ const readErr = (e: GbrainReadError): GbrainReadResult => err(e);
 
 describe("buildReconcilerDbProjection — the gbrain-read → DbFact projection (spec §6)", () => {
   it("maps_clean_read_to_complete_projection", async () => {
-    const adapter = fakeAdapter({ graph: ok({ facts: [ROW_P, ROW_Q] }), schema: ok({ schemaVersion: 7 }) });
+    // Item 2b: a complete read now carries the POSITIVE completeness token (`complete: true`); default-incomplete otherwise.
+    const adapter = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P, ROW_Q] }), schema: ok({ schemaVersion: 7 }) });
     const p = await buildReconcilerDbProjection(adapter);
     expect(p.workspaceId).toBe("ws-employer"); // sourced from the grant-bound adapter, not a caller param
     expect(p.gbrainSchemaVersion).toBe(7);
@@ -69,16 +70,17 @@ describe("buildReconcilerDbProjection — fail-closed coverage (spec §12)", () 
   });
 
   it("truncated_read_is_incomplete", async () => {
-    // rows are well-formed but the read signals truncation ⇒ complete=false (an incomplete read can't claim full coverage)
-    const adapter = fakeAdapter({ graph: ok({ facts: [ROW_P], truncated: true }) });
+    // rows are well-formed AND the positive token is present, but the read signals truncation ⇒ complete=false
+    // (an incomplete read can't claim full coverage — truncation degrades EVEN WITH the completeness token)
+    const adapter = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P], truncated: true }) });
     const p = await buildReconcilerDbProjection(adapter);
     expect(p.complete).toBe(false);
     expect(p.facts).toHaveLength(1); // what WAS read is still collected
   });
 
   it("open_cursor_read_is_incomplete", async () => {
-    // an unconsumed paging cursor ⇒ more rows exist ⇒ complete=false
-    const adapter = fakeAdapter({ graph: ok({ facts: [ROW_P], cursor: "next-page" }) });
+    // an unconsumed paging cursor ⇒ more rows exist ⇒ complete=false (degrades even with the positive token)
+    const adapter = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P], cursor: "next-page" }) });
     const p = await buildReconcilerDbProjection(adapter);
     expect(p.complete).toBe(false);
   });
@@ -86,7 +88,7 @@ describe("buildReconcilerDbProjection — fail-closed coverage (spec §12)", () 
   it("malformed_row_degrades_not_throws", async () => {
     // one row does not parse into a DbFact (invalid factKind) ⇒ complete=false, the parseable facts collected, no throw
     const badRow = { factIdentity: "page:bad", factKind: "not_a_kind", contentHash: "ef".repeat(32), revisionId: "rev:1" };
-    const adapter = fakeAdapter({ graph: ok({ facts: [ROW_P, badRow] }) });
+    const adapter = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P, badRow] }) }); // token present ⇒ the dropped row is the isolated degrade cause
     const p = await buildReconcilerDbProjection(adapter);
     expect(p.complete).toBe(false);
     expect(p.facts).toHaveLength(1); // ROW_P survives; the malformed row is dropped, not thrown on
@@ -120,7 +122,7 @@ describe("buildReconcilerDbProjection — stamped fidelity (safety rule 1 / spec
 
 describe("buildReconcilerDbProjection — schema version sourced, not invented (spec §6)", () => {
   it("schema_version_sourced_from_read", async () => {
-    const adapter = fakeAdapter({ graph: ok({ facts: [ROW_P] }), schema: ok({ schemaVersion: 42 }) });
+    const adapter = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P] }), schema: ok({ schemaVersion: 42 }) });
     const p = await buildReconcilerDbProjection(adapter);
     expect(p.gbrainSchemaVersion).toBe(42); // reflects the read, not a hardcoded constant
     expect(p.complete).toBe(true);
@@ -128,7 +130,7 @@ describe("buildReconcilerDbProjection — schema version sourced, not invented (
 
   it("empty_facts_clean_read_is_complete", async () => {
     // a legitimately empty workspace, fully read, is a VALID complete read — clean-but-empty ≠ degrade
-    const adapter = fakeAdapter({ graph: ok({ facts: [] }), schema: ok({ schemaVersion: 5 }) });
+    const adapter = fakeAdapter({ graph: ok({ complete: true, facts: [] }), schema: ok({ schemaVersion: 5 }) });
     const p = await buildReconcilerDbProjection(adapter);
     expect(p.complete).toBe(true);
     expect(p.facts).toHaveLength(0);
@@ -136,11 +138,11 @@ describe("buildReconcilerDbProjection — schema version sourced, not invented (
 
   it("absent_schema_version_degrades_to_incomplete", async () => {
     // an unreadable/absent schema version ⇒ complete=false (can't corroborate the index version) — even with clean facts
-    const faulted = fakeAdapter({ graph: ok({ facts: [ROW_P] }), schema: readErr({ code: "transport_fault", op: "schema_read", cause: "boom" }) });
+    const faulted = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P] }), schema: readErr({ code: "transport_fault", op: "schema_read", cause: "boom" }) });
     const pFaulted = await buildReconcilerDbProjection(faulted);
     expect(pFaulted.complete).toBe(false);
 
-    const missing = fakeAdapter({ graph: ok({ facts: [ROW_P] }), schema: ok({ notTheVersion: true }) });
+    const missing = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P] }), schema: ok({ notTheVersion: true }) });
     const pMissing = await buildReconcilerDbProjection(missing);
     expect(pMissing.complete).toBe(false);
   });
@@ -155,7 +157,7 @@ describe("buildReconcilerDbProjection — schema version sourced, not invented (
     ["string", "7"],
     ["null", null],
   ])("non_positive_or_non_number_schema_version_degrades (%s)", async (_label, schemaVersion) => {
-    const adapter = fakeAdapter({ graph: ok({ facts: [ROW_P] }), schema: ok({ schemaVersion }) });
+    const adapter = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P] }), schema: ok({ schemaVersion }) });
     const p = await buildReconcilerDbProjection(adapter);
     expect(p.complete).toBe(false);
     expect(p.gbrainSchemaVersion).toBe(0); // the degrade sentinel, never a trusted version
@@ -166,19 +168,20 @@ describe("buildReconcilerDbProjection — type-robust incompleteness + never-thr
   // A missed "more results" signal is the dangerous value on the coverage axis, so any present non-`false`
   // truncated / any present non-empty cursor of ANY type must degrade (a false-complete = trust-gate defeat).
   it.each([
-    ["numeric cursor", { facts: [ROW_P], cursor: 42 }],
-    ["object cursor", { facts: [ROW_P], cursor: { next: "x" } }],
-    ["truthy-non-boolean truncated", { facts: [ROW_P], truncated: 1 }],
-    ["string truncated", { facts: [ROW_P], truncated: "true" }],
+    ["numeric cursor", { complete: true, facts: [ROW_P], cursor: 42 }],
+    ["object cursor", { complete: true, facts: [ROW_P], cursor: { next: "x" } }],
+    ["truthy-non-boolean truncated", { complete: true, facts: [ROW_P], truncated: 1 }],
+    ["string truncated", { complete: true, facts: [ROW_P], truncated: "true" }],
   ])("non_conforming_pagination_signal_is_incomplete (%s)", async (_label, graphBody) => {
+    // token present ⇒ the non-conforming paging signal is the ISOLATED degrade cause (Item 2b)
     const adapter = fakeAdapter({ graph: ok(graphBody) });
     const p = await buildReconcilerDbProjection(adapter);
     expect(p.complete).toBe(false);
   });
 
   it("explicit_not_truncated_and_empty_cursor_stay_complete", async () => {
-    // the benign "no more pages" sentinels — truncated:false + empty/null cursor — do NOT degrade
-    const adapter = fakeAdapter({ graph: ok({ facts: [ROW_P], truncated: false, cursor: "" }), schema: ok({ schemaVersion: 3 }) });
+    // the benign "no more pages" sentinels — truncated:false + empty/null cursor — do NOT degrade (token present)
+    const adapter = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P], truncated: false, cursor: "" }), schema: ok({ schemaVersion: 3 }) });
     const p = await buildReconcilerDbProjection(adapter);
     expect(p.complete).toBe(true);
   });
@@ -229,10 +232,108 @@ describe("buildReconcilerDbProjection — parseRow rejects every malformed shape
     ["missing revisionId", { factIdentity: "page:x", factKind: "page", contentHash: "ab".repeat(32) }],
     ["non-FactKind kind", { factIdentity: "page:x", factKind: "widget", contentHash: "ab".repeat(32), revisionId: "rev:1" }],
   ])("malformed_row_dropped_and_incomplete (%s)", async (_label, badRow) => {
-    const adapter = fakeAdapter({ graph: ok({ facts: [ROW_P, badRow] }), schema: ok({ schemaVersion: 3 }) });
+    // token present ⇒ the dropped (malformed) row is the ISOLATED degrade cause — a token can't rescue a malformed read
+    const adapter = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P, badRow] }), schema: ok({ schemaVersion: 3 }) });
     const p = await buildReconcilerDbProjection(adapter);
     expect(p.complete).toBe(false); // a dropped row ⇒ not fully well-formed ⇒ degrade
     expect(p.facts).toHaveLength(1); // only the well-formed ROW_P survives; the bad row is dropped, not thrown on
     expect(p.facts[0]?.factIdentity).toBe("page:p");
+  });
+});
+
+// ── Item 2b — POSITIVE completeness token + widened paging + stated-total cross-check (spec §12) ─────────────────
+//
+// The flip: coverage is claimed ONLY on an explicit `complete === true` token (default-INCOMPLETE otherwise) —
+// closes the old fail-OPEN where an omitted-pagination response was treated as complete. The more-results
+// rejection set is widened (hasMore/nextPageToken/nextOffset/pageInfo.hasNextPage beyond truncated/cursor), and a
+// stated-total-vs-raw-row-count cross-check is added. The token + paging field names are a DOCUMENTED CANDIDATE
+// (arch_gap, Lesson 21 — part of the Item-2a wire shape); extends worker Lesson 19 (anti-false-green coverage).
+describe("buildReconcilerDbProjection — Item 2b: positive completeness token + widened paging + stated-total (spec §12)", () => {
+  const okSchema = ok({ schemaVersion: 3 });
+
+  it("absent_completeness_token_is_incomplete", async () => {
+    // THE FLIP: a clean, well-formed read with NO positive completeness token ⇒ complete=false (was fail-open).
+    const adapter = fakeAdapter({ graph: ok({ facts: [ROW_P] }), schema: okSchema });
+    const p = await buildReconcilerDbProjection(adapter);
+    expect(p.complete).toBe(false);
+    expect(p.facts).toHaveLength(1); // the facts still project; only the coverage CLAIM degrades
+  });
+
+  it("positive_token_present_is_complete", async () => {
+    const adapter = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P] }), schema: okSchema });
+    expect((await buildReconcilerDbProjection(adapter)).complete).toBe(true);
+  });
+
+  it.each([
+    ["string 'yes'", "yes"],
+    ["number 1", 1],
+    ["literal false", false],
+    ["object", {}],
+  ])("positive_token_must_be_strictly_true (%s ⇒ incomplete)", async (_label, tokenVal) => {
+    // STRICT === true (mirror `stamped`): a truthy-non-true completeness value does NOT claim coverage.
+    const adapter = fakeAdapter({ graph: ok({ complete: tokenVal, facts: [ROW_P] }), schema: okSchema });
+    expect((await buildReconcilerDbProjection(adapter)).complete).toBe(false);
+  });
+
+  it.each([
+    ["hasMore truthy", { hasMore: true }],
+    ["hasMore truthy-non-boolean", { hasMore: 1 }],
+    ["nextPageToken present", { nextPageToken: "tok" }],
+    ["nextOffset present", { nextOffset: 10 }],
+    ["nextOffset zero", { nextOffset: 0 }],
+    ["pageInfo.hasNextPage truthy", { pageInfo: { hasNextPage: true } }],
+  ])("each_widened_more_results_field_degrades (%s)", async (_label, moreSignal) => {
+    // token present + a widened more-results signal ⇒ complete=false (type-robust, Lesson 19).
+    const adapter = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P], ...moreSignal }), schema: okSchema });
+    expect((await buildReconcilerDbProjection(adapter)).complete).toBe(false);
+  });
+
+  it("benign_falsy_widened_signals_do_not_over_degrade", async () => {
+    // an explicit "no more" (hasMore:false / pageInfo.hasNextPage:false) is not a more-results signal; the token governs.
+    const adapter = fakeAdapter({
+      graph: ok({ complete: true, facts: [ROW_P], hasMore: false, pageInfo: { hasNextPage: false } }),
+      schema: okSchema,
+    });
+    expect((await buildReconcilerDbProjection(adapter)).complete).toBe(true);
+  });
+
+  it("null-valued paging edges: truncated:null DEGRADES (non-false), but null cursor/offset carry NO signal", async () => {
+    // `truncated` degrades on any present non-`false` value (incl. null) — the fail-closed reading of an ambiguous flag.
+    const truncNull = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P], truncated: null }), schema: okSchema });
+    expect((await buildReconcilerDbProjection(truncNull)).complete).toBe(false);
+    // a null cursor / nextPageToken / nextOffset is treated as ABSENT (no more-results signal) ⇒ token governs ⇒ complete.
+    const nullSignals = fakeAdapter({
+      graph: ok({ complete: true, facts: [ROW_P], cursor: null, nextPageToken: null, nextOffset: null }),
+      schema: okSchema,
+    });
+    expect((await buildReconcilerDbProjection(nullSignals)).complete).toBe(true);
+  });
+
+  it("stated_total_cross_check (mismatch ⇒ incomplete; exact ⇒ complete; total + totalCount; non-numeric ⇒ no constraint)", async () => {
+    const short = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P], total: 5 }), schema: okSchema });
+    expect((await buildReconcilerDbProjection(short)).complete).toBe(false); // 1 raw row < stated 5 ⇒ more exist
+    const exact = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P], total: 1 }), schema: okSchema });
+    expect((await buildReconcilerDbProjection(exact)).complete).toBe(true); // rows === total ⇒ the exact full set
+    const shortCount = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P, ROW_Q], totalCount: 9 }), schema: okSchema });
+    expect((await buildReconcilerDbProjection(shortCount)).complete).toBe(false); // totalCount alias, 2 < 9
+    const nonNumeric = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P], total: "lots" }), schema: okSchema });
+    expect((await buildReconcilerDbProjection(nonNumeric)).complete).toBe(true); // a non-numeric total imposes no constraint
+    // a self-CONTRADICTORY pair (one matches, the other doesn't) ⇒ incomplete — a mismatch of ANY present finite
+    // total degrades (never trust the one that happens to match; anti-false-green, stricter than first-finite-wins).
+    const conflicting = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P], total: 1, totalCount: 100 }), schema: okSchema });
+    expect((await buildReconcilerDbProjection(conflicting)).complete).toBe(false);
+  });
+
+  it("build_projection_end_to_end_positive_and_each_degrade_lever", async () => {
+    const positive = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P, ROW_Q], total: 2 }), schema: okSchema });
+    expect((await buildReconcilerDbProjection(positive)).complete).toBe(true); // token + no more-results + matching total + schema
+    const noToken = fakeAdapter({ graph: ok({ facts: [ROW_P, ROW_Q], total: 2 }), schema: okSchema });
+    expect((await buildReconcilerDbProjection(noToken)).complete).toBe(false);
+    const more = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P, ROW_Q], total: 2, hasMore: true }), schema: okSchema });
+    expect((await buildReconcilerDbProjection(more)).complete).toBe(false);
+    const mismatch = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P, ROW_Q], total: 3 }), schema: okSchema });
+    expect((await buildReconcilerDbProjection(mismatch)).complete).toBe(false);
+    const noSchema = fakeAdapter({ graph: ok({ complete: true, facts: [ROW_P, ROW_Q], total: 2 }), schema: ok({ notTheVersion: true }) });
+    expect((await buildReconcilerDbProjection(noSchema)).complete).toBe(false); // the AND with version still holds
   });
 });
