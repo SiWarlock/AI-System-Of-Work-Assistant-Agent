@@ -124,6 +124,26 @@ import { createLogger, type Logger, type LogSink } from "../observability/logger
 // ---------------------------------------------------------------------------
 
 /**
+ * The default-OFF owner gate for the outbound external-write {@link AdapterTransport}
+ * (the per-target vendor write client). Both locks are required to select a REAL
+ * transport, and each alone keeps it OFF (AND-composed OFF-locks):
+ *  - `enabled` must be STRICTLY `=== true` (a truthy `1`/`"true"`/`{}` never arms), and
+ *  - `make` must be an owner-provisioned factory that constructs the real transport.
+ *
+ * Absent/false either lock ⇒ the deterministic in-memory stub
+ * ({@link createStubAdapterTransport}) — so the shipped default (this field unset) is
+ * BYTE-EQUIVALENT and fully dormant, and a real external write can be enabled ONLY by
+ * deliberate owner config, never by editing a hardcoded call site (§8 external-write
+ * envelope; root CLAUDE.md safety rule 3). The real factory ships UNBOUND.
+ */
+export interface WriteTransportGate {
+  /** STRICT `=== true` to arm the real transport; anything else ⇒ stub. */
+  readonly enabled?: boolean;
+  /** Owner-provisioned real-transport factory; unbound ⇒ stub (never invoked on OFF). */
+  readonly make?: () => AdapterTransport;
+}
+
+/**
  * Worker-backend configuration. A tmpdir vault + an in-memory sqlite are the
  * defaults so a test (or a first-boot smoke run) needs no external state; a real
  * deployment passes a durable `dbPath` + `vaultRoot`.
@@ -149,6 +169,13 @@ export interface BackendsConfig {
    * injects a capture sink; a deployment may point it at a file/collector.
    */
   readonly logSink?: LogSink;
+  /**
+   * Default-OFF owner gate for the outbound external-write {@link AdapterTransport}.
+   * UNSET (the shipped default) ⇒ the deterministic stub — byte-equivalent + dormant.
+   * A real vendor transport is selectable ONLY by deliberate owner config satisfying
+   * BOTH locks (see {@link WriteTransportGate}); the real factory ships UNBOUND.
+   */
+  readonly writeTransport?: WriteTransportGate;
 }
 
 // ---------------------------------------------------------------------------
@@ -577,6 +604,31 @@ export function createStubAdapterTransport(): AdapterTransport {
 }
 
 /**
+ * Select the outbound external-write {@link AdapterTransport} for the write adapter,
+ * honouring the default-OFF owner gate ({@link WriteTransportGate}).
+ *
+ * Guard FIRST, STRICT `=== true`: the owner-provisioned real transport is selected ONLY
+ * when BOTH locks are satisfied — `gate.enabled === true` (a truthy-but-not-`true` value
+ * like `1`/`"true"`/`"false"`/`{}` never arms, closing the truthy-coerce false-arming
+ * vector) AND `gate.make` is present. Any other input (unset gate, `enabled` absent/false,
+ * missing `make`) ⇒ the deterministic {@link createStubAdapterTransport} — so the shipped
+ * default (`config.writeTransport` unset) is byte-equivalent and fully dormant.
+ *
+ * The real factory is NEVER invoked on the OFF path (nothing real is constructed by the
+ * shipped default). Enabling a real external write requires deliberate owner config, never
+ * a source edit at the call site (§8 external-write envelope; safety rule 3).
+ */
+export function selectAdapterTransport(gate?: WriteTransportGate): AdapterTransport {
+  // Type-robust on BOTH locks (a JSON-sourced config could carry a non-boolean `enabled`
+  // or a non-function `make`): strict `=== true` + `typeof … === "function"` fail CLOSED
+  // to the stub on any malformed input, never arm and never throw at boot.
+  if (gate?.enabled === true && typeof gate.make === "function") {
+    return gate.make();
+  }
+  return createStubAdapterTransport();
+}
+
+/**
  * A deterministic {@link IndexApplyClient} (the write-side GBrain index seam). It
  * ACKs every apply idempotently (per (workspaceId, revisionId)) with no duplicate
  * nodes, so the reindex activity has a real, deterministic index client behind it.
@@ -717,9 +769,12 @@ export async function assembleBackends(
     schema: createStubSchemaGate(meetingSchemaCandidate),
   });
 
+  // The transport is chosen through the default-OFF owner gate: unset `writeTransport`
+  // ⇒ the deterministic stub (byte-equivalent shipped default), never a hardcoded real
+  // client at this call site (§8 external-write envelope; safety rule 3).
   const writeAdapter = makeTargetWriteAdapter(
     { targetSystem: "todoist" as TargetSystem, deriveIdentity: (env) => ({ key: env.canonicalObjectKey }) },
-    { transport: createStubAdapterTransport(), clock: now },
+    { transport: selectAdapterTransport(config.writeTransport), clock: now },
   );
 
   const indexClient = createStubIndexApplyClient();
