@@ -4,7 +4,7 @@
 - **Phase:** 13 (OPEN-THE-GATES / propose go-live grind → RUN-PATH STANDUP)
 - **Implementer:** impl19 (worker area) · **Orchestrator:** orch17 · team `session-734f946b`
 - **Predecessor:** [067 — impl18 Brick-B serve-time parity chain](067-2026-07-13-impl18-brick-b-serve-time-parity-chain.md)
-- **Successor:** _(impl20 — next cycle, armed-path arming-prep)_
+- **Successor:** [069 — impl20 dormant arming-prep arc (Items 7 + 2a + 2b)](069-2026-07-14-impl20-dormant-arming-prep-arc.md)
 
 ## Why this session existed
 
