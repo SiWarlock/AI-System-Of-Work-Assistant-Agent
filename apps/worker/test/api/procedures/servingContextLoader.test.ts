@@ -429,4 +429,40 @@ describe("selectServingOracleFactory — boot dormancy pin (gate 4 G1e-2)", () =
       selectServingOracleFactory({ provenanceStampingEnabled: true, loaderBacked, goLiveArmed: true }),
     ).toBe(loaderBacked);
   });
+
+  // ── anti-false-arming regression guard (task 13.10 Slice-2; Lesson 23/8) ─────────────
+  // The `goLiveArmed` gate is STRICT `=== true` (servingContextLoader.ts:239). A future
+  // refactor to a truthy check (`if (sel.goLiveArmed && …)`) would let a NON-boolean
+  // truthy value (a JSON/env-sourced `1` / `"false"` / `{}`) silently ARM the go-live
+  // path. This guard pins that regression: a truthy-but-not-`true` `goLiveArmed`, WITH a
+  // real `loaderBacked` present (so ONLY the strict check stands between it and arming),
+  // must still select the interim always-degraded oracle — never `loaderBacked`.
+  // The `=== true` positive control above (⇒ `loaderBacked`) keeps this NON-vacuous.
+  it.each([
+    ["number 1", 1],
+    ['string "true"', "true"],
+    ['string "false"', "false"], // truthy yet obviously not `true` — the sharpest arming vector
+    ["empty object", {}],
+    ["empty array", []],
+  ])(
+    "goLiveArmed truthy-but-not-true (%s) ⇒ interim degraded, NOT loaderBacked (strict === true)",
+    (_label, truthy) => {
+      expect(
+        selectServingOracleFactory({
+          provenanceStampingEnabled: true,
+          loaderBacked,
+          goLiveArmed: truthy as unknown as boolean,
+        }),
+      ).toBe(createInterimDegradedServingOracle);
+    },
+  );
+
+  // Co-located positive control: keeps the truthy-guard above NON-vacuous on its own (a
+  // strict `=== true` arms ⇒ loaderBacked), so the guard can't silently rot into "always
+  // interim" if the earlier dormancy-default test is ever changed.
+  it("goLiveArmed strictly === true (+ loaderBacked) ⇒ loaderBacked (guard non-vacuity anchor)", () => {
+    expect(
+      selectServingOracleFactory({ provenanceStampingEnabled: true, loaderBacked, goLiveArmed: true }),
+    ).toBe(loaderBacked);
+  });
 });
