@@ -91,21 +91,31 @@ export interface ServingCoverageReaderDeps {
    * re-gate) degrades ALL legs (fail-closed — never a false green).
    */
   readonly store?: ParityReportStore;
+  /**
+   * OPTIONAL boot-resolved rebuild-oracle BUILD-STATUS accessor (B5), mirroring `resolveRunning` — a coarse
+   * boot-global "the rebuild-oracle build ran / is-live OK" boolean → the `oracleBuildOk` coverage leg. UNBOUND
+   * in production today (boot leaves it unbound — the real binding sources the status from the gbrain
+   * import-into-scratch build-status producer = real gbrain I/O = OWNER-GATED, deferred), so `oracleBuildOk` is
+   * `false` ⇒ degrade (byte-equivalent to the pre-B5 hardwired false). A THROWING probe is caught by the
+   * reader's try/catch ⇒ ALL legs degrade (fail-closed — never a false green).
+   */
+  readonly resolveOracleBuild?: () => boolean;
 }
 
 const SERVING_COVERAGE_AUDIT_REF = "serving-coverage-pin-check";
 
 /**
- * Build a real {@link ServingCoverageReader}. TWO real signals now: `pinValid` (via `checkVersionPin` — `isOk`
- * means the running gbrain matches the pinned build) AND `parity` (B2) — the LATEST persisted `ParityReport`
- * for the workspace @ its head revision, read from the OPTIONAL {@link ParityReportStore}. `oracleBuildOk`
- * stays `false` UNCONDITIONALLY (the rebuild-oracle build-status leg is a distinct later slice), so coverage
- * remains AND-degraded even with a green report + a valid pin. HONEST-INTERIM / DORMANT: the store dep is
- * UNBOUND in production today (boot binds the real adapter in B4), so `parity` is `undefined` ⇒ the loader's
- * coverage derivation degrades every workspace regardless of `pinValid` (sound + inert; propose stays OFF).
- * ASYNC (the store read is async) — the loader `await`s it (the {@link ServingCoverageReader} seam is
- * sync-or-async). Never throws / fail-closed (§6/§16): a store REJECT (or any other fault) ⇒ ALL legs false —
- * a fault never crosses the boundary and never becomes a false green (the trust-gate kill-switch's substrate).
+ * Build a real {@link ServingCoverageReader}. All THREE serving-coverage signals it produces are now BINDABLE:
+ * `pinValid` (via `checkVersionPin` — `isOk` means the running gbrain matches the pinned build), `parity` (B2 — the LATEST
+ * persisted `ParityReport` for the workspace @ its head revision, from the OPTIONAL {@link ParityReportStore}),
+ * and `oracleBuildOk` (B5 — the OPTIONAL boot-resolved `resolveOracleBuild` rebuild-oracle build-status leg,
+ * the last hardwired-false leg removed). DORMANT: the store + `resolveOracleBuild` deps are UNBOUND in
+ * production today (boot binds neither in the shipped default), so `parity` is `undefined` + `oracleBuildOk` is
+ * `false` ⇒ the loader's coverage derivation degrades every workspace regardless of `pinValid` (sound + inert;
+ * propose stays OFF — a green coverage still cannot admit until the owner arms `goLiveArmed`). ASYNC (the store
+ * read is async) — the loader `await`s it (the {@link ServingCoverageReader} seam is sync-or-async). Never
+ * throws / fail-closed (§6/§16): a store REJECT, a throwing `resolveOracleBuild`, or any other fault ⇒ ALL legs
+ * false — a fault never crosses the boundary and never becomes a false green (the trust-gate kill-switch's substrate).
  */
 export function createServingCoverageReader(deps: ServingCoverageReaderDeps): ServingCoverageReader {
   return async (workspaceId: string, revisionId: RevisionId): Promise<ServingCoverageSources> => {
@@ -123,7 +133,11 @@ export function createServingCoverageReader(deps: ServingCoverageReaderDeps): Se
         deps.store === undefined
           ? undefined
           : await deps.store.getLatestForRevision(workspaceId, String(revisionId));
-      return { parity, pinValid, oracleBuildOk: false };
+      // Rebuild-oracle build-status leg (B5): UNBOUND (the dormant default) ⇒ `false` ⇒ degrade (byte-equivalent
+      // to the pre-B5 hardwired false). Bound ⇒ carries the resolver's boolean; a THROW propagates to the catch
+      // below ⇒ ALL legs false (fail-closed — a probe fault never becomes a false green).
+      const oracleBuildOk = deps.resolveOracleBuild?.() ?? false;
+      return { parity, pinValid, oracleBuildOk };
     } catch {
       return { parity: undefined, pinValid: false, oracleBuildOk: false };
     }

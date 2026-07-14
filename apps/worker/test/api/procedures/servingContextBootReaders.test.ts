@@ -23,6 +23,7 @@ import {
 } from "../../../src/api/procedures/servingContextBootReaders";
 import {
   createServingContextLoader,
+  deriveServingCoverage,
   type ServingContextLoaderDeps,
   type ServingCoverageReader,
 } from "../../../src/api/procedures/servingContextLoader";
@@ -36,6 +37,7 @@ import {
   stampProvenance,
   serializeStampFieldValue,
   readVaultHeadRevision,
+  isDegradedCoverage,
   type VaultFs,
   type SecretsPort,
   type SecretUnresolved,
@@ -324,13 +326,70 @@ describe("createServingCoverageReader — real pin leg + persisted parity leg (B
   });
 
   it("serving_coverage_reader_oracle_build_ok_stays_false", async () => {
-    // even a green report (clean+complete, by construction) + a valid pin ⇒ oracleBuildOk STILL false — B2
-    // wires the parity leg only; the rebuild-oracle build-status leg is a later slice ⇒ coverage stays AND-degraded.
+    // even a green report (clean+complete, by construction) + a valid pin ⇒ oracleBuildOk STILL false when
+    // `resolveOracleBuild` is UNBOUND (the dormant default) ⇒ coverage stays AND-degraded. (B5 makes the leg
+    // bindable via `resolveOracleBuild?`; boot leaves it unbound — see the B5 describe below.)
     const green = parityReport(String(DUMMY_REV));
     const s = await createServingCoverageReader(covDeps({ store: fakeStore({ report: green }) }))(WS, DUMMY_REV);
     expect(s.parity).toEqual(green);
     expect(s.pinValid).toBe(true);
     expect(s.oracleBuildOk).toBe(false);
+  });
+});
+
+// ── B5: the rebuild-oracle (oracleBuildOk) leg — the last hardwired-false coverage leg, now bindable ──────
+describe("createServingCoverageReader — rebuild-oracle (oracleBuildOk) leg (B5)", () => {
+  it("oracle_build_ok_unbound_stays_false", async () => {
+    // no resolveOracleBuild dep (the dormant default) ⇒ oracleBuildOk false (byte-equivalent to the pre-B5 hardwire)
+    const s = await createServingCoverageReader(covDeps())(WS, DUMMY_REV);
+    expect(s.oracleBuildOk).toBe(false);
+    expect(s.pinValid).toBe(true); // the other legs are unchanged
+  });
+
+  it("oracle_build_ok_bound_true", async () => {
+    // a bound resolver returning true ⇒ oracleBuildOk carries the real signal
+    const s = await createServingCoverageReader(covDeps({ resolveOracleBuild: () => true }))(WS, DUMMY_REV);
+    expect(s.oracleBuildOk).toBe(true);
+  });
+
+  it("oracle_build_ok_bound_false", async () => {
+    // an honest false ⇒ oracleBuildOk false ⇒ degrade (the rebuild-oracle build is not OK)
+    const s = await createServingCoverageReader(covDeps({ resolveOracleBuild: () => false }))(WS, DUMMY_REV);
+    expect(s.oracleBuildOk).toBe(false);
+  });
+
+  it("oracle_build_ok_throwing_fail_closed", async () => {
+    // a THROWING resolver is caught by the reader's existing try/catch ⇒ ALL legs degrade — a probe fault never
+    // crosses the boundary and never becomes a false green (§12 fail-closed; same posture as resolveRunning/store).
+    const s = await createServingCoverageReader(
+      covDeps({
+        resolveOracleBuild: () => {
+          throw new Error("rebuild-oracle probe boom");
+        },
+      }),
+    )(WS, DUMMY_REV);
+    expect(s).toEqual({ parity: undefined, pinValid: false, oracleBuildOk: false });
+  });
+
+  it("full_green_reachable_when_all_four_legs_true", async () => {
+    // THE MILESTONE: a clean revision-matched report (bound store) + a valid pin + resolveOracleBuild()=>true ⇒
+    // deriveServingCoverage yields ALL 4 legs true ⇒ isDegradedCoverage FALSE — the coverage gate is now
+    // green-CAPABLE (the last hardwired-false leg removed). A unit proof with FAKES only. A REAL green admission
+    // additionally needs BOTH (1) the RECONCILE-TRIGGER writing real reports into the store (else
+    // getLatestForRevision returns undefined ⇒ degrade) AND (2) the owner arming `goLiveArmed` (the HARD LINE —
+    // selectServingOracleFactory keeps the interim oracle until then). Production stays DORMANT: boot leaves
+    // resolveOracleBuild AND the store UNBOUND. Green-CAPABLE ≠ live.
+    const sources = await createServingCoverageReader(
+      covDeps({ store: fakeStore({ report: parityReport(String(DUMMY_REV)) }), resolveOracleBuild: () => true }),
+    )(WS, DUMMY_REV);
+    const coverage = deriveServingCoverage(sources);
+    expect(coverage).toEqual({
+      cleanForServing: true,
+      coverageComplete: true,
+      pinValid: true,
+      oracleBuildOk: true,
+    });
+    expect(isDegradedCoverage(coverage)).toBe(false);
   });
 });
 
