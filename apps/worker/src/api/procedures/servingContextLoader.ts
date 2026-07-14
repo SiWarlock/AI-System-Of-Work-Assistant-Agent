@@ -65,11 +65,16 @@ export interface ServingCoverageSources {
   readonly oracleBuildOk: boolean;
 }
 
-/** Reads the raw serving-coverage inputs for a workspace at a revision. */
+/**
+ * Reads the raw serving-coverage inputs for a workspace at a revision. SYNC-or-ASYNC (mirrors
+ * {@link CommittedVaultReader}): an in-memory test fake returns the sources directly; the real store-backed
+ * reader (B2 — the parity leg reads the durable `ParityReportStore`) returns a `Promise`. The loader `await`s
+ * either (a no-op on a non-Promise), so a sync fake still satisfies this seam.
+ */
 export type ServingCoverageReader = (
   workspaceId: string,
   revisionId: RevisionId,
-) => ServingCoverageSources;
+) => ServingCoverageSources | Promise<ServingCoverageSources>;
 
 /** Everything the loader needs to assemble a workspace's serving context. */
 export interface ServingContextLoaderDeps {
@@ -169,7 +174,7 @@ export function createServingContextLoader(deps: ServingContextLoaderDeps): Serv
       //    A ParityReport not scoped to the HEAD revision is STALE — it cannot vouch for the current committed
       //    set, so it is treated as ABSENT (the coverage kill-switch degrades rather than serving under a
       //    stale-but-green report — closes the global-kill-switch staleness gap).
-      const covSources = deps.readServingCoverage(workspaceId, snapshot.revisionId);
+      const covSources = await deps.readServingCoverage(workspaceId, snapshot.revisionId);
       const revisionScopedParity =
         covSources.parity !== undefined &&
         String(covSources.parity.reconciledAtRevision) === String(snapshot.revisionId)

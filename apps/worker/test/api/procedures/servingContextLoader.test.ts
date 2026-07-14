@@ -265,6 +265,50 @@ describe("createServingContextLoader — degraded (a NORMAL state, never a throw
   });
 });
 
+describe("createServingContextLoader — async (store-backed) coverage-reader seam (B2)", () => {
+  // spec(§6) — the ServingCoverageReader seam is sync-or-async; a store-backed reader returns a Promise. The
+  // loader must AWAIT it, not derive coverage from a Promise object (which would make every leg fail closed).
+  // Proof: an ASYNC reader returning revision-scoped GREEN sources ⇒ the loader resolves READY (only reachable
+  // if the resolved sources reached deriveServingCoverage — a non-awaiting loader would degrade on the Promise).
+  it("loader_awaits_async_coverage_reader", async () => {
+    const asyncGreen: ServingCoverageReader = () => Promise.resolve(GREEN_SOURCES); // GREEN parity is scoped to REV
+    const deps = await readyDeps({ readServingCoverage: asyncGreen });
+    const r = await createServingContextLoader(deps)(WS);
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.mode).toBe("ready");
+  });
+
+  // spec(§6) nothing-fails-silently — a rejecting async reader (a store fault propagated) never crosses the
+  // boundary: the loader's fail-closed catch folds it to a typed `err` (⇒ the oracle strips ⇒ untrusted). A
+  // resolved all-false async reader is a NORMAL degrade (ok/degraded), never an err.
+  it("loader_degrades_on_coverage_reader_reject", async () => {
+    const rejecting: ServingCoverageReader = () => Promise.reject(new Error("coverage store boom"));
+    const rejected = await createServingContextLoader(await readyDeps({ readServingCoverage: rejecting }))(WS);
+    expect(isErr(rejected)).toBe(true);
+
+    const allFalse: ServingCoverageReader = () =>
+      Promise.resolve({ parity: undefined, pinValid: false, oracleBuildOk: false });
+    const degraded = await createServingContextLoader(await readyDeps({ readServingCoverage: allFalse }))(WS);
+    expect(isOk(degraded)).toBe(true);
+    if (isOk(degraded)) expect(degraded.value.mode).toBe("degraded");
+  });
+
+  // spec(§6) global-kill-switch staleness closure — even a store-backed reader returning a GREEN report scoped
+  // to a NON-head revision is treated as ABSENT by the loader's `revisionScopedParity` re-check ⇒ degraded (the
+  // staleness kill-switch still fires with a real async store; the store query-scoping alone does not replace it).
+  it("loader_revision_scope_still_kills_stale_store_report", async () => {
+    const staleGreen: ServingCoverageReader = () =>
+      Promise.resolve({
+        parity: parityReport({ cleanForServing: true, coverageComplete: true, reconciledAtRevision: "rev-STALE" }),
+        pinValid: true,
+        oracleBuildOk: true,
+      });
+    const r = await createServingContextLoader(await readyDeps({ readServingCoverage: staleGreen }))(WS);
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.mode).toBe("degraded");
+  });
+});
+
 describe("buildCitationResolver — injective gbrain:<slug> → [page:<slug>] (gate 4 G1e-2)", () => {
   // preconditions 2/3 — a served page's citation resolves to exactly its page fact identity.
   it("resolve_citation_maps_slug_to_page_factidentity", async () => {

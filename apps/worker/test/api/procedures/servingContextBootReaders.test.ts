@@ -26,6 +26,7 @@ import {
   type ServingContextLoaderDeps,
   type ServingCoverageReader,
 } from "../../../src/api/procedures/servingContextLoader";
+import type { ParityReportStore } from "../../../src/composition/parityReportStore";
 import { createServingGateOracle } from "../../../src/api/procedures/copilotProvenanceStamp";
 import type { RetrievedContext, RetrievedSource } from "../../../src/api/procedures/copilot";
 import { createFsVault } from "../../../src/composition/backends";
@@ -202,37 +203,62 @@ const covDeps = (over: Partial<ServingCoverageReaderDeps> = {}): ServingCoverage
   ...over,
 });
 
-describe("createServingCoverageReader — real pin leg, honest-interim parity/oracle", () => {
-  it("coverage_reader_pinValid_true_and_false", () => {
+/**
+ * A fake {@link ParityReportStore} for the reader unit tests: resolves a report, a true absence
+ * (`undefined`), or REJECTS (a fault, as the real adapter does on any DbError) — and optionally spies the
+ * `(workspaceId, revisionId)` it was queried with. `record` is not on the narrow read-port, so it is absent.
+ */
+function fakeStore(
+  behavior: { report?: ParityReport; reject?: boolean },
+  spy?: (workspaceId: string, revisionId: string) => void,
+): ParityReportStore {
+  return {
+    getLatestForRevision: (workspaceId: string, revisionId: string): Promise<ParityReport | undefined> => {
+      spy?.(workspaceId, revisionId);
+      return behavior.reject
+        ? Promise.reject(new Error("operational-store parityReport.getLatestForRevision failed (unavailable): boom"))
+        : Promise.resolve(behavior.report);
+    },
+  };
+}
+
+describe("createServingCoverageReader — real pin leg + persisted parity leg (B2), honest-interim oracle", () => {
+  it("coverage_reader_pinValid_true_and_false", async () => {
     // running SHA matches the pin → pinValid true
-    expect(createServingCoverageReader(covDeps())(WS, DUMMY_REV).pinValid).toBe(true);
+    expect((await createServingCoverageReader(covDeps())(WS, DUMMY_REV)).pinValid).toBe(true);
     // SHA mismatch → pinValid false
     expect(
-      createServingCoverageReader(covDeps({ resolveRunning: () => ({ sha: "deadbeef00000", indexSchemaVersion: 1 }) }))(
-        WS,
-        DUMMY_REV,
+      (
+        await createServingCoverageReader(
+          covDeps({ resolveRunning: () => ({ sha: "deadbeef00000", indexSchemaVersion: 1 }) }),
+        )(WS, DUMMY_REV)
       ).pinValid,
     ).toBe(false);
     // gbrain unavailable (running undefined) → pinValid false
-    expect(createServingCoverageReader(covDeps({ resolveRunning: () => undefined }))(WS, DUMMY_REV).pinValid).toBe(
-      false,
-    );
+    expect(
+      (await createServingCoverageReader(covDeps({ resolveRunning: () => undefined }))(WS, DUMMY_REV)).pinValid,
+    ).toBe(false);
     // a PENDING_ pin (owed live validation) → pinValid false even on a SHA match
     expect(
-      createServingCoverageReader(covDeps({ pin: pinOf({ validatedOn: "PENDING_LIVE_VALIDATION" }) }))(WS, DUMMY_REV)
-        .pinValid,
+      (
+        await createServingCoverageReader(covDeps({ pin: pinOf({ validatedOn: "PENDING_LIVE_VALIDATION" }) }))(
+          WS,
+          DUMMY_REV,
+        )
+      ).pinValid,
     ).toBe(false);
   });
 
-  it("coverage_reader_parity_undefined_and_oracle_false", () => {
-    const s = createServingCoverageReader(covDeps())(WS, DUMMY_REV);
-    expect(s.parity).toBeUndefined(); // honest-interim: no persisted/queryable serve-time ParityReport store
-    expect(s.oracleBuildOk).toBe(false); // no serve-time rebuild oracle
-    expect(s.pinValid).toBe(true); // pin is the ONE real coverage signal
+  it("coverage_reader_parity_undefined_and_oracle_false", async () => {
+    // UNBOUND store (the dormant default — boot binds a real store in B4) ⇒ parity undefined ⇒ degrade
+    const s = await createServingCoverageReader(covDeps())(WS, DUMMY_REV);
+    expect(s.parity).toBeUndefined();
+    expect(s.oracleBuildOk).toBe(false); // no serve-time rebuild oracle (B2 wires the parity leg only)
+    expect(s.pinValid).toBe(true); // pin is a real coverage signal
     // ⇒ even with a valid pin, absent parity means the loader still degrades in production (sound + inert).
   });
 
-  it("coverage_reader_never_throws", () => {
+  it("coverage_reader_never_throws", async () => {
     const ALL_FALSE = { parity: undefined, pinValid: false, oracleBuildOk: false };
     // a throwing running-probe → all-fail-closed, no throw
     const probeThrows = createServingCoverageReader(
@@ -242,7 +268,7 @@ describe("createServingCoverageReader — real pin leg, honest-interim parity/or
         },
       }),
     );
-    expect(probeThrows(WS, DUMMY_REV)).toEqual(ALL_FALSE);
+    expect(await probeThrows(WS, DUMMY_REV)).toEqual(ALL_FALSE);
     // a throwing clock (checkVersionPin invokes now() on its degrade path) → all-fail-closed, no throw
     const clockThrows = createServingCoverageReader(
       covDeps({
@@ -252,7 +278,59 @@ describe("createServingCoverageReader — real pin leg, honest-interim parity/or
         },
       }),
     );
-    expect(clockThrows(WS, DUMMY_REV)).toEqual(ALL_FALSE);
+    expect(await clockThrows(WS, DUMMY_REV)).toEqual(ALL_FALSE);
+  });
+
+  // ── B2: the persisted parity leg ─────────────────────────────────────────────────
+  it("serving_coverage_reader_binds_store_parity", async () => {
+    // a bound store returning a report for (ws, rev) ⇒ the reader's `parity` IS that report (§6 parity leg)
+    const report = parityReport(String(DUMMY_REV));
+    const s = await createServingCoverageReader(covDeps({ store: fakeStore({ report }) }))(WS, DUMMY_REV);
+    expect(s.parity).toEqual(report);
+    expect(s.pinValid).toBe(true); // pin stays a real signal
+    expect(s.oracleBuildOk).toBe(false);
+  });
+
+  it("serving_coverage_reader_store_absence_degrades", async () => {
+    // a bound store with NO report (never reconciled) ⇒ parity undefined (a true absence ⇒ degrade)
+    const s = await createServingCoverageReader(covDeps({ store: fakeStore({ report: undefined }) }))(WS, DUMMY_REV);
+    expect(s.parity).toBeUndefined();
+    expect(s.pinValid).toBe(true);
+  });
+
+  it("serving_coverage_reader_store_reject_fail_closed", async () => {
+    // a store REJECT (DbError) ⇒ the reader DEGRADES ALL legs and does NOT reject/throw (§6 fail-closed —
+    // the load-bearing direction: a store fault never crosses the boundary and never becomes a false green).
+    const reader = createServingCoverageReader(covDeps({ store: fakeStore({ reject: true }) }));
+    await expect(reader(WS, DUMMY_REV)).resolves.toEqual({
+      parity: undefined,
+      pinValid: false,
+      oracleBuildOk: false,
+    });
+  });
+
+  it("serving_coverage_reader_unbound_store_byte_equivalent", async () => {
+    // no store dep ⇒ today's dormant default: parity undefined + real pinValid + oracleBuildOk false
+    const s = await createServingCoverageReader(covDeps())(WS, DUMMY_REV);
+    expect(s).toEqual({ parity: undefined, pinValid: true, oracleBuildOk: false });
+  });
+
+  it("serving_coverage_reader_queries_head_revision", async () => {
+    // the store is queried with the HEAD (workspaceId, String(revisionId)) passed in — not a stale one
+    const calls: Array<[string, string]> = [];
+    const store = fakeStore({ report: parityReport(String(DUMMY_REV)) }, (ws, rev) => calls.push([ws, rev]));
+    await createServingCoverageReader(covDeps({ store }))(WS, DUMMY_REV);
+    expect(calls).toEqual([[WS, String(DUMMY_REV)]]);
+  });
+
+  it("serving_coverage_reader_oracle_build_ok_stays_false", async () => {
+    // even a green report (clean+complete, by construction) + a valid pin ⇒ oracleBuildOk STILL false — B2
+    // wires the parity leg only; the rebuild-oracle build-status leg is a later slice ⇒ coverage stays AND-degraded.
+    const green = parityReport(String(DUMMY_REV));
+    const s = await createServingCoverageReader(covDeps({ store: fakeStore({ report: green }) }))(WS, DUMMY_REV);
+    expect(s.parity).toEqual(green);
+    expect(s.pinValid).toBe(true);
+    expect(s.oracleBuildOk).toBe(false);
   });
 });
 

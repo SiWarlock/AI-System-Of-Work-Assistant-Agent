@@ -23,6 +23,7 @@ import type {
   ServingCoverageReader,
   ServingCoverageSources,
 } from "./servingContextLoader";
+import type { ParityReportStore } from "../../composition/parityReportStore";
 
 /** Deps for the committed-vault reader: resolve a workspaceId to its VaultFs (boot owns the mapping + WS-8). */
 export interface CommittedVaultReaderDeps {
@@ -82,27 +83,47 @@ export interface ServingCoverageReaderDeps {
   readonly resolveRunning: () => RunningGbrainVersion | undefined;
   /** Clock for `checkVersionPin`'s ctx (the degrade HealthItem it builds is DISCARDED here) — no ambient clock. */
   readonly now: () => string;
+  /**
+   * OPTIONAL serve-time {@link ParityReportStore} (B1). UNBOUND in production today — boot binds the real
+   * `createParityReportStoreAdapter(parityRepo)` in B4 — so the parity leg is `undefined` ⇒ degrade,
+   * byte-equivalent to the pre-B2 default. When bound, the parity leg reads the LATEST persisted report for
+   * the workspace @ its head revision; a store REJECT (`DbError`, incl. B1's corrupt/identity-mismatch
+   * re-gate) degrades ALL legs (fail-closed — never a false green).
+   */
+  readonly store?: ParityReportStore;
 }
 
 const SERVING_COVERAGE_AUDIT_REF = "serving-coverage-pin-check";
 
 /**
- * Build a real {@link ServingCoverageReader}. Only `pinValid` is a REAL signal (via `checkVersionPin` — `isOk`
- * means the running gbrain matches the pinned build). HONEST-INTERIM (the C5.4a pattern): `parity` is
- * `undefined` and `oracleBuildOk` is `false` UNCONDITIONALLY, because NO serve-time ParityReport store /
- * rebuild-oracle exists yet — the reconciler produces reports but nothing persists/queries them at serve time.
- * This function IS the injection point for a future slice wiring real parity persistence — NOT a forgotten
- * stub. `parity === undefined` ⇒ the loader's coverage derivation degrades every workspace in production
- * regardless of `pinValid` (sound + inert; propose stays OFF). Never throws (§16): any fault ⇒ all-fail-closed.
+ * Build a real {@link ServingCoverageReader}. TWO real signals now: `pinValid` (via `checkVersionPin` — `isOk`
+ * means the running gbrain matches the pinned build) AND `parity` (B2) — the LATEST persisted `ParityReport`
+ * for the workspace @ its head revision, read from the OPTIONAL {@link ParityReportStore}. `oracleBuildOk`
+ * stays `false` UNCONDITIONALLY (the rebuild-oracle build-status leg is a distinct later slice), so coverage
+ * remains AND-degraded even with a green report + a valid pin. HONEST-INTERIM / DORMANT: the store dep is
+ * UNBOUND in production today (boot binds the real adapter in B4), so `parity` is `undefined` ⇒ the loader's
+ * coverage derivation degrades every workspace regardless of `pinValid` (sound + inert; propose stays OFF).
+ * ASYNC (the store read is async) — the loader `await`s it (the {@link ServingCoverageReader} seam is
+ * sync-or-async). Never throws / fail-closed (§6/§16): a store REJECT (or any other fault) ⇒ ALL legs false —
+ * a fault never crosses the boundary and never becomes a false green (the trust-gate kill-switch's substrate).
  */
 export function createServingCoverageReader(deps: ServingCoverageReaderDeps): ServingCoverageReader {
-  return (_workspaceId: string, _revisionId: RevisionId): ServingCoverageSources => {
+  return async (workspaceId: string, revisionId: RevisionId): Promise<ServingCoverageSources> => {
     try {
       const running = deps.resolveRunning();
       const pinValid = isOk(
         checkVersionPin(deps.pin, running, { now: deps.now, auditRef: SERVING_COVERAGE_AUDIT_REF }),
       );
-      return { parity: undefined, pinValid, oracleBuildOk: false };
+      // Parity leg (B2): the latest persisted ParityReport for this workspace @ its HEAD revision. UNBOUND
+      // store (dormant default) OR a true absence (never reconciled) ⇒ `undefined` ⇒ the loader degrades. A
+      // store REJECT (a DbError — B1 already fail-closes a corrupt/identity-mismatched payload) THROWS here →
+      // the catch degrades ALL legs (never a false green). The loader re-scopes the report to head (its
+      // `revisionScopedParity` re-check) as a staleness backstop; the store query is revision-scoped on the way in.
+      const parity =
+        deps.store === undefined
+          ? undefined
+          : await deps.store.getLatestForRevision(workspaceId, String(revisionId));
+      return { parity, pinValid, oracleBuildOk: false };
     } catch {
       return { parity: undefined, pinValid: false, oracleBuildOk: false };
     }

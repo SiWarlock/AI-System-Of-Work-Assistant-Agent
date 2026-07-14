@@ -1,10 +1,11 @@
 // @sow/worker — the durable ParityReportStore adapter (task 11.1, §6/§12/§16).
 //
 // Bridges the REAL @sow/db `ParityReportRepository` onto a NARROW serve-time `ParityReportStore`
-// read-port. The next slice (B2) binds this port into `createServingCoverageReader` so the
-// serving-coverage leg reads the LATEST persisted `ParityReport` for a workspace @ its head
-// revision (today the reader returns `parity: undefined` UNCONDITIONALLY — no store exists). This
-// slice DELIVERS the repo + adapter + port DORMANT: no serve-time wiring yet, no production caller.
+// read-port. B2 (brief 053) binds this port into `createServingCoverageReader` so the serving-coverage
+// PARITY leg reads the LATEST persisted `ParityReport` for a workspace @ its head revision — the reader
+// now CONSUMES this port. What remains DORMANT is the PRODUCTION binding: boot leaves the reader's
+// optional `store` dep UNBOUND (⇒ `parity: undefined` ⇒ degrade, byte-equivalent) until B4 binds the
+// real `createParityReportStoreAdapter(parityRepo)` + adds the GREEN-admission e2e.
 //
 // Mirror of `knowledgeRevisionStore.ts` (the composition-root store-adapter precedent): @sow/db
 // MUST NOT import worker/serving code (the §2.5 import direction is worker → db), so the
