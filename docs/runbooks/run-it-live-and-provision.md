@@ -1,8 +1,10 @@
 # Runbook — Run it live + provision secrets (owner ops)
 
-> **Audience:** the owner/operator, running SoW locally on macOS. **Status honesty:** every step is tagged **WORKS-NOW** / **WIRED-BUT-INERT** (code exists, a precondition/flag isn't met in the shipped app) / **TEST-GATED** (only runs under a gated integration test today) / **UNBUILT** (owner-gated HITL slice not yet built). Anchors are `file:line` at the time of writing (`048d13e`).
+> **Audience:** the owner/operator, running SoW locally on macOS. **Status honesty:** every step is tagged **WORKS-NOW** / **WIRED-BUT-INERT** (code exists, a precondition/flag isn't met in the shipped app) / **TEST-GATED** (only runs under a gated integration test today) / **BUILT-BUT-INERT** (built + boot-wired, dormant behind an owner-provisioning/arming gate) / **UNBUILT** (owner-gated HITL slice not yet built). Anchors are `file:line`.
 >
-> **One-line reality:** the control plane is real and boots; the desktop app + the live Copilot **read + synthesis** path work today (given the env preconditions below); the **vault→ingestion** live loop and the **macOS Keychain secrets adapter** are the two real gaps. Nothing here crosses the hard line — propose/semantic-write stays OFF.
+> **VERIFIED 2026-07-14 (after `daf17bc`)** — read+ingest path traced end-to-end + repo-wide green (worker 1285 / evals 492 tests pass; `typecheck`+`test` exit 0). This refresh corrects the prior draft (`048d13e`): the **macOS Keychain `SecretsPort` adapter (11.4) is now BUILT + boot-wired** (was "UNBUILT") and `copilot.vault.read` is **wired on any real vault** (the prior "inert" was an empty-default-vault artifact, not a missing wire — see §4). Boot anchors shifted (`bootWorker` is `boot.ts:849`, was `:473`); the internal `boot.ts` `file:line`s below are indicative of the current tree.
+>
+> **One-line reality:** the control plane is real and boots; the desktop app + the live Copilot **read + synthesis** path work today (given the env preconditions below); the **vault→ingestion** live loop works behind an owner opt-in (`SOW_INGEST_WATCH`). Nothing here crosses the hard line — **propose/semantic-write stays OFF** (its full machinery, incl. the reconcile-TRIGGER arc, is now BUILT + DORMANT; arming it is an owner-gated bundle documented in `copilot-propose-go-live.md`, NOT part of running the read path).
 
 ---
 
@@ -14,7 +16,7 @@
 - **`VOYAGE_API_KEY`** exported in the shell that launches the app (gbrain embeddings; see §4).
 - *(optional, for the real Temporal path in §2/§3)* the **`temporal` CLI**.
 
-There is **no `apps/worker` `dev` script** — the worker only runs (a) spawned by the Electron worker-host, or (b) inside gated integration tests. Everything reaches the worker through an injected `BootConfig` (`apps/worker/src/boot.ts:473` `bootWorker`); the worker itself never reads `process.env.SOW_*`.
+There is **no `apps/worker` `dev` script** — the worker only runs (a) spawned by the Electron worker-host, or (b) inside gated integration tests. Everything reaches the worker through an injected `BootConfig` (`apps/worker/src/boot.ts:849` `bootWorker`); the worker itself never reads `process.env.SOW_*`.
 
 ---
 
@@ -85,12 +87,12 @@ The C6-(a) go-live turned the read+synthesis flags ON in the worker-host (`apps/
 
 | Flag (worker-host) | Precondition to actually work |
 |---|---|
-| `copilotRealModel: true` + `copilotModel:"claude-sonnet-5"` (`:94-95`) | **`claude` CLI subscription login** (NOT an API key) |
-| `copilotGbrainRetrieval: true` (`:100`) | `VOYAGE_API_KEY` in env + `gbrain` on PATH + an initialized brain |
-| `copilotWorkspaceScoping: true` (`:121`) | realModel + retrieval on |
-| `copilotAgentMode: true` (`:136`) | a running `gbrain serve --http --enable-dcr` (worker-host self-manages it: `MANAGE_GBRAIN_SERVE=true`, port 8899, `worker-host/index.ts:23-28`) |
-| `copilotVaultRead: true` (`:153`) | **WIRED-BUT-INERT** — needs a real `vaultRoot` (currently `<userData>/vault`); until pointed at the Obsidian vault, `gateCopilotVaultReadDeps` leaves it inert (`boot.ts:442-450`) |
-| `copilotSkillIntrospection: true` (`:154`) | none (static catalog) |
+| `copilotRealModel: true` + `copilotModel:"claude-sonnet-5"` (`:101-102`) | **`claude` CLI subscription login** (NOT an API key) |
+| `copilotGbrainRetrieval: true` (`:107`) | `VOYAGE_API_KEY` in env + `gbrain` on PATH + an initialized brain |
+| `copilotWorkspaceScoping: true` (`:128`) | realModel + retrieval on |
+| `copilotAgentMode: true` (`:143`) | a running `gbrain serve --http --enable-dcr` (worker-host self-manages it: `MANAGE_GBRAIN_SERVE=true`, port 8899, `worker-host/index.ts:28,:79-92`) |
+| `copilotVaultRead: true` (`:160`) | **WORKS on a real vault** — point `SOW_VAULT_ROOT` at your Obsidian vault. `gateCopilotVaultReadDeps` (`boot.ts:509`) wires the read-only `copilot.vault.read` tool when the flag is on + `vaultRoot` is defined + scoping is active (+ as of the usable-gate polish, task 13.10d, the vault has readable content). On the **default empty `<userData>/vault`** it is functionally inert (reads fail-closed to `SAFE_EMPTY`); the tool is simply not useful until a populated vault is pointed at. **WS-8:** for the served `personal-business` workspace a flat Obsidian vault works directly; notes for another workspace must live under a `<slug>/…` top-level dir (partition), else denied. |
+| `copilotSkillIntrospection: true` (`:161`) | none (static catalog) |
 
 **Reachability is closed:** with `copilotRealModel` on, `resolveCopilotWorkspaces` provisions the 3 well-known scopes so a `personal-business` ask resolves a posture and reaches gbrain retrieval **provided** `VOYAGE_API_KEY` + `gbrain` are in the env and the managed serve is up (`boot.ts:329-330,:693-699`).
 
@@ -98,7 +100,7 @@ The C6-(a) go-live turned the read+synthesis flags ON in the worker-host (`apps/
 
 ---
 
-## 5. Provision secrets — env/subscription today; **Keychain adapter UNBUILT (11.4)**
+## 5. Provision secrets — env/subscription today; **Keychain `SecretsPort` adapter BUILT-BUT-INERT (11.4)**
 
 **How secrets resolve today:** they don't go through a store — they're **environment-variable + subscription-login based**. Config files are actively *barred* from holding secrets: `load-config.ts` runs `secretShapeGuard`, which **rejects** any secret-shaped key/value (REQ-S-003, `apps/worker/src/config/load-config.ts:1-8`). So do NOT put keys in `.env`/config; export them in the launching shell's environment.
 
@@ -107,8 +109,7 @@ The C6-(a) go-live turned the read+synthesis flags ON in the worker-host (`apps/
 2. **`VOYAGE_API_KEY` (gbrain embeddings)** — a plain env var; must be present in the process that launches the app (it flows to the managed `gbrain serve` and/or the CLI transport, `copilotGbrainSubprocess.ts:263-265`).
 3. **HMAC provenance-signing key** — resolved through the only `SecretsPort` in the codebase (`packages/knowledge/src/knowledge-writer/provenance-stamp.ts:87`), used **only for the propose/write-through path — which is OFF**, so **not needed for a read-only live run**.
 
-**THE GAP — the real macOS Keychain `SecretsPort` adapter is UNBUILT (task 11.4, owner-gated HITL).** There is no `KeychainSecretsAdapter` / `keytar` / `security find-generic-password` in `src` — only a `FakeSecretsPort` in tests; the design is named in `ARCHITECTURE.md:317`. What IS built is the *failure* half — the LIFE-6 Keychain-locked degraded controller (`apps/worker/src/lifecycle/degraded/keychain-locked.ts`), which handles a locked Keychain but does not resolve secrets. **Until 11.4 lands, there is no wired Keychain store/retrieve — provisioning is manual env/subscription as above.**
-
+**NO LONGER A GAP — the real macOS Keychain `SecretsPort` adapter is BUILT + boot-wired (task 11.4), inert behind an owner-provisioning gate.** _(This paragraph corrects the prior draft, which said UNBUILT.)_ Built + green (adapter 10 / backend 14 / boot 11 tests): `apps/worker/src/secrets/keychain-adapter.ts` (`createKeychainSecretsAdapter` → `SecretsPort.resolveSigningKey`), `keychain-backend.ts` (`createSecurityCliKeychainBackend` runs `security find-generic-password -w -s <svc> -a <acct>`, args-array, no shell), `keychain-boot.ts` (`buildKeychainSecrets`, owner-provisioning gate); boot-wired at `boot.ts:1089`, INERT until `config.keychainSecrets` is provisioned. **It is needed only at ARMING** (to source the propose signing key) — NOT for a read-only run; the FIRST real Keychain touch is owner-gated. The LIFE-6 Keychain-locked degraded controller (`apps/worker/src/lifecycle/degraded/keychain-locked.ts`) handles a locked Keychain. **For a read-only run, provisioning is manual env/subscription as above — no Keychain needed.**
 ---
 
 ## 6. Packaging + notarization — **UNBUILT (later, 11.6/11.7)**
@@ -124,8 +125,8 @@ Deferred/owner-gated (`IMPLEMENTATION_PLAN.md`). Three known swaps when it's bui
 | Desktop app boot + renderer↔worker (loopback+token) | **WORKS-NOW** | — |
 | Worker in Temporal-degraded mode | **WORKS-NOW** | — |
 | Copilot read + synthesis (ask / briefing / concept) | **WORKS-NOW** | `claude` login + `VOYAGE_API_KEY` + `gbrain` serve up |
-| `copilot.vault.read` | **WIRED-BUT-INERT** | point `config.vaultRoot` at the real Obsidian vault |
+| `copilot.vault.read` | **WORKS on a real vault** | point `SOW_VAULT_ROOT` at your Obsidian vault (default empty vault ⇒ tool not offered, as of task 13.10d) |
 | Vault → ingestion (drop many `.md` → each durably persists) | **WIRED (owner-opt-in)** | `SOW_INGEST_WATCH=1` + `SOW_VAULT_ROOT` + a running local Temporal (multi-file per ws works; per-source content-addressed notes) |
 | Propose / semantic-write | **OFF (hard line)** | C5.4b serving oracle (owner-gated; do NOT flip) |
-| macOS Keychain secrets | **UNBUILT (11.4)** | build `KeychainSecretsAdapter`; interim = env vars + `claude` login |
+| macOS Keychain secrets | **BUILT-BUT-INERT (11.4)** | provision at ARMING only (`config.keychainSecrets` + a real signing key); NOT needed for a read-only run — interim = env vars + `claude` login |
 | Packaging / notarization | **UNBUILT (11.6/11.7)** | fork→utilityProcess + `@electron/rebuild` + prod paths |
