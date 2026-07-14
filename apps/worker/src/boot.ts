@@ -89,6 +89,7 @@ import {
   DEFAULT_GBRAIN_HTTP_URL,
 } from "./api/procedures/copilotGbrainHttp";
 import type { GbrainTokenProvider } from "./api/procedures/copilotGbrainHttp";
+import { readdirSync } from "node:fs";
 import { createFsVaultReadFileExec, createFsRealpath } from "./api/procedures/copilotVaultRead";
 import {
   createAgentRuntimeCopilotSynthesis,
@@ -510,10 +511,44 @@ export function gateCopilotVaultReadDeps<T>(
   gate: { readonly copilotVaultRead?: boolean; readonly vaultRoot?: string },
   scopingActive: boolean,
   buildDeps: (vaultRoot: string) => T,
+  vaultUsable: (root: string) => boolean,
 ): T | undefined {
-  return gate.copilotVaultRead === true && gate.vaultRoot !== undefined && scopingActive
-    ? buildDeps(gate.vaultRoot)
-    : undefined;
+  // The 3 flag/config preconditions gate FIRST — so the shipped default (flag off) never touches the fs.
+  if (gate.copilotVaultRead !== true || gate.vaultRoot === undefined || !scopingActive) {
+    return undefined;
+  }
+  // §13.10d — offer the read-only tool ONLY when the vault actually has readable content, so the default empty
+  // `<userData>/vault` isn't handed an inert tool that can only return SAFE_EMPTY. FAIL-SAFE: a throwing/indeterminate
+  // predicate ⇒ inert (never offer a tool we can't confirm is usable). `buildDeps` is invoked ONLY when usable.
+  let usable: boolean;
+  try {
+    usable = vaultUsable(gate.vaultRoot);
+  } catch {
+    return undefined;
+  }
+  return usable ? buildDeps(gate.vaultRoot) : undefined;
+}
+
+/**
+ * §13.10d — the fs usability predicate for {@link gateCopilotVaultReadDeps}: `(root) => boolean`, true IFF `root`
+ * exists AND contains ≥1 `.md` FILE, enumerated RECURSIVELY. Mirrors `createCommittedVaultReader`'s reader filter
+ * EXACTLY — `e.isFile() && name.endsWith(".md")` (case-sensitive) — so it is true precisely when the reader would
+ * find a page to serve: a `.md` nested in subfolders counts, but a DIRECTORY named `notes.md/` does NOT (the reader
+ * enumerates zero pages there). Any fault (missing dir / read error / permission) ⇒ `false` (fail-safe — never
+ * offer the tool when usability can't be confirmed). Evaluated ONCE at boot: a vault populated AFTER boot needs a
+ * restart (matches the gate + auto-ingest model — the owner points at a populated vault, then launches). Pure over
+ * `node:fs`; the `.some(...)` short-circuits on the first matching file.
+ */
+export function createFsVaultUsable(): (root: string) => boolean {
+  return (root: string): boolean => {
+    try {
+      return readdirSync(root, { recursive: true, withFileTypes: true }).some(
+        (entry) => entry.isFile() && String(entry.name).endsWith(".md"),
+      );
+    } catch {
+      return false; // missing dir / read error / permission ⇒ fail-safe inert
+    }
+  };
 }
 
 /**
@@ -1025,12 +1060,17 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
           // redaction-safe, and the handler path-guards + WS-8-scopes every read. The gate is the pure
           // `gateCopilotVaultReadDeps` helper (fail-safe + unit-tested); the fs execs are constructed inside the
           // thunk so they exist ONLY on the gated-on/live path.
-          const vaultRunnerDeps = gateCopilotVaultReadDeps(config, wsScope !== undefined, (vaultRoot) => ({
-            buildVaultMcpServer: createCopilotVaultMcpServer,
-            vaultReadFile: createFsVaultReadFileExec(),
-            vaultRealpath: createFsRealpath(),
-            vaultRoot,
-          }));
+          const vaultRunnerDeps = gateCopilotVaultReadDeps(
+            config,
+            wsScope !== undefined,
+            (vaultRoot) => ({
+              buildVaultMcpServer: createCopilotVaultMcpServer,
+              vaultReadFile: createFsVaultReadFileExec(),
+              vaultRealpath: createFsRealpath(),
+              vaultRoot,
+            }),
+            createFsVaultUsable(), // §13.10d — offer the tool only on a usable vault (empty default ⇒ inert)
+          );
           // §13.10d — the read-only SKILL self-introspection dep. Gated on `copilotSkillIntrospection` (OFF by
           // default) + scoping on (`wsScope`; the runner registers it inside the same scoped-proxy branch as
           // vault). Unlike vault it needs NO scope/root/reader — the handler reads the STATIC catalog only, so
