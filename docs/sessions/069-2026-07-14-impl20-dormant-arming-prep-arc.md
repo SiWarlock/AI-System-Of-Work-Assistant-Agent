@@ -4,7 +4,7 @@
 - **Phase:** 13.10 — dormant arming-prep arc (the last buildable-dormant grind before the owner-gated arming gate)
 - **Team:** orch18 (orchestrator) + impl20 (worker-area implementer), team `session-734f946b`, single-track on `main`
 - **Predecessor:** [068-2026-07-14-impl19-reconcile-trigger-arc-and-runstandup.md](068-2026-07-14-impl19-reconcile-trigger-arc-and-runstandup.md)
-- **Successor:** _(none yet — HOLDING at the arming gate)_
+- **Successor:** [070-2026-07-14-impl21-external-write-gate-and-arming-strict-equality.md](070-2026-07-14-impl21-external-write-gate-and-arming-strict-equality.md)
 
 ## Why this session existed
 
