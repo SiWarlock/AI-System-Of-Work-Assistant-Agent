@@ -150,6 +150,9 @@ import type { ProofSpineParams } from "./composition/buildActivities";
 // rebound into the proof-spine params post-backends so the ingestion sourceCommit + propose dispatch
 // persist idempotency across a worker restart. Kept OFF the OFF-config path (see withDurableRevisions).
 import { createKnowledgeRevisionStoreAdapter } from "./composition/knowledgeRevisionStore";
+// C5.4b B4 — the durable ParityReportStore read-adapter, bound into the serving-coverage reader inside the
+// triple-locked loaderBackedServingOracle branch (closes the B2 store-consuming reachability waiver).
+import { createParityReportStoreAdapter } from "./composition/parityReportStore";
 import type { KnowledgeRevisionRepository } from "@sow/db";
 // §9 make-it-real C3b — the local-vault file-watcher capture trigger + its degraded-safe
 // dispatch. The Temporal Client's first real caller (deferred to here from C3a).
@@ -923,11 +926,18 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     config.copilotProvenanceStamping === true && provenanceBundle !== undefined
       ? buildLoaderBackedServingOracle({
           resolveVault: buildServedVaultResolver(servedVaultRoots),
-          // REAL coverage reader (degrades by reality today — OFF-lock 3); the pin is only the pinValid leg.
+          // REAL coverage reader (degrades by reality today — OFF-lock 3): the pin is the pinValid leg, and B4
+          // now binds the durable ParityReportStore so the PARITY legs read the latest persisted ParityReport
+          // @ head revision (closes the B2 waiver). `oracleBuildOk` stays false (rebuild-oracle leg deferred),
+          // so serving still degrades honestly even with a clean report. The store is constructed ONLY inside
+          // THIS branch — the construction guard is `copilotProvenanceStamping && provenanceBundle` (2 of the 3
+          // OFF-locks); the shipped default (no bundle) builds no store. The 3rd OFF-lock `goLiveArmed` gates
+          // SELECTION (`selectServingOracleFactory`), not construction — an unarmed-but-built store is inert.
           readServingCoverage: createServingCoverageReader({
             pin: provenanceBundle.pin,
             resolveRunning: provenanceBundle.resolveRunning ?? ((): RunningGbrainVersion | undefined => undefined),
             now: backends.now,
+            store: createParityReportStoreAdapter(backends.repos.parityReports),
           }),
           // OFF-lock 2: the REAL Keychain SecretsPort when provisioned, else the bundle's inline secrets (test),
           // else undefined ⇒ buildLoaderBackedServingOracle returns undefined ⇒ interim/degraded.
