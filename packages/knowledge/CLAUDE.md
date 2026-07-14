@@ -158,7 +158,7 @@ Lessons start at §1.
 
 | # | Date | Topic | Rule (one-liner) |
 |--:|---|---|---|
-| | | | |
+| 1 | 2026-07-14 | [A read-only external HTTP transport is a real-I/O adapter behind a mockable transport+secrets seam — SSRF-guard before auth reusing the single vetted predicate, token fails closed even when the accessor throws, redacted typed faults, wire shape a documented candidate](LESSONS.md#1) | Build a read-only external HTTP transport as a real-I/O adapter behind a mockable transport+secrets seam (faked in tests, unbound at boot ⇒ byte-equivalent); SSRF/loopback guard BEFORE auth+dispatch REUSING the single vetted authority-isolated predicate (never re-mirror); token from a SecretsPort seam header-only/never-logged, fail-closed on a typed unavailable AND a THROWING accessor; every fault a REDACTED typed error with only safe detail (status/reason/host-ref) behind a positive-2xx gate; the vendor wire shape a DOCUMENTED CANDIDATE (arch_gap + deferred Finding, fail-closed, never hardcoded-confirmed) until run at arming. |
 
 <!-- Starts empty. Each row links to its `LESSONS.md` anchor. -->
 
