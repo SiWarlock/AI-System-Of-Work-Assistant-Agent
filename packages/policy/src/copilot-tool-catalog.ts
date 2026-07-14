@@ -9,15 +9,16 @@
 // ("read_only ⇒ allowedTools contains no mutating tool") — a check `admitsMutating`'s read_only early-return
 // structurally cannot make. PURE — no clock/network/randomness; never throws.
 //
-// ⚠ WIRING (this module is INERT until wired — it changes NO runtime behavior on its own):
-//   • the Copilot's ING-7 enforcement lands in Phase-C C4, where the Copilot's AgentJob admission calls
-//     `admitJob(job, isMutatingCopilotTool)` — until then the injected-predicate hook stays unused;
-//   • closing the read_only-smuggle vector (a read_only policy that LISTS a mutating tool — which
-//     `admitsMutating` early-returns `false` on and thus admits) requires a caller to ALSO invoke
-//     `copilotReadOnlyPolicyIsPure` at admission; wiring the classifier alone does NOT close it.
-//   Do NOT record the ING-7 deferred clause as "closed" on the strength of THIS slice — only the mechanism
-//   ships here. (The general broker/runAgentJob admit seam is unary `(job) => decision` and would need
-//   widening to carry a per-tool predicate for those paths too — tracked separately.)
+// ⚠ WIRING (UPDATED 2026-07-14 — the Copilot ING-7 enforcement is now LIVE; this catalog is WIRED, not inert):
+//   • ENFORCEMENT IS ACTIVE: `admitCopilotAgentJob` (`apps/worker/src/api/procedures/copilotAgentSynthesis.ts`)
+//     runs BEFORE the agent runner on every Copilot AgentJob and calls `admitJob(job, isMutatingCopilotTool)`
+//     — the injected-predicate hook is in use (Phase-C C4 landed).
+//   • the read_only-smuggle vector (a read_only policy that LISTS a mutating tool — which `admitsMutating`
+//     early-returns `false` on and thus admits) is CLOSED, because that same `admitCopilotAgentJob` ALSO
+//     invokes `copilotReadOnlyPolicyIsPure` at admission.
+//   This module itself stays PURE — no runtime behavior on its own; the ENFORCEMENT lives in the admission
+//   caller above. (The general broker/runAgentJob admit seam is still unary `(job) => decision` and would need
+//   widening to carry a per-tool predicate for those OTHER paths too — tracked separately.)
 import { toolId } from "@sow/contracts";
 import type { ToolId, ToolPolicy } from "@sow/contracts";
 import { effectiveAllowedTools } from "@sow/contracts";

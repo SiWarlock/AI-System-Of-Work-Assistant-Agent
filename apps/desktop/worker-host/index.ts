@@ -155,7 +155,8 @@ async function start(config: WorkerHostConfig): Promise<void> {
       // `vaultRoot` is an OWNER RUNTIME precondition (the personal-business Obsidian vault path, injected via
       // config). Until it is set, the boot guard (`gateCopilotVaultReadDeps`) leaves vault.read UNWIRED/inert —
       // so this flip is SAFE to land before the path is provided (like MANAGE_GBRAIN_SERVE). skill-introspection
-      // is inert-safe too (static catalog). HARD LINE: the write/propose bridge stays OFF — `copilotProposeMode`
+      // is LIVE-but-harmless (a STATIC read-only catalog — nothing to leak; never reveals the propose tool).
+      // HARD LINE: the write/propose bridge stays OFF — `copilotProposeMode`
       // / `copilotProposeKnowledge` are deliberately NOT set here. To turn OFF, remove these two lines.
       copilotVaultRead: true,
       copilotSkillIntrospection: true,
