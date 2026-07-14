@@ -108,6 +108,14 @@ import { createApprovalsKnowledgeProposeSink } from "./api/procedures/copilotPro
 import type { CopilotNoteExistsProbe } from "./api/procedures/copilotProposeKnowledge";
 import type { CopilotServingOracle } from "./api/procedures/copilotProvenanceStamp";
 import { selectServingOracleFactory } from "./api/procedures/servingContextLoader";
+import type { CommittedVaultReader } from "./api/procedures/servingContextLoader";
+import { createReconcileScheduler } from "./composition/reconcileScheduler";
+import type { LoggedReconcileOutcome, ReconcileScheduler } from "./composition/reconcileScheduler";
+import { runReconcileForWorkspace } from "./composition/reconcileDriver";
+import { buildCanonicalFactSet } from "./composition/canonicalFactSet";
+import { buildReconcilerDbProjection } from "./composition/reconcilerDbProjection";
+import { runReconcilePass } from "./composition/parityReconcile";
+import type { RunReconcilePassDeps } from "./composition/parityReconcile";
 import {
   buildLoaderBackedServingOracle,
   buildServedVaultResolver,
@@ -170,7 +178,7 @@ import {
 } from "./watch/vaultWatcher";
 // §13 task 11.3-b — the GBrain version-pin BOOT verify step (closes the 11.3-a reachability waiver).
 import { readFile } from "node:fs/promises";
-import { createGbrainVersionProbe, computeRevisionId, type GbrainVersionProbe, type KnowledgeRevisionStore, type CommittedRevision, type SecretsPort, type SecretRef, type RunningGbrainVersion, type VaultFs } from "@sow/knowledge";
+import { createGbrainVersionProbe, computeRevisionId, type GbrainVersionProbe, type KnowledgeRevisionStore, type CommittedRevision, type SecretsPort, type SecretRef, type RunningGbrainVersion, type VaultFs, type GbrainReadAdapter, type ReconcilerDbProjection } from "@sow/knowledge";
 import { gbrainStartupVerify } from "./gbrainStartupVerify";
 
 // ── config ────────────────────────────────────────────────────────────────────
@@ -557,6 +565,79 @@ export function gateAutoIngest(
     proofSpineParams: buildProofSpineParams(ingestWorkspaceId),
     temporalAddress: opts.temporalAddress ?? "127.0.0.1:7233",
   };
+}
+
+// ── reconcile-TRIGGER arc, piece F (F1) — the default-OFF reconcile boot gate (task 13.10) ────────────────────
+// A pure gate mirroring gateAutoIngest (Lesson 2/8/16): OFF (owner opt-in unset — the default, OR no vaultRoot) ⇒
+// `undefined` + ZERO dep-thunk invocations (byte-equivalent — the factory-spy pin, Lesson 11); ON (armed —
+// owner-gated, NEVER the default) ⇒ assemble the reconcile scheduler (piece E) over the driver (D) + the
+// never-reject builders (C/B) + a redacted log. The owner-gated GbrainReadGrant transport stays UNBOUND
+// (`makeDbAdapter` → undefined) ⇒ the db-projection degrades (`complete=false`) ⇒ even the armed path records a
+// DEGRADED report (`coverageComplete=false`, never a false-green). Building the gate crosses NO hard line — the
+// arming (flip `reconcile` + provision the transport / signing key / corpora / eval) is the owner's. F2 wires the
+// `bootWorker` call site + the real leaf-thunks; this helper is unit-tested directly (the byte-equivalence pin).
+
+/** The owner opt-in + precondition for the reconcile trigger (resolved from env, threaded via BootConfig at F2). */
+export interface ReconcileGateOpts {
+  readonly reconcile?: boolean;
+  readonly vaultRoot?: string;
+}
+
+/** The assembled reconcile machinery the ON path returns (F2 holds it; a future trigger source drives its flush). */
+export interface ReconcileWiring {
+  readonly scheduler: ReconcileScheduler;
+}
+
+/** The leaf collaborators as THUNKS — invoked ONLY on the gated-on path (nothing is constructed on OFF). F2 binds the real ones. */
+export interface ReconcileGateDeps {
+  /** The committed-vault reader (piece C's input; LOCAL fs — not owner-gated). */
+  readonly makeReader: () => CommittedVaultReader;
+  /** The gbrain read adapter (piece B's input); `undefined` ⇒ the owner-gated GbrainReadGrant transport is UNBOUND ⇒ degrade. */
+  readonly makeDbAdapter: () => GbrainReadAdapter | undefined;
+  /** The pass deps (piece A's runReconcilePass: reconcilerDeps + the durable recorder + the health sink). */
+  readonly makePassDeps: () => RunReconcilePassDeps;
+  /** The redacted, non-throwing log sink (piece E's scheduler routing; F2 binds a health-materializing sink). */
+  readonly makeLog: () => (summary: LoggedReconcileOutcome) => void;
+}
+
+/**
+ * Build the reconcile wiring IFF the owner opt-in is ON AND a `vaultRoot` is present; any missing precondition ⇒
+ * `undefined` (fail-safe — the shipped default stays byte-equivalent). Pure; the dep-thunks are invoked ONLY on
+ * the gated-on path, so NOTHING (scheduler/driver/reader/adapter) is constructed on the OFF path. Building the
+ * gate arms nothing — the transport stays unbound, so even the ON path records DEGRADED (never a false-green).
+ */
+export function gateReconcile(
+  opts: ReconcileGateOpts,
+  deps: ReconcileGateDeps,
+): ReconcileWiring | undefined {
+  if (opts.reconcile !== true || opts.vaultRoot === undefined) return undefined;
+
+  // ON path (owner-gated, never default) — invoke the dep-thunks ONLY here.
+  const reader = deps.makeReader();
+  const adapter = deps.makeDbAdapter(); // undefined ⇒ owner-gated transport unbound ⇒ degrade
+  const passDeps = deps.makePassDeps();
+  const log = deps.makeLog();
+
+  const scheduler = createReconcileScheduler({
+    runReconcile: (workspaceId, origin) =>
+      runReconcileForWorkspace(workspaceId, {
+        getCanonicalFactSet: (ws) => buildCanonicalFactSet(reader, ws),
+        getDbProjection: (ws) =>
+          adapter !== undefined
+            ? buildReconcilerDbProjection(adapter)
+            : Promise.resolve<ReconcilerDbProjection>({
+                workspaceId: ws,
+                gbrainSchemaVersion: 0,
+                facts: [],
+                complete: false, // unbound transport ⇒ no coverage ⇒ degrade (never a false-green)
+              }),
+        origin,
+        runPass: (req) => runReconcilePass(req, passDeps),
+      }),
+    log,
+  });
+
+  return { scheduler };
 }
 
 /**
