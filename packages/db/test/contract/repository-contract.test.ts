@@ -75,6 +75,8 @@ import type {
   ConnectorInstanceRow,
   CrossWorkspaceLinkRepository,
   CrossWorkspaceLinkRow,
+  SeenContentHashRepository,
+  SeenContentHashRow,
   ProjectRegistryRepository,
   ProjectRegistryRow,
   ProviderStateRepository,
@@ -103,6 +105,7 @@ interface OperationalRepositories {
   readonly projectRegistry: ProjectRegistryRepository;
   readonly connectorInstance: ConnectorInstanceRepository;
   readonly crossWorkspaceLink: CrossWorkspaceLinkRepository;
+  readonly seenContentHash: SeenContentHashRepository;
   readonly eventLog: EventLogRepository;
   readonly workflowRunRefs: WorkflowRunRefRepository;
   readonly audit: AuditRepository;
@@ -180,6 +183,7 @@ const PG_TABLES: readonly PgTable[] = [
   pgSchema.projectRegistry,
   pgSchema.connectorInstance,
   pgSchema.crossWorkspaceLink,
+  pgSchema.seenContentHash,
   pgSchema.eventLog,
   pgSchema.workflowRunRefs,
   pgSchema.auditRecords,
@@ -456,6 +460,7 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(typeof repos.projectRegistry.resolveRef).toBe("function");
       expect(typeof repos.connectorInstance.setState).toBe("function");
       expect(typeof repos.crossWorkspaceLink.listApprovedForReader).toBe("function");
+      expect(typeof repos.seenContentHash.record).toBe("function");
       expect(typeof repos.eventLog.append).toBe("function");
       expect(typeof repos.workflowRunRefs.create).toBe("function");
       expect(typeof repos.audit.append).toBe("function");
@@ -692,6 +697,36 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
     it("get / setStatus on a missing link are typed not_found (never throws)", async () => {
       expect(unwrapErr(await repos.crossWorkspaceLink.get("missing")).code).toBe("not_found");
       expect(unwrapErr(await repos.crossWorkspaceLink.setStatus("missing", "approved", "2026-07-15T00:00:00.000Z")).code).toBe("not_found");
+    });
+  });
+
+  // ── seen-content-hash dedupe store (Flow-4 / REQ-F-010; WS-8-scoped; task 15.4) ──
+  describe("SeenContentHashRepository", () => {
+    const schWs = (s: string): SeenContentHashRow["workspaceId"] => s as SeenContentHashRow["workspaceId"];
+    const schRow = (over: Partial<SeenContentHashRow> = {}): SeenContentHashRow => ({
+      workspaceId: schWs("ws-a"),
+      contentHash: "hash-1",
+      seenAt: "2026-07-15T00:00:00.000Z",
+      ...over,
+    });
+
+    it("record → has round-trips; an unrecorded key is a benign false (not a fault)", async () => {
+      expect(isOk(await repos.seenContentHash.record(schRow()))).toBe(true);
+      expect(unwrap(await repos.seenContentHash.has({ workspaceId: schWs("ws-a"), contentHash: "hash-1" }))).toBe(true);
+      expect(unwrap(await repos.seenContentHash.has({ workspaceId: schWs("ws-a"), contentHash: "never-seen" }))).toBe(false);
+    });
+
+    it("record is idempotent first-write-wins: re-recording the same key is ok (no duplicate, no conflict error)", async () => {
+      expect(isOk(await repos.seenContentHash.record(schRow()))).toBe(true);
+      // A second record of the SAME (workspaceId, contentHash) must NOT error (UNIQUE, ON CONFLICT DO NOTHING).
+      expect(isOk(await repos.seenContentHash.record(schRow({ seenAt: "2027-01-01T00:00:00.000Z" })))).toBe(true);
+      expect(unwrap(await repos.seenContentHash.has({ workspaceId: schWs("ws-a"), contentHash: "hash-1" }))).toBe(true);
+    });
+
+    it("dedupe is WORKSPACE-SCOPED: a hash recorded in ws-a is NOT a hit in ws-b (WS-8 — the positive keying leg)", async () => {
+      unwrap(await repos.seenContentHash.record(schRow({ workspaceId: schWs("ws-a"), contentHash: "shared-hash" })));
+      expect(unwrap(await repos.seenContentHash.has({ workspaceId: schWs("ws-a"), contentHash: "shared-hash" }))).toBe(true);
+      expect(unwrap(await repos.seenContentHash.has({ workspaceId: schWs("ws-b"), contentHash: "shared-hash" }))).toBe(false);
     });
   });
 

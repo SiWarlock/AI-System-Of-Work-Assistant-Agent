@@ -65,6 +65,9 @@ import type {
   CrossWorkspaceLinkRepository,
   CrossWorkspaceLinkRow,
   CrossWorkspaceLinkStatus,
+  SeenContentHashRepository,
+  SeenContentHashRow,
+  SeenContentHashKey,
   PendingKnowledgeMutation,
   PendingKnowledgeMutationRepository,
   ProjectRegistryRepository,
@@ -117,6 +120,7 @@ export interface PostgresRepositories {
   readonly projectRegistry: ProjectRegistryRepository;
   readonly connectorInstance: ConnectorInstanceRepository;
   readonly crossWorkspaceLink: CrossWorkspaceLinkRepository;
+  readonly seenContentHash: SeenContentHashRepository;
   readonly eventLog: EventLogRepository;
   readonly workflowRunRefs: WorkflowRunRefRepository;
   readonly audit: AuditRepository;
@@ -583,6 +587,31 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
           .limit(1);
         const row = rows[0];
         return row ? ok(row as CrossWorkspaceLinkRow) : err(notFound(`cross-workspace link ${linkId}`));
+      }),
+  };
+
+  // Seen-content-hash dedupe store (task 15.4). WS-8-scoped composite key; `record` first-write-wins
+  // (ON CONFLICT DO NOTHING — a re-record no-op preserving the original seenAt). Fail-closed both
+  // directions: a driver throw is mapped by `run`/`toDbError` to a typed err. Async.
+  const seenContentHash: SeenContentHashRepository = {
+    has: (key: SeenContentHashKey) =>
+      run(async () => {
+        const rows = await db
+          .select()
+          .from(schema.seenContentHash)
+          .where(
+            and(
+              eq(schema.seenContentHash.workspaceId, key.workspaceId),
+              eq(schema.seenContentHash.contentHash, key.contentHash),
+            ),
+          )
+          .limit(1);
+        return ok(rows.length > 0);
+      }),
+    record: (row: SeenContentHashRow) =>
+      run(async () => {
+        await db.insert(schema.seenContentHash).values(row).onConflictDoNothing();
+        return ok(undefined);
       }),
   };
 
@@ -1448,6 +1477,7 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
     projectRegistry,
     connectorInstance,
     crossWorkspaceLink,
+    seenContentHash,
     eventLog,
     workflowRunRefs,
     audit,

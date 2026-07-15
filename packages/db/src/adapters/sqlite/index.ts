@@ -55,6 +55,9 @@ import type {
   CrossWorkspaceLinkRepository,
   CrossWorkspaceLinkRow,
   CrossWorkspaceLinkStatus,
+  SeenContentHashRepository,
+  SeenContentHashRow,
+  SeenContentHashKey,
   PendingKnowledgeMutation,
   PendingKnowledgeMutationRepository,
   ProjectRegistryRepository,
@@ -107,6 +110,7 @@ export interface SqliteRepositories {
   readonly projectRegistry: ProjectRegistryRepository;
   readonly connectorInstance: ConnectorInstanceRepository;
   readonly crossWorkspaceLink: CrossWorkspaceLinkRepository;
+  readonly seenContentHash: SeenContentHashRepository;
   readonly eventLog: EventLogRepository;
   readonly workflowRunRefs: WorkflowRunRefRepository;
   readonly audit: AuditRepository;
@@ -558,6 +562,32 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
           .where(eq(schema.crossWorkspaceLink.linkId, linkId))
           .get();
         return row ? ok(row as CrossWorkspaceLinkRow) : err(notFound(`cross-workspace link ${linkId}`));
+      }),
+  };
+
+  // Seen-content-hash dedupe store (task 15.4). WS-8-scoped composite key; `record` is first-write-
+  // wins (ON CONFLICT DO NOTHING — a re-record is a no-op preserving the original seenAt). Fail-
+  // closed both directions: a driver throw is mapped by `run`/`toDbError` to a typed err (never a
+  // masked false on `has` / masked ok on `record`).
+  const seenContentHash: SeenContentHashRepository = {
+    has: (key: SeenContentHashKey) =>
+      run(() => {
+        const row = db
+          .select()
+          .from(schema.seenContentHash)
+          .where(
+            and(
+              eq(schema.seenContentHash.workspaceId, key.workspaceId),
+              eq(schema.seenContentHash.contentHash, key.contentHash),
+            ),
+          )
+          .get();
+        return ok(row !== undefined);
+      }),
+    record: (row: SeenContentHashRow) =>
+      run(() => {
+        db.insert(schema.seenContentHash).values(row).onConflictDoNothing().run();
+        return ok(undefined);
       }),
   };
 
@@ -1381,6 +1411,7 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
     projectRegistry,
     connectorInstance,
     crossWorkspaceLink,
+    seenContentHash,
     eventLog,
     workflowRunRefs,
     audit,

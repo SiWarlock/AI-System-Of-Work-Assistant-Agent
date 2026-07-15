@@ -38,6 +38,8 @@ const TABLES: readonly SQLiteTable[] = [
   schema.connectorInstance,
   // §4/§5/§6 — the cross-workspace-link store (sanctioned WS-8 cross-read input, task 14.7).
   schema.crossWorkspaceLink,
+  // §4/§19.2 — the seen-content-hash dedupe store (Flow-4 / REQ-F-010, WS-8-scoped, task 15.4).
+  schema.seenContentHash,
 ];
 
 /** Emit `CREATE TABLE` for one Drizzle table, mirroring its column + PK config. */

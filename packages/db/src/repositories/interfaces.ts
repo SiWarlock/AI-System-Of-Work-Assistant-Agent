@@ -366,6 +366,35 @@ export interface CrossWorkspaceLinkRepository {
   setStatus(linkId: string, status: CrossWorkspaceLinkStatus, at: string): DbResult<CrossWorkspaceLinkRow>;
 }
 
+/** A durable seen-content-hash dedupe record (Flow-4 / REQ-F-010). db-owned; not a frozen contract. */
+export interface SeenContentHashRow {
+  /** The WS-8 dedupe scope — a hash is "seen" only within its own workspace. */
+  readonly workspaceId: WorkspaceId;
+  /** The content-versioned dedupe identity. */
+  readonly contentHash: string;
+  /** When the content was FIRST seen (first-write-wins preserves this). */
+  readonly seenAt: string;
+}
+
+/** The WS-8-scoped dedupe lookup key (a hash seen in A must never dedupe B). */
+export interface SeenContentHashKey {
+  readonly workspaceId: WorkspaceId;
+  readonly contentHash: string;
+}
+
+/**
+ * Durable seen-content-hash dedupe store (task 15.4, §4/§19.2; Flow-4 / REQ-F-010) — replaces an
+ * in-memory dedupe that loses exactly-once across restart. WS-8-scoped by the composite
+ * (workspaceId, contentHash) key. FAIL-CLOSED both directions (worker Lesson 3): a store fault on
+ * `has` or `record` is a typed `err` — NEVER masked as a benign `false`/`ok` (fault ≠ not-seen).
+ */
+export interface SeenContentHashRepository {
+  /** True iff (workspaceId, contentHash) was previously recorded. A store fault ⇒ typed err (never a masked false). */
+  has(key: SeenContentHashKey): DbResult<boolean>;
+  /** Record a seen hash — FIRST-WRITE-WINS (idempotent; a re-record is a no-op preserving the original seenAt). A store fault ⇒ typed err (never a masked ok). */
+  record(row: SeenContentHashRow): DbResult<void>;
+}
+
 /**
  * Event log — OPERATIONAL TRUTH, APPEND-ONLY. No update/delete in place; reads
  * are forward scans. Records are never mutated after `append`.

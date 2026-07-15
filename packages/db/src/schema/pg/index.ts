@@ -29,6 +29,8 @@ export * from "./project-registry";
 export * from "./connector-instance";
 // §4 / §5 / §6 — the cross-workspace-link store (sanctioned WS-8 cross-read input, task 14.7).
 export * from "./cross-workspace-link";
+// §4 / §19.2 — the seen-content-hash dedupe store (Flow-4 / REQ-F-010, WS-8-scoped, task 15.4).
+export * from "./seen-content-hash";
 // Phase-10 durability tables (LIFE-1 / LIFE-5 / OBS-2).
 export * from "./health-items";
 export * from "./schedule-bookkeeping";
