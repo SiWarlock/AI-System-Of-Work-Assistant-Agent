@@ -3,7 +3,7 @@
 - **Date:** 2026-07-15
 - **Phase:** Go-live build round 6 (runbook Phase-8 connector round — Linear, 2-slice). Team `session-734f946b`, orchestrator `orch21` + implementer `integrations-impl`, on `main`.
 - **Predecessor:** [077-2026-07-15-integrations-impl-github-transport.md](077-2026-07-15-integrations-impl-github-transport.md)
-- **Successor:** _(next session)_
+- **Successor:** [079-2026-07-15-integrations-impl-gmail-list-transport.md](079-2026-07-15-integrations-impl-gmail-list-transport.md)
 - **Commits:** slice 1 (POST+body extension) `8a97f44` · slice 2 (Linear GraphQL) `47fbf99` · this session doc
 
 ## Why this session existed
