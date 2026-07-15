@@ -119,6 +119,15 @@ export interface SourceBuildOutputsPort {
     validated: ValidatedExtraction,
     workspaceId: WorkspaceId,
     source: SourceNoteIdentity,
+    /**
+     * The GATE-VALIDATED note body — the `SourceEnvelope.body` value (15.2), which already cleared
+     * the §8 candidate-data gate (Zod `.strict()` + JSON-Schema, string-if-present). ADDITIVE +
+     * OPTIONAL (task 15.3, Lesson 15): absent OR empty ⇒ the projection degrades to a safe minimal real note.
+     * DELIBERATELY a SEPARATE param from {@link SourceNoteIdentity} — the note PATH derives ONLY from
+     * the identity, so an attacker-influenceable `body` can NEVER reach `deriveSourceNotePath`
+     * (traversal-safe by construction, WS-8). Backward-compatible: a 3-arg caller/fake stays valid.
+     */
+    body?: string,
   ): Promise<Result<MeetingBuiltOutputs, BuildOutputsFailure>>;
 }
 

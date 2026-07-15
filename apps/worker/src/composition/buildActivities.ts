@@ -624,11 +624,15 @@ export function buildProofSpineActivities(
   // caller value). `actions: []` so the happy path rests at `applied` without the
   // external-write stage (C1 scope). A stable planId (per workspace + planIdentity)
   // makes the commit fake's replay hold (inv-5).
+  // The honest degrade body (Lesson 15) when the source carries no extracted content — a REAL
+  // minimal note, never the old `"source ingestion (C1)"` placeholder and never empty/a failure.
+  const SOURCE_NOTE_ABSENT_BODY = "_No extracted content yet._";
   const sourceBuildOutputs: SourceBuildOutputsPort = {
     build: (
       validated: ValidatedExtraction,
       ws: WorkspaceId,
       source: SourceNoteIdentity,
+      body?: string,
     ): Promise<Result<MeetingBuiltOutputs, BuildOutputsFailure>> => {
       if (sourceBinding === undefined) {
         return Promise.resolve(
@@ -657,8 +661,17 @@ export function buildProofSpineActivities(
           {
             path: notePath.value,
             title: `Ingested: ${String(source.sourceId)}`,
-            body: "source ingestion (C1)",
-            frontmatter: {},
+            // The REAL note body (15.3): the GATE-VALIDATED SourceEnvelope.body (threaded as an
+            // explicit param, already cleared the §8/15.2 candidate-data gate — never raw-around-gate,
+            // rule 2). Absent OR empty ⇒ the honest minimal degrade (Lesson 15) — an empty markdown
+            // body is a worse artifact than an honest marker, so an empty string collapses too. `body`
+            // NEVER influenced the path above (deriveSourceNotePath keys only on the identity —
+            // traversal-safe, WS-8).
+            body: body !== undefined && body.length > 0 ? body : SOURCE_NOTE_ABSENT_BODY,
+            // Minimal identity-derived traceability frontmatter (no longer `{}`) — from the same
+            // path-keying identity (no attacker-influenceable field). Deeper source-metadata
+            // frontmatter (origin/type/sensitivity) is a deferred follow-up (needs more threading).
+            frontmatter: { source: String(source.sourceId), contentHash: source.contentHash },
           },
         ],
         patches: [],
@@ -762,7 +775,9 @@ export function buildProofSpineActivities(
       validated: ValidatedExtraction,
       workspaceId: WorkspaceId,
       source: SourceNoteIdentity,
-    ) => sourceBuildOutputs.build(validated, workspaceId, source),
+      // 15.3: forward the gate-validated note body (the driver threads context.source.body).
+      body?: string,
+    ) => sourceBuildOutputs.build(validated, workspaceId, source, body),
     sourceCommit: (plan) => sourceCommit.commit(plan),
     sourcePropose: (action, env) => sourcePropose.propose(action, env),
     sourceIndex: (revisionId) => sourceIndexPort.index(revisionId),

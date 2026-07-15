@@ -426,10 +426,18 @@ export async function runSourceIngestion(
   // Thread the PER-FILE source identity into the build so it derives a distinct content-addressed
   // note path + planId per dropped file (a fixed path collapses every file to one note). Narrow to
   // {sourceId, contentHash} — the derivation must never see origin/routingHints (injection surface).
-  const built = await deps.buildOutputs.build(validated.value, boundWorkspaceId, {
-    sourceId: context.source.sourceId,
-    contentHash: context.source.contentHash,
-  });
+  // 15.3: thread the GATE-VALIDATED note body (SourceEnvelope.body, already cleared the §8 gate) as
+  // a SEPARATE param from the path-keying identity — the note BODY may use it, the note PATH never
+  // does (deriveSourceNotePath keys only on {sourceId, contentHash}, so a hostile body can't traverse).
+  const built = await deps.buildOutputs.build(
+    validated.value,
+    boundWorkspaceId,
+    {
+      sourceId: context.source.sourceId,
+      contentHash: context.source.contentHash,
+    },
+    context.source.body,
+  );
   if (!isOk(built)) {
     state = advance(state, ["proposed", "rejected"]);
     return surface(state, `output derivation failed: ${built.error.code}`);
