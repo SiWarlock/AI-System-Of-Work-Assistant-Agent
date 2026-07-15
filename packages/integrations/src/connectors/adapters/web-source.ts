@@ -27,7 +27,17 @@ import type { Result } from "@sow/contracts";
 import { payloadHash } from "../../hash/payload-hash";
 import type { RegisterSourceInput } from "../source-register";
 
-/** The structured extract a readability WebFetch yields for one article. */
+/**
+ * The structured extract a readability WebFetch yields for one article.
+ *
+ * CONTEXT7-GROUNDED (round-8 verify, `/mozilla/readability` — `Readability.parse()`): VERIFIED CONFORMANT
+ * (no behavior change). The candidate maps the upstream output at the (deferred, real) transport seam —
+ * `text ← textContent` (the tag-stripped PLAIN text; ⚠ NOT `content`, which is HTML — hashing HTML would drift
+ * the `payloadHash({url, text})` dedupe key), `title`/`byline` verbatim, `publishedAt ← publishedTime` (hint-only).
+ * `url` is caller-supplied (Readability parses a DOM, never returns a URL) — the `origin` locator by design.
+ * arch_gap: a documented candidate; the real readability parse binds at the SPINE/arming (the `textContent`-not-
+ * `content` mapping is the load-bearing note carried to that binding).
+ */
 export interface WebPage {
   /** The canonical article URL — becomes the SourceEnvelope `origin` (locator). */
   readonly url: string;

@@ -29,7 +29,16 @@ import type { Result } from "@sow/contracts";
 import { payloadHash } from "../../hash/payload-hash";
 import type { RegisterSourceInput } from "../source-register";
 
-/** The structured extract a real RSS fetch + transcription yields for one episode. */
+/**
+ * The structured extract a real RSS fetch + transcription yields for one episode.
+ *
+ * CONTEXT7-GROUNDED (round-8 verify — no clean Context7 lib; authoritative = the RSS 2.0 spec, rssboard.org):
+ * VERIFIED CONFORMANT (no behavior change). RSS `<item>` → candidate: `episodeId ← <guid>` (the stable item id
+ * — the `payloadHash({episodeId, transcript})` dedupe anchor + `origin`), `title` verbatim, `showTitle ← channel
+ * <title>`, `audioUrl ← <enclosure @url>`, `publishedAt ← <pubDate>` (hint-only). The `transcript` is a downstream
+ * transcription concern (NOT an RSS field) — correct-by-design. arch_gap: a documented candidate; the real RSS
+ * parse binds at the SPINE/arming.
+ */
 export interface PodcastEpisode {
   /**
    * The stable episode GUID (RSS `<guid>`) — always present, and the canonical

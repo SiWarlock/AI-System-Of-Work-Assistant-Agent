@@ -29,7 +29,16 @@ import type { Result } from "@sow/contracts";
 import { payloadHash } from "../../hash/payload-hash";
 import type { RegisterSourceInput } from "../source-register";
 
-/** The structured extract a real file read + text-extraction yields for one file. */
+/**
+ * The structured extract a real file read + text-extraction yields for one file.
+ *
+ * CONTEXT7-GROUNDED (round-8 verify): CONFORMANT-BY-DESIGN / arch_gap — CANNOT be Context7-verified: the upstream
+ * is the obsidian-second-brain `--emit-json` tool (pinned `config/osb.pin` v0.11.1,
+ * `subtree_sha=PENDING_NO_SUBTREE` — inherited emit-only, NOT vendored, so there is no code subtree to diff
+ * against). The shape is internally consistent + mirrors the web/podcast dedupe discipline (`path`+`text` → the
+ * `payloadHash({path, text})` key; `path` → `origin`; `filename`/`mime` optional hints). Re-verify if a real
+ * `vendor/osb/**` subtree is ever recorded (`subtree_sha` promoted).
+ */
 export interface ExtractedFile {
   /**
    * The file path — always present, and the canonical locator, so it becomes the

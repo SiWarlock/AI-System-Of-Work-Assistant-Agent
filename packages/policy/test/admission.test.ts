@@ -111,6 +111,44 @@ describe("admitJob — ING-7 gate", () => {
   });
 });
 
+describe("admitJob — ING-7 read-only enforced at admission for ALL 4 untrusted OSB source types (R8 verify)", () => {
+  // The 4 OSB source extractors (web-source / podcast-source / youtube-source / file-source) produce UNTRUSTED
+  // candidate content; a job consuming it carries trustLevel:"untrusted". The ING-7 admission gate (`admitJob`)
+  // is source-type-AGNOSTIC — it gates on trustLevel (fail-closed) + `admitsMutating`, so it UNIFORMLY covers
+  // every untrusted job, including one over any of the 4 source types. These pins name the 4 explicitly so the
+  // "all 4 covered" coverage is a regression-visible tripwire (verify pass — the enforcement already holds).
+  const SOURCE_TYPES = ["web", "podcast", "youtube", "file"] as const;
+
+  it.each(SOURCE_TYPES)(
+    "an untrusted %s-source consuming job carrying a MUTATING tool policy is REJECTED (UNTRUSTED_CONTENT_MUTATING_TOOL)",
+    (sourceType) => {
+      const job = parse(
+        validCandidate({
+          contextRefs: [{ refKind: "source_envelope", ref: `src-${sourceType}` }],
+          toolPolicy: { mode: "scoped_write", allowedTools: [], deniedTools: [], allowsMutating: true },
+        }),
+      );
+      const d = admitJob({ ...job, trustLevel: "untrusted" as const });
+      expect(isDeny(d)).toBe(true);
+      if (isDeny(d)) expect(d.reason).toBe("UNTRUSTED_CONTENT_MUTATING_TOOL");
+    },
+  );
+
+  it.each(SOURCE_TYPES)(
+    "an untrusted %s-source consuming job that is READ-ONLY is ADMITTED",
+    (sourceType) => {
+      const job = parse(
+        validCandidate({
+          contextRefs: [{ refKind: "source_envelope", ref: `src-${sourceType}` }],
+          // default toolPolicy is read_only (no mutation capability)
+        }),
+      );
+      const d = admitJob({ ...job, trustLevel: "untrusted" as const });
+      expect(isAllow(d)).toBe(true);
+    },
+  );
+});
+
 describe("denyWriteAdapterOutsideGateway — hard denial #4", () => {
   it("returns the WRITE_ADAPTER_OUTSIDE_GATEWAY hard denial + audit signal", () => {
     const d = denyWriteAdapterOutsideGateway({

@@ -13,6 +13,8 @@
 //   • NO INFERENCE — `workspaceId`/`sourceId`/`sensitivity` are passed through from
 //     the caller's policy, never invented from content (REQ-F-017). The adapter
 //     derives only the dedupe key + routing hints that ARE in the fetched content.
+//   • ING-7 — the adapter consumes UNTRUSTED YouTube content read-only/emit-only; it
+//     has no mutating path (safety rule 6).
 //   • PURE + TOTAL (§16) — no clock, no randomness, no I/O of its own; it NEVER
 //     throws across the boundary — a transport fault (typed OR thrown) becomes a
 //     typed `Result` err so the caller classifies deterministically.
@@ -25,7 +27,17 @@ import type { Result } from "@sow/contracts";
 import { payloadHash } from "../../hash/payload-hash";
 import type { RegisterSourceInput } from "../source-register";
 
-/** The structured extract the vendored `youtube_extract.py --emit-json` returns. */
+/**
+ * The structured extract the vendored `youtube_extract.py --emit-json` returns.
+ *
+ * CONTEXT7-GROUNDED (round-8 verify, `/jdepoix/youtube-transcript-api` for the transcript + the yt-metadata
+ * wrapper for title/channel/publishDate): VERIFIED CONFORMANT (no behavior change). `videoId` (dedupe anchor) +
+ * `watchUrl` (`origin`) present; `channel ← author`, `publishedAt ← publishDate` (hint-only). The upstream
+ * per-segment transcript (`[{text, start, duration}]`) is flattened to one `transcript` string — cosmetic for
+ * SoW (no timestamp-anchored retrieval) ⚠ PROVIDED the (deferred) real transport joins the segment `.text` in
+ * DOCUMENT ORDER with a stable separator, else `payloadHash({videoId, transcript})` isn't replay-stable (the
+ * load-bearing note carried to the SPINE/arming binding). arch_gap: a documented candidate.
+ */
 export interface YouTubeExtract {
   readonly videoId: string;
   /** The canonical watch URL — becomes the SourceEnvelope `origin` (locator). */
