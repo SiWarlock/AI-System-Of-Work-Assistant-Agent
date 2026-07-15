@@ -381,3 +381,49 @@ describe("createAsanaHttpTransport — Context7-grounded list query requests the
     expect(url).toContain(`opt_fields=${encodeURIComponent("name,modified_at")}`);
   });
 });
+
+// ── 8. Template mapPage(json, request) widening — the two guardrails (R5 GitHub) ─
+// GitHub returns a bare array with page-number pagination, so the body-only mapper needs the request cursor.
+// mapPage is widened (json) → (json, request). These pin the two safety guardrails of that widening.
+describe("createConnectorHttpTransport — mapPage(json, request) widening guardrails", () => {
+  it("GUARDRAIL 2 (rule 7): mapPage receives the token-free TransportRequest — no Authorization/token", async () => {
+    const MARKER = "SECRET-MARKER-do-not-leak-to-mapper";
+    let captured: unknown;
+    const spec: ConnectorHttpSpec = {
+      ...CORE_SPEC,
+      mapPage: (_json, request) => {
+        captured = request;
+        return { ok: true, items: [], done: true };
+      },
+    };
+    const transport = fakeTransport({ response: { status: 200, body: "{}" } });
+    const secrets = fakeSecrets(ok(MARKER));
+    await createConnectorHttpTransport(spec, { transport, secrets, tokenRef: TOKEN_REF })({
+      readScope: "tasks:read",
+      cursor: "CURSOR-1",
+    });
+    expect(captured).toBeDefined();
+    const req = captured as Record<string, unknown>;
+    // keys ⊆ {cursor, readScope}; NO Authorization / headers; the token appears NOWHERE.
+    expect(Object.keys(req).every((k) => k === "cursor" || k === "readScope")).toBe(true);
+    expect("Authorization" in req).toBe(false);
+    expect("headers" in req).toBe(false);
+    expect(JSON.stringify(req)).not.toContain(MARKER);
+    expect(req).toEqual({ readScope: "tasks:read", cursor: "CURSOR-1" });
+  });
+
+  it("GUARDRAIL 1 (backward-compat): a 1-arg (json)=>page mapPage type-checks + runs through the widened template", async () => {
+    // A pre-widening single-arg mapper (the shape of the 4 existing vendor mappers) still assigns to the 2-arg
+    // type and runs correctly; the extra request arg is a runtime no-op.
+    const spec: ConnectorHttpSpec = {
+      ...CORE_SPEC,
+      mapPage: (json) => ({ ok: true, items: [], done: json !== undefined }),
+    };
+    const res = await createConnectorHttpTransport(
+      spec,
+      depsWith({ transport: fakeTransport({ response: { status: 200, body: "[]" } }) }),
+    )({ readScope: "tasks:read" });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.done).toBe(true);
+  });
+});

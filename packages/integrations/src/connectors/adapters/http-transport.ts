@@ -84,13 +84,19 @@ export interface SecretsAccessor {
  * percent-encode any cursor); `mapPage` is the CANDIDATE vendor wire-mapper (arch_gap), parsing the 2xx JSON
  * into a page or a typed failure fail-closed. `readScope` is NOT here — it flows from the adapter's
  * `makeConnector({ readScope })` via `TransportRequest.readScope` (single source, no dual-source drift).
+ *
+ * `mapPage` receives the (token-free) `TransportRequest` as a 2nd arg (widened R5 for GitHub): a body-only
+ * mapper for a page-number / bare-array API (no in-body cursor) needs the request cursor to compute the next
+ * page. It is the SAME `{ cursor?, readScope }` request — it carries NO Authorization / token (safety rule 7).
+ * The arg is additive: a 1-arg `(json) => …` mapper (the body-cursor connectors) still assigns + runs (the
+ * extra arg is a runtime no-op), so existing specializations are byte-unchanged.
  */
 export interface ConnectorHttpSpec {
   readonly baseUrl: string;
   readonly allowedHosts: readonly string[];
   readonly resourcePath: string;
   readonly buildQuery: (request: TransportRequest) => string;
-  readonly mapPage: (json: unknown) => ConnectorTransportResult;
+  readonly mapPage: (json: unknown, request: TransportRequest) => ConnectorTransportResult;
 }
 
 /** The injected deps. All fakeable; the real bindings (a Node HTTP transport + a Keychain SecretsAccessor +
@@ -185,10 +191,11 @@ export function createConnectorHttpTransport(
       return transportFailure("unknown", `malformed body (${hostRef})`);
     }
     // (7) Map via the per-connector CANDIDATE wire-mapper (fail-closed inside — a renamed/missing field ⇒ a
-    //     failure, never a false page). Wrapped: a THROWING mapper also fails closed redacted (the thrown
-    //     content never escapes to the log sink).
+    //     failure, never a false page). `request` is the token-free TransportRequest (rule 7) — a page-number /
+    //     bare-array mapper reads its cursor to compute the next page. Wrapped: a THROWING mapper also fails
+    //     closed redacted (the thrown content never escapes to the log sink).
     try {
-      return spec.mapPage(json);
+      return spec.mapPage(json, request);
     } catch {
       return transportFailure("unknown", `map error (${hostRef})`);
     }
