@@ -324,7 +324,7 @@ async function getReadModel(
  * genuine store fault is surfaced as a typed err (distinct from "not known") so the
  * caller degrades rather than silently 404s a real workspace on a transient fault.
  */
-async function resolveKnownWorkspace(
+export async function resolveKnownWorkspace(
   repo: ReadModelRepository,
   workspaceId: string,
 ): Promise<Result<boolean, FailureVariant>> {

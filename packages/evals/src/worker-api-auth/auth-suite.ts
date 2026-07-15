@@ -122,6 +122,22 @@ function serverDeps() {
         return { ok: true as const, value: { id: spec.id, registryMember: true as const, preset: spec.preset } };
       },
     },
+    // 14.6 project-registry port — a canned-ok stub (not exercised by this auth suite).
+    projectRegistry: {
+      async createProject(input: { projectId: string }) {
+        return {
+          ok: true as const,
+          value: {
+            projectId: input.projectId,
+            workspaceId: "eval-ws" as never,
+            progressProviders: [],
+            title: "",
+            slug: "",
+            lifecycleState: "active" as const,
+          },
+        };
+      },
+    },
     now: () => "2026-07-02T00:00:00.000Z",
   };
 }

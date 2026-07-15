@@ -76,6 +76,10 @@ import {
   type OnboardingCommandPort,
 } from "./api/procedures/onboarding";
 import {
+  createProjectRegistryCommandPort,
+  type ProjectRegistryCommandPort,
+} from "./api/procedures/projectRegistry";
+import {
   buildCopilotDeps,
   resolveCopilotWorkspaces,
   buildInterimCopilotScopeRegistry,
@@ -1162,6 +1166,15 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     readModels: backends.repos.readModels,
     now: backends.now,
   });
+  // 14.6 — the PRODUCTION project-registry creation port: mints a durable typed-Project
+  //   entry bound to a 14.1-registered workspace (rule-1: writes ONLY the operational
+  //   registry row, never KW/Markdown). The projectSync workflow that RESOLVES against the
+  //   registry is dormant — binding the production ResolveRegistryPort into a dispatched
+  //   runProjectSync is a named spine follow-up (Lesson 11: no dormant-on-dormant wiring).
+  const projectRegistry: ProjectRegistryCommandPort = createProjectRegistryCommandPort({
+    repo: backends.repos.projectRegistry,
+    readModels: backends.repos.readModels,
+  });
 
   // 2.5) The INTERIM Copilot ask backend (§4.6). The real GBrain/GCL retrieval + the governed LLM
   //   synthesis are deferred (the app runs over stubs; no passage-serving read-model exists yet).
@@ -1527,6 +1540,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     dispatchApproval,
     triage,
     onboarding,
+    projectRegistry,
     now: backends.now,
     ...(config.apiHost !== undefined ? { host: config.apiHost } : {}),
     ...(config.apiPort !== undefined ? { port: config.apiPort } : {}),

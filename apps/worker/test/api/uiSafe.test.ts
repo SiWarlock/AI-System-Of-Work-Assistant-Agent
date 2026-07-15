@@ -389,6 +389,11 @@ function makeServerDeps(over: { expectedToken?: SessionToken } = {}) {
       provisionWorkspace: (spec: { id: string; preset: string }) =>
         Promise.resolve({ ok: true, value: { id: spec.id, registryMember: true, preset: spec.preset } } as never),
     },
+    // 14.6 project-registry port — a canned ok stub (not exercised by these tests).
+    projectRegistry: {
+      createProject: (input: { projectId: string }) =>
+        Promise.resolve({ ok: true, value: { projectId: input.projectId } } as never),
+    },
     now: () => "2026-07-02T00:00:00.000Z",
   };
 }

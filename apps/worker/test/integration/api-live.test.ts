@@ -130,6 +130,10 @@ function serverDeps(
       provisionWorkspace: (spec) =>
         Promise.resolve({ ok: true, value: { id: spec.id, registryMember: true, preset: spec.preset } } as never),
     },
+    // 14.6 project-registry port — a canned ok stub (not exercised by this test).
+    projectRegistry: {
+      createProject: (input) => Promise.resolve({ ok: true, value: { projectId: input.projectId } } as never),
+    },
     copilot: {
       retrieval: createFixtureRetrieval({}),
       synthesis: createStubSynthesis(),

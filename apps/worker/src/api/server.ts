@@ -45,6 +45,10 @@ import {
   buildOnboardingRouter,
   type OnboardingCommandPort,
 } from "./procedures/onboarding";
+import {
+  buildProjectRegistryRouter,
+  type ProjectRegistryCommandPort,
+} from "./procedures/projectRegistry";
 import { createPushStream, type PushStream } from "./stream/pushStream";
 import type { StreamPublisherOptions } from "./stream/eventClasses";
 
@@ -78,6 +82,8 @@ export interface ApiServerDeps {
   readonly now: NowFn;
   /** The onboarding provisioning port (14.1) — mints a workspace (config upsert + WS-8 registry union). */
   readonly onboarding: OnboardingCommandPort;
+  /** The project-registry creation port (14.6) — mints a durable typed-Project entry (rule-1: registry row only). */
+  readonly projectRegistry: ProjectRegistryCommandPort;
   readonly streamPublisherOptions?: StreamPublisherOptions;
 }
 
@@ -105,6 +111,7 @@ function composeAppRouter(deps: ApiServerDeps, pushStream: PushStream) {
     }),
     systemHealth: buildSystemHealthRouter({ systemHealth: deps.systemHealth }),
     onboarding: buildOnboardingRouter({ onboarding: deps.onboarding }),
+    projectRegistry: buildProjectRegistryRouter({ projectRegistry: deps.projectRegistry }),
     stream: pushStream.router,
   });
 }
