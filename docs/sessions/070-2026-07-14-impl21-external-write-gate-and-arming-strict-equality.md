@@ -4,7 +4,7 @@
 - **Phase / task:** 13.10 (Tier-5 external-action arming-prep hardening) — SMALL FIX ROUND (dormant hardening + coverage)
 - **Team:** `session-734f946b` · orchestrator `orch19` · implementer `impl21` (worker area) · lead `main`; single-track on `main`
 - **Predecessor:** [069-2026-07-14-impl20-dormant-arming-prep-arc.md](069-2026-07-14-impl20-dormant-arming-prep-arc.md)
-- **Successor:** _(none yet)_
+- **Successor:** [071-2026-07-15-impl22-rebuild-oracle-producer.md](071-2026-07-15-impl22-rebuild-oracle-producer.md)
 
 ## Why this session existed
 
