@@ -31,6 +31,7 @@ import type {
   ProjectLifecycleState,
   ProviderProfile,
   Result,
+  SourceEnvelope,
   VisibilityLevel,
   WorkflowRunRef,
   Workspace,
@@ -393,6 +394,50 @@ export interface SeenContentHashRepository {
   has(key: SeenContentHashKey): DbResult<boolean>;
   /** Record a seen hash — FIRST-WRITE-WINS (idempotent; a re-record is a no-op preserving the original seenAt). A store fault ⇒ typed err (never a masked ok). */
   record(row: SeenContentHashRow): DbResult<void>;
+}
+
+/** The lifecycle state of a parked source's disposition row (task 15.5). */
+export type SourceDispositionState = "queued_for_review" | "dispositioned";
+
+/**
+ * A durable parked-source-of-record (task 15.5, §4/§19.2/§9; resolves ING-4). db-owned; not frozen.
+ * Holds the FULL parked SourceEnvelope (raw candidate at rest — SERVER-SIDE OPERATIONAL ONLY, never
+ * rendered/logged, rule 7) + the original idempotencyKey (REUSED on re-enter → downstream replay).
+ */
+export interface SourceDispositionRow {
+  /** The parked source identity — PK (a source parks once). */
+  readonly sourceId: string;
+  /** The full parked SourceEnvelope (json; the re-enter reads it back + re-drives THROUGH the gate). */
+  readonly sourceEnvelope: SourceEnvelope;
+  /** The original submit idempotencyKey — reused on re-enter so the downstream commit replays (inv-D). */
+  readonly idempotencyKey: string;
+  readonly state: SourceDispositionState;
+  /** The channel-free disposition key — null until the owner records a disposition (CAS, inv-A/inv-B). */
+  readonly dispositionKey: string | null;
+  readonly auditRef: string | null;
+  readonly parkedAt: string;
+  readonly dispositionedAt: string | null;
+}
+
+/**
+ * Durable source-disposition store (task 15.5) — the parked-source-of-record, replacing an in-memory
+ * disposition map that loses parked sources on restart. FAIL-CLOSED (worker Lesson 3): a fault on any
+ * method is a typed `err`; a genuine ABSENCE is `ok(undefined)` (getBy*), never masked. `park` is
+ * first-write-wins; `recordDisposition` is CAS first-write-wins on the disposition key (exactly-once).
+ */
+export interface SourceDispositionRepository {
+  /** Persist a parked source (first-write-wins; a re-park of the same sourceId is a no-op). */
+  park(row: SourceDispositionRow): DbResult<void>;
+  /** Read the parked row by source identity; a genuine absence ⇒ ok(undefined), a fault ⇒ err. */
+  getBySourceId(sourceId: string): DbResult<SourceDispositionRow | undefined>;
+  /** Read the row that recorded this channel-free disposition key; absence ⇒ ok(undefined). */
+  getByDispositionKey(dispositionKey: string): DbResult<SourceDispositionRow | undefined>;
+  /**
+   * CAS-record the owner disposition on the parked row (state→dispositioned, stamp dispositionKey +
+   * auditRef): first-write-wins — an already-dispositioned row ⇒ typed `conflict`; an absent source ⇒
+   * `not_found`. Returns the updated row.
+   */
+  recordDisposition(sourceId: string, dispositionKey: string, auditRef: string, dispositionedAt: string): DbResult<SourceDispositionRow>;
 }
 
 /**

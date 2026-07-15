@@ -47,6 +47,7 @@ import {
   type HealthItem,
   type ParityReport,
   type Result,
+  type SourceEnvelope,
   type WorkflowId,
   type WorkflowRunRef,
   type WorkspaceId,
@@ -77,6 +78,8 @@ import type {
   CrossWorkspaceLinkRow,
   SeenContentHashRepository,
   SeenContentHashRow,
+  SourceDispositionRepository,
+  SourceDispositionRow,
   ProjectRegistryRepository,
   ProjectRegistryRow,
   ProviderStateRepository,
@@ -106,6 +109,7 @@ interface OperationalRepositories {
   readonly connectorInstance: ConnectorInstanceRepository;
   readonly crossWorkspaceLink: CrossWorkspaceLinkRepository;
   readonly seenContentHash: SeenContentHashRepository;
+  readonly sourceDisposition: SourceDispositionRepository;
   readonly eventLog: EventLogRepository;
   readonly workflowRunRefs: WorkflowRunRefRepository;
   readonly audit: AuditRepository;
@@ -184,6 +188,7 @@ const PG_TABLES: readonly PgTable[] = [
   pgSchema.connectorInstance,
   pgSchema.crossWorkspaceLink,
   pgSchema.seenContentHash,
+  pgSchema.sourceDisposition,
   pgSchema.eventLog,
   pgSchema.workflowRunRefs,
   pgSchema.auditRecords,
@@ -461,6 +466,7 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(typeof repos.connectorInstance.setState).toBe("function");
       expect(typeof repos.crossWorkspaceLink.listApprovedForReader).toBe("function");
       expect(typeof repos.seenContentHash.record).toBe("function");
+      expect(typeof repos.sourceDisposition.park).toBe("function");
       expect(typeof repos.eventLog.append).toBe("function");
       expect(typeof repos.workflowRunRefs.create).toBe("function");
       expect(typeof repos.audit.append).toBe("function");
@@ -727,6 +733,62 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       unwrap(await repos.seenContentHash.record(schRow({ workspaceId: schWs("ws-a"), contentHash: "shared-hash" })));
       expect(unwrap(await repos.seenContentHash.has({ workspaceId: schWs("ws-a"), contentHash: "shared-hash" }))).toBe(true);
       expect(unwrap(await repos.seenContentHash.has({ workspaceId: schWs("ws-b"), contentHash: "shared-hash" }))).toBe(false);
+    });
+  });
+
+  // ── source-disposition store (parked-source-of-record + exactly-once disposition; task 15.5) ──
+  describe("SourceDispositionRepository", () => {
+    const sdEnvelope = (over: Partial<SourceEnvelope> = {}): SourceEnvelope => ({
+      sourceId: "src-1" as SourceEnvelope["sourceId"],
+      workspaceId: "capture-ws" as SourceEnvelope["workspaceId"],
+      origin: "https://example.com/x",
+      contentHash: "sha256:c1",
+      type: "youtube_video",
+      sensitivity: "normal",
+      routingHints: {},
+      ...over,
+    });
+    const sdRow = (over: Partial<SourceDispositionRow> = {}): SourceDispositionRow => ({
+      sourceId: "src-1",
+      sourceEnvelope: sdEnvelope(),
+      idempotencyKey: "src:capture-ws:sha256:c1",
+      state: "queued_for_review",
+      dispositionKey: null,
+      auditRef: null,
+      parkedAt: "2026-07-15T00:00:00.000Z",
+      dispositionedAt: null,
+      ...over,
+    });
+
+    it("park → getBySourceId round-trips the parked SourceEnvelope + idempotencyKey (json lossless)", async () => {
+      expect(isOk(await repos.sourceDisposition.park(sdRow()))).toBe(true);
+      const got = unwrap(await repos.sourceDisposition.getBySourceId("src-1"));
+      expect(got).toEqual(sdRow());
+      expect(got?.sourceEnvelope).toEqual(sdEnvelope()); // the full parked envelope round-trips
+      expect(got?.idempotencyKey).toBe("src:capture-ws:sha256:c1"); // reused for replay (inv-D)
+    });
+
+    it("park is first-write-wins: re-parking the same sourceId is a no-op (no error, original preserved)", async () => {
+      unwrap(await repos.sourceDisposition.park(sdRow({ parkedAt: "2026-01-01T00:00:00.000Z" })));
+      expect(isOk(await repos.sourceDisposition.park(sdRow({ parkedAt: "2027-12-31T00:00:00.000Z" })))).toBe(true);
+      expect(unwrap(await repos.sourceDisposition.getBySourceId("src-1"))?.parkedAt).toBe("2026-01-01T00:00:00.000Z");
+    });
+
+    it("recordDisposition CAS-sets the disposition (state→dispositioned, dispositionKey, auditRef); getByDispositionKey finds it", async () => {
+      unwrap(await repos.sourceDisposition.park(sdRow()));
+      const recorded = unwrap(
+        await repos.sourceDisposition.recordDisposition("src-1", "dkey-1", "audit:disp:1", "2026-07-15T01:00:00.000Z"),
+      );
+      expect(recorded.state).toBe("dispositioned");
+      expect(recorded.dispositionKey).toBe("dkey-1");
+      expect(recorded.auditRef).toBe("audit:disp:1");
+      const byKey = unwrap(await repos.sourceDisposition.getByDispositionKey("dkey-1"));
+      expect(byKey?.sourceId).toBe("src-1");
+    });
+
+    it("getBySourceId / getByDispositionKey on a miss return ok(undefined) — a benign absence, NOT a fault", async () => {
+      expect(unwrap(await repos.sourceDisposition.getBySourceId("nope"))).toBeUndefined();
+      expect(unwrap(await repos.sourceDisposition.getByDispositionKey("nope"))).toBeUndefined();
     });
   });
 

@@ -58,6 +58,8 @@ import type {
   SeenContentHashRepository,
   SeenContentHashRow,
   SeenContentHashKey,
+  SourceDispositionRepository,
+  SourceDispositionRow,
   PendingKnowledgeMutation,
   PendingKnowledgeMutationRepository,
   ProjectRegistryRepository,
@@ -111,6 +113,7 @@ export interface SqliteRepositories {
   readonly connectorInstance: ConnectorInstanceRepository;
   readonly crossWorkspaceLink: CrossWorkspaceLinkRepository;
   readonly seenContentHash: SeenContentHashRepository;
+  readonly sourceDisposition: SourceDispositionRepository;
   readonly eventLog: EventLogRepository;
   readonly workflowRunRefs: WorkflowRunRefRepository;
   readonly audit: AuditRepository;
@@ -588,6 +591,53 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
       run(() => {
         db.insert(schema.seenContentHash).values(row).onConflictDoNothing().run();
         return ok(undefined);
+      }),
+  };
+
+  // Source-disposition store (task 15.5). `sourceEnvelope` is a json column (round-trips lossless).
+  // `park` first-write-wins (ON CONFLICT DO NOTHING). getBy* return ok(undefined) on a miss (benign
+  // absence) / err on a driver fault (L3). `recordDisposition` is CAS first-write-wins on the
+  // disposition key (WHERE dispositionKey IS NULL): 0 changes ⇒ conflict (already dispositioned) or
+  // not_found (absent).
+  const sourceDisposition: SourceDispositionRepository = {
+    park: (row) =>
+      run(() => {
+        db.insert(schema.sourceDisposition).values(row).onConflictDoNothing().run();
+        return ok(undefined);
+      }),
+    getBySourceId: (sourceId) =>
+      run(() => {
+        const row = db
+          .select()
+          .from(schema.sourceDisposition)
+          .where(eq(schema.sourceDisposition.sourceId, sourceId))
+          .get();
+        return ok(row as SourceDispositionRow | undefined);
+      }),
+    getByDispositionKey: (key) =>
+      run(() => {
+        const row = db
+          .select()
+          .from(schema.sourceDisposition)
+          .where(eq(schema.sourceDisposition.dispositionKey, key))
+          .get();
+        return ok(row as SourceDispositionRow | undefined);
+      }),
+    recordDisposition: (sourceId, dispositionKey, auditRef, at) =>
+      run(() => {
+        const info = db
+          .update(schema.sourceDisposition)
+          .set({ state: "dispositioned", dispositionKey, auditRef, dispositionedAt: at })
+          .where(and(eq(schema.sourceDisposition.sourceId, sourceId), isNull(schema.sourceDisposition.dispositionKey)))
+          .run();
+        const row = db
+          .select()
+          .from(schema.sourceDisposition)
+          .where(eq(schema.sourceDisposition.sourceId, sourceId))
+          .get();
+        if (!row) return err(notFound(`source disposition ${sourceId}`));
+        if (info.changes === 0) return err(conflict(`source ${sourceId} already dispositioned`));
+        return ok(row as SourceDispositionRow);
       }),
   };
 
@@ -1412,6 +1462,7 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
     connectorInstance,
     crossWorkspaceLink,
     seenContentHash,
+    sourceDisposition,
     eventLog,
     workflowRunRefs,
     audit,

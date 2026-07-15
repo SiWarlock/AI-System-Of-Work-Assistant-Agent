@@ -31,6 +31,8 @@ export * from "./connector-instance";
 export * from "./cross-workspace-link";
 // §4 / §19.2 — the seen-content-hash dedupe store (Flow-4 / REQ-F-010, WS-8-scoped, task 15.4).
 export * from "./seen-content-hash";
+// §4 / §19.2 / §9 — the source-disposition store (parked-source-of-record + re-enter, ING-4, task 15.5).
+export * from "./source-disposition";
 // Phase-10 durability tables (LIFE-1 / LIFE-5 / OBS-2).
 export * from "./health-items";
 export * from "./schedule-bookkeeping";

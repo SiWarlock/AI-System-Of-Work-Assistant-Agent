@@ -68,6 +68,8 @@ import type {
   SeenContentHashRepository,
   SeenContentHashRow,
   SeenContentHashKey,
+  SourceDispositionRepository,
+  SourceDispositionRow,
   PendingKnowledgeMutation,
   PendingKnowledgeMutationRepository,
   ProjectRegistryRepository,
@@ -121,6 +123,7 @@ export interface PostgresRepositories {
   readonly connectorInstance: ConnectorInstanceRepository;
   readonly crossWorkspaceLink: CrossWorkspaceLinkRepository;
   readonly seenContentHash: SeenContentHashRepository;
+  readonly sourceDisposition: SourceDispositionRepository;
   readonly eventLog: EventLogRepository;
   readonly workflowRunRefs: WorkflowRunRefRepository;
   readonly audit: AuditRepository;
@@ -612,6 +615,51 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
       run(async () => {
         await db.insert(schema.seenContentHash).values(row).onConflictDoNothing();
         return ok(undefined);
+      }),
+  };
+
+  // Source-disposition store (task 15.5). json column round-trips lossless; park first-write-wins;
+  // getBy* ok(undefined) on miss / err on fault (L3); recordDisposition CAS first-write-wins on the
+  // disposition key via `.returning()` (0 rows ⇒ conflict/not_found). Async.
+  const sourceDisposition: SourceDispositionRepository = {
+    park: (row) =>
+      run(async () => {
+        await db.insert(schema.sourceDisposition).values(row).onConflictDoNothing();
+        return ok(undefined);
+      }),
+    getBySourceId: (sourceId) =>
+      run(async () => {
+        const rows = await db
+          .select()
+          .from(schema.sourceDisposition)
+          .where(eq(schema.sourceDisposition.sourceId, sourceId))
+          .limit(1);
+        return ok(rows[0] as SourceDispositionRow | undefined);
+      }),
+    getByDispositionKey: (key) =>
+      run(async () => {
+        const rows = await db
+          .select()
+          .from(schema.sourceDisposition)
+          .where(eq(schema.sourceDisposition.dispositionKey, key))
+          .limit(1);
+        return ok(rows[0] as SourceDispositionRow | undefined);
+      }),
+    recordDisposition: (sourceId, dispositionKey, auditRef, at) =>
+      run(async () => {
+        const updated = await db
+          .update(schema.sourceDisposition)
+          .set({ state: "dispositioned", dispositionKey, auditRef, dispositionedAt: at })
+          .where(and(eq(schema.sourceDisposition.sourceId, sourceId), isNull(schema.sourceDisposition.dispositionKey)))
+          .returning();
+        if (updated.length > 0) return ok(updated[0] as SourceDispositionRow);
+        const rows = await db
+          .select()
+          .from(schema.sourceDisposition)
+          .where(eq(schema.sourceDisposition.sourceId, sourceId))
+          .limit(1);
+        if (rows.length === 0) return err(notFound(`source disposition ${sourceId}`));
+        return err(conflict(`source ${sourceId} already dispositioned`));
       }),
   };
 
@@ -1478,6 +1526,7 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
     connectorInstance,
     crossWorkspaceLink,
     seenContentHash,
+    sourceDisposition,
     eventLog,
     workflowRunRefs,
     audit,

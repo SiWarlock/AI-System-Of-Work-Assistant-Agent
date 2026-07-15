@@ -40,6 +40,8 @@ const TABLES: readonly PgTable[] = [
   schema.crossWorkspaceLink,
   // §4/§19.2 — the seen-content-hash dedupe store (Flow-4 / REQ-F-010, WS-8-scoped, task 15.4).
   schema.seenContentHash,
+  // §4/§19.2/§9 — the source-disposition store (parked-source-of-record + re-enter, ING-4, task 15.5).
+  schema.sourceDisposition,
 ];
 
 /** Emit `CREATE TABLE` for one pg-core Drizzle table, mirroring its column + PK config. */
