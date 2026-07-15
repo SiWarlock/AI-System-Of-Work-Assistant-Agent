@@ -166,6 +166,77 @@ export function isLoopbackEndpoint(endpoint: string): boolean {
 }
 
 /**
+ * True iff `endpoint` is an admissible OUTBOUND connector-egress target — the
+ * INVERSE safety posture of {@link isLoopbackEndpoint}. A bearer-token-carrying
+ * connector request (Asana; Granola / Drive / Calendar / … later) may egress
+ * ONLY to an allowlisted, TLS, REMOTE host. Returns `true` IFF ALL hold:
+ *   1. the scheme is exactly `https:` (a bearer token must never ride plaintext
+ *      `http:`, and a protocol-relative `//host` carries no TLS guarantee ⇒ false);
+ *   2. the endpoint reduces to a host ({@link extractHost} !== null);
+ *   3. the host is NOT loopback ({@link isLoopbackHost} false) — SSRF-to-local
+ *      defense: the 127.0.0.0/8 range, `localhost`, `::1`, and the prefix/suffix
+ *      spoofs the vetted predicate already rejects;
+ *   4. the host is on `allowedHosts` by EXACT whole-host match — a substring /
+ *      suffix appearance of an allowlisted label (`app.asana.com.evil.com`,
+ *      `evilapp.asana.com`) does NOT match.
+ *
+ * COMPOSES the SINGLE vetted parse primitives ({@link extractHost}, which itself
+ * runs {@link extractAuthority}, and {@link isLoopbackHost}) — it MUST NOT
+ * re-parse URLs (re-parsing was the loopback-spoof hole `evil.com/@127.0.0.1`
+ * those primitives close; root CLAUDE.md Lesson 4). The `https://` scheme check
+ * is on the RAW string — a scheme test, orthogonal to (not a re-parse of) the
+ * host authority.
+ *
+ * `allowedHosts` entries are bare, lowercased hosts by contract; each is run
+ * through the SAME `extractHost` (symmetric parse — both sides in one normal
+ * form), so a `:port` / mixed-case / scheme-carrying entry resolves to its host,
+ * and a null-extracting (empty / non-string) entry is skipped fail-closed.
+ *
+ * DEFENSE-IN-DEPTH scope: the exact-host allowlist is the PRIMARY control;
+ * loopback-reject is layered on. The host compare is PORT-BLIND by design —
+ * `extractHost` strips the port, so ANY port on an allowlisted host is admitted
+ * (connectors hit vendor APIs on 443; a port-aware variant would compose the
+ * port-preserving `extractAuthority` instead). ARCH_GAP (arming-era residuals):
+ * a hostname allowlist alone CANNOT catch DNS rebinding; it does not block
+ * broader private ranges (RFC-1918 / link-local / ULA); and the layered
+ * loopback-reject inherits `isLoopbackHost`'s canonical-form-only coverage
+ * (non-canonical encodings — compressed / IPv4-mapped IPv6, decimal / hex IPv4 —
+ * are not recognized as loopback, though the PRIMARY allowlist compare still
+ * rejects them since they never string-match a remote allowlist entry). The
+ * injected REAL `HttpTransport` at the connector arming gate must pin/validate
+ * the RESOLVED IP (and an `isPrivateHost` predicate, if added, lives ONCE here
+ * alongside `isLoopbackHost`). Pure; never throws.
+ */
+export function isAllowedRemoteEndpoint(
+  endpoint: string,
+  allowedHosts: readonly string[],
+): boolean {
+  if (typeof endpoint !== "string") return false;
+  const raw = endpoint.trim();
+  if (raw.length === 0) return false;
+
+  // Scheme MUST be exactly `https://` (case-insensitive per RFC-3986 §3.1 — the
+  // `://` requires two slashes, so `https:/x` and `https:x` reject). A bearer
+  // token requires TLS: `http:`, a protocol-relative `//host`, or any other
+  // scheme fails closed. Checked on the RAW string — the parse primitives strip
+  // the scheme by design, so it can't be re-derived from the host.
+  if (!/^https:\/\//i.test(raw)) return false;
+
+  const host = extractHost(raw);
+  if (host === null) return false; // fail-closed: unparseable ⇒ inadmissible
+  if (isLoopbackHost(host)) return false; // SSRF-to-local defense (beats the allowlist)
+
+  // Exact whole-host match. Both sides pass through extractHost so the compare is
+  // between two normal-form bare hosts; a non-string / null-extracting entry is
+  // skipped (never admitted, never thrown on).
+  for (const allowed of allowedHosts) {
+    if (typeof allowed !== "string") continue;
+    if (extractHost(allowed) === host) return true;
+  }
+  return false;
+}
+
+/**
  * A REDACTION-SAFE audit ref for a route endpoint: the HOST only (scheme,
  * userinfo, port, and path stripped). A `user:pass@host` basic-auth endpoint
  * therefore never leaks its credential into the audit / System-Health stream
