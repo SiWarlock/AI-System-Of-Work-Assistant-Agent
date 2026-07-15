@@ -37,6 +37,13 @@ import {
   type RegisterConnectorInput,
   type ConnectorConfigResult,
 } from "./connector-config";
+import {
+  createCrossWorkspaceLink,
+  approveCrossWorkspaceLink,
+  revokeCrossWorkspaceLink,
+  type CreateCrossWorkspaceLinkInput,
+  type CrossWorkspaceLinkResult,
+} from "./cross-workspace-link";
 
 /** The live-session handle: stop the stream + drill-down (§9.4) + scope-aware re-hydrate (§9.5). */
 export interface StartLiveHandle {
@@ -60,6 +67,12 @@ export interface StartLiveHandle {
   readonly setConnectorState: (instanceId: string, state: "enabled" | "paused") => Promise<ConnectorConfigResult>;
   /** Set a connector instance's cadence (§14.2, wired to connectorConfig.setCadence); fails closed. */
   readonly setConnectorCadence: (instanceId: string, cadence: string) => Promise<ConnectorConfigResult>;
+  /** Create a PENDING cross-workspace link (§14.7, wired to crossWorkspaceLink.create); fails closed. */
+  readonly createCrossWorkspaceLink: (input: CreateCrossWorkspaceLinkInput) => Promise<CrossWorkspaceLinkResult>;
+  /** Approve a cross-workspace link (§14.7, wired to crossWorkspaceLink.approve); fails closed. */
+  readonly approveCrossWorkspaceLink: (linkId: string) => Promise<CrossWorkspaceLinkResult>;
+  /** Revoke a cross-workspace link (§14.7, wired to crossWorkspaceLink.revoke); fails closed. */
+  readonly revokeCrossWorkspaceLink: (linkId: string) => Promise<CrossWorkspaceLinkResult>;
 }
 
 // Connect the UI-safe store to the LIVE worker over the §10 push stream (9.4b E).
@@ -118,6 +131,9 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
     registerConnector: createRegisterConnector(live.client),
     setConnectorState: createSetConnectorState(live.client),
     setConnectorCadence: createSetConnectorCadence(live.client),
+    createCrossWorkspaceLink: createCrossWorkspaceLink(live.client),
+    approveCrossWorkspaceLink: approveCrossWorkspaceLink(live.client),
+    revokeCrossWorkspaceLink: revokeCrossWorkspaceLink(live.client),
   };
 }
 

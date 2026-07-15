@@ -448,6 +448,13 @@ export function AppShell(props: AppShellProps): ReactElement {
             </svg>
           </NavLink>
 
+          {/* Cross-workspace links — routable (§14.7 rule-4 owner-approval surface) */}
+          <NavLink surface="cross-workspace-links" label="Links" active={route.surface === "cross-workspace-links"} onNavigate={onNavigate}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M9 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M15 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />
+            </svg>
+          </NavLink>
+
           <div className="sow-nav-divider" role="separator" />
 
           {/* Settings */}

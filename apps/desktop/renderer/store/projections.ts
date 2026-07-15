@@ -12,6 +12,7 @@ import type { ConnectionStatus, UiSafeStoreState } from "./index";
 import { isWorkspaceScope, type WorkspaceScope } from "./scope";
 import type { OnboardedWorkspace, WorkspaceBucketScope } from "./onboarding";
 import type { UiSafeConnectorInstanceView } from "./connectors";
+import type { UiSafeCrossWorkspaceLinkView } from "./cross-workspace-links";
 import { routeEquals, type Route } from "./route";
 
 // Pure reducers that fold validated UI-safe StreamEvents into the store. Every
@@ -120,6 +121,29 @@ export function connectorsForWorkspace(
     if (c.workspaceId === workspaceId) out.push(c);
   }
   return out;
+}
+
+// ── Cross-workspace-links slice (§19.1 / 14.7) — the rule-4 owner-approval surface ──
+//
+// Optimistic, keyed by linkId. A status transition (create→approve→revoke) re-upserts the SAME
+// linkId so the list reflects the latest authoritative status. Global (spans workspaces), so it is
+// NOT WS-8 workspace-filtered on read — it is the coordination surface listing every session link.
+
+/** Upsert a cross-workspace link (from a create/approve/revoke result), keyed by linkId. Immutable. */
+export function upsertCrossWorkspaceLink(
+  state: UiSafeStoreState,
+  link: UiSafeCrossWorkspaceLinkView,
+): UiSafeStoreState {
+  const next = new Map(state.crossWorkspaceLinks);
+  next.set(link.linkId, link);
+  return { ...state, crossWorkspaceLinks: next };
+}
+
+/** All cross-workspace links (the coordination surface shows every session link). Fresh array. */
+export function crossWorkspaceLinksList(
+  state: UiSafeStoreState,
+): readonly UiSafeCrossWorkspaceLinkView[] {
+  return [...state.crossWorkspaceLinks.values()];
 }
 
 /**

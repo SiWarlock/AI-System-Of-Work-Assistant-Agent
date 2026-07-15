@@ -14,6 +14,7 @@ import { DEFAULT_SCOPE, type WorkspaceScope } from "./scope";
 import { DEFAULT_ROUTE, type Route } from "./route";
 import type { OnboardedWorkspace, WorkspaceBucketScope } from "./onboarding";
 import type { UiSafeConnectorInstanceView } from "./connectors";
+import type { UiSafeCrossWorkspaceLinkView } from "./cross-workspace-links";
 
 // The renderer store holds ONLY UI-safe projections delivered over the §10 push
 // stream — never secrets, Keychain refs, or unfiltered raw content (§10 boundary,
@@ -68,6 +69,13 @@ export interface UiSafeStoreState {
    * (WS-8, via `connectorsForWorkspace`); tokenRef is never present here (rule 7).
    */
   readonly connectors: ReadonlyMap<string, UiSafeConnectorInstanceView>;
+  /**
+   * The cross-workspace links (§19.1 / 14.7 — the rule-4 owner-approval surface), keyed by linkId.
+   * Tracked OPTIMISTICALLY from each crossWorkspaceLink mutation's returned UI-safe summary (no
+   * cold-load list read yet — a Future-TODO). Every field is UI-safe (ids / scope / status /
+   * timestamps); no raw cross-workspace content. A status transition re-upserts the same linkId.
+   */
+  readonly crossWorkspaceLinks: ReadonlyMap<string, UiSafeCrossWorkspaceLinkView>;
   /** The last stream `eventId` applied — a resumed subscription replays from here. */
   readonly lastEventId: string | null;
   /** The last per-stream `seq` applied — a gap (seq != last + 1) signals a dropped event. */
@@ -88,6 +96,7 @@ export const initialStoreState: UiSafeStoreState = {
   ingestion: [],
   onboarded: new Map(),
   connectors: new Map(),
+  crossWorkspaceLinks: new Map(),
   lastEventId: null,
   lastSeq: null,
 };

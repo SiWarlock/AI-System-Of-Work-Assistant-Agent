@@ -16,13 +16,17 @@ import {
   recordOnboardedWorkspace,
   connectorsForWorkspace,
   upsertConnectorInstance,
+  crossWorkspaceLinksList,
+  upsertCrossWorkspaceLink,
 } from "./store/projections";
 import { scopeMeta, type WorkspaceScope } from "./store/scope";
 import { scopeForType } from "./store/onboarding";
 import { Onboarding } from "./surfaces/onboarding";
 import { Connectors } from "./surfaces/connectors";
 import { SystemHealth } from "./surfaces/system-health";
+import { CrossWorkspaceLinks } from "./surfaces/cross-workspace-links";
 import type { RegisterConnectorInput, ConnectorConfigResult } from "./lib/connector-config";
+import type { CreateCrossWorkspaceLinkInput, CrossWorkspaceLinkResult } from "./lib/cross-workspace-link";
 import type { Route } from "./store/route";
 import { startLive, type StartLiveHandle } from "./lib/live";
 import type { AskResult } from "./lib/copilot-ask";
@@ -201,6 +205,22 @@ export function App(): ReactElement {
   const onSetConnectorCadence = (instanceId: string, cadence: string): Promise<ConnectorConfigResult> =>
     upsertOnOk(liveRef.current?.setConnectorCadence(instanceId, cadence) ?? Promise.resolve({ ok: false as const }));
 
+  // 14.7 cross-workspace links — a GLOBAL coordination surface (spans workspaces). The from/to
+  // pickers offer only onboarded workspaces (WS-8); `from` defaults to the selected onboarded scope.
+  const onboardedWorkspaces = [...state.onboarded.values()].map((ow) => ({ id: ow.workspaceId, label: ow.name }));
+  const crossLinkDefaultFrom = resolveOnboardedWorkspaceId(state, state.scope);
+  const upsertLinkOnOk = (p: Promise<CrossWorkspaceLinkResult>): Promise<CrossWorkspaceLinkResult> =>
+    p.then((r) => {
+      if (r.ok) store.dispatch((s) => upsertCrossWorkspaceLink(s, r.link));
+      return r;
+    });
+  const onCreateCrossLink = (input: CreateCrossWorkspaceLinkInput): Promise<CrossWorkspaceLinkResult> =>
+    upsertLinkOnOk(liveRef.current?.createCrossWorkspaceLink(input) ?? Promise.resolve({ ok: false as const }));
+  const onApproveCrossLink = (linkId: string): Promise<CrossWorkspaceLinkResult> =>
+    upsertLinkOnOk(liveRef.current?.approveCrossWorkspaceLink(linkId) ?? Promise.resolve({ ok: false as const }));
+  const onRevokeCrossLink = (linkId: string): Promise<CrossWorkspaceLinkResult> =>
+    upsertLinkOnOk(liveRef.current?.revokeCrossWorkspaceLink(linkId) ?? Promise.resolve({ ok: false as const }));
+
   return (
     <AppShell
       connection={state.connection}
@@ -242,6 +262,15 @@ export function App(): ReactElement {
         />
       ) : state.route.surface === "system-health" ? (
         <SystemHealth items={[...state.health.values()]} />
+      ) : state.route.surface === "cross-workspace-links" ? (
+        <CrossWorkspaceLinks
+          workspaces={onboardedWorkspaces}
+          defaultFrom={crossLinkDefaultFrom}
+          links={crossWorkspaceLinksList(state)}
+          onCreate={onCreateCrossLink}
+          onApprove={onApproveCrossLink}
+          onRevoke={onRevokeCrossLink}
+        />
       ) : (
         <Today
           scope={state.scope}
