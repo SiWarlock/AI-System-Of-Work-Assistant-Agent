@@ -23,6 +23,7 @@ export type {
 export { createAsanaHttpTransport } from "./asana";
 export { createDriveHttpTransport } from "./drive";
 export { createCalendarHttpTransport } from "./calendar";
+export { createGranolaHttpTransport } from "./granola";
 export { createCalendarConnector } from "./calendar";
 export { createTodoistConnector } from "./todoist";
 export { createLinearConnector } from "./linear";
