@@ -76,6 +76,15 @@ const emptyErr = {
   ok: false as const,
   error: { kind: "validation_rejected" as const, message: "unwired-in-suite", retryable: false },
 };
+// 14.2 connector-instance stub row (a full ConnectorInstanceRow shape; not exercised here).
+const ciStub = (instanceId: string) => ({
+  instanceId,
+  connectorId: "",
+  workspaceId: "eval-ws" as never,
+  tokenRef: "",
+  state: "paused" as const,
+  cadence: "",
+});
 function serverDeps() {
   return {
     expectedToken: EXPECTED,
@@ -136,6 +145,18 @@ function serverDeps() {
             lifecycleState: "active" as const,
           },
         };
+      },
+    },
+    // 14.2 connector-config port — canned-ok stubs (not exercised by this auth suite).
+    connectorConfig: {
+      async register(input: { instanceId: string }) {
+        return { ok: true as const, value: ciStub(input.instanceId) };
+      },
+      async setState(input: { instanceId: string; state: "enabled" | "paused" }) {
+        return { ok: true as const, value: { ...ciStub(input.instanceId), state: input.state } };
+      },
+      async setCadence(input: { instanceId: string; cadence: string }) {
+        return { ok: true as const, value: { ...ciStub(input.instanceId), cadence: input.cadence } };
       },
     },
     now: () => "2026-07-02T00:00:00.000Z",

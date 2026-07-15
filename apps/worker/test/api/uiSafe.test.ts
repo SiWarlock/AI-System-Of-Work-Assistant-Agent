@@ -394,6 +394,12 @@ function makeServerDeps(over: { expectedToken?: SessionToken } = {}) {
       createProject: (input: { projectId: string }) =>
         Promise.resolve({ ok: true, value: { projectId: input.projectId } } as never),
     },
+    // 14.2 connector-config port — canned ok stubs (not exercised by these tests).
+    connectorConfig: {
+      register: (input: { instanceId: string }) => Promise.resolve({ ok: true, value: { instanceId: input.instanceId } } as never),
+      setState: (input: { instanceId: string }) => Promise.resolve({ ok: true, value: { instanceId: input.instanceId } } as never),
+      setCadence: (input: { instanceId: string }) => Promise.resolve({ ok: true, value: { instanceId: input.instanceId } } as never),
+    },
     now: () => "2026-07-02T00:00:00.000Z",
   };
 }

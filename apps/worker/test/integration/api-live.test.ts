@@ -134,6 +134,12 @@ function serverDeps(
     projectRegistry: {
       createProject: (input) => Promise.resolve({ ok: true, value: { projectId: input.projectId } } as never),
     },
+    // 14.2 connector-config port — canned ok stubs (not exercised by this test).
+    connectorConfig: {
+      register: (input) => Promise.resolve({ ok: true, value: { instanceId: input.instanceId } } as never),
+      setState: (input) => Promise.resolve({ ok: true, value: { instanceId: input.instanceId } } as never),
+      setCadence: (input) => Promise.resolve({ ok: true, value: { instanceId: input.instanceId } } as never),
+    },
     copilot: {
       retrieval: createFixtureRetrieval({}),
       synthesis: createStubSynthesis(),

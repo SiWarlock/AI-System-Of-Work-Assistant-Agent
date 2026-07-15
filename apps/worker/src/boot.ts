@@ -80,6 +80,10 @@ import {
   type ProjectRegistryCommandPort,
 } from "./api/procedures/projectRegistry";
 import {
+  createConnectorConfigCommandPort,
+  type ConnectorConfigCommandPort,
+} from "./composition/connectorConfig";
+import {
   buildCopilotDeps,
   resolveCopilotWorkspaces,
   buildInterimCopilotScopeRegistry,
@@ -1175,6 +1179,14 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     repo: backends.repos.projectRegistry,
     readModels: backends.repos.readModels,
   });
+  // 14.2 — the PRODUCTION connector-config port: register a connector instance bound to a
+  //   14.1-registered workspace (config only — an opaque tokenRef REFERENCE, never a credential;
+  //   no live vendor call) + enable/pause + set-cadence. The Phase-16/23 consumers of the record
+  //   are dormant — not wired here (Lesson 11); the real credential/transport binds at arming.
+  const connectorConfig: ConnectorConfigCommandPort = createConnectorConfigCommandPort({
+    repo: backends.repos.connectorInstance,
+    readModels: backends.repos.readModels,
+  });
 
   // 2.5) The INTERIM Copilot ask backend (§4.6). The real GBrain/GCL retrieval + the governed LLM
   //   synthesis are deferred (the app runs over stubs; no passage-serving read-model exists yet).
@@ -1541,6 +1553,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     triage,
     onboarding,
     projectRegistry,
+    connectorConfig,
     now: backends.now,
     ...(config.apiHost !== undefined ? { host: config.apiHost } : {}),
     ...(config.apiPort !== undefined ? { port: config.apiPort } : {}),
