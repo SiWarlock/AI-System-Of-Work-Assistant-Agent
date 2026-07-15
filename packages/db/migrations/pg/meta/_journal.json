@@ -64,6 +64,13 @@
       "when": 1784139187850,
       "tag": "0008_connector_instance",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784144335295,
+      "tag": "0009_cross_workspace_link",
+      "breakpoints": true
     }
   ]
 }

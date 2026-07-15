@@ -82,6 +82,8 @@ const DOMAIN_TABLES = [
   "project_registry",
   // §4/§8 — the per-workspace connector-instance config registry (task 14.2, migration 0008).
   "connector_instance",
+  // §4/§5/§6 — the cross-workspace-link store (sanctioned WS-8 cross-read input, task 14.7, migration 0009).
+  "cross_workspace_link",
 ] as const;
 
 // PGlite constructs a real PG16 in wasm; several instances per case → wide timeout.
@@ -264,8 +266,9 @@ function defineLifecycleSuite<H>(fix: LifecycleFixture<H>): void {
         // KnowledgeWriter idempotent-replay index CREATE TABLE) + 0006_parity_reports (§6/§12/§16 —
         // the serve-time ParityReport store CREATE TABLE) + 0007_project_registry (§4/§6 — the
         // durable typed-Project registry CREATE TABLE) + 0008_connector_instance (§4/§8 — the
-        // per-workspace connector-instance config CREATE TABLE), all applied from empty.
-        expect(r.value.applied).toBe(9);
+        // per-workspace connector-instance config CREATE TABLE) + 0009_cross_workspace_link
+        // (§4/§5/§6 — the sanctioned WS-8 cross-workspace-link store CREATE TABLE), all applied from empty.
+        expect(r.value.applied).toBe(10);
         expect(r.value.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
         expect(r.value.backup.dialect).toBe(fix.dialect);
 

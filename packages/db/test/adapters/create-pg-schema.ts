@@ -36,6 +36,8 @@ const TABLES: readonly PgTable[] = [
   schema.projectRegistry,
   // §4/§8 — the per-workspace connector-instance config registry (task 14.2).
   schema.connectorInstance,
+  // §4/§5/§6 — the cross-workspace-link store (sanctioned WS-8 cross-read input, task 14.7).
+  schema.crossWorkspaceLink,
 ];
 
 /** Emit `CREATE TABLE` for one pg-core Drizzle table, mirroring its column + PK config. */

@@ -62,6 +62,9 @@ import type {
   ConnectorInstanceRepository,
   ConnectorInstanceRow,
   ConnectorInstanceState,
+  CrossWorkspaceLinkRepository,
+  CrossWorkspaceLinkRow,
+  CrossWorkspaceLinkStatus,
   PendingKnowledgeMutation,
   PendingKnowledgeMutationRepository,
   ProjectRegistryRepository,
@@ -113,6 +116,7 @@ export interface PostgresRepositories {
   readonly workspaceConfig: WorkspaceConfigRepository;
   readonly projectRegistry: ProjectRegistryRepository;
   readonly connectorInstance: ConnectorInstanceRepository;
+  readonly crossWorkspaceLink: CrossWorkspaceLinkRepository;
   readonly eventLog: EventLogRepository;
   readonly workflowRunRefs: WorkflowRunRefRepository;
   readonly audit: AuditRepository;
@@ -527,6 +531,58 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
           .limit(1);
         const row = rows[0];
         return row ? ok(row as ConnectorInstanceRow) : err(notFound(`connector instance ${instanceId}`));
+      }),
+  };
+
+  // Cross-workspace-link store (task 14.7). Flat scalars + two NULLABLE timestamps, so the row
+  // casts directly to CrossWorkspaceLinkRow (no mapper). `create` is a plain insert — a duplicate
+  // linkId throws a unique violation that `run`/`toDbError` maps to a typed `conflict`. Async.
+  const crossWorkspaceLink: CrossWorkspaceLinkRepository = {
+    create: (row) =>
+      run(async () => {
+        await db.insert(schema.crossWorkspaceLink).values(row);
+        return ok(row);
+      }),
+    get: (linkId) =>
+      run(async () => {
+        const rows = await db
+          .select()
+          .from(schema.crossWorkspaceLink)
+          .where(eq(schema.crossWorkspaceLink.linkId, linkId))
+          .limit(1);
+        const row = rows[0];
+        return row ? ok(row as CrossWorkspaceLinkRow) : err(notFound(`cross-workspace link ${linkId}`));
+      }),
+    listApprovedForReader: (fromWorkspaceId) =>
+      run(async () =>
+        ok(
+          (await db
+            .select()
+            .from(schema.crossWorkspaceLink)
+            .where(
+              and(
+                eq(schema.crossWorkspaceLink.fromWorkspaceId, fromWorkspaceId),
+                eq(schema.crossWorkspaceLink.status, "approved"),
+              ),
+            )) as CrossWorkspaceLinkRow[],
+        ),
+      ),
+    setStatus: (linkId, status: CrossWorkspaceLinkStatus, at) =>
+      run(async () => {
+        const set =
+          status === "approved"
+            ? { status, approvedAt: at }
+            : status === "revoked"
+              ? { status, revokedAt: at }
+              : { status };
+        await db.update(schema.crossWorkspaceLink).set(set).where(eq(schema.crossWorkspaceLink.linkId, linkId));
+        const rows = await db
+          .select()
+          .from(schema.crossWorkspaceLink)
+          .where(eq(schema.crossWorkspaceLink.linkId, linkId))
+          .limit(1);
+        const row = rows[0];
+        return row ? ok(row as CrossWorkspaceLinkRow) : err(notFound(`cross-workspace link ${linkId}`));
       }),
   };
 
@@ -1391,6 +1447,7 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
     workspaceConfig,
     projectRegistry,
     connectorInstance,
+    crossWorkspaceLink,
     eventLog,
     workflowRunRefs,
     audit,

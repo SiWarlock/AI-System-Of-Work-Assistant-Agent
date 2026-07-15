@@ -31,6 +31,7 @@ import type {
   ProjectLifecycleState,
   ProviderProfile,
   Result,
+  VisibilityLevel,
   WorkflowRunRef,
   Workspace,
   WorkspaceId,
@@ -317,6 +318,52 @@ export interface ConnectorInstanceRepository {
   setState(instanceId: string, state: ConnectorInstanceState): DbResult<ConnectorInstanceRow>;
   /** Set the cadence of an existing instance; absent ⇒ typed `not_found`. */
   setCadence(instanceId: string, cadence: string): DbResult<ConnectorInstanceRow>;
+}
+
+/** Owner-approval status of a cross-workspace link (the link's OWN field — never Approval.subjectKind). */
+export type CrossWorkspaceLinkStatus = "pending" | "approved" | "revoked";
+
+export interface CrossWorkspaceLinkRow {
+  /** Synthetic link id — the store PRIMARY KEY. */
+  readonly linkId: string;
+  /** The READER (workspace A) — directional: an approved link authorizes A reading B, NOT B reading A. */
+  readonly fromWorkspaceId: WorkspaceId;
+  /** The SOURCE (workspace B) — whose sanitized, scoped slice A may read once approved. */
+  readonly toWorkspaceId: WorkspaceId;
+  /** Bounded scope selector — the projectionType of B's slice that crosses (NOT NULL / non-empty). */
+  readonly scopeProjectionType: string;
+  /** Bounded scope selector — the visibility level of B's slice that crosses. */
+  readonly scopeVisibilityLevel: VisibilityLevel;
+  /** Owner-approval status — the link's OWN field (pending until an owner approves). */
+  readonly status: CrossWorkspaceLinkStatus;
+  readonly createdAt: string;
+  /** Stamped only when approved — null otherwise. */
+  readonly approvedAt: string | null;
+  /** Stamped only when revoked — null otherwise. */
+  readonly revokedAt: string | null;
+}
+
+/**
+ * Durable cross-workspace-LINK store — the SINGLE SANCTIONED WS-8 cross-workspace read input
+ * (task 14.7, §4/§5/§6; safety rule 4). `listApprovedForReader` is a reader-scoped primitive —
+ * it returns ONLY the reader's OWN APPROVED links (status + fromWorkspaceId filtered), never a
+ * cross-reader enumeration. The (fromWorkspaceId, toWorkspaceId) pair + `scope` immutability
+ * invariant is enforced at the COMPOSITION layer (`createCrossWorkspaceLink`'s get-before-create
+ * tuple guard, worker Lesson 30) — a direct caller MUST NOT silently rebind an existing link.
+ */
+export interface CrossWorkspaceLinkRepository {
+  /**
+   * Insert a new link record (keyed by linkId). A duplicate linkId ⇒ typed `conflict` (never a
+   * silent overwrite of the isolation anchor — the composition's get-before-create guard is the
+   * primary defense; this is the structural backstop).
+   */
+  create(row: CrossWorkspaceLinkRow): DbResult<CrossWorkspaceLinkRow>;
+  /** Fetch a link by its linkId primary key; absent ⇒ typed `not_found`. */
+  get(linkId: string): DbResult<CrossWorkspaceLinkRow>;
+  /** The ONLY cross-workspace read primitive: a reader's OWN APPROVED links (status + from filtered). */
+  listApprovedForReader(fromWorkspaceId: WorkspaceId): DbResult<CrossWorkspaceLinkRow[]>;
+  /** Transition a link's status, stamping the matching timestamp (`at`); absent ⇒ typed `not_found`. */
+  setStatus(linkId: string, status: CrossWorkspaceLinkStatus, at: string): DbResult<CrossWorkspaceLinkRow>;
 }
 
 /**

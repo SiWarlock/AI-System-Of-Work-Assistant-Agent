@@ -27,6 +27,8 @@ export * from "./write-receipts";
 export * from "./project-registry";
 // §4 / §8 — the per-workspace connector-instance config registry (task 14.2).
 export * from "./connector-instance";
+// §4 / §5 / §6 — the cross-workspace-link store (sanctioned WS-8 cross-read input, task 14.7).
+export * from "./cross-workspace-link";
 // Phase-10 durability tables (LIFE-1 / LIFE-5 / OBS-2).
 export * from "./health-items";
 export * from "./schedule-bookkeeping";

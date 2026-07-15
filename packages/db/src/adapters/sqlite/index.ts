@@ -52,6 +52,9 @@ import type {
   ConnectorInstanceRepository,
   ConnectorInstanceRow,
   ConnectorInstanceState,
+  CrossWorkspaceLinkRepository,
+  CrossWorkspaceLinkRow,
+  CrossWorkspaceLinkStatus,
   PendingKnowledgeMutation,
   PendingKnowledgeMutationRepository,
   ProjectRegistryRepository,
@@ -103,6 +106,7 @@ export interface SqliteRepositories {
   readonly workspaceConfig: WorkspaceConfigRepository;
   readonly projectRegistry: ProjectRegistryRepository;
   readonly connectorInstance: ConnectorInstanceRepository;
+  readonly crossWorkspaceLink: CrossWorkspaceLinkRepository;
   readonly eventLog: EventLogRepository;
   readonly workflowRunRefs: WorkflowRunRefRepository;
   readonly audit: AuditRepository;
@@ -503,6 +507,57 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
           .where(eq(schema.connectorInstance.instanceId, instanceId))
           .get();
         return row ? ok(row as ConnectorInstanceRow) : err(notFound(`connector instance ${instanceId}`));
+      }),
+  };
+
+  // Cross-workspace-link store (task 14.7). All flat scalars + two NULLABLE timestamps, so the
+  // row casts directly to CrossWorkspaceLinkRow (no mapper). `create` is a plain insert — a
+  // duplicate linkId throws a PK violation that `run`/`toDbError` maps to a typed `conflict`.
+  const crossWorkspaceLink: CrossWorkspaceLinkRepository = {
+    create: (row) =>
+      run(() => {
+        db.insert(schema.crossWorkspaceLink).values(row).run();
+        return ok(row);
+      }),
+    get: (linkId) =>
+      run(() => {
+        const row = db
+          .select()
+          .from(schema.crossWorkspaceLink)
+          .where(eq(schema.crossWorkspaceLink.linkId, linkId))
+          .get();
+        return row ? ok(row as CrossWorkspaceLinkRow) : err(notFound(`cross-workspace link ${linkId}`));
+      }),
+    listApprovedForReader: (fromWorkspaceId) =>
+      run(() =>
+        ok(
+          db
+            .select()
+            .from(schema.crossWorkspaceLink)
+            .where(
+              and(
+                eq(schema.crossWorkspaceLink.fromWorkspaceId, fromWorkspaceId),
+                eq(schema.crossWorkspaceLink.status, "approved"),
+              ),
+            )
+            .all() as CrossWorkspaceLinkRow[],
+        ),
+      ),
+    setStatus: (linkId, status: CrossWorkspaceLinkStatus, at) =>
+      run(() => {
+        const set =
+          status === "approved"
+            ? { status, approvedAt: at }
+            : status === "revoked"
+              ? { status, revokedAt: at }
+              : { status };
+        db.update(schema.crossWorkspaceLink).set(set).where(eq(schema.crossWorkspaceLink.linkId, linkId)).run();
+        const row = db
+          .select()
+          .from(schema.crossWorkspaceLink)
+          .where(eq(schema.crossWorkspaceLink.linkId, linkId))
+          .get();
+        return row ? ok(row as CrossWorkspaceLinkRow) : err(notFound(`cross-workspace link ${linkId}`));
       }),
   };
 
@@ -1325,6 +1380,7 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
     workspaceConfig,
     projectRegistry,
     connectorInstance,
+    crossWorkspaceLink,
     eventLog,
     workflowRunRefs,
     audit,

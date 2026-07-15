@@ -73,6 +73,8 @@ import type {
   PendingKnowledgeMutationRepository,
   ConnectorInstanceRepository,
   ConnectorInstanceRow,
+  CrossWorkspaceLinkRepository,
+  CrossWorkspaceLinkRow,
   ProjectRegistryRepository,
   ProjectRegistryRow,
   ProviderStateRepository,
@@ -100,6 +102,7 @@ interface OperationalRepositories {
   readonly workspaceConfig: WorkspaceConfigRepository;
   readonly projectRegistry: ProjectRegistryRepository;
   readonly connectorInstance: ConnectorInstanceRepository;
+  readonly crossWorkspaceLink: CrossWorkspaceLinkRepository;
   readonly eventLog: EventLogRepository;
   readonly workflowRunRefs: WorkflowRunRefRepository;
   readonly audit: AuditRepository;
@@ -176,6 +179,7 @@ const PG_TABLES: readonly PgTable[] = [
   pgSchema.workspaceConfig,
   pgSchema.projectRegistry,
   pgSchema.connectorInstance,
+  pgSchema.crossWorkspaceLink,
   pgSchema.eventLog,
   pgSchema.workflowRunRefs,
   pgSchema.auditRecords,
@@ -451,6 +455,7 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(typeof repos.workspaceConfig.get).toBe("function");
       expect(typeof repos.projectRegistry.resolveRef).toBe("function");
       expect(typeof repos.connectorInstance.setState).toBe("function");
+      expect(typeof repos.crossWorkspaceLink.listApprovedForReader).toBe("function");
       expect(typeof repos.eventLog.append).toBe("function");
       expect(typeof repos.workflowRunRefs.create).toBe("function");
       expect(typeof repos.audit.append).toBe("function");
@@ -630,6 +635,63 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(unwrapErr(await repos.connectorInstance.setState("missing", "enabled")).code).toBe("not_found");
       expect(unwrapErr(await repos.connectorInstance.setCadence("missing", "@daily")).code).toBe("not_found");
       expect(unwrapErr(await repos.connectorInstance.get("missing")).code).toBe("not_found");
+    });
+  });
+
+  // ── cross-workspace link (owner-approval flow; the sanctioned WS-8 cross-read input; task 14.7) ──
+  describe("CrossWorkspaceLinkRepository", () => {
+    const cwlWs = (s: string): CrossWorkspaceLinkRow["fromWorkspaceId"] => s as CrossWorkspaceLinkRow["fromWorkspaceId"];
+    const cwlRow = (over: Partial<CrossWorkspaceLinkRow> = {}): CrossWorkspaceLinkRow => ({
+      linkId: "link-1",
+      fromWorkspaceId: cwlWs("ws-a"),
+      toWorkspaceId: cwlWs("ws-b"),
+      scopeProjectionType: "coordination",
+      scopeVisibilityLevel: "coordination",
+      status: "pending",
+      createdAt: "2026-07-15T00:00:00.000Z",
+      approvedAt: null,
+      revokedAt: null,
+      ...over,
+    });
+
+    it("create → get round-trips the full record incl. nullable approvedAt/revokedAt", async () => {
+      const row = cwlRow();
+      expect(unwrap(await repos.crossWorkspaceLink.create(row))).toEqual(row);
+      const got = unwrap(await repos.crossWorkspaceLink.get("link-1"));
+      expect(got).toEqual(row);
+      expect(got.approvedAt).toBeNull();
+      expect(got.revokedAt).toBeNull();
+    });
+
+    it("setStatus → approved stamps approvedAt; → revoked stamps revokedAt", async () => {
+      unwrap(await repos.crossWorkspaceLink.create(cwlRow()));
+      const appr = unwrap(await repos.crossWorkspaceLink.setStatus("link-1", "approved", "2026-07-15T01:00:00.000Z"));
+      expect(appr.status).toBe("approved");
+      expect(appr.approvedAt).toBe("2026-07-15T01:00:00.000Z");
+      const rev = unwrap(await repos.crossWorkspaceLink.setStatus("link-1", "revoked", "2026-07-15T02:00:00.000Z"));
+      expect(rev.status).toBe("revoked");
+      expect(rev.revokedAt).toBe("2026-07-15T02:00:00.000Z");
+    });
+
+    it("listApprovedForReader returns ONLY the reader's APPROVED links (directional + status filtered)", async () => {
+      // reader ws-a: one approved (to ws-b), one pending (to ws-c) → only the approved surfaces.
+      unwrap(await repos.crossWorkspaceLink.create(cwlRow({ linkId: "a-appr", fromWorkspaceId: cwlWs("ws-a"), toWorkspaceId: cwlWs("ws-b"), status: "approved" })));
+      unwrap(await repos.crossWorkspaceLink.create(cwlRow({ linkId: "a-pend", fromWorkspaceId: cwlWs("ws-a"), toWorkspaceId: cwlWs("ws-c"), status: "pending" })));
+      // a DIFFERENT reader's approved link (from ws-x) must NOT surface for ws-a.
+      unwrap(await repos.crossWorkspaceLink.create(cwlRow({ linkId: "x-appr", fromWorkspaceId: cwlWs("ws-x"), toWorkspaceId: cwlWs("ws-b"), status: "approved" })));
+      const forA = unwrap(await repos.crossWorkspaceLink.listApprovedForReader(cwlWs("ws-a")));
+      expect(forA).toHaveLength(1);
+      expect(forA[0]?.linkId).toBe("a-appr");
+    });
+
+    it("create on a duplicate linkId is a typed conflict (never a silent overwrite of the anchor)", async () => {
+      unwrap(await repos.crossWorkspaceLink.create(cwlRow()));
+      expect(unwrapErr(await repos.crossWorkspaceLink.create(cwlRow({ toWorkspaceId: cwlWs("ws-z") }))).code).toBe("conflict");
+    });
+
+    it("get / setStatus on a missing link are typed not_found (never throws)", async () => {
+      expect(unwrapErr(await repos.crossWorkspaceLink.get("missing")).code).toBe("not_found");
+      expect(unwrapErr(await repos.crossWorkspaceLink.setStatus("missing", "approved", "2026-07-15T00:00:00.000Z")).code).toBe("not_found");
     });
   });
 
