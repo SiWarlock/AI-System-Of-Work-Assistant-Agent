@@ -134,6 +134,7 @@ describe("ScopeSwitcher listbox — roving tabindex (§11 a11y)", () => {
     onScopeChange: () => {},
     route: { surface: "today" },
     onNavigate: () => {},
+    copilotWorkspaceScoped: false,
   };
   const openSwitcher = (): { onScopeChange: ReturnType<typeof vi.fn> } => {
     const onScopeChange = vi.fn();

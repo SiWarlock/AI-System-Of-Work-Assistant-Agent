@@ -11,7 +11,10 @@
 // NEVER import electron, node, or @sow/worker from a renderer file.
 
 import { type ReactElement } from "react";
-import { WORKSPACE_SCOPES, type WorkspaceScope } from "../../store/scope";
+import { type WorkspaceScope } from "../../store/scope";
+
+/** Real workspaceId → its display name + subtle scope accent (from the onboarded set). */
+export type WorkspaceMetaMap = ReadonlyMap<string, { readonly label: string; readonly accent: string }>;
 import { groupGlobalByWorkspace } from "../../store/projections";
 import { accentVar } from "../../lib/accent";
 import type {
@@ -30,6 +33,8 @@ export interface TodayProps {
   readonly global: readonly UiSafeGclProjection[];
   /** The active workspace scope's Recent activity (§9.5; empty under Global — WS-8). */
   readonly recentChanges: readonly UiSafeRecentChange[];
+  /** Real workspaceId → { label, accent } for the Global per-workspace rows (from onboarded set). */
+  readonly workspaceMeta: WorkspaceMetaMap;
   /** Request a policy-gated drill-down into a workspace's context (worker-enforced). */
   readonly onDrillDown: (workspaceId: string, projectionType: string) => void;
 }
@@ -113,9 +118,11 @@ function HealthSection({ health }: { readonly health: readonly UiSafeHealthItem[
 
 function GlobalGroups({
   global,
+  workspaceMeta,
   onDrillDown,
 }: {
   readonly global: readonly UiSafeGclProjection[];
+  readonly workspaceMeta: WorkspaceMetaMap;
   readonly onDrillDown: (workspaceId: string, projectionType: string) => void;
 }): ReactElement {
   const groups = groupGlobalByWorkspace(global);
@@ -129,9 +136,9 @@ function GlobalGroups({
   return (
     <div className="sow-global-groups">
       {groups.map((group) => {
-        // Resolve the workspace's label + subtle accent; unknown ids (pre-onboarding)
-        // fall back to the raw id + the app blue.
-        const meta = WORKSPACE_SCOPES.find((m) => m.workspaceId === group.workspaceId);
+        // Resolve the workspace's label + subtle accent from the ONBOARDED set (§19.1 / 14.1);
+        // an unmatched id (a workspace not in the onboarded map) falls back to the raw id + app blue.
+        const meta = workspaceMeta.get(group.workspaceId);
         const label = meta?.label ?? group.workspaceId;
         return (
           <section
@@ -236,7 +243,7 @@ function RecentActivity({
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function Today(props: TodayProps): ReactElement {
-  const { scope, cards, health, global, recentChanges, onDrillDown } = props;
+  const { scope, cards, health, global, recentChanges, workspaceMeta, onDrillDown } = props;
 
   return (
     <main className="sow-content" aria-label="Today dashboard">
@@ -253,7 +260,7 @@ export function Today(props: TodayProps): ReactElement {
       {scope === "global" ? (
         <>
           <div className="sow-section-label">Across your workspaces</div>
-          <GlobalGroups global={global} onDrillDown={onDrillDown} />
+          <GlobalGroups global={global} workspaceMeta={workspaceMeta} onDrillDown={onDrillDown} />
         </>
       ) : null}
 

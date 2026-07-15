@@ -12,6 +12,7 @@ import type {
 } from "@sow/contracts/api/ui-safe";
 import { DEFAULT_SCOPE, type WorkspaceScope } from "./scope";
 import { DEFAULT_ROUTE, type Route } from "./route";
+import type { OnboardedWorkspace, WorkspaceBucketScope } from "./onboarding";
 
 // The renderer store holds ONLY UI-safe projections delivered over the §10 push
 // stream — never secrets, Keychain refs, or unfiltered raw content (§10 boundary,
@@ -52,6 +53,13 @@ export interface UiSafeStoreState {
    * Workspace-scoped — cleared to `[]` under Global (ingestion never blends; WS-8). Empty-until-producer.
    */
   readonly ingestion: readonly UiSafeIngestionItem[];
+  /**
+   * The ONBOARDED workspaces (§19.1 / 14.1), keyed by their scope bucket. The SOURCE of a
+   * workspace scope's REAL query workspaceId — a bucket present here is onboarded (selectable
+   * + queryable via its real id); a bucket ABSENT has NO read path (fail-closed empty-until-
+   * onboarded, WS-8). Empty on first run → the app shows the onboarding surface, not the app.
+   */
+  readonly onboarded: ReadonlyMap<WorkspaceBucketScope, OnboardedWorkspace>;
   /** The last stream `eventId` applied — a resumed subscription replays from here. */
   readonly lastEventId: string | null;
   /** The last per-stream `seq` applied — a gap (seq != last + 1) signals a dropped event. */
@@ -70,6 +78,7 @@ export const initialStoreState: UiSafeStoreState = {
   recentChanges: [],
   projects: [],
   ingestion: [],
+  onboarded: new Map(),
   lastEventId: null,
   lastSeq: null,
 };

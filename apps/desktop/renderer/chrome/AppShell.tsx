@@ -33,6 +33,12 @@ export interface AppShellProps {
   readonly onNavigate: (route: Route) => void;
   /** Ask Copilot a question (§9.6). Present → the Copilot composer is LIVE; absent → disabled scaffold. */
   readonly onAskCopilot?: (question: string) => Promise<AskResult>;
+  /**
+   * WS-8 gate for the Copilot ask composer (§19.1 / 14.1): true iff the active scope resolves to a
+   * single ONBOARDED workspace. False (Global / non-onboarded / unknown) → the pick-a-workspace
+   * state — you cannot ask an un-onboarded workspace. Computed by App from the onboarded store slice.
+   */
+  readonly copilotWorkspaceScoped: boolean;
   /** The pending-approval count (§9.8) for the Approvals nav badge; 0/undefined → no pill. */
   readonly pendingApprovalCount?: number;
   /** The active-scope ingestion-inbox count (§9.7) for the Inbox nav badge; 0/undefined → no pill. */
@@ -277,7 +283,7 @@ function NavLink({
 // ── The shell ──────────────────────────────────────────────────────────────
 
 export function AppShell(props: AppShellProps): ReactElement {
-  const { connection, scope, onScopeChange, route, onNavigate, onAskCopilot, pendingApprovalCount, ingestionCount, children } = props;
+  const { connection, scope, onScopeChange, route, onNavigate, onAskCopilot, copilotWorkspaceScoped, pendingApprovalCount, ingestionCount, children } = props;
 
   // Copilot right-sidebar chrome state (§4.6): collapsed (thin rail) ⇄ expanded (chat panel).
   // Owned here like the scope switcher's local open state — orthogonal to BOTH route and scope
@@ -460,7 +466,7 @@ export function AppShell(props: AppShellProps): ReactElement {
 
         {/* ── Copilot right sidebar — collapsed (thin rail) ⇄ expanded (chat panel) ── */}
         {copilotOpen ? (
-          <Copilot scope={scope} onCollapse={collapseCopilot} onAsk={onAskCopilot} />
+          <Copilot workspaceScoped={copilotWorkspaceScoped} onCollapse={collapseCopilot} onAsk={onAskCopilot} />
         ) : (
           <aside className="sow-copilot-rail" aria-label="Copilot (collapsed)">
             {/* Gradient sparkle icon */}

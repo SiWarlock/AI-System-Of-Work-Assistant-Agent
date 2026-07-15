@@ -6,12 +6,21 @@ import type { AskResult } from "../renderer/lib/copilot-ask";
 
 afterEach(cleanup);
 
-const base: Omit<CopilotProps, "scope"> = {
+const base: Omit<CopilotProps, "workspaceScoped"> = {
   onCollapse: () => {},
 };
 
-function renderCopilot(props: Partial<CopilotProps> & { scope: CopilotProps["scope"] }): void {
-  render(<Copilot {...base} {...props} />);
+// The three onboarded buckets resolve to `workspaceScoped: true` (a single workspace); Global and
+// any unknown scope resolve to `false` (pick-a-workspace). The App computes `workspaceScoped` from
+// the onboarded store slice (§19.1 / 14.1); this harness mirrors that mapping so the tests keep
+// documenting intent by scope NAME while exercising Copilot's real `workspaceScoped` prop.
+const WORKSPACE_SCOPED = new Set(["employer-work", "personal-business", "personal-life"]);
+
+function renderCopilot(
+  props: Partial<Omit<CopilotProps, "workspaceScoped">> & { scope: string },
+): void {
+  const { scope, ...rest } = props;
+  render(<Copilot {...base} workspaceScoped={WORKSPACE_SCOPED.has(scope)} {...rest} />);
 }
 
 describe("Copilot panel — read-only posture (§4.6)", () => {
@@ -55,9 +64,10 @@ describe("Copilot panel — WS-8 workspace isolation under Global", () => {
   });
 
   it("an UNRECOGNIZED (out-of-union) scope fails CLOSED to pick-a-workspace, no composer", () => {
-    // resolveWorkspaceId returns null for any scope that isn't one of the three known workspaces —
-    // so a garbage scope (persisted stale value, bad deep link) can NEVER render a queryable ask.
-    renderCopilot({ scope: "mystery-scope" as CopilotProps["scope"] });
+    // resolveOnboardedWorkspaceId returns null for any scope that isn't an onboarded workspace —
+    // so a garbage scope (persisted stale value, bad deep link) resolves to workspaceScoped:false
+    // and can NEVER render a queryable ask.
+    renderCopilot({ scope: "mystery-scope" });
     expect(screen.getByText(/pick a workspace/i)).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: /ask copilot/i })).toBeNull();
   });

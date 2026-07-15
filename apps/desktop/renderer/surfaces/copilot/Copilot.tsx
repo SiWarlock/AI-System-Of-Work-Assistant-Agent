@@ -22,7 +22,6 @@
 // NEVER import electron, node, or @sow/worker from a renderer file.
 
 import { useEffect, useRef, useState, type ReactElement } from "react";
-import { resolveWorkspaceId, type WorkspaceScope } from "../../store/scope";
 import type { AskResult } from "../../lib/copilot-ask";
 
 /** A single cited source, as shown in a citation chip. Opaque ref + display title — NO raw content. */
@@ -48,8 +47,13 @@ export interface CopilotTurnView {
 }
 
 export interface CopilotProps {
-  /** The active workspace scope — Copilot reads a SINGLE workspace (WS-8). */
-  readonly scope: WorkspaceScope;
+  /**
+   * WS-8 gate: true iff the active scope resolves to a SINGLE onboarded workspace (§19.1 / 14.1) —
+   * Copilot reads ONE workspace's knowledge. False (Global / a non-onboarded bucket / an unknown
+   * scope) → the pick-a-workspace state. Computed by App from the onboarded store slice + threaded
+   * through AppShell (the renderer's fail-closed resolve; the worker re-derives its own scoping).
+   */
+  readonly workspaceScoped: boolean;
   /** Collapse the sidebar back to the thin rail (AppShell owns the open state). */
   readonly onCollapse: () => void;
   /**
@@ -179,7 +183,7 @@ function Composer({
 }
 
 export function Copilot(props: CopilotProps): ReactElement {
-  const { scope, onCollapse, turns: seedTurns = [], onAsk } = props;
+  const { workspaceScoped, onCollapse, turns: seedTurns = [], onAsk } = props;
   const live = onAsk !== undefined;
 
   const [turns, setTurns] = useState<readonly CopilotTurnView[]>(seedTurns);
@@ -200,12 +204,11 @@ export function Copilot(props: CopilotProps): ReactElement {
     else collapseRef.current?.focus();
   }, [live]);
 
-  // WS-8: Copilot reads a SINGLE workspace's knowledge. `resolveWorkspaceId` fails CLOSED for the
-  // ASK direction — it returns a real id ONLY for one of the three recognized workspaces; Global
-  // AND any unknown/out-of-union scope resolve to `null` → the pick-a-workspace state, never a
-  // cross-workspace blend. (The worker re-derives its own workspace scoping; this only gates the UI.)
-  const workspaceId = resolveWorkspaceId(scope);
-  const workspaceScoped = workspaceId !== null;
+  // WS-8: Copilot reads a SINGLE workspace's knowledge. `workspaceScoped` (a prop, computed by App
+  // from the onboarded store slice via the fail-closed `resolveOnboardedWorkspaceId`) is true ONLY
+  // for one onboarded workspace; Global, a NON-onboarded bucket, AND any unknown scope → false →
+  // the pick-a-workspace state, never a cross-workspace blend. (The worker re-derives its own
+  // workspace scoping; this only gates the UI affordance.)
 
   const submit = (): void => {
     const q = draft.trim();

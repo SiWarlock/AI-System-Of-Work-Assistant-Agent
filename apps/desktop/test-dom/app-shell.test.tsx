@@ -11,6 +11,7 @@ const base: Omit<AppShellProps, "children"> = {
   onScopeChange: () => {},
   route: { surface: "today" },
   onNavigate: () => {},
+  copilotWorkspaceScoped: false,
 };
 
 describe("AppShell — left-rail routing (§9.5, the R2 nav wiring)", () => {

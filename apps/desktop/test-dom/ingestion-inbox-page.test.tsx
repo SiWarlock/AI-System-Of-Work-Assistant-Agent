@@ -12,15 +12,39 @@ import { AppShell, type AppShellProps } from "../renderer/chrome/AppShell";
 import { hydrateIngestionInbox } from "../renderer/lib/live";
 import { createTriageDisposition, type TriageDisposition } from "../renderer/lib/triage-disposition";
 import { createUiSafeStore } from "../renderer/store";
-import { setScope } from "../renderer/store/projections";
+import { setScope, recordOnboardedWorkspace } from "../renderer/store/projections";
 import type { WorkspaceScope } from "../renderer/store/scope";
+import type { WorkspaceBucketScope } from "../renderer/store/onboarding";
+import type { WorkspaceType } from "@sow/contracts/primitives/enums";
 import type { UiSafeIngestionItem } from "@sow/contracts/api/ui-safe";
 
 afterEach(cleanup);
 
-/** A store already in a given scope (hydrate is called for the CURRENT scope; the guard requires it). */
+const BUCKET_TYPE: Record<WorkspaceBucketScope, WorkspaceType> = {
+  "employer-work": "employer_work",
+  "personal-business": "personal_business",
+  "personal-life": "personal_life",
+};
+
+/**
+ * A store already in a given scope (hydrate is called for the CURRENT scope; the guard requires it).
+ * A workspace bucket is also ONBOARDED (§19.1 / 14.1) so it resolves to a REAL query id — otherwise
+ * `hydrateIngestionInbox` would fail closed to empty (an un-onboarded bucket has no read path).
+ */
 function storeInScope(scope: WorkspaceScope): ReturnType<typeof createUiSafeStore> {
   const store = createUiSafeStore();
+  if (scope !== "global") {
+    const bucket = scope as WorkspaceBucketScope;
+    store.dispatch((s) =>
+      recordOnboardedWorkspace(s, {
+        workspaceId: `ws_${bucket}`,
+        scope: bucket,
+        name: bucket,
+        type: BUCKET_TYPE[bucket],
+        preset: "simple",
+      }),
+    );
+  }
   store.dispatch((s) => setScope(s, scope));
   return store;
 }
@@ -115,6 +139,7 @@ describe("AppShell — Ingestion Inbox route mount (§9.7 / §9.5 nav)", () => {
     onScopeChange: () => {},
     route: { surface: "today" },
     onNavigate: () => {},
+    copilotWorkspaceScoped: false,
   };
 
   it("clicking the Inbox nav navigates to {surface:'ingestion'} (scope-preserving)", () => {

@@ -5,8 +5,19 @@ import { Projects } from "./surfaces/projects/Projects";
 import { Approvals } from "./surfaces/approvals/Approvals";
 import { IngestionInbox } from "./surfaces/ingestion-inbox";
 import { createUiSafeStore } from "./store";
-import { setScope, navigate, hydrateApprovals, replaceIngestion } from "./store/projections";
-import { WORKSPACE_SCOPES, resolveWorkspaceId, type WorkspaceScope } from "./store/scope";
+import {
+  setScope,
+  navigate,
+  hydrateApprovals,
+  replaceIngestion,
+  resolveOnboardedWorkspaceId,
+  scopeForWorkspaceId,
+  hasAnyOnboardedWorkspace,
+  recordOnboardedWorkspace,
+} from "./store/projections";
+import { scopeMeta, type WorkspaceScope } from "./store/scope";
+import { scopeForType } from "./store/onboarding";
+import { Onboarding } from "./surfaces/onboarding";
 import type { Route } from "./store/route";
 import { startLive, type StartLiveHandle } from "./lib/live";
 import type { AskResult } from "./lib/copilot-ask";
@@ -66,8 +77,10 @@ export function App(): ReactElement {
   const onDrillDown = (workspaceId: string, projectionType: string): void => {
     void liveRef.current?.drillDown(workspaceId, projectionType).then((r) => {
       if (!r.ok) return;
-      const scope = WORKSPACE_SCOPES.find((m) => m.workspaceId === workspaceId);
-      if (scope) onScopeChange(scope.id);
+      // Map the permitted workspaceId back to its scope via the ONBOARDED set (§19.1 / 14.1) —
+      // a drill can only target an onboarded workspace; an unmatched id is a safe no-op.
+      const scope = scopeForWorkspaceId(store.getSnapshot(), workspaceId);
+      if (scope !== null) onScopeChange(scope);
     });
   };
 
@@ -86,7 +99,7 @@ export function App(): ReactElement {
   // ask the worker. No single workspace or no live bridge → {ok:false}; the worker re-derives its own
   // workspace scoping + runs the WS-8 / candidate-data gates, so the renderer only requests.
   const onAskCopilot = (question: string): Promise<AskResult> => {
-    const workspaceId = resolveWorkspaceId(state.scope);
+    const workspaceId = resolveOnboardedWorkspaceId(state, state.scope);
     if (workspaceId === null || liveRef.current === null) return Promise.resolve({ ok: false });
     return liveRef.current.askCopilot(workspaceId, question);
   };
@@ -125,6 +138,45 @@ export function App(): ReactElement {
   const selectedProjectId =
     state.route.surface === "projects" ? state.route.projectId : undefined;
 
+  // First-run gate (§19.1 / 14.1): until AT LEAST ONE workspace is onboarded, the app IS the
+  // onboarding surface (fail-closed empty-until-onboarded — there is nothing to scope-read yet).
+  // Once a workspace enters the registry-backed scope store, the app proper mounts.
+  if (!hasAnyOnboardedWorkspace(state)) {
+    return (
+      <Onboarding
+        onCreateWorkspace={(input) =>
+          liveRef.current?.onboardWorkspace(input) ?? Promise.resolve({ ok: false as const })
+        }
+        onPreviewPreset={(preset) =>
+          liveRef.current?.previewPreset(preset) ?? Promise.resolve({ ok: false as const })
+        }
+        onOnboarded={(workspace, input) => {
+          // Record the REAL minted id into the scope store → the workspace becomes selectable and
+          // the app leaves first-run. Bucket derived from the immutable workspace type.
+          store.dispatch((s) =>
+            recordOnboardedWorkspace(s, {
+              workspaceId: workspace.workspaceId,
+              scope: scopeForType(input.type),
+              name: input.name,
+              type: input.type,
+              preset: workspace.preset,
+            }),
+          );
+        }}
+      />
+    );
+  }
+
+  // WS-8 gate for the Copilot ask composer: enabled ONLY when the active scope resolves to a
+  // single ONBOARDED workspace (§19.1 / 14.1). Global, a non-onboarded bucket, or an unknown
+  // scope → null → the pick-a-workspace state (you can't ask an un-onboarded workspace).
+  const copilotWorkspaceScoped = resolveOnboardedWorkspaceId(state, state.scope) !== null;
+  // Real workspaceId → { display name, subtle scope accent } (from the onboarded set) for Today's
+  // Global per-workspace rows — replaces the former placeholder-id → ScopeMeta lookup.
+  const workspaceMeta = new Map<string, { readonly label: string; readonly accent: string }>(
+    [...state.onboarded.values()].map((ow) => [ow.workspaceId, { label: ow.name, accent: scopeMeta(ow.scope).accent }]),
+  );
+
   return (
     <AppShell
       connection={state.connection}
@@ -133,6 +185,7 @@ export function App(): ReactElement {
       route={state.route}
       onNavigate={onNavigate}
       onAskCopilot={onAskCopilot}
+      copilotWorkspaceScoped={copilotWorkspaceScoped}
       pendingApprovalCount={pendingApprovalCount}
       ingestionCount={state.ingestion.length}
     >
@@ -162,6 +215,7 @@ export function App(): ReactElement {
           health={[...state.health.values()]}
           global={state.global}
           recentChanges={state.recentChanges}
+          workspaceMeta={workspaceMeta}
           onDrillDown={onDrillDown}
         />
       )}

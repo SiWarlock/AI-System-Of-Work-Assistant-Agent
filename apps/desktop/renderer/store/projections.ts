@@ -10,6 +10,7 @@ import type {
 } from "@sow/contracts/api/ui-safe";
 import type { ConnectionStatus, UiSafeStoreState } from "./index";
 import { isWorkspaceScope, type WorkspaceScope } from "./scope";
+import type { OnboardedWorkspace, WorkspaceBucketScope } from "./onboarding";
 import { routeEquals, type Route } from "./route";
 
 // Pure reducers that fold validated UI-safe StreamEvents into the store. Every
@@ -34,6 +35,73 @@ export function withConnection(
 export function setScope(state: UiSafeStoreState, scope: WorkspaceScope): UiSafeStoreState {
   if (state.scope === scope) return state;
   return { ...state, scope };
+}
+
+// ── Onboarding slice (§19.1 / 14.1) — the source of REAL workspace ids ─────────────
+//
+// A workspace bucket is SELECTABLE / QUERYABLE only once onboarded (its real minted id is
+// recorded here). These selectors REPLACE the former static-placeholder `resolveWorkspaceId`
+// at every read site: a bucket absent from the onboarded set resolves to `null` (no read
+// path — fail-closed empty-until-onboarded, WS-8), never a resurrected placeholder id.
+
+/**
+ * Record a freshly onboarded workspace, keyed by its bucket. Immutable (new state + new Map);
+ * LAST-WRITE-WINS per bucket (re-onboarding a bucket replaces its entry — the 3-bucket model
+ * allows one workspace per bucket). Identity when the identical entry is already recorded.
+ */
+export function recordOnboardedWorkspace(
+  state: UiSafeStoreState,
+  ow: OnboardedWorkspace,
+): UiSafeStoreState {
+  const existing = state.onboarded.get(ow.scope);
+  if (
+    existing !== undefined &&
+    existing.workspaceId === ow.workspaceId &&
+    existing.name === ow.name &&
+    existing.type === ow.type &&
+    existing.preset === ow.preset
+  ) {
+    return state; // identical — no state churn
+  }
+  const next = new Map(state.onboarded);
+  next.set(ow.scope, ow);
+  return { ...state, onboarded: next };
+}
+
+/**
+ * Resolve a scope to its REAL onboarded query workspaceId, or `null`. FAIL-CLOSED: Global (a
+ * cross-workspace aggregate, no single id), a NON-onboarded bucket, and any unknown/out-of-union
+ * scope ALL resolve to `null` → no scoped read path. This is the read-direction replacement for
+ * the removed static `resolveWorkspaceId`; the isolation predicate `isWorkspaceScope` (scope.ts)
+ * is INDEPENDENT and unchanged (an un-onboarded bucket still reads as isolated there).
+ */
+export function resolveOnboardedWorkspaceId(
+  state: UiSafeStoreState,
+  scope: WorkspaceScope,
+): string | null {
+  if (scope === "global") return null;
+  const ow = state.onboarded.get(scope as WorkspaceBucketScope);
+  return ow?.workspaceId ?? null;
+}
+
+/** True once AT LEAST ONE workspace bucket is onboarded (the first-run gate: false ⇒ onboarding). */
+export function hasAnyOnboardedWorkspace(state: UiSafeStoreState): boolean {
+  return state.onboarded.size > 0;
+}
+
+/**
+ * The scope bucket owning a given REAL workspaceId, or `null` if no onboarded workspace matches.
+ * Used to map a permitted drill-down's workspaceId back to a selectable scope (App.onDrillDown)
+ * — replaces the former placeholder-id `WORKSPACE_SCOPES.find(m => m.workspaceId === id)`.
+ */
+export function scopeForWorkspaceId(
+  state: UiSafeStoreState,
+  workspaceId: string,
+): WorkspaceScope | null {
+  for (const ow of state.onboarded.values()) {
+    if (ow.workspaceId === workspaceId) return ow.scope;
+  }
+  return null;
 }
 
 /**

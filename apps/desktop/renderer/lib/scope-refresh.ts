@@ -1,8 +1,8 @@
 import type { CreateTRPCClient } from "@trpc/client";
 import type { AppRouter } from "@sow/worker";
 import type { Store, UiSafeStoreState } from "../store";
-import { replaceCards } from "../store/projections";
-import { scopeMeta, type WorkspaceScope } from "../store/scope";
+import { replaceCards, resolveOnboardedWorkspaceId } from "../store/projections";
+import { type WorkspaceScope } from "../store/scope";
 
 // Push-path liveness for a workspace scope (§9.5). Lives in its own module (no `window`/
 // bridge dependency — just a client + store) so it stays unit-testable without the DOM.
@@ -29,11 +29,14 @@ export function createScopeRefresher(
   let latest = 0;
   return {
     refresh: async (scope: WorkspaceScope): Promise<void> => {
-      const meta = scopeMeta(scope);
-      if (meta.workspaceId === null) return; // Global stays live via the direct fold
+      // The REAL onboarded query id (§19.1 / 14.1): `null` for Global, a NON-onboarded bucket,
+      // OR an unknown scope — all skip the scoped pull (Global stays live via the direct fold;
+      // a bucket with no onboarded workspace has nothing to refresh).
+      const workspaceId = resolveOnboardedWorkspaceId(store.getSnapshot(), scope);
+      if (workspaceId === null) return;
       const token = ++latest;
       try {
-        const cardsR = await client.query.workspace.query({ workspaceId: meta.workspaceId });
+        const cardsR = await client.query.workspace.query({ workspaceId });
         if (token !== latest) return; // superseded by a newer refresh (latest-wins)
         if (store.getSnapshot().scope !== scope) return; // scope switched away mid-flight
         if (cardsR.ok === true) store.dispatch((s) => replaceCards(s, cardsR.value));

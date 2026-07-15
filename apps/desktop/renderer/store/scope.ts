@@ -7,30 +7,38 @@
 // PER-WORKSPACE ACCENT (Treatment 1 "subtle scope"): the app accent stays system-blue
 // everywhere; only the switcher DOT + the thin scope line take the workspace color.
 //
-// NOTE — the `workspaceId`s are provisioning placeholders. Real workspace ids are
-// minted by onboarding (§9.12); until then the read-model is empty, so a scoped query
-// returns empty/not-found. The scope→id mapping firms up when workspaces are created.
+// REAL onboarded ids (§19.1 / 14.1): the three workspace scopes are the three locked BUCKETS
+// (one per WorkspaceType). This module holds the STATIC per-scope METADATA (label + accent +
+// the global flag) only — a scope's REAL query `workspaceId` is NOT here; it is minted by
+// onboarding and lives in the store's `onboarded` slice (store/onboarding.ts), resolved via
+// `resolveOnboardedWorkspaceId` (store/projections.ts). A bucket absent from that slice has NO
+// read path — fail-closed empty-until-onboarded (WS-8), never a placeholder id.
 
-/** The four selectable scopes: the Global aggregate + the three isolated workspaces. */
+/** The four selectable scopes: the Global aggregate + the three isolated workspace buckets. */
 export type WorkspaceScope = "global" | "employer-work" | "personal-business" | "personal-life";
 
 export interface ScopeMeta {
   readonly id: WorkspaceScope;
   /** The switcher label ("All (Global)", "Employer-Work", …). */
   readonly label: string;
-  /** The query workspaceId for a workspace scope; `null` for Global (cross-workspace). */
-  readonly workspaceId: string | null;
+  /**
+   * True ONLY for the Global cross-workspace aggregate (reads flow through the WS-8 visibility
+   * gate — it has no single query workspaceId). False for every workspace bucket. This is the
+   * STABLE isolation discriminator — it replaces the former placeholder-`workspaceId !== null`
+   * test so `isWorkspaceScope` stays correct now that a bucket's real id lives in the store.
+   */
+  readonly isGlobal: boolean;
   /** The subtle scope accent (dot + scope line ONLY — the app accent stays system-blue). */
   readonly accent: string;
 }
 
 export const WORKSPACE_SCOPES: readonly ScopeMeta[] = [
-  { id: "global", label: "All (Global)", workspaceId: null, accent: "#0a84ff" },
+  { id: "global", label: "All (Global)", isGlobal: true, accent: "#0a84ff" },
   // Employer-Work shares the system-blue accent BY DESIGN (locked): Employer-Work IS
   // the blue workspace; emerald/indigo distinguish the other two. Not a placeholder.
-  { id: "employer-work", label: "Employer-Work", workspaceId: "employer-work", accent: "#0a84ff" },
-  { id: "personal-business", label: "Personal-Business", workspaceId: "personal-business", accent: "#1fae6b" },
-  { id: "personal-life", label: "Personal-Life", workspaceId: "personal-life", accent: "#5e5ce6" },
+  { id: "employer-work", label: "Employer-Work", isGlobal: false, accent: "#0a84ff" },
+  { id: "personal-business", label: "Personal-Business", isGlobal: false, accent: "#1fae6b" },
+  { id: "personal-life", label: "Personal-Life", isGlobal: false, accent: "#5e5ce6" },
 ];
 
 const BY_ID: ReadonlyMap<WorkspaceScope, ScopeMeta> = new Map(
@@ -46,32 +54,21 @@ export function scopeMeta(scope: WorkspaceScope): ScopeMeta {
 }
 
 /**
- * True iff a scope targets a single workspace (has a `workspaceId` to scope reads to).
+ * True iff a scope targets a single workspace (must NOT receive the cross-workspace fold).
  *
  * This is the workspace-ISOLATION gate for the read_model.change push path (§9.5): a
  * pushed card is folded into `cards` ONLY when this is false (the Global scope). So it
- * fails CLOSED — an UNKNOWN scope (an out-of-union value from a future untyped source:
- * a persisted last-scope, a deep link, an IPC payload) is treated as workspace-scoped →
- * the push is SUPPRESSED, never blended. Only a RECOGNIZED Global scope (workspaceId ===
- * null) permits the cross-workspace fold. (Distinct from `scopeMeta`, which fails OPEN to
- * Global's accent — a safe, never-throw default for DISPLAY, the wrong direction here.)
+ * fails CLOSED — an UNKNOWN scope (an out-of-union value from a future untyped source: a
+ * persisted last-scope, a deep link, an IPC payload) is treated as workspace-scoped → the
+ * push is SUPPRESSED, never blended. Only a RECOGNIZED Global scope (`isGlobal === true`)
+ * permits the cross-workspace fold. (Distinct from `scopeMeta`, which fails OPEN to Global's
+ * metadata — a safe never-throw default for DISPLAY, the wrong direction here.)
+ *
+ * NOTE — keyed off the STABLE `isGlobal` flag, NOT a workspaceId: a bucket's real id now
+ * lives in the store's `onboarded` slice, so an un-onboarded bucket (no id yet) must STILL
+ * read as workspace-scoped/isolated here. Onboarding state must never relax this predicate.
  */
 export function isWorkspaceScope(scope: WorkspaceScope): boolean {
   const meta = BY_ID.get(scope);
-  return meta === undefined || meta.workspaceId !== null;
-}
-
-/**
- * The query `workspaceId` for a scope that targets a single RECOGNIZED workspace, else `null`.
- *
- * This is the fail-closed gate for the ASK / read direction — the MIRROR of `isWorkspaceScope`
- * (which fails closed for the push-FOLD direction). Here `null` means "not a queryable single
- * workspace": Global → null (cross-workspace, no single id) AND any UNKNOWN / out-of-union scope
- * → null (not recognized). Only the three known workspaces return their id. Use THIS — not
- * `isWorkspaceScope` — wherever an unknown scope must NOT be treated as a queryable workspace
- * (the Copilot ask gate; A5's per-scope read): `isWorkspaceScope` returns `true` for an unknown
- * value, which is the wrong direction for gating a read.
- */
-export function resolveWorkspaceId(scope: WorkspaceScope): string | null {
-  return BY_ID.get(scope)?.workspaceId ?? null;
+  return meta === undefined || meta.isGlobal !== true;
 }

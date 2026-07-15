@@ -17,8 +17,9 @@ import {
   replaceRecentChanges,
   replaceProjects,
   replaceIngestion,
+  resolveOnboardedWorkspaceId,
 } from "../store/projections";
-import { scopeMeta, resolveWorkspaceId, WORKSPACE_SCOPES, type WorkspaceScope } from "../store/scope";
+import { type WorkspaceScope } from "../store/scope";
 import { createEventStream } from "./event-stream";
 import { createScopeRefresher } from "./scope-refresh";
 import { createLiveClient } from "./live-client";
@@ -27,6 +28,8 @@ import { createDrillDown, type DrillResult } from "./drilldown";
 import { createAskCopilot, type AskResult } from "./copilot-ask";
 import { createApprovalDecision, type ApprovalDecision, type DecisionResult } from "./approval-decision";
 import { createTriageDisposition, type TriageDisposition, type DispositionResult } from "./triage-disposition";
+import { createOnboardWorkspace, type OnboardWorkspaceInput, type OnboardResult } from "./onboard-workspace";
+import { createPresetPreview, type PresetPreviewResult } from "./preset-preview";
 
 /** The live-session handle: stop the stream + drill-down (§9.4) + scope-aware re-hydrate (§9.5). */
 export interface StartLiveHandle {
@@ -40,6 +43,10 @@ export interface StartLiveHandle {
   readonly decideApproval: (approvalId: string, decision: ApprovalDecision) => Promise<DecisionResult>;
   /** Dispose a triage item (§9.7, wired to command.disposeTriage, deterministic key); fails closed to {ok:false}. */
   readonly disposeTriage: (sourceId: string, disposition: TriageDisposition) => Promise<DispositionResult>;
+  /** Onboard a workspace (§19.1 / 14.1, wired to onboarding.createWorkspace); fails closed to {ok:false}. */
+  readonly onboardWorkspace: (input: OnboardWorkspaceInput) => Promise<OnboardResult>;
+  /** Preview a preset's provisioning profile (§14.5, wired to presetProfiles.preview); fails closed to {ok:false}. */
+  readonly previewPreset: (preset: string) => Promise<PresetPreviewResult>;
 }
 
 // Connect the UI-safe store to the LIVE worker over the §10 push stream (9.4b E).
@@ -93,6 +100,8 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
     askCopilot: createAskCopilot(live.client),
     decideApproval: createApprovalDecision(live.client),
     disposeTriage: createTriageDisposition(live.client),
+    onboardWorkspace: createOnboardWorkspace(live.client),
+    previewPreset: createPresetPreview(live.client),
   };
 }
 
@@ -120,12 +129,14 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
  * transiently overwrite the newer — scope-correct (B-under-B), non-isolation, self-healing
  * on the next push. A shared generation token (or an AbortController) would close it.
  */
-async function hydrateScope(
+export async function hydrateScope(
   client: CreateTRPCClient<AppRouter>,
   store: Store<UiSafeStoreState>,
   scope: WorkspaceScope,
 ): Promise<void> {
-  const meta = scopeMeta(scope);
+  // The REAL onboarded query id for this scope (§19.1 / 14.1) — `null` for Global, a
+  // NON-onboarded bucket, OR an unknown scope. Read from the current snapshot's onboarded slice.
+  const workspaceId = resolveOnboardedWorkspaceId(store.getSnapshot(), scope);
   // Clear immediately — no stale cross-scope cards/GCL/recent-activity/projects linger while
   // the query runs.
   store.dispatch((s) => replaceCards(s, []));
@@ -134,20 +145,21 @@ async function hydrateScope(
   store.dispatch((s) => replaceProjects(s, []));
   store.dispatch((s) => replaceIngestion(s, []));
   try {
-    if (meta.workspaceId === null) {
+    if (scope === "global") {
       // Global: dashboard + the gated GCL surface. Recent activity AND projects are
       // workspace-scoped (never a cross-workspace blend; WS-8) — they stay cleared under Global.
       const [cardsR, globalR] = await Promise.all([client.query.dashboard.query(), client.query.global.query()]);
       if (store.getSnapshot().scope !== scope) return; // superseded by a newer scope
       if (cardsR?.ok === true) store.dispatch((s) => replaceCards(s, cardsR.value));
       if (globalR?.ok === true) store.dispatch((s) => hydrateGlobal(s, globalR.value));
-    } else {
-      // allSettled, not all: ONE scoped query's failure (a not-yet-served route, a hiccup)
-      // must NOT drop the other two surfaces — each applies independently iff it resolved ok.
+    } else if (workspaceId !== null) {
+      // A single ONBOARDED workspace. allSettled, not all: ONE scoped query's failure (a
+      // not-yet-served route, a hiccup) must NOT drop the other two surfaces — each applies
+      // independently iff it resolved ok.
       const [cardsR, recentR, projectsR] = await Promise.allSettled([
-        client.query.workspace.query({ workspaceId: meta.workspaceId }),
-        client.query.recentChanges.query({ workspaceId: meta.workspaceId }),
-        client.query.projectList.query({ workspaceId: meta.workspaceId }),
+        client.query.workspace.query({ workspaceId }),
+        client.query.recentChanges.query({ workspaceId }),
+        client.query.projectList.query({ workspaceId }),
       ]);
       if (store.getSnapshot().scope !== scope) return; // superseded by a newer scope
       // Bind each ok payload to a local const BEFORE the dispatch closure — TS preserves a
@@ -197,8 +209,8 @@ async function hydrate(
 
 /**
  * Cold-load the active WORKSPACE scope's ingestion inbox (§9.7) via `query.ingestionInbox`. Ingestion
- * is workspace-scoped (WS-8) — Global (or any UNRECOGNIZED scope, via the fail-closed `resolveWorkspaceId`)
- * aggregates NOTHING, so it clears to `[]` WITHOUT a query. Re-validates each record through
+ * is workspace-scoped (WS-8) — Global, a NON-onboarded bucket, OR any unrecognized scope (all `null` via
+ * the fail-closed `resolveOnboardedWorkspaceId`) aggregates NOTHING, so it clears to `[]` WITHOUT a query. Re-validates each record through
  * `UiSafeIngestionItemSchema` (.strict) before it enters the store — the same defense-in-depth the
  * approvals/stream paths apply; a leaky/malformed record (a server-projector regression) is DROPPED,
  * never folded. A superseded scope (a fast switch during the await) is dropped. Best-effort +
@@ -210,7 +222,7 @@ export async function hydrateIngestionInbox(
   store: Store<UiSafeStoreState>,
   scope: WorkspaceScope,
 ): Promise<void> {
-  const workspaceId = resolveWorkspaceId(scope);
+  const workspaceId = resolveOnboardedWorkspaceId(store.getSnapshot(), scope);
   if (workspaceId === null) {
     store.dispatch((s) => replaceIngestion(s, []));
     return;
@@ -236,10 +248,11 @@ export async function hydrateIngestionInbox(
 /**
  * Seed the GLOBAL approval inbox (§9.8) on cold load. `query.approvalInbox` is
  * per-workspace (WS-8 — each query is workspace-scoped server-side), so the global
- * inbox is assembled by fanning out over the KNOWN workspace scopes and merging the
- * (already UI-safe) results by id via `hydrateApprovals`. `allSettled` so one
- * workspace's failure never drops the others; best-effort — the live `approval.update`
- * stream + each decision's authoritative record keep the inbox current afterward.
+ * inbox is assembled by fanning out over the ONBOARDED workspaces (their REAL minted ids
+ * from the store's onboarded slice — §19.1 / 14.1; a NON-onboarded bucket has no id, so it
+ * contributes nothing) and merging the (already UI-safe) results by id via `hydrateApprovals`.
+ * `allSettled` so one workspace's failure never drops the others; best-effort — the live
+ * `approval.update` stream + each decision's authoritative record keep the inbox current after.
  *
  * This only reshapes what the server already returns as UI-safe — no raw content
  * crosses (`UiSafeApproval` carries ids + status + channel + timing only), which is
@@ -249,9 +262,7 @@ async function hydrateApprovalInbox(
   client: CreateTRPCClient<AppRouter>,
   store: Store<UiSafeStoreState>,
 ): Promise<void> {
-  const workspaceIds = WORKSPACE_SCOPES.map((m) => m.workspaceId).filter(
-    (id): id is string => id !== null,
-  );
+  const workspaceIds = [...store.getSnapshot().onboarded.values()].map((ow) => ow.workspaceId);
   try {
     const results = await Promise.allSettled(
       workspaceIds.map((workspaceId) => client.query.approvalInbox.query({ workspaceId })),

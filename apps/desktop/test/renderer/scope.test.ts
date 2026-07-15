@@ -1,6 +1,8 @@
-// §9.4 slice 4: the workspace scope model. The switcher offers the Global aggregate +
-// the three isolated workspaces; Global has NO workspaceId (its reads go through the
-// visibility gate), each workspace scope carries its query id and its subtle accent.
+// §9.4 slice 4 + §19.1 / 14.1: the workspace scope model. The switcher offers the Global
+// aggregate + the three isolated workspace buckets. A scope's REAL query workspaceId is NO
+// LONGER static here (placeholder ids dropped) — it is minted by onboarding and lives in the
+// store's `onboarded` slice, resolved via `resolveOnboardedWorkspaceId` (see onboarding-store.test).
+// This module now holds ONLY the static per-scope METADATA (label + accent + the isGlobal flag).
 import { describe, it, expect } from "vitest";
 import {
   WORKSPACE_SCOPES,
@@ -21,15 +23,22 @@ describe("workspace scope model", () => {
     expect(DEFAULT_SCOPE).toBe("global");
   });
 
-  it("Global is the cross-workspace aggregate — it has NO workspaceId (reads via the gate)", () => {
-    expect(scopeMeta("global").workspaceId).toBeNull();
+  it("Global is the ONLY isGlobal scope (cross-workspace aggregate — reads via the gate)", () => {
+    expect(scopeMeta("global").isGlobal).toBe(true);
     expect(isWorkspaceScope("global")).toBe(false);
   });
 
-  it("each workspace scope carries a query workspaceId + its subtle accent", () => {
+  it("no ScopeMeta carries a static query workspaceId — real ids come from the onboarded store slice", () => {
+    // The placeholder ids are gone (§19.1 / 14.1): a bucket's real id lives in the store, not here.
+    for (const m of WORKSPACE_SCOPES) {
+      expect("workspaceId" in m).toBe(false);
+    }
+  });
+
+  it("each workspace bucket is isolated (isGlobal false) + carries its subtle accent", () => {
     for (const id of ["employer-work", "personal-business", "personal-life"] as const) {
       const m = scopeMeta(id);
-      expect(m.workspaceId).not.toBeNull();
+      expect(m.isGlobal).toBe(false);
       expect(isWorkspaceScope(id)).toBe(true);
       expect(m.accent).toMatch(/^#[0-9a-f]{6}$/i);
       expect(m.label.length).toBeGreaterThan(0);
