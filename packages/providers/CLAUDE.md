@@ -161,6 +161,7 @@ Lessons start at §1.
 | # | Date | Topic | Rule (one-liner) |
 |--:|---|---|---|
 | [1](LESSONS.md#1) | 2026-06-30 | Hermes empty toolset → full mutating fallback | A read-only / ING-7 Hermes run MUST pass an explicit, asserted-non-empty minimal toolset; empty `-t` silently falls back to the full (mutating) config toolset. |
+| [2](LESSONS.md#2) | 2026-07-15 | Reusable connector HTTP transport over an OUTBOUND-inverse SSRF predicate | A real read-only connector HTTP transport is a reusable `createConnectorHttpTransport(spec, deps)` producing a `ConnectorTransport` — SSRF-guard (the vetted OUTBOUND-inverse `isAllowedRemoteEndpoint`: https + allowlisted-host + reject-loopback, composed once, never re-parse) on the FINAL url BEFORE token+dispatch · token header-only/fail-closed-even-on-throw · redacted typed `TransportFailure` behind a positive-2xx gate · wrapped spec callbacks · vendor wire shape a documented `arch_gap` candidate · ING-7 GET-only · `payloadHash` for the contentHash · `readScope` single-sourced at the adapter; real transport+secrets UNBOUND at boot (byte-equivalent); connectors specialize with a per-vendor spec. |
 
 <!-- Starts empty. Each row links to its `LESSONS.md` anchor. -->
 
