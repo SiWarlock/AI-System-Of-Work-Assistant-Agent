@@ -4,7 +4,7 @@
 - **Phase:** 13.10 (Copilot serving-oracle go-live arc — trust-gate false-green hardening; arming-prep) / Phase-4 rebuild-oracle "build-first" round
 - **Team:** `session-734f946b` — orch `orch20` + impl `knowledge-impl` (single-track, branch `main`)
 - **Predecessor:** [071-2026-07-15-impl22-rebuild-oracle-producer.md](071-2026-07-15-impl22-rebuild-oracle-producer.md)
-- **Successor:** _(pending — impl22 piece C, session doc 073)_
+- **Successor:** [073-2026-07-15-impl22-rebuild-oracle-boot-binding.md](073-2026-07-15-impl22-rebuild-oracle-boot-binding.md)
 - **Commit:** `e808a43` (slice) · this session doc (separate)
 
 ## Why this session existed
