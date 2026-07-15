@@ -25,6 +25,7 @@ export { createDriveHttpTransport } from "./drive";
 export { createCalendarHttpTransport } from "./calendar";
 export { createGranolaHttpTransport } from "./granola";
 export { createGithubHttpTransport } from "./github";
+export { createLinearHttpTransport } from "./linear";
 export { createCalendarConnector } from "./calendar";
 export { createTodoistConnector } from "./todoist";
 export { createLinearConnector } from "./linear";
