@@ -4,7 +4,7 @@
 - **Phase / task:** 13.10 (Copilot propose/serving-oracle go-live — runbook Phase 4 "serving oracle go-live" producer) — first go-live PRODUCER build round
 - **Team:** `session-734f946b` · orchestrator `orch20` · implementer `impl22` (worker area) · lead `main`; single-track on `main`
 - **Predecessor:** [070-2026-07-14-impl21-external-write-gate-and-arming-strict-equality.md](070-2026-07-14-impl21-external-write-gate-and-arming-strict-equality.md)
-- **Successor:** _(none yet)_
+- **Successor:** [072-2026-07-15-knowledge-impl-rebuild-strict-equality.md](072-2026-07-15-knowledge-impl-rebuild-strict-equality.md)
 
 ## Why this session existed
 
