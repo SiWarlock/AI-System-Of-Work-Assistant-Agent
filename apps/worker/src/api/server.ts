@@ -53,6 +53,7 @@ import {
   buildConnectorConfigRouter,
   type ConnectorConfigCommandPort,
 } from "./procedures/connectorConfig";
+import { buildPresetProfilesRouter } from "./procedures/presetProfiles";
 import { createPushStream, type PushStream } from "./stream/pushStream";
 import type { StreamPublisherOptions } from "./stream/eventClasses";
 
@@ -119,6 +120,7 @@ function composeAppRouter(deps: ApiServerDeps, pushStream: PushStream) {
     onboarding: buildOnboardingRouter({ onboarding: deps.onboarding }),
     projectRegistry: buildProjectRegistryRouter({ projectRegistry: deps.projectRegistry }),
     connectorConfig: buildConnectorConfigRouter({ connectorConfig: deps.connectorConfig }),
+    presetProfiles: buildPresetProfilesRouter(),
     stream: pushStream.router,
   });
 }
