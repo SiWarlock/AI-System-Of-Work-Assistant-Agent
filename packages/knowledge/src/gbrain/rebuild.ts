@@ -157,13 +157,18 @@ export async function rebuildIndexFromMarkdown(
   const receipt = applied.value;
 
   // 4 — a non-replacing rebuild could leave a quarantined DB-only fact behind → reject.
-  if (!receipt.replaced) {
+  //     STRICT `=== true` (not truthy `!receipt.replaced`): `replaced` arrives from the
+  //     INJECTED client across a real I/O boundary where TS types are NOT runtime-enforced,
+  //     so a truthy-non-`true` value (1, "false", {}, []) must read as NOT a wholesale
+  //     replace — never a false-green into the serve-time trust gate (safety rule 1;
+  //     mirrors the propose guard 392e7db / worker Lesson 28).
+  if (receipt.replaced !== true) {
     return err({
       code: "non_replacing_rebuild",
       healthItem: buildRebuildDivergenceHealthItem(
         deps,
-        `rebuild client did not perform a wholesale replace (replaced=false); a merge ` +
-          `could leave a quarantined DB-only fact in retrieval.`,
+        `rebuild client did not confirm a wholesale replace (replaced flag not strictly true); ` +
+          `a merge could leave a quarantined DB-only fact in retrieval.`,
       ),
     });
   }

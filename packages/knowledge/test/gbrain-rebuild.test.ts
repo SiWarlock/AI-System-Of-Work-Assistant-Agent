@@ -175,3 +175,46 @@ describe("rebuildIndexFromMarkdown — fail-closed", () => {
     expect(client.received).toBeUndefined();
   });
 });
+
+// ── strict wholesale-replace gate (safety rule 1 / worker Lesson 28) ───────────
+// The `replaced` flag arrives from the INJECTED IndexRebuildClient across a real
+// I/O boundary where TS types are NOT runtime-enforced — the real client (owner-gated,
+// unbound today) hands back parsed JSON, so `replaced` can be any truthy-non-`true`
+// value (1, "false", {}, []). A truthy check (`!receipt.replaced`) would read those as
+// "replaced" and let a merge-not-replace rebuild reach a success Result → a FALSE-GREEN
+// into the serve-time trust gate (the rebuild-oracle `oracleBuildOk` leg corroborating
+// an unsound rebuild), which could leave a quarantined DB-only fact in retrieval
+// (safety rule 1). The gate must be STRICT `=== true`. Same class the propose guard
+// (392e7db) hardened; mirrors worker Lesson 28.
+describe("rebuildIndexFromMarkdown — strict wholesale-replace gate (Lesson 28 mirror)", () => {
+  it.each([
+    ["number 1", 1],
+    ['string "true"', "true"],
+    ['string "false"', "false"],
+    ["empty object {}", {}],
+    ["empty array []", []],
+  ])(
+    "spec(§6) treats a truthy-non-true replaced (%s) as NON-replacing (fail-closed, not a false-green)",
+    async (_label, replacedValue) => {
+      const snap = twoPages();
+      // Cast the untyped-boundary value through the fake client — mirrors the real
+      // client where `replaced` is parsed JSON, not a runtime-checked boolean.
+      const client = new FakeRebuildClient((req) => ({
+        ok: true,
+        value: okReceipt(req, { replaced: replacedValue as unknown as boolean }),
+      }));
+      const out = await rebuildIndexFromMarkdown(snap, deps(client));
+
+      // Non-vacuity: the client WAS invoked and returned a MATCHING nodeCount (okReceipt),
+      // so the recovery-completeness check would pass IF REACHED — the strict-equality gate
+      // (which runs first) is the ONLY thing between this and a false `ok`. Under the old
+      // truthy check the gate is skipped and this returns ok.
+      expect(client.received).toBeDefined();
+      expect(out.ok).toBe(false);
+      if (out.ok) return;
+      expect(out.error.code).toBe("non_replacing_rebuild");
+      expect(out.error.healthItem.failureClass).toBe("rebuild_divergence");
+      expect(HealthItemSchema.safeParse(out.error.healthItem).success).toBe(true);
+    },
+  );
+});
