@@ -3,7 +3,7 @@
 - **Date:** 2026-07-15
 - **Phase:** Go-live build round 7 (runbook Phase-8 connector round — Gmail, list-only). Team `session-734f946b`, orchestrator `orch21` + implementer `integrations-impl`, on `main`.
 - **Predecessor:** [078-2026-07-15-integrations-impl-linear-graphql.md](078-2026-07-15-integrations-impl-linear-graphql.md)
-- **Successor:** _(next session)_
+- **Successor:** [080-2026-07-15-integrations-impl-osb-extractor-verify.md](080-2026-07-15-integrations-impl-osb-extractor-verify.md)
 - **Commits:** Gmail `c7dcd16` · this session doc
 
 ## Why this session existed
