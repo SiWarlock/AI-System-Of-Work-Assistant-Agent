@@ -4,7 +4,7 @@
 - **Phase / task:** 13.10 (Copilot propose/serving-oracle go-live — runbook Phase 4 producer, piece C of A→B→C) — task #21
 - **Team:** `session-734f946b` · orchestrator `orch20` · implementer `impl22` (worker area) · lead `main`; single-track on `main`
 - **Predecessor:** [072-2026-07-15-knowledge-impl-rebuild-strict-equality.md](072-2026-07-15-knowledge-impl-rebuild-strict-equality.md)
-- **Successor:** _(none yet)_
+- **Successor:** [074-2026-07-15-integrations-impl-connector-transport.md](074-2026-07-15-integrations-impl-connector-transport.md)
 
 ## Why this session existed
 
