@@ -71,6 +71,8 @@ import type {
   ParityReportRepository,
   PendingKnowledgeMutation,
   PendingKnowledgeMutationRepository,
+  ProjectRegistryRepository,
+  ProjectRegistryRow,
   ProviderStateRepository,
   ReadModelRecord,
   ReadModelRepository,
@@ -94,6 +96,7 @@ import { createPgSchema } from "../adapters/create-pg-schema";
 // static type — which is itself a contract assertion (the surfaces cannot drift).
 interface OperationalRepositories {
   readonly workspaceConfig: WorkspaceConfigRepository;
+  readonly projectRegistry: ProjectRegistryRepository;
   readonly eventLog: EventLogRepository;
   readonly workflowRunRefs: WorkflowRunRefRepository;
   readonly audit: AuditRepository;
@@ -168,6 +171,7 @@ const pglitePgFixture: AdapterCase = {
 // Same `pg-core` schema DDL as the pglite helper, run through the node-postgres pool.
 const PG_TABLES: readonly PgTable[] = [
   pgSchema.workspaceConfig,
+  pgSchema.projectRegistry,
   pgSchema.eventLog,
   pgSchema.workflowRunRefs,
   pgSchema.auditRecords,
@@ -441,6 +445,7 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
   describe("factory surface", () => {
     it("exposes one repository per operational-store domain", () => {
       expect(typeof repos.workspaceConfig.get).toBe("function");
+      expect(typeof repos.projectRegistry.resolveRef).toBe("function");
       expect(typeof repos.eventLog.append).toBe("function");
       expect(typeof repos.workflowRunRefs.create).toBe("function");
       expect(typeof repos.audit.append).toBe("function");
@@ -483,6 +488,88 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
 
     it("get on a missing id returns a typed not_found (never throws)", async () => {
       expect(unwrapErr(await repos.workspaceConfig.get(validWorkspace.id)).code).toBe("not_found");
+    });
+  });
+
+  // ── project registry (MUTABLE upsert; GLOBAL resolveRef; task 14.6) ───────────
+  describe("ProjectRegistryRepository", () => {
+    const projRow = (over: Partial<ProjectRegistryRow> = {}): ProjectRegistryRow => ({
+      projectId: "acme-api",
+      workspaceId: "employer-work" as ProjectRegistryRow["workspaceId"],
+      planPath: "employer-work/acme-api/IMPLEMENTATION_PLAN.md",
+      progressProviders: [{ connectorId: "linear-1", remoteHandle: "ACME" }],
+      aliases: ["acme", "acme-project"],
+      title: "Acme API",
+      slug: "employer-work/acme-api",
+      lifecycleState: "active",
+      ...over,
+    });
+    const wsId = (s: string): ProjectRegistryRow["workspaceId"] => s as ProjectRegistryRow["workspaceId"];
+
+    it("upsert → get round-trips the full row incl. progressProviders[] + aliases[] + planPath", async () => {
+      const row = projRow();
+      expect(unwrap(await repos.projectRegistry.upsert(row))).toEqual(row);
+      const got = unwrap(await repos.projectRegistry.get("acme-api"));
+      expect(got).toEqual(row);
+      expect(got.progressProviders).toEqual(row.progressProviders);
+      expect(got.aliases).toEqual(row.aliases);
+    });
+
+    it("upsert round-trips a MINIMAL row (no planPath / no aliases → NULL → undefined)", async () => {
+      const row = projRow({ projectId: "bare", planPath: undefined, aliases: undefined, progressProviders: [] });
+      unwrap(await repos.projectRegistry.upsert(row));
+      const got = unwrap(await repos.projectRegistry.get("bare"));
+      expect(got.planPath).toBeUndefined();
+      expect(got.aliases).toBeUndefined();
+      expect(got.progressProviders).toEqual([]);
+    });
+
+    it("upsert is idempotent-by-key: a second upsert UPDATEs in place, no conflict", async () => {
+      unwrap(await repos.projectRegistry.upsert(projRow()));
+      unwrap(await repos.projectRegistry.upsert(projRow({ title: "Acme API v2" })));
+      expect(unwrap(await repos.projectRegistry.get("acme-api")).title).toBe("Acme API v2");
+      expect(unwrap(await repos.projectRegistry.listByWorkspace(wsId("employer-work")))).toHaveLength(1);
+    });
+
+    it("resolveRef resolves by projectId AND by alias to the same row", async () => {
+      const row = projRow();
+      unwrap(await repos.projectRegistry.upsert(row));
+      expect(unwrap(await repos.projectRegistry.resolveRef("acme-api"))).toEqual(row);
+      expect(unwrap(await repos.projectRegistry.resolveRef("acme"))).toEqual(row);
+    });
+
+    it("resolveRef on an unknown ref returns a typed not_found (never throws)", async () => {
+      expect(unwrapErr(await repos.projectRegistry.resolveRef("nope")).code).toBe("not_found");
+    });
+
+    it("resolve_ambiguous_alias_across_workspaces_fails_closed: an alias shared by two entries in DIFFERENT workspaces ⇒ not_found, NEVER an arbitrary pick (WS-8, safety rule 4)", async () => {
+      unwrap(await repos.projectRegistry.upsert(projRow({ projectId: "a", workspaceId: wsId("ws-a"), aliases: ["shared"] })));
+      unwrap(await repos.projectRegistry.upsert(projRow({ projectId: "b", workspaceId: wsId("ws-b"), aliases: ["shared"] })));
+      // The collision fails CLOSED — neither "a" nor "b" is arbitrarily returned.
+      expect(unwrapErr(await repos.projectRegistry.resolveRef("shared")).code).toBe("not_found");
+      // Each is still resolvable by its unambiguous projectId.
+      expect(unwrap(await repos.projectRegistry.resolveRef("a")).projectId).toBe("a");
+      expect(unwrap(await repos.projectRegistry.resolveRef("b")).projectId).toBe("b");
+    });
+
+    it("resolveRef: an exact projectId (PK) match takes PRECEDENCE over another project's colliding alias", async () => {
+      // Project A's PRIMARY KEY is "acme-api"; project B declares "acme-api" as an ALIAS.
+      unwrap(await repos.projectRegistry.upsert(projRow({ projectId: "acme-api" })));
+      unwrap(await repos.projectRegistry.upsert(projRow({ projectId: "other", aliases: ["acme-api"] })));
+      // A must STILL resolve by its own primary key — never shadowed to not_found by B's alias.
+      expect(unwrap(await repos.projectRegistry.resolveRef("acme-api")).projectId).toBe("acme-api");
+    });
+
+    it("listByWorkspace returns ONLY that workspace's rows (workspace-scoped primitive)", async () => {
+      unwrap(await repos.projectRegistry.upsert(projRow({ projectId: "a", workspaceId: wsId("ws-a"), aliases: undefined })));
+      unwrap(await repos.projectRegistry.upsert(projRow({ projectId: "b", workspaceId: wsId("ws-b"), aliases: undefined })));
+      const listA = unwrap(await repos.projectRegistry.listByWorkspace(wsId("ws-a")));
+      expect(listA).toHaveLength(1);
+      expect(listA[0]?.projectId).toBe("a");
+    });
+
+    it("get on a missing id returns a typed not_found (never throws)", async () => {
+      expect(unwrapErr(await repos.projectRegistry.get("missing")).code).toBe("not_found");
     });
   });
 

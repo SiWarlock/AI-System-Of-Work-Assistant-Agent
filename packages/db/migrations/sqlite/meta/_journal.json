@@ -50,6 +50,13 @@
       "when": 1783989582295,
       "tag": "0006_parity_reports",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1784136579990,
+      "tag": "0007_project_registry",
+      "breakpoints": true
     }
   ]
 }

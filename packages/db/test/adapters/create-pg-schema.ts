@@ -32,6 +32,8 @@ const TABLES: readonly PgTable[] = [
   schema.healthItems,
   schema.scheduleBookkeeping,
   schema.instanceLeases,
+  // §4/§6 — the durable typed-Project registry (task 14.6).
+  schema.projectRegistry,
 ];
 
 /** Emit `CREATE TABLE` for one pg-core Drizzle table, mirroring its column + PK config. */

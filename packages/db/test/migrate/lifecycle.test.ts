@@ -78,6 +78,8 @@ const DOMAIN_TABLES = [
   "provider_state",
   "read_models",
   "gcl_projections",
+  // §4/§6 — the durable typed-Project registry (task 14.6, migration 0007).
+  "project_registry",
 ] as const;
 
 // PGlite constructs a real PG16 in wasm; several instances per case → wide timeout.
@@ -258,8 +260,9 @@ function defineLifecycleSuite<H>(fix: LifecycleFixture<H>): void {
         // subjectKind/planRef add + actionRef→nullable) + 0004_pending_kmp (§13.10a — the
         // pending-KMP store CREATE TABLE) + 0005_knowledge_revisions (§6/§16 — the durable
         // KnowledgeWriter idempotent-replay index CREATE TABLE) + 0006_parity_reports (§6/§12/§16 —
-        // the serve-time ParityReport store CREATE TABLE), all applied from empty.
-        expect(r.value.applied).toBe(7);
+        // the serve-time ParityReport store CREATE TABLE) + 0007_project_registry (§4/§6 — the
+        // durable typed-Project registry CREATE TABLE), all applied from empty.
+        expect(r.value.applied).toBe(8);
         expect(r.value.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
         expect(r.value.backup.dialect).toBe(fix.dialect);
 

@@ -61,6 +61,8 @@ import type {
   ParityReportRepository,
   PendingKnowledgeMutation,
   PendingKnowledgeMutationRepository,
+  ProjectRegistryRepository,
+  ProjectRegistryRow,
   ProviderStateRepository,
   ReadModelRecord,
   ReadModelRepository,
@@ -106,6 +108,7 @@ function casDbResult(
 /** All Postgres repositories returned by the factory (one per §4 domain + WW-1 receipts). */
 export interface PostgresRepositories {
   readonly workspaceConfig: WorkspaceConfigRepository;
+  readonly projectRegistry: ProjectRegistryRepository;
   readonly eventLog: EventLogRepository;
   readonly workflowRunRefs: WorkflowRunRefRepository;
   readonly audit: AuditRepository;
@@ -381,6 +384,76 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
             },
           });
         return ok(ws);
+      }),
+  };
+
+  // Durable typed-Project registry (14.6). Nullable columns (planPath, aliases) map
+  // NULL → undefined so the row matches the `ProjectRegistryRow` optional-field shape.
+  const toProjectRegistryRow = (r: typeof schema.projectRegistry.$inferSelect): ProjectRegistryRow => ({
+    projectId: r.projectId,
+    workspaceId: r.workspaceId,
+    planPath: r.planPath ?? undefined,
+    progressProviders: r.progressProviders,
+    aliases: r.aliases ?? undefined,
+    title: r.title,
+    slug: r.slug,
+    lifecycleState: r.lifecycleState,
+  });
+  const projectRegistry: ProjectRegistryRepository = {
+    get: (projectId) =>
+      run(async () => {
+        const rows = await db
+          .select()
+          .from(schema.projectRegistry)
+          .where(eq(schema.projectRegistry.projectId, projectId))
+          .limit(1);
+        const row = rows[0];
+        return row ? ok(toProjectRegistryRow(row)) : err(notFound(`project ${projectId}`));
+      }),
+    resolveRef: (ref) =>
+      run(async () => {
+        // Portable GLOBAL resolve (no dialect-specific JSON operators — forbidden #2): scan +
+        // filter in memory. An exact projectId (PRIMARY KEY, globally unique) match takes
+        // PRECEDENCE — a project is ALWAYS resolvable by its own key, never shadowed by another
+        // project's colliding alias. Only if no projectId matches do we resolve by alias:
+        // exactly-one match resolves; zero OR >1 (an alias shared across workspaces) ⇒ not_found
+        // (fail-closed — never an arbitrary cross-workspace pick, safety rule 4).
+        const rows = await db.select().from(schema.projectRegistry);
+        const byId = rows.find((r) => r.projectId === ref);
+        if (byId) return ok(toProjectRegistryRow(byId));
+        const byAlias = rows.filter((r) => (r.aliases ?? []).includes(ref));
+        const only = byAlias.length === 1 ? byAlias[0] : undefined;
+        return only ? ok(toProjectRegistryRow(only)) : err(notFound(`project ref ${ref}`));
+      }),
+    listByWorkspace: (workspaceId) =>
+      run(async () =>
+        ok(
+          (
+            await db
+              .select()
+              .from(schema.projectRegistry)
+              .where(eq(schema.projectRegistry.workspaceId, workspaceId))
+          ).map(toProjectRegistryRow),
+        ),
+      ),
+    upsert: (entry) =>
+      run(async () => {
+        await db
+          .insert(schema.projectRegistry)
+          .values(entry)
+          .onConflictDoUpdate({
+            target: schema.projectRegistry.projectId,
+            set: {
+              workspaceId: entry.workspaceId,
+              planPath: entry.planPath ?? null,
+              progressProviders: entry.progressProviders,
+              aliases: entry.aliases ?? null,
+              title: entry.title,
+              slug: entry.slug,
+              lifecycleState: entry.lifecycleState,
+            },
+          });
+        return ok(entry);
       }),
   };
 
@@ -1243,6 +1316,7 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
 
   return {
     workspaceConfig,
+    projectRegistry,
     eventLog,
     workflowRunRefs,
     audit,

@@ -23,6 +23,8 @@ export * from "./provider-state";
 export * from "./read-models";
 export * from "./gcl-projections";
 export * from "./write-receipts";
+// §4 / §6 — the durable typed-Project registry (operational resolution index, task 14.6).
+export * from "./project-registry";
 // Phase-10 durability tables (LIFE-1 / LIFE-5 / OBS-2).
 export * from "./health-items";
 export * from "./schedule-bookkeeping";

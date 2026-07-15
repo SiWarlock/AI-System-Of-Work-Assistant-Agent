@@ -28,10 +28,12 @@ import type {
   GclProjection,
   HealthItem,
   ParityReport,
+  ProjectLifecycleState,
   ProviderProfile,
   Result,
   WorkflowRunRef,
   Workspace,
+  WorkspaceId,
   WriteReceipt,
 } from "@sow/contracts";
 
@@ -197,6 +199,73 @@ export interface WorkspaceConfigRepository {
   get(id: Workspace["id"]): DbResult<Workspace>;
   list(): DbResult<Workspace[]>;
   upsert(workspace: Workspace): DbResult<Workspace>;
+}
+
+/**
+ * One external progress-provider mapping stored on a project-registry row. Mirrors
+ * the `@sow/workflows` `ProgressProvider` STRUCTURALLY (a plain {connectorId,
+ * remoteHandle} pair) — `@sow/db` must NOT import `@sow/workflows` (dep direction is
+ * workflows → db), so the shape is re-declared here as a db-owned operational field.
+ */
+export interface ProjectRegistryProvider {
+  readonly connectorId: string;
+  readonly remoteHandle: string;
+}
+
+/**
+ * The durable typed-Project REGISTRY row (task 14.6, §4/§6) — OPERATIONAL resolution
+ * truth, MUTABLE. This is the persisted mirror of the `@sow/workflows`
+ * `ProjectRegistryEntry` port type; the worker's production `ResolveRegistryPort` maps
+ * this Row ↔ that Entry at the worker boundary (Q1: no contract promotion; db can't
+ * import the workflow-port type). It is a RESOLUTION INDEX — NEVER a second Project
+ * writer: the canonical Project (Markdown frontmatter) stays KnowledgeWriter-owned
+ * (safety rule 1). `progressProviders`/`aliases` persist as one json column each.
+ */
+export interface ProjectRegistryRow {
+  /** Stable project id — the registry PRIMARY KEY (globally unique). */
+  readonly projectId: string;
+  /** The BOUND workspace (WS-2) — the durable write target; server-resolved, never caller-set. */
+  readonly workspaceId: WorkspaceId;
+  /** The canonical status-doc (IMPLEMENTATION_PLAN) path the deterministic parser reads (optional). */
+  readonly planPath?: string;
+  /** External PM progress providers (deterministic status sources) — json column; empty ⇒ plan-only. */
+  readonly progressProviders: readonly ProjectRegistryProvider[];
+  /** Aliases the registry maps to this project (cross-referencing) — json column (optional). */
+  readonly aliases?: readonly string[];
+  /** Display title (seeds note frontmatter / dashboard). */
+  readonly title: string;
+  /** Canonical note slug (display/frontmatter only — the note PATH is derived from workspaceId, WS-8). */
+  readonly slug: string;
+  /** Current lifecycle state (§13.5 seed). */
+  readonly lifecycleState: ProjectLifecycleState;
+}
+
+/**
+ * Durable typed-Project registry — OPERATIONAL resolution truth, MUTABLE (14.6, §4/§6).
+ * `resolveRef` is GLOBAL by design: the projectSync `ResolveRegistryPort.resolve(ctx)`
+ * carries only a `projectRef` (no workspaceId — WS-8 anti-smuggle), so a ref resolves
+ * by projectId OR alias across the store; the WS-8 control is the worker port's
+ * membership gate on the RESOLVED row's workspaceId (never a caller field), plus
+ * ambiguous-alias ⇒ `not_found` (fail-closed). `listByWorkspace` is a workspace-scoped
+ * primitive — FUTURE callers (15.8/18.6) MUST pass a workspaceId the caller is
+ * authorized for; it must never become a cross-workspace enumeration path.
+ */
+export interface ProjectRegistryRepository {
+  /** Create or overwrite a registry row (keyed by projectId). */
+  upsert(entry: ProjectRegistryRow): DbResult<ProjectRegistryRow>;
+  /** Fetch a row by its projectId primary key; absent ⇒ typed `not_found`. */
+  get(projectId: string): DbResult<ProjectRegistryRow>;
+  /**
+   * Resolve a GLOBAL ref (a projectId OR an alias) to its single row. An exact projectId
+   * (PRIMARY KEY) match takes PRECEDENCE — a project is ALWAYS resolvable by its own key,
+   * never shadowed by another project's colliding alias. Only if no projectId matches is
+   * the ref resolved by alias: no match ⇒ typed `not_found`; an alias matching >1 row
+   * (across workspaces) ⇒ `not_found` (fail-closed — never an arbitrary cross-workspace
+   * pick, safety rule 4).
+   */
+  resolveRef(ref: string): DbResult<ProjectRegistryRow>;
+  /** List all rows for a workspace (workspace-scoped; see the interface note on WS-8). */
+  listByWorkspace(workspaceId: WorkspaceId): DbResult<ProjectRegistryRow[]>;
 }
 
 /**

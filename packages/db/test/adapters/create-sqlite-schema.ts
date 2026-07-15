@@ -32,6 +32,8 @@ const TABLES: readonly SQLiteTable[] = [
   schema.healthItems,
   schema.scheduleBookkeeping,
   schema.instanceLeases,
+  // §4/§6 — the durable typed-Project registry (task 14.6).
+  schema.projectRegistry,
 ];
 
 /** Emit `CREATE TABLE` for one Drizzle table, mirroring its column + PK config. */
