@@ -1,6 +1,8 @@
 # System of Work — Now → 100% Master Runbook
 
-**HEAD:** `origin/main` @ `c63fbd0` · **Platform:** macOS, local-first, self-hosted · **Audience:** owner/operator + build team
+**HEAD:** `origin/main` @ `100f413` · **Platform:** macOS, local-first, self-hosted · **Audience:** owner/operator + build team
+
+> **Progress (2026-07-15):** the **connector READ-adapter chain is COMPLETE + dormant** (rounds 1–8): the `@sow/policy` SSRF predicate + a reusable HTTP transport template (3 shapes) + **7 vendor read connectors** (Asana · Drive · Calendar · Granola · GitHub · Linear · Gmail) + **4 Context7-verified OSB extractors** (web · podcast · youtube · file), every candidate wire-shape Context7-grounded, ING-7 read-only verified at job admission, all transports UNBOUND — no hard line crossed. Also landed: the rebuild-oracle producer arc + a knowledge false-green hardening. **A full-system gap audit then ran** (see Part II at the bottom): the connectors are the input *leaf*; the **intelligence, ingestion spine, gbrain write-back, tool-sync, onboarding, and packaging** remain the substance ahead. Part II is the authoritative forward roadmap.
 
 ## Overview
 
@@ -1382,3 +1384,306 @@ The product is 100% complete when **all of the following are simultaneously true
 - [ ] **Safety invariants intact throughout** — one-writer (KnowledgeWriter), candidate-data gate, external-write envelope, WS-8 isolation, Employer-Work egress veto, ING-7 tool-stripping, SecretsPort-only secrets — all still enforced with every capability ON.
 
 **What you consciously chose to defer, if anything:** if you stop before 100%, record the cut explicitly — a coherent, safe, *reduced* product is a legitimate stopping point at any phase boundary (e.g., ship read-only through Phase 2 + Dashboard, deferring the entire write half; or go live through Phase 7 with only file-read + a subset of Phase-8 connectors, deferring the long tail of vendor transports and Gmail; or run unpackaged from source, deferring Phase 9). The only thing that is never acceptable is a *silent* cut: every deferral is an owner-approved, written scope decision, and no gate is left in a half-armed state.
+
+
+---
+
+> **PART II — added 2026-07-15 after a full-system gap audit** (10 read-only investigators, 100 evidence-cited findings, dedup + completeness-critic passes). Part I above is the original *arming* view (flip the built gates in order). Part II below is the deeper truth the audit surfaced: reaching the product the owner actually wants — real intelligence (LLM extraction + "which project is this" resolution), tool-sync (vault→Asana/Todoist/etc. write-back), and the wired ingestion spine — is **~12 phases / 15+ build rounds with 7 owner-gated hard-line crossings**, not flag-flips. Connector READ-adapter chain (rounds 1–8) is **COMPLETE + dormant** at origin/main `100f413`. Part II is the authoritative forward roadmap; Part I's phases map onto Part II's arming stages (P3 Keychain, P5–P6 oracle/coverage, P7 external-write, P8 propose).
+
+# Part II — Intelligence & Tool-Sync Roadmap (now → the system working how we want)
+
+## Where we are
+
+The connector **read-adapter** layer is built and dual-reviewed: 7 vendor read adapters (Asana / Drive / Calendar / Granola / GitHub / Linear / Gmail across three HTTP shapes — GET body-cursor, GET page-number, POST GraphQL) plus web / podcast / youtube / url source-extractor shells, all Context7-grounded and **transport-unbound**. The **read / Copilot lane runs live**: a cloud Copilot (Claude, 1M window) answers over a governed retrieval path, the §9.8 Approvals CAS→dispatch chain is live end-to-end, the KnowledgeWriter sole-writer + atomic commit is real, and the Employer-Work egress veto is complete and fail-closed. **Everything downstream of "candidate data in" is dormant**: no real trigger reaches ingestion, no model runs (the broker's `run` leg is a fixed-candidate stub), no note carries real extracted content, nothing writes to gbrain, no external write hits a real vendor, and every arming gate ships OFF behind strict `===true` locks. What follows is the ordered path from that *dormant-but-built* substrate to the system working how we want — and honestly, it is **~12 phases / 15+ build rounds with 7 owner-gated hard-line crossings**, not a set of flag-flips. Flag-flips alone never reach 100%.
+
+**Legend for the tables & phases:** `build` = pure-build / dormant-safe, no network, no owner gate. **`HARD-LINE`** = crosses into real credential I/O, real external fetch/write, real API spend, or an irreversible go-live selection → **explicit per-crossing owner confirmation required**.
+
+---
+
+## Gap inventory
+
+### 1. Ingestion Spine
+
+| Gap | State | Evidence (file:line) | What it needs | Line? |
+|---|---|---|---|---|
+| Connector→ingestion bridge + poll driver + meeting-closeout dispatch trigger | unbuilt | `vaultWatcher.ts:1-9` (only fs-watch reaches dispatch); `connectorPoll.ts:40-51`; `boot.ts:1034` (meeting.close never dispatches) | poll driver + `onRecords`→`RegisterSourceInput`→`dispatchSourceIngestion(connector_event)`; parallel calendar/Granola→`dispatchMeetingCloseout` | build |
+| Source content threading (envelope carries only `contentHash`) | partial | `file-source.ts:127-157` (reads text, **discards** it); `source-envelope.ts:26-62` (no body field) | thread candidate text via driver ctx or a payload store keyed by `contentHash` | build |
+| Note body/frontmatter projection from validated extraction | stub | `buildActivities.ts:659-660` (`body:'source ingestion (C1)'`, `frontmatter={}`) | deterministic projection mirroring `meetingOutputsProjection` | build |
+| Persisted `seenContentHash` dedupe (Flow-4 REQ-F-010) | partial | `buildActivities.ts:592-596` (always-miss); `source-register.ts:100-107` (gate real) | back with a persisted `@sow/db` registered-source repo | build |
+| Durable disposition store + real `isParked` + parked read seam + re-enter runner (§9 / 7.7) | stub | `buildActivities.ts:798-804` (in-mem Map, `isParked→ok(true)`), `:563-571`, `:577-580` | `@sow/db` operational-store repo; re-read parked envelope preserving hash; `reenterIngestion` actually re-drives on the same `idempotencyKey` | build |
+| Auto-ingest watcher `.md` scope + output-subtree feedback guard | partial | `vaultWatcher.ts:134-137`; `sourceNotePath.ts:74-86` (writes **inside** watched root) | exclude `sources/` subtree (or write outside root) to break write→watch→re-dispatch | build |
+| source-ingestion propose delegate via the **real** Tool Gateway | stub | `buildActivities.ts:703` (in-mem Map, no dispatch); `:436-443` (meetingPropose is real) | replace `sourcePropose` with `createProposeActivity` over `externalWriteDeps` | build |
+
+### 2. Intelligence (model-driven)
+
+| Gap | State | Evidence (file:line) | What it needs | Line? |
+|---|---|---|---|---|
+| ModelProviderPort/AgentRuntimePort bound into `broker.run` (route→provider; local zero-egress) | dormant | `backends.ts:496-501,768` (stub `run`); `http-transport.ts:203,321,366` (real, zero call site); `boot.ts:1413` | `ProviderRoute→port` selector driving `broker.run` over http-transport (key via `getSecret`); local provider is the egress-veto fail-closed landing | **HARD** |
+| Meeting transcript→structured-fields extraction | stub | `buildActivities.ts:351` (accepted outcome **ignored**); `backends.ts:501`; `boot.ts:1008` | bind real transport + `mapCandidate` reads `BrokerOutcome.candidateOutput`; supply prompt + output schema; eval-tested | **HARD** |
+| Source-ingestion extraction agent | stub | `buildActivities.ts:611-620` (fixed binding); `boot.ts:1013` | real broker/model run → evidence-backed fields feeding note projection; eval-tested | **HARD** |
+| Meeting correlation signal producer (`resolveSignals`) | stub | `buildActivities.ts:332-337` (echoes input); `boot.ts:1041` (hardcoded `0.95`); `correlateMeeting.ts:61` (gate real) | read transcript + gbrain history → confidence-scored ws+project binding, fail-closed below threshold (semantic = hard; attendee matcher = build) | **HARD** |
+| Content→workspace/project resolver + typed Project registry | stub | `buildActivities.ts:602-609` (single-ws `confidence:1`); `deterministicProgress.ts:264,329` (`projectId` caller-supplied) | classifier `content+hints→{ws,project,confidence}` (alias match = build; LLM = hard); needs a typed Project registry (not built) | build |
+| Real broker HEALTH / BUDGET / SCHEMA gates (§5.9/§5.4/§5.5) | stub | `backends.ts:522` (always ok), `:531` (assumes 1s), `:555` (pass-through) | availability probe, COST-1/2 accounting, registered-schema validation (schema/budget build; live health co-lands transport) | build |
+
+### 3. Write / Tool-Sync
+
+| Gap | State | Evidence (file:line) | What it needs | Line? |
+|---|---|---|---|---|
+| Real per-vendor external-write **TRANSPORT** | stub | `backends.ts:574` (in-mem Map), `:621-628`; `transport.ts:82` (seam, no impl) | build a real per-vendor write client (endpoints/idempotency, Context7-grounded) — then owner arms `enabled+make` | **HARD** |
+| Per-`TargetSystem` adapter routing registry | unbuilt | `backends.ts:775` (single adapter); `buildActivities.ts:405`; `shared-enums.ts:59` (7 targets) | `TargetSystem→adapter` selector by `action.targetSystem` — root of the Asana/Todoist mismatch | build |
+| Wire the 7 per-vendor adapter factories into the registry | dormant | `asana.ts:14` (never called outside tests); `adapter-core.ts:142` (generic is the only one invoked) | construct one adapter per vendor over its transport + register | build |
+| `ProposedAction` **producer** (extraction emits a real `targetSystem`) | stub | `backends.ts:501` (fixed candidate → no action); `buildActivities.ts:699` (`actions:[]`); `proposed-action.ts:23` | real extraction emits `ProposedAction`s w/ `targetSystem`+identity — **where todoist-vs-asana is actually chosen** | build |
+| §9.8 Approvals→dispatch terminal real write | partial | `buildActivities.ts:508-546` (chain **live**); `gateway.ts:199` (`adapter.create` hits stub); `backends.ts:756` (real receipts) | nothing in the chain — the real write is entirely the transport gap | **HARD** |
+| `copilot.propose_action` path | dormant | `copilotPropose.ts:120,275,327`; `copilotProposeSink.ts:111`; `boot.ts:1303-1304` | owner flip `copilotProposeMode` + a live retrieval path stamping `knowledge_writer`. Footgun: `idempotencyKey` excludes payload | **HARD** |
+| `copilot.propose_knowledge` path | dormant | `copilotProposeKnowledge.ts:1`; `boot.ts:1309` | owner flip `copilotProposeKnowledge` + `proofSpineParams`; mutually exclusive with propose_action | **HARD** |
+| Write OUTBOX drain trigger | dormant | `buildActivities.ts:318` (enqueue wired); `outbox-drain.ts:199` (built); `keychain-locked.ts:113` (hook unbound) | bind `runWakeDrain`/`drainOutbox` to a wake/reconnect trigger + schedule at boot (LIFE-6) | build |
+| Approval card renderer real Mac + Telegram transports | stub | `buildActivities.ts:502-505` (`render→ok(undefined)`) | bind real dual-channel push; the CAS apply/exactly-once is real | **HARD** |
+| NotebookLM back-sync (Drive write) | dormant | `notebooklm-sync.ts:1` (Drive-backed only); `provisionDev.ts:310` (no Drive connector) | real Drive WRITE adapter + managed-doc slot mapping + bind `notebookLmSync`; direct API = separate spike | **HARD** |
+| `TargetSystem` write coverage / read-write asymmetry | partial | `shared-enums.ts:59` (write enum); `connectors/adapters/` (gmail read no write; todoist write no read) | owner decision: confirm write targets, reconcile asymmetry, wire+route each | build |
+
+### 4. Connector real-transports
+
+| Gap | State | Evidence (file:line) | What it needs | Line? |
+|---|---|---|---|---|
+| Real `HttpTransport.send()` (the keystone) | unbuilt | `http-transport.ts:61,122-128` (seam, unbound); grep: zero real fetch/undici in connectors | concrete `send()` (global fetch/undici, AbortSignal/TLS/timeouts/reuse); substrate for all 7 + url/telegram. Binding creds = hard | **HARD** |
+| Connector credential binding (`SecretsAccessor` + `tokenRef`) | dormant | `http-transport.ts:74-79,177-186` (fail-closed) | bind the 11.4 Keychain adapter as accessor + provision each vendor `tokenRef` | **HARD** |
+| OAuth refresh / expiry / rotation (Google) | unbuilt | `drive.ts:37-42`, `calendar.ts:40-43`, `gmail.ts:41-43` (doc-only) | build the refresh loop; a Google token expires ~1h ⇒ else **permanent** `auth_locked`, no recovery | **HARD** |
+| Per-vendor content hydration (list→get) | partial | `gmail.ts:35-40` (id-only); `granola.ts:29-31` (no transcript); `asana.ts:33-38` (400s without GID) | second-hop fetch: batched `messages.get` fan-out (Gmail), transcript (Granola), Asana project GID + widened `opt_fields`; **ING-7 hard** on hydrated email | **HARD** |
+| Drive `incompleteSearch` coverage-degrade | partial | `drive.ts:33-35` (ignored) | map `incompleteSearch:true`→coverage-degrade (avoid false-complete) | build |
+| OSB source extractors (web/podcast/youtube) + url-source | unbuilt | `web-source.ts:41-53`, `podcast-source.ts:50-65`, `youtube-source.ts:40-51`, `url-source.ts:4-8` | readability fetch (web); RSS + audio transcription via ModelProviderPort under veto (podcast); pinned `youtube_extract.py` subprocess; real GET (url) | **HARD** |
+| File/PDF extractor binary parsing | partial | `file-read-transport.ts:1-5,111-114` (real fs, rejects binary); `vaultWatcher.ts:34-40` (**wired**) | text-extraction step for PDF/Word/binary. This is the ONE connector with a real, wired transport | build |
+| Boot composition of ConnectorPorts + ConnectorGateway | dormant | grep: zero `create*Connector` in worker/workflows; `adapters/index.ts:26-39` | construct each port over `create*HttpTransport(...)` + register a `ConnectorGateway` | build |
+| Connector-sync engine (poll activity + `connectorSyncHealth` + `resolve()` + schedule) | unbuilt | `connectorPoll.ts:47-51`; `registerWorker.ts:261` (proofSpine only); `connectorSyncHealth.ts` (unscheduled) | real `resolve(connector)→{port,syncDeps}`; register activity + health; Temporal schedule per connector+ws w/ LIFE-2 catch-up collapse | build |
+| Capture INGRESS (Telegram bot + coding-session git-hook) | unbuilt | `capture-source.ts:80-143` (consumes payload; nothing produces one); `telegram-capture.ts:1-16` | Telegram long-poll/webhook receiver (sender allowlist) + git-hook emitter producing `CapturePayload` | **HARD** |
+| Vendor wire-shape verification vs live APIs | partial | `asana.ts:28-31`, `drive.ts:29-35`, `granola.ts:29-32`, `gmail.ts:28-33` (documented candidates) | every field set is a grounded **guess**; a wrong guess fail-closes to a permanently unreachable connector — verify/correct on first live call | **HARD** |
+
+### 5. gbrain / indexing / reconcile
+
+| Gap | State | Evidence (file:line) | What it needs | Line? |
+|---|---|---|---|---|
+| Worker→gbrain index WRITE client (`IndexApplyClient`) | stub | `backends.ts:640,780` (in-mem Set); `buildActivities.ts:452-455` (`facts:[]`), `:728-731` (no-op) | real client over gbrain write (`put_page`/`sync_brain` or serve `--http`), keyed `(ws,rev,facts)`, idempotent + fail-safe (never rolls back the commit) | **HARD** |
+| Post-commit incremental sync engine + durable outbox | unbuilt | `gbrain-sync-trigger.ts:126`; `index-sync.ts:158,264`; `sync-outbox.ts:69` (iface only); `buildActivities.ts:391-400` | invoke `triggerGbrainSync` post-commit; concrete `CanonicalMarkdownSource`; dual-dialect `@sow/db` outbox + migration + drain-on-wake; bind `toIndexDispatcher` | build |
+| Signed provenance stamping wired into commit deps | dormant | `provenance-stamp.ts:208,254`; `buildActivities.ts:382-390` (no stamper); `writer.ts:436` (unstamped fail-safe) | thread `StamperDeps` (SecretsPort + `signingKeyRef`); w/o stamps the oracle never admits `knowledge_writer` facts | **HARD** |
+| Parity reconcile pass + trigger source | dormant | `reconciler.ts:110`; `parityReconcile.ts:53`/`reconcileDriver.ts:65`; `boot.ts:1555-1557,452` | flip `config.reconcile` + `vaultRoot` + a trigger (post-commit/fs-watch/schedule) that flushes `ReconcileScheduler` | build |
+| `ReconcilerDbProjection` over live `GbrainReadGrant` | dormant | `boot.ts:1562` (`→undefined`⇒degrade); `reconcilerDbProjection.ts:68`; `gbrain-http-read-client.ts:1` | bind the real read adapter into `makeDbAdapter`; confirm serve `--http` read shape at arming | **HARD** |
+| Serve-time ParityReport store WRITE side | dormant | `parityReportStore.ts:125-133` (no caller); `boot.ts:1371` (read wired); `servingContextBootReaders.ts:87-93` | activate the reconcile trigger → populates store, lifts the parity leg of the serving-coverage gate | build |
+| Rebuild-from-Markdown ORACLE (`IndexRebuildClient`) | dormant | `rebuild.ts:104`; `rebuildOracleStatus.ts:3`; `boot.ts:1347` (`make…` omitted) | bind a real rebuild client (gbrain scratch-import = real write I/O) so `oracleBuildOk` can go true | **HARD** |
+| C5.4b serving oracle admits `knowledge_writer` facts | dormant | `boot.ts:1315-1320` (degraded stamps nothing), `:1356-1387` (loader-backed behind 3 AND-locks) | the convergence capstone — selecting it is an owner security-review-gated go-live | **HARD** |
+| Copilot retrieval bound to real gbrain-exec | partial | `copilot.ts:118-135` (fixture stub); `copilotClaudeSynthesis.ts:498-504` (real path exists) | bind the gbrain-exec factory in the served path (WS-8 guard reused); needs reachable serve `--http` + embeddings key | build |
+| KnowledgeWriter commit callers carry real content | partial | `buildActivities.ts:391,689` (real `applyPlan` ×3); `atomic-write.ts:59` (real fs) | the sole writer is real+wired; dormancy is the **callers** (extraction gap), not `applyPlan` | build |
+| One-writer OS-level enforcement (REQ-S-NEW-008) | partial | `doctor-posture.test.ts:1` (report-only); `atomic-write.ts:59` (code-level) | active OS ACL/advisory lock; today only code-level + compare-revision precondition | build |
+
+### 6. Secrets / Arming gates
+
+| Gap | State | Evidence (file:line) | What it needs | Line? |
+|---|---|---|---|---|
+| `KeychainSecretsAdapter` core | dormant | `keychain-adapter.ts:91-104` (complete, fail-closed) | nothing to build — inert until `buildKeychainSecrets` is gated (`config.keychainSecrets`) | build |
+| Real macOS `security`-CLI Keychain backend | dormant | `keychain-backend.ts:22`; `keychain-boot.ts:93` (real process only on provisioned path) | owner provisions signing key via `security add-generic-password` + verifies vs live binary — **first real Keychain touch** | **HARD** |
+| `buildKeychainSecrets` gate + `getSecret`→provider deps + keychain-locked handler | partial | `keychain-boot.ts:88-95`; `boot.ts:1333,1380,391` (`getSecret` **never wired**); `http-transport.ts:82` (providers already consume it) | set `config.keychainSecrets`; wire `getSecret` into ModelProvider deps + connect the locked handler | **HARD** |
+| `provenanceServingOracle` bundle + `copilotServingOracleGoLive` + selector | dormant | `boot.ts:380,1330,1367` (bundle absent), `:368,1387`; `servingContextLoader.ts:238-240` | owner supplies bundle (`signingKeyRef`+`GbrainPin`+`resolveRunning`) **and** flips the flag; flag alone can't arm | **HARD** |
+| `deriveServingCoverage` 4-way AND-gate | partial | `rehydration-gate.ts:107`; `servingContextBootReaders.ts:139-142` (throw folds all-false) | enforcement, not build gap — green only when parity + rebuild + pin legs are independently satisfied | build |
+| Propose arming flags + content-trust structural-OFF | dormant | `boot.ts:1304,1309` (strict `===true`); `copilotAgentSynthesis.ts:261,287-289` (untrusted for every live ask) | two mutually-exclusive owner flips → PENDING approvals; 4th lock flips ON only after the oracle stamps retrieval `knowledge_writer` | **HARD** |
+| `WriteTransportGate` arming | dormant | `backends.ts:139,610-628` (AND-composed OFF-locks) | build the first vendor write client, then owner sets `enabled+make`; the gate enables nothing itself | **HARD** |
+| `autoIngest` gate | dormant | `worker-host/index.ts:176-178` (default-OFF); `boot.ts:600` | operator env flip + real `vaultRoot` wires `vaultWatch`+`proofSpineParams`+Temporal (local KW commits, no network) | build |
+| Employer-Work egress veto + `cloudCopilotPosture` | partial | `egress.ts:74,94,119` (complete, fail-closed); `worker-host/index.ts:101` | no build — complete+live; residual A1 (body-embedded employer text in the combined brain); keep un-bypassed; needs a local provider | **HARD** |
+| Strict `===true` arming-guard discipline + guard-tests | partial | `backends.ts:130`; `boot.ts:1304,1557`; `copilotAgentSynthesis.ts:262`; `reconcilerDbProjection.ts:121` | nothing to build; every NEW knob inherits the truthy-not-true guard-test (incl. the string `'false'`, Lessons 27/28) | build |
+| Documented safe turn-on order / arming runbook | partial | `turn-on-and-smoke-test-runbook.md:16,25`; `copilot-propose-go-live.md:1`; `run-it-live-and-provision.md:1` | authoritative sequence exists; ~15 build rounds remain; each hard stage needs per-crossing owner confirm | **HARD** |
+
+### 7. Onboarding & user-facing configuration *(swept-past subsystem — the whole roadmap presumes workspaces exist)*
+
+| Gap | State | Evidence (file:line) | What it needs | Line? |
+|---|---|---|---|---|
+| Workspace onboarding / provisioning (§9.12) | unbuilt | `scope.ts:11` ("minted by onboarding… until then empty"); `provisionDev.ts:3,119` (only path is dev fixtures); `surfaces/` (5 surfaces, no onboarding); `Today.tsx:132` (handles pre-onboarding) | create workspace + select vault root + apply preset + populate the **WS-8 registry for real** (not `provisionDev`). Every ingest/intel/retrieval/write path scopes to a workspace only dev fixtures create today | build |
+| Connector config surface + per-workspace connector-instance registry | unbuilt | `surfaces/` (no connectors surface); the draft's connector composition assumes a per-vendor+ws config record nothing produces | registry (`vendor·ws·tokenRef·enabled·cadence`) + config UI feeding the composition root and the per-connector schedule | build |
+| Routing/clarification **human**-resolution loop (REQ-F-017 no-inference) | partial | `triageCommands.ts:45-49` (payload has no target ws/project); `ingestion-inbox/index.tsx:42-46` (accept/reject only); `LESSONS.md #6` (key omits project dim) | let the human pick ws/project for a parked "which project" item + re-drive with that override binding — the literal closure of the owner's want | build |
+| System Health / observability UI surface | partial | `health/surface.ts` (store exists); `temporal-unavailable.ts:218` (mints `worker_down`); `surfaces/` (no health surface) | wire the produced HealthItem stream → durable store → renderer panel (`worker_down`/`auth_locked`/`parity_defect`/coverage-degrade/keychain-locked) — the operator's only window into the fail-closed degrades | build |
+
+### 8. Runtime substrate & packaging *(infra the draft assumed)*
+
+| Gap | State | Evidence (file:line) | What it needs | Line? |
+|---|---|---|---|---|
+| App-managed **local Temporal server** supervision/bundling | unbuilt | `worker-host/index.ts:53-54` (address only), `:4` (Temporal-DEGRADED default), `:28` (only gbrain serve supervised); grep: no `start-dev`/temporalite spawn | bundle+spawn+supervise a local Temporal dev server (readiness+degrade) like gbrain serve. **A packaged app cannot run ANY workflow without it** — the whole spine is unreachable in-product otherwise | **HARD** |
+| Electron packaging of native-ABI worker + bundled runtime binaries | unbuilt | `worker-host/index.ts:8` ("PACKAGING NOTE"); `LESSONS.md #2` (utilityProcess + `@electron/rebuild` at packaging) | utilityProcess for the worker, `@electron/rebuild` for native modules, bundle gbrain+Temporal, Mac code-sign/notarize — a substantial native-toolchain workstream, not a line item | build |
+
+### 9. Second-brain output workflows *(built, unregistered/unscheduled)*
+
+| Gap | State | Evidence (file:line) | What it needs | Line? |
+|---|---|---|---|---|
+| Daily brief / period review / project sync+dashboard / cross-calendar scheduling / ingestion triage — registered + scheduled | dormant | `workflows.ts:46,52,241` (bundle = proof spine only); `registerWorker.ts:261`; `periodReview.ts` + `ports/{dailyBrief,projectSync,crossCalendarScheduling}.ts` + `projectDashboard.ts` + `ingestionTriage.ts` (built, absent from bundle); grep: no `createSchedule` | register in the worker bundle + add Temporal schedules (daily/weekly). Produces much of the daily "second brain" value; synthesis legs are model-driven (eval-tested), so **mixed** | build (mixed) |
+
+### 10. gbrain embedding egress & cost accounting *(unrepresented hard-lines)*
+
+| Gap | State | Evidence (file:line) | What it needs | Line? |
+|---|---|---|---|---|
+| Employer-Work **embedding** egress at the gbrain layer | unbuilt | `egress.ts` (veto governs app's ModelProviderPort **only**); `worker-host/index.ts:28` (worker writes into app-managed serve; gbrain embeds via **its own** backend) | pin/verify gbrain's embedding backend to **local zero-egress** for any brain holding employer content, BEFORE indexing it — else safety rule 5 is violated *outside* the app's veto | **HARD** |
+| Persistent cost/budget ledger (COST-1/2 across runs) | partial | `backends.ts:531` (fixed 1s, no ledger) | durable `@sow/db` cost-ledger accumulating real token/cost per run so the budget gate enforces a real spend ceiling across runs | build |
+
+---
+
+## The roadmap
+
+Ordered. Each phase names its goal, the specific stubs it closes (with file:line), a `build` / **HARD-LINE** tag, and a concrete done-when / smoke test. Hard-line phases do not proceed without explicit owner confirmation at each crossing.
+
+### Phase 0 (prerequisite the draft omitted) — Onboarding, config surfaces & runtime substrate — **mixed (one HARD-LINE)**
+
+**Goal:** give a real user a way to *exist* in the system and give the packaged app the processes it needs to *run*, before any spine work matters.
+**Closes:**
+- Workspace onboarding §9.12 — `scope.ts:11`, `provisionDev.ts:3,119` (replaces dev fixtures; populates the WS-8 registry) · `build`
+- Connector config surface + per-workspace connector-instance registry — `surfaces/` (none) · `build`
+- System Health panel — `health/surface.ts`, `temporal-unavailable.ts:218` · `build`
+- **App-managed local Temporal server supervision** — `worker-host/index.ts:53-54,28` · **HARD-LINE** (supervises a native server process)
+
+**Done when / smoke test:** a real user onboards a workspace with a chosen vault root (**no `provisionDev`**), registers a connector instance bound to it, sees operator degrades in a Health panel, and a workflow actually runs **in-product** on the app-supervised Temporal server (not only under `TestWorkflowEnvironment`).
+
+### Phase 1 — Ingestion spine plumbing + human routing-resolution — **build**
+
+**Goal:** close the deterministic breaks so a real trigger + real extraction can carry actual content to a real note — with dedupe, park, durable disposition, no feedback loop — all with fakes, zero network; **plus** close the no-inference clarification loop so the park path isn't a dead-end for the exact ambiguous case it exists for.
+**Closes:**
+- Source content threading — `file-source.ts:127-157`, `source-envelope.ts:26-62`
+- Note body/frontmatter projection — `buildActivities.ts:659-660`
+- Persisted `seenContentHash` dedupe — `buildActivities.ts:592-596`
+- Durable disposition + `isParked` + parked read seam + re-enter runner — `buildActivities.ts:798-804,563-571,577-580`
+- Watcher scope + feedback-loop guard — `vaultWatcher.ts:134-137`, `sourceNotePath.ts:74-86`
+- source-ingestion propose via real gateway — `buildActivities.ts:703`
+- Content→ws/project routing classifier (deterministic path) — `buildActivities.ts:602-609`
+- **[ADDED]** Routing/clarification human-resolution loop — `triageCommands.ts:45-49`, `ingestion-inbox/index.tsx:42-46`
+
+**Done when / smoke test:** an E2E test drives a fake source → fake extraction → a note whose body/frontmatter come from the extraction → commit; dedupe holds across re-import; low-confidence parks to the Ingestion Inbox; writing a note does **not** re-fire the watcher; disposition/isParked/rescope are durable; **and** a parked "which project" item is reassigned by the human in the Inbox and re-drives with that override under the **same `idempotencyKey`** (no re-classify, no re-park) — all with fakes, no network.
+
+### Phase 2 — Connector engine + composition + bridge (dormant substrate) — **build**
+
+**Goal:** stand up the whole connector→ingestion drive path against a **fake** transport and leave it inert (no `tokenRef` bound).
+**Closes:**
+- Connector→ingestion bridge + poll driver + meeting-closeout trigger — `vaultWatcher.ts:1-9`, `connectorPoll.ts:40-51`, `boot.ts:1034`
+- Boot composition of ConnectorPorts + ConnectorGateway — grep: none
+- Connector-sync engine (poll activity + `connectorSyncHealth` + `resolve` + schedule) — `connectorPoll.ts:47-51`, `registerWorker.ts:261`
+- Real `HttpTransport` wrapper (built, unbound) — `http-transport.ts:61,122-128`
+- Drive `incompleteSearch` coverage-degrade — `drive.ts:33-35`
+- File/PDF extractor binary parsing — `file-read-transport.ts:1-5,111-114`
+
+**Done when / smoke test:** with a fake `HttpTransport`, a scheduled poll pass fetches records → bridges to `registerSource` → `dispatchSourceIngestion` → note; `connectorSyncHealth` is in the registered bundle; the real fetch wrapper compiles and passes a smoke test against a controlled local endpoint; **every vendor stays inert** (no `tokenRef`, no live vendor call).
+
+### Phase 3 — Keychain secrets activation — **HARD-LINE**
+
+**Goal:** provision the macOS Keychain (HMAC signing key + any provider API keys), verify the `security`-CLI backend against the live binary, wire `buildKeychainSecrets` + the `getSecret` facade into ModelProvider deps and the keychain-locked handler. Unlocks provider transports **and** provenance stamping.
+**Closes:**
+- KeychainSecretsAdapter core (activate) — `keychain-adapter.ts:91-104` · `build`
+- **Real macOS `security`-CLI backend** — `keychain-backend.ts:22`, `keychain-boot.ts:93` · **HARD-LINE** (first real Keychain / OS-credential touch)
+- `buildKeychainSecrets` gate + `getSecret`→provider deps + keychain-locked handler — `keychain-boot.ts:88-95`, `boot.ts:1333,1380,391`
+
+**Done when / smoke test:** `security add-generic-password` provisions the signing key; `buildKeychainSecrets` returns a live `SecretsPort` verified against the real `security` binary; a provider key resolves through `getSecret`; a locked/missing key **degrades, not crashes** (via the keychain-locked handler); commit deps can now receive `StamperDeps`.
+
+### Phase 4 — Real model transport → intelligence legs (eval-tested) — **HARD-LINE**
+
+**Goal:** bind ModelProviderPort/AgentRuntimePort into `broker.run` (route→provider, key via `getSecret`, **local zero-egress** Ollama/LM Studio for employer-work), make `mapCandidate` read the accepted outcome, add real prompts + schemas + real health/budget/schema gates, stand up the real meeting + source extraction agents, the correlation producer, and the content→project resolver; **arm auto-ingest** so the local spine now produces real notes. Two named dependencies: **(a)** live auto-ingest depends on Phase 0's app-managed Temporal server; **(b)** an employer-work run's fail-closed local-provider path must extend to the **embedding** backend (see Phase 5), not just completion.
+**Closes:**
+- ModelProviderPort bound into `broker.run` — `backends.ts:496-501`, `http-transport.ts:203` · **HARD-LINE**
+- Meeting transcript→fields extraction — `buildActivities.ts:351` · **HARD-LINE** (eval)
+- Source-ingestion extraction agent — `buildActivities.ts:611-620` · **HARD-LINE** (eval)
+- Meeting correlation signal producer — `buildActivities.ts:332-337`, `correlateMeeting.ts:61` · **HARD-LINE**
+- Content→ws/project resolver + typed Project registry — `buildActivities.ts:602-609` · `build`
+- Real broker HEALTH/BUDGET/SCHEMA gates — `backends.ts:522,531,555` · `build`
+- ProposedAction producer (real `targetSystem`) — `backends.ts:501`, `buildActivities.ts:699` · `build`
+- KW commit callers carry real content — `buildActivities.ts:391,689` · `build`
+- `autoIngest` gate (arm local spine, on Phase-0 Temporal) — `worker-host/index.ts:176-178` · `build`
+- Employer-Work egress veto fail-closed local path (honored) — `egress.ts:74,94,119` · **HARD-LINE**
+
+**Done when / smoke test:** a source and a meeting run end-to-end through a **real model under the egress veto**, emit schema-valid extraction with real fields (and `ProposedAction`s with a real `targetSystem`), and commit a note whose body is **real content**; evals pass; an employer-work job **fails closed to a local provider** (completion — embeddings verified in Phase 5); correlation/routing bind the right ws/project or park below threshold; the spine runs on the **app-managed Temporal server**.
+
+### Phase 5 — gbrain write-back + parity + provenance + embedding-egress + cost ledger — **mixed / HARD-LINE**
+
+**Goal:** make the app own vault→gbrain population and vault↔gbrain parity. Binding the real write client makes gbrain **embed** every written fact — a hidden real-I/O/spend **and** employer-egress hard-line the draft mis-marked "mixed". Add explicit embedding-egress control + a durable cost ledger.
+**Closes:**
+- Worker→gbrain index WRITE client — `backends.ts:640,780`, `buildActivities.ts:452-455` · **HARD-LINE**
+- Post-commit incremental sync engine + durable outbox — `gbrain-sync-trigger.ts:126`, `sync-outbox.ts:69` · `build`
+- Signed provenance stamping into commit deps — `provenance-stamp.ts:208`, `buildActivities.ts:382-390` · **HARD-LINE**
+- Parity reconcile pass + trigger — `reconciler.ts:110`, `boot.ts:1555-1557` · `build`
+- ReconcilerDbProjection over live `GbrainReadGrant` — `boot.ts:1562`, `gbrain-http-read-client.ts:1` · **HARD-LINE**
+- Serve-time ParityReport store write side — `parityReportStore.ts:125-133` · `build`
+- Rebuild-from-Markdown oracle — `rebuild.ts:104`, `boot.ts:1347` · **HARD-LINE**
+- Copilot retrieval bound to real gbrain-exec — `copilot.ts:118-135` · `build`
+- `deriveServingCoverage` legs (parity+oracleBuildOk+pin) — `rehydration-gate.ts:107` · `build`
+- **[ADDED]** Employer-Work embedding egress at the gbrain layer — `egress.ts`, `worker-host/index.ts:28` · **HARD-LINE**
+- **[ADDED]** Persistent cost/budget ledger (COST-1/2) — `backends.ts:531` · `build`
+
+**Done when / smoke test:** a KW commit fires an **idempotent gbrain index apply** (real facts, not `[]`) against a running gbrain and re-drives held jobs from a durable outbox on wake; a reconcile pass writes a ParityReport the coverage reader consumes; the rebuild oracle returns `oracleBuildOk`; notes commit **stamped**; Copilot retrieval hits the real brain; **employer-work facts index ONLY through a verified local zero-egress embedding backend**; provider runs accumulate a real cross-run cost ledger the budget gate enforces; `deriveServingCoverage` can go **all-legs-green**.
+
+### Phase 6 — Serving-oracle go-live — **HARD-LINE**
+
+**Goal:** provision the `provenanceServingOracle` bundle (signing key + gbrain pin + running-version) and flip `copilotServingOracleGoLive` so the loader-backed oracle is selected and stamps KW-provenanced retrieval sources **trusted** — an owner **security-review-gated** crossing, only after Phase 5 coverage is green.
+**Closes:**
+- C5.4b serving oracle admits `knowledge_writer` facts — `boot.ts:1315-1320,1356-1387`
+- `provenanceServingOracle` bundle + `copilotServingOracleGoLive` — `boot.ts:380,368,1387`, `servingContextLoader.ts:238-240`
+- `deriveServingCoverage` composite gate goes green — `rehydration-gate.ts:107`
+- Runtime content-trust structural-OFF → trusted — `copilotAgentSynthesis.ts:261,287-289`
+
+**Done when / smoke test:** a live Copilot ask retrieves KW-stamped facts marked **trusted**; `deriveCopilotContentTrust` returns `'trusted'`; the interim degraded oracle is no longer selected; **all four** serving-coverage legs are green.
+
+### Phase 7 — External write / tool-sync — **mixed / HARD-LINE**
+
+**Goal:** build the per-`TargetSystem` routing registry + wire the 7 vendor adapters + outbox drain + source-ingestion propose routing (build), then the first real per-vendor write client, arm `WriteTransportGate`, bind the real Mac+Telegram card renderers, and NotebookLM/Drive back-sync (hard-line).
+**Closes:**
+- Per-`TargetSystem` routing registry — `backends.ts:775`, `buildActivities.ts:405` · `build`
+- Wire the 7 vendor adapter factories — `asana.ts:14`, `adapter-core.ts:142` · `build`
+- Real per-vendor write transport + `WriteTransportGate` arming — `backends.ts:574,610-628`, `transport.ts:82` · **HARD-LINE**
+- §9.8 Approvals→dispatch terminal real write — `buildActivities.ts:508-546`, `gateway.ts:199` · **HARD-LINE**
+- Write outbox drain trigger — `buildActivities.ts:318`, `outbox-drain.ts:199` · `build`
+- Approval card renderer real Mac+Telegram — `buildActivities.ts:502-505` · **HARD-LINE**
+- NotebookLM back-sync (Drive write) — `notebooklm-sync.ts:1` · **HARD-LINE**
+- TargetSystem coverage / read-write asymmetry (owner decision) — `shared-enums.ts:59` · `build`
+
+**Done when / smoke test:** an approved §9.8 card dispatches a **REAL vendor object** with a real write receipt through the adapter **selected by `action.targetSystem`**; a held/unreachable write drains on wake; approval cards surface on Mac **and** Telegram with parity; the owner has confirmed the write-target routing.
+
+### Phase 8 — Propose activation (last arming flip) — **HARD-LINE**
+
+**Goal:** with content-trust trusted (P6), the write transport armed (P7), `proofSpineParams` provisioned (auto-ingest), and the signing key present (P3), flip `copilotProposeMode` / `copilotProposeKnowledge` (**mutually exclusive**) — done alone. Every propose write becomes a PENDING §9.8 Approval.
+**Closes:**
+- `copilot.propose_action` path — `copilotPropose.ts:120,275,327`, `boot.ts:1303-1304`
+- `copilot.propose_knowledge` path — `copilotProposeKnowledge.ts:1`, `boot.ts:1309`
+- Propose arming flags + content-trust AND-term — `copilotAgentSynthesis.ts:261`
+
+**Done when / smoke test:** the Copilot proposes an external **or** semantic write that lands as a PENDING §9.8 Approval; on approval it commits via KnowledgeWriter or dispatches a real external write; the two flags remain mutually exclusive; **every write stays human-gated**.
+
+### Phase 9 — Connector enablement per vendor (per-crossing owner-gated) — **HARD-LINE**
+
+**Goal:** arm the built-and-dormant connectors **one vendor at a time** — bind the Keychain `SecretsAccessor` + provision each `tokenRef`, build the OAuth refresh loop (Google), per-vendor content hydration, the OSB extractors + url-source, and the capture ingress, **verifying each wire-shape against the live API**. Independently armable per vendor once Phases 2+3 exist — **may be pulled earlier per owner breadth preference**.
+**Closes:**
+- Connector credential binding (`SecretsAccessor` + `tokenRef`) — `http-transport.ts:74-79`
+- OAuth refresh/expiry/rotation (Google) — `drive.ts:37-42`, `gmail.ts:41-43`
+- Per-vendor content hydration (list→get) — `gmail.ts:35-40`, `granola.ts:29-31`, `asana.ts:33-38`
+- OSB source extractors (web/podcast/youtube) + url-source — `web-source.ts:41-53`, `podcast-source.ts:50-65`, `youtube-source.ts:40-51`
+- Capture ingress (Telegram bot + git-hook) — `capture-source.ts:80-143`, `telegram-capture.ts:1-16`
+- Vendor wire-shape verification vs live APIs — `asana.ts:28-31`, `drive.ts:29-35`
+- Real `HttpTransport` go-live (bind creds) — `http-transport.ts:61`
+
+**Done when / smoke test:** each armed connector fetches real content, hydrates it (list→get where needed), and drives a real ingestion→note→gbrain pass; wire-shapes verified/corrected on first live call; the capture ingress delivers a Telegram/coding-session payload to `buildCaptureSource`. *(~one owner-gated round per vendor — the single largest workstream by count.)*
+
+### Phase 10 — OS one-writer + hardening + REAL packaging — **build**
+
+**Goal:** add active OS-level one-writer enforcement (REQ-S-NEW-008), prune retained-but-unread boot fields, complete health-surface store round-tripping, ensure every arming knob carries a truthy-not-true guard-test, and package the app — a **substantial native-toolchain workstream**, not a line item.
+**Closes:**
+- One-writer OS-level enforcement — `doctor-posture.test.ts:1`, `atomic-write.ts:59`
+- Strict `===true` arming-guard discipline + guard-tests — `backends.ts:130`, `boot.ts:1304,1557`
+- Retained-but-unread boot fields cleanup
+- Health-surface store round-trip completion — `health/surface.ts`
+- **[ADDED]** Electron packaging of native-ABI worker + bundled binaries — `worker-host/index.ts:8`, `LESSONS.md #2`
+
+**Done when / smoke test:** the doctor one-writer check is backed by an **active OS ACL/advisory lock** (not report-only); every arming knob has a truthy-not-true guard-test incl. the string `'false'`; dead boot fields pruned; the app **packages as a signed/notarized Mac app** that launches the worker via `utilityProcess` with rebuilt native modules and bundled gbrain/Temporal servers.
+
+### Phase 11 — Second-brain output workflows (register + schedule) — **mixed**
+
+**Goal:** register and schedule the built-but-dormant output workflows so the system produces daily value beyond ingestion: daily brief, period/weekly review, project sync + dashboard, cross-calendar scheduling, ingestion triage.
+**Closes:**
+- Output workflows registered + scheduled — `workflows.ts:46,52,241`, `registerWorker.ts:261`, `periodReview.ts` / `ports/{dailyBrief,projectSync,crossCalendarScheduling}.ts` / `projectDashboard.ts` / `ingestionTriage.ts`
+
+**Done when / smoke test:** each output workflow is in the registered bundle with a Temporal schedule, runs on cadence over **real workspace data**, surfaces its output in the UI, and its model-driven synthesis legs **pass evals** (deterministic legs via TDD).
+
+---
+
+## Scale & sequencing honesty
+
+- **~12 phases, 15+ build rounds, 7 hard-line stages.** Phases 0–2, most of 5, 7, 10, 11 are pure-build (dormant-safe, no owner gate). The hard-line stages — Keychain provisioning (P3), real model transport under the egress veto (P4), gbrain write-back + embedding egress (P5), serving-oracle go-live (P6), external-write transport (P7), propose flips (P8), per-vendor connector arming (P9) — each need **explicit per-crossing owner confirmation**. None are reachable by flipping a config alone.
+- **The critical path is a chain, not a menu.** P4 (real content) blocks P5 (real facts to embed) blocks P6 (trusted stamps) blocks P8 (propose). P7 (write transport) also gates P8. **Propose is deliberately last.**
+- **Phase 0 is a genuine prerequisite the ingestion draft assumed away** — without onboarding there are no real workspaces to ingest into, and without an app-managed Temporal server no workflow runs in the packaged product. It is not optional polish.
+- **Phase 9 dominates by count** (~one owner-gated round per vendor) and is the most parallelizable / owner-reorderable block — it can be pulled forward per vendor once Phases 2+3 land, if breadth is preferred over depth.
+- **Two safety invariants extend *beyond* the app's own machinery** and must not be lost: the Employer-Work egress veto must cover gbrain's **embedding** backend (P5), and the one-writer guarantee needs **active OS enforcement** (P10), not just code-level discipline.

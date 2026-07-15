@@ -1,6 +1,6 @@
 # IMPLEMENTATION_PLAN.md — System of Work Assistant
 
-> **Phase note.** Spec-anchored build plan decomposed from the binding `ARCHITECTURE.md` (production-grade). 14 phases (0–13), ~164 first-class tasks (counted as `### N.M` headings) across 6 parallel tracks (Phase 13 = Obsidian-Second-Brain inheritance **+ the Agentic Copilot arc** — §13.10 skill catalog + §13.11 Phase-C/§9.6-real machinery, promoted from Log-only 2026-07-06); the §3 contracts phase (Phase 1) is the forced-serial bottleneck and the §9 workflows phase (Phase 7) is the integration spine. Locked decisions live in `docs/planning/DECISIONS.md`; every phase anchors to `ARCHITECTURE.md §` sections — drift surfaces at TDD Step 9. Living sections (Currently-in-progress, Carry-forward, Log, Trims, Decisions-tabled) accrete through real `/tdd` work; the Parallelization plan is authored here.
+> **Phase note.** Spec-anchored build plan decomposed from the binding `ARCHITECTURE.md` (production-grade). 26 phases (0–25), ~238 first-class tasks — Phases 14–25 = the Part II activation roadmap (ARCH §19; from the 2026-07-15 gap audit, 66 gaps→tasks coverage-verified) (counted as `### N.M` headings) across 6 parallel tracks (Phase 13 = Obsidian-Second-Brain inheritance **+ the Agentic Copilot arc** — §13.10 skill catalog + §13.11 Phase-C/§9.6-real machinery, promoted from Log-only 2026-07-06); the §3 contracts phase (Phase 1) is the forced-serial bottleneck and the §9 workflows phase (Phase 7) is the integration spine. Locked decisions live in `docs/planning/DECISIONS.md`; every phase anchors to `ARCHITECTURE.md §` sections — drift surfaces at TDD Step 9. Living sections (Currently-in-progress, Carry-forward, Log, Trims, Decisions-tabled) accrete through real `/tdd` work; the Parallelization plan is authored here.
 
 > **Reading discipline.** Read by section, not whole. Living sections are bounded/pruned at `/orchestrate-end`.
 
@@ -2368,6 +2368,1040 @@ Sequenced by governance class (every write human-gated ⇒ this is wiring order,
 - [ ] All Phase-13 model calls route through `ModelProviderPort` (no hardcoded vendor endpoint); no direct osb writer or command surface is imported (anti-corruption layer).
 
 ---
+
+## Part II — Activation Roadmap (Plan Phases 14–25)
+
+Part II turns the dormant/stubbed *write + intelligence + spine* half of the system live, in dependency order, behind owner-gated arming flips — anchored to **ARCHITECTURE.md §19** (each Part-II task cites `*(implements §19.x / §Y)*`, §Y being the existing §3–§16 section it activates). Part I (Phases 0–13) froze the contracts and built the governed control plane as a proof spine over stubs; Part II is the ordered turn-on of everything it was built to gate.
+
+**Arming discipline.** Build-up-to-the-gate is free: every task ships dormant, byte-equivalent-by-default, under TDD (deterministic) or eval (model-driven), with zero production reachability until an **owner-confirmed arming flip** crosses a hard line. There are **seven hard-line crossings**. Crossings **(1)–(6)** form a **sequential activation chain**, each gated on the prior — Keychain (Phase 17) → real model transport (18) → gbrain write-back (19) → serving-oracle (20) → external write (21) → **propose (22, the last flip of the chain)**. Crossing **(7)**, per-vendor connector enablement (Phase 23), is a **separate independent arc** gated only on Phase 16 + Phase 17, armable per vendor in parallel and pullable earlier. Every arming knob is strict `=== true` (never truthy-coerce); every HARD-LINE task carries **owner confirm per crossing** (Phase 23: **per vendor crossing**). The safe turn-on order is the operator runbook authored in task 24.5 (closes G57). Safety rules 1–7 hold across the entire activation.
+
+---
+
+## Phase 14 — Onboarding, Config Surfaces & Runtime Substrate
+
+**Goal:** Give a real user a way to EXIST in the system, give the packaged app the local processes it needs to RUN, and stand up the two registries the spine resolves against (typed-Project registry; cross-workspace link store). Replace `provisionDev` fixtures with real workspace onboarding, map each preset to a concrete provisioning profile, add a connector-instance config surface + per-workspace connector registry, build the durable typed-Project registry and the cross-workspace link model + owner-approval flow, surface the `HealthItem` producers in an operator-visible System Health panel, and supervise a local Temporal dev-server. **Posture: pure-build / substrate — crosses no arming hard line** (loopback-only; no external network / spend / credential).
+
+**Spec anchors:** ARCHITECTURE.md §19.1 (primary); §11 (Global Today / Workspace tabs / System Health surfaces, WS-6 first-run presets); §13 (V1-local topology: app-managed local Temporal supervision + install doctor); §5 (WS-8 registry as the isolation root; cross-workspace link = the single sanctioned WS-8 exception); §8 (connector config surface / Connector Gateway registry); §6 (typed-Project registry; GCL Visibility Gate consumes approved links); §16 (health / observability / redaction).
+
+**Track:** desktop, worker · **Depends on (phases):** 3, 8, 9, 11
+
+### 14.1 — Workspace onboarding & provisioning (real replacement for provisionDev) *(implements §19.1 / §11, §5)*
+- [ ] Real onboarding flow mints workspaces (create workspace → choose vault root → pick Simple/Professional/Founder/Advanced preset) and unions each workspace id into the fail-closed WS-8 registry — becoming the production provisioning path; read-model stays empty until a workspace is onboarded.
+- [ ] Files: NEW apps/desktop/renderer/surfaces/onboarding/, apps/desktop/renderer/store/scope.ts:11 (extended — drop the "minted by onboarding (§9.12); until then empty" stub), apps/worker/src/composition/provisionDev.ts:3 + :119 registerWorkspace (superseded — promote real provisioning out of dev-only), NEW apps/worker/src/api/procedures/onboarding.ts
+- [ ] Cross-doc invariant: extended — Workspace; NEW — onboarding procedure
+- [ ] Depends on: P9 (§11 UI), P8 (§10 API), P3 (§5 WS-8 registry)
+- [ ] Implements: WS-6 (first-run presets), WS-8 (registry isolation root)
+- [ ] Kind: **build** — local provisioning only; no arming crossing.
+- [ ] Done-when: a fresh user with NO `provisionDev` call completes onboarding, a workspace with the chosen vault root appears in the WS-8 registry, and a workspace absent from the registry still gets zero read path (fail-closed). (closes: G58)
+
+### 14.2 — Connector configuration surface + per-workspace connector-instance registry *(implements §19.1 / §11, §8)*
+- [ ] A connectors/settings surface lets a user add a connector, bind it to a workspace, record its tokenRef, enable/pause it, and set cadence; each choice persists as a per-vendor+workspace connector-instance config record (the record the Phase-16 composition + Phase-23 arming consume). NO real credential is provisioned here — only a tokenRef *reference*.
+- [ ] Files: NEW apps/desktop/renderer/surfaces/connectors/ (today `apps/desktop/renderer/surfaces/` has no connectors/settings surface), NEW packages/db connector-instance registry table + migration, NEW apps/worker/src/api/procedures/connectorConfig.ts
+- [ ] Cross-doc invariant: NEW — ConnectorInstance (config record)
+- [ ] Depends on: 14.1, P6 (§8 gateways), P2 (§4 storage)
+- [ ] Kind: **build** — persists tokenRef references only; binding a real credential/transport is Phase 17/23.
+- [ ] Done-when: a user registers a connector instance bound to a workspace with cadence + tokenRef reference, it round-trips from the durable registry, and pause/enable toggles persist — with no live vendor call. (closes: G59)
+
+### 14.3 — System Health / observability panel (HealthItem producers → durable surface → renderer) *(implements §19.1 / §11, §16)*
+- [ ] Wire the existing HealthItem producers (worker_down, connector auth_locked, parity_defect, coverage-degrade, keychain-locked) through the health surface store into an operator-visible System Health panel; retained-but-unread items round-trip to the renderer.
+- [ ] Files: apps/worker/src/health/surface.ts (extended — durable surface store already exists), apps/worker/src/lifecycle/degraded/temporal-unavailable.ts:218 (producer — worker_down HealthItem), NEW apps/desktop/renderer/surfaces/system-health/, NEW apps/worker/src/api/procedures/health.ts (read procedure)
+- [ ] Cross-doc invariant: extended — HealthItem
+- [ ] Depends on: 14.1, P9 (§11 UI)
+- [ ] Kind: **build**.
+- [ ] Done-when: a minted degraded HealthItem (e.g. temporal-unavailable) appears in the renderer panel and survives a read round-trip; redaction strips secrets + raw content before the surface sink (safety rule 7). (closes: G61 — panel/producer leg; the retained-but-unread round-trip is 24.3)
+
+### 14.4 — App-managed local Temporal server supervision *(implements §19.1 / §13)*
+- [ ] The worker-host spawns/supervises a local Temporal dev-server (loopback 127.0.0.1:7233), mirroring MANAGE_GBRAIN_SERVE, so workflows run in-product instead of only under `TestWorkflowEnvironment`; the app leaves "Temporal-DEGRADED mode" when the managed server is healthy.
+- [ ] Files: apps/desktop/worker-host/index.ts:53-54 (temporalAddress), :4 (Temporal-DEGRADED default), :28 (MANAGE_GBRAIN_SERVE — the pattern to mirror; today NO Temporal equivalent), NEW apps/desktop/worker-host/temporal-supervisor.ts
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: P7 (§9 workflows), P11 (§13 deploy)
+- [ ] Kind: **build (substrate)** — supervising a loopback-only local process is NOT an arming crossing (no external network/spend/credential). **Owner-ratification item:** the 66-gap inventory marks G62 `hard-line`; this plan downgrades it to substrate per the four defined hard lines (propose-flip / real external write-fetch / real API spend / binding a real transport-Keychain key) — loopback Temporal touches none. This downgrade is surfaced for owner ratification (not self-adjudicated) and recorded in the 24.5 arming runbook.
+- [ ] Done-when: launching the dev/packaged app starts a supervised local Temporal server, a registered workflow executes end-to-end in-product (not under `TestWorkflowEnvironment`), and quitting the app cleanly stops the supervised server. (closes: G62)
+
+### 14.5 — Preset → provisioning-profile mapping (consume the Simple/Professional/Founder/Advanced preset) *(implements §19.1 / §11, §13)*
+- [ ] Map each onboarding preset to a concrete provisioning profile so the four tiers are differentiated, not cosmetic: each preset selects a default connector set, a set of enabled output workflows + schedules (Phase 25), and policy/egress defaults (e.g. Founder/Advanced surface more connectors + the cross-calendar workflow; Simple enables the minimal spine). No preset opens an arming hard line — every profile ships its arming flips default-OFF.
+- [ ] Files: apps/desktop/renderer/surfaces/onboarding/ (extended — preset picker feeds a profile), NEW apps/worker/src/composition/presetProfiles.ts (preset → {connectors, workflows, schedules, policy defaults})
+- [ ] Cross-doc invariant: NEW — PresetProfile
+- [ ] Depends on: 14.1
+- [ ] Kind: **build** — a preset only sets defaults; every real-spend/real-write flip stays default-OFF and owner-confirmed regardless of preset.
+- [ ] Done-when: onboarding with each of the four presets yields a distinct provisioning profile (different default connectors/enabled-workflow set), proven by a test asserting profile divergence; no profile enables a hard-line arming flip. (closes: completeness finding — preset consumption; enables differentiated Phase 25 scheduling)
+
+### 14.6 — Durable typed-Project registry + production ResolveRegistryPort *(implements §19.1 / §4, §6)*
+- [ ] Build the durable typed-Project registry the content→project router (18.6), projectSync, and projectDashboard (25.3) resolve against — a `@sow/db` project table + dual-dialect migration, a project-creation path (from onboarding; later also from the §13.10a copilot knowledge-capture flow via KnowledgeWriter), and a production `ResolveRegistryPort` backed by that store (WS-8-scoped). Today `ResolveRegistryPort`/`ProjectRegistryEntry`/`ProjectIdentity` exist only as interfaces with test fakes (`project-sync-fakes.ts`); no boot-wired `resolveRegistry`, no durable store, no creation flow.
+- [ ] Files: NEW packages/db project table + dual-dialect migration, NEW apps/worker/src/composition/projectRegistry.ts (production `ResolveRegistryPort`), packages/workflows/src/ports/projectSync.ts (`ResolveRegistryPort`/`ProjectRegistryEntry`/`ProjectIdentity` — bound to the store), packages/workflows/src/activities/deterministicProgress.ts:264,329 (projectId resolved from the registry, not caller-supplied)
+- [ ] Cross-doc invariant: NEW — ProjectRegistryEntry / ProjectIdentity (durable)
+- [ ] Depends on: 14.1 (workspace registry), P2 (§4 storage)
+- [ ] Kind: **build** — WS-8-scoped; no network/credential.
+- [ ] Done-when: a project created at onboarding round-trips from the durable store; `ResolveRegistryPort` returns a real `ProjectIdentity` for it (WS-8-scoped); 18.6 and 25.3 resolve against this registry (their Depends cite 14.6). (closes: completeness finding — typed Project registry; unblocks G12/G64)
+
+### 14.7 — Cross-workspace link model + durable store + owner-approval flow (feeds the GCL Visibility Gate) *(implements §19.1 / §5, §6)*
+- [ ] Build the `CrossWorkspaceLink` entity + durable store + an owner-approval flow (surfaced in the UI) as the **single sanctioned** WS-8 cross-read input, and feed approved links into the GCL Visibility Gate so a coordination/global brief (25.2/25.4) can blend exactly the approved slice and nothing else. Today only `GclProjection` (a per-workspace UI-safe read projection + sanitizer) exists — no link entity, store, or approval — so without this, cross-workspace coordination is either impossible (WS-8 stays fully isolating) or unsafe (gate bypass).
+- [ ] Files: NEW packages/db cross-workspace-link table + dual-dialect migration, NEW apps/worker/src/api/procedures/crossWorkspaceLink.ts (create/approve/revoke), apps/worker/src/api/procedures/queries.ts + api/projections/uiSafe.ts (`GclProjection` — consume approved links), NEW apps/desktop/renderer/surfaces/links/ (owner-approval surface)
+- [ ] Cross-doc invariant: NEW — CrossWorkspaceLink
+- [ ] Depends on: 14.1, P8 (§9.8 Approvals), P9 (§11 UI)
+- [ ] Implements: safety rule 4 (WS-8 — approved link is the single cross-workspace read path)
+- [ ] Kind: **build** — links default-absent; absent a link, zero raw cross-workspace content surfaces.
+- [ ] Done-when: an owner-approved link makes a specific slice of workspace B readable from workspace A **only** through the GCL Visibility Gate; absent the link, a boundary test proves zero raw cross-workspace content leaks (safety rule 4); revoking a link closes the read path. (closes: completeness finding — cross-workspace coordination; unblocks 25.2/25.4)
+
+### Acceptance criteria (14)
+- [ ] All 14.X task checkboxes ticked.
+- [ ] A real user completes onboarding (create workspace + vault root, no `provisionDev`), registers a connector instance bound to that workspace, sees operator degrades in a System Health panel, and gets a preset-differentiated provisioning profile.
+- [ ] The durable typed-Project registry round-trips a created project and resolves a real `ProjectIdentity` (WS-8-scoped); the cross-workspace link store + approval flow gate every cross-workspace read through the GCL Visibility Gate (absent a link → zero cross-workspace bleed).
+- [ ] The app supervises a local Temporal server so a registered workflow runs in-product (not only under `TestWorkflowEnvironment`); boot leaves Temporal-DEGRADED mode when healthy (G62 substrate downgrade ratified by owner + recorded in 24.5).
+- [ ] WS-8 stays fail-closed: a workspace absent from the registry gets no read path; every new surface is loopback-only + session-token authed; redaction strips secrets/raw content before any sink.
+- [ ] Smoke: fresh boot → onboard workspace (preset profile applied) → register connector instance (no creds) → create a project in the registry → approve a cross-workspace link → trigger a workflow on the managed Temporal server → its HealthItem/output is visible in the renderer. Crosses no arming hard line.
+
+---
+
+## Phase 15 — Ingestion Spine Plumbing + Human Routing-Resolution
+
+**Goal:** Wire the connector→ingestion→content→note spine end-to-end with fakes, build the production meeting-closeout dispatcher, and close the human routing-resolution loop. Thread real extracted body text through registration, project note body/frontmatter from the validated extraction, persist the cross-run dedupe store, make parked sources durable + re-enterable, stop auto-ingest re-firing on its own `.md` output, route source-ingestion external-write through the real Tool Gateway, build a production trigger for `meetingCloseoutWorkflow`, and turn a low-confidence "which project" park into a reroute-to-project + re-drive (REQ-F-017). **Posture: pure-build — fakes only, no network, no tokenRef bound.**
+
+**Spec anchors:** ARCHITECTURE.md §19.2 (primary); §9 (workflows 1 meeting-closeout production dispatch, 4 source-ingestion, 5 ingestion-inbox triage — ING-4 dead-end); §6 (KnowledgeWriter note projection from validated plan); §8 (Connector/Tool Gateway read→register bridge + completed-meeting→meeting dispatcher + external-write); §4 (durable dedupe + disposition store, operational truth); §11 (Ingestion Inbox reroute UI); Appendix A: SourceEnvelope, RegisterSourceInput, MeetingCloseoutInput, ProposedAction, ExternalWriteEnvelope.
+
+**Track:** worker, contract, desktop · **Depends on (phases):** 14, 4, 7
+
+### 15.1 — Connector→ingestion bridge + meeting-closeout dispatch trigger *(implements §19.2 / §9, §8)*
+- [ ] Bind the poll driver's `onRecords → RegisterSourceInput → dispatchSourceIngestion` bridge in the worker composition and add a meeting-closeout dispatch trigger, so a completed source (or closed meeting) drives ingestion — today the ONLY trigger reaching `dispatchSourceIngestion` is the local `.md` fs watcher.
+- [ ] Files: apps/worker/src/watch/vaultWatcher.ts:1-9 (extended — second dispatch source), apps/worker/src/composition/buildActivities.ts (bridge wiring), packages/workflows/src/activities/connectorPoll.ts:40-51,88-101 (inject resolve → {port, syncDeps.onRecords} — nothing in apps/worker binds it today)
+- [ ] Cross-doc invariant: none — RegisterSourceInput
+- [ ] Depends on: 14.2 (connector-instance registry), P6 (§8 gateways), P7 (§9 workflows)
+- [ ] Kind: **build** — fake transport, no tokenRef.
+- [ ] Done-when: a poll pass over a FAKE adapter's records bridges each record to `registerSource` → `dispatchSourceIngestion`, and a closed meeting dispatches ingestion — asserted with a fake, zero network. (closes: G1)
+
+### 15.2 — Source content threading through SourceEnvelope *(implements §19.2 / §8)*
+- [ ] Add a body/text field to `SourceEnvelope` and carry the extracted text past registration — today file-source reads real file text, hashes `contentHash`, and DISCARDS the text, so only the hash survives past registration.
+- [ ] Files: packages/contracts/src/models/source-envelope.ts:26-62 (extended — add body field + schema), packages/integrations/src/connectors/adapters/file-source.ts:127-157 (stop discarding text)
+- [ ] Cross-doc invariant: extended — SourceEnvelope
+- [ ] Depends on: P1 (§3 contracts)
+- [ ] Kind: **build**.
+- [ ] Done-when: a registered source carries its extracted body text (not only `contentHash`) through to the ingestion activity, verified by a contract + integration test. (closes: G2)
+
+### 15.3 — Note body/frontmatter projection from validated extraction *(implements §19.2 / §6)*
+- [ ] Project the ingested note's title/body/frontmatter from the validated extraction value instead of the placeholder literal — today `title:'Ingested:${sourceId}'`, `body:'source ingestion (C1)'`, `frontmatter={}`, and `validated.value` is ignored.
+- [ ] Files: apps/worker/src/composition/buildActivities.ts:659-660 (real projection from `validated.value`)
+- [ ] Cross-doc invariant: none — KnowledgeMutationPlan
+- [ ] Depends on: 15.2, P4 (§6 knowledge)
+- [ ] Kind: **build**.
+- [ ] Done-when: an ingested note's committed body + frontmatter derive from the validated (schema-gated) extraction, not the placeholder; a boundary test proves the write still routes through KnowledgeWriter (sole-writer, WS-8 path guard — safety rule 1). (closes: G3)
+
+### 15.4 — Persisted seenContentHash dedupe store (Flow-4) *(implements §19.2 / §4)*
+- [ ] Back `seenContentHash` with a durable store so dedupe holds across runs — today it is `()=>Promise.resolve(false)` (fresh always-miss), while the register gate itself is real.
+- [ ] Files: apps/worker/src/composition/buildActivities.ts:592-596 (bind durable store), NEW packages/db dedupe table + migration, packages/integrations/src/connectors/source-register.ts:100-107 (real gate — unchanged)
+- [ ] Cross-doc invariant: NEW — SeenContentHash (operational)
+- [ ] Depends on: P2 (§4 storage)
+- [ ] Implements: REQ-F-010 (Flow-4 dedupe)
+- [ ] Kind: **build**.
+- [ ] Done-when: re-importing identical content across two runs is deduped (second import a no-op) via the persisted store; a first import still ingests. (closes: G4)
+
+### 15.5 — Durable disposition store + real isParked + parked reader + re-enter runner *(implements §19.2 / §9, §4)*
+- [ ] Replace the in-memory disposition Map (`isParked:()=>ok(true)` hardwired; `parkedReader.read` always err `source_unavailable`) with a durable operational disposition store, a real `isParked` derived from it, a working parked-source read seam, and a 7.7 re-enter runner that re-drives a parked source.
+- [ ] Files: apps/worker/src/composition/buildActivities.ts:798-804 (durable store), :563-571 (real parkedReader), NEW packages/db disposition table + migration
+- [ ] Cross-doc invariant: NEW — SourceDisposition (operational)
+- [ ] Depends on: P2 (§4 storage), 15.1
+- [ ] Kind: **build**.
+- [ ] Done-when: a parked source persists its disposition, `isParked` reflects the store, and re-enter reads the parked source back and re-drives ingestion with the idempotency-key reused (replay-safe — safety rule 3). (closes: G5)
+
+### 15.6 — Auto-ingest `.md`-only scope + output-subtree feedback-loop guard *(implements §19.2 / §9)*
+- [ ] Scope the watcher to `.md` under the vault root AND exclude the `sources/<ws>/<digest>.md` output subtree so a written ingestion note does not re-fire the watcher — today every written note lands inside the watched root and re-triggers.
+- [ ] Files: apps/worker/src/watch/vaultWatcher.ts:134-137 (exclude output subtree; captures only `*.md` under one vaultRoot), apps/worker/src/composition/sourceNotePath.ts:74-86 (output path — assert excluded)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: 15.1
+- [ ] Kind: **build**.
+- [ ] Done-when: ingesting a source writes its note without re-triggering the watcher (no infinite feedback loop), asserted by a watcher test that counts dispatches. (closes: G6)
+
+### 15.7 — Source-ingestion external-write propose via the real Tool Gateway *(implements §19.2 / §8)*
+- [ ] Route the source-ingestion propose delegate through the real Tool Gateway (`createProposeActivity` over the real gateway) instead of the in-memory `sourceReceiptByKey` Map that mints `ext-source-N` with no `dispatchExternalWrite` — mirroring `meetingPropose`.
+- [ ] Files: apps/worker/src/composition/buildActivities.ts:703 (real gateway propose — today in-memory Map), :436-443 (`meetingPropose = createProposeActivity` over real gateway — the pattern to mirror)
+- [ ] Cross-doc invariant: none — ProposedAction, ExternalWriteEnvelope
+- [ ] Depends on: P6 (§8 gateways), 15.1
+- [ ] Kind: **build** — propose lands a pending Approval; no real external transport bound (that is Phase 21).
+- [ ] Done-when: a source-ingestion propose produces a real ProposedAction through the Tool Gateway that lands a pending §9 Approval (idempotencyKey + canonicalObjectKey envelope — safety rule 3), not an in-memory receipt. (closes: G7)
+
+### 15.8 — Human routing-resolution loop (reroute parked item to workspace/project + re-drive) *(implements §19.2 / §9, §11)*
+- [ ] Extend the triage disposition payload with a target `workspaceId/projectId` and add a reroute/assign-project action to the Ingestion Inbox so a low-confidence parked item is human-resolved (reroute + re-drive), not merely accept/reject — closing the exact REQ-F-017 ambiguity the park exists for. Target projects resolve against the 14.6 typed-Project registry.
+- [ ] Files: apps/worker/src/api/procedures/triageCommands.ts:45-49 (payload is only `{sourceId, idempotencyKey, disposition}` — add target `workspaceId/projectId`), apps/desktop/renderer/surfaces/ingestion-inbox/index.tsx:42-46 (UI offers only accept/reject — add reroute/assign-project)
+- [ ] Cross-doc invariant: extended — triage disposition
+- [ ] Depends on: 15.5, 14.6 (project registry), P9 (§11 UI)
+- [ ] Implements: REQ-F-017 (no-inference → route to clarification)
+- [ ] Kind: **build**.
+- [ ] Done-when: a parked "which project" item can be rerouted to a chosen workspace/project (from the real registry) in the Inbox and re-driven (re-classify / re-park), never invented — a test drives park → reroute → re-ingest. (closes: G60)
+
+### 15.9 — Production meeting-closeout dispatcher + calendar/Granola→meeting-correlation bridge *(implements §19.2 / §9, §8)*
+- [ ] Build the production meeting-closeout dispatcher — the analog of `dispatchSourceIngestion.ts` (a `client.workflow.start` of `meetingCloseoutWorkflow` with a real `MeetingCloseoutInput`) — AND a completed-meeting bridge that routes a calendar/Granola completed-meeting record to the **meeting** dispatcher (its dedicated `correlateMeeting`/propose machinery) instead of `registerSource`. Today `apps/worker/src/temporal/` has only `dispatchSourceIngestion.ts` (the sole production `client.workflow.start`, starting `sourceIngestionWorkflow`); there is no `dispatchMeetingCloseout` analog and `meetingCloseoutWorkflow` (workflows.ts:241) is started only in test/fakes — so the owner's flagship *meeting transcript → closeout note → propose tasks* has no production trigger and a Granola transcript arriving as a source would run the generic source path, bypassing the meeting machinery. (Rejected alternative (b): folding meetings into the source path + deleting the meeting legs 18.3/18.5 — rejected because it loses the meeting-specific `correlateMeeting`/propose specialization the flagship needs.)
+- [ ] Files: NEW apps/worker/src/temporal/dispatchMeetingCloseout.ts (analog of dispatchSourceIngestion.ts), apps/worker/src/temporal/workflows.ts:241 (`meetingCloseoutWorkflow` — production start target), packages/workflows/src/activities/connectorPoll.ts (onRecords: a completed-meeting record routes to the meeting dispatcher), apps/worker/src/composition/buildActivities.ts (bridge wiring)
+- [ ] Cross-doc invariant: none — MeetingCloseoutInput
+- [ ] Depends on: 15.1, P7 (§9 workflows)
+- [ ] Kind: **build** — fires from a FAKE calendar/Granola completed-meeting record; real Granola/calendar enablement is Phase 23.
+- [ ] Done-when (`/wired`-style reachability): a fake completed-meeting record reaches `meetingCloseoutWorkflow` in production (not `TestWorkflowEnvironment`) via `dispatchMeetingCloseout`, runs the `correlateMeeting` leg, and lands a pending `ProposedAction` Approval end-to-end — proven reachable from a production entry point (not test-only); a Granola-shaped meeting record routes to the meeting dispatcher, not `registerSource`. (closes: completeness blocker — meeting-closeout production trigger; makes G9/G11 reachable)
+
+### Acceptance criteria (15)
+- [ ] All 15.X task checkboxes ticked.
+- [ ] A source runs end-to-end whose committed note body/frontmatter come from the validated extraction (not a placeholder), through KnowledgeWriter (sole-writer, WS-8 path guard).
+- [ ] Dedupe holds across re-import; a parked source's disposition is durable and re-enterable (idempotency-key reused); writing a note does not re-trigger the watcher.
+- [ ] Source-ingestion external-write routes through the real Tool Gateway and lands a pending §9 Approval; a low-confidence routing park is human-resolvable (reroute-to-project against the real registry + re-drive), never inferred (REQ-F-017).
+- [ ] A completed-meeting record reaches `meetingCloseoutWorkflow` in production via `dispatchMeetingCloseout` (reachability proven from a production entry point, not test-only) and its dedicated correlation/propose machinery — not the generic source path.
+- [ ] Smoke: fake-transport poll → registerSource (body threaded) → extraction → note commit → dedupe on re-run → park a low-confidence item → reroute → re-ingest; and a fake completed-meeting → meeting dispatcher → correlateMeeting → pending ProposedAction Approval — all with fakes, zero network, no tokenRef bound.
+
+---
+
+## Phase 16 — Connector Engine, Composition & Bridge (dormant substrate)
+
+**Goal:** Stand up the whole connector→ingestion drive path as inert substrate. Compose `ConnectorPorts` + `ConnectorGateway` at boot, register the `connectorPoll` activity + `connectorSyncHealth` workflow with a real `resolve()` + periodic schedule, land the reusable read-only HTTP transport wrapper, and add Drive `incompleteSearch` coverage-degrade + File/PDF binary parsing — all against a FAKE transport with NO tokenRef bound, so a scheduled poll fetches fake records → bridges to `registerSource` end-to-end while every vendor stays dormant. **Posture: pure-build (dormant substrate); binding a real network transport is Phase 23's independent hard line.**
+
+**Spec anchors:** ARCHITECTURE.md §19.3 (primary); §8 (Connector Gateway external-reads engine, cursors/retry/health); §9 (workflow 10 connector sync & health, LIFE-4/LIFE-6 drain-on-wake); §5 (SSRF/egress guard, ING-7 admission); §16 (redacted typed faults).
+
+**Track:** providers-integrations, worker · **Depends on (phases):** 6, 15, 7
+
+### 16.1 — Boot composition of ConnectorPorts + ConnectorGateway *(implements §19.3 / §8)*
+- [ ] Compose `ConnectorPorts` + `ConnectorGateway` at worker boot over the 7 adapter factories + url/telegram — today zero `create*Connector` / `create*HttpTransport` exists in `apps/worker/src` or `packages/workflows/src` (non-test); factories are exported only from the local barrel.
+- [ ] Files: NEW apps/worker/src/composition/connectors.ts, packages/integrations/src/connectors/adapters/index.ts:26-39 (barrel consumed at boot)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: P6 (§8 gateways)
+- [ ] Kind: **build** — composed over a FAKE transport, no tokenRef bound.
+- [ ] Done-when: the worker boots a `ConnectorGateway` with all adapters composed over a fake transport; no adapter performs a live vendor call (no tokenRef). (closes: G32)
+
+### 16.2 — connectorPoll registration + connectorSyncHealth workflow + resolve() + schedule *(implements §19.3 / §9, §8)*
+- [ ] Register the `connectorPoll` activity with a real `resolve()` (bind adapter + cursor repo + onRecords + backoff) and add `connectorSyncHealth` to the workflow bundle with a periodic schedule — today only proofSpine workflows are registered; `connectorSyncHealth` is absent.
+- [ ] Files: packages/workflows/src/activities/connectorPoll.ts:47-51 (real resolve), apps/worker/src/temporal/registerWorker.ts:261 (add `connectorSyncHealth` past `proofSpineWorkflowsPath()`)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: 16.1, 15.1, P7 (§9 workflows)
+- [ ] Kind: **build** — schedule drives a fake transport; LIFE-4/LIFE-6 drain-on-wake honored.
+- [ ] Done-when: a scheduled `connectorSyncHealth` run resolves the poll activity, fetches fake records, and bridges to `registerSource` → `dispatchSourceIngestion` → note; the workflow appears in the registered bundle. (closes: G33)
+
+### 16.3 — Reusable read-only HTTP transport wrapper against a fake endpoint *(implements §19.3 / §8)*
+- [ ] Land/finish the reusable read-only HTTP transport wrapper (`createConnectorHttpTransport`) + its `HttpTransport.send` seam and exercise it against a controlled LOCAL/fake endpoint — the send seam is owner-gated and UNBOUND in the shipped default (grep: zero undici / https.request / real fetch in the connector tree; only base.ts/port.ts fetch() abstractions).
+- [ ] Files: packages/integrations/src/connectors/adapters/http-transport.ts:61,122-128 (send seam wrapper; real network binding deferred)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: 16.1
+- [ ] Implements: ING-7 (read-only at admission), SSRF/egress guard on the final URL
+- [ ] Kind: **build (dormant substrate)** — send runs against a fake/local endpoint only.
+- [ ] **HARD LINE:** binding the real network send (undici / https / real fetch) to a live vendor is owner-gated arming (**owner confirm per vendor crossing**), executed in Phase 23 — never part of this build.
+- [ ] Done-when: the transport wrapper compiles and passes a smoke test against a controlled local endpoint (SSRF/egress guard runs on the final URL before any token read; ING-7 read-only enforced at admission); no real vendor endpoint is bound. (closes: G25 [build; real-send bind → Phase 23 / §19.10])
+
+### 16.4 — Drive incompleteSearch coverage-degrade handling *(implements §19.3 / §8)*
+- [ ] Honor Drive's `incompleteSearch?:boolean` as a partial-corpora coverage-degrade signal (mint a coverage-degrade HealthItem) — today it is IGNORED (arch_gap).
+- [ ] Files: packages/integrations/src/connectors/adapters/drive.ts:33-35 (consume `incompleteSearch`)
+- [ ] Cross-doc invariant: none — HealthItem
+- [ ] Depends on: 16.1, 14.3 (health surface)
+- [ ] Kind: **build**.
+- [ ] Done-when: a fake Drive response with `incompleteSearch=true` surfaces a coverage-degrade signal (not silently dropped), asserted by a test. (closes: G29)
+
+### 16.5 — File/PDF extractor binary parsing *(implements §19.3 / §8)*
+- [ ] Extend the real root-confined fs transport (text-only today; a NUL byte ⇒ binary ⇒ reject) with PDF/doc binary parsing so binary source files extract instead of rejecting.
+- [ ] Files: packages/integrations/src/connectors/adapters/file-read-transport.ts:1-5,111-114 (add binary/PDF parse path to the root-confined node:fs read), apps/worker/src/watch/vaultWatcher.ts:34-40 (transport already wired into the real vault watcher)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: 16.1
+- [ ] Kind: **build** — local file read only, no network.
+- [ ] Done-when: a PDF/doc source file extracts real text (not a binary reject) through the root-confined transport; a NUL-only file still rejects; path stays root-confined. (closes: G31)
+
+### Acceptance criteria (16)
+- [ ] All 16.X task checkboxes ticked.
+- [ ] With a FAKE HttpTransport (no tokenRef bound), a scheduled `connectorSyncHealth` poll fetches records → bridges to `registerSource` → `dispatchSourceIngestion` → note; `connectorSyncHealth` is in the registered bundle.
+- [ ] The read-only HTTP transport wrapper compiles + passes a smoke test against a controlled local endpoint with the SSRF/egress + ING-7 read-only guards active; no real vendor endpoint is bound.
+- [ ] Drive `incompleteSearch` degrades coverage (not silently dropped); a PDF/doc file extracts real text.
+- [ ] Smoke: boot ConnectorGateway (fakes) → scheduled poll → fake records → `registerSource` → note — every vendor inert (no tokenRef, no live call). Binding a real transport is Phase 23.
+
+---
+
+## Phase 17 — Keychain Secrets Activation [HARD-LINE]
+
+**Goal:** Provision the macOS Keychain (HMAC signing key + provider API keys), verify the `security`-CLI backend against the live binary, wire `buildKeychainSecrets` + the `getSecret` facade into the ModelProvider deps with a keychain-locked degraded handler, and establish the secret-ref namespace/convention covering every secret kind (HMAC, model keys, per-vendor connector read tokens, per-vendor connector write tokens, Telegram bot token). The adapter core + no-shell backend are already built + fail-closed; the crossing is the *provisioning + wiring*. This is the substrate real provider transports (Phase 18), provenance stamping (Phase 19), external-write credentials (Phase 21), and per-vendor connector reads (Phase 23) all depend on. **Posture: HARD-LINE (crossing 1 of 7) — owner provisions real OS credentials; build-up-to-gate is free, the flip is owner-confirmed per crossing.**
+
+**Spec anchors:** ARCHITECTURE.md §19.4 (primary); §3 (SecretsPort interface — references, never raw secrets; the ref convention for all secret kinds); §13 (Keychain creds in V1-local topology + install-doctor probe); §7 (provider-key resolution); §6 (HMAC signing key for SignedProvenanceStamp); §16 (Keychain-locked degradation / keychain-locked HealthItem, LIFE-6 wake re-attempt; redaction).
+
+**Track:** worker, providers-integrations · **Depends on (phases):** 3, 5
+
+### 17.1 — KeychainSecretsAdapter core (SecretsPort over a mockable backend) *(implements §19.4 / §3, §16)*
+- [ ] Finalize the fail-closed `KeychainSecretsAdapter` (SecretsPort over a mockable backend) — malformed ref ⇒ 0 backend calls, zero-length key rejected, never throws. Testable end-to-end against a mock backend with no real Keychain.
+- [ ] Files: apps/worker/src/secrets/keychain-adapter.ts:91-104 (fail-closed ref parse — verify/complete)
+- [ ] Cross-doc invariant: none — SecretsPort
+- [ ] Depends on: P3 (§3 SecretsPort interface)
+- [ ] Kind: **build** — mockable backend, no real Keychain I/O; crosses no line by itself.
+- [ ] Done-when: the adapter resolves refs through a mock backend, rejects malformed/zero-length refs with 0 backend calls, and never throws — proven by unit tests with no OS Keychain touched. (closes: G47)
+
+### 17.2 — Real macOS security-CLI Keychain backend (first real OS-credential I/O) *(implements §19.4 / §13)*
+- [ ] Verify the bounded no-shell `execFile` `security`-CLI backend against the live binary and provision the Keychain entries (HMAC signing key + provider API keys) via `security add-generic-password` — the real `security` process is constructed only on the provisioned path; today no test spawns it.
+- [ ] Files: apps/worker/src/secrets/keychain-backend.ts:22 (no-shell `execFile` wrapper, args-array — verify against live binary), apps/worker/src/secrets/keychain-boot.ts:93 (real `security` process on provisioned path)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: 17.1
+- [ ] Kind: **HARD LINE** — first real Keychain / OS-credential I/O.
+- [ ] **HARD LINE (owner confirm per crossing):** provisioning real OS credentials into the Keychain is owner-confirmed arming, not part of the build; build/verify the wrapper against a mock, cross only on owner confirm.
+- [ ] Done-when: with owner-provisioned entries, the backend reads back the HMAC signing key + provider keys via the no-shell `security` wrapper (args-array, no shell); an unprovisioned/locked Keychain fails closed. (closes: G48)
+
+### 17.3 — buildKeychainSecrets boot gate + getSecret facade into ModelProvider deps + keychain-locked degraded handler *(implements §19.4 / §7, §6, §16)*
+- [ ] Wire `buildKeychainSecrets` at boot and thread the `getSecret` facade into the ModelProvider deps — today `keychainSecrets?.secrets` feeds only the oracle bundle and `getSecret` is NEVER wired (Slice-4 follow-up) — with a keychain-locked/missing degraded handler that mints a keychain-locked HealthItem and fails closed (never a silent plaintext fallback).
+- [ ] Files: apps/worker/src/secrets/keychain-boot.ts:88-95 (returns secrets + getSecret), apps/worker/src/boot.ts:1333,1380,391 (thread `getSecret` into ModelProvider deps + StamperDeps; add degraded handler)
+- [ ] Cross-doc invariant: none — SecretsPort, SignedProvenanceStamp
+- [ ] Depends on: 17.2, P5 (§7 broker)
+- [ ] Implements: safety rule 7 (secrets only via SecretsPort/Keychain)
+- [ ] Kind: **HARD LINE** — completes the credential wiring the real provider (Phase 18) + provenance stamp (Phase 19) consume.
+- [ ] **HARD LINE (owner confirm per crossing):** binding `getSecret` to real provider/stamper deps over provisioned credentials is owner-confirmed arming; keep inert (degraded) until the owner flips.
+- [ ] Done-when: `getSecret` resolves provider keys + the HMAC signing key into the ModelProvider/Stamper deps on the provisioned path; a locked/missing Keychain yields degraded providers + a keychain-locked HealthItem (fail-closed, no plaintext fallback); no secret reaches Markdown/logs/renderer (redaction verified). (closes: G49)
+
+### 17.4 — Secret-ref convention for all secret kinds (per-vendor read/write tokens + Telegram) via the getSecret facade *(implements §19.4 / §7, §3, §16)*
+- [ ] Extend the `getSecret` facade + secret-ref convention to cover every secret kind the activation needs — per-vendor connector **read** tokens (Phase 23), per-vendor connector **write** tokens (Phase 21), and the Telegram bot token (used by both the 21.8 outbound card push and the 23.6 inbound capture receiver) — so downstream seams resolve one facade with a stable ref namespace. This is the ref-convention + facade coverage; the actual per-vendor/per-token provisioning happens at each vendor's crossing (21.6/21.8/23.2).
+- [ ] Files: apps/worker/src/secrets/keychain-boot.ts:88-95 (extend `getSecret` ref namespace: `model:*`, `hmac:*`, `connector-read:<vendor>:*`, `connector-write:<vendor>:*`, `telegram-bot:*`), NEW apps/worker/src/secrets/secretRefConvention.ts
+- [ ] Cross-doc invariant: extended — SecretsPort ref convention
+- [ ] Depends on: 17.3
+- [ ] Kind: **build** — establishes the ref namespace + facade coverage; per-vendor token provisioning is the owner-confirmed crossing at 21.6/21.8/23.2 (each carries its own owner confirm per crossing).
+- [ ] Done-when: `getSecret` resolves a ref of each kind (model / hmac / connector-read / connector-write / telegram-bot) through the mock backend with the stable convention; an unknown/malformed ref fails closed with 0 backend calls; no per-vendor real token is provisioned here. (closes: completeness finding — write/Telegram secret-ref coverage; unblocks 21.10/21.8/23.2/23.6)
+
+### Acceptance criteria (17)
+- [ ] All 17.X task checkboxes ticked.
+- [ ] The `KeychainSecretsAdapter` is fail-closed against a mock backend (malformed/zero-length refs ⇒ 0 backend calls, never throws) with no OS Keychain touched in tests.
+- [ ] On the owner-provisioned path the no-shell `security`-CLI backend reads back the HMAC signing key + provider keys; `getSecret` is threaded into ModelProvider + Stamper deps; a locked/missing Keychain fails closed with a keychain-locked HealthItem (no plaintext fallback).
+- [ ] The secret-ref convention covers every secret kind (model / hmac / connector-read / connector-write / telegram-bot) through one `getSecret` facade; downstream write-credential (21.10) and per-vendor read (23.2) seams resolve against it.
+- [ ] No secret reaches Markdown, logs, or the renderer (redaction strips secrets before any sink — safety rule 7).
+- [ ] Smoke (owner-gated): provision entries via `security add-generic-password` → boot resolves `getSecret` + signing key into deps → lock the Keychain → providers degrade + HealthItem surfaces. Until the owner provisions, the phase stays inert (adapter + backend + ref convention build/verify against mocks).
+
+---
+
+## Phase 18 — Real Model Transport & Intelligence Legs
+
+**Goal:** Bind `ModelProviderPort`/`AgentRuntimePort` into `broker.run` (matrix route → provider selection; key via `getSecret`; local zero-egress Ollama/LM Studio for employer-work), make `mapCandidate` read the *accepted* `BrokerOutcome`, stand up real HEALTH/BUDGET/SCHEMA gates (BUDGET gate on a pluggable ledger port) + the meeting/source extraction agents, the correlation-signal producer, and the content→project resolver, then arm auto-ingest so the local spine produces **real** notes.
+
+**Posture:** HARD-LINE (crossing 2 — first real model transport + first real API spend); model-driven legs are **eval-tested** (the `packages/evals` harness), the deterministic gates around them stay TDD. Every leg is buildable dormant against the existing stub runner until the transport is bound. Owner confirm per crossing.
+
+**Spec anchors:** ARCHITECTURE.md §19.5 (primary); §7 broker (matrix route → egress veto → health → budget → schema/tool policy; the two ports; conformance-is-the-contract; provider health + COST-1/COST-2 caps live here; REQ-S-006 candidate-vs-schema gate at §3/§7); §5 egress veto (fail-closed local-only); §9 workflows 1 & 4 (real extraction legs); §6 (KnowledgeWriter commit callers carry real content); §16 redaction/observability; Appendix A: ProviderMatrix, ProviderRoute, AgentJob, ProposedAction, BrokerOutcome, Capability.
+
+**Track:** providers-integrations · worker · **Depends on (phases):** 17 (Keychain `getSecret` for provider keys), 15 (spine plumbing so real content reaches the note), 14 (app-managed local Temporal + typed-Project registry), 16 (connector engine feeds source content)
+
+### 18.1 — Bind ModelProviderPort/AgentRuntimePort transport into `broker.run` *(implements §19.5 / §7)*
+- [ ] Replace the fixed-candidate run leg with the real provider/runtime transport: matrix route → provider selection → `ModelProviderPort.complete` / `AgentRuntimePort.run`; provider key resolved through `getSecret`; a route resolving to a local provider uses the loopback zero-egress transport.
+- [ ] Closes (evidence): `apps/worker/src/composition/backends.ts:496-501,768` — `createStubProviderRunner` IS the broker's run leg (fixed candidate, no model call); `packages/providers/src/model/http-transport.ts:203,321,366` — real fetch-based OpenAI-compatible transport built with **zero** worker call site.
+- [ ] Files: `apps/worker/src/composition/backends.ts` (extended — real runner replaces stub), `packages/providers/src/model/http-transport.ts` (bound at first call site), `apps/worker/src/boot.ts` (wire provider deps + `getSecret`)
+- [ ] Cross-doc invariant: none — ProviderRoute, ProviderMatrix, BrokerOutcome
+- [ ] Depends on: 17 (`getSecret` facade), P5 (§7 broker composition already frozen)
+- [ ] **HARD LINE (crossing 2; owner confirm per crossing):** binding the transport is the first real model call + first real API spend — owner-confirmed arming; ships dormant (stub runner remains the default until flip).
+- [ ] Done-when (smoke): with the transport bound to a controlled local OpenAI-compatible endpoint, `broker.run` returns a real `BrokerOutcome` whose candidate came from the model (not the fixed stub); with it unbound, byte-identical stub behavior.
+- [ ] (closes: G8)
+
+### 18.2 — Real broker HEALTH / BUDGET / SCHEMA gates (pluggable ledger port) *(implements §19.5 / §7)*
+- [ ] Replace `stubHealthGate` (always ok) + `stubBudgetGate` (assumes 1s) with real gates: provider availability/health (§7), COST-1/COST-2 budget caps (§7) read through a **pluggable budget-ledger port** — backed in this phase by single-run/in-boot accounting sufficient to prove the gate, and **upgraded to the durable cross-run cost ledger by 19.11** (which plugs into this port; the durable store is Phase 19 to stay on the §4-store patterns and avoid a forward dependency) — and candidate-vs-schema validation (REQ-S-006, §3/§7; the candidate-data gate) before any accepted outcome is returned.
+- [ ] Closes (evidence): `apps/worker/src/composition/backends.ts:522` — `stubHealthGate` always ok; `backends.ts:531` — `stubBudgetGate` assumes 1s, keeps no ledger.
+- [ ] Files: `apps/worker/src/composition/backends.ts` (extended — real health/budget/schema gates + BudgetLedgerPort seam)
+- [ ] Cross-doc invariant: none — BrokerOutcome, Capability; NEW — BudgetLedgerPort (seam)
+- [ ] Depends on: 18.1 (**only** — the durable ledger 19.11 plugs backward into this port; no forward dependency)
+- [ ] Build posture: pure-build (deterministic gates — TDD; failing test pins reject-before-side-effect).
+- [ ] Implements: REQ-S-006 (candidate-data gate), COST-1/COST-2 (provider budget caps)
+- [ ] Note: PRD §5.4/§5.5/§5.9 map here to ARCHITECTURE homes — provider health + budget caps → §7; candidate-vs-schema gate → §3/§7 (REQ-S-006). (These are PRD subsection refs, not ARCHITECTURE §5.x anchors — ARCHITECTURE §5 has no numbered subsections.)
+- [ ] Done-when (smoke): a schema-invalid candidate is rejected at the SCHEMA gate with no downstream side effect; an over-budget route is denied at the BUDGET gate (single-run accounting sufficient here; durable cross-run enforcement arrives in 19.11); an unhealthy provider is denied at the HEALTH gate — all audited, fail-closed.
+- [ ] (closes: G13)
+
+### 18.3 — Meeting transcript→structured-fields extraction leg *(implements §19.5 / §9)*
+- [ ] Make `mapCandidate` read the **accepted** `BrokerOutcome` (today it ignores it and echoes `params.meetingExtraction`); add the real prompt + output schema so a transcript yields schema-valid structured fields under the candidate-data gate. Reached in production via the 15.9 meeting dispatcher.
+- [ ] Closes (evidence): `apps/worker/src/composition/buildActivities.ts:351` — `mapCandidate:(_outcome)=>params.meetingExtraction`, accepted `BrokerOutcome` IGNORED; `backends.ts:501` — stub run returns a fixed candidateOutput.
+- [ ] Files: `apps/worker/src/composition/buildActivities.ts` (extended — `mapCandidate` reads outcome), `packages/providers/src/model` (meeting extraction prompt + output schema, NEW)
+- [ ] Cross-doc invariant: none — AgentJob, BrokerOutcome
+- [ ] Depends on: 18.1, 18.2, 15.9 (production meeting dispatcher — reachability)
+- [ ] **HARD LINE (crossing 2; owner confirm per crossing):** live under a real model; **eval-tested** (the model's extraction prose can't be pinned by unit TDD) — the deterministic `mapCandidate` wiring is TDD.
+- [ ] Implements: REQ-F-017 (no-inference — never invent owner/date; emit `TBD` or park)
+- [ ] Done-when (smoke): a fixture transcript runs end-to-end through the real model (reached via `dispatchMeetingCloseout`), emits schema-valid extraction whose fields trace to the accepted outcome (not `params.meetingExtraction`); the extraction eval class passes; an ambiguous owner/date yields `TBD`, never an invented value.
+- [ ] (closes: G9)
+
+### 18.4 — Source-ingestion extraction agent leg *(implements §19.5 / §9)*
+- [ ] Replace the fixed `sourceAgent.run` (returns `sourceBinding.extraction`; comment "the real broker/model path is C2/C3") + the hand-built `{owner,dueDate:TBD}` with a real agent extraction over dropped source content → evidence-backed structured fields.
+- [ ] Closes (evidence): `apps/worker/src/composition/buildActivities.ts:611-620` — `sourceAgent.run` returns the fixed `sourceBinding.extraction`; `apps/worker/src/boot.ts:1013` — `sourceExtraction` hand-built `{owner,dueDate:TBD}`.
+- [ ] Files: `apps/worker/src/composition/buildActivities.ts` (extended — real `sourceAgent.run`), `apps/worker/src/boot.ts` (remove hand-built extraction), `packages/providers/src/model` (source extraction prompt + schema, NEW)
+- [ ] Cross-doc invariant: none — AgentJob, SourceEnvelope
+- [ ] Depends on: 18.1, 18.2, 15 (SourceEnvelope carries body text)
+- [ ] **HARD LINE (crossing 2; owner confirm per crossing):** live model over source content; **eval-tested**. ING-7 read-only: the source-consuming agent declares no mutating tools (rejected at admission if it does).
+- [ ] Implements: REQ-F-017 (no-inference), ING-7 (untrusted-content tool-stripping)
+- [ ] Done-when (smoke): a dropped source (body threaded from 15) runs through the real agent, emits schema-valid evidence-backed fields; the source-extraction eval passes; an ING-7 admission test rejects the agent if it declares a mutating tool.
+- [ ] (closes: G10)
+
+### 18.5 — Meeting correlation signal producer (`resolveSignals`) *(implements §19.5 / §9)*
+- [ ] Replace the echo (`resolveSignals` echoes `params.correlationSignals`; `correlationSignals` hardcoded `confidence:0.95`, no `projectId`, no content read) with a real producer: transcript + history → confidence-scored workspace + project binding.
+- [ ] Closes (evidence): `apps/worker/src/composition/buildActivities.ts:332-337` — `resolveSignals` echoes `params.correlationSignals`; `apps/worker/src/boot.ts:1041` — hardcoded `confidence:0.95`, no `projectId`, no content read.
+- [ ] Files: `apps/worker/src/composition/buildActivities.ts` (extended — real `resolveSignals`), `apps/worker/src/boot.ts` (remove hardcoded signals)
+- [ ] Cross-doc invariant: none — AgentJob
+- [ ] Depends on: 18.1, 18.6 (shares the content→project resolver — **co-dependent with 18.6; land together**)
+- [ ] **HARD LINE (crossing 2; owner confirm per crossing):** content-reading model leg; **eval-tested**. Below-threshold confidence parks to clarification (never an invented binding).
+- [ ] Implements: REQ-F-017 (route ambiguous binding to clarification, don't infer)
+- [ ] Done-when (smoke): a transcript+history fixture yields a real confidence-scored workspace+project binding; a low-confidence case parks to the Ingestion Inbox rather than binding a guessed `projectId`.
+- [ ] (closes: G11)
+
+### 18.6 — Content→workspace/project resolver (routing classifier) *(implements §19.5 / §9)*
+- [ ] Replace `sourceRoute.classify` (returns `confidence:1` for the single boot workspace else parks; `projectId` is caller-supplied, never content-resolved) with a real content-based routing classifier over the **14.6 typed-Project registry** ("which project is this").
+- [ ] Closes (evidence): `apps/worker/src/composition/buildActivities.ts:602-609` — `sourceRoute.classify` returns `confidence:1` for the single boot workspace; `packages/workflows/src/activities/deterministicProgress.ts:264,329` — `projectId` caller-supplied, never resolved from content.
+- [ ] Files: `apps/worker/src/composition/buildActivities.ts` (extended — real `classify`), `packages/workflows/src/activities/deterministicProgress.ts` (content-resolved `projectId` from the registry)
+- [ ] Cross-doc invariant: none — Workspace, ProviderRoute, ProjectIdentity
+- [ ] Depends on: 15 (spine plumbing), 14.6 (durable typed-Project registry — **co-dependent with 18.5; land together**)
+- [ ] Build posture: pure-build (deterministic classifier — TDD; model-assisted signals are eval-tested where present).
+- [ ] Implements: REQ-F-017 (below threshold → clarification, not inference)
+- [ ] Done-when (smoke): a source whose content matches project A (a real registry entry) routes to A above threshold; an ambiguous source parks with a clarification item; nothing binds a caller-supplied `projectId` blindly.
+- [ ] (closes: G12)
+
+### 18.7 — ProposedAction producer (real `targetSystem`) *(implements §19.5 / §7)*
+- [ ] Make extraction `buildOutputs` emit a real `targetSystem` `ProposedAction` (today the fixed candidate yields no action; the C1 happy path yields `actions:[]`), so the §8 external-write path has a real proposal to route.
+- [ ] Closes (evidence): `apps/worker/src/composition/backends.ts:501` — fixed candidate ⇒ no ProposedAction; `apps/worker/src/composition/buildActivities.ts:699` — propose "NOT exercised on the C1 happy path, which yields actions:[]".
+- [ ] Files: `apps/worker/src/composition/buildActivities.ts` (extended — `buildOutputs` emits ProposedAction)
+- [ ] Cross-doc invariant: none — ProposedAction
+- [ ] Depends on: 18.3, 18.4 (real extraction feeds the action)
+- [ ] Build posture: pure-build (deterministic producer — TDD; the extracted intent that seeds it is eval-tested via 18.3/18.4).
+- [ ] Done-when (smoke): a meeting/source extraction that implies an external action emits a `ProposedAction` with a concrete `targetSystem` (not `actions:[]`); that action lands a pending §9 Approval — with no real dispatch (Phase 21/22 arm dispatch).
+- [ ] (closes: G17)
+
+### 18.8 — KnowledgeWriter commit callers carry real content *(implements §19.5 / §6)*
+- [ ] Feed the real extraction/routing outputs into the (already-real) `createCommitActivity` sites so committed notes carry real body/frontmatter (the sole-writer path and `atomicCommit` are already real; only the callers feed stubs).
+- [ ] Closes (evidence): `apps/worker/src/composition/buildActivities.ts:391,689` — `createCommitActivity` over REAL `applyPlan` at 3 sites; `packages/knowledge/src/markdown-vault/atomic-write.ts:59` — `atomicCommit` real fs write→fsync→rename.
+- [ ] Files: `apps/worker/src/composition/buildActivities.ts` (extended — commit callers carry real content)
+- [ ] Cross-doc invariant: none — KnowledgeMutationPlan
+- [ ] Depends on: 18.3, 18.4, 18.5, 18.6, 15 (note projection from validated extraction)
+- [ ] Build posture: pure-build (KnowledgeWriter is already the sole writer — TDD pins caller content).
+- [ ] Implements: safety rule 1 (one-writer / no hidden brain — every semantic mutation via a validated `KnowledgeMutationPlan`)
+- [ ] Done-when (smoke): a real end-to-end run commits a note whose body/frontmatter are the real extraction (not the placeholder literal); the sole-writer boundary test still proves no non-KW path writes Markdown.
+- [ ] (closes: G45)
+
+### 18.9 — Employer-Work egress veto honored under the real transport *(implements §19.5 / §5)*
+- [ ] Verify the (complete, fail-closed) veto governs the real transport: raw employer-work content with egress-ack OFF routes only to a loopback local provider, else the job fails closed — no cloud fallback; keep `cloudCopilotPosture` un-bypassed.
+- [ ] Closes (evidence): `packages/policy/src/egress.ts:74,94,119` — veto predicate complete + fail-closed (loopback-local only, no cloud fallback); `apps/desktop/worker-host/index.ts:101` — owner relaxed employer→cloud via `cloudCopilotPosture`.
+- [ ] Files: `apps/worker/src/composition/backends.ts` (extended — veto ordered before provider selection), `packages/policy/src/egress.ts` (assert against real transport)
+- [ ] Cross-doc invariant: none — EgressPolicy, ProviderRoute
+- [ ] Depends on: 18.1
+- [ ] **HARD LINE (crossing 2; owner confirm per crossing):** the veto now gates a real cloud call — must be proven fail-closed before any employer-work run reaches a cloud provider. OpenRouter is its own processor, not an OpenAI alias.
+- [ ] Implements: safety rule 5 (Employer-Work egress veto)
+- [ ] Done-when (smoke): an employer-work job with ack OFF + only a cloud route available **fails closed** (never falls back to cloud); the same job with a local provider present runs on loopback; a leakage eval confirms zero raw employer content on any cloud egress.
+- [ ] (closes: G55)
+
+### 18.10 — autoIngest gate arm (activate the local ingestion spine) *(implements §19.5 / §9)*
+- [ ] Provision the `autoIngest` arming so `gateAutoIngest` turns ON: provisions `proofSpineParams` + `vaultWatch` + the app-managed Temporal server, so the local spine produces real notes on cadence (default-OFF today).
+- [ ] Closes (evidence): `apps/desktop/worker-host/index.ts:176-178` — `gateAutoIngest` default-OFF (`SOW_INGEST_WATCH`/`config.autoIngest` unset); `apps/worker/src/boot.ts:600` — `gateAutoIngest` wiring.
+- [ ] Files: `apps/desktop/worker-host/index.ts` (extended — arming provision), `apps/worker/src/boot.ts` (extended — gate wiring)
+- [ ] Cross-doc invariant: none — Workspace
+- [ ] Depends on: 14 (app-managed local Temporal substrate), 18.8 (real content to commit)
+- [ ] Build posture: **default-OFF owner-gated arming flip** (strict `=== true`; dormant/OFF by default, byte-equivalent when unset). **Note:** once 18.1's transport is bound, arming auto-ingest triggers **autonomous recurring real API spend** on cadence — owner confirm; recorded in the 24.5 arming runbook.
+- [ ] Done-when (smoke): with `autoIngest` armed on the app-managed Temporal server, a watched `.md` drives ingestion→note without re-firing the watcher (15 guard); with it unset, no spine activity — byte-identical default.
+- [ ] (closes: G54)
+
+### Acceptance criteria (18)
+- [ ] All 18.X task checkboxes ticked.
+- [ ] With the transport bound, a source and a meeting run **end-to-end through a real model under the egress veto**, emit schema-valid extraction with real fields (and a `ProposedAction` with a real `targetSystem`), and commit a note whose body is real content; the extraction/source/correlation eval classes pass.
+- [ ] An employer-work job with ack OFF and only a cloud route **fails closed to a local provider** — proven by a leakage eval showing zero raw employer content on any cloud egress (safety rule 5).
+- [ ] The BUDGET gate denies an over-budget route (single-run accounting in-phase; durable cross-run enforcement lands in 19.11 via the pluggable ledger port — no forward dependency).
+- [ ] Every real leg is byte-equivalent to the shipped stub when the transport is unbound (the arming flip is the only behavior change); a truthy-not-`true` guard-test covers the arming knob (auto-ingest is a default-OFF owner-gated arming flip with autonomous-recurring-spend semantics once armed).
+- [ ] The candidate-data gate rejects a schema-invalid model output **before** any Markdown or external side effect (safety rule 2); correlation/routing bind the right workspace/project (from the 14.6 registry) or park below threshold (REQ-F-017, no inference).
+- [ ] **Done-when smoke:** boot with the transport bound to a controlled local endpoint + `autoIngest` armed → drop a fixture source → observe a real-model extraction commit a note with real body/frontmatter via KnowledgeWriter, and an employer-work variant fail closed; boot with the transport unbound → identical stub behavior.
+
+---
+
+## Phase 19 — gbrain Write-Back, Parity, Provenance, Embedding-Egress & Cost Ledger
+
+**Goal:** Make the app own vault→gbrain population and vault↔gbrain parity — the post-commit incremental sync engine + durable outbox, HMAC provenance stamping on every KW commit, the reconcile pass + real read/write gbrain clients, the rebuild-from-Markdown oracle, the serving-coverage 4-way gate, plus the two under-marked hard-lines: employer-embedding egress at the gbrain layer and the durable cross-run cost ledger that upgrades the Phase-18 budget-gate port.
+
+**Posture:** HARD-LINE/mixed (crossing 3 — real gbrain write/read client bind + the employer-embedding-egress hard line). The sync engine, outbox, reconcile pass, coverage-gate assembly, ParityReport store, and cost ledger are pure-build dormant against fake clients; binding the real gbrain clients + the real HMAC signing key + the employer-embedding backend is the crossing. Owner confirm per crossing.
+
+**Spec anchors:** ARCHITECTURE.md §19.6 (primary); §6 write-through/divergence/parity 7-invariant layer + serving-coverage reader + reconcile trigger + provenance stamping; §4 operational stores (`GbrainSyncOutboxStore`, `ParityReportStore`, cost ledger); §5 embedding egress veto (new embedding-backend predicate extending the existing processor veto); §7 budget gate backed by the ledger; §16 redaction; Appendix A: ParityReport, SignedProvenanceStamp, GbrainReadGrant, FactProvenance.
+
+**Track:** knowledge · worker · **Depends on (phases):** 18 (real content in KW commits + the budget-gate port), 17 (Keychain HMAC signing key + `getSecret`), 14 (app-managed `gbrain serve` substrate)
+
+### 19.1 — Post-commit incremental index-sync engine + durable `GbrainSyncOutboxStore` *(implements §19.6 / §6)*
+- [ ] Wire `triggerGbrainSync` → `toIndexDispatcher`/`applyGbrainIndexJob` over a concrete `CanonicalMarkdownSource`, backed by a durable `GbrainSyncOutboxStore` (`@sow/db` schema + dual-dialect migration + drain-on-wake) — today all three symbols have zero non-test callers.
+- [ ] Closes (evidence): `packages/knowledge/src/knowledge-writer/gbrain-sync-trigger.ts:126` — `triggerGbrainSync`, no non-test callers; `packages/knowledge/src/gbrain/index-sync.ts:158,264` — `applyGbrainIndexJob`/`toIndexDispatcher`, zero callers.
+- [ ] Files: `packages/knowledge/src/knowledge-writer/gbrain-sync-trigger.ts` (bound at commit), `packages/knowledge/src/gbrain/index-sync.ts` (bound), `packages/db/src/schema` + `packages/db/migrations/{pg,sqlite}` (NEW `GbrainSyncOutboxStore` + migration), `apps/worker/src/composition/buildActivities.ts` (trigger after commit)
+- [ ] Cross-doc invariant: NEW — GbrainSyncOutbox row
+- [ ] Depends on: P2 (§4 store patterns), 18.8 (real commit content)
+- [ ] Build posture: pure-build (dormant against the fake apply client; drain-on-wake idempotency pinned by TDD).
+- [ ] Implements: safety rule 3 (replay-safe idempotency — drain reuses the row, no duplicate apply)
+- [ ] Done-when (smoke): a KW commit enqueues an outbox row and fires an idempotent index-apply against the **fake** client; a simulated wake re-drives held rows exactly once; the store round-trips across restart.
+- [ ] (closes: G37)
+
+### 19.2 — Signed provenance stamping wired into the live commit deps *(implements §19.6 / §6)*
+- [ ] Wire `stampProvenance`/`verify` (built) into `KnowledgeWriterDeps` (which today wires vault/revisions/audit/now but **no** stamper/secrets/signingKeyRef), so every KW commit carries an HMAC `SignedProvenanceStamp`.
+- [ ] Closes (evidence): `packages/knowledge/src/knowledge-writer/provenance-stamp.ts:208,254` — `stampProvenance`/`verify` built; `apps/worker/src/composition/buildActivities.ts:382-390` — `KnowledgeWriterDeps` wires vault/revisions/audit/now but NO stamper/secrets/signingKeyRef.
+- [ ] Files: `packages/knowledge/src/knowledge-writer/provenance-stamp.ts` (bound), `apps/worker/src/composition/buildActivities.ts` (extended — StamperDeps + secrets + signingKeyRef)
+- [ ] Cross-doc invariant: none — SignedProvenanceStamp, FactProvenance
+- [ ] Depends on: 17 (HMAC signing key via SecretsPort)
+- [ ] **HARD LINE (crossing 3; owner confirm per crossing):** requires the real HMAC signing key (Phase 17); the stamper wiring is buildable dormant, the key is the crossing. Secret resolved only through SecretsPort — never Markdown/logs/renderer.
+- [ ] Implements: safety rule 1 (unstamped fact = HARD-floor parity defect), safety rule 7 (secrets via SecretsPort)
+- [ ] Done-when (smoke): a committed note carries a valid `SignedProvenanceStamp` that `verify` accepts under the real key; a tampered byte fails `verify`; a missing/locked key degrades (not crashes) to a `keychain-locked` unstamped-parity-defect signal — never an unsigned silent commit.
+- [ ] (closes: G38)
+
+### 19.3 — Real worker→gbrain index WRITE client (`IndexApplyClient`) *(implements §19.6 / §6)*
+- [ ] Replace `createStubIndexApplyClient` (an in-memory `Set`, the only bound client; its one caller passes `facts:[]`) with a real `IndexApplyClient` over gbrain `put_page`/`sync_brain` (or `serve --http` write), idempotency-keyed on `(ws,rev,facts)`, fail-safe so an apply failure NEVER rolls back the already-committed Markdown.
+- [ ] Closes (evidence): `apps/worker/src/composition/backends.ts:640,780` — `createStubIndexApplyClient`, an in-memory `Set`, the only bound client; `apps/worker/src/composition/buildActivities.ts:452-455` — the one caller (meeting reindex) passes `facts:[]`.
+- [ ] Files: `apps/worker/src/composition/backends.ts` (real client replaces `createStubIndexApplyClient`), `apps/worker/src/boot.ts` (owner-gated bind), `packages/knowledge/src/gbrain` (NEW gbrain write transport)
+- [ ] Cross-doc invariant: none — IndexApplyClient (sole-issuer, distinct from the read adapter)
+- [ ] Depends on: 19.1 (the sync engine that drives the client), 14 (app-managed `gbrain serve`)
+- [ ] **HARD LINE (crossing 3; owner confirm per crossing):** real gbrain write I/O — sole-issuer, distinct from the 19.5 read adapter; ships dormant behind the owner-gated bind (stub client remains the default). Per Lessons 16/27 — bind the real adapter as a nested arg INSIDE the existing dormancy gate (lazy-eval ⇒ byte-equivalent), factory-spy zero-invocation OFF pin.
+- [ ] Implements: safety rule 3 (idempotency-keyed — replay reuses the receipt, no duplicate apply), safety rule 1 (gbrain is not a hidden Markdown writer — it only indexes the KW-committed canonical truth; a DB-only fact is a parity defect)
+- [ ] Done-when (smoke): with the client bound to a controlled local gbrain, a synced fact lands in the index exactly once under a repeated `(ws,rev,facts)` key; an apply failure leaves the committed Markdown intact (never rolls back the commit); with it unbound, byte-identical stub behavior.
+- [ ] (closes: G36)
+
+### 19.4 — Parity reconcile pass + live trigger source *(implements §19.6 / §6)*
+- [ ] Flip `config.reconcile` + wire the live trigger that flushes the `ReconcileScheduler`, so the built-but-dormant `reconcileParity` (canonical-vs-DB diff) runs in production → `ParityReport` → `parity_defect` health.
+- [ ] Closes (evidence): `packages/knowledge/src/gbrain/parity/reconciler.ts:110` — `reconcileParity` built; `apps/worker/src/composition/parityReconcile.ts:53` / `reconcileDriver.ts:65` — DORMANT, no production caller.
+- [ ] Files: `apps/worker/src/composition/parityReconcile.ts` + `reconcileDriver.ts` (bound), `apps/worker/src/boot.ts` (reconcile trigger + `config.reconcile` gate)
+- [ ] Cross-doc invariant: none — ParityReport, HealthItem
+- [ ] Depends on: 19.5 (the DB-projection leg of the diff — dormant against a fake read adapter until 19.5 binds the real grant), 19.6 (records the reconcile outcome — land together), 19.1 (canonical source populated)
+- [ ] Build posture: pure-build (the reconcile pass + scheduler flush are deterministic — TDD; per Lesson 22 the trigger is a PURE burst-collapse scheduler — LIFE-2, enqueue + externally-triggered flush, crash→degrade→next-trigger). Runs dormant against a fake DB projection until 19.5's real grant binds.
+- [ ] Implements: safety rule 1 (a DB-only semantic fact is a parity defect — quarantined; the reconcile pass is how it's detected)
+- [ ] Done-when (smoke): a canonical-vs-DB divergence produces a dirty `ParityReport` that mints a `parity_defect` HealthItem; a clean vault yields a clean report; the trigger burst-collapses to one reconcile per flush (no per-tick replay).
+- [ ] (closes: G39)
+
+### 19.5 — `ReconcilerDbProjection` over a live `GbrainReadGrant` HTTP read adapter *(implements §19.6 / §6)*
+- [ ] Bind a live `GbrainReadGrant` HTTP read adapter into `makeDbAdapter` (today `() => undefined` ⇒ degrade), so `ReconcilerDbProjection` (fail-closed `complete=false` when unbound) reads the real DB side of the parity diff.
+- [ ] Closes (evidence): `apps/worker/src/boot.ts:1562` — `makeDbAdapter:()=>undefined`, owner-gated `GbrainReadGrant` UNBOUND ⇒ degrade; `apps/worker/src/composition/reconcilerDbProjection.ts:68` — fail-closed `complete=false`.
+- [ ] Files: `apps/worker/src/boot.ts` (`makeDbAdapter` binds the real read grant), `packages/knowledge/src/gbrain` (NEW gbrain read transport — DISTINCT from the 19.3 write client), `apps/worker/src/composition/reconcilerDbProjection.ts` (bound)
+- [ ] Cross-doc invariant: none — GbrainReadGrant
+- [ ] Depends on: 14 (app-managed `gbrain serve` read endpoint), 19.3 (facts must be indexed before the DB side has anything to read — but this adapter is a DISTINCT sole-reader, not the write client)
+- [ ] **HARD LINE (crossing 3; owner confirm per crossing):** real gbrain read I/O — the read adapter is distinct from the 19.3 write client (sole-issuer separation); ships dormant behind the owner-gated `makeDbAdapter` bind (unbound ⇒ `complete=false` degrade). Per Lesson 19 — the projection is fail-closed on coverage (any read err / truncation-or-open-cursor / malformed row / absent-or-non-positive version ⇒ `complete=false`, never a throw, never a false-complete), workspace sourced from the grant (WS-8), trust flags stamped on explicit `===true` only.
+- [ ] Implements: safety rule 4 (workspace from the grant-bound adapter, not a caller param — WS-8)
+- [ ] Done-when (smoke): with the grant bound to a controlled local gbrain, the projection returns the real DB fact-set with `complete=true` on a clean fully-consumed read; any read fault/truncation ⇒ `complete=false` (never a false-complete); with `makeDbAdapter` unbound, byte-identical degrade.
+- [ ] (closes: G40)
+
+### 19.6 — Serve-time `ParityReport` store WRITE side (`recordReconcileOutcome`) *(implements §19.6 / §4)*
+- [ ] Add the `recordReconcileOutcome` production caller (today `'DORMANT: no production caller yet'`), so a reconcile pass durably records its `ParityReport` — record-only-on-ok, dirty reports recorded too — lifting the parity leg of serving-coverage (the read side is already wired at `boot.ts:1371`).
+- [ ] Closes (evidence): `apps/worker/src/composition/parityReportStore.ts:125-133` — `recordReconcileOutcome`, `'DORMANT: no production caller yet'`; `apps/worker/src/boot.ts:1371` — read side wired into `createServingCoverageReader`.
+- [ ] Files: `apps/worker/src/composition/parityReportStore.ts` (production caller bound), `apps/worker/src/composition/reconcileDriver.ts` (record BEFORE route), `apps/worker/src/boot.ts` (wire the write sink into the reconcile trigger)
+- [ ] Cross-doc invariant: none — ParityReport
+- [ ] Depends on: 19.4 (the reconcile producer whose outcome it records — land together), P2 (§4 store patterns)
+- [ ] Build posture: pure-build (the record gate is deterministic — TDD; per Lessons 12/14/18 record VERBATIM only on `ok` (forward by reference, never synthesize the trust fields), a reconcile `err` is a typed SKIP never a stored clean report, a sink `DbError` REJECTS; record dirty reports too — the defect report IS the serve-time degrade signal; record BEFORE route).
+- [ ] Implements: safety rule 1 (the recorded `ParityReport` is the serve-time degrade signal for a parity defect)
+- [ ] Done-when (smoke): a clean reconcile records a clean `ParityReport` the serving-coverage reader then reads; a dirty reconcile records the dirty report (degrade signal preserved); a reconcile `err` records nothing (typed skip); a store fault REJECTS (never a silent drop).
+- [ ] (closes: G41)
+
+### 19.7 — Rebuild-from-Markdown ORACLE (`IndexRebuildClient` bound) *(implements §19.6 / §6)*
+- [ ] Bind a real `IndexRebuildClient` (gbrain scratch-import / wholesale-replace) so `probeRebuildOracle` (DORMANT) can run `rebuildIndexFromMarkdown` and `oracleBuildOk` can go true — the rebuild-from-Markdown leg of serving-coverage.
+- [ ] Closes (evidence): `packages/knowledge/src/gbrain/rebuild.ts:104` — `rebuildIndexFromMarkdown` built; `apps/worker/src/composition/rebuildOracleStatus.ts:3` — `probeRebuildOracle` DORMANT.
+- [ ] Files: `apps/worker/src/composition/rebuildOracleStatus.ts` (bound), `apps/worker/src/boot.ts` (owner-gated `IndexRebuildClient` bind), `packages/knowledge/src/gbrain/rebuild.ts` (real rebuild transport)
+- [ ] Cross-doc invariant: none — ServingCoverage (`oracleBuildOk` leg)
+- [ ] Depends on: 14 (gbrain scratch-import endpoint), 19.1 (canonical Markdown source to rebuild from)
+- [ ] **HARD LINE (crossing 3; owner confirm per crossing):** gbrain scratch-import / wholesale-replace is real write I/O; ships dormant behind the owner-gated client bind (unbound ⇒ `oracleBuildOk=false` degrade). Per Lesson 29 — a local-derivation + owner-gated prod-UNBOUND-injected-client composition, fail-closed (only a full corroboration ⇒ true, never-throws); OMIT the factory to stay dormant (provisioning ≠ arming).
+- [ ] Implements: safety rule 1 (the rebuild oracle proves the canonical Markdown alone reconstructs the index — no hidden brain in the DB)
+- [ ] Done-when (smoke): with the rebuild client bound to a controlled local gbrain, a rebuild-from-Markdown over a scratch brain matches the live index ⇒ `oracleBuildOk=true`; a mismatch or an unbound client ⇒ `oracleBuildOk=false` (never a false green).
+- [ ] (closes: G42)
+
+### 19.8 — Copilot retrieval bound to the real gbrain-exec factory (served path) *(implements §19.6 / §6)*
+- [ ] Bind Copilot retrieval to the real gbrain-exec factory in the served path (today `createFixtureRetrieval` is the interim stub; the real path exists but falls back to the fixture stub when gbrain is OFF), reusing the WS-8 `enforceRetrievalScope`.
+- [ ] Closes (evidence): `apps/worker/src/api/procedures/copilot.ts:118-135` — `createFixtureRetrieval`, the interim fixture stub; `apps/worker/src/api/procedures/copilotClaudeSynthesis.ts:498-504` — real path WITH gbrain exec factory; gbrain OFF ⇒ fixture stub.
+- [ ] Files: `apps/worker/src/api/procedures/copilot.ts` (real gbrain-exec factory replaces the fixture), `apps/worker/src/api/procedures/copilotClaudeSynthesis.ts` (select the real retrieval), `apps/worker/src/boot.ts` (bind the exec factory)
+- [ ] Cross-doc invariant: none — WorkspaceServingContext (WS-8 retrieval scope)
+- [ ] Depends on: 19.3 (facts indexed into gbrain so retrieval has real content), 14 (reachable `serve --http` + embeddings key)
+- [ ] Build posture: pure-build (the selection + scope re-guard are deterministic — TDD; per apps/worker Lesson 1 the retrieval source varies but the WS-8 / posture / egress-veto / candidate machinery does not — reuse `enforceRetrievalScope`, never re-implement the gate). Needs a reachable `serve --http` + embeddings key to exercise the real path; unbound ⇒ fixture stub byte-equivalent.
+- [ ] Implements: safety rule 4 (workspace isolation — `enforceRetrievalScope`, the WS-8 Visibility Gate; no raw cross-workspace retrieval)
+- [ ] Done-when (smoke): with the exec factory bound + gbrain reachable, a Copilot query retrieves real gbrain results scoped to the request workspace (not the fixture); a cross-workspace slug is withheld by `enforceRetrievalScope`; with gbrain OFF, byte-identical fixture behavior.
+- [ ] (closes: G44)
+
+### 19.9 — Assemble the `deriveServingCoverage` 4-way AND-gate legs *(implements §19.6 / §6)*
+- [ ] Assemble `deriveServingCoverage`'s 4 legs (`cleanForServing` + `coverageComplete` from the parity report, `pinValid`, `oracleBuildOk`) so the composite serving-coverage AND-gate is green-CAPABLE — parity legs fed by 19.4/19.6, `oracleBuildOk` by 19.7, `pinValid` from the existing pin validator. (Go-live ADMISSION is Phase 20; this only makes the gate green-capable.)
+- [ ] Closes (evidence): `apps/worker/src/api/procedures/servingContextLoader.ts:95` — `deriveServingCoverage` ANDs the 4 legs (`cleanForServing`/`coverageComplete`/`pinValid`/`oracleBuildOk`), all fail-closed-`false` when unbound; `apps/worker/src/boot.ts:1371` — `createServingCoverageReader` feeds the parity legs.
+- [ ] Files: `apps/worker/src/api/procedures/servingContextLoader.ts` (leg assembly), `apps/worker/src/boot.ts` (wire all 4 leg sources into the coverage reader)
+- [ ] Cross-doc invariant: none — ServingCoverage
+- [ ] Depends on: 19.6 (the parity legs), 19.7 (`oracleBuildOk`), and the existing pin validator (`pinValid`)
+- [ ] Build posture: pure-build (the 4-way AND is deterministic — TDD; per Lessons 8/16/17/29 keep green-CAPABLE distinct from ARMED, each leg fail-closed-`false` when unbound, and ASSERT the AND-verdict still degrades on any deferred leg — never a fake full-green).
+- [ ] Implements: safety rule 1 + safety rule 2 (a served fact must be parity-clean + provenance-covered before it can be retrieved — the gate is the serve-time floor)
+- [ ] Done-when (smoke): with all 4 legs true (a real parity-clean report + `oracleBuildOk` + `pinValid`) the gate is green (READY, not degraded); defeating ANY single leg degrades — pinning the other three true so the degrade is provably that leg's cause; the shipped default (legs unbound) stays degraded.
+- [ ] (closes: G51)
+
+### 19.10 — Employer-Work EMBEDDING egress at the gbrain layer *(implements §19.6 / §5)*
+- [ ] Before the 19.3 write client indexes any brain holding employer-work content, pin/verify gbrain's embedding backend is a LOCAL zero-egress model — the app's egress veto governs `ModelProviderPort` calls only, NOT gbrain's own embedding backend, so employer Markdown embedded by a cloud backend is a hidden egress crossing (safety rule 5 outside the veto).
+- [ ] Closes (evidence): `packages/policy/src/egress.ts` — the Employer-Work egress veto is enforced over the app's `ModelProviderPort` calls only; `apps/desktop/worker-host/index.ts:28` — the worker writes into an app-managed `gbrain serve`; when the worker→gbrain `IndexApplyClient` writes employer Markdown, gbrain EMBEDS it via whatever backend gbrain is configured with — outside the app's control plane.
+- [ ] Files: `packages/policy/src/egress.ts` (NEW embedding-backend predicate extending the processor veto), `apps/worker/src/composition/backends.ts` (the write client asserts the embedding-backend predicate before apply), `apps/desktop/worker-host/index.ts` (provision the verified local embedding backend for employer brains)
+- [ ] Cross-doc invariant: none — EgressPolicy (embedding-backend extension)
+- [ ] Depends on: 19.3 (the real write client is the crossing point), 14 (gbrain embedding-backend config), 18.9 (the egress-veto pattern being extended)
+- [ ] **HARD LINE (crossing 3; owner confirm per crossing):** the hidden employer-egress crossing — indexing employer content FAILS CLOSED unless gbrain's embedding backend is a verified local zero-egress model; never a cloud-embedding fallback. OpenRouter / any cloud embedding is its own processor, not exempt.
+- [ ] Implements: safety rule 5 (Employer-Work egress veto — extended to gbrain's embedding backend, the leg the app-level veto does not cover)
+- [ ] Done-when (smoke): an employer-work brain whose gbrain embedding backend is cloud (or unverified) FAILS CLOSED at index time — no fact is embedded; the same brain with a verified local zero-egress embedding backend indexes normally; a leakage eval confirms zero raw employer content reaches a cloud embedding endpoint.
+- [ ] (closes: G65)
+
+### 19.11 — Persistent cross-run cost/budget ledger (durable `@sow/db` COST-1/COST-2 store) *(implements §19.6 / §4)*
+- [ ] Build a durable `@sow/db` COST-1/COST-2 cost/budget ledger (dual-dialect schema + migration + repository contract) that plugs into Phase 18.2's pluggable budget-ledger port — the port is defined in 18, the durable adapter lands here (backward dependency, never forward; no circular dependency).
+- [ ] Closes (evidence): `apps/worker/src/composition/backends.ts:531` — `stubBudgetGate` assumes a fixed 1s and keeps no ledger; the draft folds budget into "pure-build broker HEALTH/BUDGET/SCHEMA gates" but names no durable cross-run cost store.
+- [ ] Files: `packages/db/src/schema` + `packages/db/migrations/{pg,sqlite}` (NEW `CostLedger` store + additive migration), `packages/db/src/repositories/interfaces.ts` (CostLedger repo), `apps/worker/src/composition/backends.ts` (the BUDGET gate reads the durable ledger via the 18.2 port)
+- [ ] Cross-doc invariant: NEW — CostLedger row
+- [ ] Depends on: 18.2 (the pluggable budget-ledger port — this plugs BACKWARD into it; NO forward dependency), P2 (§4 store patterns)
+- [ ] Build posture: pure-build (durable operational store — TDD; per Lessons 3/12 a dual-dialect `@sow/db` repo passing the ONE contract suite on BOTH SQLite and Postgres + an additive migration, fail-closed both directions, idempotent-first-write-wins; the in-memory stub loses cross-run accounting on restart).
+- [ ] Implements: COST-1/COST-2 (persistent provider budget caps across runs — the durable enforcement 18.2's single-run accounting deferred here)
+- [ ] Done-when (smoke): spend recorded on one run is read by the BUDGET gate on the NEXT run (cross-run accounting survives restart); an over-budget cumulative total denies the route at the BUDGET gate; the ledger repo passes the contract suite on both SQLite and Postgres.
+- [ ] (closes: G66)
+
+### Acceptance criteria (19)
+- [ ] All 19.X task checkboxes ticked.
+- [ ] With the real gbrain clients bound to a controlled local gbrain, a KW commit stamps an HMAC `SignedProvenanceStamp` (`verify` accepts; a tampered byte fails), enqueues a durable outbox row, and drives an idempotent index-apply that lands the fact exactly once — an apply failure never rolls back the commit (safety rule 3).
+- [ ] The reconcile pass over the real read grant produces a `ParityReport` (clean or dirty) that is durably recorded record-only-on-ok and feeds the serving-coverage parity legs; a canonical-vs-DB divergence mints a `parity_defect` and degrades serving (safety rule 1 — a DB-only fact is a quarantined parity defect).
+- [ ] The rebuild-from-Markdown oracle over a scratch brain sets `oracleBuildOk`; `deriveServingCoverage`'s 4-way AND-gate is green-CAPABLE (parity + `oracleBuildOk` + `pinValid`), and defeating any single leg degrades — pinning the other three true (go-live ADMISSION is Phase 20, not here).
+- [ ] An employer-work brain whose gbrain embedding backend is not a verified local zero-egress model FAILS CLOSED at index time — proven by a leakage eval showing zero raw employer content on any cloud embedding endpoint (safety rule 5, extended to gbrain's embedding backend).
+- [ ] The durable cross-run cost ledger enforces COST-1/COST-2 across restarts via the 18.2 budget-ledger port (backward dependency — no forward/circular); the ledger repo passes the one contract suite on both SQLite and Postgres.
+- [ ] Every real-client leg is byte-equivalent to the shipped dormant default when the gbrain write/read clients, the HMAC key, and the embedding backend are unbound (the owner-gated binds are the only behavior change); each `=== true` arming knob carries a truthy-not-`true` guard.
+- [ ] **Done-when smoke:** boot with the gbrain write+read clients bound to a controlled local gbrain + the HMAC key provisioned → a KW commit stamps provenance, syncs+applies the fact, a reconcile pass records a clean `ParityReport`, the rebuild oracle goes green, and Copilot retrieves the real indexed fact scoped to its workspace; an employer-work brain on a cloud embedding backend fails closed; boot with every real client unbound → identical dormant behavior.
+
+## Phase 20 — Serving-Oracle Go-Live
+
+**Goal:** Provision the `provenanceServingOracle` bundle (signing key + gbrain pin + running-version) and flip `copilotServingOracleGoLive` so the **loader-backed** oracle is selected and stamps KW-provenanced retrieval sources `knowledge_writer` ⇒ *trusted*, replacing the interim always-degraded oracle — valid only after Phase 19 coverage is green.
+
+**Posture:** HARD-LINE (crossing 4 of the sequential (1)–(6) chain — content-trust flips ON), **security-review-gated**, **owner confirm per crossing**. The loader-backed oracle is already built; this phase provisions its bundle and performs the owner + security-review-gated selection flip. Nothing here is byte-changed until the flag flips (byte-equivalent to the interim degraded oracle when `goLiveArmed` is false).
+
+**Spec anchors:** ARCHITECTURE.md §19.7 (primary); §6 invariant-v default-deny `ServingGate`/`admitForServing` + serving oracle; §5 content-trust → `trusted` (the ING-7 bypass a *blanket* stamp would reopen); §13 write-through enablement-ladder flip + security-review gate; §16 redaction; Appendix A: CopilotServingOracle, CopilotServingVerdict, SignedProvenanceStamp.
+
+**Track:** worker · knowledge · **Depends on (phases):** 19 (serving-coverage green + provenance stamping + rebuild oracle)
+
+### 20.1 — `provenanceServingOracle` provisioning bundle + `copilotServingOracleGoLive` arming flag *(implements §19.7 / §13)*
+- [ ] Provision the bundle (signing key + gbrain pin + running-version) so the loader-backed oracle is built, and add the `copilotServingOracleGoLive` arming flag driving `selectServingOracleFactory` — today the bundle is ABSENT (loader-backed oracle never built) and the flag is unset (interim degraded oracle).
+- [ ] Closes (evidence): `apps/worker/src/boot.ts:380,1330,1367` — bundle ABSENT ⇒ loader-backed oracle never built; `apps/worker/src/boot.ts:368,1387` — `copilotServingOracleGoLive` unset ⇒ interim degraded oracle.
+- [ ] Files: `apps/worker/src/boot.ts` (extended — `provenanceBundle` provisioning + `copilotServingOracleGoLive` flag + `selectServingOracleFactory`)
+- [ ] Cross-doc invariant: none — CopilotServingOracle
+- [ ] Depends on: 19.2 (signing key), 19.7 (rebuild oracle / running-version), 19.9 (coverage gate)
+- [ ] **HARD LINE (crossing 4; owner confirm per crossing; security-review-gated):** provisioning the go-live bundle is owner + security-review gated; ships unarmed (`goLiveArmed` false ⇒ interim degraded oracle) — byte-equivalent default.
+- [ ] Implements: safety rule 1 & 2 (trusted only under an explicit gated verdict)
+- [ ] Done-when (smoke): with the bundle provisioned and the flag armed, `selectServingOracleFactory` returns the loader-backed oracle; unarmed, it returns the interim degraded oracle — proven both ways.
+- [ ] (closes: G50)
+
+### 20.2 — Loader-backed oracle admits `knowledge_writer`-provenanced facts *(implements §19.7 / §6)*
+- [ ] Select the loader-backed oracle (built only with `copilotProvenanceStamping && provenanceBundle`; selection needs `goLiveArmed && loaderBacked`) so KW-provenanced retrieval sources are stamped `knowledge_writer` ⇒ *trusted*, replacing the interim always-degraded oracle that stamps NOTHING ⇒ untrusted ⇒ propose OFF.
+- [ ] Closes (evidence): `apps/worker/src/boot.ts:1315-1320` — interim always-degraded oracle stamps NOTHING ⇒ untrusted ⇒ propose OFF; `apps/worker/src/boot.ts:1356-1387` — loader-backed oracle built only with `copilotProvenanceStamping && provenanceBundle`; selection needs `goLiveArmed && loaderBacked`.
+- [ ] Files: `apps/worker/src/boot.ts` (extended — loader-backed oracle selection), `apps/worker/src/api/procedures/copilotProvenanceStamp.ts` (satisfy the 5 GO-LIVE preconditions)
+- [ ] Cross-doc invariant: none — CopilotServingVerdict, SignedProvenanceStamp
+- [ ] Depends on: 20.1, 19.9 (coverage must be green)
+- [ ] **HARD LINE (crossing 4; owner confirm per crossing; security-review-gated):** a source is stamped trusted **only** under an explicit gated verdict over bytes rehydrated from committed Markdown + a valid HMAC stamp — **never** a blanket gbrain-hit stamp (that reopens the ING-7 bypass).
+- [ ] Implements: safety rule 1 & 2, ING-7 (no blanket-stamp bypass)
+- [ ] Done-when (smoke): a KW-committed-and-stamped fact retrieved for serving is admitted `knowledge_writer`/trusted by `admitForServing`; a fact lacking a valid stamp (or not rehydratable from Markdown) is **not** stamped trusted; the five GO-LIVE preconditions all hold.
+- [ ] (closes: G43)
+
+### 20.3 — `deriveServingCoverage` green admission *(implements §19.7 / §6)*
+- [ ] Verify the composite 4-way gate (assembled in 19.9) reports **all legs green** in the go-live boot (`cleanForServing && coverageComplete && pinValid && oracleBuildOk`) — the admission precondition for selecting the loader-backed oracle.
+- [ ] Closes (evidence): `apps/worker/src/api/procedures/servingContextBootReaders.ts:139-142` — bindable readers; `packages/knowledge/src/gbrain/serving/rehydration-gate.ts:107` — the 4-way gate whose green admission is the go-live precondition.
+- [ ] Files: `apps/worker/src/api/procedures/servingContextBootReaders.ts` (verify all readers bound live), `apps/worker/src/boot.ts` (gate oracle selection on green coverage)
+- [ ] Cross-doc invariant: none — ParityReport, GbrainReadGrant
+- [ ] Depends on: 19.9 (gate assembly), 20.1
+- [ ] Build posture: pure-build/verify (deterministic admission — TDD; the fail-closed fold from 19.9 is re-asserted at the go-live boundary).
+- [ ] Implements: safety rule 1 (never a false green — any leg fault blocks go-live)
+- [ ] Done-when (smoke): the go-live boot reports all four legs green and admits the loader-backed oracle; forcing any leg red blocks admission and keeps the interim degraded oracle selected.
+- [ ] (closes: G51 — green-admission leg; gate assembly is 19.9)
+
+### 20.4 — Runtime content-trust flip to `trusted` *(implements §19.7 / §5)*
+- [ ] With the loader-backed oracle selected, `deriveCopilotContentTrust` returns `trusted` for a KW-stamped ask (today it returns untrusted for **every** live ask, and capability fails closed to `read_only` unless `contentTrust==='trusted'`).
+- [ ] Closes (evidence): `apps/worker/src/api/procedures/copilotAgentSynthesis.ts:261,287-289` — capability fails closed to `read_only` unless `contentTrust==='trusted'`; `deriveCopilotContentTrust` returns untrusted for every live ask today.
+- [ ] Files: `apps/worker/src/api/procedures/copilotAgentSynthesis.ts` (extended — trust derived from the loader-backed verdict)
+- [ ] Cross-doc invariant: none — CopilotServingVerdict
+- [ ] Depends on: 20.2, 20.3
+- [ ] **HARD LINE (crossing 4; owner confirm per crossing):** the content-trust flip is the observable go-live effect; only a KW-stamped, gate-green ask flips trusted — an unstamped/untrusted ask still fails closed to `read_only`. This is the AND-term Phase 22 propose depends on (see G52 propose-term there).
+- [ ] Implements: safety rule 2 (candidate-data / trust gate)
+- [ ] Done-when (smoke): a live Copilot ask over KW-stamped facts returns `contentTrust==='trusted'`; an ask touching an unstamped/untrusted source stays `read_only`; the interim degraded oracle path (unarmed) still returns untrusted for all asks.
+- [ ] (closes: G52 — trust-flip half; propose AND-term/mutual-exclusion is 22.1/22.5)
+
+### Acceptance criteria (20)
+- [ ] All 20.X task checkboxes ticked.
+- [ ] A live Copilot ask retrieves KW-stamped facts marked **trusted**; `deriveCopilotContentTrust` returns `'trusted'`; the interim degraded oracle is no longer selected; **all four** serving-coverage legs are green.
+- [ ] A source is stamped trusted **only** under an explicit gated verdict over bytes rehydrated from committed Markdown + a valid HMAC stamp — a blanket gbrain-hit stamp is proven rejected (ING-7 bypass stays closed — safety rules 1 & 2).
+- [ ] The go-live selection is byte-equivalent to the interim degraded oracle when `goLiveArmed` is false; forcing any coverage leg red blocks admission (never a false green); a truthy-not-`true` guard-test covers `copilotServingOracleGoLive` (defense-in-depth suite in 24.2).
+- [ ] Security-review sign-off recorded for the crossing (owner + security-reviewer gate); the crossing + its runbook step are cross-referenced in the 24.5 arming runbook.
+- [ ] **Done-when smoke:** boot with the bundle provisioned + flag armed + Phase-19 coverage green → issue a Copilot ask over a KW-stamped fact → observe a `trusted` verdict and loader-backed oracle selection; boot unarmed → identical interim-degraded (untrusted, `read_only`) behavior.
+
+---
+
+## Phase 21 — External Write / Tool-Sync
+
+**Goal:** Build the per-`TargetSystem` adapter routing registry composition root, wire the seven per-vendor write-adapter factories into it, build the **external-write-adapter credential seam** (a `SecretsAccessor`/`getSecret` binding into the Tool Gateway + `adapter-core`, resolving each vendor's write token + the Telegram bot token through §19.4's ref convention), plus the outbox-drain trigger and write-target coverage decision (all pure-build); then, behind the arming flip, bind the first real per-vendor external-write transport, arm `WriteTransportGate`, bind the real Mac+Telegram approval-card renderers, and stand up NotebookLM Drive-backed back-sync — every real external write through the **only** external-write path with its full envelope.
+
+**Posture:** HARD-LINE/mixed (crossing 5 of the sequential chain — first real, irreversible external side effect; **owner confirm per crossing**). The routing registry, factory wiring, credential seam, drain trigger, and coverage decision are pure-build; the real transport, gate arming, card renderers, and NotebookLM sync are the crossing.
+
+**Spec anchors:** ARCHITECTURE.md §19.8 (primary); §8 Tool Gateway = only external-write path + external-write envelope + `AdapterTransport` owner-gate + write outbox + write-adapter credential seam + NotebookLM; §3 SecretsPort write-token resolution via §19.4's ref convention; §9 workflow 8 approval flow + workflow 12 NotebookLM sync; §11 Approval Inbox Mac+Telegram parity; §16 redaction; Appendix A: ExternalWriteEnvelope, WriteReceipt, NotebookMapping, Approval, ProposedAction.
+
+**Track:** providers-integrations · worker · **Depends on (phases):** 6 (§8 Tool/Connector Gateways — existing), 17 (Keychain write credentials + secret-ref convention), 18 (real `ProposedAction.targetSystem` to route on), 16 (connector/adapter seam)
+
+### 21.1 — Per-`TargetSystem` adapter routing registry composition root *(implements §19.8 / §8)*
+- [ ] Replace the single `makeTargetWriteAdapter({targetSystem:'todoist'})` (one adapter for all dispatches) with a per-`TargetSystem` routing registry that selects the adapter by `action.targetSystem`.
+- [ ] Closes (evidence): `apps/worker/src/composition/backends.ts:775` — a single `makeTargetWriteAdapter({targetSystem:'todoist'})`; `apps/worker/src/composition/buildActivities.ts:405` — `externalWriteDeps.adapter` = one adapter for all dispatches.
+- [ ] Files: `apps/worker/src/composition/backends.ts` (extended — routing registry), `apps/worker/src/composition/buildActivities.ts` (extended — select by `targetSystem`)
+- [ ] Cross-doc invariant: none — ProposedAction, ExternalWriteEnvelope
+- [ ] Depends on: P6 (§8 gateway), 18.7 (real `ProposedAction.targetSystem` to route on)
+- [ ] Build posture: pure-build (deterministic registry selection — TDD; all targets resolve to the stub transport until armed).
+- [ ] Done-when (smoke): a `ProposedAction` for each of the seven `targetSystem` values routes to that vendor's adapter (all over the stub transport); an unknown target fails closed with a typed fault.
+- [ ] (closes: G15)
+
+### 21.2 — Wire the seven per-vendor write adapter factories into the routing registry *(implements §19.8 / §8)*
+- [ ] Register `createAsanaWriteAdapter` (+ the six peers), each never called outside tests today, into the routing registry — replacing the sole generic `makeTargetWriteAdapter` invocation.
+- [ ] Closes (evidence): `packages/integrations/src/tools/adapters/asana.ts:14` — `createAsanaWriteAdapter` never called outside tests; `packages/integrations/src/tools/adapters/adapter-core.ts:142` — the generic `makeTargetWriteAdapter` is the only one invoked.
+- [ ] Files: `packages/integrations/src/tools/adapters/{asana,calendar,todoist,linear,drive,github,telegram}.ts` (wired), `apps/worker/src/composition/backends.ts` (extended — register the seven factories)
+- [ ] Cross-doc invariant: none — ExternalWriteEnvelope, WriteReceipt
+- [ ] Depends on: 21.1
+- [ ] Build posture: pure-build (factory wiring — TDD; each factory over the stub transport until armed).
+- [ ] Done-when (smoke): each of the seven vendor factories is reachable through the registry and produces a stub `WriteReceipt` for its target; a contract test covers all seven adapter shapes.
+- [ ] (closes: G16)
+
+### 21.3 — TargetSystem write-target coverage + read/write connector asymmetry *(implements §19.8 / §8)*
+- [ ] Resolve the write-enum coverage vs read/write asymmetry (write enum `calendar|todoist|linear|asana|drive|github|telegram`; gmail read but no gmail write; todoist write but no todoist read) — a load-bearing owner routing decision recorded in the plan/runbook, never invented.
+- [ ] Closes (evidence): `packages/contracts/src/models/shared-enums.ts:59` — write enum `calendar|todoist|linear|asana|drive|github|telegram`; `packages/integrations/src/connectors/adapters/` — gmail read but no gmail write; todoist write but no todoist read.
+- [ ] Files: `packages/contracts/src/models/shared-enums.ts` (extended if the owner decision widens the enum), `docs/runbooks/turn-on-and-smoke-test-runbook.md` (record the routing decision — folds into the 24.5 runbook)
+- [ ] Cross-doc invariant: none — ProposedAction
+- [ ] Depends on: 21.1
+- [ ] Build posture: pure-build (enum/decision — TDD; **owner decision** on target coverage — surface as a load-bearing routing choice, do not invent).
+- [ ] Done-when (smoke): every `targetSystem` in the write enum has a registered adapter (or an explicit owner-recorded "not covered"); the read/write asymmetry is documented and no dispatch silently no-ops.
+- [ ] (closes: G24)
+
+### 21.4 — Write outbox drain trigger *(implements §19.8 / §8)*
+- [ ] Wire the built, idempotent `drainOutbox` behind a live drain trigger (on wake/reconnect) so held external writes re-drive replay-safe — today `enqueue` is wired to `repos.outbox` but nothing drains it.
+- [ ] Closes (evidence): `apps/worker/src/composition/buildActivities.ts:318` — `enqueue` wired to `repos.outbox`; `packages/integrations/src/tools/outbox-drain.ts:199` — `drainOutbox` built, idempotent.
+- [ ] Files: `packages/integrations/src/tools/outbox-drain.ts` (bound to trigger), `apps/worker/src/composition/buildActivities.ts` (extended — drain on wake), `apps/worker/src/lifecycle` (wake hook)
+- [ ] Cross-doc invariant: none — ExternalWriteEnvelope, WriteReceipt
+- [ ] Depends on: 21.1
+- [ ] Build posture: pure-build (idempotent drain — TDD; drains to the stub transport until armed).
+- [ ] Implements: safety rule 3 (replay reuses the receipt ⇒ zero duplicate external writes)
+- [ ] Done-when (smoke): a held write in the outbox re-drives exactly once on wake; a replay of the same idempotency key reuses the existing `WriteReceipt` (no duplicate).
+- [ ] (closes: G21)
+
+### 21.10 — External-write-adapter credential seam (SecretsAccessor/getSecret into the Tool Gateway + adapter-core) *(implements §19.8 / §3)*
+- [ ] Build the external-write-adapter credential seam so each write adapter resolves its auth token at dispatch-time through §19.4's `getSecret` facade — a `SecretsAccessor`/`getSecret` binding threaded into the Tool Gateway + `adapter-core`, **fail-closed** on an unavailable/throwing accessor (no unauthenticated write). Resolves each vendor's `connector-write:<vendor>` token + the `telegram-bot:*` token via the 17.4 ref convention; the actual per-vendor token *provisioning* is the owner-confirmed crossing at 21.6/21.8.
+- [ ] Closes (evidence): grep of `packages/integrations/src/tools/` for `SecretsAccessor|SecretsPort|getSecret|tokenRef|credential` returns NOTHING — the write adapters have no auth-token resolution seam; `packages/integrations/src/tools/adapters/adapter-core.ts:142` — generic adapter with no secrets seam.
+- [ ] Files: `packages/integrations/src/tools/adapters/adapter-core.ts` (NEW SecretsAccessor seam), `packages/integrations/src/tools/gateway.ts` (thread getSecret through the write path), `apps/worker/src/composition/backends.ts` (bind `getSecret` into the write-adapter deps)
+- [ ] Cross-doc invariant: NEW — external-write SecretsAccessor seam
+- [ ] Depends on: 17.4 (secret-ref convention + `getSecret` facade), 21.1
+- [ ] Build posture: **build** — the seam is pure-build (fail-closed against a mock accessor); per-vendor write-token provisioning is the owner-confirmed crossing at 21.6/21.8 (each carries its own owner confirm per crossing).
+- [ ] Implements: safety rule 7 (write token resolved only via SecretsPort/Keychain, never logged)
+- [ ] Done-when (smoke): a write adapter resolves a `connector-write:<vendor>`/`telegram-bot` ref through a mock accessor; an unavailable/throwing accessor fails the dispatch closed with a typed fault (no unauthenticated write, no token in any log sink); no real vendor token is provisioned here. (closes: completeness finding — external-write credential seam; unblocks 21.6/21.8)
+
+### 21.5 — `WriteTransportGate` arming *(implements §19.8 / §8)*
+- [ ] Arm `WriteTransportGate` (AND-composed OFF-locks; the real `make` ships UNBOUND ⇒ deterministic stub, byte-equivalent shipped default) — `enabled===true` + an owner-provisioned `make` factory.
+- [ ] Closes (evidence): `apps/worker/src/composition/backends.ts:139,610-628` — AND-composed OFF-locks; the real `make` ships UNBOUND ⇒ deterministic stub (byte-equivalent shipped default).
+- [ ] Files: `apps/worker/src/composition/backends.ts` (extended — arm `WriteTransportGate`)
+- [ ] Cross-doc invariant: none — ExternalWriteEnvelope
+- [ ] Depends on: 21.1, 21.2, 21.10 (credential seam)
+- [ ] **HARD LINE (crossing 5; owner confirm per crossing):** the gate is the switch for real external writes; default-OFF, owner-provisioned; strict `=== true` (never truthy-coerce).
+- [ ] Done-when (smoke): with the gate armed + a `make` provisioned, `selectAdapterTransport` returns the real transport; with either absent, the deterministic stub — byte-identical default.
+- [ ] (closes: G53)
+
+### 21.6 — Real per-vendor external-write transport *(implements §19.8 / §8)*
+- [ ] Bind the first real per-vendor `AdapterTransport` (→ Todoist/Asana/Calendar/Drive/GitHub/Linear/Telegram) in place of `createStubAdapterTransport` (in-memory Map) — selected only when `gate.enabled===true && make is a function`; each vendor authenticates via the 21.10 seam over its provisioned `connector-write:<vendor>` token.
+- [ ] Closes (evidence): `apps/worker/src/composition/backends.ts:574` — `createStubAdapterTransport`, in-memory Map; `backends.ts:621-628` — `selectAdapterTransport` returns the stub unless `gate.enabled===true && make is a function`.
+- [ ] Files: `apps/worker/src/composition/backends.ts` (extended — real transport `make`), `packages/integrations/src/tools/adapters/adapter-core.ts` (real HTTP bind per vendor over the credential seam)
+- [ ] Cross-doc invariant: none — ExternalWriteEnvelope, WriteReceipt
+- [ ] Depends on: 21.5, 21.10 (credential seam), 17.4 (per-vendor write-token ref)
+- [ ] **HARD LINE (crossing 5; owner confirm per crossing):** first real, irreversible external side effect — owner-confirmed, one vendor at a time (each vendor its own owner-confirmed sub-crossing + write-token provisioning). Every write carries the full envelope (idempotency key + canonical object key + pre-write existence check + receipt).
+- [ ] Implements: safety rule 3 (external-write envelope), safety rule 7 (write token via SecretsPort)
+- [ ] Done-when (smoke): an armed dispatch to one real vendor creates a real object and returns a real `WriteReceipt`; a pre-write existence check + idempotency replay produce zero duplicate external writes; a redacted fault carries no token/body.
+- [ ] (closes: G14)
+
+### 21.7 — §9.8 Approvals→dispatch terminal write hits a real vendor *(implements §19.8 / §8)*
+- [ ] Route the (already-live end-to-end) Approvals CAS + `dispatchExternalWrite` chain so `adapter.create` hits the **real** transport (today it hits the stub) — the terminal write of an approved §9.8 card lands a real vendor object.
+- [ ] Closes (evidence): `apps/worker/src/composition/buildActivities.ts:508-546` — real `ApprovalRepository` CAS + `dispatchExternalWrite` (LIVE end-to-end); `packages/integrations/src/tools/gateway.ts:199` — `adapter.create` hits the stub transport today.
+- [ ] Files: `packages/integrations/src/tools/gateway.ts` (extended — `adapter.create` over the selected real transport), `apps/worker/src/composition/buildActivities.ts` (dispatch uses the routed real adapter)
+- [ ] Cross-doc invariant: none — Approval, ExternalWriteEnvelope, WriteReceipt
+- [ ] Depends on: 21.6
+- [ ] **HARD LINE (crossing 5; owner confirm per crossing):** an approved card now writes for real — owner-confirmed; the Tool Gateway is the **only** external-write path.
+- [ ] Implements: safety rule 3 (envelope + receipt on the terminal write)
+- [ ] Done-when (smoke): an approved §9.8 card dispatches a REAL vendor object with a real receipt through the adapter selected by `action.targetSystem`; a rejected/expired card writes nothing; a held/unreachable write drains on wake (21.4) exactly once.
+- [ ] (closes: G18)
+
+### 21.8 — Approval card renderer real Mac + Telegram transports *(implements §19.8 / §11)*
+- [ ] Replace the no-op `cardRenderer.render:()=>ok(undefined)` with real dual-channel push (Mac + Telegram) so an approval card surfaces on both with parity; the Telegram bot token resolves via the 21.10 seam over the `telegram-bot:*` ref.
+- [ ] Closes (evidence): `apps/worker/src/composition/buildActivities.ts:502-505` — `cardRenderer.render:()=>ok(undefined)`.
+- [ ] Files: `apps/worker/src/composition/buildActivities.ts` (extended — real `cardRenderer`), `packages/integrations/src/tools` (Mac + Telegram card transports, NEW)
+- [ ] Cross-doc invariant: none — Approval
+- [ ] Depends on: 21.10 (credential seam / Telegram token ref), 17.4 (`telegram-bot` ref)
+- [ ] **HARD LINE (crossing 5; owner confirm per crossing):** real push to Mac + Telegram — owner-confirmed; redaction strips secrets/raw content/prompts before any push sink.
+- [ ] Implements: safety rule 7 (redaction before any sink)
+- [ ] Done-when (smoke): a pending approval renders a card on Mac and Telegram with matching content; a redaction test proves no secret/raw content leaks into either channel; a no-op default holds when the renderer is unbound.
+- [ ] (closes: G22)
+
+### 21.9 — NotebookLM back-sync (Drive write) *(implements §19.8 / §9)*
+- [ ] Stand up NotebookLM Drive-backed back-sync (vault-derived managed docs → Drive → NotebookLM; direct NotebookLM API is spike-gated) over the **Drive WRITE transport (21.6)** + the connector-instance config (14.2) — **not** the Drive read connector — so it depends on no Phase-23 read-side enablement.
+- [ ] Closes (evidence): `packages/integrations/src/notebook/notebooklm-sync.ts:1` — Drive-backed only; direct NotebookLM API spike-gated; `apps/worker/src/composition/provisionDev.ts:310` — no Drive connector-instance to link/sync (superseded by the 14.2 connector-instance registry).
+- [ ] Files: `packages/integrations/src/notebook/notebooklm-sync.ts` (bound), `apps/worker/src/composition` (link the Drive connector-instance config + schedule the sync over the Drive write transport)
+- [ ] Cross-doc invariant: none — NotebookMapping
+- [ ] Depends on: 21.6 (real Drive **write** transport), 14.2 (Drive connector-instance config) — **no Phase-23 dependency** (write-only managed-doc push; the Drive read connector is a separate, non-blocking Phase-23 arc)
+- [ ] **HARD LINE (crossing 5; owner confirm per crossing):** real Drive writes of vault-derived docs — owner-confirmed; managed docs only, through the envelope.
+- [ ] Implements: safety rule 3 (Drive write through the envelope with a receipt)
+- [ ] Done-when (smoke): a vault-derived managed doc syncs to Drive with a `NotebookMapping` + receipt; a re-sync of an unchanged doc is a no-op (idempotent); no non-managed vault content is pushed; sync uses only the Drive write transport (no Drive read connector bound).
+- [ ] (closes: G23)
+
+### Acceptance criteria (21)
+- [ ] All 21.X task checkboxes ticked.
+- [ ] An approved §9.8 card dispatches a **REAL** vendor object with a real `WriteReceipt` through the adapter selected by `action.targetSystem`; a held/unreachable write drains on wake exactly once; a replay reuses the receipt ⇒ zero duplicate external writes (safety rule 3).
+- [ ] The per-`TargetSystem` routing registry resolves all seven vendors (or an explicit owner-recorded non-coverage); every write adapter resolves its `connector-write`/`telegram-bot` token through the 21.10 credential seam (fail-closed on unavailable), never logged (safety rule 7).
+- [ ] Approval cards surface on Mac **and** Telegram with parity and no secret/raw-content leak; NotebookLM back-sync uses the Drive write transport only (no Phase-23 read connector).
+- [ ] Every real transport is byte-equivalent to the shipped stub when `WriteTransportGate` is unarmed; strict `=== true` arming with a truthy-not-`true` guard-test (incl. string `'false'` — suite in 24.2).
+- [ ] The Tool Gateway is the **only** external-write path — a boundary test proves no dispatch bypasses the envelope (idempotency key + canonical object key + pre-write existence check + receipt).
+- [ ] Owner has confirmed the write-target routing decision (21.3) and each real-transport crossing (one vendor at a time); each crossing + its runbook step are cross-referenced in the 24.5 arming runbook.
+- [ ] **Done-when smoke:** boot with `WriteTransportGate` armed + one real vendor transport provisioned (token via the seam) → approve a §9.8 card → observe a real vendor object + receipt, a Mac+Telegram card, and an idempotent drain of a simulated held write; boot unarmed → identical stub behavior with no external side effect.
+
+---
+
+## Phase 22 — Propose Activation (last flip of the sequential chain)
+
+**Goal:** Turn on the Copilot's *only* write path — `copilot.propose_action` (external) and `copilot.propose_knowledge` (semantic) — as the **last flip of the sequential (1)–(6) chain**, behind a five-precondition gate, so every model-originated write lands a PENDING §9 Approval and nothing auto-applies.
+
+**Posture:** HARD-LINE (crossing 6 — the LAST flip of the sequential chain; **owner confirm per crossing**). All of §19.9's substrate is already built and dormant; this phase is the owner-confirmed flag flips + the remaining KMP-bridge commit leg — build-up-to-gate is free, the flips are owner-gated. Even after arming, every write stays human-gated per Approval. Per-vendor connector enablement (Phase 23) is a **separate independent arc** and is **not** a precondition of propose.
+
+**Spec anchors:** ARCHITECTURE.md §19.9 (activation home); §8 (Copilot propose → Tool Gateway / §9 Approvals; §13.10a KMP bridge); §6 (KnowledgeWriter commit on approval); §5 (propose gating + content-trust AND-term); §9 (workflow 8 approvals, workflow 13 Copilot Q&A); §3 frozen contracts: ProposedAction, KnowledgeMutationPlan, Approval.
+
+**Track:** worker · **Depends on (phases):** 17 (§19.4 signing key), 18 (§19.5 auto-ingest / model legs), 19 (§19.6 gbrain provenance stamping real), 20 (§19.7 content-trust flipped `trusted`), 21 (§19.8 real external-write path armed) — the full sequential chain 17→18→19→20→21 precedes this last flip. (Phase 23 per-vendor enablement is NOT a precondition.)
+
+### 22.1 — Propose precondition-gate assertion (five preconditions across the sequential chain) *(implements §19.9 / §5)*
+- [ ] Boot asserts the five arming preconditions before **either** propose flag is honored: (1) `deriveCopilotContentTrust` returns `'trusted'` (Phase 20), (2) `proofSpineParams !== undefined` — auto-ingest / KnowledgeWriter commit path provisioned (Phase 18), (3) the Keychain signing key resolves via `getSecret` (Phase 17), (4) the real external-write path is armed — `WriteTransportGate.enabled === true` (Phase 21), and (5) gbrain provenance stamping is real (Phase 19); any missing precondition holds propose OFF and mints an operator-visible `HealthItem` — never a flag-only override.
+- [ ] Files: apps/worker/src/boot.ts:1304,1309 (extended — five-precondition guard ahead of `proposeEnabled`/`knowledgeProposeEnabled`)
+- [ ] Cross-doc invariant: none — ProposedAction, KnowledgeMutationPlan, Approval
+- [ ] Depends on: Phase 17, Phase 18, Phase 19, Phase 20, Phase 21
+- [ ] Tag: HARD-LINE (arming precondition gate; crosses no line by itself; owner confirm per crossing)
+- [ ] Done-when: with any one of the five preconditions absent, both propose paths resolve `read_only` and a System Health item names the missing precondition; smoke — boot surfaces `propose=OFF (reason=<precondition>)`.
+- [ ] (closes: G52 — precondition/AND-term readiness half; trust-flip is 20.4)
+
+### 22.2 — Arm `copilot.propose_action` (external-write propose path) *(implements §19.9 / §8)*
+- [ ] Flip `copilotProposeMode === true` so the built-but-dormant external-write propose path opens: model intent → `deriveCopilotProposedAction` (server-derived, C5.3 — never model-supplied `targetSystem`/keys) → `proposeCopilotAction` → `createApprovalsProposeSink` mints a PENDING §9 Approval carrying the derived `ProposedAction`.
+- [ ] Files: apps/worker/src/boot.ts (extended — `proposeEnabled: config.copilotProposeMode === true`), apps/worker/src/api/procedures/copilotPropose.ts:120,275,327 (dormant → reachable), apps/worker/src/api/procedures/copilotProposeSink.ts:111 (real `ApprovalRepository` sink)
+- [ ] Cross-doc invariant: none — ProposedAction, Approval
+- [ ] Depends on: 22.1, 21.6, 21.7 (approved external write dispatches through the real Tool Gateway path)
+- [ ] Tag: HARD-LINE (crossing 6 — opens the Copilot external-write path; write stays human-gated per Approval; owner confirm per crossing)
+- [ ] Done-when: a Copilot external-write intent lands a PENDING Approval carrying the server-derived `ProposedAction`; approving dispatches through the Tool Gateway (§19.8, Phase 21) with a `WriteReceipt`; rejecting discards with zero side effect.
+- [ ] (closes: G19)
+
+### 22.3 — Arm `copilot.propose_knowledge` (semantic-write propose path) *(implements §19.9 / §6)*
+- [ ] Flip `copilotProposeKnowledge === true` (with `proofSpineParams` provisioned, per the §13.10a coupling) so the semantic-write propose path opens: model → `deriveCopilotProjectKnowledgePlan` (server-derived, re-validated `KnowledgeMutationPlan`) → `createApprovalsKnowledgeProposeSink` → PENDING §9 Approval via `PendingKnowledgeMutationRepository`.
+- [ ] Files: apps/worker/src/boot.ts:1309 (extended — `knowledgeProposeEnabled`), apps/worker/src/api/procedures/copilotProposeKnowledge.ts:1, apps/worker/src/api/procedures/copilotProposeKnowledgeTool.ts:130
+- [ ] Cross-doc invariant: none — KnowledgeMutationPlan, Approval
+- [ ] Depends on: 22.1
+- [ ] Tag: HARD-LINE (crossing 6 — opens the Copilot semantic-write path; commit only on approval; owner confirm per crossing)
+- [ ] Done-when: a Copilot knowledge intent lands a PENDING Approval carrying the validated `KnowledgeMutationPlan`; the plan is server-derived (safety rule 2 — model never supplies the plan/keys); rejecting leaves the vault untouched.
+- [ ] (closes: G20 — propose-sink leg)
+
+### 22.4 — §13.10a KMP-bridge on-approval executor + tool (remaining dormant slices) *(implements §19.9 / §6)*
+- [ ] Wire the on-approval executor so an **approved** knowledge Approval commits its `KnowledgeMutationPlan` through KnowledgeWriter (sole autonomous semantic writer, safety rule 1) — closing the §13.10a bridge's last dormant leg (executor + tool) so an approved card is always committable, never stranded on the external-only dispatch; the commit carries the HMAC provenance stamp (Phase 19).
+- [ ] Files: apps/worker/src/api/procedures/copilotProposeKnowledgeTool.ts:130 (extended — on-approval executor), apps/worker/src/boot.ts (extended — bridge executor wiring)
+- [ ] Cross-doc invariant: none — KnowledgeMutationPlan, Approval
+- [ ] Depends on: 22.3, 19.2 (provenance stamping — the committed plan is stamped)
+- [ ] Tag: HARD-LINE (semantic-write commit path; fires only on human approval; owner confirm per crossing)
+- [ ] Done-when: approving a knowledge card produces exactly one KnowledgeWriter commit routed through a validated `KnowledgeMutationPlan` carrying a valid `SignedProvenanceStamp`; no DB-only or unstamped write occurs (a parity defect would quarantine it); re-approval is idempotent.
+- [ ] (closes: G20 — on-approval commit leg)
+
+### 22.5 — Mutual-exclusion + content-trust AND-term runtime regression guard *(implements §19.9 / §5)*
+- [ ] Pin the runtime safety of both flips: the two propose flags stay **mutually exclusive** (both `true` ⇒ the capability resolver fails closed to `read_only`), and the propose capability remains an AND of `flag === true && contentTrust === 'trusted'` so a flag flip can never override an untrusted per-source verdict; a regression test drives both flags-on and a forced-untrusted verdict.
+- [ ] Files: apps/worker/src/api/procedures/copilotAgentSynthesis.ts:261,287-289 (guard verified), apps/worker/test/... (NEW regression test)
+- [ ] Cross-doc invariant: none — ProposedAction, KnowledgeMutationPlan
+- [ ] Depends on: 22.2, 22.3
+- [ ] Tag: pure-build (defense-in-depth guard-test over the arming logic)
+- [ ] Done-when: setting both flags `true` yields `read_only`; forcing `deriveCopilotContentTrust` untrusted keeps both paths OFF regardless of flags; test is red before the guard, green after.
+- [ ] (closes: G52 — mutual-exclusion + AND-term guard half)
+
+### Acceptance criteria (22)
+- [ ] All 22.X task checkboxes ticked.
+- [ ] Both propose flags default OFF; each is honored only after 22.1's five-precondition gate passes (content-trust trusted · auto-ingest provisioned · signing key present · external-write path armed · gbrain provenance real); a flag-only flip with any precondition absent never opens a write path.
+- [ ] Every propose (external or semantic) lands a **PENDING** §9 Approval — a grep/boundary test proves no propose path auto-applies a write; on approval, external routes through the Tool Gateway (§19.8/Phase 21) and semantic through KnowledgeWriter with a provenance stamp (safety rules 1–3 held).
+- [ ] The two propose flags are provably mutually exclusive (both-on ⇒ `read_only`), pinned by 22.5; a truthy-not-`true` guard covers both flags (24.2 suite).
+- [ ] Propose is the last flip of the sequential (1)–(6) chain — Phase 23 per-vendor enablement is NOT a precondition; the crossing + runbook step are cross-referenced in 24.5.
+- [ ] **Phase smoke:** a Copilot ask intending an external write and one intending a semantic write each land a distinct PENDING Approval; approving the external one dispatches via the Tool Gateway with a `WriteReceipt`, approving the semantic one produces one stamped KnowledgeWriter commit; setting both flags true fails the capability closed to `read_only`; forcing content-trust untrusted keeps both paths OFF.
+
+---
+
+## Phase 23 — Per-Vendor Connector Enablement
+
+**Goal:** Arm the built-and-dormant connectors **one vendor at a time** — bind the real HTTP transport, provision each vendor's Keychain credential, build the Google OAuth refresh loop, add per-vendor content hydration, stand up the OSB URL-source extractors and capture ingress, and live-verify each candidate wire-shape — so real external reads flow while every un-armed vendor stays inert.
+
+**Posture:** HARD-LINE, **independent arc** (NOT part of the sequential (1)–(6) chain), gated only on Phase 16 (§19.3 connector engine) + Phase 17 (§19.4 Keychain), ~1 owner-confirmed round per vendor (**owner confirm per vendor crossing**). Armable in parallel and pullable earlier per owner breadth preference; does not gate, and is not gated by, propose (Phase 22). The transports, adapters, and SecretsAccessor seam are already built (Phase 16 §19.3) and Keychain is live (Phase 17 §19.4); this phase is the credential bind + real-network go-live.
+
+**Spec anchors:** ARCHITECTURE.md §19.10 (activation home); §8 (Connector Gateway per-vendor real transports + credential binding + `SecretsAccessor`/OAuth seam + capture ingress); §3 (`SecretsPort` per-vendor token refs via §19.4's convention); §5 (ING-7 read-only at admission + SSRF/egress guard on the final URL); §13 (Keychain creds per vendor); frozen contracts: SourceEnvelope, RegisterSourceInput, CapturePayload.
+
+**Track:** providers-integrations · worker · **Depends on (phases):** 16 (§19.3 connector engine + `createConnectorHttpTransport`), 17 (§19.4 Keychain activation + `connector-read` ref convention)
+
+### 23.1 — Bind real `HttpTransport.send` (go-live — the keystone every remote connector needs) *(implements §19.10 / §8)*
+- [ ] Bind the real network bindings behind the owner-gated `HttpTransport.send` seam (the wrapper is built + Context7-grounded across 7 vendors/3 shapes but UNBOUND in the shipped default), with the SSRF/egress guard (`isAllowedRemoteEndpoint`) enforced on the final URL **before** any token read; each vendor bind is its own owner-confirmed crossing.
+- [ ] Files: packages/integrations/src/connectors/adapters/http-transport.ts:61,122-128 (`HttpTransport.send` — bind real fetch, currently owner-gated/UNBOUND)
+- [ ] Cross-doc invariant: none — SourceEnvelope
+- [ ] Depends on: Phase 16, Phase 17
+- [ ] Tag: HARD-LINE (crossing 7 — first real external network read; independent arc; owner confirm per vendor crossing)
+- [ ] Done-when: a bound vendor's poll performs a real HTTPS GET/POST against the live endpoint through the SSRF-guarded transport; an un-bound vendor still hits zero network; typed redacted faults never carry token/body/cause.
+- [ ] (closes: G25 — real transport go-live; the dormant build is 16.3)
+
+### 23.2 — Connector credential binding (SecretsAccessor + provisioned `tokenRef` per vendor) *(implements §19.10 / §3)*
+- [ ] Provision each vendor's Keychain credential and bind the `SecretsAccessor` so `HttpTransport` resolves the ref at send-time via §19.4's `connector-read:<vendor>` convention, **fail-closed** on an unavailable/throwing accessor (no unauthenticated fallback); the token is used Authorization-header-only and never logged.
+- [ ] Files: packages/integrations/src/connectors/adapters/http-transport.ts:74-79,177-186 (`SecretsAccessor` — provision `tokenRef` + bind per vendor)
+- [ ] Cross-doc invariant: none — SourceEnvelope
+- [ ] Depends on: 23.1, 17.4 (`connector-read` ref convention)
+- [ ] Tag: HARD-LINE (real OS credential bound to a live vendor; owner confirm per vendor crossing)
+- [ ] Done-when: a poll for the armed vendor resolves a real `tokenRef` via Keychain and authenticates; revoking/locking the Keychain entry fails the poll closed with an `auth_locked` `HealthItem`; the token appears in no log sink (safety rule 7).
+- [ ] (closes: G26)
+
+### 23.3 — OAuth token refresh / expiry / rotation loop (Google: Drive, Calendar, Gmail) *(implements §19.10 / §8)*
+- [ ] Build the OAuth refresh/expiry/rotation loop for the Google connectors (today `OAuthTokenSource` is documentation-only): detect near-expiry, refresh against the token endpoint, rotate the stored ref via SecretsPort, and retry the in-flight request once on a 401.
+- [ ] Files: packages/integrations/src/connectors/adapters/drive.ts:37-42, calendar.ts:40-43, gmail.ts:41-43 (`OAuthTokenSource` — implement refresh/expiry/rotation)
+- [ ] Cross-doc invariant: none — SourceEnvelope
+- [ ] Depends on: 23.2
+- [ ] Tag: HARD-LINE (live Google OAuth; owner confirm per vendor crossing)
+- [ ] Done-when: an expired Google token auto-refreshes and the request succeeds without operator action; a refresh failure fails closed with an `auth_locked` `HealthItem`; rotated tokens land back in Keychain, never Markdown/logs.
+- [ ] (closes: G27)
+
+### 23.4 — Per-vendor content hydration (list→get): Gmail `messages.get` fan-out · Granola transcript · Asana GID+`opt_fields` *(implements §19.10 / §8)*
+- [ ] Add the second-hop content hydration each list-only vendor needs: Gmail `messages.get` fan-out over the `id/threadId` refs (today LIST-ONLY), Granola transcript/note-body fetch (today `GET /v1/notes` is metadata-only), and Asana GID + `opt_fields` expansion — feeding real body text into `SourceEnvelope`.
+- [ ] Files: packages/integrations/src/connectors/adapters/gmail.ts:35-40 (`messages.get` fan-out), granola.ts:29-31 (transcript body), asana.ts (GID + `opt_fields`)
+- [ ] Cross-doc invariant: extended — SourceEnvelope (body threading)
+- [ ] Depends on: 23.2
+- [ ] Tag: HARD-LINE (real per-vendor content reads; ING-7 UNTRUSTED content; owner confirm per vendor crossing)
+- [ ] Done-when: a Gmail poll hydrates full message bodies (not just id refs), Granola yields transcript text, Asana yields the expanded task; email/transcript content is admitted **read-only** (ING-7 tool-stripping HARD, safety rule 6). A hydrated Granola transcript routes to the meeting dispatcher (15.9), not the generic source path.
+- [ ] (closes: G28)
+
+### 23.5 — OSB source extractors (web-article · podcast RSS+transcription · YouTube pinned-subprocess) + generic URL-source real transports *(implements §19.10 / §8)*
+- [ ] Implement the OSB extractor real transports (today type-only): `WebFetchTransport` (web-article), `PodcastExtractTransport` (RSS + audio transcription; audio-only currently fails `empty_content`), the YouTube pinned-subprocess extractor, and the generic URL-source transport — each emit-only into the candidate-data path.
+- [ ] Files: packages/integrations/src/connectors/adapters/web-source.ts:41-53 (`WebFetchTransport`), podcast-source.ts:50-65 (`PodcastExtractTransport`), plus the YouTube pinned-subprocess extractor
+- [ ] Cross-doc invariant: none — SourceEnvelope
+- [ ] Depends on: 23.1
+- [ ] Tag: HARD-LINE (real external web/media fetch; ING-7 UNTRUSTED content; owner confirm per vendor crossing)
+- [ ] Done-when: a URL/RSS/YouTube source extracts real body text → registers → ingests to a note; the extracted content is UNTRUSTED and runs read-only at job admission (safety rule 6); an audio-only podcast transcribes rather than failing `empty_content`.
+- [ ] (closes: G30)
+
+### 23.6 — Capture ingress: Telegram bot receiver + coding-session git-hook (CapturePayload producers) *(implements §19.10 / §8)*
+- [ ] Stand up the two capture producers that today have no source: a Telegram long-poll/webhook receiver (the current adapter is a 16-line shell over an injected transport) and a coding-session git-hook — each producing an allowlisted, emit-only `CapturePayload` into the candidate-data path; the Telegram bot token resolves via §19.4's `telegram-bot` ref.
+- [ ] Files: packages/integrations/src/connectors/adapters/telegram-capture.ts:1-16 (add long-poll/webhook receiver), capture-source.ts:80-143 (`CapturePayload` producers)
+- [ ] Cross-doc invariant: none — CapturePayload
+- [ ] Depends on: 23.2, 17.4 (`telegram-bot` ref)
+- [ ] Tag: HARD-LINE (real inbound ingress; UNTRUSTED capture content; owner confirm per vendor crossing)
+- [ ] Done-when: a Telegram message and a git-hook event each produce a `CapturePayload` that ingests to a note; capture content is admitted read-only (ING-7); the Telegram bot token resolves via Keychain, never logged.
+- [ ] (closes: G34)
+
+### 23.7 — Vendor wire-shape verification against live APIs *(implements §19.10 / §8)*
+- [ ] Verify each connector's Context7-grounded **candidate** wire-shape against the live API at the arming crossing (Asana/Drive/Granola/Gmail request+response shapes are DOCUMENTED CANDIDATES), correcting any drift before the vendor is trusted.
+- [ ] Files: packages/integrations/src/connectors/adapters/asana.ts:28-31, drive.ts:29-35, granola.ts:29-32, gmail.ts:28-33 (confirm/correct candidate shapes at arming)
+- [ ] Cross-doc invariant: none — SourceEnvelope
+- [ ] Depends on: 23.1, 23.4
+- [ ] Tag: HARD-LINE (live-API confirmation, part of each vendor's crossing; owner confirm per vendor crossing)
+- [ ] Done-when: each armed vendor's real response parses cleanly through its adapter (shape live-verified, not assumed); a mismatch is corrected before the vendor is marked enabled.
+- [ ] (closes: G35)
+
+### Acceptance criteria (23)
+- [ ] All 23.X task checkboxes ticked (per armed vendor; un-armed vendors remain dormant with no `tokenRef` bound and zero network).
+- [ ] Each vendor arming is an independent, owner-confirmed round (owner confirm per vendor crossing); Phase 23 is an independent arc — it neither gates nor is gated by the (1)–(6) chain beyond §19.3/§19.4. The shipped default binds no real transport (a boundary test proves an un-armed vendor performs zero live calls).
+- [ ] Every remote read resolves its credential through SecretsPort/Keychain (fail-closed on lock), passes the SSRF/egress guard on the final URL before any token read, and logs no token/body/cause.
+- [ ] All imported/untrusted content (email, web-article, podcast, YouTube, capture) runs **read-only** at job admission (ING-7, safety rule 6); a job declaring a mutating tool over untrusted content is rejected.
+- [ ] Phase-23 "done" = every vendor is independently armable + at least one owner-confirmed vendor smoke-verified end-to-end; remaining vendors are dormant-ready (substrate complete — not a 50% trap, each is a bounded owner round tracked in the 24.5 runbook).
+- [ ] **Phase smoke:** for one owner-confirmed vendor, a scheduled poll resolves a real `tokenRef`, fetches over the real `HttpTransport` against the live API (wire-shape verified), hydrates full content (list→get), and registers a source that ingests to a note; the token appears in no log; ING-7 read-only holds for an untrusted web/email source; all other vendors stay dormant.
+
+---
+
+## Phase 24 — OS One-Writer Enforcement, Hardening & Real Packaging
+
+**Goal:** Make the one-writer guarantee **OS-enforced** (not merely doctor-reported), give every arming knob a truthy-not-`true` regression guard, round-trip retained-but-unread health items, deliver real signed/notarized packaging with a native-ABI worker, and **author the Part II arming runbook** (safe turn-on order over the 12 phases / 7 crossings).
+
+**Posture:** pure-build (no hard-line crossing). Hardens, packages, and documents the activated system; safe to build to completion without an arming flip.
+
+**Spec anchors:** ARCHITECTURE.md §19.11 (activation home); §6 (OS-level one-writer lockdown REQ-S-NEW-008 — filesystem ACL + sole PGLite advisory-lock); §13 (packaging: unsigned build-from-source → signed/notarized DMG, install-doctor continuous probe, arming runbook / safe turn-on order); §4 (durable health-surface store); §3 frozen contracts: HealthItem.
+
+**Track:** worker · knowledge · desktop · **Depends on (phases):** 14 (§19.1 System Health panel + local Temporal substrate), 19 (§19.6 code-level one-writer floor), 17–23 (the crossings the runbook documents)
+
+### 24.1 — Upgrade REQ-S-NEW-008 doctor from report-only to active OS one-writer enforcement (ACL / advisory-lock) *(implements §19.11 / §6)*
+- [ ] Upgrade the one-writer guarantee from a report-only doctor posture to an **active** OS-backed check: a filesystem ACL + a sole PGLite/vault advisory-lock so a stray write-capable gbrain process bound to a canonical brain is **physically prevented** from writing the canonical `.md`, not merely flagged; the code-level sole-writer (`atomic-write.ts`) is the in-process floor, this is the OS floor beneath it.
+- [ ] Files: apps/worker/test/install/doctor-posture.test.ts:1 (report-only → active enforcement), packages/knowledge/src/markdown-vault/atomic-write.ts:59 (code-level floor — extend with OS lock acquisition)
+- [ ] Cross-doc invariant: none — (REQ-S-NEW-008)
+- [ ] Depends on: Phase 19
+- [ ] Tag: pure-build (OS-level enforcement of safety rule 1)
+- [ ] Done-when: a second write-capable process attempting to bind the canonical brain is denied at the OS layer (ACL/advisory-lock), verified by a test that spawns a contending writer and asserts the write is physically blocked, not just reported.
+- [ ] (closes: G46)
+
+### 24.2 — Strict `=== true` arming-guard regression tests across every arming knob (incl. string `'false'`) *(implements §19.11 / §13)*
+- [ ] Add a defense-in-depth regression guard-test for **every** arming knob asserting strict `=== true` (never truthy-coerce), including the adversarial string `'false'` and other truthy-but-not-`true` inputs, so no arming flip can be accidentally opened by a coercion bug; prune dead/superseded boot fields surfaced by the sweep. Covers every Part II flip: `autoIngest`, model-transport bind, gbrain write/read binds, `copilotServingOracleGoLive`, `WriteTransportGate`, `copilotProposeMode`/`copilotProposeKnowledge`, per-vendor `HttpTransport.send` binds, and the Phase-25 schedule flips.
+- [ ] Files: apps/worker/src/composition/backends.ts:130, apps/worker/src/boot.ts:1304,1557, apps/worker/src/api/procedures/copilotAgentSynthesis.ts:262, apps/worker/src/composition/reconcilerDbProjection.ts:121 (all `=== true` — add regression guards), apps/worker/test/... (NEW guard-tests)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: 24.1
+- [ ] Tag: pure-build (arming-discipline regression suite)
+- [ ] Done-when: each arming knob set to the string `'false'` (and other truthy non-`true` values) resolves OFF; the guard-test is red under a hypothetical truthy-coerce and green under strict equality; dead boot fields removed with no behavior change.
+- [ ] (closes: G56)
+
+### 24.3 — Retained-but-unread health-item round-trip + durable surface store *(implements §19.11 / §4)*
+- [ ] Round-trip retained-but-unread `HealthItem`s from producer → durable surface store → renderer panel so an operator sees degrades that were minted while the panel was closed (producers already mint `worker_down`, `auth_locked`, `parity_defect`, coverage-degrade, `keychain-locked` across the system; the durable retention/round-trip is the gap).
+- [ ] Files: apps/worker/src/health/surface.ts (durable retention + read-cursor), apps/worker/src/lifecycle/degraded/temporal-unavailable.ts:218 (producer verified end-to-end)
+- [ ] Cross-doc invariant: none — HealthItem
+- [ ] Depends on: Phase 14 (14.3 System Health panel/producer leg)
+- [ ] Tag: pure-build (observability round-trip over §19.1's panel)
+- [ ] Done-when: a `HealthItem` minted while the panel is closed is still present and marked unread when the operator opens System Health; marking it read persists across restart.
+- [ ] (closes: G61 — retained-but-unread round-trip leg; panel/producer leg is 14.3)
+
+### 24.4 — Real Electron packaging: native-ABI worker + bundled runtime + signed/notarized DMG *(implements §19.11 / §13)*
+- [ ] Deliver real packaging: native-ABI rebuild via `@electron/rebuild` (better-sqlite3 ABI), bundle the runtime binaries the app supervises (gbrain / local Temporal), migrate the worker host to a packaged `utilityProcess`/`child_process.fork` topology, and produce a Mac code-signed + notarized DMG — replacing the unsigned build-from-source path.
+- [ ] Files: apps/desktop/worker-host/index.ts:8 (`child_process.fork` — packaging topology), apps/desktop/LESSONS.md #2 (`@electron/rebuild` better-sqlite3 ABI note)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: Phase 14 (14.4 local Temporal supervision — bundled runtime)
+- [ ] Tag: pure-build (packaging; no runtime hard-line)
+- [ ] Done-when: a signed + notarized DMG installs on a clean Mac and launches with the native-ABI worker (no ABI mismatch), the supervised gbrain/Temporal binaries start, and Gatekeeper accepts the notarized bundle.
+- [ ] (closes: G63)
+
+### 24.5 — Part II arming runbook / safe turn-on order (12-phase / 7-crossing structure) *(implements §19.11 / §13)*
+- [ ] Bring `docs/runbooks/turn-on-and-smoke-test-runbook.md` (+ `copilot-propose-go-live.md`) up from the current Phase 0–6 structure to the **12-phase / 7-crossing** Part II structure: enumerate, in dependency order, every flag-flip vs BUILD-round vs hard-line crossing — the sequential (1)–(6) chain (17 Keychain → 18 model transport → 19 gbrain write-back → 20 serving-oracle → 21 external-write → 22 propose, the last flip) **plus** the independent per-vendor connector arc (23, gated only on 16+17) — each with its owner/security-review gate, its strict-`=== true` flag list, and per-crossing smoke steps. Records the G62 local-Temporal substrate-downgrade owner-ratification (from 14.4), the 21.3 write-target routing decision, and the autonomous-recurring-spend note for 18.10 / 25.2–25.4. This is the single operator artifact governing safe turn-on order; an operator must not be able to arm out of order from it.
+- [ ] Closes (evidence): `docs/runbooks/turn-on-and-smoke-test-runbook.md` currently structured on Phases 0–6 (Prerequisites / read-Copilot / auto-ingest / Keychain / oracle / reconcile / external-write) — predates and does not describe the 7-crossing Part II order; `docs/runbooks/copilot-propose-go-live.md` predates the five-precondition propose gate.
+- [ ] Files: docs/runbooks/turn-on-and-smoke-test-runbook.md (rewritten to the 12-phase/7-crossing structure), docs/runbooks/copilot-propose-go-live.md (updated to the five-precondition propose gate + last-flip-of-chain framing)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: Phases 17, 18, 19, 20, 21, 22, 23 (documents each crossing's gate + smoke)
+- [ ] Tag: pure-build (operator documentation; the safe turn-on order for a fail-closed system is itself a shipped deliverable)
+- [ ] Done-when: the runbook enumerates all 12 Part II phases and all 7 hard-line crossings in dependency order, each with its owner (and where applicable security-review) gate, its strict-`=== true` flags, and a per-crossing smoke step; each hard-line phase's Done-when cross-references its runbook step; a reader can determine the one legal arming order (chain 17→18→19→20→21→22; independent 23 arc after 16+17) and cannot arm out of order.
+- [ ] (closes: G57)
+
+### Acceptance criteria (24)
+- [ ] All 24.X task checkboxes ticked.
+- [ ] The one-writer guarantee is enforced at the OS layer (ACL/advisory-lock) — a contending write-capable process is physically blocked, proven by a spawn-a-contender test, not a report.
+- [ ] Every arming knob resolves OFF for all truthy-but-not-`true` inputs (incl. string `'false'`), pinned by regression guard-tests; dead boot fields pruned.
+- [ ] Retained-but-unread `HealthItem`s round-trip to the renderer and persist read-state across restart.
+- [ ] The Part II arming runbook documents the full 12-phase / 7-crossing turn-on order (sequential chain + independent per-vendor arc), each crossing's gate/flags/smoke; each hard-line phase's Done-when cites its runbook step (closes G57).
+- [ ] **Phase smoke:** a stray write-capable gbrain process bound to a canonical brain is physically blocked (not merely reported); every arming knob set to string `'false'` resolves OFF; a `HealthItem` minted while the panel was closed appears unread on open; a signed+notarized DMG installs and launches with the native-ABI worker and its bundled runtimes; the runbook's turn-on order is internally consistent with every hard-line phase's Done-when.
+
+---
+
+## Phase 25 — Second-Brain Output Workflows (register + schedule)
+
+**Goal:** Register and schedule the built-but-dormant output workflows — daily brief, period review, project sync + dashboard, cross-calendar scheduling, ingestion triage — so the system produces daily value beyond ingestion, each surfacing its output in the UI; global/coordination briefs blend across workspaces **only** through the 14.7 owner-approved cross-workspace links feeding the GCL Visibility Gate.
+
+**Posture:** mixed. Deterministic legs (bundle plumbing, parsers, routing, GCL projection) land via TDD; the model-driven synthesis legs are eval-tested. No hard-line crossing by itself — but **scheduling is a default-OFF, strict-`=== true`, owner-confirmed arming per schedule**: once the Phase-18 model transport and Phase-19 gbrain write-back are bound, a live schedule produces autonomous recurring real API spend / gbrain writes (owner confirm; recorded in the 24.5 runbook). The synthesis legs presuppose Phase 18 model transport and Phase 19 gbrain write-back for real data.
+
+**Spec anchors:** ARCHITECTURE.md §19.12 (activation home); §9 (workflows 2 daily brief, 3 weekly/monthly review, 5 ingestion triage, 6 cross-calendar scheduling, 7 project sync; durable schedules + LIFE-2 catch-up collapse); §11 (surfaces the outputs); §6 (KnowledgeWriter workspace + Global/Coordination briefs, read only through the GCL Visibility Gate over 14.7 approved links).
+
+**Track:** worker · **Depends on (phases):** 14 (§19.1 app-managed local Temporal supervision + typed-Project registry 14.6 + cross-workspace links 14.7), 18 (§19.5 model legs for synthesis), 19 (§19.6 gbrain write-back for retrieval)
+
+### 25.1 — Extend the registered Temporal bundle past the proof spine *(implements §19.12 / §9)*
+- [ ] Extend the registered workflow bundle beyond the two proof-spine entry points (`meetingCloseoutWorkflow` + `sourceIngestion`) and repoint `workflowsPath` from `proofSpineWorkflowsPath()` to a bundle that also exposes the output workflows — keeping the sandbox module graph clean (deep-imports, node:fs/node:crypto stubs) exactly as the proof spine does.
+- [ ] Files: apps/worker/src/temporal/workflows.ts:46,52,241 (bundle — expose output workflows), apps/worker/src/temporal/registerWorker.ts:261 (`workflowsPath` — past `proofSpineWorkflowsPath()`)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: Phase 14 (14.4 local Temporal supervision)
+- [ ] Tag: pure-build (bundle registration substrate)
+- [ ] Done-when: the worker registers a bundle exposing the output workflows alongside the proof spine; the sandbox bundle still compiles (no node:fs/node:crypto leakage); a smoke start of each newly-exposed workflow resolves.
+- [ ] (closes: G64 — registration substrate leg)
+
+### 25.2 — Register + schedule dailyBrief + periodReview (weekly/monthly) with LIFE-2 catch-up collapse *(implements §19.12 / §6)*
+- [ ] Register `dailyBrief` and `periodReview` (weekly/monthly) on Temporal schedules with LIFE-2 missed-occurrence collapse-on-wake; global/coordination briefs read **only** through the GCL Visibility Gate over the 14.7 owner-approved cross-workspace links (no raw cross-workspace blend, safety rule 4); the KnowledgeWriter writes the brief note.
+- [ ] Files: packages/workflows/src/ports/dailyBrief.ts, packages/workflows/src/workflows/periodReview.ts (register + schedule; currently BUILT with fakes but ABSENT from the bundle)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: 25.1, 14.7 (cross-workspace links → GCL gate), Phase 18, Phase 19
+- [ ] Tag: mixed (schedule/GCL-projection legs TDD; brief synthesis eval-tested) — **the schedule is a default-OFF, strict-`=== true`, owner-confirmed arming per schedule; arming triggers autonomous recurring real API spend / gbrain writes once the Phase-18/19 transports are bound — owner confirm; recorded in 24.5.**
+- [ ] Done-when: dailyBrief runs on its daily schedule and periodReview on its weekly/monthly schedule over real workspace data; a missed occurrence collapses to one run on wake (LIFE-2); global briefs surface only GCL-projected content over approved links (absent a 14.7 link, zero cross-workspace blend); synthesis legs pass evals; the schedule is byte-inert until armed.
+- [ ] (closes: G64 — dailyBrief/periodReview leg)
+
+### 25.3 — Register + schedule projectSync + projectDashboard *(implements §19.12 / §9)*
+- [ ] Register `projectSync` and the `projectDashboard` activity on schedules, resolving projects against the 14.6 durable typed-Project registry, with project-progress computed by a **deterministic parser** (no model-only %, REQ-F-011); surface the dashboard in the Projects UI.
+- [ ] Files: packages/workflows/src/ports/projectSync.ts, packages/workflows/src/activities/projectDashboard.ts (register + schedule)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: 25.1, 14.6 (typed-Project registry), Phase 19
+- [ ] Tag: mixed (progress parser + sync routing TDD; any narrative synthesis eval-tested) — **schedule is a default-OFF, strict-`=== true`, owner-confirmed arming (autonomous recurring runs once transports bound; recorded in 24.5).**
+- [ ] Done-when: projectSync runs on schedule and projectDashboard produces a dashboard whose progress comes from the deterministic parser (never a model-only %) for a real 14.6 registry project; the dashboard renders in the Projects page; the schedule is byte-inert until armed.
+- [ ] (closes: G64 — projectSync/projectDashboard leg)
+
+### 25.4 — Register + schedule crossCalendarScheduling *(implements §19.12 / §9)*
+- [ ] Register `crossCalendarScheduling` on a schedule; cross-workspace calendar reads pass through the GCL Visibility Gate over the 14.7 owner-approved links (no raw cross-workspace retrieval, safety rule 4).
+- [ ] Files: packages/workflows/src/ports/crossCalendarScheduling.ts (register + schedule)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: 25.1, 14.7 (cross-workspace links → GCL gate)
+- [ ] Tag: mixed (scheduling/GCL-projection legs TDD; any suggestion synthesis eval-tested) — **schedule is a default-OFF, strict-`=== true`, owner-confirmed arming (recorded in 24.5).**
+- [ ] Done-when: crossCalendarScheduling runs on schedule and produces scheduling output over real calendar data with zero raw cross-workspace blend (GCL-gated over approved links); output surfaces in the UI; the schedule is byte-inert until armed.
+- [ ] (closes: G64 — crossCalendarScheduling leg)
+
+### 25.5 — Register + schedule ingestionTriage *(implements §19.12 / §9)*
+- [ ] Register `ingestionTriage` on a schedule so parked/low-confidence sources are periodically re-surfaced to the Ingestion Inbox (closing the ING-4 dead-end complement to Phase 15's human routing-resolution loop).
+- [ ] Files: packages/workflows/src/workflows/ingestionTriage.ts (register + schedule; already deep-imported in workflows.ts but not a registered entry point)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: 25.1, 15.5 (durable disposition store), 15.8 (reroute loop)
+- [ ] Tag: pure-build (deterministic triage routing) — schedule is a default-OFF, strict-`=== true`, owner-confirmed arming.
+- [ ] Done-when: ingestionTriage runs on schedule and re-surfaces parked sources to the Ingestion Inbox; a resolved item is not re-surfaced; disposition state is durable; the schedule is byte-inert until armed.
+- [ ] (closes: G64 — ingestionTriage leg)
+
+### 25.6 — Surface each output workflow's result in the UI *(implements §19.12 / §11)*
+- [ ] Wire each registered output workflow's result to its UI surface (Global Today / period review view / Projects dashboard / calendar / Ingestion Inbox) so the produced value is operator-visible, not headless.
+- [ ] Files: apps/desktop/renderer/surfaces/... (extended — output-workflow result surfaces)
+- [ ] Cross-doc invariant: none
+- [ ] Depends on: 25.2, 25.3, 25.4, 25.5
+- [ ] Tag: pure-build (UI surfacing; loopback-only, session-token auth)
+- [ ] Done-when: each output workflow's latest result renders in its UI surface after a scheduled run; global briefs render only GCL-projected content over approved links; an empty state shows until the first run produces data.
+- [ ] (closes: G64 — UI surfacing leg)
+
+### Acceptance criteria (25)
+- [ ] All 25.X task checkboxes ticked.
+- [ ] The registered Temporal bundle exposes all six output workflow families alongside the proof spine, each on a durable schedule with LIFE-2 missed-occurrence collapse-on-wake; every schedule is a default-OFF, strict-`=== true`, owner-confirmed arming (byte-inert until armed; autonomous-recurring-spend note recorded in 24.5).
+- [ ] Every global/coordination brief and cross-calendar read blends across workspaces **only** through the GCL Visibility Gate over 14.7 owner-approved links — a boundary test proves no raw cross-workspace content blends into a Personal output absent an approved link (safety rule 4).
+- [ ] Project progress is computed by a deterministic parser (no model-only %, REQ-F-011) over a real 14.6 registry project; deterministic legs land via TDD and model-driven synthesis legs pass evals.
+- [ ] **Phase smoke:** each registered output workflow runs on its Temporal schedule over real workspace data, a missed occurrence collapses on wake, its output surfaces in the UI, global briefs read only GCL-projected content over an approved link, and the synthesis legs pass evals while the deterministic legs pass TDD; with the schedule unarmed, no autonomous run fires.
 
 ## Trims / Nice-to-Haves Catalog
 
