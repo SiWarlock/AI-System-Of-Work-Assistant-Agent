@@ -59,6 +59,9 @@ import type {
   OutboxEntry,
   OutboxRepository,
   ParityReportRepository,
+  ConnectorInstanceRepository,
+  ConnectorInstanceRow,
+  ConnectorInstanceState,
   PendingKnowledgeMutation,
   PendingKnowledgeMutationRepository,
   ProjectRegistryRepository,
@@ -109,6 +112,7 @@ function casDbResult(
 export interface PostgresRepositories {
   readonly workspaceConfig: WorkspaceConfigRepository;
   readonly projectRegistry: ProjectRegistryRepository;
+  readonly connectorInstance: ConnectorInstanceRepository;
   readonly eventLog: EventLogRepository;
   readonly workflowRunRefs: WorkflowRunRefRepository;
   readonly audit: AuditRepository;
@@ -454,6 +458,75 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
             },
           });
         return ok(entry);
+      }),
+  };
+
+  // Per-workspace connector-instance config registry (14.2). All flat scalar columns, so the
+  // row casts directly to ConnectorInstanceRow (no mapper). Async (no .run()/.get()).
+  const connectorInstance: ConnectorInstanceRepository = {
+    get: (instanceId) =>
+      run(async () => {
+        const rows = await db
+          .select()
+          .from(schema.connectorInstance)
+          .where(eq(schema.connectorInstance.instanceId, instanceId))
+          .limit(1);
+        const row = rows[0];
+        return row ? ok(row as ConnectorInstanceRow) : err(notFound(`connector instance ${instanceId}`));
+      }),
+    listByWorkspace: (workspaceId) =>
+      run(async () =>
+        ok(
+          (await db
+            .select()
+            .from(schema.connectorInstance)
+            .where(eq(schema.connectorInstance.workspaceId, workspaceId))) as ConnectorInstanceRow[],
+        ),
+      ),
+    upsert: (row) =>
+      run(async () => {
+        await db
+          .insert(schema.connectorInstance)
+          .values(row)
+          .onConflictDoUpdate({
+            target: schema.connectorInstance.instanceId,
+            set: {
+              connectorId: row.connectorId,
+              workspaceId: row.workspaceId,
+              tokenRef: row.tokenRef,
+              state: row.state,
+              cadence: row.cadence,
+            },
+          });
+        return ok(row);
+      }),
+    setState: (instanceId, state: ConnectorInstanceState) =>
+      run(async () => {
+        await db
+          .update(schema.connectorInstance)
+          .set({ state })
+          .where(eq(schema.connectorInstance.instanceId, instanceId));
+        const rows = await db
+          .select()
+          .from(schema.connectorInstance)
+          .where(eq(schema.connectorInstance.instanceId, instanceId))
+          .limit(1);
+        const row = rows[0];
+        return row ? ok(row as ConnectorInstanceRow) : err(notFound(`connector instance ${instanceId}`));
+      }),
+    setCadence: (instanceId, cadence) =>
+      run(async () => {
+        await db
+          .update(schema.connectorInstance)
+          .set({ cadence })
+          .where(eq(schema.connectorInstance.instanceId, instanceId));
+        const rows = await db
+          .select()
+          .from(schema.connectorInstance)
+          .where(eq(schema.connectorInstance.instanceId, instanceId))
+          .limit(1);
+        const row = rows[0];
+        return row ? ok(row as ConnectorInstanceRow) : err(notFound(`connector instance ${instanceId}`));
       }),
   };
 
@@ -1317,6 +1390,7 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
   return {
     workspaceConfig,
     projectRegistry,
+    connectorInstance,
     eventLog,
     workflowRunRefs,
     audit,

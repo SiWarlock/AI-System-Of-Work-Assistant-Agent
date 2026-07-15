@@ -71,6 +71,8 @@ import type {
   ParityReportRepository,
   PendingKnowledgeMutation,
   PendingKnowledgeMutationRepository,
+  ConnectorInstanceRepository,
+  ConnectorInstanceRow,
   ProjectRegistryRepository,
   ProjectRegistryRow,
   ProviderStateRepository,
@@ -97,6 +99,7 @@ import { createPgSchema } from "../adapters/create-pg-schema";
 interface OperationalRepositories {
   readonly workspaceConfig: WorkspaceConfigRepository;
   readonly projectRegistry: ProjectRegistryRepository;
+  readonly connectorInstance: ConnectorInstanceRepository;
   readonly eventLog: EventLogRepository;
   readonly workflowRunRefs: WorkflowRunRefRepository;
   readonly audit: AuditRepository;
@@ -172,6 +175,7 @@ const pglitePgFixture: AdapterCase = {
 const PG_TABLES: readonly PgTable[] = [
   pgSchema.workspaceConfig,
   pgSchema.projectRegistry,
+  pgSchema.connectorInstance,
   pgSchema.eventLog,
   pgSchema.workflowRunRefs,
   pgSchema.auditRecords,
@@ -446,6 +450,7 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
     it("exposes one repository per operational-store domain", () => {
       expect(typeof repos.workspaceConfig.get).toBe("function");
       expect(typeof repos.projectRegistry.resolveRef).toBe("function");
+      expect(typeof repos.connectorInstance.setState).toBe("function");
       expect(typeof repos.eventLog.append).toBe("function");
       expect(typeof repos.workflowRunRefs.create).toBe("function");
       expect(typeof repos.audit.append).toBe("function");
@@ -570,6 +575,61 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
 
     it("get on a missing id returns a typed not_found (never throws)", async () => {
       expect(unwrapErr(await repos.projectRegistry.get("missing")).code).toBe("not_found");
+    });
+  });
+
+  // ── connector-instance config (MUTABLE upsert + setState/setCadence; task 14.2) ──
+  describe("ConnectorInstanceRepository", () => {
+    const ciWs = (s: string): ConnectorInstanceRow["workspaceId"] => s as ConnectorInstanceRow["workspaceId"];
+    const ciRow = (over: Partial<ConnectorInstanceRow> = {}): ConnectorInstanceRow => ({
+      instanceId: "gdrive-1",
+      connectorId: "google-drive",
+      workspaceId: ciWs("employer-work"),
+      tokenRef: "keychain:sow/employer-work/google-drive",
+      state: "paused",
+      cadence: "0 */6 * * *",
+      ...over,
+    });
+
+    it("upsert → get round-trips the full record (incl. the opaque tokenRef reference)", async () => {
+      const row = ciRow();
+      expect(unwrap(await repos.connectorInstance.upsert(row))).toEqual(row);
+      const got = unwrap(await repos.connectorInstance.get("gdrive-1"));
+      expect(got).toEqual(row);
+      expect(got.tokenRef).toBe("keychain:sow/employer-work/google-drive");
+    });
+
+    it("upsert is idempotent-by-key: a second upsert UPDATEs in place, no conflict", async () => {
+      unwrap(await repos.connectorInstance.upsert(ciRow()));
+      unwrap(await repos.connectorInstance.upsert(ciRow({ cadence: "@daily" })));
+      expect(unwrap(await repos.connectorInstance.get("gdrive-1")).cadence).toBe("@daily");
+      expect(unwrap(await repos.connectorInstance.listByWorkspace(ciWs("employer-work")))).toHaveLength(1);
+    });
+
+    it("setState persists the enable/pause toggle", async () => {
+      unwrap(await repos.connectorInstance.upsert(ciRow({ state: "paused" })));
+      expect(unwrap(await repos.connectorInstance.setState("gdrive-1", "enabled")).state).toBe("enabled");
+      expect(unwrap(await repos.connectorInstance.get("gdrive-1")).state).toBe("enabled");
+    });
+
+    it("setCadence persists the cadence update", async () => {
+      unwrap(await repos.connectorInstance.upsert(ciRow()));
+      expect(unwrap(await repos.connectorInstance.setCadence("gdrive-1", "@hourly")).cadence).toBe("@hourly");
+      expect(unwrap(await repos.connectorInstance.get("gdrive-1")).cadence).toBe("@hourly");
+    });
+
+    it("listByWorkspace returns ONLY that workspace's instances (workspace-scoped primitive)", async () => {
+      unwrap(await repos.connectorInstance.upsert(ciRow({ instanceId: "a", workspaceId: ciWs("ws-a") })));
+      unwrap(await repos.connectorInstance.upsert(ciRow({ instanceId: "b", workspaceId: ciWs("ws-b") })));
+      const listA = unwrap(await repos.connectorInstance.listByWorkspace(ciWs("ws-a")));
+      expect(listA).toHaveLength(1);
+      expect(listA[0]?.instanceId).toBe("a");
+    });
+
+    it("setState / setCadence / get on a missing instance are typed not_found (never throws)", async () => {
+      expect(unwrapErr(await repos.connectorInstance.setState("missing", "enabled")).code).toBe("not_found");
+      expect(unwrapErr(await repos.connectorInstance.setCadence("missing", "@daily")).code).toBe("not_found");
+      expect(unwrapErr(await repos.connectorInstance.get("missing")).code).toBe("not_found");
     });
   });
 

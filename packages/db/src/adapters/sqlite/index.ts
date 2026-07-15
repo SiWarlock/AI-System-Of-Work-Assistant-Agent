@@ -49,6 +49,9 @@ import type {
   OutboxEntry,
   OutboxRepository,
   ParityReportRepository,
+  ConnectorInstanceRepository,
+  ConnectorInstanceRow,
+  ConnectorInstanceState,
   PendingKnowledgeMutation,
   PendingKnowledgeMutationRepository,
   ProjectRegistryRepository,
@@ -99,6 +102,7 @@ function casDbResult(
 export interface SqliteRepositories {
   readonly workspaceConfig: WorkspaceConfigRepository;
   readonly projectRegistry: ProjectRegistryRepository;
+  readonly connectorInstance: ConnectorInstanceRepository;
   readonly eventLog: EventLogRepository;
   readonly workflowRunRefs: WorkflowRunRefRepository;
   readonly audit: AuditRepository;
@@ -432,6 +436,73 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
           })
           .run();
         return ok(entry);
+      }),
+  };
+
+  // Per-workspace connector-instance config registry (14.2). All flat scalar columns
+  // (no nullable/json), so the row casts directly to ConnectorInstanceRow (no mapper).
+  const connectorInstance: ConnectorInstanceRepository = {
+    get: (instanceId) =>
+      run(() => {
+        const row = db
+          .select()
+          .from(schema.connectorInstance)
+          .where(eq(schema.connectorInstance.instanceId, instanceId))
+          .get();
+        return row ? ok(row as ConnectorInstanceRow) : err(notFound(`connector instance ${instanceId}`));
+      }),
+    listByWorkspace: (workspaceId) =>
+      run(() =>
+        ok(
+          db
+            .select()
+            .from(schema.connectorInstance)
+            .where(eq(schema.connectorInstance.workspaceId, workspaceId))
+            .all() as ConnectorInstanceRow[],
+        ),
+      ),
+    upsert: (row) =>
+      run(() => {
+        db.insert(schema.connectorInstance)
+          .values(row)
+          .onConflictDoUpdate({
+            target: schema.connectorInstance.instanceId,
+            set: {
+              connectorId: row.connectorId,
+              workspaceId: row.workspaceId,
+              tokenRef: row.tokenRef,
+              state: row.state,
+              cadence: row.cadence,
+            },
+          })
+          .run();
+        return ok(row);
+      }),
+    setState: (instanceId, state: ConnectorInstanceState) =>
+      run(() => {
+        db.update(schema.connectorInstance)
+          .set({ state })
+          .where(eq(schema.connectorInstance.instanceId, instanceId))
+          .run();
+        const row = db
+          .select()
+          .from(schema.connectorInstance)
+          .where(eq(schema.connectorInstance.instanceId, instanceId))
+          .get();
+        return row ? ok(row as ConnectorInstanceRow) : err(notFound(`connector instance ${instanceId}`));
+      }),
+    setCadence: (instanceId, cadence) =>
+      run(() => {
+        db.update(schema.connectorInstance)
+          .set({ cadence })
+          .where(eq(schema.connectorInstance.instanceId, instanceId))
+          .run();
+        const row = db
+          .select()
+          .from(schema.connectorInstance)
+          .where(eq(schema.connectorInstance.instanceId, instanceId))
+          .get();
+        return row ? ok(row as ConnectorInstanceRow) : err(notFound(`connector instance ${instanceId}`));
       }),
   };
 
@@ -1253,6 +1324,7 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
   return {
     workspaceConfig,
     projectRegistry,
+    connectorInstance,
     eventLog,
     workflowRunRefs,
     audit,

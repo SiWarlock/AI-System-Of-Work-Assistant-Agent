@@ -34,6 +34,8 @@ const TABLES: readonly SQLiteTable[] = [
   schema.instanceLeases,
   // §4/§6 — the durable typed-Project registry (task 14.6).
   schema.projectRegistry,
+  // §4/§8 — the per-workspace connector-instance config registry (task 14.2).
+  schema.connectorInstance,
 ];
 
 /** Emit `CREATE TABLE` for one Drizzle table, mirroring its column + PK config. */

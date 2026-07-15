@@ -25,6 +25,8 @@ export * from "./gcl-projections";
 export * from "./write-receipts";
 // §4 / §6 — the durable typed-Project registry (operational resolution index, task 14.6).
 export * from "./project-registry";
+// §4 / §8 — the per-workspace connector-instance config registry (task 14.2).
+export * from "./connector-instance";
 // Phase-10 durability tables (LIFE-1 / LIFE-5 / OBS-2).
 export * from "./health-items";
 export * from "./schedule-bookkeeping";

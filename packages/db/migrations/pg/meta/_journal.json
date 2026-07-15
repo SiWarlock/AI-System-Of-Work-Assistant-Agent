@@ -57,6 +57,13 @@
       "when": 1784136580620,
       "tag": "0007_project_registry",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784139187850,
+      "tag": "0008_connector_instance",
+      "breakpoints": true
     }
   ]
 }

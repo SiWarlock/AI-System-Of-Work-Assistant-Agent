@@ -268,6 +268,57 @@ export interface ProjectRegistryRepository {
   listByWorkspace(workspaceId: WorkspaceId): DbResult<ProjectRegistryRow[]>;
 }
 
+/** Operator enable/pause state of a connector instance (a config toggle — not a live-run signal). */
+export type ConnectorInstanceState = "enabled" | "paused";
+
+/**
+ * The durable per-workspace CONNECTOR-INSTANCE config record (task 14.2, §4/§8) —
+ * OPERATIONAL config, MUTABLE. It is what the Phase-16 connector composition + Phase-23
+ * per-vendor arming later CONSUME; it is CONFIG ONLY — NO live vendor call, and it holds an
+ * opaque `tokenRef` REFERENCE (a Keychain key id), NEVER credential/token bytes (safety
+ * rule 7 — SecretsPort/Keychain resolve the reference at arming, never this record).
+ * `instanceId` is a synthetic PK (a workspace may have >1 instance of the same vendor).
+ */
+export interface ConnectorInstanceRow {
+  /** Synthetic connector-instance id — the registry PRIMARY KEY. */
+  readonly instanceId: string;
+  /** The connector/vendor id (e.g. "google-drive", "linear"). */
+  readonly connectorId: string;
+  /** The BOUND workspace (WS-2/WS-8 anchor) — server-resolved, never caller-set; IMMUTABLE. */
+  readonly workspaceId: WorkspaceId;
+  /** Opaque Keychain REFERENCE to the credential — NEVER the secret bytes (rule 7). */
+  readonly tokenRef: string;
+  /** Operator enable/pause toggle (config only). */
+  readonly state: ConnectorInstanceState;
+  /** Opaque cadence expression (cron/interval) — consumed by the Phase-25 scheduler. */
+  readonly cadence: string;
+}
+
+/**
+ * Durable per-workspace connector-instance config registry — OPERATIONAL config, MUTABLE
+ * (14.2, §4/§8). `listByWorkspace` is a workspace-scoped primitive — FUTURE callers (the
+ * Phase-16 connector composition) MUST pass a workspaceId the caller is authorized for; it
+ * must never become a cross-workspace enumeration path.
+ */
+export interface ConnectorInstanceRepository {
+  /**
+   * Create or overwrite an instance record (keyed by instanceId). NOTE: the workspace-binding
+   * IMMUTABILITY invariant (an existing instanceId's workspaceId never changes) is enforced at
+   * the COMPOSITION layer (`registerConnectorInstance`'s get-before-upsert guard), NOT
+   * structurally here — a direct caller (a future Phase-16 consumer) MUST preserve an existing
+   * row's workspaceId (never rebind it across the isolation boundary, WS-8).
+   */
+  upsert(row: ConnectorInstanceRow): DbResult<ConnectorInstanceRow>;
+  /** Fetch a record by its instanceId primary key; absent ⇒ typed `not_found`. */
+  get(instanceId: string): DbResult<ConnectorInstanceRow>;
+  /** List all instance records for a workspace (workspace-scoped; see the note above). */
+  listByWorkspace(workspaceId: WorkspaceId): DbResult<ConnectorInstanceRow[]>;
+  /** Set the enable/pause state of an existing instance; absent ⇒ typed `not_found`. */
+  setState(instanceId: string, state: ConnectorInstanceState): DbResult<ConnectorInstanceRow>;
+  /** Set the cadence of an existing instance; absent ⇒ typed `not_found`. */
+  setCadence(instanceId: string, cadence: string): DbResult<ConnectorInstanceRow>;
+}
+
 /**
  * Event log — OPERATIONAL TRUTH, APPEND-ONLY. No update/delete in place; reads
  * are forward scans. Records are never mutated after `append`.
