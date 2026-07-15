@@ -889,6 +889,80 @@ export function gateRebuildOracle(
   return { compute, resolveOracleBuild: () => cached };
 }
 
+// ── Task 13.10 (rebuild-oracle arc, piece C — CLOSES the arc): the boot-binding's extracted pieces. spec(§6) spec(§16)
+
+/** Shared deps for the rebuild-oracle health sink: the OBS-2 failure recorder (HealthSurface.record), a clock, audit ids. */
+export interface RebuildOracleHealthDeps {
+  readonly recordFailure: (failure: HealthFailure) => Promise<unknown>;
+  readonly now: () => string;
+  readonly newAuditId: () => string;
+}
+
+/** Routes a diverged rebuild-oracle status's HealthItem to the OBS-2 surface — reprojected safe-fields-only. */
+export interface RebuildOracleHealthSink {
+  readonly record: (item: HealthItem, workspaceId: string) => Promise<void>;
+}
+
+/** A SAFE one-line rebuild-oracle health message — names the class + subject ref; NEVER the item's free-form content. */
+function rebuildOracleHealthMessage(failureClass: string, subjectRef: string): string {
+  return `Rebuild-oracle ${failureClass} at ${subjectRef} — serving withholds (oracleBuildOk=false) until remediated.`;
+}
+
+/**
+ * The rebuild-oracle health sink (mirror {@link createReconcileHealthSink}): reproject a `diverged` status's
+ * `rebuild_divergence` {@link HealthItem} → a {@link HealthFailure} → the OBS-2 recorder using ONLY safe fields —
+ * the frozen `failureClass`, a SYNTHESIZED safe message, and a subjectRef from the item's ids (falling back to the
+ * workspaceId, since a rebuild-oracle item carries no `factIdentity`/`parityReportRef`). The item's own free-form
+ * `message` is NEVER forwarded (safety rule 7). A `recordFailure` fault PROPAGATES (Lesson 18) — a trust-defect
+ * signal is never silently dropped; the boot caller ({@link computeAndRouteRebuildOracle}) CONTAINS it. The precise
+ * OBS-2 dedupe subjectRef finalizes at the arming review, when real rebuild-divergence items flow.
+ */
+export function createRebuildOracleHealthSink(deps: RebuildOracleHealthDeps): RebuildOracleHealthSink {
+  return {
+    record: async (item: HealthItem, workspaceId: string): Promise<void> => {
+      const ref = item.factIdentity ?? item.parityReportRef;
+      const subjectRef = ref !== undefined ? String(ref) : `rebuild-oracle:${workspaceId}`;
+      const failure: HealthFailure = {
+        failureClass: item.failureClass,
+        subjectRef,
+        message: rebuildOracleHealthMessage(item.failureClass, subjectRef),
+        auditRef: deps.newAuditId() as AuditId,
+        now: deps.now(),
+      };
+      await deps.recordFailure(failure); // PROPAGATE (Lesson 18) — the boot caller contains it (§16)
+    },
+  };
+}
+
+/**
+ * Run piece B's one-shot {@link RebuildOracleWiring.compute} ONCE at boot, route ONLY `diverged` statuses to the
+ * health sink, and CONTAIN any fault so it never escapes boot as an unhandled rejection (§16) — `resolveOracleBuild`
+ * stays `false` (fail-closed) on a fault. The sink PROPAGATES a record fault (Lesson 18) up to here; the boot-time
+ * posture is containment (a one-shot dormant probe must never crash boot). `onContainedFault` signals a contained
+ * fault (a redacted marker — the callback takes NO args, so no raw content can leak, safety rule 7) so it is not
+ * FULLY silent; precise op-visibility of a surface-down fault finalizes at arming.
+ */
+export async function computeAndRouteRebuildOracle(
+  wiring: RebuildOracleWiring,
+  sink: RebuildOracleHealthSink,
+  onContainedFault?: () => void,
+): Promise<void> {
+  try {
+    const result = await wiring.compute();
+    for (const { workspaceId, status } of result.statuses) {
+      if (status.outcome === "diverged") await sink.record(status.healthItem, workspaceId);
+    }
+  } catch {
+    // §16 — the contained-fault SIGNAL must itself never throw (mirror createReconcileLogSink's guarded log call): a
+    //   throwing onContainedFault (e.g. a broken logger) would defeat the containment and crash boot. Best-effort.
+    try {
+      onContainedFault?.();
+    } catch {
+      /* swallow — the fault signal is best-effort; boot must not crash on a probe/health/log fault */
+    }
+  }
+}
+
 /**
  * Build a production ProofSpineParams with a REAL `sourceIngestion` binding (a WS-2 HIGH-confidence bind to
  * `boundWorkspace`) + INERT meeting leaves. The shipped app dispatches ONLY `sourceIngestion` (via the vault
@@ -1257,6 +1331,28 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // 11.4 Slice 3 — the owner-provisioning gate: build the real Keychain `SecretsPort` ONLY when provisioned (gate
   // absent ⇒ `undefined`, inert — no adapter/backend/`security` process, byte-equivalent). Sources OFF-lock 2.
   const keychainSecrets = buildKeychainSecrets(config.keychainSecrets);
+  // Task 13.10 piece C (CLOSES the rebuild-oracle arc): the boot binding, constructed in the SAME serving-oracle
+  // construction branch. makeRebuildClient is OMITTED ⇒ the owner-gated real gbrain scratch-import stays UNBOUND ⇒
+  // gateRebuildOracle returns undefined ⇒ no compute, no health routing, resolveOracleBuild unbound ⇒ oracleBuildOk
+  // false ⇒ byte-equivalent shipped default (binding a real client is the owner's arming crossing). `compute()` is
+  // awaited ONCE below (after the reconcile binding, where `surface` is in scope); resolveOracleBuild stays false
+  // until it completes (fail-closed). The chain bootWorker → gateRebuildOracle → compute → probeRebuildOracle is now
+  // STATIC (closes the A+B reachability waivers); it stays dormant at runtime while the client is unbound.
+  let rebuildOracleIdSeq = 0;
+  const rebuildOracle =
+    config.copilotProvenanceStamping === true && provenanceBundle !== undefined
+      ? gateRebuildOracle(
+          { servedWorkspaceIds: [...servedVaultRoots.keys()] },
+          {
+            // makeRebuildClient OMITTED — UNBOUND owner-gated real client (the arming crossing).
+            makeReader: (): CommittedVaultReader =>
+              createCommittedVaultReader({ resolveVault: buildServedVaultResolver(servedVaultRoots) }),
+            now: backends.now,
+            newHealthItemId: (): string => `rebuild-oracle-health:${(rebuildOracleIdSeq += 1)}`,
+            auditRef: auditId("rebuild-oracle-audit:boot"),
+          },
+        )
+      : undefined;
   const loaderBackedServingOracle =
     config.copilotProvenanceStamping === true && provenanceBundle !== undefined
       ? buildLoaderBackedServingOracle({
@@ -1273,6 +1369,11 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
             resolveRunning: provenanceBundle.resolveRunning ?? ((): RunningGbrainVersion | undefined => undefined),
             now: backends.now,
             store: createParityReportStoreAdapter(backends.repos.parityReports),
+            // Task 13.10 piece C — the rebuild-oracle build-status leg. `undefined` by default (real client UNBOUND ⇒
+            // `rebuildOracle` undefined ⇒ oracleBuildOk stays false ⇒ serving degrades). AND-composed into
+            // `deriveServingCoverage` as ONE leg (never a standalone admit signal), so an armed `true` still requires
+            // every other leg green before it can lift the coverage gate.
+            resolveOracleBuild: rebuildOracle?.resolveOracleBuild,
           }),
           // OFF-lock 2: the REAL Keychain SecretsPort when provisioned, else the bundle's inline secrets (test),
           // else undefined ⇒ buildLoaderBackedServingOracle returns undefined ⇒ interim/degraded.
@@ -1484,6 +1585,26 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
         }),
     },
   );
+
+  // Task 13.10 piece C — run the rebuild-oracle boot probe ONCE (obligation iii), routing any divergence to the
+  // health surface (safe-fields-only, rule 7) and CONTAINING any fault so a one-shot boot probe never crashes boot
+  // (§16); `resolveOracleBuild` stays false until it completes. DORMANT by default: `rebuildOracle` is undefined
+  // unless the owner has provisioned a real client (the arming crossing), so this is a no-op on the shipped path.
+  if (rebuildOracle !== undefined) {
+    let rebuildOracleHealthSeq = 0;
+    await computeAndRouteRebuildOracle(
+      rebuildOracle,
+      createRebuildOracleHealthSink({
+        recordFailure: (failure: HealthFailure): Promise<unknown> => surface.record(failure),
+        now: backends.now,
+        newAuditId: (): string => auditId(`rebuild-oracle-audit:${(rebuildOracleHealthSeq += 1)}`),
+      }),
+      (): void =>
+        backends.logger.warn("rebuild-oracle.boot-probe: health-routing fault contained (serving degrades)", {
+          fields: {},
+        }),
+    );
+  }
 
   // 5) The operational-backup service — WIRED but NOT scheduled (the CRON is Phase-11).
   const backupService =
