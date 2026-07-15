@@ -53,6 +53,10 @@ import {
   buildConnectorConfigRouter,
   type ConnectorConfigCommandPort,
 } from "./procedures/connectorConfig";
+import {
+  buildCrossWorkspaceLinkRouter,
+  type CrossWorkspaceLinkCommandPort,
+} from "./procedures/crossWorkspaceLink";
 import { buildPresetProfilesRouter } from "./procedures/presetProfiles";
 import { createPushStream, type PushStream } from "./stream/pushStream";
 import type { StreamPublisherOptions } from "./stream/eventClasses";
@@ -91,6 +95,8 @@ export interface ApiServerDeps {
   readonly projectRegistry: ProjectRegistryCommandPort;
   /** The connector-config port (14.2) — register/enable/pause/set-cadence (config only; tokenRef reference-only, rule 7). */
   readonly connectorConfig: ConnectorConfigCommandPort;
+  /** The cross-workspace-link owner-approval port (14.7) — create/approve/revoke; the sanctioned WS-8 cross-read input (safety rule 4). */
+  readonly crossWorkspaceLink: CrossWorkspaceLinkCommandPort;
   readonly streamPublisherOptions?: StreamPublisherOptions;
 }
 
@@ -120,6 +126,7 @@ function composeAppRouter(deps: ApiServerDeps, pushStream: PushStream) {
     onboarding: buildOnboardingRouter({ onboarding: deps.onboarding }),
     projectRegistry: buildProjectRegistryRouter({ projectRegistry: deps.projectRegistry }),
     connectorConfig: buildConnectorConfigRouter({ connectorConfig: deps.connectorConfig }),
+    crossWorkspaceLink: buildCrossWorkspaceLinkRouter({ crossWorkspaceLink: deps.crossWorkspaceLink }),
     presetProfiles: buildPresetProfilesRouter(),
     stream: pushStream.router,
   });

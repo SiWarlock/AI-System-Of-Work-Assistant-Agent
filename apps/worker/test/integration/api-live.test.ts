@@ -140,6 +140,12 @@ function serverDeps(
       setState: (input) => Promise.resolve({ ok: true, value: { instanceId: input.instanceId } } as never),
       setCadence: (input) => Promise.resolve({ ok: true, value: { instanceId: input.instanceId } } as never),
     },
+    // 14.7 cross-workspace-link port — canned ok stubs (not exercised by this test).
+    crossWorkspaceLink: {
+      create: (input) => Promise.resolve({ ok: true, value: { linkId: input.linkId } } as never),
+      approve: (input) => Promise.resolve({ ok: true, value: { linkId: input.linkId } } as never),
+      revoke: (input) => Promise.resolve({ ok: true, value: { linkId: input.linkId } } as never),
+    },
     copilot: {
       retrieval: createFixtureRetrieval({}),
       synthesis: createStubSynthesis(),

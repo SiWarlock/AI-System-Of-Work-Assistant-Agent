@@ -85,6 +85,18 @@ const ciStub = (instanceId: string) => ({
   state: "paused" as const,
   cadence: "",
 });
+// 14.7 cross-workspace-link stub row (a full CrossWorkspaceLinkRow shape; not exercised here).
+const cwlStub = (linkId: string, status: "pending" | "approved" | "revoked" = "pending") => ({
+  linkId,
+  fromWorkspaceId: "eval-ws-a" as never,
+  toWorkspaceId: "eval-ws-b" as never,
+  scopeProjectionType: "coordination",
+  scopeVisibilityLevel: "coordination" as const,
+  status,
+  createdAt: "2026-07-02T00:00:00.000Z",
+  approvedAt: status === "approved" ? "2026-07-02T00:00:00.000Z" : null,
+  revokedAt: status === "revoked" ? "2026-07-02T00:00:00.000Z" : null,
+});
 function serverDeps() {
   return {
     expectedToken: EXPECTED,
@@ -157,6 +169,18 @@ function serverDeps() {
       },
       async setCadence(input: { instanceId: string; cadence: string }) {
         return { ok: true as const, value: { ...ciStub(input.instanceId), cadence: input.cadence } };
+      },
+    },
+    // 14.7 cross-workspace-link port — canned-ok stubs (not exercised by this auth suite).
+    crossWorkspaceLink: {
+      async create(input: { linkId: string }) {
+        return { ok: true as const, value: cwlStub(input.linkId) };
+      },
+      async approve(input: { linkId: string }) {
+        return { ok: true as const, value: cwlStub(input.linkId, "approved") };
+      },
+      async revoke(input: { linkId: string }) {
+        return { ok: true as const, value: cwlStub(input.linkId, "revoked") };
       },
     },
     now: () => "2026-07-02T00:00:00.000Z",

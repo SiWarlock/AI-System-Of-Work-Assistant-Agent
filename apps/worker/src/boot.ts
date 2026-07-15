@@ -84,6 +84,10 @@ import {
   type ConnectorConfigCommandPort,
 } from "./composition/connectorConfig";
 import {
+  createCrossWorkspaceLinkCommandPort,
+  type CrossWorkspaceLinkCommandPort,
+} from "./composition/crossWorkspaceLink";
+import {
   buildCopilotDeps,
   resolveCopilotWorkspaces,
   buildInterimCopilotScopeRegistry,
@@ -1187,6 +1191,15 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     repo: backends.repos.connectorInstance,
     readModels: backends.repos.readModels,
   });
+  // 14.7 — the PRODUCTION cross-workspace-link owner-approval port: create/approve/revoke links
+  //   between two 14.1-registered workspaces (the SINGLE sanctioned WS-8 cross-read input, safety
+  //   rule 4). The READ gate that consults an approved link (`resolveApprovedCrossWorkspaceSlice`)
+  //   is consumed by the coordination/global briefs (25.2/25.4) — NOT wired here (Lesson 11).
+  const crossWorkspaceLink: CrossWorkspaceLinkCommandPort = createCrossWorkspaceLinkCommandPort({
+    repo: backends.repos.crossWorkspaceLink,
+    readModels: backends.repos.readModels,
+    now: backends.now,
+  });
 
   // 2.5) The INTERIM Copilot ask backend (§4.6). The real GBrain/GCL retrieval + the governed LLM
   //   synthesis are deferred (the app runs over stubs; no passage-serving read-model exists yet).
@@ -1554,6 +1567,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     onboarding,
     projectRegistry,
     connectorConfig,
+    crossWorkspaceLink,
     now: backends.now,
     ...(config.apiHost !== undefined ? { host: config.apiHost } : {}),
     ...(config.apiPort !== undefined ? { port: config.apiPort } : {}),

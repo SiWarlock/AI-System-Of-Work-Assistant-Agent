@@ -400,6 +400,12 @@ function makeServerDeps(over: { expectedToken?: SessionToken } = {}) {
       setState: (input: { instanceId: string }) => Promise.resolve({ ok: true, value: { instanceId: input.instanceId } } as never),
       setCadence: (input: { instanceId: string }) => Promise.resolve({ ok: true, value: { instanceId: input.instanceId } } as never),
     },
+    // 14.7 cross-workspace-link port — canned ok stubs (not exercised by these tests).
+    crossWorkspaceLink: {
+      create: (input: { linkId: string }) => Promise.resolve({ ok: true, value: { linkId: input.linkId } } as never),
+      approve: (input: { linkId: string }) => Promise.resolve({ ok: true, value: { linkId: input.linkId } } as never),
+      revoke: (input: { linkId: string }) => Promise.resolve({ ok: true, value: { linkId: input.linkId } } as never),
+    },
     now: () => "2026-07-02T00:00:00.000Z",
   };
 }
