@@ -34,7 +34,8 @@ const OSB_PIN_PATH = resolve(REPO_ROOT, "config/osb.pin");
 // Safety Rule 1 + Lesson-12 hold). orch7 CERTIFY, 2026-07-11.
 // RECONCILE → eval-security: this one-time cross-track pin bump + the DEFERRED guard-PATTERN prose-FP
 // fix (the `symlink` token → a call-context anchor) belong to the eval-security track.
-const EXPECTED_CONNECTOR_ADAPTER_COUNT = 18;
+// +1: round-7 gmail.ts, read-only GET connector — orch21-authorized per providers Lesson 2 family
+const EXPECTED_CONNECTOR_ADAPTER_COUNT = 19;
 
 function loadConnectorAdapterSources(): ReadonlyArray<{ path: string; content: string }> {
   return readdirSync(ADAPTERS_DIR)
