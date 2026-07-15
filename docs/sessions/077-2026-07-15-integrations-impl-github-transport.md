@@ -3,7 +3,7 @@
 - **Date:** 2026-07-15
 - **Phase:** Go-live build round 5 (runbook Phase-8 connector round — GitHub). Team `session-734f946b`, orchestrator `orch21` + implementer `integrations-impl`, on `main`.
 - **Predecessor:** [076-2026-07-15-integrations-impl-granola-transport.md](076-2026-07-15-integrations-impl-granola-transport.md)
-- **Successor:** _(next session)_
+- **Successor:** [078-2026-07-15-integrations-impl-linear-graphql.md](078-2026-07-15-integrations-impl-linear-graphql.md)
 - **Commits:** GitHub + widening `66b44ee` · this session doc
 
 ## Why this session existed
