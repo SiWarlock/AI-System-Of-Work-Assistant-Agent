@@ -125,6 +125,11 @@ function serverDeps(
     expectedToken,
     allowlist,
     readModel: emptyReadModel,
+    // 14.1 onboarding port — a canned ok stub (this live test exercises the transport/auth path, not onboarding).
+    onboarding: {
+      provisionWorkspace: (spec) =>
+        Promise.resolve({ ok: true, value: { id: spec.id, registryMember: true, preset: spec.preset } } as never),
+    },
     copilot: {
       retrieval: createFixtureRetrieval({}),
       synthesis: createStubSynthesis(),

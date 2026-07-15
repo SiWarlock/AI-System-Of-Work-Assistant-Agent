@@ -384,6 +384,11 @@ function makeServerDeps(over: { expectedToken?: SessionToken } = {}) {
       reenterIngestion: (input: { idempotencyKey: string }) =>
         Promise.resolve({ ok: true, value: { idempotencyKey: input.idempotencyKey } } as never),
     },
+    // 14.1 onboarding port — a canned ok stub (these tests exercise the health/auth boundary, not onboarding).
+    onboarding: {
+      provisionWorkspace: (spec: { id: string; preset: string }) =>
+        Promise.resolve({ ok: true, value: { id: spec.id, registryMember: true, preset: spec.preset } } as never),
+    },
     now: () => "2026-07-02T00:00:00.000Z",
   };
 }

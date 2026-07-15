@@ -7,7 +7,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { isErr } from "@sow/contracts";
 import { assembleBackends, type ProofSpineBackends } from "../src/composition/backends";
-import { createDbReadModelQueryPort } from "../src/api/adapters/readModel";
+import { createDbReadModelQueryPort, READ_MODEL_KEYS } from "../src/api/adapters/readModel";
 import { provisionDevWorkspace, buildSyncRecentChange } from "../src/composition/provisionDev";
 
 const NOW = "2026-07-04T00:00:00.000Z";
@@ -143,6 +143,16 @@ describe("provisionDevWorkspace (data-unlock D1 — real read-model data from lo
     const unknown = await port(b).workspaceCards("personal-business");
     expect(known.ok).toBe(true);
     expect(isErr(unknown)).toBe(true); // fail-closed on an unprovisioned workspace
+    // Explicit registry-MEMBERSHIP identity (the shared `registerWorkspace` union helper — 14.1
+    // extracted it to composition/workspaceRegistry.ts; this pins provisionDev's union behavior
+    // byte-identical): the provisioned id is in the registry set, the unprovisioned one is NOT.
+    const reg = await b.repos.readModels.get(READ_MODEL_KEYS.registry, null);
+    expect(reg.ok).toBe(true);
+    if (reg.ok) {
+      const ids = (reg.value.data as { workspaceIds?: unknown }).workspaceIds;
+      expect(Array.isArray(ids) ? ids : []).toContain("employer-work");
+      expect(Array.isArray(ids) ? ids : []).not.toContain("personal-business");
+    }
   });
 
   it("does NOT write the ungated GLOBAL dashboard — the card is workspace-scoped (global is the gated GCL path, D2)", async () => {

@@ -116,6 +116,12 @@ function serverDeps() {
         return { ok: true as const, value: { idempotencyKey: input.idempotencyKey } };
       },
     },
+    // 14.1 onboarding port — a canned-ok stub (this auth suite exercises the auth boundary, not onboarding).
+    onboarding: {
+      async provisionWorkspace(spec: { id: string; preset: string }) {
+        return { ok: true as const, value: { id: spec.id, registryMember: true as const, preset: spec.preset } };
+      },
+    },
     now: () => "2026-07-02T00:00:00.000Z",
   };
 }

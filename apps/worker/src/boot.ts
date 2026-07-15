@@ -72,6 +72,10 @@ import type {
   ReadModelQueryPort,
 } from "./api/procedures/queries";
 import {
+  createProvisionWorkspacePort,
+  type OnboardingCommandPort,
+} from "./api/procedures/onboarding";
+import {
   buildCopilotDeps,
   resolveCopilotWorkspaces,
   buildInterimCopilotScopeRegistry,
@@ -1149,6 +1153,15 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   const approvals: ApprovalCommandPort = createDbApprovalCommandPort(backends.repos.approvals);
   const triage: TriagePort = createDbTriagePort(config.triageDispatch);
   const systemHealth = createSystemHealthQueryPort(backends);
+  // 14.1 — the PRODUCTION onboarding provisioning port: mints a workspace by upserting a
+  //   validated safe-default Workspace into the durable config store + unioning its id into
+  //   the fail-closed WS-8 registry (the SOLE visibility authority). The real replacement for
+  //   the dev-only provisionDevWorkspace fixture; loopback-only, no external network/credential.
+  const onboarding: OnboardingCommandPort = createProvisionWorkspacePort({
+    workspaceConfig: backends.repos.workspaceConfig,
+    readModels: backends.repos.readModels,
+    now: backends.now,
+  });
 
   // 2.5) The INTERIM Copilot ask backend (§4.6). The real GBrain/GCL retrieval + the governed LLM
   //   synthesis are deferred (the app runs over stubs; no passage-serving read-model exists yet).
@@ -1513,6 +1526,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     approvals,
     dispatchApproval,
     triage,
+    onboarding,
     now: backends.now,
     ...(config.apiHost !== undefined ? { host: config.apiHost } : {}),
     ...(config.apiPort !== undefined ? { port: config.apiPort } : {}),

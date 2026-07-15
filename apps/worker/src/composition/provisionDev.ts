@@ -24,6 +24,10 @@ import {
 } from "@sow/contracts";
 import { READ_MODEL_KEYS } from "../api/adapters/readModel";
 import type { DashboardCardSource } from "../api/projections/uiSafe";
+// The fail-closed WS-8 registry union — EXTRACTED (14.1) to a shared module so the
+// production provisioner (`provisionWorkspace`) and this dev fixture share ONE union
+// implementation. Behavior here is byte-identical to the former local helper.
+import { registerWorkspace } from "./workspaceRegistry";
 
 /** One dev workspace to provision from a single Markdown note carrying GFM checkboxes. */
 export interface DevProvisionSpec {
@@ -78,14 +82,6 @@ function readCards(data: unknown): readonly DashboardCardSource[] {
   return out;
 }
 
-/** Read the registry's `workspaceIds` string set off a payload; malformed/absent → `[]`. */
-function readWorkspaceIds(data: unknown): readonly string[] {
-  if (typeof data !== "object" || data === null) return [];
-  const arr = (data as Record<string, unknown>)["workspaceIds"];
-  if (!Array.isArray(arr)) return [];
-  return arr.filter((x): x is string => typeof x === "string");
-}
-
 /**
  * UPSERT one card (by `cardId`) into a workspace-scoped read-model row's `cards` array and
  * write it back, PRESERVING any other cards already in the row (multiple notes per workspace
@@ -109,32 +105,6 @@ async function upsertCardRow(
   const cards = [...prior.filter((c) => c.cardId !== card.cardId), card];
   const put = await readModels.put({ readModelKey, workspaceId, data: { cards }, rebuiltAt: at });
   return put.ok ? ok(undefined) : err({ code: "store_fault", message: `read-model put failed: ${readModelKey}` });
-}
-
-/**
- * UNION `workspaceId` into the global fail-closed workspace registry (`{ workspaceIds }`).
- * Idempotent: re-registering an already-known workspace is a no-op set. This is what makes
- * a workspace-scoped query resolve (WS-8: absent from the registry → the query fails closed).
- */
-async function registerWorkspace(
-  readModels: ReadModelRepository,
-  workspaceId: string,
-  at: string,
-): Promise<Result<void, DevProvisionError>> {
-  const existing = await readModels.get(READ_MODEL_KEYS.registry, null);
-  if (isErr(existing) && existing.error.code !== "not_found") {
-    // A genuine fault must NOT fold to empty — that would DROP previously-registered
-    // workspaces (making their scoped reads fail closed). Fail loudly; a re-provision repairs.
-    return err({ code: "store_fault", message: "workspace registry get failed" });
-  }
-  const prior = existing.ok ? readWorkspaceIds(existing.value.data) : [];
-  const workspaceIds = prior.includes(workspaceId) ? prior : [...prior, workspaceId];
-  const put = await readModels.put({
-    readModelKey: READ_MODEL_KEYS.registry,
-    data: { workspaceIds },
-    rebuiltAt: at,
-  });
-  return put.ok ? ok(undefined) : err({ code: "store_fault", message: "workspace registry put failed" });
 }
 
 /** Read the `projects` array off the project-dashboards payload; malformed/absent → `[]`. */

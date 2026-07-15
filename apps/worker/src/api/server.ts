@@ -41,6 +41,10 @@ import {
   buildSystemHealthRouter,
   type SystemHealthQueryPort,
 } from "./procedures/systemHealth";
+import {
+  buildOnboardingRouter,
+  type OnboardingCommandPort,
+} from "./procedures/onboarding";
 import { createPushStream, type PushStream } from "./stream/pushStream";
 import type { StreamPublisherOptions } from "./stream/eventClasses";
 
@@ -72,6 +76,8 @@ export interface ApiServerDeps {
   readonly dispatchApproval: DispatchApprovalFn;
   readonly triage: TriagePort;
   readonly now: NowFn;
+  /** The onboarding provisioning port (14.1) — mints a workspace (config upsert + WS-8 registry union). */
+  readonly onboarding: OnboardingCommandPort;
   readonly streamPublisherOptions?: StreamPublisherOptions;
 }
 
@@ -98,6 +104,7 @@ function composeAppRouter(deps: ApiServerDeps, pushStream: PushStream) {
       now: deps.now,
     }),
     systemHealth: buildSystemHealthRouter({ systemHealth: deps.systemHealth }),
+    onboarding: buildOnboardingRouter({ onboarding: deps.onboarding }),
     stream: pushStream.router,
   });
 }
