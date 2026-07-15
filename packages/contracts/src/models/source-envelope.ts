@@ -38,6 +38,15 @@ export interface SourceEnvelope {
   // consumed by the ingestion router) is unspecified upstream; open record of
   // unknown values until §8/§9 names the fields.
   routingHints: Record<string, unknown>;
+  // body = the extracted candidate source text (15.2, §19.2) — threaded past
+  // registration so the 15.3 note projection builds a real note vs the "source
+  // ingestion (C1)" placeholder. ADDITIVE + OPTIONAL (Lesson 15: a required field
+  // would drop every source registered before a producer threads it; 15.3
+  // degrades when absent). CANDIDATE DATA: it may carry RAW within-workspace
+  // content, so downstream it is subject to redaction before any log sink
+  // (rule 7) — enforcement is the CONSUMER's (15.3+); this model only defines the
+  // shape + its candidate-data gate (see the schema-side comment for the gate).
+  body?: string;
 }
 
 interface SourceEnvelopeInput {
@@ -48,6 +57,7 @@ interface SourceEnvelopeInput {
   type: string;
   sensitivity: string;
   routingHints: Record<string, unknown>;
+  body?: string;
 }
 
 export const SourceEnvelopeSchema: z.ZodType<SourceEnvelope, z.ZodTypeDef, SourceEnvelopeInput> = z
@@ -63,5 +73,10 @@ export const SourceEnvelopeSchema: z.ZodType<SourceEnvelope, z.ZodTypeDef, Sourc
     type: z.string().min(1),
     sensitivity: z.string().min(1),
     routingHints: z.record(z.string(), z.unknown()),
+    // 15.2 — the extracted candidate source text (§19.2). OPTIONAL + additive
+    // (Lesson 15); OPAQUE format (no `.min(1)` — an empty extraction is a valid
+    // state, the producer / 15.3 tightens later). CANDIDATE DATA: `.string()`
+    // gates the type so a non-string body is rejected, never trusted-through.
+    body: z.string().optional(),
   })
   .strict();

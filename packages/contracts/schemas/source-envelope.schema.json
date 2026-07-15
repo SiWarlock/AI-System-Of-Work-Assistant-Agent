@@ -28,6 +28,9 @@
     "routingHints": {
       "type": "object",
       "additionalProperties": {}
+    },
+    "body": {
+      "type": "string"
     }
   },
   "required": [
