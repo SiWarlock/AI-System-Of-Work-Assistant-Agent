@@ -25,23 +25,36 @@ export function createAsanaConnector(transport: ConnectorTransport): ConnectorPo
 }
 
 // ── Asana real read-only HTTP transport (candidate wire shape — arch_gap, Lesson 21) ─────────────────────────
-// The Asana REST list envelope is a DOCUMENTED CANDIDATE — confirmed + corrected at the owner arming binding
-// (we cannot RUN the real API now):
-//   { data: Task[], next_page?: { offset: string } | null },  Task = { gid: string, modified_at?: string, … }
-// Parsed FAIL-CLOSED: a missing / renamed field ⇒ a `TransportFailure`, never a false page. Do NOT treat as
-// final; a wrong shape yields a typed failure (degrade), never a silent success.
+// CONTEXT7-GROUNDED (`/websites/developers_asana`, round-3 correctness pass — GET /tasks, /docs/pagination,
+// /docs/personal-access-token): the Asana REST list envelope is a DOCUMENTED CANDIDATE, re-confirmed at the
+// owner arming binding:
+//   { data: Task[], next_page?: { offset: string, path, uri } | null },  Task = { gid: string, modified_at?: string, … }
+// Parsed FAIL-CLOSED: a missing / renamed field ⇒ a `TransportFailure`, never a false page.
+// ARMING-era GAPS (Context7-cited, NAMED not built — cannot complete now):
+//   • REQUIRED SCOPE: GET /tasks 400s unless the query carries `project`|`tag` OR `assignee`+`workspace` — the
+//     owner's project/workspace GID is injected at the arming binding (not knowable now).
+//   • INGESTION RICHNESS: `opt_fields=name,modified_at` below requests `modified_at` (the change token the
+//     contentHash requires) plus `name` (a minimal human-readable ingestion field, not part of the change
+//     token); richer fields (notes/assignee/due_on/…) are an arming-era ingestion-richness call.
 
 const ASANA_BASE_URL = "https://app.asana.com/api/1.0";
 const ASANA_ALLOWED_HOSTS: readonly string[] = ["app.asana.com"];
-const ASANA_PAGE_LIMIT = 100;
+const ASANA_PAGE_LIMIT = 100; // Context7: limit must be 1..100.
+// Context7 (GET /tasks): the list returns COMPACT records (gid + name) by default — `modified_at` (the change
+// token `asanaContentHash` requires) is returned ONLY when named in `opt_fields`, else the dedupe hash
+// silently degrades to the token-less raw record. `modified_at` realizes the change token; `name` is a
+// minimal human-readable ingestion field.
+const ASANA_OPT_FIELDS = "name,modified_at";
 
 /**
- * Cursor→query (per-connector paging): `?limit=<n>` on the first page, `&offset=<cursor>` when resuming. The
- * cursor is percent-encoded so tampered / persisted cursor state can never inject a query param or smuggle an
- * authority into the url (defense-in-depth — the template also SSRF-guards the final url).
+ * Cursor→query (per-connector paging): `?limit=<n>&opt_fields=<…>` on the first page, `&offset=<cursor>` when
+ * resuming. `opt_fields` requests the `modified_at` change token (Context7 — compact records omit it). The
+ * cursor (Asana's opaque `next_page.offset` token) is percent-encoded so tampered / persisted cursor state can
+ * never inject a query param or smuggle an authority into the url (defense-in-depth — the template also
+ * SSRF-guards the final url).
  */
 function asanaBuildQuery(request: TransportRequest): string {
-  const base = `?limit=${ASANA_PAGE_LIMIT}`;
+  const base = `?limit=${ASANA_PAGE_LIMIT}&opt_fields=${encodeURIComponent(ASANA_OPT_FIELDS)}`;
   return request.cursor !== undefined ? `${base}&offset=${encodeURIComponent(request.cursor)}` : base;
 }
 

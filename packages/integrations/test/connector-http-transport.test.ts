@@ -354,3 +354,30 @@ describe("createConnectorHttpTransport — token rides ONLY Authorization, never
     expect(JSON.stringify(res)).not.toContain(TOKEN);
   });
 });
+
+// ── 7. Context7 correctness-verify (round-3 slice 3) — the list query requests the change token ─────
+// Context7 (/websites/developers_asana, GET /tasks + opt_fields): the list returns COMPACT records (gid +
+// name) by default — `modified_at` (the change token asanaContentHash relies on) is returned ONLY when named
+// in `opt_fields`. Without it, the contentHash silently degrades to hashing the compact record. The corrected
+// candidate query requests `opt_fields=name,modified_at` so the dedupe change-token is actually present.
+describe("createAsanaHttpTransport — Context7-grounded list query requests the change token (opt_fields)", () => {
+  it("first page requests opt_fields including modified_at + limit≤100, no offset", async () => {
+    const transport = fakeTransport({ response: { status: 200, body: '{"data":[]}' } });
+    await createAsanaHttpTransport({ transport, secrets: fakeSecrets(), tokenRef: TOKEN_REF })(REQ);
+    const url = transport.calls[0]!.url;
+    expect(url).toContain(`opt_fields=${encodeURIComponent("name,modified_at")}`);
+    expect(url).toContain("limit=100"); // Context7: limit must be 1..100
+    expect(url).not.toContain("&offset=");
+  });
+
+  it("resuming still carries the opaque offset token (encoded) alongside opt_fields", async () => {
+    const transport = fakeTransport({ response: { status: 200, body: '{"data":[]}' } });
+    await createAsanaHttpTransport({ transport, secrets: fakeSecrets(), tokenRef: TOKEN_REF })({
+      readScope: "tasks:read",
+      cursor: "eyJ0eXAiOiJKV1QiLC",
+    });
+    const url = transport.calls[0]!.url;
+    expect(url).toContain("offset=eyJ0eXAiOiJKV1QiLC");
+    expect(url).toContain(`opt_fields=${encodeURIComponent("name,modified_at")}`);
+  });
+});
