@@ -22,6 +22,7 @@ export type {
 } from "./http-transport";
 export { createAsanaHttpTransport } from "./asana";
 export { createDriveHttpTransport } from "./drive";
+export { createCalendarHttpTransport } from "./calendar";
 export { createCalendarConnector } from "./calendar";
 export { createTodoistConnector } from "./todoist";
 export { createLinearConnector } from "./linear";
