@@ -117,6 +117,8 @@ import { buildCanonicalFactSet } from "./composition/canonicalFactSet";
 import { buildReconcilerDbProjection } from "./composition/reconcilerDbProjection";
 import { runReconcilePass } from "./composition/parityReconcile";
 import type { RunReconcilePassDeps, ReconcileHealthSink } from "./composition/parityReconcile";
+import { probeRebuildOracle } from "./composition/rebuildOracleStatus";
+import type { RebuildOracleProbeDeps, RebuildOracleStatus } from "./composition/rebuildOracleStatus";
 import {
   buildLoaderBackedServingOracle,
   buildServedVaultResolver,
@@ -180,7 +182,7 @@ import {
 } from "./watch/vaultWatcher";
 // §13 task 11.3-b — the GBrain version-pin BOOT verify step (closes the 11.3-a reachability waiver).
 import { readFile } from "node:fs/promises";
-import { createGbrainVersionProbe, computeRevisionId, type GbrainVersionProbe, type KnowledgeRevisionStore, type CommittedRevision, type SecretsPort, type SecretRef, type RunningGbrainVersion, type VaultFs, type GbrainReadAdapter, type ReconcilerDbProjection } from "@sow/knowledge";
+import { createGbrainVersionProbe, computeRevisionId, type GbrainVersionProbe, type KnowledgeRevisionStore, type CommittedRevision, type SecretsPort, type SecretRef, type RunningGbrainVersion, type VaultFs, type GbrainReadAdapter, type ReconcilerDbProjection, type IndexRebuildClient } from "@sow/knowledge";
 import { gbrainStartupVerify } from "./gbrainStartupVerify";
 
 // ── config ────────────────────────────────────────────────────────────────────
@@ -774,6 +776,117 @@ export function createReconcileLogSink(
       /* best-effort — the log sink MUST NEVER throw (piece E's flush relies on it); swallow any sink fault. */
     }
   };
+}
+
+// ── Task 13.10 (rebuild-oracle producer arc, piece B): the default-OFF gateRebuildOracle boot gate. spec(§6) spec(§12)
+//
+// The Lesson-23 arming-seam split: this pure helper turns piece A's probeRebuildOracle producer (committed 210e95e)
+// into a boot-resolvable `resolveOracleBuild: () => boolean` for createServingCoverageReader — but ONLY when the
+// owner has provisioned a real IndexRebuildClient. Byte-equivalent BY CONSTRUCTION: an added, UNREFERENCED exported
+// helper — NO bootWorker edit — so it cannot change the shipped boot. Piece C adds the bootWorker call site + the
+// async boot-await/cache + the coverage-reader binding.
+//
+// OFF (the default): the owner-gated real client factory is absent/not-a-function OR no served workspaces ⇒
+//   `undefined` + ZERO dep-thunk invocations (the byte-equivalence proof). Type-robust (Lesson 27): a malformed
+//   factory value degrades to OFF, never throws at gate time.
+// ON (owner-provisioned real client): assemble a bound async `compute` that runs probeRebuildOracle over each served
+//   workspace, FOLDS fail-closed (true IFF the served set is non-empty AND EVERY workspace corroborates), caches the
+//   boot-global boolean, and exposes a SYNC accessor over it (false until compute runs). The per-ws statuses ride out
+//   for piece C to route any rebuild_divergence HealthItem — this helper stays PURE (routes none).
+// NO hard line: the real IndexRebuildClient stays UNBOUND by default (the owner provisions the factory at arming).
+
+/** Owner-provided config for the rebuild-oracle gate — the served workspace set (piece C resolves it from config). */
+export interface RebuildOracleGateOpts {
+  /** The served workspace ids to corroborate. Empty ⇒ gate OFF (nothing to corroborate). */
+  readonly servedWorkspaceIds: readonly string[];
+}
+
+/** One served workspace's rebuild-oracle status — piece C routes any `diverged` HealthItem from these. */
+export interface RebuildOracleWorkspaceStatus {
+  readonly workspaceId: string;
+  readonly status: RebuildOracleStatus;
+}
+
+/** The result of folding the probe over every served workspace. */
+export interface RebuildOracleComputeResult {
+  readonly oracleBuildOk: boolean;
+  readonly statuses: readonly RebuildOracleWorkspaceStatus[];
+}
+
+/** The assembled ON-path wiring: a one-shot boot compute + the SYNC accessor createServingCoverageReader consumes. */
+export interface RebuildOracleWiring {
+  /** Run the probe over every served ws, fold fail-closed, cache the boot-global boolean; returns per-ws statuses. */
+  readonly compute: () => Promise<RebuildOracleComputeResult>;
+  /** SYNC accessor over the cached fold — the createServingCoverageReader `resolveOracleBuild` seam. `false` until
+   *  `compute` has run (fail-closed default — the coverage leg degrades until the boot probe completes). */
+  readonly resolveOracleBuild: () => boolean;
+}
+
+/** The gate's leaf dep-thunks — all fakeable; the owner-gated real client factory is the arming crossing. */
+export interface RebuildOracleGateDeps {
+  /** The owner-gated real gbrain scratch-import client FACTORY — UNBOUND by default (absent ⇒ gate OFF). */
+  readonly makeRebuildClient?: () => IndexRebuildClient;
+  /** The LOCAL committed-vault reader factory (piece A's `readCommittedVault` input; not owner-gated). */
+  readonly makeReader: () => CommittedVaultReader;
+  /** Injected clock (ISO-8601) — passed to the probe for deterministic rebuild health-item timestamps. */
+  readonly now: () => string;
+  /** Injected System-Health id minter — passed to the probe. */
+  readonly newHealthItemId: () => string;
+  /** AuditRecord ref the rebuild_divergence health items link back to. */
+  readonly auditRef: string;
+}
+
+/**
+ * The default-OFF rebuild-oracle boot gate (mirror gateReconcile F1). Byte-equivalent BY CONSTRUCTION (no bootWorker
+ * caller). Returns `undefined` (OFF) unless the owner has provisioned a real IndexRebuildClient factory AND there is
+ * ≥1 served workspace; on OFF it invokes NONE of its dep thunks. See the block header for the ON-path fold contract.
+ */
+export function gateRebuildOracle(
+  opts: RebuildOracleGateOpts,
+  deps: RebuildOracleGateDeps,
+): RebuildOracleWiring | undefined {
+  // OFF-lock 1 (arming): the owner-gated real client factory must be provisioned. `typeof !== "function"` folds a
+  //   malformed/absent value to OFF fail-closed (Lesson 27) — no throw at gate time. Captured in a local so TS
+  //   narrows it to a callable for the ON path below.
+  const makeRebuildClient = deps.makeRebuildClient;
+  if (typeof makeRebuildClient !== "function") return undefined;
+  // OFF-lock 2 (precondition): nothing to corroborate ⇒ OFF. BOTH locks are checked BEFORE any thunk fires — THE
+  //   byte-equivalence pin (an OFF gate invokes zero dep-thunks, so it cannot change boot).
+  if (opts.servedWorkspaceIds.length === 0) return undefined;
+
+  // ON — invoke the thunks ONCE here to bind the probe deps (mirror gateReconcile's construct-at-gate; one reader +
+  //   one client serve every workspace, since probeRebuildOracle takes the workspaceId per call).
+  const reader = deps.makeReader();
+  const rebuildClient = makeRebuildClient();
+  const probeDeps: RebuildOracleProbeDeps = {
+    readCommittedVault: reader,
+    rebuildClient,
+    now: deps.now,
+    newHealthItemId: deps.newHealthItemId,
+    auditRef: deps.auditRef,
+  };
+
+  let cached = false; // fail-closed default until the boot compute runs (mirrors resolveRunning's pre-probe state)
+  const compute = async (): Promise<RebuildOracleComputeResult> => {
+    try {
+      const statuses: RebuildOracleWorkspaceStatus[] = [];
+      for (const workspaceId of opts.servedWorkspaceIds) {
+        statuses.push({ workspaceId, status: await probeRebuildOracle(workspaceId, probeDeps) });
+      }
+      // Fail-closed AND fold (never a false green): the served set is non-empty AND EVERY workspace corroborates.
+      // Strict `=== true` (Lesson 27/28) — any non-corroborated status carries oracleBuildOk:false and sinks the fold;
+      // the `statuses.length > 0` guard is belt-and-suspenders over OFF-lock 2 (an empty `every` is vacuously true).
+      const oracleBuildOk = statuses.length > 0 && statuses.every((s) => s.status.oracleBuildOk === true);
+      cached = oracleBuildOk;
+      return { oracleBuildOk, statuses };
+    } catch {
+      // §16 defense-in-depth: probeRebuildOracle never throws, but a fold fault degrades — never a false green.
+      cached = false;
+      return { oracleBuildOk: false, statuses: [] };
+    }
+  };
+
+  return { compute, resolveOracleBuild: () => cached };
 }
 
 /**
