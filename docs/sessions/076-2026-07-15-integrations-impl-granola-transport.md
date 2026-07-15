@@ -3,7 +3,7 @@
 - **Date:** 2026-07-15
 - **Phase:** Go-live build round 4 (runbook Phase-8 connector round — Granola). Team `session-734f946b`, orchestrator `orch20` + implementer `integrations-impl`, on `main`.
 - **Predecessor:** [075-2026-07-15-integrations-impl-google-connectors-asana-verify.md](075-2026-07-15-integrations-impl-google-connectors-asana-verify.md)
-- **Successor:** _(next session)_
+- **Successor:** [077-2026-07-15-integrations-impl-github-transport.md](077-2026-07-15-integrations-impl-github-transport.md)
 - **Commits:** Granola `7687f2c` · this session doc
 
 ## Why this session existed
