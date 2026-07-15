@@ -11,6 +11,7 @@ import type {
 import type { ConnectionStatus, UiSafeStoreState } from "./index";
 import { isWorkspaceScope, type WorkspaceScope } from "./scope";
 import type { OnboardedWorkspace, WorkspaceBucketScope } from "./onboarding";
+import type { UiSafeConnectorInstanceView } from "./connectors";
 import { routeEquals, type Route } from "./route";
 
 // Pure reducers that fold validated UI-safe StreamEvents into the store. Every
@@ -87,6 +88,38 @@ export function resolveOnboardedWorkspaceId(
 /** True once AT LEAST ONE workspace bucket is onboarded (the first-run gate: false ⇒ onboarding). */
 export function hasAnyOnboardedWorkspace(state: UiSafeStoreState): boolean {
   return state.onboarded.size > 0;
+}
+
+// ── Connectors slice (§19.1 / 14.2) — optimistic instance tracking, WS-8 filtered ───
+//
+// No cold-load connector LIST read exists yet (connectorConfig is mutations-only), so the surface
+// tracks instances OPTIMISTICALLY from each mutation's returned UI-safe summary, keyed by instanceId.
+// The surface only ever shows the SELECTED workspace's instances via `connectorsForWorkspace` (WS-8).
+
+/** Upsert an instance (from a register/setState/setCadence result), keyed by instanceId. Immutable. */
+export function upsertConnectorInstance(
+  state: UiSafeStoreState,
+  instance: UiSafeConnectorInstanceView,
+): UiSafeStoreState {
+  const next = new Map(state.connectors);
+  next.set(instance.instanceId, instance);
+  return { ...state, connectors: next };
+}
+
+/**
+ * The connector instances belonging to a single workspace (WS-8 filter). A surface passes the
+ * SELECTED onboarded workspace's real id (or, for a non-onboarded/global scope, no id → empty).
+ * Returns a fresh array; never leaks another workspace's instances.
+ */
+export function connectorsForWorkspace(
+  state: UiSafeStoreState,
+  workspaceId: string,
+): readonly UiSafeConnectorInstanceView[] {
+  const out: UiSafeConnectorInstanceView[] = [];
+  for (const c of state.connectors.values()) {
+    if (c.workspaceId === workspaceId) out.push(c);
+  }
+  return out;
 }
 
 /**

@@ -13,6 +13,7 @@ import type {
 import { DEFAULT_SCOPE, type WorkspaceScope } from "./scope";
 import { DEFAULT_ROUTE, type Route } from "./route";
 import type { OnboardedWorkspace, WorkspaceBucketScope } from "./onboarding";
+import type { UiSafeConnectorInstanceView } from "./connectors";
 
 // The renderer store holds ONLY UI-safe projections delivered over the §10 push
 // stream — never secrets, Keychain refs, or unfiltered raw content (§10 boundary,
@@ -60,6 +61,13 @@ export interface UiSafeStoreState {
    * onboarded, WS-8). Empty on first run → the app shows the onboarding surface, not the app.
    */
   readonly onboarded: ReadonlyMap<WorkspaceBucketScope, OnboardedWorkspace>;
+  /**
+   * The registered connector instances (§19.1 / 14.2), keyed by instanceId. Tracked OPTIMISTICALLY
+   * from each connectorConfig mutation's returned UI-safe summary — there is no cold-load list read
+   * yet (a worker follow-up). The connectors surface shows only the SELECTED workspace's instances
+   * (WS-8, via `connectorsForWorkspace`); tokenRef is never present here (rule 7).
+   */
+  readonly connectors: ReadonlyMap<string, UiSafeConnectorInstanceView>;
   /** The last stream `eventId` applied — a resumed subscription replays from here. */
   readonly lastEventId: string | null;
   /** The last per-stream `seq` applied — a gap (seq != last + 1) signals a dropped event. */
@@ -79,6 +87,7 @@ export const initialStoreState: UiSafeStoreState = {
   projects: [],
   ingestion: [],
   onboarded: new Map(),
+  connectors: new Map(),
   lastEventId: null,
   lastSeq: null,
 };

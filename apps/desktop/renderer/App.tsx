@@ -14,10 +14,15 @@ import {
   scopeForWorkspaceId,
   hasAnyOnboardedWorkspace,
   recordOnboardedWorkspace,
+  connectorsForWorkspace,
+  upsertConnectorInstance,
 } from "./store/projections";
 import { scopeMeta, type WorkspaceScope } from "./store/scope";
 import { scopeForType } from "./store/onboarding";
 import { Onboarding } from "./surfaces/onboarding";
+import { Connectors } from "./surfaces/connectors";
+import { SystemHealth } from "./surfaces/system-health";
+import type { RegisterConnectorInput, ConnectorConfigResult } from "./lib/connector-config";
 import type { Route } from "./store/route";
 import { startLive, type StartLiveHandle } from "./lib/live";
 import type { AskResult } from "./lib/copilot-ask";
@@ -177,6 +182,25 @@ export function App(): ReactElement {
     [...state.onboarded.values()].map((ow) => [ow.workspaceId, { label: ow.name, accent: scopeMeta(ow.scope).accent }]),
   );
 
+  // 14.2 connectors — scoped to the SELECTED onboarded workspace (WS-8). Null (global / non-onboarded)
+  // → the surface disables the form + shows no instances (connectorsForWorkspace over a null id is []).
+  const connectorsWorkspaceId = resolveOnboardedWorkspaceId(state, state.scope);
+  const scopedConnectors =
+    connectorsWorkspaceId !== null ? connectorsForWorkspace(state, connectorsWorkspaceId) : [];
+  // On a successful connectorConfig mutation, upsert the returned UI-safe instance into the optimistic
+  // store slice (no cold-load list read yet). Fail-closed to {ok:false} when there is no live worker.
+  const upsertOnOk = (p: Promise<ConnectorConfigResult>): Promise<ConnectorConfigResult> =>
+    p.then((r) => {
+      if (r.ok) store.dispatch((s) => upsertConnectorInstance(s, r.instance));
+      return r;
+    });
+  const onRegisterConnector = (input: RegisterConnectorInput): Promise<ConnectorConfigResult> =>
+    upsertOnOk(liveRef.current?.registerConnector(input) ?? Promise.resolve({ ok: false as const }));
+  const onSetConnectorState = (instanceId: string, cstate: "enabled" | "paused"): Promise<ConnectorConfigResult> =>
+    upsertOnOk(liveRef.current?.setConnectorState(instanceId, cstate) ?? Promise.resolve({ ok: false as const }));
+  const onSetConnectorCadence = (instanceId: string, cadence: string): Promise<ConnectorConfigResult> =>
+    upsertOnOk(liveRef.current?.setConnectorCadence(instanceId, cadence) ?? Promise.resolve({ ok: false as const }));
+
   return (
     <AppShell
       connection={state.connection}
@@ -208,6 +232,16 @@ export function App(): ReactElement {
           selectedProjectId={selectedProjectId}
           onSelectProject={onSelectProject}
         />
+      ) : state.route.surface === "connectors" ? (
+        <Connectors
+          workspaceId={connectorsWorkspaceId}
+          instances={scopedConnectors}
+          onRegister={onRegisterConnector}
+          onSetState={onSetConnectorState}
+          onSetCadence={onSetConnectorCadence}
+        />
+      ) : state.route.surface === "system-health" ? (
+        <SystemHealth items={[...state.health.values()]} />
       ) : (
         <Today
           scope={state.scope}

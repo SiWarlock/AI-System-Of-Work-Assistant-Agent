@@ -434,14 +434,19 @@ export function AppShell(props: AppShellProps): ReactElement {
             </svg>
           </NavLink>
 
-          {/* Health — amber dot */}
-          <div className="sow-nav-item" role="link" tabIndex={0}>
+          {/* Connectors — routable (§14.2 per-workspace connector config) */}
+          <NavLink surface="connectors" label="Connectors" active={route.surface === "connectors"} onNavigate={onNavigate}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M7 8V6a5 5 0 0 1 10 0v2M6.5 8h11a1.5 1.5 0 0 1 1.5 1.5V17a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V9.5A1.5 1.5 0 0 1 6.5 8z" />
+            </svg>
+          </NavLink>
+
+          {/* System Health — routable (§14.3) */}
+          <NavLink surface="system-health" label="Health" active={route.surface === "system-health"} onNavigate={onNavigate}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M3 12h4l2-6 4 12 2-6h6" />
             </svg>
-            <span className="sow-nav-label">Health</span>
-            <span className="sow-dot-warn" aria-label="Health alert" role="img" />
-          </div>
+          </NavLink>
 
           <div className="sow-nav-divider" role="separator" />
 

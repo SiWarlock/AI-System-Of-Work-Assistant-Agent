@@ -30,6 +30,13 @@ import { createApprovalDecision, type ApprovalDecision, type DecisionResult } fr
 import { createTriageDisposition, type TriageDisposition, type DispositionResult } from "./triage-disposition";
 import { createOnboardWorkspace, type OnboardWorkspaceInput, type OnboardResult } from "./onboard-workspace";
 import { createPresetPreview, type PresetPreviewResult } from "./preset-preview";
+import {
+  createRegisterConnector,
+  createSetConnectorState,
+  createSetConnectorCadence,
+  type RegisterConnectorInput,
+  type ConnectorConfigResult,
+} from "./connector-config";
 
 /** The live-session handle: stop the stream + drill-down (§9.4) + scope-aware re-hydrate (§9.5). */
 export interface StartLiveHandle {
@@ -47,6 +54,12 @@ export interface StartLiveHandle {
   readonly onboardWorkspace: (input: OnboardWorkspaceInput) => Promise<OnboardResult>;
   /** Preview a preset's provisioning profile (§14.5, wired to presetProfiles.preview); fails closed to {ok:false}. */
   readonly previewPreset: (preset: string) => Promise<PresetPreviewResult>;
+  /** Register a connector instance (§14.2, wired to connectorConfig.register); fails closed to {ok:false}. */
+  readonly registerConnector: (input: RegisterConnectorInput) => Promise<ConnectorConfigResult>;
+  /** Enable/pause a connector instance (§14.2, wired to connectorConfig.setState); fails closed. */
+  readonly setConnectorState: (instanceId: string, state: "enabled" | "paused") => Promise<ConnectorConfigResult>;
+  /** Set a connector instance's cadence (§14.2, wired to connectorConfig.setCadence); fails closed. */
+  readonly setConnectorCadence: (instanceId: string, cadence: string) => Promise<ConnectorConfigResult>;
 }
 
 // Connect the UI-safe store to the LIVE worker over the §10 push stream (9.4b E).
@@ -102,6 +115,9 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
     disposeTriage: createTriageDisposition(live.client),
     onboardWorkspace: createOnboardWorkspace(live.client),
     previewPreset: createPresetPreview(live.client),
+    registerConnector: createRegisterConnector(live.client),
+    setConnectorState: createSetConnectorState(live.client),
+    setConnectorCadence: createSetConnectorCadence(live.client),
   };
 }
 
