@@ -3,7 +3,7 @@
 - **Date:** 2026-07-15
 - **Phase:** Go-live build round 2 (runbook Phase-8 connector round — the FIRST connector build round). Team `session-734f946b`, orchestrator `orch20` + implementer `integrations-impl`, on `main`.
 - **Predecessor:** [073-2026-07-15-impl22-rebuild-oracle-boot-binding.md](073-2026-07-15-impl22-rebuild-oracle-boot-binding.md)
-- **Successor:** _(next session)_
+- **Successor:** [075-2026-07-15-integrations-impl-google-connectors-asana-verify.md](075-2026-07-15-integrations-impl-google-connectors-asana-verify.md)
 - **Commits:** slice 1 `c2c6525` · slice 2 `47c55c2` · this session doc
 
 ## Why this session existed
