@@ -3,7 +3,7 @@
 - **Date:** 2026-07-15
 - **Phase:** Go-live build round 3 (runbook Phase-8 connector round — the Google connectors + the owner Context7 correctness pass). Team `session-734f946b`, orchestrator `orch20` + implementer `integrations-impl`, on `main`.
 - **Predecessor:** [074-2026-07-15-integrations-impl-connector-transport.md](074-2026-07-15-integrations-impl-connector-transport.md)
-- **Successor:** _(next session)_
+- **Successor:** [076-2026-07-15-integrations-impl-granola-transport.md](076-2026-07-15-integrations-impl-granola-transport.md)
 - **Commits:** slice 1 Drive `0087154` · slice 2 Calendar `a4e5b9b` · slice 3 Asana-verify `6908b0b` · this session doc
 
 ## Why this session existed
