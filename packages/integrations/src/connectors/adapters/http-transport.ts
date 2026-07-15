@@ -40,12 +40,14 @@ import type {
 // depend on `@sow/providers` (deps: contracts/domain/policy/db), the same layer reason GbrainReadClient
 // re-declared them for knowledge→providers. Two tiny structural seams don't warrant widening the layer graph.
 
-/** One outbound READ request handed to the injected transport. `method` is the literal "GET" (read-only,
- *  ING-7) and there is no body; `headers` MAY carry the resolved bearer token (never logged). */
+/** One outbound READ request handed to the injected transport. `method` is `"GET"` (default) or `"POST"` (a
+ *  GraphQL-over-POST read connector — see the ConnectorHttpSpec.method/buildBody READ-ONLY WARNING); `body` is
+ *  present only for POST (a token-free JSON body). `headers` MAY carry the resolved bearer token (never logged). */
 export interface HttpTransportRequest {
   readonly url: string;
-  readonly method: "GET";
+  readonly method: "GET" | "POST";
   readonly headers: Readonly<Record<string, string>>;
+  readonly body?: string;
 }
 
 /** The transport's raw response — an HTTP status + a raw body string (no interpretation by the transport). */
@@ -97,6 +99,24 @@ export interface ConnectorHttpSpec {
   readonly resourcePath: string;
   readonly buildQuery: (request: TransportRequest) => string;
   readonly mapPage: (json: unknown, request: TransportRequest) => ConnectorTransportResult;
+  /**
+   * HTTP method — absent ⇒ `"GET"` (the default; the 5 GET connectors). `"POST"` enables a GraphQL-over-POST
+   * read connector (Linear) with a JSON `buildBody`.
+   *
+   * ⚠️ READ-ONLY WARNING (future POST-connector authors): a POST here carries read QUERIES ONLY. The transport
+   * CANNOT inspect an opaque (e.g. GraphQL) body, so a POST connector's read-only-ness is the SPEC's contract —
+   * a FIXED query-only `buildBody` (a GraphQL `query`, NEVER a `mutation`/write) + code review — NOT the HTTP
+   * method (ING-7's GET-only type guarantee is relaxed here). Do NOT add a POST spec whose `buildBody` can
+   * construct a mutation/write. GET stays the default so no existing connector gains a write-method path.
+   */
+  readonly method?: "GET" | "POST";
+  /**
+   * Builds the JSON request body from the token-free `TransportRequest` (REQUIRED when `method === "POST"`;
+   * ignored for GET). Same seam as `buildQuery`/`mapPage`: it receives `{ cursor?, readScope }` and MUST NOT
+   * carry the token (the token rides ONLY the Authorization header — rule 7). Wrapped fail-closed by the
+   * template (a throw ⇒ a redacted failure). See the `method` WARNING — the body MUST be a read query only.
+   */
+  readonly buildBody?: (request: TransportRequest) => string;
 }
 
 /** The injected deps. All fakeable; the real bindings (a Node HTTP transport + a Keychain SecretsAccessor +
@@ -165,11 +185,33 @@ export function createConnectorHttpTransport(
     if (isErr(secret)) {
       return transportFailure("auth_locked", `token unavailable (${secret.error.reason})`);
     }
-    // (3) Build the read-only GET (ING-7 — never a write method/body). The token rides ONLY Authorization.
+    // (3) Build the request. GET (default) is byte-identical to before (no body, no content-type). POST (a
+    //     GraphQL-over-POST read connector — see the ConnectorHttpSpec.method/buildBody READ-ONLY WARNING) adds
+    //     a JSON body via the spec's TOKEN-FREE `buildBody`, wrapped fail-closed (a throw / a mis-specified POST
+    //     with no buildBody ⇒ a redacted failure, no dispatch). The token rides ONLY the Authorization header
+    //     (never the body / url) — rule 7.
+    const method = spec.method ?? "GET";
+    const headers: Record<string, string> = {
+      accept: "application/json",
+      Authorization: `Bearer ${secret.value}`,
+    };
+    let body: string | undefined;
+    if (method === "POST") {
+      if (spec.buildBody === undefined) {
+        return transportFailure("unknown", `body build error (${hostRef})`); // POST spec missing buildBody
+      }
+      try {
+        body = spec.buildBody(request);
+      } catch {
+        return transportFailure("unknown", `body build error (${hostRef})`);
+      }
+      headers["content-type"] = "application/json";
+    }
     const httpRequest: HttpTransportRequest = {
       url: fullUrl,
-      method: "GET",
-      headers: { accept: "application/json", Authorization: `Bearer ${secret.value}` },
+      method,
+      headers,
+      ...(body !== undefined ? { body } : {}),
     };
     // (4) Dispatch — a transport reject ⇒ a redacted failure (the raw cause is DISCARDED, never surfaced).
     let response: HttpTransportResponse;

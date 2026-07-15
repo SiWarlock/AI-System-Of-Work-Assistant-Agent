@@ -427,3 +427,138 @@ describe("createConnectorHttpTransport — mapPage(json, request) widening guard
     if (res.ok) expect(res.done).toBe(true);
   });
 });
+
+// ── 9. Template POST + body extension (R6 slice 1) ──────────────────────────────
+// Additive: `spec.method?: "GET"|"POST"` (default GET) + `spec.buildBody?` for a GraphQL-over-POST connector
+// (Linear, slice 2). The 5 existing GET connectors stay byte-exact; POST keeps every GET safety property
+// (SSRF-on-final-url method-agnostic · token Authorization-only, never in body · wrapped body-builder).
+describe("createConnectorHttpTransport — POST + body extension (R6 slice 1)", () => {
+  it("a POST spec sends method POST + the built body + content-type application/json; 2xx maps", async () => {
+    const transport = fakeTransport({ response: { status: 200, body: '{"data":{"ok":true}}' } });
+    const spec: ConnectorHttpSpec = {
+      ...CORE_SPEC,
+      method: "POST",
+      buildBody: () => '{"query":"query { viewer { id } }"}',
+      mapPage: () => ({ ok: true, items: [], done: true }),
+    };
+    const res = await createConnectorHttpTransport(spec, depsWith({ transport }))(REQ);
+    expect(res.ok).toBe(true);
+    const call = transport.calls[0]!;
+    expect(call.method).toBe("POST");
+    expect(call.body).toBe('{"query":"query { viewer { id } }"}');
+    expect(call.headers["content-type"]).toBe("application/json");
+    expect(call.headers.Authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it("a GET spec (no method) ⇒ method GET, NO body key, NO content-type (byte-exact)", async () => {
+    const transport = fakeTransport({ response: { status: 200, body: "[]" } });
+    const spec: ConnectorHttpSpec = { ...CORE_SPEC, mapPage: () => ({ ok: true, items: [], done: true }) };
+    await createConnectorHttpTransport(spec, depsWith({ transport }))(REQ);
+    const call = transport.calls[0]!;
+    expect(call.method).toBe("GET");
+    expect("body" in call).toBe(false);
+    expect(call.headers["content-type"]).toBeUndefined();
+    expect(call.headers).toEqual({ accept: "application/json", Authorization: `Bearer ${TOKEN}` });
+  });
+
+  it("SSRF guard is method-agnostic: a POST spec with an off-allowlist base ⇒ refused, ZERO token/dispatch/buildBody", async () => {
+    const transport = fakeTransport();
+    const secrets = fakeSecrets();
+    let buildBodyCalls = 0;
+    const spec: ConnectorHttpSpec = {
+      ...CORE_SPEC,
+      baseUrl: "https://evil.com",
+      method: "POST",
+      buildBody: () => {
+        buildBodyCalls += 1;
+        return "{}";
+      },
+    };
+    const res = await createConnectorHttpTransport(spec, { transport, secrets, tokenRef: TOKEN_REF })(REQ);
+    expect(res.ok).toBe(false);
+    expect(transport.calls).toHaveLength(0);
+    expect(secrets.refs).toHaveLength(0); // guard fires before token read
+    expect(buildBodyCalls).toBe(0); // and before the body is built
+  });
+
+  it("a THROWING buildBody ⇒ redacted TransportFailure (no raw content, no dispatch); absent buildBody while POST ⇒ fail-closed", async () => {
+    const transport = fakeTransport();
+    const throwSpec: ConnectorHttpSpec = {
+      ...CORE_SPEC,
+      method: "POST",
+      buildBody: () => {
+        throw new Error("body blew up BODY_CAUSE_LEAK");
+      },
+    };
+    const r1 = await createConnectorHttpTransport(throwSpec, { transport, secrets: fakeSecrets(), tokenRef: TOKEN_REF })(REQ);
+    expect(r1.ok).toBe(false);
+    expect(transport.calls).toHaveLength(0); // body built before dispatch ⇒ a throw means no dispatch
+    expect(JSON.stringify(r1)).not.toContain("BODY_CAUSE_LEAK");
+
+    const absentTransport = fakeTransport();
+    const absentSpec: ConnectorHttpSpec = { ...CORE_SPEC, method: "POST" }; // no buildBody — mis-specified
+    const r2 = await createConnectorHttpTransport(absentSpec, {
+      transport: absentTransport,
+      secrets: fakeSecrets(),
+      tokenRef: TOKEN_REF,
+    })(REQ);
+    expect(r2.ok).toBe(false);
+    expect(absentTransport.calls).toHaveLength(0); // mis-specified POST fails closed BEFORE dispatch
+  });
+
+  it("POST buildBody returning '' sends body:'' + content-type; a GET spec's stray buildBody is ignored (not called)", async () => {
+    // an empty-string body is still a POST body ("" !== undefined) ⇒ body:"" + content-type present.
+    const t1 = fakeTransport({ response: { status: 200, body: "{}" } });
+    const emptySpec: ConnectorHttpSpec = {
+      ...CORE_SPEC,
+      method: "POST",
+      buildBody: () => "",
+      mapPage: () => ({ ok: true, items: [], done: true }),
+    };
+    await createConnectorHttpTransport(emptySpec, { transport: t1, secrets: fakeSecrets(), tokenRef: TOKEN_REF })(REQ);
+    expect(t1.calls[0]!.body).toBe("");
+    expect(t1.calls[0]!.headers["content-type"]).toBe("application/json");
+
+    // a GET spec that (wrongly) sets buildBody ⇒ ignored: GET path, no body / no content-type, buildBody uncalled.
+    const t2 = fakeTransport({ response: { status: 200, body: "[]" } });
+    let strayCalls = 0;
+    const strayGet: ConnectorHttpSpec = {
+      ...CORE_SPEC,
+      buildBody: () => {
+        strayCalls += 1;
+        return "{}";
+      },
+      mapPage: () => ({ ok: true, items: [], done: true }),
+    };
+    await createConnectorHttpTransport(strayGet, { transport: t2, secrets: fakeSecrets(), tokenRef: TOKEN_REF })(REQ);
+    expect("body" in t2.calls[0]!).toBe(false);
+    expect(t2.calls[0]!.headers["content-type"]).toBeUndefined();
+    expect(strayCalls).toBe(0);
+  });
+
+  it("GUARDRAIL rule 7: the POST body never carries the token; buildBody gets a token-free request; token only in Authorization", async () => {
+    const MARKER = "TOKEN-MARKER-must-not-reach-body";
+    let capturedReq: unknown;
+    const transport = fakeTransport({ response: { status: 200, body: "{}" } });
+    const spec: ConnectorHttpSpec = {
+      ...CORE_SPEC,
+      method: "POST",
+      buildBody: (request) => {
+        capturedReq = request;
+        return `{"query":"query { x }","cursor":"${request.cursor ?? ""}"}`;
+      },
+      mapPage: () => ({ ok: true, items: [], done: true }),
+    };
+    await createConnectorHttpTransport(spec, { transport, secrets: fakeSecrets(ok(MARKER)), tokenRef: TOKEN_REF })({
+      readScope: "tasks:read",
+      cursor: "C1",
+    });
+    const call = transport.calls[0]!;
+    expect(call.body).not.toContain(MARKER); // token NEVER in the body
+    expect(call.headers.Authorization).toBe(`Bearer ${MARKER}`); // only in Authorization
+    const req = capturedReq as Record<string, unknown>;
+    expect(Object.keys(req).every((k) => k === "cursor" || k === "readScope")).toBe(true);
+    expect("Authorization" in req).toBe(false);
+    expect(JSON.stringify(req)).not.toContain(MARKER);
+  });
+});
