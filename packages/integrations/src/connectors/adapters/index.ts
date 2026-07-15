@@ -7,6 +7,20 @@
 // Gateway (6.1) drives the `ConnectorPort`s; each is built over an injected transport (6.3).
 export { makeConnector } from "./base";
 export type { ConnectorSpec } from "./base";
+// §13.12 reusable read-only connector HTTP transport template + the Asana instance (DORMANT — the real
+// HttpTransport + SecretsAccessor stay UNBOUND; the owner-arming boot binding is their production caller).
+// (`transportFailure` stays internal — same-package mapPage authors import it directly from ./http-transport.)
+export { createConnectorHttpTransport } from "./http-transport";
+export type {
+  ConnectorHttpSpec,
+  ConnectorHttpTransportDeps,
+  HttpTransport,
+  HttpTransportRequest,
+  HttpTransportResponse,
+  SecretsAccessor,
+  SecretUnavailable,
+} from "./http-transport";
+export { createAsanaHttpTransport } from "./asana";
 export { createCalendarConnector } from "./calendar";
 export { createTodoistConnector } from "./todoist";
 export { createLinearConnector } from "./linear";
