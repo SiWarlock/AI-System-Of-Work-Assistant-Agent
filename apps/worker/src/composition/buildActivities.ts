@@ -34,7 +34,13 @@ import type {
   Approval,
   AuditId,
 } from "@sow/contracts";
-import { auditId as makeAuditId, sourceId as makeSourceId, planId as makePlanId } from "@sow/contracts";
+import { planId as makePlanId } from "@sow/contracts";
+import {
+  createDurableDispositionStore,
+  createDurableParkedReader,
+  createRegistryValidatedRescope,
+  createReenterRunner,
+} from "./dispositionDurable";
 
 // KnowledgeWriter — the SOLE Markdown writer; real ownership+secret defaults kept.
 // `readVaultHeadRevision` resolves the LIVE vault head for the source commit's compare-revision
@@ -77,7 +83,6 @@ import {
   createApplyTransitionActivity,
   createDispatchApprovedActivity,
   createRecordDispositionActivity,
-  createRescopeSourceActivity,
   createReenterIngestionActivity,
   meetingOutputsProjection,
   // source-ingestion (make-it-real C1): the REAL registerSource gate activity + the
@@ -548,36 +553,50 @@ export function buildProofSpineActivities(
 
   // ── ingestion-triage ───────────────────────────────────────────────────────
 
-  // recordDisposition — an in-memory disposition store over the real audit sink (the
-  // §9 operational disposition table is Phase-10; this binds the exactly-once record).
-  const dispositionStore: DispositionStore = makeDispositionStore(
-    backends,
-    params.commit.workflowRunRef,
-  );
+  // recordDisposition — the DURABLE disposition store (task 15.5) over the @sow/db SourceDisposition
+  // repo + the real audit sink; exactly-once CAS record + real isParked (no longer hardwired true).
+  const dispositionStore: DispositionStore = createDurableDispositionStore({
+    repo: backends.repos.sourceDisposition,
+    audit: backends.repos.audit,
+    now: backends.now,
+    runRef: params.commit.workflowRunRef,
+  });
   const recordDisposition: RecordDispositionPort = createRecordDispositionActivity({
     store: dispositionStore,
   });
 
-  // rescopeSource — read the parked source through the register/read seam, apply the
-  // owner override (inv-C), preserve contentHash (inv-D).
-  const parkedReader: ParkedSourceReader = {
-    read: (sourceIdStr: string) =>
-      Promise.resolve(
-        err({
-          code: "source_unavailable" as const,
-          message: `parked source ${sourceIdStr} not available in this stub reader (carry-forward: the real parked-source read seam)`,
-        }),
-      ),
-  };
-  const rescopeSource: RescopeSourcePort = createRescopeSourceActivity({
+  // rescopeSource — read the parked source back from the durable store (real reader), apply the
+  // owner override (inv-C) REGISTRY-VALIDATED (WS-8), preserve contentHash (inv-D).
+  const parkedReader: ParkedSourceReader = createDurableParkedReader(backends.repos.sourceDisposition);
+  const rescopeSource: RescopeSourcePort = createRegistryValidatedRescope({
     reader: parkedReader,
+    readModels: backends.repos.readModels,
   });
 
-  // reenterIngestion — re-drive the 7.7 pipeline REUSING the same idempotencyKey (inv-D).
-  const ingestionRunner: SourceIngestionRunner = {
-    run: (_reScopedSource, _idempotencyKey) =>
-      Promise.resolve(ok({ state: "applied", runReused: true })),
-  };
+  // reenterIngestion — re-drive REUSING the same idempotencyKey (inv-D). The scoped-but-real runner
+  // re-drives THROUGH the candidate gate (rule 2) + replays over the real KnowledgeRevisionStore
+  // (rule 3); the full-7.7 fresh-commit re-drive (route/agent/build/commit) is a named follow-up.
+  const ingestionRunner: SourceIngestionRunner = createReenterRunner({
+    reGate: async (source) => {
+      // seenContentHash is hardwired false here BY DESIGN: a re-entry is a DELIBERATE re-drive of a
+      // known source, so the content-hash dedup leg must NOT short-circuit it — the reused
+      // idempotencyKey is the replay/dedupe guard downstream (inv-D), not the seen-hash leg.
+      const res = await registerSource(
+        {
+          sourceId: String(source.sourceId),
+          workspaceId: String(source.workspaceId),
+          origin: source.origin,
+          contentHash: source.contentHash,
+          type: source.type,
+          sensitivity: source.sensitivity,
+          routingHints: source.routingHints,
+        },
+        { seenContentHash: () => Promise.resolve(false) },
+      );
+      return res.outcome === "rejected" ? err({ code: "rejected" as const }) : ok(undefined);
+    },
+    revisions: params.revisions,
+  });
   const reenterIngestion: ReenterIngestionPort = createReenterIngestionActivity({
     runner: ingestionRunner,
   });
@@ -804,39 +823,3 @@ function addHours(iso: string, hours: number): string {
   return new Date(ms + hours * 3_600_000).toISOString();
 }
 
-/**
- * An in-memory DispositionStore (the §9 disposition table is Phase-10). It CAS-inserts
- * by the channel-free disposition key, minting an audit ref through the real audit sink
- * so nothing is silent. `isParked` is a stub `true` (the parked-source read seam is a
- * carry-forward). Exactly-once by key: a HIT reuses the prior audit ref (inv-A/inv-B).
- */
-function makeDispositionStore(
-  backends: ProofSpineBackends,
-  runRef: WorkflowRunRef,
-): DispositionStore {
-  const byKey = new Map<string, AuditId>();
-  return {
-    isParked: (_sourceIdStr: string) => Promise.resolve(ok(true)),
-    getByKey: (key: string) => Promise.resolve(byKey.get(key)),
-    async insert(key, disposition) {
-      const auditRef = makeAuditId(`audit:disposition:${key}`);
-      // Append a redaction-safe audit record (summaries only — never raw content).
-      await backends.repos.audit.append({
-        actor: "ingestion-triage",
-        event: "ingestion.triage.disposition.recorded",
-        refs: [
-          `ref:source:${String(makeSourceId(disposition.sourceId))}`,
-          `ref:workspace:${String(disposition.workspaceId)}`,
-          `ref:workflow:${runRef.workflowId}`,
-          String(auditRef),
-        ],
-        payloadHash: `disposition:${key}`,
-        beforeSummary: "parked source awaiting owner disposition",
-        afterSummary: "owner disposition recorded; source re-scoped for re-entry",
-        timestamps: { occurredAt: backends.now() },
-      });
-      byKey.set(key, auditRef);
-      return ok(auditRef);
-    },
-  };
-}
