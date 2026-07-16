@@ -5,6 +5,7 @@
 - **Orchestrators (cycled across the session):** orch22 → orch23 → orch24
 - **Branch:** `main` (single-track)
 - **Phase:** 14 (Onboarding, Config Surfaces & Runtime Substrate — §19.1). This doc is the Phase-14 desktop close-out (the `/phase-exit 14` checklist notes it lands at desktop-impl's cycle).
+- **Successor:** [087](087-2026-07-16-desktop-impl-cycle-close-styling.md) (desktop-impl cycle close-out — visual polish + `/session-end`).
 - **Scope:** ALL the Phase-14 desktop-track legs, built on top of the shipped worker-foundation round (workspace onboarding + the 3 registries + preset profiles + System-Health read-path).
 
 ## What was built
