@@ -15,7 +15,7 @@
 import { ok, err, isErr, type Result } from "@sow/contracts";
 import { auditId as makeAuditId } from "@sow/contracts";
 import type { AuditId, SourceEnvelope, WorkflowRunRef } from "@sow/contracts";
-import type { AuditRepository, ReadModelRepository, SourceDispositionRepository } from "@sow/db";
+import type { AuditRepository, ReadModelRepository, SourceDispositionRepository, SourceDispositionRow } from "@sow/db";
 import type { KnowledgeRevisionStore } from "@sow/knowledge";
 import {
   createRescopeSourceActivity,
@@ -24,6 +24,8 @@ import {
   type RescopeSourcePort,
   type SourceIngestionRunner,
   type ReenterOutcome,
+  type MeetingParkPort,
+  type MeetingParkFailure,
 } from "@sow/workflows";
 import { resolveKnownWorkspace } from "../api/adapters/readModel";
 
@@ -157,6 +159,46 @@ export function createReenterRunner(deps: ReenterRunnerDeps): SourceIngestionRun
       } catch {
         return err({ code: "reentry_failed", message: "re-entry failed" });
       }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// (5) MeetingParkPort — G5: the low-confidence routing-review park
+// ---------------------------------------------------------------------------
+
+export interface DurableMeetingParkDeps {
+  readonly repo: SourceDispositionRepository;
+  /** Wall clock for `parkedAt` (injected — no Date.now() in composition). */
+  readonly now: () => string;
+}
+
+/**
+ * Build the G5 {@link MeetingParkPort} over the 15.5 SourceDisposition repo's `park` (first-write-wins —
+ * NO new writer). On a low-confidence meeting it durably records a `queued_for_review` parked row,
+ * WORKSPACE-UNBOUND (dispositionKey + auditRef NULL — the routing target is the human's later triage
+ * call, inv-1), holding the meeting's SourceEnvelope (the parked source-of-record; server-side
+ * operational only, never rendered/logged, rule 7) + the meeting idempotencyKey (reused on the human's
+ * re-enter so the downstream write replays, inv-D). `park` is first-write-wins by the source identity, so
+ * a re-driven / replayed low-confidence meeting parks EXACTLY ONCE (rule 3 / L36). A store fault folds to
+ * a typed `park_failed` (fail-closed, L3). Never throws.
+ */
+export function createDurableMeetingParkPort(deps: DurableMeetingParkDeps): MeetingParkPort {
+  return {
+    async park(source: SourceEnvelope, idempotencyKey: string): Promise<Result<void, MeetingParkFailure>> {
+      const row: SourceDispositionRow = {
+        sourceId: String(source.sourceId),
+        sourceEnvelope: source,
+        idempotencyKey,
+        state: "queued_for_review",
+        dispositionKey: null, // inv-1: NO routing decision yet — the human picks the target workspace (15.8)
+        auditRef: null,
+        parkedAt: deps.now(),
+        dispositionedAt: null,
+      };
+      const parked = await deps.repo.park(row);
+      if (isErr(parked)) return err({ code: "park_failed", message: "disposition park failed" });
+      return ok(undefined);
     },
   };
 }

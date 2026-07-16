@@ -23,7 +23,10 @@ import type {
   WorkspaceId,
   KnowledgeMutationPlan,
   Result,
+  SourceEnvelope,
 } from "@sow/contracts";
+import { err } from "@sow/contracts";
+import type { MeetingParkPort, MeetingParkFailure } from "../src/ports/meetingCloseout";
 import { runMeetingCloseout } from "../src/workflows/meetingCloseout";
 import type {
   MeetingCloseoutInput,
@@ -86,10 +89,28 @@ function makeDeps(overrides: Partial<MeetingCloseoutDeps> = {}): MeetingCloseout
     propose: new FakeProposePort(),
     reindex: new FakeReindexPort(),
     health: new FakeMeetingHealthSink(),
+    park: new FakeMeetingParkPort(),
     runs: new InMemoryWorkflowRunRepo(),
     clock: new FakeClock(),
     ...overrides,
   };
+}
+
+/**
+ * A fake {@link MeetingParkPort} that RECORDS every park call and dedupes by the source identity
+ * (first-write-wins) — mirroring the durable `repo.park`. Construct with `{ fail: true }` to simulate a
+ * park-store fault. `parked` holds the set of durably-parked sourceIds (its size is the row count).
+ */
+class FakeMeetingParkPort implements MeetingParkPort {
+  readonly calls: Array<{ source: SourceEnvelope; idempotencyKey: string }> = [];
+  readonly parked = new Set<string>();
+  constructor(private readonly opts: { fail?: boolean } = {}) {}
+  park(source: SourceEnvelope, idempotencyKey: string): Promise<Result<void, MeetingParkFailure>> {
+    this.calls.push({ source, idempotencyKey });
+    if (this.opts.fail) return Promise.resolve(err({ code: "park_failed", message: "disposition store down" }));
+    this.parked.add(String(source.sourceId)); // first-write-wins by sourceId (idempotent)
+    return Promise.resolve(ok(undefined));
+  }
 }
 
 /** Alias for readability: what the CapturingCommitPort records. */
@@ -539,5 +560,86 @@ describe("runMeetingCloseout — outputs derived from validated data (regression
     );
     expect(failedOutcome.state).toBe("schema_rejected");
     expect(failing.writeCount).toBe(0);
+  });
+});
+
+// ── G5: the low-confidence routing-review PARK (closes G5) ──────────────────────
+// On a low-confidence correlation (inv-1: NO workspace guess) the un-routable meeting must be durably
+// PARKED into the Ingestion Inbox (via the injected MeetingParkPort) so a human can reroute it (15.8) —
+// not merely health-surfaced. The routing-TARGET workspace stays UNBOUND; the park is idempotent
+// (first-write-wins by source identity); a park fault surfaces a DISTINCT health signal + still resolves
+// needs_routing_review (never a false "parked"); a correlator ERROR does NOT park.
+describe("runMeetingCloseout — G5 low-confidence park", () => {
+  it("low_confidence_meeting_parks_a_disposition — a confidence:'low' outcome durably parks (via deps.park) keyed by the meeting identity; state = needs_routing_review — spec(§19.2/§9)", async () => {
+    const park = new FakeMeetingParkPort();
+    const deps = makeDeps({
+      correlate: new FakeCorrelatePort({ confidence: "low", reason: "ambiguous" }),
+      park,
+    });
+    const outcome = await runMeetingCloseout(makeInput(), deps);
+    expect(outcome.state).toBe("needs_routing_review");
+    expect(park.calls).toHaveLength(1);
+    expect(park.calls[0]?.idempotencyKey).toBe(String(makeInput().run.workflowId)); // the meeting identity
+    expect(park.parked.size).toBe(1); // durably parked to the inbox
+  });
+
+  it("parked_disposition_binds_no_routing_workspace — the parked source carries NO guessed routing-target workspace (inv-1); the driver never binds context.workspaceId on a low-confidence park (WS-8) — spec(§9 inv-1)", async () => {
+    const park = new FakeMeetingParkPort();
+    const deps = makeDeps({
+      correlate: new FakeCorrelatePort({ confidence: "low", reason: "ambiguous" }),
+      park,
+    });
+    const input = makeInput();
+    const outcome = await runMeetingCloseout(input, deps);
+    // The routing-target workspace is UNBOUND — the driver never guessed one (inv-1 / WS-2).
+    expect(outcome.context.workspaceId).toBeUndefined();
+    // The park was handed the ORIGINAL source unchanged (no rebind / no invented routing target).
+    expect(park.calls[0]?.source).toBe(input.context.source);
+  });
+
+  it("low_confidence_park_is_idempotent — a re-driven low-confidence meeting parks ONCE (the store is first-write-wins by source identity; no duplicate inbox row) — spec(rule 3 / L36)", async () => {
+    const park = new FakeMeetingParkPort();
+    const correlate = new FakeCorrelatePort({ confidence: "low", reason: "ambiguous" });
+    const deps = makeDeps({ correlate, park });
+    await runMeetingCloseout(makeInput(), deps);
+    await runMeetingCloseout(makeInput(), deps); // replay / re-drive of the SAME low-confidence meeting
+    expect(park.calls).toHaveLength(2); // the driver attempts the park on every drive…
+    expect(park.parked.size).toBe(1); // …but the store dedupes → ONE inbox row (rule 3)
+  });
+
+  it("park_write_fault_surfaces_and_does_not_false_park — a park-store fault surfaces a DISTINCT (write_through_failed) health signal + resolves needs_routing_review, never a false 'parked' nor a silent loss — spec(§9 fail-safe / §16)", async () => {
+    const park = new FakeMeetingParkPort({ fail: true });
+    const health = new FakeMeetingHealthSink();
+    const deps = makeDeps({
+      correlate: new FakeCorrelatePort({ confidence: "low", reason: "ambiguous" }),
+      park,
+      health,
+    });
+    const outcome = await runMeetingCloseout(makeInput(), deps);
+    expect(outcome.state).toBe("needs_routing_review"); // still resolves — never a false "parked"
+    expect(outcome.surfaced?.failureClass).toBe("write_through_failed"); // a DISTINCT park-failed signal
+    expect(health.surfaced.some((f) => f.failureClass === "write_through_failed")).toBe(true); // nothing silent
+  });
+
+  it("correlator_error_does_not_park — a correlator ERROR health-surfaces WITHOUT a park row (a transient source fault is a retry candidate, not a routing-review item) — spec(§9 Q4)", async () => {
+    const park = new FakeMeetingParkPort();
+    const deps = makeDeps({
+      correlate: new FakeCorrelatePort({ failWith: "correlation_source_unavailable" }),
+      park,
+    });
+    const outcome = await runMeetingCloseout(makeInput(), deps);
+    expect(outcome.state).toBe("needs_routing_review");
+    expect(park.calls).toHaveLength(0); // NO spurious inbox row on a transient correlator fault
+  });
+
+  it("high_confidence_meeting_does_not_park — a high-confidence outcome runs the full pipeline with ZERO park write (no regression / no misroute) — spec(§9)", async () => {
+    const park = new FakeMeetingParkPort();
+    const deps = makeDeps({
+      correlate: new FakeCorrelatePort({ confidence: "high", workspaceId: WS }),
+      park,
+    });
+    const outcome = await runMeetingCloseout(makeInput(), deps);
+    expect(outcome.state).not.toBe("needs_routing_review");
+    expect(park.calls).toHaveLength(0);
   });
 });

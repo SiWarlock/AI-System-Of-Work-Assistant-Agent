@@ -79,6 +79,7 @@ import type {
   ProposeActionsPort,
   ReindexGbrainPort,
   MeetingHealthSink,
+  MeetingParkPort,
   MeetingWorkflowFailure,
   // the approval-flow ports
   RecordPendingPort,
@@ -258,6 +259,10 @@ export async function meetingCloseoutWorkflow(
   const health: MeetingHealthSink = {
     surface: (failure: MeetingWorkflowFailure) => activities.surfaceFailure(failure),
   };
+  // G5: the low-confidence routing-review PARK — the sandbox proxy onto the durable park activity.
+  const park: MeetingParkPort = {
+    park: (source, idempotencyKey) => activities.meetingPark(source, idempotencyKey),
+  };
 
   const deps: MeetingCloseoutDeps = {
     correlate,
@@ -268,6 +273,7 @@ export async function meetingCloseoutWorkflow(
     propose,
     reindex,
     health,
+    park,
     runs: sandboxRunRepo(),
     clock: workflowClock,
   };

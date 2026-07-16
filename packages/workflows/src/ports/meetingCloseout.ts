@@ -477,3 +477,36 @@ export interface MeetingHealthSink {
     failure: MeetingWorkflowFailure,
   ): Promise<Result<MeetingSurfaceOutcome, MeetingHealthSinkError>>;
 }
+
+// ---------------------------------------------------------------------------
+// (7) MeetingParkPort — G5: the low-confidence routing-review PARK
+// ---------------------------------------------------------------------------
+
+/** Closed, enumerable meeting-park failure set (§16 — never thrown). */
+export type MeetingParkFailureCode = "park_failed"; // the durable disposition-store park write failed
+
+export interface MeetingParkFailure {
+  readonly code: MeetingParkFailureCode;
+  /** A REDACTION-SAFE message only (rule 7): never thread the raw DbError/cause through — the parked
+   * envelope holds candidate content, so the failure surface stays a fixed code + a static message. */
+  readonly message: string;
+}
+
+/**
+ * Durably PARK an un-routable meeting into the Ingestion Inbox on a LOW-confidence correlation (G5).
+ * This is the functional second-half of the disposition machinery: a low-confidence outcome NEVER
+ * guessed a routing-target workspace (inv-1), so the meeting is parked WORKSPACE-UNBOUND
+ * (`queued_for_review`, no bound routing target) for a human to reroute via triage (15.8). The
+ * implementation is a thin wrapper over the 15.5 durable disposition store's `park` (first-write-wins
+ * by the source identity — NO new writer): a re-driven / replayed low-confidence meeting parks EXACTLY
+ * ONCE (rule 3 / L36). `idempotencyKey` (the meeting identity) is stored on the parked row and REUSED
+ * on the human's later re-enter so the downstream write replays (inv-D). Never throws — a store fault
+ * is a typed {@link MeetingParkFailure} the driver folds to a distinct health signal (fail-safe: the
+ * item flagged NOT-durably-parked, never a false "parked").
+ */
+export interface MeetingParkPort {
+  park(
+    source: SourceEnvelope,
+    idempotencyKey: string,
+  ): Promise<Result<void, MeetingParkFailure>>;
+}

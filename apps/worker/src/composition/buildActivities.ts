@@ -37,6 +37,7 @@ import type {
 import { planId as makePlanId } from "@sow/contracts";
 import {
   createDurableDispositionStore,
+  createDurableMeetingParkPort,
   createDurableParkedReader,
   createRegistryValidatedRescope,
   createReenterRunner,
@@ -119,6 +120,7 @@ import type {
   DispatchApprovedResult,
   DispatchApprovedError,
   RecordDispositionPort,
+  MeetingParkPort,
   DispositionStore,
   RescopeSourcePort,
   ParkedSourceReader,
@@ -246,6 +248,9 @@ export interface ProofSpineActivities {
   meetingReindex(
     revisionId: string,
   ): Promise<Awaited<ReturnType<ReindexGbrainPort["reindex"]>>>;
+  meetingPark(
+    ...args: Parameters<MeetingParkPort["park"]>
+  ): Promise<Awaited<ReturnType<MeetingParkPort["park"]>>>;
 
   // ── approval-flow ──
   approvalRecordPending(
@@ -565,6 +570,13 @@ export function buildProofSpineActivities(
     store: dispositionStore,
   });
 
+  // meetingPark (G5) — the low-confidence routing-review PARK over the SAME durable SourceDisposition
+  // repo (first-write-wins; NO new writer). Parks a queued_for_review row, workspace-UNBOUND (inv-1).
+  const meetingParkPort = createDurableMeetingParkPort({
+    repo: backends.repos.sourceDisposition,
+    now,
+  });
+
   // rescopeSource — read the parked source back from the durable store (real reader), apply the
   // owner override (inv-C) REGISTRY-VALIDATED (WS-8), preserve contentHash (inv-D).
   const parkedReader: ParkedSourceReader = createDurableParkedReader(backends.repos.sourceDisposition);
@@ -773,6 +785,7 @@ export function buildProofSpineActivities(
     meetingCommit: (plan) => commit.commit(plan),
     meetingPropose: (action, env) => propose.propose(action, env),
     meetingReindex: (revisionId) => reindex.reindex(revisionId),
+    meetingPark: (source, idempotencyKey) => meetingParkPort.park(source, idempotencyKey),
 
     // approval-flow
     approvalRecordPending: (ctx) => recordPending.record(ctx),

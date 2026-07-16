@@ -25,6 +25,7 @@ import {
   createDurableParkedReader,
   createRegistryValidatedRescope,
   createReenterRunner,
+  createDurableMeetingParkPort,
 } from "../../src/composition/dispositionDurable";
 
 const NOW = "2026-07-15T00:00:00.000Z";
@@ -223,5 +224,43 @@ describe("exactly-once via the REAL record activity over the durable store (15.5
     const activity = createRecordDispositionActivity({ store });
     const res = await activity.record(disp());
     expect(isErr(res) && res.error.code).toBe("record_failed"); // fail-closed — no silent record
+  });
+});
+
+describe("createDurableMeetingParkPort (G5 — the low-confidence meeting park)", () => {
+  it("parks_a_queued_for_review_row_workspace_unbound: writes a queued_for_review row (dispositionKey + auditRef NULL — routing-target UNBOUND, inv-1) keyed by the source id, carrying the meeting idempotencyKey for a replay-safe re-enter [spec(§19.2/§9 inv-1)]", async () => {
+    const repo = new FakeDispositionRepo();
+    const park = createDurableMeetingParkPort({ repo, now: () => NOW });
+    const src = envelope({ sourceId: "mtg-src-1" as SourceEnvelope["sourceId"] });
+    const res = await park.park(src, "meeting:ws-emp:granola-1");
+    expect(isOk(res)).toBe(true);
+    const row = repo.rows.get("mtg-src-1");
+    expect(row?.state).toBe("queued_for_review");
+    expect(row?.dispositionKey).toBeNull(); // NO routing decision yet — the human picks it (inv-1)
+    expect(row?.auditRef).toBeNull();
+    expect(row?.idempotencyKey).toBe("meeting:ws-emp:granola-1"); // reused on re-enter (inv-D)
+    expect(row?.sourceEnvelope).toBe(src); // the parked source-of-record (server-side operational)
+    expect(row?.parkedAt).toBe(NOW);
+  });
+
+  it("is_first_write_wins_idempotent: re-parking the same source is a no-op ⇒ ONE row AND the FIRST write survives (true first-write-wins, not last-write) (rule 3 / L36)", async () => {
+    const repo = new FakeDispositionRepo();
+    const park = createDurableMeetingParkPort({ repo, now: () => NOW });
+    const first = envelope({ sourceId: "mtg-src-1" as SourceEnvelope["sourceId"], contentHash: "sha256:first" });
+    const second = envelope({ sourceId: "mtg-src-1" as SourceEnvelope["sourceId"], contentHash: "sha256:second-edited" });
+    await park.park(first, "meeting:ws-emp:granola-1");
+    await park.park(second, "meeting:ws-emp:granola-1"); // replay with DIFFERENT content, SAME source id
+    expect(repo.rows.size).toBe(1);
+    // first-write-WINS: the original parked row is NOT overwritten by the second park.
+    expect(repo.rows.get("mtg-src-1")?.sourceEnvelope.contentHash).toBe("sha256:first");
+  });
+
+  it("fails_closed_on_a_store_fault: a park store fault ⇒ typed park_failed (never throws, never a silent no-park) [spec(§16 / L3)]", async () => {
+    const repo = new FakeDispositionRepo();
+    repo.faultOn = "park";
+    const park = createDurableMeetingParkPort({ repo, now: () => NOW });
+    const res = await park.park(envelope({ sourceId: "mtg-src-1" as SourceEnvelope["sourceId"] }), "meeting:ws-emp:granola-1");
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.code).toBe("park_failed");
   });
 });

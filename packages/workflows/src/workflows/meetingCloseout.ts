@@ -64,6 +64,7 @@ import type {
   ProposeActionsPort,
   ReindexGbrainPort,
   MeetingHealthSink,
+  MeetingParkPort,
   MeetingCloseoutContext,
   MeetingWorkflowFailure,
 } from "../ports/meetingCloseout";
@@ -110,6 +111,8 @@ export interface MeetingCloseoutDeps {
   readonly propose: ProposeActionsPort;
   readonly reindex: ReindexGbrainPort;
   readonly health: MeetingHealthSink;
+  /** G5: durably PARK an un-routable (low-confidence) meeting into the Ingestion Inbox (workspace-UNBOUND). */
+  readonly park: MeetingParkPort;
   readonly runs: WorkflowRunRefRepository;
   readonly clock: Clock;
 }
@@ -251,9 +254,27 @@ export async function runMeetingCloseout(
   }
   const outcome = correlated.value;
   if (outcome.confidence === "low") {
-    // Parked in the Ingestion Inbox — workspace stays UNBOUND (inv-1).
+    // G5: inv-1 — NO workspace guess. Durably PARK the un-routable meeting into the Ingestion Inbox
+    // (routing-target workspace stays UNBOUND — a human reroutes it via triage, 15.8). The park is
+    // first-write-wins by the source identity, so a re-driven low-confidence meeting parks EXACTLY ONCE
+    // (rule 3 / L36); the meeting idempotencyKey rides the parked row for a replay-safe re-enter (inv-D).
     state = advance(state, ["correlated", "needs_routing_review"]);
-    return surface(state, "correlation low-confidence — routed to Ingestion Inbox");
+    const parked = await deps.park.park(context.source, input.run.workflowId);
+    if (!isOk(parked)) {
+      // FAIL-SAFE: the durable park FAILED — surface a DISTINCT `write_through_failed` health signal so an
+      // operator sees the item did NOT durably reach the inbox; still resolve needs_routing_review (never a
+      // false "parked", never a silent loss). §16: even a sink error never loses the machine state.
+      const parkFailure: MeetingWorkflowFailure = {
+        failureClass: "write_through_failed",
+        subjectRef: input.run.workflowId,
+        message: `low-confidence meeting park failed: ${parked.error.code}`,
+        auditRef: input.run.workflowId as unknown as AuditId,
+      };
+      await deps.health.surface(parkFailure);
+      return { state, context, run: runResult, runReused, surfaced: parkFailure };
+    }
+    // Parked to the Ingestion Inbox — the normal routing-review signal (nothing silent, inv-5).
+    return surface(state, "correlation low-confidence — parked to the Ingestion Inbox");
   }
   // HIGH confidence: bind the workspace BEFORE any durable write (inv-1 / WS-2).
   // Capture the bound workspace in a local so the derived plan's workspace is
