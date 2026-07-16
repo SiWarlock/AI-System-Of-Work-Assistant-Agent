@@ -11,7 +11,7 @@
 //     (`KeychainUnresolvedReason`) — NEVER the key material and NEVER the backend's raw `.detail`/stderr;
 //   • a malformed `keychain://…` ref fails closed WITHOUT a backend call (ref-injection guard, WS-8-style);
 //   • the adapter NEVER throws across the boundary — a throwing/rejecting backend folds to `backend_error`.
-import { err, isOk } from "@sow/contracts";
+import { ok, err, isOk } from "@sow/contracts";
 import type { Result } from "@sow/contracts";
 import type { SecretsPort, SecretRef, SecretUnresolved } from "@sow/knowledge";
 
@@ -85,8 +85,16 @@ function unresolved(ref: SecretRef, reason: KeychainUnresolvedReason): SecretUnr
 
 /**
  * The real `SecretsPort` over an injected {@link KeychainBackend}. `resolveSigningKey` parses the ref
- * (fail-closed, no backend call on malformed), dispatches to the backend, passes a hit's `Uint8Array` STRAIGHT
- * through (never stringified/copied), and maps every fault to a typed ref-only `SecretUnresolved`. Never throws.
+ * (fail-closed, no backend call on malformed), dispatches to the backend, and maps every fault to a typed
+ * ref-only `SecretUnresolved`. Never throws.
+ *
+ * BYTE HYGIENE (trust boundary — L10 / the L9/L20 don't-trust-the-injected-boundary posture): the adapter is
+ * the SOLE key holder over a SWAPPABLE backend, so it GUARANTEES its returned bytes are INDEPENDENT of the
+ * backend's buffer by de-aliasing a hit into a fresh `Uint8Array` — it never RELIES on the backend to have
+ * de-aliased (a backend that returned a view/pooled-Buffer slice would otherwise leak that aliasing through the
+ * SecretsPort, and on the secrets surface an aliasing leak IS key exposure). The key bytes are never stringified
+ * or logged. (The real `security`-CLI backend also de-aliases the stdout Buffer — the primary defense; this copy
+ * is defense-in-depth on top.)
  */
 export function createKeychainSecretsAdapter(backend: KeychainBackend): SecretsPort {
   return {
@@ -98,7 +106,10 @@ export function createKeychainSecretsAdapter(backend: KeychainBackend): SecretsP
         if (isOk(read)) {
           // a zero-length key is not usable HMAC signing material (a backend anomaly) — reject, never serve it.
           if (read.value.length === 0) return err(unresolved(ref, "backend_error"));
-          return read; // the key bytes never leave this local binding + the returned ok Result
+          // De-alias at the trust boundary: return an INDEPENDENT copy so the SecretsPort's bytes never
+          // share memory with the backend's (possibly view/pooled) buffer — `new Uint8Array(view)` COPIES
+          // for both Uint8Array + Buffer (unlike `.slice`, which a Node Buffer overrides to share memory).
+          return ok(new Uint8Array(read.value));
         }
         return err(unresolved(ref, reasonForKind(read.error.kind))); // `.detail` deliberately DROPPED
       } catch {

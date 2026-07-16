@@ -41,7 +41,7 @@ describe("createKeychainSecretsAdapter — resolve by reference", () => {
     const adapter = createKeychainSecretsAdapter(fakeBackend({ bytes: { "sow/kw-signing": KEY } }).backend);
     const r = await adapter.resolveSigningKey(REF);
     expect(isOk(r)).toBe(true);
-    if (isOk(r)) expect([...r.value]).toEqual([...KEY]); // the exact fixture bytes, straight through
+    if (isOk(r)) expect([...r.value]).toEqual([...KEY]); // the exact fixture bytes (de-aliased copy, byte-identical)
   });
 
   it("missing_locked_denied_map_to_typed_reason", async () => {
@@ -171,6 +171,24 @@ describe("createKeychainSecretsAdapter — rule-7 leakage + no-throw", () => {
     const r = await adapter.resolveSigningKey(REF);
     expect(isErr(r)).toBe(true);
     if (isErr(r)) expect(r.error.reason).toBe("backend_error");
+  });
+
+  it("returned_bytes_are_de_aliased_from_the_backend_buffer", async () => {
+    // 17.1 (L10 / L9-L20 don't-trust-the-injected-boundary): the adapter is the trust boundary + sole key
+    // holder over a SWAPPABLE backend — it must GUARANTEE its returned bytes are INDEPENDENT of the backend's
+    // buffer, never rely on the backend to have de-aliased. A backend that returns a VIEW (shared memory) must
+    // not leak that aliasing through the SecretsPort (on the secrets surface an aliasing leak IS key exposure).
+    const source = new Uint8Array([1, 2, 3, 4, 5]);
+    const viewBackend: KeychainBackend = {
+      read: (): Promise<Result<Uint8Array, KeychainBackendError>> => Promise.resolve(ok(source.subarray(0, 5))),
+    };
+    const r = await createKeychainSecretsAdapter(viewBackend).resolveSigningKey(REF);
+    expect(isOk(r)).toBe(true);
+    const before = isOk(r) ? [...r.value] : [];
+    source[0] = 0xff; // mutate the backend's underlying buffer AFTER the resolve returned
+    const after = isOk(r) ? [...r.value] : [];
+    expect(after).toEqual(before); // unchanged — the adapter returned an independent copy (de-aliased)
+    expect(after).toEqual([1, 2, 3, 4, 5]);
   });
 });
 
