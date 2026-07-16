@@ -123,4 +123,11 @@ describe("Onboarding surface", () => {
     renderOnboarding();
     expect(screen.getByRole("heading", { name: /set up your workspace/i })).toBeTruthy();
   });
+
+  it("styling structure: one main landmark (shared page-chrome) + the step indicator", () => {
+    renderOnboarding();
+    expect(screen.getAllByRole("main")).toHaveLength(1); // exactly one main landmark preserved
+    expect(screen.getByRole("main", { name: /onboarding/i })).toBeTruthy();
+    expect(screen.getByText(/step 1 of 3/i)).toBeTruthy(); // wayfinding affordance
+  });
 });

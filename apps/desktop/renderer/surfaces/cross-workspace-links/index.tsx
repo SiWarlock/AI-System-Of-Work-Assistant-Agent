@@ -95,73 +95,82 @@ export function CrossWorkspaceLinks(props: CrossWorkspaceLinksProps): ReactEleme
   const revoke = (linkId: string): void => runLinkOp(linkId, () => onRevoke(linkId), "Couldn't revoke the link.");
 
   return (
-    <div className="sow-cross-workspace-links" role="main" aria-label="Cross-workspace links">
-      <h1>Cross-workspace links</h1>
-      <p className="sow-subtle">
-        Authorize a single directional, scoped read from one workspace into another. Approval is
-        deliberate and per-link; revoke closes the path immediately.
-      </p>
+    <main className="sow-content sow-cross-workspace-links" aria-label="Cross-workspace links">
+      <div className="sow-page-head">
+        <div>
+          <h1>Cross-workspace links</h1>
+          <p className="sow-subtitle">
+            Authorize a single directional, scoped read from one workspace into another. Approval is
+            deliberate and per-link; revoke closes the path immediately.
+          </p>
+        </div>
+      </div>
 
       {!hasLinkableWorkspaces ? (
         <div className="sow-empty" role="status">
           Onboard at least two workspaces to link them.
         </div>
       ) : (
-        <section aria-label="Create a link">
-          <label>
-            From
-            <select value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From workspace">
-              {workspaces.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            To
-            <select value={to} onChange={(e) => setTo(e.target.value)} aria-label="To workspace">
-              <option value="">Select…</option>
-              {workspaces.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Projection
-            <select value={projType} onChange={(e) => setProjType(e.target.value)} aria-label="Projection type">
-              {PROJECTION_TYPES.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Visibility
-            <select value={visLevel} onChange={(e) => setVisLevel(e.target.value)} aria-label="Visibility level">
-              {VISIBILITY_LEVELS.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </label>
+        <section className="sow-form-section" aria-label="Create a link">
+          <div className="sow-field-row">
+            <label className="sow-field">
+              <span className="sow-field-label">From</span>
+              <select className="sow-input" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From workspace">
+                {workspaces.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="sow-field">
+              <span className="sow-field-label">To</span>
+              <select className="sow-input" value={to} onChange={(e) => setTo(e.target.value)} aria-label="To workspace">
+                <option value="">Select…</option>
+                {workspaces.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="sow-field">
+              <span className="sow-field-label">Projection</span>
+              <select className="sow-input" value={projType} onChange={(e) => setProjType(e.target.value)} aria-label="Projection type">
+                {PROJECTION_TYPES.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="sow-field">
+              <span className="sow-field-label">Visibility</span>
+              <select className="sow-input" value={visLevel} onChange={(e) => setVisLevel(e.target.value)} aria-label="Visibility level">
+                {VISIBILITY_LEVELS.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
           {selfLink ? (
             <div className="sow-field-note" role="status">
               A link's two workspaces must differ.
             </div>
           ) : null}
-          <button type="button" disabled={!canCreate} onClick={submitCreate}>
-            Create link
-          </button>
+          <div className="sow-form-actions">
+            <button type="button" className="sow-btn sow-btn--primary" disabled={!canCreate} aria-busy={busy} onClick={submitCreate}>
+              {busy && <span className="sow-spinner" aria-hidden="true" />}
+              Create link
+            </button>
+          </div>
         </section>
       )}
 
       {error !== null ? (
-        <div role="alert" className="sow-cross-workspace-links-error">
+        <div role="alert" className="sow-inline-error sow-cross-workspace-links-error">
           {error}
         </div>
       ) : null}
@@ -181,31 +190,35 @@ export function CrossWorkspaceLinks(props: CrossWorkspaceLinksProps): ReactEleme
               <span className="sow-link-scope">
                 {l.scopeProjectionType} / {l.scopeVisibilityLevel}
               </span>
-              <span className="sow-link-status">{l.status}</span>
-              {l.status === "pending" ? (
-                <button
-                  type="button"
-                  disabled={linkOpInFlight[l.linkId] === true}
-                  onClick={() => approve(l.linkId)}
-                  aria-label={`Approve cross-workspace link from ${labelFor(l.fromWorkspaceId)} to ${labelFor(l.toWorkspaceId)} scoped ${l.scopeProjectionType} ${l.scopeVisibilityLevel}`}
-                >
-                  Approve
-                </button>
-              ) : null}
-              {l.status !== "revoked" ? (
-                <button
-                  type="button"
-                  disabled={linkOpInFlight[l.linkId] === true}
-                  onClick={() => revoke(l.linkId)}
-                  aria-label={`Revoke cross-workspace link from ${labelFor(l.fromWorkspaceId)} to ${labelFor(l.toWorkspaceId)}`}
-                >
-                  Revoke
-                </button>
-              ) : null}
+              <span className={`sow-pill sow-pill--link-${l.status}`}>{l.status}</span>
+              <div className="sow-row-actions">
+                {l.status === "pending" ? (
+                  <button
+                    type="button"
+                    className="sow-btn sow-btn--approve"
+                    disabled={linkOpInFlight[l.linkId] === true}
+                    onClick={() => approve(l.linkId)}
+                    aria-label={`Approve cross-workspace link from ${labelFor(l.fromWorkspaceId)} to ${labelFor(l.toWorkspaceId)} scoped ${l.scopeProjectionType} ${l.scopeVisibilityLevel}`}
+                  >
+                    Approve
+                  </button>
+                ) : null}
+                {l.status !== "revoked" ? (
+                  <button
+                    type="button"
+                    className="sow-btn sow-btn--reject"
+                    disabled={linkOpInFlight[l.linkId] === true}
+                    onClick={() => revoke(l.linkId)}
+                    aria-label={`Revoke cross-workspace link from ${labelFor(l.fromWorkspaceId)} to ${labelFor(l.toWorkspaceId)}`}
+                  >
+                    Revoke
+                  </button>
+                ) : null}
+              </div>
             </li>
           ))}
         </ul>
       )}
-    </div>
+    </main>
   );
 }

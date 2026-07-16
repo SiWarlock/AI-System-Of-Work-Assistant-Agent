@@ -1743,3 +1743,344 @@ body {
 .sow-copilot-egress-notice strong {
   font-weight: 600;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Phase-14 desktop surfaces — Liquid Glass polish (onboarding · connectors ·
+   System-Health · cross-workspace-links). Mirrors the Approvals vocab
+   (sow-*-card/head/status/meta/actions + sow-*-btn--<variant>). CSS-only.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Subtitle under a page-head h1 (a lighter descriptive line). */
+.sow-page-head .sow-subtitle {
+  margin-top: 3px;
+  font-size: 13.5px;
+  color: var(--label-2, #6b6b70);
+  max-width: 64ch;
+  line-height: 1.45;
+}
+
+/* Onboarding step indicator (decorative dots + the "Step N of 3" subtitle carries the text). */
+.sow-step-dots {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-top: 8px;
+}
+.sow-step-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.14);
+}
+.sow-step-dot.is-active {
+  background: var(--accent-ink, #0a84ff);
+  transform: scale(1.15);
+}
+
+/* Form section — a glass card wrapping a group of fields. */
+.sow-form-section {
+  padding: 16px 18px;
+  border: 0.5px solid var(--hairline, rgba(0, 0, 0, 0.08));
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.5);
+  margin-bottom: 16px;
+  max-width: 720px;
+}
+
+/* Field + label + input. */
+.sow-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 12px;
+  min-width: 0;
+}
+.sow-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--label, #3a3a3e);
+  letter-spacing: -0.01em;
+}
+.sow-field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+.sow-field-row .sow-field {
+  flex: 1 1 180px;
+}
+.sow-input {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 0.5px solid var(--hairline, rgba(0, 0, 0, 0.14));
+  background: rgba(255, 255, 255, 0.7);
+  color: #1c1c1e;
+}
+.sow-input:focus-visible {
+  outline: 2px solid var(--accent-ink, #0a84ff);
+  outline-offset: 1px;
+}
+.sow-input--inline {
+  max-width: 108px;
+}
+
+/* Choice group (radios / preset buttons). */
+.sow-choice-group {
+  border: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+}
+.sow-choice-group > .sow-field-label {
+  flex-basis: 100%;
+  margin-bottom: 2px;
+}
+.sow-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #1c1c1e;
+}
+
+/* Form actions row. */
+.sow-form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* Buttons — mirror sow-approval-btn + variants. */
+.sow-btn {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 520;
+  padding: 5px 13px;
+  border-radius: 8px;
+  border: 0.5px solid var(--hairline, rgba(0, 0, 0, 0.1));
+  background: rgba(255, 255, 255, 0.6);
+  color: #1c1c1e;
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.sow-btn:focus-visible {
+  outline: 2px solid var(--accent-ink, #0a84ff);
+  outline-offset: 1px;
+}
+.sow-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.sow-btn--primary,
+.sow-btn--approve {
+  color: #fff;
+  border-color: transparent;
+}
+.sow-btn--primary {
+  background: var(--accent-ink, #0a84ff); /* blue system accent — distinct from the green Approve */
+}
+.sow-btn--approve {
+  background: var(--good-ink, #1fae6b); /* green affirmative action (mirrors the Approvals approve btn) */
+}
+.sow-btn--reject {
+  color: #ff3b30;
+  border-color: rgba(255, 59, 48, 0.35);
+}
+.sow-btn--warn {
+  color: var(--warn-ink, #b25e00);
+  border-color: rgba(255, 159, 10, 0.4);
+}
+
+/* Row-level action cluster (per-connector / per-link buttons). */
+.sow-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+}
+
+/* Status pills — mirror sow-approval-status (uppercase, tinted). */
+.sow-pill {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 7px;
+  border-radius: 6px;
+  white-space: nowrap;
+  color: var(--label-2, #6b6b70);
+  background: rgba(0, 0, 0, 0.05);
+}
+.sow-pill--state-enabled,
+.sow-pill--link-approved {
+  color: #1fae6b;
+  background: rgba(31, 174, 107, 0.14);
+}
+.sow-pill--state-paused,
+.sow-pill--link-pending {
+  color: var(--accent-ink, #0a84ff);
+  background: rgba(10, 132, 255, 0.12);
+}
+.sow-pill--link-revoked {
+  color: #8a8a8e;
+  background: rgba(0, 0, 0, 0.06);
+}
+.sow-pill--sev-critical,
+.sow-pill--state-open {
+  color: #ff3b30;
+  background: rgba(255, 59, 48, 0.12);
+}
+.sow-pill--sev-error {
+  color: #d1600a;
+  background: rgba(255, 122, 0, 0.13);
+}
+.sow-pill--sev-warn,
+.sow-pill--state-acknowledged {
+  color: var(--warn-ink, #b25e00);
+  background: rgba(255, 159, 10, 0.14);
+}
+.sow-pill--state-resolved {
+  color: #1fae6b;
+  background: rgba(31, 174, 107, 0.12);
+}
+
+/* Inline error banner (role=alert) — a soft red glass strip. */
+.sow-inline-error {
+  margin: 4px 0 14px;
+  padding: 8px 12px;
+  border-radius: 9px;
+  border: 0.5px solid rgba(255, 59, 48, 0.3);
+  background: rgba(255, 59, 48, 0.08);
+  color: #c4271d;
+  font-size: 13px;
+  max-width: 720px;
+}
+.sow-field-note {
+  font-size: 12.5px;
+  color: var(--warn-ink, #b25e00);
+  margin: 2px 0 10px;
+}
+
+/* Spinner (loading affordance). */
+.sow-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  opacity: 0.7;
+  animation: sow-spin 0.7s linear infinite;
+}
+@keyframes sow-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sow-spinner {
+    animation-duration: 1.6s;
+  }
+}
+
+/* Preset picker. */
+.sow-preset-btn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 540;
+  padding: 6px 14px;
+  border-radius: 9px;
+  border: 0.5px solid var(--hairline, rgba(0, 0, 0, 0.12));
+  background: rgba(255, 255, 255, 0.55);
+  color: #1c1c1e;
+  cursor: default;
+}
+.sow-preset-btn.is-selected {
+  color: #fff;
+  background: var(--accent-ink, #0a84ff);
+  border-color: transparent;
+}
+.sow-preset-btn:focus-visible {
+  outline: 2px solid var(--accent-ink, #0a84ff);
+  outline-offset: 1px;
+}
+.sow-preset-preview {
+  margin: 4px 0 14px;
+  padding: 10px 13px;
+  border-radius: 10px;
+  border: 0.5px solid var(--hairline, rgba(0, 0, 0, 0.08));
+  background: rgba(0, 0, 0, 0.02);
+  font-size: 13px;
+  color: #2a2a2c;
+}
+.sow-preset-preview p {
+  margin: 3px 0;
+}
+.sow-preset-preview--loading {
+  color: var(--label-2, #6b6b70);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sow-preview-key {
+  display: inline-block;
+  min-width: 92px;
+  font-weight: 600;
+  color: var(--label, #3a3a3e);
+}
+
+/* Health list. */
+.sow-health-list,
+.sow-connector-list,
+.sow-link-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 860px;
+}
+.sow-health-item,
+.sow-connector-item,
+.sow-link-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 13px;
+  border: 0.5px solid var(--hairline, rgba(0, 0, 0, 0.08));
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.5);
+}
+.sow-health-class,
+.sow-connector-id,
+.sow-link-direction {
+  font-weight: 600;
+  font-size: 13px;
+  color: #1c1c1e;
+}
+.sow-health-time {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  color: var(--label-3, #8a8a8e);
+  font-variant-numeric: tabular-nums;
+}
+.sow-health-time.sow-health-resolved {
+  margin-left: 0;
+}
+.sow-connector-cadence,
+.sow-link-scope {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--label-2, #6b6b70);
+}
+/* Push the trailing time/resolved column to the right on health rows. */
+.sow-health-item .sow-health-time:last-child {
+  margin-left: auto;
+}

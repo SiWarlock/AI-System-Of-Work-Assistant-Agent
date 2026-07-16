@@ -34,6 +34,13 @@ describe("System Health panel", () => {
     expect(screen.getByText("open")).toBeTruthy();
   });
 
+  it("styling structure: severity + state render as styled pills (sow-pill variants)", () => {
+    render(<SystemHealth items={[ITEM]} />);
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(document.querySelector(".sow-pill--sev-critical")).not.toBeNull();
+    expect(document.querySelector(".sow-pill--state-open")).not.toBeNull();
+  });
+
   it("renders NOTHING beyond the UI-safe fields — a stray raw field on an item is never surfaced", () => {
     // Defense-in-depth: even if a malformed item smuggled a raw ref, the panel reads only the
     // 6 UI-safe fields (the worker already dropped message/auditRef/factIdentity).

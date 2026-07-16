@@ -82,8 +82,10 @@ export function Connectors(props: ConnectorsProps): ReactElement {
   };
 
   return (
-    <div className="sow-connectors" role="main" aria-label="Connectors">
-      <h1>Connectors</h1>
+    <main className="sow-content sow-connectors" aria-label="Connectors">
+      <div className="sow-page-head">
+        <h1>Connectors</h1>
+      </div>
 
       {!scoped ? (
         <div className="sow-empty" role="status">
@@ -91,43 +93,56 @@ export function Connectors(props: ConnectorsProps): ReactElement {
         </div>
       ) : (
         <>
-          <section aria-label="Register a connector">
-            <label>
-              Connector
-              <select value={connectorId} onChange={(e) => setConnectorId(e.target.value)} aria-label="Connector">
-                {KNOWN_CONNECTORS.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Token reference
-              <input
-                type="text"
-                value={tokenRef}
-                placeholder="keychain://my-connector-token"
-                onChange={(e) => setTokenRef(e.target.value)}
-                aria-label="Token reference"
-              />
-            </label>
-            <label>
-              Cadence
-              <input
-                type="text"
-                value={cadence}
-                onChange={(e) => setCadence(e.target.value)}
-                aria-label="Cadence"
-              />
-            </label>
-            <button type="button" disabled={!canRegister} onClick={submitRegister}>
-              Register connector
-            </button>
+          <section className="sow-form-section" aria-label="Register a connector">
+            <div className="sow-field-row">
+              <label className="sow-field">
+                <span className="sow-field-label">Connector</span>
+                <select className="sow-input" value={connectorId} onChange={(e) => setConnectorId(e.target.value)} aria-label="Connector">
+                  {KNOWN_CONNECTORS.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="sow-field">
+                <span className="sow-field-label">Token reference</span>
+                <input
+                  type="text"
+                  className="sow-input"
+                  value={tokenRef}
+                  placeholder="keychain://my-connector-token"
+                  onChange={(e) => setTokenRef(e.target.value)}
+                  aria-label="Token reference"
+                />
+              </label>
+              <label className="sow-field">
+                <span className="sow-field-label">Cadence</span>
+                <input
+                  type="text"
+                  className="sow-input"
+                  value={cadence}
+                  onChange={(e) => setCadence(e.target.value)}
+                  aria-label="Cadence"
+                />
+              </label>
+            </div>
+            <div className="sow-form-actions">
+              <button
+                type="button"
+                className="sow-btn sow-btn--primary"
+                disabled={!canRegister}
+                aria-busy={busy}
+                onClick={submitRegister}
+              >
+                {busy && <span className="sow-spinner" aria-hidden="true" />}
+                Register connector
+              </button>
+            </div>
           </section>
 
           {error !== null ? (
-            <div role="alert" className="sow-connectors-error">
+            <div role="alert" className="sow-inline-error sow-connectors-error">
               {error}
             </div>
           ) : null}
@@ -141,30 +156,34 @@ export function Connectors(props: ConnectorsProps): ReactElement {
               {instances.map((inst) => (
                 <li key={inst.instanceId} className="sow-connector-item" data-instance-id={inst.instanceId} data-state={inst.state}>
                   <span className="sow-connector-id">{inst.connectorId}</span>
-                  <span className="sow-connector-state">{inst.state}</span>
+                  <span className={`sow-pill sow-pill--state-${inst.state}`}>{inst.state}</span>
                   <span className="sow-connector-cadence">{inst.cadence}</span>
-                  <button
-                    type="button"
-                    onClick={() => toggle(inst)}
-                    aria-label={`${inst.state === "enabled" ? "Pause" : "Enable"} ${inst.connectorId}`}
-                  >
-                    {inst.state === "enabled" ? "Pause" : "Enable"}
-                  </button>
-                  <input
-                    type="text"
-                    value={rowCadence[inst.instanceId] ?? inst.cadence}
-                    onChange={(e) => setRowCadence((m) => ({ ...m, [inst.instanceId]: e.target.value }))}
-                    aria-label={`Cadence for ${inst.connectorId}`}
-                  />
-                  <button type="button" onClick={() => applyCadence(inst)} aria-label={`Set cadence for ${inst.connectorId}`}>
-                    Set cadence
-                  </button>
+                  <div className="sow-row-actions">
+                    <button
+                      type="button"
+                      className={`sow-btn sow-btn--${inst.state === "enabled" ? "warn" : "primary"}`}
+                      onClick={() => toggle(inst)}
+                      aria-label={`${inst.state === "enabled" ? "Pause" : "Enable"} ${inst.connectorId}`}
+                    >
+                      {inst.state === "enabled" ? "Pause" : "Enable"}
+                    </button>
+                    <input
+                      type="text"
+                      className="sow-input sow-input--inline"
+                      value={rowCadence[inst.instanceId] ?? inst.cadence}
+                      onChange={(e) => setRowCadence((m) => ({ ...m, [inst.instanceId]: e.target.value }))}
+                      aria-label={`Cadence for ${inst.connectorId}`}
+                    />
+                    <button type="button" className="sow-btn" onClick={() => applyCadence(inst)} aria-label={`Set cadence for ${inst.connectorId}`}>
+                      Set cadence
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
           )}
         </>
       )}
-    </div>
+    </main>
   );
 }

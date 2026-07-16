@@ -124,6 +124,14 @@ describe("Cross-workspace links surface", () => {
     expect(screen.queryByRole("alert")).toBeNull(); // no spurious "couldn't approve" on success
   });
 
+  it("styling structure: Approve/Revoke carry distinct button variants + the status renders as a pill", () => {
+    renderLinks({ links: [linkView()] }); // one PENDING link
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: /approve cross-workspace link/i }).className).toMatch(/sow-btn--approve/);
+    expect(screen.getByRole("button", { name: /revoke cross-workspace link/i }).className).toMatch(/sow-btn--reject/);
+    expect(document.querySelector(".sow-pill--link-pending")).not.toBeNull();
+  });
+
   it("a typed failure surfaces a SAFE error state (role=alert), never a raw cause", async () => {
     renderLinks({ onCreate: vi.fn().mockResolvedValue({ ok: false }) });
     fireEvent.change(screen.getByRole("combobox", { name: /to workspace/i }), { target: { value: "ws_b" } });

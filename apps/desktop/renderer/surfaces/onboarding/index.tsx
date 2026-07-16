@@ -100,24 +100,35 @@ export function Onboarding(props: OnboardingProps): ReactElement {
   };
 
   return (
-    <div className="sow-onboarding" role="main" aria-label="Onboarding">
-      <h1>Set up your workspace</h1>
+    <main className="sow-content sow-onboarding" aria-label="Onboarding">
+      <div className="sow-page-head">
+        <div>
+          <h1>Set up your workspace</h1>
+          <p className="sow-subtitle">Step {step + 1} of 3</p>
+        </div>
+        <div className="sow-step-dots" aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <span key={i} className={i === step ? "sow-step-dot is-active" : "sow-step-dot"} />
+          ))}
+        </div>
+      </div>
 
       {step === 0 && (
-        <section aria-label="Workspace">
-          <label>
-            Workspace name
+        <section className="sow-form-section" aria-label="Workspace">
+          <label className="sow-field">
+            <span className="sow-field-label">Workspace name</span>
             <input
               type="text"
+              className="sow-input"
               value={name}
               onChange={(e) => setName(e.target.value)}
               aria-label="Workspace name"
             />
           </label>
-          <fieldset>
-            <legend>Workspace type</legend>
+          <fieldset className="sow-choice-group">
+            <legend className="sow-field-label">Workspace type</legend>
             {WorkspaceType.map((t) => (
-              <label key={t}>
+              <label key={t} className="sow-choice">
                 <input
                   type="radio"
                   name="workspace-type"
@@ -129,49 +140,56 @@ export function Onboarding(props: OnboardingProps): ReactElement {
               </label>
             ))}
           </fieldset>
-          <button type="button" disabled={!step0Ready} onClick={() => setStep(1)}>
-            Next
-          </button>
+          <div className="sow-form-actions">
+            <button type="button" className="sow-btn sow-btn--primary" disabled={!step0Ready} onClick={() => setStep(1)}>
+              Next
+            </button>
+          </div>
         </section>
       )}
 
       {step === 1 && (
-        <section aria-label="Vault">
-          <label>
-            Vault root
+        <section className="sow-form-section" aria-label="Vault">
+          <label className="sow-field">
+            <span className="sow-field-label">Vault root</span>
             <input
               type="text"
+              className="sow-input"
               value={vaultRoot}
               onChange={(e) => setVaultRoot(e.target.value)}
               aria-label="Vault root"
             />
           </label>
-          <label>
-            gbrain brain id
+          <label className="sow-field">
+            <span className="sow-field-label">gbrain brain id</span>
             <input
               type="text"
+              className="sow-input"
               value={gbrainBrainId}
               onChange={(e) => setGbrainBrainId(e.target.value)}
               aria-label="gbrain brain id"
             />
           </label>
-          <button type="button" onClick={() => setStep(0)}>
-            Back
-          </button>
-          <button type="button" disabled={!step1Ready} onClick={() => setStep(2)}>
-            Next
-          </button>
+          <div className="sow-form-actions">
+            <button type="button" className="sow-btn" onClick={() => setStep(0)}>
+              Back
+            </button>
+            <button type="button" className="sow-btn sow-btn--primary" disabled={!step1Ready} onClick={() => setStep(2)}>
+              Next
+            </button>
+          </div>
         </section>
       )}
 
       {step === 2 && (
-        <section aria-label="Preset">
-          <fieldset>
-            <legend>Choose a preset</legend>
+        <section className="sow-form-section" aria-label="Preset">
+          <fieldset className="sow-choice-group sow-preset-choices">
+            <legend className="sow-field-label">Choose a preset</legend>
             {PRESETS.map((p) => (
               <button
                 key={p}
                 type="button"
+                className={preset === p ? "sow-preset-btn is-selected" : "sow-preset-btn"}
                 aria-pressed={preset === p}
                 onClick={() => pickPreset(p)}
               >
@@ -180,30 +198,47 @@ export function Onboarding(props: OnboardingProps): ReactElement {
             ))}
           </fieldset>
 
+          {preset !== "" && profile === null && (
+            <div className="sow-preset-preview sow-preset-preview--loading" aria-busy="true" aria-label="Loading preset preview">
+              <span className="sow-spinner" aria-hidden="true" /> Loading preview…
+            </div>
+          )}
           {profile !== null && (
             <div className="sow-preset-preview" aria-label="Preset preview">
               <p>
-                Connectors:{" "}
+                <span className="sow-preview-key">Connectors:</span>{" "}
                 {profile.connectors.length > 0 ? profile.connectors.join(", ") : "none"}
               </p>
-              <p>Workflows: {profile.workflows.join(", ")}</p>
+              <p>
+                <span className="sow-preview-key">Workflows:</span>{" "}
+                {profile.workflows.join(", ")}
+              </p>
             </div>
           )}
 
           {error !== null && (
-            <div role="alert" className="sow-onboarding-error">
+            <div role="alert" className="sow-inline-error sow-onboarding-error">
               {error}
             </div>
           )}
 
-          <button type="button" onClick={() => setStep(1)}>
-            Back
-          </button>
-          <button type="button" disabled={!canCreate} onClick={submit}>
-            Create workspace
-          </button>
+          <div className="sow-form-actions">
+            <button type="button" className="sow-btn" onClick={() => setStep(1)}>
+              Back
+            </button>
+            <button
+              type="button"
+              className="sow-btn sow-btn--primary"
+              disabled={!canCreate}
+              aria-busy={busy}
+              onClick={submit}
+            >
+              {busy && <span className="sow-spinner" aria-hidden="true" />}
+              Create workspace
+            </button>
+          </div>
         </section>
       )}
-    </div>
+    </main>
   );
 }

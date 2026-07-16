@@ -14,8 +14,10 @@ export interface SystemHealthProps {
 
 export function SystemHealth({ items }: SystemHealthProps): ReactElement {
   return (
-    <div className="sow-system-health" role="main" aria-label="System Health">
-      <h1>System Health</h1>
+    <main className="sow-content sow-system-health" aria-label="System Health">
+      <div className="sow-page-head">
+        <h1>System Health</h1>
+      </div>
       {items.length === 0 ? (
         <div className="sow-empty" role="status">
           All clear — no health items
@@ -31,16 +33,16 @@ export function SystemHealth({ items }: SystemHealthProps): ReactElement {
               data-severity={it.severity}
             >
               <span className="sow-health-class">{it.failureClass}</span>
-              <span className="sow-health-severity">{it.severity}</span>
-              <span className="sow-health-state">{it.state}</span>
-              <span className="sow-health-opened">{it.openedAt}</span>
+              <span className={`sow-pill sow-pill--sev-${it.severity}`}>{it.severity}</span>
+              <span className={`sow-pill sow-pill--state-${it.state}`}>{it.state}</span>
+              <span className="sow-health-time">{it.openedAt}</span>
               {it.resolvedAt !== undefined ? (
-                <span className="sow-health-resolved">{it.resolvedAt}</span>
+                <span className="sow-health-time sow-health-resolved">resolved {it.resolvedAt}</span>
               ) : null}
             </li>
           ))}
         </ul>
       )}
-    </div>
+    </main>
   );
 }

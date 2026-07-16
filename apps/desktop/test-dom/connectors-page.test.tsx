@@ -80,4 +80,13 @@ describe("Connectors surface", () => {
     // Nothing token-shaped is rendered (the view carries no tokenRef).
     expect(screen.queryByText(/keychain:/i)).toBeNull();
   });
+
+  it("styling structure: page-chrome main + primary register button (aria-busy) + a variant row action", () => {
+    renderConnectors({ instances: [OK().instance] }); // one PAUSED instance
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    const reg = screen.getByRole("button", { name: /register connector/i });
+    expect(reg.className).toMatch(/sow-btn--primary/);
+    expect(reg.getAttribute("aria-busy")).toBe("false"); // the loading affordance hook (not busy at rest)
+    expect(screen.getByRole("button", { name: /enable drive/i }).className).toMatch(/sow-btn--/); // styled row action
+  });
 });
