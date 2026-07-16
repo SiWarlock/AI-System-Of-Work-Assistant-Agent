@@ -27,7 +27,7 @@
 // This helper ships REACHABILITY-WAIVERED (its production caller is Phase 16's scheduled poll).
 import { ok, err, type Result } from "@sow/contracts";
 import { workflowId as brandWorkflowId } from "@sow/contracts";
-import type { SourceIngestionInput } from "@sow/workflows";
+import type { SourceIngestionInput, MeetingCloseoutInput } from "@sow/workflows";
 import { registerSource } from "@sow/integrations";
 import type { ConnectorRecord, OnRecordsError, RegisterSourceInput } from "@sow/integrations";
 import type { DispatchOutcome, DispatchError } from "../temporal/dispatchSourceIngestion";
@@ -48,6 +48,13 @@ export interface ConnectorIngestionBinding {
   readonly sensitivity: string;
   /** Base routing hints (connector metadata); the bridge adds connectorId + recordId. */
   readonly routingHints?: Record<string, unknown>;
+  /**
+   * The connector-instance KIND (from the 14.2 registry) — the WS-8-safe discrimination the bridge
+   * routes on (15.9). A `"meeting"` connector (e.g. Granola completed-meetings) sends its records to
+   * the meeting-closeout machinery; every other connector (default `"source"`) to source ingestion.
+   * Derived from the BOUND instance, NEVER from a record content field (no-inference / WS-8).
+   */
+  readonly kind?: "source" | "meeting";
 }
 
 /** A typed, redaction-safe per-record outcome for the optional observer (never a raw payload). */
@@ -57,9 +64,14 @@ export type ConnectorIngestionRecordOutcome =
   | { readonly kind: "rejected"; readonly message: string }
   | { readonly kind: "dispatch_failed"; readonly code: DispatchError["code"] };
 
-/** The injected dispatch (mirror the vault watcher's `VaultDispatch` — degraded-safe, idempotent). */
+/** The injected SOURCE dispatch (mirror the vault watcher's `VaultDispatch` — degraded-safe, idempotent). */
 export type ConnectorIngestionDispatch = (
   input: SourceIngestionInput,
+) => Promise<Result<DispatchOutcome, DispatchError>>;
+
+/** The injected MEETING dispatch (dispatchMeetingCloseout — degraded-safe, idempotent-by-meeting-id, 15.9). */
+export type ConnectorMeetingDispatch = (
+  input: MeetingCloseoutInput,
 ) => Promise<Result<DispatchOutcome, DispatchError>>;
 
 export interface ConnectorIngestionBridgeDeps {
@@ -68,6 +80,12 @@ export interface ConnectorIngestionBridgeDeps {
   readonly registerDeps: { readonly seenContentHash: (contentHash: string) => Promise<boolean> };
   /** The C3a dispatch entry, pre-bound to a Temporal Client (or degraded ⇒ fail-closed). */
   readonly dispatch: ConnectorIngestionDispatch;
+  /**
+   * The 15.9 MEETING dispatch entry (dispatchMeetingCloseout), pre-bound to a Temporal Client.
+   * REQUIRED whenever `binding.kind === "meeting"`; a meeting binding with this ABSENT fails closed
+   * (HOLD) — a completed meeting is never silently dropped nor misrouted to the source path.
+   */
+  readonly dispatchMeeting?: ConnectorMeetingDispatch;
   /** Observer for every per-record outcome (logging / test assertion). Faults swallowed. */
   readonly onRecord?: (outcome: ConnectorIngestionRecordOutcome, recordId: string) => void;
 }
@@ -84,6 +102,21 @@ export interface ConnectorIngestionBridge {
  */
 export function createConnectorIngestionBridge(deps: ConnectorIngestionBridgeDeps): ConnectorIngestionBridge {
   const { binding, registerDeps, dispatch } = deps;
+
+  // Fail-fast WIRING invariant (15.9): a meeting binding MUST carry its meeting dispatch. A missing dep
+  // is a composition bug — caught HERE at construction (a fail-fast, not a per-record runtime HOLD that
+  // would wedge the connector forever with no §16 health item). A source binding needs no meeting dispatch.
+  if (binding.kind === "meeting" && deps.dispatchMeeting === undefined) {
+    throw new Error("createConnectorIngestionBridge: binding.kind='meeting' requires a dispatchMeeting dep");
+  }
+
+  // For a MEETING binding the `registerSource` contentHash dedupe is the WRONG axis: two DISTINCT meetings
+  // can share an identical (empty/placeholder) transcript hash (Lesson 35), so a contentHash dedupe would
+  // silently drop the second meeting. The meeting's recordId-keyed Temporal REJECT_DUPLICATE is the correct
+  // AND sole idempotency (one closeout per meeting). So a meeting bridge validates THROUGH registerSource
+  // (rule 2) but SKIPS its dedupe probe; the source bridge keeps its content-versioned dedupe (Lesson 16/34).
+  const effectiveRegisterDeps: ConnectorIngestionBridgeDeps["registerDeps"] =
+    binding.kind === "meeting" ? { seenContentHash: () => Promise.resolve(false) } : registerDeps;
 
   const observe = (outcome: ConnectorIngestionRecordOutcome, recordId: string): void => {
     try {
@@ -107,7 +140,7 @@ export function createConnectorIngestionBridge(deps: ConnectorIngestionBridgeDep
     };
 
     // Candidate-data gate (safety rule 2) — a rejected record NEVER dispatches.
-    const registered = await registerSource(input, registerDeps);
+    const registered = await registerSource(input, effectiveRegisterDeps);
     if (registered.outcome === "rejected") {
       // Permanently malformed — skip + observe; NOT an err (a poison record must not infinitely HOLD).
       observe({ kind: "rejected", message: registered.message }, record.recordId);
@@ -115,6 +148,42 @@ export function createConnectorIngestionBridge(deps: ConnectorIngestionBridgeDep
     }
     if (registered.outcome === "dedupe_hit") {
       observe({ kind: "dedupe_hit" }, record.recordId);
+      return ok(undefined);
+    }
+
+    // Registered: the transcript/source cleared the candidate-data gate (rule 2). DISCRIMINATE on the
+    // BOUND connector-instance kind (never a record content field, WS-8, 15.9): a completed-meeting
+    // connector routes to the meeting-closeout machinery (correlate → agent → validate → propose);
+    // every other connector to source ingestion. Both flow THROUGH `registerSource` above — the
+    // discrimination happens on the CLEAN envelope, so the transcript never bypasses the gate.
+    if (binding.kind === "meeting") {
+      // `dispatchMeeting` is construction-guaranteed present for a meeting binding (fail-fast above).
+      const dispatchMeeting = deps.dispatchMeeting as ConnectorMeetingDispatch;
+      // The deterministic MEETING identity is the connector's canonical record id (NOT the contentHash)
+      // → ONE closeout per meeting, STABLE across a re-poll / an edited transcript. WS-8: the workspace
+      // is the BOUND instance's, never a record content field.
+      const meetingKey = `meeting:${binding.workspaceId}:${record.recordId}`;
+      const meeting: MeetingCloseoutInput = {
+        run: {
+          workflowId: brandWorkflowId(meetingKey),
+          trigger: "connector_event",
+          idempotencyKey: meetingKey,
+          workspaceId: binding.workspaceId,
+        },
+        context: { source: registered.envelope, envelopes: [] },
+      };
+      const dispatchedMeeting = await dispatchMeeting(meeting);
+      if (!dispatchedMeeting.ok) {
+        observe({ kind: "dispatch_failed", code: dispatchedMeeting.error.code }, record.recordId);
+        return err<OnRecordsError>({
+          code: "downstream_rejected",
+          message: `meeting dispatch failed: ${dispatchedMeeting.error.code}`,
+        });
+      }
+      observe(
+        { kind: "dispatched", workflowId: dispatchedMeeting.value.workflowId, deduped: dispatchedMeeting.value.deduped },
+        record.recordId,
+      );
       return ok(undefined);
     }
 
