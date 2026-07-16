@@ -159,6 +159,8 @@ import {
   dormantBridgeFor,
   CONNECTOR_POLL_BACKOFF,
 } from "./connectorPolling";
+// 16.6 — the real persisted seen-content-hash dedupe probe (15.4 store → the Flow-4 probe).
+import { createSeenContentHashProbe } from "./seenContentHashProbe";
 
 // ---------------------------------------------------------------------------
 // The per-flow binding parameters (identity/config that is not a backend adapter)
@@ -637,11 +639,18 @@ export function buildProofSpineActivities(
   const sourceBinding = params.sourceIngestion;
 
   // (a) register — the REAL §8 gate (ajv structural + Zod .strict() + Flow-4 dedupe).
-  // seenContentHash is a deterministic FRESH probe (no persisted dedupe store in C1);
-  // replay idempotency is proven at the commit layer (inv-5), not here.
+  // 16.6 — the Flow-4 dedupe probe now reads the REAL persisted 15.4 SeenContentHashRepository
+  // (WS-8-scoped, first-write-wins). This de-deads 15.4 (0 live consumers per the Phase-15 gate) and
+  // gives the source-ingestion-workflow path (the live fs-watcher dispatch runs this `sourceRegister`
+  // activity) persistent content-dedup that survives Temporal history-retention expiry. L34: a store
+  // fault PROCEEDs (never a HOLD / false dedupe-hit).
+  //   NOTE (Step-9 flag): the 16.2 connector-poll path calls `registerSource` through the 15.1
+  //   `connectorIngestionBridge`, which carries its OWN `registerDeps.seenContentHash` seam (not this
+  //   activity). Point that seam at the SAME probe when the bridge is constructed with real deps
+  //   (Phase-16 binding-metadata wiring) so the poll path dedups too.
   const sourceRegister: RegisterSourcePort = createRegisterSourceActivity({
     registerSource,
-    deps: { seenContentHash: (): Promise<boolean> => Promise.resolve(false) },
+    seenContentHash: createSeenContentHashProbe(backends.repos.seenContentHash, backends.now),
   });
 
   // (b) route — the REAL threshold-gated routeSource activity over a DETERMINISTIC

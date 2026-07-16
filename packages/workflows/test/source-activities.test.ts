@@ -25,7 +25,9 @@ import type { WorkspaceId } from "@sow/contracts";
 // --- registerSource activity -----------------------------------------------
 
 describe("spec(§9) registerSource activity — register-then-dedupe, folds to the port union", () => {
-  const noDedupe: RegisterSourceDeps = { seenContentHash: () => Promise.resolve(false) };
+  // 16.6 — the activity now takes a WS-8-scoped dedupe probe and binds the per-call source's
+  // workspaceId (a fresh always-miss probe here isolates the fold behaviour from the dedupe store).
+  const noDedupe = (_ws: string, _h: string): Promise<boolean> => Promise.resolve(false);
 
   it("a fresh, well-formed source → registered, carrying the validated envelope", async () => {
     const registerSource = (
@@ -33,7 +35,7 @@ describe("spec(§9) registerSource activity — register-then-dedupe, folds to t
       _deps: RegisterSourceDeps,
     ): Promise<RegisterSourceResult> =>
       Promise.resolve({ outcome: "registered", envelope: makeSourceEnvelope() });
-    const port = createRegisterSourceActivity({ registerSource, deps: noDedupe });
+    const port = createRegisterSourceActivity({ registerSource, seenContentHash: noDedupe });
 
     const result = await port.register(makeSourceContext());
 
@@ -47,7 +49,7 @@ describe("spec(§9) registerSource activity — register-then-dedupe, folds to t
       _deps: RegisterSourceDeps,
     ): Promise<RegisterSourceResult> =>
       Promise.resolve({ outcome: "dedupe_hit", contentHash: input.contentHash });
-    const port = createRegisterSourceActivity({ registerSource, deps: noDedupe });
+    const port = createRegisterSourceActivity({ registerSource, seenContentHash: noDedupe });
 
     const result = await port.register(makeSourceContext());
 
@@ -66,7 +68,7 @@ describe("spec(§9) registerSource activity — register-then-dedupe, folds to t
       _deps: RegisterSourceDeps,
     ): Promise<RegisterSourceResult> =>
       Promise.resolve({ outcome: "rejected", code: "MALFORMED", message: "blank workspaceId" });
-    const port = createRegisterSourceActivity({ registerSource, deps: noDedupe });
+    const port = createRegisterSourceActivity({ registerSource, seenContentHash: noDedupe });
 
     const result = await port.register(makeSourceContext());
 
@@ -83,12 +85,35 @@ describe("spec(§9) registerSource activity — register-then-dedupe, folds to t
       captured = input;
       return Promise.resolve({ outcome: "registered", envelope: makeSourceEnvelope() });
     };
-    const port = createRegisterSourceActivity({ registerSource, deps: noDedupe });
+    const port = createRegisterSourceActivity({ registerSource, seenContentHash: noDedupe });
 
     await port.register(makeSourceContext());
 
     expect(captured?.contentHash).toBe("hash-source-1");
     expect(captured?.origin).toBe("https://youtube.com/watch?v=abc");
+  });
+
+  it("register_threads_workspace_id_to_the_dedupe_probe: the WS-8-scoped probe receives the per-call source's (workspaceId, contentHash) [spec(§4)]", async () => {
+    let probeArgs: { ws: string; hash: string } | undefined;
+    const registerSource = (
+      input: RegisterSourceInput,
+      deps: RegisterSourceDeps,
+    ): Promise<RegisterSourceResult> => {
+      // registerSource passes only contentHash to its dep; the activity must have already bound the
+      // source's workspaceId into that dep (WS-8: a hash is deduped only within its own workspace).
+      return deps.seenContentHash(input.contentHash).then(() =>
+        Promise.resolve({ outcome: "registered", envelope: makeSourceEnvelope() }),
+      );
+    };
+    const port = createRegisterSourceActivity({
+      registerSource,
+      seenContentHash: (ws: string, hash: string): Promise<boolean> => {
+        probeArgs = { ws, hash };
+        return Promise.resolve(false);
+      },
+    });
+    await port.register(makeSourceContext()); // source workspaceId = "ws-inbox", contentHash = "hash-source-1"
+    expect(probeArgs).toEqual({ ws: "ws-inbox", hash: "hash-source-1" });
   });
 });
 

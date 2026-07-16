@@ -39,13 +39,18 @@ export type RegisterSourceFn = (
 ) => Promise<RegisterSourceResult>;
 
 /**
- * Injected deps for the register activity: the `registerSource` fn + its dep bundle
- * (the Flow-4 dedupe probe). The activity maps the driver's {@link
+ * Injected deps for the register activity: the `registerSource` fn + a WS-8-SCOPED Flow-4 dedupe
+ * probe. The `registerSource` gate probes by `contentHash` alone; a content hash is "seen" only
+ * WITHIN its own workspace (WS-8 — a hash seen in workspace A must never dedupe workspace B), so the
+ * activity binds the per-call source's `workspaceId` into the probe (the source's workspaceId is
+ * server-bound, never content-inferred). A store fault PROCEEDs (never a HOLD / false dedupe-hit —
+ * worker Lesson 34); the probe closes over that. The activity maps the driver's {@link
  * SourceIngestionContext} source onto the register input VERBATIM (no inference).
  */
 export interface RegisterSourceActivityDeps {
   readonly registerSource: RegisterSourceFn;
-  readonly deps: RegisterSourceDeps;
+  /** WS-8-scoped dedupe probe — the activity supplies the per-call source's workspaceId (Flow-4 / L34). */
+  readonly seenContentHash: (workspaceId: string, contentHash: string) => Promise<boolean>;
 }
 
 /**
@@ -74,7 +79,12 @@ export function createRegisterSourceActivity(
         sensitivity: src.sensitivity,
         routingHints: src.routingHints,
       };
-      const result = await deps.registerSource(input, deps.deps);
+      // WS-8: bind THIS source's server-bound workspaceId into the contentHash probe — `registerSource`
+      // probes by contentHash alone, but a hash is "seen" only within its own workspace.
+      const registerDeps: RegisterSourceDeps = {
+        seenContentHash: (contentHash) => deps.seenContentHash(input.workspaceId, contentHash),
+      };
+      const result = await deps.registerSource(input, registerDeps);
       switch (result.outcome) {
         case "registered":
           return ok({ outcome: "registered", envelope: result.envelope });
