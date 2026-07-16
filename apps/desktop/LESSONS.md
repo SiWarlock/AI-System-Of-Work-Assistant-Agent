@@ -146,3 +146,58 @@ The shared `useRovingListbox` owns the WITHIN-listbox roving-tabindex behavior. 
 **Rule:** a roving listbox in a popup adds focus-on-open + return-focus-to-trigger (keyboard-close ONLY) + reset-on-open (via the hook's optional `open`); the component-local return-focus guard arms ONLY while open (else a closed key-press leaks into a later non-keyboard dismissal); keep the existing dismissals/ARIA byte-unchanged.
 
 **Pin:** render tests for focus-on-open / return-focus-on-Escape+select / NO-return-on-outside-click+tab-away / reset-on-reopen / dismissals-still-work / escape-while-closed-doesn't-arm.
+
+---
+
+## <a id="8"></a>8. Renderer scope reflects the fail-closed WS-8 onboarded registry — no placeholder-id resurrection
+
+**Date:** 2026-07-15.
+**Source slice:** 14.1 onboarding surface / fail-closed WS-8 scope model (`ad624a16`).
+
+The renderer's scope model derives its selectable scopes from the onboarded/registered workspace set — a workspace becomes selectable ONLY once it is onboarded/registered. Empty-until-onboarded is the fail-closed default: the scope store must never resurrect a removed placeholder id as if it were populated, so an un-onboarded or removed workspace surfaces nothing and a stale/placeholder id can never silently widen the selectable set (WS-8).
+
+**Rule:** the renderer scope model derives selectable scopes from the onboarded/registered set (a workspace is selectable ONLY once onboarded/registered); the scope store never resurrects a removed placeholder id as if populated — fail-closed empty-until-onboarded.
+
+---
+
+## <a id="9"></a>9. `isWorkspaceScope` keys off a STABLE `isGlobal` flag, not a nullable id, so onboarding state can't relax the isolation gate
+
+**Date:** 2026-07-15.
+**Source slice:** 14.1 onboarding surface / fail-closed WS-8 scope model (`ad624a16`).
+
+The workspace-scope predicate keys on a stable `isGlobal` boolean, not a nullable workspace id. A null/absent id must NOT read as "global/relaxed" — otherwise evolving onboarding state (a not-yet-onboarded workspace whose id is still null) could silently weaken the WS-8 isolation gate. Anchoring the predicate to an explicit `isGlobal` flag keeps the isolation decision independent of the mutable id.
+
+**Rule:** the workspace-scope predicate keys on a stable `isGlobal` boolean, not a nullable workspace id — a null/absent id must not read as "global/relaxed", so evolving onboarding state can never weaken the WS-8 isolation gate.
+
+---
+
+## <a id="10"></a>10. A config surface treats `tokenRef` as an opaque NAMED reference — never a secret shown/echoed/retained (rule 7 at the renderer)
+
+**Date:** 2026-07-15.
+**Source slice:** 14.2 connectors surface (`7d141528`).
+
+The connector-config surface forwards `tokenRef` as an opaque NAMED reference the user chooses — never a secret value. It is reconstructed from an allowlist on return, never round-trips / stores / renders as a value, and is cleared from the input after submit. This enforces safety rule 7 (secrets never reach the renderer, logs, or Markdown) at the renderer boundary.
+
+**Rule:** a connector-config surface forwards `tokenRef` as an opaque named reference the user chooses; it is reconstructed from an allowlist on return, never round-trips/stores/renders as a value, and is cleared from the input post-submit (rule 7 at the renderer boundary).
+
+---
+
+## <a id="11"></a>11. Reuse an existing hydrated store slice for a read path — don't duplicate a read path
+
+**Date:** 2026-07-15.
+**Source slice:** 14.3 System Health panel (`7d141528`).
+
+When a surface needs data that is already available, reuse the existing hydrated store slice rather than adding a second/duplicate read path. The System Health panel rendered the already-hydrated `state.health` from the live stream instead of opening its own fetch — one source of truth, no divergent read to drift.
+
+**Rule:** when a surface needs already-available data, reuse the existing hydrated store slice (e.g. the System Health panel rendered the already-hydrated `state.health` from the live stream) rather than adding a second/duplicate read path.
+
+---
+
+## <a id="12"></a>12. The desktop rule-4 cross-workspace authorization surface: UI-safe-only render, deliberate per-link approve, registered-only selectors, deterministic collision-free anchor-id, no pre-approval smuggling
+
+**Date:** 2026-07-15.
+**Source slice:** Phase-14 14.7 — the desktop cross-workspace-links approval surface (mirrors worker Lesson 32 / safety rule 4).
+
+A rule-4 cross-workspace-links approval surface renders ONLY the UI-safe link summary — never raw cross-workspace content, and it exposes no content-read path. Approve is a deliberate per-link owner action showing the full link (from→to, projectionType/visibilityLevel); both endpoints are sourced from the registered-workspace set with a client self-link block (WS-8 defense-in-depth). It mints a DETERMINISTIC collision-free anchor-id (`from~to~projType~visLevel`, percent-escaped delimiter ⇒ injective) so re-authorizing the same anchor is idempotent, while a scope change is transparently a NEW link needing its own approval (mirrors worker Lesson 32); and it sends only the whitelisted create fields — no `status`/`approvedAt` pre-approval smuggling.
+
+**Rule:** a rule-4 cross-workspace-links approval surface renders ONLY the UI-safe link summary (never raw cross-workspace content — no content-read path); makes approve a deliberate per-link owner action showing the full (from→to, projectionType/visibilityLevel); sources both endpoints from the registered-workspace set with a client self-link block (WS-8 defense-in-depth); mints a DETERMINISTIC collision-free anchor-id (`from~to~projType~visLevel`, percent-escaped delimiter ⇒ injective; re-authorizing the same anchor is idempotent, a scope change is transparently a NEW link needing its own approval — mirrors worker Lesson 32); and sends only the whitelisted create fields (no `status`/`approvedAt` pre-approval smuggling).

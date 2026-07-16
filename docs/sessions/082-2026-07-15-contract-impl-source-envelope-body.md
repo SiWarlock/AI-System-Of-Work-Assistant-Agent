@@ -4,7 +4,7 @@
 - **Phase:** Part II · Phase 15 (Ingestion-Spine Plumbing, §19.2) — contract-track slice
 - **Team:** `session-734f946b` — orch (orch22 → cycled → orch23) + contract-impl (this session) + worker-impl2 + desktop-impl; on `main`
 - **Predecessor session:** [081-2026-07-15-worker-impl-phase14-worker-foundation.md](081-2026-07-15-worker-impl-phase14-worker-foundation.md)
-- **Successor session:** _(none yet — contract-impl shuts down after round close; re-spawned for the next contract/domain slice, e.g. Phase-16 connector models)_
+- **Successor session:** [083-2026-07-15-worker-impl2-phase14-15-spine.md](083-2026-07-15-worker-impl2-phase14-15-spine.md) _(then contract-impl shuts down after round close; re-spawned for the next contract/domain slice)_
 - **Commit:** `a6495293` — `feat(contracts): 15.2 thread source content via SourceEnvelope +body field`
 - **Brief:** `docs/briefs/094-15.2-source-envelope-body-field.md` (spec-lint PASS @f555ff99)
 

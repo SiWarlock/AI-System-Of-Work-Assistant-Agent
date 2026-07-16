@@ -4,8 +4,8 @@
 - **Phase:** Part II — Phase 14 (Onboarding/Substrate, §19.1) capstone + Phase 15 (ingestion-spine, §19.2)
 - **Role/track:** worker-impl2 (worker track — `apps/worker`, `packages/db`, `packages/workflows`), single-track `main`
 - **Team:** `session-734f946b` — orchestrators orch22 → orch23 (cycled mid-session); lead persists
-- **Predecessor:** [081-2026-07-15-worker-impl-phase14-worker-foundation.md](081-2026-07-15-worker-impl-phase14-worker-foundation.md)
-- **Successor:** _(worker-impl3, first slice 15.6 — link when created)_
+- **Predecessor:** [082-2026-07-15-contract-impl-source-envelope-body.md](082-2026-07-15-contract-impl-source-envelope-body.md)
+- **Successor:** [084-2026-07-15-orch23-round3-close.md](084-2026-07-15-orch23-round3-close.md) _(orch23 round-3 close; then worker-impl3 for 15.6)_
 
 ## Why this session existed
 
