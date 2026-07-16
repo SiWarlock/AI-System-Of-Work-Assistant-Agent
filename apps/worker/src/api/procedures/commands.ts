@@ -52,6 +52,9 @@ import {
   type TriagePort,
   type TriageDisposition,
   type TriageDispositionResult,
+  type RerouteTarget,
+  type RerouteTargetValidatorPort,
+  type RerouteTargetValidationError,
 } from "./triageCommands";
 // `Channel` is BOTH a value (the frozen `["mac","telegram"]` const tuple, used at
 // runtime to narrow the input) and a type (the union) — a single import binds both.
@@ -68,6 +71,9 @@ export type {
   TriagePort,
   TriageDisposition,
   TriageDispositionResult,
+  RerouteTarget,
+  RerouteTargetValidatorPort,
+  RerouteTargetValidationError,
 };
 
 /**
@@ -102,6 +108,13 @@ export interface CommandDeps {
   readonly approvals: ApprovalCommandPort;
   readonly dispatchApproval: DispatchApprovalFn;
   readonly triage: TriagePort;
+  /**
+   * The 14.6-registry-backed reroute-target validator (15.8). A `disposeTriage`
+   * with a `reroute` disposition validates its explicit `target` through this port
+   * (WS-8, never a raw bind) before re-entry; the real binding is
+   * `createRegistryValidatedRerouteTarget`, a fake in unit tests.
+   */
+  readonly rerouteTargets: RerouteTargetValidatorPort;
   readonly now: NowFn;
 }
 
@@ -119,6 +132,14 @@ interface DisposeTriageInput {
   readonly sourceId: string;
   readonly idempotencyKey: string;
   readonly disposition: TriageDisposition;
+  /**
+   * The optional reroute target (15.8). The transport edge only SHAPE-validates a
+   * PRESENT target (it must be an object; string fields only) — the
+   * REQUIRED-when-reroute + registry-validation semantics live in
+   * `disposeTriageCommand` so its typed rejections (`reroute_target_required` /
+   * `reroute_target_unknown` / …) are reachable through this path.
+   */
+  readonly target?: RerouteTarget;
 }
 
 /** A non-empty-string guard (rejects absent / non-string / whitespace-only). */
@@ -180,11 +201,43 @@ function parseDisposeTriage(raw: unknown): Result<DisposeTriageInput, FailureVar
   if (!isNonEmptyString(r["sourceId"])) return err(invalidInput("DISPOSE_TRIAGE_SOURCE_ID"));
   if (!isNonEmptyString(r["idempotencyKey"])) return err(invalidInput("DISPOSE_TRIAGE_IDEMPOTENCY_KEY"));
   if (!isNonEmptyString(r["disposition"])) return err(invalidInput("DISPOSE_TRIAGE_DISPOSITION"));
+  // 15.8 reroute target — OPTIONAL. Shape-validate ONLY (a present target must be a
+  // non-null object; pick string-typed fields, drop anything else). The command owns
+  // the require-when-reroute + registry validation so a missing/blank workspaceId
+  // surfaces as `reroute_target_required` (not a transport `validation_rejected`).
+  const targetParsed = parseRerouteTarget(r["target"]);
+  if (!targetParsed.ok) return err(targetParsed.error);
   return ok({
     sourceId: r["sourceId"],
     idempotencyKey: r["idempotencyKey"],
     disposition: r["disposition"],
+    ...(targetParsed.value !== undefined ? { target: targetParsed.value } : {}),
   });
+}
+
+/**
+ * Shape-validate an OPTIONAL reroute target at the transport edge. Absent ⇒ `ok(undefined)`.
+ * A PRESENT target must be a non-null, non-array object; only string-typed `workspaceId`/
+ * `projectId` are carried (a non-string field is dropped — the command then treats a
+ * missing workspaceId as `reroute_target_required`). A non-object target is a typed
+ * `validation_rejected` (a malformed transport payload). No semantic/registry check here.
+ */
+function parseRerouteTarget(raw: unknown): Result<RerouteTarget | undefined, FailureVariant> {
+  if (raw === undefined) return ok(undefined);
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return err(invalidInput("DISPOSE_TRIAGE_TARGET_SHAPE"));
+  }
+  const t = raw as Record<string, unknown>;
+  // Carry ONLY non-empty string fields — an empty/whitespace value is normalized to
+  // absent (so `projectId: ""`, a common "no project selected" form encoding, validates
+  // as a workspace-only reroute rather than resolving `""` as a project ⇒ not_found;
+  // symmetric with the command's `.trim()` guard on workspaceId).
+  const workspaceId = isNonEmptyString(t["workspaceId"]) ? t["workspaceId"] : undefined;
+  const projectId = isNonEmptyString(t["projectId"]) ? t["projectId"] : undefined;
+  return ok({
+    ...(workspaceId !== undefined ? { workspaceId } : {}),
+    ...(projectId !== undefined ? { projectId } : {}),
+  } as RerouteTarget);
 }
 
 // ── Router factory ──────────────────────────────────────────────────────────
@@ -196,7 +249,7 @@ function parseDisposeTriage(raw: unknown): Result<DisposeTriageInput, FailureVar
  * Every side effect is routed through an injected port (§7/§8 one-writer).
  */
 export function buildCommandRouter(deps: CommandDeps) {
-  const { approvals, dispatchApproval, triage, now } = deps;
+  const { approvals, dispatchApproval, triage, rerouteTargets, now } = deps;
   return router({
     /**
      * Approval decision — a SINGLE idempotent transition (REQ-F-012). Approve /
@@ -235,7 +288,7 @@ export function buildCommandRouter(deps: CommandDeps) {
         async (_ctx, input): Promise<Result<TriageDispositionResult, FailureVariant>> => {
           const parsed = parseDisposeTriage(input);
           if (!parsed.ok) return err(parsed.error);
-          return disposeTriageCommand({ triage }, parsed.value);
+          return disposeTriageCommand({ triage, rerouteTargets }, parsed.value);
         },
       ),
     ),

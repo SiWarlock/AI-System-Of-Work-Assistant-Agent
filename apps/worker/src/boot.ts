@@ -83,6 +83,7 @@ import {
   createConnectorConfigCommandPort,
   type ConnectorConfigCommandPort,
 } from "./composition/connectorConfig";
+import { createRegistryValidatedRerouteTarget } from "./composition/dispositionDurable";
 import {
   createCrossWorkspaceLinkCommandPort,
   type CrossWorkspaceLinkCommandPort,
@@ -151,6 +152,7 @@ import type {
   ApprovalCommandPort,
   DispatchApprovalFn,
   TriagePort,
+  RerouteTargetValidatorPort,
 } from "./api/procedures/commands";
 import type { Logger } from "./observability/logger";
 import { createHealthSurface, type HealthSurface, type HealthFailure } from "./health/surface";
@@ -1164,6 +1166,15 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   });
   const approvals: ApprovalCommandPort = createDbApprovalCommandPort(backends.repos.approvals);
   const triage: TriagePort = createDbTriagePort(config.triageDispatch);
+  // 15.8 — the PRODUCTION reroute-target validator: a `reroute` disposition's explicit
+  //   human target is validated against the REAL 14.6 registry (WS-8 — the workspace must
+  //   be 14.1-registered; a targeted project must resolve UNDER that workspace) BEFORE the
+  //   pipeline re-entry. REQ-F-017 no-inference: a missing/unknown target fails closed
+  //   (typed rejection), never a guessed workspace. Mirrors createRegistryValidatedRescope.
+  const rerouteTargets: RerouteTargetValidatorPort = createRegistryValidatedRerouteTarget({
+    readModels: backends.repos.readModels,
+    projectRepo: backends.repos.projectRegistry,
+  });
   const systemHealth = createSystemHealthQueryPort(backends);
   // 14.1 — the PRODUCTION onboarding provisioning port: mints a workspace by upserting a
   //   validated safe-default Workspace into the durable config store + unioning its id into
@@ -1564,6 +1575,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     approvals,
     dispatchApproval,
     triage,
+    rerouteTargets,
     onboarding,
     projectRegistry,
     connectorConfig,

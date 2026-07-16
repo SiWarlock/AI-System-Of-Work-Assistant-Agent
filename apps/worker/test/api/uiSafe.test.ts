@@ -384,6 +384,8 @@ function makeServerDeps(over: { expectedToken?: SessionToken } = {}) {
       reenterIngestion: (input: { idempotencyKey: string }) =>
         Promise.resolve({ ok: true, value: { idempotencyKey: input.idempotencyKey } } as never),
     },
+    // 15.8 reroute-target validator — a canned ok stub (these tests exercise the health/auth boundary, not reroute).
+    rerouteTargets: { validate: () => Promise.resolve({ ok: true, value: undefined } as never) },
     // 14.1 onboarding port — a canned ok stub (these tests exercise the health/auth boundary, not onboarding).
     onboarding: {
       provisionWorkspace: (spec: { id: string; preset: string }) =>

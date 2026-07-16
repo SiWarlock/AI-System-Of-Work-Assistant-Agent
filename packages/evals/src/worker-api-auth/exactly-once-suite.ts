@@ -118,6 +118,8 @@ function makeExactlyOnceCas(approvalId: string): { deps: CommandDeps; ledger: Ca
         return { ok: true as const, value: { idempotencyKey: input.idempotencyKey } };
       },
     },
+    // 15.8 reroute-target validator — a canned ok stub (this exactly-once suite exercises the approval CAS, not reroute).
+    rerouteTargets: { async validate() { return { ok: true as const, value: undefined }; } },
     now: () => "2026-07-02T00:00:00.000Z",
   };
 

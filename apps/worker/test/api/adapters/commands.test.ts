@@ -179,6 +179,12 @@ describe("createDbApprovalCommandPort — exactly-once over the real @sow/db CAS
 // ── (b) triage port over the injected dispatch seam ───────────────────────────
 
 describe("createDbTriagePort — verbatim idempotencyKey reuse over the dispatch seam", () => {
+  // 15.8 — disposeTriageCommand now requires a reroute-target validator; these adapter
+  // tests exercise a NON-reroute disposition (the seam is disposition-agnostic), so an
+  // always-ok validator that is never consulted suffices. Reroute-target behaviour +
+  // reroute replay are covered in test/api/commands.test.ts.
+  const okRerouteTargets = { async validate() { return { ok: true as const, value: undefined }; } };
+
   it("reuses the caller's idempotencyKey verbatim (ING-4) and dispatches only via the seam", async () => {
     const dispatched: Array<{ sourceId: string; idempotencyKey: string; disposition: string }> = [];
     const dispatch: TriageDispatchFn = (input) => {
@@ -188,7 +194,7 @@ describe("createDbTriagePort — verbatim idempotencyKey reuse over the dispatch
     const port = createDbTriagePort(dispatch);
 
     const res = await disposeTriageCommand(
-      { triage: port },
+      { triage: port, rerouteTargets: okRerouteTargets },
       { sourceId: "src-1", idempotencyKey: "idem-verbatim-1", disposition: "accept" },
     );
     expect(isOk(res)).toBe(true);
@@ -209,10 +215,12 @@ describe("createDbTriagePort — verbatim idempotencyKey reuse over the dispatch
       return Promise.resolve(ok({ idempotencyKey: input.idempotencyKey }));
     };
     const port = createDbTriagePort(dispatch);
-    const input = { sourceId: "src-2", idempotencyKey: "idem-replay", disposition: "reroute" };
+    // Disposition-agnostic seam-replay test (a NON-reroute disposition — reroute-target
+    // replay is pinned separately in test/api/commands.test.ts).
+    const input = { sourceId: "src-2", idempotencyKey: "idem-replay", disposition: "reject" };
 
-    await disposeTriageCommand({ triage: port }, input);
-    await disposeTriageCommand({ triage: port }, input);
+    await disposeTriageCommand({ triage: port, rerouteTargets: okRerouteTargets }, input);
+    await disposeTriageCommand({ triage: port, rerouteTargets: okRerouteTargets }, input);
     // Both re-entries carried the IDENTICAL key — the pipeline dedupes on it (ING-4).
     expect(dispatched).toEqual(["idem-replay", "idem-replay"]);
   });
@@ -225,7 +233,7 @@ describe("createDbTriagePort — verbatim idempotencyKey reuse over the dispatch
       });
     const port = createDbTriagePort(dispatch);
     const res = await disposeTriageCommand(
-      { triage: port },
+      { triage: port, rerouteTargets: okRerouteTargets },
       { sourceId: "src-3", idempotencyKey: "idem-3", disposition: "accept" },
     );
     expect(isErr(res)).toBe(true);

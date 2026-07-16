@@ -50,6 +50,9 @@ import {
   type TriagePort,
   type CommandDeps,
   type TriageDisposition,
+  type RerouteTarget,
+  type RerouteTargetValidatorPort,
+  type RerouteTargetValidationError,
 } from "../../src/api/procedures/commands";
 import type { ApiContext } from "../../src/api/trpc";
 
@@ -135,20 +138,45 @@ class FakeDispatch {
 }
 
 // A FAKE TriagePort — records the re-enter call so a test can assert the SAME
-// idempotencyKey is reused (replay-safe, ING-4).
+// idempotencyKey is reused (replay-safe, ING-4) + the validated reroute target
+// (15.8) is threaded through verbatim.
 class FakeTriage implements TriagePort {
-  reenterCalls: Array<{ idempotencyKey: string; disposition: TriageDisposition; sourceId: string }> = [];
+  reenterCalls: Array<{
+    idempotencyKey: string;
+    disposition: TriageDisposition;
+    sourceId: string;
+    target?: RerouteTarget;
+  }> = [];
   async reenterIngestion(input: {
     sourceId: string;
     idempotencyKey: string;
     disposition: TriageDisposition;
+    target?: RerouteTarget;
   }): Promise<Result<{ idempotencyKey: string }, FailureVariant>> {
     this.reenterCalls.push({
       idempotencyKey: input.idempotencyKey,
       disposition: input.disposition,
       sourceId: input.sourceId,
+      ...(input.target !== undefined ? { target: input.target } : {}),
     });
     return { ok: true, value: { idempotencyKey: input.idempotencyKey } };
+  }
+}
+
+// A FAKE reroute-target validator (15.8). The command injects the REAL 14.6
+// registry-backed validator in production (a fake in tests, per the brief) — this
+// fake lets a test drive the command's forward-the-typed-rejection + happy-path
+// behaviour without a real registry. It records every target it was asked to
+// validate so a test can assert the command NEVER dispatches an unvalidated target.
+class FakeRerouteTargetValidator implements RerouteTargetValidatorPort {
+  calls: RerouteTarget[] = [];
+  constructor(private outcome: Result<void, RerouteTargetValidationError> = { ok: true, value: undefined }) {}
+  setOutcome(o: Result<void, RerouteTargetValidationError>): void {
+    this.outcome = o;
+  }
+  async validate(target: RerouteTarget): Promise<Result<void, RerouteTargetValidationError>> {
+    this.calls.push(target);
+    return this.outcome;
   }
 }
 
@@ -161,18 +189,21 @@ function makeDeps(over: Partial<CommandDeps> = {}): {
   store: FakeApprovalStore;
   dispatch: FakeDispatch;
   triage: FakeTriage;
+  rerouteTargets: FakeRerouteTargetValidator;
 } {
   const store = new FakeApprovalStore(approval("pending"));
   const dispatch = new FakeDispatch();
   const triage = new FakeTriage();
+  const rerouteTargets = new FakeRerouteTargetValidator();
   const deps: CommandDeps = {
     approvals: store,
     triage,
+    rerouteTargets,
     dispatchApproval: (a) => dispatch.dispatchApproved(a),
     now: clock,
     ...over,
   };
-  return { deps, store, dispatch, triage };
+  return { deps, store, dispatch, triage, rerouteTargets };
 }
 
 function caller(deps: CommandDeps, ctx: ApiContext = AUTHED_CTX) {
@@ -299,6 +330,7 @@ describe("approve/reject on an already-expired item — typed rejection, NO stat
     const deps: CommandDeps = {
       approvals: store,
       triage,
+      rerouteTargets: new FakeRerouteTargetValidator(),
       dispatchApproval: (a) => dispatch.dispatchApproved(a),
       now: clock,
     };
@@ -411,6 +443,175 @@ describe("ingestion-triage disposition — re-enters ingestion reusing the SAME 
     await c.command.disposeTriage({ sourceId: "src_1", idempotencyKey: "idem-x", disposition: "reject" });
     // Both re-entries carry the identical idempotency key — the pipeline dedupes.
     expect(triage.reenterCalls.map((k) => k.idempotencyKey)).toEqual(["idem-x", "idem-x"]);
+  });
+});
+
+// ── (b) 15.8 — a REROUTE disposition carries an explicit registry-validated target ──
+//
+// Closes the worker half of G60. A parked "which workspace/project?" item is
+// human-resolved by an EXPLICIT target, NEVER invented (REQ-F-017 no-inference). The
+// target is registry-validated (WS-8, never a raw bind) BEFORE re-entry; a missing /
+// unknown target FAILS CLOSED (typed rejection) and NEVER dispatches.
+
+describe("ingestion-triage reroute — an explicit, registry-validated target (15.8 / REQ-F-017 / G60)", () => {
+  const REROUTE = "reroute";
+
+  it("reroute_without_target_is_rejected: a reroute with NO target (or a target missing workspaceId) ⇒ typed reroute_target_required, NEVER dispatched (REQ-F-017 no-inference)", async () => {
+    // (a) no target at all.
+    {
+      const { deps, triage, rerouteTargets } = makeDeps();
+      const c = caller(deps);
+      const r: Result<unknown, FailureVariant> = await c.command.disposeTriage({
+        sourceId: "src_1",
+        idempotencyKey: "idem-1",
+        disposition: REROUTE,
+      });
+      expect(isErr(r)).toBe(true);
+      if (isErr(r)) expect(r.error.cause?.code).toBe("reroute_target_required");
+      // Fail-closed: no guessed workspace ⇒ nothing was validated, nothing dispatched.
+      expect(rerouteTargets.calls).toHaveLength(0);
+      expect(triage.reenterCalls).toHaveLength(0);
+    }
+    // (b) a target present but missing workspaceId is equally a no-inference violation.
+    {
+      const { deps, triage, rerouteTargets } = makeDeps();
+      const c = caller(deps);
+      const r: Result<unknown, FailureVariant> = await c.command.disposeTriage({
+        sourceId: "src_1",
+        idempotencyKey: "idem-1",
+        disposition: REROUTE,
+        target: { projectId: "proj_1" } as unknown as RerouteTarget,
+      });
+      expect(isErr(r)).toBe(true);
+      if (isErr(r)) expect(r.error.cause?.code).toBe("reroute_target_required");
+      expect(rerouteTargets.calls).toHaveLength(0);
+      expect(triage.reenterCalls).toHaveLength(0);
+    }
+  });
+
+  it("reroute_target_unknown_workspace_is_rejected: the validator's reroute_target_unknown is forwarded as a typed rejection; NEVER a raw bind (WS-8)", async () => {
+    const { deps, triage, rerouteTargets } = makeDeps();
+    rerouteTargets.setOutcome({ ok: false, error: { code: "reroute_target_unknown", message: "workspace not registered" } });
+    const c = caller(deps);
+    const r: Result<unknown, FailureVariant> = await c.command.disposeTriage({
+      sourceId: "src_1",
+      idempotencyKey: "idem-1",
+      disposition: REROUTE,
+      target: { workspaceId: "ghost-ws" },
+    });
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("reroute_target_unknown");
+    // The target WAS validated (against the registry) and REJECTED ⇒ no re-entry.
+    expect(rerouteTargets.calls).toHaveLength(1);
+    expect(triage.reenterCalls).toHaveLength(0);
+  });
+
+  it("reroute_target_unknown_project_is_rejected: a target projectId not in the 14.6 registry under that workspace ⇒ typed rejection, NEVER dispatched", async () => {
+    const { deps, triage, rerouteTargets } = makeDeps();
+    rerouteTargets.setOutcome({ ok: false, error: { code: "reroute_target_project_unknown", message: "project not under workspace" } });
+    const c = caller(deps);
+    const r: Result<unknown, FailureVariant> = await c.command.disposeTriage({
+      sourceId: "src_1",
+      idempotencyKey: "idem-1",
+      disposition: REROUTE,
+      target: { workspaceId: "ws-b", projectId: "not-under-ws-b" },
+    });
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("reroute_target_project_unknown");
+    expect(triage.reenterCalls).toHaveLength(0);
+  });
+
+  it("reroute_happy_redrives_with_target_reusing_key: a valid reroute re-enters carrying the VALIDATED target + REUSING the idempotencyKey; the result carries the reused key", async () => {
+    const { deps, triage, rerouteTargets } = makeDeps(); // validator defaults to ok
+    const c = caller(deps);
+    const target: RerouteTarget = { workspaceId: "ws-b", projectId: "proj-42" };
+    const r = await c.command.disposeTriage({
+      sourceId: "src_1",
+      idempotencyKey: "idem-keep",
+      disposition: REROUTE,
+      target,
+    });
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(r.value.idempotencyKey).toBe("idem-keep"); // replay-safety proof
+    // The target was validated, then the port received it verbatim + the reused key.
+    expect(rerouteTargets.calls).toEqual([target]);
+    expect(triage.reenterCalls).toHaveLength(1);
+    expect(triage.reenterCalls[0]?.idempotencyKey).toBe("idem-keep");
+    expect(triage.reenterCalls[0]?.disposition).toBe(REROUTE);
+    expect(triage.reenterCalls[0]?.target).toEqual(target);
+  });
+
+  it("accept_disposition_without_target_is_unchanged: a non-reroute disposition with NO target behaves exactly as today — no target dispatched, the validator is NEVER consulted (additive-optional)", async () => {
+    const { deps, triage, rerouteTargets } = makeDeps();
+    const c = caller(deps);
+    const r = await c.command.disposeTriage({
+      sourceId: "src_1",
+      idempotencyKey: "idem-acc",
+      disposition: "accept",
+    });
+    expect(isOk(r)).toBe(true);
+    expect(triage.reenterCalls).toHaveLength(1);
+    expect(triage.reenterCalls[0]?.idempotencyKey).toBe("idem-acc");
+    expect(triage.reenterCalls[0]?.target).toBeUndefined();
+    // accept/reject never touch the registry validator (no target to validate).
+    expect(rerouteTargets.calls).toHaveLength(0);
+  });
+
+  it("reroute_replay_is_idempotent: a re-applied reroute (same idempotencyKey) re-drives with the SAME key both times — the pipeline dedupes (rule 3 / ING-4)", async () => {
+    const { deps, triage } = makeDeps();
+    const c = caller(deps);
+    const target: RerouteTarget = { workspaceId: "ws-b" };
+    await c.command.disposeTriage({ sourceId: "src_1", idempotencyKey: "idem-r", disposition: REROUTE, target });
+    await c.command.disposeTriage({ sourceId: "src_1", idempotencyKey: "idem-r", disposition: REROUTE, target });
+    // Both re-entries carry the identical idempotency key — no new key minted on replay.
+    expect(triage.reenterCalls.map((k) => k.idempotencyKey)).toEqual(["idem-r", "idem-r"]);
+  });
+
+  it("reroute_empty_projectId_validates_as_workspace_only: `projectId:\"\"` (a 'no project selected' encoding) is normalized to absent ⇒ a workspace-only reroute, NOT a projectId=\"\" lookup", async () => {
+    const { deps, triage, rerouteTargets } = makeDeps(); // validator ok
+    const c = caller(deps);
+    const r = await c.command.disposeTriage({
+      sourceId: "src_1",
+      idempotencyKey: "idem-ws-only",
+      disposition: REROUTE,
+      target: { workspaceId: "ws-b", projectId: "" },
+    });
+    expect(isOk(r)).toBe(true);
+    // The empty projectId was dropped — the validator + port see a workspace-only target.
+    expect(rerouteTargets.calls).toEqual([{ workspaceId: "ws-b" }]);
+    expect(triage.reenterCalls[0]?.target).toEqual({ workspaceId: "ws-b" });
+  });
+
+  it("reroute_non_object_target_is_rejected_at_the_transport_edge: a non-object/array target ⇒ typed validation_rejected (DISPOSE_TRIAGE_TARGET_SHAPE), never dispatched", async () => {
+    const { deps, triage, rerouteTargets } = makeDeps();
+    const c = caller(deps);
+    for (const bad of [123, [], "ws-b"] as unknown[]) {
+      const r: Result<unknown, FailureVariant> = await c.command.disposeTriage({
+        sourceId: "src_1",
+        idempotencyKey: "idem-bad",
+        disposition: REROUTE,
+        target: bad as RerouteTarget,
+      });
+      expect(isErr(r)).toBe(true);
+      if (isErr(r)) expect(r.error.cause?.code).toBe("DISPOSE_TRIAGE_TARGET_SHAPE");
+    }
+    expect(rerouteTargets.calls).toHaveLength(0);
+    expect(triage.reenterCalls).toHaveLength(0);
+  });
+
+  it("target_forbidden_on_non_reroute_disposition: a target on an accept/reject ⇒ typed reroute_target_forbidden, NEVER a silently-ignored target (pinned contract)", async () => {
+    const { deps, triage, rerouteTargets } = makeDeps();
+    const c = caller(deps);
+    const r: Result<unknown, FailureVariant> = await c.command.disposeTriage({
+      sourceId: "src_1",
+      idempotencyKey: "idem-f",
+      disposition: "accept",
+      target: { workspaceId: "ws-b" },
+    });
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.cause?.code).toBe("reroute_target_forbidden");
+    expect(rerouteTargets.calls).toHaveLength(0);
+    expect(triage.reenterCalls).toHaveLength(0);
   });
 });
 

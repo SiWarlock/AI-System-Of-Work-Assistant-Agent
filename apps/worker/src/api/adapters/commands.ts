@@ -31,6 +31,7 @@ import type {
   ApprovalCommandPort,
   TriagePort,
   TriageDisposition,
+  RerouteTarget,
 } from "../procedures/commands";
 
 // ── (a) approval command port over the @sow/db ApprovalRepository CAS ─────────
@@ -75,6 +76,8 @@ export type TriageDispatchFn = (input: {
   sourceId: string;
   idempotencyKey: string;
   disposition: TriageDisposition;
+  /** The registry-validated reroute target (15.8) — present only for a `reroute`. */
+  target?: RerouteTarget;
 }) => Promise<Result<{ idempotencyKey: string }, FailureVariant>>;
 
 /**
@@ -93,11 +96,14 @@ export function createDbTriagePort(dispatch: TriageDispatchFn): TriagePort {
         // Verbatim reuse — the ING-4 replay-safety proof. Never re-minted here.
         idempotencyKey: input.idempotencyKey,
         disposition: input.disposition,
+        // Forward the pre-validated reroute target (15.8) when present (omitted for
+        // accept/reject so the dispatched object stays byte-equivalent for them).
+        ...(input.target !== undefined ? { target: input.target } : {}),
       }),
   };
 }
 
 // Re-export the seam types so the integrator (and the tests) import the ports + their
 // adapters from one place, mirroring `commands.ts`'s own re-export discipline.
-export type { ApprovalCommandPort, TriagePort, TriageDisposition };
+export type { ApprovalCommandPort, TriagePort, TriageDisposition, RerouteTarget };
 export type { ApprovalRepository };

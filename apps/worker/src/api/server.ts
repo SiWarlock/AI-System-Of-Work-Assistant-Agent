@@ -34,6 +34,7 @@ import {
   buildCommandRouter,
   type ApprovalCommandPort,
   type TriagePort,
+  type RerouteTargetValidatorPort,
   type DispatchApprovalFn,
   type NowFn,
 } from "./procedures/commands";
@@ -88,6 +89,8 @@ export interface ApiServerDeps {
   readonly approvals: ApprovalCommandPort;
   readonly dispatchApproval: DispatchApprovalFn;
   readonly triage: TriagePort;
+  /** The 14.6-registry-backed reroute-target validator (15.8) — WS-8 gate on a `reroute` disposition's target. */
+  readonly rerouteTargets: RerouteTargetValidatorPort;
   readonly now: NowFn;
   /** The onboarding provisioning port (14.1) — mints a workspace (config upsert + WS-8 registry union). */
   readonly onboarding: OnboardingCommandPort;
@@ -120,6 +123,7 @@ function composeAppRouter(deps: ApiServerDeps, pushStream: PushStream) {
       approvals: deps.approvals,
       dispatchApproval: deps.dispatchApproval,
       triage: deps.triage,
+      rerouteTargets: deps.rerouteTargets,
       now: deps.now,
     }),
     systemHealth: buildSystemHealthRouter({ systemHealth: deps.systemHealth }),

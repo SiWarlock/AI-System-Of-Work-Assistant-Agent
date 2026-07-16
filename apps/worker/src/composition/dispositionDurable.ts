@@ -15,7 +15,7 @@
 import { ok, err, isErr, type Result } from "@sow/contracts";
 import { auditId as makeAuditId } from "@sow/contracts";
 import type { AuditId, SourceEnvelope, WorkflowRunRef } from "@sow/contracts";
-import type { AuditRepository, ReadModelRepository, SourceDispositionRepository, SourceDispositionRow } from "@sow/db";
+import type { AuditRepository, ProjectRegistryRepository, ReadModelRepository, SourceDispositionRepository, SourceDispositionRow } from "@sow/db";
 import type { KnowledgeRevisionStore } from "@sow/knowledge";
 import {
   createRescopeSourceActivity,
@@ -28,6 +28,11 @@ import {
   type MeetingParkFailure,
 } from "@sow/workflows";
 import { resolveKnownWorkspace } from "../api/adapters/readModel";
+import type {
+  RerouteTarget,
+  RerouteTargetValidatorPort,
+  RerouteTargetValidationError,
+} from "../api/procedures/triageCommands";
 
 // ── (1) the durable DispositionStore (real isParked + CAS insert + redaction-safe audit) ──────────
 
@@ -128,6 +133,51 @@ export function createRegistryValidatedRescope(deps: RegistryValidatedRescopeDep
       if (!known.ok) return err({ code: "rescope_failed", message: "workspace registry unavailable" });
       if (!known.value) return err({ code: "rescope_failed", message: "override workspace is not registered" });
       return inner.rescope(disposition);
+    },
+  };
+}
+
+// ── (3b) the registry-validated REROUTE TARGET (15.8 — WS-8 human routing override) ──
+
+export interface RegistryValidatedRerouteTargetDeps {
+  readonly readModels: ReadModelRepository;
+  readonly projectRepo: ProjectRegistryRepository;
+}
+
+/**
+ * Build the 15.8 {@link RerouteTargetValidatorPort} that validates a human reroute
+ * target against the REAL 14.6 registry — the WS-8 gate on the routing override
+ * (mirror of {@link createRegistryValidatedRescope}). The target workspace MUST be a
+ * 14.1-registered workspace; a registry fault OR an unregistered workspace ⇒
+ * `reroute_target_unknown` (fail-closed — NEVER a bind on an unverifiable workspace).
+ * If a projectId is given it MUST resolve in the 14.6 Project registry UNDER that
+ * workspace — the row's workspaceId is server-stored (WS-8 anti-smuggle), so a project
+ * bound to a DIFFERENT workspace, a not_found, or a get fault ⇒
+ * `reroute_target_project_unknown` (never a cross-workspace project bind). Never throws
+ * (relies on the injected repos' never-reject Result contract, as the rescope sibling does).
+ */
+export function createRegistryValidatedRerouteTarget(
+  deps: RegistryValidatedRerouteTargetDeps,
+): RerouteTargetValidatorPort {
+  return {
+    async validate(target: RerouteTarget): Promise<Result<void, RerouteTargetValidationError>> {
+      // 1. WS-8 workspace gate — the override workspace must be registered.
+      const known = await resolveKnownWorkspace(deps.readModels, target.workspaceId);
+      if (!known.ok || !known.value) {
+        return err({ code: "reroute_target_unknown", message: "reroute target workspace is not registered" });
+      }
+      // 2. Project-under-workspace gate — a targeted project must resolve UNDER that
+      //    workspace (never a smuggled cross-workspace project bind).
+      if (target.projectId !== undefined) {
+        const got = await deps.projectRepo.get(target.projectId);
+        if (isErr(got) || got.value.workspaceId !== target.workspaceId) {
+          return err({
+            code: "reroute_target_project_unknown",
+            message: "reroute target project is not registered under the target workspace",
+          });
+        }
+      }
+      return ok(undefined);
     },
   };
 }

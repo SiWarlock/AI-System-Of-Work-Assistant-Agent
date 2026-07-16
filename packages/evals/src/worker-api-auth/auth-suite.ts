@@ -137,6 +137,8 @@ function serverDeps() {
         return { ok: true as const, value: { idempotencyKey: input.idempotencyKey } };
       },
     },
+    // 15.8 reroute-target validator — a canned-ok stub (this auth suite exercises the auth boundary, not reroute).
+    rerouteTargets: { async validate() { return { ok: true as const, value: undefined }; } },
     // 14.1 onboarding port — a canned-ok stub (this auth suite exercises the auth boundary, not onboarding).
     onboarding: {
       async provisionWorkspace(spec: { id: string; preset: string }) {
@@ -223,6 +225,8 @@ function makeCommandCaller(req: { token?: string; origin?: string; host?: string
         return { ok: true as const, value: { idempotencyKey: input.idempotencyKey } };
       },
     },
+    // 15.8 reroute-target validator — a canned ok stub (this auth suite exercises the auth boundary, not reroute).
+    rerouteTargets: { async validate() { return { ok: true as const, value: undefined }; } },
     now: () => "2026-07-02T00:00:00.000Z",
   };
   const appRouter = router({ command: buildCommandRouter(deps) });

@@ -162,6 +162,8 @@ function serverDeps(
     approvals: noopApprovals,
     dispatchApproval: noopDispatch,
     triage: noopTriage,
+    // 15.8 reroute-target validator — a canned ok stub (this live test exercises the transport/auth path, not reroute).
+    rerouteTargets: { validate: () => Promise.resolve({ ok: true, value: undefined }) },
     now: () => "2026-07-02T00:00:00.000Z",
     host: "127.0.0.1",
     port,

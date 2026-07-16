@@ -16,7 +16,7 @@
 import { describe, it, expect } from "vitest";
 import { ok, err, isOk, isErr, type Result } from "@sow/contracts";
 import type { AuditRecord, SourceEnvelope, WorkflowRunRef } from "@sow/contracts";
-import type { DbError, ReadModelRecord, ReadModelRepository, SourceDispositionRepository, SourceDispositionRow } from "@sow/db";
+import type { DbError, ProjectRegistryRow, ProjectRegistryRepository, ReadModelRecord, ReadModelRepository, SourceDispositionRepository, SourceDispositionRow } from "@sow/db";
 import type { CommittedRevision, KnowledgeRevisionStore } from "@sow/knowledge";
 import { createRecordDispositionActivity, type TriageDisposition } from "@sow/workflows";
 import { READ_MODEL_KEYS } from "../../src/api/adapters/readModel";
@@ -24,6 +24,7 @@ import {
   createDurableDispositionStore,
   createDurableParkedReader,
   createRegistryValidatedRescope,
+  createRegistryValidatedRerouteTarget,
   createReenterRunner,
   createDurableMeetingParkPort,
 } from "../../src/composition/dispositionDurable";
@@ -103,6 +104,36 @@ function fakeReadModels(registered: readonly string[]): ReadModelRepository {
   };
 }
 
+// A minimal ProjectRegistryRepository fake (14.6) — the 15.8 reroute-target validator
+// only reads `get(projectId)`; the other methods are inert stubs. `projects` maps a
+// projectId → its BOUND workspaceId (server-stored, WS-8 anti-smuggle); `faultOnGet`
+// drives the fail-closed path.
+function fakeProjectRegistry(projects: Record<string, string>, faultOnGet = false): ProjectRegistryRepository {
+  const row = (projectId: string, workspaceId: string): ProjectRegistryRow => ({
+    projectId,
+    workspaceId: workspaceId as ProjectRegistryRow["workspaceId"],
+    progressProviders: [],
+    title: projectId,
+    slug: projectId,
+    lifecycleState: "active",
+  });
+  return {
+    async get(projectId: string): Promise<Result<ProjectRegistryRow, DbError>> {
+      if (faultOnGet) return err({ code: "unavailable", message: "x" });
+      const ws = projects[projectId];
+      if (ws === undefined) return err({ code: "not_found", message: "x" });
+      return ok(row(projectId, ws));
+    },
+    async upsert(entry: ProjectRegistryRow): Promise<Result<ProjectRegistryRow, DbError>> { return ok(entry); },
+    async resolveRef(ref: string): Promise<Result<ProjectRegistryRow, DbError>> {
+      const ws = projects[ref];
+      if (ws === undefined) return err({ code: "not_found", message: "x" });
+      return ok(row(ref, ws));
+    },
+    async listByWorkspace(): Promise<Result<ProjectRegistryRow[], DbError>> { return ok([]); },
+  };
+}
+
 const disp = (over: Partial<TriageDisposition> = {}): TriageDisposition => ({
   sourceId: "src-1",
   workspaceId: "route-ws" as TriageDisposition["workspaceId"],
@@ -176,6 +207,67 @@ describe("createRegistryValidatedRescope (15.5 — WS-8 registry-validated owner
     const rescope = createRegistryValidatedRescope({ reader, readModels: faulting });
     const res = await rescope.rescope(disp({ workspaceId: "route-ws" as TriageDisposition["workspaceId"] }));
     expect(isErr(res) && res.error.code).toBe("rescope_failed");
+  });
+});
+
+// 15.8 — the REAL 14.6 registry-backed reroute-target validator (the worker leg of
+// G60). The human's explicit reroute target is validated against the REAL registry:
+// the workspace MUST be 14.1-registered (WS-8, never a raw bind) and, if a projectId
+// is given, it MUST resolve in the 14.6 Project registry UNDER that workspace. A
+// registry fault fails CLOSED — never a raw bind on an unverifiable target.
+describe("createRegistryValidatedRerouteTarget (15.8 — WS-8 registry-validated reroute target)", () => {
+  it("registered workspace (and, if given, a project under it) ⇒ ok; a workspace-only target validates too [spec(§19.2)]", async () => {
+    const validator = createRegistryValidatedRerouteTarget({
+      readModels: fakeReadModels(["ws-b"]),
+      projectRepo: fakeProjectRegistry({ "proj-42": "ws-b" }),
+    });
+    // workspace + project both registered, project under that workspace.
+    expect(isOk(await validator.validate({ workspaceId: "ws-b", projectId: "proj-42" }))).toBe(true);
+    // workspace-only target (no project) is valid.
+    expect(isOk(await validator.validate({ workspaceId: "ws-b" }))).toBe(true);
+  });
+
+  it("an UNREGISTERED target workspace ⇒ reroute_target_unknown — never a raw cross-workspace bind (WS-8) [spec(inv-C)]", async () => {
+    const validator = createRegistryValidatedRerouteTarget({
+      readModels: fakeReadModels([]), // nothing registered
+      projectRepo: fakeProjectRegistry({}),
+    });
+    const bad = await validator.validate({ workspaceId: "attacker-ws" });
+    expect(isErr(bad) && bad.error.code).toBe("reroute_target_unknown");
+  });
+
+  it("a projectId absent OR bound to a DIFFERENT workspace ⇒ reroute_target_project_unknown (14.6 / WS-8 cross-bind) [spec(inv-C)]", async () => {
+    const validator = createRegistryValidatedRerouteTarget({
+      readModels: fakeReadModels(["ws-b"]),
+      projectRepo: fakeProjectRegistry({ "proj-elsewhere": "ws-a" }), // proj bound to ws-a, not ws-b
+    });
+    // project not in the registry at all.
+    const missing = await validator.validate({ workspaceId: "ws-b", projectId: "ghost-proj" });
+    expect(isErr(missing) && missing.error.code).toBe("reroute_target_project_unknown");
+    // project exists but under a DIFFERENT workspace — a smuggled cross-workspace project bind.
+    const crossBind = await validator.validate({ workspaceId: "ws-b", projectId: "proj-elsewhere" });
+    expect(isErr(crossBind) && crossBind.error.code).toBe("reroute_target_project_unknown");
+  });
+
+  it("fails CLOSED on a registry read fault ⇒ reroute_target_unknown, never a raw bind on an unverifiable target (WS-8 fail-closed) [spec(§16)]", async () => {
+    // (a) the workspace registry read faults.
+    const faultingReadModels: ReadModelRepository = {
+      async get(): Promise<Result<ReadModelRecord, DbError>> { return err({ code: "unavailable", message: "x" }); },
+      async put(r: ReadModelRecord): Promise<Result<ReadModelRecord, DbError>> { return ok(r); },
+      async clear(): Promise<Result<void, DbError>> { return ok(undefined); },
+    };
+    const wsFault = createRegistryValidatedRerouteTarget({
+      readModels: faultingReadModels,
+      projectRepo: fakeProjectRegistry({ "proj-42": "ws-b" }),
+    });
+    expect(isErr(await wsFault.validate({ workspaceId: "ws-b" }))).toBe(true);
+    // (b) the project registry read faults (workspace is fine) ⇒ project fails closed.
+    const projFault = createRegistryValidatedRerouteTarget({
+      readModels: fakeReadModels(["ws-b"]),
+      projectRepo: fakeProjectRegistry({}, /* faultOnGet */ true),
+    });
+    const r = await projFault.validate({ workspaceId: "ws-b", projectId: "proj-42" });
+    expect(isErr(r) && r.error.code).toBe("reroute_target_project_unknown");
   });
 });
 
