@@ -127,7 +127,10 @@ describe("createDriveHttpTransport — candidate Drive files.list envelope maps 
     }
   });
 
-  it("incompleteSearch:true is currently IGNORED (candidate arch_gap — confirm at arming) — maps as a normal page", async () => {
+  it("incompleteSearch:true maps records as a normal page AND raises the coverage-degrade flag (16.4, was arch_gap)", async () => {
+    // Was an arch_gap (incompleteSearch IGNORED); 16.4 now honors it — the records still map
+    // as a normal page (fail-VISIBLE, kept) while `incompleteCoverage` is raised. Detailed
+    // coverage semantics are pinned in section 5 below.
     const body = JSON.stringify({ files: [{ id: "f1", modifiedTime: "t" }], incompleteSearch: true });
     const transport = fakeTransport({ response: { status: 200, body } });
     const res = await createDriveHttpTransport({ transport, secrets: fakeSecrets(), tokenRef: TOKEN_REF })(REQ);
@@ -135,6 +138,7 @@ describe("createDriveHttpTransport — candidate Drive files.list envelope maps 
     if (res.ok) {
       expect(res.items.map((i) => i.id)).toEqual(["f1"]);
       expect(res.done).toBe(true);
+      expect(res.incompleteCoverage).toBe(true);
     }
   });
 });
@@ -188,6 +192,54 @@ describe("createDriveHttpTransport — SSRF guard admits the Drive host + redact
       expect(res.message).not.toContain("BODY_LEAK");
     }
     expect(JSON.stringify(res)).not.toContain(TOKEN);
+  });
+});
+
+// ── 5. incompleteSearch → coverage-degrade signal (16.4, closes G29) ────────────
+// Google Drive's `incompleteSearch: true` means the query did NOT cover all corpora,
+// so the ingested page is PARTIAL. It must be surfaced (fail-VISIBLE) as a
+// coverage-degrade signal on the page — never silently returned as a complete result.
+// Absent / false ⇒ byte-equivalent to today (no coverage flag).
+const driveBodyCoverage = (incompleteSearch?: boolean): string =>
+  JSON.stringify({
+    files: [{ id: "file-1", name: "Doc A", mimeType: "application/pdf", modifiedTime: "2026-07-15T00:00:00Z" }],
+    ...(incompleteSearch !== undefined ? { incompleteSearch } : {}),
+  });
+
+describe("createDriveHttpTransport — incompleteSearch coverage-degrade (16.4 · §8)", () => {
+  it("drive_incomplete_search_true_degrades_coverage: incompleteSearch=true ⇒ page flags incomplete coverage — spec(§8)", async () => {
+    const transport = fakeTransport({ response: { status: 200, body: driveBodyCoverage(true) } });
+    const res = await createDriveHttpTransport({ transport, secrets: fakeSecrets(), tokenRef: TOKEN_REF })(REQ);
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      // The page still carries its records (fail-VISIBLE, NOT fail-closed — the partial
+      // set is kept) AND raises the coverage-degrade flag.
+      expect(res.items.map((i) => i.id)).toEqual(["file-1"]);
+      expect(res.incompleteCoverage).toBe(true);
+    }
+  });
+
+  it("drive_complete_search_no_degrade: incompleteSearch absent OR false ⇒ NO coverage flag (byte-equivalent) — spec(§8)", async () => {
+    const absent = fakeTransport({ response: { status: 200, body: driveBodyCoverage(undefined) } });
+    const resAbsent = await createDriveHttpTransport({ transport: absent, secrets: fakeSecrets(), tokenRef: TOKEN_REF })(REQ);
+    expect(resAbsent.ok).toBe(true);
+    if (resAbsent.ok) expect(resAbsent.incompleteCoverage).toBeUndefined();
+
+    const complete = fakeTransport({ response: { status: 200, body: driveBodyCoverage(false) } });
+    const resFalse = await createDriveHttpTransport({ transport: complete, secrets: fakeSecrets(), tokenRef: TOKEN_REF })(REQ);
+    expect(resFalse.ok).toBe(true);
+    if (resFalse.ok) expect(resFalse.incompleteCoverage).toBeUndefined();
+  });
+
+  it("threads incompleteCoverage through createDriveConnector onto the ConnectorFetchPage — spec(§8)", async () => {
+    const transport = fakeTransport({ response: { status: 200, body: driveBodyCoverage(true) } });
+    const port = createDriveConnector(createDriveHttpTransport({ transport, secrets: fakeSecrets(), tokenRef: TOKEN_REF }));
+    const page = await port.fetch();
+    expect(isErr(page)).toBe(false);
+    if (!isErr(page)) {
+      expect(page.value.records.map((r) => r.recordId)).toEqual(["file-1"]);
+      expect(page.value.incompleteCoverage).toBe(true);
+    }
   });
 });
 

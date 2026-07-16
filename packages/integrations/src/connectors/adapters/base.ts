@@ -65,6 +65,9 @@ export function makeConnector(spec: ConnectorSpec, transport: ConnectorTransport
         records: result.items.map(toRecord),
         ...(result.nextCursor !== undefined ? { nextCursor: result.nextCursor } : {}),
         done: result.done,
+        // Thread the coverage-degrade flag through unchanged (16.4) — a partial page's
+        // records are still mapped + kept; the gateway raises the health signal.
+        ...(result.incompleteCoverage ? { incompleteCoverage: true } : {}),
       };
       return ok(page);
     },

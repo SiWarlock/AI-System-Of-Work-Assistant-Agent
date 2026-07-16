@@ -28,6 +28,7 @@ import type { ConnectorCursorRepository } from "../ports/persistence";
 import { buildSafeConnectorLog } from "../redaction/gateway-log-redaction";
 import type { SafeConnectorLog } from "../redaction/gateway-log-redaction";
 import type { GatewayHealthSignal } from "../health/health-signal";
+import { buildConnectorCoverageDegradeSignal } from "../health/health-signal";
 import { nextDelayMs, EXHAUSTED, type BackoffConfig } from "./backoff";
 import { classifyConnectorError, type ConnectorHealth } from "./health";
 import type { ConnectorPort, ConnectorRecord } from "./port";
@@ -94,6 +95,9 @@ export async function runConnectorSync(
   let cursor: string | undefined = isErr(existing) ? undefined : existing.value.cursor;
 
   let processed = 0;
+  // 16.4 — set true iff a COMMITTED page reported partial corpus coverage; on an advanced
+  // pass this mints a coverage-degrade signal (fail-VISIBLE, distinct from a fetch-degrade).
+  let coverageIncomplete = false;
 
   // Drive pages until `done`, a hold, or a degrade.
   for (;;) {
@@ -151,7 +155,7 @@ export async function runConnectorSync(
 
     // page is defined here (the loop only breaks on success).
     const current = page as NonNullable<typeof page> & { ok: true };
-    const { records, nextCursor, done } = current.value;
+    const { records, nextCursor, done, incompleteCoverage } = current.value;
 
     // --- dedupe reconnect-drain replays by contentHash ---
     const fresh: ConnectorRecord[] = [];
@@ -192,8 +196,27 @@ export async function runConnectorSync(
       });
     }
 
+    // 16.4 — this page COMMITTED (past the hold-return above); if its coverage was partial,
+    // remember it so the advanced result carries a coverage-degrade signal. Fail-VISIBLE:
+    // the records already committed; we announce the partiality, we do NOT drop or hold.
+    if (incompleteCoverage === true) coverageIncomplete = true;
+
     if (done) break;
   }
 
-  return { status: "advanced", cursor, processed, health: "reachable" };
+  return {
+    status: "advanced",
+    cursor,
+    processed,
+    health: "reachable",
+    ...(coverageIncomplete
+      ? {
+          healthSignal: buildConnectorCoverageDegradeSignal({
+            connectorId: port.connectorId,
+            workspaceId,
+            reason: "connector reported partial corpus coverage (incompleteSearch)",
+          }),
+        }
+      : {}),
+  };
 }

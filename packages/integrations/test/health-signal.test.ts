@@ -6,9 +6,11 @@ import { describe, it, expect } from "vitest";
 import { FailureClass } from "@sow/contracts";
 import {
   CONNECTOR_UNREACHABLE_HEALTH_CLASS,
+  CONNECTOR_COVERAGE_DEGRADED_HEALTH_CLASS,
   WRITE_THROUGH_BLOCKED_HEALTH_CLASS,
   SCHEMA_REJECTION_HEALTH_CLASS,
   buildConnectorHealthSignal,
+  buildConnectorCoverageDegradeSignal,
   buildToolWriteHealthSignal,
   healthDedupeKey,
 } from "../src/health/health-signal";
@@ -20,14 +22,58 @@ const isFailureClass = (c: string): boolean =>
 describe("health-class constants", () => {
   it("are all valid FailureClass members", () => {
     expect(isFailureClass(CONNECTOR_UNREACHABLE_HEALTH_CLASS)).toBe(true);
+    expect(isFailureClass(CONNECTOR_COVERAGE_DEGRADED_HEALTH_CLASS)).toBe(true);
     expect(isFailureClass(WRITE_THROUGH_BLOCKED_HEALTH_CLASS)).toBe(true);
     expect(isFailureClass(SCHEMA_REJECTION_HEALTH_CLASS)).toBe(true);
   });
 
   it("map to the expected enum values", () => {
     expect(CONNECTOR_UNREACHABLE_HEALTH_CLASS).toBe("connector_unreachable");
+    // arch_gap: no dedicated coverage-degrade member in the frozen enum — reuses
+    // `sync_lagging` (the least-wrong "ingested set is behind full coverage"), mirroring
+    // the WRITE_THROUGH_BLOCKED reuse precedent. FLAGGED as carry-forward.
+    expect(CONNECTOR_COVERAGE_DEGRADED_HEALTH_CLASS).toBe("sync_lagging");
     expect(WRITE_THROUGH_BLOCKED_HEALTH_CLASS).toBe("write_through_failed");
     expect(SCHEMA_REJECTION_HEALTH_CLASS).toBe("schema_rejection");
+  });
+});
+
+describe("buildConnectorCoverageDegradeSignal (16.4 · §8/§16)", () => {
+  it("emits the coverage-degrade class with a redaction-safe message + connectorId subject + workspace ref", () => {
+    const sig = buildConnectorCoverageDegradeSignal({
+      connectorId: "drive",
+      workspaceId: "employer-work",
+      reason: "incompleteSearch: partial corpora coverage",
+    });
+    expect(sig.failureClass).toBe(CONNECTOR_COVERAGE_DEGRADED_HEALTH_CLASS);
+    expect(isFailureClass(sig.failureClass)).toBe(true);
+    expect(sig.subjectRef).toContain("drive");
+    expect(isGatewayLogSafe(sig.message)).toBe(true);
+    expect(sig.refs).toContain("employer-work");
+  });
+
+  it("routes the reason through redactString — a recognized credential shape is scrubbed (rule 7)", () => {
+    // Proves the builder pipes `reason` through the mandatory gateway redaction (defense in
+    // depth): a recognized credential TOKEN (here an `sk-` key) is replaced, so no secret
+    // that leaked into the reason survives into the health message.
+    const leaked = "sk-live0123456789ABCDEFxyz";
+    const sig = buildConnectorCoverageDegradeSignal({
+      connectorId: "drive",
+      workspaceId: "personal-business",
+      reason: `partial coverage; stray creds ${leaked}`,
+    });
+    expect(isGatewayLogSafe(sig.message)).toBe(true);
+    expect(sig.message).not.toContain(leaked);
+    expect(sig.message).toContain("[REDACTED]");
+  });
+
+  it("has a dedupe key stable per (coverage class, connectorId)", () => {
+    const a = buildConnectorCoverageDegradeSignal({ connectorId: "drive", workspaceId: "ws-1", reason: "r1" });
+    const b = buildConnectorCoverageDegradeSignal({ connectorId: "drive", workspaceId: "ws-2", reason: "different" });
+    expect(healthDedupeKey(a)).toBe(healthDedupeKey(b));
+    // Distinct from an UNREACHABLE signal for the same connector (different class).
+    const unreachable = buildConnectorHealthSignal({ connectorId: "drive", workspaceId: "ws-1", reason: "down" });
+    expect(healthDedupeKey(a)).not.toBe(healthDedupeKey(unreachable));
   });
 });
 

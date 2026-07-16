@@ -281,3 +281,72 @@ describe("runConnectorSync — redaction (§16, safety rule 5)", () => {
     expect(res.processed).toBe(0);
   });
 });
+
+// 16.4 — a SUCCESSFUL-but-PARTIAL page (incompleteCoverage) is fail-VISIBLE: records
+// still commit + the cursor still advances, but a coverage-degrade health signal is
+// surfaced so a partial ingest is never mistaken for a complete one. This is distinct
+// from the `degraded` fetch-FAILURE branch (records DO commit here).
+describe("runConnectorSync — incompleteCoverage surfaces a coverage-degrade signal (16.4 · §8)", () => {
+  it("mints a coverage-degrade signal on an advanced pass while STILL committing the page — spec(§8)", async () => {
+    const cursors = new InMemoryConnectorCursors();
+    const port = scriptedPort("drive", [
+      ok({ records: [rec("r1", "h1")], nextCursor: "c1", done: true, incompleteCoverage: true }),
+    ]);
+    const onRecords: ConnectorSyncDeps["onRecords"] = async () => ok(undefined);
+
+    const res = await runConnectorSync(port, baseDeps(cursors, onRecords));
+
+    // fail-VISIBLE, NOT fail-closed: the partial page's records committed + cursor moved.
+    expect(res.status).toBe<ConnectorSyncResult["status"]>("advanced");
+    expect(res.processed).toBe(1);
+    expect(res.cursor).toBe("c1");
+    // …AND the coverage-degrade signal is surfaced (a partial ingest is announced).
+    expect(res.healthSignal).toBeDefined();
+    expect(res.healthSignal?.failureClass).toBe("sync_lagging");
+    expect(res.healthSignal?.subjectRef).toContain("drive");
+  });
+
+  it("emits NO health signal on a fully-complete pass (byte-equivalent) — spec(§8)", async () => {
+    const cursors = new InMemoryConnectorCursors();
+    const port = scriptedPort("drive", [
+      ok({ records: [rec("r1", "h1")], nextCursor: "c1", done: true }),
+    ]);
+    const onRecords: ConnectorSyncDeps["onRecords"] = async () => ok(undefined);
+
+    const res = await runConnectorSync(port, baseDeps(cursors, onRecords));
+
+    expect(res.status).toBe<ConnectorSyncResult["status"]>("advanced");
+    expect(res.healthSignal).toBeUndefined();
+  });
+
+  it("does NOT mint a coverage signal when a partial page is HELD (onRecords fails, page uncommitted) — spec(§8)", async () => {
+    const cursors = new InMemoryConnectorCursors();
+    const port = scriptedPort("drive", [
+      ok({ records: [rec("r1", "h1")], nextCursor: "c1", done: true, incompleteCoverage: true }),
+    ]);
+    // onRecords fails → the page is HELD (uncommitted, will be re-fetched). Its partiality
+    // must NOT be announced yet — the coverage flag is only counted AFTER a page commits.
+    const onRecords: ConnectorSyncDeps["onRecords"] = async () =>
+      err({ code: "downstream_rejected", message: "sink refused" });
+
+    const res = await runConnectorSync(port, baseDeps(cursors, onRecords));
+
+    expect(res.status).toBe<ConnectorSyncResult["status"]>("held");
+    expect(res.healthSignal).toBeUndefined();
+  });
+
+  it("keeps the coverage signal STICKY across pages — an earlier partial page still degrades a later complete page — spec(§8)", async () => {
+    const cursors = new InMemoryConnectorCursors();
+    const port = scriptedPort("drive", [
+      ok({ records: [rec("r1", "h1")], nextCursor: "c1", done: false, incompleteCoverage: true }),
+      ok({ records: [rec("r2", "h2")], nextCursor: "c2", done: true }),
+    ]);
+    const onRecords: ConnectorSyncDeps["onRecords"] = async () => ok(undefined);
+
+    const res = await runConnectorSync(port, baseDeps(cursors, onRecords));
+
+    expect(res.status).toBe<ConnectorSyncResult["status"]>("advanced");
+    expect(res.processed).toBe(2);
+    expect(res.healthSignal?.failureClass).toBe("sync_lagging");
+  });
+});

@@ -127,8 +127,9 @@ export async function extractFileSource(
     // Fail-closed on an empty / whitespace-only / MALFORMED extracted text — never emit
     // a contentless candidate (safety rules 2/6). An unextractable / image-only file
     // resolves `ok` with a null/absent text; that is a fault, not a silent success
-    // (PDF/doc parsing is the downstream ModelProviderPort concern), so the shape check
-    // lives alongside the emptiness check.
+    // (deterministic PDF/doc TEXT extraction now lives in the fs transport (16.5); the
+    // downstream ModelProviderPort concern is only the summarize/enrichment of that text),
+    // so the shape check lives alongside the emptiness check.
     if (typeof file?.text !== "string" || file.text.trim().length === 0) {
       return err({ code: "empty_content", message: "file extraction returned empty or malformed extracted text" });
     }

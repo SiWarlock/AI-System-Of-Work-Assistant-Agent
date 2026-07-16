@@ -99,11 +99,18 @@ function driveMapPage(json: unknown): ConnectorTransportResult {
     items.push({ id, hash: driveContentHash(file, id), raw: entry });
   }
   const nextCursor = driveNextCursor((json as { nextPageToken?: unknown }).nextPageToken);
+  // COVERAGE-DEGRADE (16.4, closes G29): Drive's `incompleteSearch: true` means the query
+  // did NOT reach all corpora, so this page is a PARTIAL view. Surface it fail-VISIBLE — the
+  // records above are KEPT (never dropped); the gateway mints a coverage-degrade signal. A
+  // strict `=== true` check: any non-`true` (false / absent / malformed) ⇒ full coverage,
+  // byte-equivalent to today.
+  const incompleteCoverage = (json as { incompleteSearch?: unknown }).incompleteSearch === true;
   return {
     ok: true,
     items,
     done: nextCursor === undefined,
     ...(nextCursor !== undefined ? { nextCursor } : {}),
+    ...(incompleteCoverage ? { incompleteCoverage: true } : {}),
   };
 }
 

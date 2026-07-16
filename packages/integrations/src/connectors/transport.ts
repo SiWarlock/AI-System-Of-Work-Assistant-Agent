@@ -31,6 +31,14 @@ export interface TransportPage {
   readonly items: readonly TransportItem[];
   readonly nextCursor?: string;
   readonly done: boolean;
+  /**
+   * COVERAGE-DEGRADE flag (16.4): the page is a SUCCESS but the underlying query did
+   * NOT cover the full corpus (e.g. Drive's `incompleteSearch: true`) — the ingested set
+   * is PARTIAL. The records are kept (fail-VISIBLE, never fail-closed); the gateway mints
+   * a coverage-degrade health signal so a partial ingest is never mistaken for complete.
+   * Absent ⇒ full coverage (byte-equivalent to a connector that never reports it).
+   */
+  readonly incompleteCoverage?: boolean;
 }
 
 /**

@@ -22,8 +22,17 @@
 //   • BOUNDED READ — a file whose size exceeds `maxBytes` (default {@link MAX_FILE_BYTES},
 //     ample for a Markdown/text vault) is rejected `unknown`, never read into an unbounded
 //     buffer (a defensive robustness cap; the size is read from stat before the read).
-//   • TEXT-ONLY — a NUL byte in the buffer ⇒ binary ⇒ `unknown` (no garbage text emitted);
-//     PDF/doc parsing stays a deferred downstream (ModelProviderPort) concern.
+//   • BINARY PARSING (16.4/16.5) — a PDF (by the `%PDF-` magic) or any other NUL-binary is
+//     handed to the injected `parseBinary` extractor (default: a lazy-imported `unpdf` /
+//     PDF.js text extraction — pure-JS, offline, no native deps). A PDF's REAL text is
+//     emitted; a non-PDF binary, or a PDF with no extractable text (image-only / encrypted),
+//     returns `null` from the extractor ⇒ `unknown` reject (no garbage text emitted). The
+//     structured summarize/enrichment of that text stays a downstream ModelProviderPort
+//     concern; ONLY deterministic text extraction lives here. (Magic-sniff caveat: a plain
+//     UTF-8 file whose first 5 bytes are literally `%PDF-` routes to the parse path — it IS
+//     a PDF header — so a non-PDF text file with that exact prefix rejects rather than
+//     reading as text. Pathological; accepted.) The EXTRACTED text is bounded by
+//     {@link MAX_EXTRACTED_TEXT_CHARS} against compression-bomb amplification.
 //   • FAIL CLOSED (§16) — a missing file (ENOENT), a non-file (a directory), a bad/missing
 //     root, or ANY thrown fs error becomes a typed FileExtractResult; the transport NEVER
 //     throws across the seam. Emptiness is NOT decided here — the transport returns the
@@ -46,6 +55,66 @@ import type { FileExtractResult, FileExtractTransport } from "./file-source";
  * unbounded buffer. Override per transport via `createFileReadTransport(root, { maxBytes })`.
  */
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Defensive cap on EXTRACTED binary text (16.5). `MAX_FILE_BYTES` bounds the INPUT, but a
+ * compression-bomb PDF (heavily-deflated text streams within the input cap) can amplify to a
+ * far larger extracted string. Reject (fail-closed, mirroring the input cap) rather than let
+ * an unbounded string flow downstream into candidate-data / SourceEnvelope.body / Markdown.
+ */
+export const MAX_EXTRACTED_TEXT_CHARS = 32 * 1024 * 1024;
+
+/**
+ * A binary/document text extractor (16.5): given the raw bytes of a binary file (a PDF, or
+ * any NUL-binary) + light hints, return its extracted plain text, or `null` when it has no
+ * extractable text (a non-PDF binary, or a scanned/image-only/encrypted PDF). INJECTED so
+ * the transport's routing + root-confinement stay deterministically testable with a fake;
+ * production uses {@link defaultBinaryTextExtractor}. It should NEVER throw — a parse failure
+ * is `null`, not an exception (and the transport defends the seam regardless).
+ */
+export type BinaryTextExtractor = (
+  bytes: Uint8Array,
+  hints: { readonly filename: string; readonly mime?: string },
+) => Promise<string | null>;
+
+/** True IFF the buffer begins with the `%PDF-` magic (a PDF, regardless of NUL content). */
+function looksLikePdf(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= 5 &&
+    bytes[0] === 0x25 && // %
+    bytes[1] === 0x50 && // P
+    bytes[2] === 0x44 && // D
+    bytes[3] === 0x46 && // F
+    bytes[4] === 0x2d //   -
+  );
+}
+
+/**
+ * The production default {@link BinaryTextExtractor}: deterministic PDF text extraction via
+ * `unpdf` (a pure-JS, offline serverless build of PDF.js — no network, no native deps),
+ * LAZY-imported so the module stays light + sandbox-safe until a binary is actually parsed.
+ * ONLY PDFs are handled here (any other binary ⇒ `null`, rejected typed by the caller); a
+ * malformed / image-only / encrypted PDF that yields no text also returns `null`. Never
+ * throws (a parse fault becomes `null`).
+ */
+export const defaultBinaryTextExtractor: BinaryTextExtractor = async (bytes) => {
+  if (!looksLikePdf(bytes)) return null; // not a PDF ⇒ no deterministic text path here
+  try {
+    const { getDocumentProxy, extractText } = await import("unpdf");
+    // SECURITY: pin `isEvalSupported: false` in OUR call rather than inheriting unpdf's
+    // serverless default — closes the CVE-2024-4367-class eval-execution vector on this
+    // UNTRUSTED-bytes seam explicitly, so a future unpdf default-flip or a local refactor
+    // can't silently re-open it. Copy into a fresh Uint8Array — decouples pdf.js from a
+    // Buffer's shared/pooled backing.
+    const pdf = await getDocumentProxy(Uint8Array.from(bytes), { isEvalSupported: false });
+    const { text } = await extractText(pdf, { mergePages: true });
+    const merged = Array.isArray(text) ? text.join("\n") : typeof text === "string" ? text : "";
+    return merged.trim().length > 0 ? merged : null;
+  } catch {
+    // A malformed / encrypted / unsupported PDF ⇒ no extractable text (never a throw).
+    return null;
+  }
+};
 
 /**
  * The fs errno code (e.g. "ENOENT" / "EACCES" / "ELOOP") off a thrown fs error, when
@@ -82,9 +151,12 @@ export function isContainedUnder(realRoot: string, realTarget: string): boolean 
  */
 export function createFileReadTransport(
   root: string,
-  opts: { readonly maxBytes?: number } = {},
+  opts: { readonly maxBytes?: number; readonly parseBinary?: BinaryTextExtractor } = {},
 ): FileExtractTransport {
   const maxBytes = opts.maxBytes ?? MAX_FILE_BYTES;
+  // The binary/PDF extractor (16.5) — defaults to the real `unpdf`-backed one; tests inject
+  // a deterministic fake. Runs ONLY on already-root-contained bytes (see below).
+  const parseBinary = opts.parseBinary ?? defaultBinaryTextExtractor;
   return async (req): Promise<FileExtractResult> => {
     try {
       // Resolve the root to a REAL absolute path. A missing / not-a-directory root throws
@@ -108,9 +180,26 @@ export function createFileReadTransport(
       }
       // Read the RESOLVED realTarget (not the raw request) — shrinks the check→read TOCTOU.
       const buf = await readFile(realTarget);
-      // Text-only honesty: a NUL byte ⇒ binary ⇒ do NOT emit garbage text.
-      if (buf.includes(0)) {
-        return { ok: false, code: "unknown", message: "binary (non-UTF-8) content" };
+      // BINARY PARSING (16.5): a PDF (by `%PDF-` magic) or any NUL-binary is not UTF-8 text —
+      // hand the ALREADY-ROOT-CONTAINED bytes (containment was asserted above) to the injected
+      // extractor. The parse runs only on the resolved in-root `realTarget`, so it does NOT
+      // widen the read surface; the `filename` hint is the resolved basename, never the raw
+      // request. A PDF's real text is emitted; a non-PDF binary, or a PDF with no extractable
+      // text (image-only / encrypted), returns `null` ⇒ typed reject (no garbage text).
+      if (looksLikePdf(buf) || buf.includes(0)) {
+        const extracted = await parseBinary(buf, {
+          filename: basename(realTarget),
+          ...(req.mime !== undefined ? { mime: req.mime } : {}),
+        });
+        if (typeof extracted === "string" && extracted.trim().length > 0) {
+          // Bound the EXTRACTED text (compression-bomb amplification) before it flows
+          // downstream — reject fail-closed, consistent with the input `maxBytes` cap.
+          if (extracted.length > MAX_EXTRACTED_TEXT_CHARS) {
+            return { ok: false, code: "unknown", message: "binary content: extracted text exceeds the cap" };
+          }
+          return { ok: true, file: { path: realTarget, filename: basename(realTarget), text: extracted } };
+        }
+        return { ok: false, code: "unknown", message: "binary content: no extractable text" };
       }
       const text = buf.toString("utf8");
       return {

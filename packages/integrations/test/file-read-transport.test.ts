@@ -138,6 +138,137 @@ describe("createFileReadTransport — real ROOT-confined node:fs read", () => {
     expect(res.code).toBe("unknown");
   });
 
+  // ── 16.5 — PDF/doc binary parsing (closes G31) ──────────────────────────────
+  // The transport gains a binary-parse path: a PDF/doc (detected by the `%PDF-` magic,
+  // or any NUL-binary) is handed to an injected `parseBinary` extractor and its REAL
+  // extracted text is emitted — instead of the blanket binary reject. The parse path is
+  // ADDITIVE: it must NOT weaken root-confinement (an out-of-root file is rejected BEFORE
+  // any read/parse), and a genuinely-unparseable binary (parser → null) still rejects typed.
+
+  // A well-formed minimal single-page PDF with `text` in its content stream, correct
+  // xref byte-offsets so pdf.js (via unpdf) extracts it. Pure ASCII (no NUL) — so the
+  // transport must detect PDFs by the `%PDF-` magic, not by a NUL sniff.
+  const buildMinimalPdf = (text: string): Buffer => {
+    const streamContent = `BT /F1 24 Tf 72 720 Td (${text}) Tj ET`;
+    const objects: string[] = [
+      `<< /Type /Catalog /Pages 2 0 R >>`,
+      `<< /Type /Pages /Kids [3 0 R] /Count 1 >>`,
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>`,
+      `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>`,
+      `<< /Length ${Buffer.byteLength(streamContent, "latin1")} >>\nstream\n${streamContent}\nendstream`,
+    ];
+    let body = "%PDF-1.4\n";
+    const offsets: number[] = [];
+    objects.forEach((obj, i) => {
+      offsets.push(Buffer.byteLength(body, "latin1"));
+      body += `${i + 1} 0 obj\n${obj}\nendobj\n`;
+    });
+    const xrefStart = Buffer.byteLength(body, "latin1");
+    let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    for (const off of offsets) xref += `${off.toString().padStart(10, "0")} 00000 n \n`;
+    const trailer = `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+    return Buffer.from(body + xref + trailer, "latin1");
+  };
+
+  // A fake binary extractor with a call-log — proves the transport ROUTES binary bytes to
+  // the parser deterministically (no dependency on the real pdf lib in the routing tests).
+  const fakeExtractor = (result: string | null): { fn: (b: Uint8Array, h: { filename: string; mime?: string }) => Promise<string | null>; calls: Array<{ len: number; filename: string }> } => {
+    const calls: Array<{ len: number; filename: string }> = [];
+    return {
+      calls,
+      fn: async (b, h) => {
+        calls.push({ len: b.length, filename: h.filename });
+        return result;
+      },
+    };
+  };
+
+  it("pdf_file_extracts_real_text: a PDF routes to the parser and emits its extracted text — spec(§9)", async () => {
+    await writeFile(join(root, "doc.pdf"), buildMinimalPdf("Hello SoW"));
+    const parser = fakeExtractor("Hello SoW"); // deterministic parser — routing under test
+    const transport = createFileReadTransport(root, { parseBinary: parser.fn });
+
+    const res = await transport({ path: "doc.pdf" });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.file.text).toBe("Hello SoW");
+    expect(res.file.filename).toBe("doc.pdf");
+    // the parser saw real in-root bytes (a whole PDF, not zero bytes)
+    expect(parser.calls).toHaveLength(1);
+    expect(parser.calls[0]!.len).toBeGreaterThan(20);
+  });
+
+  it("pdf_file_extracts_real_text (real unpdf default): extracts REAL text, not raw PDF source — spec(§9)", async () => {
+    await writeFile(join(root, "real.pdf"), buildMinimalPdf("Hello SoW"));
+    const transport = createFileReadTransport(root); // the REAL default extractor (unpdf)
+
+    const res = await transport({ path: "real.pdf" });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.file.text).toContain("Hello SoW");
+    // PROOF it was PARSED, not read as raw text: raw PDF source would carry these tokens.
+    expect(res.file.text).not.toContain("endobj");
+    expect(res.file.text).not.toContain("/Type /Catalog");
+  });
+
+  it("nul_only_file_still_rejects: a NUL-only non-PDF binary still rejects unknown (additive, not accept-all) — spec(§16)", async () => {
+    await writeFile(join(root, "bin.dat"), Buffer.from([0x41, 0x00, 0x42])); // "A\0B", not a PDF
+    const transport = createFileReadTransport(root); // real default — unpdf rejects a non-PDF
+
+    const res = await transport({ path: "bin.dat" });
+
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.code).toBe("unknown");
+    expect("file" in res).toBe(false);
+  });
+
+  it("unparseable_pdf_rejects: a PDF the parser cannot extract (→ null) rejects unknown, never garbage/throw — spec(§16)", async () => {
+    await writeFile(join(root, "image-only.pdf"), buildMinimalPdf("x"));
+    const parser = fakeExtractor(null); // simulates an image-only / unextractable PDF
+    const transport = createFileReadTransport(root, { parseBinary: parser.fn });
+
+    const res = await transport({ path: "image-only.pdf" });
+
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.code).toBe("unknown");
+    expect(parser.calls).toHaveLength(1); // it TRIED to parse, then failed closed
+  });
+
+  it("extracted_text_over_cap_rejects: a compression-bomb-style over-cap extraction is rejected fail-closed — spec(§16)", async () => {
+    await writeFile(join(root, "bomb.pdf"), buildMinimalPdf("x"));
+    // A parser that amplifies far beyond MAX_EXTRACTED_TEXT_CHARS (32 MiB) — simulating a
+    // deflate-bomb PDF within the input cap. The transport must bound the DOWNSTREAM flow.
+    const huge = "a".repeat(32 * 1024 * 1024 + 1);
+    const transport = createFileReadTransport(root, { parseBinary: async () => huge });
+
+    const res = await transport({ path: "bomb.pdf" });
+
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.code).toBe("unknown");
+    expect(res.message).toContain("cap");
+  });
+
+  it("path_escape_still_rejects_root_confined: an out-of-root PDF rejects BEFORE any read/parse — spec(§9)", async () => {
+    // A REAL PDF planted OUTSIDE root. The binary-parse path must NOT widen the read
+    // surface: containment is asserted first, so the parser is NEVER handed these bytes.
+    await writeFile(join(base, "secret.pdf"), buildMinimalPdf("TOP SECRET"));
+    const parser = fakeExtractor("SHOULD NEVER RUN");
+    const transport = createFileReadTransport(root, { parseBinary: parser.fn });
+
+    const res = await transport({ path: "../secret.pdf" });
+
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.code).toBe("unreachable"); // root-confinement guard unchanged
+    expect("file" in res).toBe(false);
+    expect(parser.calls).toHaveLength(0); // no bytes ever reached the parser
+  });
+
   it("returns empty text for an empty file → the adapter fails it closed as empty_content — spec(§16)", async () => {
     await writeFile(join(root, "empty.md"), "", "utf8");
     const transport = createFileReadTransport(root);

@@ -22,6 +22,12 @@ export interface ConnectorFetchPage {
   readonly records: readonly ConnectorRecord[];
   readonly nextCursor?: string;
   readonly done: boolean;
+  /**
+   * COVERAGE-DEGRADE flag (16.4): the fetched page is a SUCCESS but the query did NOT
+   * cover the full corpus (partial ingest). The gateway surfaces a coverage-degrade health
+   * signal WITHOUT dropping the records (fail-VISIBLE). Absent ⇒ full coverage.
+   */
+  readonly incompleteCoverage?: boolean;
 }
 
 /**

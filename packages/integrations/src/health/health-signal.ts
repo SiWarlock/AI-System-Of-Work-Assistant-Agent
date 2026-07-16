@@ -11,10 +11,12 @@
 // `redactString` (§16 / safety rule 7) so raw fetched/written content or a
 // credential never reaches a health sink.
 //
-// arch_gap (FLAGGED as carry-forward): there is no dedicated `outbox_blocked` /
-// `write_through_blocked` member in the frozen `FailureClass` enum — a blocked
-// outbox drain reuses `write_through_failed`. WRITE_THROUGH_BLOCKED_HEALTH_CLASS
-// is that reuse alias, NOT a new enum member.
+// arch_gap (FLAGGED as carry-forward): the frozen `FailureClass` enum has no dedicated
+// `outbox_blocked` / `write_through_blocked` member (a blocked outbox drain reuses
+// `write_through_failed` via WRITE_THROUGH_BLOCKED_HEALTH_CLASS) NOR a `coverage_degraded`
+// member (a partial-coverage read reuses `sync_lagging` via
+// CONNECTOR_COVERAGE_DEGRADED_HEALTH_CLASS, 16.4). Both are reuse aliases, NOT new enum
+// members (L25: never expand the frozen enum from a leaf).
 import type { FailureClass } from "@sow/contracts";
 import { redactString } from "../redaction/gateway-log-redaction";
 
@@ -22,6 +24,16 @@ import { redactString } from "../redaction/gateway-log-redaction";
 
 /** A connector read could not reach its external system (§8 read path). */
 export const CONNECTOR_UNREACHABLE_HEALTH_CLASS: FailureClass = "connector_unreachable";
+
+/**
+ * A connector read SUCCEEDED but with PARTIAL corpus coverage (16.4) — e.g. Drive's
+ * `incompleteSearch: true`: the ingested set is incomplete, so it is behind full coverage.
+ * arch_gap: there is no dedicated `coverage_degraded` member in the frozen `FailureClass`
+ * enum, so this reuses `sync_lagging` (the least-wrong "the ingested set is behind") —
+ * exactly the `WRITE_THROUGH_BLOCKED_HEALTH_CLASS` reuse precedent (L25: never expand the
+ * frozen enum from a leaf). A dedicated member is a FLAGGED carry-forward.
+ */
+export const CONNECTOR_COVERAGE_DEGRADED_HEALTH_CLASS: FailureClass = "sync_lagging";
 
 /**
  * A tool write / outbox drain is blocked (target unreachable, hold-through-outage).
@@ -71,6 +83,28 @@ export function buildConnectorHealthSignal(input: {
     subjectRef: input.connectorId,
     severity: DEFAULT_SEVERITY,
     message: redactString(`connector ${input.connectorId} unreachable: ${input.reason}`),
+    refs: [input.workspaceId],
+  };
+}
+
+/**
+ * Build the health signal for a coverage-degraded connector read (16.4) — a SUCCESSFUL
+ * fetch whose query did not cover the full corpus (e.g. Drive `incompleteSearch`). Mirrors
+ * `buildConnectorHealthSignal`: `subjectRef` is the connectorId (dedupe subject), `refs`
+ * carries the workspaceId, the (redacted) reason is embedded. Uses the coverage-degrade
+ * class (`sync_lagging` reuse) so it dedupes distinctly from an unreachable signal for the
+ * same connector. Pure/clock-free.
+ */
+export function buildConnectorCoverageDegradeSignal(input: {
+  connectorId: string;
+  workspaceId: string;
+  reason: string;
+}): GatewayHealthSignal {
+  return {
+    failureClass: CONNECTOR_COVERAGE_DEGRADED_HEALTH_CLASS,
+    subjectRef: input.connectorId,
+    severity: DEFAULT_SEVERITY,
+    message: redactString(`connector ${input.connectorId} coverage degraded: ${input.reason}`),
     refs: [input.workspaceId],
   };
 }
