@@ -48,4 +48,4 @@ The `ApiServerDeps` gained `onboarding`/`projectRegistry`/`connectorConfig` as R
 
 Full worker suite green (1415 tests at 14.2 close), `@sow/db` 397, `@sow/workflows` 549; repo-wide turbo typecheck 20/20 + lint 11/11 at every slice close. Migrations additive (0007, 0008), both dialects; lifecycle `applied` 6→9.
 
-**Handoff:** successor `worker-impl2` picks up **14.7** (cross-workspace links — the sanctioned WS-8 cross-read path; a separate safety slice). This session cycled at round close.
+**Handoff:** successor `worker-impl2` picks up **14.7** (cross-workspace links — the sanctioned WS-8 cross-read path; a separate safety slice). This session cycled at round close. **Successor session:** [082-2026-07-15-worker-impl2-phase14-15-spine.md](082-2026-07-15-worker-impl2-phase14-15-spine.md).
