@@ -27,7 +27,12 @@ import { createWsStreamTransport } from "./ws-transport";
 import { createDrillDown, type DrillResult } from "./drilldown";
 import { createAskCopilot, type AskResult } from "./copilot-ask";
 import { createApprovalDecision, type ApprovalDecision, type DecisionResult } from "./approval-decision";
-import { createTriageDisposition, type TriageDisposition, type DispositionResult } from "./triage-disposition";
+import {
+  createTriageDisposition,
+  type TriageDisposition,
+  type DispositionResult,
+  type RerouteTarget,
+} from "./triage-disposition";
 import { createOnboardWorkspace, type OnboardWorkspaceInput, type OnboardResult } from "./onboard-workspace";
 import { createPresetPreview, type PresetPreviewResult } from "./preset-preview";
 import {
@@ -55,8 +60,15 @@ export interface StartLiveHandle {
   readonly askCopilot: (workspaceId: string, question: string) => Promise<AskResult>;
   /** Decide an approval (§9.8, wired to command.decideApproval, mac channel); fails closed to {ok:false}. */
   readonly decideApproval: (approvalId: string, decision: ApprovalDecision) => Promise<DecisionResult>;
-  /** Dispose a triage item (§9.7, wired to command.disposeTriage, deterministic key); fails closed to {ok:false}. */
-  readonly disposeTriage: (sourceId: string, disposition: TriageDisposition) => Promise<DispositionResult>;
+  /**
+   * Dispose a triage item (§9.7, wired to command.disposeTriage, deterministic key); fails closed to
+   * {ok:false}. A `reroute` disposition (15.8) carries the explicit registry-picked `target`.
+   */
+  readonly disposeTriage: (
+    sourceId: string,
+    disposition: TriageDisposition,
+    target?: RerouteTarget,
+  ) => Promise<DispositionResult>;
   /** Onboard a workspace (§19.1 / 14.1, wired to onboarding.createWorkspace); fails closed to {ok:false}. */
   readonly onboardWorkspace: (input: OnboardWorkspaceInput) => Promise<OnboardResult>;
   /** Preview a preset's provisioning profile (§14.5, wired to presetProfiles.preview); fails closed to {ok:false}. */

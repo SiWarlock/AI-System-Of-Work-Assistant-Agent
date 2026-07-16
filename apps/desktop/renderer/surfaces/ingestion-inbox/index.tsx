@@ -25,7 +25,8 @@
 
 import { useState, type ReactElement } from "react";
 import type { UiSafeIngestionItem } from "@sow/contracts/api/ui-safe";
-import type { TriageDisposition } from "../../lib/triage-disposition";
+import type { TriageDisposition, RerouteTarget } from "../../lib/triage-disposition";
+import type { ReroutePickerOptions } from "../../lib/reroute-picker";
 
 export interface IngestionInboxProps {
   /** The active workspace scope's ingestion inbox (empty under Global; empty-until-producer). */
@@ -35,8 +36,16 @@ export interface IngestionInboxProps {
    * render DISABLED (a disposition can't be issued offline). Returns whether it succeeded: on
    * `true` the parent has drained the item (store removal) and the card unmounts; on `false` the
    * card shows a non-blocking error affordance and the item REMAINS (fail closed — no data loss).
+   * A `reroute` disposition (15.8) carries the explicit registry-picked `target`.
    */
-  readonly onDispose?: (sourceId: string, disposition: TriageDisposition) => Promise<boolean>;
+  readonly onDispose?: (sourceId: string, disposition: TriageDisposition, target?: RerouteTarget) => Promise<boolean>;
+  /**
+   * The registry-sourced reroute picker options (15.8 — workspaces from the onboarded set, projects
+   * from the current scope's read model). ABSENT ⇒ the reroute control is not offered (the renderer
+   * never invents a target; there is nothing to select from). Present ⇒ each card exposes a reroute
+   * control whose picker lists ONLY these options.
+   */
+  readonly reroute?: ReroutePickerOptions;
 }
 
 /** The dispositions offered per card — accept (re-enter) vs reject (discard). The worker re-validates. */
@@ -49,23 +58,57 @@ const DISPOSITIONS: readonly { readonly disposition: TriageDisposition; readonly
 function IngestionCard({
   item,
   onDispose,
+  reroute,
 }: {
   readonly item: UiSafeIngestionItem;
-  readonly onDispose?: (sourceId: string, disposition: TriageDisposition) => Promise<boolean>;
+  readonly onDispose?: (sourceId: string, disposition: TriageDisposition, target?: RerouteTarget) => Promise<boolean>;
+  readonly reroute?: ReroutePickerOptions;
 }): ReactElement {
   const disabled = onDispose === undefined;
-  // Transient per-card error flag — the ONLY local state (list membership is store-driven). Set on a
-  // failed disposition (the item stays); cleared when a new disposition is attempted.
+  // Transient per-card error flag — the ONLY store-independent list flag. Set on a failed
+  // disposition (the item stays); cleared when a new disposition is attempted.
   const [failed, setFailed] = useState(false);
+  // Reroute control local state (15.8): the expand toggle + the two registry-picked selections.
+  // "" ⇒ nothing selected — the fail-closed default a submit is guarded against (REQ-F-017 edge).
+  const [rerouting, setRerouting] = useState(false);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState("");
 
-  const dispose = (disposition: TriageDisposition): void => {
-    if (onDispose === undefined) return;
+  // Share the ok-drains / fail-retains handling across accept/reject/reroute. On ok the parent
+  // drains the item (this card unmounts); on a failed disposition the item REMAINS with an error.
+  const runDispose = (p: Promise<boolean>): void => {
     setFailed(false);
-    void onDispose(item.sourceId, disposition).then((ok) => {
-      // On ok the parent drains the item (this card unmounts) — nothing to set here. On a failed
-      // disposition the item REMAINS; surface the non-blocking error affordance.
+    void p.then((ok) => {
       if (!ok) setFailed(true);
     });
+  };
+
+  // Legacy accept/reject: a 2-arg call, byte-equivalent to today (no target ever passed).
+  const dispose = (disposition: TriageDisposition): void => {
+    if (onDispose === undefined) return;
+    runDispose(onDispose(item.sourceId, disposition));
+  };
+
+  // The project sub-picker is offered ONLY when the picked target IS the current scope's workspace
+  // (the only workspace whose projects the renderer holds — WS-8). Rerouting elsewhere sends the
+  // workspace alone; the worker validates/assigns the project on its side.
+  const canPickProject =
+    reroute !== undefined && selectedWorkspaceId !== "" && selectedWorkspaceId === reroute.projectsWorkspaceId;
+
+  const onWorkspaceChange = (workspaceId: string): void => {
+    setSelectedWorkspaceId(workspaceId);
+    // A project selection is only valid for the current-scope workspace — drop it on any other pick.
+    if (reroute === undefined || workspaceId !== reroute.projectsWorkspaceId) setSelectedProjectId("");
+  };
+
+  const submitReroute = (): void => {
+    // REQ-F-017 at the edge: never dispatch a reroute without an explicit, registry-picked workspace.
+    if (onDispose === undefined || selectedWorkspaceId === "") return;
+    const target: RerouteTarget =
+      canPickProject && selectedProjectId !== ""
+        ? { workspaceId: selectedWorkspaceId, projectId: selectedProjectId }
+        : { workspaceId: selectedWorkspaceId };
+    runDispose(onDispose(item.sourceId, "reroute", target));
   };
 
   return (
@@ -93,7 +136,64 @@ function IngestionCard({
             {d.label}
           </button>
         ))}
+        {reroute !== undefined ? (
+          <button
+            type="button"
+            className="sow-ingestion-btn sow-ingestion-btn--reroute"
+            disabled={disabled}
+            aria-expanded={rerouting}
+            onClick={() => setRerouting((v) => !v)}
+            title={disabled ? "Connect the worker to reroute sources" : undefined}
+          >
+            Reroute
+          </button>
+        ) : null}
       </div>
+      {reroute !== undefined && rerouting && !disabled ? (
+        <div className="sow-ingestion-reroute" role="group" aria-label="Reroute this source">
+          <label className="sow-reroute-field">
+            <span className="sow-reroute-label">Reroute to workspace</span>
+            <select
+              className="sow-reroute-select"
+              value={selectedWorkspaceId}
+              onChange={(e) => onWorkspaceChange(e.target.value)}
+            >
+              <option value="">Select workspace…</option>
+              {reroute.workspaces.map((w) => (
+                <option key={w.workspaceId} value={w.workspaceId}>
+                  {w.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {canPickProject ? (
+            <label className="sow-reroute-field">
+              <span className="sow-reroute-label">Assign to project</span>
+              <select
+                className="sow-reroute-select"
+                value={selectedProjectId}
+                onChange={(e) => setSelectedProjectId(e.target.value)}
+              >
+                <option value="">No project</option>
+                {reroute.projects.map((p) => (
+                  <option key={p.projectId} value={p.projectId}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <button
+            type="button"
+            className="sow-ingestion-btn sow-ingestion-btn--reroute-confirm"
+            // REQ-F-017 at the edge: submit is inert until a workspace is explicitly chosen.
+            disabled={selectedWorkspaceId === ""}
+            onClick={submitReroute}
+          >
+            Confirm reroute
+          </button>
+        </div>
+      ) : null}
       {failed ? (
         <div className="sow-ingestion-error" role="alert">
           Couldn&apos;t dispose — try again
@@ -104,7 +204,7 @@ function IngestionCard({
 }
 
 export function IngestionInbox(props: IngestionInboxProps): ReactElement {
-  const { items, onDispose } = props;
+  const { items, onDispose, reroute } = props;
   const empty = items.length === 0;
 
   return (
@@ -125,7 +225,7 @@ export function IngestionInbox(props: IngestionInboxProps): ReactElement {
       ) : (
         <ul className="sow-ingestion-list" role="list" aria-label="Parked sources awaiting triage">
           {items.map((it) => (
-            <IngestionCard key={it.sourceId} item={it} onDispose={onDispose} />
+            <IngestionCard key={it.sourceId} item={it} onDispose={onDispose} reroute={reroute} />
           ))}
         </ul>
       )}

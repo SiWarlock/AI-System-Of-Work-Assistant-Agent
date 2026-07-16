@@ -244,3 +244,100 @@ describe("IngestionInbox — triage-resolution ACTION UI (§9.7)", () => {
     expect(document.querySelector('[data-source-id="s1"]')).toBeTruthy(); // item REMAINS (nothing dropped)
   });
 });
+
+// ── 15.8 reroute / assign-project ACTION UI (§19.2 routing-resolution) ────────
+const rerouteOpts = {
+  workspaces: [
+    { workspaceId: "ws_a", label: "Acme" },
+    { workspaceId: "ws_b", label: "Side" },
+  ],
+  projects: [{ projectId: "p_1", label: "Redesign" }],
+  projectsWorkspaceId: "ws_a", // the projects belong to the current scope's workspace (ws_a)
+} as const;
+
+const cardOf = (sourceId: string): HTMLElement =>
+  document.querySelector(`[data-source-id="${sourceId}"]`) as HTMLElement;
+
+describe("IngestionInbox — reroute / assign-project ACTION UI (15.8)", () => {
+  it("reroute_control_present — a reroute affordance renders alongside accept/reject", () => {
+    // spec(§19.2) the Inbox item exposes a reroute/assign-project control (the human routing-resolution).
+    render(<IngestionInbox items={[item("s1")]} onDispose={vi.fn(async () => true)} reroute={rerouteOpts} />);
+    expect(within(cardOf("s1")).getByRole("button", { name: "Reroute" })).toBeTruthy();
+  });
+
+  it("no_reroute_control_without_options — a card with no reroute options shows only accept/reject", () => {
+    // spec(§19.2) reroute needs registry options; absent them the control is not offered (no invented target).
+    render(<IngestionInbox items={[item("s1")]} onDispose={vi.fn(async () => true)} />);
+    expect(within(cardOf("s1")).queryByRole("button", { name: "Reroute" })).toBeNull();
+  });
+
+  it("reroute_picker_options_come_from_the_registry — a SELECT of the registry workspaces, never a free-text field", () => {
+    // spec(§19.2) registry-sourced picker: the user selects a real workspace, never types a raw target.
+    render(<IngestionInbox items={[item("s1")]} onDispose={vi.fn(async () => true)} reroute={rerouteOpts} />);
+    const card = cardOf("s1");
+    fireEvent.click(within(card).getByRole("button", { name: "Reroute" }));
+    const wsSelect = within(card).getByLabelText("Reroute to workspace") as HTMLSelectElement;
+    expect(wsSelect.tagName).toBe("SELECT");
+    expect(within(wsSelect).getByRole("option", { name: "Acme" })).toBeTruthy();
+    expect(within(wsSelect).getByRole("option", { name: "Side" })).toBeTruthy();
+    expect(card.querySelector('input[type="text"]')).toBeNull(); // no free-text target
+  });
+
+  it("reroute_submit_blocked_without_a_selected_workspace — REQ-F-017 at the edge (no target-less reroute)", () => {
+    // spec(REQ-F-017) submitting with no workspace chosen is prevented client-side — the guard the park exists for.
+    const onDispose = vi.fn(async () => true);
+    render(<IngestionInbox items={[item("s1")]} onDispose={onDispose} reroute={rerouteOpts} />);
+    const card = cardOf("s1");
+    fireEvent.click(within(card).getByRole("button", { name: "Reroute" }));
+    const confirm = within(card).getByRole("button", { name: "Confirm reroute" }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.click(confirm);
+    expect(onDispose).not.toHaveBeenCalled();
+  });
+
+  it("reroute_submit_dispatches_the_pinned_target — workspace (+ project) selected ⇒ onDispose(sourceId, 'reroute', target)", () => {
+    // spec(§19.2) a valid reroute dispatches the pinned {sourceId, disposition:'reroute', target} to the caller.
+    const onDispose = vi.fn(async () => true);
+    render(<IngestionInbox items={[item("s1")]} onDispose={onDispose} reroute={rerouteOpts} />);
+    const card = cardOf("s1");
+    fireEvent.click(within(card).getByRole("button", { name: "Reroute" }));
+    fireEvent.change(within(card).getByLabelText("Reroute to workspace"), { target: { value: "ws_a" } });
+    fireEvent.change(within(card).getByLabelText("Assign to project"), { target: { value: "p_1" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Confirm reroute" }));
+    expect(onDispose).toHaveBeenCalledWith("s1", "reroute", { workspaceId: "ws_a", projectId: "p_1" });
+  });
+
+  it("reroute_to_a_different_workspace_omits_project — a non-scope workspace hides the project picker, sends no projectId (WS-8 edge)", () => {
+    // spec(WS-8) we only hold the current scope's (ws_a) projects — a reroute to ws_b carries workspace only.
+    const onDispose = vi.fn(async () => true);
+    render(<IngestionInbox items={[item("s1")]} onDispose={onDispose} reroute={rerouteOpts} />);
+    const card = cardOf("s1");
+    fireEvent.click(within(card).getByRole("button", { name: "Reroute" }));
+    fireEvent.change(within(card).getByLabelText("Reroute to workspace"), { target: { value: "ws_b" } });
+    expect(within(card).queryByLabelText("Assign to project")).toBeNull();
+    fireEvent.click(within(card).getByRole("button", { name: "Confirm reroute" }));
+    expect(onDispose).toHaveBeenCalledWith("s1", "reroute", { workspaceId: "ws_b" });
+  });
+
+  it("reroute_switching_workspace_drops_a_stale_project — pick project under current scope, switch workspace ⇒ no stale projectId (WS-8)", () => {
+    // spec(WS-8) onWorkspaceChange resets a current-scope project selection — a reroute elsewhere can't
+    // carry a project that belongs to a different workspace (cross-workspace mis-bind defense).
+    const onDispose = vi.fn(async () => true);
+    render(<IngestionInbox items={[item("s1")]} onDispose={onDispose} reroute={rerouteOpts} />);
+    const card = cardOf("s1");
+    fireEvent.click(within(card).getByRole("button", { name: "Reroute" }));
+    fireEvent.change(within(card).getByLabelText("Reroute to workspace"), { target: { value: "ws_a" } });
+    fireEvent.change(within(card).getByLabelText("Assign to project"), { target: { value: "p_1" } });
+    fireEvent.change(within(card).getByLabelText("Reroute to workspace"), { target: { value: "ws_b" } });
+    expect(within(card).queryByLabelText("Assign to project")).toBeNull(); // sub-picker gone for the other ws
+    fireEvent.click(within(card).getByRole("button", { name: "Confirm reroute" }));
+    expect(onDispose).toHaveBeenCalledWith("s1", "reroute", { workspaceId: "ws_b" }); // NO stale projectId
+  });
+
+  it("reroute_control_disabled_without_a_live_worker — options present but no onDispose ⇒ the toggle is disabled (honest)", () => {
+    // spec(§16) mirror accept/reject: no worker ⇒ a disabled control, never a silently no-op reroute.
+    render(<IngestionInbox items={[item("s1")]} reroute={rerouteOpts} />);
+    const toggle = within(cardOf("s1")).getByRole("button", { name: "Reroute" }) as HTMLButtonElement;
+    expect(toggle.disabled).toBe(true);
+  });
+});

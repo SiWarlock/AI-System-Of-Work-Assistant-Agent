@@ -6,7 +6,11 @@
 // the reused key on ok, and folds a typed err OR any transport error to `{ ok: false }` so a
 // failed disposition surfaces nothing (fail-closed, §16 never-throw at the UI boundary).
 import { describe, it, expect, vi } from "vitest";
-import { createTriageDisposition, triageIdempotencyKey } from "../../renderer/lib/triage-disposition";
+import {
+  createTriageDisposition,
+  triageIdempotencyKey,
+  buildTriageMutationInput,
+} from "../../renderer/lib/triage-disposition";
 
 // A minimal fake tRPC client exposing only command.disposeTriage.mutate.
 function fakeClient(mutateImpl: (input: unknown) => Promise<unknown>): never {
@@ -71,5 +75,116 @@ describe("createTriageDisposition", () => {
     // spec(§16) defense-in-depth: a malformed/leaky result from a future server regression is DROPPED.
     const dispose = createTriageDisposition(fakeClient(() => Promise.resolve({ ok: true, value: {} })));
     expect((await dispose("src_1", "accept")).ok).toBe(false);
+  });
+});
+
+// ── 15.8 reroute payload builder (the deterministic renderer logic) ───────────
+describe("buildTriageMutationInput — reroute payload builder (15.8, REQ-F-017 at the edge)", () => {
+  it("reroute_submit_builds_pinned_command_payload — item + selected {workspaceId, projectId} ⇒ the pinned shape", () => {
+    // spec(§19.2) the shared command contract (brief 105): reroute carries a target {workspaceId, projectId?}.
+    const r = buildTriageMutationInput("src_1", "reroute", { workspaceId: "ws_a", projectId: "p_1" });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.input).toEqual({
+        sourceId: "src_1",
+        idempotencyKey: "src_1:reroute:ws_a:p_1", // target-ENCODED key (deterministic, replay-safe ING-4)
+        disposition: "reroute",
+        target: { workspaceId: "ws_a", projectId: "p_1" },
+      });
+    }
+  });
+
+  it("reroute_key_encodes_the_target — distinct targets ⇒ distinct keys; same target ⇒ same key (WS-8 no silent misroute)", () => {
+    // spec(WS-8) a target-blind key would AlreadyStarted-dedupe a re-submit-to-a-different-workspace onto
+    // the earlier target — a silent cross-workspace misroute. Encoding the target makes them distinct ops.
+    const key = (t: { workspaceId: string; projectId?: string }): string => {
+      const r = buildTriageMutationInput("src_1", "reroute", t);
+      return r.ok ? r.input.idempotencyKey : "";
+    };
+    expect(key({ workspaceId: "ws_a" })).toBe("src_1:reroute:ws_a");
+    expect(key({ workspaceId: "ws_b" })).toBe("src_1:reroute:ws_b");
+    expect(key({ workspaceId: "ws_a", projectId: "p_1" })).toBe("src_1:reroute:ws_a:p_1");
+    expect(key({ workspaceId: "ws_a" })).not.toBe(key({ workspaceId: "ws_b" })); // A vs B both drive
+    expect(key({ workspaceId: "ws_a" })).not.toBe(key({ workspaceId: "ws_a", projectId: "p_1" })); // ws vs ws+proj
+    expect(key({ workspaceId: "ws_a", projectId: "p_1" })).toBe(key({ workspaceId: "ws_a", projectId: "p_1" })); // same ⇒ one key
+  });
+
+  it("reroute_target_workspace_only — projectId omitted (not a `projectId: undefined` key) when no project chosen", () => {
+    // spec(§19.2) target.projectId is OPTIONAL; a workspace-only reroute is valid, no undefined key smuggled.
+    const r = buildTriageMutationInput("src_1", "reroute", { workspaceId: "ws_a" });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.input.target).toEqual({ workspaceId: "ws_a" });
+      expect("projectId" in (r.input.target ?? {})).toBe(false);
+    }
+  });
+
+  it("reroute_without_target_is_blocked — no target ⇒ typed reject, NO payload (REQ-F-017 no-inference at the edge)", () => {
+    // spec(REQ-F-017) the renderer never invents a target — a target-less reroute fails closed, no command built.
+    expect(buildTriageMutationInput("src_1", "reroute", undefined)).toEqual({
+      ok: false,
+      reason: "reroute_target_required",
+    });
+  });
+
+  it("reroute_empty_workspace_is_blocked — a blank workspaceId ⇒ typed reject (never a defaulted/guessed target)", () => {
+    // spec(REQ-F-017) mirror the worker's `reroute_target_required` guard so the round-trips agree.
+    expect(buildTriageMutationInput("src_1", "reroute", { workspaceId: "" })).toEqual({
+      ok: false,
+      reason: "reroute_target_required",
+    });
+  });
+
+  it("accept_payload_unchanged — accept builds {sourceId, key, disposition} with NO target key (byte-equivalent)", () => {
+    // spec(§19.2) additive-optional: a non-reroute disposition is exactly today's payload (worker L15/L35).
+    const r = buildTriageMutationInput("src_1", "accept");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.input).toEqual({ sourceId: "src_1", idempotencyKey: "src_1:accept", disposition: "accept" });
+      expect("target" in r.input).toBe(false);
+    }
+  });
+
+  it("reject_never_attaches_target — a stray target on a non-reroute disposition is dropped (target forbidden otherwise)", () => {
+    // spec(§19.2) contract: target is REQUIRED for reroute, FORBIDDEN otherwise — the builder never smuggles it.
+    const r = buildTriageMutationInput("src_1", "reject", { workspaceId: "ws_a" });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.input).toEqual({ sourceId: "src_1", idempotencyKey: "src_1:reject", disposition: "reject" });
+      expect("target" in r.input).toBe(false);
+    }
+  });
+});
+
+// ── 15.8 reroute caller wiring (the command-caller end-to-end) ────────────────
+describe("createTriageDisposition — reroute wiring (15.8)", () => {
+  it("reroute_calls_mutation_with_target_and_reused_key — sends the pinned reroute payload verbatim", async () => {
+    // spec(§19.2) the caller forwards the built reroute command (target + reused key) to command.disposeTriage.
+    const mutate = vi.fn(() => Promise.resolve({ ok: true, value: { idempotencyKey: "src_1:reroute:ws_a:p_1" } }));
+    const dispose = createTriageDisposition(fakeClient(mutate));
+    await dispose("src_1", "reroute", { workspaceId: "ws_a", projectId: "p_1" });
+    expect(mutate).toHaveBeenCalledWith({
+      sourceId: "src_1",
+      idempotencyKey: "src_1:reroute:ws_a:p_1",
+      disposition: "reroute",
+      target: { workspaceId: "ws_a", projectId: "p_1" },
+    });
+  });
+
+  it("reroute_without_target_never_calls_mutation — fail-closed at the edge (no target-less reroute leaves the renderer)", async () => {
+    // spec(REQ-F-017) the untrusted renderer NEVER dispatches a reroute without a registry-picked target.
+    const mutate = vi.fn(() => Promise.resolve({ ok: true, value: { idempotencyKey: "x" } }));
+    const dispose = createTriageDisposition(fakeClient(mutate));
+    const r = await dispose("src_1", "reroute");
+    expect(r.ok).toBe(false);
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("accept_still_sends_no_target — the legacy caller path stays byte-equivalent (additive)", async () => {
+    // spec(§19.2) an existing accept/reject call is unchanged — the optional target arg defaults absent.
+    const mutate = vi.fn(() => Promise.resolve({ ok: true, value: { idempotencyKey: "src_1:accept" } }));
+    const dispose = createTriageDisposition(fakeClient(mutate));
+    await dispose("src_1", "accept");
+    expect(mutate).toHaveBeenCalledWith({ sourceId: "src_1", idempotencyKey: "src_1:accept", disposition: "accept" });
   });
 });

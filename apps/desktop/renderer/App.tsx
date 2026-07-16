@@ -31,7 +31,8 @@ import type { Route } from "./store/route";
 import { startLive, type StartLiveHandle } from "./lib/live";
 import type { AskResult } from "./lib/copilot-ask";
 import type { ApprovalDecision } from "./lib/approval-decision";
-import type { TriageDisposition } from "./lib/triage-disposition";
+import type { TriageDisposition, RerouteTarget } from "./lib/triage-disposition";
+import { reroutePickerOptions } from "./lib/reroute-picker";
 import { seedDevStore } from "./dev/seed";
 
 // The renderer's single UI-safe store (app singleton — one window).
@@ -131,15 +132,28 @@ export function App(): ReactElement {
   // (`disposeTriage` returns no post-state record — no re-query) via the existing scope-replace
   // reducer; on a failed/again disposition the item REMAINS (fail closed — the card surfaces the
   // error). No live worker → `{ ok: false }`, so the card never shows a false drain.
-  const onDisposeTriage = (sourceId: string, disposition: TriageDisposition): Promise<boolean> => {
+  const onDisposeTriage = (
+    sourceId: string,
+    disposition: TriageDisposition,
+    target?: RerouteTarget,
+  ): Promise<boolean> => {
     const handle = liveRef.current;
     if (handle === null) return Promise.resolve(false);
-    return handle.disposeTriage(sourceId, disposition).then((r) => {
+    return handle.disposeTriage(sourceId, disposition, target).then((r) => {
       if (!r.ok) return false;
       store.dispatch((s) => replaceIngestion(s, s.ingestion.filter((it) => it.sourceId !== sourceId)));
       return true;
     });
   };
+
+  // 15.8 reroute picker options — the human routing-resolution target choices. Workspaces come from
+  // the onboarded/registered set (14.1); projects from the CURRENT scope's read model (14.6), bound
+  // to the resolved current-scope workspace (WS-8 — the only workspace whose projects we hold).
+  const rerouteOptions = reroutePickerOptions(
+    state.onboarded,
+    state.projects,
+    resolveOnboardedWorkspaceId(state, state.scope),
+  );
 
   const approvals = [...state.approvals.values()];
   const pendingApprovalCount = approvals.filter((a) => a.status === "pending").length;
@@ -244,6 +258,7 @@ export function App(): ReactElement {
         <IngestionInbox
           items={state.ingestion}
           onDispose={hasLiveWorker ? onDisposeTriage : undefined}
+          reroute={rerouteOptions}
         />
       ) : state.route.surface === "projects" ? (
         <Projects
