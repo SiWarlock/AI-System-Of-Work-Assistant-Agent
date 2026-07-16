@@ -38,6 +38,15 @@ export interface SourceNotePathError {
   readonly message: string;
 }
 
+/**
+ * The RESERVED top-level vault subtree that ingestion-output notes are written into
+ * (`sources/<ws>/<digest>.md`). Exported as the SINGLE SOURCE OF TRUTH so the auto-ingest
+ * vault watcher's feedback-loop guard (15.6) can exclude EXACTLY this subtree — if the output
+ * home ever moves, both the producer here and the watcher's exclusion move together (no drift
+ * that would silently re-open the write→watch→re-ingest loop, G6).
+ */
+export const SOURCE_NOTE_SUBTREE = "sources";
+
 // A workspace path segment must be a plain alphanumeric/`-`/`_` token — the shape every real
 // WorkspaceId already has (`personal-business`, `employer-work`, `ws-src`). This forbids `.`
 // (so `.`/`..` can't form), `/`, `\`, whitespace, NUL, and every control char — so the `<ws>`
@@ -82,5 +91,5 @@ export function deriveSourceNotePath(
       message: "workspace id is not a safe path segment (refused to derive an ingestion note path)",
     });
   }
-  return ok(`sources/${wsSegment}/${sourceIdentityDigest(identity)}.md`);
+  return ok(`${SOURCE_NOTE_SUBTREE}/${wsSegment}/${sourceIdentityDigest(identity)}.md`);
 }

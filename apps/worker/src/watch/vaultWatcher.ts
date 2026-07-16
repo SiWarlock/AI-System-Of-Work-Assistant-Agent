@@ -38,6 +38,9 @@ import type {
 } from "@sow/integrations/connectors/adapters/file-source";
 // REUSE the ONE authoritative root-confinement predicate (no duplicated safety check).
 import { isContainedUnder } from "@sow/integrations/connectors/adapters/file-read-transport";
+// REUSE the note-path producer's OWN reserved-output-subtree constant so the feedback-loop
+// exclusion below and `deriveSourceNotePath`'s output home can never drift apart (15.6 / G6).
+import { SOURCE_NOTE_SUBTREE } from "../composition/sourceNotePath";
 import type {
   DispatchOutcome,
   DispatchError,
@@ -88,7 +91,10 @@ export type WatchFactory = (
  */
 export type CaptureOutcome =
   | { readonly kind: "dispatched"; readonly workflowId: string; readonly deduped: boolean }
-  | { readonly kind: "ignored"; readonly reason: "not_markdown" | "escapes_root" | "absent" }
+  | {
+      readonly kind: "ignored";
+      readonly reason: "not_markdown" | "output_subtree" | "escapes_root" | "absent";
+    }
   | { readonly kind: "extract_failed"; readonly code: FileExtractError["code"] }
   | { readonly kind: "dispatch_failed"; readonly code: DispatchErrorCode }
   | { readonly kind: "error"; readonly message: string };
@@ -137,6 +143,19 @@ function isMarkdown(relPath: string): boolean {
 }
 
 /**
+ * True IFF a vault-RELATIVE path is inside the reserved ingestion-OUTPUT subtree
+ * (`sources/…`, per `deriveSourceNotePath`). Root-anchored + separator-safe: it matches the
+ * `sources` path SEGMENT at the vault root ONLY. This is the 15.6 feedback-loop guard — a
+ * KnowledgeWriter-written ingestion note lands under this subtree, so excluding it stops the
+ * write→watch→re-ingest loop (G6). It must NOT over-exclude: a nested user note
+ * (`mynotes/sources/x.md`) and a same-prefix sibling (`sourcesX.md`) are NOT the output home
+ * and still flow through. `SOURCE_NOTE_SUBTREE` is the producer's own constant (no drift).
+ */
+function isUnderOutputSubtree(relPath: string): boolean {
+  return relPath === SOURCE_NOTE_SUBTREE || relPath.startsWith(`${SOURCE_NOTE_SUBTREE}/`);
+}
+
+/**
  * The errno code (e.g. "ENOENT") off a thrown error, when present — carried in a typed
  * outcome WITHOUT echoing the absolute filesystem path a raw `e.message` would leak across
  * the boundary (mirrors the C2 transport's redaction discipline).
@@ -167,6 +186,12 @@ export function createVaultWatchHandler(
   async function computeOutcome(relPath: string): Promise<CaptureOutcome> {
     // (1) `.md` add/change only — a non-Markdown path never touches the disk.
     if (!isMarkdown(relPath)) return { kind: "ignored", reason: "not_markdown" };
+
+    // (1b) FEEDBACK-LOOP guard (15.6 / G6) — a `.md` under the reserved ingestion-OUTPUT
+    // subtree is a KnowledgeWriter-written note, NOT a new source. Drop it HERE (before any
+    // realpath/disk read) so a written note can never re-fire the watcher → re-ingest → …
+    // (defense-in-depth: the onEvent pre-filter also refuses it, so no debounce timer arms).
+    if (isUnderOutputSubtree(relPath)) return { kind: "ignored", reason: "output_subtree" };
 
     // (2) ROOT-confinement double-guard — resolve BOTH paths to their realpath, then apply
     // the ONE authoritative containment predicate. A target that no longer exists throws
@@ -244,7 +269,9 @@ export function createVaultWatchHandler(
 
   const onEvent = (_eventType: string, filename: string | null): void => {
     // Pre-filter before scheduling: null filename (some platforms) or non-.md ⇒ no timer.
-    if (filename === null || !isMarkdown(filename)) return;
+    // Drop non-`.md` and reserved-output-subtree notes up front — no debounce timer arms for a
+    // KnowledgeWriter-written ingestion note, so it never re-enters the loop (15.6 / G6).
+    if (filename === null || !isMarkdown(filename) || isUnderOutputSubtree(filename)) return;
     const existing = timers.get(filename);
     if (existing !== undefined) clearTimeout(existing);
     const t = setTimeout(() => {

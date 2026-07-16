@@ -54,6 +54,12 @@ import {
   type WatchFactory,
   type Realpath,
 } from "../../src/watch/vaultWatcher";
+// 15.6 — the note-path PRODUCER + the SHARED reserved-output-subtree constant. The watcher
+// excludes exactly this producer's output home so a written note can't re-fire the watcher.
+import {
+  deriveSourceNotePath,
+  SOURCE_NOTE_SUBTREE,
+} from "../../src/composition/sourceNotePath";
 
 import { SOW_TEMPORAL } from "../support/temporalGate";
 import { assembleBackends, type ProofSpineBackends } from "../../src/composition/backends";
@@ -303,6 +309,127 @@ describe("vaultWatcher — capture handler (fast unit, no Temporal)", () => {
       expect(outcome.message).toContain("ENOENT");
     }
     expect(calls).toHaveLength(0);
+  });
+});
+
+// ── 15.6: auto-ingest output-subtree feedback-loop guard (closes G6) ─────────────
+// The watcher's `.md` OUTPUT notes are written back INTO the watched vault root
+// (`sources/<ws>/<digest>.md`, per deriveSourceNotePath). Without an exclusion, every
+// KnowledgeWriter-written note re-fires the watcher → an infinite write→watch→re-ingest
+// loop. The guard EXCLUDES the reserved `sources/` output subtree (root-anchored,
+// segment-safe) so a written note never re-dispatches — while a user's own `.md` OUTSIDE
+// `sources/` is NOT over-excluded, and the `.md`-only scope is unchanged.
+describe("vaultWatcher — output-subtree feedback-loop guard (15.6, fast unit)", () => {
+  // A hex-shaped digest segment matching deriveSourceNotePath's output form.
+  const DIGEST = "a".repeat(32);
+
+  it("output_subtree_note_does_not_dispatch — a .md under the reserved sources/<ws>/ output subtree is excluded ⇒ 0 dispatch (feedback loop broken) BEFORE any disk read — spec(§19.2 G6)", async () => {
+    const transport = vi.fn(transportOk("# a KnowledgeWriter-written ingestion note"));
+    const { calls, fn } = recordingDispatch();
+    const dispatch = vi.fn(fn);
+    const handler = createVaultWatchHandler(BINDING, { transport, dispatch, realpath: identityRealpath });
+    const outcome = await handler.capture(`sources/ws-emp/${DIGEST}.md`);
+    expect(outcome).toEqual({ kind: "ignored", reason: "output_subtree" });
+    // Loop broken before the transport read AND before dispatch — no resource use.
+    expect(transport).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
+  });
+
+  it("output_subtree_onEvent_arms_no_timer_zero_dispatch — the fs.watch onEvent path also refuses an output-subtree note (no debounce timer armed; 0 dispatch across a write burst) — spec(§19.2 G6)", async () => {
+    vi.useFakeTimers();
+    try {
+      const dispatch = vi.fn((input: SourceIngestionInput) =>
+        Promise.resolve(ok({ workflowId: input.run.idempotencyKey, dispatched: true, deduped: false })),
+      );
+      const handler = createVaultWatchHandler(BINDING, {
+        transport: transportOk("# note"),
+        dispatch,
+        realpath: identityRealpath,
+        debounceMs: 50,
+      });
+      for (let i = 0; i < 5; i++) handler.onEvent("change", `sources/ws-emp/${DIGEST}.md`);
+      // Pin the ACTUAL onEvent-leg behavior: no debounce timer is armed for an output-subtree
+      // note. (Without this, the test would still pass on the computeOutcome guard alone, so the
+      // onEvent pre-filter would be unpinned — an L15 pass-for-the-wrong-reason.)
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(60);
+      await handler.drain();
+      expect(dispatch).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("user_md_outside_output_subtree_still_dispatches — a user/source .md OUTSIDE sources/ is NOT over-excluded ⇒ still dispatches — spec(§19.2)", async () => {
+    const { calls, fn } = recordingDispatch();
+    const handler = createVaultWatchHandler(BINDING, {
+      transport: transportOk("# a real user note"),
+      dispatch: fn,
+      realpath: identityRealpath,
+    });
+    const outcome = await handler.capture("mynotes/note.md");
+    expect(outcome.kind).toBe("dispatched");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("exclusion_matches_real_derived_output_path — the exclusion is tied to the REAL deriveSourceNotePath output via the shared SOURCE_NOTE_SUBTREE constant (producer + watcher cannot drift) — spec(§19.2 G6)", async () => {
+    const derived = deriveSourceNotePath(WS, {
+      sourceId: sourceId("file:ws-emp:whatever.md"),
+      contentHash: "deadbeef",
+    });
+    if (!derived.ok) throw new Error("expected a derived note path");
+    // The producer writes under the shared reserved subtree...
+    expect(derived.value.startsWith(`${SOURCE_NOTE_SUBTREE}/`)).toBe(true);
+    // ...and the watcher excludes EXACTLY that real output path (no drift).
+    const transport = vi.fn(transportOk("# body"));
+    const { calls, fn } = recordingDispatch();
+    const dispatch = vi.fn(fn);
+    const handler = createVaultWatchHandler(BINDING, { transport, dispatch, realpath: identityRealpath });
+    const outcome = await handler.capture(derived.value);
+    expect(outcome).toEqual({ kind: "ignored", reason: "output_subtree" });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
+  });
+
+  it("exclusion_is_root_anchored_and_separator_safe — only a root-anchored `sources/` SEGMENT is excluded; a nested user note and a same-prefix sibling still dispatch (no over-exclusion) — spec(§19.2 G6)", async () => {
+    const mk = (): { calls: SourceIngestionInput[]; handler: ReturnType<typeof createVaultWatchHandler> } => {
+      const { calls, fn } = recordingDispatch();
+      const handler = createVaultWatchHandler(BINDING, {
+        transport: transportOk("# n"),
+        dispatch: fn,
+        realpath: identityRealpath,
+      });
+      return { calls, handler };
+    };
+    // (a) root-anchored output note ⇒ excluded.
+    const a = mk();
+    expect(await a.handler.capture(`sources/ws-emp/${DIGEST}.md`)).toEqual({
+      kind: "ignored",
+      reason: "output_subtree",
+    });
+    expect(a.calls).toHaveLength(0);
+    // (b) `sources` nested under a user dir is NOT the output home ⇒ dispatches.
+    const b = mk();
+    expect((await b.handler.capture("mynotes/sources/x.md")).kind).toBe("dispatched");
+    expect(b.calls).toHaveLength(1);
+    // (c) a same-prefix sibling with NO separator is NOT excluded ⇒ dispatches.
+    const c = mk();
+    expect((await c.handler.capture("sourcesX.md")).kind).toBe("dispatched");
+    expect(c.calls).toHaveLength(1);
+  });
+
+  it("md_only_scope_precedes_output_subtree — a non-.md path (even under sources/) stays ignored as not_markdown; the existing .md-only scope is unchanged — spec(§19.2 .md-only)", async () => {
+    const { fn } = recordingDispatch();
+    const handler = createVaultWatchHandler(BINDING, {
+      transport: transportOk("data"),
+      dispatch: fn,
+      realpath: identityRealpath,
+    });
+    expect(await handler.capture(`sources/ws-emp/${DIGEST}.txt`)).toEqual({
+      kind: "ignored",
+      reason: "not_markdown",
+    });
   });
 });
 
