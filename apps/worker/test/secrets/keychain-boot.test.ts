@@ -5,8 +5,14 @@
 // equivalent — no real `security` process. SAFETY-CRITICAL (rule 7). All tests drive a FAKE exec (no real Keychain).
 import { describe, it, expect, vi } from "vitest";
 import { ok, err, isOk, isErr } from "@sow/contracts";
-import type { Result } from "@sow/contracts";
-import { buildKeychainSecrets, mapExecResult } from "../../src/secrets/keychain-boot";
+import type { ProviderId, Result } from "@sow/contracts";
+import type { SecretsAccessor, SecretUnavailableReason } from "@sow/providers";
+import {
+  buildKeychainSecrets,
+  createLockRoutingSecretsAccessor,
+  mapExecResult,
+  type KeychainLockRouter,
+} from "../../src/secrets/keychain-boot";
 import type { KeychainExec } from "../../src/secrets/keychain-backend";
 
 const REF = "keychain://providers/openai";
@@ -133,9 +139,116 @@ describe("boot provenance-secrets sourcing (OFF-lock 2 flips only under provisio
     expect(provisioned?.secrets).toBeDefined(); // provisioned ⇒ the real Keychain SecretsPort is the source
   });
 
-  // Q3 DEFERRED to a Slice-4 follow-up (the KeychainLockController is not boot-wired, and the signing-key/
-  // API-key resolution call-sites are dormant). Wiring point: route a `locked` result from
-  // secrets.resolveSigningKey / getSecret → KeychainLockController.onKeychainLocked (mark provider degraded, hold
-  // job retryable); `invalid_ref` (config error) must NOT route there. See brief 051 Q3 + docs/briefs Slice-4.
-  it.todo("Slice-4: a `locked` resolution routes to KeychainLockController.onKeychainLocked; invalid_ref does not");
+});
+
+// 17.3 (Slice-4 of the 11.4 chain) — the getSecret facade threaded into a DEGRADED-by-default, lock-routing
+// SecretsAccessor for the ModelProvider (§7). Lands the deferred it.todo (Q3): a `locked` resolution routes to
+// KeychainLockController.onKeychainLocked (mints the keychain-locked HealthItem, §16/LIFE-6); `invalid_ref`
+// (collapsed to `missing` by 17.2's mapUnavailableReason — a config error, not a lock) must NOT route there.
+// LOAD-BEARING: EVERY reason fails closed to a typed Err — NEVER a plaintext fallback (rule 7). No real Keychain,
+// no arming — a FAKE facade + a spy router (the arming is the owner-gated crossing).
+describe("createLockRoutingSecretsAccessor — degraded-by-default + locked→HealthItem routing (17.3)", () => {
+  const SUBJECT = "anthropic" as ProviderId;
+  const NOW_ISO = "2026-07-16T00:00:00.000Z";
+  const now = (): string => NOW_ISO;
+
+  /** A spy KeychainLockRouter — records the RAW input the accessor passes (so the redaction pin is non-vacuous). */
+  function makeRouter(): { router: KeychainLockRouter; calls: Array<Record<string, unknown>> } {
+    const calls: Array<Record<string, unknown>> = [];
+    const router: KeychainLockRouter = {
+      onKeychainLocked: (input): Promise<unknown> => {
+        calls.push(input as unknown as Record<string, unknown>);
+        return Promise.resolve();
+      },
+    };
+    return { router, calls };
+  }
+
+  /** A fake getSecret facade returning a fixed result (no real Keychain). */
+  const facadeReturning = (r: Result<string, { reason: SecretUnavailableReason }>): SecretsAccessor => ({
+    getSecret: (): Promise<Result<string, { reason: SecretUnavailableReason }>> => Promise.resolve(r),
+  });
+
+  it("degraded_by_default_absent_facade_yields_missing_no_creds_no_route", async () => {
+    // spec(§7 §6 L11): gate ABSENT ⇒ facade undefined ⇒ fail-closed `missing` — no real creds, no routing.
+    const { router, calls } = makeRouter();
+    const acc = createLockRoutingSecretsAccessor(undefined, router, SUBJECT, now);
+    const r = await acc.getSecret(REF);
+    expect(isErr(r) && r.error.reason).toBe("missing");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("locked_routes_to_onKeychainLocked_and_fails_closed_no_plaintext", async () => {
+    // spec(§16 — LOAD-BEARING): a `locked` resolution mints the keychain-locked HealthItem (routes once) AND the
+    // accessor returns the fail-closed Err — NEVER an ok plaintext string (no silent plaintext fallback, rule 7).
+    const { router, calls } = makeRouter();
+    const acc = createLockRoutingSecretsAccessor(facadeReturning(err({ reason: "locked" })), router, SUBJECT, now);
+    const r = await acc.getSecret(REF);
+    expect(isOk(r)).toBe(false);
+    expect(isErr(r) && r.error.reason).toBe("locked");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.subjectRef).toBe(SUBJECT);
+    expect(calls[0]?.now).toBe(NOW_ISO);
+  });
+
+  it.each([["missing"], ["denied"]] as const)(
+    "reason_%s_fails_closed_WITHOUT_routing_the_it_todo_invalid_ref_does_not_route",
+    async (reason) => {
+      // spec(§16): the deferred it.todo — ONLY `locked` routes. `missing` (the invalid_ref/backend_error collapse
+      // = a config error) and `denied` fail closed WITHOUT minting a keychain-locked item.
+      const { router, calls } = makeRouter();
+      const acc = createLockRoutingSecretsAccessor(facadeReturning(err({ reason })), router, SUBJECT, now);
+      const r = await acc.getSecret(REF);
+      expect(isErr(r) && r.error.reason).toBe(reason);
+      expect(calls).toHaveLength(0);
+    },
+  );
+
+  it("routing_input_carries_no_ref_or_secret_value_redaction", async () => {
+    // rule 7: the routing input is EXACTLY {subjectRef, now} — the ref and any secret value NEVER cross into the
+    // health path (nothing to leak to the HealthItem / logs).
+    const { router, calls } = makeRouter();
+    const acc = createLockRoutingSecretsAccessor(facadeReturning(err({ reason: "locked" })), router, SUBJECT, now);
+    await acc.getSecret(REF);
+    expect(calls).toHaveLength(1);
+    expect(Object.keys(calls[0] ?? {}).sort()).toEqual(["now", "subjectRef"]);
+  });
+
+  it("ok_resolution_returns_value_only_in_ok_result_no_route", async () => {
+    // spec(§7): a resolvable key returns the value ONLY in the ok Result and does NOT route (no spurious health).
+    const { router, calls } = makeRouter();
+    const acc = createLockRoutingSecretsAccessor(facadeReturning(ok("sk-live-value")), router, SUBJECT, now);
+    const r = await acc.getSecret(REF);
+    expect(isOk(r) && r.value).toBe("sk-live-value");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("facade_that_throws_fails_closed_to_missing_never_rejects", async () => {
+    // §16 (never throws across the boundary) / rule 7 / L9: the REAL Keychain adapter CAN throw (TCC denial / spawn /
+    // native error — cf. gbrain-http-read-client's same-seam guard). A facade throw must DEGRADE to a typed `missing`
+    // Err, never propagate as a rejection. Assert UNCONDITIONALLY (L15): a reject makes `await` throw ⇒ RED.
+    const { router, calls } = makeRouter();
+    const throwingFacade: SecretsAccessor = { getSecret: (): Promise<never> => Promise.reject(new Error("TCC denied")) };
+    const acc = createLockRoutingSecretsAccessor(throwingFacade, router, SUBJECT, now);
+    const r = await acc.getSecret(REF);
+    expect(isErr(r) && r.error.reason).toBe("missing");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("router_reject_on_locked_still_returns_the_fail_closed_locked_err_never_rejects", async () => {
+    // §16 / L21+L29: a router (health-mint) FAULT must NOT change the fail-closed secret result — the accessor STILL
+    // resolves to the `locked` Err, never rejecting. Best-effort routing; the secret degrade is what the caller sees.
+    const rejectingRouter: KeychainLockRouter = {
+      onKeychainLocked: (): Promise<never> => Promise.reject(new Error("health sink fault")),
+    };
+    const acc = createLockRoutingSecretsAccessor(
+      facadeReturning(err({ reason: "locked" })),
+      rejectingRouter,
+      SUBJECT,
+      now,
+    );
+    const r = await acc.getSecret(REF);
+    expect(isOk(r)).toBe(false);
+    expect(isErr(r) && r.error.reason).toBe("locked");
+  });
 });
