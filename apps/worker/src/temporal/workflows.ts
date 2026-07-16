@@ -50,6 +50,10 @@ import { runIngestionTriage } from "@sow/workflows/workflows/ingestionTriage";
 // (the barrel re-exports the activity set — node:crypto etc.) so the sandbox graph
 // stays clean, exactly like the three drivers above.
 import { runSourceIngestion } from "@sow/workflows/workflows/sourceIngestion";
+// 16.2: the previously-unregistered §9 connector-sync-health driver, deep-imported (barrel-free) so the
+// sandbox graph stays clean. Its schedule/wakeDrain seams use in-sandbox stubs (Phase-23 binds the real
+// DB-backed bookkeeping + drain + the live createSchedule START); the shipped default polls zero connectors.
+import { runConnectorSyncHealth } from "@sow/workflows/workflows/connectorSyncHealth";
 // The validate gate is PURE + SYNC (no-inference + schema gate) — it runs IN-SANDBOX,
 // not as a proxied activity, so the driver's synchronous ValidateExtractionPort
 // contract is honored (an activity proxy is always async).
@@ -106,6 +110,15 @@ import type {
   IndexGbrainPort,
   SourceHealthSink,
   SourceWorkflowFailure,
+  // the connector-sync-health (16.2) input/deps/outcome + the ports the wrapper adapts onto
+  ConnectorSyncHealthInput,
+  ConnectorSyncHealthDeps,
+  ConnectorSyncHealthOutcome,
+  ConnectorPollPort,
+  WakeDrainPort,
+  ConnectorSyncHealthHealthSink,
+  ConnectorSyncHealthFailure,
+  ScheduleStore,
 } from "@sow/workflows";
 
 // TYPE-ONLY import of the composition-root activities shape. Types are erased, so
@@ -430,4 +443,54 @@ export async function sourceIngestionWorkflow(
   };
 
   return runSourceIngestion(input, deps);
+}
+
+// ---------------------------------------------------------------------------
+// connector-sync-health workflow (16.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * The connector-sync-health workflow (§9 workflow 10): a THIN @temporalio wrapper that adapts the
+ * activity proxies onto the {@link ConnectorSyncHealthDeps} port set and runs the pure
+ * {@link runConnectorSyncHealth} driver inside the sandbox. `poll` delegates to the 16.2
+ * `connectorPoll` activity (which resolves the 16.1 adapter + 15.1 bridge + backoff); the failure sink
+ * routes through `surfaceFailure` (inv-5).
+ *
+ * DORMANT: the shipped default polls a connectors set enumerated from the ENABLED 14.2 instances —
+ * EMPTY until arming — so a scheduled tick is a no-op (no fetch, no health). The `schedule` + `wakeDrain`
+ * seams are IN-SANDBOX STUBS (mirroring `sandboxRunRepo`): `getBookkeeping → undefined` (first-run every
+ * tick, no durable LIFE-2 catch-up) and a no-op drain. Phase-23 arming replaces BOTH with the real
+ * DB-backed schedule bookkeeping + the §8 replay-safe wake-drain (a false-durable stub must NOT survive
+ * into a firing schedule), and adds the live `ScheduleClient.createSchedule` START.
+ */
+export async function connectorSyncHealthWorkflow(
+  input: ConnectorSyncHealthInput,
+): Promise<ConnectorSyncHealthOutcome> {
+  const poll: ConnectorPollPort = {
+    poll: (connector) => activities.connectorPoll(connector),
+  };
+  // Phase-23 TODO #1: the REAL §8 replay-safe wake-drain. In-sandbox no-op stub — the shipped default
+  // holds nothing to drain, and a pure `schedule` trigger never drains anyway.
+  const wakeDrain: WakeDrainPort = {
+    drain: () => Promise.resolve(ok({ drained: 0, reused: 0, held: 0, failed: 0 })),
+  };
+  const health: ConnectorSyncHealthHealthSink = {
+    surface: (failure: ConnectorSyncHealthFailure) => activities.surfaceFailure(failure),
+  };
+  // Phase-23 TODO #1: the REAL DB-backed schedule bookkeeping (LIFE-2 durability). In-sandbox stub now —
+  // getBookkeeping → undefined (a first-run every tick; no catch-up park), put → no-op. Dormant: a
+  // false-durable bookkeeping must NOT survive into a firing schedule (Phase-23 TODO #2 = the live START).
+  const schedule: ScheduleStore = {
+    getBookkeeping: () => Promise.resolve(undefined),
+    put: () => Promise.resolve(),
+  };
+  const deps: ConnectorSyncHealthDeps = {
+    poll,
+    wakeDrain,
+    health,
+    runs: sandboxRunRepo(),
+    schedule,
+    clock: workflowClock,
+  };
+  return runConnectorSyncHealth(input, deps);
 }

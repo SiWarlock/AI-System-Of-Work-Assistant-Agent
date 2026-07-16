@@ -150,6 +150,15 @@ import type {
 import { makeRequireApproval } from "./backends";
 // The per-file ingestion note-path derivation (traversal-safe, content-addressed) — task 11.1.
 import { deriveSourceNotePath, sourceIdentityDigest } from "./sourceNotePath";
+// 16.2 — the connector-poll activity + its real resolve binding (16.1 adapters + 15.1 bridge + backoff).
+import { createConnectorPollActivity, type ConnectorPollPort } from "@sow/workflows";
+import { composeConnectors } from "./connectors";
+import {
+  createConnectorPollResolve,
+  createDormantConnectorCursorRepo,
+  dormantBridgeFor,
+  CONNECTOR_POLL_BACKOFF,
+} from "./connectorPolling";
 
 // ---------------------------------------------------------------------------
 // The per-flow binding parameters (identity/config that is not a backend adapter)
@@ -301,6 +310,16 @@ export interface ProofSpineActivities {
   sourceIndex(
     ...args: Parameters<IndexGbrainPort["index"]>
   ): Promise<Awaited<ReturnType<IndexGbrainPort["index"]>>>;
+
+  // ── connector sync & health (16.2) ──
+  /**
+   * Poll ONE connector through the §8 Connector Gateway (`runConnectorSync`) — resolves the 16.1
+   * composed adapter + cursor + the 15.1 ingestion bridge + backoff, drives one sync pass, and
+   * projects the outcome. DORMANT in the shipped default (inert transport, zero armed instances).
+   */
+  connectorPoll(
+    ...args: Parameters<ConnectorPollPort["poll"]>
+  ): Promise<Awaited<ReturnType<ConnectorPollPort["poll"]>>>;
 
   // ── infra ports the pure drivers need ──
   /** Route a cross-subsystem failure through health+outbox (inv-5; never silent). */
@@ -754,6 +773,27 @@ export function buildProofSpineActivities(
       Promise.resolve(ok(undefined)),
   };
 
+  // 16.2 — the connector-poll activity, bound to the REAL resolve over the 16.1 composed adapters
+  // (`ComposedConnectors.ports`, by connectorId) + backoff. DORMANT by construction: the composed
+  // transport is INERT (no real vendor call, no tokenRef), the cursor repo + `bridgeFor` are dormant
+  // fail-closed seams (Phase-23 TODO #3/#4), and the shipped default enumerates ZERO enabled instances
+  // (see `enumerateEnabledConnectorTargets`), so this activity is never driven until arming.
+  //
+  // ⚠ PHASE-23 ARMING INJECTION POINT (TODO #5 — single-engine coherence): the poll path drives
+  // `runConnectorSync`, so THIS `composeConnectors()` (NOT `BootedWorker.connectors`, which the API
+  // surface exposes but the poll does not consume) is the ONE transport-injection seam. Arming MUST
+  // inject the real transport HERE (or thread `BootedWorker.connectors` in so there is a single engine)
+  // — arming boot's connectors alone would leave the fetch path inert (a split-brain footgun).
+  const connectorPollPort: ConnectorPollPort = createConnectorPollActivity({
+    resolve: createConnectorPollResolve({
+      connectors: composeConnectors(),
+      cursors: createDormantConnectorCursorRepo(),
+      backoffCfg: CONNECTOR_POLL_BACKOFF,
+      clock: backends.now,
+      bridgeFor: dormantBridgeFor,
+    }),
+  });
+
   // ── the plain-async-function object Temporal registers ───────────────────────
   return {
     // meeting-closeout
@@ -795,6 +835,8 @@ export function buildProofSpineActivities(
     sourceIndex: (revisionId) => sourceIndexPort.index(revisionId),
 
     // infra — the failure sink every driver routes through (inv-5).
+    // 16.2 — poll one connector (dormant in the shipped default; the resolve binds the real 16.1 adapters).
+    connectorPoll: (connector) => connectorPollPort.poll(connector),
     surfaceFailure: (failure) => surfaceWorkflowFailure(failure, surfaceDeps),
   };
 }
