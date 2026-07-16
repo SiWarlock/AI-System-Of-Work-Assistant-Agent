@@ -13,6 +13,14 @@
 import { boot, gbrainServe } from "@sow/worker";
 import type { SessionTokenValue } from "@sow/policy";
 import { workspaceId, isOk } from "@sow/contracts";
+import {
+  createTemporalSupervisor,
+  createTemporalSpawner,
+  createTemporalProbe,
+  realTemporalSleep,
+  shouldManageTemporal,
+  type TemporalSupervisor,
+} from "./temporal-supervisor";
 
 // Option A (app-managed serve): worker-host owns the local `gbrain serve --http --enable-dcr` lifecycle so the
 // agentic Copilot tools + the http retrieval transport share ONE server (one PGlite connection — no CLI/serve
@@ -30,6 +38,16 @@ const MANAGE_GBRAIN_SERVE = true;
 const GBRAIN_SERVE_BASE_URL = "http://127.0.0.1:8899";
 /** Bound the boot wait for serve-ready so a failed serve degrades in seconds, not the supervisor's 30s default. */
 const GBRAIN_SERVE_READINESS_TIMEOUT_MS = 10_000;
+
+// 14.4 — app-managed local Temporal supervision (G62 hard-line→substrate downgrade, OWNER RATIFIED
+// 2026-07-15). Env-gated OFF by default (byte-equivalent): the managed loopback Temporal dev-server
+// spawns ONLY when the operator opts in via SOW_MANAGE_TEMPORAL=true, mirroring the gbrain-serve
+// supervision but default-OFF (a real Temporal touches no hard line — loopback-only, cleanly
+// supervised — but the shipped default must stay in today's Temporal-DEGRADED posture).
+/** The loopback Temporal frontend the managed dev-server binds + the worker's `connectTemporal` targets. */
+const TEMPORAL_DEV_ADDRESS = "127.0.0.1:7233";
+/** Bound the boot wait for Temporal-ready so a failed spawn degrades in seconds, not the 30s default. */
+const TEMPORAL_READINESS_TIMEOUT_MS = 10_000;
 
 /** The launch config main injects over the child IPC channel. */
 interface WorkerHostConfig {
@@ -66,6 +84,7 @@ function send(msg: HostMessage): void {
 let booted: boot.BootedWorker | undefined;
 let starting = false;
 let serveSupervisor: gbrainServe.GbrainServeSupervisor | undefined;
+let temporalSupervisor: TemporalSupervisor | undefined;
 
 async function start(config: WorkerHostConfig): Promise<void> {
   if (starting || booted !== undefined) return; // config is one-shot; ignore repeats
@@ -90,6 +109,24 @@ async function start(config: WorkerHostConfig): Promise<void> {
       }
       // else: supervisor already disposed itself on the failed start; leave gbrainHttpConfig undefined.
     }
+
+    // 14.4 — env-gated (default OFF ⇒ byte-equivalent) app-managed local Temporal supervision. When
+    // opted in, spawn + supervise a LOOPBACK-only Temporal dev-server at the SAME address the worker's
+    // `connectTemporal` targets (config.temporalAddress ?? 127.0.0.1:7233) BEFORE bootWorker, so a
+    // healthy managed server is up for the existing autoIngest/proofSpine connect path to leave
+    // Temporal-DEGRADED. On a failed start the supervisor disposes itself; boot proceeds DEGRADED.
+    if (shouldManageTemporal(process.env)) {
+      const temporalAddress = config.temporalAddress ?? TEMPORAL_DEV_ADDRESS;
+      temporalSupervisor = createTemporalSupervisor({
+        address: temporalAddress,
+        spawn: createTemporalSpawner(),
+        probe: createTemporalProbe(),
+        sleep: realTemporalSleep,
+        readinessTimeoutMs: TEMPORAL_READINESS_TIMEOUT_MS,
+      });
+      await temporalSupervisor.start();
+    }
+
     booted = await boot.bootWorker({
       sessionToken: { value: config.token as SessionTokenValue, launchId: config.launchId },
       allowlist: { origins: config.origins, hosts: config.hosts },
@@ -213,6 +250,16 @@ async function start(config: WorkerHostConfig): Promise<void> {
         // ignore — dispose is best-effort on the error path
       }
     }
+    // 14.4 — reap the managed Temporal too so a boot-thrown-after-spawn never orphans the dev-server.
+    if (temporalSupervisor !== undefined) {
+      const tsup = temporalSupervisor;
+      temporalSupervisor = undefined;
+      try {
+        await tsup.dispose();
+      } catch {
+        // ignore — dispose is best-effort on the error path
+      }
+    }
     send({ type: "error", message: err instanceof Error ? err.message : String(err) });
     process.exitCode = 1;
   } finally {
@@ -223,8 +270,10 @@ async function start(config: WorkerHostConfig): Promise<void> {
 async function shutdown(): Promise<void> {
   const b = booted;
   const sup = serveSupervisor;
+  const tsup = temporalSupervisor;
   booted = undefined;
   serveSupervisor = undefined;
+  temporalSupervisor = undefined;
   try {
     if (b) await b.close();
   } finally {
@@ -232,7 +281,12 @@ async function shutdown(): Promise<void> {
       // Tear down the managed gbrain serve so it releases the port + the PGlite DB lock on worker-host exit.
       if (sup) await sup.dispose();
     } finally {
-      process.exit(0);
+      try {
+        // 14.4 — stop the managed Temporal dev-server cleanly on quit (no orphaned process, releases 7233).
+        if (tsup) await tsup.dispose();
+      } finally {
+        process.exit(0);
+      }
     }
   }
 }
