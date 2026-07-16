@@ -18,7 +18,7 @@ import {
   createTemporalSpawner,
   createTemporalProbe,
   realTemporalSleep,
-  shouldManageTemporal,
+  temporalManagementPlan,
   type TemporalSupervisor,
 } from "./temporal-supervisor";
 
@@ -115,11 +115,15 @@ async function start(config: WorkerHostConfig): Promise<void> {
     // `connectTemporal` targets (config.temporalAddress ?? 127.0.0.1:7233) BEFORE bootWorker, so a
     // healthy managed server is up for the existing autoIngest/proofSpine connect path to leave
     // Temporal-DEGRADED. On a failed start the supervisor disposes itself; boot proceeds DEGRADED.
-    if (shouldManageTemporal(process.env)) {
+    // Fail-safe gate: manage a local Temporal ONLY when SOW_MANAGE_TEMPORAL is on AND a dbPath exists to
+    // derive the persistent `<userData>/temporal/dev.db` from — an absent dbPath SKIPS management (never an
+    // in-memory spawn). The db lives under app data (§13), a sibling of the operational store.
+    const temporalPlan = temporalManagementPlan(process.env, config.dbPath);
+    if (temporalPlan !== null) {
       const temporalAddress = config.temporalAddress ?? TEMPORAL_DEV_ADDRESS;
       temporalSupervisor = createTemporalSupervisor({
         address: temporalAddress,
-        spawn: createTemporalSpawner(),
+        spawn: createTemporalSpawner({ dbFilename: temporalPlan.dbFilename }),
         probe: createTemporalProbe(),
         sleep: realTemporalSleep,
         readinessTimeoutMs: TEMPORAL_READINESS_TIMEOUT_MS,

@@ -18,6 +18,8 @@
 // refuses a non-loopback address before any spawn. The bind interface is fully enforced here.
 import { spawn as nodeSpawn } from "node:child_process";
 import { connect as netConnect } from "node:net";
+import { mkdirSync as nodeMkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { err, failure } from "@sow/contracts";
 import type { Result, FailureVariant } from "@sow/contracts";
 import { isLoopbackHost } from "@sow/policy";
@@ -60,9 +62,40 @@ export function parseTemporalHostPort(address: string): { readonly host: string;
  * `--ip` binds the gRPC frontend/HTTP gateway, and `--ui-ip` binds the Web UI (which otherwise only
  * DEFAULTS to loopback) — so the slice enforces the bind interface rather than relying on Temporal's
  * defaults (metrics/pprof stay disabled by default, port 0). No shell.
+ *
+ * PERSISTENT storage (§13, LIFE-3): `--db-filename` points at a persistent SQLite file under app data,
+ * so in-flight workflow state SURVIVES a restart — never the in-memory default. `dbFilename` is a
+ * REQUIRED param (typed non-optional), so a `start-dev` WITHOUT persistent storage is structurally
+ * un-buildable — the in-memory drift can never silently return (mirrors worker Lesson 31).
  */
-export function temporalServerArgs(host: string, port: string): readonly string[] {
-  return ["server", "start-dev", "--ip", host, "--port", port, "--ui-ip", host];
+export function temporalServerArgs(host: string, port: string, dbFilename: string): readonly string[] {
+  return ["server", "start-dev", "--ip", host, "--port", port, "--ui-ip", host, "--db-filename", dbFilename];
+}
+
+/**
+ * The persistent Temporal SQLite path under the app userData dir (§13 "under app data, never
+ * in-memory / never /tmp"): `<userData>/temporal/dev.db`. Pure + Electron-free — the caller resolves
+ * `userData` (main via app.getPath, threaded to the worker-host as `dirname(config.dbPath)`). The
+ * path is userData-derived (not caller/attacker-controlled) with no traversal.
+ */
+export function temporalDbPathUnder(userData: string): string {
+  return join(userData, "temporal", "dev.db");
+}
+
+/**
+ * The fail-closed management decision: whether to manage a local Temporal AND with which persistent
+ * db path, given the env + the operational `config.dbPath` (`<userData>/sow.db`). Returns null (DON'T
+ * manage) unless the opt-in flag is strictly on AND a dbPath exists to derive userData from — so
+ * `SOW_MANAGE_TEMPORAL="true"` with an absent dbPath SKIPS management entirely (never an in-memory
+ * fallback). Pure + Electron-free.
+ */
+export function temporalManagementPlan(
+  env: Record<string, string | undefined>,
+  dbPath: string | undefined,
+): { readonly dbFilename: string } | null {
+  if (!shouldManageTemporal(env)) return null;
+  if (dbPath === undefined || dbPath.length === 0) return null; // fail-safe: no userData ⇒ no (in-memory) spawn
+  return { dbFilename: temporalDbPathUnder(dirname(dbPath)) };
 }
 
 /** OFF by default (byte-equivalent): the managed local Temporal spawns ONLY when the operator opts in.
@@ -211,30 +244,50 @@ export type SpawnImpl = (
   kill: () => void;
 };
 
+/** A minimal recursive-mkdir contract (the subset of `node:fs.mkdirSync` the real spawner uses) — injectable for tests. */
+export type MkdirImpl = (dir: string, options: { readonly recursive: true }) => void;
+
 /** Options for the real Temporal spawner. */
 export interface TemporalSpawnerOptions {
+  /** The persistent SQLite db file (`<userData>/temporal/dev.db`) — REQUIRED so the server is never in-memory (§13). */
+  readonly dbFilename: string;
   /** The temporal binary (an absolute/resolved path preferred; a PATH name otherwise). Defaults to "temporal". */
   readonly binary?: string;
-  /** Extra args after `server start-dev --ip <host> --port <port>`. */
+  /** Extra args after the base `server start-dev …` args. */
   readonly extraArgs?: readonly string[];
   /** Injected spawn impl (tests pass a mock so the suite NEVER spawns a real Temporal). Defaults to node spawn. */
   readonly spawnImpl?: SpawnImpl;
+  /** Injected mkdir impl (tests pass a mock so the suite NEVER writes real fs). Defaults to node mkdirSync. */
+  readonly mkdirImpl?: MkdirImpl;
 }
 
 /**
- * The REAL spawner: `temporal server start-dev --ip <loopback> --port <port>` as a long-lived child.
- * Args-array + resolved binary (NO shell string interpolation — no injection surface; Lesson 10 analog).
- * stdio IGNORED (never piped to a log sink — the child's output may echo a path/host; §16 / safety 7).
- * Integration-gated; not unit-tested with the real node spawn (it would start a real server).
+ * The REAL spawner: `temporal server start-dev --ip <loopback> --port <port> --db-filename <path>` as
+ * a long-lived child. Args-array + resolved binary (NO shell string interpolation — no injection
+ * surface; Lesson 10 analog). Creates the db's parent dir (`<userData>/temporal/`) recursively BEFORE
+ * spawn (created-if-absent) via the injected mkdir seam — so a fresh install's missing dir doesn't
+ * fail the launch. stdio IGNORED (never piped to a log sink — the child's output may echo a path/host;
+ * §16 / safety 7). Integration-gated; not unit-tested with the real node spawn/fs (it would start a real server).
  */
-export function createTemporalSpawner(options?: TemporalSpawnerOptions): TemporalSpawner {
-  const binary = options?.binary ?? "temporal";
-  const extraArgs = options?.extraArgs ?? [];
-  const spawnImpl: SpawnImpl = options?.spawnImpl ?? (nodeSpawn as unknown as SpawnImpl);
+export function createTemporalSpawner(options: TemporalSpawnerOptions): TemporalSpawner {
+  const dbFilename = options.dbFilename;
+  const binary = options.binary ?? "temporal";
+  const extraArgs = options.extraArgs ?? [];
+  const spawnImpl: SpawnImpl = options.spawnImpl ?? (nodeSpawn as unknown as SpawnImpl);
+  const mkdirImpl: MkdirImpl = options.mkdirImpl ?? ((dir, opts) => void nodeMkdirSync(dir, opts));
   return (address: string): TemporalHandle => {
+    // Persistent storage stays on even off the parseable-address path: the db is address-independent,
+    // so a start-dev is NEVER built without --db-filename (no in-memory fallback).
     const hp = parseTemporalHostPort(address);
-    const baseArgs = hp !== null ? temporalServerArgs(hp.host, hp.port) : ["server", "start-dev"];
+    const baseArgs =
+      hp !== null ? temporalServerArgs(hp.host, hp.port, dbFilename) : ["server", "start-dev", "--db-filename", dbFilename];
     const args = [...baseArgs, ...extraArgs];
+    // Create the persistent-db parent dir if absent (created-if-absent) before spawn.
+    try {
+      mkdirImpl(dirname(dbFilename), { recursive: true });
+    } catch {
+      // best-effort — a mkdir fault (e.g. a race) must not throw out of the spawner; temporal will surface its own.
+    }
     const child = spawnImpl(binary, args, { env: { ...process.env }, stdio: "ignore", detached: false });
     child.on("error", () => {}); // swallow ENOENT (missing binary) so it never becomes an unhandled 'error'
     return {

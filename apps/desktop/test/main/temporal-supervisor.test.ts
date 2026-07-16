@@ -14,8 +14,14 @@ import {
   shouldManageTemporal,
   createTemporalSpawner,
   parseTemporalHostPort,
+  temporalDbPathUnder,
+  temporalManagementPlan,
   type TemporalHandle,
 } from "../../worker-host/temporal-supervisor";
+
+// A representative Electron userData dir (main resolves app.getPath("userData")); the tests never touch it.
+const USER_DATA = "/Users/me/Library/Application Support/SoW";
+const DB_PATH = temporalDbPathUnder(USER_DATA); // <userData>/temporal/dev.db
 
 /** A controllable mock process handle: capture the exit callback, spy the kill, drive crashes. */
 function mockHandle(): { handle: TemporalHandle; fireExit: () => void; killed: () => number } {
@@ -37,9 +43,9 @@ function mockHandle(): { handle: TemporalHandle; fireExit: () => void; killed: (
 
 const immediateSleep = (): Promise<void> => Promise.resolve();
 
-describe("temporalServerArgs — loopback-only, args-array (no shell)", () => {
-  it("forces EVERY listener to the loopback host — `--ip` (gRPC/frontend) AND `--ui-ip` (Web UI)", () => {
-    expect(temporalServerArgs("127.0.0.1", "7233")).toEqual([
+describe("temporalServerArgs — loopback-only, args-array (no shell), PERSISTENT storage", () => {
+  it("forces EVERY listener loopback (`--ip` + `--ui-ip`) AND persists via `--db-filename` (never in-memory)", () => {
+    expect(temporalServerArgs("127.0.0.1", "7233", DB_PATH)).toEqual([
       "server",
       "start-dev",
       "--ip",
@@ -48,14 +54,38 @@ describe("temporalServerArgs — loopback-only, args-array (no shell)", () => {
       "7233",
       "--ui-ip",
       "127.0.0.1",
+      "--db-filename",
+      DB_PATH,
     ]);
   });
 
-  it("is an ARRAY of discrete tokens — no shell string, no interpolation surface", () => {
-    const args = temporalServerArgs("127.0.0.1", "7233");
+  it("ANTI-REGRESSION: the args ALWAYS carry `--db-filename` with a non-empty path — the in-memory drift can never silently return", () => {
+    const args = temporalServerArgs("127.0.0.1", "7233", DB_PATH);
+    const i = args.indexOf("--db-filename");
+    expect(i).toBeGreaterThanOrEqual(0); // the flag is present
+    expect(args[i + 1]).toBe(DB_PATH); // …with the persistent path
+    expect((args[i + 1] ?? "").length).toBeGreaterThan(0); // never empty (which temporal treats as ephemeral)
+  });
+
+  it("is an ARRAY of DISCRETE tokens (not a single shell string) — spaces in a path arg are safe (shell:false)", () => {
+    const args = temporalServerArgs("127.0.0.1", "7233", DB_PATH);
     expect(Array.isArray(args)).toBe(true);
     expect(args.every((a) => typeof a === "string")).toBe(true);
-    expect(args.some((a) => a.includes(" ") || a.includes("&") || a.includes(";"))).toBe(false);
+    // The safety is STRUCTURAL: each flag + value is its own array element (spawn shell:false), so a
+    // db path containing spaces (macOS "Application Support") is passed verbatim, never re-split/interpolated.
+    expect(args.length).toBeGreaterThan(6); // many discrete tokens, never one concatenated command line
+    expect(args[0]).toBe("server"); // the FLAG tokens carry no whitespace/metachars (values may)
+    expect(args.filter((a) => a.startsWith("--")).every((a) => !/[\s&;|]/.test(a))).toBe(true);
+  });
+});
+
+describe("temporalDbPathUnder — persistent SQLite path under app userData (§13, never in-memory / /tmp)", () => {
+  it("derives `<userData>/temporal/dev.db` — userData-derived, not caller/attacker-controlled, no traversal", () => {
+    expect(temporalDbPathUnder(USER_DATA)).toBe(`${USER_DATA}/temporal/dev.db`);
+    // Under the app data dir; never /tmp, never an in-memory sentinel, no `..` traversal.
+    expect(temporalDbPathUnder(USER_DATA).startsWith(USER_DATA)).toBe(true);
+    expect(temporalDbPathUnder(USER_DATA)).not.toMatch(/\.\./);
+    expect(temporalDbPathUnder(USER_DATA)).not.toMatch(/^\/tmp/);
   });
 });
 
@@ -95,6 +125,26 @@ describe("shouldManageTemporal — env-gated OFF by default (byte-equivalent)", 
     expect(shouldManageTemporal({ SOW_MANAGE_TEMPORAL: "false" })).toBe(false);
     expect(shouldManageTemporal({ SOW_MANAGE_TEMPORAL: "TRUE" })).toBe(false);
     expect(shouldManageTemporal({ SOW_MANAGE_TEMPORAL: "true" })).toBe(true);
+  });
+});
+
+describe("temporalManagementPlan — fail-safe gate (manage only when opted-in AND a persistent path exists)", () => {
+  const DB = "/Users/me/Library/Application Support/SoW/sow.db";
+
+  it("returns null (DON'T manage) when the flag is OFF — regardless of dbPath", () => {
+    expect(temporalManagementPlan({}, DB)).toBeNull();
+    expect(temporalManagementPlan({ SOW_MANAGE_TEMPORAL: "false" }, DB)).toBeNull();
+  });
+
+  it("FAIL-SAFE EDGE: flag ON but dbPath absent/empty ⇒ null (SKIP — never an in-memory fallback)", () => {
+    expect(temporalManagementPlan({ SOW_MANAGE_TEMPORAL: "true" }, undefined)).toBeNull();
+    expect(temporalManagementPlan({ SOW_MANAGE_TEMPORAL: "true" }, "")).toBeNull();
+  });
+
+  it("flag ON + a dbPath ⇒ manage with the persistent `<userData>/temporal/dev.db` (sibling of the operational db)", () => {
+    expect(temporalManagementPlan({ SOW_MANAGE_TEMPORAL: "true" }, DB)).toEqual({
+      dbFilename: "/Users/me/Library/Application Support/SoW/temporal/dev.db",
+    });
   });
 });
 
@@ -164,8 +214,9 @@ describe("createTemporalSupervisor — spawn / ready / crash / dispose (mock pro
   });
 });
 
-describe("createTemporalSpawner — args-array + resolved bin, NO shell (real spawn never called in-suite)", () => {
-  it("invokes the injected spawn impl with (binary, args-array, no-shell opts) — never a shell string", () => {
+describe("createTemporalSpawner — args-array + resolved bin, NO shell, mkdir-if-absent (real spawn/fs never called in-suite)", () => {
+  it("mkdir-recursive's the db parent dir (injected fs seam) THEN spawns with the persistent --db-filename", () => {
+    const mkdirImpl = vi.fn((_dir: string, _opts: { recursive: true }) => {});
     const spawnImpl = vi.fn(
       (_command: string, _args: readonly string[], _options: { env: NodeJS.ProcessEnv; stdio: "ignore"; detached: boolean }) => ({
         on: (): void => {},
@@ -173,15 +224,64 @@ describe("createTemporalSpawner — args-array + resolved bin, NO shell (real sp
         kill: (): void => {},
       }),
     );
-    const spawner = createTemporalSpawner({ binary: "/usr/local/bin/temporal", spawnImpl: spawnImpl as never });
+    const spawner = createTemporalSpawner({
+      binary: "/usr/local/bin/temporal",
+      dbFilename: DB_PATH,
+      mkdirImpl,
+      spawnImpl: spawnImpl as never,
+    });
     spawner("127.0.0.1:7233");
+    // Directory created-if-absent via the INJECTED seam (no real fs write in-suite).
+    expect(mkdirImpl).toHaveBeenCalledWith(`${USER_DATA}/temporal`, { recursive: true });
     expect(spawnImpl).toHaveBeenCalledTimes(1);
     const [bin, args, opts] = spawnImpl.mock.calls[0]!;
     expect(bin).toBe("/usr/local/bin/temporal"); // resolved/absolute bin
-    expect(args).toEqual(["server", "start-dev", "--ip", "127.0.0.1", "--port", "7233", "--ui-ip", "127.0.0.1"]); // args-array, all-loopback
-    // `shell` is structurally absent from SpawnImpl's options type (can't pass shell:true), and never set at runtime.
+    expect(args).toEqual([
+      "server",
+      "start-dev",
+      "--ip",
+      "127.0.0.1",
+      "--port",
+      "7233",
+      "--ui-ip",
+      "127.0.0.1",
+      "--db-filename",
+      DB_PATH,
+    ]); // args-array, all-loopback, PERSISTENT
     expect((opts as unknown as { shell?: unknown }).shell).not.toBe(true); // never a shell (no injection surface)
     expect(opts.stdio).toBe("ignore"); // redaction-safe: child output never captured
     expect(opts.detached).toBe(false);
+  });
+
+  it("ANTI-REGRESSION on the fallback path too: an unparseable address STILL emits --db-filename (never in-memory)", () => {
+    const spawnImpl = vi.fn(
+      (_c: string, _a: readonly string[], _o: { env: NodeJS.ProcessEnv; stdio: "ignore"; detached: boolean }) => ({
+        on: (): void => {},
+        once: (): void => {},
+        kill: (): void => {},
+      }),
+    );
+    const spawner = createTemporalSpawner({ dbFilename: DB_PATH, mkdirImpl: () => {}, spawnImpl: spawnImpl as never });
+    spawner("not-a-parseable-address"); // the hp===null fallback branch (unreachable via the guarded supervisor)
+    const args = spawnImpl.mock.calls[0]![1];
+    expect(args).toContain("--db-filename");
+    expect(args[args.indexOf("--db-filename") + 1]).toBe(DB_PATH); // persistent even on the fallback
+  });
+
+  it("mkdir is BEST-EFFORT: a throwing mkdirImpl does NOT block the spawn (temporal degrades fail-closed, not silent-ephemeral)", () => {
+    const mkdirImpl = vi.fn(() => {
+      throw new Error("EACCES");
+    });
+    const spawnImpl = vi.fn(
+      (_c: string, _a: readonly string[], _o: { env: NodeJS.ProcessEnv; stdio: "ignore"; detached: boolean }) => ({
+        on: (): void => {},
+        once: (): void => {},
+        kill: (): void => {},
+      }),
+    );
+    const spawner = createTemporalSpawner({ dbFilename: DB_PATH, mkdirImpl, spawnImpl: spawnImpl as never });
+    expect(() => spawner("127.0.0.1:7233")).not.toThrow(); // the mkdir fault never escapes the spawner
+    expect(spawnImpl).toHaveBeenCalledTimes(1); // spawn still attempted with the persistent --db-filename
+    expect(spawnImpl.mock.calls[0]![1]).toContain("--db-filename");
   });
 });
