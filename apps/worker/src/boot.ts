@@ -84,6 +84,7 @@ import {
   type ConnectorConfigCommandPort,
 } from "./composition/connectorConfig";
 import { createRegistryValidatedRerouteTarget } from "./composition/dispositionDurable";
+import { composeConnectors, type ComposedConnectors } from "./composition/connectors";
 import {
   createCrossWorkspaceLinkCommandPort,
   type CrossWorkspaceLinkCommandPort,
@@ -470,6 +471,9 @@ export interface BootedWorker {
   /** The reconcile-TRIGGER wiring (task 13.10) — present ONLY on the armed path (`config.reconcile === true`); the
    *  shipped default omits it (byte-equivalent). The owner's arming-era trigger source binds to `scheduler`. */
   readonly reconcile?: ReconcileWiring;
+  /** The composed connector-engine substrate (16.1) — all read adapters over an INERT transport
+   *  (no real transport, no tokenRef; dormant until the Phase-23 arming). 16.2 binds poll registration off `ports`. */
+  readonly connectors: ComposedConnectors;
 }
 
 // ── the health/egress query port over the persistent store ────────────────────
@@ -1836,6 +1840,11 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     backends.close();
   };
 
+  // 16.1 — compose the connector-engine substrate: all read adapters over the INERT
+  //   transport (no real transport, no tokenRef, no secret read). Dormant until Phase 23
+  //   binds a real HttpTransport; 16.2 binds the poll registration off `connectors.ports`.
+  const connectors = composeConnectors();
+
   return {
     api,
     backends,
@@ -1844,6 +1853,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     backupService,
     connectTemporal,
     close,
+    connectors,
     ...(reconcile !== undefined ? { reconcile } : {}), // present ONLY on the armed path; omitted by default (byte-equivalent)
   };
 }
