@@ -16,6 +16,7 @@ import {
   planId,
   sourceId,
   auditId,
+  actionId,
 } from "@sow/contracts";
 import type {
   WorkspaceId,
@@ -23,6 +24,9 @@ import type {
   SourceRef,
   KnowledgeMutationPlan,
   ProviderRoute,
+  ProposedAction,
+  ExternalWriteEnvelope,
+  Result,
 } from "@sow/contracts";
 import type { ResolvedWorkspacePolicy } from "@sow/policy";
 import type { AgentExtraction, MeetingCloseoutContext, MeetingJobInputs } from "@sow/workflows";
@@ -274,5 +278,155 @@ describe("meetingCommit — the KnowledgeWriter keeps its REAL secret-scan defau
     if (res.ok) return;
     // The real scanForSecrets default fired — not a schema/other rejection.
     expect(res.error.code).toBe("secret_found");
+  });
+});
+
+// ── 15.7 (closes G7): sourcePropose routes through the REAL Tool Gateway ────────
+// The source-ingestion external-write propose must be the SAME real `propose`
+// (createProposeActivity over dispatchExternalWrite) that backs meetingPropose —
+// NOT the pre-15.7 in-memory `sourceReceiptByKey` Map that minted `ext-source-N`
+// receipts. An approval-required employer_work external write FAILS CLOSED to
+// `approval_pending` (safety rule 2/5) and lands a PENDING §9 Approval carrying the
+// external-write envelope (rule 3), redaction-safe (rule 7), with NO real transport
+// bound (dormant / byte-equivalent — the real write transport is Phase 21).
+// A distinctive token rides the RAW payload so the redaction pin (t5) is non-vacuous.
+const proposeAction: ProposedAction = {
+  actionId: actionId("act:src:propose"),
+  targetSystem: "todoist",
+  canonicalObjectKey: "todoist:task:src-propose",
+  payload: { title: "Ingested follow-up RAW-PAYLOAD-SECRET-TOKEN" },
+  approvalPolicy: "auto",
+  idempotencyKey: "idem:src:propose",
+};
+const proposeEnvelope: ExternalWriteEnvelope = {
+  actionId: actionId("act:src:propose"),
+  targetSystem: "todoist",
+  canonicalObjectKey: "todoist:task:src-propose",
+  idempotencyKey: "idem:src:propose",
+  preconditions: ["not_exists"],
+  payloadHash: "sha256:src-propose",
+};
+
+// A DISTINCT canonical action (different idempotencyKey/canonicalObjectKey) — used by t3
+// to prove the pending-Approval dedup is genuinely KEYED, not an incidental "only one".
+const proposeAction2: ProposedAction = {
+  actionId: actionId("act:src:propose:2"),
+  targetSystem: "todoist",
+  canonicalObjectKey: "todoist:task:src-propose-2",
+  payload: { title: "Second ingested follow-up" },
+  approvalPolicy: "auto",
+  idempotencyKey: "idem:src:propose:2",
+};
+const proposeEnvelope2: ExternalWriteEnvelope = {
+  actionId: actionId("act:src:propose:2"),
+  targetSystem: "todoist",
+  canonicalObjectKey: "todoist:task:src-propose-2",
+  idempotencyKey: "idem:src:propose:2",
+  preconditions: ["not_exists"],
+  payloadHash: "sha256:src-propose-2",
+};
+
+type ProposeDelegate = (
+  a: ProposedAction,
+  e: ExternalWriteEnvelope,
+) => Promise<Result<{ status: string; envelope: ExternalWriteEnvelope }, { code: string; message: string }>>;
+
+/** Drive a propose delegate once + read back the pending Approvals (fresh backends per test). */
+async function drivePropose(
+  delegate: ProposeDelegate,
+  b: ProofSpineBackends,
+): Promise<{
+  res: Awaited<ReturnType<ProposeDelegate>>;
+  pendingCount: number;
+  firstPending: Record<string, unknown> | undefined;
+}> {
+  const res = await delegate(proposeAction, proposeEnvelope);
+  const listed = await b.repos.approvals.listByStatus("pending");
+  return {
+    res,
+    pendingCount: listed.ok ? listed.value.length : -1,
+    firstPending: listed.ok
+      ? (listed.value[0] as unknown as Record<string, unknown> | undefined)
+      : undefined,
+  };
+}
+
+describe("sourcePropose — routes through the REAL Tool Gateway (15.7 / closes G7)", () => {
+  // CONTROL (already green): meetingPropose is ALREADY the real gateway propose — it
+  // proves the harness + the approval_pending/pending-Approval model are correct, so a
+  // RED on the source tests below is the source delegate's wiring, not a broken oracle.
+  it("meetingPropose CONTROL — the same approval-required action fails closed to a pending Approval", async () => {
+    const b = await freshBackends(LOCAL_ENDPOINT);
+    const acts = buildProofSpineActivities(b, paramsFor(LOCAL_ENDPOINT));
+    const { res, pendingCount } = await drivePropose((a, e) => acts.meetingPropose(a, e), b);
+    expect(res.ok).toBe(false); // spec(§8) — real gateway fail-closed, no fabricated receipt
+    if (!res.ok) expect(res.error.code).toBe("approval_pending");
+    expect(pendingCount).toBe(1);
+  });
+
+  it("t1 source_propose_routes_through_the_real_gateway_not_an_in_memory_receipt", async () => {
+    // spec(§19.2/§8) — the G7 fix: the source propose is the real gateway propose, so an
+    // approval-required write FAILS CLOSED — NOT ok(status:"created") with an `ext-source-N`
+    // in-memory receipt (which is exactly what the pre-15.7 stub returns → RED).
+    const b = await freshBackends(LOCAL_ENDPOINT);
+    const acts = buildProofSpineActivities(b, paramsFor(LOCAL_ENDPOINT));
+    const { res } = await drivePropose((a, e) => acts.sourcePropose(a, e), b);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error.code).toBe("approval_pending");
+  });
+
+  it("t2 source_propose_lands_a_pending_approval_carrying_the_envelope", async () => {
+    // spec(§8 / rule 3) — the external-write envelope's payloadHash (keyed to the
+    // idempotencyKey + canonicalObjectKey) rides onto the pending §9 Approval.
+    const b = await freshBackends(LOCAL_ENDPOINT);
+    const acts = buildProofSpineActivities(b, paramsFor(LOCAL_ENDPOINT));
+    const { pendingCount, firstPending } = await drivePropose((a, e) => acts.sourcePropose(a, e), b);
+    expect(pendingCount).toBe(1);
+    expect(firstPending?.payloadHash).toBe(proposeEnvelope.payloadHash);
+  });
+
+  it("t3 source_propose_is_idempotent_no_duplicate_pending_approval", async () => {
+    // spec(rule 3) — a re-propose of the same canonical action does NOT duplicate the
+    // pending Approval (the Approval id derives from the envelope idempotencyKey).
+    const b = await freshBackends(LOCAL_ENDPOINT);
+    const acts = buildProofSpineActivities(b, paramsFor(LOCAL_ENDPOINT));
+    await acts.sourcePropose(proposeAction, proposeEnvelope);
+    await acts.sourcePropose(proposeAction, proposeEnvelope);
+    const listed = await b.repos.approvals.listByStatus("pending");
+    expect(listed.ok).toBe(true);
+    if (listed.ok) expect(listed.value.length).toBe(1);
+    // A DISTINCT canonical action IS added (2 pending) — the dedup is genuinely KEYED,
+    // not an incidental "only ever one pending Approval".
+    await acts.sourcePropose(proposeAction2, proposeEnvelope2);
+    const listed2 = await b.repos.approvals.listByStatus("pending");
+    expect(listed2.ok).toBe(true);
+    if (listed2.ok) expect(listed2.value.length).toBe(2);
+  });
+
+  it("t4 source_propose_binds_no_real_transport_zero_real_write", async () => {
+    // spec(NO hard line) — dormant/byte-equivalent: fails closed (no fabricated write
+    // receipt) AND no COMMITTED external write receipt was landed (real transport is
+    // UNBOUND — Phase 21). A committed receipt would mean a real egress happened.
+    const b = await freshBackends(LOCAL_ENDPOINT);
+    const acts = buildProofSpineActivities(b, paramsFor(LOCAL_ENDPOINT));
+    const { res } = await drivePropose((a, e) => acts.sourcePropose(a, e), b);
+    expect(res.ok).toBe(false);
+    const reserve = await b.repos.writeReceipts.reserve(
+      proposeAction.targetSystem,
+      proposeAction.canonicalObjectKey,
+    );
+    expect(reserve.ok).toBe(true);
+    if (reserve.ok) expect(reserve.value.kind).not.toBe("committed");
+  });
+
+  it("t5 source_propose_pending_approval_is_redaction_safe", async () => {
+    // spec(rule 7) — the Approval card carries the payloadHash, NEVER the raw payload bytes.
+    const b = await freshBackends(LOCAL_ENDPOINT);
+    const acts = buildProofSpineActivities(b, paramsFor(LOCAL_ENDPOINT));
+    const { firstPending } = await drivePropose((a, e) => acts.sourcePropose(a, e), b);
+    expect(firstPending).toBeDefined();
+    const serialized = JSON.stringify(firstPending);
+    expect(serialized).toContain(proposeEnvelope.payloadHash);
+    expect(serialized).not.toContain("RAW-PAYLOAD-SECRET-TOKEN");
   });
 });

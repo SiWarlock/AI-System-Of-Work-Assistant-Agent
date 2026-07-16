@@ -140,8 +140,6 @@ import type {
   ValidatedExtraction,
   MeetingBuiltOutputs,
   BuildOutputsFailure,
-  ProposeResult,
-  ProposeError,
 } from "@sow/workflows";
 import type { BrokerOutcome } from "@sow/providers";
 
@@ -740,31 +738,13 @@ export function buildProofSpineActivities(
     deriveIdempotencyKey: (plan) => `kw:commit:${String(plan.planId)}`,
   });
 
-  // (f) propose — DETERMINISTIC reuse-by-key (NOT exercised on the C1 happy path, which
-  // yields actions:[]; wired for completeness so the delegate is registered). A replay
-  // with the same idempotencyKey reuses the prior envelope (zero duplicate write).
-  const sourceReceiptByKey = new Map<string, ExternalWriteEnvelope>();
-  const sourcePropose: ProposeActionsPort = {
-    propose: (
-      action: ProposedAction,
-      env: ExternalWriteEnvelope,
-    ): Promise<Result<ProposeResult, ProposeError>> => {
-      const key = env.idempotencyKey || action.idempotencyKey;
-      const existing = sourceReceiptByKey.get(key);
-      if (existing !== undefined) {
-        return Promise.resolve(ok({ status: "reused", envelope: existing }));
-      }
-      const stamped: ExternalWriteEnvelope = {
-        ...env,
-        writeReceipt: {
-          externalObjectId: `ext-source-${sourceReceiptByKey.size + 1}`,
-          recordedAt: now(),
-        },
-      };
-      sourceReceiptByKey.set(key, stamped);
-      return Promise.resolve(ok({ status: "created", envelope: stamped }));
-    },
-  };
+  // (f) propose — 15.7 (closes G7): the source-ingestion external-write propose now routes through the
+  // SAME real Tool Gateway propose port as `meetingPropose` (the `propose` = createProposeActivity over
+  // dispatchExternalWrite, defined in §f-meeting above) — REPLACING the in-memory `ext-source-N` receipt
+  // stub. A source propose produces a real ProposedAction → ExternalWriteEnvelope (idempotencyKey +
+  // canonicalObjectKey, rule 3) → a pending §9 Approval (an approval-required action FAILS CLOSED to
+  // approval_pending — no blind write). DORMANT/no hard line: the write adapter stays the default stub
+  // (WriteTransportGate OFF) ⇒ ZERO real egress; the real external transport is Phase-21 (L11).
 
   // (g) index — a DETERMINISTIC GBrain index that runs AFTER the commit and never
   // rolls it back. Inherently idempotent: it performs no side effect, so re-indexing
@@ -811,7 +791,7 @@ export function buildProofSpineActivities(
       body?: string,
     ) => sourceBuildOutputs.build(validated, workspaceId, source, body),
     sourceCommit: (plan) => sourceCommit.commit(plan),
-    sourcePropose: (action, env) => sourcePropose.propose(action, env),
+    sourcePropose: (action, env) => propose.propose(action, env),
     sourceIndex: (revisionId) => sourceIndexPort.index(revisionId),
 
     // infra — the failure sink every driver routes through (inv-5).
