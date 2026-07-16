@@ -124,6 +124,136 @@ export function isLoopbackHost(host: string): boolean {
 }
 
 /**
+ * Parse an IPv6 literal to its 8 numeric hextets (0..65535), expanding a single `::` and an
+ * optional trailing dotted-quad (`::ffff:1.2.3.4`), stripping a zone id (`%eth0`). Returns
+ * `null` if it is not a well-formed IPv6 literal. Lower-cased input assumed. Pure.
+ */
+function parseIpv6Hextets(input: string): number[] | null {
+  const core = (input.split("%")[0] ?? "").trim();
+  if (!core.includes(":")) return null;
+
+  // A trailing dotted-quad → two hextets appended after the `::` expansion.
+  let s = core;
+  const v4Tail: number[] = [];
+  const dotted = s.match(/(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (dotted !== null) {
+    const idx = dotted.index ?? -1;
+    if (idx < 0) return null; // defensive: a matched group always has an index
+    const o = dotted.slice(1).map(Number);
+    if (o.some((n) => n > 255)) return null;
+    v4Tail.push(((o[0] as number) << 8) | (o[1] as number), ((o[2] as number) << 8) | (o[3] as number));
+    s = s.slice(0, idx); // leaves a trailing ':' (e.g. "::ffff:")
+    if (s.endsWith(":") && !s.endsWith("::")) s = s.slice(0, -1);
+  } else if (s.includes(".")) {
+    return null; // a stray dot that is not a valid trailing quad
+  }
+
+  const halves = s.split("::");
+  if (halves.length > 2) return null; // at most one "::"
+  const parse = (part: string): number[] | null => {
+    if (part === "") return [];
+    const out: number[] = [];
+    for (const g of part.split(":")) {
+      if (!/^[0-9a-f]{1,4}$/.test(g)) return null;
+      out.push(parseInt(g, 16));
+    }
+    return out;
+  };
+  const head = parse(halves[0] ?? "");
+  const tail = halves.length === 2 ? parse(halves[1] ?? "") : [];
+  if (head === null || tail === null) return null;
+
+  let groups: number[];
+  if (halves.length === 2) {
+    const fill = 8 - head.length - tail.length - v4Tail.length;
+    if (fill < 0) return null;
+    groups = [...head, ...Array<number>(fill).fill(0), ...tail, ...v4Tail];
+  } else {
+    groups = [...head, ...v4Tail];
+  }
+  return groups.length === 8 ? groups : null;
+}
+
+/**
+ * True iff `host` is a PRIVATE / non-publicly-routable target that must NEVER be reached by an
+ * outbound connector read — the SSRF denylist that BEATS the allowlist (16.3; mirrors the
+ * loopback reject, extended). Expects the host {@link extractHost} yields (scheme/userinfo/port
+ * already stripped). Covers, defense-in-depth:
+ *   • IPv4: RFC-1918 (10/8, 172.16/12, 192.168/16), CGNAT (100.64/10), link-local incl. the
+ *     cloud-metadata IP (169.254/16), `0.0.0.0/8`, loopback (127/8 — belt over {@link isLoopbackHost}).
+ *     Any NON-canonical numeric-IPv4 form (octal `0177.0.0.1`, hex `0x7f.0.0.1`, short `127.1`,
+ *     integer `2130706433`, >255 octet) that a libc/inet_aton resolver could map internally is
+ *     FAIL-CLOSED (treated private) — only a clean public decimal dotted-quad is admitted.
+ *   • IPv6: loopback/unspecified (`::1`/`::`, any zero-fill spelling), link-local (fe80::/10),
+ *     ULA (fc00::/7), and IPv4-mapped/embedded (`::ffff:169.254.169.254`, hex `::ffff:a9fe:a9fe`)
+ *     — reduced to the embedded v4 and re-checked. An unparseable IPv6 literal is FAIL-CLOSED.
+ *   • Hostnames: `localhost` / `.internal` / `.local` / `.lan` / `.home.arpa` suffixes and a bare
+ *     single-label host (resolves via a LOCAL search domain). A trailing FQDN dot is normalized.
+ * Fail-CLOSED on empty / malformed. The SINGLE vetted private-range predicate (lives ONCE here per
+ * {@link isAllowedRemoteEndpoint}). Host-string only — DNS-rebind + NAT64 (64:ff9b::/96) / 6to4
+ * (2002::/16) embedded-v4 (which need gateway/relay infra to reach, not a direct connect) are left
+ * to the Phase-23 real-send resolved-IP recheck. Pure.
+ */
+export function isPrivateHost(host: string): boolean {
+  if (typeof host !== "string" || host.length === 0) return true; // fail-closed
+  const h = host.toLowerCase().trim().replace(/\.+$/, ""); // normalize case, whitespace, trailing dot(s)
+  if (h.length === 0) return true; // fail-closed (was only dots / whitespace)
+
+  // Internal / mDNS / non-public hostname suffixes.
+  if (
+    h === "localhost" ||
+    h.endsWith(".localhost") ||
+    h.endsWith(".internal") ||
+    h.endsWith(".local") ||
+    h.endsWith(".lan") ||
+    h.endsWith(".home.arpa")
+  ) {
+    return true;
+  }
+
+  // A numeric-IPv4 attempt: every dot-separated label is decimal/octal/hex numeric.
+  if (!h.includes(":") && /^[0-9a-fx.]+$/.test(h) && /[0-9]/.test(h) && h.split(".").every((l) => /^(0x[0-9a-f]+|\d+)$/.test(l))) {
+    const labels = h.split(".");
+    const canonical =
+      labels.length === 4 && labels.every((l) => /^\d{1,3}$/.test(l) && Number(l) <= 255);
+    if (canonical) {
+      const [a, b] = labels.map(Number) as [number, number, number, number];
+      if (a === 0) return true; //                        0.0.0.0/8 "this host"
+      if (a === 10) return true; //                       10.0.0.0/8
+      if (a === 127) return true; //                      127.0.0.0/8 loopback (belt)
+      if (a === 169 && b === 254) return true; //         169.254.0.0/16 link-local + cloud metadata
+      if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+      if (a === 192 && b === 168) return true; //         192.168.0.0/16
+      if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 CGNAT
+      return false; // a publicly-routable IPv4 literal
+    }
+    return true; // a NON-canonical numeric IPv4 form (octal/hex/short/integer/oversized) ⇒ fail-closed
+  }
+
+  // IPv6 literal.
+  if (h.includes(":")) {
+    const g = parseIpv6Hextets(h);
+    if (g === null) return true; // unparseable IPv6 literal ⇒ fail-closed
+    if (g.every((x) => x === 0)) return true; //                         :: unspecified
+    if (g.slice(0, 7).every((x) => x === 0) && g[7] === 1) return true; // ::1 loopback
+    if ((g[0] as number) >= 0xfe80 && (g[0] as number) <= 0xfebf) return true; // link-local fe80::/10
+    if ((g[0] as number) >= 0xfc00 && (g[0] as number) <= 0xfdff) return true; // ULA fc00::/7
+    // IPv4-mapped (`::ffff:a.b.c.d`) or -compatible (high 96 bits zero): reduce to the v4.
+    if (g.slice(0, 5).every((x) => x === 0) && (g[5] === 0 || g[5] === 0xffff)) {
+      const g6 = g[6] as number;
+      const g7 = g[7] as number;
+      return isPrivateHost(`${(g6 >> 8) & 0xff}.${g6 & 0xff}.${(g7 >> 8) & 0xff}.${g7 & 0xff}`);
+    }
+    return false; // a publicly-routable IPv6 literal
+  }
+
+  // A bare single-label host (no dot, not an IP) — resolves via a LOCAL search domain.
+  if (!h.includes(".")) return true;
+
+  return false; // a dotted public hostname (FQDN)
+}
+
+/**
  * True ONLY for a loopback endpoint — one that provably cannot leave the machine:
  * `localhost`, the 127.0.0.0/8 range, `::1`, or a unix-socket path (`/abs/path`
  * or `unix://…`). FALSE for any remote / proxied / DNS / all-interfaces
@@ -196,16 +326,16 @@ export function isLoopbackEndpoint(endpoint: string): boolean {
  * loopback-reject is layered on. The host compare is PORT-BLIND by design —
  * `extractHost` strips the port, so ANY port on an allowlisted host is admitted
  * (connectors hit vendor APIs on 443; a port-aware variant would compose the
- * port-preserving `extractAuthority` instead). ARCH_GAP (arming-era residuals):
- * a hostname allowlist alone CANNOT catch DNS rebinding; it does not block
- * broader private ranges (RFC-1918 / link-local / ULA); and the layered
- * loopback-reject inherits `isLoopbackHost`'s canonical-form-only coverage
- * (non-canonical encodings — compressed / IPv4-mapped IPv6, decimal / hex IPv4 —
- * are not recognized as loopback, though the PRIMARY allowlist compare still
- * rejects them since they never string-match a remote allowlist entry). The
- * injected REAL `HttpTransport` at the connector arming gate must pin/validate
- * the RESOLVED IP (and an `isPrivateHost` predicate, if added, lives ONCE here
- * alongside `isLoopbackHost`). Pure; never throws.
+ * port-preserving `extractAuthority` instead). DENYLIST (beats the allowlist, 16.3):
+ * the layered {@link isLoopbackHost} reject PLUS {@link isPrivateHost} now block
+ * RFC-1918 / CGNAT / link-local + cloud-metadata / IPv6 ULA+link-local / internal
+ * hostnames — including non-canonical numeric IPv4 (octal/hex/short/integer) and
+ * non-canonical IPv6 (compressed / hex IPv4-mapped) forms, which fail CLOSED — even
+ * if a spec misconfigures its allowlist. ARCH_GAP (arming-era residual, NARROWED):
+ * only DNS REBINDING remains — a hostname/host-STRING check cannot see the resolved
+ * IP, so the injected REAL `HttpTransport` at the Phase-23 connector arming gate must
+ * additionally pin/validate the RESOLVED IP (re-running `isPrivateHost` on it). Pure;
+ * never throws.
  */
 export function isAllowedRemoteEndpoint(
   endpoint: string,
@@ -225,6 +355,10 @@ export function isAllowedRemoteEndpoint(
   const host = extractHost(raw);
   if (host === null) return false; // fail-closed: unparseable ⇒ inadmissible
   if (isLoopbackHost(host)) return false; // SSRF-to-local defense (beats the allowlist)
+  // SSRF private-range defense (16.3): RFC-1918 / CGNAT / link-local + cloud-metadata /
+  // IPv6 ULA+link-local / internal hostnames are refused EVEN IF a misconfigured spec
+  // allowlisted them — the denylist BEATS the allowlist, exactly like the loopback reject.
+  if (isPrivateHost(host)) return false;
 
   // Exact whole-host match. Both sides pass through extractHost so the compare is
   // between two normal-form bare hosts; a non-string / null-extracting entry is

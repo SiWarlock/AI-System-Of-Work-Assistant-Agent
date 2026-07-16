@@ -8,7 +8,7 @@
 import { describe, it, expect } from "vitest";
 import type { ProviderRoute } from "@sow/contracts";
 import { processorId } from "@sow/contracts";
-import { isAllowedRemoteEndpoint, isLoopbackEndpoint, processorOfRoute } from "../src/processors";
+import { isAllowedRemoteEndpoint, isLoopbackEndpoint, isPrivateHost, processorOfRoute } from "../src/processors";
 
 // ── route builders ───────────────────────────────────────────────────────────
 const providerRoute = (
@@ -236,5 +236,115 @@ describe("isAllowedRemoteEndpoint — fail-closed on unparseable / non-string (f
       isAllowedRemoteEndpoint("https://app.asana.com", [123 as unknown as string, "app.asana.com"]),
     ).toBe(true);
     expect(isAllowedRemoteEndpoint("https://app.asana.com", [123 as unknown as string])).toBe(false);
+  });
+});
+
+// ── isPrivateHost — SSRF private-range denylist (16.3) ───────────────────────────
+// The vetted loopback predicate already beats the allowlist; `isPrivateHost` extends the
+// SAME defense-in-depth denylist to RFC-1918, CGNAT, link-local (incl. the 169.254.169.254
+// cloud metadata IP), IPv6 ULA/link-local, and internal hostname suffixes — so a
+// MISCONFIGURED allowlist can never let a connector reach an internal/metadata endpoint.
+describe("isPrivateHost — blocks private / link-local / metadata / ULA / internal (true)", () => {
+  it.each([
+    ["10.0.0.1", "RFC-1918 10/8"],
+    ["10.255.255.255", "RFC-1918 10/8 upper"],
+    ["172.16.0.1", "RFC-1918 172.16/12 lower"],
+    ["172.31.255.255", "RFC-1918 172.16/12 upper"],
+    ["192.168.1.1", "RFC-1918 192.168/16"],
+    ["169.254.169.254", "link-local / cloud metadata IP"],
+    ["169.254.0.1", "link-local 169.254/16"],
+    ["100.64.0.1", "CGNAT 100.64/10"],
+    ["127.0.0.1", "IPv4 loopback"],
+    ["0.0.0.0", "0.0.0.0/8 this-host"],
+    ["::1", "IPv6 loopback"],
+    ["::", "IPv6 unspecified"],
+    ["fe80::1", "IPv6 link-local fe80::/10"],
+    ["fc00::1", "IPv6 ULA fc00::/7 (fc)"],
+    ["fd12:3456::1", "IPv6 ULA fc00::/7 (fd)"],
+    ["::ffff:10.0.0.1", "IPv4-mapped IPv6 of a private v4"],
+    ["localhost", "localhost name"],
+    ["foo.internal", ".internal suffix"],
+    ["db.local", ".local (mDNS) suffix"],
+    ["intranet", "single-label host (local search domain)"],
+  ])("blocks %s (%s)", (host) => {
+    expect(isPrivateHost(host)).toBe(true);
+  });
+});
+
+describe("isPrivateHost — allows public hosts (false)", () => {
+  it.each([
+    ["8.8.8.8", "public v4"],
+    ["1.1.1.1", "public v4"],
+    ["172.15.0.1", "just below the 172.16/12 block"],
+    ["172.32.0.1", "just above the 172.16/12 block"],
+    ["192.169.0.1", "just outside 192.168/16"],
+    ["169.253.0.1", "just outside 169.254/16"],
+    ["100.63.0.1", "just below CGNAT 100.64/10"],
+    ["100.128.0.1", "just above CGNAT 100.64/10"],
+    ["app.asana.com", "public FQDN"],
+    ["www.googleapis.com", "public FQDN"],
+    ["2606:4700:4700::1111", "public IPv6"],
+  ])("allows %s (%s)", (host) => {
+    expect(isPrivateHost(host)).toBe(false);
+  });
+});
+
+describe("isAllowedRemoteEndpoint — SSRF: a private/metadata host is rejected EVEN IF allowlisted (denylist beats allowlist)", () => {
+  it.each([
+    ["https://169.254.169.254/latest/meta-data/", "169.254.169.254", "cloud metadata IP"],
+    ["https://10.0.0.5/internal", "10.0.0.5", "RFC-1918"],
+    ["https://192.168.0.1/admin", "192.168.0.1", "RFC-1918"],
+    ["https://vault.internal/secret", "vault.internal", ".internal host"],
+    ["https://[fd00::1]/x", "fd00::1", "IPv6 ULA"],
+  ])("rejects %s even when %s is on the allowlist (%s)", (url, host) => {
+    // A misconfigured spec that allowlisted the internal host must STILL be refused.
+    expect(isAllowedRemoteEndpoint(url, [host])).toBe(false);
+  });
+});
+
+// Adversarial SSRF-evasion vectors (security review, 16.3) — non-canonical encodings that a
+// libc/inet_aton resolver or the OS could still route internally must FAIL CLOSED (private).
+describe("isPrivateHost — adversarial non-canonical encodings fail closed (true)", () => {
+  it.each([
+    // Non-canonical IPv6 literals that reduce to an internal target.
+    ["::ffff:a9fe:a9fe", "hex IPv4-mapped 169.254.169.254 (metadata)"],
+    ["::ffff:7f00:1", "hex IPv4-mapped 127.0.0.1 (loopback)"],
+    ["::ffff:0a00:0001", "hex IPv4-mapped 10.0.0.1 (RFC-1918)"],
+    ["::ffff:169.254.169.254", "dotted IPv4-mapped metadata"],
+    ["0000:0000:0000:0000:0000:0000:0000:0001", "fully-expanded ::1"],
+    ["fe80::1%eth0", "link-local with a zone id"],
+    ["FE80::1", "uppercase link-local"],
+    // Legacy inet_aton IPv4 forms.
+    ["0177.0.0.1", "octal 127.0.0.1"],
+    ["127.1", "short-form 127.0.0.1"],
+    ["10.1", "short-form 10.0.0.1"],
+    ["0x7f.0.0.1", "hex-octet 127.0.0.1"],
+    ["2130706433", "integer 127.0.0.1"],
+    ["256.0.0.1", "oversized octet ⇒ fail-closed"],
+    ["999.1.1.1", "oversized octet ⇒ fail-closed"],
+    // Trailing-dot absolute FQDNs.
+    ["localhost.", "trailing-dot localhost"],
+    ["metadata.google.internal.", "trailing-dot .internal"],
+    ["db.local.", "trailing-dot .local"],
+    // Whitespace.
+    [" 127.0.0.1", "leading-space loopback"],
+  ])("blocks %s (%s)", (host) => {
+    expect(isPrivateHost(host)).toBe(true);
+  });
+
+  it.each([["" as unknown as string, "empty"], [undefined as unknown as string, "undefined"], [null as unknown as string, "null"], [42 as unknown as string, "number"]])(
+    "fail-closed on a malformed host %s (%s)",
+    (host) => {
+      expect(isPrivateHost(host)).toBe(true);
+    },
+  );
+});
+
+describe("isPrivateHost — a public IPv6 with a dotted low-32 tail is NOT over-blocked (false)", () => {
+  it.each([
+    ["2001:db8::10.0.0.1", "public 2001:db8:: whose low bits render as 10.0.0.1"],
+    ["2606:4700:4700::1111", "public Cloudflare IPv6"],
+  ])("allows %s (%s)", (host) => {
+    expect(isPrivateHost(host)).toBe(false);
   });
 });

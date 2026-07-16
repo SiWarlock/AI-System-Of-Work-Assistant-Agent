@@ -22,6 +22,9 @@ import {
 } from "../src/connectors/adapters/http-transport";
 import { createAsanaHttpTransport, createAsanaConnector } from "../src/connectors/adapters/asana";
 import type { TransportRequest } from "../src/connectors/transport";
+import { readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 const TOKEN = "asana-PAT-secret-XYZ";
 const TOKEN_REF = "keychain:asana-token";
@@ -560,5 +563,121 @@ describe("createConnectorHttpTransport — POST + body extension (R6 slice 1)", 
     expect(Object.keys(req).every((k) => k === "cursor" || k === "readScope")).toBe(true);
     expect("Authorization" in req).toBe(false);
     expect(JSON.stringify(req)).not.toContain(MARKER);
+  });
+});
+
+// ── 16.3 — ING-7 runtime method admission ───────────────────────────────────────
+// The `method` type is already GET|POST, but ING-7 read-only-ness must be a RUNTIME
+// admission gate too (defense-in-depth): a mutating verb smuggled past the type (a cast, a
+// future widening) is REJECTED at admission — before ANY token read or dispatch.
+describe("createConnectorHttpTransport — ING-7 read-only method admission", () => {
+  it.each([["DELETE"], ["PUT"], ["PATCH"], ["OPTIONS"], ["HEAD"]])(
+    "ing7_admission_rejects_a_mutating_verb: %s is refused at admission (no token read, no dispatch)",
+    async (verb) => {
+      const transport = fakeTransport();
+      const secrets = fakeSecrets();
+      const spec = { ...CORE_SPEC, method: verb as unknown as "GET" | "POST" };
+      const res = await createConnectorHttpTransport(spec, { transport, secrets, tokenRef: TOKEN_REF })(REQ);
+      expect(res.ok).toBe(false);
+      expect(transport.calls).toHaveLength(0); // zero dispatch
+      expect(secrets.refs).toHaveLength(0); // admission BEFORE token read
+      expect(JSON.stringify(res)).not.toContain(TOKEN); // redaction-safe fault
+    },
+  );
+
+  it("admits GET (default) and POST (the read-only exceptions)", async () => {
+    const tGet = fakeTransport();
+    const rGet = await createConnectorHttpTransport(CORE_SPEC, depsWith({ transport: tGet }))(REQ);
+    expect(rGet.ok).toBe(true);
+    expect(tGet.calls[0]!.method).toBe("GET");
+
+    const tPost = fakeTransport();
+    const postSpec: ConnectorHttpSpec = { ...CORE_SPEC, method: "POST", buildBody: () => JSON.stringify({ query: "{ me }" }) };
+    const rPost = await createConnectorHttpTransport(postSpec, depsWith({ transport: tPost }))(REQ);
+    expect(rPost.ok).toBe(true);
+    expect(tPost.calls[0]!.method).toBe("POST");
+  });
+});
+
+// ── 16.3 — SSRF internal-target coverage + denylist-beats-allowlist (transport level) ─
+describe("createConnectorHttpTransport — SSRF blocks internal targets before token read", () => {
+  it.each([
+    ["https://169.254.169.254", "cloud metadata IP"],
+    ["https://10.0.0.5", "RFC-1918"],
+    ["https://192.168.0.1", "RFC-1918"],
+    ["https://127.0.0.1", "loopback"],
+    ["https://[::1]", "IPv6 loopback"],
+    ["https://vault.internal", ".internal host"],
+  ])(
+    "ssrf_guard_blocks_internal_targets_before_token_read: %s (%s) refused, token never read",
+    async (baseUrl) => {
+      const transport = fakeTransport();
+      const secrets = fakeSecrets();
+      const t = createConnectorHttpTransport({ ...CORE_SPEC, baseUrl }, { transport, secrets, tokenRef: TOKEN_REF });
+      const res = await t(REQ);
+      expect(res.ok).toBe(false);
+      expect(transport.calls).toHaveLength(0);
+      expect(secrets.refs).toHaveLength(0);
+      expect(JSON.stringify(res)).not.toContain(TOKEN);
+    },
+  );
+
+  it("ssrf_guard_blocks_a_MISCONFIGURED_allowlisted_metadata_host (denylist beats allowlist)", async () => {
+    // Even if a spec mistakenly allowlists the metadata IP, the private-range denylist refuses it.
+    const transport = fakeTransport();
+    const secrets = fakeSecrets();
+    const t = createConnectorHttpTransport(
+      { ...CORE_SPEC, baseUrl: "https://169.254.169.254", allowedHosts: ["169.254.169.254"] },
+      { transport, secrets, tokenRef: TOKEN_REF },
+    );
+    const res = await t(REQ);
+    expect(res.ok).toBe(false);
+    expect(transport.calls).toHaveLength(0);
+    expect(secrets.refs).toHaveLength(0); // token NEVER read for an internal endpoint
+  });
+
+  it("ssrf_guard_allows_a_public_allowlisted_host (send IS invoked)", async () => {
+    const transport = fakeTransport();
+    const res = await createConnectorHttpTransport(CORE_SPEC, depsWith({ transport }))(REQ);
+    expect(res.ok).toBe(true);
+    expect(transport.calls).toHaveLength(1);
+    expect(transport.calls[0]!.url.startsWith("https://app.asana.com")).toBe(true);
+  });
+});
+
+// ── 16.3 — send-seam dormancy (no real network egress in the shipped default) ────
+describe("createConnectorHttpTransport — send seam is UNBOUND (dormant, no real network)", () => {
+  it("send_seam_is_unbound: construction + a guard-rejected request invoke the injected send ZERO times", async () => {
+    const transport = fakeTransport();
+    const secrets = fakeSecrets();
+    // Construction alone must not dispatch.
+    const t = createConnectorHttpTransport(
+      { ...CORE_SPEC, baseUrl: "https://169.254.169.254", allowedHosts: ["app.asana.com"] },
+      { transport, secrets, tokenRef: TOKEN_REF },
+    );
+    expect(transport.calls).toHaveLength(0);
+    const res = await t(REQ);
+    expect(res.ok).toBe(false);
+    expect(transport.calls).toHaveLength(0); // guard-reject ⇒ zero real send
+    expect(secrets.refs).toHaveLength(0);
+  });
+
+  it("send_seam_is_unbound: the connector source tree binds NO real network transport (grep-pin)", () => {
+    const dir = fileURLToPath(new URL("../src/connectors", import.meta.url));
+    const files: string[] = [];
+    const walk = (d: string): void => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith(".ts")) files.push(p);
+      }
+    };
+    walk(dir);
+    expect(files.length).toBeGreaterThan(0);
+    // Real outbound-network bindings that must NOT appear in the dormant connector tree.
+    const NETWORK_BIND =
+      /(?:import[^;\n]*from\s*|require\(\s*)['"](?:undici|node:https?|https?)['"]|\bhttps?\.request\s*\(|\bnew\s+XMLHttpRequest\b/;
+    const offenders = files.filter((f) => NETWORK_BIND.test(readFileSync(f, "utf8")));
+    expect(offenders).toEqual([]);
   });
 });

@@ -156,6 +156,20 @@ export function createConnectorHttpTransport(
   const { transport, secrets, tokenRef } = deps;
 
   return async (request: TransportRequest): Promise<ConnectorTransportResult> => {
+    // (0) ING-7 read-only ADMISSION — the FIRST gate. `method` is already typed GET|POST, but
+    //     enforce it at RUNTIME too (defense-in-depth): a mutating verb smuggled past the type
+    //     (an `as` cast / a future widening) is refused at admission — BEFORE any query build,
+    //     SSRF check, token read, or dispatch. GET + POST are the ONLY admitted methods.
+    //     WHY POST is admitted (NOT a write hole): the read-only guarantee rests on (a) the
+    //     read-only ADAPTERS — the untrusted content is the RESPONSE body, never the request
+    //     verb — and (b) a FIXED query-only `buildBody` (a GraphQL `query`, NEVER a mutation;
+    //     see the ConnectorHttpSpec.method WARNING). GitHub/Linear read via GraphQL-over-POST.
+    //     The {GET,POST} allowlist (reject HEAD/OPTIONS/PUT/PATCH/DELETE) is the defense-in-depth
+    //     layer ON TOP of that adapter/spec read-only contract.
+    const method = spec.method ?? "GET";
+    if (method !== "GET" && method !== "POST") {
+      return transportFailure("unknown", `method not admitted (read-only) (${endpointHostRef(spec.baseUrl)})`);
+    }
     // `spec.buildQuery` / `spec.mapPage` are per-connector CALLBACKS (the candidate surface every
     // specialization supplies). Wrap them so a throwing builder/mapper — which a FUTURE connector could write
     // with raw response content in its message — can NEVER escape this template unredacted into
@@ -189,8 +203,7 @@ export function createConnectorHttpTransport(
     //     GraphQL-over-POST read connector — see the ConnectorHttpSpec.method/buildBody READ-ONLY WARNING) adds
     //     a JSON body via the spec's TOKEN-FREE `buildBody`, wrapped fail-closed (a throw / a mis-specified POST
     //     with no buildBody ⇒ a redacted failure, no dispatch). The token rides ONLY the Authorization header
-    //     (never the body / url) — rule 7.
-    const method = spec.method ?? "GET";
+    //     (never the body / url) — rule 7. (`method` was resolved + read-only-admitted at step (0).)
     const headers: Record<string, string> = {
       accept: "application/json",
       Authorization: `Bearer ${secret.value}`,
