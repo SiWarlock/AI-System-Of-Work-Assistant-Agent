@@ -29,6 +29,10 @@ export const SECURITY_BIN = "/usr/bin/security";
 
 const NEWLINE = 0x0a;
 const DETAIL_MAX = 200;
+/** Max RAW code-0 stdout length (bytes, any trailing newline INCLUDED — the guard checks the raw value before
+ *  the newline-strip so an anomalous blob is never copied). A value larger is anomalous — an HMAC key is 32-64B
+ *  and a provider key/token is well under it; 4KB is generous headroom, far under the real execFile's 64KB maxBuffer. */
+const MAX_KEY_LEN = 4096;
 /** A secret-shaped run: ≥16 chars of a key/base64/hex-ish alphabet. Redacted from `detail` (belt-and-suspenders
  *  over the structural guarantee that `detail` never reads stdout). */
 const SECRET_SHAPED = /[A-Za-z0-9+/=_-]{16,}/g;
@@ -98,8 +102,13 @@ export function createSecurityCliKeychainBackend(deps: SecurityCliKeychainBacken
           account,
         ]);
         if (code === 0) {
+          const raw = toBytes(stdout);
+          // Trust boundary (mirror the Slice-1 zero-length reject): a code-0 value FAR larger than any real
+          // key/token is anomalous — the wrapper doesn't TRUST the swappable exec to have bounded stdout.
+          // Reject on the RAW length (before de-aliasing, so an anomalous blob is never copied); never served.
+          if (raw.length > MAX_KEY_LEN) return err({ kind: "backend_error", detail: "key exceeds max length" });
           // the ONLY place the secret leaves — straight into the ok Result; never logged, never in detail.
-          return ok(stripOneTrailingNewline(toBytes(stdout)));
+          return ok(stripOneTrailingNewline(raw));
         }
         // FAULT: read only code + stderr — stdout (which could carry partial secret bytes) is deliberately IGNORED.
         return err({ kind: classifyFault(code, stderr), detail: scrubDetail(code, stderr) });

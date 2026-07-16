@@ -108,6 +108,32 @@ describe("createSecurityCliKeychainBackend — success", () => {
     expect(isOk(r)).toBe(true);
     if (isOk(r)) expect(r.value.length).toBe(0); // backend strips → empty; the Slice-1 adapter is what REJECTS empty
   });
+
+  it("a_code_0_stdout_above_the_max_key_length_is_rejected_not_served", async () => {
+    // trust boundary (17.2 — mirrors the 17.1 zero-length reject): the wrapper must not TRUST the swappable
+    // injected exec to have bounded stdout. A code-0 value FAR larger than any real key/token (an HMAC key is
+    // 32-64B, provider keys/tokens are well under 4KB) is anomalous — NEVER served as a key. The 4KB bound is
+    // generous headroom under the real execFile's 64KB maxBuffer (which bounds the real path).
+    const over = await createSecurityCliKeychainBackend({
+      exec: fakeExec({ code: 0, stdout: new Uint8Array(4097).fill(0x41) }).exec,
+    }).read(SVC, ACCT);
+    expect(isErr(over)).toBe(true);
+    if (isErr(over)) expect(over.error.kind).toBe("backend_error");
+    // non-vacuity: a value AT the bound still serves — this rejects the anomalous, never a real key.
+    const at = await createSecurityCliKeychainBackend({
+      exec: fakeExec({ code: 0, stdout: new Uint8Array(4096).fill(0x41) }).exec,
+    }).read(SVC, ACCT);
+    expect(isOk(at)).toBe(true);
+    if (isOk(at)) expect(at.value.length).toBe(4096);
+    // the guard is on the RAW length (before the newline-strip): a 4097-byte value ending in \n (which WOULD
+    // strip to 4096) is STILL rejected — locks the raw-length semantics so a strip-then-check refactor can't
+    // silently widen the bound, and no anomalous blob is copied.
+    const withNl = new Uint8Array(4097).fill(0x41);
+    withNl[4096] = 0x0a; // trailing newline
+    const rejNl = await createSecurityCliKeychainBackend({ exec: fakeExec({ code: 0, stdout: withNl }).exec }).read(SVC, ACCT);
+    expect(isErr(rejNl)).toBe(true);
+    if (isErr(rejNl)) expect(rejNl.error.kind).toBe("backend_error");
+  });
 });
 
 describe("createSecurityCliKeychainBackend — fault mapping (typed, never throws)", () => {
