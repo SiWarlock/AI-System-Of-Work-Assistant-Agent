@@ -51,7 +51,9 @@ function reasonForKind(kind: KeychainBackendError["kind"]): KeychainUnresolvedRe
   return Object.hasOwn(REASON_FOR_KIND, kind) ? REASON_FOR_KIND[kind] : "backend_error";
 }
 
-const SCHEME = "keychain://";
+/** The `keychain://` URI scheme. EXPORTED so the 17.4 secret-ref convention composes refs against the SAME scheme
+ *  (single-sourced — no duplicated literal that could drift, L37). */
+export const SCHEME = "keychain://";
 /** Bound the whole ref (defense for the Slice-2 `security`-CLI boundary this charset feeds). */
 const MAX_REF_LENGTH = 512;
 /** Per-segment charset — bars whitespace, path separators, and shell metacharacters (defense atop the args-array
@@ -63,8 +65,12 @@ const SEGMENT = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/;
  * Parse + validate an opaque `keychain://<service>/<account>` reference into its structured parts, or `null`
  * when malformed. Fail-closed: exactly two non-empty segments, each charset-clean and not a `.`/`..` traversal
  * token. The caller makes NO backend call on `null` (ref-injection defense).
+ *
+ * EXPORTED so the 17.4 secret-ref convention (`secretRefConvention.ts`) reuses the SAME traversal-safe parse to
+ * build refs traversal-safe BY CONSTRUCTION (round-trip validation) + parse them back — a single-sourced charset
+ * (no duplicate that could drift and re-open the ref-injection surface, L5/L37).
  */
-function parseKeychainRef(ref: string): { readonly service: string; readonly account: string } | null {
+export function parseKeychainRef(ref: string): { readonly service: string; readonly account: string } | null {
   if (ref.length > MAX_REF_LENGTH) return null; // bounded input for the downstream CLI
   if (!ref.startsWith(SCHEME)) return null;
   const segments = ref.slice(SCHEME.length).split("/");
