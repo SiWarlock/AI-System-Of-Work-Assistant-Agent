@@ -404,6 +404,46 @@ describe("spec(§9 inv-3/WS-2) buildOutputs activity — outputs DERIVED from va
     expect(item.envelope.idempotencyKey).toBe(item.action.idempotencyKey);
   });
 
+  it("meeting_externalActionProposals_mirror_derived_actions — the KMP mirrors the projection-derived actions; empty when none (spec 18.7 / G17)", async () => {
+    // (a) with a derived action, plan.externalActionProposals RECORDS the SAME ProposedActions the driver
+    //     proposes — no longer the empty `[]`.
+    const withActions = createBuildOutputsActivity({
+      projection: noteProjection(),
+      sourceRef: meetingSourceRef,
+      planIdentity: { closeout: "wf-1" },
+      noteExists: new FakeNoteExistsReader({ exists: false }),
+    });
+    const res = await withActions.build(validatedFixture(), workspaceId("ws-bound"));
+    expect(isOk(res)).toBe(true); // unconditional — the mirror pins below must not be vacuously skipped (L15)
+    if (!isOk(res)) return;
+    expect(res.value.actions.length).toBeGreaterThan(0);
+    expect(res.value.plan.externalActionProposals).toEqual(res.value.actions.map((a) => a.action));
+
+    // (b) no derived action (a projection that maps NO action) ⇒ externalActionProposals stays [] —
+    //     byte-equivalent to pre-18.7.
+    const emptyActionsProjection: OutputsProjection = {
+      project: (_validated, ws) =>
+        ok({
+          mutation: {
+            kind: "create",
+            note: { path: `meetings/${String(ws)}/closeout.md`, body: "closeout", frontmatter: {} },
+          },
+          actions: [],
+        }),
+    };
+    const noActions = createBuildOutputsActivity({
+      projection: emptyActionsProjection,
+      sourceRef: meetingSourceRef,
+      planIdentity: { closeout: "wf-1" },
+      noteExists: new FakeNoteExistsReader({ exists: false }),
+    });
+    const none = await noActions.build(validatedFixture(), workspaceId("ws-bound"));
+    expect(isOk(none)).toBe(true); // unconditional — the byte-equivalent-[] pin must not be vacuously skipped (L15)
+    if (!isOk(none)) return;
+    expect(none.value.actions).toHaveLength(0);
+    expect(none.value.plan.externalActionProposals).toEqual([]);
+  });
+
   it("is DETERMINISTIC — same validated + workspace ⇒ same planId + keys (replay-stable, inv-5)", async () => {
     const port = createBuildOutputsActivity({
       projection: noteProjection(),

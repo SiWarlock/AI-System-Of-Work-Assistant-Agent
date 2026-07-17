@@ -195,24 +195,10 @@ export function createBuildOutputsActivity(
         identity: { ...deps.planIdentity, workspace: String(workspaceId) },
       });
 
-      const plan: KnowledgeMutationPlan = {
-        planId: planId(planKey),
-        // WS-2/WS-4: the write targets the CORRELATION-BOUND workspace, not any
-        // caller-controlled value — stamped by construction.
-        workspaceId,
-        // REQ-F-006: the derived plan cites the evidence it was built from.
-        sourceRefs: [deps.sourceRef],
-        // §9 create-vs-patch: first close → a full NoteCreate; re-close → a region NotePatch (never both).
-        creates: mutation.kind === "create" ? [mutation.note] : [],
-        patches: mutation.kind === "patch" ? [mutation.patch] : [],
-        linkMutations: [],
-        frontmatterUpdates: [],
-        externalActionProposals: [],
-        confidence: deps.confidence ?? 1,
-        requiresApproval: false,
-        provenanceOrigin: deps.provenanceOrigin ?? "meeting_close",
-      };
-
+      // 18.7 — derive the external actions FIRST (from the projection's per-action-item descriptors, the
+      // flagship "propose tasks" producer) so the KMP can MIRROR them into `externalActionProposals`. The
+      // keys are computed via the §8 builders (traversal-safe by construction). Empty when the projection
+      // derives none (fail-closed on missing/TBD owner or title) ⇒ byte-equivalent to pre-18.7.
       const actions: MeetingExternalActionInput[] = projected.value.actions.map(
         (d): MeetingExternalActionInput => {
           const canonicalObjectKey = buildCanonicalObjectKey({
@@ -242,6 +228,26 @@ export function createBuildOutputsActivity(
           return { action: act, envelope };
         },
       );
+
+      const plan: KnowledgeMutationPlan = {
+        planId: planId(planKey),
+        // WS-2/WS-4: the write targets the CORRELATION-BOUND workspace, not any
+        // caller-controlled value — stamped by construction.
+        workspaceId,
+        // REQ-F-006: the derived plan cites the evidence it was built from.
+        sourceRefs: [deps.sourceRef],
+        // §9 create-vs-patch: first close → a full NoteCreate; re-close → a region NotePatch (never both).
+        creates: mutation.kind === "create" ? [mutation.note] : [],
+        patches: mutation.kind === "patch" ? [mutation.patch] : [],
+        linkMutations: [],
+        frontmatterUpdates: [],
+        // 18.7 — the KMP records the SAME PENDING external actions the driver proposes (empty when none
+        // derived ⇒ byte-equivalent). The candidate-data gate validates each action's external-write keys.
+        externalActionProposals: actions.map((a) => a.action),
+        confidence: deps.confidence ?? 1,
+        requiresApproval: false,
+        provenanceOrigin: deps.provenanceOrigin ?? "meeting_close",
+      };
 
       const outputs: MeetingBuiltOutputs = { plan, actions };
       return ok(outputs);

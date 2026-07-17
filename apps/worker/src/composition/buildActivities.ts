@@ -164,6 +164,9 @@ import {
 // 18.4 — the source-ingestion extraction leg ROUTED THROUGH THE BROKER (+ ING-7), replacing the
 // fixed `sourceAgent.run` bypass. The SOURCE analog of 18.3's meeting broker routing.
 import { createSourceAgentBrokerRouting } from "./source-extraction";
+// 18.7 — the deterministic PENDING external-action producer (no dispatch; targetSystem + the
+// existence/dedupe keys from the binding + a traversal-safe identity, NEVER content).
+import { produceProposedActions, type ExternalActionBinding } from "./proposed-action-producer";
 import type { IngestionInboxProjectionPort } from "../api/projections/ingestionInboxProjection";
 // The per-file ingestion note-path derivation (traversal-safe, content-addressed) — task 11.1.
 import { deriveSourceNotePath, sourceIdentityDigest } from "./sourceNotePath";
@@ -212,6 +215,13 @@ export interface SourceIngestionParams {
   readonly sourceRef: SourceRef;
   /** See the note on `sourceRef` — retained but unread by the source build after slice #46. */
   readonly planIdentity: Record<string, string>;
+  /**
+   * 18.7 — the OPTIONAL external-action binding (config/binding, NEVER content). UNSET (the shipped
+   * default) ⇒ the ProposedAction producer emits nothing ⇒ `externalActionProposals: []` +
+   * `actions: []` (byte-equivalent to pre-18.7). Present (owner-configured) ⇒ an implied action becomes
+   * a PENDING §9 Approval through the existing propose path — NO dispatch.
+   */
+  readonly externalActionBinding?: ExternalActionBinding;
 }
 
 export interface ProofSpineParams {
@@ -829,6 +839,15 @@ export function buildProofSpineActivities(
       // planId keys on the SAME content-addressed digest as the path, so path ↔ planId stay
       // consistent (same file+content → replay; edit → new note). Includes `ws` (WS-8 distinct).
       const digest = sourceIdentityDigest(source);
+      // 18.7 — the deterministic PENDING external-action producer (SAFE-BUILD, NO dispatch). UNSET
+      // binding (the shipped default) ⇒ [] ⇒ byte-equivalent. WS-8/no-inference: the identity is the
+      // routing-bound `ws` + the per-file source identity, NEVER content; the keys are traversal-safe
+      // (LESSON 5); an emitted action lands PENDING via the propose path below (no dispatch here).
+      const externalActions = produceProposedActions({
+        validated,
+        identity: { workspaceId: ws, sourceId: String(source.sourceId) },
+        binding: sourceBinding.externalActionBinding,
+      });
       const plan: KnowledgeMutationPlan = {
         planId: makePlanId(`plan-source-${String(ws)}-${digest}`),
         // WS-2/WS-4: stamped from the PASSED (routing-bound) workspace, never a caller/source field.
@@ -855,12 +874,14 @@ export function buildProofSpineActivities(
         patches: [],
         linkMutations: [],
         frontmatterUpdates: [],
-        externalActionProposals: [],
+        // 18.7 — the produced PENDING external actions (empty when no binding ⇒ byte-equivalent). The
+        // candidate-data gate (18.2: applyUniversalRules → ruleExternalWriteKeys) validates each one's keys.
+        externalActionProposals: externalActions.map((a) => a.action),
         confidence: 1,
         requiresApproval: false,
         provenanceOrigin: "ingestion",
       };
-      return Promise.resolve(ok({ plan, actions: [] }));
+      return Promise.resolve(ok({ plan, actions: externalActions }));
     },
   };
 
