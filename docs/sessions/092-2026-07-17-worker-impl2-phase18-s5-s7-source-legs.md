@@ -4,7 +4,7 @@
 - **Phase:** Phase 18 (§19.5 real ModelProvider — SAFE-BUILD; the deterministic extraction/routing/content legs, no crossing)
 - **Role / session:** `worker-impl2` (worker track — successor to `worker-impl`, which died on context overflow mid-S5)
 - **Predecessor session:** [091-2026-07-16-phase17-keychain-build.md](091-2026-07-16-phase17-keychain-build.md)
-- **Successor session:** _(worker-impl3, next — S8–S9 after the cycle)_
+- **Successor session:** [093-2026-07-17-worker-impl3-phase18-s8-s9-egress-veto-autoingest-guard.md](093-2026-07-17-worker-impl3-phase18-s8-s9-egress-veto-autoingest-guard.md)
 
 ## Why this session existed
 Resume the Phase-18 SAFE-BUILD as the worker implementer after `worker-impl` died mid-S5 (fresh context). Carry the deterministic source/meeting legs from the RED test through commit: S5 (18.4 source extraction + ING-7), S6 (18.7 ProposedAction producer), S7 (18.8 commit callers carry real content). All SAFE-BUILD — no real cloud key, no real model call, no real spend, no hard-line crossing.
