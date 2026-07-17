@@ -148,6 +148,16 @@ import type {
   ResolvedWorkspacePolicy,
 } from "./backends";
 import { makeRequireApproval } from "./backends";
+import {
+  createContentProjectClassify,
+  createCorrelationSignalProducer,
+  createBootWorkspaceContentResolver,
+  createBootCorrelationScorer,
+  DEFAULT_THRESHOLD as ROUTING_THRESHOLD,
+  type ContentResolver,
+  type CorrelationScorerPort,
+} from "./content-project-resolver";
+import type { IngestionInboxProjectionPort } from "../api/projections/ingestionInboxProjection";
 // The per-file ingestion note-path derivation (traversal-safe, content-addressed) — task 11.1.
 import { deriveSourceNotePath, sourceIdentityDigest } from "./sourceNotePath";
 // 16.2 — the connector-poll activity + its real resolve binding (16.1 adapters + 15.1 bridge + backoff).
@@ -229,6 +239,27 @@ export interface ProofSpineParams {
    * deterministic leaves (only `registerSource()` runs for real, guardrail-3).
    */
   readonly sourceIngestion?: SourceIngestionParams;
+  /**
+   * 18.6 — the content→workspace/project resolver injected into the source-route `classify`.
+   * OPTIONAL: UNSET ⇒ the BYTE-EQUIVALENT boot-workspace default (bind the single boot
+   * workspace confidently, no project, never park). The real registry-backed resolver
+   * (`createRegistryContentResolver` over `ResolveRegistryPort`) is bound at the reachability
+   * follow-up (needs the registry+readModels repos, not in `backends`).
+   */
+  readonly contentResolver?: ContentResolver;
+  /**
+   * 18.5 — the correlation SCORER injected into the meeting `resolveSignals` producer.
+   * OPTIONAL: UNSET ⇒ the BYTE-EQUIVALENT fixed `correlationSignals` binding. The real
+   * model-via-broker scorer binds at the crossing (eval-tested).
+   */
+  readonly correlationScorer?: CorrelationScorerPort;
+  /**
+   * 18.6/18.5 — the Ingestion-Inbox PARK sink the classify/producer record to on a
+   * no-match/below-threshold (REQ-F-017 clarification surface). OPTIONAL: UNSET ⇒ a dormant
+   * no-op park (never observable — the byte-equivalent default never parks). The real
+   * `createIngestionInboxProjectionPort` (readModels-backed) is the reachability follow-up.
+   */
+  readonly ingestionPark?: IngestionInboxProjectionPort;
 }
 
 // ---------------------------------------------------------------------------
@@ -343,6 +374,16 @@ export function buildProofSpineActivities(
 ): ProofSpineActivities {
   const { now } = backends;
 
+  // 18.6/18.5 — the Ingestion-Inbox PARK sink the content classifier + correlation producer
+  // record to on a no-match/below-threshold (REQ-F-017 clarification surface). UNSET ⇒ a
+  // dormant no-op (the byte-equivalent default never parks; the byte-equivalent binding path
+  // never calls it); the real readModels-backed `createIngestionInboxProjectionPort` is the
+  // reachability follow-up.
+  const ingestionPark: IngestionInboxProjectionPort = params.ingestionPark ?? {
+    recordPark: () => Promise.resolve(ok(undefined)),
+    recordDisposition: () => Promise.resolve(ok(undefined)),
+  };
+
   // ── the failure sink (7.5) backing every per-driver *HealthSink (inv-5) ──────
   const outboxSink: OutboxSink = {
     async enqueueRetry(entry): Promise<void> {
@@ -359,10 +400,15 @@ export function buildProofSpineActivities(
 
   // (a) correlate — a deterministic signal source (inv-1: high IFF cleared+resolved).
   const correlate: CorrelatePort = createCorrelateActivity({
-    resolveSignals: (
-      _ctx: MeetingCloseoutContext,
-    ): Promise<Result<CorrelationSignals, CorrelateError>> =>
-      Promise.resolve(ok(params.correlationSignals)),
+    // 18.5 — a real confidence-scored correlation producer over the INJECTED scorer (UNSET ⇒
+    // the BYTE-EQUIVALENT fixed `correlationSignals` binding). Below-threshold ⇒ recordPark
+    // (REQ-F-017), never an invented binding. Threshold single-sourced with the activity.
+    resolveSignals: createCorrelationSignalProducer({
+      scorer: params.correlationScorer ?? createBootCorrelationScorer(params.correlationSignals),
+      park: ingestionPark,
+      threshold: ROUTING_THRESHOLD,
+    }),
+    threshold: ROUTING_THRESHOLD,
   });
 
   // (b) runAgentJob — the REAL broker (localConfig ALWAYS supplied by backends).
@@ -657,12 +703,25 @@ export function buildProofSpineActivities(
   // classifier: a present binding resolves a HIGH-confidence workspace bind (WS-2);
   // absent → a sub-threshold Ingestion-Inbox park (fail-closed, never auto-routes).
   const sourceRoute: RouteSourcePort = createRouteSourceActivity({
-    classify: (): Promise<Result<RouteSignals, RouteError>> =>
-      Promise.resolve(
-        sourceBinding !== undefined
-          ? ok({ confidence: 1, workspaceId: sourceBinding.boundWorkspaceId })
-          : ok({ confidence: 0, reason: "no source-ingestion binding (C1)" }),
-      ),
+    // 18.6 — a real content→project classifier over the INJECTED resolver (UNSET ⇒ the
+    // BYTE-EQUIVALENT boot-workspace bind: confidence:1 boot ws, no project — matching the
+    // pre-18.6 single-workspace classify; the bound path never parks). The C1 no-binding
+    // fallback (sourceBinding undefined) parks via the (no-op) ingestionPark default — arming
+    // a real park makes that observable. No-match/below-threshold ⇒ recordPark (REQ-F-017),
+    // projectId NEVER guessed. Threshold single-sourced with the activity.
+    classify: createContentProjectClassify({
+      resolve:
+        params.contentResolver ??
+        (sourceBinding !== undefined
+          ? createBootWorkspaceContentResolver(sourceBinding.boundWorkspaceId)
+          : {
+              resolve: (): Promise<Result<RouteSignals, RouteError>> =>
+                Promise.resolve(ok({ confidence: 0, reason: "no source-ingestion binding (C1)" })),
+            }),
+      park: ingestionPark,
+      threshold: ROUTING_THRESHOLD,
+    }),
+    threshold: ROUTING_THRESHOLD,
   });
 
   // (c) runAgentJob — a DETERMINISTIC accepted candidate (the real broker/model path is
