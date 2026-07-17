@@ -38,7 +38,7 @@
 //     (`createOperationalBackupService`) is WIRED into the handle (`backupService`)
 //     but NOT SCHEDULED — the periodic CRON that calls `backupService.run()` on the
 //     `backupCadenceMs` is Phase-11. The service is ready; only its trigger is deferred.
-import { auditId, sourceId, isOk, workspaceId, workflowId } from "@sow/contracts";
+import { auditId, sourceId, isOk, workspaceId, workflowId, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID } from "@sow/contracts";
 import type {
   Result,
   FailureVariant,
@@ -1023,7 +1023,10 @@ export function buildAutoIngestProofSpineParams(boundWorkspace: string): ProofSp
     workflowRunId: workflowId("wf-autoingest-inert"),
     workspaceId: ws,
     capability: "meeting.close",
-    outputSchemaId: "sow:meeting.close.output",
+    // 18.2 — the (inert) meeting broker candidate is a KnowledgeMutationPlan stand-in; the real
+    // SCHEMA gate validates against this registered schema (never driven here — auto-ingest routes
+    // SOURCE ingestion, which bypasses the broker; aligned for correctness if ever broker-driven).
+    outputSchemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
     maxRuntimeSeconds: 30,
     idempotencyKey: "job:meeting:inert",
   };

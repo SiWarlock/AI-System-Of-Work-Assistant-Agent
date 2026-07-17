@@ -28,7 +28,13 @@ import { tmpdir } from "node:os";
 import { join, dirname, relative, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 
-import { isOk, isErr, actionId as makeActionId } from "@sow/contracts";
+import {
+  isErr,
+  KnowledgeMutationPlanSchema,
+  ProposedActionSchema,
+  KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
+  PROPOSED_ACTION_SCHEMA_ID,
+} from "@sow/contracts";
 import type {
   ProposedAction,
   ExternalWriteEnvelope,
@@ -80,16 +86,15 @@ import { ok, err } from "@sow/contracts";
 // ── @sow/providers: the Broker + its deterministic gate stubs ─────────────────
 import {
   createBroker,
+  createHealthGate,
+  createSchemaGate,
   makeAgentResult,
   type Broker,
   type BrokerJobRequest,
   type BrokerOutcome,
   type ProviderRunner,
-  type HealthGate,
-  type BudgetGate,
-  type SchemaGate,
-  type BrokerCandidate,
-  type EnforcedBudget,
+  type HealthGateSources,
+  type BudgetDefaults,
 } from "@sow/providers";
 import type { AgentResult } from "@sow/providers";
 
@@ -119,6 +124,12 @@ import {
 } from "./store-adapters";
 import { createLogger, type Logger, type LogSink } from "../observability/logger";
 import { selectProviderRunner, type ProviderTransportGate } from "./provider-runner";
+import {
+  createLedgeredBudgetGate,
+  createSingleRunBudgetLedger,
+  DEFAULT_BUDGET_DEFAULTS,
+  type BudgetLedgerPort,
+} from "./budget-ledger";
 
 // ---------------------------------------------------------------------------
 // (0) config
@@ -186,6 +197,25 @@ export interface BackendsConfig {
    * Mirrors {@link WriteTransportGate}; the real factory ships UNBOUND.
    */
   readonly providerTransport?: ProviderTransportGate;
+  /**
+   * The broker's §7 HEALTH gate sources (5.9 provider-reachability + model-availability).
+   * UNSET ⇒ the inert/config-driven safe-build default ({@link DEFAULT_HEALTH_SOURCES}):
+   * healthy + model-present + conformance-passing for the routable provider, no network
+   * reachability probe (deferred to the owner crossing). A deploy binds the real probes;
+   * a test injects a fake unhealthy source to exercise the deny path. Deny-only policing.
+   */
+  readonly healthSources?: HealthGateSources;
+  /**
+   * The COST-1/COST-2 budget default caps the real BUDGET gate enforces. UNSET ⇒
+   * {@link DEFAULT_BUDGET_DEFAULTS} (mirrors config/providers.defaults.json §budgets).
+   */
+  readonly budgetDefaults?: BudgetDefaults;
+  /**
+   * The pluggable single-run budget ledger the BUDGET gate accounts each run into.
+   * UNSET ⇒ a fresh {@link createSingleRunBudgetLedger} (in-boot only). The §19.11
+   * durable cross-run ledger plugs in here (backward — no forward dependency).
+   */
+  readonly budgetLedger?: BudgetLedgerPort;
 }
 
 // ---------------------------------------------------------------------------
@@ -523,51 +553,29 @@ export function createStubProviderRunner(extraction: StubMeetingExtraction): Pro
 }
 
 /**
- * A deterministic health gate that always PROCEEDS (the injected model endpoint is
- * assumed reachable in this stub). Real health/model-availability probing is the 5.9
- * gate the providers track owns.
- *
- * // REAL-SDK INJECTION POINT (carry-forward: vendor transport)
+ * The inert/config-driven safe-build HEALTH sources (5.9). Reports the routable provider
+ * healthy + model-present + conformance-passing WITHOUT a network reachability probe — the
+ * real reachability/Keychain probe is the owner-crossing follow-up. A deployment binds the
+ * real sources; a test injects a fake unhealthy source to exercise the fail-closed deny
+ * path. Deny-only policing (no spend/egress). Overridable via `config.healthSources`.
  */
-export const stubHealthGate: HealthGate = () => ok({ value: undefined });
-
-/**
- * A deterministic budget gate: derive the job's declared runtime cap pre-run, and
- * never breach post-run (the stub run consumes 1s). Real COST-1/COST-2 accounting is
- * the 5.4 gate.
- *
- * // REAL-SDK INJECTION POINT (carry-forward: vendor transport)
- */
-export const stubBudgetGate: BudgetGate = {
-  pre(job): ReturnType<BudgetGate["pre"]> {
-    const budget: EnforcedBudget = {
-      maxRuntimeSeconds: job.maxRuntimeSeconds,
-      ...(job.maxCostUsd !== undefined ? { maxCostUsd: job.maxCostUsd } : {}),
-    };
-    return ok({ value: budget });
-  },
-  post(): ReturnType<BudgetGate["post"]> {
-    return ok({ value: undefined });
-  },
+export const DEFAULT_HEALTH_SOURCES: HealthGateSources = {
+  health: () => ({ state: "healthy" }),
+  availability: () => ({ modelPresent: true, conformanceStatus: "passing" }),
 };
 
 /**
- * The schema/tool gate the broker runs on the candidate. This deterministic stub
- * accepts the candidate and emits it as a KnowledgeMutationPlan-shaped candidate ONLY
- * when the candidate carries one; otherwise it emits a proposed_action-shaped
- * candidate. For the meeting.close spine we care only that the broker ACCEPTS and
- * hands a candidate to `mapCandidate`, so the stub wraps the run's candidateOutput.
- *
- * // REAL-SDK INJECTION POINT (carry-forward: vendor transport)
- * The real 5.5 schema gate validates the candidate against the AgentJob.outputSchemaId
- * registered schema before it is ever emitted.
+ * The candidate-schema parsers the real SCHEMA gate (5.5, REQ-S-006) validates against:
+ * the registered KnowledgeMutationPlan + ProposedAction contracts (the two candidate kinds
+ * the broker emits). A read_only/untrusted job can only emit a KMP (a PA implies a mutating
+ * action → tool_policy_violation). The concrete per-capability EXTRACTION output schema + its
+ * NoInferenceView (REQ-F-017) bind with the real extraction leg (18.3/18.4); this slice wires
+ * the structural candidate-data gate over the existing candidate schemas.
  */
-export function createStubSchemaGate(
-  toCandidate: (candidateOutput: unknown) => BrokerCandidate,
-): SchemaGate {
-  return (_job, result): ReturnType<SchemaGate> =>
-    ok({ value: toCandidate(result.candidateOutput) });
-}
+const CANDIDATE_MODEL_SCHEMAS = {
+  [KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID]: KnowledgeMutationPlanSchema,
+  [PROPOSED_ACTION_SCHEMA_ID]: ProposedActionSchema,
+};
 
 /**
  * A deterministic {@link AdapterTransport} (the per-target write client seam). It
@@ -708,25 +716,6 @@ export interface ProofSpineBackends {
   readonly close: () => void;
 }
 
-/**
- * The candidate the stub broker emits for the meeting.close job. It wraps the run's
- * candidateOutput as a proposed_action-shaped candidate so `createBroker` accepts it;
- * `mapCandidate` (in buildActivities) turns the accepted BrokerOutcome into the
- * meeting AgentExtraction the spine validates.
- */
-function meetingSchemaCandidate(candidateOutput: unknown): BrokerCandidate {
-  // The spine's mapCandidate reads the accepted outcome, not this candidate's shape,
-  // so we wrap it as a proposed_action carrying the candidate output for traceability.
-  const action: ProposedAction = {
-    actionId: makeActionId("stub:meeting.close:candidate"),
-    targetSystem: "todoist",
-    canonicalObjectKey: "stub:meeting.close",
-    payload: { candidateOutput },
-    approvalPolicy: "auto",
-    idempotencyKey: "stub:meeting.close:candidate",
-  };
-  return { kind: "proposed_action", action };
-}
 
 /**
  * The default {@link LogSink}: one NDJSON line per redacted record on stderr. The
@@ -772,15 +761,26 @@ export async function assembleBackends(
         : ["http://127.0.0.1:11434"],
   };
 
+  // 18.2 — the single-run BUDGET ledger seam (19.11 durable cross-run ledger plugs in backward).
+  const budgetLedger = config.budgetLedger ?? createSingleRunBudgetLedger();
   const broker = createBroker({
-    health: stubHealthGate,
-    budget: stubBudgetGate,
-    // 18.1 — the run leg is chosen through the default-OFF owner gate: unset
-    // `providerTransport` ⇒ the deterministic stub (byte-equivalent shipped default),
-    // never a hardcoded real model client at this call site (§19.5). A real ModelProvider
-    // runner is bound ONLY by deliberate owner config at the crossing.
+    // 18.2 — the REAL §7 policing gates (deny-only: no spend/egress/write; ACTIVE by default,
+    // no dormancy knob — they cross no hard line).
+    // HEALTH (5.9): provider-reachability + model-availability over injected sources (the
+    //   inert/config-driven safe-build default; a deployment binds the real network probes).
+    health: createHealthGate(config.healthSources ?? DEFAULT_HEALTH_SOURCES),
+    // BUDGET (5.4): COST-1/COST-2 caps (config-sourced defaults) wrapped by the BudgetLedgerPort.
+    budget: createLedgeredBudgetGate(
+      { defaults: config.budgetDefaults ?? DEFAULT_BUDGET_DEFAULTS },
+      budgetLedger,
+    ),
+    // RUN (18.1): the default-OFF real-transport gate — unset `providerTransport` ⇒ the
+    //   byte-identical stub; a real ModelProvider runner is bound ONLY by owner config at the crossing.
     run: selectProviderRunner(config.providerTransport, createStubProviderRunner(extraction)),
-    schema: createStubSchemaGate(meetingSchemaCandidate),
+    // SCHEMA (5.5, REQ-S-006): the candidate-data gate — ajv registry + KMP/PA model parsers.
+    //   A schema-invalid candidate is rejected BEFORE emit (no side effect). The per-capability
+    //   extraction NoInferenceView (REQ-F-017) binds with the real extraction leg (18.3/18.4).
+    schema: createSchemaGate({ modelSchemas: CANDIDATE_MODEL_SCHEMAS }),
   });
 
   // The transport is chosen through the default-OFF owner gate: unset `writeTransport`

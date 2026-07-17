@@ -11,7 +11,14 @@
 // pinned by the always-run fast-unit tests (connectorIngestionBridge.test.ts §15.9 +
 // meetingCloseout-dispatch.test.ts). This file proves the dispatch→workflow→propose WIRING end-to-end.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { workspaceId, workflowId, sourceId, auditId } from "@sow/contracts";
+import {
+  workspaceId,
+  workflowId,
+  sourceId,
+  auditId,
+  validKnowledgeMutationPlan,
+  KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
+} from "@sow/contracts";
 import type { WorkspaceId, WorkflowRunRef, SourceRef, ProviderRoute, AuditId } from "@sow/contracts";
 import type { ResolvedWorkspacePolicy } from "@sow/policy";
 import type {
@@ -85,7 +92,7 @@ const meetingJobInputs: MeetingJobInputs = {
   workflowRunId: workflowId("wf-mtg-live"),
   workspaceId: WS,
   capability: MEETING_CAP,
-  outputSchemaId: "sow:meeting.close.output",
+  outputSchemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID, // 18.2 — meeting broker candidate = KMP stand-in
   maxRuntimeSeconds: 30,
   idempotencyKey: "job:meeting:live",
 };
@@ -154,7 +161,8 @@ beforeAll(async () => {
   const env = await TestWorkflowEnvironment.createLocal();
   const backends = await assembleBackends(
     { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT] },
-    { candidateOutput: {} },
+    // 18.2 — a schema-valid KMP stub extraction so the REAL SCHEMA gate accepts (Option 1).
+    { candidateOutput: validKnowledgeMutationPlan },
   );
   const activities = buildProofSpineActivities(backends, meetingParamsFor(memRevisionStore()));
   const worker = await Worker.create({

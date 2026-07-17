@@ -28,6 +28,8 @@ import {
   workflowId,
   sourceId,
   actionId,
+  validKnowledgeMutationPlan,
+  KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
 } from "@sow/contracts";
 import type {
   WorkspaceId,
@@ -117,7 +119,7 @@ const meetingJobInputs: MeetingJobInputs = {
   workflowRunId: workflowId("wf-spine"),
   workspaceId: WS,
   capability: MEETING_CAP,
-  outputSchemaId: "sow:meeting.close.output",
+  outputSchemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID, // 18.2 — meeting broker candidate = KMP stand-in
   maxRuntimeSeconds: 30,
   idempotencyKey: "job:meeting:spine",
 };
@@ -237,7 +239,8 @@ beforeAll(async () => {
   const env = await TestWorkflowEnvironment.createLocal();
   const backends = await assembleBackends(
     { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT] },
-    { candidateOutput: {} },
+    // 18.2 — a schema-valid KMP stub extraction so the REAL SCHEMA gate accepts (Option 1).
+    { candidateOutput: validKnowledgeMutationPlan },
   );
   const activities = buildProofSpineActivities(backends, paramsFor(memRevisionStore()));
   const worker = await Worker.create({

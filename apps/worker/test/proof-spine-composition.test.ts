@@ -17,6 +17,8 @@ import {
   sourceId,
   auditId,
   actionId,
+  validKnowledgeMutationPlan,
+  KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
 } from "@sow/contracts";
 import type {
   WorkspaceId,
@@ -94,7 +96,11 @@ const meetingJobInputs: MeetingJobInputs = {
   workflowRunId: workflowId("wf-1"),
   workspaceId: WS,
   capability: MEETING_CAP,
-  outputSchemaId: "sow:meeting.close.output",
+  // 18.2 — the meeting.close broker candidate is a KnowledgeMutationPlan stand-in (the
+  // real SCHEMA gate validates candidateOutput against this registered schema; the
+  // extraction output schema is a separate 18.3/18.4 concern). mapCandidate ignores the
+  // broker candidate, so downstream is unaffected.
+  outputSchemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
   maxRuntimeSeconds: 30,
   idempotencyKey: "job:meeting:1",
 };
@@ -146,7 +152,8 @@ afterEach(() => {
 async function freshBackends(endpoint: string): Promise<ProofSpineBackends> {
   const b = await assembleBackends(
     { now: () => NOW, allowedLocalEndpoints: [endpoint] },
-    { candidateOutput: {} },
+    // 18.2 — a schema-valid KMP stub extraction so the REAL SCHEMA gate accepts (Option 1).
+    { candidateOutput: validKnowledgeMutationPlan },
   );
   openBackends.push(b);
   return b;

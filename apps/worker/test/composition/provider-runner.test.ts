@@ -15,7 +15,7 @@
 // SAFE-BUILD: every provider call runs against a FAKE HttpTransport / fake facade —
 // no real endpoint, no real key, no real spend, no network.
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { ok, err, isOk, isErr, validAgentJob } from "@sow/contracts";
+import { ok, err, isOk, isErr, validAgentJob, validKnowledgeMutationPlan } from "@sow/contracts";
 import type {
   AgentJob,
   ProviderRoute,
@@ -396,7 +396,9 @@ describe("assembleBackends — default run leg IS the stub (byte-identical dorma
   });
 
   it("assembleBackends_default_run_leg_is_stub_byte_identical — no providerTransport ⇒ stub extraction flows verbatim (spec L16 L27)", async () => {
-    const STUB_OUT = { marker: "stub-42" };
+    // A schema-valid KMP (18.2 activated the REAL SCHEMA gate — the run-leg candidate must
+    // validate against the job's KMP outputSchemaId; validAgentJob.outputSchemaId is the KMP id).
+    const STUB_OUT = validKnowledgeMutationPlan;
     // No `providerTransport` (the shipped default) ⇒ the gate MUST fall back to
     // createStubProviderRunner(extraction).
     const backends = await assembleBackends({}, { candidateOutput: STUB_OUT });
@@ -433,15 +435,14 @@ describe("assembleBackends — default run leg IS the stub (byte-identical dorma
       localConfig: { allowedLocalEndpoints: [LOCAL_ENDPOINT] },
     });
 
-    // The DEFAULT run leg is the stub: its fixed extraction flows VERBATIM into the
-    // accepted candidate, with the stub's fixed usage (runtimeSeconds 1). Byte-identical.
+    // The DEFAULT run leg is the stub: its fixed extraction flows VERBATIM into the accepted
+    // candidate (the real SCHEMA gate validates + normalizes it to a knowledge_mutation_plan),
+    // with the stub's fixed usage (runtimeSeconds 1). Byte-identical run-leg output.
     expect(isOk(outcome)).toBe(true);
     if (!isOk(outcome)) return;
-    expect(outcome.value.candidate.kind).toBe("proposed_action");
-    if (outcome.value.candidate.kind !== "proposed_action") return;
-    expect(
-      (outcome.value.candidate.action.payload as { candidateOutput: unknown }).candidateOutput,
-    ).toEqual(STUB_OUT);
+    expect(outcome.value.candidate.kind).toBe("knowledge_mutation_plan");
+    if (outcome.value.candidate.kind !== "knowledge_mutation_plan") return;
+    expect(outcome.value.candidate.plan).toEqual(STUB_OUT);
     expect(outcome.value.usage.runtimeSeconds).toBe(1);
   });
 });
