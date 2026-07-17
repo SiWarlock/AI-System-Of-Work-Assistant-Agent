@@ -157,6 +157,10 @@ import {
   type ContentResolver,
   type CorrelationScorerPort,
 } from "./content-project-resolver";
+import {
+  mapAcceptedMeetingExtraction,
+  createMeetingExtractionSchemaGate,
+} from "./meeting-extraction";
 import type { IngestionInboxProjectionPort } from "../api/projections/ingestionInboxProjection";
 // The per-file ingestion note-path derivation (traversal-safe, content-addressed) — task 11.1.
 import { deriveSourceNotePath, sourceIdentityDigest } from "./sourceNotePath";
@@ -423,13 +427,21 @@ export function buildProofSpineActivities(
     }),
     // The stub broker run is fixed, so the accepted outcome maps to the deterministic
     // meeting extraction; the real transport folds a model's candidate here instead.
-    mapCandidate: (_outcome: BrokerOutcome): AgentExtraction => params.meetingExtraction,
+    // 18.3 — GATE on the broker verdict: only an ACCEPTED outcome (run-leg output passed the
+    // broker schema gate) authorizes the extraction to trace through; a rejection ⇒ an EMPTY
+    // extraction the downstream candidate-data gate rejects (no commit). Faithful evidence-bearing
+    // reconstruction from the accepted candidate is deferred to the agent_extraction candidate (#18).
+    mapCandidate: (outcome: BrokerOutcome): AgentExtraction =>
+      mapAcceptedMeetingExtraction(outcome, params.meetingExtraction),
     // Phase-3/5 carry-forward: localConfig is ALWAYS supplied to the broker.
     localConfig: backends.localConfig,
   });
 
   // (c) validate — no-inference (real) + a deterministic pass-through schema gate.
-  const schemaGate: MeetingSchemaGate = () => ok(undefined);
+  // 18.3 — the REAL meeting-extraction structural candidate-data gate (rule 2 / REQ-S-006),
+  // replacing the pass-everything stub. Composed with validateNoInference (REQ-F-017) inside
+  // createValidateActivity. Worker-injected (reuses ExtractionField; no new frozen model).
+  const schemaGate: MeetingSchemaGate = createMeetingExtractionSchemaGate();
   const validate: ValidateExtractionPort = createValidateActivity({ schemaGate });
 
   // (d) buildOutputs — the REAL imported meetingOutputsProjection (WS-2 stamp).
