@@ -91,3 +91,37 @@ describe("buildAutoIngestProofSpineParams — real sourceIngestion binding + ine
     expect(typeof a.revisions.getByIdempotencyKey).toBe("function");
   });
 });
+
+// 18.10 (Lesson 28) — the truthy-not-`true` strict-arming REGRESSION GUARD. The combos block above
+// covers true / false / undefined; this pins the MISSING case: a truthy-NON-`true` value — the shape
+// an env/IPC-sourced flag actually arrives as (`"true"`, `1`, the L28-named `"false"` string, a
+// truthy `{}`) — must NOT arm the (hard-line-adjacent) ingestion loop. The desktop worker-host passes
+// `config.autoIngest` RAW (no host-side `=== true`), so `gateAutoIngest`'s strict `!== true` is the
+// SOLE arming chokepoint — pinning it here covers the desktop activation path too. Behavioral cast
+// test (a runtime seam exists — `gateAutoIngest` is directly callable), per L28.
+describe("gateAutoIngest — L28 truthy-not-`true` strict-arming guard (18.10)", () => {
+  it.each([
+    { label: '"true" (string)', v: "true" as unknown as boolean },
+    { label: "1 (number)", v: 1 as unknown as boolean },
+    { label: '"false" (string — the L28-named case)', v: "false" as unknown as boolean },
+    { label: "{} (truthy object)", v: {} as unknown as boolean },
+  ])("auto_ingest_truthy_not_true_does_not_arm — autoIngest=$label ⇒ undefined + build NOT called", ({ v }) => {
+    const build = vi.fn((_ws: string) => FAKE_PARAMS);
+    const r = gateAutoIngest({ autoIngest: v, ingestWorkspaceId: WS }, "/vault", build);
+    // A truthy-coerce must NOT arm the ingestion gate — fail-safe undefined, and the proof-spine
+    // builder is NEVER invoked (no ProofSpineParams / in-memory revisions store constructed).
+    expect(r).toBeUndefined();
+    expect(build).not.toHaveBeenCalled();
+  });
+
+  it("auto_ingest_literal_true_arms — positive control (co-located): ONLY strict `true` arms (non-vacuity, not a blanket deny)", () => {
+    const build = vi.fn((_ws: string) => FAKE_PARAMS);
+    const r = gateAutoIngest({ autoIngest: true, ingestWorkspaceId: WS }, "/vault", build);
+    expect(r).toEqual({
+      vaultWatch: { workspaceId: WS, sensitivity: "normal" },
+      proofSpineParams: FAKE_PARAMS,
+      temporalAddress: "127.0.0.1:7233",
+    });
+    expect(build).toHaveBeenCalledWith(WS);
+  });
+});
