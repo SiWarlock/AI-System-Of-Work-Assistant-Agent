@@ -1,5 +1,7 @@
 # Session 091 — 2026-07-16 — Phase 17: Keychain Secrets Activation (BUILD complete; crossing PENDING)
 
+**Successor session:** [092-2026-07-17-worker-impl2-phase18-s5-s7-source-legs.md](092-2026-07-17-worker-impl2-phase18-s5-s7-source-legs.md)
+
 **Team:** lead-carried orchestrator + worker-impl4 (17.1/17.2, then CYCLED at 86%) → worker-impl5 (successor: 17.3/17.4) + integrations-impl (warm). desktop-impl stood down. Single-track `main`.
 **Span:** origin/main `44ec4253` → `<this round-close>` (4 build slices + round-close). **Posture: the FIRST hard-line phase — the whole BUILD landed on the SAFE side, NO hard line crossed. The owner provisioning+arming crossing is PENDING (owner-gated).**
 
