@@ -76,6 +76,9 @@ import {
   createRunAgentJobActivity,
   createValidateActivity,
   createBuildOutputsActivity,
+  // 18.8 — the shared TBD-sentinel frontmatter value extractor (the meeting projection uses the SAME
+  // helper; parity, not a re-impl) — an absent extraction field ⇒ TBD, never an invented value (REQ-F-017).
+  frontmatterValue,
   createCommitActivity,
   createProposeActivity,
   createReindexActivity,
@@ -167,6 +170,10 @@ import { createSourceAgentBrokerRouting } from "./source-extraction";
 // 18.7 — the deterministic PENDING external-action producer (no dispatch; targetSystem + the
 // existence/dedupe keys from the binding + a traversal-safe identity, NEVER content).
 import { produceProposedActions, type ExternalActionBinding } from "./proposed-action-producer";
+// 18.8 — the shared marker-neutralizer (the meeting projection uses the SAME helper) so a `kw:region`
+// marker in an extraction frontmatter value can't forge a region boundary. Deep import (established
+// pattern — cf. semanticMutationDispatch's projectNotePath; not barrel-exported).
+import { neutralizeFrontmatterValue } from "@sow/workflows/activities/projections/noteSlug";
 import type { IngestionInboxProjectionPort } from "../api/projections/ingestionInboxProjection";
 // The per-file ingestion note-path derivation (traversal-safe, content-addressed) — task 11.1.
 import { deriveSourceNotePath, sourceIdentityDigest } from "./sourceNotePath";
@@ -848,6 +855,29 @@ export function buildProofSpineActivities(
         identity: { workspaceId: ws, sourceId: String(source.sourceId) },
         binding: sourceBinding.externalActionBinding,
       });
+      // 18.8 — the committed note carries the REAL validated extraction (owner/dueDate) in its
+      // frontmatter, alongside the identity provenance (source/contentHash) — the source note is no
+      // longer identity-only (closes the 18.4-deferred "deeper source-metadata frontmatter"). A FIXED
+      // convention [owner, dueDate] (mirrors the meeting's fixed NOTE_FRONTMATTER_FIELDS) — NEVER an
+      // arbitrary validated field — so a hostile extraction can't inject frontmatter or redirect the
+      // path/workspace (WS-8/no-inference). An absent field ⇒ the TBD sentinel via `frontmatterValue`
+      // (REQ-F-017); each value is neutralized so an embedded `kw:region` marker can't forge a region
+      // boundary (parity with the meeting projection). The content reaches the note ONLY via this
+      // validated KMP → createCommitActivity → applyPlan (the sole writer, which re-runs the gate — rule 1).
+      const SOURCE_FRONTMATTER_FIELDS = ["owner", "dueDate"] as const;
+      // Defensive degrade to the SAFE no-inference value: `ValidatedExtraction.fields` is non-optional per
+      // contract, but a contract-violating absent `fields` degrades to `{}` ⇒ every convention field
+      // resolves to the TBD sentinel (never an invented value), with the KnowledgeWriter gate as the real
+      // backstop. Unlike the meeting projection (which fails on an absent concrete title anchor), the
+      // source note has no concrete-anchor requirement, so a TBD/TBD frontmatter is a valid degrade.
+      const vfields = validated.fields ?? {};
+      const noteFrontmatter: Record<string, unknown> = {
+        source: String(source.sourceId),
+        contentHash: source.contentHash,
+      };
+      for (const name of SOURCE_FRONTMATTER_FIELDS) {
+        noteFrontmatter[name] = neutralizeFrontmatterValue(frontmatterValue(vfields[name]));
+      }
       const plan: KnowledgeMutationPlan = {
         planId: makePlanId(`plan-source-${String(ws)}-${digest}`),
         // WS-2/WS-4: stamped from the PASSED (routing-bound) workspace, never a caller/source field.
@@ -865,10 +895,11 @@ export function buildProofSpineActivities(
             // NEVER influenced the path above (deriveSourceNotePath keys only on the identity —
             // traversal-safe, WS-8).
             body: body !== undefined && body.length > 0 ? body : SOURCE_NOTE_ABSENT_BODY,
-            // Minimal identity-derived traceability frontmatter (no longer `{}`) — from the same
-            // path-keying identity (no attacker-influenceable field). Deeper source-metadata
-            // frontmatter (origin/type/sensitivity) is a deferred follow-up (needs more threading).
-            frontmatter: { source: String(source.sourceId), contentHash: source.contentHash },
+            // 18.8 — the identity provenance (source/contentHash) PLUS the real validated extraction
+            // (owner/dueDate, TBD when absent) via the fixed convention built above — no attacker-
+            // influenceable / arbitrary field. (Deeper source metadata — origin/type/sensitivity — and
+            // an extraction-derived note title remain a future enhancement.)
+            frontmatter: noteFrontmatter,
           },
         ],
         patches: [],

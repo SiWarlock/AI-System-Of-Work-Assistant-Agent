@@ -260,3 +260,137 @@ describe("real sourceCommit — KnowledgeWriter sole-writer commit + durable 2a 
     }
   });
 });
+
+// ── 18.8: the committed source note carries the REAL extraction content (frontmatter + body) ──────
+// A REAL validated extraction (owner evidence-backed, dueDate TBD) — the source note frontmatter must
+// carry these convention fields, not identity-only placeholder metadata (mirrors the meeting note,
+// which already stamps owner/dueDate from the validated extraction).
+const SOURCE_VALIDATED: ValidatedExtraction = {
+  validated: true,
+  fields: { owner: { value: "Bob", evidenceRef: "source#L12" }, dueDate: { value: TBD } },
+} as unknown as ValidatedExtraction;
+
+describe("18.8 — the committed source note carries REAL extraction content (frontmatter/body), via the sole writer", () => {
+  async function realActs() {
+    const backends = await assembleBackends(
+      { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT], dbPath: tempDbPath() },
+      { candidateOutput: {} },
+    );
+    const store = createKnowledgeRevisionStoreAdapter(backends.repos.knowledgeRevisions);
+    return { acts: buildProofSpineActivities(backends, paramsFor(store)), backends };
+  }
+
+  it("commit_carries_real_extraction_frontmatter — the note frontmatter carries owner/dueDate from the VALIDATED extraction (not identity-only) (spec §6 / 18.8)", async () => {
+    const { acts, backends } = await realActs();
+    try {
+      const built = await acts.sourceBuildOutputs(SOURCE_VALIDATED, SRC_WS, SRC, "the real note body");
+      expect(built.ok).toBe(true);
+      if (!built.ok) return;
+      const create = built.value.plan.creates[0];
+      expect(create?.frontmatter?.owner).toBe("Bob"); // REAL extraction owner, not a placeholder
+      expect(create?.frontmatter?.dueDate).toBe(TBD); // TBD stays TBD (REQ-F-017, never invented)
+      // the identity provenance fields are retained.
+      expect(create?.frontmatter?.source).toBe(String(SRC.sourceId));
+      expect(create?.frontmatter?.contentHash).toBe(SRC.contentHash);
+    } finally {
+      backends.close();
+    }
+  });
+
+  it("source_frontmatter_absent_owner_date_is_TBD — an extraction with NO owner/dueDate ⇒ frontmatter shows TBD, never an invented value (spec REQ-F-017)", async () => {
+    const noOwnerDate = {
+      validated: true,
+      fields: { title: { value: "Doc", evidenceRef: "s#1" } },
+    } as unknown as ValidatedExtraction;
+    const { acts, backends } = await realActs();
+    try {
+      const built = await acts.sourceBuildOutputs(noOwnerDate, SRC_WS, SRC, "body");
+      expect(built.ok).toBe(true);
+      if (!built.ok) return;
+      const fm = built.value.plan.creates[0]?.frontmatter ?? {};
+      expect(fm.owner).toBe(TBD); // absent ⇒ the TBD sentinel, never an invented owner (REQ-F-017)
+      expect(fm.dueDate).toBe(TBD);
+    } finally {
+      backends.close();
+    }
+  });
+
+  it("commit_carries_real_body — the note body is the threaded (15.3) SourceEnvelope.body, not a placeholder (spec 15.3)", async () => {
+    const { acts, backends } = await realActs();
+    try {
+      const built = await acts.sourceBuildOutputs(SOURCE_VALIDATED, SRC_WS, SRC, "the real note body");
+      expect(built.ok).toBe(true);
+      if (!built.ok) return;
+      expect(built.value.plan.creates[0]?.body).toBe("the real note body");
+    } finally {
+      backends.close();
+    }
+  });
+
+  it("frontmatter_ws8_no_smuggled_field — a smuggled workspaceId/path field in the extraction NEVER redirects the write nor lands in frontmatter (spec WS-8/no-inference)", async () => {
+    const smuggled = {
+      validated: true,
+      fields: {
+        owner: { value: "Bob", evidenceRef: "source#L12" },
+        workspaceId: { value: "ws-EVIL", evidenceRef: "x" },
+        path: { value: "../../escape", evidenceRef: "x" },
+      },
+    } as unknown as ValidatedExtraction;
+    const { acts, backends } = await realActs();
+    try {
+      const built = await acts.sourceBuildOutputs(smuggled, SRC_WS, SRC, "body");
+      expect(built.ok).toBe(true);
+      if (!built.ok) return;
+      const plan = built.value.plan;
+      // WS-2/WS-4: the plan workspace is the routing-bound arg, never a content field.
+      expect(plan.workspaceId).toBe(String(SRC_WS));
+      // the FIXED frontmatter convention never stamps an arbitrary / smuggled field.
+      const fm = plan.creates[0]?.frontmatter ?? {};
+      expect("workspaceId" in fm).toBe(false);
+      expect("path" in fm).toBe(false);
+      // ... and the note PATH stays identity-derived (traversal-safe), never the smuggled `../../escape`.
+      expect(plan.creates[0]?.path).toMatch(new RegExp(`^sources/${String(SRC_WS)}/[0-9a-f]+\\.md$`));
+    } finally {
+      backends.close();
+    }
+  });
+
+  it("source_frontmatter_marker_neutralized — a kw:region marker in an owner value is NEUTRALIZED in the committed frontmatter, so it can't forge a region boundary (spec §6 / safety rule 1, parity with the meeting)", async () => {
+    const markered = {
+      validated: true,
+      fields: { owner: { value: "x <!-- kw:region:evil --> y", evidenceRef: "s#1" }, dueDate: { value: TBD } },
+    } as unknown as ValidatedExtraction;
+    const { acts, backends } = await realActs();
+    try {
+      const built = await acts.sourceBuildOutputs(markered, SRC_WS, SRC, "body");
+      expect(built.ok).toBe(true);
+      if (!built.ok) return;
+      const owner = String(built.value.plan.creates[0]?.frontmatter?.owner ?? "");
+      // the marker is defused at the source — no `<!-- kw:region:` opener survives (deleting
+      // neutralizeFrontmatterValue from the build would leave the RAW marker → this pin fails).
+      expect(owner).not.toContain("<!-- kw:region:");
+      expect(owner.length).toBeGreaterThan(0); // neutralized, never dropped
+    } finally {
+      backends.close();
+    }
+  });
+
+  it("content_flows_through_validated_kmp_only — the REAL content reaches disk ONLY via the KMP → the sole KnowledgeWriter (rule 1) (spec safety rule 1)", async () => {
+    const { acts, backends } = await realActs();
+    try {
+      const built = await acts.sourceBuildOutputs(SOURCE_VALIDATED, SRC_WS, SRC, "the real note body");
+      expect(built.ok).toBe(true);
+      if (!built.ok) return;
+      const committed = await acts.sourceCommit(built.value.plan);
+      expect(committed.ok).toBe(true);
+      if (!committed.ok) return;
+      // the on-disk note (written by the SOLE writer from the validated KMP) carries the real content.
+      const onDisk = await backends.vault.read(built.value.plan.creates[0]!.path);
+      expect(onDisk).toBeDefined();
+      expect(onDisk).toContain("Bob"); // the real extraction owner reached the committed note
+      expect(onDisk).toContain("the real note body"); // the real body reached the committed note
+    } finally {
+      backends.close();
+    }
+  });
+});
