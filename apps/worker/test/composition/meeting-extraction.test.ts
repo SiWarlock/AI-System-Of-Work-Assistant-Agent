@@ -161,3 +161,58 @@ describe("createValidateActivity(realGate) — REQ-F-017 + structural gate compo
     expect(res.value.validated).toBe(true);
   });
 });
+
+// ── 4. 18.17 / CP-7 — rule-7 reject-message FIELD-KEY redaction regression-pin ────────────────
+// Every extraction/schema-gate reject message reports the field KEY + a STRUCTURAL reason — NEVER the
+// field VALUE. Once a real model flows, a field value is untrusted raw content; a value in a reject
+// message that reaches a log / HealthItem / the renderer is a rule-7 leak. The audit found NO
+// worker-territory reject embeds a value (this gate is already key-only; validateNoInference is
+// {code, field}; source-extraction forwards token-only upstream messages), so this PINS the invariant
+// with a canary so a future value-embedding reject goes RED (L15 — assert UNCONDITIONALLY, not in a .catch).
+const CANARY = "SECRET-LEAK-CANARY";
+describe("18.17/CP-7 — schema-gate reject messages are field-KEY-only, never the value (rule 7)", () => {
+  const gate = createMeetingExtractionSchemaGate();
+
+  it("value_reject_message_carries_the_key_not_the_value — a non-primitive value carrying a secret-like canary ⇒ the reject names the KEY, never the value (rule 7)", () => {
+    // The field KEY ("owner") is safe to surface; the VALUE (untrusted model content) must never reach it.
+    const res = gate({ fields: { owner: { value: { leak: CANARY } } } } as unknown as AgentExtraction);
+    expect(isErr(res)).toBe(true);
+    if (!isErr(res)) return;
+    expect(res.error.message).toContain("owner"); // the KEY is named …
+    expect(res.error.message).not.toContain(CANARY); // … the VALUE is NEVER surfaced (source-mutation: re-adding ${value} ⇒ RED)
+  });
+
+  it("evidenceRef_reject_message_carries_the_key_not_the_evidenceRef — a non-string evidenceRef carrying a canary ⇒ key-only (rule 7)", () => {
+    const res = gate({ fields: { owner: { value: "T", evidenceRef: [CANARY] } } } as unknown as AgentExtraction);
+    expect(isErr(res)).toBe(true);
+    if (!isErr(res)) return;
+    expect(res.error.message).toContain("owner");
+    expect(res.error.message).not.toContain(CANARY);
+  });
+
+  it("not_well_formed_field_reject_message_carries_the_key_not_the_field — a bare (non-object) field carrying a canary ⇒ key-only (rule 7)", () => {
+    // For a bare-string field the VALUE is the whole field; the not-well-formed reject must still name only the KEY.
+    const res = gate({ fields: { owner: CANARY } } as unknown as AgentExtraction);
+    expect(isErr(res)).toBe(true);
+    if (!isErr(res)) return;
+    expect(res.error.message).toContain("owner");
+    expect(res.error.message).not.toContain(CANARY);
+  });
+
+  it("validate_activity_reject_is_value_free — the composed ValidateExtractionPort reject (no-inference AND schema paths) never carries a field value (rule 7 / L25)", () => {
+    const validate = createValidateActivity({ schemaGate: createMeetingExtractionSchemaGate() });
+    // NO-INFERENCE path: a concrete value with NO evidenceRef ⇒ no_inference_violation; reject is field-KEY-keyed, value-free.
+    const res = validate.validate({ fields: { owner: field(CANARY) } });
+    expect(isErr(res)).toBe(true);
+    if (!isErr(res)) return;
+    expect(res.error.code).toBe("no_inference_violation"); // pin the path (no-inference runs first)
+    expect(JSON.stringify(res.error)).not.toContain(CANARY);
+    // SCHEMA path: an EVIDENCED non-primitive value ⇒ passes no-inference (concrete + evidenceRef), then the
+    // schema gate rejects the non-primitive value ⇒ schema_rejected (the composed schema-reject path); value-free.
+    const res2 = validate.validate({ fields: { owner: { value: { leak: CANARY }, evidenceRef: "e1" } } } as unknown as AgentExtraction);
+    expect(isErr(res2)).toBe(true);
+    if (!isErr(res2)) return;
+    expect(res2.error.code).toBe("schema_rejected"); // pin: genuinely the composed schema path, not no-inference
+    expect(JSON.stringify(res2.error)).not.toContain(CANARY);
+  });
+});
