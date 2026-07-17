@@ -22,6 +22,7 @@ export * from "./broker/provider-health";
 export * from "./broker/model-availability";
 export * from "./broker/budget-enforcer";
 export * from "./broker/cost-meter";
+export * from "./broker/pricing";
 export * from "./broker/schema-gate";
 export * from "./broker/output-normalizer";
 
