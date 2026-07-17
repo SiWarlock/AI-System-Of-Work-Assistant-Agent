@@ -152,7 +152,7 @@ function makeController(): {
 
 // ── the real runner: output/error mapping + never-throws (§19.5 / §16) ──────────
 describe("createRealProviderRunner — provider-output/error mapping", () => {
-  it("real_runner_maps_provider_output_to_agent_result — ProviderOutput → GateResult<AgentResult> (spec §19.5)", async () => {
+  it("real_runner_maps_provider_output_to_agent_result — ProviderOutput → GateResult<AgentResult> [spec(§19.5)]", async () => {
     const calls: HttpTransportRequest[] = [];
     const { controller } = makeController();
     const runner = createRealProviderRunner({
@@ -193,7 +193,7 @@ describe("createRealProviderRunner — provider-output/error mapping", () => {
     expect(JSON.stringify(res.error)).not.toContain("sk-canary");
   });
 
-  it("runtime_branch_route_is_fail_closed — an agentic (AgentRuntimePort) route → typed provider_unavailable, no dispatch (spec §19.5 Q4)", async () => {
+  it("runtime_branch_route_is_fail_closed — an agentic (AgentRuntimePort) route → typed provider_unavailable, no dispatch [spec(§19.5 Q4)]", async () => {
     const calls: HttpTransportRequest[] = [];
     const { controller } = makeController();
     const runner = createRealProviderRunner({
