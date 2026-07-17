@@ -13,6 +13,7 @@ import {
   DEFAULT_INGEST_WORKSPACE,
 } from "../src/boot";
 import type { ProofSpineParams } from "../src/composition/buildActivities";
+import type { StubMeetingExtraction } from "../src/composition/backends";
 
 const WS = "personal-business";
 // A sentinel the injected builder returns — the gate tests only care that it's threaded, not its shape.
@@ -123,5 +124,58 @@ describe("gateAutoIngest — L28 truthy-not-`true` strict-arming guard (18.10)",
       temporalAddress: "127.0.0.1:7233",
     });
     expect(build).toHaveBeenCalledWith(WS);
+  });
+});
+
+// CP-3b / 18.13b (#13 precondition) — the SOURCE stubExtraction SEAM. The broker's stub provider-runner output
+// (`StubMeetingExtraction.candidateOutput`) is what an ARMED auto-ingest SOURCE run emits; today it is NOT threaded
+// through `AutoIngestWiring`, so an armed source boots with the `assembleBackends` `{ candidateOutput: {} }` default
+// and fails CLOSED at the schema gate (no note) — the boot.ts `buildAutoIngestProofSpineParams` VERIFICATION-OWED
+// note. This threads the SEAM: `gateAutoIngest` forwards an owner-provided source stub into the wiring as
+// `stubExtraction` — a BootConfig field the desktop worker-host already spreads → `bootWorker` → `assembleBackends`
+// + `makeProofSpineRegisterHook`. Per the crossing ruling the DORMANT DEFAULT stays EMPTY: no stub is provisioned
+// until arming, and the `outputSchemaId → sow:agent-extraction` switch that makes the stub normalize to an
+// `agent_extraction` candidate (rather than the KMP stand-in ⇒ EMPTY ⇒ reject) is arming-bundle scope, NOT this
+// slice. So the end-to-end "armed source passes the gate + commits a note" is reachability-WAIVERED (L11); this
+// pins the SEAM + the byte-equivalent default + the AND-lock (a stub alone can NOT arm a disabled gate).
+describe("gateAutoIngest — source stubExtraction seam (CP-3b/18.13b, #13 precondition)", () => {
+  const SOURCE_STUB: StubMeetingExtraction = { candidateOutput: { agentExtraction: "sentinel" } };
+
+  it("gate_threads_source_stub_when_provided — ON + a provided source stub ⇒ the wiring carries it (the #13 seam)", () => {
+    const r = gateAutoIngest(
+      { autoIngest: true, ingestWorkspaceId: WS },
+      "/vault",
+      () => FAKE_PARAMS,
+      SOURCE_STUB,
+    );
+    // Threaded BY REFERENCE (→ config.stubExtraction → assembleBackends' stub provider-runner). The three prior
+    // wiring fields are unchanged — the stub is purely additive.
+    expect(r?.stubExtraction).toBe(SOURCE_STUB);
+    expect(r?.vaultWatch).toEqual({ workspaceId: WS, sensitivity: "normal" });
+    expect(r?.proofSpineParams).toBe(FAKE_PARAMS);
+    expect(r?.temporalAddress).toBe("127.0.0.1:7233");
+  });
+
+  it("gate_omits_stub_by_default_byte_equivalent — ON + NO stub arg ⇒ wiring shape byte-identical to the shipped default (no stubExtraction key)", () => {
+    const r = gateAutoIngest({ autoIngest: true, ingestWorkspaceId: WS }, "/vault", () => FAKE_PARAMS);
+    // Byte-equivalent: the default (unprovisioned) wiring DEEP-EQUALS the EXACT prior 3-field shape via
+    // `.toStrictEqual` (stricter than `.toEqual` — rejects an extra `stubExtraction: undefined` key), and the
+    // `in`-check proves the key is OMITTED entirely (the conditional spread never sets it). The source stub is
+    // EMPTY until the owner arms it.
+    expect(r).toStrictEqual({
+      vaultWatch: { workspaceId: WS, sensitivity: "normal" },
+      proofSpineParams: FAKE_PARAMS,
+      temporalAddress: "127.0.0.1:7233",
+    });
+    expect(r !== undefined && "stubExtraction" in r).toBe(false);
+  });
+
+  it("gate_off_path_ignores_stub — a provided stub can NOT arm a disabled gate (AND-lock: autoIngest===true still required)", () => {
+    const build = vi.fn((_ws: string) => FAKE_PARAMS);
+    // Opt-in OFF but a stub is supplied — the stub is INERT; the gate ANDs (opt-in ON + vaultRoot), so it stays
+    // fail-safe undefined and the proof-spine builder is never invoked. A stub is not an arming knob.
+    const r = gateAutoIngest({ autoIngest: false, ingestWorkspaceId: WS }, "/vault", build, SOURCE_STUB);
+    expect(r).toBeUndefined();
+    expect(build).not.toHaveBeenCalled();
   });
 });

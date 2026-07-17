@@ -191,4 +191,38 @@ describe("source extraction candidate-data gate — reused MeetingSchemaGate + v
     if (!isOk(res)) return;
     expect(res.value.validated).toBe(true);
   });
+
+  // CP-3b/18.13b — the SOURCE leg's evidence-bearing reconstruction end-to-end: an ACCEPTED first-class
+  // `agent_extraction` candidate carrying a CONCRETE (non-TBD) value + `evidenceRef` reconstructs FAITHFULLY through
+  // the shared `mapAcceptedMeetingExtraction` (the mapper the source leg injects at buildActivities) so
+  // `validateNoInference` (REQ-F-017) runs on the model's REAL evidence — WITH evidenceRef ⇒ ok, WITHOUT ⇒ rejected.
+  // The 18.4/CP-2 fixtures above only carry TBD for owner/dueDate, so this pins the concrete-value evidence FLOW.
+  const acceptedWith = (extraction: AgentExtraction): BrokerOutcome =>
+    ok({
+      jobState: "accepted",
+      route: {} as never,
+      candidate: { kind: "agent_extraction", extraction },
+      usage: { runtimeSeconds: 1 },
+      audits: [],
+      replayed: false,
+    } as unknown as BrokerAccepted);
+
+  it("source_reconstructs_concrete_value_with_evidenceRef_faithful — concrete owner + evidenceRef round-trips → validate PASSES (spec REQ-F-017, source path)", () => {
+    const reconstructed = mapAcceptedMeetingExtraction(
+      acceptedWith({ fields: { title: field("Doc", "source:1"), owner: field("Alice", "source:span:7") } }),
+    );
+    expect(reconstructed.fields.owner).toEqual({ value: "Alice", evidenceRef: "source:span:7" }); // faithful
+    expect(isOk(validate.validate(reconstructed))).toBe(true); // evidenceRef reached no-inference ⇒ authorized
+  });
+
+  it("source_reconstructs_concrete_value_without_evidenceRef_rejected — the SAME concrete owner MINUS evidenceRef ⇒ no_inference_violation (spec REQ-F-017)", () => {
+    const reconstructed = mapAcceptedMeetingExtraction(
+      acceptedWith({ fields: { title: field("Doc", "source:1"), owner: field("Alice") } }),
+    );
+    expect(reconstructed.fields.owner).toEqual({ value: "Alice" }); // no evidenceRef carried through
+    const res = validate.validate(reconstructed);
+    expect(isErr(res)).toBe(true);
+    if (!isErr(res)) return;
+    expect(res.error.code).toBe("no_inference_violation"); // an inferred owner is rejected before any commit
+  });
 });

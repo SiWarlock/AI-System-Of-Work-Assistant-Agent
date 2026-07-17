@@ -606,11 +606,23 @@ export interface AutoIngestGateOpts {
 }
 
 /** The wiring gateAutoIngest augments the bootWorker call with when the opt-in is ON — every field is an
- *  existing BootConfig field, so the worker-host wires all three with one spread. */
+ *  existing BootConfig field, so the worker-host wires them with one spread. */
 export interface AutoIngestWiring {
   readonly vaultWatch: { readonly workspaceId: string; readonly sensitivity: string };
   readonly proofSpineParams: ProofSpineParams;
   readonly temporalAddress: string;
+  /**
+   * CP-3b/18.13b (#13 precondition) — the SOURCE stub seam. The broker's stub provider-runner output the ARMED
+   * auto-ingest SOURCE run emits. `stubExtraction` shares its name with the BootConfig field, so the worker-host's
+   * existing wiring spread (`...(gateAutoIngest(...) ?? {})`) forwards it STRUCTURALLY when present →
+   * `config.stubExtraction` → `assembleBackends` + `makeProofSpineRegisterHook`. OPTIONAL + OMITTED by default: with
+   * no stub the `assembleBackends` `{ candidateOutput: {} }` default keeps the source FAIL-CLOSED at the schema gate
+   * (byte-equivalent to the shipped default — pinned by `.toStrictEqual` + an `in`-check). A valid stub is PASSED
+   * (the optional 4th arg of `gateAutoIngest`) only at ARMING (bundle #4, desktop host); the
+   * `outputSchemaId → sow:agent-extraction` switch that makes it normalize to an `agent_extraction` candidate (not
+   * the KMP stand-in ⇒ EMPTY ⇒ reject) is arming-bundle scope, NOT this slice.
+   */
+  readonly stubExtraction?: StubMeetingExtraction;
 }
 
 /**
@@ -623,6 +635,7 @@ export function gateAutoIngest(
   opts: AutoIngestGateOpts,
   vaultRoot: string | undefined,
   buildProofSpineParams: (workspaceId: string) => ProofSpineParams,
+  stubExtraction?: StubMeetingExtraction,
 ): AutoIngestWiring | undefined {
   if (opts.autoIngest !== true || vaultRoot === undefined) return undefined;
   const ingestWorkspaceId = opts.ingestWorkspaceId ?? DEFAULT_INGEST_WORKSPACE;
@@ -631,6 +644,12 @@ export function gateAutoIngest(
     vaultWatch: { workspaceId: ingestWorkspaceId, sensitivity },
     proofSpineParams: buildProofSpineParams(ingestWorkspaceId),
     temporalAddress: opts.temporalAddress ?? "127.0.0.1:7233",
+    // CP-3b/18.13b (#13 precondition) — thread the SOURCE stub seam. OMIT the key when no stub is provided (a
+    // conditional spread, never `= undefined`) so the default wiring shape stays byte-identical (pinned by
+    // `.toStrictEqual` + an `in`-check) and the `assembleBackends` `{ candidateOutput: {} }` default keeps the source
+    // FAIL-CLOSED at the schema gate. A stub is provisioned only at ARMING (bundle #4); it is NOT an arming knob —
+    // the gate already AND-locked OFF above (opt-in ON + vaultRoot), so a supplied stub can never arm a disabled gate.
+    ...(stubExtraction !== undefined ? { stubExtraction } : {}),
   };
 }
 
@@ -1064,12 +1083,14 @@ export function buildAutoIngestProofSpineParams(boundWorkspace: string): ProofSp
       // route (ollama + 127.0.0.1 + egressClass "local" ⇒ processorOfRoute===null ⇒ the §5 employer-raw veto
       // ALLOWS via the loopback fall-through — rule 5's sanctioned local zero-egress path; a cloud route fails
       // closed). The endpoint mirrors localConfig.allowedLocalEndpoints' default.
-      //   ⚠ VERIFICATION-OWED (owner-opt-in completion, NOT the shipped default): the broker's SCHEMA gate also
-      //   needs a valid-KMP `stubExtraction` (the shipped assembleBackends `{}` default fails it), provisioned by
-      //   the live bootWorker host (desktop main) — NOT yet threaded through AutoIngestWiring. Until then an owner
-      //   who ENABLES auto-ingest gets source fail-closed at the schema gate (no note). The SHIPPED DEFAULT
-      //   (auto-ingest OFF ⇒ gateAutoIngest returns undefined ⇒ these params are never built) stays byte-equivalent;
-      //   the -live accept-path proof is SOW_TEMPORAL-gated (sourceIngestion-live.test.ts).
+      //   ⚠ ARMING-OWED (owner-opt-in completion, NOT the shipped default): the broker's SCHEMA gate also needs a
+      //   valid `stubExtraction` (the shipped assembleBackends `{}` default fails it). CP-3b/18.13b THREADED the SEAM
+      //   — `gateAutoIngest`'s optional `stubExtraction` → `AutoIngestWiring.stubExtraction` → the worker-host spread
+      //   → `assembleBackends` — but the DORMANT default stays EMPTY (no stub provisioned), so an owner who ENABLES
+      //   auto-ingest today STILL gets source fail-closed at the schema gate (no note), byte-equivalent to shipped.
+      //   Arming (bundle #4, desktop host) supplies a valid stub AND flips `outputSchemaId → sow:agent-extraction`
+      //   (so the stub normalizes to an `agent_extraction` candidate, not the KMP stand-in ⇒ EMPTY ⇒ reject); the
+      //   -live accept-path proof is SOW_TEMPORAL-gated (sourceIngestion-live.test.ts).
       capabilityDefaults: {
         "source.process": {
           provider: "ollama",
