@@ -171,6 +171,12 @@ function applyUniversalRules(candidate: BrokerCandidate): Result<BrokerCandidate
     }
     return ok(candidate);
   }
+  if (candidate.kind === "agent_extraction") {
+    // CP-2: no §3 universal rule applies to a pre-KMP extraction candidate — it carries
+    // neither a scoped-mutation plan nor an external-write proposal. The worker
+    // reconstructs it into a KnowledgeMutationPlan downstream, where these rules re-apply.
+    return ok(candidate);
+  }
   const keys = ruleExternalWriteKeys(candidate.action);
   if (isErr(keys)) return err(`${keys.error.code}:${(keys.error.fields ?? []).join("|")}`);
   return ok(candidate);

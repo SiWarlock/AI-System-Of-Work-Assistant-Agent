@@ -16,11 +16,13 @@ import type {
   AgentJob,
   KnowledgeMutationPlan,
   ProposedAction,
+  AgentExtractionCandidate,
   Result,
 } from "@sow/contracts";
 import {
   KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
   PROPOSED_ACTION_SCHEMA_ID,
+  AGENT_EXTRACTION_SCHEMA_ID,
 } from "@sow/contracts";
 
 // Re-export the candidate type so the normalizer's callers/tests have one import
@@ -70,6 +72,14 @@ export function bySchemaIdNormalizer(): OutputNormalizer {
           kind: "proposed_action",
           action: validatedOutput as ProposedAction,
         });
+      case AGENT_EXTRACTION_SCHEMA_ID:
+        // CP-2/GATE-1: the evidence-bearing extraction candidate. The value is the
+        // schema gate's already-Zod-PARSED object (locked #3), passed through
+        // UNCHANGED so per-field `evidenceRef` survives to `validateNoInference`.
+        return ok({
+          kind: "agent_extraction",
+          extraction: validatedOutput as AgentExtractionCandidate,
+        });
       default:
         return err({
           code: "unnormalizable",
@@ -89,6 +99,10 @@ export function bySchemaIdNormalizer(): OutputNormalizer {
  */
 export function candidateImpliesMutatingAction(candidate: BrokerCandidate): boolean {
   if (candidate.kind === "proposed_action") return true;
+  // An agent_extraction (CP-2) is a pre-KMP intermediate with NO external action of
+  // its own — the worker reconstructs it into a KnowledgeMutationPlan downstream,
+  // where §3 universal rules + tool-policy re-apply. It never implies a mutation here.
+  if (candidate.kind === "agent_extraction") return false;
   return candidate.plan.externalActionProposals.length > 0;
 }
 

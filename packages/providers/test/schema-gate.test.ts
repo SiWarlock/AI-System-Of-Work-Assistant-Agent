@@ -12,13 +12,16 @@ import type { AgentJob, Result } from "@sow/contracts";
 import {
   KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
   PROPOSED_ACTION_SCHEMA_ID,
+  AGENT_EXTRACTION_SCHEMA_ID,
   KnowledgeMutationPlanSchema,
   ProposedActionSchema,
+  AgentExtractionCandidateSchema,
 } from "@sow/contracts";
 import {
   validAgentJob,
   validKnowledgeMutationPlan,
   validProposedAction,
+  validAgentExtractionCandidate,
   invalidKnowledgeMutationPlanEmptySourceRefs,
 } from "@sow/contracts";
 import { validate } from "@sow/domain";
@@ -60,6 +63,36 @@ const scopedWriteActionJob: AgentJob = {
 function completed(candidateOutput: unknown) {
   return makeAgentResult({ status: "completed", candidateOutput, usage: { runtimeSeconds: 1 }, logs: [] });
 }
+
+// ── CP-2 (18.12a) — agent_extraction gate: the evidence-bearing candidate (GATE-1 payoff) ──
+const extractionJob: AgentJob = { ...readOnlyKmpJob, outputSchemaId: AGENT_EXTRACTION_SCHEMA_ID };
+
+function extractionGate(): SchemaGate {
+  return gate({ modelSchemas: { ...modelSchemas, [AGENT_EXTRACTION_SCHEMA_ID]: AgentExtractionCandidateSchema } });
+}
+
+describe("schema gate — agent_extraction (CP-2 / GATE-1): evidence-bearing candidate", () => {
+  it("valid extraction output → agent_extraction candidate (evidenceRef intact, Zod-parsed)", async () => {
+    // spec(§19.5) — the gate emits the first-class agent_extraction candidate so the model's
+    // evidenceRef reaches validateNoInference faithfully (anti-KMP-stand-in, GATE-1 payoff).
+    const out = await extractionGate()(extractionJob, completed(validAgentExtractionCandidate));
+    expect(isOk(out)).toBe(true);
+    if (!isOk(out)) return;
+    expect(out.value.value.kind).toBe("agent_extraction");
+    if (out.value.value.kind !== "agent_extraction") return;
+    expect(out.value.value.extraction.fields.owner?.evidenceRef).toBe("transcript#L12");
+  });
+
+  it("a smuggled extra top-level key → schema_rejected, NO candidate (strict / additionalProperties:false)", async () => {
+    // spec(§7) / REQ-S-006 — the closed schema (outer .strict()) rejects a smuggled sibling key.
+    const smuggled = { ...validAgentExtractionCandidate, injected: "x" };
+    const out = await extractionGate()(extractionJob, completed(smuggled));
+    expect(isErr(out)).toBe(true);
+    if (!isErr(out)) return;
+    expect(out.error.reason).toBe("schema_rejected");
+    expect(out.error.branch).toBe("rejected");
+  });
+});
 
 describe("schema gate — happy path: validated output → emitted candidate", () => {
   it("KMP-shaped output → knowledge_mutation_plan candidate, output unchanged", async () => {

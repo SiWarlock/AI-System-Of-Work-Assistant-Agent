@@ -31,6 +31,7 @@ import type {
   DataOwner,
   KnowledgeMutationPlan,
   ProposedAction,
+  AgentExtractionCandidate,
   Result,
 } from "@sow/contracts";
 import {
@@ -143,10 +144,15 @@ export type SchemaGate = (
   result: AgentResult,
 ) => GateResult<BrokerCandidate> | Promise<GateResult<BrokerCandidate>>;
 
-/** The emitted CANDIDATE — never applied; the strict side-effect rule stops here. */
+/** The emitted CANDIDATE — never applied; the strict side-effect rule stops here.
+ *  `agent_extraction` (CP-2/GATE-1) is the evidence-bearing extraction intermediate:
+ *  the worker reconstructs it into a KnowledgeMutationPlan downstream, so its
+ *  per-field `evidenceRef` reaches `validateNoInference` faithfully (REQ-F-017,
+ *  anti-KMP-stand-in). It carries no external action of its own. */
 export type BrokerCandidate =
   | { readonly kind: "knowledge_mutation_plan"; readonly plan: KnowledgeMutationPlan }
-  | { readonly kind: "proposed_action"; readonly action: ProposedAction };
+  | { readonly kind: "proposed_action"; readonly action: ProposedAction }
+  | { readonly kind: "agent_extraction"; readonly extraction: AgentExtractionCandidate };
 
 /** Replay ledger: an already-accepted idempotencyKey is served from here, not re-run. */
 export interface IdempotencyLedger {

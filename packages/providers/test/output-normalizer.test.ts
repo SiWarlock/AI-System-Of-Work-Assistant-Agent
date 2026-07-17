@@ -11,8 +11,14 @@ import type { AgentJob } from "@sow/contracts";
 import {
   KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
   PROPOSED_ACTION_SCHEMA_ID,
+  AGENT_EXTRACTION_SCHEMA_ID,
 } from "@sow/contracts";
-import { validAgentJob, validKnowledgeMutationPlan, validProposedAction } from "@sow/contracts";
+import {
+  validAgentJob,
+  validKnowledgeMutationPlan,
+  validProposedAction,
+  validAgentExtractionCandidate,
+} from "@sow/contracts";
 import {
   bySchemaIdNormalizer,
   candidateImpliesMutatingAction,
@@ -119,6 +125,41 @@ describe("enforceToolPolicyOnCandidate — reject, never silently coerce (5.5 bu
     const c: BrokerCandidate = { kind: "proposed_action", action: validProposedAction };
     const out = enforceToolPolicyOnCandidate(scopedWriteActionJob, c);
     expect(isOk(out)).toBe(true);
+  });
+});
+
+// ── CP-2 (18.12a) — agent_extraction: the first-class evidence-bearing candidate ──
+const extractionJob: AgentJob = {
+  ...validAgentJob,
+  outputSchemaId: AGENT_EXTRACTION_SCHEMA_ID,
+  toolPolicy: { mode: "read_only", allowedTools: [], deniedTools: [], allowsMutating: false },
+};
+
+describe("bySchemaIdNormalizer — agent_extraction (CP-2 / GATE-1)", () => {
+  it("AGENT_EXTRACTION_SCHEMA_ID → agent_extraction candidate, Zod-parsed value passed through unchanged", () => {
+    // spec(§19.5) — schema id from the JOB (locked #2) drives the kind; evidenceRef survives (REQ-F-017).
+    const out = bySchemaIdNormalizer()(extractionJob, validAgentExtractionCandidate);
+    expect(isOk(out)).toBe(true);
+    if (!isOk(out)) return;
+    expect(out.value.kind).toBe("agent_extraction");
+    if (out.value.kind !== "agent_extraction") return;
+    expect(out.value.extraction).toBe(validAgentExtractionCandidate); // same reference — no coercion
+    expect(out.value.extraction.fields.owner?.evidenceRef).toBe("transcript#L12");
+  });
+});
+
+describe("candidateImpliesMutatingAction / tool-policy — agent_extraction is a non-mutating intermediate", () => {
+  it("an agent_extraction candidate implies NO mutating external action", () => {
+    const c: BrokerCandidate = { kind: "agent_extraction", extraction: validAgentExtractionCandidate };
+    expect(candidateImpliesMutatingAction(c)).toBe(false);
+  });
+
+  it("a read_only extraction job emitting agent_extraction passes tool-policy unchanged (not coerced)", () => {
+    const c: BrokerCandidate = { kind: "agent_extraction", extraction: validAgentExtractionCandidate };
+    const out = enforceToolPolicyOnCandidate(extractionJob, c);
+    expect(isOk(out)).toBe(true);
+    if (!isOk(out)) return;
+    expect(out.value).toBe(c); // same reference — no rebuild
   });
 });
 
