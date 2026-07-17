@@ -10,14 +10,24 @@
 // request SHAPE; the model's actual output (evidenceRef faithfulness) is eval-at-flip.
 import { describe, it, expect } from "vitest";
 import type { AgentJob } from "@sow/contracts";
-import { isOk, isErr, AGENT_EXTRACTION_SCHEMA_ID, validAgentJob } from "@sow/contracts";
+import {
+  isOk,
+  isErr,
+  AGENT_EXTRACTION_SCHEMA_ID,
+  validAgentJob,
+  validAgentExtractionCandidate,
+} from "@sow/contracts";
+import { admitJob, isDeny, isAllow } from "@sow/policy";
 import {
   buildMeetingExtractionRequest,
+  buildSourceExtractionRequest,
   buildClaudeExtractionOutputConfig,
   registrySchemaResolver,
   MEETING_EXTRACTION_PROMPT,
+  SOURCE_EXTRACTION_PROMPT,
   type SchemaResolver,
 } from "../src/model/extraction-request";
+import { bySchemaIdNormalizer } from "../src/broker/output-normalizer";
 
 const extractionJob: AgentJob = { ...validAgentJob, outputSchemaId: AGENT_EXTRACTION_SCHEMA_ID };
 
@@ -96,5 +106,76 @@ describe("meeting extraction request — INLINE json_schema resolved from the jo
     // pins the REAL resolver's no-throw/undefined contract (Map.get + registry never-throw),
     // so the fail-closed path is proven end-to-end, not only via the fake resolver.
     expect(registrySchemaResolver("sow:definitely-not-registered")).toBeUndefined();
+  });
+});
+
+// ── CP-3 (18.13a) — source extraction leg over agent_extraction (ING-7 preserved) ──
+describe("source extraction request — reuses the resolve→inline config; source-appropriate prompt (CP-3)", () => {
+  it("carries the INLINE json_schema resolved from AgentJob.outputSchemaId (reuses CP-2's config leg)", () => {
+    // spec(§19.5) — same resolve→inline→copy leg as the meeting request (buildClaudeExtractionOutputConfig).
+    const out = buildSourceExtractionRequest(extractionJob, fakeResolver);
+    expect(isOk(out)).toBe(true);
+    if (!isOk(out)) return;
+    expect(out.value.outputConfig.format.type).toBe("json_schema");
+    expect(out.value.outputConfig.format.schema).toEqual(fakeClosedSchema);
+    expect(out.value.outputConfig.format.schema).not.toBe(fakeClosedSchema); // copied — no registry alias
+  });
+
+  it("carries a SOURCE-appropriate prompt, distinct from the meeting prompt (REQ-F-017: TBD/evidenceRef)", () => {
+    // spec(§9) — the source leg differs only in the prompt (WHAT is extracted), never the gate/admission.
+    const out = buildSourceExtractionRequest(extractionJob, fakeResolver);
+    expect(isOk(out)).toBe(true);
+    if (!isOk(out)) return;
+    expect(out.value.prompt).toBe(SOURCE_EXTRACTION_PROMPT);
+    expect(out.value.prompt).not.toBe(MEETING_EXTRACTION_PROMPT);
+    expect(out.value.prompt).toMatch(/source/i);
+    expect(out.value.prompt).toMatch(/evidenceRef/);
+    expect(out.value.prompt).toMatch(/TBD/);
+  });
+
+  it("fails closed (schema_unresolved) on an unresolved id — same must-carry guarantee as the meeting leg", () => {
+    const out = buildSourceExtractionRequest(extractionJob, () => undefined);
+    expect(isErr(out)).toBe(true);
+    if (!isErr(out)) return;
+    expect(out.error.code).toBe("schema_unresolved");
+  });
+
+  it("the CP-2 normalizer is schema-keyed (source/meeting-agnostic) — the source leg reuses it unchanged: agent_extraction, evidenceRef round-trips", () => {
+    // spec(§19.5) — bySchemaIdNormalizer keys ONLY on outputSchemaId (not a source/meeting flag),
+    // so a source extraction output normalizes to the SAME agent_extraction candidate the meeting
+    // leg does, evidenceRef intact (REQ-F-017). This schema-agnosticism IS the reuse CP-3 depends
+    // on — there is no source-specific normalizer.
+    const out = bySchemaIdNormalizer()(extractionJob, validAgentExtractionCandidate);
+    expect(isOk(out)).toBe(true);
+    if (!isOk(out)) return;
+    expect(out.value.kind).toBe("agent_extraction");
+    if (out.value.kind !== "agent_extraction") return;
+    expect(out.value.extraction).toBe(validAgentExtractionCandidate); // same reference — no coercion
+    expect(out.value.extraction.fields.owner?.evidenceRef).toBe("transcript#L12");
+  });
+});
+
+describe("ING-7 preserved — the source extraction switch does not weaken admission (CP-3, rule 6)", () => {
+  const untrustedMutating: AgentJob = {
+    ...validAgentJob,
+    trustLevel: "untrusted" as const,
+    toolPolicy: { mode: "scoped_write", allowedTools: [], deniedTools: [], allowsMutating: true },
+  };
+
+  it("an untrusted source job carrying a mutating tool policy still DENIES at admitJob", () => {
+    // spec(§6) — ING-7 admission (admitJob, broker step 1) is ORTHOGONAL to the extraction-request
+    // change; an untrusted+mutating job still fails closed (regression guard for the source switch).
+    const d = admitJob(untrustedMutating);
+    expect(isDeny(d)).toBe(true);
+    if (!isDeny(d)) return;
+    expect(d.reason).toBe("UNTRUSTED_CONTENT_MUTATING_TOOL");
+  });
+
+  it("POSITIVE anchor — an untrusted READ-ONLY source job is admitted (grant machinery works, L7)", () => {
+    const readOnly: AgentJob = {
+      ...untrustedMutating,
+      toolPolicy: { mode: "read_only", allowedTools: [], deniedTools: [], allowsMutating: false },
+    };
+    expect(isAllow(admitJob(readOnly))).toBe(true);
   });
 });

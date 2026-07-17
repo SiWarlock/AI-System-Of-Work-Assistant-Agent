@@ -110,3 +110,33 @@ export function buildMeetingExtractionRequest(
   if (isErr(cfg)) return cfg;
   return ok({ outputConfig: cfg.value, prompt: MEETING_EXTRACTION_PROMPT });
 }
+
+/**
+ * SOURCE extraction instruction (CP-3 / 18.13a) — the source sibling of
+ * `MEETING_EXTRACTION_PROMPT`. Same REQ-F-017 no-inference contract (concrete value ⇒
+ * verbatim `evidenceRef`; unstated ⇒ `"TBD"`, never invented), phrased for an imported
+ * SOURCE document rather than a meeting transcript. The extraction switch changes only
+ * WHAT the leg extracts — never the ING-7 admission posture (untrusted-content jobs stay
+ * read-only, enforced source-agnostically at `admitJob`, broker step 1).
+ */
+export const SOURCE_EXTRACTION_PROMPT: string = [
+  "Extract the structured fields from the imported source document.",
+  "For every field with a concrete value, set evidenceRef to the verbatim source span it was taken from.",
+  'If a field is not explicitly stated in the source, set its value to "TBD" and omit evidenceRef —',
+  "never infer or invent an owner, date, or any other value (REQ-F-017).",
+].join(" ");
+
+/**
+ * Assemble the Claude SOURCE-extraction request from an `AgentJob`: the SAME inline
+ * structured-output config as the meeting leg (keyed off `job.outputSchemaId`, resolve →
+ * inline → fail-closed) + the source-appropriate prompt. Propagates the
+ * `schema_unresolved` fail-closed fault. Reachability-waivered producer (L11).
+ */
+export function buildSourceExtractionRequest(
+  job: AgentJob,
+  resolve: SchemaResolver = registrySchemaResolver,
+): Result<AgentExtractionRequest, ExtractionRequestFault> {
+  const cfg = buildClaudeExtractionOutputConfig(job.outputSchemaId, resolve);
+  if (isErr(cfg)) return cfg;
+  return ok({ outputConfig: cfg.value, prompt: SOURCE_EXTRACTION_PROMPT });
+}
