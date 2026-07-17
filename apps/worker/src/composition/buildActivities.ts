@@ -239,9 +239,11 @@ export interface ProofSpineParams {
   /** The meeting.close AgentJob inputs (READ-ONLY tool policy default; inv-2). */
   readonly meetingJobInputs: MeetingJobInputs;
   /**
-   * The candidate meeting extraction the broker outcome maps to. Deterministic here
-   * (the stub provider run is fixed) — the real transport streams a model extraction
-   * that `mapCandidate` folds instead.
+   * The deterministic stub meeting extraction. As of 18.12b/CP-2 `mapAcceptedMeetingExtraction`
+   * reconstructs from the `agent_extraction` candidate (no longer echoed), so this field is currently
+   * UNREAD on the dormant path — retained pending the arming-bundle cleanup that makes the stub emit a
+   * real `agent_extraction` candidate (outputSchemaId → sow:agent-extraction, #13 Finding C). A Step-9
+   * Future-TODO removes the orphaned thread (boot.ts → registerWorker → params) if arming doesn't reuse it.
    */
   readonly meetingExtraction: AgentExtraction;
   /** The KnowledgeRevisionStore the writer records committed revisions in. */
@@ -452,7 +454,7 @@ export function buildProofSpineActivities(
     // extraction the downstream candidate-data gate rejects (no commit). Faithful evidence-bearing
     // reconstruction from the accepted candidate is deferred to the agent_extraction candidate (#18).
     mapCandidate: (outcome: BrokerOutcome): AgentExtraction =>
-      mapAcceptedMeetingExtraction(outcome, params.meetingExtraction),
+      mapAcceptedMeetingExtraction(outcome),
     // Phase-3/5 carry-forward: localConfig is ALWAYS supplied to the broker.
     localConfig: backends.localConfig,
   });
@@ -760,9 +762,10 @@ export function buildProofSpineActivities(
   // fixed `ok(sourceBinding.extraction)` bypass), SUBJECTING the untrusted imported source to ING-7
   // admission (rule 6) + the broker's gate pipeline (route → egress-veto → health → budget → run →
   // schema). The run leg is 18.1's DORMANT STUB (no real model); on an ACCEPTED outcome `mapCandidate`
-  // folds the deterministic `sourceBinding.extraction` (gate-on-outcome — the meeting leg's exact
-  // pattern), so the note the accept-path produces is OUTPUT-byte-equivalent to the prior bypass while
-  // the source now traverses the safety gates (the point of 18.4). WS-8 (rule 4): the job's workspace
+  // (18.12b/CP-2, the shared meeting-leg mapper) reconstructs FAITHFULLY from an `agent_extraction`
+  // candidate. The dormant stub emits a KMP stand-in ⇒ `mapCandidate` returns EMPTY (fail-closed, no
+  // commit — L46), NOT byte-equivalent to the prior echo bypass; CP-3b threads the source stubExtraction
+  // so the dormant source run emits a real agent_extraction (reachability = the arming bundle, L11). WS-8 (rule 4): the job's workspace
   // is bound DYNAMICALLY from the routing-bound `ctx.workspaceId` INSIDE `createSourceAgentBrokerRouting`
   // (never a source content field). Absent binding → the fail-closed unsupported_type rejection (C1).
   const sourceAgent: RunSourceAgentJobPort =
@@ -805,11 +808,13 @@ export function buildProofSpineActivities(
             type: params.resolved.type,
             dataOwner: params.resolved.dataOwner,
           }),
-          // gate-on-outcome: only an ACCEPTED broker outcome authorizes the deterministic extraction to
-          // trace through; a rejection propagates typed (no blind echo). Faithful evidence-bearing
-          // reconstruction from the accepted candidate is deferred to the agent_extraction candidate (#18).
+          // gate-on-outcome (18.12b/CP-2, shared mapper): an ACCEPTED `agent_extraction` candidate is
+          // reconstructed FAITHFULLY (value + evidenceRef); a non-agent_extraction candidate (today's dormant
+          // KMP stand-in) OR a rejection yields EMPTY ⇒ no commit (L46). CP-3b threads the source stubExtraction
+          // so the dormant source run emits a real agent_extraction; production reachability = the arming bundle
+          // (outputSchemaId → sow:agent-extraction, #13 Finding C), reachability-WAIVERED (L11).
           mapCandidate: (outcome: BrokerOutcome): AgentExtraction =>
-            mapAcceptedMeetingExtraction(outcome, sourceBinding.extraction),
+            mapAcceptedMeetingExtraction(outcome),
           // Phase-3/5 carry-forward: localConfig is ALWAYS supplied to the broker.
           localConfig: backends.localConfig,
         });

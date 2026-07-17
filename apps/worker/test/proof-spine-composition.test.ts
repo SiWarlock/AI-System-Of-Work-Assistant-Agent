@@ -239,8 +239,13 @@ describe("meetingRunAgentJob — localConfig is threaded to the broker AND consu
     const res = await acts.meetingRunAgentJob(meetingCtx());
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    // The accepted extraction is the deterministic meeting extraction (mapCandidate).
-    expect(res.value.fields.title?.value).toBe("Weekly Sync");
+    // 18.12b: the DORMANT stub emits a KMP-stand-in candidate (not agent_extraction) — the outputSchemaId
+    // switch to `sow:agent-extraction` is the OWNER-GATED arming bundle (coupled with the candidate-schema
+    // registration + the NoInferenceView broker binding, #13 Finding C), NOT this slice. A non-agent_extraction
+    // accepted candidate ⇒ EMPTY extraction (empty ⇒ no commit — L46 fail-closed). The reconstruction LOGIC is
+    // unit-proven in meeting-extraction.test.ts (the GATE-1 payoff); production reconstruction is
+    // reachability-WAIVERED until arming (L11).
+    expect(res.value.fields).toEqual({});
   });
 
   it("FAILS CLOSED (typed) when the local route endpoint is NOT in localConfig (config was consulted)", async () => {

@@ -66,16 +66,70 @@ const rejected: BrokerOutcome = err({
   audits: [],
 } as unknown as BrokerRejection);
 
+// 18.12b — an ACCEPTED first-class `agent_extraction` candidate (CP-1's union member), carrying the
+// evidence-bearing per-field extraction the meeting leg reconstructs from.
+const acceptedAgentExtraction = (
+  fields: Record<string, { value: unknown; evidenceRef?: string }>,
+): BrokerOutcome =>
+  ok({
+    jobState: "accepted",
+    route: {} as never,
+    candidate: { kind: "agent_extraction", extraction: { fields } },
+    usage: { runtimeSeconds: 1 },
+    audits: [],
+    replayed: false,
+  } as unknown as BrokerAccepted);
+
 // ── 1. mapCandidate gates on the accepted outcome ──────────────────────────────
 describe("mapAcceptedMeetingExtraction — gate on the accepted broker outcome (18.3 AC#1)", () => {
-  it("map_gates_on_accepted_outcome_reads_candidate — accepted ⇒ the extraction; NON-accepted ⇒ empty, never a blind echo (spec §9)", () => {
-    // Accepted (the run-leg output passed the broker schema gate) → the extraction traces through.
-    expect(mapAcceptedMeetingExtraction(accepted, validExtraction)).toEqual(validExtraction);
-    // A NON-accepted outcome is NOT blindly echoed as the injected extraction — it yields an
-    // EMPTY extraction, which the downstream candidate-data gate rejects (no commit). This is the
-    // tightening over today's `(_outcome) => params.meetingExtraction` blind-ignore.
-    const onRejected = mapAcceptedMeetingExtraction(rejected, validExtraction);
-    expect(onRejected.fields).toEqual({});
+  it("map_gates_on_accepted_non_agent_or_rejected_yields_empty — a legacy non-agent (KMP stand-in) accepted candidate OR a rejection ⇒ empty, never a blind echo (18.12b; spec §9)", () => {
+    // 18.12b: a non-`agent_extraction` accepted candidate (the legacy KMP stand-in — still valid for other
+    // legs) carries no evidence-bearing extraction to reconstruct ⇒ EMPTY, which the downstream candidate-data
+    // gate rejects (no commit — L46). This tightens today's echo of the injected extraction.
+    expect(mapAcceptedMeetingExtraction(accepted).fields).toEqual({});
+    // A NON-accepted outcome ⇒ empty (unchanged).
+    expect(mapAcceptedMeetingExtraction(rejected).fields).toEqual({});
+  });
+});
+
+// ── 1b. 18.12b / CP-2 (GATE-1 payoff): reconstruct FAITHFULLY from the agent_extraction candidate ──
+describe("mapAcceptedMeetingExtraction — reconstruct FROM the accepted agent_extraction candidate (18.12b / GATE-1)", () => {
+  const validate = createValidateActivity({ schemaGate: createMeetingExtractionSchemaGate() });
+
+  it("accepted_agent_extraction_candidate_reconstructs_fields_with_evidenceRef — each field's value + evidenceRef FAITHFULLY reconstructed from candidate.extraction.fields, NOT the injected extraction (spec §19.5)", () => {
+    const out = acceptedAgentExtraction({
+      title: { value: "Weekly Sync", evidenceRef: "transcript:span:1" },
+      owner: { value: "Alice", evidenceRef: "transcript:span:2" },
+      dueDate: { value: TBD },
+    });
+    const rebuilt = mapAcceptedMeetingExtraction(out); // reconstructs from the candidate, not an injected extraction
+    expect(rebuilt.fields.title).toEqual({ value: "Weekly Sync", evidenceRef: "transcript:span:1" });
+    expect(rebuilt.fields.owner).toEqual({ value: "Alice", evidenceRef: "transcript:span:2" });
+    expect(rebuilt.fields.dueDate).toEqual({ value: TBD }); // TBD carries no evidenceRef
+  });
+
+  it("concrete_value_WITH_evidenceRef_passes_but_WITHOUT_is_rejected_inferred_owner_or_date — THE GATE-1 payoff: the candidate's REAL evidenceRef now reaches validateNoInference (the stand-in discarded it) (spec §19.5)", () => {
+    // WITH evidenceRef ⇒ evidence-backed ⇒ passes no-inference.
+    const withEv = mapAcceptedMeetingExtraction(
+      acceptedAgentExtraction({ title: { value: "S", evidenceRef: "transcript:span:1" }, owner: { value: "Alice", evidenceRef: "transcript:span:2" } }),
+    );
+    expect(isOk(validate.validate(withEv))).toBe(true);
+    // SAME concrete value WITHOUT evidenceRef ⇒ inferred_owner_or_date (previously UNREACHABLE from the
+    // candidate — the KMP stand-in dropped evidenceRef, so no-inference only ever saw the injected extraction).
+    const noEv = mapAcceptedMeetingExtraction(
+      acceptedAgentExtraction({ title: { value: "S", evidenceRef: "transcript:span:1" }, owner: { value: "Alice" } }),
+    );
+    const r = validate.validate(noEv);
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.code).toBe("no_inference_violation");
+  });
+
+  it("tbd_value_validates — a TBD field (never invented) passes no-inference regardless of evidenceRef (REQ-F-017 park) (spec §19.5)", () => {
+    const rebuilt = mapAcceptedMeetingExtraction(
+      acceptedAgentExtraction({ title: { value: "S", evidenceRef: "transcript:span:1" }, owner: { value: TBD }, dueDate: { value: TBD } }),
+    );
+    expect(isOk(validate.validate(rebuilt))).toBe(true);
   });
 });
 

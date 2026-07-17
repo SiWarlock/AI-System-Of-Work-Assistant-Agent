@@ -57,7 +57,9 @@ const inputs = (toolPolicy: unknown = READ_ONLY): SourceJobInputs =>
 const acceptedOutcome: BrokerOutcome = ok({
   jobState: "accepted",
   route: {} as never,
-  candidate: { kind: "knowledge_mutation_plan", plan: {} as never },
+  // 18.12b: the source leg reconstructs from a first-class `agent_extraction` candidate (CP-2). The faithful
+  // reconstruction of `sourceExtraction`'s fields (value + evidenceRef) round-trips to `sourceExtraction`.
+  candidate: { kind: "agent_extraction", extraction: sourceExtraction },
   usage: { runtimeSeconds: 1 },
   audits: [],
   replayed: false,
@@ -87,7 +89,7 @@ const routing = (
     buildEgress: () => ({}) as never,
     buildMatrix: () => ({}) as never,
     buildWorkspace: () => ({ type: "personal_business", dataOwner: "user" }) as never,
-    mapCandidate: (o) => mapAcceptedMeetingExtraction(o, sourceExtraction),
+    mapCandidate: (o) => mapAcceptedMeetingExtraction(o),
     ...over,
   });
 
@@ -146,7 +148,7 @@ describe("createSourceAgentBrokerRouting — route the source through the broker
     const res = await routing(broker, {
       mapCandidate: (o) => {
         mapped = true;
-        return mapAcceptedMeetingExtraction(o, sourceExtraction);
+        return mapAcceptedMeetingExtraction(o);
       },
     }).run(ctx());
     expect(isErr(res)).toBe(true); // the broker rejection propagates as a SourceAgentFailure

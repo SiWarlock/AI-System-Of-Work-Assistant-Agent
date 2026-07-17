@@ -10,10 +10,13 @@
 //      reachable `ValidateExtractionPort` (createValidateActivity).
 //
 // SAFE-BUILD: the run leg is 18.1's dormant stub — no real model/prompt executes; these are pure
-// deterministic validators. The FAITHFUL evidence-bearing extraction reconstruction from the
-// accepted candidate is deferred to the first-class `agent_extraction` BrokerCandidate (task #18)
-// — the current KMP stand-in candidate discards `ExtractionField.evidenceRef`, which REQ-F-017
-// keys on, so it is unreconstructable worker-only.
+// deterministic validators. 18.12b/CP-2 (GATE-1 consumer): `mapAcceptedMeetingExtraction` now
+// RECONSTRUCTS the extraction FAITHFULLY from the first-class `agent_extraction` BrokerCandidate
+// (CP-1) — each field's value + `evidenceRef` preserved intact, so `validateNoInference` (REQ-F-017)
+// runs on the model's REAL evidence, replacing the KMP stand-in's `evidenceRef`-discarding echo. The
+// reconstruction is production-reachable only once the arming bundle switches the job outputSchemaId
+// → `sow:agent-extraction` (owner-gated, #13 Finding C) — reachability-WAIVERED here (L11), its LOGIC
+// unit-proven in meeting-extraction.test.ts (the GATE-1 payoff).
 //
 // PURE — the schema gate NEVER coerces (no default-fill); it only decides ok/reject. Never throws.
 import { ok, err } from "@sow/contracts";
@@ -25,24 +28,42 @@ import type { BrokerOutcome } from "@sow/providers";
 type SchemaGateReject = { readonly code: "schema_rejected"; readonly message: string };
 
 /**
- * Gate the meeting `mapCandidate` on the broker verdict. Only an ACCEPTED `BrokerOutcome` whose
- * candidate is present (the schema-gate-validated run-leg output) authorizes the extraction to
- * trace through; a rejection (or an accepted-but-candidate-less outcome) yields an EMPTY
- * extraction, which the downstream candidate-data gate (`ValidateExtractionPort`: the structural
- * gate + no-inference) rejects — no commit. This is the tightening over the prior
- * `(_outcome) => params.meetingExtraction` blind-ignore. Pure; never throws.
+ * Reconstruct the meeting extraction from the broker verdict (18.12b/CP-2). Only an ACCEPTED
+ * `BrokerOutcome` carrying an `agent_extraction` candidate authorizes an extraction — its
+ * `extraction.fields` are reconstructed FAITHFULLY (value + `evidenceRef` preserved intact) into
+ * the `AgentExtraction` the downstream `ValidateExtractionPort` (structural gate + no-inference /
+ * REQ-F-017) validates. A rejection, an accepted-but-candidate-less outcome, OR a non-`agent_extraction`
+ * accepted candidate (the legacy KMP stand-in — still valid for other legs, but carrying no
+ * evidence-bearing extraction) yields an EMPTY extraction, which the gate rejects — no commit (L46).
+ * This replaces the prior evidenceRef-discarding echo of the injected extraction. Pure; never throws.
  */
-export function mapAcceptedMeetingExtraction(
-  outcome: BrokerOutcome,
-  extraction: AgentExtraction,
-): AgentExtraction {
+export function mapAcceptedMeetingExtraction(outcome: BrokerOutcome): AgentExtraction {
   if (!outcome.ok || outcome.value.candidate === undefined) {
     return { fields: {} };
   }
-  // The accepted, schema-gate-validated candidate traces through as the extraction. (Faithful
-  // evidence-bearing reconstruction FROM the candidate is task #18; the KMP stand-in discards
-  // evidenceRef, so REQ-F-017 can't be re-derived from it worker-only.)
-  return extraction;
+  const candidate = outcome.value.candidate;
+  if (candidate.kind !== "agent_extraction") {
+    // A legacy non-`agent_extraction` accepted candidate (the KMP stand-in — still valid for other legs)
+    // carries no evidence-bearing extraction to reconstruct ⇒ EMPTY, which the downstream candidate-data
+    // gate rejects (no commit — L46 division of labor).
+    return { fields: {} };
+  }
+  // FAITHFUL reconstruction FROM the accepted `agent_extraction` candidate (18.12b / GATE-1): each field's
+  // value + evidenceRef preserved INTACT, so `validateNoInference` (REQ-F-017) runs on the model's REAL
+  // evidence — replacing the KMP stand-in's evidenceRef-DISCARDING echo. The @sow/contracts
+  // AgentExtractionCandidate and the @sow/workflows AgentExtraction share the `{ value, evidenceRef? }`
+  // field shape (no port widening, flag-1); the broker schema gate already Zod-parsed the candidate (flag-3).
+  // A null-prototype accumulator so a hostile `__proto__`/`constructor` field key (structurally
+  // blocklisted upstream by CP-1's schema, L51) can never swap this map's prototype even if a future
+  // gate change let one through — the mapper is self-defending independent of which schema gates it.
+  const fields: AgentExtraction["fields"] = Object.create(null) as AgentExtraction["fields"];
+  for (const [key, f] of Object.entries(candidate.extraction.fields)) {
+    fields[key] =
+      f.evidenceRef !== undefined
+        ? { value: f.value, evidenceRef: f.evidenceRef }
+        : { value: f.value };
+  }
+  return { fields };
 }
 
 /** A value is a well-formed `ExtractionField.value` iff it is a string/number/boolean (the `TBD`
