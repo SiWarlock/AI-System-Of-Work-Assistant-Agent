@@ -123,7 +123,7 @@ import {
   createInstanceLeaseStoreAdapter,
 } from "./store-adapters";
 import { createLogger, type Logger, type LogSink } from "../observability/logger";
-import { selectProviderRunner, type ProviderTransportGate } from "./provider-runner";
+import { selectProviderRunner, selectHealthSources, type ProviderTransportGate } from "./provider-runner";
 import {
   createLedgeredBudgetGate,
   createSingleRunBudgetLedger,
@@ -558,11 +558,16 @@ export function createStubProviderRunner(extraction: StubMeetingExtraction): Pro
  * real reachability/Keychain probe is the owner-crossing follow-up. A deployment binds the
  * real sources; a test injects a fake unhealthy source to exercise the fail-closed deny
  * path. Deny-only policing (no spend/egress). Overridable via `config.healthSources`.
+ *
+ * ALWAYS-GREEN, so correct ONLY while the transport is DORMANT — `selectHealthSources`
+ * (18.14/CP-4) AND-locks this to the providerTransport arming so it is never selected under a
+ * real transport (that would false-green a dead provider). `Object.freeze` (L31) so an
+ * in-process caller cannot mutate this safety-posture constant.
  */
-export const DEFAULT_HEALTH_SOURCES: HealthGateSources = {
-  health: () => ({ state: "healthy" }),
-  availability: () => ({ modelPresent: true, conformanceStatus: "passing" }),
-};
+export const DEFAULT_HEALTH_SOURCES: HealthGateSources = Object.freeze({
+  health: () => ({ state: "healthy" as const }),
+  availability: () => ({ modelPresent: true, conformanceStatus: "passing" as const }),
+});
 
 /**
  * The candidate-schema parsers the real SCHEMA gate (5.5, REQ-S-006) validates against:
@@ -766,9 +771,19 @@ export async function assembleBackends(
   const broker = createBroker({
     // 18.2 — the REAL §7 policing gates (deny-only: no spend/egress/write; ACTIVE by default,
     // no dormancy knob — they cross no hard line).
-    // HEALTH (5.9): provider-reachability + model-availability over injected sources (the
-    //   inert/config-driven safe-build default; a deployment binds the real network probes).
-    health: createHealthGate(config.healthSources ?? DEFAULT_HEALTH_SOURCES),
+    // HEALTH (5.9): provider-reachability + model-availability over injected sources. The
+    //   source is AND-LOCKED to the 18.1 providerTransport arming (18.14/CP-4): an explicit
+    //   config.healthSources wins; else armed transport ⇒ the owner's real availability source
+    //   (or a fail-closed UNAVAILABLE if the arming bundle omitted it — never the always-green
+    //   stub, which would false-green a dead real provider), dormant ⇒ DEFAULT_HEALTH_SOURCES
+    //   (byte-equivalent green — correct only while the transport is dormant).
+    //   ⚠ ARMING CAVEAT: config.healthSources takes PRECEDENCE over the AND-lock (explicit
+    //   owner source wins). When arming providerTransport, do NOT ALSO bind config.healthSources
+    //   to an always-green source — that re-opens the exact false-green the AND-lock closes.
+    //   (§19.5 arming runbook checklist item; the AND-lock only governs the default branch.)
+    health: createHealthGate(
+      config.healthSources ?? selectHealthSources(config.providerTransport, DEFAULT_HEALTH_SOURCES),
+    ),
     // BUDGET (5.4): COST-1/COST-2 caps (config-sourced defaults) wrapped by the BudgetLedgerPort.
     budget: createLedgeredBudgetGate(
       { defaults: config.budgetDefaults ?? DEFAULT_BUDGET_DEFAULTS },

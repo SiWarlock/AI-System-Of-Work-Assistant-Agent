@@ -43,6 +43,7 @@ import {
   type HttpTransport,
   type SecretsAccessor,
   type ProviderLogSink,
+  type HealthGateSources,
 } from "@sow/providers";
 import { buildAuditSignal, type AuditSignal } from "@sow/policy";
 import { createLockRoutingSecretsAccessor } from "../secrets/keychain-boot";
@@ -65,6 +66,13 @@ export interface ProviderTransportGate {
   readonly enabled?: boolean;
   /** Owner-provisioned real-runner factory; unbound ⇒ stub (never invoked on OFF). */
   readonly make?: () => ProviderRunner;
+  /**
+   * Owner-provisioned real HEALTH/availability source (18.14/CP-4), AND-locked to this SAME
+   * arming (one flip arms BOTH run + health — no split-brain). Selected by
+   * {@link selectHealthSources} ONLY on the armed path; armed-but-unbound ⇒
+   * {@link UNAVAILABLE_HEALTH_SOURCES} (fail-closed), NEVER the always-green stub.
+   */
+  readonly healthSource?: () => HealthGateSources;
 }
 
 /**
@@ -81,6 +89,45 @@ export function selectProviderRunner(
 ): ProviderRunner {
   if (gate?.enabled === true && typeof gate.make === "function") {
     return gate.make();
+  }
+  return stub;
+}
+
+/**
+ * A fail-closed {@link HealthGateSources} reporting the provider UNREACHABLE — the broker's
+ * HEALTH gate DENIES (retryable) AND surfaces an OBS-2 System Health item. Selected on the
+ * ARMED path when the owner armed the runner but did NOT provide a real `healthSource`: the
+ * always-green stub is NEVER used under a real transport (that would false-green a
+ * dead/unreachable provider), so an incomplete arming bundle fails CLOSED + LOUD (a
+ * provider-unreachable deny with a health item), never a silent stub-green admit.
+ */
+export const UNAVAILABLE_HEALTH_SOURCES: HealthGateSources = Object.freeze({
+  health: () => ({ state: "unreachable" as const }),
+  // `availability` is NEVER consulted on this path — createHealthGate/evaluateEligibility
+  // short-circuit on the non-healthy `unreachable` health dimension before availability is
+  // read. It is set defensively fail-closed (modelPresent:false / failing) so even a future
+  // consumer that reordered the dimensions would still DENY, never admit.
+  availability: () => ({ modelPresent: false, conformanceStatus: "failing" as const }),
+});
+
+/**
+ * Select the broker's HEALTH {@link HealthGateSources}, AND-LOCKED to the SAME default-OFF
+ * arming as {@link selectProviderRunner} (one owner flip arms BOTH the run leg and the health
+ * source — no split-brain where the transport is real but health stays stub-green). Guard
+ * FIRST, STRICT `=== true` + `typeof make === "function"` (type-robust; a truthy-but-not-`true`
+ * `enabled` fails CLOSED to the stub, never arms). Shipped default (`gate` unset/dormant) ⇒ the
+ * EXACT `stub` instance — byte-equivalent + dormant, and the real `healthSource` factory is
+ * NEVER invoked on the OFF path. On the ARMED path the always-green stub is NEVER used: the
+ * owner-provisioned `healthSource` is selected, or — if the arming bundle omitted it —
+ * {@link UNAVAILABLE_HEALTH_SOURCES} (fail-closed), so a real transport can never ride a
+ * false-green health source. Mirrors {@link selectProviderRunner}.
+ */
+export function selectHealthSources(
+  gate: ProviderTransportGate | undefined,
+  stub: HealthGateSources,
+): HealthGateSources {
+  if (gate?.enabled === true && typeof gate.make === "function") {
+    return typeof gate.healthSource === "function" ? gate.healthSource() : UNAVAILABLE_HEALTH_SOURCES;
   }
   return stub;
 }
