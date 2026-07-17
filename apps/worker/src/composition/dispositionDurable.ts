@@ -242,7 +242,10 @@ export function createDurableMeetingParkPort(deps: DurableMeetingParkDeps): Meet
         idempotencyKey,
         state: "queued_for_review",
         dispositionKey: null, // inv-1: NO routing decision yet — the human picks the target workspace (15.8)
-        auditRef: null,
+        // 18.16/CP-6 (L25 propagate-or-mint): a park is auditable — mint a STABLE auditRef (never null, §16
+        // operational truth) DETERMINISTIC in the source identity (sourceId + idempotencyKey), so a re-driven /
+        // replayed low-confidence meeting mints the SAME ref and first-write-wins keeps ONE row (rule 3 / L36).
+        auditRef: makeAuditId(`meeting-park:${String(source.sourceId)}:${idempotencyKey}`),
         parkedAt: deps.now(),
         dispositionedAt: null,
       };

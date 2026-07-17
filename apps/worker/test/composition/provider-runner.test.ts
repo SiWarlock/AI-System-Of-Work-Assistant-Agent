@@ -278,16 +278,16 @@ describe("selectProviderRunner — default-OFF dormancy gate", () => {
 
 // ── the credential path: locked/missing ⇒ held retryable, no plaintext (rule 7) ─
 // A LOCKED key mints a keychain-locked HealthItem (via the lock-routing accessor's
-// onKeychainLocked); a MISSING (facade-unbound — the DORMANT default) key holds retryable
-// with NO health item (17.3: "a config error is not a lock"). BOTH fail closed: retryable,
-// never terminal, never a plaintext dispatch.
+// onKeychainLocked); a MISSING (facade-unbound — the DORMANT default) key holds retryable and, since
+// 18.16/CP-6, surfaces a DISTINCT credential-unavailable observability item (no longer a silent hold;
+// NOT a keychain lock — L41). BOTH fail closed: retryable, never terminal, never a plaintext dispatch.
 describe("createRealProviderRunner — credential fail-closed degrade", () => {
   it.each([
-    { label: "locked", facade: lockedFacade as SecretsAccessor | undefined, mintsHealthItem: true },
-    { label: "missing (facade unbound — the dormant default)", facade: undefined, mintsHealthItem: false },
+    { label: "locked", facade: lockedFacade as SecretsAccessor | undefined, expectedSubjectRef: "keychain:claude" },
+    { label: "missing (facade unbound — the dormant default)", facade: undefined, expectedSubjectRef: "credential:claude" },
   ])(
-    "$label secret ⇒ held retryable, no plaintext, no terminal reject (spec rule7 L21 L29)",
-    async ({ facade, mintsHealthItem }) => {
+    "$label secret ⇒ held retryable, no plaintext, no terminal reject; surfaces its DISTINCT health item (spec rule7 L21 L29 / 18.16)",
+    async ({ facade, expectedSubjectRef }) => {
       const calls: HttpTransportRequest[] = [];
       const { controller, recorded } = makeController();
       const runner = createRealProviderRunner({
@@ -307,13 +307,9 @@ describe("createRealProviderRunner — credential fail-closed degrade", () => {
       expect(controller.heldJobs()).toContain("job-locked");
       // NO plaintext / NO egress: a locked/missing secret never dispatches to the transport.
       expect(calls).toHaveLength(0);
-      // ONLY a locked key surfaces a keychain-locked HealthItem; a missing (unbound) key does not.
-      if (mintsHealthItem) {
-        expect(recorded.length).toBeGreaterThan(0);
-        expect(recorded[0]?.subjectRef).toBe("keychain:claude");
-      } else {
-        expect(recorded).toHaveLength(0);
-      }
+      // 18.16/CP-6: locked → keychain-locked item; missing → the DISTINCT credential-unavailable item.
+      expect(recorded.length).toBeGreaterThan(0);
+      expect(recorded[0]?.subjectRef).toBe(expectedSubjectRef);
     },
   );
 });

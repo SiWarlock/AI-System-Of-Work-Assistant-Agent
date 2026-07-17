@@ -152,30 +152,51 @@ describe("createLockRoutingSecretsAccessor — degraded-by-default + locked→He
   const NOW_ISO = "2026-07-16T00:00:00.000Z";
   const now = (): string => NOW_ISO;
 
-  /** A spy KeychainLockRouter — records the RAW input the accessor passes (so the redaction pin is non-vacuous). */
-  function makeRouter(): { router: KeychainLockRouter; calls: Array<Record<string, unknown>> } {
+  /** A spy KeychainLockRouter — records the RAW input the accessor passes (so the redaction pin is non-vacuous).
+   *  `calls` = onKeychainLocked spy (name kept for the existing tests); `missingCalls` = the 18.16/CP-6
+   *  onCredentialUnavailable spy. `throwOnMissing` makes the missing-mint router reject (best-effort pin). */
+  function makeRouter(opts: { throwOnMissing?: boolean } = {}): {
+    router: KeychainLockRouter;
+    calls: Array<Record<string, unknown>>;
+    missingCalls: Array<Record<string, unknown>>;
+  } {
     const calls: Array<Record<string, unknown>> = [];
+    const missingCalls: Array<Record<string, unknown>> = [];
     const router: KeychainLockRouter = {
       onKeychainLocked: (input): Promise<unknown> => {
         calls.push(input as unknown as Record<string, unknown>);
         return Promise.resolve();
       },
+      onCredentialUnavailable: (input): Promise<unknown> => {
+        missingCalls.push(input as unknown as Record<string, unknown>);
+        if (opts.throwOnMissing === true) return Promise.reject(new Error("router boom"));
+        return Promise.resolve();
+      },
     };
-    return { router, calls };
+    return { router, calls, missingCalls };
   }
+
+  /** A fake getSecret facade that THROWS (the real Keychain adapter can — TCC/spawn/native, L9). */
+  const facadeThrowing = (): SecretsAccessor => ({
+    getSecret: (): Promise<Result<string, { reason: SecretUnavailableReason }>> => {
+      throw new Error("native keychain error");
+    },
+  });
 
   /** A fake getSecret facade returning a fixed result (no real Keychain). */
   const facadeReturning = (r: Result<string, { reason: SecretUnavailableReason }>): SecretsAccessor => ({
     getSecret: (): Promise<Result<string, { reason: SecretUnavailableReason }>> => Promise.resolve(r),
   });
 
-  it("degraded_by_default_absent_facade_yields_missing_no_creds_no_route", async () => {
-    // spec(§7 §6 L11): gate ABSENT ⇒ facade undefined ⇒ fail-closed `missing` — no real creds, no routing.
-    const { router, calls } = makeRouter();
+  it("degraded_by_default_absent_facade_yields_missing_mints_credential_unavailable_not_locked", async () => {
+    // spec(§7 §6 L11): gate ABSENT ⇒ facade undefined ⇒ fail-closed `missing` — no real creds. 18.16/CP-6: a
+    // genuinely-absent credential now mints the credential-unavailable OBSERVABILITY item (NOT a keychain lock).
+    const { router, calls, missingCalls } = makeRouter();
     const acc = createLockRoutingSecretsAccessor(undefined, router, SUBJECT, now);
     const r = await acc.getSecret(REF);
     expect(isErr(r) && r.error.reason).toBe("missing");
-    expect(calls).toHaveLength(0);
+    expect(calls).toHaveLength(0); // NOT mislabeled a keychain lock (L41)
+    expect(missingCalls).toHaveLength(1); // credential-unavailable minted (18.16/CP-6)
   });
 
   it("locked_routes_to_onKeychainLocked_and_fails_closed_no_plaintext", async () => {
@@ -191,18 +212,28 @@ describe("createLockRoutingSecretsAccessor — degraded-by-default + locked→He
     expect(calls[0]?.now).toBe(NOW_ISO);
   });
 
-  it.each([["missing"], ["denied"]] as const)(
-    "reason_%s_fails_closed_WITHOUT_routing_the_it_todo_invalid_ref_does_not_route",
-    async (reason) => {
-      // spec(§16): the deferred it.todo — ONLY `locked` routes. `missing` (the invalid_ref/backend_error collapse
-      // = a config error) and `denied` fail closed WITHOUT minting a keychain-locked item.
-      const { router, calls } = makeRouter();
-      const acc = createLockRoutingSecretsAccessor(facadeReturning(err({ reason })), router, SUBJECT, now);
-      const r = await acc.getSecret(REF);
-      expect(isErr(r) && r.error.reason).toBe(reason);
-      expect(calls).toHaveLength(0);
-    },
-  );
+  it("reason_missing_mints_credential_unavailable_not_locked", async () => {
+    // 18.16/CP-6 (lands the deferred it.todo): `missing` (17.2 mapUnavailableReason collapses invalid_ref +
+    // backend_error + a genuinely-missing key — the split is a documented Future-TODO) now mints the GENERIC
+    // credential-unavailable OBSERVABILITY item — NOT a keychain lock (L41 — missing is not mislabeled a lock).
+    const { router, calls, missingCalls } = makeRouter();
+    const acc = createLockRoutingSecretsAccessor(facadeReturning(err({ reason: "missing" })), router, SUBJECT, now);
+    const r = await acc.getSecret(REF);
+    expect(isErr(r) && r.error.reason).toBe("missing");
+    expect(calls).toHaveLength(0); // NOT a keychain lock
+    expect(missingCalls).toHaveLength(1); // credential-unavailable minted
+  });
+
+  it("reason_denied_fails_closed_WITHOUT_routing_either_mint", async () => {
+    // spec(§16): `denied` is neither a lock nor a missing-provisioning signal — it fails closed WITHOUT minting
+    // either item (a denied-visibility signal is a separate Phase-18 follow-up).
+    const { router, calls, missingCalls } = makeRouter();
+    const acc = createLockRoutingSecretsAccessor(facadeReturning(err({ reason: "denied" })), router, SUBJECT, now);
+    const r = await acc.getSecret(REF);
+    expect(isErr(r) && r.error.reason).toBe("denied");
+    expect(calls).toHaveLength(0);
+    expect(missingCalls).toHaveLength(0);
+  });
 
   it("routing_input_carries_no_ref_or_secret_value_redaction", async () => {
     // rule 7: the routing input is EXACTLY {subjectRef, now} — the ref and any secret value NEVER cross into the
@@ -223,23 +254,30 @@ describe("createLockRoutingSecretsAccessor — degraded-by-default + locked→He
     expect(calls).toHaveLength(0);
   });
 
-  it("facade_that_throws_fails_closed_to_missing_never_rejects", async () => {
-    // §16 (never throws across the boundary) / rule 7 / L9: the REAL Keychain adapter CAN throw (TCC denial / spawn /
-    // native error — cf. gbrain-http-read-client's same-seam guard). A facade throw must DEGRADE to a typed `missing`
-    // Err, never propagate as a rejection. Assert UNCONDITIONALLY (L15): a reject makes `await` throw ⇒ RED.
-    const { router, calls } = makeRouter();
-    const throwingFacade: SecretsAccessor = { getSecret: (): Promise<never> => Promise.reject(new Error("TCC denied")) };
-    const acc = createLockRoutingSecretsAccessor(throwingFacade, router, SUBJECT, now);
-    const r = await acc.getSecret(REF);
-    expect(isErr(r) && r.error.reason).toBe("missing");
-    expect(calls).toHaveLength(0);
-  });
+  it.each([
+    { label: "async-reject", facade: { getSecret: (): Promise<never> => Promise.reject(new Error("TCC denied")) } as SecretsAccessor },
+    { label: "sync-throw", facade: facadeThrowing() },
+  ])(
+    "facade_that_throws_fails_closed_to_missing_never_rejects_and_mints ($label)",
+    async ({ facade }) => {
+      // §16 (never throws across the boundary) / rule 7 / L9: the REAL Keychain adapter CAN throw (TCC denial / spawn /
+      // native error). BOTH a synchronous throw AND an async rejection from `getSecret` must be caught and DEGRADE to a
+      // typed `missing` Err (never propagate), and the synthesized-missing path mints. Assert UNCONDITIONALLY (L15).
+      const { router, calls, missingCalls } = makeRouter();
+      const acc = createLockRoutingSecretsAccessor(facade, router, SUBJECT, now);
+      const r = await acc.getSecret(REF);
+      expect(isErr(r) && r.error.reason).toBe("missing");
+      expect(calls).toHaveLength(0);
+      expect(missingCalls).toHaveLength(1); // 18.16/CP-6: the synthesized-missing (throw) path also mints
+    },
+  );
 
   it("router_reject_on_locked_still_returns_the_fail_closed_locked_err_never_rejects", async () => {
     // §16 / L21+L29: a router (health-mint) FAULT must NOT change the fail-closed secret result — the accessor STILL
     // resolves to the `locked` Err, never rejecting. Best-effort routing; the secret degrade is what the caller sees.
     const rejectingRouter: KeychainLockRouter = {
       onKeychainLocked: (): Promise<never> => Promise.reject(new Error("health sink fault")),
+      onCredentialUnavailable: (): Promise<never> => Promise.reject(new Error("health sink fault")),
     };
     const acc = createLockRoutingSecretsAccessor(
       facadeReturning(err({ reason: "locked" })),
@@ -250,5 +288,40 @@ describe("createLockRoutingSecretsAccessor — degraded-by-default + locked→He
     const r = await acc.getSecret(REF);
     expect(isOk(r)).toBe(false);
     expect(isErr(r) && r.error.reason).toBe("locked");
+  });
+
+  it("router_reject_on_missing_still_returns_the_fail_closed_missing_err_never_rejects", async () => {
+    // §16 / L21+L29: the credential-unavailable mint is best-effort observability — a router FAULT must NOT change
+    // the fail-closed secret result. Assert UNCONDITIONALLY (L15): a reject makes `await` throw ⇒ RED.
+    const { router, missingCalls } = makeRouter({ throwOnMissing: true });
+    const acc = createLockRoutingSecretsAccessor(facadeReturning(err({ reason: "missing" })), router, SUBJECT, now);
+    const r = await acc.getSecret(REF);
+    expect(isOk(r)).toBe(false);
+    expect(isErr(r) && r.error.reason).toBe("missing");
+    expect(missingCalls).toHaveLength(1); // it attempted the mint, then swallowed the fault
+  });
+
+  it("missing_routing_input_carries_no_ref_or_secret_value_redaction", async () => {
+    // rule 7: the credential-unavailable routing input is EXACTLY {subjectRef, now} — the ref/key never crosses
+    // into the health path (nothing to leak to the HealthItem / logs). Non-vacuous — asserts the exact key set.
+    const { router, missingCalls } = makeRouter();
+    const acc = createLockRoutingSecretsAccessor(facadeReturning(err({ reason: "missing" })), router, SUBJECT, now);
+    await acc.getSecret(REF);
+    expect(missingCalls).toHaveLength(1);
+    expect(Object.keys(missingCalls[0] ?? {}).sort()).toEqual(["now", "subjectRef"]);
+    expect(JSON.stringify(missingCalls[0])).not.toContain(REF);
+  });
+
+  it("missing_and_locked_route_to_DISTINCT_mints_never_cross_fire", async () => {
+    // 18.16/CP-6 + L41: `locked` → onKeychainLocked ONLY; `missing` → onCredentialUnavailable ONLY. The two signals
+    // never cross-fire — a missing credential is never mislabeled a lock, and a lock never mints credential-unavailable.
+    const a = makeRouter();
+    await createLockRoutingSecretsAccessor(facadeReturning(err({ reason: "locked" })), a.router, SUBJECT, now).getSecret(REF);
+    expect(a.calls).toHaveLength(1);
+    expect(a.missingCalls).toHaveLength(0);
+    const b = makeRouter();
+    await createLockRoutingSecretsAccessor(facadeReturning(err({ reason: "missing" })), b.router, SUBJECT, now).getSecret(REF);
+    expect(b.calls).toHaveLength(0);
+    expect(b.missingCalls).toHaveLength(1);
   });
 });

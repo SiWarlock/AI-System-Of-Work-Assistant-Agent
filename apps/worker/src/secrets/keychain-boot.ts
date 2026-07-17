@@ -103,6 +103,10 @@ export function buildKeychainSecrets(
  */
 export interface KeychainLockRouter {
   onKeychainLocked(input: { readonly subjectRef: ProviderId; readonly now: string }): Promise<unknown>;
+  /** 18.16/CP-6: surface a credential-unavailable observability item on a `missing` resolution — a DISTINCT
+   * signal from a lock (L41). Declared a STRUCTURAL SUBSET of `KeychainLockController.onCredentialUnavailable`
+   * so the Phase-18 boot binding passes the real controller unchanged (module stays @sow/lifecycle-free). */
+  onCredentialUnavailable(input: { readonly subjectRef: ProviderId; readonly now: string }): Promise<unknown>;
 }
 
 /**
@@ -128,23 +132,36 @@ export function createLockRoutingSecretsAccessor(
 ): SecretsAccessor {
   return {
     async getSecret(ref: string): Promise<Result<string, SecretUnavailable>> {
-      if (facade === undefined) return err({ reason: "missing" }); // DEGRADED — gate absent ⇒ no creds, no route
+      // Resolve to a SINGLE fail-closed Result. facade ABSENT (gate not wired) and a facade THROW (the real
+      // Keychain adapter CAN throw — TCC denial / spawn / native error, L9) both DEGRADE to `missing` — never
+      // propagate, never a plaintext fallback (§16 never-throws / rule 7).
       let resolved: Result<string, SecretUnavailable>;
-      try {
-        resolved = await facade.getSecret(ref);
-      } catch {
-        // FAIL-CLOSED (§16 never-throws / rule 7 / L9): the real Keychain adapter CAN throw (TCC denial / spawn /
-        // native error — cf. gbrain-http-read-client's same-seam guard). Degrade to `missing`, never propagate.
-        return err({ reason: "missing" });
-      }
-      if (isErr(resolved) && resolved.error.reason === "locked") {
-        // Route ONLY a `locked` result → mint the keychain-locked HealthItem (§16). `missing` (the invalid_ref /
-        // backend_error collapse) and `denied` intentionally do NOT route here — a config error is not a lock.
+      if (facade === undefined) {
+        resolved = err({ reason: "missing" });
+      } else {
         try {
-          await router.onKeychainLocked({ subjectRef, now: now() });
+          resolved = await facade.getSecret(ref);
         } catch {
-          // Best-effort health mint: a router fault must NOT change the fail-closed secret result (§16). The caller
-          // still degrades on the `locked` Err below; the Phase-18 binding SHOULD supply a never-reject router (L21/L29).
+          resolved = err({ reason: "missing" });
+        }
+      }
+
+      // Route the fail-closed reason to its DISTINCT best-effort health mint (§16 observability): `locked` →
+      // the keychain-locked item (LIFE-6); `missing` → the credential-unavailable item (18.16/CP-6 — an
+      // un-provisioned/unresolvable credential, incl. the invalid_ref/backend_error collapse; NOT mislabeled a
+      // lock, L41). `denied` mints NEITHER (a denied-visibility signal is a Phase-18 follow-up). A router
+      // (health-mint) FAULT must NEVER change the fail-closed secret result — swallow it. Only `subjectRef` +
+      // `now` cross into the health path — never the `ref` or the secret value (rule 7).
+      if (isErr(resolved)) {
+        try {
+          if (resolved.error.reason === "locked") {
+            await router.onKeychainLocked({ subjectRef, now: now() });
+          } else if (resolved.error.reason === "missing") {
+            await router.onCredentialUnavailable({ subjectRef, now: now() });
+          }
+        } catch {
+          // Best-effort: a router fault does NOT change the fail-closed secret result (Phase-18 binding SHOULD
+          // supply a never-reject router, L21/L29).
         }
       }
       return resolved; // fail-closed Err (or the ok value) — NEVER a plaintext fallback

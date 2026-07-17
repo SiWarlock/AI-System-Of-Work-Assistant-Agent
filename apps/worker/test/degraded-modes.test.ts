@@ -331,4 +331,31 @@ describe("Keychain-locked — providers DEGRADED, jobs HELD retryable (never ter
     expect(out.value.drain.drained).toBe(1);
     expect(ctl.heldJobs()).toHaveLength(0);
   });
+
+  // 18.16/CP-6 (a) — the missing-key observability mint. A genuinely-missing (un-provisioned) credential
+  // was a SILENT hold; onCredentialUnavailable surfaces an operator-visible item WITHOUT mislabeling it a
+  // Keychain LOCK (L41): it REUSES the existing frozen `worker_down` FailureClass (no enum expansion, L25) but
+  // is DISTINCT from a lock by a `credential:` subjectRef prefix + a generic message. Value-free (rule 7).
+  it("onCredentialUnavailable mints a DISTINCT redaction-safe credential-unavailable item (worker_down, distinct subjectRef, generic message, no key/ref)", async () => {
+    const { ctl } = makeController({ drained: 0, reused: 0, held: 0, failed: 0 });
+    const out = await ctl.onCredentialUnavailable({ subjectRef: PROVIDER, now: T0 });
+    expect(isOk(out)).toBe(true);
+    if (!isOk(out)) return;
+    const item = out.value.healthItem;
+    // Reuses the existing frozen worker_down FailureClass (L25 — no frozen-taxonomy expansion) …
+    expect(item.failureClass).toBe("worker_down");
+    // … but is DISTINCT from a keychain LOCK: the §10.3 (failureClass, subjectRef) dedupe identity is encoded
+    // in `item.id` as `worker_down|<subjectRef>` with a `credential:` subjectRef (never `keychain:`), so the two
+    // items never dedupe-collide; and a GENERIC message that does NOT claim a lock (L41 — a missing credential
+    // is not mislabeled a Keychain lock).
+    expect(item.id).toContain("credential:");
+    expect(item.id).not.toContain("keychain:");
+    expect(item.message.toLowerCase()).not.toContain("lock");
+    // rule 7 — value-free: the item carries only the provider id (in the id) + a generic message; no secret,
+    // no key, no raw ref (the accessor never even passes a ref into the health path).
+    expect(JSON.stringify(item)).not.toMatch(/secret|api[-_]?key|password/i);
+    // Distinct from the lock: the lock item's id uses `keychain:` → a different §10.3 identity.
+    const locked = await ctl.onKeychainLocked({ subjectRef: PROVIDER, now: T0 });
+    expect(isOk(locked) && locked.value.healthItem.id).not.toBe(item.id);
+  });
 });

@@ -14,7 +14,7 @@
 // GUARDRAIL (raw candidate content at rest, orch23): the stored raw SourceEnvelope is server-side
 // operational only — the disposition audit record carries SUMMARIES ONLY (never the raw body/content).
 import { describe, it, expect } from "vitest";
-import { ok, err, isOk, isErr, type Result } from "@sow/contracts";
+import { ok, err, isOk, isErr, auditId, type Result } from "@sow/contracts";
 import type { AuditRecord, SourceEnvelope, WorkflowRunRef } from "@sow/contracts";
 import type { DbError, ProjectRegistryRow, ProjectRegistryRepository, ReadModelRecord, ReadModelRepository, SourceDispositionRepository, SourceDispositionRow } from "@sow/db";
 import type { CommittedRevision, KnowledgeRevisionStore } from "@sow/knowledge";
@@ -320,7 +320,7 @@ describe("exactly-once via the REAL record activity over the durable store (15.5
 });
 
 describe("createDurableMeetingParkPort (G5 — the low-confidence meeting park)", () => {
-  it("parks_a_queued_for_review_row_workspace_unbound: writes a queued_for_review row (dispositionKey + auditRef NULL — routing-target UNBOUND, inv-1) keyed by the source id, carrying the meeting idempotencyKey for a replay-safe re-enter [spec(§19.2/§9 inv-1)]", async () => {
+  it("parks_a_queued_for_review_row_workspace_unbound_with_a_stable_minted_auditref: writes a queued_for_review row (dispositionKey UNBOUND inv-1; auditRef a STABLE MINTED ref — never null, 18.16/CP-6) keyed by the source id, carrying the meeting idempotencyKey for a replay-safe re-enter [spec(§19.2/§9 inv-1)]", async () => {
     const repo = new FakeDispositionRepo();
     const park = createDurableMeetingParkPort({ repo, now: () => NOW });
     const src = envelope({ sourceId: "mtg-src-1" as SourceEnvelope["sourceId"] });
@@ -329,10 +329,24 @@ describe("createDurableMeetingParkPort (G5 — the low-confidence meeting park)"
     const row = repo.rows.get("mtg-src-1");
     expect(row?.state).toBe("queued_for_review");
     expect(row?.dispositionKey).toBeNull(); // NO routing decision yet — the human picks it (inv-1)
-    expect(row?.auditRef).toBeNull();
+    // 18.16/CP-6: auditRef is a STABLE MINTED ref (never null) so the park is auditable (§16 operational truth).
+    expect(row?.auditRef).not.toBeNull();
+    expect(row?.auditRef).toBe(auditId("meeting-park:mtg-src-1:meeting:ws-emp:granola-1"));
     expect(row?.idempotencyKey).toBe("meeting:ws-emp:granola-1"); // reused on re-enter (inv-D)
     expect(row?.sourceEnvelope).toBe(src); // the parked source-of-record (server-side operational)
     expect(row?.parkedAt).toBe(NOW);
+  });
+
+  it("mints_a_deterministic_auditref_reused_across_reparks: the auditRef is a deterministic function of (sourceId, idempotencyKey) — a re-park mints the SAME ref AND first-write-wins keeps the first row (18.16/CP-6 / L36)", async () => {
+    const repo = new FakeDispositionRepo();
+    const park = createDurableMeetingParkPort({ repo, now: () => NOW });
+    const sid = "mtg-src-1" as SourceEnvelope["sourceId"];
+    await park.park(envelope({ sourceId: sid, contentHash: "sha256:first" }), "meeting:ws-emp:granola-1");
+    const firstRef = repo.rows.get("mtg-src-1")?.auditRef;
+    await park.park(envelope({ sourceId: sid, contentHash: "sha256:edited" }), "meeting:ws-emp:granola-1");
+    expect(repo.rows.size).toBe(1); // first-write-wins
+    expect(repo.rows.get("mtg-src-1")?.auditRef).toBe(firstRef); // same deterministic ref on re-park
+    expect(firstRef).toBe(auditId("meeting-park:mtg-src-1:meeting:ws-emp:granola-1"));
   });
 
   it("is_first_write_wins_idempotent: re-parking the same source is a no-op ⇒ ONE row AND the FIRST write survives (true first-write-wins, not last-write) (rule 3 / L36)", async () => {

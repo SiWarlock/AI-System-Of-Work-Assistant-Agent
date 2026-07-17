@@ -70,6 +70,12 @@ export interface KeychainLockedOutcome {
   readonly degradedProvider: ProviderId;
 }
 
+/** 18.16/CP-6 — the outcome of surfacing a credential-unavailable (un-provisioned/unresolvable) item. */
+export interface CredentialUnavailableOutcome {
+  /** The surfaced DISTINCT credential-unavailable health item (observability only; not a lock). */
+  readonly healthItem: HealthItem;
+}
+
 /** Which provider a held job depends on (so unlock knows what it was waiting on). */
 export interface HoldJobInput {
   readonly subjectRef: ProviderId;
@@ -123,6 +129,11 @@ export interface KeychainLockController {
   onKeychainLocked(
     input: KeychainLockedInput,
   ): Promise<Result<KeychainLockedOutcome, DegradedModeError>>;
+  /** 18.16/CP-6: surface a DISTINCT credential-unavailable item (un-provisioned/unresolvable secret) —
+   *  observability for an otherwise-SILENT fail-closed HOLD; NOT a keychain lock (L41). Never throws. */
+  onCredentialUnavailable(
+    input: KeychainLockedInput,
+  ): Promise<Result<CredentialUnavailableOutcome, DegradedModeError>>;
   /** Hold a dependent job as RETRYABLE (never terminal — no work lost). */
   holdJob(
     jobId: string,
@@ -164,6 +175,9 @@ export function createKeychainLockController(
 
   // A stable subjectRef per provider so a recurring lock bumps ONE deduped item.
   const subjectRefOf = (p: ProviderId): string => `keychain:${p}`;
+  // 18.16/CP-6: a DISTINCT subjectRef prefix so a credential-unavailable item NEVER dedupe-collides with a
+  // keychain LOCK under the §10.3 (failureClass, subjectRef) identity (both reuse the worker_down class).
+  const credentialSubjectRefOf = (p: ProviderId): string => `credential:${p}`;
 
   return {
     async onKeychainLocked(
@@ -186,6 +200,30 @@ export function createKeychainLockController(
       if (!recorded.ok) return err(mapSurfaceError(recorded.error));
 
       return ok({ healthItem: recorded.value.item, degradedProvider: input.subjectRef });
+    },
+
+    async onCredentialUnavailable(
+      input: KeychainLockedInput,
+    ): Promise<Result<CredentialUnavailableOutcome, DegradedModeError>> {
+      // OBSERVABILITY ONLY (18.16/CP-6): surface a DISTINCT credential-unavailable item so an un-provisioned /
+      // unresolvable credential is no longer a SILENT fail-closed HOLD. Reuses the worker_down FailureClass
+      // (L25 — no frozen-taxonomy expansion) but a DISTINCT `credential:` subjectRef (never collides with a
+      // LOCK under §10.3) + a GENERIC message (NOT a lock — L41). Deliberately does NOT mark the provider
+      // degraded / hold jobs: the accessor's fail-closed Err drives the HOLD; this is purely additive audit/
+      // health. Value-free (rule 7): only subjectRef (a provider id) + now cross in — never the key or raw ref.
+      const message =
+        `Credential unavailable for provider '${input.subjectRef}' — could not be resolved; ` +
+        "verify the credential is provisioned. Dependent jobs are held (retryable).";
+      const recorded = await surface.record({
+        failureClass: healthClass,
+        subjectRef: credentialSubjectRefOf(input.subjectRef),
+        message,
+        auditRef,
+        now: input.now,
+      });
+      if (!recorded.ok) return err(mapSurfaceError(recorded.error));
+
+      return ok({ healthItem: recorded.value.item });
     },
 
     holdJob(
