@@ -118,6 +118,7 @@ import {
   createInstanceLeaseStoreAdapter,
 } from "./store-adapters";
 import { createLogger, type Logger, type LogSink } from "../observability/logger";
+import { selectProviderRunner, type ProviderTransportGate } from "./provider-runner";
 
 // ---------------------------------------------------------------------------
 // (0) config
@@ -176,6 +177,15 @@ export interface BackendsConfig {
    * BOTH locks (see {@link WriteTransportGate}); the real factory ships UNBOUND.
    */
   readonly writeTransport?: WriteTransportGate;
+  /**
+   * Default-OFF owner gate for the real ModelProvider {@link ProviderRunner} (the broker's
+   * §7 run leg — 18.1). UNSET (the shipped default) ⇒ the deterministic `createStubProviderRunner`
+   * — byte-equivalent + dormant. A real runner is selectable ONLY by deliberate owner config
+   * satisfying BOTH locks (strict `enabled === true` AND an owner-provisioned `make` factory);
+   * the real network transport + provider key are bound by `make` at the owner crossing (§19.5).
+   * Mirrors {@link WriteTransportGate}; the real factory ships UNBOUND.
+   */
+  readonly providerTransport?: ProviderTransportGate;
 }
 
 // ---------------------------------------------------------------------------
@@ -765,7 +775,11 @@ export async function assembleBackends(
   const broker = createBroker({
     health: stubHealthGate,
     budget: stubBudgetGate,
-    run: createStubProviderRunner(extraction),
+    // 18.1 — the run leg is chosen through the default-OFF owner gate: unset
+    // `providerTransport` ⇒ the deterministic stub (byte-equivalent shipped default),
+    // never a hardcoded real model client at this call site (§19.5). A real ModelProvider
+    // runner is bound ONLY by deliberate owner config at the crossing.
+    run: selectProviderRunner(config.providerTransport, createStubProviderRunner(extraction)),
     schema: createStubSchemaGate(meetingSchemaCandidate),
   });
 
