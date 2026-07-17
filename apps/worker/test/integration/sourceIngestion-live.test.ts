@@ -42,7 +42,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { Client as TemporalClient } from "@temporalio/client";
-import { auditId } from "@sow/contracts";
+import { auditId, validKnowledgeMutationPlan } from "@sow/contracts";
 import type { AuditId } from "@sow/contracts";
 import { SOW_CONTROL_PLANE_TASK_QUEUE } from "@sow/workflows/runtime/taskQueue";
 // make-it-real C3a: the degraded-safe dispatch entry + its production Temporal-client adapter.
@@ -109,7 +109,14 @@ const resolvedFor = (endpoint: string): ResolvedWorkspacePolicy => ({
   providerMatrix: {
     workspaceId: WS,
     allowedProviders: ["ollama"],
-    capabilityDefaults: { [MEETING_CAP]: localRoute(endpoint) } as never,
+    // 18.4 — the source-processing job now routes THROUGH the broker (ING-7), so `source.process`
+    // needs a resolvable route. It reuses the SAME genuine loopback-local ollama route as the meeting
+    // leg (egressClass "local" + 127.0.0.1 ⇒ processorOfRoute===null ⇒ the §5 employer-raw veto
+    // ALLOWS via the loopback-local fall-through — rule 5's sanctioned local zero-egress path).
+    capabilityDefaults: {
+      [MEETING_CAP]: localRoute(endpoint),
+      "source.process": localRoute(endpoint),
+    } as never,
     rawCloudEgressEnabled: false,
   },
 });
@@ -220,7 +227,10 @@ describe("buildProofSpineActivities — exposes the sourceIngestion delegates", 
   it("registers every source-ingestion activity as a plain async fn — spec(§9)", async () => {
     const backends = await assembleBackends(
       { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT] },
-      { candidateOutput: {} },
+      // 18.4 — a schema-VALID KnowledgeMutationPlan stub candidate: the source job now routes through
+      // the broker, whose SCHEMA gate validates the run-leg candidateOutput against KMP (an empty `{}`
+      // would be schema_rejected). mapCandidate folds the deterministic `sourceExtraction` on accept.
+      { candidateOutput: validKnowledgeMutationPlan },
     );
     try {
       const acts = buildProofSpineActivities(backends, sourceParamsFor(memRevisionStore()));
@@ -263,7 +273,9 @@ beforeAll(async () => {
   const env = await TestWorkflowEnvironment.createLocal();
   const backends = await assembleBackends(
     { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT] },
-    { candidateOutput: {} },
+    // 18.4 — a schema-VALID KnowledgeMutationPlan stub candidate: the source now routes through the
+    // broker, whose SCHEMA gate validates the run-leg candidateOutput against KMP (`{}` ⇒ schema_rejected).
+    { candidateOutput: validKnowledgeMutationPlan },
   );
   const activities = buildProofSpineActivities(backends, sourceParamsFor(memRevisionStore()));
   const worker = await Worker.create({

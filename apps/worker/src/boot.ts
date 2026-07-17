@@ -1024,8 +1024,9 @@ export function buildAutoIngestProofSpineParams(boundWorkspace: string): ProofSp
     workspaceId: ws,
     capability: "meeting.close",
     // 18.2 — the (inert) meeting broker candidate is a KnowledgeMutationPlan stand-in; the real
-    // SCHEMA gate validates against this registered schema (never driven here — auto-ingest routes
-    // SOURCE ingestion, which bypasses the broker; aligned for correctness if ever broker-driven).
+    // SCHEMA gate validates against this registered schema. The meeting flow registers but is never
+    // dispatched here (auto-ingest dispatches SOURCE ingestion). 18.4 — SOURCE ingestion now routes
+    // THROUGH the broker (no longer a bypass), so this KMP-schema alignment is realized on that path.
     outputSchemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
     maxRuntimeSeconds: 30,
     idempotencyKey: "job:meeting:inert",
@@ -1055,9 +1056,28 @@ export function buildAutoIngestProofSpineParams(boundWorkspace: string): ProofSp
     },
     providerMatrix: {
       workspaceId: ws,
-      allowedProviders: [],
-      // Empty inert — the meeting.close route is never resolved (the meeting flow registers but never dispatches).
-      capabilityDefaults: {} as ResolvedWorkspacePolicy["providerMatrix"]["capabilityDefaults"],
+      // 18.4 — `ollama` (a LOCAL provider) is allow-listed so the `source.process` loopback-local route below
+      // passes route-resolution's provider allowlist. NO cloud provider is listed (a cloud route fails closed).
+      allowedProviders: ["ollama"],
+      // The meeting.close route is never resolved (the meeting flow registers but never dispatches). 18.4 —
+      // SOURCE ingestion now routes THROUGH the broker, so `source.process` resolves to a GENUINE loopback-local
+      // route (ollama + 127.0.0.1 + egressClass "local" ⇒ processorOfRoute===null ⇒ the §5 employer-raw veto
+      // ALLOWS via the loopback fall-through — rule 5's sanctioned local zero-egress path; a cloud route fails
+      // closed). The endpoint mirrors localConfig.allowedLocalEndpoints' default.
+      //   ⚠ VERIFICATION-OWED (owner-opt-in completion, NOT the shipped default): the broker's SCHEMA gate also
+      //   needs a valid-KMP `stubExtraction` (the shipped assembleBackends `{}` default fails it), provisioned by
+      //   the live bootWorker host (desktop main) — NOT yet threaded through AutoIngestWiring. Until then an owner
+      //   who ENABLES auto-ingest gets source fail-closed at the schema gate (no note). The SHIPPED DEFAULT
+      //   (auto-ingest OFF ⇒ gateAutoIngest returns undefined ⇒ these params are never built) stays byte-equivalent;
+      //   the -live accept-path proof is SOW_TEMPORAL-gated (sourceIngestion-live.test.ts).
+      capabilityDefaults: {
+        "source.process": {
+          provider: "ollama",
+          model: "local-default",
+          endpoint: "http://127.0.0.1:11434",
+          egressClass: "local",
+        },
+      } as ResolvedWorkspacePolicy["providerMatrix"]["capabilityDefaults"],
       rawCloudEgressEnabled: false,
     },
   };

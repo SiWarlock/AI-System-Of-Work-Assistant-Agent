@@ -58,7 +58,10 @@ import { runConnectorSyncHealth } from "@sow/workflows/workflows/connectorSyncHe
 // not as a proxied activity, so the driver's synchronous ValidateExtractionPort
 // contract is honored (an activity proxy is always async).
 import { createValidateActivity } from "@sow/workflows/activities/validateCloseout";
-import type { MeetingSchemaGate } from "@sow/workflows/activities/validateCloseout";
+// 18.4 — the REAL structural candidate-data gate (rule 2 / REQ-S-006), reused from 18.3's
+// meeting-extraction leaf. PURE (typeof/Object.keys only; @sow/contracts value import + type-only
+// imports) so it is Temporal-workflow-sandbox-safe, exactly like validateCloseout above.
+import { createMeetingExtractionSchemaGate } from "../composition/meeting-extraction";
 import type {
   // driver input/deps/outcome
   MeetingCloseoutInput,
@@ -175,14 +178,16 @@ const workflowClock: Clock = {
  * deterministic + sandbox-safe (imports only @sow/contracts + @sow/domain pure code)
  * and returns a synchronous Result, so it runs IN-SANDBOX rather than as an async
  * activity proxy — which is what the driver's SYNC {@link ValidateExtractionPort}
- * contract requires. The schema gate is the deterministic pass-through the
- * composition root also uses (the structural ajv gate is a later wave); the real
- * safety-bearing half — validateNoInference (REQ-F-017) — runs unchanged and rejects
- * an inferred owner/date before any commit.
+ * contract requires. 18.4 — the schema gate is now the REAL structural candidate-data gate
+ * (`createMeetingExtractionSchemaGate`, rule 2 / REQ-S-006), replacing the prior pass-through, and it
+ * runs IN-SANDBOX for BOTH the meeting AND source drivers (they share this module-level `validate`).
+ * The gate is PURE + total (typeof/Object.keys only — no Date.now/Math.random/I/O), so it is
+ * Temporal-workflow-sandbox-safe. Composed with the real safety-bearing half — validateNoInference
+ * (REQ-F-017) — which rejects an inferred owner/date before any commit. (18.3 wired the same gate at
+ * the activity layer; 18.4 makes it the reachable in-sandbox gate the drivers actually run.)
  */
-const passThroughSchemaGate: MeetingSchemaGate = () => ok(undefined);
 const validate: ValidateExtractionPort = createValidateActivity({
-  schemaGate: passThroughSchemaGate,
+  schemaGate: createMeetingExtractionSchemaGate(),
 });
 
 /**

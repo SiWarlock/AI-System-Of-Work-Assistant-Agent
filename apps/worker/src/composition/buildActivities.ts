@@ -22,7 +22,7 @@
 // ownership+secret defaults, the fail-closed approval unwrap, the always-supplied
 // broker localConfig, the faithful ReceiptStore mapping) live in backends.ts and are
 // threaded here unchanged.
-import { ok, err } from "@sow/contracts";
+import { ok, err, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID } from "@sow/contracts";
 import type {
   Result,
   WorkspaceId,
@@ -161,6 +161,9 @@ import {
   mapAcceptedMeetingExtraction,
   createMeetingExtractionSchemaGate,
 } from "./meeting-extraction";
+// 18.4 — the source-ingestion extraction leg ROUTED THROUGH THE BROKER (+ ING-7), replacing the
+// fixed `sourceAgent.run` bypass. The SOURCE analog of 18.3's meeting broker routing.
+import { createSourceAgentBrokerRouting } from "./source-extraction";
 import type { IngestionInboxProjectionPort } from "../api/projections/ingestionInboxProjection";
 // The per-file ingestion note-path derivation (traversal-safe, content-addressed) — task 11.1.
 import { deriveSourceNotePath, sourceIdentityDigest } from "./sourceNotePath";
@@ -736,16 +739,63 @@ export function buildProofSpineActivities(
     threshold: ROUTING_THRESHOLD,
   });
 
-  // (c) runAgentJob — a DETERMINISTIC accepted candidate (the real broker/model path is
-  // C2/C3). Absent binding → a fail-closed unsupported_type rejection.
-  const sourceAgent: RunSourceAgentJobPort = {
-    run: (): Promise<Result<AgentExtraction, SourceAgentFailure>> =>
-      Promise.resolve(
-        sourceBinding !== undefined
-          ? ok(sourceBinding.extraction)
-          : err({ code: "unsupported_type", message: "no source-ingestion binding (C1)" }),
-      ),
-  };
+  // (c) runAgentJob — 18.4: the source-processing job now ROUTES THROUGH THE BROKER (replacing the
+  // fixed `ok(sourceBinding.extraction)` bypass), SUBJECTING the untrusted imported source to ING-7
+  // admission (rule 6) + the broker's gate pipeline (route → egress-veto → health → budget → run →
+  // schema). The run leg is 18.1's DORMANT STUB (no real model); on an ACCEPTED outcome `mapCandidate`
+  // folds the deterministic `sourceBinding.extraction` (gate-on-outcome — the meeting leg's exact
+  // pattern), so the note the accept-path produces is OUTPUT-byte-equivalent to the prior bypass while
+  // the source now traverses the safety gates (the point of 18.4). WS-8 (rule 4): the job's workspace
+  // is bound DYNAMICALLY from the routing-bound `ctx.workspaceId` INSIDE `createSourceAgentBrokerRouting`
+  // (never a source content field). Absent binding → the fail-closed unsupported_type rejection (C1).
+  const sourceAgent: RunSourceAgentJobPort =
+    sourceBinding === undefined
+      ? {
+          run: (): Promise<Result<AgentExtraction, SourceAgentFailure>> =>
+            Promise.resolve(
+              err({ code: "unsupported_type", message: "no source-ingestion binding (C1)" }),
+            ),
+        }
+      : createSourceAgentBrokerRouting({
+          broker: { runJob: (req, signal) => backends.broker.runJob(req, signal) },
+          inputs: {
+            workflowRunId: params.meetingJobInputs.workflowRunId,
+            // `source.process` — a worker-internal capability arch_gap string (orch-confirmed; no
+            // contract change). Its route lives in the workspace ProviderMatrix (local zero-egress).
+            capability: "source.process",
+            outputSchemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
+            maxRuntimeSeconds: params.meetingJobInputs.maxRuntimeSeconds,
+            // Deterministic, WS-8-scoped idempotency key (mirrors the meeting job's fixed key). The
+            // per-file dedupe axis is the ctx-threaded SourceNoteIdentity downstream (note path/planId).
+            idempotencyKey: `job:source:${String(sourceBinding.boundWorkspaceId)}:${String(sourceBinding.sourceRef.sourceId)}`,
+            // toolPolicy left unset → the READ_ONLY default (ING-7): a read-only untrusted source job.
+          },
+          // WS-8: the source routes to its OWN `ctx.workspaceId` (routing-bound), which may differ from the
+          // proof-spine's configured workspace. The broker requires `matrix.workspaceId === job.workspaceId`
+          // (route-resolution) and evaluates the egress veto over the job's workspace, so scope BOTH the matrix
+          // and the egress policy to the source job's ws. In the shipped single-workspace-per-worker proof-spine
+          // (`buildAutoIngestProofSpineParams`, where `boundWorkspaceId === resolved.workspaceId`) this is a
+          // NO-OP; it only bites when a source classifies into a workspace distinct from the worker's default.
+          buildEgress: (ctx) => ({
+            ...params.resolved.egressPolicy,
+            workspaceId: ctx.workspaceId ?? params.resolved.egressPolicy.workspaceId,
+          }),
+          buildMatrix: (ctx) => ({
+            ...params.resolved.providerMatrix,
+            workspaceId: ctx.workspaceId ?? params.resolved.providerMatrix.workspaceId,
+          }),
+          buildWorkspace: () => ({
+            type: params.resolved.type,
+            dataOwner: params.resolved.dataOwner,
+          }),
+          // gate-on-outcome: only an ACCEPTED broker outcome authorizes the deterministic extraction to
+          // trace through; a rejection propagates typed (no blind echo). Faithful evidence-bearing
+          // reconstruction from the accepted candidate is deferred to the agent_extraction candidate (#18).
+          mapCandidate: (outcome: BrokerOutcome): AgentExtraction =>
+            mapAcceptedMeetingExtraction(outcome, sourceBinding.extraction),
+          // Phase-3/5 carry-forward: localConfig is ALWAYS supplied to the broker.
+          localConfig: backends.localConfig,
+        });
 
   // (d) buildOutputs — DETERMINISTICALLY derive a KnowledgeMutationPlan FROM the
   // validated extraction + the routing-BOUND workspace (WS-2/WS-4 stamp — never a
