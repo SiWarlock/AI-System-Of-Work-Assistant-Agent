@@ -1,0 +1,42 @@
+{
+  "type": "object",
+  "properties": {
+    "fields": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "evidenceRef": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "propertyNames": {
+        "pattern": "^(?!(?:__proto__|prototype|constructor)$)"
+      }
+    }
+  },
+  "required": [
+    "fields"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sow:agent-extraction"
+}

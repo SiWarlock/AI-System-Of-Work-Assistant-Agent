@@ -11,6 +11,7 @@
 import type { WorkspaceId, AgentJobId, ActionId, PlanId, SourceId, ApprovalId, WorkflowId, AuditId } from "../primitives/ids";
 import type { ProcessorId, ToolId } from "../primitives/enums";
 import type { Capability, RevisionId, ProposalId, ReportId, BrainId, ProjectId, FactIdentity, MdContentSha } from "../primitives/zod-brands";
+import type { AgentExtractionCandidate } from "../models/agent-extraction";
 import type { ToolPolicy } from "../models/tool-policy";
 import type { EgressPolicy } from "../models/egress-policy";
 import type { ProviderRoute } from "../models/provider-route";
@@ -380,4 +381,15 @@ export const validGbrainPin: GbrainPin = {
   validatedOn: "2026-06-30",
   validationRef: "docs/design/gbrain-write-through-divergence.md",
   writeThroughEnabled: false,
+};
+
+// ── 28. AgentExtractionCandidate (CP-1 / GATE-1 — evidence-bearing + clean) ─────
+// `owner` is a concrete evidence-backed claim (survives validateNoInference);
+// `dueDate` is the REQ-F-017 `TBD` park value (no evidenceRef needed). Schema-valid
+// AND no-inference-clean, so it passes both the candidate-data gate and REQ-F-017.
+export const validAgentExtractionCandidate: AgentExtractionCandidate = {
+  fields: {
+    owner: { value: "Alice", evidenceRef: "transcript#L12" },
+    dueDate: { value: "TBD" },
+  },
 };

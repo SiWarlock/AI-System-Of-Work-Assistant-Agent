@@ -27,6 +27,7 @@ export * from "./models/shared-enums";
 export * from "./models/shared-shapes";
 
 // --- frozen models (27) ---
+export * from "./models/agent-extraction";
 export * from "./models/agent-job";
 export * from "./models/approval";
 export * from "./models/audit-record";

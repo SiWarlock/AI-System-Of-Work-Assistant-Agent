@@ -9,6 +9,7 @@ export * from "./valid";
 export * from "./invalid";
 
 import {
+  validAgentExtractionCandidate,
   validToolPolicy,
   validEgressPolicy,
   validProviderRoute,
@@ -105,6 +106,7 @@ export const FIXTURES: readonly FixtureEntry[] = [
   { model: "GbrainReadGrant", schemaId: "sow:gbrain-read-grant", instance: validGbrainReadGrant, valid: true },
   { model: "GbrainPin", schemaId: "sow:gbrain-pin", instance: validGbrainPin, valid: true },
   { model: "ConformanceResult", schemaId: "sow:conformance-result", instance: validConformanceResult, valid: true },
+  { model: "AgentExtractionCandidate", schemaId: "sow:agent-extraction", instance: validAgentExtractionCandidate, valid: true },
 
   // ── INVALID — one per pinned rejection rule ───────────────────────────────
   { model: "ToolPolicy", schemaId: "sow:tool-policy", instance: invalidToolPolicyMutatingReadOnly, valid: false, rejectedBy: "refine" },
