@@ -17,6 +17,8 @@ export * from "./model/extraction-request";
 export * from "./model/extraction-completion-request";
 // Subscription HEALTH probe primitive (18.22) — the worker wraps it into HealthGateSources (18.23).
 export * from "./model/subscription-health-probe";
+// Spend-free subscription REACHABILITY probe (18.26) — the arm injects it as 18.22's checkReachable.
+export * from "./model/subscription-reachability-probe";
 export * from "./ports/agent-runtime-port";
 
 // ── broker core (5.2 / 5.3 / 5.4 / 5.5 / 5.9) ────────────────────────────────
