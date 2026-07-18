@@ -41,6 +41,9 @@ import {
   selectProviderRunner,
   type ProviderTransportGate,
 } from "../../src/composition/provider-runner";
+import { buildRealProviderTransportGate } from "../../src/composition/real-provider-transport-gate";
+import type { ClaudeSubscriptionCompletion } from "@sow/providers";
+import type { ExtractionContentResolver } from "../../src/composition/subscription-extraction-runner";
 import {
   createStubProviderRunner,
   assembleBackends,
@@ -241,6 +244,89 @@ describe("createRealProviderRunner — provider-output/error mapping", () => {
     if (!isErr(res)) return;
     expect(res.error.branch).toBe("failed_terminal");
     expect(JSON.stringify(res.error)).not.toContain("sk-canary"); // no cause echoed (rule 7)
+  });
+});
+
+// ── 18.20 — the runtime branch selects the subscription extraction runner when bound ─
+// The `!("provider" in route)` runtime branch (previously an unconditional deny) now delegates
+// to a subscription-backed extraction runner WHEN `deps.subscription` is bound; UNBOUND (the
+// dormant default) keeps the EXACT existing fail-closed deny (byte-equivalent). The subscription
+// deps ride the SAME default-OFF arming — the factory thunks are invoked ONLY when the real runner
+// is constructed (on the armed path), never on the OFF/default path (L23/L27 factory-spy).
+describe("createRealProviderRunner — subscription runtime-branch binding (18.20, dormant)", () => {
+  const runtimeRoute = {
+    runtime: "claude-agent-sdk",
+    model: "claude-sonnet-5",
+    endpoint: "https://api.anthropic.com",
+    egressClass: "cloud",
+  } as unknown as ProviderRoute;
+
+  it("runtime_route_selects_subscription_runner_only_when_bound — bound ⇒ subscription runner; unbound ⇒ existing deny [spec(§19.5)]", async () => {
+    const calls: HttpTransportRequest[] = [];
+    const { controller } = makeController();
+    const baseDeps = {
+      transport: cannedTransport(200, CANNED_CLAUDE_BODY, calls),
+      facade: okFacade("sk-canary"),
+      controller,
+      allowedEndpoints: [],
+      now,
+    };
+    const job = makeJob(runtimeRoute, { outputSchemaId: "sow:agent-extraction" });
+
+    // UNBOUND (dormant default): the EXACT existing fail-closed deny, byte-equivalent to pre-slice.
+    const unbound = createRealProviderRunner(baseDeps);
+    const denied = await unbound(runtimeRoute, job, budget);
+    expect(isErr(denied)).toBe(true);
+    if (!isErr(denied)) return;
+    expect(denied.error.reason).toBe("provider_unavailable");
+    expect(denied.error.message).toContain("agentic runtime route not bound");
+
+    // BOUND: the subscription runner returns a canned completed AgentResult (candidate pass-through).
+    const structured = { fields: { owner: { value: "TBD" } } };
+    const bound = createRealProviderRunner({
+      ...baseDeps,
+      subscription: {
+        completion: (): ClaudeSubscriptionCompletion => ({
+          complete: () => Promise.resolve(ok({ structuredOutput: structured, costUsd: 0.002 })),
+        }),
+        content: (): ExtractionContentResolver => ({ resolve: () => Promise.resolve(ok("resolved content")) }),
+        model: "claude-sonnet-5",
+      },
+    });
+    const routed = await bound(runtimeRoute, job, budget);
+    expect(isOk(routed)).toBe(true);
+    if (!isOk(routed)) return;
+    expect(routed.value.value.candidateOutput).toEqual(structured); // ran through the subscription runner
+    expect(calls).toHaveLength(0); // the runtime route never touches the model-provider HTTP transport
+  });
+
+  it("off_gate_constructs_no_subscription_client — subscription factories 0× on OFF, once on armed [spec(L23)][spec(L27)]", () => {
+    const { controller } = makeController();
+    const completionFactory = vi.fn<() => ClaudeSubscriptionCompletion>(() => ({
+      complete: () => Promise.resolve(ok({ structuredOutput: {}, costUsd: 0 })),
+    }));
+    const contentFactory = vi.fn<() => ExtractionContentResolver>(() => ({
+      resolve: () => Promise.resolve(ok("c")),
+    }));
+    const runnerDeps = {
+      transport: cannedTransport(200, CANNED_CLAUDE_BODY, []),
+      facade: okFacade("sk-canary"),
+      controller,
+      allowedEndpoints: [],
+      now,
+      subscription: { completion: completionFactory, content: contentFactory, model: "claude-sonnet-5" },
+    };
+    const gate = buildRealProviderTransportGate({ runnerDeps });
+    const stub = createStubProviderRunner({ candidateOutput: { k: 1 } });
+    // OFF (config.providerTransport unset) ⇒ the EXACT stub; the subscription factories NEVER fire.
+    expect(selectProviderRunner(undefined, stub)).toBe(stub);
+    expect(completionFactory).not.toHaveBeenCalled();
+    expect(contentFactory).not.toHaveBeenCalled();
+    // ARMED ⇒ make() constructs the real runner, invoking EACH subscription factory exactly once.
+    const armed = selectProviderRunner(gate, stub);
+    expect(armed).not.toBe(stub);
+    expect(completionFactory).toHaveBeenCalledTimes(1);
+    expect(contentFactory).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -44,11 +44,16 @@ import {
   type SecretsAccessor,
   type ProviderLogSink,
   type HealthGateSources,
+  type ClaudeSubscriptionCompletion,
 } from "@sow/providers";
 import { buildAuditSignal, type AuditSignal } from "@sow/policy";
 import { createLockRoutingSecretsAccessor } from "../secrets/keychain-boot";
 import { buildSecretRef, type KnownProvider } from "../secrets/secretRefConvention";
 import type { KeychainLockController } from "../lifecycle/degraded/keychain-locked";
+import {
+  createSubscriptionExtractionRunner,
+  type ExtractionContentResolver,
+} from "./subscription-extraction-runner";
 
 // ── the default-OFF dormancy gate (mirrors WriteTransportGate / selectAdapterTransport) ─
 
@@ -151,6 +156,23 @@ export interface RealProviderRunnerDeps {
   readonly now: () => string;
   /** Optional redacted provider-boundary log sink. */
   readonly logSink?: ProviderLogSink;
+  /**
+   * OPTIONAL owner-crossing subscription-extraction deps (18.20, §19.5 Option-B). Bound ONLY at the owner
+   * ENABLE; UNBOUND (the dormant default) ⇒ the `!("provider" in route)` runtime branch keeps the exact
+   * fail-closed deny (byte-equivalent to pre-18.20). Factory-THUNKED so nothing is constructed on the OFF
+   * path — `createRealProviderRunner` itself runs only on the armed `providerTransport` path (L23/L27), and
+   * the thunks fire once at that construction. Forwarded verbatim through `buildRealProviderTransportGate`.
+   */
+  readonly subscription?: {
+    /** The subscription completion client factory (`() => createClaudeSubscriptionCompletion()`). */
+    readonly completion: () => ClaudeSubscriptionCompletion;
+    /** The content-resolution seam factory (fake in tests; real resolver at ENABLE). */
+    readonly content: () => ExtractionContentResolver;
+    /** The owner-configured extraction model id. */
+    readonly model: string;
+    /** SDK beta flags; defaults to `DEFAULT_EXTRACTION_BETAS`. */
+    readonly betas?: readonly string[];
+  };
 }
 
 const RUNNER_ACTOR = "provider:runner" as const;
@@ -263,12 +285,31 @@ export function createRealProviderRunner(deps: RealProviderRunnerDeps): Provider
     ["lm_studio", createLmStudioModelProvider({ transport, allowedEndpoints, ...logOpt })],
   ]);
 
+  // 18.20 — the subscription-extraction runtime runner, constructed ONCE on the armed path (this whole
+  // factory runs only when `providerTransport` is armed; L23/L27). The thunks fire here (armed
+  // construction), never on the OFF/default path. UNBOUND `deps.subscription` ⇒ `undefined` ⇒ the runtime
+  // branch keeps its fail-closed deny (byte-equivalent to pre-18.20).
+  const subscriptionRunner: ProviderRunner | undefined =
+    deps.subscription !== undefined
+      ? createSubscriptionExtractionRunner({
+          completion: deps.subscription.completion(),
+          content: deps.subscription.content(),
+          model: deps.subscription.model,
+          ...(deps.subscription.betas !== undefined ? { betas: deps.subscription.betas } : {}),
+        })
+      : undefined;
+
   return async (route, job, budget, signal) => {
     try {
-      // Only a `provider`-branch (ModelProviderPort) route is bound in this slice; a
-      // `runtime`-branch (AgentRuntimePort) route is the DORMANT agentic leg — fail closed
-      // to a typed deny (never a silent no-op).
+      // A `runtime`-branch (AgentRuntimePort) route: when the owner bound the subscription-extraction deps
+      // (18.20, §19.5 Option-B) delegate to that runner; otherwise the DORMANT agentic leg fails closed to
+      // a typed deny (never a silent no-op). The `provider`-branch (ModelProviderPort) route falls through.
       if (!("provider" in route)) {
+        if (subscriptionRunner !== undefined) {
+          // `await` inside the try so the outer catch backstops this delegation too (defense-in-depth —
+          // the subscription runner is total by construction, so this never actually catches).
+          return await subscriptionRunner(route, job, budget, signal);
+        }
         return err(
           denyUnavailable(job, "agentic runtime route not bound in the safe-build model runner"),
         );
