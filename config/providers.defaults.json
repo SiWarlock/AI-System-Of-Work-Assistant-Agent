@@ -176,13 +176,14 @@
     "defaultMaxCostUsd": 0.50,
     "defaultMaxRuntimeSeconds": 120,
     "perCapability": {
-      "meeting.close":  { "maxCostUsd": 0.50, "maxRuntimeSeconds": 300 },
+      "meeting.close":  { "maxCostUsd": 1.50, "maxRuntimeSeconds": 300 },
+      "source.process": { "maxCostUsd": 1.50, "maxRuntimeSeconds": 300 },
       "extraction":     { "maxCostUsd": 0.25, "maxRuntimeSeconds": 120 },
       "synthesis":      { "maxCostUsd": 0.25, "maxRuntimeSeconds": 180 },
       "cheap.classify": { "maxCostUsd": 0.05, "maxRuntimeSeconds": 60  },
       "copilot.qa":     { "maxCostUsd": 0.15, "maxRuntimeSeconds": 90  }
     },
-    "derivation": "Conservative. A representative meeting.close on Opus 4.8 (~50k input + ~8k output) estimates 50000*5/1e6 + 8000*25/1e6 = $0.45 < $0.50 cap. classify/extraction tiers scaled down. OQ-004 perf-budget pass (Spike 0.6) may refine."
+    "derivation": "18.23 step 2: meeting.close + source.process (the two subscription-EXTRACTION legs) carry the $1.50 extraction cap. Deny-only/fail-safe (a raise never newly-denies a tokenless dormant job). BOTH maxCostUsd AND maxRuntimeSeconds are RE-CONFIRM-AT-FINAL-SPEND PLACEHOLDERS (owner sets exact values at the step-7 flip): ~$0.45 real on sonnet for a ~100k-tok transcript, the conservative meter over-counts ~3x. classify/extraction/synthesis/copilot tiers scaled down. OQ-004 perf-budget pass (Spike 0.6) may refine."
   },
 
   "costEstimation": {

@@ -63,7 +63,14 @@ export interface SingleRunBudgetLedger extends BudgetLedgerPort {
 export const DEFAULT_BUDGET_DEFAULTS: BudgetDefaults = {
   global: { maxRuntimeSeconds: 120, maxCostUsd: 0.5 },
   perCapability: {
-    "meeting.close": { maxCostUsd: 0.5, maxRuntimeSeconds: 300 },
+    // 18.23 step 2 — meeting.close + source.process (the two subscription-EXTRACTION legs) carry the
+    // $1.50 extraction cap. Deny-only/fail-safe (only ever REDUCES spend, ships ON — L44; a raise never
+    // newly-denies a tokenless dormant job — L54). ⚠ BOTH maxCostUsd AND maxRuntimeSeconds are
+    // RE-CONFIRM-AT-FINAL-SPEND PLACEHOLDERS — the owner sets the exact values at the step-7 flip.
+    // MUST stay byte-identical to config/providers.defaults.json §budgets.perCapability (drift-guard
+    // default_budget_defaults_match_config, broker-gates.test.ts).
+    "meeting.close": { maxCostUsd: 1.5, maxRuntimeSeconds: 300 },
+    "source.process": { maxCostUsd: 1.5, maxRuntimeSeconds: 300 },
     extraction: { maxCostUsd: 0.25, maxRuntimeSeconds: 120 },
     synthesis: { maxCostUsd: 0.25, maxRuntimeSeconds: 180 },
     "cheap.classify": { maxCostUsd: 0.05, maxRuntimeSeconds: 60 },

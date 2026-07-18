@@ -27,7 +27,7 @@ import { dirname, resolve } from "node:path";
 import { describe, it, expect } from "vitest";
 import { isOk, isErr, validAgentJob, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID } from "@sow/contracts";
 import type { AgentJob, ProviderRoute } from "@sow/contracts";
-import { budgetBreachHealthItem } from "@sow/providers";
+import { budgetBreachHealthItem, resolveEnforcedBudget } from "@sow/providers";
 import type { EnforcedBudget, AgentUsage, BudgetBreach } from "@sow/providers";
 import {
   createSingleRunBudgetLedger,
@@ -139,6 +139,28 @@ describe("COST-1 dollar cap — real Claude pricing threaded into the composed b
     const gate = createLedgeredBudgetGate({ defaults: DEFAULT_BUDGET_DEFAULTS, pricing: {} }, createSingleRunBudgetLedger());
     const res = gate.post(claudeJob(), OVER_COST_USAGE, CAP); // runtime 2 < 300, cost unmeasured
     expect(isOk(res)).toBe(true); // within budget — degrades to runtime-only, never a false cost deny
+  });
+
+  it("source_process_extraction_cost_cap_is_1_5 — the extraction cap: resolveEnforcedBudget(source.process) ⇒ maxCostUsd 1.5 (spec COST-1; 18.23 step 2)", () => {
+    // 18.23 step 2 — the subscription-extraction dollar cap. Deny-only/fail-safe (only ever REDUCES
+    // spend, ships ON — L44); a tokenless dormant job meters UNMEASURED ⇒ this raise never newly-denies
+    // (L54). The $1.5 value is a re-confirm-at-final-spend PLACEHOLDER (owner sets the exact value at flip).
+    const job = claudeJob({
+      capability: "source.process" as unknown as AgentJob["capability"],
+      maxCostUsd: undefined, // no explicit job cap ⇒ the perCapability default applies
+      maxRuntimeSeconds: undefined,
+    });
+    const budget = resolveEnforcedBudget(job, DEFAULT_BUDGET_DEFAULTS);
+    expect(budget.maxCostUsd).toBe(1.5);
+  });
+
+  it("meeting_close_extraction_cost_cap_is_1_5 — meeting.close likewise carries the $1.5 extraction cap (spec COST-1; 18.23 step 2)", () => {
+    const job = claudeJob({
+      capability: "meeting.close" as unknown as AgentJob["capability"],
+      maxCostUsd: undefined,
+      maxRuntimeSeconds: undefined,
+    });
+    expect(resolveEnforcedBudget(job, DEFAULT_BUDGET_DEFAULTS).maxCostUsd).toBe(1.5);
   });
 
   it("budget_breach_health_item_redacted — the OBS-2 HealthItem carries id-refs + numeric bounds ONLY, no raw content/prompt (rule 7)", () => {
