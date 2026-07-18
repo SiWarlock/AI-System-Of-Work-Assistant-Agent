@@ -4,7 +4,7 @@
 - **Phase:** 18 (§19.5 real ModelProvider) — FLIP-WIRING round (DORMANT / mock-tested / NO hard line crossed)
 - **Track:** worker + providers-integrations (single-track `main`)
 - **Predecessor session:** [094-2026-07-17-worker-impl4-cp3b-cp5b-crossing-prereq.md](094-2026-07-17-worker-impl4-cp3b-cp5b-crossing-prereq.md)
-- **Successor session:** _(next round — the Medium build to route extraction through the Claude subscription synthesis; owner ENABLE #13 is lead/owner-gated, not an impl slice)_
+- **Successor session:** `096-2026-07-18-phase18-staged-enable-worker-impl.md` (the subscription-routing + staged-ENABLE arming round — 18.20/18.21/18.23, all dormant)
 - **Commits:** 18.18b providers `67f6b87a` · 18.18a worker `aa4b93e1` · round-close docs `d193fa14`
 
 ## Why this session existed
