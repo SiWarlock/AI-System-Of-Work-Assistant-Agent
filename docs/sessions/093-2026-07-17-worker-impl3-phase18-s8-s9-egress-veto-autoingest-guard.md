@@ -5,7 +5,7 @@
 - **Track / role:** worker (single-track `main`) · implementer `worker-impl3` (successor to `worker-impl2`, cycled at a clean slice boundary — no lost work)
 - **Orchestrator:** `orch2` (successor to `orch`, cycled mid-session; see "Decisions made")
 - **Predecessor session:** [092-2026-07-17-worker-impl2-phase18-s5-s7-source-legs.md](092-2026-07-17-worker-impl2-phase18-s5-s7-source-legs.md)
-- **Successor session:** _(next worker-impl, TBD — Phase-18 owner crossing #13 is lead/owner-gated, not an impl slice)_
+- **Successor session:** [094-2026-07-17-worker-impl4-cp3b-cp5b-crossing-prereq.md](094-2026-07-17-worker-impl4-cp3b-cp5b-crossing-prereq.md)
 
 ## Why this session existed
 
