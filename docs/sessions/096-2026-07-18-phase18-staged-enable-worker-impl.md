@@ -5,7 +5,7 @@
 - **Role:** implementer — worker (`apps/worker/`)
 - **Team:** `session-4f4687dd` — lead + `main-orchestrator` + worker-impl (this) + providers-impl (18.19/18.22)
 - **Predecessor:** `095-2026-07-17-phase18-flip-wiring-round.md`
-- **Successor:** _(the step-6 wiring slice — a fresh worker-impl per `docs/runbooks/phase-18-subscription-enable-decision.md`)_
+- **Successor:** [`097-2026-07-18-phase18-subscription-arm-code-complete-worker-impl.md`](097-2026-07-18-phase18-subscription-arm-code-complete-worker-impl.md)
 
 ## Why this session existed
 Owner chose **Option B** — extraction runs on the Claude **subscription** (Agent SDK on the local `claude` login; worker runs `ANTHROPIC_API_KEY` UNSET). This session built the worker legs of the subscription-extraction path + the staged-ENABLE arming surface (owner GO on steps 0–5), all DORMANT — nothing arms (the gate flip = owner step 6, first spend = step 7, remain the HARD STOP).
