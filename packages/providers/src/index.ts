@@ -15,6 +15,8 @@ export * from "./model/claude-subscription-completion";
 // exported so the worker runtime runner (18.20) can build the subscription extraction request.
 export * from "./model/extraction-request";
 export * from "./model/extraction-completion-request";
+// Subscription HEALTH probe primitive (18.22) — the worker wraps it into HealthGateSources (18.23).
+export * from "./model/subscription-health-probe";
 export * from "./ports/agent-runtime-port";
 
 // ── broker core (5.2 / 5.3 / 5.4 / 5.5 / 5.9) ────────────────────────────────
