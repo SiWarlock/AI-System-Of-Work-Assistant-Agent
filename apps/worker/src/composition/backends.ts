@@ -96,7 +96,7 @@ import {
   type HealthGateSources,
   type BudgetDefaults,
 } from "@sow/providers";
-import type { AgentResult } from "@sow/providers";
+import type { AgentResult, TokenPricing } from "@sow/providers";
 
 // ── @sow/policy: the fail-closed approval unwrap ──────────────────────────────
 import {
@@ -128,6 +128,7 @@ import {
   createLedgeredBudgetGate,
   createSingleRunBudgetLedger,
   DEFAULT_BUDGET_DEFAULTS,
+  DEFAULT_PROVIDER_PRICING,
   type BudgetLedgerPort,
 } from "./budget-ledger";
 
@@ -210,6 +211,14 @@ export interface BackendsConfig {
    * {@link DEFAULT_BUDGET_DEFAULTS} (mirrors config/providers.defaults.json §budgets).
    */
   readonly budgetDefaults?: BudgetDefaults;
+  /**
+   * CP-5b — the per-ProviderId token pricing the BUDGET gate meters cost against (COST-1 dollar cap).
+   * UNSET ⇒ {@link DEFAULT_PROVIDER_PRICING} (the conservative fail-safe placeholder; deny-only ships
+   * ON, worker L44). Absent/empty for a given provider ⇒ that route's cost is UNMEASURED and degrades
+   * to the runtime-only backstop (never a false cost-cheap). A deployment/test overrides to inject or
+   * to force the runtime-only degrade (`{}`).
+   */
+  readonly budgetPricing?: Readonly<Record<string, TokenPricing>>;
   /**
    * The pluggable single-run budget ledger the BUDGET gate accounts each run into.
    * UNSET ⇒ a fresh {@link createSingleRunBudgetLedger} (in-boot only). The §19.11
@@ -786,7 +795,13 @@ export async function assembleBackends(
     ),
     // BUDGET (5.4): COST-1/COST-2 caps (config-sourced defaults) wrapped by the BudgetLedgerPort.
     budget: createLedgeredBudgetGate(
-      { defaults: config.budgetDefaults ?? DEFAULT_BUDGET_DEFAULTS },
+      {
+        defaults: config.budgetDefaults ?? DEFAULT_BUDGET_DEFAULTS,
+        // CP-5b: thread the real per-model→conservative-provider pricing so the COST-1 dollar cap
+        // FIRES (pricingFor keyed by ProviderId). UNSET ⇒ the shipped fail-safe placeholder (deny-only
+        // ships ON, L44); the cost limb was previously DEAD because `pricing` was never wired here.
+        pricing: config.budgetPricing ?? DEFAULT_PROVIDER_PRICING,
+      },
       budgetLedger,
     ),
     // RUN (18.1): the default-OFF real-transport gate — unset `providerTransport` ⇒ the
