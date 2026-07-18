@@ -80,6 +80,10 @@ Ruling carried: **thread the SEAM only — the DORMANT default stays EMPTY**. Th
 3. **Never trust cached/memory vendor pricing — ground on the live source.** opus-4-8 = $5/$25; the "$10/$50" was a Fable-5 conflation. Falsifying a cited authoritative table (even in the "conservative" direction) is worse than a non-existent staleness when the conservative margin is already delivered by the max.
 4. **Thread the seam only; the dormant default stays EMPTY (fail-closed preserved).** For an arming precondition, add the additive seam (conditional-spread, byte-equivalent default, AND-lock guard so a supplied input can't arm a disabled gate); arming supplies the real value + any coupled `outputSchemaId` flip.
 
+## Known environment issues (non-blocking — tooling fast-follow)
+
+- **`pnpm lint` fails: `Command "eslint" not found`.** Pre-existing + environment-level (the `eslint` binary isn't installed in this environment) — NOT introduced by this slice: the worker's own `lint` script is `tsc --noEmit` (clean via `pnpm typecheck`, 20/20), and no eslint config was touched. Spend-safety for the flip rides on `tsc` + the test suite + the security reviews (all green). Flagged to orch2 for a tooling fast-follow; no code change owed.
+
 ## How to use what was built
 
 - CP-3b: at arming, the desktop worker-host passes a valid source stub as `gateAutoIngest`'s 4th arg; the arming bundle flips the source `outputSchemaId`.
