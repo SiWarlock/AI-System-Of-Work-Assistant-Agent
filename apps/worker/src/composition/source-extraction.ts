@@ -57,6 +57,7 @@ import type {
   SourceIngestionContext,
   AgentExtraction,
 } from "@sow/workflows";
+import { LOCAL_EXTRACTION_ROUTE } from "./extraction-route-gate";
 
 /** The narrow Broker surface this leg dispatches through (injected). */
 export interface SourceBroker {
@@ -209,15 +210,11 @@ export function createSourceAgentBrokerRouting(
   };
 }
 
-// A minimal loopback-local DEFAULT route (a real route is resolved by the Broker from the
+// The minimal loopback-local DEFAULT route (a real route is resolved by the Broker from the
 // ProviderMatrix, which OVERRIDES job.providerRoute before any egress/budget/exec decision; this is
 // only the pre-dispatch placeholder the ING-7 predicate is evaluated over — admission is
-// route-independent). `egressClass: "local"` is the valid EgressClass member (never the non-enum
-// "local_zero_egress"); the `as` cast mirrors the codebase's ProviderRoute-literal pattern (the
-// strict Zod union brands ProviderId), not a way to smuggle an invalid enum.
-const DEFAULT_ROUTE: ProviderRoute = {
-  provider: "ollama",
-  model: "local-default",
-  endpoint: "http://127.0.0.1:11434",
-  egressClass: "local",
-} as unknown as ProviderRoute;
+// route-independent). 18.24 step-6 item iv — SINGLE-SOURCED to `LOCAL_EXTRACTION_ROUTE` (L5/L37): the
+// boot `capabilityDefaults["source.process"]` literal, `LOCAL_EXTRACTION_ROUTE`, and this constant are now
+// ONE frozen constant, so a route change can never silently drift the three copies (byte-equivalent to the
+// prior inline literal). Drift-guarded by `subscription-arming-boot-wiring.test.ts`.
+const DEFAULT_ROUTE: ProviderRoute = LOCAL_EXTRACTION_ROUTE;

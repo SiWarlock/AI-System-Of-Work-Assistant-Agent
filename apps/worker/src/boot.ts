@@ -48,6 +48,7 @@ import type {
   WorkspaceId,
   WorkflowRunRef,
   GbrainPin,
+  ContextRef,
 } from "@sow/contracts";
 import { descriptorFor } from "@sow/policy";
 import type { SessionToken, LegacyContentPolicy, CopilotWorkspaceScope, ResolvedWorkspacePolicy } from "@sow/policy";
@@ -60,6 +61,12 @@ import {
   type BackendsConfig,
   type StubMeetingExtraction,
 } from "./composition/backends";
+import {
+  LOCAL_EXTRACTION_ROUTE,
+  CLOUD_EXTRACTION_ROUTE,
+} from "./composition/extraction-route-gate";
+import { SOURCE_CONTEXT_REF_KIND } from "./composition/real-extraction-content-resolver";
+import { resolveSubscriptionArming } from "./composition/subscription-extraction-arming";
 import type { WorkerOriginAllowlist } from "./api/auth/originAllowlist";
 import { startApiServer, type RunningApiServer } from "./api/mount";
 import { createDbReadModelQueryPort } from "./api/adapters/readModel";
@@ -1091,13 +1098,12 @@ export function buildAutoIngestProofSpineParams(boundWorkspace: string): ProofSp
       //   Arming (bundle #4, desktop host) supplies a valid stub AND flips `outputSchemaId → sow:agent-extraction`
       //   (so the stub normalizes to an `agent_extraction` candidate, not the KMP stand-in ⇒ EMPTY ⇒ reject); the
       //   -live accept-path proof is SOW_TEMPORAL-gated (sourceIngestion-live.test.ts).
+      // 18.24 step-6 item iv — SINGLE-SOURCE the shipped local route (L5/L37): the boot literal,
+      // `LOCAL_EXTRACTION_ROUTE`, and `source-extraction.ts` `DEFAULT_ROUTE` are now ONE frozen constant, so a
+      // route change can never silently drift the three copies. Byte-equivalent to the prior inline literal.
+      // The owner-armed cloud `{runtime}` swap is applied by `withSubscriptionExtractionArming` (dormant).
       capabilityDefaults: {
-        "source.process": {
-          provider: "ollama",
-          model: "local-default",
-          endpoint: "http://127.0.0.1:11434",
-          egressClass: "local",
-        },
+        "source.process": LOCAL_EXTRACTION_ROUTE,
       } as ResolvedWorkspacePolicy["providerMatrix"]["capabilityDefaults"],
       rawCloudEgressEnabled: false,
     },
@@ -1145,6 +1151,53 @@ export function withDurableRevisions(
 }
 
 /**
+ * 18.24 step-6 — the proof-spine post-processor that co-gates the subscription extraction route + ContextRef to
+ * the SAME `config.providerTransport` arming signal (`resolveSubscriptionArming.effectiveArmed`; one flip, no
+ * split-brain — L52). Mirrors {@link withDurableRevisions}.
+ *
+ * `armed !== true` (the shipped default — `providerTransport` unset, OR a shadowing-env-refused arm) ⇒ the params
+ * are returned UNCHANGED (byte-equivalent: the source.process route stays LOCAL, `sourceIngestion.contextRefs`
+ * stays absent). ARMED ⇒ swap `capabilityDefaults["source.process"]` to the cloud `{runtime}` subscription route
+ * (re-triggers the §5 egress veto for employer-raw jobs downstream) + stamp EXACTLY ONE
+ * `{refKind:"source", ref: sourceRef.sourceId}` ContextRef — the routing-bound ingestion identity (WS-8, never a
+ * content field; = the source idempotencyKey id + the parked-reader id) the 18.21 resolver derefs. Pure; total.
+ *
+ * Reachability-WAIVERED (L11): the armed branch fires ONLY at the owner ENABLE (step 6, HARD STOP) — this slice
+ * leaves `config.providerTransport` unset, so boot always passes `armed=false`.
+ */
+export function withSubscriptionExtractionArming(
+  proofSpineParams: ProofSpineParams | undefined,
+  armed: boolean,
+): ProofSpineParams | undefined {
+  if (proofSpineParams === undefined || armed !== true) return proofSpineParams;
+  const sourceIngestion = proofSpineParams.sourceIngestion;
+  return {
+    ...proofSpineParams,
+    resolved: {
+      ...proofSpineParams.resolved,
+      providerMatrix: {
+        ...proofSpineParams.resolved.providerMatrix,
+        capabilityDefaults: {
+          ...proofSpineParams.resolved.providerMatrix.capabilityDefaults,
+          "source.process": CLOUD_EXTRACTION_ROUTE,
+        } as ResolvedWorkspacePolicy["providerMatrix"]["capabilityDefaults"],
+      },
+    },
+    ...(sourceIngestion !== undefined
+      ? {
+          sourceIngestion: {
+            ...sourceIngestion,
+            // EXACTLY ONE ref, sourced from the CONFIG binding's `sourceRef.sourceId` (never content — WS-8).
+            contextRefs: [
+              { refKind: SOURCE_CONTEXT_REF_KIND, ref: String(sourceIngestion.sourceRef.sourceId) },
+            ] as readonly ContextRef[],
+          },
+        }
+      : {}),
+  };
+}
+
+/**
  * Build the persistent {@link BackendsConfig} from the live-boot {@link BootConfig}. PURE +
  * side-effect-free — extracted from `bootWorker` (18.18a) so the drop-regression guard runs in
  * DEFAULT CI without the SOW_API-gated boot.
@@ -1185,10 +1238,40 @@ export function buildBackendsConfig(config: BootConfig): BackendsConfig {
  * the proof-spine register hook. See the header for the Phase-9/11 residual deferrals.
  */
 export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
+  // 0.9) 18.24 step-6 — resolve the SUBSCRIPTION-EXTRACTION arm from the SINGLE `config.providerTransport`
+  //   signal (the SAME `isProviderTransportArmed` predicate `selectProviderRunner` reads — one flip, no
+  //   split-brain, L52). On the ARMED path a subscription-SHADOWING env var (a stale key / gateway redirect that
+  //   would displace the ambient `claude` login) REFUSES the arm: `effectiveArmed=false` ⇒ the transport gate is
+  //   STRIPPED from the backends config (extraction degrades to the LOCAL stub route — fail-closed, ZERO cloud
+  //   extraction) and a boot-visible fault is surfaced below — NEVER a worker-wide boot-throw (L52: degrade+surface).
+  //   Shipped default: `config.providerTransport` unset ⇒ `effectiveArmed=false`, `authRefused=false` ⇒ byte-equivalent.
+  //
+  //   ⚠ #13 STEP-6 (owner ENABLE) — this slice does NOT build/inject the gate. `config.providerTransport` is set by
+  //   the OWNER at step 6 via `gateSubscriptionExtraction(...).providerTransport`. That gate's `make()` builds the
+  //   subscription runner whose `ExtractionContentResolver` needs `createDurableParkedReader(backends.repos.sourceDisposition)`
+  //   — a repo that exists only AFTER `assembleBackends`, while `config.providerTransport` is consumed EAGERLY inside
+  //   `assembleBackends` (backends.ts:809 `selectProviderRunner` → `gate.make()`). So the owner's step-6 wiring must bind
+  //   the resolver's `reader` via a POST-`assembleBackends` LATE-BIND holder (the resolver's `resolve()` is per-job/late,
+  //   long after boot) — do NOT rediscover this ordering. Also confirm no Claude-Code `apiKeyHelper` API-key injection
+  //   (a settings-level shadow this env guard can't see; runbook CHECKPOINT-1 caveat).
+  const arming = resolveSubscriptionArming(config.providerTransport, process.env);
+
   // 1) The persistent composition root (sqlite + genesis migration, vault, the
   //    persistent §9 stores, the redacting logger, the §7 broker).
-  const backendsConfig: BackendsConfig = buildBackendsConfig(config);
+  const backendsConfig: BackendsConfig = buildBackendsConfig(
+    // Degrade the arm on a shadowing-env refusal — strip the transport gate so extraction stays LOCAL/stub.
+    arming.authRefused ? { ...config, providerTransport: undefined } : config,
+  );
   const backends = await assembleBackends(backendsConfig, config.stubExtraction);
+
+  // 1.1) 18.24 step-6 — surface the armed-path shadowing-env refusal LOUDLY (boot-visible, code-only — rule 7),
+  //   so a mis-provisioned armed config can't be mistaken for a working arm (Checkpoint-2 backstops it at ENABLE).
+  //   Dormant: never reached on the shipped default (only `config.providerTransport` armed + a shadowing var set).
+  if (arming.authRefused) {
+    backends.logger.error("subscription.arming.refused", {
+      fields: { code: arming.authFault?.code ?? "anthropic_key_set_on_armed_path" },
+    });
+  }
 
   // 1.4) §11.1 slice 2b — DURABLE revisions. Rebind the proof-spine params' placeholder `revisions` to the
   //   durable slice-2a KnowledgeRevisionStore over `backends.repos.knowledgeRevisions` (the repo exists only now;
@@ -1197,9 +1280,11 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   //   the dormant propose dispatch both persist idempotency durably (survives a worker restart). On the OFF path
   //   `config.proofSpineParams` is undefined ⇒ `proofSpineParams` is undefined ⇒ the durable store is NEVER
   //   constructed and NOTHING persists (the slice-1 owner-opt-in invariant is intact).
-  const proofSpineParams = withDurableRevisions(
-    config.proofSpineParams,
-    backends.repos.knowledgeRevisions,
+  //   18.24 step-6 — then co-gate the subscription extraction route + source ContextRef to the SAME effective
+  //   arm (dormant: `effectiveArmed=false` on the shipped default ⇒ params UNCHANGED, byte-equivalent).
+  const proofSpineParams = withSubscriptionExtractionArming(
+    withDurableRevisions(config.proofSpineParams, backends.repos.knowledgeRevisions),
+    arming.effectiveArmed,
   );
 
   // 1.5) DEV data-unlock (OFF by default). When dev-provision specs are supplied, turn

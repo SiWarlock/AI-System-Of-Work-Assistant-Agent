@@ -33,6 +33,7 @@ import type {
   KnowledgeMutationPlan,
   Approval,
   AuditId,
+  ContextRef,
 } from "@sow/contracts";
 import { planId as makePlanId } from "@sow/contracts";
 import {
@@ -229,6 +230,14 @@ export interface SourceIngestionParams {
    * a PENDING §9 Approval through the existing propose path — NO dispatch.
    */
   readonly externalActionBinding?: ExternalActionBinding;
+  /**
+   * 18.24 step-6 — the OPTIONAL ContextRefs stamped onto the source-processing `AgentJob` (config/binding,
+   * NEVER content). UNSET (the shipped default) ⇒ the source job carries empty `contextRefs` (byte-equivalent
+   * to pre-18.24). Populated ONLY on the owner-armed subscription path by `withSubscriptionExtractionArming`
+   * with EXACTLY ONE `{refKind:"source", ref: sourceRef.sourceId}` — the routing-bound identity (WS-8, never a
+   * content field) the 18.21 `ExtractionContentResolver` derefs to inline the parked body.
+   */
+  readonly contextRefs?: readonly ContextRef[];
 }
 
 export interface ProofSpineParams {
@@ -788,6 +797,10 @@ export function buildProofSpineActivities(
             // Deterministic, WS-8-scoped idempotency key (mirrors the meeting job's fixed key). The
             // per-file dedupe axis is the ctx-threaded SourceNoteIdentity downstream (note path/planId).
             idempotencyKey: `job:source:${String(sourceBinding.boundWorkspaceId)}:${String(sourceBinding.sourceRef.sourceId)}`,
+            // 18.24 step-6 — thread the OPTIONAL binding-supplied ContextRefs onto the job. UNSET (shipped
+            // default) ⇒ `undefined` ⇒ `source-extraction` folds it to `[]` (byte-equivalent). Populated ONLY on
+            // the owner-armed path (`withSubscriptionExtractionArming`) with the routing-bound source ref (WS-8).
+            contextRefs: sourceBinding.contextRefs,
             // toolPolicy left unset → the READ_ONLY default (ING-7): a read-only untrusted source job.
           },
           // WS-8: the source routes to its OWN `ctx.workspaceId` (routing-bound), which may differ from the

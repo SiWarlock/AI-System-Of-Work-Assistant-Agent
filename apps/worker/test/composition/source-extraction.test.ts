@@ -21,6 +21,7 @@ import {
   createSourceAgentBrokerRouting,
   type SourceJobInputs,
 } from "../../src/composition/source-extraction";
+import { LOCAL_EXTRACTION_ROUTE } from "../../src/composition/extraction-route-gate";
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 const WS_BOUND = "ws-routing-bound" as WorkspaceId;
@@ -133,6 +134,35 @@ describe("createSourceAgentBrokerRouting — route the source through the broker
     expect(captured?.workspaceId).not.toBe(WS_SMUGGLED);
     expect(captured?.trustLevel).toBe("untrusted"); // inv-2
     expect(captured?.carriesRawContent).toBe(true);
+  });
+
+  it("source_job_carries_supplied_contextrefs — 18.24: inputs.contextRefs reach the assembled job (the resolver dereferences them); a smuggled content ws is still ignored (spec §19.5 / WS-8 L33)", async () => {
+    let captured: AgentJob | undefined;
+    const broker = brokerSpy(acceptedOutcome);
+    const REFS = [{ refKind: "source", ref: "src-77" }] as unknown as SourceJobInputs["contextRefs"];
+    await routing(broker, {
+      inputs: { ...inputs(READ_ONLY), contextRefs: REFS },
+      admit: (job: AgentJob) => {
+        captured = job;
+        return { decision: "allow", value: job, audit: {} as never };
+      },
+    }).run(ctx()); // ctx.workspaceId = WS_BOUND (routing-bound), ctx.source.workspaceId = WS_SMUGGLED (content)
+    // The supplied source ContextRef reaches the job (the 18.21 resolver derefs {refKind:"source", ref} to the body).
+    expect(captured?.contextRefs).toStrictEqual([{ refKind: "source", ref: "src-77" }]);
+    expect(captured?.workspaceId).toBe(WS_BOUND); // WS-8 unaffected — routing-bound ws, never the smuggled content ws
+  });
+
+  it("source_job_default_route_is_the_shared_local_constant — 18.24 item iv: an unset providerRoute ⇒ the job carries the SINGLE-SOURCED LOCAL_EXTRACTION_ROUTE (DEFAULT_ROUTE is no longer a hand-copy) (spec §19.5 / L5/L37)", async () => {
+    let captured: AgentJob | undefined;
+    const broker = brokerSpy(acceptedOutcome);
+    await routing(broker, {
+      // inputs() leaves providerRoute unset ⇒ the job falls back to DEFAULT_ROUTE (== LOCAL_EXTRACTION_ROUTE).
+      admit: (job: AgentJob) => {
+        captured = job;
+        return { decision: "allow", value: job, audit: {} as never };
+      },
+    }).run(ctx());
+    expect(captured?.providerRoute).toBe(LOCAL_EXTRACTION_ROUTE); // the exact shared frozen constant — no drift
   });
 
   it("source_job_unbound_workspace_fails_closed — an UNBOUND ctx.workspaceId (WS-2 precondition breach) is rejected BEFORE any admission/dispatch, no job built (spec WS-8 rule 4 / fail-closed)", async () => {

@@ -24,12 +24,10 @@ import type { ProviderRoute } from "@sow/contracts";
 export const DEFAULT_EXTRACTION_MODEL = "claude-sonnet-5" as const;
 
 /**
- * The SHIPPED default (unarmed) extraction route — byte-identical to boot.ts:1094 `source.process` (and to
- * `source-extraction.ts` `DEFAULT_ROUTE`). ⚠ TRANSCRIPTION-DRIFT (L37/L55): this is currently a hand-copy;
- * the shipped route is not exported, so nothing cross-checks them today. The drift is INACTIVE while this
- * knob is unwired (boot still uses its own inline literal). #13 ENABLE precondition: when boot binds
- * `selectExtractionRoute(false)` into `capabilityDefaults`, SINGLE-SOURCE this constant with boot.ts:1094 +
- * `DEFAULT_ROUTE` (one literal, L37) so they can never drift.
+ * The SHIPPED default (unarmed) extraction route. 18.24 step-6 (item iv) — this is now the SINGLE SOURCE of
+ * the shipped local route: `boot.ts` `capabilityDefaults["source.process"]` AND `source-extraction.ts`
+ * `DEFAULT_ROUTE` both bind THIS frozen constant (L5/L37 — one literal, no transcription drift). A parity
+ * drift-guard lives in `subscription-arming-boot-wiring.test.ts`.
  */
 export const LOCAL_EXTRACTION_ROUTE: ProviderRoute = Object.freeze({
   provider: "ollama",
