@@ -116,6 +116,69 @@ describe("18.9 — Employer-Work egress veto honored at the real assembled broke
     // no cloud fallback: the pipeline denied at the veto and emitted no candidate (isErr above).
   });
 
+  it("assembled_broker_denies_employer_raw_cloud_runtime — employer-raw + ack OFF + a cloud {runtime} route ⇒ DENY EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED, no run leg (rule 5)", async () => {
+    // 18.23 step 5 — the SUBSCRIPTION-extraction cloud route at ENABLE is a `{runtime}` route, NOT a
+    // provider route. The egress veto is route-shape-AGNOSTIC (processorOfRoute keys off egressClass, not
+    // provider-vs-runtime), and a `{runtime}` route skips the provider-allowlist in resolveRoute (its
+    // providerOfRoute is null) ⇒ it RESOLVES and reaches the veto, which DENIES exactly like a provider
+    // cloud route. Pins the assembled-broker coverage gap for the cloud runtime route before the owner ENABLE.
+    const backends = await assembleBackends({});
+    opened.push(backends);
+    const runtimeCloudRoute = {
+      runtime: "claude-agent-sdk",
+      model: "claude-sonnet-5",
+      endpoint: "https://api.anthropic.com",
+      egressClass: "cloud",
+    } as unknown as ProviderRoute;
+    const outcome = await backends.broker.runJob({
+      job: employerRawJob(runtimeCloudRoute, { idempotencyKey: "idem-runtime-cloud-deny" }),
+      matrix: matrixFor(runtimeCloudRoute, []), // allowedProviders empty — a runtime route skips the allowlist
+      egress: ackOffEgress,
+      workspace: EMPLOYER,
+      localConfig: { allowedLocalEndpoints: [LOCAL_ENDPOINT] },
+    });
+    expect(isErr(outcome)).toBe(true);
+    if (!isErr(outcome)) return;
+    // fail CLOSED at the egress veto, BEFORE the run leg — no cloud fallback, no subscription runner needed.
+    expect(outcome.error.stage).toBe("egress_veto");
+    expect(outcome.error.reason).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
+  });
+
+  it("assembled_broker_allows_employer_ack_on_cloud_runtime — flipping ONLY ack ON (+ allowlisting the runtime processor) on the SAME cloud {runtime} route RESOLVES PAST the veto (non-vacuity positive control, L7)", async () => {
+    // Lesson 7 non-vacuity: SAME employer-raw job + SAME cloud {runtime} route as the DENY above, but ack
+    // ON + the runtime processor (processorOfRoute ⇒ "claude-agent-sdk") allowlisted (incl. for raw content)
+    // ⇒ the veto ALLOWS → the job resolves PAST the veto to the dormant stub run leg + is accepted. The only
+    // VETO-RELEVANT diff from the deny case is the ack flag + the allowlist (the {candidateOutput} is
+    // post-veto stub-only), proving the DENY is specifically the employer-raw+ack-OFF condition — NOT a
+    // blanket {runtime}-route rejection (which would make
+    // assembled_broker_denies_employer_raw_cloud_runtime vacuously green). Works dormant (stub run leg).
+    const backends = await assembleBackends({}, { candidateOutput: validKnowledgeMutationPlan });
+    opened.push(backends);
+    const runtimeCloudRoute = {
+      runtime: "claude-agent-sdk",
+      model: "claude-sonnet-5",
+      endpoint: "https://api.anthropic.com",
+      egressClass: "cloud",
+    } as unknown as ProviderRoute;
+    const ackOnRuntimeEgress: EgressPolicy = {
+      workspaceId: validAgentJob.workspaceId,
+      allowedProcessors: [processorId("claude-agent-sdk")],
+      rawContentAllowedProcessors: [processorId("claude-agent-sdk")],
+      employerRawEgressAcknowledged: true,
+    } as unknown as EgressPolicy;
+    const outcome = await backends.broker.runJob({
+      job: employerRawJob(runtimeCloudRoute, { idempotencyKey: "idem-runtime-cloud-ackon-allow" }),
+      matrix: matrixFor(runtimeCloudRoute, []),
+      egress: ackOnRuntimeEgress,
+      workspace: EMPLOYER,
+      localConfig: { allowedLocalEndpoints: [LOCAL_ENDPOINT] },
+    });
+    expect(isOk(outcome)).toBe(true); // resolved PAST the egress veto (reached the dormant stub + accepted)
+    if (!isOk(outcome)) return;
+    expect(outcome.value.candidate.kind).toBe("knowledge_mutation_plan");
+    expect(outcome.value.usage.runtimeSeconds).toBe(1); // the DORMANT stub (SAFE-BUILD; no real cloud call)
+  });
+
   it("assembled_broker_employer_raw_ack_off_openrouter_cloud_denied — OpenRouter classified CLOUD (its own processor) ⇒ DENIED, never laundered to a local ALLOW", async () => {
     const backends = await assembleBackends({});
     opened.push(backends);
