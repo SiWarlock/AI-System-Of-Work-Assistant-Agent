@@ -1145,6 +1145,39 @@ export function withDurableRevisions(
 }
 
 /**
+ * Build the persistent {@link BackendsConfig} from the live-boot {@link BootConfig}. PURE +
+ * side-effect-free — extracted from `bootWorker` (18.18a) so the drop-regression guard runs in
+ * DEFAULT CI without the SOW_API-gated boot.
+ *
+ * 18.18a — FLIP-WIRING FORWARD: `providerTransport` is now forwarded via conditional-spread mirroring
+ * the sibling fields; before this slice it was SILENTLY DROPPED here, so an owner-armed
+ * `ProviderTransportGate` never reached `selectProviderRunner`/`selectHealthSources`. Omitting it
+ * (the shipped default) keeps `backendsConfig` byte-equivalent to pre-slice ⇒ the deterministic stub
+ * runner. NO hard line crossed — the real client is bound by the gate's `make()` at the owner
+ * crossing, never here.
+ *
+ * L52 (load-bearing): `config.healthSources` is NOT forwarded here at all — like the other
+ * non-listed BackendsConfig siblings it is dropped by this reconstruction, which is the FAIL-SAFE
+ * direction. The real health source rides `gate.healthSource` under `providerTransport` (AND-locked
+ * to the same arming); boot therefore structurally CANNOT bind a green `config.healthSources` that
+ * would take `??` precedence at backends.ts:794 and re-open the false-green under a real transport.
+ */
+export function buildBackendsConfig(config: BootConfig): BackendsConfig {
+  return {
+    ...(config.dbPath !== undefined ? { dbPath: config.dbPath } : {}),
+    ...(config.vaultRoot !== undefined ? { vaultRoot: config.vaultRoot } : {}),
+    ...(config.now !== undefined ? { now: config.now } : {}),
+    ...(config.allowedLocalEndpoints !== undefined
+      ? { allowedLocalEndpoints: config.allowedLocalEndpoints }
+      : {}),
+    ...(config.logSink !== undefined ? { logSink: config.logSink } : {}),
+    ...(config.providerTransport !== undefined
+      ? { providerTransport: config.providerTransport }
+      : {}),
+  };
+}
+
+/**
  * Boot the live worker control plane. Assembles the persistent backends, stands up
  * the real loopback API transport over the @sow/db port adapters (behind the injected
  * token + allowlist), wires the redacting logger + the Temporal-unavailable degraded
@@ -1154,15 +1187,7 @@ export function withDurableRevisions(
 export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // 1) The persistent composition root (sqlite + genesis migration, vault, the
   //    persistent §9 stores, the redacting logger, the §7 broker).
-  const backendsConfig: BackendsConfig = {
-    ...(config.dbPath !== undefined ? { dbPath: config.dbPath } : {}),
-    ...(config.vaultRoot !== undefined ? { vaultRoot: config.vaultRoot } : {}),
-    ...(config.now !== undefined ? { now: config.now } : {}),
-    ...(config.allowedLocalEndpoints !== undefined
-      ? { allowedLocalEndpoints: config.allowedLocalEndpoints }
-      : {}),
-    ...(config.logSink !== undefined ? { logSink: config.logSink } : {}),
-  };
+  const backendsConfig: BackendsConfig = buildBackendsConfig(config);
   const backends = await assembleBackends(backendsConfig, config.stubExtraction);
 
   // 1.4) §11.1 slice 2b — DURABLE revisions. Rebind the proof-spine params' placeholder `revisions` to the
