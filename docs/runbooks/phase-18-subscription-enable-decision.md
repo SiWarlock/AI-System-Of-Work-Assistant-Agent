@@ -31,3 +31,38 @@
 
 ## Fail-closed summary (the whole path degrades safe if any precondition is unmet)
 Content resolver unbound → deny/no-dispatch. Cost cap unset → SDK default (set it anyway). healthSource unbound → UNAVAILABLE deny. Route unchanged → stays local. Employer-raw + ack OFF + cloud → fail-closed, no fallback. `ANTHROPIC_API_KEY` set → auth deny. Transport gate OFF → byte-equivalent stub. **No single omission produces a silent real spend or a raw-employer cloud leak.**
+
+---
+
+## ⛔ CHECKPOINT 1 RESULT (2026-07-18) — shadowing-env grounded + dev-env all-unset (BEFORE arming)
+
+**`SUBSCRIPTION_SHADOWING_ENV_KEYS` — the full grounded set** (Context7 `/nothflare/claude-agent-sdk-docs`; the Agent SDK `query()` runs on Claude Code, so Claude Code's auth/egress env vars apply). The armed-boot `assertSubscriptionAuthEnv` guard MUST enumerate ALL of these and refuse (fail-closed) if ANY is set:
+
+**Class A — auth-shadowing (change WHICH auth/provider ⇒ NOT the subscription / wrong billing):**
+- `ANTHROPIC_API_KEY` — raw API key; shadows the ambient `claude` login (Context7-confirmed). THE primary.
+- `ANTHROPIC_AUTH_TOKEN` — custom bearer auth-token override.
+- `CLAUDE_CODE_USE_BEDROCK` — switch to AWS Bedrock (different provider/auth/egress).
+- `CLAUDE_CODE_USE_VERTEX` — switch to GCP Vertex.
+
+**Class B — egress-redirect (content could go elsewhere / be intercepted):**
+- `ANTHROPIC_BASE_URL` — proxy redirect; the proxy can inspect/inject creds (Context7-confirmed).
+- `ANTHROPIC_API_URL` — base-url alias (defensive).
+- `HTTP_PROXY` / `HTTPS_PROXY` — route ALL traffic through a proxy (Context7-confirmed). ✅ IN the 8-var guard (18.24).
+- `http_proxy` / `https_proxy` — **FLIP-VERIFY CANDIDATE (18.24, security LOW):** Node honors LOWERCASE proxy vars too, so a lowercase-only proxy would NOT trip the uppercase-only guard (a Class-B fail-OPEN). Add to `SUBSCRIPTION_SHADOWING_ENV_KEYS` at the flip once confirmed the Agent-SDK path honors them.
+- `ANTHROPIC_CUSTOM_HEADERS` — **FLIP-VERIFY CANDIDATE (18.24):** can inject headers (creds/routing); unconfirmed vs live SDK docs — verify + add at the flip.
+
+**⚠ NOT a plain env var — the `apiKeyHelper` caveat:** Claude Code's `apiKeyHelper` **settings** entry can inject an API key (bypassing the env check). The owner MUST confirm the deployment's Claude Code settings (`~/.claude/settings.json` / project settings) carry no `apiKeyHelper` / API-key injection, not just the env.
+
+**Dev-env presence check (presence only, no values — rule 7): all 8 UNSET.** ⚠ This was the orchestrator's dev shell — NOT authoritative for the deployment. The DEFINITIVE checks (owner-confirmed at the arm): (a) the armed-boot `assertSubscriptionAuthEnv` guard over the full set above; (b) the owner's actual deployment env + Claude Code settings clean; (c) the local `claude` login active + on the subscription (verify `Query.accountInfo().tokenSource`/`subscriptionType` if feasible).
+
+## Remaining step-6/7 plan (step-6 WIRING LANDED 2026-07-18 — only the owner arm remains)
+
+The staged round (steps 0–5) + the **step-6 WIRING (18.24 `65dd9e5f` A helpers + `c9361092` B wiring, dormant, security 6/6 PASS)** are BUILT. `bootWorker` now arms the whole bundle off ONE signal (`config.providerTransport` via `isProviderTransportArmed`): the full 8-var `assertSubscriptionAuthEnv` fires DEGRADE-not-crash on the armed path (L52); `withSubscriptionExtractionArming` co-gates the cloud route + the exactly-one `{refKind:"source"}` ContextRef; `LOCAL_EXTRACTION_ROUTE` single-sourced (3 copies unified); `checkReachable` memoized. Shipped default byte-equivalent (signal unset ⇒ nothing arms). **What remains = the owner arm:**
+
+1. **⚠ The step-6 flip is NOT just "set a config value" (the eager-consumption FINDING).** `assembleBackends` consumes `config.providerTransport` EAGERLY (`backends.ts:809`) but the content-resolver's parked-reader (`createDurableParkedReader(backends.repos.sourceDisposition)`) exists only AFTER assembly. So the flip = set `config.providerTransport = gateSubscriptionExtraction(...)` (the pure step-6 builder, already landed + reachability-waivered) + a **reader-holder late-bind**: fill the resolver's reader POST-`assembleBackends`. Testable at the flip WITHOUT real spend (unit + SOW_TEMPORAL `-live` with a stubbed completion). In-code `#13 step-6` TODO in `boot.ts` marks the site.
+2. **Re-verify at the flip (HARD preconditions):** the FULL `SUBSCRIPTION_SHADOWING_ENV_KEYS` set vs live SDK docs (add the lowercase `http_proxy`/`https_proxy` + `ANTHROPIC_CUSTOM_HEADERS` candidates above if confirmed — a missed var fails OPEN); the `$1.50`/`300s` cap + `DEFAULT_EXTRACTION_MODEL` id; no `apiKeyHelper` API-key injection in Claude Code settings.
+3. **HOLD at the arm** for the owner to confirm: env + Claude Code settings clean (checkpoint 1 authoritative), local `claude` login active on the subscription.
+4. **Checkpoint 2** — arm (set `config.providerTransport` + the reader-holder bind) → confirm gate armed + preconditions green (health available, route live, no shadowing-var degrade).
+5. **Checkpoint 3** — one CONTROLLED real extraction → the note + the REAL cost + the eval verdict. Do NOT widen beyond one run. HALT + escalate at any fail-closed point.
+
+**HARD LINES: real egress (arm) + real spend (first run) — explicit per-crossing owner confirm.** Sealed locally at the 18.24 round commit (do NOT push mid-crossing; origin/main stays `f2bb8cca` until the crossing pushes).
