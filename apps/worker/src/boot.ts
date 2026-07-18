@@ -38,7 +38,7 @@
 //     (`createOperationalBackupService`) is WIRED into the handle (`backupService`)
 //     but NOT SCHEDULED — the periodic CRON that calls `backupService.run()` on the
 //     `backupCadenceMs` is Phase-11. The service is ready; only its trigger is deferred.
-import { auditId, sourceId, isOk, workspaceId, workflowId, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID } from "@sow/contracts";
+import { auditId, sourceId, isOk, workspaceId, workflowId, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID, AGENT_EXTRACTION_SCHEMA_ID } from "@sow/contracts";
 import type {
   Result,
   FailureVariant,
@@ -1197,6 +1197,17 @@ export function withSubscriptionExtractionArming(
   const sourceIngestion = proofSpineParams.sourceIngestion;
   return {
     ...proofSpineParams,
+    // 18.27 / #13 Finding C — co-gate the outputSchemaId flip (L57) to the SAME arm signal. On the ARMED
+    // path source.process emits a first-class `sow:agent-extraction` candidate (its route is swapped to the
+    // cloud {runtime} route below) — not the KMP stand-in that discards `evidenceRef` — so validateNoInference
+    // runs on the real evidence (GATE-1, L51/L46; the broker SCHEMA gate registers this parser, 18.27
+    // backends.ts). meeting.close's outputSchemaId is co-gated for parity, but its cloud route is NOT armed
+    // this slice (Finding-F: meeting.close stays local) ⇒ that flip is INERT until meeting.close is separately
+    // armed. Unarmed ⇒ this branch is never taken ⇒ both legs stay KMP (byte-equivalent).
+    meetingJobInputs: {
+      ...proofSpineParams.meetingJobInputs,
+      outputSchemaId: AGENT_EXTRACTION_SCHEMA_ID,
+    },
     resolved: {
       ...proofSpineParams.resolved,
       providerMatrix: {
@@ -1215,6 +1226,8 @@ export function withSubscriptionExtractionArming(
             contextRefs: [
               { refKind: SOURCE_CONTEXT_REF_KIND, ref: String(sourceIngestion.sourceRef.sourceId) },
             ] as readonly ContextRef[],
+            // The co-gated source-leg outputSchemaId flip (buildActivities reads `sourceBinding.outputSchemaId`).
+            outputSchemaId: AGENT_EXTRACTION_SCHEMA_ID,
           },
         }
       : {}),

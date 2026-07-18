@@ -15,6 +15,7 @@ import {
   CLOUD_EXTRACTION_ROUTE,
 } from "../../src/composition/extraction-route-gate";
 import { SOURCE_CONTEXT_REF_KIND } from "../../src/composition/real-extraction-content-resolver";
+import { AGENT_EXTRACTION_SCHEMA_ID, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID } from "@sow/contracts";
 import type { ProviderRoute } from "@sow/contracts";
 
 // `source.process` is a worker-internal capability arch_gap string, not in the branded `Capability` union
@@ -78,5 +79,21 @@ describe("withSubscriptionExtractionArming — co-gated route swap + source Cont
     const armed = withSubscriptionExtractionArming(params, true)!;
     expect(sourceRoute(armed)).toStrictEqual(CLOUD_EXTRACTION_ROUTE); // route still swaps …
     expect(armed.sourceIngestion).toBeUndefined(); // … but nothing to stamp a ref on (safe)
+  });
+});
+
+describe("withSubscriptionExtractionArming — co-gated outputSchemaId flip (18.27 / #13 Finding C, L57)", () => {
+  it("arming_flips_outputschemaid_both_legs — armed ⇒ meeting AND source outputSchemaId both = sow:agent-extraction (so the candidate normalizes to agent_extraction not the KMP stand-in) [spec(§19.5/REQ-F-017)]", () => {
+    const params = buildAutoIngestProofSpineParams("ws-arm");
+    const armed = withSubscriptionExtractionArming(params, true)!;
+    expect(armed.meetingJobInputs.outputSchemaId).toBe(AGENT_EXTRACTION_SCHEMA_ID);
+    expect(armed.sourceIngestion!.outputSchemaId).toBe(AGENT_EXTRACTION_SCHEMA_ID);
+  });
+
+  it("unarmed_stays_kmp — armed=false ⇒ meeting outputSchemaId stays KMP + sourceIngestion.outputSchemaId undefined (byte-equivalent, AND-locked before the flip, L57) [spec(L2)]", () => {
+    const params = buildAutoIngestProofSpineParams("ws-arm");
+    const unarmed = withSubscriptionExtractionArming(params, false)!;
+    expect(unarmed.meetingJobInputs.outputSchemaId).toBe(KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID);
+    expect(unarmed.sourceIngestion!.outputSchemaId).toBeUndefined();
   });
 });

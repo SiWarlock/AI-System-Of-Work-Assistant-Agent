@@ -238,6 +238,15 @@ export interface SourceIngestionParams {
    * content field) the 18.21 `ExtractionContentResolver` derefs to inline the parked body.
    */
   readonly contextRefs?: readonly ContextRef[];
+  /**
+   * 18.27 / #13 Finding C — the OPTIONAL owner-armed source-processing `outputSchemaId` (config/binding). UNSET
+   * (the shipped default) ⇒ the source job falls back to `KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID` (byte-equivalent —
+   * the KMP stand-in ⇒ `mapAcceptedMeetingExtraction` reconstructs EMPTY ⇒ reject, L46). Populated ONLY on the
+   * owner-armed path by `withSubscriptionExtractionArming` with `sow:agent-extraction`, so the run-leg candidate
+   * normalizes to a first-class `agent_extraction` candidate carrying `evidenceRef` through to `validateNoInference`
+   * (GATE-1, L51/L57). AND-locked to the SAME arming signal (a supplied value cannot arm a disabled gate).
+   */
+  readonly outputSchemaId?: string;
 }
 
 export interface ProofSpineParams {
@@ -792,7 +801,11 @@ export function buildProofSpineActivities(
             // `source.process` — a worker-internal capability arch_gap string (orch-confirmed; no
             // contract change). Its route lives in the workspace ProviderMatrix (local zero-egress).
             capability: "source.process",
-            outputSchemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
+            // 18.27 / #13 Finding C — the OWNER-ARMED outputSchemaId (AND-locked to the arming signal via
+            // `withSubscriptionExtractionArming`, L57). UNSET (the shipped default) ⇒ the KMP stand-in ⇒
+            // `mapAcceptedMeetingExtraction` reconstructs EMPTY ⇒ reject (byte-equivalent, L46). Armed ⇒
+            // `sow:agent-extraction` ⇒ the accepted candidate carries `evidenceRef` to validateNoInference (GATE-1).
+            outputSchemaId: sourceBinding.outputSchemaId ?? KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
             maxRuntimeSeconds: params.meetingJobInputs.maxRuntimeSeconds,
             // Deterministic, WS-8-scoped idempotency key (mirrors the meeting job's fixed key). The
             // per-file dedupe axis is the ctx-threaded SourceNoteIdentity downstream (note path/planId).

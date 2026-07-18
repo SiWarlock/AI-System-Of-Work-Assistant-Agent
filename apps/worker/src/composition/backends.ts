@@ -32,8 +32,10 @@ import {
   isErr,
   KnowledgeMutationPlanSchema,
   ProposedActionSchema,
+  AgentExtractionCandidateSchema,
   KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
   PROPOSED_ACTION_SCHEMA_ID,
+  AGENT_EXTRACTION_SCHEMA_ID,
 } from "@sow/contracts";
 import type {
   ProposedAction,
@@ -580,15 +582,24 @@ export const DEFAULT_HEALTH_SOURCES: HealthGateSources = Object.freeze({
 
 /**
  * The candidate-schema parsers the real SCHEMA gate (5.5, REQ-S-006) validates against:
- * the registered KnowledgeMutationPlan + ProposedAction contracts (the two candidate kinds
- * the broker emits). A read_only/untrusted job can only emit a KMP (a PA implies a mutating
+ * the registered KnowledgeMutationPlan + ProposedAction contracts (the deterministic run-leg candidate
+ * kinds; the owner-armed `agent_extraction` third is registered below). A read_only/untrusted job can only emit a KMP (a PA implies a mutating
  * action → tool_policy_violation). The concrete per-capability EXTRACTION output schema + its
  * NoInferenceView (REQ-F-017) bind with the real extraction leg (18.3/18.4); this slice wires
  * the structural candidate-data gate over the existing candidate schemas.
+ *
+ * 18.27 / #13 Finding C — the `sow:agent-extraction` GATE-1 candidate (L51) is now registered so an
+ * accepted `agent_extraction` run-leg candidate clears the broker SCHEMA gate (its Zod `.strict()` +
+ * prototype-pollution key blocklist is the model-parser layer ajv drops); the `bySchemaIdNormalizer`
+ * then emits the `agent_extraction` BrokerCandidate that carries per-field `evidenceRef` through to
+ * `validateNoInference`. Ships ON (deny-only, L44); INERT until a job carries this `outputSchemaId`
+ * (the owner-armed subscription path — `withSubscriptionExtractionArming`), so non-agent-extraction
+ * jobs are byte-equivalent (L23).
  */
 const CANDIDATE_MODEL_SCHEMAS = {
   [KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID]: KnowledgeMutationPlanSchema,
   [PROPOSED_ACTION_SCHEMA_ID]: ProposedActionSchema,
+  [AGENT_EXTRACTION_SCHEMA_ID]: AgentExtractionCandidateSchema,
 };
 
 /**
