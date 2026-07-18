@@ -5,7 +5,10 @@
 // (byte-equivalent). Reachability-WAIVERED (L11) — boot calls it on the armed path at the owner ENABLE.
 import { describe, it, expect } from "vitest";
 import { isOk, isErr } from "@sow/contracts";
-import { assertSubscriptionAuthEnv } from "../../src/composition/subscription-auth-guard";
+import {
+  assertSubscriptionAuthEnv,
+  SUBSCRIPTION_SHADOWING_ENV_KEYS,
+} from "../../src/composition/subscription-auth-guard";
 
 describe("assertSubscriptionAuthEnv — ANTHROPIC_API_KEY-unset armed-path guard (18.23 step 0, dormant)", () => {
   it("anthropic_key_set_on_armed_path_refuses — armed + key SET ⇒ fail-closed typed refusal (no raw-API fallback) [spec(§19.5)]", () => {
@@ -28,5 +31,42 @@ describe("assertSubscriptionAuthEnv — ANTHROPIC_API_KEY-unset armed-path guard
 
   it("armed_truthy_not_true_never_refuses — STRICT ===true; a truthy-not-true armed value ⇒ unarmed, never reads env [spec(L28)]", () => {
     expect(isOk(assertSubscriptionAuthEnv("true" as unknown as boolean, { ANTHROPIC_API_KEY: "sk-x" }))).toBe(true);
+  });
+
+  // 18.24 step-6 — enumerate the FULL grounded shadowing-env set (runbook CHECKPOINT-1 RESULT; Context7
+  // /nothflare/claude-agent-sdk-docs). Extends the guard from the single arch-named var to all 8 SDK
+  // credential/base-url overrides that can displace the ambient `claude` subscription login (a missed one
+  // is a silent FAIL-OPEN → wrong billing / redirected egress). The `some()` logic is unchanged (L61).
+  const FULL_SHADOWING_SET = [
+    // Class A — auth-shadowing (which auth/provider):
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    // Class B — egress-redirect (content could go elsewhere):
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_API_URL",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+  ] as const;
+
+  it("shadowing_env_full_set_enumerated — the guard watches ALL 8 grounded shadowing vars (Context7) [spec(§19.5)]", () => {
+    // The exact set (order-independent) — a var dropped from the constant is a silent fail-open vector.
+    expect([...SUBSCRIPTION_SHADOWING_ENV_KEYS].sort()).toStrictEqual([...FULL_SHADOWING_SET].sort());
+  });
+
+  it("shadowing_env_full_set_each_var_fails_closed — for EACH of the 8 vars: armed+set ⇒ refuse; armed all-unset ⇒ ok; unarmed+set ⇒ ok [spec(§19.5)]", () => {
+    for (const key of FULL_SHADOWING_SET) {
+      const armedSet = assertSubscriptionAuthEnv(true, { [key]: "shadow-value" });
+      expect(isErr(armedSet)).toBe(true);
+      if (isErr(armedSet)) {
+        expect(armedSet.error.code).toBe("anthropic_key_set_on_armed_path");
+        expect(JSON.stringify(armedSet.error)).not.toContain("shadow-value"); // rule 7 — value never echoed
+      }
+      // The SAME var set on the UNARMED path ⇒ ok (byte-equivalent default never reads env).
+      expect(isOk(assertSubscriptionAuthEnv(false, { [key]: "shadow-value" }))).toBe(true);
+    }
+    // All 8 unset on the armed path ⇒ ok (the subscription profile is used).
+    expect(isOk(assertSubscriptionAuthEnv(true, {}))).toBe(true);
   });
 });

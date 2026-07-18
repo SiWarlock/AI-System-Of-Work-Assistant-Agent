@@ -81,10 +81,22 @@ export interface ProviderTransportGate {
 }
 
 /**
+ * The SINGLE arming predicate for the real-transport gate — STRICT `=== true` + `typeof make === "function"`
+ * (type-robust on BOTH locks; a JSON-sourced config with a truthy-but-not-`true` `enabled` or a non-function
+ * `make` fails CLOSED, never arms, never throws at boot). This is the ONE source of truth the run leg, the
+ * health source, AND boot's route/auth/ContextRef arming all read (L52 — one flip, no split-brain): a
+ * consumer that re-inlined the check could drift. Pure; total.
+ */
+export function isProviderTransportArmed(
+  gate: ProviderTransportGate | undefined,
+): gate is ProviderTransportGate & { enabled: true; make: () => ProviderRunner } {
+  return gate?.enabled === true && typeof gate.make === "function";
+}
+
+/**
  * Select the broker's run-leg {@link ProviderRunner}, honouring the default-OFF gate.
- * Guard FIRST, STRICT `=== true` + `typeof make === "function"` (type-robust on BOTH
- * locks; a JSON-sourced config with a truthy-but-not-`true` `enabled` or a non-function
- * `make` fails CLOSED to the stub, never arms, never throws at boot). Shipped default
+ * Guard FIRST via {@link isProviderTransportArmed} (type-robust on both locks; a truthy-but-not-`true`
+ * `enabled` or a non-function `make` fails CLOSED to the stub). Shipped default
  * (`config.providerTransport` unset) ⇒ the EXACT stub instance — byte-equivalent + dormant.
  * The real factory is NEVER invoked on the OFF path. Mirrors `selectAdapterTransport`.
  */
@@ -92,7 +104,7 @@ export function selectProviderRunner(
   gate: ProviderTransportGate | undefined,
   stub: ProviderRunner,
 ): ProviderRunner {
-  if (gate?.enabled === true && typeof gate.make === "function") {
+  if (isProviderTransportArmed(gate)) {
     return gate.make();
   }
   return stub;
@@ -131,7 +143,7 @@ export function selectHealthSources(
   gate: ProviderTransportGate | undefined,
   stub: HealthGateSources,
 ): HealthGateSources {
-  if (gate?.enabled === true && typeof gate.make === "function") {
+  if (isProviderTransportArmed(gate)) {
     return typeof gate.healthSource === "function" ? gate.healthSource() : UNAVAILABLE_HEALTH_SOURCES;
   }
   return stub;

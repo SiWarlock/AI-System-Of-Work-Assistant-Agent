@@ -20,16 +20,38 @@ export interface SubscriptionAuthFault {
 }
 
 /**
- * The credential env vars that SHADOW the subscription profile by the Agent SDK's resolution precedence
- * (a set env var here makes the SDK use that credential instead of the ambient `claude` subscription login).
+ * The credential/base-url env vars that SHADOW the subscription profile by the Agent SDK's resolution
+ * precedence (a set env var here makes the SDK use that credential/endpoint instead of the ambient `claude`
+ * subscription login → wrong billing or redirected egress). The Agent SDK `query()` runs on Claude Code, so
+ * Claude Code's auth/egress env vars apply.
  *
- * ⚠ INCOMPLETE-BY-DESIGN: `ANTHROPIC_API_KEY` is the arch-named + Context7-confirmed shadowing var. The SDK
- * recognizes OTHER credential/base-url overrides (e.g. `ANTHROPIC_AUTH_TOKEN`, gateway/base-url vars) that
- * can ALSO displace the subscription login — a missed one is a silent FAIL-OPEN. Enumerating the FULL set
- * against the LIVE Agent-SDK docs (claude-api / Context7) is a HARD flip precondition (#13, owner step-6);
- * extend this constant then. A `some()` over this set keeps the guard extensible without a logic change.
+ * 18.24 step-6 — the FULL grounded set (runbook `phase-18-subscription-enable-decision.md` CHECKPOINT-1
+ * RESULT; Context7 `/nothflare/claude-agent-sdk-docs`):
+ *   • Class A — auth-shadowing (WHICH auth/provider): `ANTHROPIC_API_KEY` (the arch-named primary),
+ *     `ANTHROPIC_AUTH_TOKEN` (custom bearer), `CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_VERTEX` (switch to
+ *     AWS Bedrock / GCP Vertex — a different provider/auth/egress).
+ *   • Class B — egress-redirect (content could go elsewhere / be intercepted): `ANTHROPIC_BASE_URL`,
+ *     `ANTHROPIC_API_URL` (proxy/base-url redirect — a proxy can inspect/inject creds), `HTTP_PROXY` /
+ *     `HTTPS_PROXY` (route ALL traffic through a proxy).
+ * A `some()` over this set keeps the guard extensible without a logic change (L61).
+ *
+ * ⚠ NOT covered here — the `apiKeyHelper` CAVEAT: Claude Code's `apiKeyHelper` *settings* entry can inject an
+ * API key BYPASSING env. The owner MUST confirm the deployment's Claude Code settings carry no
+ * `apiKeyHelper` / API-key injection (a #13 owner step-6 precondition — an out-of-band settings check, not an
+ * env var this guard can see). Re-verify the full set against the LIVE Agent-SDK docs at the flip.
  */
-export const SUBSCRIPTION_SHADOWING_ENV_KEYS = ["ANTHROPIC_API_KEY"] as const;
+export const SUBSCRIPTION_SHADOWING_ENV_KEYS = [
+  // Class A — auth-shadowing:
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  // Class B — egress-redirect:
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_API_URL",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+] as const;
 
 /**
  * On the ARMED subscription path, refuse fail-closed if ANY subscription-shadowing env var is set. STRICT
