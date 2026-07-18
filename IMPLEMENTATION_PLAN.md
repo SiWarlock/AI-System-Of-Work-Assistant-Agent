@@ -15,6 +15,8 @@
 
 ## Currently in progress
 
+- **⏸ TEAM PAUSED 2026-07-18** — handoff `docs/team-handoffs/013-2026-07-18-phase18-crossing-dormant-optionB-team-pause.md` · last round-seal `171017b7` · next-slice target: route extraction through the subscription synthesis (Option B; `packages/providers` + `apps/worker`). Restart with `/team-start` (loads the team-protocol tier table + registers teammates → restores WARN70/ACTION75/HARD80 monitoring).
+
 **◆ 2026-07-17 (Part II — PHASE-18 OWNER A/B DECISION [owner Path B → the Claude SUBSCRIPTION for extraction]: doc-flush + next-round scoping; NO build this cycle; team `session-734f946b`).**
 - **State:** the flip-wiring round (below) is the LAST dormant build; the whole Phase-18 crossing is built + dormant + PUSHED (origin/main = `05d7d008`). NO hard line crossed.
 - **⭐ OWNER DECISION (load-bearing — ARCH §7/§19.5):** the real-model EXTRACTION path runs on the Claude **SUBSCRIPTION** — `createClaudeSubscriptionCompletion` (Agent SDK `query()` on the local `claude` login, NO credential; the worker runs `ANTHROPIC_API_KEY` UNSET), NOT a raw-API `x-api-key` key. Both built + dormant paths converge on `AgentResult.candidateOutput`, so GATE-1 (candidate-schema gate + `validateNoInference`/REQ-F-017) is shape-agnostic; the raw `ModelProviderPort`/`createRealModelHttpTransport` path stays the FALLBACK for isolated-billing / non-Claude providers. **⚠ Operational invariant:** an empty/stale `ANTHROPIC_API_KEY` shadows the subscription profile by resolution precedence — the worker MUST run with it UNSET.
