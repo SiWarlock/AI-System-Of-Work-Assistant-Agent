@@ -29,6 +29,7 @@ import {
 import type { Result } from "@sow/contracts";
 import {
   createSubscriptionExtractionRunner,
+  createSubscriptionOnlyProviderRunner,
   type ExtractionContentResolver,
 } from "../../src/composition/subscription-extraction-runner";
 
@@ -296,5 +297,51 @@ describe("createSubscriptionExtractionRunner — totality + fail-closed content"
     expect(res.error.reason).toBe("provider_unavailable");
     expect(res.error.branch).toBe("failed_terminal");
     expect(calls).toHaveLength(0); // never built an unconstrained request / never dispatched
+  });
+});
+
+// ── 18.25 step-6 — the SUBSCRIPTION-ONLY runner for the owner arm (no 5-provider registry ⇒ no
+//    post-assembleBackends controller/now/transport; serves ONLY the cloud {runtime} route). ─────────────
+const providerRoute = (): ProviderRoute =>
+  ({ provider: "claude", model: MODEL, endpoint: "https://api.anthropic.com", egressClass: "cloud" }) as unknown as ProviderRoute;
+
+describe("createSubscriptionOnlyProviderRunner — the arm runner (18.25 step-6)", () => {
+  it("provider_route_fails_closed — a `provider` (raw-API) route ⇒ fail-closed deny; completion/content NEVER touched [spec(§19.5/rule5)]", async () => {
+    const completionCalls: CompletionRequest[] = [];
+    let contentCalled = false;
+    const runner = createSubscriptionOnlyProviderRunner({
+      completion: fakeCompletion(ok({ structuredOutput: {}, costUsd: 0.01 }), completionCalls),
+      content: { resolve: () => { contentCalled = true; return Promise.resolve(ok(CONTENT)); } },
+      model: MODEL,
+    });
+    const res = await runner(providerRoute(), makeJob("source.process"), budget());
+    expect(isErr(res)).toBe(true); // the subscription arm NEVER serves a raw-API provider route
+    if (isErr(res)) expect(res.error.reason).toBe("provider_unavailable");
+    expect(completionCalls).toHaveLength(0); // no dispatch
+    expect(contentCalled).toBe(false); // no content resolve
+  });
+
+  it("runtime_route_delegates_to_subscription_runner — a cloud {runtime} route ⇒ delegates (success frames candidate) [spec(§19.5)]", async () => {
+    const structured = { fields: { title: { value: "T", evidenceRef: "s#1" } } };
+    const runner = createSubscriptionOnlyProviderRunner({
+      completion: fakeCompletion(ok({ structuredOutput: structured, costUsd: 0.004 })),
+      content: okContent(),
+      model: MODEL,
+    });
+    const res = await runner(runtimeRoute(), makeJob("source.process"), budget());
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value.value.candidateOutput).toEqual(structured);
+  });
+
+  it("runtime_route_content_err_denies — delegation preserves the runtime runner's fail-closed (content err ⇒ deny, no spend) [spec(§16)]", async () => {
+    const completionCalls: CompletionRequest[] = [];
+    const runner = createSubscriptionOnlyProviderRunner({
+      completion: fakeCompletion(ok({ structuredOutput: {}, costUsd: 0.01 }), completionCalls),
+      content: errContent(), // content unresolvable ⇒ fail closed BEFORE dispatch
+      model: MODEL,
+    });
+    const res = await runner(runtimeRoute(), makeJob("source.process"), budget());
+    expect(isErr(res)).toBe(true);
+    expect(completionCalls).toHaveLength(0); // no cloud dispatch on unresolved content
   });
 });

@@ -38,7 +38,15 @@ import {
 } from "./provider-runner";
 import { selectExtractionRoute, DEFAULT_EXTRACTION_MODEL } from "./extraction-route-gate";
 import { createSubscriptionHealthSources } from "./subscription-health-sources";
-import type { ExtractionContentResolver } from "./subscription-extraction-runner";
+import {
+  createSubscriptionOnlyProviderRunner,
+  type ExtractionContentResolver,
+} from "./subscription-extraction-runner";
+import {
+  createRealExtractionContentResolver,
+  createLateBoundParkedReader,
+  type ReaderHolder,
+} from "./real-extraction-content-resolver";
 import {
   assertSubscriptionAuthEnv,
   type SubscriptionAuthFault,
@@ -150,6 +158,100 @@ export function gateSubscriptionExtraction(
   });
 
   return { providerTransport, route: selectExtractionRoute(true) };
+}
+
+// ── gateSubscriptionOnlyExtraction — the SUBSCRIPTION-ONLY arm builder (18.25 step-6) ─────────────
+
+/** Injected deps for {@link gateSubscriptionOnlyExtraction} — the subscription deps ONLY (no
+ *  `RealProviderRunnerDeps`, so NONE of the post-`assembleBackends` registry deps are needed). */
+export interface SubscriptionOnlyArmingDeps {
+  /** The subscription completion client factory (`() => createClaudeSubscriptionCompletion()`). */
+  readonly makeCompletion: () => ClaudeSubscriptionCompletion;
+  /** The content-resolution seam factory — the arm wires `createRealExtractionContentResolver` over the
+   *  late-bound reader holder (filled post-`assembleBackends`). */
+  readonly makeContentResolver: () => ExtractionContentResolver;
+  /** The injected reachability check the health probe folds (the real fs/SDK probe binds at the arm). */
+  readonly checkReachable: SubscriptionReachabilityCheck;
+  /** Injected numeric ms clock for the short-TTL health memoize (the composition root injects it). */
+  readonly now: () => number;
+  /** Optional short-TTL override; defaults to {@link DEFAULT_HEALTH_PROBE_TTL_MS}. */
+  readonly healthTtlMs?: number;
+}
+
+/**
+ * Compose the SUBSCRIPTION-ONLY owner arm bundle. Same OFF-guard contract as {@link gateSubscriptionExtraction}
+ * (STRICT `enabled === true`; else `undefined` with ZERO thunk invocations — byte-equivalent). Armed ⇒ a
+ * {@link ProviderTransportGate} whose `make` builds {@link createSubscriptionOnlyProviderRunner} (NO 5-provider
+ * registry ⇒ NO post-`assembleBackends` `controller`/`now`/`transport` deps — the eager-consumption ordering
+ * fix; only the content resolver's reader is late-bound via its holder) + the short-TTL-memoized health source
+ * (rides `gate.healthSource`, never `config.healthSources` — L52) + the armed cloud route. Pure; total.
+ */
+export function gateSubscriptionOnlyExtraction(
+  opts: SubscriptionArmingOpts | undefined,
+  deps: SubscriptionOnlyArmingDeps,
+): SubscriptionArmingWiring | undefined {
+  if (opts?.enabled !== true) return undefined;
+
+  const model = opts.model ?? DEFAULT_EXTRACTION_MODEL;
+  const betas = opts.betas ?? DEFAULT_EXTRACTION_BETAS;
+  const ttlMs = deps.healthTtlMs ?? DEFAULT_HEALTH_PROBE_TTL_MS;
+
+  const memoProbe = memoizeVerdict(
+    () => probeClaudeSubscriptionHealth({ checkReachable: deps.checkReachable }),
+    ttlMs,
+    deps.now,
+  );
+  const healthSource = (): HealthGateSources => createSubscriptionHealthSources(memoProbe);
+
+  const providerTransport: ProviderTransportGate = {
+    enabled: true,
+    // THUNK — the runner + completion + content are constructed ONLY on `make()` (0× at build, factory-spy).
+    make: () =>
+      createSubscriptionOnlyProviderRunner({
+        completion: deps.makeCompletion(),
+        content: deps.makeContentResolver(),
+        model,
+        betas,
+      }),
+    healthSource,
+  };
+
+  return { providerTransport, route: selectExtractionRoute(true) };
+}
+
+// ── buildSubscriptionArmWiring — the boot-composition glue: gate over the late-bound reader holder ────────
+
+/** The boot-composition deps for {@link buildSubscriptionArmWiring} — the collaborators available BEFORE
+ *  `assembleBackends` (the durable reader is filled into `readerHolder` AFTER, by the caller). */
+export interface SubscriptionArmWiringDeps {
+  /** The mutable reader holder the caller fills POST-`assembleBackends` (`createReaderHolder()`). */
+  readonly readerHolder: ReaderHolder;
+  /** The subscription completion client factory (real: `() => createClaudeSubscriptionCompletion()`). */
+  readonly makeCompletion: () => ClaudeSubscriptionCompletion;
+  /** The injected reachability check the health probe folds (the real fs/SDK probe binds at the arm). */
+  readonly checkReachable: SubscriptionReachabilityCheck;
+  /** Injected numeric ms clock for the short-TTL health memoize. */
+  readonly now: () => number;
+}
+
+/**
+ * The single boot-composition seam for the subscription arm: it wires `makeContentResolver` as the real
+ * {@link createRealExtractionContentResolver} over a {@link createLateBoundParkedReader} bound to the caller's
+ * `readerHolder` (the eager-consumption ordering fix — the caller fills the holder after `assembleBackends`),
+ * then builds the gate via {@link gateSubscriptionOnlyExtraction}. OFF (opt-in unset / not `enabled === true`)
+ * ⇒ `undefined` (byte-equivalent — no gate, no holder use, zero thunk invocations). Pure; total.
+ */
+export function buildSubscriptionArmWiring(
+  opts: SubscriptionArmingOpts | undefined,
+  deps: SubscriptionArmWiringDeps,
+): SubscriptionArmingWiring | undefined {
+  return gateSubscriptionOnlyExtraction(opts, {
+    makeCompletion: deps.makeCompletion,
+    makeContentResolver: () =>
+      createRealExtractionContentResolver({ reader: createLateBoundParkedReader(deps.readerHolder) }),
+    checkReachable: deps.checkReachable,
+    now: deps.now,
+  });
 }
 
 // ── resolveSubscriptionArming — the boot-side degrade decision (#2: degrade-arming, never boot-crash) ─────

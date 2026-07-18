@@ -65,8 +65,15 @@ import {
   LOCAL_EXTRACTION_ROUTE,
   CLOUD_EXTRACTION_ROUTE,
 } from "./composition/extraction-route-gate";
-import { SOURCE_CONTEXT_REF_KIND } from "./composition/real-extraction-content-resolver";
-import { resolveSubscriptionArming } from "./composition/subscription-extraction-arming";
+import {
+  SOURCE_CONTEXT_REF_KIND,
+  createReaderHolder,
+} from "./composition/real-extraction-content-resolver";
+import {
+  resolveSubscriptionArming,
+  buildSubscriptionArmWiring,
+} from "./composition/subscription-extraction-arming";
+import { createDurableParkedReader } from "./composition/dispositionDurable";
 import type { WorkerOriginAllowlist } from "./api/auth/originAllowlist";
 import { startApiServer, type RunningApiServer } from "./api/mount";
 import { createDbReadModelQueryPort } from "./api/adapters/readModel";
@@ -155,6 +162,7 @@ import { createCopilotProposeMcpServer, createCopilotProposeKnowledgeMcpServer, 
 import type { CopilotSynthesisPort } from "./api/procedures/copilot";
 import { createReadModelBriefingRetrieval, type CopilotBriefingDeps } from "./api/procedures/copilotBriefing";
 import { createClaudeSubscriptionCompletion } from "@sow/providers";
+import type { ClaudeSubscriptionCompletion, SubscriptionReachabilityCheck } from "@sow/providers";
 import type { SystemHealthQueryPort, UiSafeEgressStatus } from "./api/procedures/systemHealth";
 import type {
   ApprovalCommandPort,
@@ -259,6 +267,22 @@ export interface BootConfig extends BackendsConfig {
   };
   /** The deterministic meeting candidate the broker maps until the real model transport lands. */
   readonly stubExtraction?: StubMeetingExtraction;
+  /**
+   * 18.25 step-6 — the owner ARM opt-in for the SUBSCRIPTION-ONLY extraction path. OFF by default (`enabled`
+   * unset/not `=== true`) ⇒ byte-equivalent: the whole subscription arm is inert, `config.providerTransport`
+   * stays as-is. When ARMED, bootWorker CONSTRUCTS the subscription `ProviderTransportGate` over a late-bound
+   * reader holder (the eager-consumption ordering fix, backends.ts:809) — this is the owner ENABLE flip (real
+   * cloud egress + real spend, HARD LINE; lead+owner-run). `makeCompletion`/`checkReachable` default to the
+   * real subscription client + a FAIL-CLOSED reachability probe; a test/-live path injects stubs.
+   * ⚠ #13 arm precondition: the real SDK-reachability `checkReachable` (providers-layer) MUST bind before
+   * HEALTH can be AVAILABLE at the arm — the default fail-closed probe keeps the arm HEALTH-denied until then.
+   */
+  readonly subscriptionArm?: {
+    readonly enabled?: boolean;
+    readonly model?: string;
+    readonly makeCompletion?: () => ClaudeSubscriptionCompletion;
+    readonly checkReachable?: SubscriptionReachabilityCheck;
+  };
   /** Temporal dev-server address (host:port) — defaults to 127.0.0.1:7233. */
   readonly temporalAddress?: string;
   /** Bound the Temporal connect loop so a permanent outage degrades, never spins. Default 5. */
@@ -1231,6 +1255,14 @@ export function buildBackendsConfig(config: BootConfig): BackendsConfig {
 }
 
 /**
+ * 18.25 step-6 — the FAIL-CLOSED default reachability check for the subscription arm. Returns `undefined` ⇒
+ * `probeClaudeSubscriptionHealth` folds it to `check_ambiguous` ⇒ NON-healthy ⇒ the armed HEALTH gate DENIES
+ * (never a false-green, L52). The REAL SDK-reachability probe (providers-layer) is injected via
+ * `config.subscriptionArm.checkReachable` at the owner arm — until then, an armed gate is HEALTH-denied.
+ */
+const FAIL_CLOSED_REACHABILITY: SubscriptionReachabilityCheck = () => undefined;
+
+/**
  * Boot the live worker control plane. Assembles the persistent backends, stands up
  * the real loopback API transport over the @sow/db port adapters (behind the injected
  * token + allowlist), wires the redacting logger + the Temporal-unavailable degraded
@@ -1238,31 +1270,53 @@ export function buildBackendsConfig(config: BootConfig): BackendsConfig {
  * the proof-spine register hook. See the header for the Phase-9/11 residual deferrals.
  */
 export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
-  // 0.9) 18.24 step-6 — resolve the SUBSCRIPTION-EXTRACTION arm from the SINGLE `config.providerTransport`
-  //   signal (the SAME `isProviderTransportArmed` predicate `selectProviderRunner` reads — one flip, no
-  //   split-brain, L52). On the ARMED path a subscription-SHADOWING env var (a stale key / gateway redirect that
-  //   would displace the ambient `claude` login) REFUSES the arm: `effectiveArmed=false` ⇒ the transport gate is
-  //   STRIPPED from the backends config (extraction degrades to the LOCAL stub route — fail-closed, ZERO cloud
-  //   extraction) and a boot-visible fault is surfaced below — NEVER a worker-wide boot-throw (L52: degrade+surface).
-  //   Shipped default: `config.providerTransport` unset ⇒ `effectiveArmed=false`, `authRefused=false` ⇒ byte-equivalent.
-  //
-  //   ⚠ #13 STEP-6 (owner ENABLE) — this slice does NOT build/inject the gate. `config.providerTransport` is set by
-  //   the OWNER at step 6 via `gateSubscriptionExtraction(...).providerTransport`. That gate's `make()` builds the
-  //   subscription runner whose `ExtractionContentResolver` needs `createDurableParkedReader(backends.repos.sourceDisposition)`
-  //   — a repo that exists only AFTER `assembleBackends`, while `config.providerTransport` is consumed EAGERLY inside
-  //   `assembleBackends` (backends.ts:809 `selectProviderRunner` → `gate.make()`). So the owner's step-6 wiring must bind
-  //   the resolver's `reader` via a POST-`assembleBackends` LATE-BIND holder (the resolver's `resolve()` is per-job/late,
-  //   long after boot) — do NOT rediscover this ordering. Also confirm no Claude-Code `apiKeyHelper` API-key injection
-  //   (a settings-level shadow this env guard can't see; runbook CHECKPOINT-1 caveat).
-  const arming = resolveSubscriptionArming(config.providerTransport, process.env);
+  // 0.8) 18.25 step-6 — CONSTRUCT the subscription-ONLY arm gate from the owner opt-in (`config.subscriptionArm`).
+  //   This is the deferred FINDING piece: the subscription runner's `ExtractionContentResolver` needs
+  //   `createDurableParkedReader(backends.repos.sourceDisposition)` — a repo that exists ONLY after `assembleBackends`,
+  //   while `config.providerTransport` is consumed EAGERLY inside `assembleBackends` (backends.ts:809
+  //   `selectProviderRunner` → `gate.make()`). SOLUTION: build the content resolver over a LATE-BOUND reader whose
+  //   holder is filled POST-assembly (the resolver's `resolve()` is per-job/late). `createSubscriptionOnlyProviderRunner`
+  //   builds NO 5-provider registry, so it needs NONE of the post-assembly `controller`/`now`/`transport` deps.
+  //   OFF (opt-in unset / not `enabled === true`) ⇒ `armWiring` undefined ⇒ byte-equivalent (holder never filled).
+  const readerHolder = createReaderHolder();
+  const armWiring = buildSubscriptionArmWiring(config.subscriptionArm, {
+    readerHolder,
+    makeCompletion: config.subscriptionArm?.makeCompletion ?? (() => createClaudeSubscriptionCompletion()),
+    // ⚠ #13 arm precondition: the DEFAULT is a FAIL-CLOSED reachability probe (⇒ HEALTH UNAVAILABLE) — the real
+    //   SDK-reachability check (providers-layer `probeSubscriptionReachability`) MUST be injected at the arm before
+    //   HEALTH can be AVAILABLE. Until then the armed HEALTH gate DENIES (fail-closed, never a false-green — L52).
+    checkReachable: config.subscriptionArm?.checkReachable ?? FAIL_CLOSED_REACHABILITY,
+    now: () => Date.now(),
+  });
+
+  // 0.9) 18.24 step-6 — resolve the SUBSCRIPTION-EXTRACTION arm from the SINGLE `providerTransport` signal (the SAME
+  //   `isProviderTransportArmed` predicate `selectProviderRunner` reads — one flip, no split-brain, L52). The effective
+  //   transport is the CONSTRUCTED arm gate (18.25), else `config.providerTransport` (the 18.24 raw-API fallback path).
+  //   On the ARMED path a subscription-SHADOWING env var (a stale key / gateway redirect that would displace the ambient
+  //   `claude` login) REFUSES the arm: `effectiveArmed=false` ⇒ the transport gate is STRIPPED from the backends config
+  //   (extraction degrades to the LOCAL stub route — fail-closed, ZERO cloud extraction) + a boot-visible fault is
+  //   surfaced below — NEVER a worker-wide boot-throw (L52: degrade+surface). Shipped default (both unset) ⇒
+  //   `effectiveArmed=false`, `authRefused=false` ⇒ byte-equivalent. Also confirm no Claude-Code `apiKeyHelper` API-key
+  //   injection (a settings-level shadow this env guard can't see; runbook CHECKPOINT-1 caveat).
+  const effectiveProviderTransport = armWiring?.providerTransport ?? config.providerTransport;
+  const arming = resolveSubscriptionArming(effectiveProviderTransport, process.env);
 
   // 1) The persistent composition root (sqlite + genesis migration, vault, the
   //    persistent §9 stores, the redacting logger, the §7 broker).
   const backendsConfig: BackendsConfig = buildBackendsConfig(
     // Degrade the arm on a shadowing-env refusal — strip the transport gate so extraction stays LOCAL/stub.
-    arming.authRefused ? { ...config, providerTransport: undefined } : config,
+    arming.authRefused
+      ? { ...config, providerTransport: undefined }
+      : { ...config, providerTransport: effectiveProviderTransport },
   );
   const backends = await assembleBackends(backendsConfig, config.stubExtraction);
+
+  // 1.05) 18.25 step-6 — FILL the late-bound reader holder POST-`assembleBackends` (only when the arm is
+  //   effectively armed): the durable parked reader exists only now. On the dormant/refused path the holder stays
+  //   empty (the late-bound reader fails closed — never a real read). This closes the eager-consumption ordering.
+  if (arming.effectiveArmed && armWiring !== undefined) {
+    readerHolder.reader = createDurableParkedReader(backends.repos.sourceDisposition);
+  }
 
   // 1.1) 18.24 step-6 — surface the armed-path shadowing-env refusal LOUDLY (boot-visible, code-only — rule 7),
   //   so a mis-provisioned armed config can't be mistaken for a working arm (Checkpoint-2 backstops it at ENABLE).
@@ -1270,6 +1324,17 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   if (arming.authRefused) {
     backends.logger.error("subscription.arming.refused", {
       fields: { code: arming.authFault?.code ?? "anthropic_key_set_on_armed_path" },
+    });
+  }
+
+  // 1.2) 18.25 step-6 — LOUD warn on an ambiguous both-armed config: the subscription arm
+  //   (`config.subscriptionArm`) SILENTLY takes precedence over the 18.24 raw-API `config.providerTransport`
+  //   (`?? ` at the effective-transport select). Both set is an owner mis-config at ENABLE (they pick ONE
+  //   path) — surface it code-only (rule 7) rather than fail silent. Dormant: never reached on the shipped
+  //   default (both unset).
+  if (config.subscriptionArm?.enabled === true && config.providerTransport !== undefined) {
+    backends.logger.warn("subscription.arming.both_transports_set", {
+      fields: { code: "subscription_arm_precedes_provider_transport" },
     });
   }
 

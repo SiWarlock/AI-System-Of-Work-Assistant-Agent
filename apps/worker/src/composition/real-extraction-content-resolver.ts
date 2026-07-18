@@ -22,7 +22,7 @@
 // DORMANT: no production caller — bound at the owner ENABLE flip (step 6, HARD STOP) as
 // RealProviderRunnerDeps.subscription.content. Reachability-WAIVERED (L11).
 import { ok, err, isErr } from "@sow/contracts";
-import type { AgentJob, ContextRef, Result } from "@sow/contracts";
+import type { AgentJob, ContextRef, Result, SourceEnvelope } from "@sow/contracts";
 import type { ParkedSourceReader } from "@sow/workflows";
 import type {
   ExtractionContentResolver,
@@ -35,6 +35,49 @@ import type {
  * ref: <sourceId>}`; this resolver derefs it.
  */
 export const SOURCE_CONTEXT_REF_KIND = "source" as const;
+
+// ── 18.25 step-6 — the reader-holder late-bind (the eager-consumption ordering fix) ──────────────
+//
+// `config.providerTransport` is consumed EAGERLY inside `assembleBackends` (backends.ts:809 —
+// `selectProviderRunner` → `gate.make()` builds the run leg), but the durable `ParkedSourceReader`
+// (`createDurableParkedReader(backends.repos.sourceDisposition)`) exists only AFTER `assembleBackends`
+// returns. So the content resolver is constructed over a LATE-BOUND reader whose backing `reader` is a
+// mutable holder filled POST-assembly. This is sound because `resolve()` runs per-job (long after boot),
+// so the holder is always filled by the time any real job reads it; PRE-fill (the pre-arm / build window)
+// fails CLOSED — never `ok("")` — so a mis-ordered wiring can never send an empty prompt or leak content.
+
+/** A mutable holder for the durable parked reader, filled POST-`assembleBackends` (the late-bind seam). */
+export interface ReaderHolder {
+  reader?: ParkedSourceReader;
+}
+
+/** Build an empty {@link ReaderHolder} (the arm wiring fills `.reader` after `assembleBackends`). */
+export function createReaderHolder(): ReaderHolder {
+  return { reader: undefined };
+}
+
+/**
+ * A {@link ParkedSourceReader} that delegates to `holder.reader` at READ time (per-job), not construction.
+ * An unfilled holder fails CLOSED (`source_unavailable`) — never throws, never a real read — so the resolver
+ * built over it is byte-safe before the post-assembly fill. Total.
+ */
+export function createLateBoundParkedReader(holder: ReaderHolder): ParkedSourceReader {
+  return {
+    read(
+      sourceId: string,
+    ): Promise<Result<SourceEnvelope, { code: "source_unavailable"; message: string }>> {
+      const bound = holder.reader;
+      if (bound === undefined) {
+        // Fail-closed: the holder isn't filled yet (pre-arm / pre-assembly). The resolver maps this to its
+        // own code-only `source_unavailable` (rule 7) — never ok(""), never a throw.
+        return Promise.resolve(
+          err({ code: "source_unavailable" as const, message: "parked reader not bound (pre-arm)" }),
+        );
+      }
+      return bound.read(sourceId);
+    },
+  };
+}
 
 /** Injected deps: the durable parked-source reader (a fake in tests; the real `createDurableParkedReader`
  *  is already boot-wired and is bound here at the owner ENABLE). */

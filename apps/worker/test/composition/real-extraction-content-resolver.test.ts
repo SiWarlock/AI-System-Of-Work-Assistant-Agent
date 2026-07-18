@@ -17,6 +17,8 @@ import type { AgentJob, ContextRef, SourceEnvelope } from "@sow/contracts";
 import type { ParkedSourceReader } from "@sow/workflows";
 import {
   createRealExtractionContentResolver,
+  createReaderHolder,
+  createLateBoundParkedReader,
   SOURCE_CONTEXT_REF_KIND,
 } from "../../src/composition/real-extraction-content-resolver";
 
@@ -161,5 +163,44 @@ describe("createRealExtractionContentResolver — fail-closed faults", () => {
     if (!isErr(res)) return;
     expect(res.error).toEqual({ code: "source_unavailable" }); // reader's message (carries the sourceId) dropped
     expect(JSON.stringify(res.error)).not.toContain("canary");
+  });
+});
+
+// ── 18.25 step-6 — the reader-holder late-bind (solves the eager-consumption ordering: config.providerTransport
+//    is consumed at assembleBackends (backends.ts:809) BEFORE backends.repos.sourceDisposition exists, so the
+//    resolver is built over a LATE-BOUND reader whose holder is filled POST-assembly). ─────────────────────
+describe("createLateBoundParkedReader — the reader-holder late-bind (18.25 step-6, dormant)", () => {
+  it("late_bound_reader_unset_fails_closed — an unfilled holder ⇒ read() returns a typed source_unavailable, no throw (fail-closed) [spec(§19.5)]", async () => {
+    const holder = createReaderHolder();
+    const reader = createLateBoundParkedReader(holder);
+    const res = await reader.read("S1");
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.code).toBe("source_unavailable");
+  });
+
+  it("late_bound_reader_delegates_once_filled — the holder filled POST-assembly ⇒ read() delegates verbatim [spec(§19.5)]", async () => {
+    const holder = createReaderHolder();
+    const reader = createLateBoundParkedReader(holder); // built while the holder is still empty
+    const calls: string[] = [];
+    holder.reader = okReader(envelope("late-body"), calls); // filled AFTER construction (post-assembleBackends)
+    const res = await reader.read("S7");
+    expect(calls).toStrictEqual(["S7"]); // delegated to the real reader
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value.body).toBe("late-body");
+  });
+
+  it("resolver_over_late_bound_reader_resolves_after_fill — the resolver built over the late-bound reader resolves content ONLY after the holder is filled (the whole late-bind chain) [spec(§19.5)]", async () => {
+    const holder = createReaderHolder();
+    const resolver = createRealExtractionContentResolver({ reader: createLateBoundParkedReader(holder) });
+    const job = makeJob([sourceRef("S1")]);
+    // Before the holder is filled (pre-arm / pre-assembly bind) ⇒ fail-closed, NEVER ok("").
+    const before = await resolver.resolve(job);
+    expect(isErr(before)).toBe(true);
+    if (isErr(before)) expect(before.error.code).toBe("source_unavailable");
+    // Filled post-assembly ⇒ resolves the parked body.
+    holder.reader = okReader(envelope("real-body"));
+    const after = await resolver.resolve(job);
+    expect(isOk(after)).toBe(true);
+    if (isOk(after)) expect(after.value).toBe("real-body");
   });
 });

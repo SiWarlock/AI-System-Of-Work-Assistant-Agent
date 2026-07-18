@@ -170,6 +170,29 @@ function buildExtractionRequestForJob(
 }
 
 /**
+ * 18.25 step-6 — the SUBSCRIPTION-ONLY provider runner for the owner arm. Solves the eager-consumption
+ * ordering (backends.ts:809): unlike {@link createRealProviderRunner} it builds NO 5-provider registry, so
+ * it needs NONE of the post-`assembleBackends` deps (`controller`, `now`, `transport`) — only the
+ * subscription deps ({completion, content, model, betas}). It serves the cloud `{runtime}` route via the
+ * subscription runner and FAILS CLOSED on a `provider` (ModelProviderPort) route — the subscription arm
+ * NEVER serves a raw-API cloud provider route (a structural safety narrowing; the raw-API path stays the
+ * separate 18.24 `gateSubscriptionExtraction` fallback). Total — never throws (§16).
+ */
+export function createSubscriptionOnlyProviderRunner(
+  deps: SubscriptionExtractionRunnerDeps,
+): ProviderRunner {
+  const runtime = createSubscriptionExtractionRunner(deps);
+  return async (route, job, budget, signal) => {
+    // A `provider`-branch (ModelProviderPort) route is NOT served by the subscription arm — fail closed
+    // (never a silent no-op, never a raw-API dispatch). Only the cloud {runtime} route reaches the runner.
+    if ("provider" in route) {
+      return err(denyUnavailable(job, "subscription arm serves runtime routes only (no provider route)"));
+    }
+    return runtime(route, job, budget, signal);
+  };
+}
+
+/**
  * Build the subscription-extraction {@link ProviderRunner}. This leg binds the OWNER-CONFIGURED
  * `deps.model` and always egresses to the Anthropic subscription (the SDK's ambient `claude` login), so
  * it asserts the `route` the veto classified is a `cloud`-egress route BEFORE any egress (defense-in-depth
@@ -180,7 +203,6 @@ export function createSubscriptionExtractionRunner(
 ): ProviderRunner {
   const { completion, content, model } = deps;
   const betas = deps.betas ?? DEFAULT_EXTRACTION_BETAS;
-
   return async (route, job, budget, signal) => {
     try {
       // 0. Defense-in-depth over the egress veto (rule 5), mirroring createClaudeCopilotSynthesis: the
