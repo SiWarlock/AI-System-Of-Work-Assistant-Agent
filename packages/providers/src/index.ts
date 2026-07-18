@@ -11,6 +11,10 @@
 export * from "./ports/agent-result";
 export * from "./ports/model-provider-port";
 export * from "./model/claude-subscription-completion";
+// Subscription extraction request legs (CP-2/CP-3) + the pure CompletionRequest assembler (18.19) —
+// exported so the worker runtime runner (18.20) can build the subscription extraction request.
+export * from "./model/extraction-request";
+export * from "./model/extraction-completion-request";
 export * from "./ports/agent-runtime-port";
 
 // ── broker core (5.2 / 5.3 / 5.4 / 5.5 / 5.9) ────────────────────────────────
