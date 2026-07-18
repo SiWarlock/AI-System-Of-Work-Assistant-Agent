@@ -36,6 +36,7 @@ export * from "./model/openai-provider";
 export * from "./model/openrouter-provider";
 export * from "./model/ollama-provider";
 export * from "./model/lmstudio-provider";
+export * from "./model/real-http-transport";
 
 // ── AgentRuntimePort adapters (5.8) ──────────────────────────────────────────
 export * from "./runtime/runtime-support";
