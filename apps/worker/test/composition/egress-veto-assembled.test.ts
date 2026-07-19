@@ -262,3 +262,117 @@ describe("18.9 — Employer-Work egress veto honored at the real assembled broke
     expect(outcome.error.reason).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
   });
 });
+
+// 18.30 — PRE-ARM ASSURANCE for the already-built-dormant auto-ingest trigger: the SOURCE-ingestion dispatch
+// path (capability `source.process`) is subject to BOTH hard safety gates at the REAL assembled broker (L50 —
+// pin at the assembled root, not only the injected-fake unit level). So the eventual owner-gated auto-ingest
+// ARM (18.10) flips a PROVEN-SAFE seam: (1) an untrusted source job carrying a mutating tool policy is
+// admission-REJECTED (ING-7 / rule 6 / L47); (2) an employer-raw + ack-OFF + cloud source route fails closed
+// at the egress veto (rule 5) — NEVER a cloud egress of raw employer content. The prior coverage tied rule-5
+// only to `meeting.close` (above) and drove `source.process` on a LOCAL route (`sourceIngestion-live`, where
+// the veto ALLOWS via the loopback fall-through) — the untrusted-mutating + employer-raw-cloud cases on the
+// source.process capability were the gap. NOT arming: `providerTransport` stays UNSET ⇒ the dormant stub run
+// leg; the denied paths never reach it. The armed extraction route is a cloud `{runtime}` route (18.23), so
+// these mirror the runtime-route deny/allow above, re-keyed onto `source.process`.
+describe("18.30 — auto-ingest source.process dispatch path is admission+veto safe at the assembled root (pre-ARM assurance)", () => {
+  const opened: ProofSpineBackends[] = [];
+  afterEach(() => {
+    for (const b of opened.splice(0)) b.close();
+  });
+
+  const SOURCE_CAP = "source.process";
+  // The armed subscription-extraction route (18.23): a cloud `{runtime}` route (providerOfRoute null ⇒ skips
+  // the provider allowlist, reaches the veto), NOT a provider route.
+  const runtimeCloudRoute = {
+    runtime: "claude-agent-sdk",
+    model: "claude-sonnet-5",
+    endpoint: "https://api.anthropic.com",
+    egressClass: "cloud",
+  } as unknown as ProviderRoute;
+  // A mutating tool policy — the ING-7 reject trigger for untrusted content.
+  const MUTATING = { mode: "scoped_write", allowedTools: ["write"], deniedTools: [], allowsMutating: true };
+  // A read-only policy — the ING-7-clean posture the real (untrusted) source path carries.
+  const READ_ONLY = { mode: "read_only", allowedTools: [], deniedTools: [], allowsMutating: false };
+  // A ProviderMatrix keyed on `source.process` (allowedProviders empty — a `{runtime}` route skips the allowlist).
+  const sourceMatrix = (route: ProviderRoute): ProviderMatrix =>
+    ({
+      workspaceId: validAgentJob.workspaceId,
+      allowedProviders: [],
+      capabilityDefaults: { [SOURCE_CAP]: route } as ProviderMatrix["capabilityDefaults"],
+      rawCloudEgressEnabled: false,
+    }) as unknown as ProviderMatrix;
+
+  it("assembled_source_untrusted_mutating_admission_rejected — a source.process job (untrusted + mutating toolPolicy) is REJECTED at ADMISSION through the REAL assembled broker; route/veto/run never reached (ING-7 / rule 6 / L47/L50)", async () => {
+    const backends = await assembleBackends({});
+    opened.push(backends);
+    const outcome = await backends.broker.runJob({
+      job: employerRawJob(runtimeCloudRoute, {
+        capability: SOURCE_CAP,
+        trustLevel: "untrusted",
+        toolPolicy: MUTATING,
+        idempotencyKey: "idem-source-ing7-deny",
+      }),
+      matrix: sourceMatrix(runtimeCloudRoute),
+      egress: ackOffEgress,
+      workspace: EMPLOYER,
+      localConfig: { allowedLocalEndpoints: [LOCAL_ENDPOINT] },
+    });
+    expect(isErr(outcome)).toBe(true);
+    if (!isErr(outcome)) return;
+    // ADMISSION is pipeline stage 1 — the reject short-circuits BEFORE route/veto/run (never reached).
+    expect(outcome.error.stage).toBe("admission");
+    expect(outcome.error.reason).toBe("UNTRUSTED_CONTENT_MUTATING_TOOL");
+  });
+
+  it("assembled_source_employer_raw_cloud_fails_closed_at_egress_veto — a source.process job (untrusted + read_only, so ING-7 ADMITS) with employer-raw + ack OFF + a cloud {runtime} route fails closed at the EGRESS VETO; run leg never reached (rule 5)", async () => {
+    const backends = await assembleBackends({});
+    opened.push(backends);
+    const outcome = await backends.broker.runJob({
+      job: employerRawJob(runtimeCloudRoute, {
+        capability: SOURCE_CAP,
+        trustLevel: "untrusted",
+        toolPolicy: READ_ONLY,
+        idempotencyKey: "idem-source-veto-deny",
+      }),
+      matrix: sourceMatrix(runtimeCloudRoute),
+      egress: ackOffEgress,
+      workspace: EMPLOYER,
+      localConfig: { allowedLocalEndpoints: [LOCAL_ENDPOINT] },
+    });
+    expect(isErr(outcome)).toBe(true);
+    if (!isErr(outcome)) return;
+    // ING-7 ADMITS (read_only) → route resolves (source.process → cloud {runtime}) → the rule-5 veto DENIES:
+    // employer-raw + ack OFF + cloud ⇒ no run leg, no cloud (raw employer content can't cloud-egress on the
+    // source path). This is the gap `sourceIngestion-live` (LOCAL route only) left unpinned.
+    expect(outcome.error.stage).toBe("egress_veto");
+    expect(outcome.error.reason).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
+    expect(outcome.error.healthItem?.healthClass).toBe(NO_ELIGIBLE_PROVIDER_HEALTH_CLASS); // parity with the 18.9 sibling
+  });
+
+  it("assembled_source_ack_on_cloud_resolves_past_veto — flipping ONLY ack ON (+ allowlisting the runtime processor) on the SAME source.process cloud {runtime} route resolves PAST the veto to the dormant stub (non-vacuity control, L7) — proves the DENY above is the employer-raw+ack-OFF condition, not a blanket source-route rejection", async () => {
+    const backends = await assembleBackends({}, { candidateOutput: validKnowledgeMutationPlan });
+    opened.push(backends);
+    const ackOnEgress = {
+      workspaceId: validAgentJob.workspaceId,
+      allowedProcessors: [processorId("claude-agent-sdk")],
+      rawContentAllowedProcessors: [processorId("claude-agent-sdk")],
+      employerRawEgressAcknowledged: true,
+    } as unknown as EgressPolicy;
+    const outcome = await backends.broker.runJob({
+      job: employerRawJob(runtimeCloudRoute, {
+        capability: SOURCE_CAP,
+        trustLevel: "untrusted",
+        toolPolicy: READ_ONLY,
+        idempotencyKey: "idem-source-veto-ackon-allow",
+      }),
+      matrix: sourceMatrix(runtimeCloudRoute),
+      egress: ackOnEgress,
+      workspace: EMPLOYER,
+      localConfig: { allowedLocalEndpoints: [LOCAL_ENDPOINT] },
+    });
+    expect(isOk(outcome)).toBe(true); // resolved PAST the veto to the dormant stub (SAFE-BUILD, no real cloud)
+    if (!isOk(outcome)) return;
+    expect(outcome.value.candidate.kind).toBe("knowledge_mutation_plan");
+    expect(outcome.value.usage.runtimeSeconds).toBe(1); // the DORMANT stub's fixed value
+  });
+});
