@@ -4,7 +4,7 @@
 - **Phase:** 18 (§19.5 Real Model Transport & Intelligence Legs) — the formal phase-exit gate over the now-LIVE subscription ENABLE crossing
 - **Role / track:** main-orchestrator, single-track `main`, team `session-4f4687dd`
 - **Predecessor:** [`098-2026-07-18-phase18-subscription-enable-golive-worker-impl.md`](098-2026-07-18-phase18-subscription-enable-golive-worker-impl.md) (the maiden-run go-live) + [`099-…-providers-legs.md`](099-2026-07-18-phase18-subscription-providers-legs.md)
-- **Successor:** _(the next round — the deferred-breadth follow-ups: meeting.close arming / eval-class runs / note-projection alignment)_
+- **Successor:** [`101-2026-07-19-phase18-pre-arm-hardening-worker-impl.md`](101-2026-07-19-phase18-pre-arm-hardening-worker-impl.md) (the 3 Carry-forward burndown slices: 18.28 shadowing-env / 18.29 note-projection / 18.30 auto-ingest verify-and-pin)
 - **Outcome:** ✅ `/phase-exit 18` crossing gate **CLEAR**; the 1 security-MEDIUM hardened in-round (18.28); Phase 18 recorded **crossing GO-LIVE (source leg) complete — NOT a full phase tick** (owner call).
 
 ## Why this session existed
