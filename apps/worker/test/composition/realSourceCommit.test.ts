@@ -394,3 +394,148 @@ describe("18.8 — the committed source note carries REAL extraction content (fr
     }
   });
 });
+
+// ── 18.29: the source-note frontmatter projects the model's MULTI-TASK task-prefixed fields ──────────
+// The maiden run emitted task-prefixed agent_extraction fields (task1_owner, task1_dueDate, …); the
+// prior FIXED [owner,dueDate] loop read only the bare keys ⇒ blanket TBD/TBD. The projection now
+// generalizes to a STRICT PATTERN allow-list (bare owner/dueDate ∪ `^task<n>_(owner|dueDate)$`) that
+// stays injection-resistant BY CONSTRUCTION (L49): a smuggled / mis-shaped key never lands.
+describe("18.29 — source-note frontmatter projects multi-task fields (strict allow-list, L49 injection-resistant)", () => {
+  async function build(validated: ValidatedExtraction) {
+    const backends = await assembleBackends(
+      { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT], dbPath: tempDbPath() },
+      { candidateOutput: {} },
+    );
+    try {
+      const store = createKnowledgeRevisionStoreAdapter(backends.repos.knowledgeRevisions);
+      const acts = buildProofSpineActivities(backends, paramsFor(store));
+      const built = await acts.sourceBuildOutputs(validated, SRC_WS, SRC, "body");
+      expect(built.ok).toBe(true);
+      if (!built.ok) throw new Error(built.error.message);
+      return built.value.plan;
+    } finally {
+      backends.close();
+    }
+  }
+  const extraction = (
+    fields: Record<string, { value: unknown; evidenceRef?: string }>,
+  ): ValidatedExtraction => ({ validated: true, fields } as unknown as ValidatedExtraction);
+
+  it("multitask_fields_project_into_frontmatter — task1/task2 owner+dueDate values appear in frontmatter (no longer blanket TBD) [spec §19.5/§9]", async () => {
+    const plan = await build(
+      extraction({
+        task1_owner: { value: "Alice", evidenceRef: "s#1" },
+        task1_dueDate: { value: "2026-08-01", evidenceRef: "s#2" },
+        task2_owner: { value: "Bob", evidenceRef: "s#3" },
+        task2_dueDate: { value: TBD },
+      }),
+    );
+    const fm = plan.creates[0]?.frontmatter ?? {};
+    expect(fm.task1_owner).toBe("Alice");
+    expect(fm.task1_dueDate).toBe("2026-08-01");
+    expect(fm.task2_owner).toBe("Bob");
+    expect(fm.task2_dueDate).toBe(TBD); // TBD stays TBD (REQ-F-017)
+  });
+
+  it("hostile_or_arbitrary_keys_never_land — only bare + `^task<n>_(owner|dueDate)$` project; smuggled/mis-shaped keys are refused (L49 injection-resistance) [spec WS-8/no-inference]", async () => {
+    const plan = await build(
+      extraction({
+        task1_owner: { value: "Alice", evidenceRef: "s#1" }, // valid — DOES land
+        workspaceId: { value: "ws-EVIL", evidenceRef: "x" }, // smuggled
+        path: { value: "../../escape", evidenceRef: "x" }, // smuggled
+        task1_secret: { value: "leak", evidenceRef: "x" }, // task-prefixed but wrong suffix
+        taskX_owner: { value: "leak", evidenceRef: "x" }, // non-digit index
+        task_owner: { value: "leak", evidenceRef: "x" }, // no digit
+        task1_owner_extra: { value: "leak", evidenceRef: "x" }, // trailing junk (anchored $)
+        owner_task1: { value: "leak", evidenceRef: "x" }, // reversed
+        tasksTruncated: { value: true, evidenceRef: "x" }, // the sentinel is projection-owned — a `fields` copy must NOT surface it
+      }),
+    );
+    const fm = plan.creates[0]?.frontmatter ?? {};
+    expect(fm.task1_owner).toBe("Alice"); // the one valid key lands
+    for (const k of [
+      "workspaceId",
+      "path",
+      "task1_secret",
+      "taskX_owner",
+      "task_owner",
+      "task1_owner_extra",
+      "owner_task1",
+      "tasksTruncated", // unforgeable from fields: only the projection stamps it, and only on real truncation
+    ]) {
+      expect(k in fm).toBe(false); // NONE of the hostile / mis-shaped keys land
+    }
+  });
+
+  it("absent_task_field_degrades_to_TBD — a task present via one field gets BOTH owner+dueDate; the absent sibling ⇒ TBD, never invented [spec REQ-F-017]", async () => {
+    const plan = await build(
+      extraction({ task1_owner: { value: "Alice", evidenceRef: "s#1" } }), // no task1_dueDate
+    );
+    const fm = plan.creates[0]?.frontmatter ?? {};
+    expect(fm.task1_owner).toBe("Alice");
+    expect("task1_dueDate" in fm).toBe(true);
+    expect(fm.task1_dueDate).toBe(TBD); // absent sibling ⇒ TBD (never invented)
+  });
+
+  it("single_task_bare_keys_byte_equivalent — a bare owner/dueDate-only extraction projects exactly as 18.8 (no task keys, no truncation sentinel) [spec backward-compat]", async () => {
+    const plan = await build(
+      extraction({ owner: { value: "Bob", evidenceRef: "s#1" }, dueDate: { value: TBD } }),
+    );
+    const fm = plan.creates[0]?.frontmatter ?? {};
+    expect(fm).toStrictEqual({
+      source: String(SRC.sourceId),
+      contentHash: SRC.contentHash,
+      owner: "Bob",
+      dueDate: TBD,
+    }); // byte-equivalent to the 18.8 shape — no task_* keys, no tasksTruncated
+  });
+
+  it("multitask_frontmatter_marker_neutralized — a kw:region marker in a task value is neutralized (marker-safety parity, L49) [spec §6/rule 1]", async () => {
+    const plan = await build(
+      extraction({ task1_owner: { value: "a <!-- kw:region:evil --> b", evidenceRef: "s#1" } }),
+    );
+    const owner = String(plan.creates[0]?.frontmatter?.task1_owner ?? "");
+    expect(owner).not.toContain("<!-- kw:region:"); // defused
+    expect(owner.length).toBeGreaterThan(0); // neutralized, never dropped
+  });
+
+  it("multitask_frontmatter_path_unchanged — a multi-task extraction derives the IDENTICAL identity-keyed note path (path is SourceNoteIdentity-only) [spec WS-8/traversal]", async () => {
+    const plan = await build(
+      extraction({
+        task1_owner: { value: "Alice", evidenceRef: "s#1" },
+        task2_owner: { value: "Bob", evidenceRef: "s#2" },
+      }),
+    );
+    expect(plan.creates[0]?.path).toMatch(new RegExp(`^sources/${String(SRC_WS)}/[0-9a-f]+\\.md$`));
+  });
+
+  it("projection_is_deterministic_ascending_order — re-projection is byte-identical + task keys ascend by NUMERIC index (task2 before task10, not lexicographic) [spec determinism]", async () => {
+    const fields = extraction({
+      task10_owner: { value: "J", evidenceRef: "s#10" },
+      task2_owner: { value: "B", evidenceRef: "s#2" },
+      task1_owner: { value: "A", evidenceRef: "s#1" },
+    });
+    const fm1 = (await build(fields)).creates[0]?.frontmatter ?? {};
+    const fm2 = (await build(fields)).creates[0]?.frontmatter ?? {};
+    expect(JSON.stringify(fm1)).toBe(JSON.stringify(fm2)); // deterministic
+    const taskKeys = Object.keys(fm1).filter((k) => k.startsWith("task"));
+    expect(taskKeys).toStrictEqual([
+      "task1_owner",
+      "task1_dueDate",
+      "task2_owner",
+      "task2_dueDate",
+      "task10_owner",
+      "task10_dueDate",
+    ]); // ascending numeric index (NOT lexicographic task10 before task2)
+  });
+
+  it("many_tasks_capped_with_visible_sentinel — beyond the defensive cap the projection truncates the TASKS + stamps tasksTruncated:true (no silent drop; bounds the unbounded candidate key count, L51) [spec determinism/bound]", async () => {
+    const many: Record<string, { value: unknown; evidenceRef?: string }> = {};
+    for (let i = 1; i <= 60; i++) many[`task${i}_owner`] = { value: `u${i}`, evidenceRef: `s#${i}` };
+    const fm = (await build(extraction(many))).creates[0]?.frontmatter ?? {};
+    const taskOwnerKeys = Object.keys(fm).filter((k) => /^task\d+_owner$/.test(k));
+    expect(taskOwnerKeys.length).toBe(50); // capped
+    expect(fm.tasksTruncated).toBe(true); // honestly signalled (no silent cap)
+    expect(fm.task1_owner).toBe("u1"); // the lowest indices are kept
+  });
+});

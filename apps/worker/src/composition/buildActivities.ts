@@ -886,28 +886,62 @@ export function buildProofSpineActivities(
         identity: { workspaceId: ws, sourceId: String(source.sourceId) },
         binding: sourceBinding.externalActionBinding,
       });
-      // 18.8 — the committed note carries the REAL validated extraction (owner/dueDate) in its
-      // frontmatter, alongside the identity provenance (source/contentHash) — the source note is no
-      // longer identity-only (closes the 18.4-deferred "deeper source-metadata frontmatter"). A FIXED
-      // convention [owner, dueDate] (mirrors the meeting's fixed NOTE_FRONTMATTER_FIELDS) — NEVER an
-      // arbitrary validated field — so a hostile extraction can't inject frontmatter or redirect the
-      // path/workspace (WS-8/no-inference). An absent field ⇒ the TBD sentinel via `frontmatterValue`
-      // (REQ-F-017); each value is neutralized so an embedded `kw:region` marker can't forge a region
-      // boundary (parity with the meeting projection). The content reaches the note ONLY via this
+      // 18.29 — the committed note carries the REAL validated extraction in its frontmatter, alongside the
+      // identity provenance (source/contentHash). This GENERALIZES the 18.8 FIXED [owner,dueDate] convention
+      // to a STRICT PATTERN allow-list that ALSO projects the real model's MULTI-TASK task-prefixed fields
+      // (task1_owner, task1_dueDate, task2_owner, …) — the maiden run emitted these and the fixed-key read
+      // degraded them to blanket TBD/TBD. It stays injection-resistant BY CONSTRUCTION (L49): a key lands ONLY
+      // if it is a bare convention field OR matches `^task<n>_(owner|dueDate)$` EXACTLY — a smuggled
+      // `workspaceId`/path/`../x`/`taskN_secret`/non-digit-index key can NEVER inject frontmatter or redirect
+      // the path/workspace (WS-8/no-inference). An absent field ⇒ the TBD sentinel via `frontmatterValue`
+      // (REQ-F-017, never invented); every value is neutralized so an embedded `kw:region` marker can't forge a
+      // region boundary (parity with the meeting projection). The content reaches the note ONLY via this
       // validated KMP → createCommitActivity → applyPlan (the sole writer, which re-runs the gate — rule 1).
-      const SOURCE_FRONTMATTER_FIELDS = ["owner", "dueDate"] as const;
+      const BARE_FRONTMATTER_FIELDS = ["owner", "dueDate"] as const;
+      // A task field key: `task<index>_(owner|dueDate)`, anchored (no `g` flag ⇒ stateless `.exec`).
+      const TASK_FRONTMATTER_FIELD = /^task(\d+)_(owner|dueDate)$/;
+      // Defensive bound on the projected task COUNT: the agent_extraction candidate is not yet key-count-bounded
+      // (maxProperties is a deferred §9-catalog Future-TODO, L51), so a pathological/hostile extraction could
+      // emit unbounded taskN_* keys. Cap the tasks (NOT a silent per-key drop) — beyond the cap a single
+      // `tasksTruncated: true` sentinel (a projection-added literal, NEVER read from `fields` ⇒ injection-safe)
+      // honestly signals the elision.
+      const MAX_FRONTMATTER_TASKS = 50;
       // Defensive degrade to the SAFE no-inference value: `ValidatedExtraction.fields` is non-optional per
-      // contract, but a contract-violating absent `fields` degrades to `{}` ⇒ every convention field
-      // resolves to the TBD sentinel (never an invented value), with the KnowledgeWriter gate as the real
-      // backstop. Unlike the meeting projection (which fails on an absent concrete title anchor), the
-      // source note has no concrete-anchor requirement, so a TBD/TBD frontmatter is a valid degrade.
+      // contract, but a contract-violating absent `fields` degrades to `{}` ⇒ every convention field resolves
+      // to the TBD sentinel (never an invented value), with the KnowledgeWriter gate as the real backstop.
       const vfields = validated.fields ?? {};
       const noteFrontmatter: Record<string, unknown> = {
         source: String(source.sourceId),
         contentHash: source.contentHash,
       };
-      for (const name of SOURCE_FRONTMATTER_FIELDS) {
+      // (i) the bare convention fields — ALWAYS projected (backward-compat: a single-task source is
+      // byte-equivalent to 18.8; a pure multi-task source keeps the honest TBD pair). Absent ⇒ TBD.
+      for (const name of BARE_FRONTMATTER_FIELDS) {
         noteFrontmatter[name] = neutralizeFrontmatterValue(frontmatterValue(vfields[name]));
+      }
+      // (ii) the multi-task fields — collect the DISTINCT task-index digit strings present under the strict
+      // pattern, order ASCENDING by numeric value (digit-string tiebreak for determinism), cap, then project
+      // BOTH owner+dueDate per task (an absent sibling ⇒ TBD). Reading by the canonical `task${idx}_${field}`
+      // key uses the exact matched digit string, so a leading-zero variant (`task01_`) is neither lost nor
+      // collided with `task1_`.
+      const taskIndices = [
+        ...new Set(
+          Object.keys(vfields)
+            .map((k) => TASK_FRONTMATTER_FIELD.exec(k)?.[1])
+            .filter((d): d is string => d !== undefined),
+        ),
+      ].sort((a, b) => Number(a) - Number(b) || (a < b ? -1 : a > b ? 1 : 0));
+      const projectedTasks = taskIndices.slice(0, MAX_FRONTMATTER_TASKS);
+      for (const idx of projectedTasks) {
+        for (const field of ["owner", "dueDate"] as const) {
+          const key = `task${idx}_${field}`;
+          noteFrontmatter[key] = neutralizeFrontmatterValue(frontmatterValue(vfields[key]));
+        }
+      }
+      // No silent cap (L51): a truncated projection stamps a visible sentinel (a projection-added literal,
+      // never read from `fields`, so it can't be forged by a hostile extraction).
+      if (taskIndices.length > projectedTasks.length) {
+        noteFrontmatter.tasksTruncated = true;
       }
       const plan: KnowledgeMutationPlan = {
         planId: makePlanId(`plan-source-${String(ws)}-${digest}`),
