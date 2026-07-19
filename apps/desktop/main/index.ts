@@ -22,6 +22,7 @@ import {
   type WorkerChild,
 } from "./worker-supervisor";
 import { setWorkerEndpoint } from "./worker-holder";
+import { readWorkerArmingEnv } from "./worker-arming-env";
 
 const isDev = typeof process.env["ELECTRON_RENDERER_URL"] === "string";
 
@@ -87,6 +88,9 @@ function startWorker(): void {
     ...(process.env["SOW_TEMPORAL_ADDRESS"] !== undefined
       ? { temporalAddress: process.env["SOW_TEMPORAL_ADDRESS"] }
       : {}),
+    // Path-β subscription-extraction arming + §5 egress allowlist (18.32), read HERE in Electron main and
+    // threaded to the worker-host over IPC (plain data only). Unset ⇒ `{}` ⇒ byte-equivalent to today's config.
+    ...readWorkerArmingEnv(process.env),
   };
   const entryPath = join(__dirname, "../worker/desktop-host.mjs");
   const loaderPath = join(__dirname, "../../worker-host/register-loader.mjs");

@@ -22,6 +22,11 @@ export interface WorkerHostConfig {
   readonly autoIngest?: boolean;
   readonly ingestWorkspaceId?: string;
   readonly temporalAddress?: string;
+  /** Path-β subscription-extraction arming (owner env; default OFF/dormant). PLAIN DATA only — the fork IPC
+   *  channel cannot carry the makeCompletion/checkReachable thunks (§19.5); bootWorker supplies those. */
+  readonly subscriptionArm?: { readonly enabled?: boolean; readonly model?: string };
+  /** §5 egress-processor allowlist forwarded into the auto-ingest proof-spine EgressPolicy (18.31); default absent ⇒ []. */
+  readonly egressAllowedProcessors?: readonly string[];
 }
 
 /** The minimal child-process surface the supervisor drives (a real fork or a fake). */

@@ -21,6 +21,7 @@ import {
   temporalManagementPlan,
   type TemporalSupervisor,
 } from "./temporal-supervisor";
+import { subscriptionArmForward, buildAutoIngestGateOpts } from "./arming-forward";
 
 // Option A (app-managed serve): worker-host owns the local `gbrain serve --http --enable-dcr` lifecycle so the
 // agentic Copilot tools + the http retrieval transport share ONE server (one PGlite connection — no CLI/serve
@@ -49,8 +50,9 @@ const TEMPORAL_DEV_ADDRESS = "127.0.0.1:7233";
 /** Bound the boot wait for Temporal-ready so a failed spawn degrades in seconds, not the 30s default. */
 const TEMPORAL_READINESS_TIMEOUT_MS = 10_000;
 
-/** The launch config main injects over the child IPC channel. */
-interface WorkerHostConfig {
+/** The launch config main injects over the child IPC channel. Exported so the IPC mirror can be
+ *  compile-time sync-pinned against main/worker-supervisor.ts's copy (18.32). */
+export interface WorkerHostConfig {
   /** The per-launch session-token secret (same string the renderer presents as Bearer). */
   readonly token: string;
   /** The per-launch identity (audit-only; does not affect token verification). */
@@ -70,6 +72,12 @@ interface WorkerHostConfig {
   readonly ingestWorkspaceId?: string;
   /** The local Temporal dev-server address; default 127.0.0.1:7233. */
   readonly temporalAddress?: string;
+  /** Path-β subscription-extraction arming (owner env; default OFF/dormant). PLAIN DATA only — the fork IPC
+   *  channel cannot carry the makeCompletion/checkReachable thunks (§19.5); bootWorker supplies those, and its
+   *  FAIL-CLOSED reachability default keeps an env-only arm HEALTH-denied. Mirrors main/worker-supervisor.ts. */
+  readonly subscriptionArm?: { readonly enabled?: boolean; readonly model?: string };
+  /** §5 egress-processor allowlist forwarded into the auto-ingest proof-spine EgressPolicy (18.31); default absent ⇒ []. */
+  readonly egressAllowedProcessors?: readonly string[];
 }
 
 /** Messages the host emits back to main. */
@@ -209,18 +217,19 @@ async function start(config: WorkerHostConfig): Promise<void> {
       dispatchApproval: () => Promise.resolve({ ok: true, value: undefined }),
       ...(config.dbPath !== undefined ? { dbPath: config.dbPath } : {}),
       ...(config.vaultRoot !== undefined ? { vaultRoot: config.vaultRoot } : {}),
+      // Path-β subscription-extraction arming (18.32): forward the plain-data arm (unset ⇒ key OMITTED ⇒
+      // byte-equivalent). bootWorker supplies the real makeCompletion + a FAIL-CLOSED reachability probe, so
+      // an env-only arm stays HEALTH-denied (dormant) until the owner ENABLE injects a real checkReachable.
+      ...subscriptionArmForward(config),
       // OPEN-THE-GATES auto-ingest (owner opt-in, default OFF): when `config.autoIngest` is ON AND a vaultRoot is
       // present, wire vaultWatch + proofSpineParams + temporalAddress → activate the built §11.8 vault→ingestion
       // loop on the local Temporal dev-server. Default (opt-in OFF or no vaultRoot) ⇒ the gate returns undefined ⇒
       // NO proofSpineParams / NO vaultWatch — EXACTLY today's degraded boot (control-plane API only; connectTemporal
       // degrades cleanly, the proof-spine pipeline stays dormant). The proof-spine params are built only when gated on.
       ...(boot.gateAutoIngest(
-        {
-          autoIngest: config.autoIngest,
-          ingestWorkspaceId: config.ingestWorkspaceId,
-          // sensitivity is not an owner env knob this slice — the gate defaults it to "normal".
-          temporalAddress: config.temporalAddress,
-        },
+        // 18.32 — the WorkerHostConfig → gateAutoIngest opts mapping, incl. the §5 egress allowlist forward
+        // (18.31). Egress omitted when unset ⇒ the proof-spine EgressPolicy stays fail-closed-empty (byte-equiv).
+        buildAutoIngestGateOpts(config),
         config.vaultRoot,
         boot.buildAutoIngestProofSpineParams,
       ) ?? {}),
