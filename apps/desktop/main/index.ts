@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { createMainWindow } from "./window";
 import { installCsp } from "./security";
 import { registerIpcHandlers } from "./ipc";
@@ -23,6 +23,7 @@ import {
 } from "./worker-supervisor";
 import { setWorkerEndpoint } from "./worker-holder";
 import { readWorkerArmingEnv } from "./worker-arming-env";
+import { loadAllowlistedDotenv } from "./dotenv-allowlist";
 
 const isDev = typeof process.env["ELECTRON_RENDERER_URL"] === "string";
 
@@ -59,7 +60,39 @@ function registerAppProtocol(): void {
 // over the child IPC channel (never env/argv — the token is a secret).
 let supervisor: WorkerSupervisor | null = null;
 
+/**
+ * 18.34 — natively load the repo-root .env with an ALLOWLIST gate BEFORE any SOW_* read. Only recognized
+ * SOW_* config vars hydrate; a subscription-shadowing / egress-redirect var or a secret is structurally
+ * excluded (not SOW_*) and skipped + warned (KEY only, rule 7). Missing/unreadable .env ⇒ no-op; an existing
+ * process.env value wins (a real shell/CI export beats .env). Replaces dev.sh's blanket `source .env`.
+ */
+function hydrateAllowlistedDotenv(): void {
+  let contents: string | undefined;
+  try {
+    // The `.env` in the launch cwd — the repo root under `pnpm dev` / the old dev.sh (which cd'd there).
+    // In a packaged app cwd is not the repo, so there's no `.env` and this no-ops (a dev-only convenience).
+    contents = readFileSync(join(process.cwd(), ".env"), "utf8");
+  } catch {
+    contents = undefined; // missing/unreadable/EISDIR ⇒ no-op (today's default: no repo .env)
+  }
+  const { hydrate, skipped } = loadAllowlistedDotenv(contents, process.env);
+  for (const [key, value] of Object.entries(hydrate)) process.env[key] = value;
+  for (const s of skipped) {
+    if (s.reason === "shadowing") {
+      console.warn(
+        `[env] .env key "${s.key}" NOT loaded — subscription-shadowing/egress-redirect var excluded by the SOW_* allowlist (use the shell if truly intended; secrets belong in Keychain).`,
+      );
+    } else if (s.reason === "not_recognized") {
+      console.warn(`[env] .env key "${s.key}" NOT loaded — not on the recognized SOW_* config allowlist.`);
+    }
+    // "already_set" ⇒ silent: an existing process.env export intentionally wins.
+  }
+}
+
 function startWorker(): void {
+  // Hydrate the allowlisted .env FIRST, before any SOW_* read below or in the forked worker-host (which
+  // inherits this process.env). No-op when no repo-root .env exists (today's default).
+  hydrateAllowlistedDotenv();
   const mode = isDev ? "dev" : "prod";
   const devUrl = process.env["ELECTRON_RENDERER_URL"];
   const allowlist = buildWorkerAllowlist(mode, WORKER_LOOPBACK_PORT, devUrl);
