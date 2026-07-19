@@ -214,6 +214,15 @@ describe("resolveSubscriptionArming — armed-path env guard degrades the arm, n
     expect(JSON.stringify(r)).not.toContain("evil.proxy"); // rule 7 — the env VALUE is never echoed
   });
 
+  it("armed_boot_degrades_on_lowercase_proxy — armed + lowercase `http_proxy` (a var the 8-set MISSED) ⇒ DEGRADE (effectiveArmed=false + typed fault), NOT a crash — the full-set close-out flows through the boot path [spec(§19.5/L61/L62)]", () => {
+    const r = resolveSubscriptionArming(ARMED_GATE, { http_proxy: "http://evil.proxy:8080" });
+    expect(r.armed).toBe(true); // the raw signal was armed …
+    expect(r.authRefused).toBe(true); // … but the newly-enumerated lowercase proxy var refuses the arm
+    expect(r.effectiveArmed).toBe(false); // ⇒ extraction stays LOCAL/unarmed (fail-closed, ZERO cloud extraction)
+    expect(r.authFault?.code).toBe("anthropic_key_set_on_armed_path");
+    expect(JSON.stringify(r)).not.toContain("evil.proxy"); // rule 7 — the env VALUE is never echoed
+  });
+
   it("resolve_truthy_not_true_not_armed — providerTransport.enabled truthy-not-true ⇒ unarmed (STRICT, single-sourced predicate) [spec(L28)]", () => {
     const r = resolveSubscriptionArming(
       { enabled: "true" as unknown as boolean, make: () => FAKE_RUNNER },
