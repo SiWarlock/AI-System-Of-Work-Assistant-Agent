@@ -4,7 +4,7 @@
 - **Phase:** 18 (§19.5 Real Model Transport & Intelligence Legs) — the owner ENABLE / hard-line crossing (real cloud egress + real ~$0.45 spend, Option B / subscription)
 - **Role / track:** worker-impl (implementer), single-track `main`, team `session-4f4687dd`
 - **Predecessor:** [`096-2026-07-18-phase18-staged-enable-worker-impl.md`](096-2026-07-18-phase18-staged-enable-worker-impl.md)
-- **Successor:** _(the FRESH worker-impl that executes the ARM + RUN — see "Open follow-ups → ARM-EXECUTION HANDOFF")_
+- **Successor:** [`098-2026-07-18-phase18-subscription-enable-golive-worker-impl.md`](098-2026-07-18-phase18-subscription-enable-golive-worker-impl.md) — the ARM + RUN executed there (GO-LIVE; #13 Finding C 18.27 shipped first, then the maiden real extraction + CP3)
 - **Cycle reason:** worker-impl at 77% [ACTION] on the canonical /context-check heartbeat → cycle at the next clean break. This IS the clean break: the arm is **code-complete, before the irreversible real-spend run**.
 
 ## Why this session existed
