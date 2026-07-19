@@ -23,9 +23,10 @@
 // leakage-eval (zero raw employer content on a real cloud egress) is the CROSSING.
 import { describe, it, expect, afterEach } from "vitest";
 import { isOk, isErr, processorId, validAgentJob, validKnowledgeMutationPlan } from "@sow/contracts";
-import type { AgentJob, ProviderRoute, ProviderMatrix, EgressPolicy } from "@sow/contracts";
+import type { AgentJob, ProviderRoute, ProviderMatrix, EgressPolicy, ProcessorId } from "@sow/contracts";
 import { NO_ELIGIBLE_PROVIDER_HEALTH_CLASS } from "@sow/providers";
 import { assembleBackends, type ProofSpineBackends } from "../../src/composition/backends";
+import { buildAutoIngestProofSpineParams } from "../../src/boot";
 
 const LOCAL_ENDPOINT = "http://127.0.0.1:11434";
 
@@ -374,5 +375,110 @@ describe("18.30 — auto-ingest source.process dispatch path is admission+veto s
     if (!isOk(outcome)) return;
     expect(outcome.value.candidate.kind).toBe("knowledge_mutation_plan");
     expect(outcome.value.usage.runtimeSeconds).toBe(1); // the DORMANT stub's fixed value
+  });
+});
+
+// 18.31 — the auto-ingest EGRESS-ALLOWLIST seam is the OPERATIVE veto gate for a PERSONAL-workspace
+// `source.process` cloud `{runtime}` route (the armed subscription-extraction shape, 18.23). The egress policy
+// here is produced by the REAL 18.31 seam — `buildAutoIngestProofSpineParams(ws, allowlist).resolved.egressPolicy`
+// — so these drive the exact value the desktop forward (18.32) will populate through the real
+// `assembleBackends(...).broker.runJob` (the reachability evidence for the new param, per the brief's Step 7.5).
+// A personal-ws source job carries RAW content, so the cloud processor must be in BOTH `allowedProcessors` AND
+// `rawContentAllowedProcessors` to clear the veto (both populated by the single seam param). The employer-raw veto
+// (18.30) is INDEPENDENT — allowlisting a processor never bypasses it. providerTransport stays UNSET ⇒ the dormant
+// stub run leg (SAFE-BUILD; no real cloud call is possible).
+describe("18.31 — the egress-allowlist seam gates a personal-ws source.process cloud {runtime} route at the assembled root (rule 5)", () => {
+  const opened: ProofSpineBackends[] = [];
+  afterEach(() => {
+    for (const b of opened.splice(0)) b.close();
+  });
+
+  const SOURCE_CAP = "source.process";
+  // The armed subscription-extraction route (18.23): a cloud `{runtime}` route (providerOfRoute null ⇒ skips
+  // the provider allowlist, reaches the veto), processor `claude-agent-sdk`.
+  const runtimeCloudRoute = {
+    runtime: "claude-agent-sdk",
+    model: "claude-sonnet-5",
+    endpoint: "https://api.anthropic.com",
+    egressClass: "cloud",
+  } as unknown as ProviderRoute;
+  // A read-only policy — the ING-7-clean posture the real (untrusted) source path carries (so admission ADMITS).
+  const READ_ONLY = { mode: "read_only", allowedTools: [], deniedTools: [], allowsMutating: false };
+  const PERSONAL = { type: "personal_business", dataOwner: "user" } as const;
+  // A ProviderMatrix keyed on `source.process` (allowedProviders empty — a `{runtime}` route skips the allowlist).
+  const sourceMatrix = (route: ProviderRoute): ProviderMatrix =>
+    ({
+      workspaceId: validAgentJob.workspaceId,
+      allowedProviders: [],
+      capabilityDefaults: { [SOURCE_CAP]: route } as ProviderMatrix["capabilityDefaults"],
+      rawCloudEgressEnabled: false,
+    }) as unknown as ProviderMatrix;
+  // An untrusted, read-only source.process job CARRYING RAW CONTENT (source ingestion carries raw content).
+  const rawSourceJob = (over: Record<string, unknown> = {}): AgentJob =>
+    ({
+      ...validAgentJob,
+      providerRoute: runtimeCloudRoute,
+      carriesRawContent: true,
+      capability: SOURCE_CAP,
+      trustLevel: "untrusted",
+      toolPolicy: READ_ONLY,
+      ...over,
+    }) as unknown as AgentJob;
+  // The egress policy built THROUGH the real 18.31 seam — the value the desktop forward will populate.
+  const egressFor = (allowlist: readonly ProcessorId[]): EgressPolicy =>
+    buildAutoIngestProofSpineParams(String(validAgentJob.workspaceId), allowlist).resolved
+      .egressPolicy as unknown as EgressPolicy;
+
+  it("assembled_broker_allows_claude_agent_sdk_cloud_route_only_when_allowlisted — allowlist populated ⇒ resolves PAST the egress veto to the dormant stub (§5 rule 5, L50)", async () => {
+    const backends = await assembleBackends({}, { candidateOutput: validKnowledgeMutationPlan });
+    opened.push(backends);
+    const outcome = await backends.broker.runJob({
+      job: rawSourceJob({ idempotencyKey: "idem-personal-allowlisted-allow" }),
+      matrix: sourceMatrix(runtimeCloudRoute),
+      egress: egressFor([processorId("claude-agent-sdk")]), // both lists carry the processor (seam-populated)
+      workspace: PERSONAL,
+      localConfig: { allowedLocalEndpoints: [LOCAL_ENDPOINT] },
+    });
+    // The allowlist clears the veto (personal ws ⇒ no employer veto; processor in BOTH lists ⇒ raw-content OK).
+    expect(isOk(outcome)).toBe(true);
+    if (!isOk(outcome)) return;
+    expect(outcome.value.candidate.kind).toBe("knowledge_mutation_plan");
+    expect(outcome.value.usage.runtimeSeconds).toBe(1); // the DORMANT stub (SAFE-BUILD; no real cloud call)
+  });
+
+  it("assembled_broker_denies_claude_agent_sdk_cloud_route_when_allowlist_empty — the SAME route with an EMPTY allowlist ⇒ DENY PROCESSOR_NOT_ALLOWED at the egress veto (the allowlist is the operative gate, non-vacuity for the allow above)", async () => {
+    const backends = await assembleBackends({});
+    opened.push(backends);
+    const outcome = await backends.broker.runJob({
+      job: rawSourceJob({ idempotencyKey: "idem-personal-empty-deny" }),
+      matrix: sourceMatrix(runtimeCloudRoute),
+      egress: egressFor([]), // the byte-equivalent dormant default (both lists empty)
+      workspace: PERSONAL,
+      localConfig: { allowedLocalEndpoints: [LOCAL_ENDPOINT] },
+    });
+    expect(isErr(outcome)).toBe(true);
+    if (!isErr(outcome)) return;
+    // The ONLY veto-relevant diff from the allow above is the allowlist ⇒ proves it is the operative gate.
+    expect(outcome.error.stage).toBe("egress_veto");
+    expect(outcome.error.reason).toBe("PROCESSOR_NOT_ALLOWED");
+  });
+
+  it("allowlisting_a_processor_never_bypasses_employer_raw_veto — the SAME claude-agent-sdk allowlist on an EMPLOYER-work + ack-OFF workspace STILL denies EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED (the employer veto precedes the allowlist — preserves the 18.30 pin)", async () => {
+    const backends = await assembleBackends({});
+    opened.push(backends);
+    const outcome = await backends.broker.runJob({
+      // egressFor(...) always sets employerRawEgressAcknowledged:false ⇒ ack OFF; the processor IS allowlisted
+      // in both lists — WITHOUT the employer veto this would ALLOW, so a DENY proves the veto (which runs BEFORE
+      // the allowlist) is what fails it closed. Allowlisting is additive within rule-3, never a rule-5 bypass.
+      job: rawSourceJob({ idempotencyKey: "idem-employer-allowlisted-still-deny" }),
+      matrix: sourceMatrix(runtimeCloudRoute),
+      egress: egressFor([processorId("claude-agent-sdk")]),
+      workspace: EMPLOYER,
+      localConfig: { allowedLocalEndpoints: [LOCAL_ENDPOINT] },
+    });
+    expect(isErr(outcome)).toBe(true);
+    if (!isErr(outcome)) return;
+    expect(outcome.error.stage).toBe("egress_veto");
+    expect(outcome.error.reason).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
   });
 });

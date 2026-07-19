@@ -7,6 +7,7 @@
 // the shipped path — the review confirms). The live fs.watch→Temporal→sourceIngestion path is the SOW_TEMPORAL=1
 // suites; this file pins the config→wiring GATE + the binding.
 import { describe, it, expect, vi } from "vitest";
+import { processorId } from "@sow/contracts";
 import {
   gateAutoIngest,
   buildAutoIngestProofSpineParams,
@@ -177,5 +178,61 @@ describe("gateAutoIngest — source stubExtraction seam (CP-3b/18.13b, #13 preco
     const r = gateAutoIngest({ autoIngest: false, ingestWorkspaceId: WS }, "/vault", build, SOURCE_STUB);
     expect(r).toBeUndefined();
     expect(build).not.toHaveBeenCalled();
+  });
+});
+
+// 18.31 — the auto-ingest EGRESS-ALLOWLIST seam. `AutoIngestGateOpts` gains an optional
+// `egressAllowedProcessors`; `gateAutoIngest` threads it into `buildAutoIngestProofSpineParams`, which
+// populates the proof-spine `EgressPolicy.allowedProcessors` AND `.rawContentAllowedProcessors` (source
+// ingestion carries raw content ⇒ both). Default-empty ⇒ byte-equivalent to today (both lists []). Without
+// this seam an armed subscription cloud `{runtime}` route is denied `PROCESSOR_NOT_ALLOWED`; the desktop
+// forward (18.32) supplies the real value. This pins the GATE→proof-spine EgressPolicy threading; the
+// assembled-broker consequence (allowlist is the operative veto gate) is in egress-veto-assembled.test.ts.
+describe("gateAutoIngest — egress-allowlist seam (18.31, gate → proof-spine EgressPolicy)", () => {
+  const AGENT_SDK = processorId("claude-agent-sdk");
+
+  it("egress_allowlist_default_empty_is_byte_equivalent — ARMED but NO egressAllowedProcessors ⇒ proof-spine EgressPolicy both lists [] (identical to the pre-seam builder output)", () => {
+    // spec(§5) — the dormant default stays fail-closed empty; byte-equivalent to today (Lessons 23/50).
+    const r = gateAutoIngest(
+      { autoIngest: true, ingestWorkspaceId: WS },
+      "/vault",
+      buildAutoIngestProofSpineParams,
+    );
+    const egress = r?.proofSpineParams.resolved.egressPolicy;
+    expect(egress?.allowedProcessors).toStrictEqual([]);
+    expect(egress?.rawContentAllowedProcessors).toStrictEqual([]);
+    // The whole EgressPolicy is byte-identical to the pre-seam direct builder (default param []).
+    expect(egress).toStrictEqual(buildAutoIngestProofSpineParams(WS).resolved.egressPolicy);
+  });
+
+  it("egress_allowlist_populates_both_processor_lists — egressAllowedProcessors:['claude-agent-sdk'] ⇒ BOTH allowedProcessors AND rawContentAllowedProcessors carry it", () => {
+    // spec(§5) — source ingestion carries raw content, so the cloud processor must be in BOTH lists
+    // (session 098 CP3 precondition: allowedProcessors AND rawContentAllowedProcessors).
+    const r = gateAutoIngest(
+      { autoIngest: true, ingestWorkspaceId: WS, egressAllowedProcessors: [AGENT_SDK] },
+      "/vault",
+      buildAutoIngestProofSpineParams,
+    );
+    const egress = r?.proofSpineParams.resolved.egressPolicy;
+    expect(egress?.allowedProcessors).toStrictEqual([AGENT_SDK]);
+    expect(egress?.rawContentAllowedProcessors).toStrictEqual([AGENT_SDK]);
+    // Distinct array instances (no aliasing between the two lists).
+    expect(egress?.allowedProcessors).not.toBe(egress?.rawContentAllowedProcessors);
+  });
+
+  it("egress_allowlist_empty_calls_thunk_single_arg_byte_equivalent — explicit [] routes to the SINGLE-arg thunk call (byte-equivalent to the pre-seam call); a non-empty list passes it as the 2nd arg (L23/L28/L57 arity pin)", () => {
+    // The `.length > 0` guard keeps the default/empty path calling the thunk EXACTLY as the pre-seam code did
+    // (single arg) so byte-equivalence is preserved BY CONSTRUCTION regardless of the injected thunk's impl — an
+    // ARITY pin (L23/L28 factory-spy style), since with the real builder an explicit [] and a single-arg call are
+    // output-indistinguishable (a value assertion can't see the branch). Guards against a future "simplify to
+    // always pass `?? []`" that would move byte-equivalence from by-construction to by-callee-behavior (L57).
+    const build = vi.fn((_ws: string, _allow?: readonly string[]) => FAKE_PARAMS);
+    gateAutoIngest({ autoIngest: true, ingestWorkspaceId: WS, egressAllowedProcessors: [] }, "/vault", build);
+    expect(build).toHaveBeenCalledWith(WS); // exactly one arg — an empty allowlist adds NO 2nd arg
+    expect(build.mock.calls[0]).toHaveLength(1);
+
+    build.mockClear();
+    gateAutoIngest({ autoIngest: true, ingestWorkspaceId: WS, egressAllowedProcessors: [AGENT_SDK] }, "/vault", build);
+    expect(build).toHaveBeenCalledWith(WS, [AGENT_SDK]); // non-empty ⇒ passed as the 2nd arg
   });
 });

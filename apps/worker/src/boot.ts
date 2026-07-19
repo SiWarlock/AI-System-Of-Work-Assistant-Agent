@@ -38,7 +38,7 @@
 //     (`createOperationalBackupService`) is WIRED into the handle (`backupService`)
 //     but NOT SCHEDULED — the periodic CRON that calls `backupService.run()` on the
 //     `backupCadenceMs` is Phase-11. The service is ready; only its trigger is deferred.
-import { auditId, sourceId, isOk, workspaceId, workflowId, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID, AGENT_EXTRACTION_SCHEMA_ID } from "@sow/contracts";
+import { auditId, sourceId, isOk, workspaceId, workflowId, processorId, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID, AGENT_EXTRACTION_SCHEMA_ID } from "@sow/contracts";
 import type {
   Result,
   FailureVariant,
@@ -634,6 +634,16 @@ export interface AutoIngestGateOpts {
   readonly ingestWorkspaceId?: string;
   readonly ingestSensitivity?: string;
   readonly temporalAddress?: string;
+  /**
+   * 18.31 — the egress-processor allowlist for the auto-ingest proof-spine `EgressPolicy` (both
+   * `allowedProcessors` AND `rawContentAllowedProcessors`, since source ingestion carries raw content, §5). Plain
+   * IPC-safe `string[]` (branded to `ProcessorId` worker-side in `buildAutoIngestProofSpineParams`); the desktop
+   * forward (18.32) passes `WorkerHostConfig.egressAllowedProcessors` straight through. DEFAULT-ABSENT/empty ⇒ the
+   * proof-spine egress policy stays fail-closed empty (byte-equivalent to today) — an armed subscription cloud
+   * `{runtime}` route is denied `PROCESSOR_NOT_ALLOWED` until this allowlists its processor. Independent OFF-lock
+   * from `subscriptionArm`/`providerTransport` (Lessons 8/27/52): supplying it arms nothing on its own.
+   */
+  readonly egressAllowedProcessors?: readonly string[];
 }
 
 /** The wiring gateAutoIngest augments the bootWorker call with when the opt-in is ON — every field is an
@@ -665,7 +675,7 @@ export interface AutoIngestWiring {
 export function gateAutoIngest(
   opts: AutoIngestGateOpts,
   vaultRoot: string | undefined,
-  buildProofSpineParams: (workspaceId: string) => ProofSpineParams,
+  buildProofSpineParams: (workspaceId: string, egressAllowedProcessors?: readonly string[]) => ProofSpineParams,
   stubExtraction?: StubMeetingExtraction,
 ): AutoIngestWiring | undefined {
   if (opts.autoIngest !== true || vaultRoot === undefined) return undefined;
@@ -673,7 +683,14 @@ export function gateAutoIngest(
   const sensitivity = opts.ingestSensitivity ?? "normal";
   return {
     vaultWatch: { workspaceId: ingestWorkspaceId, sensitivity },
-    proofSpineParams: buildProofSpineParams(ingestWorkspaceId),
+    // 18.31 — thread the egress allowlist into the proof-spine builder ONLY when a non-empty list is provided (a
+    // conditional pass mirroring the `stubExtraction` conditional-spread, L57): the default/OFF-of-the-seam path
+    // calls the thunk with a SINGLE arg — byte-identical to the pre-seam call — while a populated allowlist bakes
+    // the processor into the EgressPolicy. An empty list is semantically the fail-closed default (both lists empty).
+    proofSpineParams:
+      opts.egressAllowedProcessors !== undefined && opts.egressAllowedProcessors.length > 0
+        ? buildProofSpineParams(ingestWorkspaceId, opts.egressAllowedProcessors)
+        : buildProofSpineParams(ingestWorkspaceId),
     temporalAddress: opts.temporalAddress ?? "127.0.0.1:7233",
     // CP-3b/18.13b (#13 precondition) — thread the SOURCE stub seam. OMIT the key when no stub is provided (a
     // conditional spread, never `= undefined`) so the default wiring shape stays byte-identical (pinned by
@@ -1050,7 +1067,12 @@ export async function computeAndRouteRebuildOracle(
  * default-OFF invariant). Closes the deferred durable-`revisions` residual — both (a) the real durable
  * sourceCommit and (b) the propose-path durability.
  */
-export function buildAutoIngestProofSpineParams(boundWorkspace: string): ProofSpineParams {
+export function buildAutoIngestProofSpineParams(
+  boundWorkspace: string,
+  // 18.31 — the owner/desktop-supplied egress allowlist (plain IPC-safe strings). DEFAULT [] ⇒ the egress policy
+  // below stays fail-closed empty (byte-equivalent to the pre-seam hardcoded-empty lists).
+  egressAllowedProcessors: readonly string[] = [],
+): ProofSpineParams {
   const ws: WorkspaceId = workspaceId(boundWorkspace);
   const inertRevisions: KnowledgeRevisionStore = (() => {
     const byKey = new Map<string, CommittedRevision>();
@@ -1100,8 +1122,12 @@ export function buildAutoIngestProofSpineParams(boundWorkspace: string): ProofSp
     defaultVisibility: "coordination",
     egressPolicy: {
       workspaceId: ws,
-      allowedProcessors: [],
-      rawContentAllowedProcessors: [],
+      // 18.31 — brand the (IPC-safe plain) processor strings to `ProcessorId` at this single worker-side site (the
+      // desktop forward passes them through untouched, 18.32). Source ingestion carries raw content ⇒ the cloud
+      // processor must be in BOTH lists (§5). DEFAULT [] ⇒ two distinct empty arrays, byte-equivalent to the prior
+      // hardcoded-empty lists (no aliasing between the two — a downstream mutation of one can't affect the other).
+      allowedProcessors: egressAllowedProcessors.map((p) => processorId(p)),
+      rawContentAllowedProcessors: egressAllowedProcessors.map((p) => processorId(p)),
       employerRawEgressAcknowledged: false,
     },
     providerMatrix: {
