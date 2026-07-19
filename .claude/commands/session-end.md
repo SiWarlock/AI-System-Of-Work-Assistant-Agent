@@ -34,7 +34,7 @@ Procedure:
 2.7. **Wiring / reachability — confirm, don't re-trace.** Each feature already stated *"Reachable from `<entry>` via `<path>`"* at `/tdd` Step 7.5; carry those into the session doc's Reachability section. Re-trace (`/wired`) only a feature whose wiring a *later* slice might have removed. Any still tested-but-unwired feature → an open follow-up "Future TODO — belongs to a phase." A green suite over an unreachable feature is a silent gap.
 
 3. **ALWAYS create a session doc** at `docs/sessions/<NNN>-<YYYY-MM-DD>-<topic>.md`. This is required, not optional. Compute `<NNN>` as the next sequential number — `ls docs/sessions/`, find the max NNN prefix, increment, zero-pad to 3 digits. Single-track / solo → plain `<NNN>-…`.
-   **Multi-track mode (you carry a `<track>-` name prefix): prefix the filename with your track** — `docs/sessions/<track>-<NNN>-<date>-<topic>.md` — and compute `<NNN>` within your track (`ls docs/sessions/<track>-*`), so parallel tracks' session docs don't collide when the track branches merge (root `CLAUDE.md` "Naming + cross-bleed prevention").
+   **Multi-track mode (you carry a `<track>-` name prefix): prefix the filename with your track** — `docs/sessions/<track>-<NNN>-<date>-<topic>.md` — and compute `<NNN>` within your track (`ls docs/sessions/<track>-*`), so parallel tracks' session docs don't collide when the track branches merge (root `CLAUDE.md` "Naming + numbered-doc collision prevention").
 
    The doc must include these sections:
    - **Header** — date, phase, predecessor + successor session links

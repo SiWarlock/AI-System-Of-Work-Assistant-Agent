@@ -11,7 +11,7 @@ argument-hint: "<short topic>"
   + gate conditions VERBATIM.
 -->
 
-> **Role guard — TEAM LEAD only.** `/team-end` is the lead's pause-the-team close-out. Not the same as `/orchestrate-end` (orchestrator's round close-out) or `/session-end` (implementer's session close-out). Those run per-session; this runs when the team is **fully pausing** (end of day, arc-complete, lead-cycle, mode-swap to solo).
+> **Role guard — TEAM LEAD only.** `/team-end` is the lead's pause-the-team close-out. Not the same as `/orchestrate-end` (orchestrator's round close-out) or `/session-end` (implementer's session close-out). Those run per-session; this runs when the team is **fully pausing** (end of day, arc-complete, lead-cycle, mode-swap to solo). Requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` to have been set when this team was started (see `/team-start`'s prerequisite check) — without it there was never a live team to close out.
 
 Argument: `$ARGUMENTS` — short topic for the handoff doc filename (e.g. `eod-YYYY-MM-DD`, `arc-X-complete`).
 
@@ -47,7 +47,7 @@ Do NOT proceed to Step 2 until both gates pass. **Never tear down mid-work.**
 
 Read for the handoff doc:
 1. `git log --oneline -5` — last 5 commits, includes the round-seal hash.
-2. `IMPLEMENTATION_PLAN.md` "Currently in progress" + "Next session target" + "Carry-forward to upcoming briefs" + last Log entry.
+2. `IMPLEMENTATION_PLAN.md` "Currently in progress" + "Next session target" + "Carry-forward to upcoming briefs"; plus the last round entry in `docs/archive/IMPLEMENTATION_LOG.md` (the plan's `## Log` is only a pointer stub).
 3. The most recent `docs/sessions/<NNN>-*.md` — what just landed.
 You already hold the rest of the coordination state (team composition, active arc, open decisions) from the task list, tier-crossing pings, and escalations during the team's life; re-read `IMPLEMENTATION_PLAN.md` if unsure.
 
@@ -57,7 +57,7 @@ You already hold the rest of the coordination state (team composition, active ar
 ls docs/team-handoffs/ 2>/dev/null | head -20
 ```
 
-Take the highest numeric prefix + 1, zero-pad to 3 digits. If the `docs/team-handoffs/` directory doesn't exist yet, create it + start at `001`. Filename: `<NNN>-<YYYY-MM-DD>-<topic>.md` per `$ARGUMENTS`. **Multi-track mode (this lead carries a `<track>`): prefix the filename with the track** — `<track>-<NNN>-<YYYY-MM-DD>-<topic>.md` — and compute `<NNN>` within the track (`ls docs/team-handoffs/<track>-*`), so parallel tracks' handoffs don't collide when the track branches merge (root `CLAUDE.md` "Naming + cross-bleed prevention"). Single-track / solo → plain `<NNN>-…`.
+Take the highest numeric prefix + 1, zero-pad to 3 digits. If the `docs/team-handoffs/` directory doesn't exist yet, create it + start at `001`. Filename: `<NNN>-<YYYY-MM-DD>-<topic>.md` per `$ARGUMENTS`. **Multi-track mode (this lead carries a `<track>`): prefix the filename with the track** — `<track>-<NNN>-<YYYY-MM-DD>-<topic>.md` — and compute `<NNN>` within the track (`ls docs/team-handoffs/<track>-*`), so parallel tracks' handoffs don't collide when the track branches merge (root `CLAUDE.md` "Naming + numbered-doc collision prevention"). Single-track / solo → plain `<NNN>-…`.
 
 ## Step 4 — Write the handoff doc
 
@@ -111,7 +111,7 @@ Next team session: lead runs `/team-start <track>`, reads this handoff doc + `IM
 
 ## Step 5 — Update IMPLEMENTATION_PLAN.md
 
-Add one line under `Currently in progress` (or refresh it):
+**REPLACE** (don't append to) the `Currently in progress` snapshot with the pause marker, keeping it within the ≤3-item / ≤15-line cap:
 
 ```markdown
 - **Team paused at <YYYY-MM-DD>** — handoff doc: `docs/team-handoffs/<NNN>-<date>-<topic>.md` · last round-seal: `<commit hash>` · next-slice target: <task ID or "TBD per handoff">
@@ -146,14 +146,14 @@ If a predecessor handoff exists, also update its "Successor handoff" link to poi
 
 Remove this team's registry entries so `/context-check` no longer reports them as live (heartbeats would also age out via the 10-minute staleness filter, but explicit cleanup is cleaner):
 
-This cleans up **our custom monitoring layer only**. The Claude Code team itself (`~/.claude/teams/session-<first-8>/`) is auto-removed when your session exits — don't touch it. Match on the **team label** every teammate registered under at `/team-start` (the `$TEAM_LABEL` — track name, or `session-<first-8>`); that one filter catches the lead + every teammate, so no separate official-config read is needed:
+This cleans up **our custom monitoring layer only**. The Claude Code team itself (`~/.claude/teams/session-<first-8>/`) is auto-removed when your session exits — don't touch it. Match on the **track label** every teammate registered under at `/team-start` (the `$TRACK_LABEL` — track name, or `session-<first-8>`); that one filter catches the lead + every teammate, so no separate official-config read is needed:
 
 ```bash
-TEAM="<the $TEAM_LABEL used at /team-start>"
+TRACK="<the $TRACK_LABEL used at /team-start>"
 # Remove each registry entry (and its heartbeat) registered under this label.
 for f in "$HOME/.claude/team-registry"/*.json; do
   [ -f "$f" ] || continue
-  if [ "$(jq -r '.team // empty' "$f" 2>/dev/null)" = "$TEAM" ]; then
+  if [ "$(jq -r '.track_label // empty' "$f" 2>/dev/null)" = "$TRACK" ]; then
     sid=$(jq -r '.session_id // empty' "$f" 2>/dev/null)
     [ -n "$sid" ] && rm -f "$HOME/.claude/heartbeats/${sid}.json"
     rm -f "$f"

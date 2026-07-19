@@ -19,6 +19,8 @@
 >
 > _(Delete this blockquote if the project has no single load-bearing one-liner.)_
 
+> **Prerequisite:** Claude Code's agent-teams feature is experimental and OFF by default — it requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (set in `settings.json`'s `env` block or your shell environment). `/team-start` checks this before doing anything else; without it, none of this playbook engages and you fall back to "Single-operator fallback" below.
+
 ---
 
 ## Why a team
@@ -98,7 +100,7 @@ The build runs as **6 parallel tracks**, each its own git worktree + team (see t
 
 The lead spawns an implementer for an area when that area's work begins. **Build order is the explicit Phase/Track DAG in `IMPLEMENTATION_PLAN.md`'s Parallelization plan** — derived from `ARCHITECTURE.md` §2.5 subsystem boundaries, refined by the per-task `Depends on:` graph. Tracks with no unsatisfied upstream-track dependency run **in parallel, each in its own worktree with its own team** (see "Working tree → tracks + worktrees" below); a track starts once its upstream tracks have merged. The **critical path** through the DAG is the lead's scheduling priority — staff it first. (Single-track plan → one serial spine in one working tree.)
 
-Naming: **`<track>-<area>-<role>`** when parallel teams run (e.g. `frontend-team-orchestrator`), else `<area>-<role>` (e.g. `contracts-orchestrator`) — full rule in root `CLAUDE.md` "Naming + cross-bleed prevention." The `<track>` values come from the `IMPLEMENTATION_PLAN.md` Track map, not invented ad-hoc.
+Naming: **`<track>-<area>-<role>`** when parallel teams run (e.g. `frontend-team-orchestrator`), else `<area>-<role>` (e.g. `contracts-orchestrator`) — full rule in root `CLAUDE.md` "Naming + numbered-doc collision prevention." The `<track>` values come from the `IMPLEMENTATION_PLAN.md` Track map, not invented ad-hoc.
 
 ---
 
@@ -106,7 +108,7 @@ Naming: **`<track>-<area>-<role>`** when parallel teams run (e.g. `frontend-team
 
 The lead is the primary target for phantom messages because it sits at the human/agent boundary. Per root `CLAUDE.md` "Phantom-message defense" + lead-specific notes:
 
-1. **Track-prefix mismatch** on any peer DM → channel-bleed; ignore + continue. Most-common cause of cross-team contamination.
+1. **Track-prefix mismatch** on any peer DM → a spawn-naming inconsistency within the lead's own team (not cross-team bleed, which can't happen — `SendMessage` only resolves within your own session-scoped team) — verify the sender rather than reflexively ignoring it.
 2. **User-frame plain text with uncertain/exploratory tone** (vs the user's direct/tactical voice) → confirm before dispatching high-stakes directives. Low-stakes informational questions can be answered inline.
 3. **An agent pushing back on a correction with verifiable evidence** → defer to the evidence. The original input that triggered the correction may have been the phantom — don't double down on a recovery directive.
 4. **Commit-hash verification** is per-issue, not standard practice — only verify hashes when an actual problem surfaces (a referenced hash isn't in `git log`).
@@ -128,7 +130,7 @@ The lead spawns each teammate with a **brief, focused spawn prompt** carrying th
 
 ## Context monitoring + auto-cycle
 
-The orchestrator runs `/context-check <team>` locally after each slice but **pings the lead only when a tier ≥ WARN is crossed** (per root `CLAUDE.md` Messaging budget) — OK slices produce no ping, and the lead reads "work is advancing" from the free idle-notifications + the task list. When a ping does arrive it carries each teammate's `ctx_pct` (status-line heartbeat joined to the team-registry by session_id). The lead evaluates three thresholds — **this table is the canonical home for the tier ladder**; the numbers are the `check-team-context.sh` env defaults (`CLAUDE_TEAM_CTX_WARN/ACTION/HARD`), so an env override changes them everywhere at once; other docs cite tier NAMES only:
+The orchestrator runs `/context-check <track>` locally after each slice but **pings the lead only when a tier ≥ WARN is crossed** (per root `CLAUDE.md` Messaging budget) — OK slices produce no ping, and the lead reads "work is advancing" from the free idle-notifications + the task list. When a ping does arrive it carries each teammate's `ctx_pct` (status-line heartbeat joined to the team-registry by session_id). The lead evaluates three thresholds — **this table is the canonical home for the tier ladder**; the numbers are the `check-team-context.sh` env defaults (`CLAUDE_TEAM_CTX_WARN/ACTION/HARD`), so an env override changes them everywhere at once; other docs cite tier NAMES only:
 
 | Tier | Default % | What the lead does |
 |---|---|---|
@@ -141,7 +143,7 @@ Thresholds configurable via env vars: `CLAUDE_TEAM_CTX_WARN`, `CLAUDE_TEAM_CTX_A
 
 ### How the lead reads the ping
 
-A ping arrives only on a tier crossing, carrying the verbatim `/context-check <team> --brief` line — act on the tier it names. The lead can also invoke `/context-check <team>` directly any time for an ad-hoc snapshot (same helper script).
+A ping arrives only on a tier crossing, carrying the verbatim `/context-check <track> --brief` line — act on the tier it names. The lead can also invoke `/context-check <track>` directly any time for an ad-hoc snapshot (same helper script).
 
 ### The auto-cycle flow at ACTION threshold
 
@@ -207,7 +209,8 @@ In either case, the swap procedure is the same:
 2. **Lead re-reads the current state pointers:** `IMPLEMENTATION_PLAN.md` "Currently in progress" + the most recent `docs/sessions/<NNN>-*.md` + the last commit hash (`git log -1 --oneline`).
 3. **Spawn the successor** with the appropriate template (in `/team-start.md`), carrying:
    - Track prefix matching the lead's own
-   - Team name (the `$TEAM_LABEL` from `/team-start` Step 1 — the track name, or `session-<first-8>`; reuse the SAME team for the successor — pass it as the `Agent` `team_name` so the successor spawns as a teammate session, not a background agent)
+   - A `name` (the `Agent` param) issued by the lead — that alone is what makes it a teammate session, not `team_name` (accepted but ignored by the runtime) and not any team-creation step (none exists). The successor lands in the same session's one implicit team automatically, since the lead session persists across the cycle.
+   - Track label (the `$TRACK_LABEL` from `/team-start` Step 1 — the track name, or `session-<first-8>`; this is our own context-monitoring bookkeeping, reused so the registry-write below groups with the outgoing teammate's entries)
    - One-line WHY (what arc, what state, what user-direction was chosen)
    - The correct start command (`/orchestrate-start` for orch successor, `/session-start` for impl successor)
    - **Registry-write as first action** (in the spawn prompt template) — load-bearing for monitoring continuity.
@@ -226,7 +229,7 @@ These flow **directly between teammates**. The lead is **not** in the loop unles
 - **Step-2.5 test-design review:** implementer → orchestrator (tight write-up); orch reviews against spec, replies `APPROVED.`/`TWEAK:`/`ADD:`. The orch is the reviewer, not the human (unless a critical/safety design Q surfaces).
 - **Step-9 routing:** implementer → orchestrator (categorized flags + ship-ask). Orch routes hot per the **canonical Step-9 matrix in `docs/orchestrator-briefing.md`**. Lead receives only escalated items.
 - **Status (no prose):** slice assignment / in-progress / completion + commit hash live on the **task list** via `TaskUpdate`. The lead reads `TaskList` on demand; the harness's free idle-notifications signal turn-ends. No status pings.
-- **Context-check:** orchestrator runs `/context-check <team>` locally each slice; pings the lead **only on a tier crossing**.
+- **Context-check:** orchestrator runs `/context-check <track>` locally each slice; pings the lead **only on a tier crossing**.
 - **Commit + close-out:** implementer commits the slice (Step 10) with the orchestrator-authored message and marks the task `completed`. `/session-end` + `/orchestrate-end` run on user-explicit go OR auto-cycle trigger.
 
 ---
@@ -251,8 +254,8 @@ Between events the lead is silent. Visibility comes from the free idle-notificat
 2. **Merge order = DAG topological order, gated by an integration preflight.** A downstream track does **not** merge into the integration branch until its upstream tracks have merged. The lead owning the critical-path track coordinates the sequence; **one actor runs the merges** (no merge races between track leads). **After every track merge, run `/preflight` in each code area the merge touched, from the integration checkout** (collapses to one invocation for single-area projects — and `/preflight`'s cwd detection runs ONE area per invocation, so invoke it per touched area, not once from the root). A failing integration preflight **blocks downstream merges** and escalates as a **Finding**.
 3. **Shared-contract changes propagate owner → integration → consumers.** A type / interface / schema two tracks both depend on (an `ARCHITECTURE.md` Appendix-A model crossing a §2.5 edge) has a **single owning track**. A change to it is (a) made in the owning track, (b) merged to the integration branch, (c) pulled into consuming track worktrees (`git merge <integration>`) **before** they build against it. Consuming tracks treat the contract as **frozen** until the owner signals the change is merged. A shared-contract change mid-build is a **Finding** (escalation category #2) — it reaches the human via the lead.
 4. **Cross-worktree commit bleed = the filesystem analogue of channel-bleed.** A track team's commits land only on its own branch/worktree; a commit touching another track's area, or the root checkout, is cross-track contamination. The `git add <path>` discipline (never `git add -A`) is the primary guard.
-5. **Context monitoring is naturally per-track** — each track runs in its own lead session, so it's a distinct team (current Claude Code is "one team per session"), and our `/context-check <track-label>` is already scoped by the `$TEAM_LABEL` each track's teammates register under; the `team-register.sh` `track`/`branch` fields let tooling group + locate a track's teammates.
-6. **Numbered docs are track-prefixed.** Briefs, session docs, and team-handoffs are written from each track's worktree, so their per-directory `NNN` counters would **collide on merge** unless prefixed. Each track prefixes its numbered docs with `<track>-` and counts within that prefix — `docs/briefs/<track>-NNN-…`, `docs/sessions/<track>-NNN-…`, `docs/team-handoffs/<track>-NNN-…` (canonical rule in root `CLAUDE.md` "Naming + cross-bleed prevention").
+5. **Context monitoring is naturally per-track** — each track runs in its own lead session, so it's a distinct, session-scoped Claude team (current Claude Code is "one team per session"), and our `/context-check <track-label>` is already scoped by the `$TRACK_LABEL` each track's teammates register under; the `team-register.sh` `track`/`branch` fields let tooling group + locate a track's teammates.
+6. **Numbered docs are track-prefixed.** Briefs, session docs, and team-handoffs are written from each track's worktree, so their per-directory `NNN` counters would **collide on merge** unless prefixed. Each track prefixes its numbered docs with `<track>-` and counts within that prefix — `docs/briefs/<track>-NNN-…`, `docs/sessions/<track>-NNN-…`, `docs/team-handoffs/<track>-NNN-…` (canonical rule in root `CLAUDE.md` "Naming + numbered-doc collision prevention").
 
 ---
 

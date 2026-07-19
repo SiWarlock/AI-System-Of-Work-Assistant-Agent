@@ -7,7 +7,7 @@ argument-hint: "[category|all]"
 <!--
   OPTIONAL COMMAND. Generate this file ONLY if the project has an eval / test-suite
   class worth a dedicated runner command (eval-driven projects). If not, DELETE
-  this file and remove its row from the area CLAUDE.md + briefing command lists.
+  this file and remove its row from the area memory file (CLAUDE.md) + briefing command lists.
 
   This body is heavily project-shaped. The structure below — argument list →
   mapping table → pre-flight checks → output format → forbidden — is the reusable

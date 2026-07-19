@@ -22,7 +22,7 @@ Argument: `$ARGUMENTS` — the phase ID to gate (e.g. `P3`).
 
 ## Step 1 — Read the rows
 
-Read the phase's section + the checklist template in `IMPLEMENTATION_PLAN.md`. Materialize the checklist for `$ARGUMENTS` under the phase (if this phase doesn't already carry one) by copying the template's rows verbatim. Identify which rows are already ticked from a prior partial run — **resume from the first unticked row** (mid-gate auto-cycle re-entry is expected).
+Read the phase's section + the checklist template in `IMPLEMENTATION_PLAN.md`. Materialize the checklist for `$ARGUMENTS` in **`docs/archive/phase-exit-<phase>.md`** (create if absent — not inline in the plan) by copying the template's rows verbatim. In the plan phase body, keep only a one-line **`Gate:`** pointer: `**Gate:** <PENDING|CLEAR|BLOCKED> — see docs/archive/phase-exit-<phase>.md`. Identify which rows are already ticked from a prior partial run in that archive file — **resume from the first unticked row** (mid-gate auto-cycle re-entry is expected).
 
 ## Step 2 — Execute each row, in order
 
@@ -30,7 +30,7 @@ Map each row to its executor. The canonical mappings:
 
 | Row (as written in the tracker) | Executor |
 |---|---|
-| All phase task checkboxes ticked | Read the phase section; verify every `- [ ]` under its tasks is `[x]` (or carries a partial-note + Log entry) |
+| All phase task State lines are DONE-class | Read the phase section; verify each task's single State line reads `- [x] DONE · hash · date` (or `- [~] PARTIAL · remaining:…` with an archive-log entry) |
 | Acceptance criterion met | Judgment check against the phase's `Acceptance criteria` block; run the named smoke if one exists |
 | `/preflight` clean | Run `/preflight` **per touched code area** |
 | Cross-doc invariants verified | Diff Appendix A + area `CLAUDE.md` table vs the phase's model changes |
@@ -47,14 +47,14 @@ Map each row to its executor. The canonical mappings:
 
 ## Step 3 — Tick as you go
 
-Record each row's tick in `IMPLEMENTATION_PLAN.md` **as it passes** (with a one-line evidence note where useful — e.g. the spec-lint PASS line, the audit report path). A mid-gate interruption (auto-cycle) resumes from the last ticked row — never re-runs passed rows.
+Record each row's tick in **`docs/archive/phase-exit-<phase>.md`** **as it passes** (with a one-line evidence note where useful — e.g. the spec-lint PASS line, the audit report path). A mid-gate interruption (auto-cycle) resumes from the last ticked row — never re-runs passed rows.
 
 ## Step 4 — Verdict
 
-Append the gate outcome to the `IMPLEMENTATION_PLAN.md` Log:
+Append the gate outcome to **`docs/archive/IMPLEMENTATION_LOG.md`** (the plan carries no Log):
 
-- **CLEAR** — every row ticked. The phase may be ticked complete at the next `/orchestrate-end`.
-- **BLOCKED** — name the failing row(s) + the report path(s). Findings raised here escalate as **Findings (category 2)** via orchestrator → lead → human; the fixes become the round's work. A row may be **explicitly waived only by the human** (record `waived: <who/why>` on the row).
+- **CLEAR** — every row ticked. Update the phase's one-line `Gate:` pointer to `**Gate:** CLEAR (evidence: <report paths>) — see docs/archive/phase-exit-<phase>.md`; the full ticked checklist stays in the archive, never in the plan. The phase may be ticked complete at the next `/orchestrate-end`.
+- **BLOCKED** — name the failing row(s) + the report path(s); set the phase's one-line `Gate:` pointer to `**Gate:** BLOCKED — see docs/archive/phase-exit-<phase>.md` (never leave a stale PENDING). Findings raised here escalate as **Findings (category 2)** via orchestrator → lead → human; the fixes become the round's work. A row may be **explicitly waived only by the human** (record `waived: <who/why>` on the row).
 
 ## Forbidden in this command
 

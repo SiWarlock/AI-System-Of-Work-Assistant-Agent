@@ -36,11 +36,11 @@ If a slice landed partial work, leave the box `[ ]` and add a parenthetical note
 
 **Phase ticks are gated.** A phase-level checkbox is ticked complete only after a **CLEAR `/phase-exit` verdict** for that phase (or rows explicitly waived by the human, recorded on the row). Task-level ticks are this step's normal work; phase-level ticks are not.
 
-**New-task anchor rule (HEADING-level only).** Any `### <phase-id>.N` heading added this round (Step-9 routing, Step-5.5 INLINE-TARGET) must carry `(implements §X; origin: <slice>)` — or `(ops — no contract anchor)` for purely operational tasks — and §X must be covered by its phase's `Spec anchors:` line. No covering anchor ⇒ that's a **contract gap**: route an Architecture-doc note + escalate as a Finding; never a silent task add. The `- [ ]` field lines under a task are never individually checked.
+**New-task anchor rule (HEADING-level only).** Any `### <phase-id>.N` heading added this round (Step-9 routing, Step-5.5 INLINE-TARGET) must carry `(implements §X; origin: <slice>)` — or `(ops — no contract anchor)` for purely operational tasks — and §X must be covered by its phase's `Spec anchors:` line. No covering anchor ⇒ that's a **contract gap**: route an Architecture-doc note + escalate as a Finding; never a silent task add. A task carries exactly ONE state-checkbox line (the first content line under its `### <phase-id>.N` heading); the metadata/field lines beneath are plain fielded lines, never checkboxes.
 
-## Step 4 — Append a Log entry to `IMPLEMENTATION_PLAN.md`
+## Step 4 — Append a Log entry to `docs/archive/IMPLEMENTATION_LOG.md`
 
-The implementer's session doc is the technical narrative. The Log entry is the **orchestrator's framing** — what landed at the planning level, decisions made, scope shifts, what's now unblocked or blocked. **Keep the Log bounded** (per the tracker's Log policy): once more than ~10 rounds have accumulated inline, roll the oldest into `docs/archive/TASKS-LOG.md` with a one-line pointer.
+The plan file carries **no** inline Log. Append the round's framing (same format below) to `docs/archive/IMPLEMENTATION_LOG.md` — an append-only audit trail read on demand, never loaded whole. Do **not** write round narratives into `IMPLEMENTATION_PLAN.md`; the plan holds only NOW (Currently-in-progress) + the forward working set (Carry-forward).
 
 Format:
 
@@ -57,16 +57,16 @@ Format:
 
 ## Step 5 — Update planning state
 
-- **Decisions tabled** — resolved entries move to the Log entry above (with the resolution); new entries get added with rationale.
+- **Decisions tabled** — resolved entries move to the round's Log entry in `docs/archive/IMPLEMENTATION_LOG.md` (with the resolution); new entries get added with rationale.
 - **Carry-forward to upcoming briefs** — add items the next `/tdd` brief MUST fold in. New entries include an origin marker `(origin: YYYY-MM-DD <slice-id>)`; multi-slice spreads also include `last-consumer-slice: <id>`.
 - **Trims / Nice-to-Haves Catalog** — add entries for anything deferred this session with come-back guidance.
-- **"Currently in progress"** — update with the last commit hash, suite count, next session target, anything blocking.
+- **"Currently in progress"** — **REPLACE the whole section (do NOT append).** It is a snapshot of NOW: `≤3` items / `≤15` lines — last commit hash, suite count, next session target, active blockers. **Delete** the prior snapshot's lines; never stack rounds. **No round narratives** (those go to `docs/archive/IMPLEMENTATION_LOG.md`) and **no materialized `/phase-exit` checklists** (those live in the archive with a `Gate:` pointer — see `/phase-exit`).
 
 ## Step 5.5 — Triage Carry-forward to upcoming briefs
 
 The Step-9 routing matrix routes operational/optimization items INTO the Carry-forward section (Step 5). There's no symmetric step that routes them OUT. Without active triage the section accumulates monotonically and stops being useful for next-brief authoring. Step 5.5 closes the loop.
 
-Walk every bullet under `## Carry-forward to upcoming briefs`. Read each item + its origin date marker. Propose ONE of five outcomes to the user, with a one-line rationale:
+Walk every bullet under `## Carry-forward to upcoming briefs`. Read each item + its origin date marker. **Apply DELETE and INLINE-TARGET mechanically — no user prompt** (a completed or phase-owned item is a bookkeeping fact, not a scope decision). **Only DEFER (a scope cut) escalates to the user.** For each item pick one of five outcomes:
 
 | Outcome | When | Action |
 |---|---|---|
@@ -78,6 +78,8 @@ Walk every bullet under `## Carry-forward to upcoming briefs`. Read each item + 
 
 Per-item: apply the outcome directly. DELETE/KEEP/INLINE/SPREAD are orchestrator-handled; **DEFER escalates** (deferment approval).
 
+**Resolved items are DELETED, never annotated.** An item completed since it landed is removed with a one-line archive/commit pointer — do **not** leave a `✅ RESOLVED` / "safe to prune next round" marker in place. A resolved annotation is a lint failure. Overflow past the `~7` cap that is still live moves to that item's phase as a `#### Residuals` bullet, not kept in Carry-forward.
+
 After the walk, surface counts: *"Triage complete: K deleted, M inlined, J deferred, S spread, N kept."* **Hard cap: keep Carry-forward under ~7 items.** If it's still over the cap after triage, or any item is >3 slices old with no consumer, force-resolve those (INLINE-TARGET or DEFER) — Carry-forward is a small working set, not a backlog.
 
 This step runs BEFORE the round commit (Step 7) so triage outcomes land in the same commit.
@@ -86,14 +88,24 @@ This step runs BEFORE the round commit (Step 7) so triage outcomes land in the s
 
 Decision criterion: did substantial *orchestrator-side* work land this round? Substantial = scaffolding refactor, deploy ops, infrastructure changes, big planning shifts, or a session that ran orchestrator-only with no `/tdd` cycles.
 
-If YES → create `docs/sessions/<NNN>-<date>-<topic>.md` (next sequential NNN, shared sequence with implementer docs; **track-prefixed `<track>-<NNN>-…` in multi-track mode**, same track as your implementer's docs — root `CLAUDE.md` "Naming + cross-bleed prevention"). Update the predecessor session doc's Successor link.
+If YES → create `docs/sessions/<NNN>-<date>-<topic>.md` (next sequential NNN, shared sequence with implementer docs; **track-prefixed `<track>-<NNN>-…` in multi-track mode**, same track as your implementer's docs — root `CLAUDE.md` "Naming + numbered-doc collision prevention"). Update the predecessor session doc's Successor link.
 
 If NO → no orchestrator-side doc needed.
+
+## Step 6.5 — Run the plan-format lint (blocking)
+
+Before staging, run the structural lint on the reconciled tracker:
+
+```bash
+scripts/plan-lint.sh IMPLEMENTATION_PLAN.md
+```
+
+It enforces the format contract mechanically: `≤3` Currently-in-progress items, `≤7` Carry-forward with no resolved-in-place annotations, exactly one state-checkbox line per `### N.M` task (vocabulary `DONE/PARTIAL/OPEN/DEFERRED/OWNER-GATED`; `DONE` needs `` `hash` `` + ISO date), no state tokens on headings, a `**Spec:**` anchor or `arch_gap` per task, `OWNER-GATED` tasks pointing at a defined `§ARM-*/§DEC-*` ledger, and a Log section that is only a pointer. **Exit non-zero blocks the close-out** — fix the violations, do not commit around them. This is the mechanical backstop for the caps that were promised but never enforced.
 
 ## Step 7 — Commit the round + push
 
 After reconciliation, the orchestrator-side working tree has:
-- `IMPLEMENTATION_PLAN.md` updates (Log entry, box ticks, Carry-forward additions + Step-5.5 triage relocations, "Currently in progress" refresh, Decisions tabled changes)
+- `IMPLEMENTATION_PLAN.md` updates (box ticks, Carry-forward additions + Step-5.5 triage relocations, "Currently in progress" refresh, Decisions tabled changes)
 - Any hot-routed `packages/contracts/LESSONS.md` + `packages/contracts/CLAUDE.md` index additions that haven't ridden a slice commit yet
 - Any hot-routed `ARCHITECTURE.md` prose edits that haven't ridden a slice commit yet
 - Any `/tdd` brief file(s) authored this round in `docs/briefs/<NNN>-<task-id>-<topic>.md` (incl. in-place refreshes of a stale brief)
@@ -103,6 +115,7 @@ Stage these explicitly (do NOT use `git add -A`):
 
 ```bash
 git add IMPLEMENTATION_PLAN.md \
+        docs/archive/IMPLEMENTATION_LOG.md \
         packages/contracts/LESSONS.md \
         packages/contracts/CLAUDE.md \
         ARCHITECTURE.md \
@@ -136,7 +149,7 @@ This is the round's terminal commit. **Verify the push mechanically** — the `g
 ## Step 8 — Close the round (mode- and trigger-aware)
 
 Assemble the close-out summary:
-- What was reconciled (boxes ticked, Log entry appended, Carry-forward additions)
+- What was reconciled (boxes ticked, Log entry appended to `docs/archive/IMPLEMENTATION_LOG.md`, Carry-forward additions)
 - Step-5.5 triage outcomes + threshold-warning state
 - Anything that slipped through hot routing (and the fix that landed)
 - Whether an orchestrator-side session doc was created
@@ -159,3 +172,4 @@ Then route it three ways (this is the **canonical close-out spec** — root `CLA
 - **Skipping Step 2 or Step 3 verification.** The whole point of this command is catching what slipped through hot routing.
 - **Skipping Step 5.5 triage.** If the Carry-forward section is never drained, it accumulates monotonically and stops being useful.
 - **Deferring without escalating.** A DEFER (scope cut) is a deferment approval — escalate to the human; never cut scope agent-only.
+- **Committing a round whose `plan-lint.sh` exits non-zero.**

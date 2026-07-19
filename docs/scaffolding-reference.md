@@ -18,6 +18,8 @@
 
 This project runs the **agent-team orchestrator + implementer pattern** (three roles + human). Same slash commands, same Step-9 routing matrix, same N+2 commit cadence, same cross-doc invariants discipline as the universal pattern. **Adaptations are project-shaped:** this project's stack, code areas, phase plan (`0–12 (phase) / N.x (task)`), forbidden patterns, and architecture are its own.
 
+**Requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`** — Claude Code's agent-teams feature is experimental and OFF by default; `/team-start` checks this before spawning anything. Without it, the single-operator fallback below is the only available mode, not a stylistic alternative.
+
 _(Single-operator fallback: drop the team-lead row + `/team-start`/`/team-end`; the human bridges between orchestrator + implementer sessions.)_
 
 ---
@@ -50,12 +52,12 @@ SoW-build/
 ├── statusline-command.sh               # Status line + heartbeat writer (install once)
 ├── scripts/
 │   └── check-team-context.sh           # /context-check helper (install once)
-├── team-registry/                      # Per-session: {session_id, name, team, role, cwd, ts}
+├── team-registry/                      # Per-session: {session_id, name, track_label, role, cwd, ts} — OUR bookkeeping, not Claude's real (session-derived) team
 │   └── <session_id>.json               # Written by teammate at startup via spawn prompt
 ├── heartbeats/                         # Per-session ctx_pct heartbeats (status line writes IFF registry exists)
 │   └── <session_id>.json               # Updated every status line refresh
-└── team-history/                       # Per-slice trajectory data
-    └── <team>/<name>.jsonl             # Per-slice ctx snapshot (/context-check --snapshot) for 3-slice rolling growth
+└── track-history/                      # Per-slice trajectory data
+    └── <track>/<name>.jsonl            # Per-slice ctx snapshot (/context-check --snapshot) for 3-slice rolling growth
 ```
 
 <!-- ▼ EXAMPLE BLOCK [id=inventory-extension]: extend the inventory with the project's real layout — extra code areas, deliverable docs, eval suites. ▼ -->
@@ -65,7 +67,7 @@ SoW-build/
 
 ## Team pattern (three roles + human)
 
-The full topology, role/cwd/loads table, escalation taxonomy, and naming/cross-bleed rule are **canonical in root `CLAUDE.md` "Team coordination — shared rules"** (+ `docs/team-protocol.md` for the lead). One-line map:
+The full topology, role/cwd/loads table, escalation taxonomy, and the track-naming/numbered-doc collision-prevention rule are **canonical in root `CLAUDE.md` "Team coordination — shared rules"** (+ `docs/team-protocol.md` for the lead). One-line map:
 
 - **Team lead** — thin, durable; `/team-start` + `/team-end`; escalation conduit to the human; stateless between events. Reads progress from the task list + free idle-notifications; pings nobody per-slice.
 - **Orchestrator** — planning, scope, docs, Step-2.5 review, Step-9 routing, commit messages, push, `/orchestrate-end`.
@@ -95,12 +97,12 @@ Command descriptions are injected by the harness per command; root `CLAUDE.md` "
 8. Implementer sends categorized Step-9 flags directly to orchestrator
 9. Orchestrator routes hot (commit-message-first reply); escalates deferments / safety findings / load-bearing architectural calls
 10. Implementer Step 10: commits with the orchestrator-authored message, then **marks the task `completed`** (hash in metadata) + a one-line wake to the orch
-11. **(Team mode)** Orchestrator runs `/context-check <team> --snapshot <hash>` locally; pings the lead **only if a tier ≥ WARN is crossed**; then dispatches the next slice without waiting
+11. **(Team mode)** Orchestrator runs `/context-check <track> --snapshot <hash>` locally; pings the lead **only if a tier ≥ WARN is crossed**; then dispatches the next slice without waiting
 12. Repeat
 
 ### Context monitoring + auto-cycle (team mode only)
 
-Status lines write per-session heartbeats (gated on a `~/.claude/team-registry/` entry, so solo sessions are silent). The orchestrator runs `/context-check <team>` **locally each slice** but pings the lead **only on a tier crossing** (≥ WARN) — OK slices produce no ping; the lead's free idle-notifications + the task list cover progress. The tier ladder (WARN/ACTION/HARD-STOP) and the full auto-cycle flow are **canonical in `docs/team-protocol.md` "Context monitoring + auto-cycle"** (numbers = the script's env defaults, `CLAUDE_TEAM_CTX_*`).
+Status lines write per-session heartbeats (gated on a `~/.claude/team-registry/` entry, so solo sessions are silent). The orchestrator runs `/context-check <track>` **locally each slice** but pings the lead **only on a tier crossing** (≥ WARN) — OK slices produce no ping; the lead's free idle-notifications + the task list cover progress. The tier ladder (WARN/ACTION/HARD-STOP) and the full auto-cycle flow are **canonical in `docs/team-protocol.md` "Context monitoring + auto-cycle"** (numbers = the script's env defaults, `CLAUDE_TEAM_CTX_*`).
 
 ### Step-9 routing matrix
 
@@ -108,7 +110,7 @@ Canonical in `docs/orchestrator-briefing.md` "Step-9 routing matrix." (Implement
 
 ### Carry-forward triage at `/orchestrate-end`
 
-Five outcomes: DELETE / KEEP / **INLINE-TARGET (→ real task checkbox, not an annotation)** / DEFER (escalate) / SPREAD.
+Five outcomes: DELETE / KEEP / **INLINE-TARGET (→ real task checkbox, not an annotation)** / DEFER (escalate) / SPREAD. DELETE + INLINE-TARGET run **mechanically** (no user prompt); only **DEFER** escalates. Resolved items are **deleted with an archive/commit pointer, never annotated in place**; live overflow past the ~7 cap moves to the owning phase's `#### Residuals`.
 
 ### Reachability (tested ≠ shipped)
 
@@ -167,7 +169,7 @@ The principle: **single source of truth per concern.** Drift between sources is 
 
 ## Limits / known gaps
 
-1. **Cross-team channel-bleed is a real failure mode** — the track-prefix naming rule + ignore-mismatched-prefix posture mitigate it but don't fully eliminate it.
+1. **Track-prefix naming is a legibility/collision-prevention convention, not a delivery-channel defense** — genuine cross-team `SendMessage` bleed can't occur (each parallel track runs its own session-scoped Claude team), so the real risk is a spawn-naming mistake within one's own team, not "another track's" message arriving.
 2. **Documentation drift between a lesson and the code it governs is only audit-caught** — the cross-doc invariants table catches model↔spec drift mechanically; lesson↔code drift is not.
 3. **Subagents aren't sandboxed** — their forbidden-patterns section is the only guard.
 4. **HITL chokepoints stay HITL** — deploys, scope cuts, load-bearing architectural decisions, push approvals keep the user in the loop.
