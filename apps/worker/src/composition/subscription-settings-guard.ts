@@ -58,11 +58,17 @@ export interface SettingsInjectionFault {
 }
 
 /** Top-level `settings.json` fields that DIRECTLY mint/inject a credential (grounded vs live Claude-Code docs).
- *  `apiKeyHelper` (command → key), `awsAuthRefresh` / `awsCredentialExport` (Bedrock cred scripts). EXPLICIT
- *  EXTENSIBLE (L61): add a field the live surface names at re-verify. EXCLUDES `model`/`availableModels`/
- *  `forceLogin*` (common/ambiguous ⇒ permanent false-degrade — see the header). The settings `env` block's
- *  shadowing KEYS are handled separately via 18.28's {@link SUBSCRIPTION_SHADOWING_ENV_KEYS}. */
-export const SETTINGS_INJECTION_FIELDS = ["apiKeyHelper", "awsAuthRefresh", "awsCredentialExport"] as const;
+ *  `apiKeyHelper` (command → key), `awsAuthRefresh` / `awsCredentialExport` (Bedrock cred scripts), and
+ *  `gcpAuthRefresh` (18.37 — the Vertex analog of the AWS cred scripts). EXPLICIT EXTENSIBLE (L61): add a field
+ *  the live surface names at re-verify. EXCLUDES `model`/`availableModels`/`forceLogin*` (common/ambiguous ⇒
+ *  permanent false-degrade — see the header). The settings `env` block's shadowing KEYS are handled separately
+ *  via 18.28's {@link SUBSCRIPTION_SHADOWING_ENV_KEYS} (extended to the full provider surface in 18.37). */
+export const SETTINGS_INJECTION_FIELDS = [
+  "apiKeyHelper",
+  "awsAuthRefresh",
+  "awsCredentialExport",
+  "gcpAuthRefresh",
+] as const;
 
 const INJECTION_CODE = "settings_key_injection_on_armed_path" as const;
 

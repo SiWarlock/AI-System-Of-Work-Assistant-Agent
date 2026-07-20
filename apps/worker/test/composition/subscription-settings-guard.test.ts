@@ -128,6 +128,16 @@ describe("assertNoSettingsKeyInjection — the settings-level key-injection guar
     }
   });
 
+  it("settings_gcp_auth_refresh_faults: a settings gcpAuthRefresh cred-script ⇒ fault (the Vertex analog of awsAuthRefresh/awsCredentialExport)", () => {
+    // 18.37 — completes the settings cred-script surface: `gcpAuthRefresh` (Vertex) sits beside `awsAuthRefresh` /
+    //   `awsCredentialExport` (Bedrock) already in SETTINGS_INJECTION_FIELDS; a settings gcpAuthRefresh script
+    //   refreshes GCP creds for the Vertex path — a settings-level credential injection the guard must catch.
+    expect(SETTINGS_INJECTION_FIELDS as readonly string[]).toContain("gcpAuthRefresh");
+    expect(assertNoSettingsKeyInjection(reader(parsed({ gcpAuthRefresh: "/bin/gcp-refresh.sh" })))?.code).toBe(
+      "settings_key_injection_on_armed_path",
+    );
+  });
+
   it("empty_field_is_not_injecting: an empty/whitespace apiKeyHelper ⇒ clean (effectively unset, no key minted)", () => {
     // A blank command mints no key — treat as absent (never a false-degrade on a vestigial empty field).
     expect(assertNoSettingsKeyInjection(reader(parsed({ apiKeyHelper: "" })))).toBeUndefined();
@@ -145,6 +155,17 @@ describe("assertNoSettingsKeyInjection — the settings-level key-injection guar
     expect(assertNoSettingsKeyInjection(reader(parsed({ env: { ANTHROPIC_AUTH_TOKEN: "   " } })))?.code).toBe(
       "settings_key_injection_on_armed_path",
     );
+  });
+
+  it("settings_env_new_18_37_var_degrades_via_single_source: an 18.37-added shadow var in a settings env block ⇒ fault", () => {
+    // Single-source (L5/L37) — the 18.37 extension of SUBSCRIPTION_SHADOWING_ENV_KEYS hardens THIS settings-`env`
+    // leg too (it reuses the same constant), not just the process.env guard. Proven with load-bearing new vars.
+    expect(SUBSCRIPTION_SHADOWING_ENV_KEYS as readonly string[]).toContain("CLAUDE_CODE_USE_MANTLE");
+    for (const key of ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_MANTLE", "ANTHROPIC_FOUNDRY_API_KEY"]) {
+      expect(assertNoSettingsKeyInjection(reader(parsed({ env: { [key]: "shadow" } })))?.code, `settings env.${key}`).toBe(
+        "settings_key_injection_on_armed_path",
+      );
+    }
   });
 
   it("SETTINGS_INJECTION_FIELDS excludes model/availableModels/forceLogin* (common/ambiguous → permanent false-degrade)", () => {

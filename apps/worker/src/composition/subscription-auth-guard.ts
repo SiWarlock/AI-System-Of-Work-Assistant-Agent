@@ -28,47 +28,77 @@ export interface SubscriptionAuthFault {
  * subscription login → wrong billing or redirected egress). The Agent SDK `query()` runs on Claude Code, so
  * Claude Code's auth/egress env vars apply.
  *
- * 18.28 — the FULL grounded set, now ENUMERATED (was deferred-to-flip in 18.24; this closes the
- * `/phase-exit 18` crossing-gate security-MEDIUM). Runbook `phase-18-subscription-enable-decision.md`
- * CHECKPOINT-1 RESULT; Context7 `/nothflare/claude-agent-sdk-docs`:
- *   • Class A — auth-shadowing (WHICH auth/provider): `ANTHROPIC_API_KEY` (the arch-named primary),
- *     `ANTHROPIC_AUTH_TOKEN` (custom bearer), `CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_VERTEX` (switch to
- *     AWS Bedrock / GCP Vertex — a different provider/auth/egress).
- *   • Class B — egress-redirect (content could go elsewhere / be intercepted): `ANTHROPIC_BASE_URL`,
- *     `ANTHROPIC_API_URL` (proxy/base-url redirect — a proxy can inspect/inject creds),
- *     `ANTHROPIC_CUSTOM_HEADERS` (injects arbitrary request headers the SDK forwards — an auth/egress override),
- *     and the standard proxy vars that route ALL traffic through a proxy — `HTTP_PROXY` / `HTTPS_PROXY` /
- *     `ALL_PROXY`, enumerated in BOTH cases (`http_proxy` / `https_proxy` / `all_proxy`) because Node/undici
- *     (`EnvHttpProxyAgent`) + `proxy-from-env` honor the lowercase forms too — a missed case is a silent
- *     fail-OPEN. `NO_PROXY` / `no_proxy` are DELIBERATELY EXCLUDED: a bypass allowlist is not a redirect, so
- *     watching it would false-positive-DEGRADE a legitimate config (do not "helpfully" add it).
+ * 18.37 — the FULL grounded PROVIDER surface (extends 18.28's 13-key set to 29). Grounded via claude-code-guide
+ * vs LIVE Claude-Code docs 2026-07-20 (env-vars.md / authentication.md / amazon-bedrock.md / google-vertex-ai.md
+ * / microsoft-foundry.md). The set is SINGLE-SOURCED — `assertSubscriptionAuthEnv` (the `process.env` guard) AND
+ * 18.36's `subscription-settings-guard` settings-`env` leg both consume it, so one edit hardens both.
+ *   • Class A — auth-shadowing (WHICH auth/provider): the direct tokens `ANTHROPIC_API_KEY` (#3),
+ *     `ANTHROPIC_AUTH_TOKEN` (#2), `CLAUDE_CODE_OAUTH_TOKEN` (#5 — a `setup-token` OAuth token that outranks the
+ *     `/login` subscription and can carry a DIFFERENT account); the provider switches `CLAUDE_CODE_USE_BEDROCK` /
+ *     `_USE_VERTEX` / `_USE_FOUNDRY` / `_USE_MANTLE` / `_USE_ANTHROPIC_AWS` (switch to AWS/GCP/Azure/Mantle/
+ *     Claude-Platform-on-AWS — a different provider/egress; the 5 grounded in claude-code `_HAS_3P_PROVIDER_AT_LOAD`);
+ *     and the Anthropic-namespaced by-presence provider creds `ANTHROPIC_AWS_API_KEY` / `ANTHROPIC_FOUNDRY_API_KEY`
+ *     / `ANTHROPIC_FOUNDRY_AUTH_TOKEN` / `AWS_BEARER_TOKEN_BEDROCK`.
+ *   • Class B — egress-redirect: `ANTHROPIC_BASE_URL` (the real redirect defense), `ANTHROPIC_API_URL` (a legacy
+ *     SDK alias — kept, harmless), `ANTHROPIC_CUSTOM_HEADERS`, the per-provider base-URL/endpoint overrides
+ *     (`ANTHROPIC_BEDROCK_BASE_URL` / `_VERTEX_BASE_URL` / `_FOUNDRY_BASE_URL` / `_AWS_BASE_URL` /
+ *     `_BEDROCK_MANTLE_BASE_URL` / `ANTHROPIC_FOUNDRY_RESOURCE` — the Foundry endpoint is built from it), and the
+ *     proxy vars in BOTH cases (`HTTP_PROXY`/`http_proxy`/… — Node/undici honor lowercase; a missed case = silent fail-OPEN).
+ *   • Class C — mTLS client certs (`CLAUDE_CODE_CLIENT_CERT` / `_CLIENT_KEY` / `_CLIENT_KEY_PASSPHRASE`): change
+ *     the client identity → mTLS to a custom endpoint when paired with a base-URL redirect.
  * A `some()` over this set keeps the guard extensible without a logic change (L61); over-inclusion is the
  * fail-safe direction (a watched var the SDK doesn't honor only degrades the owner-gated armed path).
  *
- * ⚠ NOT covered here — the `apiKeyHelper` CAVEAT: Claude Code's `apiKeyHelper` *settings* entry can inject an
- * API key BYPASSING env. The owner MUST confirm the deployment's Claude Code settings carry no
- * `apiKeyHelper` / API-key injection (a #13 owner step-6 precondition — an out-of-band settings check, not an
- * env var this guard can see). A final re-verify of this set against the LIVE Agent-SDK docs at the flip stays
- * a HARD precondition (the SDK's honored set can change) — and reconsider borderline TLS-interception ENABLERS
- * there (e.g. `NODE_EXTRA_CA_CERTS`, which alone redirects nothing but lets a rogue CA decrypt a proxy tunnel;
- * inert unless a now-watched proxy var is also set) — but the guard no longer ships a known-incomplete set.
+ * ⚠ DELIBERATELY EXCLUDED (each does NOT shadow BY PRESENCE ALONE — watching them would permanently FALSE-degrade
+ * a legit armed config, the L65 `NO_PROXY`-class): `NO_PROXY`/`no_proxy` (a bypass allowlist, not a redirect); the
+ * COMMON generic cloud creds `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_SESSION_TOKEN`/`AWS_PROFILE`/
+ * `GOOGLE_APPLICATION_CREDENTIALS`/`GCLOUD_PROJECT`/`GOOGLE_CLOUD_PROJECT` — inert unless a `USE_*` switch is set,
+ * and ALL FIVE switches are watched above (⭐ load-bearing: the generic AWS creds activate under Bedrock, Mantle,
+ * AND Claude-Platform-on-AWS — so this exclusion is fail-OPEN unless `_USE_MANTLE` + `_USE_ANTHROPIC_AWS` are BOTH
+ * watched, which they now are); and routing/project-IDs/regions (`ANTHROPIC_VERTEX_PROJECT_ID`
+ * /`ANTHROPIC_AWS_WORKSPACE_ID`/`ANTHROPIC_WORKSPACE_ID`/`CLOUD_ML_REGION` — carry no credential, redirect nothing).
+ *
+ * ⚠ NOT env-var reachable (backstopped elsewhere): `apiKeyHelper` (precedence #4, above the subscription) is a
+ * SETTINGS key — covered by 18.36's `subscription-settings-guard` `SETTINGS_INJECTION_FIELDS`; a Claude-apps
+ * GATEWAY session outranks even the switches with no single env var (a §ARM-18 deployment-checklist residual). A
+ * final re-verify vs the LIVE docs at the flip stays a HARD precondition (the SDK's honored set shifts by version;
+ * reconsider `NODE_EXTRA_CA_CERTS` there — inert unless a watched proxy var is also set).
  */
 export const SUBSCRIPTION_SHADOWING_ENV_KEYS = [
-  // Class A — auth-shadowing:
+  // Class A — auth-shadowing: direct tokens + provider switches.
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
+  "CLAUDE_CODE_OAUTH_TOKEN",
   "CLAUDE_CODE_USE_BEDROCK",
   "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_MANTLE",
+  "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+  // Class A — by-presence provider credentials (Anthropic-namespaced / Bedrock bearer).
+  "ANTHROPIC_AWS_API_KEY",
+  "ANTHROPIC_FOUNDRY_API_KEY",
+  "ANTHROPIC_FOUNDRY_AUTH_TOKEN",
+  "AWS_BEARER_TOKEN_BEDROCK",
   // Class B — egress-redirect (both proxy cases — Node honors lowercase; NO_PROXY excluded, see above):
   "ANTHROPIC_BASE_URL",
   "ANTHROPIC_API_URL",
   "ANTHROPIC_CUSTOM_HEADERS",
+  "ANTHROPIC_BEDROCK_BASE_URL",
+  "ANTHROPIC_VERTEX_BASE_URL",
+  "ANTHROPIC_FOUNDRY_BASE_URL",
+  "ANTHROPIC_AWS_BASE_URL",
+  "ANTHROPIC_BEDROCK_MANTLE_BASE_URL",
+  "ANTHROPIC_FOUNDRY_RESOURCE",
   "HTTP_PROXY",
   "http_proxy",
   "HTTPS_PROXY",
   "https_proxy",
   "ALL_PROXY",
   "all_proxy",
+  // Class C — mTLS client certs (change the client identity → mTLS to a custom endpoint when paired w/ a redirect):
+  "CLAUDE_CODE_CLIENT_CERT",
+  "CLAUDE_CODE_CLIENT_KEY",
+  "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
 ] as const;
 
 /**
