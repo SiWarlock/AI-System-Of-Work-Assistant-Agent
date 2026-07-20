@@ -73,6 +73,10 @@ import {
   resolveSubscriptionArming,
   buildSubscriptionArmWiring,
 } from "./composition/subscription-extraction-arming";
+import {
+  resolveArmCheckReachable,
+  REACHABILITY_LIVE_ENV_VAR,
+} from "./composition/subscription-reachability-arming";
 import { createDurableParkedReader } from "./composition/dispositionDurable";
 import type { WorkerOriginAllowlist } from "./api/auth/originAllowlist";
 import { startApiServer, type RunningApiServer } from "./api/mount";
@@ -1294,14 +1298,6 @@ export function buildBackendsConfig(config: BootConfig): BackendsConfig {
 }
 
 /**
- * 18.25 step-6 — the FAIL-CLOSED default reachability check for the subscription arm. Returns `undefined` ⇒
- * `probeClaudeSubscriptionHealth` folds it to `check_ambiguous` ⇒ NON-healthy ⇒ the armed HEALTH gate DENIES
- * (never a false-green, L52). The REAL SDK-reachability probe (providers-layer) is injected via
- * `config.subscriptionArm.checkReachable` at the owner arm — until then, an armed gate is HEALTH-denied.
- */
-const FAIL_CLOSED_REACHABILITY: SubscriptionReachabilityCheck = () => undefined;
-
-/**
  * Boot the live worker control plane. Assembles the persistent backends, stands up
  * the real loopback API transport over the @sow/db port adapters (behind the injected
  * token + allowlist), wires the redacting logger + the Temporal-unavailable degraded
@@ -1321,10 +1317,15 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   const armWiring = buildSubscriptionArmWiring(config.subscriptionArm, {
     readerHolder,
     makeCompletion: config.subscriptionArm?.makeCompletion ?? (() => createClaudeSubscriptionCompletion()),
-    // ⚠ #13 arm precondition: the DEFAULT is a FAIL-CLOSED reachability probe (⇒ HEALTH UNAVAILABLE) — the real
-    //   SDK-reachability check (providers-layer `probeSubscriptionReachability`) MUST be injected at the arm before
-    //   HEALTH can be AVAILABLE. Until then the armed HEALTH gate DENIES (fail-closed, never a false-green — L52).
-    checkReachable: config.subscriptionArm?.checkReachable ?? FAIL_CLOSED_REACHABILITY,
+    // 18.35 — bind the effective reachability check behind the INDEPENDENT reachability-enable OFF-lock. The
+    //   real spend-free probe (`probeSubscriptionReachability` over the macOS Keychain detector) binds ONLY when
+    //   the arm is enabled AND `SOW_SUBSCRIPTION_REACHABILITY_LIVE` is set (strict "1"/"true"); an env-only arm
+    //   (enabled alone) STAYS FAIL_CLOSED_REACHABILITY (⇒ HEALTH UNAVAILABLE) by design (L52/L57). The explicit
+    //   `config.subscriptionArm?.checkReachable` test/-live seam is still honored first. Shipped default (both
+    //   unset) ⇒ FAIL_CLOSED_REACHABILITY, byte-equivalent (the real probe thunk is never constructed). The
+    //   worker child inherits main's process.env (index.ts:134 forks with no `env` filter), so the shell-export
+    //   ENABLE needs no desktop change. The FLIP stays owner+lead-gated (real cloud egress + spend, HARD LINE).
+    checkReachable: resolveArmCheckReachable(config.subscriptionArm, process.env[REACHABILITY_LIVE_ENV_VAR]),
     now: () => Date.now(),
   });
 
