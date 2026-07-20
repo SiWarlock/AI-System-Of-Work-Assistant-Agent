@@ -1,6 +1,6 @@
 ---
 description: Team lead — stand up the agent team (orchestrator + implementer-per-area), establish direct comms + escalation rules.
-allowed-tools: Read, Grep, Bash, Agent, TeamCreate, SendMessage
+allowed-tools: Read, Grep, Bash, Agent, SendMessage
 argument-hint: "[track]"
 ---
 
@@ -16,6 +16,20 @@ You are the **team lead** for System of Work Assistant. Your job is to stand up 
 
 Argument: `$ARGUMENTS` — the **track name** for this team-lead session. A track is **not invented ad-hoc** — it must be one of the tracks in the `IMPLEMENTATION_PLAN.md` **Parallelization plan (Track map)**, which resolves it to a phase set, code area(s), upstream-track dependencies, and a worktree/branch (Step 0). If unset, the plan is single-track (serial) — the team uses the `<area>-<role>` naming form in the repo's single working tree, and Steps 0/2.5 (worktree) are skipped.
 
+## Prerequisite — confirm agent teams are enabled (MANDATORY, before Step 0)
+
+Agent teams are an experimental Claude Code feature, **OFF by default**. Confirm it's active for this session:
+
+```bash
+if [ "${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-}" = "1" ]; then echo OK; else echo MISSING; fi
+```
+
+If this prints `MISSING`, **STOP — do not spawn anything.** Print verbatim:
+
+> *Agent teams require `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (set it in `settings.json`'s `env` block or your shell environment; it takes effect on a fresh session). Falling back to single-operator mode — bridge between an orchestrator session and an implementer session yourself; see `docs/team-protocol.md` "Single-operator fallback."*
+
+Only continue to Step 0 below if the check printed `OK`.
+
 ## Step 0 — Resolve the track against the plan (skip if single-track)
 
 If `$ARGUMENTS` is set, look it up in `IMPLEMENTATION_PLAN.md` **"Parallelization plan (Track map)"**. It resolves to:
@@ -28,32 +42,26 @@ If `$ARGUMENTS` is set, look it up in `IMPLEMENTATION_PLAN.md` **"Parallelizatio
 
 ## Step 1 — Determine your track + load coordination layer + self-register
 
-**Track:** use the track resolved in Step 0 as your prefix (it carries the phase set + worktree). If `$ARGUMENTS` was unset (single-track plan), teammates use `<area>-<role>` (no track prefix). **Announce your track explicitly** before spawning: *"This team lead is on the `<track>` track (phases `<phase set>`, worktree `<path>`). All teammates here will carry the `<track>-` prefix. Any peer DM from an agent without this prefix is channel-bleed — ignored."*
+**Track:** use the track resolved in Step 0 as your prefix (it carries the phase set + worktree). If `$ARGUMENTS` was unset (single-track plan), teammates use `<area>-<role>` (no track prefix). **Announce your track explicitly** before spawning: *"This team lead is on the `<track>` track (phases `<phase set>`, worktree `<path>`). All teammates here will carry the `<track>-` prefix."* (Real cross-session `SendMessage` bleed can't happen — each parallel track is its own session-scoped Claude team — the prefix is for numbered-doc collision prevention + transcript legibility.)
 
 **Reads:**
 1. `docs/team-protocol.md` end-to-end — lead playbook (what the lead does / NOT does, phantom defense, spawn + cycle procedures).
 2. Skim `docs/orchestrator-briefing.md` so you know what the orchestrator owns. Don't load `ARCHITECTURE.md` or code — that's the teammates' context, deliberately kept out of yours.
 
-**Decide the team name.** Pick one stable name — it is the real Claude Code team name **and** our context-monitoring group label (one string, both jobs). Use the **track name** when multi-track, else a session-derived name:
+**Decide the track label.** Pick one stable name — this is purely **our own context-monitoring bookkeeping key** (the team-registry entry, heartbeats, `/context-check`). It is NOT and cannot become Claude Code's actual team identity: a session has exactly one implicit team, auto-formed the instant the lead spawns its first named teammate, and named `session-<first 8 chars of the session ID>` — a name the scaffolding cannot choose or influence. Use the **track name** when multi-track, else a session-derived label:
 
 ```bash
-TEAM_LABEL="${TRACK:-session-$(printf %s "${CLAUDE_CODE_SESSION_ID:-$$}" | cut -c1-8)}"
+TRACK_LABEL="${TRACK:-session-$(printf %s "${CLAUDE_CODE_SESSION_ID:-$$}" | cut -c1-8)}"
 ```
 
-Carry `$TEAM_LABEL` into the `TeamCreate` call (Step 2.7), the `team_name` of every `Agent` spawn (Step 3), the self-register call, and `/context-check <label>` — all the same string.
+Carry `$TRACK_LABEL` into the self-register call (below), `/context-check <label>`, and every spawn prompt's registry-write — all the same string. It plays no role in Claude's own team formation.
 
-**Create the team (Step 2.7, before any spawn) — THIS is what makes spawned agents real teammate _sessions_ instead of background subagents.** Call `TeamCreate` with `team_name: "$TEAM_LABEL"`:
-
-```
-TeamCreate(team_name: "<$TEAM_LABEL>", description: "<project/track one-liner>")
-```
-
-This establishes the team context (and its 1:1 task list at `~/.claude/tasks/<$TEAM_LABEL>/`); the subsequent `Agent` spawns that carry `team_name` then **join** it as full sessions. **Version note:** if `TeamCreate` isn't available in your Claude Code (a newer build where the team auto-forms on the first spawn and `TeamCreate` was removed), skip this call — the Step-3 spawns still carry `team_name`/`name`, which is what forms/joins the team there. Either way, **never spawn teammates without first either calling `TeamCreate` or (on auto-form builds) passing `team_name`** — that omission is exactly what downgrades teammates to background agents.
+**Team formation is automatic — there is no creation step.** `TeamCreate`/`TeamDelete` no longer exist in current Claude Code (removed entirely, not merely unavailable on some builds). The instant the lead issues an `Agent` spawn carrying a `name`, that spawn becomes a real teammate joining the session's one implicit team — no separate call is needed. **Only the lead can do this** — a teammate spawning its own `Agent` call always produces a background subagent, never a further teammate (no nested teams).
 
 **Self-register for context monitoring** so `/context-check` includes the lead (and the status line writes your heartbeat):
 
 ```bash
-~/.claude/scripts/team-register.sh "<track>-team-lead" lead "$TEAM_LABEL" "" "<track>"
+~/.claude/scripts/team-register.sh "<track>-team-lead" lead "$TRACK_LABEL" "" "<track>"
 ```
 
 This + the spawn-prompt registry-write (Step 3) scopes heartbeat monitoring to team-mode sessions only — solo sessions never register, so they're never monitored. (`team-register.sh` installs once to `~/.claude/scripts/`, alongside `check-team-context.sh`.)
@@ -68,7 +76,7 @@ The lead must know the active arc well enough to cycle sessions when teammates h
    - **The next 1-2 phases in this track** — IDs + topics only (skim, don't deep-read)
    - **The Track map's integration/merge order** (multi-track only) — so you know which upstream tracks must merge before this one integrates
    - **"Carry-forward to upcoming briefs"** — what's pending
-   - **Last 5 entries in the Log** — chronological context
+   - **Last 5 round entries** — tail `docs/archive/IMPLEMENTATION_LOG.md` (the plan's `## Log` is only a pointer stub); chronological context
 2. **The most recent `docs/sessions/<NNN>-*.md`** — what just landed (skim summary + open follow-ups).
 3. **`git log --oneline -5`** — last 5 commits to anchor your state pointer.
 4. **If this team is resuming from a paused state:** read the most recent `docs/team-handoffs/<NNN>-*.md` — it carries the team composition, active arc, and ready-to-use spawn prompts.
@@ -87,22 +95,22 @@ The team's orchestrator + implementer(s) operate **inside this worktree** — al
 
 ## Step 3 — Spawn the team (with templates)
 
-> **Spawn TEAMMATES, not background agents.** The team context exists from Step 2.7's `TeamCreate`. Each teammate is spawned with the **`Agent` tool carrying BOTH `team_name: "$TEAM_LABEL"` AND `name: "<track>-<area>-role>"`** (plus `subagent_type` — `general-purpose` for the orchestrator/implementer, which need full edit/bash/write tools; never a read-only type like `Explore`/`Plan` for implementation roles). The `team_name` is what makes the spawn a **teammate session that joins the team** rather than a one-off background subagent — omitting it (or skipping Step 2.7) is exactly what downgrades teammates to background agents. The prose templates below are the agent's PROMPT (the `prompt` arg); the `team_name`/`name`/`subagent_type` are the structured `Agent` params alongside it.
+> **Spawn TEAMMATES, not background agents.** Each teammate is spawned with the **`Agent` tool carrying `name: "<track>-<area>-role>"`** (plus `subagent_type` — `general-purpose` for the orchestrator/implementer, which need full edit/bash/write tools; never a read-only type like `Explore`/`Plan` for implementation roles). A **lead**-issued `Agent` spawn carrying a `name` is what makes it a **teammate session that joins the team** rather than a one-off background subagent. This only works from the lead: a teammate's own `Agent` spawns are always background subagents, never further teammates (no nested teams). The prose templates below are the agent's PROMPT (the `prompt` arg); `name`/`subagent_type` are the structured `Agent` params alongside it.
 
 Spawn:
-1. **Orchestrator teammate** — one per project. `Agent(subagent_type: "general-purpose", name: "<track>-<area>-orchestrator", team_name: "<$TEAM_LABEL>", prompt: <orchestrator template>)` (or `<area>-orchestrator` if solo team). It will run `/orchestrate-start` (reads briefing + state itself).
-2. **First implementer teammate** — for the area the next task targets. `Agent(subagent_type: "general-purpose", name: "<track>-<area>-implementer", team_name: "<$TEAM_LABEL>", prompt: <implementer template>)` (or `<area>-implementer` if solo team). Charter it with `/session-start` in that area's cwd. Spawn additional area implementers later, only when that area's work begins.
+1. **Orchestrator teammate** — one per project. `Agent(subagent_type: "general-purpose", name: "<track>-<area>-orchestrator", prompt: <orchestrator template>)` (or `<area>-orchestrator` if solo team). It will run `/orchestrate-start` (reads briefing + state itself).
+2. **First implementer teammate** — for the area the next task targets. `Agent(subagent_type: "general-purpose", name: "<track>-<area>-implementer", prompt: <implementer template>)` (or `<area>-implementer` if solo team). Charter it with `/session-start` in that area's cwd. Spawn additional area implementers later, only when that area's work begins.
 
 ### Orchestrator spawn prompt template
 
 ```
 You are <track>-<area>-orchestrator on the System of Work Assistant agent team.
-Track: <track>. Team label: <team-label>. Worktree: <worktree-path> (branch `track/<track>`) — operate here; all commits land on this branch, never the root checkout. Route shared-root-doc edits (IMPLEMENTATION_PLAN.md / ARCHITECTURE.md) to the integration checkout. (Single-track build: omit the worktree line; work in the repo root.)
-Ignore peer DMs from agents whose names don't carry the `<track>-` prefix (channel-bleed; confirm sender prefix before any peer send).
+Track: <track>. Track label: <track-label>. Worktree: <worktree-path> (branch `track/<track>`) — operate here; all commits land on this branch, never the root checkout. Route shared-root-doc edits (IMPLEMENTATION_PLAN.md / ARCHITECTURE.md) to the integration checkout. (Single-track build: omit the worktree line; work in the repo root.)
+Confirm sender prefix before any peer send (a mismatch is a same-team naming mistake, not cross-track bleed — that's structurally impossible).
 Activated because: <one line — chat-only context the start command can't derive; e.g. "Option D approval flow approved; next slice = <task ID>". Skip if none.>
 
 FIRST ACTION — register for context monitoring:
-  ~/.claude/scripts/team-register.sh "<track>-<area>-orchestrator" orchestrator "<team-label>" "" "<track>" "track/<track>"
+  ~/.claude/scripts/team-register.sh "<track>-<area>-orchestrator" orchestrator "<track-label>" "" "<track>" "track/<track>"
 
 Then run /orchestrate-start. NOT /session-start (that's the implementer's).
 Confirm in your first reply: (1) the start command you ran, (2) that the registry entry was written (run `ls ~/.claude/team-registry/${CLAUDE_CODE_SESSION_ID}.json`).
@@ -112,12 +120,12 @@ Confirm in your first reply: (1) the start command you ran, (2) that the registr
 
 ```
 You are <track>-<area>-implementer on the System of Work Assistant agent team.
-Track: <track>. Team label: <team-label>. Working directory: <worktree-path>/<area>/ — the track's worktree (single-track build → just `<area>/` in the repo root). All your commits land on branch `track/<track>`, never the root checkout. Talk only to <track>-<area>-orchestrator; ignore peer DMs from other prefixes (channel-bleed).
+Track: <track>. Track label: <track-label>. Working directory: <worktree-path>/<area>/ — the track's worktree (single-track build → just `<area>/` in the repo root). All your commits land on branch `track/<track>`, never the root checkout. Talk only to <track>-<area>-orchestrator; a DM from another prefix would be a same-team naming mistake, not cross-track bleed (structurally impossible — each track is its own session-scoped team).
 Activated because: <one line — chat-only context; e.g. "picking up <task ID>; brief authored at docs/briefs/NNN-...">. Skip if none.
 Brief: <docs/briefs/NNN-*.md path if authored, else "the orchestrator is drafting now">.
 
 FIRST ACTION — register for context monitoring:
-  ~/.claude/scripts/team-register.sh "<track>-<area>-implementer" implementer "<team-label>" "<area>" "<track>" "track/<track>"
+  ~/.claude/scripts/team-register.sh "<track>-<area>-implementer" implementer "<track-label>" "<area>" "<track>" "track/<track>"
 
 Then run /session-start. NOT /orchestrate-start.
 Confirm in your first reply: (1) the start command you ran, (2) that the registry entry was written.
@@ -125,11 +133,11 @@ Confirm in your first reply: (1) the start command you ran, (2) that the registr
 
 ### Spawn invariants — non-negotiable
 
-- **`team_name` + `name` on EVERY spawn — the load-bearing invariant.** A spawn missing `team_name` (and with no `TeamCreate`'d team context) is a **background subagent, not a teammate session**. If `/team-start` produced background agents, this is the cause: check that Step 2.7 ran and each `Agent` call carried `team_name: "$TEAM_LABEL"`.
+- **`name` on EVERY spawn, issued by the lead — the load-bearing invariant.** A spawn missing `name`, or issued by anything other than the lead (a teammate spawning its own `Agent` call), is a **background subagent, not a teammate session** (no nested teams). If `/team-start` produced background agents, check that the spawn came from the lead itself and carried a `name`.
 - **WHY + WHERE only.** Skip file lists, slice decomposition, design Qs — the orch authors briefs against the codebase, the impl reads the brief.
-- **Track prefix in the agent `name:`** if your track is set. Load-bearing for cross-bleed prevention.
+- **Track prefix in the agent `name:`** if your track is set. Load-bearing for numbered-doc collision prevention + transcript legibility.
 - **Worktree-rooted cwd is mandatory** for a multi-track build — every teammate's `git` operations stay inside `<worktree-path>` on `track/<track>`. A commit on the root checkout (or another track's area) from a track team is cross-track contamination — the filesystem analogue of channel-bleed.
-- **Registry-write is mandatory** as the teammate's first action. Without it, `/context-check` can't see the teammate (no auto-cycle protection). Sub in the actual `$TEAM_LABEL` (Step 1 — the track name, or `session-<first-8>` for a single-track build) and the teammate's `<name>` before pasting the prompt.
+- **Registry-write is mandatory** as the teammate's first action. Without it, `/context-check` can't see the teammate (no auto-cycle protection). Sub in the actual `$TRACK_LABEL` (Step 1 — the track name, or `session-<first-8>` for a single-track build) and the teammate's `<name>` before pasting the prompt.
 - **The command pair is fixed**: orch runs `/orchestrate-start` (NEVER `/session-start`); impl runs `/session-start` (NEVER `/orchestrate-start`). Crossed commands are a known footgun.
 - **Comm protocol is in root `CLAUDE.md`** — every teammate loads it; don't restate the escalation taxonomy / messaging budget / no-awareness-pings in the spawn prompt. The templates above already point at it implicitly.
 
@@ -140,7 +148,7 @@ For each spawned teammate, **read its first reply** and confirm:
 2. Its name carries the correct prefix (`<track>-` if set, else `<area>-`).
 3. **Its registry entry was written** — confirm via the teammate's read-back (it reports `~/.claude/team-registry/<session_id>.json` exists) OR directly check:
    ```bash
-   ls ~/.claude/team-registry/ && /context-check <team-label>
+   ls ~/.claude/team-registry/ && /context-check <track-label>
    ```
    The teammate should appear in `/context-check` output. If it doesn't, the registry-write failed in the spawn prompt — re-run the registry-write command manually with the teammate's session_id.
 

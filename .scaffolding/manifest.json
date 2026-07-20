@@ -1,12 +1,12 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "scaffoldingRepo": "/Users/dreddy/Documents/Dev/AI-tools/SoW/SoW-build/scaffold",
   "generatedFromSha": "2556dd23632de17bcc213b7b14f4fe7f7a296adf",
   "generatedFromRef": "main",
   "generatorModel": "claude-opus-4-8",
   "generatedAt": "2026-06-29T12:00:00Z",
-  "lastUpgradedFromSha": null,
-  "lastUpgradedAt": null,
+  "lastUpgradedFromSha": "588b7350a8e086a8927b9af7fba797dcbcd2114b",
+  "lastUpgradedAt": "2026-07-19T22:54:38Z",
   "mode": "team",
   "posture": "production-grade",
   "track": null,
@@ -37,13 +37,13 @@
   "placeholders": {
     "PROJECT_NAME": "System of Work Assistant",
     "PROJECT_TAGLINE": "A Mac-first, local-first, self-hosted personal operating system for employer work, side projects, and personal life.",
-    "ARCHITECTURE_SENTENCE": "governed local control plane \u2014 candidate-data-in, validated-and-policed-out; Markdown is the only canonical semantic truth and KnowledgeWriter is its only autonomous writer.",
+    "ARCHITECTURE_SENTENCE": "governed local control plane — candidate-data-in, validated-and-policed-out; Markdown is the only canonical semantic truth and KnowledgeWriter is its only autonomous writer.",
     "REPO_DIRNAME": "SoW-build",
     "GIT_REMOTE": "none configured",
     "AI_TRAILER": "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
     "TASK_TRACKER": "IMPLEMENTATION_PLAN.md",
     "ARCH_DOC": "ARCHITECTURE.md",
-    "PHASE_IDS": "0\u201312 (phase) / N.x (task)",
+    "PHASE_IDS": "0–12 (phase) / N.x (task)",
     "SECURITY_REVIEW_POLICY": "invariant",
     "CODE_QUALITY_REVIEW_POLICY": "every-slice",
     "RUNTIME": "Node 22 LTS + TypeScript 5.x",
@@ -58,7 +58,7 @@
   "codeAreas": [
     {
       "CODE_AREA": "packages/contracts/",
-      "CODE_AREA_NAME": "contract \u2014 shared contracts & domain",
+      "CODE_AREA_NAME": "contract — shared contracts & domain",
       "CODE_AREA_BASENAME": "contracts",
       "RUNTIME": "Node 22 + TS 5.x",
       "PKG_MANAGER": "pnpm",
@@ -69,7 +69,7 @@
     },
     {
       "CODE_AREA": "apps/worker/",
-      "CODE_AREA_NAME": "worker \u2014 storage/Temporal/API",
+      "CODE_AREA_NAME": "worker — storage/Temporal/API",
       "CODE_AREA_BASENAME": "worker",
       "RUNTIME": "Node 22 + TS 5.x",
       "PKG_MANAGER": "pnpm",
@@ -80,7 +80,7 @@
     },
     {
       "CODE_AREA": "packages/providers/",
-      "CODE_AREA_NAME": "providers-integrations \u2014 providers/policy/gateways",
+      "CODE_AREA_NAME": "providers-integrations — providers/policy/gateways",
       "CODE_AREA_BASENAME": "providers",
       "RUNTIME": "Node 22 + TS 5.x",
       "PKG_MANAGER": "pnpm",
@@ -91,7 +91,7 @@
     },
     {
       "CODE_AREA": "packages/knowledge/",
-      "CODE_AREA_NAME": "knowledge \u2014 KnowledgeWriter/GBrain/GCL",
+      "CODE_AREA_NAME": "knowledge — KnowledgeWriter/GBrain/GCL",
       "CODE_AREA_BASENAME": "knowledge",
       "RUNTIME": "Node 22 + TS 5.x",
       "PKG_MANAGER": "pnpm",
@@ -102,7 +102,7 @@
     },
     {
       "CODE_AREA": "apps/desktop/",
-      "CODE_AREA_NAME": "desktop \u2014 Electron UI",
+      "CODE_AREA_NAME": "desktop — Electron UI",
       "CODE_AREA_BASENAME": "desktop",
       "RUNTIME": "Node 22 + TS 5.x",
       "PKG_MANAGER": "pnpm",
@@ -113,7 +113,7 @@
     },
     {
       "CODE_AREA": "packages/evals/",
-      "CODE_AREA_NAME": "eval-security \u2014 eval & test harness",
+      "CODE_AREA_NAME": "eval-security — eval & test harness",
       "CODE_AREA_BASENAME": "evals",
       "RUNTIME": "Node 22 + TS 5.x",
       "PKG_MANAGER": "pnpm",
@@ -370,6 +370,12 @@
       "dest": "ARCHITECTURE.md",
       "template": "templates/ARCHITECTURE.md",
       "kind": "user-canonical"
+    },
+    {
+      "dest": "scripts/plan-lint.sh",
+      "template": "templates/scripts/plan-lint.sh",
+      "kind": "placeholder-only",
+      "divergence": "pre-existing (authored 2026-07-19 by the plan-doc cleanup; trivially diverges from template: local literal default vs tokenized DEFAULT_PLAN line)"
     }
   ],
   "exampleBlocks": [
@@ -593,5 +599,6 @@
       "id": "task-entry-format",
       "status": "illustrative"
     }
-  ]
+  ],
+  "host": "claude"
 }

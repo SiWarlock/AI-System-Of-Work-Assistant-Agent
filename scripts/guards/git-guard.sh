@@ -3,15 +3,24 @@
 # Mechanically enforces two git rules that were previously prose-only:
 #   1. `git add -A` / `git add .` is banned for ALL roles — stage explicitly.
 #   2. Implementers never `git push` — pushes happen at /orchestrate-end (orchestrator).
-# Role comes from the team registry (~/.claude/team-registry/<session_id>.json, written by the
-# /team-start spawn prompts). No registry entry => solo/bootstrap session => rule 2 is a no-op.
+# Role comes from the team registry (~/.claude/team-registry/<session_id>.json, written by the Claude
+# /team-start spawn prompts). The Claude team-registry file is never written under Codex (Codex has no
+# analogous mechanism), so on that host this falls back to reading CODEX_AGENT_ROLE/CODEX_SUBAGENT env
+# vars — UNCONFIRMED: nothing in real Codex source/docs establishes that Codex ever sets either var (the
+# same unverified-guess pattern subagent-start.sh's own comment already flags for its non-agent_type/
+# agent_id fallback fields); treat this as speculative/likely-dead code, not a working enforcement
+# mechanism, until proven otherwise (open decision: docs/codex/team-overlay.md §7). No signal found =>
+# solo/bootstrap session (or an unconfirmed Codex build) => rule 2 is a no-op — fails open, never closed.
 # Exit 2 blocks the tool call; the stderr message reaches the agent.
 
 set -euo pipefail
 command -v jq >/dev/null 2>&1 || exit 0   # never hard-fail the harness on a missing dep
 
 payload=$(cat)
-cmd=$(printf '%s' "$payload" | jq -r '.tool_input.command // empty')
+# `|| true`: a malformed/non-JSON payload makes jq exit non-zero, which — being the last command in this
+# assignment — would trip `set -e` and kill the guard before it ever runs its checks. Fail open to "no
+# command" (never fail closed into silently not guarding) rather than crash.
+cmd=$(printf '%s' "$payload" | jq -r '.tool_input.command // empty' 2>/dev/null) || true
 [ -n "$cmd" ] || exit 0
 
 # 1. blanket-stage ban (all roles)
@@ -26,10 +35,16 @@ if printf '%s' "$cmd" | grep -qE '(^|[^a-z])git[^|;&]*[[:space:]]push\b'; then
   role=""
   [ -n "$sid" ] && [ -f "$HOME/.claude/team-registry/${sid}.json" ] \
     && role=$(jq -r '.role // empty' "$HOME/.claude/team-registry/${sid}.json" 2>/dev/null || true)
-  if [ "$role" = "implementer" ]; then
-    echo "BLOCKED (git-guard): implementers never push — the push is the orchestrator's /orchestrate-end round close-out. Finish the slice through Step 10; flag anything push-related at Step 9." >&2
-    exit 2
-  fi
+  # Codex-host fallback: no team-registry file exists there, so fall back to CODEX_AGENT_ROLE/CODEX_SUBAGENT
+  # — UNCONFIRMED env vars (see the file header comment); this branch is best-effort and likely a no-op
+  # in practice until a real Codex-set role signal is identified.
+  [ -n "$role" ] || role="${CODEX_AGENT_ROLE:-${CODEX_SUBAGENT:-}}"
+  case "$role" in
+    implementer|*impl*)
+      echo "BLOCKED (git-guard): implementers never push — the push is the orchestrator's /orchestrate-end round close-out. Finish the slice through Step 10; flag anything push-related at Step 9." >&2
+      exit 2
+      ;;
+  esac
 fi
 
 exit 0

@@ -22,7 +22,7 @@ You'll read `docs/tdd-brief-template.md` **when you actually author a brief** (S
 - **"Currently in progress"** (top)
 - **"Carry-forward to upcoming briefs"** (your working set)
 - the **active phase section**
-- the last 2-3 **Log** entries (tail the Log section)
+- the last 2-3 round entries — tail `docs/archive/IMPLEMENTATION_LOG.md` (the plan's `## Log` is only a pointer stub)
 
 ## Step 4 — Read the most recent session doc (named sections only)
 
@@ -39,7 +39,7 @@ Read only its **"What was built", "Decisions made", "Decisions explicitly NOT ma
 ```bash
 grep -oE '#[a-z0-9-]+' IMPLEMENTATION_PLAN.md | sort -u    # all anchors in the tracker
 # Then for the specific Currently-in-progress task(s):
-grep -B 2 -A 20 "Currently in progress" IMPLEMENTATION_PLAN.md | grep -oE '#[a-z0-9-]+' | sort -u
+grep -B 2 -A 15 "Currently in progress" IMPLEMENTATION_PLAN.md | grep -oE '#[a-z0-9-]+' | sort -u
 ```
 
 For each anchor cited by the active task(s), use `/check-arch <topic>` (or targeted `Read` with `offset`/`limit`) to load just that section. **Skip when** the active task has no architecture-anchor citations.

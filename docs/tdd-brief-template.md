@@ -30,7 +30,7 @@ Every `/tdd` brief is authored as a **file** in `docs/briefs/`, not just pasted 
 
 **Naming:** `docs/briefs/NNN-<task-id>-<short-topic>.md` — e.g. `024-P3-2-payment-retry-logic.md`.
 
-- **`NNN`** — a stable, zero-padded, sequential id on its own counter (parallel to `docs/sessions/`). Compute it the way session docs do: `ls docs/briefs/`, find the highest `NNN` prefix, increment. Numbers are stable IDs — never reused, never reordered. **Multi-track mode (the orchestrator carries a `<track>-` name prefix): prefix the filename with the track** — `docs/briefs/<track>-NNN-<task-id>-<topic>.md` — and compute `NNN` within the track (`ls docs/briefs/<track>-*`), so parallel tracks' briefs don't collide on merge (root `CLAUDE.md` "Naming + cross-bleed prevention").
+- **`NNN`** — a stable, zero-padded, sequential id on its own counter (parallel to `docs/sessions/`). Compute it the way session docs do: `ls docs/briefs/`, find the highest `NNN` prefix, increment. Numbers are stable IDs — never reused, never reordered. **Multi-track mode (the orchestrator carries a `<track>-` name prefix): prefix the filename with the track** — `docs/briefs/<track>-NNN-<task-id>-<topic>.md` — and compute `NNN` within the track (`ls docs/briefs/<track>-*`), so parallel tracks' briefs don't collide on merge (root `CLAUDE.md` "Naming + numbered-doc collision prevention").
 - **`<task-id>`** — the `IMPLEMENTATION_PLAN.md` task this brief implements. Ties the brief to its phase.
 - **`<short-topic>`** — kebab-case feature topic.
 
