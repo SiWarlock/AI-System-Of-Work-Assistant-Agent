@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "scaffoldingRepo": "/Users/dreddy/Documents/Dev/AI-tools/SoW/SoW-build/scaffold",
+  "scaffoldingRepo": "git@github.com-nozzins:SiWarlock/claude-code-tdd-agent-crew-scaffold.git",
   "generatedFromSha": "2556dd23632de17bcc213b7b14f4fe7f7a296adf",
   "generatedFromRef": "main",
   "generatorModel": "claude-opus-4-8",
