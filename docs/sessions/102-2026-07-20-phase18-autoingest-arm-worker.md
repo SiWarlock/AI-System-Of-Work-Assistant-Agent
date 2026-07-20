@@ -4,7 +4,7 @@
 - **Phase:** 18 (§19.5 real model transport / auto-ingest arming)
 - **Role:** worker-impl (single-track `main`)
 - **Predecessor:** [`101-2026-07-19-phase18-pre-arm-hardening-worker-impl.md`](101-2026-07-19-phase18-pre-arm-hardening-worker-impl.md) (Phase-18 pre-ARM hardening: 18.28/18.29/18.30)
-- **Successor:** _(next round)_
+- **Successor:** [`103-2026-07-20-phase18-desktop-arming-dotenv-loading.md`](103-2026-07-20-phase18-desktop-arming-dotenv-loading.md) (desktop-impl's concurrent close-out, same full-team cycle: 18.32 subscription-arming forwarding + 18.34 native `.env` loading)
 
 ## Why this session existed
 
