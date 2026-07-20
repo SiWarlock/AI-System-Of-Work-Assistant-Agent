@@ -4,7 +4,7 @@
 - **Phase:** 18 (§19.5 real ModelProvider / subscription crossing) — post-GO-LIVE hardening round, all dormant / pre-ARM
 - **Role:** worker-impl (implementer), team `session-4f4687dd`, single-track `main`
 - **Predecessor:** [`100-2026-07-18-phase-exit-18-crossing-gate-orch.md`](100-2026-07-18-phase-exit-18-crossing-gate-orch.md) (the `/phase-exit 18` crossing gate → CLEAR + 3 Carry-forward findings)
-- **Successor:** _(next round)_
+- **Successor:** [`102-2026-07-20-phase18-autoingest-arm-worker.md`](102-2026-07-20-phase18-autoingest-arm-worker.md) (18.31 egress-allowlist seam + 18.33 committed L64 armed dry-run go/no-go)
 
 ## Why this session existed
 
