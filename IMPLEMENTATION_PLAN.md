@@ -61,9 +61,8 @@ _`*` = a residual/deferred bullet remains inside a certified phase (see that pha
 
 ## Currently in progress
 
-- **Active:** none in flight — Phase-18 **Path-β desktop-arming round SEALED** (4 slices, all dormant/default-OFF, nothing armed): 18.31 `dd2ceaa4` (egress-allowlist seam) · 18.32 `0d8e7c56` (desktop subscription-arming forwarding) · 18.34 `fc3031f7` (native allowlisted `.env` loading) · 18.33 `db45eb6e` (committed L64 go/no-go harness). Gates GREEN: worker 1820/0, desktop 361/0, typecheck 20/20; lint/format env-waived. Session docs 102 (worker) + 103 (desktop).
-- **Next target:** owner call — the auto-ingest / subscription in-app ENABLE (§ARM-18, owner-gated; the app is now CAPABLE — run the go/no-go `SOW_L64_DRYRUN=1 npx vitest run apps/worker/test/integration/autoIngest-armed-live.test.ts` first), OR a Carry-forward brief (SPINE arc · 7.19 retention re-open · Phase-9 completion).
-- **Blocker:** all Phase-18 breadth + every arming step is owner-gated (§ARM-18). Nothing arms without the owner.
+- **Team PAUSED 2026-07-20** — handoff: `docs/team-handoffs/014-2026-07-20-phase18-pathbeta-sealed-scaffolding-upgraded-team-cycle.md` · last round-seal: `7b15e6e3` (pushed) · reason: full-team cycle onto the upgraded scaffolding.
+- **Next target (owner call):** the §ARM-18 in-app auto-ingest / subscription ENABLE — run the go/no-go `SOW_L64_DRYRUN=1 npx vitest run apps/worker/test/integration/autoIngest-armed-live.test.ts` FIRST — OR a Carry-forward brief. All Phase-18 breadth + every arming step is owner-gated; nothing arms without the owner.
 
 ---
 

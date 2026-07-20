@@ -4,7 +4,7 @@
 **Track:** solo / single-track `main`
 **Worktree:** root checkout (single-track)
 **Predecessor handoff:** `012-2026-07-17-flipwiring-sealed-auth-investigation-done-orch-cycle.md`
-**Successor handoff:** _(filled in by the next /team-end)_
+**Successor handoff:** `014-2026-07-20-phase18-pathbeta-sealed-scaffolding-upgraded-team-cycle.md`
 **Round-seal commit at handoff:** `171017b7`
 
 ## Why this handoff exists
