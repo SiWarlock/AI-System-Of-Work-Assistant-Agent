@@ -77,6 +77,10 @@ import {
   resolveArmCheckReachable,
   REACHABILITY_LIVE_ENV_VAR,
 } from "./composition/subscription-reachability-arming";
+import {
+  guardSettingsOnArmedPath,
+  readClaudeCodeSettings,
+} from "./composition/subscription-settings-guard";
 import { createDurableParkedReader } from "./composition/dispositionDurable";
 import type { WorkerOriginAllowlist } from "./api/auth/originAllowlist";
 import { startApiServer, type RunningApiServer } from "./api/mount";
@@ -1341,11 +1345,26 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   const effectiveProviderTransport = armWiring?.providerTransport ?? config.providerTransport;
   const arming = resolveSubscriptionArming(effectiveProviderTransport, process.env);
 
+  // 0.95) 18.36 — the settings-level key-injection guard. On the EFFECTIVELY-armed path ONLY (no fs read on the
+  //   shipped default OR the env-refused path — byte-equivalent), detect a Claude-Code `settings.json` key
+  //   injection (`apiKeyHelper` / a settings-`env` shadow / a Bedrock cred script) the 18.28 `process.env` guard
+  //   structurally can't see — the Agent SDK `query()` honors settings, so an injected raw key there would make a
+  //   "subscription" run silently metered-spend. A detected injection DEGRADES the arm identically to the env-
+  //   shadow refusal (strip the transport gate → local/stub) + a boot-visible code-only fault (rule 7) — NEVER a
+  //   worker crash (§16/L52). PRESENCE only (the key value / command is never read). Closes a CHECKPOINT-1 residual.
+  //   `armRefused` / `armEffective` are THE combined degrade signals — EVERY arm-degrade consumer below (the
+  //   transport strip, the reader-holder fill, AND the route/ContextRef/schema arming) reads THESE, never
+  //   `arming.*` directly, so a settings injection strips the WHOLE arm in lockstep (no split-brain, L52). The
+  //   two boot-visible logs keep their distinct reasons (`arming.authRefused` = env-shadow; `settingsFault` = settings).
+  const settingsFault = guardSettingsOnArmedPath(arming.effectiveArmed, readClaudeCodeSettings);
+  const armRefused = arming.authRefused || settingsFault !== undefined;
+  const armEffective = arming.effectiveArmed && settingsFault === undefined;
+
   // 1) The persistent composition root (sqlite + genesis migration, vault, the
   //    persistent §9 stores, the redacting logger, the §7 broker).
   const backendsConfig: BackendsConfig = buildBackendsConfig(
-    // Degrade the arm on a shadowing-env refusal — strip the transport gate so extraction stays LOCAL/stub.
-    arming.authRefused
+    // Degrade the arm on a shadowing-env OR settings-injection refusal — strip the transport gate so extraction stays LOCAL/stub.
+    armRefused
       ? { ...config, providerTransport: undefined }
       : { ...config, providerTransport: effectiveProviderTransport },
   );
@@ -1354,7 +1373,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // 1.05) 18.25 step-6 — FILL the late-bound reader holder POST-`assembleBackends` (only when the arm is
   //   effectively armed): the durable parked reader exists only now. On the dormant/refused path the holder stays
   //   empty (the late-bound reader fails closed — never a real read). This closes the eager-consumption ordering.
-  if (arming.effectiveArmed && armWiring !== undefined) {
+  if (armEffective && armWiring !== undefined) {
     readerHolder.reader = createDurableParkedReader(backends.repos.sourceDisposition);
   }
 
@@ -1364,6 +1383,14 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   if (arming.authRefused) {
     backends.logger.error("subscription.arming.refused", {
       fields: { code: arming.authFault?.code ?? "anthropic_key_set_on_armed_path" },
+    });
+  }
+  // 1.15) 18.36 — surface a settings-level key-injection refusal LOUDLY (boot-visible, code-only — rule 7), with
+  //   a DISTINCT code + the file-tier marker so the operator can tell it apart from the env-shadow refusal.
+  //   Dormant: never reached on the shipped default (only the effectively-armed path reads settings).
+  if (settingsFault !== undefined) {
+    backends.logger.error("subscription.arming.refused", {
+      fields: { code: settingsFault.code, marker: settingsFault.marker },
     });
   }
 
@@ -1389,7 +1416,9 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   //   arm (dormant: `effectiveArmed=false` on the shipped default ⇒ params UNCHANGED, byte-equivalent).
   const proofSpineParams = withSubscriptionExtractionArming(
     withDurableRevisions(config.proofSpineParams, backends.repos.knowledgeRevisions),
-    arming.effectiveArmed,
+    // 18.36 — the COMBINED effective arm (settings-injection folded in), NOT `arming.effectiveArmed`: a settings
+    //   key-injection must strip the route/ContextRef/schema arming in lockstep with the transport (L52 no split-brain).
+    armEffective,
   );
 
   // 1.5) DEV data-unlock (OFF by default). When dev-provision specs are supplied, turn
