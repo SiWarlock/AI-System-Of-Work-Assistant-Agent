@@ -168,6 +168,23 @@ describe("assertNoSettingsKeyInjection — the settings-level key-injection guar
     }
   });
 
+  it("settings_env_new_18_38_var_degrades_via_single_source: an 18.38-added shadow var in a settings env block ⇒ fault", () => {
+    // Single-source (L5/L37/L71) — the 18.38 re-ground extension (the GATEWAY/CCR switches, the GCP first-party
+    // switch, ANTHROPIC_IDENTITY_TOKEN, and the *_FILE_DESCRIPTOR credential-indirection channels) hardens THIS
+    // settings-`env` leg too, not just the process.env guard — proving the constant is the load-bearing single source.
+    for (const key of [
+      "CLAUDE_CODE_USE_GATEWAY",
+      "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+      "ANTHROPIC_IDENTITY_TOKEN",
+      "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+    ]) {
+      expect(SUBSCRIPTION_SHADOWING_ENV_KEYS as readonly string[], `${key} must be watched`).toContain(key);
+      expect(assertNoSettingsKeyInjection(reader(parsed({ env: { [key]: "shadow" } })))?.code, `settings env.${key}`).toBe(
+        "settings_key_injection_on_armed_path",
+      );
+    }
+  });
+
   it("SETTINGS_INJECTION_FIELDS excludes model/availableModels/forceLogin* (common/ambiguous → permanent false-degrade)", () => {
     // Mirrors 18.28's NO_PROXY exclusion: a field that is common in a legit subscription config would permanently
     // false-degrade the armed path (a model pin is not a credential injection). Grounded vs live Claude-Code docs.

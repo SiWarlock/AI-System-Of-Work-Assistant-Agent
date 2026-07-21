@@ -33,58 +33,120 @@ describe("assertSubscriptionAuthEnv — ANTHROPIC_API_KEY-unset armed-path guard
     expect(isOk(assertSubscriptionAuthEnv("true" as unknown as boolean, { ANTHROPIC_API_KEY: "sk-x" }))).toBe(true);
   });
 
-  // 18.37 — the FULL grounded provider surface (extends 18.28's 13-key set to 29; claude-code-guide vs LIVE
-  // Claude-Code docs 2026-07-20: env-vars.md / authentication.md / amazon-bedrock.md / google-vertex-ai.md /
-  // microsoft-foundry.md). Adds the account-shadow token (`CLAUDE_CODE_OAUTH_TOKEN`, precedence #5 — above the
-  // subscription), the two missing provider switches (`CLAUDE_CODE_USE_FOUNDRY` + `CLAUDE_CODE_USE_MANTLE` —
-  // ⭐ Mantle is load-bearing: the AWS creds below activate under Bedrock OR Mantle, so EXCLUDING them is only
-  // fail-safe because BOTH switches are watched), the Anthropic-namespaced by-presence provider creds, the
-  // per-provider base-URL/endpoint redirects, and the mTLS client-cert vars. A missed var/case is a silent
-  // FAIL-OPEN → wrong billing / redirected egress on the armed path (L61). The `some()` logic is unchanged; a
-  // set var DEGRADES the arm fail-closed, never crashes boot (L52/L62).
+  // 18.38 — the FULL grounded provider surface, RE-GROUNDED against the SDK-BUNDLED claude-code (2.1.201 — the
+  // ACTUAL Agent-SDK `query()` runtime; the standalone 2.1.216 CLI is a SEPARATE newer artifact). Extends
+  // 18.37's 30-key set to 60. A repo-source `strings` re-ground of the shipped binary + claude-code-guide vs
+  // live docs found 18.37's public-docs grounding under-covered the shipped surface a THIRD time (worker L72 —
+  // ground vs the AUTHORITATIVE RUNTIME-BUNDLED binary, not public docs). New: the GATEWAY + CCR-router provider
+  // switches, the SKIP_*_AUTH gateway-handoff signals, the *_FILE/_FILE_DESCRIPTOR credential-indirection
+  // channels, ANTHROPIC_IDENTITY_TOKEN(_FILE), the Mantle API key, the GCP first-party family (FWD — present in
+  // 2.1.216, over-inclusion fail-safe for an SDK bump), the CC-namespaced base-url/proxy redirects,
+  // ANTHROPIC_UNIX_SOCKET / ANTHROPIC_CONFIG_DIR, and the mTLS cert-store. A missed var/case is a silent
+  // FAIL-OPEN → wrong billing / redirected egress on the armed path (L61/L72). The `some()` logic is unchanged;
+  // a set var DEGRADES the arm fail-closed, never crashes boot (L52/L62). Single-sourced (settings-`env` reuses it).
   const FULL_SHADOWING_SET = [
-    // Class A — auth-shadowing (which auth/provider): direct tokens + provider switches.
+    // Class A — auth-shadowing: direct tokens + credential-indirection channels (the *_FILE(_DESCRIPTOR) variants
+    // are the easiest way a credential slips past a name-prefix allowlist — grounded, corroborated).
     "ANTHROPIC_API_KEY",
+    "CLAUDE_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+    "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+    "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+    "ANTHROPIC_IDENTITY_TOKEN",
+    "ANTHROPIC_IDENTITY_TOKEN_FILE",
+    // Class A — host-managed auth cluster (18.38 Step-8 security re-ground — the "still-missed" cluster the reviewer caught).
+    "CLAUDE_CODE_HFI_BEARER_TOKEN",
+    "CLAUDE_CODE_SESSION_ACCESS_TOKEN",
+    "CLAUDE_CODE_HOST_CREDS_FILE",
+    "CLAUDE_CODE_HOST_AUTH_ENV_VAR",
+    "CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR",
+    // Class A — provider / gateway / router / host switches (watched → the generic-cloud-cred exclusion stays sound, L72).
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",
     "CLAUDE_CODE_USE_FOUNDRY",
     "CLAUDE_CODE_USE_MANTLE",
     "CLAUDE_CODE_USE_ANTHROPIC_AWS",
-    // Class A — by-presence provider credentials (Anthropic-namespaced / Bedrock bearer).
+    "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+    "CLAUDE_CODE_USE_GATEWAY",
+    "CLAUDE_CODE_USE_CCR_V2",
+    "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
+    // Class A — SKIP-auth gateway-handoff signals (a "provider creds held by a gateway" flag ⇒ leaving the subscription).
+    "CLAUDE_CODE_SKIP_BEDROCK_AUTH",
+    "CLAUDE_CODE_SKIP_VERTEX_AUTH",
+    "CLAUDE_CODE_SKIP_FOUNDRY_AUTH",
+    "CLAUDE_CODE_SKIP_MANTLE_AUTH",
+    "CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH",
+    "CLAUDE_CODE_SKIP_ANTHROPIC_GOOGLE_CLOUD_AUTH",
+    // Class A — by-presence provider credentials (Anthropic-namespaced / Bedrock bearer / CCR-router token).
     "ANTHROPIC_AWS_API_KEY",
+    "ANTHROPIC_AWS_AUTH",
     "ANTHROPIC_FOUNDRY_API_KEY",
     "ANTHROPIC_FOUNDRY_AUTH_TOKEN",
+    "ANTHROPIC_BEDROCK_MANTLE_API_KEY",
+    "ANTHROPIC_GOOGLE_CLOUD_AUTH",
+    "ANTHROPIC_ENVIRONMENT_KEY",
+    "ANTHROPIC_PROFILE",
     "AWS_BEARER_TOKEN_BEDROCK",
-    // Class B — egress-redirect (content could go elsewhere / be intercepted).
+    "CCR_OAUTH_TOKEN_FILE",
+    // Class B — egress-redirect (content could go elsewhere / be intercepted); both proxy cases (Node honors lowercase).
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_API_URL",
+    "CLAUDE_CODE_API_BASE_URL",
+    "CLAUDE_CODE_GB_BASE_URL",
     "ANTHROPIC_CUSTOM_HEADERS",
     "ANTHROPIC_BEDROCK_BASE_URL",
     "ANTHROPIC_VERTEX_BASE_URL",
     "ANTHROPIC_FOUNDRY_BASE_URL",
     "ANTHROPIC_AWS_BASE_URL",
+    "ANTHROPIC_GOOGLE_CLOUD_BASE_URL",
     "ANTHROPIC_BEDROCK_MANTLE_BASE_URL",
     "ANTHROPIC_FOUNDRY_RESOURCE",
+    "CLAUDE_CODE_CUSTOM_OAUTH_URL",
+    "CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL",
+    "ANTHROPIC_UNIX_SOCKET",
+    "ANTHROPIC_CONFIG_DIR",
     "HTTP_PROXY",
     "http_proxy",
     "HTTPS_PROXY",
     "https_proxy",
     "ALL_PROXY",
     "all_proxy",
-    // Class C — mTLS client certs (change the client identity → mTLS to a custom endpoint when paired w/ a redirect).
+    "CLAUDE_CODE_PROXY_URL",
+    "CLAUDE_CODE_PROXY_HOST",
+    "CLAUDE_CODE_HTTP_PROXY",
+    "CLAUDE_CODE_HTTPS_PROXY",
+    // bare-CLAUDE_ namespace (18.38 Step-8 re-verify — the reviewer's cross-namespace sweep; the denylist's structural leak).
+    "CLAUDE_ENV_FILE",
+    "CLAUDE_AI_AUTHORIZE_URL",
+    "CLAUDE_AI_ORIGIN",
+    "CLAUDE_LOCAL_OAUTH_API_BASE",
+    "CLAUDE_LOCAL_OAUTH_APPS_BASE",
+    "CLAUDE_LOCAL_OAUTH_CONSOLE_BASE",
+    "CLAUDE_BRIDGE_BASE_URL",
+    "CLAUDE_BRIDGE_SESSION_INGRESS_URL",
+    "CLAUDE_BRIDGE_OAUTH_TOKEN",
+    "CLAUDE_BRIDGE_USE_CCR_V2",
+    "CLAUDE_CONFIG_DIR",
+    "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+    // Class C — mTLS client certs + cert-store (change the client identity → mTLS to a custom endpoint w/ a redirect).
     "CLAUDE_CODE_CLIENT_CERT",
     "CLAUDE_CODE_CLIENT_KEY",
     "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
+    "CLAUDE_CODE_CERT_STORE",
   ] as const;
 
-  it("shadowing_env_full_set_enumerated — the guard watches ALL 30 grounded shadowing vars (claude-code-guide, live docs) [spec(§19.5)]", () => {
+  it("shadowing_env_full_set_enumerated — the guard watches ALL 81 grounded shadowing vars (SDK-bundled 2.1.201 full-namespace re-ground) [spec(§19.5)]", () => {
     // The exact set (order-independent) — a var dropped from the constant is a silent fail-open vector.
     expect([...SUBSCRIPTION_SHADOWING_ENV_KEYS].sort()).toStrictEqual([...FULL_SHADOWING_SET].sort());
+    // Count + no-dup pins: the sort-compare alone passes if a duplicate is added symmetrically to BOTH lists
+    // (a silent under-count of real coverage) — pin the exact count AND uniqueness so a dup can't hide.
+    expect(SUBSCRIPTION_SHADOWING_ENV_KEYS).toHaveLength(81);
+    expect(new Set(SUBSCRIPTION_SHADOWING_ENV_KEYS).size).toBe(SUBSCRIPTION_SHADOWING_ENV_KEYS.length);
   });
 
-  it("shadowing_env_full_set_each_var_fails_closed — for EACH of the 30 vars: armed+set ⇒ refuse; armed all-unset ⇒ ok; unarmed+set ⇒ ok [spec(§19.5)]", () => {
+  it("shadowing_env_full_set_each_var_fails_closed — for EACH of the 81 vars: armed+set ⇒ refuse; armed all-unset ⇒ ok; unarmed+set ⇒ ok [spec(§19.5)]", () => {
     for (const key of FULL_SHADOWING_SET) {
       const armedSet = assertSubscriptionAuthEnv(true, { [key]: "shadow-value" });
       expect(isErr(armedSet), `armed + ${key} set must refuse`).toBe(true);
@@ -95,7 +157,7 @@ describe("assertSubscriptionAuthEnv — ANTHROPIC_API_KEY-unset armed-path guard
       // The SAME var set on the UNARMED path ⇒ ok (byte-equivalent default never reads env).
       expect(isOk(assertSubscriptionAuthEnv(false, { [key]: "shadow-value" })), `unarmed + ${key} ⇒ ok`).toBe(true);
     }
-    // All 29 unset on the armed path ⇒ ok (the subscription profile is used).
+    // All 81 unset on the armed path ⇒ ok (the subscription profile is used).
     expect(isOk(assertSubscriptionAuthEnv(true, {}))).toBe(true);
   });
 
@@ -107,6 +169,11 @@ describe("assertSubscriptionAuthEnv — ANTHROPIC_API_KEY-unset armed-path guard
     const excluded = [
       "NO_PROXY",
       "no_proxy",
+      // 18.38 note-only (owner/lead-approved 2026-07-20): NODE_EXTRA_CA_CERTS is a TLS-interception enabler but
+      // INERT without a watched proxy/base-url redirect (all now watched); watching it by-presence would
+      // false-degrade legit CI/TLS armed configs (L65/NO_PROXY class). Pinned EXCLUDED so a future well-meaning
+      // add fails HERE (not just the set===N mirror) and forces a reconsider.
+      "NODE_EXTRA_CA_CERTS",
       "AWS_ACCESS_KEY_ID",
       "AWS_SECRET_ACCESS_KEY",
       "AWS_SESSION_TOKEN",
@@ -117,7 +184,21 @@ describe("assertSubscriptionAuthEnv — ANTHROPIC_API_KEY-unset armed-path guard
       "ANTHROPIC_VERTEX_PROJECT_ID",
       "ANTHROPIC_AWS_WORKSPACE_ID",
       "ANTHROPIC_WORKSPACE_ID",
+      // 18.38 — the GCP first-party routing/region IDs are pure routing (carry no cred, redirect nothing) → EXCLUDED,
+      // mirroring the AWS/Vertex routing-ID exclusions; watching them would false-degrade a legit GCP-provider config.
+      "ANTHROPIC_GOOGLE_CLOUD_PROJECT",
+      "ANTHROPIC_GOOGLE_CLOUD_LOCATION",
+      "ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID",
       "CLOUD_ML_REGION",
+      // 18.38 Step-8 — bare-CLAUDE_ vars deliberately EXCLUDED as a DIFFERENT subsystem (NOT the model-billing/egress
+      // path: background-shell/PTY auth, device MFA, remote session-ingress; extraction runs maxTurns:1 / tools:[] /
+      // no background tasks ⇒ inert). Documented so a future re-ground doesn't re-flag them; 18.40 env-scrub covers
+      // them by construction regardless. Also EXCLUDED (ambiguous / routinely-set ⇒ would false-degrade): CLAUDE_BASE,
+      // CLAUDE_PROJECT_DIR, CLAUDE_JOB_DIR, CLAUDE_SESSION_ID.
+      "CLAUDE_BG_CLAIM_AUTH",
+      "CLAUDE_BG_PTY_AUTH",
+      "CLAUDE_TRUSTED_DEVICE_TOKEN",
+      "CLAUDE_SESSION_INGRESS_TOKEN_FILE",
     ] as const;
     for (const key of excluded) {
       expect([...SUBSCRIPTION_SHADOWING_ENV_KEYS] as string[], `${key} must NOT be watched`).not.toContain(key);
@@ -132,6 +213,23 @@ describe("assertSubscriptionAuthEnv — ANTHROPIC_API_KEY-unset armed-path guard
     for (const sw of ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS"] as const) {
       expect([...SUBSCRIPTION_SHADOWING_ENV_KEYS] as string[], `${sw} must be watched`).toContain(sw);
       expect(isErr(assertSubscriptionAuthEnv(true, { [sw]: "1" })), `armed + ${sw} ⇒ refuse`).toBe(true);
+    }
+  });
+
+  it("gcp_cred_activating_switches_all_watched — restores the generic-GCP-cred exclusion soundness (L72, GCP analog) [spec(§19.5)]", () => {
+    // ⭐ L72 (GCP analog of the AWS soundness pin). The generic GCP creds (GOOGLE_APPLICATION_CREDENTIALS /
+    // GCLOUD_PROJECT / GOOGLE_CLOUD_PROJECT) are EXCLUDED because a provider SWITCH is the real trigger + is watched.
+    // They activate under Vertex OR Anthropic-on-Google-Cloud — so the exclusion is fail-OPEN unless BOTH switches
+    // are watched. In the 2.1.201 runtime Vertex alone already covers them; watching CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD
+    // restores soundness for the 2.1.216+ Anthropic-on-GCP provider (forward-safe over-inclusion). Pin both switches
+    // watched, AND the generic GCP creds + GCP routing IDs stay UNWATCHED (the exclusion holds).
+    for (const sw of ["CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD"] as const) {
+      expect([...SUBSCRIPTION_SHADOWING_ENV_KEYS] as string[], `${sw} must be watched`).toContain(sw);
+      expect(isErr(assertSubscriptionAuthEnv(true, { [sw]: "1" })), `armed + ${sw} ⇒ refuse`).toBe(true);
+    }
+    for (const cred of ["GOOGLE_APPLICATION_CREDENTIALS", "GCLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT"] as const) {
+      expect([...SUBSCRIPTION_SHADOWING_ENV_KEYS] as string[], `${cred} must stay excluded`).not.toContain(cred);
+      expect(isOk(assertSubscriptionAuthEnv(true, { [cred]: "present" })), `armed + ${cred} ⇒ ok (switch is the trigger)`).toBe(true);
     }
   });
 });
