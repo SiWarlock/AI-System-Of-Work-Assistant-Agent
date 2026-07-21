@@ -4,7 +4,7 @@
 - **Phase:** 18 (§19.5 real ModelProvider / subscription crossing) — Path-β "in-app auto-ingest capability" round, all dormant / default-OFF (nothing armed, run, or spent)
 - **Role:** desktop-impl (implementer), team `session-4f4687dd`, single-track `main`
 - **Predecessor:** [`102-2026-07-20-phase18-autoingest-arm-worker.md`](102-2026-07-20-phase18-autoingest-arm-worker.md) (worker-impl's concurrent close-out: 18.31 egress-allowlist seam + 18.33 committed L64 armed dry-run go/no-go)
-- **Successor:** _(none yet)_
+- **Successor:** [`104-2026-07-20-phase18-arm18-checkpoint1-shadow-hardening.md`](104-2026-07-20-phase18-arm18-checkpoint1-shadow-hardening.md) (worker-impl: 18.35 reachability bind + 18.36 settings key-injection guard + 18.37 shadow-set extension)
 
 > **Concurrent-close-out numbering note:** this is a full-team cycle — worker-impl reserved **102** (via 101's successor link) for its 18.31/18.33 doc; I took **103**. I did NOT edit 101 (correctly points to 102) or 102 (worker-impl territory, being written concurrently). The 102→103 successor link should be added by worker-impl or reconciled at `/orchestrate-end`.
 
