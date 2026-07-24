@@ -112,7 +112,13 @@ export interface ClaudeSubscriptionCompletion {
  * Auth is ambient — the SDK uses the local `claude` login. `settingSources: []` so no project CLAUDE.md
  * is loaded; `allowedTools: []` so no tool can run. A thrown SDK error folds to a typed error.
  */
-export function createClaudeSubscriptionCompletion(): ClaudeSubscriptionCompletion {
+export function createClaudeSubscriptionCompletion(
+  // 18.40 — an optional rule-5 completeness seam. When the (armed) worker caller supplies `childEnv` (a minimal
+  // allowlist), it REPLACES the spawned claude env ENTIRELY (sdk.d.ts:1391-1409) so NO shadow var reaches the
+  // subscription `query()`. Omitted ⇒ inherit process.env (byte-equivalent shipped default). The worker computes
+  // the allowlist (layer rule: worker computes, providers forwards); this only forwards it.
+  deps?: { readonly childEnv?: Record<string, string | undefined> },
+): ClaudeSubscriptionCompletion {
   return {
     async complete(
       req: CompletionRequest,
@@ -144,6 +150,9 @@ export function createClaudeSubscriptionCompletion(): ClaudeSubscriptionCompleti
             // The caller vets the flags; cast to the SDK's `SdkBeta[]` at this boundary (e.g. 1M
             // context). Spread to a fresh mutable array so the SDK can't mutate the caller's readonly one.
             ...(req.betas !== undefined ? { betas: [...req.betas] as SdkBeta[] } : {}),
+            // 18.40 — rule-5 completeness: when supplied, `env` REPLACES the child env entirely (no merge with
+            // process.env) so no shadow var can reach the subscription spawn. Omitted ⇒ absent ⇒ inherit (byte-equiv).
+            ...(deps?.childEnv !== undefined ? { env: deps.childEnv } : {}),
           },
         })) {
           messages.push(message);

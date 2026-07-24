@@ -77,6 +77,7 @@ import {
   resolveArmCheckReachable,
   REACHABILITY_LIVE_ENV_VAR,
 } from "./composition/subscription-reachability-arming";
+import { resolveSubscriptionSpawnChildEnv } from "./composition/subscription-child-env-allowlist";
 import {
   guardSettingsOnArmedPath,
   readClaudeCodeSettings,
@@ -1317,10 +1318,26 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   //   holder is filled POST-assembly (the resolver's `resolve()` is per-job/late). `createSubscriptionOnlyProviderRunner`
   //   builds NO 5-provider registry, so it needs NONE of the post-assembly `controller`/`now`/`transport` deps.
   //   OFF (opt-in unset / not `enabled === true`) ⇒ `armWiring` undefined ⇒ byte-equivalent (holder never filled).
+  // 18.40 — the SINGLE armed-subscription-spawn child-env chokepoint (rule-5 completeness-by-construction). When
+  //   the extraction arm OR the §13.10 Copilot real-model path is enabled, EVERY subscription `query()` spawn runs
+  //   with a MINIMAL ALLOWLISTED env — no shadow var (known/unknown/CLAUDE_ENV_FILE-injected) can reach the child.
+  //   Neither enabled ⇒ undefined ⇒ the spawn omits `env` ⇒ inherits process.env (byte-equivalent shipped default).
+  //   Wired at BOTH createClaudeSubscriptionCompletion sites (extraction makeCompletion below + Copilot completion,
+  //   :~1774) so no armed spawn inherits raw env. The 18.38 denylist stays as a defense-in-depth pre-run degrade.
+  const spawnChildEnv = resolveSubscriptionSpawnChildEnv(
+    {
+      subscriptionArmEnabled: config.subscriptionArm?.enabled === true,
+      copilotRealModel: config.copilotRealModel === true,
+    },
+    process.env,
+  );
   const readerHolder = createReaderHolder();
   const armWiring = buildSubscriptionArmWiring(config.subscriptionArm, {
     readerHolder,
-    makeCompletion: config.subscriptionArm?.makeCompletion ?? (() => createClaudeSubscriptionCompletion()),
+    makeCompletion:
+      config.subscriptionArm?.makeCompletion ??
+      (() =>
+        createClaudeSubscriptionCompletion(spawnChildEnv !== undefined ? { childEnv: spawnChildEnv } : undefined)),
     // 18.35 — bind the effective reachability check behind the INDEPENDENT reachability-enable OFF-lock. The
     //   real spend-free probe (`probeSubscriptionReachability` over the macOS Keychain detector) binds ONLY when
     //   the arm is enabled AND `SOW_SUBSCRIPTION_REACHABILITY_LIVE` is set (strict "1"/"true"); an env-only arm
@@ -1764,7 +1781,10 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     workspaces: copilotWorkspaces,
     model: config.copilotModel,
     betas: config.copilotBetas,
-    completion: createClaudeSubscriptionCompletion,
+    // 18.40 — the §13.10 Copilot real-model path is the 2nd real subscription `query()` spawn; route it through
+    //   the SAME `spawnChildEnv` chokepoint (gated on copilotRealModel too) so it never inherits raw process.env.
+    completion: () =>
+      createClaudeSubscriptionCompletion(spawnChildEnv !== undefined ? { childEnv: spawnChildEnv } : undefined),
     // P3-live: the real gbrain read seam, constructed ONLY when the flag is on (a factory, so the transport
     // isn't built off-path). Absent ⇒ retrieval stays the fixture stub. "http" ⇒ the mandated MCP-over-HTTP
     // grant path (coexists with a running serve); else the subprocess CLI.
