@@ -23,6 +23,7 @@ import type {
   UiSafeGclProjection,
   UiSafeRecentChange,
 } from "@sow/contracts/api/ui-safe";
+import type { DailyBrief } from "../../lib/daily-brief";
 
 export interface TodayProps {
   /** The active workspace scope (drives the Global-only cross-workspace section). */
@@ -35,6 +36,8 @@ export interface TodayProps {
   readonly recentChanges: readonly UiSafeRecentChange[];
   /** Real workspaceId → { label, accent } for the Global per-workspace rows (from onboarded set). */
   readonly workspaceMeta: WorkspaceMetaMap;
+  /** The deterministic, store-assembled daily brief (9.20) — summary + meta chips from UI-safe counts. */
+  readonly brief: DailyBrief;
   /** Request a policy-gated drill-down into a workspace's context (worker-enforced). */
   readonly onDrillDown: (workspaceId: string, projectionType: string) => void;
 }
@@ -243,7 +246,7 @@ function RecentActivity({
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function Today(props: TodayProps): ReactElement {
-  const { scope, cards, health, global, recentChanges, workspaceMeta, onDrillDown } = props;
+  const { scope, cards, health, global, recentChanges, workspaceMeta, brief, onDrillDown } = props;
 
   return (
     <main className="sow-content" aria-label="Today dashboard">
@@ -264,47 +267,22 @@ export function Today(props: TodayProps): ReactElement {
         </>
       ) : null}
 
-      {/* Daily brief — static illustrative content (§ material-direction.md) */}
+      {/* Daily brief — deterministic, store-assembled summary from UI-safe counts (9.20). NOT the
+          model-synthesized briefing (that stays the separate on-request Copilot path). Populated by the
+          demo-seed; an empty read-model yields an honest zero-brief (no mockup). */}
       <div className="sow-section-label">Daily brief</div>
-      <p className="sow-brief-text">
-        Two meetings on the calendar and one blocker to clear. Vendor review
-        still needs close-out. Granola sync is degraded, so the standup
-        transcript has not landed yet.
-      </p>
-      <div className="sow-brief-meta">
-        3 decisions logged · 2 meetings · 1 open blocker
-      </div>
+      <p className="sow-brief-text">{brief.summary}</p>
+      {brief.meta ? <div className="sow-brief-meta">{brief.meta}</div> : null}
 
       {/* Waiting on you — driven from props.cards */}
       <div className="sow-section-label">Waiting on you</div>
       <DashboardCards cards={cards} />
 
-      {/* Today's schedule — static illustrative content */}
+      {/* Today's schedule — no calendar data source exists until 9.9 Calendar (unbuilt). Honest empty
+          state (no fabricated meetings); real rows land when 9.9 ships. */}
       <div className="sow-section-label">{"Today's schedule"}</div>
-      <div className="sow-grouped" role="list" aria-label="Today's schedule">
-        <div className="sow-row" role="listitem">
-          <span className="sow-row-time">09:30</span>
-          <span className="sow-row-title">Standup</span>
-          <span className="sow-row-people">2 people</span>
-          <span className="sow-row-state">transcript pending</span>
-        </div>
-        <div className="sow-row" role="listitem">
-          <span className="sow-row-time">11:00</span>
-          <span className="sow-row-title">Vendor review</span>
-          <span className="sow-row-people">4 people</span>
-          <span className="sow-row-state sow-row-state--attn">
-            needs close-out
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M9 6l6 6-6 6" />
-            </svg>
-          </span>
-        </div>
-        <div className="sow-row" role="listitem">
-          <span className="sow-row-time">15:00</span>
-          <span className="sow-row-title">1:1 with Priya</span>
-          <span className="sow-row-people">2 people</span>
-          <span className="sow-row-state">in 4 hours</span>
-        </div>
+      <div className="sow-empty" role="status">
+        No calendar connected
       </div>
 
       {/* System health — driven from props.health */}

@@ -34,6 +34,7 @@ import type { ApprovalDecision } from "./lib/approval-decision";
 import type { TriageDisposition, RerouteTarget } from "./lib/triage-disposition";
 import { reroutePickerOptions } from "./lib/reroute-picker";
 import { shouldShowOnboarding, shouldBackfillMarker, type FirstRunSignal } from "./lib/first-run-gate";
+import { buildDailyBrief } from "./lib/daily-brief";
 import { seedDevStore } from "./dev/seed";
 
 // The renderer's single UI-safe store (app singleton — one window).
@@ -188,6 +189,16 @@ export function App(): ReactElement {
   const approvals = [...state.approvals.values()];
   const pendingApprovalCount = approvals.filter((a) => a.status === "pending").length;
 
+  // §9.20 Today daily brief — a DETERMINISTIC, model-free summary from store counts. recentChanges +
+  // ingestion are scope-hydrated (WS-8-cleared to [] under Global, so they reflect the current workspace);
+  // pendingApprovals is the INTENTIONALLY-GLOBAL approval inbox (not scope-cleared — ratified design), so it
+  // counts across workspaces in every scope. UI-safe (counts only, no raw content).
+  const brief = buildDailyBrief({
+    recentChanges: state.recentChanges.length,
+    toTriage: state.ingestion.length,
+    pendingApprovals: pendingApprovalCount,
+  });
+
   const selectedProjectId =
     state.route.surface === "projects" ? state.route.projectId : undefined;
 
@@ -332,6 +343,7 @@ export function App(): ReactElement {
           global={state.global}
           recentChanges={state.recentChanges}
           workspaceMeta={workspaceMeta}
+          brief={brief}
           onDrillDown={onDrillDown}
         />
       )}
