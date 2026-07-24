@@ -644,6 +644,19 @@ Owner GO on a STAGED ENABLE: build/verify the ENABLE preconditions (steps 0–5)
 
 ---
 
+### 2026-07-24 — ⭐ Phase-9 "make the daily briefing real" round 1 (recent-changes producer LIVE + path-scoped open-in-vault) — team cycle boundary
+
+- **Round framing:** owner-directed arc — wire the real read-model PRODUCERS so the desktop daily briefing renders actual auto-ingested data (the read path was already real; the producers were dormant / dev-only). Two-track parallel round: worker producers ∥ desktop surface. Sealed at a clean boundary; the trio (orch + worker + desktop) cycles here to start the substantial remaining arc fresh (context-management, not a blocker).
+- **9.15 `8a35cc2e` (worker) — real recent-changes read-model producer.** Pure `refreshRecentChanges` (scoped `audit.query` → the existing `projectRecentChanges` → `readModels.put`) fired from a bounded fail-SAFE `sourceCommit` post-commit trigger that NEVER blocks the sole-writer commit. Reachability CONFIRMED (real commit → non-empty `recent_changes` row) — the Recent Changes surface now renders REAL ingest activity (9.5 already wired the list to its query, so the producer ALONE made it live; no desktop slice needed). WS-8-safe by construction; security 0C/0H/0M; suite 6435 green. Worker L76.
+- **9.12 `80d387c6` (desktop) — path-scoped open-in-vault.** Pure electron-free `guardVaultPath` (lexical `+sep` → realpath re-containment → isFile-for-open; TOCTOU-narrowing realpath-open) + `vault:open`/`vault:reveal` preload channels (inventory-pinned) + main handler + set-once vault-roots holder. Renderer-supplied paths treated as untrusted across the trusted bridge; security 0C/0H/0M; 376 green. Desktop L16.
+- **Decisions made:** producer trigger = bounded fail-safe post-commit refresh (never blocks the commit); empty-workspace → unconditional empty-row put (full-refresh semantics); audit scan bound `1000` + arch_gap flag (audit.query is rowid-ASC/oldest-first — Q3 finding); open-in-vault roots-agnostic guard + (A) single-root wiring; separate vault channels; the producer work PROMOTED from Residual-9 to first-class task 9.15.
+- **Scope shifts:** task 9.15 added; 9.12 → DONE; remaining Phase-9 producer/surface legs enumerated for the fresh trio (Currently-in-progress). No frozen-contract change.
+- **New blockers / open questions:** none. Follow-ups in Residuals(9): audit.query recency ordering (task 2.9); persistent-refresh-fault → HealthItem; the desktop multi-root parser + renderer button.
+- **Next session target (fresh trio):** daily-brief/dashboard/task-rollup producer legs + ingestion-inbox park-sink binding (worker) + Today-live wiring + 9.9/9.10/9.11 (desktop) → `/phase-exit 9` + the owed LIVE `/design-review`.
+- Reference: implementer session docs `108-2026-07-24-*` (worker 9.15) + `109-2026-07-24-*` (desktop 9.12); briefs 155/156; worker L76 / desktop L16.
+
+---
+
 ## Part 2 — Round-close narratives + phase-completion summaries (verbatim from "Currently in progress"; source L16–L163)
 
 ## Currently in progress
