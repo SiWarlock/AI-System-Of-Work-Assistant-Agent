@@ -4,7 +4,7 @@
 - **Phase:** 18 (subscription-extraction ENABLE — §ARM-18 CHECKPOINT-1 pre-first-armed-run hardening)
 - **Track:** main (single-track, worker area)
 - **Predecessor:** [103-2026-07-20-phase18-desktop-arming-dotenv-loading.md](103-2026-07-20-phase18-desktop-arming-dotenv-loading.md)
-- **Successor:** _(none yet)_
+- **Successor:** [105-2026-07-24-phase18-gate1-shadow-guard-completeness.md](105-2026-07-24-phase18-gate1-shadow-guard-completeness.md)
 
 ## Why this session existed
 
