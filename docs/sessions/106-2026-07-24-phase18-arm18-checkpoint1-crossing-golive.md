@@ -4,7 +4,7 @@
 - **Phase:** 18 (subscription-extraction ENABLE — §ARM-18 CHECKPOINT-1, the owner-authorized test-vault auto-ingest crossing; gate ladder 2→6)
 - **Track:** main (single-track, worker area)
 - **Predecessor:** [105-2026-07-24-phase18-gate1-shadow-guard-completeness.md](105-2026-07-24-phase18-gate1-shadow-guard-completeness.md)
-- **Successor:** _(none yet)_
+- **Successor:** [107-2026-07-24-osb-parity-amendment-integration-orch.md](107-2026-07-24-osb-parity-amendment-integration-orch.md)
 
 ## Why this session existed
 

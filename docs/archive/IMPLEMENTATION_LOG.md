@@ -630,6 +630,20 @@ Owner GO on a STAGED ENABLE: build/verify the ENABLE preconditions (steps 0–5)
 
 ---
 
+### 2026-07-24 — ⭐ OSB-PARITY amendment INTEGRATED into canonical ARCHITECTURE + IMPLEMENTATION_PLAN (owner-approved AS IS; planning-only, all dormant)
+
+- **Round framing:** owner-directed NEW scope — full OSB parity (auto-linking · "the vault rewrites itself" auto-entity-update · governed `/research`+`/research-deep`) under SoW governance. A subagent-authored proposal (`docs/planning/osb-parity-amendment-proposal.md`, owner-approved as-is) was integrated into the canonical docs as PLANNED, dormant phases/tasks. Orchestrator-only planning round — no code, nothing armed.
+- **⚠ Anchor verification FIRST (lead-mandated, proposal was subagent-authored):** a general-purpose subagent verified all 11 cited code anchors via codegraph/graphify. **Result: zero DRIFTED/WRONG.** The 3 load-bearing claims all hold: `KnowledgeWriter.applyLink` (writer.ts:511-528, inserts `[[dstSlug]]` dedup-on-present, no reciprocal backlink); backlinks DERIVED by `deriveCanonicalFacts` (canonical-fact-deriver.ts:259); **NO `EntityResolver`/`LinkHealer` today** (vault paths lossily slug-derived via `safeNoteSlug`, noteSlug.ts:71 — the net-new load-bearing gap). One refinement: `ProviderId` is precisely `packages/contracts/src/primitives/enums.ts:14` (5 members claude/openai/openrouter/ollama/lm_studio) — used the exact anchor.
+- **ARCHITECTURE.md:** §6 KN-10 (Living-Vault Synthesis Engine, SENSE→REASON→EFFECT via KMP) + KN-11 (governed auto-link/derived-backlink) + KN-12 (structural-file parity); §7 RES-1 (egress-classed research provider Perplexity/Grok + free aggregator) + RES-2 (`/research-deep` vault-first pipeline); §19.13 (research go-live + living-vault scheduling, HARD-LINE crossing 8); §19.12 amend (register livingVaultSynthesis); Spec-Index rows REQ-F-021, REQ-F-022, §19.13.
+- **IMPLEMENTATION_PLAN.md:** 13.8 expanded into 13.8a–e (EntityResolver · LinkHealer · confined synthesis planner · ingest-rewrite + index/log parity · scheduled synthesis activity); new 13.13 (RES-1 research provider, dormant) + 13.14 (/research + /research-deep flows, dormant); §ARM-RESEARCH ledger (crossing 8 — real fetch + paid Perplexity/xAI key, two standing hard lines, fails closed on employer-work ack-OFF); Phase 26 (26.1 provider go-live + 26.2 living-vault scheduling, both OWNER-GATED §ARM-RESEARCH); phase-status rows (Phase 26 added; Phase 13 open 8→10).
+- **Decisions made:** (1) **lint-format correction** — the proposal's `### 13.8a` checkbox form breaks plan-lint (`tn=substr+0` coerces 13.8a→8, colliding with 13.8 on the numeric-order check); rendered 13.8a–e as lint-exempt `#### ` sub-slices (text-state, roll up to 13.8) instead, while 13.13/13.14/26.x are proper integer `### ` tasks. (2) Adding `perplexity`/`xai` ProviderIds is a frozen-contract build-time round (task 13.13), NOT the arming crossing (which is transport+key). (3) Committed the source proposal as the integration's provenance artifact.
+- **Scope shifts:** the roadmap gains one independent HARD-LINE crossing (crossing 8, §ARM-RESEARCH) + Phase 26; behaviors 1&2 are an expansion of the already-designed §13.8 onto BUILT primitives (KMP/LinkMutation/NotePatch/no-inference/@user-confinement) + two new deterministic pieces (EntityResolver, LinkHealer); behavior 3 is the one wholly-new subsystem (governed research provider).
+- **New blockers / open questions:** none. plan-lint 0 violations (3 pre-existing ledger warnings). Nothing armed; research egress + paid-key are owner-gated (§ARM-RESEARCH).
+- **Next session target:** build the dormant OSB-parity slices (13.8a–e deterministic-TDD; 13.13/13.14; model legs eval-tested) when owner-sequenced — OR the standing Carry-forward set.
+- Reference: `docs/planning/osb-parity-amendment-proposal.md` (source); orchestrator session doc `107-2026-07-24-*`; anchor-verification via general-purpose subagent.
+
+---
+
 ## Part 2 — Round-close narratives + phase-completion summaries (verbatim from "Currently in progress"; source L16–L163)
 
 ## Currently in progress
