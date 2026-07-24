@@ -4,7 +4,7 @@
 - **Phase:** 18 (subscription-extraction ENABLE — §ARM-18 CHECKPOINT-1, the owner-authorized test-vault auto-ingest crossing; GATE-1 hardening)
 - **Track:** main (single-track, worker area)
 - **Predecessor:** [104-2026-07-20-phase18-arm18-checkpoint1-shadow-hardening.md](104-2026-07-20-phase18-arm18-checkpoint1-shadow-hardening.md)
-- **Successor:** _(none yet — fresh worker pair resumes at gate-2, see Open follow-ups)_
+- **Successor:** [106-2026-07-24-phase18-arm18-checkpoint1-crossing-golive.md](106-2026-07-24-phase18-arm18-checkpoint1-crossing-golive.md)
 
 ## Why this session existed
 
