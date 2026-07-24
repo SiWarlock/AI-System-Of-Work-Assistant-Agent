@@ -14,8 +14,12 @@
 //      containment; a symlink whose realpath escapes the root is caught here (the layer the lexical one lacks).
 //   3. isFile — `open` targets a regular file; `reveal` (show-in-folder) may target a directory / repo root.
 import { resolve, sep } from "node:path";
-import { ok, err, isOk } from "@sow/contracts";
-import type { Result } from "@sow/contracts";
+// Deep subpath (not the `@sow/contracts` barrel) so the Electron-main bundle inlines ONLY the pure
+// Result helpers — importing the barrel drags the whole contracts graph (zod + ajv schema construction)
+// into main. The main build bundles `@sow/contracts` (electron.vite.config.ts `exclude`), so this must be
+// a lean leaf. `exclude` covers subpaths too, so the deep path is still bundled (never a runtime `.ts` require).
+import { ok, err, isOk } from "@sow/contracts/primitives/result";
+import type { Result } from "@sow/contracts/primitives/result";
 
 /** The two path-scoped operations. `open` launches the file in its default app; `reveal` shows it in Finder. */
 export type VaultOp = "open" | "reveal";
