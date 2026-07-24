@@ -22,6 +22,7 @@ import {
   type WorkerChild,
 } from "./worker-supervisor";
 import { setWorkerEndpoint } from "./worker-holder";
+import { setVaultRoots } from "./vault-roots";
 import { readWorkerArmingEnv } from "./worker-arming-env";
 import { loadAllowlistedDotenv } from "./dotenv-allowlist";
 
@@ -100,6 +101,11 @@ function startWorker(): void {
   // The vault the app watches: the owner's real Obsidian vault via SOW_VAULT_ROOT, else the userData default.
   const vaultRoot = process.env["SOW_VAULT_ROOT"] ?? join(userData, "vault");
   mkdirSync(vaultRoot, { recursive: true });
+  // Publish the vault roots for the path-scoped open/reveal IPC handlers (9.12). Set ONCE at boot; the handlers
+  // (registered just before, in registerIpcHandlers) read them lazily at invoke-time. The Global/Coordination
+  // repo lives under the vault root, so this single root covers it; a multi-root SOW_VAULT_ROOT_PATHS parser is
+  // a follow-up (Future TODO). guardVaultPath stays roots-agnostic, so the source is a pure wiring change.
+  setVaultRoots([vaultRoot]);
   // OPEN-THE-GATES auto-ingest opt-in (owner env; default OFF). Read HERE in Electron main (env lives here, not
   // in the worker-host) and threaded to the worker-host over IPC via WorkerHostConfig — the same path vaultRoot
   // takes. Unset ⇒ today's degraded boot. `boot.gateAutoIngest` requires BOTH this flag AND vaultRoot to wire.

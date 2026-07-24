@@ -36,6 +36,16 @@ export interface SowBridge {
      */
     readonly getConnection: () => Promise<WorkerEndpoint | null>;
   };
+  readonly vault: {
+    /**
+     * Open a vault note in its default editor (Obsidian) — open-BY-PATH only (9.12 / REQ-UX-003). Main
+     * path-scopes the path (realpath containment under the configured vault roots) and performs the open;
+     * the renderer never reads or enumerates the vault filesystem. Resolves `{ ok }` — no reason disclosed.
+     */
+    readonly open: (path: string) => Promise<{ ok: boolean }>;
+    /** Reveal a vault path in the OS file manager (Finder), same path-scoping as `open`. */
+    readonly reveal: (path: string) => Promise<{ ok: boolean }>;
+  };
 }
 
 export function buildSowBridge(invoke: InvokeFn): SowBridge {
@@ -49,6 +59,10 @@ export function buildSowBridge(invoke: InvokeFn): SowBridge {
     worker: {
       getConnection: () => invoke("worker:getConnection") as Promise<WorkerEndpoint | null>,
     },
+    vault: {
+      open: (path) => invoke("vault:open", path) as Promise<{ ok: boolean }>,
+      reveal: (path) => invoke("vault:reveal", path) as Promise<{ ok: boolean }>,
+    },
   };
 }
 
@@ -59,5 +73,7 @@ export const PRELOAD_CHANNELS = [
   "app:getVersion",
   "session:getToken",
   "worker:getConnection",
+  "vault:open",
+  "vault:reveal",
 ] as const;
 export type PreloadChannel = (typeof PRELOAD_CHANNELS)[number];
