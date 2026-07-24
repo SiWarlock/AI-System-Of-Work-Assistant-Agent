@@ -176,7 +176,7 @@ import { produceProposedActions, type ExternalActionBinding } from "./proposed-a
 // marker in an extraction frontmatter value can't forge a region boundary. Deep import (established
 // pattern — cf. semanticMutationDispatch's projectNotePath; not barrel-exported).
 import { neutralizeFrontmatterValue } from "@sow/workflows/activities/projections/noteSlug";
-import type { IngestionInboxProjectionPort } from "../api/projections/ingestionInboxProjection";
+import { createIngestionInboxProjectionPort, type IngestionInboxProjectionPort } from "../api/projections/ingestionInboxProjection";
 // The per-file ingestion note-path derivation (traversal-safe, content-addressed) — task 11.1.
 import { deriveSourceNotePath, sourceIdentityDigest } from "./sourceNotePath";
 // 16.2 — the connector-poll activity + its real resolve binding (16.1 adapters + 15.1 bridge + backoff).
@@ -419,15 +419,15 @@ export function buildProofSpineActivities(
 ): ProofSpineActivities {
   const { now } = backends;
 
-  // 18.6/18.5 — the Ingestion-Inbox PARK sink the content classifier + correlation producer
-  // record to on a no-match/below-threshold (REQ-F-017 clarification surface). UNSET ⇒ a
-  // dormant no-op (the byte-equivalent default never parks; the byte-equivalent binding path
-  // never calls it); the real readModels-backed `createIngestionInboxProjectionPort` is the
-  // reachability follow-up.
-  const ingestionPark: IngestionInboxProjectionPort = params.ingestionPark ?? {
-    recordPark: () => Promise.resolve(ok(undefined)),
-    recordDisposition: () => Promise.resolve(ok(undefined)),
-  };
+  // 18.6/18.5 + 9.16 — the Ingestion-Inbox PARK sink the content classifier + correlation producer
+  // record to on a no-match/below-threshold (REQ-F-017 clarification surface). ALWAYS-ON: the default
+  // is the REAL readModels-backed `createIngestionInboxProjectionPort` (9.7-B producer core — WS-8-safe
+  // by construction, drop-rules AT WRITE, never-throws), so a real park populates `ingestion_inbox` and
+  // a triage disposition removes it (the 2nd "make the daily briefing real" producer leg, mirrors 9.15
+  // recentChanges / LESSON 76). `params.ingestionPark` stays the test/fake override seam.
+  const ingestionPark: IngestionInboxProjectionPort =
+    params.ingestionPark ??
+    createIngestionInboxProjectionPort({ readModels: backends.repos.readModels, now });
 
   // ── the failure sink (7.5) backing every per-driver *HealthSink (inv-5) ──────
   const outboxSink: OutboxSink = {
@@ -759,9 +759,9 @@ export function buildProofSpineActivities(
     // 18.6 — a real content→project classifier over the INJECTED resolver (UNSET ⇒ the
     // BYTE-EQUIVALENT boot-workspace bind: confidence:1 boot ws, no project — matching the
     // pre-18.6 single-workspace classify; the bound path never parks). The C1 no-binding
-    // fallback (sourceBinding undefined) parks via the (no-op) ingestionPark default — arming
-    // a real park makes that observable. No-match/below-threshold ⇒ recordPark (REQ-F-017),
-    // projectId NEVER guessed. Threshold single-sourced with the activity.
+    // fallback (sourceBinding undefined) parks via the ingestionPark default — now the REAL
+    // always-on producer (9.16), so the C1 park populates `ingestion_inbox`. No-match/below-
+    // threshold ⇒ recordPark (REQ-F-017), projectId NEVER guessed. Threshold single-sourced with the activity.
     classify: createContentProjectClassify({
       resolve:
         params.contentResolver ??
@@ -1062,7 +1062,30 @@ export function buildProofSpineActivities(
     approvalDispatchApproved: (action, env) => dispatchApproved.dispatch(action, env),
 
     // ingestion-triage
-    triageRecordDisposition: (disposition) => recordDisposition.record(disposition),
+    triageRecordDisposition: async (disposition) => {
+      const result = await recordDisposition.record(disposition);
+      // 9.16 — fail-SAFE ingestion-inbox remove AFTER the durable disposition CAS. Only on a durable
+      // success (recorded|noop ⇒ isOk) do we clear the item from the DERIVED `ingestion_inbox`
+      // read-model; a remove fault (err OR throw) is swallowed so it NEVER fails the durable disposition
+      // (the CAS is sole-writer operational truth; the inbox is rebuildable-derived — §16 / LESSON 21/76).
+      // WS-8 (rule 4): the remove keys the server-bound, registry-validated `disposition.workspaceId`
+      // (never content-derived) — the producer core only ever touches that one workspace's OWN row.
+      // ⚠ RESIDUAL (correct-by-coincidence — the §ARM-21 `Approval.workspaceId` pattern, worker L12/L32):
+      // this is the owner's ROUTING-OVERRIDE ws, which under multi-workspace can DIFFER from the source's
+      // ORIGINAL parked ws (an A→B rescope); the remove then targets B's row and the item LINGERS in A's
+      // inbox until a read-model rebuild — a LIVENESS/staleness residual, NOT a leak (zero cross-ws touch).
+      // CORRECT under single-workspace-per-worker (the shipping reality). The arming-era fix threads the
+      // ORIGINAL parked ws through the disposition seam. FUTURE-TODO(9.16-health): a persistent remove
+      // fault → a HealthItem (mirrors the 9.15 refresh-fault Residual).
+      if (isOk(result)) {
+        try {
+          await ingestionPark.recordDisposition(String(disposition.workspaceId), disposition.sourceId);
+        } catch {
+          /* fail-SAFE: a read-model remove fault never fails the durable disposition */
+        }
+      }
+      return result;
+    },
     triageRescopeSource: (disposition) => rescopeSource.rescope(disposition),
     triageReenter: (reScopedSource, idempotencyKey) =>
       reenterIngestion.reenter(reScopedSource, idempotencyKey),
