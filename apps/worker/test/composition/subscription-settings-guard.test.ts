@@ -7,9 +7,13 @@
 // PRESENCE only (rule 7 — never the value / command string); armed-path-only (byte-equivalent default);
 // fail-safe DEGRADE on an unreadable source; over-inclusion is fail-safe (an EXPLICIT EXTENSIBLE set).
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   assertNoSettingsKeyInjection,
   guardSettingsOnArmedPath,
+  readManagedFragments,
+  readManagedPreferencesPlists,
+  relocationDegradeSource,
   SETTINGS_INJECTION_FIELDS,
   type SettingsSourceRead,
   type SettingsHierarchyReader,
@@ -91,10 +95,9 @@ describe("assertNoSettingsKeyInjection — the settings-level key-injection guar
   it("first_fault_wins_highest_precedence_tier: a clean high tier + an injecting low tier ⇒ fault at the injecting tier", () => {
     // Pins the loop's documented precedence order (highest tier first) — a clean managed tier doesn't mask a lower injection.
     const fault = assertNoSettingsKeyInjection(
-      reader(
-        { marker: "managed", outcome: { kind: "parsed", settings: { model: "claude-x" } } },
-        parsed({ apiKeyHelper: "/bin/mint" }, "user"),
-      ),
+      // 18.39-B: a PRESENT managed tier degrades on its own now, so use an ABSENT managed tier to test that a lower
+      // (user) injection is still caught at its own tier.
+      reader({ marker: "managed", outcome: { kind: "absent" } }, parsed({ apiKeyHelper: "/bin/mint" }, "user")),
     );
     expect(fault?.marker).toBe("user");
     // A faulting managed tier wins over a lower injecting tier (managed is highest precedence).
@@ -219,5 +222,177 @@ describe("guardSettingsOnArmedPath — the armed-path gate (byte-equivalent OFF;
     const spy = vi.fn(() => [parsed({ model: "claude-sonnet-5" })]);
     expect(guardSettingsOnArmedPath(true, spy)).toBeUndefined();
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// 18.39 — the managed-settings.d fragment dir + settings-path relocation + the managed-tier session-env `hooks`
+// vector: the 3 settings-file injection surfaces the flat-tier reader (18.36) missed. Closes GATE-1's (b) leg.
+describe("18.39 — managed-settings.d fragments + relocation + managed-tier hooks (settings-file surface completeness)", () => {
+  /** A fake fs for readManagedFragments: readdir returns the file names; readFile returns the mapped content. */
+  function fakeFragmentFs(
+    files: Record<string, string>,
+    opts?: { readonly dirAbsent?: boolean; readonly readdirThrows?: boolean },
+  ): { existsSync: (p: string) => boolean; readdirSync: (p: string) => string[]; readFileSync: (p: string) => string } {
+    return {
+      existsSync: () => opts?.dirAbsent !== true,
+      readdirSync: () => {
+        if (opts?.readdirThrows === true) throw new Error("EACCES");
+        return Object.keys(files);
+      },
+      readFileSync: (p: string) => {
+        const name = p.slice(p.lastIndexOf("/") + 1);
+        const content = files[name];
+        if (content === undefined) throw new Error("ENOENT");
+        return content;
+      },
+    };
+  }
+  const DIR = "/Library/Application Support/ClaudeCode/managed-settings.d";
+
+  it("managed_fragment_apikeyhelper_degrades: a managed-settings.d fragment injecting apiKeyHelper ⇒ fault (marker managed)", () => {
+    // spec(§19.5) — a fragment cred-mint is the invisible shadow the flat-tier reader misses (session-104 residual #40).
+    const sources = readManagedFragments(DIR, fakeFragmentFs({ "10-x.json": JSON.stringify({ apiKeyHelper: "/bin/mint" }) }));
+    const fault = assertNoSettingsKeyInjection(() => sources);
+    expect(fault?.code).toBe("settings_key_injection_on_armed_path");
+    expect(fault?.marker).toBe("managed");
+  });
+
+  it("managed_fragment_env_shadow_degrades: a fragment env.<18.38 shadow key> ⇒ fault (single-source env leg reaches fragments)", () => {
+    // spec(L71) — the env-block leg (reusing SUBSCRIPTION_SHADOWING_ENV_KEYS, incl. 18.38 additions) covers fragments too.
+    expect(SUBSCRIPTION_SHADOWING_ENV_KEYS as readonly string[]).toContain("CLAUDE_CODE_USE_GATEWAY");
+    const sources = readManagedFragments(DIR, fakeFragmentFs({ "x.json": JSON.stringify({ env: { CLAUDE_CODE_USE_GATEWAY: "1" } }) }));
+    expect(assertNoSettingsKeyInjection(() => sources)?.code).toBe("settings_key_injection_on_armed_path");
+  });
+
+  it("managed_fragment_unreadable_degrades: a malformed / non-object fragment ⇒ unreadable ⇒ degrade (§16/L65)", () => {
+    const malformed = readManagedFragments(DIR, fakeFragmentFs({ "bad.json": "{ not json" }));
+    expect(assertNoSettingsKeyInjection(() => malformed)?.marker).toBe("managed");
+    const nonObject = readManagedFragments(DIR, fakeFragmentFs({ "arr.json": "[1,2,3]" }));
+    expect(assertNoSettingsKeyInjection(() => nonObject)?.code).toBe("settings_key_injection_on_armed_path");
+  });
+
+  it("managed_fragment_dir_absent_or_empty_no_source; present-fragment degrades (B); non-.json ignored", () => {
+    expect(readManagedFragments(DIR, fakeFragmentFs({}, { dirAbsent: true }))).toEqual([]);
+    expect(readManagedFragments(DIR, fakeFragmentFs({}))).toEqual([]);
+    // non-.json ignored: only ok.json enumerated.
+    const frags = readManagedFragments(DIR, fakeFragmentFs({ "ok.json": JSON.stringify({ model: "x" }), "notes.txt": "ignored" }));
+    expect(frags).toHaveLength(1);
+    // 18.39-B: a PRESENT managed fragment (even a benign {model:x}) ⇒ DEGRADE (managed presence, drift-immune).
+    expect(assertNoSettingsKeyInjection(() => frags)?.marker).toBe("managed");
+    // absent/empty dir ⇒ [] ⇒ scan clean (no managed source).
+    expect(assertNoSettingsKeyInjection(() => [])).toBeUndefined();
+  });
+
+  it("managed_fragments_read_deterministically: fragments read in sorted (stable) order", () => {
+    const sources = readManagedFragments(
+      DIR,
+      fakeFragmentFs({
+        "30-c.json": JSON.stringify({ model: "c" }),
+        "10-a.json": JSON.stringify({ model: "a" }),
+        "20-b.json": JSON.stringify({ model: "b" }),
+      }),
+    );
+    const models = sources.map((s) => (s.outcome.kind === "parsed" ? s.outcome.settings["model"] : null));
+    expect(models).toEqual(["a", "b", "c"]);
+  });
+
+  it("readdir_throw_emits_synthetic_unreadable: a fragment dir that exists but readdir throws (perms) ⇒ ONE synthetic degrade", () => {
+    const sources = readManagedFragments(DIR, fakeFragmentFs({}, { readdirThrows: true }));
+    expect(sources).toEqual([{ marker: "managed", outcome: { kind: "unreadable" } }]);
+    expect(assertNoSettingsKeyInjection(() => sources)?.marker).toBe("managed");
+  });
+
+  it("relocation_var_present_degrades: a settings-path relocation var set ⇒ synthetic unreadable managed source (fail-safe)", () => {
+    // spec(§19.5) — a relocation var means the default-path managed scan can't be trusted ⇒ degrade (Q5, homed in the guard).
+    for (const key of ["CLAUDE_CODE_MANAGED_SETTINGS_PATH", "CLAUDE_CODE_REMOTE_SETTINGS_PATH"]) {
+      expect(relocationDegradeSource({ [key]: "/tmp/relocated" })).toEqual({ marker: "managed", outcome: { kind: "unreadable" } });
+    }
+    expect(relocationDegradeSource({})).toBeUndefined();
+  });
+
+  it("managed_tier_hooks_field_degrades: a MANAGED-tier `hooks` block ⇒ fault (the session-env *.sh vector, survives settingSources:[])", () => {
+    // spec(§19.5) — a managed hook runs on session start + can mint creds/set env; presence-only (rule 7, never executed).
+    const fault = assertNoSettingsKeyInjection(() => [
+      { marker: "managed", outcome: { kind: "parsed", settings: { hooks: { SessionStart: [{ command: "/bin/x.sh" }] } } } },
+    ]);
+    expect(fault?.code).toBe("settings_key_injection_on_armed_path");
+    expect(fault?.marker).toBe("managed");
+  });
+
+  it("user_and_project_hooks_are_clean: a user/project `hooks` block ⇒ NO fault (disabled by settingSources:[], managed-only sound)", () => {
+    // ⛔ managed-ONLY: the extraction query() passes settingSources:[] (claude-subscription-completion.ts:145) which
+    //   DISABLES user/project settings+hooks, so a user/project `hooks` block cannot inject ⇒ NOT watched (else a legit
+    //   dev-hooks config permanently false-degrades the armed run — the L65 class). Soundness depends on that :145 coupling.
+    expect(assertNoSettingsKeyInjection(reader(parsed({ hooks: { SessionStart: [{ command: "x" }] } }, "user")))).toBeUndefined();
+    expect(assertNoSettingsKeyInjection(reader(parsed({ hooks: { PreToolUse: [] } }, "project")))).toBeUndefined();
+    expect(assertNoSettingsKeyInjection(reader(parsed({ hooks: {} }, "project-local")))).toBeUndefined();
+  });
+
+  // ── 18.39 Step-8 review folds: the plist managed tier (HIGH) + statusLine sibling (MEDIUM) + coupling pin (MEDIUM) ──
+  it("plist_present_degrades: an enterprise managed-preferences plist present ⇒ synthetic unreadable managed source (§19.5)", () => {
+    // The macOS /Library/Managed Preferences/com.anthropic.claudecode.plist is a 3rd managed source (same schema,
+    // survives settingSources:[]); we can't JSON-scan a plist ⇒ presence ⇒ fail-safe degrade.
+    const present = readManagedPreferencesPlists(["/Library/Managed Preferences/com.anthropic.claudecode.plist"], { existsSync: () => true });
+    expect(present).toEqual([{ marker: "managed", outcome: { kind: "unreadable" } }]);
+    expect(assertNoSettingsKeyInjection(() => present)?.marker).toBe("managed");
+    // fs throw ⇒ fail-safe assume present (degrade)
+    expect(
+      readManagedPreferencesPlists(["/x"], {
+        existsSync: () => {
+          throw new Error("EPERM");
+        },
+      }),
+    ).toHaveLength(1);
+  });
+
+  it("plist_absent_is_clean: no managed-preferences plist (non-MDM machine) ⇒ no source (byte-equivalent)", () => {
+    expect(
+      readManagedPreferencesPlists(["/Library/Managed Preferences/com.anthropic.claudecode.plist"], { existsSync: () => false }),
+    ).toEqual([]);
+  });
+
+  it("managed_statusline_command_degrades_user_is_clean: statusLine (a managed command vector) ⇒ degrade; user clean", () => {
+    // spec(§19.5) — a MANAGED statusLine.command runs a shell command; under B it degrades via managed-presence
+    // (subsumed, no field-enumeration needed).
+    expect(
+      assertNoSettingsKeyInjection(() => [
+        { marker: "managed", outcome: { kind: "parsed", settings: { statusLine: { type: "command", command: "/bin/x.sh" } } } },
+      ])?.marker,
+    ).toBe("managed");
+    // A user/project statusLine is disabled by settingSources:[] ⇒ NOT watched (no false-degrade of a legit dev config).
+    expect(assertNoSettingsKeyInjection(reader(parsed({ statusLine: { type: "command", command: "x" } }, "user")))).toBeUndefined();
+  });
+
+  it("managed_present_nonempty_degrades_empty_is_clean: B — ANY present non-empty managed ⇒ degrade (drift-immune); empty ⇒ clean", () => {
+    // ⭐ THE B PROPERTY (L73 analog): an UNKNOWN/FUTURE managed field, or even a benign model pin, ⇒ degrade — no
+    //   field to enumerate/miss, so a future SDK managed field can't silently fail-open (subsumes headersHelper etc.).
+    expect(
+      assertNoSettingsKeyInjection(() => [{ marker: "managed", outcome: { kind: "parsed", settings: { some_future_field: "x" } } }])?.marker,
+    ).toBe("managed");
+    expect(
+      assertNoSettingsKeyInjection(() => [{ marker: "managed", outcome: { kind: "parsed", settings: { model: "claude-x" } } }])?.marker,
+    ).toBe("managed");
+    // An EMPTY managed `{}` mints nothing ⇒ clean (no false-degrade on a vestigial empty managed file).
+    expect(assertNoSettingsKeyInjection(() => [{ marker: "managed", outcome: { kind: "parsed", settings: {} } }])).toBeUndefined();
+  });
+
+  it("managed_only_soundness_pinned_to_settingSources_empty: the extraction query() STILL passes settingSources:[] (RED-on-weaken)", () => {
+    // ⛔ CROSS-FILE COUPLING PIN (18.39 Step-8): managed-only hooks/statusLine is sound ONLY because the extraction
+    //   query() disables user/project settings via `settingSources: []`. If that literal is ever removed/changed, this
+    //   fails RED — forcing a re-evaluation (widen to all tiers). Upgrades the comment coupling to a mechanical pin.
+    const providerSrc = readFileSync(
+      new URL("../../../../packages/providers/src/model/claude-subscription-completion.ts", import.meta.url),
+      "utf8",
+    );
+    // POSITIVE: an empty settingSources:[] is present. NEGATIVE (the load-bearing half, decoy-proof): NO non-empty
+    // settingSources array anywhere — `settingSources: ["user"]` at the real :145 would trip this even if the :112
+    // docstring's `[]` stays intact. Together they RED on any weakening of the isolation-mode option.
+    expect(providerSrc).toMatch(/settingSources:\s*\[\s*\]/);
+    expect(providerSrc).not.toMatch(/settingSources:\s*\[\s*[^\]\s]/); // tightened: also trips on `[ "user" ]` (inner space)
+    // Programmatic managed-injection (the file-scan guard structurally can't see it) stays closed-by-construction:
+    // the query() adapter passes NEITHER a `managedSettings` NOR a bare `settings` option (both are SDK injection
+    // vectors: sdk.d.ts settings?: string | Settings). Pin both (defense-in-depth, RED-on-weaken).
+    expect(providerSrc).not.toMatch(/\bmanagedSettings\s*:/);
+    expect(providerSrc).not.toMatch(/\bsettings\s*:/);
   });
 });
