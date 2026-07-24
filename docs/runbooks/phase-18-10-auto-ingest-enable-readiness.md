@@ -93,4 +93,23 @@ else the armed run yields candidate → `schema_rejected` → EMPTY → no commi
 - Its real risk surface is **operational** (autonomous recurring extraction), not safety-structural (veto + ING-7 + feedback-guard all proven on the auto path). Subscription cost is routine.
 - **Before the first autonomous cadence:** run the L64 fake-completion dry-run as the note-produced go/no-go.
 
+---
+
+## 6. ✅ CROSSING SEALED LIVE (2026-07-24) + the Step-B in-app watcher owner-run command
+
+**Step A (direct-extraction) PROVEN LIVE.** The §ARM-18 auto-ingest ENABLE crossing sealed: gates 2→6 passed, and the real subscription EXTRACTION path ran over a throwaway test vault (a throwaway harness, direct-drive — NO Electron/watcher/Temporal). Evidence: note `sources/ws-gate6-testvault/5090325d20ea3f748e7af417f3c85e79.md`; `$0.054601` metered (< $1.50 SDK `maxBudgetUsd`); egress `claude-agent-sdk` only; `apiKeyUnset:true` (subscription); childEnv = the 8-key allowlist + SDK `CLAUDE_CODE_SDK_*` re-injected (`runOk:true` — the gate-3 control-var unknown CLOSED live); REQ-F-017 `TBD` held; ING-7 read-only. The auto-mode classifier blocked the agent → the OWNER ran the command himself (session-098 fallback, no bypass). Session doc 106; `IMPLEMENTATION_PLAN.md` §ARM-18 ledger has the full evidence.
+
+**Step B — the literal in-app watcher AUTO-FIRE (documented owner-run FOLLOW-UP, NOT yet run).** This proves 18.10's actual trigger (drop-file → live watcher auto-fire → note, hands-off), which Step A did not exercise (it drove the activities directly). Owner-run (the auto-mode classifier blocks the agent; same fallback). From the repo root:
+
+```
+cd /Users/dreddy/Documents/Dev/AI-tools/SoW/SoW-build && \
+SOW_VAULT_ROOT="<fresh throwaway benign test vault, outside ~/Obsidian>" \
+SOW_INGEST_WATCH=1 SOW_MANAGE_TEMPORAL=true SOW_SUBSCRIPTION_ARM=1 \
+SOW_SUBSCRIPTION_MODEL=claude-sonnet-5 SOW_EGRESS_ALLOWED_PROCESSORS=claude-agent-sdk \
+SOW_SUBSCRIPTION_REACHABILITY_LIVE=1 SOW_INGEST_WORKSPACE=personal-business \
+./dev.sh
+```
+
+Owner steps: (1) confirm `ANTHROPIC_API_KEY` UNSET (subscription path); (2) run (launches the Electron app + managed loopback Temporal); (3) drop a NEW benign `.md` into the vault (e.g. `echo "# Sync\nMorgan will send notes tomorrow." > "$VAULT/sync-note.md"`) → watcher auto-fires → new note under `$VAULT/sources/<ws>/…md`, hands-off. **Caveats:** heavy (Electron GUI + Temporal — may not run headless); `SOW_SUBSCRIPTION_REACHABILITY_LIVE` MUST be shell-exported as shown (it is NOT on the 18.34 `.env` allowlist); a `$TMPDIR` vault may be OS-cleaned (repoint at any fresh throwaway); the note-projection camelCase-vs-underscore fidelity residual (Residuals(18)) applies. Step A already proved the safety-critical core; **B is a demonstration, not a safety gate** — don't force the GUI launch.
+
 _Refs: IMPLEMENTATION_PLAN 18.10 / 18.30; session doc 101; `docs/audits/18-crossing-*.md`; worker Lessons 37 / 50 / 57 / 64 / 67; `docs/runbooks/phase-18-subscription-enable-decision.md`._

@@ -615,6 +615,21 @@ Owner GO on a STAGED ENABLE: build/verify the ENABLE preconditions (steps 0–5)
 
 ---
 
+### 2026-07-24 — ⭐ Phase-18 §ARM-18 auto-ingest ENABLE crossing SEALED LIVE (gates 2→6; first auto-ingest-armed real subscription extraction over a throwaway test vault)
+
+- **Round framing:** the owner-authorized auto-ingest ENABLE crossing (test-vault-only) resumed at GATE-1 CLEAR and ran gates 2→6 to a live seal. NO new committed code — a throwaway direct-extraction harness proved the path, then was removed; HEAD unchanged from the round base at the code level (this round moves docs only).
+- **gate-2** SDK-docs re-ground (Context7 vs bundled claude-agent-sdk 0.3.201 / claude-code 2.1.201) CLEAR, no drift: `maxBudgetUsd` cap → `error_max_budget_usd` fail-path; `betas`=[`context-1m-2025-08-07`] matches code; `model` request-supplied; **the 18.40 env-replace + `settingSources:[]` mechanisms confirmed by BOTH sources**. Informational: SDK `taskBudget` (alpha) unused; no native runtime-seconds cap (Finding-F stands).
+- **gate-3** $0 `SOW_L64_DRYRUN` GREEN (4/4 ran, key unset) — closed the spend-and-produce-nothing risk (L64). Surfaced + recorded: the fake-completion dry-run cannot exercise a real spawn, so "gate-3 proves control-var survival" was overstated — survival is a real-spawn property, validated at gate-6.
+- **gate-4** op-prereqs CLEAR: NO managed settings on the host (base + `.d` + `/Library/Managed Preferences` plist all absent) → no HALT; `claude` login present (spend-free check); `ANTHROPIC_API_KEY` UNSET; `temporal` 1.8.0.
+- **gate-5/6 — Step A REAL RUN = PASS** (owner-confirmed flip): note `sources/ws-gate6-testvault/5090325d20ea3f748e7af417f3c85e79.md`; **$0.054601** metered (< $1.50); `apiKeyUnset`; egress `claude-agent-sdk` only; model `claude-sonnet-5`; childEnv = EXACTLY the 8-key allowlist (18.40 env-scrub proven by-construction on a REAL spawn) + SDK re-injected `CLAUDE_CODE_SDK_*` atop it (`runOk:true` → **gate-3 control-var unknown CLOSED live**); REQ-F-017 `TBD`-not-invented held; ING-7 read-only; L37 no-refire.
+- **Decisions made:** owner chose **A-then-B, worker-runs-it**; the auto-mode classifier BLOCKED the worker's real-run command → the OWNER ran it himself (session-098 fallback, NO bypass — correct safety behavior); owner then chose to **document Step B (in-app `SOW_INGEST_WATCH` watcher auto-fire) as an owner-run follow-up** rather than force the Electron/Temporal GUI launch — Step A proved the safety-critical core.
+- **Scope shifts:** auto-ingest EXTRACTION path now proven LIVE (task 18.10 extraction leg — box stays OWNER-GATED for the in-app watcher arm); 18.40 validation-gate CONFIRMED live; the overstated gate-3 phrasing corrected in §19.5 + the §ARM-18 ledger; ARCHITECTURE §19.5 note updated with the live proof.
+- **New blockers / open questions:** none safety. One non-safety fidelity residual (fail-safe): the real model emits `task1Owner`/`task1DueDate` camelCase vs 18.29's `^task\d+_(owner|dueDate)$` underscore pattern → multi-task owners safe-degrade to `TBD` (values preserved in the note body) → Residuals(18) schema↔projection key-casing fix, flagged OSB-parity-relevant.
+- **Next session target:** OWNER-DIRECTED new scope — full OSB PARITY amendment integration (auto-linking · auto-updating related entities on ingest · `/research`+`/research-deep` web-research flow). A grounded proposal lands at `docs/planning/osb-parity-amendment-proposal.md`; after lead review it routes to the orchestrator to integrate into canonical ARCHITECTURE.md + IMPLEMENTATION_PLAN.md as new phases/tasks. Do NOT start until routed.
+- Reference: implementer session doc `106-2026-07-24-*` (crossing execution); §ARM-18 ledger; runbook `phase-18-10-auto-ingest-enable-readiness.md` §6 (Step-B owner-run command).
+
+---
+
 ## Part 2 — Round-close narratives + phase-completion summaries (verbatim from "Currently in progress"; source L16–L163)
 
 ## Currently in progress
