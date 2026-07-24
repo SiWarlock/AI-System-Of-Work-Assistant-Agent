@@ -9,6 +9,12 @@
 
 export type InvokeFn = (channel: string, ...args: unknown[]) => Promise<unknown>;
 
+// The durable first-run marker's wire type is owned by main/first-run.ts (the marker's owner); re-export it
+// so the renderer imports it from the preload layer it already depends on (renderer → preload → main). A
+// type-only import — erased at runtime, so the bridge stays electron-free for the security snapshot test.
+import type { FirstRunStatus } from "../main/first-run";
+export type { FirstRunStatus } from "../main/first-run";
+
 /** The non-secret loopback worker endpoint the renderer's tRPC client targets. */
 export interface WorkerEndpoint {
   readonly httpUrl: string;
@@ -46,6 +52,19 @@ export interface SowBridge {
     /** Reveal a vault path in the OS file manager (Finder), same path-scoping as `open`. */
     readonly reveal: (path: string) => Promise<{ ok: boolean }>;
   };
+  readonly lifecycle: {
+    /**
+     * The durable first-run marker status (9.17 / §11). Main owns the marker under app-data; the renderer
+     * consults it to decide the onboarding MOUNT (never the WS-8 isolation predicate — LESSON 9). A read
+     * fault resolves to a typed err Result the renderer gate maps to the registry-derived fallback.
+     */
+    readonly firstRunStatus: () => Promise<FirstRunStatus>;
+    /**
+     * Mark onboarding complete (9.17) — idempotent. Called on a CONFIRMED `createWorkspace` and on the
+     * existing-install backfill. Resolves the write Result; the renderer uses it fire-and-forget.
+     */
+    readonly markOnboarded: () => Promise<FirstRunStatus>;
+  };
 }
 
 export function buildSowBridge(invoke: InvokeFn): SowBridge {
@@ -63,6 +82,10 @@ export function buildSowBridge(invoke: InvokeFn): SowBridge {
       open: (path) => invoke("vault:open", path) as Promise<{ ok: boolean }>,
       reveal: (path) => invoke("vault:reveal", path) as Promise<{ ok: boolean }>,
     },
+    lifecycle: {
+      firstRunStatus: () => invoke("lifecycle:firstRunStatus") as Promise<FirstRunStatus>,
+      markOnboarded: () => invoke("lifecycle:markOnboarded") as Promise<FirstRunStatus>,
+    },
   };
 }
 
@@ -75,5 +98,7 @@ export const PRELOAD_CHANNELS = [
   "worker:getConnection",
   "vault:open",
   "vault:reveal",
+  "lifecycle:firstRunStatus",
+  "lifecycle:markOnboarded",
 ] as const;
 export type PreloadChannel = (typeof PRELOAD_CHANNELS)[number];

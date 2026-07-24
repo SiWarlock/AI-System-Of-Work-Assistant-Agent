@@ -33,6 +33,7 @@ import type { AskResult } from "./lib/copilot-ask";
 import type { ApprovalDecision } from "./lib/approval-decision";
 import type { TriageDisposition, RerouteTarget } from "./lib/triage-disposition";
 import { reroutePickerOptions } from "./lib/reroute-picker";
+import { shouldShowOnboarding, shouldBackfillMarker, type FirstRunSignal } from "./lib/first-run-gate";
 import { seedDevStore } from "./dev/seed";
 
 // The renderer's single UI-safe store (app singleton — one window).
@@ -45,6 +46,24 @@ export function App(): ReactElement {
   // `connection` status: the dev-seed fallback sets connection="live" for a populated demo
   // even though there is NO handle, so gating on `connection` would render dead controls.
   const [hasLiveWorker, setHasLiveWorker] = useState(false);
+  // The durable first-run marker signal (9.17): `undefined` while the async read is pending, then the
+  // marker Result. Drives the authoritative onboarding gate (below) with a registry fallback. `backfilledRef`
+  // makes the existing-install marker backfill fire AT MOST ONCE (a persistent read fault can't loop writes).
+  const [firstRunSignal, setFirstRunSignal] = useState<FirstRunSignal>(undefined);
+  const backfilledRef = useRef(false);
+
+  useEffect(() => {
+    // Read the durable first-run marker once at boot (9.17). No bridge (a standalone browser without Electron
+    // main) ⇒ leave the signal pending; the gate falls back to the registry. A read fault resolves to an err
+    // Result the gate also maps to the fallback — never a lock-out.
+    let cancelled = false;
+    void window.sow?.lifecycle?.firstRunStatus().then((s) => {
+      if (!cancelled) setFirstRunSignal(s);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     // Connect the live worker over the §10 push stream (9.4b E). When there is no
@@ -69,6 +88,17 @@ export function App(): ReactElement {
   }, []);
 
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot);
+
+  useEffect(() => {
+    // Existing-install marker BACKFILL (9.17): a pre-feature install has a populated registry but NO marker,
+    // so the durable authority never engages until we write it once. Once the registry shows onboarded and
+    // the marker read RESOLVED to not-complete, write it ONCE (idempotent) — future worker-down boots then
+    // stay past onboarding. Fire-once guard prevents a persistent read fault from looping writes every render.
+    if (!backfilledRef.current && shouldBackfillMarker(firstRunSignal, hasAnyOnboardedWorkspace(state))) {
+      backfilledRef.current = true;
+      void window.sow?.lifecycle?.markOnboarded();
+    }
+  }, [firstRunSignal, state]);
 
   // §9.4 policy-gated drill-down: REQUEST the worker-enforced query; on a permitted
   // result fold the workspace-scoped cards in + switch scope to that workspace. A
@@ -161,10 +191,12 @@ export function App(): ReactElement {
   const selectedProjectId =
     state.route.surface === "projects" ? state.route.projectId : undefined;
 
-  // First-run gate (§19.1 / 14.1): until AT LEAST ONE workspace is onboarded, the app IS the
-  // onboarding surface (fail-closed empty-until-onboarded — there is nothing to scope-read yet).
-  // Once a workspace enters the registry-backed scope store, the app proper mounts.
-  if (!hasAnyOnboardedWorkspace(state)) {
+  // First-run gate (§19.1 / 14.1 + 9.17): the app IS the onboarding surface ONLY on a genuine first run.
+  // The AUTHORITATIVE, durable main-owned marker decides: a complete marker suppresses onboarding even under
+  // a transiently-empty registry (worker unreachable at boot); absent / faulted / pending ⇒ fall back to the
+  // registry-derived gate (`!hasAnyOnboardedWorkspace`) — never re-onboarding a real install. Gates ONLY this
+  // mount, never the WS-8 isolation predicate (LESSON 9).
+  if (shouldShowOnboarding(firstRunSignal, hasAnyOnboardedWorkspace(state))) {
     return (
       <Onboarding
         onCreateWorkspace={(input) =>
@@ -185,6 +217,12 @@ export function App(): ReactElement {
               preset: workspace.preset,
             }),
           );
+          // Persist the durable first-run marker (9.17) on this CONFIRMED create so future launches skip
+          // onboarding even if the worker is unreachable at boot. Fire-and-forget + idempotent; a write
+          // fault is non-fatal (the in-memory registry already updated; the backfill effect retries later).
+          // Mark the fire-once guard so the backfill effect does not also write.
+          backfilledRef.current = true;
+          void window.sow?.lifecycle?.markOnboarded();
         }}
       />
     );

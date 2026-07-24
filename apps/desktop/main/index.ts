@@ -23,6 +23,7 @@ import {
 } from "./worker-supervisor";
 import { setWorkerEndpoint } from "./worker-holder";
 import { setVaultRoots } from "./vault-roots";
+import { setFirstRunMarkerPath } from "./first-run-holder";
 import { readWorkerArmingEnv } from "./worker-arming-env";
 import { loadAllowlistedDotenv } from "./dotenv-allowlist";
 
@@ -106,6 +107,10 @@ function startWorker(): void {
   // repo lives under the vault root, so this single root covers it; a multi-root SOW_VAULT_ROOT_PATHS parser is
   // a follow-up (Future TODO). guardVaultPath stays roots-agnostic, so the source is a pure wiring change.
   setVaultRoots([vaultRoot]);
+  // Publish the durable first-run marker path (9.17) for the lifecycle IPC handlers. Set ONCE at boot; the
+  // handlers (registered just before) read it lazily. A small JSON file directly under userData (survives
+  // launches) — gates only the onboarding mount, never the WS-8 predicate.
+  setFirstRunMarkerPath(join(userData, "onboarding-complete.json"));
   // OPEN-THE-GATES auto-ingest opt-in (owner env; default OFF). Read HERE in Electron main (env lives here, not
   // in the worker-host) and threaded to the worker-host over IPC via WorkerHostConfig — the same path vaultRoot
   // takes. Unset ⇒ today's degraded boot. `boot.gateAutoIngest` requires BOTH this flag AND vaultRoot to wire.

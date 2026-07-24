@@ -41,4 +41,13 @@ describe("preload API inventory (§5/§11 — privileged-surface drift guard)", 
     const tokenChannels = inventory.channels.filter((c) => /token/i.test(c));
     expect(tokenChannels).toEqual(["session:getToken"]);
   });
+
+  it("registers exactly the two 9.17 lifecycle first-run channels (regex/token covered by the all-channels guards above)", () => {
+    // 9.17 — the durable first-run marker's read/write channels. Their forbidden-regex + no-token
+    // guarantees are already enforced over ALL channels by the two `it`s above (a UX marker, not a
+    // filesystem/token surface); this pins the exact lifecycle membership so a stray/renamed/removed
+    // lifecycle channel is caught. (No duplicated regex literal — that could silently drift from line 35.)
+    const lifecycle = inventory.channels.filter((c) => c.startsWith("lifecycle:")).sort();
+    expect(lifecycle).toEqual(["lifecycle:firstRunStatus", "lifecycle:markOnboarded"]);
+  });
 });
