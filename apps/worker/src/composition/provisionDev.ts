@@ -90,7 +90,7 @@ function readCards(data: unknown): readonly DashboardCardSource[] {
  * already in the row (the same not-found-vs-fault distinction `getReadModel` makes in
  * `readModel.ts`). The row is rebuildable (§4), so a re-provision repairs it.
  */
-async function upsertCardRow(
+export async function upsertCardRow(
   readModels: ReadModelRepository,
   readModelKey: string,
   workspaceId: string,
@@ -124,7 +124,7 @@ function readProjects(data: unknown): readonly UiSafeProjectDashboard[] {
  * The written row is a candidate that `query.projectList`'s `sanitizeProjectDashboards`
  * re-validates (incl. the REQ-F-011 progress checks) before it ever reaches the renderer.
  */
-async function upsertProjectRow(
+export async function upsertProjectRow(
   readModels: ReadModelRepository,
   workspaceId: string,
   project: UiSafeProjectDashboard,
@@ -191,7 +191,7 @@ function readChanges(data: unknown): readonly UiSafeRecentChange[] {
  * is a candidate that `query.recentChanges`'s `sanitizeRecentChanges` re-validates (single-line
  * summary leak gate, DESC-by-instant, cap) before it reaches the renderer.
  */
-async function upsertRecentChangeRow(
+export async function upsertRecentChangeRow(
   readModels: ReadModelRepository,
   workspaceId: string,
   change: UiSafeRecentChange,

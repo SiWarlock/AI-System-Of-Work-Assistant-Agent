@@ -183,6 +183,7 @@ import type { Logger } from "./observability/logger";
 import { createHealthSurface, type HealthSurface, type HealthFailure } from "./health/surface";
 import { createPersistentHealthSurfaceStore } from "./composition/store-adapters";
 import { provisionDevWorkspace, type DevProvisionSpec } from "./composition/provisionDev";
+import { maybeSeedDemoData } from "./composition/demoSeed";
 import {
   createTemporalUnavailabilityController,
   DEFAULT_TEMPORAL_UNAVAILABLE_CONFIG,
@@ -1466,6 +1467,24 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
         });
       }
     }
+  }
+
+  // 1.6) DEV demo-seed (OFF by default; STRICT `SOW_DEMO_SEED === "1"`). Vault-FREE representative
+  //   read-model fixtures across the WHOLE Global Today so `SOW_DEMO_SEED=1 ./dev.sh` browses a
+  //   populated dashboard with ZERO model calls / egress / Keychain. Read-model-ONLY (rebuildable),
+  //   never Markdown/KW/secrets. Best-effort: a seed fault is logged + skipped, never blocks the
+  //   control plane booting (§16). The forked worker inherits `process.env` from desktop main (L70).
+  try {
+    const seeded = await maybeSeedDemoData(process.env, {
+      readModels: backends.repos.readModels,
+      now: backends.now,
+    });
+    if (seeded !== undefined) {
+      if (seeded.ok) backends.logger.info("dev.demoSeed.ok", {});
+      else backends.logger.warn("dev.demoSeed.skip", { fields: { code: seeded.error.code } });
+    }
+  } catch {
+    backends.logger.warn("dev.demoSeed.skip", { fields: { code: "threw" } });
   }
 
   // 2) The REAL @sow/db port adapters behind the query/command surface.
