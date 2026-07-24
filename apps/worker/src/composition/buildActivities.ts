@@ -22,7 +22,7 @@
 // ownership+secret defaults, the fail-closed approval unwrap, the always-supplied
 // broker localConfig, the faithful ReceiptStore mapping) live in backends.ts and are
 // threaded here unchanged.
-import { ok, err, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID } from "@sow/contracts";
+import { ok, err, isOk, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID } from "@sow/contracts";
 import type {
   Result,
   WorkspaceId,
@@ -36,6 +36,7 @@ import type {
   ContextRef,
 } from "@sow/contracts";
 import { planId as makePlanId } from "@sow/contracts";
+import { refreshRecentChanges } from "./recentChangesProducer";
 import {
   createDurableDispositionStore,
   createDurableMeetingParkPort,
@@ -1077,7 +1078,25 @@ export function buildProofSpineActivities(
       // 15.3: forward the gate-validated note body (the driver threads context.source.body).
       body?: string,
     ) => sourceBuildOutputs.build(validated, workspaceId, source, body),
-    sourceCommit: (plan) => sourceCommit.commit(plan),
+    sourceCommit: async (plan) => {
+      const result = await sourceCommit.commit(plan);
+      // 9.15 — bounded, fail-SAFE post-commit recent-changes refresh. On a successful source commit, rebuild the
+      // committing workspace's recent_changes read-model from the freshly-appended `knowledge_writer.commit`
+      // audit row so real ingest activity surfaces on the Recent Changes surface. A refresh fault NEVER
+      // fails/blocks the commit (the KW commit is sole-writer durable truth; the read-model is
+      // rebuildable-derived). FUTURE-TODO(9.15-health): route a persistent refresh fault to a HealthItem.
+      if (isOk(result)) {
+        try {
+          await refreshRecentChanges(
+            { workspaceId: String(plan.workspaceId) },
+            { audit: backends.repos.audit, readModels: backends.repos.readModels, now: backends.now },
+          );
+        } catch {
+          /* fail-SAFE: a refresh fault (even a totality regression) never fails the commit */
+        }
+      }
+      return result;
+    },
     sourcePropose: (action, env) => propose.propose(action, env),
     sourceIndex: (revisionId) => sourceIndexPort.index(revisionId),
 
