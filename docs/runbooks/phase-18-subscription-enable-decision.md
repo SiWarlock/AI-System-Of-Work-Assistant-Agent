@@ -84,3 +84,15 @@ The step-6 WIRING + the deferred eager-consumption FINDING piece + the macOS log
 6. **CP3 → orchestrator:** the note + the REAL metered $ + the eval verdict.
 
 **HARD LINES: real egress (arm) + real spend (first run) — explicit per-crossing owner confirm.** Sealed locally through the 18.25 / detectLogin / 18.26 commits (do NOT push mid-crossing; origin/main stays `f2bb8cca` until the crossing pushes).
+
+---
+
+## ⚠ LOAD-BEARING PRECONDITION — employer cloud egress is company-sanctioned ONLY while login = company (the §ARM-18 anchor · 2026-07-25 employer-egress FLIP)
+
+The 2026-07-25 employer-work rule-5 egress FLIP (worker `bcde3d61`; contracts Lesson 35; `ARCHITECTURE.md` §5) opens `employer_work` cloud egress by a SCOPED provisioning-time default-seed for a `[claude]` processor ONLY. Its load-bearing precondition — the reason the flip is safe — is:
+
+- **Company-sanctioned iff login = company.** The employer sanctions cloud egress to Anthropic ONLY because the active `claude` login IS the company subscription (the same login the Option-B extraction path bills). Employer-sanctioned **login = company**. The owner confirmed login = company at the 2026-07-25 flip. The moment the active login is NOT the company subscription, the sanction does NOT hold.
+- **It does NOT re-confirm on future login switches.** The seed is a STATIC, provisioning-time acknowledgment; nothing in the running system re-verifies that a later `claude` /login switch still points at the company subscription. A login change that swaps the subscription silently invalidates the sanction premise — the seed would keep egressing employer-raw content under a now-personal login. Treat "the active login is still the company subscription" as an owner-owned operational invariant to re-confirm on ANY login change.
+- **The clean end-state is the per-workspace subscription-split.** The durable fix is separate subscriptions per workspace (employer-work bound to the company subscription, personal workspaces to a personal one), so the login↔workspace binding is STRUCTURAL rather than a provisioning-time assumption. Until that split lands, the invariant above is the guard.
+
+Non-`[claude]` processors still deny; an absent/faulted employer posture still fails closed (never a fault-time default-true; no bulk migration). This precondition governs the FLIP, not the subscription-extraction ENABLE ledger above — but both rest on the same `ANTHROPIC_API_KEY`-UNSET + active-company-`claude`-login posture (Step 0 / CHECKPOINT 1).

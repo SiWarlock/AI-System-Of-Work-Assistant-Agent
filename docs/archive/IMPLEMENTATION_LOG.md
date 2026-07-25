@@ -1142,3 +1142,15 @@ Owner GO on a STAGED ENABLE: build/verify the ENABLE preconditions (steps 0–5)
 - **Next session target:** ARC-4 §13.8 (13.8b LinkHealer → c planner → d/f/g) · the worker composition-root bindings (21.1/2 #29, 9.9a #28→9.9b, 13.17 copilotGbrainRetrieval) · 13.14 /research · evalsec 12.x/Phase-19 · provint 21.10/25.x.
 - **Reference:** no implementer session docs this round (mid-arc seal, not a full cycle); slice detail in commits `50b302b0`…`1038faa3` + task #31 metadata.
 
+---
+
+### 2026-07-25 — Wave-2 2nd seal: employer-egress rule-5 FLIP + credential seam + research egress eval (main-orchestrator, HARD-STOP cycle)
+
+- **Completed (planning level):** since the recovery seal `53231188` — **⛔ 9.10 employer-egress FLIP EXECUTED** (`bcde3d61`, owner-authorized rule-5 default-seed employer_work=`[claude]` ack=true, scoped/non-blanket [non-claude still denies], preserve-fault [absent/faulted still fails closed], provisioning-time-only; SUPERSEDES 9.10-B's audited-ack for the open; §ARM-18 EXECUTED) · **21.10-core** external-write credential seam (`e023f682`, dormant WriteSecretsAccessor gate) · **13.13r** research egress-leakage DoD eval (`1aaa575a`). Suites green.
+- **Decisions made:** employer cloud egress OPENED by owner-authorized default-seed (login=company CONFIRMED, company-sanctioned) — the owner CHOSE default-seed over the audited-ack; landed on the lead's rigorous-diff Step-9 owner-confirm (worker's hard-line-reversal diligence answered on evidence + the Step-9 backstop). 12.18 Electron leg SATISFIED-BY-9.14 (#43 deleted — duplication finding).
+- **Scope shifts:** 9.10-B re-scoped to egress-status visibility + revoke (no longer the opener). Login-switch residual (company-sanctioned holds only while the company login is active) → the per-workspace subscription-split end-state (§ARM-18, queued).
+- **Incident (recovered, no work lost):** a lead heartbeat-render-lag misjudgment triggered spurious shutdowns; I rejected mine (alive); worker-implementer-2 cycled before the retraction reached it → **worker-implementer** (successor) resumed #39's uncommitted WIP (verify-not-rebuild) + landed it.
+- **⚠ Close-out debt (task #31):** a subagent banked this seal's LESSONS (#24–37) + ARCHITECTURE arch-notes + CLAUDE.md cross-doc + EVALUATION_CRITERIA + runbook login-pin (verify at close); the §ARM-RESEARCH/§ARM-21 residuals + the 9.11 first-run drift + the 12.18 DoD-pointer remain in #31 for the fresh orch.
+- **Next session target** (orch-only cycle; 5 impls keep running): ARC-4 13.8c planner → d/f/g · worker bindings (9.9a #28→9.9b #25 · 21.1/2 #29 · 13.17) · 13.14 /research · 21.3 (#27, owner) · push (owner: `git push origin main`).
+- **Reference:** commits `e023f682`/`1aaa575a`/`bcde3d61` + task #31 metadata (full handoff).
+

@@ -327,3 +327,129 @@ When you must ADDITIVELY strengthen a safety-critical gate (here: expand what co
 To thread a new candidate field through a frozen Appendix-A seam (`SourceEnvelope +body?`), make it OPTIONAL + additive + gate-validated (`z.string().optional()` — a present non-string is rejected, absent is accepted), NEVER composed as a required field: a required field would drop every existing record (nothing carries it yet), so the required gate + its producer/consumer land TOGETHER in a later slice (Lesson [15](LESSONS.md#15) in action). Prevent an embedder leak: any shape embedding the model at a `.strict()` boundary uses an explicit hand-authored field-PICK (NOT a spread), so the new field does not surface downstream until intended. The 4-file ADR-008 set moves together in ONE commit: the Zod model (`.strict()`), the regenerated JSON Schema (the field under `properties`, NOT in `required`, `additionalProperties:false` preserved), the frozen snapshot (the top-level field-set now includes the field), and the schema-snapshot test.
 
 **Rule:** thread a new candidate field through a frozen Appendix-A seam as OPTIONAL + additive + gate-validated (`z.string().optional()`, string-if-present else rejected) — never a required field (which drops every existing record; the required gate + producer/consumer land together in a later slice, L15); use an explicit hand-authored field-PICK (not a spread) at any `.strict()` boundary embedding the model so the new field can't leak downstream until intended; move the 4-file ADR-008 set in ONE commit (Zod `.strict()` model + regenerated JSON Schema [field under `properties`, NOT `required`, `additionalProperties:false` preserved] + frozen snapshot [top-level field-set includes the field] + schema-snapshot test). `pin: source-envelope.test.ts additive-body block + registry-all green`.
+
+## <a id="24"></a>24. logic-in-package / wire-at-boot (the ARC-5 cross-track pattern) — the LOGIC lands in the owning package; the composition-root BINDING is a separate worker task
+
+**Date:** 2026-07-25.
+**Source slice:** ARC-5 cross-track pattern — applied this round to 21.1/21.2, 13.17, 9.9, 13.8b, 21.10.
+
+When a capability needs both a pure/owning-package implementation AND a worker composition-root binding, the two split across TRACKS: the LOGIC (validator, resolver, re-ranker, projection, renderer affordance) lands test-first in the owning package (`contracts`/`domain`/`knowledge`/`providers`/`desktop`), and the `apps/worker/composition` (or Electron main) BINDING that wires it into boot is a SEPARATE task on the worker/host track. This keeps each slice atomic + single-territory + independently reviewable, and prevents a cross-track slice from touching two territories at once (a merge + review hazard). The seam is an injected port left UNBOUND (or a default-OFF gate) until the wiring task lands — so the logic ships dormant + byte-equivalent meanwhile.
+
+**Rule:** split a capability into the owning-package LOGIC (test-first, in its own track) and a SEPARATE worker/host composition-root BINDING task — the logic ships dormant behind an unbound injected seam / default-OFF gate until the wiring task lands, so each slice stays atomic + single-territory. `accepted: process convention (not mechanically enforceable)`.
+
+## <a id="25"></a>25. A new egress-classed provider is a FROZEN-CONTRACT round — enum + ALL embedding schemas (empirically surveyed) + membership pins + a rule-5 contract-surface test; fail-closed BY CONSTRUCTION via the ProviderId-agnostic §5 veto
+
+**Date:** 2026-07-25.
+**Source slice:** 13.13 — the `perplexity`/`xai` (RES-1) `ProviderId` enum expansion.
+
+Adding a new egress-classed processor to the `ProviderId` enum ripples through EVERY schema that embeds it — SURVEY the ripple EMPIRICALLY, don't assume it: 13.13 was **5** embedding schemas, not the assumed 3 (provider-route + provider-profile + provider-matrix + agent-job + workspace), each regenerated with its snapshot in one frozen-contract round, plus the membership pins and a rule-5 contract-surface test. Fail-closed is BY CONSTRUCTION: the §5 egress veto is ProviderId-AGNOSTIC — it opts a processor IN via the `LOCAL_PROVIDERS` allowlist, so a new cloud provider absent from that allowlist (perplexity/xai) is egress-classed automatically with NO veto edit. That is why the enum expansion cannot silently open an egress hole.
+
+**Rule:** a new egress-classed `ProviderId` is a frozen-contract round — enum + ALL embedding schemas EMPIRICALLY surveyed (13.13 = 5: route/profile/matrix + agent-job + workspace) + snapshots + membership pins + a rule-5 contract-surface test; the §5 veto stays ProviderId-agnostic (`LOCAL_PROVIDERS` opt-in allowlist), so an un-allowlisted new cloud provider is egress-classed fail-closed BY CONSTRUCTION. `pin: providerid-research.test.ts`.
+
+## <a id="26"></a>26. Local retrieval selects a zero-egress backend for employer-work or fails closed (rule 5); the embedding index is a rebuildable sidecar OUTSIDE the Markdown tree; RRF fusion K=60, 0-indexed, id-asc tie-break
+
+**Date:** 2026-07-25.
+**Source slice:** 13.3a — the local-embedding hybrid retrieval backend.
+
+The local-embedding retrieval path selects a ZERO-EGRESS backend for an employer-work query or FAILS CLOSED (rule 5) — there is no cloud fallback for sensitive retrieval. The embedding index is a REBUILDABLE sidecar kept OUTSIDE the canonical Markdown tree: it is a pointer/ranking artifact, never a byte source (§6(i)-adjacent, safety rule 1), and a lost index rebuilds from Markdown. RRF fusion of the lexical + dense legs uses `K=60` with a 0-indexed rank and an id-ascending tie-break so the fused order is deterministic + CI-stable.
+
+**Rule:** local retrieval selects a zero-egress backend for employer-work or fails closed (rule 5); the embedding index is a rebuildable sidecar OUTSIDE the Markdown tree (never a byte source); RRF fusion is `K=60`, 0-indexed rank, id-asc tie-break (deterministic). `pin: knowledge gbrain-local-embed.test.ts`.
+
+## <a id="27"></a>27. A no-inference eval suite scores at a HARD 100% floor (a safety invariant, not a soft bar) and asserts the domain oracle directly over a labeled corpus, provider-free
+
+**Date:** 2026-07-25.
+**Source slice:** the no-inference validator eval (REQ-F-017 characterization suite).
+
+REQ-F-017 no-inference is a SAFETY INVARIANT, so its eval suite scores at a HARD 100% floor — anything below is a fail, never a soft ratio bar (contrast the ≥0.90 usefulness metrics). It asserts the DOMAIN ORACLE (`validateNoInference`) DIRECTLY over the labeled corpus, provider-free (no model call — the oracle is deterministic, so the suite pins the oracle, not a model). RED for a characterization-over-an-existing-oracle suite means scratch-running the negative controls against a BROKEN stub oracle first (to prove the suite actually catches an inference leak), not against the finished oracle where everything already passes.
+
+**Rule:** a no-inference eval scores at a HARD 100% floor (safety invariant, not a soft bar) and asserts the deterministic domain oracle directly over the labeled corpus, provider-free; get RED for a characterization suite by scratch-running the neg-controls against a broken stub, not the finished oracle. `pin: evals no-inference-validator.test.ts`.
+
+## <a id="28"></a>28. The retrieval re-ranker is a PURE local re-scorer reusing the RRF fusion primitive — reorders before the cap, no egress/model/spend, content-preserving
+
+**Date:** 2026-07-25.
+**Source slice:** 13.17 — the retrieval re-ranker.
+
+The retrieval re-ranker is a PURE, local, deterministic re-scorer that REUSES the RRF fusion primitive (L26) — it reorders candidates BEFORE the top-K cap, so the retained cut-set improves, with no egress, no model call, and no spend. It is content-preserving and generic (`<T extends Passage>`), so it never mutates or drops passage content — only order. The model-based re-ranking leg is owner-gated and deferred (this local leg ships first).
+
+**Rule:** the retrieval re-ranker is a PURE local re-scorer reusing the RRF fusion primitive — reorders before the cap, no egress/model/spend, content-preserving (`<T extends Passage>`); the model-based leg is owner-gated. `pin: knowledge gbrain-rerank.test.ts`.
+
+## <a id="29"></a>29. A §12 worker-API auth eval drives the EXPORTED interceptor/originAllowlist/handshake boundary (imports, never edits worker) and reuses the 8.7 runAuthSuite; a spoof vector must drive the gate-path it CLAIMS
+
+**Date:** 2026-07-25.
+**Source slice:** the §12 session-token/origin auth eval.
+
+An eval over the §12 renderer↔worker auth boundary IMPORTS the worker's exported interceptor / originAllowlist / handshake surface (the eval track CONSUMES track outputs, never EDITS the worker) and reuses the 8.7 `runAuthSuite` for the core session-token gate rather than re-implementing it. A spoof vector must exercise the gate-path it actually CLAIMS to test: an ORIGIN-position value is checked by a raw exact-match, so only a HOST-position vector exercises the Lesson-4 host-authority-isolation predicate — mislabeling one for the other is a vacuous assertion (the guard it names never runs).
+
+**Rule:** a §12 worker-API auth eval drives the EXPORTED interceptor/originAllowlist/handshake boundary (imports, never edits worker) + reuses the 8.7 `runAuthSuite`; a spoof vector must drive the gate-path it CLAIMS — ORIGIN-position = raw exact-match, only HOST-position tests Lesson-4 host authority-isolation. `pin: evals session-token-origin.test.ts`.
+
+## <a id="30"></a>30. An egress-classed research provider runs the BROKER veto FIRST; a key-less aggregator SELF-runs the REAL egressVeto over a SYNTHETIC egress-classed route (processorOfRoute!==null or the employer-raw veto fails OPEN)
+
+**Date:** 2026-07-25.
+**Source slice:** 13.13r — the RES-1 research provider + its egress-leakage eval.
+
+An egress-classed research provider (Perplexity/xAI) runs the broker's rule-5 egress veto FIRST, before any dispatch. The KEY-LESS source aggregator is NOT exempt just because it has no paid key: it SELF-runs the REAL `egressVeto` over a SYNTHETIC egress-classed route — and that route MUST carry `processorOfRoute !== null`, or the employer-raw veto FAILS OPEN (the sharp pin: a null-processor route silently skips the employer-raw check). Each vendor is its OWN processor (never aliased), citations are preserved verbatim as candidate data, and the provider ships dormant over a faked transport — key-less does NOT mean bypass.
+
+**Rule:** an egress-classed research provider runs the broker veto FIRST; a key-less aggregator SELF-runs the REAL `egressVeto` over a SYNTHETIC egress-classed route (`processorOfRoute!==null` or the employer-raw veto fails OPEN — the sharp pin); each vendor its OWN processor (never aliased); citations verbatim candidate-data; dormant over faked transport; key-less ≠ bypass. `pin: providers research-provider.test.ts + evals research-egress-leakage.test.ts`.
+
+## <a id="31"></a>31. A task-rollup UI-safe projection is a PRE-RANKED ordered list (producer ranks; renderer renders order, never re-sorts by a model signal), priority-representable-as-UNSET, workspace-scoped (no workspaceId), flood-bound
+
+**Date:** 2026-07-25.
+**Source slice:** the §13.15/13.16 task-rollup UI-safe projection (contract-first).
+
+The task-rollup UI-safe projection is a PRE-RANKED ordered list: the producer ranks deterministically and the renderer renders THAT order — it NEVER re-sorts by a model signal (determinism + no-inference at the surface). Priority is representable as UNSET (absence IS the sentinel — REQ-F-017 never infers a priority), the shape carries NO `workspaceId` ANYWHERE (WS-8 — the projection is already workspace-scoped at production, so re-carrying the id is a leak surface), and it is `.strict()` + array-`.max()` flood-bound. Defined contract-first so the producer and the renderer surface unblock in parallel.
+
+**Rule:** a task-rollup UI-safe projection is a PRE-RANKED ordered list (producer ranks; renderer renders order, never re-sorts by a model signal), priority-representable-as-UNSET (absent IS the sentinel, no-inference), workspace-scoped with NO `workspaceId` anywhere (WS-8), `.strict()` + array-`.max()` flood-bound; defined contract-first to unblock producer + surface. `pin: contracts ui-safe.test.ts`.
+
+## <a id="32"></a>32. The EntityResolver grounds-before-writing — exact-slug/alias resolves, no-note ⇒ create-stub, ambiguous/lossy/collision ⇒ WITHHOLD (never a fabricated path); PURE over a WS-8-scoped GBrain read; fail-closed to unresolved
+
+**Date:** 2026-07-25.
+**Source slice:** 13.8a — the synthesis `EntityResolver`.
+
+The synthesis EntityResolver GROUNDS before any write: an exact slug/alias match resolves; a genuinely-absent note yields a create-stub; an ambiguous, lossy, or colliding candidate is WITHHELD — it never fabricates or picks an arbitrary path (a synthesis-named path is never trusted). It is PURE over a WS-8-SCOPED GBrain read (foreign-workspace candidates are DROPPED, so a cross-workspace note can't be resolved into — safety rule 4), and it fails closed to `unresolved`.
+
+**Rule:** the EntityResolver grounds-before-writing — exact-slug/alias resolves, no-note ⇒ create-stub, ambiguous/lossy/collision ⇒ WITHHOLD (never a fabricated/arbitrary path); PURE over a WS-8-scoped GBrain read (foreign-workspace candidates dropped); fail-closed to unresolved. `pin: knowledge synthesis-entity-resolver.test.ts`.
+
+## <a id="33"></a>33. The retrieval recall@10 bar runs on a recorded-embedding fixture (deterministic/CI, ≥30 queries), computes its own dense-cosine baseline, gates fused≥0.91 + reranked≥raw with ≥1 lexical-rescue, drives the REAL retrieveLocalEmbed
+
+**Date:** 2026-07-25.
+**Source slice:** 13.3b — the retrieval recall@10 eval.
+
+The retrieval recall@10 eval runs on a RECORDED-embedding fixture (deterministic, CI-safe, ≥30 queries — the §12 corpus floor) and computes its OWN dense-cosine baseline mirroring the real cosine, so the "does fusion help" claim is self-contained. It gates fused recall `≥0.91` AND reranked `≥` raw with `≥1` lexical-rescue case (a query where raw `<` fused, proving fusion actually helps and not a tie), drives the REAL `retrieveLocalEmbed` (exercising the rule-5 zero-egress floor), and proves non-vacuity via a both-legs-miss degraded corpus (recall drops when it should).
+
+**Rule:** the recall@10 bar runs on a recorded-embedding fixture (deterministic/CI, ≥30 queries), computes its own dense-cosine baseline, gates fused≥0.91 + reranked≥raw with ≥1 lexical-rescue (raw<fused proves fusion helps), drives the REAL `retrieveLocalEmbed` (rule-5 floor), non-vacuity via a both-legs-miss degraded corpus. `pin: evals retrieval-recall.test.ts`.
+
+## <a id="34"></a>34. A renderer open/reveal affordance passes a CLOSED repo TARGET (never a path); MAIN resolves target→configured root so path-traversal is impossible BY CONSTRUCTION; Open-in-Obsidian opens obsidian:// with encodeURIComponent as a structural injection guard
+
+**Date:** 2026-07-25.
+**Source slice:** 9.9 — the desktop Open-in-Vault / reveal affordance.
+
+A renderer "open / reveal in vault" affordance passes a CLOSED repo TARGET token (an enum-like key), NEVER a filesystem path — MAIN resolves that target to the configured root, so a renderer-supplied path-traversal is impossible BY CONSTRUCTION (§5-preserving, and stronger than exposing roots to the renderer to resolve). The true Open-in-Obsidian builds an `obsidian://` URL from the MAIN-resolved root with a HARDCODED scheme literal and `encodeURIComponent` as a STRUCTURAL injection guard (Context7-verified against the Obsidian URI scheme), with a graceful folder-open fallback when Obsidian isn't the handler.
+
+**Rule:** a renderer open/reveal affordance passes a CLOSED repo TARGET (never a path); MAIN resolves target→configured root so path-traversal is impossible BY CONSTRUCTION (§5-preserving); Open-in-Obsidian builds `obsidian://` from the MAIN-resolved root (hardcoded scheme + `encodeURIComponent` structural injection guard, Context7-verified) with a graceful folder-open fallback. `pin: desktop open-in-vault.test.ts`.
+
+## <a id="35"></a>35. The employer-egress rule-5 FLIP is an owner-authorized SCOPED default-seed (employer_work + [claude] only, provisioning-time, no bulk migration), proven by inverse-ALLOW + non-[claude]-denies + preserve-fault pins; rides the 9.10-A store-backed resolver
+
+**Date:** 2026-07-25.
+**Source slice:** 9.10 — the employer cloud-egress default-seed flip (`bcde3d61`), over the 9.10-A store-backed posture resolver.
+
+The employer-work rule-5 egress FLIP is an owner-authorized, SCOPED provisioning-time default-seed — it sets `employerRawEgressAcknowledged=true` + `acknowledgedAt` ONLY for `employer_work` + a `[claude]` processor, with NO bulk migration of existing records. It is proven by three pins: an inverse-ALLOW (the seeded scope now allows a `[claude]` cloud route), a non-`[claude]`-still-denies (scoped, never blanket-cloud), and a preserve-fault (an absent/faulted employer posture STILL fails closed — never a fault-time default-true). It rides the 9.10-A store-backed single-source posture resolver (the interim `cloudCopilotPosture` hack is RETIRED). LOAD-BEARING precondition (login = company): `docs/runbooks/phase-18-subscription-enable-decision.md`.
+
+**Rule:** the employer-egress rule-5 FLIP is an owner-authorized SCOPED default-seed (employer_work + `[claude]` only, ack=true + acknowledgedAt, provisioning-time, NO bulk migration), proven by inverse-ALLOW + non-`[claude]`-denies + preserve-fault (absent/faulted STILL fails closed — never a fault-time default-true); rides the 9.10-A store-backed single-source resolver (retires `cloudCopilotPosture`). `pin: worker egress-posture-store-backed.test.ts`.
+
+## <a id="36"></a>36. The external-write credential seam resolves the vendor token at DISPATCH-time through an OPTIONAL injected WriteSecretsAccessor, BEFORE the existence-probe + create; fail-closed on unavailable/empty/throw; value discarded (never logged); real-accessor ⇔ real-transport arm together
+
+**Date:** 2026-07-25.
+**Source slice:** 21.10 — the external-write credential seam (17.4 `writeSecretRef`).
+
+The external-write credential seam resolves the vendor token at DISPATCH time (the 17.4 `writeSecretRef`) through an OPTIONAL injected `WriteSecretsAccessor`, BEFORE the pre-write existence-probe and the create. It fails closed on unavailable / empty / throw (a blank token is NOT auth), reads the value ONLY for the non-empty check then DISCARDS it (never logged — rule 7), and is byte-equivalent when the accessor is ABSENT (dormant default). The real accessor and the real write transport MUST arm TOGETHER (§ARM-21) — a real accessor without a real transport (or vice-versa) is a half-armed hole.
+
+**Rule:** the external-write credential seam resolves the vendor token at DISPATCH-time (17.4 `writeSecretRef`) via an OPTIONAL injected `WriteSecretsAccessor`, BEFORE the existence-probe + create; fail-closed on unavailable/empty/throw (blank ≠ auth); value read only for the non-empty check then discarded (never logged, rule 7); ABSENT ⇒ byte-equivalent; real-accessor ⇔ real-transport arm together (§ARM-21). `pin: integrations credential-seam.test.ts`.
+
+## <a id="37"></a>37. The LinkHealer heals a forward link ONLY on a faithful/unambiguous slug match (shared match-keys with the EntityResolver — predicate-lives-once); backlinks NEVER authored (derived read-only via GBrain); every heal is a LinkMutation → KnowledgeWriter
+
+**Date:** 2026-07-25.
+**Source slice:** 13.8b/13.8c — the synthesis `LinkHealer`.
+
+The synthesis LinkHealer heals a FORWARD link only on a faithful, unambiguous slug match — reusing the SAME match-keys as the EntityResolver (L32) so the resolve predicate LIVES ONCE (a lossy/fuzzy/2+-candidate match withholds). Backlinks are NEVER authored — they are derived read-only via GBrain. Every heal is a `LinkMutation` routed through KnowledgeWriter (safety rule 1 — never a direct write).
+
+**Rule:** the LinkHealer heals a forward link ONLY on a faithful/unambiguous slug match (shared match-keys with the EntityResolver — predicate-lives-once; lossy/fuzzy/2+ withholds); backlinks NEVER authored (derived read-only via GBrain); every heal is a `LinkMutation` → KnowledgeWriter (never a direct write). `pin: knowledge synthesis-link-healer.test.ts`.
