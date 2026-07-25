@@ -35,7 +35,10 @@ const OSB_PIN_PATH = resolve(REPO_ROOT, "config/osb.pin");
 // RECONCILE → eval-security: this one-time cross-track pin bump + the DEFERRED guard-PATTERN prose-FP
 // fix (the `symlink` token → a call-context anchor) belong to the eval-security track.
 // +1: round-7 gmail.ts, read-only GET connector — orch21-authorized per providers Lesson 2 family
-const EXPECTED_CONNECTOR_ADAPTER_COUNT = 19;
+// +1: 13.13 free-source-aggregator.ts, dormant candidate-data research connector (read-edge) — main-orch-authorized;
+//     write-free per eval-security's OWN scanForWriteSurfaces (0 violations, the deciding CERTIFY) + provint #34
+//     all-7-invariant security review (candidate-data-only, one-writer-safe), 2026-07-25.
+const EXPECTED_CONNECTOR_ADAPTER_COUNT = 20;
 
 function loadConnectorAdapterSources(): ReadonlyArray<{ path: string; content: string }> {
   return readdirSync(ADAPTERS_DIR)
