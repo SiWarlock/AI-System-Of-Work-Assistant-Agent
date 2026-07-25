@@ -19,6 +19,8 @@ import {
   UiSafeCitationSchema,
   UiSafeCopilotAnswerSchema,
   UiSafeIngestionItemSchema,
+  UiSafeScheduleEntrySchema,
+  UiSafeScheduleSchema,
   collapseToSummaryLine,
   UI_SAFE_ALLOWLIST,
 } from "../../src/api/ui-safe";
@@ -51,6 +53,9 @@ const PROJECTIONS = [
   ["citation", UiSafeCitationSchema, UI_SAFE_ALLOWLIST.citation] as const,
   ["copilotAnswer", UiSafeCopilotAnswerSchema, UI_SAFE_ALLOWLIST.copilotAnswer] as const,
   ["ingestion", UiSafeIngestionItemSchema, UI_SAFE_ALLOWLIST.ingestion] as const,
+  // 9.9 — the UI-safe schedule/calendar projection (busy/free + generic-conflict-only).
+  ["scheduleEntry", UiSafeScheduleEntrySchema, UI_SAFE_ALLOWLIST.scheduleEntry] as const,
+  ["schedule", UiSafeScheduleSchema, UI_SAFE_ALLOWLIST.schedule] as const,
 ] as const;
 
 describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage gate)", () => {
@@ -147,6 +152,74 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
     expect(
       UiSafeApprovalSchema.safeParse({ ...sample, actor: "leaked" }).success,
     ).toBe(false);
+  });
+
+  // 9.8 — UiSafeApproval gains OPTIONAL targetSystem (closed enum) + workspaceId (plain UI-safe
+  // string, NOT branded — the file's no-branded-fields rule). Additive: the bare shape above still
+  // validates, and the enriched shape validates; over-population still rejected by .strict().
+  it("UiSafeApprovalSchema accepts the additive targetSystem + workspaceId (9.8), and still validates without them", () => {
+    const bare = { id: "approval-1", status: "pending", channel: "mac" };
+    const enriched = { ...bare, targetSystem: "linear", workspaceId: "employer-work" };
+    expect(UiSafeApprovalSchema.safeParse(bare).success).toBe(true); // additive — no consumer break
+    const parsed = UiSafeApprovalSchema.safeParse(enriched);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.targetSystem).toBe("linear");
+      expect(parsed.data.workspaceId).toBe("employer-work");
+    }
+    // Closed vocabulary: an out-of-set targetSystem is rejected.
+    expect(UiSafeApprovalSchema.safeParse({ ...enriched, targetSystem: "notion" }).success).toBe(false);
+    // Over-population (a raw/secret field) still rejected (.strict).
+    expect(UiSafeApprovalSchema.safeParse({ ...enriched, payloadHash: "sha256:x" }).success).toBe(false);
+  });
+
+  // 9.5 — changeId is an OPAQUE worker-mediated ref (already on UiSafeRecentChange): a plain string
+  // the renderer never interprets, NOT a raw auditRef. Pin the opaque-plain-string contract.
+  it("UiSafeRecentChange.changeId is an opaque plain-string handle (9.5), never a structured/raw auditRef", () => {
+    const base = { kind: "commit", summary: "committed a note", occurredAt: "2026-07-04T00:00:00.000Z" };
+    // An opaque SHA-256-shaped handle validates (the worker's deriveChangeId output shape).
+    const sha = "a".repeat(64);
+    expect(UiSafeRecentChangeSchema.safeParse({ ...base, changeId: sha }).success).toBe(true);
+    // A short opaque token also validates (no structure required of the renderer).
+    expect(UiSafeRecentChangeSchema.safeParse({ ...base, changeId: "chg-1" }).success).toBe(true);
+    // Empty is rejected (a handle must be non-empty).
+    expect(UiSafeRecentChangeSchema.safeParse({ ...base, changeId: "" }).success).toBe(false);
+  });
+
+  // 9.9 — the UI-safe schedule/calendar projection: busy/free windows + GENERIC conflict explanation
+  // only, NEVER raw cross-workspace event detail (Flow 3 / REQ-F-009).
+  it("UiSafeScheduleEntrySchema accepts a busy/free window + generic conflict, rejects raw event detail", () => {
+    const free = { start: "2026-07-04T09:00:00.000Z", end: "2026-07-04T10:00:00.000Z", busy: false };
+    const busy = { ...free, busy: true, conflictExplanation: "conflicts with a work commitment" };
+    expect(UiSafeScheduleEntrySchema.safeParse(free).success).toBe(true);
+    expect(UiSafeScheduleEntrySchema.safeParse(busy).success).toBe(true);
+    // Raw cross-workspace event detail must NOT be representable (.strict rejects unknown keys).
+    for (const leak of [{ title: "Acme board sync" }, { attendees: ["ceo@acme"] }, { workspaceId: "employer-work" }]) {
+      expect(UiSafeScheduleEntrySchema.safeParse({ ...busy, ...leak }).success, JSON.stringify(leak)).toBe(false);
+    }
+    // A multi-line conflict explanation (the shape of leaked raw content) is rejected.
+    expect(
+      UiSafeScheduleEntrySchema.safeParse({ ...busy, conflictExplanation: "line1\nline2" }).success,
+    ).toBe(false);
+  });
+
+  it("UiSafeScheduleSchema wraps entries + carries NO workspace attribution (9.9, REQ-F-009 no cross-workspace timing leak)", () => {
+    const schedule = {
+      entries: [
+        { start: "2026-07-04T09:00:00.000Z", end: "2026-07-04T10:00:00.000Z", busy: false },
+        { start: "2026-07-04T10:00:00.000Z", end: "2026-07-04T11:00:00.000Z", busy: true, conflictExplanation: "busy" },
+      ],
+    };
+    expect(UiSafeScheduleSchema.safeParse(schedule).success).toBe(true);
+    // No per-view workspace attribution (a conflict never reveals WHICH workspace is busy).
+    expect(UI_SAFE_ALLOWLIST.schedule).not.toContain("workspaceId");
+    expect(UiSafeScheduleSchema.safeParse({ ...schedule, workspaceId: "employer-work" }).success).toBe(false);
+  });
+
+  it("UiSafeScheduleSchema rejects an over-length entries array (.max(200) push-stream flood bound)", () => {
+    const window = { start: "2026-07-04T09:00:00.000Z", end: "2026-07-04T10:00:00.000Z", busy: false };
+    expect(UiSafeScheduleSchema.safeParse({ entries: Array(200).fill(window) }).success).toBe(true);
+    expect(UiSafeScheduleSchema.safeParse({ entries: Array(201).fill(window) }).success).toBe(false);
   });
 
   it("UiSafeHealthItemSchema accepts a valid sample + rejects an unknown key", () => {

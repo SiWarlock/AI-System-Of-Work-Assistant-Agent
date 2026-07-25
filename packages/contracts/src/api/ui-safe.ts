@@ -20,6 +20,7 @@ import {
   channelSchema,
   failureClassSchema,
   healthStateSchema,
+  targetSystemSchema,
   VisibilityLevelSchema,
 } from "../models/shared-enums";
 import type {
@@ -28,6 +29,7 @@ import type {
   Channel,
   FailureClass,
   HealthState,
+  TargetSystem,
 } from "../models/shared-enums";
 import type { VisibilityLevel } from "../primitives/enums";
 
@@ -137,6 +139,14 @@ export interface UiSafeApproval {
   channel: Channel;
   snoozeUntil?: string;
   expiresAt?: string;
+  // §9.8 — OPTIONAL enrichment for the renderer's payload editor + workspace attribution (global
+  // Approvals inbox). `targetSystem`: the external system an external_action card writes to (closed
+  // enum, no content) — absent for a semantic_mutation card. `workspaceId`: the served/authorizing
+  // workspace this card belongs to — a PLAIN UI-safe string (these UI-safe shapes carry no branded
+  // fields; the GclProjection precedent), server-set attribution. BOTH optional ⇒ additive: a producer
+  // that doesn't supply them stays valid (parsing consumers never break).
+  targetSystem?: TargetSystem;
+  workspaceId?: string;
 }
 
 // No `z.ZodType<T>` annotation: the schema infers as a `ZodObject`, which keeps
@@ -155,6 +165,9 @@ export const UiSafeApprovalSchema = z
     channel: channelSchema,
     snoozeUntil: z.string().datetime().optional(),
     expiresAt: z.string().datetime().optional(),
+    // §9.8 — optional enrichment (see interface): closed target-system enum + plain workspace attribution.
+    targetSystem: targetSystemSchema.optional(),
+    workspaceId: z.string().min(1).optional(),
   })
   .strict();
 
@@ -511,6 +524,55 @@ export const UiSafeIngestionItemSchema = z
   })
   .strict();
 
+// ── UiSafeSchedule / UiSafeScheduleEntry ─────────────────────────────────────
+// The §9.9 Calendar availability surface (Flow 3 / REQ-F-009). One entry is a busy/free time window
+// with, at most, a GENERIC conflict explanation — NEVER raw event detail (title / attendees / body /
+// location). Availability is sourced from the GCL projection, a cross-workspace read, so the redaction
+// is load-bearing: a conflict from another workspace surfaces as `busy: true` + a generic explanation
+// and NOTHING that reveals WHICH workspace is busy WHEN (that timing attribution is itself a
+// cross-workspace leak). So the shape carries NO workspaceId anywhere (per-entry OR top-level) — the
+// worker scopes/merges the query, the renderer knows what it asked for (mirrors UiSafeRecentChange /
+// UiSafeDashboardCard). `conflictExplanation` is single-line-bounded (defense-in-depth: a multi-line
+// value is the shape of leaked raw content; PROJECTOR OBLIGATION per Lesson §5 — the generic string is
+// composed redact-by-type, never a raw event field passthrough).
+// DEFERRED worker-side cross-field invariants (an object-level `.refine` here would collapse `.shape`,
+// which the allowlist freeze test reads — the UiSafeProjectProgress/REQ-F-011 precedent): the producing
+// §9.9 `query.calendar` procedure enforces, before emit, (a) `start <= end` on each window and
+// (b) `busy === false ⇒ conflictExplanation` absent (a free window carries no conflict). Neither is a
+// leak if violated (a nonsensical window is harmless) — the structural gate here pins shape + bounds.
+export interface UiSafeScheduleEntry {
+  /** Window start (ISO-8601 datetime). */
+  start: string;
+  /** Window end (ISO-8601 datetime). */
+  end: string;
+  busy: boolean;
+  /** OPTIONAL GENERIC conflict explanation — single-line, no raw cross-workspace event detail. */
+  conflictExplanation?: string;
+}
+
+export const UiSafeScheduleEntrySchema = z
+  .object({
+    start: z.string().datetime(),
+    end: z.string().datetime(),
+    busy: z.boolean(),
+    conflictExplanation: uiSafeSummaryLine.optional(),
+  })
+  .strict();
+
+// The availability view: an ordered list of busy/free windows. Carries NO workspaceId (see the entry
+// header — the whole point of the generic-conflict shape is that the view never attributes a conflict
+// to a source workspace). `entries` LENGTH is capped (a week view is generous at 200) so the §10 push
+// stream can't be flooded with N windows (mirrors the dashboard prose-array length caps).
+export interface UiSafeSchedule {
+  entries: readonly UiSafeScheduleEntry[];
+}
+
+export const UiSafeScheduleSchema = z
+  .object({
+    entries: z.array(UiSafeScheduleEntrySchema).max(200).readonly(),
+  })
+  .strict();
+
 // ── Schema ⇄ interface parity guards (compile-time; erased at runtime) ───────
 // Each asserts the schema's inferred output EXACTLY equals its standalone
 // interface — so the interface and the runtime validator can never drift apart.
@@ -527,7 +589,9 @@ const _uiSafeParity: [
   Exact<z.infer<typeof UiSafeCitationSchema>, UiSafeCitation>,
   Exact<z.infer<typeof UiSafeCopilotAnswerSchema>, UiSafeCopilotAnswer>,
   Exact<z.infer<typeof UiSafeIngestionItemSchema>, UiSafeIngestionItem>,
-] = [true, true, true, true, true, true, true, true, true, true, true, true];
+  Exact<z.infer<typeof UiSafeScheduleEntrySchema>, UiSafeScheduleEntry>,
+  Exact<z.infer<typeof UiSafeScheduleSchema>, UiSafeSchedule>,
+] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true];
 void _uiSafeParity;
 
 // ── Checked-in allowlist — THE source of truth ───────────────────────────────
@@ -536,7 +600,7 @@ void _uiSafeParity;
 // using ONLY these names; the contract test freezes every schema's field set
 // against its entry so a field cannot be silently added to the UI surface later.
 export const UI_SAFE_ALLOWLIST = {
-  approval: ["actionRef", "channel", "expiresAt", "id", "snoozeUntil", "status", "subjectKind"],
+  approval: ["actionRef", "channel", "expiresAt", "id", "snoozeUntil", "status", "subjectKind", "targetSystem", "workspaceId"],
   healthItem: ["failureClass", "id", "openedAt", "resolvedAt", "severity", "state"],
   workflowRunRef: ["idempotencyKey", "state", "trigger", "workflowId"],
   dashboardCard: ["cardId", "count", "kind", "status", "title", "updatedAt"],
@@ -559,4 +623,6 @@ export const UI_SAFE_ALLOWLIST = {
   citation: ["citationId", "title"],
   copilotAnswer: ["answer", "citations", "egressProcessor"],
   ingestion: ["sensitivity", "sourceId", "summary", "type"],
+  scheduleEntry: ["busy", "conflictExplanation", "end", "start"],
+  schedule: ["entries"],
 } as const;
