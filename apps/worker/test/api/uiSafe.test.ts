@@ -353,6 +353,7 @@ function makeServerDeps(over: { expectedToken?: SessionToken } = {}) {
       approvalInbox: () => emptyErr,
       copilotSurface: () => emptyErr,
       globalSurface: () => emptyErr,
+      calendar: () => emptyErr,
       recentChanges: () => emptyErr,
       projectDashboards: () => emptyErr,
     },

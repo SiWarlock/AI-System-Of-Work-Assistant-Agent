@@ -25,8 +25,9 @@ import type {
   UiSafeDashboardCard,
   UiSafeGclProjection,
   UiSafeIngestionItem,
+  UiSafeScheduleEntry,
 } from "@sow/contracts";
-import { collapseToSummaryLine } from "@sow/contracts";
+import { collapseToSummaryLine, UiSafeScheduleEntrySchema } from "@sow/contracts";
 import { permitsRawDrillDown } from "@sow/policy";
 
 /**
@@ -212,4 +213,58 @@ export function toUiSafeIngestionItem(source: SourceEnvelope): UiSafeIngestionIt
     sensitivity: source.sensitivity,
     summary,
   };
+}
+
+/**
+ * Source shape for the §9.9a calendar-schedule projector (Flow 3 / REQ-F-009). There is no frozen
+ * seam for a raw busy window (availability is a cross-workspace read the GCL gate sanitizes), so the
+ * projector's INPUT is defined here as the superset the availability source yields (mirrors
+ * `DashboardCardSource`): a sanitized busy window carrying, at most, a GENERIC reason. `sourceId`
+ * records WHICH calendar/connector produced it — and the projector DROPS it (WS-8: which workspace is
+ * busy WHEN is itself a cross-workspace timing leak).
+ */
+export interface ScheduleWindowSource {
+  /** WHICH availability source produced the window — DROPPED by the projector (WS-8 attribution). */
+  readonly sourceId?: string;
+  /** ISO-8601 window start. */
+  readonly start: string;
+  /** ISO-8601 window end. */
+  readonly end: string;
+  /** OPTIONAL GENERIC sanitized reason — the ONLY conflict text that may surface (never raw detail). */
+  readonly genericReason?: string;
+}
+
+/**
+ * Project a sanitized busy {@link ScheduleWindowSource} to a {@link UiSafeScheduleEntry} — the §9.9a
+ * drop-seam the DEFERRED write-time producer calls. Copies ONLY `start`/`end` (→ `busy: true` — a busy
+ * window is busy by definition) and DERIVES a single-line `conflictExplanation` from the SAFE
+ * `genericReason` via `collapseToSummaryLine` (L5 projector obligation — never a raw event field
+ * passthrough). Everything else on the source — `sourceId` (WHICH calendar), any adversarial extra key
+ * (a raw title/attendee/body) — is NEVER read, so no source/workspace/timing attribution can ride out
+ * (WS-8). Enforces the ui-safe.ts-DEFERRED cross-field invariant `start <= end` AT WRITE: an inverted /
+ * unparseable window returns `null` (the producer drops it) rather than emitting a nonsensical entry.
+ * The `busy === false ⇒ conflictExplanation` absent invariant holds by construction here (busy is
+ * always `true`); the read-side `sanitizeCalendar` re-gates BOTH against a tampered stored row.
+ */
+export function toUiSafeScheduleEntry(window: ScheduleWindowSource): UiSafeScheduleEntry | null {
+  const out: UiSafeScheduleEntry = { start: window.start, end: window.end, busy: true };
+  if (window.genericReason !== undefined) {
+    const line = collapseToSummaryLine(window.genericReason);
+    // collapseToSummaryLine returns "" for a whitespace-only reason — OMIT rather than emit an empty
+    // conflictExplanation (which would fail the frozen `uiSafeSummaryLine.min(1)` at read → whole-degrade).
+    if (line.length > 0) out.conflictExplanation = line;
+  }
+  // (1) Write-validity == read-validity: validate the projected entry against the SAME frozen
+  //     `UiSafeScheduleEntrySchema` the read-side `sanitizeCalendar` re-gates with (full-ISO `.datetime()`
+  //     start/end + the single-line conflictExplanation bound). A window whose projected entry would fail
+  //     the read schema (a date-only / non-ISO bound) is DROPPED HERE — never stored — so a single
+  //     malformed window can never poison the WHOLE calendar via `sanitizeCalendar`'s whole-degrade-to-empty.
+  if (!UiSafeScheduleEntrySchema.safeParse(out).success) return null;
+  // (2) The ui-safe.ts-DEFERRED cross-field invariant the structural schema can't carry: `start <= end`.
+  //     Both bounds are now valid `.datetime()` values, so `Date.parse` yields a finite instant — a
+  //     CHRONOLOGICAL compare, never lexicographic (which diverges under variable fractional-second
+  //     precision; the `sanitizeRecentChanges` rationale). `busy === false ⇒ conflictExplanation` absent
+  //     holds by construction here (busy is always `true`).
+  if (Date.parse(window.start) > Date.parse(window.end)) return null;
+  return out;
 }

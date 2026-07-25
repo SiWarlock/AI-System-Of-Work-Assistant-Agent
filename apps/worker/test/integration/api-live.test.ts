@@ -90,6 +90,7 @@ const emptyReadModel: ReadModelQueryPort = {
   approvalInbox: () => ({ ok: true, value: [] }),
   copilotSurface: () => ({ ok: true, value: [] }),
   globalSurface: () => ({ ok: true, value: [] }),
+  calendar: () => ({ ok: true, value: [] }),
   recentChanges: () => ({ ok: true, value: [] }),
   projectDashboards: () => ({ ok: true, value: [] }),
 };

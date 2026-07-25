@@ -153,6 +153,33 @@ describe("createDbReadModelQueryPort — global card + GCL surfaces", () => {
     expect(isOk(res)).toBe(true);
     if (isOk(res)) expect(res.value).toEqual([]);
   });
+
+  it("an ABSENT calendar schedule read-model returns an EMPTY ok list (§9.9 empty-until-producer)", async () => {
+    const o = await freshDb();
+    const port = createDbReadModelQueryPort(o.repos);
+    const res = await port.calendar();
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value).toEqual([]);
+  });
+
+  it("a SEEDED schedule projects `data.entries` field-copy → UiSafeScheduleEntry[]; a malformed row + a stray raw key are DROPPED (WS-8)", async () => {
+    const o = await freshDb();
+    await seedReadModel(o, READ_MODEL_KEYS.schedule, undefined, {
+      entries: [
+        { start: "2026-07-25T09:00:00.000Z", end: "2026-07-25T10:00:00.000Z", busy: true, conflictExplanation: "busy", sourceId: "employer-cal" },
+        { start: "2026-07-25T11:00:00.000Z", busy: true }, // missing `end` → DROPPED
+      ],
+    });
+    const port = createDbReadModelQueryPort(o.repos);
+    const res = await port.calendar();
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) {
+      expect(res.value.length).toBe(1);
+      // Field-copy: ONLY start/end/busy/conflictExplanation cross — `sourceId` (attribution) is dropped.
+      expect(res.value[0]).toEqual({ start: "2026-07-25T09:00:00.000Z", end: "2026-07-25T10:00:00.000Z", busy: true, conflictExplanation: "busy" });
+      expect((res.value[0] as unknown as Record<string, unknown>)["sourceId"]).toBeUndefined();
+    }
+  });
 });
 
 // ── workspace-scoped surfaces (fail-closed on unknown workspace) ──────────────

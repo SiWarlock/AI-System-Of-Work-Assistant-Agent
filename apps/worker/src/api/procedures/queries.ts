@@ -51,6 +51,9 @@ import {
   UiSafeProjectDashboardSchema,
   type UiSafeIngestionItem,
   UiSafeIngestionItemSchema,
+  type UiSafeSchedule,
+  type UiSafeScheduleEntry,
+  UiSafeScheduleEntrySchema,
   type UiSafeCopilotAnswer,
 } from "@sow/contracts";
 import { computePercent } from "@sow/workflows";
@@ -131,6 +134,14 @@ export interface ReadModelQueryPort {
    * cross-workspace read path, WS-8). Never raw cross-workspace content inline.
    */
   readonly globalSurface: () => MaybeAsyncResult<readonly GclProjection[]>;
+  /**
+   * Calendar availability (§9.9) — the GLOBAL busy/free schedule (workspaceId-free by design; WS-8 —
+   * a conflict never attributes to a source workspace). Candidate `UiSafeScheduleEntry` rows a
+   * DEFERRED write-time producer emitted. EMPTY-UNTIL-PRODUCER: an absent read-model row → ok([]).
+   * The two ui-safe.ts-deferred cross-field invariants are re-gated by `sanitizeCalendar`. Takes NO
+   * workspaceId (the worker owns the scope/merge; NOT a cross-workspace drill path).
+   */
+  readonly calendar: () => MaybeAsyncResult<readonly UiSafeScheduleEntry[]>;
   /**
    * Workspace-scoped "Recent activity" rows (§9.5) — candidate UiSafeRecentChange
    * summaries the WRITE-time projector produced (redaction-by-type at projection time).
@@ -414,6 +425,40 @@ function sanitizeIngestionInbox(
   return ok(out.slice(0, INGESTION_INBOX_CAP));
 }
 
+/** Max schedule entries the calendar surface serves (a week view is generous at 200; mirrors the UiSafeScheduleSchema cap). */
+const SCHEDULE_ENTRIES_CAP = 200;
+
+/**
+ * The calendar read boundary (§9.9 / Flow 3 / REQ-F-009): RE-VALIDATE each candidate entry through the
+ * frozen `UiSafeScheduleEntrySchema` (defense-in-depth over the DEFERRED write-time producer) AND re-gate
+ * the two ui-safe.ts-DEFERRED cross-field invariants the structural schema can't carry: (a) `start <= end`
+ * (chronological via `Date.parse`, NOT a lexicographic compare — `.datetime()` admits variable
+ * fractional-second precision under which lexicographic order diverges from chronological; the
+ * `sanitizeRecentChanges` rationale) and (b) `busy === false ⇒ conflictExplanation` absent (a "free"
+ * window carrying a conflict is a tampered/nonsensical row). DEGRADE
+ * POSTURE — deliberately DISTINCT from the sibling sanitizers (which fail to a typed `err`): a poisoned OR
+ * invariant-violating row degrades the WHOLE result to an EMPTY `ok({entries:[]})` — the honest-empty
+ * calendar posture (REQ-F-009: an unreachable/tampered source surfaces empty/degraded, NEVER "free", and a
+ * display surface degrades to no-data rather than an error dialog). A genuine port `err` (store fault)
+ * still PROPAGATES. Valid rows are capped at {@link SCHEDULE_ENTRIES_CAP}. Redaction-safe (no raw row crosses).
+ */
+function sanitizeCalendar(
+  r: Result<readonly UiSafeScheduleEntry[], FailureVariant>,
+): Result<UiSafeSchedule, FailureVariant> {
+  if (!r.ok) return r; // a genuine store fault propagates (distinct from a malformed ROW → empty)
+  const out: UiSafeScheduleEntry[] = [];
+  for (const entry of r.value) {
+    const parsed = UiSafeScheduleEntrySchema.safeParse(entry);
+    if (!parsed.success) return ok({ entries: [] }); // schema-invalid row → whole-degrade to empty
+    const start = Date.parse(parsed.data.start);
+    const end = Date.parse(parsed.data.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) return ok({ entries: [] }); // (a)
+    if (parsed.data.busy === false && parsed.data.conflictExplanation !== undefined) return ok({ entries: [] }); // (b)
+    out.push(parsed.data);
+  }
+  return ok({ entries: out.slice(0, SCHEDULE_ENTRIES_CAP) });
+}
+
 /**
  * The Project dashboards read boundary (§9.5). Two-stage, fail-CLOSED on any bad row:
  *  1. Structural re-validation through the frozen `UiSafeProjectDashboardSchema` (the schema
@@ -628,6 +673,19 @@ export function buildQueryRouter(deps: QueryRouterDeps) {
       authedResolver<undefined, readonly UiSafeGclProjection[]>(
         async (): Promise<Result<readonly UiSafeGclProjection[], FailureVariant>> =>
           projectGlobal(await readModel.globalSurface()),
+      ),
+    ),
+
+    /**
+     * Calendar availability (§9.9 / Flow 3) — the GLOBAL busy/free schedule, each entry re-validated +
+     * the two deferred cross-field invariants re-gated + capped (`sanitizeCalendar`). Takes NO
+     * workspaceId (workspaceId-free by design; the worker owns the scope/merge — WS-8, never attributes
+     * a conflict to a source workspace). Empty-until-producer (the write-time binding is DEFERRED).
+     */
+    calendar: publicProcedure.query(
+      authedResolver<undefined, UiSafeSchedule>(
+        async (): Promise<Result<UiSafeSchedule, FailureVariant>> =>
+          sanitizeCalendar(await readModel.calendar()),
       ),
     ),
 

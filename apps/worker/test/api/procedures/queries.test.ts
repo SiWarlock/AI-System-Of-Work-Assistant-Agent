@@ -211,6 +211,11 @@ function fakePort(overrides: Partial<ReadModelQueryPort> = {}): ReadModelQueryPo
     globalSurface: (): Result<readonly GclProjection[], FailureVariant> =>
       ok([fakeGclProjection()]),
 
+    // §9.9 calendar — the GLOBAL busy/free schedule (no workspaceId). Default = one valid busy entry;
+    // the sanitize/cap/invariant/unbound tests override this. Empty-until-producer in production.
+    calendar: () =>
+      ok([{ start: "2026-07-25T09:00:00.000Z", end: "2026-07-25T10:00:00.000Z", busy: true, conflictExplanation: "busy" }]),
+
     // Candidate rows in NON-descending order (older first) so the procedure's server-side
     // re-sort is observable; unknown workspace → typed not-found (fail-closed).
     recentChanges: (workspaceId) =>
@@ -463,6 +468,47 @@ describe("buildQueryRouter — UI-safe read-model serving (§10/§13)", () => {
     const res = await caller.query.ingestionInbox({ workspaceId: KNOWN_WORKSPACE });
     expect(isOk(res)).toBe(true);
     if (isOk(res)) expect(res.value.length).toBe(100);
+  });
+
+  it("query.calendar is EMPTY-UNTIL-PRODUCER: no schedule read-model row ⇒ ok({entries:[]}) (honest-empty, dormant producer)", async () => {
+    const caller = makeCaller(fakePort({ calendar: () => ok([]) }));
+    const res = await caller.query.calendar();
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value).toEqual({ entries: [] });
+  });
+
+  it("query.calendar re-validates + emits UiSafeSchedule + CAPS at 200 (never trust the stored JSON length)", async () => {
+    const many = Array.from({ length: 250 }, (_, i) => ({
+      start: "2026-07-25T09:00:00.000Z",
+      end: "2026-07-25T10:00:00.000Z",
+      busy: true,
+      conflictExplanation: `busy ${i}`,
+    }));
+    const caller = makeCaller(fakePort({ calendar: () => ok(many) }));
+    const res = await caller.query.calendar();
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value.entries.length).toBe(200);
+  });
+
+  it("query.calendar DEGRADES to empty ok on a SCHEMA-invalid row (multi-line conflictExplanation) — never partial, never free, never err", async () => {
+    const poisoned = { start: "2026-07-25T09:00:00.000Z", end: "2026-07-25T10:00:00.000Z", busy: true, conflictExplanation: "busy\nleaked raw event body" };
+    const caller = makeCaller(fakePort({ calendar: () => ok([poisoned]) }));
+    const res = await caller.query.calendar();
+    // Calendar DEGRADE posture (distinct from the sibling sanitizers' typed err): the whole result → empty ok.
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value).toEqual({ entries: [] });
+  });
+
+  it("query.calendar DEGRADES to empty ok on a cross-field INVARIANT violation (busy=false WITH a conflict OR start>end)", async () => {
+    const freeWithConflict = { start: "2026-07-25T09:00:00.000Z", end: "2026-07-25T10:00:00.000Z", busy: false, conflictExplanation: "should not exist" };
+    const invRes = await makeCaller(fakePort({ calendar: () => ok([freeWithConflict]) })).query.calendar();
+    expect(isOk(invRes)).toBe(true);
+    if (isOk(invRes)) expect(invRes.value).toEqual({ entries: [] });
+
+    const inverted = { start: "2026-07-25T10:00:00.000Z", end: "2026-07-25T09:00:00.000Z", busy: true };
+    const invRes2 = await makeCaller(fakePort({ calendar: () => ok([inverted]) })).query.calendar();
+    expect(isOk(invRes2)).toBe(true);
+    if (isOk(invRes2)) expect(invRes2.value).toEqual({ entries: [] });
   });
 
   it("approval inbox returns UI-safe Approval cards only", async () => {

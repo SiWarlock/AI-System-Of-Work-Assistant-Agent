@@ -39,6 +39,7 @@ import {
   type UiSafeRecentChange,
   type UiSafeProjectDashboard,
   type UiSafeIngestionItem,
+  type UiSafeScheduleEntry,
 } from "@sow/contracts";
 import type {
   ReadModelRepository,
@@ -71,6 +72,8 @@ export const READ_MODEL_KEYS = {
   projectDashboards: "project_dashboards",
   /** GCL sanitized cross-workspace surface (workspaceId = null). */
   global: "global_surface",
+  /** Calendar availability — the GLOBAL busy/free schedule (workspaceId = null; §9.9; empty-until-producer). */
+  schedule: "schedule",
   /**
    * The workspace REGISTRY (workspaceId = null): a global read-model whose `data`
    * is `{ workspaceIds: string[] }` — the fail-closed known-workspace membership
@@ -266,6 +269,30 @@ export function readIngestionItems(data: unknown): readonly UiSafeIngestionItem[
 }
 
 /**
+ * Read the `entries` array off the calendar-schedule read-model payload → candidate UiSafeScheduleEntry[]
+ * (§9.9). A malformed payload → `[]`; a structurally-malformed row (a missing/wrong-typed `start`/`end`/
+ * `busy`) is DROPPED. Copies ONLY the four allowlisted field names by EXPLICIT copy — a stray raw field
+ * (a `sourceId` / workspace / raw event detail) on a stored row can NEVER ride through this narrowing
+ * (WS-8). The two DEFERRED cross-field invariants (`start <= end`; `busy === false ⇒ conflictExplanation`
+ * absent) + the single-line `conflictExplanation` bound are re-gated downstream by `queries.ts`'s
+ * `sanitizeCalendar` (defense-in-depth). Mirrors {@link readIngestionItems} (field-copy + drop-malformed).
+ */
+export function readScheduleEntries(data: unknown): readonly UiSafeScheduleEntry[] {
+  const rows = pluckArray(data, "entries");
+  const out: UiSafeScheduleEntry[] = [];
+  for (const row of rows) {
+    if (typeof row !== "object" || row === null) continue;
+    const r = row as Record<string, unknown>;
+    if (typeof r["start"] === "string" && typeof r["end"] === "string" && typeof r["busy"] === "boolean") {
+      const entry: UiSafeScheduleEntry = { start: r["start"], end: r["end"], busy: r["busy"] };
+      if (typeof r["conflictExplanation"] === "string") entry.conflictExplanation = r["conflictExplanation"];
+      out.push(entry);
+    }
+  }
+  return out;
+}
+
+/**
  * Read the `projects` array off the project-dashboards read-model payload → candidate
  * UiSafeProjectDashboard[]. A malformed payload → `[]`; a non-object row is dropped. This is
  * a THIN transport narrowing only — every field (and the REQ-F-011 cross-field progress
@@ -377,6 +404,7 @@ export interface DbReadModelQueryPortAsync {
     workspaceId: string,
   ) => Promise<Result<readonly WorkflowRunRef[], FailureVariant>>;
   readonly globalSurface: () => Promise<Result<readonly GclProjection[], FailureVariant>>;
+  readonly calendar: () => Promise<Result<readonly UiSafeScheduleEntry[], FailureVariant>>;
   readonly recentChanges: (
     workspaceId: string,
   ) => Promise<Result<readonly UiSafeRecentChange[], FailureVariant>>;
@@ -533,6 +561,17 @@ export function createDbReadModelQueryPort(
       const rm = await getReadModel(readModels, READ_MODEL_KEYS.global, null);
       if (isErr(rm)) return rm;
       return ok(rm.value === undefined ? [] : readProjections(rm.value.data));
+    },
+
+    async calendar(): Promise<Result<readonly UiSafeScheduleEntry[], FailureVariant>> {
+      // Calendar availability is a GLOBAL read-model (workspaceId = null; UiSafeSchedule is
+      // workspaceId-free by design — WS-8/no-attribution). An absent row is an EMPTY ok list
+      // (EMPTY-UNTIL-PRODUCER: the DEFERRED write-time calendarProjection populates it later).
+      // The candidate rows + the two DEFERRED cross-field invariants are re-gated by `queries.ts`'s
+      // `sanitizeCalendar` — this binding only narrows the transport shape.
+      const rm = await getReadModel(readModels, READ_MODEL_KEYS.schedule, null);
+      if (isErr(rm)) return rm;
+      return ok(rm.value === undefined ? [] : readScheduleEntries(rm.value.data));
     },
   };
 }
