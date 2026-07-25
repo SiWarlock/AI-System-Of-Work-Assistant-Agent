@@ -45,6 +45,8 @@ export * from "./model/openrouter-provider";
 export * from "./model/ollama-provider";
 export * from "./model/lmstudio-provider";
 export * from "./model/real-http-transport";
+// ── RES-1 research/web-retrieval provider (perplexity/xai, dormant/faked transport) ──
+export * from "./model/research-provider";
 
 // ── AgentRuntimePort adapters (5.8) ──────────────────────────────────────────
 export * from "./runtime/runtime-support";
