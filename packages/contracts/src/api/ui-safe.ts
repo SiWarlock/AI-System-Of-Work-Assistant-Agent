@@ -21,6 +21,8 @@ import {
   failureClassSchema,
   healthStateSchema,
   targetSystemSchema,
+  taskLifecycleSchema,
+  prioritySchema,
   VisibilityLevelSchema,
 } from "../models/shared-enums";
 import type {
@@ -30,6 +32,8 @@ import type {
   FailureClass,
   HealthState,
   TargetSystem,
+  TaskLifecycle,
+  Priority,
 } from "../models/shared-enums";
 import type { VisibilityLevel } from "../primitives/enums";
 
@@ -573,6 +577,54 @@ export const UiSafeScheduleSchema = z
   })
   .strict();
 
+// ── UiSafeTaskRollup / UiSafeTaskRollupItem ──────────────────────────────────
+// The §11 "highest-priority tasks" surface (Today + daily brief + Copilot), the UI-safe PROJECTION of
+// the typed Task store (§13.15/§13.16). ONE item is the UI-safe subset of a Task:
+//   - taskId    : the renderer's opaque HANDLE for a worker-mediated action (plain id, like cardId/
+//                 sourceId — NOT the opaque-ref GRAMMAR, which is reserved for evidence/citation refs);
+//   - title     : ONE short single-line line (a task title can carry raw content — re-bounded here);
+//   - status    : the closed TaskLifecycle (todo|in_progress|blocked|done|cancelled) — a display token;
+//   - priority  : OPTIONAL closed Priority (p0..p3). ABSENT IS THE UNSET STATE (REQ-F-017 no-inference,
+//                 mirroring the 13.15 Task model) — the projection NEVER forces/fabricates a priority;
+//   - dueDate   : OPTIONAL ISO-8601 datetime (relative-time display + a due-rank input);
+//   - projectRef: OPTIONAL owning-project HANDLE (plain id — a task without a project is valid).
+// DROPS every raw/content-derived Task field; carries NO workspaceId (per-item OR top-level) — a
+// SINGLE workspace's ranked tasks (the worker scopes the query, the renderer knows its scope; mirrors
+// UiSafeSchedule / UiSafeRecentChange / UiSafeDashboardCard — a pushed/cached row can never blend
+// cross-scope, WS-8). The list is PRE-RANKED by the 13.16 producer (deterministic priority/dueDate
+// order); the renderer renders the ORDER, never re-sorts by a model signal.
+export interface UiSafeTaskRollupItem {
+  taskId: string;
+  title: string;
+  status: TaskLifecycle;
+  priority?: Priority;
+  dueDate?: string;
+  projectRef?: string;
+}
+
+export const UiSafeTaskRollupItemSchema = z
+  .object({
+    taskId: z.string().min(1),
+    title: uiSafeSummaryLine,
+    status: taskLifecycleSchema,
+    priority: prioritySchema.optional(),
+    dueDate: z.string().datetime().optional(),
+    projectRef: z.string().min(1).optional(),
+  })
+  .strict();
+
+// The pre-ranked list. `items` LENGTH is capped (a "highest-priority" list is a top-N, well under 200)
+// so the §10 push stream can't be flooded (mirrors the schedule/dashboard array caps).
+export interface UiSafeTaskRollup {
+  items: readonly UiSafeTaskRollupItem[];
+}
+
+export const UiSafeTaskRollupSchema = z
+  .object({
+    items: z.array(UiSafeTaskRollupItemSchema).max(200).readonly(),
+  })
+  .strict();
+
 // ── Schema ⇄ interface parity guards (compile-time; erased at runtime) ───────
 // Each asserts the schema's inferred output EXACTLY equals its standalone
 // interface — so the interface and the runtime validator can never drift apart.
@@ -591,7 +643,9 @@ const _uiSafeParity: [
   Exact<z.infer<typeof UiSafeIngestionItemSchema>, UiSafeIngestionItem>,
   Exact<z.infer<typeof UiSafeScheduleEntrySchema>, UiSafeScheduleEntry>,
   Exact<z.infer<typeof UiSafeScheduleSchema>, UiSafeSchedule>,
-] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+  Exact<z.infer<typeof UiSafeTaskRollupItemSchema>, UiSafeTaskRollupItem>,
+  Exact<z.infer<typeof UiSafeTaskRollupSchema>, UiSafeTaskRollup>,
+] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
 void _uiSafeParity;
 
 // ── Checked-in allowlist — THE source of truth ───────────────────────────────
@@ -625,4 +679,6 @@ export const UI_SAFE_ALLOWLIST = {
   ingestion: ["sensitivity", "sourceId", "summary", "type"],
   scheduleEntry: ["busy", "conflictExplanation", "end", "start"],
   schedule: ["entries"],
+  taskRollupItem: ["dueDate", "priority", "projectRef", "status", "taskId", "title"],
+  taskRollup: ["items"],
 } as const;

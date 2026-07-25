@@ -21,6 +21,8 @@ import {
   UiSafeIngestionItemSchema,
   UiSafeScheduleEntrySchema,
   UiSafeScheduleSchema,
+  UiSafeTaskRollupItemSchema,
+  UiSafeTaskRollupSchema,
   collapseToSummaryLine,
   UI_SAFE_ALLOWLIST,
 } from "../../src/api/ui-safe";
@@ -56,6 +58,9 @@ const PROJECTIONS = [
   // 9.9 — the UI-safe schedule/calendar projection (busy/free + generic-conflict-only).
   ["scheduleEntry", UiSafeScheduleEntrySchema, UI_SAFE_ALLOWLIST.scheduleEntry] as const,
   ["schedule", UiSafeScheduleSchema, UI_SAFE_ALLOWLIST.schedule] as const,
+  // 13.16 — the priority/due-ranked UI-safe task rollup (workspace-scoped, priority-unset-representable).
+  ["taskRollupItem", UiSafeTaskRollupItemSchema, UI_SAFE_ALLOWLIST.taskRollupItem] as const,
+  ["taskRollup", UiSafeTaskRollupSchema, UI_SAFE_ALLOWLIST.taskRollup] as const,
 ] as const;
 
 describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage gate)", () => {
@@ -220,6 +225,51 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
     const window = { start: "2026-07-04T09:00:00.000Z", end: "2026-07-04T10:00:00.000Z", busy: false };
     expect(UiSafeScheduleSchema.safeParse({ entries: Array(200).fill(window) }).success).toBe(true);
     expect(UiSafeScheduleSchema.safeParse({ entries: Array(201).fill(window) }).success).toBe(false);
+  });
+
+  // 13.16 — the priority/due-RANKED UI-safe task rollup (the "highest-priority tasks" surface).
+  const rollupItem = { taskId: "task-1", title: "Ship the frozen contracts", status: "in_progress", priority: "p1", dueDate: "2026-08-01T00:00:00.000Z", projectRef: "proj-1" };
+
+  it("UiSafeTaskRollupItemSchema accepts a valid ranked item + rejects an unknown key (.strict)", () => {
+    expect(UiSafeTaskRollupItemSchema.safeParse(rollupItem).success).toBe(true);
+    // raw over-population rejected — a title-derived hash / raw body / cross-scope id can't ride along.
+    for (const leak of [{ payloadHash: "sha256:x" }, { body: "raw" }, { workspaceId: "employer-work" }]) {
+      expect(UiSafeTaskRollupItemSchema.safeParse({ ...rollupItem, ...leak }).success, JSON.stringify(leak)).toBe(false);
+    }
+    // title is single-line-bounded (the load-bearing raw-content re-bound): a multi-line title is rejected.
+    expect(UiSafeTaskRollupItemSchema.safeParse({ ...rollupItem, title: "line1\nline2" }).success).toBe(false);
+    // dueDate is a bounded ISO datetime: a non-ISO string is rejected.
+    expect(UiSafeTaskRollupItemSchema.safeParse({ ...rollupItem, dueDate: "tomorrow" }).success).toBe(false);
+  });
+
+  // no-inference (13.15): an absent priority is a valid shape — the projection NEVER forces/guesses it.
+  it("UiSafeTaskRollupItem priority is representable-as-UNSET (absent stays absent, never forced) spec(§6)", () => {
+    const { priority: _omit, ...noPriority } = rollupItem;
+    const parsed = UiSafeTaskRollupItemSchema.safeParse(noPriority);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.priority).toBeUndefined();
+    // out-of-vocabulary priority + status are rejected (closed enums).
+    expect(UiSafeTaskRollupItemSchema.safeParse({ ...rollupItem, priority: "urgent" }).success).toBe(false);
+    expect(UiSafeTaskRollupItemSchema.safeParse({ ...rollupItem, status: "snoozed" }).success).toBe(false);
+    // projectRef + dueDate are optional (a task without a project / due date is valid).
+    const { projectRef: _p, dueDate: _d, ...minimal } = rollupItem;
+    expect(UiSafeTaskRollupItemSchema.safeParse(minimal).success).toBe(true);
+  });
+
+  it("UiSafeTaskRollupSchema is a pre-ranked list + workspace-scoped (WS-8: NO cross-workspace blend)", () => {
+    const rollup = { items: [rollupItem, { taskId: "task-2", title: "Next", status: "todo" }] };
+    expect(UiSafeTaskRollupSchema.safeParse(rollup).success).toBe(true);
+    // Honest-empty: a zero-task "highest-priority" list is a valid render state (no min).
+    expect(UiSafeTaskRollupSchema.safeParse({ items: [] }).success).toBe(true);
+    // No per-item/top-level workspace attribution — a single workspace's ranked tasks (the worker scopes).
+    expect(UI_SAFE_ALLOWLIST.taskRollup).not.toContain("workspaceId");
+    expect(UI_SAFE_ALLOWLIST.taskRollupItem).not.toContain("workspaceId");
+    expect(UiSafeTaskRollupSchema.safeParse({ ...rollup, workspaceId: "employer-work" }).success).toBe(false);
+  });
+
+  it("UiSafeTaskRollupSchema rejects an over-length items array (.max(200) push-stream flood bound)", () => {
+    expect(UiSafeTaskRollupSchema.safeParse({ items: Array(200).fill(rollupItem) }).success).toBe(true);
+    expect(UiSafeTaskRollupSchema.safeParse({ items: Array(201).fill(rollupItem) }).success).toBe(false);
   });
 
   it("UiSafeHealthItemSchema accepts a valid sample + rejects an unknown key", () => {
