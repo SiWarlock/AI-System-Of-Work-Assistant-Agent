@@ -5,6 +5,8 @@ import {
   type UiSafeApproval,
   UiSafeIngestionItemSchema,
   type UiSafeIngestionItem,
+  UiSafeScheduleEntrySchema,
+  type UiSafeScheduleEntry,
 } from "@sow/contracts/api/ui-safe";
 import type { SowBridge } from "../../preload/bridge";
 import type { Store, UiSafeStoreState } from "../store";
@@ -17,6 +19,7 @@ import {
   replaceRecentChanges,
   replaceProjects,
   replaceIngestion,
+  replaceSchedule,
   resolveOnboardedWorkspaceId,
 } from "../store/projections";
 import { type WorkspaceScope } from "../store/scope";
@@ -247,8 +250,41 @@ async function hydrate(
     // Best-effort snapshot — the live stream is the source of truth.
   }
   await hydrateApprovalInbox(client, store);
+  // Cold-load the GLOBAL availability schedule (§9.9) — workspaceId-free, so it hydrates ONCE here and is
+  // NOT re-hydrated per scope (unlike the ingestion inbox below). Empty-until-wired.
+  await hydrateCalendar(client, store);
   // Cold-load the active workspace scope's ingestion inbox (§9.7) — empty under Global.
   await hydrateIngestionInbox(client, store, store.getSnapshot().scope);
+}
+
+/**
+ * Cold-load the GLOBAL availability schedule (§9.9) via `query.calendar` (NO args — workspaceId-free; the
+ * worker owns scope/merge, WS-8). Re-validates each entry through `UiSafeScheduleEntrySchema` (.strict)
+ * before it enters the store — the same defense-in-depth the approvals/ingestion/stream paths apply; a
+ * leaky/malformed entry (a server-projector regression) is DROPPED, never folded. Best-effort +
+ * never-crashing: a query `err`/throw resolves to the empty state (never a white-screen). Empty-until-wired —
+ * returns `[]` today until the producer's adapter binds. NOT threaded through `hydrateScope` — calendar is
+ * global, so a scope change never re-queries it (it has no scope dependency).
+ */
+export async function hydrateCalendar(
+  client: CreateTRPCClient<AppRouter>,
+  store: Store<UiSafeStoreState>,
+): Promise<void> {
+  try {
+    const res = await client.query.calendar.query();
+    if (res?.ok === true && Array.isArray(res.value.entries)) {
+      const valid: UiSafeScheduleEntry[] = [];
+      for (const e of res.value.entries) {
+        const parsed = UiSafeScheduleEntrySchema.safeParse(e);
+        if (parsed.success) valid.push(parsed.data);
+      }
+      store.dispatch((s) => replaceSchedule(s, valid));
+    } else {
+      store.dispatch((s) => replaceSchedule(s, [])); // an err result → empty (don't leave stale)
+    }
+  } catch {
+    store.dispatch((s) => replaceSchedule(s, [])); // best-effort — non-crashing
+  }
 }
 
 /**

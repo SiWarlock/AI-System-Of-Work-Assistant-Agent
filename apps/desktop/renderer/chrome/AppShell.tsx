@@ -380,14 +380,13 @@ export function AppShell(props: AppShellProps): ReactElement {
             </svg>
           </NavLink>
 
-          {/* Calendar */}
-          <div className="sow-nav-item" role="link" tabIndex={0}>
+          {/* Calendar — routable (§9.9 availability surface) */}
+          <NavLink surface="calendar" label="Calendar" active={route.surface === "calendar"} onNavigate={onNavigate}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <rect x="3.5" y="5" width="17" height="15" rx="2.5" />
               <path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" />
             </svg>
-            <span className="sow-nav-label">Calendar</span>
-          </div>
+          </NavLink>
 
           {/* Approvals — routable (§9.8), with a live pending-count badge */}
           <NavLink

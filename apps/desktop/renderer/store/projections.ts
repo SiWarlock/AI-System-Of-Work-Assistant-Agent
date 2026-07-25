@@ -7,6 +7,7 @@ import type {
   UiSafeRecentChange,
   UiSafeProjectDashboard,
   UiSafeIngestionItem,
+  UiSafeScheduleEntry,
 } from "@sow/contracts/api/ui-safe";
 import type { ConnectionStatus, UiSafeStoreState } from "./index";
 import { isWorkspaceScope, type WorkspaceScope } from "./scope";
@@ -294,6 +295,21 @@ export function replaceIngestion(
 ): UiSafeStoreState {
   if (ingestion.length === 0 && state.ingestion.length === 0) return state;
   return { ...state, ingestion };
+}
+
+/**
+ * REPLACE the GLOBAL availability schedule (§9.9) with a fresh `query.calendar` snapshot. Unlike the
+ * scope-cleared workspace slices (recentChanges/projects/ingestion), calendar is workspace-FREE (the worker
+ * scopes/merges; `UiSafeSchedule` carries no workspaceId, WS-8), so this is a single global replace hydrated
+ * on cold-load, NOT re-hydrated on scope change. `query.calendar` returns the whole list, so this replaces
+ * (never upserts). Empty→empty is a ref-stable no-op (no needless re-render). Mirrors `replaceIngestion`.
+ */
+export function replaceSchedule(
+  state: UiSafeStoreState,
+  entries: readonly UiSafeScheduleEntry[],
+): UiSafeStoreState {
+  if (entries.length === 0 && state.schedule.length === 0) return state;
+  return { ...state, schedule: entries };
 }
 
 /**

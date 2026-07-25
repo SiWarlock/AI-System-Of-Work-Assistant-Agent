@@ -9,6 +9,7 @@ import type {
   UiSafeRecentChange,
   UiSafeProjectDashboard,
   UiSafeIngestionItem,
+  UiSafeScheduleEntry,
 } from "@sow/contracts/api/ui-safe";
 import { DEFAULT_SCOPE, type WorkspaceScope } from "./scope";
 import { DEFAULT_ROUTE, type Route } from "./route";
@@ -56,6 +57,13 @@ export interface UiSafeStoreState {
    */
   readonly ingestion: readonly UiSafeIngestionItem[];
   /**
+   * The GLOBAL availability schedule (§9.9 Calendar; query.calendar snapshot). Workspace-FREE by design
+   * (`UiSafeSchedule` carries no workspaceId — the worker scopes/merges cross-source availability, WS-8), so
+   * unlike recentChanges/projects/ingestion it is NOT scope-cleared — a single global slice hydrated on
+   * cold-load. Empty-until-wired (honest empty-state) until the producer's adapter binds.
+   */
+  readonly schedule: readonly UiSafeScheduleEntry[];
+  /**
    * The ONBOARDED workspaces (§19.1 / 14.1), keyed by their scope bucket. The SOURCE of a
    * workspace scope's REAL query workspaceId — a bucket present here is onboarded (selectable
    * + queryable via its real id); a bucket ABSENT has NO read path (fail-closed empty-until-
@@ -94,6 +102,7 @@ export const initialStoreState: UiSafeStoreState = {
   recentChanges: [],
   projects: [],
   ingestion: [],
+  schedule: [],
   onboarded: new Map(),
   connectors: new Map(),
   crossWorkspaceLinks: new Map(),

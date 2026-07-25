@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactElement } 
 import { AppShell } from "./chrome/AppShell";
 import { Today } from "./surfaces/today/Today";
 import { Projects } from "./surfaces/projects/Projects";
+import { Calendar } from "./surfaces/calendar";
 import { Approvals } from "./surfaces/approvals/Approvals";
 import { IngestionInbox } from "./surfaces/ingestion-inbox";
 import { createUiSafeStore } from "./store";
@@ -322,6 +323,9 @@ export function App(): ReactElement {
           onOpenRepo={requestVaultOpen}
           onRevealRepo={requestVaultReveal}
         />
+      ) : state.route.surface === "calendar" ? (
+        // §9.9 — the GLOBAL availability surface (empty-until-wired honest empty-state).
+        <Calendar entries={state.schedule} />
       ) : state.route.surface === "connectors" ? (
         <Connectors
           workspaceId={connectorsWorkspaceId}

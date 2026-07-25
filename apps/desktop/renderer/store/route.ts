@@ -13,6 +13,7 @@
 export type Route =
   | { readonly surface: "today" }
   | { readonly surface: "projects"; readonly projectId?: string }
+  | { readonly surface: "calendar" }
   | { readonly surface: "approvals" }
   | { readonly surface: "ingestion" }
   | { readonly surface: "connectors" }
