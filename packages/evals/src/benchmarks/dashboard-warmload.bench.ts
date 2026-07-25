@@ -183,6 +183,7 @@ export function makeRepresentativeReadModel(
     globalSurface: outOfScope,
     recentChanges: outOfScope,
     projectDashboards: outOfScope,
+    calendar: outOfScope,
   };
 }
 

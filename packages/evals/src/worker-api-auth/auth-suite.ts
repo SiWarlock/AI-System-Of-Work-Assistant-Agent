@@ -111,6 +111,7 @@ function serverDeps() {
       globalSurface: () => emptyErr,
       recentChanges: () => emptyErr,
       projectDashboards: () => emptyErr,
+      calendar: () => emptyErr,
     },
     // Copilot ask backend — never exercised by these AUTH-boundary vectors; empty fixtures suffice.
     copilot: {
