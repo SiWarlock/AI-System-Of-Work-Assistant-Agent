@@ -45,6 +45,7 @@ import type {
   RetrievedContext,
   RetrievedSource,
   WorkspacePosture,
+  WorkspacePostureResolver,
 } from "./copilot";
 import {
   createGbrainSubprocessRetrieval,
@@ -323,13 +324,14 @@ export function createClaudeCloudRouteSelector(
 }
 
 /**
- * The interim CONSENT posture for the real cloud path. Allowlists the Claude processor for raw content
- * (the veto then ALLOWS the cloud route — the copilot job always carries raw content) and, for
- * EMPLOYER-WORK, sets `employerRawEgressAcknowledged: true` — the owner's explicit consent ("I'm fine
- * with Employer-Work going to a cloud model, I just want a notice"). Employer-work then egresses to
- * Anthropic WITH the visible notice; a personal workspace egresses with none. Interim until the
- * AUTHORITATIVE `WorkspaceConfigRepository.get(id)` posture lands — the ack becomes a real per-workspace
- * setting then, not a flag-derived default. Pure.
+ * The interim CONSENT posture — RETAINED ONLY as the `buildCopilotDeps` fixtures/dev FALLBACK
+ * (used when no store-backed `workspacePosture` resolver is injected). ⚠ It is UNREACHABLE on the
+ * PRODUCTION veto path (task 9.10-A / owner ruling D1=A): boot injects
+ * `createStoreBackedWorkspacePosture(WorkspaceConfigRepository)` as the AUTHORITATIVE posture source,
+ * so the `employerRawEgressAcknowledged = (type === "employer_work")` flag-derived ack NEVER feeds a
+ * real employer egress decision — employer egress opens ONLY via 9.10-B's audited acknowledge, personal
+ * via its seeded allowlist (`seedPersonalCloudCopilotAllowlist`). Physical deletion of this fallback is
+ * a tracked follow-up (its test surgery is out of this slice's scope). Pure.
  */
 export function cloudCopilotPosture(workspaceId: string, type: WorkspaceType): WorkspacePosture {
   const claude = processorId("claude");
@@ -420,6 +422,15 @@ export interface CopilotDepsOptions {
   readonly realCopilot: boolean;
   /** The provisioned workspaces (fixtures + postures are built per id). Empty ⇒ every ask fails closed. */
   readonly workspaces: readonly CopilotWorkspace[];
+  /**
+   * OPTIONAL (task 9.10-A) the AUTHORITATIVE store-backed posture resolver. When present it is the SOLE
+   * veto-posture source (reads `WorkspaceConfigRepository.egressPolicy` — ack + allowlists); boot injects
+   * `createStoreBackedWorkspacePosture(backends.repos.workspaceConfig)`. Absent ⇒ the fail-closed interim
+   * map over `workspaces` (fixtures/dev; nothing egresses). The retired `type==="employer_work"` cloud
+   * consent HACK is GONE — employer egress opens ONLY via the durable store (9.10-B's audited acknowledge),
+   * personal via its seeded allowlist.
+   */
+  readonly workspacePosture?: WorkspacePostureResolver;
   /** Optional model override (BootConfig.copilotModel); defaults to DEFAULT_CLAUDE_COPILOT_MODEL. */
   readonly model?: string;
   /** Optional SDK beta override; defaults to DEFAULT_COPILOT_BETAS (the 1M-context window). */
@@ -491,6 +502,9 @@ export function buildCopilotDeps(opts: CopilotDepsOptions): CopilotDeps {
   const postures: Record<string, WorkspacePosture> = {};
   for (const ws of opts.workspaces) {
     fixtures[ws.id] = { workspaceId: ws.id, blocks: [], sources: [] };
+    // The interim FALLBACK posture map (used ONLY when no store-backed `opts.workspacePosture` is
+    // injected — fixtures/dev). On the PRODUCTION path boot injects the store-backed resolver, so this
+    // map (and the `cloudCopilotPosture` consent fallback) never feeds a real veto decision (9.10-A).
     postures[ws.id] = opts.realCopilot
       ? cloudCopilotPosture(ws.id, ws.type)
       : localWorkspacePosture(ws.id, ws.type);
@@ -547,8 +561,9 @@ export function buildCopilotDeps(opts: CopilotDepsOptions): CopilotDeps {
         ? opts.agentSynthesis()
         : createClaudeCopilotSynthesis(opts.completion(), { betas: opts.betas })
       : createStubSynthesis(),
-    // Authoritative posture resolved by workspaceId (server-side).
-    workspacePosture: createLocalWorkspacePosture(postures),
+    // Authoritative posture resolved by workspaceId (server-side). The store-backed resolver (9.10-A) is
+    // the SOLE source when injected; the interim FAIL-CLOSED map is only the fixtures/dev fallback.
+    workspacePosture: opts.workspacePosture ?? createLocalWorkspacePosture(postures),
     routeSelector: opts.realCopilot
       ? createClaudeCloudRouteSelector(opts.model)
       : createLocalRouteSelector(),

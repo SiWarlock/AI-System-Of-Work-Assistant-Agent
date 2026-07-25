@@ -30,9 +30,35 @@
 //
 // SCOPE: worker composition only. Never writes Markdown, never routes a semantic
 // mutation, never touches secrets.
-import { ok, err, isErr, defaultWorkspace, type Result, type Workspace, type WorkspaceType } from "@sow/contracts";
+import { ok, err, isErr, defaultWorkspace, processorId, type Result, type Workspace, type WorkspaceType } from "@sow/contracts";
 import type { ReadModelRepository, WorkspaceConfigRepository } from "@sow/db";
 import { registerWorkspace } from "./workspaceRegistry";
+
+/**
+ * Seed the PERSONAL cloud-copilot egress allowlist (task 9.10-A / owner ruling D1=A). Under
+ * Option A the durable `egressPolicy` is the SOLE veto posture source, so a personal workspace's
+ * PERSISTED allowlist must include the cloud-copilot processor (`claude`) for the LIVE personal
+ * cloud-copilot allow-path to survive the store-backed swap — otherwise the veto's allowlist step
+ * DENYs `PROCESSOR_NOT_ALLOWED`. Personal scopes (`personal_business` + `personal_life`) allowlist
+ * `claude` for both normal + raw content; **`employer_work` is NEVER seeded** — it stays
+ * fail-closed (empty allowlists) and opens ONLY via 9.10-B's audited two-step acknowledge command.
+ * The acknowledgment flag is untouched (still `false` — no auto-consent). Pure.
+ */
+export function seedPersonalCloudCopilotAllowlist(workspace: Workspace): Workspace {
+  // ALLOWLIST (fail-closed by construction): seed ONLY the known PERSONAL scopes. Any other type —
+  // including `employer_work` (opens only via 9.10-B's audited ack) AND any future employer-class scope
+  // later added to `WorkspaceType` — stays fail-closed with empty allowlists (never auto-seeded).
+  if (workspace.type !== "personal_business" && workspace.type !== "personal_life") return workspace;
+  const claude = processorId("claude");
+  return {
+    ...workspace,
+    egressPolicy: {
+      ...workspace.egressPolicy,
+      allowedProcessors: [claude],
+      rawContentAllowedProcessors: [claude],
+    },
+  };
+}
 
 /** The onboarding inputs a real user supplies to mint a workspace. */
 export interface ProvisionWorkspaceSpec {
@@ -108,6 +134,10 @@ export async function provisionWorkspace(
     // Redaction-safe: never echo the raw Zod/driver detail.
     return err({ code: "invalid_workspace", message: "workspace validation rejected" });
   }
+
+  // 1b) Seed the personal cloud-copilot egress allowlist (9.10-A / Option A) so the LIVE personal
+  //     cloud-copilot allow-path survives the store-backed veto swap; employer_work stays fail-closed.
+  workspace = seedPersonalCloudCopilotAllowlist(workspace);
 
   // 2) Isolation-class immutability guard. The workspace `type` anchors `dataOwner` (the
   //    rule-5 egress-veto applicability) + the WS-8 classification — onboarding may CREATE

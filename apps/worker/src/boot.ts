@@ -118,6 +118,7 @@ import {
   buildInterimCopilotScopeRegistry,
 } from "./api/procedures/copilotClaudeSynthesis";
 import type { CopilotWorkspace } from "./api/procedures/copilotClaudeSynthesis";
+import { createStoreBackedWorkspacePosture } from "./api/adapters/storeBackedWorkspacePosture";
 import {
   createGbrainCliExec,
   DEFAULT_GBRAIN_COPILOT_WORKSPACE,
@@ -528,11 +529,12 @@ function failClosedEgress(workspaceId: string): UiSafeEgressStatus {
  * Build the System-Health query port over the persistent health store. `healthItems`
  * reads the durable @sow/db `health_items` table (via the backends' persistent
  * `HealthItemStore`); a store fault folds to a typed `degraded_unavailable` err
- * (never a throw, §16). `egressStatus` returns the FAIL-CLOSED default (raw egress
- * OFF, zero-egress ON) — the real per-workspace egress-policy read is Phase-9
- * workspace-settings territory; the safe default never over-permits.
+ * (never a throw, §16). `egressStatus` reads the DURABLE per-workspace egress posture
+ * from `WorkspaceConfigRepository.egressPolicy` (task 9.10-A / §16 Leg 5.1) and
+ * FAIL-CLOSES to the safe default (raw egress OFF, zero-egress ON) on absence OR any
+ * store fault — never over-permits.
  */
-function createSystemHealthQueryPort(backends: ProofSpineBackends): SystemHealthQueryPort {
+export function createSystemHealthQueryPort(backends: ProofSpineBackends): SystemHealthQueryPort {
   return {
     async healthItems(): Promise<Result<readonly HealthItem[], FailureVariant>> {
       try {
@@ -550,8 +552,17 @@ function createSystemHealthQueryPort(backends: ProofSpineBackends): SystemHealth
         };
       }
     },
-    egressStatus(workspaceId: string): Result<UiSafeEgressStatus, FailureVariant> {
-      return { ok: true, value: failClosedEgress(workspaceId) };
+    async egressStatus(wsId: string): Promise<Result<UiSafeEgressStatus, FailureVariant>> {
+      // Read the DURABLE per-workspace egress posture (task 9.10-A). Absence OR any store
+      // fault ⇒ the FAIL-CLOSED safe default (raw egress OFF) — never over-permits.
+      try {
+        const got = await backends.repos.workspaceConfig.get(wsId as WorkspaceId);
+        if (!isOk(got)) return { ok: true, value: failClosedEgress(wsId) };
+        const acknowledged = got.value.egressPolicy.employerRawEgressAcknowledged;
+        return { ok: true, value: { workspaceId: wsId, employerRawEgressAcknowledged: acknowledged, zeroEgressOnly: !acknowledged } };
+      } catch {
+        return { ok: true, value: failClosedEgress(wsId) };
+      }
     },
   };
 }
@@ -1798,6 +1809,10 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   const copilot = buildCopilotDeps({
     realCopilot: config.copilotRealModel === true,
     workspaces: copilotWorkspaces,
+    // 9.10-A — the AUTHORITATIVE store-backed veto posture (reads WorkspaceConfigRepository.egressPolicy):
+    //   the SOLE production posture source, retiring the flag-derived cloud-consent fallback (rule 5). The
+    //   briefing bundle reuses `copilot.workspacePosture` below, so both consumer reads are single-sourced.
+    workspacePosture: createStoreBackedWorkspacePosture(backends.repos.workspaceConfig),
     model: config.copilotModel,
     betas: config.copilotBetas,
     // 18.40 — the §13.10 Copilot real-model path is the 2nd real subscription `query()` spawn; route it through
