@@ -48,6 +48,9 @@ export * from "./gbrain/local-embed";
 // ── gbrain rerank: deterministic local retrieval re-ranker (13.17) ──────────────
 export * from "./gbrain/rerank";
 
+// ── synthesis: living-vault synthesis primitives (ARC-4 §13.8) ──────────────────
+export * from "./synthesis/entity-resolver";
+
 // ── gbrain derive: the gbrain-independent CanonicalFactDeriver (parity reference) ─
 export * from "./gbrain/derive/canonical-fact-deriver";
 
