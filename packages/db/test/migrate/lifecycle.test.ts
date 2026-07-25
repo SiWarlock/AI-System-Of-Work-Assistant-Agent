@@ -50,6 +50,7 @@ import {
 import { createSqliteMigrationEngine } from "../../src/migrate/sqlite-engine";
 import { createPgMigrationEngine } from "../../src/migrate/pg-engine";
 import { CURRENT_SCHEMA_VERSION } from "../../src/migrate/version-compat";
+import type { OnDiskSchema } from "../../src/migrate/version-compat";
 import type { DbError } from "../../src/repositories/interfaces";
 
 type Conn = InstanceType<typeof Database>;
@@ -397,6 +398,11 @@ class StubEngine implements MigrationEngine {
   recordApply(): Promise<Result<void, DbError>> {
     this.recordCalls += 1;
     return Promise.resolve(this.behavior.record ?? ok(undefined));
+  }
+  // These stub-engine cases exercise the runner's apply-lifecycle branches only (never the
+  // compat gate), so a benign fresh-DB read satisfies the interface (task 11.2).
+  readOnDiskSchema(): Promise<Result<OnDiskSchema, DbError>> {
+    return Promise.resolve(ok({ version: 0, hasMigrationHistory: false }));
   }
 }
 

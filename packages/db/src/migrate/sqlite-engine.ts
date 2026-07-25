@@ -35,6 +35,7 @@ import type {
   MigrationBackup,
   MigrationEngine,
 } from "./runner";
+import type { OnDiskSchema } from "./version-compat";
 
 type Conn = InstanceType<typeof Database>;
 
@@ -117,6 +118,19 @@ class SqliteMigrationEngine implements MigrationEngine {
       return err(
         toDbError(cause, "failed to record sqlite schema-version marker"),
       );
+    }
+  }
+
+  async readOnDiskSchema(): Promise<Result<OnDiskSchema, DbError>> {
+    try {
+      // `PRAGMA user_version` is a built-in per-DB integer, always readable (0 default on
+      // a fresh DB — the marker `recordApply` writes). `#appliedCount` reads drizzle's
+      // journal (0 when the table is absent on a fresh DB) — the "populated" signal.
+      const version = this.#conn.pragma("user_version", { simple: true }) as number;
+      const hasMigrationHistory = this.#appliedCount() > 0;
+      return ok({ version, hasMigrationHistory });
+    } catch (cause) {
+      return err(toDbError(cause, "failed to read sqlite schema-version marker"));
     }
   }
 

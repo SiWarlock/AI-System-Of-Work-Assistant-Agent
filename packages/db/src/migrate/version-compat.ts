@@ -63,13 +63,12 @@ export interface AppSchemaCompat {
  * rather than guessing. Genesis: the Phase-2 initial schema (v1). v2 adds the
  * §9.8 `approvals.workspaceId` column (migration 0001) — forward-migratable from v1.
  *
- * NOTE (pre-existing gap, NOT closed here): `assertSchemaCompatible` has no production
- * caller today — `openDatabase` applies migrations directly with no preceding compat
- * gate. So this table + `CURRENT_SCHEMA_VERSION` keep the schema-version METADATA
- * coherent with the migration set, but the app↔schema version GUARD (worker forbidden
- * #4's version-check half) is not yet wired. The additive 0001 ALTER is backward-safe
- * on its own (an old app tolerates the unknown column); wiring the boot gate is tracked
- * separately.
+ * The boot gate is WIRED (task 11.2): `openDatabase` (apps/worker composition) reads the
+ * on-disk schema via the engine `readOnDiskSchema` and calls {@link assertBootSchemaCompatible}
+ * BEFORE `applyMigrations`, refusing an incompatible pairing with a typed-repair throw
+ * (worker forbidden #4's version-check half). The shipping worker's app version
+ * (`WORKER_APP_VERSION`) MUST be a key in this table — bump it in lockstep with each
+ * schema-changing migration + `CURRENT_SCHEMA_VERSION` and add the matching row.
  */
 export const APP_SCHEMA_COMPAT_TABLE: readonly AppSchemaCompat[] = [
   { appVersion: "0.1.0", targetSchemaVersion: 1, minReadableSchemaVersion: 1 },
@@ -197,4 +196,39 @@ export function assertSchemaCompatible(
 
   // min <= schemaVersion <= target — compatible (forward migration, if any, is 2.6's job).
   return ok(undefined);
+}
+
+/**
+ * The on-disk operational-schema state the startup gate reasons over: the recorded
+ * schema-version marker plus whether ANY migration history exists. Both are read together
+ * (task 11.2 engine `readOnDiskSchema`) so genesis is decided atomically — a second query
+ * for the history could race the marker read.
+ */
+export interface OnDiskSchema {
+  /** The persisted schema-version marker (0 when never recorded / on a fresh DB). */
+  readonly version: number;
+  /** True iff drizzle's migration journal has ≥1 applied row — the "populated" signal. */
+  readonly hasMigrationHistory: boolean;
+}
+
+/**
+ * The startup app↔schema compatibility gate (task 11.2). A thin, genesis-aware wrapper
+ * over {@link assertSchemaCompatible}: it adds NO new refusal reason, only the genesis
+ * carve-out. A FRESH DB — marker 0 AND no migration history — is NOT a downgrade refusal:
+ * it is brought to target by the forward migration runner. Any OTHER pairing (including a
+ * POPULATED DB whose marker reads 0, which would otherwise be a corrupt-marker downgrade)
+ * delegates to the pure predicate and refuses when incompatible. Deterministic, no I/O.
+ */
+export function assertBootSchemaCompatible(
+  onDisk: OnDiskSchema,
+  appVersion: string,
+  table: readonly AppSchemaCompat[] = APP_SCHEMA_COMPAT_TABLE,
+): Result<void, IncompatibleSchema> {
+  // Genesis: a fresh DB (marker 0, no migration history) migrates to target — never a
+  // `schema_below_minimum` refusal. The migration-history flag is the "populated" signal:
+  // a marker-0 DB WITH history is a corrupt/mispointed marker and falls through to refuse.
+  if (onDisk.version === 0 && !onDisk.hasMigrationHistory) {
+    return ok(undefined);
+  }
+  return assertSchemaCompatible(appVersion, onDisk.version, table);
 }

@@ -26,6 +26,7 @@ import { err, isErr, ok } from "@sow/contracts";
 
 import type { DbError } from "../repositories/interfaces";
 import { CURRENT_SCHEMA_VERSION } from "./version-compat";
+import type { OnDiskSchema } from "./version-compat";
 
 /** The two operational-store dialects (§4): SQLite local + standard Postgres. */
 export type MigrationDialect = "sqlite" | "pg";
@@ -67,6 +68,14 @@ export interface MigrationEngine {
   restore(backup: MigrationBackup): Promise<Result<void, DbError>>;
   /** Record a successful apply by persisting the on-disk schema-version marker. */
   recordApply(schemaVersion: number): Promise<Result<void, DbError>>;
+  /**
+   * Read the on-disk schema state (task 11.2): the persisted schema-version marker plus
+   * whether any migration history exists. The startup app↔schema compat gate
+   * ({@link assertBootSchemaCompatible}) reasons over this BEFORE applying any migration.
+   * A fresh DB reports `{ version: 0, hasMigrationHistory: false }`; a genuine read fault
+   * is a typed `err` (§16, never throws).
+   */
+  readOnDiskSchema(): Promise<Result<OnDiskSchema, DbError>>;
 }
 
 /** Options for {@link applyMigrations}. */

@@ -36,6 +36,7 @@ import type {
   MigrationBackup,
   MigrationEngine,
 } from "./runner";
+import type { OnDiskSchema } from "./version-compat";
 
 /** On-disk schema-version marker table (Postgres has no `PRAGMA user_version`). */
 const SCHEMA_VERSION_TABLE = "_sow_schema_version";
@@ -128,6 +129,28 @@ class PgMigrationEngine implements MigrationEngine {
       return err(
         toDbError(cause, "failed to record postgres schema-version marker"),
       );
+    }
+  }
+
+  async readOnDiskSchema(): Promise<Result<OnDiskSchema, DbError>> {
+    try {
+      // Read the `_sow_schema_version` marker; the table is absent on a fresh DB (the
+      // marker query throws) → version 0. `#appliedCount` reads drizzle's journal (0 when
+      // absent) — the "populated" signal.
+      let version = 0;
+      try {
+        const r = await this.#client.query<{ version: number }>(
+          `SELECT version FROM "${SCHEMA_VERSION_TABLE}" LIMIT 1`,
+        );
+        const v = r.rows[0]?.version;
+        version = typeof v === "number" ? v : 0;
+      } catch {
+        version = 0; // marker table absent on a fresh DB → 0
+      }
+      const hasMigrationHistory = (await this.#appliedCount()) > 0;
+      return ok({ version, hasMigrationHistory });
+    } catch (cause) {
+      return err(toDbError(cause, "failed to read postgres schema-version marker"));
     }
   }
 

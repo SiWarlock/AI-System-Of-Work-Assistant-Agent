@@ -53,6 +53,7 @@ import {
   createSqliteRepositories,
   createSqliteMigrationEngine,
   applyMigrations,
+  assertBootSchemaCompatible,
   type SqliteRepositories,
   type WriteReceiptRepository,
   type ReserveOutcome,
@@ -253,6 +254,15 @@ function resolveSqliteMigrationsFolder(): string {
   throw new Error("could not locate @sow/db migrations/sqlite genesis folder");
 }
 
+/**
+ * This worker build's app version, fed to the §4/§13 app↔schema-version compatibility gate
+ * (task 11.2). It MUST be a key in `APP_SCHEMA_COMPAT_TABLE` (@sow/db version-compat.ts) —
+ * bump it in lockstep with each schema-changing migration + `CURRENT_SCHEMA_VERSION`, and
+ * add the matching compat row. Deliberately NOT `apps/worker/package.json`'s `0.0.0` (which
+ * is unrecorded → `unknown_app_version` → the worker would refuse to boot on every launch).
+ */
+export const WORKER_APP_VERSION = "0.2.0";
+
 /** A live sqlite handle + the repositories built over it. */
 export interface OpenDatabase {
   readonly db: unknown; // the drizzle BetterSQLite3Database (opaque here)
@@ -281,6 +291,32 @@ export async function openDatabase(config: BackendsConfig = {}): Promise<OpenDat
 
   const conn = new Database(config.dbPath ?? ":memory:");
   const engine = createSqliteMigrationEngine(conn as never);
+
+  // §4/§13 app↔schema-version compatibility gate (task 11.2 / worker forbidden #4): read the
+  // on-disk schema state and REFUSE to boot on an incompatible pairing BEFORE applying any
+  // migration — no silent forward-only break. Genesis (a fresh DB, no migration history) is
+  // NOT a refusal; it migrates to target. The refusal is a typed-repair throw, in the same
+  // style as the migration-failure throw below (a composition-root boot fault — no caller to
+  // fold it for).
+  // Fail-safe trade-off (documented): a `record_failed` state (migrations applied but the
+  // marker write failed ⇒ marker 0 WITH migration history) refuses here as `schema_below_minimum`
+  // rather than re-running the runner's idempotent recovery — {version, hasMigrationHistory}
+  // cannot distinguish it from a genuinely corrupt marker, so the gate fails closed (restore
+  // from backup); a marker-0-populated recovery refinement is a deferred follow-up.
+  const onDisk = await engine.readOnDiskSchema();
+  if (isErr(onDisk)) {
+    throw new Error(
+      `worker composition: could not read the operational-DB schema-version marker: ${onDisk.error.message}`,
+    );
+  }
+  const compat = assertBootSchemaCompatible(onDisk.value, WORKER_APP_VERSION);
+  if (isErr(compat)) {
+    throw new Error(
+      `worker composition: refusing to start — incompatible operational-DB schema ` +
+        `(${compat.error.reason}): ${compat.error.message} ${compat.error.repair}`,
+    );
+  }
+
   const migrated = await applyMigrations(engine, {
     migrationsFolder: resolveSqliteMigrationsFolder(),
   });
