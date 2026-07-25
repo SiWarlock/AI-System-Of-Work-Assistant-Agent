@@ -75,6 +75,9 @@ export function defaultSeverityForFailureClass(failureClass: FailureClass): stri
       return HEALTH_ITEM_SEVERITY_CRITICAL;
     case "policy_denial":
     case "egress_denied":
+    // 13.15 operational fail-closed degradations (operator must act) → error.
+    case "provider_routing_unavailable":
+    case "outbox_blocked":
       return HEALTH_ITEM_SEVERITY_ERROR;
     case "connector_unreachable":
     case "write_through_failed":
@@ -86,6 +89,9 @@ export function defaultSeverityForFailureClass(failureClass: FailureClass): stri
     case "conflict_review":
     case "sync_lagging":
     case "rebuild_divergence":
+    // 13.15 recoverable holds (degraded-but-recoverable) → warn.
+    case "db_unavailable":
+    case "write_through_blocked":
       return HEALTH_ITEM_DEFAULT_SEVERITY;
     default: {
       // A new FailureClass member reaches here as a non-`never` type → tsc error, forcing

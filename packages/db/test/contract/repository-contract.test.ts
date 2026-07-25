@@ -82,6 +82,8 @@ import type {
   SourceDispositionRow,
   ProjectRegistryRepository,
   ProjectRegistryRow,
+  TaskRepository,
+  TaskRow,
   ProviderStateRepository,
   ReadModelRecord,
   ReadModelRepository,
@@ -106,6 +108,7 @@ import { createPgSchema } from "../adapters/create-pg-schema";
 interface OperationalRepositories {
   readonly workspaceConfig: WorkspaceConfigRepository;
   readonly projectRegistry: ProjectRegistryRepository;
+  readonly task: TaskRepository;
   readonly connectorInstance: ConnectorInstanceRepository;
   readonly crossWorkspaceLink: CrossWorkspaceLinkRepository;
   readonly seenContentHash: SeenContentHashRepository;
@@ -185,6 +188,7 @@ const pglitePgFixture: AdapterCase = {
 const PG_TABLES: readonly PgTable[] = [
   pgSchema.workspaceConfig,
   pgSchema.projectRegistry,
+  pgSchema.task,
   pgSchema.connectorInstance,
   pgSchema.crossWorkspaceLink,
   pgSchema.seenContentHash,
@@ -463,6 +467,7 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
     it("exposes one repository per operational-store domain", () => {
       expect(typeof repos.workspaceConfig.get).toBe("function");
       expect(typeof repos.projectRegistry.resolveRef).toBe("function");
+      expect(typeof repos.task.listByWorkspace).toBe("function");
       expect(typeof repos.connectorInstance.setState).toBe("function");
       expect(typeof repos.crossWorkspaceLink.listApprovedForReader).toBe("function");
       expect(typeof repos.seenContentHash.record).toBe("function");
@@ -591,6 +596,61 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
 
     it("get on a missing id returns a typed not_found (never throws)", async () => {
       expect(unwrapErr(await repos.projectRegistry.get("missing")).code).toBe("not_found");
+    });
+  });
+
+  // ── task rollup index (MUTABLE upsert; workspace-scoped list; task 13.15) ─────
+  // The durable OPERATIONAL rollup index behind the 13.16 priority/due-ranked read-model.
+  // NEVER a second Task writer — the canonical Task (Markdown frontmatter) stays
+  // KnowledgeWriter-owned (safety rule 1); this row is a resolution/rollup index only.
+  describe("TaskRepository — spec(§13.15) both-dialect equivalence", () => {
+    const wsId = (s: string): TaskRow["workspaceId"] => s as TaskRow["workspaceId"];
+    const taskRow = (over: Partial<TaskRow> = {}): TaskRow => ({
+      taskId: "task-1",
+      workspaceId: wsId("personal-business"),
+      projectId: "proj-1",
+      title: "Ship the frozen contracts",
+      status: "in_progress",
+      priority: "p1",
+      dueDate: "2026-08-01T00:00:00.000Z",
+      ...over,
+    });
+
+    it("upsert → get round-trips the full row incl. projectId + priority + dueDate", async () => {
+      const row = taskRow();
+      expect(unwrap(await repos.task.upsert(row))).toEqual(row);
+      const got = unwrap(await repos.task.get("task-1"));
+      expect(got).toEqual(row);
+    });
+
+    it("upsert round-trips a MINIMAL row (no projectId / no priority / no dueDate → NULL → undefined) — priority NEVER inferred (REQ-F-017)", async () => {
+      const row = taskRow({ taskId: "bare", projectId: undefined, priority: undefined, dueDate: undefined });
+      unwrap(await repos.task.upsert(row));
+      const got = unwrap(await repos.task.get("bare"));
+      expect(got.projectId).toBeUndefined();
+      expect(got.priority).toBeUndefined();
+      expect(got.dueDate).toBeUndefined();
+    });
+
+    it("upsert is idempotent-by-key: a second upsert UPDATEs in place, no conflict", async () => {
+      unwrap(await repos.task.upsert(taskRow()));
+      unwrap(await repos.task.upsert(taskRow({ priority: "p0", title: "Ship it now" })));
+      const got = unwrap(await repos.task.get("task-1"));
+      expect(got.priority).toBe("p0");
+      expect(got.title).toBe("Ship it now");
+      expect(unwrap(await repos.task.listByWorkspace(wsId("personal-business")))).toHaveLength(1);
+    });
+
+    it("listByWorkspace returns ONLY that workspace's rows (workspace-scoped primitive, WS-8)", async () => {
+      unwrap(await repos.task.upsert(taskRow({ taskId: "a", workspaceId: wsId("ws-a") })));
+      unwrap(await repos.task.upsert(taskRow({ taskId: "b", workspaceId: wsId("ws-b") })));
+      const listA = unwrap(await repos.task.listByWorkspace(wsId("ws-a")));
+      expect(listA).toHaveLength(1);
+      expect(listA[0]?.taskId).toBe("a");
+    });
+
+    it("get on a missing id returns a typed not_found (never throws)", async () => {
+      expect(unwrapErr(await repos.task.get("missing")).code).toBe("not_found");
     });
   });
 

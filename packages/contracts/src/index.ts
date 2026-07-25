@@ -3,7 +3,7 @@
 //
 // Phase-1 contract freeze: this barrel re-exports the FULL frozen surface —
 // primitives, the event catalog, the schema infrastructure, and every one of
-// the 27 frozen models (plus shared-enums / shared-shapes). `export *` is safe
+// the frozen models (plus shared-enums / shared-shapes). `export *` is safe
 // under verbatimModuleSyntax. No symbol collides across these modules (verified
 // at freeze time); see registry-all.test.ts for the REQ-S-006 coverage proof.
 
@@ -44,6 +44,7 @@ export * from "./models/knowledge-mutation-plan";
 export * from "./models/notebook-mapping";
 export * from "./models/parity-report";
 export * from "./models/project";
+export * from "./models/task";
 export * from "./models/proposed-action";
 export * from "./models/provider-matrix";
 export * from "./models/provider-profile";

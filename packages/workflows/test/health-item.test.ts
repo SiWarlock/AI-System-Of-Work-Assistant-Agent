@@ -427,4 +427,16 @@ describe("defaultSeverityForFailureClass + the materializer severity default (§
     if (!isOk(res)) return;
     expect(res.value.severity).toBe(HEALTH_ITEM_DEFAULT_SEVERITY);
   });
+
+  // 13.15 — the four NEW OPERATIONAL members each resolve to a deliberate severity, and the
+  // function stays TOTAL (the assertNever decision point covers them — no `never` fallthrough,
+  // no throw). spec(§16)
+  it("assigns a deliberate severity to each new operational member; stays total — spec(§16)", () => {
+    // fail-closed operational degradations (operator must act) → error
+    expect(defaultSeverityForFailureClass("provider_routing_unavailable")).toBe("error");
+    expect(defaultSeverityForFailureClass("outbox_blocked")).toBe("error");
+    // recoverable holds (degraded-but-recoverable) → warn
+    expect(defaultSeverityForFailureClass("db_unavailable")).toBe(HEALTH_ITEM_DEFAULT_SEVERITY);
+    expect(defaultSeverityForFailureClass("write_through_blocked")).toBe(HEALTH_ITEM_DEFAULT_SEVERITY);
+  });
 });

@@ -56,6 +56,20 @@ export const ProjectLifecycleState = [
 export const projectLifecycleStateSchema = z.enum(ProjectLifecycleState);
 export type ProjectLifecycleState = z.infer<typeof projectLifecycleStateSchema>;
 
+// §13.15 — the typed Task lifecycle (a simple closed status enum, NOT an 8th domain state machine:
+// no transition invariant is named, so a state machine would be a heavier frozen commitment than
+// the model needs). A task is `todo` → `in_progress` (may be `blocked`) and ends `done` or `cancelled`.
+export const TaskLifecycle = ["todo", "in_progress", "blocked", "done", "cancelled"] as const;
+export const taskLifecycleSchema = z.enum(TaskLifecycle);
+export type TaskLifecycle = z.infer<typeof taskLifecycleSchema>;
+
+// §13.15 — the typed Task PRIORITY vocabulary. A CLOSED enum (not a numeric scale — numbers invite
+// inference + are harder to validate). Priority is OPTIONAL on Task and is NEVER inferred: absent ⇒
+// the unset/TBD state (REQ-F-017), only owner-set or explicitly extracted-with-evidence.
+export const Priority = ["p0", "p1", "p2", "p3"] as const;
+export const prioritySchema = z.enum(Priority);
+export type Priority = z.infer<typeof prioritySchema>;
+
 export const TargetSystem = [
   "calendar",
   "todoist",
@@ -125,6 +139,20 @@ export const FailureClass = [
   "policy_denial",
   "egress_denied",
   "isolation_breach",
+  // 13.15 (2026-07-25): four dedicated OPERATIONAL members. ADDITIVE — every member above is
+  // unchanged (no rename/remove). Each is semantically DISTINCT from the nearest existing member:
+  //   • db_unavailable              — the §4 operational store is unreachable (degraded-mode.ts
+  //     currently maps this to the least-wrong `worker_down`, an infra/supervision class).
+  //   • provider_routing_unavailable — no eligible ModelProvider route (fail-closed no-provider;
+  //     the broker already emits this literal, see broker.ts NO_ELIGIBLE_PROVIDER_HEALTH_CLASS).
+  //   • outbox_blocked              — the external-write outbox is gated/held (a §8 pre-dispatch
+  //     hold — NOT a write attempt that errored).
+  //   • write_through_blocked       — a PRECONDITION/gate HOLDS the write-through (distinct from
+  //     `write_through_failed`, where the write ATTEMPT errored; blocked = never attempted).
+  "db_unavailable",
+  "provider_routing_unavailable",
+  "outbox_blocked",
+  "write_through_blocked",
 ] as const;
 export const failureClassSchema = z.enum(FailureClass);
 export type FailureClass = z.infer<typeof failureClassSchema>;

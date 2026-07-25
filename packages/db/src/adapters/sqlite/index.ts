@@ -64,6 +64,8 @@ import type {
   PendingKnowledgeMutationRepository,
   ProjectRegistryRepository,
   ProjectRegistryRow,
+  TaskRepository,
+  TaskRow,
   ProviderStateRepository,
   ReadModelRecord,
   ReadModelRepository,
@@ -110,6 +112,7 @@ function casDbResult(
 export interface SqliteRepositories {
   readonly workspaceConfig: WorkspaceConfigRepository;
   readonly projectRegistry: ProjectRegistryRepository;
+  readonly task: TaskRepository;
   readonly connectorInstance: ConnectorInstanceRepository;
   readonly crossWorkspaceLink: CrossWorkspaceLinkRepository;
   readonly seenContentHash: SeenContentHashRepository;
@@ -447,6 +450,58 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
           })
           .run();
         return ok(entry);
+      }),
+  };
+
+  // Durable typed-Task rollup index (13.15). Nullable columns (projectId, priority, dueDate) map
+  // NULL → undefined so the row matches the `TaskRow` optional-field shape (priority NEVER inferred).
+  const toTaskRow = (r: typeof schema.task.$inferSelect): TaskRow => ({
+    taskId: r.taskId,
+    workspaceId: r.workspaceId,
+    projectId: r.projectId ?? undefined,
+    title: r.title,
+    status: r.status,
+    priority: r.priority ?? undefined,
+    dueDate: r.dueDate ?? undefined,
+  });
+  const task: TaskRepository = {
+    get: (taskId) =>
+      run(() => {
+        const row = db
+          .select()
+          .from(schema.task)
+          .where(eq(schema.task.taskId, taskId))
+          .get();
+        return row ? ok(toTaskRow(row)) : err(notFound(`task ${taskId}`));
+      }),
+    listByWorkspace: (workspaceId) =>
+      run(() =>
+        ok(
+          db
+            .select()
+            .from(schema.task)
+            .where(eq(schema.task.workspaceId, workspaceId))
+            .all()
+            .map(toTaskRow),
+        ),
+      ),
+    upsert: (row) =>
+      run(() => {
+        db.insert(schema.task)
+          .values(row)
+          .onConflictDoUpdate({
+            target: schema.task.taskId,
+            set: {
+              workspaceId: row.workspaceId,
+              projectId: row.projectId ?? null,
+              title: row.title,
+              status: row.status,
+              priority: row.priority ?? null,
+              dueDate: row.dueDate ?? null,
+            },
+          })
+          .run();
+        return ok(row);
       }),
   };
 
@@ -1459,6 +1514,7 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
   return {
     workspaceConfig,
     projectRegistry,
+    task,
     connectorInstance,
     crossWorkspaceLink,
     seenContentHash,

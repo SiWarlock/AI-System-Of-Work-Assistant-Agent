@@ -50,6 +50,7 @@ import {
   ApprovalSchema,
   AuditRecordSchema,
   ProjectSchema,
+  TaskSchema,
   WorkflowRunRefSchema,
   HealthItemSchema,
   NotebookMappingSchema,
@@ -85,6 +86,7 @@ const ZOD_BY_ID: Record<string, ZodTypeAny> = {
   "sow:approval": ApprovalSchema,
   "sow:audit-record": AuditRecordSchema,
   "sow:project": ProjectSchema,
+  "sow:task": TaskSchema,
   "sow:workflow-run-ref": WorkflowRunRefSchema,
   "sow:health-item": HealthItemSchema,
   "sow:notebook-mapping": NotebookMappingSchema,
@@ -123,7 +125,7 @@ describe("seam fixtures registry (1.15)", () => {
     expect(FIXTURES.some((f) => !f.valid)).toBe(true);
   });
 
-  it("provides exactly one VALID fixture for every registered Appendix-A schema (all 27)", () => {
+  it("provides exactly one VALID fixture for every registered Appendix-A schema", () => {
     const registered = [...defaultSchemaRegistry.ids()].sort();
     const validCovered = FIXTURES.filter((f) => f.valid && f.schemaId !== null).map(
       (f) => f.schemaId as string,

@@ -29,6 +29,7 @@ import type {
   EgressPolicy,
   WorkspaceType,
   DataOwner,
+  FailureClass,
   KnowledgeMutationPlan,
   ProposedAction,
   AgentExtractionCandidate,
@@ -49,14 +50,11 @@ import { newJobLifecycle } from "./agent-job-machine";
 import type { AgentJobState, JobBranch, JobLifecycle } from "./agent-job-machine";
 import type { AgentResult, AgentUsage } from "../ports/agent-result";
 
-// arch_gap: the frozen `FailureClass` enum has no provider-routing / no-eligible-
-// provider member, and no distinct budget/schema broker classes beyond
-// `budget_breach` / `schema_rejection`. Rather than mint enum members on a frozen
-// contract, the broker surfaces the "no eligible provider after the gate
-// sequence" fail-closed System Health item (OBS-2) under this named class —
-// mirroring @sow/policy's POLICY_DENIAL_HEALTH_CLASS arch_gap convention. Flagged
-// in the task manifest.
-export const NO_ELIGIBLE_PROVIDER_HEALTH_CLASS = "provider_routing_unavailable" as const;
+// The broker surfaces the "no eligible provider after the gate sequence" fail-closed System Health
+// item (OBS-2) under this class. As of 13.15 `provider_routing_unavailable` is a DEDICATED frozen
+// `FailureClass` member (the prior arch_gap is closed) — `satisfies FailureClass` binds it to the enum
+// (tsc-enforced membership) while preserving the literal type, so removing the member breaks compile here.
+export const NO_ELIGIBLE_PROVIDER_HEALTH_CLASS = "provider_routing_unavailable" satisfies FailureClass;
 
 const BROKER_ACTOR = "broker:pipeline" as const;
 const BROKER_MARKER = "broker:pipeline-decision" as const;

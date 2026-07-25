@@ -34,6 +34,8 @@ const TABLES: readonly PgTable[] = [
   schema.instanceLeases,
   // §4/§6 — the durable typed-Project registry (task 14.6).
   schema.projectRegistry,
+  // §4/§6 — the durable typed-Task rollup index (task 13.15).
+  schema.task,
   // §4/§8 — the per-workspace connector-instance config registry (task 14.2).
   schema.connectorInstance,
   // §4/§5/§6 — the cross-workspace-link store (sanctioned WS-8 cross-read input, task 14.7).

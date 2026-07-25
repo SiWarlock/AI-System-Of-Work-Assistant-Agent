@@ -66,6 +66,10 @@ export const BrainIdSchema = brandedIdSchema<BrainId>();
 export type ProjectId = Branded<string, "ProjectId">;
 export const ProjectIdSchema = brandedIdSchema<ProjectId>();
 
+// §13.15 — the typed Task's stable identity (independent of its note slug).
+export type TaskId = Branded<string, "TaskId">;
+export const TaskIdSchema = brandedIdSchema<TaskId>();
+
 // ── FactIdentity — content-INDEPENDENT structured identity (Appendix A) ──────
 // Forms (lenient inner chars):
 //   page:<slug>  |  link:<src>-><dst>:<field>  |  timeline:<page>:<seq>  |  tag:<page>:<tag>

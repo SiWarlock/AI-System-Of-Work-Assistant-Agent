@@ -29,6 +29,8 @@ import type {
   HealthItem,
   ParityReport,
   ProjectLifecycleState,
+  Priority,
+  TaskLifecycle,
   ProviderProfile,
   Result,
   SourceEnvelope,
@@ -268,6 +270,55 @@ export interface ProjectRegistryRepository {
   resolveRef(ref: string): DbResult<ProjectRegistryRow>;
   /** List all rows for a workspace (workspace-scoped; see the interface note on WS-8). */
   listByWorkspace(workspaceId: WorkspaceId): DbResult<ProjectRegistryRow[]>;
+}
+
+/**
+ * The durable typed-Task ROLLUP row (task 13.15, §4/§6) — a DERIVED operational resolution/rollup
+ * INDEX, MUTABLE. It is the queryable mirror the 13.16 priority/due-ranked read-model producer reads,
+ * the sibling of `ProjectRegistryRow`. It is NOT the frozen Appendix-A `Task` contract model and NOT in
+ * the column-parity snapshot guards; it carries only the ranking/grouping/display fields (NO
+ * `provenanceOrigin`/body — those stay on the canonical Markdown Task).
+ *
+ * RULE 1 (one-writer): this is a ROLLUP INDEX, never a second Task writer — the canonical Task (Markdown
+ * frontmatter) stays KnowledgeWriter-owned (safety rule 1). `priority`/`dueDate` are OPTIONAL and NEVER
+ * inferred (absent ⇒ unset, REQ-F-017).
+ */
+export interface TaskRow {
+  /** Stable task id — the rollup PRIMARY KEY (globally unique). */
+  readonly taskId: string;
+  /** The BOUND workspace (WS-2) — server-resolved, never caller-set. */
+  readonly workspaceId: WorkspaceId;
+  /** OPTIONAL owning-project binding (a task without a project is valid). */
+  readonly projectId?: string;
+  /** Display title (seeds the Today/task surface + daily brief). */
+  readonly title: string;
+  /** Current lifecycle status (§13.15). */
+  readonly status: TaskLifecycle;
+  /** OPTIONAL priority — NEVER inferred (absent ⇒ unset, REQ-F-017). */
+  readonly priority?: Priority;
+  /** OPTIONAL due date (ISO-8601 datetime). */
+  readonly dueDate?: string;
+}
+
+/**
+ * Durable typed-Task rollup index — a DERIVED operational resolution index, MUTABLE (13.15, §4/§6).
+ * `listByWorkspace` is a workspace-scoped primitive — FUTURE callers (the 13.16 task-rollup producer)
+ * MUST pass a workspaceId the caller is authorized for; it must never become a cross-workspace
+ * enumeration path (WS-8). NO global-ref resolution (tasks carry no aliases) — get is by primary key only.
+ */
+export interface TaskRepository {
+  /**
+   * Create or overwrite a rollup row (keyed by taskId). NOTE: the workspace-binding IMMUTABILITY
+   * invariant (an existing taskId's workspaceId never changes) is enforced at the COMPOSITION layer
+   * (the future 13.16 producer's get-before-upsert), NOT structurally here — a direct caller MUST
+   * preserve an existing row's workspaceId (never rebind it across the isolation boundary, WS-8),
+   * mirroring the ConnectorInstanceRepository upsert caveat.
+   */
+  upsert(row: TaskRow): DbResult<TaskRow>;
+  /** Fetch a row by its taskId primary key; absent ⇒ typed `not_found`. */
+  get(taskId: string): DbResult<TaskRow>;
+  /** List all rows for a workspace (workspace-scoped; see the interface note on WS-8). */
+  listByWorkspace(workspaceId: WorkspaceId): DbResult<TaskRow[]>;
 }
 
 /** Operator enable/pause state of a connector instance (a config toggle — not a live-run signal). */

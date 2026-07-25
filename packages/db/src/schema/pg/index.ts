@@ -25,6 +25,8 @@ export * from "./gcl-projections";
 export * from "./write-receipts";
 // §4 / §6 — the durable typed-Project registry (operational resolution index, task 14.6).
 export * from "./project-registry";
+// §4 / §6 — the durable typed-Task rollup index (operational, task 13.15).
+export * from "./task";
 // §4 / §8 — the per-workspace connector-instance config registry (task 14.2).
 export * from "./connector-instance";
 // §4 / §5 / §6 — the cross-workspace-link store (sanctioned WS-8 cross-read input, task 14.7).

@@ -1,0 +1,10 @@
+[
+  "dueDate",
+  "id",
+  "priority",
+  "projectId",
+  "provenanceOrigin",
+  "status",
+  "title",
+  "workspaceId"
+]

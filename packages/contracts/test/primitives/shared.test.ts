@@ -37,6 +37,8 @@ import {
   ProviderIdSchema,
   provenanceOriginSchema,
   projectLifecycleStateSchema,
+  taskLifecycleSchema,
+  prioritySchema,
   targetSystemSchema,
   approvalStatusSchema,
   channelSchema,
@@ -170,6 +172,11 @@ describe("shared enum schemas — exact membership", () => {
     [projectLifecycleStateSchema, [
       "idea", "planning", "active", "paused", "done", "archived",
     ]],
+    // 13.15 — the typed Task lifecycle + priority vocabularies (frozen membership).
+    [taskLifecycleSchema, [
+      "todo", "in_progress", "blocked", "done", "cancelled",
+    ]],
+    [prioritySchema, ["p0", "p1", "p2", "p3"]],
     [targetSystemSchema, [
       "calendar", "todoist", "linear", "asana", "drive", "github", "telegram",
     ]],
@@ -185,6 +192,8 @@ describe("shared enum schemas — exact membership", () => {
       "parity_defect", "conflict_review", "sync_lagging", "rebuild_divergence",
       // C-enum (make-it-real): additive SECURITY / POLICY / EGRESS / ISOLATION members.
       "security_violation", "policy_denial", "egress_denied", "isolation_breach",
+      // 13.15: additive OPERATIONAL members.
+      "db_unavailable", "provider_routing_unavailable", "outbox_blocked", "write_through_blocked",
     ]],
     [factKindSchema, ["page", "link", "timeline", "tag", "frontmatter_value"]],
     [factProvenanceOriginSchema, [

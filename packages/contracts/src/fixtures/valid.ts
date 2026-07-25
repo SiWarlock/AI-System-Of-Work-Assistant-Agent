@@ -10,7 +10,7 @@
 // and type-only for types (verbatimModuleSyntax).
 import type { WorkspaceId, AgentJobId, ActionId, PlanId, SourceId, ApprovalId, WorkflowId, AuditId } from "../primitives/ids";
 import type { ProcessorId, ToolId } from "../primitives/enums";
-import type { Capability, RevisionId, ProposalId, ReportId, BrainId, ProjectId, FactIdentity, MdContentSha } from "../primitives/zod-brands";
+import type { Capability, RevisionId, ProposalId, ReportId, BrainId, ProjectId, TaskId, FactIdentity, MdContentSha } from "../primitives/zod-brands";
 import type { AgentExtractionCandidate } from "../models/agent-extraction";
 import type { ToolPolicy } from "../models/tool-policy";
 import type { EgressPolicy } from "../models/egress-policy";
@@ -22,6 +22,7 @@ import type { AgentJob } from "../models/agent-job";
 import type { KnowledgeMutationPlan } from "../models/knowledge-mutation-plan";
 import type { ProposedAction } from "../models/proposed-action";
 import type { Project } from "../models/project";
+import type { Task } from "../models/task";
 import type { ExternalWriteEnvelope } from "../models/external-write-envelope";
 import type { WriteReceipt } from "../models/write-receipt";
 import type { SourceEnvelope } from "../models/source-envelope";
@@ -246,6 +247,18 @@ export const validProject: Project = {
     { state: "active", eventTime: T0, transactionTime: T0 },
   ],
   provenanceOrigin: "project_capture",
+};
+
+// ── Task (§13.15) ────────────────────────────────────────────────────────────
+export const validTask: Task = {
+  id: "task-001" as TaskId,
+  workspaceId: "ws-employer" as WorkspaceId,
+  projectId: "proj-001" as ProjectId,
+  title: "Land the auth-redesign spike",
+  status: "in_progress",
+  priority: "p1",
+  dueDate: T0,
+  provenanceOrigin: "meeting_close",
 };
 
 // ── 16. WorkflowRunRef ───────────────────────────────────────────────────────

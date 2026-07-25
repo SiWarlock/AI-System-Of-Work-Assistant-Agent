@@ -21,7 +21,11 @@
         "security_violation",
         "policy_denial",
         "egress_denied",
-        "isolation_breach"
+        "isolation_breach",
+        "db_unavailable",
+        "provider_routing_unavailable",
+        "outbox_blocked",
+        "write_through_blocked"
       ]
     },
     "severity": {
