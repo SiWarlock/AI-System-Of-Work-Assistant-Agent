@@ -89,7 +89,7 @@ cmd_brief() {
     elif ! awk -v t="$tid" '
         $0 ~ "^###+ *" t "([^0-9]|$)" {intask=1; next}
         intask && /^###? / {exit}
-        intask && /^- \[ \]/ {found=1}
+        intask && /^- \[[ ~]\]/ {found=1}  # accept [ ] OPEN and [~] PARTIAL as briefable open work; still excludes [x] done (RCA: spec-lint⇄plan-lint gate mismatch, 2026-07-25)
         END {exit !found}' "$TRACKER"; then
       bad "task $tid has no unticked checkbox in $TRACKER (already done, or mis-cited)"
     fi
