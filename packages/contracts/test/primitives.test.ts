@@ -67,6 +67,9 @@ describe("shared enums (1.1)", () => {
       "openrouter",
       "ollama",
       "lm_studio",
+      // 13.13 research providers (additive, each its OWN member — rule 5 no-alias).
+      "perplexity",
+      "xai",
     ]);
     expect([...EgressClass]).toEqual(["local", "cloud"]);
   });

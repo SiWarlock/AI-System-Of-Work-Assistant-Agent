@@ -11,7 +11,12 @@ export type DataOwner = (typeof DataOwner)[number];
 export const VisibilityLevel = ["isolated", "coordination", "sanitized", "full"] as const;
 export type VisibilityLevel = (typeof VisibilityLevel)[number];
 
-export const ProviderId = ["claude", "openai", "openrouter", "ollama", "lm_studio"] as const;
+// 13.13 (§7/§ARM-RESEARCH): perplexity + xai are the research providers — additive, each its OWN
+// member (a distinct processor, NEVER an openai/openrouter alias — safety rule 5). Both are cloud
+// services; a route/profile classes them egress-`cloud` (per-route DATA), and the §5 veto — which is
+// ProviderId-agnostic (it trusts the loopback-endpoint PROOF, not the id) — fails an employer-work
+// ack-OFF call on them closed BY CONSTRUCTION. Dormant: no transport/config until §ARM-RESEARCH.
+export const ProviderId = ["claude", "openai", "openrouter", "ollama", "lm_studio", "perplexity", "xai"] as const;
 export type ProviderId = (typeof ProviderId)[number];
 
 export const EgressClass = ["local", "cloud"] as const;

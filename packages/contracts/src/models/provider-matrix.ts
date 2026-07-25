@@ -37,7 +37,7 @@ export const PROVIDER_MATRIX_SCHEMA_ID = "sow:provider-matrix" as const;
 // the spec doesn't name.
 export interface ProviderMatrix {
   workspaceId: WorkspaceId;
-  // Closed ProviderId enum set (claude|openai|openrouter|ollama|lm_studio).
+  // Closed ProviderId enum set (claude|openai|openrouter|ollama|lm_studio|perplexity|xai).
   allowedProviders: ProviderId[];
   // Open map: capability id -> resolved default route (the §7 resolution source).
   // `Partial<>` mirrors Zod's `z.record` inference for a branded-string key.

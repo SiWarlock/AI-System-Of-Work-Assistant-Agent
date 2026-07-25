@@ -71,8 +71,8 @@ export const ProviderProfileSchema: z.ZodType<
   ProviderProfileInput
 > = z
   .object({
-    // Closed provider enum (claude|openai|openrouter|ollama|lm_studio). OpenRouter
-    // is its OWN provider, NOT an OpenAI alias (safety rule 5).
+    // Closed provider enum (claude|openai|openrouter|ollama|lm_studio|perplexity|xai). OpenRouter —
+    // and likewise perplexity/xai — is its OWN provider, NEVER an OpenAI/OpenRouter alias (safety rule 5).
     provider: ProviderIdSchema,
     endpoint: z.string().min(1),
     model: z.string().min(1),

@@ -36,7 +36,7 @@ const routeCommon = {
 // fails BOTH branches; a route with NEITHER fails the required-key check on both.
 //   - runtime:  arch_gap: the agent-runtime id catalog is open (e.g.
 //               claude-agent-sdk | hermes) — non-empty string, not a closed enum.
-//   - provider: closed ProviderId enum (claude|openai|openrouter|ollama|lm_studio).
+//   - provider: closed ProviderId enum (claude|openai|openrouter|ollama|lm_studio|perplexity|xai).
 export const ProviderRouteSchema = z.union([
   z.object({ runtime: z.string().min(1), ...routeCommon }).strict(),
   z.object({ provider: ProviderIdSchema, ...routeCommon }).strict(),

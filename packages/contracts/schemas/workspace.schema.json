@@ -95,7 +95,9 @@
               "openai",
               "openrouter",
               "ollama",
-              "lm_studio"
+              "lm_studio",
+              "perplexity",
+              "xai"
             ]
           }
         },
@@ -144,7 +146,9 @@
                       "openai",
                       "openrouter",
                       "ollama",
-                      "lm_studio"
+                      "lm_studio",
+                      "perplexity",
+                      "xai"
                     ]
                   },
                   "model": {
@@ -184,7 +188,9 @@
             "openai",
             "openrouter",
             "ollama",
-            "lm_studio"
+            "lm_studio",
+            "perplexity",
+            "xai"
           ]
         }
       },

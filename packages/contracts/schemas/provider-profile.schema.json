@@ -8,7 +8,9 @@
         "openai",
         "openrouter",
         "ollama",
-        "lm_studio"
+        "lm_studio",
+        "perplexity",
+        "xai"
       ]
     },
     "endpoint": {

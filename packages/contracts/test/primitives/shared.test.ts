@@ -164,7 +164,9 @@ describe("shared enum schemas — exact membership", () => {
     [DataOwnerSchema, ["employer", "user", "client"]],
     [VisibilityLevelSchema, ["isolated", "coordination", "sanitized", "full"]],
     [EgressClassSchema, ["local", "cloud"]],
-    [ProviderIdSchema, ["claude", "openai", "openrouter", "ollama", "lm_studio"]],
+    // 13.13: additive research providers — perplexity + xai (each its OWN member, NOT an
+    // openai/openrouter alias, safety rule 5).
+    [ProviderIdSchema, ["claude", "openai", "openrouter", "ollama", "lm_studio", "perplexity", "xai"]],
     [provenanceOriginSchema, [
       "human", "meeting_close", "ingestion", "gbrain_proposal", "parity_remediation",
       "project_capture", "project_sync", "copilot_propose",
