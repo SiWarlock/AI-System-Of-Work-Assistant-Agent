@@ -189,6 +189,20 @@ function tokenize(s: string): Set<string> {
   return new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 0));
 }
 
+/**
+ * Rank passages by lexical (sparse) relevance to the query: ONLY passages with an
+ * actual lexical hit (osb `lexical_results` holds matches only), ordered by overlap
+ * DESC then id ASC. Exported so the 13.17 re-ranker fuses this with the retrieval
+ * order — the sparse leg of `retrieveLocalEmbed` is this exact ranking. Pure.
+ */
+export function lexicalRelevanceRank(query: string, passages: readonly Passage[]): readonly string[] {
+  return passages
+    .map((p) => ({ id: p.id, score: lexicalOverlap(query, p.text) }))
+    .filter((r) => r.score > 0)
+    .sort(byScoreDescThenIdAsc)
+    .map((r) => r.id);
+}
+
 // ── the retrieval primitive ──────────────────────────────────────────────────────
 
 /**
@@ -263,13 +277,9 @@ export async function retrieveLocalEmbed(
       .sort(byScoreDescThenIdAsc)
       .map((r) => r.id);
     // Sparse leg — ONLY passages with an actual lexical hit (osb `lexical_results`
-    // holds matches only). A zero-overlap passage is ABSENT from this leg, so it
-    // contributes no id-order-derived sparse term; it can still rank via the dense leg.
-    const sparse = passages
-      .map((p) => ({ id: p.id, score: lexicalOverlap(query, p.text) }))
-      .filter((r) => r.score > 0)
-      .sort(byScoreDescThenIdAsc)
-      .map((r) => r.id);
+    // holds matches only); a zero-overlap passage is ABSENT from this leg (it can
+    // still rank via the dense leg). Shared with the 13.17 re-ranker.
+    const sparse = lexicalRelevanceRank(query, passages);
 
     return ok(fuseRrf(dense, sparse, { limit }));
   } catch (cause) {

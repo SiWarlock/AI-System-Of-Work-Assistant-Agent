@@ -45,6 +45,9 @@ export * from "./gbrain/write-fence";
 // ── gbrain local-embed: local-zero-egress RRF retrieval primitive (13.3a) ───────
 export * from "./gbrain/local-embed";
 
+// ── gbrain rerank: deterministic local retrieval re-ranker (13.17) ──────────────
+export * from "./gbrain/rerank";
+
 // ── gbrain derive: the gbrain-independent CanonicalFactDeriver (parity reference) ─
 export * from "./gbrain/derive/canonical-fact-deriver";
 
