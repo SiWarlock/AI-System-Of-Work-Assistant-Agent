@@ -14,6 +14,11 @@ export type InvokeFn = (channel: string, ...args: unknown[]) => Promise<unknown>
 // type-only import — erased at runtime, so the bridge stays electron-free for the security snapshot test.
 import type { FirstRunStatus } from "../main/first-run";
 export type { FirstRunStatus } from "../main/first-run";
+// The closed repo-target union (9.12r Option A) is owned by main/open-in-vault.ts (the resolver's owner); re-export
+// it so the renderer imports it from the preload layer it already depends on. Type-only ⇒ erased at runtime, so the
+// bridge stays electron-free for the security snapshot test.
+import type { VaultRepoTarget } from "../main/open-in-vault";
+export type { VaultRepoTarget } from "../main/open-in-vault";
 
 /** The non-secret loopback worker endpoint the renderer's tRPC client targets. */
 export interface WorkerEndpoint {
@@ -44,13 +49,14 @@ export interface SowBridge {
   };
   readonly vault: {
     /**
-     * Open a vault note in its default editor (Obsidian) — open-BY-PATH only (9.12 / REQ-UX-003). Main
-     * path-scopes the path (realpath containment under the configured vault roots) and performs the open;
-     * the renderer never reads or enumerates the vault filesystem. Resolves `{ ok }` — no reason disclosed.
+     * Open a repo in the OS file manager by CLOSED TARGET (9.12r Option A / REQ-UX-003). The renderer names
+     * WHICH repo ("workspace" | "global") — never a path; MAIN resolves the target to a configured root and
+     * opens it (the renderer never learns or enumerates the vault filesystem, §5). Resolves `{ ok }` — no reason
+     * disclosed. (True "open in Obsidian" via the obsidian:// URI is the tracked A1 fast-follow.)
      */
-    readonly open: (path: string) => Promise<{ ok: boolean }>;
-    /** Reveal a vault path in the OS file manager (Finder), same path-scoping as `open`. */
-    readonly reveal: (path: string) => Promise<{ ok: boolean }>;
+    readonly open: (target: VaultRepoTarget) => Promise<{ ok: boolean }>;
+    /** Reveal a repo (by the same closed target) in the OS file manager (Finder); main resolves the path. */
+    readonly reveal: (target: VaultRepoTarget) => Promise<{ ok: boolean }>;
   };
   readonly lifecycle: {
     /**
@@ -79,8 +85,8 @@ export function buildSowBridge(invoke: InvokeFn): SowBridge {
       getConnection: () => invoke("worker:getConnection") as Promise<WorkerEndpoint | null>,
     },
     vault: {
-      open: (path) => invoke("vault:open", path) as Promise<{ ok: boolean }>,
-      reveal: (path) => invoke("vault:reveal", path) as Promise<{ ok: boolean }>,
+      open: (target) => invoke("vault:open", target) as Promise<{ ok: boolean }>,
+      reveal: (target) => invoke("vault:reveal", target) as Promise<{ ok: boolean }>,
     },
     lifecycle: {
       firstRunStatus: () => invoke("lifecycle:firstRunStatus") as Promise<FirstRunStatus>,

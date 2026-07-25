@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { isOk, isErr } from "@sow/contracts";
-import { guardVaultPath, performVaultAction } from "../../main/open-in-vault";
+import {
+  guardVaultPath,
+  performVaultAction,
+  resolveRepoRoot,
+  type VaultActionDeps,
+} from "../../main/open-in-vault";
 
 // 9.12 — open-in-vault path-scoping. A renderer-supplied path crossing the trusted preload bridge is
 // STILL untrusted: main opens/reveals ONLY a path whose realpath is contained within a configured
@@ -159,68 +164,107 @@ describe("guardVaultPath — path-scoped containment guard (main opens only real
   });
 });
 
-describe("performVaultAction — shell dispatch over the guard (no side effect on a rejected path)", () => {
-  it("a rejected path makes ZERO shell calls and returns { ok: false }", async () => {
-    // spec(§5) — the safety pin at the dispatch layer: a path outside the roots reaches neither
-    // shell.openPath nor shell.showItemInFolder.
+describe("resolveRepoRoot — a CLOSED repo target resolves to a configured root (never a renderer path)", () => {
+  it("maps both targets to the sole configured root today (single-root; multi-root deferred)", () => {
+    // spec(§11) — 9.12r Option A: the renderer sends a closed target; main owns the path. Today one vault
+    // root covers the workspace repos + the Global/Coordination repo, so both targets resolve to it.
+    expect(resolveRepoRoot("workspace", [ROOT])).toBe(ROOT);
+    expect(resolveRepoRoot("global", [ROOT])).toBe(ROOT);
+  });
+
+  it("returns null for any unknown / malformed / path-shaped value (no arbitrary path resolves)", () => {
+    // spec(§5) — the closed union is the gate: a renderer can never smuggle a filesystem path through the target.
+    const notTargets: unknown[] = ["/etc/passwd", "/vault/x.md", "../x", "Workspace", "GLOBAL", "", " ", 1, null, undefined, {}, ["workspace"]];
+    for (const bad of notTargets) expect(resolveRepoRoot(bad, [ROOT])).toBeNull();
+  });
+
+  it("returns null when no root is configured (fail-closed — no accidental open-all)", () => {
+    // spec(§5) — a valid target still resolves to null when there is no configured root.
+    expect(resolveRepoRoot("workspace", [])).toBeNull();
+  });
+});
+
+describe("performVaultAction — target-resolved repo open/reveal (renderer sends a CLOSED target, never a path)", () => {
+  const seams = (
+    openPath: (p: string) => Promise<string>,
+    showInFolder: (p: string) => void,
+    realpathMap: Record<string, string> = {},
+    realpathThrowOn: readonly string[] = [],
+  ): VaultActionDeps => ({
+    realpath: fakeRealpath(realpathMap, realpathThrowOn),
+    stat: fakeStat(true), // unused on the reveal-mode containment path (no isFile), but required by the deps shape
+    openPath,
+    showInFolder,
+  });
+
+  it("open resolves the workspace target to the configured root and opens the REALPATH-resolved root", async () => {
+    // spec(§11/REQ-UX-003) — a repo root is a DIRECTORY; open maps to shell.openPath on the main-resolved,
+    // realpath-canonicalized root (opens the repo folder in the OS file manager — A2, no note-file isFile gate).
     const openPath = vi.fn(async () => "");
     const showInFolder = vi.fn(() => {});
-    const res = await performVaultAction("open", "/etc/passwd", [ROOT], {
-      realpath: fakeRealpath(),
-      stat: fakeStat(true),
-      openPath,
-      showInFolder,
-    });
+    const res = await performVaultAction("open", "workspace", [ROOT], seams(openPath, showInFolder, { [ROOT]: "/real/vault" }));
+    expect(res).toEqual({ ok: true });
+    expect(openPath).toHaveBeenCalledWith("/real/vault");
+    expect(showInFolder).not.toHaveBeenCalled();
+  });
+
+  it("reveal resolves the global target to the configured root and reveals it (not open)", async () => {
+    // spec(§11/REQ-UX-003) — reveal maps to show-in-folder on the resolved root.
+    const openPath = vi.fn(async () => "");
+    const showInFolder = vi.fn(() => {});
+    const res = await performVaultAction("reveal", "global", [ROOT], seams(openPath, showInFolder));
+    expect(res).toEqual({ ok: true });
+    expect(showInFolder).toHaveBeenCalledWith(ROOT);
+    expect(openPath).not.toHaveBeenCalled();
+  });
+
+  it("an ARBITRARY PATH or unknown value as the target FAILS CLOSED with ZERO shell calls (§5 — no path smuggling)", async () => {
+    // spec(§5) — THE key Option-A assertion: the renderer can only ever pass a closed target; a filesystem
+    // path (or any non-member) resolves to null ⇒ no shell call, no open. Traversal is impossible by construction.
+    const openPath = vi.fn(async () => "");
+    const showInFolder = vi.fn(() => {});
+    const notTargets: unknown[] = ["/etc/passwd", "/vault/notes/x.md", "../secrets", "", "Workspace", "GLOBAL", 123, null, undefined, {}, ["workspace"]];
+    for (const bad of notTargets) {
+      const res = await performVaultAction("open", bad, [ROOT], seams(openPath, showInFolder));
+      expect(res).toEqual({ ok: false });
+    }
+    expect(openPath).not.toHaveBeenCalled();
+    expect(showInFolder).not.toHaveBeenCalled();
+  });
+
+  it("a valid target with NO configured root fails closed (zero shell calls)", async () => {
+    // spec(§5) — no configured root ⇒ nothing to open, fail closed.
+    const openPath = vi.fn(async () => "");
+    const showInFolder = vi.fn(() => {});
+    const res = await performVaultAction("open", "workspace", [], seams(openPath, showInFolder));
     expect(res).toEqual({ ok: false });
     expect(openPath).not.toHaveBeenCalled();
     expect(showInFolder).not.toHaveBeenCalled();
   });
 
-  it("open invokes shell.openPath with the REALPATH-resolved absPath (TOCTOU-safe)", async () => {
-    // spec(§11/REQ-UX-003) — the real path (post symlink-resolution), not the requested path, is opened.
+  it("a realpath fault on the resolved root fails closed — no shell call, never throws", async () => {
+    // spec(§16) — never-throws: a realpath seam fault (missing/permission) folds to { ok:false }, no shell call.
     const openPath = vi.fn(async () => "");
     const showInFolder = vi.fn(() => {});
-    const res = await performVaultAction("open", "/vault/link.md", [ROOT], {
-      realpath: fakeRealpath({ "/vault/link.md": "/vault/real.md" }),
-      stat: fakeStat(true),
-      openPath,
-      showInFolder,
-    });
-    expect(res).toEqual({ ok: true });
-    expect(openPath).toHaveBeenCalledWith("/vault/real.md");
-    expect(showInFolder).not.toHaveBeenCalled();
-  });
-
-  it("reveal invokes shell.showItemInFolder and not openPath", async () => {
-    // spec(§11/REQ-UX-003) — reveal maps to show-in-folder.
-    const openPath = vi.fn(async () => "");
-    const showInFolder = vi.fn(() => {});
-    const res = await performVaultAction("reveal", "/vault/notes/x.md", [ROOT], {
-      realpath: fakeRealpath(),
-      stat: fakeStat(true),
-      openPath,
-      showInFolder,
-    });
-    expect(res).toEqual({ ok: true });
-    expect(showInFolder).toHaveBeenCalledWith("/vault/notes/x.md");
+    const res = await performVaultAction("open", "workspace", [ROOT], seams(openPath, showInFolder, {}, [ROOT]));
+    expect(res).toEqual({ ok: false });
     expect(openPath).not.toHaveBeenCalled();
   });
 
-  it("maps a non-empty shell.openPath error to { ok: false } WITHOUT disclosing the error string", async () => {
-    // spec(§16) — rule 7: shell.openPath returns a non-empty error string (may echo the path) on failure;
-    // it is mapped to a bare { ok: false }, never surfaced.
-    const res = await performVaultAction("open", "/vault/notes/x.md", [ROOT], {
+  it("maps a non-empty shell.openPath error string to { ok:false } WITHOUT disclosing it (rule 7)", async () => {
+    // spec(§16) — the shell error string may echo the path; it is mapped to a bare { ok:false }, never surfaced.
+    const res = await performVaultAction("open", "workspace", [ROOT], {
       realpath: fakeRealpath(),
       stat: fakeStat(true),
-      openPath: async () => "EACCES: /vault/notes/x.md",
+      openPath: async () => "EACCES: /vault",
       showInFolder: () => {},
     });
     expect(res).toEqual({ ok: false });
   });
 
   it("NEVER throws when the shell seam throws", async () => {
-    // spec(§16) — never-throws: a throwing shell call folds to { ok: false }.
-    const res = await performVaultAction("open", "/vault/notes/x.md", [ROOT], {
+    // spec(§16) — a throwing shell call folds to { ok:false }.
+    const res = await performVaultAction("open", "workspace", [ROOT], {
       realpath: fakeRealpath(),
       stat: fakeStat(true),
       openPath: async () => {

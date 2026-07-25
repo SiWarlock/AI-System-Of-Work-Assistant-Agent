@@ -25,6 +25,7 @@ import { Onboarding } from "./surfaces/onboarding";
 import { Connectors } from "./surfaces/connectors";
 import { SystemHealth } from "./surfaces/system-health";
 import { CrossWorkspaceLinks } from "./surfaces/cross-workspace-links";
+import { requestVaultOpen, requestVaultReveal } from "./lib/open-in-vault";
 import type { RegisterConnectorInput, ConnectorConfigResult } from "./lib/connector-config";
 import type { CreateCrossWorkspaceLinkInput, CrossWorkspaceLinkResult } from "./lib/cross-workspace-link";
 import type { Route } from "./store/route";
@@ -315,6 +316,11 @@ export function App(): ReactElement {
           projects={state.projects}
           selectedProjectId={selectedProjectId}
           onSelectProject={onSelectProject}
+          // 9.12r — the workspace-repo action is enabled only when the active scope resolves to an onboarded
+          // workspace (its repo exists); the Coordination-repo action is always available. Main owns the path.
+          workspaceRepoAvailable={resolveOnboardedWorkspaceId(state, state.scope) !== null}
+          onOpenRepo={requestVaultOpen}
+          onRevealRepo={requestVaultReveal}
         />
       ) : state.route.surface === "connectors" ? (
         <Connectors

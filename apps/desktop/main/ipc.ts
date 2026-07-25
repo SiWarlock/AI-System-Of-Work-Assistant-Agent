@@ -46,14 +46,14 @@ export function registerIpcHandlers(): void {
   // — the renderer pairs it with session:getToken.
   ipcMain.handle("worker:getConnection", () => getWorkerEndpoint());
 
-  // Open-in-Obsidian / reveal-in-vault (9.12, REQ-UX-003 / §11). The renderer requests open-BY-PATH only;
-  // main path-scopes the untrusted path (realpath containment under the configured vault roots) BEFORE any
-  // shell call — no arbitrary path open (§5). Roots are read lazily (set once at boot in startWorker).
-  ipcMain.handle("vault:open", (_event, path: unknown) =>
-    performVaultAction("open", path, getVaultRoots(), vaultSeams),
+  // Open / reveal a repo in the OS file manager (9.12r Option A, REQ-UX-003 / §11). The renderer names a CLOSED
+  // TARGET ("workspace" | "global") — NEVER a path; main resolves it to a configured root + scope-opens it, so an
+  // out-of-root path is unrepresentable by construction (§5). Roots are read lazily (set once at boot).
+  ipcMain.handle("vault:open", (_event, target: unknown) =>
+    performVaultAction("open", target, getVaultRoots(), vaultSeams),
   );
-  ipcMain.handle("vault:reveal", (_event, path: unknown) =>
-    performVaultAction("reveal", path, getVaultRoots(), vaultSeams),
+  ipcMain.handle("vault:reveal", (_event, target: unknown) =>
+    performVaultAction("reveal", target, getVaultRoots(), vaultSeams),
   );
 
   // Durable first-run marker (9.17, §11). Main owns the marker under app-data (the path is set once at boot

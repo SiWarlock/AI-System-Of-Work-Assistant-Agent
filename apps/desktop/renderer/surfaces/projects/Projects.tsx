@@ -15,9 +15,11 @@
 import { type ReactElement } from "react";
 import type { UiSafeProjectDashboard, UiSafeManagedDoc } from "@sow/contracts/api/ui-safe";
 import type { WorkspaceScope } from "../../store/scope";
+import type { VaultRepoTarget } from "../../../preload/bridge";
 import { useRovingListbox, type RovingOptionProps } from "../../lib/a11y/useRovingListbox";
 import { resolveSelectedProject } from "./select";
 import { resolveDocPack } from "./docpack";
+import { RepoActions } from "./RepoActions";
 
 export interface ProjectsProps {
   /** The active workspace scope — Projects is workspace-scoped (WS-8). */
@@ -28,6 +30,12 @@ export interface ProjectsProps {
   readonly selectedProjectId: string | undefined;
   /** Select a project's detail (sets route.projectId). Scope-preserving. */
   readonly onSelectProject: (projectId: string) => void;
+  /** 9.12r — true when the active workspace is onboarded (has a repo) → enables the workspace-repo affordance. */
+  readonly workspaceRepoAvailable?: boolean;
+  /** 9.12r — open a repo by CLOSED target (main resolves the path). Absent ⇒ the affordance is not shown. */
+  readonly onOpenRepo?: (target: VaultRepoTarget) => void;
+  /** 9.12r — reveal a repo by CLOSED target. Absent ⇒ the affordance is not shown. */
+  readonly onRevealRepo?: (target: VaultRepoTarget) => void;
 }
 
 /** A labelled hairline list of a project's prose items (blockers / waiting / next). */
@@ -170,6 +178,7 @@ function ProjectDetail({ project }: { readonly project: UiSafeProjectDashboard }
 
 export function Projects(props: ProjectsProps): ReactElement {
   const { scope, projects, selectedProjectId, onSelectProject } = props;
+  const { workspaceRepoAvailable, onOpenRepo, onRevealRepo } = props;
   const selected = resolveSelectedProject(projects, selectedProjectId);
   // Roving-tabindex over the project options: the active (selected) option is the single tab stop;
   // arrows browse, Enter/Space opens (explicit selection). Called unconditionally (hooks rule) — the
@@ -195,6 +204,15 @@ export function Projects(props: ProjectsProps): ReactElement {
             </div>
           ) : null}
         </div>
+        {/* 9.12r — open/reveal the vault repo by CLOSED target (main owns the path). Shown only when App wires
+            the bridge callbacks; the workspace action is enabled only for an onboarded workspace. */}
+        {onOpenRepo !== undefined && onRevealRepo !== undefined ? (
+          <RepoActions
+            workspaceRepoAvailable={workspaceRepoAvailable === true}
+            onOpen={onOpenRepo}
+            onReveal={onRevealRepo}
+          />
+        ) : null}
       </div>
 
       {scope === "global" ? (

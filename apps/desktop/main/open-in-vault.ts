@@ -101,18 +101,47 @@ export interface VaultActionDeps extends VaultGuardDeps {
   readonly showInFolder: (absPath: string) => void;
 }
 
+// ── 9.12r Option A: the renderer requests a CLOSED repo TARGET, main owns the PATH ───────────────────────────
+// The renderer is untrusted, so it never supplies (or learns) a filesystem path — it names WHICH repo to open
+// via this closed union, and main resolves the target to a configured root (`vault-roots.ts` stays main-only,
+// §5/REQ-S-004). A non-member value resolves to null ⇒ path-traversal is impossible BY CONSTRUCTION (there is
+// no untrusted path to contain), which is the §5-preserving strength of Option A over an exposed-path design.
+
+/** Which repo the renderer asks main to open/reveal. A closed union — the renderer NEVER passes a path. */
+export type VaultRepoTarget = "workspace" | "global";
+
+const VAULT_REPO_TARGETS: readonly VaultRepoTarget[] = ["workspace", "global"];
+
 /**
- * Guard then dispatch to the shell. On a rejected path NO shell call is made. The shell's own error string is
- * NEVER surfaced (rule 7 — it may echo the path); the caller learns only `{ ok }`. NEVER throws (§16).
+ * Resolve a closed repo target to a configured root path, or `null` (unknown/malformed target OR no configured
+ * root ⇒ fail closed). TODAY a single vault root covers the workspace repos + the Global/Coordination repo, so
+ * both targets resolve to `roots[0]`; a multi-root / per-workspace-path resolution is a deferred follow-up.
+ */
+export function resolveRepoRoot(target: unknown, roots: readonly string[]): string | null {
+  if (typeof target !== "string" || !VAULT_REPO_TARGETS.includes(target as VaultRepoTarget)) return null;
+  return roots[0] ?? null;
+}
+
+/**
+ * Resolve a closed repo target to its configured root, then dispatch to the shell. A repo root is a DIRECTORY,
+ * so the containment guard runs in `reveal` mode (open-mode's isFile check would wrongly reject the root); the
+ * guard here is defense-in-depth (realpath canonicalization + fail-closed on a fs fault), NOT the primary gate —
+ * the closed target already makes an out-of-root path unrepresentable. On any refusal NO shell call is made; the
+ * shell's own error string is NEVER surfaced (rule 7 — it may echo the path); the caller learns only `{ ok }`.
+ * NEVER throws (§16).
  */
 export async function performVaultAction(
   op: VaultOp,
-  requestedPath: unknown,
+  target: unknown,
   roots: readonly string[],
   deps: VaultActionDeps,
 ): Promise<{ ok: boolean }> {
-  const guarded = await guardVaultPath(requestedPath, roots, op, deps);
-  if (!isOk(guarded)) return { ok: false }; // rejected ⇒ no shell call, no disclosure
+  const root = resolveRepoRoot(target, roots);
+  if (root === null) return { ok: false }; // unknown/invalid target OR no configured root ⇒ no shell call
+  // Contain + realpath the MAIN-resolved root (reveal mode ⇒ a directory root is allowed). Trivially contained
+  // (root under itself); the value is the realpath + the fail-closed-on-fault behavior guardVaultPath provides.
+  const guarded = await guardVaultPath(root, roots, "reveal", deps);
+  if (!isOk(guarded)) return { ok: false };
   try {
     if (op === "open") {
       const failureMsg = await deps.openPath(guarded.value.absPath);
