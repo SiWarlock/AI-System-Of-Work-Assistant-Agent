@@ -103,6 +103,8 @@ export * from "./activities/deterministicProgress";
 export * from "./activities/projectDashboard";
 export * from "./activities/validateNarrative";
 export * from "./activities/projections/projectSyncOutputs";
+// 7.19 RETENTION-PRUNE (dormant — live schedule = §19.12)
+export * from "./activities/prunePolicy";
 
 // --- src/workflows/ — PURE orchestration drivers ----------------------------
 export * from "./workflows/systemHealthSurfacing";
@@ -122,3 +124,5 @@ export * from "./workflows/deletionSaga";
 export * from "./workflows/hermesAutomation";
 export * from "./workflows/notebookLmSync";
 export * from "./workflows/projectSync";
+// 7.19 RETENTION-PRUNE (dormant — live schedule/activity binding = §19.12)
+export * from "./workflows/retentionPrune";
