@@ -54,3 +54,17 @@ export type {
   VaultReadError,
   VaultReadTransportResult,
 } from "./obsidian-vault-mcp";
+// §13.13 RES-1 free key-less source aggregator (DORMANT — faked transport; egress-veto-first, gates identically).
+export { createFreeSourceAggregator, FREE_SOURCES, FREE_SOURCE_EGRESS_ROUTE } from "./free-source-aggregator";
+export type {
+  FreeSource,
+  FreeSourceTransport,
+  FreeSourceFetchRequest,
+  FreeSourceFetchResponse,
+  FreeSourceResult,
+  AggregatedResearch,
+  AggregatorEgressDenied,
+  ResearchContext,
+  FreeSourceAggregatorDeps,
+  FreeSourceAggregator,
+} from "./free-source-aggregator";
