@@ -42,6 +42,9 @@ export * from "./gbrain/startup-verify";
 export * from "./gbrain/gbrain-version-probe";
 export * from "./gbrain/write-fence";
 
+// ── gbrain local-embed: local-zero-egress RRF retrieval primitive (13.3a) ───────
+export * from "./gbrain/local-embed";
+
 // ── gbrain derive: the gbrain-independent CanonicalFactDeriver (parity reference) ─
 export * from "./gbrain/derive/canonical-fact-deriver";
 
