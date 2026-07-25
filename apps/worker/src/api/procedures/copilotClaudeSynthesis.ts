@@ -329,8 +329,10 @@ export function createClaudeCloudRouteSelector(
  * PRODUCTION veto path (task 9.10-A / owner ruling D1=A): boot injects
  * `createStoreBackedWorkspacePosture(WorkspaceConfigRepository)` as the AUTHORITATIVE posture source,
  * so the `employerRawEgressAcknowledged = (type === "employer_work")` flag-derived ack NEVER feeds a
- * real employer egress decision — employer egress opens ONLY via 9.10-B's audited acknowledge, personal
- * via its seeded allowlist (`seedPersonalCloudCopilotAllowlist`). Physical deletion of this fallback is
+ * real employer egress decision — both employer AND personal egress open via the store-backed seeded
+ * allowlist (`seedCloudCopilotAllowlist`): the ⛔ owner-authorized 9.10 default-seed FLIP seeds
+ * employer_work ack=true (scoped to [claude]), superseding 9.10-B's audited acknowledge for the open.
+ * Physical deletion of this fallback is
  * a tracked follow-up (its test surgery is out of this slice's scope). Pure.
  */
 export function cloudCopilotPosture(workspaceId: string, type: WorkspaceType): WorkspacePosture {

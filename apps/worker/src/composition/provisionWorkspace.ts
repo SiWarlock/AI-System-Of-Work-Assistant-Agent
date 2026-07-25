@@ -35,29 +35,49 @@ import type { ReadModelRepository, WorkspaceConfigRepository } from "@sow/db";
 import { registerWorkspace } from "./workspaceRegistry";
 
 /**
- * Seed the PERSONAL cloud-copilot egress allowlist (task 9.10-A / owner ruling D1=A). Under
- * Option A the durable `egressPolicy` is the SOLE veto posture source, so a personal workspace's
- * PERSISTED allowlist must include the cloud-copilot processor (`claude`) for the LIVE personal
- * cloud-copilot allow-path to survive the store-backed swap — otherwise the veto's allowlist step
- * DENYs `PROCESSOR_NOT_ALLOWED`. Personal scopes (`personal_business` + `personal_life`) allowlist
- * `claude` for both normal + raw content; **`employer_work` is NEVER seeded** — it stays
- * fail-closed (empty allowlists) and opens ONLY via 9.10-B's audited two-step acknowledge command.
- * The acknowledgment flag is untouched (still `false` — no auto-consent). Pure.
+ * Seed the cloud-copilot egress allowlist at provisioning (task 9.10-A + the 9.10 employer FLIP). Under
+ * the store-backed single-source resolver the durable `egressPolicy` is the SOLE veto posture, so a
+ * workspace's PERSISTED allowlist must include the cloud-copilot processor (`claude`) for its cloud
+ * allow-path to survive (else the veto's allowlist step DENYs `PROCESSOR_NOT_ALLOWED`).
+ *
+ *   • PERSONAL (`personal_business`/`personal_life`): allowlist `[claude]`; the ack flag stays `false`
+ *     (the employer veto never bites for personal — 9.10-A).
+ *   • ⛔ `employer_work` — the OWNER-AUTHORIZED rule-5 FLIP (9.10, 2026-07-25, via lead): employer cloud
+ *     egress is OPEN by default-seed, **SCOPED to `[claude]` ONLY** — the active `claude` login IS the
+ *     company subscription (company-sanctioned; §ARM-18 login=company precondition owner-confirmed). Sets
+ *     `employerRawEgressAcknowledged=true` + `acknowledgedAt` so the veto ALLOWS employer-raw cloud
+ *     `[claude]`; a NON-`claude` processor is STILL DENIED by the veto's allowlist (a scoped open, NEVER
+ *     blanket-cloud). Supersedes 9.10-B's audited-acknowledge as the employer-open mechanism (owner chose
+ *     the silent default-seed). ⚠ Provisioning-time only — no retroactive migration of existing rows.
+ *     ⚠ RESIDUAL (§ARM-18): employer content egresses under whatever `claude` login is ACTIVE at run time
+ *     — "company-sanctioned" holds ONLY while the COMPANY login is active; there is NO re-confirm on a
+ *     login switch. The per-workspace subscription-split is the clean end-state (tracked, not this slice).
+ *   • Any OTHER/future type stays fail-closed (allowlist form — never auto-seeded).
+ *
+ * `now` stamps `acknowledgedAt` on the employer seed (the provisioning clock). Pure.
  */
-export function seedPersonalCloudCopilotAllowlist(workspace: Workspace): Workspace {
-  // ALLOWLIST (fail-closed by construction): seed ONLY the known PERSONAL scopes. Any other type —
-  // including `employer_work` (opens only via 9.10-B's audited ack) AND any future employer-class scope
-  // later added to `WorkspaceType` — stays fail-closed with empty allowlists (never auto-seeded).
-  if (workspace.type !== "personal_business" && workspace.type !== "personal_life") return workspace;
+export function seedCloudCopilotAllowlist(workspace: Workspace, now: string): Workspace {
   const claude = processorId("claude");
-  return {
-    ...workspace,
-    egressPolicy: {
-      ...workspace.egressPolicy,
-      allowedProcessors: [claude],
-      rawContentAllowedProcessors: [claude],
-    },
-  };
+  if (workspace.type === "personal_business" || workspace.type === "personal_life") {
+    return {
+      ...workspace,
+      egressPolicy: { ...workspace.egressPolicy, allowedProcessors: [claude], rawContentAllowedProcessors: [claude] },
+    };
+  }
+  if (workspace.type === "employer_work") {
+    return {
+      ...workspace,
+      egressPolicy: {
+        ...workspace.egressPolicy,
+        allowedProcessors: [claude],
+        rawContentAllowedProcessors: [claude],
+        employerRawEgressAcknowledged: true,
+        acknowledgedAt: now,
+      },
+    };
+  }
+  // ALLOWLIST fail-closed: any other/future type stays with empty allowlists (never auto-seeded).
+  return workspace;
 }
 
 /** The onboarding inputs a real user supplies to mint a workspace. */
@@ -135,9 +155,10 @@ export async function provisionWorkspace(
     return err({ code: "invalid_workspace", message: "workspace validation rejected" });
   }
 
-  // 1b) Seed the personal cloud-copilot egress allowlist (9.10-A / Option A) so the LIVE personal
-  //     cloud-copilot allow-path survives the store-backed veto swap; employer_work stays fail-closed.
-  workspace = seedPersonalCloudCopilotAllowlist(workspace);
+  // 1b) Seed the cloud-copilot egress allowlist (9.10-A personal + the 9.10 employer FLIP): persist the
+  //     [claude] allowlist so the store-backed veto allows the cloud path; employer_work is default-seeded
+  //     ack=true (owner-authorized, scoped to [claude]). `at` stamps the employer acknowledgedAt.
+  workspace = seedCloudCopilotAllowlist(workspace, at);
 
   // 2) Isolation-class immutability guard. The workspace `type` anchors `dataOwner` (the
   //    rule-5 egress-veto applicability) + the WS-8 classification — onboarding may CREATE

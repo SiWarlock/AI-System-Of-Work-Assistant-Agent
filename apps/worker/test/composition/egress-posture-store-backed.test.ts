@@ -15,11 +15,12 @@ import type { AgentJob, ProviderRoute, ProviderMatrix, Workspace, WorkspaceType 
 import { assembleBackends, type ProofSpineBackends } from "../../src/composition/backends";
 import { createSystemHealthQueryPort } from "../../src/boot";
 import { createStoreBackedWorkspacePosture } from "../../src/api/adapters/storeBackedWorkspacePosture";
-import { seedPersonalCloudCopilotAllowlist } from "../../src/composition/provisionWorkspace";
+import { seedCloudCopilotAllowlist } from "../../src/composition/provisionWorkspace";
 import type { WorkspaceConfigRepository, DbResult } from "@sow/db";
 
 const LOCAL_ENDPOINT = "http://127.0.0.1:11434";
 const WS = String(validAgentJob.workspaceId);
+const NOW = "2026-07-25T00:00:00.000Z";
 
 const cloudRoute: ProviderRoute = {
   provider: "claude",
@@ -27,17 +28,24 @@ const cloudRoute: ProviderRoute = {
   endpoint: "https://api.anthropic.test",
   egressClass: "cloud",
 } as unknown as ProviderRoute;
+// A NON-claude cloud route (its own processor id "openai"), for the scope pin.
+const openaiCloudRoute: ProviderRoute = {
+  provider: "openai",
+  model: "gpt",
+  endpoint: "https://api.openai.test",
+  egressClass: "cloud",
+} as unknown as ProviderRoute;
 
-// A raw-content job on a CLOUD route. Whether the rule-5 veto bites depends on the
-// WORKSPACE arg (employer_work vs personal), not the job.
-const rawCloudJob = (over: Record<string, unknown> = {}): AgentJob =>
-  ({ ...validAgentJob, providerRoute: cloudRoute, carriesRawContent: true, ...over }) as unknown as AgentJob;
+// A raw-content job on a given CLOUD route (default claude). Whether the rule-5 veto bites depends on
+// the WORKSPACE arg (employer_work vs personal) + the seeded allowlist, not the job itself.
+const rawCloudJob = (over: Record<string, unknown> = {}, route: ProviderRoute = cloudRoute): AgentJob =>
+  ({ ...validAgentJob, providerRoute: route, carriesRawContent: true, ...over }) as unknown as AgentJob;
 
-const matrixFor = (allowed: string[]): ProviderMatrix =>
+const matrixFor = (allowed: string[], route: ProviderRoute = cloudRoute): ProviderMatrix =>
   ({
     workspaceId: validAgentJob.workspaceId,
     allowedProviders: allowed,
-    capabilityDefaults: { "meeting.close": cloudRoute } as ProviderMatrix["capabilityDefaults"],
+    capabilityDefaults: { "meeting.close": route } as ProviderMatrix["capabilityDefaults"],
     rawCloudEgressEnabled: false,
   }) as unknown as ProviderMatrix;
 
@@ -134,8 +142,8 @@ describe("§5 9.10-A — the durable posture feeds the assembled veto (rule 5 he
     const backends = await assembleBackends({});
     opened.push(backends);
     // Option A single-source: the seed persists personal allowlist=[claude] so the LIVE
-    // personal cloud-copilot allow-path survives the swap (employer stays fail-closed).
-    const personal = seedPersonalCloudCopilotAllowlist(workspaceWith("personal_business", false));
+    // personal cloud-copilot allow-path survives the swap.
+    const personal = seedCloudCopilotAllowlist(workspaceWith("personal_business", false), NOW);
     const resolver = createStoreBackedWorkspacePosture(mutableRepo(personal).repo);
     const posture = await resolver.resolve(WS);
     expect(isOk(posture)).toBe(true);
@@ -153,15 +161,76 @@ describe("§5 9.10-A — the durable posture feeds the assembled veto (rule 5 he
     if (isErr(outcome)) expect(outcome.error.stage).not.toBe("egress_veto");
   });
 
-  it("seed_allowlists_personal_not_employer — personal types get [claude]; employer_work stays fail-closed (empty, ack false)", () => {
-    const pb = seedPersonalCloudCopilotAllowlist(workspaceWith("personal_business", false));
-    const pl = seedPersonalCloudCopilotAllowlist(workspaceWith("personal_life", false));
-    const ew = seedPersonalCloudCopilotAllowlist(workspaceWith("employer_work", false));
+  it("seed_allowlists_personal_and_employer_scoped — personal + employer get [claude]; ONLY employer gets ack=true + acknowledgedAt (the owner-authorized flip)", () => {
+    const pb = seedCloudCopilotAllowlist(workspaceWith("personal_business", false), NOW);
+    const pl = seedCloudCopilotAllowlist(workspaceWith("personal_life", false), NOW);
+    const ew = seedCloudCopilotAllowlist(workspaceWith("employer_work", false), NOW);
+    // personal: [claude] allowlist, ack UNCHANGED false (the employer veto never bites for personal).
     expect(pb.egressPolicy.rawContentAllowedProcessors).toContain(processorId("claude"));
     expect(pl.egressPolicy.rawContentAllowedProcessors).toContain(processorId("claude"));
-    // EMPLOYER_WORK is NEVER seeded — it opens ONLY via 9.10-B's audited acknowledge.
-    expect(ew.egressPolicy.allowedProcessors).toEqual([]);
-    expect(ew.egressPolicy.rawContentAllowedProcessors).toEqual([]);
-    expect(ew.egressPolicy.employerRawEgressAcknowledged).toBe(false);
+    expect(pb.egressPolicy.employerRawEgressAcknowledged).toBe(false);
+    // employer_work — the ⛔ OWNER-AUTHORIZED FLIP: SCOPED to [claude] only + ack=true + acknowledgedAt.
+    expect(ew.egressPolicy.allowedProcessors).toEqual([processorId("claude")]);
+    expect(ew.egressPolicy.rawContentAllowedProcessors).toEqual([processorId("claude")]);
+    expect(ew.egressPolicy.employerRawEgressAcknowledged).toBe(true);
+    expect(ew.egressPolicy.acknowledgedAt).toBe(NOW); // acknowledged_at_stamped (REQ-S-002 audit trail)
+  });
+
+  it("veto_allows_employer_raw_cloud_claude — a SEEDED employer_work workspace RESOLVES ack=true + the assembled broker ALLOWS employer-raw cloud [claude] (INVERSE of the 9.10-A ack-off DENY)", async () => {
+    const backends = await assembleBackends({});
+    opened.push(backends);
+    const seededEmployer = seedCloudCopilotAllowlist(workspaceWith("employer_work", false), NOW);
+    const resolver = createStoreBackedWorkspacePosture(mutableRepo(seededEmployer).repo);
+    const posture = await resolver.resolve(WS);
+    expect(isOk(posture)).toBe(true);
+    if (!isOk(posture)) return;
+    expect(posture.value.egress.employerRawEgressAcknowledged).toBe(true); // employer_seed_resolves_ack_true
+    const outcome = await backends.broker.runJob({
+      job: rawCloudJob({ idempotencyKey: "idem-employer-claude-allow" }),
+      matrix: matrixFor(["claude"]),
+      egress: posture.value.egress,
+      workspace: { type: posture.value.type, dataOwner: posture.value.dataOwner },
+      localConfig: { allowedLocalEndpoints: [LOCAL_ENDPOINT] },
+    });
+    // ack=true + claude allowlisted ⇒ the veto ALLOWS; the dormant stub run leg errs DOWNSTREAM (not egress_veto).
+    if (isErr(outcome)) expect(outcome.error.stage).not.toBe("egress_veto");
+  });
+
+  it("non_claude_employer_raw_still_denies — the flip is SCOPED to [claude]: a NON-claude cloud processor on employer-raw STILL DENIES (rule-5; never blanket-cloud)", async () => {
+    const backends = await assembleBackends({});
+    opened.push(backends);
+    const seededEmployer = seedCloudCopilotAllowlist(workspaceWith("employer_work", false), NOW);
+    const resolver = createStoreBackedWorkspacePosture(mutableRepo(seededEmployer).repo);
+    const posture = await resolver.resolve(WS);
+    expect(isOk(posture)).toBe(true);
+    if (!isOk(posture)) return;
+    const outcome = await backends.broker.runJob({
+      job: rawCloudJob({ idempotencyKey: "idem-employer-openai-deny" }, openaiCloudRoute),
+      matrix: matrixFor(["openai"], openaiCloudRoute),
+      egress: posture.value.egress,
+      workspace: { type: posture.value.type, dataOwner: posture.value.dataOwner },
+      localConfig: { allowedLocalEndpoints: [LOCAL_ENDPOINT] },
+    });
+    // ack=true (the employer veto doesn't bite) BUT proc "openai" ∉ the [claude] allowlist ⇒ DENY at the veto.
+    expect(isErr(outcome)).toBe(true);
+    if (isErr(outcome)) expect(outcome.error.stage).toBe("egress_veto");
+  });
+
+  it("employer_absence_still_fails_closed — THE line: the flip seeds a PROVISIONED durable ack, NEVER a fault-time default-true — an absent/faulted employer posture STILL fails closed (rule-5 preserve-fault)", async () => {
+    // A never-provisioned (absent) employer workspace: the seed only applies at provisioning, so the
+    // store-backed resolver reads not_found ⇒ err (unknownWorkspace), NOT a synthesized ack=true.
+    const absentRepo: WorkspaceConfigRepository = {
+      get: (): DbResult<Workspace> => Promise.resolve({ ok: false, error: { code: "not_found", message: "never provisioned" } }),
+      list: () => Promise.resolve({ ok: false, error: { code: "unknown", message: "n/a" } }),
+      upsert: (w: Workspace) => Promise.resolve(ok(w)),
+    };
+    // A store FAULT on an employer read: still fail-closed (fault ≠ benign absence, never default-true).
+    const faultRepo: WorkspaceConfigRepository = {
+      get: (): DbResult<Workspace> => Promise.resolve({ ok: false, error: { code: "unavailable", message: "db down" } }),
+      list: () => Promise.resolve({ ok: false, error: { code: "unknown", message: "n/a" } }),
+      upsert: (w: Workspace) => Promise.resolve(ok(w)),
+    };
+    expect(isOk(await createStoreBackedWorkspacePosture(absentRepo).resolve(WS))).toBe(false);
+    expect(isOk(await createStoreBackedWorkspacePosture(faultRepo).resolve(WS))).toBe(false);
   });
 });

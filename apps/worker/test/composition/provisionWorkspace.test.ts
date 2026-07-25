@@ -19,7 +19,7 @@
 // registry, and the REAL `resolveKnownWorkspace` (through `createDbReadModelQueryPort`).
 // The store-fault pin injects a faulting `ReadModelRepository` fake.
 import { describe, it, expect, afterEach } from "vitest";
-import { ok, err, isErr, isOk, type Result, type Workspace } from "@sow/contracts";
+import { ok, err, isErr, isOk, processorId, type Result, type Workspace } from "@sow/contracts";
 import type { DbError, ReadModelRepository, ReadModelRecord, WorkspaceConfigRepository } from "@sow/db";
 import { assembleBackends, type ProofSpineBackends } from "../../src/composition/backends";
 import { createDbReadModelQueryPort, READ_MODEL_KEYS } from "../../src/api/adapters/readModel";
@@ -257,16 +257,19 @@ describe("provisionWorkspace (14.1 — production workspace provisioning path)",
     expect(isOk(changes) && changes.value).toEqual([]);
   });
 
-  it("default_egress_closed: the upserted Workspace defaults egress CLOSED + isolated visibility (safety rule 5) [spec(§5)]", async () => {
+  it("employer_egress_scoped_open_via_flip: the upserted employer Workspace is default-seeded ack=true + [claude]-scoped cloud egress (⛔ 9.10 owner-authorized flip); visibility stays isolated + no blanket raw-cloud (safety rule 5) [spec(§5)]", async () => {
     const b = await fresh();
     await provisionWorkspace(deps(b), SPEC_A);
     const cfg = await b.repos.workspaceConfig.get("employer-work" as Workspace["id"]);
     expect(isOk(cfg)).toBe(true);
     if (isOk(cfg)) {
       const w = cfg.value;
-      expect(w.egressPolicy.employerRawEgressAcknowledged).toBe(false);
-      expect(w.egressPolicy.rawContentAllowedProcessors).toEqual([]);
-      expect(w.egressPolicy.allowedProcessors).toEqual([]);
+      // ⛔ OWNER-AUTHORIZED rule-5 FLIP (9.10): employer cloud egress OPEN by default-seed, SCOPED to [claude].
+      expect(w.egressPolicy.employerRawEgressAcknowledged).toBe(true);
+      expect(w.egressPolicy.acknowledgedAt).toBeDefined();
+      expect(w.egressPolicy.allowedProcessors).toEqual([processorId("claude")]);
+      expect(w.egressPolicy.rawContentAllowedProcessors).toEqual([processorId("claude")]);
+      // Unchanged safety posture: isolated visibility + NO blanket raw-cloud (the flip is [claude]-scoped, not all-cloud).
       expect(w.defaultVisibility).toBe("isolated");
       expect(w.providerMatrix.rawCloudEgressEnabled).toBe(false);
     }
