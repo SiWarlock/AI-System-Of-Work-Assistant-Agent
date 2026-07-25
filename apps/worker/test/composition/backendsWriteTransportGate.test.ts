@@ -151,19 +151,26 @@ describe("selectAdapterTransport — external-write transport owner-gate", () =>
   });
 });
 
-describe("assembleBackends — default path assembles the write adapter (wiring smoke)", () => {
+describe("assembleBackends — default path assembles the write-adapter REGISTRY (wiring smoke)", () => {
   const opened: ProofSpineBackends[] = [];
   afterEach(() => {
     for (const b of opened.splice(0)) b.close();
   });
 
-  // The call-site swap (`createStubAdapterTransport()` → `selectAdapterTransport(...)`)
-  // leaves default assembly intact: `assembleBackends({})` still yields the todoist write
-  // adapter. (That the default SELECTS the stub is pinned deterministically by the
-  // pure-helper tests above; this is a wiring smoke that the swap didn't break assembly.)
-  it("assembleBackends({}) still assembles the todoist writeAdapter", async () => {
+  // 21.1/2 binding: the single `makeTargetWriteAdapter('todoist')` construction is REPLACED by
+  // `buildWriteAdapterRegistry(adapterDeps)` over the SAME stub-backed deps — so `assembleBackends({})`
+  // now exposes `writeAdapters`, the EXHAUSTIVE per-TargetSystem registry (all seven vendors selectable),
+  // not a single todoist adapter. (That the default SELECTS the stub transport is pinned deterministically
+  // by the pure-helper tests above — dormancy preserved; this is the wiring smoke that the swap assembles
+  // the full registry, each adapter self-tagged to its target.)
+  it("assembleBackends({}) assembles the 7-target write-adapter registry (all TargetSystems selectable), not a single todoist adapter", async () => {
     const backends = await assembleBackends({});
     opened.push(backends);
-    expect(backends.writeAdapter.targetSystem).toBe("todoist");
+    const targets: TargetSystem[] = ["calendar", "todoist", "linear", "asana", "drive", "github", "telegram"];
+    for (const t of targets) {
+      expect(backends.writeAdapters[t]).toBeDefined();
+      expect(backends.writeAdapters[t].targetSystem).toBe(t);
+      expect(typeof backends.writeAdapters[t].create).toBe("function");
+    }
   });
 });

@@ -68,11 +68,11 @@ import type {
   ReceiptReservation,
 } from "@sow/integrations";
 import {
-  makeTargetWriteAdapter,
+  buildWriteAdapterRegistry,
   type AdapterTransport,
   type AdapterTransportRequest,
   type TransportResponse,
-  type TargetWriteAdapter,
+  type WriteAdapterRegistry,
 } from "@sow/integrations";
 
 // ── @sow/knowledge: the sole Markdown writer + the GBrain index seam ──────────
@@ -766,7 +766,7 @@ export interface ProofSpineBackends {
   /** The §7 Broker (deterministic gate stubs; localConfig always supplied). */
   readonly broker: Broker;
   /** The per-target write adapter (deterministic transport). */
-  readonly writeAdapter: TargetWriteAdapter;
+  readonly writeAdapters: WriteAdapterRegistry;
   /** The GBrain index client (deterministic transport). */
   readonly indexClient: IndexApplyClient;
   /** The local-provider config ALWAYS handed to the broker (never undefined). */
@@ -860,13 +860,17 @@ export async function assembleBackends(
     schema: createSchemaGate({ modelSchemas: CANDIDATE_MODEL_SCHEMAS }),
   });
 
-  // The transport is chosen through the default-OFF owner gate: unset `writeTransport`
-  // ⇒ the deterministic stub (byte-equivalent shipped default), never a hardcoded real
-  // client at this call site (§8 external-write envelope; safety rule 3).
-  const writeAdapter = makeTargetWriteAdapter(
-    { targetSystem: "todoist" as TargetSystem, deriveIdentity: (env) => ({ key: env.canonicalObjectKey }) },
-    { transport: selectAdapterTransport(config.writeTransport), clock: now },
-  );
+  // 21.1/2 composition-root binding (§19.8/§8): the EXHAUSTIVE per-`TargetSystem` write-adapter
+  // registry over the SAME injected stub-backed deps that previously fed the single todoist adapter —
+  // `dispatchRouted` (buildActivities) selects the vendor adapter by `action.targetSystem`, replacing
+  // the single hardcoded vendor (G15/G16). The transport is chosen through the default-OFF owner gate:
+  // unset `writeTransport` ⇒ the deterministic stub for EVERY adapter (byte-equivalent shipped default,
+  // fully dormant — a real per-vendor transport is the owner's to bind at 21.5/21.6, §ARM-21). No real
+  // external write opens here (safety rule 3).
+  const writeAdapters = buildWriteAdapterRegistry({
+    transport: selectAdapterTransport(config.writeTransport),
+    clock: now,
+  });
 
   const indexClient = createStubIndexApplyClient();
 
@@ -879,7 +883,7 @@ export async function assembleBackends(
     instanceLeaseStore,
     logger,
     broker,
-    writeAdapter,
+    writeAdapters,
     indexClient,
     localConfig,
     now,

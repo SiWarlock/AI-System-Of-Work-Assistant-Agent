@@ -28,8 +28,11 @@ import type {
   ProviderRoute,
   ProposedAction,
   ExternalWriteEnvelope,
+  TargetSystem,
   Result,
 } from "@sow/contracts";
+import { dispatchRouted, createUnroutedWriteAdapter } from "@sow/integrations";
+import type { ExternalWriteDeps, ExternalWriteResult } from "@sow/integrations";
 import type { ResolvedWorkspacePolicy } from "@sow/policy";
 import type { AgentExtraction, MeetingCloseoutContext, MeetingJobInputs } from "@sow/workflows";
 import type { CommittedRevision, KnowledgeRevisionStore } from "@sow/knowledge";
@@ -440,5 +443,92 @@ describe("sourcePropose — routes through the REAL Tool Gateway (15.7 / closes 
     const serialized = JSON.stringify(firstPending);
     expect(serialized).toContain(proposeEnvelope.payloadHash);
     expect(serialized).not.toContain("RAW-PAYLOAD-SECRET-TOKEN");
+  });
+});
+
+// ── 21.1/2 composition-root BINDING (§19.8 / §8) ──────────────────────────────
+// The single hardcoded `makeTargetWriteAdapter('todoist')` is replaced by the
+// `buildWriteAdapterRegistry` registry (backends.ts) + `dispatchRouted` routing at the two
+// buildActivities dispatch sites. These pin the routing over the REAL assembled registry (L50):
+// a known target routes to its vendor adapter via dispatch; an unregistered/`__proto__` target
+// fails closed WITHOUT dispatching; the exercised todoist path stays byte-equivalent + dormant.
+const unknownTargetAction: ProposedAction = {
+  ...proposeAction,
+  actionId: actionId("act:unknown:target"),
+  targetSystem: "__proto__" as unknown as TargetSystem, // an UNREGISTERED target (runtime tamper / future enum)
+  canonicalObjectKey: "unknown:obj:1",
+  idempotencyKey: "idem:unknown:1",
+};
+const unknownTargetEnvelope: ExternalWriteEnvelope = {
+  ...proposeEnvelope,
+  actionId: actionId("act:unknown:target"),
+  targetSystem: "__proto__" as unknown as TargetSystem,
+  canonicalObjectKey: "unknown:obj:1",
+  idempotencyKey: "idem:unknown:1",
+  payloadHash: "sha256:unknown:1",
+};
+
+describe("write-adapter routing binding (21.1/2 / §19.8 — composition root routes external writes via the registry)", () => {
+  const opened: ProofSpineBackends[] = [];
+  afterEach(() => {
+    for (const b of opened.splice(0)) b.close();
+  });
+
+  it("known_target_routes_to_its_vendor_adapter_via_dispatch — dispatchRouted over the ASSEMBLED registry selects the todoist adapter + dispatches with it (overriding the sentinel)", async () => {
+    const b = await freshBackends(LOCAL_ENDPOINT);
+    opened.push(b);
+    const seen: ExternalWriteDeps[] = [];
+    const spy = (
+      _env: ExternalWriteEnvelope,
+      _action: ProposedAction,
+      deps: ExternalWriteDeps,
+    ): Promise<ExternalWriteResult> => {
+      seen.push(deps);
+      return Promise.resolve({ status: "rejected", reason: "spy" });
+    };
+    await dispatchRouted(
+      b.writeAdapters,
+      proposeEnvelope,
+      proposeAction,
+      { adapter: createUnroutedWriteAdapter() } as unknown as ExternalWriteDeps,
+      spy,
+    );
+    expect(seen.length).toBe(1);
+    // The registry pick (todoist) OVERRODE the fail-closed sentinel before dispatch.
+    expect(seen[0]!.adapter).toBe(b.writeAdapters.todoist);
+  });
+
+  it("unknown_target_fails_closed_via_dispatch — an unregistered/__proto__ target REJECTS without dispatching (no existence probe, no create — rule 3)", async () => {
+    const b = await freshBackends(LOCAL_ENDPOINT);
+    opened.push(b);
+    let dispatched = 0;
+    const spy = (): Promise<ExternalWriteResult> => {
+      dispatched++;
+      return Promise.resolve({ status: "rejected", reason: "spy" });
+    };
+    const res = await dispatchRouted(
+      b.writeAdapters,
+      unknownTargetEnvelope,
+      unknownTargetAction,
+      { adapter: createUnroutedWriteAdapter() } as unknown as ExternalWriteDeps,
+      spy,
+    );
+    expect(res.status).toBe("rejected"); // Object.hasOwn fail-closed (no fail-open to a prototype member)
+    expect(dispatched).toBe(0); // rejected BEFORE any side effect
+  });
+
+  it("todoist_binding_byte_equivalent_and_dormant — the ASSEMBLED sourcePropose (now dispatchRouted) still fails closed to approval_pending + lands NO committed write receipt (§ARM-21, byte-equivalent)", async () => {
+    const b = await freshBackends(LOCAL_ENDPOINT);
+    opened.push(b);
+    const acts = buildProofSpineActivities(b, paramsFor(LOCAL_ENDPOINT));
+    const { res } = await drivePropose((a, e) => acts.sourcePropose(a, e), b);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error.code).toBe("approval_pending"); // same outcome as pre-binding
+    const reserve = await b.repos.writeReceipts.reserve(
+      proposeAction.targetSystem,
+      proposeAction.canonicalObjectKey,
+    );
+    expect(reserve.ok).toBe(true);
+    if (reserve.ok) expect(reserve.value.kind).not.toBe("committed"); // no real transport bound (dormant)
   });
 });

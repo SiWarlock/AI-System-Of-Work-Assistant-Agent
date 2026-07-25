@@ -56,7 +56,7 @@ import type {
 } from "@sow/knowledge";
 
 // The §8 Tool Gateway external-write entry + its deps.
-import { dispatchExternalWrite } from "@sow/integrations";
+import { dispatchRouted, createUnroutedWriteAdapter } from "@sow/integrations";
 import type { ExternalWriteDeps, ExternalWriteResult } from "@sow/integrations";
 
 // The REAL §8 source-register candidate gate (ajv structural + Zod .strict() + the
@@ -527,10 +527,14 @@ export function buildProofSpineActivities(
     deriveIdempotencyKey: (plan) => `kw:commit:${String(plan.planId)}`,
   });
 
-  // (f) propose — the §8 Tool Gateway (dispatchExternalWrite) over real backends.
+  // (f) propose — the §8 Tool Gateway routed via dispatchRouted (→ dispatchExternalWrite) over real backends.
   const requireApproval = makeRequireApproval(params.resolved);
   const externalWriteDeps: ExternalWriteDeps = {
-    adapter: backends.writeAdapter,
+    // 21.1/2 binding: the ExternalWriteDeps type requires an `adapter`, but the vendor adapter is now
+    // selected PER-CALL by `dispatchRouted` (keyed on `action.targetSystem`) — so this is the fail-closed
+    // sentinel (`createUnroutedWriteAdapter`): every op REJECTS if a dispatch ever bypasses the registry
+    // (defense-in-depth, never a silent single-vendor write). `dispatchRouted` overrides it with the pick.
+    adapter: createUnroutedWriteAdapter(),
     receiptStore: backends.receiptStore,
     requireApproval, // SYNC bare verdict; FAILS CLOSED on a policy DENY.
     recordPendingApproval: async (action, env): Promise<Result<unknown, unknown>> => {
@@ -562,11 +566,13 @@ export function buildProofSpineActivities(
     clock: now,
   };
   const propose: ProposeActionsPort = createProposeActivity({
+    // 21.1/2 binding: route by `action.targetSystem` through the registry (dispatchRouted overrides
+    // the sentinel `deps.adapter` with the vendor pick); an unregistered target FAILS CLOSED (rejected).
     dispatch: (
       env: ExternalWriteEnvelope,
       action: ProposedAction,
       deps: ExternalWriteDeps,
-    ): Promise<ExternalWriteResult> => dispatchExternalWrite(env, action, deps),
+    ): Promise<ExternalWriteResult> => dispatchRouted(backends.writeAdapters, env, action, deps),
     deps: externalWriteDeps,
   });
 
@@ -646,7 +652,8 @@ export function buildProofSpineActivities(
       action: ProposedAction,
       envelope: ExternalWriteEnvelope,
     ): Promise<Result<DispatchApprovedResult, DispatchApprovedError>> {
-      const outcome = await dispatchExternalWrite(envelope, action, externalWriteDeps);
+      // 21.1/2 binding: route the approved dispatch by `action.targetSystem` through the registry too.
+      const outcome = await dispatchRouted(backends.writeAdapters, envelope, action, externalWriteDeps);
       switch (outcome.status) {
         case "created":
         case "reused":
@@ -1007,7 +1014,7 @@ export function buildProofSpineActivities(
 
   // (f) propose — 15.7 (closes G7): the source-ingestion external-write propose now routes through the
   // SAME real Tool Gateway propose port as `meetingPropose` (the `propose` = createProposeActivity over
-  // dispatchExternalWrite, defined in §f-meeting above) — REPLACING the in-memory `ext-source-N` receipt
+  // dispatchRouted → dispatchExternalWrite, defined in §f-meeting above) — REPLACING the in-memory `ext-source-N` receipt
   // stub. A source propose produces a real ProposedAction → ExternalWriteEnvelope (idempotencyKey +
   // canonicalObjectKey, rule 3) → a pending §9 Approval (an approval-required action FAILS CLOSED to
   // approval_pending — no blind write). DORMANT/no hard line: the write adapter stays the default stub
