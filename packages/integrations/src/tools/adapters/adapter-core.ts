@@ -68,6 +68,43 @@ export interface AdapterSpec {
   readonly deriveIdentity: IdentityDeriver;
 }
 
+// ── external-write credential seam (21.10, safety rule 7 / §19.8) ──────────────
+
+/** Why a write token could not be resolved (SecretsPort-shaped). A missing/locked/
+ *  denied token FAILS the write CLOSED (no unauthenticated write) — never a throw of
+ *  the raw reason, never the token value. (Named distinctly from the connector READ-auth
+ *  `SecretUnavailable` — this is the external-WRITE seam.) */
+export const WriteSecretUnavailableReason = ["missing", "locked", "denied"] as const;
+export type WriteSecretUnavailableReason = (typeof WriteSecretUnavailableReason)[number];
+
+export interface WriteSecretUnavailable {
+  readonly reason: WriteSecretUnavailableReason;
+}
+
+/**
+ * SecretsPort-shaped accessor for external-WRITE auth tokens: resolves a macOS
+ * Keychain REFERENCE handle (never an inline token, REQ-S-003) to the token value as
+ * a typed Result — a missing/locked/denied token is an Err, not a throw. The worker
+ * binds the real KeychainSecretsAdapter at boot (a separate task); tests inject a
+ * mock. The write path reads only the ok/err VERDICT — never the token value (rule 7).
+ */
+export interface WriteSecretsAccessor {
+  getSecret(ref: string): Promise<Result<string, WriteSecretUnavailable>>;
+}
+
+/**
+ * Derive the 17.4 `keychain://<service>/<account>` write-token ref for a target. Object
+ * targets (calendar/todoist/linear/asana/drive/github) resolve a `connector-write:<vendor>`
+ * token; telegram resolves the `telegram-bot:*` token (the concrete bot account is bound
+ * at §ARM-21 arming). PURE — no I/O, no secret; the real Keychain resolution + ref parse
+ * happen in the worker-bound accessor.
+ */
+export function writeSecretRef(targetSystem: TargetSystem): string {
+  return targetSystem === "telegram"
+    ? "keychain://telegram-bot/*"
+    : `keychain://connector-write/${targetSystem}`;
+}
+
 // A transport fault code maps 1:1 onto the port's AdapterError code.
 function faultToError(fault: TransportFault, detail: string): AdapterError {
   return { code: fault, message: detail };

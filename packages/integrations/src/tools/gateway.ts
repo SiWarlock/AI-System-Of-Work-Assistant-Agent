@@ -37,6 +37,7 @@ import { recordReceipt } from "./receipt-store";
 import { buildSafeToolWriteLog, type SafeToolWriteLog } from "../redaction/gateway-log-redaction";
 import type { ReceiptStore } from "../ports/persistence";
 import type { TargetWriteAdapter } from "./adapter-port";
+import { writeSecretRef, type WriteSecretsAccessor } from "./adapters/adapter-core";
 
 /**
  * The approval-verdict value the gateway reads. Mirrors the §5 policy
@@ -66,6 +67,14 @@ export interface ExternalWriteDeps {
   readonly audit: (rec: AuditRecord) => Promise<void>;
   readonly clock: () => string;
   readonly logSink?: (rec: SafeToolWriteLog) => void;
+  /**
+   * 21.10 — the external-write CREDENTIAL SEAM. When BOUND, the write path resolves the
+   * vendor auth token at DISPATCH-time (via the 17.4 `writeSecretRef`) and FAILS CLOSED on
+   * an unavailable/throwing accessor — no unauthenticated write, token never read into a
+   * sink (safety rule 7). OPTIONAL: absent ⇒ byte-equivalent (the dormant stub transport
+   * needs no auth; the real accessor + real transport arm TOGETHER at §ARM-21 / 21.6).
+   */
+  readonly secrets?: WriteSecretsAccessor;
 }
 
 /** The closed, enumerable dispatch outcome set (§16). */
@@ -113,6 +122,27 @@ function emitCommitDiagnostics(
   return deps.audit(audit);
 }
 
+// Resolve the write auth token at dispatch-time — the fail-closed credential GATE
+// (21.10, safety rule 7). Fails closed on unavailable / empty / throwing: a blank
+// (whitespace-only) token is NOT proof of auth (mirrors `isRealVendorId` in the same
+// core). The token value is read ONLY for the non-empty check and is then DISCARDED —
+// never logged, never bound onward, never in a fault (rule 7). A throwing accessor is
+// caught and held (§16 — never propagates). The held reason is CODE-ONLY (the closed-set
+// unavailability code, never the token or the raw keychain ref).
+async function resolveWriteCredentialFault(
+  secrets: WriteSecretsAccessor,
+  targetSystem: ExternalWriteEnvelope["targetSystem"],
+): Promise<string | null> {
+  try {
+    const got = await secrets.getSecret(writeSecretRef(targetSystem));
+    if (!got.ok) return `write credential unavailable: ${got.error.reason}`;
+    if (got.value.trim().length === 0) return "write credential unavailable: empty";
+    return null;
+  } catch {
+    return "write credential resolution faulted";
+  }
+}
+
 // --- the entry point ---------------------------------------------------------
 
 /**
@@ -140,6 +170,19 @@ export async function dispatchExternalWrite(
     if (!approved) {
       await deps.recordPendingApproval(action, env);
       return { status: "approval_pending" };
+    }
+  }
+
+  // 2.5 CREDENTIAL SEAM (21.10, safety rule 7). Resolve the vendor write token at
+  //     DISPATCH-time BEFORE any vendor call (the existence probe + create both need
+  //     auth). An unavailable/throwing accessor HOLDS the write — no unauthenticated
+  //     write, no existence probe, no create. DORMANT: absent accessor ⇒ skipped
+  //     (byte-equivalent; the stub transport needs no auth — the real accessor arms
+  //     with the real transport at §ARM-21). The token value is never read here.
+  if (deps.secrets !== undefined) {
+    const credentialFault = await resolveWriteCredentialFault(deps.secrets, env.targetSystem);
+    if (credentialFault !== null) {
+      return { status: "held", reason: credentialFault };
     }
   }
 
