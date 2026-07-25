@@ -19,6 +19,7 @@
 // same. TOTAL never-throws; fail-closed to withheld on any fault/empty/malformed.
 import { isErr } from "@sow/contracts";
 import type { Result, WorkspaceId } from "@sow/contracts";
+import { faithfulKey, entitySlug, identifiers } from "./match-keys";
 
 /** The entity classes the living-vault synthesis resolves (knowledge-local, not a frozen contract). */
 export type EntityKind = "person" | "project" | "concept";
@@ -74,42 +75,9 @@ function withheld(reason: WithheldReason): EntityResolution {
   return { kind: "withheld", reason };
 }
 
-/**
- * A FAITHFUL match key: NFC-compose, fold em/en-dashes to a hyphen, trim, lowercase.
- * Spaces are NOT flattened to hyphens (Q1) — so a name-form ref matches a title/alias
- * and a slug-form ref matches a slug, but a space↔hyphen-only difference does NOT
- * match (it falls through to the lossy check → withheld). Pure.
- */
-function faithfulKey(raw: string): string {
-  return raw.normalize("NFC").replace(/[–—]/g, "-").trim().toLowerCase();
-}
-
-/**
- * A LOSSY filesystem slug (lowercase-hyphenated) — used for the create-stub proposal
- * AND lossy-collision detection. Replicates workflows' `safeNoteSlug` shape (which is
- * unreachable across the layer boundary), lowercased for the entity-name convention.
- * A distinct entity that collapses to the SAME lossy slug as an existing note (`C++`→
- * `c`) is a collision the resolver refuses to resolve or stub-over. Pure.
- */
-function entitySlug(raw: string): string {
-  return raw
-    .normalize("NFKD")
-    .replace(/[^\p{L}\p{N}]+/gu, "-")
-    .replace(/^-+|-+$/g, "")
-    .toLowerCase()
-    .slice(0, 120)
-    .replace(/-+$/g, "");
-}
-
-/** A candidate's comparable identifiers: its slug, its title, and any aliases. */
-function identifiers(c: EntityCandidate): readonly string[] {
-  const out: string[] = [c.slug];
-  if (typeof c.title === "string") out.push(c.title);
-  if (Array.isArray(c.aliases)) {
-    for (const a of c.aliases) if (typeof a === "string") out.push(a);
-  }
-  return out;
-}
+// The faithful-match discipline — the key (`faithfulKey`), the lossy slug (`entitySlug`), and the
+// comparable-identifier set (`identifiers`) — lives in `./match-keys`, the ONE source 13.8a + 13.8b
+// (LinkHealer) both ground on so they can never drift (Lesson 17).
 
 /**
  * Resolve a referenced entity to an EXISTING canonical vault note path, a create-stub

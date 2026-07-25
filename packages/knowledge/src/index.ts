@@ -49,7 +49,10 @@ export * from "./gbrain/local-embed";
 export * from "./gbrain/rerank";
 
 // ── synthesis: living-vault synthesis primitives (ARC-4 §13.8) ──────────────────
+// `faithfulKey`/`entitySlug` live in `./synthesis/match-keys` (internal — the ONE shared
+// faithful-match discipline both primitives ground on; not re-exported, Lesson 17).
 export * from "./synthesis/entity-resolver";
+export * from "./synthesis/link-healer";
 
 // ── gbrain derive: the gbrain-independent CanonicalFactDeriver (parity reference) ─
 export * from "./gbrain/derive/canonical-fact-deriver";
