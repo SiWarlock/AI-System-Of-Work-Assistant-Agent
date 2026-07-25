@@ -57,6 +57,9 @@ export * from "./tools/adapters/drive";
 export * from "./tools/adapters/github";
 export * from "./tools/adapters/telegram";
 
+// ── 21.1/21.2 per-TargetSystem write-adapter routing registry (pure; worker binds it) ──
+export * from "./tools/write-adapter-registry";
+
 // ── NotebookPort (notebooklm.sync — Drive-backed 00–04 managed-doc upsert) ──
 export * from "./notebook/notebook-port";
 export * from "./notebook/notebooklm-sync";
