@@ -99,6 +99,8 @@ export interface VaultActionDeps extends VaultGuardDeps {
   readonly openPath: (absPath: string) => Promise<string>;
   /** `shell.showItemInFolder` — reveals the item in the OS file manager. */
   readonly showInFolder: (absPath: string) => void;
+  /** `shell.openExternal` — opens an external URI (the `obsidian://` deep-link, A1). Rejects if unsupported. */
+  readonly openExternal: (uri: string) => Promise<void>;
 }
 
 // ── 9.12r Option A: the renderer requests a CLOSED repo TARGET, main owns the PATH ───────────────────────────
@@ -129,6 +131,9 @@ export function resolveRepoRoot(target: unknown, roots: readonly string[]): stri
  * the closed target already makes an out-of-root path unrepresentable. On any refusal NO shell call is made; the
  * shell's own error string is NEVER surfaced (rule 7 — it may echo the path); the caller learns only `{ ok }`.
  * NEVER throws (§16).
+ *
+ * OPEN is the A1 true Open-in-Obsidian: it opens the vault in Obsidian via the Context7-verified `obsidian://`
+ * URI, falling back to the A2 folder-open if that fails. REVEAL is the A2 show-in-folder (unchanged).
  */
 export async function performVaultAction(
   op: VaultOp,
@@ -142,13 +147,35 @@ export async function performVaultAction(
   // (root under itself); the value is the realpath + the fail-closed-on-fault behavior guardVaultPath provides.
   const guarded = await guardVaultPath(root, roots, "reveal", deps);
   if (!isOk(guarded)) return { ok: false };
-  try {
-    if (op === "open") {
-      const failureMsg = await deps.openPath(guarded.value.absPath);
-      return { ok: failureMsg === "" };
+  const absPath = guarded.value.absPath;
+
+  if (op === "reveal") {
+    try {
+      deps.showInFolder(absPath);
+      return { ok: true };
+    } catch {
+      return { ok: false }; // a shell fault yields { ok: false } — no throw, no disclosure
     }
-    deps.showInFolder(guarded.value.absPath);
+  }
+
+  // op === "open" — TRUE Open-in-Obsidian (A1). Context7-verified wire shape: `obsidian://open?path=<url-encoded
+  // ABSOLUTE path>` — Obsidian resolves the most-specific vault containing the path (here the vault ROOT dir, so
+  // it focuses that vault). The path is the MAIN-resolved, realpath'd root — NEVER renderer-supplied (closed
+  // target, §5); encodeURIComponent neutralizes `? & # space`, so no extra query param can be injected
+  // (structural guard, not a denylist). On an openExternal REJECT (obsidian:// unsupported) fall back to the A2
+  // folder-open — never a hard error/hang. (Best-effort: on macOS openExternal may RESOLVE for an unregistered
+  // scheme — LaunchServices shows its own prompt — so the fallback is not guaranteed when Obsidian is absent;
+  // accepted edge, the primary action is the Obsidian deep-link. Residuals(9).)
+  const uri = `obsidian://open?path=${encodeURIComponent(absPath)}`;
+  try {
+    await deps.openExternal(uri);
     return { ok: true };
+  } catch {
+    // fall through to the A2 fallback
+  }
+  try {
+    const failureMsg = await deps.openPath(absPath);
+    return { ok: failureMsg === "" };
   } catch {
     return { ok: false }; // a shell fault yields { ok: false } — no throw, no disclosure
   }

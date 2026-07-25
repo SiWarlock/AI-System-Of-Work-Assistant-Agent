@@ -21,6 +21,8 @@ const vaultSeams: VaultActionDeps = {
   stat: (p) => fsStat(p),
   openPath: (p) => shell.openPath(p),
   showInFolder: (p) => shell.showItemInFolder(p),
+  // A1 (9.12-A1): the `obsidian://` deep-link opener for the true Open-in-Obsidian.
+  openExternal: (uri) => shell.openExternal(uri),
 };
 
 // The real node:fs seams for the durable first-run marker (9.17). Kept OUT of first-run.ts so that module

@@ -34,19 +34,19 @@ function RepoGroup({
         type="button"
         className="sow-repo-btn"
         disabled={disabled}
-        aria-label={`Open ${noun}`}
+        aria-label={`Open ${noun} in Obsidian`}
         onClick={() => onOpen(target)}
       >
-        Open folder
+        Open in Obsidian
       </button>
       <button
         type="button"
         className="sow-repo-btn"
         disabled={disabled}
-        aria-label={`Reveal ${noun}`}
+        aria-label={`Reveal ${noun} in Finder`}
         onClick={() => onReveal(target)}
       >
-        Reveal
+        Reveal in Finder
       </button>
     </div>
   );
