@@ -1154,3 +1154,13 @@ Owner GO on a STAGED ENABLE: build/verify the ENABLE preconditions (steps 0–5)
 - **Next session target** (orch-only cycle; 5 impls keep running): ARC-4 13.8c planner → d/f/g · worker bindings (9.9a #28→9.9b #25 · 21.1/2 #29 · 13.17) · 13.14 /research · 21.3 (#27, owner) · push (owner: `git push origin main`).
 - **Reference:** commits `e023f682`/`1aaa575a`/`bcde3d61` + task #31 metadata (full handoff).
 
+
+---
+
+### 2026-07-25 — Wave-2 3rd seal: 9.9a calendar producer shipped + 9.9b/21.1-2-binding dispatched (main-orchestrator, HARD-STOP orch-only cycle)
+
+- **Completed:** #28 9.9a calendar read-model producer `8b4e3537` — calendarProjection (GCL busy windows→UiSafeSchedule) + query.calendar mounted, dormant/empty-until-wired (WS-8/REQ-F-009/Flow-3); security-reviewer=invariant CLEAN. Step-9 hot-routed: §9.9 tick (9.9a SHIPPED) + the 2 deferred producer-binding SAFETY follow-ups (rule-7 CalendarProjectionError.cause redaction + genericReason via GCL Gate) captured against buildProofSpineActivities.
+- **Dispatched (in flight → fresh orch):** #29 21.1/2 composition-root binding (brief 187 `@b84826f8`, Step-2.5 APPROVED — both dispatch sites via dispatchRouted, unrouted-sentinel fail-closed, dormant/byte-equiv) + #25 9.9b Calendar renderer (brief 188 `@0b280c6b`, Step-2.5 APPROVED, global cold-load slice).
+- **Cycle:** respawned orch hit HARD-STOP (96%) → surgical round seal (targeted, not the full /orchestrate-end walkthrough, to avoid overflow) → orch-only cycle (impls keep running; their Step-9 routes to the fresh orch by name).
+- **Next (fresh orch):** ⭐ knowledge 13.8c planner→d/f/g + 13.16 rollup · provint ARC-5 · evalsec ARC-6 · contract free. #31 debt persists (§ARM-RESEARCH/§ARM-21 residuals · 9.11 reconcile · 12.18 pointer). Desktop green needs `pnpm build:sow` (stale worker dist). push owner-run (7 ahead).
+- **Reference:** commit `8b4e3537` + briefs 187/188 + task #31 metadata + the lead HARD-STOP handoff.
