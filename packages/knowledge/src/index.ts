@@ -55,6 +55,7 @@ export * from "./synthesis/entity-resolver";
 export * from "./synthesis/link-healer";
 export * from "./synthesis/planner";
 export * from "./synthesis/ingest-rewrite";
+export * from "./synthesis/meeting-rewrite";
 export * from "./markdown-vault/structural-files";
 
 // ── gbrain derive: the gbrain-independent CanonicalFactDeriver (parity reference) ─
