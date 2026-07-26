@@ -3,9 +3,9 @@
 // the AUTO plan + a per-run digest receipt (planIds = batch-undo unit). An ingest UPDATES ≥1 existing
 // note. PURE over injected ports; TOTAL never-throws; DORMANT. @user confinement + no-inference inherited.
 import { describe, it, expect } from "vitest";
-import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { classifyImporterSource, scanProductionImporters, ungatedImporters } from "./support/dormancy-pin";
 import { ok } from "@sow/contracts";
 import type { Result, WorkspaceId, ProvenanceOrigin } from "@sow/contracts";
 import type { EntityCandidate, EntityGbrainReadPort, EntityReadFault } from "../src/synthesis/entity-resolver";
@@ -149,19 +149,48 @@ describe("rewriteVaultForSource — digest, inherited safety, flood-bound, dorma
     expect(r2.plans).toEqual([]);
   });
 
-  it("no_production_caller — rewriteVaultForSource has NO apps/ or workflows/ importer (dormant, L24)", () => {
+  // spec(§6 KN-10, L24) — REFRAMED (13.8f-A commit 1): the pin asserted *zero* production importers,
+  // which forces a RED window on the slice that binds it (13.8d worker-binding). The invariant it always
+  // meant is "every production importer is an ARMING-GATED site" — green with zero importers (today) AND
+  // with the flag-gated binding (tomorrow). The predicate lives once, in test/support/dormancy-pin.ts.
+  it("no_production_caller — every apps/ or workflows/ importer of rewriteVaultForSource is arming-gated (dormant, L24)", () => {
     const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-    let out = "";
-    try {
-      out = execSync("grep -rn 'rewriteVaultForSource' packages apps --include='*.ts' || true", { cwd: repoRoot, encoding: "utf8" });
-    } catch {
-      out = "";
-    }
-    const offenders = out
-      .split("\n")
-      .filter(Boolean)
-      .filter((l) => !l.includes(".test.ts") && !l.includes("/test/"))
-      .filter((l) => /^(apps|packages\/workflows)\//.test(l));
-    expect(offenders).toEqual([]);
+    const importers = scanProductionImporters("rewriteVaultForSource", repoRoot);
+    expect(ungatedImporters(importers, "rewriteVaultForSource")).toEqual([]);
+  });
+
+  it("dormancy_pin_allows_gated_importer — a flag-gated / type-only importer passes; an UNGATED one FAILS (non-vacuous)", () => {
+    const sym = "rewriteVaultForSource";
+    const ungated = `import { ${sym} } from "@sow/knowledge";\nconst plans = await ${sym}(input, deps);`;
+    const gated = `import { ${sym} } from "@sow/knowledge";\nif (config.livingVaultRewrite === true) { await ${sym}(input, deps); }`;
+    // THE REAL SHAPE of a composition-root binding: the strict `=== true` lives in boot.ts, one hop
+    // away, so this importing file carries the marker INSTEAD — the load-bearing branch.
+    const waived = `import { ${sym} } from "@sow/knowledge";\n// dormancy-waiver(13.8d): armed only via boot.ts gateLivingVaultRewrite (=== true)\nbuildActivities({ rewrite: ${sym} });`;
+    const markerNoTaskId = `import { ${sym} } from "@sow/knowledge";\n// dormancy-waiver()\nawait ${sym}(input, deps);`;
+    const typeOnly = `import type { ${sym} } from "@sow/knowledge";\nexport interface Deps { rewrite?: typeof ${sym} }`;
+
+    expect(classifyImporterSource(ungated, sym)).toBe("ungated");
+    expect(classifyImporterSource(gated, sym)).toBe("gated");
+    expect(classifyImporterSource(waived, sym)).toBe("gated");
+    expect(classifyImporterSource(typeOnly, sym)).toBe("type_only");
+    // the marker is a CLAIM that must name its task — an empty marker is not a waiver
+    expect(classifyImporterSource(markerNoTaskId, sym)).toBe("ungated");
+    // the offender list is exactly the ungated file — the pin has not been weakened to a tautology
+    expect(
+      ungatedImporters(
+        [
+          { path: "packages/workflows/src/activities/ungated.ts", source: ungated },
+          { path: "packages/workflows/src/workflows/sourceIngestion.ts", source: gated },
+          { path: "packages/workflows/src/ports/sourceIngestion.ts", source: typeOnly },
+        ],
+        sym,
+      ),
+    ).toEqual(["packages/workflows/src/activities/ungated.ts"]);
+  });
+
+  it("dormancy_pin_still_passes_with_zero_importers — the pin never REQUIRES an importer (no RED window either side)", () => {
+    // Today's state is zero production importers; the reframe must not have become "there must be
+    // exactly one gated importer", which would be RED until the worker's binding lands.
+    expect(ungatedImporters([], "rewriteVaultForSource")).toEqual([]);
   });
 });
