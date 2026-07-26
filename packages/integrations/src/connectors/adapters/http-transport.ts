@@ -117,6 +117,17 @@ export interface ConnectorHttpSpec {
    * template (a throw ⇒ a redacted failure). See the `method` WARNING — the body MUST be a read query only.
    */
   readonly buildBody?: (request: TransportRequest) => string;
+  /**
+   * PATH-AUTH mode (Telegram Bot API — `/bot<token>/getUpdates`): the token rides the URL PATH, not
+   * the `Authorization` header. When `true`, `resourcePath` MUST contain the literal placeholder
+   * `{token}`. The SSRF guard + every fault host-ref run on the PLACEHOLDER url — `isAllowedRemoteEndpoint`
+   * / `endpointHostRef` read the AUTHORITY (host), so the `{token}` in the PATH is ignored, the host check
+   * is unaffected, and the token is still resolved AFTER the SSRF gate (no token read on an off-guard url).
+   * The resolved token is validated against a safe-path-segment ALLOWLIST (fail-closed BY CONSTRUCTION —
+   * closes `\`/authority-injection chars, Lessons 12/13) and substituted into the path for the request url
+   * ONLY — never a header, never a fault/log (rule 7). ABSENT ⇒ Bearer-header auth (byte-identical).
+   */
+  readonly pathAuth?: boolean;
 }
 
 /** The injected deps. All fakeable; the real bindings (a Node HTTP transport + a Keychain SecretsAccessor +
@@ -204,10 +215,29 @@ export function createConnectorHttpTransport(
     //     a JSON body via the spec's TOKEN-FREE `buildBody`, wrapped fail-closed (a throw / a mis-specified POST
     //     with no buildBody ⇒ a redacted failure, no dispatch). The token rides ONLY the Authorization header
     //     (never the body / url) — rule 7. (`method` was resolved + read-only-admitted at step (0).)
-    const headers: Record<string, string> = {
-      accept: "application/json",
-      Authorization: `Bearer ${secret.value}`,
-    };
+    // Auth: Bearer-header (default — byte-identical to before) OR token-in-PATH (`pathAuth`, Telegram).
+    const headers: Record<string, string> = { accept: "application/json" };
+    let requestUrl = fullUrl;
+    if (spec.pathAuth === true) {
+      // A pathAuth spec MUST carry the `{token}` placeholder — else `.replace` is a no-op and the token
+      // is silently DROPPED (a tokenless dispatch). Fail-closed BY CONSTRUCTION so a future pathAuth
+      // connector can't misconfigure into an unauthenticated request (host-only ref, rule 7).
+      if (!spec.resourcePath.includes("{token}")) {
+        return transportFailure("unknown", `pathAuth spec missing {token} placeholder (${hostRef})`);
+      }
+      // Token-in-PATH: validate against a safe-path-segment ALLOWLIST (unreserved path chars + `:`,
+      // which a legit `\d+:[A-Za-z0-9_-]+` telegram token satisfies) — fail-closed BY CONSTRUCTION on
+      // `\` / `/` / `@` / any authority-injection char (Lessons 12/13). NOT encoded (Telegram needs the
+      // literal `:`); validation is the guard. Substitute into the PATH for the request url ONLY — no
+      // Authorization header, and the token never touches a fault/hostRef (rule 7). Function-form
+      // replace so a `$` in a (rejected-anyway) token can't be a replacement special.
+      if (!/^[A-Za-z0-9:._~-]+$/.test(secret.value)) {
+        return transportFailure("auth_locked", `token malformed (${hostRef})`);
+      }
+      requestUrl = `${trimTrailingSlash(spec.baseUrl)}${spec.resourcePath.replace("{token}", () => secret.value)}${query}`;
+    } else {
+      headers["Authorization"] = `Bearer ${secret.value}`;
+    }
     let body: string | undefined;
     if (method === "POST") {
       if (spec.buildBody === undefined) {
@@ -221,7 +251,7 @@ export function createConnectorHttpTransport(
       headers["content-type"] = "application/json";
     }
     const httpRequest: HttpTransportRequest = {
-      url: fullUrl,
+      url: requestUrl,
       method,
       headers,
       ...(body !== undefined ? { body } : {}),
