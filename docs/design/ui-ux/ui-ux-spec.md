@@ -29,7 +29,7 @@ Everything the UI shows should reinforce four felt guarantees:
 - **Workspace isolation** — you always know which of the three "brains" you are in, and crossing between them is deliberate and visible.
 - **Approval before action** — external side effects wait for you; they are shown with exactly what will change and cannot fire twice.
 - **Provenance and audit** — every fact and every action traces back to its source and its record.
-- **Egress safety** — you can always see whether cloud models are allowed to see raw content in the current context.
+- **Egress safety** — you can always see whether cloud models are allowed to see raw content in the current context. (⛔ SCOPED 2026-07-26: 'always see' means always AVAILABLE in the workspace-settings egress pane, per workspace — NOT an always-displayed chrome badge, which cannot know a per-workspace posture. See §the top-bar note.)
 
 The UI's job is to make those guarantees **calm and obvious**, not to bury them.
 
@@ -68,7 +68,7 @@ Every screen lives inside a persistent shell:
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────┐
-│ ◈ Scope: Employer-Work ▾     ⌕ Search or run a command  ⌘K   🛡 Egress: local-only ⚙ │  top bar (52px)
+│ ◈ Scope: Employer-Work ▾     ⌕ Search or run a command  ⌘K                        ⚙ │  top bar (52px)
 ├────────────┬──────────────────────────────────────────────────────────────┤
 │ left rail  │                                                              │
 │ (220px)    │              active surface renders here                     │
@@ -79,7 +79,7 @@ Every screen lives inside a persistent shell:
 **Top bar** carries the three governance controls that are always relevant:
 - **Workspace scope selector** (top-left, most important control). Sets the governed context. Color-coded to the current workspace accent. Options: All (Global), Employer-Work, Personal-Business, Personal-Life.
 - **⌘K command palette** (center). Jump to any note, run a workflow, approve, search the knowledge graph. This is a keyboard tool; the palette is first-class.
-- **Egress state pill** (right). Shows whether cloud AI models may see raw content in the current scope: `local-only` (shield locked, safe) or `cloud allowed`. Turns rose if an action would risk sending raw employer content to a cloud model.
+- **⛔ NO egress pill in the top bar (superseded 2026-07-26).** This spec previously mandated a shield "Egress: `local-only` (safe) / `cloud allowed`" pill here. It was implemented as an **unconditional hardcoded string** — no data source — and therefore asserted local-only on every screen while both employer and personal workspaces egressed to Claude (post-`bcde3d61`/`40414dd1`). Removed from the chrome, and the app-shell test suite now pins that the toolbar makes **no egress claim in either direction** (a "cloud-allowed" badge would be the same defect: a chrome-level element cannot know a PER-WORKSPACE posture). Egress posture is surfaced per workspace in the **workspace-settings egress pane**, derived from the durable `EgressPolicy`, with revoke as the only UI-exposed direction. Do not re-introduce a chrome-level posture badge; a future scope-aware indicator would need a truthful per-scope signal AND to be derived, never constant (`ARCHITECTURE.md §5`/§11).
 
 **Left rail** is the primary nav, grouped into work surfaces and governance surfaces, with live badges:
 
@@ -279,7 +279,7 @@ These are the things that make this **not** a generic dashboard. Apply them cons
 - **Workspace boundary is felt, not just labeled.** The current workspace accent tints the scope selector and active-nav; a lock glyph marks any cross-workspace read.
 - **Provenance everywhere.** Every fact/note/action carries a "source → governed writer revision" trail; mono hashes on hover; the Audit page is the full ledger.
 - **Candidate vs committed.** Proposed writes render in a distinct "candidate" style (dashed/tinted) until they pass validation and (if needed) approval, then settle into committed truth.
-- **Egress is ambient.** The top-bar shield pill is always visible; if an action would send raw employer content to a cloud model, the UI says so plainly and the action fails closed (it will not silently fall back to cloud).
+- **Egress is ambient — but NOT via a chrome badge.** **⛔ CORRECTED 2026-07-26 — the always-visible chrome pill is REMOVED.** The GOAL below stands; the MECHANISM was wrong. Egress posture is PER-WORKSPACE, so a single global always-visible badge cannot state it truthfully — the one that shipped was a hardcoded constant asserting `local-only` on every screen while both employer and personal workspaces egressed to Claude. Posture is now always AVAILABLE (workspace-settings egress pane, per workspace, derived from the durable `EgressPolicy`, revoke the only UI-exposed direction) rather than always DISPLAYED in chrome. A `cloud-allowed` badge would be the same defect. See `ui-ux-spec.md` "NO egress pill in the top bar" + `ARCHITECTURE.md §5`/§11. The rest of this principle stands unchanged: if an action would send raw employer content to a cloud model, the UI says so plainly and the action fails closed (it will not silently fall back to cloud).
 - **System Health is persistent truth.** Health items do not vanish on refresh; they stay until resolved/acknowledged and link to their audit record.
 - **Exactly-once, shown.** Approval cards and external writes display the "no duplicate" confirmation so the idempotency guarantee is visible, not just implemented.
 

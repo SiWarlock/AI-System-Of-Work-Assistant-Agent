@@ -37,7 +37,7 @@ Treat this as the leading candidate for (C) — but still start the discussion b
   1. **Workspace isolation** — you always know which of the three "brains" you're in; crossing is deliberate + visible.
   2. **Approval before action** — external side effects wait for you, show exactly what will change, can't fire twice.
   3. **Provenance & audit** — every fact/action traces to its source + its record.
-  4. **Egress safety** — you can always see whether cloud models may see raw content in the current scope.
+  4. **Egress safety** — you can always see whether cloud models may see raw content in the current scope. (⛔ SCOPED 2026-07-26: always AVAILABLE per workspace in the workspace-settings egress pane; the always-visible chrome pill was removed — a global badge cannot know a per-workspace posture.)
 - **Platform:** Electron desktop, Mac-first + a Telegram companion surface for approvals/briefs (the desktop app is the focus).
 
 ## The functional surfaces the UI must cover (ARCHITECTURE §11 — grounded, the data is REAL now)
@@ -50,11 +50,11 @@ Canonical §11 surfaces: **Global Today Dashboard · Workspace tabs · Project d
 
 - **Aesthetic:** "calm governed control plane," Linear / Raycast adjacent. Dark-mode-first, high-contrast, information-dense but unhurried, `⌘K` command palette first-class.
 - **Dials:** visual variance LOW (predictable, aligned), motion LOW (state feedback only, honor reduced-motion), density MEDIUM-HIGH (cockpit; hairline dividers over big padded cards).
-- **Shell:** persistent top bar (workspace-scope selector top-left · ⌘K search center · egress-state pill right) + a 220px left rail grouped **Work** (Today, Approvals·badge, Inbox·badge, Knowledge, Projects, Copilot, Health·badge) vs **Governance** (Connectors, Models, Audit, Settings).
+- **Shell:** persistent top bar (workspace-scope selector top-left · ⌘K search center · egress-state [⛔ chrome pill REMOVED 2026-07-26 — posture lives in the workspace-settings pane; see ui-ux-spec.md] pill right) + a 220px left rail grouped **Work** (Today, Approvals·badge, Inbox·badge, Knowledge, Projects, Copilot, Health·badge) vs **Governance** (Connectors, Models, Audit, Settings).
 - **Workspace scope model:** three isolated brains, each with an accent (Employer=steel blue, Personal-Business=emerald, Personal-Life=amber); a **Global** scope for cross-workspace views where any boundary crossing passes an explicit visibility gate (never silent blending).
 - **Page set (12):** Today/Command Center · Approvals · Inbox · Knowledge · Projects · Copilot · System Health · Connectors · Models · Audit · Workspaces · Settings.
 - **Design system:** bg near-black zinc `#09090B`, panels `#18181B`, hairline `zinc-800`; **one accent** steel blue `#5A7FB5` (no AI-purple, no decorative gradients, no neon); **Geist** UI + **Geist Mono for all governance data** (IDs/hashes/keys/timestamps); **Phosphor** icons stroke 1.5; radii locked (panels 10 / buttons 8 / pills full); one theme (dark default + real light), never inverts mid-screen; shadcn/ui + Radix component base.
-- **Governance UI patterns (the differentiators):** the egress pill, the workspace-crossing visibility gate, the approval diff ("exactly what will change"), provenance/audit trails, mono-for-data.
+- **Governance UI patterns (the differentiators):** the egress POSTURE surface (⛔ 2026-07-26: the chrome *pill* was removed — a global badge cannot state a per-workspace posture; the differentiator is the per-workspace workspace-settings pane with owner revoke, derived from the durable EgressPolicy), the workspace-crossing visibility gate, the approval diff ("exactly what will change"), provenance/audit trails, mono-for-data.
 
 *(Full detail: `ui-ux-spec.md` §4 per-page specs 4.1–4.12; `design-system.md` tokens + component map + copy voice + required states.)*
 

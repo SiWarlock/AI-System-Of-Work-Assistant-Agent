@@ -55,7 +55,7 @@ Semantic color (good/warn/critical) is **separate from the accent** and never co
 - Selected sidebar row = **filled rounded-pill** in accent — **never** a left accent-bar (that's the web tell).
 - **Segmented control** (macOS inset style), **grouped inset lists** (hairline-separated rows in a rounded container) for schedule/health.
 - **Copilot** = persistent right sidebar with **iMessage-style bubbles** (user = filled blue, assistant = glass) + citation chips (mono) + proposal action row + suggestion chips + rounded input with a blue send circle.
-- Toolbar: **pull-down** workspace switcher (dot + name + up/down chevron), **small inset** search + `⌘K` chip (not a giant web search bar), **egress status pill** on the right.
+- Toolbar: **pull-down** workspace switcher (dot + name + up/down chevron), **small inset** search + `⌘K` chip (not a giant web search bar), ~~**egress status pill** on right~~ (⛔ REMOVED 2026-07-26 — a chrome badge cannot state a PER-WORKSPACE posture; see `ui-ux-spec.md`).
 - Fake menu bar + wallpaper are staging for mockups; on a **light** desktop the menu bar is **dark text on light frost**.
 
 ## HARD build requirement (Phase 9 — do not drop)
@@ -81,7 +81,7 @@ These bugs recurred because each screen re-invented spacing. LOCKED rules — ev
 
 ## Shell & navigation (LOCKED 2026-07-03)
 
-- **Three-pane shell:** left nav rail · center content · right **Copilot sidebar**. Unified toolbar carries traffic lights, workspace switcher, `⌘K` search, **egress pill**, gear.
+- **Three-pane shell:** left nav rail · center content · right **Copilot sidebar**. Unified toolbar carries traffic lights, workspace switcher, `⌘K` search, gear (⛔ egress pill REMOVED 2026-07-26 — see `ui-ux-spec.md`).
 - **Copilot = persistent right sidebar** on every screen — collapsible to a thin rail, and **expandable to a full-screen conversation**. It is NOT a separate nav page.
 - **Workspace model:** the toolbar **workspace switcher scopes the whole app** — the active workspace (Employer-Work / Personal-Business / Personal-Life) drives every page. A **"Global"** scope aggregates across the three, and any cross-workspace read passes the **GCL Visibility Gate** (safety rule 4 — never a raw blend).
 - **Workspace identity — Treatment 1 (subtle scope), LOCKED:** the app accent stays **system-blue for every workspace**. The active workspace is expressed ONLY by the **switcher dot** + a thin **scope line** under the toolbar — no control re-tint (selected pills, buttons, counts stay blue in all brains, keeping the locked look consistent). Isolation stays legible without three differently-colored apps.
@@ -89,7 +89,7 @@ These bugs recurred because each screen re-invented spacing. LOCKED rules — ev
 - **Sidebar structure — Option B (config tucked in Settings):**
   - **WORK:** Today (home) · Calendar · Approvals · Inbox · Knowledge · Projects · **Health**
   - divider → **Settings** (contains **Connectors · Models · Audit · Workspaces** + preferences).
-  - **Governance-legibility guardrail:** config *pages* live under Settings, but the always-on governance *signals* stay first-class and visible — the **egress pill** (toolbar), **Health** in the main rail (with alert dot), System Health on Today. Keeps the rail calm without hiding the guarantees.
+  - **Governance-legibility guardrail:** ⛔ AMENDED 2026-07-26 — an always-on governance SIGNAL must still be DERIVED and stated at the scope it applies to; the egress pill violated both (a global constant for a per-workspace fact) and was removed. First-class visibility means reachable-and-truthful, never a chrome badge asserting what chrome cannot know. config *pages* live under Settings, but the always-on governance *signals* stay first-class and visible — the **egress pill** (toolbar), **Health** in the main rail (with alert dot), System Health on Today. Keeps the rail calm without hiding the guarantees.
 - **Home:** Today. **Recent Changes** folds into Today ("Recent activity") + Audit — not a separate page.
 - **Settled page inventory:** Today · Calendar · Approvals · Inbox · Knowledge · Projects · Health · Settings (→ Connectors · Models · Audit · Workspaces). Copilot = sidebar (not a page).
 

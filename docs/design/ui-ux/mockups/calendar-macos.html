@@ -1,3 +1,8 @@
+<!-- ⛔ SUPERSEDED ELEMENT (2026-07-26): the top-bar shield "Egress: local-only" pill shown in this mockup was REMOVED from the product.
+     It was implemented as an unconditional hardcoded string with no data source, so it asserted local-only on every screen while both
+     employer and personal workspaces egressed to Claude. Egress posture is PER-WORKSPACE and now lives in the workspace-settings egress
+     pane, derived from the durable EgressPolicy. Do NOT reproduce this pill (or a "cloud-allowed" inverse) when using this mockup as a
+     visual reference. See docs/design/ui-ux/ui-ux-spec.md "NO egress pill in the top bar" + ARCHITECTURE.md §5/§11. -->
 <title>Calendar — SoW (macOS Liquid Glass)</title>
 <style>
   :root {
