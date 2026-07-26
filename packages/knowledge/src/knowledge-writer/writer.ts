@@ -62,6 +62,7 @@ import { scanForSecrets } from "./secret-scan";
 // The on-disk frontmatter format codec (§13.10a gate 2 + its inverse). Kept in one module so the
 // forward serializer and its inverse cannot drift; the region/link projection stays here.
 import { serializeScalar, parseNote, composeNote, KW_STAMP_FRONTMATTER_KEY } from "./frontmatter";
+import { neutralizeNoteBody, neutralizeRegionMarkers } from "../markdown-vault/sections";
 import { stampProvenance, serializeStampFieldValue } from "./provenance-stamp";
 import type { StamperDeps } from "./provenance-stamp";
 // The SHARED page-hash core (gate 4 G1d-1): the writer mints its stamp through the SAME function
@@ -483,7 +484,10 @@ function renderCreate(create: NoteCreate): string {
     // must not land as a raw frontmatter value; it formerly bypassed serialization).
     fm.set("title", serializeScalar(create.title));
   }
-  return composeNote(fm, create.body);
+  // Security (13.8d ii, L9/L14): neutralize embedded region markers in the create body so a
+  // content-embedded `kw:region`/`@generated`/`@user` marker can never forge/plant a region
+  // boundary — region-AWARE, so a legit planner `renderGeneratedRegion` wrapper is preserved.
+  return composeNote(fm, neutralizeNoteBody(create.body));
 }
 
 function applyFrontmatter(content: string, patch: FrontmatterPatch): string {
@@ -496,7 +500,10 @@ function applyRegionPatch(content: string, patch: NotePatch): string {
   const { frontmatter, body } = parseNote(content);
   const open = `<!-- kw:region:${patch.regionId} -->`;
   const close = `<!-- /kw:region:${patch.regionId} -->`;
-  const region = `${open}\n${patch.newBody}\n${close}`;
+  // Security (13.8d ii / L9): neutralize embedded region markers in the patch inner body so a
+  // `<!-- /kw:region:id -->` (or any family marker) in newBody can never prematurely close/forge a
+  // region boundary — the create+patch pair both route content through the ONE neutralizer (L9).
+  const region = `${open}\n${neutralizeRegionMarkers(patch.newBody)}\n${close}`;
   const start = body.indexOf(open);
   const end = body.indexOf(close);
   let nextBody: string;

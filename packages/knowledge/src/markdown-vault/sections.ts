@@ -79,6 +79,42 @@ export function renderUserRegion(body: string): string {
 // pure ADDITIVE widening: a `kw:region` marker matches exactly as before (group 3 = its id).
 const MARKER_RE = /<!-- (\/?)(?:(kw:region|@generated):([^\s>]+)|(@user)) -->/gu;
 
+// A SUPERSET of every region-marker matcher the note is served through: KnowledgeWriter's
+// `applyRegionPatch` exact `<!-- kw:region:<id> -->` `indexOf` target AND `MARKER_RE` above (the
+// `parseSections` matcher, whose vocabulary is `kw:region` + the §13 osb-interop `@generated:<id>` /
+// `@user` families). Case-insensitive, whitespace-tolerant, open OR close, any id — so anything ANY
+// consumer could read as a boundary is caught. BROADER than the parser on purpose (case-insensitive +
+// `[^\s>]*` zero-or-more id vs the parser's `+`): neutralizer ⊇ parser, the correct safety direction.
+// The leading `[\s/]*` is ONE char class (whitespace OR the close `/`), NOT `\s*\/?\s*` — two unbounded
+// `\s*` straddling an optional backtrack is QUADRATIC (ReDoS) on a long non-completing whitespace run
+// after `<!--`; a single class is linear and still covers ` ` (open) and ` /` (close). Each alternation
+// branch starts with a REQUIRED literal so the nullable `[\s/]*` can't overlap; remaining quantifiers
+// act on DISJOINT classes — linear for the full vocabulary. This is the ONE canonical neutralizer (L9):
+// co-located here with `MARKER_RE`, the grammar it defends (the `@sow/workflows` copy re-points here).
+const REGION_MARKER_RE = /<!--[\s/]*(?:kw:region:[^\s>]*|@generated:[^\s>]*|@user)\s*-->/giu;
+
+/**
+ * Neutralize any `kw:region` / `@generated` / `@user` boundary-marker string embedded in CONTENT so it
+ * can NEVER forge or break a region boundary. Escapes each marker's leading `<!--` to `<\!--` — the
+ * human still reads the text (visible, content-preserving; nothing deleted) but neither
+ * `applyRegionPatch`'s exact `indexOf` NOR `parseSections`/`MARKER_RE` can match it. Runs to a FIXPOINT
+ * (escaping only REMOVES `<!--`, never creates one ⇒ the `<!--` count is monotone-decreasing ⇒
+ * terminates). The callback escapes EVERY `<!--` in each matched span (a greedy `[^\s>]*` id merges
+ * nested markers into ONE match), so nesting collapses in a SINGLE pass — LINEAR in body length even on
+ * a deeply-nested untrusted body (Lesson 9: keep every marker-scan on the untrusted path linear; the
+ * old first-`<!--`-only escape was O(depth) passes — a soft-DoS on the ING-7 create path). Idempotent;
+ * never throws. PURE.
+ */
+export function neutralizeRegionMarkers(content: string): string {
+  let out = content;
+  let prev: string;
+  do {
+    prev = out;
+    out = out.replace(REGION_MARKER_RE, (marker) => marker.replaceAll("<!--", "<\\!--"));
+  } while (out !== prev);
+  return out;
+}
+
 export interface HumanSection {
   readonly kind: "human";
   readonly text: string;
@@ -272,4 +308,32 @@ export function upsertRegionBody(
   }
   const sep = content.length === 0 ? "" : content.endsWith("\n") ? "\n" : "\n\n";
   return ok(`${content}${sep}${rendered}`);
+}
+
+/**
+ * Neutralize a whole NOTE body for a create, region-AWARE (KW `renderCreate` uses this). A create body
+ * may already carry a LEGIT assistant region (the synthesis planner's `new_note` wraps content via
+ * `renderGeneratedRegion`) — blanket-neutralizing would escape those legit markers and destroy the
+ * region. So: parse the body; PRESERVE each legit assistant region's markers + family (kw:region vs
+ * @generated) while neutralizing its INNER body; neutralize every human-span's text (so an embedded
+ * `@user`/`kw:region`/`@generated` marker can never forge a boundary — incl. planting a fake `@user`
+ * human region). A body whose marker structure is MALFORMED (no clean regions to preserve) is
+ * blanket-neutralized. Idempotent; never throws (parse failure ⇒ blanket). PURE.
+ */
+export function neutralizeNoteBody(body: string): string {
+  const parsed = parseSections(body);
+  if (!parsed.ok) {
+    return neutralizeRegionMarkers(body);
+  }
+  return parsed.value
+    .map((s) => {
+      if (s.kind !== "assistant") {
+        return neutralizeRegionMarkers(s.text);
+      }
+      // Preserve the ORIGINAL family so a @generated region isn't silently reclassified to kw:region.
+      const isGenerated = s.raw.startsWith(generatedOpenMarker(s.regionId));
+      const safeInner = neutralizeRegionMarkers(s.body);
+      return isGenerated ? renderGeneratedRegion(s.regionId, safeInner) : renderRegion(s.regionId, safeInner);
+    })
+    .join("");
 }
