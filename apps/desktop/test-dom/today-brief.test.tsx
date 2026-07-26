@@ -19,6 +19,7 @@ const base: Omit<TodayProps, "brief"> = {
   global: [],
   recentChanges: [],
   workspaceMeta: new Map(),
+  tasks: [],
   onDrillDown: () => {},
 };
 

@@ -22,6 +22,7 @@ import type {
   UiSafeHealthItem,
   UiSafeGclProjection,
   UiSafeRecentChange,
+  UiSafeTaskRollupItem,
 } from "@sow/contracts/api/ui-safe";
 import type { DailyBrief } from "../../lib/daily-brief";
 
@@ -38,6 +39,11 @@ export interface TodayProps {
   readonly workspaceMeta: WorkspaceMetaMap;
   /** The deterministic, store-assembled daily brief (9.20) — summary + meta chips from UI-safe counts. */
   readonly brief: DailyBrief;
+  /**
+   * The active workspace scope's PRE-RANKED highest-priority tasks (§13.16; empty under Global — WS-8).
+   * Rendered in the worker's deterministic priority/dueDate order VERBATIM — the renderer NEVER re-sorts.
+   */
+  readonly tasks: readonly UiSafeTaskRollupItem[];
   /** Request a policy-gated drill-down into a workspace's context (worker-enforced). */
   readonly onDrillDown: (workspaceId: string, projectionType: string) => void;
 }
@@ -243,10 +249,61 @@ function RecentActivity({
   );
 }
 
+// ── Top priorities (§13.16) ────────────────────────────────────────────────
+
+/** A short bidirectional relative due label from an ISO instant ("due in 3h" / "overdue 2d"). Display-only. */
+function dueLabel(iso: string): string {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "";
+  const diffMin = Math.round((then - Date.now()) / 60_000);
+  const abs = Math.abs(diffMin);
+  const mag = abs < 60 ? `${abs}m` : abs < 1440 ? `${Math.floor(abs / 60)}h` : `${Math.floor(abs / 1440)}d`;
+  return diffMin >= 0 ? `due in ${mag}` : `overdue ${mag}`;
+}
+
+/**
+ * Top priorities (§13.16) — the active WORKSPACE scope's PRE-RANKED highest-priority tasks, rendered in
+ * the worker's deterministic order VERBATIM (NEVER re-sorted by a renderer/model signal). Workspace-scoped:
+ * under Global `tasks` is empty (tasks never blend cross-workspace; WS-8). Renders ONLY the allowlisted
+ * UI-safe fields (title / status token / OPTIONAL priority token / OPTIONAL relative due / OPTIONAL
+ * projectRef chip); `priority` ABSENT ⇒ NO badge (REQ-F-017 unset, never fabricated); `taskId` rides as a
+ * non-interactive data-attr (the worker-mediated open is a follow-up, mirror `changeId`).
+ */
+function TopPriorities({ tasks }: { readonly tasks: readonly UiSafeTaskRollupItem[] }): ReactElement {
+  if (tasks.length === 0) {
+    return (
+      <div className="sow-empty" role="status">
+        No tasks
+      </div>
+    );
+  }
+  return (
+    <ul className="sow-priorities" role="list" aria-label="Top priorities">
+      {tasks.map((t) => (
+        <li className="sow-priority-row" role="listitem" key={t.taskId} data-task-id={t.taskId}>
+          <span className="sow-priority-title">{t.title}</span>
+          <span className="sow-priority-status">{humanizeToken(t.status)}</span>
+          {t.priority !== undefined ? (
+            <span className={`sow-priority-badge sow-priority-badge--${t.priority}`}>{t.priority}</span>
+          ) : null}
+          {t.dueDate !== undefined ? <span className="sow-priority-due">{dueLabel(t.dueDate)}</span> : null}
+          {/* projectRef renders the raw opaque id (like changeId); resolving it to a human project title
+              is a follow-up (Today holds no project-name map for arbitrary refs — mirror the 9.9b flags). */}
+          {t.projectRef !== undefined ? (
+            <span className="sow-priority-project" data-project-ref={t.projectRef}>
+              {t.projectRef}
+            </span>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function Today(props: TodayProps): ReactElement {
-  const { scope, cards, health, global, recentChanges, workspaceMeta, brief, onDrillDown } = props;
+  const { scope, cards, health, global, recentChanges, workspaceMeta, brief, tasks, onDrillDown } = props;
 
   return (
     <main className="sow-content" aria-label="Today dashboard">
@@ -273,6 +330,11 @@ export function Today(props: TodayProps): ReactElement {
       <div className="sow-section-label">Daily brief</div>
       <p className="sow-brief-text">{brief.summary}</p>
       {brief.meta ? <div className="sow-brief-meta">{brief.meta}</div> : null}
+
+      {/* Top priorities — the §13.16 pre-ranked highest-priority tasks (workspace-scoped; empty under
+          Global — WS-8). Rendered in the served order VERBATIM; empty-until-data honest empty-state. */}
+      <div className="sow-section-label">Top priorities</div>
+      <TopPriorities tasks={tasks} />
 
       {/* Waiting on you — driven from props.cards */}
       <div className="sow-section-label">Waiting on you</div>

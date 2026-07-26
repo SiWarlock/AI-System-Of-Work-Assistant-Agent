@@ -7,6 +7,8 @@ import {
   type UiSafeIngestionItem,
   UiSafeScheduleEntrySchema,
   type UiSafeScheduleEntry,
+  UiSafeTaskRollupItemSchema,
+  type UiSafeTaskRollupItem,
 } from "@sow/contracts/api/ui-safe";
 import type { SowBridge } from "../../preload/bridge";
 import type { Store, UiSafeStoreState } from "../store";
@@ -20,6 +22,7 @@ import {
   replaceProjects,
   replaceIngestion,
   replaceSchedule,
+  replaceTaskRollup,
   resolveOnboardedWorkspaceId,
 } from "../store/projections";
 import { type WorkspaceScope } from "../store/scope";
@@ -191,6 +194,7 @@ export async function hydrateScope(
   store.dispatch((s) => replaceRecentChanges(s, []));
   store.dispatch((s) => replaceProjects(s, []));
   store.dispatch((s) => replaceIngestion(s, []));
+  store.dispatch((s) => replaceTaskRollup(s, []));
   try {
     if (scope === "global") {
       // Global: dashboard + the gated GCL surface. Recent activity AND projects are
@@ -231,6 +235,8 @@ export async function hydrateScope(
   // empty under Global). Serial after the cards/recent/projects fan-out — ingestion is
   // empty-until-producer, so the extra round-trip is negligible and keeps the load-path un-duplicated.
   await hydrateIngestionInbox(client, store, scope);
+  // Re-load the highest-priority task rollup for the new scope (§13.16) — same workspace-scoped pattern.
+  await hydrateTaskRollup(client, store, scope);
 }
 
 async function hydrate(
@@ -255,6 +261,8 @@ async function hydrate(
   await hydrateCalendar(client, store);
   // Cold-load the active workspace scope's ingestion inbox (§9.7) — empty under Global.
   await hydrateIngestionInbox(client, store, store.getSnapshot().scope);
+  // Cold-load the active workspace scope's highest-priority task rollup (§13.16) — empty under Global.
+  await hydrateTaskRollup(client, store, store.getSnapshot().scope);
 }
 
 /**
@@ -322,6 +330,45 @@ export async function hydrateIngestionInbox(
     }
   } catch {
     store.dispatch((s) => replaceIngestion(s, [])); // best-effort — non-crashing
+  }
+}
+
+/**
+ * Cold-load / scope-change the active WORKSPACE scope's highest-priority task rollup (§13.16) via
+ * `query.taskRollup` — WORKSPACE-scoped (mirror `hydrateIngestionInbox`, NOT the global calendar path):
+ * Global / a NON-onboarded bucket / any unrecognized scope (all `null` via the fail-closed
+ * `resolveOnboardedWorkspaceId`) surface NOTHING, so it clears to `[]` WITHOUT a query. ⚠ `query.taskRollup`
+ * returns `{ items: [...] }` (an object like `query.calendar`'s `{entries}`), NOT a bare array — unwrap
+ * `res.value.items`. Re-validates each row through `UiSafeTaskRollupItemSchema` (.strict) before it enters
+ * the store — a leaky/malformed row is DROPPED, never folded; the PRE-RANKED order is preserved. A superseded
+ * scope (a fast switch during the await) is dropped. Best-effort + never-crashing: a query `err`/throw →
+ * empty. Empty-until-data — returns `[]` until the producer's Temporal wiring populates the row.
+ */
+export async function hydrateTaskRollup(
+  client: CreateTRPCClient<AppRouter>,
+  store: Store<UiSafeStoreState>,
+  scope: WorkspaceScope,
+): Promise<void> {
+  const workspaceId = resolveOnboardedWorkspaceId(store.getSnapshot(), scope);
+  if (workspaceId === null) {
+    store.dispatch((s) => replaceTaskRollup(s, []));
+    return;
+  }
+  try {
+    const res = await client.query.taskRollup.query({ workspaceId });
+    if (store.getSnapshot().scope !== scope) return; // superseded by a newer scope
+    if (res?.ok === true && Array.isArray(res.value.items)) {
+      const valid: UiSafeTaskRollupItem[] = [];
+      for (const it of res.value.items) {
+        const parsed = UiSafeTaskRollupItemSchema.safeParse(it);
+        if (parsed.success) valid.push(parsed.data);
+      }
+      store.dispatch((s) => replaceTaskRollup(s, valid));
+    } else {
+      store.dispatch((s) => replaceTaskRollup(s, [])); // an err result → empty (don't leave stale)
+    }
+  } catch {
+    store.dispatch((s) => replaceTaskRollup(s, [])); // best-effort — non-crashing
   }
 }
 

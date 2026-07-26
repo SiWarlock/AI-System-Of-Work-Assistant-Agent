@@ -10,6 +10,7 @@ import type {
   UiSafeProjectDashboard,
   UiSafeIngestionItem,
   UiSafeScheduleEntry,
+  UiSafeTaskRollupItem,
 } from "@sow/contracts/api/ui-safe";
 import { DEFAULT_SCOPE, type WorkspaceScope } from "./scope";
 import { DEFAULT_ROUTE, type Route } from "./route";
@@ -64,6 +65,12 @@ export interface UiSafeStoreState {
    */
   readonly schedule: readonly UiSafeScheduleEntry[];
   /**
+   * The active WORKSPACE scope's PRE-RANKED highest-priority tasks (§13.16; query.taskRollup snapshot).
+   * Workspace-scoped — cleared to `[]` under Global (tasks never blend cross-workspace; WS-8). Hydrated on
+   * cold-load AND scope-change (the ingestion-inbox pattern), NOT the global cold-load-only path.
+   */
+  readonly taskRollup: readonly UiSafeTaskRollupItem[];
+  /**
    * The ONBOARDED workspaces (§19.1 / 14.1), keyed by their scope bucket. The SOURCE of a
    * workspace scope's REAL query workspaceId — a bucket present here is onboarded (selectable
    * + queryable via its real id); a bucket ABSENT has NO read path (fail-closed empty-until-
@@ -103,6 +110,7 @@ export const initialStoreState: UiSafeStoreState = {
   projects: [],
   ingestion: [],
   schedule: [],
+  taskRollup: [],
   onboarded: new Map(),
   connectors: new Map(),
   crossWorkspaceLinks: new Map(),

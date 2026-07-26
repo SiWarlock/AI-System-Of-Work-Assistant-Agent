@@ -354,6 +354,7 @@ export function App(): ReactElement {
           recentChanges={state.recentChanges}
           workspaceMeta={workspaceMeta}
           brief={brief}
+          tasks={state.taskRollup}
           onDrillDown={onDrillDown}
         />
       )}

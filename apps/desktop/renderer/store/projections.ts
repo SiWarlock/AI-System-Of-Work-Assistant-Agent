@@ -8,6 +8,7 @@ import type {
   UiSafeProjectDashboard,
   UiSafeIngestionItem,
   UiSafeScheduleEntry,
+  UiSafeTaskRollupItem,
 } from "@sow/contracts/api/ui-safe";
 import type { ConnectionStatus, UiSafeStoreState } from "./index";
 import { isWorkspaceScope, type WorkspaceScope } from "./scope";
@@ -295,6 +296,21 @@ export function replaceIngestion(
 ): UiSafeStoreState {
   if (ingestion.length === 0 && state.ingestion.length === 0) return state;
   return { ...state, ingestion };
+}
+
+/**
+ * REPLACE the active WORKSPACE scope's highest-priority tasks (§13.16) with a fresh `query.taskRollup`
+ * snapshot. Workspace-SCOPED (mirrors recentChanges/ingestion, NOT the global schedule): switching scope
+ * fully replaces (never blends), and a scope with no tasks (incl. Global, where tasks never surface; WS-8)
+ * clears it to `[]`. `query.taskRollup` returns the whole PRE-RANKED list, so this replaces (never upserts)
+ * and preserves the served ORDER. Empty→empty is a ref-stable no-op.
+ */
+export function replaceTaskRollup(
+  state: UiSafeStoreState,
+  tasks: readonly UiSafeTaskRollupItem[],
+): UiSafeStoreState {
+  if (tasks.length === 0 && state.taskRollup.length === 0) return state;
+  return { ...state, taskRollup: tasks };
 }
 
 /**
