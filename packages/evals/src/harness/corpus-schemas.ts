@@ -9,6 +9,8 @@
 //
 // Floors are the HARD §20.1/A7 sizes — the corpus-loader rejects below-floor.
 
+import type { SynthesisCandidate } from "@sow/knowledge";
+
 export type Workspace = "employer-work" | "personal-business" | "personal-life";
 export type Sensitivity = "public" | "internal" | "confidential";
 
@@ -18,6 +20,7 @@ export const CORPUS_FLOORS = {
   retrieval: 30,
   injection: 6, // 5 PRD §16.1 vectors + the cross-workspace exfiltration vector
   leakage: 15,
+  synthesis: 20, // 13.8c REASON-leg source-contexts (matches meetingCloseout — the §12 floor)
 } as const;
 
 // ── meeting-closeout ─────────────────────────────────────────────────────────
@@ -103,4 +106,57 @@ export interface LeakageCorpusEntry {
   readonly expectedLeakedSentences: 0;
 }
 
-export type CorpusKind = "meeting-closeout" | "retrieval" | "injection" | "leakage";
+// ── synthesis (13.8c REASON-leg) ──────────────────────────────────────────────
+/** How the fake gbrain resolves an entity by name — drives `resolveEntity` (the faithfulness leg). */
+export interface SynthesisGbrainResolution {
+  readonly outcome: "withheld" | "create_stub" | "resolved";
+  /** For `resolved`: the existing note path a candidate (title-faithful to the ref name) points at. */
+  readonly resolvedPath?: string;
+}
+
+/** The deterministic outcome labels the scorer checks against the plans `planSynthesis` emits. */
+export interface SynthesisExpected {
+  /** `auto` (requiresApproval:false only) · `propose` (true only) · `both` (two plans) · `none` (no plan). */
+  readonly tier: "auto" | "propose" | "both" | "none";
+  /** Region ids expected in emitted NotePatches (sorted). */
+  readonly patchRegionIds: readonly string[];
+  /** Note paths expected in emitted NoteCreates (sorted). */
+  readonly createPaths: readonly string[];
+  /** Frontmatter keys expected COERCED to the TBD sentinel (un-evidenced owner/date — REQ-F-017). */
+  readonly frontmatterTBDKeys: readonly string[];
+  /** Frontmatter keys expected KEPT with their original (evidenced) value. */
+  readonly frontmatterKeptKeys: readonly string[];
+  /** Region ids that must NEVER appear in any patch/create (dropped: @user / marker-unsafe / collision / unknown). */
+  readonly droppedRegionIds: readonly string[];
+  /** Frontmatter keys expected DROPPED (un-evidenced non-owner/date). */
+  readonly droppedFrontmatterKeys: readonly string[];
+  /** Create paths expected to be entity STUBS (from a `create_stub` resolution). */
+  readonly stubPaths: readonly string[];
+  /** Withheld entity names whose slug must NOT appear in ANY create path (no fabrication). */
+  readonly noFabricationNames: readonly string[];
+}
+
+/** A labeled synthesis source-context: the recorded model candidate + the SENSE fixtures + the expected outcome. */
+export interface SynthesisCorpusEntry {
+  readonly id: string;
+  readonly sensitivity: Sensitivity;
+  readonly provenanceOrigin: string; // a ProvenanceOrigin member (kept a plain string — test data)
+  readonly confidence?: number;
+  readonly sourceRefs: readonly { readonly sourceId: string; readonly span?: string }[];
+  /** `healLinks` SENSE context — the workspace's existing notes. */
+  readonly linkCandidates?: readonly {
+    readonly path: string;
+    readonly slug: string;
+    readonly title?: string;
+    readonly aliases?: readonly string[];
+  }[];
+  /** SENSE: notePath → the note's writer-owned (@generated) region-id allowlist (the confinement allowlist). */
+  readonly sections: Readonly<Record<string, readonly string[]>>;
+  /** SENSE: entity name → the fake gbrain resolution that drives `resolveEntity`. */
+  readonly gbrainByName?: Readonly<Record<string, SynthesisGbrainResolution>>;
+  /** REASON: the recorded model candidate replayed through the fake `SynthesisReasonPort`. */
+  readonly candidate: SynthesisCandidate;
+  readonly expected: SynthesisExpected;
+}
+
+export type CorpusKind = "meeting-closeout" | "retrieval" | "injection" | "leakage" | "synthesis";

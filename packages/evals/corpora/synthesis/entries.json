@@ -1,0 +1,210 @@
+[
+  {
+    "id": "refresh-auto",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": { "notes/a.md": ["summary"] },
+    "candidate": { "regions": [{ "notePath": "notes/a.md", "regionId": "summary", "body": "Refreshed derived content.", "effect": "refresh" }] },
+    "expected": { "tier": "auto", "patchRegionIds": ["summary"], "createPaths": [], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": [], "noFabricationNames": [] }
+  },
+  {
+    "id": "new-region-auto",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": { "notes/b.md": ["intro"] },
+    "candidate": { "regions": [{ "notePath": "notes/b.md", "regionId": "derived", "body": "New derived section.", "effect": "new_region" }] },
+    "expected": { "tier": "auto", "patchRegionIds": ["derived"], "createPaths": [], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": [], "noFabricationNames": [] }
+  },
+  {
+    "id": "new-note-auto",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": {},
+    "candidate": { "regions": [{ "notePath": "synthesis/acme.md", "regionId": "summary", "body": "Acme synthesis.", "effect": "new_note" }] },
+    "expected": { "tier": "auto", "patchRegionIds": [], "createPaths": ["synthesis/acme.md"], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": [], "noFabricationNames": [] }
+  },
+  {
+    "id": "frontmatter-status-propose",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": {},
+    "candidate": { "frontmatter": [{ "notePath": "notes/c.md", "key": "status", "value": "active", "evidenceRef": "src-1#s" }] },
+    "expected": { "tier": "propose", "patchRegionIds": [], "createPaths": [], "frontmatterTBDKeys": [], "frontmatterKeptKeys": ["status"], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": [], "noFabricationNames": [] }
+  },
+  {
+    "id": "user-region-drop",
+    "sensitivity": "confidential",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": { "notes/d.md": ["summary"] },
+    "candidate": { "regions": [{ "notePath": "notes/d.md", "regionId": "@user", "body": "HIJACK the human note", "effect": "refresh" }] },
+    "expected": { "tier": "none", "patchRegionIds": [], "createPaths": [], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": ["@user"], "droppedFrontmatterKeys": [], "stubPaths": [], "noFabricationNames": [] }
+  },
+  {
+    "id": "refresh-unknown-drop",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": { "notes/e.md": ["summary"] },
+    "candidate": { "regions": [{ "notePath": "notes/e.md", "regionId": "ghost", "body": "sneak into an unknown id", "effect": "refresh" }] },
+    "expected": { "tier": "none", "patchRegionIds": [], "createPaths": [], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": ["ghost"], "droppedFrontmatterKeys": [], "stubPaths": [], "noFabricationNames": [] }
+  },
+  {
+    "id": "new-region-collision-drop",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": { "notes/f.md": ["summary"] },
+    "candidate": { "regions": [{ "notePath": "notes/f.md", "regionId": "summary", "body": "collide via relabel", "effect": "new_region" }] },
+    "expected": { "tier": "none", "patchRegionIds": [], "createPaths": [], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": ["summary"], "droppedFrontmatterKeys": [], "stubPaths": [], "noFabricationNames": [] }
+  },
+  {
+    "id": "owner-unevidenced-tbd",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": {},
+    "candidate": { "frontmatter": [{ "notePath": "notes/h.md", "key": "owner", "value": "Alice" }] },
+    "expected": { "tier": "propose", "patchRegionIds": [], "createPaths": [], "frontmatterTBDKeys": ["owner"], "frontmatterKeptKeys": [], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": [], "noFabricationNames": [] }
+  },
+  {
+    "id": "date-unevidenced-tbd",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": {},
+    "candidate": { "frontmatter": [{ "notePath": "notes/i.md", "key": "dueDate", "value": "2026-08-01" }] },
+    "expected": { "tier": "propose", "patchRegionIds": [], "createPaths": [], "frontmatterTBDKeys": ["dueDate"], "frontmatterKeptKeys": [], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": [], "noFabricationNames": [] }
+  },
+  {
+    "id": "nonowner-unevidenced-drop",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": {},
+    "candidate": { "frontmatter": [{ "notePath": "notes/j.md", "key": "priority", "value": "p0" }] },
+    "expected": { "tier": "none", "patchRegionIds": [], "createPaths": [], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": [], "droppedFrontmatterKeys": ["priority"], "stubPaths": [], "noFabricationNames": [] }
+  },
+  {
+    "id": "evidenced-owner-kept",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": {},
+    "candidate": { "frontmatter": [{ "notePath": "notes/k.md", "key": "owner", "value": "Bob", "evidenceRef": "src-1#s" }] },
+    "expected": { "tier": "propose", "patchRegionIds": [], "createPaths": [], "frontmatterTBDKeys": [], "frontmatterKeptKeys": ["owner"], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": [], "noFabricationNames": [] }
+  },
+  {
+    "id": "entity-withheld-nofab",
+    "sensitivity": "confidential",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": {},
+    "gbrainByName": { "Ghost": { "outcome": "withheld" } },
+    "candidate": { "entityRefs": [{ "name": "Ghost", "kind": "person" }] },
+    "expected": { "tier": "none", "patchRegionIds": [], "createPaths": [], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": [], "noFabricationNames": ["Ghost"] }
+  },
+  {
+    "id": "entity-create-stub",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": {},
+    "gbrainByName": { "Payments": { "outcome": "create_stub" } },
+    "candidate": { "entityRefs": [{ "name": "Payments", "kind": "project" }] },
+    "expected": { "tier": "auto", "patchRegionIds": [], "createPaths": ["payments.md"], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": ["payments.md"], "noFabricationNames": [] }
+  },
+  {
+    "id": "entity-resolved-nocreate",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": {},
+    "gbrainByName": { "Photon Drive": { "outcome": "resolved", "resolvedPath": "projects/photon-drive.md" } },
+    "candidate": { "entityRefs": [{ "name": "Photon Drive", "kind": "project" }] },
+    "expected": { "tier": "none", "patchRegionIds": [], "createPaths": [], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": [], "noFabricationNames": [] }
+  },
+  {
+    "id": "marker-unsafe-drop",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": {},
+    "candidate": { "regions": [{ "notePath": "notes/s.md", "regionId": "bad id", "body": "x", "effect": "new_note" }] },
+    "expected": { "tier": "none", "patchRegionIds": [], "createPaths": [], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": ["bad id"], "droppedFrontmatterKeys": [], "stubPaths": [], "noFabricationNames": [] }
+  },
+  {
+    "id": "mixed-newnote-and-propose",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": {},
+    "candidate": {
+      "regions": [{ "notePath": "synthesis/m.md", "regionId": "body", "body": "Fresh.", "effect": "new_note" }],
+      "frontmatter": [{ "notePath": "notes/m.md", "key": "status", "value": "done", "evidenceRef": "src-1#s" }]
+    },
+    "expected": { "tier": "both", "patchRegionIds": [], "createPaths": ["synthesis/m.md"], "frontmatterTBDKeys": [], "frontmatterKeptKeys": ["status"], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": [], "noFabricationNames": [] }
+  },
+  {
+    "id": "mixed-refresh-tbd-and-drops",
+    "sensitivity": "confidential",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": { "notes/n.md": ["summary"] },
+    "candidate": {
+      "regions": [
+        { "notePath": "notes/n.md", "regionId": "summary", "body": "refresh", "effect": "refresh" },
+        { "notePath": "notes/n.md", "regionId": "@user", "body": "hijack", "effect": "refresh" }
+      ],
+      "frontmatter": [
+        { "notePath": "notes/n.md", "key": "owner", "value": "Carol" },
+        { "notePath": "notes/n.md", "key": "tags", "value": "x" }
+      ]
+    },
+    "expected": { "tier": "both", "patchRegionIds": ["summary"], "createPaths": [], "frontmatterTBDKeys": ["owner"], "frontmatterKeptKeys": [], "droppedRegionIds": ["@user"], "droppedFrontmatterKeys": ["tags"], "stubPaths": [], "noFabricationNames": [] }
+  },
+  {
+    "id": "link-heal-auto",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": {},
+    "linkCandidates": [{ "path": "projects/acme-api.md", "slug": "acme-api", "title": "Acme API" }],
+    "candidate": { "links": { "srcPath": "notes/o.md", "refs": [{ "title": "Acme API" }] } },
+    "expected": { "tier": "auto", "patchRegionIds": [], "createPaths": [], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": [], "noFabricationNames": [] }
+  },
+  {
+    "id": "stub-plus-newregion-auto",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": { "notes/p.md": ["intro"] },
+    "gbrainByName": { "Widgets": { "outcome": "create_stub" } },
+    "candidate": {
+      "entityRefs": [{ "name": "Widgets", "kind": "concept" }],
+      "regions": [{ "notePath": "notes/p.md", "regionId": "derived", "body": "y", "effect": "new_region" }]
+    },
+    "expected": { "tier": "auto", "patchRegionIds": ["derived"], "createPaths": ["widgets.md"], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": ["widgets.md"], "noFabricationNames": [] }
+  },
+  {
+    "id": "comprehensive-clean-both",
+    "sensitivity": "internal",
+    "provenanceOrigin": "ingestion",
+    "sourceRefs": [{ "sourceId": "src-1", "span": "1-2" }],
+    "sections": { "notes/q.md": ["summary"] },
+    "gbrainByName": { "Acme": { "outcome": "resolved", "resolvedPath": "projects/acme.md" } },
+    "candidate": {
+      "regions": [
+        { "notePath": "synthesis/q.md", "regionId": "body", "body": "z", "effect": "new_note" },
+        { "notePath": "notes/q.md", "regionId": "summary", "body": "refresh", "effect": "refresh" }
+      ],
+      "frontmatter": [{ "notePath": "notes/q.md", "key": "owner", "value": "Dave", "evidenceRef": "src-1#s" }],
+      "entityRefs": [{ "name": "Acme", "kind": "project" }]
+    },
+    "expected": { "tier": "both", "patchRegionIds": ["summary"], "createPaths": ["synthesis/q.md"], "frontmatterTBDKeys": [], "frontmatterKeptKeys": ["owner"], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": [], "noFabricationNames": [] }
+  }
+]
