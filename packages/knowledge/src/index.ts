@@ -53,6 +53,7 @@ export * from "./gbrain/rerank";
 // faithful-match discipline both primitives ground on; not re-exported, Lesson 17).
 export * from "./synthesis/entity-resolver";
 export * from "./synthesis/link-healer";
+export * from "./synthesis/planner";
 
 // ── gbrain derive: the gbrain-independent CanonicalFactDeriver (parity reference) ─
 export * from "./gbrain/derive/canonical-fact-deriver";
