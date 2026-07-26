@@ -52,7 +52,7 @@ SoW-build/
 ├── statusline-command.sh               # Status line + heartbeat writer (install once)
 ├── scripts/
 │   └── check-team-context.sh           # /context-check helper (install once)
-├── team-registry/                      # Per-session: {session_id, name, track_label, role, cwd, ts} — OUR bookkeeping, not Claude's real (session-derived) team
+├── team-registry/                      # Per-session: {session_id, name, team, role, area, track, branch, cwd, ts} — OUR bookkeeping, not Claude's real (session-derived) team
 │   └── <session_id>.json               # Written by teammate at startup via spawn prompt
 ├── heartbeats/                         # Per-session ctx_pct heartbeats (status line writes IFF registry exists)
 │   └── <session_id>.json               # Updated every status line refresh

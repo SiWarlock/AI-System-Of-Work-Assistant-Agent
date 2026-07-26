@@ -146,14 +146,14 @@ If a predecessor handoff exists, also update its "Successor handoff" link to poi
 
 Remove this team's registry entries so `/context-check` no longer reports them as live (heartbeats would also age out via the 10-minute staleness filter, but explicit cleanup is cleaner):
 
-This cleans up **our custom monitoring layer only**. The Claude Code team itself (`~/.claude/teams/session-<first-8>/`) is auto-removed when your session exits — don't touch it. Match on the **track label** every teammate registered under at `/team-start` (the `$TRACK_LABEL` — track name, or `session-<first-8>`); that one filter catches the lead + every teammate, so no separate official-config read is needed:
+This cleans up **our custom monitoring layer only**. The Claude Code team itself (`~/.claude/teams/session-<first-8>/`) is auto-removed when your session exits — don't touch it. Match on the **team label** every teammate registered under at `/team-start` (the `$TEAM_LABEL` — track name, or `session-<first-8>`); that one filter catches the lead + every teammate, so no separate official-config read is needed:
 
 ```bash
-TRACK="<the $TRACK_LABEL used at /team-start>"
+TEAM="<the $TEAM_LABEL used at /team-start>"
 # Remove each registry entry (and its heartbeat) registered under this label.
 for f in "$HOME/.claude/team-registry"/*.json; do
   [ -f "$f" ] || continue
-  if [ "$(jq -r '.track_label // empty' "$f" 2>/dev/null)" = "$TRACK" ]; then
+  if [ "$(jq -r '.team // empty' "$f" 2>/dev/null)" = "$TEAM" ]; then
     sid=$(jq -r '.session_id // empty' "$f" 2>/dev/null)
     [ -n "$sid" ] && rm -f "$HOME/.claude/heartbeats/${sid}.json"
     rm -f "$f"
