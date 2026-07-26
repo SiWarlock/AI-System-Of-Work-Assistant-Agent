@@ -228,6 +228,13 @@ function fakePort(overrides: Partial<ReadModelQueryPort> = {}): ReadModelQueryPo
 
     projectDashboards: (workspaceId) =>
       workspaceId === KNOWN_WORKSPACE ? ok([validFakeProject]) : err(notFoundWorkspace(workspaceId)),
+
+    // §13.16 task rollup — workspace-scoped, fail-closed on unknown ws. Default = one valid ranked item;
+    // the sanitize/drop/cap tests override this. Empty-until-producer in production.
+    taskRollup: (workspaceId) =>
+      workspaceId === KNOWN_WORKSPACE
+        ? ok([{ taskId: "task-1", title: "Ship the thing", status: "todo", priority: "p0" }])
+        : err(notFoundWorkspace(workspaceId)),
   };
   return { ...base, ...overrides };
 }
@@ -509,6 +516,40 @@ describe("buildQueryRouter — UI-safe read-model serving (§10/§13)", () => {
     const invRes2 = await makeCaller(fakePort({ calendar: () => ok([inverted]) })).query.calendar();
     expect(isOk(invRes2)).toBe(true);
     if (isOk(invRes2)) expect(invRes2.value).toEqual({ entries: [] });
+  });
+
+  it("query.taskRollup is EMPTY-UNTIL-PRODUCER: no task_rollup row ⇒ ok({items:[]}) (dormant producer)", async () => {
+    const caller = makeCaller(fakePort({ taskRollup: () => ok([]) }));
+    const res = await caller.query.taskRollup({ workspaceId: KNOWN_WORKSPACE });
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value).toEqual({ items: [] });
+  });
+
+  it("query.taskRollup PER-ROW DROPS a leaky row (multi-line title) but KEEPS valid rows — leak-safe snapshot, distinct from the whole-err siblings", async () => {
+    const valid = { taskId: "t1", title: "valid task", status: "todo" as const, priority: "p0" as const };
+    const leaky = { taskId: "t2", title: "line one\nleaked raw body", status: "todo" as const }; // multi-line title fails uiSafeSummaryLine
+    const caller = makeCaller(fakePort({ taskRollup: () => ok([valid, leaky]) }));
+    const res = await caller.query.taskRollup({ workspaceId: KNOWN_WORKSPACE });
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value.items.map((i) => i.taskId)).toEqual(["t1"]); // leaky row DROPPED, valid kept
+  });
+
+  it("query.taskRollup CAPS at 200 (server-bounded — never trust the stored JSON length)", async () => {
+    const many = Array.from({ length: 250 }, (_, i) => ({
+      taskId: `t${i}`,
+      title: `task ${i}`,
+      status: "todo" as const,
+      priority: "p1" as const,
+    }));
+    const caller = makeCaller(fakePort({ taskRollup: () => ok(many) }));
+    const res = await caller.query.taskRollup({ workspaceId: KNOWN_WORKSPACE });
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value.items.length).toBe(200);
+  });
+
+  it("query.taskRollup fails closed on an UNKNOWN workspace (typed err — WS-8, no rows)", async () => {
+    const res = await makeCaller(fakePort()).query.taskRollup({ workspaceId: "ws-unknown" });
+    expect(isErr(res)).toBe(true);
   });
 
   it("approval inbox returns UI-safe Approval cards only", async () => {

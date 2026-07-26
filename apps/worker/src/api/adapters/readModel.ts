@@ -40,6 +40,7 @@ import {
   type UiSafeProjectDashboard,
   type UiSafeIngestionItem,
   type UiSafeScheduleEntry,
+  type UiSafeTaskRollupItem,
 } from "@sow/contracts";
 import type {
   ReadModelRepository,
@@ -70,6 +71,8 @@ export const READ_MODEL_KEYS = {
   ingestion: "ingestion_inbox",
   /** Project dashboards — workspace-scoped deterministic-progress project cards (§9.5). */
   projectDashboards: "project_dashboards",
+  /** Task rollup — workspace-scoped pre-ranked highest-priority tasks (§13.16; empty-until-producer). */
+  taskRollup: "task_rollup",
   /** GCL sanitized cross-workspace surface (workspaceId = null). */
   global: "global_surface",
   /** Calendar availability — the GLOBAL busy/free schedule (workspaceId = null; §9.9; empty-until-producer). */
@@ -293,6 +296,35 @@ export function readScheduleEntries(data: unknown): readonly UiSafeScheduleEntry
 }
 
 /**
+ * Read the `items` array off the task-rollup read-model payload → candidate UiSafeTaskRollupItem[]
+ * (§13.16). A malformed payload → `[]`; a structurally-malformed row (missing/non-string
+ * `taskId`/`title`/`status`) is DROPPED. Copies ONLY the six allowlisted field names by EXPLICIT copy —
+ * a stray `workspaceId`/raw field on a stored row can NEVER ride through this narrowing (WS-8). The
+ * strict enum/format re-validation + the leak-safe PER-ROW DROP live downstream in `queries.ts`'s
+ * `sanitizeTaskRollup` (defense-in-depth). Mirrors {@link readIngestionItems}/{@link readScheduleEntries}.
+ */
+export function readTaskRollupItems(data: unknown): readonly UiSafeTaskRollupItem[] {
+  const rows = pluckArray(data, "items");
+  const out: UiSafeTaskRollupItem[] = [];
+  for (const row of rows) {
+    if (typeof row !== "object" || row === null) continue;
+    const r = row as Record<string, unknown>;
+    if (typeof r["taskId"] === "string" && typeof r["title"] === "string" && typeof r["status"] === "string") {
+      const item: UiSafeTaskRollupItem = {
+        taskId: r["taskId"],
+        title: r["title"],
+        status: r["status"] as UiSafeTaskRollupItem["status"],
+      };
+      if (typeof r["priority"] === "string") item.priority = r["priority"] as UiSafeTaskRollupItem["priority"];
+      if (typeof r["dueDate"] === "string") item.dueDate = r["dueDate"];
+      if (typeof r["projectRef"] === "string") item.projectRef = r["projectRef"];
+      out.push(item);
+    }
+  }
+  return out;
+}
+
+/**
  * Read the `projects` array off the project-dashboards read-model payload → candidate
  * UiSafeProjectDashboard[]. A malformed payload → `[]`; a non-object row is dropped. This is
  * a THIN transport narrowing only — every field (and the REQ-F-011 cross-field progress
@@ -411,6 +443,9 @@ export interface DbReadModelQueryPortAsync {
   readonly projectDashboards: (
     workspaceId: string,
   ) => Promise<Result<readonly UiSafeProjectDashboard[], FailureVariant>>;
+  readonly taskRollup: (
+    workspaceId: string,
+  ) => Promise<Result<readonly UiSafeTaskRollupItem[], FailureVariant>>;
 }
 
 /**
@@ -552,6 +587,21 @@ export function createDbReadModelQueryPort(
       const rm = await getReadModel(readModels, READ_MODEL_KEYS.projectDashboards, workspaceId);
       if (isErr(rm)) return rm;
       return ok(rm.value === undefined ? [] : readProjectDashboards(rm.value.data));
+    },
+
+    async taskRollup(
+      workspaceId: string,
+    ): Promise<Result<readonly UiSafeTaskRollupItem[], FailureVariant>> {
+      // §13.16 task rollup — workspace-scoped, fail-closed (an unknown workspace never reaches the rows).
+      // An absent row is an EMPTY ok list (EMPTY-UNTIL-PRODUCER: the DEFERRED refreshTaskRollup populates
+      // it later). Candidate rows are re-validated (strict enum/format + per-row DROP) by queries.ts's
+      // `sanitizeTaskRollup` — this binding only narrows the transport shape.
+      const known = await resolveKnownWorkspace(readModels, workspaceId);
+      if (isErr(known)) return known;
+      if (!known.value) return err(unknownWorkspace());
+      const rm = await getReadModel(readModels, READ_MODEL_KEYS.taskRollup, workspaceId);
+      if (isErr(rm)) return rm;
+      return ok(rm.value === undefined ? [] : readTaskRollupItems(rm.value.data));
     },
 
     async globalSurface(): Promise<Result<readonly GclProjection[], FailureVariant>> {

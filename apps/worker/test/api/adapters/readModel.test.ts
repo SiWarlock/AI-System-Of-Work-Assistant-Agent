@@ -405,6 +405,35 @@ describe("createDbReadModelQueryPort — ingestion + approval inboxes", () => {
     expect(isErr(unknown)).toBe(true); // fail-closed (WS-8)
   });
 
+  it("taskRollup reads the workspace-scoped task_rollup read-model: absent → empty; field-copy drops a smuggled workspaceId + a malformed row; UNKNOWN → fail-closed (WS-8)", async () => {
+    const o = await freshDb();
+    await seedRegistry(o, [KNOWN_WS]);
+    let port = createDbReadModelQueryPort(o.repos);
+    // Absent row → empty ok (§13.16 empty-until-producer).
+    let res = await port.taskRollup(KNOWN_WS);
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value).toEqual([]);
+
+    await seedReadModel(o, READ_MODEL_KEYS.taskRollup, KNOWN_WS, {
+      items: [
+        { taskId: "t1", title: "Ship it", status: "todo", priority: "p0", dueDate: "2026-07-25T00:00:00.000Z", projectRef: "prj-1", workspaceId: "smuggled" },
+        { taskId: "t-bad", status: "todo" }, // missing title → dropped by the transport guard
+      ],
+    });
+    port = createDbReadModelQueryPort(o.repos);
+    res = await port.taskRollup(KNOWN_WS);
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) {
+      expect(res.value.length).toBe(1); // malformed row dropped
+      expect(res.value[0]!.taskId).toBe("t1");
+      // Field-copy: a smuggled `workspaceId` on the stored row NEVER rides through (WS-8).
+      expect((res.value[0]! as unknown as Record<string, unknown>)["workspaceId"]).toBeUndefined();
+    }
+
+    const unknownTr = await port.taskRollup(UNKNOWN_WS);
+    expect(isErr(unknownTr)).toBe(true); // fail-closed (WS-8)
+  });
+
   it("ingestionInbox is WORKSPACE-SCOPED: workspace A's rows NEVER surface for workspace B (WS-8 shared-global-key guard — safety rule 4)", async () => {
     const o = await freshDb();
     const A = KNOWN_WS;

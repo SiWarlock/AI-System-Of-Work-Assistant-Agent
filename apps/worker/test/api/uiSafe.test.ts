@@ -356,6 +356,7 @@ function makeServerDeps(over: { expectedToken?: SessionToken } = {}) {
       calendar: () => emptyErr,
       recentChanges: () => emptyErr,
       projectDashboards: () => emptyErr,
+      taskRollup: () => emptyErr,
     },
     // Copilot ask backend — never exercised by these serving tests; empty fixtures fail closed.
     copilot: {

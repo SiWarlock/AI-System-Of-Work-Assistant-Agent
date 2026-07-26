@@ -54,6 +54,9 @@ import {
   type UiSafeSchedule,
   type UiSafeScheduleEntry,
   UiSafeScheduleEntrySchema,
+  type UiSafeTaskRollup,
+  type UiSafeTaskRollupItem,
+  UiSafeTaskRollupItemSchema,
   type UiSafeCopilotAnswer,
 } from "@sow/contracts";
 import { computePercent } from "@sow/workflows";
@@ -162,6 +165,15 @@ export interface ReadModelQueryPort {
   readonly projectDashboards: (
     workspaceId: string,
   ) => MaybeAsyncResult<readonly UiSafeProjectDashboard[]>;
+  /**
+   * Task rollup (§13.16) — workspace-scoped candidate UiSafeTaskRollupItem rows a DEFERRED write-time
+   * producer emitted, PRE-RANKED by real priority/dueDate (never a model signal). Unknown workspace →
+   * typed err (fail-closed). EMPTY-UNTIL-PRODUCER: an absent read-model row → ok([]). The emitted shape
+   * carries no workspaceId (WS-8). NOT a cross-workspace path. `sanitizeTaskRollup` per-row-drops a leaky row.
+   */
+  readonly taskRollup: (
+    workspaceId: string,
+  ) => MaybeAsyncResult<readonly UiSafeTaskRollupItem[]>;
 }
 
 /** A port result that may be delivered synchronously (the fake) or async (@sow/db). */
@@ -459,6 +471,31 @@ function sanitizeCalendar(
   return ok({ entries: out.slice(0, SCHEDULE_ENTRIES_CAP) });
 }
 
+/** Max task-rollup rows the surface serves (mirrors UiSafeTaskRollupSchema.max(200) + the write cap). */
+const TASK_ROLLUP_CAP = 200;
+
+/**
+ * The task-rollup read boundary (§13.16 / §11 highest-priority tasks): RE-VALIDATE each candidate row
+ * through the frozen `.strict()` `UiSafeTaskRollupItemSchema` (enum status/priority + single-line title
+ * bound + opaque-ref grammar) and PER-ROW DROP a leaky/malformed row (safeParse-fail ⇒ skip). This is
+ * deliberately DISTINCT from the event-stream siblings' whole-list ERR (sanitizeRecentChanges/Ingestion)
+ * and the calendar whole-degrade-to-empty (sanitizeCalendar): a task-rollup SNAPSHOT has NO silent-free
+ * hazard, so a leaky row is simply dropped (never renders ⇒ WS-8/leak-safe) while a partial priority list
+ * stays useful. The producer validates on write, so a read-time drop signals store corruption (a
+ * drop-count health signal is a Future-TODO). Preserves the producer's rank order; re-caps at 200.
+ */
+function sanitizeTaskRollup(
+  r: Result<readonly UiSafeTaskRollupItem[], FailureVariant>,
+): Result<UiSafeTaskRollup, FailureVariant> {
+  if (!r.ok) return r; // a genuine store fault / unknown-workspace err propagates
+  const out: UiSafeTaskRollupItem[] = [];
+  for (const item of r.value) {
+    const parsed = UiSafeTaskRollupItemSchema.safeParse(item);
+    if (parsed.success) out.push(parsed.data); // per-row DROP on failure (leak-safe snapshot posture)
+  }
+  return ok({ items: out.slice(0, TASK_ROLLUP_CAP) });
+}
+
 /**
  * The Project dashboards read boundary (§9.5). Two-stage, fail-CLOSED on any bad row:
  *  1. Structural re-validation through the frozen `UiSafeProjectDashboardSchema` (the schema
@@ -665,6 +702,18 @@ export function buildQueryRouter(deps: QueryRouterDeps) {
       authedResolver<WorkspaceInput, readonly UiSafeProjectDashboard[]>(
         async (_ctx, input): Promise<Result<readonly UiSafeProjectDashboard[], FailureVariant>> =>
           sanitizeProjectDashboards(await readModel.projectDashboards(input.workspaceId)),
+      ),
+    ),
+
+    /**
+     * Task rollup (§13.16 / §11 highest-priority tasks) — the workspace's PRE-RANKED tasks (by real
+     * priority/dueDate, never a model signal), each re-validated + a leaky row per-row-dropped + capped.
+     * Unknown workspace → typed err (fail-closed). Empty-until-producer. NOT a cross-workspace path.
+     */
+    taskRollup: publicProcedure.input(parseWorkspaceInput).query(
+      authedResolver<WorkspaceInput, UiSafeTaskRollup>(
+        async (_ctx, input): Promise<Result<UiSafeTaskRollup, FailureVariant>> =>
+          sanitizeTaskRollup(await readModel.taskRollup(input.workspaceId)),
       ),
     ),
 
