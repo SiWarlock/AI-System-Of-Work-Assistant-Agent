@@ -28,7 +28,7 @@ export { createGithubHttpTransport } from "./github";
 export { createLinearHttpTransport } from "./linear";
 export { createGmailHttpTransport } from "./gmail";
 export { createCalendarConnector } from "./calendar";
-export { createTodoistConnector } from "./todoist";
+export { createTodoistConnector, createTodoistHttpTransport } from "./todoist";
 export { createLinearConnector } from "./linear";
 export { createAsanaConnector } from "./asana";
 export { createGranolaConnector } from "./granola";
