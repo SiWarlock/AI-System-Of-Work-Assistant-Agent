@@ -1,0 +1,219 @@
+// 13.8d — the living-vault rewrite adapter: the composition-root half of §6 KN-10 ("the vault rewrites
+// itself" around an ingested source). It adapts `@sow/knowledge`'s `rewriteVaultForSource` onto the
+// workflow-layer `SourceLivingVaultPort` and — the load-bearing part — REALPATH-CONTAINS every note path
+// the derived plans touch before any of them can reach KnowledgeWriter.
+//
+// dormancy-waiver(13.8d): arming runs through boot.ts `gateLivingVaultRewrite` (strict `=== true` + a
+// non-empty vaultRoot). The strict check lives at the composition root rather than in this file —
+// "logic-in-package, wire-at-boot" — which is why this module carries the waiver marker instead of an
+// `=== true` of its own.
+//
+// ⚠ STATE OF THE WIRING (do not read the line above as "already live"): `gateLivingVaultRewrite` has NO
+// call site in `bootWorker` yet, and nothing constructs the `IngestRewriteDeps` the real rewrite needs.
+// So `ProofSpineParams.livingVault` is never populated, `createLivingVaultActivity(undefined)` returns an
+// empty plan set, and the capability is inert by ABSENCE as well as by flag. Completing that call site
+// (plus the `linkCandidates` threading below) is the arming follow-up.
+//
+// WHY CONTAINMENT LIVES HERE. The note paths in a rewrite plan are derived from SYNTHESIZED entity
+// content, and the KnowledgeWriter commit gate does not itself verify that a note path lies inside the
+// workspace tree (the vault does `join(root, note.path)` verbatim) — so this adapter is the enforcer, the
+// same role `projections/noteSlug.ts` plays for the meeting/project paths. It cannot live in
+// `runSourceIngestion`: that driver is Temporal workflow-sandbox code, where an `fs` call is a
+// determinism violation as well as a layering one.
+import { realpathSync } from "node:fs";
+import { dirname, resolve, sep } from "node:path";
+import { ok, err } from "@sow/contracts";
+import type { KnowledgeMutationPlan, Result, WorkspaceId } from "@sow/contracts";
+import { rewriteVaultForSource } from "@sow/knowledge";
+import type { IngestRewriteDeps } from "@sow/knowledge";
+import type {
+  SourceLivingVaultPort,
+  LivingVaultFailure,
+  SourceNoteIdentity,
+  ValidatedExtraction,
+} from "@sow/workflows/ports/sourceIngestion";
+
+/** Derives the plan set for one ingested source. Production binds {@link createIngestRewriteAdapter}. */
+export type LivingVaultRewrite = (
+  validated: ValidatedExtraction,
+  workspaceId: WorkspaceId,
+  source: SourceNoteIdentity,
+) => Promise<{ readonly plans: readonly KnowledgeMutationPlan[] }>;
+
+export interface LivingVaultAdapterDeps {
+  /** The configured vault root. Containment is enforced against its REAL path. */
+  readonly vaultRoot: string;
+  readonly rewrite: LivingVaultRewrite;
+}
+
+/**
+ * Every note path a plan touches — creates, patches, link sources, frontmatter targets. A non-string or
+ * empty path is returned as the sentinel `""`, which containment rejects (fail-closed: an unreadable
+ * path is never treated as "nothing to check").
+ */
+function touchedPaths(plan: KnowledgeMutationPlan): readonly string[] {
+  const out: string[] = [];
+  const add = (path: unknown): void => {
+    out.push(typeof path === "string" && path.length > 0 ? path : "");
+  };
+  for (const c of plan.creates ?? []) add(c.path);
+  for (const p of plan.patches ?? []) add(p.path);
+  for (const l of plan.linkMutations ?? []) add(l.srcPath);
+  for (const f of plan.frontmatterUpdates ?? []) add(f.path);
+  return out;
+}
+
+/**
+ * Is `rel` contained by `rootReal` (an already-realpath'd vault root)?
+ *
+ * Two layers, mirroring `copilotVaultRead.ts:104`:
+ *  1. LEXICAL — `resolve` collapses `..` and makes an absolute `rel` escape visibly; anything not strictly
+ *     under the root is rejected without touching the filesystem.
+ *  2. REAL — the lexical result is resolved to its REAL path so a symlinked directory inside the vault
+ *     that points outside it is caught. A plan's note usually does NOT exist yet (it is a CREATE), so we
+ *     resolve the DEEPEST EXISTING ANCESTOR: that is where a symlink could be hiding, and it is equivalent
+ *     to realpathing the file itself once the file exists.
+ *
+ * Fail-closed throughout: an unresolvable root, an empty path, or a walk that runs out of ancestors is
+ * NOT contained.
+ */
+function isContained(rootReal: string, rel: string): boolean {
+  if (rel.length === 0) return false;
+  const lexical = resolve(rootReal, rel);
+  if (lexical === rootReal || !lexical.startsWith(rootReal + sep)) return false;
+
+  let probe = lexical;
+  for (;;) {
+    try {
+      const real = realpathSync(probe);
+      return real === rootReal || real.startsWith(rootReal + sep);
+    } catch (cause) {
+      // ONLY "this component does not exist yet" justifies climbing to the parent — that is the CREATE
+      // case. Any other fault (EACCES, ELOOP, ENAMETOOLONG) means we could not VERIFY this component,
+      // and climbing past it would report "contained" for a path we never actually resolved.
+      const code = (cause as NodeJS.ErrnoException | undefined)?.code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") return false;
+      const parent = dirname(probe);
+      if (parent === probe) return false; // walked past the filesystem root — nothing resolvable
+      probe = parent;
+    }
+  }
+}
+
+/**
+ * Build the {@link SourceLivingVaultPort}: derive the plan set, then admit it ONLY if EVERY path in EVERY
+ * plan is contained. Rejection is ALL-OR-NOTHING — admitting the contained subset of a plan set whose
+ * sibling escaped is precisely the partial-write the pipeline forbids.
+ *
+ * Never throws (§16): a throwing/rejecting rewrite folds onto `rewrite_failed`. Faults carry NO path and
+ * NO content (safety rule 7) — the operator sees the class of problem, the health sink never sees the
+ * vault layout.
+ */
+export function createLivingVaultPort(deps: LivingVaultAdapterDeps): SourceLivingVaultPort {
+  return {
+    async rewrite(
+      validated: ValidatedExtraction,
+      workspaceId: WorkspaceId,
+      source: SourceNoteIdentity,
+    ): Promise<Result<readonly KnowledgeMutationPlan[], LivingVaultFailure>> {
+      let plans: readonly KnowledgeMutationPlan[];
+      try {
+        const receipt = await deps.rewrite(validated, workspaceId, source);
+        plans = receipt?.plans ?? [];
+      } catch {
+        return err({ code: "rewrite_failed", message: "living-vault rewrite failed" });
+      }
+
+      let rootReal: string;
+      try {
+        rootReal = realpathSync(resolve(deps.vaultRoot));
+      } catch {
+        // An unresolvable vault root cannot contain anything — refuse rather than write blind.
+        return err({ code: "path_escape", message: "vault root could not be resolved" });
+      }
+
+      for (const plan of plans) {
+        // WS-8 re-gate at the last chokepoint before these plans cross into the commit path. Today the
+        // adapter stamps the workspace itself (content cannot redirect it), so this can only fire on a
+        // future adapter that derives it — which is exactly when a silent cross-workspace write would
+        // otherwise become possible (the read-back re-gate discipline of worker L12/L32).
+        if (String(plan.workspaceId) !== String(workspaceId)) {
+          return err({
+            code: "path_escape",
+            message: "a derived plan targeted a different workspace than the routing-bound one",
+          });
+        }
+        for (const path of touchedPaths(plan)) {
+          if (!isContained(rootReal, path)) {
+            return err({
+              code: "path_escape",
+              message: "a derived note path resolved outside the vault root",
+            });
+          }
+        }
+      }
+      return ok(plans);
+    },
+  };
+}
+
+/**
+ * The ARMING gate as an activity delegate. The Temporal wrapper is the ONLY production entry into
+ * `runSourceIngestion`, and the workflow sandbox cannot read boot config — so it always binds this
+ * delegate and the arming decision is made HERE, where the composition root's gate result is visible.
+ *
+ * UNARMED (`port` undefined — the shipped default) ⇒ `ok([])`: an EMPTY plan set, deliberately NOT a
+ * failure. An empty set adds no commit and routes no health item, so every observable outcome of the
+ * dormant pipeline is identical to pre-13.8d; returning a failure instead would surface a spurious
+ * degrade on every ingest. ARMED ⇒ the contained, realpath-checked plan set from {@link createLivingVaultPort}.
+ */
+export function createLivingVaultActivity(
+  port: SourceLivingVaultPort | undefined,
+): SourceLivingVaultPort["rewrite"] {
+  return (
+    validated: ValidatedExtraction,
+    workspaceId: WorkspaceId,
+    source: SourceNoteIdentity,
+  ): Promise<Result<readonly KnowledgeMutationPlan[], LivingVaultFailure>> =>
+    port === undefined
+      ? Promise.resolve(ok([]))
+      : port.rewrite(validated, workspaceId, source);
+}
+
+/**
+ * Adapt the real `rewriteVaultForSource` onto {@link LivingVaultRewrite}. The knowledge-side deps
+ * (gbrain / reason / sections / structural / id minters) are supplied by the caller at arming time — this
+ * module only maps the port's arguments onto `IngestRewriteInput`, so it stays free of provider wiring.
+ *
+ * `provenanceOrigin` + `sourceRefs` are stamped from the ROUTING-BOUND workspace + the per-file source
+ * identity — never from extracted content (WS-2/WS-8: content can never redirect which workspace or
+ * source a rewrite is attributed to).
+ *
+ * ⚠ DELIBERATELY MINIMAL, and NOT yet the full adapter. `IngestRewriteInput` also accepts
+ * `linkCandidates` (the entity context the synthesis planner links against), `confidence`, and `date`;
+ * deriving those from the validated extraction is its own piece of work, so `validated` is intentionally
+ * unread here. Consequence while it stays this way: an ARMED run synthesizes against NO entity
+ * candidates and will mostly produce a thin or empty plan set. That is acceptable only because this
+ * ships DORMANT — it must be completed before the capability is armed (Step-9 follow-up).
+ */
+export function createIngestRewriteAdapter(knowledgeDeps: IngestRewriteDeps): LivingVaultRewrite {
+  return async (
+    _validated: ValidatedExtraction,
+    workspaceId: WorkspaceId,
+    source: SourceNoteIdentity,
+  ): Promise<{ readonly plans: readonly KnowledgeMutationPlan[] }> => {
+    const receipt = await rewriteVaultForSource(
+      {
+        workspaceId,
+        // `ingestion` is the ProvenanceOrigin member for this path (shared-enums.ts). It must be a real
+        // member: `rewriteVaultForSource` is TOTAL (any internal fault yields an EMPTY receipt), so an
+        // invalid origin would fail the plan schema INSIDE the planner and surface as "armed, spends,
+        // produces nothing" rather than as an error — the L64 failure class.
+        provenanceOrigin: "ingestion",
+        sourceRefs: [{ sourceId: String(source.sourceId) }],
+      },
+      knowledgeDeps,
+    );
+    return { plans: receipt.plans };
+  };
+}

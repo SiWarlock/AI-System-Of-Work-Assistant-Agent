@@ -46,6 +46,7 @@ import type {
   ExternalWriteEnvelope,
   FailureClass,
   AuditId,
+  KnowledgeMutationPlan,
 } from "@sow/contracts";
 import type { SourceState } from "@sow/domain";
 import { sourceMachine } from "@sow/domain";
@@ -67,6 +68,8 @@ import type {
   SourceWorkflowFailure,
   SourceAgentFailureCode,
   KnowledgeCommitFailureCode,
+  SourceLivingVaultPort,
+  LivingVaultFailure,
 } from "../ports/sourceIngestion";
 
 // --- input -----------------------------------------------------------------
@@ -103,6 +106,17 @@ export interface SourceIngestionDeps {
   readonly health: SourceHealthSink;
   readonly runs: WorkflowRunRefRepository;
   readonly clock: Clock;
+  /**
+   * 13.8d — the OPTIONAL living-vault rewrite seam (§6 KN-10: the vault rewrites itself around an
+   * ingested source). UNBOUND skips the leg entirely. NOTE that the production Temporal wrapper ALWAYS
+   * binds it (the sandbox cannot read boot config, so the arming gate lives in the activity, which
+   * returns an empty plan set while unarmed): on that path the dormant cost is one inert activity call,
+   * and every OBSERVABLE pipeline outcome — plans committed, health items, resting state — is identical
+   * to pre-13.8d. "Unbound" remains the shape used by direct/unit drivers.
+   * The strict `=== true` arming check lives at the COMPOSITION ROOT (worker boot), not here —
+   * "logic-in-package, wire-at-boot": this driver only ever sees "bound or not".
+   */
+  readonly livingVault?: SourceLivingVaultPort;
 }
 
 // --- driver outcome --------------------------------------------------------
@@ -445,6 +459,44 @@ export async function runSourceIngestion(
   const plan = built.value.plan;
   const actions = built.value.actions;
 
+  // 6b. LIVING VAULT (13.8d / §6 KN-10) — derive the mutations that keep the REST of the vault true
+  //     around this new source (entity updates + index/op-log parity), so ingestion is not merely
+  //     "append one note". DORMANT BY DEFAULT: `livingVault` is optional and the shipped composition
+  //     leaves it unbound (the strict `=== true` arming flag lives at the composition root), so the
+  //     whole leg is skipped and the pipeline stays byte-equivalent to pre-13.8d.
+  //
+  //     BEST-EFFORT BY DESIGN: the derived source note is what this pipeline guarantees, so a rewrite
+  //     that fails — or even THROWS, which a §16 port must not do but we refuse to trust — degrades to
+  //     the single-note path rather than losing the ingest. The degrade is surfaced (inv-5: never
+  //     silent) and, because it happens BEFORE any commit, it can never leave a partial write.
+  const livingVaultPlans: KnowledgeMutationPlan[] = [];
+  if (deps.livingVault !== undefined) {
+    let rewritten: Result<readonly KnowledgeMutationPlan[], LivingVaultFailure> | undefined;
+    try {
+      rewritten = await deps.livingVault.rewrite(validated.value, boundWorkspaceId, {
+        sourceId: context.source.sourceId,
+        contentHash: context.source.contentHash,
+      });
+    } catch {
+      // A thrown error carries an untrusted message (and possibly a path) — we deliberately keep it
+      // out of the health item (safety rule 7) and record only the fact of the degrade.
+      rewritten = undefined;
+    }
+    if (rewritten === undefined || !isOk(rewritten)) {
+      const reason = rewritten === undefined ? "rewrite_threw" : rewritten.error.code;
+      // `sync_lagging` mirrors the step-8 index/sync degrade: the committed truth stands while a
+      // DERIVED view of it is now behind — here the vault's entity/index parity, there GBrain's.
+      await deps.health.surface({
+        failureClass: "sync_lagging",
+        subjectRef: input.run.workflowId,
+        message: `living-vault rewrite degraded (source note stands): ${reason}`,
+        auditRef: input.run.workflowId as unknown as AuditId,
+      });
+    } else {
+      livingVaultPlans.push(...rewritten.value);
+    }
+  }
+
   // The candidate is now a proposal (validated + derived).
   state = advance(state, ["proposed"]);
 
@@ -462,6 +514,47 @@ export async function runSourceIngestion(
     );
   }
   context = { ...context, revisionId: committed.value.revisionId };
+
+  // 7b. Commit the living-vault plans through the SAME KnowledgeWriter port (13.8d). Safety rule 1:
+  //     the binding introduces NO second writer — it hands additional VALIDATED plans to the existing
+  //     commit path, which re-runs the write gate on each. Ordered AFTER the source note so that note's
+  //     revision is durable first; each plan is individually idempotent, so a re-drive replays.
+  //     Empty on the shipped default (the leg above never ran), so this loop is a no-op.
+  //
+  //     ⛔ AUTO TIER ONLY. The living-vault planner emits up to TWO plans: an AUTO one (additive,
+  //     derived, reversible) and a PROPOSE one carrying the human-relevant edits (§6 KN-10 tiered
+  //     autonomy). A plan marked `requiresApproval` belongs to the §9.8 Approvals surface — committing
+  //     it here would auto-apply exactly the class of edit the approval gate exists to hold. It is
+  //     WITHHELD instead, and the withholding is surfaced so it is never a silent drop.
+  //     The test is strict `!== false`: an absent/unknown flag withholds (fail-closed — only an
+  //     explicit auto-tier plan is auto-committed).
+  let withheldForApproval = 0;
+  for (const livingVaultPlan of livingVaultPlans) {
+    if (livingVaultPlan.requiresApproval !== false) {
+      withheldForApproval += 1;
+      continue;
+    }
+    const extra = await deps.commit.commit(livingVaultPlan);
+    if (!isOk(extra)) {
+      // BEST-EFFORT, matching step 8: the source note's revision is already durable and the living
+      // vault is an enrichment of it, so a parity-plan failure is surfaced (inv-5) and the pipeline
+      // continues rather than failing a run whose primary output succeeded.
+      await deps.health.surface({
+        failureClass: commitFailureClass(extra.error.code),
+        subjectRef: input.run.workflowId,
+        message: `living-vault commit failed (source note stands): ${extra.error.code}`,
+        auditRef: input.run.workflowId as unknown as AuditId,
+      });
+    }
+  }
+  if (withheldForApproval > 0) {
+    await deps.health.surface({
+      failureClass: "conflict_review",
+      subjectRef: input.run.workflowId,
+      message: `living-vault withheld ${withheldForApproval} approval-required plan(s) — pending §9.8 approval routing`,
+      auditRef: input.run.workflowId as unknown as AuditId,
+    });
+  }
 
   // 8. Index GBrain / sync NotebookLM AFTER the commit — idempotent, and it NEVER
   //    rolls the commit back. An index/sync failure surfaces but the commit stands.

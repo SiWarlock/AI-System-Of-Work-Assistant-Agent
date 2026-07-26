@@ -404,6 +404,13 @@ export interface BootConfig extends BackendsConfig {
    */
   readonly copilotProposeMode?: boolean;
   /**
+   * 13.8d — the OWNER opt-in that arms the living-vault rewrite on the source-ingestion path (§6 KN-10:
+   * ingesting a source also updates the entities/index/op-log it bears on). ABSENT (the shipped default)
+   * ⇒ the leg is unbound and ingestion is byte-equivalent to pre-13.8d. Read ONLY through
+   * {@link gateLivingVaultRewrite}, which requires a strict `=== true` AND a configured `vaultRoot`.
+   */
+  readonly livingVaultRewrite?: boolean;
+  /**
    * §13.10a — mirror flag for the SEMANTIC-write propose tool (`copilot.propose_knowledge`). OFF by default.
    * EFFECTIVE only when the dispatch side is provisioned (`proofSpineParams`) — else a proposed card could not
    * be committed on approval. Mutually exclusive with `copilotProposeMode` (both on ⇒ the capability resolver
@@ -627,6 +634,33 @@ export function createFsVaultUsable(): (root: string) => boolean {
       return false; // missing dir / read error / permission ⇒ fail-safe inert
     }
   };
+}
+
+/**
+ * 13.8d arming gate for the LIVING-VAULT rewrite (§6 KN-10). Build the wiring (via `buildWiring`, which
+ * receives the narrowed `vaultRoot`) IFF the owner opt-in is strictly `true` AND a `vaultRoot` is
+ * configured; any missing precondition ⇒ `undefined` (fail-safe — `SourceIngestionDeps.livingVault` stays
+ * unbound and source ingestion is byte-equivalent to pre-13.8d).
+ *
+ * STRICT `=== true`, not truthiness (worker L28 / knowledge L2): this flag reaches the worker through
+ * config that is ultimately env/IPC-derived, where `"true"`, `"false"`, and `1` are ALL truthy — and the
+ * capability it arms MUTATES the vault beyond the ingested note. A truthy-non-`true` value silently
+ * arming that is the exact false-green vector those lessons exist to close.
+ *
+ * `buildWiring` is a THUNK invoked ONLY on the armed path (worker L2/L16), so the OFF path constructs
+ * nothing — no adapter, no knowledge deps, no fs handles. Exported for the boot-gating unit test
+ * (`test/boot-living-vault-gating.test.ts`); it has no other consumer.
+ */
+export function gateLivingVaultRewrite<T>(
+  gate: { readonly livingVaultRewrite?: boolean; readonly vaultRoot?: string },
+  buildWiring: (vaultRoot: string) => T,
+): T | undefined {
+  // The vaultRoot half is checked as strictly as the flag: `""` would make the containment check
+  // `resolve("")` to the worker's CWD and then cheerfully report every path as "contained", and a
+  // null/non-string (plausible from JSON/IPC-derived config) would throw at `resolve`. Neither may arm.
+  if (gate.livingVaultRewrite !== true) return undefined;
+  if (typeof gate.vaultRoot !== "string" || gate.vaultRoot.length === 0) return undefined;
+  return buildWiring(gate.vaultRoot);
 }
 
 /**

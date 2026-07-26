@@ -82,6 +82,7 @@ import type {
   ValidateExtractionPort,
   BuildOutputsPort,
   SourceBuildOutputsPort,
+  SourceLivingVaultPort,
   CommitKnowledgePort,
   ProposeActionsPort,
   ReindexGbrainPort,
@@ -432,6 +433,14 @@ export async function sourceIngestionWorkflow(
   const health: SourceHealthSink = {
     surface: (failure: SourceWorkflowFailure) => activities.surfaceFailure(failure),
   };
+  // 13.8d — the living-vault leg (§6 KN-10). The delegate is ALWAYS bound because the sandbox cannot
+  // read boot config; the ARMING decision lives in the activity (`createLivingVaultActivity`), which
+  // yields an EMPTY plan set unless the owner-armed port was supplied at the composition root. So the
+  // shipped default derives nothing, commits nothing extra, and surfaces nothing — byte-equivalent.
+  const livingVault: SourceLivingVaultPort = {
+    rewrite: (validated, workspaceId, source) =>
+      activities.sourceLivingVaultRewrite(validated, workspaceId, source),
+  };
 
   const deps: SourceIngestionDeps = {
     register,
@@ -445,6 +454,7 @@ export async function sourceIngestionWorkflow(
     health,
     runs: sandboxRunRepo(),
     clock: workflowClock,
+    livingVault,
   };
 
   return runSourceIngestion(input, deps);

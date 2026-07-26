@@ -106,6 +106,7 @@ import type {
   BuildOutputsPort,
   SourceBuildOutputsPort,
   SourceNoteIdentity,
+  SourceLivingVaultPort,
   CommitKnowledgePort,
   ProposeActionsPort,
   ReindexGbrainPort,
@@ -179,6 +180,10 @@ import { neutralizeFrontmatterValue } from "@sow/workflows/activities/projection
 import { createIngestionInboxProjectionPort, type IngestionInboxProjectionPort } from "../api/projections/ingestionInboxProjection";
 // The per-file ingestion note-path derivation (traversal-safe, content-addressed) — task 11.1.
 import { deriveSourceNotePath, sourceIdentityDigest } from "./sourceNotePath";
+// 13.8d — the living-vault rewrite leg's arming gate. Importing the ACTIVITY factory (not
+// `rewriteVaultForSource` itself) keeps this module free of the knowledge synthesis surface; the real
+// rewrite is bound one hop away in `living-vault.ts`, which carries the dormancy waiver.
+import { createLivingVaultActivity } from "./living-vault";
 // 16.2 — the connector-poll activity + its real resolve binding (16.1 adapters + 15.1 bridge + backoff).
 import { createConnectorPollActivity, type ConnectorPollPort } from "@sow/workflows";
 import { composeConnectors } from "./connectors";
@@ -305,6 +310,14 @@ export interface ProofSpineParams {
    * `createIngestionInboxProjectionPort` (readModels-backed) is the reachability follow-up.
    */
   readonly ingestionPark?: IngestionInboxProjectionPort;
+  /**
+   * 13.8d — the OPTIONAL living-vault rewrite port (§6 KN-10). UNSET is the shipped default ⇒ the
+   * `sourceLivingVaultRewrite` activity is inert (empty plan set) and source ingestion is byte-equivalent
+   * to pre-13.8d. It is TO BE supplied by `boot.ts`'s `gateLivingVaultRewrite` on the owner-armed path
+   * (built via `createLivingVaultPort` — realpath containment against the configured vaultRoot); that
+   * boot call site is the arming follow-up and does NOT exist yet, so today this is always unset.
+   */
+  readonly livingVault?: SourceLivingVaultPort;
 }
 
 // ---------------------------------------------------------------------------
@@ -388,6 +401,14 @@ export interface ProofSpineActivities {
   sourceIndex(
     ...args: Parameters<IndexGbrainPort["index"]>
   ): Promise<Awaited<ReturnType<IndexGbrainPort["index"]>>>;
+  /**
+   * 13.8d — derive the living-vault rewrite's plan set for the ingested source (§6 KN-10). DORMANT in
+   * the shipped default: with no armed port it returns an EMPTY plan set, so no extra commit happens and
+   * the pipeline outcome is identical to pre-13.8d. Armed, it returns the realpath-CONTAINED plans.
+   */
+  sourceLivingVaultRewrite(
+    ...args: Parameters<SourceLivingVaultPort["rewrite"]>
+  ): Promise<Awaited<ReturnType<SourceLivingVaultPort["rewrite"]>>>;
 
   // ── connector sync & health (16.2) ──
   /**
@@ -1129,6 +1150,10 @@ export function buildProofSpineActivities(
     },
     sourcePropose: (action, env) => propose.propose(action, env),
     sourceIndex: (revisionId) => sourceIndexPort.index(revisionId),
+    // 13.8d — the living-vault leg. `params.livingVault` is supplied ONLY by the boot-level
+    // `gateLivingVaultRewrite` (strict `=== true` + a vaultRoot); absent ⇒ the delegate is inert and
+    // yields an empty plan set, so the dormant pipeline commits exactly the one source note it always did.
+    sourceLivingVaultRewrite: createLivingVaultActivity(params.livingVault),
 
     // infra — the failure sink every driver routes through (inv-5).
     // 16.2 — poll one connector (dormant in the shipped default; the resolve binds the real 16.1 adapters).

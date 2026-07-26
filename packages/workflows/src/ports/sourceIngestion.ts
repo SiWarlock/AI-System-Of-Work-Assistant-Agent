@@ -38,6 +38,7 @@ import type {
   SourceId,
   AuditId,
   FailureClass,
+  KnowledgeMutationPlan,
 } from "@sow/contracts";
 import type {
   AgentExtraction,
@@ -129,6 +130,52 @@ export interface SourceBuildOutputsPort {
      */
     body?: string,
   ): Promise<Result<MeetingBuiltOutputs, BuildOutputsFailure>>;
+}
+
+// ---------------------------------------------------------------------------
+// (2c‴) SourceLivingVaultPort — §6 KN-10 "the vault rewrites itself" (task 13.8d)
+// ---------------------------------------------------------------------------
+//
+// Ingesting a source does not only mint that source's own note: it should also update the entities,
+// index, and op-log the new content bears on, so the REST of the vault stays true (§6 KN-10/KN-12).
+// `@sow/knowledge`'s `rewriteVaultForSource` derives exactly that — a ≤2-plan set (one AUTO, one
+// PROPOSE) plus the structural-file parity mutations merged in.
+//
+// It is its OWN port rather than a widened {@link SourceBuildOutputsPort} because that port returns a
+// `MeetingBuiltOutputs` carrying a SINGLE `plan` and is SHARED with meeting-closeout + hermes; routing
+// a plan SET through it would mean changing a shared contract seam for a source-only capability.
+//
+// The port is DELIBERATELY plan-shaped, not vault-shaped: the driver is Temporal workflow-sandbox code,
+// so it must never see a filesystem path it could act on. The adapter behind this port (composition
+// root) is what resolves + realpath-CONTAINS every touched note path against the vault root and folds an
+// escape onto `path_escape` — by the time plans cross this boundary they are already contained.
+
+/**
+ * Closed, enumerable living-vault failure set (§16 — never thrown).
+ *   • `path_escape`    — a derived mutation targeted a note path that, resolved to its REAL path,
+ *     escapes the REAL vault root (a symlink/traversal escape). FAIL-CLOSED: no plan is returned, so
+ *     nothing is written; the message carries NO path (safety rule 7).
+ *   • `rewrite_failed` — the synthesis/rewrite itself could not produce a plan set.
+ */
+export type LivingVaultFailureCode = "path_escape" | "rewrite_failed";
+
+export interface LivingVaultFailure {
+  readonly code: LivingVaultFailureCode;
+  readonly message: string;
+}
+
+/**
+ * Derive the living-vault rewrite's plan set for one ingested source. Every returned plan is committed
+ * through the EXISTING {@link CommitKnowledgePort} (KnowledgeWriter stays the sole Markdown writer —
+ * safety rule 1); this port NEVER writes. Returns a typed failure rather than throwing (§16); the driver
+ * treats ANY failure as a best-effort degrade (the derived source note still commits).
+ */
+export interface SourceLivingVaultPort {
+  rewrite(
+    validated: ValidatedExtraction,
+    workspaceId: WorkspaceId,
+    source: SourceNoteIdentity,
+  ): Promise<Result<readonly KnowledgeMutationPlan[], LivingVaultFailure>>;
 }
 
 // ---------------------------------------------------------------------------
