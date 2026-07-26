@@ -26,9 +26,11 @@ import { Onboarding } from "./surfaces/onboarding";
 import { Connectors } from "./surfaces/connectors";
 import { SystemHealth } from "./surfaces/system-health";
 import { CrossWorkspaceLinks } from "./surfaces/cross-workspace-links";
+import { EgressSettings } from "./surfaces/workspace-settings/egress";
 import { requestVaultOpen, requestVaultReveal } from "./lib/open-in-vault";
 import type { RegisterConnectorInput, ConnectorConfigResult } from "./lib/connector-config";
 import type { CreateCrossWorkspaceLinkInput, CrossWorkspaceLinkResult } from "./lib/cross-workspace-link";
+import type { EgressStatusResult } from "./lib/egress-status";
 import type { Route } from "./store/route";
 import { startLive, type StartLiveHandle } from "./lib/live";
 import type { AskResult } from "./lib/copilot-ask";
@@ -279,6 +281,15 @@ export function App(): ReactElement {
       if (r.ok) store.dispatch((s) => upsertCrossWorkspaceLink(s, r.link));
       return r;
     });
+  // 9.10-C egress posture (⚠ safety rule 5) — READ per workspace, and the ONE fail-SAFE revoke command.
+  // Both fail closed without a live worker: the read resolves {ok:false} → "posture unavailable" (never
+  // "acknowledged"), and the revoke callback is UNDEFINED so the surface offers no dead control. There is
+  // deliberately no ack-ON counterpart — that direction is an owner-gated provisioning-time crossing.
+  const onLoadEgressStatus = (workspaceId: string): Promise<EgressStatusResult> =>
+    liveRef.current?.egressStatus(workspaceId) ?? Promise.resolve({ ok: false as const });
+  const onRevokeEgressAck = (workspaceId: string): Promise<EgressStatusResult> =>
+    liveRef.current?.revokeEgressAck(workspaceId) ?? Promise.resolve({ ok: false as const });
+
   const onCreateCrossLink = (input: CreateCrossWorkspaceLinkInput): Promise<CrossWorkspaceLinkResult> =>
     upsertLinkOnOk(liveRef.current?.createCrossWorkspaceLink(input) ?? Promise.resolve({ ok: false as const }));
   const onApproveCrossLink = (linkId: string): Promise<CrossWorkspaceLinkResult> =>
@@ -336,6 +347,14 @@ export function App(): ReactElement {
         />
       ) : state.route.surface === "system-health" ? (
         <SystemHealth items={[...state.health.values()]} />
+      ) : state.route.surface === "workspace-settings" ? (
+        // 9.10-C — per-workspace egress posture + the audited fail-SAFE revoke (REQ-S-002, rule 5).
+        <EgressSettings
+          workspaces={onboardedWorkspaces}
+          onLoadStatus={onLoadEgressStatus}
+          // No live worker ⇒ no revoke affordance at all (never a silently no-op policy control).
+          onRevoke={hasLiveWorker ? onRevokeEgressAck : undefined}
+        />
       ) : state.route.surface === "cross-workspace-links" ? (
         <CrossWorkspaceLinks
           workspaces={onboardedWorkspaces}

@@ -1949,6 +1949,22 @@ body {
   color: #1fae6b;
   background: rgba(31, 174, 107, 0.12);
 }
+/* 9.10-C egress posture. ACK-ON is the ATTENTION state (raw employer content may reach a cloud
+   provider), ack-off is the calm/safe one — deliberately NOT the usual green=on mapping. `muted`
+   carries the unknown/pending posture, which must never read as permission. */
+.sow-pill--egress-true {
+  color: var(--warn-ink, #b25e00);
+  background: rgba(255, 159, 10, 0.14);
+}
+.sow-pill--egress-false,
+.sow-pill--zero-egress {
+  color: #1fae6b;
+  background: rgba(31, 174, 107, 0.12);
+}
+.sow-pill--muted {
+  color: #8a8a8e;
+  background: rgba(0, 0, 0, 0.06);
+}
 
 /* Inline error banner (role=alert) — a soft red glass strip. */
 .sow-inline-error {
@@ -2038,7 +2054,8 @@ body {
 /* Health list. */
 .sow-health-list,
 .sow-connector-list,
-.sow-link-list {
+.sow-link-list,
+.sow-egress-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -2049,7 +2066,8 @@ body {
 }
 .sow-health-item,
 .sow-connector-item,
-.sow-link-item {
+.sow-link-item,
+.sow-egress-item {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -2060,7 +2078,8 @@ body {
 }
 .sow-health-class,
 .sow-connector-id,
-.sow-link-direction {
+.sow-link-direction,
+.sow-egress-workspace {
   font-weight: 600;
   font-size: 13px;
   color: #1c1c1e;
@@ -2075,7 +2094,8 @@ body {
   margin-left: 0;
 }
 .sow-connector-cadence,
-.sow-link-scope {
+.sow-link-scope,
+.sow-egress-confirm-copy {
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 12px;
   color: var(--label-2, #6b6b70);

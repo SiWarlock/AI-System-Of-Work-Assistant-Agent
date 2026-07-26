@@ -55,6 +55,7 @@ import {
   type CreateCrossWorkspaceLinkInput,
   type CrossWorkspaceLinkResult,
 } from "./cross-workspace-link";
+import { createEgressStatus, createRevokeEgressAck, type EgressStatusResult } from "./egress-status";
 
 /** The live-session handle: stop the stream + drill-down (§9.4) + scope-aware re-hydrate (§9.5). */
 export interface StartLiveHandle {
@@ -91,6 +92,11 @@ export interface StartLiveHandle {
   readonly approveCrossWorkspaceLink: (linkId: string) => Promise<CrossWorkspaceLinkResult>;
   /** Revoke a cross-workspace link (§14.7, wired to crossWorkspaceLink.revoke); fails closed. */
   readonly revokeCrossWorkspaceLink: (linkId: string) => Promise<CrossWorkspaceLinkResult>;
+  /** Read a workspace's egress posture (9.10-C, wired to systemHealth.egressStatus); fails closed. */
+  readonly egressStatus: (workspaceId: string) => Promise<EgressStatusResult>;
+  /** Revoke a workspace's employer raw-egress ack (9.10-C, wired to egressCommand.revokeEgressAck —
+   *  ⚠ rule 5, the audited fail-SAFE OFF direction; there is NO ack-ON counterpart). Fails closed. */
+  readonly revokeEgressAck: (workspaceId: string) => Promise<EgressStatusResult>;
 }
 
 // Connect the UI-safe store to the LIVE worker over the §10 push stream (9.4b E).
@@ -152,6 +158,8 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
     createCrossWorkspaceLink: createCrossWorkspaceLink(live.client),
     approveCrossWorkspaceLink: approveCrossWorkspaceLink(live.client),
     revokeCrossWorkspaceLink: revokeCrossWorkspaceLink(live.client),
+    egressStatus: createEgressStatus(live.client),
+    revokeEgressAck: createRevokeEgressAck(live.client),
   };
 }
 

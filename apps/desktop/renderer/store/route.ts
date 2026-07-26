@@ -18,7 +18,8 @@ export type Route =
   | { readonly surface: "ingestion" }
   | { readonly surface: "connectors" }
   | { readonly surface: "system-health" }
-  | { readonly surface: "cross-workspace-links" };
+  | { readonly surface: "cross-workspace-links" }
+  | { readonly surface: "workspace-settings" };
 
 /**
  * The surface mounted on launch: Today (home). Frozen — it is shared by reference across

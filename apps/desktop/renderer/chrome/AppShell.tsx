@@ -454,6 +454,14 @@ export function AppShell(props: AppShellProps): ReactElement {
             </svg>
           </NavLink>
 
+          {/* Egress — routable (9.10-C workspace-settings egress posture + the fail-SAFE revoke) */}
+          <NavLink surface="workspace-settings" label="Egress" active={route.surface === "workspace-settings"} onNavigate={onNavigate}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5" />
+              <path d="M13.5 10.5L20.5 3.5M20.5 3.5h-4.5M20.5 3.5v4.5" />
+            </svg>
+          </NavLink>
+
           <div className="sow-nav-divider" role="separator" />
 
           {/* Settings */}

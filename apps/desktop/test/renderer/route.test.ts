@@ -56,6 +56,17 @@ describe("route model (§9.5 routing foundation — surface selection, independe
     expect(routeEquals({ surface: "projects" }, { surface: "projects", projectId: "p1" })).toBe(false);
   });
 
+  it("workspace-settings is a routable surface (9.10-C egress) — navigable, structural-equal, scope-preserving", () => {
+    // spec(§11) — the egress posture/revoke surface mounts as its own routable surface (id-less, like Today),
+    // so it is reachable from the shell rather than dead code.
+    const s = navigate(initialStoreState, { surface: "workspace-settings" });
+    expect(s.route).toEqual({ surface: "workspace-settings" });
+    expect(s.scope).toBe(initialStoreState.scope); // routing never touches the WS-8 scope
+    expect(navigate(s, { surface: "workspace-settings" })).toBe(s); // ref-stable no-op
+    expect(routeEquals({ surface: "workspace-settings" }, { surface: "workspace-settings" })).toBe(true);
+    expect(routeEquals({ surface: "workspace-settings" }, { surface: "system-health" })).toBe(false);
+  });
+
   it("approvals is a routable surface — navigable, structural-equal, distinct from other surfaces", () => {
     // §9.8: the Approval inbox mounts as its own surface (id-less, like Today).
     const s = navigate(initialStoreState, { surface: "approvals" });

@@ -72,6 +72,25 @@ describe("AppShell — left-rail routing (§9.5, the R2 nav wiring)", () => {
     expect(screen.getByText("ACTIVE-SURFACE-BODY")).toBeTruthy();
   });
 
+  it("Egress is a routable nav item (9.10-C) — clicking navigates to workspace-settings + marks active", () => {
+    // spec(§11) — Step-7.5 reachability for the egress posture/revoke surface: it is reachable from the
+    // left rail, not an orphan component.
+    const onNavigate = vi.fn();
+    const { rerender } = render(
+      <AppShell {...base} onNavigate={onNavigate}>
+        <div>content</div>
+      </AppShell>,
+    );
+    fireEvent.click(screen.getByText("Egress"));
+    expect(onNavigate).toHaveBeenCalledWith({ surface: "workspace-settings" });
+    rerender(
+      <AppShell {...base} route={{ surface: "workspace-settings" }} onNavigate={onNavigate}>
+        <div>content</div>
+      </AppShell>,
+    );
+    expect(screen.getByText("Egress").closest(".sow-nav-item")?.getAttribute("aria-current")).toBe("page");
+  });
+
   it("Approvals is a routable nav item (§9.8) — clicking navigates, and it marks active on route", () => {
     const onNavigate = vi.fn();
     const { rerender } = render(
