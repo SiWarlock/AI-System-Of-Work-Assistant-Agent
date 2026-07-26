@@ -358,3 +358,61 @@ describe("AppShell — §9.4 scope switcher popup keyboard loop (§11 a11y fast-
     expect(document.activeElement).not.toBe(button());
   });
 });
+
+// ── rule-5: the chrome asserts NO egress posture ────────────────────────────────
+//
+// AppShell used to render an unconditional shield-and-checkmark pill reading
+// "Egress: local-only" (aria-label "Egress mode: local-only") with no props and no data source —
+// false in both directions after the egress flip (personal seeded [claude]; employer_work
+// default-seeded ack=true scoped [claude] — both cloud), and asserted to screen readers too.
+// Egress posture is PER-WORKSPACE; persistent chrome cannot know it, so it must claim nothing.
+// The truthful, scope-aware, data-bound pill is task #8 (after 9.22 makes the signal real).
+describe("AppShell — makes no egress claim (⚠ rule-5 false assurance regression pin)", () => {
+  it("chrome_makes_no_egress_claim — the toolbar asserts no egress posture, in text or accessible name", () => {
+    // spec(§5) REQ-S-002 — a safety posture must be DERIVED from governing state, never asserted from
+    // a constant. This is the pin that stops the badge coming back.
+    render(
+      <AppShell {...base}>
+        <div>content</div>
+      </AppShell>,
+    );
+    const NAMING = [
+      "aria-label",
+      "title",
+      "alt",
+      "aria-roledescription",
+      "aria-placeholder",
+      "aria-valuetext",
+      "placeholder",
+    ] as const;
+
+    // (a) DIRECTION-AGNOSTIC. The invariant is "the chrome asserts NO posture", not "the chrome
+    //     doesn't say local-only" — `Egress: cloud-allowed` / `Egress: none` are the SAME defect
+    //     (a constant, unconditioned claim about a PER-WORKSPACE fact). So the toolbar may not
+    //     mention egress at all, however phrased. Scoped to `.sow-toolbar` (:313) because the
+    //     left-rail "Egress" NAV link (`.sow-sidebar`, :366) is a route noun, not a claim — the two
+    //     are disjoint subtrees, and the deleted pill lived in the toolbar.
+    const toolbar = document.querySelector(".sow-toolbar");
+    expect(toolbar).not.toBeNull();
+    expect(toolbar?.textContent ?? "").not.toMatch(/egress/i);
+    for (const el of toolbar?.querySelectorAll("*") ?? []) {
+      for (const a of NAMING) expect(el.getAttribute(a) ?? "").not.toMatch(/egress/i);
+    }
+
+    // (b) VOCABULARY NET — an equivalent assurance that never says "egress", anywhere in the shell.
+    //     Still a blocklist (a novel phrasing can evade it); (a) is the load-bearing half.
+    const claim =
+      /local[\s‐‑-]?only|zero[\s‐‑-]?egress|on[\s‐‑-]?device|stays? on (this|your) (mac|device|machine)|never leaves|nothing leaves|no data leaves|offline[\s‐‑-]?only|private mode|runs? locally|sandboxed|end[\s‐‑-]?to[\s‐‑-]?end/i;
+    const surfaces: string[] = [document.body.textContent ?? ""];
+    for (const el of document.querySelectorAll("*")) {
+      for (const a of NAMING) surfaces.push(el.getAttribute(a) ?? "");
+      // Resolve indirect accessible names too — the text lives elsewhere in the DOM.
+      for (const a of ["aria-labelledby", "aria-describedby"] as const) {
+        for (const id of (el.getAttribute(a) ?? "").split(/\s+/).filter(Boolean)) {
+          surfaces.push(document.getElementById(id)?.textContent ?? "");
+        }
+      }
+    }
+    for (const s of surfaces) expect(s).not.toMatch(claim);
+  });
+});

@@ -1,7 +1,7 @@
 // AppShell — the persistent macOS Liquid Glass shell (LOCKED 2026-07-03).
 //
 // Extracted from Today (§9.5 routing foundation) so every surface (Today, Projects, …)
-// mounts inside the SAME shell: the top bar (scope switcher + ⌘K + egress + connection),
+// mounts inside the SAME shell: the top bar (scope switcher + ⌘K + connection),
 // the thin per-workspace scope line, the left-rail nav, and the collapsed Copilot rail.
 // The active surface renders as {children}.
 //
@@ -338,14 +338,10 @@ export function AppShell(props: AppShellProps): ReactElement {
 
           <div className="sow-tb-spacer" />
 
-          {/* Egress pill */}
-          <span className="sow-pill sow-pill-egress" aria-label="Egress mode: local-only">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z" />
-              <path d="M9 12l2 2 4-4" />
-            </svg>
-            Egress:&nbsp;<span className="sow-pill-mono">local-only</span>
-          </span>
+          {/* ⚠ rule-5: the chrome asserts NO egress posture. A hardcoded "Egress: local-only" pill
+              lived here until 2026-07-26 — no data source, and posture is PER-WORKSPACE so persistent
+              chrome can't know it. Truthful scope-aware pill = task #8. Pinned by
+              `chrome_makes_no_egress_claim` (test-dom/app-shell.test.tsx). */}
 
           {/* Connection status pill */}
           <ConnectionPill connection={connection} />
