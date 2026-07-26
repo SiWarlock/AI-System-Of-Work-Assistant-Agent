@@ -52,10 +52,15 @@ export interface WriteSurfaceToken {
  * adapters mention "KnowledgeWriter (the sole writer)" in prose, which must not trip the guard.
  */
 export const WRITE_SURFACE_TOKENS: ReadonlyArray<WriteSurfaceToken> = [
-  // sole-writer package + its atomic vault-commit primitives (§6, safety rule 1). The
-  // `knowledge-writer` path token also catches a deep RELATIVE import of the writer module that
-  // would evade the `@sow/knowledge` package specifier.
-  { token: "@sow/knowledge", pattern: /@sow\/knowledge/ },
+  // sole-writer package + its atomic vault-commit primitives (§6, safety rule 1). L12 (deny import
+  // PATHS, not prose): the token is the QUOTED import specifier — a `'`/`"` immediately before the
+  // path. A real `import ... from "@sow/knowledge"` / `require("@sow/knowledge")` (every idiomatic
+  // form is quote-preceded) trips; a backtick-fenced or bare PROSE mention in a doc comment (e.g.
+  // web-fetch-transport.ts's "imports no `@sow/knowledge`") does NOT — closing that false-positive.
+  // (A non-idiomatic backtick-specifier import `import(`@sow/knowledge`)` is a KNOWN deferred gap;
+  // the runtime one-writer invariant is the backstop.) The `knowledge-writer` path token also
+  // catches a deep RELATIVE import of the writer module that would evade the package specifier.
+  { token: "\"@sow/knowledge", pattern: /['"]@sow\/knowledge/ },
   { token: "knowledge-writer", pattern: /knowledge-writer/ },
   { token: "markdown-vault", pattern: /markdown-vault/ },
   { token: "atomic-write", pattern: /atomic-write/ },

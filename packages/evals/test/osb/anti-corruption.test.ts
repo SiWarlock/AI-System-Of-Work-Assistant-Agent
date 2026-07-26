@@ -38,7 +38,10 @@ const OSB_PIN_PATH = resolve(REPO_ROOT, "config/osb.pin");
 // +1: 13.13 free-source-aggregator.ts, dormant candidate-data research connector (read-edge) — main-orch-authorized;
 //     write-free per eval-security's OWN scanForWriteSurfaces (0 violations, the deciding CERTIFY) + provint #34
 //     all-7-invariant security review (candidate-data-only, one-writer-safe), 2026-07-25.
-const EXPECTED_CONNECTOR_ADAPTER_COUNT = 20;
+// +1: 13.2a web-fetch-transport.ts, dormant SSRF-guarded read-only web-fetch transport (emit-only; real fetch = §ARM-23) —
+//     write-free per eval-security's OWN scanForWriteSurfaces (0 violations, the deciding CERTIFY); its doc-comment
+//     `@sow/knowledge` prose is now correctly NOT flagged (L12: the token is the QUOTED import specifier), 2026-07-26.
+const EXPECTED_CONNECTOR_ADAPTER_COUNT = 21;
 
 function loadConnectorAdapterSources(): ReadonlyArray<{ path: string; content: string }> {
   return readdirSync(ADAPTERS_DIR)
@@ -51,10 +54,48 @@ describe("Phase-13 §13.1 gate (a) — OSB anti-corruption write-path guard", ()
     const res = scanForWriteSurfaces([
       { path: "evil.ts", content: 'import { KnowledgeWriter } from "@sow/knowledge";\nconst x = 1;' },
     ]);
-    const v = res.violations.find((x) => x.token === "@sow/knowledge");
+    const v = res.violations.find((x) => x.token.includes("@sow/knowledge"));
     expect(v).toBeDefined();
     expect(v?.line).toBe(1);
     expect(res.scannedCount).toBe(1);
+  });
+
+  it("L12 no-weakening: EVERY idiomatic @sow/knowledge import form still trips (quote-preceded); backtick/bare PROSE does NOT (closes the web-fetch-transport doc-comment FP)", () => {
+    // Every real import specifier is quote-preceded (' or ") — the tightened token catches all 12 idiomatic forms.
+    const realImports = [
+      'import { KnowledgeWriter } from "@sow/knowledge";',
+      "import { KnowledgeWriter } from '@sow/knowledge';",
+      'import type { KnowledgeMutationPlan } from "@sow/knowledge";',
+      'import * as kw from "@sow/knowledge";',
+      'import kw from "@sow/knowledge";',
+      'import "@sow/knowledge";',
+      'export { writer } from "@sow/knowledge";',
+      'export * from "@sow/knowledge";',
+      'const kw = require("@sow/knowledge");',
+      'const kw = await import("@sow/knowledge");',
+      "const kw = await import('@sow/knowledge');",
+      'import { w } from "@sow/knowledge/knowledge-writer";', // deep subpath
+    ];
+    for (const form of realImports) {
+      const res = scanForWriteSurfaces([{ path: "evil.ts", content: form }]);
+      expect(
+        res.violations.some((v) => v.token.includes("@sow/knowledge")),
+        `real @sow/knowledge import form must STILL trip (no weakening): ${form}`,
+      ).toBe(true);
+    }
+    // Backtick-fenced / bare PROSE mentions (as in web-fetch-transport.ts's line-27 doc comment) are NOT imports.
+    const prose = [
+      "// imports no `@sow/knowledge`/fs-write (the L12 write-surface scan stays green).",
+      "// downstream of registerSource(), ultimately the @sow/knowledge sole writer (KN-4).",
+      "/* the @sow/knowledge package is the only autonomous Markdown writer. */",
+    ];
+    for (const line of prose) {
+      const res = scanForWriteSurfaces([{ path: "clean.ts", content: line }]);
+      expect(
+        res.violations.some((v) => v.token.includes("@sow/knowledge")),
+        `backtick/bare @sow/knowledge PROSE must NOT trip: ${line}`,
+      ).toBe(false);
+    }
   });
 
   it("flags node:fs write ops (writeFile / createFsVault) — no direct vault write (§6)", () => {
