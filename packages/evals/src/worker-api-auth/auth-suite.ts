@@ -112,6 +112,7 @@ function serverDeps() {
       recentChanges: () => emptyErr,
       projectDashboards: () => emptyErr,
       calendar: () => emptyErr,
+      taskRollup: () => emptyErr,
     },
     // Copilot ask backend — never exercised by these AUTH-boundary vectors; empty fixtures suffice.
     copilot: {

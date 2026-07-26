@@ -184,6 +184,7 @@ export function makeRepresentativeReadModel(
     recentChanges: outOfScope,
     projectDashboards: outOfScope,
     calendar: outOfScope,
+    taskRollup: outOfScope,
   };
 }
 
