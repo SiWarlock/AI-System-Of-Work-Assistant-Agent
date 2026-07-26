@@ -63,10 +63,20 @@ export interface MeetingRewriteInput {
   readonly sourceRefs: readonly { readonly sourceId: string; readonly span?: string }[];
   readonly confidence?: number;
   /**
-   * The DETERMINISTIC entity refs from the correlate step (project / decision / attendee). These and
-   * only these are grounded — attendees ride here as opaque refs until 13.8g parses them.
+   * The DETERMINISTIC entity refs from the correlate step (project / decision / attendee). Grounded
+   * resolve-OR-STUB: an unresolved ref here may mint a create-stub, because it carries a real name.
    */
   readonly entityRefs?: readonly EntityRef[];
+  /**
+   * Refs that may RESOLVE to an existing note but must NEVER mint a create-stub (13.8g-A rule 2).
+   * An IDENTIFIER — a bare email — is evidence of a person but not of a NAME, so stubbing it would
+   * create a machine-named page (`jane-acme-com.md`) duplicating the real `jane-doe.md` for the same
+   * human, corroding KN-11 entity convergence. Passed verbatim they can still match an existing note
+   * by alias (the case that matters); matching nothing, they produce silence rather than a note.
+   * Suppression must be EXPLICIT: `resolveEntity` returns `create_stub`, not `withheld`, on a
+   * no-match. Omit/empty ⇒ this leg is inert and `entityRefs` behavior is byte-identical.
+   */
+  readonly identifierOnlyRefs?: readonly EntityRef[];
   /** Existing workspace notes — SENSE context for `healLinks` (13.3 retrieval; faked in tests). */
   readonly linkCandidates?: readonly EntityCandidate[];
 }
@@ -141,12 +151,26 @@ export async function rewriteVaultForMeeting(
     // query is issued, so no cross-brain read is even attempted (defense-in-depth over resolveEntity's).
     if (deps == null || deps.gbrain?.workspaceId !== input.workspaceId) return empty;
 
-    // 1. GROUND (deterministic) — resolve-or-stub each correlated entity. Never fabricates a path.
-    const refs = Array.isArray(input.entityRefs) ? input.entityRefs.slice(0, MAX_ENTITY_REFS) : [];
+    // 1. GROUND (deterministic). TWO legs, differing ONLY in whether a no-match may mint a note:
+    //    · `entityRefs`          — resolve-OR-STUB (the ref carries a real name).
+    //    · `identifierOnlyRefs`  — resolve-ONLY (13.8g-A rule 2; a no-match produces silence).
+    //    One combined slice keeps the single `MAX_ENTITY_REFS` bound, and with `identifierOnlyRefs`
+    //    omitted this list is exactly `entityRefs.slice(0, MAX_ENTITY_REFS)` — byte-identical.
+    //    Named refs are concatenated FIRST, so they win the shared budget: if `entityRefs` alone
+    //    fills the cap, identifier-only refs are the first sacrificed (more evidence outranks less).
+    //    Each source is sliced BEFORE mapping so an oversized input allocates nothing extra.
+    const namedRefs = Array.isArray(input.entityRefs) ? input.entityRefs.slice(0, MAX_ENTITY_REFS) : [];
+    const identifierRefs = Array.isArray(input.identifierOnlyRefs)
+      ? input.identifierOnlyRefs.slice(0, MAX_ENTITY_REFS)
+      : [];
+    const refs: readonly { readonly ref: EntityRef; readonly allowStub: boolean }[] = [
+      ...namedRefs.map((ref) => ({ ref, allowStub: true })),
+      ...identifierRefs.map((ref) => ({ ref, allowStub: false })),
+    ].slice(0, MAX_ENTITY_REFS);
     const grounded = new Set<string>([input.meetingNotePath]);
     const groundedPaths: string[] = [];
     const stubCreates: NoteCreate[] = [];
-    for (const ref of refs) {
+    for (const { ref, allowStub } of refs) {
       // PER-ELEMENT fail-safe (mirrors planner.ts `collectEntities`): `resolveEntity` reads
       // `entityRef.name` before its own try opens, so ONE malformed ref would otherwise abort the
       // whole run and discard every already-grounded entity. Blast radius = the bad element only.
@@ -157,7 +181,7 @@ export async function rewriteVaultForMeeting(
             grounded.add(resolution.path);
             groundedPaths.push(resolution.path);
           }
-        } else if (resolution.kind === "create_stub" && isNonEmptyString(resolution.proposedSlug)) {
+        } else if (allowStub && resolution.kind === "create_stub" && isNonEmptyString(resolution.proposedSlug)) {
           const stubPath = `${resolution.proposedSlug}.md`;
           if (!grounded.has(stubPath)) {
             grounded.add(stubPath);
@@ -165,7 +189,8 @@ export async function rewriteVaultForMeeting(
             stubCreates.push({ path: stubPath, body: renderGeneratedRegion("stub", "") });
           }
         }
-        // withheld ⇒ nothing grounded, nothing may target it (ground-before-write, L32)
+        // withheld ⇒ nothing grounded; a stub-suppressed no-match ⇒ likewise nothing (rule 2).
+        // Either way nothing may target it (ground-before-write, L32).
       } catch {
         continue;
       }
