@@ -4,7 +4,7 @@
 - **Phase / arc:** ARC-4 §13.8 living-vault synthesis KEYSTONE (knowledge track, single-track `main`)
 - **Role:** knowledge-implementer
 - **Predecessor:** [113-2026-07-26-worker-phase9-13-21-slices.md](113-2026-07-26-worker-phase9-13-21-slices.md) (chronological); knowledge lineage: 13.8a EntityResolver `c3d62436`
-- **Successor:** _(post-pause)_ — 13.8f meeting-path synthesis + the 13.8d worker binding (queued, not dispatched)
+- **Successor:** [117-2026-07-26-arc4-keystone-completion-13.8fgjk-knowledge.md](117-2026-07-26-arc4-keystone-completion-13.8fgjk-knowledge.md) — 13.8f-A · g-A · j · k (ARC-4 knowledge half COMPLETE)
 
 ## Why this session existed
 
