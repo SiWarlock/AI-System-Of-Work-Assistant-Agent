@@ -125,6 +125,29 @@ describe("Copilot panel — Employer-Work egress notice (§9.6-real P1.3, safety
     expect(notice?.textContent).toMatch(/claude/i);
     expect(notice?.textContent).toMatch(/cloud/i);
     expect(notice?.textContent).toMatch(/employer-work/i);
+    // spec(§5) rule 7 (9.24) — the notice discloses the SERVER-DERIVED label and NOTHING else.
+    // Exact-equality (not a leak-shape blocklist): a blocklist over a fixed template + the label
+    // "claude" cannot fail under any plausible mutation, so it would assert nothing.
+    expect((notice?.textContent ?? "").replace(/\s+/g, " ").trim()).toBe(
+      "Answered using claude — a cloud model — on Employer-Work content.",
+    );
+  });
+
+  it("a leak-shaped processor label renders VERBATIM — the contract permits it, so nothing here sanitizes", () => {
+    // spec(§5) rule 7 (9.24) — characterization, NOT an endorsement. `uiSafeSummaryLine`
+    // (`UiSafeCopilotAnswer.egressProcessor`) is any single-line string ≤1024: it rejects
+    // multi-line/over-length/empty but does NOT reject a URL- or path-shaped label, unlike the
+    // sibling `citationId`'s `uiSafeOpaqueRef`. The renderer interpolates the label as-is. Not
+    // reachable today (labels are server-constructed route literals), and it is the OVER-disclosure
+    // direction rather than case 3 — pinned so the tightening lands deliberately, with this test
+    // flipping to an assertion, rather than being discovered in a banner.
+    const turns: readonly CopilotTurnView[] = [
+      { id: "e2", question: "q", answer: "a", citations: [], egressProcessor: "https://api.anthropic.com/v1" },
+    ];
+    renderCopilot({ scope: "employer-work", turns });
+    expect(document.querySelector(".sow-copilot-egress-notice")?.textContent).toMatch(
+      /https:\/\/api\.anthropic\.com\/v1/,
+    );
   });
 
   it("a turn WITHOUT egressProcessor renders NO egress notice (false branch — local/no-egress answer)", () => {
@@ -132,7 +155,21 @@ describe("Copilot panel — Employer-Work egress notice (§9.6-real P1.3, safety
       { id: "n1", question: "q", answer: "a local answer", citations: [] },
     ];
     renderCopilot({ scope: "employer-work", turns });
+    // Positive anchor FIRST: without it the three negatives below all pass on an empty DOM (a
+    // regression in the seed-turn render path would report green).
+    const turn = screen.getByText("a local answer").closest(".sow-copilot-turn");
+    expect(turn).not.toBeNull();
     expect(document.querySelector(".sow-copilot-egress-notice")).toBeNull();
+    // spec(§5) (9.24) — and it stays SILENT: no warning/unknown affordance either. Case 1 is
+    // genuinely nothing-to-disclose, so alarm noise on the safe path would train the owner to
+    // ignore the surface — the notice's value depends on it being rare and meaningful.
+    //
+    // ⚠ CONDITIONAL PIN: "absence ⇒ silence" is correct ONLY because the server-side derivation
+    // makes case 3 (signal-didn't-arrive) unreachable — see the describe header below. If that ever
+    // stops holding, an unknown-provenance affordance becomes the RIGHT fix and this assertion must
+    // be revisited, not defended. It pins today's conclusion, not an eternal law.
+    expect(turn?.querySelector('[role="alert"]')).toBeNull();
+    expect(turn?.textContent ?? "").not.toMatch(/unknown|unavailable|couldn't determine/i);
   });
 
   it("a LIVE answer carrying egressProcessor threads the notice onto the rendered turn", async () => {
@@ -144,6 +181,90 @@ describe("Copilot panel — Employer-Work egress notice (§9.6-real P1.3, safety
     fireEvent.change(screen.getByRole("textbox", { name: /ask copilot/i }), { target: { value: "q" } });
     fireEvent.click(screen.getByRole("button", { name: /send/i }));
     await screen.findByText("Answered on the cloud.");
+    expect(document.querySelector(".sow-copilot-egress-notice")).not.toBeNull();
+  });
+});
+
+// Task 9.24 (⚠ rule-5, pre-existing) — the notice is a DERIVED-PRESENCE indicator, so it is only
+// honest if its ABSENCE is also derived. Absence carries THREE meanings (see the contract comment on
+// `UiSafeCopilotAnswer.egressProcessor`):
+//   1. local / zero-egress answer            — nothing to disclose ✅
+//   2. non-Employer-Work cloud egress        — owner-chosen: no notice ✅
+//   3. the signal did not arrive             — would be fail-open-by-omission ❌
+//
+// The Step-2.5 trace concluded case 3 is UNREACHABLE on the live path. ⚠ The legs that actually
+// close it are SERVER-side (`apps/worker`), and NOTHING in this file guards them — the durable
+// statement lives in the arch note / plan; this is a pointer, not the authority:
+//   • `runGovernedCopilotSynthesis` is the one core behind all three answer procedures, and
+//     `toUiSafeCopilotAnswer` the one projector that makes an answer servable;
+//   • the notice derives from the TRUSTED `processorOfRoute`, never a route's self-declared
+//     `egressClass` (pinned worker-side: a route lying "local" on a remote endpoint still notifies);
+//   • BOTH real synthesis adapters FAIL CLOSED on a non-Claude route before any egress, and
+//     `buildCopilotDeps` pairs synthesis+routeSelector so they cannot skew — this is what stops
+//     "egressed on a route the classifier called local", which the chokepoint alone does NOT;
+//   • `egressProcessor` is `.optional()`, not `.catch()`, so the field cannot be silently stripped —
+//     a schema-invalid answer fails whole. (Narrower than it sounds: `uiSafeSummaryLine` rejects
+//     multi-line/over-length/empty, NOT a URL-shaped label — see the leak-shape test above.)
+//
+// What this file legitimately pins is the RENDERER end: a signal that never arrives surfaces as a
+// VISIBLE failure, never as a plausible silent answer. That is the property that makes absence safe
+// to read as "nothing to disclose".
+//
+// ⚠ Known un-pinned closures (Step-9 flagged, worker/plan territory): `toUiSafeCopilotAnswer` takes
+// the notice as an OPTIONAL trailing positional, so a fourth skill that forgets it produces a
+// servable notice-free answer with every test here green; and `Copilot.tsx` is the ONLY renderer
+// reader of `egressProcessor`, so the first surface rendering a briefing/concept answer without
+// reading it re-opens case 3 at the renderer.
+describe("Copilot panel — absence of the egress notice is DERIVED, not assumed (9.24, safety rule 5)", () => {
+  it("failed_ask_renders_explicit_failure_not_a_silent_answer — a typed err is visible, never silent", async () => {
+    // spec(§5) — THE load-bearing pin (mutation-confirmed: making the failure path render a
+    // plausible answer fails this). If a failed ask rendered as a normal-looking answer, "the egress
+    // signal didn't arrive" would be indistinguishable from "nothing to disclose" — case 3, live.
+    // (The generic error-turn behaviour is also covered below; what this adds is the rule-5 half —
+    // no notice, no citations, i.e. nothing that could read as a completed disclosed answer.)
+    const onAsk = vi.fn<(q: string) => Promise<AskResult>>().mockResolvedValue({ ok: false });
+    renderCopilot({ scope: "employer-work", onAsk });
+    fireEvent.change(screen.getByRole("textbox", { name: /ask copilot/i }), { target: { value: "q" } });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    await screen.findByText(/couldn't answer that right now/i);
+    expect(document.querySelector(".sow-copilot-egress-notice")).toBeNull();
+    expect(screen.queryByRole("list", { name: "Citations" })).toBeNull();
+  });
+
+  it("malformed_ok_payload_renders_explicit_failure — the defensive catch lands on the same visible failure", async () => {
+    // spec(§5) — separate `it` so a regression in the typed-err route cannot hide this one (and so
+    // neither can match the other's stale text). ⚠ This shape is NOT reachable through
+    // `createAskCopilot` (it folds a null value to {ok:false} first) — it exercises the renderer's
+    // defence-in-depth `catch`, which is exactly what that try/catch exists for. The malformation
+    // that would actually matter for case 3 — a well-formed answer missing ONLY egressProcessor —
+    // does not throw and is by construction indistinguishable here; that risk lives in the producer
+    // and consumer closures noted in the header, not in anything a renderer test can detect.
+    const malformed = vi.fn<(q: string) => Promise<AskResult>>().mockResolvedValue({
+      ok: true,
+      answer: null,
+    } as unknown as AskResult);
+    renderCopilot({ scope: "employer-work", onAsk: malformed });
+    fireEvent.change(screen.getByRole("textbox", { name: /ask copilot/i }), { target: { value: "q" } });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    await screen.findByText(/couldn't answer that right now/i);
+    expect(document.querySelector(".sow-copilot-egress-notice")).toBeNull();
+  });
+
+  it("notice_is_scope_blind_at_the_renderer — case 2 is enforced SERVER-side, not here", async () => {
+    // spec(§5) — the renderer keys the notice ONLY on `egressProcessor` presence; it does not know
+    // the workspace type. So a personal-workspace turn CARRYING a processor still renders the
+    // notice. Pinning that (rather than "a personal turn stays silent", which is just the absent-
+    // notice branch again and would pass with any scope) makes this fail if someone "fixes" case 2
+    // by adding renderer-side scope suppression — which would BOTH reverse an owner decision and
+    // move a rule-5 decision out of the worker, where `decideCopilotEgress` owns it.
+    const onAsk = vi.fn<(q: string) => Promise<AskResult>>().mockResolvedValue({
+      ok: true,
+      answer: { answer: ["Answered in the cloud, personal workspace."], citations: [], egressProcessor: "claude" },
+    });
+    renderCopilot({ scope: "personal-business", onAsk });
+    fireEvent.change(screen.getByRole("textbox", { name: /ask copilot/i }), { target: { value: "q" } });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    await screen.findByText("Answered in the cloud, personal workspace.");
     expect(document.querySelector(".sow-copilot-egress-notice")).not.toBeNull();
   });
 });
