@@ -187,6 +187,14 @@ function serverDeps() {
         return { ok: true as const, value: cwlStub(input.linkId, "revoked") };
       },
     },
+    // 9.10-B egress-command port (⚠ rule-5) — a canned fail-closed err stub. This auth suite exercises the
+    // auth boundary (health.ping / decideApproval), NEVER egress revoke, so a store_fault err suffices + is
+    // the safe direction (an un-exercised port never fakes a successful egress-ack flip).
+    egressCommand: {
+      async revokeEgressAck(_input: { workspaceId: string }) {
+        return { ok: false as const, error: { code: "store_fault" as const, message: "not exercised in auth suite" } };
+      },
+    },
     now: () => "2026-07-02T00:00:00.000Z",
   };
 }
