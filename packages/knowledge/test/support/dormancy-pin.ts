@@ -61,6 +61,21 @@ const TYPE_ONLY_LINE = /\bimport\s+type\b|\btypeof\s+/;
 const STRICT_ARMING_GATE = /===\s*true/;
 /** The load-bearing branch: `dormancy-waiver(<task-id>)` — a non-empty task id is REQUIRED. */
 const EXPLICIT_WAIVER = /dormancy-waiver\(\s*[^)\s][^)]*\)/;
+/**
+ * A comment line. Prose that NAMES a dormant symbol is not an import of it — a doc comment reading
+ * "`rewriteVaultForSource` derives a ≤2-plan set" must not make its file an importer. Filtering these
+ * out is what keeps the pin from firing on documentation (which would train readers to weaken it).
+ * Conservative by design: a trailing comment on a CODE line still counts as code (fail loud, not silent).
+ */
+const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*)/;
+
+/** The lines that reference `symbol` in real code — comments excluded. */
+function codeMentions(source: string, symbol: string): string[] {
+  return source
+    .split("\n")
+    .filter((l) => l.includes(symbol))
+    .filter((l) => !COMMENT_LINE.test(l));
+}
 
 /**
  * Classify one importing file. TYPE-ONLY wins first (an inert type reference can't arm anything),
@@ -68,8 +83,10 @@ const EXPLICIT_WAIVER = /dormancy-waiver\(\s*[^)\s][^)]*\)/;
  * on), then a strict `=== true` arming check in this same file; anything else is UNGATED.
  */
 export function classifyImporterSource(source: string, symbol: string): ImporterVerdict {
-  const mentions = source.split("\n").filter((l) => l.includes(symbol));
-  if (mentions.length > 0 && mentions.every((l) => TYPE_ONLY_LINE.test(l))) return "type_only";
+  const mentions = codeMentions(source, symbol);
+  // No CODE reference at all (comment-only prose, or nothing) ⇒ not an importer; nothing to gate.
+  if (mentions.length === 0) return "type_only";
+  if (mentions.every((l) => TYPE_ONLY_LINE.test(l))) return "type_only";
   if (EXPLICIT_WAIVER.test(source) || STRICT_ARMING_GATE.test(source)) return "gated";
   return "ungated";
 }
@@ -100,6 +117,11 @@ export function scanProductionImporters(symbol: string, repoRoot: string): Impor
         .filter(Boolean)
         .filter((l) => !l.includes(".test.ts") && !l.includes("/test/") && !l.includes("/dist/"))
         .filter((l) => /^(apps|packages\/workflows)\//.test(l))
+        // `path:lineno:content` — a match whose CONTENT is a comment is prose, not an import.
+        .filter((l) => {
+          const m = /^([^:]+):\d+:(.*)$/.exec(l);
+          return m == null ? true : !COMMENT_LINE.test(m[2]!);
+        })
         .map((l) => l.slice(0, l.indexOf(":")))
         .filter(Boolean),
     ),

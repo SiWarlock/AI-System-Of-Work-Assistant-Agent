@@ -175,6 +175,12 @@ describe("rewriteVaultForSource — digest, inherited safety, flood-bound, dorma
     expect(classifyImporterSource(typeOnly, sym)).toBe("type_only");
     // the marker is a CLAIM that must name its task — an empty marker is not a waiver
     expect(classifyImporterSource(markerNoTaskId, sym)).toBe("ungated");
+    // PROSE that names the symbol is not an import of it. Caught live: the worker's
+    // ports/sourceIngestion.ts documents `rewriteVaultForSource` in a doc comment and the pin fired
+    // on it. A pin that flags documentation trains people to weaken the pin.
+    const commentOnly = `// \`@sow/knowledge\`'s ${sym} derives exactly that — a ≤2-plan set.\n * see ${sym} for the shape\nexport interface Deps { rewrite?: unknown }`;
+    expect(classifyImporterSource(commentOnly, sym)).toBe("type_only");
+    expect(ungatedImporters([{ path: "packages/workflows/src/ports/sourceIngestion.ts", source: commentOnly }], sym)).toEqual([]);
     // the offender list is exactly the ungated file — the pin has not been weakened to a tautology
     expect(
       ungatedImporters(
