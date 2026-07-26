@@ -43,6 +43,10 @@ import {
   type SystemHealthQueryPort,
 } from "./procedures/systemHealth";
 import {
+  buildEgressCommandRouter,
+  type EgressCommandPort,
+} from "./procedures/egressCommands";
+import {
   buildOnboardingRouter,
   type OnboardingCommandPort,
 } from "./procedures/onboarding";
@@ -100,6 +104,8 @@ export interface ApiServerDeps {
   readonly connectorConfig: ConnectorConfigCommandPort;
   /** The cross-workspace-link owner-approval port (14.7) — create/approve/revoke; the sanctioned WS-8 cross-read input (safety rule 4). */
   readonly crossWorkspaceLink: CrossWorkspaceLinkCommandPort;
+  /** The egress-ack owner-revoke port (9.10-B) — the fail-SAFE OFF command for employer raw-cloud egress (rule 5). */
+  readonly egressCommand: EgressCommandPort;
   readonly streamPublisherOptions?: StreamPublisherOptions;
 }
 
@@ -131,6 +137,7 @@ function composeAppRouter(deps: ApiServerDeps, pushStream: PushStream) {
     projectRegistry: buildProjectRegistryRouter({ projectRegistry: deps.projectRegistry }),
     connectorConfig: buildConnectorConfigRouter({ connectorConfig: deps.connectorConfig }),
     crossWorkspaceLink: buildCrossWorkspaceLinkRouter({ crossWorkspaceLink: deps.crossWorkspaceLink }),
+    egressCommand: buildEgressCommandRouter({ egressCommand: deps.egressCommand }),
     presetProfiles: buildPresetProfilesRouter(),
     stream: pushStream.router,
   });

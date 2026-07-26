@@ -112,6 +112,8 @@ import {
   createCrossWorkspaceLinkCommandPort,
   type CrossWorkspaceLinkCommandPort,
 } from "./composition/crossWorkspaceLink";
+import { createEgressCommandPort } from "./composition/egressRevoke";
+import type { EgressCommandPort } from "./api/procedures/egressCommands";
 import {
   buildCopilotDeps,
   resolveCopilotWorkspaces,
@@ -1551,6 +1553,16 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     now: backends.now,
   });
 
+  // 1c) The egress-ack REVOKE command (9.10-B ⚠ rule-5) — the fail-SAFE OFF direction: an owner-authorized
+  //   get→flip-off+clear→upsert→audit over the DURABLE workspace config + audit log. LIVE (not dormant —
+  //   the owner invokes it deliberately; it only ever turns egress OFF). The VISIBILITY read stays
+  //   `systemHealth.egressStatus` (built above); this is the command half.
+  const egressCommand: EgressCommandPort = createEgressCommandPort({
+    workspaceConfig: backends.repos.workspaceConfig,
+    audit: backends.repos.audit,
+    now: backends.now,
+  });
+
   // 2.5) The INTERIM Copilot ask backend (§4.6). The real GBrain/GCL retrieval + the governed LLM
   //   synthesis are deferred (the app runs over stubs; no passage-serving read-model exists yet).
   //   The fixture retrieval returns an EMPTY-but-valid context for each dev-provision SPEC's
@@ -1926,6 +1938,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     projectRegistry,
     connectorConfig,
     crossWorkspaceLink,
+    egressCommand,
     now: backends.now,
     ...(config.apiHost !== undefined ? { host: config.apiHost } : {}),
     ...(config.apiPort !== undefined ? { port: config.apiPort } : {}),

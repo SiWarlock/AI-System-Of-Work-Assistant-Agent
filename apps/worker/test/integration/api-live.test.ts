@@ -148,6 +148,10 @@ function serverDeps(
       approve: (input) => Promise.resolve({ ok: true, value: { linkId: input.linkId } } as never),
       revoke: (input) => Promise.resolve({ ok: true, value: { linkId: input.linkId } } as never),
     },
+    // 9.10-B egress-ack revoke port — a canned fail-closed stub (not exercised by this transport test).
+    egressCommand: {
+      revokeEgressAck: () => Promise.resolve({ ok: false, error: { code: "store_fault", message: "unwired" } } as never),
+    },
     copilot: {
       retrieval: createFixtureRetrieval({}),
       synthesis: createStubSynthesis(),

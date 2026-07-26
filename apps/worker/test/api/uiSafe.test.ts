@@ -376,6 +376,9 @@ function makeServerDeps(over: { expectedToken?: SessionToken } = {}) {
       healthItems: () => emptyErr,
       egressStatus: () => emptyErr,
     },
+    egressCommand: {
+      revokeEgressAck: () => Promise.resolve({ ok: false as const, error: { code: "store_fault" as const, message: "unwired" } }),
+    },
     approvals: {
       get: () => Promise.resolve({ ok: false, error: { code: "not_found", message: "unwired" } } as never),
       applyTransition: () =>
