@@ -309,8 +309,11 @@ describe("planSynthesis — PURE / TOTAL never-throws; a fault fails safe (Lesso
 
 // ── 9. dormant — no production caller (L24 logic-in-package / wire-at-boot) ────────
 
-describe("planSynthesis — dormant: zero non-test importers (L24 wire-at-boot)", () => {
-  it("no_production_caller — planSynthesis is called only from its own def + tests (wiring is 13.8d/f)", () => {
+describe("planSynthesis — dormant: no PRODUCTION caller (L24 wire-at-boot)", () => {
+  it("no_production_caller — planSynthesis has NO apps/ or workflows/ (production) importer; dormant/eval consumers are allowed", () => {
+    // planSynthesis is legitimately consumed by DORMANT/eval callers — the 13.8d knowledge ingest-rewrite
+    // (synthesis/ingest-rewrite.ts, itself dormant) and the 13.8c-eval scorer (packages/evals). The
+    // dormancy that matters is that it is NOT wired into a PRODUCTION entry — no apps/ or workflows/ caller.
     const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
     let out = "";
     try {
@@ -321,13 +324,9 @@ describe("planSynthesis — dormant: zero non-test importers (L24 wire-at-boot)"
     const offenders = out
       .split("\n")
       .filter(Boolean)
-      .filter(
-        (l) =>
-          !l.includes("synthesis/planner.ts") && // its own definition
-          !l.includes("src/index.ts") && // barrel export
-          !l.includes(".test.ts") && // test files
-          !l.includes("/test/"),
-      );
+      .filter((l) => !l.includes(".test.ts") && !l.includes("/test/"))
+      // a PRODUCTION importer lives under apps/ or packages/workflows/ (the runtime/orchestration layers)
+      .filter((l) => /^(apps|packages\/workflows)\//.test(l));
     expect(offenders).toEqual([]);
   });
 });
