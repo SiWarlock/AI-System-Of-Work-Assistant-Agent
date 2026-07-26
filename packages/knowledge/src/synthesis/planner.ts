@@ -43,7 +43,7 @@ import type {
 } from "@sow/contracts";
 import { checkExtractionField, TBD } from "@sow/domain";
 import { renderGeneratedRegion } from "../markdown-vault/sections";
-import { resolveEntity, type EntityRef, type EntityCandidate, type EntityGbrainReadPort } from "./entity-resolver";
+import { resolveEntity, stubNotePathFor, type EntityRef, type EntityCandidate, type EntityGbrainReadPort } from "./entity-resolver";
 import { healLinks, type LinkRef } from "./link-healer";
 
 // ── candidate types (knowledge-local, NOT frozen contracts — mirror EntityRef/LinkRef) ──────────
@@ -283,9 +283,11 @@ async function collectEntities(
   for (const eRef of entityRefs) {
     try {
       const res = await resolveEntity(eRef, input.workspaceId, { gbrain: deps.gbrain });
-      if (res.kind === "create_stub" && isNonEmptyString(res.proposedSlug)) {
+      // 13.8j: the stub path comes from the ONE shared namespaced derivation — never built inline
+      // here, so an untrusted entity name can't mint a root structural surface (index.md / log.md).
+      const stubPath = stubNotePathFor(res, eRef?.kind);
+      if (stubPath !== null) {
         // Skip if a create already targets this path — never let an empty stub clobber a content-bearing create.
-        const stubPath = `${res.proposedSlug}.md`;
         if (!autoM.creates.some((c) => c.path === stubPath)) {
           autoM.creates.push({ path: stubPath, body: renderGeneratedRegion("stub", "") });
         }

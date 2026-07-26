@@ -44,7 +44,7 @@ import type {
   FrontmatterPatch,
 } from "@sow/contracts";
 import { renderGeneratedRegion } from "../markdown-vault/sections";
-import { resolveEntity, type EntityRef, type EntityCandidate, type EntityGbrainReadPort } from "./entity-resolver";
+import { resolveEntity, stubNotePathFor, type EntityRef, type EntityCandidate, type EntityGbrainReadPort } from "./entity-resolver";
 import { planSynthesis, type SynthesisReasonPort, type SynthesisSectionPort } from "./planner";
 
 // Per-array flood bounds (L31 — bounded blast radius for an autonomous writer). These cap the
@@ -181,9 +181,11 @@ export async function rewriteVaultForMeeting(
             grounded.add(resolution.path);
             groundedPaths.push(resolution.path);
           }
-        } else if (allowStub && resolution.kind === "create_stub" && isNonEmptyString(resolution.proposedSlug)) {
-          const stubPath = `${resolution.proposedSlug}.md`;
-          if (!grounded.has(stubPath)) {
+        } else if (allowStub) {
+          // 13.8j: namespaced by the ONE shared derivation (never built inline), so an untrusted
+          // attendee name can't mint a root structural surface. `null` ⇒ not a mintable stub.
+          const stubPath = stubNotePathFor(resolution, ref?.kind);
+          if (stubPath !== null && !grounded.has(stubPath)) {
             grounded.add(stubPath);
             groundedPaths.push(stubPath);
             stubCreates.push({ path: stubPath, body: renderGeneratedRegion("stub", "") });

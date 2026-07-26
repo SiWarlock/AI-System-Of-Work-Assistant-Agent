@@ -330,3 +330,36 @@ describe("planSynthesis — dormant: no PRODUCTION caller (L24 wire-at-boot)", (
     expect(offenders).toEqual([]);
   });
 });
+
+// ── 13.8j — the SOURCE path carries the same stub-minting defect (§6 KN-12) ────────
+//
+// The finding was reported against meeting-rewrite.ts, but planner.ts minted stubs at the vault
+// root independently — so the SOURCE-ingestion path (bound dormant by 13.8d 172f9aed) carried it
+// too. Both consumers now inherit the namespace from the ONE shared derivation.
+
+describe("planSynthesis — entity stubs are namespaced, never a root structural surface (13.8j)", () => {
+  it("structural_surface_names_cannot_be_minted__source — Index/Log/README stub under their kind", async () => {
+    const candidate: SynthesisCandidate = {
+      entityRefs: [
+        { name: "Index", kind: "person" },
+        { name: "Log", kind: "project" },
+        { name: "README", kind: "concept" },
+      ],
+    };
+    const r = await planSynthesis(baseInput(), mkDeps({ gbrain: gbrainEmpty, reason: fakeReason(candidate) }));
+    expect(r.ok).toBe(true);
+    const created = (r.ok ? r.value.plans : []).flatMap((p) => p.creates).map((c) => c.path);
+    expect(created.length).toBe(3); // non-vacuous: the stubs are really minted
+    for (const forbidden of ["index.md", "log.md", "readme.md", "README.md"]) {
+      expect(created, `source path minted a structural surface: ${forbidden}`).not.toContain(forbidden);
+    }
+    expect(created.sort()).toEqual(["concepts/readme.md", "people/index.md", "projects/log.md"]);
+  });
+
+  it("stub_paths_are_namespaced — the ordinary case carries the prefix (positive pin)", async () => {
+    const candidate: SynthesisCandidate = { entityRefs: [{ name: "New Person", kind: "person" }] };
+    const r = await planSynthesis(baseInput(), mkDeps({ gbrain: gbrainEmpty, reason: fakeReason(candidate) }));
+    const created = (r.ok ? r.value.plans : []).flatMap((p) => p.creates).map((c) => c.path);
+    expect(created).toEqual(["people/new-person.md"]);
+  });
+});

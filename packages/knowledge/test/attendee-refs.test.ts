@@ -248,7 +248,7 @@ describe("normalizeAttendees — WS-8 and the 13.8f-A producer contract", () => 
     // (3) the SAME ref in the nameable bucket WOULD have stubbed — proves suppression is the cause,
     //     not an incidental no-op (resolveEntity returns create_stub, not withheld, on a no-match)
     const asNamed = await rewriteVaultForMeeting({ ...base, entityRefs: identifierOnlyRefs }, mkDeps([]));
-    expect(asNamed.plans.flatMap((p) => p.creates).map((c) => c.path)).toEqual(["jane-acme-com.md"]);
+    expect(asNamed.plans.flatMap((p) => p.creates).map((c) => c.path)).toEqual(["people/jane-acme-com.md"]);
   });
 
   it("named_ref_behavior_is_unchanged — omitting identifierOnlyRefs is byte-identical to before", async () => {
@@ -270,8 +270,8 @@ describe("normalizeAttendees — WS-8 and the 13.8f-A producer contract", () => 
     const without = await rewriteVaultForMeeting(base, deps);
     const withEmpty = await rewriteVaultForMeeting({ ...base, identifierOnlyRefs: [] }, deps);
     // a named ref still resolve-OR-STUBS exactly as it did before the carve-out existed
-    expect(without.groundedPaths).toEqual(["jane-doe.md"]);
-    expect(without.plans.flatMap((p) => p.creates).map((c) => c.path)).toEqual(["jane-doe.md"]);
+    expect(without.groundedPaths).toEqual(["people/jane-doe.md"]);
+    expect(without.plans.flatMap((p) => p.creates).map((c) => c.path)).toEqual(["people/jane-doe.md"]);
     expect(withEmpty).toEqual(without);
   });
 

@@ -121,7 +121,7 @@ describe("rewriteVaultForMeeting — every target is entity-grounded (§6 KN-10,
       mkDeps({ gbrain: fakeGbrain(groundAcme), reason: fakeReason(candidate) }),
     );
     expect(receipt.groundedPaths).toContain("projects/acme-api.md"); // the good ref before it survived
-    expect(receipt.groundedPaths).toContain("new-person.md"); // and the good ref AFTER it still ran
+    expect(receipt.groundedPaths).toContain("people/new-person.md"); // and the good ref AFTER it still ran
     expect(allPatches(receipt).some((p) => p.path === "projects/acme-api.md")).toBe(true);
   });
 
@@ -131,7 +131,8 @@ describe("rewriteVaultForMeeting — every target is entity-grounded (§6 KN-10,
       gbrain: fakeGbrain({ "Dup Name": () => ok(ambiguous) }), // "New Person" ⇒ [] ⇒ create_stub
       reason: fakeReason({
         regions: [
-          { notePath: "new-person.md", regionId: "meetings", body: "attended", effect: "new_region" },
+          // the model writes to the page grounding created for this entity (13.8j: namespaced)
+          { notePath: "people/new-person.md", regionId: "meetings", body: "attended", effect: "new_region" },
           { notePath: "a/dup.md", regionId: "meetings", body: "guessed", effect: "new_region" },
         ],
       }),
@@ -141,8 +142,8 @@ describe("rewriteVaultForMeeting — every target is entity-grounded (§6 KN-10,
       deps,
     );
     // the create-stub path is grounded — a stub note is created, and writes to it are allowed
-    expect(receipt.plans.flatMap((p) => p.creates).some((c) => c.path === "new-person.md")).toBe(true);
-    expect(allPatches(receipt).some((p) => p.path === "new-person.md")).toBe(true);
+    expect(receipt.plans.flatMap((p) => p.creates).some((c) => c.path === "people/new-person.md")).toBe(true);
+    expect(allPatches(receipt).some((p) => p.path === "people/new-person.md")).toBe(true);
     // the AMBIGUOUS entity was withheld — nothing may target the note the resolver refused to pick
     expect(allPatches(receipt).some((p) => p.path === "a/dup.md")).toBe(false);
     expect(receipt.plans.flatMap((p) => p.creates).some((c) => c.path === "a/dup.md")).toBe(false);
@@ -313,8 +314,8 @@ describe("rewriteVaultForMeeting — never-throws, flood-bound, dormant (L11 / L
       baseInput({ entityRefs: [{ name: "New Person", kind: "person" }] }),
       mkDeps({ reason: fakeReason({}) }), // model returns nothing usable
     );
-    expect(receipt.groundedPaths).toEqual(["new-person.md"]);
-    expect(receipt.plans.flatMap((p) => p.creates).map((c) => c.path)).toEqual(["new-person.md"]);
+    expect(receipt.groundedPaths).toEqual(["people/new-person.md"]);
+    expect(receipt.plans.flatMap((p) => p.creates).map((c) => c.path)).toEqual(["people/new-person.md"]);
     expect(receipt.autoCount).toBe(1);
     expect(receipt.proposeCount).toBe(0);
   });
@@ -351,6 +352,42 @@ describe("rewriteVaultForMeeting — never-throws, flood-bound, dormant (L11 / L
     expect(receipt.runId).toBe("run-MEET");
     expect(receipt.planIds).toEqual(receipt.plans.map((p) => p.planId));
     expect(receipt.autoCount + receipt.proposeCount).toBe(receipt.plans.length);
+  });
+
+  it("structural_surface_names_cannot_be_minted__meeting — an attendee named Index/Log never reaches a root file (13.8j)", async () => {
+    // The MEETING call site. Entity names arrive from untrusted attendee strings (13.8g-A), so a
+    // name like `Index` must not mint the KN-12 navigation catalog. Namespaced by construction.
+    const receipt = await rewriteVaultForMeeting(
+      baseInput({
+        entityRefs: [
+          { name: "Index", kind: "person" },
+          { name: "Log", kind: "project" },
+          { name: "README", kind: "concept" },
+        ],
+      }),
+      mkDeps({ gbrain: fakeGbrain({}) }), // no candidates ⇒ every ref takes the create_stub branch
+    );
+    const created = receipt.plans.flatMap((p) => p.creates).map((c) => c.path);
+    expect(created.length).toBe(3); // the stubs ARE minted (non-vacuous) …
+    for (const forbidden of ["index.md", "log.md", "readme.md", "README.md", "Log.md", "Index.md"]) {
+      expect(created, `minted a structural surface: ${forbidden}`).not.toContain(forbidden);
+    }
+    // … under their kind namespaces
+    expect(created.sort()).toEqual(["concepts/readme.md", "people/index.md", "projects/log.md"]);
+    expect(receipt.groundedPaths.every((p) => p.includes("/"))).toBe(true);
+  });
+
+  it("resolved_paths_unchanged — 13.8j re-paths STUBS only; a resolver HIT keeps its real path verbatim", async () => {
+    const receipt = await rewriteVaultForMeeting(
+      baseInput({ entityRefs: [acmeRef] }),
+      mkDeps({
+        gbrain: fakeGbrain(groundAcme), // resolves to projects/acme-api.md
+        reason: fakeReason({ regions: [{ notePath: "projects/acme-api.md", regionId: "m", body: "x", effect: "new_region" }] }),
+      }),
+    );
+    // NOT re-prefixed to projects/projects/acme-api.md — a resolved note keeps the path it has
+    expect(receipt.groundedPaths).toEqual(["projects/acme-api.md"]);
+    expect(receipt.plans.flatMap((p) => p.creates)).toEqual([]); // a resolved entity mints nothing
   });
 
   it("no_production_caller — every apps/ or workflows/ importer of rewriteVaultForMeeting is arming-gated (dormant, L24)", () => {

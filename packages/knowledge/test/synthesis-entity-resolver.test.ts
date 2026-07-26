@@ -5,14 +5,20 @@
 // (osb's ground-before-write rule, governed). Pure over an injected read port; TOTAL
 // never-throws; fail-closed to withheld. Safety rule 4: never resolves across workspaces.
 import { describe, it, expect } from "vitest";
+import { readFileSync, readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve, join } from "node:path";
 import { ok, err } from "@sow/contracts";
 import type { Result, WorkspaceId } from "@sow/contracts";
 import {
   resolveEntity,
+  stubNotePathFor,
+  NAMESPACED_ENTITY_KINDS,
   type EntityCandidate,
   type EntityGbrainReadPort,
   type EntityReadFault,
   type EntityResolution,
+  type EntityKind,
 } from "../src/synthesis/entity-resolver";
 
 const WS_A = "ws-a" as WorkspaceId;
@@ -188,5 +194,125 @@ describe("resolveEntity — fail-closed to withheld on any read fault (Lesson 11
     const port = fakePort(WS_A, () => ok([hostile]));
     const r = await resolveEntity({ name: "Jane Doe", kind: "person" }, WS_A, { gbrain: port });
     expect(r).toEqual({ kind: "withheld", reason: "gbrain_unavailable" });
+  });
+});
+
+// ── 13.8j — entity stub paths are NAMESPACED, derived ONCE (§6 KN-12, safety rule 1) ──
+//
+// An entity name is untrusted (13.8g-A feeds it from meeting attendee strings). Minting a stub at
+// the vault ROOT let a name like `Index`/`Log` collide with the KnowledgeWriter-owned KN-12
+// structural surfaces — `MeetingRewriteDeps` omits the `structural` port precisely so a meeting
+// cannot touch those, and root-level minting reached them by another door. The fix is a NAMESPACE
+// (complete-by-construction for every present AND future structural filename), not a reserved-name
+// denylist (enumeration is unwinnable — worker L72, §ARM-18 18.39-B).
+
+describe("stubNotePathFor — entity stubs are namespaced, never root (13.8j)", () => {
+  const stub = (proposedSlug: string): EntityResolution => ({ kind: "create_stub", proposedSlug });
+
+  it("kind_namespacing — every EntityKind gets a self-describing prefix; none may sit at the root", () => {
+    expect(stubNotePathFor(stub("jane-doe"), "person")).toBe("people/jane-doe.md");
+    expect(stubNotePathFor(stub("acme-api"), "project")).toBe("projects/acme-api.md");
+    expect(stubNotePathFor(stub("rate-limiting"), "concept")).toBe("concepts/rate-limiting.md");
+    // no kind may resolve to a bare root path — the property the namespace exists to guarantee
+    for (const kind of NAMESPACED_ENTITY_KINDS) {
+      expect(stubNotePathFor(stub("x"), kind)).toMatch(/^[a-z]+\/x\.md$/);
+    }
+  });
+
+  it("structural_surface_names_cannot_be_minted — a REAL resolve of `Index`/`Log` never reaches a root file", async () => {
+    // Drive the whole path (resolveEntity ⇒ entitySlug ⇒ stubNotePathFor) rather than hand-feeding a
+    // pre-lowercased slug — otherwise the test never exercises the slugification it depends on.
+    const port = fakePort(WS_A, () => ok([]));
+    for (const name of ["Index", "Log", "README", "Home", "Logs", "index", "LOG"]) {
+      for (const kind of NAMESPACED_ENTITY_KINDS) {
+        const resolution = await resolveEntity({ name, kind }, WS_A, { gbrain: port });
+        expect(resolution.kind).toBe("create_stub"); // non-vacuous: a stub really is proposed
+        const path = stubNotePathFor(resolution, kind)!;
+        expect(["index.md", "log.md", "readme.md", "home.md", "logs.md"], `${name}/${kind}`).not.toContain(path);
+        expect(path.startsWith("Logs/"), `${name}/${kind} reached the op-log subtree`).toBe(false);
+        expect(path.includes("/")).toBe(true);
+      }
+    }
+    expect(stubNotePathFor(await resolveEntity({ name: "Index", kind: "person" }, WS_A, { gbrain: port }), "person")).toBe(
+      "people/index.md",
+    );
+  });
+
+  it("unknown_kind_falls_back_to_a_namespace_not_the_root — incl. PROTOTYPE keys (kind rides candidate data)", () => {
+    // `kind` reaches the planner from a model candidate, so a malformed value must degrade to a
+    // namespace, never the root (that would silently reopen the hole this slice closes).
+    //
+    // The prototype keys are the sharp ones: with an object-literal lookup, `__proto__`/`toString`/
+    // `constructor` return a non-undefined value from Object.prototype, so `?? FALLBACK` never fires
+    // and the path lands back at the ROOT ("[object Object]index.md"). A Map has no such keys.
+    // Model-supplied means ADVERSARIAL-SHAPED by default, not merely optional — so the vectors are
+    // hostile values, not just an absent field.
+    const hostile = [
+      // prototype-chain keys: a bare `NAMESPACES[kind]` read resolves these to inherited Object
+      // members, yielding "a namespace that isn't a namespace" (contracts L41, same fail-open as the
+      // TargetSystem write-adapter registry). Explicit membership only — never a bare index.
+      "__proto__",
+      "constructor",
+      "toString",
+      "valueOf",
+      "hasOwnProperty",
+      "prototype",
+      // path-shaped: closes the loop between entitySlug's traversal collapsing and the namespace
+      // layer — a separator-bearing kind must not escape the vault or double-prefix.
+      "../",
+      "people/../..",
+      "a/b",
+      "/etc",
+      // wrong-case / padded: the lookup is EXACT-MATCH by decision (no normalization), so these fall
+      // back. Pinned so the choice is deliberate rather than incidental.
+      "Person",
+      "person ",
+      " person",
+      "PERSON",
+      // plain garbage
+      "not-a-kind",
+      "",
+    ];
+    for (const kind of hostile) {
+      const path = stubNotePathFor(stub("whatever"), kind as unknown as EntityKind)!;
+      expect(path, `kind=${JSON.stringify(kind)} escaped the namespace`).toBe("entities/whatever.md");
+      // the result is a single-segment namespaced path — no escape, no double prefix
+      expect(path.startsWith("/"), `kind=${JSON.stringify(kind)} produced an absolute path`).toBe(false);
+      expect(path).not.toContain("..");
+      expect(path.split("/").length).toBe(2);
+    }
+    expect(stubNotePathFor(stub("whatever"), undefined)).toBe("entities/whatever.md");
+  });
+
+  it("only_create_stub_mints — a resolved or withheld resolution yields no path at all", () => {
+    expect(stubNotePathFor({ kind: "resolved", path: "people/jane-doe.md" }, "person")).toBeNull();
+    expect(stubNotePathFor({ kind: "withheld", reason: "ambiguous" }, "person")).toBeNull();
+    expect(stubNotePathFor(stub(""), "person")).toBeNull(); // an empty slug is not a path
+  });
+
+  it("traversal_collapse_still_holds — the namespace ADDS to entitySlug's guarantee, never replaces it", async () => {
+    const port = fakePort(WS_A, () => ok([]));
+    const r = await resolveEntity({ name: "../../etc/passwd", kind: "person" }, WS_A, { gbrain: port });
+    expect(r.kind).toBe("create_stub");
+    const path = stubNotePathFor(r, "person")!;
+    expect(path).toBe("people/etc-passwd.md"); // collapsed by entitySlug, then namespaced
+    expect(path).not.toContain("..");
+    expect(path.startsWith("/")).toBe(false);
+  });
+
+  it("path_derivation_lives_once — no inline `${…proposedSlug}.md` remains in packages/knowledge/src", () => {
+    // The duplication IS what enabled the defect: two call sites derived the same path, so the fix
+    // had to be applied twice by hand. This pins the single-derivation property (forbidden-pattern
+    // #6 / L39) so a third consumer inherits the namespace instead of re-deriving the bug.
+    const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
+    const INLINE_MINT = /\$\{[^}]*proposedSlug[^}]*\}\s*\.md|\$\{[^}]*proposedSlug[^}]*\}`?\s*\+?\s*"\.md"/;
+    const walk = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+        e.isDirectory() ? walk(join(dir, e.name)) : e.name.endsWith(".ts") ? [join(dir, e.name)] : [],
+      );
+    const offenders = walk(srcRoot).filter((f) => INLINE_MINT.test(readFileSync(f, "utf8")));
+    expect(offenders).toEqual([]);
+    // non-vacuity: the pattern DOES catch the construction it is meant to forbid
+    expect(INLINE_MINT.test("const stubPath = `${resolution.proposedSlug}.md`;")).toBe(true);
   });
 });
