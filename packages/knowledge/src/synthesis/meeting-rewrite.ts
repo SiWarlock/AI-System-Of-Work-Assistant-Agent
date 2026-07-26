@@ -46,6 +46,7 @@ import type {
 import { renderGeneratedRegion } from "../markdown-vault/sections";
 import { resolveEntity, stubNotePathFor, type EntityRef, type EntityCandidate, type EntityGbrainReadPort } from "./entity-resolver";
 import { planSynthesis, type SynthesisReasonPort, type SynthesisSectionPort } from "./planner";
+import { admitGroundedPath } from "./grounded-path";
 
 // Per-array flood bounds (L31 — bounded blast radius for an autonomous writer). These cap the
 // DETERMINISTIC inputs this module owns: the correlated entity refs and the link-candidate context.
@@ -146,7 +147,12 @@ export async function rewriteVaultForMeeting(
     // Every guard lives INSIDE the try so the total-function claim holds even for a null/hostile
     // `deps` or `input` (the sibling `rewriteVaultForSource` is total the same way).
     if (input == null || typeof input !== "object") return empty;
-    if (!isNonEmptyString(input.meetingNotePath)) return empty;
+    // 13.8k: validate the subject path ONCE and use the captured value everywhere below. Re-reading
+    // `input.meetingNotePath` per use would be a TOCTOU seam — a hostile getter/Proxy could return a
+    // benign path to the guard and `index.md` to the seed.
+    const seedVerdict = admitGroundedPath(input.meetingNotePath);
+    if (!seedVerdict.ok) return empty;
+    const meetingNotePath = seedVerdict.path;
     // WS-8 (safety rule 4): a read port bound to another workspace never reads — fail closed BEFORE any
     // query is issued, so no cross-brain read is even attempted (defense-in-depth over resolveEntity's).
     if (deps == null || deps.gbrain?.workspaceId !== input.workspaceId) return empty;
@@ -167,8 +173,12 @@ export async function rewriteVaultForMeeting(
       ...namedRefs.map((ref) => ({ ref, allowStub: true })),
       ...identifierRefs.map((ref) => ({ ref, allowStub: false })),
     ].slice(0, MAX_ENTITY_REFS);
-    const grounded = new Set<string>([input.meetingNotePath]);
+    // 13.8k: the run's OWN subject seeds the set through the SAME single admission point — a meeting
+    // note "at" index.md would otherwise let the model patch the navigation catalog by the one route
+    // that isn't a GBrain row. `audit:false` — groundedPaths documents ENTITY decisions, not the subject.
+    const grounded = new Set<string>();
     const groundedPaths: string[] = [];
+    admitInto(meetingNotePath, grounded, groundedPaths, false);
     const stubCreates: NoteCreate[] = [];
     for (const { ref, allowStub } of refs) {
       // PER-ELEMENT fail-safe (mirrors planner.ts `collectEntities`): `resolveEntity` reads
@@ -177,17 +187,12 @@ export async function rewriteVaultForMeeting(
       try {
         const resolution = await resolveEntity(ref, input.workspaceId, { gbrain: deps.gbrain });
         if (resolution.kind === "resolved" && isNonEmptyString(resolution.path)) {
-          if (!grounded.has(resolution.path)) {
-            grounded.add(resolution.path);
-            groundedPaths.push(resolution.path);
-          }
+          admitInto(resolution.path, grounded, groundedPaths);
         } else if (allowStub) {
           // 13.8j: namespaced by the ONE shared derivation (never built inline), so an untrusted
           // attendee name can't mint a root structural surface. `null` ⇒ not a mintable stub.
           const stubPath = stubNotePathFor(resolution, ref?.kind);
-          if (stubPath !== null && !grounded.has(stubPath)) {
-            grounded.add(stubPath);
-            groundedPaths.push(stubPath);
+          if (stubPath !== null && admitInto(stubPath, grounded, groundedPaths)) {
             stubCreates.push({ path: stubPath, body: renderGeneratedRegion("stub", "") });
           }
         }
@@ -228,7 +233,7 @@ export async function rewriteVaultForMeeting(
         if (!grounded.has(l.srcPath)) continue;
         // The meeting note's own additive links leave the plan set and become the 13.8f-B fold surface
         // — kept in exactly ONE place so the worker's merge can never write them twice.
-        if (l.srcPath === input.meetingNotePath && plan.requiresApproval === false) meetingNoteLinkMutations.push(l);
+        if (l.srcPath === meetingNotePath && plan.requiresApproval === false) meetingNoteLinkMutations.push(l);
         else kept.linkMutations.push(l);
       }
       // The entity create-stubs are grounded by construction — they ride the AUTO plan.
@@ -313,6 +318,27 @@ function assembleFresh(
     provenanceOrigin: input.provenanceOrigin,
   });
   return parsed.success ? parsed.data : null;
+}
+
+/**
+ * THE SINGLE ENTRY POINT to the grounded set (13.8k). Every path — resolved candidate, minted stub,
+ * or a future producer's — is admitted here or not at all, so the shape invariant holds regardless of
+ * who produced it. A structural pin fails if a second `grounded.add` / `groundedPaths.push` appears
+ * anywhere else. Returns whether the path is now grounded (already-present counts as admitted).
+ *
+ * NOTE the meeting note itself is admitted at the top of the run but deliberately NOT audited here —
+ * `groundedPaths` documents the ENTITY grounding decisions, not the run's own subject.
+ */
+function admitInto(path: string, grounded: Set<string>, groundedPaths: string[], audit = true): boolean {
+  const verdict = admitGroundedPath(path);
+  if (!verdict.ok) return false;
+  // ALREADY grounded ⇒ nothing NEW was admitted. Returning true here would let a stub be minted over
+  // a note the resolver already confirmed EXISTS (a second ref slugging to an already-resolved path),
+  // which is what the pre-13.8k `!grounded.has(...)` guard prevented. Callers key creates off this.
+  if (grounded.has(verdict.path)) return false;
+  grounded.add(verdict.path);
+  if (audit) groundedPaths.push(verdict.path);
+  return true;
 }
 
 function safeRunId(deps: MeetingRewriteDeps): string {

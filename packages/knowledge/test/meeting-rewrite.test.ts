@@ -390,6 +390,32 @@ describe("rewriteVaultForMeeting — never-throws, flood-bound, dormant (L11 / L
     expect(receipt.plans.flatMap((p) => p.creates)).toEqual([]); // a resolved entity mints nothing
   });
 
+  it("meeting_note_path_is_admitted_too — the run's OWN subject path is not exempt from the invariant (13.8k)", async () => {
+    // `meetingNotePath` is caller-supplied and SEEDS the grounded set, so it gates writes exactly
+    // like a resolved entity path does. A meeting note "at" index.md would let the model patch the
+    // navigation catalog — the same violation by the one route that isn't a GBrain row.
+    const candidate: SynthesisCandidate = {
+      regions: [{ notePath: "projects/acme-api.md", regionId: "meetings", body: "x", effect: "new_region" }],
+    };
+    const deps = () => mkDeps({ gbrain: fakeGbrain(groundAcme), reason: fakeReason(candidate) });
+
+    // POSITIVE CONTROL first — with a legitimate subject the SAME fixture produces real output, so a
+    // later empty receipt is attributable to the guard rather than to a fixture that grounds nothing.
+    const good = await rewriteVaultForMeeting(baseInput({ entityRefs: [acmeRef] }), deps());
+    expect(good.groundedPaths).toEqual(["projects/acme-api.md"]);
+    expect(good.plans.length).toBeGreaterThan(0);
+
+    for (const poisoned of ["index.md", "log.md", "Logs/2026-07-26.md", "/etc/passwd.md", "../escape.md"]) {
+      const receipt = await rewriteVaultForMeeting(
+        baseInput({ meetingNotePath: poisoned, entityRefs: [acmeRef] }),
+        deps(),
+      );
+      expect(receipt.plans, `${poisoned} produced a plan`).toEqual([]);
+      expect(receipt.meetingNoteLinkMutations).toEqual([]);
+      expect(receipt.groundedPaths, `${poisoned} grounded something`).toEqual([]);
+    }
+  });
+
   it("no_production_caller — every apps/ or workflows/ importer of rewriteVaultForMeeting is arming-gated (dormant, L24)", () => {
     const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
     const importers = scanProductionImporters("rewriteVaultForMeeting", repoRoot);

@@ -7,6 +7,21 @@
 // PURE: no fs, no clock (the op-log date is injected), no throws.
 import type { NotePatch } from "@sow/contracts";
 
+// ── the writer-owned structural surfaces — ONE source of truth (13.8k) ───────────────────────
+// These were previously a caller argument (`indexPath`) and inline defaults ("Logs", "log.md"), so
+// there was nothing for a guard to derive from and the only way to protect them was a hand-copied
+// list — the denylist-drift failure L64/L65 warn about. They are now named constants that the
+// builders below consume as their defaults AND that `synthesis/grounded-path.ts` reads to decide
+// what may never be grounded. Predicate-lives-once applied to DATA: add a surface here and the
+// guard inherits it for free.
+
+/** The vault's navigation catalog — writer-owned. */
+export const STRUCTURAL_INDEX_PATH = "index.md";
+/** The op-log pointer note — writer-owned. */
+export const STRUCTURAL_LOG_POINTER_PATH = "log.md";
+/** The day-log directory (`Logs/<date>.md`) — writer-owned, whole subtree. */
+export const STRUCTURAL_LOGS_DIR = "Logs";
+
 /** One `- [[slug]] - desc` catalog entry in an index section. */
 export interface IndexEntry {
   readonly slug: string;
@@ -35,7 +50,10 @@ export function renderIndexEntries(entries: readonly IndexEntry[]): string {
  * (each targets a fixed writer-owned region id; unchanged sections are never touched). The CALLER passes
  * only the sections whose entry set changed this run. A marker-unsafe region id is dropped.
  */
-export function buildIndexSectionPatches(indexPath: string, changed: readonly IndexSection[]): NotePatch[] {
+export function buildIndexSectionPatches(
+  indexPath: string = STRUCTURAL_INDEX_PATH,
+  changed: readonly IndexSection[] = [],
+): NotePatch[] {
   if (typeof indexPath !== "string" || indexPath.length === 0 || !Array.isArray(changed)) return [];
   const out: NotePatch[] = [];
   for (const s of changed) {
@@ -65,8 +83,9 @@ export function buildOpLogMutations(opts: {
   const date = typeof opts?.date === "string" ? opts.date : "";
   const entry = typeof opts?.entry === "string" ? opts.entry : "";
   if (date.length === 0 || !/^[^\s>]+$/.test(date)) return { patches: [] }; // marker-safe date anchor required
-  const logsDir = typeof opts.logsDir === "string" && opts.logsDir.length > 0 ? opts.logsDir : "Logs";
-  const pointerPath = typeof opts.pointerPath === "string" && opts.pointerPath.length > 0 ? opts.pointerPath : "log.md";
+  const logsDir = typeof opts.logsDir === "string" && opts.logsDir.length > 0 ? opts.logsDir : STRUCTURAL_LOGS_DIR;
+  const pointerPath =
+    typeof opts.pointerPath === "string" && opts.pointerPath.length > 0 ? opts.pointerPath : STRUCTURAL_LOG_POINTER_PATH;
   const regionId = isSafeId(opts.regionId) ? opts.regionId : "log";
   const dayPath = `${logsDir}/${date}.md`;
   return {

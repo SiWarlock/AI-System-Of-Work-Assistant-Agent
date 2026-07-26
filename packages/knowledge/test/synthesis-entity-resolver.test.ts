@@ -316,3 +316,59 @@ describe("stubNotePathFor — entity stubs are namespaced, never root (13.8j)", 
     expect(INLINE_MINT.test("const stubPath = `${resolution.proposedSlug}.md`;")).toBe(true);
   });
 });
+
+// ── 13.8k — a poisoned candidate ROW cannot resolve to a writer-owned surface ─────
+//
+// `candidate.path` arrives VERBATIM from the GBrain read, shape-guarded only as a non-empty
+// string. A row carrying `path: "index.md"` plus a faithfully-matching title used to resolve
+// there — reaching the KN-12 navigation catalog through the RESOLVED door (13.8j closed the
+// stub-minting one). A refusal WITHHOLDS; it never sanitizes into a different path.
+
+describe("resolveEntity — a poisoned candidate path is withheld, never resolved (13.8k)", () => {
+  it("structural_surface_path_cannot_be_grounded — a faithful title over index.md/log.md withholds", async () => {
+    for (const poisoned of ["index.md", "log.md", "Logs/2026-07-26.md"]) {
+      const port = fakePort(WS_A, () => ok([cand({ path: poisoned, slug: "jane-doe", title: "Jane Doe" })]));
+      const r = await resolveEntity({ name: "Jane Doe", kind: "person" }, WS_A, { gbrain: port });
+      expect(r.kind, `${poisoned} resolved`).not.toBe("resolved");
+      // Q4: the structural-surface hit is the SECURITY-relevant refusal and gets its own greppable
+      // reason, distinct from a generic malformed path.
+      expect(r).toEqual({ kind: "withheld", reason: "structural_surface" });
+    }
+  });
+
+  it("shape_invalid_candidate_path_withholds — absolute / traversal / non-.md rows never resolve", async () => {
+    for (const bad of ["/etc/passwd.md", "../../secrets.md", "people/jane", "people\\jane.md"]) {
+      const port = fakePort(WS_A, () => ok([cand({ path: bad, slug: "jane-doe", title: "Jane Doe" })]));
+      const r = await resolveEntity({ name: "Jane Doe", kind: "person" }, WS_A, { gbrain: port });
+      expect(r.kind, `${bad} resolved`).not.toBe("resolved");
+    }
+  });
+
+  it("refusal_withholds_never_sanitizes — no repaired path is emitted, and the reason is code-only", async () => {
+    const port = fakePort(WS_A, () => ok([cand({ path: "/employer-secret/jane.md", slug: "jane-doe", title: "Jane Doe" })]));
+    const r = await resolveEntity({ name: "Jane Doe", kind: "person" }, WS_A, { gbrain: port });
+    expect(r).toEqual({ kind: "withheld", reason: "unsafe_shape" }); // shape failure; no `path` key at all
+    expect(JSON.stringify(r)).not.toContain("employer-secret");
+  });
+
+  it("a poisoned row can never WIN a resolution — it is either ambiguous or refused", async () => {
+    // Two shapes, and neither lets `index.md` become the resolved path:
+    //  (a) the poisoned row faithfully matches ⇒ 2 distinct paths ⇒ withheld(ambiguous). The guard is
+    //      not even reached, and that is fine: the poisoned path still never wins.
+    //  (b) the poisoned row is the ONLY match ⇒ the guard fires ⇒ withheld(structural_surface).
+    // (A poisoned row that does NOT faithfully match is dropped by the match filter before the guard,
+    // so there is no arrangement in which a poisoned sibling coexists with a resolved legitimate one.)
+    const both = fakePort(WS_A, () =>
+      ok([
+        cand({ path: "index.md", slug: "jane-doe", title: "Jane Doe" }),
+        cand({ path: "people/jane-doe.md", slug: "jane-doe", title: "Jane Doe" }),
+      ]),
+    );
+    const a = await resolveEntity({ name: "Jane Doe", kind: "person" }, WS_A, { gbrain: both });
+    expect(a).toEqual({ kind: "withheld", reason: "ambiguous" });
+
+    const onlyPoisoned = fakePort(WS_A, () => ok([cand({ path: "index.md", slug: "jane-doe", title: "Jane Doe" })]));
+    const b = await resolveEntity({ name: "Jane Doe", kind: "person" }, WS_A, { gbrain: onlyPoisoned });
+    expect(b).toEqual({ kind: "withheld", reason: "structural_surface" });
+  });
+});

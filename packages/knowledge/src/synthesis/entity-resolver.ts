@@ -20,6 +20,7 @@
 import { isErr } from "@sow/contracts";
 import type { Result, WorkspaceId } from "@sow/contracts";
 import { faithfulKey, entitySlug, identifiers } from "./match-keys";
+import { admitGroundedPath, type GroundedPathRefusal } from "./grounded-path";
 
 /** The entity classes the living-vault synthesis resolves (knowledge-local, not a frozen contract). */
 export type EntityKind = "person" | "project" | "concept";
@@ -60,7 +61,13 @@ export type WithheldReason =
   | "lossy_match"
   | "gbrain_unavailable"
   | "malformed_entity"
-  | "ws_scope_mismatch";
+  | "ws_scope_mismatch"
+  /**
+   * 13.8k path refusals, COMPOSED from the guard's own union rather than re-declared: a new
+   * `GroundedPathRefusal` member propagates here automatically instead of being silently funnelled
+   * into a catch-all by a non-exhaustive mapping.
+   */
+  | GroundedPathRefusal;
 
 /**
  * The three-way resolution: a resolved EXISTING path, a create-stub proposal (no note
@@ -187,7 +194,15 @@ export async function resolveEntity(
     // into duplicate rows for one note resolves, not a false `ambiguous`.
     const matches = valid.filter((c) => identifiers(c).some((id) => faithfulKey(id) === key));
     const matchedPaths = new Set(matches.map((c) => c.path));
-    if (matchedPaths.size === 1) return { kind: "resolved", path: matches[0]!.path };
+    if (matchedPaths.size === 1) {
+      // 13.8k: `candidate.path` is UNTRUSTED data from the GBrain read — a non-empty-string check is
+      // not a path check. Refuse here so every consumer of a `resolved` result inherits the
+      // invariant, and WITHHOLD rather than sanitize (a repaired path is a target the row never
+      // claimed). An admitted path is returned byte-identical, so grounding still matches exactly.
+      const verdict = admitGroundedPath(matches[0]!.path);
+      if (!verdict.ok) return withheld(verdict.reason);
+      return { kind: "resolved", path: verdict.path };
+    }
     if (matchedPaths.size >= 2) return withheld("ambiguous");
 
     // No faithful match — a lossy collision with an existing note ⇒ withhold (never
