@@ -7,48 +7,25 @@
 // (never a note written to an unintended path). Extracted so meeting-closeout + projectSync share ONE
 // adversarially-verified implementation rather than each duplicating (and risking drift on) this gate.
 import type { WorkspaceId } from "@sow/contracts";
-
-// A SUPERSET of every region-marker matcher the note is served through: the KnowledgeWriter's
-// `applyRegionPatch` exact `<!-- kw:region:<id> -->` / `<!-- /kw:region:<id> -->` `indexOf` target
-// AND `markdown-vault/sections.ts`'s `MARKER_RE` (the `parseSections` matcher, whose vocabulary is
-// `kw:region` + the §13 osb-interop `@generated:<id>` / `@user` families). Case-insensitive,
-// whitespace-tolerant, open OR close, any id — so anything ANY consumer could read as a boundary is
-// caught. It is BROADER than the parser on purpose (case-insensitive + `[^\s>]*` zero-or-more id vs
-// the parser's `+`), i.e. neutralizer ⊇ parser — the correct safety direction (defusing a form the
-// parser would ignore is harmless; the reverse is a forge vector). A parser↔neutralizer PARITY test
-// pins that every parser-recognized form is defused here.
+// #54 — the region-marker neutralizer is a SAFETY predicate (it is what stops content-embedded
+// `kw:region` / `@generated` / `@user` strings from forging or breaking a region boundary in the
+// KnowledgeWriter's `applyRegionPatch` `indexOf` or in `parseSections`/`MARKER_RE`), so it must exist
+// EXACTLY ONCE. The canonical definition is `@sow/knowledge`'s `markdown-vault/sections.ts` (#51),
+// CO-LOCATED with `MARKER_RE` — the grammar it defends — so the neutralizer ⊇ parser invariant, the
+// ReDoS-safe matcher, and the single-pass nesting collapse are hardened in ONE place. This module
+// previously carried a second, independently-maintained copy: two copies of a forgery defense drift
+// silently (a hardening lands on one, the other stays exploitable, and no type error notices).
+// It is RE-EXPORTED here so every existing projection call site keeps its import path unchanged.
 //
-// The leading `[\s/]*` (one char class — whitespace OR the close-marker `/`) is DELIBERATE, NOT
-// `\s*\/?\s*`: two unbounded `\s*` straddling an optional backtrack QUADRATICALLY on a long
-// whitespace run after `<!--` that never completes as a marker (a ReDoS soft-DoS on this
-// untrusted-content, ING-7 path). A single class is linear and still covers ` ` (open) and ` /`
-// (close). Each alternation branch starts with a REQUIRED literal (`kw:region:`/`@generated:`/
-// `@user`), so the nullable `[\s/]*` can't overlap it; all remaining quantifiers act on DISJOINT
-// classes (`[^\s>]` vs `\s`), so no ambiguity — linear for the full vocabulary.
-const REGION_MARKER_RE = /<!--[\s/]*(?:kw:region:[^\s>]*|@generated:[^\s>]*|@user)\s*-->/giu;
+// The DEEP SUBPATH is load-bearing, not incidental — do NOT "tidy" it to the `@sow/knowledge` barrel.
+// `markdown-vault/sections` is PURE (it imports only `@sow/contracts`), whereas the barrel re-exports
+// KnowledgeWriter + the fs vault watcher + the GBrain adapter and transitively pulls `@sow/db`/`node:fs`.
+// This module is imported by the projection activities AND by the worker composition root
+// (`apps/worker/src/composition/buildActivities.ts`), so widening to the barrel would drag the whole
+// knowledge/db layer into those graphs for one pure string function.
+import { neutralizeRegionMarkers } from "@sow/knowledge/markdown-vault/sections";
 
-/**
- * Neutralize any `kw:region` / `@generated` / `@user` boundary-marker string embedded in CONTENT so
- * it can NEVER forge or break a region boundary. Escapes each marker's leading `<!--` to `<\!--` —
- * the human still reads the text (visible, content-preserving; nothing is deleted) but neither
- * `applyRegionPatch`'s exact-spaced `indexOf` NOR `parseSections`/`MARKER_RE` can match it.
- *
- * Runs to a FIXPOINT: escaping `<!--`→`<\!--` only REMOVES `<!--` occurrences (never creates one),
- * so the `<!--` count is monotone-decreasing ⇒ it terminates; each pass peels one nesting layer (a
- * greedy `[^\s>]*` id can swallow a nested marker on a single pass, leaving the inner `<!--` for the
- * next). POST-CONDITION: the result contains NO substring matchable by `REGION_MARKER_RE` (⊇ both
- * consumers' matchers) ⇒ a content-embedded marker can never be selected as a region boundary.
- * Idempotent (a clean / already-neutralized string is returned byte-identical); never throws.
- */
-export function neutralizeRegionMarkers(content: string): string {
-  let out = content;
-  let prev: string;
-  do {
-    prev = out;
-    out = out.replace(REGION_MARKER_RE, (marker) => marker.replace("<!--", "<\\!--"));
-  } while (out !== prev);
-  return out;
-}
+export { neutralizeRegionMarkers };
 
 /**
  * Neutralize a MODEL-DERIVED frontmatter value before it is serialized: a `kw:region` marker in a
