@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-25 · **Track:** single-track `main` (no worktree — root checkout)
 **Predecessor handoff:** `015-2026-07-25-remaining-build-order-wave2-lead-compaction.md`
-**Successor handoff:** _(next `/team-end`)_
+**Successor handoff:** `017-2026-07-27-egress-integrity-sealed-hardstop-cycle.md`
 **HEAD at handoff:** `f5cd300c` · **origin/main:** `f5cd300c` (IN SYNC — everything pushed) · **ahead:** 0
 
 > **⭐ READ THIS FIRST, then `docs/planning/remaining-build-order.md` (the 8-arc plan) + `IMPLEMENTATION_PLAN.md` "Currently in progress" + task #31 (the orch's deferred-doc inventory) + `docs/team-protocol.md` (lead playbook — NOT auto-loaded).**
