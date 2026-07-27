@@ -1439,7 +1439,15 @@ The connector **read-adapter** layer is built and dual-reviewed: 7 vendor read a
 | Write OUTBOX drain trigger | dormant | `buildActivities.ts:318` (enqueue wired); `outbox-drain.ts:199` (built); `keychain-locked.ts:113` (hook unbound) | bind `runWakeDrain`/`drainOutbox` to a wake/reconnect trigger + schedule at boot (LIFE-6) | build |
 | Approval card renderer real Mac + Telegram transports | stub | `buildActivities.ts:502-505` (`render→ok(undefined)`) | bind real dual-channel push; the CAS apply/exactly-once is real | **HARD** |
 | NotebookLM back-sync (Drive write) | dormant | `notebooklm-sync.ts:1` (Drive-backed only); `provisionDev.ts:310` (no Drive connector) | real Drive WRITE adapter + managed-doc slot mapping + bind `notebookLmSync`; direct API = separate spike | **HARD** |
-| `TargetSystem` write coverage / read-write asymmetry | partial | `shared-enums.ts:59` (write enum); `connectors/adapters/` (gmail read no write; todoist write no read) | owner decision: confirm write targets, reconcile asymmetry, wire+route each | build |
+| `TargetSystem` write coverage / read-write asymmetry | **RESOLVED (2026-07-26)** | `shared-enums.ts:59` (write enum); `connectors/adapters/` — the todoist READ connector landed (`6facc356`), so "todoist write no read" is stale; gmail read-no-write is now a recorded **owner attestation**, not a gap (below) | nothing to reconcile: the remaining asymmetry is intentional and attested | — |
+
+#### Owner attestations — intentional write exclusions (⛔ permanent product/safety boundaries)
+
+Mirrored verbatim from `IMPLEMENTATION_PLAN.md` task 21.3 (the attestations of record) so this arming runbook is self-contained at the crossing — 21.3's Done-when requires the copy to live here:
+
+> **OWNER ATTESTATIONS (intentional write exclusions):** **gmail** = READ-ONLY, no gmail-send ("SoW is not an email sender"); **granola** = READ-ONLY transcript source, no write API. Both are permanent product/safety boundaries — gmail-send + granola-write NEVER added to `TargetSystem`.
+
+**How to treat these at an arming crossing:** they are NOT unfinished work and must never be "completed" by adding a write target. A future round proposing `gmail-send` or `granola-write` is a **scope/safety escalation to the owner**, not a build task — the read-write asymmetry above is the intended end state, and the connectors' read-only scopes (minimal `gmail.readonly`; Granola GET-only `grn_` key) are part of it. ING-7 tool-stripping stays HARD for gmail content when detail-hydration lands (email content is untrusted).
 
 ### 4. Connector real-transports
 

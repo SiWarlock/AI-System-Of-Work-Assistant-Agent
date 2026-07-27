@@ -18,7 +18,7 @@ V1 is done when the system runs locally/self-hosted on a Mac, proves the meeting
 | Write-through enablement | `writeThroughEnabled` flips ON only when proven | per-workspace, default OFF until 4 GO green + pin promoted + read-token-rejects-write | enablement-gate (12.22) + fail-closed (12.23) suites |
 | Sync latency — GBrain search visibility (REQ-NF-003) | KnowledgeWriter commit → fact visible via GBrain search, p95 | ≤ 60s p95 | Knowledge-sync latency benchmark (`packages/evals/src/benchmarks/knowledge-sync-latency.bench.ts`, §12 sole timing-assertion path) |
 | Sync latency — dashboard read-model (REQ-NF-003) | KnowledgeWriter commit → fact reflected in dashboard read-model, p95 | ≤ 10s p95 | Same knowledge-sync latency benchmark (per-stage) |
-| Retrieval | Relevant context | 90%+ benchmark success | KN-10 retrieval eval |
+| Retrieval — recall@10 (13.3b) | Relevant context surfaced by local hybrid retrieval | **fused recall@10 ≥ 0.91** gate; reranked ≥ raw with ≥1 lexical rescue. **Measured 2026-07-25: 1.00** (fused) | `packages/evals` recorded-embedding recall harness (13.3b `cdb1c47f`) — deterministic/CI, ≥30 queries (§12 floor), computes its own dense-cosine baseline, drives the REAL `retrieveLocalEmbed` (zero-egress, rule 5); non-vacuity via a both-legs-miss degraded corpus |
 | Workspace leakage | Raw Employer Work in personal/global outputs | 0 without explicit permission | WS-7 adversarial suite |
 | Prompt injection | Mutating tool access from untrusted content | 0 | ING-7 job-admission tests |
 | Calendar safety | Scheduling proposals check all configured availability | 100% | Doctor appointment flow |

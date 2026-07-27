@@ -256,6 +256,18 @@ The implementer reuses its session across a round's slices — it's already orie
 
 <!-- ▼ EXAMPLE BLOCK [id=project-specific-pitfalls]: project-specific pitfalls — the source project accreted several more pitfalls unique to its domain (contract-type placement, model-ID verification against live catalogs, matrix-driven brief file-list reconciliation, agent-existence ≠ pipeline-readiness). Add the project's own recurring brief-authoring mistakes here as they emerge — each one is cheap insurance against a repeat. ▼ -->
 
+### Pitfall — specifying that flagged data "reaches the commit path" without naming who ENFORCES the flag
+
+**This shipped a real Approvals bypass** (2026-07-26, 13.8d). The brief's acceptance bullet read *"the multi-entity plan set reaches the step-7 commit path."* The producer emits a set in which one plan carries `requiresApproval: true`, and **nothing downstream re-reads that flag** — so a brief followed literally would have auto-applied the human-gated tier and bypassed the §9.8 Approvals gate. Every component behaved exactly as documented; the governance simply had no enforcement point, so it read as correct in review.
+
+**Rule — for any brief that moves validated or flagged items across a boundary, answer this in the brief:** *does anything downstream actually READ the governance flag this data carries, and if not, which side of this boundary is now responsible for enforcing it?* If the answer is "nothing reads it," the brief must specify the enforcement (strict `!== <permissive>`, never truthy) and require that withheld items are surfaced, not dropped. Applies to `requiresApproval`, `dryRun`, `trusted`, tier/class fields, and any per-item allow/deny marker. See contracts L57.
+
+**Related — when a brief asks "are there other instances?":** specify the search by CONCEPT, not by the string forms already known, and require the iteration count in the Step-9 report (contracts **L64**). A one-pass string sweep yields a confident, wrong all-clear.
+
+### Pitfall — the brief's PREMISE is a hypothesis; an implementer contradicting it from the code is doing the job right
+
+Twice in one round an implementer invalidated a brief premise by reading the source: the flag case above, and a brief that said "let the resolver withhold on a no-match" when `EntityResolver` actually returns `create_stub` — following it would have minted machine-named person notes. **Write briefs so premises are checkable** (cite `file:line` for every claimed behavior, so a wrong premise is cheap to falsify), pre-load a Step-2.5 question wherever a premise is load-bearing, and treat a premise correction at Step 2.5 as a success of the process rather than friction. An orchestrator's brief is a hypothesis to be checked, not an instruction to be obeyed.
+
 <!-- ▲ END EXAMPLE BLOCK [id=project-specific-pitfalls] ▲ -->
 
 ---
