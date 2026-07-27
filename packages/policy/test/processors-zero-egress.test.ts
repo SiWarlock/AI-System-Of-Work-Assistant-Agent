@@ -1,0 +1,407 @@
+// spec(§5) — task 9.22 (Option C): the two-axis "is this workspace pinned to
+// zero egress?" predicates. `zeroEgressOnly` is a POSITIVE SAFETY CLAIM rendered
+// to a human as "your content stays on this machine", so it is true ONLY when
+// BOTH axes hold and false for everything ambiguous:
+//
+//   axis 1 — ROUTING pins local: `allowedProviders ⊆ LOCAL_PROVIDERS` AND every
+//            `capabilityDefaults` route is genuinely loopback-local
+//            (`processorOfRoute(route) === null` — the PROOF, never the
+//            `egressClass` CLAIM) AND `rawCloudEgressEnabled === false`.
+//   axis 2 — NO DESTINATION is approved: both egress allowlists are EMPTY.
+//
+// ⛔ Axis 2 is EMPTINESS, not local-membership — the correction this whole task
+// exists for. The argument (why an empty allowlist is the STRONGEST zero-egress
+// state, and why `["ollama"]` in an EGRESS allowlist can only mean a REMOTE
+// ollama) is stated ONCE, beside the code, in `src/processors.ts` above
+// `everyProviderIsLocal`. Read it there; it is deliberately not restated here,
+// because two copies of a load-bearing argument diverge.
+import { describe, it, expect } from "vitest";
+import { processorId, validWorkspace, workspaceId } from "@sow/contracts";
+import type { EgressPolicy, ProcessorId, ProviderMatrix, ProviderRoute } from "@sow/contracts";
+import * as processorsModule from "../src/processors";
+import {
+  hasNoApprovedEgressDestination,
+  isLocalOnlyProviderMatrix,
+  isZeroEgressOnlyWorkspace,
+} from "../src/processors";
+
+// ── builders ─────────────────────────────────────────────────────────────────
+const WS = workspaceId("ws-zero-egress");
+
+const route = (
+  identity: { provider: string } | { runtime: string },
+  endpoint: string,
+  egressClass: "local" | "cloud",
+): ProviderRoute => ({ ...identity, model: "m", endpoint, egressClass }) as unknown as ProviderRoute;
+
+const defaults = (
+  entries: Record<string, ProviderRoute>,
+): ProviderMatrix["capabilityDefaults"] => entries as ProviderMatrix["capabilityDefaults"];
+
+const matrix = (over: Partial<ProviderMatrix> = {}): ProviderMatrix => ({
+  workspaceId: WS,
+  allowedProviders: [],
+  capabilityDefaults: defaults({}),
+  rawCloudEgressEnabled: false,
+  ...over,
+});
+
+const policy = (over: Partial<EgressPolicy> = {}): EgressPolicy => ({
+  workspaceId: WS,
+  allowedProcessors: [],
+  rawContentAllowedProcessors: [],
+  employerRawEgressAcknowledged: false,
+  ...over,
+});
+
+const ids = (...names: string[]): ProcessorId[] => names.map((n) => processorId(n));
+
+// A genuinely non-egress route: local provider + loopback endpoint (proof, not claim).
+const LOOPBACK_OLLAMA = route({ provider: "ollama" }, "http://127.0.0.1:11434", "local");
+// The tunneled-local hole: claims 'local', points somewhere remote.
+const TUNNELED_LOCAL = route({ provider: "ollama" }, "https://ollama.example.com", "local");
+
+// ── axis 1 — routing pins local ──────────────────────────────────────────────
+describe("isLocalOnlyProviderMatrix — axis 1 (9.22 option C)", () => {
+  it("local_matrix_is_local_only", () => {
+    expect(
+      isLocalOnlyProviderMatrix(
+        matrix({
+          allowedProviders: ["ollama", "lm_studio"],
+          capabilityDefaults: defaults({ "meeting.close": LOOPBACK_OLLAMA }),
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("empty_matrix_is_vacuously_local_only", () => {
+    // `[] ⊆ LOCAL_PROVIDERS` and "no routes" are both vacuously satisfied, and an
+    // empty matrix genuinely routes nowhere — so this is not a false claim. It IS
+    // the state a re-provision wipes to (task 9.29): the claim stays true while the
+    // owner's configured posture has been destroyed. Recorded, not worked around here.
+    expect(isLocalOnlyProviderMatrix(matrix())).toBe(true);
+  });
+
+  it("cloud_provider_in_allowed_providers_defeats_it", () => {
+    expect(isLocalOnlyProviderMatrix(matrix({ allowedProviders: ["claude"] }))).toBe(false);
+    // ALL, not ANY — one cloud id is enough however many local ones accompany it.
+    expect(
+      isLocalOnlyProviderMatrix(matrix({ allowedProviders: ["ollama", "lm_studio", "claude"] })),
+    ).toBe(false);
+  });
+
+  it("research_and_cloud_providers_are_never_local", () => {
+    // §ARM-RESEARCH structural invariant, asserted from the CONSUMING side:
+    // perplexity/xai are cloud processors, each its own — listing either as local
+    // would make an employer-work ack-OFF job silently egress instead of failing
+    // closed (safety rule 5).
+    //
+    // The ids are typed `ProviderId`, so a typo cannot make this pass by naming a
+    // provider that does not exist; and the POSITIVE CONTROL below proves the
+    // predicate can still say `true`, so "false for everything" cannot satisfy it.
+    const cloud: ProviderMatrix["allowedProviders"] = [
+      "claude",
+      "openai",
+      "openrouter",
+      "perplexity",
+      "xai",
+    ];
+    for (const p of cloud) {
+      expect(
+        isLocalOnlyProviderMatrix(matrix({ allowedProviders: [p] })),
+        `${p} must not read as local`,
+      ).toBe(false);
+    }
+    const local: ProviderMatrix["allowedProviders"] = ["ollama", "lm_studio"];
+    for (const p of local) {
+      expect(
+        isLocalOnlyProviderMatrix(matrix({ allowedProviders: [p] })),
+        `${p} is the positive control — it must read as local`,
+      ).toBe(true);
+    }
+  });
+
+  it("raw_cloud_egress_enabled_defeats_it", () => {
+    expect(isLocalOnlyProviderMatrix(matrix({ rawCloudEgressEnabled: true }))).toBe(false);
+    // STRICT === false: a missing/non-boolean flag is not a verified 'off'.
+    expect(
+      isLocalOnlyProviderMatrix(
+        matrix({ rawCloudEgressEnabled: undefined as unknown as boolean }),
+      ),
+    ).toBe(false);
+  });
+
+  it("non_loopback_capability_route_defeats_it", () => {
+    // The routing PROOF is processorOfRoute() === null, never the egressClass claim.
+    expect(
+      isLocalOnlyProviderMatrix(
+        matrix({
+          allowedProviders: ["ollama"],
+          capabilityDefaults: defaults({ "meeting.close": TUNNELED_LOCAL }),
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isLocalOnlyProviderMatrix(
+        matrix({
+          allowedProviders: ["ollama"],
+          capabilityDefaults: defaults({
+            "meeting.close": LOOPBACK_OLLAMA,
+            "source.extract": route({ provider: "claude" }, "https://api.anthropic.com", "cloud"),
+          }),
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("sparse_allowed_providers_is_not_local_only", () => {
+    // `Array.prototype.every` SKIPS HOLES, so a bare `.every` would report a
+    // 3-hole array as all-local and mint a safety claim out of junk. A hole is
+    // malformed input, and malformed never yields a positive claim.
+    expect(
+      isLocalOnlyProviderMatrix(
+        matrix({ allowedProviders: new Array(3) as ProviderMatrix["allowedProviders"] }),
+      ),
+    ).toBe(false);
+    const withHole = ["ollama", undefined, "lm_studio"] as unknown as ProviderMatrix["allowedProviders"];
+    delete withHole[1];
+    expect(isLocalOnlyProviderMatrix(matrix({ allowedProviders: withHole }))).toBe(false);
+  });
+
+  it("an_under_reported_length_cannot_hide_a_cloud_provider", () => {
+    // The scan is bounded by `length`, so anything that UNDER-reports it leaves the
+    // tail unexamined and mints a local-only claim over a cloud member. A real
+    // Array cannot do this — `length` is a non-configurable own property, so even
+    // an Array subclass can't shadow it — but `Array.isArray` pierces a Proxy to
+    // its target, so a proxied array can. Malformed ⇒ false, same as a hole.
+    const lying = new Proxy(["claude"], {
+      get: (t, k, r) => (k === "length" ? 0 : Reflect.get(t, k, r)),
+    }) as unknown as ProviderMatrix["allowedProviders"];
+    expect(isLocalOnlyProviderMatrix(matrix({ allowedProviders: lying }))).toBe(false);
+  });
+
+  it("non_enumerable_or_symbol_keyed_capability_route_is_not_skipped", () => {
+    // Totality: a route hidden behind a non-enumerable — or symbol-keyed — own
+    // property must still be inspected. Skipping it would let an unexamined remote
+    // route ride under a local-only claim, which is the claim's whole failure mode.
+    const nonEnumerable = {} as Record<string, ProviderRoute>;
+    Object.defineProperty(nonEnumerable, "meeting.close", {
+      value: TUNNELED_LOCAL,
+      enumerable: false,
+    });
+    expect(
+      isLocalOnlyProviderMatrix(
+        matrix({ allowedProviders: ["ollama"], capabilityDefaults: defaults(nonEnumerable) }),
+      ),
+    ).toBe(false);
+
+    const symbolKeyed = { [Symbol("meeting.close")]: TUNNELED_LOCAL } as unknown as Record<
+      string,
+      ProviderRoute
+    >;
+    expect(
+      isLocalOnlyProviderMatrix(
+        matrix({ allowedProviders: ["ollama"], capabilityDefaults: defaults(symbolKeyed) }),
+      ),
+    ).toBe(false);
+  });
+
+  it("a_route_whose_identity_cannot_be_branded_denies_rather_than_throws", () => {
+    // `processorOfRoute` brands the route's RAW identity string, and the brand
+    // constructor THROWS on a blank one — so `{provider: ""}` (a shape only a
+    // deserialized row can produce; the type forbids it) would escape as an
+    // exception instead of a decision. A safety predicate that throws where it
+    // should deny is not fail-closed: the caller sees a crash, not `false`.
+    for (const identity of ["", "   "]) {
+      for (const branch of [{ provider: identity }, { runtime: identity }]) {
+        const m = matrix({
+          capabilityDefaults: defaults({
+            "meeting.close": route(branch, "https://remote.example.com", "cloud"),
+          }),
+        });
+        expect(() => isLocalOnlyProviderMatrix(m)).not.toThrow();
+        expect(isLocalOnlyProviderMatrix(m)).toBe(false);
+      }
+    }
+  });
+
+  it("a_throwing_getter_denies_rather_than_throws", () => {
+    const hostile = {} as Record<string, ProviderRoute>;
+    Object.defineProperty(hostile, "meeting.close", {
+      get() {
+        throw new Error("hostile getter");
+      },
+      enumerable: true,
+    });
+    const m = matrix({ capabilityDefaults: defaults(hostile) });
+    expect(() => isLocalOnlyProviderMatrix(m)).not.toThrow();
+    expect(isLocalOnlyProviderMatrix(m)).toBe(false);
+  });
+
+  it("malformed_matrix_is_not_local_only", () => {
+    const bad = (v: unknown): boolean => isLocalOnlyProviderMatrix(v as ProviderMatrix);
+    expect(bad(undefined)).toBe(false);
+    expect(bad(null)).toBe(false);
+    expect(bad("ollama")).toBe(false);
+    expect(bad(matrix({ allowedProviders: "ollama" as unknown as ProviderMatrix["allowedProviders"] }))).toBe(false);
+    expect(
+      bad(matrix({ allowedProviders: [null] as unknown as ProviderMatrix["allowedProviders"] })),
+    ).toBe(false);
+    expect(
+      bad(matrix({ allowedProviders: [""] as unknown as ProviderMatrix["allowedProviders"] })),
+    ).toBe(false);
+    expect(
+      bad(matrix({ capabilityDefaults: null as unknown as ProviderMatrix["capabilityDefaults"] })),
+    ).toBe(false);
+    // An undefined VALUE under a present capability key is a malformed route, not "no route".
+    expect(
+      bad(
+        matrix({
+          capabilityDefaults: { "meeting.close": undefined } as unknown as ProviderMatrix["capabilityDefaults"],
+        }),
+      ),
+    ).toBe(false);
+  });
+});
+
+// ── axis 2 — no destination is approved ──────────────────────────────────────
+describe("hasNoApprovedEgressDestination — axis 2 (9.22 option C)", () => {
+  it("both_allowlists_empty_is_no_approved_destination", () => {
+    expect(hasNoApprovedEgressDestination(policy())).toBe(true);
+  });
+
+  it("remote_ollama_in_an_egress_allowlist_is_a_destination", () => {
+    // ⛔ THE corrected-model assertion. A genuine loopback-local route never
+    // consults this list (egress.ts:157), so an entry here — including "ollama" —
+    // is a REMOTE endpoint approved to receive content.
+    expect(hasNoApprovedEgressDestination(policy({ allowedProcessors: ids("ollama") }))).toBe(false);
+    expect(hasNoApprovedEgressDestination(policy({ allowedProcessors: ids("lm_studio") }))).toBe(false);
+    expect(hasNoApprovedEgressDestination(policy({ allowedProcessors: ids("claude") }))).toBe(false);
+  });
+
+  it("raw_content_allowlist_is_an_independent_destination_set", () => {
+    expect(
+      hasNoApprovedEgressDestination(policy({ rawContentAllowedProcessors: ids("claude") })),
+    ).toBe(false);
+  });
+
+  it("the_acknowledgment_flag_does_not_move_the_answer", () => {
+    // Severs the original defect at its root: `zeroEgressOnly` was `!acknowledged`,
+    // a claim about CONSENT masquerading as a claim about ROUTING.
+    //
+    // Asserting only `acked === unacked` would be satisfied by a predicate that
+    // returned a constant — i.e. by a broken predicate — so the value is pinned on
+    // BOTH sides. Under the old `!acknowledged` model these two would differ.
+    const acked = policy({
+      employerRawEgressAcknowledged: true,
+      acknowledgedAt: "2026-07-27T00:00:00.000Z",
+    });
+    expect(hasNoApprovedEgressDestination(acked)).toBe(true);
+    expect(hasNoApprovedEgressDestination(policy())).toBe(true);
+  });
+
+  it("sparse_or_malformed_allowlists_are_never_empty", () => {
+    const bad = (v: unknown): boolean => hasNoApprovedEgressDestination(v as EgressPolicy);
+    expect(bad(policy({ allowedProcessors: new Array(3) as ProcessorId[] }))).toBe(false);
+    // A zeroed `length` over real members must not read as "no destination
+    // approved" (proxied array — `Array.isArray` pierces the Proxy).
+    const lying = new Proxy(ids("claude"), {
+      get: (t, k, r) => (k === "length" ? 0 : Reflect.get(t, k, r)),
+    }) as ProcessorId[];
+    expect(bad(policy({ allowedProcessors: lying }))).toBe(false);
+    expect(bad(policy({ allowedProcessors: "claude" as unknown as ProcessorId[] }))).toBe(false);
+    // The killer case for a missing `Array.isArray`: `"".length === 0`, so a bare
+    // length check would read an empty STRING as "no destinations approved".
+    expect(bad(policy({ allowedProcessors: "" as unknown as ProcessorId[] }))).toBe(false);
+    expect(bad(policy({ rawContentAllowedProcessors: "" as unknown as ProcessorId[] }))).toBe(false);
+    expect(bad(policy({ rawContentAllowedProcessors: null as unknown as ProcessorId[] }))).toBe(false);
+    expect(bad(undefined)).toBe(false);
+    expect(bad(null)).toBe(false);
+    expect(bad("")).toBe(false);
+  });
+});
+
+// ── the composition — both axes, fail-closed on each ─────────────────────────
+describe("isZeroEgressOnlyWorkspace — the two-axis claim (9.22 option C)", () => {
+  const ws = (
+    m: Partial<ProviderMatrix> = {},
+    p: Partial<EgressPolicy> = {},
+  ): { egressPolicy: EgressPolicy; providerMatrix: ProviderMatrix } => ({
+    egressPolicy: policy(p),
+    providerMatrix: matrix(m),
+  });
+
+  it("both_axes_hold_is_zero_egress_only", () => {
+    expect(
+      isZeroEgressOnlyWorkspace(
+        ws({
+          allowedProviders: ["ollama"],
+          capabilityDefaults: defaults({ "meeting.close": LOOPBACK_OLLAMA }),
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("either_axis_alone_is_not_enough", () => {
+    // Local matrix + a leftover cloud destination — the case option B could not see.
+    expect(
+      isZeroEgressOnlyWorkspace(
+        ws({ allowedProviders: ["ollama"] }, { allowedProcessors: ids("claude") }),
+      ),
+    ).toBe(false);
+    // Empty allowlists + a cloud-capable matrix — the case option A could not see.
+    expect(isZeroEgressOnlyWorkspace(ws({ allowedProviders: ["claude"] }))).toBe(false);
+  });
+
+  it("is_independent_of_the_acknowledgment", () => {
+    // Both sides pinned to a VALUE, not merely to each other — an equality-only
+    // assertion is satisfied by a constant predicate, i.e. by the broken case.
+    const off = ws({ allowedProviders: ["ollama"] });
+    const on = ws(
+      { allowedProviders: ["ollama"] },
+      { employerRawEgressAcknowledged: true, acknowledgedAt: "2026-07-27T00:00:00.000Z" },
+    );
+    expect(isZeroEgressOnlyWorkspace(off)).toBe(true);
+    expect(isZeroEgressOnlyWorkspace(on)).toBe(true);
+  });
+
+  it("the_canonical_valid_workspace_fails_on_axis_1_alone", () => {
+    // Driven from the REAL shared fixture, not a hand-built lookalike: it carries
+    // EMPTY allowlists (axis 2 passes) but `allowedProviders: ["claude"]` (axis 1
+    // fails). An axis-2-only implementation returns `true` here and has silently
+    // become option A — which is exactly the collapse this test exists to catch.
+    expect(hasNoApprovedEgressDestination(validWorkspace.egressPolicy)).toBe(true);
+    expect(isLocalOnlyProviderMatrix(validWorkspace.providerMatrix)).toBe(false);
+    expect(isZeroEgressOnlyWorkspace(validWorkspace)).toBe(false);
+  });
+
+  it("an_entirely_unconfigured_workspace_still_reports_zero_egress", () => {
+    // ⚠ Recorded deliberately, not as an endorsement: empty matrix + empty
+    // allowlists satisfies BOTH axes. The claim is not false (nothing routes,
+    // nothing is approved) but it is indistinguishable from a workspace whose
+    // configured posture a re-provision wiped (task 9.29). Pinned here so the
+    // behaviour is a decision on record rather than an accident a later edit can
+    // change silently in either direction.
+    expect(isZeroEgressOnlyWorkspace(ws())).toBe(true);
+  });
+
+  it("absent_or_malformed_input_never_claims_zero_egress", () => {
+    const bad = (v: unknown): boolean =>
+      isZeroEgressOnlyWorkspace(v as { egressPolicy: EgressPolicy; providerMatrix: ProviderMatrix });
+    expect(bad(undefined)).toBe(false);
+    expect(bad(null)).toBe(false);
+    expect(bad({})).toBe(false);
+    expect(bad({ egressPolicy: policy() })).toBe(false);
+    expect(bad({ providerMatrix: matrix() })).toBe(false);
+  });
+});
+
+// ── structural pin ───────────────────────────────────────────────────────────
+describe("LOCAL_PROVIDERS stays module-private", () => {
+  it("membership_is_asked_never_read", () => {
+    // Exporting the set invites a caller to re-derive membership and reach a
+    // second, weaker answer (contracts forbidden-pattern #6). Callers get
+    // predicates; the set stays here with the identity-wins-over-endpoint rule.
+    expect(Object.keys(processorsModule)).not.toContain("LOCAL_PROVIDERS");
+  });
+});

@@ -6,13 +6,197 @@
 // (a route that CLAIMS egressClass 'local' but points at a remote/proxied
 // endpoint) is treated as EGRESS, never as safe-local. REDACTION-SAFE: this
 // module returns ids only (a ProcessorId or null) — no content.
-import type { ProviderId, ProviderRoute, ProcessorId } from "@sow/contracts";
+import type {
+  EgressPolicy,
+  ProcessorId,
+  ProviderId,
+  ProviderMatrix,
+  ProviderRoute,
+} from "@sow/contracts";
 import { processorId } from "@sow/contracts";
 
 // The ONLY provider ids that name a genuinely LOCAL (zero-egress) engine. A CLOUD
 // provider id (claude/openai/openrouter) can NEVER be laundered into a
 // non-egress route by an endpoint claim — the named provider identity wins.
 const LOCAL_PROVIDERS: ReadonlySet<ProviderId> = new Set<ProviderId>(["ollama", "lm_studio"]);
+
+// ─── task 9.22 (option C): the two-axis zero-egress claim ─────────────────────
+//
+// `zeroEgressOnly` is what the app tells its owner about whether their content
+// stays on their machine, so it is a POSITIVE SAFETY CLAIM: it is true only when
+// BOTH independent axes hold, and every ambiguous input resolves to `false`. Two
+// separate things must go wrong before the app can lie.
+//
+// The predicates live HERE, beside LOCAL_PROVIDERS, so callers ASK a question
+// instead of reading the set — the set's own contract is that provider IDENTITY
+// decides locality (an endpoint claim can never launder a cloud id), and a caller
+// re-implementing membership is how a second, weaker answer appears (contracts
+// forbidden-pattern #6). LOCAL_PROVIDERS stays module-private.
+//
+// ⛔ AXIS 2 IS EMPTINESS, NOT LOCAL-MEMBERSHIP. In `egress.ts`, `egressVeto`'s
+// normal-allowlist step denies an EGRESSING route whose processor is absent from
+// `allowedProcessors`, so an EMPTY allowlist denies every egress route — the
+// STRONGEST zero-egress state, not the weakest. And its final fall-through allows
+// a genuine loopback-local route WITHOUT consulting the allowlist at all, so a
+// local provider never needs to appear in it. Therefore an entry in an EGRESS
+// allowlist — `ollama` included — can only mean a REMOTE endpoint approved as a
+// destination. Reading `["ollama"]` as "local-only" would assert safety over
+// precisely the config that means raw content is leaving. Do not re-invert this.
+// (Deliberately cited by function + clause, not by line: a line reference here
+// would rot into an argument that reads authoritative and points at nothing.)
+
+/** True IFF `providers` is a DENSE array whose every member is a local zero-egress provider id. */
+function everyProviderIsLocal(providers: unknown): boolean {
+  if (!Array.isArray(providers)) return false;
+  // NOT `.every` — `Array.prototype.every` SKIPS HOLES, so a sparse array would
+  // report vacuously true and mint a safety claim out of junk. A hole is
+  // malformed input, and malformed never yields a positive claim.
+  for (let i = 0; i < providers.length; i += 1) {
+    if (!Object.prototype.hasOwnProperty.call(providers, i)) return false;
+    const p: unknown = providers[i];
+    if (typeof p !== "string" || p.length === 0) return false;
+    if (!LOCAL_PROVIDERS.has(p as ProviderId)) return false;
+  }
+  // ...and the loop above only inspected `length` entries, so an array-like whose
+  // `length` UNDER-reports its contents would hide the rest. Require the own index
+  // keys to be exactly `0..length-1`: an unexamined member never rides through.
+  return countOwnIndexKeys(providers) === providers.length;
+}
+
+/** How many own keys of `value` are canonical array indices (`"0"`, `"1"`, …). */
+function countOwnIndexKeys(value: object): number {
+  let n = 0;
+  for (const key of Object.getOwnPropertyNames(value)) {
+    if (String(Number(key)) === key && Number(key) >= 0) n += 1;
+  }
+  return n;
+}
+
+/** True IFF every route configured in `capabilityDefaults` is a genuine loopback-local (non-egress) route. */
+function everyCapabilityRouteIsLoopbackLocal(capabilityDefaults: unknown): boolean {
+  if (capabilityDefaults === null || typeof capabilityDefaults !== "object") return false;
+  if (Array.isArray(capabilityDefaults)) return false;
+  const record = capabilityDefaults as Record<PropertyKey, ProviderRoute | undefined>;
+  // EVERY own key (not `Object.values`/`Object.keys`) so a route hidden behind a
+  // NON-ENUMERABLE or symbol-keyed own property is still inspected — an unexamined
+  // route must never ride under a local-only claim. Own keys only, so no inherited
+  // prototype member is ever read as a route.
+  // The WHOLE scan runs under ONE try: `processorOfRoute` is total for every
+  // route the TYPE admits, but it brands the route's raw identity string, and the
+  // brand constructor THROWS on a blank one — so `{provider: ""}` (a shape only a
+  // deserialized row can produce) escapes as an exception rather than a decision.
+  // A throwing input is malformed input, and malformed can only ever mean `false`
+  // here; a safety predicate that throws instead of denying is not fail-closed.
+  try {
+    for (const key of Reflect.ownKeys(record)) {
+      const route = record[key];
+      // `processorOfRoute` is the routing PROOF (null ⇔ genuinely non-egress); the
+      // route's own `egressClass` is only a claim. A malformed/absent route yields
+      // a non-null MALFORMED_ROUTE processor, so it fails closed here too.
+      if (processorOfRoute(route as ProviderRoute) !== null) return false;
+    }
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * AXIS 1 — the workspace's ROUTING pins local: every allowed provider is a local
+ * zero-egress engine, every configured capability route is genuinely loopback-local,
+ * and raw cloud egress is verified OFF.
+ *
+ * `rawCloudEgressEnabled` is compared STRICTLY to `false` — an absent or
+ * non-boolean flag is not a verified 'off'.
+ *
+ * ⚠ An EMPTY matrix satisfies this VACUOUSLY (`[] ⊆ LOCAL_PROVIDERS`, no routes).
+ * That is not a false claim — an empty matrix genuinely routes nowhere — but it is
+ * also the state a same-type re-provision currently wipes to (task 9.29), so the
+ * claim can be true for a posture the owner never chose. Deliberate, recorded,
+ * fixed at the provisioning end rather than papered over here.
+ *
+ * Pure; malformed ⇒ false. Total over every value the DECLARED type admits and
+ * over the absent/wrong-typed shapes that reach it from a deserialized row (the
+ * brand never policed those) — the guards below are load-bearing for exactly that
+ * reason, not defensive decoration.
+ */
+export function isLocalOnlyProviderMatrix(matrix: ProviderMatrix): boolean {
+  // `== null` covers null AND undefined; permitted against a non-nullable type
+  // (the same guard shape `provider-matrix.ts` uses on its typed matrix param).
+  if (matrix == null || typeof matrix !== "object") return false;
+  if (matrix.rawCloudEgressEnabled !== false) return false;
+  if (!everyProviderIsLocal(matrix.allowedProviders)) return false;
+  return everyCapabilityRouteIsLoopbackLocal(matrix.capabilityDefaults);
+}
+
+/**
+ * AXIS 2 — NO egress destination is approved: both allowlists are EMPTY, so the
+ * §5 veto denies every egressing route.
+ *
+ * This is emptiness, NOT local-membership — see the ⛔ note above. Independent of
+ * `employerRawEgressAcknowledged`: consent is not routing, and conflating the two
+ * is the original defect this task removes.
+ *
+ * Pure; malformed ⇒ false (see {@link isLocalOnlyProviderMatrix} on totality).
+ */
+export function hasNoApprovedEgressDestination(policy: EgressPolicy): boolean {
+  if (policy == null || typeof policy !== "object") return false;
+  return (
+    isEmptyProcessorList(policy.allowedProcessors) &&
+    isEmptyProcessorList(policy.rawContentAllowedProcessors)
+  );
+}
+
+/**
+ * True IFF `list` is genuinely an EMPTY array. A non-array is malformed, never
+ * "empty"; and a `length` of 0 is not taken on trust — an array-like carrying
+ * members under a zeroed `length` would otherwise read as "no destinations
+ * approved", which is the exact false assurance this predicate exists to prevent.
+ */
+function isEmptyProcessorList(list: unknown): boolean {
+  return Array.isArray(list) && list.length === 0 && countOwnIndexKeys(list) === 0;
+}
+
+/**
+ * The composed claim (task 9.22, owner-ruled option C): a workspace is
+ * zero-egress-only IFF its routing pins local (axis 1) AND no egress destination
+ * is approved (axis 2).
+ *
+ * ⛔ SCOPE — this answers "can a MODEL-PROVIDER route carry content off this
+ * machine?", i.e. exactly the surface `egressVeto` governs. It says NOTHING about
+ * connector reads or Tool-Gateway external writes, which reach the network on
+ * their own paths and do not consult `egressPolicy.allowedProcessors`. Whatever
+ * an operator-facing surface renders from this value must be worded to the same
+ * scope; a broader promise ("nothing leaves this machine") would not be derived
+ * from the state that governs it.
+ *
+ * The conjunction lives HERE rather than at each producer on purpose: two
+ * producers each composing the axes themselves is the same two-sites-must-agree
+ * arrangement this task exists to remove. Callers ask once.
+ *
+ * The parameter is structural, so a full `Workspace` satisfies it. Callers own
+ * everything impure — the store read, the fault path, and the rule that an
+ * unreadable workspace claims NOTHING (fail-closed to `false`, never the
+ * strongest claim from the state you know least about).
+ *
+ * ⚠ THE AXES ARE NOT INDEPENDENT AT THE DEFAULT STATE. A workspace with an EMPTY
+ * matrix and EMPTY allowlists satisfies BOTH and is reported zero-egress. The
+ * claim is not false — nothing routes and nothing is approved — but provisioning
+ * SEEDS both (`provisionWorkspace` seeds `[claude]`), so "both axes empty" IS the
+ * never-provisioned/wiped state: ONE missing event zeroes both, and option C's
+ * "two independent things must go wrong" does not hold here. Deliberate and
+ * escalated rather than silently strengthened — the durable fix is a live
+ * provisioning posture (task 9.29), and any third conjunct is an owner ruling.
+ *
+ * Pure; absent/malformed either half ⇒ false.
+ */
+export function isZeroEgressOnlyWorkspace(w: {
+  egressPolicy: EgressPolicy;
+  providerMatrix: ProviderMatrix;
+}): boolean {
+  if (w == null || typeof w !== "object") return false;
+  return isLocalOnlyProviderMatrix(w.providerMatrix) && hasNoApprovedEgressDestination(w.egressPolicy);
+}
 
 /** The substring before the earliest of `delimiters`, or the whole string if none occur. */
 export function firstSegment(str: string, delimiters: string): string {
