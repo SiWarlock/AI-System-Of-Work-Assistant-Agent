@@ -23,7 +23,7 @@ Complete the ARC-4 keystone chain's knowledge half: the meeting path (13.8f-A), 
 
 Final state: **636 tests passing / 1 skipped (48 files)** in `@sow/knowledge`, typecheck + lint clean, repo-wide `turbo typecheck` 20/20. All new code dormant behind its own pins.
 
-> ⚠ **INCOMPLETE: preflight failures.** Repo-wide `turbo lint typecheck test` is RED. **One failure is mine** — see "Preflight status" below. This session is not "ready" until it is resolved by the owning track.
+> ✅ **RESOLVED.** At `/session-end` this doc carried an `INCOMPLETE: preflight failures` banner — repo-wide tests were RED and one failure was mine. It was fixed in `3fd7dd2a` (eval-security) and **`@sow/evals` is 610 pass / 0 fail**. See "Preflight status" below for what happened and why it slipped through, which is the part still worth reading.
 
 ## Decisions made
 
@@ -96,7 +96,7 @@ Every feature is **dormant by design** — arming-gated, with its own dormancy p
 
 `npx turbo lint typecheck test` → **37/42 tasks pass**; `@sow/evals#test`, `@sow/db#test`, `@sow/desktop#test/typecheck` fail.
 
-### ⚠ `@sow/evals` — CAUSED BY 13.8j (mine). Cannot fix: eval-security territory.
+### ✅ `@sow/evals` — CAUSED BY 13.8j (mine). **RESOLVED by `3fd7dd2a`** (eval-security); `@sow/evals` now 610 pass / 0 fail.
 
 `suites/synthesis/synthesis-reason.test.ts` → `safety_floor_100pct` fails on two corpus entries, invariants `create_paths` + `stubs_present`:
 
