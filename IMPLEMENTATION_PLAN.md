@@ -62,7 +62,7 @@ _`*` = a residual/deferred bullet remains inside a certified phase (see that pha
 
 ## Currently in progress
 
-- **⏸ TEAM PAUSED (cycle, not teardown) 2026-07-27** — handoff doc: `docs/team-handoffs/017-2026-07-27-egress-integrity-sealed-hardstop-cycle.md` · round-seal: `8dc4ad56` · orchestrator cycled at HARD-STOP 83%; all teammates `/session-end`/`/orchestrate-end`-closed. **Next dispatch, in order: evalsec corpus re-point → worker 9.22 RE-BRIEF (brief 203 is WRONG) → 9.23 (brief 204, clean).** Push owed: 2-commit tail. _(The seal snapshot below is the orchestrator's and is retained deliberately — it is the successor's evidence base, not stale in-progress state.)_
+- **🔄 ORCHESTRATOR CYCLING 2026-07-27 — the TEAM CONTINUES, it is NOT paused.** Round sealed `8dc4ad56`; `main-orchestrator` drained at HARD-STOP 83% and is being replaced by a fresh one. Lead + the three implementers persist. Round record: `docs/team-handoffs/017-2026-07-27-egress-integrity-sealed-hardstop-cycle.md` — written as the round's seal documentation, NOT a pause marker. **Next dispatch, in order: evalsec corpus re-point → worker 9.22 RE-BRIEF (brief 203 is WRONG) → 9.23 (brief 204, clean).** Push owed: 2-commit tail. _(The seal snapshot below is the orchestrator's and is retained deliberately — it is the successor's evidence base, not stale in-progress state.)_
 
 - **⚠ THREE RED PACKAGES IN THE TREE — ALL THREE ARE INHERITED OR NOT-A-FAILURE. THIS ROUND CREATED NONE OF THEM. Push is OWED at the seal, NOT gated.**
   A successor seeing three red packages with no triage would reasonably assume the round broke things. It did not. Distinguished by CAUSE:
