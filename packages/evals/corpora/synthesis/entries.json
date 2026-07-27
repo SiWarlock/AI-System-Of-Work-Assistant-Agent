@@ -116,7 +116,7 @@
     "sections": {},
     "gbrainByName": { "Payments": { "outcome": "create_stub" } },
     "candidate": { "entityRefs": [{ "name": "Payments", "kind": "project" }] },
-    "expected": { "tier": "auto", "patchRegionIds": [], "createPaths": ["payments.md"], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": ["payments.md"], "noFabricationNames": [] }
+    "expected": { "tier": "auto", "patchRegionIds": [], "createPaths": ["projects/payments.md"], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": ["projects/payments.md"], "noFabricationNames": [] }
   },
   {
     "id": "entity-resolved-nocreate",
@@ -188,7 +188,7 @@
       "entityRefs": [{ "name": "Widgets", "kind": "concept" }],
       "regions": [{ "notePath": "notes/p.md", "regionId": "derived", "body": "y", "effect": "new_region" }]
     },
-    "expected": { "tier": "auto", "patchRegionIds": ["derived"], "createPaths": ["widgets.md"], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": ["widgets.md"], "noFabricationNames": [] }
+    "expected": { "tier": "auto", "patchRegionIds": ["derived"], "createPaths": ["concepts/widgets.md"], "frontmatterTBDKeys": [], "frontmatterKeptKeys": [], "droppedRegionIds": [], "droppedFrontmatterKeys": [], "stubPaths": ["concepts/widgets.md"], "noFabricationNames": [] }
   },
   {
     "id": "comprehensive-clean-both",

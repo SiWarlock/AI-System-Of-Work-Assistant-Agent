@@ -1,7 +1,7 @@
 {
   "corpusId": "synthesis",
-  "version": "1.0.0",
-  "contentHash": "sha256:09f8491b38ac8b1568540e5a18a98ada81c08c901e54498dbd7c9032030bf1bf",
+  "version": "1.1.0",
+  "contentHash": "sha256:f30d873d57188adb2056b85642d24a5a247110bbe083279f95001ba86dcfa580",
   "entryCount": 20,
   "floor": 20
 }
