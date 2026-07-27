@@ -30,7 +30,7 @@
 //
 // SCOPE: worker composition only. Never writes Markdown, never routes a semantic
 // mutation, never touches secrets.
-import { ok, err, isErr, defaultWorkspace, processorId, type Result, type Workspace, type WorkspaceType } from "@sow/contracts";
+import { ok, err, isErr, defaultWorkspace, processorId, WorkspaceSchema, type Result, type Workspace, type WorkspaceType } from "@sow/contracts";
 import type { ReadModelRepository, WorkspaceConfigRepository } from "@sow/db";
 import { registerWorkspace } from "./workspaceRegistry";
 
@@ -155,18 +155,14 @@ export async function provisionWorkspace(
     return err({ code: "invalid_workspace", message: "workspace validation rejected" });
   }
 
-  // 1b) Seed the cloud-copilot egress allowlist (9.10-A personal + the 9.10 employer FLIP): persist the
-  //     [claude] allowlist so the store-backed veto allows the cloud path; employer_work is default-seeded
-  //     ack=true (owner-authorized, scoped to [claude]). `at` stamps the employer acknowledgedAt.
-  workspace = seedCloudCopilotAllowlist(workspace, at);
-
   // 2) Isolation-class immutability guard. The workspace `type` anchors `dataOwner` (the
   //    rule-5 egress-veto applicability) + the WS-8 classification — onboarding may CREATE
   //    a workspace or idempotently overwrite same-type fields (name/vaultRoot), but must
   //    NEVER silently flip the type (employer_work→personal_life would downgrade
   //    dataOwner employer→user, a latent veto-applicability open). Read the existing row:
-  //      • not_found            → a fresh CREATE (fall through).
-  //      • exists, SAME type    → an idempotent overwrite (fall through).
+  //      • not_found            → a fresh CREATE — the ONLY branch that seeds (2a).
+  //      • exists, SAME type    → an idempotent overwrite — carries the stored egress
+  //                               posture forward + re-gates the aggregate (2b, task 9.23).
   //      • exists, DIFFERENT type → reject; upsert nothing, union nothing.
   //      • genuine store fault  → fail CLOSED (never fall through to create on an unknown
   //                               prior state — a transient fault must not bypass the guard).
@@ -175,12 +171,53 @@ export async function provisionWorkspace(
     if (existing.error.code !== "not_found") {
       return err({ code: "store_fault", message: "workspace config get failed" });
     }
-    // not_found → a fresh create; fall through.
+    // 2a) not_found → a genuine fresh CREATE. This is the ONLY branch that may SEED the cloud-copilot
+    //     egress allowlist (9.10-A personal + the 9.10 employer FLIP: `[claude]`, employer default-seeded
+    //     ack=true + `acknowledgedAt` stamped from `at`). Seeding here rather than before the existence
+    //     check is what makes the invariant STRUCTURAL — provisioning seeds only what it CREATES — so
+    //     there is no window in which a seeded-but-not-yet-overwritten policy exists (task 9.23).
+    workspace = seedCloudCopilotAllowlist(workspace, at);
   } else if (existing.value.type !== spec.type) {
     return err({
       code: "workspace_type_immutable",
       message: "workspace type is immutable through onboarding",
     });
+  } else {
+    // 2b) exists, SAME type → an idempotent overwrite. Carry the STORED egress posture forward VERBATIM
+    //     (task 9.23, ⚠ rule-5, completing worker L30's get-before-upsert on the field that derives
+    //     egress-veto applicability). Previously the seed ran unconditionally above and this branch fell
+    //     through to the upsert, so a re-provision silently restored a REVOKED
+    //     `employerRawEgressAcknowledged` (9.10-B, `225c10ca`) with no audit row and no owner confirm —
+    //     the revoke held only until someone re-provisioned.
+    //
+    //     ⚠ SCOPE: this carries `egressPolicy` ONLY. `defaultWorkspace` above also rebuilds
+    //     `providerMatrix`, `defaultVisibility`, `gbrainBrainId` and `dataOwner` from the spec, so a
+    //     re-provision still resets those. That is the same bug class in the fail-CLOSED direction
+    //     (empty allowlists/routes DENY; `isolated` is the most restrictive visibility) — tracked as
+    //     task 9.29, deliberately not widened here so a rule-5 fix does not also restore possibly
+    //     PERMISSIVE routing state.
+    //
+    //     The WHOLE stored object is assigned, never a field-by-field copy — a named-field copy silently
+    //     drops any field this build's `EgressPolicy` does not name. (A field a NEWER build wrote is
+    //     rejected by the `.strict()` re-parse below, not carried — fail-closed, not forward-compatible.)
+    //
+    //     The carried object lands AFTER `defaultWorkspace` already parsed, so re-gate the aggregate.
+    //     This parse is not a formality: the db `get` returns `row as Workspace`, an UNCHECKED CAST with
+    //     no Zod on the read path, so this is the ONLY validation the stored blob ever receives before it
+    //     re-crosses into a write. It catches a foreign `egressPolicy.workspaceId` (the identity refine),
+    //     a contradictory `acknowledgedAt`-without-ack, a non-array allowlist, and any unknown key —
+    //     do NOT narrow it to a hand-written id comparison.
+    //     FAIL-CLOSED rather than normalizing a foreign workspaceId to `spec.id`: normalizing would graft
+    //     another workspace's allowlist + ack onto this one, stamped as if it belonged here (a
+    //     WS-8-adjacent write that looks legitimate afterwards). Same posture as the store-fault branch:
+    //     never proceed over a contradictory prior state.
+    workspace = { ...workspace, egressPolicy: existing.value.egressPolicy };
+    try {
+      workspace = WorkspaceSchema.parse(workspace);
+    } catch {
+      // Redaction-safe: never echo the raw Zod detail (it would carry the stored values).
+      return err({ code: "invalid_workspace", message: "stored workspace failed validation" });
+    }
   }
 
   // 3) Upsert into the durable operational store FIRST — so a later union fault leaves
