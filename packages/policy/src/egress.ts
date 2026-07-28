@@ -27,7 +27,7 @@ import {
   buildAuditSignal,
   type AuditSignal,
 } from "./audit-signal";
-import { processorOfRoute, endpointHostRef } from "./processors";
+import { processorOfRoute, endpointHostRef, MALFORMED_ROUTE_PROCESSOR } from "./processors";
 
 const EGRESS_ACTOR = "policy:egress" as const;
 
@@ -133,6 +133,21 @@ export function egressVeto(
     );
   }
   // employerRawUnacked && proc===null falls through to (4) — loopback-local allow.
+
+  // ── 2b. UNCLASSIFIABLE route ⇒ deny (never allowlist-satisfiable) ──────────
+  // `MALFORMED_ROUTE` is a SENTINEL meaning "this route could not be identified",
+  // not a destination — so it must not reach step 3, where it would be compared
+  // against `allowedProcessors` like any real processor id and ALLOWED by an entry
+  // naming it. That entry is reachable: `boot.ts` brands operator-supplied strings
+  // into the allowlist. Denying here keeps "we could not classify it" from ever
+  // being satisfiable by configuration.
+  if (proc === MALFORMED_ROUTE_PROCESSOR) {
+    return deny(
+      "MALFORMED_POLICY_INPUT",
+      "route identity could not be classified; an unidentifiable route is never eligible to egress",
+      refs,
+    );
+  }
 
   // ── 3. Normal allowlist (egress routes only, proc!==null) ──────────────────
   if (proc !== null) {

@@ -20,6 +20,18 @@ import { processorId } from "@sow/contracts";
 // non-egress route by an endpoint claim — the named provider identity wins.
 const LOCAL_PROVIDERS: ReadonlySet<ProviderId> = new Set<ProviderId>(["ollama", "lm_studio"]);
 
+/**
+ * The processor id {@link processorOfRoute} returns when a route CANNOT be
+ * classified — neither/both identity keys, or a non-string / blank identity.
+ *
+ * It is a SENTINEL meaning "unidentifiable", not a destination. It is deliberately
+ * exported so the §5 veto can deny on it by identity rather than by string literal:
+ * an unclassifiable route must never be satisfiable by an allowlist entry, and
+ * before it was hoisted the bare literal `"MALFORMED_ROUTE"` sitting in three
+ * places was exactly the kind of value an operator-supplied allowlist could name.
+ */
+export const MALFORMED_ROUTE_PROCESSOR: ProcessorId = processorId("MALFORMED_ROUTE");
+
 // ─── task 9.22 (option C): the two-axis zero-egress claim ─────────────────────
 //
 // `zeroEgressOnly` is what the app tells its owner about whether their content
@@ -84,12 +96,13 @@ function everyCapabilityRouteIsLoopbackLocal(capabilityDefaults: unknown): boole
   // NON-ENUMERABLE or symbol-keyed own property is still inspected — an unexamined
   // route must never ride under a local-only claim. Own keys only, so no inherited
   // prototype member is ever read as a route.
-  // The WHOLE scan runs under ONE try: `processorOfRoute` is total for every
-  // route the TYPE admits, but it brands the route's raw identity string, and the
-  // brand constructor THROWS on a blank one — so `{provider: ""}` (a shape only a
-  // deserialized row can produce) escapes as an exception rather than a decision.
-  // A throwing input is malformed input, and malformed can only ever mean `false`
-  // here; a safety predicate that throws instead of denying is not fail-closed.
+  // The WHOLE scan runs under ONE try. `processorOfRoute` is now TOTAL — task #25
+  // moved the blank-identity guard into it, so it classifies rather than throws —
+  // but totality is a property of the whole fold, not of the one call inside it:
+  // reading `record[key]` invokes a getter, and a hostile object's getter can
+  // throw. A throwing input is malformed input, and malformed can only ever mean
+  // `false` here; a safety predicate that throws instead of denying is not
+  // fail-closed. Keep this try even though its original motivation moved upstream.
   try {
     for (const key of Reflect.ownKeys(record)) {
       const route = record[key];
@@ -669,16 +682,44 @@ export function processorOfRoute(route: ProviderRoute): ProcessorId | null {
     egressClass?: unknown;
   } | null;
   if (r === null || typeof r !== "object") {
-    return processorId("MALFORMED_ROUTE"); // egress, never non-egress
+    return MALFORMED_ROUTE_PROCESSOR; // egress, never non-egress
   }
-  const hasProvider = typeof r.provider === "string";
-  const hasRuntime = typeof r.runtime === "string";
+  // ⛔ READ THE IDENTITY EXACTLY ONCE. Every read of `r.provider`/`r.runtime` goes
+  // through an untyped view, so a route carrying ACCESSORS (not a shape `JSON.parse`
+  // can produce, but one a hand-built object can) could return a different value on
+  // each read: a check-then-use split. Re-reading was exploitable BOTH ways — a
+  // getter yielding a string at the typeof check and a non-string at the brand
+  // turned the blank-guard itself into the throw site, and one yielding a cloud id
+  // at the typeof check but a LOCAL id at the membership check laundered a cloud
+  // provider to `null` (non-egress) straight past the rule-5 veto. Capture first,
+  // then only ever use the captured values.
+  const providerRaw: unknown = r.provider;
+  const runtimeRaw: unknown = r.runtime;
+  const hasProvider = typeof providerRaw === "string";
+  const hasRuntime = typeof runtimeRaw === "string";
   // A well-formed ProviderRoute is EXACTLY one of provider|runtime. Neither or
   // both ⇒ malformed ⇒ treated as EGRESS (closes the no-port loopback edge).
   if (hasProvider === hasRuntime) {
-    return processorId("MALFORMED_ROUTE");
+    return MALFORMED_ROUTE_PROCESSOR;
   }
-  const identity = (hasProvider ? r.provider : r.runtime) as string;
+  const identity: unknown = hasProvider ? providerRaw : runtimeRaw;
+  // A non-string or BLANK identity is malformed, and malformed is EGRESS. This is
+  // what makes the function TOTAL on the identity axis: `processorId` brands the
+  // raw value and its brand constructor THROWS on a non-string or empty/whitespace
+  // string, so without this a `{provider: ""}` route — unconstructible under the
+  // type, ordinary from a deserialized row — escapes as an exception instead of a
+  // classification. The §5 veto calls this and is contractually never-throwing, so
+  // a throw here does not fail safe: it denies the veto the answer it needs to deny
+  // with.
+  //
+  // The `typeof` half is UNREACHABLE while the captures above are the only reads
+  // (exactly one of them is already known to be a string) — it is kept as the
+  // TS-narrowing mechanism, which is why `identity` needs no cast, and as belt
+  // against a future re-introduced re-read. It is deliberately NOT test-pinned:
+  // no input can reach it, and a test asserting otherwise would be vacuous.
+  if (typeof identity !== "string" || identity.trim().length === 0) {
+    return MALFORMED_ROUTE_PROCESSOR; // egress, never non-egress
+  }
 
   // Non-egress requires BOTH the 'local' claim AND loopback PROOF. egressClass
   // alone is never trusted — that is the tunneled-local hole.
@@ -692,8 +733,9 @@ export function processorOfRoute(route: ProviderRoute): ProcessorId | null {
     if (hasRuntime) return null;
     // A provider-branch route is non-egress ONLY for a genuinely local provider;
     // a cloud provider id (claude/openai/openrouter) is a cloud processor by
-    // identity even when it claims loopback (fail-closed).
-    if (LOCAL_PROVIDERS.has(r.provider as ProviderId)) return null;
+    // identity even when it claims loopback (fail-closed). Membership is tested on
+    // the CAPTURED identity — re-reading `r.provider` here was the laundering hole.
+    if (LOCAL_PROVIDERS.has(identity as ProviderId)) return null;
   }
 
   // Egress: a distinct processor id per destination. No aliasing.

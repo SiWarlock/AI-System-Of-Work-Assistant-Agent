@@ -89,6 +89,168 @@ describe("processorOfRoute — cloud endpoints ⇒ distinct processor id", () =>
   });
 });
 
+describe("processorOfRoute — TOTAL: a malformed identity denies, never throws (task #25)", () => {
+  // `processorOfRoute` BRANDS the route's raw identity, and the brand constructor
+  // throws on a blank/whitespace string. A route like `{provider: ""}` cannot come
+  // from a type-checked construction, but it can arrive from a deserialized row or
+  // a hand-built policy object — neither of which the brand ever policed.
+  //
+  // This module documents itself PURE and FAIL-CLOSED, and it is the identity layer
+  // beneath the §5 egress veto. A throw here is not a safe crash: it hands the veto
+  // an exception where it owes a typed decision, so the classification a rule-5 gate
+  // depends on never happens. Malformed input must classify as EGRESS
+  // (MALFORMED_ROUTE) — the same answer the neither/both-keys branches already give.
+  for (const identity of ["", "   ", "\t"]) {
+    for (const branch of ["provider", "runtime"] as const) {
+      it(`a blank ${branch} (${JSON.stringify(identity)}) ⇒ EGRESS, not a throw`, () => {
+        const route = {
+          [branch]: identity,
+          model: "m",
+          endpoint: "https://remote.example.com",
+          egressClass: "cloud",
+        } as unknown as ProviderRoute;
+        expect(() => processorOfRoute(route)).not.toThrow();
+        expect(processorOfRoute(route)).not.toBeNull();
+      });
+    }
+  }
+
+  it("a blank identity CLAIMING loopback-local is still EGRESS — the claim never rescues it", () => {
+    // The dangerous shape: a blank id on a genuine loopback endpoint. If a blank
+    // identity ever resolved to null it would read as "non-egress", and the veto's
+    // loopback fall-through would ALLOW raw employer content on an unidentifiable
+    // route. Fail-closed means EGRESS here, not null.
+    const route = {
+      provider: "",
+      model: "m",
+      endpoint: "http://127.0.0.1:11434",
+      egressClass: "local",
+    } as unknown as ProviderRoute;
+    expect(() => processorOfRoute(route)).not.toThrow();
+    expect(processorOfRoute(route)).not.toBeNull();
+  });
+
+  it("an identity read TWICE cannot launder a cloud provider to non-egress", () => {
+    // ⛔ The sharpest shape. The identity is read through an untyped view, so a
+    // route with an ACCESSOR can answer differently on each read: `openai` when
+    // asked "is this a string / which processor?", `ollama` when asked "is this in
+    // LOCAL_PROVIDERS?". Re-reading meant the membership test could pass for a
+    // value the classification never saw — a CLOUD provider resolving to `null`
+    // (non-egress), which walks straight through the §5 veto's loopback
+    // fall-through carrying raw employer content. Capture-once closes it.
+    // ⚠ The threshold is exact and load-bearing. Capture-once performs ONE read, so
+    // the getter must flip on read TWO — the read a re-introduced membership
+    // re-read would perform. A later threshold (">= 3") is never reached under
+    // either version, and the test passes for both: green, and blind. Verified by
+    // mutation, not by inspection.
+    let reads = 0;
+    const route = {
+      model: "m",
+      endpoint: "http://127.0.0.1:11434",
+      egressClass: "local",
+      get provider(): string {
+        reads += 1;
+        return reads >= 2 ? "ollama" : "openai";
+      },
+    } as unknown as ProviderRoute;
+    expect(processorOfRoute(route)).not.toBeNull();
+    expect(reads).toBe(1); // the capture-once property itself
+  });
+
+  it("a well-formed local route is the positive control — still null", () => {
+    // Proves the totality fix did not simply make everything EGRESS.
+    expect(processorOfRoute(providerRoute("ollama", "http://127.0.0.1:11434", "local"))).toBeNull();
+  });
+
+  it("the guard tracks the BRAND's predicate, not a list of blank-looking strings", () => {
+    // Established empirically, not assumed: `makeId` rejects
+    // `typeof raw !== "string" || raw.trim().length === 0`, and `String.prototype.trim`
+    // strips FAR more than the space character — NBSP, BOM/ZWNBSP, the U+2000 quad
+    // family, IDEOGRAPHIC SPACE, LINE/PARA SEPARATOR, VTAB and FORM FEED all trim to
+    // empty and therefore all THROW. The original defect was one step past where
+    // anyone looked, so the guard reuses the brand's OWN predicate rather than
+    // enumerating blank forms — an enumeration here would be the unwinnable-denylist
+    // pattern this project has retired twice, and every id below is one a denylist
+    // written against `""` would have missed.
+    for (const blank of [
+      // ESCAPES, not literal characters: a raw newline inside a string literal is
+      // a syntax error, and a syntax-broken test file reports `PASS (0)` — green,
+      // and contributing nothing. Caught here by a suite count that DROPPED.
+      " ", // U+0020 space
+      "\t", // U+0009 tab
+      "\n", // U+000A newline
+      "\v", // U+000B vertical tab
+      "\f", // U+000C form feed
+      "\r", // U+000D carriage return
+      "\u00A0", // NBSP
+      "\uFEFF", // BOM / ZWNBSP
+      "\u2000", // EN QUAD
+      "\u3000", // IDEOGRAPHIC SPACE
+      "\u2028", // LINE SEPARATOR
+      "\u2029", // PARAGRAPH SEPARATOR
+    ]) {
+      const route = {
+        provider: blank,
+        model: "m",
+        endpoint: "https://remote.example.com",
+        egressClass: "cloud",
+      } as unknown as ProviderRoute;
+      const hex = `U+${(blank.codePointAt(0) ?? 0).toString(16).toUpperCase()}`;
+      expect(() => processorOfRoute(route), hex).not.toThrow();
+      expect(processorOfRoute(route), hex).not.toBeNull();
+    }
+
+    // The complement, which keeps the above from reading as "anything odd is blank":
+    // these are NOT whitespace per ECMA-262, so they do NOT trim away, the brand
+    // ACCEPTS them, and they classify as ordinary EGRESS. Fail-closed either way.
+    for (const notBlank of ["\u200B", "\u200D", "\u0000", "\u180E"]) {
+      const route = {
+        provider: notBlank,
+        model: "m",
+        endpoint: "https://remote.example.com",
+        egressClass: "cloud",
+      } as unknown as ProviderRoute;
+      expect(() => processorOfRoute(route)).not.toThrow();
+      expect(processorOfRoute(route)).not.toBeNull();
+    }
+  });
+});
+
+// ── the no-drift pin ─────────────────────────────────────────────────────────
+describe("processorOfRoute — NO DRIFT: the totality fix moved no well-formed classification", () => {
+  // ⛔ THE SAFETY-CRITICAL PIN of the totality slice. Making a throwing function
+  // total is only safe if it changes throw→deny and NOTHING else: a well-formed
+  // route that silently moved from EGRESS to non-egress would be a rule-5
+  // regression wearing a totality fix as cover, and the suite would still be green
+  // because the malformed cases are what everyone is looking at.
+  //
+  // Every row is a route the TYPE admits (no blank identity anywhere), asserted
+  // against the classification it had BEFORE the fix.
+  const rows: ReadonlyArray<readonly [string, ProviderRoute, "null" | "processor"]> = [
+    ["local provider on loopback", providerRoute("ollama", "http://127.0.0.1:11434", "local"), "null"],
+    ["local provider on localhost", providerRoute("lm_studio", "http://localhost:1234", "local"), "null"],
+    ["runtime on loopback", runtimeRoute("http://127.0.0.1:9000", "local"), "null"],
+    ["cloud provider, cloud class", providerRoute("claude", "https://api.anthropic.com", "cloud"), "processor"],
+    ["openai cloud", providerRoute("openai", "https://api.openai.com", "cloud"), "processor"],
+    ["openrouter cloud", providerRoute("openrouter", "https://openrouter.ai/api/v1", "cloud"), "processor"],
+    ["runtime, cloud class", runtimeRoute("https://api.anthropic.com", "cloud"), "processor"],
+    // The tunneled-local hole: 'local' CLAIM, remote endpoint ⇒ EGRESS. The single
+    // most important row — if totality had made the claim authoritative, this flips.
+    ["tunneled-local (remote endpoint)", providerRoute("ollama", "https://exfil.example.com:11434", "local"), "processor"],
+    ["local-claiming host-suffix spoof", providerRoute("ollama", "http://127.0.0.1.attacker.com", "local"), "processor"],
+    // A CLOUD provider id claiming loopback: identity wins over endpoint.
+    ["cloud id on loopback", providerRoute("openai", "http://127.0.0.1:1234", "local"), "processor"],
+  ];
+
+  for (const [label, route, expected] of rows) {
+    it(`${label} ⇒ ${expected} (unchanged)`, () => {
+      const got = processorOfRoute(route);
+      if (expected === "null") expect(got).toBeNull();
+      else expect(got).not.toBeNull();
+    });
+  }
+});
+
 describe("processorOfRoute — tunneled-'local' hole ⇒ EGRESS (non-null), fail-closed", () => {
   it("egressClass 'local' + REMOTE endpoint ⇒ non-null processor (treated as egress)", () => {
     // The exfiltration hole: a 'local' claim pointing at a remote/proxied host.

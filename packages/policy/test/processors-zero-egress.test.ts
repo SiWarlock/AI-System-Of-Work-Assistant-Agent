@@ -256,12 +256,13 @@ describe("isLocalOnlyProviderMatrix — axis 1 (9.22 option C)", () => {
     ).toBe(false);
   });
 
-  it("a_route_whose_identity_cannot_be_branded_denies_rather_than_throws", () => {
-    // `processorOfRoute` brands the route's RAW identity string, and the brand
-    // constructor THROWS on a blank one — so `{provider: ""}` (a shape only a
-    // deserialized row can produce; the type forbids it) would escape as an
-    // exception instead of a decision. A safety predicate that throws where it
-    // should deny is not fail-closed: the caller sees a crash, not `false`.
+  it("a_route_with_a_blank_identity_denies_rather_than_throws", () => {
+    // A blank route identity (`{provider: ""}` — unconstructible under the type,
+    // ordinary from a deserialized row) must deny, not throw. Task #25 moved the
+    // guard into `processorOfRoute` itself, where every caller gets it; this stays
+    // as the consumer-side pin that the PROPERTY holds here, independent of which
+    // layer currently enforces it — if that guard ever moves or regresses, this
+    // reddens rather than silently inheriting a crash.
     for (const identity of ["", "   "]) {
       for (const branch of [{ provider: identity }, { runtime: identity }]) {
         const m = localMatrix({

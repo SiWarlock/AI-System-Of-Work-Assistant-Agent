@@ -291,4 +291,87 @@ describe("egressVeto — fail-closed on malformed input (never fail-open)", () =
     if (isDeny(d)) expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
     expectAuditable(d);
   });
+
+  // task #25 — a BLANK route identity must DENY, not throw.
+  //
+  // The step-0 malformed guard validates `endpoint` and `egressClass` but never the
+  // identity, so `{provider: ""}` reaches `processorOfRoute`, which brands the raw
+  // identity — and the brand constructor throws on a blank string. The veto is
+  // contractually total (§16: every outcome is a typed PolicyDecision, never a
+  // thrown error), so this escapes as an exception where it owes a decision.
+  //
+  // Asserted at the VETO, not just at `processorOfRoute`, because the veto is the
+  // safety property: a rule-5 gate that throws hands its caller an exception
+  // instead of a denial, and any caller with a `catch` that defaults permissive
+  // turns a crash into a fail-OPEN on the raw-employer-egress path.
+  for (const [label, route] of [
+    ["blank provider", { provider: "", model: "m", endpoint: "https://x.example.com", egressClass: "cloud" }],
+    ["whitespace provider", { provider: "   ", model: "m", endpoint: "https://x.example.com", egressClass: "cloud" }],
+    ["blank runtime", { runtime: "", model: "m", endpoint: "https://x.example.com", egressClass: "cloud" }],
+    ["blank identity claiming loopback-local", { provider: "", model: "m", endpoint: "http://127.0.0.1:11434", egressClass: "local" }],
+  ] as const) {
+    it(`${label} ⇒ a DENY decision, never a thrown error`, () => {
+      const job = baseJob({ carriesRawContent: true });
+      const run = (): PolicyDecision<ProviderRoute> =>
+        egressVeto(job, route as unknown as ProviderRoute, egressPolicy(), employerWs);
+      expect(run).not.toThrow();
+      const d = run();
+      expect(isAllow(d)).toBe(false);
+      expect(isDeny(d)).toBe(true);
+      // The CODE is pinned, not just the direction: identity validation could later
+      // migrate into the step-0 malformed guard, which would keep a bare isDeny()
+      // green while silently relocating the enforcement point. Employer-raw-unacked
+      // bites first here, which is the branch that must own this input.
+      if (isDeny(d)) expect(d.reason).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
+      expectAuditable(d);
+    });
+  }
+
+  it("a blank RUNTIME on a loopback endpoint no longer reads as non-egress", () => {
+    // The one shape whose classification actually FLIPS. It never threw: the
+    // runtime branch returned null (NON-EGRESS) at the loopback check before ever
+    // reaching the brand, so an unidentifiable route was being treated as a genuine
+    // local engine and allowed. Now it is EGRESS and denies. Safe direction, and
+    // the only semantic change in this slice — so it gets its own pin.
+    const route = {
+      runtime: "",
+      model: "m",
+      endpoint: "http://127.0.0.1:11434",
+      egressClass: "local",
+    } as unknown as ProviderRoute;
+    const d = egressVeto(baseJob({ carriesRawContent: true }), route, egressPolicy(), employerWs);
+    expect(isAllow(d)).toBe(false);
+    expect(isDeny(d)).toBe(true);
+    expectAuditable(d);
+  });
+
+  it("an UNCLASSIFIABLE route is never satisfiable by an allowlist entry naming the sentinel", () => {
+    // `MALFORMED_ROUTE` means "could not classify", not a destination. Without a
+    // dedicated deny it would flow into the normal allowlist step like a real
+    // processor id, so a workspace whose allowlist literally names it would ALLOW
+    // an unidentifiable route — and that entry is operator-reachable, since boot
+    // brands operator-supplied strings into this list.
+    const route = {
+      provider: "",
+      model: "m",
+      endpoint: "https://x.example.com",
+      egressClass: "cloud",
+    } as unknown as ProviderRoute;
+    const sentinel = processorId("MALFORMED_ROUTE");
+    const d = egressVeto(
+      baseJob(),
+      route,
+      egressPolicy({
+        allowedProcessors: [sentinel],
+        rawContentAllowedProcessors: [sentinel],
+        employerRawEgressAcknowledged: true,
+        acknowledgedAt: "2026-07-28T00:00:00.000Z",
+      }),
+      personalWs,
+    );
+    expect(isAllow(d)).toBe(false);
+    expect(isDeny(d)).toBe(true);
+    if (isDeny(d)) expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
+    expectAuditable(d);
+  });
 });
