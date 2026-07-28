@@ -190,12 +190,46 @@ export async function provisionWorkspace(
     //     `employerRawEgressAcknowledged` (9.10-B, `225c10ca`) with no audit row and no owner confirm —
     //     the revoke held only until someone re-provisioned.
     //
-    //     ⚠ SCOPE: this carries `egressPolicy` ONLY. `defaultWorkspace` above also rebuilds
-    //     `providerMatrix`, `defaultVisibility`, `gbrainBrainId` and `dataOwner` from the spec, so a
-    //     re-provision still resets those. That is the same bug class in the fail-CLOSED direction
-    //     (empty allowlists/routes DENY; `isolated` is the most restrictive visibility) — tracked as
-    //     task 9.29, deliberately not widened here so a rule-5 fix does not also restore possibly
-    //     PERMISSIVE routing state.
+    //     ⚠ SCOPE: this carries `egressPolicy` ONLY, and that is a DELIBERATE, traced decision (task
+    //     9.29) — not an oversight and not work left undone. `defaultWorkspace` above also rebuilds
+    //     `providerMatrix`, `defaultVisibility` and `dataOwner` from the spec, so a re-provision
+    //     rewrites those too. A reachability trace found NO production path that mutates them after
+    //     provisioning: the only two writers of the config store are THIS function (which writes the
+    //     defaults) and `egressRevoke` (which spreads the stored aggregate and touches only
+    //     `egressPolicy`). So the stored values can only ever BE the defaults being rewritten, and the
+    //     rewrite is a no-op today. Carrying them forward would preserve state that cannot yet differ.
+    //     It would also carry `rawCloudEgressEnabled: true` through a re-provision that previously
+    //     re-closed it — the inverted safety direction that kept 9.29 out of this rule-5 fix. (That
+    //     value opens no gate TODAY: its only reader treats `true` as claim-DENYING. The objection is
+    //     that carrying a permission-shaped field forward is a different argument from carrying a
+    //     REVOKED one, and deserves its own review rather than riding in on a rule-5 slice.)
+    //
+    //     ⚠ The day that trace stops holding, this decision must be revisited PER FIELD — and the
+    //     per-field direction is NOT uniform. It depends on the CONSUMER, not on the field:
+    //       · `providerMatrix`    → reset to `{[], {}, false}` ⇒ FAIL-CLOSED everywhere it is read: an
+    //         empty matrix denies routing (`policy/provider-matrix.ts`) and cannot support a local-only
+    //         claim (`policy/processors.ts` `isLocalOnlyProviderMatrix` requires a non-vacuous matrix).
+    //       · `defaultVisibility` → reset to `"isolated"` ⇒ DIRECTION-DEPENDENT. It is the most
+    //         restrictive value for the GCL visibility CEILING (`policy/visibility.ts`), but it is the
+    //         PERMISSIVE value at the approval gate: `policy/approval-policy.ts` auto-allow requires
+    //         `=== "isolated"`, so resetting `coordination`→`isolated` ADDS auto-approve eligibility.
+    //       · `dataOwner`         → re-derived from `type` ⇒ FAIL-OPEN at the same approval gate:
+    //         auto-allow requires `dataOwner === "user"`, so a workspace hardened to `"employer"` that
+    //         gets re-derived back to `"user"` moves an external action from requires-approval to
+    //         auto-create — no §9 card, no owner sight.
+    //         ⚠ NOTE the mechanism: the §5 EGRESS veto branches on `workspace.type` (which the
+    //         immutability guard above already pins), NOT on `dataOwner` — `dataOwner` reaches the veto
+    //         only as an audit ref. The fail-open surface here is the APPROVAL gate, not the egress veto.
+    //     Both fail-open surfaces are unreachable from the store today (`resolveWorkspacePolicy` has no
+    //     production caller; the one store→posture path projects neither field), which is why this is a
+    //     documented invariant rather than a live hole.
+    //
+    //     Guarded by the writer census in `test/composition/provision-preserves-egress-posture.test.ts`,
+    //     which pins BOTH the repo-type writers AND the direct `schema.workspaceConfig` table writers —
+    //     so a new writer of either shape turns it red at exactly the moment this decision needs redoing.
+    //     ⚠ Accepted residual: an OUT-OF-BAND change (a sqlite CLI edit, a restore from an older
+    //     snapshot) can harden one of these fields with no code writer to catch — nothing goes red, and
+    //     the next re-provision silently reverts it.
     //
     //     The WHOLE stored object is assigned, never a field-by-field copy — a named-field copy silently
     //     drops any field this build's `EgressPolicy` does not name. (A field a NEWER build wrote is
