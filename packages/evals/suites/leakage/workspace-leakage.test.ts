@@ -143,6 +143,24 @@ describe("§20.1 Workspace leakage — the WS-8 gate yields 0 cross-workspace di
     },
   );
 
+  // ⚠ ALLOW-SIDE CONTROL for the PROJECTION leg. Without it every assertion above is satisfied by a
+  // gate that refuses EVERYTHING, so nothing distinguishes "the gate works" from "the gate is a
+  // brick wall." Proven by simulation (#28): replacing `validateProjectionVisibility` with a constant
+  // DENY left all 610 tests in `packages/evals` GREEN — a gate that decides nothing passed a suite
+  // whose entire purpose is to certify that it decides correctly.
+  //
+  // The sibling leg below already had this (its comment even names the reason — "pins that the DENY
+  // above is a policy decision, not an unconditional throw"). One leg was protected and one was not,
+  // in the same file, for the same class of gate. That asymmetry is the actual defect.
+  it("a projection WITHIN the workspace default is ALLOWED (the deny above is a decision, not a wall)", () => {
+    // `isolated` is the tightest level and the employer default, so this projection does NOT exceed
+    // its source and MUST pass. Identical to `rawEmployerProjection` except the visibility level —
+    // the one field the gate is supposed to be deciding on.
+    const withinDefault: GclProjection = { ...rawEmployerProjection, visibilityLevel: "isolated" };
+    const d = validateProjectionVisibility(withinDefault, employerWorkspace);
+    expect(isAllow(d), "an isolated-level projection is within an isolated default").toBe(true);
+  });
+
   it("a recorded Level-3 owner-approved link is the SOLE exception (not auto-created)", () => {
     // The gate is not an absolute wall — it permits the ONE sanctioned path. This
     // pins that the DENY above is a policy decision, not an unconditional throw.

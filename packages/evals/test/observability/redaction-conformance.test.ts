@@ -91,16 +91,36 @@ const WSFREE_NEEDLE = "WSFREENEEDLE";
 /** Every marker that stands in for a redacted value (a redacted output is one of these). */
 const MARKERS: readonly string[] = [REDACTED_CREDENTIAL, REDACTED_RAW, REDACTED_FIELD];
 
-/** True iff a rendered string still contains a raw secret/content substring. */
+/**
+ * True iff a rendered string still contains a raw secret/content substring.
+ *
+ * ⚠ THIS IS THE SUITE'S ONLY LEAK ORACLE — 25 call sites depend on it, and exactly ONE of them
+ * (the `redactString` corpus loop below) carries a companion "output is marker-bearing" assertion.
+ * The other 24 — every log record, error, sink and rendered-line path — assert ONLY that this
+ * returns false. So a value this function cannot see is a value those 24 assertions cannot protect,
+ * and the suite reports green while it leaks.
+ *
+ * It previously gated the corpus scan on a PREFIX ALLOWLIST (`sk-`/`sk_live`/`xoxb-`/`ghp_`/`AKIA`/
+ * `eyJ`), which meant the corpus's own PEM private key and `"my api_key: shhh"` matched no branch
+ * and were INVISIBLE. Verified by simulation (task #27): making `redactRecord` emit a
+ * non-allowlisted PEM field VERBATIM left all 610 tests in `packages/evals` GREEN.
+ *
+ * The prefix list was an ENUMERATION, and this repo has retired enumerations twice for being
+ * structurally unwinnable — 13.8j chose a namespace over a reserved-name denylist, and the
+ * settings-injection field list became a presence-degrade. An enumeration in a SAFETY ORACLE is
+ * worse than one in a guard: it does not fail open loudly, it simply stops seeing things.
+ *
+ * So the gate is GONE rather than extended: every corpus value is checked verbatim, unconditionally.
+ * A new corpus entry is covered the moment it is added, with no prefix to remember to update —
+ * complete-by-construction (L74: assert over the non-emptiable oracle, never a curated subset).
+ * ⛔ Do NOT reintroduce a prefix/shape filter here to "reduce false positives"; a false positive is
+ * a loud, one-line fix, while a false negative is a silently leaked credential.
+ */
 function containsRawSecret(haystack: string): boolean {
   if (haystack.includes(SECRET_NEEDLE)) return true;
-  // any credential corpus value that is NOT itself a marker leaking through
+  // EVERY credential corpus value, no prefix gate — see the enumeration note above.
   for (const c of CREDENTIAL_CORPUS) {
-    // A whole-line sensitive-keyword phrase is dropped, not substring-matched;
-    // assert the DISTINCTIVE secret token part never survives.
-    if (c.startsWith("sk-") || c.startsWith("sk_live") || c.startsWith("xoxb-") || c.startsWith("ghp_") || c.startsWith("AKIA") || c.startsWith("eyJ")) {
-      if (haystack.includes(c)) return true;
-    }
+    if (haystack.includes(c)) return true;
   }
   if (haystack.includes("hunter2")) return true;
   if (haystack.includes("ACME acquisition")) return true;
@@ -158,6 +178,21 @@ describe("§12 redaction conformance — raw-content fields never reach a sink (
     // the structure is preserved (keys present) but no value survives
     expect(Object.keys(rec).sort()).toEqual(["apiKey", "promptText", "rawBody"]);
     expect(containsRawSecret(JSON.stringify(rec))).toBe(false);
+  });
+
+  // ⚠ The test above hand-picks THREE values for the non-allowlisted path. That is a curated subset,
+  // and the subset is what a regression escapes through: simulation (#27) showed `redactRecord`
+  // emitting a non-allowlisted PEM field VERBATIM while all 610 tests stayed GREEN — the fixed leak
+  // oracle could see the PEM, but nothing ever FED it one. An oracle only protects what the corpus
+  // actually drives through it. So drive the WHOLE corpus, so a new entry is covered on the day it
+  // is added rather than whenever someone remembers to hand-add a fourth field (L74).
+  it("ALLOWLIST fail-safe holds for EVERY corpus value, not the three hand-picked ones", () => {
+    for (const raw of [...CREDENTIAL_CORPUS, rawEmployerBody, ...shortSingleLineRaw, ...whitespaceFreeRaw]) {
+      // `unknownField` is not on the allowlist ⇒ the value must be dropped WHOLE, never inspected.
+      const rec = redactRecord({ unknownField: raw });
+      expect(rec["unknownField"], `leaked under a non-allowlisted key: ${raw.slice(0, 24)}`).toBe(REDACTED_FIELD);
+      expect(containsRawSecret(JSON.stringify(rec)), `oracle missed: ${raw.slice(0, 24)}`).toBe(false);
+    }
   });
 
   it("allowlisted traceability fields pass through only when NOT secret-shaped", () => {
