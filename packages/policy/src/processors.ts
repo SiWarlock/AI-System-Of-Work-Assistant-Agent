@@ -24,8 +24,11 @@ const LOCAL_PROVIDERS: ReadonlySet<ProviderId> = new Set<ProviderId>(["ollama", 
 //
 // `zeroEgressOnly` is what the app tells its owner about whether their content
 // stays on their machine, so it is a POSITIVE SAFETY CLAIM: it is true only when
-// BOTH independent axes hold, and every ambiguous input resolves to `false`. Two
-// separate things must go wrong before the app can lie.
+// BOTH axes hold, and every ambiguous input resolves to `false`. Two separate
+// things must go wrong before the app can lie — which holds ONLY because axis 1
+// additionally requires the provider matrix to be NON-VACUOUS (the owner's third
+// conjunct). Without that, the single absence of provisioning would satisfy both
+// axes at once and the pair would collapse to one.
 //
 // The predicates live HERE, beside LOCAL_PROVIDERS, so callers ASK a question
 // instead of reading the set — the set's own contract is that provider IDENTITY
@@ -102,18 +105,80 @@ function everyCapabilityRouteIsLoopbackLocal(capabilityDefaults: unknown): boole
 }
 
 /**
- * AXIS 1 — the workspace's ROUTING pins local: every allowed provider is a local
- * zero-egress engine, every configured capability route is genuinely loopback-local,
- * and raw cloud egress is verified OFF.
+ * True IFF BOTH sets the local-only claim quantifies over are NON-EMPTY: at least
+ * one allowed provider AND at least one capability route.
+ *
+ * Named for the property, not for a workflow: this is not "has the operator
+ * finished setup" (it reads neither `localProviderPreference` nor
+ * `rawCloudEgressEnabled` and validates no shape) — it is precisely
+ * NON-VACUITY of the two universally-quantified conditions in
+ * {@link isLocalOnlyProviderMatrix}.
+ *
+ * Both halves are required because each is independently vacuous — an empty
+ * `allowedProviders` makes the subset test trivially true, an empty
+ * `capabilityDefaults` makes "every route is loopback-local" trivially true — and
+ * requiring only one leaves the same hole one level down: route resolution is
+ * SOLELY `capabilityDefaults`, so a provider-listed-but-ROUTELESS matrix routes
+ * nothing at all.
+ *
+ * The routes half counts OWN KEYS, not validated routes, which is deliberately
+ * looser than it reads. It is sound only in COMPOSITION: the caller also requires
+ * every own key to satisfy `processorOfRoute(...) === null`, so "≥1 own key" plus
+ * "all keys are genuine loopback routes" together do imply ≥1 real local route.
+ * This predicate is not safe to reuse alone as "has routes".
+ *
+ * ⚠ It DOES under-claim in one honest case: a matrix carrying only RUNTIME-branch
+ * routes with an empty `allowedProviders` is a legitimate local-only posture
+ * (runtime routes carry no provider and are exempt from the model's subset
+ * refine), and it reads `false` here. That is accepted, not overlooked — such a
+ * matrix is indistinguishable from a never-configured one, and under-claiming
+ * safety is the only direction this field may err.
+ */
+function isNonVacuousProviderMatrix(matrix: ProviderMatrix): boolean {
+  const providers: unknown = matrix.allowedProviders;
+  if (!Array.isArray(providers) || providers.length === 0) return false;
+  const routes: unknown = matrix.capabilityDefaults;
+  if (routes === null || typeof routes !== "object") return false;
+  // Under one try for the same reason the route scan is: enumerating a hostile
+  // object's keys can THROW, and a safety predicate that throws where it should
+  // deny is not fail-closed.
+  //
+  // `Reflect.ownKeys` (vs `Object.keys`) is NOT load-bearing for safety here — it
+  // is deliberately no test's dependency. Either choice denies every hostile
+  // shape; they differ only for a matrix whose ONLY route is symbol-keyed or
+  // non-enumerable, where `Object.keys` would deny a genuine local route (an
+  // under-claim, the safe direction) and neither can produce a spurious `true`.
+  // It matches the scan below so the two agree on what counts as a route.
+  try {
+    return Reflect.ownKeys(routes).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * AXIS 1 — the workspace's ROUTING pins local: the matrix is actually CONFIGURED,
+ * every allowed provider is a local zero-egress engine, every configured capability
+ * route is genuinely loopback-local, and raw cloud egress is verified OFF.
  *
  * `rawCloudEgressEnabled` is compared STRICTLY to `false` — an absent or
  * non-boolean flag is not a verified 'off'.
  *
- * ⚠ An EMPTY matrix satisfies this VACUOUSLY (`[] ⊆ LOCAL_PROVIDERS`, no routes).
- * That is not a false claim — an empty matrix genuinely routes nowhere — but it is
- * also the state a same-type re-provision currently wipes to (task 9.29), so the
- * claim can be true for a posture the owner never chose. Deliberate, recorded,
- * fixed at the provisioning end rather than papered over here.
+ * ⭐ WHY NON-VACUITY IS A CONJUNCT AND NOT A SEPARATE CONCERN (owner ruling).
+ * Both of the conditions above are VACUOUSLY satisfied by an EMPTY matrix, so
+ * without this requirement an empty matrix would claim local-only. It must not:
+ * an unconfigured workspace claims NOTHING, because the app does not yet know what
+ * it routes and not-knowing may never render to its owner as reassurance.
+ *
+ * ⛔ AND TODAY, EVERY STORED WORKSPACE IS THAT CASE — so this predicate is
+ * currently UNSATISFIABLE in production, by construction. `defaultWorkspace()`
+ * seeds `{allowedProviders: [], capabilityDefaults: {}}`, and NO code path ever
+ * writes a non-empty matrix (the only two writers of the workspace config store
+ * are `provisionWorkspace`, which rebuilds from that default, and `egressRevoke`,
+ * which touches `egressPolicy` only). So "empty matrix" is not merely the
+ * never-provisioned workspace — it is every workspace. `false` is the honest
+ * answer for all of them until a real matrix writer exists, and a consumer must
+ * read that `false` as UNKNOWN, never as "cloud egress is possible".
  *
  * Pure; malformed ⇒ false. Total over every value the DECLARED type admits and
  * over the absent/wrong-typed shapes that reach it from a deserialized row (the
@@ -125,6 +190,7 @@ export function isLocalOnlyProviderMatrix(matrix: ProviderMatrix): boolean {
   // (the same guard shape `provider-matrix.ts` uses on its typed matrix param).
   if (matrix == null || typeof matrix !== "object") return false;
   if (matrix.rawCloudEgressEnabled !== false) return false;
+  if (!isNonVacuousProviderMatrix(matrix)) return false;
   if (!everyProviderIsLocal(matrix.allowedProviders)) return false;
   return everyCapabilityRouteIsLoopbackLocal(matrix.capabilityDefaults);
 }
@@ -179,14 +245,23 @@ function isEmptyProcessorList(list: unknown): boolean {
  * unreadable workspace claims NOTHING (fail-closed to `false`, never the
  * strongest claim from the state you know least about).
  *
- * ⚠ THE AXES ARE NOT INDEPENDENT AT THE DEFAULT STATE. A workspace with an EMPTY
- * matrix and EMPTY allowlists satisfies BOTH and is reported zero-egress. The
- * claim is not false — nothing routes and nothing is approved — but provisioning
- * SEEDS both (`provisionWorkspace` seeds `[claude]`), so "both axes empty" IS the
- * never-provisioned/wiped state: ONE missing event zeroes both, and option C's
- * "two independent things must go wrong" does not hold here. Deliberate and
- * escalated rather than silently strengthened — the durable fix is a live
- * provisioning posture (task 9.29), and any third conjunct is an owner ruling.
+ * ⭐ THE AXES MUST FAIL INDEPENDENTLY, AND THE NON-VACUITY CONJUNCT IS WHAT KEEPS
+ * THEM THAT WAY. Provisioning SEEDS both allowlists (`provisionWorkspace` seeds
+ * `[claude]`), so "both allowlists empty" is NOT a deliberately-locked-down
+ * workspace — it is the never-provisioned (or task-9.29-wiped) one, and that same
+ * single absence leaves `providerMatrix` empty too. So without the non-vacuity
+ * requirement in {@link isLocalOnlyProviderMatrix}, ONE missing event would
+ * satisfy BOTH axes and this predicate would make its strongest claim about the
+ * workspace it knows least about — exactly the collapse the two-axis design was
+ * chosen to prevent. With it, an unconfigured workspace reports `false`: not yet
+ * known, therefore not reassuring.
+ *
+ * ⛔ CONSEQUENCE FOR WHOEVER WIRES THIS: because no writer populates
+ * `providerMatrix` today (see {@link isLocalOnlyProviderMatrix}), this predicate
+ * returns `false` for every stored workspace. `false` therefore means UNKNOWN far
+ * more often than it means "egress is possible", and a surface that renders it as
+ * the latter would assert a posture it has not established — the same defect in
+ * the opposite direction.
  *
  * Pure; absent/malformed either half ⇒ false.
  */
