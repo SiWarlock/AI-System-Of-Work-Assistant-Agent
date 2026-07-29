@@ -1647,6 +1647,12 @@ grep -nE 'pin:' packages/contracts/LESSONS.md | grep -oE '\b[a-z][a-z0-9]*(_[a-z
 
 ⭐ **Working counter-example from the same exchange, worth copying:** the enumeration *"both dialects × `get`/`list` = four sites"* was stated **with its scope**, which is exactly what let the next reader find that `updateProvisioningFields`'s `.returning()` row is cast too — **six sites, three per dialect** (sqlite `:362`/`:364`/`:412`, postgres `:383`/`:385`/`:430`). A scoped claim gets corrected; an unscoped one gets believed.
 
+> ⭐⭐ **AND THEN IT ESCALATED, WHICH IS THE RULE'S REAL PAYOFF — STATING THE SCOPE DID NOT JUST BOUND THE CLAIM, IT REVEALED THE CLAIM WAS MEASURING THE WRONG THING.**
+>
+> Writing *"complete for the pattern `as Workspace` within `packages/db/src`"* forced the next question — *is that where the property lives?* — and the answer was no. `packages/db/src/schema/workspace-config.ts:35-36` types both nested aggregates `text({mode:"json"}).$type<Workspace[...]>()`, so drizzle's inferred row is **already structurally `Workspace`** and **all six casts are decorative**: delete them and an unvalidated row still flows. **A cast-shaped search, however wide, structurally cannot establish completeness when the type lie lives in the schema DECLARATION rather than at the call sites.** The six-site enumeration was accurate and beside the point — a construction census wearing a completeness badge ([L70](#70)).
+>
+> ⇒ **So the rule's payoff is not "narrower claims."** It is that **forcing yourself to say WHERE you looked exposes WHETHER that is where the property lives.** An unscoped *"the casts are the problem"* would have shipped a fix that deleted six casts and changed nothing — and it would have passed review, because the casts really were there. **The scope statement is not a hedge; it is the step that makes the measurement auditable.**
+
 `pattern:` — not greppable. Enforcement is at authoring time: any sentence of the form *"there is no X"* / *"X appears nowhere"* / *"nothing calls X"* must carry the pattern **and** the path set that was searched.
 `accepted: not mechanically enforceable` — mitigation: in a Finding or a Step-9 flag, a negative claim without a stated scope is treated as unverified rather than as evidence.
 
@@ -1716,3 +1722,38 @@ Repairing [L69](#69)'s rotted pin citation, the ruling was: *establish whether e
 ⚠ **The failure mode this prevents is quiet.** `accepted: not mechanically enforceable` looks like the weakest of the three options, so there is a pull toward promising a pin instead — it reads as more rigorous. **It is less rigorous**, because it substitutes a deliverable nobody can produce for an honest statement about the rule's nature. Where a judgment rule *does* have a mechanical shadow, name the enforcement **point** rather than a test (L71's line does this: *"enforcement points: `/orchestrate-end` Carry-forward triage + `/team-end`"*).
 
 `accepted: not mechanically enforceable` — self-referentially, this is exactly that kind of rule. Enforcement point: the moment an `accepted:` / `pin:` / `pattern:` line is authored at Step-9 routing.
+
+---
+
+<a id="103"></a>
+## 103. HOUSE PATTERN — make the violation UNREPRESENTABLE; a detector is belt, never the mechanism
+
+**2026-07-29 · named because the team converged on it unprompted, four-for-four in ONE round, four independent authors, three code areas**
+
+This is a **convention**, not an incident report. Four slices in one round independently reached for the same move, and naming it makes the fifth cheaper to reach for:
+
+| # | Slice | The violation | Made unrepresentable by |
+|---|---|---|---|
+| 1 | **9.35** (desktop) | a fallback rendering `error.message` / a stack — rule 7 | `fallback` typed `(reset) => ReactNode` with **no error parameter** — the caller is never handed one |
+| 2 | **9.30** (worker) | provisioning writing posture columns | `ProvisioningOwnedFields` — a posture write is **untypeable** from that path |
+| 3 | **9.21-B** (worker) | a partial modelled as a success, or leaking a message | the `err` variant carries only a **closed literal**, no message field ([L80](#80)) |
+| 4 | **9.36** (db) | an unvalidated stored aggregate reaching a policy decision | the parse becomes the **only** constructor of the repo's return value |
+
+> ⇒ **Prefer a design in which the bad state does not typecheck over one in which the bad state is detected.** A detector answers *"did it happen?"*; unrepresentability answers *"can it happen?"* — and only the second is closed under **future callers**, which is where every one of these was actually leaking.
+
+⭐ **The decisive precedent is the project's own, and it is now THREE-for-three on safety rule 5** — this is not an aesthetic preference:
+- Worker [L73](#73): a `process.env` **denylist** was *structurally unwinnable* for a rule-5 egress **completeness** invariant — every re-ground found more (the watched set grew **13 → 81**). Replaced by a spawn-env **allowlist** (complete-by-construction, drift-immune); the denylist was retained **explicitly as "defense-in-depth belt," not the completeness mechanism.**
+- Worker [L74](#74): the same call again for settings **files** — a **presence-degrade** subsuming an unwinnable managed-**field** enumeration.
+- 9.36: a **cast census** would have been the third instance of the same unwinnable-denylist shape.
+
+**The tell that you are on the losing side of this:** the enumeration keeps growing when re-checked, and each re-check is *correct*. That is not diligence converging — it is evidence the property does not live where you are counting. ⚠ **An enumeration can be accurate and beside the point** ([L100](#100)): 9.36's six-cast census was right about the casts and wrong about completeness, because the type lie lived in the schema declaration, not the call sites.
+
+**Do:**
+1. Ask **"what is the cheapest edit that makes this violation representable again?"** If the answer is *"add a new call site"* or *"add a new field"*, you have a detector, not a mechanism.
+2. Put the invariant where the **compiler** enforces it: a closed literal ([L31](#31)'s literal-`false` arming flags), a branded type only one constructor can produce, an absent parameter, a narrowed field set.
+3. **Keep the detector — and label it belt.** Both L73 and L74 kept theirs. ⛔ **Report the belt separately from the mechanism**, or a later reader mistakes the belt for the guarantee and "improves" the mechanism away.
+4. If the belt is a census/source-scan, **both-anchor it and mutation-verify** — 9.22's census pin was prefix-anchored and accepted a superset, passing on exactly the input it existed to reject ([L70](#70)).
+
+⚠ **Limits, so this doesn't become a reflex.** Unrepresentability costs type complexity, and it cannot express a **runtime** property (freshness, ordering, a live external state) — for those, a fail-closed runtime gate with a **reason code** is the mechanism ([L80](#80)). And a type-level guarantee over data crossing a trust boundary is only real **after** a runtime parse: `$type<>()` on a DB column is a **compile-time claim about runtime-untrusted bytes**, which is the defect 9.36 exists to fix, not an instance of this pattern.
+
+`accepted: not mechanically enforceable` — a design-time preference, not a checkable shape. Enforcement point: `/tdd` Step 2.5, where "how would you detect this?" should be answered with "you wouldn't — it won't compile."
