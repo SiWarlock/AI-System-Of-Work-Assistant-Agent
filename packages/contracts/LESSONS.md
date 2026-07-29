@@ -1633,7 +1633,11 @@ grep -nE 'pin:' packages/contracts/LESSONS.md | grep -oE '\b[a-z][a-z0-9]*(_[a-z
 | Wrong **scope** | the paths searched excluded where the thing lives |
 | **Verified evidence, inherited inference** ⭐ | the *fact* under the claim was checked and TRUE; the *step from fact to claim* was never checked |
 
-⭐ **The fourth is the subtlest and it arrived the same day, on a different claim.** *"`§4.5` does not exist in `ARCHITECTURE.md`"* was verified — zero occurrences, correctly scoped, **true**. The claim built on it, *"therefore `§4.5` is undefined,"* was **false**: its real referent is `docs/design/ui-ux/ui-ux-spec.md:206`, another document's own §-numbering. **Checking the fact under a claim is not checking the claim** — and it feels like verification, which is what makes it dangerous. The other three mechanisms produce a wrong *fact*; this one produces a wrong *conclusion from a right fact*, so every verification step passes.
+⭐ **The fourth is the sharpest of the four and it arrived the same day, on a different claim.** *"`§4.5` does not exist in `ARCHITECTURE.md`"* was verified — zero occurrences, correctly scoped, **true**. The claim built on it, *"therefore `§4.5` is undefined,"* was **false**: its real referent is `docs/design/ui-ux/ui-ux-spec.md:206`, another document's own §-numbering. **Checking the fact under a claim is not checking the claim** — and it feels like verification, which is exactly what makes it dangerous.
+
+> ⭐ **State the distinction this way, because it is the whole reason the fourth earns a row instead of a footnote: the first three mechanisms produce a wrong FACT. The fourth produces a wrong CONCLUSION FROM A RIGHT FACT — so EVERY VERIFICATION STEP PASSES.**
+>
+> The other three are catchable by re-running the check: widen the pattern, separate the outputs, extend the scope, and the wrong fact turns into a right one. **This one has no failed check anywhere in the chain to notice.** The grep was correct, its scope was correct, the count was correct, and the conclusion was still false — so there is nothing for a diligent re-verification to find. The only defence is to state the inferential step *as a separate claim* and check that too: *"zero occurrences in file X"* and *"therefore undefined"* are two assertions, and the second is the one that was never tested.
 
 > ⇒ **The durable rule is NOT "widen the pattern"** — that only fixes the first mechanism, and this round proved there are at least three. **A negative existence claim inherits the boundaries of the search that produced it, and those boundaries must travel with the claim.** *"I grepped and found nothing"* is not a finding. *"No hit for `<pattern>` under `<paths>`"* is — because a reader can see the hole, and the person holding the file can contradict it cheaply.
 
@@ -1673,6 +1677,42 @@ Phase 9's task prose cites `§4.5` (8×), `§14.1`, `§14.3`, `§14.5`, `§13.5`
 
 **Do:** cite an architecture anchor as bare `§N`; cite a plan task as **`task N.M`** (no `§`); cite another document by **path + its own numbering** (`ui-ux-spec.md §4.5`), never bare. When `§N.x` with `N ≠ 19` appears, resolve it before repeating it.
 
-⛔ **SCALE, measured when the pattern was first run rather than estimated — the class is an order of magnitude larger than the phase that surfaced it.** The pattern matches **87 lines** of `IMPLEMENTATION_PLAN.md`, against **180** legitimate `§19.x` occurrences correctly excluded. Phase 9 contributed 8. ⚠ **87 is the size of the CANDIDATE SET, not a defect count** — many are presumably valid references to other documents' numbering, which is exactly what needs classifying. Stated this way deliberately: *"8 instances found"* would have implied the repair was a phase-sized cleanup when the surface is repo-wide, and a fix scoped to the instances someone happened to notice is the fix-where-noticed shape. **Whoever takes the cleanup should budget against 87 candidates and report how many were real.**
+⛔ **SCALE, measured when the pattern was first run rather than estimated — the class is an order of magnitude larger than the phase that surfaced it.** The pattern matches **87 lines** of `IMPLEMENTATION_PLAN.md`, against **180** legitimate `§19.x` occurrences correctly excluded. Phase 9 contributed 8.
+
+**The measurement method, recorded so nobody re-estimates it** (2026-07-29, at commit `247d0b67`):
+```sh
+grep -cE '§(1[0-8]|[0-9])\.[0-9]' IMPLEMENTATION_PLAN.md   # → 87   (candidate lines)
+grep -coE '§19\.[0-9]+'           IMPLEMENTATION_PLAN.md   # → 180  (legit §19.x, excluded)
+```
+⛔ **87 is a CANDIDATE count, not a defect count** — and the distinction is what keeps the record honest. A future reader who budgets against 87 and **reports how many were real** is running a scoped arc; someone who fixes the 8 they happened to notice and ticks the item is doing fix-where-noticed **wearing a completion badge**. Re-run the two commands rather than trusting these numbers: the file grows. ⚠ **87 is the size of the CANDIDATE SET, not a defect count** — many are presumably valid references to other documents' numbering, which is exactly what needs classifying. Stated this way deliberately: *"8 instances found"* would have implied the repair was a phase-sized cleanup when the surface is repo-wide, and a fix scoped to the instances someone happened to notice is the fix-where-noticed shape. **Whoever takes the cleanup should budget against 87 candidates and report how many were real.**
 
 `pattern: grep -nE '§(1[0-8]|[0-9])\.[0-9]' IMPLEMENTATION_PLAN.md` — every hit is a non-§19 subsection reference and therefore **not** an architecture anchor; confirm which system it belongs to. (Excludes `§19.x`, the only real subsections.) ⚠ Inherits [L99](#99)'s limit: prose *discussing* the notation hazard trips it too — the pattern narrows the set, it cannot do the classifying.
+
+---
+
+<a id="102"></a>
+## 102. Before recording a rule as unpinned, ask whether it is the KIND of rule a test can pin at all — "pin owed" on a judgment rule is debt that can never be discharged
+
+**2026-07-29 · created in the same breath as a ruling against phantom pins · lead, self-caught**
+
+Repairing [L69](#69)'s rotted pin citation, the ruling was: *establish whether either candidate test pins L69's rule; if neither does, **record the pin as ABSENT** — and an absent pin is a candidate slice for a later round.* The reasoning behind it is sound and is [13.20](#93)'s: **a claim asserted-as-pinned but unenforced is worse than unpinned, because the claim stops anyone looking.**
+
+**Two things were wrong with it, and the second is the lesson.**
+
+**(a) The framing was a FALSE DICHOTOMY.** "Either a test pins the rule, or the pin is absent" excluded what turned out to be true: **the pin's subject existed, in the cited file, under two different names.** The evidence was **author-declared, not inferred** — both assertions carry an in-code `9.22 ⚠ SEMANTICS CHANGE (L69)` comment naming the lesson. So citing them smuggles no cross-file equivalence, which is precisely the hazard the ruling existed to protect against and which its own binary made unreachable. ⇒ **When a ruling enumerates the outcomes, check that the enumeration is exhaustive before treating "neither" as proof of absence.**
+
+**(b) ⛔ L69's rule is a PROCESS rule about test-authoring judgment — *no test can pin it*.** *"Treat a test that asserts a safety value as a claim requiring the same derivation check as the code it guards"* is a rule about how a human reads a diff. Corrected assertions are **artifacts of having applied it**, never enforcement of it. So *"record the pin as absent, and a later slice writes it"* created an obligation **no slice could ever discharge** — and it was created in the same message that ruled against phantom pins.
+
+> ⇒ **A phantom obligation is the same defect as a phantom pin, facing forward.** A phantom pin says *"this is checked"* when nothing checks it. A phantom obligation says *"this will be checked"* when nothing can. Both retire the reader's attention; the second also accretes into a backlog that can only ever be closed by someone re-deriving that the work was impossible.
+
+**The check, and it is one question asked BEFORE the enforcement line is written:** *is this the kind of rule a test can pin at all?*
+
+| Rule kind | Honest enforcement |
+|---|---|
+| A **property of the code** ("no root path is reachable") | `pin:` a test — and mutation-verify it ([L75](#75)) |
+| A **mechanically detectable shape** ("no second definition of this symbol") | `pattern:` a grep/ast-grep expression |
+| A **judgment rule** ("stop and ask whether the test was right") | `accepted: not mechanically enforceable` — **and no slice is owed** |
+
+⚠ **The failure mode this prevents is quiet.** `accepted: not mechanically enforceable` looks like the weakest of the three options, so there is a pull toward promising a pin instead — it reads as more rigorous. **It is less rigorous**, because it substitutes a deliverable nobody can produce for an honest statement about the rule's nature. Where a judgment rule *does* have a mechanical shadow, name the enforcement **point** rather than a test (L71's line does this: *"enforcement points: `/orchestrate-end` Carry-forward triage + `/team-end`"*).
+
+`accepted: not mechanically enforceable` — self-referentially, this is exactly that kind of rule. Enforcement point: the moment an `accepted:` / `pin:` / `pattern:` line is authored at Step-9 routing.
