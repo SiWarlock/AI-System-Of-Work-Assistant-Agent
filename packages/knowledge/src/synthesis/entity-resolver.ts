@@ -18,18 +18,22 @@
 // WITHHELD — resolving it would risk binding to a DIFFERENT note that slugifies the
 // same. TOTAL never-throws; fail-closed to withheld on any fault/empty/malformed.
 import { isErr } from "@sow/contracts";
-import type { Result, WorkspaceId } from "@sow/contracts";
+import type { Result, WorkspaceId, EntityKind, EntityRef } from "@sow/contracts";
 import { faithfulKey, entitySlug, identifiers } from "./match-keys";
 import { admitGroundedPath, type GroundedPathRefusal } from "./grounded-path";
 
-/** The entity classes the living-vault synthesis resolves (knowledge-local, not a frozen contract). */
-export type EntityKind = "person" | "project" | "concept";
-
-/** A referenced entity to ground: a display name + its class. */
-export interface EntityRef {
-  readonly name: string;
-  readonly kind: EntityKind;
-}
+/**
+ * `EntityKind`/`EntityRef` are the `packages/contracts` frozen contract (§DEC-CANDGATE leg 1, task
+ * 13.18) — re-exported here so every existing importer of `./entity-resolver` (planner.ts,
+ * meeting-rewrite.ts, attendee-refs.ts, this file's own tests, and — via the `@sow/knowledge` barrel
+ * — packages/evals/src/synthesis/corpus.ts) keeps resolving unchanged. This file no longer declares
+ * its own copy (leg 2, task 13.19); the `EntityRefSchema` candidate-data gate is called at the
+ * `planSynthesis` boundary (`planner.ts`'s `collectEntities`) — the actual point model-supplied
+ * candidate data crosses in — not here. `resolveEntity` below stays schema-agnostic on purpose (the
+ * gate runs ONCE at the boundary, not per consumer); a deterministic caller (e.g. the meeting path's
+ * attendee-supplied refs) calls it directly and is unaffected by that gate.
+ */
+export type { EntityKind, EntityRef };
 
 /** An existing vault note candidate from the workspace-scoped GBrain read. */
 export interface EntityCandidate {

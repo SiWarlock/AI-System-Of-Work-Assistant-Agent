@@ -30,7 +30,7 @@
 //
 // PURE over the injected ports; TOTAL never-throws (a faulted read / mis-shaped candidate → fail-safe
 // empty or partial-valid plan set — L11); DORMANT (production wiring is 13.8d/13.8f).
-import { ok, err, KnowledgeMutationPlanSchema } from "@sow/contracts";
+import { ok, err, KnowledgeMutationPlanSchema, EntityRefSchema } from "@sow/contracts";
 import type {
   Result,
   WorkspaceId,
@@ -128,6 +128,20 @@ export interface SynthesisOutcome {
    * exactly one truncation class here: over budget). Never a ref/name/path (rule 7).
    */
   readonly entityRefsTruncated: number;
+  /**
+   * Count of MODEL-supplied `candidate.entityRefs` REJECTED by `EntityRefSchema` this run
+   * (§DEC-CANDGATE leg 2, task 13.19, REQ-S-006) — a bad `kind`, a blank/non-string `name`, or a
+   * smuggled extra key (e.g. `path`) never reaches `resolveEntity`/`stubNotePathFor`. 0 means nothing
+   * was rejected. Deliberately a SEPARATE count from `entityRefsTruncated`, never merged into it: the
+   * cap is a POSITIONAL slice taken BEFORE validation runs (bounds gbrain-read AND schema-parse work to
+   * the same constant, and leaves the 13.8h cap byte-identical), so `entityRefsTruncated` counts refs
+   * beyond the cap that are never even inspected by the schema, while `entityRefsRejected` counts
+   * malformed refs WITHIN the capped set — disjoint populations, so a reader can tell which failure
+   * class fired rather than a merged number hiding it (L88's independent-caps discipline, applied to
+   * independent counts). Never a ref/name/path (rule 7) — a poisoned-row attack must not be
+   * byte-identical to a benign empty run (13.8m).
+   */
+  readonly entityRefsRejected: number;
 }
 
 /** The only actionable error: an input that can never source a plan (REQ-F-006). All other faults fail safe. */
@@ -206,10 +220,12 @@ export async function planSynthesis(
   const proposeM = emptyMuts();
   const plans: KnowledgeMutationPlan[] = [];
   // Hoisted ABOVE the try (mirrors 13.8m-A's `refusals` fix): a fault AFTER `collectEntities` runs (e.g.
-  // a throwing `newPlanId` inside `assemble`) must not discard the truncation count already computed —
-  // else a run that fan-out-hijacked entityRefs and then tripped a later fault would report the SAME
-  // entityRefsTruncated as a benign run, destroying the distinction this field exists to create.
+  // a throwing `newPlanId` inside `assemble`) must not discard the truncation/rejection counts already
+  // computed — else a run that fan-out-hijacked entityRefs and then tripped a later fault would report
+  // the SAME entityRefsTruncated/entityRefsRejected as a benign run, destroying the distinction these
+  // fields exist to create.
   let entityRefsTruncated = 0;
+  let entityRefsRejected = 0;
 
   try {
     const candidate = await deps.reason.reason(input);
@@ -217,7 +233,9 @@ export async function planSynthesis(
       collectRegions(candidate.regions, autoM, deps);
       collectFrontmatter(candidate.frontmatter, proposeM);
       collectLinks(candidate.links, autoM, input);
-      entityRefsTruncated = await collectEntities(candidate.entityRefs, autoM, input, deps);
+      const entityStats = await collectEntities(candidate.entityRefs, autoM, input, deps);
+      entityRefsTruncated = entityStats.truncated;
+      entityRefsRejected = entityStats.rejected;
     }
     // Assembly runs INSIDE the try — a throwing `newPlanId` fails safe to the plans already assembled (L11).
     const autoPlan = assemble(autoM, false, input, deps);
@@ -227,7 +245,7 @@ export async function planSynthesis(
   } catch {
     // reason port / assembly / any composite fault ⇒ fail-safe: return whatever was assembled (possibly nothing).
   }
-  return ok({ plans, entityRefsTruncated });
+  return ok({ plans, entityRefsTruncated, entityRefsRejected });
 }
 
 /**
@@ -295,28 +313,63 @@ function collectLinks(links: ProposedLinks | undefined, autoM: Muts, input: Synt
   }
 }
 
+/** The fan-out/validation bookkeeping `collectEntities` reports back to `planSynthesis` (13.8h + §DEC-CANDGATE leg 2). */
+interface EntityCollectionStats {
+  readonly truncated: number;
+  readonly rejected: number;
+}
+
 /**
  * ENTITY grounding → AUTO. create_stub MAY create a stub; a `withheld`/`resolved` fabricates nothing.
- * The MODEL-supplied `entityRefs` is capped at `MAX_MODEL_ENTITY_REFS` BEFORE the loop (13.8h) — a
- * degenerate REASON output must not drive an unbounded sequential GBrain read. Returns the count of
- * refs DROPPED by the cap (0 = nothing truncated) so the caller can surface it rather than silently
- * synthesizing against fewer entities than the model proposed.
+ *
+ * Two gates apply, in this order, deliberately: (1) the MODEL-supplied `entityRefs` array is capped
+ * to `MAX_MODEL_ENTITY_REFS` BY POSITION first (13.8h — a degenerate REASON output must not drive an
+ * unbounded sequential GBrain read); (2) `EntityRefSchema` (§DEC-CANDGATE leg 2, task 13.19,
+ * REQ-S-006) then validates each element of that CAPPED subset, before it ever reaches
+ * `resolveEntity`/`stubNotePathFor` — `kind`/`name` are runtime-untrusted candidate data, not a
+ * guarantee the `EntityRef` TS type alone provides.
+ *
+ * CAP-THEN-VALIDATE (not validate-then-cap) is the deliberate choice: it bounds both the GBrain-read
+ * work AND the schema-parse work to the same constant, and leaves the 13.8h cap's meaning byte-
+ * identical (still "the first `MAX_MODEL_ENTITY_REFS` elements, by position"). ⚠ ACCEPTED TRADE-OFF,
+ * recorded so it is never rediscovered as a surprise: because the cap is positional, a degenerate
+ * model output FRONT-LOADED with malformed refs can consume the entire cap and starve legitimate refs
+ * positioned after it (e.g. 200 malformed refs followed by 50 valid ones ⇒ all 200 are rejected, the
+ * 50 valid ones are truncated away and never resolved). This degrades completeness, never
+ * correctness — a suppressed ref writes nothing false — and bounding parse+read work to one constant
+ * against a hostile input is judged worth more than maximizing useful work extracted from it.
+ *
+ * Returns the counts of refs dropped by each gate (0 = nothing dropped by that gate) so the caller can
+ * surface them — disjoint populations, never merged: a ref beyond the cap is truncated and never
+ * inspected by the schema at all; a malformed ref within the cap is rejected and never counted as
+ * truncated.
  */
 async function collectEntities(
   entityRefs: readonly EntityRef[] | undefined,
   autoM: Muts,
   input: SynthesisInput,
   deps: SynthesisDeps,
-): Promise<number> {
-  if (!Array.isArray(entityRefs)) return 0;
-  const capped = entityRefs.slice(0, MAX_MODEL_ENTITY_REFS); // sliced BEFORE the loop — nothing extra allocated/awaited
+): Promise<EntityCollectionStats> {
+  if (!Array.isArray(entityRefs)) return { truncated: 0, rejected: 0 };
+  const capped = entityRefs.slice(0, MAX_MODEL_ENTITY_REFS); // sliced BEFORE validation — nothing extra allocated/awaited
   const truncated = Math.max(0, entityRefs.length - MAX_MODEL_ENTITY_REFS);
+  let rejected = 0;
   for (const eRef of capped) {
     try {
-      const res = await resolveEntity(eRef, input.workspaceId, { gbrain: deps.gbrain });
+      // §DEC-CANDGATE leg 2 (REQ-S-006): `eRef` is MODEL-supplied candidate data — reject a bad
+      // `kind`, a blank/non-string `name`, or a smuggled extra key (e.g. `path`) HERE, before
+      // `resolveEntity`/`stubNotePathFor` ever see it. Counted, not silently dropped (13.8m: a
+      // poisoned-row attack must not be byte-identical to a benign empty run).
+      const parsed = EntityRefSchema.safeParse(eRef);
+      if (!parsed.success) {
+        rejected++;
+        continue;
+      }
+      const validRef = parsed.data;
+      const res = await resolveEntity(validRef, input.workspaceId, { gbrain: deps.gbrain });
       // 13.8j: the stub path comes from the ONE shared namespaced derivation — never built inline
       // here, so an untrusted entity name can't mint a root structural surface (index.md / log.md).
-      const stubPath = stubNotePathFor(res, eRef?.kind);
+      const stubPath = stubNotePathFor(res, validRef.kind);
       if (stubPath !== null) {
         // Skip if a create already targets this path — never let an empty stub clobber a content-bearing create.
         if (!autoM.creates.some((c) => c.path === stubPath)) {
@@ -328,7 +381,7 @@ async function collectEntities(
       continue;
     }
   }
-  return truncated;
+  return { truncated, rejected };
 }
 
 /** Assemble one tier's mutations into a validated KMP, or null when there is nothing to synthesize / it fails the gate. */

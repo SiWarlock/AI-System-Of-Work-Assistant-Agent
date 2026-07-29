@@ -372,3 +372,20 @@ describe("resolveEntity — a poisoned candidate path is withheld, never resolve
     expect(b).toEqual({ kind: "withheld", reason: "structural_surface" });
   });
 });
+
+// ── §DEC-CANDGATE leg 2 (13.19) — a DETERMINISTIC caller is unaffected by the new boundary gate ──
+//
+// The new `EntityRefSchema` check lives in planner.ts's `collectEntities` — the MODEL-supplied
+// `candidate.entityRefs` path — not inside `resolveEntity` itself. `attendee-refs.ts:242`'s
+// deterministic producer (`{ name, kind: "person" }`, consumed directly by meeting-rewrite.ts via
+// `resolveEntity`, never through `collectEntities`) is therefore UNAFFECTED: this pins that a direct
+// `resolveEntity` call behaves exactly as before leg 2, so the gate closes the class without also
+// gating a caller it was never meant to touch (the brief's "once at the boundary, not per consumer").
+
+describe("resolveEntity — a deterministic caller-supplied ref is unaffected by the §DEC-CANDGATE boundary gate (leg 2)", () => {
+  it("a_deterministic_caller_supplied_ref_is_unaffected — the attendee-refs.ts producer shape resolves exactly as before", async () => {
+    const port = fakePort(WS_A, () => ok([cand({ path: "people/jane-doe.md", slug: "jane-doe", title: "Jane Doe" })]));
+    const r = await resolveEntity({ name: "Jane Doe", kind: "person" }, WS_A, { gbrain: port });
+    expect(r).toEqual({ kind: "resolved", path: "people/jane-doe.md" });
+  });
+});

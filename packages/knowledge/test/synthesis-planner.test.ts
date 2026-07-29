@@ -5,14 +5,20 @@
 // PROPOSE — classified DETERMINISTICALLY by the planner, never model-declared); `@user`-region
 // confinement (patches only ever target writer-owned regions; a human region is provably never
 // emitted); no-inference (REQ-F-017: un-evidenced owner/date → TBD). TOTAL never-throws.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { ok, err, KnowledgeMutationPlanSchema } from "@sow/contracts";
+import { ok, err, KnowledgeMutationPlanSchema, EntityRefSchema } from "@sow/contracts";
 import { TBD } from "@sow/domain";
 import type { Result, WorkspaceId, ProvenanceOrigin, KnowledgeMutationPlan } from "@sow/contracts";
-import type { EntityCandidate, EntityGbrainReadPort, EntityReadFault, EntityRef } from "../src/synthesis/entity-resolver";
+import type { EntityCandidate, EntityGbrainReadPort, EntityReadFault, EntityRef, EntityKind } from "../src/synthesis/entity-resolver";
+// ⚠ Deliberate exception to this package's "import the module under test directly, not the barrel"
+// convention (src/index.ts's own header comment) — this file's evals-barrel test (13.19, §DEC-CANDGATE
+// leg 2, Trap 1) exists SPECIFICALLY to prove the @sow/knowledge barrel import
+// packages/evals/src/synthesis/corpus.ts:20 depends on keeps resolving after the contracts re-point,
+// so it imports the barrel path on purpose.
+import type { EntityRef as BarrelEntityRef } from "../src/index";
 import {
   planSynthesis,
   MAX_MODEL_ENTITY_REFS,
@@ -438,5 +444,157 @@ describe("planSynthesis — the MODEL-supplied entityRefs fan-out is capped (13.
     expect(r.ok).toBe(true); // TOTAL — the fault fails safe
     expect(r.ok && r.value.entityRefsTruncated).toBe(250 - MAX_MODEL_ENTITY_REFS); // NOT reset to 0 by the later fault
     expect(r.ok && r.value.plans).toEqual([]); // the assembly fault does lose the plans — that part's expected
+  });
+});
+
+// ── 13.19 — §DEC-CANDGATE leg 2: EntityRefSchema gates model-supplied entityRefs (REQ-S-006) ──
+//
+// Leg 1 (contracts, 93ebeabd) shipped EntityRefSchema with NO CALLER. This is the caller: a
+// malformed model-supplied ref (bad `kind`, blank/non-string `name`, a smuggled extra key) must
+// never reach `resolveEntity`/`stubNotePathFor` — and because a poisoned-row attack must never be
+// byte-identical to a benign empty run (13.8m), a rejection is COUNTED and surfaced on
+// `SynthesisOutcome`, deliberately independent of `entityRefsTruncated` (over-cap vs.
+// malformed-shape are different failure classes — L88's discipline about independent caps, applied
+// to independent counts).
+
+describe("planSynthesis — EntityRefSchema gates model-supplied entityRefs at the boundary (§DEC-CANDGATE leg 2, REQ-S-006)", () => {
+  it("malformed_entity_ref_is_rejected_at_the_boundary — bad kind / blank name / non-string name / a smuggled key never reach resolveEntity", async () => {
+    const port = fakeGbrainCounting();
+    const candidate = {
+      entityRefs: [
+        { name: "Acme", kind: "organization" }, // outside the EntityKind union
+        { name: "", kind: "person" }, // blank name
+        { name: 42, kind: "person" }, // non-string name
+        { name: "Evil", kind: "person", path: "index.md" }, // smuggled extra key — `.strict()` rejects
+      ],
+    } as unknown as SynthesisCandidate;
+    const r = await planSynthesis(baseInput(), mkDeps({ gbrain: port, reason: fakeReason(candidate) }));
+    expect(r.ok).toBe(true);
+    expect(port.queries.length).toBe(0); // NONE of the four malformed refs ever reached resolveEntity
+    expect(r.ok && r.value.entityRefsRejected).toBe(4);
+  });
+
+  it("a_rejected_ref_is_surfaced_not_silently_dropped — one poisoned ref among valid ones is counted, distinguishable from a benign empty run", async () => {
+    const candidate: SynthesisCandidate = {
+      entityRefs: [
+        { name: "Valid Person", kind: "person" },
+        { name: "Evil", kind: "__proto__" as unknown as EntityKind }, // hostile kind — prototype-chain probe (L65)
+      ],
+    };
+    const r = await planSynthesis(baseInput(), mkDeps({ gbrain: gbrainEmpty, reason: fakeReason(candidate) }));
+    expect(r.ok && r.value.entityRefsRejected).toBe(1); // the poisoned ref is counted, not silently dropped
+
+    // a benign run with NO entityRefs at all reports 0 — the two runs are NOT byte-identical (13.8m)
+    const benign = await planSynthesis(baseInput(), mkDeps({ gbrain: gbrainEmpty, reason: fakeReason({}) }));
+    expect(benign.ok && benign.value.entityRefsRejected).toBe(0);
+  });
+
+  it("valid_refs_still_resolve_unchanged — a person/project/concept ref each still resolves through the gate (non-vacuity)", async () => {
+    const candidate: SynthesisCandidate = {
+      entityRefs: [
+        { name: "A Person", kind: "person" },
+        { name: "A Project", kind: "project" },
+        { name: "A Concept", kind: "concept" },
+      ],
+    };
+    const r = await planSynthesis(baseInput(), mkDeps({ gbrain: gbrainEmpty, reason: fakeReason(candidate) }));
+    expect(r.ok && r.value.entityRefsRejected).toBe(0); // nothing legitimate is rejected
+    const created = (r.ok ? r.value.plans : []).flatMap((p) => p.creates).map((c) => c.path);
+    expect(created.sort()).toEqual(["concepts/a-concept.md", "people/a-person.md", "projects/a-project.md"]);
+  });
+
+  it("the_fan_out_cap_still_applies_after_validation — the 13.8h cap and the new schema gate don't double-count or bypass each other", async () => {
+    const many: EntityRef[] = Array.from({ length: 250 }, (_, i) => ({ name: `entity-${i}`, kind: "person" as const }));
+    const port = fakeGbrainCounting();
+    const r = await planSynthesis(baseInput(), mkDeps({ gbrain: port, reason: fakeReason({ entityRefs: many }) }));
+    expect(port.queries.length).toBe(MAX_MODEL_ENTITY_REFS); // the cap is unchanged by validation
+    expect(r.ok && r.value.entityRefsTruncated).toBe(250 - MAX_MODEL_ENTITY_REFS);
+    expect(r.ok && r.value.entityRefsRejected).toBe(0); // all 250 are well-formed — the cap alone explains the drop
+  });
+
+  it("truncation_and_rejection_are_independently_reported_in_the_same_run — cap and gate operate on DISJOINT populations, never double-counted", async () => {
+    // CAP-THEN-VALIDATE (final Step 2.5 ruling — bounds parse+read work to ONE constant and leaves
+    // 13.8h's cap byte-identical): the raw array is sliced to MAX_MODEL_ENTITY_REFS BY POSITION first,
+    // then only the capped subset is validated. So a ref beyond position 200 is truncated and NEVER
+    // inspected by the schema at all — it cannot also be "rejected" — while a malformed ref AT a
+    // position < 200 is rejected and never counts toward truncation. 3 malformed refs sit WITHIN the
+    // cap (positions 5/60/199); 50 more refs sit BEYOND it (200-249) and are truncated regardless of
+    // their own shape.
+    const refs = Array.from({ length: 250 }, (_, i) =>
+      i === 5 || i === 60 || i === 199 ? { name: `entity-${i}`, kind: "organization" } : { name: `entity-${i}`, kind: "person" },
+    );
+    const port = fakeGbrainCounting();
+    const r = await planSynthesis(
+      baseInput(),
+      mkDeps({ gbrain: port, reason: fakeReason({ entityRefs: refs } as unknown as SynthesisCandidate) }),
+    );
+    expect(r.ok && r.value.entityRefsTruncated).toBe(250 - MAX_MODEL_ENTITY_REFS); // 50 — cap-only, positions ≥200
+    expect(r.ok && r.value.entityRefsRejected).toBe(3); // the 3 malformed refs INSIDE the cap
+    expect(port.queries.length).toBe(MAX_MODEL_ENTITY_REFS - 3); // 197 real resolveEntity calls — capped minus rejected
+  });
+
+  it("a_front_loaded_malformed_array_can_starve_valid_refs — an ACCEPTED cap-then-validate trade-off, pinned so it can't drift silently", async () => {
+    // Cap-then-validate bounds parse+read work to ONE constant and leaves the 13.8h cap byte-identical
+    // — but the cap is POSITIONAL, so it has a named, ACCEPTED cost: a degenerate model output
+    // front-loaded with malformed refs can crowd out legitimate ones. 200 malformed refs (positions
+    // 0-199) followed by 50 VALID refs (200-249): the 200 malformed refs consume the ENTIRE cap and are
+    // all rejected; the 50 valid refs are truncated away and NEVER resolved (queries===0). Nothing
+    // false is ever written (a suppressed ref writes nothing) — this degrades completeness, not
+    // correctness — but the degradation is real and must be visible here, not rediscovered later.
+    const malformedFirst = Array.from({ length: 200 }, (_, i) => ({ name: `bad-${i}`, kind: "organization" }));
+    const validAfter = Array.from({ length: 50 }, (_, i) => ({ name: `entity-${i}`, kind: "person" as const }));
+    const refs = [...malformedFirst, ...validAfter];
+    const port = fakeGbrainCounting();
+    const r = await planSynthesis(
+      baseInput(),
+      mkDeps({ gbrain: port, reason: fakeReason({ entityRefs: refs } as unknown as SynthesisCandidate) }),
+    );
+    expect(r.ok && r.value.entityRefsRejected).toBe(200); // the entire cap was spent on malformed refs
+    expect(r.ok && r.value.entityRefsTruncated).toBe(50); // the 50 valid refs never even reach validation
+    expect(port.queries.length).toBe(0); // starved — none of the 50 legitimate refs are ever resolved
+  });
+
+  it("a_malformed_ref_beyond_the_cap_is_absorbed_into_truncated_not_rejected — the disjoint partition holds AT the cap boundary", async () => {
+    // The complementary case to the starvation test above: here the malformed refs sit BEYOND position
+    // 200, not within it. Cap-then-validate means they are sliced away BY POSITION before validation
+    // ever runs — so they are silently absorbed into `entityRefsTruncated` (never individually examined,
+    // never separately flagged) rather than counted as `entityRefsRejected`. This is the correct,
+    // ACCEPTED behavior under the ruling (not the poisoned-run-byte-identical-to-benign shape 13.8m
+    // describes — the signal exists, it just says "unexamined" rather than "malformed", and a ref past
+    // the cap can never reach resolveEntity, so it cannot poison anything).
+    const valid = Array.from({ length: 200 }, (_, i) => ({ name: `entity-${i}`, kind: "person" as const }));
+    const malformedBeyondCap = Array.from({ length: 10 }, (_, i) => ({ name: `bad-${i}`, kind: "organization" }));
+    const refs = [...valid, ...malformedBeyondCap];
+    const port = fakeGbrainCounting();
+    const r = await planSynthesis(
+      baseInput(),
+      mkDeps({ gbrain: port, reason: fakeReason({ entityRefs: refs } as unknown as SynthesisCandidate) }),
+    );
+    expect(r.ok && r.value.entityRefsRejected).toBe(0); // never inspected — the schema never sees them
+    expect(r.ok && r.value.entityRefsTruncated).toBe(10); // absorbed here instead
+    expect(port.queries.length).toBe(200); // the 200 valid refs at the front are unaffected
+  });
+
+  it("validation_runs_once_at_the_boundary_not_per_consumer — the schema is invoked exactly once per considered ref, never multiplied", async () => {
+    const spy = vi.spyOn(EntityRefSchema, "safeParse");
+    const candidate: SynthesisCandidate = {
+      entityRefs: [
+        { name: "One", kind: "person" },
+        { name: "Two", kind: "project" },
+        { name: "Three", kind: "concept" },
+      ],
+    };
+    await planSynthesis(baseInput(), mkDeps({ gbrain: gbrainEmpty, reason: fakeReason(candidate) }));
+    // bounded by the ref count — a per-consumer gate (e.g. also inside resolveEntity) would double this
+    expect(spy).toHaveBeenCalledTimes(3);
+    spy.mockRestore();
+  });
+
+  it("evals_barrel_import_still_resolves — EntityRef imported via the @sow/knowledge barrel (as packages/evals/src/synthesis/corpus.ts:20 does) is the contracts type and still round-trips", async () => {
+    const ref: BarrelEntityRef = { name: "Barrel Co", kind: "project" };
+    const r = await planSynthesis(baseInput(), mkDeps({ gbrain: gbrainEmpty, reason: fakeReason({ entityRefs: [ref] }) }));
+    const created = (r.ok ? r.value.plans : []).flatMap((p) => p.creates).map((c) => c.path);
+    expect(created).toEqual(["projects/barrel-co.md"]);
+    expect(r.ok && r.value.entityRefsRejected).toBe(0);
   });
 });
