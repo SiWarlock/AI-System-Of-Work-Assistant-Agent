@@ -1974,3 +1974,43 @@ git commit -F <msg> -- <paths>      # pathspec-limited: commits ONLY these paths
 ⭐ **Corollary that generalises past commits:** where the mitigation is *structural* (a pathspec, a closed literal, an absent parameter, a required field), adopting it as the default is nearly free — this is [L103](#103)'s make-it-unrepresentable applied to **process**. Where it is *behavioural* ("remember to check X"), adoption is expensive and unreliable, which is itself an argument for finding a structural form first.
 
 `accepted: not mechanically enforceable` — enforcement point: `/tdd` Step-9 routing and `/orchestrate-end`, at the moment an enforcement line is written. **A `pattern:` or `pin:` that names an option rather than a default is this defect.**
+
+---
+
+<a id="111"></a>
+## 111. AN UNVERIFIED DOUBT ABOUT A CORRECT RECORD IS THE SAME DEFECT AS AN UNVERIFIED CLAIM — and it is more corrosive, because a doubt need not be specific to do damage
+
+**2026-07-29 · the round's sharpest inversion, and I committed it twice in one exchange**
+
+An implementer's preflight report described the root **`pnpm lint` as a "broken wrapper,"** having run `npx turbo run lint` instead. The tracker records `pnpm lint → 11/11 successful, exit 0` as part of the (genuine) *lint-is-typecheck* finding. I relayed the doubt upward — flagging that *"the gate we already knew was only a typecheck may also not be invoked the way the record says it is."*
+
+**Verified, three ways, and the record was right:**
+- root `package.json:12` — `"lint": "turbo run lint"`. **`pnpm lint` IS `turbo run lint`;** it delegates, it does not shadow.
+- `pnpm lint` → `Tasks: 11 successful, 11 total`, **EXIT=0**. `npx turbo run lint` → identical. **Same mechanism, not a workaround.**
+- **All 11 packages' `lint` is literally `tsc --noEmit`**, and **`eslint` appears in ZERO workspace `package.json` files.**
+
+> ⇒ **The real finding (no ESLint, no `format:check` — so `lint` means typecheck and nothing more) was never in question and stands on its own evidence. The DOUBT was the error.**
+
+⛔ **And I did not merely relay it — I "corroborated" it, wrongly, with two distinct measurement failures in one command:**
+1. **I piped the output through `tail`, then printed `$?`** — which reported **`tail`'s** exit status, not `pnpm`'s. **I never measured the thing I was reporting on.** (L100's family again: measuring the wrong object.)
+2. The alarming text I saw — `Command "eslint" not found` / `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL` — **is unreproducible and cannot have come from a workspace script**, since no package references eslint. It was an artifact of my own tooling interleaved into the captured output, which I read as evidence because it *agreed with the doubt I already held.*
+
+**Why doubt is the more dangerous direction, and this is the whole lesson:**
+
+| | A false CLAIM | A false DOUBT |
+|---|---|---|
+| What it needs to spread | a specific assertion, which is checkable | **nothing specific** — "X may be broken" is unfalsifiable as stated |
+| How it ends | someone checks it and it dies | **it lingers**; nobody can disprove a vague suspicion |
+| What it costs | a wrong belief, corrected | **trust in a mechanism that works** |
+
+> ⭐ **A false green gets fixed. A false doubt makes people stop trusting a gate that works** — and a distrusted-but-working gate is worse than a known-broken one, because it gets bypassed *and* nobody replaces it.
+
+**Do:**
+1. **Hold a doubt to the same evidentiary standard as a claim.** *"I think X may be broken"* is not reportable; *"X printed Y, exit code Z, reproduced N times"* is.
+2. ⛔ **Never report an exit code you obtained through a pipe.** `cmd | tail` gives you `tail`'s status. Redirect (`cmd > f 2>&1; echo $?`) or check `PIPESTATUS`.
+3. **Beware agreement.** The unreproducible output was believed *because it matched a doubt already in hand* — confirmation is the weakest evidence and feels like the strongest.
+4. **Attacking a record is a claim about the record**, and ([L71](#71)) a correction is a claim too. Retracting requires the same verification as asserting — **including retracting someone else's retraction**, which is how this one was caught.
+
+⚠ **Meta, and it is the uncomfortable part:** this round spent itself almost entirely on **over-claims**, which trains a reflex toward suspicion. **That reflex is itself an over-claim generator, pointed the other way.** Skepticism is not free; it has a false-positive rate, and its false positives destroy working machinery.
+
+`accepted: not mechanically enforceable` — enforcement point: any message or record that questions an existing verified claim. **State the command, the output, and the real exit code, or do not raise it.**
