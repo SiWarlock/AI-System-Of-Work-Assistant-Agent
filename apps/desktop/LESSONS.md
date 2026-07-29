@@ -250,3 +250,37 @@ A renderer-only first-run gate (`!hasAnyOnboardedWorkspace(state)`) spuriously r
 **Date:** 2026-07-24. **Source slice:** 9.20 — Today-live daily-brief + honest-empty schedule.
 
 The Today "Daily brief" + "Today's schedule" were HARDCODED placeholder strings (read no read-model). The RICH brief is the model-synthesized Copilot briefing (`query.copilotBriefing` — needs a model; Phase-24.x) — NOT usable in a zero-model demo. So render a DETERMINISTIC brief from already-UI-safe store COUNTS: a pure, window-free `buildDailyBrief({recentChanges, ingestion, approvals})` (L3) composes a headline (the most-actionable non-zero, approvals>triage>recent) + a zero-dropped chip line (`meta`) + honest singular/plural wording; all-zero ⇒ an honest "all caught up", never a mockup. Return `{summary, meta, stats}` so BOTH the headline AND the chip line are deterministic + node-tested (Today stays a DUMB render of the `brief` prop; App.tsx computes it from `state.recentChanges.length`/`state.ingestion.length`/`pendingApprovalCount`). Renders ONLY counts/UI-safe summaries — no raw-content field can leak (rule 5). ⚠ Do NOT source a "blockers/open issues" stat from System Health (it conflates infra health with work items AND duplicates the System Health section right below — the demo would show the same issues twice); a work-blocker stat sources from PROJECT blockers. The brief's approval count is the intentionally-GLOBAL approval inbox (not scope-cleared) — UI-safe counts, ratified, not a WS-8 leak. The schedule renders an HONEST empty state ("No calendar connected") — no fabricated rows — until 9.9 Calendar. `pin: daily-brief.test.ts (seeded-counts + singular/plural + all-zero-honest + pure-ui-safe) + today-brief.test.tsx (brief-prop-rendered + schedule-honest-empty)`.
+
+---
+
+## <a id="20"></a>20. A redaction boundary should WITHHOLD the unsafe value from the caller's type — not ask the caller not to render it
+
+**Date:** 2026-07-29. **Source slice:** 9.35 — the renderer `ErrorBoundary` (`3f33c97b`).
+
+The brief asked that the error fallback never render `error.message` or a stack, because a caught error can carry worker-payload-derived content (safety rule 7). The obvious implementation passes the error to the fallback and *doesn't* render it.
+
+What shipped instead: **`fallback` is typed `(reset: () => void) => ReactNode` — no error parameter at all.** A caller **cannot** leak the message, because it is never handed one. The rule-7 obligation is discharged by the **type**, not by every present and future caller remembering it.
+
+⇒ **When a boundary exists to keep a value from being displayed, express that by not passing the value.** A convention says "don't render this"; a signature says "you have nothing to render." The second survives a future contributor who never read the convention, and it needs no test to stay true — though the test still earns its place by proving the *absence* is real.
+
+Same family as 9.34's `AdmittedCopilotAnswer` brand and worker [L31](../../apps/worker/LESSONS.md#31)'s literal-`false` arming flags: **make the unsafe state unrepresentable rather than merely forbidden.**
+
+⚠ Applies wherever a caller is handed something it must partially ignore — error objects, raw envelopes, unredacted rows. If the caller only needs three of eight fields, hand it three.
+
+`pin: apps/desktop/test-dom/error-boundary.test.tsx — fallback_exposes_no_raw_message_or_stack (mutation-verified: rendering the message turns it RED)`
+
+---
+
+## <a id="21"></a>21. Verify a TEST-INFRASTRUCTURE assumption empirically before building on it — the harness's behaviour is not the platform's
+
+**Date:** 2026-07-29. **Source slice:** 9.35 (`3f33c97b`). **Extends [L3](#3)/[L4](#4).**
+
+Two independent instances in one slice, both cheap to hit and expensive to debug:
+
+**(a) "Does this throw synchronously?" across a jsdom event dispatch.** The natural test for *"the boundary does NOT catch handler failures"* is `expect(() => fireEvent.click(...)).toThrow()`. **It does not throw.** Per DOM spec, jsdom's `dispatchEvent` reports a listener exception to the **global error handler**, not to the caller — and React DEV's `invokeGuardedCallbackDev` re-dispatches it as a **DELAYED global report**, which surfaced as a process-level *unhandled exception failing the entire suite* while the test's own assertions were green. ⚠ **A green test inside a red run is the worst diagnostic shape available**: the failure is real, attributable to nothing the test says, and looks like someone else's regression. Rewritten to use an async rejection the component handles itself (the real `{ok:false}` fold shape) — same invariant proven, zero process-level noise.
+
+**(b) tsconfig `include` parity across test tiers.** `tsconfig.web.json` already listed `preload/api.d.ts` for the `window.sow` ambient; `tsconfig.testdom.json` never had, because no test-dom file had transitively pulled in `App.tsx` before. The moment one did (importing the real `App`), four errors appeared **in the testdom pass only.** ⇒ **the three tsc configs can silently diverge on ambient `.d.ts` includes, and the gap only surfaces when some test first reaches a file that needs it.** Diagnosed by running each config standalone rather than inferring from a combined run — the right move in a shared tree where another area's WIP can produce a red.
+
+⇒ **Before assuming a new test import "just works," or that a runtime throws where you expect: run the smallest version and look.** Both instances cost one command to establish and would have cost a debugging session to infer. And when the harness surprises you, **document the history in-file** — the next person will otherwise "simplify" the test back into the trap.
+
+`pin: apps/desktop/test-dom/error-boundary.test.tsx — boundary_does_not_catch_async_or_handler_failures (in-file comment records the synchronous-throw attempt) + tsconfig.testdom.json include`

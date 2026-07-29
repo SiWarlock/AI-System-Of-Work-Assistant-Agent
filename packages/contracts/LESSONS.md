@@ -1504,3 +1504,28 @@ Repairing the above, I ran two edits in one shell invocation: amend `LESSONS.md`
 **Do:** chain writes into the commit — `python … && git add … && git commit` — so a failed edit **cannot** reach a commit. Or verify the **content is present** before staging (`grep -c '<the new text>'`), not merely that the file changed. ⚠ **And for any paired artifact (prose ⟷ index, model ⟷ snapshot, code ⟷ test), assert BOTH halves at the commit, not in the working tree** — `git show HEAD:<file>` on each. Staging the pair is not the same as both halves being written.
 
 **Do (added):** after fixing an instance, ask *"what is the SET this instance belongs to, and have I enumerated every member?"* — and record the enumeration, not just the fix. A lesson that diagnoses a class and ships one instance-fix will let its next reader do exactly the same thing and feel finished.
+
+---
+
+<a id="95"></a>
+## 95. A type consumed as if its TypeScript annotation constrained runtime-untrusted data needs a BOUNDARY schema — and that schema rejects-or-passes, never rewrites
+
+**Date:** 2026-07-29. **Source slice:** 13.18 — `EntityRef` gets a real contract + Zod schema (`93ebeabd`), §DEC-CANDGATE leg 1.
+
+**The arc's thesis, and the reason four fixes in one round did not add up to one fix.** `EntityRef` was declared only in `packages/knowledge`, self-described *"knowledge-local, not a frozen contract"*, with no schema anywhere — while `planSynthesis`'s input guard validated only `workspaceId` and `sourceRefs`. So `kind: EntityKind` was a **compile-time claim about runtime-untrusted data**, defended ad hoc at each consumption site.
+
+That one shape produced four distinct bugs: the uncapped model-supplied `entityRefs` fan-out (13.8h), `requiresApproval` carried but enforced nowhere (the §9.8 Approvals bypass, [L57](#57)), attendee display-name shapes no validator rejected (two high-severity bugs, [L60](#60)), and `kind` trusted enough to index an object literal (the prototype-chain hole, [L65](#65)). **Every fix closed an INSTANCE while the shape that produced them stayed open, so instance five looked novel to whoever met it.**
+
+⇒ **When a field crosses a model boundary and is then consumed as if the annotation constrained it, the fix belongs at the boundary schema — not at each consumer.** A consumer-side guard protects that consumer; the next one starts from zero.
+
+⚠ **The gap is usually already wider than it looks.** `EntityRef` had *already* crossed into `packages/evals` via the `@sow/knowledge` barrel, so an un-schema'd type was acting as a **de facto cross-package contract with zero runtime validation** — which is the argument for a class-fix in one sentence. Check who imports it before scoping the fix.
+
+**Two properties of the schema itself, both load-bearing:**
+
+**(a) It rejects or passes; it NEVER rewrites.** No `.trim()`, no `.transform()`, no coercion. `name` feeds `entitySlug()`/`faithfulKey()` path and key derivation, so a transforming gate would silently change derived output — **a schema that mutates its input is a second producer**, which is the one-writer rule violated at the validation layer.
+
+**(b) `.strict()` closes a smuggled field at BOTH tiers, not one.** `additionalProperties: false` **survives** JSON-Schema translation (unlike cross-field refines — [L3](#3)), so ajv gates it independently of Zod. A model-supplied `path` arriving on an `EntityRef` and reaching a writer-owned surface — the shape behind the §ARM-RESEARCH 13.8j/k/l residuals — is therefore closed twice. ⭐ **Established empirically by the reviewer, not assumed**, which is what separates it from `.strict()`-as-tidiness. Relatedly: prefer `z.enum` over an object-literal lookup, because it is a real Set-membership check and L65's failure mode cannot recur through it even in principle.
+
+⛔ **A boundary schema with no caller closes nothing.** Leg 1 shipped the gate; **leg 2 calls it** at `planSynthesis`. Describing leg 1 as "the candidate-data gap is closed" would be the half-gate-that-reads-as-coverage the owner warned about when approving the arc.
+
+`pin: packages/contracts/test/models/entity-ref.test.ts (9 tests incl. the proto-chain + .strict() rejections) + the generated schemas/entity-ref.schema.json freeze`
