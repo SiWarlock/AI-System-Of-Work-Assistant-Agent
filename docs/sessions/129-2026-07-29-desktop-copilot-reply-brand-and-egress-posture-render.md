@@ -3,7 +3,7 @@
 **Date:** 2026-07-29
 **Track / role:** main · desktop-implementer
 **Predecessor session:** `docs/sessions/120-2026-07-28-desktop-copilot-renderer-parity.md`
-**Successor session:** _(next `/session-end`)_
+**Successor session:** `docs/sessions/131-2026-07-29-desktop-errorboundary-and-partial-scaffold-repair.md`
 
 ---
 
