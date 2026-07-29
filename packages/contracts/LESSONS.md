@@ -1281,3 +1281,26 @@ So it was found, the consequence was stated, **the correct lesson-analogy (L56) 
 ⛔ **Recorded, not fixed** — installing ESLint across 11 packages and triaging its first run is a new arc, forbidden by the round's teardown boundary. Deliberately left visible rather than quietly patched, per L82: an uncovered gap invites work; a false-green one closes the question.
 
 `pattern: [ -d node_modules/eslint ] || echo "WARN: lint gate claims ESLint; ESLint is not installed"` · `accepted: not mechanically enforceable` until the gate is made real.
+
+---
+
+<a id="90"></a>
+## 90. A non-vacuity guard must be satisfied by the test's SUBJECT, not by the environment — delete the feature and see if the guard still passes
+
+**2026-07-29 · #8, the round's final slice · both halves self-caught by the implementer**
+
+#8's `no_naming_attribute_overclaims` sweeps `aria-label` / `aria-labelledby` / `aria-describedby` / `title` on the egress-posture subtree for banned claim tokens. Knowing that a filter-then-assert-nothing-matched test passes vacuously over an empty set ([L54](#54)), the implementer added a non-vacuity check: *assert the attributes exist.*
+
+⚠ **The non-vacuity guard was itself vacuous.** Pre-existing, unrelated `aria-label`s elsewhere in the page satisfied "attributes exist" — so **the test would have passed while never touching the new pill at all.** It guarded the DOM's general habit of having labels, not this feature's labels.
+
+> ⭐ **The check that finds this: delete your feature entirely. Does the non-vacuity guard still pass?** If yes, it is anchored to the environment, not to your subject — and "something matched" was never the same claim as "the thing I am testing matched."
+
+Fixed by giving the pill **its own populated `title`** (the scope sentence) and anchoring non-vacuity to *that specific node's* attribute, so the guard cannot be satisfied by anything the feature doesn't own.
+
+**The second half, same slice, same instinct.** They had confirmed the banned-token regex **passes on clean text** — but not that it **fires on a real restoration**. That is [L75](#75) landing on the pin that guards this round's signature defect: a negative pin verified only in the state where it should be silent. Closed by reintroducing `"nothing leaves this machine"` into the rendering and confirming **four** tests caught it.
+
+**Why this pair is the right note to end a round on:** every earlier instance this round was found by someone *else* — a reviewer, the orchestrator, the lead. These two were found by the author, on their own tests, by asking what their guard would fail to notice. **That is the only version of this discipline that scales**, because the reviewer who would catch it is reading the assertion and finding it reasonable — which it is. The defect is never in what the assertion says; it is in what satisfies it.
+
+**Do:** for any guard added to prevent a vacuous pass, state what anchors it to the subject. For any negative/absence pin, verify it FIRES on a genuine restoration, not merely that it is quiet on clean input. Both are single extra runs inside the slice.
+
+`pin: apps/desktop/test-dom/egress-settings-page.test.tsx (no_naming_attribute_overclaims, anchored to the pill's own title; banned-token regex mutation-verified against a real restoration)` · `accepted: not mechanically enforceable`.
