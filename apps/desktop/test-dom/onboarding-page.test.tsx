@@ -130,4 +130,59 @@ describe("Onboarding surface", () => {
     expect(screen.getByRole("main", { name: /onboarding/i })).toBeTruthy();
     expect(screen.getByText(/step 1 of 3/i)).toBeTruthy(); // wayfinding affordance
   });
+
+  // Task 9.21-B — closes 9.21's third Done-when clause: a partial scaffold surfaces a typed,
+  // TRUE repair state instead of the generic (and for a partial, actively wrong) failure copy.
+  describe("a partial-scaffold createWorkspace result (9.21-B)", () => {
+    it("partial_scaffold_renders_true_fixed_copy_never_couldnt_create_or_vault_path — spec(§11)", async () => {
+      const props = renderOnboarding({
+        onCreateWorkspace: vi.fn().mockResolvedValue({ ok: false, reason: "partial_scaffold" }),
+      });
+      walkToPreset();
+      fireEvent.click(screen.getByRole("button", { name: "Professional" }));
+      fireEvent.click(screen.getByRole("button", { name: /create workspace/i }));
+      const alert = await screen.findByRole("alert");
+      // Exact-text (not .toMatch) so a future edit that starts interpolating a server-derived
+      // field into this copy is caught — the fixed literal is the whole redaction guarantee.
+      expect(alert.textContent).toBe(
+        "Your workspace was created but setup didn't finish. Submit again to resume — nothing will be duplicated.",
+      );
+      expect(alert.textContent).not.toMatch(/couldn't create/i);
+      expect(alert.textContent).not.toMatch(/vault path/i);
+      expect(props.onOnboarded).not.toHaveBeenCalled();
+    });
+
+    it("onOnboarded_does_not_fire_on_a_partial_scaffold_result — spec(§11) 9.21 Done-when clause 3", async () => {
+      // markOnboarded() is called ONLY inside App.tsx's onOnboarded handler (App.tsx:223-240),
+      // which this pin proves never fires on a partial — markOnboarded is therefore unreachable
+      // on this path too (verified by inspection of that single call site, not a separate test;
+      // App.tsx is untouched by this slice, per the brief's Q2 default vote).
+      const props = renderOnboarding({
+        onCreateWorkspace: vi.fn().mockResolvedValue({ ok: false, reason: "partial_scaffold" }),
+      });
+      walkToPreset();
+      fireEvent.click(screen.getByRole("button", { name: "Professional" }));
+      fireEvent.click(screen.getByRole("button", { name: /create workspace/i }));
+      await screen.findByRole("alert");
+      expect(props.onOnboarded).not.toHaveBeenCalled();
+    });
+
+    it("successful_resume_after_a_partial_completes_onboarding — spec(§11)", async () => {
+      const onCreateWorkspace = vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false, reason: "partial_scaffold" })
+        .mockResolvedValueOnce({ ok: true, workspace: { workspaceId: "ws_1", registryMember: true, preset: "professional" } });
+      const props = renderOnboarding({ onCreateWorkspace });
+      walkToPreset();
+      fireEvent.click(screen.getByRole("button", { name: "Professional" }));
+      fireEvent.click(screen.getByRole("button", { name: /create workspace/i }));
+      await screen.findByRole("alert"); // the partial repair state
+      expect(props.onOnboarded).not.toHaveBeenCalled();
+      // Resume = re-submitting the SAME input (no distinct "Resume" control, per Step-2.5).
+      fireEvent.click(screen.getByRole("button", { name: /create workspace/i }));
+      await waitFor(() => expect(props.onOnboarded).toHaveBeenCalledTimes(1));
+      expect(onCreateWorkspace).toHaveBeenCalledTimes(2);
+      expect(onCreateWorkspace.mock.calls[0]).toEqual(onCreateWorkspace.mock.calls[1]); // identical input both times
+    });
+  });
 });

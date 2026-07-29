@@ -22,7 +22,10 @@
 // shape as the `AdmittedCopilotAnswer` brand in Copilot.tsx.) `componentDidCatch` logs the raw
 // error to `console.error` only (dev-tools, not a UI surface, not a persisted log sink) — there
 // is no preload logging channel to report to (verified — preload/bridge.ts's 7-channel allowlist
-// has none); adding one is an out-of-scope IPC-surface expansion (9.35 brief).
+// has none; pinned by `test/security/preload-inventory.snapshot.test.ts:26`, "the live bridge
+// invokes EXACTLY the checked-in inventory channels" — that test is what makes THIS comment's
+// premise durable, not just true today). Adding a logging channel is an out-of-scope IPC-surface
+// expansion (9.35 brief); whoever does it should also update this comment.
 //
 // Reset: uncontrolled by design. A caller can remount an instance via React `key` (e.g. keyed on
 // the current route, so navigating away from a broken surface gets a fresh boundary) and/or let

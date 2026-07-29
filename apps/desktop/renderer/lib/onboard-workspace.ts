@@ -7,7 +7,16 @@ import type { WorkspaceType } from "@sow/contracts/primitives/enums";
 // data gate, the one-writer provisioning (`provisionWorkspace`), the fail-closed WS-8 registry
 // union, and the redaction-safe typed Result. This wrapper folds a typed err (validation /
 // store fault / auth) OR any transport error OR a malformed ok to `{ ok: false }` so a failed
-// onboarding never surfaces a raw driver cause / partial state (desktop Lesson 6 pattern).
+// onboarding never surfaces a raw driver cause (desktop Lesson 6 pattern).
+//
+// 9.21-B — EXACTLY ONE case is widened out of that fold: worker's `ONBOARDING_PARTIAL_SCAFFOLD`
+// (9.21-A, `provisionErrorToFailure` in apps/worker/src/api/procedures/onboarding.ts) is a
+// distinguishable REPAIRABLE state — the workspace config row was durably written, only the
+// registry union is incomplete, and re-running resumes idempotently. Every OTHER typed err
+// (validation / a different degraded_unavailable cause / auth), malformed ok, and transport
+// throw still folds to the same opaque `{ ok: false }` as before. `reason` is a CLOSED literal
+// with no message/detail field at all — mirroring the 9.35 `ErrorBoundary.fallback` shape —
+// so rule 7 is enforced by the type (there is nothing to leak), not by discipline.
 
 /** The onboarding form input the user fills (the worker re-validates every field server-side). */
 export interface OnboardWorkspaceInput {
@@ -28,7 +37,7 @@ export interface UiSafeProvisioned {
 
 export type OnboardResult =
   | { readonly ok: true; readonly workspace: UiSafeProvisioned }
-  | { readonly ok: false };
+  | { readonly ok: false; readonly reason?: "partial_scaffold" };
 
 /** Build the onboarding command-caller over a live tRPC client. */
 export function createOnboardWorkspace(
@@ -56,6 +65,22 @@ export function createOnboardWorkspace(
             preset: typeof res.value.preset === "string" ? res.value.preset : "",
           },
         };
+      }
+      // Admit EXACTLY the partial-scaffold case out of the fold — every other typed err (a
+      // different degraded_unavailable cause, validation_rejected, auth) and every malformed ok
+      // stays the opaque failure below. Each level is narrowed before being read (candidate data
+      // off the wire) so a malformed/foreign shape can never accidentally match.
+      if (
+        res.ok === false &&
+        res.error != null &&
+        typeof res.error === "object" &&
+        "cause" in res.error &&
+        res.error.cause != null &&
+        typeof res.error.cause === "object" &&
+        "code" in res.error.cause &&
+        res.error.cause.code === "ONBOARDING_PARTIAL_SCAFFOLD"
+      ) {
+        return { ok: false, reason: "partial_scaffold" };
       }
       // A typed err (validation_rejected / degraded_unavailable / auth) or a malformed ok → fail closed.
       return { ok: false };

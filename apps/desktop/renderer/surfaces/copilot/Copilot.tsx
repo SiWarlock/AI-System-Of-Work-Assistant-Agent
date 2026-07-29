@@ -134,8 +134,12 @@ const FAILED_REPLY: UiSafeCopilotAnswer = { answer: [ASK_FAILED], citations: [] 
  * ⚠ Why this is a real check and not ceremony after 9.26's re-gate: deleting the old field-by-field
  * re-map also deleted the THROW that used to land a contract-violating payload on the failure turn.
  * With the answer now carried verbatim, a malformed reply would instead throw inside
- * `CopilotAnswerView` during RENDER. There is NO ErrorBoundary anywhere in apps/desktop (verified),
- * so React 18 unmounts the ENTIRE ROOT — not just the panel — instead of showing ASK_FAILED. And
+ * `CopilotAnswerView` during RENDER. A render-time `ErrorBoundary` now exists (9.35,
+ * `chrome/ErrorBoundary.tsx`, wired at `main.tsx` + `chrome/AppShell.tsx`) and WOULD catch this —
+ * but it would blank the whole panel (or the whole app, at the root site) for one turn's worth of
+ * bad data. Validating HERE degrades exactly that one turn to ASK_FAILED instead, leaving the rest
+ * of the conversation and the panel itself intact — still strictly better recovery than
+ * catch-after-throw, which is why this gate stays even with a boundary now in place. And
  * `createAskCopilot` is NOT the only door: the seed prop reaches `useState` directly, so a
  * `finish`-only guard would not see it (nor would a shallow `Array.isArray` pair, which admits
  * `citations: [null]` and throws on `c.citationId` at render). Validating with the SAME contract

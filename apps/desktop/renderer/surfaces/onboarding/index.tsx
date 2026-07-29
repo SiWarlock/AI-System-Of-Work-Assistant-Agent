@@ -49,7 +49,9 @@ export function Onboarding(props: OnboardingProps): ReactElement {
   const [gbrainBrainId, setGbrainBrainId] = useState("");
   const [preset, setPreset] = useState<(typeof PRESETS)[number] | "">("");
   const [profile, setProfile] = useState<ProvisioningProfileView | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // 9.21-B: a partial scaffold is a DISTINCT, TRUE, resumable state — never the generic failure
+  // copy. `"none"` is the initial/no-error state; the two failure states never coexist.
+  const [failure, setFailure] = useState<"none" | "generic" | "partial">("none");
   const [busy, setBusy] = useState(false);
   // Latest-wins guard for the async preview (mirrors scope-refresh.ts): a slow OLDER preview must
   // never overwrite a NEWER pick's profile — else the panel could show tier A's set while tier B is
@@ -87,15 +89,18 @@ export function Onboarding(props: OnboardingProps): ReactElement {
       preset,
     };
     setBusy(true);
-    setError(null);
+    setFailure("none");
     void onCreateWorkspace(input).then((r) => {
       setBusy(false);
       if (r.ok) {
         onOnboarded(r.workspace, input);
         return;
       }
-      // Redaction-safe: a generic message only — the caller already dropped any raw cause.
-      setError("Couldn't create the workspace. Check the vault path and try again.");
+      // 9.21-B: a partial scaffold gets its own TRUE copy — never onOnboarded (the workspace is
+      // not yet fully registered) and never the generic "couldn't create" message (it was
+      // created; only the registry union didn't finish). Every other failure is unchanged:
+      // redaction-safe generic copy only — the caller already dropped any raw cause.
+      setFailure(r.reason === "partial_scaffold" ? "partial" : "generic");
     });
   };
 
@@ -216,9 +221,18 @@ export function Onboarding(props: OnboardingProps): ReactElement {
             </div>
           )}
 
-          {error !== null && (
+          {failure === "generic" && (
             <div role="alert" className="sow-inline-error sow-onboarding-error">
-              {error}
+              Couldn't create the workspace. Check the vault path and try again.
+            </div>
+          )}
+          {failure === "partial" && (
+            // 9.21-B: TRUE copy for a partial scaffold — the workspace WAS created; only the
+            // registry union didn't finish. Resume = re-submitting this same form (no separate
+            // "Resume" control — the button below already does it, per Step-2.5). Kept on one
+            // JSX line so the rendered text is exactly this literal, not JSX's line-join spacing.
+            <div role="alert" className="sow-inline-error sow-onboarding-partial">
+              {"Your workspace was created but setup didn't finish. Submit again to resume — nothing will be duplicated."}
             </div>
           )}
 
