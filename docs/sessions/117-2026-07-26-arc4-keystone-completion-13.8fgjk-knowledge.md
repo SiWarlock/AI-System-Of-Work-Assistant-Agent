@@ -4,7 +4,7 @@
 - **Phase / arc:** ARC-4 §13.8 living-vault synthesis KEYSTONE — knowledge half COMPLETE (single-track `main`)
 - **Role:** knowledge-implementer
 - **Predecessor:** [114-2026-07-26-arc4-living-vault-keystone-13.8bcd-knowledge.md](114-2026-07-26-arc4-living-vault-keystone-13.8bcd-knowledge.md)
-- **Successor:** _(none yet)_ — remaining ARC-4 work is worker-side (13.8f-B, 13.8g-B) + 13.8h/13.8l/13.8m
+- **Successor:** [121-2026-07-28-arc4-source-path-admission-and-refusals-13.8l-m-knowledge.md](121-2026-07-28-arc4-source-path-admission-and-refusals-13.8l-m-knowledge.md) — 13.8l + 13.8m-A (both Findings from this session, closed)
 
 ## Why this session existed
 
