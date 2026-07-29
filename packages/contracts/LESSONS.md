@@ -675,3 +675,376 @@ Both times the tell was identical: the implementer verified that the **mechanism
 The practical consequence the implementer committed to, and it is cheap: **for any pin whose job is to prove an invariant, mutation-test it inside the slice rather than trusting it reads correctly.** Both of that slice's unsound pins looked fine on inspection — one was vacuous, one compared source text — and only deliberately breaking the code exposed them. Two extra runs, versus shipping a test that proves nothing forever.
 
 **Rule:** state and verify the PROPERTY, not the mechanism that is supposed to deliver it — "no path targeting a writer-owned surface is reachable from any producer" rather than "the guard is called"; then adversarially test the property (hostile inputs, not just absent ones). Write pins against the property too, never against the construction you happened to use, or a different construction bypasses both code and pin. And mutation-test any invariant pin in the slice that introduces it: an inspection-passing pin can be vacuous or text-comparing, and only breaking the code distinguishes them. `pin: knowledge grounded-path.test.ts + synthesis-entity-resolver.test.ts (hostile-key + mutation-verified invariant pins)`.
+
+---
+
+<a id="71"></a>
+## 71. A durable claim must carry the conditions under which it was true — and a correction is a claim too
+
+**2026-07-27 · the egress-integrity round's five retractions · process lesson, no code pin**
+
+Five claims were retracted in one round. Four are the same defect and the fifth is that defect applied to a *fix*. All five were plausible, all five reached a durable file (`IMPLEMENTATION_PLAN.md`, a handoff, the round log, a Carry-forward item), and none was caught by review — each was caught only when somebody **ran or re-read the actual artifact**.
+
+### The two mechanisms — and why conflating them is itself the trap
+
+The tempting one-liner is *"diagnose by running, not by inferring."* **That is wrong, and the round proved it wrong.** It fits some instances and actively misdescribes the most consequential one, and a lesson that guards the wrong thing leaves the real trap open.
+
+**(a) Written from INFERENCE where execution was available.** A remembered crossing recorded as landed, when one `grep` showed the symbol had **zero hits repo-wide** (it existed only on an unmerged branch — a reader would have searched a file for something that was never there). A mechanism asserted for someone else's error — *"they never ran the suite"* — that was never checked against what they actually did.
+
+**(b) Written from a REAL execution, attributed to the WRONG STATE.** The costliest one, and the one (a)'s framing hides completely. A measurement was taken in a working tree with an edit applied, the edit was reverted, and the result was recorded as a property of committed `HEAD`. The follow-up `git status` (clean) and `git log` (file unchanged) both **passed and were both true** — of a *different tree-state* than the measurement. Two individually-correct observations fused into one false composite. Nothing was fabricated, and checking their work the obvious way **confirmed both halves**.
+
+> **The rule (b) yields, which no amount of "run it" discipline would have produced:**
+> **when a diagnosis and its `git status` / `git log` verification are separated by a REVERT, the verification does not cover the diagnosis.** Re-run after the tree is clean, or record the tree state (`git diff --stat` / `git stash list`) beside the observation.
+
+### The propagation half — how three of them survived
+
+Two survived because a reader trusted a credible source instead of checking: an implementer's hypothesis was amplified into a durable file by an orchestrator who did not verify it, and a lead then began banking a *lesson* from that unverified mechanism. The chain broke only when the original implementer **re-tested their own hypothesis and retracted it** — pushing back against a claim already accepted by two people above them. That is the expensive direction to push, and it was the only thing that worked.
+
+**Corollary to [L68](#68):** a credible upstream source is not evidence. The more senior the amplifier, the less likely anyone downstream re-checks — so the *cheapest* place to verify is the moment before something becomes durable, and the person best positioned is the one who least feels the need.
+
+### The fourth instance — a correction is a claim
+
+A half-applied fix left an entry asserting **"ONE issue, not two"** in its head while the tail still declared **"TWO ISSUES ARE STACKED HERE"** with the retracted guidance intact. **A half-corrected record is worse than an uncorrected one:** it reads as authoritative in both directions and the reader believes whichever half they reach first. A second correction over-swung the other way — *"none of that is true"* — when the original observation *was* true, merely of another tree; that erased the very distinction the fix existed to draw.
+
+**So: after correcting a durable entry, re-read the WHOLE entry for coherence, and state precisely which part was wrong** — the observation, its attribution, or its scope. "That was false" is usually too coarse to be true.
+
+### What to actually do
+
+- Attach re-runnable evidence to a durable claim: the command, the counts, `file:line`, and **the tree state it was taken in**.
+- Before recording a claim about someone else's error, check what they did. *"They never ran it"* was itself an unverified claim about an unverified claim.
+- One `grep` beats one memory. If the claim is "X landed," grep for X.
+- When you correct an entry, read it end-to-end afterward, and be precise about which half moved.
+
+`accepted: not mechanically enforceable` — enforcement points are `/orchestrate-end` Carry-forward triage and `/team-end`, where durable text is written under the most time pressure and the least verification.
+
+---
+
+<a id="72"></a>
+## 72. A guard applied to ONE field of an aggregate is a silent fail-open for its siblings
+
+**2026-07-27 · 9.23 / 9.29 / 9.31 · worker + its reviewers**
+
+`provisionWorkspace` already did the get-before-upsert that [L30](#30) mandates. It read the stored row, compared `type`, and rejected a type flip. **The read was right there — and only its `type` use was wired.** The same `upsert` rewrote `egressPolicy` (silently restoring a REVOKED egress ack — a rule-5 fail-open, task 9.23), `providerMatrix`, and `defaultVisibility` (fail-closed clobbers, task 9.29) from spec defaults.
+
+Nothing was missing in the sense a checklist would catch: the rule existed, the mechanism existed, the code implemented it. **What was missing was the rule's application to the other fields the same write touches.**
+
+**Why review does not catch this.** A reviewer asks *"is the L30 guard present?"* — it is, visibly, with a correct comment. The guard's presence is what makes the omission invisible; an *absent* guard would have drawn attention. This is [L70](#70) (verify the property, not the mechanism) in the specific shape that recurs most: the mechanism is genuinely there and genuinely correct **for the one field its author was thinking about**.
+
+> **The check:** when a guard protects a field on a write, enumerate **every field that write touches** and state, per field, whether the guard applies. Fields the guard does *not* protect are either deliberate (say so in-code, with the safety direction named) or defects.
+
+**Direction matters for scoping, not for detection.** 9.23's sibling was fail-OPEN (a revoked consent restored); 9.29's are fail-CLOSED (config wiped to restrictive defaults). Both are the same defect. They were deliberately **not** fixed together — carrying `egressPolicy` forward preserves a *revoked* state, while carrying `providerMatrix` forward preserves a possibly-*permissive* `rawCloudEgressEnabled`. Same code shape, different safety argument; the second must not ride in on the first's rule-5 coattails.
+
+**Bound the claim afterwards.** Having closed it, the implementer volunteered that the revoke is durable per workspace **ROW**, not per **VAULT** (task 9.31) — a second workspace pointed at the same vault root re-seeds. "Is it durable now?" answered unqualified would have been a fresh instance of [L56](#56) *about the fix itself*. **A fix's scope is a claim, and inherits the same evidence burden as the claim it repairs.**
+
+`pin: worker provision-preserves-egress-posture.test.ts` (`re_provision_preserves_a_revoked_ack` · `same_type_overwrite_carries_policy_verbatim` · `carried_policy_with_a_foreign_workspaceid_does_not_land`)
+`pattern: grep -n "\.upsert(" apps/worker/src/composition` — extends L30's pattern: for each hit, ask which fields the guard covers, not merely whether a guard exists.
+
+---
+
+<a id="73"></a>
+## 73. In a multi-axis safety predicate, a fixture failing on the axis you have not built yet reads as a broken fixture
+
+**2026-07-27 · 9.22 option C · caught in review before any code was written**
+
+`zeroEgressOnly` under option C is a conjunction: **axis 1** the provider matrix resolves local-only, **AND axis 2** both egress allowlists are empty. The worker fixture `employerAcked` (via `validWorkspace`) sets `allowedProcessors: []`, `rawContentAllowedProcessors: []`, and `allowedProviders: ["claude"]`.
+
+So it evaluates **`false` — via axis 1**, because `claude ∉ LOCAL_PROVIDERS`. **Its allowlists are empty.** Option A ⇒ `true`, B ⇒ `false`, C ⇒ `false`.
+
+**The trap:** an implementer who builds axis 2 first computes `true` here, sees a test expecting `false`, and concludes the *fixture is stale*. Fixing the test makes the suite green — and ships **option A while believing it shipped option C**, on the rule-5 surface the owner reads to confirm a revoke landed.
+
+> **When a conjunction's axes are built or checked in isolation, a fixture that fails on an unbuilt axis is indistinguishable from a wrong fixture.** The green suite actively confirms the mistake.
+
+This is [L69](#69) with the roles reversed. There, a test defended the defect and made the correct fix look like a regression. Here, the test is *correct* and would be **sacrificed** to an incomplete implementation. Both invert the review gate; the direction differs.
+
+**What to do**
+- For every conjunctive safety predicate, record **which axis** makes each discriminating fixture fail. The value is not the verdict — it is the *reason*, which is the part that does not survive a summary.
+- State it as a tripwire the implementer will actually hit: *"if your axis-2-only implementation makes this fixture pass, you have implemented option A."*
+- Prefer **separate per-axis predicates** with the AND at one visible composition site over one fused predicate. A fused predicate hides which axis failed, and hiding which axis failed is how a two-condition safety claim degrades into a one-condition claim with nobody noticing.
+- Test **each axis alone ⇒ false**. Those are exactly the cases the weaker options miss, and they are what makes the conjunction falsifiable rather than decorative.
+
+**Also recorded (the meta-point that prompted the check):** the claim under review — "the branch's literals are correct under C" — was **right**, and its most natural justification ("the allowlists are empty") was **wrong**. A right answer resting on a wrong reason is indistinguishable from a right answer until someone builds on the reason. That is why an observation was demanded rather than a derivation, and why the *reason* was recorded alongside the verdict.
+
+`accepted: not mechanically enforceable` — mitigation is the per-axis test set + recording the failing axis beside every discriminating fixture.
+
+---
+
+<a id="74"></a>
+## 74. A guard must assert the exhaustive, non-emptiable oracle — a label the scorer only subset-checks is free to empty
+
+**2026-07-27 · task #19 synthesis-corpus guard · security review HIGH, found and fixed in-slice**
+
+The anti-laundering guard added alongside a corpus re-point first asserted that every path in `expected.stubPaths` sat under a known entity namespace. It read as rigorous and passed design review — including mine.
+
+It was defeatable. `stubs_present` (`scorer.ts:63`) is a **SUBSET** check, so `stubPaths` can be **emptied at zero cost**: a targeted de-namespace could re-point `createPaths` back to the vault root, empty `stubPaths`, and walk straight through the guard — with corpus-wide non-vacuity still propped up by the *other* entry.
+
+**The defect: the guard asserted over a corpus LABEL rather than over the thing the label describes.** A label is an input the attacker (or a careless future edit) also controls. Fixed by making the primary oracle the planner's **real emitted paths** (`no_root_creates_from_planner`) — which no corpus edit can satisfy — and demoting the label check to a secondary that names the offending expectation, covers `createPaths` too, and rejects `..`.
+
+> **Ask of any guard: what is the cheapest edit that makes this assertion vacuous?** If the answer is "empty the field it reads," it is guarding a label, not a property. Prefer an oracle the artifact under suspicion cannot rewrite.
+
+Directly related to [L70](#70) (verify the property, not the mechanism) and [L54](#54) (an exact inventory, because a filter is vacuous precisely in the state that matters) — the recurring form is an assertion whose *subject* is attacker-controlled.
+
+`pin: evals suites/synthesis/synthesis-reason.test.ts (no_root_creates_from_planner)`
+
+---
+
+<a id="75"></a>
+## 75. Prove a new guard by SIMULATING the compromise it claims to catch
+
+**2026-07-27 · task #19 · the step that upgraded "load-bearing" from opinion to evidence**
+
+The guard in [L74](#74) had already passed review as load-bearing when its author found it bypassable. What settled it was not more review — it was **running the attack**.
+
+The simulation: compromise the planner so it genuinely mints at the vault root, then launder the corpus to agree, then re-stamp the integrity hash — i.e. perform the exact laundering the guard exists to detect. Result:
+
+- **All 10 pre-existing tests PASS** — including `safety_floor_100pct` and `faithfulness_no_fabrication`
+- **Only the 2 new KN-12 guards fail**
+
+So a KN-12 root-collision regression laundered through the corpus **would have shipped fully green before this slice**. That sentence is a measurement. "The guard is load-bearing" was, until then, an opinion that had already survived one review while being false about the guard's first version.
+
+> **A negative guard that has never failed is indistinguishable from one that cannot fail.** Make it fail on purpose, against a genuine compromise rather than a hand-built fixture, then revert. Report what stayed green — the passing set is the finding.
+
+Generalizes [L62](#62)'s throwaway-probe practice from phrasing-blocklists to any safety guard, and pairs with [L70](#70): the simulation is what distinguishes "the mechanism ran" from "the property holds."
+
+**Byproduct worth its own note (knowledge, 13.8j):** the first simulation deleted the `concept` map entry and the planner emitted `entities/widgets.md`, **not** a root path — producing a root mint required *also* blanking `FALLBACK_NAMESPACE`. That module's comment calls the fallback "⚠ LOAD-BEARING — do not tighten this into a rejection." **That claim is now demonstrated rather than asserted**, and any future slice tempted to harden the fallback into a rejection should read it as measured fact.
+
+⛔ **MISSING PRECONDITION — added 2026-07-28 after the same author's simulation was itself invalid.** Hunting the guard blindnesses of [L74](#74), their **first** simulation patched `@sow/providers` while the test under examination imports from `@sow/domain`. It produced a plausible, confident **"24/24 passed"** — a result that looked exactly like a finding. They caught it only because a companion assertion *should* have fired and didn't, then re-ran against the real import path.
+
+> **A simulation is evidence only if you prove the compromise was REACHED — by seeing the guard FAIL before you trust it passing.** Otherwise you have measured an untouched code path and are about to report a blindness that does not exist — the [L71](#71) defect (a real execution attributed to the wrong thing) wearing the clothes of this very technique.
+
+**There are at least two distinct ways to get that false green, and only the FAIL-first check covers both** (both hit by the same author, hours apart): (i) the compromise never reached the code under test — patching `@sow/providers` where the test imports `@sow/domain`; (ii) the compromise reached the right function and **no test fed it the triggering input** — the oracle was fixed but the corpus hand-picked three values, none of them the PEM the fix was for. "Verify the import path" catches only (i). **Running the guard against the compromise and requiring RED catches both**, which is why it is a required state and not a review step.
+
+⛔ **AND A GREEN SUITE IS NOT EVIDENCE A FILE RAN — CHECK THE COUNT (added 2026-07-28, third self-caught defect in one slice).** Literal control characters in a fixture made a test file a **syntax error**, and a broken test file reports **`PASS (0) FAIL (0)`**. Every signal that normally means "fine" said fine. It was caught only because the suite **COUNT** dropped **466 → 334**.
+
+> **A file that did not run and a file whose tests all passed are indistinguishable from the pass/fail line alone.** The count is the only signal that separates them — and a simulation whose file silently stopped executing produces a *perfect* false green.
+
+This is the same defect class as the states above, one layer lower: state 1 (compromise applied, guard passes) is **indistinguishable from "the test file did not execute."** Record the test COUNT alongside every simulation state, not just the verdict.
+
+**The three-state protocol** (the practising implementer's own formulation, adopted as the method):
+1. **compromise applied, guard PASSES** → the blindness is reproduced;
+2. **guard fixed, compromise still applied, guard FAILS** → it now discriminates;
+3. **compromise reverted, guard PASSES** → no false positive on correct code.
+
+**State 2 is the one a "fix" without simulation skips**, and it is what caught a stacked second defect that state 1 and 3 both missed. A compromise that changes nothing is indistinguishable from a compromise that was never applied.
+
+`accepted: not mechanically enforceable` — mitigation: state the simulation, **the import path it reached**, and the passing set in the Step-9 report.
+
+---
+
+<a id="76"></a>
+## 76. An unchecked cast on a READ path that feeds a WRITE path is the only validation boundary you have left
+
+**2026-07-27 · 9.23 · generalized at the lead's request beyond the slice that surfaced it**
+
+`packages/db`'s workspace `get` returns `row as Workspace` — an **unchecked cast, no Zod on the read path**. That is invisible and harmless while a stored row is only *read*. It stops being harmless the moment a value read that way is carried into a **write**, which is exactly what 9.23's fix does when it carries `existing.value.egressPolicy` forward.
+
+At that point the re-parse (`WorkspaceSchema.parse` on the reassembled aggregate) is not a formality or belt-and-braces — **it is the only validation the stored blob ever receives before re-crossing into a write.** It catches a foreign `egressPolicy.workspaceId` (the identity refine), a contradictory `acknowledgedAt`-without-ack, a non-array allowlist, and any unknown key. Narrowing it to a hand-written id comparison — which reads like a tidy simplification — would silently drop all of that.
+
+**Fail closed, do not normalize.** A foreign `workspaceId` is rejected rather than rewritten to the expected one: normalizing would graft another workspace's allowlist and acknowledgment onto this workspace, **stamped as if it belonged there** — a WS-8-adjacent write that looks entirely legitimate to every later reader. Same posture as the store-fault branch: never proceed over a contradictory prior state.
+
+> **Find the read→write paths.** Wherever a repository read is typed by cast rather than parse, and its result can reach an `upsert`, the parse at the write boundary is load-bearing and must be commented as such — otherwise a future reader deletes it as redundant with "the type."
+
+This is the read-path dual of the project's candidate-data rule (safety rule 2): provider output is untrusted until parsed, and **so is your own store's output once a cast is the only thing asserting its shape**.
+
+`pin: worker provision-preserves-egress-posture.test.ts (carried_policy_with_a_foreign_workspaceid_does_not_land)`
+`pattern: grep -rn "as Workspace\|row as " packages/db/src` — each hit is a read whose consumers must parse before writing.
+
+---
+
+<a id="77"></a>
+## 77. A multi-axis safety posture is only as strong as its axes' INDEPENDENCE — verify no single event can zero them all
+
+**2026-07-27 · 9.22 option C · found by the producer implementer, escalated rather than silently strengthened**
+
+Option C was chosen over the single-axis alternatives for one stated reason: **it requires two independent things to go wrong before the app misreports safety.** That rationale is the whole justification for the extra complexity.
+
+It does not hold at the default state. `provisionWorkspace` seeds **both** allowlists `[claude]`, so *"both allowlists empty"* **is** the never-provisioned state — and that same absence leaves `providerMatrix` empty, which satisfies axis 1 **vacuously**. **One missing event zeroes both axes**, and an unconfigured workspace reports the strongest safety claim the system can make.
+
+The result is not *false* — an empty matrix genuinely routes nowhere. It is worse than false in one specific way: **it is indistinguishable from a deliberate owner decision** while being the product of nothing having happened yet.
+
+> **When you compose a safety claim from N conditions, enumerate the events that could set each one, and check whether any single event sets all N.** If one does, the conjunction is theatre at exactly that state — you have a one-axis predicate wearing an N-axis costume, and the extra axes buy nothing precisely where the system knows least.
+
+**Two process points, both worth copying:**
+- The implementer **shipped it as ruled, documented it, pinned it, and escalated** — rather than quietly strengthening the predicate against an owner ruling. Silently hardening a safety predicate past its ruling is a second inversion in the same file; the escalation is the correct move even when the strengthening looks obviously right.
+- Ask the independence question **at design time**, when the answer changes the option chosen. Here it surfaced after the ruling, so the ruling now carries a recorded qualification instead of having been made with full information.
+
+Companion to [L73](#73) (the axis-order trap — the *implementation* hazard of a conjunction). This is the *design* hazard: L73 is about building one axis and mistaking a correct fixture for a broken one; L77 is about the axes not being the independent things you counted.
+
+`pin: policy processors-zero-egress.test.ts` (the unprovisioned-workspace case, pinned as deliberate) · **task 9.29** is the durability fix that stops it being routinely reachable.
+
+---
+
+<a id="78"></a>
+## 78. Totality is a property of the whole fold, not of the guard you wrote — a branding constructor throws on input your guard admitted
+
+**2026-07-27 · `processorOfRoute` · found while consuming it**
+
+`processorOfRoute` documents itself as pure and fail-closed, and its malformed-route branches carefully return the `MALFORMED_ROUTE` processor (egress, never non-egress) rather than throwing. The guards are right.
+
+Then it **brands** the route's raw identity — and the brand constructor throws on a blank string. So `{provider: ""}`, arriving from a deserialized row, **throws instead of denying**, on the identity layer that sits directly beneath the egress veto. A throw on an untrusted route is a fail-open-by-crash on a rule-5 path.
+
+**The author's guards were exhaustive over the cases the author enumerated.** The throw came from a *downstream constructor* the guards happily fed — a value that passed every explicit check and then failed at a conversion nobody classified as a check.
+
+> **Totality is a property of the whole fold from untrusted input to returned value — including every constructor, brand, parser, and coercion along the way.** Reviewing "are the guards exhaustive?" cannot find this, because the guards *are* exhaustive; the throw lives after them.
+
+Practical checks: brand/parse **after** validating, or use the non-throwing constructor variant; for any function documented total, trace each `return` path back through every call it makes and ask which of them can throw on admitted input; a `try` at the boundary is containment, not totality — it protects *that* caller and leaves every other one exposed (which is why this became its own task rather than being fixed at the call site).
+
+Related to [L76](#76): both are cases where a value crosses a boundary carrying a *type-level* promise (a brand, a cast) that nothing enforced at runtime.
+
+`pin: policy processors-zero-egress.test.ts` (boundary containment) · **task #25** makes the predicate itself total.
+
+---
+
+<a id="79"></a>
+## 79. Adding a conjunct silently retires the discrimination of every existing test built on the state it now rejects
+
+**2026-07-27 · 9.22, the owner's third conjunct · found by the implementer adding it**
+
+`isLocalOnlyProviderMatrix` gained a third conjunct: the matrix must be **non-empty**. One line. The predicate's existing test suite stayed green.
+
+**Green was the wrong signal.** Every single-fault fixture in that suite — `allowedProviders: ["claude"]`, `rawCloudEgressEnabled: true`, the sparse-array and hole cases, the proxy cases, the malformed-field cases — had been built on an **empty matrix**, because that was the minimal fixture under the old two-conjunct arity. After the change, all seven still passed **on the new unconfigured conjunct, not on the condition each was written to test.** They asserted `false` and got `false`, for a reason that had nothing to do with their names.
+
+**Two were worse than non-discriminating.** The totality pins (blank route identity, throwing getter) **short-circuited at the new check and never reached the route scan they exist to exercise.** A safety pin that no longer executes the code it guards is [L69](#69)'s hazard arriving by accident: it is not defending the defect, it is simply absent while reporting present.
+
+> **Widening a predicate's precondition narrows the input space its existing tests explore.** Any fixture that satisfied the old arity *minimally* now likely fails at the new conjunct first — so it stops discriminating, silently, with no red anywhere.
+
+⭐ **SHARPER (2026-07-28, from the implementer who did the re-basing — the first framing was too weak):** the hazard is **not** "old tests go stale." Two of the affected pins had **already been mutation-verified in the base slice**, and the re-basing itself was done correctly — yet they *still* silently re-pointed at the new conjunct. The under-reported-`length` proxy fixture began tripping the new check instead of the guard it was written for; the non-enumerable/symbol fixtures were clearing the conjunct only because it enumerated keys the same way their target guard did. **A fixture can be re-based correctly and still end up asserting the new condition rather than its own** — because the new conjunct and the old guard can inspect the *same structural property*, so satisfying one incidentally satisfies or trips the other. Mutation-verification before the change does not survive the change. **Re-mutate every affected pin AFTER adding the conjunct, not just before.**
+
+**The check when you add a conjunct to a shared predicate:** for each existing test, ask *does this fixture still reach the condition the test is named for?* Mechanically: re-base every case onto a fixture that **satisfies the new conjunct** (here, a `localMatrix()` builder producing a genuinely configured matrix), so each test fails for its own reason again. The alternative — trusting a green suite through an arity change — is verifying the mechanism instead of the property ([L70](#70)).
+
+**This is the third time in one round a green suite would have certified the wrong thing** (the tested false assurance of [L69](#69); the laundered corpus of [L75](#75); this). The common thread is not carelessness — each suite was thorough *for the shape it was written against*, and each was invalidated by a change that no test could see. **A suite's discrimination is a property of the fixtures, not of the assertions**, and nothing in a passing run reports its loss.
+
+⭐ **CONFIRMING INSTANCE, ONE DAY LATER — this lesson caught a live regression, not a stale fixture (2026-07-28, desktop 9.26/9.28).** A refactor deleted a field-by-field re-map, and the post-reshape mutation check on a 9.24 rule-5 pin went **RED**. What it surfaced was not a fixture needing an update: **deleting the re-map also deleted a defensive throw** nobody knew they relied on, which had been landing contract-violating payloads on `ASK_FAILED`. With the answer carried verbatim a malformed reply would instead throw **during render** — and with **no `ErrorBoundary` anywhere in the app**, React unmounts the **entire root** rather than the panel.
+
+> **When a refactor removes code, ask what failure mode that code was incidentally providing.** A mapping, a cast, a redundant-looking branch — each may be the only thing converting a crash into a handled path.
+
+`pin: policy processors-zero-egress.test.ts` — every single-fault case re-based onto `localMatrix()`; the unconfigured case asserts `false` on **both** halves independently. · `desktop copilot-panel.test.tsx` — the three reshaped 9.24 pins, each re-mutated *after* the reshape and each discriminating something different.
+
+---
+
+<a id="80"></a>
+## 80. A suite must assert that a gate DECIDES, not that a gate SAID NO
+
+**2026-07-28 · eval-guard sweep (24.6-A) · the round's strongest single line, recorded verbatim at the lead's instruction**
+
+> **These suites assert that a gate SAID NO, not that the gate DECIDES.**
+
+Two guards, both proven blind by simulation, both leaving **all 610 tests green** under a compromise that should have been caught:
+
+- **rule 7 — redaction.** `redactRecord` was compromised so a non-allowlisted field emits a **PEM private key verbatim**. Green.
+- **rule 4 / WS-8 — visibility.** `validateProjectionVisibility` was replaced with a **constant DENY** — a gate that decides nothing and refuses everything identically. Green.
+
+**A guard with no allow-side control and no reason-code pin cannot distinguish a working gate from a brick wall.** Every deny-side assertion still passes when the gate has stopped deciding, because "it said no" is exactly what a brick wall says. The suite is measuring the *outcome* it hoped for rather than the *decision* it claims to test.
+
+### The two things that make a guard suite discriminate
+
+1. **An allow-side control** that differs from the deny fixture **in exactly the field the gate decides on**. The WS-8 fix was one such case: an `isolated`-level projection *within* an `isolated` default must be ALLOWED. Its sibling leg already had one — same file, one leg protected, one not — and the sibling's own comment stated the reason. **The asymmetry was the defect.**
+2. **A reason-code pin,** not just a boolean. A `MALFORMED_POLICY_INPUT` deny and a genuine visibility refusal are the same `isDeny`, and a suite that reads only the boolean scores a broken gate as a working one. `suites/egress-ack/egress-veto.test.ts` is the reference shape: every deny pins a reason **code**, so removing the protection flips the *reason*, not merely the outcome — and it survives the constant-deny substitution that kills the others.
+
+### The corollary that nearly shipped a half-fix
+
+Fixing the redaction **oracle** left the suite *still green under the compromise*, because **nothing ever fed it a PEM** — the non-allowlisted-field case hand-picked three values, none of them one.
+
+> **An oracle only protects what the corpus actually drives through it.** Fixing the eye is useless if nothing walks in front of it.
+
+Both halves were the same [L74](#74) move: delete the enumeration (check every corpus value verbatim) **and** drive the whole corpus through the guarded path rather than a hand-picked sample. ⚠ **In a safety ORACLE an enumeration is worse than in a guard** — it does not fail open loudly, **it just stops seeing.**
+
+### Scope
+
+This generalizes past evals to any test of a policing predicate — egress vetoes, admission gates, approval gates, visibility gates. **Ask of any guard suite: if I replaced the gate with a constant DENY, would anything go red?** If not, the suite pins the outcome, not the decision.
+
+`pin: evals suites/leakage/workspace-leakage.test.ts` (allow-side control) · `test/observability/redaction-conformance.test.ts` (whole-corpus, enumeration-free oracle) · reference shape `suites/egress-ack/egress-veto.test.ts`
+
+---
+
+<a id="81"></a>
+## 81. An implementer who contradicts a brief after reading the code is functioning correctly — expect it, don't tolerate it
+
+**2026-07-28 · five corrections in one round · recorded at the lead's instruction as a STANDING EXPECTATION, not an anecdote**
+
+In a single round, implementers corrected **five** orchestrator-authored framings. Every one was caught by **doing the work**. **None** was caught by review — not by the orchestrator who wrote it, not by the lead who endorsed it, not by a reviewer subagent.
+
+| # | The framing | What reading the code showed |
+|---|---|---|
+| 1 | "a re-derived `dataOwner` removes the employer branch of the §5 egress veto" | The veto branches on workspace **`type`**; `dataOwner` reaches it only as an audit ref. The real fail-open is the **approval gate** (`approval-policy.ts:176`), where `dataOwner: "user"` moves an external action to auto-create with no §9 card. *(Also: `defaultVisibility` is not uniformly fail-closed — it is **permissive** at that same gate.)* |
+| 2 | "read the sibling `arch_gap` and match the house answer" | The sibling's justification **inverts**: fail-SAFE there / fail-**OPEN** here, and a re-provision **repairs** the sibling's race while **causing** this one. Matching it would copy a conclusion while discarding the premise that earned it. |
+| 3 | "a simulation must verify the import path" | That is the language-specific *symptom*. The rule is **prove the compromise was REACHED — see the guard FAIL before trusting it passing**, which covers both observed false-green modes. |
+| 4 | "apply admission to the source path's plan targets" | Read naively that gates the **merged** output, refusing the writer's own KN-12 parity writes and **destroying the feature while still "preventing collision"** — the exact non-vacuity trap the same brief named three sections earlier. |
+| 5 | "sweep for more instances (#30) before fixing the known ones" | **#29 is a FALSE coverage claim; #30 finds MISSING ones.** A DoD asserting coverage by a nonexistent file reads green and *closes the question*; another true gap on a pile already known non-empty changes nothing anyone would do. |
+
+**Why review cannot substitute.** Each framing was *plausible* — that is what got it written and endorsed. A reviewer checks whether the instruction is coherent, not whether its premise survives contact with the code, because checking the premise **is doing the work**. Case 4 is the sharpest: the brief's own test #3 named the trap the brief's Files line then walked into. The author had the concept and still wrote the contradiction.
+
+> **The brief is a hypothesis. The code is the evidence.** An implementer who reads the code and contradicts the brief has done the job the brief could not do for itself.
+
+**What this obliges, on each side:**
+- **Orchestrator** — write premises as **falsifiable claims with `file:line`**, so contradiction is cheap; treat a Step-2.5 correction as the process working, never as friction; and **carry the correction upward** rather than absorbing it, because the endorser is usually holding the same wrong picture ([L68](#68)).
+- **Implementer** — a brief that contradicts the code is a **finding**, not an instruction to follow carefully. Cases 1 and 3 were implementers correcting **their own** prior claims after the orchestrator had already relayed them upward; that is the most expensive direction to push and the only thing that stopped the chain.
+
+**The asymmetry that makes this structural:** verification pressure in a review hierarchy runs *downward* by default. Three of this round's five corrections travelled *up* through an orchestrator and a lead who had both already agreed. Nothing in the hierarchy checks the top node ([L68](#68)) — **only contact with the code does.**
+
+⭐ **SIXTH INSTANCE — AND THE MOST CONSEQUENTIAL, BECAUSE IT WAS A CLOSE-OUT INSTRUCTION (2026-07-28).** The orchestrator told an implementer to record "the 3 lenses (E/F/G) unexplored" in their session doc. **E and F had been run to completion; only G was never started** — and that completed pass had produced ~10 findings including a **live rule-3 edge** (an eval fake missing the real repository's terminal-state guard, where production has no second guard). The implementer corrected the instruction **while executing it**. Had they complied, **the finding would have been lost at respawn**, because the successor re-derives from files and the file would have said the pass never happened.
+
+> **A wrong instruction in a CLOSE-OUT is worse than a wrong instruction in a brief.** A brief's error surfaces when the code contradicts it; a close-out's error is *written into the durable record and never contradicted by anything*, because the work that would have contradicted it is exactly what stops.
+
+Corollary: at a cycle boundary the orchestrator is describing work it did not do, from messages that are compressing, under time pressure — the worst possible conditions for a claim that will be the only surviving record. **Ask the implementer to correct the close-out list rather than dictating it.**
+
+⚠ **AND THE SAME TRAP CATCHES THE VERIFIER.** Checking one of these corrections, the orchestrator ran `git diff … | grep -c "<pin_name>"`, got `1`, and nearly reported the implementer's self-correction as wrong. **A context line and a changed line count identically under `grep -c`** — the single hit was a *new comment* mentioning the pin, not a change to it. The measurement that verifies a correction is as capable of being the wrong oracle as the claim it checks ([L71](#71)); when a count decides a question, check *what kind* of line it counted.
+
+`accepted: not mechanically enforceable` — mitigation: cite `file:line` for every load-bearing brief premise; pre-load a Step-2.5 question wherever a premise carries the slice; state corrections in the round record with attribution so the pattern stays visible.
+
+---
+
+<a id="82"></a>
+## 82. On finding a false assurance: make the claim true, or retract it — never split the difference
+
+**2026-07-28 · two DoD claims, opposite dispositions, one rule · lead ruling**
+
+Two false coverage claims surfaced in the same sweep, and they were resolved in **opposite directions**. That contrast is the lesson.
+
+- **`WORKSPACE_LEAKAGE dodPass=true`** — unsupported (no allow-side control, so a constant-DENY gate scored identically). **Disposition: make the claim TRUE.** The missing evidence was *one pin*.
+- **Four dead DoD suite pointers**, incl. safety-classed `KNOWLEDGE_WRITE` / `WORKSPACE_ROUTING` / `TOOL_GATEWAY_IDEMPOTENCY` — the registry asserted coverage by files that **do not exist**. **Disposition: mark UNCOVERED and open tasks to write the suites.** Making those claims true is three real safety suites.
+
+> **Make the claim true when you cheaply can; retract it when you can't. Never split the difference.**
+
+### The forbidden middle is the one that feels most helpful
+
+The tempting third option — **re-point the pointer at whatever suite sits nearby** — is the failure mode, and it is attractive precisely because it is cheap, looks like a fix, and turns the build green. It **manufactures the appearance of coverage**: committing the defect while ostensibly repairing it. "Nearby" is not coverage; **proximity is not evidence.** Re-point only with proof the suite covers the criterion's *actual claim*.
+
+### Why "uncovered" beats "falsely covered"
+
+**An uncovered criterion is VISIBLE; a false-green one CLOSES THE QUESTION.** The first invites work. The second actively prevents it — nobody audits a criterion that reports covered, so the gap becomes permanent *and* invisible. On a safety-classed criterion that is strictly worse than the honest gap.
+
+This is [L56](#56)'s disposition half. L56 says *derive a claim from the state that governs it, never assert it*. L82 says what to do the moment you find one that was asserted: **the cheap-and-quiet option is the one that reproduces the defect.**
+
+### The generalizable test
+
+When you find a claim the evidence doesn't support, three options exist and only two are legitimate:
+1. **Supply the missing evidence** — right when it's cheap and bounded (one pin, one fixture, one assertion).
+2. **Withdraw the claim + record what would restore it** — right when the evidence is real work. Cost: honest visibility.
+3. ⛔ **Re-aim the claim at whatever evidence is handy** — *never*. This is the option that produces a green build and a false record, and it is the one that will feel like the pragmatic middle path.
+
+⚠ **The pull toward (3) scales with deadline pressure and with how safety-classed the criterion is** — exactly inverted from where it is safe.
+
+`accepted: not mechanically enforceable` — mitigation: an `existsSync`-class tripwire so a dangling claim becomes RED rather than invisible; route volume-of-work-to-make-it-true upward before choosing, since that number decides between (1) and (2).
+
+---
+
+<a id="83"></a>
+## 83. In a shared working tree the INDEX is shared state — per-file `git add` is not isolation
+
+**2026-07-28 · hit from both sides in one round · desktop + evalsec**
+
+Two implementers hit the same defect from opposite ends within hours, neither at fault:
+
+- **Desktop**, staging its own four files, found **three of evalsec's already staged** in the shared index. A plain `git commit` would have swept another track's in-flight work into a **rule-5 commit** — the `225c10ca` mixed-commit failure this project has been paying for all round. They used a **pathspec-limited commit** (`git commit -- <their paths>`), verified exactly four files landed, and relayed that evalsec's staging had been reset (content intact).
+- **evalsec**, staging only its session doc, had that doc **swept into the worker's commit**, because the index already held eight of worker's files when worker committed.
+
+> **`git add <my-file>` isolates what you *put in* the index. It does not isolate the index.** Anyone else's broad `add` or `commit` between your `add` and your `commit` carries your staged file with it — or takes theirs with yours.
+
+**The defenses, in order:**
+1. **Pathspec-limited commit** — `git commit -- <paths>` makes capturing someone else's work *structurally impossible* rather than a matter of noticing. ⚠ Side effect: it resets the index for the *uncommitted* paths, so a teammate's staged files silently become unstaged. **Their content is safe; tell them**, or they meet an empty staging area mid-commit.
+2. **Stage immediately before committing**, and verify `git diff --cached --name-only` is exactly your file set **at commit time** — not at `add` time. The window between the two is the whole exposure.
+3. **Do not rewrite history to fix a mis-attribution.** A rebase in a shared tree with live agents is far more destructive than a file committed under the wrong message. Record the attribution in the round seal instead. *(evalsec's call, and it was right.)*
+
+**Same root as the mutation-window rule** ([L75](#75)): a shared tree has more shared state than the files themselves — the index and the working tree are both global, and every agent's normal, correct workflow perturbs them. **Neither of these was a discipline failure; both were structural.** Expect them whenever N implementers share one checkout.
+
+`accepted: not mechanically enforceable` — mitigation: pathspec-limited commits as the default; `git status` before believing a red in a package you did not touch.
