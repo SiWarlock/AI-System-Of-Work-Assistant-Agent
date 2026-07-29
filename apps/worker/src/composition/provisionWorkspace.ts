@@ -114,7 +114,33 @@ export type ProvisionWorkspaceError =
   // The workspace `type` (⇒ dataOwner ⇒ the rule-5 egress-veto anchor + WS-8 class) is
   // IMMUTABLE through onboarding — re-onboarding an existing id with a different type is rejected.
   | { readonly code: "workspace_type_immutable"; readonly message: string }
-  | { readonly code: "store_fault"; readonly message: string };
+  | { readonly code: "store_fault"; readonly message: string }
+  // Task 9.21-A. The config row IS durably written (the create insert or the same-type update
+  // succeeded) — only the LAST step, the registry union, faulted. Distinct from `store_fault`
+  // because a durable side effect already landed: the caller can resume (re-provision the same
+  // id) rather than retry a no-op. `configWritten`/`incompleteStep` are step-identity flags only
+  // — never the raw `registerWorkspace` cause (§16 / rule 7).
+  | {
+      readonly code: "partial_scaffold";
+      readonly message: string;
+      readonly configWritten: true;
+      readonly incompleteStep: "registry_union";
+    };
+
+/**
+ * Wrap a `registerWorkspace` fault as the distinct, resumable `partial_scaffold` outcome
+ * (task 9.21-A). Both call sites reach this ONLY after their own durable write (the same-type
+ * update or the create insert) already succeeded — the registry union is always the last step.
+ * Discards the raw `RegistryUnionError` cause; only the step identity crosses (§16 / rule 7).
+ */
+function partialScaffold(): ProvisionWorkspaceError {
+  return {
+    code: "partial_scaffold",
+    message: "workspace config written; registry union incomplete",
+    configWritten: true,
+    incompleteStep: "registry_union",
+  };
+}
 
 /** The provisioned-workspace summary returned on success (registry-member by construction). */
 export interface ProvisionedWorkspace {
@@ -249,7 +275,9 @@ export async function provisionWorkspace(
     // Union into the registry exactly as the create path does — a re-provision must still repair a
     // workspace that was written but never registered (the fail-closed WS-8 ordering).
     const regExisting = await registerWorkspace(readModels, spec.id, at);
-    if (!regExisting.ok) return err(regExisting.error);
+    // Task 9.21-A: the update above already landed durably — a union fault here is the distinct,
+    // resumable `partial_scaffold` outcome, not the generic `store_fault` (see `partialScaffold`).
+    if (!regExisting.ok) return err(partialScaffold());
     return ok({ id: spec.id, registryMember: true, preset: spec.preset });
   }
 
@@ -276,7 +304,9 @@ export async function provisionWorkspace(
   // 4) Union into the fail-closed WS-8 registry — the SOLE visibility authority. Only
   //    now is the workspace resolvable by a scoped read.
   const reg = await registerWorkspace(readModels, spec.id, at);
-  if (!reg.ok) return err(reg.error);
+  // Task 9.21-A: the insert above already landed durably (fail-closed insert-first ordering) — a
+  // union fault here is the distinct, resumable `partial_scaffold` outcome, not `store_fault`.
+  if (!reg.ok) return err(partialScaffold());
 
   return ok({ id: spec.id, registryMember: true, preset: spec.preset });
 }

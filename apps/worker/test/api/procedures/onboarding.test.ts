@@ -127,4 +127,27 @@ describe("onboarding.createWorkspace procedure (14.1)", () => {
     expect(isErr(res)).toBe(true);
     expect(port.calls).toHaveLength(0); // resolver body never ran
   });
+
+  it("onboarding_partial_scaffold_is_distinguishable: a registerWorkspace-fault partial reaches the transport as a DISTINCT FailureVariant, never the generic store-fault one (task 9.21-A) [spec(§16)][spec(§11)]", async () => {
+    const port = new FakeOnboardingPort(() => ({
+      ok: false,
+      error: {
+        code: "partial_scaffold",
+        message: "workspace config written; registry union incomplete",
+        configWritten: true,
+        incompleteStep: "registry_union",
+      },
+    }));
+    const c = caller(port);
+    const res = await c.onboarding.createWorkspace(VALID_INPUT);
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) {
+      // Distinguishable from the generic store-fault cause — never folded back into it (9.21-A).
+      expect(res.error.cause?.code).toBe("ONBOARDING_PARTIAL_SCAFFOLD");
+      expect(res.error.cause?.code).not.toBe("ONBOARDING_STORE_FAULT");
+      // Redaction-safe: no raw driver detail (there is none in this outcome, but the mapping must not
+      // introduce any — §16 / rule 7).
+      expect(JSON.stringify(res.error)).not.toContain("registry union incomplete");
+    }
+  });
 });

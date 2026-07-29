@@ -143,6 +143,14 @@ function provisionErrorToFailure(e: ProvisionWorkspaceError): FailureVariant {
       return failure("validation_rejected", "workspace type is immutable", {
         cause: { code: "ONBOARDING_TYPE_IMMUTABLE" },
       });
+    case "partial_scaffold":
+      // Task 9.21-A: DISTINCT from the generic store fault below — the config row is durably
+      // written and only the registry union is incomplete, so the desktop leg (9.21-B) can offer
+      // resume rather than a dead end. Never folded back into ONBOARDING_STORE_FAULT.
+      return failure("degraded_unavailable", "workspace scaffold incomplete — resume required", {
+        retryable: true,
+        cause: { code: "ONBOARDING_PARTIAL_SCAFFOLD" },
+      });
     case "store_fault":
       return failure("degraded_unavailable", "onboarding store unavailable", {
         retryable: true,
