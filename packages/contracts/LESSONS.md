@@ -1321,7 +1321,17 @@ I did not pass it on. I spent the next three commits banking lessons, and **the 
 **Two actionable halves, both mine to have known:**
 
 1. **Imposing a hold creates a blocking edge, and the holder owns releasing it.** "Hold until X clears" makes the *relay* of X load-bearing. I added the dependency and then treated the message carrying its release as ordinary correspondence rather than as the thing a teammate was parked on.
-2. **The status board would have shown it, and I was reading my own commit queue instead.** The task sat `in_progress` with an idle owner and a dirty tree — visible the entire time. The status channel exists precisely so that progress does not depend on someone remembering to notice; consulting it is not optional bookkeeping, it is the check.
+2. **The status board would have shown it, and nobody read it.** The task sat `in_progress` with an idle owner and a dirty tree — visible the entire time, to **both** the orchestrator and the lead. The orchestrator was reading its own commit queue; the lead was reading idle-notifications as *normal quiet*. **Two roles, the same status channel available to each, neither looking at it.** So this is not one agent forgetting a check — it is that **nothing polls the board**, and both parties were consuming event streams instead of state.
+
+### ⛔ WHO ACTUALLY CAUGHT IT, and why that is the finding
+
+**The owner did — by noticing every pane had gone quiet.**
+
+Not the orchestrator. Not the lead. Not `TaskList`. Not a heartbeat, not `/context-check`, not a tier threshold. **The entire monitoring apparatus reported normal while nothing moved for twenty minutes.**
+
+> ⭐ **A stall is the only failure mode whose signature is the ABSENCE of a signal.** Every other defect this round announced itself — a red test, a failing gate, a contradiction between two documents, a mutation that stayed green. **A stall announces itself as calm.** Our instrumentation detects events; it has nothing that watches for the absence of events, and an idle notification is byte-indistinguishable from "correctly finished and nothing to do."
+
+That the detection method which worked was *a human noticing an absence* is precisely the method a governed autonomous system cannot rely on. **Recorded as an unmet monitoring gap, not as a save.** The concrete shape of the missing check: *is any task `in_progress` whose owner has been idle longer than a slice takes, with uncommitted files in its territory?* — a question the existing data answers and nothing currently asks.
 
 ⚠ **The uncomfortable detail, kept because it is the useful part:** the lessons I was writing during that window were [L90](#90) — *about a guard that passes while checking nothing.* The lapse and the lesson occupied the same twenty minutes. **Knowing a failure mode in the abstract does not make you notice it in your own workflow**, which is the entire reason these are written as mechanical checks rather than as things to be mindful of.
 
