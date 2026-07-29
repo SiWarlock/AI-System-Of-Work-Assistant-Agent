@@ -4,7 +4,7 @@
 **Track / role:** main · provint-implementer (`packages/policy`, `packages/providers`, `packages/integrations`)
 **Predecessor session:** `docs/sessions/119-2026-07-26-desktop-egress-surface-chrome-claim-copilot-omission.md`
 _(back-link owed: 119 is another implementer's artifact. Following the precedent 118 and 119 both set, I did not edit it — see Open follow-ups.)_
-**Successor session:** _(next `/session-end`)_
+**Successor session:** `docs/sessions/126-2026-07-29-assertredactionsafe-verdict-auditsignal-persistence-gap.md`
 
 ---
 
