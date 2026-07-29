@@ -1131,3 +1131,72 @@ The #40 fix made the eval's fake CAS enforce the terminal-state rule, importing 
 **Do:** when a double is corrected to match production, state explicitly what the suite covers *after* the change (usually: unchanged), and where the real code is actually pinned. Where a real adapter exists, prefer driving it — a double is for what you cannot reach, not for what is merely inconvenient to wire.
 
 `pin: packages/db/test/invariants/operational-truth.test.ts` · `accepted: not mechanically enforceable` (enforcement point: `/tdd` Step 9 — a "fixed the fake" flag must state the post-fix coverage, not only the drift closure).
+
+---
+
+<a id="86"></a>
+## 86. A refusal channel is only real once a refused run is distinguishable from an empty one on EVERY exit path — including the paths that reject afterwards
+
+**2026-07-29 · 13.8m-A producer + 13.8m-B consumer · knowledge + worker**
+
+The whole point of a refusal channel is that *"we refused something hostile"* stops being byte-identical to *"there was nothing to do."* The subtlety is that this is a property of **every** exit, not of the happy one.
+
+The producer got there first: `rewriteVaultForSource` hoists its `refusals` accumulator **above the `try`** (`ingest-rewrite.ts:112-115`) and includes it on the fail-safe `empty()` receipt (`:116`), with the reason stated in-code — *a fault AFTER admission must not discard what was already refused, or a hostile run that hijacks paths and then trips a throwing port becomes byte-identical to a benign empty one.*
+
+The consumer had the same shape one layer up. `createLivingVaultPort` can reject **after** the receipt is read — `path_escape`, a WS-8 mismatch, an unresolvable vault root. So the audit fires **once, immediately after the receipt, before root resolution and the containment loop**; a refused-then-rejected run still surfaces its codes.
+
+> **Ask of any refusal/audit channel: enumerate every `return` between the refusal and the caller, and check that each one still carries it.** A channel that only survives the success path documents the case nobody attacks.
+
+**Supporting constraints, all load-bearing:**
+- **Code-only, always.** `GroundedPathRefusal` is a closed two-member union (`"structural_surface" | "unsafe_shape"`). A channel carrying the refused *path* would become the exfiltration route it exists to report (rule 7). A count is fine; a path, title, or entity name is not.
+- **Best-effort at the sink, never at the accumulator.** A throwing/rejecting sink must not alter the returned `Result` and must not escape as an unhandled rejection (L25's terminal-sink rule). But the *accumulation* is not best-effort — that is the part hoisted above the `try`.
+- **A benign run must invoke the sink ZERO times.** Firing on every run destroys the distinction from the other direction, and it is the easier mistake to make.
+
+**Known bound, recorded rather than hidden:** `refusals` is OPTIONAL on the worker seam so the 13 pre-existing containment-test fakes stayed valid (L11-style degrade). The consequence is that a *future* adapter can omit it and the sink silently never fires. Acceptable only because the single production producer always forwards the required receipt field, pinned by `adapter_forwards_refusals_verbatim` — and **the bound is stated in the type's doc comment**, scoped the way 13.8k's module header scoped its invariant. An unqualified "refusals are surfaced" would have been the overclaim.
+
+⚠ **Scope discipline that mattered more than the code:** the plan recorded this channel as landing on **both** synthesis receipts. It landed on **one** (`ingest-rewrite.ts:97`); `MeetingRewriteReceipt` has no refusal field at all (`meeting-rewrite.ts:95-112` — `groundedPaths` is the *admitted* set). Briefing the false claim would have sent an implementer after a field that does not exist, and shipping it as "refusals now reach the operator" would have left the meeting path byte-identical between a poisoned run and an empty one — **the original defect, silently half-closed, on an `§ARM-RESEARCH` arming precondition.** Caught by reading the receipts before authoring the brief.
+
+`pin: apps/worker/test/living-vault-refusal-audit.test.ts (refused_then_containment_rejected_still_surfaces + benign_empty_run_invokes_no_sink)` · `pattern: grep -n "return err(" apps/worker/src/composition/living-vault.ts` — per hit, ask whether the refusal already fired.
+
+---
+
+<a id="87"></a>
+## 87. Close a structurally-satisfiable safety type with a NOMINAL brand — and give the genuine candidate boundary its own UNBRANDED type
+
+**2026-07-29 · 9.34 (`d7a9b170`) · desktop**
+
+`CopilotTurnView.reply` and `CopilotAnswerView`'s prop were typed `UiSafeCopilotAnswer`. TypeScript is structural, so **any object of the right shape satisfies it** — and because the rule-5 disclosure field `egressProcessor` is `.optional()`, a hand-built literal omitting it compiled cleanly and **silently dropped the disclosure**. The type asserted "this was validated" while accepting anything shaped like it.
+
+Fixed with a **nominal brand**: `AdmittedCopilotAnswer = UiSafeCopilotAnswer & { readonly [uniqueSymbol]: true }`, mintable only by the exported `admitReply()` (which casts internally, after `.safeParse`). Both chokepoints now require the branded type, so `reply:` is **uninhabitable by a hand-built literal**.
+
+⭐ **The half that makes it honest, and the half that is easy to skip: a SEPARATE unbranded `CopilotTurnSeed` for the mount-time seed prop.** That boundary genuinely receives unvalidated candidate data. Branding it — or casting into the brand there — would have made the brand assert something false at exactly the point it matters. So the candidate boundary keeps a candidate type and is admitted *internally*, at the door that actually validates.
+
+> **A brand is a claim about provenance. If you find yourself casting into it at a boundary that has not validated, the boundary needs its own unbranded type — not a cast.**
+
+**Verification notes worth reusing:**
+- **RED for a type-level pin is a `@ts-expect-error` that goes UNUSED.** Both pins compiled without error pre-brand, so the directive became unused and **typecheck went RED**. That is a real red-green cycle on a purely static change.
+- **Both reviewers independently mutation-tested it** by aliasing `AdmittedCopilotAnswer` back to the bare contract type and confirming the directives fail — L75 applied to a type-level guard, where the instinct to skip simulation is strongest because "it's just types."
+- **No contract change.** The brand is a renderer-local nominal type *over* the existing `UiSafeCopilotAnswer`; the shared model is untouched, so this is not a frozen-contract round.
+
+`pin: apps/desktop/test-dom/copilot-panel.test.tsx (two @ts-expect-error pins + admitReply renders + CopilotTurnSeed still accepts a plain literal)`.
+
+---
+
+<a id="88"></a>
+## 88. Single-sourcing is for literals that must AGREE — two caps bounding different THREAT MODELS must stay independent
+
+**2026-07-29 · 13.8h (`bed423cb`) · knowledge**
+
+13.8h's own `Done-when` said *"keep the cap a single shared constant so a caller-side and planner-side cap can't drift."* That was **overridden deliberately**, and the reasoning generalizes past this slice.
+
+`meeting-rewrite.ts`'s `MAX_ENTITY_REFS` bounds **deterministic input the meeting path owns**. The new `MAX_MODEL_ENTITY_REFS` in `planner.ts` bounds **adversarial model output** — a degenerate REASON emission driving an unbounded sequential GBrain read loop. Both are `200` today, so sharing looks free.
+
+It isn't: **coupled, a future tuning of one silently retunes the other's threat model.** Someone raising the meeting cap for a legitimate large-attendee meeting would, without knowing it, widen the adversarial fan-out bound. The values coincide; the *reasons* do not.
+
+> **L5/L37's single-sourcing rule applies to a literal that must AGREE with another** — a grammar, a path convention, a matcher, an enum both sides parse. It does **not** apply to two values that merely happen to be equal. Ask: *if one of these changed for its own reason, must the other change with it?* If no, they are different constants that happen to share a number, and merging them couples two decisions that should move independently.
+
+**So the discipline is symmetric, and both directions have bitten this project:** a duplicated *matcher* diverges silently and the fix is to single-source it (L39, and the `branch`-literal duplication in the L75 amendment). A shared *policy threshold* couples unrelated decisions and the fix is to split it. Naming and an in-code note are what keep the split from reading as an oversight — here the comment states the decoupling explicitly, precisely so the next reader does not "helpfully" merge them.
+
+⚠ **A plan's `Done-when` is a hypothesis too** (L81 applied to the tracker rather than the brief). This one was written before anyone had looked at whether the two caps shared a reason, and a circular import (`meeting-rewrite` → `planner`) made sharing infeasible regardless. **The divergence is recorded on the task itself**, because a shipped implementation contradicting its own recorded Done-when is exactly what a later reader "fixes."
+
+`pin: packages/knowledge/test/synthesis-planner.test.ts` (cap asserted via the ACTUAL GBrain call count, not the reported number — the property, not the mechanism, L70) · `accepted: not mechanically enforceable`.
