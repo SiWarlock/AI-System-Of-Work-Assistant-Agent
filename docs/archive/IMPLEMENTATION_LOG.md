@@ -1232,3 +1232,53 @@ L71 durable claims carry their conditions (5 retractions, 2 mechanisms) · L72 a
 ### Open at seal
 
 **9.22** (blocked: 9.32 deferred) · **9.21** (needs 9.30 ✅, now unblocked) · **#8** desktop (blocked on 9.22) · **#40** E1 unfixed · **#41** F-lens unverified · **#30** sweep unfinished · **#37** meeting-closeout spine suite (`requiresRealIntegration` — constrained, not skipped) · #13/#16/#26/#32/#34/#35/#36/#38/#39. **Push owed: owner-run.**
+
+---
+
+## 2026-07-29 — The five-slice tail: `zeroEgressOnly` finally means its contract, and eight lessons about our own instruments
+
+**Orchestrator:** `main-orchestrator-3` (opus; predecessor cycled at the hardening-tail seal `6209c1e2`). **Implementers:** five, all `sonnet[1m]` — worker · desktop · knowledge · provint · evalsec. **Single-track `main`.** Closed by **owner instruction: a bounded five-slice tail, then a FULL TEARDOWN.** ⛔ **Push is OWED and owner-run — 63+ commits unpushed at seal.**
+
+### The tail (owner-set, final — nothing else moved)
+
+`2c03b3af` worker **13.8m-B** source-path refusal channel · `bed423cb` knowledge **13.8h** entityRefs fan-out cap (closes §ARM-RESEARCH precondition 8) · `d7a9b170` desktop **9.34** Copilot-reply brand · `69b10883` worker **9.22** ⚠rule-5 `zeroEgressOnly` derived from the option-C predicate · `cda4d2f4` desktop **#8** ⚠rule-5 the derived-posture render. Plus `3c2a1717` (#36 no-fix) and `2eb6ee7d` (#40 E1). Session docs **125–129**.
+
+⭐ **The arc's point landed: 9.10-C's acceptance bullet 1, recorded UNMET with NO approved deferral since 2026-07-26 because the owner declined one and said "fix the cause, don't ship around it," is now MET.** The cause was 9.22. It was fixed, then the surface rendered it. Nobody shipped around it when that would have been easy.
+
+### ⛔ THE THREE THINGS A FRESH SESSION CANNOT RE-DERIVE
+
+1. **`lint` IS typecheck. There has never been any lint coverage.** `pnpm lint` → 11/11 exit 0, but every package's `lint` script is `tsc --noEmit`; **ESLint is not installed and has no config**; no package or root defines `format:check`. So every `/preflight clean` in this project's history means *"typecheck passed."* ⛔ **And it was ALREADY RECORDED** — `#### Residuals (1)`, three bullets, since 2026-07-26, consequence stated and the L56 analogy already drawn — after which seven of us read "lint clean" as evidence for a round and the orchestrator re-discovered it as novel. ⭐ **CORRECT BOOKKEEPING PRODUCED THE BLIND SPOT:** moving it out of Carry-forward was right by every rule we have, and Carry-forward is triaged every round while phase `Residuals` are not. **The next session will triage Carry-forward and skim Residuals exactly as we did.** Derived rule: **when you de-prioritise a known FALSE-GREEN, disarm the signal in the same move.** (L89)
+2. **The 24.6 guard sweep stopped on an OWNER BOUND, not on dryness — and its last completed lens verified 7 of 7.** Three iterations, all productive; lens G never started; L64's stopping condition never met. **A 100% hit rate is evidence the remaining lenses hold more.** The seven are upgraded LEAD → **VERIFIED FINDING** (5 by mutation window, 2 by reading where the absence *is* the finding) and **recorded, not fixed**. Resume point: lens G, iteration 4. *"We stopped looking"* and *"there is nothing left"* must not blur.
+3. **9.32 stays a deferred arc, so `zeroEgressOnly === true` is UNREACHABLE in production, and #8 renders NOT ESTABLISHED BY DESIGN — not by shortfall.** The owner ruled an empty `providerMatrix` a *correct state*, which is option C's non-empty conjunct expressed as a product decision, and it ratifies L77's unprovisioned case as deliberate. ⛔ **Do NOT seed a default to make the positive branch reachable** — that manufactures the exact reassurance this arc exists to stop.
+
+### Decisions made
+
+- **Owner:** five-slice tail then full teardown · empty `providerMatrix` is CORRECT · the 5th slice (9.22) approved after the orchestrator showed #8 could not ship without it.
+- **Lead:** §DEC-CANDGATE **deferred a SECOND time, explicitly**, cost named (`EntityRef` stays unvalidated ⇒ every fix stays an instance-fix) · #30 **STOP**, record the frontier · #41 **record, don't fix** · #8's Step-10 commit held until clearance · test-naming stays snake_case (convention question, not a fix).
+- **Orchestrator:** 13.8h shipped **against its own recorded `Done-when`** — an INDEPENDENT cap constant, because `MAX_ENTITY_REFS` bounds deterministic owned input while `MAX_MODEL_ENTITY_REFS` bounds adversarial model output, and coupling them would let a future tuning of one retune the other's threat model (L88; divergence recorded on the task).
+
+### ⚠ The round's signature: our instruments, not our code
+
+**Every headline finding was about a thing that reports success.** `lint` passes while checking nothing (L89). A fake mirroring a real guard covers the fake, not the code (L85). Green-under-mutation has two readings — unasserted vs **unreached** — and E1's was *unreached* (L84). A census pin with a **prefix anchor** accepts `predicate(x) || true` (L70). A **non-vacuity guard** satisfied by unrelated pre-existing `aria-label`s, so the test would pass while never touching its feature (L90). And a **clearance that stopped at the relay**, stalling the team for twenty minutes with every signal reporting normal (L91).
+
+⭐ **THREE REPORTED REDS, NONE REPRODUCIBLE AT COMMITTED HEAD** — an inherited `@sow/db` migration failure (**453/453 green**), a repo-wide `lint` failure, and an `apps/desktop` bundle-test failure (**58/58 files, 483/483 green**). Each reported in good faith by someone who saw it; none about the repo. Two were tree-state artifacts of reading or testing a shared tree mid-slice (L83's amendment, now covering readers and test runs as well as writers).
+
+⚠ **And the detection asymmetry, recorded as an unmet gap rather than a save: the twenty-minute stall was caught by the OWNER noticing every pane had gone quiet** — not by the orchestrator, the lead, `TaskList`, a heartbeat, or a tier check. **A stall is the only failure mode whose signature is the absence of a signal**; everything else announced itself. The missing check is answerable from data we already have: *is any task `in_progress` whose owner has been idle longer than a slice takes, with uncommitted files in its territory?*
+
+### Corrections to durable claims (five, of which three were the orchestrator's or lead's)
+
+13.8m's channel is on **one** receipt, not both (would have sent worker after a nonexistent field) · E1's "rule-3 LIVE edge" narrowed — **production was never exposed**, the defect was a false green in a phase-exit-8 DoD criterion · **#8 could not ship before 9.22** because two predicates shared the name `zeroEgressOnly` and the live one was `!acknowledged`, so `true` was reachable on every cloud-allowlisted personal workspace · L69's own `file:line` citations had gone **stale** and brief 215 propagated them · L89's first draft called the lint gate "invisible" when it had been recorded for three days. **Six implementer corrections of orchestrator/lead framings; L81 is now evidenced at LEAD level, not just brief level.**
+
+### Scope shifts
+
+Nothing deferred out of a phase silently. **OUT, recorded:** #9 (9.21 — now the sole `/phase-exit 9` blocker) · #16 · #26 (9.32) · #30 · #32 · #35 · #37 · #38 · #39 · #43 (13.8m-C, the meeting path's absent refusal channel) · #44 (E1's coverage half) · #45 (the §5 veto's audit signal is produced and dropped) · §DEC-CANDGATE.
+
+### Blockers / open questions
+
+**`/phase-exit 9` blocked on 9.21 alone.** ESLint absent (recorded, not fixed). The sweep frontier at lens G. `pnpm lint` throws a harness JSON-parse error in **≥2 of 5 implementer sessions** (cause unknown; they ran the legs directly, which is also why no scoped preflight caught the ESLint absence). Push owed, owner-run.
+
+### Next session target
+
+Per the owner's teardown: a **fresh session re-spawns** from the lead's `/team-end` handoff. First candidates: **9.21** (clears Phase 9) · **13.8m-C** · **§DEC-CANDGATE** as the contract-first arc it was twice approved to be · then the SPINE arc.
+
+- **Reference:** session docs **125–129** · briefs **214/215/216** · contracts **L84–L91** + amendments to **L70/L75/L83/L89** · `#### Residuals (1)` (lint), `Residuals (12)` (#41 + the #30 frontier), `Residuals (3)` (#36 close + #45) · §9.32 (the owner ruling + the two-predicates trap).
