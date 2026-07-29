@@ -127,7 +127,7 @@ describe("seam fixtures registry (1.15)", () => {
     expect(FIXTURES.some((f) => !f.valid)).toBe(true);
   });
 
-  it("provides exactly one VALID fixture for every registered Appendix-A schema", () => {
+  it("provides exactly one VALID fixture for every registered schema (defaultSchemaRegistry.ids() — an unconditional glob, not an Appendix-A-only filter; L93)", () => {
     const registered = [...defaultSchemaRegistry.ids()].sort();
     const validCovered = FIXTURES.filter((f) => f.valid && f.schemaId !== null).map(
       (f) => f.schemaId as string,
