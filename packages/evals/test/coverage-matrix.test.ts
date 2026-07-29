@@ -88,6 +88,88 @@ describe("registry integrity", () => {
     }
   });
 
+  // ⚠ A well-FORMED path is not a REAL one. The assertion above tests `c.suite` with a filename
+  // REGEX, so `suites/does-not-exist.test.ts` satisfies it completely — and 5 of the 24 declared
+  // paths did not resolve to a file on disk, including the `MEETING_CLOSEOUT_REPLAY` spine that the
+  // test below singles out as the real-integration DoD anchor.
+  //
+  // That is a FALSE coverage claim, not a missing one: the matrix asserted these criteria were
+  // covered by named suites, the suites did not exist, and the meta-test that exists to catch
+  // exactly this reported green. A missing suite is a known gap; a dangling pointer to a missing
+  // suite is a gap that has been marked as closed.
+  //
+  // The regex cannot be strengthened into this — only the filesystem knows. Resolution of the
+  // individual dangling entries is a scope decision (correct the pointer vs. write the suite, which
+  // mean opposite things), but this tripwire is decision-independent: however each is resolved, a
+  // pointer that stops resolving fails HERE rather than silently re-opening the claim.
+  // ⛔ KNOWN-DANGLING BASELINE — these are FALSE COVERAGE CLAIMS that are recorded, not accepted.
+  // Each names a criterion whose declared suite does not exist, so the criterion is currently
+  // certified by nothing. Resolving them is a per-criterion scope decision (correct the pointer vs.
+  // WRITE the missing suite — which mean opposite things: one makes the CLAIM honest, the other
+  // makes the COVERAGE real), and three of them are safety-classed — KNOWLEDGE_WRITE (one-writer),
+  // WORKSPACE_ROUTING (workspace isolation), TOOL_GATEWAY_IDEMPOTENCY (external-write envelope).
+  // Silently re-pointing those at a convenient nearby suite would MANUFACTURE the appearance of
+  // coverage, which is the defect itself. So they are listed here, in code, unmissable.
+  //
+  // ⚠ THIS LIST MAY ONLY EVER SHRINK. It is a ratchet, not an allowlist — see the length assertion
+  // below. A baseline that can be appended to at zero cost is exactly the emptiable-label defect
+  // (L74) this suite has been closing; the count pin is what stops this from becoming one.
+  // ⛔ UNCOVERED: no suite exists for these. Per the #29 disposition, an absent suite is marked
+  // UNCOVERED rather than re-pointed at a plausible neighbour — proximity is not coverage, and
+  // manufacturing the appearance of it on a safety-classed criterion is the defect itself.
+  // 6 → 4: HUMAN_SECTION_PRESERVATION and TOOL_GATEWAY_IDEMPOTENCY were re-pointed with PROOF
+  // (named assertions verified to cover the criterion's actual claim, not merely to sit nearby).
+  // Each entry below was resolved by a bounded READ of the candidate suite's actual assertions
+  // against the criterion's actual claim (metric + threshold), not by counting keyword references —
+  // "strong candidate" is the proximity trap in better clothes. Two criteria left this list that way
+  // (HUMAN_SECTION_PRESERVATION, TOOL_GATEWAY_IDEMPOTENCY: matched at METRIC level, see the registry
+  // comments). ⚠ Marking a criterion uncovered when a suite probably does cover it is ALSO a claim
+  // outrunning its evidence — under-claiming is safer than over-claiming but it is not free.
+  const KNOWN_DANGLING_SUITES: readonly string[] = [
+    // ⛔ The three below share ONE never-written suite: suites/meeting-closeout/meeting-closeout-e2e.test.ts.
+    // That directory contains only `no-inference-validator.test.ts`, which is not the spine.
+    // ⚠ CONSTRAINED, NOT SKIPPED: the spine is `requiresRealIntegration: true` — it needs live infra
+    // (real Temporal + a real vault + a real gbrain), so it cannot be satisfied by a unit suite. A
+    // successor should read this as blocked on infrastructure, not deferred for convenience.
+    "MEETING_CLOSEOUT_REPLAY", // the real-integration DoD spine
+    "WORKSPACE_ROUTING", // rule 4 (workspace isolation)
+    "KNOWLEDGE_WRITE", // rule 1 (one-writer)
+    // ⛔ (b) by READ, not by default. `retrieval-recall.test.ts` exists and is the obvious neighbour,
+    // but this criterion's metric is `retrieval-usefulness` and that suite computes
+    // |gold ∩ top-K| / |gold| — RECALL by definition (16 mentions of recall; none of usefulness,
+    // precision or ndcg). Recall asks "was the gold doc retrieved at all", relevance asks "are the
+    // retrieved ones the right ones" — a system that retrieves EVERYTHING scores recall 1.0 with
+    // poor relevance, so recall cannot stand in for it. Re-pointing here would have been the exact
+    // proximity trap. Also `requiresRealIntegration: true`.
+    "RETRIEVAL_RELEVANCE",
+  ];
+
+  it("resolves every declared suite path to a file on disk (known-dangling set may only shrink)", () => {
+    const dangling = EVAL_CRITERIA.filter((c) => !existsSync(resolve(PKG_ROOT, c.suite))).map((c) => c.id);
+    const unexpected = dangling.filter((id) => !KNOWN_DANGLING_SUITES.includes(id));
+    const detail = EVAL_CRITERIA.filter((c) => unexpected.includes(c.id))
+      .map((c) => `${c.id} → ${c.suite}`)
+      .join("\n");
+    // A NEW dangling pointer fails here — the regression this tripwire exists for.
+    expect(unexpected, `NEW dangling suite path(s) — the file does not exist:\n${detail}`).toEqual([]);
+    // ⛔ THE RATCHET. Appending to the baseline to silence a failure raises this count and fails,
+    // so widening the known-false set is a visible, reviewable act rather than a quiet one. When a
+    // criterion is genuinely fixed, DELETE its entry and lower this number — never the reverse.
+    // ⚠ THE CEILING COUNTS **CRITERIA**, NOT PATHS. The two differ — today it is 4 CRITERIA across
+    // 2 paths, because `meeting-closeout-e2e.test.ts` is cited by three separate criteria. State the
+    // unit explicitly: a ceiling ambiguous between the two invites a later "correction" in the wrong
+    // direction, and because this number may only ever be LOWERED, a wrong unit bakes in permanently.
+    expect(
+      KNOWN_DANGLING_SUITES.length,
+      "the known-dangling baseline may only shrink — this ceiling counts CRITERIA (not paths); fix a criterion, do not add one",
+    ).toBeLessThanOrEqual(4);
+    // Non-vacuity: a stale baseline naming criteria that now resolve is itself a false record.
+    const staleBaseline = KNOWN_DANGLING_SUITES.filter((id) => !dangling.includes(id));
+    expect(staleBaseline, `baseline lists criteria that now RESOLVE — delete them: ${staleBaseline.join(", ")}`).toEqual(
+      [],
+    );
+  });
+
   it("flags at least one real-integration-required DoD criterion", () => {
     // §20.2: the DoD cannot be satisfied by mocks — some criteria MUST be real.
     expect(EVAL_CRITERIA.some((c) => c.requiresRealIntegration)).toBe(true);

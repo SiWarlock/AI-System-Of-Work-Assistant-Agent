@@ -215,7 +215,10 @@ export const EVAL_CRITERIA: readonly EvalCriterion[] = [
     category: "acceptance",
     metric: null,
     threshold: gate(),
-    suite: "../knowledge/test/knowledgewriter-ownership.test.ts",
+    // Re-pointed (#29) with PROOF, not proximity: ownership.test.ts pins "rejects an edit that
+    // modifies human text outside any region" and "rejects overwriting a human range by wrapping it
+    // in assistant markers (no absorption)" — that IS human-section preservation.
+    suite: "../knowledge/test/ownership.test.ts",
     requiresRealIntegration: false,
     spec: "§20.1 · KN-7 · §16.3",
   },
@@ -307,7 +310,12 @@ export const EVAL_CRITERIA: readonly EvalCriterion[] = [
     category: "metric",
     metric: "dashboard-warmload-p95",
     threshold: max(2_000, "ms"),
-    suite: "perf/dashboard-warmload.bench.ts",
+    // Path-only correction (#29): the declared `perf/` directory never existed; the file itself is
+    // real and its basename matches exactly. Identity preserved — this is not a re-point to a
+    // different suite. ⚠ `test/benchmarks/dashboard-warmload.test.ts` also exists and is what
+    // ENFORCES the budget; whether this criterion should cite the harness or the enforcing test is
+    // an open question, deliberately not decided here.
+    suite: "src/benchmarks/dashboard-warmload.bench.ts",
     requiresRealIntegration: true,
     spec: "§5.4 · REQ-NF-002",
   },
@@ -349,7 +357,10 @@ export const EVAL_CRITERIA: readonly EvalCriterion[] = [
     category: "dod-gate",
     metric: "duplicate-external-writes",
     threshold: max(0, "count"),
-    suite: "../integrations/test/tool-gateway-replay.test.ts",
+    // Re-pointed (#29) with PROOF: tool-gateway.test.ts pins "same idempotencyKey twice → first
+    // 'created', second 'reused', create called EXACTLY once" and the canonicalObjectKey
+    // existence-probe reuse — that IS the replay/idempotency claim.
+    suite: "../integrations/test/tool-gateway.test.ts",
     requiresRealIntegration: false,
     spec: "§8 · REQ-I-005",
   },
