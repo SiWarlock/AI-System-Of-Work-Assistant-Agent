@@ -8,6 +8,7 @@
 // get-before-upsert guard.
 import { ok, err, isErr } from "@sow/contracts";
 import type { Result, Workspace } from "@sow/contracts";
+import { isZeroEgressOnlyWorkspace } from "@sow/policy";
 import type { WorkspaceConfigRepository, AuditRepository } from "@sow/db";
 import type { UiSafeEgressStatus } from "../api/procedures/systemHealth";
 import type {
@@ -35,7 +36,10 @@ export interface EgressCommandDeps {
  *   3. upsert the fail-SAFE OFF state (durable).
  *   4. append a SUMMARIES-only AuditRecord (§4 / rule-7 — no raw content/policy dump). A sink fault fails
  *      CLOSED (the OFF state is already durable + the command is idempotent, so a retry completes the trail).
- *   5. return the NEW `UiSafeEgressStatus` (ack=false ⇒ zeroEgressOnly=true).
+ *   5. return the NEW `UiSafeEgressStatus` — `zeroEgressOnly` DERIVED via {@link isZeroEgressOnlyWorkspace}
+ *      over the just-written `revoked` state (not re-read, not asserted): revoking the ack does not by
+ *      itself make a workspace local-only (9.22) — `providerMatrix`/`allowedProcessors` are untouched by
+ *      this command, so a cloud-allowlisted workspace correctly stays `false` after a revoke.
  * TOTAL never-throws — the whole body is guarded; a thrown cause never crosses (rule-7, code+static msg only).
  */
 export function createEgressCommandPort(deps: EgressCommandDeps): EgressCommandPort {
@@ -78,10 +82,15 @@ export function createEgressCommandPort(deps: EgressCommandDeps): EgressCommandP
           timestamps: { occurredAt: deps.now() },
         });
         if (isErr(audited)) return err({ code: "store_fault", message: "audit append failed" });
-        // (5) the NEW UI-safe status — fail-safe OFF ⇒ zeroEgressOnly. Mirrors the visibility reader's
-        //     derivation (`zeroEgressOnly = !acknowledged`, boot.ts `createSystemHealthQueryPort`): both are
-        //     `true` here because ack is now false. Keep this in sync if that reader's derivation ever grows.
-        return ok({ workspaceId: wsId, employerRawEgressAcknowledged: false, zeroEgressOnly: true });
+        // (5) the NEW UI-safe status — zeroEgressOnly DERIVED from the just-written `revoked` state via
+        //     the SAME predicate the visibility reader uses (boot.ts `createSystemHealthQueryPort`), so
+        //     the two producers cannot drift. `revoked` already carries the post-revoke providerMatrix +
+        //     egressPolicy verbatim (only the ack fields changed above) — no second store read needed.
+        return ok({
+          workspaceId: wsId,
+          employerRawEgressAcknowledged: false,
+          zeroEgressOnly: isZeroEgressOnlyWorkspace(revoked),
+        });
       } catch {
         // TOTAL never-throws — the thrown cause NEVER crosses (rule-7; code + static message only).
         return err({ code: "store_fault", message: "unexpected revoke fault" });

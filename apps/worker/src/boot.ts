@@ -50,7 +50,7 @@ import type {
   GbrainPin,
   ContextRef,
 } from "@sow/contracts";
-import { descriptorFor } from "@sow/policy";
+import { descriptorFor, isZeroEgressOnlyWorkspace } from "@sow/policy";
 import type { SessionToken, LegacyContentPolicy, CopilotWorkspaceScope, ResolvedWorkspacePolicy } from "@sow/policy";
 import { TBD } from "@sow/domain";
 import type { MeetingJobInputs, AgentExtraction } from "@sow/workflows";
@@ -529,19 +529,29 @@ export interface BootedWorker {
 
 // ── the health/egress query port over the persistent store ────────────────────
 
-/** A fail-closed egress status: raw Employer-Work egress OFF + zero-egress ON (safe default). */
+/**
+ * A fail-closed egress status: raw Employer-Work egress OFF; zero-egress-only NOT ESTABLISHED.
+ *
+ * 9.22 ⚠ DIRECTION INVERTED from the pre-9.22 default. Under the old `!acknowledged` meaning, a fault
+ * returning `zeroEgressOnly: true` was fail-SAFE (we didn't confirm an ack, so assume the restrictive
+ * posture). Under the option-C meaning, `true` asserts the workspace is PROVABLY local-only
+ * (`isZeroEgressOnlyWorkspace`) — and a store fault cannot establish that. Returning `true` here would
+ * be a false assurance on exactly the surface an owner checks to confirm a revoke landed, so a fault
+ * now yields `false` (NOT ESTABLISHED — never "cloud egress is possible", never "local-only").
+ */
 function failClosedEgress(workspaceId: string): UiSafeEgressStatus {
-  return { workspaceId, employerRawEgressAcknowledged: false, zeroEgressOnly: true };
+  return { workspaceId, employerRawEgressAcknowledged: false, zeroEgressOnly: false };
 }
 
 /**
  * Build the System-Health query port over the persistent health store. `healthItems`
  * reads the durable @sow/db `health_items` table (via the backends' persistent
  * `HealthItemStore`); a store fault folds to a typed `degraded_unavailable` err
- * (never a throw, §16). `egressStatus` reads the DURABLE per-workspace egress posture
- * from `WorkspaceConfigRepository.egressPolicy` (task 9.10-A / §16 Leg 5.1) and
- * FAIL-CLOSES to the safe default (raw egress OFF, zero-egress ON) on absence OR any
- * store fault — never over-permits.
+ * (never a throw, §16). `egressStatus` reads the DURABLE per-workspace state and derives
+ * `zeroEgressOnly` via {@link isZeroEgressOnlyWorkspace} (§5 option C: routing pins local
+ * AND no egress destination is approved) — never from `employerRawEgressAcknowledged`,
+ * which is consent, not routing. FAIL-CLOSES to `false` (raw egress OFF, zero-egress
+ * NOT ESTABLISHED) on absence OR any store fault — a fault can never PROVE local-only.
  */
 export function createSystemHealthQueryPort(backends: ProofSpineBackends): SystemHealthQueryPort {
   return {
@@ -563,12 +573,21 @@ export function createSystemHealthQueryPort(backends: ProofSpineBackends): Syste
     },
     async egressStatus(wsId: string): Promise<Result<UiSafeEgressStatus, FailureVariant>> {
       // Read the DURABLE per-workspace egress posture (task 9.10-A). Absence OR any store
-      // fault ⇒ the FAIL-CLOSED safe default (raw egress OFF) — never over-permits.
+      // fault ⇒ the FAIL-CLOSED safe default (raw egress OFF, zero-egress NOT ESTABLISHED).
       try {
         const got = await backends.repos.workspaceConfig.get(wsId as WorkspaceId);
         if (!isOk(got)) return { ok: true, value: failClosedEgress(wsId) };
         const acknowledged = got.value.egressPolicy.employerRawEgressAcknowledged;
-        return { ok: true, value: { workspaceId: wsId, employerRawEgressAcknowledged: acknowledged, zeroEgressOnly: !acknowledged } };
+        // 9.22 — DERIVED from the option-C predicate over the full workspace already read above, never
+        // from `!acknowledged` (consent is not routing; conflating the two was the original defect).
+        return {
+          ok: true,
+          value: {
+            workspaceId: wsId,
+            employerRawEgressAcknowledged: acknowledged,
+            zeroEgressOnly: isZeroEgressOnlyWorkspace(got.value),
+          },
+        };
       } catch {
         return { ok: true, value: failClosedEgress(wsId) };
       }

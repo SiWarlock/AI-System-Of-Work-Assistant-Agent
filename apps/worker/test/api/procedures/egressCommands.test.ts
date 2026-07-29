@@ -84,7 +84,11 @@ describe("§9.10-B egress-ack REVOKE command (⚠ rule-5 fail-safe OFF)", () => 
     const r = await port.revokeEgressAck({ workspaceId: WS_ID });
     expect(isOk(r)).toBe(true);
     if (isOk(r)) {
-      expect(r.value).toEqual({ workspaceId: WS_ID, employerRawEgressAcknowledged: false, zeroEgressOnly: true });
+      // 9.22 ⚠ SEMANTICS CHANGE (L69): this assertion used to read `zeroEgressOnly: true`, defending the
+      // pre-9.22 `!acknowledged` coupling. `employerAcked` inherits `validWorkspace`'s own vacuous
+      // providerMatrix (`capabilityDefaults: {}`), so the option-C predicate is NOT ESTABLISHED
+      // (`false`) both before and after this revoke — the correct answer, not a regression.
+      expect(r.value).toEqual({ workspaceId: WS_ID, employerRawEgressAcknowledged: false, zeroEgressOnly: false });
     }
     expect(upserts.length).toBe(1);
     expect(upserts[0]!.egressPolicy.employerRawEgressAcknowledged).toBe(false);
@@ -179,7 +183,10 @@ describe("§9.10-B egress-ack REVOKE command (⚠ rule-5 fail-safe OFF)", () => 
     expect(isOk(after)).toBe(true);
     if (isOk(after)) {
       expect(after.value.employerRawEgressAcknowledged).toBe(false); // NEGATIVE (revoked→off)
-      expect(after.value.zeroEgressOnly).toBe(true);
+      // 9.22 ⚠ SEMANTICS CHANGE (L69): was `zeroEgressOnly: true` — the tested false assurance this arc
+      // exists to remove. `employerAcked`'s providerMatrix is vacuous (never provisioned with real
+      // routes), so the option-C predicate reads NOT ESTABLISHED, not "local-only", pre- and post-revoke.
+      expect(after.value.zeroEgressOnly).toBe(false);
     }
   });
 
