@@ -26,6 +26,11 @@ export interface RevokeEgressAckInput {
  */
 export type RevokeEgressAckError =
   | { readonly code: "workspace_not_found"; readonly message: string }
+  // Task 9.36 — the stored row failed re-validation at the repository read boundary (an
+  // out-of-band-corrupted row, never producible by a real writer). Distinct from `store_fault`:
+  // this is PERMANENTLY non-retryable (the row will not become consistent on retry), so it must
+  // never be collapsed into the retryable store-fault code.
+  | { readonly code: "stored_row_schema_violation"; readonly message: string }
   | { readonly code: "store_fault"; readonly message: string };
 
 /**
@@ -61,12 +66,21 @@ function parseWorkspaceInput(value: unknown): RevokeEgressAckInput {
  * fault is a retryable `degraded_unavailable`.
  */
 function toBoundaryError(e: RevokeEgressAckError): FailureVariant {
-  return e.code === "workspace_not_found"
-    ? failure("validation_rejected", "workspace not found", { cause: { code: "WORKSPACE_NOT_FOUND" } })
-    : failure("degraded_unavailable", "egress ack revoke failed", {
-        retryable: true,
-        cause: { code: "EGRESS_REVOKE_STORE_FAULT" },
-      });
+  if (e.code === "workspace_not_found") {
+    return failure("validation_rejected", "workspace not found", { cause: { code: "WORKSPACE_NOT_FOUND" } });
+  }
+  if (e.code === "stored_row_schema_violation") {
+    // Task 9.36 — PERMANENTLY non-retryable (a corrupt stored row will not self-heal on retry;
+    // `retryable: true` here would be a new silent-hang class, not a transient outage).
+    return failure("degraded_unavailable", "workspace record failed schema re-validation", {
+      retryable: false,
+      cause: { code: "EGRESS_REVOKE_STORED_ROW_SCHEMA_VIOLATION" },
+    });
+  }
+  return failure("degraded_unavailable", "egress ack revoke failed", {
+    retryable: true,
+    cause: { code: "EGRESS_REVOKE_STORE_FAULT" },
+  });
 }
 
 /**

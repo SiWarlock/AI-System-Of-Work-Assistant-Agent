@@ -32,6 +32,19 @@ export const workspaceConfig = sqliteTable("workspace_config", {
   gbrainBrainId: text().$type<Workspace["gbrainBrainId"]>().notNull(),
   defaultVisibility: text().$type<Workspace["defaultVisibility"]>().notNull(),
   // Nested aggregates → one json column each, NAMED by the top-level field.
-  egressPolicy: text({ mode: "json" }).$type<Workspace["egressPolicy"]>().notNull(),
-  providerMatrix: text({ mode: "json" }).$type<Workspace["providerMatrix"]>().notNull(),
+  //
+  // Task 9.36 — DELIBERATELY typed `unknown`, not `Workspace["egressPolicy"]`/`["providerMatrix"]`.
+  // A `.$type<T>()` overlay is a COMPILE-TIME-ONLY assertion over a JSON column's parsed bytes — it
+  // does not validate anything at runtime, so typing these columns as the frozen model types made
+  // every SELECT already "structurally" a `Workspace`, meaning the six `as Workspace` casts the read
+  // boundary used to have were DECORATIVE, not causal: deleting them changed nothing, because the row
+  // was already asserted to be a `Workspace` right here, at the schema. Typing these `unknown` makes
+  // the read boundary the ONLY way to get a real `Workspace` out — `parseStoredWorkspace`
+  // (`../adapters/workspace-read-gate.ts`) is now REQUIRED, not merely called, because a raw
+  // `$inferSelect` row no longer satisfies `Workspace` for any consumer, present or future (a reader
+  // added tomorrow with no cast at all still cannot return the row as `Workspace` — L70/L95: pin the
+  // PROPERTY, not the call sites). Writes are unaffected — `EgressPolicy`/`ProviderMatrix` remain
+  // assignable TO `unknown` for `.values()`/`.set()`.
+  egressPolicy: text({ mode: "json" }).notNull(),
+  providerMatrix: text({ mode: "json" }).notNull(),
 });

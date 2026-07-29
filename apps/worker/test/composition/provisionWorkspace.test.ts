@@ -194,6 +194,59 @@ describe("provisionWorkspace (14.1 — production workspace provisioning path)",
     expect(await registryIds(b)).not.toContain("employer-work");
   });
 
+  it("reonboard_stored_row_schema_violation_is_classified_not_collapsed: a stored-row schema-violation on the existence-check read ⇒ its OWN code, distinct from store_fault (task 9.36) [spec(§5)]", async () => {
+    const b = await fresh();
+    let upsertCalls = 0;
+    const inconsistentGetConfig: WorkspaceConfigRepository = {
+      async get(): Promise<Result<Workspace, DbError>> {
+        return err({ code: "stored_row_schema_violation", message: "corrupt row" });
+      },
+      async list(): Promise<Result<Workspace[], DbError>> {
+        return ok([]);
+      },
+      async upsert(w: Workspace): Promise<Result<Workspace, DbError>> {
+        upsertCalls += 1;
+        return ok(w);
+      },
+      insertIfAbsent: () => Promise.resolve(ok(false)),
+      async updateProvisioningFields(): Promise<Result<Workspace, DbError>> {
+        upsertCalls += 1;
+        return err({ code: "unavailable", message: "unreachable" });
+      },
+    };
+    const res = await provisionWorkspace(
+      { workspaceConfig: inconsistentGetConfig, readModels: b.repos.readModels, now: b.now },
+      SPEC_A,
+    );
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) {
+      expect(res.error.code).toBe("stored_row_schema_violation");
+      expect(res.error.code).not.toBe("store_fault"); // classified, not collapsed
+    }
+    expect(upsertCalls).toBe(0);
+    expect(await registryIds(b)).not.toContain("employer-work");
+  });
+
+  it("same_type_stored_row_schema_violation_is_classified_not_collapsed: updateProvisioningFields's RETURNING row failing re-validation ⇒ its OWN code (task 9.36) [spec(§5)]", async () => {
+    const b = await fresh();
+    await provisionWorkspace(deps(b), SPEC_A); // seed a real row → the same-type branch is taken next
+    const inconsistentUpdateConfig: WorkspaceConfigRepository = {
+      ...b.repos.workspaceConfig,
+      async updateProvisioningFields(): Promise<Result<Workspace, DbError>> {
+        return err({ code: "stored_row_schema_violation", message: "corrupt row" });
+      },
+    };
+    const res = await provisionWorkspace(
+      { workspaceConfig: inconsistentUpdateConfig, readModels: b.repos.readModels, now: b.now },
+      SPEC_A,
+    );
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) {
+      expect(res.error.code).toBe("stored_row_schema_violation");
+      expect(res.error.code).not.toBe("store_fault"); // classified, not collapsed
+    }
+  });
+
   it("registry_get_fault_is_typed_err_not_empty: a store fault on the registry get ⇒ typed store_fault err, NEVER a fold-to-empty [spec(§5)]", async () => {
     // Upsert succeeds; the registry GET faults (unavailable, NOT not_found).
     const okConfig: WorkspaceConfigRepository = {

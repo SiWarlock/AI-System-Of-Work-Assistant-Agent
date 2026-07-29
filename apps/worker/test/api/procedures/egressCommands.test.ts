@@ -30,7 +30,7 @@ const WS_ID = String(employerAcked.id);
 /** A mutable in-memory WorkspaceConfigRepository seeded with one workspace (absent ⇒ not_found). */
 function memConfig(
   seed: Workspace | undefined,
-  opts: { getFault?: boolean; getThrows?: boolean; upsertFault?: boolean } = {},
+  opts: { getFault?: boolean; getThrows?: boolean; upsertFault?: boolean; getStoredRowSchemaViolation?: boolean } = {},
 ): { repo: WorkspaceConfigRepository; upserts: Workspace[] } {
   let stored = seed;
   const upserts: Workspace[] = [];
@@ -38,6 +38,10 @@ function memConfig(
     get: (id): DbResult<Workspace> => {
       if (opts.getThrows) throw new Error("boom — must be caught, never crosses");
       if (opts.getFault) return Promise.resolve({ ok: false, error: { code: "unavailable", message: "db down" } as DbError });
+      // Task 9.36 — the repository read boundary re-gate; distinct from a generic store fault.
+      if (opts.getStoredRowSchemaViolation) {
+        return Promise.resolve({ ok: false, error: { code: "stored_row_schema_violation", message: "corrupt row" } as DbError });
+      }
       return stored !== undefined && String(id) === String(stored.id)
         ? Promise.resolve({ ok: true, value: stored })
         : Promise.resolve({ ok: false, error: nf });
@@ -129,6 +133,20 @@ describe("§9.10-B egress-ack REVOKE command (⚠ rule-5 fail-safe OFF)", () => 
     if (isErr(rB)) expect(rB.error.code).toBe("store_fault"); // a non-not_found fault discriminated
     expect(faulted.upserts.length).toBe(0);
     expect(auditB.appended.length).toBe(0);
+  });
+
+  it("revoke_classifies_stored_row_schema_violation_distinctly — task 9.36's new code is NOT collapsed into store_fault", async () => {
+    const inconsistent = memConfig(employerAcked, { getStoredRowSchemaViolation: true });
+    const audit = memAudit();
+    const port = createEgressCommandPort({ workspaceConfig: inconsistent.repo, audit: audit.repo, now: () => NOW });
+    const r = await port.revokeEgressAck({ workspaceId: WS_ID });
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) {
+      expect(r.error.code).toBe("stored_row_schema_violation");
+      expect(r.error.code).not.toBe("store_fault"); // classified, not collapsed
+    }
+    expect(inconsistent.upserts.length).toBe(0); // fail-closed — never upserts over a corrupt read
+    expect(audit.appended.length).toBe(0);
   });
 
   it("revoke_fail_closed_on_upsert_fault — a durable-write (upsert) fault AFTER a good get → typed store_fault, ZERO audit (never records a write that didn't land)", async () => {

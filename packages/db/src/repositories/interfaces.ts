@@ -50,6 +50,7 @@ export type DbErrorCode =
   | "constraint_violation"
   | "serialization_failure" // transaction retry-able (§4)
   | "unavailable" // §4 DB-unavailable degraded mode
+  | "stored_row_schema_violation" // task 9.36 — a stored row fails re-validation on read (permanent, non-retryable)
   | "unknown";
 
 export interface DbError {
@@ -224,7 +225,7 @@ export interface WorkspaceConfigRepository {
    * write back posture columns it had read earlier, so a `revokeEgressAck` landing between that read and
    * that write was silently clobbered — 9.23's fail-open narrowed to a race. Narrowing the WRITE removes
    * the shared column entirely, so there is nothing left for a concurrent posture command to lose.
-   * Absent row ⇒ `not_found` (this never creates; the create path is `upsert`).
+   * Absent row ⇒ `not_found` (this never creates; the create path is `insertIfAbsent`, task 9.30).
    */
   updateProvisioningFields(
     id: Workspace["id"],

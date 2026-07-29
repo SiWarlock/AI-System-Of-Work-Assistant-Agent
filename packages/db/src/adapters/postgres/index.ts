@@ -37,7 +37,6 @@ import type {
   HealthItem,
   ParityReport,
   ProviderProfile,
-  Workspace,
   WorkflowRunRef,
 } from "@sow/contracts";
 import type {
@@ -97,6 +96,7 @@ import {
   type CasVerdict,
 } from "../../invariants/operational-truth";
 import { conflict, notFound, toDbError } from "./errors";
+import { parseStoredWorkspace, parseStoredWorkspaceList } from "../workspace-read-gate";
 
 /**
  * Bridge the pure invariant CAS verdict onto the adapter's §16 DbError taxonomy,
@@ -380,9 +380,12 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
       run(async () => {
         const rows = await db.select().from(schema.workspaceConfig).where(eq(schema.workspaceConfig.id, id)).limit(1);
         const row = rows[0];
-        return row ? ok(row as Workspace) : err(notFound(`workspace ${id}`));
+        // Task 9.36 — re-gate the stored row through the FULL WorkspaceSchema (never an unchecked
+        // cast) before it can re-cross into a write or a policy decision (contracts L76).
+        return row ? parseStoredWorkspace(row) : err(notFound(`workspace ${id}`));
       }),
-    list: () => run(async () => ok((await db.select().from(schema.workspaceConfig)) as Workspace[])),
+    list: () =>
+      run(async () => parseStoredWorkspaceList(await db.select().from(schema.workspaceConfig))),
     upsert: (ws) =>
       run(async () => {
         await db
@@ -427,7 +430,9 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
           .where(eq(schema.workspaceConfig.id, id))
           .returning();
         const row = rows[0];
-        return row ? ok(row as Workspace) : err(notFound(`workspace ${id}`));
+        // Task 9.36 — the RETURNING row hands back posture columns this write never touched;
+        // re-gate it too (site 3/6 — the one the original four-site enumeration missed).
+        return row ? parseStoredWorkspace(row) : err(notFound(`workspace ${id}`));
       }),
   };
 

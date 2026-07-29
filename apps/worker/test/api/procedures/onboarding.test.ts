@@ -150,4 +150,20 @@ describe("onboarding.createWorkspace procedure (14.1)", () => {
       expect(JSON.stringify(res.error)).not.toContain("registry union incomplete");
     }
   });
+
+  it("onboarding_stored_row_schema_violation_is_distinguishable_and_non_retryable: a corrupt stored row reaches the transport as its OWN FailureVariant, never store-fault, never retryable (task 9.36) [spec(§16)]", async () => {
+    const port = new FakeOnboardingPort(() => ({
+      ok: false,
+      error: { code: "stored_row_schema_violation", message: "workspace config read failed re-validation" },
+    }));
+    const c = caller(port);
+    const res = await c.onboarding.createWorkspace(VALID_INPUT);
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) {
+      expect(res.error.cause?.code).toBe("ONBOARDING_STORED_ROW_SCHEMA_VIOLATION");
+      expect(res.error.cause?.code).not.toBe("ONBOARDING_STORE_FAULT");
+      // PERMANENTLY non-retryable — a corrupt row will not self-heal on retry (design question 5).
+      expect(res.error.retryable).toBe(false);
+    }
+  });
 });

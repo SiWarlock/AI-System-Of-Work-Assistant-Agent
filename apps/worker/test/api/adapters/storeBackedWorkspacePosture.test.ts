@@ -75,6 +75,21 @@ describe("§5 createStoreBackedWorkspacePosture — durable ack read, fail-close
     expect(isOk(p)).toBe(false);
   });
 
+  it("resolver_stored_row_schema_violation_fails_closed — task 9.36's new DbErrorCode is ALREADY covered by the existing any-fault fail-closed (no code change needed here)", async () => {
+    // The repository read boundary (task 9.36) can now reject a stored row as
+    // `stored_row_schema_violation` — verify this resolver (`if (!isOk(got)) return err(...)`) already
+    // fails closed on it, exactly as it does on any other DbError code (regression pin, not a fix:
+    // this file needed no change for 9.36 — confirmed by reading the source, contradicting the
+    // brief's file list, which listed it as one to modify).
+    const r = createStoreBackedWorkspacePosture(
+      repoGetting(() =>
+        Promise.resolve({ ok: false, error: { code: "stored_row_schema_violation", message: "corrupt row" } }),
+      ),
+    );
+    const p = await r.resolve(WS);
+    expect(isOk(p)).toBe(false);
+  });
+
   it("resolver_foreign_readback_fails_closed — a store row whose id ≠ the requested id is REJECTED (WS-8 re-gate)", async () => {
     // A buggy/malicious `get` returns a FOREIGN (more-permissive) workspace's row for the requested id.
     const foreign = defaultWorkspace({ id: "ws-OTHER", name: "Other", type: "personal_business", markdownRepoPath: "/v", gbrainBrainId: "b" });

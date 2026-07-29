@@ -151,6 +151,13 @@ function provisionErrorToFailure(e: ProvisionWorkspaceError): FailureVariant {
         retryable: true,
         cause: { code: "ONBOARDING_PARTIAL_SCAFFOLD" },
       });
+    case "stored_row_schema_violation":
+      // Task 9.36 — PERMANENTLY non-retryable (an out-of-band-corrupted row will not self-heal
+      // on retry); distinct from ONBOARDING_STORE_FAULT so a caller never retries it forever.
+      return failure("degraded_unavailable", "workspace record failed schema re-validation", {
+        retryable: false,
+        cause: { code: "ONBOARDING_STORED_ROW_SCHEMA_VIOLATION" },
+      });
     case "store_fault":
       return failure("degraded_unavailable", "onboarding store unavailable", {
         retryable: true,

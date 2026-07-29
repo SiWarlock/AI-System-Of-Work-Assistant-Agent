@@ -19,6 +19,12 @@ export const workspaceConfig = pgTable("workspace_config", {
   gbrainBrainId: text().$type<Workspace["gbrainBrainId"]>().notNull(),
   defaultVisibility: text().$type<Workspace["defaultVisibility"]>().notNull(),
   // Nested aggregates → one json column each, NAMED by the top-level field.
-  egressPolicy: json().$type<Workspace["egressPolicy"]>().notNull(),
-  providerMatrix: json().$type<Workspace["providerMatrix"]>().notNull(),
+  //
+  // Task 9.36 — DELIBERATELY typed `unknown`, not `Workspace["egressPolicy"]`/`["providerMatrix"]`.
+  // Mirrors the sqlite schema's note verbatim (behavioral parity, REQ-D-003): a `.$type<T>()` overlay
+  // is compile-time-only and does not validate the JSON column's parsed bytes, so typing it as the
+  // frozen model type made every SELECT already "structurally" a `Workspace` — the read boundary's
+  // casts were decorative, not causal. `unknown` forces `parseStoredWorkspace` to be the ONLY way out.
+  egressPolicy: json().notNull(),
+  providerMatrix: json().notNull(),
 });

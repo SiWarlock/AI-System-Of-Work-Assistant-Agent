@@ -27,7 +27,6 @@ import type {
   HealthItem,
   ParityReport,
   ProviderProfile,
-  Workspace,
   WorkflowRunRef,
 } from "@sow/contracts";
 import type {
@@ -87,6 +86,7 @@ import {
   type CasVerdict,
 } from "../../invariants/operational-truth";
 import { conflict, notFound, toDbError } from "./errors";
+import { parseStoredWorkspace, parseStoredWorkspaceList } from "../workspace-read-gate";
 
 /**
  * Bridge the pure invariant CAS verdict onto the adapter's §16 DbError taxonomy,
@@ -359,9 +359,12 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
     get: (id) =>
       run(() => {
         const row = db.select().from(schema.workspaceConfig).where(eq(schema.workspaceConfig.id, id)).get();
-        return row ? ok(row as Workspace) : err(notFound(`workspace ${id}`));
+        // Task 9.36 — re-gate the stored row through the FULL WorkspaceSchema (never an unchecked
+        // cast) before it can re-cross into a write or a policy decision (contracts L76).
+        return row ? parseStoredWorkspace(row) : err(notFound(`workspace ${id}`));
       }),
-    list: () => run(() => ok(db.select().from(schema.workspaceConfig).all() as Workspace[])),
+    list: () =>
+      run(() => parseStoredWorkspaceList(db.select().from(schema.workspaceConfig).all())),
     upsert: (ws) =>
       run(() => {
         db.insert(schema.workspaceConfig)
@@ -409,7 +412,9 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
           .where(eq(schema.workspaceConfig.id, id))
           .returning()
           .get();
-        return updated ? ok(updated as Workspace) : err(notFound(`workspace ${id}`));
+        // Task 9.36 — the RETURNING row hands back posture columns this write never touched;
+        // re-gate it too (site 3/6 — the one the original four-site enumeration missed).
+        return updated ? parseStoredWorkspace(updated) : err(notFound(`workspace ${id}`));
       }),
   };
 

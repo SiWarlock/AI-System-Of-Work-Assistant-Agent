@@ -125,7 +125,11 @@ export type ProvisionWorkspaceError =
       readonly message: string;
       readonly configWritten: true;
       readonly incompleteStep: "registry_union";
-    };
+    }
+  // Task 9.36 — a stored row failed re-validation at the repository read boundary (an
+  // out-of-band-corrupted row, never producible by a real writer — see workspace-read-gate.ts).
+  // PERMANENTLY non-retryable, distinct from `store_fault`.
+  | { readonly code: "stored_row_schema_violation"; readonly message: string };
 
 /**
  * Wrap a `registerWorkspace` fault as the distinct, resumable `partial_scaffold` outcome
@@ -194,6 +198,11 @@ export async function provisionWorkspace(
   //                               prior state — a transient fault must not bypass the guard).
   const existing = await workspaceConfig.get(spec.id as Workspace["id"]);
   if (isErr(existing)) {
+    // Task 9.36 — classify, don't collapse: a referentially-inconsistent stored row is distinct
+    // from a generic store fault (permanently non-retryable).
+    if (existing.error.code === "stored_row_schema_violation") {
+      return err({ code: "stored_row_schema_violation", message: "workspace config read failed re-validation" });
+    }
     if (existing.error.code !== "not_found") {
       return err({ code: "store_fault", message: "workspace config get failed" });
     }
@@ -270,6 +279,11 @@ export async function provisionWorkspace(
       gbrainBrainId: workspace.gbrainBrainId,
     });
     if (isErr(updated)) {
+      // Task 9.36 — the RETURNING row hands back posture columns this write never touched; a
+      // PRE-EXISTING corrupt row surfaces here too. Classify, don't collapse.
+      if (updated.error.code === "stored_row_schema_violation") {
+        return err({ code: "stored_row_schema_violation", message: "workspace config update read-back failed re-validation" });
+      }
       return err({ code: "store_fault", message: "workspace config update failed" });
     }
     // Union into the registry exactly as the create path does — a re-provision must still repair a

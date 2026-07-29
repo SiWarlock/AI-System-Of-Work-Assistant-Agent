@@ -23,6 +23,10 @@
 // read-model rebuild vs. not-rebuildable operational truth) + the §16 error
 // convention (NO method throws across the boundary — every failure is a typed
 // `Result<T, DbError>` with an enumerable `DbErrorCode`).
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { drizzle as drizzleSqlite } from "drizzle-orm/better-sqlite3";
 import { PGlite } from "@electric-sql/pglite";
@@ -148,6 +152,7 @@ const DB_ERROR_CODES: readonly DbErrorCode[] = [
   "constraint_violation",
   "serialization_failure",
   "unavailable",
+  "stored_row_schema_violation", // task 9.36
   "unknown",
 ];
 
@@ -559,6 +564,174 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
 
     it("get on a missing id returns a typed not_found (never throws)", async () => {
       expect(unwrapErr(await repos.workspaceConfig.get(validWorkspace.id)).code).toBe("not_found");
+    });
+
+    // ── task 9.36 — the read-path re-gate at the repository boundary ────────────────────────────
+    // The corrupt-row fixture is built by CAST, not by the schema (the schema correctly refuses to
+    // construct it) — mirrors apps/worker/test/composition/provision-preserves-egress-posture.test.ts's
+    // `a_corrupt_stored_policy_can_never_re_cross_into_a_write`. `upsert` never re-gates on write
+    // (out of scope here — a production writer can never originate this shape, task 9.29's residual;
+    // this fixture models an out-of-band edit), so it is the one way to get a corrupt row INTO a real
+    // dual-dialect store to prove the READ side now rejects it.
+    describe("read-path re-gate (task 9.36)", () => {
+      const corruptEgress = {
+        ...validWorkspace,
+        egressPolicy: { ...validWorkspace.egressPolicy, workspaceId: "some-other-workspace" },
+      } as unknown as typeof validWorkspace;
+      const corruptMatrix = {
+        ...validWorkspace,
+        providerMatrix: { ...validWorkspace.providerMatrix, workspaceId: "some-other-workspace" },
+      } as unknown as typeof validWorkspace;
+
+      it("a_referentially_inconsistent_row_is_rejected_on_get", async () => {
+        unwrap(await repos.workspaceConfig.upsert(corruptEgress));
+        const res = await repos.workspaceConfig.get(validWorkspace.id);
+        expect(isErr(res)).toBe(true);
+        if (isErr(res)) expect(res.error.code).toBe("stored_row_schema_violation");
+      });
+
+      it("the_inconsistency_error_is_distinguishable_from_a_store_fault", async () => {
+        unwrap(await repos.workspaceConfig.upsert(corruptEgress));
+        const code = unwrapErr(await repos.workspaceConfig.get(validWorkspace.id)).code;
+        expect(code).toBe("stored_row_schema_violation");
+        // A boolean isErr is not sufficient (contracts L80) — pin the reason CODE against every
+        // OTHER member of the closed taxonomy, so a hard failure never reads as indistinguishable
+        // from a genuine outage.
+        const OTHER_CODES: DbErrorCode[] = [
+          "not_found",
+          "conflict",
+          "constraint_violation",
+          "serialization_failure",
+          "unavailable",
+          "unknown",
+        ];
+        expect(OTHER_CODES).not.toContain(code);
+      });
+
+      it("a_consistent_row_still_round_trips", async () => {
+        // The non-vacuity control (contracts L80): without this, a constant-deny gate would also
+        // pass the two tests above.
+        unwrap(await repos.workspaceConfig.upsert(validWorkspace));
+        const got = unwrap(await repos.workspaceConfig.get(validWorkspace.id));
+        expect(got).toEqual(validWorkspace);
+      });
+
+      it("providerMatrix_inconsistency_is_caught_too_not_just_egressPolicy", async () => {
+        // contracts L72 — a guard applied to one field of an aggregate is a silent fail-open for
+        // its siblings; buildActivities.ts consumes `providerMatrix.workspaceId` too.
+        unwrap(await repos.workspaceConfig.upsert(corruptMatrix));
+        const res = await repos.workspaceConfig.get(validWorkspace.id);
+        expect(isErr(res)).toBe(true);
+        if (isErr(res)) expect(res.error.code).toBe("stored_row_schema_violation");
+      });
+
+      it("list_rejects_or_reports_an_inconsistent_row", async () => {
+        unwrap(await repos.workspaceConfig.upsert(corruptEgress));
+        const res = await repos.workspaceConfig.list();
+        // A per-get fix that leaves `list` casting closes three of six sites, not six — `list` must
+        // not silently return the corrupt row typed as valid.
+        expect(isErr(res)).toBe(true);
+        if (isErr(res)) expect(res.error.code).toBe("stored_row_schema_violation");
+      });
+
+      it("updateProvisioningFields_return_is_gated_too", async () => {
+        // The narrowed write (task 9.30) never touches egressPolicy/providerMatrix, so a PRE-EXISTING
+        // corrupt row stays corrupt across the update — and the write method hands back posture
+        // columns it never wrote (sites 3/6, the ones the original four-site enumeration missed).
+        unwrap(await repos.workspaceConfig.upsert(corruptEgress));
+        const res = await repos.workspaceConfig.updateProvisioningFields(validWorkspace.id, {
+          name: "Renamed",
+          markdownRepoPath: "/moved",
+          gbrainBrainId: validWorkspace.gbrainBrainId,
+        });
+        expect(isErr(res)).toBe(true);
+        if (isErr(res)) expect(res.error.code).toBe("stored_row_schema_violation");
+      });
+
+      it("the_gate_does_not_normalize", async () => {
+        // Fail closed, never repair-write: a normalizing gate would silently coerce the foreign
+        // workspaceId to the expected one, making a LATER read succeed. It must not.
+        unwrap(await repos.workspaceConfig.upsert(corruptEgress));
+        const first = await repos.workspaceConfig.get(validWorkspace.id);
+        expect(isErr(first)).toBe(true);
+        const second = await repos.workspaceConfig.get(validWorkspace.id);
+        expect(isErr(second)).toBe(true);
+        if (isErr(second)) expect(second.error.code).toBe("stored_row_schema_violation");
+      });
+
+      // ── SPEC-FIDELITY CROSS-MAP (residual named at Step 2.5: mutation-verification proves
+      // DISCRIMINATION — these tests fail when the gate is removed — it cannot prove SPEC FIDELITY,
+      // because a test written after the implementation can encode the implementation's own
+      // behavior rather than `WorkspaceSchema`'s actual constraint classes, and no mutation of the
+      // implementation reveals that gap). This table is keyed off `WorkspaceSchema`'s OWN
+      // independently-authored enumeration (`packages/contracts/test/models/workspace.test.ts`,
+      // a DIFFERENT area's test, so it cannot have been derived from this implementation).
+      //
+      // Per-class disposition:
+      //   - `.strict()` unknown top-level key — UNREACHABLE via a stored row. `db.select().from(
+      //     schema.workspaceConfig)` selects exactly drizzle's declared column list; unlike a
+      //     hand-authored JS object literal, a SELECT result can never carry an extra key. Not
+      //     tested below for that reason, not because it was missed.
+      //   - missing required field (`egressPolicy` absent) — the literal "absent key" shape is
+      //     ALSO unreachable (the column is `NOT NULL`, so the row always carries the key); a JSON
+      //     `null` VALUE is the closest analogous reachable shape, but constructing it requires
+      //     bypassing the typed `upsert` wrapper (drizzle maps a JS `null` for a NOT NULL json
+      //     column to SQL NULL at the write itself, not a storable JSON-null blob) — a raw SQL
+      //     INSERT would be needed, which is out of proportion for this residual. Recorded as a
+      //     genuine, small, unclosed gap rather than silently dropped.
+      //   - every other class below IS reachable via an out-of-band-edited row and is exercised.
+      const REACHABLE_SCHEMA_VIOLATION_CLASSES: {
+        readonly name: string;
+        readonly row: unknown;
+        /** Overrides the lookup key — only the empty-id class stores under a DIFFERENT primary key. */
+        readonly queryId?: string;
+      }[] = [
+        {
+          name: "empty_id_branded_non_empty",
+          row: {
+            ...validWorkspace,
+            id: "",
+            egressPolicy: { ...validWorkspace.egressPolicy, workspaceId: "" },
+            providerMatrix: { ...validWorkspace.providerMatrix, workspaceId: "" },
+          },
+          queryId: "",
+        },
+        { name: "empty_name", row: { ...validWorkspace, name: "" } },
+        { name: "empty_markdownRepoPath", row: { ...validWorkspace, markdownRepoPath: "" } },
+        { name: "whitespace_gbrainBrainId_branded_non_empty", row: { ...validWorkspace, gbrainBrainId: "  " } },
+        { name: "out_of_set_type", row: { ...validWorkspace, type: "freelance" } },
+        { name: "out_of_set_dataOwner", row: { ...validWorkspace, dataOwner: "nobody" } },
+        { name: "out_of_set_defaultVisibility", row: { ...validWorkspace, defaultVisibility: "public" } },
+        {
+          name: "egressPolicy_own_invariant_violated_ack_true_no_acknowledgedAt",
+          row: {
+            ...validWorkspace,
+            egressPolicy: { ...validWorkspace.egressPolicy, employerRawEgressAcknowledged: true },
+          },
+        },
+        {
+          name: "providerMatrix_own_invariant_violated_route_provider_not_allowlisted",
+          row: {
+            ...validWorkspace,
+            providerMatrix: {
+              ...validWorkspace.providerMatrix,
+              allowedProviders: ["claude"],
+              capabilityDefaults: {
+                summarize: { provider: "openai", model: "gpt-x", endpoint: "https://api.openai.com", egressClass: "cloud" },
+              },
+            },
+          },
+        },
+      ];
+
+      for (const violation of REACHABLE_SCHEMA_VIOLATION_CLASSES) {
+        it(`spec_fidelity_cross_map — ${violation.name}`, async () => {
+          unwrap(await repos.workspaceConfig.upsert(violation.row as unknown as typeof validWorkspace));
+          const res = await repos.workspaceConfig.get((violation.queryId ?? validWorkspace.id) as typeof validWorkspace.id);
+          expect(isErr(res)).toBe(true);
+          if (isErr(res)) expect(res.error.code).toBe("stored_row_schema_violation");
+        });
+      }
     });
   });
 
@@ -1916,5 +2089,89 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(unwrapErr(await repos.outbox.enqueue(outboxEntry({ outboxId: "dup" }))).code).toBe("conflict");
       expect(unwrapErr(await repos.workflowRunRefs.create(validWorkflowRunRef)).code).toBe("conflict");
     });
+  });
+});
+
+// ── task 9.36 BELT — a source census that a re-introduced unchecked cast cannot pass silently ──
+//
+// The MECHANISM is type-level: `workspace-config.ts`/`pg/workspace-config.ts` type the two nested
+// JSON columns `unknown` (not `Workspace["egressPolicy"]`/`["providerMatrix"]`), so a bare
+// `return ok(row)` with NO cast at all no longer compiles — the most likely accidental bypass is
+// closed by construction. But TypeScript's `as` operator still permits an EXPLICIT `row as Workspace`
+// (verified empirically: `unknown` fields satisfy the cast-overlap rule in either direction), and
+// `as unknown as Workspace` always compiles for any two types — no purely structural TS mechanism can
+// forbid a deliberate double-cast. Per worker L73/L74 (banked twice already for this exact shape — a
+// denylist/enumeration is structurally unwinnable for a completeness invariant; contracts L103) this
+// census is explicitly BELT, never the mechanism: it makes a re-introduced cast VISIBLE (a RED test),
+// it does not make it impossible.
+describe("workspace read-boundary cast census — the 9.36 belt (contracts L70/L103)", () => {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+
+  /**
+   * Every production `.ts` under `packages/db/src`, TRACKED or freshly-added-but-not-yet-staged
+   * (`--others --exclude-standard`) — a brand-new file mid-slice must be scanned too, or this
+   * census would trivially miss a cast in a file nobody has `git add`ed yet.
+   */
+  function trackedDbSources(): string[] {
+    let out = "";
+    try {
+      out = execSync("git ls-files --cached --others --exclude-standard -- 'packages/db/src/**/*.ts'", {
+        cwd: repoRoot,
+        encoding: "utf8",
+      });
+    } catch {
+      out = "";
+    }
+    return out.split("\n").filter(Boolean);
+  }
+
+  /** Strip comments first — this file's own doc comments legitimately NAME the pattern being banned. */
+  function stripComments(src: string): string {
+    return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  }
+
+  // Both-anchored (9.22's own census pin was initially prefix-only and accepted a superset —
+  // `\b...\b` on BOTH sides of `Workspace`, so `WorkspaceId`/`WorkspaceConfigRepository`/`WorkspaceType`
+  // never match, only the literal word "Workspace" immediately after `as`).
+  const CAST_PATTERN = /\bas\s+Workspace(\s*\[\s*\])?\b/;
+
+  function castOffenders(): string[] {
+    return trackedDbSources().filter((p) => {
+      try {
+        return CAST_PATTERN.test(stripComments(readFileSync(resolve(repoRoot, p), "utf8")));
+      } catch {
+        return true; // unreadable ⇒ surface, never silently skip
+      }
+    });
+  }
+
+  it("no_unchecked_workspace_cast_survives_in_packages_db — the ONLY way to produce a Workspace from a stored row is parseStoredWorkspace's real Zod parse", () => {
+    expect(
+      castOffenders(),
+      "a bare `as Workspace`/`as Workspace[]` cast re-opened the read-boundary bypass task 9.36 closed — route through parseStoredWorkspace/parseStoredWorkspaceList instead",
+    ).toEqual([]);
+  });
+
+  it("census_discovery_really_scans — non-vacuity (an empty/broken glob would pass every source census trivially)", () => {
+    const scanned = trackedDbSources();
+    expect(scanned.length).toBeGreaterThan(10);
+    expect(scanned).toContain("packages/db/src/adapters/workspace-read-gate.ts");
+  });
+
+  it("census_classifier_catches_a_reintroduced_cast_and_spares_the_real_parser — catch-power, mutation-verified inline", () => {
+    // The parser itself never uses this cast shape (Zod's `.safeParse` return IS a `Workspace` — no
+    // cast needed), so a clean codebase passes; a synthetic reintroduction must be caught.
+    const offending = 'const w = row as Workspace;';
+    const doubleCastOffending = 'const w = row as unknown as Workspace;';
+    const listOffending = 'const rows = raw as Workspace[];';
+    const clean = 'const w = WorkspaceSchema.safeParse(row);';
+    const typeOnlyImport = 'import type { Workspace } from "@sow/contracts";';
+    const renamedImport = 'import { Workspace as WS } from "@sow/contracts";';
+    expect(CAST_PATTERN.test(offending)).toBe(true);
+    expect(CAST_PATTERN.test(doubleCastOffending)).toBe(true); // the double-cast backdoor is ALSO caught
+    expect(CAST_PATTERN.test(listOffending)).toBe(true);
+    expect(CAST_PATTERN.test(clean)).toBe(false);
+    expect(CAST_PATTERN.test(typeOnlyImport)).toBe(false); // a legitimate type-only import is spared
+    expect(CAST_PATTERN.test(renamedImport)).toBe(false); // "Workspace as X" ≠ "as Workspace"
   });
 });

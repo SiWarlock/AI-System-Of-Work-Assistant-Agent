@@ -52,9 +52,15 @@ export function createEgressCommandPort(deps: EgressCommandDeps): EgressCommandP
         // (1) get-before-upsert (L30) — fail closed, never upsert on unknown/faulted prior.
         const existing = await deps.workspaceConfig.get(wsId as Workspace["id"]);
         if (isErr(existing)) {
-          return existing.error.code === "not_found"
-            ? err({ code: "workspace_not_found", message: "workspace not found" })
-            : err({ code: "store_fault", message: "workspace config get failed" });
+          if (existing.error.code === "not_found") {
+            return err({ code: "workspace_not_found", message: "workspace not found" });
+          }
+          // Task 9.36 — classify, don't collapse: a referentially-inconsistent stored row is
+          // distinct from a generic store fault (permanently non-retryable, see egressCommands.ts).
+          if (existing.error.code === "stored_row_schema_violation") {
+            return err({ code: "stored_row_schema_violation", message: "workspace config read failed re-validation" });
+          }
+          return err({ code: "store_fault", message: "workspace config get failed" });
         }
         const ws = existing.value;
         const before = ws.egressPolicy.employerRawEgressAcknowledged;
