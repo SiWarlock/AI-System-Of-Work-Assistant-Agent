@@ -678,6 +678,16 @@ The practical consequence the implementer committed to, and it is cheap: **for a
 
 **Rule:** state and verify the PROPERTY, not the mechanism that is supposed to deliver it — "no path targeting a writer-owned surface is reachable from any producer" rather than "the guard is called"; then adversarially test the property (hostile inputs, not just absent ones). Write pins against the property too, never against the construction you happened to use, or a different construction bypasses both code and pin. And mutation-test any invariant pin in the slice that introduces it: an inspection-passing pin can be vacuous or text-comparing, and only breaking the code distinguishes them. `pin: knowledge grounded-path.test.ts + synthesis-entity-resolver.test.ts (hostile-key + mutation-verified invariant pins)`.
 
+### ⭐ CONFIRMING INSTANCE 2026-07-29 (9.22) — a LOOSE ANCHOR makes a census pin accept a superset
+
+Self-caught by the implementer, on their own guard, in the round's last slice. 9.22 added a source-scan census pin — *"no producer bypasses the predicate"* — to prove that every `zeroEgressOnly` value comes from `isZeroEgressOnlyWorkspace`. The pin matched with a **prefix-anchored** regex.
+
+> **A prefix anchor accepts a superset. `isZeroEgressOnlyWorkspace(x) || true` matches the pin and is a total bypass** — the pin passes on precisely the input it exists to reject.
+
+Matching *"the call appears here"* is a **mechanism** check; the property is *"the value is the predicate's return, unmodified."* They both-anchored the match, then **mutation-verified by reintroducing that exact `|| true` shape**, watched it fail, and reverted. No live instance existed — **they found it by attacking their own guard rather than trusting it.**
+
+**Generalises to every census/source-scan pin:** anchor both ends, and pick your adversarial input by asking *what is the cheapest edit that satisfies this matcher while violating the invariant?* (the [L74](#74) question, aimed at the matcher instead of the subject). A pin that greps for a good call cannot distinguish a good call from a good call with a defect welded to it.
+
 ---
 
 <a id="71"></a>
