@@ -25,6 +25,15 @@ const status = (over: Partial<UiSafeEgressStatusView> = {}): UiSafeEgressStatusV
   ...over,
 });
 
+// Task #8 (9.10-C bullet 1) — the provider-routing posture pill's expected text, hardcoded here as
+// the TEST's expectation (not imported from the component — asserting against rendered UI text, not
+// an implementation internal). Exact equality is used at every call site below, never `.toMatch`:
+// "not established" CONTAINS "established", so a containment check on the TRUE state would also pass
+// for the FALSE state (the substring trap, L62).
+const ESTABLISHED_TEXT = "Provider routing: established";
+const NOT_ESTABLISHED_TEXT = "Provider routing: not established";
+const BANNED_EGRESS_CLAIM = /zero-egress|local-only|stays local|nothing leaves|cloud egress is possible/i;
+
 /** The last RTL render result — for the tests that need `rerender` (prop-identity / set-change cases). */
 let renderResult: ReturnType<typeof render>;
 
@@ -217,22 +226,160 @@ describe("Workspace-settings egress surface (9.10-C)", () => {
     await waitFor(() => expect((props.onLoadStatus as ReturnType<typeof vi.fn>).mock.calls.length).toBe(3));
   });
 
-  it("NEVER claims zero-egress / local-only — the producer derives that field as !acknowledged", async () => {
-    // spec(§5) safety rule 5 — `zeroEgressOnly` is currently `!employerRawEgressAcknowledged`
-    // (apps/worker/src/boot.ts:564), NOT a real local-provider pin: a personal workspace has ack=false
-    // while its allowlist is [claude] (cloud). Rendering it as "zero-egress only" would tell the owner
-    // content stays local when it egresses — the dangerous direction on the disclosure surface. So the
-    // surface must not make that claim until the producer computes a genuine pin (worker-track Finding).
+  it("posture_pill_never_claims_zero_egress_or_local_only_in_either_state", async () => {
+    // spec(§5) safety rule 5 — RE-AIMED, not retired (L67): the pre-9.22 pin's premise
+    // (`zeroEgressOnly === !employerRawEgressAcknowledged`) is gone, but its INTENT — this surface
+    // never claims zero-egress/local-only — is MORE load-bearing now that task #8 adds a real claim
+    // to this exact spot. The two fields are independent post-9.22, so a single adversarial fixture
+    // is no longer meaningful; exercises BOTH reachable states of the new pill in one pass instead.
     renderEgress({
       onLoadStatus: vi.fn((workspaceId: string) =>
         Promise.resolve({
           ok: true as const,
-          status: status({ workspaceId, employerRawEgressAcknowledged: false, zeroEgressOnly: true }),
+          status: status({ workspaceId, zeroEgressOnly: workspaceId === "ws_employer" }),
         }),
       ),
     });
-    await waitFor(() => expect(row("ws_employer").getAttribute("data-egress-ack")).toBe("false"));
-    expect(document.body.textContent).not.toMatch(/zero-egress|stays local|local[- ]only/i);
+    await waitFor(() =>
+      expect(row("ws_employer").querySelector("[data-egress-scope]")?.getAttribute("data-egress-scope")).toBe(
+        "established",
+      ),
+    );
+    expect(document.body.textContent).not.toMatch(BANNED_EGRESS_CLAIM);
+    const titled = Array.from(document.querySelectorAll("[title]"));
+    expect(titled.length).toBeGreaterThan(0); // non-vacuous — the scope-note `title` genuinely exists (L54)
+    titled.forEach((el) => expect(el.getAttribute("title")).not.toMatch(BANNED_EGRESS_CLAIM));
+    // MUTATION-VERIFIED (L75) — BANNED_EGRESS_CLAIM was confirmed to actually FIRE, not just currently
+    // pass on clean text: restoring a genuine over-claim into PROVIDER_ROUTING_ESTABLISHED ("... -
+    // nothing leaves this machine") broke this test plus `true_renders_a_scoped_model_provider_claim`
+    // (both via this regex specifically) and the two exact-text pins (via equality, a second
+    // independent mechanism). Verified, then reverted — a negative pin that has never failed is
+    // indistinguishable from one that cannot fail; this one has failed, on purpose, once.
+  });
+
+  it("false_renders_not_established_and_claims_nothing", async () => {
+    // spec(§5) — the FALSE-specific over-read risks, both directions named (L62's skipped direction):
+    // must not read as SAFE, and must not read as "cloud egress is possible" (the inverted claim).
+    renderEgress({
+      onLoadStatus: vi.fn((workspaceId: string) =>
+        Promise.resolve({ ok: true as const, status: status({ workspaceId, zeroEgressOnly: false }) }),
+      ),
+    });
+    await waitFor(() =>
+      expect(row("ws_employer").querySelector("[data-egress-scope]")?.textContent).toBe(NOT_ESTABLISHED_TEXT),
+    );
+    const text = row("ws_employer").textContent ?? "";
+    expect(text).not.toMatch(/\bsafe\b/i);
+    expect(text).not.toMatch(/cloud egress is possible|egress is possible/i);
+  });
+
+  it("true_renders_a_scoped_model_provider_claim", async () => {
+    // spec(§5) — the TRUE-specific risk: an unscoped "nothing leaves this machine"-class claim. `true`
+    // is unreachable in production today (9.32), but the rendering path must still be scoped, not just
+    // presently-untriggered.
+    renderEgress({
+      onLoadStatus: vi.fn((workspaceId: string) =>
+        Promise.resolve({ ok: true as const, status: status({ workspaceId, zeroEgressOnly: true }) }),
+      ),
+    });
+    await waitFor(() =>
+      expect(row("ws_employer").querySelector("[data-egress-scope]")?.textContent).toBe(ESTABLISHED_TEXT),
+    );
+    const text = row("ws_employer").textContent ?? "";
+    expect(text).toMatch(/model-provider/i);
+    expect(text).not.toMatch(/nothing leaves|leaves this (machine|device|computer)/i);
+  });
+
+  it("posture_text_moves_with_the_governing_state", async () => {
+    // spec(§5) L56 — change the governing field, the rendered claim moves. Ack is held IDENTICAL
+    // across both rows so this pins `zeroEgressOnly` specifically, not a conflation with the ack pill.
+    renderEgress({
+      onLoadStatus: vi.fn((workspaceId: string) =>
+        Promise.resolve({
+          ok: true as const,
+          status: status({
+            workspaceId,
+            employerRawEgressAcknowledged: true, // held constant across both rows
+            zeroEgressOnly: workspaceId === "ws_employer",
+          }),
+        }),
+      ),
+    });
+    await waitFor(() =>
+      expect(row("ws_employer").querySelector("[data-egress-scope]")?.textContent).toBe(ESTABLISHED_TEXT),
+    );
+    expect(row("ws_personal").querySelector("[data-egress-scope]")?.textContent).toBe(NOT_ESTABLISHED_TEXT);
+  });
+
+  it("posture_pill_is_decoupled_from_the_ack_field", async () => {
+    // spec(§5) — 9.22's entire achievement is that `zeroEgressOnly` is no longer `!acknowledged`. Pin
+    // BOTH directions as a STANDING assertion, not a one-time mutation check: vary `zeroEgressOnly`
+    // alone (ack constant, above) ⇒ the pill differs; vary ACK alone (`zeroEgressOnly` constant, here)
+    // ⇒ the pill is UNCHANGED. Without this direction, a regression that re-couples the pill to ack
+    // would pass every other test in this file, because every existing fixture that varies one
+    // currently varies both.
+    renderEgress({
+      onLoadStatus: vi.fn((workspaceId: string) =>
+        Promise.resolve({
+          ok: true as const,
+          status: status({
+            workspaceId,
+            zeroEgressOnly: true, // held constant across both rows
+            employerRawEgressAcknowledged: workspaceId === "ws_employer",
+          }),
+        }),
+      ),
+    });
+    await waitFor(() =>
+      expect(row("ws_employer").querySelector("[data-egress-scope]")?.textContent).toBe(ESTABLISHED_TEXT),
+    );
+    expect(row("ws_employer").getAttribute("data-egress-ack")).toBe("true");
+    expect(row("ws_personal").getAttribute("data-egress-ack")).toBe("false");
+    // ack differs between the two rows, but the posture pill does NOT move — pinned to zeroEgressOnly alone.
+    expect(row("ws_personal").querySelector("[data-egress-scope]")?.textContent).toBe(ESTABLISHED_TEXT);
+  });
+
+  it("no_naming_attribute_overclaims", async () => {
+    // spec(§5) L54 — sweep EVERY naming/description attribute on the posture subtree; non-vacuous
+    // because the scope-note `title` is a real, populated attribute, not an empty selector set.
+    renderEgress({
+      onLoadStatus: vi.fn((workspaceId: string) =>
+        Promise.resolve({ ok: true as const, status: status({ workspaceId, zeroEgressOnly: true }) }),
+      ),
+    });
+    await waitFor(() => expect(row("ws_employer").querySelector("[data-egress-scope]")).not.toBeNull());
+    // Positive anchor FIRST (L54/copilot-panel precedent): a bare "some naming attribute exists
+    // somewhere in the row" is satisfied by the UNRELATED Retry/Revoke button aria-labels even if the
+    // posture pill's OWN `title` were missing — verified by mutation (removing `title` left this
+    // sweep's generic node-count check green). Anchor on the specific attribute this feature adds.
+    expect(row("ws_employer").querySelector("[data-egress-scope][title]")).not.toBeNull();
+    const attrs = ["aria-label", "aria-labelledby", "aria-describedby", "title"];
+    const nodes = Array.from(document.querySelectorAll(attrs.map((a) => `[${a}]`).join(",")));
+    expect(nodes.length).toBeGreaterThan(0);
+    let checked = 0;
+    for (const el of nodes) {
+      for (const attr of attrs) {
+        const v = el.getAttribute(attr);
+        if (v !== null) {
+          checked += 1;
+          expect(v).not.toMatch(BANNED_EGRESS_CLAIM);
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(0); // non-vacuity, L54
+  });
+
+  it("unavailable_is_not_not_established", async () => {
+    // spec(§16)/(§5) — the read-fault path stays a claim SEPARATE from both posture states: neither
+    // "established" nor "not established" appears when the posture is genuinely unavailable.
+    renderEgress({
+      workspaces: [WORKSPACES[0]!],
+      onLoadStatus: vi.fn(() => Promise.resolve({ ok: false as const })),
+    });
+    await waitFor(() => expect(row("ws_employer").getAttribute("data-egress-ack")).toBe("unknown"));
+    expect(row("ws_employer").textContent).toMatch(/posture unavailable/i);
+    expect(row("ws_employer").querySelector("[data-egress-scope]")).toBeNull();
+    expect(row("ws_employer").textContent).not.toMatch(/provider routing/i);
   });
 
   it("an UNAVAILABLE posture offers a Retry that re-reads — a blip must not strand the fail-safe control", async () => {

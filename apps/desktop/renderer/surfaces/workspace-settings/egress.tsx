@@ -12,13 +12,35 @@ import type { EgressStatusResult, UiSafeEgressStatusView } from "../../lib/egres
 // The OFF state says so instead of offering a button. Tests pin the absence as an exact control
 // INVENTORY in BOTH posture states (a filter-only assertion would be vacuous when OFF renders nothing).
 //
-// ⚠ `zeroEgressOnly` is READ but deliberately NOT RENDERED. Its contract is "pinned to a local
-// zero-egress provider", but the live producer derives it as `!employerRawEgressAcknowledged`
-// (`apps/worker/src/boot.ts:564`) — so every personal workspace (ack always false, allowlist `[claude]`
-// = cloud) would render a "zero-egress only" assurance while its content does egress. Claiming
-// local-only for content that leaves the machine is the dangerous direction on the one surface built to
-// inform disclosure decisions, so the claim waits for a real local-pin signal (Step-9 Finding, worker
-// track). The field stays in the allowlist so the projection shape is unchanged.
+// ⚠ 9.10-C bullet 1 (task #8, ⚠ safety rule 5) — `zeroEgressOnly` IS now rendered, as a SEPARATE
+// pill from the ack posture above. 9.22 (`69b10883`) changed its derivation from `!acknowledged` to
+// `isZeroEgressOnlyWorkspace` (an all-local NON-EMPTY provider matrix AND both egress allowlists
+// empty), so the field now means what it documents — the withholding this comment used to explain is
+// superseded, not merely edited around.
+//
+// `true` = ESTABLISHED: no model-provider route can leave this machine. `false` = NOT ESTABLISHED —
+// never "cloud egress is possible", never "safe". The app does not know. Both misreadings are real
+// risks on this exact surface (contracts L56/L62), so the pill text is deliberately EPISTEMIC
+// ("established" / "not established") rather than substantive ("safe" / "local").
+//
+// ⛔ SCOPE: the predicate covers MODEL-PROVIDER ROUTES ONLY — connectors and Tool-Gateway external
+// writes never consult it. So even `true` is a SCOPED claim, never "nothing leaves this machine".
+// `EGRESS_SCOPE_NOTE` below is constant, shared text — safe as a constant because it states what the
+// predicate MEASURES (a fixed architectural fact), not the derived VALUE; only the pill text itself
+// moves with `zeroEgressOnly` (forbidden-pattern #7's test: change the governing state, the claim moves).
+//
+// ⚠ KNOWN BOUND (state here, not discover later): after 9.22, a worker-side STORE FAULT returns `ok`
+// with a fail-closed `zeroEgressOnly: false` — indistinguishable at this renderer from a genuinely
+// not-established workspace (Q3 was settled as ONE `false` value, deliberately, not a third state).
+// This is NOT the same as this component's own `cell.kind === "unavailable"` branch below (a
+// transport-level failure or malformed payload), which stays textually distinct ("posture
+// unavailable" + Retry) and IS recoverable via Retry — that distinction is real and preserved; the
+// one above is not, and is accepted under Q3's ruling.
+//
+// ⚠ `true` is currently UNREACHABLE in production (task 9.32 — nothing writes a non-empty
+// `providerMatrix` yet; an owner-ratified deferred arc, not a bug). Rendered PLAINLY, no special
+// affordance: de-emphasizing an unreachable state would itself be an implicit claim the predicate
+// does not support.
 //
 // Fail-closed PRESENTATION: a read error renders "posture unavailable" — an unknown posture is never
 // drawn as acknowledged, and no revoke is offered on a guess. It is NOT terminal, though: a per-row
@@ -26,6 +48,16 @@ import type { EgressStatusResult, UiSafeEgressStatusView } from "../../lib/egres
 // one transient blip. A revoke is a deliberate TWO-STEP confirm (never a native confirm()/alert(): a
 // modal dialog blocks the harness), and its result comes from the command's returned status — a failure
 // leaves the displayed posture untouched (no optimistic flip, no false "revoked").
+
+/** Task #8 — the shared scope caveat for the provider-routing posture pill. See the file-header
+ *  comment for why a constant is safe here (it describes the MEASURED scope, never the derived value). */
+const EGRESS_SCOPE_NOTE =
+  "Covers model-provider routing only — connector reads and external-write traffic are governed separately and aren't reflected here.";
+
+/** Epistemic, not substantive: "established" (a fact was confirmed) vs "not established" (unknown) —
+ *  never the two banned over-claiming shorthand tokens named in the file-header comment above. */
+const PROVIDER_ROUTING_ESTABLISHED = "Provider routing: established";
+const PROVIDER_ROUTING_NOT_ESTABLISHED = "Provider routing: not established";
 
 export interface EgressWorkspaceOption {
   readonly id: string;
@@ -194,11 +226,23 @@ export function EgressSettings(props: EgressSettingsProps): ReactElement {
                     </div>
                   </>
                 ) : (
-                  <span className={`sow-pill sow-pill--egress-${String(cell.status.employerRawEgressAcknowledged)}`}>
-                    {cell.status.employerRawEgressAcknowledged
-                      ? "Cloud egress acknowledged"
-                      : "Not acknowledged — raw employer content is not cleared for cloud"}
-                  </span>
+                  <>
+                    <span className={`sow-pill sow-pill--egress-${String(cell.status.employerRawEgressAcknowledged)}`}>
+                      {cell.status.employerRawEgressAcknowledged
+                        ? "Cloud egress acknowledged"
+                        : "Not acknowledged — raw employer content is not cleared for cloud"}
+                    </span>
+                    {/* Task #8 — a SEPARATE claim from the ack pill above: pinned to `zeroEgressOnly`
+                        alone (9.22 decoupled it from `employerRawEgressAcknowledged`). */}
+                    <span
+                      className="sow-pill sow-pill--egress-scoped"
+                      data-egress-scope={cell.status.zeroEgressOnly ? "established" : "not-established"}
+                      title={EGRESS_SCOPE_NOTE}
+                    >
+                      {cell.status.zeroEgressOnly ? PROVIDER_ROUTING_ESTABLISHED : PROVIDER_ROUTING_NOT_ESTABLISHED}
+                    </span>
+                    <p className="sow-egress-scope-note">{EGRESS_SCOPE_NOTE}</p>
+                  </>
                 )}
 
                 {/* The ONLY mutating control — offered iff the ack is genuinely ON and a live worker exists. */}
