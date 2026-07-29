@@ -23,6 +23,7 @@ import type { KnowledgeMutationPlan } from "../models/knowledge-mutation-plan";
 import type { ProposedAction } from "../models/proposed-action";
 import type { Project } from "../models/project";
 import type { Task } from "../models/task";
+import type { EntityRef } from "../models/entity-ref";
 import type { ExternalWriteEnvelope } from "../models/external-write-envelope";
 import type { WriteReceipt } from "../models/write-receipt";
 import type { SourceEnvelope } from "../models/source-envelope";
@@ -259,6 +260,12 @@ export const validTask: Task = {
   priority: "p1",
   dueDate: T0,
   provenanceOrigin: "meeting_close",
+};
+
+// ── EntityRef (§DEC-CANDGATE leg 1, task 13.18) ──────────────────────────────
+export const validEntityRef: EntityRef = {
+  name: "Acme API",
+  kind: "project",
 };
 
 // ── 16. WorkflowRunRef ───────────────────────────────────────────────────────

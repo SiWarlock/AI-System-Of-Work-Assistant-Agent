@@ -33,6 +33,7 @@ export * from "./models/approval";
 export * from "./models/audit-record";
 export * from "./models/divergence";
 export * from "./models/egress-policy";
+export * from "./models/entity-ref";
 export * from "./models/external-write-envelope";
 export * from "./models/fact-provenance";
 export * from "./models/gbrain-pin";

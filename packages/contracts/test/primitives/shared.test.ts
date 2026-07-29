@@ -56,6 +56,9 @@ import {
   trustLevelSchema,
   gbrainAllowedOpSchema,
 } from "../../src/models/shared-enums";
+// §DEC-CANDGATE leg 1 (task 13.18) — EntityKind is model-local to entity-ref.ts,
+// not shared-enums.ts (it is not reused by any other model, unlike TaskLifecycle/Priority).
+import { entityKindSchema } from "../../src/models/entity-ref";
 import { emitJsonSchema } from "../../src/schema/emit";
 import { z } from "zod";
 
@@ -216,6 +219,8 @@ describe("shared enum schemas — exact membership", () => {
     [gbrainAllowedOpSchema, [
       "search", "graph", "timeline", "schema_read", "health", "contained_synthesis",
     ]],
+    // §DEC-CANDGATE leg 1 (task 13.18) — EntityRef's entity-class vocabulary.
+    [entityKindSchema, ["person", "project", "concept"]],
   ];
 
   it("each enum lists exactly its declared members", () => {
