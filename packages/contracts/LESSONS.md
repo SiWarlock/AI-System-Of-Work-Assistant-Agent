@@ -1348,3 +1348,126 @@ That the detection method which worked was *a human noticing an absence* is prec
 **Do:** when you impose a hold, track it as an open obligation on yourself, and release it before any other work. In a team pattern where one role is the only channel between two others, **the relay is a critical path, not correspondence.** And read the board, not your own queue, when deciding whether anyone is waiting.
 
 `accepted: not mechanically enforceable` — mitigation: an imposed hold is written down as an owed release (the same rule as [L51](#51): if it only lives in your head or in a message, it is not tracked); check `TaskList` for `in_progress` tasks with idle owners before starting unrelated work.
+
+---
+
+<a id="92"></a>
+## 92. A certified phase's acceptance statement is IMMUTABLE — new work anchored to its spec goes to an ACTIVE phase; the Spec anchor carries traceability, the placement carries ownership
+
+**2026-07-29 · §DEC-CANDGATE leg 1 (task 13.18) · orchestrator proposed, lead ruled**
+
+Scheduling the twice-deferred §DEC-CANDGATE arc needed a numbered tracker home. Its anchor-native one was obvious: the slice adds a `packages/contracts` model, and **Phase 1's Spec anchors are exactly `§3 · Appendix A · §16/REQ-S-006`.** So `### 1.16`.
+
+Phase 1 is `✅ done · CLEAR 06-30`, and its acceptance line reads **`- [x] DONE · a039e86e · phase-certified`** followed by *"All 1.X checkboxes ticked."*
+
+I noticed adding an unticked `### 1.16` would flip a `✅` row the owner reads, judged that not mine to do quietly, and surfaced it instead of absorbing it. **That instinct was right and the reasoning behind it was too small.**
+
+> **The lead's ruling: a phase certification is an AUDIT ARTIFACT, not a status field.** Adding an unticked task under an acceptance line asserting *"All 1.X checkboxes ticked"* does not just flip one `✅` — it **retroactively redefines every past certification in the project** to mean *"complete, except for whatever we added later."* That integrity loss is far larger than a phase-boundary smudge.
+
+**And the objection that made Phase 1 look necessary dissolves once placement and anchoring are separated.** They are different things:
+
+- **The `Spec:` anchor carries TRACEABILITY.** 13.18 still declares `§3 · Appendix A · §16/REQ-S-006`, so `/phase-exit`'s auditor reads those anchors and the audit surface follows the task wherever it sits.
+- **The phase carries OWNERSHIP** — who works it, which round closes it, whose gate it blocks.
+
+So the task went to **Phase 13** (active, and where all four instances of the defect arose) with `spec-lint`'s sanctioned **`widens phase scope because…`** declaration. Traceability preserved, certification honest, nothing smudged that matters.
+
+⚠ **The near-miss worth naming:** the alternative I nearly took would have been *locally* correct on every rule I could see — right anchors, right package, right phase for the spec — and would have quietly damaged an audit trail spanning fourteen certified phases. **A rule that is right about one row can be wrong about the artifact the rows compose into.**
+
+**Do:** new work whose spec anchors point into a **certified** phase goes to an **active** phase, declaring the scope widening explicitly, and records why in-task so it is not re-litigated. Never add an unticked checkbox under a `[x]`-certified acceptance statement. If no active phase can own it, that is an escalation, not a certification edit.
+
+`pattern: awk '/^### Acceptance criteria/{a=1} a&&/^- \[x\]/{c=1} /^## Phase/{a=0;c=0} c&&/^- \[ \]/{print FILENAME": unticked task under a certified acceptance line"}' IMPLEMENTATION_PLAN.md` — the real fix is a `plan-lint` rule (recorded as a scaffolding follow-up); until then this grep is the check.
+
+---
+
+<a id="93"></a>
+## 93. Code citations in durable prose fail in BOTH directions — they rot silently, AND a wrongly-scoped audit condemns healthy ones. The audit is the more dangerous half
+
+**2026-07-29 · three candidate instances in one round; ONE of them was a false positive**
+
+Durable prose in this project cites `file.ts:NN` constantly, and **nothing lints those citations.** This round produced what looked like three instances of them rotting. It was two — and the third taught more than both.
+
+**The two real instances (rot):**
+1. **[L69](#69)** cited `:83`/`:178`; both had drifted. Found by an implementer reading the file while briefing 9.22 — *"an L71 instance inside L69."*
+2. **`IMPLEMENTATION_PLAN.md:90`** (the §DEC-CANDGATE ledger) cited `planner.ts:180-182` and *"consumed at `:197`"* — both stale post-13.8h, **inside the paragraph written explicitly for whoever picks the arc up cold.** Corrected to `:197-200` and `:220`.
+
+**The false positive, and why it is the dangerous direction:**
+
+A premise-check reported that **[L49](#49)** cites a `ZOD_BY_ID` registration and membership-guard rows that **do not exist anywhere.** Grep confirmed: zero hits. The conclusion drafted into a brief was *"follow the code, not L49's stale prose."*
+
+**L49 was correct.** `ZOD_BY_ID` lives in `packages/domain/test/fixtures/fixtures.test.ts`; the membership rows in `packages/contracts/test/primitives/shared.test.ts`. The search had covered only `packages/contracts/src` and `packages/contracts/test`, found nothing, and **generalized "not in this package" to "does not exist."**
+
+> ⭐ **The search reproduced the exact blind spot the lesson exists to close.** L49's whole content is *"a new Appendix-A model's checklist reaches OUTSIDE `packages/contracts`, and missing the fixture/`ZOD_BY_ID` breaks the DOMAIN meta-test, not the contracts suite — **green-in-contracts ≠ done**."* An audit scoped to `packages/contracts` was **guaranteed** to declare that lesson stale.
+
+**Had it shipped:** an implementer would have followed the brief, landed a fully green `packages/contracts`, reported clean, and left `@sow/domain` red with a half-frozen seam — **L49's precise failure mode, caused by a brief that cited L49 while contradicting it.**
+
+⚠ **The two directions demand opposite responses, which is why one-directional framing makes the next reader worse:**
+
+| Direction | What it looks like | Wrong response it invites |
+|---|---|---|
+| **Rot** (L69, plan:90) | citation points at moved/absent code | *"trust cited lessons less"* |
+| **False positive** (L49) | audit says a HEALTHY citation is stale | *"delete the guard the citation defends"* |
+
+Loosening trust in cited lessons is the natural reaction to rot — and it is exactly what would have made instance 3 land. **A citation that fails to resolve is a question, never a verdict.** Ask *"did I look everywhere it could live?"* before *"is the prose wrong?"* — and for this project the answer is usually another package, because the seams deliberately span them.
+
+**Do:** before declaring a citation stale, search the **whole repo**, not the package the symbol seems to belong to. When correcting one, land **one** number in **every** place it appears (a half-corrected citation is a new instance). And when a premise-check contradicts a lesson, the lesson gets the benefit of the doubt until the search is proven exhaustive — the lesson was written by someone holding the code.
+
+⛔ **Deliberately NOT done: a repo-wide citation sweep.** It is task 24.6's territory and out of scope this round — and this lesson's own content argues a cheap sweep would produce false positives faster than fixes.
+
+`pattern: grep -oE '[a-zA-Z0-9_/.-]+\.ts:[0-9]+' packages/*/LESSONS.md` — then verify each path exists and has ≥ that many lines. ⚠ **States its own limit: this catches a citation pointing past EOF or at a deleted file; it CANNOT catch a line that still exists but now says something else, which is the common case (both real instances this round).** The stronger form is citing a stable symbol name alongside the line number so a reader can re-locate it after drift.
+
+---
+
+<a id="94"></a>
+## 94. A correction must land in EVERY channel that carries the claim — and channels rank by what a stale value CAUSES, not by how authoritative they look
+
+**2026-07-29 · the orchestrator's own failure, three times in one correction, while writing the lesson about it**
+
+I retracted a wrong finding (that [L49](#49) was stale — see [L93](#93)) and fixed brief 219. I then told the lead the correction had landed. **It had landed in one channel of four.**
+
+| Channel | State after my "fix" | Found by |
+|---|---|---|
+| brief 219, correction-3 section | ✅ corrected | me |
+| task #3 **metadata** | ✅ corrected | me |
+| task #3 **description** | ⛔ **still the retracted version, verbatim** | **the lead** |
+| brief 219, **three downstream references** | ⛔ **still pointed the old way** | me, only on a re-audit |
+
+The description was being read by an implementer **already working the slice**. The three downstream brief references included the *"verify the premises"* instruction — the first thing the implementer reads — which still called it *"a probably-stale L49 citation."*
+
+> ⚠ **`metadata ≠ description`, and correcting the section that states a claim does not correct the sentences that repeat it.** I had corrected the *argument* and left the *conclusions drawn from it* in place, in the same file, having just re-stamped that file and declared it fixed.
+
+⛔ **A correction that lands in one place and not another is WORSE than no correction:** two authoritative sources now disagree, **and neither announces the disagreement.** Before, one source was wrong. After, the reader picks.
+
+**This is the round's signature shape, third instance.** It is not a new failure mode — it is the one the round opened on:
+
+1. **Seven Phase-9 checkboxes** read `[ ] OPEN` while the phase's own acceptance **prose** already credited every landing commit. *The record was correct where nobody looks and wrong where it gets read.*
+2. **[L91](#91)** — a clearance reached the orchestrator and never reached the implementer. *Correct at the routing layer, absent at the consuming one.*
+3. **This** — corrected in the brief, stale in the task description an implementer was reading.
+
+⭐ **The new half, which makes this mechanical rather than a reminder: NOT ALL CHANNEL DRIFT IS EQUAL. Rank by consequence.**
+
+- A stale **instruction** fails **OPEN** — the implementer acts on it. Task #3's retracted L49 text pointed at *"skip the domain checklist,"* i.e. straight at the half-frozen seam.
+- A stale **spec-lint stamp** fails **SAFE** — `/tdd` Step 0 simply re-lints, costing one run.
+
+Both were stale in the same description. **Only one could hurt.** And the stamp went stale *three times* (`@9632c07d → @ed597a6a → @1469120a → @8fe4b89d`) because **every content edit re-hashes the brief** — so a hash pasted into durable prose is guaranteed to rot.
+
+⇒ **The fix is structural, not diligence.** I removed the stamp from the task description entirely and replaced it with a pointer to the metadata plus the command to regenerate it. **A volatile value does not belong in durable prose that also carries instructions** — it drifts, and its drift trains readers to distrust the prose around it, which is where the load-bearing text lives.
+
+**Do:** when you correct a claim, enumerate its channels **before** declaring the fix done — brief file (including every downstream sentence that repeats it), task description, task metadata, and any message already sent — then grep the retracted wording across all of them to prove none survives. Fix the highest-consequence channel first. Keep volatile values (hashes, counts, stamps) out of durable instruction prose and behind a pointer. And when a correction reverses an instruction someone may already have acted on, **tell them explicitly that it reversed** — do not just publish the new version.
+
+`pattern: grep -rniE '<the retracted wording>' docs/briefs/ IMPLEMENTATION_PLAN.md packages/*/LESSONS.md` — run it as the **last** step of any correction, not the first; a correction is not done when the right text exists, it is done when the wrong text does not. ⚠ Task descriptions/metadata are session-scoped and **not** greppable — enumerate them by hand ([L51](#51): if it only lives in the harness, it is not tracked).
+
+### ⛔ AMENDMENT (same day, +1 hour) — this lesson was applied to the INSTANCE it was noticed at, not across the CLASS it named. Fourth instance.
+
+I wrote *"a hash in durable prose is guaranteed to rot"* — **a statement about every task description** — and then de-inlined the stamp from **task #3 only.** The lead enumerated the rest:
+
+- **#1** description said `@f9bdfa76` · brief was actually `@e23ff413` ⛔ **stale since dispatch**
+- **#2** description said `@10f66c4f` · brief `@10f66c4f` — current **only because that brief had not been edited yet**
+- **#3** ✅ the one I noticed, the one I fixed
+
+⚠ **`@e23ff413` is the stamp I quoted in #1's own dispatch message.** I had the new hash in hand and left the old one in the description, so worker held two disagreeing sources for the same brief from the moment it was dispatched.
+
+⭐ **The distinction that makes this mechanical, and it rescues the consequence-ranking rather than undermining it:** the lead correctly de-prioritised #1 *because a stale stamp is fail-safe.* That reasoning was sound. **But "which do I fix FIRST" and "what is the FULL SET" are two different questions, and answering only the first is how *fix first* silently becomes *fix only*.** The ranking tells you the order. It never tells you the extent. **Ask both, in that order, every time.**
+
+⇒ **When a lesson names a class ("every X of this kind"), the fix is not done until the class is enumerated** — even for the members whose staleness is harmless, because the harmless ones are where the habit forms. And note the recursion: **this is the round's signature shape for the fourth time, committed by the author of the lesson about it, within an hour of writing it.** Knowing a failure mode does not make you apply it at the right scope — which is why the check below is a question you ask, not a thing you remember.
+
+**Do (added):** after fixing an instance, ask *"what is the SET this instance belongs to, and have I enumerated every member?"* — and record the enumeration, not just the fix. A lesson that diagnoses a class and ships one instance-fix will let its next reader do exactly the same thing and feel finished.
