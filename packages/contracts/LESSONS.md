@@ -1053,4 +1053,16 @@ Two implementers hit the same defect from opposite ends within hours, neither at
 
 **Same root as the mutation-window rule** ([L75](#75)): a shared tree has more shared state than the files themselves — the index and the working tree are both global, and every agent's normal, correct workflow perturbs them. **Neither of these was a discipline failure; both were structural.** Expect them whenever N implementers share one checkout.
 
-`accepted: not mechanically enforceable` — mitigation: pathspec-limited commits as the default; `git status` before believing a red in a package you did not touch.
+### ⭐ THE PROCEDURE — three checks, and the third is the one that caught it
+
+Per-file `git add` is **necessary but not sufficient**. It does not protect against **(a)** files already in the index before you add, or **(b)** the index changing between your `add` and your `commit`. What actually worked, from three occurrences in one session (another area's session doc in the staging area · an index reset between `add` and `commit` · a foreign session doc inside a commit despite staging exactly one file):
+
+1. **BEFORE** — `git diff --cached --name-only`, immediately before committing. Verify the exact set.
+2. **DURING** — chain `git add … && git commit …` in **ONE invocation**, so nothing can land between them.
+3. **AFTER** — `git show --stat`, immediately after. **Catch what still got through.**
+
+> **Step 3 is the one that matters.** In the third occurrence a commit had *already* silently carried another area's session doc; it was caught only by checking afterwards and corrected with `reset --soft` + unstage + re-commit. **Steps 1 and 2 reduce the odds; step 3 is what tells you they failed.** Without it, the mis-attribution is discovered by whoever audits the hash months later, if ever.
+
+A recovery via `reset --soft` is safe and correct here — it is *not* history rewriting, since the commit has not been shared. That is a different thing from rebasing a pushed or teammate-visible commit, which stays forbidden.
+
+`accepted: not mechanically enforceable` — mitigation: the three-check procedure above; pathspec-limited commits as the default; `git status` before believing a red in a package you did not touch.
