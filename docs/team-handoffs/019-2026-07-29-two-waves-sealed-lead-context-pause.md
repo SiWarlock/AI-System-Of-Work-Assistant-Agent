@@ -3,9 +3,10 @@
 **Date:** 2026-07-29 · **Track:** single-track `main` (root checkout, no worktree)
 **Predecessor:** `018-2026-07-29-egress-honesty-sealed-full-teardown.md`
 **Successor:** _(next `/team-end`)_
-**Round-seal chain:** `a0661c19` → `6286f0d3` → `29417647` · **unpushed:** run `git rev-list --count origin/main..HEAD`
+**Round-seal commit:** `a0661c19` · **everything after it is close-out** — list it with `git log --oneline a0661c19..HEAD`; count unpushed with `git rev-list --count origin/main..HEAD`.
 
-> ⛔ **PUSH IS OWED AND OWNER-RUN.** Nothing was pushed. Do not quote a commit count from this doc — it rots; run the command.
+> ⛔ **PUSH IS OWED AND OWNER-RUN.** Nothing was pushed.
+> ⚠ **This line originally inlined the seal chain and was wrong within four minutes** — three more close-out commits landed after it was written. Corrected to name the ROUND-SEAL commit (stable) and give the COMMAND for the rest (self-updating). **That is L110's rule applied to this document: do not quote a count or a chain from this doc — run the command.** The defect it demonstrates is the round's own, committed by the lead in the artifact recording it.
 
 ## Why this handoff exists
 
