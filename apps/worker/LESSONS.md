@@ -744,3 +744,37 @@ Extends L76 to a two-op producer with a REMOVE leg. The producer core (`createIn
 **Date:** 2026-07-24. **Source slice:** 9.19 — DEV-ONLY demo-seed for a populated Global Today.
 
 For an owner to browse a populated dashboard WITHOUT extraction/arming: a `SOW_DEMO_SEED`-gated dev fixture that writes representative rows across the FULL Global Today read-model (dashboard_cards + global_surface + per-ws workspace/project/project_dashboards/recent_changes/ingestion_inbox + registry). Unlike `provisionDev` (which DERIVES from a real vault Markdown note), the demo-seed is VAULT-FREE (fixtures) and populates the Global aggregate provisionDev skips. REUSE provisionDev's shape-correct upsert helpers (`export` them in-place, byte-equivalent) so every seeded row passes the LIVE read-side `sanitize*` re-gate — the seeded shapes ARE the real projection shapes (incl. the §6 GclProjectionSchema refine for global_surface). Discovery: the renderer's Global scope reads BOTH `dashboard_cards` AND `global_surface`, so both must be seeded. STRICT gate via a pure `maybeSeedDemoData(env, deps)` (unit-testable OFF byte-equivalence + a one-line boot wiring): fires ONLY on `SOW_DEMO_SEED === "1"` — default/absent/truthy-not-strict/`" 1"` ⇒ zero puts. READ-MODEL-ONLY is the load-bearing pin — the module calls ONLY `readModels.put`/`registerWorkspace`, NEVER Markdown / KnowledgeWriter / the candidate gate / secrets / egress (a MULTI-LINE-AWARE import-statement scan enforces it — the one-writer + candidate posture stay structurally untouched; seeding the approvals OPERATIONAL store would break this pin, so a populated approvals inbox is a SEPARATE dev-seed follow). Never-throws at boot (a seed fault is a typed err, boot degrades). The forked worker inherits `process.env`, so `SOW_DEMO_SEED=1 ./dev.sh` reaches it (a `.env`-file flag additionally needs the desktop dotenv-allowlist). `pin: demoSeed.test.ts (populate-every-key + sanitize-regate + strict-off-zero-writes + read-model-only-import-scan + idempotent + fault-never-crashes) + demoSeed-live.test.ts (real tRPC caller populated ON / empty OFF)`.
+
+---
+
+<a id="79"></a>
+## 79. A multi-step path whose steps are individually durable must expose WHICH step is incomplete — a taxonomy needs a member per RECOVERABLE STATE, not per fault source
+
+**Date:** 2026-07-29. **Source slice:** 9.21-A — the typed partial-scaffold state (`c09ccd9b`).
+
+`provisionWorkspace` has **four individually durable steps** and **five store-side failure points**, and every one returned the same `store_fault`. So *"nothing was created"* and *"the config row landed but the registry union did not"* were **indistinguishable to the caller** — and the second is not hypothetical: the create branch inserts config **first** precisely so a later union fault leaves the workspace **invisible** to scoped reads rather than registry-known-but-config-less. **The partial was a designed-for, fail-closed state with no way to announce itself.**
+
+⇒ **A failure taxonomy needs a member per RECOVERABLE STATE, not per fault source.** Five faults collapsing to one code is correct if the caller's only option is "give up"; it is wrong the moment one of those states is **resumable**, because the caller cannot offer resume for a state it cannot name.
+
+⚠ **And the typed state must survive the TRANSPORT.** `provisionErrorToFailure` was extended in the same slice so the variant reaches the router as a distinguishable `ONBOARDING_PARTIAL_SCAFFOLD` — **a typed state that dies at the boundary is invisible to the consumer it exists for**, which would have made the producer leg pointless while looking complete.
+
+⭐ **Half the slice PINNED behaviour that already worked.** The resume path (a same-type re-provision unioning the registry, repairing a workspace written but never registered) was already correct and **entirely unproven**. Mutation-verified rather than assumed: removing the union call turned the resume test RED; re-adding the pre-9.23 seeding upsert turned the egress-preservation test RED on a 4-key-vs-3-key policy diff. **A pin never observed to fail is an unproven pin** (contracts L90).
+
+`pin: apps/worker/test/composition/provisionWorkspace-partial-scaffold.test.ts — resume_after_partial_completes_the_union + resume_does_not_restore_a_revoked_ack + create_path_registry_fault_returns_partial_not_store_fault`
+
+---
+
+<a id="80"></a>
+## 80. Do not widen a literal-typed success field to model a failure — a partial is a FAILED operation with durable side effects, never an `ok`
+
+**Date:** 2026-07-29. **Source slice:** 9.21-A (`c09ccd9b`). **Extends [L31](#31).**
+
+`ProvisionedWorkspace.registryMember` is typed as the **literal `true`** ("registry-member by construction"), which makes *"provisioned but unregistered"* **structurally unrepresentable as a success**. Modelling the new partial state by widening it to `boolean` (plus a `repairState` field) was the obvious move and the wrong one: **it deletes a real structural guarantee in order to model a failure as a success.**
+
+⇒ **A partial is not a success. It is a FAILED operation with durable side effects** — so it belongs in the `err` arm, as a distinct variant naming what completed and what did not (`configWritten: true`, `incompleteStep: "registry_union"`). `ok` keeps meaning fully-provisioned-and-registered.
+
+⚠ **The general shape, worth carrying past this field:** when a new state does not fit an existing type, the cheap fix is to loosen the type until it fits. That trades a compile-time guarantee for a runtime convention, and the guarantee is the thing that was doing work. **Add a case; do not weaken a claim.** Same instinct as L31's literal-`false` arming flags — the type is load-bearing, not decorative.
+
+**Pinned mechanically, and the pin was proven:** a `@ts-expect-error` on constructing an `ok` with `registryMember: false` goes **unused** (tsc `TS2578`) the moment the literal is widened — mutation-verified by aliasing it to `boolean` and observing the directive go unused, then reverting.
+
+`pin: apps/worker/test/composition/provisionWorkspace-partial-scaffold.test.ts — a_partial_is_not_constructible_as_ok + tsc`
