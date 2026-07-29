@@ -2086,3 +2086,31 @@ body {
 .sow-health-item .sow-health-time:last-child {
   margin-left: auto;
 }
+
+/* ── Render-time error boundary fallback (§16, task #35 / 9.35) ──────────────────────────── */
+/* Shared by both boundary sites (main.tsx root + AppShell's content pane) — a short, calm
+   message + a manual retry affordance. No error detail is ever available to style around. */
+.sow-error-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 24px;
+  font-size: 13px;
+  color: var(--label-2, #6b6b70);
+}
+
+.sow-error-fallback-text {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.sow-error-fallback-retry {
+  padding: 8px 14px;
+  font-size: 12.5px;
+  color: var(--label-2, #6b6b70);
+  background: var(--card, #fff);
+  border: 0.5px solid rgba(255, 255, 255, 0.4);
+  border-radius: 14px;
+  cursor: pointer;
+}

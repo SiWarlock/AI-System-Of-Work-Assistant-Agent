@@ -22,6 +22,7 @@ import type { Route } from "../store/route";
 import { accentVar } from "../lib/accent";
 import { Copilot } from "../surfaces/copilot/Copilot";
 import type { AskResult } from "../lib/copilot-ask";
+import { ErrorBoundary, ErrorFallback } from "./ErrorBoundary";
 
 export interface AppShellProps {
   readonly connection: ConnectionStatus;
@@ -477,7 +478,15 @@ export function AppShell(props: AppShellProps): ReactElement {
         </nav>
 
         {/* ── Content pane — the active surface ─────────────────────────── */}
-        {children}
+        {/* Surface-level boundary (9.35 / task #35): keyed on the route so navigating to a
+            DIFFERENT surface remounts a fresh boundary (auto-reset) rather than carrying a
+            crashed instance's state forward. Chrome/nav/Copilot rail live OUTSIDE this boundary,
+            so they survive a throw here — this is the recoverable half of the pair; the root
+            boundary in main.tsx is the backstop for everything this one cannot reach (the
+            Onboarding early-return + App() itself, neither of which is inside {children}). */}
+        <ErrorBoundary key={JSON.stringify(route)} fallback={(reset) => <ErrorFallback reset={reset} />}>
+          {children}
+        </ErrorBoundary>
 
         {/* ── Copilot right sidebar — collapsed (thin rail) ⇄ expanded (chat panel) ── */}
         {copilotOpen ? (

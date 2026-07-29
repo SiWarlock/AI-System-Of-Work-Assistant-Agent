@@ -12,5 +12,5 @@
       "@sow/db": ["../../packages/db/dist/index.d.ts"]
     }
   },
-  "include": ["test-dom"]
+  "include": ["test-dom", "preload/api.d.ts"]
 }
