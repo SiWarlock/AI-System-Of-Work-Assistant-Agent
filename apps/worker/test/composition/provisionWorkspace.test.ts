@@ -174,6 +174,13 @@ describe("provisionWorkspace (14.1 — production workspace provisioning path)",
         upsertCalls += 1;
         return ok(w);
       },
+      // 9.30 — a get-fault returns before any write, so this must never be reached; count it too so
+      // the pin still proves "no write of ANY kind on an unknown prior state".
+      insertIfAbsent: () => Promise.resolve(ok(false)),
+      async updateProvisioningFields(): Promise<Result<Workspace, DbError>> {
+        upsertCalls += 1;
+        return err({ code: "unavailable", message: "unreachable" });
+      },
     };
     // Returns a Result (never throws) — assert UNCONDITIONALLY (Lesson 15, no assertions-only-in-catch).
     const res = await provisionWorkspace(
@@ -198,6 +205,11 @@ describe("provisionWorkspace (14.1 — production workspace provisioning path)",
       },
       async upsert(w: Workspace): Promise<Result<Workspace, DbError>> {
         return ok(w);
+      },
+      // 9.30 — unreached on these paths; present to satisfy the interface.
+      insertIfAbsent: () => Promise.resolve(ok(false)),
+      async updateProvisioningFields(): Promise<Result<Workspace, DbError>> {
+        return err({ code: "unavailable", message: "unreachable" });
       },
     };
     const faultingReadModels: ReadModelRepository = {
@@ -231,6 +243,11 @@ describe("provisionWorkspace (14.1 — production workspace provisioning path)",
       },
       async upsert(): Promise<Result<Workspace, DbError>> {
         return err({ code: "unavailable", message: "config store down" });
+      },
+      // 9.30 — unreached on these paths; present to satisfy the interface.
+      insertIfAbsent: () => Promise.resolve(ok(false)),
+      async updateProvisioningFields(): Promise<Result<Workspace, DbError>> {
+        return err({ code: "unavailable", message: "unreachable" });
       },
     };
     const res = await provisionWorkspace(

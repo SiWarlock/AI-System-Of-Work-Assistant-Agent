@@ -34,6 +34,10 @@ function repoGetting(get: () => DbResult<Workspace>): WorkspaceConfigRepository 
     get,
     list: () => Promise.resolve({ ok: false, error: { code: "unknown", message: "n/a" } }),
     upsert: (w: Workspace) => Promise.resolve(ok(w)),
+    // 9.30 — this suite exercises the READ path only; the mutator is present to satisfy the interface.
+    insertIfAbsent: () => Promise.resolve(ok(false)),
+    updateProvisioningFields: () =>
+      Promise.resolve({ ok: false, error: { code: "unknown", message: "n/a" } }),
   };
 }
 

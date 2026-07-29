@@ -49,6 +49,10 @@ function memConfig(
       upserts.push(w); // successful writes only
       return Promise.resolve({ ok: true, value: w });
     },
+    // 9.30 — the revoke path never calls this; present to satisfy the interface.
+    insertIfAbsent: () => Promise.resolve({ ok: true, value: false } as const),
+    updateProvisioningFields: (): DbResult<Workspace> =>
+      Promise.resolve({ ok: false, error: nf }),
   };
   return { repo, upserts };
 }

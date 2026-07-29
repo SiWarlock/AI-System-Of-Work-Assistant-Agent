@@ -69,6 +69,13 @@ function mutableRepo(initial: Workspace): { repo: WorkspaceConfigRepository; set
   const repo: WorkspaceConfigRepository = {
     get: (): DbResult<Workspace> => Promise.resolve(ok(current)),
     list: () => Promise.resolve(ok([current])),
+    updateProvisioningFields: (_id, f) => {
+      // Apply for real — a fake that reports success while mutating nothing lets a silently-dropped
+      // write pass as green (its `upsert` sibling two lines up DOES mutate).
+      current = { ...current, ...f };
+      return Promise.resolve(ok(current));
+    },
+    insertIfAbsent: () => Promise.resolve(ok(false)),
     upsert: (w: Workspace) => {
       current = w;
       return Promise.resolve(ok(w));
@@ -223,12 +230,18 @@ describe("§5 9.10-A — the durable posture feeds the assembled veto (rule 5 he
       get: (): DbResult<Workspace> => Promise.resolve({ ok: false, error: { code: "not_found", message: "never provisioned" } }),
       list: () => Promise.resolve({ ok: false, error: { code: "unknown", message: "n/a" } }),
       upsert: (w: Workspace) => Promise.resolve(ok(w)),
+      insertIfAbsent: () => Promise.resolve(ok(false)),
+      updateProvisioningFields: () =>
+        Promise.resolve({ ok: false, error: { code: "not_found", message: "never provisioned" } }),
     };
     // A store FAULT on an employer read: still fail-closed (fault ≠ benign absence, never default-true).
     const faultRepo: WorkspaceConfigRepository = {
       get: (): DbResult<Workspace> => Promise.resolve({ ok: false, error: { code: "unavailable", message: "db down" } }),
       list: () => Promise.resolve({ ok: false, error: { code: "unknown", message: "n/a" } }),
       upsert: (w: Workspace) => Promise.resolve(ok(w)),
+      insertIfAbsent: () => Promise.resolve(ok(false)),
+      updateProvisioningFields: () =>
+        Promise.resolve({ ok: false, error: { code: "unavailable", message: "db down" } }),
     };
     expect(isOk(await createStoreBackedWorkspacePosture(absentRepo).resolve(WS))).toBe(false);
     expect(isOk(await createStoreBackedWorkspacePosture(faultRepo).resolve(WS))).toBe(false);
