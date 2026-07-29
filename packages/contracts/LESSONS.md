@@ -1936,7 +1936,10 @@ git add ARCHITECTURE.md && git commit -q -F - <<'EOF'     # ran anyway
 git commit -F <msg> -- <paths>      # pathspec-limited: commits ONLY these paths
 ```
 
-⭐ **`git commit -- <paths>` commits exactly those paths regardless of what else is staged.** The foreign-file sweep stops being *detected* and becomes **unrepresentable** — the index's contents can no longer influence the commit's contents. No discipline, no ordering, no reading of output required. ⇒ **In a shared checkout, pathspec-limit every commit.** (This was already recorded once as a mitigation and had not been adopted as the default; adopting it is the actual remedy.)
+⭐ **`git commit -- <paths>` commits exactly those paths regardless of what else is staged.** The foreign-file sweep stops being *detected* and becomes **unrepresentable** — the index's contents can no longer influence the commit's contents. No discipline, no ordering, no reading of output required. ⇒ **In a shared checkout, pathspec-limit every commit.** (This was already recorded once as a mitigation and had not been adopted as the default; adopting it is the actual remedy — see [L110](#110).)
+
+⚠ **ONE LIMIT, AND CARRY IT WITH THE RULE OR SOMEONE WILL CONCLUDE THE FORM IS BROKEN AND REVERT TO THE DETECTOR** (found by desktop-implementer shipping under it): **`git commit -- <path>` cannot pick up an UNTRACKED file** — a brand-new file still needs `git add` first.
+> ⇒ **This does NOT weaken the guarantee.** The `add` makes the file **visible**; the pathspec **on the commit** remains the **filter**. So a foreign staged file still cannot enter the commit — **unrepresentability holds in full.** What is lost is only the *convenience* of never needing an `add`, not the property. ⇒ For a slice adding new files: `git add <your new paths>` **then** `git commit -F <msg> -- <your paths>`.
 
 **Secondary fixes, for when pathspec-limiting is unavailable:**
 - Put the pre-check in a **separate invocation** and read it before the next one. Cheap, and it restores the check→act ordering.
@@ -2016,3 +2019,25 @@ An implementer's preflight reported root **`pnpm lint`** failing and used `npx t
 ⚠ **Meta, and it is the round's own trap: a round spent almost entirely on over-claims trains a suspicion reflex, and that reflex is an over-claim generator pointed the other way** — including inward, at one's own correct work. The reflex fired here twice: once as an over-harsh self-criticism the lead had to reject, and once as the over-confident retraction above.
 
 `accepted: not mechanically enforceable` — enforcement points: **(1)** any message questioning *or* retracting an existing claim must carry the command, the output, and a **real** exit code; **(2)** two runs disagreeing ⇒ report **flaky**, never **passing**; **(3)** prefer inspectable over executed evidence in anything durable.
+
+---
+
+<a id="112"></a>
+## 112. AN IN-FLIGHT MESSAGE IS INDISTINGUISHABLE FROM AN ABSENT ONE AT THE OBSERVATION POINT — so a stall check detects a WAITING STATE and cannot diagnose its CAUSE
+
+**2026-07-29 · the lead's own instrument, corrected by its author after banking a false positive as a success**
+
+A three-way wait was diagnosed from three signals read together: the task still `in_progress` with its owner assigned · the owner idle for ~4 minutes · two uncommitted files whose newest write was ~6 minutes stale. The conclusion — *"every party correctly believes it is blocked on someone else, and the relay never came"* — was **wrong**: the relay had already been sent and was **in flight while the measurement was being taken**.
+
+> ⇒ **The three signals cannot separate "blocked" from "resolution in transit,"** because the distinguishing information lives in a channel the observer cannot see. ⭐ **So the check has an IRREDUCIBLE false-positive rate proportional to message latency, and NO additional signal fixes it** — adding a fourth observable does not help when the missing fact is unobservable in principle from that vantage point.
+
+**The honest form of the instrument:**
+- ✅ **It reliably detects a WAITING STATE.** Task-owner + idle-time + file-mtime read *together* is genuinely better than reading the quiet, and it beats each signal alone.
+- ⛔ **It cannot diagnose the CAUSE of that state.** *"Someone is waiting"* is supported; *"X never sent Y"* is not.
+- ⇒ **Therefore it warrants a QUESTION, never an ACCUSATION.** *"Is anyone blocked on me?"* costs one message and is right either way. *"The relay never came"* was an accusation, and it was false.
+
+⚠ **And the ledger error is the more instructive half:** this was recorded as *"the first time the stall check fired on a REAL stall"* — after two earlier false positives. **It was the third false positive.** ⇒ **A monitoring instrument's own success ledger needs the same verification as any other claim** ([L111](#111)), and it is *especially* prone to inflation, because the operator both raises the alarm and grades it. **A check that grades its own hit rate will report a better one than it has.**
+
+**Generalises past messaging:** any observation-point check on a distributed system shares this shape — a queued job, an unflushed buffer, a request in the network. **"I cannot see it" and "it does not exist" are the same observation and different facts.** Kin to [L100](#100)'s negative claims (an absence is only as strong as the scope that looked) and to [L91](#91) (a stall's signature is the absence of a signal — true, and the reason this instrument is needed *and* the reason it cannot be conclusive).
+
+`accepted: not mechanically enforceable` — enforcement point: the wording of the alarm itself. **Phrase a stall report as a question about state, never as a claim about someone's action;** and when logging whether the check "worked," verify the outcome before crediting it.

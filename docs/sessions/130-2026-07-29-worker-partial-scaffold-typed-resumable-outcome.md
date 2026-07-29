@@ -3,7 +3,7 @@
 **Date:** 2026-07-29
 **Track / role:** main · worker-implementer
 **Predecessor session:** `docs/sessions/128-2026-07-29-worker-refusal-channel-and-zeroegressonly-contract.md`
-**Successor session:** _(unwritten)_
+**Successor session:** `docs/sessions/134-2026-07-29-workspace-read-boundary-regate.md` (9.36 — the workspace read-boundary re-gate)
 
 ---
 

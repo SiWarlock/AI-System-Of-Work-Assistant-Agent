@@ -3,7 +3,7 @@
 **Date:** 2026-07-29
 **Track / role:** main · desktop-implementer
 **Predecessor session:** `docs/sessions/129-2026-07-29-desktop-copilot-reply-brand-and-egress-posture-render.md`
-**Successor session:** _(next `/session-end`)_
+**Successor session:** `docs/sessions/135-2026-07-29-dead-css-cleanup-and-copilot-rehydrate-precondition.md` (9.37a + 9.25)
 
 ---
 
