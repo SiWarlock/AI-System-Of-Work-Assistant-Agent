@@ -145,3 +145,7 @@ yarn-error.log*
 # .claude/ (commands, agents, settings.json) · scripts/
 # docs/ (incl. planning/, archive/, briefs|sessions|runbooks .gitkeep)
 # .scaffolding/manifest.json + README.md · .gitleaksignore
+
+# graphify knowledge-graph output (regenerable via `graphify update .`) — kept untracked so no
+# implementer `git add` can sweep 6 dirs of build artifacts into a safety-critical commit (L83).
+graphify-out/
