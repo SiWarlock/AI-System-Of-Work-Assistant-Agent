@@ -1202,3 +1202,36 @@ It isn't: **coupled, a future tuning of one silently retunes the other's threat 
 ⚠ **A plan's `Done-when` is a hypothesis too** (L81 applied to the tracker rather than the brief). This one was written before anyone had looked at whether the two caps shared a reason, and a circular import (`meeting-rewrite` → `planner`) made sharing infeasible regardless. **The divergence is recorded on the task itself**, because a shipped implementation contradicting its own recorded Done-when is exactly what a later reader "fixes."
 
 `pin: packages/knowledge/test/synthesis-planner.test.ts` (cap asserted via the ACTUAL GBrain call count, not the reported number — the property, not the mechanism, L70) · `accepted: not mechanically enforceable`.
+
+---
+
+<a id="89"></a>
+## 89. A gate named for a check it does not perform is worse than an absent gate — its passing is read as evidence
+
+**2026-07-29 · found while verifying an implementer's close-out claim · measured, not inferred**
+
+An implementer's `/session-end` reported that repo-wide `pnpm lint` **fails** ("eslint binary not found"). Running it produced the opposite result — and the opposite result is the worse one:
+
+```
+pnpm lint  →  Tasks: 11 successful, 11 total   exit 0
+```
+
+Then what it actually runs:
+
+- **Every** package's `lint` script is **`tsc --noEmit`** (`@sow/desktop`'s is three `tsc --noEmit -p …` invocations).
+- **ESLint is not installed** — no `node_modules/eslint` — and **has no config anywhere**: no `.eslintrc*`, no `eslint.config.*`.
+- **No package defines `format:check`**, nor does root, so `pnpm format:check` fails as an unknown script.
+
+⇒ **`pnpm lint` is `pnpm typecheck` wearing another name.** Every `/preflight clean` and `lint clean` claim in this project's history means *"typecheck passed."* **There has never been any lint coverage at all.**
+
+> **The failure mode is not that the gate is broken. It is that the gate PASSES.** A broken gate gets fixed the first time someone runs it. A gate that passes while checking nothing it claims to is **invisible**, and its green is actively consumed as evidence — by implementers reporting Step 9, by orchestrators approving ships, and by every round seal that wrote "preflight clean."
+
+**Where the false claim was documented, which is what made it durable:** root `CLAUDE.md`'s stack table lists `Lint | ESLint`; all six area `CLAUDE.md` files carry a "Standard commands" block advertising `pnpm lint` and `pnpm format:check`; `/preflight` composes `lint && typecheck && test`. **Six documents describe a tool that is not installed** — the same *three-surfaces-agree-one-has-it* shape recorded for the approval terminal guard, arriving in the toolchain instead of the code.
+
+**Relation to [L80](#80).** L80 asks *"if I replaced the gate with a constant DENY, would anything go red?"* This is the mirror: **a gate that is a constant ALLOW for the property it names.** Both are gates that have stopped deciding; a constant-DENY gate at least announces itself by blocking, while a constant-ALLOW gate is silent forever. **Relation to [L82](#82):** this is a false coverage claim, and the disposition rule applies unchanged — make it true (install and configure the linter) or retract it (say plainly that `lint` means typecheck). ⛔ **Do not re-point it at "well, typecheck is a kind of linting"** — that is L82's forbidden middle.
+
+**Do, for any gate you rely on:** run it once and read **what it executed**, not whether it passed. For a composite gate (`lint && typecheck && test`) confirm each leg runs a *distinct* tool — two legs invoking the same binary means one leg is decoration. And when a claim about tooling arrives second-hand, **run it**: the implementer here sensed something was wrong and reported it, their conclusion was inverted, and only executing it distinguished the two.
+
+⛔ **Recorded, not fixed** — installing ESLint across 11 packages and triaging its first run is a new arc, forbidden by the round's teardown boundary. Deliberately left visible rather than quietly patched, per L82: an uncovered gap invites work; a false-green one closes the question.
+
+`pattern: [ -d node_modules/eslint ] || echo "WARN: lint gate claims ESLint; ESLint is not installed"` · `accepted: not mechanically enforceable` until the gate is made real.
