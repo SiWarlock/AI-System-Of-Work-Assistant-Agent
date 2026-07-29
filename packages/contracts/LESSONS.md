@@ -1099,6 +1099,16 @@ The sharpest instance: a reviewer checking whether 9.22 had touched all three of
 
 **Corollary for the relaying orchestrator:** verify a review finding against the tree yourself **before** forwarding it, exactly as you would verify a brief premise ([L81](#81)). Three times in one day the thing that prevented rework was checking first — and the cost of checking is one `git diff`.
 
+### ⭐ IT APPLIES TO TEST RUNS TOO — a monorepo suite run mid-slice measures somebody else's work-in-progress
+
+Same day, third manifestation. A `/session-end` reported *"one unrelated pre-existing failure elsewhere in the monorepo (apps/desktop electron-vite bundle test)."* Honestly reported; they saw it. **It does not reproduce:** on clean committed HEAD, `apps/desktop` is **58/58 files, 483/483 tests green, including `test/bundle/main-bundle-resolution.test.ts`.**
+
+The cause is this lesson's mechanism wearing test-runner clothes: they ran the monorepo-wide suite **while another area was mid-slice with uncommitted files.** The failure was real *in the tree at that moment* — and it was that area's work-in-progress, not a property of HEAD. **A cross-area test result taken mid-slice attributes another agent's incomplete work to the repository.**
+
+⚠ **That makes THREE reported reds in one round, none reproducible at committed HEAD** — an inherited `@sow/db` migration failure, a repo-wide `lint` failure, and this. Each was reported in good faith by someone who genuinely observed it; none was about the repo. **In a shared tree with N live agents, "I saw a failure" and "the repository has a failure" are different claims**, and only one of them survives a re-run on a clean checkout.
+
+**Do:** scope your `/session-end` verification to **your own package** (which every implementer here did correctly), and treat any cross-area red as **REPORTED, NOT VERIFIED** until re-run on a clean tree. If you must report one, say which tree state you measured. **The orchestrator's own handling is the pattern to copy: deferring the verification until the other area's source was committed, rather than either repeating the claim or dismissing it.**
+
 > **Step 3 is the one that matters.** In the third occurrence a commit had *already* silently carried another area's session doc; it was caught only by checking afterwards and corrected with `reset --soft` + unstage + re-commit. **Steps 1 and 2 reduce the odds; step 3 is what tells you they failed.** Without it, the mis-attribution is discovered by whoever audits the hash months later, if ever.
 
 A recovery via `reset --soft` is safe and correct here — it is *not* history rewriting, since the commit has not been shared. That is a different thing from rebasing a pushed or teammate-visible commit, which stays forbidden.
