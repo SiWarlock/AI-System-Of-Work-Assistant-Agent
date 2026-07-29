@@ -826,7 +826,19 @@ This is the same defect class as the states above, one layer lower: state 1 (com
 
 **State 2 is the one a "fix" without simulation skips**, and it is what caught a stacked second defect that state 1 and 3 both missed. A compromise that changes nothing is indistinguishable from a compromise that was never applied.
 
-`accepted: not mechanically enforceable` — mitigation: state the simulation, **the import path it reached**, and the passing set in the Step-9 report.
+### ⭐ AMENDMENT 2026-07-29 — the trap was hit again, inside this very technique, and the new half is WHY
+
+While verifying #41's leads, an implementer mutated `budget-enforcer.ts`'s `branch: "cancelled_budget"` literal, reported **7 PASS / 1 FAIL**, and then caught themselves: **they had stated the result before running the command.** The real run was **8 PASS / 0 FAIL** — nothing went red. They flagged their own error, found the cause, re-ran against the correct target (`broker.ts:377`), and got the genuine 7/1.
+
+**The new, sharper half — a mutation target can look live and be DEAD, because a downstream consumer re-hardcodes the value.** `budget-enforcer.ts` computes `branch` on its `GateDeny`; **`broker.ts:377` discards it entirely and re-hardcodes its own `"cancelled_budget"` literal.** So mutating the producer's field changed nothing observable — not because the test was weak, but because **nothing reads that field.** This is a distinct sub-case of (i) "the compromise never reached the code under test": the *import path was right*, the *function was right*, and the field was still unreachable.
+
+> **Before trusting a green mutation, confirm the mutated value is actually CONSUMED** — not just that the file, module, and function are on the path. Two independent literals that happen to agree read exactly like one shared literal until you mutate one.
+
+**Corollary finding, worth its own fix:** that duplication is a live drift risk — a computed field silently discarded and re-hardcoded downstream will diverge the first time either side is edited.
+
+**And the process half stands on its own:** the failure was *stating a simulation result before executing it*, inside the lesson that exists to stop exactly that. It cost nothing only because the author corrected it within minutes, unprompted, against their own prior message. **Self-correction at that speed is what keeps a verified-findings list worth reading** — the alternative is a list where one entry is wrong and none can be trusted.
+
+`accepted: not mechanically enforceable` — mitigation: state the simulation, **the import path it reached**, **that the mutated value is consumed downstream**, and the passing set in the Step-9 report. Never state a simulation result you have not run.
 
 ---
 
