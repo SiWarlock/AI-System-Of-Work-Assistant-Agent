@@ -1075,6 +1075,20 @@ Per-file `git add` is **necessary but not sufficient**. It does not protect agai
 2. **DURING** — chain `git add … && git commit …` in **ONE invocation**, so nothing can land between them.
 3. **AFTER** — `git show --stat`, immediately after. **Catch what still got through.**
 
+### ⭐ AMENDMENT 2026-07-29 — the working tree is a moving target for READERS too, not just writers
+
+L83 above is about the index as shared state for the agent *writing* a commit. The same tree is shared state for anyone *reviewing* — and that produced three framing errors in one day, all at lead level, all with the same mechanism.
+
+The sharpest instance: a reviewer checking whether 9.22 had touched all three of its sites read `boot.ts` **after** the implementer's edit (their quoted line numbers `:543`/`:588` reflect the edited file) and `egressRevoke.ts` **before** it — then reported the third site as untouched and asked for it to be sent back. The implementer had in fact already derived it correctly.
+
+> **The proof that the read spanned two states was self-contained: the reviewer quoted a comment as evidence of absence, and that comment had been deleted by the very edit they were looking for.** A file cannot both contain a line and not contain it, so the two observations came from different snapshots.
+
+**Why this is worse than an ordinary stale read.** It arrives as a *finding*, with file:line evidence attached, addressed to whoever can act on it — so it is maximally likely to be relayed. Had it been forwarded, a correct implementation would have been sent back for rework mid-slice, and the "wrong instruction in a close-out" hazard would have fired with the reviewer's authority behind it.
+
+**Mitigation, and it is one line: while an implementer is mid-slice, review the COMMITTED diff, not the live working tree.** `git show`/`git diff <base>..<head>` are immutable; `git status` and a file read are not. If you must read the live tree, take every observation in **one** command invocation so they share a snapshot, and say which snapshot in the report. Same discipline as the mutation window ([L75](#75)): record the tree state beside the observation.
+
+**Corollary for the relaying orchestrator:** verify a review finding against the tree yourself **before** forwarding it, exactly as you would verify a brief premise ([L81](#81)). Three times in one day the thing that prevented rework was checking first — and the cost of checking is one `git diff`.
+
 > **Step 3 is the one that matters.** In the third occurrence a commit had *already* silently carried another area's session doc; it was caught only by checking afterwards and corrected with `reset --soft` + unstage + re-commit. **Steps 1 and 2 reduce the odds; step 3 is what tells you they failed.** Without it, the mis-attribution is discovered by whoever audits the hash months later, if ever.
 
 A recovery via `reset --soft` is safe and correct here — it is *not* history rewriting, since the commit has not been shared. That is a different thing from rebasing a pushed or teammate-visible commit, which stays forbidden.
