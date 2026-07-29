@@ -23,10 +23,18 @@ import type {
 } from "@sow/contracts";
 import type { EntityCandidate, EntityGbrainReadPort } from "./entity-resolver";
 import { planSynthesis, type SynthesisReasonPort, type SynthesisSectionPort } from "./planner";
+import { admitPlanMutations, rebuildPlanWithMutations, type GroundedPathRefusal } from "./grounded-path";
 
 // Per-array flood bound (13.8d security-item iv, L31) — the ingest fan-out caps the run's candidate
-// context so a pathological source can't drive an unbounded KMP. planSynthesis bounds its own effects.
+// context so a pathological source can't drive an unbounded KMP. planSynthesis does NOT cap the model's region/frontmatter arrays (see MAX_REFUSALS).
 const MAX_LINK_CANDIDATES = 2000;
+/**
+ * Bound the refusal audit. `planSynthesis` does NOT cap the model's `regions`/`frontmatter` arrays
+ * (planner.ts `collectRegions`/`collectFrontmatter` iterate them uncapped), so a poisoned source
+ * proposing N hijack targets would otherwise put N codes on a receipt the 13.8m-B worker persists.
+ * The reason domain is 2 values; the cap costs no diagnostic power.
+ */
+const MAX_REFUSALS = 100;
 
 /** SENSE context for one ingest run's touched notes — passed to the structural-file writer. */
 export interface StructuralContext {
@@ -80,6 +88,13 @@ export interface IngestRewriteReceipt {
   readonly planIds: readonly string[];
   readonly autoCount: number;
   readonly proposeCount: number;
+  /**
+   * 13.8m-A — code-only refusal audit (§6 KN-7 "rejected AND audited"). Reason codes ONLY: a channel
+   * that carried the refused path would BECOME the exfiltration route it exists to report (rule 7).
+   * An empty array means "nothing was refused", which is what distinguishes a benign empty run from
+   * a poisoned one. Dormant — the consumer is 13.8m-B (worker).
+   */
+  readonly refusals: readonly GroundedPathRefusal[];
 }
 
 const clamp01 = (n: unknown): number => (typeof n === "number" && Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0);
@@ -94,8 +109,12 @@ export async function rewriteVaultForSource(
   deps: IngestRewriteDeps,
 ): Promise<IngestRewriteReceipt> {
   const runId = safeRunId(deps);
-  const empty: IngestRewriteReceipt = { runId, plans: [], planIds: [], autoCount: 0, proposeCount: 0 };
-  if (input == null || typeof input !== "object") return empty;
+  // Hoisted ABOVE the try: a fault AFTER admission must not discard what was already refused, or a
+  // hostile run that hijacks paths and then trips a throwing port becomes byte-identical to a benign
+  // empty one — destroying exactly the distinction 13.8m-A exists to create.
+  const refusals: GroundedPathRefusal[] = [];
+  const empty = (): IngestRewriteReceipt => ({ runId, plans: [], planIds: [], autoCount: 0, proposeCount: 0, refusals });
+  if (input == null || typeof input !== "object") return empty();
 
   try {
     // 1. SINGLE planSynthesis per run → the ≤2 semantic KMPs. Flood-bound the injected candidate context.
@@ -110,7 +129,20 @@ export async function rewriteVaultForSource(
       },
       { gbrain: deps.gbrain, reason: deps.reason, sections: deps.sections, newPlanId: deps.newPlanId },
     );
-    const semantic = res.ok ? [...res.value.plans] : [];
+    // 13.8l — ADMIT the model-proposed targets (the 4th door to 13.8k's invariant). Placed HERE, once:
+    // `touchedNotePaths` and `mergeStructural` both read `semantic`, so a single admission gives the
+    // KMP *and* the structural writer's context the guarantee, with no second enforcement point.
+    // ⚠ SEMANTIC plans only. `deps.structural` legitimately targets index.md/log.md/Logs/<date>.md —
+    // that IS KN-12 parity (13.8d's whole point), so it is merged in AFTER this and never admitted.
+    const semantic: KnowledgeMutationPlan[] = [];
+    for (const proposed of res.ok ? res.value.plans : []) {
+      const admitted = admitPlanMutations(proposed);
+      for (const r of admitted.refusals) if (refusals.length < MAX_REFUSALS) refusals.push(r);
+      const survived = admitted.creates.length + admitted.patches.length + admitted.linkMutations.length + admitted.frontmatterUpdates.length;
+      if (survived === 0) continue; // every target refused ⇒ no plan, but the refusals are reported
+      const rebuilt = rebuildPlanWithMutations(proposed, admitted);
+      if (rebuilt) semantic.push(rebuilt);
+    }
 
     // 2. Structural-file parity — derive the touched notePaths from the plans, build index + op-log muts.
     const touchedPaths = touchedNotePaths(semantic);
@@ -125,9 +157,10 @@ export async function rewriteVaultForSource(
       planIds: plans.map((p) => p.planId),
       autoCount: plans.filter((p) => p.requiresApproval === false).length,
       proposeCount: plans.filter((p) => p.requiresApproval === true).length,
+      refusals,
     };
   } catch {
-    return empty;
+    return empty(); // keeps any refusals accumulated before the fault
   }
 }
 
@@ -179,21 +212,17 @@ function mergeStructural(
   const autoIdx = semantic.findIndex((p) => p.requiresApproval === false);
   if (autoIdx >= 0) {
     const a = semantic[autoIdx]!;
-    const parsed = KnowledgeMutationPlanSchema.safeParse({
-      planId: a.planId as unknown as string,
-      workspaceId: a.workspaceId as unknown as string,
-      sourceRefs: a.sourceRefs.map((s) => ({ sourceId: s.sourceId as unknown as string, ...(s.span !== undefined ? { span: s.span } : {}) })),
+    // Route through the SHARED rebuild so the three optionals + externalActionProposals survive. The
+    // hand-rolled re-parse this replaced dropped them, silently reverting the very guarantee
+    // `rebuildPlanWithMutations` documents (latent only because no current producer sets them).
+    const merged = rebuildPlanWithMutations(a, {
       creates: [...a.creates, ...sm.creates],
       patches: [...a.patches, ...sm.patches],
       linkMutations: [...a.linkMutations, ...sm.linkMutations],
       frontmatterUpdates: [...a.frontmatterUpdates, ...sm.frontmatterUpdates],
-      externalActionProposals: [],
-      confidence: a.confidence,
-      requiresApproval: false,
-      provenanceOrigin: a.provenanceOrigin,
     });
     const out = [...semantic];
-    if (parsed.success) out[autoIdx] = parsed.data; // else fail-safe: keep the un-merged semantic plans
+    if (merged) out[autoIdx] = merged; // else fail-safe: keep the un-merged semantic plans
     return out;
   }
 

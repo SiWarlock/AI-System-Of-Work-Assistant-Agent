@@ -46,7 +46,7 @@ import type {
 import { renderGeneratedRegion } from "../markdown-vault/sections";
 import { resolveEntity, stubNotePathFor, type EntityRef, type EntityCandidate, type EntityGbrainReadPort } from "./entity-resolver";
 import { planSynthesis, type SynthesisReasonPort, type SynthesisSectionPort } from "./planner";
-import { admitGroundedPath } from "./grounded-path";
+import { admitGroundedPath, rebuildPlanWithMutations } from "./grounded-path";
 
 // Per-array flood bounds (L31 — bounded blast radius for an autonomous writer). These cap the
 // DETERMINISTIC inputs this module owns: the correlated entity refs and the link-candidate context.
@@ -275,27 +275,11 @@ export async function rewriteVaultForMeeting(
  * field from a plan that carried one. Spread conditionally: the schema is `.strict()`.
  */
 function assemble(m: Muts, original: KnowledgeMutationPlan): KnowledgeMutationPlan | null {
-  const parsed = KnowledgeMutationPlanSchema.safeParse({
-    planId: original.planId,
-    workspaceId: original.workspaceId,
-    sourceRefs: original.sourceRefs.map((s) => ({
-      sourceId: s.sourceId,
-      ...(s.span !== undefined ? { span: s.span } : {}),
-    })),
-    creates: m.creates,
-    patches: m.patches,
-    linkMutations: m.linkMutations,
-    frontmatterUpdates: m.frontmatterUpdates,
-    externalActionProposals: original.externalActionProposals,
-    confidence: original.confidence,
-    requiresApproval: original.requiresApproval,
-    provenanceOrigin: original.provenanceOrigin,
-    ...(original.gbrainProposalRef !== undefined ? { gbrainProposalRef: original.gbrainProposalRef } : {}),
-    ...(original.signedProvenanceStamp !== undefined ? { signedProvenanceStamp: original.signedProvenanceStamp } : {}),
-    ...(original.expectedProjectId !== undefined ? { expectedProjectId: original.expectedProjectId } : {}),
-  });
-  return parsed.success ? parsed.data : null; // fail-safe drop (candidate-data gate)
+  // Delegates to the ONE shared rebuild (13.8l) — the meeting gate and the source gate filter by
+  // different predicates but must reassemble identically, and two copies would drift.
+  return rebuildPlanWithMutations(original, m);
 }
+
 
 /** Assemble a fresh plan for effects that have no semantic plan to ride (the stub-only run). */
 function assembleFresh(

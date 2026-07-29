@@ -200,3 +200,182 @@ describe("rewriteVaultForSource — digest, inherited safety, flood-bound, dorma
     expect(ungatedImporters([], "rewriteVaultForSource")).toEqual([]);
   });
 });
+
+// ── 13.8l — the SOURCE path's 4th door to the grounded-path invariant (§6 KN-12) ────
+//
+// `planSynthesis` output reached the KMP and `touchedNotePaths` UNGUARDED: a model-proposed
+// `patches:[{path:"index.md"}]` was stopped only by the worker adapter's realpath containment, which
+// prevents ESCAPE but not COLLISION with a writer-owned surface. Same invariant 13.8k established on
+// the meeting path, same admission function — the fourth route to it.
+//
+// ⚠ THE TRAP THIS SLICE MUST NOT FALL INTO: the source path LEGITIMATELY writes index.md / log.md /
+// Logs/<date>.md — that is KN-12 structural parity, the entire point of 13.8d. Admission therefore
+// applies to the SEMANTIC (model-proposed) plans ONLY, before the writer's own structural mutations
+// are merged in. A guard over the MERGED output would "prevent collision" while destroying parity.
+
+describe("rewriteVaultForSource — model-proposed targets are admitted; writer parity is not (13.8l)", () => {
+  it("source_path_patch_targeting_a_structural_surface_is_refused — index.md/log.md/Logs cannot enter the KMP", async () => {
+    for (const owned of ["index.md", "log.md", "Logs/2026-07-26.md"]) {
+      const candidate: SynthesisCandidate = {
+        regions: [
+          { notePath: owned, regionId: "hijack", body: "x", effect: "new_note" },
+          { notePath: "notes/legit.md", regionId: "body", body: "ok", effect: "new_note" },
+        ],
+      };
+      const receipt = await rewriteVaultForSource(baseInput(), mkDeps({ reason: fakeReason(candidate) }));
+      const targets = receipt.plans.flatMap((p) => [
+        ...p.creates.map((c) => c.path),
+        ...p.patches.map((x) => x.path),
+        ...p.frontmatterUpdates.map((f) => f.path),
+      ]);
+      expect(targets, `${owned} reached the KMP`).not.toContain(owned);
+      expect(targets, "the legitimate sibling was lost (over-refusal)").toContain("notes/legit.md");
+    }
+  });
+
+  it("structural_parity_mutations_still_reach_index_and_log — the writer's OWN KN-12 writes are NOT refused", async () => {
+    // THE non-vacuity guard for this slice: a guard that refuses everything also "prevents collision"
+    // while breaking the feature. These paths come from the writer's parity builders, not the model.
+    const candidate: SynthesisCandidate = {
+      regions: [{ notePath: "synthesis/n.md", regionId: "b", body: "x", effect: "new_note" }],
+    };
+    const structural: StructuralMutations = {
+      patches: [
+        { path: "index.md", regionId: "people", newBody: "- [[jane-doe]]" },
+        { path: "Logs/2026-07-26.md", regionId: "log", newBody: "entry" },
+        { path: "log.md", regionId: "pointer", newBody: "Latest: [[Logs/2026-07-26]]" },
+      ],
+    };
+    const receipt = await rewriteVaultForSource(
+      baseInput(),
+      mkDeps({ reason: fakeReason(candidate), structural: fakeStructural(structural) }),
+    );
+    const auto = receipt.plans.find((p) => p.requiresApproval === false)!;
+    expect(auto.patches.some((p) => p.path === "index.md")).toBe(true);
+    expect(auto.patches.some((p) => p.path === "Logs/2026-07-26.md")).toBe(true);
+    expect(auto.patches.some((p) => p.path === "log.md")).toBe(true);
+    expect(receipt.refusals).toEqual([]); // parity writes are not refusals
+  });
+
+  it("legitimate_source_targets_still_land — ordinary notes are unaffected (non-vacuity)", async () => {
+    const candidate: SynthesisCandidate = {
+      regions: [{ notePath: "people/jane-doe.md", regionId: "summary", body: "Updated.", effect: "refresh" }],
+      frontmatter: [{ notePath: "people/jane-doe.md", key: "status", value: "active", evidenceRef: "src-1#s" }],
+    };
+    const receipt = await rewriteVaultForSource(
+      baseInput(),
+      mkDeps({
+        reason: fakeReason(candidate),
+        sections: fakeSections({ "people/jane-doe.md": { generatedRegionIds: ["summary"] } }),
+      }),
+    );
+    expect(receipt.plans.flatMap((p) => p.patches).some((p) => p.path === "people/jane-doe.md")).toBe(true);
+    expect(receipt.plans.flatMap((p) => p.frontmatterUpdates).some((f) => f.path === "people/jane-doe.md")).toBe(true);
+    expect(receipt.refusals).toEqual([]);
+  });
+
+  it("refused targets never reach touchedNotePaths — the structural writer is never asked about them", async () => {
+    // touchedNotePaths drives index regeneration; an owned surface leaking in would make the writer
+    // regenerate a section ABOUT the hijack attempt.
+    let seenTouched: readonly string[] = [];
+    const candidate: SynthesisCandidate = {
+      regions: [
+        { notePath: "index.md", regionId: "hijack", body: "x", effect: "new_note" },
+        { notePath: "notes/legit.md", regionId: "body", body: "ok", effect: "new_note" },
+      ],
+    };
+    await rewriteVaultForSource(
+      baseInput(),
+      mkDeps({
+        reason: fakeReason(candidate),
+        structural: fakeStructural((ctx) => {
+          seenTouched = (ctx as { touchedPaths: readonly string[] }).touchedPaths;
+          return {};
+        }),
+      }),
+    );
+    // POSITIVE control: proves the structural port really was called with a real context, so the
+    // negative below cannot pass merely because the port was skipped.
+    expect(seenTouched).toEqual(["notes/legit.md"]);
+    expect(seenTouched).not.toContain("index.md");
+  });
+});
+
+// ── 13.8m-A — refusals are AUDITABLE, code-only (§6 KN-7 "rejected AND audited") ────
+
+describe("rewriteVaultForSource — a refusal is observable and carries no content (13.8m-A)", () => {
+  it("a_refused_path_is_observable_on_the_receipt — with a reason code", async () => {
+    const candidate: SynthesisCandidate = {
+      regions: [{ notePath: "index.md", regionId: "hijack", body: "x", effect: "new_note" }],
+    };
+    const receipt = await rewriteVaultForSource(baseInput(), mkDeps({ reason: fakeReason(candidate) }));
+    expect(receipt.refusals).toContain("structural_surface");
+  });
+
+  it("a_benign_empty_run_is_distinguishable_from_a_refused_one — today they are byte-identical", async () => {
+    const benign = await rewriteVaultForSource(baseInput(), mkDeps({ reason: fakeReason({}) }));
+    const refused = await rewriteVaultForSource(
+      baseInput(),
+      mkDeps({ reason: fakeReason({ regions: [{ notePath: "log.md", regionId: "h", body: "x", effect: "new_note" }] }) }),
+    );
+    expect(benign.plans).toEqual([]);
+    expect(refused.plans).toEqual([]); // both produce nothing …
+    expect(benign.refusals).toEqual([]); // … but only one REFUSED
+    expect(refused.refusals.length).toBeGreaterThan(0);
+    expect(refused.refusals).not.toEqual(benign.refusals);
+  });
+
+  it("refusals_survive_a_late_fault — a hostile run that ALSO trips a throwing port still reports", async () => {
+    // Caught by mutation-testing the fix: without it, `catch` returns a fresh empty receipt and the
+    // accumulated refusals vanish — so a run that hijacked paths AND tripped a fault is byte-identical
+    // to a benign empty one, destroying the exact distinction 13.8m-A exists to create.
+    //
+    // The fault must genuinely reach the OUTER catch: `safeStructural` swallows a throwing structural
+    // port internally, and `newPlanId` throwing on its FIRST call aborts inside planSynthesis before
+    // admission runs. So throw on the SECOND call — planSynthesis mints the PROPOSE plan, admission
+    // refuses the hijack, then mergeStructural's fresh-AUTO-plan branch trips it.
+    let calls = 0;
+    const receipt = await rewriteVaultForSource(
+      baseInput(),
+      mkDeps({
+        reason: fakeReason({
+          regions: [{ notePath: "index.md", regionId: "hijack", body: "x", effect: "new_note" }],
+          frontmatter: [{ notePath: "notes/ok.md", key: "status", value: "active", evidenceRef: "src-1#s" }],
+        }),
+        structural: fakeStructural({ patches: [{ path: "index.md", regionId: "people", newBody: "- [[x]]" }] }),
+        newPlanId: () => {
+          calls += 1;
+          if (calls >= 2) throw new Error("boom");
+          return "plan-1";
+        },
+      }),
+    );
+    expect(calls).toBeGreaterThanOrEqual(2); // the late fault really fired
+    expect(receipt.plans).toEqual([]);
+    expect(receipt.refusals).toContain("structural_surface"); // the refusal SURVIVED the fault
+  });
+
+  it("refusals_carry_no_path_or_title_text — reason codes ONLY (safety rule 7)", async () => {
+    // The refusal channel must not become the leak: GBrain/model-derived paths are untrusted content
+    // and may carry PII or employer-work strings.
+    const hostile = "employer-internal/secret-person-q3-layoffs.md";
+    const candidate: SynthesisCandidate = {
+      regions: [
+        { notePath: "index.md", regionId: "h", body: "x", effect: "new_note" },
+        { notePath: `/${hostile}`, regionId: "h2", body: "y", effect: "new_note" },
+      ],
+    };
+    const receipt = await rewriteVaultForSource(baseInput(), mkDeps({ reason: fakeReason(candidate) }));
+    // NON-VACUITY FIRST: an empty array satisfies every `not.toContain` below and skips the loop, so
+    // this test would stay green if `refusals` silently stopped populating. Pin the content, then the
+    // leak properties.
+    expect(receipt.refusals).toEqual(["structural_surface", "unsafe_shape"]);
+    const serialized = JSON.stringify(receipt.refusals);
+    expect(serialized).not.toContain("employer-internal");
+    expect(serialized).not.toContain("secret-person");
+    expect(serialized).not.toContain("layoffs");
+    expect(serialized).not.toContain("index.md");
+    // every entry is one of the two known code-only reasons
+    for (const r of receipt.refusals) expect(["structural_surface", "unsafe_shape"]).toContain(r);
+  });
+});

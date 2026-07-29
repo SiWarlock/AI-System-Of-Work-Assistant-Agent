@@ -1,19 +1,11 @@
 // The GROUNDED-PATH SHAPE INVARIANT (§6 KN-10/KN-12; safety rule 1; 13.8k) —
 //
-//     every path entering THE GROUNDED SET is shape-validated, WHOEVER produced it.
-//
-// ⚠ SCOPE, stated precisely because this predicate is barrel-exported and the unqualified sentence
-// would over-promise: the grounded set is a MEETING-path construct (`rewriteVaultForMeeting`). The
-// SOURCE-ingestion path has no grounded set at all — `planSynthesis` output flows into the KMP and
-// `touchedNotePaths` without one, so a model-proposed `patches:[{path:"index.md"}]` there is stopped
-// only by the worker adapter's realpath containment, which prevents ESCAPE but not COLLISION with a
-// writer-owned surface. That is a known, separately-tracked gap (Step-9 Finding), NOT something this
-// module already covers. Applying `admitGroundedPath` to the source path's plan targets is the fix,
-// and it belongs to 13.8d rather than here.
+//     every path entering a SYNTHESIS OUTPUT is shape-validated, WHOEVER produced it.
 //
 // Stated as an invariant rather than as a guard at one call site, deliberately: a location-scoped
 // fix ("validate candidate rows in the resolver") is satisfied while a different producer still
-// routes an unvalidated path into the grounded set. Three routes to this one invariant are known:
+// routes an unvalidated path into a synthesis output. FOUR routes to this one invariant are known,
+// and all four are now closed:
 //
 //   1. STUB MINTING          — closed by 13.8j (namespaced by construction).
 //   2. RESOLVED CANDIDATE    — `resolveEntity` returns `candidate.path` VERBATIM from an untrusted
@@ -21,6 +13,15 @@
 //                              carrying `path: "index.md"` plus a faithfully-matching title resolves
 //                              there, and the model may then patch the navigation catalog.
 //   3. CALLER-SUPPLIED SEED  — `MeetingRewriteInput.meetingNotePath` seeds the grounded set directly.
+//   4. SOURCE-PATH PLAN TARGETS — `planSynthesis` output reached the KMP and `touchedNotePaths` with
+//                              no grounded set at all, stopped only by the worker adapter's realpath
+//                              containment, which prevents ESCAPE but not COLLISION with a
+//                              writer-owned surface. Closed by 13.8l via `admitPlanMutations`.
+//
+// ⚠ What is deliberately NOT admitted: the writer's OWN KN-12 structural-parity mutations
+// (`index.md` / `log.md` / `Logs/<date>.md` from the `STRUCTURAL_*` constants). Those are 13.8d's
+// entire point. Admitting them would refuse the feature while still appearing to prevent collision —
+// so callers admit the SEMANTIC (model-proposed) plans and merge structural parity in afterwards.
 //
 // This module is the one place that decides. Every producer routes through `admitGroundedPath`, and
 // a structural pin fails if a second, unguarded entry point appears.
@@ -33,6 +34,14 @@
 //
 // The owned-surface set is DERIVED from `markdown-vault/structural-files.ts`, never re-listed — a
 // hand-copied list is the denylist-drift failure (L64/L65); add a surface there and this inherits it.
+import { KnowledgeMutationPlanSchema } from "@sow/contracts";
+import type {
+  KnowledgeMutationPlan,
+  NoteCreate,
+  NotePatch,
+  LinkMutation,
+  FrontmatterPatch,
+} from "@sow/contracts";
 import {
   STRUCTURAL_INDEX_PATH,
   STRUCTURAL_LOG_POINTER_PATH,
@@ -95,4 +104,83 @@ export function admitGroundedPath(path: unknown): GroundedPathVerdict {
   if (!path.toLowerCase().endsWith(".md")) return refuse("unsafe_shape");
   if (isStructuralSurface(path)) return refuse("structural_surface");
   return { ok: true, path };
+}
+
+/**
+ * Filter a plan's four mutation arrays through {@link admitGroundedPath}, returning the surviving
+ * mutations plus the code-only refusal reasons (13.8l/13.8m-A). Lives HERE, beside the predicate,
+ * so the source and meeting paths share ONE implementation — the duplication that let 13.8j's defect
+ * exist in two call sites is the thing this placement prevents.
+ *
+ * ⚠ Callers must apply this to MODEL-PROPOSED (semantic) plans ONLY. The writer's own KN-12
+ * structural-parity mutations legitimately target `index.md`/`log.md`/`Logs/<date>.md`; running them
+ * through this would refuse them and destroy structural parity while still appearing to "prevent
+ * collision". Admit the semantic plans BEFORE the structural mutations are merged in.
+ */
+export function admitPlanMutations(plan: KnowledgeMutationPlan): {
+  readonly creates: NoteCreate[];
+  readonly patches: NotePatch[];
+  readonly linkMutations: LinkMutation[];
+  readonly frontmatterUpdates: FrontmatterPatch[];
+  readonly refusals: GroundedPathRefusal[];
+} {
+  const refusals: GroundedPathRefusal[] = [];
+  const keep = <T>(items: readonly T[], pathOf: (t: T) => unknown): T[] => {
+    const out: T[] = [];
+    if (!Array.isArray(items)) return out; // TOTAL: a mis-shaped plan yields no mutations, never a throw
+    for (const item of items) {
+      const verdict = admitGroundedPath(pathOf(item));
+      if (verdict.ok) out.push(item);
+      else refusals.push(verdict.reason);
+    }
+    return out;
+  };
+  return {
+    creates: keep(plan.creates, (c) => c.path),
+    patches: keep(plan.patches, (p) => p.path),
+    linkMutations: keep(plan.linkMutations, (l) => l.srcPath),
+    frontmatterUpdates: keep(plan.frontmatterUpdates, (f) => f.path),
+    refusals,
+  };
+}
+
+/**
+ * Rebuild a plan from an admitted (filtered) mutation set, re-validating through the candidate-data
+ * gate. The filter only ever REMOVES mutations, so every non-mutation field must survive verbatim —
+ * including the three optionals. Dropping `expectedProjectId` here would strip a §13.10a verification
+ * field from a plan that carried one; dropping `signedProvenanceStamp` would strip provenance. Both
+ * synthesis paths share this so the two gates cannot drift (the duplication defect 13.8j was about).
+ *
+ * Returns `null` when nothing survived or the rebuilt plan fails the schema gate (fail-safe drop).
+ */
+export function rebuildPlanWithMutations(
+  original: KnowledgeMutationPlan,
+  m: {
+    readonly creates: readonly NoteCreate[];
+    readonly patches: readonly NotePatch[];
+    readonly linkMutations: readonly LinkMutation[];
+    readonly frontmatterUpdates: readonly FrontmatterPatch[];
+  },
+): KnowledgeMutationPlan | null {
+  if (m.creates.length + m.patches.length + m.linkMutations.length + m.frontmatterUpdates.length === 0) return null;
+  const parsed = KnowledgeMutationPlanSchema.safeParse({
+    planId: original.planId as unknown as string,
+    workspaceId: original.workspaceId as unknown as string,
+    sourceRefs: original.sourceRefs.map((s) => ({
+      sourceId: s.sourceId as unknown as string,
+      ...(s.span !== undefined ? { span: s.span } : {}),
+    })),
+    creates: [...m.creates],
+    patches: [...m.patches],
+    linkMutations: [...m.linkMutations],
+    frontmatterUpdates: [...m.frontmatterUpdates],
+    externalActionProposals: original.externalActionProposals,
+    confidence: original.confidence,
+    requiresApproval: original.requiresApproval,
+    provenanceOrigin: original.provenanceOrigin,
+    ...(original.gbrainProposalRef !== undefined ? { gbrainProposalRef: original.gbrainProposalRef } : {}),
+    ...(original.signedProvenanceStamp !== undefined ? { signedProvenanceStamp: original.signedProvenanceStamp } : {}),
+    ...(original.expectedProjectId !== undefined ? { expectedProjectId: original.expectedProjectId } : {}),
+  });
+  return parsed.success ? parsed.data : null;
 }
