@@ -25,7 +25,7 @@ import { dirname, resolve, sep } from "node:path";
 import { ok, err } from "@sow/contracts";
 import type { KnowledgeMutationPlan, Result, WorkspaceId } from "@sow/contracts";
 import { rewriteVaultForSource } from "@sow/knowledge";
-import type { IngestRewriteDeps } from "@sow/knowledge";
+import type { IngestRewriteDeps, GroundedPathRefusal } from "@sow/knowledge";
 import type {
   SourceLivingVaultPort,
   LivingVaultFailure,
@@ -33,17 +33,62 @@ import type {
   ValidatedExtraction,
 } from "@sow/workflows/ports/sourceIngestion";
 
-/** Derives the plan set for one ingested source. Production binds {@link createIngestRewriteAdapter}. */
+/**
+ * Derives the plan set for one ingested source. Production binds {@link createIngestRewriteAdapter}.
+ *
+ * `refusals` is OPTIONAL here for FAKE COMPATIBILITY ONLY (13.8m-B) — a hand-rolled test fake may omit
+ * it and degrades to `[]` (L11-style byte-equivalent silence: an old-shaped fake never fires the audit
+ * sink). The GUARANTEE that a refusal is ever observed rests entirely on
+ * {@link createIngestRewriteAdapter} always forwarding the producer's REQUIRED
+ * `IngestRewriteReceipt.refusals` field verbatim (pinned by `adapter_forwards_refusals_verbatim`) — a
+ * second producer bound to this seam MUST forward its own refusals the same way, or refusals from that
+ * producer silently never reach the sink. Scoped the way 13.8k's module header scoped its invariant:
+ * a statement about THIS producer, not an unqualified "refusals are surfaced".
+ */
 export type LivingVaultRewrite = (
   validated: ValidatedExtraction,
   workspaceId: WorkspaceId,
   source: SourceNoteIdentity,
-) => Promise<{ readonly plans: readonly KnowledgeMutationPlan[] }>;
+) => Promise<{
+  readonly plans: readonly KnowledgeMutationPlan[];
+  readonly refusals?: readonly GroundedPathRefusal[];
+}>;
+
+/** Code-only refusal-audit payload (rule 7) — reason codes + workspace only, never a path/title/entity name. */
+export interface RefusalAudit {
+  readonly workspaceId: WorkspaceId;
+  readonly codes: readonly GroundedPathRefusal[];
+}
 
 export interface LivingVaultAdapterDeps {
   /** The configured vault root. Containment is enforced against its REAL path. */
   readonly vaultRoot: string;
   readonly rewrite: LivingVaultRewrite;
+  /**
+   * 13.8m-B — optional best-effort audit sink (§6 KN-7 "rejected AND audited"). Fired ONCE per run,
+   * ONLY when the receipt's refusals are non-empty — a benign empty run invokes it zero times,
+   * preserving the empty-vs-refused distinction 13.8m-A exists to create. Never alters the returned
+   * `Result` and never escapes as an unhandled rejection, whether the sink throws sync or rejects
+   * async (L25/L53 best-effort). Unbound (the shipped default — nothing constructs this dep in
+   * production today) ⇒ zero invocations (L11 byte-equivalent). The concrete HealthItem/HealthFailure
+   * mint is deferred to the 13.8d arming follow-up, where boot.ts already binds the OTHER
+   * `IngestRewriteDeps` — constructing one here would wire a clock/id pair for a path nothing reaches.
+   */
+  readonly recordRefusals?: (audit: RefusalAudit) => Promise<unknown>;
+}
+
+/** Best-effort, fire-and-forget: never throws, never awaited, never alters the caller's Result (L25/L53). */
+function emitRefusalAudit(
+  sink: LivingVaultAdapterDeps["recordRefusals"],
+  workspaceId: WorkspaceId,
+  refusals: readonly GroundedPathRefusal[],
+): void {
+  if (refusals.length === 0 || typeof sink !== "function") return;
+  try {
+    void sink({ workspaceId, codes: refusals }).catch(() => {});
+  } catch {
+    /* best-effort — a throwing sink must never alter the primary Result. */
+  }
 }
 
 /**
@@ -120,6 +165,9 @@ export function createLivingVaultPort(deps: LivingVaultAdapterDeps): SourceLivin
       try {
         const receipt = await deps.rewrite(validated, workspaceId, source);
         plans = receipt?.plans ?? [];
+        // Fired here, BEFORE root resolution / containment below, so a refusal is reported on EVERY
+        // subsequent exit path — including one that later rejects (13.8m-B's highest-value guarantee).
+        emitRefusalAudit(deps.recordRefusals, workspaceId, receipt?.refusals ?? []);
       } catch {
         return err({ code: "rewrite_failed", message: "living-vault rewrite failed" });
       }
@@ -201,7 +249,10 @@ export function createIngestRewriteAdapter(knowledgeDeps: IngestRewriteDeps): Li
     _validated: ValidatedExtraction,
     workspaceId: WorkspaceId,
     source: SourceNoteIdentity,
-  ): Promise<{ readonly plans: readonly KnowledgeMutationPlan[] }> => {
+  ): Promise<{
+    readonly plans: readonly KnowledgeMutationPlan[];
+    readonly refusals: readonly GroundedPathRefusal[];
+  }> => {
     const receipt = await rewriteVaultForSource(
       {
         workspaceId,
@@ -214,6 +265,6 @@ export function createIngestRewriteAdapter(knowledgeDeps: IngestRewriteDeps): Li
       },
       knowledgeDeps,
     );
-    return { plans: receipt.plans };
+    return { plans: receipt.plans, refusals: receipt.refusals };
   };
 }
