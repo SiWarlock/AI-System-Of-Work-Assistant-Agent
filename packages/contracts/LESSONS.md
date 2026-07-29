@@ -1656,7 +1656,11 @@ grep -nE 'pin:' packages/contracts/LESSONS.md | grep -oE '\b[a-z][a-z0-9]*(_[a-z
 >
 > ⇒ **So the rule's payoff is not "narrower claims."** It is that **forcing yourself to say WHERE you looked exposes WHETHER that is where the property lives.** An unscoped *"the casts are the problem"* would have shipped a fix that deleted six casts and changed nothing — and it would have passed review, because the casts really were there. **The scope statement is not a hedge; it is the step that makes the measurement auditable.**
 
-`pattern:` — not greppable. Enforcement is at authoring time: any sentence of the form *"there is no X"* / *"X appears nowhere"* / *"nothing calls X"* must carry the pattern **and** the path set that was searched.
+⭐ **A SIXTH SHAPE, and it is mechanism #1 at its most dangerous: THE THING YOU ARE SEARCHING FOR DOES NOT EXIST AS A LITERAL ANYWHERE.** Deleting the dead `.sow-pill--zero-egress` CSS rule (9.37a), the acceptance bullet said *"nothing references the class."* The rule's selector list was **shared** with `.sow-pill--egress-false` — which is **live**, and is built by **template interpolation**: `` `sow-pill sow-pill--egress-${String(...acknowledged)}` `` (`egress.tsx:230`). ⇒ **No literal occurrence of that class name exists in the TSX, so a name search returns "zero references" for a class with a live consumer.** Deleting the block on that evidence would have silently restyled a live element. Caught by the implementer reading the selector list rather than trusting the search. **Same family as the `$type<>()` look-alike ([L103](#103)'s limits): the property does not live where the literal is.** ⇒ For dynamically-constructed identifiers, search the **stable prefix** (`sow-pill--egress-`), not the full name — and know that the set of construction sites is itself unbounded.
+
+> ⛔ **AND THE PRESCRIPTION THIS FORCES ON ACCEPTANCE BULLETS, because the bullet was mine:** *"nothing references the class"* stated a **negative claim without saying HOW TO LOOK** — this lesson's own rule, applied one level up, to a brief. ⇒ **Any acceptance bullet asserting an absence must specify the search that establishes it** (which pattern, which paths, and whether the identifier can be dynamically constructed). A bullet that says *"verify nothing references X"* delegates the scope decision to whoever reads it, and they will use the literal.
+
+`pattern:` — not greppable. Enforcement is at authoring time: any sentence of the form *"there is no X"* / *"X appears nowhere"* / *"nothing calls X"* must carry the pattern **and** the path set that was searched — **and, for an identifier that can be assembled at runtime, must say so.**
 `accepted: not mechanically enforceable` — mitigation: in a Finding or a Step-9 flag, a negative claim without a stated scope is treated as unverified rather than as evidence.
 
 ---
@@ -1815,3 +1819,32 @@ Briefing the **meeting** path (13.8m-C), the natural move is *"mirror the most r
 ⚠ **Where recency IS the right signal:** when the newer sibling exists *because* the older one was wrong (a supersession — 9.30 superseding 9.23's re-gate is exactly that, see [L76](#76)). ⇒ **Distinguish a SUPERSESSION from a CONCESSION.** A supersession's note says *"the older approach was wrong"*; a concession's says *"this is narrower than we wanted, because X."* Mirror the first; read past the second.
 
 `accepted: not mechanically enforceable` — judgment at authoring time. Enforcement point: brief-writing, at the moment a prior implementation is named as the template to mirror; say **which** sibling and **why that one**.
+
+---
+
+<a id="106"></a>
+## 106. A CAPABILITY IS NOT A GUARANTEE — a correctly-typed, correctly-fail-closed signal that reaches no consumer is indistinguishable from the failure it was built to distinguish
+
+**2026-07-29 · THREE instances across three areas on one safety posture, one of them pre-existing and untouched**
+
+| # | The signal | Produced | Consumed |
+|---|---|---|---|
+| **#45** | the §5 egress veto's `AuditSignal` → `AuditRecord` | ✅ | ⛔ **no persistence consumer — produced and DROPPED.** *Pre-existing; tracked since before this round and still open* (`IMPLEMENTATION_PLAN.md:552`, handoff `018:52`) |
+| **13.8m** | `GroundedPathRefusal` on the synthesis receipt | ✅ (A: source · C: meeting) | source path wired by B; **meeting path has no consumer** |
+| **9.36 → 9.38** | a distinguishable stored-row-corruption `DbErrorCode` | ✅ | ⛔ `boot.ts:578-592` folds **any** `get()` error into one generic `failClosedEgress` value |
+
+> ⇒ **In all three the producer is CORRECT.** The type is right, it fails closed in the right direction, the tests pass, and **the signal never arrives.** At the surface, a corrupt stored row is byte-identical to an outage; a poisoned-candidate run is byte-identical to a benign empty one; a vetoed egress is byte-identical to one that never happened. **Each was created precisely to be distinguishable from the thing it is now indistinguishable from.**
+
+**Why this passes review, every time.** A producer slice's Done-when is *about the producer* — and it is genuinely met. The consumer is "someone else's slice," so its absence is not a defect **in the work under review**. ⚠ **Two coincidences are a pattern; three, with one already tracked and unfixed, is a systemic gap in how this project ships signals** — not three unlucky slices.
+
+**The tell:** the phrase *"now distinguishable"* / *"now surfaced"* / *"now audited"* appearing in a record whose slice only built the **producer**. Nothing in a green suite contradicts it, because the producer really does produce.
+
+**Do:**
+1. ⛔ **A slice that produces a distinguishing signal must NAME ITS CONSUMER — or record the absence as a tracked task in the SAME round.** Producer-first sequencing is correct; **producer-only is a half-shipped guarantee.**
+2. **Write the scoped claim, never the unqualified one.** Not *"corrupt rows are now distinguishable"* but *"distinguishable at the repository boundary; nothing surfaces it yet — see task N."* The unqualified form is the [L56](#56) class, and it is what gets quoted.
+3. ⭐ **Mechanical hook — `/tdd` Step 7.5 already asks the question and accepts the wrong answer.** *"none — wiring lands in `<slice>`"* is a legitimate Step-7.5 response, but nothing checks that `<slice>` **exists as a tracked task**. ⇒ **When Step 7.5 answers "none," the named future slice must be a real task by the end of that round.** That converts an intention into an artifact ([L51](#51): close-out debt goes in a file, never only in a head or a message).
+4. When judging "is this done?", ask **whose eyes** the signal reaches — not whether it is emitted. Kin to [L80](#80) (*a suite must assert that a gate DECIDES, not that a gate SAID NO*): both are the difference between a mechanism existing and a mechanism working.
+
+⚠ **Do not over-correct into blocking producer-first work.** Splitting producer from consumer is right — it is how 13.8m-A/B shipped safely and how the repo avoids dormant-on-dormant wiring ([L11](#11)). **The defect is never the split; it is the unqualified claim plus the untracked consumer.**
+
+`accepted: not mechanically enforceable` for the framing; the **Step-7.5 hook in (3) is the checkable part** — enforcement point: `/tdd` Step 7.5 and `/orchestrate-end` Carry-forward triage.
