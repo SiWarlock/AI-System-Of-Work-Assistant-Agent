@@ -1906,3 +1906,41 @@ Knowledge skipped the `/tdd` Step-2.5 pause: tests written, RED confirmed, imple
 ⚠ **And the trend rule, because two in one round is a trend:** **disclosure is what makes a deviation ASSESSABLE; it is not what makes it acceptable.** Both deviations were disclosed and self-caught, which is strictly better than silence — but if disclosure becomes most of the mitigation, the gate is softening, and a third instance is a **finding**, not three one-offs.
 
 `accepted: not mechanically enforceable` — enforcement point: the reviewer, at the moment a Step-2.5 write-up arrives describing completed work. Name what was lost, not just what was disclosed.
+
+---
+
+<a id="109"></a>
+## 109. A CHECK CHAINED INTO THE ACTION IT GUARDS IS NOT A GATE — it prints, it cannot stop
+
+**2026-07-29 · self-inflicted and self-caught, on the exact hazard banked earlier the same round**
+
+The shared-tree commit discipline is three steps: `git diff --cached --name-only` **before**, chained `add && commit`, `git show --stat` **after**. Committing an `ARCHITECTURE.md` note, all three ran — and **14 of another implementer's in-flight, already-staged files landed inside a `docs(arch)` commit.**
+
+**The pre-check WORKED. It printed the dirty index, correctly and completely.** It could not act, because it was **inside the same shell invocation as the commit**:
+
+```sh
+echo "=== PRE-STAGE ==="; git diff --cached --name-only   # printed 15 foreign files
+git add ARCHITECTURE.md && git commit -q -F - <<'EOF'     # ran anyway
+```
+
+> ⇒ **A check whose output the actor reads only AFTER the action is not a gate; it is a receipt.** The `&&` chains **add → commit**; nothing chains **check → add**. And step 3 (`git show --stat` after) reports the damage **as history**, which is the one form in which it is most expensive to fix.
+
+⚠ **This is the same defect as the round's earlier "an assertion that aborts a step but not the pipeline is a warning, not a gate,"** and it survived being banked because that entry was read as being about *failed edits*, not about *the checkpoint's own placement*. **Recording a hazard does not immunize you against its other shape.**
+
+**THE FIX IS STRUCTURAL, AND IT IS THE HOUSE PATTERN ([L103](#103)) APPLIED TO THE COMMIT ITSELF:**
+
+```sh
+git commit -F <msg> -- <paths>      # pathspec-limited: commits ONLY these paths
+```
+
+⭐ **`git commit -- <paths>` commits exactly those paths regardless of what else is staged.** The foreign-file sweep stops being *detected* and becomes **unrepresentable** — the index's contents can no longer influence the commit's contents. No discipline, no ordering, no reading of output required. ⇒ **In a shared checkout, pathspec-limit every commit.** (This was already recorded once as a mitigation and had not been adopted as the default; adopting it is the actual remedy.)
+
+**Secondary fixes, for when pathspec-limiting is unavailable:**
+- Put the pre-check in a **separate invocation** and read it before the next one. Cheap, and it restores the check→act ordering.
+- Or make it **fail-closed in-line**: `[ -z "$(git diff --cached --name-only)" ] && git add … && git commit …` — so a dirty index *aborts* rather than *narrates*.
+
+**The repair, recorded because it is non-destructive and worth knowing:** `git reset --soft HEAD~1` (moves HEAD; **working tree untouched**) → `git restore --staged <foreign paths>` (**index only**; a new file returns to untracked) → re-commit pathspec-limited. Nothing was lost. ⚠ **Then tell the owner of those files to verify their own diff** — they are the only one who knows what it should contain, and a silent partial is precisely what this class produces.
+
+⚠ **Zsh footgun met during the repair, worth its own line:** `git restore --staged $PATHS` **failed** because **zsh does not word-split unquoted parameter expansions** — the whole list arrived as one pathspec. It failed *loudly* (`did not match any file(s) known to git`), which is the good direction; in a script that ignored the exit code it would have silently unstaged nothing while reporting success. **List paths explicitly, or use an array.**
+
+`pattern: git log --format='%H %s' -20 | …` — not reliably greppable after the fact. **Enforcement is the habit: `git commit -- <paths>`.** `accepted: not mechanically enforceable`, but the pathspec form makes the failure mode structurally unreachable, which is stronger than enforcement.
