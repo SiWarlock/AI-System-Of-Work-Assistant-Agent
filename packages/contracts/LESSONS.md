@@ -1605,3 +1605,30 @@ grep -nE 'pin:' packages/contracts/LESSONS.md | grep -oE '\b[a-z][a-z0-9]*(_[a-z
     echo "CANDIDATE (classify: citation or quotation?): $n"; done
 ```
 `accepted: not mechanically enforceable` — the classification half is judgment; the pattern narrows the set to inspect. Candidate `plan-lint`/`spec-lint` rule (see the process-durability item's gate-gap list).
+
+---
+
+<a id="100"></a>
+## 100. A negative claim from a scoped search is only as strong as its scope — so state the scope WITH the claim
+
+**2026-07-29 · the third instance of one defect by a third mechanism · lead, self-caught and self-reported**
+
+*"There is NO `WorkspaceSchema.parse` on any write path"* was false. `defaultWorkspace()` parses at `packages/contracts/src/models/workspace.ts:112`, and the create path writes exactly its output (`provisionWorkspace.ts:294` `insertIfAbsent(workspace)`) — so the fresh-create write **is** validated. The search that produced the claim covered `apps/worker/src` + `packages/db/src`, which **structurally cannot contain** `packages/contracts/src`.
+
+**Three instances of the same defect by three different mechanisms, in one round, by one author:**
+| Mechanism | What went wrong |
+|---|---|
+| Wrong **pattern** | the regex could not match the form the thing was written in |
+| Merged **output** | two commands' results read as one, so a miss looked like a hit |
+| Wrong **scope** | the paths searched excluded where the thing lives |
+
+> ⇒ **The durable rule is NOT "widen the pattern"** — that only fixes the first mechanism, and this round proved there are at least three. **A negative existence claim inherits the boundaries of the search that produced it, and those boundaries must travel with the claim.** *"I grepped and found nothing"* is not a finding. *"No hit for `<pattern>` under `<paths>`"* is — because a reader can see the hole, and the person holding the file can contradict it cheaply.
+
+**Why negatives specifically.** A positive claim carries its own evidence (here is the hit) and is self-falsifying if wrong. A negative claim's evidence is an **absence**, which is indistinguishable from an absence of *looking* — so the scope IS the evidence, and omitting it leaves a claim with no checkable content that still reads as authoritative. Kin to [L91](#91) (a stall's signature is the absence of a signal) and [L75](#75)'s fail-first precondition: an unobserved absence and a real absence look identical.
+
+⚠ **The reason this one was expensive rather than merely wrong:** the false negative was used to *repair* a citation. Under it, the natural fix was to name a different mechanism as the write-path guard — which would have replaced a stale citation with a confidently-wrong one ([L99](#99)'s larger half). **A wrong negative upstream of a correction propagates into durable prose as a positive assertion.**
+
+⭐ **Working counter-example from the same exchange, worth copying:** the enumeration *"both dialects × `get`/`list` = four sites"* was stated **with its scope**, which is exactly what let the next reader find that `updateProvisioningFields`'s `.returning()` row is cast too — **six sites, three per dialect** (sqlite `:362`/`:364`/`:412`, postgres `:383`/`:385`/`:430`). A scoped claim gets corrected; an unscoped one gets believed.
+
+`pattern:` — not greppable. Enforcement is at authoring time: any sentence of the form *"there is no X"* / *"X appears nowhere"* / *"nothing calls X"* must carry the pattern **and** the path set that was searched.
+`accepted: not mechanically enforceable` — mitigation: in a Finding or a Step-9 flag, a negative claim without a stated scope is treated as unverified rather than as evidence.
