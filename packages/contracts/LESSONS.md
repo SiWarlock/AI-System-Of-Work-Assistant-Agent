@@ -748,7 +748,8 @@ Nothing was missing in the sense a checklist would catch: the rule existed, the 
 
 **Bound the claim afterwards.** Having closed it, the implementer volunteered that the revoke is durable per workspace **ROW**, not per **VAULT** (task 9.31) — a second workspace pointed at the same vault root re-seeds. "Is it durable now?" answered unqualified would have been a fresh instance of [L56](#56) *about the fix itself*. **A fix's scope is a claim, and inherits the same evidence burden as the claim it repairs.**
 
-`pin: worker provision-preserves-egress-posture.test.ts` (`re_provision_preserves_a_revoked_ack` · `same_type_overwrite_carries_policy_verbatim` · `carried_policy_with_a_foreign_workspaceid_does_not_land`)
+`pin: worker provision-preserves-egress-posture.test.ts` (`re_provision_preserves_a_revoked_ack` · `same_type_overwrite_carries_policy_verbatim` · `a_corrupt_stored_policy_can_never_re_cross_into_a_write`)
+⚠ **Third name corrected 2026-07-29** — it shipped as `carried_policy_with_a_foreign_workspaceid_does_not_land`, which exists in **no test file** (9.30's rename; see [L76](#76) for the full repair and why the rename is not cosmetic — that guard pins a re-gate 9.30 **superseded**). The first two names were verified live in the same pass, at `:75` and `:118` — the point of checking all three rather than only the one flagged.
 `pattern: grep -n "\.upsert(" apps/worker/src/composition` — extends L30's pattern: for each hit, ask which fields the guard covers, not merely whether a guard exists.
 
 ---
@@ -869,7 +870,9 @@ At that point the re-parse (`WorkspaceSchema.parse` on the reassembled aggregate
 
 This is the read-path dual of the project's candidate-data rule (safety rule 2): provider output is untrusted until parsed, and **so is your own store's output once a cast is the only thing asserting its shape**.
 
-`pin: worker provision-preserves-egress-posture.test.ts (carried_policy_with_a_foreign_workspaceid_does_not_land)`
+`pin: worker provision-preserves-egress-posture.test.ts (a_corrupt_stored_policy_can_never_re_cross_into_a_write)`
+⚠ **Citation corrected 2026-07-29.** This lesson shipped citing `carried_policy_with_a_foreign_workspaceid_does_not_land`, which exists in **no test file** — 9.30 renamed the guard, and every citation kept the old name (contracts [L93](#93)'s rot direction, [L96](#96) applied to a `pin:` line rather than a prose claim). The live guard is at `apps/worker/test/composition/provision-preserves-egress-posture.test.ts:221`.
+⛔ **And the rename is not cosmetic — do not repair the citation without reading what the new name says.** That guard's own annotation is *"9.23's re-gate, superseded (9.30)"*, and `IMPLEMENTATION_PLAN.md:1186` records why: 9.30 **DELETED** the `existing.value.egressPolicy` carry-forward **and its `WorkspaceSchema.parse` re-gate** — the exact mechanism this lesson is about — because `updateProvisioningFields` narrows the same-type write to name/vaultRoot/brainId, so **no stored blob re-crosses into a write at all** and the re-gate's premise evaporates rather than being ignored. ⇒ **The RULE stands** (a cast-typed read that can reach a write is the last validation boundary you have). **The MECHANISM it praises is history** — superseded by a stronger closure: by construction, not by re-gate. Cite it that way; a bare rename would have turned a stale citation into a fresh false claim ([L71](#71) — a correction is a claim too).
 `pattern: grep -rn "as Workspace\|row as " packages/db/src` — each hit is a read whose consumers must parse before writing.
 
 ---
