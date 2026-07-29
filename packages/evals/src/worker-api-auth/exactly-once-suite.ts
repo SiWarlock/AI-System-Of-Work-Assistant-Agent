@@ -24,7 +24,7 @@
 import { isOk, type Result } from "@sow/contracts";
 import type { Approval, ApprovalStatus, Channel } from "@sow/contracts";
 import { mintSessionToken, type SessionToken } from "@sow/policy";
-import type { ApprovalTransitionOutcome, DbError } from "@sow/db";
+import { isTerminalApprovalStatus, type ApprovalTransitionOutcome, type DbError } from "@sow/db";
 import { makeAuthInterceptor, type AuthInterceptor } from "@sow/worker/api/auth/interceptor";
 import type { WorkerOriginAllowlist } from "@sow/worker/api/auth/originAllowlist";
 import { createCallerFactory, router, type ApiContext } from "@sow/worker/api/trpc";
@@ -93,6 +93,14 @@ function makeExactlyOnceCas(approvalId: string): { deps: CommandDeps; ledger: Ca
       // the real `decideApprovalCas`: end-state match ⇒ idempotent_noop.)
       if (record.status === next.status) {
         return { ok: true, value: { approval: record, applied: false } };
+      }
+      // TERMINAL GUARD — mirrors the real `decideApprovalCas`
+      // (packages/db/src/invariants/operational-truth.ts): a tombstoned/terminal
+      // record can NEVER transition to a DIFFERENT status, regardless of whether
+      // the caller's (always-freshly-read) expectedFrom matches. Without this the
+      // fake would re-apply + re-dispatch a decision on an already-decided item.
+      if (isTerminalApprovalStatus(record.status)) {
+        return { ok: false, error: { code: "conflict", message: "approval CAS conflict" } };
       }
       // GENUINE TRANSITION — the CAS moves the record IFF it still matches the
       // pre-transition `expectedFrom`. This branch fires exactly once.
@@ -239,6 +247,45 @@ export async function runExactlyOnceSuite(): Promise<SuiteResult> {
     );
   } catch {
     cases.push(expectCase("xchan.replay-threw", false, "the replay path threw across the §16 boundary"));
+  }
+
+  // A cross-channel double where the SECOND contender names a DIFFERENT target
+  // status than the one already terminally applied (Mac approves, Telegram then
+  // rejects the same already-approved item). The real CAS refuses to transition
+  // OUT of a terminal status regardless of the caller's stale expectedFrom
+  // (`decideApprovalCas`, packages/db/src/invariants/operational-truth.ts) — this
+  // must resolve to an err with NO second dispatch, never a second apply.
+  try {
+    const { deps, ledger } = makeExactlyOnceCas("apr_terminal");
+    const caller = makeAuthedCommandCaller(deps);
+    const approveR = (await caller.command.decideApproval({
+      approvalId: "apr_terminal",
+      decision: "approve",
+      channel: "mac" satisfies Channel,
+    })) as Result<UiSafeApprovalDecisionResult, unknown>;
+    const rejectR = (await caller.command.decideApproval({
+      approvalId: "apr_terminal",
+      decision: "reject",
+      channel: "telegram" satisfies Channel,
+    })) as Result<UiSafeApprovalDecisionResult, unknown>;
+    cases.push(
+      expectCase(
+        "xchan.terminal-refuses-second-decision",
+        isOk(approveR) && !isOk(rejectR),
+        "a decision on an already-terminal approval must return err, never re-decide it",
+      ),
+    );
+    cases.push(
+      expectCase(
+        "xchan.terminal-no-second-dispatch",
+        ledger.dispatchCount === 1 && ledger.appliedCount === 1,
+        `re-deciding a terminal approval must not dispatch/apply again, got applied=${ledger.appliedCount} dispatch=${ledger.dispatchCount}`,
+      ),
+    );
+  } catch {
+    cases.push(
+      expectCase("xchan.terminal-threw", false, "the terminal re-decision path threw across the §16 boundary"),
+    );
   }
 
   return foldSuite(EXACTLY_ONCE_SUITE_NAME, cases);
