@@ -1658,6 +1658,10 @@ grep -nE 'pin:' packages/contracts/LESSONS.md | grep -oE '\b[a-z][a-z0-9]*(_[a-z
 
 ⭐ **A SIXTH SHAPE, and it is mechanism #1 at its most dangerous: THE THING YOU ARE SEARCHING FOR DOES NOT EXIST AS A LITERAL ANYWHERE.** Deleting the dead `.sow-pill--zero-egress` CSS rule (9.37a), the acceptance bullet said *"nothing references the class."* The rule's selector list was **shared** with `.sow-pill--egress-false` — which is **live**, and is built by **template interpolation**: `` `sow-pill sow-pill--egress-${String(...acknowledged)}` `` (`egress.tsx:230`). ⇒ **No literal occurrence of that class name exists in the TSX, so a name search returns "zero references" for a class with a live consumer.** Deleting the block on that evidence would have silently restyled a live element. Caught by the implementer reading the selector list rather than trusting the search. **Same family as the `$type<>()` look-alike ([L103](#103)'s limits): the property does not live where the literal is.** ⇒ For dynamically-constructed identifiers, search the **stable prefix** (`sow-pill--egress-`), not the full name — and know that the set of construction sites is itself unbounded.
 
+⭐ **A SEVENTH SHAPE — WRONG SCOPE *INSIDE A BELT*, which is where it does the most damage.** 9.36's source census (the belt over deliberate `as Workspace` reintroductions) discovered its own file set with bare **`git ls-files`** — **tracked files only.** The slice's central new file, `packages/db/src/adapters/workspace-read-gate.ts`, was **untracked at the time**, so ⛔ **the census was blind to the very file the slice created.** A belt whose enumeration method skips new files **passes forever on exactly the additions it exists to catch** — and it passes *green*, so nothing signals the hole. Fixed with `git ls-files --cached --others --exclude-standard`. Self-caught by the implementer before reporting.
+⚠ **Sibling false pass from the same census, also self-caught:** the first mutation attempt used an inline `import("@sow/contracts").Workspace` cast form, which the regex **correctly did not match** — so the mutation "passed" while testing nothing. **A mutation that the guard cannot see is indistinguishable from a guard that works** ([L75](#75)'s fail-first precondition). The realistic single-token cast was needed to make the census go RED.
+⇒ **Both belong to L100 rather than to the census:** a guard is only as complete as the **enumeration** feeding it, and *"which files does this scan?"* is a scope question with the same failure mode as *"which paths did you grep?"*
+
 > ⛔ **AND THE PRESCRIPTION THIS FORCES ON ACCEPTANCE BULLETS, because the bullet was mine:** *"nothing references the class"* stated a **negative claim without saying HOW TO LOOK** — this lesson's own rule, applied one level up, to a brief. ⇒ **Any acceptance bullet asserting an absence must specify the search that establishes it** (which pattern, which paths, and whether the identifier can be dynamically constructed). A bullet that says *"verify nothing references X"* delegates the scope decision to whoever reads it, and they will use the literal.
 
 `pattern:` — not greppable. Enforcement is at authoring time: any sentence of the form *"there is no X"* / *"X appears nowhere"* / *"nothing calls X"* must carry the pattern **and** the path set that was searched — **and, for an identifier that can be assembled at runtime, must say so.**
@@ -1848,3 +1852,57 @@ Briefing the **meeting** path (13.8m-C), the natural move is *"mirror the most r
 ⚠ **Do not over-correct into blocking producer-first work.** Splitting producer from consumer is right — it is how 13.8m-A/B shipped safely and how the repo avoids dormant-on-dormant wiring ([L11](#11)). **The defect is never the split; it is the unqualified claim plus the untracked consumer.**
 
 `accepted: not mechanically enforceable` for the framing; the **Step-7.5 hook in (3) is the checkable part** — enforcement point: `/tdd` Step 7.5 and `/orchestrate-end` Carry-forward triage.
+
+---
+
+<a id="107"></a>
+## 107. Red-first proves the test predates the CODE; an independently-authored cross-area enumeration proves it predates the AUTHOR — so the second can discharge the first's residual
+
+**2026-07-29 · 9.36 · reframes what the TDD gate is FOR**
+
+9.36 shipped with a disclosed TDD deviation: the shared read-gate helper and both adapters were written **before** the dual-dialect tests. The implementer mitigated with mutation verification, which was genuinely strong — reverting one adapter's gate turned exactly the 4 tests that touch it RED while the 3 scoped elsewhere correctly stayed green.
+
+**But mutation verification cannot reach the residual, and the residual is precise:** a test derived from the implementation **encodes** the implementation, and **no mutation OF that implementation reveals it.** Mutation proves **discrimination**; it says nothing about **spec-fidelity**.
+
+> ⭐ **The reframe: red-first is a PROXY, not the property.** What we actually want is *"this test was not derived from the code under test."* **Temporal ordering** (write the test first) is one way to get it. **Independent authorship** is the property itself.
+>
+> ⇒ **RED-FIRST PROVES THE TEST PREDATES THE CODE. AN INDEPENDENTLY-AUTHORED, CROSS-AREA SPEC ENUMERATION PROVES THE TEST PREDATES THE AUTHOR.** The second is a *stronger* guarantee of the same property — which is why it can **discharge** a red-first residual rather than merely apologise for it.
+
+**How it discharged this one.** The remedy was not "write more fixtures" but a **cross-map** against `packages/contracts/test/models/workspace.test.ts`, which already enumerates every `WorkspaceSchema` constraint class one `it(...)` at a time — `.strict()` unknown key, each branded/enum field, both `min(1)` strings, a missing required field, **both nested aggregates' own invariants**, and the top-level refine **in both directions**. That file is **contracts territory, authored by a different area, for a different purpose** — so it *structurally cannot* have been derived from the worker implementation under test.
+
+⚠ **Not a licence to skip red-first.** It discharges a residual **after the fact**, when an independent enumeration happens to exist; it does not make deviation free. Red-first remains the default because it needs no such coincidence — and forbidden-pattern #1 still applies, with the deviation recorded, its residual named, and this remedy attached (so an accepted-deviation precedent carries its **price**, not just its permission).
+
+⭐ **The deliverable shape matters as much as the source, and "one fixture per class" was the wrong ask.** Several constraint classes are **unreachable in a given context** — a `NOT NULL` column cannot present as a *missing field* in a stored row. So the artifact is a **per-class disposition**: **covered** (name the fixture) · **unreachable-in-this-context BECAUSE …** · **gap**. ⇒ **The "because" IS the artifact, not the fixture count.** It converts *"would I have written these tests the same way before seeing the code?"* — unanswerable introspectively — into a list a reviewer can audit.
+
+**Generalises past tests:** whenever you need *"X was not derived from Y,"* ask whether an **independent author** already produced X for their own reasons. That is stronger than any ordering discipline you can impose on a single author, and cheaper than re-deriving it.
+
+`pin: the cross-map itself is the artifact` · `accepted: not mechanically enforceable` — enforcement point: `/tdd` Step 2.5 when a deviation is disclosed, and Step 9 when it is recorded.
+
+---
+
+<a id="108"></a>
+## 108. What a skipped review costs is not a wrong answer — it is an UNASKED ADJACENT QUESTION
+
+**2026-07-29 · 13.8m-C · and it is why "already GREEN, and correct" is not a defence**
+
+Knowledge skipped the `/tdd` Step-2.5 pause: tests written, RED confirmed, implemented, GREEN, mutation-verified — **then** the write-up sent. Self-caught and disclosed, with work stopped before Step 7.
+
+**Reviewing it, everything checked out.** Their central finding was **better than the brief's premise** (the real refusal discard point is `resolveEntity`'s internal `withheld(reason)`, not the `admitInto` call the brief pointed at), and their scope reasoning was sound (not threading three provably-unreachable-to-fail call sites, since speculative guards are the [L75](#75) *"never observed to fail"* shape). The one thing the gate most needed to catch — whether a sibling slice's recorded compromise got inherited ([L105](#105)) — was verified in source and had **not** been.
+
+> ⇒ **So the cost was not a wrong answer. It was the question NEXT TO the answer.** Their narrowing to the two members the field's type admits is correct — and it opens an obvious adjacent question: **the other five union members, do they reach anybody?** One of them is a workspace-isolation signal. At Step 2.5 that question gets asked and costs a sentence. After GREEN it is either a new slice or nothing.
+>
+> ⛔ **Which is why "the design is already green AND correct" does not defend skipping the review: correctness of the answer GIVEN is not coverage of the answers NOT SOUGHT.**
+
+**And the structural reason the gate sits where it does:** a design reviewed **after** it is green can only be **ratified or rejected wholesale.** Before implementation, a reviewer can cheaply add, narrow, or redirect. Afterwards, every suggestion costs rework, so the reviewer's threshold silently rises and marginal-but-real improvements go unmade. **The review still happens; it just becomes a weaker instrument.**
+
+⚠ **Distinguish two things that share the words "TDD deviation, disclosed":**
+| | What moved | What was lost |
+|---|---|---|
+| **Reorder inside the gate** (9.36) | tests after code, **Step 2.5 still happened** | spec-fidelity — addressable, see [L107](#107) |
+| **Skip the gate** (13.8m-C) | **no pre-implementation review at all** | the adjacent questions — **not** recoverable, only substitutable |
+
+⇒ **Do not let one's precedent cover the other.** The remedy for a skipped gate cannot be the remedy for a reorder: here it was *"answer the question Step 2.5 would have asked, from source, and don't fix it in this slice"* — which substitutes for the lost review without pretending to restore it.
+
+⚠ **And the trend rule, because two in one round is a trend:** **disclosure is what makes a deviation ASSESSABLE; it is not what makes it acceptable.** Both deviations were disclosed and self-caught, which is strictly better than silence — but if disclosure becomes most of the mitigation, the gate is softening, and a third instance is a **finding**, not three one-offs.
+
+`accepted: not mechanically enforceable` — enforcement point: the reviewer, at the moment a Step-2.5 write-up arrives describing completed work. Name what was lost, not just what was disclosed.

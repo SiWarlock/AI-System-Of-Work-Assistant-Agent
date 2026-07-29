@@ -68,6 +68,14 @@ Every `/tdd` brief is authored as a **file** in `docs/briefs/`, not just pasted 
 what calls the new code. If wiring genuinely belongs to a later slice, say exactly:
 `none — wiring lands in <slice-id>`. `spec-lint brief` fails a brief without this section.>
 
+> ⛔ **`none — wiring lands in <slice-id>` CARRIES A REQUIREMENT: `<slice-id>` MUST BE A REAL TRACKED TASK BY THE END OF THE ROUND** (added 2026-07-29 — contracts **L106**). This answer is legitimate and producer-first splitting is correct (contracts L11) — **but nothing previously checked that the named slice existed**, and that gap is what manufactures *capability-not-guarantee* instances: a correctly-typed, correctly-fail-closed signal that reaches no consumer is indistinguishable at the surface from the failure it was built to distinguish. Three such instances were live simultaneously in one round (a dropped `AuditSignal` open since before that round, refusals reaching nobody, a distinguishable error no consumer surfaced).
+>
+> ⇒ **Two obligations on any brief whose Step-7.5 answer is "none":**
+> 1. **Name the consumer slice, and make it a tracked task in the same round** — an intention in prose is not an artifact (contracts **L51**: close-out debt goes in a file, never only in a head or a message).
+> 2. **Write the SCOPED claim in the acceptance criteria and the commit** — *"distinguishable at `<boundary>`; nothing surfaces it yet, see task N"* — never the unqualified *"X is now distinguishable / surfaced / audited."* The unqualified form is what gets quoted, and it is false the moment it leaves the producer's own scope.
+>
+> ⚠ Also: **any acceptance bullet asserting an ABSENCE must specify the search that establishes it** — which pattern, which paths, and **whether the identifier can be assembled at runtime** (contracts **L100**). *"Verify nothing references X"* delegates the scope decision to the reader, and they will use the literal — which silently misses a dynamically-constructed consumer.
+
 ## Files expected to touch
 **New:**
 - `<path>` — <what it does>
