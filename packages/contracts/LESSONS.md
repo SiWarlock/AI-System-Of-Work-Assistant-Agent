@@ -1978,39 +1978,41 @@ git commit -F <msg> -- <paths>      # pathspec-limited: commits ONLY these paths
 ---
 
 <a id="111"></a>
-## 111. AN UNVERIFIED DOUBT ABOUT A CORRECT RECORD IS THE SAME DEFECT AS AN UNVERIFIED CLAIM — and it is more corrosive, because a doubt need not be specific to do damage
+## 111. A RETRACTION IS A CLAIM — and an INTERMITTENT failure is the perfect trap for a premature one
 
-**2026-07-29 · the round's sharpest inversion, and I committed it twice in one exchange**
+**2026-07-29 · I retracted a correct doubt, on evidence I had explained away, and an implementer caught it by re-verifying instead of deferring**
 
-An implementer's preflight report described the root **`pnpm lint` as a "broken wrapper,"** having run `npx turbo run lint` instead. The tracker records `pnpm lint → 11/11 successful, exit 0` as part of the (genuine) *lint-is-typecheck* finding. I relayed the doubt upward — flagging that *"the gate we already knew was only a typecheck may also not be invoked the way the record says it is."*
+An implementer's preflight reported root **`pnpm lint`** failing and used `npx turbo run lint` instead. I relayed the doubt to the lead. The lead ran `pnpm lint`, got **11/11 successful**, and retracted it. **I then verified the retraction — and "confirmed" it — and the retraction was WRONG.**
 
-**Verified, three ways, and the record was right:**
-- root `package.json:12` — `"lint": "turbo run lint"`. **`pnpm lint` IS `turbo run lint`;** it delegates, it does not shadow.
-- `pnpm lint` → `Tasks: 11 successful, 11 total`, **EXIT=0**. `npx turbo run lint` → identical. **Same mechanism, not a workaround.**
-- **All 11 packages' `lint` is literally `tsc --noEmit`**, and **`eslint` appears in ZERO workspace `package.json` files.**
+**What is actually established** (all unpiped exit codes, two independent operators):
+- root `package.json:12` = `"lint": "turbo run lint"` — the script does delegate to turbo.
+- **`pnpm lint` fails INTERMITTENTLY**, *before turbo starts*, with `ESLint output (JSON parse failed…)` / `[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command "eslint" not found` — the implementer reproduced it at **exit 1**, and **my own first run produced byte-identical output**.
+- `pnpm --filter . run lint` and `npx turbo run lint` succeed, **11/11 exit 0**, in the same shell, same session.
+- **All 11 packages' `lint` is literally `tsc --noEmit`; `eslint` appears in ZERO workspace manifests** — so the eslint reference cannot originate in a package script, and the *recursive*-exec error says bare invocation isn't running the root script at all. **Cause unidentified; deliberately not chased.**
 
-> ⇒ **The real finding (no ESLint, no `format:check` — so `lint` means typecheck and nothing more) was never in question and stands on its own evidence. The DOUBT was the error.**
+> ⛔ **HOW I GOT IT WRONG, AND THE MECHANISM IS THE LESSON: I dismissed real evidence because it disagreed with a conclusion I had just formed.** My run 1 failed; my run 2 of the *same command in the same shell* returned 11/11. **I treated run 2 as the truth and run 1 as an artifact of my own tooling** — reasoning that no manifest references eslint, so the text "couldn't be real."
+>
+> ⭐ **An INTERMITTENT failure is the ideal trap for this, because a second run genuinely does "disprove" the first — and the disproof is worthless.** Two runs disagreeing is evidence of **non-determinism**, never evidence that the failing run was fictitious. **The correct read of "it failed, then it passed" is "it is flaky," not "it passes."**
 
-⛔ **And I did not merely relay it — I "corroborated" it, wrongly, with two distinct measurement failures in one command:**
-1. **I piped the output through `tail`, then printed `$?`** — which reported **`tail`'s** exit status, not `pnpm`'s. **I never measured the thing I was reporting on.** (L100's family again: measuring the wrong object.)
-2. The alarming text I saw — `Command "eslint" not found` / `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL` — **is unreproducible and cannot have come from a workspace script**, since no package references eslint. It was an artifact of my own tooling interleaved into the captured output, which I read as evidence because it *agreed with the doubt I already held.*
-
-**Why doubt is the more dangerous direction, and this is the whole lesson:**
-
-| | A false CLAIM | A false DOUBT |
+**Separate RAISING from CORROBORATING — they are different acts with different standards** (this distinction is the lead's, and it corrects an earlier over-broad version of this entry):
+| Act | Verdict | Why |
 |---|---|---|
-| What it needs to spread | a specific assertion, which is checkable | **nothing specific** — "X may be broken" is unfalsifiable as stated |
-| How it ends | someone checks it and it dies | **it lingers**; nobody can disprove a vague suspicion |
-| What it costs | a wrong belief, corrected | **trust in a mechanism that works** |
+| **Raising** an unverified doubt to someone who can verify it | ⭐ **CORRECT** | that is what the escalation channel is *for*; a teammate who sits on a doubt until it is substantiated is strictly worse, and this round repeatedly depended on that channel working |
+| **Corroborating** it with support that does not hold | ⛔ **the defect** | it converts "please check this" into "this is established," and it spends the verifier's budget on a false premise |
 
-> ⭐ **A false green gets fixed. A false doubt makes people stop trusting a gate that works** — and a distrusted-but-working gate is worse than a known-broken one, because it gets bypassed *and* nobody replaces it.
+⚠ **So do NOT read this as "don't raise doubts."** An earlier draft of this entry said escalating-without-banking was *"the same claim in a channel with fewer witnesses."* **Too strong, and actively harmful if followed** — it teaches suppression of exactly the signal that caught this. The defect was never the raising.
 
-**Do:**
-1. **Hold a doubt to the same evidentiary standard as a claim.** *"I think X may be broken"* is not reportable; *"X printed Y, exit code Z, reproduced N times"* is.
-2. ⛔ **Never report an exit code you obtained through a pipe.** `cmd | tail` gives you `tail`'s status. Redirect (`cmd > f 2>&1; echo $?`) or check `PIPESTATUS`.
-3. **Beware agreement.** The unreproducible output was believed *because it matched a doubt already in hand* — confirmation is the weakest evidence and feels like the strongest.
-4. **Attacking a record is a claim about the record**, and ([L71](#71)) a correction is a claim too. Retracting requires the same verification as asserting — **including retracting someone else's retraction**, which is how this one was caught.
+⛔ **THE PIPE TRAP CAUGHT BOTH INVESTIGATORS WITHIN FIFTEEN MINUTES, and this is worth more than either self-criticism:**
+- I ran `pnpm lint 2>&1 | tail -8` then printed `$?` — **which is `tail`'s status, not `pnpm`'s.** I reported an exit code I had not measured.
+- The lead ran `pnpm lint 2>&1 | tail -6; echo "exit=${PIPESTATUS[0]}"` and got **`exit=` — empty**. They noted it as instrument imprecision and moved on.
+- **The lead reached a defensible answer only because they had a second, independent signal** (the `11 successful` line plus visible `tsc --noEmit`). ⇒ **Redundancy separated the two outcomes, not care.**
 
-⚠ **Meta, and it is the uncomfortable part:** this round spent itself almost entirely on **over-claims**, which trains a reflex toward suspicion. **That reflex is itself an over-claim generator, pointed the other way.** Skepticism is not free; it has a false-positive rate, and its false positives destroy working machinery.
+> ⇒ **`cmd | tail` discards the exit status you care about. Redirect (`cmd > f 2>&1; echo $?`) or index `PIPESTATUS` correctly — and if the exit code prints EMPTY, that is a failed measurement, not a minor imprecision.**
 
-`accepted: not mechanically enforceable` — enforcement point: any message or record that questions an existing verified claim. **State the command, the output, and the real exit code, or do not raise it.**
+⭐ **AND THE DURABLE FIX IS ABOUT EVIDENCE CLASS, not care — make the evidence unrepresentable-as-wrong ([L103](#103) applied to evidence):** the finding that actually mattered — **lint means typecheck and nothing more** — never depended on any of this. It rests on **script inspection**: 11 scripts, all `tsc --noEmit`, no ESLint anywhere, no `format:check`. **An inspectable fact cannot be re-opened by a flaky execution; a run's exit code can.** ⇒ **Prefer inspectable evidence over executed evidence for any durable claim.** Exit codes and run output are **receipts**; the script definitions are the **gate**.
+
+**Counter-consideration, stated as reasoning rather than as demonstrated here** — because this instance shows the *opposite*, and pretending otherwise would be the defect this entry is about: a **false doubt** is also costly, and differently from a false claim. A false claim is specific and checkable, so someone kills it; a vague doubt is unfalsifiable as stated and lingers, and **a distrusted-but-working gate is worse than a known-broken one, because it gets bypassed *and* never replaced.** ⇒ **Both directions have a false-positive rate. Skepticism is not free — but neither is dismissal, and THIS time dismissal was the error.**
+
+⚠ **Meta, and it is the round's own trap: a round spent almost entirely on over-claims trains a suspicion reflex, and that reflex is an over-claim generator pointed the other way** — including inward, at one's own correct work. The reflex fired here twice: once as an over-harsh self-criticism the lead had to reject, and once as the over-confident retraction above.
+
+`accepted: not mechanically enforceable` — enforcement points: **(1)** any message questioning *or* retracting an existing claim must carry the command, the output, and a **real** exit code; **(2)** two runs disagreeing ⇒ report **flaky**, never **passing**; **(3)** prefer inspectable over executed evidence in anything durable.
