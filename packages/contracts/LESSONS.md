@@ -2048,3 +2048,33 @@ A three-way wait was diagnosed from three signals read together: the task still 
 **Generalises past messaging:** any observation-point check on a distributed system shares this shape — a queued job, an unflushed buffer, a request in the network. **"I cannot see it" and "it does not exist" are the same observation and different facts.** Kin to [L100](#100)'s negative claims (an absence is only as strong as the scope that looked) and to [L91](#91) (a stall's signature is the absence of a signal — true, and the reason this instrument is needed *and* the reason it cannot be conclusive).
 
 `accepted: not mechanically enforceable` — enforcement point: the wording of the alarm itself. **Phrase a stall report as a question about state, never as a claim about someone's action;** and when logging whether the check "worked," verify the outcome before crediting it.
+
+---
+
+<a id="113"></a>
+## 113. A lead's RULINGS need the same adversarial channel its CLAIMS have — the person who cannot audit a decision is the person who made it
+
+**2026-07-29 · the round's capstone, requested by the decider whose judgement it indicts**
+
+This round produced **ten overturns** of a reader further from the evidence by a reader closer to it. **Nine covered CLAIMS. Exactly ONE covered JUDGEMENT — and only because the decider asked for it.**
+
+**Why claims got corrected and decisions did not.** The machinery that made claim-overturns cheap was one convention: **every brief and finding cited a falsifiable `file:line`**, so anyone with the file open could contradict it in one command. ⛔ **That machinery has no analogue for a decision.** A ruling — *hold contract · no 4th adversarial pass · Option A over Option B · not this round* — cites **reasoning**, not a checkable premise. There is nothing to grep. So the only person positioned to price it is **whoever bore its cost**, and that person is structurally not the one who chose.
+
+> ⭐ **THE PERSON WHO CANNOT AUDIT A DECISION IS THE PERSON WHO MADE IT, AND THE ONLY CORRECTION AVAILABLE COMES FROM WHOEVER BORE ITS COST.**
+>
+> **A hold's cost is invisible to whoever imposed it.** So is a deferral's, a scope cut's, an ordering constraint's, a *"not this round."* The decider sees the risk avoided; only the held party sees the hour.
+
+**The instance.** contract-implementer was held idle for over an hour by lead ruling, to keep two writers off the contract/db seam while 9.36 was live. Asked — **specifically**, in those terms — whether the hold had been *wrong*, they **read `be62e348`'s actual diff** rather than agreeing: it rewrote `packages/db/src/repositories/interfaces.ts`, added the read-gate adapter, touched both dialects' schema, and contained **zero `packages/contracts/**` files.** ⇒ **The hold was right for a MORE PRECISE reason than the one given** — the contention surface was never the contracts layer, it was the repository-interface file one layer down. **Sharpened, not ratified**, and the next dispatch inherits a named file instead of an approximation.
+
+⚠ **The uncomfortable half: it only happened because the decider asked.** Contract had formed no view during the hold, had no channel to raise one, and investigated *when prompted*. ⇒ **A low correction rate on judgement is not evidence that judgement is better than claims. It is evidence that nobody is checking.**
+
+**Do:**
+1. **When a ruling imposes a cost on someone — a hold, a deferral, a scope cut, an ordering — ask the party who bore it to price it, AT CLOSE-OUT**, which is the last moment before the state is recoverable.
+2. ⛔ **Ask the SPECIFIC question, not a generic one.** *"Anything unfiled?"* got *"nothing unfiled."* *"Was this hold wrong — was the collision real, would the work have parallelised safely, did you form a view you didn't state?"* got a diff read. **The generic prompt is not a weaker version of the specific one; it is a different question, and it reliably returns nothing.**
+3. **Record the answer as a PRICED decision** — including *"it was right, for this narrower reason,"* which is the common and most useful outcome.
+
+⚠ **Limit, so this does not become paralysis:** this is **not** *"distrust every ruling."* A decider who re-litigates every call stops deciding, and most rulings this round were right. The ask is **one bounded question, once, at a boundary, to the one party who paid** — cheap enough to be routine, and it is the only correction channel that exists for judgement.
+
+**Kin:** the reader-with-the-file-open asymmetry (this entry is that asymmetry pointed at **decisions** rather than **claims**) · [L100](#100)'s fourth mechanism in a *process* decision (a cost estimated without being measured) · [L112](#112) (an instrument that grades its own hit rate will report a better one than it has — the same self-assessment defect, one level up).
+
+`accepted: not mechanically enforceable` — enforcement point: `/orchestrate-end` close-out, and the escalation taxonomy. **A hold or deferral should carry a price-it-back step the way a Step-9 flag carries a routing destination.**
