@@ -12,11 +12,13 @@ import type { Result, WorkspaceId, ProvenanceOrigin } from "@sow/contracts";
 import { TBD } from "@sow/domain";
 import type { EntityCandidate, EntityGbrainReadPort, EntityReadFault, EntityRef } from "../src/synthesis/entity-resolver";
 import type { SynthesisCandidate, SynthesisSectionPort, NoteRegionDescriptor } from "../src/synthesis/planner";
+import type { GroundedPathRefusal } from "../src/synthesis/grounded-path";
 import {
   rewriteVaultForMeeting,
   MAX_ENTITY_REFS,
   type MeetingRewriteInput,
   type MeetingRewriteDeps,
+  type MeetingRewriteReceipt,
 } from "../src/synthesis/meeting-rewrite";
 import { classifyImporterSource, scanProductionImporters, ungatedImporters } from "./support/dormancy-pin";
 
@@ -422,5 +424,125 @@ describe("rewriteVaultForMeeting — never-throws, flood-bound, dormant (L11 / L
     expect(ungatedImporters(importers, "rewriteVaultForMeeting")).toEqual([]);
     // non-vacuity: the same predicate still rejects an ungated binding of THIS symbol
     expect(classifyImporterSource(`import { rewriteVaultForMeeting } from "@sow/knowledge";\nawait rewriteVaultForMeeting(i, d);`, "rewriteVaultForMeeting")).toBe("ungated");
+  });
+});
+
+// ── 13.8m-C — the MEETING-path code-only refusal channel (§6 KN-7 "rejected AND audited") ─────────
+//
+// Mirrors 13.8m-A (ingest-rewrite.ts) exactly: a REQUIRED `refusals: readonly GroundedPathRefusal[]`
+// on the receipt, an accumulator HOISTED above the try, present on the fail-safe empty()-equivalent.
+// Producer-only — the meeting-path worker consumer does not exist yet (a follow-on, like 13.8m-B).
+//
+// Two REAL sources of refusal signal on this path (verified in source, not assumed from the brief):
+//  1. The SEED check (`admitGroundedPath(input.meetingNotePath)`) — a poisoned meeting note path
+//     aborts the WHOLE run today with zero signal.
+//  2. `resolveEntity`'s OWN internal admission check (entity-resolver.ts, 13.8k) — a poisoned
+//     RESOLVED candidate path is already caught THERE and returned as `withheld(reason)`, where
+//     `reason` for that route is exactly a `GroundedPathRefusal` member embedded in the broader
+//     `WithheldReason` union. This receipt never read `resolution.reason` before this slice.
+// The `admitInto` call sites (resolved-path re-admission, stub-path admission) are NOT threaded
+// with a refusals accumulator: both are provably unreachable-to-fail — the resolved-path call
+// re-validates a path `resolveEntity` already admitted (pure function, same input ⇒ same result),
+// and the stub path is namespaced-safe by construction (13.8j). Adding untested speculative
+// threading there would be exactly the "guard never observed to fail" shape L75 warns against.
+
+describe("rewriteVaultForMeeting — a refusal is observable and carries no content (13.8m-C)", () => {
+  it("benign_empty_run_and_refused_run_are_distinguishable — today they are byte-identical", async () => {
+    const benign = await rewriteVaultForMeeting(baseInput(), mkDeps());
+    const refused = await rewriteVaultForMeeting(baseInput({ meetingNotePath: "index.md" }), mkDeps());
+    expect(benign.plans).toEqual([]);
+    expect(refused.plans).toEqual([]); // both produce nothing …
+    expect(benign.refusals).toEqual([]); // … but only one REFUSED
+    expect(refused.refusals.length).toBeGreaterThan(0);
+    expect(refused.refusals).not.toEqual(benign.refusals);
+  });
+
+  it("refusal_carries_no_path_or_title_text — reason codes ONLY (safety rule 7)", async () => {
+    // The refusal channel must not become the leak: a resolved candidate's path/title is
+    // GBrain-derived, untrusted content that may carry PII or employer-work strings.
+    const hostile = "employer-internal/secret-person-q3-layoffs.md";
+    const deps = mkDeps({
+      gbrain: fakeGbrain({
+        Ghost1: () => ok([cand({ path: `/${hostile}`, slug: "ghost1", title: "Ghost1" })]), // absolute ⇒ unsafe_shape
+        Ghost2: () => ok([cand({ path: "index.md", slug: "ghost2", title: "Ghost2" })]), // structural_surface
+      }),
+    });
+    const receipt = await rewriteVaultForMeeting(
+      baseInput({
+        entityRefs: [
+          { name: "Ghost1", kind: "person" },
+          { name: "Ghost2", kind: "project" },
+        ],
+      }),
+      deps,
+    );
+    // NON-VACUITY FIRST — an empty array satisfies every `not.toContain` below and would let this
+    // test stay green if `refusals` silently stopped populating.
+    expect(receipt.refusals).toEqual(["unsafe_shape", "structural_surface"]);
+    const serialized = JSON.stringify(receipt.refusals);
+    expect(serialized).not.toContain("employer-internal");
+    expect(serialized).not.toContain("secret-person");
+    expect(serialized).not.toContain("layoffs");
+    expect(serialized).not.toContain("index.md");
+    expect(serialized).not.toContain("Ghost1");
+    expect(serialized).not.toContain("Ghost2");
+    // every entry is one of the two known code-only reasons
+    for (const r of receipt.refusals) expect(["structural_surface", "unsafe_shape"]).toContain(r);
+  });
+
+  it("fault_after_admission_still_reports_refusals — a run that refuses, then trips a throwing port, still reports", async () => {
+    // Caught by mutation-testing the fix (reported at Step 2.5/9): without the hoist, `catch` returns
+    // a fresh empty receipt and the accumulated refusal vanishes — a run that hijacked a resolution
+    // AND tripped a fault becomes byte-identical to a benign empty one.
+    //
+    // The fault must genuinely reach the OUTER catch. `newPlanId` throwing never reaches `planSynthesis`
+    // (which is itself TOTAL and would swallow it internally) — so the candidate here is EMPTY
+    // (`semantic = []`), meaning `assemble` inside planSynthesis never calls `newPlanId` at all. The
+    // only call this scenario drives is step 5's `assembleFresh` (stub-only run), which is UNGUARDED
+    // in `rewriteVaultForMeeting`'s own try — a throw there reaches the outer catch directly.
+    const deps = mkDeps({
+      gbrain: fakeGbrain({
+        Ghost: () => ok([cand({ path: "index.md", slug: "ghost", title: "Ghost" })]), // withheld(structural_surface)
+        // "New Person" ⇒ [] ⇒ create_stub, mints a stub ⇒ step 5's assembleFresh runs
+      }),
+      newPlanId: () => {
+        throw new Error("boom");
+      },
+    });
+    const receipt = await rewriteVaultForMeeting(
+      baseInput({ entityRefs: [{ name: "Ghost", kind: "person" }, { name: "New Person", kind: "person" }] }),
+      deps,
+    );
+    expect(receipt.plans).toEqual([]); // the fault really fired — nothing assembled
+    expect(receipt.refusals).toContain("structural_surface"); // the refusal SURVIVED the fault
+  });
+
+  it("fail_safe_receipt_carries_refusals — the empty()-equivalent path returned on a seed refusal is EXACTLY empty plus refusals", async () => {
+    const receipt = await rewriteVaultForMeeting(baseInput({ meetingNotePath: "log.md" }), mkDeps());
+    // every OTHER field is the canonical "nothing happened" shape …
+    expect(receipt.plans).toEqual([]);
+    expect(receipt.planIds).toEqual([]);
+    expect(receipt.autoCount).toBe(0);
+    expect(receipt.proposeCount).toBe(0);
+    expect(receipt.meetingNoteLinkMutations).toEqual([]);
+    expect(receipt.groundedPaths).toEqual([]);
+    // … except refusals, the one field that carries signal
+    expect(receipt.refusals).toEqual(["structural_surface"]);
+  });
+
+  it("refusals_is_required_on_the_receipt — the field cannot be omitted (contracts L103)", () => {
+    // @ts-expect-error — omitting `refusals` must fail to type-check; an UNUSED directive here (TS2578)
+    // is the pin failing, not passing (worker L80's proven pin, applied here).
+    const literal: MeetingRewriteReceipt = {
+      runId: "run-1",
+      plans: [],
+      planIds: [],
+      autoCount: 0,
+      proposeCount: 0,
+      meetingNoteLinkMutations: [],
+      groundedPaths: [],
+    };
+    // Reference `literal` so it's not reported as an unused local by a stricter lint config someday.
+    expect(literal.runId).toBe("run-1");
   });
 });

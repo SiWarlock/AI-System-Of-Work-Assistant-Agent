@@ -46,7 +46,7 @@ import type {
 import { renderGeneratedRegion } from "../markdown-vault/sections";
 import { resolveEntity, stubNotePathFor, type EntityRef, type EntityCandidate, type EntityGbrainReadPort } from "./entity-resolver";
 import { planSynthesis, type SynthesisReasonPort, type SynthesisSectionPort } from "./planner";
-import { admitGroundedPath, rebuildPlanWithMutations } from "./grounded-path";
+import { admitGroundedPath, rebuildPlanWithMutations, type GroundedPathRefusal } from "./grounded-path";
 
 // Per-array flood bounds (L31 — bounded blast radius for an autonomous writer). These cap the
 // DETERMINISTIC inputs this module owns: the correlated entity refs and the link-candidate context.
@@ -106,9 +106,27 @@ export interface MeetingRewriteReceipt {
    * Audit surface: the ENTITY paths grounding admitted this run (resolved notes + create-stubs), in
    * resolution order. It is the grounding decision, NOT a record of what was written — the meeting
    * note itself is omitted (it is always permitted), and a stub listed here can still fail the
-   * downstream schema gate and emit nothing.
+   * downstream schema gate and emit nothing. See `refusals` for this decision's REJECTED complement
+   * (13.8m-C).
    */
   readonly groundedPaths: readonly string[];
+  /**
+   * 13.8m-C — code-only refusal audit (§6 KN-7 "rejected AND audited"), the MEETING-path analog of
+   * `IngestRewriteReceipt.refusals` (13.8m-A). Reason codes ONLY: a channel that carried the refused
+   * path would BECOME the exfiltration route it exists to report (rule 7). An empty array means
+   * "nothing was refused" — the distinction that makes a poisoned run observably different from a
+   * benign one.
+   *
+   * ⛔ DORMANT, PRODUCER-ONLY: this field is populated on the real meeting path, but there is
+   * currently NO CONSUMER — the meeting-path worker binding (the 13.8m-B analogue) does not exist
+   * yet. Do not read this as "refusals now reach the operator" — only the SOURCE path's refusals do
+   * today, via 13.8m-B.
+   *
+   * Unlike its sibling (`IngestRewriteReceipt.refusals`, capped by its own `MAX_REFUSALS`), this array
+   * has no separate cap: its only two push sites (the single seed check, and the per-ref grounding
+   * loop) are already transitively bounded by `MAX_ENTITY_REFS` — length can never exceed 1 + 200.
+   */
+  readonly refusals: readonly GroundedPathRefusal[];
 }
 
 interface Muts {
@@ -134,7 +152,12 @@ export async function rewriteVaultForMeeting(
   deps: MeetingRewriteDeps,
 ): Promise<MeetingRewriteReceipt> {
   const runId = safeRunId(deps);
-  const empty: MeetingRewriteReceipt = {
+  // Hoisted ABOVE the try (mirrors 13.8m-A's `ingest-rewrite.ts` fix): a fault AFTER admission must
+  // not discard what was already refused, or a run that refuses a resolved candidate and then trips a
+  // throwing port becomes byte-identical to a benign empty one — destroying exactly the distinction
+  // this channel exists to create.
+  const refusals: GroundedPathRefusal[] = [];
+  const empty = (): MeetingRewriteReceipt => ({
     runId,
     plans: [],
     planIds: [],
@@ -142,20 +165,24 @@ export async function rewriteVaultForMeeting(
     proposeCount: 0,
     meetingNoteLinkMutations: [],
     groundedPaths: [],
-  };
+    refusals,
+  });
   try {
     // Every guard lives INSIDE the try so the total-function claim holds even for a null/hostile
     // `deps` or `input` (the sibling `rewriteVaultForSource` is total the same way).
-    if (input == null || typeof input !== "object") return empty;
+    if (input == null || typeof input !== "object") return empty();
     // 13.8k: validate the subject path ONCE and use the captured value everywhere below. Re-reading
     // `input.meetingNotePath` per use would be a TOCTOU seam — a hostile getter/Proxy could return a
     // benign path to the guard and `index.md` to the seed.
     const seedVerdict = admitGroundedPath(input.meetingNotePath);
-    if (!seedVerdict.ok) return empty;
+    if (!seedVerdict.ok) {
+      refusals.push(seedVerdict.reason); // 13.8m-C: the CALLER-SUPPLIED SEED route, observed not discarded
+      return empty();
+    }
     const meetingNotePath = seedVerdict.path;
     // WS-8 (safety rule 4): a read port bound to another workspace never reads — fail closed BEFORE any
     // query is issued, so no cross-brain read is even attempted (defense-in-depth over resolveEntity's).
-    if (deps == null || deps.gbrain?.workspaceId !== input.workspaceId) return empty;
+    if (deps == null || deps.gbrain?.workspaceId !== input.workspaceId) return empty();
 
     // 1. GROUND (deterministic). TWO legs, differing ONLY in whether a no-match may mint a note:
     //    · `entityRefs`          — resolve-OR-STUB (the ref carries a real name).
@@ -188,6 +215,15 @@ export async function rewriteVaultForMeeting(
         const resolution = await resolveEntity(ref, input.workspaceId, { gbrain: deps.gbrain });
         if (resolution.kind === "resolved" && isNonEmptyString(resolution.path)) {
           admitInto(resolution.path, grounded, groundedPaths);
+        } else if (resolution.kind === "withheld") {
+          // 13.8m-C: `resolveEntity` ALREADY ran `admitGroundedPath` internally on a resolved
+          // candidate's path (13.8k) and withheld on failure — the reason is embedded in the broader
+          // `WithheldReason` union. Surface it here iff it's actually a GroundedPathRefusal (route 2,
+          // RESOLVED CANDIDATE, from grounded-path.ts's own header); the other withheld reasons
+          // (ambiguous/lossy_match/gbrain_unavailable/malformed_entity/ws_scope_mismatch) are not this
+          // channel's concern and are left alone, exactly as before.
+          const { reason } = resolution;
+          if (reason === "structural_surface" || reason === "unsafe_shape") refusals.push(reason);
         } else if (allowStub) {
           // 13.8j: namespaced by the ONE shared derivation (never built inline), so an untrusted
           // attendee name can't mint a root structural surface. `null` ⇒ not a mintable stub.
@@ -196,8 +232,8 @@ export async function rewriteVaultForMeeting(
             stubCreates.push({ path: stubPath, body: renderGeneratedRegion("stub", "") });
           }
         }
-        // withheld ⇒ nothing grounded; a stub-suppressed no-match ⇒ likewise nothing (rule 2).
-        // Either way nothing may target it (ground-before-write, L32).
+        // a stub-suppressed no-match ⇒ nothing grounded, nothing to report — a create_stub with
+        // `allowStub` false is silence by design (13.8g-A rule 2), not a refusal of this channel's kind.
       } catch {
         continue;
       }
@@ -261,9 +297,10 @@ export async function rewriteVaultForMeeting(
       proposeCount: rebuilt.filter((p) => p.requiresApproval === true).length,
       meetingNoteLinkMutations,
       groundedPaths,
+      refusals,
     };
   } catch {
-    return empty;
+    return empty(); // keeps any refusals accumulated before the fault
   }
 }
 
