@@ -4,7 +4,7 @@
 **Track / role:** main · desktop-implementer
 **Predecessor session:** `docs/sessions/118-2026-07-26-worker-noteslug-livingvault-zeroegress.md`
 _(back-link owed: 118 is another implementer's session doc. Following the precedent 118 itself set, I did not edit another implementer's artifact — see Open follow-ups.)_
-**Successor session:** _(next `/session-end`)_
+**Successor session:** `docs/sessions/120-2026-07-28-desktop-copilot-renderer-parity.md`
 
 ---
 
