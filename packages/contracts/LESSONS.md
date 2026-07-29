@@ -666,7 +666,13 @@ An untested false assurance is a gap. A **tested** one is worse in kind, not deg
 
 Two structural corollaries, both observed in this one slice. **(a) After fixing a construction, re-sweep the TESTS** for assertions that encoded the old behaviour — that is where a correct fix goes to die. One report yielded four artifacts: worker reported one pinning assertion, the lead found a second (a full-object `toEqual`, the more brittle form, and the one that survived the first fix), and a repo-wide sweep found two stale FAKES returning a combination the corrected producer can no longer emit. A fake modelling an impossible state is not defending anything, but it later reads as documentation of intended behaviour. **(b) An audit that reads only production code cannot find this class at all** — it lives in the assertions and fixtures (recorded as scope constraint 5 of task 24.6).
 
-**Rule:** treat a test that asserts a safety VALUE as a claim requiring the same derivation check as the code it guards — a tested false assurance actively defends the defect, because the correct fix presents as a regression and the fixer backs out with a failing test's confidence. When correcting a safety construction: flip AND strengthen every assertion that encoded the old behaviour (prefer an independence/invariant assertion over a value assertion), re-sweep tests and fakes repo-wide rather than trusting the reported instance, and flag a test-semantics change on a safety pin explicitly instead of letting it disappear into a green suite. `pin: worker egressCommands.test.ts (revoke_return_makes_no_unearned_local_claim + the before==after independence assertion)`.
+**Rule:** treat a test that asserts a safety VALUE as a claim requiring the same derivation check as the code it guards — a tested false assurance actively defends the defect, because the correct fix presents as a regression and the fixer backs out with a failing test's confidence. When correcting a safety construction: flip AND strengthen every assertion that encoded the old behaviour (prefer an independence/invariant assertion over a value assertion), re-sweep tests and fakes repo-wide rather than trusting the reported instance, and flag a test-semantics change on a safety pin explicitly instead of letting it disappear into a green suite.
+
+`pin: worker egressCommands.test.ts` (`revoke_flips_ack_and_clears_timestamp` · `visibility_reflects_revoke` — the two corrected assertions, each carrying an explicit in-code `9.22 ⚠ SEMANTICS CHANGE (L69)` comment naming this lesson)
+⚠ **PIN NAME CORRECTED 2026-07-29.** This pin shipped citing `revoke_return_makes_no_unearned_local_claim`, which **exists in no test file** and shows no sign of ever having existed (the two live carriers have different, long-standing names). Found by executing [L99](#99)'s enforcement pattern, independently of the reported instance that prompted it.
+⭐ **It was NOT an absent pin, which was the expected outcome — a third possibility neither framing enumerated: the pin's SUBJECT exists, in the CITED FILE, under two different names.** The evidence is author-declared rather than inferred: both assertions carry in-code `9.22 ⚠ SEMANTICS CHANGE (L69)` comments explaining that each *used to* read `zeroEgressOnly: true` and now reads `false`. That is the artifact this lesson is about, labelled as such by the person who changed it. ⇒ **Cited by test NAME, not `file:line`** — deliberately, because this lesson's own line citations have now drifted **twice** (`:83`/`:178` → `:87`/`:182` → the assertions actually sit at `:91`/`:189`). A name does not rot; a line number is a claim with an implicit *"as of commit X."*
+⚠ **Related but deliberately NOT folded into this pin:** `zeroEgressOnlyDerivation.test.ts` `post_revoke_status_is_derived_from_state` pins the *substantive property* the false assurance mis-asserted (a revoke on a cloud-allowlisted workspace still reports `false`). It is **9.22's** coverage of the property, in a **different file** — kept labelled separately rather than absorbed, since folding it in would assert a cross-file equivalence this lesson's own [L99](#99) forbids a rename to smuggle.
+⚠ **And the honest limit: this lesson's RULE is a process rule about test-authoring judgment, which no test can pin.** The corrected assertions are *artifacts* of having applied it, not enforcement of it. Treat the rule itself as `accepted: not mechanically enforceable`; **no future slice is owed a pin for it**, and recording one would be a phantom obligation.
 
 ## <a id="70"></a>70. Verify the PROPERTY, not the MECHANISM — a mechanism check passes while the property fails, and that is exactly what a reviewer misses too
 
@@ -1598,6 +1604,10 @@ Forbidden-pattern #2 stated the §2.5 pure-root invariant was pinned by *"a boun
 ⭐ **THE CHECK IS MECHANIZABLE, AND IT FOUND A FOURTH INSTANCE — measured, not asserted.** Run over `pin:` lines, it flagged `revoke_return_makes_no_unearned_local_claim` (L69's pin, citing `worker egressCommands.test.ts`): the file exists, **no test of that name does**, and none of its nine live `it(...)` names matches. Independent of the reported instance, found by execution.
 ⚠ **And its false-positive mode is known, because it fired on itself:** the corpus-wide form flagged 3 names of which 2 were legitimate quotations (L67 quotes a test it exists to criticize). Scoping to `pin:` lines drops one, but **prose that merely mentions the word `pin:` while quoting a stale name still trips it** — which is this lesson's own distinction, unmechanizable by grep. Treat output as *candidates to classify*, never as defects; a check that reports known permanent false positives is one people learn to disbelieve ([L89](#89)).
 
+> ⭐ **THE LINE THAT MATTERS MORE THAN THE ENFORCEMENT LINE: the pattern narrows the set; it cannot do the classifying.**
+>
+> Demonstrated **within an hour of banking this lesson**, by its own author, on a different check: verifying that three audit reports emitted no `CLEAR`/`BLOCKED` verdict, a grep for those tokens flagged **all three** — and every hit was the *disclaimer sentence* saying no verdict was emitted. Same structure, one level up: a mechanical search cannot distinguish a thing from a statement **about** that thing. The only fix was to read the lines. ⇒ **Any grep-backed enforcement line on a claim of this shape inherits this limit**; write the limit down beside the pattern, or the next person reads a hit count as a defect count.
+
 `pattern:` — pin-line-scoped; every hit is a CANDIDATE requiring the citation-vs-quotation classification above:
 ```sh
 grep -nE 'pin:' packages/contracts/LESSONS.md | grep -oE '\b[a-z][a-z0-9]*(_[a-z0-9]+){3,}\b' | sort -u |
@@ -1621,6 +1631,9 @@ grep -nE 'pin:' packages/contracts/LESSONS.md | grep -oE '\b[a-z][a-z0-9]*(_[a-z
 | Wrong **pattern** | the regex could not match the form the thing was written in |
 | Merged **output** | two commands' results read as one, so a miss looked like a hit |
 | Wrong **scope** | the paths searched excluded where the thing lives |
+| **Verified evidence, inherited inference** ⭐ | the *fact* under the claim was checked and TRUE; the *step from fact to claim* was never checked |
+
+⭐ **The fourth is the subtlest and it arrived the same day, on a different claim.** *"`§4.5` does not exist in `ARCHITECTURE.md`"* was verified — zero occurrences, correctly scoped, **true**. The claim built on it, *"therefore `§4.5` is undefined,"* was **false**: its real referent is `docs/design/ui-ux/ui-ux-spec.md:206`, another document's own §-numbering. **Checking the fact under a claim is not checking the claim** — and it feels like verification, which is what makes it dangerous. The other three mechanisms produce a wrong *fact*; this one produces a wrong *conclusion from a right fact*, so every verification step passes.
 
 > ⇒ **The durable rule is NOT "widen the pattern"** — that only fixes the first mechanism, and this round proved there are at least three. **A negative existence claim inherits the boundaries of the search that produced it, and those boundaries must travel with the claim.** *"I grepped and found nothing"* is not a finding. *"No hit for `<pattern>` under `<paths>`"* is — because a reader can see the hole, and the person holding the file can contradict it cheaply.
 
@@ -1632,3 +1645,34 @@ grep -nE 'pin:' packages/contracts/LESSONS.md | grep -oE '\b[a-z][a-z0-9]*(_[a-z
 
 `pattern:` — not greppable. Enforcement is at authoring time: any sentence of the form *"there is no X"* / *"X appears nowhere"* / *"nothing calls X"* must carry the pattern **and** the path set that was searched.
 `accepted: not mechanically enforceable` — mitigation: in a Finding or a Step-9 flag, a negative claim without a stated scope is treated as unverified rather than as evidence.
+
+---
+
+<a id="101"></a>
+## 101. `ARCHITECTURE.md` has real numbered subsections ONLY under §19 — every other `§N.x` token in project prose is shorthand wearing an architecture-anchor costume
+
+**2026-07-29 · found by the Phase-9 audit's anchor reconciliation · the CLASS fix, deliberately not four repairs**
+
+Phase 9's task prose cites `§4.5` (8×), `§14.1`, `§14.3`, `§14.5`, `§13.5`, `§9.4`, `§9.5`, `§9.32`. **Not one of them is an `ARCHITECTURE.md` section.** Traced to their real referents:
+
+| Token | Real referent |
+|---|---|
+| `§4.5` | `docs/design/ui-ux/ui-ux-spec.md:206` — **another document's own §-numbering** |
+| `§14.1` / `§14.3` / `§14.5` | `IMPLEMENTATION_PLAN.md` **Phase-14 tasks** |
+| `§13.5` | plan **task** 13.5 (appears in `ARCHITECTURE.md` only inside an Appendix-A cross-ref row) |
+| `§9.4` / `§9.5` / `§9.32` | plan **task numbers** wearing a `§` |
+| `USER_FLOWS 3/5/6/13` | Flows 3/5/6 are real; **Flow 13 does not exist** in `USER_FLOWS.md` — "13" resolves only as `ARCHITECTURE.md:354` §9's *workflow*-13 |
+
+> ⇒ **The structural fact that makes this checkable: `ARCHITECTURE.md` has real numbered subsections ONLY under §19** (`### §19.1`–`### §19.13`). Every top-level section is a bare `## §N`. **So any `§N.x` token with `N ≠ 19` is, by construction, not an architecture anchor** — it is a plan task, another doc's numbering, or a typo.
+
+**Why this is one lesson and not eight repairs.** Each instance individually reads as a trivial citation typo. Together they are a **notation collision**: the project uses `§` for at least four different numbering systems (architecture sections, plan tasks, other design docs' internal sections, and workflow numbers), and the reader cannot tell which from the token. The failure is not that a link is broken — **it is that the token resolves *plausibly* in the wrong system.** A dangling citation gets investigated; an **ambiguous** one gets believed, which is the same asymmetry as a false CLEAR versus a false RED.
+
+⚠ **It cost a real escalation.** `§4.5` is the anchor of the doc-pack leg that makes Phase 9 un-exitable, so *"the blocker is pinned to a section that does not exist"* was escalated toward the owner as potentially scope-deciding — and withdrawn once the referent was found. **The notation defect manufactured a scope question out of a formatting choice.**
+
+⚠ **The gate has purchase on this in exactly one place, and it is not where the instances live.** `scripts/spec-lint.sh` fails a *brief* whose cited anchor is outside the phase's declared set — verified live: it rejected a draft carrying `§9.36` and a stray `§13`, both authored **by the person who had reported this finding an hour earlier**. Nothing lints the same tokens in `IMPLEMENTATION_PLAN.md` task prose, which is where all eight live. **A gate that covers the newest artifact and not the accumulated one reports health for the half nobody was worried about.**
+
+**Do:** cite an architecture anchor as bare `§N`; cite a plan task as **`task N.M`** (no `§`); cite another document by **path + its own numbering** (`ui-ux-spec.md §4.5`), never bare. When `§N.x` with `N ≠ 19` appears, resolve it before repeating it.
+
+⛔ **SCALE, measured when the pattern was first run rather than estimated — the class is an order of magnitude larger than the phase that surfaced it.** The pattern matches **87 lines** of `IMPLEMENTATION_PLAN.md`, against **180** legitimate `§19.x` occurrences correctly excluded. Phase 9 contributed 8. ⚠ **87 is the size of the CANDIDATE SET, not a defect count** — many are presumably valid references to other documents' numbering, which is exactly what needs classifying. Stated this way deliberately: *"8 instances found"* would have implied the repair was a phase-sized cleanup when the surface is repo-wide, and a fix scoped to the instances someone happened to notice is the fix-where-noticed shape. **Whoever takes the cleanup should budget against 87 candidates and report how many were real.**
+
+`pattern: grep -nE '§(1[0-8]|[0-9])\.[0-9]' IMPLEMENTATION_PLAN.md` — every hit is a non-§19 subsection reference and therefore **not** an architecture anchor; confirm which system it belongs to. (Excludes `§19.x`, the only real subsections.) ⚠ Inherits [L99](#99)'s limit: prose *discussing* the notation hazard trips it too — the pattern narrows the set, it cannot do the classifying.
