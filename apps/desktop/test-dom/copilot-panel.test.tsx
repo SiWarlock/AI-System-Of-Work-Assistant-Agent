@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
-import { Copilot, CopilotAnswerView, type CopilotProps, type CopilotTurnView } from "../renderer/surfaces/copilot/Copilot";
+import {
+  Copilot,
+  CopilotAnswerView,
+  admitReply,
+  type CopilotProps,
+  type CopilotTurnView,
+  type CopilotTurnSeed,
+} from "../renderer/surfaces/copilot/Copilot";
 import type { AskResult } from "../renderer/lib/copilot-ask";
 
 afterEach(cleanup);
@@ -74,7 +81,7 @@ describe("Copilot panel — WS-8 workspace isolation under Global", () => {
 });
 
 describe("Copilot panel — transcript bubbles + citations (§4.6, rendered from the view-model)", () => {
-  const turns: readonly CopilotTurnView[] = [
+  const turns: readonly CopilotTurnSeed[] = [
     {
       id: "t1",
       question: "What decisions did we make on the vendor review?",
@@ -105,7 +112,7 @@ describe("Copilot panel — transcript bubbles + citations (§4.6, rendered from
   });
 
   it("a turn with no citations and no proposal renders a bare answer (false branches)", () => {
-    const bare: readonly CopilotTurnView[] = [
+    const bare: readonly CopilotTurnSeed[] = [
       { id: "b1", question: "Any update on the standup?", reply: { answer: ["Nothing new since yesterday."], citations: [] } },
     ];
     renderCopilot({ scope: "employer-work", turns: bare });
@@ -118,7 +125,7 @@ describe("Copilot panel — transcript bubbles + citations (§4.6, rendered from
 
 describe("Copilot panel — Employer-Work egress notice (§9.6-real P1.3, safety rule 5)", () => {
   it("a turn carrying egressProcessor shows the cloud-egress notice banner (processor + cloud + Employer-Work)", () => {
-    const turns: readonly CopilotTurnView[] = [
+    const turns: readonly CopilotTurnSeed[] = [
       { id: "e1", question: "q", reply: { answer: ["an answer synthesized on the cloud"], citations: [], egressProcessor: "claude" } },
     ];
     renderCopilot({ scope: "employer-work", turns });
@@ -143,7 +150,7 @@ describe("Copilot panel — Employer-Work egress notice (§9.6-real P1.3, safety
     // reachable today (labels are server-constructed route literals), and it is the OVER-disclosure
     // direction rather than case 3 — pinned so the tightening lands deliberately, with this test
     // flipping to an assertion, rather than being discovered in a banner.
-    const turns: readonly CopilotTurnView[] = [
+    const turns: readonly CopilotTurnSeed[] = [
       { id: "e2", question: "q", reply: { answer: ["a"], citations: [], egressProcessor: "https://api.anthropic.com/v1" } },
     ];
     renderCopilot({ scope: "employer-work", turns });
@@ -153,7 +160,7 @@ describe("Copilot panel — Employer-Work egress notice (§9.6-real P1.3, safety
   });
 
   it("a turn WITHOUT egressProcessor renders NO egress notice (false branch — local/no-egress answer)", () => {
-    const turns: readonly CopilotTurnView[] = [
+    const turns: readonly CopilotTurnSeed[] = [
       { id: "n1", question: "q", reply: { answer: ["a local answer"], citations: [] } },
     ];
     renderCopilot({ scope: "employer-work", turns });
@@ -370,11 +377,16 @@ describe("Copilot panel — live ask (onAsk wired; A5)", () => {
 // whole object through (`notice_is_scope_blind_at_the_renderer`, which drives the real onAsk path).
 // Closing the residual needs a branded reply mintable only from a validated wire payload — Step-9
 // Future TODO. Naming that here so nobody reads these pins as proof of a guarantee they do not give.
+//
+// ✅ 9.34 — CLOSED (see the new describe block below): `CopilotTurnView.reply` and
+// `CopilotAnswerView`'s prop are now `AdmittedCopilotAnswer`, mintable only via `admitReply` (exported
+// from Copilot.tsx). The three `render(<CopilotAnswerView reply={...} />)` calls above were updated
+// to `admitReply(...)` for exactly this reason — a bare literal no longer type-checks there.
 describe("Copilot — the disclosure travels with the answer (9.28)", () => {
   it("shared_view_renders_body_and_disclosure_together — the notice is the view's job, not each call site's", () => {
     // spec(§5) — the notice is a property of the ANSWER OBJECT + the shared view, not of each call
     // site remembering. Rendering the view with a notice-bearing answer discloses, always.
-    render(<CopilotAnswerView reply={{ answer: ["Answered."], citations: [], egressProcessor: "claude" }} />);
+    render(<CopilotAnswerView reply={admitReply({ answer: ["Answered."], citations: [], egressProcessor: "claude" })} />);
     const notice = document.querySelector(".sow-copilot-egress-notice");
     expect(notice).not.toBeNull();
     expect(notice?.textContent).toMatch(/claude/i);
@@ -390,7 +402,7 @@ describe("Copilot — the disclosure travels with the answer (9.28)", () => {
       citations: [{ citationId: "b1", title: "Today read-model" }],
       egressProcessor: "claude",
     };
-    render(<CopilotAnswerView reply={briefingAnswer} />);
+    render(<CopilotAnswerView reply={admitReply(briefingAnswer)} />);
     expect(document.querySelector(".sow-copilot-egress-notice")).not.toBeNull();
     // …and the answer body still renders (the view is not notice-only).
     expect(screen.getByText(/2 approvals pending/)).toBeTruthy();
@@ -399,8 +411,44 @@ describe("Copilot — the disclosure travels with the answer (9.28)", () => {
   it("a local answer through the shared view stays silent — case 1 unchanged", () => {
     // spec(§5) — the mechanism must not manufacture a notice where the contract says there is
     // nothing to disclose (that would be alarm noise on the safe path, and a claim of its own).
-    render(<CopilotAnswerView reply={{ answer: ["A local answer."], citations: [] }} />);
+    render(<CopilotAnswerView reply={admitReply({ answer: ["A local answer."], citations: [] })} />);
     expect(document.querySelector(".sow-copilot-egress-notice")).toBeNull();
     expect(screen.getByText("A local answer.")).toBeTruthy();
+  });
+});
+
+// Task 9.34 — the reply is BRANDED: `admitReply` is the ONLY function that can produce an
+// `AdmittedCopilotAnswer`, so a hand-built literal is uninhabitable at `CopilotTurnView.reply` and at
+// `CopilotAnswerView`'s prop. This closes the "HONEST BOUND" left open above (9.28): a plain literal
+// there used to compile silently; now it is a compile error, proven below via `@ts-expect-error`
+// (the brand is compile-time-only — nothing prevents the SAME object from rendering correctly once
+// admitted, which the positive test below also shows).
+describe("Copilot — the reply is branded, uninhabitable by a hand-built literal (9.34)", () => {
+  it("admitReply mints a reply usable wherever CopilotAnswerView/CopilotTurnView require one", () => {
+    const admitted = admitReply({ answer: ["Admitted."], citations: [] });
+    render(<CopilotAnswerView reply={admitted} />);
+    expect(screen.getByText("Admitted.")).toBeTruthy();
+  });
+
+  it("a hand-built literal no longer satisfies CopilotAnswerView's reply prop (compile-time)", () => {
+    // @ts-expect-error — 9.34: `reply` must be minted by `admitReply`; a fresh literal (even one
+    // satisfying every UiSafeCopilotAnswer field) is missing the brand and is rejected at compile
+    // time. Before this slice, this line type-checked with no error at all.
+    render(<CopilotAnswerView reply={{ answer: ["x"], citations: [] }} />);
+  });
+
+  it("a hand-built literal no longer satisfies CopilotTurnView's reply field (compile-time)", () => {
+    // @ts-expect-error — 9.34: same brand, the OTHER chokepoint named in the task (`reply:` on
+    // CopilotTurnView itself, not just the shared view's prop).
+    const bad: CopilotTurnView = { id: "x", question: "q", reply: { answer: ["a"], citations: [] } };
+    // The brand is compile-time-only (no runtime property), so the object still behaves normally —
+    // this line exists only so the `@ts-expect-error` above has a use, not to assert anything new.
+    expect(bad.reply.answer).toEqual(["a"]);
+  });
+
+  it("CopilotTurnSeed — the mount-time candidate boundary — still accepts a plain literal (only the ADMITTED type is branded)", () => {
+    const seed: CopilotTurnSeed = { id: "s1", question: "q", reply: { answer: ["a seed answer"], citations: [] } };
+    renderCopilot({ scope: "employer-work", turns: [seed] });
+    expect(screen.getByText("a seed answer")).toBeTruthy();
   });
 });

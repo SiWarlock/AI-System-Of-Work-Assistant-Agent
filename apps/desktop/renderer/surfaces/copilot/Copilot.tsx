@@ -21,11 +21,29 @@
 // a rule-5 egress disclosure could be silently dropped. Every turn entering state is admitted through
 // `admitReply` (both doors — live asks AND the seed prop), so the render path can assume a valid reply.
 //
+// 9.34 — `reply` is further BRANDED (`AdmittedCopilotAnswer`): mintable only via `admitReply`, so a
+// hand-built literal no longer satisfies `CopilotTurnView.reply` or `CopilotAnswerView`'s prop at all
+// (a type error, not a silent compile). See the brand's doc comment below for what this does and does
+// not close.
+//
 // NEVER import electron, node, or @sow/worker from a renderer file.
 
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { UiSafeCopilotAnswerSchema, type UiSafeCopilotAnswer } from "@sow/contracts/api/ui-safe";
 import type { AskResult } from "../../lib/copilot-ask";
+
+declare const ADMITTED_REPLY_BRAND: unique symbol;
+
+/**
+ * A `UiSafeCopilotAnswer` that has passed through {@link admitReply} — the ONLY function that can
+ * produce one. The brand is a compile-time-only marker with no runtime representation (nothing is
+ * actually added to the object; `admitReply` returns the parsed value cast to this type), so a
+ * hand-built object literal — even one satisfying every `UiSafeCopilotAnswer` field, including
+ * `egressProcessor` — can never satisfy it: TypeScript requires the `[ADMITTED_REPLY_BRAND]`
+ * property, which no literal has and none can accidentally acquire. 9.34: closes the residual 9.28
+ * left open (a hand-built partial literal at `reply:` used to compile silently).
+ */
+export type AdmittedCopilotAnswer = UiSafeCopilotAnswer & { readonly [ADMITTED_REPLY_BRAND]: true };
 
 /**
  * One question→answer exchange rendered as iMessage-style bubbles.
@@ -36,20 +54,39 @@ import type { AskResult } from "../../lib/copilot-ask";
  * disclosure. `reply: result.answer` has nothing to forget, so the PATH OF LEAST RESISTANCE now
  * carries the disclosure. The renderer twin of 9.27 (the producer's optional trailing positional).
  *
- * ⚠ HONEST BOUND — the vector is BIASED AGAINST, not eliminated, and the difference matters:
- * `egressProcessor` is optional on the contract, so a hand-built partial literal still compiles —
+ * ⚠ HONEST BOUND (9.28) — the vector was BIASED AGAINST, not eliminated: `egressProcessor` is
+ * optional on the contract, so a hand-built partial literal still compiled —
  *     reply: { answer: r.answer.answer, citations: r.answer.citations }   // ← disclosure dropped
- * with no missing-property and no excess-property error. That is the same omission one level up.
- * What changed is that it now requires WRITING a literal rather than merely forgetting a line in a
- * mapping everyone already writes. Closing it fully needs a branded reply mintable only from a
- * validated wire payload (Step-9 Future TODO) — until then, do not read this as impossible.
+ * with no missing-property and no excess-property error. That was the same omission one level up.
+ *
+ * ✅ 9.34 — CLOSED: `reply` is {@link AdmittedCopilotAnswer}, a branded type mintable ONLY via
+ * {@link admitReply}. The literal above no longer type-checks here — a hand-built object is missing
+ * the brand, so writing it is a compile error, not a silent omission that ships. The residual left
+ * is narrower and honest: a deliberate `... as AdmittedCopilotAnswer` cast still bypasses the brand,
+ * but that is a visible, intentional act — not the path of least resistance a plain literal was.
  */
 export interface CopilotTurnView {
   readonly id: string;
   readonly question: string;
-  /** The validated answer, verbatim — body, citations, and the egress disclosure travel together. */
-  readonly reply: UiSafeCopilotAnswer;
+  /** The ADMITTED answer — body, citations, and the egress disclosure travel together, and this
+   *  field is uninhabitable except via {@link admitReply} (9.34). */
+  readonly reply: AdmittedCopilotAnswer;
   /** When the answer implies an action: the proposed action's label. It ROUTES TO APPROVALS — never a direct write. */
+  readonly proposalLabel?: string;
+}
+
+/**
+ * MOUNT-TIME seed input for {@link CopilotProps.turns} (tests; a future restore, task #13). `reply`
+ * here is CANDIDATE data — the same `UiSafeCopilotAnswer` shape the worker declares, but NOT YET
+ * admitted — so this type must not claim a validation the seed boundary hasn't performed. It is
+ * re-validated by {@link admitReply} at mount (door 2) before it enters {@link CopilotTurnView} state.
+ * Distinct from `CopilotTurnView` so a seed fixture can be built as a plain literal while the
+ * ADMITTED type stays uninhabitable by one.
+ */
+export interface CopilotTurnSeed {
+  readonly id: string;
+  readonly question: string;
+  readonly reply: UiSafeCopilotAnswer;
   readonly proposalLabel?: string;
 }
 
@@ -67,8 +104,12 @@ export interface CopilotProps {
    * MOUNT-TIME seed conversation (tests; a future restore). INIT-ONLY — it seeds the internal turn
    * state once; live asks append. A post-mount change to this prop is NOT reconciled (to reset the
    * conversation from a new source, remount via `key`). The live app never passes it (no synthetic seed).
+   *
+   * ⚠ 9.34 — each entry's `reply` is {@link CopilotTurnSeed}'s CANDIDATE `UiSafeCopilotAnswer`, not
+   * the branded `AdmittedCopilotAnswer`: the seed boundary must not claim an admission it hasn't
+   * performed. It is re-validated by `admitReply` at mount (door 2) before entering turn state.
    */
-  readonly turns?: readonly CopilotTurnView[];
+  readonly turns?: readonly CopilotTurnSeed[];
   /** Ask a question (A5, wired to query.copilotAsk). Present → the composer is LIVE; absent → disabled scaffold. */
   readonly onAsk?: (question: string) => Promise<AskResult>;
 }
@@ -100,11 +141,19 @@ const FAILED_REPLY: UiSafeCopilotAnswer = { answer: [ASK_FAILED], citations: [] 
  * `citations: [null]` and throws on `c.citationId` at render). Validating with the SAME contract
  * schema at every entry point is the shape-validate-at-the-boundary posture, once per turn rather
  * than once per render.
+ *
+ * ⚠ 9.34 — the SOLE minting function for {@link AdmittedCopilotAnswer}. Exported so a future
+ * consumer (a `copilotBriefing`/`copilotConcept` surface, or a test rendering {@link CopilotAnswerView}
+ * directly) can admit its own candidate data rather than being tempted to cast past the brand.
  */
-function admitReply(candidate: unknown): UiSafeCopilotAnswer {
+export function admitReply(candidate: unknown): AdmittedCopilotAnswer {
   const parsed = UiSafeCopilotAnswerSchema.safeParse(candidate);
-  return parsed.success ? parsed.data : FAILED_REPLY;
+  return (parsed.success ? parsed.data : FAILED_REPLY) as AdmittedCopilotAnswer;
 }
+
+/** The branded failure reply, minted once — `FAILED_REPLY` already satisfies the contract schema,
+ *  so this always succeeds; avoids re-parsing it at every failure-turn construction. */
+const ADMITTED_FAILED_REPLY: AdmittedCopilotAnswer = admitReply(FAILED_REPLY);
 
 /** A mono citation chip — the display title of a cited source. Carries no raw content / path / URL. */
 function CitationChip({ title }: { readonly title: string }): ReactElement {
@@ -124,7 +173,7 @@ function CitationChip({ title }: { readonly title: string }): ReactElement {
  * return notice-bearing answers and have no consumer today, which is the 9.28 gap. Rendering through
  * this view inherits the rule-5 disclosure by construction rather than by remembering.
  */
-export function CopilotAnswerView({ reply }: { readonly reply: UiSafeCopilotAnswer }): ReactElement {
+export function CopilotAnswerView({ reply }: { readonly reply: AdmittedCopilotAnswer }): ReactElement {
   return (
     <>
       <div className="sow-copilot-answer">{reply.answer.join("\n")}</div>
@@ -283,9 +332,9 @@ export function Copilot(props: CopilotProps): ReactElement {
         // (the seed prop is door 2, at mount) — see its docblock for why it is not redundant.
         turn = result.ok
           ? { id, question: q, reply: admitReply(result.answer) }
-          : { id, question: q, reply: FAILED_REPLY };
+          : { id, question: q, reply: ADMITTED_FAILED_REPLY };
       } catch {
-        turn = { id, question: q, reply: FAILED_REPLY };
+        turn = { id, question: q, reply: ADMITTED_FAILED_REPLY };
       }
       setTurns((prev) => [...prev, turn]);
       setPending(false);
