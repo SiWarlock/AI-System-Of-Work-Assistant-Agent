@@ -1938,8 +1938,7 @@ body {
   color: var(--warn-ink, #b25e00);
   background: rgba(255, 159, 10, 0.14);
 }
-.sow-pill--egress-false,
-.sow-pill--zero-egress {
+.sow-pill--egress-false {
   color: #1fae6b;
   background: rgba(31, 174, 107, 0.12);
 }
