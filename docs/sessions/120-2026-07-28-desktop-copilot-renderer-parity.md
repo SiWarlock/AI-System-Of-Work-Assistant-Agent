@@ -3,7 +3,7 @@
 **Date:** 2026-07-28
 **Track / role:** main · desktop-implementer
 **Predecessor session:** `docs/sessions/119-2026-07-26-desktop-egress-surface-chrome-claim-copilot-omission.md`
-**Successor session:** _(next `/session-end`)_
+**Successor session:** `docs/sessions/129-2026-07-29-desktop-copilot-reply-brand-and-egress-posture-render.md`
 
 ---
 
