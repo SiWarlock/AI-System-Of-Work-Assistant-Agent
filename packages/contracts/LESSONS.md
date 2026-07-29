@@ -1066,3 +1066,56 @@ Per-file `git add` is **necessary but not sufficient**. It does not protect agai
 A recovery via `reset --soft` is safe and correct here — it is *not* history rewriting, since the commit has not been shared. That is a different thing from rebasing a pushed or teammate-visible commit, which stays forbidden.
 
 `accepted: not mechanically enforceable` — mitigation: the three-check procedure above; pathspec-limited commits as the default; `git status` before believing a red in a package you did not touch.
+
+---
+
+<a id="84"></a>
+## 84. A green suite under a mutated guard has TWO readings — unasserted, or unreached — and they demand different fixes
+
+**2026-07-28 · task #40 (E1) · evalsec, mutation-verified**
+
+The §12 approval-exactly-once eval — **a phase-exit-8 DoD criterion** — was suspected of running on a CAS fake that lacked the real repository's terminal-state guard. The prior round wrote the conclusion *"delete that branch in production and the eval stays green"* into the round seal **as fact**, then corrected itself at the seal: three of E1's four claims were read off the source, the fourth was not, and all four had been stated at one strength.
+
+So it was **executed**: the terminal branch was removed from `packages/db/src/invariants/operational-truth.ts:254-267`, the §12 suite run, and it stayed **3/3 green**. Branch restored; `git status --porcelain packages/db/` clean.
+
+**The claim was true. The obvious reading of it was wrong.**
+
+> The tempting conclusion is *"the eval fails to ASSERT the guard."* The actual finding is stronger and different: **the eval's call graph never REACHES that code at all.**
+
+**Why the distinction is not academic — it changes the fix:**
+
+| Reading | What's wrong | What fixes it | What "fixing the assertion" achieves |
+|---|---|---|---|
+| **Unasserted** | The suite drives the real code but doesn't check this property | Add the assertion | Closes it |
+| **Unreached** | The suite never executes the real code | Make the suite drive the real code | **Nothing about the real code** |
+
+Under the unreached reading, adding assertions to the stand-in is still correct work — it removes drift, and #40 did it — but it must not be recorded as closing the coverage gap, because the real function remains uncovered by that suite either way. That is why #40 shipped **and #44 stayed open**.
+
+**Relation to [L75](#75).** L75 governs false greens in the *simulation* — the compromise never landed, or landed where no test fed it the triggering input; its remedy is fail-first ("see the guard FAIL before you trust it passing"). This is the **opposite corner**: the compromise genuinely landed, the suite genuinely stayed green, and the open question is what that green *proves*. L75 tells you the measurement is real. L84 tells you a real measurement still has two readings.
+
+**Relation to [L80](#80).** L80's test is *"replace the gate with a constant DENY — would anything go red?"* This one is *"delete the gate — would anything go red, and if not, which of the two reasons is it?"* L80 catches a gate that stopped deciding; this catches a suite that was never watching.
+
+**Do:** when a mutation leaves a suite green, determine which reading applies *before* writing the fix — cheapest discriminator is whether the suite's imports reach the mutated module at all. Then state the reading in the report, and name the test that WOULD have gone red. Do not let "we fixed the guard" stand in for "the code is now covered."
+
+`pin: packages/db/test/invariants/operational-truth.test.ts` (30/30 — the only thing that actually pins the real `decideApprovalCas`; treat it as load-bearing) · `accepted: not mechanically enforceable` (mitigation: record which reading a green-under-mutation supports, plus the count per L75).
+
+---
+
+<a id="85"></a>
+## 85. A fake that mirrors a real guard covers the fake — mirroring buys discrimination, never coverage
+
+**2026-07-28 · task #40 residual → #44 · raised by the implementer at Step 9**
+
+The #40 fix made the eval's fake CAS enforce the terminal-state rule, importing the **real** `isTerminalApprovalStatus` from `@sow/db` rather than re-declaring the status set — so the two cannot drift. That is the right fix and it is genuinely better than a duplicated literal ([L39](#39)'s single-sourcing, applied to a test double).
+
+**And it does not make the suite cover `decideApprovalCas`.** A future regression in the *real* function stays invisible to that suite, because the suite still executes the double.
+
+> **Mirroring a real guard's semantics buys discrimination for the double's own logic. It buys nothing about the code the double stands in for.**
+
+**Why this is easy to miss, and why it matters more than the original defect:** "the fake was missing the guard; we added the guard" reads as a closed loop. Both halves are true, the suite goes green, and the finding gets ticked. What actually changed is that the fake stopped being *wrong*; nothing changed about what the suite *watches*. So the remaining exposure is now harder to see than before the fix, because the obvious symptom is gone — the [L82](#82) hazard arriving through a legitimate repair rather than a re-pointed claim.
+
+**Corollary — know which test is load-bearing.** Once a criterion is nominally covered by a suite running a double, the real assurance lives somewhere else entirely; here `packages/db/test/invariants/operational-truth.test.ts`. That file is the only thing between a real regression and a silently-passing DoD criterion, and nothing in the eval suite's name or output says so. Name it, in the suite and in the plan.
+
+**Do:** when a double is corrected to match production, state explicitly what the suite covers *after* the change (usually: unchanged), and where the real code is actually pinned. Where a real adapter exists, prefer driving it — a double is for what you cannot reach, not for what is merely inconvenient to wire.
+
+`pin: packages/db/test/invariants/operational-truth.test.ts` · `accepted: not mechanically enforceable` (enforcement point: `/tdd` Step 9 — a "fixed the fake" flag must state the post-fix coverage, not only the drift closure).
