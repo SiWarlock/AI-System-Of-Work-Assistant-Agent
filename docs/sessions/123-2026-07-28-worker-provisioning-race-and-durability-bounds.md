@@ -3,7 +3,7 @@
 **Date:** 2026-07-28
 **Track / role:** main · worker-implementer
 **Predecessor session:** `docs/sessions/118-2026-07-26-worker-noteslug-livingvault-zeroegress.md`
-**Successor session:** _(unwritten)_
+**Successor session:** `docs/sessions/128-2026-07-29-worker-refusal-channel-and-zeroegressonly-contract.md`
 _(Doc number 123 was ASSIGNED by the orchestrator, not computed — desktop and provint both computed 120 concurrently and collided.)_
 
 ---
