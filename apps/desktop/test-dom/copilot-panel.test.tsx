@@ -112,6 +112,12 @@ describe("Copilot panel — transcript bubbles + citations (§4.6, rendered from
   });
 
   it("a turn with no citations and no proposal renders a bare answer (false branches)", () => {
+    // Also 9.25's acceptance bullet 3 (branch B — no restore path exists, but the seed DOOR
+    // itself is exercised here): this `bare` seed omits `egressProcessor` too, so it renders
+    // identically to a genuine non-cloud answer — the same "by construction indistinguishable"
+    // characterization the 9.24 header above documents for the live-ask door (`admitReply` gates
+    // both doors identically). Not a new risk this test introduces; a pointer for whoever reads
+    // this file next to why 9.25 stays a live precondition on any future restore producer.
     const bare: readonly CopilotTurnSeed[] = [
       { id: "b1", question: "Any update on the standup?", reply: { answer: ["Nothing new since yesterday."], citations: [] } },
     ];
