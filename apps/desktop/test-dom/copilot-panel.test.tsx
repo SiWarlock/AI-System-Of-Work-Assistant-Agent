@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
-import { Copilot, type CopilotProps, type CopilotTurnView } from "../renderer/surfaces/copilot/Copilot";
+import { Copilot, CopilotAnswerView, type CopilotProps, type CopilotTurnView } from "../renderer/surfaces/copilot/Copilot";
 import type { AskResult } from "../renderer/lib/copilot-ask";
 
 afterEach(cleanup);
@@ -78,11 +78,13 @@ describe("Copilot panel — transcript bubbles + citations (§4.6, rendered from
     {
       id: "t1",
       question: "What decisions did we make on the vendor review?",
-      answer: "Two decisions were logged: adopt the new SLA and defer the pricing change.",
-      citations: [
-        { id: "c1", title: "Vendor review — decisions" },
-        { id: "c2", title: "Pricing change memo" },
-      ],
+      reply: {
+        answer: ["Two decisions were logged: adopt the new SLA and defer the pricing change."],
+        citations: [
+          { citationId: "c1", title: "Vendor review — decisions" },
+          { citationId: "c2", title: "Pricing change memo" },
+        ],
+      },
       proposalLabel: "Draft a follow-up email",
     },
   ];
@@ -104,7 +106,7 @@ describe("Copilot panel — transcript bubbles + citations (§4.6, rendered from
 
   it("a turn with no citations and no proposal renders a bare answer (false branches)", () => {
     const bare: readonly CopilotTurnView[] = [
-      { id: "b1", question: "Any update on the standup?", answer: "Nothing new since yesterday.", citations: [] },
+      { id: "b1", question: "Any update on the standup?", reply: { answer: ["Nothing new since yesterday."], citations: [] } },
     ];
     renderCopilot({ scope: "employer-work", turns: bare });
     expect(screen.getByText("Nothing new since yesterday.")).toBeTruthy();
@@ -117,7 +119,7 @@ describe("Copilot panel — transcript bubbles + citations (§4.6, rendered from
 describe("Copilot panel — Employer-Work egress notice (§9.6-real P1.3, safety rule 5)", () => {
   it("a turn carrying egressProcessor shows the cloud-egress notice banner (processor + cloud + Employer-Work)", () => {
     const turns: readonly CopilotTurnView[] = [
-      { id: "e1", question: "q", answer: "an answer synthesized on the cloud", citations: [], egressProcessor: "claude" },
+      { id: "e1", question: "q", reply: { answer: ["an answer synthesized on the cloud"], citations: [], egressProcessor: "claude" } },
     ];
     renderCopilot({ scope: "employer-work", turns });
     const notice = document.querySelector(".sow-copilot-egress-notice");
@@ -142,7 +144,7 @@ describe("Copilot panel — Employer-Work egress notice (§9.6-real P1.3, safety
     // direction rather than case 3 — pinned so the tightening lands deliberately, with this test
     // flipping to an assertion, rather than being discovered in a banner.
     const turns: readonly CopilotTurnView[] = [
-      { id: "e2", question: "q", answer: "a", citations: [], egressProcessor: "https://api.anthropic.com/v1" },
+      { id: "e2", question: "q", reply: { answer: ["a"], citations: [], egressProcessor: "https://api.anthropic.com/v1" } },
     ];
     renderCopilot({ scope: "employer-work", turns });
     expect(document.querySelector(".sow-copilot-egress-notice")?.textContent).toMatch(
@@ -152,7 +154,7 @@ describe("Copilot panel — Employer-Work egress notice (§9.6-real P1.3, safety
 
   it("a turn WITHOUT egressProcessor renders NO egress notice (false branch — local/no-egress answer)", () => {
     const turns: readonly CopilotTurnView[] = [
-      { id: "n1", question: "q", answer: "a local answer", citations: [] },
+      { id: "n1", question: "q", reply: { answer: ["a local answer"], citations: [] } },
     ];
     renderCopilot({ scope: "employer-work", turns });
     // Positive anchor FIRST: without it the three negatives below all pass on an empty DOM (a
@@ -345,5 +347,60 @@ describe("Copilot panel — live ask (onAsk wired; A5)", () => {
     expect((screen.getByRole("textbox", { name: /ask copilot/i }) as HTMLTextAreaElement).value).toMatch(
       /what decisions did we log/i,
     );
+  });
+});
+
+// Task 9.28 (⚠ rule-5 LATENT, not live) — the disclosure must travel WITH the answer.
+//
+// The gap: `copilotBriefing` and `copilotConcept` ALREADY return notice-bearing answers and have NO
+// renderer consumer today. The first surface that renders one by re-mapping fields — `answer`,
+// `citations`, and (forgotten) `egressProcessor` — silently drops the disclosure. That re-map IS the
+// drop vector, and it is exactly the renderer twin of 9.27's optional trailing positional.
+//
+// MECHANISM (construction, not enumeration — L64/L73 retired the enumerate-the-consumers posture):
+// the turn view holds the VALIDATED `UiSafeCopilotAnswer` VERBATIM (`reply`) instead of flattening it
+// into loose fields, and a single shared `CopilotAnswerView` renders body + notice together, so
+// `reply: result.answer` — the path of least resistance — carries the disclosure.
+//
+// ⚠ HONEST BOUND, corrected at security review: the vector is BIASED AGAINST, not eliminated.
+// `egressProcessor` is optional on the contract, so a hand-built partial literal at `reply:` still
+// compiles and still drops the disclosure — the same omission one level up. These tests CANNOT catch
+// that (no renderer test can observe a future consumer's literal); what they pin is that the shared
+// view discloses whenever the object it is given carries a label, and that the LIVE path passes the
+// whole object through (`notice_is_scope_blind_at_the_renderer`, which drives the real onAsk path).
+// Closing the residual needs a branded reply mintable only from a validated wire payload — Step-9
+// Future TODO. Naming that here so nobody reads these pins as proof of a guarantee they do not give.
+describe("Copilot — the disclosure travels with the answer (9.28)", () => {
+  it("shared_view_renders_body_and_disclosure_together — the notice is the view's job, not each call site's", () => {
+    // spec(§5) — the notice is a property of the ANSWER OBJECT + the shared view, not of each call
+    // site remembering. Rendering the view with a notice-bearing answer discloses, always.
+    render(<CopilotAnswerView reply={{ answer: ["Answered."], citations: [], egressProcessor: "claude" }} />);
+    const notice = document.querySelector(".sow-copilot-egress-notice");
+    expect(notice).not.toBeNull();
+    expect(notice?.textContent).toMatch(/claude/i);
+  });
+
+  it("an_answer_shaped_like_a_briefing_reply_discloses_through_the_shared_view", () => {
+    // spec(§5) — `copilotBriefing`/`copilotConcept` return the SAME `UiSafeCopilotAnswer` shape, so a
+    // future briefing surface renders through this same view and inherits the disclosure. Simulated
+    // here by rendering a briefing-shaped notice-bearing answer through the shared view directly —
+    // which is what such a surface would do.
+    const briefingAnswer = {
+      answer: ["Your day: 2 approvals pending.", "1 item to triage."],
+      citations: [{ citationId: "b1", title: "Today read-model" }],
+      egressProcessor: "claude",
+    };
+    render(<CopilotAnswerView reply={briefingAnswer} />);
+    expect(document.querySelector(".sow-copilot-egress-notice")).not.toBeNull();
+    // …and the answer body still renders (the view is not notice-only).
+    expect(screen.getByText(/2 approvals pending/)).toBeTruthy();
+  });
+
+  it("a local answer through the shared view stays silent — case 1 unchanged", () => {
+    // spec(§5) — the mechanism must not manufacture a notice where the contract says there is
+    // nothing to disclose (that would be alarm noise on the safe path, and a claim of its own).
+    render(<CopilotAnswerView reply={{ answer: ["A local answer."], citations: [] }} />);
+    expect(document.querySelector(".sow-copilot-egress-notice")).toBeNull();
+    expect(screen.getByText("A local answer.")).toBeTruthy();
   });
 });

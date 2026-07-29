@@ -16,34 +16,41 @@
 // (WS-8 fail-closed / candidate-data gate rejection / transport) folds to a safe error turn — never
 // a partial or raw answer (the worker already gated it; `AskResult` carries only {ok:false}).
 //
-// `CopilotTurnView` is a presentational view-model (not the wire contract) — A5 maps the validated
-// `UiSafeCopilotAnswer`/citations into it, keeping this component free of the schema/registry.
+// `CopilotTurnView` EMBEDS the validated `UiSafeCopilotAnswer` verbatim (9.28) rather than flattening
+// it into loose fields: the field-by-field re-map that used to live in `finish` was the vector by which
+// a rule-5 egress disclosure could be silently dropped. Every turn entering state is admitted through
+// `admitReply` (both doors — live asks AND the seed prop), so the render path can assume a valid reply.
 //
 // NEVER import electron, node, or @sow/worker from a renderer file.
 
 import { useEffect, useRef, useState, type ReactElement } from "react";
+import { UiSafeCopilotAnswerSchema, type UiSafeCopilotAnswer } from "@sow/contracts/api/ui-safe";
 import type { AskResult } from "../../lib/copilot-ask";
 
-/** A single cited source, as shown in a citation chip. Opaque ref + display title — NO raw content. */
-export interface CopilotCitationView {
-  readonly id: string;
-  readonly title: string;
-}
-
-/** One question→answer exchange rendered as iMessage-style bubbles. */
+/**
+ * One question→answer exchange rendered as iMessage-style bubbles.
+ *
+ * ⚠ 9.28 — `reply` holds the VALIDATED `UiSafeCopilotAnswer` VERBATIM, deliberately NOT flattened
+ * into loose fields. The old shape re-mapped the answer field-by-field (`answer`, `citations`, and
+ * — easily forgotten — `egressProcessor`), and that re-map was the drop vector for a rule-5 egress
+ * disclosure. `reply: result.answer` has nothing to forget, so the PATH OF LEAST RESISTANCE now
+ * carries the disclosure. The renderer twin of 9.27 (the producer's optional trailing positional).
+ *
+ * ⚠ HONEST BOUND — the vector is BIASED AGAINST, not eliminated, and the difference matters:
+ * `egressProcessor` is optional on the contract, so a hand-built partial literal still compiles —
+ *     reply: { answer: r.answer.answer, citations: r.answer.citations }   // ← disclosure dropped
+ * with no missing-property and no excess-property error. That is the same omission one level up.
+ * What changed is that it now requires WRITING a literal rather than merely forgetting a line in a
+ * mapping everyone already writes. Closing it fully needs a branded reply mintable only from a
+ * validated wire payload (Step-9 Future TODO) — until then, do not read this as impossible.
+ */
 export interface CopilotTurnView {
   readonly id: string;
   readonly question: string;
-  readonly answer: string;
-  readonly citations: readonly CopilotCitationView[];
+  /** The validated answer, verbatim — body, citations, and the egress disclosure travel together. */
+  readonly reply: UiSafeCopilotAnswer;
   /** When the answer implies an action: the proposed action's label. It ROUTES TO APPROVALS — never a direct write. */
   readonly proposalLabel?: string;
-  /**
-   * The Employer-Work egress NOTICE (safety rule 5): the cloud processor label this answer's raw
-   * Employer-Work content was synthesized by (egress acknowledged ON). PRESENT only for employer-work
-   * cloud egress — server-derived, never for a local/zero-egress answer. Its presence shows the banner.
-   */
-  readonly egressProcessor?: string;
 }
 
 export interface CopilotProps {
@@ -75,6 +82,29 @@ const SUGGESTIONS: readonly string[] = [
 ];
 
 const ASK_FAILED = "Sorry — I couldn't answer that right now. Please try again.";
+/** The failure turn's reply — a valid `UiSafeCopilotAnswer` shape carrying only the safe message. */
+const FAILED_REPLY: UiSafeCopilotAnswer = { answer: [ASK_FAILED], citations: [] };
+
+/**
+ * The ADMISSION gate for a reply entering turn state — every door goes through it (live asks in
+ * `finish`, AND the `turns` seed prop at mount). A candidate that fails the contract schema degrades
+ * to {@link FAILED_REPLY} rather than being stored.
+ *
+ * ⚠ Why this is a real check and not ceremony after 9.26's re-gate: deleting the old field-by-field
+ * re-map also deleted the THROW that used to land a contract-violating payload on the failure turn.
+ * With the answer now carried verbatim, a malformed reply would instead throw inside
+ * `CopilotAnswerView` during RENDER. There is NO ErrorBoundary anywhere in apps/desktop (verified),
+ * so React 18 unmounts the ENTIRE ROOT — not just the panel — instead of showing ASK_FAILED. And
+ * `createAskCopilot` is NOT the only door: the seed prop reaches `useState` directly, so a
+ * `finish`-only guard would not see it (nor would a shallow `Array.isArray` pair, which admits
+ * `citations: [null]` and throws on `c.citationId` at render). Validating with the SAME contract
+ * schema at every entry point is the shape-validate-at-the-boundary posture, once per turn rather
+ * than once per render.
+ */
+function admitReply(candidate: unknown): UiSafeCopilotAnswer {
+  const parsed = UiSafeCopilotAnswerSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : FAILED_REPLY;
+}
 
 /** A mono citation chip — the display title of a cited source. Carries no raw content / path / URL. */
 function CitationChip({ title }: { readonly title: string }): ReactElement {
@@ -85,33 +115,52 @@ function CitationChip({ title }: { readonly title: string }): ReactElement {
   );
 }
 
-/** One conversation turn: the user's question (filled-blue bubble) + Copilot's answer (glass bubble)
- *  with its citation chips and, when the answer implies an action, a routes-to-Approvals row. */
+/**
+ * ⚠ 9.28 — the SHARED answer view: the one place a `UiSafeCopilotAnswer` becomes DOM. It takes the
+ * whole validated object, so the body, its citations, and its egress disclosure render together and
+ * cannot be separated by a consumer that only remembered two of the three.
+ *
+ * This is what a FUTURE `copilotBriefing` / `copilotConcept` surface renders through — both already
+ * return notice-bearing answers and have no consumer today, which is the 9.28 gap. Rendering through
+ * this view inherits the rule-5 disclosure by construction rather than by remembering.
+ */
+export function CopilotAnswerView({ reply }: { readonly reply: UiSafeCopilotAnswer }): ReactElement {
+  return (
+    <>
+      <div className="sow-copilot-answer">{reply.answer.join("\n")}</div>
+      {reply.egressProcessor !== undefined ? (
+        // Safety rule 5: raw Employer-Work content was synthesized by a CLOUD model (egress
+        // acknowledged). A visible consent notice — not fail-closed, per the owner's posture.
+        <div className="sow-copilot-egress-notice" role="note" aria-label="Cloud egress notice">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M17.5 19a4.5 4.5 0 0 0 .5-8.98 6 6 0 0 0-11.64-1.6A4 4 0 0 0 6.5 19h11z" />
+          </svg>
+          <span>
+            Answered using <strong>{reply.egressProcessor}</strong> — a cloud model — on Employer-Work content.
+          </span>
+        </div>
+      ) : null}
+      {reply.citations.length > 0 ? (
+        <div className="sow-copilot-cites" role="list" aria-label="Citations">
+          {reply.citations.map((c) => (
+            <CitationChip key={c.citationId} title={c.title} />
+          ))}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/** One conversation turn: the user's question (filled-blue bubble) + Copilot's answer (glass bubble),
+ *  the latter rendered ENTIRELY through {@link CopilotAnswerView} so the egress disclosure cannot be
+ *  separated from the answer it belongs to (9.28). The proposal row is turn-level, not part of the
+ *  answer contract, so it stays here. */
 function CopilotTurn({ turn }: { readonly turn: CopilotTurnView }): ReactElement {
   return (
     <div className="sow-copilot-turn">
       <div className="sow-copilot-bubble sow-copilot-bubble--user">{turn.question}</div>
       <div className="sow-copilot-bubble sow-copilot-bubble--assistant">
-        <div className="sow-copilot-answer">{turn.answer}</div>
-        {turn.egressProcessor !== undefined ? (
-          // Safety rule 5: raw Employer-Work content was synthesized by a CLOUD model (egress
-          // acknowledged). A visible consent notice — not fail-closed, per the owner's posture.
-          <div className="sow-copilot-egress-notice" role="note" aria-label="Cloud egress notice">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M17.5 19a4.5 4.5 0 0 0 .5-8.98 6 6 0 0 0-11.64-1.6A4 4 0 0 0 6.5 19h11z" />
-            </svg>
-            <span>
-              Answered using <strong>{turn.egressProcessor}</strong> — a cloud model — on Employer-Work content.
-            </span>
-          </div>
-        ) : null}
-        {turn.citations.length > 0 ? (
-          <div className="sow-copilot-cites" role="list" aria-label="Citations">
-            {turn.citations.map((c) => (
-              <CitationChip key={c.id} title={c.title} />
-            ))}
-          </div>
-        ) : null}
+        <CopilotAnswerView reply={turn.reply} />
         {turn.proposalLabel !== undefined ? (
           <div className="sow-copilot-proposal">
             <span className="sow-copilot-proposal-label">{turn.proposalLabel}</span>
@@ -186,7 +235,11 @@ export function Copilot(props: CopilotProps): ReactElement {
   const { workspaceScoped, onCollapse, turns: seedTurns = [], onAsk } = props;
   const live = onAsk !== undefined;
 
-  const [turns, setTurns] = useState<readonly CopilotTurnView[]>(seedTurns);
+  // DOOR 2 into turn state: the seed prop reaches state WITHOUT passing through `finish`, so it is
+  // admitted here. Init-only (the seed is not reconciled post-mount), so this runs once.
+  const [turns, setTurns] = useState<readonly CopilotTurnView[]>(() =>
+    seedTurns.map((t) => ({ ...t, reply: admitReply(t.reply) })),
+  );
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
   const turnSeq = useRef(0);
@@ -225,18 +278,14 @@ export function Copilot(props: CopilotProps): ReactElement {
       const id = `ask-${String(turnSeq.current)}`;
       let turn: CopilotTurnView;
       try {
+        // 9.28 — the validated answer is carried VERBATIM: no field-by-field re-map, so there is no
+        // mapping in which a rule-5 egress disclosure can be forgotten. `admitReply` is DOOR 1 of 2
+        // (the seed prop is door 2, at mount) — see its docblock for why it is not redundant.
         turn = result.ok
-          ? {
-              id,
-              question: q,
-              answer: result.answer.answer.join("\n"),
-              citations: result.answer.citations.map((c) => ({ id: c.citationId, title: c.title })),
-              // Thread the server-derived Employer-Work egress notice (present only for cloud egress).
-              egressProcessor: result.answer.egressProcessor,
-            }
-          : { id, question: q, answer: ASK_FAILED, citations: [] };
+          ? { id, question: q, reply: admitReply(result.answer) }
+          : { id, question: q, reply: FAILED_REPLY };
       } catch {
-        turn = { id, question: q, answer: ASK_FAILED, citations: [] };
+        turn = { id, question: q, reply: FAILED_REPLY };
       }
       setTurns((prev) => [...prev, turn]);
       setPending(false);
