@@ -1486,4 +1486,21 @@ I wrote *"a hash in durable prose is guaranteed to rot"* — **a statement about
 
 ⇒ **When a lesson names a class ("every X of this kind"), the fix is not done until the class is enumerated** — even for the members whose staleness is harmless, because the harmless ones are where the habit forms. And note the recursion: **this is the round's signature shape for the fourth time, committed by the author of the lesson about it, within an hour of writing it.** Knowing a failure mode does not make you apply it at the right scope — which is why the check below is a question you ask, not a thing you remember.
 
+### ⛔ FIFTH INSTANCE, inside the repair of the fourth — and it exposes a HOLE IN THE THREE-STEP COMMIT DISCIPLINE
+
+Repairing the above, I ran two edits in one shell invocation: amend `LESSONS.md` prose, amend the `CLAUDE.md` index row. **The `LESSONS.md` edit failed its own `assert` guard** (my anchor string didn't match the real line) and correctly changed nothing. The `CLAUDE.md` edit succeeded. Then `git add … && git commit` **ran anyway** — because the `&&` chain guarded only **add→commit**, never **write→add**.
+
+⇒ **For one commit (`49f0cdba`) the lessons index asserted a section that did not exist in the prose** — the index/prose disagreement the lessons convention exists to prevent, committed by the role that maintains it.
+
+⛔ **The three-step discipline could not have caught it, and this is the transferable part.** It verifies **what is staged**, not **whether the edits meant to produce it all succeeded**:
+
+- `git diff --cached --name-only` **before** → correct (nothing pre-staged)
+- `git show --stat` **after** → correct (one file, one row, exactly the content I asked for)
+
+**Both were truthful. Neither could report that a sibling edit silently no-oped.** A partial write + a truthful stage + a successful commit **reads as success at every checkpoint** — which is this round's signature shape reaching the instrument that was supposed to catch this round's signature shape.
+
+⚠ **The guard did its job; I failed to gate on it.** An assertion that aborts a *step* but not the *pipeline* is a **warning, not a gate.**
+
+**Do:** chain writes into the commit — `python … && git add … && git commit` — so a failed edit **cannot** reach a commit. Or verify the **content is present** before staging (`grep -c '<the new text>'`), not merely that the file changed. ⚠ **And for any paired artifact (prose ⟷ index, model ⟷ snapshot, code ⟷ test), assert BOTH halves at the commit, not in the working tree** — `git show HEAD:<file>` on each. Staging the pair is not the same as both halves being written.
+
 **Do (added):** after fixing an instance, ask *"what is the SET this instance belongs to, and have I enumerated every member?"* — and record the enumeration, not just the fix. A lesson that diagnoses a class and ships one instance-fix will let its next reader do exactly the same thing and feel finished.
