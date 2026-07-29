@@ -1632,12 +1632,15 @@ grep -nE 'pin:' packages/contracts/LESSONS.md | grep -oE '\b[a-z][a-z0-9]*(_[a-z
 | Merged **output** | two commands' results read as one, so a miss looked like a hit |
 | Wrong **scope** | the paths searched excluded where the thing lives |
 | **Verified evidence, inherited inference** ⭐ | the *fact* under the claim was checked and TRUE; the *step from fact to claim* was never checked |
+| **Correct numbers, incommensurable units** ⭐ | both measurements were right; they measured *different things* and were compared as if they didn't |
 
 ⭐ **The fourth is the sharpest of the four and it arrived the same day, on a different claim.** *"`§4.5` does not exist in `ARCHITECTURE.md`"* was verified — zero occurrences, correctly scoped, **true**. The claim built on it, *"therefore `§4.5` is undefined,"* was **false**: its real referent is `docs/design/ui-ux/ui-ux-spec.md:206`, another document's own §-numbering. **Checking the fact under a claim is not checking the claim** — and it feels like verification, which is exactly what makes it dangerous.
 
 > ⭐ **State the distinction this way, because it is the whole reason the fourth earns a row instead of a footnote: the first three mechanisms produce a wrong FACT. The fourth produces a wrong CONCLUSION FROM A RIGHT FACT — so EVERY VERIFICATION STEP PASSES.**
 >
-> The other three are catchable by re-running the check: widen the pattern, separate the outputs, extend the scope, and the wrong fact turns into a right one. **This one has no failed check anywhere in the chain to notice.** The grep was correct, its scope was correct, the count was correct, and the conclusion was still false — so there is nothing for a diligent re-verification to find. The only defence is to state the inferential step *as a separate claim* and check that too: *"zero occurrences in file X"* and *"therefore undefined"* are two assertions, and the second is the one that was never tested.
+⭐ **The fifth arrived while banking the fourth, in the same document, from a FLAG AMBIGUITY.** Recording L101's scale, the measurement was written as `grep -coE …` — **`-c` counts LINES, `-o` counts OCCURRENCES, and combining them is ambiguous.** One run reported **87** (lines, the candidate set); a later run of the sibling pattern reported **180** (occurrences). Both numbers were **correct**; they measured **different things**, and the record paired them as a ratio — *"87 candidates against 180 legitimate."* The real figures: **87 lines / 113 occurrences** vs **163 lines / 180 occurrences**. Caught only because the 180 **would not reproduce** on re-run, on a file that had only been appended to — a count that moves in the wrong direction is a unit error, not a data change. ⇒ **Never write a count without its unit, and prefer the command over the value.** ⚠ This one is *not* caught by re-running the same command — re-running reproduces the same ambiguous flag. It is caught by re-deriving the number **a different way** and finding it disagrees with itself.
+
+> The first three are catchable by re-running the check: widen the pattern, separate the outputs, extend the scope, and the wrong fact turns into a right one. **The fourth has no failed check anywhere in the chain to notice.** The grep was correct, its scope was correct, the count was correct, and the conclusion was still false — so there is nothing for a diligent re-verification to find. The only defence is to state the inferential step *as a separate claim* and check that too: *"zero occurrences in file X"* and *"therefore undefined"* are two assertions, and the second is the one that was never tested.
 
 > ⇒ **The durable rule is NOT "widen the pattern"** — that only fixes the first mechanism, and this round proved there are at least three. **A negative existence claim inherits the boundaries of the search that produced it, and those boundaries must travel with the claim.** *"I grepped and found nothing"* is not a finding. *"No hit for `<pattern>` under `<paths>`"* is — because a reader can see the hole, and the person holding the file can contradict it cheaply.
 
@@ -1756,4 +1759,59 @@ This is a **convention**, not an incident report. Four slices in one round indep
 
 ⚠ **Limits, so this doesn't become a reflex.** Unrepresentability costs type complexity, and it cannot express a **runtime** property (freshness, ordering, a live external state) — for those, a fail-closed runtime gate with a **reason code** is the mechanism ([L80](#80)). And a type-level guarantee over data crossing a trust boundary is only real **after** a runtime parse: `$type<>()` on a DB column is a **compile-time claim about runtime-untrusted bytes**, which is the defect 9.36 exists to fix, not an instance of this pattern.
 
+⭐ **AND A META-RULE THIS ENTRY EARNED, applying to every convention promoted from candidate: BANK THE LIMITS ALONGSIDE THE PATTERN, IN THE SAME EDIT.** The look-alike above is the reason. `$type<>()` on a DB column **looks** like make-the-violation-unrepresentable and is its **inverse** — a compile-time claim over runtime-untrusted bytes, i.e. **the defect 9.36 exists to fix rather than an instance of the pattern.** A convention shipped without that distinction would have produced a fifth "application" that was **the original defect wearing the pattern's name** — and it would have been defended by citing this lesson. ⇒ **A pattern without stated limits becomes a reflex, and a reflex is applied by people who did not read the reasoning.** For any convention promoted to house-pattern status, the same edit must answer: *where does this NOT apply, and what looks like it but isn't?*
+
 `accepted: not mechanically enforceable` — a design-time preference, not a checkable shape. Enforcement point: `/tdd` Step 2.5, where "how would you detect this?" should be answered with "you wouldn't — it won't compile."
+
+---
+
+<a id="104"></a>
+## 104. A mechanical check cannot distinguish a USE from a MENTION — so the document explaining a rule is the one most likely to violate it mechanically
+
+**2026-07-29 · THREE independent demonstrations in one round, TWICE inside a mechanism built to catch the very thing**
+
+| # | The check | What it flagged | What the hit actually was |
+|---|---|---|---|
+| 1 | [L99](#99)'s stale-pin-name pattern over `pin:` lines | the repaired L76/L72 pin lines | **correction prose that QUOTES the stale name** in order to record it |
+| 2 | a grep for `CLEAR`/`BLOCKED` over the three Phase-9 audit reports, verifying no verdict was emitted | **all three reports** | the **disclaimer sentence** saying no verdict is emitted |
+| 3 | `scripts/spec-lint.sh`'s out-of-phase-anchor check | brief 226's gate-finding note | **the note documenting that very collision**, which quoted the offending token — and its first rewrite still did, so it tripped **twice** |
+
+> ⭐ **This is not a defect in any of those checks. It is what greps ARE.** A mechanical check matches a **form**; use and mention share the form. So **any grep-shaped gate will trip on prose ABOUT what it forbids** — and the prose most likely to mention a forbidden token is **the finding that documents it.**
+
+**Two corollaries, and the second is the load-bearing one:**
+
+1. **The document explaining a rule is the document most likely to violate it mechanically.** A lesson about a bad token contains the token. A disclaimer about a verdict contains the verdict vocabulary. A finding about a citation quotes the citation.
+2. ⛔ **A check with no use/mention escape will systematically SUPPRESS ITS OWN DOCUMENTATION.** The path of least resistance when a gate rejects your finding-record is to **delete the discussion** — which is exactly backwards, and it happens quietly because deleting the sentence makes the check green. **The gate ends up enforcing silence about the thing it exists to catch.**
+
+**Do:**
+- **Expect the finding-record to trip the check**, and budget for it rather than treating it as a surprise.
+- Write the record **token-free** (describe the token instead of reproducing it), **or** give the check an explicit escape (an allowlisted line prefix / a marker comment) — but **never** resolve it by removing the explanation.
+- When authoring a `pattern:` enforcement line, **state this limit beside it** (as L99 and [L101](#101) now do). A hit count is a **candidate** count; classification is human and always will be.
+- ⚠ **Do not "fix" the check to be cleverer about it.** Distinguishing use from mention requires understanding the sentence — that is not a property a grep can acquire, and an almost-clever check is worse than a blunt one because its false-negative surface stops being obvious.
+
+⚠ **The self-referential note, which is the point rather than a joke:** a mechanical check for this lesson's own rule would flag this lesson. Every table row above is a mention.
+
+`accepted: not mechanically enforceable` — necessarily, and demonstrably. Enforcement point: authoring any `pattern:` line, and reading any check's output as candidates rather than defects.
+
+---
+
+<a id="105"></a>
+## 105. The most recent implementation is not the most correct one — it is the one that most recently accepted a compromise
+
+**2026-07-29 · caught while briefing 13.8m-C, before a line was written**
+
+Task 13.8m landed on two paths. **13.8m-A** (source producer) put `refusals` on the receipt as a **required** field. **13.8m-B** (the worker consumer) made it **optional on the worker seam** — deliberately, to keep 13 existing containment fakes valid — and **recorded the bound in-code**: *"a FUTURE adapter could omit it and the sink would silently never fire."*
+
+Briefing the **meeting** path (13.8m-C), the natural move is *"mirror the most recent sibling."* **That would have carried B's optionality onto a second path** — importing a compromise that existed only to avoid a fakes migration, onto a path with no fakes to migrate.
+
+> ⇒ **"Follow the newest sibling" is the default that spreads recorded bounds** — and a recorded bound spreads **silently, because it was already deemed acceptable once.** Nobody re-litigates it; its acceptance is treated as settled precedent rather than as a local trade.
+
+**The right template was the OLDER one.** A's required field makes omission **unrepresentable**; B's optional seam makes it **detectable at best** ([L103](#103)).
+
+**The check is cheap, and the compromise's own diligence is what makes it cheap:** a compromise in the newest sibling is usually **documented** — that is what makes it a *recorded* bound. ⇒ **Before mirroring an implementation, read its own caveats.** If it has an in-code note explaining why it is shaped that way, that note is telling you whether the shape is the design or the concession.
+
+**Ask: which sibling has the fewest ACCEPTED COMPROMISES — not which is newest.** Recency signals *"most recently touched,"* which correlates with *"most recently forced to trade something,"* not with correctness.
+
+⚠ **Where recency IS the right signal:** when the newer sibling exists *because* the older one was wrong (a supersession — 9.30 superseding 9.23's re-gate is exactly that, see [L76](#76)). ⇒ **Distinguish a SUPERSESSION from a CONCESSION.** A supersession's note says *"the older approach was wrong"*; a concession's says *"this is narrower than we wanted, because X."* Mirror the first; read past the second.
+
+`accepted: not mechanically enforceable` — judgment at authoring time. Enforcement point: brief-writing, at the moment a prior implementation is named as the template to mirror; say **which** sibling and **why that one**.
