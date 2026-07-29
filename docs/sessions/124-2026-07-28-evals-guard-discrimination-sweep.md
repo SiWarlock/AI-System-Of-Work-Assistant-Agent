@@ -47,9 +47,24 @@ Verified by reading both, side by side. The fake's own docblock claims "This is 
 
 **Fix shape (not applied):** add the terminal branch to the fake, plus a case driving `approved → reject` asserting `err` + `dispatchCount === 0`.
 
+#### ⚠ PROOF STATUS — read this before quoting E1
+
+Two claims here have **different evidence strengths**. Do not collapse them:
+
+| Claim | Status |
+|---|---|
+| The fake omits the terminal branch the real CAS has | ✅ **VERIFIED BY READING** — both sides read side by side, `file:line` above. Independently confirmed by the orchestrator. |
+| In the fake, `approved` + `next: rejected` takes the apply branch and re-dispatches | ✅ **VERIFIED BY READING** — follows directly from the two branches present. |
+| `decideApprovalCommand` has no terminal guard of its own | ✅ **VERIFIED BY READING** — `approvalCommands.ts:204-215`. |
+| **"Delete the branch in production and the eval stays green"** | ⚠ **NOT SIMULATION-PROVEN.** Highly likely from the above, but never executed. It needs a `packages/db` mutation window (remove the branch → run the §12 suite → observe green), which was not opened: the announce-first protocol makes cross-package windows visible to teammates mid-slice, and per that protocol an unproven finding is reported as unproven rather than taking a silent window. |
+
+**Successor: run that mutation before quoting the last line as fact.** It is the L75 STATE-1 step (reproduce the blindness) and it has not been done for E1. Everything above it stands without it.
+
 ### Lens F — 7 findings, REPORTED BUT NOT VERIFIED
 
 ⚠ Lens F's output arrived compressed. These are recorded as **claims with reproductions**, not as facts — relaying unverified subagent output as verified is a failure already committed once this round (see "What I got wrong"). Verify before acting.
+
+**⛔ PROOF STATUS FOR ALL SEVEN: NONE ARE SIMULATION-PROVEN.** Not one had its mutation executed. Each entry below gives *what is claimed blind* + *the substitution that allegedly stays green* + *`file:line`* — which is enough to run L75 STATE 1 (apply the substitution, confirm the suite stays green) and no more. **Treat every one as a lead, not a finding.** Several are plausible enough that I'd expect them to hold; that expectation is not evidence, and this round has already produced two cases where a confident-looking claim was wrong (a stacked defect where the first fix left the suite green, and a root-cause hypothesis that reached durable docs before retraction).
 
 1. `suites/budget-cap/` — job-explicit-vs-default cap precedence never discriminated: the only fixtures (900s, 10s) breach/pass **both** the 300s job cap and the 60s global floor. Claim: `resolveEnforcedBudget = (_job, defaults) => defaults.global` — ignoring every per-job operator cap — leaves all 7 tests green. A 100s fixture would discriminate. (COST-1)
 2. `suites/system-health/health-surfacing.test.ts:328-337` — claimed **pure tautology**: compares two test-local literals, touches no SUT symbol; allegedly survives deleting the entire health module. (secrets/redaction)
