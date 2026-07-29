@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-27 · **Track:** single-track `main` (no worktree — root checkout)
 **Predecessor handoff:** `016-2026-07-25-wave2-sealed-full-teardown-new-session.md`
-**Successor handoff:** _(next `/team-end`)_
+**Successor handoff:** `018-2026-07-29-egress-honesty-sealed-full-teardown.md`
 **Round-seal commit:** `8dc4ad56` (orchestrator terminal commit, docs-only, 19 files, 0 code)
 **origin/main:** `d0886ea4` · **unpushed tail:** 2 commits (`31f53239` desktop doc 119 + `8dc4ad56` seal)
 
