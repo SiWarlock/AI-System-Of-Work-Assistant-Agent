@@ -1749,6 +1749,9 @@ This is a **convention**, not an incident report. Four slices in one round indep
 | 2 | **9.30** (worker) | provisioning writing posture columns | `ProvisioningOwnedFields` — a posture write is **untypeable** from that path |
 | 3 | **9.21-B** (worker) | a partial modelled as a success, or leaking a message | the `err` variant carries only a **closed literal**, no message field ([L80](#80)) |
 | 4 | **9.36** (db) | an unvalidated stored aggregate reaching a policy decision | the parse becomes the **only** constructor of the repo's return value |
+| 5 ⭐ | **the commit discipline itself** (process, not code) | a foreign staged file entering someone else's commit | **`git commit -- <paths>`** — pathspec-limited, so the index's contents cannot influence the commit's contents ([L109](#109)) |
+
+⭐ **The fifth instance is the one that shows the pattern is not about types.** The first four replace a runtime check with a compile-time impossibility; the fifth replaces a **procedural** check with a **command form**, and the reasoning is identical — a three-step "verify the index, then commit" discipline is a detector whose failure mode is *"the actor read the output after acting"*, while a pathspec-limited commit removes the influence entirely. ⇒ **Ask the pattern's question of processes too: what is the cheapest edit that makes this violation representable again?** If the answer is *"forget one step"*, you have a detector.
 
 > ⇒ **Prefer a design in which the bad state does not typecheck over one in which the bad state is detected.** A detector answers *"did it happen?"*; unrepresentability answers *"can it happen?"* — and only the second is closed under **future callers**, which is where every one of these was actually leaking.
 
@@ -1944,3 +1947,30 @@ git commit -F <msg> -- <paths>      # pathspec-limited: commits ONLY these paths
 ⚠ **Zsh footgun met during the repair, worth its own line:** `git restore --staged $PATHS` **failed** because **zsh does not word-split unquoted parameter expansions** — the whole list arrived as one pathspec. It failed *loudly* (`did not match any file(s) known to git`), which is the good direction; in a script that ignored the exit code it would have silently unstaged nothing while reporting success. **List paths explicitly, or use an array.**
 
 `pattern: git log --format='%H %s' -20 | …` — not reliably greppable after the fact. **Enforcement is the habit: `git commit -- <paths>`.** `accepted: not mechanically enforceable`, but the pathspec form makes the failure mode structurally unreachable, which is stronger than enforcement.
+
+---
+
+<a id="110"></a>
+## 110. A MITIGATION RECORDED AS AN OPTION IS NOT A MITIGATION — if it is the right default, make it the default in the same edit that records it
+
+**2026-07-29 · the third distinct shape of [L89](#89) in one round, and the purest**
+
+`git commit -- <paths>` — pathspec-limiting, which makes a foreign staged file **structurally unable** to enter a commit — **was already in this project's record as a mitigation.** It had been written down, correctly, as one available option among several. **It had never been adopted as the default.** Then an orchestrator commit swept 14 of another implementer's staged in-flight files into a `docs(arch)` commit ([L109](#109)) — a failure the recorded mitigation would have made impossible.
+
+> ⇒ **The remedy was in the record, correct, and inert.** Nothing was missing, nothing was wrong, and it protected nobody — because it was filed as a *thing you could do* rather than as *the thing we do*.
+
+⭐ **Three distinct shapes of L89 in a single round, worth naming together because the differences are what make each escapable:**
+
+| Shape | What the record did | Why it failed |
+|---|---|---|
+| **Recorded but UNBELIEVED** | correctly documented `lint` as typecheck-only | the false green kept being read as evidence; a whole round said "lint clean" |
+| **Recorded but OTHER-SHAPE** | *"an assertion that aborts a step but not the pipeline is a warning, not a gate"* | filed as being about failed **edits**; could not prevent its sibling about **checkpoint placement** ([L109](#109)) |
+| **Recorded but NEVER ADOPTED** ⭐ | pathspec-limiting, as an option | an option is not a default; the author of the next commit had no reason to reach for it |
+
+**Do:** when routing a mitigation at Step-9, ask **"is this the right default?"** If yes, **change the default in the same edit** — the convention, the template, the command you actually type — not only the lesson describing it. If the answer is *"it depends,"* say **on what**, because an unconditioned option will be read as optional forever.
+
+⚠ **The general form, and it is uncomfortable:** **a record's job is not to be true. It is to change what happens by default.** A true, correct, well-written entry that leaves the default untouched has bought nothing but the ability to say it was known — which is worse than not knowing, because it converts a surprise into a foreseeable omission.
+
+⭐ **Corollary that generalises past commits:** where the mitigation is *structural* (a pathspec, a closed literal, an absent parameter, a required field), adopting it as the default is nearly free — this is [L103](#103)'s make-it-unrepresentable applied to **process**. Where it is *behavioural* ("remember to check X"), adoption is expensive and unreliable, which is itself an argument for finding a structural form first.
+
+`accepted: not mechanically enforceable` — enforcement point: `/tdd` Step-9 routing and `/orchestrate-end`, at the moment an enforcement line is written. **A `pattern:` or `pin:` that names an option rather than a default is this defect.**
