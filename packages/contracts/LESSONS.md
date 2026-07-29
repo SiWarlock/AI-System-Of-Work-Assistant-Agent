@@ -1579,3 +1579,29 @@ Forbidden-pattern #2 stated the §2.5 pure-root invariant was pinned by *"a boun
 ⚠ **The asymmetry that makes this the orchestrator's problem specifically:** implementers commit per slice, so their state converges every cycle. The orchestrator owns `IMPLEMENTATION_PLAN.md`/`ARCHITECTURE.md` and the cadence says those ride the **round-terminal** commit — which means **tracker truth is designed to be stale for the whole round**, for a file the entire team verifies against by policy.
 
 **Do:** commit tracker reconciliation **promptly**, not at the seal — a checkbox tick is not "round bookkeeping," it is the answer to a question teammates ask HEAD. If you must hold plan state, say so when anyone reports a task's status. `accepted: not mechanically enforceable` — mitigation: after any batch of checkbox ticks, commit before the next dispatch.
+
+---
+
+<a id="99"></a>
+## 99. Enumerate the occurrence set, then CLASSIFY each member — an occurrence of a stale citation is not always a stale citation
+
+**2026-07-29 · the L76/L72 pin-name repair · the instruction said four sites; three were repairs**
+
+`carried_policy_with_a_foreign_workspaceid_does_not_land` appeared in four places and existed in **no test file**. The instruction — correct about extent — was *"fix the stale pin name in four places, not one."* Three were **citations**: a `pin:` line pointing at a guard, which must be true. The fourth was a **quotation**: `IMPLEMENTATION_PLAN.md`'s own finding record, which names the stale string as its *subject* — *"L76 cites a pin named X that exists in NO TEST FILE."* Substituting the live name there would have made the record assert that **the live guard** exists in no test file.
+
+> ⇒ **A citation-rot record has to keep quoting the rotted citation.** Enumerate the full occurrence set ([L93](#93)'s repo-wide discipline), then **classify each member before touching it** — CITATION (points at a thing; must resolve) vs QUOTATION (reports that a thing was wrong; must stay verbatim). Only citations get repaired. "Enumerate the set" and "repair the set" are different instructions, and the second is not implied by the first.
+
+**The larger half: a repair can manufacture a fresh false claim.** 9.30 had **deleted** the mechanism L76 describes — the `existing.value.egressPolicy` carry-forward *and* its `WorkspaceSchema.parse` re-gate — because `updateProvisioningFields` narrows the same-type write so no stored blob re-crosses (`provisionWorkspace.ts:238-249`). The live guard's own name says so: `a_corrupt_stored_policy_can_never_re_cross_into_a_write`, annotated *"9.23's re-gate, superseded (9.30)"*. So a **pure rename** would have left prose asserting a deleted re-gate while pointing at a live test — **worse than the stale name was**, because a stale name fails visibly the moment anyone greps for it and a plausible live name never does. Resolution that holds: **the RULE stands, the MECHANISM is history, the closure is now by construction.** [L71](#71) generalized — a correction is a claim, so *verify the cited thing still does what the citing prose says it does*, not merely that the name resolves.
+
+**Enumeration discipline, applied unasked:** L72's pin line carried three names; only one was flagged. The other two were checked in the same pass and were live (`:75`, `:118`). Checking the unflagged siblings is what turns a reported instance into a closed class.
+
+⭐ **THE CHECK IS MECHANIZABLE, AND IT FOUND A FOURTH INSTANCE — measured, not asserted.** Run over `pin:` lines, it flagged `revoke_return_makes_no_unearned_local_claim` (L69's pin, citing `worker egressCommands.test.ts`): the file exists, **no test of that name does**, and none of its nine live `it(...)` names matches. Independent of the reported instance, found by execution.
+⚠ **And its false-positive mode is known, because it fired on itself:** the corpus-wide form flagged 3 names of which 2 were legitimate quotations (L67 quotes a test it exists to criticize). Scoping to `pin:` lines drops one, but **prose that merely mentions the word `pin:` while quoting a stale name still trips it** — which is this lesson's own distinction, unmechanizable by grep. Treat output as *candidates to classify*, never as defects; a check that reports known permanent false positives is one people learn to disbelieve ([L89](#89)).
+
+`pattern:` — pin-line-scoped; every hit is a CANDIDATE requiring the citation-vs-quotation classification above:
+```sh
+grep -nE 'pin:' packages/contracts/LESSONS.md | grep -oE '\b[a-z][a-z0-9]*(_[a-z0-9]+){3,}\b' | sort -u |
+  while read -r n; do grep -rqF "$n" --include='*.test.ts' --include='*.test.tsx' apps packages ||
+    echo "CANDIDATE (classify: citation or quotation?): $n"; done
+```
+`accepted: not mechanically enforceable` — the classification half is judgment; the pattern narrows the set to inspect. Candidate `plan-lint`/`spec-lint` rule (see the process-durability item's gate-gap list).
