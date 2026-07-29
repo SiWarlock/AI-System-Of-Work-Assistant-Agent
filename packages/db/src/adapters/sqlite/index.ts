@@ -382,6 +382,35 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
           .run();
         return ok(ws);
       }),
+    // 9.30 — INSERT-ONLY create. `onConflictDoNothing` means a racing create can never overwrite an
+    // existing row's posture (the plain `upsert` would conflict-update every column, restoring a
+    // freshly-seeded ack over a concurrent revoke).
+    insertIfAbsent: (ws) =>
+      run(() => {
+        const inserted = db
+          .insert(schema.workspaceConfig)
+          .values(ws)
+          .onConflictDoNothing()
+          .returning()
+          .get();
+        return ok(inserted !== undefined);
+      }),
+    // 9.30 — a single narrow UPDATE touching only the provisioning-owned columns. No read-modify-write,
+    // so a concurrent posture command (e.g. `revokeEgressAck`) cannot be clobbered by this statement.
+    updateProvisioningFields: (id, fields) =>
+      run(() => {
+        const updated = db
+          .update(schema.workspaceConfig)
+          .set({
+            name: fields.name,
+            markdownRepoPath: fields.markdownRepoPath,
+            gbrainBrainId: fields.gbrainBrainId,
+          })
+          .where(eq(schema.workspaceConfig.id, id))
+          .returning()
+          .get();
+        return updated ? ok(updated as Workspace) : err(notFound(`workspace ${id}`));
+      }),
   };
 
   // Durable typed-Project registry (14.6). Nullable columns (planPath, aliases) map

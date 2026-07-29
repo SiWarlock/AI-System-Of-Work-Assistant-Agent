@@ -403,6 +403,32 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
           });
         return ok(ws);
       }),
+    // 9.30 — INSERT-ONLY create (see the sqlite adapter for the race this closes).
+    insertIfAbsent: (ws) =>
+      run(async () => {
+        const rows = await db
+          .insert(schema.workspaceConfig)
+          .values(ws)
+          .onConflictDoNothing()
+          .returning();
+        return ok(rows.length > 0);
+      }),
+    // 9.30 — a single narrow UPDATE touching only the provisioning-owned columns. No read-modify-write,
+    // so a concurrent posture command (e.g. `revokeEgressAck`) cannot be clobbered by this statement.
+    updateProvisioningFields: (id, fields) =>
+      run(async () => {
+        const rows = await db
+          .update(schema.workspaceConfig)
+          .set({
+            name: fields.name,
+            markdownRepoPath: fields.markdownRepoPath,
+            gbrainBrainId: fields.gbrainBrainId,
+          })
+          .where(eq(schema.workspaceConfig.id, id))
+          .returning();
+        const row = rows[0];
+        return row ? ok(row as Workspace) : err(notFound(`workspace ${id}`));
+      }),
   };
 
   // Durable typed-Project registry (14.6). Nullable columns (planPath, aliases) map

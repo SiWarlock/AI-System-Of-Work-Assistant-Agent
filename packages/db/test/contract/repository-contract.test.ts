@@ -512,6 +512,51 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(list[0]?.name).toBe("Acme API (renamed)");
     });
 
+    // ── 9.30: the two narrow mutators, on BOTH dialects (forbidden-pattern #2) ────────────────
+    it("updateProvisioningFields updates ONLY the provisioning-owned columns", async () => {
+      unwrap(await repos.workspaceConfig.upsert(validWorkspace));
+      const updated = unwrap(
+        await repos.workspaceConfig.updateProvisioningFields(validWorkspace.id, {
+          name: "Renamed",
+          markdownRepoPath: "/moved",
+          gbrainBrainId: validWorkspace.gbrainBrainId,
+        }),
+      );
+      expect(updated.name).toBe("Renamed");
+      expect(updated.markdownRepoPath).toBe("/moved");
+      // The posture columns are untouched — this is what makes a concurrent revoke un-clobberable.
+      const got = unwrap(await repos.workspaceConfig.get(validWorkspace.id));
+      expect(got.egressPolicy).toEqual(validWorkspace.egressPolicy);
+      expect(got.providerMatrix).toEqual(validWorkspace.providerMatrix);
+      expect(got.type).toBe(validWorkspace.type);
+      expect(got.dataOwner).toBe(validWorkspace.dataOwner);
+      expect(got.defaultVisibility).toBe(validWorkspace.defaultVisibility);
+    });
+
+    it("updateProvisioningFields on a missing id is a typed not_found — it never creates", async () => {
+      const r = await repos.workspaceConfig.updateProvisioningFields(validWorkspace.id, {
+        name: "X",
+        markdownRepoPath: "/x",
+        gbrainBrainId: validWorkspace.gbrainBrainId,
+      });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error.code).toBe("not_found");
+      expect(unwrap(await repos.workspaceConfig.list())).toHaveLength(0);
+    });
+
+    it("insertIfAbsent creates once, then reports false WITHOUT overwriting the stored row", async () => {
+      expect(unwrap(await repos.workspaceConfig.insertIfAbsent(validWorkspace))).toBe(true);
+      // The racing caller: same id, DIFFERENT posture. It must not land.
+      const contender = {
+        ...validWorkspace,
+        name: "Contender",
+      } as typeof validWorkspace;
+      expect(unwrap(await repos.workspaceConfig.insertIfAbsent(contender))).toBe(false);
+      const got = unwrap(await repos.workspaceConfig.get(validWorkspace.id));
+      expect(got.name).toBe(validWorkspace.name); // the loser wrote NOTHING
+      expect(got.egressPolicy).toEqual(validWorkspace.egressPolicy);
+    });
+
     it("get on a missing id returns a typed not_found (never throws)", async () => {
       expect(unwrapErr(await repos.workspaceConfig.get(validWorkspace.id)).code).toBe("not_found");
     });

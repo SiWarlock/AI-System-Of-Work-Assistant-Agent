@@ -340,7 +340,13 @@ export async function openDatabase(config: BackendsConfig = {}): Promise<OpenDat
  * A real, filesystem-backed {@link VaultFs} rooted at `root`. Paths are
  * vault-relative; `read` returns `undefined` for a missing file (never throws for
  * absence); `remove` is a no-op on an absent file. A tmpdir root is fine for tests;
- * a deployment passes the workspace's markdownRepoPath.
+ * a deployment passes `config.vaultRoot` (see the call site below).
+ *
+ * ⚠ Corrected at 9.31: this previously said "a deployment passes the workspace's markdownRepoPath",
+ * which was never true — the root comes from BOOT CONFIG, so the worker has exactly ONE vault
+ * regardless of how many workspaces exist, and `Workspace.markdownRepoPath` is written but never read.
+ * That distinction is load-bearing for the durability bound on the egress revoke (task 9.31): it is
+ * why two workspaces "sharing a vault root" is not a state anything can currently act on.
  */
 export function createFsVault(root: string): VaultFs {
   const rootResolved = resolve(root);

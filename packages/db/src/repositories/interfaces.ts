@@ -199,10 +199,46 @@ export type ReserveOutcome =
  * rebuildable). The owner edits governance posture; `upsert` persists the whole
  * validated aggregate.
  */
+/**
+ * The workspace fields ONBOARDING/PROVISIONING owns and may rewrite on an idempotent re-provision
+ * (task 9.30). Deliberately NOT the whole aggregate: `egressPolicy`, `providerMatrix`,
+ * `defaultVisibility`, `dataOwner` and `type` are durable POSTURE, owned by their own commands
+ * (`revokeEgressAck`, …) — a re-provision changes where a workspace points and what it is called, never
+ * what it is allowed to do. The type IS the invariant: provisioning cannot express a posture write.
+ */
+export interface ProvisioningOwnedFields {
+  readonly name: Workspace["name"];
+  readonly markdownRepoPath: Workspace["markdownRepoPath"];
+  // Derived from the model, not restated as `string` — `gbrainBrainId` is BRANDED (`BrainId`), and a
+  // widened primitive here would force a cast at every adapter.
+  readonly gbrainBrainId: Workspace["gbrainBrainId"];
+}
+
 export interface WorkspaceConfigRepository {
   get(id: Workspace["id"]): DbResult<Workspace>;
   list(): DbResult<Workspace[]>;
   upsert(workspace: Workspace): DbResult<Workspace>;
+  /**
+   * Update ONLY the provisioning-owned fields of an EXISTING workspace, in a single statement (task
+   * 9.30). This is the read-modify-write race fix: the whole-aggregate `upsert` forced provisioning to
+   * write back posture columns it had read earlier, so a `revokeEgressAck` landing between that read and
+   * that write was silently clobbered — 9.23's fail-open narrowed to a race. Narrowing the WRITE removes
+   * the shared column entirely, so there is nothing left for a concurrent posture command to lose.
+   * Absent row ⇒ `not_found` (this never creates; the create path is `upsert`).
+   */
+  updateProvisioningFields(
+    id: Workspace["id"],
+    fields: ProvisioningOwnedFields,
+  ): DbResult<Workspace>;
+  /**
+   * INSERT a workspace only if its id is absent; resolves `true` when the row was created and `false`
+   * when one already existed (never overwrites). The create half of the 9.30 race fix: a plain `upsert`
+   * is `INSERT … ON CONFLICT DO UPDATE <every column>`, so a provision that read `not_found`, then
+   * raced a create AND a revoke, would blindly write its freshly-seeded `ack=true` back over the
+   * owner's revoke. Insert-only makes that impossible: the loser of the race writes nothing and its
+   * caller fails loudly rather than silently adopting an existing row.
+   */
+  insertIfAbsent(workspace: Workspace): DbResult<boolean>;
 }
 
 /**

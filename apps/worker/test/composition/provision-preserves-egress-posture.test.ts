@@ -218,17 +218,22 @@ describe("provisionWorkspace — seeds only what it CREATES (9.23)", () => {
     expect(await storedPolicy(b, EMPLOYER.id)).toEqual(before);
   });
 
-  it("carried_policy_with_a_foreign_workspaceid_does_not_land — the carry re-gates identity", async () => {
-    // Carrying the stored `egressPolicy` object wholesale (rather than copying named fields) is the
-    // right call — a field-by-field copy silently drops any field added later. But it lands the object
-    // AFTER `defaultWorkspace` already parsed, so nothing re-checks the aggregate's identity refinement
-    // (`WorkspaceSchema`: id === egressPolicy.workspaceId === providerMatrix.workspaceId).
+  it("a_corrupt_stored_policy_can_never_re_cross_into_a_write — 9.23's re-gate, superseded (9.30)", async () => {
+    // ⚠ THIS PIN CHANGED MEANING AT 9.30, deliberately. Under 9.23 the same-type branch carried the
+    // stored `egressPolicy` into a whole-aggregate write, so a row bearing a FOREIGN
+    // `egressPolicy.workspaceId` could have been grafted onto this workspace — and the
+    // `WorkspaceSchema.parse` re-gate existed to refuse that (the only validation a blob read through
+    // the repo's unchecked `row as Workspace` cast would ever get).
     //
-    // Fail CLOSED rather than normalize: a stored policy bearing a foreign workspaceId means the row is
-    // already inconsistent, and rewriting its id to `spec.id` would quietly graft ANOTHER workspace's
-    // allowlist + ack onto this one, stamped as if it belonged here — a WS-8-adjacent write that would
-    // look entirely legitimate afterwards. Refusing is the same posture as the store-fault branch:
-    // never proceed over an unknown/contradictory prior state.
+    // Option A removes the premise instead of the protection: provisioning now writes three
+    // caller-derived primitives and never reads the stored blob into a write at all. So the re-gate is
+    // not "dropped" — the thing it guarded cannot occur. This asserts that stronger property directly:
+    // whatever corruption the row carries, NO whole-aggregate write happens and nothing from the blob
+    // is echoed back.
+    //
+    // Out of scope, still true, tracked elsewhere: a corrupt row is still SERVED on the read path
+    // (`storeBackedWorkspacePosture` compares `ws.id` but not `ws.egressPolicy.workspaceId`). This
+    // slice hardens the write; the read-side re-gate is its own follow-up.
     const b = await fresh();
     const base = await b.repos.workspaceConfig.get(EMPLOYER.id as Workspace["id"]);
     expect(isErr(base)).toBe(true); // nothing stored yet
@@ -248,12 +253,18 @@ describe("provisionWorkspace — seeds only what it CREATES (9.23)", () => {
     // `provisionWorkspace` starts calling later, turning a future compile error into a fake that
     // half-hits the real store. No cast either — the annotation must be what catches a missing member.
     let upserted: Workspace | undefined;
+    const narrowWrites: { readonly name: string; readonly markdownRepoPath: string; readonly gbrainBrainId: string }[] = [];
     const injected: WorkspaceConfigRepository = {
       get: (): Promise<Result<Workspace, DbError>> => Promise.resolve({ ok: true, value: corrupt }),
       list: (): Promise<Result<Workspace[], DbError>> => Promise.resolve({ ok: true, value: [corrupt] }),
       upsert: (w: Workspace): Promise<Result<Workspace, DbError>> => {
         upserted = w;
         return b.repos.workspaceConfig.upsert(w);
+      },
+      insertIfAbsent: () => Promise.resolve({ ok: true, value: false } as const),
+      updateProvisioningFields: (_id, fields): Promise<Result<Workspace, DbError>> => {
+        narrowWrites.push({ name: fields.name, markdownRepoPath: fields.markdownRepoPath, gbrainBrainId: String(fields.gbrainBrainId) });
+        return Promise.resolve({ ok: true, value: corrupt });
       },
     };
 
@@ -262,11 +273,15 @@ describe("provisionWorkspace — seeds only what it CREATES (9.23)", () => {
       EMPLOYER,
     );
 
-    expect(isErr(res)).toBe(true);
-    if (isErr(res)) expect(res.error.code).toBe("invalid_workspace"); // failed for the RIGHT reason
-    // The load-bearing assertion, whichever disposition is chosen: no workspace may be written whose
-    // own id disagrees with its egress policy's.
+    // Under Option A the corrupt row is simply not this write's business: provisioning updates its own
+    // fields and succeeds. It neither launders the corruption nor pretends to repair it.
+    expect(isOk(res)).toBe(true);
+    // THE load-bearing assertions: no whole-aggregate write happened…
     expect(upserted).toBeUndefined();
+    // …and the only write carried caller-derived values, never anything read off the corrupt blob.
+    expect(narrowWrites).toEqual([
+      { name: EMPLOYER.name, markdownRepoPath: EMPLOYER.vaultRoot, gbrainBrainId: EMPLOYER.gbrainBrainId },
+    ]);
   });
 
   it("revoke_preserves_provisioning_owned_fields — the OTHER writer resets nothing (9.29)", async () => {
@@ -325,6 +340,12 @@ describe("provisionWorkspace — seeds only what it CREATES (9.23)", () => {
         upserts += 1;
         return b.repos.workspaceConfig.upsert(w);
       },
+      // Counted too: the pin proves NO write of any kind happens on an unknown prior state.
+      insertIfAbsent: () => Promise.resolve({ ok: true, value: false } as const),
+      updateProvisioningFields: (): Promise<Result<Workspace, DbError>> => {
+        upserts += 1;
+        return Promise.resolve({ ok: false, error: { code: "unavailable", message: "unreachable" } as DbError });
+      },
     } as WorkspaceConfigRepository;
 
     const res = await provisionWorkspace(
@@ -335,6 +356,170 @@ describe("provisionWorkspace — seeds only what it CREATES (9.23)", () => {
     expect(isErr(res)).toBe(true);
     if (isErr(res)) expect(res.error.code).toBe("store_fault");
     expect(upserts).toBe(0); // a transient fault must never bypass the guard
+  });
+});
+
+describe("provisionWorkspace — the write is narrowed to provisioning-owned fields (9.30)", () => {
+  it("interleaved_revoke_is_not_silently_reverted — a revoke between the get and the write SURVIVES", async () => {
+    // THE RACE 9.23 left. `provisionWorkspace` reads the row (existence/type check), then writes. A
+    // `revokeEgressAck` landing in that window was silently clobbered by the write carrying the
+    // pre-revoke policy — 9.23's own defect narrowed to a race, still with no audit row.
+    //
+    // ⚠ The sibling `workspaceRegistry`'s `arch_gap (concurrency)` note does NOT justify accepting this
+    // one: it accepts its race because the direction is fail-SAFE (a dropped id goes invisible) and "a
+    // re-provision repairs it". Here a lost update reverts a revoke — fail-OPEN — and a re-provision is
+    // what CAUSES it. Option A closes it by construction: provisioning no longer writes the egress
+    // column at all, so there is nothing for a concurrent revoke to lose.
+    const b = await fresh();
+    expect(isOk(await provisionWorkspace(deps(b), EMPLOYER))).toBe(true);
+    expect((await storedPolicy(b, EMPLOYER.id)).employerRawEgressAcknowledged).toBe(true);
+
+    const revoke = createEgressCommandPort({
+      workspaceConfig: b.repos.workspaceConfig,
+      audit: b.repos.audit,
+      now: () => NOW,
+    });
+
+    // Interleave for real: fire the revoke from inside the repo `get` the provisioner is awaiting, so
+    // the revoke is durably committed BEFORE the provisioner reaches its write.
+    let raced = false;
+    const racing: WorkspaceConfigRepository = {
+      get: async (id) => {
+        const r = await b.repos.workspaceConfig.get(id);
+        if (!raced) {
+          raced = true;
+          await revoke.revokeEgressAck({ workspaceId: EMPLOYER.id });
+        }
+        return r;
+      },
+      list: () => b.repos.workspaceConfig.list(),
+      upsert: (w) => b.repos.workspaceConfig.upsert(w),
+      insertIfAbsent: () => Promise.resolve({ ok: true, value: false } as const),
+      updateProvisioningFields: (id, fields) =>
+        b.repos.workspaceConfig.updateProvisioningFields(id, fields),
+    };
+
+    const res = await provisionWorkspace(
+      { workspaceConfig: racing, readModels: b.repos.readModels, now: b.now },
+      EMPLOYER,
+    );
+    expect(isOk(res)).toBe(true);
+    expect(raced).toBe(true); // non-vacuity: the interleave really happened
+
+    // The owner's revoke WINS. Before Option A this read `true` — the revoke silently reverted.
+    const after = await storedPolicy(b, EMPLOYER.id);
+    expect(after.employerRawEgressAcknowledged).toBe(false);
+    expect(after.acknowledgedAt).toBeUndefined();
+  });
+
+  it("create_branch_conflict_does_not_restore_a_revoked_ack — the OTHER half of the same race", async () => {
+    // Caught in review: narrowing the same-type write closed the race on ONE branch, while the CREATE
+    // branch kept the identical shape — `get` says not_found, then a blind
+    // `INSERT … ON CONFLICT DO UPDATE SET <every column>`. If the row appears in that window and the
+    // owner revokes, the conflict-update writes the freshly-seeded `ack=true` straight back over the
+    // revoke. Same defect, same function, on the branch nobody narrowed — and the slice's own comment
+    // claimed the race was closed. A create must never silently adopt an existing row's identity.
+    const b = await fresh();
+
+    let raced = false;
+    const racing: WorkspaceConfigRepository = {
+      get: async (id) => {
+        const r = await b.repos.workspaceConfig.get(id);
+        if (!raced) {
+          raced = true;
+          // The row appears AFTER our not_found, then the owner revokes on it.
+          await provisionWorkspace(deps(b), EMPLOYER);
+          await createEgressCommandPort({
+            workspaceConfig: b.repos.workspaceConfig,
+            audit: b.repos.audit,
+            now: () => NOW,
+          }).revokeEgressAck({ workspaceId: EMPLOYER.id });
+        }
+        return r; // …but WE still hold the stale not_found
+      },
+      list: () => b.repos.workspaceConfig.list(),
+      upsert: (w) => b.repos.workspaceConfig.upsert(w),
+      insertIfAbsent: () => Promise.resolve({ ok: true, value: false } as const),
+      updateProvisioningFields: (id, f) => b.repos.workspaceConfig.updateProvisioningFields(id, f),
+    };
+
+    const res = await provisionWorkspace(
+      { workspaceConfig: racing, readModels: b.repos.readModels, now: b.now },
+      EMPLOYER,
+    );
+    expect(raced).toBe(true); // non-vacuity: the interleave really happened
+
+    // Either the create fails loudly, or it must not have clobbered the revoke. What it may NOT do is
+    // report success while silently restoring `ack=true`.
+    const after = await storedPolicy(b, EMPLOYER.id);
+    expect(after.employerRawEgressAcknowledged).toBe(false);
+    expect(after.acknowledgedAt).toBeUndefined();
+    if (isErr(res)) expect(res.error.code).toBe("store_fault");
+  });
+
+  it("provisioning_write_cannot_touch_egress_state — the carry-forward is dead BY CONSTRUCTION", async () => {
+    // 9.23 carried `egressPolicy` forward on the same-type branch. Under Option A provisioning never
+    // writes that column, so the carry is moot — and this pin is why deleting it is safe to read as
+    // deliberate rather than as a dropped safety mechanism: the write path structurally cannot reach
+    // egress state, whatever it was carrying.
+    const b = await fresh();
+    expect(isOk(await provisionWorkspace(deps(b), EMPLOYER))).toBe(true);
+
+    // Set a posture no re-provision could reproduce from spec defaults.
+    const cfg = await b.repos.workspaceConfig.get(EMPLOYER.id as Workspace["id"]);
+    expect(isOk(cfg)).toBe(true);
+    if (!isOk(cfg)) return;
+    const marked: Workspace = {
+      ...cfg.value,
+      egressPolicy: {
+        ...cfg.value.egressPolicy,
+        allowedProcessors: [processorId("ollama")],
+        rawContentAllowedProcessors: [],
+        employerRawEgressAcknowledged: false,
+      },
+    };
+    delete (marked.egressPolicy as { acknowledgedAt?: string }).acknowledgedAt;
+    expect(isOk(await b.repos.workspaceConfig.upsert(marked))).toBe(true);
+
+    // Re-provision with DIFFERENT provisioning-owned values, so the write definitely runs.
+    expect(
+      isOk(await provisionWorkspace(deps(b), { ...EMPLOYER, name: "Renamed", vaultRoot: "/moved" })),
+    ).toBe(true);
+
+    expect(await storedPolicy(b, EMPLOYER.id)).toEqual(marked.egressPolicy);
+  });
+
+  it("same_type_write_updates_only_provisioning_owned_fields — name/vaultRoot/brain move, nothing else", async () => {
+    const b = await fresh();
+    expect(isOk(await provisionWorkspace(deps(b), PERSONAL))).toBe(true);
+    const before = await b.repos.workspaceConfig.get(PERSONAL.id as Workspace["id"]);
+    expect(isOk(before)).toBe(true);
+    if (!isOk(before)) return;
+
+    expect(
+      isOk(
+        await provisionWorkspace(deps(b), {
+          ...PERSONAL,
+          name: "Renamed Side Business",
+          vaultRoot: "/vaults/moved",
+          gbrainBrainId: "brain-moved",
+        }),
+      ),
+    ).toBe(true);
+
+    const after = await b.repos.workspaceConfig.get(PERSONAL.id as Workspace["id"]);
+    expect(isOk(after)).toBe(true);
+    if (!isOk(after)) return;
+    // Provisioning-owned ⇒ updated.
+    expect(after.value.name).toBe("Renamed Side Business");
+    expect(after.value.markdownRepoPath).toBe("/vaults/moved");
+    expect(after.value.gbrainBrainId).toBe("brain-moved");
+    // NOT provisioning-owned ⇒ byte-identical (this is 9.29's invariant, now structural).
+    expect(after.value.egressPolicy).toEqual(before.value.egressPolicy);
+    expect(after.value.providerMatrix).toEqual(before.value.providerMatrix);
+    expect(after.value.defaultVisibility).toBe(before.value.defaultVisibility);
+    expect(after.value.dataOwner).toBe(before.value.dataOwner);
+    expect(after.value.type).toBe(before.value.type);
   });
 });
 
@@ -349,9 +534,18 @@ describe("provisionWorkspace — seeds only what it CREATES (9.23)", () => {
 // that makes `dataOwner` the field it really exists for) is stated ONCE, at the decision site:
 // `provisionWorkspace.ts` branch 2b. Do not restate it here — two copies drift.
 
+/**
+ * Every mutating method on `WorkspaceConfigRepository`. ⚠ 9.30 added `updateProvisioningFields`; the
+ * classifier keyed only on `.upsert(` and would have silently STOPPED seeing `provisionWorkspace` once
+ * it switched — a census that quietly loses a writer is worse than none. Grow this list whenever the
+ * repo grows a mutator, or the tripwire rots into a pass-by-omission.
+ */
+const WORKSPACE_CONFIG_WRITE_METHODS = ["insertIfAbsent", "updateProvisioningFields", "upsert"] as const;
+
 /** Is `source` a production file that both knows the repo type AND writes through it? */
 function isWorkspaceConfigWriter(source: string): boolean {
-  return source.includes("WorkspaceConfigRepository") && /\.upsert\(/.test(source);
+  if (!source.includes("WorkspaceConfigRepository")) return false;
+  return WORKSPACE_CONFIG_WRITE_METHODS.some((m) => new RegExp(`\\.${m}\\(`).test(source));
 }
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
@@ -464,6 +658,67 @@ describe("workspace-config writer census — the 9.29 tripwire", () => {
     const scanned = trackedProductionSources();
     expect(scanned.length).toBeGreaterThan(100);
     expect(scanned).toContain("apps/worker/src/api/adapters/storeBackedWorkspacePosture.ts");
+  });
+
+  it("markdownRepoPath_has_no_production_consumer — the 9.31 bound, pinned (not just asserted)", () => {
+    // 9.23 + 9.30 make the revoke durable per workspace ROW. They do NOT make it durable per VAULT: a
+    // NEW workspace id pointed at the same vault root is a fresh create, and a fresh create seeds
+    // ack=true. That is a BOUND rather than a hole only because nothing reads the field — the running
+    // worker's vault comes from boot config, so two workspaces "sharing a vault root" is not a state
+    // anything can act on.
+    //
+    // That premise is exactly the kind that rots silently, so pin it instead of trusting the prose:
+    // the day a consumer reads `markdownRepoPath` to bind work to a workspace, this fires and the
+    // vault-scope question becomes real.
+    const readers = trackedProductionSources().filter((p) => {
+      // The model, the db (de)serialization, and provisioning WRITING it are not consumers.
+      // Narrow, FILE-level exclusions only — the model, the two db (de)serializers, and the writer.
+      // ⚠ Deliberately NOT excluding `backends.ts` or all of `packages/db/`: those are the two places a
+      // real consumer would most plausibly appear (`createFsVault(ws.markdownRepoPath)`, or a
+      // lookup-by-vault-path query), i.e. exactly what this pin exists to catch.
+      const EXEMPT = [
+        "packages/contracts/src/models/workspace.ts",
+        "packages/db/src/schema/workspace-config.ts",
+        "packages/db/src/schema/pg/workspace-config.ts",
+        "packages/db/src/adapters/sqlite/index.ts",
+        "packages/db/src/adapters/postgres/index.ts",
+        "apps/worker/src/composition/provisionWorkspace.ts",
+        // DECLARATION sites, not consumers: the write-side field list 9.30 added, and a sample
+        // Workspace. Neither binds work to a vault path — which is the only thing this pin is about.
+        "packages/db/src/repositories/interfaces.ts",
+        "packages/contracts/src/fixtures/valid.ts",
+      ];
+      if (EXEMPT.includes(p)) return false;
+      try {
+        // Strip comments first: prose mentioning the field (this slice added some) is not a consumer,
+        // and excluding whole files to accommodate prose would disarm the pin where it matters most.
+        const src = readFileSync(resolve(repoRoot, p), "utf8")
+          .replace(/\/\*[\s\S]*?\*\//g, "")
+          .replace(/^\s*\/\/.*$/gm, "");
+        return src.includes("markdownRepoPath");
+      } catch {
+        return true;
+      }
+    });
+    expect(
+      readers,
+      "something now reads Workspace.markdownRepoPath — the 9.31 vault-scope bound may have become a real second door onto a revoked egress posture; re-read provisionWorkspace branch 2b",
+    ).toEqual([]);
+  });
+
+  it("census_covers_every_repo_write_method — the classifier cannot rot into pass-by-omission", () => {
+    // The failure mode 9.30 nearly caused: the repo grows a mutator, the classifier still keys on the
+    // old one, and a real writer stops being counted — the census passes because it went BLIND, not
+    // because the invariant holds. Pin the method list against the interface itself.
+    const iface = readFileSync(
+      resolve(repoRoot, "packages/db/src/repositories/interfaces.ts"),
+      "utf8",
+    );
+    const block = iface.slice(iface.indexOf("interface WorkspaceConfigRepository"));
+    const body = block.slice(0, block.indexOf("\n}"));
+    const declared = [...body.matchAll(/^\s{2}(\w+)\(/gm)].map((m) => m[1]);
+    const mutators = declared.filter((m) => m !== "get" && m !== "list");
+    expect([...mutators].sort()).toEqual([...WORKSPACE_CONFIG_WRITE_METHODS].sort());
   });
 
   it("census_classifier_catches_a_writer_and_spares_a_reader — catch-power", () => {

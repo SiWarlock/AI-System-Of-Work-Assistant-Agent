@@ -30,7 +30,7 @@
 //
 // SCOPE: worker composition only. Never writes Markdown, never routes a semantic
 // mutation, never touches secrets.
-import { ok, err, isErr, defaultWorkspace, processorId, WorkspaceSchema, type Result, type Workspace, type WorkspaceType } from "@sow/contracts";
+import { ok, err, isErr, defaultWorkspace, processorId, type Result, type Workspace, type WorkspaceType } from "@sow/contracts";
 import type { ReadModelRepository, WorkspaceConfigRepository } from "@sow/db";
 import { registerWorkspace } from "./workspaceRegistry";
 
@@ -183,82 +183,94 @@ export async function provisionWorkspace(
       message: "workspace type is immutable through onboarding",
     });
   } else {
-    // 2b) exists, SAME type → an idempotent overwrite. Carry the STORED egress posture forward VERBATIM
-    //     (task 9.23, ⚠ rule-5, completing worker L30's get-before-upsert on the field that derives
-    //     egress-veto applicability). Previously the seed ran unconditionally above and this branch fell
-    //     through to the upsert, so a re-provision silently restored a REVOKED
-    //     `employerRawEgressAcknowledged` (9.10-B, `225c10ca`) with no audit row and no owner confirm —
-    //     the revoke held only until someone re-provisioned.
+    // 2b) exists, SAME type → an idempotent overwrite. Write ONLY the provisioning-owned fields
+    //     (task 9.30, Option A). This RETURNS EARLY — the whole-aggregate `upsert` at step 3 is the
+    //     CREATE path only.
     //
-    //     ⚠ SCOPE: this carries `egressPolicy` ONLY, and that is a DELIBERATE, traced decision (task
-    //     9.29) — not an oversight and not work left undone. `defaultWorkspace` above also rebuilds
-    //     `providerMatrix`, `defaultVisibility` and `dataOwner` from the spec, so a re-provision
-    //     rewrites those too. A reachability trace found NO production path that mutates them after
-    //     provisioning: the only two writers of the config store are THIS function (which writes the
-    //     defaults) and `egressRevoke` (which spreads the stored aggregate and touches only
-    //     `egressPolicy`). So the stored values can only ever BE the defaults being rewritten, and the
-    //     rewrite is a no-op today. Carrying them forward would preserve state that cannot yet differ.
-    //     It would also carry `rawCloudEgressEnabled: true` through a re-provision that previously
-    //     re-closed it — the inverted safety direction that kept 9.29 out of this rule-5 fix. (That
-    //     value opens no gate TODAY: its only reader treats `true` as claim-DENYING. The objection is
-    //     that carrying a permission-shaped field forward is a different argument from carrying a
-    //     REVOKED one, and deserves its own review rather than riding in on a rule-5 slice.)
+    //     WHY NARROW THE WRITE. The `get` above and the write below are a non-atomic read-modify-write.
+    //     While provisioning wrote the WHOLE aggregate, it had to write back posture columns it had read
+    //     earlier — so a `revokeEgressAck` landing in that window was silently clobbered (9.23's
+    //     fail-open, narrowed to a race, still with no audit row). Narrowing the write removes the
+    //     egress column from THIS statement, so a concurrent revoke has nothing here to lose.
     //
-    //     ⚠ The day that trace stops holding, this decision must be revisited PER FIELD — and the
-    //     per-field direction is NOT uniform. It depends on the CONSUMER, not on the field:
-    //       · `providerMatrix`    → reset to `{[], {}, false}` ⇒ FAIL-CLOSED everywhere it is read: an
-    //         empty matrix denies routing (`policy/provider-matrix.ts`) and cannot support a local-only
-    //         claim (`policy/processors.ts` `isLocalOnlyProviderMatrix` requires a non-vacuous matrix).
-    //       · `defaultVisibility` → reset to `"isolated"` ⇒ DIRECTION-DEPENDENT. It is the most
-    //         restrictive value for the GCL visibility CEILING (`policy/visibility.ts`), but it is the
-    //         PERMISSIVE value at the approval gate: `policy/approval-policy.ts` auto-allow requires
-    //         `=== "isolated"`, so resetting `coordination`→`isolated` ADDS auto-approve eligibility.
-    //       · `dataOwner`         → re-derived from `type` ⇒ FAIL-OPEN at the same approval gate:
-    //         auto-allow requires `dataOwner === "user"`, so a workspace hardened to `"employer"` that
-    //         gets re-derived back to `"user"` moves an external action from requires-approval to
-    //         auto-create — no §9 card, no owner sight.
-    //         ⚠ NOTE the mechanism: the §5 EGRESS veto branches on `workspace.type` (which the
-    //         immutability guard above already pins), NOT on `dataOwner` — `dataOwner` reaches the veto
-    //         only as an audit ref. The fail-open surface here is the APPROVAL gate, not the egress veto.
-    //     Both fail-open surfaces are unreachable from the store today (`resolveWorkspacePolicy` has no
-    //     production caller; the one store→posture path projects neither field), which is why this is a
-    //     documented invariant rather than a live hole.
+    //     ⚠ THAT CLAIM IS DIRECTIONAL — do not read it as "the race is closed". It holds in the ACK
+    //     direction only. `revokeEgressAck` is still itself a whole-aggregate read-modify-write
+    //     (`egressRevoke.ts`: get → spread the stored row → upsert), so the MIRROR interleave is still
+    //     live: a rename landing inside the revoke's window is silently reverted. That direction is
+    //     benign (a lost rename, never a lost revoke), which is why it is task 9.38 rather than part of
+    //     this fix — but an unqualified "nothing can be lost" would be a one-directional claim stated as
+    //     a total one, the exact defect shape this slice exists to close.
     //
-    //     Guarded by the writer census in `test/composition/provision-preserves-egress-posture.test.ts`,
-    //     which pins BOTH the repo-type writers AND the direct `schema.workspaceConfig` table writers —
-    //     so a new writer of either shape turns it red at exactly the moment this decision needs redoing.
-    //     ⚠ Accepted residual: an OUT-OF-BAND change (a sqlite CLI edit, a restore from an older
-    //     snapshot) can harden one of these fields with no code writer to catch — nothing goes red, and
-    //     the next re-provision silently reverts it.
+    //     ⚠ Why this path does NOT copy the sibling's answer. `workspaceRegistry`'s
+    //     `arch_gap (concurrency)` note ACCEPTS the same class of race — but explicitly because its
+    //     direction is fail-SAFE (a dropped id goes invisible; scoped reads fail closed) and because
+    //     "a re-provision repairs it". Both halves INVERT here: a lost update reverts a revoke
+    //     (ack false→true, fail-OPEN), and a re-provision is precisely what CAUSES it. Adopting that
+    //     note's conclusion would have meant keeping its words and discarding the premise that earned
+    //     them.
     //
-    //     The WHOLE stored object is assigned, never a field-by-field copy — a named-field copy silently
-    //     drops any field this build's `EgressPolicy` does not name. (A field a NEWER build wrote is
-    //     rejected by the `.strict()` re-parse below, not carried — fail-closed, not forward-compatible.)
+    //     ⛔ 9.23's `egressPolicy` CARRY-FORWARD IS DELETED HERE, DELIBERATELY — not lost. It existed to
+    //     stop the whole-aggregate write from clobbering stored posture; this path no longer writes that
+    //     column at all, so the carry is moot and `ProvisioningOwnedFields` makes a posture write
+    //     UNTYPEABLE from here. The guarantee is now structural instead of remembered. Pinned by
+    //     `provisioning_write_cannot_touch_egress_state`.
     //
-    //     The carried object lands AFTER `defaultWorkspace` already parsed, so re-gate the aggregate.
-    //     This parse is not a formality: the db `get` returns `row as Workspace`, an UNCHECKED CAST with
-    //     no Zod on the read path, so this is the ONLY validation the stored blob ever receives before it
-    //     re-crosses into a write. It catches a foreign `egressPolicy.workspaceId` (the identity refine),
-    //     a contradictory `acknowledgedAt`-without-ack, a non-array allowlist, and any unknown key —
-    //     do NOT narrow it to a hand-written id comparison.
-    //     FAIL-CLOSED rather than normalizing a foreign workspaceId to `spec.id`: normalizing would graft
-    //     another workspace's allowlist + ack onto this one, stamped as if it belonged here (a
-    //     WS-8-adjacent write that looks legitimate afterwards). Same posture as the store-fault branch:
-    //     never proceed over a contradictory prior state.
-    workspace = { ...workspace, egressPolicy: existing.value.egressPolicy };
-    try {
-      workspace = WorkspaceSchema.parse(workspace);
-    } catch {
-      // Redaction-safe: never echo the raw Zod detail (it would carry the stored values).
-      return err({ code: "invalid_workspace", message: "stored workspace failed validation" });
+    //     ⛔ 9.23's `WorkspaceSchema.parse` RE-GATE IS ALSO GONE, and its reason evaporates rather than
+    //     being ignored. That parse existed because the carried blob — read through the repo's unchecked
+    //     `row as Workspace` cast — was about to RE-CROSS INTO A WRITE, and it was the only validation
+    //     that blob would ever get. Under Option A the stored blob is never written back: the update
+    //     carries three caller-supplied primitives, none of them read from the row. Nothing untrusted
+    //     re-crosses, so there is nothing left to re-gate.
+    //     ⚠ THE BOUND ON "THE REVOKE IS DURABLE" (task 9.31) — read this before answering that question
+    //     unqualified. 9.23 + 9.30 make an owner's revoke durable for a workspace ROW: no re-provision
+    //     of THAT id can restore it, racing or not. They do NOT make it durable for a VAULT.
+    //     `createWorkspace` takes a caller-chosen `id` and nothing enforces uniqueness on
+    //     `markdownRepoPath`, so a NEW `employer_work` workspace pointed at the SAME vault root is a
+    //     fresh create — and a fresh create seeds `ack=true` (step 2a).
+    //     Why that is currently a bound and not a hole: `Workspace.markdownRepoPath` has NO production
+    //     consumer. The running worker's vault comes from BOOT CONFIG (`backends.ts`
+    //     `createFsVault(config.vaultRoot ?? …)`), never from the workspace row — the field is written
+    //     and never read. So "two workspaces sharing a vault root" is not a state anything can act on
+    //     today: the worker has exactly one vault. The day something binds work to a workspace BY vault
+    //     path, this stops being a bound and becomes a real second door onto a revoked posture.
+    //     Guarded by `markdownRepoPath_has_no_production_consumer` — it fires at exactly that moment.
+    //
+    //     The three values come from the VALIDATED aggregate built at step 1, not from the raw `spec`:
+    //     `defaultWorkspace` already Zod-parsed them (and brands `gbrainBrainId`), so the narrow update
+    //     inherits that validation instead of re-admitting unparsed caller input on a second path.
+    const updated = await workspaceConfig.updateProvisioningFields(spec.id as Workspace["id"], {
+      name: workspace.name,
+      markdownRepoPath: workspace.markdownRepoPath,
+      gbrainBrainId: workspace.gbrainBrainId,
+    });
+    if (isErr(updated)) {
+      return err({ code: "store_fault", message: "workspace config update failed" });
     }
+    // Union into the registry exactly as the create path does — a re-provision must still repair a
+    // workspace that was written but never registered (the fail-closed WS-8 ordering).
+    const regExisting = await registerWorkspace(readModels, spec.id, at);
+    if (!regExisting.ok) return err(regExisting.error);
+    return ok({ id: spec.id, registryMember: true, preset: spec.preset });
   }
 
-  // 3) Upsert into the durable operational store FIRST — so a later union fault leaves
-  //    the workspace invisible (fail-closed), never registry-known-but-config-less.
-  const up = await workspaceConfig.upsert(workspace);
+  // 3) CREATE ONLY (task 9.30 — the same-type overwrite returned above). Insert the whole seeded
+  //    aggregate FIRST, so a later union fault leaves the workspace invisible (fail-closed), never
+  //    registry-known-but-config-less. Reaching here means the row did not exist at the check, so
+  //    this write has no stored posture to clobber.
+  //    ⚠ INSERT-ONLY, not `upsert` (task 9.30, second half — caught in review after the same-type
+  //    branch was narrowed). A plain upsert is `INSERT … ON CONFLICT DO UPDATE <every column>`, so this
+  //    branch carried the SAME race it was fixing next door: read `not_found`, lose the window to a
+  //    create AND a revoke, then conflict-update the freshly-seeded `ack=true` straight back over the
+  //    owner's decision. Insert-only makes the loser of that race write NOTHING and fail loudly here,
+  //    rather than silently adopting — and inheriting the posture of — a row it did not create.
+  const up = await workspaceConfig.insertIfAbsent(workspace);
   if (isErr(up)) {
-    return err({ code: "store_fault", message: "workspace config upsert failed" });
+    return err({ code: "store_fault", message: "workspace config insert failed" });
+  }
+  if (!up.value) {
+    // A row appeared between the existence check and this insert. Never overwrite it: the prior state
+    // is unknown to us (it may already carry a revoked posture), which is the store-fault posture.
+    return err({ code: "store_fault", message: "workspace was created concurrently" });
   }
 
   // 4) Union into the fail-closed WS-8 registry — the SOLE visibility authority. Only
