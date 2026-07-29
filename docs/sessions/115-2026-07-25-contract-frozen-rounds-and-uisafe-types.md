@@ -4,7 +4,7 @@
 - **Phase:** 13 (ARC-2 frozen-contract foundation) + Wave-2 contract legs (13.13 / 13.16 / desktop-9.x unblocks)
 - **Role:** contract-implementer (single-track `main`)
 - **Predecessor session:** prior contract-track arc (Phase-9/13 contract work; not re-linked — parallel-implementer numbering collided at 112–114 this round)
-- **Successor session:** _TBD (post-pause)_
+- **Successor session:** [132-2026-07-29-entityref-contract-and-pure-root-boundary.md](132-2026-07-29-entityref-contract-and-pure-root-boundary.md)
 
 ## Why this session existed
 
