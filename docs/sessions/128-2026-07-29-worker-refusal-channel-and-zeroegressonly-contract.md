@@ -3,7 +3,7 @@
 **Date:** 2026-07-29
 **Track / role:** main · worker-implementer
 **Predecessor session:** `docs/sessions/123-2026-07-28-worker-provisioning-race-and-durability-bounds.md`
-**Successor session:** _(unwritten)_
+**Successor session:** `docs/sessions/130-2026-07-29-worker-partial-scaffold-typed-resumable-outcome.md`
 
 ---
 
