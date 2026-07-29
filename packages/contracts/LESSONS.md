@@ -1529,3 +1529,50 @@ That one shape produced four distinct bugs: the uncapped model-supplied `entityR
 ⛔ **A boundary schema with no caller closes nothing.** Leg 1 shipped the gate; **leg 2 calls it** at `planSynthesis`. Describing leg 1 as "the candidate-data gap is closed" would be the half-gate-that-reads-as-coverage the owner warned about when approving the arc.
 
 `pin: packages/contracts/test/models/entity-ref.test.ts (9 tests incl. the proto-chain + .strict() rejections) + the generated schemas/entity-ref.schema.json freeze`
+
+---
+
+<a id="96"></a>
+## 96. A `CLAUDE.md` claim that an invariant "is pinned" is ITSELF a claim needing verification — and a scanner must add a companion guard for escape vectors it cannot classify, never a comment that overclaims
+
+**2026-07-29 · 13.20 (`0a6d6629`)**
+
+Forbidden-pattern #2 stated the §2.5 pure-root invariant was pinned by *"a boundary test."* **A repo-wide search found no such test.** ⇒ **An unbacked claim of coverage is worse than an acknowledged gap, because nobody re-checks what a convention doc says is already enforced.** Same class as `lint`-is-typecheck.
+
+⭐ **And the slice reproduced the defect in miniature, then fixed it properly.** The new scanner's own header claimed it caught a tsconfig `paths` alias reach-around. **It did not** — a bare path-aliased specifier is neither `@sow/`-prefixed nor relative, so it passed both branches unscanned. The fix was **not** to delete the sentence: narrow the comment to what is actually detected **AND add a companion guard** asserting no `paths` map exists. If one ever appears, that goes red and the scanner needs a real third branch.
+
+⇒ **A scanner that classifies specifiers cannot classify what doesn't look like a specifier. For every such escape vector: a guard on the vector's ABSENCE, or an explicitly named blind spot — never a comment implying coverage.**
+
+**Do:** treat "X is pinned" in any doc as unverified until you find the pin. When your own guard has a hole, add a tripwire for the hole rather than prose about it. `pattern: grep -rn "pins this\|is pinned\|pinned by" packages/*/CLAUDE.md` — each hit is a claim to verify.
+
+---
+
+<a id="97"></a>
+## 97. A BARE IDENTIFIER IS A POINTER TO NOTHING THAT READS AS A POINTER TO SOMETHING — qualify every cross-namespace reference
+
+**2026-07-29 · three independent instances in one round**
+
+1. **`#13`** in a handoff's desktop queue: no tracker entry, no description, its detail dead with a prior session's task list. **And ambiguous across three numbering systems** — the only resolvable `#13` is the **owner-ENABLE hard line** (*"lead-run with the owner — NOT an orchestrator step"*). ⇒ **briefing it would have pointed at an owner crossing while looking routine.**
+2. **`L26`** cited in a *contracts* brief while meaning **worker's** L26. Lesson numbers are **per-area and independent**, so a bare `L##` resolves differently in four namespaces and **looks valid in all of them.** The implementer inherited and copied it — correctly, given the context.
+3. **`L49`** references in the plan that turned out to be *worker* L49, not contracts L49.
+
+⇒ **The failure is not staleness — it is that a bare identifier LOOKS fine.** A stale citation fails to resolve and gets investigated; an ambiguous one resolves to the wrong thing silently. ⚠ **Worse for `#13`: it sat in a DURABLE FILE, so it read as recorded.** Contracts [L51](#51) says close-out debt goes in a file; **the corollary is that a file entry must carry enough scope to be actionable COLD. A number is not scope.**
+
+**Do:** qualify every cross-area citation (`worker L26`, not `L26`). Never put a bare `#N` in a queue without a one-line description. Before acting on any bare identifier, resolve it — and if it cannot be resolved, **say so rather than inferring.**
+
+---
+
+<a id="98"></a>
+## 98. An owner of a shared doc holding UNCOMMITTED state makes HEAD lie to everyone who verifies against HEAD — the counterpart to L83
+
+**2026-07-29 · orchestrator's own failure, caught by the lead**
+
+[L83](#83) says verify at a **commit**, never the live tree, while anyone is mid-slice. The lead did exactly that — checked task 9.24's checkbox **at HEAD**, read `[ ] OPEN`, and correctly concluded a claim of mine was false.
+
+**9.24 was done.** It shipped in a prior round, and this round's seven-stale-checkbox reconciliation had ticked it — **in the orchestrator's working tree, uncommitted, for thirteen commits.**
+
+> ⇒ **Verifying at HEAD is right, and it returns a WRONG ANSWER while a doc-owner holds uncommitted tracker state.** L83 protects you from a moving tree; nothing protected the lead from a *stale* HEAD. **Both halves of "don't trust the tree, trust HEAD" can fail at once.**
+
+⚠ **The asymmetry that makes this the orchestrator's problem specifically:** implementers commit per slice, so their state converges every cycle. The orchestrator owns `IMPLEMENTATION_PLAN.md`/`ARCHITECTURE.md` and the cadence says those ride the **round-terminal** commit — which means **tracker truth is designed to be stale for the whole round**, for a file the entire team verifies against by policy.
+
+**Do:** commit tracker reconciliation **promptly**, not at the seal — a checkbox tick is not "round bookkeeping," it is the answer to a question teammates ask HEAD. If you must hold plan state, say so when anyone reports a task's status. `accepted: not mechanically enforceable` — mitigation: after any batch of checkbox ticks, commit before the next dispatch.

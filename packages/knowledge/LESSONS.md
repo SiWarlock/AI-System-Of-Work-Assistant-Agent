@@ -51,3 +51,22 @@ Four safety properties, each pinned. (1) The SSRF/egress guard runs BEFORE token
 A boolean returned by an INJECTED external-I/O client (here `IndexRebuildClient.rebuildFromMarkdown`'s `receipt.replaced`) is UNTRUSTED at runtime — TS types aren't enforced across the boundary, so a real/adversarial client can return a truthy-non-`true` value (`1`, the string `"false"`, `{}`). A truthy check (`if (!receipt.replaced)`) then SLIPS the guard: a merge-not-replace rebuild reaches a success `Result`, a false-green into the serve-time trust gate (the rebuild-oracle `oracleBuildOk` leg corroborates over an unsound rebuild — safety rule 1: a non-replacing rebuild could leave a quarantined DB-only fact in retrieval). Fix = strict `if (receipt.replaced !== true)` + a guard test parametrizing the truthy-non-`true` set (`1`/`"true"`/`"false"`/`{}`/`[]`) so each rejects; make it NON-vacuous via a MATCHING recovery count so the strict gate is the ONLY thing preventing a false `ok`. Keep any health message NON-interpolated of the boundary value (rule 7). Same class the propose guard `392e7db` hardened; this is worker Lesson 28's arming-guard pattern applied at a knowledge-layer external-I/O boundary.
 
 **Rule:** never truthy-check a boolean returned by an injected external-I/O client at a trust-gate floor — use strict `=== true` (the field is runtime-untrusted across the boundary; a truthy-non-`true` value is a false-green vector); pin with a truthy-not-`true` guard test (incl. the string `"false"`) made non-vacuous by an otherwise-passing downstream so the strict gate is the sole gate; keep boundary values out of any health message (rule 7). (Knowledge-layer application of worker Lesson 28.)
+
+---
+
+<a id="3"></a>
+## 3. When a positional CAP and a per-element GATE compose, the ORDER is a design decision with observable consequences — pin the COMPOSED case, and never let a new gate silently redefine an EXISTING count
+
+**Date:** 2026-07-29. **Source slice:** 13.19 — §DEC-CANDGATE leg 2 (`93cafe5f`).
+
+`collectEntities` already capped model-supplied `entityRefs` positionally (13.8h) and reported `entityRefsTruncated`. Adding a per-element schema gate created a question nobody had asked: **does the cap run before the gate, or after?**
+
+**It is not a style choice — the two orderings produce different numbers from the same input.** 250 refs with 3 malformed inside the cap: cap-first ⇒ `truncated 50, rejected 3`; gate-first ⇒ `truncated 47, rejected 3`.
+
+⭐ **CAP-FIRST WON, and the decisive reason is about the EXISTING field, not the new one.** Gate-first silently **redefines `entityRefsTruncated`** — today *"refs beyond position 200 of the raw array,"* under gate-first *"valid refs beyond position 200 of the valid subset."* Same name, same type, **different population**, on a field with live consumers — **and every pre-existing 13.8h test still passes**, because they use all-valid arrays. The redefinition would have landed **green and silent.** ⇒ **Under cap-first, only the NEW field carries new semantics. That is the right shape for adding a gate to an existing counted path.**
+
+⚠ **Why the contradiction survived to Step 2.5: each gate tested ALONE cannot discriminate the ordering.** An all-valid array behaves identically under both. Only a **composed** case — both counts nonzero in one run — can tell them apart. ⇒ **pin the composed case, and state which population each count measures.** Three tests do it here: both-nonzero (`truncated 50, rejected 3`, 197 real resolves), a malformed ref **past** the cap absorbed into truncated rather than rejected, and the front-loaded starvation case.
+
+**Do:** when adding a gate to a path that already counts drops, ask what the existing count MEANS afterwards. Keep the counts **disjoint** (never-examined vs examined-and-malformed), never merged. And **surface the refusal** — a validate-then-silently-drop gate renders a poisoned row byte-identical to a benign empty run (13.8m).
+
+`pin: packages/knowledge/test/synthesis-planner.test.ts — truncation_and_rejection_are_independently_reported_in_the_same_run + a_malformed_ref_beyond_the_cap_is_absorbed_into_truncated_not_rejected + a_front_loaded_malformed_array_can_starve_valid_refs`
