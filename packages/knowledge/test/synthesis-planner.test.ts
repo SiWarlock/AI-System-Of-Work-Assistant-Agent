@@ -12,9 +12,10 @@ import { dirname, resolve } from "node:path";
 import { ok, err, KnowledgeMutationPlanSchema } from "@sow/contracts";
 import { TBD } from "@sow/domain";
 import type { Result, WorkspaceId, ProvenanceOrigin, KnowledgeMutationPlan } from "@sow/contracts";
-import type { EntityCandidate, EntityGbrainReadPort, EntityReadFault } from "../src/synthesis/entity-resolver";
+import type { EntityCandidate, EntityGbrainReadPort, EntityReadFault, EntityRef } from "../src/synthesis/entity-resolver";
 import {
   planSynthesis,
+  MAX_MODEL_ENTITY_REFS,
   type SynthesisCandidate,
   type SynthesisInput,
   type SynthesisDeps,
@@ -34,6 +35,19 @@ function fakeGbrain(byName: Record<string, () => Result<readonly EntityCandidate
   return { workspaceId: WS_A, findCandidates: async (ref) => (byName[ref.name] ?? (() => ok([])))() };
 }
 const gbrainEmpty = fakeGbrain({});
+
+/** A gbrain read port that RECORDS every query, for fan-out/flood-bound assertions (13.8h). */
+function fakeGbrainCounting(): EntityGbrainReadPort & { readonly queries: EntityRef[] } {
+  const queries: EntityRef[] = [];
+  return {
+    queries,
+    workspaceId: WS_A,
+    findCandidates: async (ref) => {
+      queries.push(ref);
+      return ok([]);
+    },
+  };
+}
 
 /** A section provider backed (at wire time) by parseSections; here a fixed per-note descriptor map. */
 function fakeSections(map: Record<string, NoteRegionDescriptor>): SynthesisSectionPort {
@@ -233,10 +247,13 @@ describe("planSynthesis — ground-before-write: a withheld entity never fabrica
         NewProj: () => ok([]),
       }),
     });
-    const creates = allCreates(plansOf(await planSynthesis(baseInput(), deps)));
+    const r = await planSynthesis(baseInput(), deps);
+    const creates = allCreates(plansOf(r));
     // withheld → nothing fabricated for Ghost; create_stub → a stub note for NewProj (proposedSlug 'newproj')
     expect(creates.some((c) => /ghost/i.test(c.path))).toBe(false);
     expect(creates.some((c) => c.path.includes("newproj"))).toBe(true);
+    // 13.8h: an ordinary under-cap run reports NO truncation (positive zero-pin, not just "didn't throw")
+    expect(r.ok && r.value.entityRefsTruncated).toBe(0);
   });
 });
 
@@ -361,5 +378,65 @@ describe("planSynthesis — entity stubs are namespaced, never a root structural
     const r = await planSynthesis(baseInput(), mkDeps({ gbrain: gbrainEmpty, reason: fakeReason(candidate) }));
     const created = (r.ok ? r.value.plans : []).flatMap((p) => p.creates).map((c) => c.path);
     expect(created).toEqual(["people/new-person.md"]);
+  });
+});
+
+// ── 13.8h — the MODEL-supplied entityRefs fan-out is capped (unbounded-read vector) ────
+//
+// `collectEntities` awaits ONE GBrain read per `candidate.entityRefs` element — a degenerate REASON
+// output otherwise drives an unbounded sequential read loop. `MAX_MODEL_ENTITY_REFS` is deliberately
+// INDEPENDENT of meeting-rewrite.ts's `MAX_ENTITY_REFS`: that constant bounds a DETERMINISTIC input the
+// meeting path owns; this one bounds ADVERSARIAL MODEL OUTPUT — coupling them would let a future tuning
+// of one silently retune the other's threat model.
+
+describe("planSynthesis — the MODEL-supplied entityRefs fan-out is capped (13.8h, unbounded-read vector)", () => {
+  it("entity_refs_over_cap_are_never_resolved — the gbrain read is called AT MOST MAX_MODEL_ENTITY_REFS times", async () => {
+    const many: EntityRef[] = Array.from({ length: 250 }, (_, i) => ({ name: `entity-${i}`, kind: "person" as const }));
+    const port = fakeGbrainCounting();
+    await planSynthesis(baseInput(), mkDeps({ gbrain: port, reason: fakeReason({ entityRefs: many }) }));
+    // exact, not `toBeLessThan` — a loosened cap must fail this, not slip through
+    expect(port.queries.length).toBe(MAX_MODEL_ENTITY_REFS);
+  });
+
+  it("entity_refs_truncated_reports_the_drop_count — 250 supplied, cap 200 ⇒ entityRefsTruncated === 50", async () => {
+    const many: EntityRef[] = Array.from({ length: 250 }, (_, i) => ({ name: `entity-${i}`, kind: "person" as const }));
+    const r = await planSynthesis(baseInput(), mkDeps({ gbrain: fakeGbrainCounting(), reason: fakeReason({ entityRefs: many }) }));
+    expect(r.ok && r.value.entityRefsTruncated).toBe(250 - MAX_MODEL_ENTITY_REFS);
+  });
+
+  it("entity_refs_at_or_under_cap_report_zero_truncated — a boundary run and a small run both report 0 (positive zero-pin)", async () => {
+    const atCap: EntityRef[] = Array.from({ length: MAX_MODEL_ENTITY_REFS }, (_, i) => ({ name: `entity-${i}`, kind: "person" as const }));
+    const rAtCap = await planSynthesis(baseInput(), mkDeps({ gbrain: fakeGbrainCounting(), reason: fakeReason({ entityRefs: atCap }) }));
+    expect(rAtCap.ok && rAtCap.value.entityRefsTruncated).toBe(0);
+
+    const small: EntityRef[] = [{ name: "Solo", kind: "person" }];
+    const rSmall = await planSynthesis(baseInput(), mkDeps({ gbrain: fakeGbrainCounting(), reason: fakeReason({ entityRefs: small }) }));
+    expect(rSmall.ok && rSmall.value.entityRefsTruncated).toBe(0);
+  });
+
+  it("entity_refs_truncation_is_head_first_and_deterministic — the FIRST MAX_MODEL_ENTITY_REFS refs survive, never an arbitrary subset", async () => {
+    // guard against a vacuous pass: an undefined/0 cap would make both loops below no-op to green.
+    expect(MAX_MODEL_ENTITY_REFS).toBeGreaterThan(0);
+    const many: EntityRef[] = Array.from({ length: 250 }, (_, i) => ({ name: `entity-${i}`, kind: "person" as const }));
+    const port = fakeGbrainCounting();
+    await planSynthesis(baseInput(), mkDeps({ gbrain: port, reason: fakeReason({ entityRefs: many }) }));
+    const queriedNames = port.queries.map((q) => q.name);
+    for (let i = 0; i < MAX_MODEL_ENTITY_REFS; i++) expect(queriedNames).toContain(`entity-${i}`);
+    for (let i = MAX_MODEL_ENTITY_REFS; i < 250; i++) expect(queriedNames).not.toContain(`entity-${i}`);
+  });
+
+  it("entity_refs_truncated_count_survives_a_later_fault — a throwing newPlanId aborts assembly AFTER truncation is computed", async () => {
+    const many: EntityRef[] = Array.from({ length: 250 }, (_, i) => ({ name: `entity-${i}`, kind: "person" as const }));
+    const deps = mkDeps({
+      gbrain: fakeGbrainCounting(),
+      reason: fakeReason({ entityRefs: many }),
+      newPlanId: () => {
+        throw new Error("boom");
+      },
+    });
+    const r = await planSynthesis(baseInput(), deps);
+    expect(r.ok).toBe(true); // TOTAL — the fault fails safe
+    expect(r.ok && r.value.entityRefsTruncated).toBe(250 - MAX_MODEL_ENTITY_REFS); // NOT reset to 0 by the later fault
+    expect(r.ok && r.value.plans).toEqual([]); // the assembly fault does lose the plans — that part's expected
   });
 });

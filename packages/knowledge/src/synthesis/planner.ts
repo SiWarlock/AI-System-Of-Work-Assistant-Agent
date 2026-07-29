@@ -121,6 +121,13 @@ export interface SynthesisDeps {
 export interface SynthesisOutcome {
   /** 0–2 plans: at most one AUTO (requiresApproval:false) + at most one PROPOSE (requiresApproval:true). */
   readonly plans: readonly KnowledgeMutationPlan[];
+  /**
+   * Count of MODEL-supplied `candidate.entityRefs` dropped by the `MAX_MODEL_ENTITY_REFS` cap this run
+   * (13.8h). 0 means nothing was truncated — the same "empty means benign" distinction 13.8m-A's
+   * `refusals` channel makes on the receipts, expressed as a COUNT rather than a code list (there is
+   * exactly one truncation class here: over budget). Never a ref/name/path (rule 7).
+   */
+  readonly entityRefsTruncated: number;
 }
 
 /** The only actionable error: an input that can never source a plan (REQ-F-006). All other faults fail safe. */
@@ -132,6 +139,17 @@ const USER_SENTINEL = "@user";
 // arch_gap: the concrete §9 owner/date field set is unspecified (no-inference.ts keys an OPAQUE field
 // name). This heuristic errs toward TBD-coercion (never fabrication) — the REQ-F-017-safe direction.
 const OWNER_DATE_RE = /(?:owner|assignee|due|date)/i;
+
+/**
+ * Fan-out bound on the MODEL-supplied `candidate.entityRefs` (13.8h) — `collectEntities` awaits ONE
+ * GBrain read (`resolveEntity`) per element, so an uncapped array drives an unbounded SEQUENTIAL read
+ * loop off a single degenerate REASON output. Deliberately INDEPENDENT of meeting-rewrite.ts's
+ * `MAX_ENTITY_REFS`: that constant bounds a DETERMINISTIC input the meeting path owns (the correlated
+ * attendee/project refs); this one bounds ADVERSARIAL MODEL OUTPUT. Same value today so nothing
+ * surprises, but the two must NEVER be single-sourced — retuning one is not a decision about the
+ * other's threat model.
+ */
+export const MAX_MODEL_ENTITY_REFS = 200;
 
 interface Muts {
   creates: NoteCreate[];
@@ -187,6 +205,11 @@ export async function planSynthesis(
   const autoM = emptyMuts();
   const proposeM = emptyMuts();
   const plans: KnowledgeMutationPlan[] = [];
+  // Hoisted ABOVE the try (mirrors 13.8m-A's `refusals` fix): a fault AFTER `collectEntities` runs (e.g.
+  // a throwing `newPlanId` inside `assemble`) must not discard the truncation count already computed —
+  // else a run that fan-out-hijacked entityRefs and then tripped a later fault would report the SAME
+  // entityRefsTruncated as a benign run, destroying the distinction this field exists to create.
+  let entityRefsTruncated = 0;
 
   try {
     const candidate = await deps.reason.reason(input);
@@ -194,7 +217,7 @@ export async function planSynthesis(
       collectRegions(candidate.regions, autoM, deps);
       collectFrontmatter(candidate.frontmatter, proposeM);
       collectLinks(candidate.links, autoM, input);
-      await collectEntities(candidate.entityRefs, autoM, input, deps);
+      entityRefsTruncated = await collectEntities(candidate.entityRefs, autoM, input, deps);
     }
     // Assembly runs INSIDE the try — a throwing `newPlanId` fails safe to the plans already assembled (L11).
     const autoPlan = assemble(autoM, false, input, deps);
@@ -204,7 +227,7 @@ export async function planSynthesis(
   } catch {
     // reason port / assembly / any composite fault ⇒ fail-safe: return whatever was assembled (possibly nothing).
   }
-  return ok({ plans });
+  return ok({ plans, entityRefsTruncated });
 }
 
 /**
@@ -272,15 +295,23 @@ function collectLinks(links: ProposedLinks | undefined, autoM: Muts, input: Synt
   }
 }
 
-/** ENTITY grounding → AUTO. create_stub MAY create a stub; a `withheld`/`resolved` fabricates nothing. */
+/**
+ * ENTITY grounding → AUTO. create_stub MAY create a stub; a `withheld`/`resolved` fabricates nothing.
+ * The MODEL-supplied `entityRefs` is capped at `MAX_MODEL_ENTITY_REFS` BEFORE the loop (13.8h) — a
+ * degenerate REASON output must not drive an unbounded sequential GBrain read. Returns the count of
+ * refs DROPPED by the cap (0 = nothing truncated) so the caller can surface it rather than silently
+ * synthesizing against fewer entities than the model proposed.
+ */
 async function collectEntities(
   entityRefs: readonly EntityRef[] | undefined,
   autoM: Muts,
   input: SynthesisInput,
   deps: SynthesisDeps,
-): Promise<void> {
-  if (!Array.isArray(entityRefs)) return;
-  for (const eRef of entityRefs) {
+): Promise<number> {
+  if (!Array.isArray(entityRefs)) return 0;
+  const capped = entityRefs.slice(0, MAX_MODEL_ENTITY_REFS); // sliced BEFORE the loop — nothing extra allocated/awaited
+  const truncated = Math.max(0, entityRefs.length - MAX_MODEL_ENTITY_REFS);
+  for (const eRef of capped) {
     try {
       const res = await resolveEntity(eRef, input.workspaceId, { gbrain: deps.gbrain });
       // 13.8j: the stub path comes from the ONE shared namespaced derivation — never built inline
@@ -297,6 +328,7 @@ async function collectEntities(
       continue;
     }
   }
+  return truncated;
 }
 
 /** Assemble one tier's mutations into a validated KMP, or null when there is nothing to synthesize / it fails the gate. */
