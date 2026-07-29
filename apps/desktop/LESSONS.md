@@ -269,6 +269,8 @@ Same family as 9.34's `AdmittedCopilotAnswer` brand and worker [L31](../../apps/
 
 `pin: apps/desktop/test-dom/error-boundary.test.tsx — fallback_exposes_no_raw_message_or_stack (mutation-verified: rendering the message turns it RED)`
 
+⭐ **SECOND INSTANCE, same day (9.21-B):** `OnboardResult`'s partial variant carries **no message or detail field** — only the closed literal `reason: "partial_scaffold"`. Same construction, different surface: the renderer cannot leak a server-derived string on the partial path because it is never given one. **Two independent applications in one round is the signal that this is a construction rather than a one-off.**
+
 ---
 
 ## <a id="21"></a>21. Verify a TEST-INFRASTRUCTURE assumption empirically before building on it — the harness's behaviour is not the platform's
@@ -284,3 +286,23 @@ Two independent instances in one slice, both cheap to hit and expensive to debug
 ⇒ **Before assuming a new test import "just works," or that a runtime throws where you expect: run the smallest version and look.** Both instances cost one command to establish and would have cost a debugging session to infer. And when the harness surprises you, **document the history in-file** — the next person will otherwise "simplify" the test back into the trap.
 
 `pin: apps/desktop/test-dom/error-boundary.test.tsx — boundary_does_not_catch_async_or_handler_failures (in-file comment records the synchronous-throw attempt) + tsconfig.testdom.json include`
+
+---
+
+## <a id="22"></a>22. A correctness property that holds only because a BROAD FOLD flattens everything becomes a branching obligation the moment you narrow the fold — and you must pin ALL its real call sites, not the obvious one
+
+**Date:** 2026-07-29. **Source slice:** 9.21-B — the partial-scaffold repair state (`f4cc1b0f`).
+
+`onboard-workspace.ts` folded every failure to `{ok:false}`. One consequence was that **"onboarding never marks complete on a partial" was TRUE — but only because the fold made `markOnboarded()` unreachable on that path.** Nothing branched on the partial, so nothing could act on it.
+
+⇒ **Narrowing that fold converted a structural guarantee into a branching obligation.** The property did not change; **what enforced it did** — from "no code path exists" to "our new branch must not take one." ⚠ **Pin it BEFORE widening**, because afterwards the test proves the new code and nobody remembers the guarantee used to be free.
+
+⭐ **The sharper half, which cost a Step-2.5 round trip: pin ALL the real call sites, not the obvious one.** `markOnboarded` has **two** — `App.tsx:240` inside the `onOnboarded` handler, and `App.tsx:104`, the 9.17 existing-install backfill effect. The Step-2.5 write-up asserted it was *"called only inside `App.tsx:223-240`."* **False.** And tracing the second site is what showed the guarantee to be thinner than it looked: on a partial `onOnboarded` never fires ⇒ `backfilledRef` stays false ⇒ **the fire-once guard does NOT block the backfill** ⇒ the only thing preventing a written marker is `shouldBackfillMarker` returning false, which holds only because the store gains its workspace **inside the handler that didn't fire.**
+
+> **The guarantee survived — but through a two-step inference across a second call site, via a helper nobody had examined.** Pinning `onOnboarded` alone would have covered one site and left the other resting on inference, in a slice whose entire purpose was to stop relying on incidental correctness.
+
+⚠ **The instrument that caught it was a FLAG, not a test.** The implementer wrote *"`markOnboarded` is NOT separately pinned — flagging this explicitly per your ask for stated asymmetry rather than 'both pinned'."* Had they written "both pinned," review would have passed and the untested clause would have shipped. **Stating an asymmetry is what makes it reviewable.**
+
+**Do:** before narrowing any fold/catch-all, enumerate what was true *only because* it flattened — then `grep` every call site of each guarantee's mechanism and pin them all. A guarantee held by absence-of-a-code-path needs a test the moment a code path appears.
+
+`pin: apps/desktop/test-dom/app-partial-scaffold-markonboarded.test.tsx — real-App integration covering both call sites in one render; mutation-verified (firing onOnboarded on a partial turns it RED with the app navigating past Onboarding)`
