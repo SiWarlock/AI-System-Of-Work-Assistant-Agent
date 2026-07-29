@@ -119,6 +119,28 @@ export function isRedactionSafe(signal: AuditSignal): boolean {
  * Local invariant guard: throw if the signal is not redaction-safe. Intra-module
  * assertion only (not a cross-subsystem boundary) — callers that need a typed
  * outcome use `isRedactionSafe`.
+ *
+ * ⚠ DELIBERATELY ZERO PRODUCTION CALLERS (task #36, traced 2026-07-28/29) — do
+ * NOT "helpfully" wire this into a call site. Every production `AuditSignal`
+ * builder (egress-veto, schema-gate, budget-enforcer, provider-health,
+ * model-availability, provider-runner, broker) constructs `actor`/`event` from
+ * fixed literals, `refs` from `ref:job:<id>`/`ref:workspace:<id>` templates,
+ * `payloadHash` from named marker constants, and `beforeSummary`/`afterSummary`
+ * from error CODES/KINDS/schema-ids/field-names only — never the raw
+ * candidate/provider payload. Verified line-by-line at the closest-to-untrusted
+ * site (`createSchemaGate`, schema-gate.ts): every `schemaDeny` message
+ * interpolates `schemaId` / ajv error code / Zod field names / rule-violation
+ * codes, never the validated value itself. Redaction-safety holds structurally
+ * at every construction site, not by luck — there is no representable
+ * violation for this assert to catch today.
+ *
+ * Separately: the broker/egress-veto `AuditSignal`→`AuditRecord` persistence
+ * path does not exist yet in production (`toAuditRecordInput` has zero
+ * callers; `guardCopilotEgress` discards `decision.audit`; `BrokerOutcome.audits`
+ * has no worker consumer) — producer-first, consumer pending, same shape as
+ * #26/9.32. If that consumer is ever wired, 9.33's house rule applies: a safety
+ * gate must DENY, not throw — so the correct call there is `isRedactionSafe`
+ * + fail-closed deny, still not this assert.
  */
 export function assertRedactionSafe(signal: AuditSignal): void {
   if (!isRedactionSafe(signal)) {
