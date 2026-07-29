@@ -1409,6 +1409,22 @@ A premise-check reported that **[L49](#49)** cites a `ZOD_BY_ID` registration an
 
 Loosening trust in cited lessons is the natural reaction to rot — and it is exactly what would have made instance 3 land. **A citation that fails to resolve is a question, never a verdict.** Ask *"did I look everywhere it could live?"* before *"is the prose wrong?"* — and for this project the answer is usually another package, because the seams deliberately span them.
 
+### ⛔ THE NAMING VARIANT — a TEST NAME that overstates its scope misleads the next reader of the test, not its author
+
+**Same day, found while reviewing 13.18's Step 2.5.** `packages/domain/test/fixtures/fixtures.test.ts:128` is named:
+
+> `"provides exactly one VALID fixture for every registered Appendix-A schema"`
+
+Its mechanism (`:129`) is `const registered = [...defaultSchemaRegistry.ids()]`, and `defaultSchemaRegistry` is an **unconditional glob** over `schemas/*.schema.json` (`packages/contracts/src/schema/registry.ts` `loadSchemasFromDir`). **There is no Appendix-A filter.** The name asserts a narrowing the assertion does not perform.
+
+**It caused a real error the same day.** I read the name, inferred that [L49](#49)'s new-model checklist attached only to Appendix-A models, and wrote that conditionality into brief 219 and task #3's description. The contract implementer traced the registry in source and overturned it: the checklist is **mandatory the moment a schema file exists**, because the meta-test measures against the glob. Had the conditional been followed, `packages/contracts` would have gone green with `@sow/domain` red — L49's exact failure mode, produced by a brief that cited L49.
+
+⭐ **Why this earns its own line rather than folding into the citation rule: an overstated name is INVISIBLE TO ITS AUTHOR and load-bearing for everyone else.** The author knows what the assertion does — they wrote it — so the name never misleads *them*, and no test failure will ever surface the gap. It misleads the **next** reader, who has only the name and a reasonable expectation that it describes the mechanism. **A name is documentation with none of documentation's review.**
+
+⇒ **A test name is a claim about scope. If it names a filter, the assertion must perform that filter.** When they disagree, fix the **name** — the assertion is usually the correct half, and renaming is free.
+
+**Do:** read the assertion before inferring a rule from a name. When writing one, prefer a name that **under-claims** (`every registered schema`) to one that over-claims (`every Appendix-A schema`) — the honest name costs nothing and the flattering one costs someone a wrong inference. The rename itself is in Carry-forward, deliberately not done: another area's test file, and renaming a passing test mid-round is churn.
+
 **Do:** before declaring a citation stale, search the **whole repo**, not the package the symbol seems to belong to. When correcting one, land **one** number in **every** place it appears (a half-corrected citation is a new instance). And when a premise-check contradicts a lesson, the lesson gets the benefit of the doubt until the search is proven exhaustive — the lesson was written by someone holding the code.
 
 ⛔ **Deliberately NOT done: a repo-wide citation sweep.** It is task 24.6's territory and out of scope this round — and this lesson's own content argues a cheap sweep would produce false positives faster than fixes.
