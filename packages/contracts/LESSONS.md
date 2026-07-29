@@ -1304,3 +1304,27 @@ Fixed by giving the pill **its own populated `title`** (the scope sentence) and 
 **Do:** for any guard added to prevent a vacuous pass, state what anchors it to the subject. For any negative/absence pin, verify it FIRES on a genuine restoration, not merely that it is quiet on clean input. Both are single extra runs inside the slice.
 
 `pin: apps/desktop/test-dom/egress-settings-page.test.tsx (no_naming_attribute_overclaims, anchored to the pill's own title; banned-token regex mutation-verified against a real restoration)` · `accepted: not mechanically enforceable`.
+
+---
+
+<a id="91"></a>
+## 91. A clearance that stops at the routing layer is indistinguishable from a clearance never given — whoever imposes a hold owns releasing it
+
+**2026-07-29 · the round's last slice · orchestrator's own failure, caught by the lead**
+
+#8 was rule-5, so the lead asked that its Step-10 commit **hold** until they cleared the Step-9. I relayed that hold to the implementer. The lead then cleared #8 — to **me**, since the lead does not DM implementers.
+
+I did not pass it on. I spent the next three commits banking lessons, and **the team stalled**: the implementer sat idle, correctly obeying a hold I had imposed and then failed to lift, with their slice complete and their files uncommitted.
+
+> **From the implementer's side, a clearance that stopped at the relay is byte-identical to a clearance never given.** Everyone waits, nobody is blocked by anything real, and **no signal anywhere reports a problem** — the same false-green shape this round spent itself closing, relocated from the code into the coordination layer.
+
+**Two actionable halves, both mine to have known:**
+
+1. **Imposing a hold creates a blocking edge, and the holder owns releasing it.** "Hold until X clears" makes the *relay* of X load-bearing. I added the dependency and then treated the message carrying its release as ordinary correspondence rather than as the thing a teammate was parked on.
+2. **The status board would have shown it, and I was reading my own commit queue instead.** The task sat `in_progress` with an idle owner and a dirty tree — visible the entire time. The status channel exists precisely so that progress does not depend on someone remembering to notice; consulting it is not optional bookkeeping, it is the check.
+
+⚠ **The uncomfortable detail, kept because it is the useful part:** the lessons I was writing during that window were [L90](#90) — *about a guard that passes while checking nothing.* The lapse and the lesson occupied the same twenty minutes. **Knowing a failure mode in the abstract does not make you notice it in your own workflow**, which is the entire reason these are written as mechanical checks rather than as things to be mindful of.
+
+**Do:** when you impose a hold, track it as an open obligation on yourself, and release it before any other work. In a team pattern where one role is the only channel between two others, **the relay is a critical path, not correspondence.** And read the board, not your own queue, when deciding whether anyone is waiting.
+
+`accepted: not mechanically enforceable` — mitigation: an imposed hold is written down as an owed release (the same rule as [L51](#51): if it only lives in your head or in a message, it is not tracked); check `TaskList` for `in_progress` tasks with idle owners before starting unrelated work.
