@@ -58,7 +58,11 @@ _(append-only; newest last; every entry: what · why · what would reverse it)_
 
 | # | Decision | Reason | Reversal |
 |---|---|---|---|
-| — | _(none yet — run begins here)_ | | |
+| 1 | **`(a0)(ix)` fix (i) AUTHORISED** — add five one-line pointers from each non-contract area's `CLAUDE.md` up to the project-wide ledger `packages/contracts/LESSONS.md`. | Additive, reversible, touches no rule. Closes the real defect: root points DOWN to the ledger but **nothing points back UP** — `grep -c 'packages/contracts/LESSONS' <area>/CLAUDE.md` = **0 in all five** non-contract areas, so an implementer orienting off its own area doc (what the launch protocol tells it to load) has no path to the ledger. | Revert the commit; five lines. |
+| 2 | **Citation convention ADOPTED: `contracts LNN` for cross-area citations**, bare `LNN` only inside the owning area's own docs. | Five ledgers each start at §1 — **`L39` names two lessons, `L3` names four** — in the ledgers every `pin:` and enforcement line resolves against. Live instance committed by the orchestrator in the same session that found it: one sentence citing bare `L39` and qualified `contracts L119`. **A dangling citation gets investigated; an ambiguous one gets believed.** | Documentation convention; reversible by amending the same line. |
+| 3 | **`(a0)(ix)(1)` — the root `CLAUDE.md` standing-rule amendment — HELD FOR THE OWNER**, not decided. | Fix (i) is discoverability plumbing (lead's). Amending the no-cross-area rule in root `CLAUDE.md` changes **the owner's rule**, and a lead promoting his own instance-ruling into standing conventions is **L121 performed on L121**. | n/a — deliberately not taken. |
+| 4 | **Existing bare-`LNN` citations NOT audited.** Recorded as a scoped item with its measurement command instead. | The convention prevents *new* ambiguity and does nothing about existing citations, which may already resolve wrong. Auditing mid-round would be unscoped work discovered rather than budgeted. | n/a — recorded, not done. |
+| 5 | **Renumbering ledgers into disjoint ranges REJECTED (not deferred).** | Lesson numbers are stable IDs — *never reorder, never reuse a deleted slot* — already a rule in force. Rejecting is the honest disposition; deferring would imply it is available later. | n/a |
 
 ## Deferred to the owner (do NOT decide)
 
