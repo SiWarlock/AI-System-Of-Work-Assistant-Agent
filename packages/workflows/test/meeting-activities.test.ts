@@ -581,6 +581,67 @@ describe("spec(§6 KN-10 / §9) 13.8f-B — buildOutputs folds meetingVaultRewri
 });
 
 // ---------------------------------------------------------------------------
+// 13.8g-B — buildOutputs passes the raw attendees field value through UNEXAMINED
+// (packages/workflows must not import normalizeAttendees; only the worker
+// composition-root adapter, apps/worker/src/composition/meeting-vault.ts, does)
+// ---------------------------------------------------------------------------
+
+/** A spy MeetingVaultRewritePort recording every call's full argument tuple. */
+function spyMeetingVault(result: MeetingVaultRewriteResult): {
+  port: MeetingVaultRewritePort;
+  calls: Parameters<MeetingVaultRewritePort["rewrite"]>[];
+} {
+  const calls: Parameters<MeetingVaultRewritePort["rewrite"]>[] = [];
+  const port: MeetingVaultRewritePort = {
+    rewrite: (...args) => {
+      calls.push(args);
+      return Promise.resolve(result);
+    },
+  };
+  return { port, calls };
+}
+
+describe("spec(§9 W1) 13.8g-B — buildOutputs threads the raw attendees value through to meetingVaultRewrite", () => {
+  it("passes fields['attendees']'s value through as the 5th argument verbatim", async () => {
+    const { port, calls } = spyMeetingVault({ meetingNoteLinkMutations: [] });
+    const activity = createBuildOutputsActivity({
+      projection: noteProjection(),
+      sourceRef: meetingSourceRef,
+      planIdentity: { closeout: "wf-1" },
+      noteExists: new FakeNoteExistsReader({ exists: false }),
+      meetingVaultRewrite: port,
+    });
+    const fixture: ValidatedExtraction = {
+      validated: true,
+      fields: {
+        title: { value: "Weekly Sync", evidenceRef: "transcript#L1" },
+        attendees: { value: ["Jane Doe <jane@acme.com>", "jane@acme.com"], evidenceRef: "transcript#L2" },
+      },
+    };
+    const res = await activity.build(fixture, workspaceId("ws-bound"));
+    expect(isOk(res)).toBe(true);
+    expect(calls.length).toBe(1);
+    expect(calls[0]![4]).toEqual(["Jane Doe <jane@acme.com>", "jane@acme.com"]);
+  });
+
+  it("an absent attendees field passes the TBD sentinel through — never throws, never invents (REQ-F-017)", async () => {
+    const { port, calls } = spyMeetingVault({ meetingNoteLinkMutations: [] });
+    const activity = createBuildOutputsActivity({
+      projection: noteProjection(),
+      sourceRef: meetingSourceRef,
+      planIdentity: { closeout: "wf-1" },
+      noteExists: new FakeNoteExistsReader({ exists: false }),
+      meetingVaultRewrite: port,
+    });
+    // validatedFixtureWithTitle() carries no "attendees" key at all.
+    const res = await activity.build(validatedFixtureWithTitle(), workspaceId("ws-bound"));
+    expect(isOk(res)).toBe(true);
+    expect(calls.length).toBe(1);
+    expect(calls[0]![4]).toBe(TBD);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // commitKnowledge — inv-5 (KnowledgeWriter idempotent replay)
 // ---------------------------------------------------------------------------
 

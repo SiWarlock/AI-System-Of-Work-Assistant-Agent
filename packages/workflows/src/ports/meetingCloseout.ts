@@ -352,6 +352,15 @@ export interface MeetingVaultRewriteResult {
  * at the composition root (apps/worker/src/composition/meeting-vault.ts, 13.8f-B). Optional on
  * {@link BuildOutputsActivityDeps}; UNSET ⇒ the shipped default (never called, `linkMutations` stays `[]`
  * — byte-equivalent to pre-13.8f-B).
+ *
+ * `attendees` (13.8g-B) is the meeting's raw, UNEXAMINED `fields["attendees"]` field value from the
+ * `ValidatedExtraction` — additive, OPTIONAL; an omitted/`undefined` value is byte-equivalent to
+ * 13.8f-B. `packages/workflows` passes it through untouched (it must not import `@sow/knowledge`'s
+ * `normalizeAttendees` — layer rule, §2.5); only the worker composition-root adapter normalizes it.
+ * ⚠ SCOPED CLAIM (13.8g-C, not yet decided): attendee refs are threaded here, but the path yields ZERO
+ * refs today, because the real meeting-extraction schema gate (`apps/worker/src/composition/
+ * meeting-extraction.ts` `isPrimitiveOrTbd`) admits only scalars — an array can never reach this
+ * argument in a validated extraction. Never state this as "attendees now reach the rewrite" unqualified.
  */
 export interface MeetingVaultRewritePort {
   rewrite(
@@ -359,6 +368,7 @@ export interface MeetingVaultRewritePort {
     meetingNotePath: string,
     sourceRef: SourceRef,
     provenanceOrigin: ProvenanceOrigin,
+    attendees?: unknown,
   ): Promise<MeetingVaultRewriteResult>;
 }
 

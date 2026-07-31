@@ -3,6 +3,9 @@
 // WS-8-keyed per (workspaceId, key); §16 never-throws; stores only already-dropped UiSafeIngestionItem
 // items (raw refs never persisted at rest). Mirrors projectDashboardUpdate.test.ts (fakeReadModels).
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ok, err, isOk, isErr, UiSafeIngestionItemSchema } from "@sow/contracts";
 import type { SourceEnvelope, UiSafeIngestionItem } from "@sow/contracts";
 import type { ReadModelRecord, ReadModelRepository, DbResult, DbError } from "@sow/db";
@@ -226,5 +229,16 @@ describe("createIngestionInboxProjectionPort — recordDisposition", () => {
     await port.recordDisposition("ws-A", "src_1");
     expect(itemsOf(repo, "ws-A")).toEqual([]);
     expect(itemsOf(repo, "ws-B").map((i) => i.sourceId)).toEqual(["src_1"]);
+  });
+});
+
+describe("9.37(b) — the module header describes the LIVE binding, not a stale dormancy claim", () => {
+  it("ingestion_inbox_header_describes_the_live_binding: no longer claims 'Ships DORMANT' (9.16 already bound it live)", () => {
+    const src = readFileSync(
+      resolvePath(dirname(fileURLToPath(import.meta.url)), "../../../src/api/projections/ingestionInboxProjection.ts"),
+      "utf8",
+    );
+    const header = src.slice(0, src.indexOf("\nimport "));
+    expect(header).not.toContain("Ships DORMANT");
   });
 });

@@ -19,12 +19,23 @@
 // so this slice doesn't split that already-tracked task across two slices). `refusals`/`groundedPaths`
 // are similarly not read — see `MeetingVaultRewriteResult`'s own header in ports/meetingCloseout.ts.
 //
-// NO CONTAINMENT LAYER (unlike living-vault.ts, deliberately): `meetingNoteLinkMutations`' `srcPath` is,
-// by construction, always the meeting note itself (`meeting-rewrite.ts:272`: `l.srcPath === meetingNotePath`)
-// — never synthesized — and `dstSlug` is not treated as a raw filesystem path anywhere in the source-path
-// precedent either (`living-vault.ts`'s own `touchedPaths()` never reads `.dstSlug`). So this narrow cut
-// opens no new path-escape surface for a realpath-containment layer to close.
-import { rewriteVaultForMeeting } from "@sow/knowledge";
+// NO CONTAINMENT LAYER (unlike living-vault.ts, deliberately) — RE-VERIFIED, still true after 13.8g-B:
+// `meetingNoteLinkMutations`' `srcPath` is, by construction, always the meeting note itself
+// (`meeting-rewrite.ts:272`: `l.srcPath === meetingNotePath`) — never synthesized — and `dstSlug` is not
+// treated as a raw filesystem path anywhere in the source-path precedent either (`living-vault.ts`'s own
+// `touchedPaths()` never reads `.dstSlug`). 13.8g-B changes only what crosses IN (`entityRefs`/
+// `identifierOnlyRefs`, below), never what crosses OUT — so this narrow cut still opens no new
+// path-escape surface for a realpath-containment layer to close.
+//
+// 13.8g-B — `entityRefs`/`identifierOnlyRefs` are now threaded, via `normalizeAttendees` (13.8g-A) over
+// the meeting's attendee data. `linkCandidates` remains NOT threaded (a real residual — nothing today
+// supplies a workspace note-candidate list for `healLinks`; a future follow-up, not this slice's job).
+// ⚠ SCOPED CLAIM (13.8g-C, not yet decided): attendee refs are threaded, but the path yields ZERO refs
+// today — the real meeting-extraction schema gate (`meeting-extraction.ts`'s `isPrimitiveOrTbd`) admits
+// only scalars, so an array can never reach this adapter in a validated extraction; a realistic
+// delimited string hits `normalizeAttendees`' non-array branch. Never state this as "attendees now
+// update person pages" — see `packages/composition/meeting-vault.test.ts`'s own characterization pin.
+import { rewriteVaultForMeeting, normalizeAttendees } from "@sow/knowledge";
 import type { MeetingRewriteDeps } from "@sow/knowledge";
 import type { WorkspaceId, SourceRef, ProvenanceOrigin } from "@sow/contracts";
 import type {
@@ -33,13 +44,17 @@ import type {
 } from "@sow/workflows/ports/meetingCloseout";
 
 /**
- * Adapt the real `rewriteVaultForMeeting` onto {@link MeetingVaultRewritePort}. Maps the port's minimal
- * arguments onto `MeetingRewriteInput` — `entityRefs`/`identifierOnlyRefs`/`linkCandidates` are
- * intentionally NOT threaded here (13.8f-B's own Q3: strictly faked ports this slice; deriving real
- * entity refs from correlation signals is 13.8g-B's territory), so an armed run today would synthesize
- * against NO entity candidates and mostly produce a thin or empty result. That is acceptable only
- * because this ships DORMANT — it must be completed before the capability is armed (a future follow-up),
- * mirroring `createIngestRewriteAdapter`'s own documented residual in living-vault.ts.
+ * Adapt the real `rewriteVaultForMeeting` onto {@link MeetingVaultRewritePort}. Maps the port's
+ * arguments onto `MeetingRewriteInput` — `entityRefs`/`identifierOnlyRefs` are populated from the
+ * meeting's attendee data (13.8g-B), normalized via `@sow/knowledge`'s `normalizeAttendees` (never from
+ * "correlation signals" — `CorrelationSignals` runs BEFORE extraction and has no attendees field to
+ * carry; see `IMPLEMENTATION_PLAN.md` `#### 13.8g`). `withheld` (code-only exclusion reasons) is
+ * deliberately DROPPED, not threaded — surfacing it with no reader today would mint a fresh L106; its
+ * future consumer is 13.8m. `linkCandidates` remains unthreaded (a genuine residual, not this slice's
+ * job — see the module header). An armed run can now ground against real attendee-derived person
+ * entities in principle; in practice it yields zero today (13.8g-C, module header). That is acceptable
+ * only because this ships DORMANT still — mirrors `createIngestRewriteAdapter`'s own documented residual
+ * in living-vault.ts.
  */
 export function createMeetingVaultPort(knowledgeDeps: MeetingRewriteDeps): MeetingVaultRewritePort {
   return {
@@ -48,7 +63,12 @@ export function createMeetingVaultPort(knowledgeDeps: MeetingRewriteDeps): Meeti
       meetingNotePath: string,
       sourceRef: SourceRef,
       provenanceOrigin: ProvenanceOrigin,
+      attendees?: unknown,
     ): Promise<MeetingVaultRewriteResult> {
+      // 13.8g-C (not yet decided): `normalizeAttendees` requires Array.isArray — the real meeting-
+      // extraction schema gate admits only scalars, so `attendees` can never be an array in a validated
+      // extraction. This call is correct and total either way; it yields empty refs today.
+      const { refs, identifierOnlyRefs } = normalizeAttendees(attendees);
       const receipt = await rewriteVaultForMeeting(
         {
           workspaceId,
@@ -60,6 +80,8 @@ export function createMeetingVaultPort(knowledgeDeps: MeetingRewriteDeps): Meeti
               ...(sourceRef.span !== undefined ? { span: sourceRef.span } : {}),
             },
           ],
+          entityRefs: refs,
+          identifierOnlyRefs,
         },
         knowledgeDeps,
       );

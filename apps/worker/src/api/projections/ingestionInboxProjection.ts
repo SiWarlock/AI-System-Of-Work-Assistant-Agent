@@ -10,13 +10,15 @@
 // read-time drop). The write-side reads existing items back through the SAME `readIngestionItems`
 // narrower the read path uses, so the stored shape can never drift from the 9.7-A read contract.
 //
-// Ships DORMANT: the always-on wiring — invoking `recordPark` at the Temporal ingestion workflow's
-// low-confidence park route (`packages/workflows/src/workflows/sourceIngestion.ts`) and
-// `recordDisposition` at `createRecordDispositionActivity`
-// (`packages/workflows/src/activities/disposition.ts:104-141`) — plus the desktop surface mount are
-// DEFERRED (R5-style, exactly like `projectRecentChanges`, which is built with no caller). Mirrors
-// `projectDashboardUpdate.ts` (factory + injected readModels+now, upsert-preserving-siblings,
-// fault-vs-not_found guard).
+// LIVE (9.37(b) — this header previously described the wiring below as still unbound; 9.16 already
+// bound it): the producer core here is invoked at both `recordPark` call sites `buildProofSpineActivities` wires by
+// default — the correlation no-match/below-threshold route AND the meeting-closeout equivalent
+// (`apps/worker/src/composition/buildActivities.ts:461-463,486,817`) — and at `recordDisposition` via
+// the triage-disposition activity (`buildActivities.ts:1125`), reaching production through
+// `registerWorker.ts` → `bootWorker`. The desktop surface (`apps/desktop/renderer/surfaces/
+// ingestion-inbox`) hydrates via `live.ts`'s `hydrateIngestionInbox` on cold-load AND scope-change.
+// Nothing about this producer's core wiring remains deferred. Mirrors `projectDashboardUpdate.ts`
+// (factory + injected readModels+now, upsert-preserving-siblings, fault-vs-not_found guard).
 import { ok, err, isOk, isErr } from "@sow/contracts";
 import type { Result, SourceEnvelope } from "@sow/contracts";
 import type { ReadModelRepository } from "@sow/db";

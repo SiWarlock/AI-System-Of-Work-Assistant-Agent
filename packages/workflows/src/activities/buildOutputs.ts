@@ -259,11 +259,18 @@ export function createBuildOutputsActivity(
       let meetingNoteLinkMutations: readonly LinkMutation[] = [];
       if (deps.meetingVaultRewrite !== undefined && notePath !== null) {
         try {
+          // 13.8g-B — pass fields["attendees"]'s value through UNEXAMINED (frontmatterValue is the
+          // same TBD-safe idiom meetingOutputs.ts:157 already uses for this field); this layer must
+          // not import @sow/knowledge's normalizeAttendees (§2.5 — only the worker composition-root
+          // adapter does). Scoped claim (13.8g-C, not yet decided): the real meeting-extraction schema
+          // gate admits only scalars, so this can never be an array in a validated extraction — the
+          // threaded value reaches the rewrite, but yields zero entity refs today.
           const rewritten = await deps.meetingVaultRewrite.rewrite(
             workspaceId,
             notePath,
             deps.sourceRef,
             deps.provenanceOrigin ?? "meeting_close",
+            frontmatterValue(validated.fields["attendees"]),
           );
           meetingNoteLinkMutations = rewritten.meetingNoteLinkMutations;
         } catch {
