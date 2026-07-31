@@ -90,7 +90,7 @@ Every package is TypeScript `strict`. Every exported function declares explicit 
 **AI assistance trailer** on AI-assisted commits (HEREDOC for multi-line):
 
 ```
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 ```
 
 ### Push posture

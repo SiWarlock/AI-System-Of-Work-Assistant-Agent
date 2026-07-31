@@ -124,7 +124,7 @@ git add IMPLEMENTATION_PLAN.md \
 git status --short  # Verify only orchestrator-domain files staged
 ```
 
-Author the commit message — Conventional Commits + `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` trailer — capturing the orchestrator's framing of the round:
+Author the commit message — Conventional Commits + `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>` trailer — capturing the orchestrator's framing of the round:
 
 ```bash
 git commit -m "$(cat <<'EOF'
@@ -133,7 +133,7 @@ docs(tasks): <round topic — orchestrator framing>
 <body — what was reconciled, scope decisions, transition state, next
 session target. Reference the implementer's session doc by NNN.>
 
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```

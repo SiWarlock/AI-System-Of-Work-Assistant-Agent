@@ -46,7 +46,7 @@ A Mac-first, local-first, self-hosted personal operating system — a **governed
 - **Workflow scripts are plain JS** — no TS annotations; **escape inner backticks** (`\``) inside template-literal briefs or the script won't parse.
 - **TDD** for deterministic code (test-first); the eval path for LLM generation.
 - **Adversarial-verify** every safety-critical phase, then re-verify each fix until CLEAR.
-- **Commit per batch:** explicit `git add <path>` (never `-A`); Conventional Commits + trailer `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`; allowlist TDD-fixture secrets by fingerprint in `.gitleaksignore` with FULL-LINE comments (inline `#` breaks gitleaks). Push origin/main at phase close-out.
+- **Commit per batch:** explicit `git add <path>` (never `-A`); Conventional Commits + trailer `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`; allowlist TDD-fixture secrets by fingerprint in `.gitleaksignore` with FULL-LINE comments (inline `#` breaks gitleaks). Push origin/main at phase close-out.
 - **Full solo close-out** (memory `solo-session-full-closeout`): session doc, hot-routing, `/orchestrate-end` incl. Step-5.5 Carry-forward triage, formal `/phase-exit` with arch-drift + security + reachability sub-agents.
 - **Don't touch** `.env` / `scaffold/`.
 
