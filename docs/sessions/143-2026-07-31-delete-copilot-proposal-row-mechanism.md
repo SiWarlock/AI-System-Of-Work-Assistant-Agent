@@ -64,8 +64,15 @@ orchestrator opens (not this session's territory).
 - **The file-header docblock's opening `material-direction.md` design-doc quote** still lists
   "proposal action row" as part of Copilot's locked composition spec (lines 1-4, pre-existing, not
   touched by this diff). Both Step-8 reviewers flagged this as a low-severity nit and judged it
-  non-misleading (it describes the kept *goal*, not current behavior) and out of this slice's scope.
-  Deferred, not fixed.
+  non-misleading (it describes the kept *goal*, not current behavior) and out of this slice's scope
+  — `docs/design/**` is not desktop territory. Deferred, not fixed. **ADDENDUM (post-commit, from the
+  orchestrator):** the successor task materialized as **task 9.42**; the docblock observation is
+  routed against 9.42 (the composition claim becomes true again if the affordance is rebuilt there)
+  **and** into round-2's **DOC-1** scope (a docs/design-authority review partition that did not run
+  this round) — because a locked design-authority document (`material-direction.md`) asserting a
+  since-removed UI element is the same shape the "Egress: local-only" hardcoded-pill defect had at
+  its root, and this reviewer found an instance of that class from inside an ordinary code slice. Not
+  edited here; recorded so it survives the harness task list.
 
 ## TDD compliance
 
