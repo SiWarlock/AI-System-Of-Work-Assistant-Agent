@@ -3,7 +3,7 @@
 **Date:** 2026-07-31
 **Track / role:** main · worker-implementer
 **Predecessor session:** `docs/sessions/138-2026-07-30-worker-three-slices-egress-notice-corruption-surfacing-meeting-keystone.md`
-**Successor session:** _(unwritten — the next worker-implementer)_
+**Successor session:** `docs/sessions/144-2026-07-31-meeting-sibling-plans-and-13.8i-b-premise-defect.md`
 
 ---
 
