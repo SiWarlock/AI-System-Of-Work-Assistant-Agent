@@ -15,6 +15,7 @@ import { describe, expect, it } from "vitest";
 import {
   AgentExtractionCandidateSchema,
   AGENT_EXTRACTION_SCHEMA_ID,
+  LIST_VALUED_EXTRACTION_FIELDS,
 } from "../../src/models/agent-extraction";
 import { fieldSet } from "../../src/schema/field-set";
 import { emitJsonSchema } from "../../src/schema/emit";
@@ -223,6 +224,144 @@ describe("AgentExtraction contract — spec(§19.5/§7 / Appendix A) — GATE-1"
         AgentExtractionCandidateSchema.safeParse({ fields: { owner: { value: "Alice", evidenceRef: "s#L1" } } })
           .success,
       ).toBe(true);
+    });
+  });
+
+  // ── 13.8g-C leg A — list-valued extraction fields (⚠ SCOPED, DECLARED,
+  // DEFAULT-CLOSED relaxation of the rule-2 candidate-data gate, lead-ruled
+  // 2026-07-31). `attendees` and `decisions` are declared list-capable; every
+  // OTHER field name keeps today's scalar-only rejection exactly as before —
+  // that is the property this whole block exists to pin. `LIST_VALUED_EXTRACTION_FIELDS`
+  // is the single source of list-ness: leg B (worker) must import it rather than
+  // re-declaring the two names, so the two legs cannot disagree about which
+  // fields are list-capable.
+  describe("list-valued extraction fields (13.8g-C leg A) — spec(§7 REQ-S-006 / §9)", () => {
+    it("LIST_VALUED_EXTRACTION_FIELDS declares exactly attendees and decisions", () => {
+      expect([...LIST_VALUED_EXTRACTION_FIELDS].sort()).toEqual(["attendees", "decisions"]);
+    });
+
+    it("a_declared_list_field_accepts_a_string_array — both attendees and decisions", () => {
+      for (const field of LIST_VALUED_EXTRACTION_FIELDS) {
+        expect(
+          AgentExtractionCandidateSchema.safeParse({ fields: { [field]: { value: ["a", "b"] } } }).success,
+          field,
+        ).toBe(true);
+      }
+    });
+
+    it("an_undeclared_field_still_rejects_an_array — the default-closed leg (the most important test in the slice)", () => {
+      expect(AgentExtractionCandidateSchema.safeParse({ fields: { owner: { value: ["a", "b"] } } }).success).toBe(
+        false,
+      );
+    });
+
+    it("a_declared_list_field_still_accepts_a_scalar_and_TBD — additive, never required", () => {
+      for (const field of LIST_VALUED_EXTRACTION_FIELDS) {
+        expect(AgentExtractionCandidateSchema.safeParse({ fields: { [field]: { value: "TBD" } } }).success, field).toBe(
+          true,
+        );
+        expect(
+          AgentExtractionCandidateSchema.safeParse({ fields: { [field]: { value: 3, evidenceRef: "s#L1" } } })
+            .success,
+          field,
+        ).toBe(true);
+      }
+    });
+
+    // Individually, not batched — an individually-injected element is what makes this discriminating
+    // (9.41 leg A's precedent) rather than merely proving SOME element in the array is bad.
+    it("a_list_element_that_is_not_a_string_is_rejected — number", () => {
+      expect(AgentExtractionCandidateSchema.safeParse({ fields: { attendees: { value: ["ok", 5] } } }).success).toBe(
+        false,
+      );
+    });
+    it("a_list_element_that_is_not_a_string_is_rejected — boolean", () => {
+      expect(
+        AgentExtractionCandidateSchema.safeParse({ fields: { attendees: { value: ["ok", true] } } }).success,
+      ).toBe(false);
+    });
+    it("a_list_element_that_is_not_a_string_is_rejected — null", () => {
+      expect(
+        AgentExtractionCandidateSchema.safeParse({ fields: { attendees: { value: ["ok", null] } } }).success,
+      ).toBe(false);
+    });
+    it("a_list_element_that_is_not_a_string_is_rejected — nested array (no array-of-array)", () => {
+      expect(
+        AgentExtractionCandidateSchema.safeParse({ fields: { attendees: { value: [["nested"]] } } }).success,
+      ).toBe(false);
+    });
+    it("a_list_element_that_is_not_a_string_is_rejected — nested object (no array-of-object)", () => {
+      expect(
+        AgentExtractionCandidateSchema.safeParse({ fields: { attendees: { value: [{ a: 1 }] } } }).success,
+      ).toBe(false);
+    });
+
+    it("a_list_over_the_cap_is_rejected — the bound is real, not documentary", () => {
+      const atCap = Array(200).fill("x");
+      const overCap = Array(201).fill("x");
+      expect(AgentExtractionCandidateSchema.safeParse({ fields: { attendees: { value: atCap } } }).success).toBe(
+        true,
+      );
+      expect(AgentExtractionCandidateSchema.safeParse({ fields: { attendees: { value: overCap } } }).success).toBe(
+        false,
+      );
+    });
+
+    // ── Two independent mechanisms — driven through the REAL ajv registry, not the Zod type ──
+    it("ajv_rejects_everything_zod_rejects_for_these_cases — driven through the real registry", () => {
+      const ajvValidate = defaultSchemaRegistry.getValidator(AGENT_EXTRACTION_SCHEMA_ID);
+      expect(ajvValidate).toBeTypeOf("function");
+      const cases: Array<[string, unknown]> = [
+        ["undeclared field, array value", { fields: { owner: { value: ["a", "b"] } } }],
+        ["declared field, non-string element", { fields: { attendees: { value: ["ok", 5] } } }],
+        ["declared field, nested array", { fields: { attendees: { value: [["x"]] } } }],
+        ["declared field, over the cap", { fields: { attendees: { value: Array(201).fill("x") } } }],
+      ];
+      for (const [label, payload] of cases) {
+        expect(ajvValidate?.(payload), label).toBe(false);
+        expect(AgentExtractionCandidateSchema.safeParse(payload).success, label).toBe(false);
+      }
+      // And the positive case both legs must ACCEPT (a rejection-only suite passes trivially).
+      const positive = { fields: { attendees: { value: ["alice", "bob"] } } };
+      expect(ajvValidate?.(positive)).toBe(true);
+      expect(AgentExtractionCandidateSchema.safeParse(positive).success).toBe(true);
+    });
+
+    // ── The security regression pin: propertyNames must survive the container-shape change ──
+    it("propertyNames_still_rejects_prototype_pollution_keys_including_on_a_declared_list_field", () => {
+      const schema = emitJsonSchema(AgentExtractionCandidateSchema, AGENT_EXTRACTION_SCHEMA_ID) as {
+        properties: { fields: { propertyNames?: { pattern?: string } } };
+      };
+      // Assert against the generated JSON Schema's ACTUAL content, not just behavior.
+      expect(schema.properties.fields.propertyNames?.pattern).toBe(
+        "^(?!(?:__proto__|prototype|constructor)$)",
+      );
+
+      const ajvValidate = defaultSchemaRegistry.getValidator(AGENT_EXTRACTION_SCHEMA_ID);
+      const rawKey = (key: string): unknown => JSON.parse(`{"fields":{"${key}":{"value":"x"}}}`);
+      for (const key of ["__proto__", "prototype", "constructor"]) {
+        expect(ajvValidate?.(rawKey(key)), key).toBe(false);
+        expect(AgentExtractionCandidateSchema.safeParse(rawKey(key)).success, key).toBe(false);
+      }
+      // Same three keys, but landing where a declared LIST field also exists in the same payload —
+      // the hazard this pins is specific to the container shape change, so prove it survives
+      // alongside the new declared-field machinery, not only in isolation.
+      const besideADeclaredField = (key: string): unknown =>
+        JSON.parse(`{"fields":{"attendees":{"value":["ok"]},"${key}":{"value":"x"}}}`);
+      for (const key of ["__proto__", "prototype", "constructor"]) {
+        expect(ajvValidate?.(besideADeclaredField(key)), key).toBe(false);
+        expect(AgentExtractionCandidateSchema.safeParse(besideADeclaredField(key)).success, key).toBe(false);
+      }
+    });
+
+    // ── L23: the TOP-LEVEL field-name set is unaffected by a nested container-shape change.
+    // Already covered by "freezes its top-level field-name set" above (unchanged `.snap`); this
+    // test exists only as a second, LOCAL non-vacuity check that a nested change doesn't sneak
+    // past the (unwalked) top-level snapshot silently.
+    it("the_top_level_snapshot_is_unchanged — fields stays the only top-level key after this slice", () => {
+      expect(fieldSet(emitJsonSchema(AgentExtractionCandidateSchema, AGENT_EXTRACTION_SCHEMA_ID))).toEqual([
+        "fields",
+      ]);
     });
   });
 });
