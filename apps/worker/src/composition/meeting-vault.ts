@@ -13,11 +13,10 @@
 // composition, and the capability is inert by ABSENCE as well as by flag — mirrors living-vault.ts's own
 // honesty about its wiring state (13.8d).
 //
-// NARROW CUT (13.8f-B): only `meetingNoteLinkMutations` crosses this port — the receipt's sibling
-// entity-page `plans` are deliberately NOT read here at all (13.8f-C's territory: committing them is
-// §9.8-Approvals-adjacent — the `requiresApproval !== false` AUTO/PROPOSE split belongs to task 13.8i —
-// so this slice doesn't split that already-tracked task across two slices). `refusals`/`groundedPaths`
-// are similarly not read — see `MeetingVaultRewriteResult`'s own header in ports/meetingCloseout.ts.
+// 13.8f-C: `receipt.plans` (the sibling entity-page plans) now crosses this port too — carried out
+// alongside `meetingNoteLinkMutations`, never committed here (the workflow commits them, after its own
+// main-plan commit — see workflows/meetingCloseout.ts). `refusals`/`groundedPaths` are still NOT read —
+// see `MeetingVaultRewriteResult`'s own header in ports/meetingCloseout.ts.
 //
 // NO CONTAINMENT LAYER (unlike living-vault.ts, deliberately) — RE-VERIFIED, still true after 13.8g-B:
 // `meetingNoteLinkMutations`' `srcPath` is, by construction, always the meeting note itself
@@ -85,7 +84,7 @@ export function createMeetingVaultPort(knowledgeDeps: MeetingRewriteDeps): Meeti
         },
         knowledgeDeps,
       );
-      return { meetingNoteLinkMutations: receipt.meetingNoteLinkMutations };
+      return { meetingNoteLinkMutations: receipt.meetingNoteLinkMutations, plans: receipt.plans };
     },
   };
 }

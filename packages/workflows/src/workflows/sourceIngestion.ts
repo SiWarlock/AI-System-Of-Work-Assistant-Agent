@@ -252,7 +252,10 @@ function agentFailureClass(code: SourceAgentFailureCode): FailureClass {
  *   • commit_failed / write_conflict (a generic/compare-revision write failure) → `write_through_failed`
  *   • schema_rejected                                             → `schema_rejection`
  */
-function commitFailureClass(code: KnowledgeCommitFailureCode): FailureClass {
+// Exported (13.8f-C) so meetingCloseout.ts's own sibling-plan commit loop shares the SAME
+// KnowledgeCommitFailureCode → FailureClass taxonomy rather than a second, independently-drifting copy
+// (contracts L119 — two copies of a mapping that must agree, with nothing tying them together).
+export function commitFailureClass(code: KnowledgeCommitFailureCode): FailureClass {
   switch (code) {
     case "schema_rejected":
       return "schema_rejection";

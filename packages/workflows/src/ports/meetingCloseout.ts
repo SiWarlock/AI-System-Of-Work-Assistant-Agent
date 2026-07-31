@@ -280,10 +280,31 @@ export interface MeetingExternalActionInput {
  * was rejected at validate, so it can never reach the plan) and the write always
  * targets the correlation-bound workspace (`plan.workspaceId` is stamped from the
  * passed workspaceId, not from any caller-controlled field).
+ *
+ * ⚠ SHARED TYPE — constructed by THREE build-outputs bindings, not just the meeting-closeout path:
+ * meeting-closeout's own `createBuildOutputsActivity` (activities/buildOutputs.ts), the SOURCE-ingestion
+ * path's binding (apps/worker/src/composition/buildActivities.ts's `sourceBuildOutputs`), and
+ * hermes-automation's fixture (packages/evals/suites/hermes-standalone). A future required-field addition
+ * here has that same three-site blast radius — grep the FULL dependency graph (every package depending on
+ * `@sow/workflows`), not just this package, before assuming a widening is complete (13.8f-C).
  */
 export interface MeetingBuiltOutputs {
   readonly plan: KnowledgeMutationPlan;
   readonly actions: readonly MeetingExternalActionInput[];
+  /**
+   * 13.8f-C — the meeting-vault rewrite's sibling entity-page (person/project) plans, carried out of
+   * this activity WITHOUT being committed here (the workflow commits them after its own main-plan
+   * commit — see workflows/meetingCloseout.ts for why). Empty when the rewrite leg is unset/unarmed or
+   * emits nothing.
+   */
+  readonly siblingPlans: readonly KnowledgeMutationPlan[];
+  /**
+   * 13.8f-C — set (to the closed reason code `"rewrite_threw"`) when the meeting-vault rewrite call
+   * THREW — never when the leg is merely unset/unarmed (that is the ordinary dormant case, not a
+   * fault). The workflow surfaces this as a health item and continues; the meeting note's own commit
+   * never depends on this leg. `undefined` = no fault.
+   */
+  readonly meetingVaultRewriteFault?: "rewrite_threw";
 }
 
 /**
@@ -330,19 +351,22 @@ export interface BuildOutputsPort {
 // ---------------------------------------------------------------------------
 
 /**
- * The 13.8f-B narrow-cut result of a meeting-path living-vault rewrite: ONLY the additive links whose
+ * The result of a meeting-path living-vault rewrite: the meeting note's OWN additive links (whose
  * `srcPath` is the meeting note itself — the piece {@link BuildOutputsPort}'s activity folds into the
- * meeting note's OWN plan. Deliberately NOT the full `MeetingRewriteReceipt`:
+ * meeting note's OWN plan), plus (13.8f-C) the sibling entity-page KMPs (person/project) a real rewrite
+ * also produces. Still deliberately NOT the full `MeetingRewriteReceipt`:
  *   • `groundedPaths` is UNREPRESENTABLE here, not merely unlogged (safety rule 7) — this port's shape
  *     structurally cannot carry it, so there is no field a future caller could accidentally log.
- *   • `plans` (the sibling entity-page KMPs) and `refusals` (the 13.8m-C audit codes) are OMITTED on
- *     purpose: committing `plans` is tracked separately (13.8f-C — the `requiresApproval !== false`
- *     AUTO/PROPOSE split is 13.8i's §9.8-Approvals territory, not this slice's), and adding `refusals`
- *     with no consumer yet would mint a fresh L106 capability-not-guarantee. 13.8m widens this type when
- *     it builds the sink — do not add fields here speculatively.
+ *   • `refusals` (the 13.8m-C audit codes) is OMITTED on purpose: it has no consumer yet, and adding it
+ *     would mint a fresh L106 capability-not-guarantee. 13.8m widens this type when it builds the sink.
+ *   • `plans` (13.8f-C) is carried, but NEVER committed by {@link BuildOutputsPort}'s activity — the
+ *     WORKFLOW commits them, AFTER the meeting note's own commit (the sibling-commit hazard 13.8f-B's
+ *     own scoping ruled out putting in the activity — see workflows/meetingCloseout.ts).
  */
 export interface MeetingVaultRewriteResult {
   readonly meetingNoteLinkMutations: readonly LinkMutation[];
+  /** 13.8f-C — the sibling entity-page (person/project) plans, already tiered AUTO/PROPOSE upstream. */
+  readonly plans: readonly KnowledgeMutationPlan[];
 }
 
 /**

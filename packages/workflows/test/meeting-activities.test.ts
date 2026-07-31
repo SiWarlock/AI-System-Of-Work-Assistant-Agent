@@ -502,6 +502,22 @@ function validatedFixtureWithTitle(title = "Weekly Sync"): ValidatedExtraction {
 
 const fixedLinkMutation: LinkMutation = { op: "add", srcPath: "meetings/ws-bound/weekly-sync.md", dstSlug: "projects/acme" };
 
+/** A sibling entity-page (person/project) KnowledgeMutationPlan — 13.8f-C's own fixture, distinct from
+ *  the meeting note's own plan so a test can prove the two are never conflated. */
+const siblingPlanFixture: KnowledgeMutationPlan = {
+  planId: planId("sibling-1"),
+  workspaceId: workspaceId("ws-bound"),
+  sourceRefs: [{ sourceId: sourceId("src-meeting-1") }],
+  creates: [],
+  patches: [],
+  linkMutations: [],
+  frontmatterUpdates: [],
+  externalActionProposals: [],
+  confidence: 1,
+  requiresApproval: false,
+  provenanceOrigin: "meeting_close",
+};
+
 /** A fake MeetingVaultRewritePort returning a fixed, known result — 13.8f's own Done-when accepts
  *  proving this fold over a faked planner/resolver. */
 function fakeMeetingVault(result: MeetingVaultRewriteResult): MeetingVaultRewritePort {
@@ -515,7 +531,7 @@ describe("spec(§6 KN-10 / §9) 13.8f-B — buildOutputs folds meetingVaultRewri
       sourceRef: meetingSourceRef,
       planIdentity: { closeout: "wf-1" },
       noteExists: new FakeNoteExistsReader({ exists: false }),
-      meetingVaultRewrite: fakeMeetingVault({ meetingNoteLinkMutations: [fixedLinkMutation] }),
+      meetingVaultRewrite: fakeMeetingVault({ meetingNoteLinkMutations: [fixedLinkMutation], plans: [] }),
     });
     const res = await port.build(validatedFixtureWithTitle(), workspaceId("ws-bound"));
     expect(isOk(res)).toBe(true);
@@ -535,28 +551,37 @@ describe("spec(§6 KN-10 / §9) 13.8f-B — buildOutputs folds meetingVaultRewri
     expect(isOk(res)).toBe(true);
     if (!isOk(res)) return;
     expect(res.value.plan.linkMutations).toEqual([]);
+    // 13.8f-C: the sibling-plan leg is equally dormant when unarmed — no plans, no fault.
+    expect(res.value.siblingPlans).toEqual([]);
+    expect(res.value.meetingVaultRewriteFault).toBeUndefined();
   });
 
-  it("frontmatter_updates_stay_empty_even_when_the_receipt_has_plans: frontmatterUpdates is UNCHANGED and the port's result never leaks anything beyond meetingNoteLinkMutations", async () => {
-    // MeetingVaultRewriteResult is STRUCTURALLY {meetingNoteLinkMutations} only — plans/refusals/
-    // groundedPaths cannot even be constructed on this type, so this is a shape pin, not just a
-    // behavior pin: the merge contract's second clause (frontmatterUpdates stays hardcoded because
-    // there is no meetingNoteFrontmatter counterpart BY CONSTRUCTION) is provable at the type level.
+  // spec(§6 KN-10) 13.8f-C — MeetingVaultRewriteResult now carries `plans` (widened by this slice); this
+  // replaces the old "structurally cannot carry plans" shape pin, which this slice deliberately makes
+  // false. What stays true, re-pinned below: `plans` reaches MeetingBuiltOutputs.siblingPlans as its OWN
+  // field and NEVER bleeds into the meeting note's own linkMutations/frontmatterUpdates (the merge
+  // contract in packages/knowledge/src/synthesis/meeting-rewrite.ts:23-32 — meetingNoteLinkMutations and
+  // plans are partitioned by the PRODUCER; this activity must not re-merge them).
+  it("armed_binding_carries_sibling_plans_out_without_merging_them: plans land on siblingPlans, never on the meeting note's own plan", async () => {
     const port = createBuildOutputsActivity({
       projection: noteProjection(),
       sourceRef: meetingSourceRef,
       planIdentity: { closeout: "wf-1" },
       noteExists: new FakeNoteExistsReader({ exists: false }),
-      meetingVaultRewrite: fakeMeetingVault({ meetingNoteLinkMutations: [fixedLinkMutation] }),
+      meetingVaultRewrite: fakeMeetingVault({
+        meetingNoteLinkMutations: [fixedLinkMutation],
+        plans: [siblingPlanFixture],
+      }),
     });
     const res = await port.build(validatedFixtureWithTitle(), workspaceId("ws-bound"));
     expect(isOk(res)).toBe(true);
     if (!isOk(res)) return;
+    // Carried out as its own field...
+    expect(res.value.siblingPlans).toEqual([siblingPlanFixture]);
+    // ...and the merge contract's second clause still holds: frontmatterUpdates stays hardcoded (no
+    // meetingNoteFrontmatter counterpart BY CONSTRUCTION) and the meeting note's own linkMutations
+    // carries EXACTLY meetingNoteLinkMutations, never the sibling plan's own content.
     expect(res.value.plan.frontmatterUpdates).toEqual([]);
-    // Non-leak: linkMutations carries EXACTLY the fake's meetingNoteLinkMutations, nothing more (the
-    // STRUCTURAL half — no field exists to carry plans/refusals/groundedPaths — is a type-level
-    // guarantee, deliberately not re-asserted here as a brittle full plan key-list, which would fail on
-    // any unrelated future KnowledgeMutationPlan field addition).
     expect(res.value.plan.linkMutations).toEqual([fixedLinkMutation]);
   });
 
@@ -577,6 +602,11 @@ describe("spec(§6 KN-10 / §9) 13.8f-B — buildOutputs folds meetingVaultRewri
     expect(isOk(res)).toBe(true);
     if (!isOk(res)) return;
     expect(res.value.plan.linkMutations).toEqual([]);
+    // 13.8f-C: the SAME throw degrades siblingPlans to [] too (same call, same catch) — but unlike
+    // 13.8f-B's silent linkMutations degrade, this fault is NOT silent: it is signaled on the returned
+    // outputs so the WORKFLOW (which owns health-surfacing) can route it (test in meeting-closeout.test.ts).
+    expect(res.value.siblingPlans).toEqual([]);
+    expect(res.value.meetingVaultRewriteFault).toBe("rewrite_threw");
   });
 });
 
@@ -603,7 +633,7 @@ function spyMeetingVault(result: MeetingVaultRewriteResult): {
 
 describe("spec(§9 W1) 13.8g-B — buildOutputs threads the raw attendees value through to meetingVaultRewrite", () => {
   it("passes fields['attendees']'s value through as the 5th argument verbatim", async () => {
-    const { port, calls } = spyMeetingVault({ meetingNoteLinkMutations: [] });
+    const { port, calls } = spyMeetingVault({ meetingNoteLinkMutations: [], plans: [] });
     const activity = createBuildOutputsActivity({
       projection: noteProjection(),
       sourceRef: meetingSourceRef,
@@ -625,7 +655,7 @@ describe("spec(§9 W1) 13.8g-B — buildOutputs threads the raw attendees value 
   });
 
   it("an absent attendees field passes the TBD sentinel through — never throws, never invents (REQ-F-017)", async () => {
-    const { port, calls } = spyMeetingVault({ meetingNoteLinkMutations: [] });
+    const { port, calls } = spyMeetingVault({ meetingNoteLinkMutations: [], plans: [] });
     const activity = createBuildOutputsActivity({
       projection: noteProjection(),
       sourceRef: meetingSourceRef,

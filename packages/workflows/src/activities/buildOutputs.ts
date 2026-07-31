@@ -123,14 +123,14 @@ export interface BuildOutputsActivityDeps {
    */
   readonly noteExists: NoteExistsReader;
   /**
-   * 13.8f-B — the OPTIONAL meeting-path living-vault rewrite (§6 KN-10, the meeting analog of 13.8d's
-   * `SourceLivingVaultPort`). UNSET is the shipped default ⇒ `linkMutations` stays `[]`, byte-equivalent
-   * to pre-13.8f-B. The real adapter (`createMeetingVaultPort`, apps/worker/src/composition/
-   * meeting-vault.ts) is bound only on the owner-armed path (`boot.ts` `gateMeetingVaultRewrite`, which
-   * has no `bootWorker` call site yet — see that module). Narrow cut: only `meetingNoteLinkMutations` is
-   * consumed here; the sibling entity-page `plans` a real rewrite also produces are NOT read from this
-   * port at all (13.8f-C's territory, tracked separately) — `MeetingVaultRewriteResult` structurally
-   * cannot carry them.
+   * 13.8f-B/13.8f-C — the OPTIONAL meeting-path living-vault rewrite (§6 KN-10, the meeting analog of
+   * 13.8d's `SourceLivingVaultPort`). UNSET is the shipped default ⇒ `linkMutations` stays `[]` and
+   * `siblingPlans` stays `[]`, byte-equivalent to pre-13.8f-B. The real adapter
+   * (`createMeetingVaultPort`, apps/worker/src/composition/meeting-vault.ts) is bound only on the
+   * owner-armed path (`boot.ts` `gateMeetingVaultRewrite`, which has no `bootWorker` call site yet — see
+   * that module). This activity consumes `meetingNoteLinkMutations` (folded into the meeting note's own
+   * plan) and, since 13.8f-C, `plans` (carried out as `siblingPlans` — NEVER committed here; the
+   * workflow commits them after its own main-plan commit).
    */
   readonly meetingVaultRewrite?: MeetingVaultRewritePort;
 }
@@ -257,6 +257,8 @@ export function createBuildOutputsActivity(
       // field this notePath derivation reads), so notePath is non-null whenever this line runs. Kept
       // explicit rather than assumed, in case the two derivations' preconditions ever diverge.
       let meetingNoteLinkMutations: readonly LinkMutation[] = [];
+      let siblingPlans: readonly KnowledgeMutationPlan[] = [];
+      let meetingVaultRewriteFault: "rewrite_threw" | undefined;
       if (deps.meetingVaultRewrite !== undefined && notePath !== null) {
         try {
           // 13.8g-B — pass fields["attendees"]'s value through UNEXAMINED (frontmatterValue is the
@@ -273,8 +275,17 @@ export function createBuildOutputsActivity(
             frontmatterValue(validated.fields["attendees"]),
           );
           meetingNoteLinkMutations = rewritten.meetingNoteLinkMutations;
+          // 13.8f-C — carried out, NEVER committed here (the workflow commits after its own main-plan
+          // commit — committing inside this build() call risks a partial commit if a later step in the
+          // SAME call throws, exactly the hazard 13.8f-B's scoping ruled out).
+          siblingPlans = rewritten.plans;
         } catch {
+          // The SAME throw degrades BOTH legs to empty (one call, one catch) — but unlike 13.8f-B's
+          // original silent catch, this is now SIGNALED (not merely defaulted) so the WORKFLOW, which
+          // owns health-surfacing, can route it as a health item and continue (degrade-not-fail).
           meetingNoteLinkMutations = [];
+          siblingPlans = [];
+          meetingVaultRewriteFault = "rewrite_threw";
         }
       }
 
@@ -300,7 +311,7 @@ export function createBuildOutputsActivity(
         provenanceOrigin: deps.provenanceOrigin ?? "meeting_close",
       };
 
-      const outputs: MeetingBuiltOutputs = { plan, actions };
+      const outputs: MeetingBuiltOutputs = { plan, actions, siblingPlans, meetingVaultRewriteFault };
       return ok(outputs);
     },
   };

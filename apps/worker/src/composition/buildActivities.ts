@@ -1021,7 +1021,12 @@ export function buildProofSpineActivities(
         requiresApproval: false,
         provenanceOrigin: "ingestion",
       };
-      return Promise.resolve(ok({ plan, actions: externalActions }));
+      // 13.8f-C widened the shared MeetingBuiltOutputs (also used by this SOURCE-path binding — see its
+      // own header comment on siblingPlans/meetingVaultRewriteFault) to carry the meeting path's sibling
+      // entity-page plans + rewrite-fault signal. The SOURCE path has its OWN, entirely separate
+      // sibling-plan mechanism (`deps.livingVault` on SourceIngestionDeps, driven directly in
+      // sourceIngestion.ts) — these fields are always empty/unset here, byte-equivalent to pre-13.8f-C.
+      return Promise.resolve(ok({ plan, actions: externalActions, siblingPlans: [] }));
     },
   };
 

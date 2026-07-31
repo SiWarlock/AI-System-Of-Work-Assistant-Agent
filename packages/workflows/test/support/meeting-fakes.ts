@@ -262,6 +262,12 @@ export class FakeValidatePort implements ValidateExtractionPort {
 export interface FakeBuildOutputsConfig {
   readonly failWith?: BuildOutputsFailureCode;
   readonly actionCount?: number;
+  /** 13.8f-C — the sibling entity-page plans a meeting-vault rewrite emitted, carried on the returned
+   *  MeetingBuiltOutputs (never committed by this fake — the WORKFLOW commits them). Defaults to []. */
+  readonly siblingPlans?: readonly KnowledgeMutationPlan[];
+  /** 13.8f-C — simulate a THROWN meeting-vault rewrite (never a genuinely unset/unarmed leg). Defaults
+   *  to undefined (no fault). */
+  readonly meetingVaultRewriteFault?: "rewrite_threw";
 }
 
 export class FakeBuildOutputsPort implements BuildOutputsPort {
@@ -341,7 +347,12 @@ export class FakeBuildOutputsPort implements BuildOutputsPort {
       actions.push({ action, envelope });
     }
 
-    const outputs: MeetingBuiltOutputs = { plan, actions };
+    const outputs: MeetingBuiltOutputs = {
+      plan,
+      actions,
+      siblingPlans: this.config.siblingPlans ?? [],
+      meetingVaultRewriteFault: this.config.meetingVaultRewriteFault,
+    };
     return Promise.resolve(ok(outputs));
   }
 }

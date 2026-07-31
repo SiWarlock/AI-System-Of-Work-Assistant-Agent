@@ -83,12 +83,16 @@ describe("createMeetingVaultPort — 13.8f-B adapter contract (rewriteVaultForMe
     expect(deps).toBe(stubKnowledgeDeps);
   });
 
-  it("narrows the receipt to EXACTLY meetingNoteLinkMutations — plans/refusals/groundedPaths never cross the port", async () => {
+  it("carries meetingNoteLinkMutations AND plans — refusals/groundedPaths never cross the port (13.8f-C)", async () => {
+    // 13.8f-C stops discarding receipt.plans (the sibling entity-page plans a real rewrite emits);
+    // refusals/groundedPaths stay excluded — refusals has no consumer yet (would mint a fresh L106),
+    // and groundedPaths structurally cannot cross (rule 7 — it can carry attendee-derived person names).
     const linkMutation = { op: "add" as const, srcPath: NOTE_PATH, dstSlug: "projects/acme" };
+    const siblingPlan = { planId: "p1" } as never;
     rewriteVaultForMeetingMock.mockResolvedValueOnce(
       fixtureReceipt({
         meetingNoteLinkMutations: [linkMutation],
-        plans: [{ planId: "p1" } as never], // a non-empty sibling plan — must NOT leak through
+        plans: [siblingPlan],
         refusals: ["structural_surface"],
         groundedPaths: ["projects/acme.md"],
       }),
@@ -96,8 +100,8 @@ describe("createMeetingVaultPort — 13.8f-B adapter contract (rewriteVaultForMe
     const port = createMeetingVaultPort(stubKnowledgeDeps);
     const result = await port.rewrite(WS, NOTE_PATH, SOURCE_REF, "meeting_close");
 
-    expect(result).toEqual({ meetingNoteLinkMutations: [linkMutation] });
-    expect(Object.keys(result)).toEqual(["meetingNoteLinkMutations"]);
+    expect(result).toEqual({ meetingNoteLinkMutations: [linkMutation], plans: [siblingPlan] });
+    expect(Object.keys(result).sort()).toEqual(["meetingNoteLinkMutations", "plans"]);
   });
 });
 

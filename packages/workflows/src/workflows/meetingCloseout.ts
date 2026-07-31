@@ -68,6 +68,16 @@ import type {
   MeetingCloseoutContext,
   MeetingWorkflowFailure,
 } from "../ports/meetingCloseout";
+// 13.8f-C — reuse 13.8i's propose-routing port DIRECTLY (its shape is generic over any
+// KnowledgeMutationPlan + WorkspaceId): one propose sink, one mechanism, never a meeting-path analog.
+import type {
+  ProposeKnowledgeApprovalPort,
+  ProposeKnowledgeApprovalResult,
+  ProposeKnowledgeApprovalError,
+} from "../ports/sourceIngestion";
+// 13.8f-C — share the SAME KnowledgeCommitFailureCode → FailureClass taxonomy the source path uses for
+// its own living-vault sibling-commit loop, rather than a second, independently-drifting copy (L119).
+import { commitFailureClass } from "./sourceIngestion";
 
 // NOTE: `MeetingExternalActionInput` now lives on the port seam
 // (src/ports/meetingCloseout.ts) — it is part of the buildOutputs result — and is
@@ -115,6 +125,14 @@ export interface MeetingCloseoutDeps {
   readonly park: MeetingParkPort;
   readonly runs: WorkflowRunRefRepository;
   readonly clock: Clock;
+  /**
+   * 13.8f-C — OPTIONAL routing of a withheld PROPOSE-tier sibling entity-page plan into a PENDING §9.8
+   * Approval, reusing 13.8i's EXISTING port + composition-root sink (never a second one). Subordinate to
+   * `buildOutputs.siblingPlans` (only ever consulted when that's non-empty), mirroring `livingVault`'s
+   * own optionality on the source path. UNBOUND ⇒ a withheld sibling's mint attempt degrades to a typed
+   * failure (surfaced, never a silent drop, never a downgrade to auto-commit).
+   */
+  readonly proposeKnowledgeApproval?: ProposeKnowledgeApprovalPort;
 }
 
 // --- driver outcome --------------------------------------------------------
@@ -133,6 +151,14 @@ export interface MeetingCloseoutOutcome {
   readonly run: Result<WorkflowRunRef, WorkflowRunError>;
   readonly runReused: boolean;
   readonly surfaced?: MeetingWorkflowFailure;
+  /**
+   * 13.8f-C — the ordered ids of the sibling entity-page (AUTO-tier) plans this run actually COMMITTED
+   * (the one-action batch-undo unit) — NOT every plan the rewrite emitted, which would also include a
+   * withheld PROPOSE plan's id even though nothing was written for it. Empty when the rewrite leg is
+   * unbound or emitted nothing committable. Named identically to `SourceIngestionOutcome`'s own field so
+   * both paths report the same shape.
+   */
+  readonly livingVaultPlanIds: readonly string[];
 }
 
 // --- machine-transition helper ---------------------------------------------
@@ -228,6 +254,12 @@ export async function runMeetingCloseout(
   let state: MeetingCloseoutState = "detected";
   let context: MeetingCloseoutContext = input.context;
 
+  // 13.8f-C — the ordered ids of sibling entity-page plans this run actually COMMITS (populated in the
+  // sibling loop after step 5, below). A plain mutable array so `surface`'s closure (defined before that
+  // loop runs) always reads whatever has been accumulated by the time any return fires — empty on every
+  // branch that exits before the loop, which is exactly correct (nothing committed yet).
+  const livingVaultPlanIds: string[] = [];
+
   const surface = async (
     failState: MeetingCloseoutState,
     message: string,
@@ -242,7 +274,7 @@ export async function runMeetingCloseout(
     // sink itself errors we still return the failure state (fail-closed); the sink's
     // own error is the 7.5 seam's concern, not a reason to lose the machine state.
     await deps.health.surface(failure);
-    return { state: failState, context, run: runResult, runReused, surfaced: failure };
+    return { state: failState, context, run: runResult, runReused, surfaced: failure, livingVaultPlanIds };
   };
 
   // 2. Correlate (inv-1 / WS-2). A correlator error OR a low-confidence outcome parks
@@ -271,7 +303,7 @@ export async function runMeetingCloseout(
         auditRef: input.run.workflowId as unknown as AuditId,
       };
       await deps.health.surface(parkFailure);
-      return { state, context, run: runResult, runReused, surfaced: parkFailure };
+      return { state, context, run: runResult, runReused, surfaced: parkFailure, livingVaultPlanIds };
     }
     // Parked to the Ingestion Inbox — the normal routing-review signal (nothing silent, inv-5).
     return surface(state, "correlation low-confidence — parked to the Ingestion Inbox");
@@ -331,6 +363,21 @@ export async function runMeetingCloseout(
   const plan = built.value.plan;
   const actions = built.value.actions;
 
+  // 4c. 13.8f-C — the meeting-vault rewrite (embedded in the buildOutputs ACTIVITY, unlike the source
+  //     path where it runs directly in this workflow) may have THROWN and degraded to no link mutations
+  //     / no sibling plans. That degrade is best-effort by design (the meeting note's own commit must
+  //     never depend on it) but is never silent (inv-5): surface it here, before the main commit, then
+  //     continue — mirroring this file's OWN reindex-failure convention (write_through_failed: a
+  //     derived/secondary leg failed, the primary output stands).
+  if (built.value.meetingVaultRewriteFault !== undefined) {
+    await deps.health.surface({
+      failureClass: "write_through_failed",
+      subjectRef: input.run.workflowId,
+      message: `meeting-vault rewrite degraded (meeting note stands): ${built.value.meetingVaultRewriteFault}`,
+      auditRef: input.run.workflowId as unknown as AuditId,
+    });
+  }
+
   // 5. Commit the DERIVED semantic output through KnowledgeWriter (inv-4: the SOLE
   //    Markdown writer). IDEMPOTENT by the plan's key (inv-5): a replay reuses the
   //    prior revision (no second write / audit). A compare-revision clash →
@@ -342,6 +389,74 @@ export async function runMeetingCloseout(
   }
   state = advance(state, ["knowledge_committed"]);
   context = { ...context, revisionId: committed.value.revisionId };
+
+  // 5b. 13.8f-C — commit the sibling entity-page (person/project) plans through the SAME
+  //     KnowledgeWriter port, mirroring 13.8i's source-path loop (sourceIngestion.ts step 7b). Ordered
+  //     AFTER the meeting note's own commit so a later fault here can never leave a sibling plan
+  //     durably committed while the same build() call reports an error (the hazard 13.8f-B's own
+  //     scoping ruled out putting this loop in the activity). Each plan is individually idempotent, so
+  //     a re-drive replays.
+  //
+  //     ⛔ AUTO TIER ONLY. A sibling plan marked `requiresApproval !== false` belongs to the §9.8
+  //     Approvals surface — committing it here would auto-apply exactly the class of edit the approval
+  //     gate exists to hold. It is WITHHELD instead — NEVER falls through to commit regardless of what
+  //     happens next. Strict `!== false`: an absent/unknown flag withholds (fail-closed).
+  //
+  //     Completing the tier split exactly as 13.8i does: a withheld plan is ROUTED into a PENDING §9.8
+  //     Approval via the injected `proposeKnowledgeApproval` port (reusing the EXISTING
+  //     copilotProposeKnowledgeSink minting — never a second sink). UNBOUND port, a rejected mint, OR a
+  //     throw are ALL the same safe outcome: the plan stays withheld and the fault is surfaced — never a
+  //     downgrade to auto-commit.
+  let queuedForApproval = 0;
+  for (const sibling of built.value.siblingPlans) {
+    if (sibling.requiresApproval !== false) {
+      let proposed: Result<ProposeKnowledgeApprovalResult, ProposeKnowledgeApprovalError> | undefined;
+      try {
+        proposed =
+          deps.proposeKnowledgeApproval === undefined
+            ? undefined
+            : await deps.proposeKnowledgeApproval.propose(sibling, boundWorkspaceId);
+      } catch {
+        proposed = undefined;
+      }
+      if (proposed !== undefined && isOk(proposed)) {
+        queuedForApproval += 1;
+      } else {
+        const reason = proposed === undefined ? "propose_port_unbound_or_threw" : proposed.error.code;
+        await deps.health.surface({
+          failureClass: "write_through_failed",
+          subjectRef: input.run.workflowId,
+          message: `meeting sibling PROPOSE plan could not be queued for approval (withheld, never committed): ${reason}`,
+          auditRef: input.run.workflowId as unknown as AuditId,
+        });
+      }
+      continue; // NEVER falls through to commit, regardless of the mint outcome above
+    }
+    const extra = await deps.commit.commit(sibling);
+    if (!isOk(extra)) {
+      // BEST-EFFORT, matching the reindex-failure convention below: the meeting note's own revision is
+      // already durable and a sibling plan is an enrichment of it, so a failure here is surfaced
+      // (inv-5) and the closeout continues rather than failing a run whose primary output succeeded.
+      await deps.health.surface({
+        failureClass: commitFailureClass(extra.error.code),
+        subjectRef: input.run.workflowId,
+        message: `meeting sibling commit failed (meeting note stands): ${extra.error.code}`,
+        auditRef: input.run.workflowId as unknown as AuditId,
+      });
+    } else {
+      // The batch-undo unit reflects what was ACTUALLY COMMITTED, not what the producer merely
+      // emitted (a withheld PROPOSE plan has no revision to undo — mirrors 13.8i's own ruling).
+      livingVaultPlanIds.push(String(sibling.planId));
+    }
+  }
+  if (queuedForApproval > 0) {
+    await deps.health.surface({
+      failureClass: "conflict_review",
+      subjectRef: input.run.workflowId,
+      message: `meeting closeout queued ${queuedForApproval} sibling plan(s) for §9.8 approval`,
+      auditRef: input.run.workflowId as unknown as AuditId,
+    });
+  }
 
   // 6. Re-index GBrain AFTER the Markdown commit (inv-4): async + idempotent. A
   //    re-index failure surfaces a health item but NEVER rolls the commit back — the
@@ -362,7 +477,7 @@ export async function runMeetingCloseout(
   // No external actions ⇒ summarize straight from knowledge_committed.
   if (actions.length === 0) {
     state = advance(state, ["summarized"]);
-    return { state, context, run: runResult, runReused };
+    return { state, context, run: runResult, runReused, livingVaultPlanIds };
   }
 
   // 7. External-action stage (inv-4/inv-5): every external write goes through the Tool
@@ -389,5 +504,5 @@ export async function runMeetingCloseout(
 
   // 8. Summarize (happy terminal).
   state = advance(state, ["summarized"]);
-  return { state, context, run: runResult, runReused };
+  return { state, context, run: runResult, runReused, livingVaultPlanIds };
 }

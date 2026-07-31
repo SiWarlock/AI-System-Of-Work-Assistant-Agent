@@ -17,7 +17,7 @@
 //     external write are REUSED (fakes report replayed/reused; each happens exactly once).
 //   • EVERY failure branch surfaces a 7.5 health item (nothing silent, inv-5).
 import { describe, it, expect } from "vitest";
-import { isOk, ok } from "@sow/contracts";
+import { isOk, ok, planId } from "@sow/contracts";
 import { workflowId } from "@sow/contracts";
 import type {
   WorkspaceId,
@@ -641,5 +641,210 @@ describe("runMeetingCloseout — G5 low-confidence park", () => {
     const outcome = await runMeetingCloseout(makeInput(), deps);
     expect(outcome.state).not.toBe("needs_routing_review");
     expect(park.calls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 13.8f-C — commit sibling entity-page plans (person/project) after the meeting note's own commit.
+// Mirrors 13.8i's source-path loop (sourceIngestion.ts step 7b): AUTO tier commits through the SAME
+// CommitKnowledgePort; PROPOSE tier routes to a §9.8 Approval via the SAME ProposeKnowledgeApprovalPort
+// 13.8i built (../src/ports/sourceIngestion) — reused directly (its shape is generic over any
+// KnowledgeMutationPlan + WorkspaceId), never a meeting-path analog.
+// ---------------------------------------------------------------------------
+
+function siblingPlan(id: string, requiresApproval = false): KnowledgeMutationPlan {
+  return {
+    planId: planId(id),
+    workspaceId: WS,
+    sourceRefs: [],
+    creates: [],
+    patches: [],
+    linkMutations: [],
+    frontmatterUpdates: [],
+    confidence: 1,
+    requiresApproval,
+    provenanceOrigin: "meeting_close",
+  } as unknown as KnowledgeMutationPlan;
+}
+
+// 13.8i's propose-knowledge-approval port shape (../src/ports/sourceIngestion) — GREEN adds the field
+// to MeetingCloseoutDeps that accepts exactly this port. Kept LOCAL + type-only here (mirrors
+// source-living-vault-binding.test.ts) so nothing production is touched before GREEN.
+interface FakeProposeKnowledgeApprovalResult {
+  readonly approvalRef: string;
+  readonly created: boolean;
+}
+interface FakeProposeKnowledgeApprovalError {
+  readonly code: "mint_failed";
+  readonly message: string;
+}
+
+class SpyProposeKnowledgePort {
+  calls: { readonly plan: KnowledgeMutationPlan; readonly workspaceId: WorkspaceId }[] = [];
+  constructor(
+    private readonly outcome:
+      | { readonly kind: "ok"; readonly approvalRef?: string; readonly created?: boolean }
+      | { readonly kind: "err" }
+      | { readonly kind: "throws" } = { kind: "ok" },
+  ) {}
+  propose(
+    plan: KnowledgeMutationPlan,
+    workspaceId: WorkspaceId,
+  ): Promise<Result<FakeProposeKnowledgeApprovalResult, FakeProposeKnowledgeApprovalError>> {
+    this.calls.push({ plan, workspaceId });
+    if (this.outcome.kind === "throws") throw new Error("propose exploded");
+    if (this.outcome.kind === "err") {
+      return Promise.resolve(err({ code: "mint_failed", message: "fake mint failure" }));
+    }
+    return Promise.resolve(
+      ok({ approvalRef: this.outcome.approvalRef ?? "apr_fake", created: this.outcome.created ?? true }),
+    );
+  }
+}
+
+/** A commit port that fails ONLY for plans whose planId is in `failFor`; captures + succeeds otherwise —
+ *  lets a test simulate the meeting note's own commit succeeding while a specific sibling's fails. */
+class FailForPlanIdsCommitPort implements CommitKnowledgePort {
+  readonly captured: KnowledgeMutationPlan[] = [];
+  private n = 0;
+  constructor(private readonly failFor: ReadonlySet<string>) {}
+  commit(plan: KnowledgeMutationPlan): Promise<Result<KnowledgeCommitSuccess, KnowledgeCommitFailure>> {
+    if (this.failFor.has(String(plan.planId))) {
+      return Promise.resolve(err({ code: "commit_failed", message: "fake sibling commit failure" }));
+    }
+    this.captured.push(plan);
+    this.n += 1;
+    return Promise.resolve(ok({ revisionId: `rev-sib-${this.n}`, replayed: false }));
+  }
+}
+
+describe("runMeetingCloseout — 13.8f-C: commit sibling entity-page plans after the meeting note's own commit", () => {
+  it("sibling_plans_commit_after_the_meeting_note: ordering pinned by a test, not asserted in a comment", async () => {
+    const captured: KnowledgeMutationPlan[] = [];
+    const commit = new CapturingCommitPort(captured);
+    const buildOutputs = new FakeBuildOutputsPort({
+      siblingPlans: [siblingPlan("sib-1"), siblingPlan("sib-2")],
+    });
+    const outcome = await runMeetingCloseout(makeInput(), makeDeps({ commit, buildOutputs }));
+
+    expect(outcome.state).toBe("summarized");
+    expect(captured).toHaveLength(3); // the meeting note's own plan + 2 siblings
+    // The meeting note's own plan commits FIRST; the two siblings follow, in order.
+    expect(captured.slice(1).map((p) => String(p.planId))).toEqual(["sib-1", "sib-2"]);
+  });
+
+  it("only_the_auto_tier_commits: a mixed set commits AUTO, withholds PROPOSE", async () => {
+    const captured: KnowledgeMutationPlan[] = [];
+    const commit = new CapturingCommitPort(captured);
+    const propose = new SpyProposeKnowledgePort({ kind: "ok" });
+    const buildOutputs = new FakeBuildOutputsPort({
+      siblingPlans: [siblingPlan("sib-auto"), siblingPlan("sib-propose", true)],
+    });
+    const outcome = await runMeetingCloseout(
+      makeInput(),
+      makeDeps({ commit, buildOutputs, proposeKnowledgeApproval: propose } as never),
+    );
+
+    expect(outcome.state).toBe("summarized");
+    expect(captured.slice(1).map((p) => String(p.planId))).toEqual(["sib-auto"]);
+  });
+
+  it("a_propose_tier_sibling_never_reaches_commit — the load-bearing safety pin", async () => {
+    // MUTATION-VERIFIED at GREEN: the driver's `if (siblingPlan.requiresApproval !== false)` is
+    // temporarily inverted to `=== false`, confirmed this test reds, then reverted (Step-9 report).
+    const captured: KnowledgeMutationPlan[] = [];
+    const commit = new CapturingCommitPort(captured);
+    const propose = new SpyProposeKnowledgePort({ kind: "ok" });
+    const buildOutputs = new FakeBuildOutputsPort({
+      siblingPlans: [siblingPlan("sib-propose-only", true)],
+    });
+    await runMeetingCloseout(
+      makeInput(),
+      makeDeps({ commit, buildOutputs, proposeKnowledgeApproval: propose } as never),
+    );
+
+    expect(captured.map((p) => String(p.planId))).not.toContain("sib-propose-only");
+  });
+
+  it("an_absent_flag_sibling_is_withheld_AND_minted: the fail-closed leg, both halves", async () => {
+    const captured: KnowledgeMutationPlan[] = [];
+    const commit = new CapturingCommitPort(captured);
+    const propose = new SpyProposeKnowledgePort({ kind: "ok" });
+    const noFlag = { ...siblingPlan("sib-unknown") } as Record<string, unknown>;
+    delete noFlag.requiresApproval;
+    const buildOutputs = new FakeBuildOutputsPort({
+      siblingPlans: [noFlag as unknown as KnowledgeMutationPlan],
+    });
+
+    await runMeetingCloseout(
+      makeInput(),
+      makeDeps({ commit, buildOutputs, proposeKnowledgeApproval: propose } as never),
+    );
+
+    expect(captured).toHaveLength(1); // the meeting note only — never auto-committed
+    expect(propose.calls).toHaveLength(1); // AND minted — not silently dropped
+    expect(String(propose.calls[0]?.plan.planId)).toBe("sib-unknown");
+  });
+
+  it("a_sibling_commit_failure_does_not_fail_the_closeout: degrade-not-fail; the meeting note's revision stands and a health item surfaces", async () => {
+    const commit = new FailForPlanIdsCommitPort(new Set(["sib-fails"]));
+    const health = new FakeMeetingHealthSink();
+    const buildOutputs = new FakeBuildOutputsPort({
+      siblingPlans: [siblingPlan("sib-fails")],
+    });
+    const outcome = await runMeetingCloseout(makeInput(), makeDeps({ commit, health, buildOutputs }));
+
+    expect(outcome.state).toBe("summarized"); // the closeout still reaches its happy terminal
+    expect(commit.captured).toHaveLength(1); // the meeting note's own commit stands
+    expect(health.surfaced.some((f) => /sibling commit failed/i.test(f.message))).toBe(true);
+  });
+
+  it("a_rewrite_fault_does_not_fail_the_closeout: same, one layer up", async () => {
+    const commit = new FakeCommitPort();
+    const health = new FakeMeetingHealthSink();
+    const buildOutputs = new FakeBuildOutputsPort({
+      siblingPlans: [],
+      meetingVaultRewriteFault: "rewrite_threw",
+    });
+    const outcome = await runMeetingCloseout(makeInput(), makeDeps({ commit, health, buildOutputs }));
+
+    expect(outcome.state).toBe("summarized");
+    expect(health.surfaced.some((f) => /rewrite/i.test(f.message))).toBe(true);
+  });
+
+  it("committed_plan_ids_exclude_withheld_plans: the accumulate-on-success rule, stated as the property rather than the mechanism", async () => {
+    const commit = new FakeCommitPort();
+    const propose = new SpyProposeKnowledgePort({ kind: "ok" });
+    const buildOutputs = new FakeBuildOutputsPort({
+      siblingPlans: [
+        siblingPlan("sib-first"),
+        siblingPlan("sib-propose-mid", true),
+        siblingPlan("sib-last"),
+      ],
+    });
+    const outcome = await runMeetingCloseout(
+      makeInput(),
+      makeDeps({ commit, buildOutputs, proposeKnowledgeApproval: propose } as never),
+    );
+
+    expect(outcome.livingVaultPlanIds).toEqual(["sib-first", "sib-last"]);
+  });
+
+  it("a_benign_run_with_no_sibling_plans_commits_and_mints_nothing: non-vacuity control (L80)", async () => {
+    const commit = new FakeCommitPort();
+    const health = new FakeMeetingHealthSink();
+    const propose = new SpyProposeKnowledgePort({ kind: "ok" });
+    const buildOutputs = new FakeBuildOutputsPort({ siblingPlans: [] });
+    const outcome = await runMeetingCloseout(
+      makeInput(),
+      makeDeps({ commit, health, buildOutputs, proposeKnowledgeApproval: propose } as never),
+    );
+
+    expect(outcome.state).toBe("summarized");
+    expect(propose.calls).toHaveLength(0);
+    expect(outcome.livingVaultPlanIds).toEqual([]);
+    expect(health.surfaced.some((f) => /queued .* plan\(s\) for §9\.8 approval/i.test(f.message))).toBe(
+      false,
+    );
   });
 });
