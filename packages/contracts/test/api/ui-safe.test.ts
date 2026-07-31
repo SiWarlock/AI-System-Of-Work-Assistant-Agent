@@ -13,6 +13,7 @@ import {
   UiSafeDashboardCardSchema,
   UiSafeGclProjectionSchema,
   UiSafeRecentChangeSchema,
+  UiSafeAuditDrillSummarySchema,
   UiSafeProjectProgressSchema,
   UiSafeManagedDocSchema,
   UiSafeProjectDashboardSchema,
@@ -49,6 +50,8 @@ const PROJECTIONS = [
   ["dashboardCard", UiSafeDashboardCardSchema, UI_SAFE_ALLOWLIST.dashboardCard] as const,
   ["gclProjection", UiSafeGclProjectionSchema, UI_SAFE_ALLOWLIST.gclProjection] as const,
   ["recentChange", UiSafeRecentChangeSchema, UI_SAFE_ALLOWLIST.recentChange] as const,
+  // 9.41 leg A (9.10-D sub-arc) — the resolved audit drill-down summary.
+  ["auditDrillSummary", UiSafeAuditDrillSummarySchema, UI_SAFE_ALLOWLIST.auditDrillSummary] as const,
   ["projectProgress", UiSafeProjectProgressSchema, UI_SAFE_ALLOWLIST.projectProgress] as const,
   ["managedDoc", UiSafeManagedDocSchema, UI_SAFE_ALLOWLIST.managedDoc] as const,
   ["projectDashboard", UiSafeProjectDashboardSchema, UI_SAFE_ALLOWLIST.projectDashboard] as const,
@@ -145,6 +148,23 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
     expect(UI_SAFE_ALLOWLIST.recentChange).not.toContain("workspaceId");
   });
 
+  // 9.41 leg A (9.10-D sub-arc) — the resolved audit drill-down. UiSafeRecentChange already
+  // mints changeId for a future "worker-mediated audit drill" (see its own header comment);
+  // this is that drill's result. The arc invariant: auditRef NEVER leaves the worker, and the
+  // summary is PROVENANCE only (event + occurredAt) — not the mutation's contents, because the
+  // renderer already shows the change itself. Everything else AuditRecord carries is dropped:
+  // the internal auditRef/refs, the principal actor, the content-derived payloadHash, the
+  // unbounded-raw before/afterSummary, and workspaceId (the worker scopes the query, not the row).
+  it("UiSafeAuditDrillSummary omits auditRef/actor/refs/payloadHash/beforeSummary/afterSummary/workspaceId", () => {
+    expect(UI_SAFE_ALLOWLIST.auditDrillSummary).not.toContain("auditRef");
+    expect(UI_SAFE_ALLOWLIST.auditDrillSummary).not.toContain("actor");
+    expect(UI_SAFE_ALLOWLIST.auditDrillSummary).not.toContain("refs");
+    expect(UI_SAFE_ALLOWLIST.auditDrillSummary).not.toContain("payloadHash");
+    expect(UI_SAFE_ALLOWLIST.auditDrillSummary).not.toContain("beforeSummary");
+    expect(UI_SAFE_ALLOWLIST.auditDrillSummary).not.toContain("afterSummary");
+    expect(UI_SAFE_ALLOWLIST.auditDrillSummary).not.toContain("workspaceId");
+  });
+
   // ── Behaviors: each schema accepts a valid sample + rejects unknown keys ─────
   it("UiSafeApprovalSchema accepts a valid sample + rejects an unknown key", () => {
     const sample = {
@@ -189,6 +209,28 @@ describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage g
     expect(UiSafeRecentChangeSchema.safeParse({ ...base, changeId: "chg-1" }).success).toBe(true);
     // Empty is rejected (a handle must be non-empty).
     expect(UiSafeRecentChangeSchema.safeParse({ ...base, changeId: "" }).success).toBe(false);
+  });
+
+  // 9.41 leg A (9.10-D sub-arc) — the resolved audit drill-down's own accept/reject behavior:
+  // a valid {event, occurredAt} sample parses, and each of the 7 forbidden fields injected
+  // individually is rejected (.strict()) — the behavioral proof, not just the allowlist-array check.
+  it("UiSafeAuditDrillSummarySchema accepts a valid sample + rejects each forbidden field via .strict()", () => {
+    const sample = { event: "kw_commit", occurredAt: "2026-07-30T00:00:00.000Z" };
+    expect(UiSafeAuditDrillSummarySchema.safeParse(sample).success).toBe(true);
+    for (const leak of [
+      { auditRef: "audit-1" },
+      { actor: "KnowledgeWriter" },
+      { refs: ["plan-1"] },
+      { payloadHash: "sha256:x" },
+      { beforeSummary: "before" },
+      { afterSummary: "after" },
+      { workspaceId: "employer-work" },
+    ]) {
+      expect(
+        UiSafeAuditDrillSummarySchema.safeParse({ ...sample, ...leak }).success,
+        JSON.stringify(leak),
+      ).toBe(false);
+    }
   });
 
   // 9.9 — the UI-safe schedule/calendar projection: busy/free windows + GENERIC conflict explanation

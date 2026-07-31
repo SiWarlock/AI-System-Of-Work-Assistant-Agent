@@ -326,6 +326,45 @@ export const UiSafeRecentChangeSchema = z
   })
   .strict();
 
+// ── UiSafeAuditDrillSummary ──────────────────────────────────────────────────
+// 9.41 leg A (9.10-D sub-arc) — the resolved audit drill-down. `UiSafeRecentChange`
+// above mints an opaque `changeId` for exactly this: "a future worker-mediated
+// audit drill" (see its own header). This is that drill's RESULT. The worker
+// resolver (leg B) takes the opaque `changeId`, re-derives the backing
+// `AuditRecord` server-side, re-checks scope-ownership (WS-8), and returns ONLY
+// this narrow summary — `auditRef` itself NEVER leaves the worker, and there is
+// no row id to leak (AuditRecord carries none; AuditRepository exposes only
+// append + query(filter,limit), never get(id)).
+//   - `event`      : the audited action's short display label. `AuditRecord.event`
+//                    is an OPEN non-empty string (arch_gap — no closed taxonomy
+//                    given upstream), so this is bounded the same way
+//                    UiSafeRecentChange bounds its own `kind`: a display token,
+//                    not the raw unbounded string.
+//   - `occurredAt` : ISO datetime, from `AuditRecord.timestamps.occurredAt`
+//                    (mirrors UiSafeRecentChange.occurredAt exactly).
+// DROPPED from AuditRecord, deliberately, per the lead's 2026-07-29 arc ruling —
+// the argument a future reader must DEFEAT, not merely re-raise: an audit link's
+// value is PROVENANCE, not CONTENTS, because the renderer already shows the
+// change itself:
+//   - `auditRef` (the arc invariant: never leaves the worker) · `actor` (principal
+//     identity, like UiSafeApproval) · `refs` (internal refs, like UiSafeHealthItem
+//     drops its own `auditRef`) · `payloadHash` (content-derived hash)
+//   - `beforeSummary` / `afterSummary` (unbounded raw mutation summaries — "unbounded
+//     raw" is this file's own reason UiSafeRecentChange already drops them)
+//   - `workspaceId` (mirrors UiSafeRecentChange/UiSafeDashboardCard — the worker
+//     scopes the query, not the row)
+export interface UiSafeAuditDrillSummary {
+  event: string;
+  occurredAt: string;
+}
+
+export const UiSafeAuditDrillSummarySchema = z
+  .object({
+    event: uiSafeToken,
+    occurredAt: z.string().datetime(),
+  })
+  .strict();
+
 // ── UiSafeProjectProgress ────────────────────────────────────────────────────
 // The DETERMINISTIC progress of a project (§9.5, REQ-F-011): counts PARSED from real task
 // state (GFM checkboxes) by the worker's `computePercent`/`countCheckboxes` — NEVER a
@@ -635,6 +674,7 @@ const _uiSafeParity: [
   Exact<z.infer<typeof UiSafeDashboardCardSchema>, UiSafeDashboardCard>,
   Exact<z.infer<typeof UiSafeGclProjectionSchema>, UiSafeGclProjection>,
   Exact<z.infer<typeof UiSafeRecentChangeSchema>, UiSafeRecentChange>,
+  Exact<z.infer<typeof UiSafeAuditDrillSummarySchema>, UiSafeAuditDrillSummary>,
   Exact<z.infer<typeof UiSafeProjectProgressSchema>, UiSafeProjectProgress>,
   Exact<z.infer<typeof UiSafeManagedDocSchema>, UiSafeManagedDoc>,
   Exact<z.infer<typeof UiSafeProjectDashboardSchema>, UiSafeProjectDashboard>,
@@ -645,7 +685,7 @@ const _uiSafeParity: [
   Exact<z.infer<typeof UiSafeScheduleSchema>, UiSafeSchedule>,
   Exact<z.infer<typeof UiSafeTaskRollupItemSchema>, UiSafeTaskRollupItem>,
   Exact<z.infer<typeof UiSafeTaskRollupSchema>, UiSafeTaskRollup>,
-] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
 void _uiSafeParity;
 
 // ── Checked-in allowlist — THE source of truth ───────────────────────────────
@@ -660,6 +700,7 @@ export const UI_SAFE_ALLOWLIST = {
   dashboardCard: ["cardId", "count", "kind", "status", "title", "updatedAt"],
   gclProjection: ["drillable", "projectionType", "summary", "visibilityLevel", "workspaceId"],
   recentChange: ["changeId", "kind", "occurredAt", "summary"],
+  auditDrillSummary: ["event", "occurredAt"],
   projectProgress: ["completedCount", "percentComplete", "totalCount"],
   managedDoc: ["linkState", "slot", "syncState", "title"],
   projectDashboard: [
