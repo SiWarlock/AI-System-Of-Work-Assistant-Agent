@@ -554,6 +554,13 @@ function failClosedEgress(workspaceId: string): UiSafeEgressStatus {
  * NOT ESTABLISHED) on absence OR any store fault — a fault can never PROVE local-only.
  */
 export function createSystemHealthQueryPort(backends: ProofSpineBackends): SystemHealthQueryPort {
+  // Task 9.38 — the System-Health surface a corrupt stored row mints INTO, over the SAME
+  // persistent store the degraded controller's surface binds (backends.healthItems) so a
+  // corruption item survives a restart same as any other. Constructed once; `egressStatus`
+  // mints on its own corrupt branch below — there is no second, deferred mint path.
+  const corruptionSurface: HealthSurface = createHealthSurface(
+    createPersistentHealthSurfaceStore(backends.healthItems),
+  );
   return {
     async healthItems(): Promise<Result<readonly HealthItem[], FailureVariant>> {
       try {
@@ -576,7 +583,30 @@ export function createSystemHealthQueryPort(backends: ProofSpineBackends): Syste
       // fault ⇒ the FAIL-CLOSED safe default (raw egress OFF, zero-egress NOT ESTABLISHED).
       try {
         const got = await backends.repos.workspaceConfig.get(wsId as WorkspaceId);
-        if (!isOk(got)) return { ok: true, value: failClosedEgress(wsId) };
+        if (!isOk(got)) {
+          // Task 9.38 — a stored_row_schema_violation is a DISTINCT, code-only System-Health
+          // item (never a change to the fail-closed return below): the operator can now see
+          // the corruption. `not_found` (absence) and a thrown/transient outage (the catch
+          // below) mint NOTHING, so they stay distinguishable from a genuine corruption. The
+          // mint is keyed-upsert on (failureClass, subjectRef) — a recurring poll of the same
+          // corrupt row bumps the existing item, never appends. Code-only (safety rule 7): the
+          // message is a static string; the raw ZodError in `got.error.cause` is never touched.
+          if (got.error.code === "stored_row_schema_violation") {
+            // Best-effort, deliberately unchecked (mirrors the L53 credential-unavailable mint):
+            // this whole branch sits inside egressStatus's outer try, so even a `record` fault
+            // still falls through to the SAME failClosedEgress return below — threading its
+            // Result into the response would risk exactly the fail-closed-unchanged violation
+            // this slice exists to prevent. Do not "fix" this by checking the Result.
+            await corruptionSurface.record({
+              failureClass: "schema_rejection",
+              subjectRef: `${wsId}:stored_row_schema_violation`,
+              message: "workspace config stored row failed re-validation (stored_row_schema_violation)",
+              auditRef: WORKSPACE_CONFIG_CORRUPTION_AUDIT_REF,
+              now: backends.now(),
+            });
+          }
+          return { ok: true, value: failClosedEgress(wsId) };
+        }
         const acknowledged = got.value.egressPolicy.employerRawEgressAcknowledged;
         // 9.22 — DERIVED from the option-C predicate over the full workspace already read above, never
         // from `!acknowledged` (consent is not routing; conflating the two was the original defect).
@@ -602,6 +632,9 @@ const BOOT_AUDIT_REF: AuditId = auditId("worker-boot:temporal-degraded");
 // §13 task 11.3-b — a dedicated audit subject for the GBrain version-pin startup verify degrades
 // (distinct from the temporal-degraded subject so audit-by-subject stays precise).
 const GBRAIN_VERIFY_AUDIT_REF: AuditId = auditId("worker-boot:gbrain-version-pin");
+// Task 9.38 — a dedicated audit subject for a stored workspace-config row failing re-validation
+// at the 9.36 read-boundary gate (distinct subject so audit-by-subject stays precise).
+const WORKSPACE_CONFIG_CORRUPTION_AUDIT_REF: AuditId = auditId("worker-boot:workspace-config-corruption");
 
 /**
  * §13.10d go-live flag-gating for the read-only VAULT page-read deps. Build them (via `buildDeps`, which
