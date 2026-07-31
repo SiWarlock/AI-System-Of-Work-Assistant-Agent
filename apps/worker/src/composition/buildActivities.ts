@@ -146,6 +146,7 @@ import type {
   ValidatedExtraction,
   MeetingBuiltOutputs,
   BuildOutputsFailure,
+  MeetingVaultRewritePort,
 } from "@sow/workflows";
 import type { BrokerOutcome } from "@sow/providers";
 
@@ -318,6 +319,17 @@ export interface ProofSpineParams {
    * boot call site is the arming follow-up and does NOT exist yet, so today this is always unset.
    */
   readonly livingVault?: SourceLivingVaultPort;
+  /**
+   * 13.8f-B — the OPTIONAL meeting-path living-vault rewrite port (§6 KN-10, the meeting analog of
+   * `livingVault`). UNSET is the shipped default ⇒ `meetingBuildOutputs`'s plan keeps `linkMutations: []`,
+   * byte-equivalent to pre-13.8f-B. It is TO BE supplied by `boot.ts`'s `gateMeetingVaultRewrite` on the
+   * owner-armed path (built via `createMeetingVaultPort`, apps/worker/src/composition/meeting-vault.ts);
+   * that boot call site is a future arming follow-up and does NOT exist yet, so today this is always
+   * unset. Narrow cut (13.8f-B): only `meetingNoteLinkMutations` folds here — the sibling entity-page
+   * `plans` a real rewrite also derives are 13.8f-C's territory (tracked separately), not read via this
+   * field at all.
+   */
+  readonly meetingVault?: MeetingVaultRewritePort;
 }
 
 // ---------------------------------------------------------------------------
@@ -525,6 +537,9 @@ export function buildProofSpineActivities(
     sourceRef: params.sourceRef,
     planIdentity: params.planIdentity,
     noteExists: meetingNoteExists,
+    // 13.8f-B — narrow cut: UNSET on the shipped default (params.meetingVault is always undefined until
+    // a future boot.ts call site exists), so linkMutations stays [], byte-equivalent to pre-13.8f-B.
+    meetingVaultRewrite: params.meetingVault,
   });
 
   // (e) commit — the REAL KnowledgeWriter applyPlan; REAL ownership+secret defaults.

@@ -32,6 +32,9 @@ import type {
   ExternalWriteEnvelope,
   AuditId,
   FailureClass,
+  SourceRef,
+  ProvenanceOrigin,
+  LinkMutation,
 } from "@sow/contracts";
 import type { ExtractionField, NoInferenceRejection } from "@sow/domain";
 
@@ -319,6 +322,44 @@ export interface BuildOutputsPort {
     validated: ValidatedExtraction,
     workspaceId: WorkspaceId,
   ): Promise<Result<MeetingBuiltOutputs, BuildOutputsFailure>>;
+}
+
+// ---------------------------------------------------------------------------
+// (2c″) MeetingVaultRewritePort — 13.8f-B: the meeting-path analog of
+// SourceLivingVaultPort (ports/sourceIngestion.ts), narrow cut
+// ---------------------------------------------------------------------------
+
+/**
+ * The 13.8f-B narrow-cut result of a meeting-path living-vault rewrite: ONLY the additive links whose
+ * `srcPath` is the meeting note itself — the piece {@link BuildOutputsPort}'s activity folds into the
+ * meeting note's OWN plan. Deliberately NOT the full `MeetingRewriteReceipt`:
+ *   • `groundedPaths` is UNREPRESENTABLE here, not merely unlogged (safety rule 7) — this port's shape
+ *     structurally cannot carry it, so there is no field a future caller could accidentally log.
+ *   • `plans` (the sibling entity-page KMPs) and `refusals` (the 13.8m-C audit codes) are OMITTED on
+ *     purpose: committing `plans` is tracked separately (13.8f-C — the `requiresApproval !== false`
+ *     AUTO/PROPOSE split is 13.8i's §9.8-Approvals territory, not this slice's), and adding `refusals`
+ *     with no consumer yet would mint a fresh L106 capability-not-guarantee. 13.8m widens this type when
+ *     it builds the sink — do not add fields here speculatively.
+ */
+export interface MeetingVaultRewriteResult {
+  readonly meetingNoteLinkMutations: readonly LinkMutation[];
+}
+
+/**
+ * The meeting-path analog of `SourceLivingVaultPort` (ports/sourceIngestion.ts) — derives the meeting
+ * note's own additive link mutations for one meeting closeout. PURE from this port's perspective (no
+ * durable write; the underlying `rewriteVaultForMeeting` is total-never-throws); the real adapter lives
+ * at the composition root (apps/worker/src/composition/meeting-vault.ts, 13.8f-B). Optional on
+ * {@link BuildOutputsActivityDeps}; UNSET ⇒ the shipped default (never called, `linkMutations` stays `[]`
+ * — byte-equivalent to pre-13.8f-B).
+ */
+export interface MeetingVaultRewritePort {
+  rewrite(
+    workspaceId: WorkspaceId,
+    meetingNotePath: string,
+    sourceRef: SourceRef,
+    provenanceOrigin: ProvenanceOrigin,
+  ): Promise<MeetingVaultRewriteResult>;
 }
 
 // ---------------------------------------------------------------------------

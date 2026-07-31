@@ -411,6 +411,15 @@ export interface BootConfig extends BackendsConfig {
    */
   readonly livingVaultRewrite?: boolean;
   /**
+   * 13.8f-B — the OWNER opt-in that arms the meeting-path living-vault rewrite (§6 KN-10 — the meeting
+   * analog of `livingVaultRewrite`). ABSENT (the shipped default) ⇒ the leg is unbound and the meeting
+   * closeout's `linkMutations` stays `[]`, byte-equivalent to pre-13.8f-B. Read ONLY through
+   * {@link gateMeetingVaultRewrite}, which requires a strict `=== true` — no second precondition (unlike
+   * `livingVaultRewrite`'s `vaultRoot`), because the meeting adapter performs no realpath containment
+   * (see apps/worker/src/composition/meeting-vault.ts's own header for why that's not a gap).
+   */
+  readonly meetingVaultRewrite?: boolean;
+  /**
    * §13.10a — mirror flag for the SEMANTIC-write propose tool (`copilot.propose_knowledge`). OFF by default.
    * EFFECTIVE only when the dispatch side is provisioned (`proofSpineParams`) — else a proposed card could not
    * be committed on approval. Mutually exclusive with `copilotProposeMode` (both on ⇒ the capability resolver
@@ -713,6 +722,33 @@ export function gateLivingVaultRewrite<T>(
   if (gate.livingVaultRewrite !== true) return undefined;
   if (typeof gate.vaultRoot !== "string" || gate.vaultRoot.length === 0) return undefined;
   return buildWiring(gate.vaultRoot);
+}
+
+/**
+ * 13.8f-B arming gate for the MEETING-path living-vault rewrite (§6 KN-10) — the meeting analog of
+ * {@link gateLivingVaultRewrite} (13.8d), same shape. Build the wiring (via `buildWiring`) IFF the owner
+ * opt-in is strictly `true`; any missing precondition ⇒ `undefined` (fail-safe —
+ * `BuildOutputsActivityDeps.meetingVaultRewrite` stays unbound and the meeting closeout is
+ * byte-equivalent to pre-13.8f-B). No second precondition (unlike `gateLivingVaultRewrite`'s
+ * `vaultRoot`): the meeting adapter performs no realpath containment — see
+ * apps/worker/src/composition/meeting-vault.ts's own header for why that's not a gap this slice opens.
+ *
+ * STRICT `=== true`, not truthiness (worker L28 / knowledge L2) — same reasoning as
+ * `gateLivingVaultRewrite`: this flag reaches the worker through env/IPC-derived config where
+ * `"true"`/`"false"`/`1` are all truthy, and the capability it arms mutates the vault.
+ *
+ * `buildWiring` is a THUNK invoked ONLY on the armed path (worker L2/L16), so the OFF path constructs
+ * nothing — no adapter, no knowledge deps. Exported for the boot-gating unit test
+ * (`test/boot-meeting-vault-gating.test.ts`); it has no other consumer — there is NO `bootWorker` call
+ * site yet (nothing constructs the real `MeetingRewriteDeps`), so this gate is dormant by ABSENCE as
+ * well as by flag, exactly like `gateLivingVaultRewrite` today.
+ */
+export function gateMeetingVaultRewrite<T>(
+  gate: { readonly meetingVaultRewrite?: boolean },
+  buildWiring: () => T,
+): T | undefined {
+  if (gate.meetingVaultRewrite !== true) return undefined;
+  return buildWiring();
 }
 
 /**

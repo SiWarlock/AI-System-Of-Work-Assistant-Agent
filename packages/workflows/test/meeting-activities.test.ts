@@ -33,12 +33,15 @@ import type {
   ExternalWriteEnvelope,
   WriteReceipt,
   WorkflowRunRef,
+  LinkMutation,
 } from "@sow/contracts";
 import { TBD } from "@sow/domain";
 import { makeMeetingContext, makeAgentExtraction } from "./support/meeting-fakes";
 import type {
   AgentExtraction,
   ValidatedExtraction,
+  MeetingVaultRewritePort,
+  MeetingVaultRewriteResult,
 } from "../src/ports/meetingCloseout";
 import { sourceId } from "@sow/contracts";
 import type { SourceRef } from "@sow/contracts";
@@ -474,6 +477,106 @@ describe("spec(§9 inv-3/WS-2) buildOutputs activity — outputs DERIVED from va
     expect(isErr(res)).toBe(true);
     if (!isErr(res)) return;
     expect(res.error.code).toBe("unmappable_extraction");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 13.8f-B — the meeting-note link-mutations fold (narrow cut over meetingVaultRewrite)
+// ---------------------------------------------------------------------------
+
+// The existing `validatedFixture()` above has NO "title" field, so buildOutputs.ts's own
+// `notePath` derivation is always `null` there (isConcrete(undefined) === false) — every test in
+// the block above skips the note-exists probe AND would skip an armed meetingVaultRewrite call
+// for the SAME reason. A fixture with a concrete title is required to exercise the armed path at
+// all; without it, tests 1 and 3 below would pass VACUOUSLY (the rewrite never called).
+function validatedFixtureWithTitle(title = "Weekly Sync"): ValidatedExtraction {
+  return {
+    validated: true,
+    fields: {
+      title: { value: title, evidenceRef: "transcript#L1" },
+      owner: { value: "Erin", evidenceRef: "transcript#L3" },
+      dueDate: { value: TBD },
+    },
+  };
+}
+
+const fixedLinkMutation: LinkMutation = { op: "add", srcPath: "meetings/ws-bound/weekly-sync.md", dstSlug: "projects/acme" };
+
+/** A fake MeetingVaultRewritePort returning a fixed, known result — 13.8f's own Done-when accepts
+ *  proving this fold over a faked planner/resolver. */
+function fakeMeetingVault(result: MeetingVaultRewriteResult): MeetingVaultRewritePort {
+  return { rewrite: () => Promise.resolve(result) };
+}
+
+describe("spec(§6 KN-10 / §9) 13.8f-B — buildOutputs folds meetingVaultRewrite's link mutations at :242", () => {
+  it("armed_binding_folds_meeting_note_link_mutations: an armed port's meetingNoteLinkMutations land in the built plan's linkMutations", async () => {
+    const port = createBuildOutputsActivity({
+      projection: noteProjection(),
+      sourceRef: meetingSourceRef,
+      planIdentity: { closeout: "wf-1" },
+      noteExists: new FakeNoteExistsReader({ exists: false }),
+      meetingVaultRewrite: fakeMeetingVault({ meetingNoteLinkMutations: [fixedLinkMutation] }),
+    });
+    const res = await port.build(validatedFixtureWithTitle(), workspaceId("ws-bound"));
+    expect(isOk(res)).toBe(true);
+    if (!isOk(res)) return;
+    expect(res.value.plan.linkMutations).toEqual([fixedLinkMutation]);
+  });
+
+  it("unarmed_binding_is_byte_identical_to_pre_slice: meetingVaultRewrite UNSET ⇒ linkMutations stays [] — the dormancy fact, not a claim", async () => {
+    const port = createBuildOutputsActivity({
+      projection: noteProjection(),
+      sourceRef: meetingSourceRef,
+      planIdentity: { closeout: "wf-1" },
+      noteExists: new FakeNoteExistsReader({ exists: false }),
+      // meetingVaultRewrite deliberately omitted — the shipped default.
+    });
+    const res = await port.build(validatedFixtureWithTitle(), workspaceId("ws-bound"));
+    expect(isOk(res)).toBe(true);
+    if (!isOk(res)) return;
+    expect(res.value.plan.linkMutations).toEqual([]);
+  });
+
+  it("frontmatter_updates_stay_empty_even_when_the_receipt_has_plans: frontmatterUpdates is UNCHANGED and the port's result never leaks anything beyond meetingNoteLinkMutations", async () => {
+    // MeetingVaultRewriteResult is STRUCTURALLY {meetingNoteLinkMutations} only — plans/refusals/
+    // groundedPaths cannot even be constructed on this type, so this is a shape pin, not just a
+    // behavior pin: the merge contract's second clause (frontmatterUpdates stays hardcoded because
+    // there is no meetingNoteFrontmatter counterpart BY CONSTRUCTION) is provable at the type level.
+    const port = createBuildOutputsActivity({
+      projection: noteProjection(),
+      sourceRef: meetingSourceRef,
+      planIdentity: { closeout: "wf-1" },
+      noteExists: new FakeNoteExistsReader({ exists: false }),
+      meetingVaultRewrite: fakeMeetingVault({ meetingNoteLinkMutations: [fixedLinkMutation] }),
+    });
+    const res = await port.build(validatedFixtureWithTitle(), workspaceId("ws-bound"));
+    expect(isOk(res)).toBe(true);
+    if (!isOk(res)) return;
+    expect(res.value.plan.frontmatterUpdates).toEqual([]);
+    // Non-leak: linkMutations carries EXACTLY the fake's meetingNoteLinkMutations, nothing more (the
+    // STRUCTURAL half — no field exists to carry plans/refusals/groundedPaths — is a type-level
+    // guarantee, deliberately not re-asserted here as a brittle full plan key-list, which would fail on
+    // any unrelated future KnowledgeMutationPlan field addition).
+    expect(res.value.plan.linkMutations).toEqual([fixedLinkMutation]);
+  });
+
+  it("a_throwing_rewrite_port_degrades_to_no_link_mutations_not_a_build_failure: the injected port is not trusted the way the total-never-throws function it wraps is (living-vault.ts's refuse-to-trust stance)", async () => {
+    const throwingVault: MeetingVaultRewritePort = {
+      rewrite: () => {
+        throw new Error("boom — must be caught, must not fail the build");
+      },
+    };
+    const port = createBuildOutputsActivity({
+      projection: noteProjection(),
+      sourceRef: meetingSourceRef,
+      planIdentity: { closeout: "wf-1" },
+      noteExists: new FakeNoteExistsReader({ exists: false }),
+      meetingVaultRewrite: throwingVault,
+    });
+    const res = await port.build(validatedFixtureWithTitle(), workspaceId("ws-bound"));
+    expect(isOk(res)).toBe(true);
+    if (!isOk(res)) return;
+    expect(res.value.plan.linkMutations).toEqual([]);
   });
 });
 

@@ -34,6 +34,7 @@ import type {
   SourceRef,
   TargetSystem,
   ProvenanceOrigin,
+  LinkMutation,
 } from "@sow/contracts";
 import { buildIdempotencyKey, buildCanonicalObjectKey, TBD } from "@sow/domain";
 import type { ExtractionField } from "@sow/domain";
@@ -43,6 +44,7 @@ import type {
   MeetingBuiltOutputs,
   MeetingExternalActionInput,
   ValidatedExtraction,
+  MeetingVaultRewritePort,
 } from "../ports/meetingCloseout";
 import { meetingNotePath } from "./projections/noteSlug";
 import type { ProjectNoteMutation } from "./deterministicProgress";
@@ -120,6 +122,17 @@ export interface BuildOutputsActivityDeps {
    * build CLOSED (build_failed, NO commit) — never a guessed create-vs-patch under uncertainty.
    */
   readonly noteExists: NoteExistsReader;
+  /**
+   * 13.8f-B — the OPTIONAL meeting-path living-vault rewrite (§6 KN-10, the meeting analog of 13.8d's
+   * `SourceLivingVaultPort`). UNSET is the shipped default ⇒ `linkMutations` stays `[]`, byte-equivalent
+   * to pre-13.8f-B. The real adapter (`createMeetingVaultPort`, apps/worker/src/composition/
+   * meeting-vault.ts) is bound only on the owner-armed path (`boot.ts` `gateMeetingVaultRewrite`, which
+   * has no `bootWorker` call site yet — see that module). Narrow cut: only `meetingNoteLinkMutations` is
+   * consumed here; the sibling entity-page `plans` a real rewrite also produces are NOT read from this
+   * port at all (13.8f-C's territory, tracked separately) — `MeetingVaultRewriteResult` structurally
+   * cannot carry them.
+   */
+  readonly meetingVaultRewrite?: MeetingVaultRewritePort;
 }
 
 /** True IFF a validated field carries a concrete (non-TBD) value worth stamping. */
@@ -229,6 +242,35 @@ export function createBuildOutputsActivity(
         },
       );
 
+      // 13.8f-B — the meeting-path living-vault rewrite (narrow cut): OPTIONAL, PURE from this call's
+      // perspective (no durable write). Reuses the SAME `notePath` the note-exists probe above already
+      // derived — never a second title-derivation, so the probed path and the folded-into plan can
+      // never diverge. UNSET or a non-concrete notePath ⇒ `[]`, byte-equivalent to pre-13.8f-B. The
+      // injected port wraps knowledge-deps this activity does not itself trust (mirrors
+      // apps/worker/src/composition/living-vault.ts's stance): even though `rewriteVaultForMeeting` is
+      // documented total-never-throws, a throwing/rejecting adapter degrades to no link mutations rather
+      // than failing the whole build — the meeting note's own commit must not depend on this leg.
+      // frontmatterUpdates stays `[]` below and is NEVER read from this result — MeetingVaultRewriteResult
+      // is structurally `{meetingNoteLinkMutations}` only, so there is no field to accidentally wire.
+      // `notePath !== null` is belt-and-suspenders, not a live branch today: `projected.ok` above already
+      // implies a concrete title (the projection's own isConcrete(fields["title"]) gate uses the SAME
+      // field this notePath derivation reads), so notePath is non-null whenever this line runs. Kept
+      // explicit rather than assumed, in case the two derivations' preconditions ever diverge.
+      let meetingNoteLinkMutations: readonly LinkMutation[] = [];
+      if (deps.meetingVaultRewrite !== undefined && notePath !== null) {
+        try {
+          const rewritten = await deps.meetingVaultRewrite.rewrite(
+            workspaceId,
+            notePath,
+            deps.sourceRef,
+            deps.provenanceOrigin ?? "meeting_close",
+          );
+          meetingNoteLinkMutations = rewritten.meetingNoteLinkMutations;
+        } catch {
+          meetingNoteLinkMutations = [];
+        }
+      }
+
       const plan: KnowledgeMutationPlan = {
         planId: planId(planKey),
         // WS-2/WS-4: the write targets the CORRELATION-BOUND workspace, not any
@@ -239,7 +281,9 @@ export function createBuildOutputsActivity(
         // §9 create-vs-patch: first close → a full NoteCreate; re-close → a region NotePatch (never both).
         creates: mutation.kind === "create" ? [mutation.note] : [],
         patches: mutation.kind === "patch" ? [mutation.patch] : [],
-        linkMutations: [],
+        // 13.8f-B — folds the meeting-vault rewrite's additive links (never a change to frontmatterUpdates
+        // below — see the merge contract in packages/knowledge/src/synthesis/meeting-rewrite.ts:23-35).
+        linkMutations: [...meetingNoteLinkMutations],
         frontmatterUpdates: [],
         // 18.7 — the KMP records the SAME PENDING external actions the driver proposes (empty when none
         // derived ⇒ byte-equivalent). The candidate-data gate validates each action's external-write keys.
