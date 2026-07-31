@@ -3,7 +3,7 @@
 **Date:** 2026-07-31
 **Track / role:** main · desktop-implementer
 **Predecessor session:** `docs/sessions/135-2026-07-29-dead-css-cleanup-and-copilot-rehydrate-precondition.md`
-**Successor session:** _(next `/session-end`)_
+**Successor session:** `docs/sessions/143-2026-07-31-delete-copilot-proposal-row-mechanism.md`
 
 ---
 
