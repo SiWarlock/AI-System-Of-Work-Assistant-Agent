@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve, join } from "node:path";
-import { ok, err } from "@sow/contracts";
+import { ok, err, EntityRefSchema } from "@sow/contracts";
 import type { Result, WorkspaceId } from "@sow/contracts";
 import {
   resolveEntity,
@@ -19,6 +19,7 @@ import {
   type EntityReadFault,
   type EntityResolution,
   type EntityKind,
+  type EntityRef,
 } from "../src/synthesis/entity-resolver";
 
 const WS_A = "ws-a" as WorkspaceId;
@@ -387,5 +388,66 @@ describe("resolveEntity — a deterministic caller-supplied ref is unaffected by
     const port = fakePort(WS_A, () => ok([cand({ path: "people/jane-doe.md", slug: "jane-doe", title: "Jane Doe" })]));
     const r = await resolveEntity({ name: "Jane Doe", kind: "person" }, WS_A, { gbrain: port });
     expect(r).toEqual({ kind: "resolved", path: "people/jane-doe.md" });
+  });
+});
+
+// ── 13.21 — EntityRef is ELEMENT-IMMUTABLE through knowledge's own import path (owner ruling C) ──
+//
+// 13.19 deleted knowledge's own EntityRef (which carried `readonly name`/`readonly kind`) and
+// re-exported contracts' (mutable) — every consumption site's `readonly EntityRef[]` stayed in
+// place, but that only protects the ARRAY (rejecting element REPLACEMENT), never a FIELD on an
+// element (`arr[0].name = "x"`). This restores the ELEMENT-level guarantee as a DERIVED narrowing
+// over contracts' EntityRef (never a second declaration, so it cannot drift — 13.21 brief), reached
+// by every existing consumer of `./entity-resolver` (or the `@sow/knowledge` barrel) by NAME, with
+// zero call-site churn.
+
+describe("EntityRef — element-immutable through knowledge's own import path (13.21)", () => {
+  it("ref_fields_cannot_be_mutated_via_knowledges_import — a field write does not type-check", () => {
+    // ⚠ TYPECHECK-VERIFIED, NOT RUNTIME-VERIFIED: `neverInvoked` never executes (a mutation would
+    // succeed at runtime on a plain JS object regardless of its TS type) — the guarantee this pins
+    // lives entirely in `tsc --noEmit` (this repo's `lint` gate, run at /preflight), NOT in
+    // `vitest run` (vitest's transform strips types and never evaluates `@ts-expect-error`). A green
+    // `vitest run` alone does not mean this guard is intact — only a clean typecheck does; a reverted
+    // narrowing would leave this test passing under `vitest run` regardless.
+    function neverInvoked(ref: EntityRef): void {
+      // @ts-expect-error — `name` must be readonly through knowledge's own EntityRef (13.21); an
+      // UNUSED directive here (TS2578) means the field is still mutable, i.e. this pin is failing.
+      ref.name = "mutated";
+    }
+    void neverInvoked;
+    expect(true).toBe(true);
+  });
+
+  it("a_valid_ref_is_still_constructible_and_readable — non-vacuity: the narrowed type isn't unusable", () => {
+    const ref: EntityRef = { name: "Jane Doe", kind: "person" };
+    expect(ref.name).toBe("Jane Doe");
+    expect(ref.kind).toBe("person");
+  });
+
+  it("schema_output_assigns_to_the_narrowed_type — EntityRefSchema's success value needs no cast", () => {
+    const parsed = EntityRefSchema.safeParse({ name: "Jane Doe", kind: "person" });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    // contracts' (mutable) parse output assigning to knowledge's (immutable) narrowed type is a safe
+    // widening-to-readonly — if this needed a cast, the narrowing would be fighting the candidate-
+    // data gate 13.19 exists to call.
+    const ref: EntityRef = parsed.data;
+    expect(ref.name).toBe("Jane Doe");
+  });
+
+  it("array_element_immutability_is_what_changed — readonly EntityRef[] now blocks field mutation too", () => {
+    // ⚠ TYPECHECK-VERIFIED, NOT RUNTIME-VERIFIED — same caveat as the first test in this block:
+    // `neverInvoked` never executes; the guarantee lives in `tsc --noEmit`, not in this test's own
+    // runtime pass/fail.
+    function neverInvoked(refs: readonly EntityRef[]): void {
+      // @ts-expect-error — element REPLACEMENT was already rejected pre-13.21 (array-level readonly,
+      // unchanged by this slice) — this directive is USED both before and after.
+      refs[0] = { name: "New", kind: "person" };
+      // @ts-expect-error — element FIELD mutation is the NEW guarantee this slice restores: UNUSED
+      // (TS2578) before 13.21, USED after — this is the actual delta the slice makes.
+      refs[0].name = "mutated";
+    }
+    void neverInvoked;
+    expect(true).toBe(true);
   });
 });

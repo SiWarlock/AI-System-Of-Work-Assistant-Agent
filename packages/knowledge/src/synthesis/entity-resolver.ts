@@ -18,22 +18,48 @@
 // WITHHELD — resolving it would risk binding to a DIFFERENT note that slugifies the
 // same. TOTAL never-throws; fail-closed to withheld on any fault/empty/malformed.
 import { isErr } from "@sow/contracts";
-import type { Result, WorkspaceId, EntityKind, EntityRef } from "@sow/contracts";
+import type { Result, WorkspaceId, EntityKind, EntityRef as ContractsEntityRef } from "@sow/contracts";
 import { faithfulKey, entitySlug, identifiers } from "./match-keys";
 import { admitGroundedPath, type GroundedPathRefusal } from "./grounded-path";
 
 /**
- * `EntityKind`/`EntityRef` are the `packages/contracts` frozen contract (§DEC-CANDGATE leg 1, task
- * 13.18) — re-exported here so every existing importer of `./entity-resolver` (planner.ts,
- * meeting-rewrite.ts, attendee-refs.ts, this file's own tests, and — via the `@sow/knowledge` barrel
- * — packages/evals/src/synthesis/corpus.ts) keeps resolving unchanged. This file no longer declares
+ * `EntityKind` is the `packages/contracts` frozen contract (§DEC-CANDGATE leg 1, task 13.18) —
+ * re-exported here so every existing importer of `./entity-resolver` (planner.ts, meeting-rewrite.ts,
+ * attendee-refs.ts, this file's own tests, and — via the `@sow/knowledge` barrel —
+ * packages/evals/src/synthesis/corpus.ts) keeps resolving unchanged. This file no longer declares
  * its own copy (leg 2, task 13.19); the `EntityRefSchema` candidate-data gate is called at the
  * `planSynthesis` boundary (`planner.ts`'s `collectEntities`) — the actual point model-supplied
  * candidate data crosses in — not here. `resolveEntity` below stays schema-agnostic on purpose (the
  * gate runs ONCE at the boundary, not per consumer); a deterministic caller (e.g. the meeting path's
  * attendee-supplied refs) calls it directly and is unaffected by that gate.
  */
-export type { EntityKind, EntityRef };
+export type { EntityKind };
+
+/**
+ * 13.21 (owner ruling, Option C of four): an ELEMENT-IMMUTABLE narrowing of contracts' `EntityRef`,
+ * under the SAME name so every existing importer of `./entity-resolver` inherits it with zero
+ * call-site churn. `readonly EntityRef[]` at every consumption site (planner.ts, attendee-refs.ts,
+ * meeting-rewrite.ts) only ever protected the ARRAY (rejecting element replacement) — never a field
+ * on an element (`arr[0].name = "x"`), because leg 2 (13.19) re-exported contracts' EntityRef, whose
+ * fields are mutable by that package's own (deliberate, documented at contracts entity-ref.ts:25-27)
+ * house convention. This is a DERIVED narrowing, not a second declaration — it is *computed* from
+ * contracts' type, so unlike the duplicate leg 2 deleted, it cannot drift: a future field add to
+ * contracts' EntityRef appears here automatically, still readonly-at-this-level. `packages/contracts`
+ * is NOT modified (owner ruling — its non-readonly convention for Appendix-A seam models stays
+ * untouched). ⚠ `Readonly<T>` is SHALLOW: both current fields (`name`/`kind`) are primitives, so this
+ * is a complete guarantee today — but a future non-primitive field (an array/object) would have its
+ * own reassignment blocked, never its contents' mutation (`ref.tags.push(...)` would still
+ * type-check). Re-examine this narrowing (a deep-readonly form) if contracts ever adds one.
+ *
+ * ⚠ RESIDUAL, recorded rather than guarded: this narrowing is inherited only through `./entity-
+ * resolver` (or the `@sow/knowledge` barrel, which re-exports it). A hypothetical future consumer
+ * inside `packages/knowledge` importing `EntityRef` DIRECTLY from `@sow/contracts` would get the
+ * mutable form instead. No such import exists today — verified repo-wide; this file was the only
+ * `packages/knowledge` site importing the bare contracts type, and it is what this comment replaces.
+ * Not backed by a scanner: a source-scan over import statements for this is a negative claim over an
+ * unbounded space (a detector, not a gate — 9.39's precedent), so it is recorded here instead.
+ */
+export type EntityRef = Readonly<ContractsEntityRef>;
 
 /** An existing vault note candidate from the workspace-scoped GBrain read. */
 export interface EntityCandidate {
