@@ -27,6 +27,7 @@ const base: Omit<TodayProps, "tasks"> = {
   workspaceMeta: new Map(),
   brief,
   onDrillDown: () => {},
+  onAuditDrill: () => Promise.resolve({ ok: false }),
 };
 
 function task(over: Partial<UiSafeTaskRollupItem> = {}): UiSafeTaskRollupItem {

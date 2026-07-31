@@ -10,7 +10,7 @@
 //   - @sow/contracts                  — UiSafe* (types only)
 // NEVER import electron, node, or @sow/worker from a renderer file.
 
-import { type ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { type WorkspaceScope } from "../../store/scope";
 
 /** Real workspaceId → its display name + subtle scope accent (from the onboarded set). */
@@ -23,8 +23,10 @@ import type {
   UiSafeGclProjection,
   UiSafeRecentChange,
   UiSafeTaskRollupItem,
+  UiSafeAuditDrillSummary,
 } from "@sow/contracts/api/ui-safe";
 import type { DailyBrief } from "../../lib/daily-brief";
+import type { AuditDrillResult } from "../../lib/audit-drill";
 
 export interface TodayProps {
   /** The active workspace scope (drives the Global-only cross-workspace section). */
@@ -46,6 +48,9 @@ export interface TodayProps {
   readonly tasks: readonly UiSafeTaskRollupItem[];
   /** Request a policy-gated drill-down into a workspace's context (worker-enforced). */
   readonly onDrillDown: (workspaceId: string, projectionType: string) => void;
+  /** 9.41 leg C — resolve a Recent Activity row's opaque `changeId` (worker-mediated, re-scoped
+   *  WS-8); fails closed to {ok:false} on denial/fault/malformed. */
+  readonly onAuditDrill: (changeId: string) => Promise<AuditDrillResult>;
 }
 
 // ── Waiting-on-you cards ───────────────────────────────────────────────────
@@ -210,18 +215,114 @@ function relativeTime(iso: string): string {
   return `${Math.floor(hrs / 24)}d`;
 }
 
+/** A Recent Activity row's audit-drill state (9.41 leg C) — mirrors `egress.tsx`'s `PostureCell`:
+ *  absent (no entry in `cells`) ⇒ not yet activated; `loading` ⇒ pending; `ready` ⇒ resolved;
+ *  `unavailable` ⇒ denial/fault/malformed, deliberately collapsed to ONE non-committal state (no
+ *  probe-oracle over the audit store — leg B mints distinct codes server-side for the operator,
+ *  none of which reach here). */
+type DrillCell =
+  | { readonly kind: "loading" }
+  | { readonly kind: "ready"; readonly summary: UiSafeAuditDrillSummary }
+  | { readonly kind: "unavailable" };
+
 /**
  * Recent activity (§9.5) — a hairline-divided list of the active WORKSPACE scope's committed
  * knowledge mutations / audit-linked changes (never cards). Workspace-scoped: under Global
  * scope `changes` is empty (recent changes never blend cross-workspace; WS-8). `summary` is
- * the worker's single-line projector-built line; `kind` is a display token; `changeId` rides
- * as a data-attr — the (worker-mediated, scope-checked) audit-drill handle for a later slice.
+ * the worker's single-line projector-built line; `kind` is a display token; `changeId` is the
+ * (worker-mediated, scope-checked) audit-drill handle — 9.41 leg C, this is that slice.
+ *
+ * The drill is a DELIBERATE per-row act, never eager: nothing fetches on mount. Per-row state
+ * mirrors `egress.tsx`'s `PostureCell` (loading/ready/unavailable) + its monotonic per-row `seq`
+ * guard, extended here with a cleanup effect (mirrors egress's unmount-invalidation) that bumps
+ * every CURRENT row's seq the moment `changes` is replaced wholesale (a scope switch — `live.ts`'s
+ * `hydrateScope` clears then re-fetches). Desktop L66: this pin's safety has two legs — (1)
+ * inherited: the worker's `deriveChangeId` hashes `workspaceId` into `changeId`, so a foreign
+ * scope's stale key can never match a currently-rendered row; (2) this component's own cleanup,
+ * which additionally guards a changeId that later REAPPEARS (switching back to this workspace)
+ * from being silently "resolved" by a pre-switch stale promise nobody re-activated this time.
+ *
+ * No control is offered while "loading": leg B's resolver scans up to 1000 audit rows hashing
+ * each (not cheap), and `egress.tsx`'s own `inFlightRef` exists specifically to prevent duplicate
+ * dispatch of a costlier-than-trivial action — mirrored here by rendering no clickable element
+ * during "loading" (matches egress's own loading branch) plus a state-based re-entrancy guard
+ * (mirrors Copilot's `pending` check) so a Retry double-click can't double-fire either.
  */
 function RecentActivity({
   changes,
+  onAuditDrill,
 }: {
   readonly changes: readonly UiSafeRecentChange[];
+  readonly onAuditDrill: (changeId: string) => Promise<AuditDrillResult>;
 }): ReactElement {
+  // `ready`/`unavailable` entries are retained indefinitely (Q2 — resolved-per-session), even for a
+  // changeId no longer in `changes`; only a stuck "loading" entry is pruned (see the cleanup effect
+  // below). Bounded by the recent-changes feed's own flood-bound, not separately capped here.
+  const [cells, setCells] = useState<Record<string, DrillCell>>({});
+  const seq = useRef<Record<string, number>>({});
+
+  const activateDrill = (changeId: string): void => {
+    // Already in flight — never double-dispatch (leg B's resolver isn't cheap). Reading `cells`
+    // here (state, not a ref) is safe because React flushes the "loading" update before a SEPARATE
+    // click event's handler runs (mirrors Copilot's plain `pending`-state check) — this does not
+    // protect against two calls within one synchronous handler, which doesn't happen here since
+    // every entry point is a distinct click.
+    if (cells[changeId]?.kind === "loading") return;
+    const mine = (seq.current[changeId] = (seq.current[changeId] ?? 0) + 1);
+    setCells((m) => ({ ...m, [changeId]: { kind: "loading" } }));
+    void onAuditDrill(changeId)
+      .then((r) => {
+        if (seq.current[changeId] !== mine) return; // superseded — a newer activation/replace won
+        setCells((m) => ({
+          ...m,
+          [changeId]: r.ok ? { kind: "ready", summary: r.summary } : { kind: "unavailable" },
+        }));
+      })
+      .catch(() => {
+        if (seq.current[changeId] === mine) {
+          setCells((m) => ({ ...m, [changeId]: { kind: "unavailable" } }));
+        }
+      });
+  };
+
+  // Invalidate every row's in-flight/cached seq whenever the `changes` SET is replaced (a scope
+  // switch clears+re-fetches wholesale, live.ts `hydrateScope`) — mirrors egress.tsx's unmount
+  // invalidation, applied on every replace rather than only on unmount (L66, see file-header note).
+  //
+  // The seq bump alone stops a WRONG paint (a stale resolution is dropped, never rendered) but does
+  // NOT by itself unstick the row: a row still "loading" at invalidation time will never receive a
+  // resolution that counts, so it must be reset here too — otherwise it reads "Checking details…"
+  // forever with no way to re-activate (security review, 9.41-C). `ready`/`unavailable` cells are
+  // left untouched (Q2 — resolved state is retained per-row for the session, even across a
+  // switch-away-and-back).
+  //
+  // The dependency is this DERIVED STRING, never the `changes` array reference — an innocuous
+  // parent re-render handing down a fresh-identity-same-content array must NOT invalidate every
+  // in-flight drill (that would make no drill ever able to complete). Mirrors egress.tsx:120-123's
+  // `ids` derivation exactly, MINUS its `encodeURIComponent` escaping: that escaping exists there for
+  // injectivity over workspace ids of unknown shape (desktop L12 — an unescaped delimiter could
+  // collide two ids into one key). `changeId` is a sha256 hex digest (worker `deriveChangeId`), which
+  // cannot contain a comma, so the join here is already injective without escaping.
+  const changeIds = changes.map((c) => c.changeId).join(",");
+  useEffect(() => {
+    return () => {
+      for (const id of changes.map((c) => c.changeId)) {
+        seq.current[id] = (seq.current[id] ?? 0) + 1;
+      }
+      setCells((m) => {
+        let next: Record<string, DrillCell> | null = null;
+        for (const id of changes.map((c) => c.changeId)) {
+          if (m[id]?.kind === "loading") {
+            next ??= { ...m };
+            delete next[id];
+          }
+        }
+        return next ?? m;
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [changeIds]);
+
   if (changes.length === 0) {
     return (
       <div className="sow-activity" role="list" aria-label="Recent activity">
@@ -233,18 +334,51 @@ function RecentActivity({
   }
   return (
     <div className="sow-activity" role="list" aria-label="Recent activity">
-      {changes.map((change) => (
-        <div
-          className="sow-activity-row"
-          role="listitem"
-          key={change.changeId}
-          data-change-id={change.changeId}
-        >
-          <span className="sow-activity-kind">{change.kind}</span>
-          <span className="sow-activity-summary">{change.summary}</span>
-          <span className="sow-activity-when">{relativeTime(change.occurredAt)}</span>
-        </div>
-      ))}
+      {changes.map((change) => {
+        const cell = cells[change.changeId];
+        return (
+          <div
+            className="sow-activity-row"
+            role="listitem"
+            key={change.changeId}
+            data-change-id={change.changeId}
+          >
+            <span className="sow-activity-kind">{change.kind}</span>
+            <span className="sow-activity-summary">{change.summary}</span>
+            <span className="sow-activity-when">{relativeTime(change.occurredAt)}</span>
+            {cell === undefined ? (
+              <button
+                type="button"
+                className="sow-activity-drill"
+                onClick={() => activateDrill(change.changeId)}
+                aria-label={`View audit details for ${change.summary}`}
+              >
+                Details
+              </button>
+            ) : cell.kind === "loading" ? (
+              <span className="sow-activity-drill-pending" role="status">
+                Checking details…
+              </span>
+            ) : cell.kind === "unavailable" ? (
+              <>
+                <span className="sow-activity-drill-unavailable">Details unavailable</span>
+                <button
+                  type="button"
+                  className="sow-activity-drill"
+                  onClick={() => activateDrill(change.changeId)}
+                  aria-label={`Retry loading audit details for ${change.summary}`}
+                >
+                  Retry
+                </button>
+              </>
+            ) : (
+              <span className="sow-activity-drill-detail">
+                {cell.summary.event} · {relativeTime(cell.summary.occurredAt)}
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -303,7 +437,7 @@ function TopPriorities({ tasks }: { readonly tasks: readonly UiSafeTaskRollupIte
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function Today(props: TodayProps): ReactElement {
-  const { scope, cards, health, global, recentChanges, workspaceMeta, brief, tasks, onDrillDown } = props;
+  const { scope, cards, health, global, recentChanges, workspaceMeta, brief, tasks, onDrillDown, onAuditDrill } = props;
 
   return (
     <main className="sow-content" aria-label="Today dashboard">
@@ -353,7 +487,7 @@ export function Today(props: TodayProps): ReactElement {
 
       {/* Recent activity — workspace-scoped, from props.recentChanges (§9.5) */}
       <div className="sow-section-label">Recent activity</div>
-      <RecentActivity changes={recentChanges} />
+      <RecentActivity changes={recentChanges} onAuditDrill={onAuditDrill} />
     </main>
   );
 }

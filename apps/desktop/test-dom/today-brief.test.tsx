@@ -21,6 +21,7 @@ const base: Omit<TodayProps, "brief"> = {
   workspaceMeta: new Map(),
   tasks: [],
   onDrillDown: () => {},
+  onAuditDrill: () => Promise.resolve({ ok: false }),
 };
 
 describe("Today — daily brief + schedule are real/honest, not mockups (9.20)", () => {

@@ -34,6 +34,7 @@ import type { EgressStatusResult } from "./lib/egress-status";
 import type { Route } from "./store/route";
 import { startLive, type StartLiveHandle } from "./lib/live";
 import type { AskResult } from "./lib/copilot-ask";
+import type { AuditDrillResult } from "./lib/audit-drill";
 import type { ApprovalDecision } from "./lib/approval-decision";
 import type { TriageDisposition, RerouteTarget } from "./lib/triage-disposition";
 import { reroutePickerOptions } from "./lib/reroute-picker";
@@ -127,6 +128,16 @@ export function App(): ReactElement {
       const scope = scopeForWorkspaceId(store.getSnapshot(), workspaceId);
       if (scope !== null) onScopeChange(scope);
     });
+  };
+
+  // 9.41 leg C: audit-drill REQUEST for a Recent Activity row's opaque changeId. Resolves the
+  // CURRENT scope's workspaceId (fail-closed for Global/unknown/no-live-worker, mirrors
+  // onAskCopilot) — the worker re-derives the AuditRecord + re-checks WS-8 scope-ownership; the
+  // renderer only asks, and RecentActivity never sees a raw workspaceId.
+  const onAuditDrill = (changeId: string): Promise<AuditDrillResult> => {
+    const workspaceId = resolveOnboardedWorkspaceId(state, state.scope);
+    if (workspaceId === null || liveRef.current === null) return Promise.resolve({ ok: false });
+    return liveRef.current.auditDrill(workspaceId, changeId);
   };
 
   // §9.5 routing: select the mounted SURFACE (left-rail nav). Scope-preserving — `navigate`
@@ -375,6 +386,7 @@ export function App(): ReactElement {
           brief={brief}
           tasks={state.taskRollup}
           onDrillDown={onDrillDown}
+          onAuditDrill={onAuditDrill}
         />
       )}
     </AppShell>

@@ -25,6 +25,7 @@ vi.mock("../renderer/lib/live", async (importOriginal) => {
   const stubHandle: StartLiveHandle = {
     stop: () => {},
     drillDown: async () => ({ ok: false }),
+    auditDrill: async () => ({ ok: false }),
     hydrateScope: async () => {},
     askCopilot: async () => ({ ok: false }),
     decideApproval: async () => ({ ok: false }),

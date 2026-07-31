@@ -31,6 +31,7 @@ import { createScopeRefresher } from "./scope-refresh";
 import { createLiveClient } from "./live-client";
 import { createWsStreamTransport } from "./ws-transport";
 import { createDrillDown, type DrillResult } from "./drilldown";
+import { createAuditDrill, type AuditDrillResult } from "./audit-drill";
 import { createAskCopilot, type AskResult } from "./copilot-ask";
 import { createApprovalDecision, type ApprovalDecision, type DecisionResult } from "./approval-decision";
 import {
@@ -61,6 +62,9 @@ import { createEgressStatus, createRevokeEgressAck, type EgressStatusResult } fr
 export interface StartLiveHandle {
   readonly stop: () => void;
   readonly drillDown: (workspaceId: string, projectionType: string) => Promise<DrillResult>;
+  /** Resolve a Recent Activity row's opaque `changeId` (9.41 leg C, wired to query.auditDrill);
+   *  fails closed to {ok:false} on denial/fault/malformed — the worker re-derives + re-scopes. */
+  readonly auditDrill: (workspaceId: string, changeId: string) => Promise<AuditDrillResult>;
   /** Re-hydrate for a scope (called on a scope change) — clears then re-queries, no blend. */
   readonly hydrateScope: (scope: WorkspaceScope) => Promise<void>;
   /** Ask Copilot a question (§9.6, wired to query.copilotAsk); fails closed to {ok:false}. */
@@ -146,6 +150,7 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
       live.close();
     },
     drillDown: createDrillDown(live.client),
+    auditDrill: createAuditDrill(live.client),
     hydrateScope: (scope: WorkspaceScope): Promise<void> => hydrateScope(live.client, store, scope),
     askCopilot: createAskCopilot(live.client),
     decideApproval: createApprovalDecision(live.client),
