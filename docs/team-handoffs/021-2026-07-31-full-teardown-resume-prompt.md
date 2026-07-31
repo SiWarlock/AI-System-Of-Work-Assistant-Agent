@@ -172,6 +172,32 @@ activity with dormancy **inside** it (mirror `createLivingVaultActivity`) → **
 delegate binds unconditionally and the arming decision lives in the activity, which yields an **empty
 plan set** unless the owner-armed port was supplied.
 
+⛔ **READ `docs/sessions/144-…` §"What happened" step 5 BEFORE THE BRIEF'S UNVERIFIED LIST — THE BRIEF
+UNDERSTATES WHAT IS KNOWN.** Brief 241 v2 still carries **7 `UNVERIFIED` markers and 0 marked
+resolved**, but worker independently resolved **three** of them with file:line evidence on its way out,
+and the resolutions landed in **session doc 144, not in the brief**:
+- **`buildAutoIngestProofSpineParams` (`boot.ts:1215`) is the SOLE live `ProofSpineParams` constructor**
+  — `registerWorker.ts`'s same-named function is **dead code, zero callers anywhere.**
+- **The meeting path's activity shape is ASYMMETRIC:** the *rewrite* leg has **no** separate Temporal
+  activity (it is embedded in the existing `meetingBuildOutputs`), while the *propose* leg **does** need
+  its own new activity per path — mirroring the `meetingCommit`/`sourceCommit` convention of a separate
+  name per path even for identical delegation.
+- **The registration template is `createLivingVaultActivity` (`living-vault.ts:222-233`)** — a pure
+  factory returning the port's own safe-identity value when unarmed.
+
+⚠ **Worker's own caveat, and keep it: this resolution was NEVER orchestrator-confirmed before teardown.
+Treat it as a STRONG CANDIDATE, not a ruling — re-verify or get sign-off before building on it.**
+⭐ **This split is the round's return-path defect recurring at the artifact layer:** the next implementer
+reads the **brief**, the evidence is in the **session doc**, and only the session doc points across.
+**Fix the pointer in the brief the moment work resumes.**
+
+**ONE OPEN DESIGN QUESTION, deliberately NOT ruled** (a lead minutes from teardown, unable to see the
+code, must not issue a design ruling — that is the phantom-ruling shape): does the new propose-approval
+activity's unarmed branch **reuse** the existing closed `ProposeKnowledgeApprovalErrorCode = "mint_failed"`,
+or does the enum need widening to distinguish *"never bound"* from *"sink genuinely rejected"*?
+**Worker's default vote: REUSE** — no consumer needs the distinction, and widening would be an unowed
+capability (L106's shape). **Needs a Step-2.5-equivalent sign-off.**
+
 **RULED (lead, decisions 11–12):** worker's option (a) — a **second**
 `createApprovalsKnowledgeProposeSink(...)` at the real composition root — is **APPROVED**; the old
 *"never a second sink"* wording forbade the wrong noun (it targets a second minting **PATH**; two
