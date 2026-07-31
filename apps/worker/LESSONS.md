@@ -778,3 +778,29 @@ For an owner to browse a populated dashboard WITHOUT extraction/arming: a `SOW_D
 **Pinned mechanically, and the pin was proven:** a `@ts-expect-error` on constructing an `ok` with `registryMember: false` goes **unused** (tsc `TS2578`) the moment the literal is widened — mutation-verified by aliasing it to `boolean` and observing the directive go unused, then reverting.
 
 `pin: apps/worker/test/composition/provisionWorkspace-partial-scaffold.test.ts — a_partial_is_not_constructible_as_ok + tsc`
+
+---
+
+<a id="81"></a>
+## 81. A widened shared-port interface's blast radius is found in the typecheck OUTPUT, not by grepping for the type's own name
+
+**Date:** 2026-07-30. **Source slice:** 9.41 leg B (worker-implementer, Step 9).
+
+When `ReadModelQueryPort` widened by one method (`auditEvents`), the brief scoped "files expected to touch" by grepping the literal string `ReadModelQueryPort` across `apps/worker` + `packages/evals`, then counting `workspaceCards:` occurrences to distinguish "references the type" from "constructs a full literal." Two blind spots survived, both real: (1) a **separate, narrower interface** (`DbReadModelQueryDeps`, the real adapter's own dependency shape) also needed the new field threaded through its call sites — a structurally different search than the one performed for the port interface; (2) **two more files** (`apps/worker/test/api/uiSafe.test.ts`, `packages/evals/src/worker-api-auth/auth-suite.ts`) constructed a fully-conforming `ReadModelQueryPort` object literal **without ever writing the type's name** — passed inline to a typed parameter and satisfied by structural inference, invisible to a grep for the string. Both gaps surfaced only by making the widening change and reading the full-graph typecheck output, not by a pre-dispatch scan.
+
+⇒ Enumerating a widened shared interface's blast radius by grepping the type's OWN NAME is an L64 instance one layer up (search the CONCEPT, not the construction) — a structurally-typed language lets a conforming value satisfy an interface with zero textual reference to it. The exhaustive method is: make the widening change, run the full-graph typecheck, and read every error site — the compiler enumerates exactly the set a grep can only approximate. A pre-dispatch grep-based scope estimate is a useful STARTING candidate list (worth stating in the brief so the implementer isn't flying blind) — never a CLOSED one. Brief it as "confirmed via grep, re-verify via typecheck at Step 1" rather than "confirmed NOT touched."
+
+`accepted: not mechanically enforceable` — enforcement point: brief authoring (state a grep-derived touch list as a candidate, not a closed set) and `/tdd` Step 1 (confirm the file list against the ACTUAL typecheck output, not just the brief's list, before GREEN).
+
+---
+
+<a id="82"></a>
+## 82. An internal producer's pre-validated-input shape is not valid precedent for a public read-surface method in the same file
+
+**Date:** 2026-07-30. **Source slice:** 9.41 leg B (worker-implementer, code-quality review).
+
+`createDbReadModelQueryPort` gives every existing method (`workspaceCards`, `ingestionInbox`, `approvalInbox`, etc.) the same `resolveKnownWorkspace` fail-closed gate before touching the store — an unknown `workspaceId` returns a typed not-found, never reaches the repository. A new `auditEvents` method's first draft skipped that gate, citing `refreshRecentChanges` (`recentChangesProducer.ts`) as precedent, where the `workspaceId` is not independently re-gated before the audit query. **That precedent doesn't transfer:** `refreshRecentChanges` is an internal COMPOSITION-ROOT producer invoked by a trigger that already supplies a known-valid `workspaceId` — it is not a PUBLIC read surface reachable from an arbitrary caller-supplied string the way every sibling method on `readModel.ts`'s port is. Fixed with the gate + a dedicated RED test (an unregistered `workspaceId` → `WORKSPACE_NOT_FOUND`, never reaches `AuditRepository.query`).
+
+⇒ When justifying a new method's shape by pointing at an existing function that "does something similar," check whether the two sit at the SAME trust boundary. An internal composition-root helper's caller has already validated its inputs by construction (or the trigger controls them); a method publicly exposed through every sibling on the same port interface has not, and needs the SAME fail-closed gate its siblings carry — not the internal helper's lighter shape. "This other function in the codebase does it this way" is not precedent until the two are confirmed to sit at the same boundary.
+
+`pin: apps/worker/test/api/adapters/readModel.test.ts — auditEvents fails closed with WORKSPACE_NOT_FOUND on an unregistered workspace, never reaches the repository`
