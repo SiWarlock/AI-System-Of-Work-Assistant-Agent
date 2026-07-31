@@ -89,6 +89,22 @@ state, not a backlog. If `git rev-list --count` shows a large number, that is **
 ~/.claude/scripts/team-register.sh "main-team-lead" lead "main" "" "main"
 ```
 
+## Step 3b — State AT THE SEAL (a snapshot for recognition only — Step 3's commands are the truth)
+
+| | |
+|---|---|
+| **Round seal** | `48c658b5` — *"seal the round — an audit that could not finish, and a premise that did not survive the code"* |
+| `origin/main` | `809516ad` · **117 unpushed, owner-run** |
+| Tree | clean, zero untracked (both checks run) |
+| Sessions closed | knowledge `142` · desktop `143` · worker `144` · contract `145` · orchestrator `146` |
+| Suites | workflows 601/601 · worker 2063/2102 (39 skipped) · knowledge 672/673 (1 skipped) · desktop 511/511 · typecheck 20/20 |
+| `plan-lint` | 0 violations |
+| Carry-forward | triaged **8 → 6** (1 inlined as `### 13.23`, 1 deleted with its text preserved in the Log, **0 deferred, 0 spread**) |
+
+⛔ **"No lint coverage exists" — never write "lint clean."** See Part 5.
+⚠ **If `git rev-parse HEAD` does not return `48c658b5`, someone committed after the seal — read
+`git log` and trust it over this table.**
+
 ---
 
 # PART 2 — SPAWN PROMPTS (paste-ready, all six)
@@ -205,7 +221,20 @@ objects over identical repos with planId idempotency are **one path instantiated
 **NOT an arming crossing** — binding and arming are separately observable **by construction**.
 ⛔ **Acceptance keeps the *"default boot mints ZERO Approval cards"* pin AND its non-vacuity control.**
 
-### desktop — 9.40 mechanism deleted; successor task owed.
+### desktop — 9.40 SHIPPED (`d5e987d4`, ticked `8a45f1bd`). Two residuals recorded, not reopened.
+
+⭐ **RESIDUAL 1 — two stale comments shipped IN THE SAME COMMIT that fixed a stale comment.** The new
+type-pin's own comments describe the **pre-deletion** state in the present tense. ⛔ **The irony is the
+lesson: the slice that correctly fixed one stale comment its brief warned about introduced two new ones
+— in the very test that pins the removal.** Self-limiting (the compiler reds if acted on). Desktop's to
+fix at next touch.
+⭐ **RESIDUAL 2 — a DESIGN-AUTHORITY instance found from inside the code, belonging to the partition
+that DIED.** `Copilot.tsx`'s header quotes the locked `material-direction.md`, which still lists a
+*"proposal action row."* Routed to **`### 9.42`** AND into **round 2's DOC-1 scope**, with a
+whoever-closes-it-says-so note. ⛔ **A code-slice reviewer surfaced an instance of exactly the class
+DOC-1 was meant to sweep — evidence the doc surface is unswept, not that it is clean.**
+
+### desktop — the 9.40 ruling that produced the above; successor task owed.
 
 Ruled (decision 8): **delete the mechanism, keep the goal.** `UiSafeCopilotAnswer` excludes proposals
 **by explicit design** (`packages/contracts/src/api/ui-safe.ts:498-500`), so populating `proposalLabel`
@@ -276,16 +305,21 @@ large parts of `apps/worker/test`, all of `packages/workflows/test`, most of `pa
 
 ## The six audit findings — F3 is the one that blocks
 
-- ⭐ **F3 [HIGH, rules 4/5/6] — ARMING BLOCKER.** Every policy-layer denial on the interactive Copilot
+⭐ **ALL THREE ACTIONABLE FINDINGS ARE NOW NUMBERED TASKS — `### 24.7` (F3) · `### 24.8` (F4) ·
+`### 24.9` (F1).** ⛔ **This matters more than it looks: an audit finding that never becomes a task is
+this project's signature failure, and the L106 ledger is five instances long.** `24.9` carries an
+explicit *"do not close this by citing the in-code MUST comment as coverage."*
+
+- ⭐ **F3 → `### 24.7` [HIGH, rules 4/5/6] — ARMING BLOCKER.** Every policy-layer denial on the interactive Copilot
   path builds an `AuditSignal` and **discards it**; `toAuditRecordInput` (the only thing that persists
   one) has **ZERO callers repo-wide**; no tRPC error middleware; no `HealthItem` for these classes.
   ⛔ **Guarantee HOLDS, DETECTION IS LOST** — do **not** compress this to "a violation goes undetected."
   **One accidental trip and a sustained probing campaign against the employer-egress veto are
   BYTE-IDENTICAL at every durable surface.** Broader than tracked `#45`. **Must be a numbered task.**
-- **F4 [medium]** — `outboxHealth` has **zero callers** while the Phase-6 acceptance text asserts OBS-2
+- **F4 → `### 24.8` [medium]** — `outboxHealth` has **zero callers** while the Phase-6 acceptance text asserts OBS-2
   as **delivered**. ⛔ **This audit's own mechanism, sitting in the tracker: an acceptance line claiming
   a safety signal that does not exist.**
-- **F1 [re-graded by the orchestrator, by measurement]** — `retrieveLocalEmbed` has zero production
+- **F1 → `### 24.9` [re-graded by the orchestrator, by measurement]** — `retrieveLocalEmbed` has zero production
   callers, `egressGate` is test-only ⇒ **not a live breach; a live arming PRECONDITION with no
   enforcement.** The module says a remote backend *"MUST bind `egressGate`"* — ⭐ **and MUST is prose,
   not a gate.**
