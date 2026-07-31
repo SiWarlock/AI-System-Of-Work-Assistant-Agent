@@ -4,7 +4,7 @@
 - **Phase / arc:** §DEC-CANDGATE (owner-approved 2026-07-26, twice-deferred, scheduled this round) — leg 1 of 3, contracts-only; plus task 13.20, a sibling finding raised by 13.18's own Step-2.5 review
 - **Role:** contract-implementer (single-track `main`)
 - **Predecessor session:** [115-2026-07-25-contract-frozen-rounds-and-uisafe-types.md](115-2026-07-25-contract-frozen-rounds-and-uisafe-types.md)
-- **Successor session:** _TBD (orchestrator context-cycle at round seal; I persist idle into the next round, not cycling)_
+- **Successor session:** [145-2026-07-31-audit-drill-summary-and-list-valued-extraction-fields.md](145-2026-07-31-audit-drill-summary-and-list-valued-extraction-fields.md)
 
 ## Why this session existed
 
