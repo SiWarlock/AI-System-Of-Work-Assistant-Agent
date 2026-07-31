@@ -22,21 +22,37 @@ Owner stepped away 2026-07-31 ~07:50 UTC and authorized **autonomous mode**:
 5. **Record every decision made while away** — this file.
 6. **Defer HITL until the owner returns.**
 
-### ⛔ The one carve-out the lead applied, and why
+### ⛔ SUPERSEDED — the carve-out was WITHDRAWN by the owner
 
-(2) and (6) pull against each other. **Resolution: arm anything internal, dormant, or
-reversible; DEFER the four standing hard lines**, because each is irreversible, outward-facing,
-and affects third parties rather than this repo:
+The lead initially held the four hard lines at armed-but-off, reasoning that "defer HITL" and
+"arm the go-live gates" could not both be honoured on a crossing designed around explicit
+per-crossing confirm.
+
+⭐ **The owner then REAFFIRMED EXPLICITLY (2026-07-31):** authorised to do the human-gated
+go-live **even while away, despite the rule, even if tests incur cloud cost.**
+
+⇒ **CARVE-OUT WITHDRAWN. ALL FOUR HARD LINES ARE AUTHORISED TO CROSS this run:**
 
 - cloud egress on **raw Employer-Work** content
 - the **propose-bridge flip**
-- **real external write / fetch** (connector arming — Gmail, Granola, Drive, Asana)
-- **real external-API spend / paid-key provisioning**
+- **real external write / fetch** — connector arming (Gmail, Granola, Drive, Asana)
+- **real external-API spend / paid-key provisioning**, including cloud cost from test runs
 
-Anything reaching one of those is taken **to the edge and left armed-but-off**, recorded here as
-*"ready, awaiting owner confirm"* — never crossed. Rationale: "defer HITL" and "arm the go-live
-gates" cannot both be honoured on a crossing whose whole design is *explicit owner confirm PER
-crossing*; the reversible reading is the safe one and costs only a confirmation on return.
+⛔ **This is a DECISION RECORD, not a rule change.** `CLAUDE.md`'s Key safety rules and the
+`Owner gates & arming ledgers` are **untouched** — they still say escalate-per-crossing and they
+still bind the next round. What changed is that the owner **pre-granted the confirmations for
+this run**. ⛔ **Do not edit those rules, and do not let a future reader infer a standing
+relaxation from this file** — that inference is exactly the L121 defect this round recorded.
+
+### Execution hygiene for crossings — how, not whether
+
+1. **Record EVERY crossing in the table below**, with what it did and whether an undo exists.
+   Irreversibility makes the record matter more, not less.
+2. **Prefer a reversible target first where one exists** — the owner's own account/workspace, a
+   connector's sandbox or dry-run mode — then the real one. Not a gate; the order any engineer
+   picks when both are available.
+3. **An external write with no undo says so** in its entry: *"no undo — &lt;what now exists in
+   the world&gt;."*
 
 ## State at handover
 
