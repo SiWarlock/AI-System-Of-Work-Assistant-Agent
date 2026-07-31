@@ -4,7 +4,6 @@ import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import {
   Copilot,
   CopilotAnswerView,
-  CopilotTurn,
   admitReply,
   type CopilotProps,
   type CopilotTurnView,
@@ -112,34 +111,10 @@ describe("Copilot panel — transcript bubbles + citations (§4.6, rendered from
     expect(screen.getByText("Pricing change memo")).toBeTruthy();
   });
 
-  it("a turn carrying a proposal shows a routes-to-Approvals action row (never a direct write)", () => {
-    // 9.39 — `finish` (the sole live-ask producer) never sets `proposalLabel`; only the now-deleted
-    // seed door ever did, so this was already unreachable from any production `<Copilot>` render
-    // before this slice. Renders the exported `CopilotTurn` directly instead (mirrors
-    // `CopilotAnswerView`'s existing direct-render precedent below) — a presentational-component
-    // render, not a parallel route into `Copilot`'s own turn *state*.
-    render(
-      <CopilotTurn
-        turn={{
-          id: "t1",
-          question: "What decisions did we make on the vendor review?",
-          reply: admitReply({
-            answer: ["Two decisions were logged: adopt the new SLA and defer the pricing change."],
-            citations: [{ citationId: "c1", title: "Vendor review — decisions" }],
-          }),
-          proposalLabel: "Draft a follow-up email",
-        }}
-      />,
-    );
-    const proposal = screen.getByText(/Draft a follow-up email/i).closest(".sow-copilot-proposal");
-    expect(proposal).not.toBeNull();
-    expect(proposal?.textContent).toMatch(/approvals/i);
-  });
-
-  it("a turn with no citations and no proposal renders a bare answer (false branches)", async () => {
-    // 9.39 — driven live; "no proposal" is now structurally guaranteed (`finish` never sets
-    // `proposalLabel`), not a fixture choice. See the 9.24 describe block below for the
-    // by-construction-indistinguishable characterization this bare shape also illustrates.
+  it("a turn with no citations renders a bare answer (false branch)", async () => {
+    // 9.39 — driven live (the seed door is deleted); same assertion. (9.40 removed the proposal-row
+    // mechanism entirely — a turn can no longer carry one at all, so there is nothing left to assert
+    // absent here; see the type-level pin in the "proposal-row mechanism is removed" describe below.)
     const onAsk = vi.fn().mockResolvedValue({
       ok: true,
       answer: { answer: ["Nothing new since yesterday."], citations: [] },
@@ -150,9 +125,8 @@ describe("Copilot panel — transcript bubbles + citations (§4.6, rendered from
     });
     fireEvent.click(screen.getByRole("button", { name: /send/i }));
     expect(await screen.findByText("Nothing new since yesterday.")).toBeTruthy();
-    // No citation list rendered, and no proposal action row.
+    // No citation list rendered.
     expect(screen.queryByRole("list", { name: "Citations" })).toBeNull();
-    expect(document.querySelector(".sow-copilot-proposal")).toBeNull();
   });
 });
 
@@ -492,5 +466,27 @@ describe("Copilot — the reply is branded, uninhabitable by a hand-built litera
     // The brand is compile-time-only (no runtime property), so the object still behaves normally —
     // this line exists only so the `@ts-expect-error` above has a use, not to assert anything new.
     expect(bad.reply.answer).toEqual(["a"]);
+  });
+});
+
+// Task 9.40 — LEAD RULING: delete the proposal-row MECHANISM, keep the GOAL (re-tracked as a
+// separate task, not implemented here). `UiSafeCopilotAnswer`'s header states the answer shape can
+// never carry an action; the renderer-local `proposalLabel` field was the only attempt, its button
+// was permanently `disabled` with no producer, and 9.39 deleted that producer's only source. This
+// pins the field's absence at the TYPE level — the same "RED for a type-level pin is a
+// `@ts-expect-error` that goes unused" technique as the 9.34 brand tests above (contracts L87):
+// currently `proposalLabel` still exists, so the directive below is unused and typecheck is RED;
+// removing the field from `CopilotTurnView` turns it GREEN.
+describe("Copilot — the proposal-row mechanism is removed, not merely unreachable (9.40)", () => {
+  it("proposalLabel no longer exists on CopilotTurnView", () => {
+    const turn: CopilotTurnView = {
+      id: "t1",
+      question: "q",
+      reply: admitReply({ answer: ["a"], citations: [] }),
+      // @ts-expect-error — 9.40: `proposalLabel` removed from `CopilotTurnView`; this property must
+      // fail to type-check once the field is gone (currently unused — the field still exists).
+      proposalLabel: "should not compile",
+    };
+    expect(turn.reply.answer).toEqual(["a"]);
   });
 });

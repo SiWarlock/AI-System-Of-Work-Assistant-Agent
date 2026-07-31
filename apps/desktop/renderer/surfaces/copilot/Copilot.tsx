@@ -9,7 +9,9 @@
 // the current surface on every screen.
 //
 // Load-bearing (§4.6): Copilot READS ONLY. It never writes or sends. Any action becomes a PROPOSAL
-// that routes to Approvals — surfaced by the persistent reminder AND by each turn's proposal row.
+// that routes to Approvals — surfaced by the persistent reminder. (9.40: the per-turn proposal-row
+// affordance was deleted — `UiSafeCopilotAnswer` cannot carry an approval id for any producer that
+// could exist — and the goal is re-tracked as a separate task rather than implemented here.)
 // WS-8: Copilot reads a SINGLE workspace's knowledge; under Global there is no ask (a "pick a
 // workspace" state, not a cross-workspace blend). When `onAsk` is provided (A5, wired to
 // query.copilotAsk) the composer is LIVE; without it the input is a disabled scaffold. A failed ask
@@ -71,8 +73,6 @@ export interface CopilotTurnView {
   /** The ADMITTED answer — body, citations, and the egress disclosure travel together, and this
    *  field is uninhabitable except via {@link admitReply} (9.34). */
   readonly reply: AdmittedCopilotAnswer;
-  /** When the answer implies an action: the proposed action's label. It ROUTES TO APPROVALS — never a direct write. */
-  readonly proposalLabel?: string;
 }
 
 export interface CopilotProps {
@@ -178,29 +178,13 @@ export function CopilotAnswerView({ reply }: { readonly reply: AdmittedCopilotAn
 
 /** One conversation turn: the user's question (filled-blue bubble) + Copilot's answer (glass bubble),
  *  the latter rendered ENTIRELY through {@link CopilotAnswerView} so the egress disclosure cannot be
- *  separated from the answer it belongs to (9.28). The proposal row is turn-level, not part of the
- *  answer contract, so it stays here. */
-export function CopilotTurn({ turn }: { readonly turn: CopilotTurnView }): ReactElement {
+ *  separated from the answer it belongs to (9.28). */
+function CopilotTurn({ turn }: { readonly turn: CopilotTurnView }): ReactElement {
   return (
     <div className="sow-copilot-turn">
       <div className="sow-copilot-bubble sow-copilot-bubble--user">{turn.question}</div>
       <div className="sow-copilot-bubble sow-copilot-bubble--assistant">
         <CopilotAnswerView reply={turn.reply} />
-        {turn.proposalLabel !== undefined ? (
-          <div className="sow-copilot-proposal">
-            <span className="sow-copilot-proposal-label">{turn.proposalLabel}</span>
-            {/* Read-only: an action never writes here — it becomes a proposal in Approvals. The
-                Approvals surface + navigation land with that page; the affordance is honest-disabled. */}
-            <button
-              className="sow-copilot-proposal-go"
-              type="button"
-              disabled
-              title="This becomes a proposal in the Approvals queue — Copilot never writes or sends directly"
-            >
-              Review in Approvals
-            </button>
-          </div>
-        ) : null}
       </div>
     </div>
   );
