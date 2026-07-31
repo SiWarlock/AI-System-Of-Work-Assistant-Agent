@@ -19,7 +19,7 @@
 // `CopilotTurnView` EMBEDS the validated `UiSafeCopilotAnswer` verbatim (9.28) rather than flattening
 // it into loose fields: the field-by-field re-map that used to live in `finish` was the vector by which
 // a rule-5 egress disclosure could be silently dropped. Every turn entering state is admitted through
-// `admitReply` (both doors — live asks AND the seed prop), so the render path can assume a valid reply.
+// `admitReply`, so the render path can assume a valid reply.
 //
 // 9.34 — `reply` is further BRANDED (`AdmittedCopilotAnswer`): mintable only via `admitReply`, so a
 // hand-built literal no longer satisfies `CopilotTurnView.reply` or `CopilotAnswerView`'s prop at all
@@ -75,21 +75,6 @@ export interface CopilotTurnView {
   readonly proposalLabel?: string;
 }
 
-/**
- * MOUNT-TIME seed input for {@link CopilotProps.turns} (tests; a future restore, task #13). `reply`
- * here is CANDIDATE data — the same `UiSafeCopilotAnswer` shape the worker declares, but NOT YET
- * admitted — so this type must not claim a validation the seed boundary hasn't performed. It is
- * re-validated by {@link admitReply} at mount (door 2) before it enters {@link CopilotTurnView} state.
- * Distinct from `CopilotTurnView` so a seed fixture can be built as a plain literal while the
- * ADMITTED type stays uninhabitable by one.
- */
-export interface CopilotTurnSeed {
-  readonly id: string;
-  readonly question: string;
-  readonly reply: UiSafeCopilotAnswer;
-  readonly proposalLabel?: string;
-}
-
 export interface CopilotProps {
   /**
    * WS-8 gate: true iff the active scope resolves to a SINGLE onboarded workspace (§19.1 / 14.1) —
@@ -100,16 +85,6 @@ export interface CopilotProps {
   readonly workspaceScoped: boolean;
   /** Collapse the sidebar back to the thin rail (AppShell owns the open state). */
   readonly onCollapse: () => void;
-  /**
-   * MOUNT-TIME seed conversation (tests; a future restore). INIT-ONLY — it seeds the internal turn
-   * state once; live asks append. A post-mount change to this prop is NOT reconciled (to reset the
-   * conversation from a new source, remount via `key`). The live app never passes it (no synthetic seed).
-   *
-   * ⚠ 9.34 — each entry's `reply` is {@link CopilotTurnSeed}'s CANDIDATE `UiSafeCopilotAnswer`, not
-   * the branded `AdmittedCopilotAnswer`: the seed boundary must not claim an admission it hasn't
-   * performed. It is re-validated by `admitReply` at mount (door 2) before entering turn state.
-   */
-  readonly turns?: readonly CopilotTurnSeed[];
   /** Ask a question (A5, wired to query.copilotAsk). Present → the composer is LIVE; absent → disabled scaffold. */
   readonly onAsk?: (question: string) => Promise<AskResult>;
 }
@@ -127,9 +102,9 @@ const ASK_FAILED = "Sorry — I couldn't answer that right now. Please try again
 const FAILED_REPLY: UiSafeCopilotAnswer = { answer: [ASK_FAILED], citations: [] };
 
 /**
- * The ADMISSION gate for a reply entering turn state — every door goes through it (live asks in
- * `finish`, AND the `turns` seed prop at mount). A candidate that fails the contract schema degrades
- * to {@link FAILED_REPLY} rather than being stored.
+ * The ADMISSION gate for a reply entering turn state — the live-ask path in `finish` goes through
+ * it. A candidate that fails the contract schema degrades to {@link FAILED_REPLY} rather than being
+ * stored.
  *
  * ⚠ Why this is a real check and not ceremony after 9.26's re-gate: deleting the old field-by-field
  * re-map also deleted the THROW that used to land a contract-violating payload on the failure turn.
@@ -139,12 +114,9 @@ const FAILED_REPLY: UiSafeCopilotAnswer = { answer: [ASK_FAILED], citations: [] 
  * but it would blank the whole panel (or the whole app, at the root site) for one turn's worth of
  * bad data. Validating HERE degrades exactly that one turn to ASK_FAILED instead, leaving the rest
  * of the conversation and the panel itself intact — still strictly better recovery than
- * catch-after-throw, which is why this gate stays even with a boundary now in place. And
- * `createAskCopilot` is NOT the only door: the seed prop reaches `useState` directly, so a
- * `finish`-only guard would not see it (nor would a shallow `Array.isArray` pair, which admits
- * `citations: [null]` and throws on `c.citationId` at render). Validating with the SAME contract
- * schema at every entry point is the shape-validate-at-the-boundary posture, once per turn rather
- * than once per render.
+ * catch-after-throw, which is why this gate stays even with a boundary now in place. A shallow
+ * `Array.isArray` pair would still admit `citations: [null]` and throw on `c.citationId` at render —
+ * validating with the full contract schema is what actually closes that.
  *
  * ⚠ 9.34 — the SOLE minting function for {@link AdmittedCopilotAnswer}. Exported so a future
  * consumer (a `copilotBriefing`/`copilotConcept` surface, or a test rendering {@link CopilotAnswerView}
@@ -208,7 +180,7 @@ export function CopilotAnswerView({ reply }: { readonly reply: AdmittedCopilotAn
  *  the latter rendered ENTIRELY through {@link CopilotAnswerView} so the egress disclosure cannot be
  *  separated from the answer it belongs to (9.28). The proposal row is turn-level, not part of the
  *  answer contract, so it stays here. */
-function CopilotTurn({ turn }: { readonly turn: CopilotTurnView }): ReactElement {
+export function CopilotTurn({ turn }: { readonly turn: CopilotTurnView }): ReactElement {
   return (
     <div className="sow-copilot-turn">
       <div className="sow-copilot-bubble sow-copilot-bubble--user">{turn.question}</div>
@@ -285,14 +257,12 @@ function Composer({
 }
 
 export function Copilot(props: CopilotProps): ReactElement {
-  const { workspaceScoped, onCollapse, turns: seedTurns = [], onAsk } = props;
+  const { workspaceScoped, onCollapse, onAsk } = props;
   const live = onAsk !== undefined;
 
-  // DOOR 2 into turn state: the seed prop reaches state WITHOUT passing through `finish`, so it is
-  // admitted here. Init-only (the seed is not reconciled post-mount), so this runs once.
-  const [turns, setTurns] = useState<readonly CopilotTurnView[]>(() =>
-    seedTurns.map((t) => ({ ...t, reply: admitReply(t.reply) })),
-  );
+  // 9.39 — turn state starts empty; the mount-time seed door is deleted (see 9.25, whose rule-5
+  // precondition on a rehydrated turn now moves to whatever future slice builds Copilot restore).
+  const [turns, setTurns] = useState<readonly CopilotTurnView[]>([]);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
   const turnSeq = useRef(0);
@@ -325,15 +295,15 @@ export function Copilot(props: CopilotProps): ReactElement {
     // a contract-violating ok-payload (defensive: the worker gates the answer, but if a malformed
     // `{ok:true}` ever reached here, building the turn would throw and leave the composer stuck
     // disabled). A failed/malformed ask folds to a safe, generic error turn — NEVER a partial/raw
-    // answer. Live-turn ids use a distinct `ask-` prefix so they can't collide with a seed turn's id.
+    // answer. Live-turn ids use an `ask-` prefix and are unique within a mount (`turnSeq` is monotonic).
     const finish = (result: AskResult): void => {
       turnSeq.current += 1;
       const id = `ask-${String(turnSeq.current)}`;
       let turn: CopilotTurnView;
       try {
         // 9.28 — the validated answer is carried VERBATIM: no field-by-field re-map, so there is no
-        // mapping in which a rule-5 egress disclosure can be forgotten. `admitReply` is DOOR 1 of 2
-        // (the seed prop is door 2, at mount) — see its docblock for why it is not redundant.
+        // mapping in which a rule-5 egress disclosure can be forgotten. `admitReply` gates this
+        // path — see its docblock for why the gate stays even with a render-time boundary in place.
         turn = result.ok
           ? { id, question: q, reply: admitReply(result.answer) }
           : { id, question: q, reply: ADMITTED_FAILED_REPLY };

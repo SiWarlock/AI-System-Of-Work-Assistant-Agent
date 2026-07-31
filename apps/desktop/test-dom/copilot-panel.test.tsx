@@ -4,10 +4,10 @@ import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import {
   Copilot,
   CopilotAnswerView,
+  CopilotTurn,
   admitReply,
   type CopilotProps,
   type CopilotTurnView,
-  type CopilotTurnSeed,
 } from "../renderer/surfaces/copilot/Copilot";
 import type { AskResult } from "../renderer/lib/copilot-ask";
 
@@ -56,8 +56,16 @@ describe("Copilot panel — composer scaffolded/disabled until the backend (A)",
 
 describe("Copilot panel — empty-until-data (no synthetic seed)", () => {
   it("a workspace scope with no turns shows the ask-a-question empty state", () => {
-    renderCopilot({ scope: "employer-work", turns: [] });
+    renderCopilot({ scope: "employer-work" });
     expect(screen.getByText(/ask a question/i)).toBeTruthy();
+  });
+
+  it("turns is not part of CopilotProps — the mount-time seed door is deleted (9.39)", () => {
+    // @ts-expect-error — 9.39: `turns` no longer exists on `CopilotProps`; this line type-checked
+    // with no error at all before this slice (9.25's now-removed AST scanner policed the seed door
+    // over an unbounded construction space at runtime — L100; this is the closed-space compile-time
+    // gate L103 asks for instead: nothing to police once the prop cannot exist).
+    render(<Copilot {...base} workspaceScoped={true} turns={[]} />);
   });
 });
 
@@ -81,48 +89,67 @@ describe("Copilot panel — WS-8 workspace isolation under Global", () => {
 });
 
 describe("Copilot panel — transcript bubbles + citations (§4.6, rendered from the view-model)", () => {
-  const turns: readonly CopilotTurnSeed[] = [
-    {
-      id: "t1",
-      question: "What decisions did we make on the vendor review?",
-      reply: {
+  it("renders the question, the answer, and each citation as a chip", async () => {
+    // 9.39 — driven through the real live-ask path (the seed door is deleted); same assertions.
+    const onAsk = vi.fn().mockResolvedValue({
+      ok: true,
+      answer: {
         answer: ["Two decisions were logged: adopt the new SLA and defer the pricing change."],
         citations: [
           { citationId: "c1", title: "Vendor review — decisions" },
           { citationId: "c2", title: "Pricing change memo" },
         ],
       },
-      proposalLabel: "Draft a follow-up email",
-    },
-  ];
-
-  it("renders the question, the answer, and each citation as a chip", () => {
-    renderCopilot({ scope: "employer-work", turns });
+    });
+    renderCopilot({ scope: "employer-work", onAsk });
+    fireEvent.change(screen.getByRole("textbox", { name: /ask copilot/i }), {
+      target: { value: "What decisions did we make on the vendor review?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    expect(await screen.findByText(/Two decisions were logged/i)).toBeTruthy();
     expect(screen.getByText(/What decisions did we make/i)).toBeTruthy();
-    expect(screen.getByText(/Two decisions were logged/i)).toBeTruthy();
     expect(screen.getByText("Vendor review — decisions")).toBeTruthy();
     expect(screen.getByText("Pricing change memo")).toBeTruthy();
   });
 
   it("a turn carrying a proposal shows a routes-to-Approvals action row (never a direct write)", () => {
-    renderCopilot({ scope: "employer-work", turns });
+    // 9.39 — `finish` (the sole live-ask producer) never sets `proposalLabel`; only the now-deleted
+    // seed door ever did, so this was already unreachable from any production `<Copilot>` render
+    // before this slice. Renders the exported `CopilotTurn` directly instead (mirrors
+    // `CopilotAnswerView`'s existing direct-render precedent below) — a presentational-component
+    // render, not a parallel route into `Copilot`'s own turn *state*.
+    render(
+      <CopilotTurn
+        turn={{
+          id: "t1",
+          question: "What decisions did we make on the vendor review?",
+          reply: admitReply({
+            answer: ["Two decisions were logged: adopt the new SLA and defer the pricing change."],
+            citations: [{ citationId: "c1", title: "Vendor review — decisions" }],
+          }),
+          proposalLabel: "Draft a follow-up email",
+        }}
+      />,
+    );
     const proposal = screen.getByText(/Draft a follow-up email/i).closest(".sow-copilot-proposal");
     expect(proposal).not.toBeNull();
     expect(proposal?.textContent).toMatch(/approvals/i);
   });
 
-  it("a turn with no citations and no proposal renders a bare answer (false branches)", () => {
-    // Also 9.25's acceptance bullet 3 (branch B — no restore path exists, but the seed DOOR
-    // itself is exercised here): this `bare` seed omits `egressProcessor` too, so it renders
-    // identically to a genuine non-cloud answer — the same "by construction indistinguishable"
-    // characterization the 9.24 header above documents for the live-ask door (`admitReply` gates
-    // both doors identically). Not a new risk this test introduces; a pointer for whoever reads
-    // this file next to why 9.25 stays a live precondition on any future restore producer.
-    const bare: readonly CopilotTurnSeed[] = [
-      { id: "b1", question: "Any update on the standup?", reply: { answer: ["Nothing new since yesterday."], citations: [] } },
-    ];
-    renderCopilot({ scope: "employer-work", turns: bare });
-    expect(screen.getByText("Nothing new since yesterday.")).toBeTruthy();
+  it("a turn with no citations and no proposal renders a bare answer (false branches)", async () => {
+    // 9.39 — driven live; "no proposal" is now structurally guaranteed (`finish` never sets
+    // `proposalLabel`), not a fixture choice. See the 9.24 describe block below for the
+    // by-construction-indistinguishable characterization this bare shape also illustrates.
+    const onAsk = vi.fn().mockResolvedValue({
+      ok: true,
+      answer: { answer: ["Nothing new since yesterday."], citations: [] },
+    });
+    renderCopilot({ scope: "employer-work", onAsk });
+    fireEvent.change(screen.getByRole("textbox", { name: /ask copilot/i }), {
+      target: { value: "Any update on the standup?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    expect(await screen.findByText("Nothing new since yesterday.")).toBeTruthy();
     // No citation list rendered, and no proposal action row.
     expect(screen.queryByRole("list", { name: "Citations" })).toBeNull();
     expect(document.querySelector(".sow-copilot-proposal")).toBeNull();
@@ -130,11 +157,16 @@ describe("Copilot panel — transcript bubbles + citations (§4.6, rendered from
 });
 
 describe("Copilot panel — Employer-Work egress notice (§9.6-real P1.3, safety rule 5)", () => {
-  it("a turn carrying egressProcessor shows the cloud-egress notice banner (processor + cloud + Employer-Work)", () => {
-    const turns: readonly CopilotTurnSeed[] = [
-      { id: "e1", question: "q", reply: { answer: ["an answer synthesized on the cloud"], citations: [], egressProcessor: "claude" } },
-    ];
-    renderCopilot({ scope: "employer-work", turns });
+  it("a turn carrying egressProcessor shows the cloud-egress notice banner (processor + cloud + Employer-Work)", async () => {
+    // 9.39 — driven live (the seed door is deleted); same assertions.
+    const onAsk = vi.fn().mockResolvedValue({
+      ok: true,
+      answer: { answer: ["an answer synthesized on the cloud"], citations: [], egressProcessor: "claude" },
+    });
+    renderCopilot({ scope: "employer-work", onAsk });
+    fireEvent.change(screen.getByRole("textbox", { name: /ask copilot/i }), { target: { value: "q" } });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    await screen.findByText("an answer synthesized on the cloud");
     const notice = document.querySelector(".sow-copilot-egress-notice");
     expect(notice).not.toBeNull();
     expect(notice?.textContent).toMatch(/claude/i);
@@ -148,7 +180,7 @@ describe("Copilot panel — Employer-Work egress notice (§9.6-real P1.3, safety
     );
   });
 
-  it("a leak-shaped processor label renders VERBATIM — the contract permits it, so nothing here sanitizes", () => {
+  it("a leak-shaped processor label renders VERBATIM — the contract permits it, so nothing here sanitizes", async () => {
     // spec(§5) rule 7 (9.24) — characterization, NOT an endorsement. `uiSafeSummaryLine`
     // (`UiSafeCopilotAnswer.egressProcessor`) is any single-line string ≤1024: it rejects
     // multi-line/over-length/empty but does NOT reject a URL- or path-shaped label, unlike the
@@ -156,23 +188,33 @@ describe("Copilot panel — Employer-Work egress notice (§9.6-real P1.3, safety
     // reachable today (labels are server-constructed route literals), and it is the OVER-disclosure
     // direction rather than case 3 — pinned so the tightening lands deliberately, with this test
     // flipping to an assertion, rather than being discovered in a banner.
-    const turns: readonly CopilotTurnSeed[] = [
-      { id: "e2", question: "q", reply: { answer: ["a"], citations: [], egressProcessor: "https://api.anthropic.com/v1" } },
-    ];
-    renderCopilot({ scope: "employer-work", turns });
+    // 9.39 — driven live (the seed door is deleted); same assertion.
+    const onAsk = vi.fn().mockResolvedValue({
+      ok: true,
+      answer: { answer: ["a"], citations: [], egressProcessor: "https://api.anthropic.com/v1" },
+    });
+    renderCopilot({ scope: "employer-work", onAsk });
+    fireEvent.change(screen.getByRole("textbox", { name: /ask copilot/i }), { target: { value: "q" } });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    await screen.findByText(/api\.anthropic\.com/);
     expect(document.querySelector(".sow-copilot-egress-notice")?.textContent).toMatch(
       /https:\/\/api\.anthropic\.com\/v1/,
     );
   });
 
-  it("a turn WITHOUT egressProcessor renders NO egress notice (false branch — local/no-egress answer)", () => {
-    const turns: readonly CopilotTurnSeed[] = [
-      { id: "n1", question: "q", reply: { answer: ["a local answer"], citations: [] } },
-    ];
-    renderCopilot({ scope: "employer-work", turns });
+  it("a turn WITHOUT egressProcessor renders NO egress notice (false branch — local/no-egress answer)", async () => {
+    // 9.39 — driven live (the seed door is deleted); same assertions.
+    const onAsk = vi.fn().mockResolvedValue({
+      ok: true,
+      answer: { answer: ["a local answer"], citations: [] },
+    });
+    renderCopilot({ scope: "employer-work", onAsk });
+    fireEvent.change(screen.getByRole("textbox", { name: /ask copilot/i }), { target: { value: "q" } });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
     // Positive anchor FIRST: without it the three negatives below all pass on an empty DOM (a
-    // regression in the seed-turn render path would report green).
-    const turn = screen.getByText("a local answer").closest(".sow-copilot-turn");
+    // regression in the live-turn render path would report green).
+    const turnAnswer = await screen.findByText("a local answer");
+    const turn = turnAnswer.closest(".sow-copilot-turn");
     expect(turn).not.toBeNull();
     expect(document.querySelector(".sow-copilot-egress-notice")).toBeNull();
     // spec(§5) (9.24) — and it stays SILENT: no warning/unknown affordance either. Case 1 is
@@ -450,11 +492,5 @@ describe("Copilot — the reply is branded, uninhabitable by a hand-built litera
     // The brand is compile-time-only (no runtime property), so the object still behaves normally —
     // this line exists only so the `@ts-expect-error` above has a use, not to assert anything new.
     expect(bad.reply.answer).toEqual(["a"]);
-  });
-
-  it("CopilotTurnSeed — the mount-time candidate boundary — still accepts a plain literal (only the ADMITTED type is branded)", () => {
-    const seed: CopilotTurnSeed = { id: "s1", question: "q", reply: { answer: ["a seed answer"], citations: [] } };
-    renderCopilot({ scope: "employer-work", turns: [seed] });
-    expect(screen.getByText("a seed answer")).toBeTruthy();
   });
 });
