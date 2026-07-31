@@ -6,7 +6,9 @@
 **Round narrative + decisions:** `docs/archive/IMPLEMENTATION_LOG.md`, entry `2026-07-30`
 ⛔ **NOTHING PUSHED** — owner-run by standing posture. Count unpushed with `git rev-list --count origin/main..HEAD`.
 
-> **Why this doc exists:** the owner ruled an **orchestrator-only cycle** — all four implementers stayed up (27–56%) with **no `/session-end`**, so there are no implementer session docs this round. Substantial orchestrator-side work landed (a gate fix ported to the scaffolding template, a convention flip, seven briefs, eight numbered tasks, a banked lesson), which is Step-6's YES criterion.
+> **Why this doc exists:** the owner ruled an **orchestrator-only cycle**, and substantial orchestrator-side work landed (a gate fix ported to the scaffolding template, a convention flip, seven briefs, eight numbered tasks, a banked lesson) — Step-6's YES criterion.
+>
+> ⚠ **CORRECTION, added after this doc's own commit `103f15c7`:** this paragraph originally said *"all four implementers stayed up (27–56%) with no `/session-end`, so there are no implementer session docs this round."* **True when written; false minutes later.** The owner **revised the cycle to include `worker-implementer`** — it had climbed from 56% to **73% (WARN)**, it is the **critical path** (four queued items; sole unblock for knowledge *and* desktop), and it was cleanly between slices. ⇒ **`docs/sessions/138-…` is worker's, and it lands in its own commit AFTER this one.** ⛔ **So this doc's `/orchestrate-end` did NOT consume an implementer recap, and Step 1's "no implementer session doc" is a statement about ORDERING, not about absence** — a successor must read 138 alongside this. **contract, knowledge and desktop did not cycle** (27–33%). ⭐ **Corrected rather than rewritten, because the stale claim is the only thing that explains why the close-out doesn't reference a doc that exists.**
 
 ---
 
