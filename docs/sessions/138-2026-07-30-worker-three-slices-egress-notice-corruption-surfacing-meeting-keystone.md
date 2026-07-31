@@ -3,7 +3,7 @@
 **Date:** 2026-07-30
 **Track / role:** main · worker-implementer
 **Predecessor session:** `docs/sessions/134-2026-07-29-workspace-read-boundary-regate.md`
-**Successor session:** _(unwritten — the next worker-implementer)_
+**Successor session:** `docs/sessions/139-2026-07-31-audit-drill-attendee-threading-propose-tier-approvals.md`
 
 ---
 
