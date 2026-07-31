@@ -10,9 +10,11 @@
 //     and fail closed (typed err, no approvals) for an unknown one;
 //   • a malformed read-model payload is treated as EMPTY (never a crash / raw leak).
 import { describe, it, expect, afterEach } from "vitest";
-import { isErr, isOk } from "@sow/contracts";
+import { isErr, isOk, ok } from "@sow/contracts";
 import type { Approval, WorkspaceId } from "@sow/contracts";
+import type { AuditRepository } from "@sow/db";
 import { openDatabase, type OpenDatabase } from "../../../src/composition/backends";
+import { RECENT_CHANGES_AUDIT_SCAN_BOUND } from "../../../src/api/projections/recentChanges";
 import {
   createDbReadModelQueryPort,
   READ_MODEL_KEYS,
@@ -508,6 +510,60 @@ describe("createDbReadModelQueryPort — ingestion + approval inboxes", () => {
     expect(isErr(ing)).toBe(true);
     expect(isErr(apr)).toBe(true);
     if (isErr(ing)) expect(ing.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
+  });
+});
+
+// ── auditEvents (9.41 leg B: real delegation to AuditRepository) ──────────────
+
+describe("createDbReadModelQueryPort — auditEvents", () => {
+  it("createDbReadModelQueryPort_auditEvents_delegates_to_the_injected_audit_repository", async () => {
+    const calls: Array<{ filter: unknown; limit: number }> = [];
+    const auditOk: AuditRepository = {
+      append: async () => ok(undefined),
+      query: async (filter, limit) => {
+        calls.push({ filter, limit });
+        return ok([]);
+      },
+    };
+    const o = await freshDb();
+    await seedRegistry(o, [KNOWN_WS]);
+    const port = createDbReadModelQueryPort({ ...o.repos, audit: auditOk });
+    const res = await port.auditEvents(KNOWN_WS);
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value).toEqual([]);
+    expect(calls).toEqual([{ filter: { workspaceId: KNOWN_WS }, limit: RECENT_CHANGES_AUDIT_SCAN_BOUND }]);
+  });
+
+  it("fails closed with WORKSPACE_NOT_FOUND for an unknown workspace — never reaches the repository (consistent with every sibling method in this file)", async () => {
+    let calls = 0;
+    const auditSpy: AuditRepository = {
+      append: async () => ok(undefined),
+      query: async () => {
+        calls += 1;
+        return ok([]);
+      },
+    };
+    const o = await freshDb();
+    await seedRegistry(o, [KNOWN_WS]); // registry exists, but UNKNOWN_WS is not in it
+    const port = createDbReadModelQueryPort({ ...o.repos, audit: auditSpy });
+    const res = await port.auditEvents(UNKNOWN_WS);
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
+    expect(calls).toBe(0);
+  });
+
+  it("folds a THROWN AuditRepository.query call to a typed err — never-throws (§16)", async () => {
+    const auditThrows: AuditRepository = {
+      append: async () => ok(undefined),
+      query: async () => {
+        throw new Error("boom — raw driver detail must never cross");
+      },
+    };
+    const o = await freshDb();
+    await seedRegistry(o, [KNOWN_WS]);
+    const port = createDbReadModelQueryPort({ ...o.repos, audit: auditThrows });
+    const res = await port.auditEvents(KNOWN_WS);
+    expect(isErr(res)).toBe(true);
   });
 });
 

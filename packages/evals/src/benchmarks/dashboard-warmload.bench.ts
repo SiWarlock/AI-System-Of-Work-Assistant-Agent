@@ -185,6 +185,9 @@ export function makeRepresentativeReadModel(
     projectDashboards: outOfScope,
     calendar: outOfScope,
     taskRollup: outOfScope,
+    // 9.41 leg B — cross-area additive stub (worker `ReadModelQueryPort` widened);
+    // not served by this benchmark, same as every other out-of-scope surface above.
+    auditEvents: outOfScope,
   };
 }
 

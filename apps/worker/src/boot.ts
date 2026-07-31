@@ -1626,6 +1626,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   const readModel: ReadModelQueryPort = createDbReadModelQueryPort({
     readModels: backends.repos.readModels,
     approvals: backends.repos.approvals,
+    audit: backends.repos.audit,
   });
   const approvals: ApprovalCommandPort = createDbApprovalCommandPort(backends.repos.approvals);
   const triage: TriagePort = createDbTriagePort(config.triageDispatch);

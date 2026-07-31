@@ -15,6 +15,9 @@
 // the real @sow/db binding is the integrator step. Procedures are invoked
 // in-process via tRPC `createCallerFactory` (no socket).
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   UI_SAFE_ALLOWLIST,
   isErr,
@@ -29,8 +32,10 @@ import {
   type GclProjection,
   type UiSafeManagedDoc,
   type UiSafeIngestionItem,
+  type AuditRecord,
 } from "@sow/contracts";
 import { createCallerFactory, router, type ApiContext } from "../../../src/api/trpc";
+import { deriveChangeId } from "../../../src/api/projections/recentChanges";
 import type { AuthedContext } from "../../../src/api/auth/sessionAuth";
 import {
   buildQueryRouter,
@@ -235,6 +240,12 @@ function fakePort(overrides: Partial<ReadModelQueryPort> = {}): ReadModelQueryPo
       workspaceId === KNOWN_WORKSPACE
         ? ok([{ taskId: "task-1", title: "Ship the thing", status: "todo", priority: "p0" }])
         : err(notFoundWorkspace(workspaceId)),
+
+    // 9.41 leg B — the frozen AuditRecord candidate set `auditDrill` re-scans to resolve an
+    // opaque changeId. Default = empty for KNOWN_WORKSPACE (tests override per-case); unknown
+    // workspace → typed not-found, mirroring every other workspace-scoped method.
+    auditEvents: (workspaceId) =>
+      workspaceId === KNOWN_WORKSPACE ? ok([]) : err(notFoundWorkspace(workspaceId)),
   };
   return { ...base, ...overrides };
 }
@@ -889,6 +900,108 @@ describe("buildQueryRouter — globalDrillDown (SAFETY: workspace-scoped, visibi
     });
     expect(isErr(res)).toBe(true);
     if (isErr(res)) expect(res.error.kind).toBe("validation_rejected");
+  });
+});
+
+describe("buildQueryRouter — auditDrill (9.41 leg B: resolve an opaque changeId server-side)", () => {
+  // All frozen fields present so a projection bug (leaking one) would be caught by test 4.
+  function fakeAuditRecord(overrides: Partial<AuditRecord> = {}): AuditRecord {
+    return {
+      actor: "user:alice",
+      event: "knowledge_writer.commit",
+      refs: ["ref_1"],
+      payloadHash: "sha256:deadbeef",
+      beforeSummary: "before",
+      afterSummary: "after",
+      timestamps: { occurredAt: "2026-07-02T00:00:00.000Z" },
+      workspaceId: KNOWN_WORKSPACE,
+      ...overrides,
+    };
+  }
+
+  it("audit_drill_resolves_a_real_changeid_to_its_narrow_summary — spec(§10/§16)", async () => {
+    const record = fakeAuditRecord();
+    const changeId = deriveChangeId(record);
+    const caller = makeCaller(fakePort({ auditEvents: () => ok([record]) }));
+    const res = await caller.query.auditDrill({ workspaceId: KNOWN_WORKSPACE, changeId });
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) {
+      expect(res.value).toEqual({
+        event: "knowledge_writer.commit",
+        occurredAt: "2026-07-02T00:00:00.000Z",
+      });
+    }
+  });
+
+  it("audit_drill_unknown_changeid_is_a_typed_not_found", async () => {
+    const caller = makeCaller(fakePort({ auditEvents: () => ok([fakeAuditRecord()]) }));
+    const res = await caller.query.auditDrill({
+      workspaceId: KNOWN_WORKSPACE,
+      changeId: "does_not_exist_anywhere",
+    });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("AUDIT_DRILL_TARGET_NOT_FOUND");
+  });
+
+  it("audit_drill_never_returns_a_foreign_workspace_record_even_if_the_port_leaks_one (WS-8)", async () => {
+    // The hash MATCHES the foreign record — a resolver trusting the hash alone would serve it.
+    // A correctly-scoped sibling sits alongside it so a "match anything in the list" bug would
+    // also be exposed (it would still fail: no record in the list hashes to `foreignChangeId`
+    // except the foreign one).
+    const foreign = fakeAuditRecord({ workspaceId: "ws_employer", event: "external_write.created" });
+    const scoped = fakeAuditRecord({ workspaceId: KNOWN_WORKSPACE });
+    const foreignChangeId = deriveChangeId(foreign);
+    const caller = makeCaller(fakePort({ auditEvents: () => ok([foreign, scoped]) }));
+    const res = await caller.query.auditDrill({ workspaceId: KNOWN_WORKSPACE, changeId: foreignChangeId });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("AUDIT_DRILL_TARGET_NOT_FOUND");
+  });
+
+  it("audit_drill_never_leaks_dropped_fields — exactly {event, occurredAt}, never refs/payloadHash/actor/workspaceId", async () => {
+    const record = fakeAuditRecord({
+      actor: "user:carries-a-secret-identity",
+      refs: ["ref_a", "ref_b"],
+      payloadHash: "sha256:carried-hash",
+    });
+    const changeId = deriveChangeId(record);
+    const caller = makeCaller(fakePort({ auditEvents: () => ok([record]) }));
+    const res = await caller.query.auditDrill({ workspaceId: KNOWN_WORKSPACE, changeId });
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(fieldSet(res.value)).toEqual(["event", "occurredAt"]);
+  });
+
+  it("audit_drill_malformed_event_fails_closed_not_throws", async () => {
+    // The hash is computed over the RAW event field, so an oversized event still hash-matches —
+    // but UiSafeAuditDrillSummarySchema's uiSafeToken bound (max 64) rejects it at serve time.
+    const record = fakeAuditRecord({ event: "e".repeat(100) });
+    const changeId = deriveChangeId(record);
+    const caller = makeCaller(fakePort({ auditEvents: () => ok([record]) }));
+    const res = await caller.query.auditDrill({ workspaceId: KNOWN_WORKSPACE, changeId });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("AUDIT_DRILL_TARGET_UNSERVABLE");
+  });
+
+  it("resolveAuditDrillDown_reuses_the_single_sourced_derivechangeid (L39/L61 — a derivation lives once)", () => {
+    const src = readFileSync(
+      resolvePath(dirname(fileURLToPath(import.meta.url)), "../../../src/api/procedures/queries.ts"),
+      "utf8",
+    );
+    expect(src.includes("createHash")).toBe(false);
+  });
+
+  it("a port failure on auditEvents propagates as-is (mirrors resolveGlobalDrillDown's sanitized-first-return shape)", async () => {
+    const portFailure = notFoundWorkspace(UNKNOWN_WORKSPACE);
+    const caller = makeCaller(fakePort({ auditEvents: () => err(portFailure) }));
+    const res = await caller.query.auditDrill({ workspaceId: UNKNOWN_WORKSPACE, changeId: "irrelevant" });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
+  });
+
+  it("auditDrill_procedure_is_mounted_and_authed_gated (same auth gate as every other query)", async () => {
+    const caller = makeCaller(fakePort({ auditEvents: () => ok([]) }), UNAUTH_CTX);
+    const res = await caller.query.auditDrill({ workspaceId: KNOWN_WORKSPACE, changeId: "irrelevant" });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.message).toBe("unauthenticated");
   });
 });
 

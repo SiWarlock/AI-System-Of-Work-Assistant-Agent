@@ -46,6 +46,7 @@ describe.skipIf(!SOW_API)("bootWorker — DEV data-unlock (devProvision surfaces
       const port = createDbReadModelQueryPort({
         readModels: booted.backends.repos.readModels,
         approvals: booted.backends.repos.approvals,
+        audit: booted.backends.repos.audit,
       });
 
       const cards = await port.workspaceCards("employer-work");

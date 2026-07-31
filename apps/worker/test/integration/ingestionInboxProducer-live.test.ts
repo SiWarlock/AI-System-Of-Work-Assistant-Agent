@@ -81,7 +81,11 @@ describe("ingestion-inbox producer — a real park surfaces on the served query,
       // Register WS in the fail-closed registry (the production union path) so the SERVED query
       // resolves it (WS-8 visibility authority).
       await registerWorkspace(backends.repos.readModels, String(WS), NOW);
-      const queries = createDbReadModelQueryPort({ readModels: backends.repos.readModels, approvals: backends.repos.approvals });
+      const queries = createDbReadModelQueryPort({
+        readModels: backends.repos.readModels,
+        approvals: backends.repos.approvals,
+        audit: backends.repos.audit,
+      });
       const acts = buildProofSpineActivities(backends, paramsFor(createKnowledgeRevisionStoreAdapter(backends.repos.knowledgeRevisions)));
 
       // Real below-threshold park → the served ingestion-inbox query returns the item.

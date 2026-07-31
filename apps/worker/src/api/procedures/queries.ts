@@ -58,8 +58,12 @@ import {
   type UiSafeTaskRollupItem,
   UiSafeTaskRollupItemSchema,
   type UiSafeCopilotAnswer,
+  type AuditRecord,
+  type UiSafeAuditDrillSummary,
+  UiSafeAuditDrillSummarySchema,
 } from "@sow/contracts";
 import { computePercent } from "@sow/workflows";
+import { deriveChangeId } from "../projections/recentChanges";
 import { router, publicProcedure, authedResolver } from "../router";
 import {
   answerCopilotQuestion,
@@ -174,6 +178,16 @@ export interface ReadModelQueryPort {
   readonly taskRollup: (
     workspaceId: string,
   ) => MaybeAsyncResult<readonly UiSafeTaskRollupItem[]>;
+  /**
+   * Workspace-scoped audit records (9.41 leg B) — the frozen `AuditRecord` rows `auditDrill`
+   * re-scans to resolve an opaque `UiSafeRecentChange.changeId` back to its backing record.
+   * Unknown workspace → typed err (fail-closed, mirrors every other workspace-scoped method).
+   * NOT yet UI-safe-projected — {@link resolveAuditDrillDown} projects the ONE matched record;
+   * the raw set itself never crosses this boundary.
+   */
+  readonly auditEvents: (
+    workspaceId: string,
+  ) => MaybeAsyncResult<readonly AuditRecord[]>;
 }
 
 /** A port result that may be delivered synchronously (the fake) or async (@sow/db). */
@@ -300,6 +314,22 @@ function parseGlobalDrillInput(value: unknown): GlobalDrillInput {
   return {
     workspaceId: requireString(source, "workspaceId"),
     projectionType: requireString(source, "projectionType"),
+  };
+}
+
+/** A drill-down pointer into an opaque `UiSafeRecentChange.changeId` (9.41 leg B). */
+export interface AuditDrillInput {
+  readonly workspaceId: string;
+  readonly changeId: string;
+}
+
+/** Validator for the audit-drill input — reads ONLY `workspaceId` + `changeId`. */
+function parseAuditDrillInput(value: unknown): AuditDrillInput {
+  if (typeof value !== "object" || value === null) throw new Error("invalid_input");
+  const source = value as Record<string, unknown>;
+  return {
+    workspaceId: requireString(source, "workspaceId"),
+    changeId: requireString(source, "changeId"),
   };
 }
 
@@ -584,6 +614,59 @@ async function resolveGlobalDrillDown(
   return projectCards(await readModel.workspaceCards(input.workspaceId));
 }
 
+/**
+ * 9.41 leg B — resolve an opaque `UiSafeRecentChange.changeId` back to its narrow
+ * `UiSafeAuditDrillSummary`. `changeId` is a one-way hash (`deriveChangeId`); there is no
+ * `AuditRepository.get(id)`, so resolution RE-FETCHES the workspace-scoped candidate set and
+ * RE-DERIVES the identical hash per candidate to find the match (never decode/reverse the id,
+ * never a second hash implementation — L39/L61).
+ *
+ * Fail-closed at every step, never a throw (§16):
+ *   1. A port fault propagates as-is (mirrors {@link resolveGlobalDrillDown}'s sanitized-first
+ *      return).
+ *   2. No candidate whose `deriveChangeId(r) === input.changeId` AND `r.workspaceId ===
+ *      input.workspaceId` (the second clause is WS-8 defense-in-depth — required even though
+ *      the port call is nominally pre-scoped, in case a port ever leaks a foreign record) →
+ *      typed `AUDIT_DRILL_TARGET_NOT_FOUND`.
+ *   3. A match whose projected `{event, occurredAt}` fails `UiSafeAuditDrillSummarySchema` (e.g.
+ *      an oversized/unsafe `event` — the hash is computed over the RAW field, so a malformed
+ *      event can still hash-match) → typed `AUDIT_DRILL_TARGET_UNSERVABLE`, never a malformed ok.
+ *
+ * `auditRef` never leaves the worker — only `{event, occurredAt}` crosses.
+ */
+async function resolveAuditDrillDown(
+  readModel: ReadModelQueryPort,
+  input: AuditDrillInput,
+): Promise<Result<UiSafeAuditDrillSummary, FailureVariant>> {
+  const fetched = await readModel.auditEvents(input.workspaceId);
+  if (!fetched.ok) return fetched;
+
+  const match = fetched.value.find(
+    (r) => deriveChangeId(r) === input.changeId && r.workspaceId === input.workspaceId,
+  );
+  if (match === undefined) {
+    return err(
+      failure("validation_rejected", "no such audit record to drill into", {
+        cause: { code: "AUDIT_DRILL_TARGET_NOT_FOUND" },
+      }),
+    );
+  }
+
+  const candidate: UiSafeAuditDrillSummary = {
+    event: match.event,
+    occurredAt: match.timestamps.occurredAt,
+  };
+  const parsed = UiSafeAuditDrillSummarySchema.safeParse(candidate);
+  if (!parsed.success) {
+    return err(
+      failure("validation_rejected", "audit record cannot be safely served", {
+        cause: { code: "AUDIT_DRILL_TARGET_UNSERVABLE" },
+      }),
+    );
+  }
+  return ok(parsed.data);
+}
+
 // ── Router factory ────────────────────────────────────────────────────────────
 
 /**
@@ -747,6 +830,18 @@ export function buildQueryRouter(deps: QueryRouterDeps) {
       authedResolver<GlobalDrillInput, readonly UiSafeDashboardCard[]>(
         async (_ctx, input): Promise<Result<readonly UiSafeDashboardCard[], FailureVariant>> =>
           resolveGlobalDrillDown(readModel, input),
+      ),
+    ),
+
+    /**
+     * 9.41 leg B — resolve an opaque `UiSafeRecentChange.changeId` server-side into its narrow
+     * `UiSafeAuditDrillSummary`. Resolvable at the authenticated tRPC boundary; no renderer
+     * caller until 9.41 leg C (desktop's Recent Changes affordance).
+     */
+    auditDrill: publicProcedure.input(parseAuditDrillInput).query(
+      authedResolver<AuditDrillInput, UiSafeAuditDrillSummary>(
+        async (_ctx, input): Promise<Result<UiSafeAuditDrillSummary, FailureVariant>> =>
+          resolveAuditDrillDown(readModel, input),
       ),
     ),
   });

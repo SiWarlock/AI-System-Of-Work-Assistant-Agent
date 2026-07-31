@@ -26,7 +26,11 @@ async function fresh(): Promise<ProofSpineBackends> {
 }
 
 function port(b: ProofSpineBackends): ReturnType<typeof createDbReadModelQueryPort> {
-  return createDbReadModelQueryPort({ readModels: b.repos.readModels, approvals: b.repos.approvals });
+  return createDbReadModelQueryPort({
+    readModels: b.repos.readModels,
+    approvals: b.repos.approvals,
+    audit: b.repos.audit,
+  });
 }
 
 function deps(b: ProofSpineBackends): { readModels: typeof b.repos.readModels; vault: { read(p: string): Promise<string | undefined> }; now: () => string } {

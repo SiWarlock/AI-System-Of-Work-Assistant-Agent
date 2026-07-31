@@ -41,15 +41,18 @@ import {
   type UiSafeIngestionItem,
   type UiSafeScheduleEntry,
   type UiSafeTaskRollupItem,
+  type AuditRecord,
 } from "@sow/contracts";
 import type {
   ReadModelRepository,
   ApprovalRepository,
+  AuditRepository,
   ReadModelRecord,
   DbError,
 } from "@sow/db";
 import type { ReadModelQueryPort } from "../procedures/queries";
 import type { DashboardCardSource } from "../projections/uiSafe";
+import { RECENT_CHANGES_AUDIT_SCAN_BOUND } from "../projections/recentChanges";
 
 // ── read-model key scheme (documented convention) ─────────────────────────────
 // The @sow/db `read_models` table is keyed by (readModelKey, workspaceId?) with a
@@ -403,6 +406,7 @@ export async function resolveKnownWorkspace(
 export interface DbReadModelQueryDeps {
   readonly readModels: ReadModelRepository;
   readonly approvals: ApprovalRepository;
+  readonly audit: AuditRepository;
 }
 
 /**
@@ -446,6 +450,9 @@ export interface DbReadModelQueryPortAsync {
   readonly taskRollup: (
     workspaceId: string,
   ) => Promise<Result<readonly UiSafeTaskRollupItem[], FailureVariant>>;
+  readonly auditEvents: (
+    workspaceId: string,
+  ) => Promise<Result<readonly AuditRecord[], FailureVariant>>;
 }
 
 /**
@@ -464,7 +471,7 @@ export interface DbReadModelQueryPortAsync {
 export function createDbReadModelQueryPort(
   deps: DbReadModelQueryDeps,
 ): DbReadModelQueryPortAsync {
-  const { readModels, approvals } = deps;
+  const { readModels, approvals, audit } = deps;
 
   /** Read a workspace-scoped card read-model, fail-closed on an unknown workspace. */
   const workspaceScopedCards = async (
@@ -622,6 +629,30 @@ export function createDbReadModelQueryPort(
       const rm = await getReadModel(readModels, READ_MODEL_KEYS.schedule, null);
       if (isErr(rm)) return rm;
       return ok(rm.value === undefined ? [] : readScheduleEntries(rm.value.data));
+    },
+
+    async auditEvents(workspaceId: string): Promise<Result<readonly AuditRecord[], FailureVariant>> {
+      // 9.41 leg B — fail-closed on an unknown/out-of-scope workspace, consistent with every
+      // other workspace-scoped method in this file (code-quality review corrected an earlier
+      // draft that skipped this gate citing `refreshRecentChanges` as precedent — that function
+      // is an internal producer invoked with an already-known-valid workspaceId, not a public
+      // read surface like this one's five siblings here).
+      const known = await resolveKnownWorkspace(readModels, workspaceId);
+      if (isErr(known)) return known;
+      if (!known.value) return err(unknownWorkspace());
+      // Delegates to the injected AuditRepository, scoped + bounded IDENTICALLY to the
+      // recent-changes producer (`RECENT_CHANGES_AUDIT_SCAN_BOUND` — the SAME bound, so any
+      // changeId a user could ever drill into necessarily passed through this same scan).
+      // Never-throws (§16): a thrown call OR a returned DbError both fold to the
+      // redaction-safe `storeFault()` — the raw driver detail never crosses.
+      let r: Result<AuditRecord[], DbError>;
+      try {
+        r = await audit.query({ workspaceId }, RECENT_CHANGES_AUDIT_SCAN_BOUND);
+      } catch {
+        return err(storeFault());
+      }
+      if (isErr(r)) return err(storeFault());
+      return ok(r.value);
     },
   };
 }

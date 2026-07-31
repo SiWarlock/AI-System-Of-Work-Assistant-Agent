@@ -26,7 +26,11 @@ const AUTHED_CTX: ApiContext = { auth: ok<AuthedContext>({ authenticated: true }
 
 /** An in-process caller over the query router mounted on the REAL read-model port. */
 function makeCaller(b: ProofSpineBackends) {
-  const readModel = createDbReadModelQueryPort({ readModels: b.repos.readModels, approvals: b.repos.approvals });
+  const readModel = createDbReadModelQueryPort({
+    readModels: b.repos.readModels,
+    approvals: b.repos.approvals,
+    audit: b.repos.audit,
+  });
   const copilot = {
     retrieval: createFixtureRetrieval({}),
     synthesis: createStubSynthesis(),

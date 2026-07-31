@@ -94,6 +94,7 @@ const emptyReadModel: ReadModelQueryPort = {
   recentChanges: () => ({ ok: true, value: [] }),
   projectDashboards: () => ({ ok: true, value: [] }),
   taskRollup: () => ({ ok: true, value: [] }),
+  auditEvents: () => ({ ok: true, value: [] }),
 };
 
 /** An empty System-Health port (no items; a fail-closed egress default). */

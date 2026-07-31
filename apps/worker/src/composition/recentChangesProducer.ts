@@ -9,18 +9,8 @@
 import { ok, err, isErr } from "@sow/contracts";
 import type { Result, AuditRecord } from "@sow/contracts";
 import type { AuditRepository, DbError, ReadModelRecord, ReadModelRepository } from "@sow/db";
-import { projectRecentChanges } from "../api/projections/recentChanges";
+import { projectRecentChanges, RECENT_CHANGES_AUDIT_SCAN_BOUND } from "../api/projections/recentChanges";
 import { READ_MODEL_KEYS } from "../api/adapters/readModel";
-
-/**
- * The audit scan bound. ⚠ arch_gap: `audit.query(filter, limit)` orders by `rowid` ASC (append/OLDEST-first) then
- * `slice(0, limit)` — the dialect-agnostic forward order is under-specified until task 2.9 — so a SMALL limit would
- * return the OLDEST rows, making a "recent" feed show STALE changes. We scan a GENEROUS window so a personal-scale
- * workspace's full audit history returns; the projector DESC-sorts and the read-side `sanitizeRecentChanges` caps
- * to 50, yielding the correct most-recent feed. FUTURE-TODO(2.9): a workspace with more than this many lifetime
- * audit rows would surface stale-oldest until `audit.query` gains recency (DESC/most-recent) ordering.
- */
-export const RECENT_CHANGES_AUDIT_SCAN_BOUND = 1000;
 
 export interface RefreshRecentChangesInput {
   readonly workspaceId: string;

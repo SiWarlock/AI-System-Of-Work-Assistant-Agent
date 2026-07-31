@@ -62,7 +62,11 @@ function deps(b: ProofSpineBackends): ProvisionWorkspaceDeps {
   return { workspaceConfig: b.repos.workspaceConfig, readModels: b.repos.readModels, now: b.now };
 }
 function port(b: ProofSpineBackends): ReturnType<typeof createDbReadModelQueryPort> {
-  return createDbReadModelQueryPort({ readModels: b.repos.readModels, approvals: b.repos.approvals });
+  return createDbReadModelQueryPort({
+    readModels: b.repos.readModels,
+    approvals: b.repos.approvals,
+    audit: b.repos.audit,
+  });
 }
 /** Read the registry row's `workspaceIds` set directly (null-scoped global read-model). */
 async function registryIds(b: ProofSpineBackends): Promise<readonly string[]> {
