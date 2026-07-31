@@ -62,6 +62,18 @@
 
 ⇒ **This works because briefs cite premises that CAN be contradicted in one command.** ⚠ **Two of the eight shared one root cause, recorded against the orchestrator: specify a change set by what BREAKS, not by what the call LOOKS LIKE.** And **four verification greps produced false negatives** — the discipline of checking the tree is right; the *pattern* needs the same care as the decision to check.
 
+## ⭐ The posture your successor should inherit, not just the state
+
+**Two things belong here as posture rather than as findings, at the lead's request.**
+
+**1. Never self-assess context; send the canonical line verbatim.** At close-out the temptation was to paraphrase — *"I'm around 70%"* — from a number the lead had already given me. Instead I ran `check-team-context.sh main --brief` and pasted it whole: `Team main: ACTION (worker-implementer=73%, main-orchestrator=79%)`. ⭐ **That is why the 79% is trustworthy, and it is also how `worker-implementer=73%` surfaced at all** — a figure that had moved from the 56% the owner's ruling was priced on, on the one area that is the critical path. **A paraphrase would have carried my number and silently dropped worker's.** ⇒ **The rule earns its keep precisely when paraphrasing would be easiest and would look harmless.**
+
+**2. ⭐⭐ THE EIGHTH CORRECTION IS THE MOST IMPORTANT ONE IN THIS DOC, and it is not about `activeForm`.** I prescribed *"check `activeForm` before flagging a crossing"* — repeatedly — to the one party whose tooling **structurally cannot render it**, **while quoting the (a4) caveat that says exactly that.** Worker established it from their own tooling and offered a better substitute (*"have I already sent a Step 9?"* — check your **own outbound state**, not the board), which I adopted **verbatim**, replacing mine in the tracker.
+
+⇒ **The posture: an orchestrator who can be corrected by the person RECEIVING the instruction is the mechanism working, not a failure of it.** ⛔ **Briefs and rulings that cannot be contradicted do not get corrected — they get followed.** All eight corrections this round arrived as `file:line` findings rather than complaints, and the reason is structural: **every brief cited premises checkable in one command, so a closer reader could contradict them cheaply.** Three of the eight were defects in *orchestrator-authored fixes*, found by the people the fixes were aimed at.
+
+⚠ **Do not read the correction count as a quality problem to drive down.** Driving it down means writing briefs nobody can check — which converts visible, cheap corrections into invisible, expensive ones. **The count is the instrument, not the defect.** And **hold your own rulings to the same standard as your claims**: contracts **L113** exists because a low correction rate on *judgement* is evidence nobody checked it, not evidence it was better. **Ask the party who bore a ruling's cost to price it, with a specific question** — the generic *"anything unfiled?"* reliably returns nothing.
+
 ## Open follow-ups
 
 - ⛔ **`(a0)(viii)` — nothing systematically surfaces tracked work nobody is queued on.** **9.27, a rule-5 fail-open, sat OPEN 07-26→07-30 in no queue.** ⭐ The anti-scanner lesson does **not** apply: **the tracked set is CLOSED and ENUMERABLE, so a sweep over it IS a gate.**
