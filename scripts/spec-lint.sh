@@ -27,9 +27,33 @@ bad()  { printf '  FAIL %s\n' "$*"; FAIL=1; }
 note() { printf '  note %s\n' "$*"; }
 
 # ---- shared anchor extraction --------------------------------------------------------------------
-# stdin → one anchor per line (§-form and #-form), LESSONS lines excluded, deduped.
+# stdin → one anchor per line (§-form and #-form), deduped.
+#
+# TWO line-level exclusions, both USE/MENTION escapes:
+#   1. `LESSONS`               — a lesson ref is not a spec anchor (original).
+#   2. `spec-lint:mention`     — an explicit author marker: this line MENTIONS a §-token rather than
+#                                CITING an architecture anchor. Needed because a brief legitimately
+#                                refers to OTHER documents' section numbering (root CLAUDE.md's rules,
+#                                the brief template's own seam-question heading, another doc's §N), and
+#                                every such token was previously extracted as an ARCHITECTURE.md
+#                                citation and failed the phase-subset check. That made a MANDATORY
+#                                template element un-lintable in any phase not declaring the token's
+#                                anchor, so the only way to earn a PASS was to DROP the token the
+#                                template supplies — i.e. the check suppressed its own documentation.
+#
+# ⛔ DELIBERATELY EXPLICIT, NOT INFERRED. An earlier design auto-excluded any line naming a `*.md`
+# file other than the arch doc. Rejected: it makes the gate SILENTLY WEAKER (a line carrying both a
+# real citation and a doc reference would skip the real one), and a gate that quietly checks less is
+# the precise failure this project keeps re-finding — "a check that reports nothing is read as a check
+# that passed." An unmarked §-token is ALWAYS treated as a citation. The escape must be written, so it
+# shows up in the diff and the author owns it.
+#
+# ⚠ Known, accepted limit: the marker excludes the WHOLE line, so a line carrying a real citation AND
+# a mention loses the citation too. Put them on separate lines. This fails in the author-opted-out
+# direction and is visible in the source, which is why it is acceptable.
 extract_anchors() {
   grep -v 'LESSONS' \
+    | grep -v 'spec-lint:mention' \
     | grep -oE '§[0-9]+(\.[0-9]+)*|#[a-z][a-z0-9-]{2,}' \
     | sort -u || true
 }
@@ -76,7 +100,7 @@ cmd_brief() {
   local anchors a
   anchors=$(extract_anchors < "$brief")
   for a in $anchors; do
-    anchor_in_arch "$a" || bad "anchor $a cited in the brief has no matching heading/id in $ARCH_DOC"
+    anchor_in_arch "$a" || bad "anchor $a cited in the brief has no matching heading/id in $ARCH_DOC — if $a is a MENTION of another document's section numbering rather than an architecture citation, append '<!-- spec-lint:mention -->' to that line"
   done
 
   # 2. Task ID(s) exist in the tracker with unticked work (bundles cite several)
@@ -108,7 +132,7 @@ cmd_brief() {
     else
       for a in $anchors; do
         printf '%s\n' "$pset" | contained_in_set "$a" \
-          || bad "brief anchor $a is outside phase $phase's Spec anchors ($(printf '%s' "$pset" | tr '\n' ' ')) — add an explicit 'widens phase scope because…' line or fix the anchor"
+          || bad "brief anchor $a is outside phase $phase's Spec anchors ($(printf '%s' "$pset" | tr '\n' ' ')) — pick ONE: (a) the slice really does widen scope ⇒ add a 'widens phase scope because…' line; (b) $a is a MENTION of another doc's numbering, not a citation ⇒ append '<!-- spec-lint:mention -->' to that line; (c) the anchor is wrong ⇒ fix it. ⛔ Do NOT add $a to phase $phase's declared anchor set to silence this — an anchor set that grew because a linter demanded it is worthless."
       done
     fi
   fi

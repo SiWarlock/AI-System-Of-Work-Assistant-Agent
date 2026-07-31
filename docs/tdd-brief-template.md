@@ -97,10 +97,12 @@ Tests to write in `<test_path>`:
 ## Cross-doc invariant impact (implementer flags at Step 9; orchestrator writes the docs)
 - **Model field changes:** <none / list of contract models touched>
 - **Orchestrator doc rows to write hot (Step 9 routing):** <none / which `packages/contracts/CLAUDE.md` cross-doc rows + `ARCHITECTURE.md` Appendix A rows the orchestrator authors atomic with the round>
-- **§2.5-seam (shared-contract) model touched?** If this slice's NEW/extended invariant touches an
-  Appendix-A model whose `§` is crossed by a `§2.5` dependency edge, the RED outline MUST include the
-  **schema-snapshot test** (model field-name set == checked-in snapshot, tagged `spec(§X)`) — the
+- **§2.5-seam (shared-contract) model touched?** <!-- spec-lint:mention --> If this slice's NEW/extended invariant touches an
+  Appendix-A model whose section is crossed by a subsystem-dependency-DAG edge, the RED outline MUST include the
+  **schema-snapshot test** (model field-name set == checked-in snapshot, tagged with the model's spec section) — the
   implementer authors it in this same `/tdd` cycle; Step 2.5 reviews it like any test.
+
+  > ⚠ **Why this bullet's heading carries `<!-- spec-lint:mention -->` — do not remove it.** The heading names the seam anchor as a **literal token**, and `spec-lint brief` extracts every `§`-token in a brief as an `ARCHITECTURE.md` **citation**, then fails any citation outside the phase's declared anchor set. **Phase 9 declares that anchor; Phase 13 does not** — so following this template verbatim made every Phase-13 brief un-lintable, and the only way to earn a PASS was to **drop the token this template supplies** (done under duress in briefs 226 and 227). ⛔ **The fix was NOT to add the anchor to Phase 13's declared set** — an anchor set that grew because a linter demanded it is worthless, and the anchor sets' trustworthiness is load-bearing. The marker is the use/mention escape; the body text above is also phrased token-free so the bullet reads correctly either way. ⚠ **The asymmetry that made this invisible for so long: it cannot fire for anyone working the phase that happens to declare the anchor,** so Phase-9 authors never saw it. (Carry-forward 6(a0)(iii); contracts **L104** — a check with no use/mention escape suppresses its own documentation.)
 
 > **Orchestrator territory** (canonical list: the `packages/contracts/CLAUDE.md` "must NOT touch" list — hook-enforced in team mode): flag at Step 9 categorized; the orchestrator writes hot during the same session and commits at `/orchestrate-end`.
 
