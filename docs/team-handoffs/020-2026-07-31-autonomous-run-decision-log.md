@@ -56,13 +56,16 @@ relaxation from this file** — that inference is exactly the L121 defect this r
 
 ## State at handover
 
+⛔ **DO NOT QUOTE A HASH OR A COUNT FROM THIS SECTION — RUN THE COMMAND.** Handoff 019's seal chain
+rotted in four minutes and this file is written mid-run. The literals below were true when written
+and are wrong by the time you read them; the commands are true whenever they are run.
+
 | | |
 |---|---|
-| HEAD | `9121300c` |
-| `origin/main` | `809516ad` — **87 commits unpushed, owner-run, DO NOT PUSH** |
-| Tree | 10 modified (worker mid-slice on 13.8f-C), 0 untracked |
-| Round terminal | `4811805b` (+ `214fc8a9`) — orchestrator's books, **not a round seal** |
-| Slices this round | **14** |
+| HEAD · origin · unpushed | `git rev-parse --short HEAD origin/main ; git rev-list --count origin/main..HEAD` |
+| Tree | `git diff --stat ; git ls-files --others --exclude-standard` — ⚠ **BOTH**, per contracts L117: modified-and-untracked are different risk profiles and one command sees only one of them |
+| Push | ⛔ **owner-run at seals. The lead never pushes.** ~95 unpushed is BY DESIGN, not a backlog |
+| Slices this round | 15 at `8199a61f` (13.8f-C); count forward with `git log --oneline` |
 
 **Team (6 sessions, all live):** `main-orchestrator` 29% · `worker-implementer` 42% (mid 13.8f-C)
 · `contract-implementer` 55% (idle, nothing queued) · `knowledge-implementer` 35% ·
@@ -79,17 +82,30 @@ _(append-only; newest last; every entry: what · why · what would reverse it)_
 | 3 | **`(a0)(ix)(1)` — the root `CLAUDE.md` standing-rule amendment — HELD FOR THE OWNER**, not decided. | Fix (i) is discoverability plumbing (lead's). Amending the no-cross-area rule in root `CLAUDE.md` changes **the owner's rule**, and a lead promoting his own instance-ruling into standing conventions is **L121 performed on L121**. | n/a — deliberately not taken. |
 | 4 | **Existing bare-`LNN` citations NOT audited.** Recorded as a scoped item with its measurement command instead. | The convention prevents *new* ambiguity and does nothing about existing citations, which may already resolve wrong. Auditing mid-round would be unscoped work discovered rather than budgeted. | n/a — recorded, not done. |
 | 5 | **Renumbering ledgers into disjoint ranges REJECTED (not deferred).** | Lesson numbers are stable IDs — *never reorder, never reuse a deleted slot* — already a rule in force. Rejecting is the honest disposition; deferring would imply it is available later. | n/a |
+| 6 | **All four hard lines RELEASED to the team** (see the superseded-carve-out section above), with the execution hygiene attached. | The owner reaffirmed explicitly. Holding them after that would substitute the lead's judgement for a decision the owner had already made twice. | The authorization is **run-scoped**; `CLAUDE.md` and the Owner-gates ledgers are untouched and re-bind next round with no action needed. |
+| 7 | **SEQUENCING: task 24.6 (pre-go-live safety audit) runs BEFORE any arming slice.** | The plan names it *pre*-go-live. Arming connectors first means the audit's findings land on a surface that is already writing to the world. ⭐ **Authorization removes the human gate; it does not reorder the arc** — the two were never the same constraint, and collapsing them is how a granted permission turns into a skipped step. | Re-order at will — it is a scheduling call, nothing is written by it. |
+| 8 | **9.40 RULED — DELETE the mechanism, KEEP the goal as a tracked successor task.** Desktop unblocked. | `UiSafeCopilotAnswer` (`packages/contracts/src/api/ui-safe.ts:520-524`) **excludes proposals by explicit design** — `:498-500`: *"if the answer implies an action, that becomes a ProposedAction routed to Approvals — never carried on this shape."* So the tracker's option A contradicts the answer seam. What option B would delete is **one doc comment on a renderer-local optional field** (`Copilot.tsx:75`), not a frozen entry/schema/Appendix-A row. ⚠ **Inference, flagged as such:** a producer making *"Review in Approvals"* navigate needs an approval **id**, so `proposalLabel?: string` is a guess at a shape the producer will not supply. ⭐ Precedent is this project's own egress-pill reconciliation (`Residuals (9)`) — **keep the GOAL, correct the MECHANISM**; the goal survives as the successor task. | Restore from the deletion commit; the successor task carries the requirement so it cannot be lost by the delete. |
 
 ## Deferred to the owner (do NOT decide)
 
-- **Phase 9's exit** — blocked on a nonexistent Drive connector + the nothing-deferred ruling.
-- **9.40** — Copilot proposal-row affordance: populate (needs a worker procedure) or delete
-  (a product call). **Desktop's only unblock.**
+⭐ **This list SHRANK when the carve-out was withdrawn — the go-live items moved OUT of it and into
+the lead's authority.** What remains are things the authorization does not reach: amendments to the
+owner's own rules, and one blocker no permission can clear.
+
+- **Phase 9's exit** — ⛔ **not an authorization problem and not clearable by one.** It is blocked on
+  a Drive connector that **does not exist** plus the owner's nothing-is-deferred-out-of-Phase-9
+  ruling. Permission to arm a connector is not a connector.
+- ~~**9.40**~~ — ⭐ **DECIDED, decision 8.** Delete the mechanism, keep the goal. Desktop unblocked.
 - **`(a0)(viii)`'s three candidate fixes** — the tracked-work-nobody-is-queued-on gate.
 - **`(a0)(ix)`** — L121's discoverability gap: a cross-area rule filed in one area's
   `LESSONS.md` is discoverable only by the area least likely to need it. Root `CLAUDE.md`
   amendment is the owner's, not the lead's — see the provenance argument in L121.
 - **scaffold template trailer** — in-target is `Opus 5`, template still `4.8`; a future
   `scaffold-upgrade` would re-import `4.8` over the owner's ruling. Writes reopen next round.
-- Employer login-switch residual · per-workspace subscription split · §ARM-23 web-fetch ·
-  connector arming · §DEC-CANDGATE arming · task 24.6 pre-go-live safety audit.
+- ⭐ **RELEASED, decision 6 — these are NO LONGER the owner's this run:** §ARM-23 web-fetch ·
+  connector arming · §DEC-CANDGATE arming · task 24.6 pre-go-live safety audit (**runs FIRST**,
+  decision 7) · the employer login-switch residual. Each crossing gets a table row with its undo
+  status. ⛔ They return to owner-gated next round, automatically, because no rule was edited.
+- **Per-workspace subscription SPLIT** — ⛔ **stays the owner's, and this is a scope call, not a
+  safety one.** A single login governs all egress today; splitting it is **new scope**, and
+  authorization to cross a line is not authorization to widen the build.
