@@ -2146,3 +2146,28 @@ This round produced **ten overturns** of a reader further from the evidence by a
 ⭐ **THIRD INSTANCE, 2026-07-31 — THE DOWNWARD FACE, and it is arguably the costlier one.** The two instances above are lead→orchestrator. The same defect points **down** the hierarchy: an orchestrator, reviewing an implementer's Step-2.5, was one keystroke from sending *"the absent-flag fixture is missing — add it."* **It was not missing** (`packages/workflows/test/source-living-vault-binding.test.ts:381-393`, `unknown_approval_flag_fails_closed`, which deletes `requiresApproval` and asserts not-committed). Caught only by reading the file before sending. ⛔ **And the detail that makes it worth recording: that fixture was the very thing making the implementer's planned mutation-verification NON-VACUOUS** — relaxing a strict `!== false` to a truthy check is indistinguishable from the original when every fixture carries `true`, so without the absent-flag case the mutation would have proved nothing. **The doubt would have attacked the exact thing making their test good.**
 
 ⇒ **Why downward is worse than upward, and it is structural rather than a matter of degree:** a false doubt aimed at a subordinate **burns their round-trip AND trains them to over-defend correct work** — and **nothing checks it**, because the one person best placed to refute it is the person being doubted, who must now argue against a reviewer who has already written the finding down. Upward, a relayed doubt meets someone with standing to push back; downward it meets someone with a reason not to. **Hold a doubt you are about to send DOWN to a strictly higher evidentiary bar than one you send up** — the asymmetry of who can safely contradict it is the reason.
+
+
+---
+
+<a id="117"></a>
+## 117. After a session death, run TWO checks — a diff is structurally blind to untracked files, and the file it cannot see is the only one with a real loss vector
+
+**Date:** 2026-07-31. **Source:** `worker-implementer`'s turn died on an API 529 mid-slice on 13.8i (a §9.8 Approvals safety slice). **Companion to [L83](#83)** (shared-tree state) and [L100](#100) (a claim inherits its check's scope).
+
+Recovery reported *"369 insertions across 4 files, all present"* — and the arithmetic was exact. **A fifth artifact existed and was not in that number:** an **untracked** 152-line test file containing the slice's highest-value test (the one driving the *real* propose sink twice to prove the adapter did not mangle its idempotency). `git diff --stat` cannot see an untracked file, so a complete-looking inventory was structurally incomplete.
+
+⇒ **THE PROCEDURE, after any session death, crash, 529, or abrupt teardown — BOTH, always:**
+```sh
+git diff --stat                              # modifications to TRACKED files
+git ls-files --others --exclude-standard     # what the diff is structurally blind to
+```
+**Then stage the untracked work immediately.** Staging costs nothing and **removes the only real loss vector** — a tracked modification survives almost anything short of a hard reset, while an untracked file is one careless `git clean` or `git checkout` from gone.
+
+⭐ **THE REPORTING DEFECT, self-diagnosed by the lead and sharper than the procedure:** *"I ran two checks and reported one."* Both checks had in fact been run — all five files were stat'd — but the **summary** merged a 4-file `diff --stat` with a 5-file existence check into a single number, **and the number is what travels.** ⇒ **A summary that silently spans two different scopes is worse than either check alone**, because the merged figure carries the authority of both while covering neither. Same defect as [L100](#100)'s unscoped negative, relocated from a search into a status report.
+
+⭐⭐ **AND THE DEEPEST VERSION, which is the reusable one: "I checked PRESENCE and reported SAFETY, and those are not the same property."** The file was *there* — that was true and verified. Whether it was *safe* is a different question with a different answer, and nothing in the presence check speaks to it. ⚠ **This generalises far past git:** a service that responds is not a service that is healthy; a row that exists is not a row that is valid; a test that runs is not a test that discriminates. **Whenever you report reassurance, name the property you actually measured** — the gap between the measured property and the reassuring one is where every false green in this project has lived.
+
+⚠ **Corollary for the recovery message itself:** tell the interrupted party what you verified *and how*, so they do not reconstruct work that is sitting on disk — but do not let "your work is intact" outrun the check that established it. The honest form names the artifacts and their **risk state**, not just their existence.
+
+`accepted: not mechanically enforceable` — enforcement point: any crash/teardown recovery, and any message asserting that someone else's in-flight work survived.
