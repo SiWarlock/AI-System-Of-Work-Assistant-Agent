@@ -85,6 +85,8 @@ _(append-only; newest last; every entry: what · why · what would reverse it)_
 | 6 | **All four hard lines RELEASED to the team** (see the superseded-carve-out section above), with the execution hygiene attached. | The owner reaffirmed explicitly. Holding them after that would substitute the lead's judgement for a decision the owner had already made twice. | The authorization is **run-scoped**; `CLAUDE.md` and the Owner-gates ledgers are untouched and re-bind next round with no action needed. |
 | 7 | **SEQUENCING: task 24.6 (pre-go-live safety audit) runs BEFORE any arming slice.** | The plan names it *pre*-go-live. Arming connectors first means the audit's findings land on a surface that is already writing to the world. ⭐ **Authorization removes the human gate; it does not reorder the arc** — the two were never the same constraint, and collapsing them is how a granted permission turns into a skipped step. | Re-order at will — it is a scheduling call, nothing is written by it. |
 | 8 | **9.40 RULED — DELETE the mechanism, KEEP the goal as a tracked successor task.** Desktop unblocked. | `UiSafeCopilotAnswer` (`packages/contracts/src/api/ui-safe.ts:520-524`) **excludes proposals by explicit design** — `:498-500`: *"if the answer implies an action, that becomes a ProposedAction routed to Approvals — never carried on this shape."* So the tracker's option A contradicts the answer seam. What option B would delete is **one doc comment on a renderer-local optional field** (`Copilot.tsx:75`), not a frozen entry/schema/Appendix-A row. ⚠ **Inference, flagged as such:** a producer making *"Review in Approvals"* navigate needs an approval **id**, so `proposalLabel?: string` is a guess at a shape the producer will not supply. ⭐ Precedent is this project's own egress-pill reconciliation (`Residuals (9)`) — **keep the GOAL, correct the MECHANISM**; the goal survives as the successor task. | Restore from the deletion commit; the successor task carries the requirement so it cannot be lost by the delete. |
+| 9 | **24.6 GO — dispatch it as an orchestrator-run auditor fan-out** (the `/phase-exit` pattern: read-only subagents partitioned by mechanism × surface, synthesised into one report). Cost authorized. | It cannot be one implementer's slice — Files says *"scope spans ALL areas + `docs/design/**` + `docs/**`"*, and there is no eval-security session in this team. Read-only auditors need no area session. ⛔ **THREAT-MODEL RULING, the load-bearing part: the audit assumes THE GATES ARE OPEN.** Auditing a world where the arming flags still protect us would clear a system we are about to stop being. | The report is a document; findings become tasks. Nothing it does is a write to the world. |
+| 10 | **24.6's constraint count FIXED (4→5)** — `932727c3`. Provenance of constraint 5 flagged for the owner, not ratified. | A wrong count on a *"do not soften any of them"* list means a reader who counts five under a header saying four **cannot tell which is surplus** ⇒ the error endangers the four that are unambiguously owner-set. ⭐ **The edit moves a numeral, not an obligation** — that is the line between repairing owner-set text and amending it, and it is why `(a0)(ix)(1)` still stays with the owner. | One-character revert; the provenance question is recorded either way. |
 
 ## Deferred to the owner (do NOT decide)
 
@@ -119,6 +121,15 @@ owner's own rules, and one blocker no permission can clear.
   connector arming · §DEC-CANDGATE arming · task 24.6 pre-go-live safety audit (**runs FIRST**,
   decision 7) · the employer login-switch residual. Each crossing gets a table row with its undo
   status. ⛔ They return to owner-gated next round, automatically, because no rule was edited.
+- ⭐ **NEW — WHO WROTE 24.6's CONSTRAINT 5?** Its header said *"FOUR BINDING CONSTRAINTS (owner-set;
+  do not soften any of them)"* and listed **five**, from 2026-07-26 until the lead corrected the
+  count on 2026-07-31 (`932727c3`). Constraint 5 is stamped *"added 2026-07-26"* — the same day the
+  task was owner-approved — so it was **probably** appended during that assembly. ⛔ **Unverified.
+  The count fix is NOT a ratification of the fifth constraint**; it was made because a wrong count
+  endangers the four that ARE unambiguously the owner's (a reader counting five under a header
+  saying four cannot tell which is surplus). **One question for the owner: is constraint 5 yours?**
+  If not, it still stands as a finding — it is the one carrying the headline *test-assertions-in-
+  scope* insight — but it should be re-badged as team-set rather than owner-set.
 - **Per-workspace subscription SPLIT** — ⛔ **stays the owner's, and this is a scope call, not a
   safety one.** A single login governs all egress today; splitting it is **new scope**, and
   authorization to cross a line is not authorization to widen the build.
