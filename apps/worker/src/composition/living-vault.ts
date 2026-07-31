@@ -22,7 +22,7 @@
 // determinism violation as well as a layering one.
 import { realpathSync } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
-import { ok, err } from "@sow/contracts";
+import { ok, err, isOk } from "@sow/contracts";
 import type { KnowledgeMutationPlan, Result, WorkspaceId } from "@sow/contracts";
 import { rewriteVaultForSource } from "@sow/knowledge";
 import type { IngestRewriteDeps, GroundedPathRefusal } from "@sow/knowledge";
@@ -31,7 +31,11 @@ import type {
   LivingVaultFailure,
   SourceNoteIdentity,
   ValidatedExtraction,
+  ProposeKnowledgeApprovalPort,
+  ProposeKnowledgeApprovalResult,
+  ProposeKnowledgeApprovalError,
 } from "@sow/workflows/ports/sourceIngestion";
+import type { CopilotKnowledgeProposeSink } from "../api/procedures/copilotProposeKnowledgeSink";
 
 /**
  * Derives the plan set for one ingested source. Production binds {@link createIngestRewriteAdapter}.
@@ -266,5 +270,47 @@ export function createIngestRewriteAdapter(knowledgeDeps: IngestRewriteDeps): Li
       knowledgeDeps,
     );
     return { plans: receipt.plans, refusals: receipt.refusals };
+  };
+}
+
+/**
+ * 13.8i — the composition-root adapter that lets `runSourceIngestion` (Temporal workflow-sandbox code,
+ * cannot import @sow/db/worker adapters) route a withheld PROPOSE-tier living-vault plan into a PENDING
+ * §9.8 Approval, by REUSING the EXISTING `CopilotKnowledgeProposeSink` (apps/worker/src/api/procedures/
+ * copilotProposeKnowledgeSink.ts, `createApprovalsKnowledgeProposeSink`) — never a second minting site
+ * (contracts L39/L61). A THIN wrapper only: it does not re-implement any of the sink's own security
+ * contracts (workspace provenance re-check, payload-swap TOCTOU, planId-keyed idempotency) — those are
+ * pinned exhaustively in copilotProposeKnowledgeSink.test.ts; this module's own test
+ * (living-vault-propose-approval.test.ts) verifies only the mapping: delegates verbatim, folds the
+ * sink's `FailureVariant` (or a thrown error) onto the closed `mint_failed` port error — never leaking
+ * the raw detail (rule 7) — and never throws (§16).
+ */
+export function createProposeKnowledgeApprovalPort(
+  sink: CopilotKnowledgeProposeSink,
+): ProposeKnowledgeApprovalPort {
+  return {
+    async propose(
+      plan: KnowledgeMutationPlan,
+      workspaceId: WorkspaceId,
+    ): Promise<Result<ProposeKnowledgeApprovalResult, ProposeKnowledgeApprovalError>> {
+      try {
+        const recorded = await sink.record({ plan, workspaceId });
+        if (!isOk(recorded)) {
+          return err({
+            code: "mint_failed",
+            message: "propose-knowledge-approval: the sink rejected the plan",
+          });
+        }
+        return ok({
+          approvalRef: recorded.value.approvalRef,
+          created: recorded.value.created,
+        });
+      } catch {
+        return err({
+          code: "mint_failed",
+          message: "propose-knowledge-approval: the sink threw",
+        });
+      }
+    },
   };
 }

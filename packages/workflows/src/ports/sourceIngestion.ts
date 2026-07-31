@@ -179,6 +179,46 @@ export interface SourceLivingVaultPort {
 }
 
 // ---------------------------------------------------------------------------
+// (2c⁗) ProposeKnowledgeApprovalPort — §9.8 Approvals for a withheld PROPOSE-tier
+// living-vault plan (task 13.8i, completing 13.8d's tier split)
+// ---------------------------------------------------------------------------
+//
+// A living-vault plan marked `requiresApproval !== false` must never auto-commit (§6 KN-10 tiered
+// autonomy) — it is withheld instead. Before this slice, "withheld" meant "counted, then dropped."
+// This port routes it into a PENDING §9.8 Approval so a human can act on it, REUSING the existing
+// worker-side propose-knowledge sink (composition root: apps/worker/src/composition/living-vault.ts) —
+// never a second minting site. Closed, enumerable error (§16 — never thrown), deliberately narrower
+// than the concrete adapter's own FailureVariant vocabulary: the driver never depends on a downstream
+// package's error enum (the same principle this file states for every other port here).
+
+/** A mint fault (the sink rejected the plan, or the adapter caught a throw). Never the raw cause (rule 7). */
+export type ProposeKnowledgeApprovalErrorCode = "mint_failed";
+
+export interface ProposeKnowledgeApprovalError {
+  readonly code: ProposeKnowledgeApprovalErrorCode;
+  readonly message: string;
+}
+
+/** Proof a semantic proposal was recorded. `created:false` ⇒ an idempotent re-drive (no 2nd Approval). */
+export interface ProposeKnowledgeApprovalResult {
+  readonly approvalRef: string;
+  readonly created: boolean;
+}
+
+/**
+ * Route a withheld PROPOSE-tier plan into a PENDING §9.8 Approval. Idempotent by the plan's own
+ * `planId` (the SAME assumption the already-shipped AUTO-tier commit path relies on — see the driver's
+ * own withhold-branch comment). Never throws (§16); a mint fault is a typed err — the plan stays
+ * withheld, never a downgrade to auto-commit.
+ */
+export interface ProposeKnowledgeApprovalPort {
+  propose(
+    plan: KnowledgeMutationPlan,
+    workspaceId: WorkspaceId,
+  ): Promise<Result<ProposeKnowledgeApprovalResult, ProposeKnowledgeApprovalError>>;
+}
+
+// ---------------------------------------------------------------------------
 // (0) The source-ingestion pipeline context
 // ---------------------------------------------------------------------------
 

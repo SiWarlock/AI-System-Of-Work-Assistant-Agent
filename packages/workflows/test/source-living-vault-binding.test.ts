@@ -127,6 +127,45 @@ class CapturingCommitPort implements CommitKnowledgePort {
   }
 }
 
+// 13.8i — the propose-knowledge-approval port shape does not exist in ../src/ports/sourceIngestion yet
+// (Step 4 adds it); this local shape is what the driver is expected to call. Kept type-only so nothing
+// production is touched before GREEN — a plain fake class needs no `implements` clause to be usable.
+interface FakeProposeKnowledgeApprovalResult {
+  readonly approvalRef: string;
+  readonly created: boolean;
+}
+interface FakeProposeKnowledgeApprovalError {
+  readonly code: "mint_failed";
+  readonly message: string;
+}
+
+/** Records every call + returns a configured outcome (or throws, to pin the never-throws contract). */
+class SpyProposeKnowledgePort {
+  calls: { readonly plan: KnowledgeMutationPlan; readonly workspaceId: WorkspaceId }[] = [];
+  constructor(
+    private readonly outcome:
+      | { readonly kind: "ok"; readonly approvalRef?: string; readonly created?: boolean }
+      | { readonly kind: "err" }
+      | { readonly kind: "throws" } = { kind: "ok" },
+  ) {}
+  propose(
+    plan: KnowledgeMutationPlan,
+    workspaceId: WorkspaceId,
+  ): Promise<Result<FakeProposeKnowledgeApprovalResult, FakeProposeKnowledgeApprovalError>> {
+    this.calls.push({ plan, workspaceId });
+    if (this.outcome.kind === "throws") throw new Error("propose exploded");
+    if (this.outcome.kind === "err") {
+      return Promise.resolve(err({ code: "mint_failed", message: "fake mint failure" }));
+    }
+    return Promise.resolve(
+      ok({
+        approvalRef: this.outcome.approvalRef ?? "apr_fake",
+        created: this.outcome.created ?? true,
+      }),
+    );
+  }
+}
+
 describe("runSourceIngestion — living-vault seam DORMANT by default (13.8d)", () => {
   it("default_off_is_byte_equivalent — dep UNBOUND ⇒ exactly ONE commit, applied, nothing surfaced", async () => {
     const commit = new FakeCommitPort();
@@ -176,14 +215,183 @@ describe("runSourceIngestion — living-vault seam DORMANT by default (13.8d)", 
     expect(outcome.state).toBe("applied");
     // The source note + the AUTO plan only — the PROPOSE plan is absent from the commit path.
     expect(commit.captured.slice(1).map((p) => String(p.planId))).toEqual(["lv-auto"]);
-    // Withheld ≠ silently dropped (inv-5).
-    expect(health.surfaced.some((f) => /withheld 1 approval-required/i.test(f.message))).toBe(true);
+    // Withheld ≠ silently dropped — but 13.8i changes WHAT happens instead (routed to Approvals, not
+    // just counted), so with no propose port bound the mint attempt fails and IS surfaced as such.
+    expect(
+      health.surfaced.some((f) => /could not be queued for approval/i.test(f.message)),
+    ).toBe(true);
   });
 
-  it("unknown_approval_flag_fails_closed — a plan with NO requiresApproval is withheld, not committed", async () => {
-    // Strict `!== false`: only an explicitly auto-tier plan is auto-committed, so a malformed/older
-    // plan shape can never be treated as pre-approved.
+  it("a_withheld_propose_plan_mints_exactly_one_pending_approval — 13.8i core contract", async () => {
     const commit = new CapturingCommitPort();
+    const health = new FakeSourceHealthSink();
+    const propose = new SpyProposeKnowledgePort({ kind: "ok" });
+    const livingVault = new SpyLivingVaultPort({
+      kind: "plans",
+      plans: [livingVaultPlan("lv-auto"), livingVaultPlan("lv-propose", true)],
+    });
+
+    const outcome = await runSourceIngestion(
+      makeInput(),
+      makeDeps({ commit, health, livingVault, proposeKnowledgeApproval: propose } as never),
+    );
+
+    expect(outcome.state).toBe("applied");
+    // Still never committed.
+    expect(commit.captured.slice(1).map((p) => String(p.planId))).toEqual(["lv-auto"]);
+    // Exactly ONE mint attempt, for the PROPOSE plan, at the routing-bound workspace.
+    expect(propose.calls).toHaveLength(1);
+    expect(String(propose.calls[0]?.plan.planId)).toBe("lv-propose");
+    expect(String(propose.calls[0]?.workspaceId)).toBe(String(WS));
+    // A successful queue is surfaced too (operator-visible, distinct wording from a mint failure).
+    expect(health.surfaced.some((f) => /queued 1 plan\(s\) for §9\.8 approval/i.test(f.message))).toBe(
+      true,
+    );
+  });
+
+  it("a_mint_failure_leaves_the_plan_withheld_and_surfaces — never a downgrade to auto-commit", async () => {
+    const commit = new CapturingCommitPort();
+    const health = new FakeSourceHealthSink();
+    const propose = new SpyProposeKnowledgePort({ kind: "err" });
+    const livingVault = new SpyLivingVaultPort({
+      kind: "plans",
+      plans: [livingVaultPlan("lv-propose-fails", true)],
+    });
+
+    const outcome = await runSourceIngestion(
+      makeInput(),
+      makeDeps({ commit, health, livingVault, proposeKnowledgeApproval: propose } as never),
+    );
+
+    expect(outcome.state).toBe("applied");
+    // A mint FAILURE must never fall through to commit — the safe direction is "not committed."
+    expect(commit.captured.map((p) => String(p.planId))).not.toContain("lv-propose-fails");
+    expect(
+      health.surfaced.some((f) => /could not be queued for approval.*mint_failed/i.test(f.message)),
+    ).toBe(true);
+    // No false "queued" claim alongside the failure.
+    expect(health.surfaced.some((f) => /queued 1 plan\(s\)/i.test(f.message))).toBe(false);
+  });
+
+  it("a_propose_port_that_throws_never_auto_commits_either", async () => {
+    const commit = new CapturingCommitPort();
+    const health = new FakeSourceHealthSink();
+    const propose = new SpyProposeKnowledgePort({ kind: "throws" });
+    const livingVault = new SpyLivingVaultPort({
+      kind: "plans",
+      plans: [livingVaultPlan("lv-propose-throws", true)],
+    });
+
+    const outcome = await runSourceIngestion(
+      makeInput(),
+      makeDeps({ commit, health, livingVault, proposeKnowledgeApproval: propose } as never),
+    );
+
+    expect(outcome.state).toBe("applied");
+    expect(commit.captured.map((p) => String(p.planId))).not.toContain("lv-propose-throws");
+    expect(propose.calls).toHaveLength(1); // non-vacuity — the port really was consulted
+    expect(health.surfaced.some((f) => /could not be queued for approval/i.test(f.message))).toBe(
+      true,
+    );
+  });
+
+  it("a_benign_run_with_no_propose_plans_mints_zero_approvals — non-vacuity control (L80)", async () => {
+    const commit = new CapturingCommitPort();
+    const health = new FakeSourceHealthSink();
+    const propose = new SpyProposeKnowledgePort({ kind: "ok" });
+    const livingVault = new SpyLivingVaultPort({
+      kind: "plans",
+      plans: [livingVaultPlan("lv-auto-only")], // AUTO tier only — nothing withheld
+    });
+
+    await runSourceIngestion(
+      makeInput(),
+      makeDeps({ commit, health, livingVault, proposeKnowledgeApproval: propose } as never),
+    );
+
+    expect(propose.calls).toHaveLength(0);
+    expect(health.surfaced.some((f) => /queued .* plan\(s\) for §9\.8 approval/i.test(f.message))).toBe(
+      false,
+    );
+  });
+
+  it("the_auto_tier_still_commits_unchanged — explicit re-assertion, not assumed (L79)", async () => {
+    const commit = new CapturingCommitPort();
+    const propose = new SpyProposeKnowledgePort({ kind: "ok" });
+    const livingVault = new SpyLivingVaultPort({
+      kind: "plans",
+      plans: [livingVaultPlan("lv-auto-1"), livingVaultPlan("lv-auto-2")],
+    });
+
+    const outcome = await runSourceIngestion(
+      makeInput(),
+      makeDeps({ commit, livingVault, proposeKnowledgeApproval: propose } as never),
+    );
+
+    expect(outcome.state).toBe("applied");
+    expect(commit.captured.slice(1).map((p) => String(p.planId))).toEqual(["lv-auto-1", "lv-auto-2"]);
+    // The propose port is never consulted for AUTO-tier plans.
+    expect(propose.calls).toHaveLength(0);
+  });
+
+  it("a_propose_tier_plan_never_reaches_commit — the load-bearing safety pin", async () => {
+    // MUTATION-VERIFIED (not merely asserted): sourceIngestion.ts's `if (livingVaultPlan.requiresApproval
+    // !== false)` was temporarily inverted to `=== false` — this THIS test failed (AssertionError:
+    // 'lv-propose-only' found in the committed set), confirming it genuinely discriminates a regression
+    // that lets a PROPOSE-tier plan reach commit. A separate, milder mutation (relaxing to a truthy
+    // check, `if (livingVaultPlan.requiresApproval)`) does NOT red this test (an explicit `true` stays
+    // truthy either way) — that mutation is instead caught by the sibling
+    // `unknown_approval_flag_fails_closed` test (an absent flag becomes falsy under it and wrongly
+    // commits). Both mutations were reverted; `git diff --stat` confirmed no leftover.
+    const commit = new CapturingCommitPort();
+    const propose = new SpyProposeKnowledgePort({ kind: "ok" });
+    const livingVault = new SpyLivingVaultPort({
+      kind: "plans",
+      plans: [livingVaultPlan("lv-propose-only", true)],
+    });
+
+    await runSourceIngestion(
+      makeInput(),
+      makeDeps({ commit, livingVault, proposeKnowledgeApproval: propose } as never),
+    );
+
+    expect(commit.captured.map((p) => String(p.planId))).not.toContain("lv-propose-only");
+  });
+
+  it("planIds_survive_the_worker_seam_in_order — (b) the batch-undo unit reflects COMMITTED plans only", async () => {
+    // Deliberately includes a PROPOSE plan between two AUTO plans: the batch-undo unit must carry
+    // only what actually committed (order preserved), never an uncommitted/withheld plan's id —
+    // there is nothing to undo for a plan that was never written.
+    const commit = new CapturingCommitPort();
+    const propose = new SpyProposeKnowledgePort({ kind: "ok" });
+    const livingVault = new SpyLivingVaultPort({
+      kind: "plans",
+      plans: [
+        livingVaultPlan("lv-auto-first"),
+        livingVaultPlan("lv-propose-mid", true),
+        livingVaultPlan("lv-auto-last"),
+      ],
+    });
+
+    const outcome = await runSourceIngestion(
+      makeInput(),
+      makeDeps({ commit, livingVault, proposeKnowledgeApproval: propose } as never),
+    );
+
+    expect((outcome as unknown as { livingVaultPlanIds: readonly string[] }).livingVaultPlanIds).toEqual([
+      "lv-auto-first",
+      "lv-auto-last",
+    ]);
+  });
+
+  it("unknown_approval_flag_fails_closed — a plan with NO requiresApproval is withheld, not committed, AND MINTED (13.8i)", async () => {
+    // Strict `!== false`: only an explicitly auto-tier plan is auto-committed, so a malformed/older
+    // plan shape can never be treated as pre-approved. 13.8i sharpens what "withheld" now means: after
+    // this slice, withheld ⇒ queued for a human, not dropped — so an absent-flag plan must ALSO mint an
+    // Approval, not merely stay uncommitted. Both branches (withhold-from-commit, attempt-to-mint) key
+    // on the SAME `!== false` predicate — a second, divergent condition for the mint would be the bug.
+    const commit = new CapturingCommitPort();
+    const propose = new SpyProposeKnowledgePort({ kind: "ok" });
     const noFlag = { ...livingVaultPlan("lv-unknown") } as Record<string, unknown>;
     delete noFlag.requiresApproval;
     const livingVault = new SpyLivingVaultPort({
@@ -191,9 +399,14 @@ describe("runSourceIngestion — living-vault seam DORMANT by default (13.8d)", 
       plans: [noFlag as unknown as KnowledgeMutationPlan],
     });
 
-    await runSourceIngestion(makeInput(), makeDeps({ commit, livingVault }));
+    await runSourceIngestion(
+      makeInput(),
+      makeDeps({ commit, livingVault, proposeKnowledgeApproval: propose } as never),
+    );
 
-    expect(commit.captured).toHaveLength(1); // the source note only
+    expect(commit.captured).toHaveLength(1); // the source note only — never auto-committed
+    expect(propose.calls).toHaveLength(1); // AND minted — not silently dropped
+    expect(String(propose.calls[0]?.plan.planId)).toBe("lv-unknown");
   });
 
   it("rewrite_fault_never_partial_commits — a FAULTING rewrite ⇒ fail-safe single-note commit + surfaced", async () => {

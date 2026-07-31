@@ -70,6 +70,9 @@ import type {
   KnowledgeCommitFailureCode,
   SourceLivingVaultPort,
   LivingVaultFailure,
+  ProposeKnowledgeApprovalPort,
+  ProposeKnowledgeApprovalResult,
+  ProposeKnowledgeApprovalError,
 } from "../ports/sourceIngestion";
 
 // --- input -----------------------------------------------------------------
@@ -117,6 +120,15 @@ export interface SourceIngestionDeps {
    * "logic-in-package, wire-at-boot": this driver only ever sees "bound or not".
    */
   readonly livingVault?: SourceLivingVaultPort;
+  /**
+   * 13.8i — OPTIONAL routing of a withheld PROPOSE-tier living-vault plan into a PENDING §9.8
+   * Approval, completing 13.8d's tier split. Subordinate to `livingVault` (only ever consulted when
+   * that leg is bound AND emits a plan with `requiresApproval !== false`), so unbound direct/unit
+   * drivers need not fake it — mirrors `livingVault`'s own optionality. UNBOUND ⇒ a withheld plan's
+   * mint attempt degrades to a typed failure (surfaced, never a silent drop, never a downgrade to
+   * auto-commit) — see the withhold branch below.
+   */
+  readonly proposeKnowledgeApproval?: ProposeKnowledgeApprovalPort;
 }
 
 // --- driver outcome --------------------------------------------------------
@@ -134,6 +146,14 @@ export interface SourceIngestionOutcome {
   readonly run: Result<WorkflowRunRef, WorkflowRunError>;
   readonly runReused: boolean;
   readonly surfaced?: SourceWorkflowFailure;
+  /**
+   * 13.8i (b) — the ordered ids of the living-vault AUTO-tier plans this run actually COMMITTED (the
+   * one-action batch-undo unit) — NOT the producer's raw `IngestRewriteReceipt.planIds`, which would
+   * also include a withheld PROPOSE plan's id even though nothing was written for it. Empty when the
+   * living-vault leg is unbound or emitted nothing committable. No batch-undo executor consumes this
+   * yet — tracked as a follow-up task (named at Step 9), not built here (L106).
+   */
+  readonly livingVaultPlanIds: readonly string[];
 }
 
 // --- machine-transition helper ---------------------------------------------
@@ -334,6 +354,11 @@ export async function runSourceIngestion(
   // The machine cursor starts at the initial state.
   let state: SourceState = "captured";
   let context: SourceIngestionContext = input.context;
+  // 13.8i (b) — the ordered ids of living-vault plans this run actually COMMITS (populated in step
+  // 7b, below). A plain mutable array so `surface`'s closure (defined before that step runs) always
+  // reads whatever has been accumulated by the time any return fires — empty on every branch that
+  // exits before step 7b, which is exactly correct (nothing committed yet).
+  const livingVaultPlanIds: string[] = [];
 
   const surface = async (
     failState: SourceState,
@@ -353,7 +378,7 @@ export async function runSourceIngestion(
     // machine state regardless of the sink's own result — a failure to record a
     // failure is the sink's concern, not a reason to lose the machine state.
     await deps.health.surface(failure);
-    return { state: failState, context, run: runResult, runReused, surfaced: failure };
+    return { state: failState, context, run: runResult, runReused, surfaced: failure, livingVaultPlanIds };
   };
 
   // 2. REGISTER the SourceEnvelope BEFORE any extraction (Flow 4 / REQ-F-010).
@@ -525,14 +550,44 @@ export async function runSourceIngestion(
   //     derived, reversible) and a PROPOSE one carrying the human-relevant edits (§6 KN-10 tiered
   //     autonomy). A plan marked `requiresApproval` belongs to the §9.8 Approvals surface — committing
   //     it here would auto-apply exactly the class of edit the approval gate exists to hold. It is
-  //     WITHHELD instead, and the withholding is surfaced so it is never a silent drop.
+  //     WITHHELD instead — NEVER falls through to commit regardless of what happens next.
   //     The test is strict `!== false`: an absent/unknown flag withholds (fail-closed — only an
   //     explicit auto-tier plan is auto-committed).
-  let withheldForApproval = 0;
+  //
+  //     13.8i — completing the tier split: a withheld plan is no longer just COUNTED, it is ROUTED into
+  //     a PENDING §9.8 Approval via the injected `proposeKnowledgeApproval` port (reusing the EXISTING
+  //     copilotProposeKnowledgeSink minting at the worker composition root — never a second sink). The
+  //     mint attempt keys on the IDENTICAL `!== false` predicate the withhold branch uses — a second,
+  //     divergent condition here would be the bug. UNBOUND port, a rejected mint, OR a throw are ALL
+  //     the SAME safe outcome: the plan stays withheld and the fault is surfaced — never a downgrade to
+  //     auto-commit (the failure direction that matters per this slice's safety posture).
+  //     Idempotency inherits the SAME assumption 13.8d's own AUTO-tier commit already makes (a re-drive
+  //     replays because "each plan is individually idempotent") — the sink dedupes by the plan's own
+  //     `planId`, unverified-but-unchanged from what this pipeline already relies on elsewhere.
+  let queuedForApproval = 0;
   for (const livingVaultPlan of livingVaultPlans) {
     if (livingVaultPlan.requiresApproval !== false) {
-      withheldForApproval += 1;
-      continue;
+      let proposed: Result<ProposeKnowledgeApprovalResult, ProposeKnowledgeApprovalError> | undefined;
+      try {
+        proposed =
+          deps.proposeKnowledgeApproval === undefined
+            ? undefined
+            : await deps.proposeKnowledgeApproval.propose(livingVaultPlan, boundWorkspaceId);
+      } catch {
+        proposed = undefined;
+      }
+      if (proposed !== undefined && isOk(proposed)) {
+        queuedForApproval += 1;
+      } else {
+        const reason = proposed === undefined ? "propose_port_unbound_or_threw" : proposed.error.code;
+        await deps.health.surface({
+          failureClass: "write_through_failed",
+          subjectRef: input.run.workflowId,
+          message: `living-vault PROPOSE plan could not be queued for approval (withheld, never committed): ${reason}`,
+          auditRef: input.run.workflowId as unknown as AuditId,
+        });
+      }
+      continue; // NEVER falls through to commit, regardless of the mint outcome above
     }
     const extra = await deps.commit.commit(livingVaultPlan);
     if (!isOk(extra)) {
@@ -545,13 +600,18 @@ export async function runSourceIngestion(
         message: `living-vault commit failed (source note stands): ${extra.error.code}`,
         auditRef: input.run.workflowId as unknown as AuditId,
       });
+    } else {
+      // 13.8i (b) — the batch-undo unit reflects what was ACTUALLY COMMITTED, not what the producer
+      // merely emitted (a withheld PROPOSE plan has no revision to undo — see SourceIngestionOutcome's
+      // own doc comment for why this is NOT `receipt.planIds` forwarded verbatim).
+      livingVaultPlanIds.push(String(livingVaultPlan.planId));
     }
   }
-  if (withheldForApproval > 0) {
+  if (queuedForApproval > 0) {
     await deps.health.surface({
       failureClass: "conflict_review",
       subjectRef: input.run.workflowId,
-      message: `living-vault withheld ${withheldForApproval} approval-required plan(s) — pending §9.8 approval routing`,
+      message: `living-vault queued ${queuedForApproval} plan(s) for §9.8 approval`,
       auditRef: input.run.workflowId as unknown as AuditId,
     });
   }
@@ -573,7 +633,7 @@ export async function runSourceIngestion(
   // No external actions ⇒ the proposal is applied straight from the commit.
   if (actions.length === 0) {
     state = advance(state, ["applied"]);
-    return { state, context, run: runResult, runReused };
+    return { state, context, run: runResult, runReused, livingVaultPlanIds };
   }
 
   // 9. External-action stage: every external write goes through the Tool Gateway
@@ -593,5 +653,5 @@ export async function runSourceIngestion(
 
   // Applied (happy terminal).
   state = advance(state, ["applied"]);
-  return { state, context, run: runResult, runReused };
+  return { state, context, run: runResult, runReused, livingVaultPlanIds };
 }
