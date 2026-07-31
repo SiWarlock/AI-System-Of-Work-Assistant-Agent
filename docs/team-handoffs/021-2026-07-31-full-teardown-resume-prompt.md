@@ -94,7 +94,8 @@ state, not a backlog. If `git rev-list --count` shows a large number, that is **
 | | |
 |---|---|
 | **Round seal** | `48c658b5` — *"seal the round — an audit that could not finish, and a premise that did not survive the code"* |
-| `origin/main` | `809516ad` · **117 unpushed, owner-run** |
+| **Final HEAD** | `c07cb147` — **two commits land AFTER the seal, both legitimate:** `e910ec0f` (this file) and `c07cb147` (241 v2's premises marked RESOLVED in place + the owed hot-write recorded). ⭐ **A seal is not the last commit; it is the last commit of the ROUND'S WORK.** |
+| `origin/main` | `809516ad` · **119 unpushed, owner-run** |
 | Tree | clean, zero untracked (both checks run) |
 | Sessions closed | knowledge `142` · desktop `143` · worker `144` · contract `145` · orchestrator `146` |
 | Suites | workflows 601/601 · worker 2063/2102 (39 skipped) · knowledge 672/673 (1 skipped) · desktop 511/511 · typecheck 20/20 |
@@ -188,10 +189,10 @@ activity with dormancy **inside** it (mirror `createLivingVaultActivity`) → **
 delegate binds unconditionally and the arming decision lives in the activity, which yields an **empty
 plan set** unless the owner-armed port was supplied.
 
-⛔ **READ `docs/sessions/144-…` §"What happened" step 5 BEFORE THE BRIEF'S UNVERIFIED LIST — THE BRIEF
-UNDERSTATES WHAT IS KNOWN.** Brief 241 v2 still carries **7 `UNVERIFIED` markers and 0 marked
-resolved**, but worker independently resolved **three** of them with file:line evidence on its way out,
-and the resolutions landed in **session doc 144, not in the brief**:
+⭐ **CLOSED `c07cb147` — the brief now carries the resolutions IN PLACE** (`UNVERIFIED` 7 → 5, five
+marked `RESOLVED`). **Read the brief; it no longer understates what is known.** The three resolutions,
+kept here as a backstop and because their *evidence* still lives in `docs/sessions/144-…` §"What
+happened" step 5:
 - **`buildAutoIngestProofSpineParams` (`boot.ts:1215`) is the SOLE live `ProofSpineParams` constructor**
   — `registerWorker.ts`'s same-named function is **dead code, zero callers anywhere.**
 - **The meeting path's activity shape is ASYMMETRIC:** the *rewrite* leg has **no** separate Temporal
@@ -203,9 +204,21 @@ and the resolutions landed in **session doc 144, not in the brief**:
 
 ⚠ **Worker's own caveat, and keep it: this resolution was NEVER orchestrator-confirmed before teardown.
 Treat it as a STRONG CANDIDATE, not a ruling — re-verify or get sign-off before building on it.**
-⭐ **This split is the round's return-path defect recurring at the artifact layer:** the next implementer
-reads the **brief**, the evidence is in the **session doc**, and only the session doc points across.
-**Fix the pointer in the brief the moment work resumes.**
+⭐ **KEEP THE EPISODE EVEN THOUGH IT IS FIXED — it is the round's return-path defect recurring at the
+artifact layer, and it was caught by CHECKING rather than by the close-out reporting it.** Worker wrote
+its research where **it** was working (its session doc); the next implementer reads the **brief**; only
+the session doc pointed across. **"Write it down" is not sufficient — it must be written where the
+CONSUMER looks.** Same defect as decision 1 (area docs not pointing up to the ledger), one layer down,
+inside the same round that fixed it.
+
+⛔ **AND ONE MORE OWED WRITE, recorded as Carry-forward item 11 (`c07cb147`):** `UiSafeAuditDrillSummary`
+— frozen by 9.41 leg A, with **shipped consumers on both the worker and desktop legs** — has **no
+`ARCHITECTURE.md` Appendix-A row and no `packages/contracts/CLAUDE.md` cross-doc row.** The orchestrator
+acknowledged that hot-write and never made it; absence confirmed by measurement (`grep -c` = 0 in both,
+working tree **and** history). ⭐ **The detection path is the finding: that row is the one the routing
+matrix marks orchestrator-write / implementer-must-NOT-touch, so an implementer noticing its absence is
+the ONLY mechanism that exists.** Nothing enumerates *acknowledged-but-unwritten hot-writes* — face 1 of
+`(a0)(viii)` aimed at the orchestrator's own queue.
 
 **ONE OPEN DESIGN QUESTION, deliberately NOT ruled** (a lead minutes from teardown, unable to see the
 code, must not issue a design ruling — that is the phantom-ruling shape): does the new propose-approval
