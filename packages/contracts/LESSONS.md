@@ -2103,3 +2103,22 @@ This round produced **ten overturns** of a reader further from the evidence by a
 **Kin:** [L106](#106) (the same wire, a different break — and the remedies do not transfer) · [L100](#100)'s family of claims that pass every check while measuring the wrong thing · the *make-the-violation-unrepresentable* posture applied to a **trade-off** (the byte-identical pin) rather than to a type.
 
 `pattern: rg -n 'catch[^{]*\{[^}]*ok:\s*true|!isOk\([^)]*\)[^{]*\{[^}]*ok:\s*true' apps/worker/src packages/*/src` — warn-grep at `/preflight`; a hit is not automatically wrong (a deliberate best-effort fold is legitimate) but **must carry an in-code note saying which causes it collapses and why that is acceptable.**
+
+---
+
+<a id="115"></a>
+## 115. A TOTAL function over `unknown` costs nothing at the definition site and is paid back at a call site its author could not have known would exist
+
+**Date:** 2026-07-31. **Source:** 13.8g-B brief authoring (orchestrator), from 13.8g-A's `7dfd03d3` a round earlier. **Extends [L103](#103)** — the same posture, arriving through a *signature* rather than through an unrepresentable state.
+
+13.8g-A's author wrote `normalizeAttendees(raw: unknown): AttendeeNormalization` (`packages/knowledge/src/synthesis/attendee-refs.ts:171`) — TOTAL, never-throws, `Array.isArray` guard first, returning the empty normalization on anything that is not a string array (`:172-173`). At the time the only imagined caller was a raw meeting-record attendee list. **That list turned out not to exist anywhere in the codebase.** A round later the real call site materialised as `ValidatedExtraction.fields["attendees"]?.value` — a *post-model, schema-gated* `ExtractionField<unknown>` whose `.value` may be a string, an array, the `TBD` sentinel, or absent: **four shapes, none of them the one the function was written for.**
+
+⭐ **And the wiring needed ZERO new guards.** Not because anyone anticipated this call site — nobody could have — but because a function that is total over `unknown` has already answered *every* "what if the caller hands me something else" question in advance. Had the signature been the "obvious" `normalizeAttendees(raw: readonly string[])`, the corrected path would have required a shape probe, a `TBD`-sentinel check, an array coercion, and a decision about what to do with each failure — **four new branches, each a place to get the fail-safe direction backwards**, written by someone under pressure to make a dispatch work.
+
+⇒ **The general claim, and it is about ECONOMICS rather than taste: at the definition site, accepting `unknown` and being total costs one `Array.isArray` and an empty-value constant. At an unanticipated call site it saves a branch per shape the caller might hold — and unlike the definition-site cost, the call-site cost is paid by someone who does not have the function's invariants in their head.** The asymmetry is the whole argument. This is why [L103](#103)'s posture generalises past types: *make the bad input unrepresentable* and *make every input representable-and-handled* are the same move seen from the two sides of a boundary.
+
+⚠ **The limit, so this is not read as "type everything `unknown`":** it applies at a **trust boundary** where the input genuinely is untrusted or its shape is genuinely not yet known — a parser, a normalizer, a gate, an adapter over content the process did not author. **Inside** a boundary, `unknown` erases a real compile-time guarantee and is strictly worse ([L80](#80): add a case, do not weaken a claim). The test: *would a caller handing me the wrong shape be a BUG in the caller, or a fact about the world?* Bug ⇒ type it precisely. Fact about the world ⇒ `unknown` + total.
+
+⭐ **Why it is worth banking as EVIDENCE and not as principle:** this project already believed the house pattern. What it did not have was a case where the payoff was **collected by a different person, a round later, on a call site nobody had imagined** — which is precisely the payoff shape that never shows up in the slice that pays the cost, and therefore the one that gets argued away when someone asks whether the extra guard is worth it. **It was worth it, and here is the receipt.**
+
+`accepted: not mechanically enforceable` — enforcement point: `/tdd` Step 2.5, when reviewing any new function that takes external/untrusted/not-yet-shaped input. Ask whether a wrong shape would be the caller's bug or the world's fact.
