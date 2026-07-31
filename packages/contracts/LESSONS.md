@@ -2078,3 +2078,28 @@ This round produced **ten overturns** of a reader further from the evidence by a
 **Kin:** the reader-with-the-file-open asymmetry (this entry is that asymmetry pointed at **decisions** rather than **claims**) · [L100](#100)'s fourth mechanism in a *process* decision (a cost estimated without being measured) · [L112](#112) (an instrument that grades its own hit rate will report a better one than it has — the same self-assessment defect, one level up).
 
 `accepted: not mechanically enforceable` — enforcement point: `/orchestrate-end` close-out, and the escalation taxonomy. **A hold or deferral should carry a price-it-back step the way a Step-9 flag carries a routing destination.**
+
+---
+
+<a id="114"></a>
+## 114. A function that returns a SAFE DEFAULT with a SUCCESS FLAG destroys the caller's ability to distinguish causes — the information is gone AT THAT FRAME, not merely unlogged downstream
+
+**The shape:** every failure branch returns `{ok: true, value: <safeDefault>}` — the `!isOk(...)` guard and the `catch` both. The posture is correct, the return type is honest about *what it is*, and the **cause is annihilated**.
+
+**Instance (task 9.38, `apps/worker/src/boot.ts` `egressStatus`).** 9.36 had just done the hard part: it re-gated the stored `Workspace` aggregate at the repository boundary and minted a **distinguishable, permanently-non-retryable** `stored_row_schema_violation`. `egressStatus` then did `if (!isOk(got)) return {ok:true, value: failClosedEgress(wsId)}` — **with no inspection of `got.error.code` at all** — and folded a thrown outage to the *same* value. So a corrupt row, an absent workspace, and a store outage were **byte-identical at that surface**, and because the frame reported **success**, the caller could not tell either. The operator could not see the corruption they were required to repair.
+
+⛔ **WHY THIS IS NOT [L106](#106), and the difference dictates the remedy.** L106 is *produced-and-dropped*: the signal exists, travels, and reaches no consumer — so the fix is **add a consumer**. This is *never-produced*: the distinction is destroyed **at the frame**, so there is nothing downstream to consume and **no consumer can be added later.** ⇒ **L106's remedy is unavailable here by construction.** Conflating the two sends you looking for a reader that could not exist.
+
+⚠ **And the remedy that suggests itself is also unavailable: you cannot "widen the error path," because there is no error path** — the function returns `ok`. **You must ADD a channel** (a health item, an audit signal), which is a different and larger change than it looks from the call site.
+
+⭐ **THE TRAP, and why this survives review: the safe default is CORRECT, so the code reads as careful — and it *is* careful, about the posture.** Fail-closed is exactly right; nothing about it should change. The carelessness is entirely about **observability**, and **the safe default is precisely what makes the information loss invisible** — there is no failing test, no error log, no unhappy path to notice. **Correct-and-safe is not the same as observable**, and a reviewer checking the invariant will find the invariant honoured.
+
+⛔ **The one wrong fix, stated because it is the tempting one:** do **not** buy visibility by weakening the safe default (returning `ok:false`, or making the posture depend on the failure class). The correct fix is **orthogonal** — leave the return byte-identical on every branch and mint the distinction **beside** it. 9.38 pins the return byte-identical across absent/corrupt/outage precisely so that trade becomes unrepresentable rather than merely discouraged.
+
+**Tell:** a read port whose every failure branch returns a success. Grep the `catch` blocks and the `!isOk` guards of anything that serves a posture, a status, or a projection.
+
+⚠ **Residual honesty requirement.** Adding the channel for *one* cause does not restore the others: after 9.38, an **outage still mints nothing**, so absence-of-signal continues to conflate *healthy* with *outage*. That was pre-existing and is not worsened — but it must be **stated**, because the natural reading of "we now surface corruption" is "we now surface failures." Fixing the outage case was declined for a real reason, not a scheduling one: **there is no reliable outage signal to key on without risking a false corruption report**, which would trade a true-positive guarantee for a false-positive risk.
+
+**Kin:** [L106](#106) (the same wire, a different break — and the remedies do not transfer) · [L100](#100)'s family of claims that pass every check while measuring the wrong thing · the *make-the-violation-unrepresentable* posture applied to a **trade-off** (the byte-identical pin) rather than to a type.
+
+`pattern: rg -n 'catch[^{]*\{[^}]*ok:\s*true|!isOk\([^)]*\)[^{]*\{[^}]*ok:\s*true' apps/worker/src packages/*/src` — warn-grep at `/preflight`; a hit is not automatically wrong (a deliberate best-effort fold is legitimate) but **must carry an in-code note saying which causes it collapses and why that is acceptable.**
