@@ -79,6 +79,12 @@ git log --oneline -10
 
 ⚠ **`git status` RETURNS THE LITERAL STRING `ok` IN THIS ENVIRONMENT — it tells you nothing.** Use
 `git log` / `git diff` / `git ls-files` / `git cat-file`. This has misled multiple sessions.
+⛔ **AND THE PORCELAIN FORM IS WORSE, BECAUSE IT FAILS SILENTLY INTO A PLAUSIBLE NUMBER:**
+`git status --porcelain=v1` **also** returns the literal `ok`, so a naive `| wc -l` reads as
+**"1 modified file"** — a believable answer that is pure noise. ⭐ **The orchestrator's own spawn prompt
+warned it about this and it still tripped TWICE in one session**, which is the tell that a warning is
+not a defense when the wrong answer looks reasonable. **Never derive a file count from `git status`
+in any form.**
 
 ⛔ **PUSH IS OWNER-RUN, AT SEALS ONLY. THE LEAD NEVER PUSHES.** ~100 unpushed commits is the designed
 state, not a backlog. If `git rev-list --count` shows a large number, that is **correct**.
