@@ -2171,3 +2171,30 @@ git ls-files --others --exclude-standard     # what the diff is structurally bli
 ⚠ **Corollary for the recovery message itself:** tell the interrupted party what you verified *and how*, so they do not reconstruct work that is sitting on disk — but do not let "your work is intact" outrun the check that established it. The honest form names the artifacts and their **risk state**, not just their existence.
 
 `accepted: not mechanically enforceable` — enforcement point: any crash/teardown recovery, and any message asserting that someone else's in-flight work survived.
+
+
+---
+
+<a id="118"></a>
+## 118. ⭐ THE FAMILY: A PROXY STANDING IN FOR THE PROPERTY — the round's unifying defect, banked as a family because the remedies differ but the DETECTION QUESTION is identical
+
+**Date:** 2026-07-31. **Banked at the lead's instruction** after three instances surfaced in one evening and a back-reading found the day's earlier findings were the same shape. ⛔ **This is an INDEX, not a new rule** — each member below has its own entry and its own remedy. What generalises is **how you notice**.
+
+**THE SHAPE.** You need to know property **P** (is it safe? is it done? is it necessary? is it covered?). **P** is expensive or awkward to measure. A **proxy Q** is cheap and to hand (does it exist? how many lines? where is it conventionally done? did the command exit 0?). **Q correlates with P almost always — which is exactly why substituting it is invisible.** You measure **Q**, and then you *report* **P**. The substitution fails precisely where the correlation breaks, and **that case is disproportionately the interesting one**, because a correlation that holds everywhere boring is what made **Q** look safe to use.
+
+**MEMBERS FROM THIS ROUND** — each `Q → P`, with where it broke:
+- **presence → safety** ([L117](#117)): five files stat'd and all present; the fifth was **untracked**, i.e. present and *not safe*. "I checked presence and reported safety."
+- **lines changed → progress** (2026-07-31, orchestrator): a wake message told an implementer *"resume at Step 3/4"*, inferred from `git diff --stat`. It was at **Step 8** — GREEN done, suite run, safety pin mutation-verified. The diff cannot see finished work that produced no further lines.
+- **conventional location → necessary location** (2026-07-31, orchestrator): Step-8 reviewer dispatch was treated as bound to the implementer's session **because that is where the step lives**. A reviewer needs the **diff and the brief**; the session is convention, not dependency. This one *cost an option* rather than producing a false claim — the failure mode of a proxy is not always a wrong answer, sometimes it is an unconsidered one.
+- **a gate that runs → a gate that checks** ([L89](#89)): `lint` is `tsc --noEmit`; the command exits 0 and the property it names was never evaluated.
+- **a test that runs → a test that discriminates** ([L75](#75), [L84](#84), [L90](#90)): green because unasserted, or unreached, or because no fixture fed the triggering input.
+- **the tracker says X → X is true** ((a0)(viii), both faces): work correctly recorded but unqueued; and a task whose recorded scope would produce a defect if followed.
+- **a summary → what it summarises** ((a0)(viii)'s table face): *"Phase 25 · knowledge · open · 6"* answering *"does knowledge have work?"* with **yes, six**, while all six are another track's.
+
+⇒ **THE DETECTION QUESTION, and it is the only part that transfers: NAME THE PROPERTY YOU ACTUALLY MEASURED, THEN ASK WHETHER IT IS THE PROPERTY YOU CARE ABOUT.** Not *"is my check correct?"* — every check above was correct. **The proxy is not wrong; it is answering a different question than the one being reported.** ⭐ The tell is a sentence where the verb of measurement and the noun of the claim disagree: *"I stat'd the files, so the work is safe."* *"The diff shows 369 lines, so it is at Step 4."* *"Turbo exited 0, so it lints."*
+
+⚠ **WHAT DOES NOT GENERALISE — do not turn this into "distrust proxies."** A proxy is usually the right tool: measuring **P** directly is often impossible (you cannot measure "this test discriminates" without mutating), and a cheap correlated signal is how anything gets checked at all. ⛔ **The rule is not "stop using proxies." It is "report the proxy, not the property"** — say *"five files present, one of them untracked"* rather than *"work is safe"*; say *"369 lines across 4 tracked files"* rather than *"at Step 4."* **A stated proxy invites the reader to notice the gap; a proxy reported as the property closes the question.**
+
+⭐ **Why a family rather than a rule: the REMEDIES have nothing in common.** L117's is a second git command; L89's is renaming a script; L75's is mutation; (a0)(viii)'s is a sweep over a bounded set. **Only the noticing is shared** — which is why collecting them earns its keep, and why fixing them one at a time never surfaced the pattern. **Three appeared in one evening because someone was finally naming the measured property out loud each time.**
+
+`accepted: not mechanically enforceable` — necessarily; a check for this would itself be a proxy. **Enforcement point: any sentence that reports reassurance, status, or coverage.**
