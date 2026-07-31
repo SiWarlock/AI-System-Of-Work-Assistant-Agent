@@ -2122,3 +2122,23 @@ This round produced **ten overturns** of a reader further from the evidence by a
 ⭐ **Why it is worth banking as EVIDENCE and not as principle:** this project already believed the house pattern. What it did not have was a case where the payoff was **collected by a different person, a round later, on a call site nobody had imagined** — which is precisely the payoff shape that never shows up in the slice that pays the cost, and therefore the one that gets argued away when someone asks whether the extra guard is worth it. **It was worth it, and here is the receipt.**
 
 `accepted: not mechanically enforceable` — enforcement point: `/tdd` Step 2.5, when reviewing any new function that takes external/untrusted/not-yet-shaped input. Ask whether a wrong shape would be the caller's bug or the world's fact.
+
+---
+
+<a id="116"></a>
+## 116. In a hub-and-spoke team, authority attaches to the SPEAKER, not to the claim — so a relay arrives wearing the relayer's confidence rather than its source's
+
+**Date:** 2026-07-31. **Source:** two same-day instances, both self-reported by the lead. **Complements [L113](#113)** — that one says a ruling needs a challenge channel; this one says you must first be able to tell a ruling from a relay.
+
+**Instance 1:** the lead read `IMPLEMENTATION_PLAN.md:68`'s *"head of queue is 9.41 leg B"* and restated it to the orchestrator as fact. The orchestrator nearly briefed it **as the lead's ruling** — which would have made a stale tracker line unchallengeable, since nobody contradicts the lead on a sequencing call. Caught only because the lead retracted it unprompted: *"the sequencing call is YOURS."*
+**Instance 2:** the orchestrator offered a **preliminary, unverified** observation (*"the click→fetch→render interaction has no built precedent"*). The lead restated it as an instruction — *"carry that caveat INTO the brief."* On checking, **two thirds of the interaction was already built.** Carrying it would have told an implementer to design from scratch around working machinery.
+
+⇒ **The mechanism is structural, not a failing of anyone's diligence.** In a hub-and-spoke team every fact reaches the spokes through one node, and **confidence is attached by the last speaker rather than carried from the origin.** A tracker line worth 60% and an unverified aside worth 30% both arrive at 100% once the lead has said them — and the recipient cannot see the difference, because the two look identical on the wire. **Neither instance involved anyone stating something they believed to be false.**
+
+⭐ **THE STANDING RULE (the lead's, adopted verbatim): when the lead restates something a document or a teammate said, that is a POINTER, not a ruling — treat it with the confidence its ORIGINAL source had, which is often less than the relay sounds. A real ruling says it is a ruling and carries a reason.** The presence of a reason is the discriminator, because a relay has nothing to give one from.
+
+⚠ **The two failure directions are not symmetric, and the second is the expensive one.** A relayed **false claim** gets checked against code and dies cheaply. A relayed **false doubt** ("there's no precedent for X") makes someone **rebuild working machinery** — nothing contradicts it, because the absence it asserts is exactly what nobody goes looking for. **[L111](#111) applied to the coordination layer:** a false doubt is unfalsifiable as stated and therefore lingers, and it costs most when it arrives with authority attached.
+
+⇒ **Obligations, both cheap:** the **relayer** marks a relay as a relay (*"the tracker says…"* / *"you said earlier…"*) rather than absorbing it into their own voice — one clause; the **recipient** verifies a relayed premise before acting on it exactly as they would a brief premise ([L81](#81)), and **reports back when it fails**, since the relayer holds the same wrong picture and will otherwise repeat it. Both instances here were closed by the recipient looking rather than complying.
+
+`accepted: not mechanically enforceable` — enforcement point: any message that will become a brief premise or a dispatch decision. **The tell is the missing reason: if you cannot say WHY, you are relaying.**
