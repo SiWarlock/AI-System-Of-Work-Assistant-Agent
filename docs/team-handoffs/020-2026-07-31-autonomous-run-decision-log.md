@@ -97,9 +97,22 @@ owner's own rules, and one blocker no permission can clear.
   ruling. Permission to arm a connector is not a connector.
 - ~~**9.40**~~ — ⭐ **DECIDED, decision 8.** Delete the mechanism, keep the goal. Desktop unblocked.
 - **`(a0)(viii)`'s three candidate fixes** — the tracked-work-nobody-is-queued-on gate.
-- **`(a0)(ix)`** — L121's discoverability gap: a cross-area rule filed in one area's
-  `LESSONS.md` is discoverable only by the area least likely to need it. Root `CLAUDE.md`
-  amendment is the owner's, not the lead's — see the provenance argument in L121.
+- **`(a0)(ix)(1)` ONLY** — the root `CLAUDE.md` standing-rule amendment. Amending the owner's own
+  rule off the lead's instance-ruling is L121 performed on L121. ⭐ **Fix (i) has LANDED**
+  (`b814975c`), so this is no longer the whole item.
+  ⛔ **MECHANISM, CORRECTED — an earlier draft of this bullet had it backwards and the wrong version
+  outlived the fix by three commits.** It read *"a cross-area rule filed in one area's `LESSONS.md`
+  is discoverable only by the area least likely to need it."* **Measured, that is false:**
+  `packages/contracts/LESSONS.md` **is** the project-wide ledger (root `CLAUDE.md:256` says so), so
+  the filing was never the defect. The defect is the **RETURN path** — `grep -c
+  'packages/contracts/LESSONS' <area>/CLAUDE.md` was **0 in all five** non-contract areas, so an
+  implementer orienting off its own area doc had no route back up. Same conclusion, opposite
+  mechanism, **different fix**: add pointers, do not move lessons.
+  ⚠ **This correction is itself the lesson (L94).** Decision row 1 carried the corrected mechanism
+  from the moment it was written, while this bullet — in the section the owner reads FIRST — kept
+  the retracted one. **A correction that lands in the channel STATING a claim and not the channel
+  REPEATING it leaves the file disagreeing with itself**, and the stale copy sits where it gets read.
+  Caught by the orchestrator, not by the lead who wrote both.
 - **scaffold template trailer** — in-target is `Opus 5`, template still `4.8`; a future
   `scaffold-upgrade` would re-import `4.8` over the owner's ruling. Writes reopen next round.
 - ⭐ **RELEASED, decision 6 — these are NO LONGER the owner's this run:** §ARM-23 web-fetch ·
