@@ -406,6 +406,19 @@ export interface CopilotAskInput {
 }
 
 /**
+ * 9.27 — how a caller expresses "no notice" to {@link toUiSafeCopilotAnswer}. Replaces an optional
+ * trailing positional (`egressProcessor?: string`) a future caller could silently forget: a required
+ * `string | null` would have reproduced the same defect in a new shape, because `null` is the value
+ * a caller reaches for reflexively — "this answer genuinely needs no notice" and "I didn't think
+ * about the notice" would collapse into one token again (9.24's three-meanings-of-absence). A named
+ * decline (`{kind:"none"}`) cannot be typed by accident; neither `undefined` nor `null` satisfies
+ * this union, so a forgotten notice is a compile error, not a silently-passing default (L103 — make
+ * the violation unrepresentable). The WIRE format is unchanged: `UiSafeCopilotAnswer.egressProcessor`
+ * stays optional — only the AUTHORING requirement (this parameter) becomes mandatory.
+ */
+export type EgressNotice = { readonly kind: "none" } | { readonly kind: "processor"; readonly value: string };
+
+/**
  * The candidate-data gate (rule 2) + the WS-8 leakage gate (A1): project a CANDIDATE answer to the
  * servable `UiSafeCopilotAnswer`. Each answer block + citation TITLE is normalized through
  * `collapseToSummaryLine` (the redact-by-type SHAPE defense — single-line, ≤1024, matching the
@@ -416,7 +429,7 @@ export interface CopilotAskInput {
  */
 export function toUiSafeCopilotAnswer(
   candidate: CandidateCopilotAnswer,
-  egressProcessor?: string,
+  notice: EgressNotice,
 ): Result<UiSafeCopilotAnswer, FailureVariant> {
   const projected = {
     answer: candidate.answer.map(collapseToSummaryLine),
@@ -427,7 +440,7 @@ export function toUiSafeCopilotAnswer(
     // The server-derived Employer-Work egress notice (present only for employer-work cloud egress).
     // NOT collapsed — a leak-shaped label is a BUG and must HARD-REJECT via the strict schema
     // (`uiSafeSummaryLine.optional()`), never be silently normalized into something servable.
-    ...(egressProcessor !== undefined ? { egressProcessor } : {}),
+    ...(notice.kind === "processor" ? { egressProcessor: notice.value } : {}),
   };
   const parsed = UiSafeCopilotAnswerSchema.safeParse(projected);
   if (!parsed.success) {
@@ -493,5 +506,11 @@ export async function runGovernedCopilotSynthesis(
 
   const candidate = await deps.synthesis.synthesize(workspaceId, question, scopedContext, decision.value.route);
   if (!isOk(candidate)) return candidate;
-  return toUiSafeCopilotAnswer(candidate.value, decision.value.egressProcessor);
+  // 9.27 — convert the interim decision's OPTIONAL processor (still ProcessorId | undefined; that
+  // shape is unchanged) into the REQUIRED, explicit EgressNotice the gate now demands.
+  const notice: EgressNotice =
+    decision.value.egressProcessor !== undefined
+      ? { kind: "processor", value: decision.value.egressProcessor }
+      : { kind: "none" };
+  return toUiSafeCopilotAnswer(candidate.value, notice);
 }

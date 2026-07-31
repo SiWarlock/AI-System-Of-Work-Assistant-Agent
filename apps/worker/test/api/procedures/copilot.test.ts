@@ -21,6 +21,7 @@ import {
   type CopilotSynthesisPort,
   type WorkspacePosture,
   type WorkspacePostureResolver,
+  type EgressNotice,
 } from "../../../src/api/procedures/copilot";
 
 const WS = "ws-employer";
@@ -367,7 +368,7 @@ describe("toUiSafeCopilotAnswer — candidate-data + WS-8 leakage gate (A1)", ()
   };
 
   it("accepts a well-formed candidate and returns a validated UiSafeCopilotAnswer", () => {
-    const r = toUiSafeCopilotAnswer(goodCandidate);
+    const r = toUiSafeCopilotAnswer(goodCandidate, { kind: "none" });
     expect(isOk(r)).toBe(true);
     if (isOk(r)) {
       expect(r.value.answer).toEqual(goodCandidate.answer);
@@ -376,23 +377,81 @@ describe("toUiSafeCopilotAnswer — candidate-data + WS-8 leakage gate (A1)", ()
   });
 
   it("NORMALIZES a multi-line answer block to single-line (redact-by-type shape defense)", () => {
-    const r = toUiSafeCopilotAnswer({ ...goodCandidate, answer: ["line one\nleaked second line"] });
+    const r = toUiSafeCopilotAnswer({ ...goodCandidate, answer: ["line one\nleaked second line"] }, { kind: "none" });
     expect(isOk(r)).toBe(true);
     if (isOk(r)) expect(r.value.answer[0]).toBe("line one leaked second line"); // collapsed, single-line
   });
 
   it("REJECTS a candidate whose citationId is a path/URL (leak-shaped; fails the opaque-ref gate)", () => {
-    const r = toUiSafeCopilotAnswer({
-      ...goodCandidate,
-      citations: [{ citationId: "/Users/x/secret.md", title: "x" }],
-    });
+    const r = toUiSafeCopilotAnswer(
+      { ...goodCandidate, citations: [{ citationId: "/Users/x/secret.md", title: "x" }] },
+      { kind: "none" },
+    );
     expect(isErr(r)).toBe(true);
     if (isErr(r)) expect(r.error.kind).toBe("schema_rejected");
   });
 
   it("REJECTS a candidate with an EMPTY answer (never serve a contentless answer)", () => {
-    const r = toUiSafeCopilotAnswer({ ...goodCandidate, answer: [] });
+    const r = toUiSafeCopilotAnswer({ ...goodCandidate, answer: [] }, { kind: "none" });
     expect(isErr(r)).toBe(true);
+  });
+});
+
+// ── 9.27: the egress notice cannot be omitted — replaces an optional trailing positional a future
+// caller could silently forget with a REQUIRED, named, discriminated decline (contracts L103: make
+// the violation unrepresentable, not merely detected). ──────────────────────────────────────────
+describe("9.27 — the egress notice cannot be omitted (compiler-enforced, not a scan)", () => {
+  const goodCandidate: CandidateCopilotAnswer = {
+    answer: ["Two decisions were logged."],
+    citations: [{ citationId: "src:note-1", title: "Vendor review" }],
+  };
+
+  it("notice_cannot_be_omitted: a call with no notice argument does not compile [L103, spec(§5)]", () => {
+    // Non-vacuity verified by mutation (matches worker's provisionWorkspace-partial-scaffold.test.ts
+    // "verified by hand" convention): temporarily widening this function's `notice` parameter to
+    // `notice?: EgressNotice` in copilot.ts makes the directive below go UNUSED, which tsc reports
+    // as its own error (`reportUnusedTsExpectErrorDirective` is on by default) — verified by hand,
+    // reverted, never committed. Reported at Step 9, not re-run here (a committed mutation would
+    // defeat the pin).
+    const omittingNotice = (): void => {
+      // @ts-expect-error — notice is a REQUIRED second argument; omitting it must not compile.
+      toUiSafeCopilotAnswer(goodCandidate);
+    };
+    void omittingNotice; // type-checked by tsc, NEVER invoked — a compile-time-only pin, no runtime throw
+    // Non-vacuity: the SAME call WITH the notice supplied compiles and runs.
+    const r = toUiSafeCopilotAnswer(goodCandidate, { kind: "none" });
+    expect(isOk(r)).toBe(true);
+  });
+
+  it("declining_is_explicit_and_distinct_from_forgetting: neither undefined nor null can satisfy EgressNotice — a decline must be a deliberate, named value [spec(§5)]", () => {
+    // Non-vacuity verified by mutation, each directive independently: temporarily adding `| undefined`
+    // to EgressNotice's own definition in copilot.ts makes ONLY the `undefined` directive below go
+    // UNUSED (the `null` one still fires); reverting and adding `| null` instead flips ONLY the `null`
+    // directive (the `undefined` one still fires) — proving each pin is real and independent of the
+    // other, not a single check that happens to cover both. Verified by hand, reverted, never
+    // committed; not re-run here (a committed mutation would defeat the pin).
+    const neverCalled = (): void => {
+      // @ts-expect-error — undefined cannot satisfy EgressNotice; "forgot" has no representable value.
+      const forgotten: EgressNotice = undefined;
+      // @ts-expect-error — null cannot satisfy EgressNotice either.
+      const alsoForgotten: EgressNotice = null;
+      void forgotten;
+      void alsoForgotten;
+    };
+    void neverCalled; // type-checked, never invoked
+    // The only two constructible values are deliberate and distinct — declined is never asserted.
+    const declined: EgressNotice = { kind: "none" };
+    const asserted: EgressNotice = { kind: "processor", value: "claude" };
+    expect(declined).not.toEqual(asserted);
+  });
+
+  it("declined_notice_yields_no_key: an explicit decline produces the SAME wire shape as today's omission — no egressProcessor key (the wire format is unchanged; only authoring is)", () => {
+    const r = toUiSafeCopilotAnswer(goodCandidate, { kind: "none" });
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(Object.keys(r.value).sort()).toEqual(["answer", "citations"]);
+      expect(r.value.egressProcessor).toBeUndefined();
+    }
   });
 });
 
@@ -466,6 +525,29 @@ describe("answerCopilotQuestion — the read-only ask orchestration (retrieve �
     );
     expect(isOk(r)).toBe(true);
     if (isOk(r)) expect(r.value.egressProcessor).toBe("claude");
+  });
+
+  // 9.27 — the mirror image of the test above, a controlled single-variable comparison: SAME
+  // employer-work workspace, SAME ack ON, only the ROUTE changes (cloud → local). This isolates
+  // the `:496` ProcessorId|undefined → EgressNotice conversion itself — varying workspace AND
+  // route AND posture at once would only show the notice absent, not identify WHICH factor
+  // produced the absence. Deliberately explicit rather than leaning on `deps()`'s bare defaults:
+  // a future change to what `deps()` defaults to must not silently retire this pin.
+  it("employer-work + LOCAL route + ack ON → the served answer carries NO egressProcessor (the absent-direction conversion, :496)", async () => {
+    const r = await answerCopilotQuestion(
+      deps(ctx(WS), {
+        workspacePosture: createLocalWorkspacePosture({
+          [WS]: posture(employerWs, egressPolicy({ employerRawEgressAcknowledged: true })),
+        }),
+        routeSelector: createLocalRouteSelector(localRoute),
+      }),
+      { workspaceId: WS, question: "q" },
+    );
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.egressProcessor).toBeUndefined();
+      expect(Object.keys(r.value).sort()).toEqual(["answer", "citations"]);
+    }
   });
 
   it("employer-work + cloud route + ack OFF → fails CLOSED (no cloud fallback) BEFORE synthesis runs", async () => {
@@ -561,12 +643,12 @@ describe("answerCopilotQuestion — the read-only ask orchestration (retrieve �
 describe("toUiSafeCopilotAnswer — the egressProcessor notice is schema-gated (leak-shaped label hard-rejected)", () => {
   const candidate: CandidateCopilotAnswer = { answer: ["ok"], citations: [] };
   it("a valid processor label threads through to the served answer", () => {
-    const r = toUiSafeCopilotAnswer(candidate, "anthropic");
+    const r = toUiSafeCopilotAnswer(candidate, { kind: "processor", value: "anthropic" });
     expect(isOk(r)).toBe(true);
     if (isOk(r)) expect(r.value.egressProcessor).toBe("anthropic");
   });
   it("a leak-shaped (multi-line) label is HARD-REJECTED (COPILOT_ANSWER_REJECTED), never normalized", () => {
-    const r = toUiSafeCopilotAnswer(candidate, "anthropic\nleaked raw note");
+    const r = toUiSafeCopilotAnswer(candidate, { kind: "processor", value: "anthropic\nleaked raw note" });
     expect(isErr(r)).toBe(true);
     if (isErr(r)) expect(r.error.cause?.code).toBe("COPILOT_ANSWER_REJECTED");
   });

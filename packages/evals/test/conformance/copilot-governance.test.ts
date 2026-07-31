@@ -262,13 +262,15 @@ describe("Copilot governance — no raw-content SHAPE survives the UI-safe gate 
 
   for (const c of REJECT_CASES) {
     it(`REJECTS: ${c.name}`, () => {
-      expect(isErr(toUiSafeCopilotAnswer(c.candidate))).toBe(true);
+      // 9.27 — the notice param is now required; an explicit decline preserves this assertion exactly.
+      expect(isErr(toUiSafeCopilotAnswer(c.candidate, { kind: "none" }))).toBe(true);
     });
   }
 
   for (const c of NORMALIZE_CASES) {
     it(`NORMALIZES to a single-line, bounded shape: ${c.name}`, () => {
-      const r = toUiSafeCopilotAnswer(c.candidate);
+      // 9.27 — the notice param is now required; an explicit decline preserves this assertion exactly.
+      const r = toUiSafeCopilotAnswer(c.candidate, { kind: "none" });
       expect(isOk(r)).toBe(true);
       if (isOk(r)) {
         expect(isShapeSafe(r.value)).toBe(true);
