@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { ok } from "@sow/contracts";
+import { ok, LIST_VALUED_EXTRACTION_FIELDS } from "@sow/contracts";
 import type { WorkspaceId, ProvenanceOrigin } from "@sow/contracts";
 import type { EntityCandidate, EntityGbrainReadPort } from "../src/synthesis/entity-resolver";
 import type { SynthesisCandidate, SynthesisSectionPort } from "../src/synthesis/planner";
@@ -323,5 +323,24 @@ describe("normalizeAttendees — WS-8 and the 13.8f-A producer contract", () => 
   it("no_production_caller — every apps/ or workflows/ importer is arming-gated (dormant, L24/L52)", () => {
     const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
     expect(ungatedImporters(scanProductionImporters("normalizeAttendees", repoRoot), "normalizeAttendees")).toEqual([]);
+  });
+});
+
+// ── 6. the declared shape stays IN SYNC with what this consumer assumes (13.8g-C leg C) ──
+//
+// `normalizeAttendees` has assumed array-of-strings input since 13.8g-A (Array.isArray at entry,
+// per-element typeof-string withholding) — dormant, ahead of its own wiring, and correct once leg A
+// (packages/contracts) declared `attendees` list-valued. But nothing pinned the CORRESPONDENCE
+// between "declared list-valued" and "consumed as a list": a future edit that drops "attendees" from
+// `LIST_VALUED_EXTRACTION_FIELDS` would silently orphan this module's array assumption, with no test
+// anywhere failing to say so. This asserts the real, imported declaration directly — never a locally
+// re-derived belief (the lead's ruling, IMPLEMENTATION_PLAN.md #### 13.8g-C) — so that failure surfaces
+// HERE, in the consumer's own suite, not only in contracts' declaration-side test
+// (packages/contracts/test/models/agent-extraction.test.ts:239-240, which pins the declared SET's
+// shape but says nothing about who consumes it as a list).
+
+describe("normalizeAttendees — the consumer's array assumption matches the declared shape (13.8g-C leg C)", () => {
+  it("attendees_is_declared_list_valued_in_the_shared_schema — pins the correspondence, not a re-derived belief", () => {
+    expect(LIST_VALUED_EXTRACTION_FIELDS.includes("attendees")).toBe(true);
   });
 });
