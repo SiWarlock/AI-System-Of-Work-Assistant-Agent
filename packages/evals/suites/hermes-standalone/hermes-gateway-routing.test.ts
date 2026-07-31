@@ -357,7 +357,7 @@ function fakeBuildOutputs(): HermesAutomationDeps["buildOutputs"] {
   const envelope = envFor(action);
   return {
     build: async (_validated, boundWorkspaceId) =>
-      ok({ plan: makePlan(boundWorkspaceId), actions: [{ action, envelope }] }),
+      ok({ plan: makePlan(boundWorkspaceId), actions: [{ action, envelope }], siblingPlans: [] }),
   };
 }
 
