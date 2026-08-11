@@ -3113,7 +3113,7 @@ Bring the turn-on runbook (+ `copilot-propose-go-live.md`) up from its current P
 **Done-when:** `projectSyncResult` carries `healthSignal`/its reason through the `"advanced"` branch, `connectorSyncHealthWorkflow` surfaces it, **and a test constructs `status:"advanced"` WITH a signal present and asserts it reaches the health sink** — ⛔ **the test that does not enter the branch is what let this ship.** *(origin: 2026-08-11, 24.6 round 4, partition ACC-1)*
 
 ### 24.25 — `main-bundle-resolution.test.ts` fails at round seal; cause not established, and it is UNOWNED (origin: 24.12 session-end preflight)
-- [ ] OPEN — re-scoped 2026-08-11 (main-orchestrator); tick pending this session's commit hash · **Depends:** — · **Blocks:** nothing further
+- [x] DONE — re-scoped and closed `111506a6` 2026-08-11 (main-orchestrator) · **Depends:** — · **Blocks:** nothing further
 **Kind:** fix · **Spec:** `arch_gap` — **ops, no contract anchor: a build/test-infra failure, not a behaviour this architecture specifies** · **Files:** `apps/desktop/test/bundle/main-bundle-resolution.test.ts` — **desktop territory, and desktop is SHUT DOWN**
 **THE FINDING:** an `electron-vite build` subprocess failure, surfaced by knowledge-implementer running a **full `/preflight`** at `/session-end` (7494/7560 otherwise; lint 11/11, typecheck 20/20).
 ⭐ **NOT caused by this round — MEASURED, not assumed:** `git diff fa46c104..HEAD -- apps/desktop/ packages/contracts/src/ packages/domain/src/` returns **EMPTY**. **Zero source changes to any input the desktop bundle consumes; this round touched only docs in those trees.** The test file's own last commit (`2ce23ef1`) predates the round by weeks.
