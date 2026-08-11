@@ -2487,3 +2487,20 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⚠ **The honest limit of this lesson: crossings are STRUCTURAL in an async team and cannot be eliminated.** ⭐ **What is controllable is the BLAST RADIUS — so the discipline is not "avoid crossing," it is "notice when a crossed message is an ARGUMENT rather than a STATUS, and re-derive rather than build."**
 
 `pin: none — a process lesson.` `accepted: not mechanically enforceable` — no gate reads whether a message carried reasoning or state. **Enforcement point: the moment you are about to reverse a decision, or act on one that reverses yours.**
+
+---
+
+<a id="133"></a>
+## 133. VERIFY A COMMIT BY `git log`, NEVER BY THE COMMIT'S OWN OUTPUT — the `ok` trap reaches the receipt
+
+**Date:** 2026-08-11. **Origin:** the lead, self-reported after `git commit -F … -- <path>` returned **`ok (nothing to commit)`** and **silently did not land.** `git log` caught it; **the receipt would have had him move on.**
+
+**The known trap, and why this is strictly worse.** This project already records that **`git status` returns the literal string `ok` in this environment**, and that its porcelain form is worse because **`git status --porcelain=v1 | wc -l` reads as "1 modified file"** — a *plausible* wrong answer. ⛔ **What was NOT recorded is that the same environment mangles the COMMIT RECEIPT.**
+
+⭐ **WHY THE COMMIT CASE IS THE DANGEROUS ONE: a status you misread costs you one wrong belief about the tree. A COMMIT THAT SILENTLY DID NOT LAND LOOKS IDENTICAL TO ONE THAT DID, AND EVERYTHING DOWNSTREAM ASSUMES IT EXISTS.** A hash gets quoted into a task's metadata, a tracker tick, a handoff, a session doc — ⛔ **and this project's close-out discipline is built on hashes.** ⇒ **the failure propagates into the durable record before anyone re-checks.**
+
+⚠ **And it composes with the failure mode this project already has twice:** work lost to a session dying over an uncommitted diff ([L117](#117)). **A silent no-op commit produces exactly that state while reporting success.**
+
+⇒ **Do:** ⛔ **after every commit, confirm with `git log --oneline -1` (or `git log -1 --format=%H <expected-subject>`) before quoting the hash anywhere.** ⭐ **The general rule, which is the transferable part: in this environment a command's own success output is not evidence — confirm state-changing operations by INDEPENDENTLY QUERYING THE STATE.** ⚠ Applies to `git add` (check `git diff --cached`) and to anything whose receipt you would otherwise paste into a durable record. ⭐ **A receipt is a claim by the actor; `git log` is an observation of the world** — the same distinction [L118](#118) draws between the proxy and the property, arriving in the tooling layer.
+
+`pin: none — an operational lesson.` `pattern: none — the trigger is a workflow step, not a source pattern.` `accepted: not mechanically enforceable` — no gate reads whether a hash was confirmed. **Enforcement point: the moment before a hash enters task metadata, a tracker tick, a session doc, or a handoff.**
