@@ -475,16 +475,16 @@ describe("Copilot — the reply is branded, uninhabitable by a hand-built litera
 // was permanently `disabled` with no producer, and 9.39 deleted that producer's only source. This
 // pins the field's absence at the TYPE level — the same "RED for a type-level pin is a
 // `@ts-expect-error` that goes unused" technique as the 9.34 brand tests above (contracts L87):
-// currently `proposalLabel` still exists, so the directive below is unused and typecheck is RED;
-// removing the field from `CopilotTurnView` turns it GREEN.
+// `proposalLabel` has been REMOVED from `CopilotTurnView` (9.40, `d5e987d4`) — the `@ts-expect-error`
+// below is exercised now, not merely staged for a future removal.
 describe("Copilot — the proposal-row mechanism is removed, not merely unreachable (9.40)", () => {
   it("proposalLabel no longer exists on CopilotTurnView", () => {
     const turn: CopilotTurnView = {
       id: "t1",
       question: "q",
       reply: admitReply({ answer: ["a"], citations: [] }),
-      // @ts-expect-error — 9.40: `proposalLabel` removed from `CopilotTurnView`; this property must
-      // fail to type-check once the field is gone (currently unused — the field still exists).
+      // @ts-expect-error — 9.40: `proposalLabel` no longer exists on `CopilotTurnView`; this assignment
+      // fails to type-check (confirms the field's removal, not merely its unreachability).
       proposalLabel: "should not compile",
     };
     expect(turn.reply.answer).toEqual(["a"]);

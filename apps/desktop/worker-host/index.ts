@@ -164,8 +164,15 @@ async function start(config: WorkerHostConfig): Promise<void> {
       // by construction), so the F2 field-fidelity + A1 body-embedded residuals are REACHABLE for any workspace
       // that holds real content in the combined brain — INERT today (only personal-business has content).
       // ⚠ Operator guards while this is on:
-      //   (1) do NOT save non-personal-business content UNPREFIXED (the {assign} bridge is sound only while the
-      //       brain holds a single workspace's unprefixed content — save employer-work/personal-life PREFIXED).
+      //   (1) non-personal-business content landing UNPREFIXED is now STRUCTURALLY REJECTED, not merely an
+      //       operator-discipline rule: `packages/knowledge/src/knowledge-writer/workspace-path-guard.ts`
+      //       (24.12, `c86030f9`) rejects any foreign-workspace note whose path lacks its own workspace
+      //       prefix, at the one place every semantic write crosses (`KnowledgeWriter.applyPlan`), before
+      //       the {assign} bridge can ever see it — the guard is what keeps this sound now, not this comment.
+      //       ⚠ The `toWorkspaceId` below is a value the guard's `LEGACY_UNPREFIXED_WORKSPACE_ID` DUPLICATES
+      //       as a second hardcoded constant (two sites, one fact, no single source of truth) — `24.26`
+      //       tracks single-sourcing them at the composition root; until then a change here must be mirrored
+      //       there or the guard's exemption silently stops matching this site.
       //   (2) OWNER ACCEPTED employer-work in the combined brain (2026-07-06, "separate brains later"). F2
       //       structural field-fidelity is CLOSED (`allowItemFields`), so cross-workspace SURFACING is scoped
       //       out per ask. Accepted residuals of ONE shared brain: A1 (a page whose BODY verbatim quotes another
