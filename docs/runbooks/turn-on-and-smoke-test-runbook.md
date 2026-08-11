@@ -614,7 +614,7 @@ Deliberate — all sit at Tier 2 (partial) → Tier 5 and are gated OFF or unbui
 
 ---
 
-## Phase 3 — macOS Keychain secrets provisioning
+## Phase 3 — macOS Keychain secrets provisioning — HARD-LINE, crossing 1 of 8 (= ARCHITECTURE Phase 17 / §19.4; see the Phase-numbering map before Part II)
 
 > **HARD LINE — explicit owner confirmation required at the crossing.** This is the **first real macOS Keychain touch** in the system's life. Off the provisioned path nothing is ever constructed and no process is ever spawned; turning it on is the owner personally storing a signing key in the login Keychain and pointing the worker at it. Do not perform the `security add-generic-password` step or set `keychainSecrets` in code without the owner's explicit go-ahead for this specific crossing.
 
@@ -758,7 +758,9 @@ Because this phase performs no signing, no serving, and no external write, rolli
 
 ---
 
-## Phase 4 — Serving oracle go-live (C5.4b provenance trust)
+## Phase 4 — Serving oracle go-live (C5.4b provenance trust) — HARD-LINE, crossing 4 of 8 (= ARCHITECTURE Phase 20 / §19.7)
+
+> ⚠ **ORDER NOTE (do not follow section order here): this phase's own Preconditions below require Phase 5's reconcile output to already exist** ("A serve-time `ParityReport` store is populated… must have produced a `cleanForServing: true, coverageComplete: true` report"). The real dependency order is **crossing 3 (Phase 5, Reconcile/serving-coverage arc) before crossing 4 (this phase)** — the reverse of these two sections' position in this document. This section-order-vs-dependency-order contradiction is tracked as its own task, `### 24.28`; this callout exists so a reader following Part I strictly top-to-bottom is not silently misled in the meantime.
 
 ### What we are doing
 
@@ -881,7 +883,7 @@ Each: **Action** → **Expected result** → _what it proves_.
 
 ---
 
-## Phase 5 — Reconcile / serving-coverage arc
+## Phase 5 — Reconcile / serving-coverage arc — HARD-LINE, crossing 3 of 8 (= ARCHITECTURE Phase 19 / §19.6) ⚠ despite the section number, this crossing comes BEFORE Phase 4 (crossing 4) — see the order note in Phase 4 above / `### 24.28`
 
 > **⚠ HARD LINE — explicit owner confirmation required at the crossing.** This is the single most delicate mis-arm point in the whole go-live ladder. Turning it on makes **real `coverageComplete` verdicts feed the Copilot serving gate** — the trust kill-switch that decides whether a retrieved source is admitted as `trusted`. A wire-shape slip here can silently manufacture a false-green. Do not arm without the owner's explicit per-crossing confirmation, and only after the build round in "Build-first" below has landed **and been adversarially reviewed.**
 
@@ -962,7 +964,7 @@ Run each; each is action → exact expected result → what it proves.
 
 ---
 
-## Phase 6 — External-write transport — real connector writes
+## Phase 6 — External-write transport — real connector writes — HARD-LINE, crossing 5 of 8 (= ARCHITECTURE Phase 21 / §19.8)
 
 > **⛔ HARD LINE — explicit owner confirmation required at the crossing.** This is the FIRST time SoW performs a real OUTBOUND write to a third-party system (a Todoist task, a Google Calendar event, etc.). Everything in Phases 0–5 was local (read, synthesis, vault ingestion, pending approvals). Turning this on means the machine can create objects in your external accounts. Do not proceed past "Build-first" and "Activation" without a deliberate, out-loud owner decision at the moment the gate is armed. A real external write is irreversible from SoW's side (the object exists at the vendor).
 
@@ -1057,7 +1059,7 @@ Each is a concrete action → the exact expected result → what it proves. Run 
 
 ---
 
-## Phase 7 — Propose / semantic-write flip (LAST, alone)
+## Phase 7 — Propose / semantic-write flip (LAST, alone) — HARD-LINE, crossing 6 of 8, LAST of the sequential chain (= ARCHITECTURE Phase 22 / §19.9)
 
 ### What we are doing
 
@@ -1143,7 +1145,7 @@ Run each in order. Do not proceed past a failure.
 
 ---
 
-## Phase 8 — Connectors (build, wire & smoke-test each)
+## Phase 8 — Connectors (build, wire & smoke-test each) — HARD-LINE, crossing 7 of 8, INDEPENDENT arc (= ARCHITECTURE Phase 23 / §19.10; gated only on Phases 2+3 here / arch Phases 16+17)
 
 > **Status legend:** `WIRED-LIVE` = real transport mounted in boot · `BUILT-DORMANT` = adapter compiled + mock-tested, no real transport, unwired · `UNBUILT` = no source file exists.
 >
@@ -1381,6 +1383,7 @@ The product is 100% complete when **all of the following are simultaneously true
 - [ ] **Phase 7 — propose flipped.** `copilotProposeMode === true` and `copilotProposeKnowledge === true` with `proofSpineParams` present; a proposed semantic write reaches a `trusted` verdict end-to-end and routes through Approvals (no autonomous Markdown write outside KnowledgeWriter).
 - [ ] **Phase 8 — every connector live.** Granola, Asana, Drive, Calendar, Todoist, Linear, GitHub each fetch real vendor data through a real `ConnectorTransport` (mock replaced); Gmail built from scratch and fetching; web/podcast/youtube extractors ingesting real URLs — each as candidate-data → KnowledgeWriter, read-only per ING-7.
 - [ ] **Phase 9 — packaged.** A signed, notarized macOS desktop app installs and runs the full stack on a clean machine; the packaged binary reproduces every smoke test above.
+- [ ] **Crossing 8 / ARCHITECTURE Phase 26 (RES-1) — research-provider go-live + living-vault scheduling live.** Not covered by any Part I phase above (added post-2026-07-26; see the Phase-numbering map before Part II and Part II's Phase 26 section) — real Perplexity/xAI transport bound behind Keychain-provisioned keys, `SOW_EGRESS_ALLOWED_PROCESSORS` carries each vendor's own processor id, `livingVaultSynthesis` registered + scheduled; every research finding lands as a `KnowledgeMutationPlan` → KnowledgeWriter (PROPOSE, never autonomous).
 - [ ] **Safety invariants intact throughout** — one-writer (KnowledgeWriter), candidate-data gate, external-write envelope, WS-8 isolation, Employer-Work egress veto, ING-7 tool-stripping, SecretsPort-only secrets — all still enforced with every capability ON.
 
 **What you consciously chose to defer, if anything:** if you stop before 100%, record the cut explicitly — a coherent, safe, *reduced* product is a legitimate stopping point at any phase boundary (e.g., ship read-only through Phase 2 + Dashboard, deferring the entire write half; or go live through Phase 7 with only file-read + a subset of Phase-8 connectors, deferring the long tail of vendor transports and Gmail; or run unpackaged from source, deferring Phase 9). The only thing that is never acceptable is a *silent* cut: every deferral is an owner-approved, written scope decision, and no gate is left in a half-armed state.
@@ -1388,13 +1391,32 @@ The product is 100% complete when **all of the following are simultaneously true
 
 ---
 
-> **PART II — added 2026-07-15 after a full-system gap audit** (10 read-only investigators, 100 evidence-cited findings, dedup + completeness-critic passes). Part I above is the original *arming* view (flip the built gates in order). Part II below is the deeper truth the audit surfaced: reaching the product the owner actually wants — real intelligence (LLM extraction + "which project is this" resolution), tool-sync (vault→Asana/Todoist/etc. write-back), and the wired ingestion spine — is **~12 phases / 15+ build rounds with 7 owner-gated hard-line crossings**, not flag-flips. Connector READ-adapter chain (rounds 1–8) is **COMPLETE + dormant** at origin/main `100f413`. Part II is the authoritative forward roadmap; Part I's phases map onto Part II's arming stages (P3 Keychain, P5–P6 oracle/coverage, P7 external-write, P8 propose).
+> **PART II — added 2026-07-15 after a full-system gap audit** (10 read-only investigators, 100 evidence-cited findings, dedup + completeness-critic passes; **crossing 8 / RES-1 added 2026-07-26, and Part II's phase-count corrected 2026-08-11 — 24.6 round-3 finding DOC-2/F16 found it silently missing**). Part I above is the original *arming* view (flip the built gates in order). Part II below is the deeper truth the audit surfaced: reaching the product the owner actually wants — real intelligence (LLM extraction + "which project is this" resolution), tool-sync (vault→Asana/Todoist/etc. write-back), the wired ingestion spine, and the RES-1 research-provider arc — is **13 phases (Phase 14–26, = `ARCHITECTURE.md` §19.1–§19.13) / ~16+ build rounds with 8 owner-gated hard-line crossings**, not flag-flips. Connector READ-adapter chain (rounds 1–8) is **COMPLETE + dormant** at origin/main `100f413`. Part II is the authoritative forward roadmap, and — as of this rewrite — Part II's own phase numbers ARE `ARCHITECTURE.md`'s Phase numbers directly (no offset to remember). Part I's phases map onto Part II / `ARCHITECTURE.md` per the table below.
+
+> **Phase-numbering map (Part I ⇄ Part II ⇄ `ARCHITECTURE.md`).** Part I's "## Phase 0–9" above is a SEPARATE, execution-order-only vocabulary — it predates this audit and is **not** the same numbering as Part II below. Read this table before either part if you are jumping between them.
+>
+> | Part I (execution order) | Part II / `ARCHITECTURE.md` | Crossing |
+> |---|---|---|
+> | Phase 0 — Prerequisites & bare-boot baseline | *(no single Part II phase — generic baseline)* | — |
+> | Phase 1 — Read + synthesis Copilot (live lane) | Phase 18 / §19.5 (already crossed — live by design) | 2 (done) |
+> | Phase 2 — Auto-ingest → KnowledgeWriter | Phase 15–16 / §19.2–§19.3 | — |
+> | Phase 3 — macOS Keychain provisioning | **Phase 17 / §19.4** | **1** |
+> | Phase 4 — Serving oracle go-live | **Phase 20 / §19.7** | **4** |
+> | Phase 5 — Reconcile / serving-coverage arc | **Phase 19 / §19.6** | **3** |
+> | Phase 6 — External-write transport | **Phase 21 / §19.8** | **5** |
+> | Phase 7 — Propose / semantic-write flip | **Phase 22 / §19.9** | **6 (LAST of the chain)** |
+> | Phase 8 — Connectors (per vendor) | **Phase 23 / §19.10** | **7 (independent)** |
+> | Phase 9 — Packaging & notarization | Phase 24 / §19.11 | — |
+> | *(no Part I equivalent)* | Phase 25 / §19.12 — second-brain output workflows | — |
+> | *(no Part I equivalent)* | **Phase 26 / §19.13 — RES-1 research-provider go-live** | **8 (independent)** |
+>
+> ⚠ **Note the inversion: Part I walks Phase 4 BEFORE Phase 5, but crossing 3 (Phase 5) must complete before crossing 4 (Phase 4) — Phase 4's own Preconditions require Phase 5's reconcile output to already exist. Tracked as `### 24.28`; see the callout in Part I's Phase 4 section.**
 
 # Part II — Intelligence & Tool-Sync Roadmap (now → the system working how we want)
 
 ## Where we are
 
-The connector **read-adapter** layer is built and dual-reviewed: 7 vendor read adapters (Asana / Drive / Calendar / Granola / GitHub / Linear / Gmail across three HTTP shapes — GET body-cursor, GET page-number, POST GraphQL) plus web / podcast / youtube / url source-extractor shells, all Context7-grounded and **transport-unbound**. The **read / Copilot lane runs live**: a cloud Copilot (Claude, 1M window) answers over a governed retrieval path, the §9.8 Approvals CAS→dispatch chain is live end-to-end, the KnowledgeWriter sole-writer + atomic commit is real, and the Employer-Work egress veto is complete and fail-closed. **Everything downstream of "candidate data in" is dormant**: no real trigger reaches ingestion, no model runs (the broker's `run` leg is a fixed-candidate stub), no note carries real extracted content, nothing writes to gbrain, no external write hits a real vendor, and every arming gate ships OFF behind strict `===true` locks. What follows is the ordered path from that *dormant-but-built* substrate to the system working how we want — and honestly, it is **~12 phases / 15+ build rounds with 7 owner-gated hard-line crossings**, not a set of flag-flips. Flag-flips alone never reach 100%.
+The connector **read-adapter** layer is built and dual-reviewed: 7 vendor read adapters (Asana / Drive / Calendar / Granola / GitHub / Linear / Gmail across three HTTP shapes — GET body-cursor, GET page-number, POST GraphQL) plus web / podcast / youtube / url source-extractor shells, all Context7-grounded and **transport-unbound**. The **read / Copilot lane runs live**: a cloud Copilot (Claude, 1M window) answers over a governed retrieval path, the §9.8 Approvals CAS→dispatch chain is live end-to-end, the KnowledgeWriter sole-writer + atomic commit is real, and the Employer-Work egress veto is complete and fail-closed. **Everything downstream of "candidate data in" is dormant**: no real trigger reaches ingestion, no model runs (the broker's `run` leg is a fixed-candidate stub), no note carries real extracted content, nothing writes to gbrain, no external write hits a real vendor, and every arming gate ships OFF behind strict `===true` locks. What follows is the ordered path from that *dormant-but-built* substrate to the system working how we want — and honestly, it is **13 phases / ~16+ build rounds with 8 owner-gated hard-line crossings**, not a set of flag-flips. Flag-flips alone never reach 100%.
 
 **Legend for the tables & phases:** `build` = pure-build / dormant-safe, no network, no owner gate. **`HARD-LINE`** = crosses into real credential I/O, real external fetch/write, real API spend, or an irreversible go-live selection → **explicit per-crossing owner confirmation required**.
 
@@ -1532,7 +1554,7 @@ Mirrored verbatim from `IMPLEMENTATION_PLAN.md` task 21.3 (the attestations of r
 
 Ordered. Each phase names its goal, the specific stubs it closes (with file:line), a `build` / **HARD-LINE** tag, and a concrete done-when / smoke test. Hard-line phases do not proceed without explicit owner confirmation at each crossing.
 
-### Phase 0 (prerequisite the draft omitted) — Onboarding, config surfaces & runtime substrate — **mixed (one HARD-LINE)**
+### Phase 14 (prerequisite the draft omitted) — Onboarding, config surfaces & runtime substrate — **mixed (one HARD-LINE)** (= ARCHITECTURE §19.1)
 
 **Goal:** give a real user a way to *exist* in the system and give the packaged app the processes it needs to *run*, before any spine work matters.
 **Closes:**
@@ -1543,7 +1565,7 @@ Ordered. Each phase names its goal, the specific stubs it closes (with file:line
 
 **Done when / smoke test:** a real user onboards a workspace with a chosen vault root (**no `provisionDev`**), registers a connector instance bound to it, sees operator degrades in a Health panel, and a workflow actually runs **in-product** on the app-supervised Temporal server (not only under `TestWorkflowEnvironment`).
 
-### Phase 1 — Ingestion spine plumbing + human routing-resolution — **build**
+### Phase 15 — Ingestion spine plumbing + human routing-resolution — **build** (= ARCHITECTURE §19.2)
 
 **Goal:** close the deterministic breaks so a real trigger + real extraction can carry actual content to a real note — with dedupe, park, durable disposition, no feedback loop — all with fakes, zero network; **plus** close the no-inference clarification loop so the park path isn't a dead-end for the exact ambiguous case it exists for.
 **Closes:**
@@ -1558,7 +1580,7 @@ Ordered. Each phase names its goal, the specific stubs it closes (with file:line
 
 **Done when / smoke test:** an E2E test drives a fake source → fake extraction → a note whose body/frontmatter come from the extraction → commit; dedupe holds across re-import; low-confidence parks to the Ingestion Inbox; writing a note does **not** re-fire the watcher; disposition/isParked/rescope are durable; **and** a parked "which project" item is reassigned by the human in the Inbox and re-drives with that override under the **same `idempotencyKey`** (no re-classify, no re-park) — all with fakes, no network.
 
-### Phase 2 — Connector engine + composition + bridge (dormant substrate) — **build**
+### Phase 16 — Connector engine + composition + bridge (dormant substrate) — **build** (= ARCHITECTURE §19.3)
 
 **Goal:** stand up the whole connector→ingestion drive path against a **fake** transport and leave it inert (no `tokenRef` bound).
 **Closes:**
@@ -1571,7 +1593,7 @@ Ordered. Each phase names its goal, the specific stubs it closes (with file:line
 
 **Done when / smoke test:** with a fake `HttpTransport`, a scheduled poll pass fetches records → bridges to `registerSource` → `dispatchSourceIngestion` → note; `connectorSyncHealth` is in the registered bundle; the real fetch wrapper compiles and passes a smoke test against a controlled local endpoint; **every vendor stays inert** (no `tokenRef`, no live vendor call).
 
-### Phase 3 — Keychain secrets activation — **HARD-LINE**
+### Phase 17 — Keychain secrets activation — **HARD-LINE**, crossing 1 of 8 (= ARCHITECTURE §19.4)
 
 **Goal:** provision the macOS Keychain (HMAC signing key + any provider API keys), verify the `security`-CLI backend against the live binary, wire `buildKeychainSecrets` + the `getSecret` facade into ModelProvider deps and the keychain-locked handler. Unlocks provider transports **and** provenance stamping.
 **Closes:**
@@ -1581,9 +1603,9 @@ Ordered. Each phase names its goal, the specific stubs it closes (with file:line
 
 **Done when / smoke test:** `security add-generic-password` provisions the signing key; `buildKeychainSecrets` returns a live `SecretsPort` verified against the real `security` binary; a provider key resolves through `getSecret`; a locked/missing key **degrades, not crashes** (via the keychain-locked handler); commit deps can now receive `StamperDeps`.
 
-### Phase 4 — Real model transport → intelligence legs (eval-tested) — **HARD-LINE**
+### Phase 18 — Real model transport → intelligence legs (eval-tested) — **HARD-LINE**, crossing 2 of 8 (= ARCHITECTURE §19.5)
 
-**Goal:** bind ModelProviderPort/AgentRuntimePort into `broker.run` (route→provider, key via `getSecret`, **local zero-egress** Ollama/LM Studio for employer-work), make `mapCandidate` read the accepted outcome, add real prompts + schemas + real health/budget/schema gates, stand up the real meeting + source extraction agents, the correlation producer, and the content→project resolver; **arm auto-ingest** so the local spine now produces real notes. Two named dependencies: **(a)** live auto-ingest depends on Phase 0's app-managed Temporal server; **(b)** an employer-work run's fail-closed local-provider path must extend to the **embedding** backend (see Phase 5), not just completion.
+**Goal:** bind ModelProviderPort/AgentRuntimePort into `broker.run` (route→provider, key via `getSecret`, **local zero-egress** Ollama/LM Studio for employer-work), make `mapCandidate` read the accepted outcome, add real prompts + schemas + real health/budget/schema gates, stand up the real meeting + source extraction agents, the correlation producer, and the content→project resolver; **arm auto-ingest** so the local spine now produces real notes. Two named dependencies: **(a)** live auto-ingest depends on Phase 14's app-managed Temporal server; **(b)** an employer-work run's fail-closed local-provider path must extend to the **embedding** backend (see Phase 19), not just completion.
 **Closes:**
 - ModelProviderPort bound into `broker.run` — `backends.ts:496-501`, `http-transport.ts:203` · **HARD-LINE**
 - Meeting transcript→fields extraction — `buildActivities.ts:351` · **HARD-LINE** (eval)
@@ -1593,12 +1615,12 @@ Ordered. Each phase names its goal, the specific stubs it closes (with file:line
 - Real broker HEALTH/BUDGET/SCHEMA gates — `backends.ts:522,531,555` · `build`
 - ProposedAction producer (real `targetSystem`) — `backends.ts:501`, `buildActivities.ts:699` · `build`
 - KW commit callers carry real content — `buildActivities.ts:391,689` · `build`
-- `autoIngest` gate (arm local spine, on Phase-0 Temporal) — `worker-host/index.ts:176-178` · `build`
+- `autoIngest` gate (arm local spine, on Phase-14 Temporal) — `worker-host/index.ts:176-178` · `build`
 - Employer-Work egress veto fail-closed local path (honored) — `egress.ts:74,94,119` · **HARD-LINE**
 
-**Done when / smoke test:** a source and a meeting run end-to-end through a **real model under the egress veto**, emit schema-valid extraction with real fields (and `ProposedAction`s with a real `targetSystem`), and commit a note whose body is **real content**; evals pass; an employer-work job **fails closed to a local provider** (completion — embeddings verified in Phase 5); correlation/routing bind the right ws/project or park below threshold; the spine runs on the **app-managed Temporal server**.
+**Done when / smoke test:** a source and a meeting run end-to-end through a **real model under the egress veto**, emit schema-valid extraction with real fields (and `ProposedAction`s with a real `targetSystem`), and commit a note whose body is **real content**; evals pass; an employer-work job **fails closed to a local provider** (completion — embeddings verified in Phase 19); correlation/routing bind the right ws/project or park below threshold; the spine runs on the **app-managed Temporal server**.
 
-### Phase 5 — gbrain write-back + parity + provenance + embedding-egress + cost ledger — **mixed / HARD-LINE**
+### Phase 19 — gbrain write-back + parity + provenance + embedding-egress + cost ledger — **mixed / HARD-LINE**, crossing 3 of 8 (= ARCHITECTURE §19.6)
 
 **Goal:** make the app own vault→gbrain population and vault↔gbrain parity. Binding the real write client makes gbrain **embed** every written fact — a hidden real-I/O/spend **and** employer-egress hard-line the draft mis-marked "mixed". Add explicit embedding-egress control + a durable cost ledger.
 **Closes:**
@@ -1616,9 +1638,9 @@ Ordered. Each phase names its goal, the specific stubs it closes (with file:line
 
 **Done when / smoke test:** a KW commit fires an **idempotent gbrain index apply** (real facts, not `[]`) against a running gbrain and re-drives held jobs from a durable outbox on wake; a reconcile pass writes a ParityReport the coverage reader consumes; the rebuild oracle returns `oracleBuildOk`; notes commit **stamped**; Copilot retrieval hits the real brain; **employer-work facts index ONLY through a verified local zero-egress embedding backend**; provider runs accumulate a real cross-run cost ledger the budget gate enforces; `deriveServingCoverage` can go **all-legs-green**.
 
-### Phase 6 — Serving-oracle go-live — **HARD-LINE**
+### Phase 20 — Serving-oracle go-live — **HARD-LINE**, crossing 4 of 8 (= ARCHITECTURE §19.7)
 
-**Goal:** provision the `provenanceServingOracle` bundle (signing key + gbrain pin + running-version) and flip `copilotServingOracleGoLive` so the loader-backed oracle is selected and stamps KW-provenanced retrieval sources **trusted** — an owner **security-review-gated** crossing, only after Phase 5 coverage is green.
+**Goal:** provision the `provenanceServingOracle` bundle (signing key + gbrain pin + running-version) and flip `copilotServingOracleGoLive` so the loader-backed oracle is selected and stamps KW-provenanced retrieval sources **trusted** — an owner **security-review-gated** crossing, only after Phase 19 coverage is green.
 **Closes:**
 - C5.4b serving oracle admits `knowledge_writer` facts — `boot.ts:1315-1320,1356-1387`
 - `provenanceServingOracle` bundle + `copilotServingOracleGoLive` — `boot.ts:380,368,1387`, `servingContextLoader.ts:238-240`
@@ -1627,7 +1649,7 @@ Ordered. Each phase names its goal, the specific stubs it closes (with file:line
 
 **Done when / smoke test:** a live Copilot ask retrieves KW-stamped facts marked **trusted**; `deriveCopilotContentTrust` returns `'trusted'`; the interim degraded oracle is no longer selected; **all four** serving-coverage legs are green.
 
-### Phase 7 — External write / tool-sync — **mixed / HARD-LINE**
+### Phase 21 — External write / tool-sync — **mixed / HARD-LINE**, crossing 5 of 8 (= ARCHITECTURE §19.8)
 
 **Goal:** build the per-`TargetSystem` routing registry + wire the 7 vendor adapters + outbox drain + source-ingestion propose routing (build), then the first real per-vendor write client, arm `WriteTransportGate`, bind the real Mac+Telegram card renderers, and NotebookLM/Drive back-sync (hard-line).
 **Closes:**
@@ -1642,9 +1664,9 @@ Ordered. Each phase names its goal, the specific stubs it closes (with file:line
 
 **Done when / smoke test:** an approved §9.8 card dispatches a **REAL vendor object** with a real write receipt through the adapter **selected by `action.targetSystem`**; a held/unreachable write drains on wake; approval cards surface on Mac **and** Telegram with parity; the owner has confirmed the write-target routing.
 
-### Phase 8 — Propose activation (last arming flip) — **HARD-LINE**
+### Phase 22 — Propose activation (last arming flip) — **HARD-LINE**, crossing 6 of 8, LAST of the sequential chain (= ARCHITECTURE §19.9)
 
-**Goal:** with content-trust trusted (P6), the write transport armed (P7), `proofSpineParams` provisioned (auto-ingest), and the signing key present (P3), flip `copilotProposeMode` / `copilotProposeKnowledge` (**mutually exclusive**) — done alone. Every propose write becomes a PENDING §9.8 Approval.
+**Goal:** with content-trust trusted (Phase 20), the write transport armed (Phase 21), `proofSpineParams` provisioned (auto-ingest), and the signing key present (Phase 17), flip `copilotProposeMode` / `copilotProposeKnowledge` (**mutually exclusive**) — done alone. Every propose write becomes a PENDING §9.8 Approval.
 **Closes:**
 - `copilot.propose_action` path — `copilotPropose.ts:120,275,327`, `boot.ts:1303-1304`
 - `copilot.propose_knowledge` path — `copilotProposeKnowledge.ts:1`, `boot.ts:1309`
@@ -1652,9 +1674,9 @@ Ordered. Each phase names its goal, the specific stubs it closes (with file:line
 
 **Done when / smoke test:** the Copilot proposes an external **or** semantic write that lands as a PENDING §9.8 Approval; on approval it commits via KnowledgeWriter or dispatches a real external write; the two flags remain mutually exclusive; **every write stays human-gated**.
 
-### Phase 9 — Connector enablement per vendor (per-crossing owner-gated) — **HARD-LINE**
+### Phase 23 — Connector enablement per vendor (per-crossing owner-gated) — **HARD-LINE**, crossing 7 of 8, INDEPENDENT arc (= ARCHITECTURE §19.10)
 
-**Goal:** arm the built-and-dormant connectors **one vendor at a time** — bind the Keychain `SecretsAccessor` + provision each `tokenRef`, build the OAuth refresh loop (Google), per-vendor content hydration, the OSB extractors + url-source, and the capture ingress, **verifying each wire-shape against the live API**. Independently armable per vendor once Phases 2+3 exist — **may be pulled earlier per owner breadth preference**.
+**Goal:** arm the built-and-dormant connectors **one vendor at a time** — bind the Keychain `SecretsAccessor` + provision each `tokenRef`, build the OAuth refresh loop (Google), per-vendor content hydration, the OSB extractors + url-source, and the capture ingress, **verifying each wire-shape against the live API**. Independently armable per vendor once Phases 16+17 exist — **may be pulled earlier per owner breadth preference**.
 **Closes:**
 - Connector credential binding (`SecretsAccessor` + `tokenRef`) — `http-transport.ts:74-79`
 - OAuth refresh/expiry/rotation (Google) — `drive.ts:37-42`, `gmail.ts:41-43`
@@ -1666,7 +1688,7 @@ Ordered. Each phase names its goal, the specific stubs it closes (with file:line
 
 **Done when / smoke test:** each armed connector fetches real content, hydrates it (list→get where needed), and drives a real ingestion→note→gbrain pass; wire-shapes verified/corrected on first live call; the capture ingress delivers a Telegram/coding-session payload to `buildCaptureSource`. *(~one owner-gated round per vendor — the single largest workstream by count.)*
 
-### Phase 10 — OS one-writer + hardening + REAL packaging — **build**
+### Phase 24 — OS one-writer + hardening + REAL packaging — **build** (= ARCHITECTURE §19.11)
 
 **Goal:** add active OS-level one-writer enforcement (REQ-S-NEW-008), prune retained-but-unread boot fields, complete health-surface store round-tripping, ensure every arming knob carries a truthy-not-true guard-test, and package the app — a **substantial native-toolchain workstream**, not a line item.
 **Closes:**
@@ -1678,7 +1700,7 @@ Ordered. Each phase names its goal, the specific stubs it closes (with file:line
 
 **Done when / smoke test:** the doctor one-writer check is backed by an **active OS ACL/advisory lock** (not report-only); every arming knob has a truthy-not-true guard-test incl. the string `'false'`; dead boot fields pruned; the app **packages as a signed/notarized Mac app** that launches the worker via `utilityProcess` with rebuilt native modules and bundled gbrain/Temporal servers.
 
-### Phase 11 — Second-brain output workflows (register + schedule) — **mixed**
+### Phase 25 — Second-brain output workflows (register + schedule) — **mixed** (= ARCHITECTURE §19.12)
 
 **Goal:** register and schedule the built-but-dormant output workflows so the system produces daily value beyond ingestion: daily brief, period/weekly review, project sync + dashboard, cross-calendar scheduling, ingestion triage.
 **Closes:**
@@ -1686,12 +1708,45 @@ Ordered. Each phase names its goal, the specific stubs it closes (with file:line
 
 **Done when / smoke test:** each output workflow is in the registered bundle with a Temporal schedule, runs on cadence over **real workspace data**, surfaces its output in the UI, and its model-driven synthesis legs **pass evals** (deterministic legs via TDD).
 
+### Phase 26 — Research-provider go-live (RES-1) + living-vault scheduling — **HARD-LINE**, crossing 8 of 8, INDEPENDENT arc (= ARCHITECTURE §19.13)
+
+⛔ **This phase was silently absent from this runbook until 2026-08-11 (24.6 round-3 finding DOC-2/F16) — the closing count below said "7 hard-line stages" with no signal anything was missing. It is added here in full, sourced from `IMPLEMENTATION_PLAN.md` §ARM-RESEARCH.**
+
+**Goal:** bind the real Perplexity (`/chat/completions`) and xAI (`/v1/responses`) transports behind provisioned Keychain keys, arm the research processor under the Employer-Work egress veto, and register the `livingVaultSynthesis` schedule — so research findings and living-vault synthesis reach the vault as owner-approved `KnowledgeMutationPlan`s, never an autonomous write. **Posture:** NOT part of the sequential (1)–(6) chain (Phases 17→22) — gated only on Phase 17 (Keychain, §19.4); ~1 owner-confirmed round. Two standing hard lines cross here: real external fetch AND paid-API-key provisioning (Perplexity + xAI).
+
+**Preconditions (EIGHT — verify EACH at the crossing, not after the first armed run; discovered while binding 13.8d):**
+1. **Task 13.8i** — the withheld PROPOSE tier routes into §9.8 Approvals + the `planIds` batch-undo unit is restored; until then an armed run applies additive changes and proposes nothing.
+2. `createIngestRewriteAdapter` ignores `validated` — `linkCandidates`/`confidence`/`date` are never threaded, so an armed run would synthesize against no entity context.
+3. `gateLivingVaultRewrite` has no `bootWorker` call site and nothing constructs `IngestRewriteDeps` — the capability is inert by absence as well as by flag.
+4. **Task 13.8j** — entity stub paths must be NAMESPACED before arming: an untrusted entity name can mint `index.md`/`log.md` (the KN-12 writer-owned structural surfaces) via either the meeting or the source path.
+5. **Task 13.8k** — verify the invariant "every path entering `groundedPaths` is shape-validated, whoever produced it" — `resolveEntity` returns `candidate.path` verbatim from the GBrain read today, so a poisoned candidate targeting `index.md` resolves there.
+6. **Task 13.8l** — the SOURCE path has no grounded set: a model-proposed `patches:[{path:"index.md"}]` is stopped only by realpath containment, which prevents escape but not collision with a writer-owned surface.
+7. **Task 13.8m** — refusals reach nobody today: a poisoned-row attack is byte-identical to a benign empty run, against KN-7's "rejected AND audited."
+8. **Task 13.8h** — before this schedule arms, close the uncapped model-supplied `candidate.entityRefs` fan-out in `planSynthesis` (`planner.ts collectEntities`) — a degenerate REASON output otherwise drives an unbounded sequential GBrain read loop; verify the cap exists at the crossing, not after the first armed run.
+
+**Activation steps, IN ORDER:**
+1. Provision `providers/perplexity` + `providers/xai` paid keys into macOS Keychain (`security add-generic-password`) via Phase 17's ref convention.
+2. **CONFIRM** the real Perplexity `/chat/completions` + xAI `/v1/responses` wire shapes against a live call, then bind the real `createPerplexityTransport`/`createGrokLiveSearchTransport` (dormant → real) behind the SecretsAccessor.
+3. Add the research processor to `SOW_EGRESS_ALLOWED_PROCESSORS` — each vendor its OWN processor id (perplexity/xai NEVER an alias, safety rule 5); employer-work ack-OFF still fails closed by construction.
+4. **⚠ HARD-LINE CROSSING — flip the default-OFF strict-`=== true` research arm** (owner explicit confirm at the crossing).
+5. Register + schedule `livingVaultSynthesis` into the §19.12 (Phase 25) bundle behind its own OFF flag.
+
+**Closes:**
+- Research provider transports (Perplexity/xAI) bound behind SecretsAccessor — dormant → real
+- `livingVaultSynthesis` registered + scheduled into the Phase 25 bundle
+- **Structural invariant (do not weaken):** `perplexity`/`xai` MUST NEVER be added to `LOCAL_PROVIDERS` (`packages/policy/src/processors.ts:15`) — each is its own cloud processor id, never an alias of another; listing either as local would let an employer-work ack-OFF job silently egress instead of failing closed.
+
+**Done when / smoke test:** a live research query reaches the real Perplexity/xAI transport under the egress veto (employer-work ack-OFF still fails closed to a hard denial); the response is ING-7 read-only on retrieved web/X content; a finding lands as a `KnowledgeMutationPlan` → KnowledgeWriter and surfaces as a PENDING §9.8 Approval, never an autonomous write; `livingVaultSynthesis` runs on schedule over real workspace data. **Arming-era residuals** (confirm at the crossing, not deferred past it): the real citation/wire shape is a documented candidate (`arch_gap`) re-verified against the live endpoint; the injectable `vetoFn` seam stays UNDEFINED in production (a bound value would make the rule-5 veto advisory, not a hard denial); the free key-less source aggregator needs `AbortSignal`-awareness at the real-transport binding (no timeout on an unbounded external read today).
+
+**Rollback:** disarm the default-OFF strict flag (step 4) — the research processor leaves `SOW_EGRESS_ALLOWED_PROCESSORS`, no further external fetch occurs, and `livingVaultSynthesis` (if separately scheduled) is unscheduled. No external write can have occurred outside a PENDING Approval; reject any lingering pending research-derived proposals to be certain nothing is stranded.
+
 ---
 
 ## Scale & sequencing honesty
 
-- **~12 phases, 15+ build rounds, 7 hard-line stages.** Phases 0–2, most of 5, 7, 10, 11 are pure-build (dormant-safe, no owner gate). The hard-line stages — Keychain provisioning (P3), real model transport under the egress veto (P4), gbrain write-back + embedding egress (P5), serving-oracle go-live (P6), external-write transport (P7), propose flips (P8), per-vendor connector arming (P9) — each need **explicit per-crossing owner confirmation**. None are reachable by flipping a config alone.
-- **The critical path is a chain, not a menu.** P4 (real content) blocks P5 (real facts to embed) blocks P6 (trusted stamps) blocks P8 (propose). P7 (write transport) also gates P8. **Propose is deliberately last.**
-- **Phase 0 is a genuine prerequisite the ingestion draft assumed away** — without onboarding there are no real workspaces to ingest into, and without an app-managed Temporal server no workflow runs in the packaged product. It is not optional polish.
-- **Phase 9 dominates by count** (~one owner-gated round per vendor) and is the most parallelizable / owner-reorderable block — it can be pulled forward per vendor once Phases 2+3 land, if breadth is preferred over depth.
-- **Two safety invariants extend *beyond* the app's own machinery** and must not be lost: the Employer-Work egress veto must cover gbrain's **embedding** backend (P5), and the one-writer guarantee needs **active OS enforcement** (P10), not just code-level discipline.
+- **13 phases (Phase 14–26, = `ARCHITECTURE.md` §19.1–§19.13), ~16+ build rounds, 8 hard-line crossings.** ⛔ **Corrected 2026-08-11 — 24.6 round-3 finding DOC-2/F16: this line previously said "7 hard-line stages" and silently excluded crossing 8 (RES-1) rather than flagging it as out of scope.** Phases 14–16, most of 19, 21, 24, 25 are pure-build (dormant-safe, no owner gate). The 8 hard-line crossings, IN DEPENDENCY ORDER — **sequential chain:** Keychain provisioning (Phase 17, crossing 1) → real model transport under the egress veto (Phase 18, crossing 2) → gbrain write-back + embedding egress (Phase 19, crossing 3) → serving-oracle go-live (Phase 20, crossing 4) → external-write transport (Phase 21, crossing 5) → propose flips (Phase 22, crossing 6, LAST of the chain); **then two INDEPENDENT arcs, each gated only on the chain's early links:** per-vendor connector arming (Phase 23, crossing 7, gated on Phases 16+17) and RES-1 research-provider go-live + living-vault scheduling (Phase 26, crossing 8, gated on Phase 17 only) — each needs **explicit per-crossing owner confirmation**. None are reachable by flipping a config alone.
+- **The critical path is a chain, not a menu.** Phase 18 (real content) blocks Phase 19 (real facts to embed) blocks Phase 20 (trusted stamps) blocks Phase 22 (propose). Phase 21 (write transport) also gates Phase 22. **Propose is deliberately last** in the sequential chain. Crossings 7 (Phase 23) and 8 (Phase 26) sit OUTSIDE that chain and may be crossed independently once their own gates (16+17, and 17 respectively) are met.
+- **Phase 14 is a genuine prerequisite the ingestion draft assumed away** — without onboarding there are no real workspaces to ingest into, and without an app-managed Temporal server no workflow runs in the packaged product. It is not optional polish.
+- **Phase 23 dominates by count** (~one owner-gated round per vendor) and is the most parallelizable / owner-reorderable block — it can be pulled forward per vendor once Phases 16+17 land, if breadth is preferred over depth. Phase 26 (RES-1) is the other independent arc and can likewise be pulled forward once Phase 17 lands, independent of the sequential chain's progress.
+- **Two safety invariants extend *beyond* the app's own machinery** and must not be lost: the Employer-Work egress veto must cover gbrain's **embedding** backend (Phase 19) and the RES-1 research query text (Phase 26), and the one-writer guarantee needs **active OS enforcement** (Phase 24), not just code-level discipline.
+- **A reader determines the one legal arming order from THIS section + the per-phase headings' "crossing K of 8" tags alone** — sequential 17→18→19→20→21→22, independent 23 (after 16+17), independent 26 (after 17). Part I above uses a different, execution-order-only numbering; see the Phase-numbering map before Part II if translating between the two.

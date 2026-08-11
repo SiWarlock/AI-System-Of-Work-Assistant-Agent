@@ -108,6 +108,7 @@ Set `copilotProposeMode: false` (or `copilotAgentMode: false`). The propose tool
 
 ## References
 
+- **This runbook implements ARCHITECTURE Phase 22 / §19.9 — crossing 6 of 8 (the LAST of the sequential chain) in `turn-on-and-smoke-test-runbook.md`'s master Part II structure.** See that runbook's Phase-numbering map (before Part II) and its "Scale & sequencing honesty" closing section for the full dependency-ordered list of all 8 hard-line crossings, including crossing 8 (RES-1 research-provider go-live), which this file does not cover.
 - Session docs `037` (C3–C5.2a), `038` (C5.2c–C5.4a), `039` (§9.8 inbox scoping), `040` (C5.4b provenance-stamping seam).
 - Memory `sow-copilot-real-model-direction` (full build history + the C5.3 design-workflow verdicts).
 - Safety invariants: root `CLAUDE.md` "Key safety rules" (rule 3 external-write envelope, rule 4 WS-8, rule 6 ING-7).
