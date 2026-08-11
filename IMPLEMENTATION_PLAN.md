@@ -3058,7 +3058,7 @@ Bring the turn-on runbook (+ `copilot-propose-go-live.md`) up from its current P
 **Done-when:** the eventual `projectionType` taxonomy (§5/§6) supplies a **derivation** — `projectionType` ⇒ permitted `visibilityLevel` — not merely a ceiling, and it lands **before** any real `ProjectionSource` ships. *(origin: 2026-08-11, 24.6 round 3, WS-1)*
 
 ### 24.19 — The "key-name-independent, recursive" raw-content gate does not traverse every container shape it claims to cover (24.6 round-3 finding WS-1/F15 — rule 4)
-- [ ] OPEN · **Depends:** — · **Blocks:** —
+- [x] DONE `4cef394f` 2026-08-11 (knowledge) · **Depends:** — · **Blocks:** —
 **Kind:** fix · **Spec:** §5, §6 · **Safety rule 4** · **Files:** `packages/contracts/src/models/gcl-projection.ts:37-51` (`isRawContentShaped`/`carriesRawContent`) · `packages/contracts/schemas/gcl-projection.schema.json:21-24` · `packages/contracts/test/models/gcl-projection.test.ts`
 **THE CLAIM (in-code, `:23-26`):** *"the gate is KEY-NAME-INDEPENDENT: it scans EVERY value recursively (nested objects + arrays) and rejects any string that is multi-line OR exceeds the summary length cap, regardless of key name."*
 ⛔ **FALSE FOR TWO CONTAINER SHAPES.** The traversal is `Array.isArray` → recurse, else `typeof === "object"` → recurse over **`Object.entries(value)`**, which enumerates only **own enumerable string-keyed** properties. Both of these are `typeof === "object"` yet yield `[]`, so the function falls through to *"not raw-content-shaped"* **without inspecting their contents**: (1) **`Map`/`Set`** — `Object.entries(new Map([["x","…multi-line raw…"]]))` → `[]`; (2) **non-enumerable own properties** via `Object.defineProperty(…, {enumerable:false})`.
