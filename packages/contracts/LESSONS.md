@@ -2406,3 +2406,20 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⇒ **Do:** counting or grouping by a key domain that is **closed today and extensible tomorrow** ⇒ **`Map` internally, `Object.fromEntries` at the boundary.** Reach for it by default; the cost is one call.
 
 `pin: <the 13.23 leg-A synthesis-planner tests — the public shape is unchanged, so they pin the pattern's OUTPUT, not the pattern>` `pattern: grep -nE '\[[A-Za-z_.]+\] *(\+\+|\+=|=)' --include='*.ts' packages apps | grep -v test` — an accumulator indexed by a variable key is the **candidate** shape; it is a defect only when the key domain is not provably prototype-free. `accepted: partially enforceable` — the grep over-approximates.
+
+---
+
+<a id="129"></a>
+## 129. TYPE NARROWING IS A PROPERTY OF POSITION, NOT OF THE EXPRESSION — and a green vitest run is not a typecheck
+
+**Date:** 2026-08-11. **Origin:** 13.8i-B, worker — **self-caught during a code-quality fix**, which is what makes it worth banking: the defect was introduced by a *correct* refactor and found by the *right* gate.
+
+**The instance.** A reviewer correctly flagged byte-identical duplication of a `reason`/`failureClass` derivation across two drivers. Extracting it into a shared exported helper was the right fix. ⛔ **But the inline version was relying on cross-statement narrowing supplied by the ORIGINAL call site's enclosing `if`/`else`** — once lifted into a standalone function, that narrowing no longer existed and the body no longer compiled (`Property 'error' does not exist on type Ok<…>`).
+
+⭐ **THE MECHANISM: narrowing is a property of the POSITION an expression occupies, not of the expression itself.** A "pure move" of an expression is therefore **not** type-preserving in general — the expression is identical and its *type context* is not. ⇒ **this specific hazard attaches to extract-function, extract-helper, and de-duplication refactors, i.e. exactly the ones a code-quality review asks for.** ([L118](#118)'s family at the type level: the property you preserved is *the text*; the property you needed is *the inferred type*.)
+
+⛔ **AND THE PART THAT GENERALISES FURTHEST: `vitest` DID NOT CATCH IT, BECAUSE VITEST DOES NOT TYPECHECK.** The suite stayed green over a build-broken tree. ⭐ **A green test run and a clean typecheck are different claims, and in this repo the gap is wider than usual: `lint` IS `tsc --noEmit`** ([L111](#111)), so *"tests green"* and *"lint clean"* are **not** two independent confirmations unless `tsc` was actually executed — and the test runner will never supply it.
+
+⇒ **Do:** ⛔ **after ANY extract/de-duplicate refactor, run the repo-wide typecheck before declaring the fix done — not the test suite, the typecheck.** Step 8's full-graph typecheck is a **separate gate for this reason**, not a formality. ⭐ **And when a lifted body stops compiling, restore the narrowing INSIDE the new function** (an explicit `if`/`else` that narrows locally) rather than reaching for a cast or a non-null assertion — **the compile error is reporting a real loss of information, and silencing it keeps the loss while hiding the report.**
+
+`pin: none — a method lesson.` `pattern: none — the trigger is a refactor shape, not a source pattern.` `accepted: not mechanically enforceable` beyond the existing gate. **Enforcement point: `/tdd` Step 8's repo-wide `tsc`, which already exists — the lesson is that a GREEN VITEST RUN MUST NOT BE READ AS COVERING IT.**
