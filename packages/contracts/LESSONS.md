@@ -2448,3 +2448,42 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⚠ **And the corollary that makes this worth a lesson rather than a note: a rename is a free audit of this distinction.** Every test that broke was claiming to be a value pin; every test that survived was claiming to be a wiring pin. **If a test broke and you cannot say which property it was pinning, that is the finding — not the rename.**
 
 `pin: none — a method lesson.` `pattern: grep -rnE 'expect\([A-Z_]+\)\.toBe\([A-Z_]+\)'` — a constant compared to a constant is the **vacuous value-pin** candidate shape. `accepted: partially enforceable` — the grep catches the vacuous direction only; the brittle direction is not mechanically distinguishable from a correct value pin.
+
+---
+
+<a id="131"></a>
+## 131. A RELEASE CONDITION PHRASED AS AN ACTION IS DISCHARGED BY ACTIVITY — write gates as OUTCOMES
+
+**Date:** 2026-08-11. **Origin:** the lead, self-reported. ⭐ **Banked with the provenance the lead asked be kept, because the provenance IS the lesson: he DIAGNOSED this failure mode and then COMMITTED IT TWO SENTENCES LATER, in the same message.**
+
+**The instance.** A block-release condition was written as ***"`packages/knowledge/src/gcl/*` has actually been audited."*** The audit ran — and returned a **HIGH finding on the exact claim the condition existed to protect.** ⇒ **the condition was SATISFIED AS AN ACTION and worthless as a guarantee.** Rewritten outcome-based: *"the wired cross-workspace read path actually goes through the GCL gate and the ceiling is re-derived rather than frozen."*
+
+⛔ **THE PROVENANCE, KEPT DELIBERATELY.** The same message that introduced this condition was **fixing a different condition that had already released by attrition** — an earlier gate whose trigger *"until 24.6 round 2 closes"* had been **met**, so leaving it written would have released the block silently. ⭐ **The author was actively reasoning about how conditions fail, and wrote an action-phrased one in the next breath.** ⇒ ***noticing a class does not immunise you against it.*** **That is the transferable claim, and it is why this is banked as a lesson rather than filed as a one-off correction.**
+
+⭐ **THE SWEEP THAT FOLLOWED FOUND A LIVE NEAR-MISS IN THE ARMING LEDGER — evidence the class is systemic, not anecdotal.** `§ARM-RESEARCH` precondition (1) is a **task reference**: *"task 13.8i — route the withheld PROPOSE tier into §9.8 Approvals."* **`13.8i` was ticked DONE while the capability was ABSENT** (it built the mechanism and left the binding to `13.8i-B`) ⇒ **an operator checking that precondition against the tracker would have read a TICK as a CAPABILITY.** ⛔ **And the tracker had already grown a prose defense against it** — *"DO NOT READ THE TASK TITLE OR THE COMMIT SUBJECT AS 'PROPOSE PLANS REACH APPROVALS'"* — **which is the defect being patched at the wrong layer: a warning compensating for a mis-phrased gate.**
+⭐ **The cheap-fix contrast, from the same ledger: precondition (3) reads *"`gateLivingVaultRewrite` has NO `bootWorker` call site and nothing constructs `IngestRewriteDeps`"* — a STATE, not an activity, so it CANNOT be discharged by doing something.** ⇒ **the repair is re-phrasing, not re-design.**
+
+⇒ **Do:** ⛔ **write every gate, arming precondition and `Done-when` as a property of the SYSTEM, never as work performed.** **Test it with: *"could this be true while the thing it protects is broken?"*** — *"X has been audited/reviewed/attempted/tracked"* fails; *"X holds, and here is the observation that shows it"* passes. ⚠ **A task REFERENCE is action-phrased by construction** (a task can tick while its capability is absent — this project has a five-instance ledger of exactly that, `L106`); ⭐ **if a precondition must cite a task, state the CAPABILITY it must yield and cite the task beside it as provenance.** ⚠ **And a prose warning attached to a gate is a smell: it usually means the gate is phrased wrongly and someone compensated with a comment.**
+
+`pin: none — a process lesson.` `pattern: grep -nE '(Done-when|condition|precondition).*(has been|have been|was (run|audited|reviewed)|is tracked|task [0-9])' IMPLEMENTATION_PLAN.md` — action-phrased **candidates** to classify, not defects. `accepted: partially enforceable` — the grep cannot judge whether a phrasing is load-bearing. ⛔ **Sweep scope, stated: the arming conditions and `§ARM-*` ledgers were classified 2026-08-11; the ~200 per-task `Done-when` lines were NOT.**
+
+---
+
+<a id="132"></a>
+## 132. METADATA-IS-AUTHORITATIVE HANDLES A STALE *STATUS*; IT DOES NOTHING FOR A STALE *ARGUMENT*
+
+**Date:** 2026-08-11. **Origin:** six message crossings in one round, two of which did real damage. **Banked at the lead's instruction, who supplied the cost rule and asked that his own instance be the headline because it is the more instructive.**
+
+**The established mitigation and its exact limit.** This project already learned that crossings are frequent and that **task metadata is authoritative over prose** — which reliably resolves *"is this dispatched / approved / done?"* ⛔ **It does nothing when what crossed was a piece of REASONING.** A status has a canonical home; **an argument does not.**
+
+⭐ **THE COST RULE, and it is the part that predicts damage: a crossing's damage scales with how much reasoning was built ON TOP OF the stale half.** A crossed status costs one read-back. **A crossed argument costs everything derived from it.**
+
+**The two instances, both load-bearing:**
+- ⭐ **The lead's (the instructive one): he REVERSED A CORRECT DECISION on a misread and issued a WRONG PRIORITY DOWNSTREAM in a spawn prompt.** He had held a session on the grounds that *"none of 24.12's candidate REMEDIES is providers territory"* — correct — then reversed himself on the claim that a **leg of the FINDING** was providers territory. ⛔ **He had silently substituted *leg* for *remedy*: the same finding-vs-remedy confusion the tracker keeps producing, arriving inside the correction of a decision.** **The reversal reached a third party before the retraction did.**
+- **The orchestrator's:** answered a HOLD that had already been reversed, and separately re-answered a question already answered in flight. **Cheaper, because nothing was built on top.**
+
+⇒ **Do:** ⛔ **before reversing your own decision on new information, re-read the ARGUMENT you are reversing, not just the conclusion** — the failure here was not a wrong fact, it was a **substituted noun** inside a sentence that still read true. ⭐ **And when a reversal has already been relayed onward, the retraction must reach the SAME CHANNEL that carried the error** ([L94](#94)): a correction sent only upstream leaves the downstream instruction authoritative. ⚠ **Practically: check your inbox before reporting something outstanding, and check whether you already ruled before re-ruling** — both crossings this round were resolvable by reading, not by asking.
+
+⚠ **The honest limit of this lesson: crossings are STRUCTURAL in an async team and cannot be eliminated.** ⭐ **What is controllable is the BLAST RADIUS — so the discipline is not "avoid crossing," it is "notice when a crossed message is an ARGUMENT rather than a STATUS, and re-derive rather than build."**
+
+`pin: none — a process lesson.` `accepted: not mechanically enforceable` — no gate reads whether a message carried reasoning or state. **Enforcement point: the moment you are about to reverse a decision, or act on one that reverses yours.**
