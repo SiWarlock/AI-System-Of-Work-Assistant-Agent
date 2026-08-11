@@ -60,8 +60,12 @@ export interface GclProjection {
   workspaceId: WorkspaceId;
   // Closed enum: isolated | coordination | sanitized | full (§5 visibility levels).
   visibilityLevel: VisibilityLevel;
-  // arch_gap: projectionType taxonomy unspecified upstream — an OPEN non-empty
-  // string that drives the allowed-field set (full enforcement §5/§6).
+  // arch_gap: the full projectionType taxonomy (which drives the allowed-field
+  // set) is unspecified upstream — an OPEN non-empty string here. A NARROWER
+  // projectionType ⇒ permitted-VisibilityLevel derivation now exists (task 24.18)
+  // at `@sow/policy` `isVisibilityConsistentWithProjectionType` — see that
+  // module's `arch_gap` note for what remains unspecified (the taxonomy content
+  // itself; the derivation MECHANISM is real and wired through `admitProjection`).
   projectionType: string;
   // OPEN record (summary/metadata only); raw-content-shaped keys are forbidden by
   // the refine below so no raw workspace content can ride a projection.

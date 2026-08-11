@@ -20,6 +20,7 @@ import {
   denyDirectCrossWorkspaceRaw,
   isAllow,
   type CrossWorkspaceRawRequest,
+  type ProjectionTypeVisibilityTaxonomy,
 } from "@sow/policy";
 
 /** A single JSON-path-tagged validation issue (redaction-safe: path + message only). */
@@ -43,6 +44,16 @@ export type GclGateError =
       readonly sourceDefault: VisibilityLevel;
       readonly message: string;
     }
+  // task 24.18 (WS-1/F14): the declared level is not permitted for the
+  // projection's projectionType — a DERIVATION mismatch, distinct from
+  // `visibility_exceeds_source` (a ceiling breach). Keep the two separate; see
+  // `@sow/policy` `VISIBILITY_TYPE_MISMATCH` vs `VISIBILITY_EXCEEDS_SOURCE`.
+  | {
+      readonly code: "visibility_type_mismatch";
+      readonly declaredLevel: VisibilityLevel;
+      readonly projectionType: string;
+      readonly message: string;
+    }
   | { readonly code: "malformed_policy_input"; readonly message: string };
 
 /** Result alias for an admission decision. */
@@ -57,15 +68,23 @@ export type GclAdmitResult = Result<GclProjection, GclGateError>;
  *     failure whose issue path is `sanitizedPayload` is classified as the
  *     dedicated `raw_content_present` HARD reject.
  *  3. §5 `validateProjectionVisibility` — over-visibility ⇒ `visibility_exceeds_source`
- *     HARD reject; a workspace mismatch / malformed input ⇒ `malformed_policy_input`.
+ *     HARD reject; a projectionType/visibilityLevel derivation mismatch ⇒
+ *     `visibility_type_mismatch` HARD reject (task 24.18, independent of the
+ *     ceiling check); a workspace mismatch / malformed input ⇒ `malformed_policy_input`.
  *
  * On success returns the validated projection UNCHANGED (the gate never mutates
  * visibility or strips content — a candidate is either clean or rejected).
+ *
+ * `taxonomy` is an optional injected `ProjectionTypeVisibilityTaxonomy` forwarded
+ * to `validateProjectionVisibility` (default: `@sow/policy`'s empty production
+ * default — see task 24.18). Omitted, this call's behavior is byte-identical to
+ * before 24.18.
  */
 export function admitProjection(
   candidate: unknown,
   sourceWorkspace: Workspace,
   registry?: SchemaRegistry,
+  taxonomy?: ProjectionTypeVisibilityTaxonomy,
 ): GclAdmitResult {
   // (1) ajv structural gate. Note: ajv's `additionalProperties:{}` on
   // sanitizedPayload does NOT catch raw-content keys — that is Zod's job (2).
@@ -99,9 +118,13 @@ export function admitProjection(
 
   const projection: GclProjection = parsed.data;
 
-  // (3) §5 visibility predicate — the source-default ceiling + workspace pin.
-  const decision = validateProjectionVisibility(projection, sourceWorkspace);
+  // (3) §5 visibility predicate — the source-default ceiling + the projectionType
+  // derivation (task 24.18), each an independent gate + workspace pin.
+  const decision = validateProjectionVisibility(projection, sourceWorkspace, taxonomy);
   if (!isAllow(decision)) {
+    // Explicit branch per DenialReason this function can actually emit — never a
+    // `default:`/trailing-else absorb of a real reason into `malformed_policy_input`
+    // (contracts L134 / task 24.23's own class of bug, avoided here on purpose).
     if (decision.reason === "VISIBILITY_EXCEEDS_SOURCE") {
       return err({
         code: "visibility_exceeds_source",
@@ -110,6 +133,16 @@ export function admitProjection(
         message: decision.message,
       });
     }
+    if (decision.reason === "VISIBILITY_TYPE_MISMATCH") {
+      return err({
+        code: "visibility_type_mismatch",
+        declaredLevel: projection.visibilityLevel,
+        projectionType: projection.projectionType,
+        message: decision.message,
+      });
+    }
+    // The only remaining reason `validateProjectionVisibility` can emit today is
+    // MALFORMED_POLICY_INPUT (absent/mismatched workspace id, unrecognized level).
     return err({ code: "malformed_policy_input", message: decision.message });
   }
 

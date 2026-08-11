@@ -16,6 +16,7 @@ import { ok, err } from "@sow/contracts";
 import type { GclProjection, Workspace, Result } from "@sow/contracts";
 import type { GclProjectionRepository, DbError } from "@sow/db";
 import type { SchemaRegistry } from "@sow/contracts/schema/registry";
+import type { ProjectionTypeVisibilityTaxonomy } from "@sow/policy";
 import { admitProjection, type GclGateError, type GclAdmitResult } from "./visibility-gate";
 
 /** Enumerable failure reasons for a gated persist (§16 closed set). */
@@ -34,8 +35,9 @@ export async function admitAndPersistProjection(
   sourceWorkspace: Workspace,
   repo: GclProjectionRepository,
   registry?: SchemaRegistry,
+  taxonomy?: ProjectionTypeVisibilityTaxonomy,
 ): Promise<Result<GclProjection, GclPersistError>> {
-  const admitted = admitProjection(candidate, sourceWorkspace, registry);
+  const admitted = admitProjection(candidate, sourceWorkspace, registry, taxonomy);
   if (!admitted.ok) {
     return err({ code: "rejected", reason: admitted.error });
   }
@@ -57,6 +59,7 @@ export function serveProjection(
   stored: GclProjection,
   sourceWorkspace: Workspace,
   registry?: SchemaRegistry,
+  taxonomy?: ProjectionTypeVisibilityTaxonomy,
 ): GclAdmitResult {
-  return admitProjection(stored, sourceWorkspace, registry);
+  return admitProjection(stored, sourceWorkspace, registry, taxonomy);
 }

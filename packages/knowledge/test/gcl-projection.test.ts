@@ -6,6 +6,7 @@ import { describe, it, expect } from "vitest";
 import { ok, err, defaultWorkspace } from "@sow/contracts";
 import type { GclProjection, Workspace } from "@sow/contracts";
 import type { DbError, DbResult } from "@sow/db";
+import type { ProjectionTypeVisibilityTaxonomy } from "@sow/policy";
 import { admitAndPersistProjection, serveProjection } from "../src/gcl/projection";
 
 // ── in-memory GclProjectionRepository fake (interface-only; no concrete driver) ──
@@ -86,6 +87,20 @@ describe("admitAndPersistProjection", () => {
     expect(repo.upsertCalls).toBe(0);
   });
 
+  // task 24.18 (WS-1/F14): the projectionType-derivation taxonomy threads through
+  // to this real entry point too (not only `admitProjection` directly) — an
+  // injected taxonomy activates the same way through the persist path.
+  it("HARD-rejects (and never upserts) a projectionType/visibilityLevel mismatch when an injected taxonomy is in effect (task 24.18)", async () => {
+    const repo = new FakeGclProjectionRepo();
+    const taxonomy: ProjectionTypeVisibilityTaxonomy = { calendar_busy: ["isolated"] };
+    const r = await admitAndPersistProjection(validCandidate, ws("full"), repo, undefined, taxonomy);
+    expect(r.ok).toBe(false);
+    if (!r.ok && r.error.code === "rejected") {
+      expect(r.error.reason.code).toBe("visibility_type_mismatch");
+    }
+    expect(repo.upsertCalls).toBe(0);
+  });
+
   it("surfaces a repository write failure as a typed persist error (never throws)", async () => {
     const repo = new FakeGclProjectionRepo();
     repo.failNext = { code: "unavailable", message: "db down" };
@@ -116,5 +131,17 @@ describe("serveProjection — re-gate a stored row before it crosses a workspace
     const r = serveProjection(validCandidate, ws("isolated"));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.code).toBe("visibility_exceeds_source");
+  });
+
+  // task 24.18 (WS-1/F14): `serveProjection` is the LIVE cross-workspace read gate
+  // (`apps/worker/src/composition/crossWorkspaceRead.ts` calls it, per task
+  // 24.17) — the projectionType derivation must be reachable HERE, not only
+  // through `admitProjection` in isolation, for "wired to fire" to be true of
+  // the path that actually runs today.
+  it("refuses a re-served stored row whose visibility level is inconsistent with its projectionType under an injected taxonomy (task 24.18)", () => {
+    const taxonomy: ProjectionTypeVisibilityTaxonomy = { calendar_busy: ["isolated"] };
+    const r = serveProjection(validCandidate, ws("full"), undefined, taxonomy);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe("visibility_type_mismatch");
   });
 });

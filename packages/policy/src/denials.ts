@@ -40,6 +40,11 @@ export const SUPPORT_DENIALS = [
   "LOCAL_ENDPOINT_NOT_CONFIGURED",
   "NON_LOOPBACK_LOCAL_TREATED_AS_EGRESS",
   "VISIBILITY_EXCEEDS_SOURCE",
+  // task 24.18 (WS-1/F14): a DERIVATION mismatch — the declared visibilityLevel is
+  // not permitted for the projection's projectionType — distinct from a ceiling
+  // breach (VISIBILITY_EXCEEDS_SOURCE): a level can be within the workspace
+  // default and still be wrong for its type, or vice versa. Never collapse the two.
+  "VISIBILITY_TYPE_MISMATCH",
   "APPROVAL_REQUIRED",
   "AUTH_TOKEN_INVALID",
   "ORIGIN_NOT_ALLOWED",

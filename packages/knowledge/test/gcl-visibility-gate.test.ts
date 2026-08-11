@@ -3,6 +3,7 @@
 // (never downgrade-and-store); direct cross-workspace raw retrieval denied (WS-8).
 import { describe, it, expect } from "vitest";
 import { defaultWorkspace, type GclProjection, type Workspace } from "@sow/contracts";
+import type { ProjectionTypeVisibilityTaxonomy } from "@sow/policy";
 import {
   admitProjection,
   guardCrossWorkspaceRawRead,
@@ -86,6 +87,32 @@ describe("admitProjection — composed candidate-data gate + visibility validati
     const r = admitProjection(foreign, wsWithDefault("full"));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.code).toBe("malformed_policy_input");
+  });
+
+  // task 24.18 (WS-1/F14): an INJECTED taxonomy wires the projectionType
+  // derivation through the real gate entry point — production's default taxonomy
+  // is empty (arch_gap), so these tests inject one to prove the mapping is real,
+  // not merely declared.
+  it("HARD-rejects a projection whose visibility level is inconsistent with its projectionType's derivation, even when the workspace ceiling would permit it (task 24.18)", () => {
+    const taxonomy: ProjectionTypeVisibilityTaxonomy = { calendar_busy: ["isolated"] };
+    // validCandidate declares "coordination" for projectionType "calendar_busy";
+    // the "full" ceiling would permit it, but the taxonomy caps calendar_busy at
+    // "isolated" — the derivation check must independently deny.
+    const r = admitProjection(validCandidate, wsWithDefault("full"), undefined, taxonomy);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error.code).toBe("visibility_type_mismatch");
+      if (r.error.code === "visibility_type_mismatch") {
+        expect(r.error.declaredLevel).toBe("coordination");
+        expect(r.error.projectionType).toBe("calendar_busy");
+      }
+    }
+  });
+
+  it("an injected taxonomy that does not cover this candidate's projectionType leaves the ceiling as the sole gate (no regression)", () => {
+    const taxonomy: ProjectionTypeVisibilityTaxonomy = { "some-other-type": ["isolated"] };
+    const r = admitProjection(validCandidate, wsWithDefault("sanitized"), undefined, taxonomy);
+    expect(r.ok).toBe(true);
   });
 });
 

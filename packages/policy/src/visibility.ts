@@ -42,6 +42,52 @@ export function isWithinDefault(
 }
 
 /**
+ * A `projectionType` ⇒ permitted-`VisibilityLevel`-set DERIVATION (task 24.18 /
+ * WS-1 finding F14). §5/§6 arch_gap: the full `projectionType` taxonomy is
+ * unspecified upstream (see `@sow/contracts` `gcl-projection.ts`) — this map is
+ * deliberately EXTENSIBLE, not exhaustive. A `projectionType` absent from it has
+ * no known derivation yet, so {@link isVisibilityConsistentWithProjectionType}
+ * returns `true` (no opinion) for it — the workspace-default CEILING
+ * ({@link isWithinDefault}) remains its sole gate until an entry is added here.
+ */
+export type ProjectionTypeVisibilityTaxonomy = Readonly<Record<string, readonly VisibilityLevel[]>>;
+
+/**
+ * The production default taxonomy — EMPTY. No `projectionType` category is
+ * specified upstream today (the finding's own severity reasoning: self-disclosed
+ * `arch_gap`, zero concrete `ProjectionSource` implementations), so asserting any
+ * real category here would be an invented classification this package has no
+ * authority to make. The derivation MECHANISM below is real and tested; this
+ * constant is what makes it a no-op in production until a real taxonomy lands.
+ */
+export const DEFAULT_PROJECTION_TYPE_VISIBILITY_TAXONOMY: ProjectionTypeVisibilityTaxonomy = {};
+
+/**
+ * The §5/§6 derivation check: does `level` belong to the permitted set for
+ * `projectionType`? A `projectionType` with NO entry in `taxonomy` has no
+ * derivation opinion — returns `true` (fail-OPEN for the unknown case only,
+ * matching this module's `arch_gap` convention; the ceiling check is the
+ * fail-closed floor for every projectionType regardless of taxonomy coverage).
+ * A `projectionType` WITH an entry is fail-closed: `level` must be a member.
+ */
+export function isVisibilityConsistentWithProjectionType(
+  projectionType: string,
+  level: VisibilityLevel,
+  taxonomy: ProjectionTypeVisibilityTaxonomy = DEFAULT_PROJECTION_TYPE_VISIBILITY_TAXONOMY,
+): boolean {
+  // `projectionType` is a fully open, producer-controlled string — a bare
+  // `taxonomy[projectionType]` bracket lookup on a plain-object taxonomy would
+  // resolve a prototype-colliding name ("constructor", "__proto__", ...) to an
+  // INHERITED Object.prototype member instead of `undefined`, defeating the
+  // `undefined` short-circuit below and throwing on `.includes` — never throw
+  // across this boundary (§16 / this module's own fail-closed contract).
+  // `Object.hasOwn` checks OWN membership only (desktop Lesson 15's family).
+  if (!Object.hasOwn(taxonomy, projectionType)) return true;
+  const permitted = taxonomy[projectionType];
+  return permitted !== undefined && permitted.includes(level);
+}
+
+/**
  * §9.4 Global-Today drill-down gate: does a projection's visibility level permit
  * opening WORKSPACE-SCOPED RAW context from the global surface?
  *
@@ -78,6 +124,7 @@ const CROSS_WS_PAYLOAD_MARKER = "policy:cross-workspace-raw-decision" as const;
 export function validateProjectionVisibility(
   projection: GclProjection,
   sourceWorkspace: Workspace,
+  taxonomy: ProjectionTypeVisibilityTaxonomy = DEFAULT_PROJECTION_TYPE_VISIBILITY_TAXONOMY,
 ): PolicyDecision<GclProjection> {
   const wsId: unknown = projection?.workspaceId;
   const level: unknown = projection?.visibilityLevel;
@@ -145,6 +192,29 @@ export function validateProjectionVisibility(
       "VISIBILITY_EXCEEDS_SOURCE",
       "projection visibility level exceeds the workspace default",
       exceedsSignal("projection level exceeds workspace default"),
+    );
+  }
+
+  // §5/§6 DERIVATION check (task 24.18 / WS-1 finding F14) — a SEPARATE,
+  // INDEPENDENT gate alongside the ceiling check above, not a replacement for
+  // it: a ceiling breach still denies even when the type/level pair is
+  // consistent (the check above), and a type/level mismatch still denies here
+  // even when the ceiling would have permitted the declared level. Raising
+  // `sourceWorkspace.defaultVisibility` can never retroactively validate a
+  // mismatched declaration — this check does not consult the ceiling at all.
+  if (!isVisibilityConsistentWithProjectionType(projection.projectionType, level, taxonomy)) {
+    return denyDecision(
+      "VISIBILITY_TYPE_MISMATCH",
+      "projection visibility level is not permitted for its projectionType",
+      buildAuditSignal({
+        actor: "policy",
+        event: "visibility.projection.denied",
+        refs,
+        payloadHash: VISIBILITY_PAYLOAD_MARKER,
+        beforeSummary: "projection visibility not validated",
+        afterSummary: "projection level not permitted for its projectionType",
+        denialCode: "VISIBILITY_TYPE_MISMATCH",
+      }),
     );
   }
 
