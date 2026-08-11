@@ -2327,3 +2327,24 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⇒ **Do:** ⛔ **before paying a recorded debt, re-derive its target from the destination artifact, not from the debt's description.** The debt is reliable evidence that *something is missing*; it is **not** authority on *what belongs there* — those are different claims, and a debt written by the person who owes it carries their understanding at the time they deferred it, which is exactly the moment they were not looking closely. ⭐ **Corollary (the honest disposition here): the RESIDUAL gap was real but different** — `packages/contracts/CLAUDE.md` indexed **no** UI-safe projection at all, so the fix is a scoped companion note naming them as explicitly-not-frozen with their orchestrator-write obligation intact, which closes the discoverability gap for `UiSafeCopilotAnswer` too. **A wrong prescription over a real symptom is still a real symptom.**
 
 `pin: none — a process lesson.` `pattern: grep -c 'UiSafeAuditDrillSummary' ARCHITECTURE.md packages/contracts/CLAUDE.md` — both must be non-zero; **but re-derive the ROW SHAPE from each destination's own scoping note before adding one.** `accepted: not mechanically enforceable` — no gate can distinguish a debt paid correctly from one paid as literally written.
+
+---
+
+<a id="125"></a>
+## 125. A REMEDIATION LEDGER IS A CLAIM LIKE ANY OTHER — "amended" counted as "corrected," and the count made the file look audited
+
+**Date:** 2026-08-11. **Origin:** 24.6 round 2, partition DOC-1 → task **24.10**. **Banked at the lead's instruction**, who called it *"the sharpest thing DOC-1 returned."*
+
+**The instance.** `docs/design/ui-ux/material-direction.md:92`'s normative governance paragraph **opened** with *"⛔ AMENDED 2026-07-26 — … the egress pill violated both … and was removed"* and, **in the same sentence**, enumerated the signals that *"stay first-class and visible"* — **including the egress pill.** Lines 58 and 84 of the same file struck it correctly. ⇒ **the file contradicted itself three ways, and the stale copy sat in the NORMATIVE paragraph** — the one a generator or an implementer treats as the spec.
+
+⛔ **THE PART THAT MAKES IT A LESSON RATHER THAN A TYPO: the fix ledger recorded this file as DONE.** `IMPLEMENTATION_PLAN.md`'s `#### Residuals (9)` claimed the sweep corrected *"material-direction.md ×3,"* counting as one of the three *"its normative governance-legibility guardrail amended."* ⭐ **It WAS amended — a preamble was added — and it was NOT corrected: the enumeration inside it never moved.** The ledger's own word was accurate and its implication was false.
+
+⭐ **WHY THIS SURVIVES A RE-READ, AND WHY IT IS THE DANGEROUS FORM: the surrounding prose CHANGED.** A reader checking the sweep sees a paragraph that visibly received attention, with a dated ⛔ amendment marker on it. **Fresh edit-marks read as evidence of a completed fix.** An untouched paragraph would have looked suspicious; a half-edited one does not. ⇒ **partial remediation is harder to detect than no remediation.**
+
+⛔ **AND THE LOCATION IS THE COMPOUNDING FACTOR: this is a completion record standing over an incomplete fix, INSIDE THE REMEDIATION LEDGER OF THE VERY DEFECT IT REMEDIATES.** The 9-site sweep existed to remove asserted safety claims; its own record asserted a claim it had not verified. **Same mechanism, one level up** — [L106](#106)'s *"an occurrence is not automatically a defect"* inverted into *"a remediation is not automatically a fix."*
+
+⚠ **It also survived a GREP.** The prior sweep's evidence was phrase-shaped; the surviving instance is inside a paragraph whose other sentences carry the correction, so a phrase-grep over the file returns hits that look like the fix. **The check that found it was READING THE PARAGRAPH.** (Compare [L64](#64): a string-shaped audit returns a confident false all-clear.)
+
+⇒ **Do:** ⛔ **when a sweep reports `<file> ×N`, the N is a count of SITES TOUCHED, never of sites CORRECTED — record which, and prefer naming the sites over the number** ([L100](#100): state the unit). ⭐ **And verify a doc fix by re-reading the enclosing PARAGRAPH, not by re-running the grep that found it** — the grep's hits now include your own correction, so it cannot distinguish fixed from half-fixed. **Corollary for reviewers: a dated amendment marker is evidence someone LOOKED, never evidence they FINISHED.**
+
+`pin: none — a process lesson.` `pattern: grep -n 'egress pill' docs/design/ui-ux/material-direction.md` — every surviving hit must be inside a strike-through or an explicit do-not-re-add line. `accepted: not mechanically enforceable` in general — **enforcement point: any sweep close-out that reports a per-file count.**
