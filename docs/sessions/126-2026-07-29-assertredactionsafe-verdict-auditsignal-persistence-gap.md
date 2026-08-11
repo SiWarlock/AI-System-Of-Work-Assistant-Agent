@@ -3,7 +3,7 @@
 **Date:** 2026-07-29
 **Track / role:** main · provint-implementer (`packages/policy`, `packages/providers`, `packages/integrations`)
 **Predecessor session:** `docs/sessions/122-2026-07-28-policy-zero-egress-predicates-processorofroute-totality.md`
-**Successor session:** _(next `/session-end`, if this track respawns)_
+**Successor session:** `docs/sessions/149-2026-08-11-provint-respawn-9-42-established-24-16-24-14.md`
 
 ⛔ Round is bounded — full teardown after this arc, per the lead. No new work taken; existing findings recorded, none fixed beyond #36's doc-only comment.
 
