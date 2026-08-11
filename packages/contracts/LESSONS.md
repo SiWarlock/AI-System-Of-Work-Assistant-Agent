@@ -2348,3 +2348,22 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⇒ **Do:** ⛔ **when a sweep reports `<file> ×N`, the N is a count of SITES TOUCHED, never of sites CORRECTED — record which, and prefer naming the sites over the number** ([L100](#100): state the unit). ⭐ **And verify a doc fix by re-reading the enclosing PARAGRAPH, not by re-running the grep that found it** — the grep's hits now include your own correction, so it cannot distinguish fixed from half-fixed. **Corollary for reviewers: a dated amendment marker is evidence someone LOOKED, never evidence they FINISHED.**
 
 `pin: none — a process lesson.` `pattern: grep -n 'egress pill' docs/design/ui-ux/material-direction.md` — every surviving hit must be inside a strike-through or an explicit do-not-re-add line. `accepted: not mechanically enforceable` in general — **enforcement point: any sweep close-out that reports a per-file count.**
+
+---
+
+<a id="126"></a>
+## 126. A BANKED LESSON RECORDS THAT A DEFECT *WAS* FIXED, NEVER THAT IT *IS* FIXED — re-derive the negative from current source
+
+**Date:** 2026-08-11. **Origin:** 24.6 round 2, partition `AC-2b`. **Banked at the lead's instruction**, who called it *"the single best methodological call of the round"* and noted that ⭐ **a negative that was at risk of being ASSUMED is worth more than another finding.**
+
+**The instance.** `packages/knowledge/src/synthesis/*` — the living-vault area, and the surface the project is about to arm — carried five banked lessons recording heavy prior fixing of one defect class ([L32](#32)/[L37](#37)/[L38](#38)/[L60](#60)/[L65](#65)). `IMPLEMENTATION_PLAN.md` warned in its own words: ⛔ ***"prior lessons record heavy fixing of this exact defect class here, but current state was NOT independently re-verified — do not treat past fixes as present coverage."*** **AC-2b re-derived it from current code anyway** and reported the specific mechanisms live *in the code it read*: the prototype-pollution-defeating `Map` in `entity-resolver.ts`, and `admitGroundedPath` as the single admission chokepoint with all four historically-named path-fabrication routes closed **in the code, not merely in the comments.**
+
+⛔ **THE MECHANISM, AND IT IS WHY THIS IS A LESSON RATHER THAN A COMPLIMENT: A CITATION IS EVIDENCE ABOUT THE PAST; COVERAGE IS A CLAIM ABOUT THE PRESENT.** Between the fix and now sit refactors, container swaps, new call sites, and re-forked helpers — this project has watched a single `.catchall()` container swap silently drop **three** guards that a passing test suite had covered for months. ⇒ **the lesson number proves someone once closed it; nothing in the citation observes that it is still closed.** This is [L118](#118)'s family — a **PROXY** (*a lesson exists*) standing in for the **PROPERTY** (*the code is sound*) — aimed at our own remediation history.
+
+⭐ **AND THE PART THAT MAKES IT DANGEROUS RATHER THAN MERELY LOOSE: AN ASSUMED NEGATIVE AND A VERIFIED ONE PRODUCE BYTE-IDENTICAL REPORTS.** *"Sound — see L37"* and *"Sound — `admitGroundedPath` is the single chokepoint, all four routes closed, read at HEAD"* occupy the same line of a report and carry the same weight to a reader. **Only one of them would notice a regression.** ⇒ this is the audit's own *explicit-negatives-are-required* rule, one level up: without the derivation shown, **a thin check and a clean surface are indistinguishable.**
+
+⚠ **The inverse error is real and must not be induced: this is NOT "distrust the ledger."** The lessons were correct when written and are the reason the surface is in good shape. **The claim being challenged is not *was this fixed* but *is it still* — and only the second one is what an audit, a phase-exit, or an arming gate actually needs.**
+
+⇒ **Do:** ⛔ **when a lesson would be your evidence that something is sound, open the file instead and cite `file:line` at HEAD; cite the lesson beside it as PROVENANCE, never as proof.** ⭐ **Sharpest form: a lesson tells you WHERE to look and WHAT to look for — it is a search key, not a result.** Strongest when the surface is dormant-and-about-to-arm, since dormancy means nothing has been exercising the guard in the meantime.
+
+`pin: none — a method lesson.` `accepted: not mechanically enforceable` — no gate distinguishes a cited negative from a derived one. **Enforcement point: any audit, `/phase-exit`, or arming gate whose "sound" verdict rests on a lesson citation rather than on a line of current source.**
