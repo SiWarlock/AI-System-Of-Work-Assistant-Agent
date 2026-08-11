@@ -3,23 +3,29 @@
 //
 // This is an ACTIVITY, NOT workflow code — it runs worker-side and MAY use
 // node:crypto (via the @sow/domain key builders, should a derived projection need a
-// canonical/idempotency key) + the real @sow/knowledge GCL Visibility Gate
-// (authorizeCrossWorkspaceRawRead / admitProjection). It implements
-// {@link UpdateProjectionsPort}.
+// canonical/idempotency key). It implements {@link UpdateProjectionsPort}.
+//
+// ⚠ REACHABILITY (24.6/24.17 finding, Lesson 11): this activity's cross-workspace gate is
+// the INJECTED {@link ProjectionGate} seam below — no production factory binds it to a real
+// @sow/knowledge `admitProjection`/`serveProjection` implementation anywhere today, and this
+// activity itself has zero production callers (Phase 25.2/25.4, deferred). The ACTUAL,
+// ALREADY-WIRED cross-workspace read gate in this codebase is
+// `apps/worker/src/composition/crossWorkspaceRead.ts`'s `resolveApprovedCrossWorkspaceSlice`
+// (also not yet consumer-wired, same phase) — a future implementation of `ProjectionGate` for
+// THIS activity should call through @sow/knowledge `serveProjection` directly, mirroring that
+// module, not re-derive the gate logic here.
 //
 // ★★ WHY THIS IS THE LEAKAGE SEAM (REQ-F-005/008, safety rule 4): the daily brief's
 // GLOBAL/Coordination view must NEVER read raw cross-workspace content. The ONLY
-// cross-workspace read path is the GCL Visibility Gate, which emits SANITIZED,
-// visibility-validated {@link GclProjection}s. This activity:
+// sanctioned cross-workspace read path is the GCL Visibility Gate. This activity, ONCE a
+// real `ProjectionGate` is bound:
 //   1. asks an injected PURE {@link ProjectionSource} for one candidate projection
 //      per in-scope workspace (summary/metadata only — busy/free, deadline counts);
-//   2. runs EACH candidate through the injected {@link ProjectionGate} (backed by
-//      @sow/knowledge `admitProjection`, which recovers the raw-content-shaped-key
-//      refine ajv drops + the §5 visibility ceiling);
-//   3. returns ONLY admitted, sanitized projections — a candidate carrying raw
+//   2. would run EACH candidate through the injected {@link ProjectionGate};
+//   3. would return ONLY admitted, sanitized projections — a candidate carrying raw
 //      content is HARD-rejected as `gate_rejected` and NEVER returned (no
 //      downgrade-and-store; the driver parks in projection_stale and surfaces 7.5).
-// So a raw cross-workspace body can never ride a projection into the global brief.
+// Until a real gate is bound, this activity has no live production path at all.
 //
 // §16: returns a typed Result — never throws. A stale source or a gate rejection is
 // a typed {@link UpdateProjectionsError} the driver maps to projection_stale.
@@ -65,10 +71,12 @@ export interface ProjectionSource {
 }
 
 /**
- * The injected GCL Visibility Gate seam. In production this wraps @sow/knowledge
- * `admitProjection` (the composed ajv ∘ Zod ∘ §5-visibility gate): a candidate
- * carrying raw content OR exceeding the source's default visibility is HARD-rejected
- * — never downgraded. A `false` admission is the leakage HARD-reject (safety rule 4).
+ * The injected GCL Visibility Gate seam. ⚠ DORMANT: no production factory binds this to a
+ * real @sow/knowledge `admitProjection`/`serveProjection` implementation today (24.17
+ * finding) — the "in production" behavior below describes the CONTRACT a future binding
+ * must honor, not current behavior. When bound: a candidate carrying raw content OR
+ * exceeding the source's CURRENT default visibility is HARD-rejected — never downgraded. A
+ * `false` admission is the leakage HARD-reject (safety rule 4).
  */
 export interface ProjectionGate {
   admit(candidate: CandidateProjection): Result<GclProjection, GateRejection>;

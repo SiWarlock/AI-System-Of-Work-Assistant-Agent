@@ -2,25 +2,34 @@
 // path (WS-8 isolation seam — REQ-F-005 / Section 9.13).
 //
 // This is an ACTIVITY, NOT workflow code — it runs worker-side and MAY use the real
-// adapters (@sow/knowledge GBrain read + the GCL Visibility Gate `admitProjection`,
-// @sow/policy) and node:crypto. It implements the TWO scope-appropriate retrieval
-// ports the copilot-Q&A driver depends on: {@link RetrieveWorkspacePort} (one bound
-// brain) and {@link RetrieveGlobalPort} (the GCL Visibility Gate).
+// adapters (@sow/knowledge GBrain read, @sow/policy) and node:crypto. It implements the
+// TWO scope-appropriate retrieval ports the copilot-Q&A driver depends on:
+// {@link RetrieveWorkspacePort} (one bound brain) and {@link RetrieveGlobalPort} (the GCL
+// Visibility Gate).
+//
+// ⚠ REACHABILITY (24.6/24.17 finding, Lesson 11): the global retriever's gate below,
+// {@link ScopedProjectionGate}, is an INJECTED SEAM with no production factory binding it
+// to a real @sow/knowledge `admitProjection`/`serveProjection` implementation today, and
+// this activity has zero production callers (Phase 25.2/25.4, deferred). The ACTUAL,
+// ALREADY-WIRED cross-workspace read gate in this codebase is
+// `apps/worker/src/composition/crossWorkspaceRead.ts`'s `resolveApprovedCrossWorkspaceSlice`
+// (also not yet consumer-wired) — a future `ScopedProjectionGate` implementation should
+// call through @sow/knowledge `serveProjection` directly, mirroring that module.
 //
 // ★★ WHY THIS IS THE ISOLATION SEAM (WS-8 / safety rule 4): an owner question is
 // answered from EITHER a single workspace's own brain OR the GLOBAL/coordination view
 // — and the global view is the SINGLE cross-workspace read path: the GCL Visibility
-// Gate. This activity makes that structural:
+// Gate. This activity makes that structural, ONCE a real gate is bound:
 //   • the workspace retriever queries ONLY the passed workspace's brain — it never
 //     touches another workspace's brain and never issues a cross-brain federation
-//     query (a direct cross-brain GBrain query is exactly what WS-8 forbids);
+//     query (a direct cross-brain GBrain query is exactly what WS-8 forbids); its own
+//     production-wiring status is out of THIS finding's scope — the gate claim below
+//     is what 24.17 corrects;
 //   • the global retriever asks an injected PURE source for candidate cross-workspace
-//     context (summary/metadata only) and runs EACH candidate through the injected
-//     {@link ScopedProjectionGate} (backed by @sow/knowledge `admitProjection`, which
-//     recovers the raw-content-shaped-key refine ajv drops + the §5 visibility
-//     ceiling); a candidate carrying raw content is HARD-rejected (gate_denied) and
-//     NEVER returned — no downgrade-and-serve. So a raw cross-workspace body can never
-//     ride the answer.
+//     context (summary/metadata only) and would run EACH candidate through the injected
+//     {@link ScopedProjectionGate}; a candidate carrying raw content is HARD-rejected
+//     (gate_denied) and NEVER returned — no downgrade-and-serve. Until a real gate is
+//     bound, the global half of this activity has no live production path.
 //
 // The read path has NO write side: this activity reads + gates ONLY. It never
 // commits Markdown and never dispatches an external write (those ports do not exist
@@ -133,10 +142,12 @@ export interface ScopedGateRejection {
 }
 
 /**
- * The injected GCL Visibility Gate seam. In production this wraps @sow/knowledge
- * `admitProjection` (the composed ajv ∘ Zod ∘ §5-visibility gate): a candidate
- * carrying raw content OR exceeding the source's default visibility is HARD-rejected
- * — never downgraded. A rejection is the leakage HARD-reject (safety rule 4).
+ * The injected GCL Visibility Gate seam. ⚠ DORMANT: no production factory binds this to a
+ * real @sow/knowledge `admitProjection`/`serveProjection` implementation today (24.17
+ * finding) — the "in production" behavior below describes the CONTRACT a future binding
+ * must honor, not current behavior. When bound: a candidate carrying raw content OR
+ * exceeding the source's CURRENT default visibility is HARD-rejected — never downgraded. A
+ * rejection is the leakage HARD-reject (safety rule 4).
  */
 export interface ScopedProjectionGate {
   admit(candidate: CandidateGlobalProjection): Result<GclProjection, ScopedGateRejection>;

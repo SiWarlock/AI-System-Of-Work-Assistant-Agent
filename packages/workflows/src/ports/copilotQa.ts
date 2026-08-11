@@ -228,11 +228,15 @@ export interface RetrieveGlobalError {
 
 /**
  * Retrieve global/coordination evidence through the GCL Visibility Gate (WS-8 /
- * REQ-F-005 / safety rule 4 — the SINGLE cross-workspace read path). The activity
- * gathers candidate cross-workspace context and admits each through the gate
- * (@sow/knowledge admitProjection); it NEVER issues a direct cross-brain GBrain
- * query and NEVER returns a raw workspace body — ONLY gate-validated, sanitized
- * {@link GclProjection}s ride the returned `global`-scoped evidence. A projection
+ * REQ-F-005 / safety rule 4 — the SINGLE sanctioned cross-workspace read path). ⚠
+ * DORMANT (24.17 finding, Lesson 11): the ONLY production implementer of this port,
+ * `scopedRetrieval.ts`'s global retriever, has an injected `ScopedProjectionGate` seam
+ * with no real `admitProjection`/`serveProjection` binding today, and neither this port
+ * nor its implementer has a production caller (Phase 25.2/25.4, deferred). CONTRACT a
+ * real implementation must honor: gather candidate cross-workspace context and admit
+ * each through the real gate; it must NEVER issue a direct cross-brain GBrain query and
+ * NEVER return a raw workspace body — ONLY gate-validated, sanitized
+ * {@link GclProjection}s would ride the returned `global`-scoped evidence. A projection
  * that fails the gate is HARD-rejected (gate_denied), not downgraded. Never throws.
  */
 export interface RetrieveGlobalPort {

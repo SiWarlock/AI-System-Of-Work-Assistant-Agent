@@ -189,12 +189,15 @@ export interface UpdateProjectionsError {
 
 /**
  * Update (and re-gate) the sanitized cross-workspace GCL projections for the bound
- * workspaces. The activity runs each candidate projection through the GCL
- * Visibility Gate (authorizeCrossWorkspaceRawRead / admitProjection) so ONLY
- * sanitized, visibility-validated projections are returned — a candidate carrying
- * raw content is HARD-rejected (`gate_rejected`), never leaked. The returned
- * projections are the ONLY cross-workspace context the global brief may read
- * (REQ-F-005/008). Never throws.
+ * workspaces. ⚠ DORMANT (24.17 finding, Lesson 11): the ONLY production implementer of
+ * this port, `buildGclProjection.ts`, has an injected `ProjectionGate` seam with no real
+ * `admitProjection`/`serveProjection` binding today, and neither this port nor its
+ * implementer has a production caller (Phase 25.2/25.4, deferred). CONTRACT a real
+ * implementation must honor: run each candidate projection through the real GCL
+ * Visibility Gate so ONLY sanitized, visibility-validated projections are returned — a
+ * candidate carrying raw content is HARD-rejected (`gate_rejected`), never leaked. The
+ * returned projections would be the ONLY cross-workspace context the global brief may
+ * read (REQ-F-005/008). Never throws.
  */
 export interface UpdateProjectionsPort {
   update(
