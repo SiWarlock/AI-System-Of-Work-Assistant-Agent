@@ -1,7 +1,7 @@
 # Session 142 — knowledge: EntityRef element-immutability restored (13.21) + the attendees declared-list correspondence pin (13.8g-C leg C)
 
 **Date:** 2026-07-31 (spanning from 2026-07-30 21:xx) · **Role:** knowledge-implementer (`main`, single-track, root checkout)
-**Predecessor:** [136-2026-07-29-13.8m-c-meeting-refusal-channel-knowledge.md](136-2026-07-29-13.8m-c-meeting-refusal-channel-knowledge.md) · **Successor:** _(next knowledge-implementer session)_
+**Predecessor:** [136-2026-07-29-13.8m-c-meeting-refusal-channel-knowledge.md](136-2026-07-29-13.8m-c-meeting-refusal-channel-knowledge.md) · **Successor:** [148-2026-08-11-withheldreason-signals-and-workspace-path-guard.md](148-2026-08-11-withheldreason-signals-and-workspace-path-guard.md)
 
 ## Why this session existed
 
