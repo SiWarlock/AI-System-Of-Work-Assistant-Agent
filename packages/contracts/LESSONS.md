@@ -2423,3 +2423,28 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⇒ **Do:** ⛔ **after ANY extract/de-duplicate refactor, run the repo-wide typecheck before declaring the fix done — not the test suite, the typecheck.** Step 8's full-graph typecheck is a **separate gate for this reason**, not a formality. ⭐ **And when a lifted body stops compiling, restore the narrowing INSIDE the new function** (an explicit `if`/`else` that narrows locally) rather than reaching for a cast or a non-null assertion — **the compile error is reporting a real loss of information, and silencing it keeps the loss while hiding the report.**
 
 `pin: none — a method lesson.` `pattern: none — the trigger is a refactor shape, not a source pattern.` `accepted: not mechanically enforceable` beyond the existing gate. **Enforcement point: `/tdd` Step 8's repo-wide `tsc`, which already exists — the lesson is that a GREEN VITEST RUN MUST NOT BE READ AS COVERING IT.**
+
+---
+
+<a id="130"></a>
+## 130. A VALUE PIN AND A WIRING PIN ARE DIFFERENT TESTS — one must use the literal, the other must use the symbol, and swapping them gives you a vacuous test or a brittle one
+
+**Date:** 2026-08-11. **Origin:** 24.16, providers-integrations — surfaced by a pure rename, and **banked as a correction to the orchestrator's own first framing of it**, which was too flattering to one of the two shapes.
+
+**The instance.** Renaming `WRITE_THROUGH_BLOCKED_HEALTH_CLASS` → `WRITE_THROUGH_FAILED_HEALTH_CLASS` (value unchanged) touched two tests **very differently**:
+- `outbox.test.ts` asserts the emitted `failureClass` **equals the imported constant** ⇒ it survived the rename untouched.
+- `health-signal.test.ts` asserts the constant **equals the string literal** ⇒ it required updating.
+
+⛔ **THE TEMPTING AND WRONG CONCLUSION — which is what I first wrote — is that the symbol-comparing test is the better shape because it survived.** It is not. **They pin different properties and both were correct:**
+- **Symbol comparison pins WIRING:** *does the production path actually use this constant?* ⭐ It **must** use the symbol — that is the whole assertion.
+- **Literal comparison pins VALUE:** *is this constant still `"write_through_failed"`?* ⭐ It **must** use the literal — that is the whole assertion.
+
+⭐ **SWAP THEM AND EACH FAILS IN ITS OWN CHARACTERISTIC WAY, which is the reusable part:**
+- A **value pin written symbol-to-symbol is VACUOUS** — `expect(CONST).toBe(CONST)` is `X === X`. It passes under every possible value, including a wrong one. ([L80](#80)/[L62](#62)'s vacuity family, arriving through a rename rather than a constant-substitution.)
+- A **wiring pin written against a literal is BRITTLE** — it goes red on a pure rename, **a false positive**, and the cost is worse than the noise: *"the rename broke a test"* teaches the next engineer that renames are dangerous, when what actually happened is that a test was asserting something it did not mean.
+
+⇒ **The diagnostic question is not *"which is more robust?"* but *"WHAT DO I WANT TO BE TOLD ABOUT?"*** — a changed **value** (literal) or a broken **connection** (symbol). ⭐ **Robustness is the wrong axis entirely: a value pin SHOULD be fragile to value changes; that is its job.**
+
+⚠ **And the corollary that makes this worth a lesson rather than a note: a rename is a free audit of this distinction.** Every test that broke was claiming to be a value pin; every test that survived was claiming to be a wiring pin. **If a test broke and you cannot say which property it was pinning, that is the finding — not the rename.**
+
+`pin: none — a method lesson.` `pattern: grep -rnE 'expect\([A-Z_]+\)\.toBe\([A-Z_]+\)'` — a constant compared to a constant is the **vacuous value-pin** candidate shape. `accepted: partially enforceable` — the grep catches the vacuous direction only; the brittle direction is not mechanically distinguishable from a correct value pin.
