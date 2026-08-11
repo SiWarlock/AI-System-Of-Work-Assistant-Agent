@@ -43,7 +43,14 @@ import type {
 } from "@sow/contracts";
 import { checkExtractionField, TBD } from "@sow/domain";
 import { renderGeneratedRegion } from "../markdown-vault/sections";
-import { resolveEntity, stubNotePathFor, type EntityRef, type EntityCandidate, type EntityGbrainReadPort } from "./entity-resolver";
+import {
+  resolveEntity,
+  stubNotePathFor,
+  type EntityRef,
+  type EntityCandidate,
+  type EntityGbrainReadPort,
+  type WithheldReason,
+} from "./entity-resolver";
 import { healLinks, type LinkRef } from "./link-healer";
 
 // ── candidate types (knowledge-local, NOT frozen contracts — mirror EntityRef/LinkRef) ──────────
@@ -142,6 +149,32 @@ export interface SynthesisOutcome {
    * byte-identical to a benign empty run (13.8m).
    */
   readonly entityRefsRejected: number;
+  /**
+   * Per-code count of `WithheldReason`s `resolveEntity` produced this run (13.23 leg A) — code-ONLY
+   * (rule 7: never a ref/name/path/slug). `WithheldReason` is a closed literal union, so the map's KEY
+   * TYPE makes carrying a free string structurally impossible (the compile-level pin in
+   * synthesis-planner.test.ts). SPARSE, not exhaustive: an absent key means that code never fired this
+   * run (0), a present key its fired count — exhaustive-by-construction was considered and rejected
+   * because `GroundedPathRefusal` (composed into `WithheldReason`) exports no member list, so building
+   * an exhaustive map would mean RE-DECLARING it here, which criterion 3 (composed, never re-declared)
+   * forbids; a future refusal member propagates through this map with zero code changes.
+   * `ws_scope_mismatch` (the WS-8 signal) is individually distinguishable from every other code, never
+   * folded into an aggregate — a single merged count would destroy exactly the distinction this field
+   * exists to create (the same argument `entityRefsRejected`'s own doc comment makes).
+   *
+   * ⛔ SCOPE: only withholds from `collectEntities` (the MODEL-supplied `candidate.entityRefs`) reach
+   * this map. `rewriteVaultForMeeting`'s OWN direct `resolveEntity` call over `input.entityRefs` /
+   * `identifierOnlyRefs` (the deterministic correlation-step refs) is a SEPARATE call site and does
+   * NOT flow through here — pinned by
+   * `the_meeting_rewrite_direct_call_site_does_NOT_flow_through_this_channel`. Tracked as leg C.
+   *
+   * ⛔ DORMANT — leg B (13.23, worker) is the consumer: it surfaces this map (alongside
+   * `entityRefsTruncated`/`entityRefsRejected`, both ALSO produced-and-dropped today) to System Health
+   * via the driver's `deps.health.surface`, NOT to the audit trail (24.7's scope). Until leg B lands,
+   * this field is produced-and-unread by every caller of `planSynthesis` — a NAMED dormant seam, not a
+   * silent one (L106).
+   */
+  readonly entityRefsWithheldByReason: Readonly<Partial<Record<WithheldReason, number>>>;
 }
 
 /** The only actionable error: an input that can never source a plan (REQ-F-006). All other faults fail safe. */
@@ -220,12 +253,13 @@ export async function planSynthesis(
   const proposeM = emptyMuts();
   const plans: KnowledgeMutationPlan[] = [];
   // Hoisted ABOVE the try (mirrors 13.8m-A's `refusals` fix): a fault AFTER `collectEntities` runs (e.g.
-  // a throwing `newPlanId` inside `assemble`) must not discard the truncation/rejection counts already
-  // computed — else a run that fan-out-hijacked entityRefs and then tripped a later fault would report
-  // the SAME entityRefsTruncated/entityRefsRejected as a benign run, destroying the distinction these
-  // fields exist to create.
+  // a throwing `newPlanId` inside `assemble`) must not discard the truncation/rejection/withheld counts
+  // already computed — else a run that fan-out-hijacked entityRefs and then tripped a later fault would
+  // report the SAME entityRefsTruncated/entityRefsRejected/entityRefsWithheldByReason as a benign run,
+  // destroying the distinction these fields exist to create.
   let entityRefsTruncated = 0;
   let entityRefsRejected = 0;
+  let entityRefsWithheldByReason: Partial<Record<WithheldReason, number>> = {};
 
   try {
     const candidate = await deps.reason.reason(input);
@@ -236,6 +270,7 @@ export async function planSynthesis(
       const entityStats = await collectEntities(candidate.entityRefs, autoM, input, deps);
       entityRefsTruncated = entityStats.truncated;
       entityRefsRejected = entityStats.rejected;
+      entityRefsWithheldByReason = entityStats.withheld;
     }
     // Assembly runs INSIDE the try — a throwing `newPlanId` fails safe to the plans already assembled (L11).
     const autoPlan = assemble(autoM, false, input, deps);
@@ -245,7 +280,7 @@ export async function planSynthesis(
   } catch {
     // reason port / assembly / any composite fault ⇒ fail-safe: return whatever was assembled (possibly nothing).
   }
-  return ok({ plans, entityRefsTruncated, entityRefsRejected });
+  return ok({ plans, entityRefsTruncated, entityRefsRejected, entityRefsWithheldByReason });
 }
 
 /**
@@ -313,10 +348,11 @@ function collectLinks(links: ProposedLinks | undefined, autoM: Muts, input: Synt
   }
 }
 
-/** The fan-out/validation bookkeeping `collectEntities` reports back to `planSynthesis` (13.8h + §DEC-CANDGATE leg 2). */
+/** The fan-out/validation/withhold bookkeeping `collectEntities` reports back to `planSynthesis` (13.8h + §DEC-CANDGATE leg 2 + 13.23 leg A). */
 interface EntityCollectionStats {
   readonly truncated: number;
   readonly rejected: number;
+  readonly withheld: Partial<Record<WithheldReason, number>>;
 }
 
 /**
@@ -350,10 +386,21 @@ async function collectEntities(
   input: SynthesisInput,
   deps: SynthesisDeps,
 ): Promise<EntityCollectionStats> {
-  if (!Array.isArray(entityRefs)) return { truncated: 0, rejected: 0 };
+  if (!Array.isArray(entityRefs)) return { truncated: 0, rejected: 0, withheld: {} };
   const capped = entityRefs.slice(0, MAX_MODEL_ENTITY_REFS); // sliced BEFORE validation — nothing extra allocated/awaited
   const truncated = Math.max(0, entityRefs.length - MAX_MODEL_ENTITY_REFS);
   let rejected = 0;
+  // 13.23 leg A: a per-code withhold tally. `res.reason` is produced entirely by this codebase's own
+  // `resolveEntity` (never runtime-untrusted candidate data itself — only `res.reason`, not `eRef`,
+  // ever indexes this) and every CURRENT `WithheldReason` member is collision-free against
+  // `Object.prototype` — but the field's own doc comment commits to a FUTURE `GroundedPathRefusal`
+  // member propagating with zero code changes, and nothing pins that a future member can't be named
+  // `toString`/`constructor`/`__proto__`. Accumulate in a `Map` (mirroring `ENTITY_NAMESPACES` above,
+  // immune to the prototype chain regardless of the key string, L65) and convert to the public
+  // plain-object shape ONLY once, via `Object.fromEntries` — which defines OWN properties
+  // (`[[DefineOwnProperty]]`), not assignment, so a hypothetical `"__proto__"`-named future member
+  // still lands as a harmless own key rather than reassigning the object's prototype.
+  const withheldMap = new Map<WithheldReason, number>();
   for (const eRef of capped) {
     try {
       // §DEC-CANDGATE leg 2 (REQ-S-006): `eRef` is MODEL-supplied candidate data — reject a bad
@@ -367,6 +414,11 @@ async function collectEntities(
       }
       const validRef = parsed.data;
       const res = await resolveEntity(validRef, input.workspaceId, { gbrain: deps.gbrain });
+      if (res.kind === "withheld") {
+        // 13.23 leg A: surface the reason as a signal — the withhold itself is unchanged (isolation
+        // holds; only detection was missing). Never the ref/name/path (rule 7) — only the closed code.
+        withheldMap.set(res.reason, (withheldMap.get(res.reason) ?? 0) + 1);
+      }
       // 13.8j: the stub path comes from the ONE shared namespaced derivation — never built inline
       // here, so an untrusted entity name can't mint a root structural surface (index.md / log.md).
       const stubPath = stubNotePathFor(res, validRef.kind);
@@ -381,7 +433,7 @@ async function collectEntities(
       continue;
     }
   }
-  return { truncated, rejected };
+  return { truncated, rejected, withheld: Object.fromEntries(withheldMap) as Partial<Record<WithheldReason, number>> };
 }
 
 /** Assemble one tier's mutations into a validated KMP, or null when there is nothing to synthesize / it fails the gate. */

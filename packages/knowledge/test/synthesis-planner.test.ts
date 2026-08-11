@@ -13,6 +13,7 @@ import { ok, err, KnowledgeMutationPlanSchema, EntityRefSchema } from "@sow/cont
 import { TBD } from "@sow/domain";
 import type { Result, WorkspaceId, ProvenanceOrigin, KnowledgeMutationPlan } from "@sow/contracts";
 import type { EntityCandidate, EntityGbrainReadPort, EntityReadFault, EntityRef, EntityKind } from "../src/synthesis/entity-resolver";
+import { rewriteVaultForMeeting } from "../src/synthesis/meeting-rewrite";
 // ⚠ Deliberate exception to this package's "import the module under test directly, not the barrel"
 // convention (src/index.ts's own header comment) — this file's evals-barrel test (13.19, §DEC-CANDGATE
 // leg 2, Trap 1) exists SPECIFICALLY to prove the @sow/knowledge barrel import
@@ -596,5 +597,141 @@ describe("planSynthesis — EntityRefSchema gates model-supplied entityRefs at t
     const created = (r.ok ? r.value.plans : []).flatMap((p) => p.creates).map((c) => c.path);
     expect(created).toEqual(["projects/barrel-co.md"]);
     expect(r.ok && r.value.entityRefsRejected).toBe(0);
+  });
+});
+
+// ── 13.23 leg A — resolveEntity's WithheldReason reaches SynthesisOutcome as a per-code count ──
+//
+// resolveEntity ALREADY produces a WithheldReason on every withhold (entity-resolver.ts:89-100) and
+// every one was discarded. This mirrors the entityRefsTruncated/entityRefsRejected channel already
+// established above: a SPARSE per-code count map (never a single merged count — ws_scope_mismatch,
+// the WS-8 signal, must stay individually distinguishable), hoisted above the try exactly like its
+// siblings, produced by the SAME generic accumulator so a GroundedPathRefusal member (composed, never
+// re-declared here) flows through without this slice naming it. ISOLATION HOLDS in every case below —
+// resolveEntity still withholds correctly; only the SIGNAL that it did is new. DORMANT: leg B (worker)
+// is the consumer (System Health via deps.health.surface); nothing reads this map yet.
+
+const WS_B = "ws-b" as WorkspaceId;
+
+describe("planSynthesis — a withheld WithheldReason reaches SynthesisOutcome as a per-code count (13.23 leg A)", () => {
+  it("withheld_ws_scope_mismatch_reaches_the_outcome_as_a_per_code_count — the WS-8 signal is individually distinguishable", async () => {
+    const port: EntityGbrainReadPort = { workspaceId: WS_B, findCandidates: async () => ok([]) }; // bound to a DIFFERENT ws than input
+    const candidate: SynthesisCandidate = { entityRefs: [{ name: "Jane Doe", kind: "person" }] };
+    const r = await planSynthesis(baseInput(), mkDeps({ gbrain: port, reason: fakeReason(candidate) }));
+    expect(r.ok && r.value.entityRefsWithheldByReason).toEqual({ ws_scope_mismatch: 1 });
+  });
+
+  it("a_benign_run_yields_zero_withheld_signals_across_every_code — non-vacuity partner of the test above", async () => {
+    const candidate: SynthesisCandidate = { entityRefs: [{ name: "Jane Doe", kind: "person" }] }; // resolves via create_stub, never withheld
+    const r = await planSynthesis(baseInput(), mkDeps({ gbrain: gbrainEmpty, reason: fakeReason(candidate) }));
+    expect(r.ok && r.value.entityRefsWithheldByReason).toEqual({});
+  });
+
+  it("mixed_withheld_reasons_are_counted_per_code_not_merged — two distinct codes, one repeated ⇒ disjoint per-code counts", async () => {
+    const port = fakeGbrain({
+      "Ghost One": () => err({ code: "read_fault" }), // gbrain_unavailable
+      "Ghost Two": () => err({ code: "read_fault" }), // gbrain_unavailable, again
+      "Jane Doe": () =>
+        ok([
+          cand({ path: "people/jane-doe.md", slug: "jane-doe", title: "Jane Doe" }),
+          cand({ path: "people/jane-doe-2.md", slug: "jane-doe-2", title: "Jane Doe" }),
+        ]), // ambiguous
+    });
+    const candidate: SynthesisCandidate = {
+      entityRefs: [
+        { name: "Ghost One", kind: "person" },
+        { name: "Ghost Two", kind: "person" },
+        { name: "Jane Doe", kind: "person" },
+      ],
+    };
+    const r = await planSynthesis(baseInput(), mkDeps({ gbrain: port, reason: fakeReason(candidate) }));
+    expect(r.ok && r.value.entityRefsWithheldByReason).toEqual({ gbrain_unavailable: 2, ambiguous: 1 }); // never merged into one number
+  });
+
+  it("withheld_counts_survive_a_later_fault — a throwing newPlanId aborts assembly AFTER withheld reasons are computed (mirrors 13.8h's pin)", async () => {
+    const port = fakeGbrain({ Ghost: () => err({ code: "read_fault" }) }); // "Stub Me" defaults to ok([]) ⇒ create_stub, keeping autoM non-empty
+    const candidate: SynthesisCandidate = {
+      entityRefs: [
+        { name: "Ghost", kind: "person" },
+        { name: "Stub Me", kind: "person" },
+      ],
+    };
+    const deps = mkDeps({
+      gbrain: port,
+      reason: fakeReason(candidate),
+      newPlanId: () => {
+        throw new Error("boom");
+      },
+    });
+    const r = await planSynthesis(baseInput(), deps);
+    expect(r.ok).toBe(true); // TOTAL — the fault fails safe
+    expect(r.ok && r.value.entityRefsWithheldByReason).toEqual({ gbrain_unavailable: 1 }); // NOT reset by the later fault
+    expect(r.ok && r.value.plans).toEqual([]); // the assembly fault does lose the plans — same as its sibling counters
+  });
+
+  it("a_groundedpathrefusal_member_flows_through_without_this_slice_naming_it — pins composition (criterion 3)", async () => {
+    // A faithful title over a KnowledgeWriter-owned structural surface (13.8k) — resolveEntity's OWN
+    // admitGroundedPath call withholds "structural_surface", a member of the COMPOSED GroundedPathRefusal
+    // union. Nothing in planner.ts's accumulator names this code; it flows through the SAME generic
+    // `withheld[res.reason]++` path as every other member, present or future.
+    const port: EntityGbrainReadPort = {
+      workspaceId: WS_A,
+      findCandidates: async () => ok([cand({ path: "index.md", slug: "jane-doe", title: "Jane Doe" })]),
+    };
+    const candidate: SynthesisCandidate = { entityRefs: [{ name: "Jane Doe", kind: "person" }] };
+    const r = await planSynthesis(baseInput(), mkDeps({ gbrain: port, reason: fakeReason(candidate) }));
+    expect(r.ok && r.value.entityRefsWithheldByReason).toEqual({ structural_surface: 1 });
+  });
+
+  it("rule_7_the_channel_cannot_carry_a_free_string_by_construction — compile-level proof, not a runtime scan", () => {
+    // WithheldReason is a closed literal union, so `entityRefsWithheldByReason`'s KEY TYPE rejects any
+    // key outside it via excess-property checking — a caller cannot smuggle an entity name/path/slug
+    // through this channel even at the type level. Verified by `pnpm typecheck` (an unused
+    // `@ts-expect-error` is itself a type error, L87) — a runtime scan cannot prove a channel that only
+    // ever holds compile-time-known literals.
+    // @ts-expect-error — "some_entity_name_or_path" is not a member of WithheldReason.
+    const illegal: SynthesisOutcome["entityRefsWithheldByReason"] = { some_entity_name_or_path: 1 };
+    void illegal;
+  });
+
+  it("the_meeting_rewrite_direct_call_site_does_NOT_flow_through_this_channel — leg C (tracked separately) closes this", async () => {
+    // `rewriteVaultForMeeting`'s own per-ref loop (input.entityRefs/identifierOnlyRefs, admitInto) is a
+    // SEPARATE resolveEntity call site from `collectEntities` — the latter only ever sees the MODEL
+    // REASON port's OWN candidate.entityRefs. ⚠ ws_scope_mismatch itself cannot demonstrate this here:
+    // rewriteVaultForMeeting gates deps.gbrain.workspaceId===input.workspaceId ONCE, before the per-ref
+    // loop even starts (meeting-rewrite.ts:190) — a mismatched port short-circuits to an empty receipt
+    // instead of ever reaching resolveEntity, so ws_scope_mismatch is structurally UNREACHABLE on this
+    // path specifically. "ambiguous" (reachable here, and — like ws_scope_mismatch — NOT a
+    // GroundedPathRefusal member, so `refusals` never captures it either) demonstrates the identical
+    // gap: any withhold reason on this direct loop is invisible to `entityRefsWithheldByReason`.
+    const port: EntityGbrainReadPort = {
+      workspaceId: WS_A,
+      findCandidates: async () =>
+        ok([
+          cand({ path: "people/jane-doe.md", slug: "jane-doe", title: "Jane Doe" }),
+          cand({ path: "people/jane-doe-2.md", slug: "jane-doe-2", title: "Jane Doe" }),
+        ]),
+    };
+    const receipt = await rewriteVaultForMeeting(
+      {
+        workspaceId: WS_A,
+        provenanceOrigin: "ingestion" as ProvenanceOrigin,
+        meetingNotePath: "meetings/standup.md",
+        sourceRefs: [{ sourceId: "src-1" }],
+        entityRefs: [{ name: "Jane Doe", kind: "person" }], // withholds "ambiguous" on the DIRECT loop
+      },
+      {
+        gbrain: port,
+        reason: fakeReason({}), // no candidate.entityRefs ⇒ collectEntities never runs — nothing to confound the result
+        sections: fakeSections({}),
+        newPlanId: () => "plan-1",
+        newRunId: () => "run-1",
+      },
+    );
+    expect(receipt.groundedPaths).toEqual([]); // the withhold produced no path (only the meeting note's own audit:false seed applies)
+    expect(receipt.refusals).toEqual([]); // "ambiguous" is not a GroundedPathRefusal member — invisible here too
+    // MeetingRewriteReceipt structurally carries no such channel — meeting-rewrite.ts discards planSynthesis's
+    // own entityRefsWithheldByReason (computed for candidate.entityRefs, never input.entityRefs) down to `.plans`.
+    expect(Object.prototype.hasOwnProperty.call(receipt, "entityRefsWithheldByReason")).toBe(false);
   });
 });
