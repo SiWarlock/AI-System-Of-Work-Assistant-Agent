@@ -2559,3 +2559,20 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⇒ **Do:** when a gate failure is dismissed by citing a known false-positive signature, **the citation goes in the same message or record that reports the failure — never a silent skip.** Symmetrically, filing a failure as a task is not wrong even when it matches a known signature — but the filer should check for a match first and **record the check either way** (*"checked against L83 — matches / doesn't match, because …"*), so the next reader is not left to re-derive whether the check happened at all.
 
 `pin: none — process convention, not mechanically enforceable via a source pattern.` `pattern: none.` `accepted: not mechanically enforceable` — enforcement point: the moment a preflight/gate failure is reported or dismissed against a known-flaky signature.
+
+---
+
+<a id="137"></a>
+## 137. A REFERENCE-EQUALITY CHECK AGAINST ONE KNOWN-BAD SINGLETON STATES "NOBODY LEFT THE DEFAULT," NOT "WHAT'S THERE IS GOOD" — name which claim a guard actually makes
+
+**Date:** 2026-08-11. **Origin:** `24.13`'s boot guard, providers-integrations-implementer — flagged by both reviewers, offered as a convention candidate.
+
+**The instance.** `assertReconcileVaultBootSafe`'s mechanism is `activeVerifier === defaultVerifyKwSig` — a reference-equality check against one specific known-bad placeholder singleton. It reads, at a glance, like a quality gate on the verifier ("is signature verification wired correctly?"). **It answers a narrower question: "is this THE placeholder, specifically?"** A distinct-but-equally-weak verifier — any other non-empty-string check, any stub with different code but the same non-security — passes the guard silently, because identity is checked against exactly one bad value, not against a property ("is this cryptographically real?").
+
+⭐ **THE MECHANISM: singling out ONE known-bad value by identity is cheap, precise, and easy to reason about — and its precision is exactly what narrows its claim.** A reference-equality check cannot generalize past the one object it names. This is not a flaw in the guard (it does what task `24.13` needed: refuse to boot if nobody overrode the shipped placeholder) — the flaw would be in a READER who generalizes its pass to a claim it never made.
+
+⚠ **Family, not a new species: this is `L118`'s proxy/property distinction arriving at the identity-check granularity.** `L123` named the shape at the type level (*"MUST is prose, not a gate"* — an optional guard is type-indistinguishable from a bound one); this is the runtime-value sibling — **a check can be REAL (it genuinely blocks the one case it names) and still be NARROWER than its surrounding prose implies.** The fix in both cases is the same: state the check's actual claim next to it, not the claim a reader would infer from its name or its passing.
+
+⇒ **Do:** when a guard's mechanism is a reference-equality (or otherwise identity-scoped) check against a single known-bad value, the doc/comment beside it states the check's claim PRECISELY — *"refuses to boot if nobody overrode the default; does not evaluate the strength of whatever WAS supplied"* — not *"verifies the signature is real."** Widening to a real property check (e.g. a verifier-strength/self-test probe) is a separate, larger piece of work — naming the gap is what stops the narrow check from being read as the wide one in the meantime.
+
+`pin: none — process/documentation convention.` `pattern: none — the trigger is a check's DOC TEXT overclaiming what its MECHANISM verifies, not a source shape a linter can classify.` `accepted: not mechanically enforceable` — enforcement point: any reviewer reading a guard whose mechanism is `=== <oneKnownBadValue>` checks the adjacent prose states that scope, not a broader one.
