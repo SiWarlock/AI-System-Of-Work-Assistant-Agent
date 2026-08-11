@@ -5,6 +5,9 @@
 // assistant-domain file — becomes a conflict-review System-Health item and NEVER
 // auto-advances (closes the §6 out-of-band hidden-brain hole, REQ-S-NEW-008).
 import { describe, it, expect } from "vitest";
+import { execSync } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { computeRevisionId } from "../src/knowledge-writer/revision";
 import type { RevisionId, VaultSnapshot } from "../src/knowledge-writer/revision";
 import {
@@ -12,6 +15,7 @@ import {
   computeMutations,
   fileContentSha,
   buildJournalView,
+  assertReconcileVaultBootSafe,
   type WriteJournalEntry,
   type ReconcileDeps,
   type Attribution,
@@ -276,5 +280,66 @@ describe("reconcileVault — conflict-review (never auto-advances)", () => {
     expect(out.baseRevisionId).toBe(baseRev); // ANY conflict blocks the advance
     expect(out.conflicts).toHaveLength(1);
     expect(out.healthItems).toHaveLength(1);
+  });
+});
+
+// spec(§6, safety rule 1) — task 24.13: reconcileVault has zero production callers
+// today, but the module must not be silently wireable into a boot path while
+// `defaultVerifyKwSig` (the non-cryptographic "any non-empty string" placeholder) is
+// the active verifier — that is exactly the hidden-brain hole §6 exists to close.
+// `assertReconcileVaultBootSafe` is the fail-fast guard a FUTURE composition root
+// must call before constructing `ReconcileDeps` for a real fs-watch boot. Path A (a
+// real HMAC verifier, mirroring provenance-stamp.ts) was rejected for this slice —
+// brief 249 Step 2.5 — because reconcileVault has no live consumer to validate a real
+// verifier against yet, and every one of this file's existing fixtures relies on the
+// permissive placeholder via non-cryptographic `kwWriterSig` stand-ins.
+describe("assertReconcileVaultBootSafe — 24.13 fail-fast boot guard (Path B)", () => {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+
+  /**
+   * Census the repo for `pattern` under `roots`, returning matching FILES (relative
+   * paths, sorted). Mirrors `neutralizer-single-source.test.ts`'s `censusFiles`:
+   * node_modules/dist excluded so a hoisted install or stale build output can't
+   * produce a false hit; a grep fault yields `[]`, which fails the assertions below
+   * (fail-closed — never a false green).
+   */
+  function censusFiles(pattern: string, roots: string): readonly string[] {
+    let out = "";
+    try {
+      out = execSync(
+        `grep -rlE '${pattern}' ${roots} --include='*.ts' --exclude-dir=node_modules --exclude-dir=dist || true`,
+        { cwd: repoRoot, encoding: "utf8" },
+      );
+    } catch {
+      out = "";
+    }
+    return out.split("\n").filter(Boolean).sort();
+  }
+
+  it("boot_guard_fires_when_reconcile_vault_wired_with_placeholder_verifier — refuses to boot with no real verifier bound", () => {
+    // A composition root constructing ReconcileDeps without binding a real verifier
+    // falls back to the placeholder exactly like reconcileVault itself does
+    // (`deps.verifyKwSig ?? defaultVerifyKwSig`) — this is that scenario, simulated.
+    expect(() => assertReconcileVaultBootSafe()).toThrow(/placeholder/i);
+  });
+
+  it("boot_guard_silent_when_real_verifier_active — a bound non-placeholder verifier never trips the guard", () => {
+    expect(() => assertReconcileVaultBootSafe(() => true)).not.toThrow();
+  });
+
+  it("boot_guard_silent_when_reconcile_vault_unreachable — zero production callers today, re-pinned as a standing census", () => {
+    // The exact premise grep brief 249 re-confirmed before this slice was
+    // implemented, now a standing CI trip-wire instead of a one-off check: if a
+    // future slice wires a real apps/ caller without reading this file, THIS test
+    // goes red immediately.
+    expect(censusFiles("reconcileVault|runWakeReconcile|createVaultWatcher", "apps")).toEqual([]);
+  });
+
+  it("no_production_override_of_the_verifier_machinery_exists_yet — only reconcile.ts + its own test reference the sig-verification seam", () => {
+    // The sibling premise grep, pinned the same way: no production code overrides
+    // the verifier machinery today — only this module and its own test reference it.
+    expect(censusFiles("verifyKwSig|KwSigVerifier|defaultVerifyKwSig", "packages apps")).toEqual(
+      ["packages/knowledge/src/fs-watch/reconcile.ts", "packages/knowledge/test/reconcile.test.ts"].sort(),
+    );
   });
 });

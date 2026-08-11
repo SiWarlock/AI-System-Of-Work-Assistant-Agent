@@ -73,6 +73,59 @@ export type KwSigVerifier = (entry: WriteJournalEntry) => boolean;
 
 const defaultVerifyKwSig: KwSigVerifier = (e) => e.kwWriterSig.trim().length > 0;
 
+/**
+ * Fail-fast boot guard (task 24.13, safety rule 1, Path B). `reconcileVault` has
+ * zero production callers today (§6) — but a FUTURE composition root wiring the
+ * fs-watch out-of-band reconciler must not silently inherit `defaultVerifyKwSig`,
+ * the non-cryptographic "any non-empty string" placeholder. A real HMAC verifier
+ * (Path A, mirroring `provenance-stamp.ts`) was rejected for this slice: there is
+ * no live consumer to validate one against yet. Call this ONCE, BEFORE
+ * constructing `ReconcileDeps` for any real boot path — a one-time wiring-time
+ * check, never a per-reconcile-event call (`reconcileVault` itself is documented
+ * PURE + total / never-throws; re-invoking this guard on every reconcile would
+ * reintroduce exactly the throw-in-the-hot-path risk that contract forbids).
+ *
+ * ⚠ This is a KNOWN-SINGLETON check, not a verifier-quality check: it rejects
+ * exactly the `defaultVerifyKwSig` object by reference, not "any weak verifier
+ * shaped like it." A distinct function that is equally (or more) permissive —
+ * e.g. a copy-pasted `(e) => e.kwWriterSig.trim().length > 0` — passes silently.
+ * It catches "forgot to bind a real verifier," not "bound a bad one."
+ *
+ * Unlike `reconcileVault`, this function DOES throw across the boundary —
+ * deliberately: it is a boot-time invariant in the same SHAPE as
+ * `gbrain-sync-trigger.ts`'s existing domain-machine-edge fail-fast guard (throws
+ * rather than a typed `Result`, because a `Result` implies a caller that could
+ * reasonably continue past a false-attribution guarantee, which is wrong here —
+ * the whole point is refuse-to-boot). It is NOT self-enforcing the way that
+ * precedent is: `gbrain-sync-trigger.ts`'s check runs unconditionally at module
+ * load and cannot be forgotten; this one depends on a caller-supplied `verify`
+ * argument that doesn't exist until a composition root wires it, so it must be an
+ * explicitly-called function, not automatic load-time code.
+ *
+ * ⚠ Nothing today FORCES a future composition root to call this — there is no
+ * composition root yet to bind the obligation to. This is a backstop a wiring
+ * slice must remember to call, not a compile-time guarantee (24.13's own finding:
+ * naming a hazard in a comment is not enough on its own, but an explicit
+ * "accepted: none exists" is still an honest, load-bearing statement for the next
+ * reader — same disclosure this package's `CaptureDeps.verifyCodingSessionOrigin`
+ * carries for the same reason). Two standing census tests in `reconcile.test.ts`
+ * partially backstop this (pinning "zero production callers" / "no production
+ * override" as CI trip-wires), but their scope is `apps/`-only — see the Step-9
+ * flag on that gap.
+ */
+export function assertReconcileVaultBootSafe(verify?: KwSigVerifier): void {
+  const active = verify ?? defaultVerifyKwSig;
+  if (active === defaultVerifyKwSig) {
+    throw new Error(
+      "reconcileVault must not be wired into a composition root while " +
+        "defaultVerifyKwSig (the non-cryptographic placeholder) is the active " +
+        "verifier — bind a real signature verifier (see provenance-stamp.ts's " +
+        "stampProvenance/verifyProvenanceStamp pattern) before composing the " +
+        "fs-watch reconciler into any boot path (task 24.13).",
+    );
+  }
+}
+
 /** `sha256` of a file's bytes — the identity the write-journal matches against. */
 export function fileContentSha(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
