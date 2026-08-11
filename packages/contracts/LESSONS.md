@@ -2387,3 +2387,22 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⇒ **Do:** ⛔ **when an instruction contains both a constraint and an expansion, do NOT pick — send it back naming both halves.** ⭐ **Test for the author: after writing a constraint, re-read the message asking only *"does anything later in this message spend what I just withheld?"*** — the check must be a **second pass over the pair**, because the first pass is per-clause and will pass. **And for anyone relaying an authorization: state its exact extent and then add nothing to the same message that acts on it.**
 
 `pin: none — a process lesson.` `accepted: not mechanically enforceable` — no gate reads intent across two clauses. **Enforcement point: the RECIPIENT, and only if they are licensed to flag rather than expected to interpret.**
+
+---
+
+<a id="128"></a>
+## 128. ACCUMULATE IN A `Map`, PUBLISH AS A PLAIN OBJECT — the prototype-safe shape and the JSON-friendly shape are different, and the conversion is the seam
+
+**Date:** 2026-08-11. **Origin:** 13.23 leg A, knowledge — surfaced by `security-reviewer` as a **low**, and **fixed in-slice rather than deferred.**
+
+**The situation, which recurs whenever a signal is counted by code.** A public field is a plain object keyed by a closed string-literal union (`Partial<Record<WithheldReason, number>>`) — it must stay a plain object because it is serialized and read across a boundary. **But accumulating into it with `acc[key]++` indexes an object whose prototype chain is live**, so a key named `__proto__`, `constructor`, `toString` or `valueOf` does not create an own-property — it collides with `Object.prototype`.
+
+⚠ **The subtlety that made it a LOW and not a nothing: no CURRENT member collides.** The reviewer's point was about the **future** member — this project's key domains grow (the union here is *composed* from another module's union precisely so new members propagate automatically), ⭐ **so the very property that makes the type good — it extends without edits here — is what makes the accumulator unsafe without edits here.** [L65](#65) already guards the identical shape two lines away (`ENTITY_NAMESPACES`), which is what let the reviewer recognise it.
+
+⇒ **The fix, and the reason it is a pattern rather than a one-off:** accumulate in a **`Map`** (no prototype chain, arbitrary string keys safe), then convert **once, at the publication boundary**, with **`Object.fromEntries`** — which uses `[[DefineOwnProperty]]`, **not assignment**, so it creates a genuine own-property even for a hypothetical `"__proto__"` key. ⭐ **The public type and the assertions do not change at all**, which is what makes this cheap enough to be the default rather than a special case.
+
+⚠ **DISTINCT FROM [L65](#65), and the distinction is the point of banking it separately.** L65's answer is *`ReadonlyMap` all the way through* — correct when the value never has to leave as a plain object. **Here it does** (serialized field), so *"use a Map"* alone under-specifies: **the conversion is the load-bearing half, and `Object.assign` / spread / a `for` loop with `obj[k] =` would all silently re-open the hole at the last step.** ⇒ **when the internal and external shapes differ on safety, name BOTH shapes and the converter.**
+
+⇒ **Do:** counting or grouping by a key domain that is **closed today and extensible tomorrow** ⇒ **`Map` internally, `Object.fromEntries` at the boundary.** Reach for it by default; the cost is one call.
+
+`pin: <the 13.23 leg-A synthesis-planner tests — the public shape is unchanged, so they pin the pattern's OUTPUT, not the pattern>` `pattern: grep -nE '\[[A-Za-z_.]+\] *(\+\+|\+=|=)' --include='*.ts' packages apps | grep -v test` — an accumulator indexed by a variable key is the **candidate** shape; it is a defect only when the key domain is not provably prototype-free. `accepted: partially enforceable` — the grep over-approximates.
