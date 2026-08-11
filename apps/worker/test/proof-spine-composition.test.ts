@@ -268,13 +268,17 @@ describe("meetingCommit — the KnowledgeWriter keeps its REAL secret-scan defau
     const acts = buildProofSpineActivities(b, paramsFor(LOCAL_ENDPOINT));
     // A minimal, schema-valid plan whose note body carries a sensitive keyword the
     // real scanForSecrets default trips on. A pass-through default would let it commit.
+    // 24.12 (knowledge track): the path must carry its own workspace's prefix (WS = "ws-emp") or
+    // KnowledgeWriter's new foreign-workspace path-consistency guard rejects it BEFORE secret-scan
+    // ever runs — this test targets the secret-scan step specifically, so the path is prefixed to
+    // reach it. Mechanical, no worker logic touched.
     const plan: KnowledgeMutationPlan = {
       planId: planId("plan:secret"),
       workspaceId: WS,
       sourceRefs: [{ sourceId: sourceId("src-1") }],
       creates: [
         {
-          path: "meetings/note.md",
+          path: `${WS}/meetings/note.md`,
           title: "note",
           body: "password: hunter2-supersecret-value",
           frontmatter: {},
