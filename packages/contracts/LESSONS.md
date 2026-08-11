@@ -2504,3 +2504,22 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⇒ **Do:** ⛔ **after every commit, confirm with `git log --oneline -1` (or `git log -1 --format=%H <expected-subject>`) before quoting the hash anywhere.** ⭐ **The general rule, which is the transferable part: in this environment a command's own success output is not evidence — confirm state-changing operations by INDEPENDENTLY QUERYING THE STATE.** ⚠ Applies to `git add` (check `git diff --cached`) and to anything whose receipt you would otherwise paste into a durable record. ⭐ **A receipt is a claim by the actor; `git log` is an observation of the world** — the same distinction [L118](#118) draws between the proxy and the property, arriving in the tooling layer.
 
 `pin: none — an operational lesson.` `pattern: none — the trigger is a workflow step, not a source pattern.` `accepted: not mechanically enforceable` — no gate reads whether a hash was confirmed. **Enforcement point: the moment before a hash enters task metadata, a tracker tick, a session doc, or a handoff.**
+
+---
+
+<a id="134"></a>
+## 134. A `default:` BRANCH IN A MAPPER OVER A CLOSED UNION IS A SILENT ABSORBER — guard exhaustiveness, don't terminate it
+
+**Date:** 2026-08-11. **Origin:** 24.12's reviewer chase, knowledge-implementer — **traced to root rather than observed**, from a single failing test.
+
+**The instance.** 24.12 added a `workspace_path_violation` write-failure code. `packages/workflows/src/activities/commitKnowledge.ts`'s `mapWriteFailure` switches over the closed `KnowledgeCommitFailureCode` union, has **no case for it**, and falls to `default: return "commit_failed"` ⇒ **a workspace-scope rejection is reported as a generic commit failure.**
+
+⭐ **THE MECHANISM: a `default:` over a CLOSED union converts a compile-time obligation into a silent runtime re-classification.** The union's whole value is that it is enumerable — ⛔ **and `default:` throws that value away at exactly the moment it would have paid: the day someone adds a member.** **Nothing fails. Nothing warns. The new case quietly means something else.**
+
+⭐⭐ **THE EVIDENCE THAT MAKES THIS A LESSON AND NOT A STYLE NOTE: THIS REPO CONTAINS BOTH PATTERNS, OVER SIBLING UNIONS.** `defaultSeverityForFailureClass` over `FailureClass` is **`assertNever`-guarded**, so adding a member there is a **compile error**. `mapWriteFailure` over `KnowledgeCommitFailureCode` is `default:`-terminated, so adding a member there is **silence.** ⇒ **the correct pattern was already available, already used, twenty lines away in the same subsystem.**
+
+⚠ **THIS IS THE THIRD INSTANCE IN ONE ROUND of the same super-shape — *the vocabulary grew and the consumer did not*:** [L?/24.16](#123)'s citation rot (a comment claiming enum members do not exist, after they shipped) · **24.21**'s `kind` conflation (a union collapsing *hold* and *errored attempt* after the members to distinguish them arrived) · **and this.** ⭐ **All three were INVISIBLE while the vocabulary was poorer — and became defects the moment it grew, WITHOUT ANYONE EDITING THE DEFECTIVE FILE.** ⇒ ***a change to a shared vocabulary silently re-grades every consumer that did not move with it.***
+
+⇒ **Do:** ⛔ **over a closed union, never `default:` — terminate with an `assertNever(x)` exhaustiveness guard** so the next member is a compile error. ⭐ **And when you WIDEN a closed union, the change is not done at the declaration: enumerate its consumers and check each one is exhaustive rather than absorbing.** ⚠ **A `default:` is legitimate over an OPEN domain** (a parsed string, an external code) — **the defect is specifically `default:` over something the type system could have enumerated for you.**
+
+`pin: none.` `pattern: grep -rnE 'default:' --include='*.ts' packages apps | grep -v test` — **candidates**, not defects: classify each by whether its subject is a closed union. `accepted: partially enforceable` — the grep cannot tell a closed union from an open domain.
