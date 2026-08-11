@@ -2367,3 +2367,23 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⇒ **Do:** ⛔ **when a lesson would be your evidence that something is sound, open the file instead and cite `file:line` at HEAD; cite the lesson beside it as PROVENANCE, never as proof.** ⭐ **Sharpest form: a lesson tells you WHERE to look and WHAT to look for — it is a search key, not a result.** Strongest when the surface is dormant-and-about-to-arm, since dormancy means nothing has been exercising the guard in the meantime.
 
 `pin: none — a method lesson.` `accepted: not mechanically enforceable` — no gate distinguishes a cited negative from a derived one. **Enforcement point: any audit, `/phase-exit`, or arming gate whose "sound" verdict rests on a lesson citation rather than on a line of current source.**
+
+---
+
+<a id="127"></a>
+## 127. A SCOPE CONSTRAINT AND A SCOPE EXPANSION IN ONE MESSAGE ARE INVISIBLE TO THEIR AUTHOR — because each half is individually correct
+
+**Date:** 2026-08-11. **Origin:** the lead's own instruction on task 24.10, self-reported after the orchestrator declined to act on it. **Sibling of [L125](#125)** — same round, same shape one level over: **L125 is a partial fix that reads as complete; this is a partial constraint that reads as whole.**
+
+**The instance.** One message carried both: ⛔ *"THE AUTHORIZATION IS THIS ONE EDIT. It is NOT a standing unlock… any further `docs/design/**` edit needs a fresh gate"* **and** *"take 9.42's sibling obligation on the same file in the same pass."* ⭐ **The second instruction authorises a second edit to the same locked file that the first instruction forbids.** The lead did not notice while writing it, and said so plainly: **the contradiction was invisible because each half was individually correct.**
+
+⛔ **THE MECHANISM, AND IT IS WHY NO AMOUNT OF CARE CATCHES IT: AUTHORING REVIEWS EACH SENTENCE, EXECUTION REVIEWS THE PAIR.** An author asks *"is this true?"* of each clause and both pass. **Nothing in the act of writing forces the question *"do these two clauses describe the same scope?"*** — that question only arises for someone who has to satisfy both **at once**. ⇒ **this class of defect has no detection point on the authoring side by construction**, which is why it is not a carelessness lesson.
+
+⛔ **AND THE COMPOUNDING FACTOR HERE, WHICH GENERALISES FURTHER THAN THE INSTANCE: THE MESSAGE WAS RELAYING SOMEONE ELSE'S AUTHORIZATION.** The owner had authorized **one** edit. The broad half would have spent an authorization **the relayer did not hold and did not intend to grant** — ⭐ *an authorization widens as it is relayed, and the relayer is the LEAST able to notice, because they know what they meant.* ([L116](#116)'s neighbour: authority attaches to the speaker — **so does scope.**)
+
+⭐ **WHAT MADE IT SURVIVABLE, and it is the transferable part: the executor treated the contradiction as a FINDING rather than as an ambiguity to resolve.** ⛔ **Resolving it silently is the failure** — and the pull is always toward the **broader** reading, because the broader reading is the one that lets you proceed. **Had it been resolved that way, an owner authorization would have been exceeded through an intermediary who never intended it, and every party would have believed they had acted correctly.**
+⚠ **The independent second ground matters too, and is worth separating: the narrow reading was ALSO right on the merits** — the two doc instances were different kinds of thing (a retired goal makes a doc **false**; a **live** goal re-tracked as a task does not, and deleting it would cancel a product commitment while wearing the word *"correction"*). ⇒ **two independent grounds, and only one of them was about permission.** A correctness argument and a permission argument reaching the same answer is not one argument.
+
+⇒ **Do:** ⛔ **when an instruction contains both a constraint and an expansion, do NOT pick — send it back naming both halves.** ⭐ **Test for the author: after writing a constraint, re-read the message asking only *"does anything later in this message spend what I just withheld?"*** — the check must be a **second pass over the pair**, because the first pass is per-clause and will pass. **And for anyone relaying an authorization: state its exact extent and then add nothing to the same message that acts on it.**
+
+`pin: none — a process lesson.` `accepted: not mechanically enforceable` — no gate reads intent across two clauses. **Enforcement point: the RECIPIENT, and only if they are licensed to flag rather than expected to interpret.**
