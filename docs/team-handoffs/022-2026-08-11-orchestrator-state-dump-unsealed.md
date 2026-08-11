@@ -1,7 +1,7 @@
 # 022 — ORCHESTRATOR STATE DUMP (round NOT sealed)
 
 **Date:** 2026-08-11 · **Track:** single-track `main` · **Author:** `main-orchestrator` at **79% [ACTION]**
-**Status:** ⛔ **THIS IS A STATE DUMP, NOT A SEAL. `/orchestrate-end` was NOT run.**
+**Status:** ⚠ **PARTIALLY SUPERSEDED — the round WAS sealed after this was written.** `IMPLEMENTATION_PLAN.md`'s *"Currently in progress"* now carries the seal state. ⛔ **THE FULL `/orchestrate-end` WAS STILL NOT RUN** — at ACTION tier the orchestrator wrote the seal's LOAD-BEARING sections directly rather than load the whole command and risk stopping mid-way. ⭐ **STILL OWED, and a successor must do them: (1) the round's Log entry appended to `docs/archive/IMPLEMENTATION_LOG.md`, (2) a Carry-forward TRIAGE pass (the list is at its ~7 cap and was not triaged this round), (3) folding round 4's three partition reports into an `docs/audits/004`.** ⚠ **This file remains the fullest record of what is OWED and UNSWEPT — read it alongside the seal, not instead of it.**
 
 > ⛔ **WHY, AND IT WAS PRE-DECIDED SO IT WOULD NOT BE JUDGED AT 80%:** the lead ruled that if `/orchestrate-end` could not be completed **with room to spare**, it must not be started — ⭐ ***"a half-written seal is worse than an honest dump: it looks complete."*** **A successor orchestrator seals from this file.**
 > ⚠ **Verify EVERY literal below by command. Do not quote a hash or a count from this prose** — `git status` returns the literal string `ok` here and **so does `git commit`'s receipt** (contracts **L133**); use `git log` / `git diff` / `git ls-files`.
