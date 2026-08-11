@@ -5,7 +5,7 @@
 // neutralizes create bodies via `neutralizeNoteBody` (region-AWARE: preserves each legit assistant
 // region's markers + family, neutralizes region inner bodies + human-span text, blanket on malformed).
 import { describe, it, expect } from "vitest";
-import { isOk, validKnowledgeMutationPlan } from "@sow/contracts";
+import { ok, isOk, validKnowledgeMutationPlan } from "@sow/contracts";
 import type { KnowledgeMutationPlan, WorkflowRunRef } from "@sow/contracts";
 import {
   neutralizeRegionMarkers,
@@ -143,7 +143,16 @@ const wf: WorkflowRunRef = {
 };
 const EMPTY_REV = computeRevisionId(new Map());
 function deps(vault: MemoryVaultFs): KnowledgeWriterDeps {
-  return { vault, revisions: new MemoryRevisionStore(), audit: new MemoryAuditRepo(), now: () => "2026-07-01T00:00:00.000Z" };
+  // 24.12: this file's fixtures use the generic "ws-001" workspace with unprefixed paths for reasons
+  // orthogonal to workspace-path scoping — pass-through, mirroring the ownership/secret-scan isolation
+  // convention. The real gate is pinned in workspace-path-guard.test.ts.
+  return {
+    vault,
+    revisions: new MemoryRevisionStore(),
+    audit: new MemoryAuditRepo(),
+    now: () => "2026-07-01T00:00:00.000Z",
+    workspacePathCheck: () => ok(undefined),
+  };
 }
 function cmd(plan: KnowledgeMutationPlan): KnowledgeWriteCommand {
   return { plan, expectedBaseRevision: EMPTY_REV, actor: "KnowledgeWriter", sourceEventRef: "evt-1", workflowRunRef: wf, idempotencyKey: "idem-neu-1" };

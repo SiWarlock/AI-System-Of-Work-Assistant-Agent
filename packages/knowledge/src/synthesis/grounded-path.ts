@@ -68,11 +68,33 @@ const CONTROL_OR_BACKSLASH = /[\u0000-\u001f\u007f\\]/;
 const refuse = (reason: GroundedPathRefusal): GroundedPathVerdict => ({ ok: false, reason });
 
 /**
+ * No `..`/`.`/empty path segment. `admitGroundedPath` applies this BEFORE any string-prefix/equality
+ * check on the path (including `isStructuralSurface`) — a `startsWith`/`===` match on a RAW,
+ * un-shape-checked path is not traversal-safe on its own: `"Logs/../employer-work-secret.md"`
+ * string-STARTS-WITH `"logs/"` but RESOLVES (`path.resolve`) outside the `Logs/` subtree entirely, at
+ * the vault root. EXPORTED (24.12 remedy leg, security-review finding) so a caller reusing
+ * `isStructuralSurface` STANDALONE — outside `admitGroundedPath`'s own call order, which always runs
+ * this check first — restores the SAME precondition instead of silently missing it.
+ */
+export function hasNoTraversalSegments(path: string): boolean {
+  return path.split("/").every((s) => s !== ".." && s !== "." && s !== "");
+}
+
+/**
  * A KnowledgeWriter-owned structural surface. Compared CASE-INSENSITIVELY: the vault is Mac-first,
  * so `Index.md` and `index.md` are the same file on a case-insensitive volume — a case-only variant
  * must not slip past the check and then collide on disk.
+ *
+ * ⚠ NOT traversal-safe on its own — a `startsWith`/`===` string match, not a resolved-path check. Every
+ * caller MUST pair this with {@link hasNoTraversalSegments} (`admitGroundedPath` always does, in order;
+ * a bare call site is the exact bug 24.12's security review caught).
+ *
+ * EXPORTED (24.12 remedy leg): `knowledge-writer/workspace-path-guard.ts` reuses this SAME predicate
+ * to exempt structural surfaces from the per-workspace path-prefix requirement (L39 — predicate lives
+ * once; a second hand-derived "is this index.md/log.md/Logs/**" check would risk drifting from this
+ * one, e.g. on the case-insensitivity handling).
  */
-function isStructuralSurface(path: string): boolean {
+export function isStructuralSurface(path: string): boolean {
   const lower = path.toLowerCase();
   if (lower === STRUCTURAL_INDEX_PATH.toLowerCase()) return true;
   if (lower === STRUCTURAL_LOG_POINTER_PATH.toLowerCase()) return true;
@@ -99,8 +121,7 @@ export function admitGroundedPath(path: unknown): GroundedPathVerdict {
   if (CONTROL_OR_BACKSLASH.test(path)) return refuse("unsafe_shape");
   if (path.startsWith("/")) return refuse("unsafe_shape"); // absolute
   if (/^[A-Za-z]:/.test(path)) return refuse("unsafe_shape"); // drive-letter absolute
-  const segments = path.split("/");
-  if (segments.some((s) => s === ".." || s === "." || s === "")) return refuse("unsafe_shape");
+  if (!hasNoTraversalSegments(path)) return refuse("unsafe_shape");
   if (!path.toLowerCase().endsWith(".md")) return refuse("unsafe_shape");
   if (isStructuralSurface(path)) return refuse("structural_surface");
   return { ok: true, path };

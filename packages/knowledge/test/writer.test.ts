@@ -41,6 +41,11 @@ function deps(vault: MemoryVaultFs): KnowledgeWriterDeps & {
     revisions: new MemoryRevisionStore(),
     audit: new MemoryAuditRepo(),
     now: () => "2026-07-01T00:00:00.000Z",
+    // 24.12: this file's fixtures use the generic "ws-001" workspace with unprefixed paths ("notes/a.md")
+    // for reasons orthogonal to workspace-path scoping — pass-through here, exactly like the REAL
+    // ownership/secret defaults are isolated in the "YAML-safe" block below. The real gate is pinned in
+    // workspace-path-guard.test.ts.
+    workspacePathCheck: () => ok(undefined),
   };
 }
 

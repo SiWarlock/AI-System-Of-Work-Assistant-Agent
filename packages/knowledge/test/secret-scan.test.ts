@@ -3,7 +3,7 @@
 // the matched secret never leaves via the typed error / audit (§16 redaction),
 // and the scan actually blocks a real commit through applyPlan.
 import { describe, it, expect } from "vitest";
-import { isOk, isErr, validKnowledgeMutationPlan } from "@sow/contracts";
+import { ok, isOk, isErr, validKnowledgeMutationPlan } from "@sow/contracts";
 import type { KnowledgeMutationPlan, WorkflowRunRef } from "@sow/contracts";
 import { isRedactionSafe } from "@sow/policy";
 import { applyPlan } from "../src/knowledge-writer/writer";
@@ -45,6 +45,9 @@ function deps(vault: MemoryVaultFs): KnowledgeWriterDeps & {
     audit: new MemoryAuditRepo(),
     now: () => "2026-07-01T00:00:00.000Z",
     secretScan: scanForSecrets, // wire the REAL scan under test
+    // 24.12: this file's fixtures use the generic "ws-001" workspace with unprefixed paths for reasons
+    // orthogonal to workspace-path scoping — pass-through. The real gate is pinned in workspace-path-guard.test.ts.
+    workspacePathCheck: () => ok(undefined),
   };
 }
 

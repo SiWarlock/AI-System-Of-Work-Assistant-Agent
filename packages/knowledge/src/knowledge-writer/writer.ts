@@ -11,6 +11,9 @@
 //      JSON-Schema layer; the Zod parse + §3 rule catch it — LESSONS §3)
 //   3. compare-revision precondition (on-disk == expected base, else write_conflict)
 //   4. project the plan into post-apply file bytes
+//   4.5. foreign-workspace path-consistency guard (task 24.12) — a note's path must carry its own
+//        plan.workspaceId as prefix, unless it's a KN-12 structural surface or the one legacy-exempt
+//        workspace the Copilot LegacyContentPolicy {mode:"assign"} bridge serves
 //   5. ownership check hook (task 4.2) — BEFORE the secret scan and the commit
 //   6. secret scan hook (task 4.3) — immediately BEFORE the atomic commit
 //   7. atomic all-or-nothing commit (temp-write + rename)
@@ -59,6 +62,7 @@ import {
 // create no runtime cycle.
 import { enforceHumanOwnership } from "./ownership";
 import { scanForSecrets } from "./secret-scan";
+import { enforceWorkspacePathScope } from "./workspace-path-guard";
 // The on-disk frontmatter format codec (§13.10a gate 2 + its inverse). Kept in one module so the
 // forward serializer and its inverse cannot drift; the region/link projection stays here.
 import { serializeScalar, parseNote, composeNote, KW_STAMP_FRONTMATTER_KEY } from "./frontmatter";
@@ -100,6 +104,31 @@ export interface SecretFound {
 /** Blocking pre-commit secret scan (reject-not-redact / task 4.3). Default: pass. */
 export type SecretScan = (ctx: SecretScanContext) => Result<void, SecretFound>;
 
+export interface WorkspacePathContext {
+  readonly path: string;
+  readonly plan: KnowledgeMutationPlan;
+}
+export interface WorkspacePathViolation {
+  readonly code: "workspace_path_violation";
+  /**
+   * ⚠ rule 7: safe to return to the SAME in-process caller that submitted the plan (it already knows
+   * its own path) — mirrors `OwnershipViolation`/`SecretFound`/`CommitFailed`'s own `.path` fields.
+   * NOT safe to carry unredacted into any DURABLE log/health/audit sink a future caller might add; a
+   * vault path can encode a workspace-adjacent slug — redact/gate it there, the way every other §16
+   * surface in this codebase does, before this crosses that boundary.
+   */
+  readonly path: string;
+}
+/**
+ * Foreign-workspace path-consistency guard (24.12 remedy — §5 WS-8, safety rule 4). The
+ * `packages/policy` Copilot serving-time `LegacyContentPolicy` `{mode:"assign"}` bridge treats every
+ * UNPREFIXED note in the combined gbrain brain as belonging to its one `toWorkspaceId` — sound only
+ * while the brain holds a single workspace's unprefixed content. This guard makes a foreign-workspace
+ * note landing unprefixed UNREPRESENTABLE at the one place every semantic write crosses (rule 1).
+ * Default: the real predicate (`enforceWorkspacePathScope`) — see `./workspace-path-guard`.
+ */
+export type WorkspacePathCheck = (ctx: WorkspacePathContext) => Result<void, WorkspacePathViolation>;
+
 // ── command / deps / result shapes ──────────────────────────────────────────
 
 /**
@@ -124,6 +153,8 @@ export interface KnowledgeWriterDeps {
   readonly now: () => string;
   readonly ownershipCheck?: OwnershipCheck;
   readonly secretScan?: SecretScan;
+  /** 24.12 remedy — foreign-workspace path-consistency guard. Default: the real predicate. */
+  readonly workspacePathCheck?: WorkspacePathCheck;
   /** Schema-registry override (tests); defaults to the process registry. */
   readonly registry?: SchemaRegistry;
   /**
@@ -163,13 +194,16 @@ export interface CommitFailed {
  * variants (schema_rejected | write_conflict | ownership_violation | secret_found)
  * are the ones the brief pins; `commit_failed` is the typed infrastructure-fault
  * route (a filesystem fault mid-commit) — still typed, still routable to System
- * Health, never a swallowed throw.
+ * Health, never a swallowed throw. `workspace_path_violation` (24.12) is the fifth
+ * semantic/policy variant: a foreign-workspace note whose path does not carry its
+ * own workspace's prefix.
  */
 export type WriteFailure =
   | SchemaRejected
   | WriteConflict
   | OwnershipViolation
   | SecretFound
+  | WorkspacePathViolation
   | CommitFailed;
 
 // ── the writer ───────────────────────────────────────────────────────────────
@@ -188,6 +222,7 @@ export async function applyPlan(
 ): Promise<Result<WriteSuccess, WriteFailure>> {
   const ownership = deps.ownershipCheck ?? enforceHumanOwnership;
   const scan = deps.secretScan ?? scanForSecrets;
+  const workspaceScope = deps.workspacePathCheck ?? enforceWorkspacePathScope;
 
   // 1 — idempotent replay: a prior commit for this key returns without any new
   // write or second AuditRecord (§6 idempotency).
@@ -222,6 +257,18 @@ export async function applyPlan(
   // 4 — project the plan into post-apply bytes; derive the changed file set.
   const projected = projectPlan(snapshot, plan);
   const changes = diffChanges(snapshot, projected);
+
+  // 4.5 — foreign-workspace path-consistency guard (24.12 remedy, safety rule 4). BEFORE ownership +
+  // secret scan (cheapest/structural check first) and BEFORE the commit — a foreign-workspace note
+  // landing unprefixed is what let the Copilot serving-time LegacyContentPolicy `{mode:"assign"}`
+  // bridge (packages/policy) silently sweep it into another workspace's served content; that
+  // precondition was previously enforced only by an operator-discipline comment (contracts L123).
+  for (const change of changes) {
+    const decision = workspaceScope({ path: change.path, plan });
+    if (!decision.ok) {
+      return err(decision.error);
+    }
+  }
 
   // 5 — ownership check (task 4.2), BEFORE the secret scan and the commit.
   for (const change of changes) {
