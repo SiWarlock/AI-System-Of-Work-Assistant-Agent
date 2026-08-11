@@ -3,7 +3,7 @@
 **Date:** 2026-07-31
 **Track / role:** main · worker-implementer
 **Predecessor session:** `docs/sessions/139-2026-07-31-audit-drill-attendee-threading-propose-tier-approvals.md`
-**Successor session:** _(unwritten — the next worker-implementer)_
+**Successor session:** `docs/sessions/150-2026-08-11-propose-approval-binding-and-cross-workspace-ceiling-gate.md`
 
 ---
 
