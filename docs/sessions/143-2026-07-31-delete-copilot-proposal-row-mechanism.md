@@ -3,7 +3,7 @@
 **Date:** 2026-07-31
 **Track / role:** main · desktop-implementer
 **Predecessor session:** `docs/sessions/140-2026-07-31-copilot-seed-door-deletion-and-recent-activity-audit-drill.md`
-**Successor session:** _(next `/session-end`)_
+**Successor session:** `docs/sessions/147-2026-08-11-desktop-idle-9-42-blocked-24-12-no-desktop-leg.md`
 
 ---
 
