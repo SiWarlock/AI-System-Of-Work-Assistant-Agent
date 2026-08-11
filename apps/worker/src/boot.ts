@@ -150,6 +150,10 @@ import {
 import { buildSemanticApprovalDispatch } from "./composition/semanticApprovalDispatch";
 // §13.10a G4b-3 — the SEMANTIC-write propose deps (dormant behind `copilotProposeKnowledge`).
 import { createApprovalsKnowledgeProposeSink } from "./api/procedures/copilotProposeKnowledgeSink";
+// 13.8i-B — the fresh sink object over the SAME repos, wrapped by the EXISTING factory (a second sink
+// OBJECT over identical repos + planId idempotency is one minting path instantiated twice, never a
+// second minting PATH — the prohibition is on the behaviour, not the object; contracts L59/brief 241 v2).
+import { createProposeKnowledgeApprovalPort } from "./composition/living-vault";
 import type { CopilotNoteExistsProbe } from "./api/procedures/copilotProposeKnowledge";
 import type { CopilotServingOracle } from "./api/procedures/copilotProvenanceStamp";
 import { selectServingOracleFactory } from "./api/procedures/servingContextLoader";
@@ -1406,6 +1410,43 @@ export function withSubscriptionExtractionArming(
 }
 
 /**
+ * 13.8i-B — bind the propose-knowledge-approval port onto the proof-spine params, for BOTH the
+ * source-ingestion and meeting-closeout paths (one shared port instance, two registered activity names —
+ * the `meetingCommit`/`sourceCommit` convention). Runs HERE, alongside {@link withDurableRevisions} /
+ * {@link withSubscriptionExtractionArming} — AFTER `backends` is built — because the fresh sink needs
+ * `backends.repos.approvals` / `backends.repos.pendingKnowledgeMutations` / `backends.repos.workspaceConfig`
+ * / `backends.now`, none of which exist at `buildAutoIngestProofSpineParams`'s desktop-worker-host call
+ * site (session 144's open question resolved empirically: a post-processor, not inline construction).
+ *
+ * DEFAULT-OFF PRESERVED (mirrors `withDurableRevisions`): `proofSpineParams === undefined` (the OFF/
+ * absent-config path) ⇒ returned UNCHANGED — the sink is NEVER constructed, `backends` is never touched.
+ *
+ * ⛔ UNLIKE `withSubscriptionExtractionArming` / `livingVault` / `meetingVault`, THIS BINDS
+ * UNCONDITIONALLY — there is NO separate propose-side arming flag, and that is a deliberate, lead-ruled
+ * single-gate design (brief 241 v2 decisions 11–12), not an oversight. Binding the sink here mints
+ * NOTHING by itself: the driver only ever calls `.propose()` for a `requiresApproval !== false` plan, and
+ * today NOTHING produces one — `livingVault`/`meetingVault` rewrite are THEMSELVES still dormant (always
+ * an empty plan set, per their own boot-level gates). ⭐ **THE "DEFAULT BOOT MINTS ZERO APPROVAL CARDS"
+ * GUARANTEE THEREFORE RESTS ENTIRELY ON THAT UPSTREAM DORMANCY, NOT ON THIS PORT BEING ABSENT.** The
+ * moment living-vault/meeting-vault rewrite are armed to actually produce a PROPOSE-tier plan,
+ * propose-to-Approvals is live with no separate gate of its own — an operator arming living-vault must
+ * read this comment, not assume a second lock protects them.
+ */
+export function withProposeKnowledgeApproval(
+  proofSpineParams: ProofSpineParams | undefined,
+  backends: ProofSpineBackends,
+): ProofSpineParams | undefined {
+  if (proofSpineParams === undefined) return undefined;
+  const sink = createApprovalsKnowledgeProposeSink({
+    approvals: backends.repos.approvals,
+    pendingKmp: backends.repos.pendingKnowledgeMutations,
+    workspaceConfig: backends.repos.workspaceConfig,
+    now: backends.now,
+  });
+  return { ...proofSpineParams, proposeKnowledgeApproval: createProposeKnowledgeApprovalPort(sink) };
+}
+
+/**
  * Build the persistent {@link BackendsConfig} from the live-boot {@link BootConfig}. PURE +
  * side-effect-free — extracted from `bootWorker` (18.18a) so the drop-regression guard runs in
  * DEFAULT CI without the SOW_API-gated boot.
@@ -1567,11 +1608,17 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   //   constructed and NOTHING persists (the slice-1 owner-opt-in invariant is intact).
   //   18.24 step-6 — then co-gate the subscription extraction route + source ContextRef to the SAME effective
   //   arm (dormant: `effectiveArmed=false` on the shipped default ⇒ params UNCHANGED, byte-equivalent).
-  const proofSpineParams = withSubscriptionExtractionArming(
-    withDurableRevisions(config.proofSpineParams, backends.repos.knowledgeRevisions),
-    // 18.36 — the COMBINED effective arm (settings-injection folded in), NOT `arming.effectiveArmed`: a settings
-    //   key-injection must strip the route/ContextRef/schema arming in lockstep with the transport (L52 no split-brain).
-    armEffective,
+  // 1.4b) 13.8i-B — bind the propose-knowledge-approval port UNCONDITIONALLY (no separate arming flag;
+  //   see withProposeKnowledgeApproval's own doc for why the zero-cards guarantee still holds). Runs
+  //   LAST so it always sees the fully-assembled params from the two rebinds above.
+  const proofSpineParams = withProposeKnowledgeApproval(
+    withSubscriptionExtractionArming(
+      withDurableRevisions(config.proofSpineParams, backends.repos.knowledgeRevisions),
+      // 18.36 — the COMBINED effective arm (settings-injection folded in), NOT `arming.effectiveArmed`: a settings
+      //   key-injection must strip the route/ContextRef/schema arming in lockstep with the transport (L52 no split-brain).
+      armEffective,
+    ),
+    backends,
   );
 
   // 1.5) DEV data-unlock (OFF by default). When dev-provision specs are supplied, turn

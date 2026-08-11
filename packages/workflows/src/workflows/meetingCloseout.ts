@@ -77,7 +77,8 @@ import type {
 } from "../ports/sourceIngestion";
 // 13.8f-C — share the SAME KnowledgeCommitFailureCode → FailureClass taxonomy the source path uses for
 // its own living-vault sibling-commit loop, rather than a second, independently-drifting copy (L119).
-import { commitFailureClass } from "./sourceIngestion";
+// 13.8i-B — same precedent for the propose-approval reason/failureClass mapping.
+import { commitFailureClass, proposeApprovalSurfaceInfo } from "./sourceIngestion";
 
 // NOTE: `MeetingExternalActionInput` now lives on the port seam
 // (src/ports/meetingCloseout.ts) — it is part of the buildOutputs result — and is
@@ -405,8 +406,10 @@ export async function runMeetingCloseout(
   //     Completing the tier split exactly as 13.8i does: a withheld plan is ROUTED into a PENDING §9.8
   //     Approval via the injected `proposeKnowledgeApproval` port (reusing the EXISTING
   //     copilotProposeKnowledgeSink minting — never a second sink). UNBOUND port, a rejected mint, OR a
-  //     throw are ALL the same safe outcome: the plan stays withheld and the fault is surfaced — never a
-  //     downgrade to auto-commit.
+  //     throw are ALL the same safe OUTCOME (the plan stays withheld and the fault is surfaced — never a
+  //     downgrade to auto-commit), but 13.8i-B DISTINGUISHES them at the SURFACED failureClass — see
+  //     sourceIngestion.ts step 7b's comment for the full write_through_blocked/write_through_failed
+  //     rationale (identical here; the meeting and source paths share ONE port instance).
   let queuedForApproval = 0;
   for (const sibling of built.value.siblingPlans) {
     if (sibling.requiresApproval !== false) {
@@ -422,9 +425,9 @@ export async function runMeetingCloseout(
       if (proposed !== undefined && isOk(proposed)) {
         queuedForApproval += 1;
       } else {
-        const reason = proposed === undefined ? "propose_port_unbound_or_threw" : proposed.error.code;
+        const { reason, failureClass } = proposeApprovalSurfaceInfo(proposed);
         await deps.health.surface({
-          failureClass: "write_through_failed",
+          failureClass,
           subjectRef: input.run.workflowId,
           message: `meeting sibling PROPOSE plan could not be queued for approval (withheld, never committed): ${reason}`,
           auditRef: input.run.workflowId as unknown as AuditId,

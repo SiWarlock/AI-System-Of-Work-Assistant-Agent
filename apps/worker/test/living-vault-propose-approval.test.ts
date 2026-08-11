@@ -14,7 +14,7 @@ import { describe, it, expect } from "vitest";
 import { ok, err, isOk } from "@sow/contracts";
 import type { Approval, FailureVariant, KnowledgeMutationPlan, Workspace, WorkspaceId } from "@sow/contracts";
 import type { DbError, DbResult, PendingKnowledgeMutation, PendingKnowledgeMutationRepository, WorkspaceConfigRepository, ApprovalRepository } from "@sow/db";
-import { createProposeKnowledgeApprovalPort } from "../src/composition/living-vault";
+import { createProposeKnowledgeApprovalPort, createProposeKnowledgeApprovalActivity } from "../src/composition/living-vault";
 import { createApprovalsKnowledgeProposeSink } from "../src/api/procedures/copilotProposeKnowledgeSink";
 import type { CopilotKnowledgeProposeSink } from "../src/api/procedures/copilotProposeKnowledgeSink";
 
@@ -148,5 +148,52 @@ describe("createProposeKnowledgeApprovalPort — 13.8i adapter contract (a thin 
       expect(second.value.approvalRef).toBe(first.value.approvalRef); // the SAME card
     }
     expect(approvalsStore.size).toBe(1); // exactly one Approval row exists, never two
+  });
+});
+
+// spec(§6 KN-10 / §9.8 Approvals; ⚠SAFETY; 13.8i-B) — createProposeKnowledgeApprovalActivity: the
+// ARMING gate as an activity delegate, mirroring createLivingVaultActivity's SHAPE (a pure factory over
+// `port | undefined`, dormancy INSIDE the activity, per contracts L59) but NOT its `ok([])` identity
+// return — propose has no natural "nothing happened" success, so the unarmed branch is a typed
+// `not_armed` err, never ok(...) (a false proof a plan was queued) and never a throw (§16).
+describe("createProposeKnowledgeApprovalActivity — 13.8i-B dormancy-in-the-activity (L59 shape, corrected return)", () => {
+  it("unarmed (port undefined) returns a typed not_armed err — never ok, never throws", async () => {
+    const activity = createProposeKnowledgeApprovalActivity(undefined);
+    const res = await activity(plan(), WS);
+
+    expect(isOk(res)).toBe(false);
+    if (!isOk(res)) {
+      expect(res.error.code).toBe("not_armed");
+    }
+  });
+
+  it("armed (port defined) delegates verbatim — no double-wrapping, no re-interpretation", async () => {
+    let calls = 0;
+    const fakePort = {
+      propose: async (p: KnowledgeMutationPlan, ws: WorkspaceId) => {
+        calls += 1;
+        expect(p).toBe(plan_);
+        expect(ws).toBe(WS);
+        return ok({ approvalRef: "apr_armed", created: true });
+      },
+    };
+    const plan_ = plan();
+    const activity = createProposeKnowledgeApprovalActivity(fakePort);
+    const res = await activity(plan_, WS);
+
+    expect(calls).toBe(1);
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value).toEqual({ approvalRef: "apr_armed", created: true });
+  });
+
+  it("armed + a genuine mint rejection still surfaces mint_failed, NOT not_armed — the codes are distinct", async () => {
+    const fakePort = {
+      propose: async () => err({ code: "mint_failed" as const, message: "fake sink rejection" }),
+    };
+    const activity = createProposeKnowledgeApprovalActivity(fakePort);
+    const res = await activity(plan(), WS);
+
+    expect(isOk(res)).toBe(false);
+    if (!isOk(res)) expect(res.error.code).toBe("mint_failed");
   });
 });

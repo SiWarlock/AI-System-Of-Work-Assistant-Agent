@@ -107,6 +107,7 @@ import type {
   SourceBuildOutputsPort,
   SourceNoteIdentity,
   SourceLivingVaultPort,
+  ProposeKnowledgeApprovalPort,
   CommitKnowledgePort,
   ProposeActionsPort,
   ReindexGbrainPort,
@@ -184,7 +185,7 @@ import { deriveSourceNotePath, sourceIdentityDigest } from "./sourceNotePath";
 // 13.8d — the living-vault rewrite leg's arming gate. Importing the ACTIVITY factory (not
 // `rewriteVaultForSource` itself) keeps this module free of the knowledge synthesis surface; the real
 // rewrite is bound one hop away in `living-vault.ts`, which carries the dormancy waiver.
-import { createLivingVaultActivity } from "./living-vault";
+import { createLivingVaultActivity, createProposeKnowledgeApprovalActivity } from "./living-vault";
 // 16.2 — the connector-poll activity + its real resolve binding (16.1 adapters + 15.1 bridge + backoff).
 import { createConnectorPollActivity, type ConnectorPollPort } from "@sow/workflows";
 import { composeConnectors } from "./connectors";
@@ -330,6 +331,17 @@ export interface ProofSpineParams {
    * field at all.
    */
   readonly meetingVault?: MeetingVaultRewritePort;
+  /**
+   * 13.8i-B — the propose-knowledge-approval port (§6 KN-10 / §9.8), shared by BOTH the source and
+   * meeting paths (one port instance, two registered activity names — mirrors the `meetingCommit`/
+   * `sourceCommit` per-path-naming convention). UNLIKE `livingVault`/`meetingVault` this carries NO
+   * separate arming flag of its own: `boot.ts`'s `withProposeKnowledgeApproval` binds it UNCONDITIONALLY
+   * whenever `proofSpineParams` exists at all. The "default boot mints ZERO Approval cards" guarantee
+   * rests entirely on `livingVault`/`meetingVault` staying dormant (empty plan sets) — NOT on this field
+   * being absent. See `createProposeKnowledgeApprovalActivity` (living-vault.ts) for the unarmed-branch
+   * fallback this field's absence still triggers (test-only / a future construction site that omits it).
+   */
+  readonly proposeKnowledgeApproval?: ProposeKnowledgeApprovalPort;
 }
 
 // ---------------------------------------------------------------------------
@@ -361,6 +373,15 @@ export interface ProofSpineActivities {
   meetingPark(
     ...args: Parameters<MeetingParkPort["park"]>
   ): Promise<Awaited<ReturnType<MeetingParkPort["park"]>>>;
+  /**
+   * 13.8i-B — the meeting-path propose-approval delegate (mirrors `sourceProposeKnowledgeApproval`;
+   * both register the SAME shared port instance under a per-path name, the `meetingCommit`/`sourceCommit`
+   * convention). Dormancy lives INSIDE the activity (`createProposeKnowledgeApprovalActivity`, L59
+   * shape) — never gated at the workflow level.
+   */
+  meetingProposeKnowledgeApproval(
+    ...args: Parameters<ProposeKnowledgeApprovalPort["propose"]>
+  ): Promise<Awaited<ReturnType<ProposeKnowledgeApprovalPort["propose"]>>>;
 
   // ── approval-flow ──
   approvalRecordPending(
@@ -421,6 +442,14 @@ export interface ProofSpineActivities {
   sourceLivingVaultRewrite(
     ...args: Parameters<SourceLivingVaultPort["rewrite"]>
   ): Promise<Awaited<ReturnType<SourceLivingVaultPort["rewrite"]>>>;
+  /**
+   * 13.8i-B — the source-path propose-approval delegate (mirrors `meetingProposeKnowledgeApproval`;
+   * both register the SAME shared port instance under a per-path name). Dormancy lives INSIDE the
+   * activity (`createProposeKnowledgeApprovalActivity`, L59 shape) — never gated at the workflow level.
+   */
+  sourceProposeKnowledgeApproval(
+    ...args: Parameters<ProposeKnowledgeApprovalPort["propose"]>
+  ): Promise<Awaited<ReturnType<ProposeKnowledgeApprovalPort["propose"]>>>;
 
   // ── connector sync & health (16.2) ──
   /**
@@ -1102,6 +1131,10 @@ export function buildProofSpineActivities(
     meetingPropose: (action, env) => propose.propose(action, env),
     meetingReindex: (revisionId) => reindex.reindex(revisionId),
     meetingPark: (source, idempotencyKey) => meetingParkPort.park(source, idempotencyKey),
+    // 13.8i-B — the meeting-path leg. SAME `params.proposeKnowledgeApproval` instance as the source leg
+    // below (one shared port, two registered names — the meetingCommit/sourceCommit convention);
+    // dormancy (absent ⇒ typed not_armed err) lives inside createProposeKnowledgeApprovalActivity.
+    meetingProposeKnowledgeApproval: createProposeKnowledgeApprovalActivity(params.proposeKnowledgeApproval),
 
     // approval-flow
     approvalRecordPending: (ctx) => recordPending.record(ctx),
@@ -1174,6 +1207,8 @@ export function buildProofSpineActivities(
     // `gateLivingVaultRewrite` (strict `=== true` + a vaultRoot); absent ⇒ the delegate is inert and
     // yields an empty plan set, so the dormant pipeline commits exactly the one source note it always did.
     sourceLivingVaultRewrite: createLivingVaultActivity(params.livingVault),
+    // 13.8i-B — the source-path leg. SAME shared port instance as meetingProposeKnowledgeApproval above.
+    sourceProposeKnowledgeApproval: createProposeKnowledgeApprovalActivity(params.proposeKnowledgeApproval),
 
     // infra — the failure sink every driver routes through (inv-5).
     // 16.2 — poll one connector (dormant in the shipped default; the resolve binds the real 16.1 adapters).

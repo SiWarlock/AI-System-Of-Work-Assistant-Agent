@@ -285,6 +285,38 @@ export function createIngestRewriteAdapter(knowledgeDeps: IngestRewriteDeps): Li
  * sink's `FailureVariant` (or a thrown error) onto the closed `mint_failed` port error — never leaking
  * the raw detail (rule 7) — and never throws (§16).
  */
+/**
+ * 13.8i-B — the ARMING gate as an activity delegate for propose-approval. Mirrors
+ * {@link createLivingVaultActivity}'s SHAPE ONLY (a pure factory over `port | undefined`, dormancy
+ * INSIDE the activity, per contracts L59) — NOT its `ok([])` identity return. `propose` has no natural
+ * "nothing happened" success (a mint either happens or it does not): {@link ProposeKnowledgeApprovalResult}
+ * is documented as "Proof a semantic proposal was recorded", so an `ok(...)` on the unarmed path would be
+ * a FALSE PROOF of a durable write — the caller's `queuedForApproval` counter would then count Approvals
+ * that do not exist. UNARMED (`port` undefined) therefore returns a typed `not_armed` err — never
+ * `ok(...)`, never a throw (§16).
+ *
+ * ⛔ NOT DEAD CODE once 13.8i-B binds `proposeKnowledgeApproval` unconditionally at boot: `port` is
+ * `undefined` here only if a FUTURE `ProofSpineParams` construction site omits it — precisely the
+ * arming-transition misconfiguration an operator arming living-vault/meeting-vault rewrite needs
+ * DISTINGUISHED from a genuine sink rejection (`mint_failed`), not folded into the same code.
+ */
+export function createProposeKnowledgeApprovalActivity(
+  port: ProposeKnowledgeApprovalPort | undefined,
+): ProposeKnowledgeApprovalPort["propose"] {
+  return (
+    plan: KnowledgeMutationPlan,
+    workspaceId: WorkspaceId,
+  ): Promise<Result<ProposeKnowledgeApprovalResult, ProposeKnowledgeApprovalError>> =>
+    port === undefined
+      ? Promise.resolve(
+          err({
+            code: "not_armed",
+            message: "propose-knowledge-approval: no port bound at the composition root",
+          }),
+        )
+      : port.propose(plan, workspaceId);
+}
+
 export function createProposeKnowledgeApprovalPort(
   sink: CopilotKnowledgeProposeSink,
 ): ProposeKnowledgeApprovalPort {

@@ -271,6 +271,30 @@ export function commitFailureClass(code: KnowledgeCommitFailureCode): FailureCla
 }
 
 /**
+ * 13.8i-B — map a propose-knowledge-approval outcome to the `reason` string + §16 FailureClass its
+ * surfaced health item carries. `write_through_blocked` = a PRECONDITION HOLDS the write-through
+ * (`not_armed` — no port bound at all, never attempted); `write_through_failed` = the write ATTEMPT
+ * errored (`mint_failed`, or this driver's own test-only unbound/throw path, which folds to `undefined`).
+ */
+// Exported (13.8i-B) so meetingCloseout.ts's own sibling-plan propose loop shares the SAME mapping
+// rather than a second, independently-drifting copy — the same precedent `commitFailureClass` set above
+// (contracts L119).
+export function proposeApprovalSurfaceInfo(
+  proposed: Result<ProposeKnowledgeApprovalResult, ProposeKnowledgeApprovalError> | undefined,
+): { readonly reason: string; readonly failureClass: FailureClass } {
+  // TOTAL: the `isOk(proposed)` arm is unreachable BY CALLING CONVENTION (every call site only reaches
+  // this helper from its own `else` of an `isOk` check) but the function stays total/never-throws (§16)
+  // rather than assuming its caller's context — an ok result folds to the same safe default as unbound.
+  if (proposed !== undefined && !isOk(proposed)) {
+    return {
+      reason: proposed.error.code,
+      failureClass: proposed.error.code === "not_armed" ? "write_through_blocked" : "write_through_failed",
+    };
+  }
+  return { reason: "propose_port_unbound_or_threw", failureClass: "write_through_failed" };
+}
+
+/**
  * Map a source-agent failure code to the sourceMachine resting state it folds to.
  * Terminal safety classes (ING-7 admission, injection, unsupported type, egress veto)
  * are TERMINAL failures (never retried blindly); provider/budget are retryable; a
@@ -561,9 +585,17 @@ export async function runSourceIngestion(
   //     a PENDING §9.8 Approval via the injected `proposeKnowledgeApproval` port (reusing the EXISTING
   //     copilotProposeKnowledgeSink minting at the worker composition root — never a second sink). The
   //     mint attempt keys on the IDENTICAL `!== false` predicate the withhold branch uses — a second,
-  //     divergent condition here would be the bug. UNBOUND port, a rejected mint, OR a throw are ALL
-  //     the SAME safe outcome: the plan stays withheld and the fault is surfaced — never a downgrade to
-  //     auto-commit (the failure direction that matters per this slice's safety posture).
+  //     divergent condition here would be the bug. UNBOUND port, a rejected mint, OR a throw are ALL the
+  //     SAME safe OUTCOME (the plan stays withheld and the fault is surfaced — never a downgrade to
+  //     auto-commit), but 13.8i-B DISTINGUISHES them at the SURFACED failureClass: `not_armed` (no port
+  //     bound at all — a PRECONDITION that was never satisfied) reads as `write_through_blocked`, every
+  //     other case (a genuine `mint_failed` rejection, or this driver's own test-only unbound/throw path)
+  //     reads as `write_through_failed` (an ATTEMPT that errored) — so an operator can tell "never armed"
+  //     from "the sink genuinely rejected it." `not_armed` is a LIVE guard at the arming transition (see
+  //     `createProposeKnowledgeApprovalActivity`, apps/worker/src/composition/living-vault.ts), not dead
+  //     code: 13.8i-B binds `proposeKnowledgeApproval` unconditionally, so it fires only if a future
+  //     `ProofSpineParams` construction site omits it while a PROPOSE-tier plan reaches this branch —
+  //     exactly the misconfiguration an operator arming living-vault needs distinguished.
   //     Idempotency inherits the SAME assumption 13.8d's own AUTO-tier commit already makes (a re-drive
   //     replays because "each plan is individually idempotent") — the sink dedupes by the plan's own
   //     `planId`, unverified-but-unchanged from what this pipeline already relies on elsewhere.
@@ -582,9 +614,9 @@ export async function runSourceIngestion(
       if (proposed !== undefined && isOk(proposed)) {
         queuedForApproval += 1;
       } else {
-        const reason = proposed === undefined ? "propose_port_unbound_or_threw" : proposed.error.code;
+        const { reason, failureClass } = proposeApprovalSurfaceInfo(proposed);
         await deps.health.surface({
-          failureClass: "write_through_failed",
+          failureClass,
           subjectRef: input.run.workflowId,
           message: `living-vault PROPOSE plan could not be queued for approval (withheld, never committed): ${reason}`,
           auditRef: input.run.workflowId as unknown as AuditId,

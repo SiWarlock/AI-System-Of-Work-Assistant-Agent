@@ -83,6 +83,7 @@ import type {
   BuildOutputsPort,
   SourceBuildOutputsPort,
   SourceLivingVaultPort,
+  ProposeKnowledgeApprovalPort,
   CommitKnowledgePort,
   ProposeActionsPort,
   ReindexGbrainPort,
@@ -282,6 +283,13 @@ export async function meetingCloseoutWorkflow(
   const park: MeetingParkPort = {
     park: (source, idempotencyKey) => activities.meetingPark(source, idempotencyKey),
   };
+  // 13.8i-B — the propose-approval leg (§6 KN-10). The delegate is ALWAYS bound because the sandbox
+  // cannot read boot config; the ARMING decision lives in the activity (`createProposeKnowledgeApprovalActivity`),
+  // which yields a typed `not_armed` err unless the owner-armed port was supplied at the composition
+  // root — mirrors the `livingVault` leg in `sourceIngestionWorkflow` below (L59).
+  const proposeKnowledgeApproval: ProposeKnowledgeApprovalPort = {
+    propose: (plan, workspaceId) => activities.meetingProposeKnowledgeApproval(plan, workspaceId),
+  };
 
   const deps: MeetingCloseoutDeps = {
     correlate,
@@ -295,6 +303,7 @@ export async function meetingCloseoutWorkflow(
     park,
     runs: sandboxRunRepo(),
     clock: workflowClock,
+    proposeKnowledgeApproval,
   };
 
   return runMeetingCloseout(input, deps);
@@ -441,6 +450,13 @@ export async function sourceIngestionWorkflow(
     rewrite: (validated, workspaceId, source) =>
       activities.sourceLivingVaultRewrite(validated, workspaceId, source),
   };
+  // 13.8i-B — the propose-approval leg (§6 KN-10), mirroring `livingVault` immediately above: the
+  // delegate is ALWAYS bound (sandbox cannot read boot config), and the ARMING decision lives in the
+  // activity (`createProposeKnowledgeApprovalActivity`), which yields a typed `not_armed` err unless the
+  // owner-armed port was supplied at the composition root.
+  const proposeKnowledgeApproval: ProposeKnowledgeApprovalPort = {
+    propose: (plan, workspaceId) => activities.sourceProposeKnowledgeApproval(plan, workspaceId),
+  };
 
   const deps: SourceIngestionDeps = {
     register,
@@ -455,6 +471,7 @@ export async function sourceIngestionWorkflow(
     runs: sandboxRunRepo(),
     clock: workflowClock,
     livingVault,
+    proposeKnowledgeApproval,
   };
 
   return runSourceIngestion(input, deps);

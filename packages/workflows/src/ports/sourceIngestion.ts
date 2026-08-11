@@ -191,8 +191,15 @@ export interface SourceLivingVaultPort {
 // than the concrete adapter's own FailureVariant vocabulary: the driver never depends on a downstream
 // package's error enum (the same principle this file states for every other port here).
 
-/** A mint fault (the sink rejected the plan, or the adapter caught a throw). Never the raw cause (rule 7). */
-export type ProposeKnowledgeApprovalErrorCode = "mint_failed";
+/**
+ * A mint fault. `mint_failed` — an ATTEMPT was made and the sink rejected the plan (or the adapter
+ * caught a throw). `not_armed` — a PRECONDITION was never satisfied: no port was bound at the
+ * composition root, so no attempt was made at all (13.8i-B; distinct from `mint_failed` because the
+ * driver routes each to a different §16 FailureClass — `write_through_blocked` vs `write_through_failed`
+ * — so an operator can tell "never armed" from "the sink genuinely rejected it"). Never the raw cause
+ * either way (rule 7).
+ */
+export type ProposeKnowledgeApprovalErrorCode = "mint_failed" | "not_armed";
 
 export interface ProposeKnowledgeApprovalError {
   readonly code: ProposeKnowledgeApprovalErrorCode;

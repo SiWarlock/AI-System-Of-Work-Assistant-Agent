@@ -135,7 +135,10 @@ interface FakeProposeKnowledgeApprovalResult {
   readonly created: boolean;
 }
 interface FakeProposeKnowledgeApprovalError {
-  readonly code: "mint_failed";
+  // 13.8i-B — widened from the sole "mint_failed" (an ATTEMPT that errored) to add "not_armed" (a
+  // PRECONDITION that was never satisfied — no port bound at all). Distinct production consumer: the
+  // driver routes each to a different FailureClass (write_through_failed vs write_through_blocked).
+  readonly code: "mint_failed" | "not_armed";
   readonly message: string;
 }
 
@@ -146,6 +149,7 @@ class SpyProposeKnowledgePort {
     private readonly outcome:
       | { readonly kind: "ok"; readonly approvalRef?: string; readonly created?: boolean }
       | { readonly kind: "err" }
+      | { readonly kind: "not_armed" }
       | { readonly kind: "throws" } = { kind: "ok" },
   ) {}
   propose(
@@ -154,6 +158,9 @@ class SpyProposeKnowledgePort {
   ): Promise<Result<FakeProposeKnowledgeApprovalResult, FakeProposeKnowledgeApprovalError>> {
     this.calls.push({ plan, workspaceId });
     if (this.outcome.kind === "throws") throw new Error("propose exploded");
+    if (this.outcome.kind === "not_armed") {
+      return Promise.resolve(err({ code: "not_armed", message: "fake: no port bound" }));
+    }
     if (this.outcome.kind === "err") {
       return Promise.resolve(err({ code: "mint_failed", message: "fake mint failure" }));
     }
@@ -460,5 +467,58 @@ describe("runSourceIngestion — living-vault seam DORMANT by default (13.8d)", 
       "utf8",
     );
     expect(driver).not.toMatch(/writeFile|appendFile|mkdir|node:fs/);
+  });
+
+  it("not_armed_and_mint_failed_route_to_distinct_failureClasses — 13.8i-B: a precondition-HELD blocked mint reads differently from an ATTEMPT-errored one", async () => {
+    const health = new FakeSourceHealthSink();
+    const notArmed = new SpyProposeKnowledgePort({ kind: "not_armed" });
+    const livingVaultA = new SpyLivingVaultPort({
+      kind: "plans",
+      plans: [livingVaultPlan("lv-not-armed", true)],
+    });
+    await runSourceIngestion(
+      makeInput(),
+      makeDeps({ health, livingVault: livingVaultA, proposeKnowledgeApproval: notArmed } as never),
+    );
+
+    const mintFailed = new SpyProposeKnowledgePort({ kind: "err" });
+    const health2 = new FakeSourceHealthSink();
+    const livingVaultB = new SpyLivingVaultPort({
+      kind: "plans",
+      plans: [livingVaultPlan("lv-mint-failed", true)],
+    });
+    await runSourceIngestion(
+      makeInput(),
+      makeDeps({ health: health2, livingVault: livingVaultB, proposeKnowledgeApproval: mintFailed } as never),
+    );
+
+    expect(health.surfaced.some((f) => f.failureClass === "write_through_blocked")).toBe(true);
+    expect(health.surfaced.some((f) => f.failureClass === "write_through_failed")).toBe(false);
+    expect(health2.surfaced.some((f) => f.failureClass === "write_through_failed")).toBe(true);
+    expect(health2.surfaced.some((f) => f.failureClass === "write_through_blocked")).toBe(false);
+  });
+
+  it("zero_cards_rests_on_empty_plans_not_on_port_absence — the SAME bound port mints 0 when plans are empty and 1 when they are not", async () => {
+    // ⭐ 13.8i-B: the default-boot zero-cards guarantee rests on livingVault staying dormant (empty plan
+    // sets), NOT on this port being absent — proven here by holding the port instance CONSTANT and
+    // varying only the plan set, so the port's presence cannot be what explains either outcome.
+    const boundPort = new SpyProposeKnowledgePort({ kind: "ok" });
+
+    const emptyLivingVault = new SpyLivingVaultPort({ kind: "plans", plans: [] });
+    await runSourceIngestion(
+      makeInput(),
+      makeDeps({ livingVault: emptyLivingVault, proposeKnowledgeApproval: boundPort } as never),
+    );
+    expect(boundPort.calls).toHaveLength(0);
+
+    const nonEmptyLivingVault = new SpyLivingVaultPort({
+      kind: "plans",
+      plans: [livingVaultPlan("lv-contrast", true)],
+    });
+    await runSourceIngestion(
+      makeInput(),
+      makeDeps({ livingVault: nonEmptyLivingVault, proposeKnowledgeApproval: boundPort } as never),
+    );
+    expect(boundPort.calls).toHaveLength(1); // the SAME port instance — only the plan set changed
   });
 });
