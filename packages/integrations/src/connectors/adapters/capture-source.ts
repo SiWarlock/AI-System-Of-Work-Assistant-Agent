@@ -4,8 +4,11 @@
 // discarding their mechanism (unattended skip-permissions cloud writers). ONE
 // adapter, TWO triggers folded onto the same certified spine:
 //
-//   • coding_session (git-driven)  → trustLevel 'trusted'   — deterministic; a
-//     downstream capture may auto-apply (§13.8 confined-auto tier).
+//   • coding_session (git-driven)  → trustLevel DERIVED from `deps.verifyCodingSessionOrigin`
+//     (24.14 — was previously self-declared from the bare `kind` discriminant alone, safety
+//     rule 6 / audit finding F11; an unverified origin downgrades to 'untrusted' rather than
+//     rejecting the candidate, matching the emit-only posture below). Trusted output may
+//     auto-apply (§13.8 confined-auto tier) once wired downstream.
 //   • telegram_capture (mobile)    → trustLevel 'untrusted' — inbound, possibly
 //     from a forwarded/malicious source: the DOWNSTREAM extraction agent MUST run
 //     read-only (ING-7); and the bot is an always-on attack surface, so the SENDER
@@ -55,9 +58,20 @@ export interface BuildCaptureInput {
 /**
  * Injected admission deps. `isAllowedTelegramSender` is the bot's sender allowlist
  * (only YOUR telegram id may capture) — consulted ONLY for the telegram trigger.
+ *
+ * `verifyCodingSessionOrigin` (24.14) is the git-trigger's analogous seam — consulted ONLY
+ * for the coding_session trigger, over the WHOLE capture (no single sender-like field exists
+ * to check in isolation; a future real verifier decides what evidence it needs). REQUIRED,
+ * no default — the caller must always supply real logic, exactly like
+ * `isAllowedTelegramSender`; there is no permissive fallback to accidentally ship.
+ * ⛔ BINDING STATUS: no production caller exists yet, so no real verifier is bound anywhere.
+ * accepted: no mechanical backstop exists preventing a future binding from supplying a
+ * permissive `() => true` — the binding slice (§13.6 trigger work) must supply BOTH the real
+ * verifier AND that guard when it wires a caller.
  */
 export interface CaptureDeps {
   readonly isAllowedTelegramSender: (sender: string) => boolean;
+  readonly verifyCodingSessionOrigin: (capture: CodingSessionCapture) => boolean;
 }
 
 /** The CLOSED capture-build failure set (§16 — enumerable). */
@@ -74,8 +88,9 @@ function fail(code: CaptureError["code"], message: string): Result<RegisterSourc
  * Build a CANDIDATE `RegisterSourceInput` from a capture — emit-only, pure, never
  * throws. Telegram captures are sender-allowlisted (fail-closed) and marked
  * `untrusted` so downstream extraction runs read-only (ING-7); git captures are
- * `trusted`. The `contentHash` is a deterministic, workspace-scoped Flow-4 dedupe
- * key over the capture content.
+ * `trusted` ONLY when `deps.verifyCodingSessionOrigin` confirms the origin (24.14) —
+ * otherwise `untrusted`, never rejected. The `contentHash` is a deterministic,
+ * workspace-scoped Flow-4 dedupe key over the capture content.
  */
 export function buildCaptureSource(
   input: BuildCaptureInput,
@@ -95,7 +110,10 @@ export function buildCaptureSource(
     content = cap.sessionSummary;
     routingHints = {
       trigger: "git",
-      trustLevel: "trusted",
+      // 24.14: trust is DERIVED from the injected verifier, never self-declared from the
+      // bare discriminant alone (F11). Downgrade, not reject, on an unverified origin —
+      // still emit-only (rule 1); ING-7 (rule 6) routes an "untrusted" downstream read-only.
+      trustLevel: deps.verifyCodingSessionOrigin(cap) ? "trusted" : "untrusted",
       repo: cap.repo,
       ...(cap.commit !== undefined ? { commit: cap.commit } : {}),
     };

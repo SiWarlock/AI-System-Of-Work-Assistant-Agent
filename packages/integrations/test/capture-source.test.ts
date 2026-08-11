@@ -1,7 +1,8 @@
 // @sow/integrations — PROTOTYPE (Phase-13 §13.6 "capture as I work", G4).
 //
 // ONE governed capture-source adapter, TWO triggers folded onto the same spine:
-//   • git-driven (coding session)     → trustLevel 'trusted'   (deterministic)
+//   • git-driven (coding session)     → trustLevel DERIVED from an injected verifier (24.14),
+//                                        downgrading to 'untrusted' when unverified — see below
 //   • telegram mobile quick-capture   → trustLevel 'untrusted' (ING-7 read-only
 //                                        downstream) + sender allowlist (fail-closed)
 // Both are EMIT-ONLY: they map a capture into a CANDIDATE `RegisterSourceInput` and
@@ -16,8 +17,8 @@ import {
 import { registerSource, type RegisterSourceDeps } from "../src/connectors/source-register";
 
 const neverSeen: RegisterSourceDeps["seenContentHash"] = async () => false;
-const allowAll: CaptureDeps = { isAllowedTelegramSender: () => true };
-const denyAll: CaptureDeps = { isAllowedTelegramSender: () => false };
+const allowAll: CaptureDeps = { isAllowedTelegramSender: () => true, verifyCodingSessionOrigin: () => true };
+const denyAll: CaptureDeps = { isAllowedTelegramSender: () => false, verifyCodingSessionOrigin: () => false };
 
 function gitInput(partial: Partial<BuildCaptureInput> = {}): BuildCaptureInput {
   return {
@@ -63,6 +64,15 @@ describe("Phase-13 §13.6 — buildCaptureSource (git + telegram triggers, one g
     // and it passes the REAL gate end-to-end
     const reg = await registerSource(c, { seenContentHash: neverSeen });
     expect(reg.outcome).toBe("registered");
+  });
+
+  it("GIT trigger WITHOUT a verified origin FAILS CLOSED to UNTRUSTED (24.14) — a bare `kind: coding_session` claim does not self-grant trust", () => {
+    const res = buildCaptureSource(gitInput(), denyAll);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // Still emits a candidate (emit-only posture, never a construct-time reject) — just
+    // classified honestly, mirroring the acceptance wording: "not trusted", not "rejected".
+    expect(res.value.routingHints).toMatchObject({ trustLevel: "untrusted", trigger: "git" });
   });
 
   it("TELEGRAM trigger (allowlisted sender) → candidate (type telegram_capture, UNTRUSTED → ING-7 downstream)", async () => {
