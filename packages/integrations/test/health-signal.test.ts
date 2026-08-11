@@ -7,7 +7,7 @@ import { FailureClass } from "@sow/contracts";
 import {
   CONNECTOR_UNREACHABLE_HEALTH_CLASS,
   CONNECTOR_COVERAGE_DEGRADED_HEALTH_CLASS,
-  WRITE_THROUGH_BLOCKED_HEALTH_CLASS,
+  WRITE_THROUGH_FAILED_HEALTH_CLASS,
   SCHEMA_REJECTION_HEALTH_CLASS,
   buildConnectorHealthSignal,
   buildConnectorCoverageDegradeSignal,
@@ -23,17 +23,17 @@ describe("health-class constants", () => {
   it("are all valid FailureClass members", () => {
     expect(isFailureClass(CONNECTOR_UNREACHABLE_HEALTH_CLASS)).toBe(true);
     expect(isFailureClass(CONNECTOR_COVERAGE_DEGRADED_HEALTH_CLASS)).toBe(true);
-    expect(isFailureClass(WRITE_THROUGH_BLOCKED_HEALTH_CLASS)).toBe(true);
+    expect(isFailureClass(WRITE_THROUGH_FAILED_HEALTH_CLASS)).toBe(true);
     expect(isFailureClass(SCHEMA_REJECTION_HEALTH_CLASS)).toBe(true);
   });
 
   it("map to the expected enum values", () => {
     expect(CONNECTOR_UNREACHABLE_HEALTH_CLASS).toBe("connector_unreachable");
     // arch_gap: no dedicated coverage-degrade member in the frozen enum — reuses
-    // `sync_lagging` (the least-wrong "ingested set is behind full coverage"), mirroring
-    // the WRITE_THROUGH_BLOCKED reuse precedent. FLAGGED as carry-forward.
+    // `sync_lagging` (the least-wrong "ingested set is behind full coverage").
+    // FLAGGED as carry-forward.
     expect(CONNECTOR_COVERAGE_DEGRADED_HEALTH_CLASS).toBe("sync_lagging");
-    expect(WRITE_THROUGH_BLOCKED_HEALTH_CLASS).toBe("write_through_failed");
+    expect(WRITE_THROUGH_FAILED_HEALTH_CLASS).toBe("write_through_failed");
     expect(SCHEMA_REJECTION_HEALTH_CLASS).toBe("schema_rejection");
   });
 });

@@ -23,7 +23,7 @@ import {
   toOutboxStatus,
   type HoldReason,
 } from "../src/tools/outbox";
-import { WRITE_THROUGH_BLOCKED_HEALTH_CLASS } from "../src/health/health-signal";
+import { WRITE_THROUGH_FAILED_HEALTH_CLASS } from "../src/health/health-signal";
 import {
   InMemoryOutbox,
   makeEnvelope,
@@ -182,7 +182,7 @@ describe("outboxHealth — OBS-2 depth breach", () => {
     }
     const signal = await outboxHealth(outbox, { now: clock(), depthThreshold: 3, limit: 1000 });
     expect(signal).not.toBeUndefined();
-    expect(signal?.failureClass).toBe(WRITE_THROUGH_BLOCKED_HEALTH_CLASS);
+    expect(signal?.failureClass).toBe(WRITE_THROUGH_FAILED_HEALTH_CLASS);
   });
 
   it("emits NO signal when depth is at or below the threshold (held items still present, not expired)", async () => {

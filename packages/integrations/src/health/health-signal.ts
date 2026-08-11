@@ -11,12 +11,18 @@
 // `redactString` (§16 / safety rule 7) so raw fetched/written content or a
 // credential never reaches a health sink.
 //
-// arch_gap (FLAGGED as carry-forward): the frozen `FailureClass` enum has no dedicated
-// `outbox_blocked` / `write_through_blocked` member (a blocked outbox drain reuses
-// `write_through_failed` via WRITE_THROUGH_BLOCKED_HEALTH_CLASS) NOR a `coverage_degraded`
-// member (a partial-coverage read reuses `sync_lagging` via
-// CONNECTOR_COVERAGE_DEGRADED_HEALTH_CLASS, 16.4). Both are reuse aliases, NOT new enum
-// members (L25: never expand the frozen enum from a leaf).
+// The `outbox_blocked` / `write_through_blocked` FailureClass members DO exist
+// (shared-enums.ts:154-155, task 13.15/ARC-2) — this comment previously claimed otherwise
+// (citation rot, task 24.16, now corrected). `WRITE_THROUGH_FAILED_HEALTH_CLASS` below is a
+// deliberate, exact-value constant for `write_through_failed`, not a reuse-alias for either
+// new member; `buildToolWriteHealthSignal`'s `kind` parameter still conflates a genuine
+// attempt-error with a blocked/held drain into that one value — a real, separately-tracked
+// finding (a behavior/severity change, not a citation fix; not addressed here).
+//
+// arch_gap (FLAGGED as carry-forward): the frozen `FailureClass` enum has NO dedicated
+// `coverage_degraded` member, so a partial-coverage read reuses `sync_lagging` via
+// CONNECTOR_COVERAGE_DEGRADED_HEALTH_CLASS (16.4) — a genuine reuse alias (L25: never expand
+// the frozen enum from a leaf).
 import type { FailureClass } from "@sow/contracts";
 import { redactString } from "../redaction/gateway-log-redaction";
 
@@ -29,18 +35,22 @@ export const CONNECTOR_UNREACHABLE_HEALTH_CLASS: FailureClass = "connector_unrea
  * A connector read SUCCEEDED but with PARTIAL corpus coverage (16.4) — e.g. Drive's
  * `incompleteSearch: true`: the ingested set is incomplete, so it is behind full coverage.
  * arch_gap: there is no dedicated `coverage_degraded` member in the frozen `FailureClass`
- * enum, so this reuses `sync_lagging` (the least-wrong "the ingested set is behind") —
- * exactly the `WRITE_THROUGH_BLOCKED_HEALTH_CLASS` reuse precedent (L25: never expand the
- * frozen enum from a leaf). A dedicated member is a FLAGGED carry-forward.
+ * enum, so this reuses `sync_lagging` (the least-wrong "the ingested set is behind") (L25:
+ * never expand the frozen enum from a leaf). A dedicated member is a FLAGGED carry-forward.
  */
 export const CONNECTOR_COVERAGE_DEGRADED_HEALTH_CLASS: FailureClass = "sync_lagging";
 
 /**
- * A tool write / outbox drain is blocked (target unreachable, hold-through-outage).
- * arch_gap: reuses `write_through_failed` — no dedicated `outbox_blocked` member
- * exists in the frozen enum. FLAGGED as a carry-forward.
+ * The `write_through_failed` FailureClass, named exact-value like its siblings below.
+ * Previously named `WRITE_THROUGH_BLOCKED_HEALTH_CLASS`, which asserted a distinction
+ * (blocked vs failed) its value collapsed — a name/value contradiction (task 24.16). Both
+ * `outbox_blocked` and `write_through_blocked` are real, dedicated FailureClass members
+ * (shared-enums.ts:154-155, task 13.15/ARC-2); this constant is `write_through_failed`
+ * DELIBERATELY, not a reuse-alias standing in for either. `buildToolWriteHealthSignal`'s
+ * `kind` parameter still conflates a genuine attempt-error with a blocked/held drain into
+ * this one value — tracked separately, not fixed here (a behavior/severity change).
  */
-export const WRITE_THROUGH_BLOCKED_HEALTH_CLASS: FailureClass = "write_through_failed";
+export const WRITE_THROUGH_FAILED_HEALTH_CLASS: FailureClass = "write_through_failed";
 
 /** A candidate/envelope failed the schema/candidate gate (§8 write path). */
 export const SCHEMA_REJECTION_HEALTH_CLASS: FailureClass = "schema_rejection";
@@ -123,7 +133,7 @@ export function buildToolWriteHealthSignal(input: {
   const failureClass: FailureClass =
     input.kind === "schema_rejection"
       ? SCHEMA_REJECTION_HEALTH_CLASS
-      : WRITE_THROUGH_BLOCKED_HEALTH_CLASS;
+      : WRITE_THROUGH_FAILED_HEALTH_CLASS;
   return {
     failureClass,
     subjectRef: input.subjectRef,
