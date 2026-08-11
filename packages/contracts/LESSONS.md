@@ -2544,3 +2544,18 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⇒ **Do:** ⛔ **when lifting a predicate into a new caller, ask what the ORIGINAL caller did BEFORE calling it — and either reproduce that, or state in the predicate's own doc what it assumes.** ⭐ **Best form, taken here: make the precondition the new guard's FIRST step so no branch can be reached without it.** ⚠ **A string-prefix comparison is NOT a path-containment check; the gap between them is exactly where traversal lives.**
 
 `pin: <24.12's traversal-lookalike tests — 3 via `applyPlan`, one per match kind>` `accepted: partially enforceable` — no gate detects a lifted predicate losing its caller's ordering. **Enforcement point: any refactor that EXPORTS a previously-inline predicate.**
+
+---
+
+<a id="136"></a>
+## 136. A DOCUMENTED FALSE-POSITIVE SIGNATURE IS A CITATION, NOT A SILENT SKIP — recognizing it and reporting it are different acts
+
+**Date:** 2026-08-11. **Origin:** `24.25` — two implementers, same round, same gate failure, different dispositions.
+
+**The instance.** `knowledge-implementer` and `providers-integrations-implementer` both ran a full `/preflight` at close-out, minutes apart, and both hit the identical `apps/desktop/test/bundle/main-bundle-resolution.test.ts` failure — with identical evidence available to both (`git diff <round-open>..HEAD` empty for every input the bundle consumes). `knowledge` filed it as a tracked task (`24.25`). `providers-integrations` recognized it as matching **L83**'s documented concurrent-WIP false-positive signature and did not file it. Both dispositions were individually defensible — **but the difference between them tracked which implementer happened to recall L83, not anything about the failure itself.** Subsequently re-verified: three clean-tree runs, all PASS, establishing the L83 concurrent-WIP explanation rather than merely leaving it consistent.
+
+⭐ **THE MECHANISM, and it is the round's own headline (propagation, not detection) recurring at the level of a single lesson's application:** L83 existed, was correctly written, and correctly matched this instance — **but a lesson's existence does not make its application VISIBLE to a reader who didn't happen to retrieve it.** A recognized-and-silently-skipped match and a never-checked failure are **byte-identical to every downstream reader** — neither leaves a trace that the check happened.
+
+⇒ **Do:** when a gate failure is dismissed by citing a known false-positive signature, **the citation goes in the same message or record that reports the failure — never a silent skip.** Symmetrically, filing a failure as a task is not wrong even when it matches a known signature — but the filer should check for a match first and **record the check either way** (*"checked against L83 — matches / doesn't match, because …"*), so the next reader is not left to re-derive whether the check happened at all.
+
+`pin: none — process convention, not mechanically enforceable via a source pattern.` `pattern: none.` `accepted: not mechanically enforceable` — enforcement point: the moment a preflight/gate failure is reported or dismissed against a known-flaky signature.
