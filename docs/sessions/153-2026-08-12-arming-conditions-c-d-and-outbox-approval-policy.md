@@ -3,7 +3,7 @@
 **Date:** 2026-08-11 / 2026-08-12 (session spanned midnight)
 **Track / role:** main · worker-implementer
 **Predecessor session:** `docs/sessions/150-2026-08-11-propose-approval-binding-and-cross-workspace-ceiling-gate.md`
-**Successor session:** _(unwritten — the next worker-implementer)_
+**Successor session:** `docs/sessions/157-2026-08-12-l134-chain-closes-migration-detector-and-raw-content-fork-deleted.md`
 
 ---
 
