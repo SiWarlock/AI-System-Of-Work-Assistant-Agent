@@ -3,7 +3,7 @@
 **Date:** 2026-08-11
 **Track / role:** main · providers-integrations-implementer (`packages/providers`, `packages/policy`, `packages/integrations`)
 **Predecessor session:** `docs/sessions/126-2026-07-29-assertredactionsafe-verdict-auditsignal-persistence-gap.md`
-**Successor session:** _(next `/session-end`, if this track respawns)_
+**Successor session:** `docs/sessions/154-2026-08-12-24-13-boot-guard-24-29-census-widened-24-15-blocked.md`
 
 ---
 
