@@ -1,7 +1,7 @@
 # Session 148 — knowledge: WithheldReason signals producer (13.23 leg A) + the block-release workspace-path guard (24.12)
 
 **Date:** 2026-08-11 · **Role:** knowledge-implementer (`main`, single-track, root checkout)
-**Predecessor:** [142-2026-07-31-entityref-immutability-and-attendee-correspondence-pin-knowledge.md](142-2026-07-31-entityref-immutability-and-attendee-correspondence-pin-knowledge.md) · **Successor:** _(next knowledge-implementer session)_
+**Predecessor:** [142-2026-07-31-entityref-immutability-and-attendee-correspondence-pin-knowledge.md](142-2026-07-31-entityref-immutability-and-attendee-correspondence-pin-knowledge.md) · **Successor:** [155-2026-08-12-gcl-visibility-gate-hardening-and-the-live-dormant-correction.md](155-2026-08-12-gcl-visibility-gate-hardening-and-the-live-dormant-correction.md)
 
 ## Why this session existed
 
