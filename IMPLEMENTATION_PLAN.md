@@ -3152,7 +3152,7 @@ Bring the turn-on runbook (+ `copilot-propose-go-live.md`) up from its current P
 
 ### 24.34 — Concept-level sweep: are there OTHER forks of `isRawContentShaped`/the raw-content-shape check beyond `proposeWindows.ts`? Two is a pattern
 
-- [ ] SWEPT 2026-08-12 (knowledge-implementer) — tick pending this entry's own commit — filed 2026-08-11 (main-orchestrator, lead's own question at `24.32`'s close) · **Depends:** — · **Blocks:** — (a sweep, not a fix; findings spawn their own tasks)
+- [x] **DONE `ecf0c9ce`** 2026-08-12 — swept by knowledge-implementer, **`0` files changed (audit slice; the coverage statement below IS the deliverable, and `ecf0c9ce` is the commit that recorded it)** — filed 2026-08-11 (main-orchestrator, lead's own question at `24.32`'s close) · **Depends:** — · **Blocks:** — (a sweep, not a fix; findings spawn their own tasks)
 ⛔⛔ **RECORD THE COVERAGE STATEMENT, NOT THE VERDICT — lead's explicit instruction, because a future reader will otherwise cite *"24.34 found none"* as proof.** ⭐ **"Zero new forks" is a SATURATION result; saturation is not coverage** (round 2's `AC-2`/`TEST-1` both reported dry at ~16% of their surface, honestly).
 **RESULT:** **no new fork.** The only two instances remain `gcl-projection.ts` (hardened, `24.19`) and `proposeWindows.ts` (dormant, `24.32`, untouched here).
 **SURFACE SEARCHED:** `packages/*/src/**/*.ts` + `apps/worker/src/**/*.ts` + `apps/desktop/{main,preload,renderer,worker-host}/**/*.ts(x)` = **589 production files.** Excludes `node_modules`/`dist`/`.turbo`/`coverage`. Single-pattern greps throughout (the alternation trap).
