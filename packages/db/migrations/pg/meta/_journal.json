@@ -85,6 +85,13 @@
       "when": 1784153449017,
       "tag": "0011_source_disposition",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1786549834102,
+      "tag": "0012_outbox_approval_policy",
+      "breakpoints": true
     }
   ]
 }

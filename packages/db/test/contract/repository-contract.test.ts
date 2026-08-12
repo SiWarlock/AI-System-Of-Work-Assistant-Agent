@@ -1300,6 +1300,45 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(due.map((e) => e.outboxId).sort()).toEqual(["due-now", "retry-elapsed"]);
     });
 
+    it("task 24.35 — approvalPolicy round-trips through enqueue→get and update→get (nullable, additive)", async () => {
+      unwrap(await repos.outbox.enqueue(outboxEntry({ outboxId: "o-policy", approvalPolicy: "auto_private" })));
+      expect(unwrap(await repos.outbox.get("o-policy")).approvalPolicy).toBe("auto_private");
+      const updated = unwrap(
+        await repos.outbox.update({
+          ...outboxEntry({ outboxId: "o-policy" }),
+          approvalPolicy: "queued",
+          updatedAt: "2026-06-30T00:00:05.000Z",
+        }),
+      );
+      expect(updated.approvalPolicy).toBe("queued");
+      expect(unwrap(await repos.outbox.get("o-policy")).approvalPolicy).toBe("queued");
+    });
+
+    it("task 24.35 — approvalPolicy is absent (undefined), not a stored empty/null artifact, when never supplied", async () => {
+      unwrap(await repos.outbox.enqueue(outboxEntry({ outboxId: "o-no-policy" })));
+      expect(unwrap(await repos.outbox.get("o-no-policy")).approvalPolicy).toBeUndefined();
+    });
+
+    // orchestrator ADD — `update()`'s `.set({...})` block lists every field EXPLICITLY (unlike `enqueue`'s
+    // `.values(entry)` spread), making a silently-forgotten field the single highest-risk spot here (the
+    // same L134-family shape this round keeps finding: a mechanical thing quietly not wired). Deliberately
+    // a SEPARATE test from the round-trip one above: that test enqueues WITH the field already set and only
+    // exercises value→different-value; this one starts from genuinely ABSENT and exercises the
+    // never-set→first-set-via-update transition specifically.
+    it("task 24.35 — update() SETS approvalPolicy for the first time on an entry enqueued WITHOUT it", async () => {
+      unwrap(await repos.outbox.enqueue(outboxEntry({ outboxId: "o-late-policy" })));
+      expect(unwrap(await repos.outbox.get("o-late-policy")).approvalPolicy).toBeUndefined();
+      const updated = unwrap(
+        await repos.outbox.update({
+          ...outboxEntry({ outboxId: "o-late-policy" }),
+          approvalPolicy: "auto_private",
+          updatedAt: "2026-06-30T00:00:05.000Z",
+        }),
+      );
+      expect(updated.approvalPolicy).toBe("auto_private");
+      expect(unwrap(await repos.outbox.get("o-late-policy")).approvalPolicy).toBe("auto_private");
+    });
+
     it("enqueue with a duplicate outboxId is a typed conflict", async () => {
       unwrap(await repos.outbox.enqueue(outboxEntry({ outboxId: "o1" })));
       expect(unwrapErr(await repos.outbox.enqueue(outboxEntry({ outboxId: "o1" }))).code).toBe("conflict");

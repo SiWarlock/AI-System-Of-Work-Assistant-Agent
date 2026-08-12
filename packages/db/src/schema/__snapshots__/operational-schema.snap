@@ -52,6 +52,7 @@
   ],
   "outbox": [
     "actionRef",
+    "approvalPolicy",
     "attempts",
     "canonicalObjectKey",
     "enqueuedAt",

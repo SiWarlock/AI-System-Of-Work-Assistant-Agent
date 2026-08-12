@@ -88,6 +88,15 @@ export interface OutboxEntry {
   readonly canonicalObjectKey: string;
   readonly idempotencyKey: string;
   readonly payloadHash: string;
+  /**
+   * Task 24.35 — the ORIGINAL `approvalPolicy` token in effect when this action was first proposed
+   * (e.g. `AUTO_PRIVATE_POLICY`/"queued" — @sow/policy's approval-policy tokens). Persisted so a redrive
+   * (task 24.15) can re-derive `requiresApproval()` against this SAME original policy rather than a fixed
+   * literal reconstructed at redrive time, which would silently over-gate an auto-eligible write if the
+   * workspace's CURRENT policy has since tightened. Additive/nullable — absent on any row enqueued before
+   * this field existed.
+   */
+  readonly approvalPolicy?: string;
   /** §9 Proposed-External-Action machine state. */
   readonly status: string;
   /** To-dispatch payload (no secrets — Keychain refs resolved at dispatch). */

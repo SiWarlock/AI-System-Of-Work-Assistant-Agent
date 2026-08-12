@@ -34,6 +34,8 @@ export const outbox = sqliteTable("outbox", {
   canonicalObjectKey: text().notNull(),
   idempotencyKey: text().notNull(),
   payloadHash: text().notNull(),
+  // Task 24.35 — the original approvalPolicy token at propose time (nullable/additive; see interfaces.ts).
+  approvalPolicy: text(),
   // §9 Proposed-External-Action machine state.
   status: text().notNull(),
   // To-dispatch action payload (no secrets; §16 redaction applies to log sinks).
