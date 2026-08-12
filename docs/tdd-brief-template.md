@@ -274,6 +274,16 @@ The implementer reuses its session across a round's slices — it's already orie
 
 **Related — when a brief asks "are there other instances?":** specify the search by CONCEPT, not by the string forms already known, and require the iteration count in the Step-9 report (contracts **L64**). A one-pass string sweep yields a confident, wrong all-clear.
 
+### Pitfall — citing a file by BASENAME when the repo has duplicate basenames across sibling directories
+
+**This produced a confident, wrong "not a site" in one hour** (2026-08-12, task `24.49`). A brief cited `meetingCloseout.ts:420`. The implementer resolved it to `packages/workflows/src/workflows/meetingCloseout.ts`, measured **0** occurrences, and reported the site did not exist. The orchestrator had meant `packages/workflows/src/**ports**/meetingCloseout.ts`, which has **4**. ⭐ **Neither party made a measurement error — both counts were correct for the file each read.** ⛔ **And the orchestrator had the full path in its own grep output when it wrote the brief.**
+
+⚠ **The repo makes this systematic, not incidental — `packages/workflows/src` has EIGHT basenames existing in BOTH `ports/` and `workflows/`:** `approvalFlow · copilotQa · crossCalendarScheduling · dailyBrief · ingestionTriage · meetingCloseout · projectSync · sourceIngestion`. ⇒ **every path-less citation naming one of these is ambiguous**, and the implementer's resolution (to `workflows/`, matching the slice's other files) was the *reasonable* reading.
+
+⛔ **The direction is what makes it expensive: it produced a FALSE NEGATIVE.** A false positive costs one classification and gets corrected; **a false negative closes the question with a ✅ next to it and ships an incomplete fix under a confident all-clear.**
+
+**Rule — cite every file by REPO-RELATIVE PATH, never basename**, in briefs, tasks, findings, and messages. `L97`'s shape (*a bare identifier is a pointer to nothing that reads as a pointer to something*) arriving in file paths rather than lesson or task numbers. ⚠ **Corollary for the reader: when a cited site measures zero, ask whether the path was ambiguous BEFORE concluding the site does not exist** — a citation that fails to resolve is a question, not a verdict (contracts `L93`).
+
 ### Pitfall — the brief's PREMISE is a hypothesis; an implementer contradicting it from the code is doing the job right
 
 Twice in one round an implementer invalidated a brief premise by reading the source: the flag case above, and a brief that said "let the resolver withhold on a no-match" when `EntityResolver` actually returns `create_stub` — following it would have minted machine-named person notes. **Write briefs so premises are checkable** (cite `file:line` for every claimed behavior, so a wrong premise is cheap to falsify), pre-load a Step-2.5 question wherever a premise is load-bearing, and treat a premise correction at Step 2.5 as a success of the process rather than friction. An orchestrator's brief is a hypothesis to be checked, not an instruction to be obeyed.
