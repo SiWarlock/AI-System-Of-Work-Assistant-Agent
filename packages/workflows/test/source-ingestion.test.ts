@@ -430,6 +430,19 @@ describe("runSourceIngestion — write conflict", () => {
     expect(outcome.state).toBe("failed_terminal");
     expect(health.surfaced).toHaveLength(1);
   });
+
+  it("a commit workspace_path_violation → failed_terminal (24.23 — same isolation-class treatment as ownership_violation, exhaustive not defaulted)", async () => {
+    const health = new FakeSourceHealthSink();
+    const deps = makeDeps({
+      commit: new FakeCommitPort({ failWith: "workspace_path_violation" }),
+      health,
+    });
+
+    const outcome = await runSourceIngestion(makeInput(), deps);
+
+    expect(outcome.state).toBe("failed_terminal");
+    expect(health.surfaced).toHaveLength(1);
+  });
 });
 
 // --- external action held / approval → failed_retryable ---------------------
@@ -611,11 +624,15 @@ describe("runSourceIngestion — cause-aware §16 failure class (inv-5)", () => 
     expect(await surfacedClass(commit("ownership_violation"))).toBe("isolation_breach");
     expect(await surfacedClass(commit("secret_found"))).toBe("security_violation");
     expect(await surfacedClass(commit("commit_failed"))).toBe("write_through_failed");
+    // 24.23 — workspace_path_violation (24.12) is the SAME isolation class as
+    // ownership_violation, not the write_through_failed a default: absorb would
+    // have given it (the L134 chain's origin instance).
+    expect(await surfacedClass(commit("workspace_path_violation"))).toBe("isolation_breach");
     // NONE of the conflated terminal causes is worker_down (reserved for supervision/infra).
     for (const c of ["admission_rejected", "injection_detected", "unsupported_type", "egress_vetoed"] as const) {
       expect(await surfacedClass(agent(c))).not.toBe("worker_down");
     }
-    for (const c of ["ownership_violation", "secret_found", "commit_failed"] as const) {
+    for (const c of ["ownership_violation", "secret_found", "commit_failed", "workspace_path_violation"] as const) {
       expect(await surfacedClass(commit(c))).not.toBe("worker_down");
     }
     expect(

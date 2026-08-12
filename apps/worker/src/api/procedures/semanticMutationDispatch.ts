@@ -182,9 +182,11 @@ function dbErrorToFailure(e: DbError): FailureVariant {
 /**
  * Fold a KnowledgeWriter commit failure onto a bounded, redaction-safe variant. The closed
  * `KnowledgeCommitFailureCode` set maps as: schema/write-conflict pass through their kind;
- * ownership/secret fold to `validation_rejected` (a policy breach, not retryable); an
- * infra `commit_failed` is `degraded_unavailable` + retryable. The writer's `cause` (which
- * may carry a path/secret/raw error) is DROPPED — only the stable code crosses.
+ * ownership/secret/workspace-path fold to `validation_rejected` (a policy breach, NOT
+ * retryable — task 24.23: a workspace-path violation is deterministic, so `retryable:true`
+ * would instruct the caller to retry a write that can never succeed); an infra
+ * `commit_failed` is `degraded_unavailable` + retryable. The writer's `cause` (which may
+ * carry a path/secret/raw error) is DROPPED — only the stable code crosses.
  */
 function commitFailureToVariant(f: KnowledgeCommitFailure): FailureVariant {
   switch (f.code) {
@@ -196,12 +198,25 @@ function commitFailureToVariant(f: KnowledgeCommitFailure): FailureVariant {
       return reject("validation_rejected", "SEMANTIC_DISPATCH_COMMIT_OWNERSHIP_VIOLATION", "semantic dispatch: commit ownership violation");
     case "secret_found":
       return reject("validation_rejected", "SEMANTIC_DISPATCH_COMMIT_SECRET_FOUND", "semantic dispatch: commit blocked by secret scan");
+    case "workspace_path_violation":
+      return reject("validation_rejected", "SEMANTIC_DISPATCH_COMMIT_WORKSPACE_PATH_VIOLATION", "semantic dispatch: commit workspace-path violation");
     case "commit_failed":
-    default:
       return failure("degraded_unavailable", "semantic dispatch: commit failed", {
         retryable: true,
         cause: { code: "SEMANTIC_DISPATCH_COMMIT_FAILED" },
       });
+    default: {
+      // A new KnowledgeCommitFailureCode member reaches here as a non-`never`
+      // type → tsc error, forcing a deliberate variant above. Never a `default:`
+      // that silently absorbs a real reason (task 24.23 / L134) — the ORIGINAL
+      // instance of this exact shape, found one file over from this one.
+      const _exhaustive: never = f.code;
+      void _exhaustive;
+      return failure("degraded_unavailable", "semantic dispatch: commit failed", {
+        retryable: true,
+        cause: { code: "SEMANTIC_DISPATCH_COMMIT_FAILED" },
+      });
+    }
   }
 }
 

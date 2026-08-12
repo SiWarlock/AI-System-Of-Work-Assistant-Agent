@@ -247,10 +247,14 @@ function agentFailureClass(code: SourceAgentFailureCode): FailureClass {
  * carries. A KnowledgeWriter refusing/failing a write is never `worker_down` (the worker is up).
  * With the C-enum taxonomy, the isolation + secret causes are classed HONESTLY (interims +
  * `arch_gap` markers retired):
- *   • secret_found        (a secret-scan refusal — a secret breach) → `security_violation`
- *   • ownership_violation (a WS-4 workspace-isolation refusal)      → `isolation_breach`
+ *   • secret_found              (a secret-scan refusal — a secret breach)       → `security_violation`
+ *   • ownership_violation       (a WS-4 workspace-isolation refusal)            → `isolation_breach`
+ *   • workspace_path_violation  (24.12/24.23 — a foreign-workspace note landing
+ *                                 unprefixed, §5 WS-8 — the SAME isolation class
+ *                                 as ownership_violation, CRITICAL severity via
+ *                                 defaultSeverityForFailureClass)               → `isolation_breach`
  *   • commit_failed / write_conflict (a generic/compare-revision write failure) → `write_through_failed`
- *   • schema_rejected                                             → `schema_rejection`
+ *   • schema_rejected                                                          → `schema_rejection`
  */
 // Exported (13.8f-C) so meetingCloseout.ts's own sibling-plan commit loop shares the SAME
 // KnowledgeCommitFailureCode → FailureClass taxonomy rather than a second, independently-drifting copy
@@ -263,10 +267,20 @@ export function commitFailureClass(code: KnowledgeCommitFailureCode): FailureCla
       return "security_violation";
     case "ownership_violation":
       return "isolation_breach";
+    case "workspace_path_violation":
+      return "isolation_breach";
     case "write_conflict":
-    case "commit_failed":
-    default:
       return "write_through_failed";
+    case "commit_failed":
+      return "write_through_failed";
+    default: {
+      // A new KnowledgeCommitFailureCode member reaches here as a non-`never`
+      // type → tsc error, forcing a deliberate class above. Never a `default:`
+      // that silently absorbs a real reason (task 24.23 / L134).
+      const _exhaustive: never = code;
+      void _exhaustive;
+      return "write_through_failed";
+    }
   }
 }
 
@@ -319,8 +333,8 @@ function agentFailureState(code: SourceAgentFailureCode): SourceState {
 /**
  * Map a KnowledgeWriter commit failure to the resting state. A compare-revision
  * `write_conflict` is retryable; a schema rejection is `rejected`; an ownership /
- * secret / commit failure is TERMINAL (a WS-isolation or secret breach never retries
- * blindly — safety rules 4/7).
+ * secret / workspace-path / commit failure is TERMINAL (a WS-isolation or secret
+ * breach never retries blindly — safety rules 4/7).
  */
 function commitFailureState(code: KnowledgeCommitFailureCode): SourceState {
   switch (code) {
@@ -329,10 +343,21 @@ function commitFailureState(code: KnowledgeCommitFailureCode): SourceState {
     case "schema_rejected":
       return "rejected";
     case "ownership_violation":
-    case "secret_found":
-    case "commit_failed":
-    default:
       return "failed_terminal";
+    case "secret_found":
+      return "failed_terminal";
+    case "workspace_path_violation":
+      return "failed_terminal";
+    case "commit_failed":
+      return "failed_terminal";
+    default: {
+      // A new KnowledgeCommitFailureCode member reaches here as a non-`never`
+      // type → tsc error, forcing a deliberate state above. Never a `default:`
+      // that silently absorbs a real reason (task 24.23 / L134).
+      const _exhaustive: never = code;
+      void _exhaustive;
+      return "failed_terminal";
+    }
   }
 }
 

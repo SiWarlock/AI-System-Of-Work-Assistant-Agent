@@ -70,8 +70,13 @@ export interface CommitActivityDeps {
   readonly deriveIdempotencyKey: (plan: KnowledgeMutationPlan) => string;
 }
 
+// Exported (task 24.23 / L134 — the chain's origin instance, closing last) so its
+// exhaustiveness over WriteFailure.code is directly unit-testable, not only
+// observable through the full commit flow — mirrors 24.30/24.36/24.38's own
+// remedy pattern (global-markdown-reconcile.ts's gateReason, visibility-gate.ts's
+// denialToGateError/denialToCrossWorkspaceRawDenial).
 /** Map a KnowledgeWriter WriteFailure onto the closed commit-failure code set. */
-function mapWriteFailure(failure: WriteFailure): KnowledgeCommitFailureCode {
+export function mapWriteFailure(failure: WriteFailure): KnowledgeCommitFailureCode {
   switch (failure.code) {
     case "schema_rejected":
       return "schema_rejected";
@@ -81,9 +86,18 @@ function mapWriteFailure(failure: WriteFailure): KnowledgeCommitFailureCode {
       return "ownership_violation";
     case "secret_found":
       return "secret_found";
+    case "workspace_path_violation":
+      return "workspace_path_violation";
     case "commit_failed":
-    default:
       return "commit_failed";
+    default: {
+      // A new WriteFailure member reaches here as a non-`never` type → tsc error,
+      // forcing a deliberate mapping above. Never a `default:` that silently
+      // absorbs a real reason (task 24.23 was that gap; this is the fix).
+      const _exhaustive: never = failure;
+      void _exhaustive;
+      return "commit_failed";
+    }
   }
 }
 

@@ -185,7 +185,9 @@ function makeDispatch(
   return { dispatch: createSemanticMutationDispatch(deps), kmp, commit, readCalls, existsCalls };
 }
 
-const assertErr = <T,>(r: Result<T, { kind: string; cause?: { code: string } }>): { kind: string; cause?: { code: string } } => {
+const assertErr = <T,>(
+  r: Result<T, { kind: string; retryable: boolean; cause?: { code: string } }>,
+): { kind: string; retryable: boolean; cause?: { code: string } } => {
   if (r.ok) throw new Error("expected err, got ok");
   return r.error;
 };
@@ -294,6 +296,20 @@ describe("createSemanticMutationDispatch — commit failure + non-approved statu
     // never a marked-committed row on a failed commit; the raw cause never crosses.
     expect(kmp.store.get("plan-f-1")?.status).toBe("pending");
     expect(JSON.stringify(e)).not.toContain("leak");
+  });
+
+  it("24.23 — a workspace_path_violation commit failure surfaces as a non-retryable rejection, not degraded_unavailable/retryable (the L134 chain's origin instance, closing last)", async () => {
+    const { dispatch, kmp } = makeDispatch(mkRow(), {
+      commit: { failure: { code: "workspace_path_violation", message: "boom", cause: { path: "sources/other-workspace/leaked.md" } } },
+    });
+    const r = await dispatch(mkApproval());
+    const e = assertErr(r);
+    expect(e.kind).toBe("validation_rejected");
+    // A default: absorb would have folded this to degraded_unavailable + retryable:true —
+    // actively WRONG (a workspace-path violation is deterministic; retrying reproduces it
+    // exactly, so telling the caller to retry is worse than losing the reason).
+    expect(e.retryable).toBe(false);
+    expect(kmp.store.get("plan-f-1")?.status).toBe("pending");
   });
 
   it("commit succeeds but the row-status update fails → surfaces the store fault, no double-commit", async () => {
