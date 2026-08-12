@@ -136,7 +136,7 @@ export async function resolveApprovedCrossWorkspaceSlice(
         // link.toWorkspaceId === projection.workspaceId), and the malformed-defaultVisibility case is
         // already excluded by the `isVisibilityLevel` pre-check above — so only the two reachable cases
         // are handled explicitly below.
-        const admitted = serveProjection(projection, sourceWorkspace.value);
+        const admitted = await serveProjection(projection, sourceWorkspace.value);
         if (isErr(admitted)) {
           if (admitted.error.code === "visibility_exceeds_source") {
             visibilityExceededCount += 1;
