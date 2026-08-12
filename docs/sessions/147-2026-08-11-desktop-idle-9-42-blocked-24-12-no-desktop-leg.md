@@ -3,7 +3,7 @@
 **Date:** 2026-08-11
 **Track / role:** main · desktop-implementer
 **Predecessor session:** `docs/sessions/143-2026-07-31-delete-copilot-proposal-row-mechanism.md`
-**Successor session:** _(next `/session-end`)_
+**Successor session:** `docs/sessions/151-2026-08-11-operator-guard-comment-and-9.40-stale-comments.md`
 
 ---
 
