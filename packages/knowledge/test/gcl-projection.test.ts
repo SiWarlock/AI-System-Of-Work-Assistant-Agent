@@ -235,11 +235,13 @@ describe("serveProjection — re-gate a stored row before it crosses a workspace
     if (!r.ok) expect(r.error.code).toBe("visibility_exceeds_source");
   });
 
-  // task 24.18 (WS-1/F14): `serveProjection` is the LIVE cross-workspace read gate
-  // (`apps/worker/src/composition/crossWorkspaceRead.ts` calls it, per task
-  // 24.17) — the projectionType derivation must be reachable HERE, not only
-  // through `admitProjection` in isolation, for "wired to fire" to be true of
-  // the path that actually runs today.
+  // task 24.18 (WS-1/F14), corrected 2026-08-12 (24.33's own finding, session 155): worker's
+  // `crossWorkspaceRead.ts`'s `resolveApprovedCrossWorkspaceSlice` calls `serveProjection` — a
+  // real call site (`crossWorkspaceRead.ts:139`), accurate at the source level — but that
+  // function itself has ZERO production callers today; every real caller is in a test file.
+  // The projectionType derivation must still be reachable HERE, not only through
+  // `admitProjection` in isolation, so it is already correct the moment that chain is wired
+  // (Phase 25.2/25.4) — not because it runs today.
   it("refuses a re-served stored row whose visibility level is inconsistent with its projectionType under an injected taxonomy (task 24.18)", () => {
     const taxonomy: ProjectionTypeVisibilityTaxonomy = { calendar_busy: ["isolated"] };
     const r = serveProjection(validCandidate, ws("full"), undefined, taxonomy);
