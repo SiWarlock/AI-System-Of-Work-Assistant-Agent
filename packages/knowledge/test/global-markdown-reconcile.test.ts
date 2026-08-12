@@ -10,11 +10,13 @@
 import { describe, it, expect } from "vitest";
 import { defaultWorkspace } from "@sow/contracts";
 import type { GclProjection, Workspace } from "@sow/contracts";
+import type { GclGateError } from "../src/gcl/visibility-gate";
 import {
   projectProjectionsToMarkdown,
   parseGlobalMarkdown,
   projectionKey,
   reconcileGlobalMarkdown,
+  gateReason,
   type ReconcileGlobalMarkdownDeps,
 } from "../src/gcl/global-markdown-reconcile";
 
@@ -268,5 +270,64 @@ describe("reconcileGlobalMarkdown — multi-entry ordering + isolation", () => {
     expect(out.toAdmit).toEqual([]);
     expect(out.entries[0]!.class).toBe("rejected");
     expect(out.entries[0]!.reason).toBe("unknown_workspace");
+  });
+});
+
+// ── gateReason — exhaustive over GclGateError.code (task 24.30 / L134) ──────
+// `gateReason()` previously ended in `default: return "schema_rejected"`,
+// silently reclassifying BOTH `visibility_type_mismatch` (added by 24.18) and
+// the pre-existing `malformed_policy_input` — exactly L134's shape (a `default:`
+// over a closed union absorbing a real member), one file over from 24.23.
+describe("gateReason — exhaustive over GclGateError.code (task 24.30 / L134)", () => {
+  it("gate_reason_visibility_type_mismatch_surfaces_as_itself: a visibility_type_mismatch error surfaces as itself, not schema_rejected", () => {
+    const e: GclGateError = {
+      code: "visibility_type_mismatch",
+      declaredLevel: "full",
+      projectionType: "calendar_busy",
+      message: "projection visibility level is not permitted for its projectionType",
+    };
+    expect(gateReason(e)).toBe("visibility_type_mismatch");
+  });
+
+  it("gate_reason_malformed_policy_input_surfaces_as_itself: a malformed_policy_input error surfaces as itself, not schema_rejected", () => {
+    const e: GclGateError = {
+      code: "malformed_policy_input",
+      message: "projection workspaceId does not match source workspace",
+    };
+    expect(gateReason(e)).toBe("malformed_policy_input");
+  });
+
+  it("gate_reason_unchanged_for_pre_existing_correctly_handled_cases: schema_rejected/raw_content_present/visibility_exceeds_source are byte-identical to before", () => {
+    const schemaRejected: GclGateError = { code: "schema_rejected", stage: "ajv", issues: [] };
+    const rawContent: GclGateError = { code: "raw_content_present", issues: [] };
+    const exceedsSource: GclGateError = {
+      code: "visibility_exceeds_source",
+      declaredLevel: "full",
+      sourceDefault: "isolated",
+      message: "projection visibility level exceeds the workspace default",
+    };
+    expect(gateReason(schemaRejected)).toBe("schema_rejected");
+    expect(gateReason(rawContent)).toBe("raw_content_present");
+    expect(gateReason(exceedsSource)).toBe("visibility_exceeds_source");
+  });
+
+  // End-to-end reachability: malformed_policy_input's remaining live path
+  // through the real reconcile flow is a corrupted source-workspace posture
+  // (identity/workspace-resolution checks upstream of admitProjection already
+  // rule out the OTHER malformed_policy_input causes at this call site).
+  it("REJECTS an owner edit end-to-end with malformed_policy_input surfacing as itself, when the resolved workspace's own defaultVisibility is corrupt", () => {
+    const base = projectProjectionsToMarkdown([proj()]);
+    const current = projectProjectionsToMarkdown([proj({ sanitizedPayload: { busySlots: 5 } })]);
+    const corrupt = {
+      ...ws("sanitized"),
+      defaultVisibility: "not-a-real-level" as unknown as Workspace["defaultVisibility"],
+    };
+    const out = reconcileGlobalMarkdown(
+      { dbRows: [proj()], baseMarkdown: base, currentMarkdown: current },
+      deps(corrupt),
+    );
+    expect(out.toAdmit).toEqual([]);
+    expect(out.entries[0]!.class).toBe("rejected");
+    expect(out.entries[0]!.reason).toBe("malformed_policy_input");
   });
 });

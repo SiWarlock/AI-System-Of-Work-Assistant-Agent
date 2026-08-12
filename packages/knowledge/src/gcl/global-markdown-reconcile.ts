@@ -191,7 +191,11 @@ export type GlobalReconcileReason =
   | "schema_rejected"
   | "malformed_json"
   | "identity_mismatch"
-  | "unknown_workspace";
+  | "unknown_workspace"
+  // task 24.30 / L134: previously silently absorbed into "schema_rejected" by
+  // gateReason()'s `default:` branch — now surfaced as themselves.
+  | "visibility_type_mismatch"
+  | "malformed_policy_input";
 
 export interface GlobalReconcileOutcome {
   /** Non-unchanged entries, in ascending key order. */
@@ -215,15 +219,31 @@ function readString(o: unknown, k: string): string | undefined {
   return undefined;
 }
 
+// Exported (task 24.30 / L134) so its exhaustiveness over GclGateError.code is
+// directly unit-testable, not only observable through the full reconcile flow.
 /** Map a Visibility-Gate error to this module's enumerable reject reason. */
-function gateReason(e: GclGateError): GlobalReconcileReason {
+export function gateReason(e: GclGateError): GlobalReconcileReason {
   switch (e.code) {
     case "visibility_exceeds_source":
       return "visibility_exceeds_source";
     case "raw_content_present":
       return "raw_content_present";
-    default:
+    case "visibility_type_mismatch":
+      return "visibility_type_mismatch";
+    case "malformed_policy_input":
+      return "malformed_policy_input";
+    case "schema_rejected":
       return "schema_rejected";
+    default: {
+      // A new GclGateError member reaches here as a non-`never` type → tsc
+      // error, forcing a deliberate reason mapping above — mirrors
+      // defaultSeverityForFailureClass's exhaustiveness guard (L134's own
+      // remedy pattern). Never a `default:` that silently absorbs a real
+      // reason (task 24.30 — the same shape as 24.23, one file over).
+      const _exhaustive: never = e;
+      void _exhaustive;
+      return "schema_rejected";
+    }
   }
 }
 
