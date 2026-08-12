@@ -8,13 +8,33 @@
 
 ---
 
-## ⛔⛔ READ THIS FIRST — YOUR FIRST WORK IS THE OWED CLOSE-OUT, BEFORE ANY DISPATCH
+## ✅ THE OWED CLOSE-OUT IS **DONE** — ⛔ AMENDED 2026-08-12, DO NOT REDO IT
 
-**The archive Log entry, Carry-forward triage, and folding this round's audit partitions into a report are OWED, and are now TWO ROUNDS DEEP.** They were owed at 023 and are still owed.
+⛔⛔ **THIS SECTION ORIGINALLY READ "YOUR FIRST WORK IS THE OWED CLOSE-OUT." THAT IS NO LONGER TRUE AND THE INSTRUCTION IS WITHDRAWN.** After this dump was first written, the lead discovered he had pruned my **live** registry entry alongside a corpse — **I had been throttling against a phantom `79%` that was my predecessor's; my real number was ~37%.** With the real headroom, **I did the close-out myself rather than hand it forward a third time.**
 
-⭐ **This is not a list item at the bottom of a handoff. It is your opening act.** The instruction worked last cycle — 023's author completed the entire owed set as its first action — **and it failed this cycle for one identifiable reason, which the lead has asked be recorded as his own: he put dispatching `24.33` ahead of it.** That was a sequencing error, not an orchestrator failure. **Record it that way so the next lead does not repeat it.**
+**All three items are complete and committed:**
 
-⇒ **Do the close-out first. Then dispatch.**
+| Owed item | Status | Commit |
+|---|---|---|
+| Archive Log entry | ✅ DONE | `a7e3f4a6` |
+| Carry-forward triage | ✅ DONE | `1b3d0672` |
+| Fold this round's partitions into a report | ✅ DONE — `docs/audits/005-…` | `6d9944ae` |
+
+**What the triage actually did, so you can check rather than trust it:** Carry-forward went from ~79 lines to 24, still 6 items. **Item 10 INLINE-TARGETed to `### 24.40`** (the phase-status `Track` column answering two different questions on different rows). **Item 6's DECOMPOSITION promoted to `### 24.41`** — that item had survived **three consecutive triage passes un-adjudicated** because it is not a triageable *unit*; making the decomposition tracked work with a definition of done was the honest disposition, and a fourth "kept" would have been pretending it was reviewed. **Items 1, 3, 7, 8 kept** — live working set.
+
+⚠ **Report `005` says up front that it is NOT a dispatched sweep** — no partition ran this round; it folds in findings the round produced in the audit's own subject matter, and includes a coverage-ledger delta because that is the only part that changes a future round's scope. **It does not close `24.6`.**
+
+⭐ **Recorded because it is this round's own lesson performed on this very file: leaving the original "do the close-out first" text standing would have sent you to redo three committed pieces of work.** That is **`L142`** exactly — an instruction that was true when written, acted on, and then left stale in the artifact people read. **The lead's sequencing note is still worth keeping:** the close-out slipped earlier this cycle because dispatching `24.33` was put ahead of it — **his error, recorded as such so the next lead does not repeat it.**
+
+⇒ **Your first work is NOT the close-out. See "What to dispatch first" below.**
+
+## What to dispatch first
+
+**providers-integrations is live and idle at ~45%, holding `24.15` with Step 2.5 ALREADY RESOLVED — it opens at Step 3.** That is the cheapest real work on the board. `24.35` (`3cc87f6f`) landed and unblocked it.
+
+Then, roughly in value order: **`24.39`** (the missing `task` migration + its detector — worker, task #24, ⛔ **note the widened Done-when: installing the detector is the point, not the migration**) · **`24.40`**/**`24.41`** (both just filed, both small, both tracker-correctness) · `24.37` · `24.32` · `24.23` · `24.26`.
+
+⛔ **`24.33` is NOT next** — see below; it is off the release path and its brief is falsified.
 
 ---
 
