@@ -2721,3 +2721,28 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⚠ **Corollary for the tracker, and it reprices a lot of history: "certified DONE" for a schema-touching task carries less than it appears to.** A DONE tick attests that the slice's own acceptance criteria were met — **it does not attest that the deployment path can reproduce the result**, unless a criterion said so. `13.15`'s Done-when never mentioned a migration, which is exactly how it passed.
 
 `pin: packages/db/test/migrate/schema-migration-coverage.test.ts` (barrel-derived, both dialects, non-vacuity-guarded — `24.39`). `pattern: none reliable — the defect is an ABSENT artifact, and no grep finds a file that was never written; the detector test is the mechanism.` `accepted: partially enforceable` — enforcement point: **any slice adding or altering a persisted schema, and any Done-when for one (state the migration explicitly, as `13.15`'s did not).**
+
+---
+
+<a id="145"></a>
+## 145. A CODE COMMENT ASSERTING ITS OWN CODE IS LIVE OR LOAD-BEARING IS A REACHABILITY CLAIM THAT NOTHING RE-MEASURES — AND IT SITS WHERE IT IS MOST BELIEVED
+
+**Date:** 2026-08-12. **Origin:** four instances in one round, three areas, found by three different people.
+
+**The four:**
+1. **`24.33`'s own task text** — *"ONE HALF IS LIVE"* on a chain whose every caller is dormant. Extended a **release condition** before it was falsified.
+2. **`packages/knowledge/test/gcl-projection.test.ts`** (dated to `24.18`) — *"`serveProjection` is the LIVE cross-workspace read gate… the path that actually runs today."* Found by knowledge-implementer while reading for `24.33`.
+3. **`packages/workflows/src/activities/proposeWindows.ts`** — *"the LOAD-BEARING Flow-3 leakage check"* gating the Tool Gateway, on an activity with **zero production callers**. ⚠ **Two occurrences in one file** (doc comment + inline at the call site); the finding cited one, the implementer fixed both (`L94`).
+4. **`packages/evals/suites/calendar-conflict/calendar-conflict.test.ts:15`** — still calls the same guards *"load-bearing"* after (3) was corrected. Found by `24.32`'s code-quality-reviewer.
+
+⭐⭐ **THE MECHANISM, and it is why comments are the WORST medium for this claim: a reachability assertion is a claim about the WHOLE PROGRAM, and a comment sits INSIDE ONE FILE.** The author knows their own file; they do **not** know who calls it, and nothing about writing a comment prompts them to check. ⛔ **Then the comment's POSITION does the damage: a reader treats a comment as authoritative about the code it sits on, because for every OTHER kind of claim — what this function does, why this branch exists, what invariant it preserves — it is.** ⇒ **the one claim a comment is least equipped to make is the one it is most trusted for.**
+
+⛔ **AND IT DECAYS SILENTLY IN BOTH DIRECTIONS.** (2) said **live** about a **dormant** path; `L138`'s instance said **LOAD-BEARING** about an **unfixed dormant fork**, which told readers the path was covered. **Either way the comment outlives the fact, because a comment is never re-derived — only re-read.** ⭐ **`L143` for CODE COMMENTS**, and worse than for findings: a finding at least lives in a ledger someone triages; **a comment lives where it will be quoted and never audited.**
+
+⭐ **THE TELL, and it is cheap: any comment containing LIVE · LOAD-BEARING · "actually runs" · "the path that" · "this is where X happens today" is a REACHABILITY CLAIM.** ⇒ **either it cites its evidence (a caller, a `file:line`, a census run) or it should not make the claim.**
+
+⇒ **Do: state what is STRUCTURALLY true and let reachability be looked up.** *"This is the check the Tool Gateway path uses"* is durable; *"this is the LOAD-BEARING check"* is a claim about today that rots. ⭐ **When correcting one, KEEP THE TRUE HALF** — (2)'s *"`crossWorkspaceRead.ts` calls `serveProjection`"* was accurate at the source level and is worth preserving; only *"the path that actually runs today"* was false. **A comment reduced to "this is dormant" loses why the code exists.** ⚠ **And fix EVERY occurrence in the file, not the one the finding cited** (`L94`) — instance 3 had two, and instance 4 shows the claim also propagates across FILES, so a same-round correction can leave a sibling asserting the opposite.
+
+⚠ **Do NOT over-correct into banning the word.** A comment MAY say a path is live — **if it says how that was established.** The defect is the unevidenced assertion, not the topic.
+
+`pin: none — the subject is a claim in prose.` `pattern: grep -rnE "LOAD-BEARING|actually runs|the LIVE " --include="*.ts" packages apps` — ⚠ **hits are CANDIDATES to classify, not defects** (`L104`: a check cannot tell a use from a mention, and this lesson's own text would trip it). `accepted: partially enforceable` — enforcement point: **any slice that reads a comment asserting its own reachability, and any correction of one (sweep the file AND its siblings).**
