@@ -26,6 +26,8 @@
 
 _One row per phase; `Open` = tasks not yet DONE-class (open + partial + deferred + owner-gated). States: ✅ done · 🔶 active · ⬜ open · ⛔ owner-gated. Verified 2026-07-19 @ `db45eb6e`._
 
+⛔ **`Track` MEANS TERRITORY — WHICH DIRECTORIES THE WORK EDITS, per the Track map below — NEVER the DOMAIN the phase's output is about.** ⭐ **Stated explicitly 2026-08-12 (task `24.40`) because the column had been answering BOTH questions on different rows, and the ALLOCATION reading is the one that silently fails:** a phase labelled by domain tells an idle area it has work when every task belongs to another track. **To check a row: read the phase's task `Files:` lines and map them through the Track map — the label must follow the Files, not the title.** ⚠ **The phase-status table is the FIRST thing anyone scoping work for an idle area reads, so a wrong label here is consulted INSTEAD OF the source.**
+
 | Ph | Title | Track | State | Gate | Open | Anchor |
 |----|-------|-------|-------|------|------|--------|
 | 0 | Foundation spikes | — | ✅ done | complete (no formal gate) | 1* | §OQ |
@@ -53,8 +55,8 @@ _One row per phase; `Open` = tasks not yet DONE-class (open + partial + deferred
 | 22 | Propose Activation (last flip) | worker | ⛔ gated | — (crossing 6, §ARM-GBRAIN) | 5 | §19.9 |
 | 23 | Per-Vendor Connector Enablement | prov-int | ⛔ gated | — (crossing 7, §ARM-23) | 7 | §19.10 |
 | 24 | OS One-Writer Enforcement & Real Packaging | worker | ⬜ open | — | 5 | §19.11 |
-| 25 | Second-Brain Output Workflows | knowledge | ⬜ open | — | 6 | §19.12 |
-| 26 | Research/Web-Retrieval Provider Go-Live + Living-Vault Scheduling | prov-int+knowledge | ⛔ gated | — (§ARM-RESEARCH) | 2 | §19.13 |
+| 25 | Second-Brain Output Workflows | worker | ⬜ open | — | 6 | §19.12 |
+| 26 | Research/Web-Retrieval Provider Go-Live + Living-Vault Scheduling | prov-int+worker | ⛔ gated | — (§ARM-RESEARCH) | 2 | §19.13 |
 
 _`*` = a residual/deferred bullet remains inside a certified phase (see that phase's `#### Residuals`)._
 
@@ -3209,6 +3211,9 @@ Bring the turn-on runbook (+ `copilot-propose-go-live.md`) up from its current P
 ⛔ **DO NOT JUST RELABEL — the defect is bigger than two wrong cells.** **The `Track` column is INCONSISTENT ABOUT WHAT IT MEANS:** Phase 25 is labelled by **domain**, while the Track map defines a track by **territory** (which directories you may edit). **One column, two questions, and the ALLOCATION reading is the one that silently fails.** ⛔ **Fix-where-noticed makes the NEXT mislabelled row HARDER to spot, because the table will look audited.**
 ⚠ **Why it is not cosmetic: the phase-status table is the FIRST thing anyone scoping work for an idle area reads.** *"Phase 25 · knowledge · ⬜ open · 6"* answers *"does knowledge have work?"* with **yes, six** — while all six are another track's. ⭐ **A summary that disagrees with what it summarises is WORSE than no summary, because it is consulted INSTEAD OF the source.** **(a0)(viii)'s face 2 in a SUMMARY TABLE rather than in a task.**
 **Done-when:** the table's header/legend **states which sense the `Track` column carries** (territory, per the Track map); **THEN** every row violating that sense is corrected — Phase 25 established, **Phase 26 verified rather than inferred**. *(origin: 2026-07-31 knowledge-territory sweep; INLINE-TARGETed 2026-08-12)*
+⭐ **DONE 2026-08-12 (main-orchestrator, orchestrator territory — not dispatched).** **Legend written first, then the rows**, per the ruling's ordering. **Phase 26 is no longer inferred — MEASURED:** its two tasks' `Files:` lines are `packages/providers/src/model-provider/research-provider.ts` and `apps/worker/src/temporal/`, and **`packages/knowledge` appears ZERO times in the whole phase body** ⇒ `prov-int+knowledge` → **`prov-int+worker`**. Phase 25 `knowledge` → **`worker`** (`packages/workflows` ×6 · `apps/worker` ×2 · `packages/knowledge` ×0, and the Track map assigns `packages/workflows` to worker).
+⭐ **ALL 27 ROWS AUDITED, not just the two noticed** — per the ruling that fix-where-noticed makes the next mislabelled row harder to spot. **Result: no other row names a track with zero mentions in its phase body.**
+⚠⚠ **SCOPE OF THAT NEGATIVE, STATED SO IT CAN BE REFUTED (`L100`) — AND IT IS A PROXY (`L118`): the check counted PACKAGE-PATH MENTIONS across each phase body, which includes prose, not just `Files:` lines.** ⇒ **it reliably catches a label naming a track that does NO work in the phase (the actual defect here), and it does NOT adjudicate a label that under-represents a genuinely multi-track phase.** ⛔ **Several such rows exist and were deliberately NOT changed:** Phase 13 labelled `knowledge` (contract:51 · worker:36 · knowledge:32) · Phase 19 labelled `knowledge` (worker:24 · knowledge:6) · Phase 9 `desktop` and Phase 21 `prov-int` (both effectively ties with worker) · Phase 24 `worker` (worker:58 but knowledge:27 · prov-int:18). **Whether a multi-track phase should carry a multi-track label is a DIFFERENT question from the one this task fixed, and it is left open rather than silently decided.**
 
 ### 24.41 — Decompose Carry-forward item 6 ("process-durability debt") into triageable units — it is not currently a triageable unit
 
