@@ -34,6 +34,14 @@ The owner released **without** conditioning on it; it must not be recorded as a 
 
 ⇒ ⭐ **Anyone planning a real crossing should re-derive the reachability qualifier for that crossing's findings first.** ⭐ *A finding graded "dormant, therefore not a live breach" is exactly the shape that was wrong three times.*
 
+## ⚠ Post-handoff addendum (landed after this file's first commit — read it)
+
+**A post-seal addendum committed at `e8ab0426`, after seal `0f46da64` and after this handoff's own commit.** Three corrections it carries:
+
+1. ⛔ **The seal UNDERCOUNTED `24.49`: it said EIGHT sites fixed. It was NINE.** The ninth (`test/source-ingestion.test.ts:627`) was reachable only via **the key the implementer asked to add before starting** — invisible to every key in the sweep before it. ⭐ **The load-bearing act was the implementer's own pre-sweep caveat: it reported *"7 found by THESE keys plus one known survivor — not 7 that exist"* and asked to re-run rather than proceed on a number it could not defend.** ⇒ ***a sweep that has already demonstrated it can miss a member of its own result set is not finished, and the person best placed to know that is the one who ran it.***
+2. ⛔⛔ **THE ROUND IS NOT SEALED AS "SUITE GREEN." Do not read it that way.** Two true numbers are in circulation at different scopes and units (knowledge: **7595 passed** test cases at leg 2; worker's preflight: **527 / 1 / 8**). **They agree on the only thing that matters: exactly ONE failure — the desktop bundle test, pre-existing, unowned, `### 24.25`.**
+3. ⭐⭐ **THE CROSSING ASYMMETRY — the round's most reusable process finding, and no task holds it.** **Six message-crossings between lead and orchestrator in one session.** ⭐ **FOUR of the six were alarms that work was MISSING when it had already LANDED — and that direction is SELF-CORRECTING, because someone re-checks and finds it there.** ⛔ **A crossed message asserting something IS done when it is not would NOT self-correct: nobody re-checks a reassurance.** ⚠ **The dangerous direction did not occur this round, and NOTHING STRUCTURAL PREVENTED IT** — the only defence that operated was `L133`/`L117` discipline on both sides. **Every crossing resolved by reading the tree instead of trusting recollection, twice when the stale belief was the implementer's own.**
+
 ## Team composition at close
 
 | Role | Model | Closed at |
