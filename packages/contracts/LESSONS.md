@@ -2625,3 +2625,53 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⇒ **Do:** knowing a defect class is not a substitute for a mechanical check — this is the argument FOR `24.29`-style repo-wide census tests being structural (a test that scans `packages/` and `apps/` unconditionally) rather than a discipline anyone, including the person who just named the discipline, is trusted to remember to apply. **When re-deriving a reachability claim for ANY finding, grep both `apps/` and `packages/` by default — never `apps/` alone** — and if a census test already exists for the exact mechanism in question, run IT rather than write a fresh ad hoc grep, since the fresh grep is exactly where this recurs.
 
 `pin: none — the trigger is a search-scope habit, not a source pattern a linter can classify.` `pattern: none — process convention; the closest mechanical backstop is 24.29's own repo-wide census tests, which check specific mechanisms, not reachability claims in general.` `accepted: not mechanically enforceable` — enforcement point: any reachability grep written ad hoc rather than run through an existing repo-wide census.
+
+---
+
+<a id="141"></a>
+## 141. THREE WRONG REACHABILITY CALLS ON ONE MODULE IN ONE SESSION — HAND-VERIFICATION OF REACHABILITY DOES NOT WORK HERE
+
+**Date:** 2026-08-12. **Origin:** `24.33` / condition (d)'s amendment-and-reversal. Orchestrator (twice) and lead (once), on `crossWorkspaceRead.ts` / `admitProjection`. **Banked at the lead's instruction, who contributed the third error and named the pattern.**
+
+**The three, in order, each by someone who had just watched the previous one fail.**
+1. **Orchestrator, `apps/`-only grep** — declared `admitProjection`'s callers unreachable on a scan that structurally could not see `packages/`. Owner-caught. Banked as **L140**.
+2. **Orchestrator, "LIVE via the chain"** — declared the path live because `crossWorkspaceRead.ts:139` genuinely calls the real `serveProjection`. True, and about the wrong question.
+3. **Lead, inner-hop-verified** — independently confirmed the same `:139` call site and treated *"the call exists"* as *"the path is reachable."* **Checked the inner hop, never asked who calls the outer one.**
+
+**Ground truth, established by knowledge-implementer from source and confirmed by the lead:** `resolveApprovedCrossWorkspaceSlice` has **zero production callers** — every call site is in its own test file; `boot.ts:1765`, `buildGclProjection.ts:13`, `scopedRetrieval.ts:15` are all **comments**. `reconcileGlobalMarkdown`, the other caller, is likewise uncalled. **Every path into `admitProjection` is dormant.**
+
+⛔ **THE COST, and it is the reason this is not a style note: error 3 was relayed to the owner as the basis for extending a release condition.** Arming-block condition (d) was amended to cover `24.33` **specifically because the lead reported it live**. A slice was briefed, dispatched, and would have been built against that premise. The correction came from the implementer reading source at Step 0 — **after** the condition had already changed shape in the tracker.
+
+⭐ **THE MECHANISM, and why *try harder* is the wrong conclusion.** Each of the three checks was **locally correct** and answered a **genuinely different question**: *is the symbol in this directory?* · *does this call site invoke the real implementation?* · *does this inner hop resolve?* **None of them is "does a production entry point reach this?"** — and all three are what a competent person produces when they verify reachability by hand, because hand-verification necessarily picks *one* hop, *one* scope, *one* direction, and the answer it returns is about **that choice**, not about reachability. **L118's proxy-for-property, three times, with three different proxies, on one module, inside one session** — and the third instance was committed by the person who had just corrected the second.
+
+⛔ **The distinguishing feature: hand-verification's failures are not random, they are BIASED TOWARD "REACHABLE."** A grep that finds a call site produces evidence you can point at; a grep that finds nothing feels like an incomplete search. So the cheap answer is *"yes, here's the call"* and the expensive one is *"no, and I checked every direction it could have come from."* ⇒ **the error mode is systematically toward over-claiming reachability, which is the direction that adds release conditions and briefs slices.**
+
+⇒ **Do: `24.29` shipped a repo-wide mechanical census. POINT IT AT THIS.** Before any **arming-relevant** reachability claim is relied on — a release condition, a phase-exit verdict, a brief premise that a path is live — the claim comes from a **mechanical census over `packages/` AND `apps/`, walking from production entry points**, not from a hand grep by whoever is holding the question. ⚠ **A hand grep remains fine for orientation** — it is fine to *look*; the rule governs what may be **relied on**. ⭐ **And the honest framing for the negative case: "I could not find a caller" is not "there is no caller" (L100) — but three people producing three different wrong answers is stronger evidence than any of them, and the correct response to that is a machine, not a fourth careful human.**
+
+`pin: none — the subject is a verification METHOD, not a source pattern.` `pattern: none — the mechanical form is 24.29's census, which must be RUN, not grepped for.` `accepted: not mechanically enforceable` — enforcement point: **any reachability claim that becomes a release-condition premise, a phase-exit input, or a brief premise. Cite the census run, not a grep.**
+
+---
+
+<a id="142"></a>
+## 142. A RELEASE-CONDITION CHANGE IS NOT COMPLETE WHEN ACKNOWLEDGED, NOR WHEN COMMITTED — IT IS COMPLETE WHEN THE LEAD RE-READS THE DOC AND CONFIRMS
+
+**Date:** 2026-08-12. **Origin:** the arming-block condition-(d) surface, **which drifted TWICE in one day.** **Banked at the lead's instruction; the rule is his, stated in his words.**
+
+**Both instances share one mechanism, exactly.** An owner ruling is relayed through the lead → it reaches the orchestrator's **inbox** → the orchestrator **acknowledges it in a message and acts on it** → **the doc write crosses with other work, or slips.** ⇒ **every participant's messages reflect the new state while the artifact everyone reads stays stale.**
+
+- **Instance 1 (~00:47).** Condition (d) amended to cover both `24.7` and `24.33`. Reached the lead's message and the orchestrator's tracker edit — with a real window where the tracker said `24.7` only, *remedy landed, verified*, and nothing stating `24.33` was also required. Banked as the round's own headline; **L140** attaches to its adjacent defect.
+- **Instance 2 (~10:45).** The reversal — (d) reverts to `24.7` only, all four conditions discharged, `24.33` leaves the release path. **The orchestrator received it, acted on it correctly (held `24.33`, dispatched `24.36` instead), and did not write the doc.** The tracker still read *"NOW COVERS BOTH… THE BLOCK LIFTS WHEN BOTH LAND"* and *"`24.33`'s LEG: OPEN, TOP OF QUEUE."*
+
+⛔ **WHY ACKNOWLEDGEMENT IS THE ACTIVE INGREDIENT, not an aggravating detail: the ruling LOOKS RECEIVED.** The acknowledgement is real, the behavioural change is real and visible (a different slice got dispatched), and **both are evidence the message landed** — so nobody, including the sender, has any reason to check the artifact. **A ruling that was ignored would have been caught immediately; one that was acted on but not written is invisible precisely BECAUSE it was acted on.** ⭐ **L91's clearance-stopped-at-the-relay, inverted: there the message did not arrive and everyone waited; here it arrived, everyone moved, and the RECORD stayed behind.**
+
+⛔ **AND THE STAKES ARE THE MAXIMUM THIS PROJECT HAS: the artifact is the release criteria.** A successor reading *"condition (d): 24.7, verified"* concludes the arming block is clear. **It was not, and the whole round exists because a gate nearly released on a technicality — twice.** ⚠ A stale line in a lesson costs a wrong belief; a stale line in the release criteria costs a release.
+
+⭐ **WHAT CAUGHT IT, BOTH TIMES, AND NOTHING ELSE DID: the lead re-read the file.** Not `plan-lint` (the text was well-formed both times). Not the commit (instance 2 had no commit to inspect). Not the orchestrator's own close-out. Not the task list. **Two independent detections, one method, zero from the apparatus.**
+
+⇒ **THE RULE, adopted: a release-condition change is complete when the LEAD RE-READS THE DOC AND CONFIRMS — not when acknowledged, not when committed.** The writer's confirmation is **quoting the amended text back**; the lead re-reads the file regardless, because a quote is a claim by the actor and the file is an observation of the world (**L133**'s receipt-vs-`git log` distinction, arriving in the coordination layer).
+
+⚠ **Scope it deliberately, or it becomes ceremony that gets skipped: this applies to RELEASE-CONDITION and ARMING-LEDGER text specifically** — the surfaces where a stale line is actionable by someone who was not in the conversation. It is not a general rule for every tracker edit; the cost is one re-read, and it is worth paying exactly where the artifact outranks the conversation.
+
+⭐ **The general form, which is what makes it worth banking rather than just doing: a correction is not propagated when the people are corrected — it is propagated when the ARTIFACT is corrected, and human acknowledgement is systematically mistaken for both.** **L94** said a correction must reach every channel carrying the claim; **this adds the harder half — the channel people ACT from and the channel people READ from are different channels, and fixing the first is what makes forgetting the second invisible.**
+
+`pin: none — process convention.` `pattern: none — the stale text is well-formed prose; no linter distinguishes a superseded release condition from a current one.` `accepted: not mechanically enforceable` — enforcement point: **any owner ruling that changes a release condition or arming ledger. The writer quotes the amended text back; the lead re-reads the file and confirms. Neither step is optional, and the second is the one that has actually caught it.**
