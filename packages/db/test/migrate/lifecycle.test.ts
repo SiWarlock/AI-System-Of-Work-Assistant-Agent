@@ -63,34 +63,6 @@ const REAL_PG_MIGRATIONS = fileURLToPath(
   new URL("../../migrations/pg", import.meta.url),
 );
 
-// Every operational-store domain table the genesis migration must materialize (§4).
-const DOMAIN_TABLES = [
-  "workspace_config",
-  "event_log",
-  "workflow_run_refs",
-  "audit",
-  "approvals",
-  "outbox",
-  // §13.10a — the pending-KMP store (the semantic-write sibling of the outbox).
-  "pending_knowledge_mutations",
-  // §6/§16 — the durable KnowledgeWriter idempotent-replay index (task 11.1).
-  "knowledge_revisions",
-  "connector_cursors",
-  "provider_state",
-  "read_models",
-  "gcl_projections",
-  // §4/§6 — the durable typed-Project registry (task 14.6, migration 0007).
-  "project_registry",
-  // §4/§8 — the per-workspace connector-instance config registry (task 14.2, migration 0008).
-  "connector_instance",
-  // §4/§5/§6 — the cross-workspace-link store (sanctioned WS-8 cross-read input, task 14.7, migration 0009).
-  "cross_workspace_link",
-  // §4/§19.2 — the seen-content-hash dedupe store (Flow-4 / REQ-F-010, WS-8-scoped, task 15.4, migration 0010).
-  "seen_content_hash",
-  // §4/§19.2/§9 — the source-disposition store (parked-source-of-record + re-enter, ING-4, task 15.5, migration 0011).
-  "source_disposition",
-] as const;
-
 // PGlite constructs a real PG16 in wasm; several instances per case → wide timeout.
 const CASE_TIMEOUT_MS = 30_000;
 
@@ -286,10 +258,17 @@ function defineLifecycleSuite<H>(fix: LifecycleFixture<H>): void {
         expect(live()).toBe(original);
         expect(fix.isOpen(live())).toBe(true);
 
-        // Every operational domain table exists; the schema-version marker recorded.
-        for (const t of DOMAIN_TABLES) {
-          expect(await fix.tableExists(live(), t), `table ${t}`).toBe(true);
-        }
+        // 24.43 — the per-table `DOMAIN_TABLES` existence loop that lived here was DELETED:
+        // it was a hand-maintained array that had ALREADY drifted before 24.39 touched
+        // anything (missing parity_reports/write_receipts/health_items/schedule_bookkeeping/
+        // instance_leases, and until 24.39 also task) — the same stale-enumeration anti-
+        // pattern 24.39 exists to eliminate, one file over. `schema-migration-coverage.
+        // test.ts`'s barrel-derived detector supersedes it: it asserts every table EVERY
+        // schema barrel module declares exists in a real applyMigrations()-built DB, both
+        // dialects, over these SAME real migration folders — a strict superset of what this
+        // loop ever checked, and unable to drift the way a literal array can.
+        //
+        // The schema-version marker recorded:
         expect(await fix.userVersion(live())).toBe(CURRENT_SCHEMA_VERSION);
 
         // Pre-existing operational data is untouched by a forward apply.

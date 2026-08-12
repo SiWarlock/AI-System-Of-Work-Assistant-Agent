@@ -31,8 +31,11 @@ import { isOk } from "@sow/contracts";
 import type { WorkspaceId } from "@sow/contracts";
 
 import { applyMigrations } from "../../src/migrate/runner";
-import { createSqliteMigrationEngine } from "../../src/migrate/sqlite-engine";
-import { createPgMigrationEngine } from "../../src/migrate/pg-engine";
+import {
+  createSqliteMigrationEngine,
+  DRIZZLE_JOURNAL_TABLE as SQLITE_JOURNAL_TABLE,
+} from "../../src/migrate/sqlite-engine";
+import { createPgMigrationEngine, SCHEMA_VERSION_TABLE as PG_MARKER_TABLE } from "../../src/migrate/pg-engine";
 import { createSqliteRepositories } from "../../src/adapters/sqlite/index";
 import { createPostgresRepositories } from "../../src/adapters/postgres/index";
 import * as sqliteSchema from "../../src/schema/index";
@@ -69,6 +72,40 @@ async function actualPgTableNames(client: PGlite): Promise<string[]> {
   return r.rows.map((row) => row.table_name).sort();
 }
 
+// Migration-LIFECYCLE machinery tables — legitimately present in a migrated DB
+// without being schema-barrel domain tables, so a bidirectional (24.43) check must
+// exclude them from the "orphan" direction. A FIXED, closed set defined by the
+// migration engines themselves, not a hand-list that drifts as domain tables are
+// added (the anti-pattern this task exists to eliminate) — it only grows if the
+// migration engine's OWN bookkeeping shape changes, which is a different failure
+// mode entirely. Both entries are imported from their engine's own export
+// (`sqlite-engine.ts`'s `DRIZZLE_JOURNAL_TABLE`, `pg-engine.ts`'s
+// `SCHEMA_VERSION_TABLE`) rather than duplicated as literals — this repo's L5/L37
+// single-sourcing rule, not L88's "equal but independent" counter-case: if drizzle
+// ever renames its journal table, the engine's own query AND this exclusion must
+// change together, so they share one source of truth. pg's own
+// `drizzle."__drizzle_migrations"` journal needs NO entry here at all — it lives
+// outside the `public` schema `actualPgTableNames` is scoped to (verified at
+// pg-engine.ts:161), so it never appears in `actual` to begin with.
+//
+// ⚠ THE RISK DIRECTION HERE IS THE OPPOSITE OF `DOMAIN_TABLES`'s (the array 24.43
+// deleted from lifecycle.test.ts): that one failed by UNDER-reporting (silently
+// passing over tables it didn't list). This is a DENYLIST on the orphan check, so
+// it fails the OTHER way — if drizzle ever adds a second bookkeeping table, the
+// orphan test below goes RED *spuriously*. The reflexive fix for a spurious RED is
+// to widen the exclusion — which is exactly how a denylist rots into the next
+// `DOMAIN_TABLES`. A new entry here needs a REASON ("this is engine bookkeeping,
+// here is the engine line that creates it"), never just a name added to make a
+// test pass.
+const SQLITE_INFRA_TABLES = new Set([SQLITE_JOURNAL_TABLE]);
+const PG_INFRA_TABLES = new Set([PG_MARKER_TABLE]);
+
+/** Tables present in `actual` that are neither declared by the schema barrel nor known migration-lifecycle infra. */
+function orphanTables(actual: string[], declared: string[], infra: ReadonlySet<string>): string[] {
+  const declaredSet = new Set(declared);
+  return actual.filter((t) => !declaredSet.has(t) && !infra.has(t));
+}
+
 // Populated only as each dialect's `it` body actually RUNS — a runtime propagation
 // check, not a static array — so a dialect silently skipped (the default vitest
 // reporter's terminal-overwrite quirk under capture made exactly this ambiguous
@@ -98,6 +135,40 @@ describe("24.39 — schema barrel enumeration is non-vacuous", () => {
   });
 });
 
+// Companion to the "schema barrel enumeration is non-vacuous" block above: THAT
+// block guards the declared side statically (no DB needed). This guards BOTH
+// sides against the real migrated DB — an empty `actual` would let the 24.43
+// orphan check below pass vacuously (nothing to be an orphan), the same failure
+// shape one direction over. Self-contained: this file's bidirectional guarantee
+// doesn't depend on the declared-side block above still existing unchanged.
+describe("24.43 — detector_is_non_vacuous_in_both_directions", () => {
+  it("sqlite: both the declared set and the migrated set are non-empty", async () => {
+    const conn = new Database(":memory:");
+    try {
+      const engine = createSqliteMigrationEngine(conn);
+      const applied = await applyMigrations(engine, { migrationsFolder: REAL_SQLITE_MIGRATIONS });
+      expect(isOk(applied)).toBe(true);
+      expect(schemaTableNames(sqliteSchema as unknown as Record<string, unknown>).length).toBeGreaterThan(0);
+      expect((await actualSqliteTableNames(engine.connection)).length).toBeGreaterThan(0);
+    } finally {
+      conn.close();
+    }
+  }, CASE_TIMEOUT_MS);
+
+  it("pg: both the declared set and the migrated set are non-empty", async () => {
+    const client = new PGlite();
+    try {
+      const engine = createPgMigrationEngine(client);
+      const applied = await applyMigrations(engine, { migrationsFolder: REAL_PG_MIGRATIONS });
+      expect(isOk(applied)).toBe(true);
+      expect(schemaTableNames(pgSchema as unknown as Record<string, unknown>).length).toBeGreaterThan(0);
+      expect((await actualPgTableNames(engine.client)).length).toBeGreaterThan(0);
+    } finally {
+      await client.close();
+    }
+  }, CASE_TIMEOUT_MS);
+});
+
 describe("24.39 — migrated_database_has_every_schema_table (sqlite)", () => {
   it(
     "a database built via applyMigrations() over the real sqlite migrations contains every table the sqlite schema barrel declares",
@@ -125,6 +196,37 @@ describe("24.39 — migrated_database_has_every_schema_table (sqlite)", () => {
   );
 });
 
+// LEG B (24.43) — the mirror direction: a migration creating a table the schema
+// no longer declares would go unnoticed by the "every schema table" check above
+// (that direction only proves declared ⊆ actual). Excludes the fixed migration-
+// lifecycle infra set (SQLITE_INFRA_TABLES), never a domain table.
+describe("24.43 — migrated_database_has_no_table_the_schema_does_not_declare (sqlite)", () => {
+  it(
+    "a database built via applyMigrations() over the real sqlite migrations creates no table beyond the sqlite schema barrel (+ known migration-lifecycle bookkeeping)",
+    async () => {
+      const conn = new Database(":memory:");
+      try {
+        const engine = createSqliteMigrationEngine(conn);
+        const applied = await applyMigrations(engine, {
+          migrationsFolder: REAL_SQLITE_MIGRATIONS,
+        });
+        expect(isOk(applied)).toBe(true);
+
+        const declared = schemaTableNames(sqliteSchema as unknown as Record<string, unknown>);
+        const actual = await actualSqliteTableNames(engine.connection);
+        const extra = orphanTables(actual, declared, SQLITE_INFRA_TABLES);
+        expect(
+          extra,
+          `table(s) a sqlite migration creates but the schema barrel no longer declares: ${extra.join(", ")}`,
+        ).toEqual([]);
+      } finally {
+        conn.close();
+      }
+    },
+    CASE_TIMEOUT_MS,
+  );
+});
+
 describe("24.39 — migrated_database_has_every_schema_table (pg)", () => {
   it(
     "a database built via applyMigrations() over the real pg migrations contains every table the pg schema barrel declares",
@@ -140,6 +242,32 @@ describe("24.39 — migrated_database_has_every_schema_table (pg)", () => {
         const actual = await actualPgTableNames(engine.client);
         const missing = declared.filter((t) => !actual.includes(t));
         expect(missing, `schema table(s) with no pg migration: ${missing.join(", ")}`).toEqual([]);
+      } finally {
+        await client.close();
+      }
+    },
+    CASE_TIMEOUT_MS,
+  );
+});
+
+// LEG B (24.43), pg leg — see the sqlite block above for the full rationale.
+describe("24.43 — migrated_database_has_no_table_the_schema_does_not_declare (pg)", () => {
+  it(
+    "a database built via applyMigrations() over the real pg migrations creates no table beyond the pg schema barrel (+ known migration-lifecycle bookkeeping)",
+    async () => {
+      const client = new PGlite();
+      try {
+        const engine = createPgMigrationEngine(client);
+        const applied = await applyMigrations(engine, { migrationsFolder: REAL_PG_MIGRATIONS });
+        expect(isOk(applied)).toBe(true);
+
+        const declared = schemaTableNames(pgSchema as unknown as Record<string, unknown>);
+        const actual = await actualPgTableNames(engine.client);
+        const extra = orphanTables(actual, declared, PG_INFRA_TABLES);
+        expect(
+          extra,
+          `table(s) a pg migration creates but the schema barrel no longer declares: ${extra.join(", ")}`,
+        ).toEqual([]);
       } finally {
         await client.close();
       }

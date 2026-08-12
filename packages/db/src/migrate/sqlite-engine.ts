@@ -39,6 +39,9 @@ import type { OnDiskSchema } from "./version-compat";
 
 type Conn = InstanceType<typeof Database>;
 
+/** drizzle's own migration-journal table name (its convention, not this repo's — mirrors `pg-engine.ts`'s `SCHEMA_VERSION_TABLE` export so a consumer never re-literals it, 24.43). */
+export const DRIZZLE_JOURNAL_TABLE = "__drizzle_migrations";
+
 /**
  * SQLite {@link MigrationEngine}. Owns the live connection: {@link restore} swaps
  * it for a fresh connection deserialized from the backup, so callers MUST read the
@@ -138,7 +141,7 @@ class SqliteMigrationEngine implements MigrationEngine {
   #appliedCount(): number {
     try {
       const row = this.#conn
-        .prepare("SELECT count(*) AS c FROM __drizzle_migrations")
+        .prepare(`SELECT count(*) AS c FROM ${DRIZZLE_JOURNAL_TABLE}`)
         .get() as { c?: number } | undefined;
       return typeof row?.c === "number" ? row.c : 0;
     } catch {
