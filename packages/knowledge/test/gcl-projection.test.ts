@@ -216,21 +216,21 @@ describe("persistDenialAudit — the fail-closed redaction-safety gate before an
 });
 
 describe("serveProjection — re-gate a stored row before it crosses a workspace boundary", () => {
-  it("serves a clean stored row unchanged", () => {
-    const r = serveProjection(validCandidate, ws("sanitized"));
+  it("serves a clean stored row unchanged", async () => {
+    const r = await serveProjection(validCandidate, ws("sanitized"));
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.value).toEqual(validCandidate);
   });
 
-  it("refuses a tampered stored row that now carries raw content", () => {
+  it("refuses a tampered stored row that now carries raw content", async () => {
     const tampered = { ...validCandidate, sanitizedPayload: { body: "leaked raw" } } as GclProjection;
-    const r = serveProjection(tampered, ws("full"));
+    const r = await serveProjection(tampered, ws("full"));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.code).toBe("raw_content_present");
   });
 
-  it("refuses a stored row whose visibility now exceeds the source default", () => {
-    const r = serveProjection(validCandidate, ws("isolated"));
+  it("refuses a stored row whose visibility now exceeds the source default", async () => {
+    const r = await serveProjection(validCandidate, ws("isolated"));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.code).toBe("visibility_exceeds_source");
   });
@@ -242,10 +242,127 @@ describe("serveProjection — re-gate a stored row before it crosses a workspace
   // The projectionType derivation must still be reachable HERE, not only through
   // `admitProjection` in isolation, so it is already correct the moment that chain is wired
   // (Phase 25.2/25.4) — not because it runs today.
-  it("refuses a re-served stored row whose visibility level is inconsistent with its projectionType under an injected taxonomy (task 24.18)", () => {
+  it("refuses a re-served stored row whose visibility level is inconsistent with its projectionType under an injected taxonomy (task 24.18)", async () => {
     const taxonomy: ProjectionTypeVisibilityTaxonomy = { calendar_busy: ["isolated"] };
-    const r = serveProjection(validCandidate, ws("full"), undefined, taxonomy);
+    const r = await serveProjection(validCandidate, ws("full"), undefined, taxonomy);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.code).toBe("visibility_type_mismatch");
+  });
+
+  // task 24.44 (leg 2 of 24.33's pair; the argument is from 24.33's own Step 2.5): serveProjection's
+  // re-gate denial is the defense-in-depth catch of a post-write tamper — arguably the MORE
+  // safety-critical audit case, since admitAndPersistProjection catches a bad projection on the
+  // way IN, this catches one already stored. The suite below covers, on this path: carries the
+  // signal · end-to-end durable record · a raw-content denial (this function's OWN characteristic
+  // denial, no PolicyDecision behind it) persists nothing either · allow persists nothing ·
+  // byte-equivalent when the port is absent · workspaceId provenance (never row-derived) ·
+  // routes through the fail-closed gate rather than bypassing it (code-quality + security review).
+  it("serve_projection_denial_carries_the_signal: a re-gate denial's AuditSignal survives on the returned error, same as admitProjection's own output shape", async () => {
+    const r = await serveProjection(validCandidate, ws("isolated"));
+    expect(r.ok).toBe(false);
+    if (!r.ok && "audit" in r.error) {
+      expect(r.error.audit).toBeDefined();
+      expect(r.error.audit?.denialCode).toBe("VISIBILITY_EXCEEDS_SOURCE");
+    } else {
+      expect.fail("expected a policy-decision deny variant carrying an audit field");
+    }
+  });
+
+  // MOVE THE STATE (24.17's precedent, reused for 24.33's own end-to-end pin): a
+  // construction-side assertion can't distinguish "the signal is built and dropped" from a fix
+  // — drive a real denial through the real serveProjection call with an injected persist port
+  // and assert the durable record lands.
+  it("serve_projection_denial_is_durably_recorded_end_to_end: a real re-gate denial calls the injected persist port with the signal + workspaceId", async () => {
+    const auditPersist = new FakeAuditPersistPort();
+    const workspace = ws("isolated");
+    const r = await serveProjection(validCandidate, workspace, undefined, undefined, auditPersist);
+    expect(r.ok).toBe(false);
+    expect(auditPersist.calls).toHaveLength(1);
+    expect(auditPersist.calls[0]?.workspaceId).toBe(workspace.id);
+    expect(auditPersist.calls[0]?.signal.denialCode).toBe("VISIBILITY_EXCEEDS_SOURCE");
+  });
+
+  // code-quality review (24.44): 24.33's ACTUAL fourth pin was "a raw-content denial (no
+  // PolicyDecision, no AuditSignal — auditOf returns undefined) calls the port zero times," not
+  // "carries the signal" (which is really a restatement of the first pin). serveProjection's
+  // characteristic denial IS a tampered raw-content row ("refuses a tampered stored row..."
+  // above) — this pin was missing on the path it matters most for.
+  it("serve_projection_raw_content_denial_persists_nothing: a raw-content denial (no PolicyDecision behind it) calls the injected persist port zero times", async () => {
+    const auditPersist = new FakeAuditPersistPort();
+    const tampered = { ...validCandidate, sanitizedPayload: { body: "leaked raw" } } as GclProjection;
+    const r = await serveProjection(tampered, ws("full"), undefined, undefined, auditPersist);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe("raw_content_present");
+    expect(auditPersist.calls).toHaveLength(0);
+  });
+
+  // task 24.33 / contracts L86 — allow persists nothing (positive control: the tests above
+  // already prove the channel fires on a real denial, so this proves it does NOT fire when
+  // nothing was denied — a channel that fires on every path carries no information).
+  it("serve_projection_allow_persists_nothing: a clean re-serve calls the injected persist port zero times", async () => {
+    const auditPersist = new FakeAuditPersistPort();
+    const r = await serveProjection(validCandidate, ws("sanitized"), undefined, undefined, auditPersist);
+    expect(r.ok).toBe(true);
+    expect(auditPersist.calls).toHaveLength(0);
+  });
+
+  // security review (24.44) — a REAL comparison, not two independent assertions that happen to
+  // agree: the port's mere presence must not change the returned Result at all (byte-equivalent),
+  // proven by comparing the SAME denial served with and without an injected port.
+  it("serve_projection_without_audit_port_is_byte_equivalent: injecting a port does not change the returned Result shape for the same denial", async () => {
+    const withoutPort = await serveProjection(validCandidate, ws("isolated"));
+    const withPort = await serveProjection(validCandidate, ws("isolated"), undefined, undefined, new FakeAuditPersistPort());
+    expect(withoutPort.ok).toBe(false);
+    expect(withPort).toEqual(withoutPort);
+  });
+
+  // security review (24.44) — MUTATION-PROVEN gap: swapping sourceWorkspace.id for the row's own
+  // (attacker-controllable) workspaceId left every other test in this block green, because on
+  // every OTHER denial path validateProjectionVisibility has already proven wsId===sourceWorkspace.id
+  // before denying (packages/policy/src/visibility.ts:162) — the two values are equal by
+  // construction there, so no other test can tell them apart. This is the ONE fixture that can:
+  // a MISMATCHING but REDACTION-SAFE workspaceId reaches the persist call (unlike the routing-gate
+  // test below, whose mismatch is also unsafe and never gets far enough to record who's used).
+  it("serve_projection_denial_persists_under_sourceWorkspace_id_never_the_stored_rows_own_value: a mismatched-but-safe row workspaceId does not leak into the persisted record", async () => {
+    const auditPersist = new FakeAuditPersistPort();
+    const workspace = ws("full");
+    const foreignSafe = { ...validCandidate, workspaceId: "ws-002" as GclProjection["workspaceId"] };
+    const r = await serveProjection(foreignSafe, workspace, undefined, undefined, auditPersist);
+    expect(r.ok).toBe(false);
+    expect(auditPersist.calls).toHaveLength(1);
+    expect(auditPersist.calls[0]?.workspaceId).toBe(workspace.id);
+    expect(auditPersist.calls[0]?.workspaceId).not.toBe("ws-002");
+  });
+
+  // task 24.44 (orchestrator ADD) — a ROUTING pin, not a re-test of persistDenialAudit's own
+  // refusal logic (that's covered once, in 24.33's suite — L39). It asserts "the deny path goes
+  // through the gate," not "the gate works": a correctly-routed serveProjection (calls
+  // persistDenialAudit) persists this signal ZERO times; an implementation that bypassed the
+  // gate straight to auditPersist.persistDenial would persist it ONCE (mutation-verified by hand:
+  // temporarily bypassing the gate turned this test red with exactly this count delta, before
+  // reverting). Constructed through the REAL path (24.45's own finding, not stubbed):
+  // validateProjectionVisibility's MALFORMED_POLICY_INPUT branch
+  // (packages/policy/src/visibility.ts:132) embeds the candidate's own UNVALIDATED workspaceId
+  // into the denial's AuditSignal.refs before checking it matches — a URL-userinfo-credential
+  // shape there trips isRedactionSafe's URL_USERINFO_CREDENTIAL rule specifically (code-quality
+  // review: the password below is deliberately NOT also a SENSITIVE_KEYWORD match, so this pins
+  // the URL-userinfo rule and not an unrelated one — swap it if that rule changes).
+  // ⚠ COUPLING (documented, not hidden): if 24.45 resolves via validate-or-omit, this exact
+  // unsafe value stops reaching audit.refs and this fixture breaks — that is a correct signal
+  // to fix the fixture (a different unsafe-signal construction), not to delete the test.
+  it("serve_projection_denial_routes_through_the_redaction_gate: a re-gate denial whose AuditSignal is unsafe (URL-userinfo-credential-shaped workspaceId ref) persists zero times via the real chain, not via persistDenialAudit's own isolated unit test", async () => {
+    const auditPersist = new FakeAuditPersistPort();
+    const foreignWithCredential = {
+      ...validCandidate,
+      workspaceId: "https://u:hunter2@evil.example" as GclProjection["workspaceId"],
+    };
+    const r = await serveProjection(foreignWithCredential, ws("full"), undefined, undefined, auditPersist);
+    expect(r.ok).toBe(false);
+    if (!r.ok && r.error.code === "malformed_policy_input") {
+      expect(r.error.audit).toBeDefined();
+    } else {
+      expect.fail("expected malformed_policy_input carrying an audit field");
+    }
+    expect(auditPersist.calls).toHaveLength(0);
   });
 });

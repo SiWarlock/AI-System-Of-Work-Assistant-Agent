@@ -11,7 +11,9 @@
 //    error, never a throw (§16).
 //  - READ: `serveProjection` re-gates a stored row before it crosses a workspace
 //    boundary (defense in depth: a row tampered post-write to carry raw or
-//    over-visibility content is refused at serve, not leaked).
+//    over-visibility content is refused at serve, not leaked); a re-gate denial's
+//    audit signal is persisted the same fail-closed-gated way the write path's is
+//    (task 24.44).
 import { ok, err } from "@sow/contracts";
 import type { GclProjection, Workspace, Result } from "@sow/contracts";
 import type { GclProjectionRepository, DbError } from "@sow/db";
@@ -102,18 +104,35 @@ export async function admitAndPersistProjection(
  * Serve a stored projection across the cross-workspace read path. Re-runs the
  * full Visibility Gate on the row so a post-write tamper (raw content injected,
  * visibility raised) is refused at serve rather than leaked. Returns the same
- * typed gate error set as {@link admitProjection}.
+ * typed gate error set as {@link admitProjection}. A re-gate denial's `AuditSignal`,
+ * when the injected `auditPersist` port is present, is persisted the same way
+ * `admitAndPersistProjection`'s write-path denial is (task 24.44, completing
+ * `24.33`'s deliberately-scoped-out coverage) — arguably the MORE safety-critical
+ * of the two audit paths, since this one catches a projection already stored,
+ * not just one on the way in.
  *
- * Deliberately does NOT carry `auditPersist` (task 24.33's asymmetry): this function has a
- * real production caller (`apps/worker/src/composition/crossWorkspaceRead.ts`) that calls it
- * SYNCHRONOUSLY — widening this to `Promise<GclAdmitResult>` would break that file's compile.
- * Filed as its own producer/consumer pair, `### 24.44`, rather than folded in here.
+ * `apps/worker/src/composition/crossWorkspaceRead.ts` names a real call site for
+ * this function — but that caller, `resolveApprovedCrossWorkspaceSlice`, has ZERO
+ * production callers of its own as of 2026-08-12 (established `24.33` Step 0,
+ * re-verified at `24.44`; every real caller is in a test file). Re-derive this
+ * before relying on it — `Phase 25.2/25.4`'s port wiring is what would change it.
+ * A call site existing in production source is not the same claim as the path
+ * executing in production.
+ *
+ * `auditPersist` is OPTIONAL and UNBOUND in production, same as
+ * `admitAndPersistProjection`'s — the persist is fail-closed gated (see
+ * {@link persistDenialAudit}), never a best-effort write of a possibly-unsafe signal.
  */
-export function serveProjection(
+export async function serveProjection(
   stored: GclProjection,
   sourceWorkspace: Workspace,
   registry?: SchemaRegistry,
   taxonomy?: ProjectionTypeVisibilityTaxonomy,
-): GclAdmitResult {
-  return admitProjection(stored, sourceWorkspace, registry, taxonomy);
+  auditPersist?: GclAuditPersistPort,
+): Promise<GclAdmitResult> {
+  const admitted = admitProjection(stored, sourceWorkspace, registry, taxonomy);
+  if (!admitted.ok) {
+    await persistDenialAudit(auditOf(admitted.error), sourceWorkspace.id, auditPersist);
+  }
+  return admitted;
 }
