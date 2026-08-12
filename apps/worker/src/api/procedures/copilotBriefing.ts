@@ -73,6 +73,16 @@ export async function answerCopilotBriefing(
   if (!isOk(assembled)) return assembled; // unknown workspace / retrieval failure → fail closed (WS-8)
   const scoped = enforceRetrievalScope(input.workspaceId, assembled.value);
   if (!isOk(scoped)) return scoped; // defense-in-depth — a foreign-scoped context is rejected
+  // 24.37 — THIS CALL'S DIRECTNESS IS LOAD-BEARING, and not for the usual reason: briefing's
+  // denial-audit persistence is guaranteed STRUCTURALLY, not by any test of this file. It holds
+  // because (a) this is a direct call to `runGovernedCopilotSynthesis`, (b) that function's deny
+  // path persists through `auditPersist` and IS pinned (copilotDenialAudit.test.ts), and (c)
+  // `AuditPersisting<CopilotBriefingDeps>` makes omitting the port a compile error.
+  // ⛔ Leg (c) survives a refactor; leg (a) does not. If this stops being a direct call — an
+  // interposed wrapper, a second synthesis path, or an early return that denies before reaching
+  // here — the guarantee evaporates and NOTHING FAILS: no test reds, no type complains, and
+  // briefing's denials go unpersisted exactly as they did before 24.7. Re-establish coverage
+  // before changing this call's shape.
   return runGovernedCopilotSynthesis(deps, input.workspaceId, BRIEFING_DIRECTIVE, scoped.value);
 }
 

@@ -175,7 +175,7 @@ import { createServingCoverageReader, createCommittedVaultReader } from "./api/p
 import { createParityReportRecorderAdapter } from "./composition/parityReportStore";
 import { buildKeychainSecrets, type KeychainSecretsGate } from "./secrets/keychain-boot";
 import { createCopilotProposeMcpServer, createCopilotProposeKnowledgeMcpServer, createCopilotGbrainProxyMcpServer, createCopilotVaultMcpServer, createCopilotSkillsMcpServer } from "@sow/providers";
-import type { CopilotSynthesisPort, AuditPersistPort } from "./api/procedures/copilot";
+import type { CopilotSynthesisPort, AuditPersistPort, AuditPersisting } from "./api/procedures/copilot";
 import { createReadModelBriefingRetrieval, type CopilotBriefingDeps } from "./api/procedures/copilotBriefing";
 import { createClaudeSubscriptionCompletion } from "@sow/providers";
 import type { ClaudeSubscriptionCompletion, SubscriptionReachabilityCheck } from "@sow/providers";
@@ -2080,7 +2080,12 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // §9.4 Today read-model (`readModel` structurally satisfies BriefingTodayPort: recentChanges/ingestion/
   // approvalInbox). Read-only + WS-8-scoped by construction; empty-until-producer today (the read-model is
   // real but its producer rows fill in as Phase-9 producers land). Propose bridge untouched.
-  const briefing: CopilotBriefingDeps = {
+  // 24.37 — `AuditPersisting<…>` makes the 24.7 gap UNREPRESENTABLE rather than merely fixed: this
+  // literal is hand-built (it reuses the copilot bundle field-by-field because briefing swaps in its
+  // own retrieval), and omitting `auditPersist` below is now a compile error instead of a silent
+  // production gap. See the type's own scope note — this closes the recurrence for THIS port, not the
+  // general "hand-built literal drops a later-added optional field" class.
+  const briefing: AuditPersisting<CopilotBriefingDeps> = {
     synthesis: copilot.synthesis,
     workspacePosture: copilot.workspacePosture,
     routeSelector: copilot.routeSelector,

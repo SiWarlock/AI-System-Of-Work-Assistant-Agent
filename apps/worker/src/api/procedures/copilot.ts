@@ -461,6 +461,23 @@ export interface GovernedCopilotSynthesisDeps {
   readonly auditPersist?: AuditPersistPort;
 }
 
+/**
+ * 24.37 — a deps bundle whose `auditPersist` is STATICALLY GUARANTEED present.
+ *
+ * The guarantee already existed at `buildCopilotDeps`'s INPUT (`CopilotDepsOptions.auditPersist` is
+ * required) and was ERASED by its return type, which widened back to the fixture-permissive shape
+ * above. That erasure is what let `24.7`'s `briefing` literal in `boot.ts` compile while silently
+ * dropping the port. This type stops the erasure; it adds no runtime surface.
+ *
+ * ⚠ SCOPE (L100): this closes the recurrence for `auditPersist`. It does NOT close the general class
+ * — a hand-built deps literal can still drop a factory's later-added OPTIONAL field, because
+ * "safety-relevant" is not a property the type system can see. That remains a CONVENTION: a
+ * safety-relevant deps field should be required on the production-path type, as here.
+ */
+export type AuditPersisting<T extends GovernedCopilotSynthesisDeps> = T & {
+  readonly auditPersist: AuditPersistPort;
+};
+
 /** The Copilot ASK deps — the governed core + the workspace-knowledge retrieval port. */
 export interface CopilotDeps extends GovernedCopilotSynthesisDeps {
   readonly retrieval: CopilotRetrievalPort;

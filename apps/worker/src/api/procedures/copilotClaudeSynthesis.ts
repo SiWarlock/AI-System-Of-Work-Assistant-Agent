@@ -37,6 +37,7 @@ import {
   localWorkspacePosture,
 } from "./copilot";
 import type {
+  AuditPersisting,
   AuditPersistPort,
   CandidateCopilotAnswer,
   CopilotDeps,
@@ -508,7 +509,7 @@ export interface CopilotDepsOptions {
  * fixture read either way; the authoritative posture-by-workspaceId resolution is identical. Pure apart
  * from the injected `completion` factory (called at most once, only on the real path).
  */
-export function buildCopilotDeps(opts: CopilotDepsOptions): CopilotDeps {
+export function buildCopilotDeps(opts: CopilotDepsOptions): AuditPersisting<CopilotDeps> {
   const fixtures: Record<string, RetrievedContext> = {};
   const postures: Record<string, WorkspacePosture> = {};
   for (const ws of opts.workspaces) {
