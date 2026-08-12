@@ -101,6 +101,10 @@ export async function holdWrite(
     payloadHash: env.payloadHash,
     status: toOutboxStatus(reason),
     payload: action.payload,
+    // The ORIGINAL approvalPolicy token (task 24.15/24.35) — so a later redrive
+    // reconstructs a faithful action instead of a neutral stand-in that over-gates
+    // an auto-eligible write held only for an unrelated transport failure.
+    approvalPolicy: action.approvalPolicy,
     attempts: 0,
     enqueuedAt: now,
     updatedAt: now,

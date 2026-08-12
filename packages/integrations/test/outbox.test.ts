@@ -137,6 +137,30 @@ describe("holdWrite — hold-through-outage", () => {
     expect(first.value.outboxId).toBe("outbox_dup_1");
   });
 
+  it("PERSISTS the original approvalPolicy on the entry (24.15 — redrive must not reconstruct a neutral stand-in)", async () => {
+    // spec(§8) — task 24.15: the entry must carry the ORIGINAL approvalPolicy token
+    // so a later redrive can reconstruct a faithful action, not a hardcoded literal.
+    const outbox = new InMemoryOutbox();
+    const action = makeProposedAction({
+      idempotencyKey: "idem_policy",
+      canonicalObjectKey: "cok_policy",
+      approvalPolicy: "auto_private",
+    });
+    const held = await holdWrite(
+      {
+        env: makeEnvelope({ idempotencyKey: "idem_policy", canonicalObjectKey: "cok_policy" }),
+        action,
+        reason: "unreachable",
+        workspaceId: "employer-work",
+      },
+      outbox,
+      { clock, outboxId: () => "outbox_policy" },
+    );
+    expect(isOk(held)).toBe(true);
+    if (!isOk(held)) return;
+    expect(held.value.approvalPolicy).toBe("auto_private");
+  });
+
   it("propagates a store enqueue fault as a typed err (never throws, never a silent drop)", async () => {
     // A repo whose enqueue always faults and getByIdempotencyKey reports novel.
     const faulting = new InMemoryOutbox();

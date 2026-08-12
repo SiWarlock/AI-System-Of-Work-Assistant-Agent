@@ -42,18 +42,28 @@ import { nextDelayMs, EXHAUSTED, type BackoffConfig } from "../connectors/backof
 // invariant 2), so the drain reconstructs it explicitly.
 const EXISTENCE_PRECONDITION = "exists_check" as const;
 
-// A reconstructed action's approvalPolicy. The persisted OutboxEntry does not store
-// the original approvalPolicy (it is not needed to re-drive — the gateway's
-// approval verdict comes from the injected `requireApproval`). The schema requires
-// a non-empty string; a queued/held write is one that already cleared (or is
-// re-clearing) the approval gate, so we reconstruct the neutral queued marker.
+// FALLBACK-ONLY marker (task 24.15). The persisted OutboxEntry DOES now store the
+// original approvalPolicy (`OutboxEntry.approvalPolicy?: string`, task 24.35) — a
+// held write reconstructs the FAITHFUL original token below (the token itself is a
+// historical record of what was proposed, deliberately NOT re-derived; it is the
+// gateway's other conjuncts — the resolved workspace posture — that are re-read
+// fresh at redrive time, per `@sow/policy`'s `requiresApproval`). This literal is
+// the fallback for any entry with NO persisted value at all — not only a
+// pre-24.35 legacy row, but any future producer that enqueues without going
+// through `holdWrite`: the schema requires a non-empty string, and an absent
+// original policy must fail SAFE — "queued" is never AUTO_PRIVATE_POLICY, so a
+// row with no persisted policy always gates on redrive rather than silently
+// auto-allowing.
 const REDRIVE_APPROVAL_POLICY = "queued" as const;
 
 /**
  * Reconstruct the linked `ProposedAction` from a persisted `OutboxEntry`. The four
  * linkage keys (actionId / targetSystem / canonicalObjectKey / idempotencyKey) are
  * preserved verbatim so the gateway's `envelopeMatchesAction` linkage pin holds;
- * the stored `payload` re-drives the create. Pure.
+ * the stored `payload` re-drives the create; `approvalPolicy` is the FAITHFUL
+ * original token (task 24.15) — or, for any entry with no persisted value (a
+ * pre-24.35 legacy row, or a future producer bypassing `holdWrite`), the
+ * fail-safe `REDRIVE_APPROVAL_POLICY` fallback (never auto-eligible). Pure.
  */
 function rebuildAction(entry: OutboxEntry): ProposedAction {
   return {
@@ -61,7 +71,7 @@ function rebuildAction(entry: OutboxEntry): ProposedAction {
     targetSystem: entry.targetSystem as TargetSystem,
     canonicalObjectKey: entry.canonicalObjectKey,
     payload: (entry.payload as Record<string, unknown>) ?? {},
-    approvalPolicy: REDRIVE_APPROVAL_POLICY,
+    approvalPolicy: entry.approvalPolicy ?? REDRIVE_APPROVAL_POLICY,
     idempotencyKey: entry.idempotencyKey,
   };
 }

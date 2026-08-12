@@ -30,6 +30,7 @@ import {
   makeProposedAction,
   makeWriteReceipt,
   makeReceiptRecord,
+  makeOutboxEntry,
 } from "./support/fakes";
 
 const clock = (): string => "2026-07-01T00:00:00.000Z";
@@ -276,6 +277,146 @@ describe("drainOutbox — reconnect drain", () => {
     expect(isOk(entry)).toBe(true);
     if (!isOk(entry)) return;
     expect(entry.value.status).toBe("rejected");
+  });
+
+  // task 24.15 (§8/§16): the redrive reconstruction hardcoded approvalPolicy as a
+  // fixed "queued" literal, over-gating an entry held for an UNRELATED transport
+  // failure whose original action was auto-eligible. Fixed by persisting the
+  // original approvalPolicy (outbox.test.ts pins the write half) and reading it
+  // back here (`rebuildAction`) instead of the neutral stand-in.
+  //
+  // WHAT THIS FAKE IS AND ISN'T: it mirrors the ONE gating condition
+  // `@sow/policy`'s real `requiresApproval` uses that this slice's fix can affect
+  // (`action.approvalPolicy === "auto_private"`) — narrower than the full
+  // 5-conjunct predicate ON PURPOSE. The predicate's own logic (including the
+  // other 4 conjuncts: resolved-posture, dataOwner, target allow-list, visibility)
+  // is exhaustively pinned in `packages/policy/test/approval-policy.test.ts`; this
+  // slice's job is proving `rebuildAction`/`holdWrite` correctly THREAD the
+  // persisted field to that predicate, not re-verifying the predicate itself. The
+  // fake is NOT the authority on gating — packages/policy is. It agrees with the
+  // real predicate on the fixtures below (targetSystem: "calendar", the sole
+  // AUTO_ALLOW_ELIGIBLE_TARGETS member today, and a non-employer workspaceId) —
+  // if that target set ever grows past one member, the fake's blindness to
+  // targetSystem becomes a real gap; this is recorded, not guarded against.
+  function makeApprovalPolicyGatedDeps(
+    adapter: TargetWriteAdapter,
+    receiptStore: InMemoryReceiptStore,
+  ): ExternalWriteDeps {
+    return {
+      adapter,
+      receiptStore,
+      requireApproval: (action) => ({ requiresApproval: action.approvalPolicy !== "auto_private" }),
+      recordPendingApproval: async () => ok(undefined),
+      isApproved: async () => false, // never pre-approved — a gated entry must surface as pending
+      audit: async () => undefined,
+      clock,
+    };
+  }
+
+  it("redrive_restores_auto_eligible_entry_without_approval_gate — an auto_private entry redrives without approval", async () => {
+    const outbox = new InMemoryOutbox();
+    const receiptStore = new InMemoryReceiptStore();
+    await holdWrite(
+      {
+        // targetSystem: "calendar" + a non-employer workspaceId — see the fake's
+        // own docblock above for why the fixture must agree with the real
+        // predicate's other conjuncts, not just the one this fake reads.
+        env: makeEnvelope({
+          idempotencyKey: "idem_auto",
+          canonicalObjectKey: "cok_auto",
+          targetSystem: "calendar",
+        }),
+        action: makeProposedAction({
+          idempotencyKey: "idem_auto",
+          canonicalObjectKey: "cok_auto",
+          targetSystem: "calendar",
+          approvalPolicy: "auto_private",
+        }),
+        reason: "unreachable",
+        workspaceId: "personal-life",
+      },
+      outbox,
+      { clock, outboxId: () => "outbox_auto" },
+    );
+
+    const createCalls = { n: 0 };
+    const adapter = makeAdapter({ createCalls });
+    const result = await drainOutbox(outbox, {
+      gatewayDeps: makeApprovalPolicyGatedDeps(adapter, receiptStore),
+      now: clock(),
+      limit: 100,
+      backoffCfg,
+      clock,
+    });
+
+    // Drained straight through — no approval_pending detour, no held bucket.
+    expect(createCalls.n).toBe(1);
+    expect(result.drained).toBe(1);
+    expect(result.held).toBe(0);
+  });
+
+  it("redrive_still_gates_an_action_that_genuinely_needed_approval — a non-auto_private entry still requires approval on redrive", async () => {
+    const outbox = new InMemoryOutbox();
+    const receiptStore = new InMemoryReceiptStore();
+    await holdWrite(
+      {
+        // makeProposedAction defaults approvalPolicy to "requires_approval".
+        env: makeEnvelope({ idempotencyKey: "idem_needs", canonicalObjectKey: "cok_needs" }),
+        action: makeProposedAction({ idempotencyKey: "idem_needs", canonicalObjectKey: "cok_needs" }),
+        reason: "unreachable",
+        workspaceId: "employer-work",
+      },
+      outbox,
+      { clock, outboxId: () => "outbox_needs" },
+    );
+
+    const createCalls = { n: 0 };
+    const adapter = makeAdapter({ createCalls });
+    const result = await drainOutbox(outbox, {
+      gatewayDeps: makeApprovalPolicyGatedDeps(adapter, receiptStore),
+      now: clock(),
+      limit: 100,
+      backoffCfg,
+      clock,
+    });
+
+    // Regression pin: the fix must not over-correct into under-gating (rule-3).
+    expect(createCalls.n).toBe(0);
+    expect(result.held).toBe(1);
+    const entry = await outbox.get("outbox_needs");
+    expect(isOk(entry)).toBe(true);
+    if (!isOk(entry)) return;
+    expect(entry.value.status).toBe("proposed");
+  });
+
+  it("redrive_gates_a_pre_migration_entry_with_no_persisted_approval_policy — an absent approvalPolicy fails safe (gate, never skip)", async () => {
+    // Simulates a row written BEFORE this migration: enqueued directly (bypassing
+    // holdWrite) with no approvalPolicy at all — the field is optional/nullable.
+    const outbox = new InMemoryOutbox();
+    const receiptStore = new InMemoryReceiptStore();
+    await outbox.enqueue(
+      makeOutboxEntry({
+        outboxId: "outbox_legacy",
+        idempotencyKey: "idem_legacy",
+        canonicalObjectKey: "cok_legacy",
+        status: "retry_queued",
+        // approvalPolicy intentionally omitted.
+      }),
+    );
+
+    const createCalls = { n: 0 };
+    const adapter = makeAdapter({ createCalls });
+    const result = await drainOutbox(outbox, {
+      gatewayDeps: makeApprovalPolicyGatedDeps(adapter, receiptStore),
+      now: clock(),
+      limit: 100,
+      backoffCfg,
+      clock,
+    });
+
+    // Fail-safe default: an absent original policy must gate, never auto-allow.
+    expect(createCalls.n).toBe(0);
+    expect(result.held).toBe(1);
   });
 
   it("returns { drained, reused, held, failed } and drives entries through the SAME dispatch pipeline", async () => {
