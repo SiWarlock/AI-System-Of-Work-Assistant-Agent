@@ -2700,3 +2700,24 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⚠ **Do NOT over-correct into "distrust the ledger"** — the findings were correct when written, and one of the three still had a real residual under a false headline. **The verdict is not *the record is unreliable*, it is *the record is a snapshot and triage is where it gets refreshed.*** A triage pass that only re-reads is not triage; it is transcription.
 
 `pin: none — the subject is a triage METHOD.` `pattern: none — no linter distinguishes a stale finding from a live one; that is the whole problem.` `accepted: not mechanically enforceable` — enforcement point: **`/orchestrate-end`'s Carry-forward triage, and any audit or phase-exit whose verdict rests on a previously-recorded finding rather than a fresh measurement.**
+
+---
+
+<a id="144"></a>
+## 144. "DONE" PLUS A GREEN SUITE DOES NOT PROVE A MIGRATION EXISTS — THE DEPLOYMENT ARTIFACT AND THE TEST SUBSTRATE ARE DIFFERENT THINGS
+
+**Date:** 2026-08-12. **Origin:** task `24.39`, worker-implementer's candidate, **pre-endorsed by the lead** and banked hot rather than at close-out.
+
+**The instance.** Task `13.15` shipped the `Task` model, its Drizzle schema, its `TaskRepository`, and its tests. **It was ticked `[x]` DONE at `54b052a7` and certified.** ⛔ **No migration was ever generated, in either dialect.** A database built by the migration runner would not have had the table — for **eighteen days**, across multiple rounds, with a green suite the whole time.
+
+⭐⭐ **THE MECHANISM, and it is not carelessness: `packages/db`'s repo-contract suite builds its test databases DIRECTLY FROM THE DRIZZLE SCHEMA (`create-{sqlite,pg}-schema.ts`) and never calls `applyMigrations()`.** ⇒ **every `TaskRepository` test passed against a table the deployment path could not produce.** **The suite and the deployment disagreed, and the suite is the one everybody reads.** Nobody did anything wrong at the time; **the gate simply did not measure the thing.**
+
+⛔ **WHY IT WAS UNDETECTABLE BY EVERY MECHANISM THIS PROJECT HAD:** it is invisible to typecheck (the schema is real), to the test suite (which bypasses migrations by construction), to review (the diff looked complete because it *was* complete for everything except the artifact nobody's tooling touched), and to `/wired` (the symbol is reachable — it is the TABLE that isn't). ⭐ **It surfaced only because `drizzle-kit generate`, run for an unrelated one-column change, tried to bundle the missing `CREATE TABLE` into that slice** — i.e. **by accident, on a different task.**
+
+⭐ **THE GENERAL FORM, which is what makes this worth banking beyond migrations: whenever the artifact that VERIFIES a capability is built by a different mechanism than the artifact that SHIPS it, "tests pass" says nothing about "it ships."** Family: **`L89`** (a gate that runs but checks nothing — `lint` is typecheck) · **`L84`** (a suite whose call graph never reaches the mutated code) · **`L85`** (a fake mirroring a real guard covers the fake). ⚠ **This is the sharpest member, because the other three are about a test being weak; here the test is STRONG and simply points at a different object than the one that deploys.**
+
+⇒ **Do: for any capability with a separate deployment artifact — a migration, a bundle, a generated schema, a packaged binary, a registered workflow — at least one test must exercise THAT ARTIFACT, not a convenient reconstruction of it.** ⭐ **And derive the expected set from the source of truth, never a hand-maintained list** (`24.39`'s detector walks the schema barrel; the sibling `DOMAIN_TABLES` array in the same directory had already drifted by five tables — `24.43`). ⚠ **The literal-list version of this check is the same defect one level up: it reports coverage of a set it does not enumerate.**
+
+⚠ **Corollary for the tracker, and it reprices a lot of history: "certified DONE" for a schema-touching task carries less than it appears to.** A DONE tick attests that the slice's own acceptance criteria were met — **it does not attest that the deployment path can reproduce the result**, unless a criterion said so. `13.15`'s Done-when never mentioned a migration, which is exactly how it passed.
+
+`pin: packages/db/test/migrate/schema-migration-coverage.test.ts` (barrel-derived, both dialects, non-vacuity-guarded — `24.39`). `pattern: none reliable — the defect is an ABSENT artifact, and no grep finds a file that was never written; the detector test is the mechanism.` `accepted: partially enforceable` — enforcement point: **any slice adding or altering a persisted schema, and any Done-when for one (state the migration explicitly, as `13.15`'s did not).**
