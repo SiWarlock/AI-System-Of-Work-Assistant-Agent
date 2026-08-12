@@ -135,7 +135,11 @@ When the implementer sends you a Step 9 summary, route each item **immediately**
 >
 > ⭐ **`L109`: a check you read AFTER the action is a receipt, not a gate** — so run the "after" pass **before** `git commit`, and treat a non-zero exit as a stop, not a note.
 >
-> ⛔ **DO NOT DELETE THIS LINE NOW THAT THE HOOK EXISTS.** `scripts/hooks/pre-commit-plan-lint.sh` is built and verified (task `24.42`) but **ships NOT INSTALLED** — armed by choice, per this project's posture for every dangerous capability. **A git hook is repo-local and is not shared by clone**, so it protects one working copy and covers neither teammates, nor CI, nor a fresh checkout. ⇒ **the hook and this line are COMPLEMENTS: this line is the only thing binding on an orchestrator who has not installed it.** *(Install, opt-in: `ln -s ../../scripts/hooks/pre-commit-plan-lint.sh .git/hooks/pre-commit`. Verify without installing: `PLAN_LINT_FORCE=1 bash scripts/hooks/pre-commit-plan-lint.sh`.)*
+> ⭐ **A `pre-commit` hook IS NOW INSTALLED AND LIVE in this working copy** (owner-authorized 2026-08-12, task `24.42`): `scripts/hooks/pre-commit-plan-lint.sh`. ⛔ **A tracker commit carrying a `plan-lint` violation WILL FAIL.** `git commit --no-verify` bypasses it — deliberate and visible by design; **if you use it, say so at close-out.**
+>
+> ⛔ **DO NOT DELETE THIS LINE NOW THAT THE HOOK IS LIVE — installation makes it MORE important, not less.** A git hook is **repo-local and not shared by clone**: it covers this working copy, **not CI and not a fresh checkout.** ⭐ **And a LIVE gate is one a future reader may assume covers everyone. It does not.** **A gate believed to cover more than it does is worse than a known gap (`L89`) — which is the exact failure this hook was written to fix, now reachable from the opposite direction.** ⇒ **hook and line are COMPLEMENTS; this line is what binds when the hook isn't there.**
+>
+> ⚠ **Run the check with REDIRECTION, never a pipe:** `bash scripts/plan-lint.sh > /tmp/pl.txt 2>&1; echo $?`. ⛔ **`plan-lint … | tail -1 && git commit` reads TAIL's exit status, not plan-lint's — the orchestrator committed over a RED that way on 2026-08-12, within the hour of shipping this hook** (`L111` producing `L109`'s shape). **That incident is why the owner installed it.**
 
 **Hot-write ≠ autonomous-write — but the gate is you, not the human.** You write each routed item yourself; you do **not** ask the human per item. The human is looped in **only** for the escalation rows (deferments, safety findings, load-bearing architectural decisions).
 

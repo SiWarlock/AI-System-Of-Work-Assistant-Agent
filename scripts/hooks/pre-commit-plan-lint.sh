@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 # pre-commit-plan-lint.sh — gate IMPLEMENTATION_PLAN.md hot-writes on scripts/plan-lint.sh
 #
-# ⛔ SHIPPED NOT INSTALLED. Built, verified, and DORMANT until someone opts in — the
-# same posture this codebase applies to every other dangerous capability (built ·
-# dormant · armed by choice). Installing it changes commit behaviour for whoever
-# owns the working copy, so it is their deliberate act, never a side effect of a pull.
+# ⭐ INSTALLED AND LIVE IN THIS WORKING COPY as of 2026-08-12 — OWNER-AUTHORIZED.
+# Built dormant first (the project's built · dormant · armed-by-choice posture), then
+# armed by the owner. ⛔ A tracker commit carrying a plan-lint violation NOW FAILS here.
+# `git commit --no-verify` bypasses it — deliberate and visible, which is the design;
+# if you use it, say so at close-out.
 #
-#   INSTALL (opt-in, per working copy):
+# ⚠ CORRECTION TO THE ORIGINAL FRAMING, recorded because the reasoning was wrong even
+# though the outcome was right: this was first described as "activation is a deliberate
+# act by whoever owns the working copy," as if it were per-session opt-in. IT IS NOT —
+# there is ONE clone, shared by every session including the owner's own commits. So
+# "opt-in" was never available; the only real question was whether to change the
+# owner's repo, which is what made it theirs to decide.
+#
+#   INSTALL / RE-INSTALL (already done here; needed after a fresh clone):
 #     ln -s ../../scripts/hooks/pre-commit-plan-lint.sh .git/hooks/pre-commit
 #   UNINSTALL:
 #     rm .git/hooks/pre-commit
@@ -26,12 +34,16 @@
 # read AFTER the action is a receipt, not a gate; L103: prefer unrepresentable to
 # detected).
 #
-# ⚠ ACCEPTED RESIDUAL, stated rather than papered over: a git hook is REPO-LOCAL and
-# is NOT shared by clone. Installing it here protects THIS working copy only. It does
-# not cover teammates, CI, or a fresh clone — so the mandatory before-and-after
-# plan-lint step in docs/orchestrator-briefing.md REMAINS BINDING and is a complement
-# to this hook, never a thing the hook replaces (L89: a gate believed to cover more
-# than it does is worse than a known gap).
+# ⚠ ACCEPTED RESIDUAL, UNCHANGED BY INSTALLATION: a git hook is REPO-LOCAL and is NOT
+# shared by clone. It protects THIS working copy only — not CI, not a fresh clone.
+# The mandatory before-and-after plan-lint step in docs/orchestrator-briefing.md
+# REMAINS BINDING and is a complement, never a thing this hook replaces.
+#
+# ⛔ AND INSTALLING IT CREATED A NEW WAY FOR L89 TO HAPPEN, which is worth more than
+# the reassurance: a LIVE gate is one a future reader may assume covers everyone.
+# It does not. A gate believed to cover more than it does is worse than a known gap —
+# which is precisely the failure this hook was written to fix, now reachable from the
+# other direction. ⇒ the manual step is MORE important to keep now, not less.
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
