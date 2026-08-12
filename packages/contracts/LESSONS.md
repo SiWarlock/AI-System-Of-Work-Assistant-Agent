@@ -2675,3 +2675,28 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⭐ **The general form, which is what makes it worth banking rather than just doing: a correction is not propagated when the people are corrected — it is propagated when the ARTIFACT is corrected, and human acknowledgement is systematically mistaken for both.** **L94** said a correction must reach every channel carrying the claim; **this adds the harder half — the channel people ACT from and the channel people READ from are different channels, and fixing the first is what makes forgetting the second invisible.**
 
 `pin: none — process convention.` `pattern: none — the stale text is well-formed prose; no linter distinguishes a superseded release condition from a current one.` `accepted: not mechanically enforceable` — enforcement point: **any owner ruling that changes a release condition or arming ledger. The writer quotes the amended text back; the lead re-reads the file and confirms. Neither step is optional, and the second is the one that has actually caught it.**
+
+---
+
+<a id="143"></a>
+## 143. A RECORDED FINDING DECAYS: ONLY ITS TEXT IS EVER RE-READ, ITS CLAIM IS NEVER RE-MEASURED — SO TRIAGE MUST RE-MEASURE, NOT RE-READ
+
+**Date:** 2026-08-12. **Origin:** task `24.41`, the decomposition of Carry-forward item 6. **Banked at the lead's instruction, who named the generalisation.**
+
+**The measurement.** Item 6 held ~13 sub-findings accumulated over ~3 weeks. **Four could be checked mechanically. THREE contradicted their own recorded status:**
+
+- **`(a0)(ix)(2)`** claimed *"`grep -c 'packages/contracts/LESSONS' <area>/CLAUDE.md` = 0 for ALL FIVE non-contract areas."* **Measured: `1` for all five.** The proposed one-line-per-area fix had **landed**, and the finding still read as open.
+- **`(a0)(vi)`** proposed *read-time staleness expiry in `check-team-context.sh`*. **Measured: implemented** (`status:"stale"` + `stale_age_sec`).
+- **`(a0)(v)`** claimed *"`plan-lint` has no equivalent trigger ANYWHERE."* **Measured: FALSE as written** — `.claude/commands/orchestrate-end.md:100` runs it and `:175` forbids committing over a non-zero exit. **A real, narrower residual survived** (it gates the round-close commit, not the per-edit hot-write) — **but the finding as written was wrong, and anyone acting on its text would have rebuilt a gate that already existed.**
+
+⭐⭐ **THE MECHANISM, and it is not about this item: a finding is written ONCE, with evidence, and thereafter only its TEXT is ever re-read — its CLAIM is never re-measured.** Triage asks *"is this still relevant?"* and answers from the prose, because the prose is what is in front of you and it is confidently written. ⇒ **an item can sit `OPEN` for three rounds while the defect is gone, and the ledger reports it live the entire time.**
+
+⛔ **THIS IS THE INVERSE OF THE FAILURE THE ROUND WAS SPENT ON, WHICH IS WHY IT WAS INVISIBLE.** `L94`/`L142`/the propagation headline are all *a fix that landed and the record did not catch up in the direction of DANGER* (the doc still says the guard is missing when it exists; someone rebuilds it — wasteful but safe). **This is the same decay pointed the other way, and it is the expensive direction:** *the record says a defect is OPEN when it is CLOSED*, so the ledger's open-item count is inflated, real work competes with phantom work, and — worse — **a genuinely open item sitting in a list where most entries are stale gets the credibility of its neighbours.**
+
+⭐ **`L126` said a lesson is a SEARCH KEY, not a result. This is the same claim about FINDINGS**, which is a sharper case: a lesson is prescriptive and ages slowly, while **a finding is an assertion about a specific file at a specific commit and begins rotting immediately.**
+
+⇒ **Do: treat any finding older than a round or two as a HYPOTHESIS.** At triage, **re-run the check the finding itself specifies** before dispositioning it — ⭐ **the cost is near zero and that is the point: all three of these were disproved by running the exact grep the finding had helpfully written down.** ⚠ **A finding that does NOT state a re-runnable check is the one to worry about** — it cannot be re-measured, only believed, so **write findings with their own falsification command attached** (`L100`: state the scope; this adds *state the re-check*).
+
+⚠ **Do NOT over-correct into "distrust the ledger"** — the findings were correct when written, and one of the three still had a real residual under a false headline. **The verdict is not *the record is unreliable*, it is *the record is a snapshot and triage is where it gets refreshed.*** A triage pass that only re-reads is not triage; it is transcription.
+
+`pin: none — the subject is a triage METHOD.` `pattern: none — no linter distinguishes a stale finding from a live one; that is the whole problem.` `accepted: not mechanically enforceable` — enforcement point: **`/orchestrate-end`'s Carry-forward triage, and any audit or phase-exit whose verdict rests on a previously-recorded finding rather than a fresh measurement.**
