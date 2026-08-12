@@ -21,6 +21,7 @@ import {
   isAllow,
   type CrossWorkspaceRawRequest,
   type ProjectionTypeVisibilityTaxonomy,
+  type DenialReason,
 } from "@sow/policy";
 
 /** A single JSON-path-tagged validation issue (redaction-safe: path + message only). */
@@ -122,31 +123,74 @@ export function admitProjection(
   // derivation (task 24.18), each an independent gate + workspace pin.
   const decision = validateProjectionVisibility(projection, sourceWorkspace, taxonomy);
   if (!isAllow(decision)) {
-    // Explicit branch per DenialReason this function can actually emit — never a
-    // `default:`/trailing-else absorb of a real reason into `malformed_policy_input`
-    // (contracts L134 / task 24.23's own class of bug, avoided here on purpose).
-    if (decision.reason === "VISIBILITY_EXCEEDS_SOURCE") {
-      return err({
-        code: "visibility_exceeds_source",
-        declaredLevel: projection.visibilityLevel,
-        sourceDefault: sourceWorkspace.defaultVisibility,
-        message: decision.message,
-      });
-    }
-    if (decision.reason === "VISIBILITY_TYPE_MISMATCH") {
-      return err({
-        code: "visibility_type_mismatch",
-        declaredLevel: projection.visibilityLevel,
-        projectionType: projection.projectionType,
-        message: decision.message,
-      });
-    }
-    // The only remaining reason `validateProjectionVisibility` can emit today is
-    // MALFORMED_POLICY_INPUT (absent/mismatched workspace id, unrecognized level).
-    return err({ code: "malformed_policy_input", message: decision.message });
+    return err(denialToGateError(decision.reason, decision.message, projection, sourceWorkspace));
   }
 
   return ok(decision.value);
+}
+
+/**
+ * Map a §5 `DenialReason` to this gate's `GclGateError` (task 24.36 / L134,
+ * third instance this round — the prior form was an un-guarded `if`/`if`/
+ * trailing-return that silently absorbed any reason besides the two explicit
+ * checks into `malformed_policy_input`, contradicting its own adjacent comment).
+ * EXHAUSTIVE over all 15 `DenialReason` members (4 `HardDenial` + 11
+ * `SupportDenial`), terminated with an `assertNever`-style guard mirroring
+ * `global-markdown-reconcile.ts`'s `gateReason` (task 24.30's landed pattern) —
+ * a future 16th member is a compile error here, not a silent absorption.
+ * `validateProjectionVisibility` can genuinely only ever emit 3 of the 15
+ * (`VISIBILITY_EXCEEDS_SOURCE`/`VISIBILITY_TYPE_MISMATCH`/`MALFORMED_POLICY_INPUT`
+ * — verified by reading its full body); the other 12 are grouped under one
+ * fail-closed `malformed_policy_input` mapping (matching `FAIL_CLOSED_DENIAL`'s
+ * own designation as the default deny code), each its OWN explicit case, not a
+ * `default:` catch-all. Exported so every member is directly unit-testable, not
+ * only the 3 reachable through a real `validateProjectionVisibility` call.
+ */
+export function denialToGateError(
+  reason: DenialReason,
+  message: string,
+  projection: GclProjection,
+  sourceWorkspace: Workspace,
+): GclGateError {
+  switch (reason) {
+    case "VISIBILITY_EXCEEDS_SOURCE":
+      return {
+        code: "visibility_exceeds_source",
+        declaredLevel: projection.visibilityLevel,
+        sourceDefault: sourceWorkspace.defaultVisibility,
+        message,
+      };
+    case "VISIBILITY_TYPE_MISMATCH":
+      return {
+        code: "visibility_type_mismatch",
+        declaredLevel: projection.visibilityLevel,
+        projectionType: projection.projectionType,
+        message,
+      };
+    case "MALFORMED_POLICY_INPUT":
+    case "EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED":
+    case "DIRECT_CROSS_WORKSPACE_RAW_RETRIEVAL":
+    case "UNTRUSTED_CONTENT_MUTATING_TOOL":
+    case "WRITE_ADAPTER_OUTSIDE_GATEWAY":
+    case "PROVIDER_NOT_ALLOWED":
+    case "NO_ROUTE_FOR_CAPABILITY":
+    case "PROCESSOR_NOT_ALLOWED":
+    case "LOCAL_ENDPOINT_NOT_CONFIGURED":
+    case "NON_LOOPBACK_LOCAL_TREATED_AS_EGRESS":
+    case "APPROVAL_REQUIRED":
+    case "AUTH_TOKEN_INVALID":
+    case "ORIGIN_NOT_ALLOWED":
+      return { code: "malformed_policy_input", message };
+    default: {
+      // A new DenialReason member reaches here as a non-`never` type → tsc
+      // error, forcing a deliberate mapping decision above (mirrors
+      // defaultSeverityForFailureClass / 24.30's gateReason). Never a
+      // `default:` that silently absorbs a real reason.
+      const _exhaustive: never = reason;
+      void _exhaustive;
+      return { code: "malformed_policy_input", message };
+    }
+  }
 }
 
 /** Enumerable denial reasons for a direct cross-workspace raw-retrieval guard. */

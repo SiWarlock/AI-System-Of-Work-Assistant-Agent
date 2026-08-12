@@ -3,10 +3,11 @@
 // (never downgrade-and-store); direct cross-workspace raw retrieval denied (WS-8).
 import { describe, it, expect } from "vitest";
 import { defaultWorkspace, type GclProjection, type Workspace } from "@sow/contracts";
-import type { ProjectionTypeVisibilityTaxonomy } from "@sow/policy";
+import type { ProjectionTypeVisibilityTaxonomy, DenialReason } from "@sow/policy";
 import {
   admitProjection,
   guardCrossWorkspaceRawRead,
+  denialToGateError,
 } from "../src/gcl/visibility-gate";
 
 // A workspace whose default visibility admits `coordination`-level projections.
@@ -113,6 +114,80 @@ describe("admitProjection — composed candidate-data gate + visibility validati
     const taxonomy: ProjectionTypeVisibilityTaxonomy = { "some-other-type": ["isolated"] };
     const r = admitProjection(validCandidate, wsWithDefault("sanitized"), undefined, taxonomy);
     expect(r.ok).toBe(true);
+  });
+});
+
+// task 24.36 (L134, third instance): admitProjection's DenialReason narrowing was
+// an un-guarded if/if/trailing-return — any DenialReason other than the two
+// explicit checks silently fell into "malformed_policy_input", contradicting its
+// own adjacent comment ("never a default:/trailing-else absorb... avoided here on
+// purpose"). Tests target the extracted `denialToGateError` directly (mirroring
+// 24.30's `gateReason` extraction) so every one of DenialReason's 12 members is
+// exercisable, not only the 3 validateProjectionVisibility can actually emit.
+describe("denialToGateError — exhaustive over DenialReason (task 24.36 / L134)", () => {
+  it("admit_projection_visibility_exceeds_source_unchanged: VISIBILITY_EXCEEDS_SOURCE maps byte-identically to before", () => {
+    const r = denialToGateError("VISIBILITY_EXCEEDS_SOURCE", "exceeds", validCandidate, wsWithDefault("isolated"));
+    expect(r).toEqual({
+      code: "visibility_exceeds_source",
+      declaredLevel: "coordination",
+      sourceDefault: "isolated",
+      message: "exceeds",
+    });
+  });
+
+  it("admit_projection_visibility_type_mismatch_unchanged: VISIBILITY_TYPE_MISMATCH maps byte-identically to before", () => {
+    const r = denialToGateError("VISIBILITY_TYPE_MISMATCH", "mismatch", validCandidate, wsWithDefault("isolated"));
+    expect(r).toEqual({
+      code: "visibility_type_mismatch",
+      declaredLevel: "coordination",
+      projectionType: "calendar_busy",
+      message: "mismatch",
+    });
+  });
+
+  it("admit_projection_malformed_policy_input_still_explicit: MALFORMED_POLICY_INPUT, and every other DenialReason validateProjectionVisibility can never emit, still maps to malformed_policy_input", () => {
+    const ws = wsWithDefault("isolated");
+    // MALFORMED_POLICY_INPUT: the one this function's real caller actually emits.
+    expect(denialToGateError("MALFORMED_POLICY_INPUT", "bad input", validCandidate, ws)).toEqual({
+      code: "malformed_policy_input",
+      message: "bad input",
+    });
+    // The other 9 members are genuinely impossible from validateProjectionVisibility
+    // (verified by reading its full body) but must still map explicitly, not via a
+    // trailing fallthrough — fail-closed to the same reason, per FAIL_CLOSED_DENIAL.
+    const impossibleButExhaustivelyHandled: readonly DenialReason[] = [
+      "EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED",
+      "DIRECT_CROSS_WORKSPACE_RAW_RETRIEVAL",
+      "UNTRUSTED_CONTENT_MUTATING_TOOL",
+      "WRITE_ADAPTER_OUTSIDE_GATEWAY",
+      "PROVIDER_NOT_ALLOWED",
+      "NO_ROUTE_FOR_CAPABILITY",
+      "PROCESSOR_NOT_ALLOWED",
+      "LOCAL_ENDPOINT_NOT_CONFIGURED",
+      "NON_LOOPBACK_LOCAL_TREATED_AS_EGRESS",
+      "APPROVAL_REQUIRED",
+      "AUTH_TOKEN_INVALID",
+      "ORIGIN_NOT_ALLOWED",
+    ];
+    for (const reason of impossibleButExhaustivelyHandled) {
+      expect(denialToGateError(reason, "n/a", validCandidate, ws)).toEqual({
+        code: "malformed_policy_input",
+        message: "n/a",
+      });
+    }
+  });
+
+  // admitProjection's own OBSERVABLE behavior is unchanged by the extraction —
+  // pinned end-to-end through the real function, not just the extracted helper.
+  it("admitProjection's own output is byte-identical after the extraction, for both real deny reasons", () => {
+    const exceeds = admitProjection(validCandidate, wsWithDefault("isolated"));
+    expect(exceeds.ok).toBe(false);
+    if (!exceeds.ok) expect(exceeds.error.code).toBe("visibility_exceeds_source");
+
+    const foreign = { ...validCandidate, workspaceId: "ws-999" as GclProjection["workspaceId"] };
+    const malformed = admitProjection(foreign, wsWithDefault("full"));
+    expect(malformed.ok).toBe(false);
+    if (!malformed.ok) expect(malformed.error.code).toBe("malformed_policy_input");
   });
 });
 
