@@ -22,6 +22,7 @@ import {
   type CrossWorkspaceRawRequest,
   type ProjectionTypeVisibilityTaxonomy,
   type DenialReason,
+  type AuditSignal,
 } from "@sow/policy";
 
 /** A single JSON-path-tagged validation issue (redaction-safe: path + message only). */
@@ -36,6 +37,13 @@ export interface GateIssue {
  * are the two HARD-reject safety cases (§3 P3 / §5): the gate refuses them, it
  * does NOT sanitize-and-downgrade.
  */
+// task 24.33: the three policy-decision-derived variants below (visibility_exceeds_source,
+// visibility_type_mismatch, malformed_policy_input) carry an OPTIONAL `audit` — the
+// `PolicyDecision`'s mandatory `AuditSignal`, threaded outward instead of dropped
+// (`denialToGateError` is the only constructor of these three and always has one available).
+// `schema_rejected`/`raw_content_present` never carry one — they're pure ajv/Zod shape
+// failures with no `PolicyDecision`/`AuditSignal` behind them at all, so there's nothing to
+// thread; adding the field there would imply a capability that can never manifest.
 export type GclGateError =
   | { readonly code: "schema_rejected"; readonly stage: "ajv" | "zod"; readonly issues: readonly GateIssue[] }
   | { readonly code: "raw_content_present"; readonly issues: readonly GateIssue[] }
@@ -44,6 +52,7 @@ export type GclGateError =
       readonly declaredLevel: VisibilityLevel;
       readonly sourceDefault: VisibilityLevel;
       readonly message: string;
+      readonly audit?: AuditSignal;
     }
   // task 24.18 (WS-1/F14): the declared level is not permitted for the
   // projection's projectionType — a DERIVATION mismatch, distinct from
@@ -54,8 +63,34 @@ export type GclGateError =
       readonly declaredLevel: VisibilityLevel;
       readonly projectionType: string;
       readonly message: string;
+      readonly audit?: AuditSignal;
     }
-  | { readonly code: "malformed_policy_input"; readonly message: string };
+  | { readonly code: "malformed_policy_input"; readonly message: string; readonly audit?: AuditSignal };
+
+/**
+ * Extract a deny's `AuditSignal`, when the variant carries one (task 24.33). Only the three
+ * policy-decision-derived variants ever do — `schema_rejected`/`raw_content_present` have none
+ * to extract (see the `GclGateError` doc comment above). Switches on `.code` with the same
+ * `assertNever`-style exhaustiveness guard as `denialToGateError`/`denialToCrossWorkspaceRawDenial`
+ * (this file's own convention, code-quality review) rather than a structural `"audit" in error`
+ * check — a future 6th `GclGateError` variant is a compile error here, not a silent `undefined`.
+ */
+export function auditOf(error: GclGateError): AuditSignal | undefined {
+  switch (error.code) {
+    case "schema_rejected":
+    case "raw_content_present":
+      return undefined;
+    case "visibility_exceeds_source":
+    case "visibility_type_mismatch":
+    case "malformed_policy_input":
+      return error.audit;
+    default: {
+      const _exhaustive: never = error;
+      void _exhaustive;
+      return undefined;
+    }
+  }
+}
 
 /** Result alias for an admission decision. */
 export type GclAdmitResult = Result<GclProjection, GclGateError>;
@@ -123,7 +158,9 @@ export function admitProjection(
   // derivation (task 24.18), each an independent gate + workspace pin.
   const decision = validateProjectionVisibility(projection, sourceWorkspace, taxonomy);
   if (!isAllow(decision)) {
-    return err(denialToGateError(decision.reason, decision.message, projection, sourceWorkspace));
+    return err(
+      denialToGateError(decision.reason, decision.message, projection, sourceWorkspace, decision.audit),
+    );
   }
 
   return ok(decision.value);
@@ -145,12 +182,17 @@ export function admitProjection(
  * own designation as the default deny code), each its OWN explicit case, not a
  * `default:` catch-all. Exported so every member is directly unit-testable, not
  * only the 3 reachable through a real `validateProjectionVisibility` call.
+ * `audit` (task 24.33) is OPTIONAL and threaded straight into the three
+ * policy-decision variants when the caller has one (`admitProjection` always does —
+ * `decision.audit` is mandatory on `PolicyDecision`) — the exhaustive unit tests below
+ * call this directly without a 5th arg and are unaffected (no `audit` key on the result).
  */
 export function denialToGateError(
   reason: DenialReason,
   message: string,
   projection: GclProjection,
   sourceWorkspace: Workspace,
+  audit?: AuditSignal,
 ): GclGateError {
   switch (reason) {
     case "VISIBILITY_EXCEEDS_SOURCE":
@@ -159,6 +201,7 @@ export function denialToGateError(
         declaredLevel: projection.visibilityLevel,
         sourceDefault: sourceWorkspace.defaultVisibility,
         message,
+        ...(audit !== undefined ? { audit } : {}),
       };
     case "VISIBILITY_TYPE_MISMATCH":
       return {
@@ -166,6 +209,7 @@ export function denialToGateError(
         declaredLevel: projection.visibilityLevel,
         projectionType: projection.projectionType,
         message,
+        ...(audit !== undefined ? { audit } : {}),
       };
     case "MALFORMED_POLICY_INPUT":
     case "EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED":
@@ -180,7 +224,7 @@ export function denialToGateError(
     case "APPROVAL_REQUIRED":
     case "AUTH_TOKEN_INVALID":
     case "ORIGIN_NOT_ALLOWED":
-      return { code: "malformed_policy_input", message };
+      return { code: "malformed_policy_input", message, ...(audit !== undefined ? { audit } : {}) };
     default: {
       // A new DenialReason member reaches here as a non-`never` type → tsc
       // error, forcing a deliberate mapping decision above (mirrors

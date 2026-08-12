@@ -6,8 +6,22 @@ import { describe, it, expect } from "vitest";
 import { ok, err, defaultWorkspace } from "@sow/contracts";
 import type { GclProjection, Workspace } from "@sow/contracts";
 import type { DbError, DbResult } from "@sow/db";
-import type { ProjectionTypeVisibilityTaxonomy } from "@sow/policy";
-import { admitAndPersistProjection, serveProjection } from "../src/gcl/projection";
+import type { ProjectionTypeVisibilityTaxonomy, AuditSignal } from "@sow/policy";
+import { buildAuditSignal } from "@sow/policy";
+import {
+  admitAndPersistProjection,
+  serveProjection,
+  persistDenialAudit,
+  type GclAuditPersistPort,
+} from "../src/gcl/projection";
+
+// ── in-memory GclAuditPersistPort fake (task 24.33 — spy, records every call) ──
+class FakeAuditPersistPort implements GclAuditPersistPort {
+  readonly calls: { signal: AuditSignal; workspaceId: string }[] = [];
+  async persistDenial(signal: AuditSignal, workspaceId: string): Promise<void> {
+    this.calls.push({ signal, workspaceId });
+  }
+}
 
 // ── in-memory GclProjectionRepository fake (interface-only; no concrete driver) ──
 class FakeGclProjectionRepo {
@@ -110,6 +124,94 @@ describe("admitAndPersistProjection", () => {
       expect(r.error.code).toBe("persist_failed");
       if (r.error.code === "persist_failed") expect(r.error.dbError.code).toBe("unavailable");
     }
+  });
+
+  // task 24.33 — MOVE THE STATE (24.7's precedent): drive a real denial through the real
+  // admitProjection → admitAndPersistProjection chain, faking only the repository seam (as
+  // this suite already does) + the injected auditPersist port, and assert a durable record
+  // lands. A construction-side test can't distinguish "built and dropped" from a fix.
+  it("gcl_denial_lands_a_durable_audit_record_end_to_end: a real denial through admitAndPersistProjection calls the injected persist port with the signal + workspaceId", async () => {
+    const repo = new FakeGclProjectionRepo();
+    const auditPersist = new FakeAuditPersistPort();
+    const workspace = ws("isolated");
+    const r = await admitAndPersistProjection(validCandidate, workspace, repo, undefined, undefined, auditPersist);
+    expect(r.ok).toBe(false);
+    expect(auditPersist.calls).toHaveLength(1);
+    expect(auditPersist.calls[0]?.workspaceId).toBe(workspace.id);
+    expect(auditPersist.calls[0]?.signal.denialCode).toBe("VISIBILITY_EXCEEDS_SOURCE");
+  });
+
+  // task 24.33 / contracts L86 — a channel that fires on every path carries no information; the ALLOW
+  // path must persist nothing for the deny channel to mean anything.
+  it("allow_path_persists_nothing: a clean admission calls the injected persist port zero times", async () => {
+    const repo = new FakeGclProjectionRepo();
+    const auditPersist = new FakeAuditPersistPort();
+    const r = await admitAndPersistProjection(validCandidate, ws("sanitized"), repo, undefined, undefined, auditPersist);
+    expect(r.ok).toBe(true);
+    expect(auditPersist.calls).toHaveLength(0);
+  });
+
+  it("with no auditPersist port injected, a denial still resolves normally (port is optional, byte-equivalent when absent)", async () => {
+    const repo = new FakeGclProjectionRepo();
+    const r = await admitAndPersistProjection(validCandidate, ws("isolated"), repo);
+    expect(r.ok).toBe(false);
+  });
+
+  // task 24.33 (code-quality review) — a schema/raw-content denial has no PolicyDecision behind
+  // it (auditOf returns undefined for these two variants), so the injected port must never be
+  // called for them either, not just for the ALLOW path.
+  it("a raw-content denial (no PolicyDecision, no AuditSignal to persist) calls the injected persist port zero times", async () => {
+    const repo = new FakeGclProjectionRepo();
+    const auditPersist = new FakeAuditPersistPort();
+    const rawBearing = { ...validCandidate, sanitizedPayload: { content: "raw text" } };
+    const r = await admitAndPersistProjection(rawBearing, ws("full"), repo, undefined, undefined, auditPersist);
+    expect(r.ok).toBe(false);
+    expect(auditPersist.calls).toHaveLength(0);
+  });
+});
+
+// task 24.33 — the redaction-safety gate lives HERE (packages/knowledge), not inside the
+// injected port, because the real port binding is deferred to Phase 25.2/25.4 and the safety
+// property must hold regardless of what that future adapter does. Every real GCL-produced
+// AuditSignal is safe by construction (policy-authored refs/codes only — mirrors
+// isRedactionSafe's own documented invariant), so the refusal case is pinned directly against
+// a hand-built unsafe signal, the same convention this file's sibling (denialToGateError)
+// already uses for cases the real chain can't produce.
+describe("persistDenialAudit — the fail-closed redaction-safety gate before any persist (task 24.33)", () => {
+  const safeSignal = buildAuditSignal({
+    actor: "policy",
+    event: "gcl.denied",
+    refs: ["ref:workspace:ws-001"],
+    payloadHash: "sha256:cafe",
+    beforeSummary: "not evaluated",
+    afterSummary: "denied",
+  });
+
+  it("persists a redaction-safe signal", async () => {
+    const auditPersist = new FakeAuditPersistPort();
+    await persistDenialAudit(safeSignal, "ws-001", auditPersist);
+    expect(auditPersist.calls).toHaveLength(1);
+  });
+
+  it("redaction_unsafe_signal_is_refused_not_persisted: a credential-shaped signal is refused, never persisted", async () => {
+    const leaky = buildAuditSignal({
+      actor: "policy",
+      event: "gcl.denied",
+      refs: ["sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGH"],
+      payloadHash: "sha256:cafe",
+      beforeSummary: "not evaluated",
+      afterSummary: "denied",
+    });
+    const auditPersist = new FakeAuditPersistPort();
+    await persistDenialAudit(leaky, "ws-001", auditPersist);
+    expect(auditPersist.calls).toHaveLength(0);
+  });
+
+  it("a missing signal (allow path) or a missing port is a no-op, never throws", async () => {
+    const auditPersist = new FakeAuditPersistPort();
+    await expect(persistDenialAudit(undefined, "ws-001", auditPersist)).resolves.toBeUndefined();
+    expect(auditPersist.calls).toHaveLength(0);
+    await expect(persistDenialAudit(safeSignal, "ws-001", undefined)).resolves.toBeUndefined();
   });
 });
 

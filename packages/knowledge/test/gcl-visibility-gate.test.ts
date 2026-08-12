@@ -9,6 +9,7 @@ import {
   guardCrossWorkspaceRawRead,
   denialToGateError,
   denialToCrossWorkspaceRawDenial,
+  auditOf,
 } from "../src/gcl/visibility-gate";
 
 // A workspace whose default visibility admits `coordination`-level projections.
@@ -63,6 +64,44 @@ describe("admitProjection — composed candidate-data gate + visibility validati
         expect(r.error.declaredLevel).toBe("coordination");
         expect(r.error.sourceDefault).toBe("isolated");
       }
+    }
+  });
+
+  // task 24.33 (spec §5, §16, safety rule 4): validateProjectionVisibility's PolicyDecision
+  // carries a mandatory AuditSignal on every deny — admitProjection built it and dropped it.
+  // Pinned through the REAL entry point (not denialToGateError directly) because the defect
+  // is specifically that the real call site never threaded decision.audit through.
+  it("admit_projection_deny_carries_its_audit_signal: a real policy-decision denial's AuditSignal survives to the caller instead of being dropped", () => {
+    const r = admitProjection(validCandidate, wsWithDefault("isolated"));
+    expect(r.ok).toBe(false);
+    if (!r.ok && "audit" in r.error) {
+      expect(r.error.audit).toBeDefined();
+      expect(r.error.audit?.denialCode).toBe("VISIBILITY_EXCEEDS_SOURCE");
+      // redaction-safe by construction (policy-authored refs/codes only) — sanity, not the gate itself.
+      expect(r.error.audit?.refs.length).toBeGreaterThan(0);
+    } else {
+      expect.fail("expected a policy-decision deny variant carrying an audit field");
+    }
+  });
+
+  // task 24.33 (code-quality review) — the negative control: auditOf's "no audit" branch
+  // (schema_rejected / raw_content_present) is the one this function most needs pinned, since
+  // its whole job is discriminating "has audit" from "doesn't."
+  it("auditOf returns undefined for the two variants that never carry a PolicyDecision (schema_rejected, raw_content_present)", () => {
+    const rawBearing = { ...validCandidate, sanitizedPayload: { body: "raw employer transcript text" } };
+    const rawResult = admitProjection(rawBearing, wsWithDefault("full"));
+    expect(rawResult.ok).toBe(false);
+    if (!rawResult.ok) {
+      expect(rawResult.error.code).toBe("raw_content_present");
+      expect(auditOf(rawResult.error)).toBeUndefined();
+    }
+
+    const extra = { ...validCandidate, smuggled: "x" };
+    const schemaResult = admitProjection(extra, wsWithDefault("full"));
+    expect(schemaResult.ok).toBe(false);
+    if (!schemaResult.ok) {
+      expect(schemaResult.error.code).toBe("schema_rejected");
+      expect(auditOf(schemaResult.error)).toBeUndefined();
     }
   });
 
