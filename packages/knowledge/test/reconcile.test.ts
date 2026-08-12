@@ -327,14 +327,58 @@ describe("assertReconcileVaultBootSafe — 24.13 fail-fast boot guard (Path B)",
     expect(() => assertReconcileVaultBootSafe(() => true)).not.toThrow();
   });
 
-  it("boot_guard_silent_when_reconcile_vault_unreachable — zero production callers today, re-pinned as a standing census", () => {
-    // The exact premise grep brief 249 re-confirmed before this slice was
-    // implemented, now a standing CI trip-wire instead of a one-off check: if a
-    // future slice wires a real apps/ caller without reading this file, THIS test
-    // goes red immediately.
-    expect(censusFiles("reconcileVault|runWakeReconcile|createVaultWatcher", "apps")).toEqual([]);
+  // task 24.29: the original census above scanned `apps` only, narrower than the
+  // repo-wide "zero production callers" claim it exists to protect (contracts L118 —
+  // a proxy [the apps/-only scan] standing in for the property [repo-wide absence]).
+  // Widened to `packages apps`. Each entry names WHY it's an expected self-reference,
+  // not a production caller, so the allow-list is auditable rather than an
+  // unexplained magic array — investigated from source, not assumed (24.29 Step 2.5).
+  // ⚠ IMPLEMENTATION_PLAN.md:3159 (this task's own originating text) also cites this
+  // as "the exact mirror of contracts L93" — checked, and L93 is NOT this shape
+  // (L93 is about citations rotting in prose, not census scope). Flagged at Step 9 as
+  // a citation error in the plan doc itself, not corrected here (orchestrator territory).
+  const KNOWN_RECONCILER_SELF_REFERENCES = [
+    "packages/knowledge/src/fs-watch/reconcile.ts", // defines reconcileVault
+    "packages/knowledge/src/fs-watch/vault-watcher.ts", // defines runWakeReconcile, createVaultWatcher
+    "packages/knowledge/src/gcl/global-markdown-reconcile.ts", // prose comment only (line 5), not a call site
+    "packages/knowledge/test/reconcile.test.ts", // this file's own tests
+    "packages/knowledge/test/vault-watcher.test.ts", // vault-watcher's own unit tests
+  ];
+
+  it("census_scans_packages_and_apps — the widened scope is structurally real, not cosmetic", () => {
+    const result = censusFiles("reconcileVault|runWakeReconcile|createVaultWatcher", "packages apps");
+    expect(result.some((f) => f.startsWith("packages/"))).toBe(true);
   });
 
+  it("census_excludes_the_known_comment_reference — global-markdown-reconcile.ts's prose mention is accounted for, not a false caller", () => {
+    // Asserts against the RAW (unfiltered) result, not the already-subtracted
+    // `unexpected` set — a filtered-array assertion here would be vacuously true
+    // regardless of whether the grep pattern matches the comment at all (the exact
+    // "a test that runs, not a test that discriminates" shape, contracts L118's own
+    // family). This proves the census genuinely catches the comment line AND that
+    // it's accounted for as known, not merely that `.filter()` works.
+    const result = censusFiles("reconcileVault|runWakeReconcile|createVaultWatcher", "packages apps");
+    expect(result).toContain("packages/knowledge/src/gcl/global-markdown-reconcile.ts");
+    expect(KNOWN_RECONCILER_SELF_REFERENCES).toContain(
+      "packages/knowledge/src/gcl/global-markdown-reconcile.ts",
+    );
+  });
+
+  it("census_still_reports_zero_production_callers_or_flags_a_real_one — repo-wide, not apps-only", () => {
+    // The actual safety tripwire (24.29): subtract the known, investigated
+    // self-references and assert whatever remains — TODAY that's empty (verified
+    // by hand before writing this assertion, not assumed). A future real caller
+    // anywhere in packages/ or apps/ makes this non-empty and red.
+    const result = censusFiles("reconcileVault|runWakeReconcile|createVaultWatcher", "packages apps");
+    const unexpected = result.filter((f) => !KNOWN_RECONCILER_SELF_REFERENCES.includes(f));
+    expect(unexpected).toEqual([]);
+  });
+
+  // Unchanged by 24.29: this pattern (verifyKwSig|KwSigVerifier|defaultVerifyKwSig)
+  // was already scoped `packages apps` since 24.13 — only the reachability census
+  // above was apps/-only. A flat `toEqual` stays correct here (no self-references
+  // exist for this pattern beyond the module + its own test, unlike the reachability
+  // pattern's 5), so it doesn't need the allow-list-subtraction shape.
   it("no_production_override_of_the_verifier_machinery_exists_yet — only reconcile.ts + its own test reference the sig-verification seam", () => {
     // The sibling premise grep, pinned the same way: no production code overrides
     // the verifier machinery today — only this module and its own test reference it.
