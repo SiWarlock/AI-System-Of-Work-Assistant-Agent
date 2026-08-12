@@ -3,7 +3,7 @@
 **Date:** 2026-08-12
 **Track / role:** main · worker-implementer
 **Predecessor session:** `docs/sessions/153-2026-08-12-arming-conditions-c-d-and-outbox-approval-policy.md`
-**Successor session:** _(unwritten — the next worker-implementer)_
+**Successor session:** `docs/sessions/160-2026-08-12-audit-persist-required-and-the-ownership-violation-invariant.md`
 
 ---
 
