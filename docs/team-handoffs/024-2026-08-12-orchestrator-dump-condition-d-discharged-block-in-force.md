@@ -30,11 +30,12 @@
 
 ## What to dispatch first
 
-**providers-integrations is live and idle at ~45%, holding `24.15` with Step 2.5 ALREADY RESOLVED — it opens at Step 3.** That is the cheapest real work on the board. `24.35` (`3cc87f6f`) landed and unblocked it.
+⚠⚠ **AMENDED 2026-08-12 (second time). THE LIST BELOW WAS RIGHT WHEN WRITTEN AND EVERY ITEM ON IT HAS SINCE LANDED.** ⭐ **Left visible rather than silently rewritten, because this file has now gone stale TWICE in one day and that is itself the finding (`L143`): a dispatch list is a snapshot, and a resume doc that reads as current is worse than one that dates itself.** ⛔ **DO NOT DISPATCH FROM THIS SECTION. Read `IMPLEMENTATION_PLAN.md` Phase 24 and the task list — they are authoritative; this is provenance.**
 
-Then, roughly in value order: **`24.39`** (the missing `task` migration + its detector — worker, task #24, ⛔ **note the widened Done-when: installing the detector is the point, not the migration**) · **`24.40`**/**`24.41`** (both just filed, both small, both tracker-correctness) · `24.37` · `24.32` · `24.23` · `24.26`.
+**SUPERSEDED, all DONE:** `24.15` was dispatched · `24.39` `4db89061` · `24.40` `e0436916` · `24.41` `186c5fc6` · `24.42` `4d7d7051` (hook, later owner-INSTALLED) · `24.43` `a5214c8e` · `24.34` `ecf0c9ce` · `24.36` `f5cac8a8` · `24.38` `5fc64421` · **`24.33` `ce8e839f` — no longer "not next"; its brief was RE-AUTHORED (`ab9e2fa8`) against the corrected dormant premise and it SHIPPED.**
 
-⛔ **`24.33` is NOT next** — see below; it is off the release path and its brief is falsified.
+**LIVE AT THIS AMENDMENT (verify against the tracker, do not trust this line either):** worker on **`24.32`** (task #31) · providers on **`24.15`** (task #19) · **knowledge FREE with nothing in-territory** — a classification, not an oversight.
+**FILED, UNDISPATCHED:** ⭐ **`24.44`** (knowledge+worker PAIR — `serveProjection`'s audit leg + a one-word `await`; **cross-track, so it is the LEAD's call per `L121`'s provenance**, and its dependency `24.33` has now landed) · ⛔ **`24.45`** (`isRedactionSafe` is a heuristic whose doc claims coverage it does not have — **BLOCKS the Phase 25.2/25.4 wiring, because the defect ARRIVES WITH the fix for it**; providers territory) · **`24.46`** (the canonical raw-content key set is authoritative by designation, not construction; contracts — an unqueued track) · `24.23` · `24.26` · `24.37`.
 
 ---
 
