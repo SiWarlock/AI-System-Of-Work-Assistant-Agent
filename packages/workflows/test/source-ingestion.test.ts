@@ -418,7 +418,7 @@ describe("runSourceIngestion — write conflict", () => {
     expect(health.surfaced).toHaveLength(1);
   });
 
-  it("a commit ownership_violation → failed_terminal (a WS-isolation breach never retries blindly)", async () => {
+  it("a commit ownership_violation → failed_terminal (a KN-7/KN-8 section-ownership breach never retries blindly)", async () => {
     const health = new FakeSourceHealthSink();
     const deps = makeDeps({
       commit: new FakeCommitPort({ failWith: "ownership_violation" }),
@@ -431,7 +431,7 @@ describe("runSourceIngestion — write conflict", () => {
     expect(health.surfaced).toHaveLength(1);
   });
 
-  it("a commit workspace_path_violation → failed_terminal (24.23 — same isolation-class treatment as ownership_violation, exhaustive not defaulted)", async () => {
+  it("a commit workspace_path_violation → failed_terminal (24.23 — §5 WS-8 on its own merits, exhaustive not defaulted)", async () => {
     const health = new FakeSourceHealthSink();
     const deps = makeDeps({
       commit: new FakeCommitPort({ failWith: "workspace_path_violation" }),
@@ -624,9 +624,12 @@ describe("runSourceIngestion — cause-aware §16 failure class (inv-5)", () => 
     expect(await surfacedClass(commit("ownership_violation"))).toBe("isolation_breach");
     expect(await surfacedClass(commit("secret_found"))).toBe("security_violation");
     expect(await surfacedClass(commit("commit_failed"))).toBe("write_through_failed");
-    // 24.23 — workspace_path_violation (24.12) is the SAME isolation class as
-    // ownership_violation, not the write_through_failed a default: absorb would
-    // have given it (the L134 chain's origin instance).
+    // 24.23 — workspace_path_violation (24.12) maps to isolation_breach on its OWN
+    // §5 WS-8 merits, not the write_through_failed a default: absorb would have given
+    // it (the L134 chain's origin instance). ⛔ 24.23 originally justified this as "the
+    // SAME isolation class as ownership_violation" — a false analogy: ownership_violation
+    // is KN-7/KN-8 SECTION ownership, a different invariant (24.49). Right answer,
+    // wrong reason; the conclusion below never depended on the analogy.
     expect(await surfacedClass(commit("workspace_path_violation"))).toBe("isolation_breach");
     // NONE of the conflated terminal causes is worker_down (reserved for supervision/infra).
     for (const c of ["admission_rejected", "injection_detected", "unsupported_type", "egress_vetoed"] as const) {

@@ -248,10 +248,18 @@ function agentFailureClass(code: SourceAgentFailureCode): FailureClass {
  * With the C-enum taxonomy, the isolation + secret causes are classed HONESTLY (interims +
  * `arch_gap` markers retired):
  *   • secret_found              (a secret-scan refusal — a secret breach)       → `security_violation`
- *   • ownership_violation       (a WS-4 workspace-isolation refusal)            → `isolation_breach`
+ *   • ownership_violation       (KN-7/KN-8 — a SECTION-ownership refusal: human-
+ *                                 owned bytes changed/deleted/absorbed, or an
+ *                                 untargeted assistant region's bytes moved, or
+ *                                 markers malformed. ⛔ NOT workspace isolation —
+ *                                 see @sow/knowledge ownership.ts's four
+ *                                 conditions, 24.49)                            → `isolation_breach`
  *   • workspace_path_violation  (24.12/24.23 — a foreign-workspace note landing
- *                                 unprefixed, §5 WS-8 — the SAME isolation class
- *                                 as ownership_violation, CRITICAL severity via
+ *                                 unprefixed, §5 WS-8. This one IS workspace
+ *                                 isolation, and it earns `isolation_breach` on
+ *                                 its OWN merits — ⛔ NOT by analogy to
+ *                                 ownership_violation, which 24.23 wrongly cited
+ *                                 as the same class. CRITICAL severity via
  *                                 defaultSeverityForFailureClass)               → `isolation_breach`
  *   • commit_failed / write_conflict (a generic/compare-revision write failure) → `write_through_failed`
  *   • schema_rejected                                                          → `schema_rejection`
@@ -333,8 +341,11 @@ function agentFailureState(code: SourceAgentFailureCode): SourceState {
 /**
  * Map a KnowledgeWriter commit failure to the resting state. A compare-revision
  * `write_conflict` is retryable; a schema rejection is `rejected`; an ownership /
- * secret / workspace-path / commit failure is TERMINAL (a WS-isolation or secret
- * breach never retries blindly — safety rules 4/7).
+ * secret / workspace-path / commit failure is TERMINAL (a section-ownership,
+ * workspace-isolation or secret breach never retries blindly — safety rules 4/7).
+ * ⚠ The three are DISTINCT invariants and only the middle one is about workspaces:
+ * ownership_violation is KN-7/KN-8 SECTION ownership, workspace_path_violation is
+ * §5 WS-8, secret_found is rule 7 (24.49).
  */
 function commitFailureState(code: KnowledgeCommitFailureCode): SourceState {
   switch (code) {

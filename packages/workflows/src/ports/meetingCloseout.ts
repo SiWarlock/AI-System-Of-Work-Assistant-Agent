@@ -417,11 +417,17 @@ export interface KnowledgeCommitSuccess {
  * mirroring the @sow/knowledge WriteFailure variants the activity folds onto:
  *   • `schema_rejected`         — the plan failed the schema gate (→ schema_rejected).
  *   • `write_conflict`          — a compare-revision precondition clash (→ write_conflict).
- *   • `ownership_violation`     — cross-workspace ownership breach (WS isolation).
+ *   • `ownership_violation`     — a SECTION-ownership breach (KN-7/KN-8): human-owned
+ *                                 bytes changed, or an untargeted assistant region's
+ *                                 bytes moved, or markers malformed. ⛔ NOT workspace
+ *                                 isolation — see @sow/knowledge ownership.ts (24.49).
  *   • `secret_found`            — a secret leaked into the candidate Markdown (rule 7).
  *   • `workspace_path_violation` — a foreign-workspace note landing unprefixed (24.12,
- *                                 §5 WS-8 — a workspace-isolation breach, the same class
- *                                 as `ownership_violation`, not a generic commit failure).
+ *                                 §5 WS-8 — a workspace-isolation breach, and the only
+ *                                 member of this union that is one. ⛔ NOT "the same
+ *                                 class as `ownership_violation`", which named a
+ *                                 different invariant (24.49); it stands on §5 WS-8
+ *                                 itself, and is not a generic commit failure).
  *   • `commit_failed`           — the underlying commit failed for another reason.
  */
 export type KnowledgeCommitFailureCode =
