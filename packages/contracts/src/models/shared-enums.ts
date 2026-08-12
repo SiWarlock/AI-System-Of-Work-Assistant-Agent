@@ -134,7 +134,11 @@ export const FailureClass = [
   //     (ING-7 untrusted-content attack, KnowledgeWriter secret_found).
   //   • policy_denial      — a policy/admission refusal (ING-7 mutating-tool at admission).
   //   • egress_denied      — an egress-policy veto (safety rule 5; the egress_status precedent).
-  //   • isolation_breach   — a workspace-isolation refusal (WS-4 ownership_violation).
+  //   • isolation_breach   — a workspace-isolation refusal (§5 WS-8, KnowledgeWriter
+  //     workspace_path_violation). ⚠ KnowledgeWriter's `ownership_violation` also maps
+  //     here, but it is KN-7/KN-8 SECTION (region) ownership — human-owned bytes or an
+  //     untargeted assistant region — NOT workspace isolation (24.49). Whether this
+  //     class is the right home for it is an open question, tracked, not settled here.
   "security_violation",
   "policy_denial",
   "egress_denied",
