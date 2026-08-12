@@ -275,8 +275,10 @@ function defineLifecycleSuite<H>(fix: LifecycleFixture<H>): void {
         // (§4/§5/§6 — the sanctioned WS-8 cross-workspace-link store CREATE TABLE) + 0010_seen_content_hash
         // (§4/§19.2 — the WS-8-scoped Flow-4 dedupe store CREATE TABLE) + 0011_source_disposition
         // (§4/§19.2/§9 — the parked-source-of-record + re-enter store CREATE TABLE) + 0012_outbox_approval_policy
-        // (§8 task 24.35 — additive nullable OutboxEntry.approvalPolicy column), all applied from empty.
-        expect(r.value.applied).toBe(13);
+        // (§8 task 24.35 — additive nullable OutboxEntry.approvalPolicy column) + 0013_task_table
+        // (§4/§6 — the durable typed-Task rollup index CREATE TABLE, task 13.15's migration that
+        // was never generated; 24.39), all applied from empty.
+        expect(r.value.applied).toBe(14);
         expect(r.value.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
         expect(r.value.backup.dialect).toBe(fix.dialect);
 

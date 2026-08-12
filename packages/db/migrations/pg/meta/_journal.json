@@ -92,6 +92,13 @@
       "when": 1786549834102,
       "tag": "0012_outbox_approval_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1786552767178,
+      "tag": "0013_task_table",
+      "breakpoints": true
     }
   ]
 }
