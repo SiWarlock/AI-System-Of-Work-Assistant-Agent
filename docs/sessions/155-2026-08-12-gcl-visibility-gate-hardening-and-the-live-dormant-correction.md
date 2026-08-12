@@ -1,7 +1,7 @@
 # Session 155 — knowledge: GCL Visibility Gate hardening (taxonomy derivation, raw-content bypasses, four L134 exhaustiveness instances) + the "live, not dormant" premise correction (24.33)
 
 **Date:** 2026-08-12 · **Role:** knowledge-implementer (`main`, single-track, root checkout)
-**Predecessor:** [148-2026-08-11-withheldreason-signals-and-workspace-path-guard.md](148-2026-08-11-withheldreason-signals-and-workspace-path-guard.md) · **Successor:** _(next knowledge-implementer session)_
+**Predecessor:** [148-2026-08-11-withheldreason-signals-and-workspace-path-guard.md](148-2026-08-11-withheldreason-signals-and-workspace-path-guard.md) · **Successor:** [156-2026-08-12-raw-content-shape-fork-concept-sweep-24-34-zero-new-forks.md](156-2026-08-12-raw-content-shape-fork-concept-sweep-24-34-zero-new-forks.md)
 
 ## Why this session existed
 
