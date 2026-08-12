@@ -28,7 +28,7 @@
 // §16: returns a typed Result — never throws. A derivation the mapper cannot project
 // folds to a typed {@link BuildSchedulingFailure} the driver maps to schema_rejected
 // with NO side effect.
-import { ok, err, planId, actionId } from "@sow/contracts";
+import { ok, err, planId, actionId, carriesRawContent as payloadCarriesRawContent } from "@sow/contracts";
 import type {
   Result,
   WorkspaceId,
@@ -64,51 +64,24 @@ export function isGenericExplanation(s: string | undefined): boolean {
 }
 
 /**
- * Key names that name a raw-content-shaped slot (a verbatim workspace title/body/etc.)
- * regardless of the value shape — mirrors the GCL projection gate's `RAW_CONTENT_SHAPED_KEYS`.
- * The gate is primarily VALUE-shape based (below); this catches an emptied/short raw slot
- * whose KEY still declares raw intent.
+ * `payloadCarriesRawContent` re-exports `@sow/contracts`'s canonical, hardened
+ * `carriesRawContent` (task 24.19 — a plain-object/Symbol-key structural restriction
+ * + `Object.getOwnPropertyNames` traversal, closing the Map/Set/non-enumerable/
+ * Symbol-keyed bypasses a bare `Object.entries` walk cannot see) under this
+ * activity's established name, so its external consumer
+ * (`packages/evals/suites/calendar-conflict`) is unaffected. This file previously
+ * maintained an INDEPENDENT, unfixed fork of the same traversal (task 24.32,
+ * contracts L138) — deleted, not repaired; re-export rather than re-derivation
+ * keeps a single definition (contracts L39).
+ *
+ * WHERE this check belongs: it runs over the ACTUALLY-DISPATCHED payload (the
+ * object that rides the Tool Gateway onto the external calendar event), never the
+ * decoy `genericExplanation` descriptor field alone. It is NOT load-bearing today —
+ * `createProposeWindowsActivity` has zero production callers (task 24.32's own
+ * reachability establishment, grep-and-classify, every hit read); this is where the
+ * Flow-3 leakage check will matter once the activity is wired.
  */
-const RAW_CONTENT_SHAPED_KEYS: ReadonlySet<string> = new Set([
-  "body",
-  "content",
-  "rawcontent",
-  "raw",
-  "transcript",
-  "notebody",
-]);
-
-/**
- * KEY-NAME-INDEPENDENT recursive raw-content shape detector — the SAME check the
- * Phase-4 GCL projection gate uses (`isRawContentShaped`): a value is raw-content-shaped
- * if its KEY names a raw slot, OR (recursively, through objects + arrays) any string
- * value is multi-line OR exceeds the summary length cap. This is intentionally
- * independent of key name for the string-value case so a leaked title/body under ANY
- * key (`conflictDetail`, `title`, `summary`, …) is caught. Fail-closed backstop for the
- * Flow-3 leakage rule over the ACTUALLY-DISPATCHED payload.
- */
-export function isRawContentShaped(value: unknown, key?: string): boolean {
-  if (key !== undefined && RAW_CONTENT_SHAPED_KEYS.has(key.toLowerCase())) return true;
-  if (typeof value === "string") {
-    return value.length > MAX_GENERIC_EXPLANATION_LEN || /[\r\n]/.test(value);
-  }
-  if (Array.isArray(value)) return value.some((v) => isRawContentShaped(v));
-  if (value !== null && typeof value === "object") {
-    return Object.entries(value as Record<string, unknown>).some(([k, v]) =>
-      isRawContentShaped(v, k),
-    );
-  }
-  return false;
-}
-
-/**
- * True IFF the dispatched payload carries ANY raw-content-shaped value/key. The
- * LOAD-BEARING Flow-3 leakage check: it runs over the payload that actually reaches the
- * Tool Gateway, never the decoy descriptor field.
- */
-export function payloadCarriesRawContent(payload: Record<string, unknown>): boolean {
-  return Object.entries(payload).some(([k, v]) => isRawContentShaped(v, k));
-}
+export { payloadCarriesRawContent };
 
 /**
  * A deterministic descriptor for the ONE calendar action the deriver wants to propose,
@@ -218,13 +191,16 @@ export function createProposeWindowsActivity(
         );
       }
 
-      // Flow-3 leakage guard (fail-closed) — LOAD-BEARING on the ACTUALLY-DISPATCHED
-      // payload: the object that rides the Tool Gateway onto the external calendar event
-      // is `action.payload = d.payload`, NOT the `genericExplanation` descriptor field.
-      // A guard that only inspects the descriptor is the 7.6 bug class (protective-looking
-      // but not on the real egress path). Run the KEY-NAME-INDEPENDENT recursive
-      // raw-content detector over the dispatched payload; raw-content-shaped → refuse,
-      // never dispatch (driver folds `build_failed` → schema_rejected, NO side effect).
+      // Flow-3 leakage guard (fail-closed) — this is WHERE the check belongs on the
+      // ACTUALLY-DISPATCHED payload once this activity is wired (dormant today, zero
+      // production callers, task 24.32): the object that rides the Tool Gateway onto
+      // the external calendar event is `action.payload = d.payload`, NOT the
+      // `genericExplanation` descriptor field. A guard that only inspects the
+      // descriptor is the 7.6 bug class (protective-looking but not on the real
+      // egress path). Runs the canonical, hardened raw-content-shape predicate
+      // (`@sow/contracts`'s `carriesRawContent`, task 24.19/24.32 — never a local
+      // fork) over the dispatched payload; raw-content-shaped → refuse, never
+      // dispatch (driver folds `build_failed` → schema_rejected, NO side effect).
       if (payloadCarriesRawContent(d.payload)) {
         return Promise.resolve(
           err({
