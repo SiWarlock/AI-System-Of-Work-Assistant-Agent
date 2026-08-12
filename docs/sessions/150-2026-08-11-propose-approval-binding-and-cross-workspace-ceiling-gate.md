@@ -3,7 +3,7 @@
 **Date:** 2026-08-11
 **Track / role:** main · worker-implementer
 **Predecessor session:** `docs/sessions/144-2026-07-31-meeting-sibling-plans-and-13.8i-b-premise-defect.md`
-**Successor session:** _(unwritten — the next worker-implementer)_
+**Successor session:** `docs/sessions/153-2026-08-12-arming-conditions-c-d-and-outbox-approval-policy.md`
 
 ---
 
