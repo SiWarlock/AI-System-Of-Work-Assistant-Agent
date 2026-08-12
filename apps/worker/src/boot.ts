@@ -38,7 +38,7 @@
 //     (`createOperationalBackupService`) is WIRED into the handle (`backupService`)
 //     but NOT SCHEDULED — the periodic CRON that calls `backupService.run()` on the
 //     `backupCadenceMs` is Phase-11. The service is ready; only its trigger is deferred.
-import { auditId, sourceId, isOk, workspaceId, workflowId, processorId, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID, AGENT_EXTRACTION_SCHEMA_ID } from "@sow/contracts";
+import { auditId, sourceId, isOk, isErr, workspaceId, workflowId, processorId, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID, AGENT_EXTRACTION_SCHEMA_ID } from "@sow/contracts";
 import type {
   Result,
   FailureVariant,
@@ -50,7 +50,7 @@ import type {
   GbrainPin,
   ContextRef,
 } from "@sow/contracts";
-import { descriptorFor, isZeroEgressOnlyWorkspace } from "@sow/policy";
+import { descriptorFor, isZeroEgressOnlyWorkspace, toAuditRecordInput, isRedactionSafe } from "@sow/policy";
 import type { SessionToken, LegacyContentPolicy, CopilotWorkspaceScope, ResolvedWorkspacePolicy } from "@sow/policy";
 import { TBD } from "@sow/domain";
 import type { MeetingJobInputs, AgentExtraction } from "@sow/workflows";
@@ -175,7 +175,7 @@ import { createServingCoverageReader, createCommittedVaultReader } from "./api/p
 import { createParityReportRecorderAdapter } from "./composition/parityReportStore";
 import { buildKeychainSecrets, type KeychainSecretsGate } from "./secrets/keychain-boot";
 import { createCopilotProposeMcpServer, createCopilotProposeKnowledgeMcpServer, createCopilotGbrainProxyMcpServer, createCopilotVaultMcpServer, createCopilotSkillsMcpServer } from "@sow/providers";
-import type { CopilotSynthesisPort } from "./api/procedures/copilot";
+import type { CopilotSynthesisPort, AuditPersistPort } from "./api/procedures/copilot";
 import { createReadModelBriefingRetrieval, type CopilotBriefingDeps } from "./api/procedures/copilotBriefing";
 import { createClaudeSubscriptionCompletion } from "@sow/providers";
 import type { ClaudeSubscriptionCompletion, SubscriptionReachabilityCheck } from "@sow/providers";
@@ -216,7 +216,7 @@ import { createKnowledgeRevisionStoreAdapter } from "./composition/knowledgeRevi
 // C5.4b B4 — the durable ParityReportStore read-adapter, bound into the serving-coverage reader inside the
 // triple-locked loaderBackedServingOracle branch (closes the B2 store-consuming reachability waiver).
 import { createParityReportStoreAdapter } from "./composition/parityReportStore";
-import type { KnowledgeRevisionRepository } from "@sow/db";
+import type { KnowledgeRevisionRepository, AuditRepository } from "@sow/db";
 // §9 make-it-real C3b — the local-vault file-watcher capture trigger + its degraded-safe
 // dispatch. The Temporal Client's first real caller (deferred to here from C3a).
 import { createFileReadTransport } from "@sow/integrations/connectors/adapters/file-read-transport";
@@ -554,6 +554,53 @@ export interface BootedWorker {
  */
 function failClosedEgress(workspaceId: string): UiSafeEgressStatus {
   return { workspaceId, employerRawEgressAcknowledged: false, zeroEgressOnly: false };
+}
+
+/**
+ * 24.7 — the real `AuditPersistPort` implementation: stamps a clock-free `AuditSignal` into a durable
+ * `AuditRecord` (`toAuditRecordInput`, already-tested pure mapping) carrying the caller-supplied
+ * `workspaceId`, then writes it via the already-wired `AuditRepository.append`. Never throws and never
+ * surfaces an append failure back to the caller — the denial guarantee (the action stays blocked) must
+ * never depend on the audit write succeeding (Step 2.5 Q3). An append failure is made visible via a
+ * single redaction-safe `console.error` naming the event + the store error code — deliberately NOT a
+ * `HealthItem`: no existing mechanism reaches a `HealthItem` sink from this synchronous API-procedures
+ * call path (the only wired minting is inside Temporal activities), and building one is out of this
+ * slice's scope. Exported for direct unit testing, mirroring `createSystemHealthQueryPort` below.
+ *
+ * security-reviewer catch: gated on `isRedactionSafe` before persisting — `packages/policy`'s
+ * `audit-signal.ts` doc comment named this EXACT consumer in advance ("if that consumer is ever wired,
+ * 9.33's house rule applies: a safety gate must DENY, not throw"). Every current producer (the egress
+ * veto, ING-7 admission) is redaction-safe by construction (verified by inspection + pinned by
+ * `copilotDenialAudit.test.ts`'s `persisted_record_is_redaction_safe`), so this is defense-in-depth for a
+ * FUTURE producer, not a fix for a live leak — a failing signal is refused (fail-closed DENY of the
+ * persist attempt, matching 9.33), never persisted, and the refusal itself is logged with the event name
+ * only (never the unsafe field content).
+ */
+export function createAuditPersistPort(deps: {
+  readonly audit: AuditRepository;
+  readonly now: () => string;
+}): AuditPersistPort {
+  return {
+    persistDenial: async (signal, workspaceId): Promise<void> => {
+      if (!isRedactionSafe(signal)) {
+        // eslint-disable-next-line no-console -- deliberate, redaction-safe (event name only, never a
+        // field value) visibility; 9.33's house rule — DENY the persist, never throw, never log the field.
+        console.error(
+          `[copilot.denial-audit] REFUSED to persist — signal for event="${signal.event}" failed the redaction-safety gate (9.33)`,
+        );
+        return;
+      }
+      const record = { ...toAuditRecordInput(signal, deps.now()), workspaceId };
+      const appended = await deps.audit.append(record);
+      if (isErr(appended)) {
+        // eslint-disable-next-line no-console -- deliberate, redaction-safe (event/code only) visibility;
+        // see the doc comment above for why this is a log line and not a HealthItem.
+        console.error(
+          `[copilot.denial-audit] AuditRepository.append failed — event="${signal.event}" workspaceId="${workspaceId}" code="${appended.error.code}"`,
+        );
+      }
+    },
+  };
 }
 
 /**
@@ -1891,6 +1938,10 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
             // the capability resolver fails closed to read_only).
             knowledgeProposeEnabled: config.copilotProposeKnowledge === true && proofSpineParams !== undefined,
             resolveContentTrust: deriveCopilotContentTrust,
+            // 24.7 — same durable sink as the completion path below (`copilotAuditPersist`); safe forward
+            // reference — this thunk runs only when `buildCopilotDeps` invokes it, after that const inits
+            // (identical lazy-closure shape to `copilotWorkspaceScope` just below).
+            auditPersist: copilotAuditPersist,
           });
         }
       : undefined;
@@ -1988,8 +2039,16 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
           policy: config.copilotLegacyContentPolicy ?? denyLegacyPolicy,
         }
       : undefined;
+  // 24.7 — the durable, queryable denial-audit sink for BOTH Copilot synthesis paths (completion below,
+  // agentic in `agentSynthesisFactory` above). One instance, single-sourced over the same audit repo +
+  // clock every other durable write in this boot uses.
+  const copilotAuditPersist: AuditPersistPort = createAuditPersistPort({
+    audit: backends.repos.audit,
+    now: backends.now,
+  });
   const copilot = buildCopilotDeps({
     realCopilot: config.copilotRealModel === true,
+    auditPersist: copilotAuditPersist,
     workspaces: copilotWorkspaces,
     // 9.10-A — the AUTHORITATIVE store-backed veto posture (reads WorkspaceConfigRepository.egressPolicy):
     //   the SOLE production posture source, retiring the flag-derived cloud-consent fallback (rule 5). The
@@ -2026,6 +2085,12 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     workspacePosture: copilot.workspacePosture,
     routeSelector: copilot.routeSelector,
     retrieval: createReadModelBriefingRetrieval(readModel),
+    // 24.7 — forward the SAME durable denial-audit sink `copilot`/`copilotConcept` use. Omitting this
+    // compiled fine (the inner `GovernedCopilotSynthesisDeps.auditPersist` field is optional, deliberately,
+    // for hand-built test fixtures) but would have silently left `copilotBriefing`'s egress-veto denials
+    // unpersisted in production — the exact gap this task exists to close, on one of its three named entry
+    // points. Caught verifying the "is buildCopilotDeps the sole production constructor" assumption.
+    auditPersist: copilot.auditPersist,
   };
 
   // §13.10a G4a — route an APPROVED approval to its subject-specific side effect. A `semantic_mutation`

@@ -34,7 +34,8 @@ import type {
   WorkspaceId,
   WorkspaceType,
 } from "@sow/contracts";
-import { isAllow, processorOfRoute } from "@sow/policy";
+import { isAllow, isDeny, processorOfRoute } from "@sow/policy";
+import type { AuditSignal, PolicyDecision } from "@sow/policy";
 import { vetoJobEgress } from "@sow/providers";
 
 /** A port result delivered sync (the in-memory fixture / test fake) or async (the real adapter). */
@@ -179,14 +180,31 @@ export interface CopilotSynthesisPort {
  * by declaring the job carries none. Under employer-work + ack OFF the only eligible route is a
  * loopback-local provider; anything else denies (fail closed).
  */
+/**
+ * 24.7 — the raw, audit-PRESERVING core of {@link guardCopilotEgress} / {@link decideCopilotEgress}.
+ * Returns the underlying `PolicyDecision` (never discarded) so a caller that needs the deny's
+ * `AuditSignal` can reach it. `FailureVariant.cause` is a frozen `.strict({code: string})` schema — the
+ * signal CANNOT be smuggled through the `Result` error channel, so this exists as a separate, internal
+ * escape hatch. `guardCopilotEgress`/`decideCopilotEgress` stay thin `Result`-shaped wrappers over it —
+ * unchanged behavior, unchanged public shape, every existing caller/test unaffected.
+ */
+function evaluateCopilotEgress(params: {
+  readonly job: AgentJob;
+  readonly route: ProviderRoute;
+  readonly egress: EgressPolicy;
+  readonly workspace: { readonly type: WorkspaceType; readonly dataOwner: DataOwner };
+}): PolicyDecision<ProviderRoute> {
+  const job: AgentJob = { ...params.job, carriesRawContent: true };
+  return vetoJobEgress(job, params.route, params.egress, params.workspace);
+}
+
 export function guardCopilotEgress(params: {
   readonly job: AgentJob;
   readonly route: ProviderRoute;
   readonly egress: EgressPolicy;
   readonly workspace: { readonly type: WorkspaceType; readonly dataOwner: DataOwner };
 }): Result<ProviderRoute, FailureVariant> {
-  const job: AgentJob = { ...params.job, carriesRawContent: true };
-  const decision = vetoJobEgress(job, params.route, params.egress, params.workspace);
+  const decision = evaluateCopilotEgress(params);
   if (isAllow(decision)) return ok(decision.value);
   return err(
     failure("validation_rejected", "Copilot synthesis route denied by the egress veto", {
@@ -246,23 +264,48 @@ export interface EgressDecision {
  * leak). The notice fires iff employer-work AND the allowed route egresses (a non-null processor);
  * reaching an ALLOW under those conditions already proves egress-ack is ON (else the veto denied).
  */
-export function decideCopilotEgress(params: {
+/**
+ * 24.7 — the audit-preserving core of {@link decideCopilotEgress}. Returns BOTH the existing `result`
+ * (byte-identical to `decideCopilotEgress`'s own return — that function becomes a one-line wrapper, so
+ * every existing caller/test is unaffected) AND the raw `AuditSignal` from the underlying veto decision,
+ * present on BOTH the allow and deny outcome (every `PolicyDecision` carries one; never optional here).
+ * `runGovernedCopilotSynthesis` calls THIS — not `decideCopilotEgress` — so it can persist the DENY audit.
+ */
+export function decideCopilotEgressWithAudit(params: {
   readonly job: AgentJob;
   readonly route: ProviderRoute;
   readonly posture: WorkspacePosture;
-}): Result<EgressDecision, FailureVariant> {
-  const guarded = guardCopilotEgress({
+}): { readonly result: Result<EgressDecision, FailureVariant>; readonly audit: AuditSignal } {
+  const decision = evaluateCopilotEgress({
     job: params.job,
     route: params.route,
     egress: params.posture.egress,
     workspace: { type: params.posture.type, dataOwner: params.posture.dataOwner },
   });
-  if (!isOk(guarded)) return guarded; // veto DENY (e.g. employer-work + cloud + ack OFF) → fail closed
-  const proc = processorOfRoute(guarded.value); // ProcessorId | null — the leak-safe egress classifier
-  if (params.posture.type === "employer_work" && proc !== null) {
-    return ok({ route: guarded.value, egressProcessor: proc }); // employer-work cloud egress → the notice
+  if (isDeny(decision)) {
+    return {
+      audit: decision.audit,
+      result: err(
+        failure("validation_rejected", "Copilot synthesis route denied by the egress veto", {
+          cause: { code: decision.reason },
+        }),
+      ),
+    };
   }
-  return ok({ route: guarded.value }); // local, OR non-employer cloud → allow, NO notice
+  const proc = processorOfRoute(decision.value); // ProcessorId | null — the leak-safe egress classifier
+  const result =
+    params.posture.type === "employer_work" && proc !== null
+      ? ok({ route: decision.value, egressProcessor: proc }) // employer-work cloud egress → the notice
+      : ok({ route: decision.value }); // local, OR non-employer cloud → allow, NO notice
+  return { audit: decision.audit, result };
+}
+
+export function decideCopilotEgress(params: {
+  readonly job: AgentJob;
+  readonly route: ProviderRoute;
+  readonly posture: WorkspacePosture;
+}): Result<EgressDecision, FailureVariant> {
+  return decideCopilotEgressWithAudit(params).result;
 }
 
 /**
@@ -380,6 +423,22 @@ export function createStubSynthesis(): CopilotSynthesisPort {
 // `toUiSafeCopilotAnswer` is the ONE place a candidate becomes servable UI-safe data.
 
 /**
+ * 24.7 — the narrow port that turns a policy-denial `AuditSignal` into a DURABLE, queryable record
+ * (`toAuditRecordInput` → `AuditRepository.append`, both already built + tested; this port is the
+ * missing consumer). `persistDenial` takes the workspaceId EXPLICITLY (not parsed out of the signal's
+ * opaque `refs` strings) because the caller (`runGovernedCopilotSynthesis` / the agentic `synthesize`)
+ * already has it in scope. Never throws and never surfaces a persistence failure back to the caller —
+ * the denial guarantee (the action stays blocked) must never depend on the audit write succeeding; a
+ * real implementation makes its own append failure visible some other way (see `createAuditPersistPort`
+ * in `boot.ts`). Deliberately narrow (matches this file's neighboring ports — `CopilotRetrievalPort`,
+ * `WorkspacePostureResolver`, `EgressRouteSelector`) rather than the raw `@sow/db` `AuditRepository`, so
+ * this procedures-layer file's import surface stays `@sow/contracts`/`@sow/policy`/`@sow/providers` only.
+ */
+export interface AuditPersistPort {
+  readonly persistDenial: (signal: AuditSignal, workspaceId: string) => Promise<void>;
+}
+
+/**
  * The GOVERNED post-retrieval deps — the shared safety core (authoritative posture → route → egress
  * veto → synthesis-on-the-veto-cleared-route → candidate/UI-safe gate). Every on-request Copilot
  * synthesis SKILL (ask, briefing, …) reuses `runGovernedCopilotSynthesis` over these deps, so the
@@ -392,6 +451,14 @@ export interface GovernedCopilotSynthesisDeps {
   readonly workspacePosture: WorkspacePostureResolver;
   /** Select the candidate ProviderRoute the synthesis would egress to (interim: a genuine local route). */
   readonly routeSelector: EgressRouteSelector;
+  /**
+   * 24.7 — OPTIONAL here (unlike the required `CopilotDepsOptions.auditPersist` `buildCopilotDeps`
+   * always populates it from) so the many existing hand-built `GovernedCopilotSynthesisDeps`/`CopilotDeps`
+   * fixtures across this file's own + sibling test suites (none of which exercise audit persistence)
+   * don't all need updating. Absent ⇒ the egress-veto deny below is not persisted (test-only shape;
+   * `buildCopilotDeps` — the real production composition root — can never omit it).
+   */
+  readonly auditPersist?: AuditPersistPort;
 }
 
 /** The Copilot ASK deps — the governed core + the workspace-knowledge retrieval port. */
@@ -497,12 +564,17 @@ export async function runGovernedCopilotSynthesis(
   if (!isOk(posture)) return posture; // unknown workspace → fail closed (WORKSPACE_NOT_FOUND)
   const route = await deps.routeSelector.select(workspaceId, posture.value);
   if (!isOk(route)) return route;
-  const decision = decideCopilotEgress({
+  const { result: decision, audit } = decideCopilotEgressWithAudit({
     job: buildCopilotJob(workspaceId, route.value),
     route: route.value,
     posture: posture.value,
   });
-  if (!isOk(decision)) return decision; // veto DENY (e.g. employer-work cloud, ack OFF) → no synthesis
+  if (!isOk(decision)) {
+    // 24.7 — a policy boundary was PROBED: persist the denial as a durable, queryable AuditRecord
+    // (the guarantee above — synthesis never runs — never depends on this succeeding).
+    if (deps.auditPersist !== undefined) await deps.auditPersist.persistDenial(audit, workspaceId);
+    return decision; // veto DENY (e.g. employer-work cloud, ack OFF) → no synthesis
+  }
 
   const candidate = await deps.synthesis.synthesize(workspaceId, question, scopedContext, decision.value.route);
   if (!isOk(candidate)) return candidate;

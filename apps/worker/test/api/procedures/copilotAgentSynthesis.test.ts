@@ -54,7 +54,10 @@ import {
   type CopilotPromptContext,
 } from "../../../src/api/procedures/copilotAgentSynthesis";
 import { buildCopilotDeps } from "../../../src/api/procedures/copilotClaudeSynthesis";
-import type { RetrievedContext } from "../../../src/api/procedures/copilot";
+import type { AuditPersistPort, RetrievedContext } from "../../../src/api/procedures/copilot";
+// 24.7 — none of this file's cases exercise audit persistence; a shared no-op satisfies the now-required
+// `CopilotDepsOptions.auditPersist` / `AgentSynthesisOpts.auditPersist` fields at every call site below.
+const auditNoop: AuditPersistPort = { persistDenial: async () => {} };
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 const CLAUDE_ROUTE: ProviderRoute = {
@@ -551,14 +554,14 @@ describe("createAgentRuntimeCopilotSynthesis — the agentic CopilotSynthesisPor
   it("C5.3 AND-term: proposeEnabled:true but the fail-closed trust interim ⇒ the job stays read_only (flag alone never grants propose)", async () => {
     const f = fakeRunner(() => ok(completed({ answer: ["ok"], citations: [] })));
     // proposeEnabled ON, but the DEFAULT resolveContentTrust (deriveCopilotContentTrust ⇒ untrusted) gates it.
-    const synth = createAgentRuntimeCopilotSynthesis(f.runner, { proposeEnabled: true });
+    const synth = createAgentRuntimeCopilotSynthesis(f.runner, { proposeEnabled: true, auditPersist: auditNoop });
     await synth.synthesize("personal-business", "q?", ctx(), CLAUDE_ROUTE);
     expect(f.lastJob()?.toolPolicy.mode).toBe("read_only");
     expect(f.lastJob()?.trustLevel).toBe("untrusted");
   });
   it("C5.4 end-to-end: proposeEnabled + an ALL-KnowledgeWriter context ⇒ the built job IS trusted+scoped_write (propose-capable)", async () => {
     const f = fakeRunner(() => ok(completed({ answer: ["ok"], citations: [] })));
-    const synth = createAgentRuntimeCopilotSynthesis(f.runner, { proposeEnabled: true });
+    const synth = createAgentRuntimeCopilotSynthesis(f.runner, { proposeEnabled: true, auditPersist: auditNoop });
     const trustedCtx = ctx({
       sources: [{ citationId: "gbrain:a", title: "A", provenance: "knowledge_writer" }],
     });
@@ -1253,7 +1256,7 @@ describe("buildCopilotDeps — an injected agentSynthesis factory swaps in the a
         return ok(completed({ answer: ["from agent"], citations: [] }));
       },
     };
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       agentSynthesis: () => createAgentRuntimeCopilotSynthesis(runner),
       workspaces: [{ id: "personal-business", type: "personal_business" }],
@@ -1265,7 +1268,7 @@ describe("buildCopilotDeps — an injected agentSynthesis factory swaps in the a
   });
 
   it("uses the completion path when NO agentSynthesis is injected (the default real path is unchanged)", async () => {
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces: [{ id: "personal-business", type: "personal_business" }],
       completion: baseCompletion,
@@ -1277,7 +1280,7 @@ describe("buildCopilotDeps — an injected agentSynthesis factory swaps in the a
 
   it("does NOT invoke the agentSynthesis factory when realCopilot is OFF (stub wins; nothing is constructed)", async () => {
     let factoryCalls = 0;
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: false,
       agentSynthesis: () => {
         factoryCalls += 1;

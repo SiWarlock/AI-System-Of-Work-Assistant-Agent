@@ -74,8 +74,8 @@ import {
   isDeny,
   isMutatingCopilotTool,
 } from "@sow/policy";
-import type { CopilotWorkspaceScope } from "@sow/policy";
-import type { CandidateCopilotAnswer, CopilotSynthesisPort, RetrievedContext } from "./copilot";
+import type { CopilotWorkspaceScope, AuditSignal, PolicyDecision } from "@sow/policy";
+import type { AuditPersistPort, CandidateCopilotAnswer, CopilotSynthesisPort, RetrievedContext } from "./copilot";
 import { handleCopilotProposeToolCall } from "./copilotPropose";
 import type { CopilotProposeSink } from "./copilotPropose";
 // §13.10a G4b-2 — the SEMANTIC-write propose grant (mirror of the propose_action grant above).
@@ -367,34 +367,63 @@ export function buildCopilotAgentJob(
  * hold a mutating policy). The gate BITES on the dangerous shapes: an untrusted+mutating job (hard-rejected)
  * and a read_only policy that smuggles a mutating tool (rejected by the purity check). Pure.
  */
-export function admitCopilotAgentJob(job: AgentJob): Result<AgentJob, FailureVariant> {
+/**
+ * 24.7 — the audit-preserving core of {@link admitCopilotAgentJob}. Returns BOTH the existing `result`
+ * (byte-identical to `admitCopilotAgentJob`'s own return — that function becomes a one-line wrapper, so
+ * every existing caller/test is unaffected) AND the raw `AuditSignal` from the ING-7 `admitJob` decision.
+ * `audit` is `undefined` only when the PRE-check (`isToolPolicyConsistent`) rejects first — that check is
+ * a structural-consistency guard, not a `PolicyDecision`, so it has no signal to give; it is also out of
+ * this task's rule-6 scope (the finding is specifically about the `admitJob` ING-7 predicate's discarded
+ * signal). `createAgentRuntimeCopilotSynthesis` calls THIS — not `admitCopilotAgentJob` — so it can
+ * persist the ING-7 deny audit.
+ */
+export function admitCopilotAgentJobWithAudit(
+  job: AgentJob,
+): { readonly result: Result<AgentJob, FailureVariant>; readonly audit?: AuditSignal } {
   // Defense-in-depth on this PUBLIC gate: re-assert the ToolPolicy cross-field invariant the Zod `.refine`
   // enforces (read_only ⇒ !allowsMutating). `admitCopilotAgentJob` takes an already-typed AgentJob and does
   // NOT re-run the schema gate, so a caller-built read_only policy with `allowsMutating:true` (which
   // `admitsMutating`'s read_only early-return would otherwise admit) is refused here.
   if (!isToolPolicyConsistent(job.toolPolicy)) {
-    return err(
-      failure("validation_rejected", "copilot tool policy is internally inconsistent", {
-        cause: { code: "COPILOT_TOOLPOLICY_INCONSISTENT" },
-      }),
-    );
+    return {
+      result: err(
+        failure("validation_rejected", "copilot tool policy is internally inconsistent", {
+          cause: { code: "COPILOT_TOOLPOLICY_INCONSISTENT" },
+        }),
+      ),
+    };
   }
-  const decision = admitJob(job, isMutatingCopilotTool);
+  const decision: PolicyDecision<AgentJob> = admitJob(job, isMutatingCopilotTool);
   if (isDeny(decision)) {
-    return err(
-      failure("validation_rejected", "copilot agent job rejected by the ING-7 admission gate", {
-        cause: { code: decision.reason },
-      }),
-    );
+    return {
+      audit: decision.audit,
+      result: err(
+        failure("validation_rejected", "copilot agent job rejected by the ING-7 admission gate", {
+          cause: { code: decision.reason },
+        }),
+      ),
+    };
   }
   if (!copilotReadOnlyPolicyIsPure(job.toolPolicy)) {
-    return err(
-      failure("validation_rejected", "copilot read_only tool policy lists a mutating tool", {
-        cause: { code: "COPILOT_READONLY_POLICY_IMPURE" },
-      }),
-    );
+    // code-quality-reviewer catch: `decision.audit` here is the PRIOR `admitJob` call's ALLOW signal
+    // (event "job.admission.allowed") — this branch only runs when that call did NOT deny. Attaching it to
+    // THIS denial would persist a record that says "allowed" for a job that was, in fact, rejected — worse
+    // than no record. `copilotReadOnlyPolicyIsPure` is a plain boolean (no `PolicyDecision`/`AuditSignal` of
+    // its own), so — same as the pre-ING-7 `isToolPolicyConsistent` branch above — there is no correct
+    // signal to give; omit `audit` rather than attach a misleading one.
+    return {
+      result: err(
+        failure("validation_rejected", "copilot read_only tool policy lists a mutating tool", {
+          cause: { code: "COPILOT_READONLY_POLICY_IMPURE" },
+        }),
+      ),
+    };
   }
-  return ok(job);
+  return { audit: decision.audit, result: ok(job) };
+}
+
+export function admitCopilotAgentJob(job: AgentJob): Result<AgentJob, FailureVariant> {
+  return admitCopilotAgentJobWithAudit(job).result;
 }
 
 // ── the governed agentic prompt ───────────────────────────────────────────────
@@ -513,6 +542,14 @@ export interface AgentSynthesisOpts {
    */
   readonly knowledgeProposeEnabled?: boolean;
   readonly resolveContentTrust?: (context: RetrievedContext) => CopilotContentTrust;
+  /**
+   * 24.7 — REQUIRED whenever `opts` is supplied (unlike its siblings above): audit persistence for a
+   * policy denial is not an optional feature the way propose/trust are, so an omission here is a compile
+   * error rather than a silent gap. The sole production caller (`boot.ts`'s `agentSynthesisFactory`)
+   * always supplies it; a caller that omits `opts` ENTIRELY (most of this file's own unit tests, which
+   * don't exercise propose/trust/audit at all) is unaffected.
+   */
+  readonly auditPersist: AuditPersistPort;
 }
 
 /**
@@ -529,6 +566,7 @@ export function createAgentRuntimeCopilotSynthesis(
   const proposeEnabled = opts?.proposeEnabled ?? false;
   const knowledgeProposeEnabled = opts?.knowledgeProposeEnabled ?? false;
   const resolveContentTrust = opts?.resolveContentTrust ?? deriveCopilotContentTrust;
+  const auditPersist = opts?.auditPersist;
   return {
     synthesize: async (
       workspaceId: string,
@@ -542,8 +580,14 @@ export function createAgentRuntimeCopilotSynthesis(
       const contentTrust = resolveContentTrust(context);
       const job = buildCopilotAgentJob(workspaceId, runtimeRoute.value, { contentTrust, proposeEnabled, knowledgeProposeEnabled });
       // ING-7 admission (C4) BEFORE the runner — fail closed on an untrusted+mutating or impure-read_only job.
-      const admitted = admitCopilotAgentJob(job);
-      if (!isOk(admitted)) return admitted;
+      const { result: admitted, audit } = admitCopilotAgentJobWithAudit(job);
+      if (!isOk(admitted)) {
+        // 24.7 — a policy boundary was PROBED: persist the denial as a durable, queryable AuditRecord
+        // (the guarantee above — the runner never runs — never depends on this succeeding). `audit` is
+        // absent only for the pre-ING-7 `isToolPolicyConsistent` structural reject (out of this task's scope).
+        if (auditPersist !== undefined && audit !== undefined) await auditPersist.persistDenial(audit, workspaceId);
+        return admitted;
+      }
       const run = await runner.run(admitted.value, { question, context });
       if (!isOk(run)) return err(foldRuntimeError(run.error));
       return mapAgentResultToCandidate(run.value, context);

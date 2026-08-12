@@ -37,6 +37,7 @@ import {
   localWorkspacePosture,
 } from "./copilot";
 import type {
+  AuditPersistPort,
   CandidateCopilotAnswer,
   CopilotDeps,
   CopilotRetrievalPort,
@@ -488,6 +489,14 @@ export interface CopilotDepsOptions {
    * event (see `copilotProvenanceStamp.ts` GO-LIVE PRECONDITIONS). A FACTORY so it's built only on-path.
    */
   readonly servingOracle?: () => CopilotServingOracle;
+  /**
+   * 24.7 — REQUIRED (unlike its siblings above): this is the real composition root for the completion
+   * path's Copilot deps (task 24.26's precedent — a safety-load-bearing dependency belongs at the
+   * composition root, not an easy-to-forget optional). Boot always supplies a real
+   * `createAuditPersistPort({audit: backends.repos.audit, now: backends.now})`. Threads straight into
+   * `GovernedCopilotSynthesisDeps.auditPersist` below.
+   */
+  readonly auditPersist: AuditPersistPort;
 }
 
 /**
@@ -569,5 +578,8 @@ export function buildCopilotDeps(opts: CopilotDepsOptions): CopilotDeps {
     routeSelector: opts.realCopilot
       ? createClaudeCloudRouteSelector(opts.model)
       : createLocalRouteSelector(),
+    // 24.7 — always populated (the type's `auditPersist` is required); `runGovernedCopilotSynthesis`
+    // persists the egress-veto deny through it regardless of realCopilot/interim.
+    auditPersist: opts.auditPersist,
   };
 }

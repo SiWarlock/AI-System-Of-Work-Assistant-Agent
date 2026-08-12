@@ -18,7 +18,10 @@ import type {
   CompletionOutput,
   CompletionError,
 } from "@sow/providers";
-import type { RetrievedContext } from "../../../src/api/procedures/copilot";
+import type { AuditPersistPort, RetrievedContext } from "../../../src/api/procedures/copilot";
+// 24.7 — none of this file's cases exercise audit persistence; a shared no-op satisfies the now-required
+// `CopilotDepsOptions.auditPersist` field at every `buildCopilotDeps` call site in this file.
+const auditNoop: AuditPersistPort = { persistDenial: async () => {} };
 import { decideCopilotEgress, buildCopilotJob } from "../../../src/api/procedures/copilot";
 import { deriveCopilotContentTrust } from "../../../src/api/procedures/copilotAgentSynthesis";
 import { createInterimDegradedServingOracle } from "../../../src/api/procedures/copilotProvenanceStamp";
@@ -480,7 +483,7 @@ describe("buildCopilotDeps — the flag branch, unit-tested (a flipped ternary c
 
   it("OFF: fail-closed posture (ack off) + local route (no notice); the completion factory is NEVER called", async () => {
     let factoryCalls = 0;
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: false,
       workspaces: employer,
       completion: () => {
@@ -510,7 +513,7 @@ describe("buildCopilotDeps — the flag branch, unit-tested (a flipped ternary c
 
   it("ON: consent posture (ack on) + cloud route + real synthesis (fake client); factory called EXACTLY once", async () => {
     let factoryCalls = 0;
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces: employer,
       completion: () => {
@@ -539,7 +542,7 @@ describe("buildCopilotDeps — the flag branch, unit-tested (a flipped ternary c
   });
 
   it("threads the model override into the cloud route selector", async () => {
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces: employer,
       model: "claude-sonnet-5",
@@ -553,14 +556,14 @@ describe("buildCopilotDeps — the flag branch, unit-tested (a flipped ternary c
   });
 
   it("with no provisioned workspaces, every posture resolve fails CLOSED (WORKSPACE_NOT_FOUND)", async () => {
-    const deps = buildCopilotDeps({ realCopilot: true, workspaces: [], completion: okCompletion });
+    const deps = buildCopilotDeps({ auditPersist: auditNoop, realCopilot: true, workspaces: [], completion: okCompletion });
     const posture = await deps.workspacePosture.resolve("ws-employer");
     expect(isErr(posture)).toBe(true);
   });
 
   it("threads betas into the synthesis request (default 1M-context beta, no explicit override)", async () => {
     const { client, calls } = recordingClient(ok({ structuredOutput: goodOutput, costUsd: 0.01 }));
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces: employer,
       completion: () => client,
@@ -572,7 +575,7 @@ describe("buildCopilotDeps — the flag branch, unit-tested (a flipped ternary c
 
   it("threads a NON-default betas OVERRIDE through buildCopilotDeps (not just the default)", async () => {
     const { client, calls } = recordingClient(ok({ structuredOutput: goodOutput, costUsd: 0.01 }));
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces: employer,
       betas: ["context-1m-2025-08-07", "some-other-beta"],
@@ -646,7 +649,7 @@ describe("buildCopilotDeps — P3-live gbrain retrieval branch (only the served 
 
   it("real path + gbrainExec: the SERVED workspace reads gbrain; the factory is called EXACTLY once", async () => {
     let factoryCalls = 0;
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion: okCompletion,
@@ -666,7 +669,7 @@ describe("buildCopilotDeps — P3-live gbrain retrieval branch (only the served 
 
   it("real path + gbrainExec: a NON-served workspace stays on the fixture (empty) and never reads gbrain (WS-8)", async () => {
     let execCalls = 0;
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion: okCompletion,
@@ -683,7 +686,7 @@ describe("buildCopilotDeps — P3-live gbrain retrieval branch (only the served 
 
   it("gbrainExec is IGNORED when realCopilot is OFF (fixture stub; the factory is NEVER called)", async () => {
     let factoryCalls = 0;
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: false,
       workspaces,
       completion: okCompletion,
@@ -699,14 +702,14 @@ describe("buildCopilotDeps — P3-live gbrain retrieval branch (only the served 
   });
 
   it("WITHOUT gbrainExec the real path keeps the fixture retrieval (served workspace returns empty, not gbrain)", async () => {
-    const deps = buildCopilotDeps({ realCopilot: true, workspaces, completion: okCompletion });
+    const deps = buildCopilotDeps({ auditPersist: auditNoop, realCopilot: true, workspaces, completion: okCompletion });
     const r = await deps.retrieval.retrieve(served, "q");
     expect(isOk(r)).toBe(true);
     if (isOk(r)) expect(r.value.blocks).toEqual([]);
   });
 
   it("honors a gbrainWorkspaceId override (that workspace reads gbrain; personal-business falls back to fixture)", async () => {
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion: okCompletion,
@@ -744,7 +747,7 @@ describe("buildCopilotDeps — C5.4b provenance-stamping decorator (a flipped te
       mode: "gated",
       admitted: new Map([["gbrain:sessions:028", { content: "PROVEN", mdContentSha: "sha" }]]),
     });
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion: okCompletion,
@@ -763,7 +766,7 @@ describe("buildCopilotDeps — C5.4b provenance-stamping decorator (a flipped te
   });
 
   it("real path + the INTERIM oracle: a live gbrain hit is STILL un-stamped ⇒ untrusted (structurally OFF today)", async () => {
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion: okCompletion,
@@ -780,7 +783,7 @@ describe("buildCopilotDeps — C5.4b provenance-stamping decorator (a flipped te
 
   it("servingOracle is IGNORED when realCopilot is OFF (the factory is NEVER called)", async () => {
     let factoryCalls = 0;
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: false,
       workspaces,
       completion: okCompletion,
@@ -792,7 +795,7 @@ describe("buildCopilotDeps — C5.4b provenance-stamping decorator (a flipped te
   });
 
   it("WITHOUT servingOracle the real path is UNDECORATED (sources un-provenanced — the pre-C5.4b behavior)", async () => {
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion: okCompletion,
@@ -865,7 +868,7 @@ describe("buildCopilotDeps — SC3 gbrainWorkspaceScope wires the P1 filter into
   const rawWithForeign = [rawHit("personal-business/mine", "mine", "Mine"), rawHit("employer-work/secret", "leak", "Leak")];
 
   it("with gbrainWorkspaceScope: DROPS the FOREIGN hit from the served workspace's retrieval", async () => {
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion,
@@ -882,7 +885,7 @@ describe("buildCopilotDeps — SC3 gbrainWorkspaceScope wires the P1 filter into
   });
 
   it("WITHOUT gbrainWorkspaceScope: passthrough (back-compat — foreign hit survives)", async () => {
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion,
@@ -894,7 +897,7 @@ describe("buildCopilotDeps — SC3 gbrainWorkspaceScope wires the P1 filter into
   });
 
   it("under the boot DEFAULT {deny}: an unprefixed/legacy hit is DROPPED (⚠ today's whole brain is unprefixed ⇒ zero retrieval — why the owner posture is {assign,personal-business}, not the default)", async () => {
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion,
@@ -908,7 +911,7 @@ describe("buildCopilotDeps — SC3 gbrainWorkspaceScope wires the P1 filter into
   });
 
   it("the filter is bound to the served id: a legacy hit is KEPT under {assign,personal-business} served=personal-business", async () => {
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion,
@@ -944,7 +947,7 @@ describe("buildCopilotDeps — Option A multi-served: a NON-served registered wo
   const combined = [rawHit("employer-work/acme", "EW content", "EW"), rawHit("personal-business/mine", "PB content", "PB")];
 
   it("scope present: asking employer-work (≠ the boot-fixed served personal-business) reads the brain, scoped to employer-work", async () => {
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion,
@@ -962,7 +965,7 @@ describe("buildCopilotDeps — Option A multi-served: a NON-served registered wo
   });
 
   it("scope present: the served personal-business still reads its OWN content (own + legacy-assigned; EW dropped)", async () => {
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion,
@@ -976,7 +979,7 @@ describe("buildCopilotDeps — Option A multi-served: a NON-served registered wo
 
   it("scope present: an UNREGISTERED workspace fails closed (WORKSPACE_NOT_FOUND) and NEVER reads the brain", async () => {
     let execCalls = 0;
-    const deps = buildCopilotDeps({
+    const deps = buildCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion,
