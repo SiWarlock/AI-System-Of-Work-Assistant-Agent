@@ -1,7 +1,7 @@
 # Session 156 — knowledge: concept-level sweep for raw-content-shape predicate forks (24.34) — zero new forks, non-vacuity control fires 3×
 
 **Date:** 2026-08-12 · **Role:** knowledge-implementer (`main`, single-track, root checkout)
-**Predecessor:** [155-2026-08-12-gcl-visibility-gate-hardening-and-the-live-dormant-correction.md](155-2026-08-12-gcl-visibility-gate-hardening-and-the-live-dormant-correction.md) · **Successor:** _(next knowledge-implementer session)_
+**Predecessor:** [155-2026-08-12-gcl-visibility-gate-hardening-and-the-live-dormant-correction.md](155-2026-08-12-gcl-visibility-gate-hardening-and-the-live-dormant-correction.md) · **Successor:** [158-2026-08-12-gcl-denial-audit-persistence-24-33-and-24-44.md](158-2026-08-12-gcl-denial-audit-persistence-24-33-and-24-44.md)
 
 ## Why this session existed
 
