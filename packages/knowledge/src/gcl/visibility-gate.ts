@@ -212,8 +212,53 @@ export function guardCrossWorkspaceRawRead(
   if (isAllow(decision)) {
     return ok(decision.value);
   }
-  if (decision.reason === "DIRECT_CROSS_WORKSPACE_RAW_RETRIEVAL") {
-    return err({ code: "direct_cross_workspace_raw_denied", message: decision.message });
+  return err(denialToCrossWorkspaceRawDenial(decision.reason, decision.message));
+}
+
+/**
+ * Map a §5 `DenialReason` to this guard's `CrossWorkspaceRawDenial` (task
+ * 24.38 / L134, fourth instance this round — the prior form was an un-guarded
+ * single `===` check + trailing return that silently absorbed the other 14
+ * members into `malformed_policy_input`). EXHAUSTIVE over all 15
+ * `DenialReason` members, terminated with the same `assertNever`-style guard
+ * as `denialToGateError` above (task 24.36's landed pattern, this same file).
+ * `denyDirectCrossWorkspaceRaw` can genuinely only ever emit 2 of the 15
+ * (`DIRECT_CROSS_WORKSPACE_RAW_RETRIEVAL`/`MALFORMED_POLICY_INPUT`); the other
+ * 13 are grouped under one fail-closed `malformed_policy_input` mapping
+ * (matching `FAIL_CLOSED_DENIAL`'s own designation), each its OWN explicit
+ * case, not a `default:` catch-all. Exported so every member is directly
+ * unit-testable, not only the 2 reachable through a real call.
+ */
+export function denialToCrossWorkspaceRawDenial(
+  reason: DenialReason,
+  message: string,
+): CrossWorkspaceRawDenial {
+  switch (reason) {
+    case "DIRECT_CROSS_WORKSPACE_RAW_RETRIEVAL":
+      return { code: "direct_cross_workspace_raw_denied", message };
+    case "MALFORMED_POLICY_INPUT":
+    case "EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED":
+    case "UNTRUSTED_CONTENT_MUTATING_TOOL":
+    case "WRITE_ADAPTER_OUTSIDE_GATEWAY":
+    case "PROVIDER_NOT_ALLOWED":
+    case "NO_ROUTE_FOR_CAPABILITY":
+    case "PROCESSOR_NOT_ALLOWED":
+    case "LOCAL_ENDPOINT_NOT_CONFIGURED":
+    case "NON_LOOPBACK_LOCAL_TREATED_AS_EGRESS":
+    case "VISIBILITY_EXCEEDS_SOURCE":
+    case "VISIBILITY_TYPE_MISMATCH":
+    case "APPROVAL_REQUIRED":
+    case "AUTH_TOKEN_INVALID":
+    case "ORIGIN_NOT_ALLOWED":
+      return { code: "malformed_policy_input", message };
+    default: {
+      // A new DenialReason member reaches here as a non-`never` type → tsc
+      // error, forcing a deliberate mapping decision above (mirrors
+      // denialToGateError / defaultSeverityForFailureClass). Never a
+      // `default:` that silently absorbs a real reason.
+      const _exhaustive: never = reason;
+      void _exhaustive;
+      return { code: "malformed_policy_input", message };
+    }
   }
-  return err({ code: "malformed_policy_input", message: decision.message });
 }

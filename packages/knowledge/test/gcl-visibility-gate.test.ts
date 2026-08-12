@@ -8,6 +8,7 @@ import {
   admitProjection,
   guardCrossWorkspaceRawRead,
   denialToGateError,
+  denialToCrossWorkspaceRawDenial,
 } from "../src/gcl/visibility-gate";
 
 // A workspace whose default visibility admits `coordination`-level projections.
@@ -216,5 +217,68 @@ describe("guardCrossWorkspaceRawRead — the direct cross-brain raw-retrieval de
     const r = guardCrossWorkspaceRawRead({ fromWorkspaceId: "", toWorkspaceId: "ws-b" });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.code).toBe("malformed_policy_input");
+  });
+});
+
+// task 24.38 (L134, fourth instance): guardCrossWorkspaceRawRead's narrowing was
+// the SAME un-guarded shape 24.36 just fixed one function above in this file —
+// one explicit check against DIRECT_CROSS_WORKSPACE_RAW_RETRIEVAL, then a
+// trailing return absorbing the other 14 members into malformed_policy_input.
+// Mirrors 24.36's denialToGateError extraction for the identical reason:
+// denyDirectCrossWorkspaceRaw can only ever emit 2 of the 15 members, so the
+// other 13 are otherwise untestable end-to-end.
+describe("denialToCrossWorkspaceRawDenial — exhaustive over DenialReason (task 24.38 / L134)", () => {
+  it("guard_cross_workspace_raw_read_direct_retrieval_unchanged: DIRECT_CROSS_WORKSPACE_RAW_RETRIEVAL maps byte-identically to before", () => {
+    expect(denialToCrossWorkspaceRawDenial("DIRECT_CROSS_WORKSPACE_RAW_RETRIEVAL", "denied")).toEqual({
+      code: "direct_cross_workspace_raw_denied",
+      message: "denied",
+    });
+  });
+
+  it("guard_cross_workspace_raw_read_malformed_input_unchanged: MALFORMED_POLICY_INPUT maps byte-identically to before", () => {
+    expect(denialToCrossWorkspaceRawDenial("MALFORMED_POLICY_INPUT", "bad input")).toEqual({
+      code: "malformed_policy_input",
+      message: "bad input",
+    });
+  });
+
+  // Honesty note (matching 24.36's own): a grouped case-list and a trailing
+  // fallthrough are output-identical by construction for every one of these —
+  // this is a genuine regression pin, not proof of the structural
+  // exhaustiveness property (that's the empirical removal-test below).
+  it("guard_cross_workspace_raw_read_non_emittable_reasons_fail_closed: every other DenialReason still maps to malformed_policy_input", () => {
+    const nonEmittable: readonly DenialReason[] = [
+      "EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED",
+      "UNTRUSTED_CONTENT_MUTATING_TOOL",
+      "WRITE_ADAPTER_OUTSIDE_GATEWAY",
+      "PROVIDER_NOT_ALLOWED",
+      "NO_ROUTE_FOR_CAPABILITY",
+      "PROCESSOR_NOT_ALLOWED",
+      "LOCAL_ENDPOINT_NOT_CONFIGURED",
+      "NON_LOOPBACK_LOCAL_TREATED_AS_EGRESS",
+      "VISIBILITY_EXCEEDS_SOURCE",
+      "VISIBILITY_TYPE_MISMATCH",
+      "APPROVAL_REQUIRED",
+      "AUTH_TOKEN_INVALID",
+      "ORIGIN_NOT_ALLOWED",
+    ];
+    for (const reason of nonEmittable) {
+      expect(denialToCrossWorkspaceRawDenial(reason, "n/a")).toEqual({
+        code: "malformed_policy_input",
+        message: "n/a",
+      });
+    }
+  });
+
+  // guardCrossWorkspaceRawRead's own OBSERVABLE behavior is unchanged by the
+  // extraction — pinned end-to-end, not just via the extracted helper.
+  it("guardCrossWorkspaceRawRead's own output is byte-identical after the extraction", () => {
+    const denied = guardCrossWorkspaceRawRead({ fromWorkspaceId: "ws-a", toWorkspaceId: "ws-b" });
+    expect(denied.ok).toBe(false);
+    if (!denied.ok) expect(denied.error.code).toBe("direct_cross_workspace_raw_denied");
+
+    const malformed = guardCrossWorkspaceRawRead({ fromWorkspaceId: "", toWorkspaceId: "ws-b" });
+    expect(malformed.ok).toBe(false);
+    if (!malformed.ok) expect(malformed.error.code).toBe("malformed_policy_input");
   });
 });
