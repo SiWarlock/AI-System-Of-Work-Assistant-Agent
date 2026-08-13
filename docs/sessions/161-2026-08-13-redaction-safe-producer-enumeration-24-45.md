@@ -3,7 +3,7 @@
 **Date:** 2026-08-13 · **Phase:** 24 · **Track:** single-track `main` (root checkout, no worktree)
 **Role:** `providers-integrations-implementer` (owns `providers`, `policy`, `integrations`)
 **Predecessor:** `docs/sessions/159-2026-08-12-24-15-outbox-redrive-approval-policy-and-24-50-finding.md` (the `providers-integrations` chain; session-doc chains run per-AREA, so `160` is worker's and not this doc's predecessor despite the number)
-**Successor:** `162-2026-08-13-required-from-birth-green-under-both-and-a-notice-that-carries-nothing.md`
+**Successor:** `162-2026-08-13-required-from-birth-green-under-both-and-a-notice-that-carries-nothing.md` (chronological; set by knowledge) · ⚠ **this AREA's next session is `165-2026-08-13-24-65-the-defect-that-was-not-there.md`** — both named because the chain convention is inconsistent repo-wide (this doc declares per-area, `162` used chronological for its predecessor), and following one alone skips a doc.
 
 **Slice landed:** `48ec7c91` — 1 commit, 4 files, `packages/policy` only.
 
