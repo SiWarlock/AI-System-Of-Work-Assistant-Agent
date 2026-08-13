@@ -6,7 +6,7 @@
 // `CopilotSynthesisPort.synthesize`) and then QUERIES the repository for the record. A
 // construction-side-only assertion (e.g. "buildAuditSignal was called") does not discharge this task
 // even if green — see IMPLEMENTATION_PLAN.md task 24.7 / brief 252.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { ok, isOk, isErr, processorId } from "@sow/contracts";
 import type { AgentJob, AuditRecord, DataOwner, EgressPolicy, ProviderRoute, WorkspaceType } from "@sow/contracts";
 import type { AuditRepository, AuditQuery, DbResult, DbError } from "@sow/db";
@@ -265,5 +265,163 @@ describe("24.7 — the ING-7 admission denial on the agentic Copilot path persis
     const queried = await mem.repo.query({ workspaceId: agentPersonaWs }, 10);
     expect(isOk(queried)).toBe(true);
     if (isOk(queried)) expect(queried.value.length).toBe(0);
+  });
+});
+
+// ── task 24.62 — the port's TWO channels, and the two console.error lines that describe them ────────
+//
+// `createAuditPersistPort.persistDenial(signal, workspaceId)` takes TWO data channels and gates ONE:
+// `isRedactionSafe` scans the `AuditSignal`; `workspaceId` rides beside it, never scanned. Both
+// `console.error` lines asserted a redaction-safety property the line beneath them did not have, and
+// NOTHING pinned either line's content — which is exactly how a comment and its code drift apart
+// (`L82`). These tests pin the log-sink content itself, so the comments become checkable claims.
+//
+// ⚠ NO SEVERITY CLAIM. Neither line is a caller-injection channel: both `persistDenial` call sites are
+// registry-validated (`copilot.ts:580-581` `workspacePosture.resolve`, fail-closed) with a read-back
+// identity re-gate (`storeBackedWorkspacePosture.ts:39`, strict `String(ws.id) !== workspaceId`). The
+// residual these tests close is narrower and real: registry-validated means the id EXISTS, not that it
+// is WELL-SHAPED — a credential-shaped id in the workspace CONFIG still reaches a log sink (`24.55`'s
+// trusted-provenance-vs-validated-shape rule, one layer down; `packages/policy`'s `visibility.ts`
+// records the same residual for its own sibling site, in the RESIDUAL note on its `refs` construction
+// — cited by symbol, not line, because that file is concurrently modified on another track).
+//
+// ⚠ SCOPE EXCEPTION TO THIS FILE'S OWN HEADER, stated so the header stays true. The `24.7` header
+// above requires that "every test here MOVES THE STATE — it triggers a REAL denial through the REAL
+// call chain". These three DRIVE THE PORT DIRECTLY, and that is deliberate, not a shortcut: the real
+// chain's `event` values are three hardcoded literals, so no legitimate call chain can produce a
+// gate-FAILING signal to trigger the refusal branch with. The existing `24.7` refusal test at the top
+// of this file made the same choice for the same reason. ⇒ the anti-discharge clause is satisfied by
+// the tests that CAN move the state; these pin a branch reachable only by construction.
+
+/**
+ * Capture `console.error` for the duration of one call; always restores.
+ *
+ * ⛔ NON-STRING ARGS ARE `JSON.stringify`d, NOT `String()`d, AND THAT IS LOAD-BEARING. `String({...})`
+ * renders `"[object Object]"`, so a future `console.error(msg, { workspaceId })` — the most natural
+ * "improve the diagnostics" edit anyone would make here — would put the value in the sink while every
+ * `not.toContain` assertion below stayed GREEN. A rule-7 pin that cannot see structured args is a pin
+ * that fails silently in the one direction it exists to catch.
+ */
+async function captureConsoleError(run: () => Promise<void>): Promise<string[]> {
+  const lines: string[] = [];
+  const render = (a: unknown): string => (typeof a === "string" ? a : JSON.stringify(a) ?? String(a));
+  const spy = vi
+    .spyOn(console, "error")
+    .mockImplementation((...args: unknown[]) => void lines.push(args.map(render).join(" ")));
+  try {
+    await run();
+  } finally {
+    spy.mockRestore();
+  }
+  return lines;
+}
+
+describe("24.62 — the audit-persist port's log sink carries only what its comments claim", () => {
+  // spec(§16) — safety rule 7: redaction strips secrets + raw content before ANY log sink.
+  // A refusal means at least one of the six fields `isRedactionSafe` scans is unsafe and the handler
+  // CANNOT KNOW WHICH ⇒ no signal-derived value is safe to emit here, `event` included. This is the
+  // doctrine `packages/knowledge`'s `GclAuditPersistPort.onRefused` (task 24.53, `e85953d3`) already
+  // states in prose and discharges by SIGNATURE — `boot.ts` is the site that violates it.
+  it("refused_signal_notice_carries_no_signal_derived_value — not event, not denialCode, not the ungated workspaceId", async () => {
+    const mem = memAuditQueryable();
+    const port = createAuditPersistPort({ audit: mem.repo, now: () => NOW });
+    // Every field carries a distinct marker so an assertion failure names the leaking channel.
+    const unsafe = buildAuditSignal({
+      actor: "MARKERACTOR",
+      event: "MARKEREVENT",
+      refs: ["MARKERREF"],
+      payloadHash: "MARKERHASH",
+      beforeSummary: "MARKERBEFORE",
+      // credential-shaped ⇒ isRedactionSafe() is false. Which field is unsafe is deliberately NOT the
+      // one the notice names — that is the whole point.
+      afterSummary: "MARKERAFTER password=MARKERSECRET",
+      denialCode: "EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED",
+    });
+    const lines = await captureConsoleError(() => port.persistDenial(unsafe, "MARKERWORKSPACE"));
+
+    // NON-VACUITY, two halves. (a) the refusal is still EMITTABLE — without this the "contains nothing"
+    // assertions below pass trivially against a port that stopped logging altogether (24.53's
+    // regression, inverted). (b) it is still the REFUSAL line specifically: `lines.length` alone is
+    // satisfied by any single line, so a reordered branch or a rewritten message would slip through.
+    expect(lines.length).toBe(1);
+    const notice = lines.join("\n");
+    expect(notice).toContain("REFUSED");
+    for (const marker of [
+      "MARKERACTOR",
+      "MARKEREVENT",
+      "MARKERREF",
+      "MARKERHASH",
+      "MARKERBEFORE",
+      "MARKERAFTER",
+      "MARKERSECRET",
+      "EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED", // denialCode: unscanned because closed BY TYPE, not validated
+      "MARKERWORKSPACE", // the second, ungated channel
+    ]) {
+      expect(notice).not.toContain(marker);
+    }
+    // and it is still refused, not persisted (the gate's own behaviour is unchanged).
+    // `isOk` asserted BEFORE narrowing — an assertion reachable only inside `if (isOk(...))` is
+    // vacuously green whenever the call errs (`L15`); the sibling control below does it the same way.
+    const queried = await mem.repo.query({ workspaceId: "MARKERWORKSPACE" }, 10);
+    expect(isOk(queried)).toBe(true);
+    if (isOk(queried)) expect(queried.value.length).toBe(0);
+  });
+
+  // spec(§5) — the non-vacuity control for the test above AND for the append-failure test below.
+  // Both of those assert ABSENCE; absence is satisfied by a port that does nothing at all. This pins
+  // that the success path still produces its durable record, `workspaceId` included — the record's
+  // whole purpose is workspace attribution, so the second channel is persisted RAW by design.
+  it("persisted_signal_still_produces_its_record — the durable write still carries workspaceId (control)", async () => {
+    const mem = memAuditQueryable();
+    const port = createAuditPersistPort({ audit: mem.repo, now: () => NOW });
+    const safe = buildAuditSignal({
+      actor: "policy",
+      event: "egress.denied",
+      refs: [`ref:workspace:${WS}`],
+      payloadHash: "sha256:abc123",
+      beforeSummary: "route not vetoed",
+      afterSummary: "egress denied",
+    });
+    const lines = await captureConsoleError(() => port.persistDenial(safe, WS));
+
+    // The success path is SILENT — completing the matrix the other two tests half-cover:
+    // refuse ⇒ 1 line · append-fault ⇒ 1 line · clean persist ⇒ 0. Without this, a stray diagnostic
+    // added to the success branch is invisible to every test in this file.
+    expect(lines).toEqual([]);
+    const queried = await mem.repo.query({ workspaceId: WS }, 10);
+    expect(isOk(queried)).toBe(true);
+    if (isOk(queried)) {
+      expect(queried.value.length).toBe(1);
+      expect(queried.value[0]?.workspaceId).toBe(WS);
+      expect(queried.value[0]?.event).toBe("egress.denied");
+    }
+  });
+
+  // spec(§16) — `L82`: the pin IS the comment/code agreement. The adjacent comment claims "event/code
+  // only"; the line also printed `workspaceId`. On THIS path the signal PASSED the gate, so `event` is
+  // scanned-and-safe and may stay — the asymmetry with the refusal path above is the reusable part.
+  it("append_failure_notice_matches_its_own_comment — event + store code, never the ungated workspaceId", async () => {
+    const faulted = memAuditQueryable(true);
+    const port = createAuditPersistPort({ audit: faulted.repo, now: () => NOW });
+    const safe = buildAuditSignal({
+      actor: "policy",
+      event: "egress.denied",
+      refs: ["ref:workspace:ws-append-fault"], // deliberately NOT the marker, so the assertion isolates channel 2
+      payloadHash: "sha256:abc123",
+      beforeSummary: "route not vetoed",
+      afterSummary: "egress denied",
+    });
+    const lines = await captureConsoleError(() => port.persistDenial(safe, "MARKERAPPENDWORKSPACE"));
+
+    expect(lines.length).toBe(1);
+    const notice = lines.join("\n");
+    // NON-VACUITY: the notice still carries exactly the two things its comment claims — asserted
+    // WITH their interpolation slots, not as bare substrings. The slice's whole claim is about WHICH
+    // VALUE OCCUPIES WHICH SLOT, and `toContain("egress.denied")` would also pass against prose that
+    // merely mentions the words while emitting the value somewhere else entirely.
+    expect(notice).toContain('event="egress.denied"');
+    expect(notice).toContain('code="unavailable"'); // the DbError code from the faulted repo
+    // …and NOT the third thing the comment never mentioned.
+    expect(notice).not.toContain("MARKERAPPENDWORKSPACE");
   });
 });

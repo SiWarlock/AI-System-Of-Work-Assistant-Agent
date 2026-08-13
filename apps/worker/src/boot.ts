@@ -573,8 +573,73 @@ function failClosedEgress(workspaceId: string): UiSafeEgressStatus {
  * veto, ING-7 admission) is redaction-safe by construction (verified by inspection + pinned by
  * `copilotDenialAudit.test.ts`'s `persisted_record_is_redaction_safe`), so this is defense-in-depth for a
  * FUTURE producer, not a fix for a live leak — a failing signal is refused (fail-closed DENY of the
- * persist attempt, matching 9.33), never persisted, and the refusal itself is logged with the event name
- * only (never the unsafe field content).
+ * persist attempt, matching 9.33), never persisted, and the refusal is logged carrying NOTHING derived
+ * from the signal.
+ *
+ * ⚠ WHAT WAS WRONG HERE BEFORE `24.62`, enumerated rather than counted (a bare ordinal is
+ * unfalsifiable — `audit-signal.ts`'s own house rule). TWO false claims across THREE comment blocks,
+ * and THIS block carried BOTH, which is why it was the one that mattered:
+ *   • claim A — *"the refusal is logged with the event name only (never the unsafe field content)"*:
+ *     here (this paragraph, previously) AND on the refusal branch (*"event name only, never a field
+ *     value"*). FALSE because `event` IS one of the six scanned fields — see that branch.
+ *   • claim B — *"a single redaction-safe `console.error` naming the event + the store error code"*:
+ *     here (above) AND on the append branch (*"event/code only"*). FALSE because that line also
+ *     printed `workspaceId` — it named two of the three things it emitted.
+ * ⛔ Brief `278` scoped this to the two INLINE blocks and missed this doc comment, i.e. the copy a
+ * reader meets first. Recorded because fixing the reported sites and leaving the authoritative one is
+ * how a corrected finding survives its own correction (`contracts L61`).
+ *
+ * ── task 24.62 — THIS PORT HAS TWO DATA CHANNELS AND THE GATE COVERS PART OF ONE ─────────────────
+ *
+ * `persistDenial(signal, workspaceId)`. ⚠ A gate named for the function it sits in reads as covering
+ * the function. It does not. Counting the ungated surface exactly, because the heading "two channels"
+ * would itself understate it:
+ *   • `AuditSignal` has EIGHT fields; `isRedactionSafe` scans SIX (`actor`, `event`, `payloadHash`,
+ *     `beforeSummary`, `afterSummary`, `refs` — `packages/policy/src/audit-signal.ts:170-177`).
+ *   • UNSCANNED signal fields: `denialCode` (closed `DenialReason` union) and ⚠ `healthSignalClass`
+ *     (bare `string` — so the "closed by type" counter-argument does not even apply to it; it is the
+ *     weaker of the two). Neither is emitted by this port today; this is enumeration, not leakage.
+ *   • `workspaceId` — the SECOND CHANNEL, a separate parameter, never scanned at all.
+ *
+ * The second channel's contract, stated in full because the SHORT version is itself the mistake
+ * (`contracts L147`):
+ *  1. **PROVENANCE** — registry-validated at both call sites, not caller-injected: `resolve` fails
+ *     closed with `WORKSPACE_NOT_FOUND` on an unknown id, and the store-backed resolver additionally
+ *     re-gates on read-back identity (`String(ws.id) !== workspaceId`, strict —
+ *     `api/adapters/storeBackedWorkspacePosture.ts`, `createStoreBackedWorkspacePosture`). An
+ *     arbitrary caller string cannot reach here. ⚠ BUT THE TWO SITES EARN THAT DIFFERENTLY, AND THE
+ *     DIFFERENCE IS THE PART THAT CAN DECAY:
+ *       • `runGovernedCopilotSynthesis` (`api/procedures/copilot.ts`) resolves the posture as its
+ *         FIRST statement and reaches `persistDenial` ~12 lines later — a LOCAL guarantee, visible
+ *         in one screen.
+ *       • the agentic `synthesize` (`api/procedures/copilotAgentSynthesis.ts`,
+ *         `createAgentRuntimeCopilotSynthesis`) resolves NOTHING. Its `workspaceId` is a bare
+ *         parameter handed straight to `persistDenial`. ⛔ Its guarantee is INHERITED from the fact
+ *         that `runGovernedCopilotSynthesis` is its ONLY production caller and validates before
+ *         passing (measured 2026-08-13 by backward trace from the call site: the sole other
+ *         `.synthesize(` hits in `packages/workflows` are a DIFFERENT two-argument port, and one
+ *         `packages/evals` hit is a test). ⇒ **a SECOND production caller of `synthesize` that does
+ *         not resolve posture first would silently void this, and nothing type-checks it.** State it
+ *         as a call-path property, because that is what it is (`L141`: reachability is the path PLUS
+ *         its trigger — here the trigger is "who may call `synthesize`").
+ *  2. ⛔ **THAT IS A PROVENANCE GUARANTEE, NOT A SHAPE GUARANTEE.** Registry-validated proves the id
+ *     EXISTS in `workspace_config`; it says nothing about what is IN it. A credential-shaped id sitting
+ *     in the config still reaches the durable record below. `packages/policy`'s `visibility.ts` records
+ *     the identical residual for its own sibling site.
+ *  3. ⛔ **AND THE PROVENANCE ARGUMENT IS CIRCULAR TO THE EXTENT THE CALLER CAN INFLUENCE THE SOURCE** —
+ *     it is exactly as strong as WHO MAY WRITE A `workspace_config` ROW, which is UNTRACED. Open as
+ *     shared-task-list **`#52`** ("who can insert a `workspace_config` row, and is that path
+ *     authz-gated"), with **`#51`** its rule-4 sibling (authz gates WHETHER a caller may call, not
+ *     WHICH workspace it may name). Named rather than left as "filed elsewhere", because per `L147`
+ *     accepting a residual without a *nameable* write-path question is how the acceptance becomes the
+ *     last word ever written about it.
+ *
+ * ⇒ the DURABLE RECORD keeps the raw id notwithstanding (2)/(3) — attribution is the record's whole
+ * purpose and `workspaceId` is its WS-8 query key, so scrubbing there would destroy the artifact to
+ * protect the sink. The LOG SINK does not carry it: safety rule 7 names log sinks specifically, and the
+ * two objects have different jobs. ⛔ Do NOT "harden" this by shape-checking the id before logging —
+ * the residual class (an employer project codename, a person's name used as an id) is NOT
+ * credential-shaped, so such a check would read as coverage of a class it cannot cover (`contracts L5`).
  */
 export function createAuditPersistPort(deps: {
   readonly audit: AuditRepository;
@@ -583,20 +648,58 @@ export function createAuditPersistPort(deps: {
   return {
     persistDenial: async (signal, workspaceId): Promise<void> => {
       if (!isRedactionSafe(signal)) {
-        // eslint-disable-next-line no-console -- deliberate, redaction-safe (event name only, never a
-        // field value) visibility; 9.33's house rule — DENY the persist, never throw, never log the field.
+        // eslint-disable-next-line no-console -- deliberate visibility; 9.33's house rule — DENY the
+        // persist, never throw. ⛔ THE NOTICE CARRIES NOTHING DERIVED FROM THE SIGNAL, AND THAT IS THE
+        // SAFETY PROPERTY, NOT AN OVERSIGHT (task 24.62). A refusal means at least one of the six
+        // scanned fields is unsafe and this handler CANNOT KNOW WHICH — so ANY signal-derived value
+        // could be exactly the one the gate refused.
+        // ⚠ That includes `event`, which this line used to interpolate under the reasoning "event name
+        // only, never a field value". `event` IS one of the six fields `isRedactionSafe` scans, so on
+        // THIS path it is a field value of unknown safety — the comment's conclusion happened to hold
+        // (every reachable producer passes a literal) while its REASONING was wrong, which is the more
+        // dangerous failure: the next producer inherits the reasoning, not the audit.
+        // ⚠ And not `denialCode` either — "closed by type" is a compile-time claim about
+        // runtime-untrusted data, a provenance argument in a type-system costume (`contracts L147`).
+        // Same doctrine `packages/knowledge`'s `GclAuditPersistPort.onRefused` (24.53) discharges by
+        // SIGNATURE; here the obligation is held by convention + the pins in `copilotDenialAudit.test.ts`.
+        // ⇒ the notice is a COUNTER, not a describer — that the refusal is EMITTABLE AT ALL is its whole
+        // function (24.53's "a notice that carries nothing" cost, accepted knowingly). ⚠ The cost is
+        // real and priced: two concurrent denials on the two Copilot paths are indistinguishable here.
+        // The follow-up that would fix it is SMALL, not a rewrite — naming WHICH field was unsafe is
+        // safe (field NAMES are a closed six-literal set, not content) and is ~5 lines in
+        // `packages/policy`'s `audit-signal.ts`, whose `isRedactionSafe` returns a bare boolean today.
+        // Open as shared-task-list `#59`; deliberately not built here (another area's territory).
+        // ⚠ The pins for everything above live in `copilotDenialAudit.test.ts`'s `24.62` block, and
+        // each NEGATIVE assertion there was mutation-proved to RED before this comment was written
+        // (event · denialCode · workspaceId, three separate mutations) — an unobserved pin is unproven.
         console.error(
-          `[copilot.denial-audit] REFUSED to persist — signal for event="${signal.event}" failed the redaction-safety gate (9.33)`,
+          "[copilot.denial-audit] REFUSED to persist — a denial signal failed the redaction-safety gate (9.33)",
         );
         return;
       }
       const record = { ...toAuditRecordInput(signal, deps.now()), workspaceId };
       const appended = await deps.audit.append(record);
       if (isErr(appended)) {
-        // eslint-disable-next-line no-console -- deliberate, redaction-safe (event/code only) visibility;
-        // see the doc comment above for why this is a log line and not a HealthItem.
+        // eslint-disable-next-line no-console -- deliberate, redaction-safe (event + store code ONLY)
+        // visibility; see the doc comment above for why this is a log line and not a HealthItem.
+        // `event` is emitted HERE and deliberately NOT on the refusal path above. ⛔ THE REASON IS
+        // *NOT* "the gate passed, so the fields are clean" — that inference is FALSE and
+        // `packages/policy` has already retracted it in full (`audit-signal.ts`, the `isRedactionSafe`
+        // doc, task 24.45): it is a **credential-shape HEURISTIC, not a shape allowlist**, so anything
+        // matching none of the three patterns passes — "an employer project codename, a person's name,
+        // or an internal identifier" included. Gate-passed means ONLY "did not look like a leaked
+        // secret", and safety rule 7 covers raw content too, which the heuristic cannot see.
+        // ⇒ the real, checkable reason `event` is safe here: it is a STRING LITERAL at every reachable
+        // producer — `packages/policy/src/egress.ts` (`egress.denied`), `packages/policy/src/admission.ts`
+        // (`job.admission.rejected`), `packages/providers/src/broker/egress-veto.ts`
+        // (`egress.veto.route_substituted`). ⚠ THAT IS A CALL-PATH PROPERTY, NOT A TYPE ONE: a future
+        // producer interpolating data into `event` would void it, and the heuristic would NOT catch it.
+        // Re-derive by backward trace from this line before adding a producer (`L141`).
+        // ⛔ `workspaceId` is deliberately ABSENT — it is the UNSCANNED second channel (see "TWO DATA
+        // CHANNELS" above). Until task 24.62 this line printed it while this very comment claimed
+        // "event/code only"; the comment named two of the three things it emitted.
         console.error(
-          `[copilot.denial-audit] AuditRepository.append failed — event="${signal.event}" workspaceId="${workspaceId}" code="${appended.error.code}"`,
+          `[copilot.denial-audit] AuditRepository.append failed — event="${signal.event}" code="${appended.error.code}"`,
         );
       }
     },
