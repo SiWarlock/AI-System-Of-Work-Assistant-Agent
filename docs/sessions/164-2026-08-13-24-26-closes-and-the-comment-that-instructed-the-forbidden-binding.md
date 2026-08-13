@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-13 · **Phase:** 24 (hardening tail) · **Area:** `packages/knowledge` (+ one lead-authorized `apps/desktop` comment fix)
 **Predecessor:** `162-2026-08-13-required-from-birth-green-under-both-and-a-notice-that-carries-nothing.md`
-**Successor:** _(filled in by the next `/session-end`)_
+**Successor:** `167-2026-08-13-the-guard-not-added-and-the-finding-i-had-to-retract.md`
 
 **Commits:** `46e34ca8` (24.26 step 3 of 3) · `9f9862bd` (the desktop residual, `#55`)
 
