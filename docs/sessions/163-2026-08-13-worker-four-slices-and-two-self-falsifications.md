@@ -1,6 +1,6 @@
 # Session 163 — worker: four slices, and the two claims I falsified myself
 
-**Date:** 2026-08-13 · **Track:** `main` · **Role:** worker-implementer · **Predecessor:** `160`
+**Date:** 2026-08-13 · **Track:** `main` · **Role:** worker-implementer · **Predecessor:** `160` · **Successor:** `166-2026-08-13-comments-that-lied-about-guards-and-the-fix-that-repaired-one.md`
 
 ## Shipped
 
