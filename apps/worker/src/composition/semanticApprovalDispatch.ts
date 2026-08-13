@@ -17,6 +17,8 @@
 // `config.proofSpineParams` is present; the default/Temporal-degraded boot leaves `dispatchApproval` external-only).
 import type { WorkflowRunRef } from "@sow/contracts";
 import { applyPlan as realApplyPlan, readVaultHeadRevision } from "@sow/knowledge";
+import { makeEnforceWorkspacePathScope } from "@sow/knowledge";
+import { LEGACY_UNPREFIXED_WORKSPACE_ID } from "./legacy-workspace";
 import type { KnowledgeWriterDeps, VaultFs, KnowledgeRevisionStore } from "@sow/knowledge";
 import { createCommitActivity } from "@sow/workflows";
 import type { ApplyPlanFn } from "@sow/workflows";
@@ -65,6 +67,13 @@ export function buildSemanticApprovalDispatch(deps: SemanticApprovalDispatchDeps
     now: deps.now,
     // ownershipCheck + secretScan LEFT UNSET → the writer uses its secure enforceHumanOwnership + scanForSecrets
     // defaults (safety rules 1/7). Never pass a pass-through.
+    //
+    // 24.26 step 2 — SUPPLY the exempt workspace id (see the matching site in buildActivities.ts for the full
+    // reasoning). Built ONCE here, OUTSIDE the per-approval `commit:` closure below — a per-approval
+    // construction would turn a config fault into an uncaught throw where `applyPlan` promises a typed
+    // WriteFailure. ⚠ Behaviourally inert until step 3 deletes writer.ts's `?? enforceWorkspacePathScope`
+    // fallback, which today is the same factory over the same string.
+    workspacePathCheck: makeEnforceWorkspacePathScope(LEGACY_UNPREFIXED_WORKSPACE_ID),
   };
   return createSemanticMutationDispatch({
     pendingKmp: deps.pendingKmp,

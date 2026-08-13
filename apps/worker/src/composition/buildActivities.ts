@@ -49,6 +49,8 @@ import {
 // `readVaultHeadRevision` resolves the LIVE vault head for the source commit's compare-revision
 // base (the ingested vault moves between commits — a fixed base would spuriously write_conflict).
 import { applyPlan, readVaultHeadRevision } from "@sow/knowledge";
+import { makeEnforceWorkspacePathScope } from "@sow/knowledge";
+import { LEGACY_UNPREFIXED_WORKSPACE_ID } from "./legacy-workspace";
 import type {
   KnowledgeWriterDeps,
   KnowledgeRevisionStore,
@@ -580,6 +582,16 @@ export function buildProofSpineActivities(
     // ownershipCheck + secretScan LEFT UNSET → applyPlan uses the real
     // enforceHumanOwnership + scanForSecrets defaults (secure-by-default, safety rule
     // 1/7). We must NEVER pass a pass-through here.
+    //
+    // 24.26 step 2 — SUPPLY the exempt workspace id rather than leaning on writer.ts's
+    // `?? enforceWorkspacePathScope` fallback. Built HERE (composition, once per boot) and
+    // NOT inside a job path: constructing it per job would turn a config fault into an
+    // uncaught throw where `applyPlan` promises a typed WriteFailure (step 1's note).
+    // ⚠ BEHAVIOURALLY INERT TODAY, deliberately: the fallback is the SAME factory over the
+    // SAME string (`workspace-path-guard.ts:183`), so supplying it changes nothing
+    // observable. It becomes load-bearing at step 3, which deletes the fallback and makes
+    // this parameter REQUIRED. Do not read the absence of a behavioural test as an oversight.
+    workspacePathCheck: makeEnforceWorkspacePathScope(LEGACY_UNPREFIXED_WORKSPACE_ID),
   };
   const commit: CommitKnowledgePort = createCommitActivity({
     applyPlan,
