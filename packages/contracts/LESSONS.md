@@ -2779,3 +2779,62 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⚠ **And do not let the dormancy grading settle the severity** — the same round produced **three wrong reachability calls on one module, each by someone who had just watched the previous one fail, biased toward "reachable"** (`L141`). **Re-derive the dormancy mechanically before any severity judgment rests on it.**
 
 `pin: none — the subject is a question asked during design.` `accepted: not mechanically enforceable` — **enforcement point: `/tdd` Step 2.5 of any slice that CORRECTS A VALUE (a literal, a default, a constant, a hardcoded token), and any Step-9 review of one.**
+
+<a id="147"></a>
+## 147. TRUSTED PROVENANCE IS NOT VALIDATED SHAPE — "it came from somewhere safe" is a claim about the SOURCE, never about the BYTES
+
+**Date:** 2026-08-13. **Source:** banked at the lead's instruction after the SAME insight was independently re-derived at **four** sites in one day — *"four independent re-derivations of the same insight is the signal that it has no home."*
+
+**The four sites.** (1) `### 24.55` — a gate treating a value as safe because its provenance was trusted. (2) `packages/policy/src/visibility.ts:152-155` — `24.45`'s own residual comment, stating it exactly: *"That is trusted PROVENANCE (config-sourced via `workspaceConfig`), NOT validated SHAPE — a credential-shaped id in the workspace config still reaches the audit."* (3) `### 24.62` — `workspaceId` reaching `persistDenial` is **registry-validated**, which proves *the id exists in `workspace_config`* and says **nothing** about whether it is well-shaped. (4) `### 24.65` — `denyDirectCrossWorkspaceRaw`'s `from`/`to`, composition-supplied ids of the same trust class.
+
+⛔ **MECHANISM.** A provenance check answers *where did this come from?* A shape check answers *what is in it?* **These are independent, and a provenance check is the cheaper one to write, the easier one to review, and the one that reads as more rigorous** — "resolved against the registry" sounds stronger than "matches a pattern," so it displaces the shape check rather than complementing it.
+
+⭐ **What makes it durable rather than an ordinary omission: the provenance check is usually CORRECT and LOAD-BEARING.** `24.62`'s registry resolution genuinely closes caller-injection — an arbitrary string cannot pass. **So there is a real guarantee, correctly implemented, doing real work — and it is a guarantee about a different property than the one the consumer needs.** Nobody is wrong; the argument just stops one step early.
+
+⛔ **The trust is CIRCULAR whenever the caller can influence the source.** `24.62`'s guarantee is exactly as strong as *who can write a `workspace_config` row* — untraced at the time of writing, and filed as its own task for that reason. ⇒ **"trusted because config-sourced" is only as strong as the write path into that config, and that write path is almost never examined in the same breath.**
+
+⚠ **It applies to closed-by-TYPE values too, which is the least intuitive corner.** `24.62`'s refusal notice was going to carry `denialCode` on the grounds that it is a closed union — **but "closed by type" is a compile-time claim about runtime-untrusted data** (the `L95`/`L103` boundary), so a `denialCode` arriving across a deserialization boundary has had its type erased. **Closed-by-type is a provenance argument wearing a type-system costume.**
+
+⇒ **DO.** When a value is admitted on provenance grounds, state the provenance claim explicitly and then ask the second question out loud: *what SHAPE could this value have, given that source?* If the answer is "anything a writer to that source can put there," you have a provenance guarantee and no shape guarantee — **say so in-code** (`L82`) rather than letting the provenance argument stand in for both. ⚠ **And when you accept it as residual, file the write-path question as its own task** — otherwise the acceptance is the last thing anyone writes about it.
+
+`pin: none — the subject is which of two questions an argument answered.` `accepted: not mechanically enforceable` — **enforcement point: any review where a value is admitted because of WHERE IT CAME FROM; and any `Done-when` whose closure argument contains the words "trusted", "registry-validated", "config-sourced", or "closed union".**
+
+<a id="148"></a>
+## 148. WHEN YOU FIX SOMETHING, ASK WHAT IT INCIDENTALLY FIXED — a residual-documenting comment outlives the residual and nothing reports it
+
+**Date:** 2026-08-13. **Source:** `### 24.65` Step 2.5 (providers-integrations), which falsified the task's own second finding by probe. **Banked as the DIRECTIONAL INVERSE of [L146](#146) at the lead's instruction, with his framing: bank them together or neither will be found.**
+
+**The instance.** `### 24.65` recorded two defects. Defect 2 — *"a null `sourceWorkspace` THROWS at the equality test and the `defaultVisibility` guard, a pre-existing §16 never-throw violation"* — **does not exist.** A probe showed null **and** undefined both return a typed `MALFORMED_POLICY_INPUT` denial with no throw: `24.45`'s own `?.` at `visibility.ts:156` makes `srcId` `undefined`, so the mismatch branch at `:191` fires and **returns before `:195` is ever reached.**
+
+⭐⭐ **MECHANISM, and it is the whole lesson: `24.45`'s single-read hardening was made for a TOCTOU/getter reason and INCIDENTALLY closed a never-throw hole nobody was looking at — and then the comment documenting the residual OUTLIVED THE RESIDUAL BY ONE COMMIT.**
+
+⛔ **Why nothing reports it.** A residual-documenting comment is **born true**. It is falsified **by a fix aimed at something else entirely**, so: no test reds (the residual had no test — that is what made it a residual), no type changes, no reviewer of the TOCTOU fix had any reason to re-read a comment about never-throw. ⇒ ***a residual-documenting comment has a lifetime tied to something nobody tracks.***
+
+⛔ **The blast radius here was four artifacts, all asserting a violation that had already been fixed:** the tracker task, the in-file comment at `visibility.ts:149-151`, **session doc `161:72` (committed)**, and the orchestrator's brief. **Each was correct when written and each was copied forward by someone who had no reason to re-measure** (`L143`'s decay, with a specific cause rather than mere age).
+
+⭐ **The pairing with [L146](#146) is the reusable part, and neither half is complete alone.** L146: *when you correct a wrong value, ask what its wrongness was incidentally PREVENTING* — a fix can **delete** an unrecorded guarantee. L148: *when you fix something, ask what it incidentally FIXED* — a fix can **satisfy** a recorded finding. **Same blind spot, opposite directions: everybody checks whether a change broke something; nobody checks what it silently repaired.** ⚠ **And the second is the one that inflates an open set with items that no longer exist, lending stale findings the credibility of their neighbours.**
+
+⇒ **DO.** At Step 9 of any slice that hardens a shared predicate, ask: *does this close, or partially close, any OPEN finding on this file?* Name them and re-measure. ⚠ **And when correcting a residual comment, correct the SESSION DOC by dated ERRATUM IN PLACE, never by rewrite** — a session doc records what was believed at a time, and silently correcting it destroys the evidence that the false claim propagated, which is itself the data (`### 24.66`'s class).
+
+⚠ **Do not read this as "re-audit every finding after every fix."** The trigger is narrow and checkable: **you hardened a predicate that other findings are recorded against.** That is a `grep` of the file's name in the tracker, not a review.
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: `/tdd` Step 9 of any slice hardening a shared predicate or guard; and `/orchestrate-end` Carry-forward triage, where a finding closed by someone else's fix is otherwise re-read rather than re-measured.**
+
+<a id="149"></a>
+## 149. THE AUTHOR OF A PIECE OF REASONING IS THE WORST REVIEWER OF TEXT THAT RESTATES IT — they check whether it matches their INTENT, not whether it is TRUE
+
+**Date:** 2026-08-13. **Source:** `### 24.65`'s Step 9. **Banked at the lead's instruction, who then applied it to themselves.**
+
+**The instance.** `#48`'s item 4 was ~19 comment lines restating a lead ruling and the orchestrator's reasoning for it. The implementer disclosed that **no reviewer had seen it** — it was written after the reviewers were dispatched — and asked whether to accept it on their stated method or re-dispatch. ⛔ **The orchestrator's answer was to re-dispatch, and the reason is the lesson: *I am the worst available reviewer for it — I authored the reasoning it restates.*** **The lead then added the other half: ~19 of those lines carry THEIR ruling, so they are second-worst.** ⇒ **the two people most motivated to check it were the two least able to.**
+
+⛔ **MECHANISM, and it is why this is not ordinary bias.** Reviewing text that restates your own reasoning is a **different cognitive operation** from reviewing text that makes a claim: you compare the text to **the version in your head** and pass it when they match. **That is intent-matching, and it feels exactly like truth-checking from the inside** — the fluency of recognition is indistinguishable from the confidence of verification. ⭐ **If the reasoning was wrong, the restatement is faithful and the review confirms it.** A reviewer who does not hold the intent has only the text and the code, which is the pair that can disagree.
+
+⭐ **Why it bites hardest on the safest-looking artifact: a comment.** Pure prose, zero logic, mechanically verifiable as behaviour-preserving — **so it invites exactly the review that cannot catch a false claim.** In this instance the artifact was a **residual note**, whose entire purpose is *to be believed by someone who will not re-derive it.*
+
+⭐ **Family with *a rule does not protect its own author* (`### 24.66`'s finding), extended from application to REVIEW.** Naming a failure mode buys nothing; **and reviewing your own reasoning buys less than nothing, because it produces a review artifact that reads as independent.**
+
+⚠ **NOT "never review your own area."** The claim is narrow: **when the text under review RESTATES reasoning you produced, your review does not count as coverage** — say so and route it, rather than supplying a check that will pass by construction. ⚠ **Route to someone holding NEITHER the intent NOR the authority** — a reviewer who knows the ruling came from the lead is reviewing an authority, not a claim.
+
+⇒ **DO.** When a slice adds prose restating a decision, ask **who authored the reasoning** before choosing the reviewer. If that is you or your approver, **dispatch a fresh reviewer and say in the dispatch that the text is unreviewed and why**. ⭐ **And when an implementer volunteers that something escaped review — as here — treat it as the disclosure it is and pay the round trip; the alternative is an unreviewed claim wearing a reviewed slice's stamp.**
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: choosing a reviewer for any slice whose diff includes prose restating a ruling, a lesson, or another agent's reasoning; and any Step-9 disclosure that part of a diff post-dates its review dispatch.**
