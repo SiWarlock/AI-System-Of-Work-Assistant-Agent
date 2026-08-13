@@ -7,7 +7,7 @@ import { ok, err, defaultWorkspace } from "@sow/contracts";
 import type { GclProjection, Workspace } from "@sow/contracts";
 import type { DbError, DbResult } from "@sow/db";
 import type { ProjectionTypeVisibilityTaxonomy, AuditSignal } from "@sow/policy";
-import { buildAuditSignal } from "@sow/policy";
+import { buildAuditSignal, isRedactionSafe } from "@sow/policy";
 import {
   admitAndPersistProjection,
   serveProjection,
@@ -172,11 +172,19 @@ describe("admitAndPersistProjection", () => {
 
 // task 24.33 — the redaction-safety gate lives HERE (packages/knowledge), not inside the
 // injected port, because the real port binding is deferred to Phase 25.2/25.4 and the safety
-// property must hold regardless of what that future adapter does. Every real GCL-produced
-// AuditSignal is safe by construction (policy-authored refs/codes only — mirrors
-// isRedactionSafe's own documented invariant), so the refusal case is pinned directly against
-// a hand-built unsafe signal, the same convention this file's sibling (denialToGateError)
-// already uses for cases the real chain can't produce.
+// property must hold regardless of what that future adapter does.
+//
+// ⛔ RETRACTED 2026-08-13 (task 24.45's knowledge leg; this was home #3 of a false invariant, and
+// the LOAD-BEARING one — a coverage claim that justifies NOT writing a test fails silently and
+// permanently). This block used to read: "Every real GCL-produced AuditSignal is safe by
+// construction (policy-authored refs/codes only), so the refusal case is pinned directly against a
+// hand-built unsafe signal … for cases the real chain can't produce." ⛔ THAT IS FALSE, and THIS
+// FILE NOW DISPROVES IT: `serve_projection_denial_routes_through_the_redaction_gate` below drives an
+// unsafe signal through the REAL chain, because `visibility.ts`'s `ref:workspace:` interpolates the
+// raw workspace id whenever the candidate matches it, and nothing constrains that id's shape.
+// ⇒ The hand-built signals below are a UNIT-LEVEL convenience for enumerating gate behaviour, NOT
+// evidence that the real chain cannot produce one. Do not read them as a reason to skip a
+// real-chain pin for a new GCL audit path.
 describe("persistDenialAudit — the fail-closed redaction-safety gate before any persist (task 24.33)", () => {
   const safeSignal = buildAuditSignal({
     actor: "policy",
@@ -341,27 +349,76 @@ describe("serveProjection — re-gate a stored row before it crosses a workspace
   // gate straight to auditPersist.persistDenial would persist it ONCE (mutation-verified by hand:
   // temporarily bypassing the gate turned this test red with exactly this count delta, before
   // reverting). Constructed through the REAL path (24.45's own finding, not stubbed):
-  // validateProjectionVisibility's MALFORMED_POLICY_INPUT branch
-  // (packages/policy/src/visibility.ts:132) embeds the candidate's own UNVALIDATED workspaceId
-  // into the denial's AuditSignal.refs before checking it matches — a URL-userinfo-credential
-  // shape there trips isRedactionSafe's URL_USERINFO_CREDENTIAL rule specifically (code-quality
-  // review: the password below is deliberately NOT also a SENSITIVE_KEYWORD match, so this pins
-  // the URL-userinfo rule and not an unrelated one — swap it if that rule changes).
-  // ⚠ COUPLING (documented, not hidden): if 24.45 resolves via validate-or-omit, this exact
-  // unsafe value stops reaching audit.refs and this fixture breaks — that is a correct signal
-  // to fix the fixture (a different unsafe-signal construction), not to delete the test.
-  it("serve_projection_denial_routes_through_the_redaction_gate: a re-gate denial whose AuditSignal is unsafe (URL-userinfo-credential-shaped workspaceId ref) persists zero times via the real chain, not via persistDenialAudit's own isolated unit test", async () => {
+  // A credential-shaped string reaching `ref:workspace:` trips isRedactionSafe's
+  // URL_USERINFO_CREDENTIAL rule specifically (code-quality review: the password below is
+  // deliberately NOT also a SENSITIVE_KEYWORD match, so this pins the URL-userinfo rule and not an
+  // unrelated one — swap it if that rule changes). ⚠ Post-24.45 the value survives because the
+  // REFERENTIAL PIN PASSES, not because `refs` is built before the guards — that ordering no longer
+  // decides it, since a foreign id now renders `UNVALIDATED` whenever it is built.
+  //
+  // ⭐ FIXTURE MIGRATED (task 24.45 pair, knowledge leg): the predecessor sourced the unsafe value
+  // from the candidate's own FOREIGN workspaceId, which 24.45 renders `UNVALIDATED` ⇒ the fixture
+  // was wrong, not the test (its own :350 coupling note called this, and the lead upheld it).
+  // ⛔ THE ENUMERATION THAT PICKED THIS REPLACEMENT, recorded so it is falsifiable rather than
+  // re-derived by the next person:
+  //   • The sibling gates CANNOT carry an unsafe signal: `auditOf` (visibility-gate.ts:78) returns
+  //     `undefined` for BOTH `schema_rejected` AND `raw_content_present`, so ajv/Zod denials reach
+  //     persistDenialAudit with no AuditSignal at all. Sourcing from "a different gate" is not
+  //     available — it is structurally impossible, not merely unused.
+  //   • Within the visibility gate, `refs` has exactly TWO entries and `ref:visibility:` was already
+  //     closed-set (`level` or "UNRECOGNIZED"). Every other scanned field is a fixed literal:
+  //     payloadHash is VISIBILITY_PAYLOAD_MARKER, beforeSummary is constant, and every afterSummary
+  //     is a hardcoded string. denialCode/healthSignalClass are closed codes and are never scanned.
+  //   • ⇒ ONE raw interpolation survives 24.45: `ref:workspace:` still renders the RAW id on the
+  //     `wsId === sourceWorkspace.id` branch. So the workspace NAMES ITSELF with a credential-shaped
+  //     id and the candidate matches it; the referential pin passes and denial comes from the
+  //     visibility ceiling instead.
+  // ⇒ GREEN UNDER BOTH producer behaviours: on THESE inputs the pre- and post-24.45 forms of that
+  // expression evaluate to the same string — and this is the exceeds-source path, one of the three
+  // 24.45's own comment names as "byte-identical to before." Verified by running the suite against
+  // both producer states, not by reading.
+  // ⭐ THE FIXTURE IS A SCHEMA-VALID WORKSPACE, which is load-bearing: it is built through
+  // `defaultWorkspace`, which itself calls `WorkspaceSchema.parse` and propagates `id` into BOTH
+  // `egressPolicy.workspaceId` and `providerMatrix.workspaceId` — so it cannot return a
+  // referentially-inconsistent aggregate, and a construction that violated the schema would THROW
+  // here. ⛔ An earlier draft hand-built the workspace with `as`-casts and a bogus `defaultVisibility`;
+  // that state is one `WorkspaceSchema` forbids, and a reader checking whether the state this test's
+  // conclusions rest on is representable would have found it is not — reopening the very deletion
+  // the note at `src/gcl/projection.ts` exists to prevent (security review).
+  // ⚠ REPRESENTABLE, and only that: `WorkspaceIdSchema` (`zod-brands.ts:30-35`) is `.min(1)` + a
+  // non-blank refine, so it admits a credential-shaped id. No enumeration of workspace-id PRODUCERS
+  // was run, so this does not claim such an id is reachable in production.
+  it("serve_projection_denial_routes_through_the_redaction_gate: a re-gate denial whose AuditSignal is unsafe (URL-userinfo-credential-shaped workspace ref) persists zero times via the real chain, not via persistDenialAudit's own isolated unit test", async () => {
     const auditPersist = new FakeAuditPersistPort();
-    const foreignWithCredential = {
+    const CREDENTIAL_SHAPED_WS_ID = "https://u:hunter2@evil.example";
+    // The workspace names itself with the credential-shaped id and the candidate matches it, so the
+    // referential pin PASSES and the raw id is interpolated into refs. Denial then comes from the
+    // ceiling: the candidate's "coordination" exceeds this workspace's "isolated" default.
+    const workspace = defaultWorkspace({
+      id: CREDENTIAL_SHAPED_WS_ID,
+      name: "Acme",
+      type: "personal_business",
+      markdownRepoPath: "/vault/acme",
+      gbrainBrainId: "brain-acme",
+      defaultVisibility: "isolated",
+    });
+    const candidate = {
       ...validCandidate,
-      workspaceId: "https://u:hunter2@evil.example" as GclProjection["workspaceId"],
+      workspaceId: CREDENTIAL_SHAPED_WS_ID as GclProjection["workspaceId"],
     };
-    const r = await serveProjection(foreignWithCredential, ws("full"), undefined, undefined, auditPersist);
+    const r = await serveProjection(candidate, workspace, undefined, undefined, auditPersist);
     expect(r.ok).toBe(false);
-    if (!r.ok && r.error.code === "malformed_policy_input") {
+    if (!r.ok && r.error.code === "visibility_exceeds_source") {
       expect(r.error.audit).toBeDefined();
+      // ⭐ DIAGNOSTIC-CLARITY GUARD — deliberately NOT a non-vacuity guard, and the distinction was a
+      // code-quality finding against this very comment's first draft. The premise dying already reds
+      // this test WITHOUT this line: a sanitized signal is redaction-SAFE, so it gets persisted and
+      // the `toHaveLength(0)` below fails — which is EXACTLY how 24.45 broke the predecessor. What
+      // this line buys is the CAUSE at the line that owns it ("the signal stopped being unsafe")
+      // instead of an opaque count delta twelve lines down.
+      expect(isRedactionSafe(r.error.audit as AuditSignal)).toBe(false);
     } else {
-      expect.fail("expected malformed_policy_input carrying an audit field");
+      expect.fail("expected visibility_exceeds_source carrying an audit field");
     }
     expect(auditPersist.calls).toHaveLength(0);
   });

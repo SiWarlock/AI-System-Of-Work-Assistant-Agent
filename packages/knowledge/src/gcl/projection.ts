@@ -58,6 +58,26 @@ export async function persistDenialAudit(
   auditPersist: GclAuditPersistPort | undefined,
 ): Promise<void> {
   if (audit === undefined || auditPersist === undefined) return;
+  // ⛔ DO NOT REMOVE THIS GATE AS DEAD CODE — task `### 24.55`'s protection obligation
+  // (`IMPLEMENTATION_PLAN.md`). It is the ONLY redaction gate `persistDenialAudit` has. ⚠ BOTH of
+  // 24.55's stated reasons are wrong; the obligation is real, so the corrected reasons are recorded
+  // here rather than the filed ones:
+  //
+  // (a) 24.55 says the gate is *"unreachable from `validateProjectionVisibility` since 24.45."*
+  //     FALSE. 24.45 closed the FOREIGN-workspace path (a mismatching `wsId` renders `UNVALIDATED`),
+  //     but `visibility.ts`'s `ref:workspace:` still interpolates the RAW id on the
+  //     `wsId === sourceWorkspace.id` branch, and nothing constrains that id's SHAPE
+  //     (`WorkspaceIdSchema`, `zod-brands.ts:30-35`, is `.min(1)` + a non-blank refine). 24.55's own
+  //     enumeration lists that outcome as `sourceWorkspace?.id` and treats it as safe — mistaking
+  //     trusted PROVENANCE for validated SHAPE. ⇒ reachable, and shown rather than argued:
+  //     `test/gcl-projection.test.ts`'s `serve_projection_denial_routes_through_the_redaction_gate`
+  //     drives this call to `false` through that producer, and reds when this line is removed.
+  // (b) 24.55 says it is what *"stops the OTHER ~40"* `buildAuditSignal` producers. ALSO FALSE, and
+  //     counterfactual in the other direction: `persistDenialAudit` has exactly two call sites
+  //     (`:110`, `:153`), both passing `auditOf(...)` from the GCL gate, so no other producer can
+  //     reach this function at all — the CALL GRAPH stops them, not this gate.
+  // ⇒ The honest statement of the obligation: this is the only thing that would refuse a signal
+  //   reaching here — today from the GCL gate, and from any producer ever routed here later.
   if (!isRedactionSafe(audit)) return;
   try {
     await auditPersist.persistDenial(audit, workspaceId);
