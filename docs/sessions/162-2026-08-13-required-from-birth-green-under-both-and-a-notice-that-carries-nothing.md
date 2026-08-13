@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-13 · **Phase:** 24 (hardening tail) · **Area:** `packages/knowledge` (knowledge-implementer, single-track `main`)
 **Predecessor:** `161-2026-08-13-redaction-safe-producer-enumeration-24-45.md` (providers) · this area's prior session was `158-2026-08-12-gcl-denial-audit-persistence-24-33-and-24-44.md`
-**Successor:** _(filled in by the next `/session-end`)_
+**Successor:** `164-2026-08-13-24-26-closes-and-the-comment-that-instructed-the-forbidden-binding.md`
 
 **Commits:** `e1293226` (24.26 step 1) · `993f28e8` (24.45 pair, knowledge leg) · `e85953d3` (24.53)
 
