@@ -2923,3 +2923,25 @@ A `buildActivities.ts` block said *"do not read the absence of a behavioural tes
 ⛔ **AND THE PLACEMENT FINDING, which re-prices the whole exercise: NONE of the three DISPATCHED sites contained an instruction. The only instruction in the slice was in a FOURTH site the implementer found and added.** ⇒ ***the risk lived entirely in the part nobody had scoped*** — simultaneously the strongest argument for stating the axes in a no-brief dispatch, and for the implementer widening scope. **A guard aimed at a filed scope cannot cover what the filing missed.**
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any slice correcting comments. Half 1 at the moment of striking a sentence; half 2 before treating an instruction-shaped comment as an ordinary comment fix.**
+
+<a id="154"></a>
+## 154. A SOUND MEASUREMENT DOES NOT LICENSE A SYSTEM-LEVEL CLAIM — the claim needs the CALL PATH, and a correct measurement is the hardest kind of wrong answer to catch
+
+**Date:** 2026-08-13. **Source:** `### 24.67` Step 9 — the implementer refuted its own Finding after `security-reviewer` challenged it. **Banked at the lead's instruction as the GENERAL FORM, not as an instance: three parties, three roles, one shape, in one round.**
+
+**The instance.** A probe measured, correctly, that `applyPlan` throws on three cast-free shapes with the vault already written. **The reported conclusion — *"nothing catches the fault to make it a System-Health concern"* — was FALSE.** `createCommitActivity` wraps `applyPlan` in try/catch and folds any throw to a typed `commit_failed`; test-pinned, and all three production compositions funnel through it.
+
+⭐⭐ **The author's own diagnosis, and it is the lesson: *"my measurement was correct; my conclusion about what it meant was not."*** **They measured `applyPlan` IN ISOLATION and reported a SYSTEM-LEVEL consequence** — and did it **while quoting `L145` at other people.**
+
+⛔ **THE PROPAGATION IS THE POINT — three parties, three different failures, one shape:**
+- **implementer:** measured a UNIT, claimed a SYSTEM property.
+- **orchestrator:** **relayed the conclusion BECAUSE THE MEASUREMENT WAS SOUND** — the measurement's soundness is exactly what made the conclusion look checked.
+- **lead:** **graded from it** — and named their own defect precisely: *"I insisted on resolving the citation for the RULE, at source, correctly — AND I TOOK THE CODE DESCRIPTION FROM THE FINDING. A grading has TWO sides and I sourced ONE."*
+
+⇒ ⭐ **A sound measurement is the HARDEST kind of wrong answer to catch, because every check downstream finds real evidence.** A fabricated number dies at the first re-run; **a correct number attached to the wrong scope survives re-measurement indefinitely** — you can re-run the probe forever and it keeps agreeing.
+
+⇒ **DO. Before a measurement becomes a claim about the SYSTEM, name the CALL PATH the claim traverses and check the boundary at each hop.** ⭐ **Operationally: *what is the smallest scope this measurement actually covers, and what is the scope of the sentence I am about to write?*** If those differ, **the difference is the unmeasured part — say so, or go measure it.** ⚠ **And a relayer: the measurement's soundness is NOT evidence for the conclusion's scope. Re-derive the scope, not the number.**
+
+⚠ **Companion — `L147`'s sharpest instance, from the same Step 9, and the lead asked for it verbatim:** the same implementer claimed a type lived in `packages/contracts`; **it is in `packages/workflows/src/ports/meetingCloseout.ts`, AND THEIR OWN EARLIER GREP OF CONTRACTS HAD COME BACK EMPTY.** ⛔ ***Not missing evidence — DISCARDED evidence, because the wrong answer felt more right than their own result.*** ⇒ **they answered *"where WOULD this live?"* instead of *"where DOES it live?"* — the question a plausible architecture invites and a measurement forbids.**
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any Step-9 Finding, brief premise, or grading input whose evidence is a measurement of one unit. State the measured scope and the claimed scope separately; if a relay, re-derive the SCOPE rather than re-running the measurement.**
