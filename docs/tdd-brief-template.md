@@ -284,6 +284,16 @@ The implementer reuses its session across a round's slices — it's already orie
 
 **Rule — cite every file by REPO-RELATIVE PATH, never basename**, in briefs, tasks, findings, and messages. `L97`'s shape (*a bare identifier is a pointer to nothing that reads as a pointer to something*) arriving in file paths rather than lesson or task numbers. ⚠ **Corollary for the reader: when a cited site measures zero, ask whether the path was ambiguous BEFORE concluding the site does not exist** — a citation that fails to resolve is a question, not a verdict (contracts `L93`).
 
+### Pitfall — telling an implementer to "apply the other side's delta locally then revert" when that delta is ALREADY IN THE WORKING TREE
+
+**This produced two mutually contradictory acceptance criteria in one brief** (2026-08-13, brief `273`). The brief asked for a change proven green under **both** producer states, and prescribed: *"apply their `visibility.ts` delta in your working tree, run the test, revert byte-identical."* **It also said, correctly, that the other side's four held files must stay untouched.** ⛔ **Both cannot hold: the other side's slice was HELD UNCOMMITTED, so its delta was ALREADY in every test run in that checkout.** Read literally, the two prescribed runs were **the same run**, and the only way to make them differ was to **write to the held files** the brief forbade touching.
+
+⚠ **The root error is the one the lead named the same day: *a HOLD defers the COMMIT, not the EFFECT.*** Vitest (and any runner) reads the **working tree**, not `HEAD` — so *"their change hasn't landed"* does **not** mean *"their change isn't in effect."* The brief's parenthetical *"providers' files still uncommitted"* was that same commit-graph model, written into an acceptance criterion.
+
+⭐ **THE RULE — the implementer's inversion, and it generalises: when the other side's work is ALREADY in the tree, the safe direction is a THROWAWAY WORKTREE for the OTHER state, never a local revert.** `git worktree add --detach HEAD` gives a pristine pre-change producer; copy in only your own files, run, remove the worktree. **Both states genuinely exercised; the other side's files never opened.**
+
+⇒ **When a brief asks for a green-under-both proof, it must say WHICH state the working tree currently holds** — and prescribe the worktree for the *other* one. **Do not describe held-but-uncommitted work as absent.**
+
 ### Pitfall — the brief's PREMISE is a hypothesis; an implementer contradicting it from the code is doing the job right
 
 Twice in one round an implementer invalidated a brief premise by reading the source: the flag case above, and a brief that said "let the resolver withhold on a no-match" when `EntityResolver` actually returns `create_stub` — following it would have minted machine-named person notes. **Write briefs so premises are checkable** (cite `file:line` for every claimed behavior, so a wrong premise is cheap to falsify), pre-load a Step-2.5 question wherever a premise is load-bearing, and treat a premise correction at Step 2.5 as a success of the process rather than friction. An orchestrator's brief is a hypothesis to be checked, not an instruction to be obeyed.
