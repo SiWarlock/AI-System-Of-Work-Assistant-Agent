@@ -387,6 +387,60 @@ describe("validateProjectionVisibility — audit refs never carry an unvalidated
   });
 });
 
+// task 24.65 — §16 never-throw at this predicate's boundary.
+//
+// ⚠ THESE PINS ARE GREEN ON FIRST WRITE. They are NOT a TDD red-first pair and are
+// recorded as such deliberately: `24.65` was filed asserting a never-throw VIOLATION here,
+// and there is none. `24.45`'s `?.` on the `srcId` read makes a null/undefined workspace
+// yield `srcId === undefined`, so the referential-pin branch returns a typed denial BEFORE
+// the unguarded `sourceWorkspace.defaultVisibility` read is reached.
+//
+// ⭐ The hardening that closed it was made for an UNRELATED reason (single-read / getter-split
+// defence), and the comment documenting the residual outlived the residual by one commit.
+// ⇒ when you fix something, ask what it incidentally fixed.
+describe("validateProjectionVisibility — §16 never-throw on a null source workspace, + the guard's real reachability (task 24.65)", () => {
+  const nullWs = null as unknown as Workspace;
+  const undefWs = undefined as unknown as Workspace;
+
+  it("null_source_workspace_returns_a_typed_denial: denies, never throws [spec(§16)]", () => {
+    expect(() => validateProjectionVisibility(projection("ws-1", "isolated"), nullWs)).not.toThrow();
+    const d = validateProjectionVisibility(projection("ws-1", "isolated"), nullWs);
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") {
+      expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
+      // The REFERENTIAL PIN catches it — not the defaultVisibility guard. Pinning the
+      // message records WHICH branch provides the guarantee, so a refactor that moves the
+      // guarantee elsewhere fails here rather than silently relocating it.
+      expect(d.message).toBe("projection workspaceId does not match source workspace");
+      expect(d.audit.refs).toContain("ref:workspace:UNVALIDATED");
+    }
+  });
+
+  it("an undefined source workspace behaves identically [spec(§16)]", () => {
+    expect(() => validateProjectionVisibility(projection("ws-1", "isolated"), undefWs)).not.toThrow();
+    // "Identically" has to be pinned as identity, not as decision+reason: `reason` cannot
+    // discriminate (MALFORMED_POLICY_INPUT is shared by five branches — see the mismatch test
+    // above), so a weaker assertion would pass even if `undefined` routed through a different
+    // branch. `validateProjectionVisibility` is pure (clock-free signal, plain constructor),
+    // so whole-decision equality is exact rather than merely convenient.
+    expect(validateProjectionVisibility(projection("ws-1", "isolated"), undefWs)).toEqual(
+      validateProjectionVisibility(projection("ws-1", "isolated"), nullWs),
+    );
+  });
+
+  it("the defaultVisibility guard IS reachable with a REAL workspace — it is not dead code [spec(§5)]", () => {
+    // `24.65` established that guard can never be reached with a NULL workspace. That is
+    // exactly the shape someone deletes as unreachable three rounds later, so pin the input
+    // that DOES reach it: a real workspace carrying an unrecognized level.
+    const w = { ...wsWithDefault("full"), defaultVisibility: "bogus" } as unknown as Workspace;
+    const d = validateProjectionVisibility(projection("ws-1", "isolated"), w);
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") {
+      expect(d.message).toBe("source workspace defaultVisibility is unrecognized");
+    }
+  });
+});
+
 describe("denyDirectCrossWorkspaceRaw (hard denial #2)", () => {
   it("denies DIRECT_CROSS_WORKSPACE_RAW_RETRIEVAL for cross-ws raw with no approvedLink", () => {
     const d = denyDirectCrossWorkspaceRaw({ fromWorkspaceId: "ws-a", toWorkspaceId: "ws-b" });

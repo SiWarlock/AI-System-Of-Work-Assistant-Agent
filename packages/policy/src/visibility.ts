@@ -144,15 +144,28 @@ export function validateProjectionVisibility(
   // ⚠ `srcId` is read ONCE and reused by both this ref and the equality test below. A
   // second read could disagree with the first (a getter-backed, Proxy-backed or lazily
   // hydrated workspace record), which would render the raw foreign id into `refs` while
-  // STILL taking the mismatch branch — reinstating precisely this leak. One read makes
-  // the property total instead of conditional on the argument being a plain object.
-  // ⚠ `?.` so this line adds no NEW throw — but note the equality test and the
-  // `defaultVisibility` guard below still dereference `sourceWorkspace` unguarded, so a
-  // null workspace remains a pre-existing §16 never-throw violation, untouched here.
-  // ⛔ RESIDUAL, stated so it cannot decay (`L100`): on the equality branch this ref
+  // STILL taking the mismatch branch — reinstating precisely this leak. One read makes the
+  // property hold over DATA PROPERTIES — ⛔ NOT "total", which is what this line said until
+  // `24.65` measured it: a throwing accessor or a Proxy `get` trap still escapes (measured on
+  // `Workspace.id` and `GclProjection.workspaceId`; ⚠ `visibilityLevel`, `projectionType` and
+  // `defaultVisibility` are the same shape and are neither pinned nor excluded — filed, see
+  // the scoped note below). Same class as the §5 / task-9.33 accessor precedent
+  // already adjudicated at `ARCHITECTURE.md:204-205` — accessor-bearing inputs to a policy
+  // gate are in scope even when unreachable from a `JSON.parse`d row.
+  // ⛔ 24.65 — a NULL/UNDEFINED workspace cannot throw here: `?.` yields `srcId === undefined`,
+  // so the referential pin below denies before the unguarded `defaultVisibility` read. An
+  // earlier comment here claimed the opposite; it was never measured. Both that guarantee and
+  // the unguarded read's reachability (via a REAL workspace) are pinned in `visibility.test.ts`.
+  // ⚠ SCOPED TO WHAT WAS MEASURED — null and undefined ONLY. `?.` guards a nullish LEFT side,
+  // NOT a throwing getter: a workspace whose `id` getter throws still throws here, as does a
+  // projection whose `workspaceId` getter throws. Both measured (`24.65`) and filed — §16
+  // never-throw does NOT hold for hostile accessor shapes.
+  // ⛔ RESIDUAL, stated so it cannot decay (`contracts L100`): on the equality branch this ref
   // still renders the RAW `srcId`. That is trusted PROVENANCE (config-sourced via
   // `workspaceConfig`), NOT validated SHAPE — a credential-shaped id in the workspace
-  // config still reaches the audit. Filed separately; out of this producer's reach.
+  // config still reaches the audit. ⇒ ⛔ ONE residual, TWO sites (`24.65`): the sibling is
+  // `denyDirectCrossWorkspaceRaw`'s `from`/`to` interpolation below, which carries the full
+  // lead ruling. **Closing one site does NOT shut the class.** Remedy filed as `#54`.
   const srcId: unknown = sourceWorkspace?.id;
   const refs: readonly string[] = [
     `ref:workspace:${
@@ -311,6 +324,36 @@ export function denyDirectCrossWorkspaceRaw(
     );
   }
 
+  // ⛔ RESIDUAL — the SAME one `24.45` recorded, SECOND SITE, not a second accepted risk
+  // (`24.65`). `from`/`to` render RAW below after only a typeof/non-empty check, so a
+  // credential-shaped workspace id reaches the audit. This is **`contracts L147`** — trusted
+  // PROVENANCE is not validated SHAPE. The sibling site is the `srcId` interpolation in
+  // `validateProjectionVisibility`, which points back here: ⛔ **closing one does NOT shut
+  // the class.**
+  // ⛔ NO FIX HERE — lead ruling (option D): `24.45`'s remedy is REFERENTIAL, interpolating
+  // only a value proven equal to a trusted counterpart in scope. This function receives ONLY
+  // `req`, so `from` and `to` are BOTH caller-supplied and no counterpart exists to prove
+  // anything against. Reusing that sentinel without the validation that earns it would be a
+  // weaker second spelling of a control `24.45` proved insufficient ⇒ false assurance, which
+  // costs more than a documented gap: a documented gap gets re-checked, a control nobody
+  // knows is weak does not.
+  // ⭐ THE ACTUAL REMEDY — pass a trusted counterpart in so the referential check can apply —
+  // is tracked as session task `#54`. Recorded rather than merely accepted, because an
+  // accepted residual with no filed remedy becomes permanent: the acceptance is otherwise the
+  // last thing anyone writes about it. ⚠ `#54` is a SESSION-SCOPED id (`contracts L51`) and
+  // the id space is reused across sessions — a durable `IMPLEMENTATION_PLAN.md` entry is owed
+  // and flagged; cite that once it exists rather than this number.
+  // ⚠ Reachability MEASURED 2026-08-13 — and stated as REACHABILITY, not as "no caller",
+  // because it HAS two production callers: `← guardCrossWorkspaceRawRead`
+  // (`packages/knowledge/src/gcl/visibility-gate.ts:255`) `← CrossWorkspaceLinkMap`'s
+  // `authorizeCrossWorkspaceRawRead` (`packages/knowledge/src/gcl/cross-workspace-links.ts:237`)
+  // `← NOTHING`. ⛔ NOT production-REACHABLE from any entry point — but BOTH hops are exported
+  // from `@sow/knowledge`'s public barrel, so a SINGLE import makes this live with fully
+  // caller-supplied values, with `CrossWorkspaceLinkMap` never constructed. ⇒ the dormancy
+  // this residual was accepted under is ONE IMPORT away from ending, and that is NOT the
+  // condition the acceptance was argued on.
+  // ⚠ The four `packages/workflows/src` appearances are COMMENTS, not calls
+  // (`contracts L104`, use-vs-mention; filed as `#53`).
   const refs: readonly string[] = [`ref:workspace:from:${from}`, `ref:workspace:to:${to}`];
 
   // Same-workspace: not a cross-workspace request — the hard denial does not apply.
