@@ -223,12 +223,102 @@ export type WriteFailure =
 /**
  * Apply one KnowledgeMutationPlan atomically. See the module header for the
  * pipeline + invariants. Returns the committed revision + its AuditRecord, or a
- * typed `WriteFailure`; NEVER throws across the boundary FOR WELL-TYPED DEPS.
- * ⚠ QUALIFIED BY 24.26 step 3, which is when the qualifier started mattering: `workspacePathCheck` is
- * REQUIRED and has no fallback, so deps cast past the type system (`as never` / `as unknown as`) with
- * that field missing reach step 4.5 with `undefined` and throw a `TypeError`. That is pinned, not
- * guarded — a guard here would be the deleted fallback under another name. Before this slice the
- * `??` default absorbed it, so the unqualified promise held even under a cast.
+ * typed `WriteFailure`.
+ *
+ * ⛔ THIS FUNCTION CONTAINS NO `try` ANYWHERE, so the §16 never-throw promise is not total AT THIS
+ * FUNCTION, and the old "for well-typed deps" qualifier did not save it (measured, 24.67). Every
+ * `await` on injected substrate can reject out of it:
+ *   PRE-COMMIT (nothing written yet) — `deps.revisions.getByIdempotencyKey` (step 1); `readSnapshot`
+ *     → `deps.vault.list`/`.read` (step 3); and inside `atomicCommit` the priors-capture `fs.read`
+ *     (`../markdown-vault/atomic-write.ts`), which sits OUTSIDE both of that function's try blocks.
+ *   POST-COMMIT (Markdown already durable) — `deps.now()`, `deps.audit.append`, `deps.revisions.record`.
+ *   ⚠ A deps object cast past the type system with a required field missing is the SAME class
+ *     reached the same way — not a separate mechanism.
+ *
+ * ⭐ BUT IT DOES NOT ESCAPE PRODUCTION UNTYPED, AND AN EARLIER DRAFT OF THIS COMMENT CLAIMED IT DID.
+ * `createCommitActivity` (`packages/workflows/src/activities/commitKnowledge.ts`) wraps this call in
+ * try/catch and folds ANY throw to a typed `commit_failed` — for precisely this reason, in its own
+ * words ("its INJECTED substrate … could THROW on an infra fault") — pinned by
+ * `commit-activity-base-revision.test.ts`, and all three production compositions funnel through it.
+ * ⛔ THE RESIDUAL IS NARROWER AND SHARPER THAN "IT THROWS" (`### 24.72`): on a POST-COMMIT fault the
+ * Markdown mutation IS durable, the caller is told `commit_failed`, and NO AuditRecord lands ⇒ a
+ * DURABLE SEMANTIC MUTATION REPORTED AS A FAILURE, WITH NO AUDIT ROW. A REPORT INVERSION, not an
+ * uncaught escape. ⚠ Step 8's comment ("a recording fault is a System-Health concern, not a
+ * rollback — the commit stands") is right that the commit stands; what it does not say is that the
+ * recording never happens and the caller is told the opposite.
+ * ⚠ GRADED (lead, 24.67): NOT safety rule 1 — KN-4 governs WHO WRITES, and KnowledgeWriter did the
+ * write through a validated plan; this is §16 plus an audit-trail/observability defect. Same class
+ * found independently in `packages/policy`'s `validateProjectionVisibility` (a `### 24.65` finding).
+ *
+ * ── 24.67 — WHY A NON-FUNCTION `workspacePathCheck` IS *NOT* GUARDED HERE ──────────────────────
+ *
+ * ⛔ DO NOT RE-DERIVE FROM THE ORIGINAL REASON. It was "a guard would be the deleted `??` fallback
+ * wearing a different hat"; that is FALSE and was WITHDRAWN by its author. The deleted fallback
+ * ADMITTED writes under a hardcoded exempt id; a fail-closed `err` ADMITS NOTHING. Opposites, not
+ * variants (contracts L120 — a sound conclusion on an unsound reason gets inherited). The decision
+ * stands on these instead:
+ *
+ * 1. ORDERING — `workspacePathCheck` is the SAFEST of the required deps, not the most exposed.
+ *    Omitted via cast, `vault` / `revisions` / `workspacePathCheck` throw with the vault EMPTY;
+ *    `now` and `audit` throw with the vault ALREADY COMMITTED. A guard on this one field hardens a
+ *    member that is ALREADY fail-closed and leaves the two that already wrote — partial coverage
+ *    reading as "§16 is robust at applyPlan" (contracts L137 — a check narrower than its own prose).
+ *    ⚠ QUALIFIED: "throws with the vault empty" holds only for a NON-EMPTY change set. With zero
+ *    changes the step-4.5 loop is never entered and `applyPlan` returns `ok` — making this also the
+ *    only pre-write dep whose omission can be entirely SIGNAL-FREE.
+ *    ⭐ PINNED, BECAUSE THE DECISION RESTS ON IT: `workspace-path-guard.test.ts`'s
+ *    `workspace_path_check_is_invoked_before_any_byte_is_committed` — which reds if the step-4.5
+ *    loop moves PAST the step-7 commit. ⚠ It does NOT red if the loop moves anywhere earlier within
+ *    steps 1-6; the pin is narrower than "reorder applyPlan and it reds."
+ * 2. NO EXISTING `WriteFailure` MEMBER IS TRUTHFUL FOR A MISCONFIGURED DEPS OBJECT.
+ *    • `workspace_path_violation` asserts THIS PLAN violated workspace path scope. It is the ONLY
+ *      member of the downstream `KnowledgeCommitFailureCode` union that is an isolation breach (that
+ *      union's own doc says so) and maps to `FailureClass "isolation_breach"` — and
+ *      `commitKnowledge.ts` propagates `cause: result.error`, so a SYNTHESIZED violation would
+ *      inject a FABRICATED `.path` into durable health/audit sinks, the field `WorkspacePathViolation`
+ *      documents (above) as unsafe for exactly those sinks. A config fault durably recorded as a
+ *      rule-4 isolation breach poisons the signal rule 4 depends on (contracts L106).
+ *    • `commit_failed` would NOT poison rule 4 (it maps to `write_through_failed`), but it asserts a
+ *      commit was ATTEMPTED that never was. Milder, still false.
+ * 3. AND A `commit_failed`-SHAPED GUARD IS REDUNDANT — `createCommitActivity` ALREADY catches the
+ *    throw and folds it to exactly that at the port boundary, test-pinned. The typed-error outcome a
+ *    guard here would produce ALREADY EXISTS one layer out, without touching this function.
+ * 4. COST OF A TRUTHFUL VARIANT — a NEW `WriteFailure` member is a deliberate compile error in THREE
+ *    areas, every one `assertNever`-guarded (24.23 / contracts L134): `packages/workflows`'
+ *    `mapWriteFailure` + `commitFailureClass`/`commitFailureState`, and `apps/worker`'s
+ *    `commitFailureToVariant`. ⚠ `KnowledgeCommitFailureCode` is declared in
+ *    `packages/workflows/src/ports/meetingCloseout.ts`, NOT in `packages/contracts` — an earlier
+ *    draft of this comment said contracts, and a reader checking "is it really three areas?" there
+ *    would find nothing and conclude they had misread. Per contracts L103 the required field IS the
+ *    mechanism; this belt would be mislabelled as one.
+ *
+ * ⚠ WHAT WOULD CHANGE THIS ANSWER (contracts L106 — an accepted residual owes its invalidating
+ * condition). Any of:
+ *   (i)   `WriteFailure` gains a misconfiguration-class member for ANY other reason ⇒ reason 4
+ *         collapses; add the guard THEN — and for EVERY required dep, never this one alone, which is
+ *         what reason 1 is for. ⚠ Do not hardcode the dep count: it was five at 24.67, and `signing`
+ *         is one promotion away from six.
+ *   (ii)  `applyPlan` acquires a caller that builds deps on a JOB PATH rather than at a composition
+ *         root ⇒ the cast class stops being hypothetical.
+ *   (iii) ⭐ `applyPlan` acquires a caller that does NOT wrap it in a §16 catch, or that catch is
+ *         removed/narrowed. Reason 3, and reason 1's "already fail-closed", are SYSTEM-level claims
+ *         resting on `createCommitActivity`'s try/catch — which lives in another package, and
+ *         nothing links its pin to this decision.
+ * ⛔ NO remedy may re-introduce a default check or an exempt id. The only admissible remedy is a
+ * REJECTION; a substitution re-opens `### 24.26`.
+ * ⚠ The `as`-cast and a genuinely-absent field are the SAME runtime state (`undefined`) and are
+ * deliberately not distinguished — different intents, identical behaviour, nothing to branch on.
+ * ⚠ AND THE CAST-ONLY THROW IS PINNED, which the pre-24.67 version of this comment said and this one
+ * must not drop: `workspace-path-guard.test.ts`'s
+ * `omitted_workspacepathcheck_runtime_behaviour_is_pinned_not_inferred`.
+ *
+ * ⭐ RE-RUN, DO NOT BELIEVE (contracts L143 — a finding with no falsification command rots): the dep
+ * table above reproduces by deleting one required key at a time from an otherwise complete deps
+ * literal, casting it to `KnowledgeWriterDeps`, calling `applyPlan` with a plan whose `creates` is
+ * NON-EMPTY (load-bearing — see reason 1's qualifier), and recording the thrown error against
+ * `vault.snapshot()`. Hold the vault handle OUTSIDE the deps literal (the `vault`-deleted row has
+ * nothing to call `.snapshot()` on otherwise), and start from an empty vault + fresh revision store
+ * or step 1 replays instead.
  */
 export async function applyPlan(
   command: KnowledgeWriteCommand,

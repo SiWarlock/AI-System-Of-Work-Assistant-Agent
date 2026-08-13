@@ -385,13 +385,16 @@ describe("workspacePathCheck is REQUIRED — the supplied id is load-bearing, an
     // exactly one field, cast past the type system. That is a BROADER class than "the 9 sites", and
     // it is unbounded by construction — any `as`-cast anywhere can produce it. Typecheck is the only
     // thing standing in front of it, which is precisely why the field being required is the fix.
-    // ⛔ NOT guarded here — by orchestrator ruling, recorded rather than fixed. ⚠ THE RULING'S STATED
-    // REASON DOES NOT SURVIVE REVIEW, so do not re-derive from it: it was "a guard would be the
-    // deleted fallback wearing a different hat", and a fail-closed
-    // `if (typeof workspaceScope !== "function") return err(violation(...))` is the OPPOSITE of that
-    // fallback — it ADMITS NOTHING and creates no second home for the exempt id, whereas the fallback
-    // admitted writes under a hardcoded one. Whether to add it is a live question routed at Step 9,
-    // not a settled equivalence.
+    // ⛔ NOT guarded — SETTLED by `### 24.67`: NO GUARD. ⚠ THE REASONS LIVE ONCE, in `applyPlan`'s
+    // docblock in `writer.ts`, and are deliberately NOT summarized here. An earlier draft of this
+    // note said "not restated here" and then restated them, putting two copies of a contestable
+    // claim in two files — the exact drift the sentence was warning against (reviewer-caught, and
+    // the same shape `workspace-path-guard.ts` already records about the exempt id).
+    // ⚠ The one thing worth duplicating is a NEGATIVE: do NOT re-derive from the ORIGINAL ruling
+    // ("a guard would be the deleted fallback wearing a different hat"). It is FALSE and WITHDRAWN
+    // by its author — and unlike the reasons, it is quotable by someone who never reads `writer.ts`.
+    // ⛔ THE THROW PINNED BELOW IS NOT THE WHOLE §16 GAP — see `### 24.72` (a POST-COMMIT store fault
+    // leaves the Markdown durable, reports `commit_failed`, and lands no AuditRecord).
     const vault = new MemoryVaultFs();
     const omitted = {
       vault,
@@ -404,6 +407,12 @@ describe("workspacePathCheck is REQUIRED — the supplied id is load-bearing, an
     await expect(applyPlan(cmd(planWithCreate(EXEMPT_WS, "projects/acme.md")), omitted)).rejects.toThrow(
       /is not a function/, // deliberately NOT the local's name — a pure rename must not red this
     );
+    // ⭐ 24.67 — WHERE the vault stood when it threw, not merely THAT it threw. The NO-GUARD
+    // decision's first reason is that this field is the SAFEST of the five required deps because
+    // omission throws with NOTHING written; that row was prose until this line. Reviewer-found: the
+    // assertion above pins the throw and says nothing about fail-closedness, which is the half the
+    // decision actually rests on.
+    expect(Object.keys(vault.snapshot())).toHaveLength(0);
 
     // ⚠ THE VACUITY TRAP, pinned as its own assertion so nobody "simplifies" the test into it: with
     // ZERO changes the step-4.5 loop is never entered, so omission does NOT throw. A version of this
@@ -413,5 +422,44 @@ describe("workspacePathCheck is REQUIRED — the supplied id is load-bearing, an
     // `toBeDefined()` would be satisfied by an `err` too, leaving the stated mechanism ("the loop is
     // never entered") silently false if an empty plan ever failed EARLIER. Pin the mechanism.
     expect(isOk(empty)).toBe(true);
+  });
+});
+
+// ── 24.67 — the pin that defends a DECISION rather than a behaviour ──────────
+//
+// `### 24.67` decided NOT to guard a non-function `workspacePathCheck`. The FIRST of the three
+// reasons is an ORDERING claim: `workspacePathCheck` is the SAFEST of the five required deps
+// because it is reached BEFORE any vault write, so a cast-produced omission is already fail-closed
+// (measured: `vault`/`revisions`/`workspacePathCheck` throw with an empty vault; `audit`/`now` throw
+// with the vault ALREADY COMMITTED). ⛔ IF ANYONE REORDERS `applyPlan`, THAT PREMISE SILENTLY
+// BECOMES FALSE AND THE RECORDED DECISION BECOMES WRONG WITHOUT ANYTHING REPORTING IT — an unpinned
+// premise under a documented decision is how a correct call rots into a wrong one.
+// ⭐ So this test does not defend the code; it defends the DECISION in `writer.ts`'s note.
+// ⚠ HONEST PROVENANCE: this is a CHARACTERIZATION pin on already-correct behaviour, not a red-green
+// cycle — the property held before it was written, so it could not red first. It was established by
+// MUTATION VERIFICATION instead (move the step-4.5 loop after the step-7 commit ⇒ this reds), which
+// buys the same guarantee red-green would. Recorded rather than smoothed over.
+describe("24.67 — the guard runs BEFORE any vault write (the NO-GUARD decision's premise)", () => {
+  it("workspace_path_check_is_invoked_before_any_byte_is_committed", async () => {
+    const vault = new MemoryVaultFs();
+    let filesAtCheckTime: number | undefined;
+    // Wraps the REAL guard rather than replacing it, so the path under test is production's, and
+    // records what the vault held AT THE MOMENT the guard ran.
+    const recording: WorkspacePathCheck = (ctx) => {
+      filesAtCheckTime = Object.keys(vault.snapshot()).length;
+      return guard(ctx);
+    };
+    const d = { ...deps(vault), workspacePathCheck: recording };
+    const r = await applyPlan(cmd(planWithCreate(EXEMPT_WS, "projects/acme.md")), d);
+
+    // (1) The plan genuinely committed — otherwise (2) would be vacuously satisfied by a run that
+    // never wrote anything, which is exactly the trap pinned in the omission test above.
+    expect(isOk(r)).toBe(true);
+    // (2) THE PREMISE. `undefined` here would mean the guard was never invoked at all (someone
+    // deleted step 4.5); a non-zero count would mean a write landed first. Both must fail.
+    expect(filesAtCheckTime).toBe(0);
+    // (3) Non-vacuity partner for (2): the vault is non-empty AFTER the call, so "0 at check time"
+    // is an ordering fact and not just "this plan never wrote".
+    expect(Object.keys(vault.snapshot()).length).toBeGreaterThan(0);
   });
 });
