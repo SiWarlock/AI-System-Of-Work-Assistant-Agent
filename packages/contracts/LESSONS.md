@@ -2874,3 +2874,52 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⇒ **DO.** When a gate, validator, or schema is cited as the reason something is safe, **write what it TESTS, not that it passed** — and if you cannot state the test in one clause, you do not know what the citation buys. ⚠ **Applies hardest to gates whose names are adjectives** (`isRedactionSafe`, `isValid`, `isTrusted`, `assertSafe`): **the name is a claim about the WORLD and the implementation is a claim about ONE PREDICATE.**
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any comment, commit message, or Done-when whose safety argument is *"X passed"* / *"X validated it"* / *"it went through X."* Replace with what X tests, or say the guarantee is unestablished.**
+
+<a id="152"></a>
+## 152. AN UNRESOLVABLE CITATION MAKES A CLAIM UNVERIFIED, NOT REFUTED — "I looked and found nothing" feels like refutation AND feels like diligence
+
+**Date:** 2026-08-13. **Source:** split out at the lead's instruction from [L150](#150), because one discrimination covers three of the round's separate defects.
+
+**The three it covers, all from one day:**
+1. **A wrong-package citation.** Two hops cited as `packages/policy/src/…`; **neither file exists** (they are `packages/knowledge/src/gcl/`). A reader who follows it finds nothing — **and concludes the call chain isn't there**, confirming a false claim in the same sentence.
+2. **A cross-namespace collision.** `#43` (shared task list) vs `### 24.43` (tracker) — **both resolve**, to unrelated tasks. Following one and finding an unrelated stale-array task reads as *"I misremembered,"* not as *"this pointer is wrong."*
+3. **Eleven rotted line numbers.** Citations to `boot.ts:588` whose symbols now sit 53–90 lines away **in a different function**. Each still resolves; each resolves to the wrong thing.
+
+⛔ **MECHANISM, and it is a fact about the READER, not the citation: an absence terminates a search.** *"I went and looked and it wasn't there"* has the texture of a completed check — **it costs effort, it produces a definite result, and it feels like exactly the diligence we ask for.** ⭐ **So the reader stops, and the stopping is what does the damage**: they now hold a *conclusion* ("the thing doesn't exist") derived from a *failed lookup*, which supports no conclusion at all.
+
+⭐ **The discrimination is one question: DID THE POINTER RESOLVE?** If it did not — wrong path, wrong namespace, moved line, renamed symbol — **you have learned nothing about the claim.** ⇒ ***a citation that fails to resolve is a QUESTION, not a VERDICT*** ([L93](#93) states this for lesson citations; **it generalises to every pointer**, and the generalisation is what was missing).
+
+⚠ **The direction is what makes it expensive: it manufactures FALSE NEGATIVES.** A false positive gets one classification and is corrected; **a false negative closes the question with a ✅ next to it** and ships an incomplete fix under a confident all-clear. **All three instances above pointed that way.**
+
+⇒ **DO.** When a lookup comes back empty, **before concluding anything, ask whether the POINTER was good** — did the path exist, was the namespace right, could the symbol have moved or been renamed, is there another package it could live in (in this repo, usually yes — the seams span packages deliberately). ⭐ **Report it as *"citation did not resolve"*, never as *"the thing is absent"*** — those are different findings with different next actions, and only the first is what you measured. ⚠ **Corollary for the AUTHOR: this is why an anchor must fail LOUDLY** ([`### 24.71`](#151)) — a symbol name that is absent gets investigated; a line number that silently resolves to the wrong thing gets believed.
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any negative conclusion drawn from a failed lookup — in a review, an audit, a premise check, or a sweep. State whether the pointer resolved, separately from what you found.**
+
+<a id="153"></a>
+## 153. CORRECTING A COMMENT HAS TWO FAILURE MODES — a claim that became TRUE-FOR-A-DIFFERENT-REASON gets struck rather than rewritten; and an instruction whose imperative INVERTS is not a comment fix
+
+**Date:** 2026-08-13. **Source:** `#56` (24.26 step-3 spinoff), worker-implementer, running the dispatch's two scope axes **against a finished diff** rather than as instructions for work not yet started. **Both halves banked together deliberately — they are the only two axes a comment-correction slice can go wrong on, and separated, neither gets found.**
+
+### Half 1 — TRUE-FOR-A-DIFFERENT-REASON is the case most likely to be STRUCK
+
+A `buildActivities.ts` block said *"do not read the absence of a behavioural test as an oversight."* Step 3 landed, and the sentence **was struck without replacement.**
+
+⛔ **But the claim had not become false. It had become TRUE FOR A DIFFERENT REASON.** Absence is now caught by the **type system** (`TS2741`); what no test can reach is whether the supplied **string** is correct. **The sentence still belonged there — with a new ground.**
+
+⭐ **MECHANISM, and it is why this beats ordinary staleness: A FALSE CLAIM ANNOUNCES ITSELF. A still-true claim whose GROUND MOVED reads as merely stale** — so the cheap edit is deletion, and **deletion silently discards a real guarantee nobody re-derives.** ⚠ **The correction and the deletion look IDENTICAL in a diff:** both remove the sentence; only one puts something back.
+
+⭐ **This is [L146](#146)'s shape (*what was the wrong value incidentally preventing?*) aimed at PROSE instead of code — and a sharper instance, because in L146 the fix and the loss were different edits, while here they are the same edit.**
+
+⇒ **DO. Before striking a stale-looking claim, ask: is it FALSE, or is it TRUE ON A GROUND THAT MOVED?** If the second, **rewrite with the new ground** — never delete. ⚠ **A correction owes a REPLACEMENT** (this project's other instance: a false *reassurance* deleted into silence where the truer, worse analysis belonged — the opposite direction, same missing step).
+
+### Half 2 — an instruction whose imperative INVERTS needs authorization; one that STRENGTHENS does not
+
+**A comment can INSTRUCT rather than describe, and the two dispositions are different.** Two instances one day apart:
+- **`worker-host/index.ts`** told a reader to **perform the binding a new rule forbids** ⇒ **the instruction's ACTION became WRONG.** Required a lead authorization; it did not merely mislead, it instructed.
+- **`legacy-workspace.ts`'s** *"do NOT delete it alongside the knowledge-side constant"* ⇒ step 3 made the const the **sole supplier of a required parameter**, so *"do not delete"* went from advisory to **load-bearing**. **The instruction's action became MORE right;** only its time-binding was stale.
+
+⭐ **THE DISCRIMINATOR: an instruction whose imperative STRENGTHENS is safe to fix in place; one whose imperative INVERTS is the thing that needs authorization.** ⇒ **the question is not *"is this comment stale?"* but *"did the action it prescribes change direction?"***
+
+⛔ **AND THE PLACEMENT FINDING, which re-prices the whole exercise: NONE of the three DISPATCHED sites contained an instruction. The only instruction in the slice was in a FOURTH site the implementer found and added.** ⇒ ***the risk lived entirely in the part nobody had scoped*** — simultaneously the strongest argument for stating the axes in a no-brief dispatch, and for the implementer widening scope. **A guard aimed at a filed scope cannot cover what the filing missed.**
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any slice correcting comments. Half 1 at the moment of striking a sentence; half 2 before treating an instruction-shaped comment as an ordinary comment fix.**
