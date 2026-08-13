@@ -142,6 +142,12 @@ Four categories only. Everything else, orchestrator + implementer settle directl
 3. **Deferment approvals** — any scope cut. Never silently drop work.
 4. **Load-bearing architectural decisions** — Option A/B/C calls shaping UX, dev-facing API surface, or load-bearing contract surface. Lead maps options + tradeoffs via `AskUserQuestion`; does NOT pick on the user's behalf.
 
+⛔⛔ **A Step-9 flag touching ANY OF THE SEVEN safety rules auto-routes to the LEAD as well as the orchestrator. ALL SEVEN. No exceptions, no judgment call at the boundary.** *(Lead ruling 2026-08-13, task `### 24.62`.)*
+
+> ⛔ **THIS CORRECTS A REAL DEFECT THAT GOVERNED THE WHOLE ROUND: spawn prompts said `rules 1/4/5/6`, and there is NO principled reason that set excluded 2, 3 or 7** — it was a prior convention mirrored rather than derived. **The lead filed it against themselves: *"the same substitute-a-model-for-a-check failure I've made four times today, except this one shipped as PROTOCOL."***
+> ⚠ **How it surfaced: a rule-7 (redaction) finding — `persistDenialAudit` gating one of two data channels — had NO auto-route, so it reached the lead only because the implementer flagged it (*"your call, not mine to make silently"*) and the orchestrator then chose to route it.** ⇒ ***a secrets finding's escalation depended on two people in sequence making a good judgment call while not tired.***
+> ⛔ **Rules 2 (candidate-data gate) and 3 (external-write envelope) sit in the IDENTICAL gap and nobody has hit them yet.** ⭐ **Fixed as a CLASS deliberately: patching only rule 7 — the one that happened to surface — would repeat the error ruled against on `### 24.54`, widening a declared set by exactly the amount the complaint demanded.**
+
 ### Messaging budget — two channels
 
 Coordination uses two channels for two different things. Keep them separate:
