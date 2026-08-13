@@ -36,8 +36,10 @@ import type {
   WorkspaceId,
   KnowledgeMutationPlan,
   Result,
+  FailureClass,
 } from "@sow/contracts";
 import { runHermesAutomation } from "../src/workflows/hermesAutomation";
+import { commitFailureClass } from "../src/workflows/sourceIngestion";
 import { createHermesRouteActivity } from "../src/activities/hermesRoute";
 import type { HermesRouteSignals } from "../src/activities/hermesRoute";
 import type { HermesRouteError } from "../src/workflows/hermesAutomation";
@@ -53,6 +55,7 @@ import type {
   BuildOutputsFailureCode,
   HermesRouteErrorCode,
 } from "../src/workflows/hermesAutomation";
+import type { MeetingWorkflowFailure } from "../src/ports/meetingCloseout";
 import {
   FakeHermesRoutePort,
   FakeHermesAgentJobPort,
@@ -284,6 +287,125 @@ describe("runHermesAutomation — knowledge-commit conflict", () => {
     expect(outcome.state).toBe("write_conflict");
     expect(propose.createCount).toBe(0);
     expect(health.surfaced).toHaveLength(1);
+  });
+});
+
+// --- commit-failure CAUSE discrimination (task 24.48) ----------------------
+//
+// spec(§16) — a §16 FailureClass reflects the CAUSE, not the resting state
+// (contracts L18). The Hermes resting state `write_conflict` DELIBERATELY conflates
+// all six KnowledgeCommitFailureCode causes (it denotes pipeline position + retry
+// posture, not cause), so the class must be threaded from the code at the commit
+// site rather than derived from the state via failureClassFor.
+//
+// ⭐ EXHAUSTIVE BY CONSTRUCTION: this is a TOTAL Record over the union, so adding a
+// seventh KnowledgeCommitFailureCode member is a COMPILE error here — it cannot
+// silently escape coverage the way a hand-written array of six would (the
+// 24.39/24.43 shape: a hand-maintained enumeration reporting coverage of a set it
+// does not enumerate).
+const EXPECTED_COMMIT_FAILURE_CLASS: Record<KnowledgeCommitFailureCode, FailureClass> = {
+  schema_rejected: "schema_rejection",
+  write_conflict: "write_through_failed",
+  ownership_violation: "isolation_breach",
+  secret_found: "security_violation",
+  workspace_path_violation: "isolation_breach",
+  commit_failed: "write_through_failed",
+};
+
+const ALL_COMMIT_FAILURE_CODES = Object.keys(
+  EXPECTED_COMMIT_FAILURE_CLASS,
+) as readonly KnowledgeCommitFailureCode[];
+
+async function runWithCommitFailure(
+  failWith: KnowledgeCommitFailureCode,
+): Promise<{ state: string; surfaced: readonly MeetingWorkflowFailure[] }> {
+  const health = new FakeMeetingHealthSink();
+  const deps = makeDeps({ commit: new FakeCommitPort({ failWith }), health });
+  const outcome = await runHermesAutomation(makeInput(), deps);
+  return { state: outcome.state, surfaced: health.surfaced };
+}
+
+describe("runHermesAutomation — knowledge-commit failure CAUSE discrimination (24.48)", () => {
+  it("surfaces the CAUSE-derived §16 FailureClass for every commit failure code", async () => {
+    for (const code of ALL_COMMIT_FAILURE_CODES) {
+      const { surfaced } = await runWithCommitFailure(code);
+      expect(surfaced).toHaveLength(1);
+      // Hardcoded (not `commitFailureClass(code)`) so this test pins the VALUES and
+      // cannot pass tautologically just because the impl calls the shared helper.
+      expect(surfaced[0]?.failureClass).toBe(EXPECTED_COMMIT_FAILURE_CLASS[code]);
+    }
+  });
+
+  it("agrees with the shared commitFailureClass taxonomy for every code (L119 no-drift)", async () => {
+    // Tautological against the CURRENT impl by design; it is load-bearing against a
+    // FUTURE fork — it reds the day hermes grows a second, independently-drifting
+    // copy of the mapping, which is exactly what 13.8f-C exported the helper to stop.
+    for (const code of ALL_COMMIT_FAILURE_CODES) {
+      const { surfaced } = await runWithCommitFailure(code);
+      expect(surfaced[0]?.failureClass).toBe(commitFailureClass(code));
+    }
+  });
+
+  it("rests on write_conflict for EVERY code — the state collapse is deliberate", async () => {
+    // Pins branch A′'s explicit decision (L82: make the claim true, don't leave it
+    // looking like an oversight). Also the guard against silently reintroducing the
+    // premise-5 hazard: anyone who later maps codes to NEW states must widen
+    // hermesAutomationTransitions and update this test in the same change.
+    for (const code of ALL_COMMIT_FAILURE_CODES) {
+      const { state } = await runWithCommitFailure(code);
+      expect(state).toBe("write_conflict");
+    }
+  });
+
+  it("NEVER rests on a success state for any code", async () => {
+    // The premise-5 regression guard, kept even though A′ cannot trip it: `advance`
+    // (hermesAutomation.ts:418) returns the cursor UNCHANGED on an illegal edge, so a
+    // mapped-but-unreachable state degrades to `knowledge_committed` — a SUCCESS
+    // state on a commit failure, with no type, lint or test objecting.
+    for (const code of ALL_COMMIT_FAILURE_CODES) {
+      const { state } = await runWithCommitFailure(code);
+      expect(state).not.toBe("knowledge_committed");
+      expect(state).not.toBe("completed");
+    }
+  });
+
+  it("keeps the failure code recoverable verbatim in the surfaced reason", async () => {
+    for (const code of ALL_COMMIT_FAILURE_CODES) {
+      const { surfaced } = await runWithCommitFailure(code);
+      expect(surfaced[0]?.message).toContain(code);
+    }
+  });
+
+  it("leaves the OTHER failure branches on the state-derived class (default untouched)", async () => {
+    // 24.48's `surface` seam gained an optional cause-derived class, and the commit
+    // branch is the ONLY one of its eight call sites that passes it. The in-file comment
+    // claims the other seven are byte-equivalent to the prior state-derived behavior —
+    // this pins that claim instead of asserting it (L82), because before this test the
+    // file contained NO failureClass assertion outside the commit path at all, so the
+    // default arm was entirely uncovered.
+    const routeHealth = new FakeMeetingHealthSink();
+    const routed = await runHermesAutomation(
+      makeInput(),
+      makeDeps({
+        route: new FakeHermesRoutePort({ failWith: "route_failed" }),
+        health: routeHealth,
+      }),
+    );
+    expect(routed.state).toBe("routing_failed");
+    // failureClassFor("routing_failed") — the state-derived default, NOT a cause-derived
+    // class: this branch omits the third argument.
+    expect(routeHealth.surfaced[0]?.failureClass).toBe("conflict_review");
+
+    const buildHealth = new FakeMeetingHealthSink();
+    const built = await runHermesAutomation(
+      makeInput(),
+      makeDeps({
+        buildOutputs: new FakeBuildOutputsPort({ failWith: "unmappable_extraction" }),
+        health: buildHealth,
+      }),
+    );
+    expect(built.state).toBe("schema_rejected");
+    expect(buildHealth.surfaced[0]?.failureClass).toBe("schema_rejection");
   });
 });
 

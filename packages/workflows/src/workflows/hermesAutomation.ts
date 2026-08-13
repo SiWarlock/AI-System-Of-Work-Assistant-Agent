@@ -79,6 +79,11 @@ import type {
   MeetingHealthSink,
   MeetingWorkflowFailure,
 } from "../ports/meetingCloseout";
+// 24.48 — share the SAME KnowledgeCommitFailureCode → FailureClass taxonomy the source path
+// (and, since 13.8f-C, the meeting path) uses, rather than a third independently-drifting copy
+// (contracts L119). Hermes was the last of the three knowledge-committing workflows still
+// deriving its commit-failure class from the RESTING STATE instead of the CAUSE.
+import { commitFailureClass } from "./sourceIngestion";
 
 // Re-export the reused governance surface so the test + a downstream slice import it
 // from ONE place (this seam) without reaching into the 7.6 module.
@@ -496,9 +501,19 @@ export async function runHermesAutomation(
   const surface = async (
     failState: HermesAutomationState,
     message: string,
+    // The §16 class (24.48). Non-commit callers OMIT it — the state-based default is
+    // correct for them because their code unions are homogeneous in safety terms — while
+    // the commit caller passes an explicit CAUSE-derived class, because `write_conflict`
+    // conflates six causes of which three are safety-invariant failures (contracts L18: a
+    // class reflects the CAUSE, not the resting state, with the resting-state map left as
+    // the non-terminal default). ⭐ Shape deliberately MIRRORS sourceIngestion.ts's own
+    // `surface` seam (a named default parameter) rather than inventing a second convention
+    // for the same job — this slice's whole point is to stop hermes diverging from the
+    // taxonomy its two sibling commit paths already share (L119).
+    failureClass: FailureClass = failureClassFor(failState),
   ): Promise<HermesAutomationOutcome> => {
     const failure: MeetingWorkflowFailure = {
-      failureClass: failureClassFor(failState),
+      failureClass,
       subjectRef: pinnedRun.workflowId,
       message,
       auditRef: pinnedRun.workflowId as unknown as AuditId,
@@ -571,8 +586,40 @@ export async function runHermesAutomation(
   //    plan's key: a replay reuses the prior revision. A conflict → write_conflict.
   const committed = await deps.commit.commit(plan);
   if (!isOk(committed)) {
+    // 24.48 — the RESTING STATE deliberately stays `write_conflict` for ALL SIX
+    // KnowledgeCommitFailureCodes, and that collapse is INTENTIONAL, not an oversight
+    // (L82): this alphabet denotes PIPELINE POSITION + RETRY POSTURE, not cause.
+    //
+    // ⛔ THE PREMISE THE COLLAPSE RESTS ON IS NOT LOCAL TO THIS FILE, so name it: resting
+    // a secret/ownership/workspace-path failure on a RE-DRIVABLE state is safe ONLY
+    // because the refusal is enforced at KnowledgeWriter, which re-refuses on every
+    // re-drive — NOT because of anything this state machine does. (Note the asymmetry
+    // this creates with sourceIngestion's `commitFailureState`, which maps those same
+    // three codes to `failed_terminal`: the two paths differ in FSM retry posture while
+    // agreeing on enforcement and — after this slice — on the §16 class the operator
+    // sees.) ⚠ If KnowledgeWriter's secret-scan ever becomes cache-backed or
+    // short-circuiting, this collapse must be revisited, and whoever makes that change
+    // will not be reading this file (contracts L66).
+    //
+    // ⛔ Do NOT 'fix' the collapse by mapping codes to new states without ALSO widening
+    // `hermesAutomationTransitions` — `advance` (:418) returns the cursor UNCHANGED on an
+    // illegal edge, so a mapped-but-unreachable state would rest on the SUCCESS state
+    // `knowledge_committed` with nothing objecting. A test pins both halves. (The walk
+    // below transits `knowledge_committed` DELIBERATELY: it is the machine's only legal
+    // predecessor of `write_conflict` (:166), so the failure edge must pass through it —
+    // transiting it is required, RESTING on it is the bug.)
+    //
+    // The CAUSE instead rides the §16 FailureClass, threaded from the code through the
+    // shared `commitFailureClass` (contracts L18). This matters: `secret_found` (rule 7),
+    // `ownership_violation` (KN-7 section ownership) and `workspace_path_violation`
+    // (rule 4 / WS-8) classify as security_violation / isolation_breach, whose default
+    // severity is CRITICAL — where the state-derived `conflict_review` defaults to warn.
     state = advance(state, ["knowledge_committed", "write_conflict"]);
-    return surface(state, `knowledge commit failed: ${committed.error.code}`);
+    return surface(
+      state,
+      `knowledge commit failed: ${committed.error.code}`,
+      commitFailureClass(committed.error.code),
+    );
   }
   state = advance(state, ["knowledge_committed"]);
   context = { ...context, revisionId: committed.value.revisionId };
