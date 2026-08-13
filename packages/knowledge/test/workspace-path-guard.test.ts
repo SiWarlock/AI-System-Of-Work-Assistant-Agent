@@ -12,6 +12,11 @@ import type { KnowledgeWriteCommand, KnowledgeWriterDeps, WorkspacePathContext }
 import { computeRevisionId } from "../src/knowledge-writer/revision";
 import { enforceWorkspacePathScope, LEGACY_UNPREFIXED_WORKSPACE_ID, SOURCE_NOTE_SUBTREE } from "../src/knowledge-writer/workspace-path-guard";
 import { MemoryAuditRepo, MemoryRevisionStore, MemoryVaultFs } from "./helpers";
+// 24.26 step 1 of 3 — the factory under test. Imported on its OWN line (rather than extended onto
+// the `:13` import) so every pre-existing line in this file stays byte-identical: the acceptance
+// criterion "no existing test was edited" is then checkable by diff, not by assertion.
+import { makeEnforceWorkspacePathScope } from "../src/knowledge-writer/workspace-path-guard";
+import type { WorkspacePathCheck } from "../src/knowledge-writer/writer";
 
 const wf: WorkflowRunRef = {
   workflowId: "wf-24-12" as WorkflowRunRef["workflowId"],
@@ -231,5 +236,88 @@ describe("enforceWorkspacePathScope — the pure predicate (unit level, for bran
       const r = enforceWorkspacePathScope(ctx(path, FOREIGN));
       expect(isErr(r), `expected ${path} to be rejected`).toBe(true);
     }
+  });
+});
+
+// 24.26 step 1 of 3 — the exempt workspace becomes a REQUIRED factory argument. This slice creates
+// the surface ONLY: nothing supplies it yet (step 2, worker) and the dependency is not yet required
+// (step 3, the final leg of `### 24.26`). `LEGACY_UNPREFIXED_WORKSPACE_ID` remains the sole source in
+// production. ⚠ Legs are anchored to `### 24.26`, never to a bare `#N` — those number independently
+// in this repo, and the id first drafted here resolves in the plan to a different, already-CLOSED task.
+describe("makeEnforceWorkspacePathScope — the exempt workspace id is a required factory argument (24.26 step 1 of 3)", () => {
+  const ctx = (path: string, workspaceId: unknown): WorkspacePathContext => ({ path, plan: { ...validKnowledgeMutationPlan, workspaceId } as unknown as KnowledgeMutationPlan });
+
+  it("the exempt id is REQUIRED FROM BIRTH — a call omitting it does not compile", () => {
+    // The acceptance criterion made executable. `tsc --noEmit` really covers this file
+    // (packages/knowledge/tsconfig.json `include: ["src","test"]`, and `lint` === `typecheck`).
+    // NEVER INVOKED — it is a type-level pin: if the parameter is ever widened to optional, the
+    // suppression below goes unused and TYPECHECK FAILS. It reds in the direction that matters
+    // (the guarantee weakening), which a runtime assertion cannot do.
+    // ⚠ Do not start a comment line with the directive's own name while describing it — tsc reads
+    // `//` + the token as a REAL directive wherever it appears, so the prose becomes a second,
+    // unused suppression and errors. (Cost one RED cycle here.)
+    const neverInvoked = (): WorkspacePathCheck =>
+      // @ts-expect-error — exemptWorkspaceId is required; a no-arg call must not typecheck
+      makeEnforceWorkspacePathScope();
+    expect(typeof neverInvoked).toBe("function");
+  });
+
+  it("exempts the workspace it was GIVEN, not the module constant", () => {
+    // The whole point of the factory: this fails if the returned predicate ignored its argument and
+    // closed over LEGACY_UNPREFIXED_WORKSPACE_ID.
+    const check = makeEnforceWorkspacePathScope(FOREIGN);
+    const r = check(ctx("projects/acme.md", FOREIGN)); // unprefixed, but THIS instance's exempt ws
+    expect(isOk(r)).toBe(true);
+  });
+
+  it("does NOT exempt the module constant when given another id — the discriminating half", () => {
+    // Test above passes even if the factory exempted BOTH its argument and the constant. Only this
+    // one proves the constant stopped being consulted; a closure bug that ORs the two is the
+    // realistic failure mode and the positive test cannot see it.
+    const check = makeEnforceWorkspacePathScope(FOREIGN);
+    const r = check(ctx("projects/acme.md", LEGACY_UNPREFIXED_WORKSPACE_ID));
+    expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    expect(r.error.code).toBe("workspace_path_violation");
+  });
+
+  it("changes ONLY the exempt id — every other branch of the predicate is byte-identical on a custom instance", () => {
+    // Non-vacuity partner: proves the factory is the SAME predicate parameterised, not a second
+    // implementation that happens to agree on the exemption. Mirrors the shipped const's own pins.
+    const check = makeEnforceWorkspacePathScope("some-other-workspace");
+    expect(isOk(check(ctx("index.md", FOREIGN)))).toBe(true); // KN-12 structural, exempt for every ws
+    expect(isOk(check(ctx("employer-work/projects/acme.md", FOREIGN)))).toBe(true); // own prefix
+    expect(isOk(check(ctx(`${SOURCE_NOTE_SUBTREE}/${FOREIGN}/abc123.md`, FOREIGN)))).toBe(true); // sources/<ws>/
+    expect(isErr(check(ctx("employer-work-x/projects/acme.md", FOREIGN)))).toBe(true); // lookalike segment
+    expect(isErr(check(ctx("employer-work/../secret.md", FOREIGN)))).toBe(true); // traversal
+    expect(isErr(check(ctx("projects/acme.md", "")))).toBe(true); // malformed plan workspaceId
+  });
+
+  it("construction FAILS FAST on an empty or whitespace-only exempt id, naming the parameter", () => {
+    // ⚠ NOT because a blank id would open an exemption hole — it provably would not: the predicate
+    // rejects an empty/malformed plan.workspaceId BEFORE the exemption comparison is reached, so a
+    // blank exempt id is inert ("nothing is exempt"), which is strictly fail-CLOSED. The reason is
+    // the step-3 supplier: once the composition root feeds this value, a blank one is a
+    // MISCONFIGURATION that silently disables the legacy-content posture the `assign` bridge
+    // depends on, and it should name itself at boot rather than surface later as "every
+    // personal-business unprefixed write started failing."
+    // ⛔ Asserts the MESSAGE, not a bare .toThrow(): before the factory existed this test passed on
+    // `TypeError: not a function` — a green resting on the wrong cause. Pinning the message is what
+    // stops an unrelated future throw from keeping it green.
+    // The cast entries cover the `typeof` half, which TypeScript makes unreachable but a JS caller or
+    // an `as`-cast at a composition root does not — so that branch is defensive, not dead.
+    const blanks: string[] = ["", "   ", "\t", "\n", undefined as unknown as string, null as unknown as string, 42 as unknown as string];
+    for (const blank of blanks) {
+      expect(() => makeEnforceWorkspacePathScope(blank)).toThrow(/exemptWorkspaceId must be a non-blank string/);
+    }
+    // Non-vacuity partner: a real id does NOT throw, so the assertion above is discriminating
+    // rather than "this factory always throws."
+    expect(() => makeEnforceWorkspacePathScope(FOREIGN)).not.toThrow();
+    // ⛔ KNOWN RESIDUAL, pinned as a COMMENT and deliberately NOT an assertion, so nobody reads it as
+    // intended behaviour: `.trim()` covers the ECMAScript whitespace class only, so a zero-width /
+    // format id (U+200B, U+2060, U+180E) CONSTRUCTS here and also clears WorkspaceIdSchema's identical
+    // `.trim()` test. Asserting it would encode the gap as desired; closing it means validating the
+    // exempt id against the known workspace set at the composition root (brief 271 option (c)) — out
+    // of this slice's scope and owed by whoever supplies the value.
   });
 });

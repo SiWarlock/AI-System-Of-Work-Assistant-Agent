@@ -28,6 +28,17 @@ export * from "./knowledge-writer/writer";
 export * from "./knowledge-writer/gbrain-sync-trigger";
 export * from "./knowledge-writer/sync-outbox";
 export * from "./knowledge-writer/tombstone";
+// The workspace-path gate (24.12) — applyPlan's third ordered predicate, alongside `ownership` and
+// `secret-scan` above — but exported NARROWLY, by name, deliberately:
+//   • `makeEnforceWorkspacePathScope` is what a composition root needs (24.26 step 2 binds it into the
+//     two `KnowledgeWriterDeps` literals). Without this line the only thing a consumer COULD put in
+//     `workspacePathCheck:` is a hand-rolled predicate — a second implementation of the very fact
+//     `### 24.26` exists to single-source.
+//   • ⛔ NOT `export *`, which would also publish `LEGACY_UNPREFIXED_WORKSPACE_ID` — a constant
+//     `### 24.26`'s final step DELETES. Publishing it would turn that deletion from an internal change
+//     into a breaking public-surface change, for a symbol no consumer should bind. `enforceWorkspacePathScope`
+//     stays off the barrel too: its only consumer is `writer.ts`'s own default, which imports directly.
+export { makeEnforceWorkspacePathScope } from "./knowledge-writer/workspace-path-guard";
 
 // ── fs-watch: out-of-band writer detection + reconciliation ─────────────────────
 export * from "./fs-watch/vault-watcher";
