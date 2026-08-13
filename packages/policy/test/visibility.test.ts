@@ -252,6 +252,141 @@ describe("validateProjectionVisibility", () => {
   });
 });
 
+// task 24.45 — the MALFORMED_POLICY_INPUT path embedded the candidate's OWN,
+// UNVALIDATED workspaceId into audit.refs. `refs` is built at the top of the
+// function, BEFORE any validation; the mismatch branch ("projection workspaceId
+// does not match source workspace") fires precisely when that value is FOREIGN —
+// so by the time the denial is constructed, the foreign value is already in the
+// audit. Safety rules 4 (workspace isolation) + 7 (redaction).
+//
+// ⚠ not-tested-because: the READ path (`serveProjection`) cannot be driven from
+// packages/policy — it lives in packages/knowledge, outside this track's territory.
+// Coverage there is STRUCTURAL rather than asserted, and the structure is the
+// argument: `serveProjection` and `admitAndPersistProjection` BOTH call
+// `admitProjection`, which calls `validateProjectionVisibility` — the single
+// chokepoint these tests pin. A fix here therefore covers both reach paths by
+// construction, not by luck. Traced 2026-08-13 by SYMBOL, not line number (a
+// cross-package line citation rots on the other track's first edit):
+// `admitAndPersistProjection` and `serveProjection` (packages/knowledge/src/gcl/
+// projection.ts) → `admitProjection` → `validateProjectionVisibility`.
+describe("validateProjectionVisibility — audit refs never carry an unvalidated workspaceId (task 24.45)", () => {
+  // Sensitive but NOT credential-shaped: no key prefix, no sensitive keyword, no
+  // URL userinfo ⇒ it passes all three isRedactionSafe regexes. That is the whole
+  // point — the heuristic structurally cannot be the defense here.
+  const FOREIGN_SENSITIVE_WS_ID = "ws-employer-projectatlas-acquisition";
+
+  it("visibility_malformed_denial_does_not_leak_unvalidated_workspace_id: a FOREIGN workspaceId never reaches audit.refs verbatim [spec(§5)]", () => {
+    const w = wsWithDefault("full");
+    const d = validateProjectionVisibility(projection(FOREIGN_SENSITIVE_WS_ID, "isolated"), w);
+
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") {
+      // ⚠ `reason` does NOT discriminate — MALFORMED_POLICY_INPUT is shared by five
+      // branches. `message` is what pins the mismatch branch specifically.
+      expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
+      expect(d.message).toBe("projection workspaceId does not match source workspace");
+      // Pin the emitted shape, not merely the absence: `not.toContain` alone would
+      // also pass if the ref were deleted, hashed or truncated.
+      expect(d.audit.refs).toEqual(["ref:workspace:UNVALIDATED", "ref:visibility:isolated"]);
+      expect(d.audit.refs.join("|")).not.toContain(FOREIGN_SENSITIVE_WS_ID);
+    }
+  });
+
+  it("a foreign workspaceId is withheld on the omits-visibilityLevel branch too [spec(§5)]", () => {
+    const w = wsWithDefault("full");
+    const p = {
+      workspaceId: FOREIGN_SENSITIVE_WS_ID,
+      projectionType: "summary",
+      sanitizedPayload: {},
+      sourceRefs: [],
+    } as unknown as GclProjection;
+    const d = validateProjectionVisibility(p, w);
+    // A SECOND leak the same expression plugs — pinned so a refactor can't regress it
+    // silently while the mismatch test stays green.
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") {
+      expect(d.message).toBe("projection omits visibilityLevel");
+      expect(d.audit.refs).toEqual(["ref:workspace:UNVALIDATED", "ref:visibility:UNRECOGNIZED"]);
+    }
+  });
+
+  it("the withheld value is NOT credential-shaped, so isRedactionSafe passes either way — the gate cannot catch this [spec(§16)]", () => {
+    const w = wsWithDefault("full");
+    const d = validateProjectionVisibility(projection(FOREIGN_SENSITIVE_WS_ID, "isolated"), w);
+    // GREEN before and after the fix. This is the characterization that justifies
+    // fixing the PRODUCER rather than tightening the heuristic (route (a) rejected
+    // — it would invert secret-scan.ts's contentContainsSecret repo-wide).
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") expect(isRedactionSafe(d.audit)).toBe(true);
+  });
+
+  // The over-tight-fix controls (`L80`). Both post-equality paths are pinned, not just
+  // one — the branches execute only AFTER `wsId === srcId`, so their refs must be
+  // byte-identical to pre-fix. These are what fail if the fix over-reaches.
+  it("visibility_allow_path_refs_are_byte_identical: the ALLOW path still names its validated workspace [spec(§5)]", () => {
+    const w = wsWithDefault("full");
+    const d = validateProjectionVisibility(projection("ws-1", "isolated"), w);
+    expect(d.decision).toBe("allow");
+    if (d.decision === "allow") {
+      expect(d.audit.refs).toEqual(["ref:workspace:ws-1", "ref:visibility:isolated"]);
+    }
+  });
+
+  it("the EXCEEDS-SOURCE path also still names its validated workspace [spec(§5)]", () => {
+    const w = wsWithDefault("isolated");
+    const d = validateProjectionVisibility(projection("ws-1", "full"), w);
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") {
+      expect(d.reason).toBe("VISIBILITY_EXCEEDS_SOURCE");
+      expect(d.audit.refs).toEqual(["ref:workspace:ws-1", "ref:visibility:full"]);
+    }
+  });
+
+  it("an absent workspaceId still reports MISSING — the pre-existing sentinel is preserved [spec(§5)]", () => {
+    const w = wsWithDefault("full");
+    const p = {
+      visibilityLevel: "isolated",
+      projectionType: "summary",
+      sanitizedPayload: {},
+      sourceRefs: [],
+    } as unknown as GclProjection;
+    const d = validateProjectionVisibility(p, w);
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") expect(d.audit.refs).toContain("ref:workspace:MISSING");
+  });
+
+  it("the source workspace id is read ONCE, so the ref and the referential pin cannot disagree [spec(§5)]", () => {
+    // Adversarial, from security review: when the audit ref and the equality test read
+    // `sourceWorkspace.id` SEPARATELY, a getter/Proxy-backed or lazily-hydrated record
+    // can return the candidate's value on read 1 and the real value on read 2 — writing
+    // the RAW foreign id into refs while still taking the mismatch branch, reinstating
+    // exactly the leak this task fixes. A single read makes the property total rather
+    // than conditional on the argument being a plain object.
+    let reads = 0;
+    const w = {
+      ...wsWithDefault("full"),
+      get id() {
+        reads += 1;
+        return reads === 1 ? FOREIGN_SENSITIVE_WS_ID : "ws-1";
+      },
+    } as unknown as Workspace;
+    validateProjectionVisibility(projection(FOREIGN_SENSITIVE_WS_ID, "isolated"), w);
+    expect(reads).toBe(1);
+  });
+
+  it("an EMPTY-STRING workspaceId reports MISSING, matching its denial message [spec(§5)]", () => {
+    const w = wsWithDefault("full");
+    const d = validateProjectionVisibility(projection("", "isolated"), w);
+    // `""` is a string, so it would otherwise fall to the UNVALIDATED arm and disagree
+    // with its own denial message ("projection omits workspaceId").
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") {
+      expect(d.message).toBe("projection omits workspaceId");
+      expect(d.audit.refs).toContain("ref:workspace:MISSING");
+    }
+  });
+});
+
 describe("denyDirectCrossWorkspaceRaw (hard denial #2)", () => {
   it("denies DIRECT_CROSS_WORKSPACE_RAW_RETRIEVAL for cross-ws raw with no approvedLink", () => {
     const d = denyDirectCrossWorkspaceRaw({ fromWorkspaceId: "ws-a", toWorkspaceId: "ws-b" });

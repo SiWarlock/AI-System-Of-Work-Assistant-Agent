@@ -63,6 +63,42 @@ describe("isRedactionSafe / assertRedactionSafe", () => {
   });
 });
 
+// task 24.45 — isRedactionSafe is a keyword/prefix/URL-userinfo HEURISTIC, not a
+// shape allowlist. These pin what it does and does NOT catch, so the enumeration on
+// the function can state something true rather than inherited (`L82`).
+describe("isRedactionSafe — the heuristic's stated limits (task 24.45)", () => {
+  it("redaction_heuristic_admits_a_sensitive_non_credential_string: a sensitive-but-not-credential-shaped ref PASSES [spec(§16)]", () => {
+    const sig = buildAuditSignal({
+      ...base,
+      refs: ["ref:workspace:ws-employer-projectatlas-acquisition"],
+    });
+    // GREEN by design, before and after. Documents WHY the remedy is validate-at-the-
+    // producer, not a tighter heuristic: a shape allowlist here would invert
+    // packages/knowledge secret-scan.ts's contentContainsSecret (`!isRedactionSafe`),
+    // which gates the KnowledgeWriter pre-commit scan on the sole-writer path.
+    expect(isRedactionSafe(sig)).toBe(true);
+  });
+
+  it("redaction_safe_still_admits_the_legitimate_ref_shapes: production templates, markers and sentinels all pass [spec(§16)]", () => {
+    const sig = buildAuditSignal({
+      ...base,
+      refs: [
+        "ref:workspace:ws-1",
+        "ref:job:job-123",
+        "ref:capability:extraction",
+        "sha256:deadbeef",
+        "policy:visibility-decision",
+        "ref:workspace:MISSING",
+        "ref:workspace:UNVALIDATED",
+        "ref:visibility:isolated",
+      ],
+    });
+    // The over-tight-fix control (`L80`): a change that rejects real production ref
+    // shapes would fail closed across every producer in the repo.
+    expect(isRedactionSafe(sig)).toBe(true);
+  });
+});
+
 describe("toAuditRecordInput", () => {
   it("produces an object AuditRecordSchema.parse accepts (impure caller supplies occurredAt)", () => {
     const sig: AuditSignal = buildAuditSignal(base);

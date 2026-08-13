@@ -128,8 +128,36 @@ export function validateProjectionVisibility(
 ): PolicyDecision<GclProjection> {
   const wsId: unknown = projection?.workspaceId;
   const level: unknown = projection?.visibilityLevel;
+  // ⛔ VALIDATE BEFORE INTERPOLATING (task 24.45, safety rules 4 + 7). `wsId` is the
+  // CANDIDATE's own, still-unvalidated claim, and the mismatch branch below fires
+  // PRECISELY when it is foreign — so interpolating it here would write untrusted
+  // candidate data into the audit of the very check that exists to reject it.
+  // `isRedactionSafe` cannot catch that: a workspace id (an employer project codename,
+  // a person's name) is not credential-shaped — `contracts L5`. Mirrors the closed-set
+  // discipline the visibility ref below already applies.
+  //
+  // Affects THREE deny branches, each of which previously emitted the raw candidate
+  // value: "omits workspaceId" (its empty-string sub-case), "omits visibilityLevel",
+  // and the mismatch itself. The allow / exceeds-source / type-mismatch paths run only
+  // AFTER the equality check, so their ref is byte-identical to before.
+  //
+  // ⚠ `srcId` is read ONCE and reused by both this ref and the equality test below. A
+  // second read could disagree with the first (a getter-backed, Proxy-backed or lazily
+  // hydrated workspace record), which would render the raw foreign id into `refs` while
+  // STILL taking the mismatch branch — reinstating precisely this leak. One read makes
+  // the property total instead of conditional on the argument being a plain object.
+  // ⚠ `?.` so this line adds no NEW throw — but note the equality test and the
+  // `defaultVisibility` guard below still dereference `sourceWorkspace` unguarded, so a
+  // null workspace remains a pre-existing §16 never-throw violation, untouched here.
+  // ⛔ RESIDUAL, stated so it cannot decay (`L100`): on the equality branch this ref
+  // still renders the RAW `srcId`. That is trusted PROVENANCE (config-sourced via
+  // `workspaceConfig`), NOT validated SHAPE — a credential-shaped id in the workspace
+  // config still reaches the audit. Filed separately; out of this producer's reach.
+  const srcId: unknown = sourceWorkspace?.id;
   const refs: readonly string[] = [
-    `ref:workspace:${typeof wsId === "string" ? wsId : "MISSING"}`,
+    `ref:workspace:${
+      typeof wsId !== "string" || wsId === "" ? "MISSING" : wsId === srcId ? wsId : "UNVALIDATED"
+    }`,
     `ref:visibility:${isVisibilityLevel(level) ? level : "UNRECOGNIZED"}`,
   ];
 
@@ -158,8 +186,9 @@ export function validateProjectionVisibility(
   if (level === undefined || level === null) {
     return denyMalformed("projection omits visibilityLevel");
   }
-  // Referential pin: a projection must name its own source workspace.
-  if (wsId !== sourceWorkspace.id) {
+  // Referential pin: a projection must name its own source workspace. Uses the SAME
+  // single read as the audit ref above (24.45) — see the note there.
+  if (wsId !== srcId) {
     return denyMalformed("projection workspaceId does not match source workspace");
   }
   // Guard the source default too — a malformed source posture is fail-closed input.
