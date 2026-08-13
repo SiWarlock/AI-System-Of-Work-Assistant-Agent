@@ -7,7 +7,7 @@
 //   • @temporalio/workflow            — proxyActivities (the ONLY way a workflow
 //                                        reaches a side effect: everything is an
 //                                        activity call scheduled on the task queue);
-//   • the three PURE drivers + their port/Deps/Input types from @sow/workflows —
+//   • the PURE drivers + their port/Deps/Input types from @sow/workflows —
 //     the drivers import NEITHER @temporalio NOR node:crypto and call NO Date.now()
 //     (they take time through the injected Clock), so they are sandbox-safe;
 //   • the ProofSpineActivities TYPE (type-only — erased at compile, never a runtime
@@ -21,7 +21,7 @@
 // the KnowledgeWriter, the Tool Gateway, the broker) lives behind the activity
 // proxies, which run in the ACTIVITY worker over the real backends — never here.
 //
-// WHAT EACH WRAPPER DOES: for one of the three fully-wireable drivers it
+// WHAT EACH WRAPPER DOES: for each fully-wireable driver it
 //   1. obtains typed activity proxies (proxyActivities<ProofSpineActivities>);
 //   2. adapts the flat activity functions onto the driver's PORT interfaces (each
 //      port method delegates to exactly one activity — the composition root already
