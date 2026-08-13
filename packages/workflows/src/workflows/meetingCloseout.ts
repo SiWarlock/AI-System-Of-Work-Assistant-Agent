@@ -428,7 +428,16 @@ export async function runMeetingCloseout(
         const { reason, failureClass } = proposeApprovalSurfaceInfo(proposed);
         await deps.health.surface({
           failureClass,
-          subjectRef: input.run.workflowId,
+          // 24.58 — PER-PLAN identity. The health dedupe key is `failureClass|subjectRef` AND
+          // doubles as the item's `id`, so a per-RUN subjectRef on a per-PLAN failure makes N
+          // sibling plans collapse onto ONE item (last message wins, N-1 lost) — including N
+          // failures of the SAME code. Run-anchored composite, NOT a bare planId: `newPlanId`
+          // has no production binding yet, so a bare id would inherit whatever it is bound to
+          // at arming. Mirrors sourceIngestion's own loop (the shared 13.8f-C shape).
+          // ⛔ The three obligations this composite puts on `newPlanId`'s eventual binding —
+          // injective-within-a-run, bounded length, derived from nothing content-bearing — are
+          // stated in full at sourceIngestion.ts's matching site. NONE is enforced today.
+          subjectRef: `${input.run.workflowId}:${String(sibling.planId)}`,
           message: `meeting sibling PROPOSE plan could not be queued for approval (withheld, never committed): ${reason}`,
           auditRef: input.run.workflowId as unknown as AuditId,
         });
@@ -442,7 +451,11 @@ export async function runMeetingCloseout(
       // (inv-5) and the closeout continues rather than failing a run whose primary output succeeded.
       await deps.health.surface({
         failureClass: commitFailureClass(extra.error.code),
-        subjectRef: input.run.workflowId,
+        // 24.58 — PER-PLAN identity; see the propose branch above for the full reasoning.
+        // Sharpest case here: `ownership_violation` and `workspace_path_violation` BOTH map
+        // to `isolation_breach`, so two distinct breaches in one run previously produced the
+        // identical key and the second silently upserted the first.
+        subjectRef: `${input.run.workflowId}:${String(sibling.planId)}`,
         message: `meeting sibling commit failed (meeting note stands): ${extra.error.code}`,
         auditRef: input.run.workflowId as unknown as AuditId,
       });
@@ -468,6 +481,27 @@ export async function runMeetingCloseout(
   const reindexed = await deps.reindex.reindex(committed.value.revisionId);
   if (!isOk(reindexed)) {
     const reindexFailure: MeetingWorkflowFailure = {
+      // 24.58 CATEGORY 2 — ACCEPTED COLLAPSE, recorded rather than fixed (L82: not an
+      // oversight). The DECISION is that run-level "the primary output stands, a derived leg
+      // failed" degrades share a run-scoped identity — unlike the per-PLAN sibling-loop
+      // failures above, which got per-plan identities.
+      //
+      // ⛔ THE COLLAPSE SET IS NOT CLOSED AND IS NOT ALL ARMING-GATED. Three sites emit
+      // `write_through_failed` with this run's subjectRef:
+      //   • the meeting-vault rewrite degrade earlier in this driver — ARMING-GATED (it needs
+      //     `meetingVaultRewriteFault`, which only a rewrite that actually RAN can set);
+      //   • THIS site (reindex);
+      //   • the terminal `surface()` helper, via `failureClassFor("outbox_retry")`, reached in
+      //     the external-action stage BELOW — ⚠ NOT GATED BY ANYTHING. A run that fails the
+      //     reindex and then holds an external action collapses these two, and the OUTBOX
+      //     message wins because it is surfaced LAST. (An earlier draft of this comment said
+      //     "only this message survives" — that was wrong in exactly the direction a reader
+      //     would trust; corrected via the 24.58 security review.)
+      // ⇒ do NOT treat meeting-vault arming as the tripwire for this whole set; it is the
+      //   tripwire for the FIRST bullet only.
+      //
+      // ⚠ `conflict_review` has its own pair on this driver (queued-for-approval vs
+      // `failureClassFor("approval_pending")`), so this record is one instance, not the census.
       failureClass: "write_through_failed",
       subjectRef: input.run.workflowId,
       message: `gbrain re-index failed (commit stands): ${reindexed.error.code}`,

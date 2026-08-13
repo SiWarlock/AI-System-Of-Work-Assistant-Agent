@@ -653,7 +653,27 @@ export async function runSourceIngestion(
         const { reason, failureClass } = proposeApprovalSurfaceInfo(proposed);
         await deps.health.surface({
           failureClass,
-          subjectRef: input.run.workflowId,
+          // 24.58 — PER-PLAN identity. The health dedupe key is `failureClass|subjectRef` AND
+          // doubles as the item's `id`, so a per-RUN subjectRef on a per-PLAN failure makes N
+          // plans collapse onto ONE item (last message wins, N-1 lost) — including N failures
+          // of the SAME code. Run-anchored composite, NOT a bare planId: `newPlanId` has no
+          // production binding yet, so a bare id would inherit whatever it is bound to at
+          // arming. (`connectorSyncHealth` sets the per-item precedent; its bare connectorId
+          // is right THERE because a connector is durable across runs — a plan is not.)
+          //
+          // ⛔ WHAT THIS COMPOSITE NEEDS FROM `newPlanId`, because the fix is only as good as
+          // its binding and NOTHING enforces this today (`PlanIdSchema` requires only
+          // non-empty-after-trim): the production binding MUST be (a) INJECTIVE WITHIN A RUN —
+          // two plans of one run never share an id, or this silently degrades to the exact
+          // collapse it exists to prevent, invisibly to these tests; (b) BOUNDED LENGTH — the
+          // dedupe key is the health-item PRIMARY KEY on both dialects, so an oversized id
+          // fails the `put` and the item is lost on the path whose purpose is visibility;
+          // (c) DERIVED FROM NOTHING CONTENT-BEARING — this id reaches the renderer via
+          // `UiSafeHealthItem.id`, a global surface that deliberately DROPS `message` as
+          // content-bearing, so a title/slug-derived planId would leak a content fragment into
+          // the one field on that shape assumed opaque. A constant binding already exists in
+          // test scaffolding, so (a) is not hypothetical.
+          subjectRef: `${input.run.workflowId}:${String(livingVaultPlan.planId)}`,
           message: `living-vault PROPOSE plan could not be queued for approval (withheld, never committed): ${reason}`,
           auditRef: input.run.workflowId as unknown as AuditId,
         });
@@ -667,7 +687,11 @@ export async function runSourceIngestion(
       // continues rather than failing a run whose primary output succeeded.
       await deps.health.surface({
         failureClass: commitFailureClass(extra.error.code),
-        subjectRef: input.run.workflowId,
+        // 24.58 — PER-PLAN identity; see the propose branch above for the full reasoning.
+        // Sharpest case here: `ownership_violation` and `workspace_path_violation` BOTH map
+        // to `isolation_breach`, so two distinct breaches in one run previously produced the
+        // identical key and the second silently upserted the first.
+        subjectRef: `${input.run.workflowId}:${String(livingVaultPlan.planId)}`,
         message: `living-vault commit failed (source note stands): ${extra.error.code}`,
         auditRef: input.run.workflowId as unknown as AuditId,
       });
@@ -692,6 +716,14 @@ export async function runSourceIngestion(
   const indexed = await deps.index.index(committed.value.revisionId);
   if (!isOk(indexed)) {
     const indexFailure: SourceWorkflowFailure = {
+      // 24.58 CATEGORY 2 — ACCEPTED COLLAPSE, recorded rather than fixed (L82: not an
+      // oversight). This shares `sync_lagging` + the run's subjectRef with the living-vault
+      // rewrite degrade above, so if BOTH fire in one run they coalesce onto one item and
+      // only this message survives. Deliberate: both are RUN-level "the primary output stands,
+      // a derived view is behind" degrades, so a run-scoped identity is the honest one — unlike
+      // the per-PLAN loop failures, which got per-plan identities. ⚠ Reachable only once the
+      // living-vault leg is ARMED (unarmed ⇒ ok([]) ⇒ that branch never fires), so this is a
+      // living-vault ARMING PRECONDITION: revisit at arming, not after the first armed run.
       failureClass: "sync_lagging",
       subjectRef: input.run.workflowId,
       message: `GBrain index/sync failed (commit stands): ${indexed.error.code}`,

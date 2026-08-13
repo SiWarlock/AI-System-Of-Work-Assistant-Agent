@@ -32,6 +32,7 @@ import type {
   CommitKnowledgePort,
   KnowledgeCommitSuccess,
   KnowledgeCommitFailure,
+  KnowledgeCommitFailureCode,
 } from "../src/ports/sourceIngestion";
 import {
   FakeRegisterSourcePort,
@@ -520,5 +521,78 @@ describe("runSourceIngestion — living-vault seam DORMANT by default (13.8d)", 
       makeDeps({ livingVault: nonEmptyLivingVault, proposeKnowledgeApproval: boundPort } as never),
     );
     expect(boundPort.calls).toHaveLength(1); // the SAME port instance — only the plan set changed
+  });
+});
+
+// --- 24.58: per-plan health identity inside the commit loop ------------------
+
+/** Fails the commit for the named planIds with the given code; every other plan succeeds. */
+class PerPlanFailingCommitPort implements CommitKnowledgePort {
+  private n = 0;
+  constructor(private readonly failures: Readonly<Record<string, KnowledgeCommitFailureCode>>) {}
+  commit(
+    plan: KnowledgeMutationPlan,
+  ): Promise<Result<KnowledgeCommitSuccess, KnowledgeCommitFailure>> {
+    const code = this.failures[String(plan.planId)];
+    if (code !== undefined) {
+      return Promise.resolve(err({ code, message: `fake per-plan failure: ${code}` }));
+    }
+    this.n += 1;
+    return Promise.resolve(ok({ revisionId: `rev-pp-${this.n}`, replayed: false }));
+  }
+}
+
+describe("runSourceIngestion — per-plan health identity in the living-vault commit loop (24.58)", () => {
+  it("two plans failing with the SAME FailureClass do not collapse onto one health item", async () => {
+    // `ownership_violation` and `workspace_path_violation` BOTH map to `isolation_breach`
+    // (commitFailureClass). The dedupe key is `failureClass|subjectRef` AND is used as the
+    // item's `id`, so while the loop surfaced a per-RUN subjectRef both plans produced the
+    // IDENTICAL key `isolation_breach|<workflowId>` — the second UPSERTED the first and the
+    // first breach's message was lost. The failure is per-PLAN, so the identity must be too.
+    const health = new FakeSourceHealthSink();
+    const commit = new PerPlanFailingCommitPort({
+      "lv-a": "ownership_violation",
+      "lv-b": "workspace_path_violation",
+    });
+    const livingVault = new SpyLivingVaultPort({
+      kind: "plans",
+      plans: [livingVaultPlan("lv-a"), livingVaultPlan("lv-b")],
+    });
+
+    await runSourceIngestion(makeInput(), makeDeps({ health, commit, livingVault }));
+
+    const breaches = health.surfaced.filter((f) => f.failureClass === "isolation_breach");
+    expect(breaches).toHaveLength(2);
+    // THE ASSERTION THAT MATTERS: distinct dedupe identity per plan. Two items with the same
+    // (failureClass, subjectRef) are ONE item downstream however many times they are surfaced.
+    expect(new Set(breaches.map((f) => f.subjectRef)).size).toBe(2);
+  });
+
+  it("the SAME plan failing twice still shares one identity (the dedupe control)", async () => {
+    // The over-broad-fix control (L80): dedupe exists for a reason. A subjectRef widened to
+    // uniqueness would pass the test above happily and flood the operator surface. Two runs
+    // of the SAME plan under the SAME run must still coalesce.
+    const mk = (): { health: FakeSourceHealthSink; run: () => Promise<unknown> } => {
+      const health = new FakeSourceHealthSink();
+      const commit = new PerPlanFailingCommitPort({ "lv-dup": "ownership_violation" });
+      const livingVault = new SpyLivingVaultPort({
+        kind: "plans",
+        plans: [livingVaultPlan("lv-dup")],
+      });
+      return {
+        health,
+        run: () => runSourceIngestion(makeInput(), makeDeps({ health, commit, livingVault })),
+      };
+    };
+    const a = mk();
+    await a.run();
+    const b = mk();
+    await b.run();
+
+    const subjA = a.health.surfaced.find((f) => f.failureClass === "isolation_breach")?.subjectRef;
+    const subjB = b.health.surfaced.find((f) => f.failureClass === "isolation_breach")?.subjectRef;
+    expect(subjA).toBeDefined();
+    // Same plan, same run identity ⇒ same dedupe subject. This is what must NOT become unique.
+    expect(subjA).toBe(subjB);
   });
 });
