@@ -3,7 +3,7 @@
 **Date:** 2026-08-12
 **Track / role:** main · providers-integrations-implementer (`packages/providers`, `packages/policy`, `packages/integrations`)
 **Predecessor session:** `docs/sessions/154-2026-08-12-24-13-boot-guard-24-29-census-widened-24-15-blocked.md`
-**Successor session:** _(next `/session-end`, whenever this track resumes)_
+**Successor session:** `docs/sessions/161-2026-08-13-redaction-safe-producer-enumeration-24-45.md`
 
 ---
 
