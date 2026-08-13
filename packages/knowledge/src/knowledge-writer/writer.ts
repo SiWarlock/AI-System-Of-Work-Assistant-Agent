@@ -62,7 +62,6 @@ import {
 // create no runtime cycle.
 import { enforceHumanOwnership } from "./ownership";
 import { scanForSecrets } from "./secret-scan";
-import { enforceWorkspacePathScope } from "./workspace-path-guard";
 // The on-disk frontmatter format codec (§13.10a gate 2 + its inverse). Kept in one module so the
 // forward serializer and its inverse cannot drift; the region/link projection stays here.
 import { serializeScalar, parseNote, composeNote, KW_STAMP_FRONTMATTER_KEY } from "./frontmatter";
@@ -125,7 +124,9 @@ export interface WorkspacePathViolation {
  * UNPREFIXED note in the combined gbrain brain as belonging to its one `toWorkspaceId` — sound only
  * while the brain holds a single workspace's unprefixed content. This guard makes a foreign-workspace
  * note landing unprefixed UNREPRESENTABLE at the one place every semantic write crosses (rule 1).
- * Default: the real predicate (`enforceWorkspacePathScope`) — see `./workspace-path-guard`.
+ * ⛔ NO DEFAULT (24.26 step 3). Build one with `makeEnforceWorkspacePathScope(<exempt workspace id>)`
+ * from `./workspace-path-guard`, supplying the id from the composition root — see
+ * `apps/worker/src/composition/legacy-workspace.ts`, which is that id's single home.
  */
 export type WorkspacePathCheck = (ctx: WorkspacePathContext) => Result<void, WorkspacePathViolation>;
 
@@ -153,8 +154,16 @@ export interface KnowledgeWriterDeps {
   readonly now: () => string;
   readonly ownershipCheck?: OwnershipCheck;
   readonly secretScan?: SecretScan;
-  /** 24.12 remedy — foreign-workspace path-consistency guard. Default: the real predicate. */
-  readonly workspacePathCheck?: WorkspacePathCheck;
+  /**
+   * 24.12 remedy — foreign-workspace path-consistency guard (safety rule 4 / WS-8).
+   *
+   * ⛔ REQUIRED (24.26 step 3 of 3). There is no default: the exempt workspace id must be supplied
+   * by the composition root, so the "which workspace may commit unprefixed" fact has ONE home
+   * (`apps/worker/src/composition/legacy-workspace.ts`) instead of a module constant here that
+   * silently duplicated it. Omitting this field is a TYPE error — pinned in `writer.test.ts`.
+   * ⚠ `?` is load-bearing by its absence: restoring it re-creates the default this task deleted.
+   */
+  readonly workspacePathCheck: WorkspacePathCheck;
   /** Schema-registry override (tests); defaults to the process registry. */
   readonly registry?: SchemaRegistry;
   /**
@@ -214,7 +223,12 @@ export type WriteFailure =
 /**
  * Apply one KnowledgeMutationPlan atomically. See the module header for the
  * pipeline + invariants. Returns the committed revision + its AuditRecord, or a
- * typed `WriteFailure`; NEVER throws across the boundary.
+ * typed `WriteFailure`; NEVER throws across the boundary FOR WELL-TYPED DEPS.
+ * ⚠ QUALIFIED BY 24.26 step 3, which is when the qualifier started mattering: `workspacePathCheck` is
+ * REQUIRED and has no fallback, so deps cast past the type system (`as never` / `as unknown as`) with
+ * that field missing reach step 4.5 with `undefined` and throw a `TypeError`. That is pinned, not
+ * guarded — a guard here would be the deleted fallback under another name. Before this slice the
+ * `??` default absorbed it, so the unqualified promise held even under a cast.
  */
 export async function applyPlan(
   command: KnowledgeWriteCommand,
@@ -222,7 +236,10 @@ export async function applyPlan(
 ): Promise<Result<WriteSuccess, WriteFailure>> {
   const ownership = deps.ownershipCheck ?? enforceHumanOwnership;
   const scan = deps.secretScan ?? scanForSecrets;
-  const workspaceScope = deps.workspacePathCheck ?? enforceWorkspacePathScope;
+  // 24.26 step 3: no `??` fallback. A default here would be a second home for the exempt workspace
+  // id — the duplication this three-step sequence exists to remove — so the check is supplied or the
+  // code does not compile.
+  const workspaceScope = deps.workspacePathCheck;
 
   // 1 — idempotent replay: a prior commit for this key returns without any new
   // write or second AuditRecord (§6 idempotency).

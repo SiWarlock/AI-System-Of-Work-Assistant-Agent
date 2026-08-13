@@ -453,3 +453,25 @@ describe("applyPlan — gate 4 G1d-2: provenance stamp minting at commit", () =>
     expect(vault.snapshot()["notes/acme.md"]).toBe(afterFirst); // no second stamp / no double-write
   });
 });
+
+// 24.26 step 3 of 3 — the slice's load-bearing pin, and the only form that can express it.
+describe("KnowledgeWriterDeps.workspacePathCheck is REQUIRED (24.26 step 3)", () => {
+  it("a deps literal omitting workspacePathCheck does not compile", () => {
+    // ⛔ TYPE-LEVEL, NEVER INVOKED. A behavioural test cannot express "this does not compile", and
+    // the runtime consequence of omission is pinned separately in workspace-path-guard.test.ts.
+    // `tsc --noEmit` really covers this file (`include: ["src","test"]`, and `lint` IS `typecheck`),
+    // so if the field is ever widened back to optional the suppression below goes UNUSED and
+    // typecheck FAILS with TS2578 — it reds in the direction that matters, the guarantee weakening.
+    // ⚠ Do not begin a comment line with the directive's own name while describing it: tsc reads
+    // `//` + that token as a REAL directive wherever it appears (cost a RED cycle in step 1).
+    const neverInvoked = (): KnowledgeWriterDeps =>
+      // @ts-expect-error — workspacePathCheck is required; omitting it must not typecheck
+      ({
+        vault: new MemoryVaultFs(),
+        revisions: new MemoryRevisionStore(),
+        audit: new MemoryAuditRepo(),
+        now: () => "2026-07-01T00:00:00.000Z",
+      });
+    expect(typeof neverInvoked).toBe("function");
+  });
+});

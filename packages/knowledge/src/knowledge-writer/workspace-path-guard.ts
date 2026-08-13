@@ -11,14 +11,32 @@
 //
 // LAYERING (24.12 brief, deliberate): this module expresses the invariant in the WRITER's own terms
 // — "a note's path must be consistent with its bound workspace" — as DATA (which one workspace may
-// commit unprefixed), never as an import of `packages/policy`. `LEGACY_UNPREFIXED_WORKSPACE_ID`
-// intentionally duplicates the VALUE `apps/desktop/worker-host/index.ts:185` configures as
-// `copilotLegacyContentPolicy.toWorkspaceId` — never the logic — because a writer (rule-1 territory)
-// importing a Copilot SERVING policy would be a layering inversion. If that value ever changes, both
-// sites must move together (recorded here, not hidden — L88's accepted-duplication discipline).
+// commit unprefixed), never as an import of `packages/policy`: a writer (rule-1 territory) importing
+// a Copilot SERVING policy would be a layering inversion.
+//
+// ⛔ THE EXEMPT WORKSPACE ID IS NO LONGER STORED HERE (24.26, complete). It is a REQUIRED argument to
+// `makeEnforceWorkspacePathScope`, supplied by the composition root; its single home is
+// `apps/worker/src/composition/legacy-workspace.ts`.
+//
+// ⛔ AND DO NOT BIND THIS TO `apps/desktop`'s `copilotLegacyContentPolicy.toWorkspaceId`. The two
+// strings match today and are DIFFERENT FACTS: that one decides where unassigned Copilot legacy
+// content is ASSIGNED at serving time; this one decides who may COMMIT UNPREFIXED PATHS. The full
+// reasoning lives once, at `apps/worker/src/composition/legacy-workspace.ts` — not restated here,
+// since duplicating the FRAMING of a fact is how the fact itself drifted.
+//
+// ⚠⚠ BUT THEY MUST STILL BE CHANGED TOGETHER, AND THE CONSEQUENCE OF NOT DOING SO IS A WS-8 LEAK —
+// recorded here because 24.26 step 3 deleted the docblock that used to carry it, and that docblock
+// had the direction WRONG in the reassuring direction (it called the stranded workspace
+// "writable-but-no-longer-served (inert, not a leak)"). ⛔ IT IS NOT INERT: it is served TO THE OTHER
+// WORKSPACE. If `toWorkspaceId` moves to `personal-life` while this guard still exempts
+// `personal-business`, the exempt workspace keeps committing UNPREFIXED, those slugs stay
+// unattributable, `assign` maps legacy → `personal-life`, and `decideHitScope` KEEPS them for a
+// `personal-life` ask ⇒ personal-business content surfaces under another workspace's ask, and
+// personal-business loses its own legacy content. Nothing structurally stops `employer-work` here.
+// ⇒ Not one fact, not independent either: two facts with a coupled safe-change rule.
 //
 // EXEMPTIONS + a SECOND SANCTIONED PREFIX SHAPE (24.12 brief U3 + a code-quality-review finding):
-//  1. The ONE legacy workspace (`LEGACY_UNPREFIXED_WORKSPACE_ID`) may commit prefixed OR unprefixed —
+//  1. The ONE legacy workspace (the supplied `exemptWorkspaceId`) may commit prefixed OR unprefixed —
 //     narrowing this further would break the shipped, owner-chosen posture the `assign` bridge serves.
 //  2. KN-12 structural surfaces (`index.md`/`log.md`/`Logs/<date>.md`) are writer-owned, not per-
 //     workspace CONTENT, and legitimately ride inside ANY workspace's plan (13.8d: "structural parity
@@ -32,9 +50,10 @@
 //     SOURCE OF TRUTH"), and left UNRECOGNIZED here, this guard rejected every real ingested source
 //     for every workspace but the legacy-exempt one — caught by code-quality review BEFORE it shipped
 //     (verified against real, running `apps/worker` tests, not inferred). `SOURCE_NOTE_SUBTREE` below
-//     duplicates that file's constant VALUE, same "data not import" reasoning as
-//     `LEGACY_UNPREFIXED_WORKSPACE_ID` (packages/knowledge cannot import apps/worker — the reverse of
-//     the layering direction this whole module exists to preserve).
+//     duplicates that file's constant VALUE as DATA, not as an import (packages/knowledge cannot
+//     depend on apps/worker — the reverse of the layering direction this whole module exists to
+//     preserve). ⚠ It is the LAST such duplication in this file: the exempt workspace id used to be
+//     the other one and is now supplied as an argument instead (24.26).
 //
 // PURE; TOTAL never-throws; fail-closed (a malformed/absent plan.workspaceId is rejected, never
 // silently admitted).
@@ -43,46 +62,11 @@ import type { WorkspacePathCheck, WorkspacePathContext, WorkspacePathViolation }
 import { isStructuralSurface, hasNoTraversalSegments } from "../synthesis/grounded-path";
 
 /**
- * The one workspace `packages/policy`'s `LegacyContentPolicy` `{mode:"assign"}` bridge rescues
- * unprefixed legacy content FOR. A plain string, not the branded `WorkspaceId`, matching
- * `KnowledgeMutationPlan.workspaceId`'s own (structurally-required, non-branded) contract type.
- *
- * ⛔ ASSERTED, NOT DERIVED (24.6's own definition of the class this task exists to fix) — recorded
- * honestly rather than silently repeating it. This value DUPLICATES, and does NOT read from,
- * `apps/desktop/worker-host/index.ts:185`'s `copilotLegacyContentPolicy.toWorkspaceId` — a writer
- * (rule-1 territory) importing that Copilot SERVING config would be the layering inversion this
- * module exists to avoid, so the two sites are two hardcoded copies of one fact, not two readers of
- * one source. ⚠ DRIFT DIRECTION, so a future reader does not have to re-derive it: if the two sites
- * ever disagree, this guard's exemption stays pinned to WHATEVER STRING IS WRITTEN HERE — a `toWorkspaceId`
- * change at the config site without a matching edit here makes the NEW legacy workspace's unprefixed
- * writes REJECTED (fail-closed, breaks LOUDLY — every write for that workspace starts erroring) while
- * the OLD one becomes writable-but-no-longer-served (inert, not a leak). Both directions are safe;
- * neither is silent.
- *
- * ⭐ THE SINGLE-SOURCING FIX IS IN FLIGHT — `IMPLEMENTATION_PLAN.md` `### 24.26`, IN THREE COMMITS.
- * Stated structurally, because what is TRUE of this file right now is narrower than where it is going.
- * ⚠ Each leg is named by CONTENT and anchored to `### 24.26`, deliberately NOT to a bare `#N` id:
- * bare ids number independently in this repo (the plan's `#N` sequence vs the live team task list),
- * and the id first drafted here resolves IN THE PLAN to a different, already-CLOSED task — which on
- * this particular comment would read as "step 3 already landed" to exactly the reader it exists to stop.
- *   step 1 (DONE, this file) — `makeEnforceWorkspacePathScope` below takes the exempt id as a
- *     REQUIRED argument, so an exempt workspace CAN now be supplied rather than asserted.
- *   step 2 (`apps/worker`) — the two `KnowledgeWriterDeps` literals pass a factory-built check.
- *   step 3 (final leg of `### 24.26`, knowledge) — `KnowledgeWriterDeps.workspacePathCheck` becomes
- *     REQUIRED, the `??` fallback in `writer.ts` goes away, and THIS CONSTANT IS DELETED.
- * ⛔ UNTIL STEP 3 LANDS, THIS CONSTANT IS STILL THE ONLY SOURCE IN PRODUCTION and the duplication
- * above is still real — `writer.ts:225` defaults to the instance built from it, and NOTHING supplies
- * an exempt id from a composition root. Do not read the factory's existence as the fix being done;
- * a reader who deletes this constant before step 2 lands breaks that default.
- */
-export const LEGACY_UNPREFIXED_WORKSPACE_ID = "personal-business";
-
-/**
  * DUPLICATES (never imports — `packages/knowledge` cannot depend on `apps/worker`)
  * `apps/worker/src/composition/sourceNotePath.ts`'s `SOURCE_NOTE_SUBTREE` constant. Drift direction:
  * if that file's value ever changes without a matching edit here, EVERY workspace's real source
- * ingestion starts failing this guard (fail-closed, breaks loudly) until the two are re-aligned — the
- * same safe-but-loud direction as `LEGACY_UNPREFIXED_WORKSPACE_ID`'s drift.
+ * ingestion starts failing this guard (fail-closed, breaks loudly) until the two are re-aligned.
+ * Safe-but-loud in both directions; never silent.
  */
 export const SOURCE_NOTE_SUBTREE = "sources";
 
@@ -98,25 +82,28 @@ function violation(path: string): WorkspacePathViolation {
  * throughout, mirroring `copilot-workspace-scope.ts`'s own boundary-correct matching —
  * `employer-work` never matches `employer-work-x`).
  *
- * ⭐ THE ONLY IMPLEMENTATION (contracts L39 — a predicate lives once; ledger named because a bare
- * `LNN` would mean the KNOWLEDGE ledger, which runs only §1–§3). `enforceWorkspacePathScope` below is
- * this factory applied to `LEGACY_UNPREFIXED_WORKSPACE_ID` — deliberately NOT a second copy of the
- * predicate, because two implementations of one fact is the exact defect 24.26 exists to remove.
+ * ⭐ THE ONLY IMPLEMENTATION, AND THE ONLY EXPORTED PREDICATE (contracts L39 — a predicate lives once;
+ * ledger named because a bare `LNN` would mean the KNOWLEDGE ledger, which runs only §1–§3).
+ * 24.26 step 3 deleted the module-level `enforceWorkspacePathScope` instance that used to sit below
+ * this: an instance built here from a hardcoded string was a second home for the exempt workspace id,
+ * which is the duplication the task removes. Build one per composition root instead.
  *
  * ⛔ THROWS on a blank `exemptWorkspaceId` — the one place in this module that throws, and only when
  * a check is BUILT, never per call, so the returned predicate keeps the module's PURE / TOTAL /
- * never-throws contract (§16) untouched. ⚠ For the shipped `enforceWorkspacePathScope` below, that
- * moment is MODULE EVALUATION — so importing this module (transitively `writer.ts` / `@sow/knowledge`)
- * is what would abort. Inert today: the only argument is a hardcoded non-blank literal.
- * ⛔ STEP-2 PRECONDITION: build the check ONCE at the composition root/boot. Constructing it on a job
- * path would surface a config fault as an uncaught throw exactly where `applyPlan` promises a typed
- * `WriteFailure` and "NEVER throws across the boundary".
+ * never-throws contract (§16) untouched.
+ * ⭐ AND SINCE 24.26 step 3 THIS MODULE CONSTRUCTS NOTHING AT IMPORT TIME. Until step 3 there was a
+ * module-level instance, so the throw could fire during MODULE EVALUATION and abort an import of
+ * `writer.ts` / `@sow/knowledge`. That hazard is now discharged by deletion: the only way to reach
+ * this throw is to CALL the factory, which only a composition root does.
+ * ⛔ STANDING RULE FOR CALLERS: build the check ONCE at the composition root/boot. Constructing it on
+ * a job path would surface a config fault as an uncaught throw exactly where `applyPlan` promises a
+ * typed `WriteFailure` (its never-throws guarantee holds for WELL-TYPED deps — see `writer.ts`).
  * ⚠ THE REASON IS MISCONFIGURATION, NOT AN EXEMPTION HOLE — recorded precisely because the obvious
  * rationale is wrong and would otherwise be re-derived incorrectly. A blank exempt id opens NOTHING:
  * the `workspaceId.length === 0` fail-closed below returns BEFORE the exemption comparison is
  * reached, so `""` is unreachable there, and `""` never equals a non-empty workspace id. A blank
  * exempt id is INERT — it means "nothing is exempt", which is strictly fail-CLOSED. What it would
- * actually do, once step 2/3 supply this from a composition root, is SILENTLY DISABLE the
+ * actually do, now that the composition root supplies it (24.26 complete), is SILENTLY DISABLE the
  * legacy-content posture the `{mode:"assign"}` bridge depends on. That is a misconfiguration, and it
  * should name itself at boot rather than surface later as "every personal-business unprefixed write
  * started failing." ⚠ `.trim()` (not `.length`) is deliberate: `" "` has length 1, so it would clear
@@ -174,10 +161,3 @@ export function makeEnforceWorkspacePathScope(exemptWorkspaceId: string): Worksp
     return err(violation(path));
   };
 }
-
-/**
- * The shipped check: `makeEnforceWorkspacePathScope` applied to the module constant. Reached from
- * `writer.ts:225` as the default when `deps.workspacePathCheck` is absent — which is every
- * production call site today (24.26 steps 2 and 3 are what change that).
- */
-export const enforceWorkspacePathScope: WorkspacePathCheck = makeEnforceWorkspacePathScope(LEGACY_UNPREFIXED_WORKSPACE_ID);

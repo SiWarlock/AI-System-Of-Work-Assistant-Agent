@@ -10,13 +10,24 @@ import type { KnowledgeMutationPlan, WorkflowRunRef } from "@sow/contracts";
 import { applyPlan } from "../src/knowledge-writer/writer";
 import type { KnowledgeWriteCommand, KnowledgeWriterDeps, WorkspacePathContext } from "../src/knowledge-writer/writer";
 import { computeRevisionId } from "../src/knowledge-writer/revision";
-import { enforceWorkspacePathScope, LEGACY_UNPREFIXED_WORKSPACE_ID, SOURCE_NOTE_SUBTREE } from "../src/knowledge-writer/workspace-path-guard";
+import { SOURCE_NOTE_SUBTREE } from "../src/knowledge-writer/workspace-path-guard";
 import { MemoryAuditRepo, MemoryRevisionStore, MemoryVaultFs } from "./helpers";
 // 24.26 step 1 of 3 — the factory under test. Imported on its OWN line (rather than extended onto
 // the `:13` import) so every pre-existing line in this file stays byte-identical: the acceptance
 // criterion "no existing test was edited" is then checkable by diff, not by assertion.
 import { makeEnforceWorkspacePathScope } from "../src/knowledge-writer/workspace-path-guard";
 import type { WorkspacePathCheck } from "../src/knowledge-writer/writer";
+
+// 24.26 step 3 — the module constant and the module-level `enforceWorkspacePathScope` are GONE, so
+// this file supplies its own exempt id and builds ONE instance for every test below. That is the
+// point of the task, not an inconvenience: production's single home for this value is
+// `apps/worker/src/composition/legacy-workspace.ts`, and a test asserting the guard's behaviour has
+// no business importing production's copy of a value it is free to choose.
+// ⚠ ONE literal, at module scope — not one per call site. Re-pointing the four pure-predicate calls
+// at four separate `makeEnforceWorkspacePathScope("personal-business")` literals would have traded a
+// deleted module-level home for four scattered ones.
+const EXEMPT_WS = "personal-business";
+const guard = makeEnforceWorkspacePathScope(EXEMPT_WS);
 
 const wf: WorkflowRunRef = {
   workflowId: "wf-24-12" as WorkflowRunRef["workflowId"],
@@ -36,7 +47,12 @@ function deps(vault: MemoryVaultFs): KnowledgeWriterDeps & { revisions: MemoryRe
     now: () => "2026-07-01T00:00:00.000Z",
     ownershipCheck: () => ok(undefined),
     secretScan: () => ok(undefined),
-    // workspacePathCheck deliberately OMITTED — every test in this file exercises the REAL default.
+    // 24.26 step 3: SUPPLIED, not omitted. This line used to read "deliberately OMITTED — every test
+    // in this file exercises the REAL default"; there is no default any more, and the field is
+    // required. What these tests exercise is now the instance built above, which is the same
+    // predicate over the same id — see `applyPlan_uses_the_SUPPLIED_exempt_id` for the pin that this
+    // is genuinely the supplied one and not a resurrected default.
+    workspacePathCheck: guard,
   };
 }
 
@@ -70,7 +86,7 @@ describe("applyPlan — foreign-workspace path consistency (24.12 remedy, constr
   it("the LEGACY-EXEMPT workspace's unprefixed content is UNAFFECTED — non-vacuity partner of the test above", async () => {
     const vault = new MemoryVaultFs();
     const d = deps(vault);
-    const plan = planWithCreate(LEGACY_UNPREFIXED_WORKSPACE_ID, "projects/acme.md"); // unprefixed, but the ONE exempt workspace
+    const plan = planWithCreate(EXEMPT_WS, "projects/acme.md"); // unprefixed, but the ONE exempt workspace
     const r = await applyPlan(cmd(plan), d);
     expect(isOk(r)).toBe(true);
     if (!isOk(r)) return;
@@ -90,7 +106,7 @@ describe("applyPlan — foreign-workspace path consistency (24.12 remedy, constr
   it("the legacy-exempt workspace MAY ALSO be prefixed — the exemption permits, never requires, unprefixed", async () => {
     const vault = new MemoryVaultFs();
     const d = deps(vault);
-    const plan = planWithCreate(LEGACY_UNPREFIXED_WORKSPACE_ID, `${LEGACY_UNPREFIXED_WORKSPACE_ID}/projects/acme.md`);
+    const plan = planWithCreate(EXEMPT_WS, `${EXEMPT_WS}/projects/acme.md`);
     const r = await applyPlan(cmd(plan), d);
     expect(isOk(r)).toBe(true);
   });
@@ -204,23 +220,23 @@ describe("applyPlan — foreign-workspace path consistency (24.12 remedy, constr
   });
 });
 
-describe("enforceWorkspacePathScope — the pure predicate (unit level, for branches applyPlan's own schema gate makes unreachable in practice)", () => {
+describe("the built check — the pure predicate (unit level, for branches applyPlan's own schema gate makes unreachable in practice)", () => {
   const ctx = (path: string, workspaceId: unknown): WorkspacePathContext => ({ path, plan: { ...validKnowledgeMutationPlan, workspaceId } as unknown as KnowledgeMutationPlan });
 
   it("fails closed on a malformed/absent plan.workspaceId — never silently admits", () => {
     for (const bad of [undefined, null, "", 42]) {
-      const r = enforceWorkspacePathScope(ctx("projects/acme.md", bad));
+      const r = guard(ctx("projects/acme.md", bad));
       expect(isErr(r)).toBe(true);
     }
   });
 
   it("fails closed on an empty path", () => {
-    const r = enforceWorkspacePathScope(ctx("", FOREIGN));
+    const r = guard(ctx("", FOREIGN));
     expect(isErr(r)).toBe(true);
   });
 
   it("is case-sensitive on the segment match — 'Employer-Work' is not 'employer-work' (fail closed on ambiguity, never a lenient match)", () => {
-    const r = enforceWorkspacePathScope(ctx("Employer-Work/projects/acme.md", FOREIGN));
+    const r = guard(ctx("Employer-Work/projects/acme.md", FOREIGN));
     expect(isErr(r)).toBe(true);
   });
 
@@ -233,16 +249,21 @@ describe("enforceWorkspacePathScope — the pure predicate (unit level, for bran
       "employer-work/./acme.md", // current-dir segment
     ];
     for (const path of traversalCrafted) {
-      const r = enforceWorkspacePathScope(ctx(path, FOREIGN));
+      const r = guard(ctx(path, FOREIGN));
       expect(isErr(r), `expected ${path} to be rejected`).toBe(true);
     }
   });
 });
 
-// 24.26 step 1 of 3 — the exempt workspace becomes a REQUIRED factory argument. This slice creates
-// the surface ONLY: nothing supplies it yet (step 2, worker) and the dependency is not yet required
-// (step 3, the final leg of `### 24.26`). `LEGACY_UNPREFIXED_WORKSPACE_ID` remains the sole source in
-// production. ⚠ Legs are anchored to `### 24.26`, never to a bare `#N` — those number independently
+// 24.26 COMPLETE (all three steps). The exempt workspace is a REQUIRED factory argument, the two
+// worker composition literals supply it, and `KnowledgeWriterDeps.workspacePathCheck` is required
+// with no fallback. Production's single home for the value is
+// `apps/worker/src/composition/legacy-workspace.ts`.
+// ⚠ THIS HEADER DESCRIBED STEP 1'S INTERMEDIATE STATE and was still asserting it after steps 2 and 3
+// landed — a stale-by-construction comment, since the commits that falsified it were in another
+// territory and could not edit it. ⛔ `EXEMPT_WS` below is a TEST-LOCAL literal and is in no
+// production path; an earlier sweep renamed the old constant into this sentence and made it claim
+// otherwise. ⚠ Legs are anchored to `### 24.26`, never to a bare `#N` — those number independently
 // in this repo, and the id first drafted here resolves in the plan to a different, already-CLOSED task.
 describe("makeEnforceWorkspacePathScope — the exempt workspace id is a required factory argument (24.26 step 1 of 3)", () => {
   const ctx = (path: string, workspaceId: unknown): WorkspacePathContext => ({ path, plan: { ...validKnowledgeMutationPlan, workspaceId } as unknown as KnowledgeMutationPlan });
@@ -262,20 +283,20 @@ describe("makeEnforceWorkspacePathScope — the exempt workspace id is a require
     expect(typeof neverInvoked).toBe("function");
   });
 
-  it("exempts the workspace it was GIVEN, not the module constant", () => {
+  it("exempts the workspace it was GIVEN, not some other instance's id", () => {
     // The whole point of the factory: this fails if the returned predicate ignored its argument and
-    // closed over LEGACY_UNPREFIXED_WORKSPACE_ID.
+    // closed over anything else.
     const check = makeEnforceWorkspacePathScope(FOREIGN);
     const r = check(ctx("projects/acme.md", FOREIGN)); // unprefixed, but THIS instance's exempt ws
     expect(isOk(r)).toBe(true);
   });
 
-  it("does NOT exempt the module constant when given another id — the discriminating half", () => {
-    // Test above passes even if the factory exempted BOTH its argument and the constant. Only this
-    // one proves the constant stopped being consulted; a closure bug that ORs the two is the
-    // realistic failure mode and the positive test cannot see it.
+  it("does NOT exempt a DIFFERENT id than the one it was given — the discriminating half", () => {
+    // Test above passes even if the factory exempted BOTH its argument and some other id. Only this
+    // one proves nothing else is consulted; a closure bug that ORs two ids is the realistic failure
+    // mode and the positive test cannot see it.
     const check = makeEnforceWorkspacePathScope(FOREIGN);
-    const r = check(ctx("projects/acme.md", LEGACY_UNPREFIXED_WORKSPACE_ID));
+    const r = check(ctx("projects/acme.md", EXEMPT_WS));
     expect(isErr(r)).toBe(true);
     if (!isErr(r)) return;
     expect(r.error.code).toBe("workspace_path_violation");
@@ -319,5 +340,78 @@ describe("makeEnforceWorkspacePathScope — the exempt workspace id is a require
     // `.trim()` test. Asserting it would encode the gap as desired; closing it means validating the
     // exempt id against the known workspace set at the composition root (brief 271 option (c)) — out
     // of this slice's scope and owed by whoever supplies the value.
+  });
+});
+
+// 24.26 step 3 — what the flip actually MEANS, in two directions the type system cannot express.
+describe("workspacePathCheck is REQUIRED — the supplied id is load-bearing, and omission is no longer safe", () => {
+  it("applyPlan_uses_the_SUPPLIED_exempt_id: a different id changes behaviour, which it could not before step 3", async () => {
+    // ⭐ THE PIN THAT MAKES THE WHOLE SEQUENCE MEAN SOMETHING. At step 2 both worker literals passed
+    // `makeEnforceWorkspacePathScope(LEGACY_UNPREFIXED_WORKSPACE_ID)` while writer.ts still had
+    // `?? enforceWorkspacePathScope` — the SAME factory over the SAME string. Supplying a wrong id
+    // was therefore indistinguishable from supplying the right one, and no test could tell. With the
+    // fallback deleted, the supplied value is the only source, so it is finally observable.
+    const vault = new MemoryVaultFs();
+    const d = { ...deps(vault), workspacePathCheck: makeEnforceWorkspacePathScope("some-other-workspace") };
+    // `EXEMPT_WS` is exempt under the file's own instance; under THIS instance it is not.
+    const plan = planWithCreate(EXEMPT_WS, "projects/acme.md");
+    const r = await applyPlan(cmd(plan), d);
+    expect(isOk(r)).toBe(false);
+    if (isOk(r)) return;
+    expect(r.error.code).toBe("workspace_path_violation");
+    expect(vault.snapshot()["projects/acme.md"]).toBeUndefined();
+  });
+
+  it("omitted_workspacepathcheck_runtime_behaviour_is_pinned_not_inferred", async () => {
+    // ⛔ MEASURED, NOT INFERRED, and recorded rather than fixed (orchestrator ruling): the flip
+    // changed what OMISSION means. Before, `?? enforceWorkspacePathScope` made an omitted check
+    // silently take the default — omission was SAFE. Now there is no fallback, so `workspaceScope`
+    // is `undefined` and applyPlan's step-4.5 loop invokes it.
+    // ⛔ SCOPE OF THE EXPOSURE — CORRECTED TWICE, and the second correction is the point. The first
+    // version claimed `packages/workflows`' 9 `deps: {} as never` sites "are the only places that can
+    // reach it", and task #49 was scoped from that. The first correction said all 9 feed
+    // `createCommitActivity`. Both were wrong; measured, the 9 are TWO different populations:
+    //   • 4 (`meeting-activities.test.ts:863, :874, :888, :907`) are `createProposeActivity`, whose
+    //     `deps` is `ExternalWriteDeps` — a different type with no `workspacePathCheck` at all, so
+    //     they are unrelated to this flip rather than uncovered by it.
+    //   • 5 (`commit-activity-base-revision.test.ts:32`, `meeting-activities.test.ts:738/756/784/802`)
+    //     do feed `createCommitActivity`, but each injects a FAKE `applyPlan` that never dereferences
+    //     `deps`, so the real one is never invoked. A bare `{}` would throw earlier regardless, at
+    //     `deps.revisions.getByIdempotencyKey`, never reaching the workspace-scope loop.
+    // ⇒ ZERO of the nine can reach this line. The only site in the repo that reaches it is the test
+    //   below. ⚠ A count that survived two corrections was never one population — grouping by the
+    //   literal `deps: {} as never` grouped by SPELLING, not by type.
+    // ⇒ What actually reaches this line is the shape BELOW: a near-complete deps literal missing
+    // exactly one field, cast past the type system. That is a BROADER class than "the 9 sites", and
+    // it is unbounded by construction — any `as`-cast anywhere can produce it. Typecheck is the only
+    // thing standing in front of it, which is precisely why the field being required is the fix.
+    // ⛔ NOT guarded here — by orchestrator ruling, recorded rather than fixed. ⚠ THE RULING'S STATED
+    // REASON DOES NOT SURVIVE REVIEW, so do not re-derive from it: it was "a guard would be the
+    // deleted fallback wearing a different hat", and a fail-closed
+    // `if (typeof workspaceScope !== "function") return err(violation(...))` is the OPPOSITE of that
+    // fallback — it ADMITS NOTHING and creates no second home for the exempt id, whereas the fallback
+    // admitted writes under a hardcoded one. Whether to add it is a live question routed at Step 9,
+    // not a settled equivalence.
+    const vault = new MemoryVaultFs();
+    const omitted = {
+      vault,
+      revisions: new MemoryRevisionStore(),
+      audit: new MemoryAuditRepo(),
+      now: () => "2026-07-01T00:00:00.000Z",
+      ownershipCheck: () => ok(undefined),
+      secretScan: () => ok(undefined),
+    } as unknown as KnowledgeWriterDeps; // an `as`-cast past the required field — not the workflows shape
+    await expect(applyPlan(cmd(planWithCreate(EXEMPT_WS, "projects/acme.md")), omitted)).rejects.toThrow(
+      /is not a function/, // deliberately NOT the local's name — a pure rename must not red this
+    );
+
+    // ⚠ THE VACUITY TRAP, pinned as its own assertion so nobody "simplifies" the test into it: with
+    // ZERO changes the step-4.5 loop is never entered, so omission does NOT throw. A version of this
+    // test built on an empty plan would pass while pinning nothing at all.
+    const emptyPlan: KnowledgeMutationPlan = { ...validKnowledgeMutationPlan, workspaceId: wsId(EXEMPT_WS), creates: [], patches: [] };
+    const empty = await applyPlan(cmd(emptyPlan, "idem-empty"), omitted);
+    // `toBeDefined()` would be satisfied by an `err` too, leaving the stated mechanism ("the loop is
+    // never entered") silently false if an empty plan ever failed EARLIER. Pin the mechanism.
+    expect(isOk(empty)).toBe(true);
   });
 });
