@@ -2838,3 +2838,39 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 ⇒ **DO.** When a slice adds prose restating a decision, ask **who authored the reasoning** before choosing the reviewer. If that is you or your approver, **dispatch a fresh reviewer and say in the dispatch that the text is unreviewed and why**. ⭐ **And when an implementer volunteers that something escaped review — as here — treat it as the disclosure it is and pay the round trip; the alternative is an unreviewed claim wearing a reviewed slice's stamp.**
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: choosing a reviewer for any slice whose diff includes prose restating a ruling, a lesson, or another agent's reasoning; and any Step-9 disclosure that part of a diff post-dates its review dispatch.**
+
+<a id="150"></a>
+## 150. TWO DEFECTS THAT REINFORCE EACH OTHER ARE WORSE THAN TWO INDEPENDENT ONES — each makes the other look CONFIRMED
+
+**Date:** 2026-08-13. **Source:** `### 24.65`'s Step 9 re-review. **Banked at the lead's instruction; both defects were the orchestrator's.**
+
+**The pair.** A tracker entry and a commit message about `denyDirectCrossWorkspaceRaw` carried **two** defects:
+1. **A wrong PROPERTY:** *"has no production caller"* where the measurement was *"not production-**reachable**."* It **has two** callers; the **chain** terminates at nothing (`L118` — measure one property, report another).
+2. **A wrong PACKAGE:** both hops cited as `packages/policy/src/…`. **Neither file exists**; they are `packages/knowledge/src/gcl/`.
+
+⛔ **MECHANISM, and it is why this is not just "two bugs": a reader who follows citation (2) lands in `packages/policy`, finds nothing, and CONFIRMS claim (1).** **The mis-attribution manufactures corroboration for the false claim** — and the confirmation feels like diligence, because the reader *did* go and look.
+
+⭐ **Worse, it hid the reason the other defect MATTERED.** The hops living in **`packages/knowledge` behind a public `export *`** is precisely what makes *"no caller"* dangerous — **one import arms a rule-4 gate with fully caller-supplied values.** ⇒ **the wrong package removed the very fact that would have exposed the wrong property.** Independently, each is a routine citation error; together they form a closed loop that survives being checked.
+
+⭐ **GENERAL FORM: defects COMPOSE, and error-correction assumes they do not.** Every check we run — re-read the citation, follow the reference, re-measure the count — assumes the *rest* of the context is sound while it tests one claim. **Two defects in the same sentence break that assumption**, because the check for one runs through the other. ⚠ **This is why "I verified it" is weaker than it sounds when the verification path shares state with the claim** (kin to `L84`'s two-readings and `L112`'s unobservable channel).
+
+⇒ **DO.** When a claim fails verification, **do not stop at the first defect** — ask what ELSE in the same sentence you took as background while testing it. ⭐ **Specifically: a citation and the claim it supports must be checked INDEPENDENTLY** — resolve the path *before* using it to evaluate the claim, and if the path does not resolve, **treat the claim as unverified rather than refuted** (`L93`: a citation that fails to resolve is a question, not a verdict). ⚠ **And when reporting a pair like this, say that they compound** — a reader told only "two errors" will fix them one at a time and never see the loop.
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any correction of a durable claim that turns up more than one defect; and any review that resolves a citation in order to test the sentence containing it.**
+
+<a id="151"></a>
+## 151. CITE WHAT A GATE TESTS, NEVER THAT IT PASSED — a passing heuristic is not a validated shape, and the citation reads stronger than the guarantee
+
+**Date:** 2026-08-13. **Source:** `### 24.62` Step 9 (worker-implementer, caught by `security-reviewer`). **Adopted as a convention at the lead's instruction, in the implementer's words.** ⭐ **The actionable form of [L147](#147).**
+
+**The instance.** Justifying why `event` may stay on the append-failure log line, the first draft read: ***"the gate PASSED, so all six scanned fields are clean."*** ⛔ **False, and already retracted in-repo:** `packages/policy`'s own `isRedactionSafe` doc (from `24.45`) states it is a **credential-shape HEURISTIC, not a shape allowlist** — *"an employer project codename, a person's name, or an internal identifier"* all pass it. ⇒ **gate-passed means only *"did not look like a leaked secret."***
+
+⛔ **MECHANISM: a gate's NAME describes its ambition; its DOC describes its test; and a citation carries the name.** *"`isRedactionSafe` passed"* reads as *"this is redaction-safe."* **It is not a lie and it is not the guarantee** — the reader supplies the missing quantifier, and supplies the generous one. ⭐ **`L147`'s displacement, one layer in: there the provenance check displaced the shape check; here the gate's NAME displaces the gate's TEST.**
+
+⭐ **The correct form is checkable in a diff, which is why it is a convention and not an exhortation.** The fix was not *"be careful about `isRedactionSafe`"* — it was to state the **real, verifiable reason**: `event` is a **string literal at all three reachable producers**, and to flag that as a **CALL-PATH property, not a type one**, so the next reader knows what would invalidate it. ⇒ **a justification you can check beats a citation you can only trust.**
+
+⚠ **PROVENANCE, and it is the round's most reproduced result: the author wrote this ELEVEN LINES BELOW their own sentence warning that the next producer inherits the reasoning rather than the audit.** **Third instance in one day of someone breaking a rule they had just written, in the same file** — one implementer one slice apart, the orchestrator within the hour of authoring the uncritical-relay taxonomy, and this. ⇒ ***a rule does not protect its own author*** is no longer a suspicion; **it is why these are written as diff-visible checks rather than as things to bear in mind.**
+
+⇒ **DO.** When a gate, validator, or schema is cited as the reason something is safe, **write what it TESTS, not that it passed** — and if you cannot state the test in one clause, you do not know what the citation buys. ⚠ **Applies hardest to gates whose names are adjectives** (`isRedactionSafe`, `isValid`, `isTrusted`, `assertSafe`): **the name is a claim about the WORLD and the implementation is a claim about ONE PREDICATE.**
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any comment, commit message, or Done-when whose safety argument is *"X passed"* / *"X validated it"* / *"it went through X."* Replace with what X tests, or say the guarantee is unestablished.**
