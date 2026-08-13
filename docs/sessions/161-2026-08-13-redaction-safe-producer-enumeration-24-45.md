@@ -3,7 +3,7 @@
 **Date:** 2026-08-13 · **Phase:** 24 · **Track:** single-track `main` (root checkout, no worktree)
 **Role:** `providers-integrations-implementer` (owns `providers`, `policy`, `integrations`)
 **Predecessor:** `docs/sessions/159-2026-08-12-24-15-outbox-redrive-approval-policy-and-24-50-finding.md` (the `providers-integrations` chain; session-doc chains run per-AREA, so `160` is worker's and not this doc's predecessor despite the number)
-**Successor:** _(filled in by the next `/session-end`)_
+**Successor:** `162-2026-08-13-required-from-birth-green-under-both-and-a-notice-that-carries-nothing.md`
 
 **Slice landed:** `48ec7c91` — 1 commit, 4 files, `packages/policy` only.
 
