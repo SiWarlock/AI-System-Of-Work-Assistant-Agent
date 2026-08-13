@@ -583,14 +583,30 @@ export function buildProofSpineActivities(
     // enforceHumanOwnership + scanForSecrets defaults (secure-by-default, safety rule
     // 1/7). We must NEVER pass a pass-through here.
     //
-    // 24.26 step 2 — SUPPLY the exempt workspace id rather than leaning on writer.ts's
-    // `?? enforceWorkspacePathScope` fallback. Built HERE (composition, once per boot) and
-    // NOT inside a job path: constructing it per job would turn a config fault into an
-    // uncaught throw where `applyPlan` promises a typed WriteFailure (step 1's note).
-    // ⚠ BEHAVIOURALLY INERT TODAY, deliberately: the fallback is the SAME factory over the
-    // SAME string (`workspace-path-guard.ts:183`), so supplying it changes nothing
-    // observable. It becomes load-bearing at step 3, which deletes the fallback and makes
-    // this parameter REQUIRED. Do not read the absence of a behavioural test as an oversight.
+    // 24.26 — SUPPLY the exempt workspace id. Built HERE (composition, once per boot) and NOT
+    // inside a job path: constructing it per job would turn a config fault into an uncaught throw
+    // where `applyPlan` promises a typed WriteFailure (step 1's note).
+    //
+    // ⛔ LOAD-BEARING AS OF STEP 3 (`46e34ca8`) — THIS LINE IS NOW THE ONLY THING ENFORCING THE
+    // WORKSPACE-PATH GUARD (safety rule 4 / WS-8) ON THIS PATH. `KnowledgeWriterDeps.workspacePathCheck`
+    // is REQUIRED and writer.ts's `?? enforceWorkspacePathScope` fallback is DELETED — there is
+    // nothing behind it. Verified by mutation rather than inherited: deleting this line yields
+    // `TS2741: Property 'workspacePathCheck' is missing … but required in type 'KnowledgeWriterDeps'`.
+    //
+    // ⚠ THIS COMMENT READ "BEHAVIOURALLY INERT TODAY" UNTIL STEP 3 LANDED, and the correction is
+    // recorded rather than silently swapped because the FAILURE MODE is the interesting part: it was
+    // TRUE WHEN WRITTEN and was falsified by a change in ANOTHER PACKAGE, with no edit to this file
+    // and nothing going red (`contracts L134`'s shape arriving in comments rather than switch
+    // statements; `L148`'s family — an artifact outliving the state it describes). ⛔ And the
+    // direction is the dangerous one: a comment calling a LIVE guard "inert" invites the next reader
+    // to delete it as dead weight, which fails OPEN on a rule-4 guard.
+    //
+    // ⚠ THE OLD BLOCK ALSO SAID "do not read the absence of a behavioural test as an oversight."
+    // That is STILL TRUE and its REASON CHANGED, so it is replaced rather than struck: absence is now
+    // caught by the type system (the `TS2741` above), and what no test can reach is whether the
+    // SUPPLIED STRING is the right one — a required parameter type-checks PRESENCE, never the value
+    // (`worker L28`). The boundary pins in `test/composition/semanticApprovalDispatch.test.ts` carry
+    // that reasoning in full.
     workspacePathCheck: makeEnforceWorkspacePathScope(LEGACY_UNPREFIXED_WORKSPACE_ID),
   };
   const commit: CommitKnowledgePort = createCommitActivity({

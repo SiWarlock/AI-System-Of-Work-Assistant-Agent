@@ -68,11 +68,14 @@ export function buildSemanticApprovalDispatch(deps: SemanticApprovalDispatchDeps
     // ownershipCheck + secretScan LEFT UNSET → the writer uses its secure enforceHumanOwnership + scanForSecrets
     // defaults (safety rules 1/7). Never pass a pass-through.
     //
-    // 24.26 step 2 — SUPPLY the exempt workspace id (see the matching site in buildActivities.ts for the full
-    // reasoning). Built ONCE here, OUTSIDE the per-approval `commit:` closure below — a per-approval
-    // construction would turn a config fault into an uncaught throw where `applyPlan` promises a typed
-    // WriteFailure. ⚠ Behaviourally inert until step 3 deletes writer.ts's `?? enforceWorkspacePathScope`
-    // fallback, which today is the same factory over the same string.
+    // 24.26 — SUPPLY the exempt workspace id (see the matching site in buildActivities.ts, which carries the
+    // full reasoning and the mutation evidence). Built ONCE here, OUTSIDE the per-approval `commit:` closure
+    // below — a per-approval construction would turn a config fault into an uncaught throw where `applyPlan`
+    // promises a typed WriteFailure.
+    // ⛔ LOAD-BEARING AS OF STEP 3 (`46e34ca8`): `workspacePathCheck` is REQUIRED and writer.ts's
+    // `?? enforceWorkspacePathScope` fallback is DELETED, so this line is the sole enforcement of the
+    // rule-4 / WS-8 path guard on the approval-driven commit path. ⚠ It read "behaviourally inert until
+    // step 3" until step 3 landed — true when written, falsified from another package with nothing red.
     workspacePathCheck: makeEnforceWorkspacePathScope(LEGACY_UNPREFIXED_WORKSPACE_ID),
   };
   return createSemanticMutationDispatch({

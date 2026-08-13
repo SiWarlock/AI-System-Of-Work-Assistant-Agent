@@ -137,17 +137,35 @@ describe("buildSemanticApprovalDispatch", () => {
   });
 });
 
-// --- 24.26 step 2: the exempt workspace id is SUPPLIED, not left to the writer's fallback ---
+// --- 24.26: the exempt workspace id is SUPPLIED, and since step 3 it is the SOLE enforcement ---
 //
-// ⛔ WHY THESE ARE BOUNDARY PINS AND NOT END-TO-END BEHAVIOURAL TESTS — this is deliberate and
-// is the finding that shaped the slice. `writer.ts:225` reads
-// `deps.workspacePathCheck ?? enforceWorkspacePathScope`, and `workspace-path-guard.ts:183`
-// defines that fallback as `makeEnforceWorkspacePathScope(LEGACY_UNPREFIXED_WORKSPACE_ID)` —
-// the SAME factory over the SAME string this composition supplies. So driving a plan through
-// the writer passes IDENTICALLY whether the wiring exists or not: an end-to-end test here
-// would be VACUOUS and would stay green with the wiring deleted. What this leg changes is
-// exactly one thing — which check instance reaches the writer — so that is what is pinned.
-// These become genuine behavioural tests at step 3, once the `??` fallback is gone.
+// ⛔ WHY THESE ARE BOUNDARY PINS AND NOT END-TO-END BEHAVIOURAL TESTS. The reason CHANGED at step 3
+// (`46e34ca8`) and both halves are worth keeping, because the pins are correct under each:
+//
+//   • BEFORE step 3 — an end-to-end test would have been VACUOUS. `applyPlan` read
+//     `deps.workspacePathCheck ?? enforceWorkspacePathScope`, and that fallback was the SAME factory
+//     over the SAME string this composition supplies, so a plan drove IDENTICALLY whether the wiring
+//     existed or not — the test would have stayed green with the wiring deleted.
+//   • ⛔ SINCE step 3 — the `??` fallback is DELETED and `KnowledgeWriterDeps.workspacePathCheck` is
+//     REQUIRED, so "the wiring deleted" no longer compiles (`TS2741`, mutation-verified at the
+//     buildActivities.ts site). The vacuity is gone, and so is the need for an end-to-end test to
+//     catch ABSENCE — the type system catches that.
+//
+// ⭐ WHAT THE PINS STILL EARN, and it is the residual the type system CANNOT reach: a required
+// parameter type-checks PRESENCE, never the STRING. Supplying the WRONG exempt workspace id compiles
+// perfectly and silently re-points a rule-4 / WS-8 path guard (`worker L28` — mutation-proved on the
+// higher-traffic sibling literal, where a wrong-id change left 2095 tests green). These pin WHICH
+// check instance reaches the writer, which is exactly the axis left unguarded.
+//
+// ⚠ ERRATUM (24.26 step-3 spinoff). This block used to forecast that these "become genuine
+// behavioural tests at step 3", and anchored that on two BARE LINE NUMBERS — one into `writer.ts`,
+// one into `workspace-path-guard.ts`. Step 3 landed and both rotted the same day: the guard-file
+// anchor now points PAST END OF FILE (that file is 163 lines), and the writer anchor lands on
+// unrelated prose. ⛔ The dead line numbers are deliberately NOT reproduced here — quoting them would
+// leave the exact strings a future dangling-citation sweep hunts for. Both are replaced by SYMBOL
+// references above, per this round's ruling: a line number rots SILENTLY (it still resolves, to the
+// wrong thing) whereas an absent symbol gets investigated. This comment is one of the sites that
+// motivated the rule.
 describe("buildSemanticApprovalDispatch — exempt workspace id from the composition root (24.26 step 2)", () => {
   /** Captures the KnowledgeWriterDeps that actually reach the writer boundary. */
   function capturingApplyPlan(): { fn: ApplyPlanFn; deps: () => KnowledgeWriterDeps | undefined } {

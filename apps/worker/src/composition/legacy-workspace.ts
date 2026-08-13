@@ -20,12 +20,15 @@
 // them because the values coincide today would mean a Copilot CONTENT-POLICY change silently
 // re-points a rule-4 PATH GUARD. The coincidence is the trap, not the answer.
 //
-// ⛔ LIFECYCLE — read this before deleting anything during 24.26 step 3:
-// Step 3 deletes `LEGACY_UNPREFIXED_WORKSPACE_ID` ON THE KNOWLEDGE SIDE and makes
-// `KnowledgeWriterDeps.workspacePathCheck` REQUIRED. At that point THIS const is the single
-// home for the value and the only thing supplying a required parameter. It is the
-// DESTINATION of that migration, not a casualty of it — do NOT delete it alongside the
-// knowledge-side constant.
+// ⛔ LIFECYCLE — STEP 3 HAS LANDED (`46e34ca8`). THIS BLOCK IS NOW STATE, NOT A FORECAST.
+// The knowledge-side `LEGACY_UNPREFIXED_WORKSPACE_ID` is DELETED (verified: no live symbol
+// remains in `packages/knowledge`, only prose references) and
+// `KnowledgeWriterDeps.workspacePathCheck` is REQUIRED. ⇒ THIS const is now the single home for
+// the value and the only thing supplying that required parameter, at both worker composition
+// sites. It was the DESTINATION of that migration, not a casualty of it — do NOT delete it.
+// ⚠ RE-TENSED, not removed (24.26 step-3 spinoff): read as a forecast this block implies step 3
+// is still pending, and a reader who concludes that may also conclude the const is transitional.
+// The guidance it carries is what keeps a LIVE rule-4 guard supplied.
 //
 // ⚠ 24.61 does NOT apply to this leg: a compile-time const cannot produce a zero-width or
 // whitespace id, so it is not one of the "legs that will supply it" that tripwire guards.
