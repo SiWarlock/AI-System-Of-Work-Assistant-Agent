@@ -169,10 +169,14 @@ async function start(config: WorkerHostConfig): Promise<void> {
       //       (24.12, `c86030f9`) rejects any foreign-workspace note whose path lacks its own workspace
       //       prefix, at the one place every semantic write crosses (`KnowledgeWriter.applyPlan`), before
       //       the {assign} bridge can ever see it — the guard is what keeps this sound now, not this comment.
-      //       ⚠ The `toWorkspaceId` below is a value the guard's `LEGACY_UNPREFIXED_WORKSPACE_ID` DUPLICATES
-      //       as a second hardcoded constant (two sites, one fact, no single source of truth) — `24.26`
-      //       tracks single-sourcing them at the composition root; until then a change here must be mirrored
-      //       there or the guard's exemption silently stops matching this site.
+      //       ⛔ The `toWorkspaceId` below and the path guard's exempt workspace id are TWO FACTS THAT
+      //       COINCIDE IN VALUE — this one assigns unattributable legacy content at SERVING time; that
+      //       one decides who may COMMIT unprefixed. DO NOT bind them (`24.26` closed deliberately
+      //       WITHOUT single-sourcing; the reasoning lives once, at
+      //       `apps/worker/src/composition/legacy-workspace.ts` — contracts L147). ⚠ Nor are they
+      //       independent: change this alone and the OLD workspace keeps committing unprefixed, and its
+      //       content is then served TO THE WORKSPACE NAMED HERE — a WS-8 leak, not the "inert" outcome
+      //       a since-retracted comment claimed. Coupled safe-change rule: move both together.
       //   (2) OWNER ACCEPTED employer-work in the combined brain (2026-07-06, "separate brains later"). F2
       //       structural field-fidelity is CLOSED (`allowItemFields`), so cross-workspace SURFACING is scoped
       //       out per ask. Accepted residuals of ONE shared brain: A1 (a page whose BODY verbatim quotes another
