@@ -18,9 +18,17 @@ import {
 // ── in-memory GclAuditPersistPort fake (task 24.33 — spy, records every call) ──
 class FakeAuditPersistPort implements GclAuditPersistPort {
   readonly calls: { signal: AuditSignal; workspaceId: string }[] = [];
+  // task 24.53 — records EVERY argument list the refusal notice is invoked with, so a test can
+  // assert not just "it fired" but "it carried nothing." `unknown[]` deliberately: typing it as the
+  // declared zero-arg shape would make a leak unrepresentable in the TEST while saying nothing about
+  // the implementation, which is the thing under test.
+  readonly refusals: unknown[][] = [];
   async persistDenial(signal: AuditSignal, workspaceId: string): Promise<void> {
     this.calls.push({ signal, workspaceId });
   }
+  onRefused = (...args: unknown[]): void => {
+    this.refusals.push(args);
+  };
 }
 
 // ── in-memory GclProjectionRepository fake (interface-only; no concrete driver) ──
@@ -421,5 +429,136 @@ describe("serveProjection — re-gate a stored row before it crosses a workspace
       expect.fail("expected visibility_exceeds_source carrying an audit field");
     }
     expect(auditPersist.calls).toHaveLength(0);
+    // task 24.53's REAL-CHAIN pin, deliberately here rather than only in 24.53's own unit suite:
+    // this file's retraction at the top of the persistDenialAudit block forbids treating hand-built
+    // signals as a reason to skip a real-chain pin, and a new suite of only hand-built ones would
+    // have done exactly that. The refusal notice fires on the path a real denial actually takes.
+    expect(auditPersist.refusals).toHaveLength(1);
+  });
+});
+
+// task 24.53 — a signal REFUSED by the redaction gate was dropped with zero observability: a refused
+// audit and one that was never produced are byte-identical to every observer. The fix is an OPTIONAL
+// injected notice, not a console write (`packages/knowledge/src` has zero `console.` calls, and this
+// is library code — logic-in-package, wire-at-boot; `boot.ts` is a composition root and sits on the
+// other side of that line).
+//
+// ⛔ THE NOTICE CARRIES NOTHING, AND THAT IS THE WHOLE DESIGN. Brief 275 prescribed mirroring
+// `boot.ts:588-591`'s "event name only" refusal log. That is unsafe here and the orchestrator ruled
+// it out on this reasoning: `@sow/policy`'s `isRedactionSafe` scans SIX fields — `actor`,
+// `event`, `payloadHash`, `beforeSummary`, `afterSummary`, `...refs` (cited by SYMBOL, not line: that
+// block's line numbers differ between HEAD and the working tree while 24.45 is held). On the refusal path at least one
+// of them is unsafe BY DEFINITION and this function cannot know which. `event` is one of the six ⇒
+// logging it can emit precisely the value the gate refused. "Event name only" reads safe because an
+// event name is USUALLY a literal; the gate scans it because that is not guaranteed.
+describe("persistDenialAudit — a refused signal is observable, and the notice carries nothing (task 24.53)", () => {
+  const CREDENTIAL_SHAPED = "https://u:hunter2@evil.example";
+
+  /** Unsafe via `event` SPECIFICALLY — the field the naive "event name only" log would have emitted. */
+  const unsafeByEvent = buildAuditSignal({
+    actor: "policy",
+    event: CREDENTIAL_SHAPED,
+    refs: ["ref:workspace:ws-001"],
+    payloadHash: "policy:visibility-decision",
+    beforeSummary: "projection visibility not validated",
+    afterSummary: "projection level exceeds workspace default",
+    denialCode: "VISIBILITY_EXCEEDS_SOURCE",
+  });
+
+  it("fixture_is_unsafe_via_event_specifically: the gate refuses it, and refuses it BECAUSE of `event`", () => {
+    // Non-vacuity for the whole describe: if this ever went safe, every test below would pass by
+    // refusing nothing.
+    expect(isRedactionSafe(unsafeByEvent)).toBe(false);
+    // ⛔ THE CAUSAL PIN. The two assertions above prove "refused" and "event holds the string" — NOT
+    // that `event` is WHY. Without this line, making some other field unsafe later keeps both green
+    // while silently destroying the property this whole suite is built on: that it discriminates
+    // against an event-name-only notice. Neutralise `event` and the same signal must go SAFE.
+    expect(isRedactionSafe({ ...unsafeByEvent, event: "gcl.projection.denied" })).toBe(true);
+  });
+
+  it("refused_signal_is_observable: the notice fires exactly once and nothing is persisted", async () => {
+    const port = new FakeAuditPersistPort();
+    await persistDenialAudit(unsafeByEvent, "ws-001", port);
+    expect(port.calls).toHaveLength(0); // the refusal still holds — this slice does not weaken the gate
+    expect(port.refusals).toHaveLength(1); // ⬅ the defect: this was 0 before 24.53
+  });
+
+  it("refusal_notice_carries_no_scanned_field_value: THE rule-7 pin — the naive implementation fails this", async () => {
+    // ⛔ This is the test that would RED against brief 275's prescribed "event name only" log, because
+    // this fixture's unsafe field IS the event. Asserting zero arguments is stronger than scanning for
+    // the value: it forbids the whole class, not this one string.
+    const port = new FakeAuditPersistPort();
+    await persistDenialAudit(unsafeByEvent, "ws-001", port);
+    expect(port.refusals[0]).toEqual([]);
+    // Kept as a deliberate 24.62 marker only — 24.62 is the sibling defect where `workspaceId` rides
+    // beside the signal unscanned. The value-scan assertions for the signal itself are omitted: they
+    // are strictly implied by `toEqual([])` and can never fail while it passes.
+    expect(JSON.stringify(port.refusals)).not.toContain("ws-001");
+  });
+
+  it("safe_signal_does_not_notify: a channel that fires on every path carries no information (contracts L86)", async () => {
+    const port = new FakeAuditPersistPort();
+    const safe = buildAuditSignal({
+      actor: "policy",
+      event: "visibility.projection.denied",
+      refs: ["ref:workspace:ws-001"],
+      payloadHash: "policy:visibility-decision",
+      beforeSummary: "projection visibility not validated",
+      afterSummary: "projection level exceeds workspace default",
+      denialCode: "VISIBILITY_EXCEEDS_SOURCE",
+    });
+    await persistDenialAudit(safe, "ws-001", port);
+    expect(port.calls).toHaveLength(1);
+    expect(port.refusals).toHaveLength(0);
+  });
+
+  it("no signal and no port stay silent no-ops, and a port without the optional notice never throws", async () => {
+    const port = new FakeAuditPersistPort();
+    await persistDenialAudit(undefined, "ws-001", port);
+    expect(port.refusals).toHaveLength(0);
+    await expect(persistDenialAudit(unsafeByEvent, "ws-001", undefined)).resolves.toBeUndefined();
+    // A port predating 24.53 (no `onRefused`) must still refuse silently rather than crash — the
+    // member is optional, so every existing call site stays byte-identical (§16 never-throws).
+    const legacy: GclAuditPersistPort = { persistDenial: async () => undefined };
+    await expect(persistDenialAudit(unsafeByEvent, "ws-001", legacy)).resolves.toBeUndefined();
+  });
+
+  it("a THROWING onRefused never breaks persistDenialAudit's never-throw contract (§16)", async () => {
+    // The notice is caller-supplied and fires ONLY on the refusal path, so an unguarded throw would
+    // turn "a signal was unsafe" into "the write path threw" — content-conditioned, and worse than
+    // the silence 24.53 removes.
+    const hostile: GclAuditPersistPort = {
+      persistDenial: async () => undefined,
+      onRefused: () => {
+        throw new Error("hostile port");
+      },
+    };
+    await expect(persistDenialAudit(unsafeByEvent, "ws-001", hostile)).resolves.toBeUndefined();
+  });
+
+  it("an ASYNC onRefused that REJECTS never escapes as an unhandled rejection", async () => {
+    // ⛔ The second escape route, and the one the signature CANNOT close: `() => void` accepts an
+    // async implementation (TypeScript's void-return assignability rule), so the most natural sink —
+    // `onRefused: async () => { await metrics.increment(...) }` — typechecks. Its rejection would
+    // bypass a plain try/catch; Node 22 defaults to --unhandled-rejections=throw and this repo
+    // registers no handler, so the process would DIE, and only ever when a signal was unsafe.
+    const hostile: GclAuditPersistPort = {
+      persistDenial: async () => undefined,
+      onRefused: (async () => {
+        throw new Error("async sink down");
+      }) as unknown as () => void,
+    };
+    const escaped: unknown[] = [];
+    const capture = (reason: unknown): void => {
+      escaped.push(reason);
+    };
+    process.on("unhandledRejection", capture);
+    try {
+      await expect(persistDenialAudit(unsafeByEvent, "ws-001", hostile)).resolves.toBeUndefined();
+      await new Promise((resolve) => setImmediate(resolve)); // let any rejection surface
+      expect(escaped).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", capture);
+    }
   });
 });

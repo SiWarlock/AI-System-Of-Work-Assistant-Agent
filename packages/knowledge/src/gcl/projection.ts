@@ -38,6 +38,27 @@ export type GclPersistError =
  */
 export interface GclAuditPersistPort {
   readonly persistDenial: (signal: AuditSignal, workspaceId: string) => Promise<void>;
+  /**
+   * OPTIONAL refusal notice (task 24.53). Invoked when a signal is refused by the redaction gate
+   * and therefore NOT persisted — so a refusal stops being byte-identical to "no denial happened."
+   *
+   * ⛔ TAKES NO PARAMETERS, AND THAT IS THE SAFETY PROPERTY, NOT AN OVERSIGHT. A refusal means at
+   * least one of the six fields `isRedactionSafe` scans (`actor`, `event`, `payloadHash`,
+   * `beforeSummary`, `afterSummary`, `refs`) is unsafe, and this function CANNOT KNOW WHICH — so any
+   * signal-derived value handed over here could be exactly the value the gate refused. ⚠ That
+   * includes `event`: "event name only" reads safe because an event name is usually a literal, but
+   * the gate scans it precisely because that is not guaranteed. The obligation is discharged by the
+   * SIGNATURE — an implementer has nothing to leak — rather than by every present and future
+   * implementer remembering a convention (desktop L20's shape: make the unsafe state
+   * unrepresentable, don't forbid it in prose).
+   * ⚠ Deliberately NOT `denialCode` either: it is unscanned because it is "a closed code," which is
+   * closed BY TYPE and not validated at runtime — the same trusted-provenance-vs-validated-shape
+   * mistake `24.55` was corrected for.
+   *
+   * Optional so every pre-24.53 call site stays byte-identical; a port without it refuses silently,
+   * exactly as before.
+   */
+  readonly onRefused?: () => void;
 }
 
 /**
@@ -78,7 +99,32 @@ export async function persistDenialAudit(
   //     reach this function at all — the CALL GRAPH stops them, not this gate.
   // ⇒ The honest statement of the obligation: this is the only thing that would refuse a signal
   //   reaching here — today from the GCL gate, and from any producer ever routed here later.
-  if (!isRedactionSafe(audit)) return;
+  if (!isRedactionSafe(audit)) {
+    // task 24.53 — a refused signal WAS indistinguishable from one never produced. The notice fires
+    // with no arguments; see `GclAuditPersistPort.onRefused` for why it must stay that way.
+    // ⚠ PARITY, NOT A CLAIM THAT ANYONE IS WATCHING (contracts L82): this makes the refusal EMITTABLE, matching
+    // the precedent at `boot.ts:585-591`. No consumer is named because none is wired — the GCL port
+    // binding is still deferred to Phase 25.2/25.4 — and asserting operator visibility without being
+    // able to name the consumer is the overclaim this file has now been corrected for twice.
+    // ⛔ `onRefused` is CALLER-SUPPLIED and fires ONLY on the refusal path, so a notice that can
+    // break this function turns "a signal was unsafe" into "the write path died" — a
+    // CONTENT-CONDITIONED failure, strictly worse than the silence 24.53 removes. Two escape routes,
+    // both closed here; the persist below is guarded for the same never-throw reason (§16).
+    //   • sync throw — the `catch`. Covers a throwing `get onRefused` accessor too.
+    //   • ⛔ ASYNC REJECTION — `() => void` does NOT forbid an async implementation (TypeScript's
+    //     void-return assignability rule), so `onRefused: async () => { await sink.write(...) }`
+    //     typechecks. Its rejected promise would escape the `catch` entirely; Node 22 defaults to
+    //     `--unhandled-rejections=throw` and this repo registers no handler, so it would TERMINATE
+    //     the process. The signature cannot make that unrepresentable, so it is handled here rather
+    //     than asserted in prose.
+    try {
+      void Promise.resolve(auditPersist.onRefused?.() as unknown).catch(() => undefined);
+    } catch {
+      // Swallowed deliberately: the refusal guarantee (nothing is persisted) must never depend on
+      // the notice succeeding, exactly as the denial guarantee does not depend on the persist.
+    }
+    return;
+  }
   try {
     await auditPersist.persistDenial(audit, workspaceId);
   } catch {
