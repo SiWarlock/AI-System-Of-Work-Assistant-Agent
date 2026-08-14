@@ -3141,4 +3141,14 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 
 ⚠ **Structural cause worth naming: the overstatement was CORRECT WHEN WRITTEN** — there was one branch then. **A second branch was added and the field doc did not move**, while the prose fifteen lines down did. ⇒ **`L148`'s shape (a claim outliving the condition that made it true) arriving in a SAFETY phrase rather than a residual note**, and the guard against it is the same: **when you add a branch, grep the file for claims quantified over the old branch count.**
 
+⭐⭐ **AMENDED same day from the sweep this lesson triggered — THE TELL IS POSITIONAL, and that converts the lesson from a thing to NOTICE into a place to LOOK.** The task named **2** sites in **1** file; worker's sweep found **4** across **3**, and **the two it added were worse-positioned than the two that were dispatched**:
+- **`copilotGbrainSubprocess.ts:8-14` — the FILE HEADER** — asserted WS-8 held *"BY CONSTRUCTION… a single-brain deployment cannot leak across workspaces through this transport."* ⛔ **That file EXPORTS `createMultiServedGbrainRetrieval`, in which ANY registered workspace reads the brain — and its OWN function doc 190 lines below already said *"by SCOPE FILTERING, not by construction."*** ⇒ **the header contradicted its own file, and the header is what a reader meets FIRST.**
+- **`boot.ts:334-341` — the operator-facing CONFIG field doc**, i.e. the surface someone reads **when deciding whether to turn the flag on.**
+
+⇒ ***THREE OF THE FOUR DEFECTIVE SITES WERE THE ENTRY DOC FOR THEIR SCOPE (field doc · file header · config doc). THE ONE THAT STAYED CORRECT WAS THE INLINE COMMENT NEXT TO THE CODE.***
+
+⭐ **MECHANISM, and it is mundane and therefore reliable: a new branch lands BESIDE THE CODE, so the author updates the comment they are already editing. THE ENTRY DOC IS NOBODY'S DIFF.** ⇒ **the doc most likely to be stale is the one most likely to be read first, and the one a reader weights most heavily** — the two properties compound rather than cancel.
+
+⇒ **DO. When a branch is added, check the SCOPE'S ENTRY DOCS FIRST** — file header, exported-symbol docblock, config-field doc, README — **before the inline comments, which are the ones that probably moved with the change.** ⚠ **And the sweep must classify by SUBJECT, not by phrase:** ~60 `by construction` occurrences in `apps/worker/src` were overwhelmingly a **different subject** (redaction-safe, idempotent, traversal-safe, UI-safe, byte-equivalent). **A phrase census is a candidate list; the subject classification is the work** (`L104`).
+
 `pin: none` · `pattern: grep -rnE "by construction" --include="*.ts" apps packages | grep -v test` — **candidates to classify** (`L104`: this row would trip it), each asking *"is there a branch where this does not hold?"* `accepted: partially enforceable`.
