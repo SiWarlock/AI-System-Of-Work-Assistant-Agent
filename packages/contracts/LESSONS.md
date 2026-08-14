@@ -3458,3 +3458,27 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⚠ **Corollary for reviewers: a file containing an explicit correction of claim X is a HIGHER-risk site for a fresh assertion of X, not a lower one.** The correction's presence reads as immunity and is the opposite.
 
 `pin: none` · `pattern: git diff --cached | grep -nE '<the retracted phrase>'` — **run on your own staged diff, whole-file sweep, expecting only the negating correction to match.** `accepted: partially enforceable` — **enforcement point: `/tdd` Step 9 of any slice touching a file where you have previously retracted a claim; and any erratum, whose author should add its phrase to their own self-check rather than assuming they are now inoculated.**
+
+<a id="175"></a>
+## 175. A COMMENT THAT DESCRIBES OTHER FILES DECAYS FROM EVERY DIRECTION AT ONCE — and none of them touch the file it lives in
+
+**Date:** 2026-08-14. **Source:** `#78`, knowledge-implementer — **found while repairing two decays, and the third was theirs.**
+
+**The instance.** One comment block in `packages/knowledge/test/workspace-path-guard.test.ts` enumerated nine `deps: {} as never` sites living in **two other files**. Repairing it turned up **THREE decays in that single block, from three unrelated directions:**
+1. **SOMEONE ELSE'S INSERTIONS MOVED THE POINTERS.** A comment-only slice in the described files added lines; **all nine citations moved, and none dangled — every one resolved to plausible text** (one landing on *the other author's new note about the sites*).
+2. **THE AUTHOR'S OWN LATER SLICE FALSIFIED THE PROSE.** The block said a post-commit store fault *"reports `commit_failed`"*; **their own commit hours earlier, in a THIRD file, made it return `audit_record_failed` / `revision_record_failed`.**
+3. **THE ENUMERATION WAS GROUPED BY SPELLING** (`deps: {} as never`) rather than by type — nine members that were never one population.
+
+⛔⛔ **MECHANISM, and it is an EXPOSURE argument rather than a care argument: a comment's decay surface is proportional to how much of the world it describes, and INVERSELY related to how often its own file is edited.** A cross-file block is maximally exposed and minimally visible:
+> **It never appears in the diff of the change that falsifies it.** Whoever edits the described file sees no reference to it.
+> **It is not read by anyone editing what it describes** — they are in the other file.
+> **Its own author edits it least**, because as a piece of prose it is *finished*.
+⇒ ***three independent decay sources, and ZERO of them produce a signal in the file that carries the claim.*** ⭐ **Contrast a note AT the site: it is in the diff of every change to that site, so a falsifying edit and the claim arrive in the same review.**
+
+⭐⭐ **THE REMEDY IS PLACEMENT, NOT DILIGENCE — the implementer's line, and it is the whole lesson: *a note at the site cannot be moved away from it; this one can, and was.*** ⇒ **put the claim where the thing it describes lives.** ⚠ **Where a cross-file block is genuinely necessary** (an enumeration, a population, a coverage argument spanning files) **it must: anchor by SYMBOL and POPULATION rather than line** (`### 24.71`), **state that site-level notes are AUTHORITATIVE over it**, and **name the population's defining property** so a reader can re-derive membership instead of trusting the list.
+
+⚠ **NOT an argument against cross-file documentation** — the block was load-bearing; it is the pointer to where a WS-8 opt-out's real assurance lives. ⭐ **It is an argument that such a block is a KNOWN-DECAYING artifact and must be written to be re-derivable, not merely correct at authoring.**
+
+⭐ **Family with [L145](#145)** (a comment asserting its own code is live) **pointed outward instead of inward** — L145's comment over-claims about the code beneath it; **this one under-defends against code it cannot see.** ⚠ **And it composes with [L174](#174): decay source 2 was the author's own later slice, so the author is simultaneously the least likely reader AND a live source of falsification.**
+
+`pin: none` · `pattern: none reliable — the defect is a claim about files the grep would have to already understand.` `accepted: not mechanically enforceable` — **enforcement point: authoring or reviewing any comment that enumerates, counts, or characterises code in ANOTHER file. Ask what would signal its falsification, and if the answer is "nothing in this file", move the claim or make it re-derivable.**
