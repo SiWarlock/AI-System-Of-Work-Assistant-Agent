@@ -445,9 +445,23 @@ export async function applyPlan(
   //       accepts plans that legitimately declare nothing, so it must test BOTH conjuncts.
   //   (2) DISPOSITION — tombstone SUPPRESSES (early `ok({changed:false})`: no commit, no revision,
   //       NO audit row). This function does the opposite on purpose: it writes a TRUTHFUL row (see
-  //       step 8). ⭐ Suppression is honest THERE only because tombstone moves the signal into its
-  //       RETURN TYPE via `changed: false`; `WriteSuccess` has no such field, so suppressing here
-  //       would delete the fact rather than relocate it.
+  //       step 8).
+  //       ⛔ CORRECTED (`### 24.80`, measured). This paragraph used to read: *"Suppression is honest
+  //       THERE only because tombstone moves the signal into its RETURN TYPE via `changed: false`;
+  //       `WriteSuccess` has no such field, so suppressing here would delete the fact rather than
+  //       relocate it."* ⚠ TECHNICALLY TRUE AND MATERIALLY OVERSTATED — and it is the sentence that
+  //       motivated a whole task to mirror the field, so it is corrected rather than left.
+  //       MEASURED: `changed` has ONE declaration (`tombstone.ts`) and THREE reads, all three in
+  //       `tombstone.test.ts`. Its own port type (`TombstoneCommitSuccess`) does not declare it.
+  //       ⇒ tombstone DECLARES the fact on its success value; it does NOT get the fact to a
+  //       consumer. "Moves the signal into the return type" is true; "therefore observability" is
+  //       not — the signal stops at the first port, exactly as this function's would.
+  //       ⚠ THIS IS NOT A CLAIM THAT TOMBSTONE IS WRONG. A return-type honesty field is a
+  //       defensible thing to have; what was false is that it SOLVED the observability problem and
+  //       could therefore be mirrored as a solution here.
+  //       ⇒ THE SURVIVING REASON, which is narrower and does hold: writing a truthful row is the
+  //       option that is honest WITHOUT a new field. Suppression needs a discriminator that reaches
+  //       someone, and no writer in this subsystem has one yet.
   // ⚠ ACCEPTED RESIDUAL + its invalidating condition (contracts L106): the applied/already-applied
   // distinction currently lives ONLY in `afterSummary` free text — `ui-safe.ts` deliberately drops
   // that field from both UI projections, no production code parses it, and the `Result` is
