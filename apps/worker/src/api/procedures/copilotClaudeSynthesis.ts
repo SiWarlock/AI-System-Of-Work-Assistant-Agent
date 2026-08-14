@@ -445,11 +445,24 @@ export interface CopilotDepsOptions {
    */
   readonly completion: () => ClaudeSubscriptionCompletion;
   /**
-   * OPTIONAL (P3-live) factory for the real gbrain read seam. When present AND `realCopilot` is on, the
-   * ONE served workspace (`gbrainWorkspaceId`) reads the local gbrain; every other workspace stays on the
-   * fixture (WS-8 by construction — see `createGbrainSubprocessRetrieval`). Absent ⇒ retrieval is the
-   * fixture stub on both paths (the pre-P3-live behavior). A FACTORY (not the exec) so the CLI transport
-   * is constructed only when the gbrain path is actually taken.
+   * OPTIONAL (P3-live) factory for the real gbrain read seam. Absent ⇒ retrieval is the fixture stub on
+   * both paths (the pre-P3-live behavior). A FACTORY (not the exec) so the CLI transport is constructed
+   * only when the gbrain path is actually taken.
+   *
+   * ⛔ WHEN PRESENT AND `realCopilot` IS ON, WHICH RETRIEVAL IS BUILT DEPENDS ON `gbrainWorkspaceScope`.
+   * The three-branch selection comment at the retrieval-selection site below is AUTHORITATIVE; in short:
+   *   • scoping OFF ⇒ single-served (`createGbrainSubprocessRetrieval`): only `gbrainWorkspaceId` reads the
+   *     brain, every other workspace stays on the fixture — WS-8 by construction ON THAT BRANCH.
+   *   • scoping ON ⇒ Option A MULTI-served (`createMultiServedGbrainRetrieval`): ANY REGISTERED workspace
+   *     reads the one combined brain, scoped per-request — ⛔ WS-8 holds by the MANDATORY FILTER, **NOT**
+   *     by construction.
+   *
+   * ⚠ THIS DOC ASSERTED "WS-8 by construction" UNCONDITIONALLY UNTIL `### 24.79`. It was true when written
+   * and was falsified by the multi-served branch landing beside it — the prose at the selection site moved,
+   * this field doc did not. ⛔ "By construction" is the strongest phrase available: it tells a reader that NO
+   * runtime condition can make the claim false, which TERMINATES INQUIRY in a way "enforced by X" does not
+   * (`contracts L161`). An investigator arriving here on the `### 24.62` boundary-(b) isolation question would
+   * have concluded isolation was structural and closed it as safe.
    */
   readonly gbrainExec?: () => GbrainQueryExec;
   /** The workspace served from the local brain; defaults to DEFAULT_GBRAIN_COPILOT_WORKSPACE. */
@@ -521,8 +534,10 @@ export function buildCopilotDeps(opts: CopilotDepsOptions): AuditPersisting<Copi
       ? cloudCopilotPosture(ws.id, ws.type)
       : localWorkspacePosture(ws.id, ws.type);
   }
-  // Retrieval: the fixture stub by default. On the real path WITH a gbrain exec factory (P3-live), the ONE
-  // served workspace reads the local gbrain and every other stays on the fixture (WS-8 by construction).
+  // Retrieval: the fixture stub by default. On the real path WITH a gbrain exec factory (P3-live), WHICH
+  // retrieval is built depends on `gbrainWorkspaceScope` — the three-branch selection immediately below is
+  // the authoritative statement. ⛔ "WS-8 by construction" is true ONLY of the scoping-OFF (single-served)
+  // branch; the multi-served branch holds WS-8 by its mandatory per-request filter (`### 24.79`).
   // The factory is invoked at most once, only when that branch is taken (the CLI is never constructed off-path).
   const fixtureRetrieval = createFixtureRetrieval(fixtures);
   const servedGbrainWorkspaceId = opts.gbrainWorkspaceId ?? DEFAULT_GBRAIN_COPILOT_WORKSPACE;

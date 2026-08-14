@@ -332,10 +332,14 @@ export interface BootConfig extends BackendsConfig {
    */
   readonly copilotBetas?: readonly string[];
   /**
-   * Real GBrain retrieval (P3-live — OFF by default; requires `copilotRealModel` too). When true, the ONE
+   * Real GBrain retrieval (P3-live — OFF by default; requires `copilotRealModel` too). When true, the
    * served workspace (`copilotGbrainWorkspaceId`, default personal-business) reads the LOCAL gbrain via the
-   * `gbrain call query` CLI instead of the empty fixture stub; every OTHER workspace stays on the fixture
-   * (WS-8 by construction — only the served workspace ever reads the single local brain). The worker needs
+   * `gbrain call query` CLI instead of the empty fixture stub.
+   * ⛔ WHETHER EVERY OTHER WORKSPACE STAYS ON THE FIXTURE DEPENDS ON `copilotWorkspaceScoping` (`### 24.79`):
+   * scoping OFF ⇒ yes, and WS-8 holds BY CONSTRUCTION (only the served workspace ever reads the brain);
+   * scoping ON ⇒ Option A multi-served, where ANY REGISTERED workspace reads the one combined brain and
+   * ⛔ WS-8 holds by the MANDATORY per-request filter, NOT by construction. This doc asserted the
+   * by-construction form unconditionally until `24.79`; it describes only the scoping-OFF branch. The worker needs
    * `VOYAGE_API_KEY` in its env (gbrain embeds the query) and the `gbrain` binary on PATH; a missing
    * key/binary fails closed (typed fault), never a throw. Interim TEST transport — NOT the mandated
    * `transport:"http"` GbrainReadGrant path. No effect when `copilotRealModel` is off.

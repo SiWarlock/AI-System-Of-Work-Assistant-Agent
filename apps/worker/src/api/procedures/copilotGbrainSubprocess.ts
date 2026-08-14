@@ -5,10 +5,19 @@
 // NOT the architecture's mandated GbrainReadGrant `transport:"http"` MCP path (`gbrain serve --http`), and
 // it reads ONE local brain that (in this seeded setup) holds a SINGLE workspace's content.
 //
-// WS-8 (safety rule 4) holds here BY CONSTRUCTION, not by adapter scoping: exactly ONE workspace
-// (`servedWorkspaceId`, whose content the brain IS) ever triggers a gbrain read; every OTHER workspace is
-// routed to the fixture `fallback` (empty for a known workspace, fail-closed for unknown) and NEVER reads
-// the brain — so a single-brain deployment cannot leak across workspaces through this transport. NOTE: the
+// ⛔ WS-8 (safety rule 4) HOLDS BY A DIFFERENT MECHANISM IN EACH OF THIS FILE'S TWO EXPORTS — read the one
+// you are using, not this paragraph alone (`### 24.79`):
+//   • `createGbrainSubprocessRetrieval` (single-served) — BY CONSTRUCTION: exactly ONE workspace
+//     (`servedWorkspaceId`, whose content the brain IS) ever triggers a gbrain read; every OTHER workspace is
+//     routed to the fixture `fallback` (empty for a known workspace, fail-closed for unknown) and NEVER reads
+//     the brain.
+//   • `createMultiServedGbrainRetrieval` (Option A, multi-served — REPLACED the above as the scoping-ON
+//     path) — ⛔ NOT by construction: ANY REGISTERED workspace reads the one combined brain, and WS-8 holds
+//     by the MANDATORY per-request scope filter. Its own header states this; see it before relying on this one.
+// ⚠ This paragraph asserted the by-construction form UNCONDITIONALLY, and for the whole file, until `24.79`.
+// It was true when written and was falsified by the multi-served export landing BESIDE IT in this same file —
+// the function doc moved, the file header did not. A file header is what a reader meets first, and
+// "cannot leak across workspaces" terminates the inquiry it should invite (`contracts L161`). NOTE: the
 // http-grant transport (copilotGbrainHttp.ts) adds no per-workspace scoping of its own either — it too
 // rests on the served brain holding ONLY that workspace's content. TRUE per-workspace isolation needs a
 // brain/source PER workspace (a grant + serve per workspace); see the session doc.
