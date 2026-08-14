@@ -2945,3 +2945,55 @@ A `buildActivities.ts` block said *"do not read the absence of a behavioural tes
 ⚠ **Companion — `L147`'s sharpest instance, from the same Step 9, and the lead asked for it verbatim:** the same implementer claimed a type lived in `packages/contracts`; **it is in `packages/workflows/src/ports/meetingCloseout.ts`, AND THEIR OWN EARLIER GREP OF CONTRACTS HAD COME BACK EMPTY.** ⛔ ***Not missing evidence — DISCARDED evidence, because the wrong answer felt more right than their own result.*** ⇒ **they answered *"where WOULD this live?"* instead of *"where DOES it live?"* — the question a plausible architecture invites and a measurement forbids.**
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any Step-9 Finding, brief premise, or grading input whose evidence is a measurement of one unit. State the measured scope and the claimed scope separately; if a relay, re-derive the SCOPE rather than re-running the measurement.**
+
+<a id="155"></a>
+## 155. REDIRECT TO A FILE, THEN MEASURE THE FILE — a pipe in this environment truncates silently, it UNDER-reports, and nothing about truncated output looks truncated
+
+**Date:** 2026-08-13. **Source:** orchestrator session start — re-deriving the unpushed commit count, within the first three minutes. **Adopted by the lead as a STANDING RULE for all roles the same hour.**
+
+**The instance.** Two commands, same range, same session:
+
+```sh
+git log --oneline origin/main..HEAD | wc -l      # 50   ← WRONG
+git rev-list --count origin/main..HEAD           # 56   ← correct
+```
+
+⛔ **Resolved rather than picked.** Writing both sets to files first and counting the files gives **56 and 56**, and `comm` reports **zero** commits present in one set and absent from the other. `git log --format=%H … | sort -u | wc -l` also returns **50** ⇒ **the variable is the PIPE, not the format.** The `git log` output was truncated by 6 commits on its way through the pipe.
+
+⭐ **Two properties make this outrank the other measurement mechanisms in practice, despite being the simplest:**
+- **IT UNDER-REPORTS.** On an unpushed count that is the dangerous direction — it reads as *"less to push than there is."* A round could seal believing it had pushed everything.
+- **IT IS INVISIBLE.** **50 is a perfectly plausible number.** Nothing about truncated output looks truncated: no error, no exit code, no gap in the sequence, no ellipsis. Compare a fabricated number, which dies at the first re-run.
+
+⚠ **Second instance, same session, same family:** `diff <(…) <(…)` returned the literal string **`[ok] Files are identical`**. Real `diff` prints a diff for differing files and **NOTHING** for identical ones — verified both directions on scratch files in the same shell. ⇒ **that string was injected, not produced.** **Process substitution is compromised here too, and the same rule covers it.** Kin to the recorded `git status --porcelain` → literal `ok` trap (**L133**) — that one reaches the *receipt*; this one reaches the *measurement*.
+
+⇒ **DO. Write the intermediate to a file, then measure the file:**
+
+```sh
+git rev-list origin/main..HEAD > /tmp/a.txt; wc -l < /tmp/a.txt
+awk '…' src > /tmp/sec.txt; grep -o '…' /tmp/sec.txt > /tmp/tok.txt; wc -l < /tmp/tok.txt
+```
+
+⭐ **And the control that catches THIS mechanism is not the non-vacuity control.** A non-vacuity control (a term known present, counted alongside) proves the search **read the file** — it passes happily over truncated output, because every row it printed was correct. **The anti-truncation control is different: compare the frequency table's ROW COUNT against `sort -u | wc -l`, and check the table's counts SUM to the occurrence total.** Two mechanisms, two controls; running one and calling it "controlled" is the trap.
+
+⚠ **NOT "never pipe."** Piping is fine for *reading*. The rule binds when a number derived from the pipe will be **reported, recorded, or compared** — which is exactly when it becomes durable and stops being re-derived.
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any command whose output becomes a count in a commit message, a tracker entry, a Step-9 report, a handoff, or a seal. If a pipe produced the number, re-derive it through a file before writing it down.**
+
+<a id="156"></a>
+## 156. A SELF-REFERENTIAL COUNT IS CORRECT AS OF ITS OWN WRITING — and the naive "fix" INTRODUCES the error
+
+**Date:** 2026-08-13. **Source:** orchestrator session start, reading the round seal. **Banked at the lead's instruction as a new shape.**
+
+**The instance.** The sealed round's tracker entry reads **"16 commits · 55 unpushed."** Measured at HEAD immediately after: **17 commits · 56 unpushed.** Both are correct. The seal line was written **before the seal commit that carries it existed** — a commit cannot count itself, so the numbers are exact as of authoring and off by exactly one the moment they land.
+
+⭐ **MECHANISM: the artifact is part of the population it measures.** Any count written *inside* the thing being counted is a snapshot taken one step before the final state, and **the gap is not an error — it is the arithmetic of self-reference.**
+
+⛔ **THE DANGEROUS PART IS THE REPAIR, NOT THE DISCREPANCY.** A later reader re-measures, finds 17/56 against a recorded 16/55, and "corrects" it. **That correction is wrong**: it makes the line disagree with every other artifact of that round (the commit's own message, the archive entry, the handoff), and it silently converts a *documented snapshot* into a *false current reading* that will itself be re-corrected next round. ⇒ ***the record was right, the reader is right, and the edit is wrong*** — which is why this needs naming: nothing about the situation signals "do not touch."
+
+⭐ **DISCRIMINATOR, and it is cheap:** before correcting an off-by-small count in a durable record, ask **"could the author have known this number when they wrote it?"** If the artifact is inside its own population — a seal counting its own round's commits, a changelog entry counting its own release's changes, a doc counting its own file's sections — the answer is no, and **the recorded number is a correct snapshot, not a stale one.**
+
+⇒ **DO. Prefer to DE-INLINE the value entirely** — cite the command that regenerates it, never the number (**L94**'s volatile-value rule; the same tracker already says *"count with `git rev-list --count origin/main..HEAD`"* two lines away and then inlines 55 anyway). Where the number must be written, **stamp it as of-authoring** (*"55 at seal time, excluding this commit"*) so the off-by-one is self-explaining and nobody repairs it.
+
+⚠ **Kin to `L143`** (a recorded finding decays and triage must re-measure) with the sign flipped: there the record went stale and needed refreshing; **here the record is permanently accurate and refreshing it is the defect.** ⇒ **"re-measure before trusting" and "do not overwrite a snapshot" are both right, and the discriminator between them is whether the artifact sits inside its own population.**
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any round seal, changelog, release note, or archive entry stating a count of the change it is part of; and any later reader about to correct such a count.**
