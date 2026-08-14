@@ -1,4 +1,6 @@
-# Session 173 — `24.68`: the remedy that could not be built, and the registry I exempted from my own lesson
+# Session 174 — `24.68`: the remedy that could not be built, and the registry I exempted from my own lesson
+
+> ⛔ **RENUMBERED 173 → 174 (2026-08-14).** Worker and I **both** committed a doc numbered `173`, minutes apart, in the same tree — mine `0ebffe50`, worker's `4bfddedf` (*"two errata, a vacuous remedy…"*). **Worker's keeps the number**: session `169`'s successor link already points at it, verified resolving. See *"The numbering collision"* below — it is a real defect and the most durable thing either of us produced in that window.
 
 **Date:** 2026-08-14 · **Phase:** 24 (hardening tail) · **Area:** `packages/policy` (`providers-integrations-implementer`, single-track `main`)
 **Predecessor:** this area's prior session — `168-2026-08-14-24-65-part-2-two-stated-advantages-that-died-on-measurement.md` · chronological — `172-2026-08-14-24-80-re-scoped-and-the-precedent-that-had-not-solved-it.md` (knowledge)
@@ -92,6 +94,20 @@ Unchanged by this slice — **nothing new becomes reachable by a comment.** `den
 3. ⭐ **A remedy filed as a deferment condition can be unbuildable** — and *"the nearest buildable thing is the trap"* is the outcome to watch for. **Measure the remedy before promising it.**
 4. **Correct a stale severity claim even when it errs toward alarm** — a false premise is a defect in either direction.
 5. **The graph is not a census** — three instruments, one session, all failing toward plausible; controls were the only defence.
+
+## ⛔⛔ The numbering collision — a defect in the convention, not in either author
+
+**Worker and I both committed a session doc numbered `173`, in the same tree, minutes apart.** Mine `0ebffe50`; worker's `4bfddedf`. **Different filenames, so git raised nothing** — they coexist happily and the collision is invisible to every mechanical check the repo has.
+
+⭐ **NEITHER OF US ERRED, and that is the finding.** Both of us followed the documented procedure: `ls docs/sessions/`, take the max `NNN`, increment. **Both measurements were CORRECT WHEN RUN.** The counter is read, then written, and **the two are not atomic** — a filesystem TOCTOU. ⇒ ***a per-directory `NNN` counter is not concurrency-safe, and no amount of care by either author closes it.***
+
+⛔ **AND THE PROJECT'S STATED DEFENCE DOES NOT COVER THIS CONFIGURATION.** Root `CLAUDE.md`'s track-prefix rule (`<track>-NNN-…`) is scoped to **MULTI-track**; it says single-track keeps the plain `NNN-…` form. **We are single-track.** ⇒ **the collision mechanism is undefended in exactly the configuration we are running.**
+
+⭐ **The existing rule solves a DIFFERENT problem:** it was written for **merge-time** collisions across worktrees — two branches each producing `001-…`. **This is a same-tree, same-second collision between concurrent teammates**, which that rule never contemplated. ⚠ **A defence that names a collision class can read as covering the whole hazard**; here it covers the merge axis and leaves the concurrency axis open.
+
+⚠ **It survived to COMMITTED on both sides.** Not caught by staging, not by the `pre-commit` hook (which lints `IMPLEMENTATION_PLAN.md`, not doc numbering), and not by either author's own check — **because both checks passed.** ⇒ **the first observer was a human reading the directory afterwards.**
+
+**Candidate remedies, not chosen here** (the team was shutting down; recorded so the next session does not re-derive them): allocate the number by an atomic operation rather than a read-then-write · include the area in the filename so the namespaces cannot collide even single-track · or make it detectable rather than preventable — a lint that fails on two files sharing an `NNN` prefix, which is cheap and would have caught this at the first commit.
 
 ## Verification at close
 
