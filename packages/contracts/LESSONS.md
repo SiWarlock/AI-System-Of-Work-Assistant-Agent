@@ -3299,3 +3299,31 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⭐ **AND THE AUTO-MODE CLASSIFIER DENYING THE REPAIR AMEND WAS CORRECT AND WAS NOT ROUTED AROUND — by worker, who was certain they were right, or by the orchestrator holding a clean recovery.** ***A guard is only worth having if it holds when the person is certain.***
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any `git commit --amend` in a shared checkout, and every spawn-prompt traps list. Confirm HEAD is yours in the same breath, or use a follow-up commit instead.**
+
+<a id="168"></a>
+## 168. A HOLD OUTLIVES ITS REASON SILENTLY — a correctly-reasoned precondition, cancelled by a decision the holder never saw
+
+**Date:** 2026-08-14. **Source:** the `L167` incident's own session doc. **Banked at the lead's instruction**, who named the family: *"same as the residual-comment-outliving-the-residual finding."* ⭐ **Nobody was wrong at any point, which is the entire difficulty.**
+
+**The instance.** Worker wrote session doc `169` and **deliberately held it uncommitted**, stating the gate in its own header: *"THIS DOC IS DELIBERATELY UNCOMMITTED AT WRITE TIME … committing on top of `1de290d9` would turn a one-command `git commit --amend` into a rebase. Commit this only after `1de290d9`'s message is restored."* ⭐ **That reasoning was CORRECT when written, and the hold was the right call.**
+
+⛔ **Then the lead ruled the repair OFF** — *corrections land IN the record, never OVER it; an amend would erase the evidence the incident happened and re-create the defect it fixes* — and landed `ad9c6815` instead. ⇒ ***`1de290d9`'s message will never be restored, so the release condition became PERMANENTLY UNSATISFIABLE.*** **The holder's session had ended before the ruling existed.**
+
+⛔⛔ **MECHANISM, and it is structural rather than careless: a hold is a precondition on a FUTURE state, and NOTHING RE-EVALUATES A PRECONDITION WHEN AN UNRELATED DECISION INVALIDATES IT.** The ruling's author is deciding a repair question and is not thinking about who is parked on that repair; the hold's author is not present to notice. **Both parties behave correctly and the artifact stays frozen.**
+
+⛔ **THE COST HAS THREE LAYERS, AND THE THIRD IS THE DANGEROUS ONE:**
+1. The doc sat **UNTRACKED** — the only state with a real loss vector (`L117`), holding the primary record of the incident that produced `L167`.
+2. Its header **instructed every reader not to commit it**, so the correct action looked forbidden.
+3. ⛔⛔ **Its "Open follow-ups" named the countermanded `git commit --amend -C 614bcbdc` as *"the only outstanding action from this session"*** — the first thing a successor reads. **A reader following it in good faith would have erased the incident evidence and re-created the defect, from the incident's own authoritative record.** ⇒ ***`L153` half 2: an instruction whose IMPERATIVE INVERTED.*** The hold existed to keep an amend cheap; after the ruling, holding bought nothing and carried loss risk.
+
+⭐⭐ **WHY IT SURVIVES A CAREFUL READ, and this is what separates it from ordinary staleness: NOTHING IN THE TEXT IS WRONG.** A stale fact contradicts the world and can be caught by re-measuring it. **Here the reasoning is intact, internally consistent, and still persuasive — the WORLD moved, not the text.** ⇒ **re-reading the hold confirms it; only knowing about an unrelated decision falsifies it.**
+
+⭐ **Family with [L148](#148)** (a residual-documenting comment outlives the residual) **and it is the same shape on a different artifact:** there a **FIX** silently satisfied a recorded finding; here a **RULING** silently voided a recorded precondition. **Both are "everybody checks what a change BROKE; nobody checks what it silently RESOLVED or CANCELLED."** ⚠ **Also [L91](#91)'s inverse:** L91 says whoever imposes a hold owns releasing it — **this is what happens when the holder cannot, because their session ended first.** ⇒ **hold-ownership must TRANSFER, or the hold outlives the team that understood it.**
+
+⇒ **DO, and both halves are cheap:**
+- **Imposing a hold:** name the **durable surface** that releases it (`L51` — a gate living only in a session-scoped artifact dies with the session), and name **who releases it if you are not here**. A hold whose releaser is gone is not a hold, it is a freeze.
+- **Issuing a ruling that forecloses an action:** **ask what is currently WAITING on that action.** One question, at the moment the ruling is written, by the only party who knows the action is now closed.
+
+⚠ **NOT a rule against holds** — the hold here was correct and prevented a genuine mess. **The defect is a hold with no transferable release path, not the decision to hold.**
+
+`pin: none` · `pattern: git ls-files --others --exclude-standard` — **an untracked file that has survived a round is a candidate stale hold, not just untidiness; ask what it is waiting for and whether that thing can still happen.** `accepted: partially enforceable` — **enforcement point: any ruling that forecloses an action (ask what is parked on it), and any `/orchestrate-end` or `/team-end` that inherits an untracked artifact.**
