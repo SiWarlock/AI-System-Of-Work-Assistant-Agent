@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-13 · **Phase:** 24 (hardening tail) · **Area:** `packages/policy` (`providers-integrations-implementer`, single-track `main`)
 **Predecessor:** chronological — `164-2026-08-13-24-26-closes-and-the-comment-that-instructed-the-forbidden-binding.md` (knowledge) · **this area's prior session** — `161-2026-08-13-redaction-safe-producer-enumeration-24-45.md`
-**Successor:** _(next `/session-end`)_
+**Successor:** `168-2026-08-14-24-65-part-2-two-stated-advantages-that-died-on-measurement.md` (this area's next; chronologically `166`/`167` are worker's and knowledge's — chains run per-AREA, see the note in `161`)
 
 **Commit:** `ba0deb1b` — 1 commit, 3 files, **zero logic delta** (non-comment `+/-` lines empty, verified mechanically).
 
