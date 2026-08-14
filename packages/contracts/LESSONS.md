@@ -3569,3 +3569,25 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⭐ **Kin to [L160](#160)** (*a correct answer from a broken instrument is worse than a wrong one, because the METHOD gets reused*) **one step earlier: L160 is a broken instrument that happens to be right; L178 is a WORKING instrument pointed at input it cannot describe.**
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any purpose-built measurement whose result will be reported — a scratch harness, a census, a checksum comparison, a normalising diff. State the valid input class WITH the result; a positive control alone does not license reading it.**
+
+<a id="179"></a>
+## 179. WHEN TWO CENSUSES DISAGREE, THE DELTA IS THE FINDING — reconciling by picking a winner discards exactly the interesting set
+
+**Date:** 2026-08-14. **Source:** `#69`'s enumeration. ⭐ **The implementer's formulation, adopted over the orchestrator's weaker one, and self-reported against themselves.**
+
+**The instance.** A name-keyed census found **3** `WriteSuccess` constructors; a compiler enumeration (make the field required, run `tsc`) found **2**. ⛔ **The orchestrator had instructed that the compiler REPLACE the name search — *"a construction site is type-dependent by definition, so the enumeration is COMPLETE."*** **It is not.** `as WriteSuccess` is an **ASSERTION**, not an assignment-checked construction, so a required field flags none of them — and the true population was **12 casts across four further files**, including `as unknown as WriteSuccess`.
+
+⇒ ***THE NAME-KEYED CENSUS WAS THE MORE COMPLETE ONE, AND IT WAS RETRACTED IN FAVOUR OF THE INCOMPLETE ONE.***
+
+⭐⭐ **THE ORCHESTRATOR'S FRAMING WAS *"neither dominates, use the union."* THE IMPLEMENTER'S IS SHARPER AND IS THE LESSON: THE TWO METHODS FAIL IN OPPOSITE DIRECTIONS, SO THEIR DISAGREEMENT IS THE SIGNAL.**
+> **Name-keyed OVER-includes** (it matches mentions) — **and it FOUND the casts.**
+> **Compiler UNDER-includes** (blind to assertions) — **and it EXCLUDED the mentions.**
+⇒ ***when they disagree, THE DELTA IS EXACTLY THE INTERESTING SET*** — the mentions the compiler dropped, and the casts the compiler could not see. **`3 vs 2` was not one method correcting the other; it was a discrepancy demanding an explanation, and the explanation was the finding.**
+
+⛔ **THE ACTUAL ERROR, in the implementer's words: *"I had both results in hand and reconciled them by picking a winner."*** ⚠ **And they named why it recurred: the SAME shape had appeared earlier in the same task — a `75`-vs-`3` reconciliation where picking a winner HAPPENED TO BE RIGHT.** ⇒ ⭐⭐ **[L160](#160) applied to a RECONCILIATION METHOD rather than to an instrument: *"getting away with it once is presumably why I did it again."*** **A correct answer from a bad reconciliation is worse than a wrong one, because the reconciliation gets reused.**
+
+⇒ **DO. When two enumerations of the same population differ, DO NOT pick.** **Compute the delta, classify every member, and state which method missed it and why.** ⭐ **If you cannot explain the discrepancy, you do not yet know the population** — and a number you cannot explain is not a measurement, whichever method produced it.
+
+⚠ **Corollary worth its own line: agreement between two methods is only evidence if they COULD have disagreed** (`L155`'s amendment) — **and this is the other half: disagreement is only useful if you EXPLAIN it rather than resolve it.** **Both halves are about refusing to let a reconciliation stand in for an understanding.**
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any moment you hold two counts of the same thing. The delta gets enumerated and explained before either number is reported, and a task/commit citing a corrected count says what the other method saw.**
