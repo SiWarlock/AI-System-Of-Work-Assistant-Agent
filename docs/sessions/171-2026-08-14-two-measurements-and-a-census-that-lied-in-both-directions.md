@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-14 · **Phase:** 24 (hardening tail) · **Area:** `packages/knowledge` (knowledge-implementer, single-track `main`)
 **Predecessor:** `170-2026-08-14-three-fixes-two-measurements-and-the-claims-i-had-to-retract-about-my-own-work.md` (also mine)
-**Successor:** _(filled in by the next `/session-end`)_
+**Successor:** `172-2026-08-14-24-80-re-scoped-and-the-precedent-that-had-not-solved-it.md`
 
 **Commits:** none — both slices were measurement-only. Verdicts recorded by the orchestrator at `d6295e89` (`#76`) and `103080dc` (`#81`).
 
