@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-13 · **Phase:** 24 (hardening tail) · **Area:** `packages/knowledge` (knowledge-implementer, single-track `main`)
 **Predecessor:** `164-2026-08-13-24-26-closes-and-the-comment-that-instructed-the-forbidden-binding.md` (this area's prior session) · same-day siblings: `165` (providers), `166` (worker)
-**Successor:** _(filled in by the next `/session-end`)_
+**Successor:** `170-2026-08-14-three-fixes-two-measurements-and-the-claims-i-had-to-retract-about-my-own-work.md`
 
 **Commits:** `7412e0f0` (`### 24.67`, task `#57`)
 
