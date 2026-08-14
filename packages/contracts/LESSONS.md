@@ -3495,3 +3495,30 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⭐ **Family with [L145](#145)** (a comment asserting its own code is live) **pointed outward instead of inward** — L145's comment over-claims about the code beneath it; **this one under-defends against code it cannot see.** ⚠ **And it composes with [L174](#174): decay source 2 was the author's own later slice, so the author is simultaneously the least likely reader AND a live source of falsification.**
 
 `pin: none` · `pattern: none reliable — the defect is a claim about files the grep would have to already understand.` `accepted: not mechanically enforceable` — **enforcement point: authoring or reviewing any comment that enumerates, counts, or characterises code in ANOTHER file. Ask what would signal its falsification, and if the answer is "nothing in this file", move the claim or make it re-derivable.**
+
+<a id="176"></a>
+## 176. A CONDITION NAMES THE MOST OBSERVABLE PROXY FOR ITS EVENT, NOT THE EVENT — and a trigger can fail silently in BOTH directions
+
+**Date:** 2026-08-14. **Source:** the lead, generalising from three of their own and the orchestrator's conditions in a single session. **Banked at their instruction, on the pair rather than the instances** — *"separately each reads as an oversight; together they read as a class."*
+
+**THREE INSTANCES, ONE SESSION, THREE AUTHORS, NONE CARELESS:**
+> **`### 24.76`'s re-derivation trigger** named a **TEXTUAL** change (*"any change to `createCommitActivity`'s catch"*) for a **SEMANTIC** condition. The catch was never edited; its **coverage** shrank when a throw became a returned `err`. **A reader checking *"did anyone touch the catch?"* answers no, correctly, and the trigger stays silent.**
+> **`#43`'s fold** named a **SESSION-SCOPED** home for a **DURABLE** need — folding a finding into a harness task that dies on respawn.
+> **`#74`'s release condition** named a **NUMBER** (*"when session doc 170 lands"*) for an **AUTHORSHIP** event. Doc 170 landed — **in a different area's chain.** Acting on it would have written a false successor link.
+
+⛔⛔ **MECHANISM, and it explains why careful people keep doing it: A CONDITION TENDS TO NAME THE MOST OBSERVABLE PROXY FOR ITS EVENT, BECAUSE OBSERVABILITY IS EXACTLY WHAT MAKES A CONDITION FEEL CHECKABLE AT THE MOMENT YOU WRITE IT.** *"Doc 170 lands"* is easy to verify; *"worker's next doc lands"* requires knowing the chains. **The author reaches for the version they can picture someone confirming.**
+
+⛔ **AND THE PROXY IS RIGHT MOST OF THE TIME, WHICH IS WHAT LETS IT SURVIVE REVIEW.** The catch usually *is* edited when its coverage changes; the doc number usually *does* track the chain. ⇒ ⭐⭐ ***the authoring test is NOT "is this checkable" — it is "CAN THIS BE CHECKED AND BE WRONG AT THE SAME TIME?"***
+
+⭐⭐ **THE PAIRED FAILURE MODE, which is the half neither instance shows alone:**
+> **`24.76`: the trigger FIRED AND LOOKED SILENT.** The event happened; the wording didn't recognise it; nobody acted.
+> **`#74`: the trigger LOOKED FIRED AND WAS SILENT.** The event hadn't happened; the wording said it had; someone nearly acted.
+⇒ ***Both are invisible from the trigger's own wording, and both are cured by one question: WHAT EVENT DOES THIS NAME, AND CAN I OBSERVE THAT EVENT DIRECTLY?***
+
+⭐ **[L118](#118)'s family aimed at CONDITIONS rather than at states, and the difference is what makes it worse.** L118's proxies give a **wrong answer** about something, which someone can later contradict. **A proxy in a TRIGGER governs whether an obligation is LIVE** ⇒ **the failure produces NO answer at all: nobody acts, or someone acts on a false premise, and neither outcome emits a signal.** ⚠ **Sibling of [L131](#131)** (*a condition phrased as an ACTION is discharged by activity*) — **L131's condition is satisfiable by worthless work; L176's names the wrong observable entirely.**
+
+⇒ **DO. When writing any trigger, release condition, deferment condition, or `Done-when`: state the EVENT in the terms that make it true, then ask whether your written form can be satisfied while the event has not occurred — or unsatisfied while it has.** ⭐ **If the honest form is harder to check, write the honest form and add the check** (`#74`'s corrected version names authorship AND adds a verify step: *if the new doc's `Predecessor` does not read `169`, the chain disagrees with itself and THAT is the finding*).
+
+⚠ **Three authors in one session, all of whom had read the governing rule — including one who had read the per-area warning that same session.** ⭐ **Which is the evidence that this is the SURFACE and not the people: knowing it does not protect you; checking does.**
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: authoring any condition that will later be evaluated by someone else (or by you, later) — trigger, release condition, deferment condition, `Done-when`, arming precondition. And any report that a condition HAS fired: verify the event, not the proxy.**
