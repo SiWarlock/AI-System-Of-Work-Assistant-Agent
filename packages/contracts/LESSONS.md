@@ -3258,6 +3258,19 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: `/tdd` Step 10, immediately before `git commit` — re-read the approved message against anything measured since it was written; and `/tdd` Step 9, where the author should note which in-flight measurements the message assumes.**
 
+⭐⭐ **AMENDED 2026-08-14 (`#78`, knowledge-implementer, self-caught at landing) — THE OPPOSITE DIRECTION, AND IT MAKES THE RULE STRONGER RATHER THAN WIDER.**
+
+**As banked, this lesson describes an AUTHOR'S claim FALSIFIED BY EVENTS after approval, visible only to the lander.** ⛔ **This instance runs the other way: the claim was FALSE FROM BIRTH, it was the LANDER'S OWN loose summary, and the author had no way to catch it because they were QUOTING IT FAITHFULLY.**
+
+**The instance.** The implementer's Step 9 said nine stale citations resolved onto *"a comment"* plus *"`expect…`, `if…`, a bare `};`, a blank line, and an `it(` title"* — **five kinds, written as if exhaustive but SAMPLED.** The orchestrator quoted it verbatim into the approved commit message. **Re-measuring all nine before landing:** ⛔ **THREE resolve onto COMMENTS — two of them the other author's own notes ABOUT the sites** — not one. ⇒ ***the "terminates the audit with a plausible answer" failure mode at THREE TIMES the reported density***, and the understated version would have shipped.
+
+⛔⛔ **THE COMPOUNDING MECHANISM, and it is the reusable part: FAITHFUL QUOTATION LAUNDERS IMPRECISION UPWARD.** The implementer's rough summary became **an orchestrator-authored, orchestrator-endorsed sentence in a durable commit message** — ⭐ **`L116` (authority attaches to the SPEAKER, not the claim) composed with this lesson: relaying someone's words accurately transfers YOUR confidence to THEIR precision.** ⚠ **And the author cannot audit it: quoting correctly is the whole of their job at that step, and they did it correctly.**
+
+⇒ ⭐⭐ **THE RULE GENERALISES: *the lander re-verifies, REGARDLESS OF WHO AUTHORED THE CLAIM.*** **Not "check whether events overtook the author" — check whether the sentence is true, including the sentences that are yours.**
+⚠ **Tell, and it is cheap: a list of KINDS written without a count is a SAMPLE wearing an enumeration's clothes.** *"A comment, an `if`, a blank line, and an `it(` title"* reads as complete and asserts nothing about how many of each. **Give the tally or say it is a sample** (`L155`'s unit discipline, applied to a taxonomy rather than a number).
+
+`accepted: not mechanically enforceable` — **added enforcement point: any Step-9 report enumerating KINDS rather than counts, and any message that quotes a teammate's characterisation into a durable artifact.**
+
 <a id="166"></a>
 ## 166. A RUN SAMPLING DURING ANOTHER TRACK'S COMMIT SEES A RED THAT BELONGS TO NOBODY — and the natural attribution is the track that just committed
 
