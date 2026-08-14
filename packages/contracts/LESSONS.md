@@ -3374,3 +3374,58 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⚠ **NOT an argument against filing remedies** — the discipline is right and prevents the commoner failure. **The defect is treating the filing as the check.**
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any deferment approval whose condition is "file the real fix," and any `/orchestrate-end` Carry-forward triage encountering a filed-but-never-started remedy. Ask what would supply it before scheduling it.**
+
+<a id="171"></a>
+## 171. A PER-PACKAGE ERROR COUNT IS A COUNT OF VANTAGE POINTS, NOT OF DEFECTS
+
+**Date:** 2026-08-14. **Source:** `### 24.72` Leg A, knowledge-implementer — **caught before reporting.** **Banked at the lead's instruction.**
+
+**The instance.** Leg A's declared compile break is **ONE site**: `commitKnowledge.ts(97,13)`, `TS2322`. **The per-package run reports FOUR packages erroring** — `packages/workflows`, `packages/evals`, `apps/worker`, `apps/desktop` — **each reporting the SAME error at the SAME location**, because each typechecks workflows' source transitively.
+
+⛔ **Reporting "4 packages" would have inflated the consumer leg's scope FOURFOLD**, and it would have looked like a measurement.
+
+⛔ **MECHANISM: a monorepo typecheck reports per-OBSERVER, and the natural unit to report is the one the tool prints.** ⇒ **population-by-spelling in a new unit — grouped by *who noticed*, not by *what is wrong*.** ⭐ **The tell is cheap and decisive: same file, same line, same code ⇒ one defect.** Deduplicate on `(file, line, code)` **before** any number leaves your session.
+
+⚠ **Second half, same run and the same shape pointing the other way:** the first `turbo run typecheck --force` reported **`Tasks: 14 successful, 16 total` — it HALTED DEPENDENTS on the first failure**, so that run's blast radius was **incomplete by construction**. ⇒ **one run over-counted the defect and under-counted the surface, simultaneously.** Re-deriving per-package fixed both. ⭐ **Neither error announces itself: 4 looks thorough, and 14/16 looks like a pass rate.**
+
+⇒ **DO: report `(file, line, code)` triples, never a package count; and when a build tool short-circuits, say so — a halted run's coverage is a claim about the RUNNER, not about the tree.**
+
+`pin: none` · `accepted: partially enforceable` — **enforcement point: any Step-9 or cross-area report quoting a count of failing packages, tests, or files from a build tool. Deduplicate by location first, and state whether the run completed.**
+
+<a id="172"></a>
+## 172. MEASURE YOUR OWN COMPLIANCE — do not assert restraint
+
+**Date:** 2026-08-14. **Source:** `### 24.72` Leg A, knowledge-implementer. **Banked at the lead's instruction**, who called it *"the cheapest possible check on the failure that produced two retractions in this project, and nobody had thought to run it."*
+
+**The instance.** `### 24.72` carried a hard constraint: ⛔ **no rule number in any commit message, comment, or test name** — the grading was open and belonged to the lead. **Every prior slice would have satisfied this by saying so.** ⭐ **This one MEASURED it: `0` hits for `rule \d|safety rule` across the 59 added lines and the new test file, reported as a number.**
+
+⛔ **MECHANISM: a compliance claim about your OWN output is the one claim you are least able to check by introspection, because you are checking against your INTENT rather than against the bytes** — `L149` aimed at self-review. **"I did not write a rule number" and "no rule number appears" are different claims**, and only the second is verifiable by anyone else.
+
+⭐⭐ **WHY IT IS DISPROPORTIONATELY CHEAP: the constraint is almost always expressible as a grep over your own diff.** *No rule number · no `TODO` · no secret literal · no `console.log` · no reference to a deleted symbol · no phrase you were told not to use.* **One command, run on the diff you already have, and it converts an assertion into evidence** — while the alternative is a reviewer taking your word for it on something they would have to read every line to falsify.
+
+⚠ **Asymmetric in the direction that matters:** a false compliance claim is **invisible to review** (the reviewer is reading for defects, not auditing your restraint) and **survives into the durable record**, where the constraint existed precisely because the record is what gets quoted.
+
+⇒ **DO: when a slice carries a "do not write X" constraint, grep your own diff for X and REPORT THE COUNT.** ⭐ **Report it even when it is zero — especially then, because zero is the only result that looks identical to not having checked.**
+
+`pin: none` · `pattern: git diff --cached | grep -cE '<the forbidden token>'` — **run against your own staged diff; report the number.** `accepted: partially enforceable` — **enforcement point: `/tdd` Step 9, on any slice carrying a prohibition on what its text may say.**
+
+<a id="173"></a>
+## 173. "DO NOT PIN THE DEFECT" AND "DO NOT BUILD ON THE DEFECT" ARE DIFFERENT FAILURES — and only the first was ever written down
+
+**Date:** 2026-08-14. **Source:** `### 24.72` Leg A, knowledge-implementer — **their distinction, which is sharper than the constraint I gave them.**
+
+**The instance.** `24.72`'s constraint said: ⛔ *do not close this by adding a test that pins either throw* — pinning a `§16` violation as intended behaviour would make it harder to close (`L69`). **Then Leg A broke 4 of `### 24.77`'s tests**, whose harness reached the post-fault state by asserting `.rejects.toThrow(/store down/)`.
+
+⛔ **Those tests looked like a constraint violation and were not.** ⭐ **They CONSUMED the throw as a driving mechanism to set up a scenario; they never ASSERTED it as intended behaviour.** ⇒ **the constraint was never breached, and repairing them made the harness strictly stronger — it now pins a contract instead of depending on a defect.**
+
+⭐⭐ **THE DISTINCTION, and it is the reusable half:**
+- **PINNING a defect** (`L69`) — the suite asserts the broken behaviour is correct ⇒ **the fix reads as a regression**, and the next person backs it out *with a failing test's confidence*. **Inverts the gate into a lock.**
+- **BUILDING ON a defect** — the suite *uses* the broken behaviour as scaffolding ⇒ **the fix legitimately breaks the test, and breaking it is CORRECT.** Nothing is defended; something is merely coupled.
+
+⇒ **They demand OPPOSITE responses.** A pinned defect means **the test was wrong and must be re-aimed** (`L69`). A built-on defect means **the test was right and its scaffolding moved** — update it and say why. ⛔ **Conflating them is expensive in both directions:** treat a built-on test as a pinned one and you delete a good test; treat a pinned one as built-on and you "update" it to keep defending the defect.
+
+⚠ **The tell is what the assertion is ABOUT, not what it mentions.** A test that *mentions* the broken behaviour in its setup is building on it; one whose **expectation** is the broken behaviour is pinning it. ⭐ **Both mention it, which is why a grep cannot separate them and a reader skimming will.**
+
+⇒ **DO: when a fix breaks tests, classify each as PINNED or BUILT-ON before touching it, and record which** — a repaired built-on harness should say in-test that its scaffolding changed and why, so the next reader does not mistake the update for a weakened assertion.
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any slice whose fix reds pre-existing tests, and any constraint phrased as "do not pin X" — which does not, on its own, tell an implementer what to do about a test that merely uses X.**
