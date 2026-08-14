@@ -3522,3 +3522,24 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⚠ **Three authors in one session, all of whom had read the governing rule — including one who had read the per-area warning that same session.** ⭐ **Which is the evidence that this is the SURFACE and not the people: knowing it does not protect you; checking does.**
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: authoring any condition that will later be evaluated by someone else (or by you, later) — trigger, release condition, deferment condition, `Done-when`, arming precondition. And any report that a condition HAS fired: verify the event, not the proxy.**
+
+<a id="177"></a>
+## 177. A SIGNAL WHOSE CONSUMER IS MORE EPHEMERAL THAN THE STATE IT REPORTS — everything is wired, and the record still does not outlast the fault
+
+**Date:** 2026-08-14. **Source:** `#81` leg 1, knowledge-implementer. ⭐ **Their framing throughout; the distinction from [L106](#106) is theirs and is what makes it a separate lesson.**
+
+**The instance.** `### 24.72` Leg A made a post-commit record fault **typed and distinguishable** — a committed Markdown mutation whose audit row never landed. **Traced on two of the three production compositions, the SAME typed failure has completely different remediation value:**
+> **`sourceIngestion`** → `deps.health.surface` → the live binding → `materializeHealthItem` ⇒ **a durable `HealthItem` an operator can act on tomorrow.**
+> ⛔ **the approval path** → `Result<void, FailureVariant>` → propagated verbatim → tRPC → **the approving user.** ⇒ **a toast.**
+
+⛔⛔ **THIS IS NOT `L106`, AND THE DIFFERENCE IS THE ENTIRE POINT.** `L106` is *produced and DROPPED* — a signal reaching no consumer. **Here the signal reaches a consumer perfectly well: the human who clicked approve, synchronously.** ⭐ **Nothing is dropped, nothing is unwired, no component misbehaves — the producer produces, the channel delivers, the consumer receives.**
+
+⭐⭐ **THE DEFECT IS A LIFETIME MISMATCH: the Markdown is DURABLE, so the inconsistency PERSISTS — while the signal carrying it is transient and gone the moment it is dismissed.** ⇒ ***THE STATE OUTLIVES ITS ONLY NOTIFICATION.*** **No durable record anywhere says a committed mutation lacks its audit row.**
+
+⛔ **WHY IT SURVIVES A WIRING REVIEW — and this is what makes it worth its own number: *"is it wired?"* IS THE WRONG QUESTION, and it returns YES.** A reachability trace, a `/wired` check, an `L106` audit all pass: there is a consumer, the call path resolves, the signal arrives. ⇒ **the right question is *DOES THE RECORD OUTLAST THE FAULT?*** — and nothing in a call-path trace asks it, because **lifetime is not a property of the graph.**
+
+⇒ **DO. For any fault signal, state the LIFETIME of the condition and the LIFETIME of its notification, and compare them.** **Condition durable + notification transient ⇒ a gap, however well wired.** ⭐ **Cheap tell: if remediation requires a human who is *already looking*, the notification is the wrong shape for a durable fault** — a synchronous error is a fine channel for *"your action failed, retry it"* and a bad one for *"the system is now inconsistent."*
+
+⚠ **COROLLARY THAT NEARLY SHIPPED, and its author flagged it rather than leaving it: a fix's benefit can be COMPOSITION-DEPENDENT while its commit message is not.** Leg A's message — *"makes the fault observable and identifiable"* — is **true on the composition that was traced and false on one that was not.** It never claimed universality; **it will be read that way**, especially sitting beside a verdict that says *"it routes."* ⇒ **when a fix lands on a shared path with multiple compositions, either state which you measured or measure them all.**
+
+`pin: none` · `pattern: none — lifetime is not visible to a call-path search, which is the finding.` `accepted: not mechanically enforceable` — **enforcement point: `/tdd` Step 7.5 and any `L106` consumer check. Having found a consumer, ask how long it lasts relative to the condition — a reachability trace answers "is there a consumer" and cannot answer "does the record survive."**
