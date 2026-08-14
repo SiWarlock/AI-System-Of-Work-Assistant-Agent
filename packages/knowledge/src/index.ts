@@ -19,7 +19,12 @@ export * from "./markdown-vault/sections";
 // ── knowledge-writer: the provably-sole writer + its ordered commit gates ───────
 // The frontmatter format codec (write-side serialize + its read-side inverse) — `readFrontmatterField`
 // is the deterministic core of gate 1's `readNoteProjectId`. parseNote/composeNote stay writer-internal.
-export { serializeScalar, deserializeScalar, readFrontmatterField, KW_STAMP_FRONTMATTER_KEY } from "./knowledge-writer/frontmatter";
+export {
+  serializeScalar,
+  deserializeScalar,
+  readFrontmatterField,
+  KW_STAMP_FRONTMATTER_KEY,
+} from "./knowledge-writer/frontmatter";
 export * from "./knowledge-writer/revision";
 export * from "./knowledge-writer/ownership";
 export * from "./knowledge-writer/secret-scan";
@@ -94,7 +99,33 @@ export * from "./gbrain/enablement/crash-recovery-reconciler";
 export * from "./gbrain/enablement/decide-enablement";
 
 // ── gcl: Visibility Gate + projection + cross-workspace links + global reconcile ─
-export * from "./gcl/visibility-gate";
+// ⛔ `./gcl/visibility-gate` and `./gcl/cross-workspace-links` are NOT re-exported (24.78 Part 1),
+// applying the bar this file already states at the workspace-path line above: *widen only for
+// something a composition root must actually construct.* NOTHING here met it.
+// EVIDENCE — measured by the providers-integrations track (24.65 → 24.78) and CITED, not re-derived,
+// so a second measurement cannot disagree with the first for uninteresting reasons: ZERO importers of
+// all 16 symbols outside `packages/knowledge`; every external hit was a comment, classified
+// individually. `CrossWorkspaceLinkMap` is constructed ONLY in
+// `packages/knowledge/test/cross-workspace-links.test.ts` (17 sites), never in production.
+//
+// ⛔⛔ THE REASON IS *NOT* THAT THIS MAKES THE GCL HAZARD UNREPRESENTABLE — that justification was
+// asserted in the task text, in the brief, and in a ruling, and it is FALSE. `package.json` declares a
+// `"./*"` WILDCARD SUBPATH EXPORT, so `@sow/knowledge/gcl/visibility-gate` stays importable after this
+// edit.
+// ⚠ COUNT CORRECTED WHILE SCOPING `### 24.78` (this comment first said "3 files deep-import today"):
+// it is TWO — `packages/evals/test/gbrain-failclosed.test.ts` and
+// `packages/workflows/src/activities/projections/noteSlug.ts`. The apparent third,
+// `packages/evals/test/osb/anti-corruption.test.ts:77`, is a STRING LITERAL in a `realImports` array
+// asserting the write-surface scanner trips on deep subpaths — a test that DEFENDS against this,
+// counted as one committing it. Population-by-spelling: grouped by the text `@sow/knowledge/` rather
+// than by *is it an import*.
+// ⭐ AND THE SHARPER MEASUREMENT: **ZERO of them import `@sow/knowledge/gcl/*` at all.** The wildcard
+// is CAPABLE of serving the GCL modules; nothing uses it to. So the surface this comment is about has
+// no consumer — which is what makes a `./gcl/*`-only deny possible without breaking anyone (`### 24.78`).
+// ⇒ THE ACTUAL REASON: this removes the path taken BY ACCIDENT (a barrel symbol in scope for anyone who
+// imports the package at all) while leaving the path taken BY INTENT (a deliberate deep import).
+// Different risk profiles, and only one of them happens by mistake.
+// ⚠ The wildcard fence is `### 24.78`'s own Done-when and is deliberately NOT absorbed here: narrowing
+// `./*` breaks 3 live deep-importers across two packages, which is its own scoped change.
 export * from "./gcl/projection";
-export * from "./gcl/cross-workspace-links";
 export * from "./gcl/global-markdown-reconcile";
