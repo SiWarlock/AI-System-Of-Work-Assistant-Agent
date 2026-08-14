@@ -3206,3 +3206,26 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⇒ **DO. When citing a precedent, state WHICH of the two you mean, and if you mean "the question is settled," say what the precedent does DIFFERENTLY and why that is sound there and wrong here.** ⭐ **`24.77`'s corrected comment does exactly that and is the reference form.** ⚠ **Kin to `L124`** (*cite a precedent by what it DID and the file it did it in, never by a name for what it did*) — **`L124` guards against a compressed LABEL; this guards against an accurate label attached to a divergent MECHANISM.**
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any brief, task, comment, or Step-9 report citing an existing implementation as precedent. Name the divergences, or say explicitly that you checked and there are none.**
+
+<a id="164"></a>
+## 164. A COUNT USED AS A COST ESTIMATE IS A CLAIM — and cost estimates are where nobody applies the measurement discipline, because they feel like CONTEXT rather than CLAIMS
+
+**Date:** 2026-08-14. **Source:** `### 24.78`; the count was the orchestrator's, the ruling built on it was the lead's, and it was falsified by knowledge-implementer at `#67` Step 2.5. **Banked at the lead's instruction, on themselves.**
+
+**The instance.** *"Narrowing `./*` breaks 3 live deep-importers across two packages"* was the **stated reason** the wildcard fence was filed as a separate, deferred task rather than closed on the spot. ⛔ **The lead's words: *"I filed the wildcard fence SEPARATELY on that reason. My reason is falsified; the ruling may or may not survive it."***
+
+**Measured: 2 files, not 3 — and the third was not an importer at all.** `packages/evals/test/osb/anti-corruption.test.ts:77` is an element of a `realImports` **string array**, inside a test asserting that the write-surface scanner **trips on every idiomatic import form, deep subpaths included**:
+```ts
+'import { w } from "@sow/knowledge/knowledge-writer";', // deep subpath
+```
+⇒ ⭐⭐ ***A TEST THAT DEFENDS AGAINST DEEP-SUBPATH IMPORTS, COUNTED AS A FILE COMMITTING ONE.*** ⛔ **The member was not merely miscounted — it was the OPPOSITE of what the count claimed.** *(Population-by-spelling: grouped by the text `@sow/knowledge/` rather than by* is it an import*.)*
+
+⛔⛔ **THE MECHANISM, AND IT IS ABOUT A CATEGORY OF SENTENCE RATHER THAN A CATEGORY OF ERROR: this project measures FINDINGS relentlessly and does not measure COSTS at all.** A count that appears as *"this would break N files"* / *"that is a ~200-line change"* / *"three tracks would need to migrate" * **reads as background colour supporting a decision, not as the decision's load-bearing premise** ⇒ **it passes review unexamined precisely because everyone is examining the finding it sits next to.**
+
+⭐ **And the consequence is a DEFERRAL, which is the quietest possible outcome:** a falsified cost estimate does not produce a wrong fix — **it produces a hazard carried as filed-and-deferred when it could have been closed.** ⚠ **Nothing ever re-checks a deferral's premise, because the item is *tracked*, which reads as *handled*.** *(`L143`'s decay, entered through the cost half rather than the finding half.)*
+
+⇒ **DO. When a count decides SCOPE, SEQUENCING, or DEFERRAL, measure it with the same discipline as a count that decides SEVERITY** — method stated, non-vacuity control, classified by property rather than by spelling. ⭐ **Operational tell: if a sentence contains a number AND the word *"so"* / *"therefore"* / *"which is why,"* the number is a premise, not context.**
+
+⚠ **AND THE CORRECTED COUNT DOES NOT AUTOMATICALLY REVERSE THE DECISION** (the lead's own caution, and it is the right one): ***"breaks few importers" is a different question from "is safe to narrow."*** **Re-derive the decision on the corrected facts; do not let it ride on the arithmetic.**
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any deferral, scope cut, sequencing decision, or separate-task filing whose justification contains a number. That number is a claim and it gets a method.**
