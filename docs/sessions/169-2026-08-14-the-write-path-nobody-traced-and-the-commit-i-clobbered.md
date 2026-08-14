@@ -28,6 +28,12 @@ Four slices in the `### 24.62` family, each one falling out of the last: two com
 `git commit --amend` in a **shared checkout** is not an operation on *your* commit. **It is an operation on whatever HEAD points at when it runs.** The orchestrator landed `614bcbdc` ("seal the round") in the window between my commit and my amend, so my `--amend` rewrote **theirs**: `1de290d9` holds their tree under my message.
 
 **Recoverable, nothing lost:** their content is intact, `614bcbdc` survives in the reflog with message + authorship, my `9674554e` is untouched, nothing is pushed. **Repair (needs someone with the permission — the auto-mode classifier denied it to me, correctly):**
+
+> ⛔⛔ **ERRATUM 2026-08-14 — THE RECIPE BELOW IS COUNTERMANDED. DO NOT RUN IT. It is preserved verbatim as the record of what was proposed, NOT as an instruction.**
+> ⛔ **The lead ruled the seal is NOT repaired by rewriting** — *an amend would erase the evidence the incident happened, and would re-create the defect it fixes; **corrections land IN the record, never OVER it***. **`ad9c6815` executed that correction instead.** The repair below was therefore never performed and must not be.
+> ⛔⛔ **AND IT IS NOW ACTIVELY HARMFUL, NOT MERELY OBSOLETE — which is why this annotation sits ABOVE the block rather than below it.** `HEAD` has moved many commits past `1de290d9`. **`git commit --amend -C 614bcbdc` amends WHATEVER HEAD POINTS AT WHEN IT RUNS** — today that is some later commit, very likely another agent's. ⇒ ***running this recipe would RE-CREATE THE EXACT INCIDENT THIS DOCUMENT EXISTS TO RECORD***, with the stolen message being `614bcbdc`'s.
+> ⚠ **And note what the first line is NOT: `git rev-parse HEAD  # MUST read 1de290d9…` is a COMMENT, not a guard.** It narrates a precondition and enforces nothing — nothing aborts if HEAD has moved. **A check that cannot stop the action is a receipt, not a gate** (`contracts L109`). The fail-closed form is a chained `[ "$(git rev-parse --short HEAD)" = "<expected>" ] && git commit --amend …`, and the better answer is the one this session's own conclusion reaches four lines below: **prefer a follow-up commit or an erratum, which are race-free.**
+
 ```
 git rev-parse HEAD          # MUST read 1de290d9…
 git commit --amend -C 614bcbdc
@@ -66,6 +72,7 @@ No new code; all four slices were documentation or measurement. The annotated si
 ## Open follow-ups
 
 - ⛔ **`1de290d9`'s message repair** — the only outstanding action from this session.
+  > ⛔ **ERRATUM 2026-08-14 — CLOSED, AND NOT BY BEING DONE. Line preserved verbatim; it was true when written.** The repair was **SUPERSEDED, never performed**: the lead ruled the seal is not repaired by rewriting, and **`ad9c6815` corrected it IN the record instead**. ⇒ **`1de290d9` keeps the seal's tracker content under this session's commit message, permanently and deliberately** — that mismatch is now evidence, not debt. **Nothing is owed here.** The recipe in the INCIDENT section above is countermanded and must not be run; see the erratum there for why it is now actively harmful rather than merely stale.
 - **`#73` / `24.84`** — the write-boundary validator. Carries the binding live-id gate (3/3 live ids accept) **and the 5-fixture migration cost**, surfaced rather than discovered at implementation time.
 - **The contracts-side change** — `WorkspaceIdSchema` its own schema, never the shared `brandedIdSchema` factory. **Contracts-first is cheaper**: it shrinks the worker change to routing through the brand.
 - **Unestablished, stated as such:** 2 of the 17 models do not reference the brand (unidentified); **pre-existing rows are uncovered by all three boundaries**; which retrieval branch is live is a **deployment** fact, never asserted from source.
