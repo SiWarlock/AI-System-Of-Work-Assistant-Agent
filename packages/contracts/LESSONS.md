@@ -3042,3 +3042,48 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 `pattern: none reliable — the defect is a MISSING result, and no grep finds an absence in another tool's output.` `accepted: not mechanically enforceable` — **enforcement point: any reachability, dead-code, or no-callers claim sourced from a code-intelligence tool, especially one about to close a task or license a deletion.**
 
 ⛔⛔ **THE SPAWN-PROMPT TRAPS LINE MUST CARRY THE ASYMMETRY, NOT THE BUG — lead instruction, and the wording matters more than the finding.** Use: ***"`codegraph`: a HIT is evidence; an EMPTY is not. Callback-position call sites can be invisible to `codegraph_callers`, so a 'no callers found' result is a QUESTION, not a verdict."*** ⛔ **Do NOT write *"codegraph is unreliable"* — that would cost more than the defect does**, discarding a tool that is genuinely better than grep for every positive question, and it is `L111`'s false-doubt failure in one sentence: **a false claim is specific and gets killed; a false doubt is unfalsifiable and makes people abandon working machinery.**
+
+<a id="158"></a>
+## 158. A HARNESS PROVES NOTHING UNTIL YOU HAVE CHECKED BOTH ITS REACH AND ITS READOUT — two independent ways a reproduction attempt lies, and they fail in opposite directions
+
+**Date:** 2026-08-13. **Source:** `### 24.76`'s executed reproduction (knowledge-implementer). **Both halves banked together at the lead's instruction — separated, neither is findable.**
+
+⭐ **A reproduction harness is an INSTRUMENT, and this project has a rule for measurements taken with commands (`L155`) and none for measurements taken with code you wrote for the occasion.** Two failures, both live in this one slice, **failing in opposite directions**:
+
+### HALF 1 — REACH. Did the harness get to the state it claims to test?
+
+**The `ADD:` on this slice required the harness to assert its own preconditions before anything downstream was trusted:** the injected fault **actually fired** · `getByIdempotencyKey` returned **empty** on the retry · `compareRevision` **passed**.
+
+⛔ **Without those, a harness that silently missed the scenario is BYTE-INDISTINGUISHABLE from one that ran it and found nothing.** ⇒ **"did not reproduce" and "never got there" produce the same output**, and the first is a finding while the second is nothing at all.
+⭐ **THE PAYOFF IS ON THE NEGATIVE SIDE, which is why it must be built in ADVANCE:** because reach was proven, **a negative result would have been worth something too.** A harness without it can only ever support a positive. ⚠ **And the injected fault is exactly the kind of thing that can short-circuit the path you meant to drive** — the fault and the reach failure share a cause.
+
+### HALF 2 — READOUT. Is the harness describing the object it claims to describe?
+
+⛔ **The first harness printed `baseRevisionId: undefined` for every row. `AuditRecord` HAS NO SUCH FIELD** (`revision.ts:100-119`). The implementer was reading a property that does not exist, re-ran against `beforeSummary` where the base actually lives, **and reported the artifact rather than the number.**
+
+⛔⛔ **Reported as-is it would have been a FABRICATED FINDING ABOUT AUDIT-RECORD CONTENTS — inside the task filed to stop a wrong audit row from being believed.** ⭐ **The defect class reproducing itself in the instrument built to measure it.**
+⭐ **GENERAL FORM (the lead's, verbatim): *a harness's output is not evidence until you have checked the harness is describing the object it claims to describe.* That is the type system's job when you have one, and NOBODY'S JOB WHEN YOU PRINT.** ⚠ **`undefined` is the tell and it is a weak one** — it renders identically for *"the field is absent from this instance"* and *"this field has never existed on this type,"* and the second is the one that fabricates.
+
+⇒ **DO. Before trusting any reproduction harness: (1) assert the preconditions that put it in the target state, and report them alongside the result; (2) resolve every field you print against the real type — a field that is always `undefined` is a QUESTION about your reader, not a fact about the data.**
+
+⚠ **NOT a rule against throwaway harnesses** — this one produced a genuine, executed finding that four people had left as a plausible paragraph. **The harness was right to exist; it needed two checks that cost minutes.**
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any reproduction attempt, fault-injection probe, or scratch harness whose output will become a verdict. State the reach evidence and the readout provenance separately from the result.**
+
+<a id="159"></a>
+## 159. WHEN YOU PROPOSE A CAUSE, STATE HOW IT COULD BE RULED OUT — a well-indexed error catalogue makes you WORSE at diagnosis, not better
+
+**Date:** 2026-08-13. **Source:** the lead, self-reported after two instances in one session. **Banked as a rule they imposed on themselves.**
+
+**Two instances, same shape, hours apart:**
+1. **The census.** They doubted their Phase-24 anchor count on the grounds that it came through a pipe — **the doubt was sound and it named the WRONG NUMBER.** The `head -12` truncation had hit the *classifier-corrected* count; the raw `16 / 81` came through a different command and was never at risk. **Re-testing what they named would have "confirmed" a figure nobody doubted while leaving the doubted one unmeasured.**
+2. **The commit count.** A 21-vs-22 discrepancy; they proposed **counting the base** as the cause — *"the error I made with 40 from `a4b65b75`."* ⛔ **`git rev-list A..B` EXCLUDES `A` BY CONSTRUCTION, so that mechanism cannot produce the discrepancy.** The real cause was a third commit landing between two reads (`L156`).
+
+⭐⭐ **THE DIAGNOSIS, IN THEIR WORDS: *"I am pattern-matching to my own error catalogue instead of deriving the cause."*** ⛔ **And the sharp part: a familiar mechanism arrives WITH CONFIDENCE ALREADY ATTACHED, because you have paid for it before** — so it *feels* like diagnosis rather than like a guess. ⇒ ***a large, well-indexed catalogue of your own past errors makes you WORSE at this, not better***, and this project deliberately builds exactly such a catalogue.
+
+⇒ **THE RULE, cheap and checkable: WHEN YOU PROPOSE A CAUSE, STATE HOW IT COULD BE RULED OUT.** ⭐ **Both instances were killable in one clause** — *"`A..B` excludes `A`"* · *"which command produced THAT number?"* — **and the proposer could have run the clause themselves.**
+
+⚠ **NOT "distrust pattern-matching"** — recognising a known shape is most of what experience buys, and the census doubt was *right to raise* (`L111`: raising is correct; corroborating without evidence is the defect). **The rule attaches the falsifier to the proposal, so the recipient can kill it in a clause instead of spending a measurement on it.**
+⭐ **Kin to `L100`** (a negative claim carries its search scope) **aimed at CAUSAL claims instead of existence claims** — and to `L154`, since a familiar mechanism correctly describing a *different* instance is a sound measurement attached to the wrong scope.
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any message proposing a cause for a discrepancy, a failure, or another agent's error — especially one drawn from your own prior instance of it. Attach the falsifier.**
