@@ -11,6 +11,9 @@
 //      JSON-Schema layer; the Zod parse + §3 rule catch it — LESSONS §3)
 //   3. compare-revision precondition (on-disk == expected base, else write_conflict)
 //   4. project the plan into post-apply file bytes
+//   4.4. already-present detection (task 24.77) — an EMPTY diff over a plan that DECLARES mutations
+//        means the vault already holds this plan's projected end state; step 8's row must say so
+//        rather than claim `revision-applied: 0 file(s) changed`
 //   4.5. foreign-workspace path-consistency guard (task 24.12) — a note's path must carry its own
 //        plan.workspaceId as prefix, unless it's a KN-12 structural surface or the one legacy-exempt
 //        workspace the Copilot LegacyContentPolicy {mode:"assign"} bridge serves
@@ -365,6 +368,50 @@ export async function applyPlan(
   const projected = projectPlan(snapshot, plan);
   const changes = diffChanges(snapshot, projected);
 
+  // 4.4 — 24.77: AN EMPTY DIFF OVER A PLAN THAT DECLARES MUTATIONS MEANS THE PLAN IS ALREADY APPLIED.
+  // ⚠ NUMBERED 4.4, NOT 4.6, DELIBERATELY: it runs HERE — after step 4's diff, before step 4.5's
+  // guard loop — and this file's step vocabulary is load-bearing (the 24.67 block above reasons about
+  // "the step-4.5 loop" moving relative to "the step-7 commit" to justify a rule-4 decision). A step
+  // number that does not match execution order damages the one thing that block needs to stay readable.
+  // The vault already contains what this plan asks for, so step 8's audit row must NOT claim
+  // `revision-applied: 0 file(s) changed` — a row that names a non-zero declared mutation count while
+  // reporting an empty diff CONTRADICTS ITSELF, and (measured, 24.76) it is written against a base
+  // that ALREADY INCLUDES the mutation.
+  // ⛔ THE PREDICATE IS DELIBERATELY RETRY-BLIND — it reads only this call's diff and this plan's own
+  // declared counts. It does NOT rest on the exactly-once approval CAS or on `createCommitActivity`'s
+  // §16 catch, which are what block the retry in production TODAY and which `### 24.72`'s natural
+  // remedy would remove. Assume both gone: this still fires, because its inputs are local.
+  // ⚠ DISCRIMINATOR, and it is the load-bearing half: `changes.length === 0` ALONE is not the
+  // condition. A legitimately empty plan (declares nothing, changes nothing) is an honest zero-change
+  // commit and keeps its ordinary row — widening this to "any empty diff" would suppress that too.
+  // ⭐ PRECEDENT, cited by what it DID and where (contracts L124): `tombstone.ts`'s step 5 recognises
+  // the same STATE — "idempotent content no-op: the vault is already in the tombstoned end state …
+  // no new revision/audit" — so the sibling writer answered this question and `applyPlan` never got
+  // the answer (contracts L134's shape: the correct posture already in use in the same subsystem).
+  // ⛔⛔ BUT DO NOT COMPLETE THE PARALLEL — IT DIVERGES HERE IN BOTH RESPECTS THIS GUARD TURNS ON,
+  // and a reader who mirrors it would undo this slice (reviewer-caught; contracts L105):
+  //   (1) CONDITION — tombstone tests `changes.length === 0` ALONE. That is the widening the
+  //       DISCRIMINATOR paragraph above forbids. It is sound THERE because a tombstone command
+  //       always targets a removal, so an empty diff cannot mean "declared nothing"; `applyPlan`
+  //       accepts plans that legitimately declare nothing, so it must test BOTH conjuncts.
+  //   (2) DISPOSITION — tombstone SUPPRESSES (early `ok({changed:false})`: no commit, no revision,
+  //       NO audit row). This function does the opposite on purpose: it writes a TRUTHFUL row (see
+  //       step 8). ⭐ Suppression is honest THERE only because tombstone moves the signal into its
+  //       RETURN TYPE via `changed: false`; `WriteSuccess` has no such field, so suppressing here
+  //       would delete the fact rather than relocate it.
+  // ⚠ ACCEPTED RESIDUAL + its invalidating condition (contracts L106): the applied/already-applied
+  // distinction currently lives ONLY in `afterSummary` free text — `ui-safe.ts` deliberately drops
+  // that field from both UI projections, no production code parses it, and the `Result` is
+  // programmatically indistinguishable from an ordinary commit (`replayed` stays `false`). A
+  // machine-readable discriminator on `WriteSuccess` is TRACKED AS `### 24.80` rather than added
+  // here, because a field no consumer reads is itself an L106 defect; adding it owes a named consumer.
+  // ⛔ AND IT IS WORSE THAN "no consumer reads it" (reviewer-established): `createCommitActivity`
+  // returns `ok({revisionId, replayed})` and DROPS `auditRecord` entirely, so no downstream caller can
+  // even READ this summary. The distinction currently cannot cross the port at all.
+  // ⇒ INVALIDATING CONDITION: the moment any caller needs to BRANCH on already-applied, this row is
+  // not enough and the discriminator is owed.
+  const alreadyApplied = changes.length === 0 && planDeclaresMutations(plan);
+
   // 4.5 — foreign-workspace path-consistency guard (24.12 remedy, safety rule 4). BEFORE ownership +
   // secret scan (cheapest/structural check first) and BEFORE the commit — a foreign-workspace note
   // landing unprefixed is what let the Copilot serving-time LegacyContentPolicy `{mode:"assign"}`
@@ -444,7 +491,12 @@ export async function applyPlan(
     baseRevisionId: command.expectedBaseRevision,
     newRevisionId: newRevision,
     beforeSummary: `revision ${command.expectedBaseRevision}`,
-    afterSummary: summarize(plan, changes.length),
+    // 24.77: the already-applied case gets a TRUTHFUL summary rather than a false `revision-applied`.
+    // ⛔ A truthful row, not a SUPPRESSED one (orchestrator ruling): suppression would trade a wrong
+    // row for an absent one, and `### 24.72` is separately about restoring observability — the
+    // asymmetry "a missing row is investigated, a wrong one is believed" does not license
+    // manufacturing absences.
+    afterSummary: alreadyApplied ? summarizeAlreadyApplied(plan) : summarize(plan, changes.length),
     payloadHash: hashPayload(plan),
     occurredAt,
     // WS-8 scope for the §9.5 recent-changes projector — the plan always carries a workspaceId (KN gate).
@@ -711,6 +763,35 @@ function tokenOf(revisionId: RevisionId): string {
 function summarize(plan: KnowledgeMutationPlan, changedFiles: number): string {
   return (
     `revision-applied: ${changedFiles} file(s) changed; ` +
+    `${plan.creates.length} create(s), ${plan.patches.length} patch(es), ` +
+    `${plan.linkMutations.length} link(s), ${plan.frontmatterUpdates.length} frontmatter update(s)`
+  );
+}
+
+/**
+ * Does this plan ASK for any mutation? (24.77's discriminator.) Deliberately counts every declared
+ * mutation kind `summarize` reports, so the two can never disagree about what "declares nothing"
+ * means — a plan counted as empty here but non-empty there would re-open the contradiction.
+ */
+function planDeclaresMutations(plan: KnowledgeMutationPlan): boolean {
+  return (
+    plan.creates.length + plan.patches.length + plan.linkMutations.length + plan.frontmatterUpdates.length > 0
+  );
+}
+
+/**
+ * 24.77 — the honest summary for "the vault already contains this plan's projected end state."
+ * Deliberately does NOT begin `revision-applied:`, because nothing was applied by THIS call; that
+ * prefix is what made the old row self-contradictory when paired with a non-zero declared count.
+ * ⚠ AND DELIBERATELY NOT `already-applied:` EITHER (reviewer-caught): that would imply THIS PLAN was
+ * applied earlier, which the guard CANNOT establish — byte-identical content may have been authored
+ * by a human, by an Obsidian/iCloud sync, or by a different plan. `already-present:` is a claim about
+ * the vault's STATE, which is exactly what was measured. Keeps the declared counts so the row still
+ * says WHAT is already present rather than degrading into a bare "no-op".
+ */
+function summarizeAlreadyApplied(plan: KnowledgeMutationPlan): string {
+  return (
+    `already-present: 0 file(s) changed; the vault already contains this plan's projected end state — ` +
     `${plan.creates.length} create(s), ${plan.patches.length} patch(es), ` +
     `${plan.linkMutations.length} link(s), ${plan.frontmatterUpdates.length} frontmatter update(s)`
   );
