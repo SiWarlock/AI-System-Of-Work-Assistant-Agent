@@ -3087,3 +3087,46 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⭐ **Kin to `L100`** (a negative claim carries its search scope) **aimed at CAUSAL claims instead of existence claims** — and to `L154`, since a familiar mechanism correctly describing a *different* instance is a sound measurement attached to the wrong scope.
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any message proposing a cause for a discrepancy, a failure, or another agent's error — especially one drawn from your own prior instance of it. Attach the falsifier.**
+
+<a id="160"></a>
+## 160. A CORRECT ANSWER FROM A BROKEN INSTRUMENT IS WORSE THAN A WRONG ONE — the wrong one gets caught, and the right one gets the method REUSED
+
+**Date:** 2026-08-13. **Source:** `#58` Part 1, providers-integrations-implementer, self-reported. **Their framing, and it is the lesson.**
+
+**Two consecutive census attempts were VACUOUS, and both would have returned the TRUE answer:**
+1. `for s in $SYMS` — ⛔ **zsh does not word-split unquoted expansions**, so the loop ran **once**, with all 16 symbol names as a single symbol. Result: a clean-looking **"NONE"**.
+2. `awk '$0 ~ "\\<" S "\\>"'` — ⛔ **macOS `awk` does not support `\<` word boundaries**, so **every** symbol returned nothing — **including the positive control.**
+
+**The true answer was zero external importers.** ⇒ ***both broken methods would have produced the correct result.***
+
+⛔⛔ **THE AUTHOR'S OWN STATEMENT OF WHY THAT IS THE BAD OUTCOME: *"Without the control I would have reported 'no importers' from a broken matcher and been ACCIDENTALLY RIGHT — the worst outcome, since it would have validated the method."***
+
+⭐⭐ **MECHANISM, and it is about the FUTURE rather than the present measurement: a wrong answer from a broken instrument gets contradicted by reality and the instrument gets fixed. A RIGHT answer from a broken instrument is CONFIRMED by reality — so the instrument is trusted, recorded as the method, and REUSED on a question where it will be wrong.** ⇒ **the damage is not in this measurement; it is in every measurement that copies the recipe.**
+
+⚠ **This is why a non-vacuity control is not optional even when you are confident of the answer** — ⭐ **especially then, because a confidently-expected result is exactly the one nobody re-runs.** **The control does not check the ANSWER, it checks the INSTRUMENT**, and those come apart precisely when the answer happens to be right.
+
+⇒ **DO. Every census reports its POSITIVE control (a term known present, with its count) and, where cheap, a NEGATIVE control (a term known absent).** Here: `admitProjection` = 13 files ✓ and `zzzNotARealSymbolQQ` = 0 ✓, with the final method `grep -rwl` per symbol. ⛔ **A census reported without its control is unverified regardless of whether its answer is correct.**
+
+⚠ **Two environment specifics worth carrying, since both are silent:** **zsh does not word-split** (a `for x in $LIST` loop silently runs once — already recorded once for a registry-prune loop, and it recurred here in a different shape) · **macOS `awk` has no `\<`/`\>`** (every match silently fails).
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any census, sweep, or enumeration whose result will be reported. State the control WITH the result; a control run and not reported is the same as not run, because the reader cannot distinguish them.**
+
+<a id="161"></a>
+## 161. UNDERSTATING A GUARD INVITES DELETION; OVERSTATING A GUARANTEE INVITES THE READER TO STOP CHECKING — both fail open, and `L153` covered only the first
+
+**Date:** 2026-08-13. **Source:** `#51` Step 2.5, worker-implementer — found while tracing a selector rather than stopping at a field doc. **Their generalisation, banked as the direction `L153` did not cover.**
+
+**The instance.** `apps/worker/src/api/procedures/copilotClaudeSynthesis.ts:449-451` and `:525` state **unconditionally** that *"the ONE served workspace reads the local gbrain; every other workspace stays on the fixture (**WS-8 by construction**)."* **That is true only of the scoping-OFF branch.** **Fifteen lines below, `:529-538` describes all three branches correctly and says multi-served holds WS-8 *"by the mandatory per-request filter (not by construction)."***
+
+⛔⛔ **SAME FILE, TWO STATEMENTS, AND THE STALE ONE CARRIES THE STRONGER SAFETY PHRASING.** ⇒ **a reader answering the open rule-4 task by quoting `:449-451` concludes isolation holds BY CONSTRUCTION and closes it as safe.** ⭐ **A live false-assurance positioned exactly where the next investigator lands.**
+
+⭐⭐ **THE ASYMMETRY, and it completes `L153`:**
+- **Understating a GUARD** (*"this check is inert / behaviourally irrelevant"*) ⇒ **invites its DELETION.** — `L153`'s territory.
+- **Overstating a GUARANTEE** (*"holds by construction"* where it holds by a filter) ⇒ **invites the reader to STOP CHECKING.**
+⇒ ***BOTH FAIL OPEN, by opposite routes, and only the first was written down.***
+
+⭐ **THE OPERATIONAL FORM: what makes a reader appropriately cautious is UNDERSTATING A GUARANTEE, never overstating one.** ⚠ **"By construction" is the highest-strength phrase available and therefore the most expensive to get wrong** — it tells the reader *no runtime condition can make this false*, which terminates inquiry in a way *"enforced by X"* does not. ⇒ **reserve it for properties that genuinely cannot be otherwise, and BRANCH-QUALIFY it the moment a second branch exists.**
+
+⚠ **Structural cause worth naming: the overstatement was CORRECT WHEN WRITTEN** — there was one branch then. **A second branch was added and the field doc did not move**, while the prose fifteen lines down did. ⇒ **`L148`'s shape (a claim outliving the condition that made it true) arriving in a SAFETY phrase rather than a residual note**, and the guard against it is the same: **when you add a branch, grep the file for claims quantified over the old branch count.**
+
+`pin: none` · `pattern: grep -rnE "by construction" --include="*.ts" apps packages | grep -v test` — **candidates to classify** (`L104`: this row would trip it), each asking *"is there a branch where this does not hold?"* `accepted: partially enforceable`.
