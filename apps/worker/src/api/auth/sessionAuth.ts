@@ -19,6 +19,34 @@ import { verifySessionToken as policyVerifySessionToken, isAllow, type SessionTo
  * The successful authentication context handed to a procedure/handler once the
  * per-launch token verifies. Deliberately minimal — the token itself never rides
  * along, only the fact of authentication.
+ *
+ * ⛔⛔ THERE IS NO PRINCIPAL HERE, AND THAT IS A DECISION — NOT A GAP. OWNER-RULED
+ * 2026-08-14 (tasks `#51` / `### 24.62` boundary (b)). DO NOT "FIX" THIS BY ADDING A
+ * SUBJECT: the owner declined both a principal and a tripwire, explicitly.
+ *
+ * WHY: SoW is single-owner and local-first — all workspaces belong to the same person.
+ * ⇒ safety rule 4 protects CONTENT SCOPE (employer content must not surface in personal
+ * outputs), NOT one principal from another. There is no "someone else's workspace"
+ * because there is only one owner. Auth here answers *"is this request from the owner's
+ * session?"* — it authenticates the REQUEST, not an ACTOR, and one shared per-launch
+ * token is the correct shape for that question.
+ *
+ * ⭐ WHAT ACTUALLY CONSTRAINS A REQUEST'S `workspaceId`, stated because an absence-only
+ * note tells the next reader nothing about what protects them: **the control is
+ * "is this workspace SERVED by this deployment", NOT "is this workspace the caller's".**
+ * It is enforced downstream, not here — `createMultiServedGbrainRetrieval`
+ * (`api/procedures/copilotGbrainSubprocess.ts`) gates the brain read on REGISTRY
+ * MEMBERSHIP (an unregistered workspace fails closed to a fixture and the brain is never
+ * read for it) and then applies a MANDATORY per-request scope filter bound to the
+ * registry-authoritative id — server-derived, never the raw input, with no passthrough
+ * branch. ⚠ Resolvers take `_ctx` and discard it; that is consistent with the above and
+ * is not an oversight, but it does mean this file is the ONLY place the reasoning lives.
+ *
+ * ⚠ SEPARATE AND STILL OPEN — do not read the ruling as closing it: whether a workspace
+ * id is WELL-SHAPED is a different question from who may name it, and the ruling is about
+ * the caller, not the string. `parseCreateWorkspace` admits any non-empty string as an id,
+ * so "registry-validated" means "someone inserted it", not "an authority vouched for its
+ * shape" (`contracts L147`; traced at `#52`).
  */
 export interface AuthedContext {
   readonly authenticated: true;

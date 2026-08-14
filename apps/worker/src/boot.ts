@@ -631,12 +631,23 @@ function failClosedEgress(workspaceId: string): UiSafeEgressStatus {
  *     in the config still reaches the durable record below. `packages/policy`'s `visibility.ts` records
  *     the identical residual for its own sibling site.
  *  3. ⛔ **AND THE PROVENANCE ARGUMENT IS CIRCULAR TO THE EXTENT THE CALLER CAN INFLUENCE THE SOURCE** —
- *     it is exactly as strong as WHO MAY WRITE A `workspace_config` ROW, which is UNTRACED. Open as
- *     shared-task-list **`#52`** ("who can insert a `workspace_config` row, and is that path
- *     authz-gated"), with **`#51`** its rule-4 sibling (authz gates WHETHER a caller may call, not
- *     WHICH workspace it may name). Named rather than left as "filed elsewhere", because per `L147`
- *     accepting a residual without a *nameable* write-path question is how the acceptance becomes the
- *     last word ever written about it.
+ *     it is exactly as strong as WHO MAY WRITE A `workspace_config` ROW. ⭐ **THAT WAS "UNTRACED" WHEN
+ *     THIS COMMENT WAS WRITTEN; IT IS NOW TRACED (`#52`, 2026-08-14) AND THE CIRCULARITY IS CONFIRMED.**
+ *     `WorkspaceConfigRepository` is the SOLE write gateway (verified at the schema symbol, not by
+ *     method name: every production write is inside the two `@sow/db` adapters), and its create path IS
+ *     caller-reachable — the `onboarding.createWorkspace` tRPC MUTATION reaches `insertIfAbsent` via
+ *     `provisionWorkspace`. ⛔ **`parseCreateWorkspace` admits ANY NON-EMPTY STRING as the id: there is
+ *     NO shape validation at the write boundary.** ⇒ *"registry-validated"* means **"someone inserted
+ *     it"**, NOT **"an authority vouched for its shape"** — so a credential-shaped id can be made
+ *     registry-valid BY CONSTRUCTION and will pass every gate above on its way into the durable record.
+ *     ⚠ **THE OWNER RULING OF 2026-08-14 DOES NOT CLOSE THIS.** That ruling is about the CALLER
+ *     (single-owner is correct by design — see `api/auth/sessionAuth.ts`); this residual is about the
+ *     STRING, and the two are independent. Rule-7 remedy — shape-validate at the write boundary or at
+ *     the audit boundary — is an open MEASUREMENT, deliberately not pre-judged here.
+ *     ⭐ **What DOES hold, so this is not read as worse than it is:** `insertIfAbsent` never overwrites
+ *     (an existing workspace cannot be hijacked), and `updateProvisioningFields` cannot express a
+ *     posture write AT ALL — `ProvisioningOwnedFields` is `{name, markdownRepoPath, gbrainBrainId}`, so
+ *     the type makes it unrepresentable. **`#51`** was the rule-4 sibling and is ruled.
  *
  * ⇒ the DURABLE RECORD keeps the raw id notwithstanding (2)/(3) — attribution is the record's whole
  * purpose and `workspaceId` is its WS-8 query key, so scrubbing there would destroy the artifact to

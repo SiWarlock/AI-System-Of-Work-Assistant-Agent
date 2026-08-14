@@ -206,6 +206,14 @@ export interface MultiServedGbrainRetrievalDeps {
  * `createGbrainSubprocessRetrieval` gate (`workspaceId === servedWorkspaceId`) with registry membership
  * (`descriptorFor`), so a second workspace's ask reads the brain instead of returning the empty fixture.
  *
+ * ⭐ THIS FUNCTION IS THE CONTROL, AND IT IS WORTH KNOWING WHAT KIND OF CONTROL IT IS (owner ruling
+ * 2026-08-14, task `#51`): **it gates on "is this workspace SERVED by this deployment", NOT on "is this
+ * workspace the caller's".** There is no caller identity to compare against — `AuthedContext` is
+ * `{authenticated:true}` and carries no principal, BY DESIGN (SoW is single-owner; rule 4 protects CONTENT
+ * SCOPE, not one principal from another — see `api/auth/sessionAuth.ts` for the ruling and its reason).
+ * ⇒ registry membership below is the whole of the admission decision, so a workspace's PRESENCE in the
+ * registry is what authorises the read. Widen the registry and you widen the read.
+ *
  * WS-8 (safety rule 4) holds by SCOPE FILTERING, not by construction: the brain is NEVER read unscoped — the
  * per-request filter (bound to the asked workspace's REGISTRY-authoritative descriptor id, server-derived,
  * never client input) drops every foreign + legacy-denied + indeterminate hit BEFORE normalize. Because the
