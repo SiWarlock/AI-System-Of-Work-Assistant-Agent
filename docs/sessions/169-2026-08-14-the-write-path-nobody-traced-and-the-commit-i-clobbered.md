@@ -1,6 +1,8 @@
 # Session 169 — worker: the write path nobody traced, and the commit I clobbered
 
-**Date:** 2026-08-14 · **Track:** `main` · **Role:** worker-implementer · **Predecessor:** `166` · **Successor:** _(none yet)_
+**Date:** 2026-08-14 · **Track:** `main` · **Role:** worker-implementer · **Predecessor:** `166` · **Successor:** `173-2026-08-14-two-errata-a-vacuous-remedy-and-the-scopes-i-kept-getting-wrong.md`
+
+> ⛔ **SUCCESSOR IS `173`, NOT `170`** — and the gap is not an error. **Session-doc chains run PER-AREA:** `170`, `171` and `172` are all `packages/knowledge` docs, verified from their own headers rather than inferred from the numbering. This chain is `worker`, so `169`'s successor is the next WORKER doc. **Written as a full filename deliberately** — a bare `173` would resolve into three numbering systems, which is the ambiguity this link was owed to close.
 
 ⚠ **THIS DOC IS DELIBERATELY UNCOMMITTED AT WRITE TIME.** HEAD (`1de290d9`) carries an outstanding repair (see the incident below); committing on top of it would turn a one-command `git commit --amend` into a rebase. **Commit this only after `1de290d9`'s message is restored.**
 
