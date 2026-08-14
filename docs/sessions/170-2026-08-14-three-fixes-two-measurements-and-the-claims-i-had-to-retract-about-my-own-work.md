@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-14 · **Phase:** 24 (hardening tail) · **Area:** `packages/knowledge` (knowledge-implementer, single-track `main`)
 **Predecessor:** `167-2026-08-13-the-guard-not-added-and-the-finding-i-had-to-retract.md` (this area's prior session — also mine)
-**Successor:** _(filled in by the next `/session-end`)_
+**Successor:** `171-2026-08-14-two-measurements-and-a-census-that-lied-in-both-directions.md`
 
 **Commits:** `77b889c2` (`### 24.77`) · `1c0bc625` + `f0d79d07` (`### 24.78` Parts 1+2) · `df39a090` (`### 24.72` Leg A) · `5d3ba8af` (`### 24.78` citation repair)
 **No-commit slices:** `### 24.76` (execution) · `#77` (Claim-2 re-derivation)
