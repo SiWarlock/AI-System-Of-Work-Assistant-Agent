@@ -1100,6 +1100,12 @@ Per-file `git add` is **necessary but not sufficient**. It does not protect agai
 2. **DURING** — chain `git add … && git commit …` in **ONE invocation**, so nothing can land between them.
 3. **AFTER** — `git show --stat`, immediately after. **Catch what still got through.**
 
+⭐⭐ **AMENDED 2026-08-13 — THE SAME DISCIPLINE APPLIES TO A PROOF, AND NOBODY HAD MADE THAT JUMP.** Worker's `#68` was a comment-only slice claiming **zero logic delta**, proven by stripping every `+`/`-` line and filtering comment-only lines to an empty residue. ⛔ **They then re-ran that proof ON THE STAGED SET, and said why: the first was measured on the WORKING TREE, BEFORE `git add`, so IT COULD NOT HAVE CAUGHT A PARTIAL STAGE.**
+
+⇒ ***A PROOF MEASURED ON THE WORKING TREE DOES NOT COVER WHAT THE COMMIT CONTAINS.*** ⭐ **Both came back empty here — but only the second one proves the artifact.**
+
+⚠ **In a shared checkout this is not hypothetical: the index is shared state — this lesson's own thesis — so what you STAGED and what you PROVED can diverge WITHOUT YOU DOING ANYTHING WRONG.** ⇒ **any claim about a commit's CONTENT — zero logic delta, comment-only, no secrets, single-file, no generated artifacts — is measured on `git diff --cached`, never on the working tree.** ⭐ **This is *"verify at commit time, not add time"* applied to a PROOF rather than to FILE SELECTION**, and the three-check procedure above verified only the file *set* while leaving every claim *about* those files measured a step too early.
+
 ### ⭐ AMENDMENT 2026-07-29 — the working tree is a moving target for READERS too, not just writers
 
 L83 above is about the index as shared state for the agent *writing* a commit. The same tree is shared state for anyone *reviewing* — and that produced three framing errors in one day, all at lead level, all with the same mechanism.
@@ -2830,6 +2836,14 @@ The brief's premise block stated: *"The sink instance **already exists at boot**
 
 ⚠ **Do not read this as "re-audit every finding after every fix."** The trigger is narrow and checkable: **you hardened a predicate that other findings are recorded against.** That is a `grep` of the file's name in the tracker, not a review.
 
+⛔⛔ **AMENDED 2026-08-13 — THIS LESSON FAILED TO PREVENT ITS OWN RECURRENCE: SAME FILE, SAME AUTHOR, THE VERY NEXT SLICE.** The implementer who banked `L148` from `### 24.65` left a block in `packages/policy/src/visibility.ts` reading *"a workspace whose `id` getter throws still throws here… §16 never-throw does NOT hold for hostile accessor shapes"* — **sitting directly above the code that, one slice later, closes exactly that.** ⚠ **Found by `code-quality-reviewer` as a HIGH, not by the author.**
+
+⭐⭐ **THEIR CONCLUSION, BANKED VERBATIM BECAUSE IT SAYS WHAT TO DO RATHER THAN WHAT WENT WRONG: *banking a lesson is not a control; the comment still has to be re-read against the code after every change that could falsify it.*** ⇒ ***THE RE-READ IS THE CONTROL, AND IT IS TRIGGERED BY THE CHANGE — NOT BY REMEMBERING THE LESSON.***
+
+⛔ **AND THE TRAP IS INTRINSIC TO THIS LESSON'S OWN SHAPE, WHICH IS WHY IT RECURS: A RESIDUAL-DOCUMENTING COMMENT IS FALSIFIED BY YOUR OWN FIX.** ⇒ **you are editing the code that makes it false, so that region is the one you are LEAST likely to re-read — you already know what it says, because you wrote it.** ⭐ **Familiarity with a region is normally an asset and is here a LIABILITY**, which is precisely why *"be careful"* cannot reach it and why the trigger has to be mechanical.
+
+⇒ **DO. At Step 8 of any slice that hardens a predicate, RE-READ THE COMMENTS IN THE REGION YOU CHANGED, hunting specifically for claims about what does NOT hold.** **A fix that closes a residual OWES the deletion or rewrite of the note describing it, in the same commit** — `L153` half 1 (*a correction owes a replacement*) pointed at the author of the fix rather than at a later reader.
+
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: `/tdd` Step 9 of any slice hardening a shared predicate or guard; and `/orchestrate-end` Carry-forward triage, where a finding closed by someone else's fix is otherwise re-read rather than re-measured.**
 
 <a id="149"></a>
@@ -3152,3 +3166,22 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⇒ **DO. When a branch is added, check the SCOPE'S ENTRY DOCS FIRST** — file header, exported-symbol docblock, config-field doc, README — **before the inline comments, which are the ones that probably moved with the change.** ⚠ **And the sweep must classify by SUBJECT, not by phrase:** ~60 `by construction` occurrences in `apps/worker/src` were overwhelmingly a **different subject** (redaction-safe, idempotent, traversal-safe, UI-safe, byte-equivalent). **A phrase census is a candidate list; the subject classification is the work** (`L104`).
 
 `pin: none` · `pattern: grep -rnE "by construction" --include="*.ts" apps packages | grep -v test` — **candidates to classify** (`L104`: this row would trip it), each asking *"is there a branch where this does not hold?"* `accepted: partially enforceable`.
+
+<a id="162"></a>
+## 162. AN ADVERSARIAL REVIEWER'S VALUE IS NOT EXTRA COVERAGE OF THE SAME SPACE — it is coverage of the space the author's CONFIDENCE CLOSED
+
+**Date:** 2026-08-13. **Source:** `#58`, providers-integrations-implementer, twice in one slice. **Their observation; banked on the landed instance, not the pending one.**
+
+⭐ **Their framing, and the last clause is the whole lesson: *"I picked the attack shapes I could imagine; it picked one I could not — in the exact place my confidence was highest."***
+
+**INSTANCE 1 (landed, a `code-quality-reviewer` HIGH).** The implementer had just written `readOwnDataProperty`, a hardened accessor for producer-controlled objects, and **did not re-scan the file for other readers of the same field.** `isWithinDefault(level, sourceWorkspace.defaultVisibility)` was **a raw second read of the property hardened three statements earlier** ⇒ **a Proxy reporting `isolated` via `getOwnPropertyDescriptor` while returning `full` via `get` passes the new guard AND THEN SUPPLIES THE CEILING**, on the one check bounding over-exposure — **and it falsified the author's own docblock claim of *"the single hardened read this module uses."*** ⛔ **The reviewer's FIRST move was exactly the scan the author skipped.**
+
+**INSTANCE 2 (pending, a `security-reviewer` harness).** Its attack set includes a **`Proxy` whose `getOwnPropertyDescriptor` trap itself throws** — which the hardened primitive **invokes** — potentially falsifying the *"closes the throw class without a `try`/`catch`"* clause. ⚠ **Recorded as pending, NOT as evidence; the verdict had not returned when this was banked.**
+
+⛔⛔ **MECHANISM: an author's enumeration of a hazard TERMINATES WHERE THEIR CONFIDENCE IS HIGHEST — and that is not a lapse, it is what confidence IS.** ⇒ **the unexamined region is not random; it is systematically the region the author just finished and feels best about.** ⭐ **So a second pair of eyes adds nothing where it merely re-covers the space the author already searched — the value is entirely in the space the author's own certainty CLOSED, and the author cannot locate that space by trying harder.**
+
+⇒ **DO. Dispatch an ADVERSARY, not a checker** — a reviewer told to *break* the fix, not to *confirm* it. ⭐ **And point it at the part the author is MOST sure of**, which is the inverse of the natural instinct to review the shaky part. ⚠ **Corollary for the AUTHOR: when a slice hardens one reader of a value, the mandatory next act is a census of EVERY reader of that value in the file** — the thing you just fixed is exactly what stops you looking.
+
+⭐ **Extends [L149](#149)** (*the author of a piece of reasoning is its worst reviewer*) **from PROSE to ATTACK-SURFACE ENUMERATION** — there the author matches text against intent; here they match a hazard-space against the one they already imagined.
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: reviewer dispatch on any slice that hardens a guard, a predicate, or a parsing boundary. Name the region the author is most confident in and aim the reviewer there; and require a same-file census of every reader of any value whose read was hardened.**
