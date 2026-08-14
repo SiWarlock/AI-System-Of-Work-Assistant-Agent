@@ -10,6 +10,8 @@
       "sow-built": "./dist/index.js",
       "default": "./src/index.ts"
     },
+    "./gcl/visibility-gate": null,
+    "./gcl/cross-workspace-links": null,
     "./*": {
       "sow-built": "./dist/*.js",
       "default": "./src/*.ts"
