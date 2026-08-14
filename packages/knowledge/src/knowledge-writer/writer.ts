@@ -67,8 +67,16 @@ import { enforceHumanOwnership } from "./ownership";
 import { scanForSecrets } from "./secret-scan";
 // The on-disk frontmatter format codec (§13.10a gate 2 + its inverse). Kept in one module so the
 // forward serializer and its inverse cannot drift; the region/link projection stays here.
-import { serializeScalar, parseNote, composeNote, KW_STAMP_FRONTMATTER_KEY } from "./frontmatter";
-import { neutralizeNoteBody, neutralizeRegionMarkers } from "../markdown-vault/sections";
+import {
+  serializeScalar,
+  parseNote,
+  composeNote,
+  KW_STAMP_FRONTMATTER_KEY,
+} from "./frontmatter";
+import {
+  neutralizeNoteBody,
+  neutralizeRegionMarkers,
+} from "../markdown-vault/sections";
 import { stampProvenance, serializeStampFieldValue } from "./provenance-stamp";
 import type { StamperDeps } from "./provenance-stamp";
 // The SHARED page-hash core (gate 4 G1d-1): the writer mints its stamp through the SAME function
@@ -131,7 +139,9 @@ export interface WorkspacePathViolation {
  * from `./workspace-path-guard`, supplying the id from the composition root — see
  * `apps/worker/src/composition/legacy-workspace.ts`, which is that id's single home.
  */
-export type WorkspacePathCheck = (ctx: WorkspacePathContext) => Result<void, WorkspacePathViolation>;
+export type WorkspacePathCheck = (
+  ctx: WorkspacePathContext,
+) => Result<void, WorkspacePathViolation>;
 
 // ── command / deps / result shapes ──────────────────────────────────────────
 
@@ -188,7 +198,10 @@ export interface WriteSuccess {
 export interface SchemaRejected {
   readonly code: "schema_rejected";
   readonly stage: "ajv" | "zod" | "scoped";
-  readonly issues: readonly { readonly path: string; readonly message: string }[];
+  readonly issues: readonly {
+    readonly path: string;
+    readonly message: string;
+  }[];
 }
 export interface WriteConflict {
   readonly code: "write_conflict";
@@ -202,6 +215,35 @@ export interface CommitFailed {
 }
 
 /**
+ * 24.72 — the two POST-COMMIT recording faults. ⛔ READ THE NAME AS WRITTEN: the commit did NOT fail.
+ * The Markdown is durable at `revisionId`; what did not land is the RECORD of it.
+ *
+ * ⛔ WHY NOT `commit_failed`: that code says the commit failed, and here it succeeded. Reporting one of
+ * these as `commit_failed` would tell a caller to treat a durable write as absent — the report
+ * inversion this task exists to remove, preserved under a typed shape instead of a throw.
+ * ⛔ WHY NOT any semantic/policy code: a store being unreachable did not earn a verdict about the
+ * plan. A config/infra fault must never be reported as a policy judgement it did not earn.
+ * ⭐ WHY TWO MEMBERS AND NOT ONE: a caller that cannot tell WHICH record is missing cannot remediate
+ * either — re-deriving an AuditRecord and re-recording a CommittedRevision are different operations
+ * against different stores. Collapsing them is the same absorption an exhaustive mapper exists to
+ * prevent, performed deliberately in a `case` instead of accidentally in a `default`.
+ * ⚠ `revisionId` is carried because the commit STANDS: without it the caller knows a recording failed
+ * but not which revision is durable, which is most of the remediation problem left in place.
+ */
+export interface AuditRecordFailed {
+  readonly code: "audit_record_failed";
+  /** The revision that IS durable in the vault. The commit stands; only its audit row is missing. */
+  readonly revisionId: RevisionId;
+  readonly cause: unknown;
+}
+export interface RevisionRecordFailed {
+  readonly code: "revision_record_failed";
+  /** The revision that IS durable in the vault. The commit stands; only its store record is missing. */
+  readonly revisionId: RevisionId;
+  readonly cause: unknown;
+}
+
+/**
  * Enumerable, never-silent failure surface (§16). The four semantic/policy
  * variants (schema_rejected | write_conflict | ownership_violation | secret_found)
  * are the ones the brief pins; `commit_failed` is the typed infrastructure-fault
@@ -209,6 +251,9 @@ export interface CommitFailed {
  * Health, never a swallowed throw. `workspace_path_violation` (24.12) is the fifth
  * semantic/policy variant: a foreign-workspace note whose path does not carry its
  * own workspace's prefix.
+ * `audit_record_failed` / `revision_record_failed` (24.72) are POST-COMMIT infrastructure faults —
+ * the only two members that describe a state in which the Markdown write SUCCEEDED. Every other
+ * member means nothing was committed.
  */
 export type WriteFailure =
   | SchemaRejected
@@ -216,7 +261,9 @@ export type WriteFailure =
   | OwnershipViolation
   | SecretFound
   | WorkspacePathViolation
-  | CommitFailed;
+  | CommitFailed
+  | AuditRecordFailed
+  | RevisionRecordFailed;
 
 // ── the writer ───────────────────────────────────────────────────────────────
 
@@ -336,7 +383,9 @@ export async function applyPlan(
 
   // 1 — idempotent replay: a prior commit for this key returns without any new
   // write or second AuditRecord (§6 idempotency).
-  const prior = await deps.revisions.getByIdempotencyKey(command.idempotencyKey);
+  const prior = await deps.revisions.getByIdempotencyKey(
+    command.idempotencyKey,
+  );
   if (prior !== undefined) {
     return ok({
       revisionId: prior.revisionId,
@@ -462,12 +511,18 @@ export async function applyPlan(
         })
       : projected;
   const committedChanges =
-    deps.signing !== undefined ? diffChanges(snapshot, committedProjected) : changes;
+    deps.signing !== undefined
+      ? diffChanges(snapshot, committedProjected)
+      : changes;
 
   // 7 — atomic all-or-nothing commit (temp-write + rename). The new revision id
   // is the deterministic staging token — no clock/random enters the primitive.
   const newRevision = computeRevisionId(committedProjected);
-  const committed = await atomicCommit(deps.vault, committedChanges, tokenOf(newRevision));
+  const committed = await atomicCommit(
+    deps.vault,
+    committedChanges,
+    tokenOf(newRevision),
+  );
   if (!committed.ok) {
     // Both atomic phases (stage_failed / commit_failed) roll the vault back to the
     // prior revision; surface either as the single typed infra-fault variant.
@@ -496,13 +551,38 @@ export async function applyPlan(
     // row for an absent one, and `### 24.72` is separately about restoring observability — the
     // asymmetry "a missing row is investigated, a wrong one is believed" does not license
     // manufacturing absences.
-    afterSummary: alreadyApplied ? summarizeAlreadyApplied(plan) : summarize(plan, changes.length),
+    afterSummary: alreadyApplied
+      ? summarizeAlreadyApplied(plan)
+      : summarize(plan, changes.length),
     payloadHash: hashPayload(plan),
     occurredAt,
     // WS-8 scope for the §9.5 recent-changes projector — the plan always carries a workspaceId (KN gate).
     workspaceId: plan.workspaceId,
   });
-  await deps.audit.append(auditRecord);
+  // 24.72 — the recording faults are TYPED, not thrown. Step 8's own note says a recording fault is a
+  // System-Health concern rather than a rollback; that was true as an intention and unimplemented as
+  // behaviour.
+  // ⛔ STATE THE DEFECT PRECISELY — IT IS MISREPORTING, NOT ESCAPE, and an earlier draft of THIS
+  // comment said "escaped", 266 lines below the paragraph where I had already corrected exactly that
+  // claim (see the §16 note above). `applyPlan` rejected UNTYPED; `createCommitActivity`'s §16 catch
+  // then folded EVERY rejection to `commit_failed` — so a post-commit record fault was reported as a
+  // COMMIT THAT FAILED while the Markdown was durable. Caught, and caught wrongly.
+  // ⭐ WHICH IS WHY A TYPED, DISTINGUISHABLE FAILURE HERE IS THE FIX AND A THROW COULD NEVER BE: a
+  // rejection carries no discriminant for that catch to preserve, and `commit_failed` discards the
+  // one thing a remediator needs. Only a member originating HERE survives the fold.
+  // ⚠ VERIFIED, not inherited: all three production bindings (`semanticApprovalDispatch.ts:90`,
+  // `buildActivities.ts:613`/`:1104`) reach `applyPlan` through that one catch, so there is no
+  // uncaught-escape path to claim.
+  // ⛔ NO ROLLBACK, DELIBERATELY. The Markdown is durable and stays durable: returning `err` here
+  // reports what is missing (the record), never undoes what landed (the commit). A rollback would
+  // repair the typed-failure surface by destroying a committed write — strictly worse.
+  // ⚠ `catch` covers BOTH escapes: an async rejection AND a synchronous throw from the adapter before
+  // its first await. Both were measured; an adapter can do either.
+  try {
+    await deps.audit.append(auditRecord);
+  } catch (cause) {
+    return err({ code: "audit_record_failed", revisionId: newRevision, cause });
+  }
 
   const record: CommittedRevision = {
     revisionId: newRevision,
@@ -515,7 +595,20 @@ export async function applyPlan(
     auditRecord,
     committedAt: occurredAt,
   };
-  await deps.revisions.record(record);
+  // 24.72 — same posture as the audit write above: typed, never thrown, and the commit still stands.
+  // ⚠ Reached only when the audit row DID land, so the two members describe genuinely different
+  // recovery states: `audit_record_failed` ⇒ neither record exists; `revision_record_failed` ⇒ the
+  // audit row exists and only the revision record is missing. A caller cannot remediate without
+  // knowing which, which is why these are two members rather than one.
+  try {
+    await deps.revisions.record(record);
+  } catch (cause) {
+    return err({
+      code: "revision_record_failed",
+      revisionId: newRevision,
+      cause,
+    });
+  }
 
   return ok({ revisionId: newRevision, auditRecord, replayed: false });
 }
@@ -594,7 +687,9 @@ async function readSnapshot(vault: VaultFs): Promise<VaultSnapshot> {
  * head-at-commit makes the whole-vault compare a no-op and delegates TARGET integrity to the executor's
  * gate-1 (`readNoteProjectId` / `noteExists`) — the precise, per-target check. Read-only; never mutates.
  */
-export async function readVaultHeadRevision(vault: VaultFs): Promise<RevisionId> {
+export async function readVaultHeadRevision(
+  vault: VaultFs,
+): Promise<RevisionId> {
   return computeRevisionId(await readSnapshot(vault));
 }
 
@@ -615,7 +710,11 @@ async function embedProvenanceStamps(
   projected: VaultSnapshot,
   plan: KnowledgeMutationPlan,
   signing: StamperDeps,
-  meta: { readonly sourceEventRef: string; readonly baseRevision: RevisionId; readonly now: () => string },
+  meta: {
+    readonly sourceEventRef: string;
+    readonly baseRevision: RevisionId;
+    readonly now: () => string;
+  },
 ): Promise<VaultSnapshot> {
   const stamped = new Map(projected);
   for (const [path, content] of projected) {
@@ -645,7 +744,10 @@ async function embedProvenanceStamps(
     if (!minted.ok) continue; // key-unresolved / mint failure ⇒ fail-safe (commit this note unstamped)
     const { frontmatter, body } = parseNote(content);
     const nextFrontmatter = new Map(frontmatter);
-    nextFrontmatter.set(KW_STAMP_FRONTMATTER_KEY, serializeStampFieldValue(minted.value));
+    nextFrontmatter.set(
+      KW_STAMP_FRONTMATTER_KEY,
+      serializeStampFieldValue(minted.value),
+    );
     stamped.set(path, composeNote(nextFrontmatter, body));
   }
   return stamped;
@@ -775,7 +877,11 @@ function summarize(plan: KnowledgeMutationPlan, changedFiles: number): string {
  */
 function planDeclaresMutations(plan: KnowledgeMutationPlan): boolean {
   return (
-    plan.creates.length + plan.patches.length + plan.linkMutations.length + plan.frontmatterUpdates.length > 0
+    plan.creates.length +
+      plan.patches.length +
+      plan.linkMutations.length +
+      plan.frontmatterUpdates.length >
+    0
   );
 }
 

@@ -12,10 +12,25 @@
 // `applyPlan` DIRECTLY, so neither mechanism is in the picture at all. The guard closing the defect
 // here IS the proof that it holds with both gone.
 import { describe, it, expect } from "vitest";
-import { ok, isOk, validKnowledgeMutationPlan, workspaceId as wsId } from "@sow/contracts";
-import type { KnowledgeMutationPlan, WorkflowRunRef, AuditRecord } from "@sow/contracts";
-import { applyPlan, readVaultHeadRevision } from "../src/knowledge-writer/writer";
-import type { KnowledgeWriteCommand, KnowledgeWriterDeps } from "../src/knowledge-writer/writer";
+import {
+  ok,
+  isOk,
+  validKnowledgeMutationPlan,
+  workspaceId as wsId,
+} from "@sow/contracts";
+import type {
+  KnowledgeMutationPlan,
+  WorkflowRunRef,
+  AuditRecord,
+} from "@sow/contracts";
+import {
+  applyPlan,
+  readVaultHeadRevision,
+} from "../src/knowledge-writer/writer";
+import type {
+  KnowledgeWriteCommand,
+  KnowledgeWriterDeps,
+} from "../src/knowledge-writer/writer";
 import { makeEnforceWorkspacePathScope } from "../src/knowledge-writer/workspace-path-guard";
 import { MemoryAuditRepo, MemoryRevisionStore, MemoryVaultFs } from "./helpers";
 
@@ -34,7 +49,11 @@ const mutatingPlan: KnowledgeMutationPlan = {
   workspaceId: wsId(WS),
   creates: [{ path: "projects/acme.md", body: "the real mutation" }],
 };
-const cmd = (plan: KnowledgeMutationPlan, base: string, key = KEY): KnowledgeWriteCommand => ({
+const cmd = (
+  plan: KnowledgeMutationPlan,
+  base: string,
+  key = KEY,
+): KnowledgeWriteCommand => ({
   plan,
   expectedBaseRevision: base as KnowledgeWriteCommand["expectedBaseRevision"],
   actor: "KnowledgeWriter",
@@ -90,10 +109,14 @@ const summaryOf = (r: AuditRecord): string => r.afterSummary;
 // prefix rename reds THEM. Bounded, not unguarded — recorded rather than rewritten.
 const isSelfContradictory = (summary: string): boolean => {
   if (!summary.startsWith("revision-applied:")) return false;
-  const changed = /^revision-applied: (\d+) file\(s\) changed/.exec(summary)?.[1];
-  const declared = [...summary.matchAll(/(\d+) (?:create|patch|link|frontmatter update)\(?e?s?\)?/g)].map((m) =>
-    Number(m[1]),
-  );
+  const changed = /^revision-applied: (\d+) file\(s\) changed/.exec(
+    summary,
+  )?.[1];
+  const declared = [
+    ...summary.matchAll(
+      /(\d+) (?:create|patch|link|frontmatter update)\(?e?s?\)?/g,
+    ),
+  ].map((m) => Number(m[1]));
   return changed === "0" && declared.some((n) => n > 0);
 };
 
@@ -118,7 +141,19 @@ async function faultThenRetry(
   else revisions.failRecord = true;
 
   const base1 = await readVaultHeadRevision(vault);
-  await expect(applyPlan(cmd(plan, String(base1)), deps)).rejects.toThrow(/store down/);
+  // ⚠ UPDATED BY 24.72, AND THE CHANGE IS THE POINT: this line used to be
+  // `await expect(...).rejects.toThrow(/store down/)` — it used the §16 THROW as its mechanism for
+  // reaching the post-fault state. 24.72 replaced that throw with a typed failure, so the harness now
+  // asserts the typed failure instead. The SCENARIO is unchanged (Markdown durable, revision record
+  // absent, same key re-entered); only attempt 1's REPORTING changed.
+  // ⭐ This is strictly stronger: the setup now pins a contract rather than depending on a defect.
+  const attempt1 = await applyPlan(cmd(plan, String(base1)), deps);
+  expect(isOk(attempt1)).toBe(false);
+  if (!isOk(attempt1)) {
+    expect(["audit_record_failed", "revision_record_failed"]).toContain(
+      attempt1.error.code,
+    );
+  }
 
   audit.failAppend = false;
   revisions.failRecord = false;
@@ -130,7 +165,10 @@ async function faultThenRetry(
     vault,
     audit,
     retry,
-    faultFired: faultAt === "audit.append" ? audit.appendFaultFired : revisions.recordFaultFired,
+    faultFired:
+      faultAt === "audit.append"
+        ? audit.appendFaultFired
+        : revisions.recordFaultFired,
     lookupOnRetry: revisions.lookups[lookupsBefore] ?? "(never called)",
   };
 }
@@ -191,7 +229,10 @@ describe("24.77 — a retry must not record an AuditRecord describing a diff aga
       workspacePathCheck: guard,
     };
     const base = await readVaultHeadRevision(vault);
-    const r = await applyPlan(cmd(mutatingPlan, String(base), "idem-honest"), deps);
+    const r = await applyPlan(
+      cmd(mutatingPlan, String(base), "idem-honest"),
+      deps,
+    );
 
     expect(isOk(r)).toBe(true);
     expect(audit.records).toHaveLength(1);
@@ -227,7 +268,10 @@ describe("24.77 — a retry must not record an AuditRecord describing a diff aga
       frontmatterUpdates: [],
     };
     const base = await readVaultHeadRevision(vault);
-    const r = await applyPlan(cmd(emptyPlan, String(base), "idem-empty-plan"), deps);
+    const r = await applyPlan(
+      cmd(emptyPlan, String(base), "idem-empty-plan"),
+      deps,
+    );
 
     expect(isOk(r)).toBe(true);
     const s = summaryOf(audit.records[0]!);
@@ -277,7 +321,9 @@ describe("24.77 — a retry must not record an AuditRecord describing a diff aga
       creates: [],
       patches: [],
       linkMutations: [],
-      frontmatterUpdates: [{ path: "projects/acme.md", key: "owner", value: "TBD" }],
+      frontmatterUpdates: [
+        { path: "projects/acme.md", key: "owner", value: "TBD" },
+      ],
     };
     const s = await faultThenRetry("audit.append", frontmatterOnlyPlan);
 
