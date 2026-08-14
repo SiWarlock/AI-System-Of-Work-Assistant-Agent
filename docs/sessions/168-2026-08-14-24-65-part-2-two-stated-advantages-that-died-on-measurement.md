@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-14 · **Phase:** 24 (hardening tail) · **Area:** `packages/policy` (`providers-integrations-implementer`, single-track `main`)
 **Predecessor:** chronological — `167-…-the-guard-not-added-and-the-finding-i-had-to-retract.md` (knowledge) · **this area's prior session** — `165-2026-08-13-24-65-the-defect-that-was-not-there.md`
-**Successor:** _(next `/session-end`)_
+**Successor:** `173-2026-08-14-24-68-the-remedy-that-could-not-be-built.md` (this area's next; `169`–`172` are worker's and knowledge's — chains run per-AREA, see the note in `161`)
 
 **Commit:** `db4f40e6` — 1 commit, 2 files, `packages/policy` only.
 **Scope:** Part 2 only. ⛔ **Part 1 (the barrel un-export) is knowledge territory and went to knowledge as a cross-track pair.**
