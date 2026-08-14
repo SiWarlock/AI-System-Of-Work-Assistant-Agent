@@ -3351,3 +3351,26 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⚠ **Not "errata are unreliable"** — the erratum discipline is right and is what made this findable at all. **The defect is scoping an erratum to the sentence that was reported.**
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any erratum, retraction, or dated correction landed on a document that ALSO contains instructions, runbook steps, or a follow-ups section. Enumerate the imperatives before declaring the correction complete.**
+
+<a id="170"></a>
+## 170. A DEFERMENT CONDITION CAN NAME A REMEDY THAT DOES NOT EXIST — filing an unbuildable fix makes an accepted risk look SCHEDULED
+
+**Date:** 2026-08-14. **Source:** `### 24.68`'s re-scope. **Lead, self-reported, on their own approval condition** — *"bank the shape, because it is mine."*
+
+**The instance.** Approving deferment **(D)** on `### 24.65`, the lead required condition 2: ***"file the REAL fix as its own task — pass a trusted counterpart into `denyDirectCrossWorkspaceRaw`."*** ⭐ **That requirement is the project's own good discipline** (*accepting a residual without filing its actual remedy is exactly how a residual becomes permanent*) **and it felt rigorous.**
+
+⛔ **Then providers measured it, hop by hop: NO SUPPLIER EXISTS.** `CrossWorkspaceLinkMap` has **zero dependencies** — no registry, no resolver, no repo; **its entire authority is what callers told it**, and its own admission check is the *same non-empty-and-distinct class* as the check being strengthened. ⇒ **the only obtainable "trusted counterpart" is the same caller-supplied string echoed back through a `Map`.**
+
+⛔⛔ **THE LEAD'S OWN DIAGNOSIS, VERBATIM: *"I required the real fix be FILED, which felt rigorous, and never asked whether it was BUILDABLE. Filing an unbuildable remedy makes an accepted risk look scheduled."***
+
+⛔ **MECHANISM: filing a remedy tests that someone NAMED one — never that one EXISTS.** The two feel identical at the moment of approval, because naming a remedy is exactly what you do when you *have* one. **Nothing in the act of filing distinguishes a deferred fix from an impossible one.**
+
+⭐⭐ **THE COST IS A CATEGORY ERROR IN THE RECORD, AND IT AGES BADLY IN A SPECIFIC DIRECTION.** An **unfiled** residual is visible as *an accepted risk* and gets re-examined. A residual filed with an unbuildable remedy is **invisible as a risk AND invisible as a blocker — it just sits in the queue looking like work.** ⇒ ***"deferred" and "unfixable at this layer" age completely differently: the first invites a future reader to simply go do it*** — **and here the nearest buildable thing was the trap** (a caller-echoed counterpart, i.e. `L147`'s provenance-for-shape substitution manufactured deliberately, which *"would read as coverage forever after"*). ⚠ **Nothing re-checks a deferral's premise, because the item is *tracked*, which reads as *handled*** (`L164`'s half, entered through the remedy rather than the cost).
+
+⭐ **Kin to [L102](#102)** (a phantom obligation — an obligation no slice can discharge) **and distinct from [L131](#131)** in the way that matters: **L131's condition CAN be satisfied, by activity that is worthless; L170's condition CANNOT be satisfied at all**, and nobody discovers this until someone sits down to build it — one full dispatch cycle later.
+
+⇒ **DO. When you make "file the real fix" a condition of accepting a residual, ask the second question: *what would SUPPLY it?* Name the mechanism, not just the remedy.** If nothing does, the honest record is **"unfixable at this layer" + "what would have to be true"** — **not a task.** ⭐ **And write those words**: a residual recorded as unfixable is re-examined when its precondition changes; one recorded as deferred is re-examined by whoever has time, who will then build the nearest available thing.
+
+⚠ **NOT an argument against filing remedies** — the discipline is right and prevents the commoner failure. **The defect is treating the filing as the check.**
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any deferment approval whose condition is "file the real fix," and any `/orchestrate-end` Carry-forward triage encountering a filed-but-never-started remedy. Ask what would supply it before scheduling it.**
