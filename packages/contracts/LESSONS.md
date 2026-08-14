@@ -3390,6 +3390,8 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 
 ⇒ **DO: report `(file, line, code)` triples, never a package count; and when a build tool short-circuits, say so — a halted run's coverage is a claim about the RUNNER, not about the tree.**
 
+⭐⭐ **AMENDED same day (worker-implementer, `### 24.85` Step 9) — THE COUNT IS WRONG IN BOTH DIRECTIONS AT ONCE, AND THE ARITHMETIC IS THE TELL.** A later run of the same window reported **`16 tasks, 14 successful, 2 FAILED`** — `@sow/workflows#build` **AND** `#typecheck` — ⛔ **while turbo's summary NAMES ONLY THE FIRST.** ⇒ ***`14 + 1` does not sum to `16`, and that discrepancy is visible on the face of the output.*** **Two TASKS, ONE SITE, ONE CAUSE.** ⇒ **the same run OVER-counts defects (one site surfacing as multiple tasks and multiple packages) and UNDER-reports the failure list (only the first named)** — ⭐ **so a reader who trusts the named failure believes the blast radius is smaller than reported, while a reader who trusts the task count believes it is larger. Neither number is the defect count.** ⚠ **Cheap check with real power: make the reported numbers SUM. If successes + named failures ≠ total, the list is truncated and you have not seen the surface.** ⭐ **And state rows OUTSIDE the expected signature explicitly — worker reported `0`, which is what proves nothing real was sheltering under a declared red.**
+
 `pin: none` · `accepted: partially enforceable` — **enforcement point: any Step-9 or cross-area report quoting a count of failing packages, tests, or files from a build tool. Deduplicate by location first, and state whether the run completed.**
 
 <a id="172"></a>
@@ -3412,7 +3414,7 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 <a id="173"></a>
 ## 173. "DO NOT PIN THE DEFECT" AND "DO NOT BUILD ON THE DEFECT" ARE DIFFERENT FAILURES — and only the first was ever written down
 
-**Date:** 2026-08-14. **Source:** `### 24.72` Leg A, knowledge-implementer — **their distinction, which is sharper than the constraint I gave them.**
+**Date:** 2026-08-14. **Source:** `### 24.72` Leg A, knowledge-implementer — **their distinction, which is sharper than the constraint they were given.** ⭐ **PROVENANCE CORRECTED at the lead's instruction: the constraint it sharpens is the LEAD'S condition on `### 24.72`, relayed by the orchestrator — so this is an implementer correcting a LEAD RULING, not an implementer tightening an orchestrator's phrasing.** ⚠ **Recorded precisely because the distinction only has force if you can see how far up it reaches: the condition was written by the person with the most authority over it and was still under-specified.**
 
 **The instance.** `24.72`'s constraint said: ⛔ *do not close this by adding a test that pins either throw* — pinning a `§16` violation as intended behaviour would make it harder to close (`L69`). **Then Leg A broke 4 of `### 24.77`'s tests**, whose harness reached the post-fault state by asserting `.rejects.toThrow(/store down/)`.
 
