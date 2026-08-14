@@ -3251,3 +3251,22 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⚠ **Corollary for the corrected party (recorded because it is the easy thing to get wrong): the correct response to being corrected here is NO AMEND.** **Amending to restore the original wording would re-introduce the falsified claim to satisfy authorship; amending to hide the correction would erase the evidence.** **The edited message with its visible note IS the right artifact.**
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: `/tdd` Step 10, immediately before `git commit` — re-read the approved message against anything measured since it was written; and `/tdd` Step 9, where the author should note which in-flight measurements the message assumes.**
+
+<a id="166"></a>
+## 166. A RUN SAMPLING DURING ANOTHER TRACK'S COMMIT SEES A RED THAT BELONGS TO NOBODY — and the natural attribution is the track that just committed
+
+**Date:** 2026-08-14. **Source:** `#72`, worker-implementer, **caught by re-running before sending an escalation they had already half-drafted.** ⭐ **The inverse of the documented shared-tree trap, and worse.**
+
+**The instance.** Mid-slice, `--project @sow/worker` returned **57 failed test files**, and `turbo` returned **8/17 tasks** with `TS2307: Cannot find module '@sow/knowledge/markdown-vault/sections'`. ⛔ **An escalation was half-written attributing it to knowledge's just-landed commit.** Re-run on a settled tree: **163 files / 2099 tests / 0 failed**, `turbo typecheck lint --force` **31/31, 0 cached.**
+
+⛔⛔ **IT WAS A TORN READ OF THE SHARED WORKING TREE WHILE ANOTHER TRACK'S COMMIT WAS LANDING. The red belonged to NO ONE and reproduces for NOBODY.**
+
+⭐⭐ **AND THE DISPROOF IS WHAT MAKES IT A FINDING RATHER THAN A SHRUG — IT IS STRUCTURAL, NOT *"it passed the second time"*: `packages/knowledge/dist/markdown-vault/sections.d.ts` STILL DOES NOT EXIST, so resolution goes via the `./*` → `./src/*.ts` default condition and THE MISSING `dist` WAS NEVER CAPABLE OF BEING THE CAUSE.** ⚠ **That distinction is load-bearing: *"passed on re-run"* is exactly what `L111` warns reads as FLAKY — two runs disagreeing is evidence of non-determinism, never that the failing run was fictitious.** ⇒ **only a structural argument separates *never real* from *intermittent*, and they demand opposite responses.**
+
+⛔ **RELATION TO THE KNOWN TRAP, and it is the inverse:** the documented one is ***a HOLD defers the COMMIT, not the EFFECT*** — another track's *uncommitted* work is already in your test runs. **This is the mirror image: not their work leaking into your run, but your run sampling their tree MID-TRANSITION.** ⭐ **Worse in two ways: the failure is transient rather than reproducible, and the most PLAUSIBLE attribution — the track that just committed — is also the most WRONG.** ⇒ **an escalation would have been specific, evidence-bearing, addressed to the right-seeming party, and entirely false** (`L83`'s stale-read hazard, arriving as a *build* failure instead of a *review* finding).
+
+⇒ **DO. In a shared checkout, a CROSS-TRACK RED IS A HYPOTHESIS UNTIL REPRODUCED ON A SETTLED TREE. Reproduce before attributing.** ⭐ **And prefer a STRUCTURAL disproof to a re-run** — ask *could the named cause have produced this at all?* **Here it could not, and that closed the question in a way a green re-run never would have.**
+
+⚠ **Do not over-correct into ignoring cross-track reds** — they are sometimes real, and `L136` already records a documented false-positive signature being *silently* skipped as its own defect. **Cite the signature and the reproduction attempt; never skip silently, never attribute unreproduced.**
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any test/typecheck failure in a shared checkout that implicates another track, and any escalation drafted from one. Re-run on a settled tree and state the structural argument before naming a cause.**
