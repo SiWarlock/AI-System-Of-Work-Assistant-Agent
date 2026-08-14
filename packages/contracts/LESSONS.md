@@ -3327,3 +3327,27 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⚠ **NOT a rule against holds** — the hold here was correct and prevented a genuine mess. **The defect is a hold with no transferable release path, not the decision to hold.**
 
 `pin: none` · `pattern: git ls-files --others --exclude-standard` — **an untracked file that has survived a round is a candidate stale hold, not just untidiness; ask what it is waiting for and whether that thing can still happen.** `accepted: partially enforceable` — **enforcement point: any ruling that forecloses an action (ask what is parked on it), and any `/orchestrate-end` or `/team-end` that inherits an untracked artifact.**
+
+<a id="169"></a>
+## 169. AN ERRATUM ON A DOCUMENT'S PREMISE DOES NOT CORRECT ITS INSTRUCTIONS — and the instruction is the dangerous half
+
+**Date:** 2026-08-14. **Source:** the doc-`169` erratum, second pass. **Banked at the lead's instruction, who ruled against their own prior scoping.** ⭐ **Immediate successor to [L168](#168) and found while closing it** — the fix for a stale hold reproduced the stale hold's own shape one layer in.
+
+**The instance.** Worker's `ea8cafd4` landed a dated erratum on session doc `169`'s **GATE** (lines 7–9), preserving the gating sentence verbatim — **executing the lead's ruling exactly as issued.** ⛔ **It did not reach the amend INSTRUCTION at `:33`, nor the "Open follow-ups" entry further down.** **26+ lines separate the erratum from the instruction, and a reader who lands on the repair block does not scroll up.**
+
+⭐ **The lead's own framing, and it is the honest one: *"Worker executed my ruling faithfully; my ruling was scoped to the sentence I knew about."*** ⇒ **the ruling named ONE site; the document had THREE.**
+
+⛔⛔ **MECHANISM: AN ERRATUM IS WRITTEN WHERE THE FALSE CLAIM IS, BECAUSE THAT IS WHERE THE AUTHOR WAS LOOKING WHEN THEY FOUND IT.** But a document's **instructions are DERIVED from its premise and live elsewhere in the file** — so correcting the premise leaves every derived imperative **intact, unmarked, and now unsupported.**
+
+⭐⭐ **THE ASYMMETRY THAT EARNS THIS ITS OWN NUMBER: A PREMISE MISLEADS; AN INSTRUCTION GETS FOLLOWED.** A reader who absorbs a stale premise may still take no action. **A reader who follows a countermanded instruction has already acted** — here, an amend that would have erased the incident evidence and re-created the defect. ⇒ ***the instruction is simultaneously where the erratum matters MOST and where it is LEAST likely to be placed***, because the person writing the erratum found the defect by reasoning about the CLAIM, not by reading for imperatives.
+
+⭐ **[L94](#94) at POINT OF USE, inside a SINGLE document — and worse than L94's original form.** There the channels were separate artifacts (brief · task description · metadata · messages), so the reader could at least believe some were unvisited. **Here they are separate REGIONS OF ONE FILE, and *"I corrected that document"* feels complete.** ⚠ **Kin to [L153](#153) half 2** (an instruction whose imperative INVERTS is not a comment fix) — **L153 says such an instruction needs authorization; L169 says the authorization must then reach the instruction's own location.**
+
+⇒ **DO:**
+- **After writing an erratum, re-read the document for IMPERATIVES derived from the corrected premise** — commands, "next steps", "Open follow-ups", runbook lines, anything a reader could execute. **Annotate at the POINT OF USE, not only at the header.**
+- ⛔ **Derive the site list by READING THE DOCUMENT, not by taking the reviewer's list.** The reviewer found the first site; that is not an enumeration (`L153`'s placement finding: *the risk lived entirely in the part nobody had scoped*).
+- **Preserve the text verbatim and annotate beside it** — striking the instruction destroys the evidence it existed and travelled (`L148`), which is the same rule the correction itself rests on.
+
+⚠ **Not "errata are unreliable"** — the erratum discipline is right and is what made this findable at all. **The defect is scoping an erratum to the sentence that was reported.**
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any erratum, retraction, or dated correction landed on a document that ALSO contains instructions, runbook steps, or a follow-ups section. Enumerate the imperatives before declaring the correction complete.**
