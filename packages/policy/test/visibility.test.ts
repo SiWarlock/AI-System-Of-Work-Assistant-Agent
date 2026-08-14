@@ -355,13 +355,19 @@ describe("validateProjectionVisibility — audit refs never carry an unvalidated
     if (d.decision === "deny") expect(d.audit.refs).toContain("ref:workspace:MISSING");
   });
 
-  it("the source workspace id is read ONCE, so the ref and the referential pin cannot disagree [spec(§5)]", () => {
+  it("the source workspace id getter is NEVER invoked, so a split read cannot disagree [spec(§5)]", () => {
     // Adversarial, from security review: when the audit ref and the equality test read
     // `sourceWorkspace.id` SEPARATELY, a getter/Proxy-backed or lazily-hydrated record
     // can return the candidate's value on read 1 and the real value on read 2 — writing
-    // the RAW foreign id into refs while still taking the mismatch branch, reinstating
-    // exactly the leak this task fixes. A single read makes the property total rather
-    // than conditional on the argument being a plain object.
+    // the RAW foreign id into refs while still taking the mismatch branch.
+    //
+    // ⭐ MODIFIED at 24.65/#58, and the pin is STRICTLY STRONGER, not relaxed. 24.45 closed
+    // this by reading ONCE (expected `reads === 1`). `readOwnData` reads the property
+    // DESCRIPTOR, which never invokes an accessor at all ⇒ expected `reads === 0`. The
+    // split-read attack is no longer merely prevented, it is unrepresentable — a getter that
+    // is never called cannot return two values. The original intent is preserved and the
+    // count moved DOWN; if this ever reads 1 again, an accessor is being invoked somewhere
+    // and both 24.45's and 24.65's guarantees have regressed together.
     let reads = 0;
     const w = {
       ...wsWithDefault("full"),
@@ -370,8 +376,15 @@ describe("validateProjectionVisibility — audit refs never carry an unvalidated
         return reads === 1 ? FOREIGN_SENSITIVE_WS_ID : "ws-1";
       },
     } as unknown as Workspace;
-    validateProjectionVisibility(projection(FOREIGN_SENSITIVE_WS_ID, "isolated"), w);
-    expect(reads).toBe(1);
+    const d = validateProjectionVisibility(projection(FOREIGN_SENSITIVE_WS_ID, "isolated"), w);
+    expect(reads).toBe(0);
+    // Non-vacuity: `reads === 0` alone would also hold if the function did nothing. The
+    // accessor-bearing workspace must still be REFUSED, and the foreign id must still be
+    // withheld from the audit — 24.45's property, surviving 24.65's change.
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") {
+      expect(d.audit.refs.join("|")).not.toContain(FOREIGN_SENSITIVE_WS_ID);
+    }
   });
 
   it("an EMPTY-STRING workspaceId reports MISSING, matching its denial message [spec(§5)]", () => {
@@ -438,6 +451,156 @@ describe("validateProjectionVisibility — §16 never-throw on a null source wor
     if (d.decision === "deny") {
       expect(d.message).toBe("source workspace defaultVisibility is unrecognized");
     }
+  });
+});
+
+// task 24.65 / #58 — the FAIL-OPEN and the accessor-throw class, one primitive.
+//
+// ⛔ THE HEADLINE IS THE FAIL-OPEN, NOT THE THROWS. A throw is loud; a visibility gate
+// that returns ALLOW for a malformed workspace is silent and grants access.
+//
+// Both hazards are prototype-chain hazards and BOTH are closed by reading only OWN DATA
+// properties: an inherited property yields no own descriptor (⇒ the fail-open denies), and
+// an accessor yields a descriptor with no `value` (⇒ the getter is never invoked, so it
+// cannot throw). `Object.hasOwn` alone closes only the first — an own accessor passes it
+// and still throws on read, which is why the sibling guard was ALSO incomplete.
+describe("validateProjectionVisibility — own-data-property reads (task 24.65 / #58)", () => {
+  const realWs = () => wsWithDefault("full");
+
+  it("zero_own_property_workspace_is_denied: a prototype-only workspace must NOT return ALLOW [spec(§5)]", () => {
+    // `Object.create({...})` — every field resolves through the prototype chain, so a plain
+    // read sees a well-formed workspace while `Object.getOwnPropertyDescriptor` sees nothing.
+    const proto = Object.create({ id: "ws-1", defaultVisibility: "full" }) as Workspace;
+    const d = validateProjectionVisibility(projection("ws-1", "isolated"), proto);
+    expect(d.decision).toBe("deny");
+  });
+
+  it("the ALLOW-side control: a real workspace differing ONLY in own-vs-inherited still allows [spec(§5)]", () => {
+    // `L80` — without this, the suite cannot tell a working gate from a constant DENY. The
+    // fixture differs from the one above in exactly the property the fix decides on.
+    const own = { id: "ws-1", defaultVisibility: "full" } as unknown as Workspace;
+    const d = validateProjectionVisibility(projection("ws-1", "isolated"), own);
+    expect(d.decision).toBe("allow");
+    if (d.decision === "allow") expect(d.audit.refs).toContain("ref:workspace:ws-1");
+  });
+
+  it("a genuine defaultWorkspace() still allows — the real production producer [spec(§5)]", () => {
+    const d = validateProjectionVisibility(projection("ws-1", "isolated"), realWs());
+    expect(d.decision).toBe("allow");
+  });
+
+  // The six measured throw shapes, each named individually so a regression says WHICH read
+  // re-opened. Every one returns a typed denial instead of throwing (§16 never-throw).
+  const thrower = (): never => {
+    throw new Error("hostile accessor");
+  };
+
+  it("throwing_id_getter_on_source_workspace_returns_typed_denial [spec(§16)]", () => {
+    const w = { get id() { return thrower(); }, defaultVisibility: "full" } as unknown as Workspace;
+    expect(() => validateProjectionVisibility(projection("ws-1", "isolated"), w)).not.toThrow();
+    expect(validateProjectionVisibility(projection("ws-1", "isolated"), w).decision).toBe("deny");
+  });
+
+  it("throwing_default_visibility_getter_on_source_workspace_returns_typed_denial [spec(§16)]", () => {
+    const w = { id: "ws-1", get defaultVisibility() { return thrower(); } } as unknown as Workspace;
+    expect(() => validateProjectionVisibility(projection("ws-1", "isolated"), w)).not.toThrow();
+    expect(validateProjectionVisibility(projection("ws-1", "isolated"), w).decision).toBe("deny");
+  });
+
+  it("throwing_workspace_id_getter_on_projection_returns_typed_denial [spec(§16)]", () => {
+    const p = { get workspaceId() { return thrower(); }, visibilityLevel: "isolated",
+      projectionType: "summary", sanitizedPayload: {}, sourceRefs: [] } as unknown as GclProjection;
+    expect(() => validateProjectionVisibility(p, realWs())).not.toThrow();
+    expect(validateProjectionVisibility(p, realWs()).decision).toBe("deny");
+  });
+
+  it("throwing_visibility_level_getter_on_projection_returns_typed_denial [spec(§16)]", () => {
+    const p = { workspaceId: "ws-1", get visibilityLevel() { return thrower(); },
+      projectionType: "summary", sanitizedPayload: {}, sourceRefs: [] } as unknown as GclProjection;
+    expect(() => validateProjectionVisibility(p, realWs())).not.toThrow();
+    expect(validateProjectionVisibility(p, realWs()).decision).toBe("deny");
+  });
+
+  it("throwing_projection_type_getter_on_projection_returns_typed_denial [spec(§16)]", () => {
+    const p = { workspaceId: "ws-1", visibilityLevel: "isolated",
+      get projectionType() { return thrower(); }, sanitizedPayload: {}, sourceRefs: [] } as unknown as GclProjection;
+    expect(() => validateProjectionVisibility(p, realWs())).not.toThrow();
+    expect(validateProjectionVisibility(p, realWs()).decision).toBe("deny");
+  });
+
+  it("throwing_taxonomy_getter_is_ignored_and_never_throws — the SIXTH shape, in the sibling guard [spec(§16)]", () => {
+    // ⛔ Found while unifying: `isVisibilityConsistentWithProjectionType`'s `Object.hasOwn`
+    // closes the prototype-KEY hazard but NOT an own accessor, so the guard the finding
+    // named as the hardened exemplar was itself incomplete.
+    const tax = { get summary() { return thrower(); } } as never;
+    expect(() => validateProjectionVisibility(projection("ws-1", "isolated"), realWs(), tax)).not.toThrow();
+    expect(isVisibilityConsistentWithProjectionType("summary", "isolated", tax)).toBe(true);
+  });
+
+  it("a Proxy that reports one ceiling via getOwnPropertyDescriptor and returns another via get cannot widen visibility [spec(§5)]", () => {
+    // ⛔ The split-read fail-open this slice's own review caught: `defaultVisibility` was
+    // hardened at the guard and then RE-READ RAW to supply the ceiling, so a Proxy could pass
+    // the guard declaring "isolated" and then hand `isWithinDefault` a "full" ceiling —
+    // widening exposure on the one gate that decides it. Both sites now read the same hoisted
+    // own-descriptor value, so the two can no longer disagree.
+    const lying = new Proxy(
+      {},
+      {
+        getOwnPropertyDescriptor: (_t, k) =>
+          k === "id"
+            ? { value: "ws-1", writable: true, enumerable: true, configurable: true }
+            : k === "defaultVisibility"
+              ? { value: "isolated", writable: true, enumerable: true, configurable: true }
+              : undefined,
+        get: (_t, k) => (k === "id" ? "ws-1" : k === "defaultVisibility" ? "full" : undefined),
+        has: () => true,
+      },
+    ) as unknown as Workspace;
+    // The workspace DECLARES `isolated`; the projection asks for `full`. The declared ceiling
+    // must win, so this denies — if the raw `get` value ("full") reached the ceiling check it
+    // would allow.
+    const d = validateProjectionVisibility(projection("ws-1", "full"), lying);
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") expect(d.reason).toBe("VISIBILITY_EXCEEDS_SOURCE");
+  });
+
+  // ⛔ Proxy `getOwnPropertyDescriptor` traps are ARBITRARY CALLER CODE and the descriptor
+  // read invokes them. An earlier version of this fix claimed the throw class was closed
+  // "without a try/catch"; these three measured it throwing straight out of the module.
+  const hostileTrap = <T extends object>(t: T): T =>
+    new Proxy(t, {
+      getOwnPropertyDescriptor() {
+        throw new Error("hostile gOPD trap");
+      },
+    });
+
+  it("a hostile getOwnPropertyDescriptor trap on the WORKSPACE returns a typed denial [spec(§16)]", () => {
+    const ws = hostileTrap({ id: "ws-1", defaultVisibility: "full" }) as unknown as Workspace;
+    expect(() => validateProjectionVisibility(projection("ws-1", "isolated"), ws)).not.toThrow();
+    expect(validateProjectionVisibility(projection("ws-1", "isolated"), ws).decision).toBe("deny");
+  });
+
+  it("a hostile getOwnPropertyDescriptor trap on the PROJECTION returns a typed denial [spec(§16)]", () => {
+    const p = hostileTrap(projection("ws-1", "isolated") as object) as unknown as GclProjection;
+    expect(() => validateProjectionVisibility(p, realWs())).not.toThrow();
+    expect(validateProjectionVisibility(p, realWs()).decision).toBe("deny");
+  });
+
+  it("a hostile getOwnPropertyDescriptor trap on the TAXONOMY never throws [spec(§16)]", () => {
+    const tax = hostileTrap({}) as never;
+    expect(() => isVisibilityConsistentWithProjectionType("summary", "full", tax)).not.toThrow();
+    expect(isVisibilityConsistentWithProjectionType("summary", "full", tax)).toBe(true);
+  });
+
+  it("an own taxonomy entry explicitly valued undefined still DENIES — present is not absent [spec(§5)]", () => {
+    // Regression pin: reading only the VALUE collapsed absent and present-but-undefined,
+    // flipping this input from deny to allow. `found` keeps them distinct.
+    expect(isVisibilityConsistentWithProjectionType("summary", "full", { summary: undefined } as never)).toBe(false);
+  });
+
+  it("a prototype-only taxonomy is still ignored — no regression on the sibling's existing guard [spec(§5)]", () => {
+    const tax = Object.create({ summary: ["isolated"] }) as never;
+    expect(isVisibilityConsistentWithProjectionType("summary", "isolated", tax)).toBe(true);
   });
 });
 

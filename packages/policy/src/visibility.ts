@@ -63,6 +63,67 @@ export type ProjectionTypeVisibilityTaxonomy = Readonly<Record<string, readonly 
 export const DEFAULT_PROJECTION_TYPE_VISIBILITY_TAXONOMY: ProjectionTypeVisibilityTaxonomy = {};
 
 /**
+ * Read `key` off `obj` ONLY if it is an OWN DATA property; `undefined` otherwise. The
+ * single hardened read this module uses for every producer-controlled object (task
+ * 24.65 / `#58`, safety rules 4 + 7).
+ *
+ * ⛔ TWO HAZARDS, ONE PRIMITIVE — and neither is closed by the obvious guard:
+ *  • **Inherited property** ⇒ no own descriptor ⇒ `undefined`. Closes the FAIL-OPEN: a
+ *    workspace built via `Object.create({id, defaultVisibility})` has zero own properties
+ *    and previously read as well-formed, so a visibility gate returned **ALLOW** for it.
+ *  • **Accessor property** ⇒ descriptor carries `get`, not `value` ⇒ the getter is NEVER
+ *    INVOKED, so it cannot throw. Closes six measured accessor throw shapes (§16).
+ *  • **Hostile Proxy trap** ⇒ caught. ⛔ THIS NEEDS THE `try`/`catch` AND AN EARLIER VERSION
+ *    OF THIS COMMENT CLAIMED IT DID NOT: *"closes the throw class without a `try`/`catch` —
+ *    the hostile code simply never runs."* **False.** `Object.getOwnPropertyDescriptor`
+ *    INVOKES a Proxy's `getOwnPropertyDescriptor` trap, which is arbitrary caller code;
+ *    three throw-throughs were measured (workspace, projection, taxonomy) against exactly
+ *    the version that claimed otherwise. The accessor half never runs; the Proxy half does.
+ *
+ * ⚠ `Object.hasOwn` alone closes only the first: an own accessor passes it and still
+ * throws on read. That is why the sibling guard below — cited as this class's hardened
+ * exemplar — was itself incomplete against a hostile taxonomy.
+ *
+ * ⚠ RESIDUAL, measured and NOT closed here: this validates the DESCRIPTOR channel while
+ * every downstream consumer reads through `[[Get]]`. For a plain object they coincide; a
+ * Proxy can present one value to each. The gate is fail-closed either way (it can only
+ * refuse on the descriptor it sees), but an ALLOWED projection can still read differently
+ * downstream. Filed rather than fixed — closing it means validating and re-emitting.
+ *
+ * ⚠ FAIL-CLOSED BEHAVIOUR CHANGE, and it is safe because of what produces a `Workspace`:
+ * both production producers terminate in `WorkspaceSchema.parse()` (`defaultWorkspace`,
+ * and `packages/db`'s workspace read gate returning `parsed.data`), and a Zod parse emits
+ * a fresh plain object with own data properties. An accessor-bearing or class-instance
+ * producer would now be DENIED — deliberate for a safety gate, and measured, not assumed.
+ */
+interface OwnDataRead {
+  /** `true` only for an OWN DATA property — distinct from one whose value is `undefined`. */
+  readonly found: boolean;
+  readonly value: unknown;
+}
+const NOT_FOUND: OwnDataRead = { found: false, value: undefined };
+
+function readOwnDataProperty(obj: unknown, key: string): OwnDataRead {
+  if (obj === null || typeof obj !== "object") return NOT_FOUND;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(obj, key);
+    if (descriptor === undefined || !("value" in descriptor)) return NOT_FOUND;
+    return { found: true, value: descriptor.value };
+  } catch {
+    // ⛔ A Proxy's `getOwnPropertyDescriptor` TRAP IS ARBITRARY CALLER CODE and
+    // `Object.getOwnPropertyDescriptor` invokes it. Measured: a throwing trap on the
+    // workspace, the projection or the taxonomy threw straight out of this module. A
+    // hostile trap is malformed input, so it fails CLOSED here rather than propagating.
+    return NOT_FOUND;
+  }
+}
+
+/** The value only — for the sites where "absent" and "present-but-undefined" are both malformed. */
+function readOwnData(obj: unknown, key: string): unknown {
+  return readOwnDataProperty(obj, key).value;
+}
+
+/**
  * The §5/§6 derivation check: does `level` belong to the permitted set for
  * `projectionType`? A `projectionType` with NO entry in `taxonomy` has no
  * derivation opinion — returns `true` (fail-OPEN for the unknown case only,
@@ -82,9 +143,27 @@ export function isVisibilityConsistentWithProjectionType(
   // `undefined` short-circuit below and throwing on `.includes` — never throw
   // across this boundary (§16 / this module's own fail-closed contract).
   // `Object.hasOwn` checks OWN membership only (desktop Lesson 15's family).
-  if (!Object.hasOwn(taxonomy, projectionType)) return true;
-  const permitted = taxonomy[projectionType];
-  return permitted !== undefined && permitted.includes(level);
+  // ⛔ 24.65/#58 — was `Object.hasOwn` + a bracket read. `hasOwn` closes the prototype-KEY
+  // hazard described above but NOT an own ACCESSOR: a taxonomy carrying a throwing getter
+  // passed `hasOwn` and then threw on the bracket read, so this guard — the one cited as the
+  // hardened exemplar for this class — was itself incomplete. `readOwnData` closes both.
+  // `Array.isArray` because an own data property need not be an array, and `.includes` on a
+  // non-array is the same never-throw violation by another route.
+  const entry = readOwnDataProperty(taxonomy, projectionType);
+  // ⛔ ABSENT ⇒ `true` (no derivation opinion) — this predicate only ever ADDS denials for
+  // types it knows; the workspace-default CEILING remains an independent gate, so returning
+  // `true` here is not an authorization. An inherited, accessor or hostile-trap entry reads
+  // as absent by design: an unusable taxonomy entry is "no opinion", never "permitted".
+  //
+  // ⛔ `found`, NOT `value === undefined` — the distinction is load-bearing and I collapsed
+  // it once: pre-slice, `Object.hasOwn` separated ABSENT from PRESENT-BUT-`undefined`, and a
+  // taxonomy `{ summary: undefined }` denied. Reading only the value made it ALLOW, a silent
+  // deny→allow flip on a caller-supplied input. `found` restores the pre-slice answer.
+  if (!entry.found) return true;
+  const permitted = entry.value;
+  // `Array.isArray` because an own data property need not be an array, and `.includes` on a
+  // non-array is the same never-throw violation by another route.
+  return Array.isArray(permitted) && permitted.includes(level);
 }
 
 /**
@@ -126,8 +205,10 @@ export function validateProjectionVisibility(
   sourceWorkspace: Workspace,
   taxonomy: ProjectionTypeVisibilityTaxonomy = DEFAULT_PROJECTION_TYPE_VISIBILITY_TAXONOMY,
 ): PolicyDecision<GclProjection> {
-  const wsId: unknown = projection?.workspaceId;
-  const level: unknown = projection?.visibilityLevel;
+  // ⛔ 24.65/#58 — OWN DATA reads, not `?.`. `?.` guards a nullish left side only: it
+  // resolves inherited properties (the fail-open) and invokes accessors (six throw shapes).
+  const wsId: unknown = readOwnData(projection, "workspaceId");
+  const level: unknown = readOwnData(projection, "visibilityLevel");
   // ⛔ VALIDATE BEFORE INTERPOLATING (task 24.45, safety rules 4 + 7). `wsId` is the
   // CANDIDATE's own, still-unvalidated claim, and the mismatch branch below fires
   // PRECISELY when it is foreign — so interpolating it here would write untrusted
@@ -141,32 +222,24 @@ export function validateProjectionVisibility(
   // and the mismatch itself. The allow / exceeds-source / type-mismatch paths run only
   // AFTER the equality check, so their ref is byte-identical to before.
   //
-  // ⚠ `srcId` is read ONCE and reused by both this ref and the equality test below. A
-  // second read could disagree with the first (a getter-backed, Proxy-backed or lazily
-  // hydrated workspace record), which would render the raw foreign id into `refs` while
-  // STILL taking the mismatch branch — reinstating precisely this leak. One read makes the
-  // property hold over DATA PROPERTIES — ⛔ NOT "total", which is what this line said until
-  // `24.65` measured it: a throwing accessor or a Proxy `get` trap still escapes (measured on
-  // `Workspace.id` and `GclProjection.workspaceId`; ⚠ `visibilityLevel`, `projectionType` and
-  // `defaultVisibility` are the same shape and are neither pinned nor excluded — filed, see
-  // the scoped note below). Same class as the §5 / task-9.33 accessor precedent
-  // already adjudicated at `ARCHITECTURE.md:204-205` — accessor-bearing inputs to a policy
-  // gate are in scope even when unreachable from a `JSON.parse`d row.
-  // ⛔ 24.65 — a NULL/UNDEFINED workspace cannot throw here: `?.` yields `srcId === undefined`,
-  // so the referential pin below denies before the unguarded `defaultVisibility` read. An
-  // earlier comment here claimed the opposite; it was never measured. Both that guarantee and
-  // the unguarded read's reachability (via a REAL workspace) are pinned in `visibility.test.ts`.
-  // ⚠ SCOPED TO WHAT WAS MEASURED — null and undefined ONLY. `?.` guards a nullish LEFT side,
-  // NOT a throwing getter: a workspace whose `id` getter throws still throws here, as does a
-  // projection whose `workspaceId` getter throws. Both measured (`24.65`) and filed — §16
-  // never-throw does NOT hold for hostile accessor shapes.
-  // ⛔ RESIDUAL, stated so it cannot decay (`contracts L100`): on the equality branch this ref
-  // still renders the RAW `srcId`. That is trusted PROVENANCE (config-sourced via
-  // `workspaceConfig`), NOT validated SHAPE — a credential-shaped id in the workspace
-  // config still reaches the audit. ⇒ ⛔ ONE residual, TWO sites (`24.65`): the sibling is
-  // `denyDirectCrossWorkspaceRaw`'s `from`/`to` interpolation below, which carries the full
-  // lead ruling. **Closing one site does NOT shut the class.** Remedy filed as `#54`.
-  const srcId: unknown = sourceWorkspace?.id;
+  // ⚠ Each workspace field is read ONCE, here, and reused everywhere below. A second read
+  // could disagree with the first (a Proxy or lazily-hydrated record), which would render one
+  // value into `refs` while a different one decides the branch. `readOwnData` also means an
+  // accessor is never invoked, so the split-read attack is unrepresentable rather than merely
+  // prevented (24.65 → #58; §5 / task-9.33 accessor precedent, `ARCHITECTURE.md:204-205`).
+  //
+  // ⛔ SURVIVING RESIDUAL — a Proxy whose `getOwnPropertyDescriptor` trap REPORTS one value
+  // while its `get` trap RETURNS another still lies to this function. `readOwnData` takes the
+  // descriptor's `value`, so the lie is confined to what the descriptor says; nothing here
+  // re-reads via `get`. **Keep it that way: any raw `sourceWorkspace.x` added below re-opens
+  // it** — that is exactly the defect `#58`'s own review caught in this slice.
+  //
+  // ⛔ RESIDUAL 2, stated so it cannot decay (`contracts L100`): on the equality branch this
+  // ref renders the RAW `srcId`. That is trusted PROVENANCE (config-sourced), NOT validated
+  // SHAPE. ⇒ ONE residual, TWO sites (`24.65`): the sibling is `denyDirectCrossWorkspaceRaw`'s
+  // `from`/`to` below. **Closing one does NOT shut the class.** Remedy filed as `#54`.
+  const srcId: unknown = readOwnData(sourceWorkspace, "id");
+  const srcDefault: unknown = readOwnData(sourceWorkspace, "defaultVisibility");
   const refs: readonly string[] = [
     `ref:workspace:${
       typeof wsId !== "string" || wsId === "" ? "MISSING" : wsId === srcId ? wsId : "UNVALIDATED"
@@ -205,7 +278,7 @@ export function validateProjectionVisibility(
     return denyMalformed("projection workspaceId does not match source workspace");
   }
   // Guard the source default too — a malformed source posture is fail-closed input.
-  if (!isVisibilityLevel(sourceWorkspace.defaultVisibility)) {
+  if (!isVisibilityLevel(srcDefault)) {
     return denyMalformed("source workspace defaultVisibility is unrecognized");
   }
 
@@ -229,7 +302,12 @@ export function validateProjectionVisibility(
       exceedsSignal("projection visibilityLevel outside closed set"),
     );
   }
-  if (!isWithinDefault(level, sourceWorkspace.defaultVisibility)) {
+  // ⛔ `srcDefault`, NOT a raw `sourceWorkspace.defaultVisibility` re-read (24.65/#58 review).
+  // The raw read here was the split-read shape 24.45 closed for `srcId`, re-opened by
+  // hardening one read and not its sibling: a Proxy reporting one value via
+  // `getOwnPropertyDescriptor` and another via `get` passed the guard above and then supplied
+  // THE CEILING here — a fail-open on the gate that decides over-exposure.
+  if (!isWithinDefault(level, srcDefault)) {
     return denyDecision(
       "VISIBILITY_EXCEEDS_SOURCE",
       "projection visibility level exceeds the workspace default",
@@ -244,7 +322,13 @@ export function validateProjectionVisibility(
   // even when the ceiling would have permitted the declared level. Raising
   // `sourceWorkspace.defaultVisibility` can never retroactively validate a
   // mismatched declaration — this check does not consult the ceiling at all.
-  if (!isVisibilityConsistentWithProjectionType(projection.projectionType, level, taxonomy)) {
+  // 24.65/#58 — own-data read; a non-string projectionType is malformed input, denied
+  // rather than coerced into the taxonomy lookup.
+  const projType = readOwnData(projection, "projectionType");
+  if (typeof projType !== "string") {
+    return denyMalformed("projection projectionType is not a string");
+  }
+  if (!isVisibilityConsistentWithProjectionType(projType, level, taxonomy)) {
     return denyDecision(
       "VISIBILITY_TYPE_MISMATCH",
       "projection visibility level is not permitted for its projectionType",
