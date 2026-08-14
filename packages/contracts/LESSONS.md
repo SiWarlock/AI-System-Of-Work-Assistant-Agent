@@ -2983,7 +2983,13 @@ awk '…' src > /tmp/sec.txt; grep -o '…' /tmp/sec.txt > /tmp/tok.txt; wc -l <
 
 ⭐ **Contrast, from the same day, showing what real corroboration looks like:** a composition set found by grepping the spelling `workspacePathCheck` and a set derived from the property (`readVaultHeadRevision` in `expectedBaseRevision` position) returned **the same two files** — **different symbol, different mechanism, so the methods could have disagreed and didn't.** That is evidence. **Two `awk | grep -o | sort | uniq -c` runs are one measurement performed twice.** ⚠ **And note which way the asymmetry runs: agreement between dependent methods is the CHEAPEST thing to obtain and the most reassuring to read** — it is what a careful person produces when re-checking their own work the obvious way.
 
-`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any command whose output becomes a count in a commit message, a tracker entry, a Step-9 report, a handoff, or a seal. If a pipe produced the number, re-derive it through a file before writing it down. And before citing a second derivation as corroboration, state what would have made the two disagree.**
+⛔⛔ **ENFORCEMENT LINE WIDENED same day at the lead's instruction, because the author broke a NARROWER version of this rule one level BELOW it.** Having measured 20 round-commits correctly, they reported **22** in the next message — **by adding one for the commit they had just made, instead of re-running the command.** ⛔ **`L155` as first written says *re-derive if a PIPE produced the number*; here NO COMMAND PRODUCED IT AT ALL.**
+
+⇒ ***A COUNT THAT WILL BE REPORTED GETS RE-DERIVED, NOT ADJUSTED.***
+
+⭐ **Why it catches people, and it is worse than the pipe case: `+1` on a correct number LOOKS EXACTLY LIKE A MEASUREMENT.** It is cheaper than running the command, it starts from a value that was genuinely measured, and **nothing in the output distinguishes it from a real count.** ⚠ **Ninth instance this round of a rule failing against its own author — committed inside the very message reporting that this lesson had been banked.**
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any command whose output becomes a count in a commit message, a tracker entry, a Step-9 report, a handoff, or a seal. RE-DERIVE the number — never adjust a previous one, and never pipe it. And before citing a second derivation as corroboration, state what would have made the two disagree.**
 
 <a id="156"></a>
 ## 156. A SELF-REFERENTIAL COUNT IS CORRECT AS OF ITS OWN WRITING — and the naive "fix" INTRODUCES the error
@@ -3033,4 +3039,6 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 
 ⚠ **Do not generalise to "distrust the index"** — that would be `L111`'s false-doubt failure, and the tool is genuinely better than grep for the positive questions. **The narrow, checkable claim: a callback-position call site can be invisible to `codegraph_callers`, so a "no callers" result is a QUESTION, not a verdict.**
 
-`pattern: none reliable — the defect is a MISSING result, and no grep finds an absence in another tool's output.` `accepted: not mechanically enforceable` — **enforcement point: any reachability, dead-code, or no-callers claim sourced from a code-intelligence tool, especially one about to close a task or license a deletion. Also: carry this into spawn-prompt traps lists.**
+`pattern: none reliable — the defect is a MISSING result, and no grep finds an absence in another tool's output.` `accepted: not mechanically enforceable` — **enforcement point: any reachability, dead-code, or no-callers claim sourced from a code-intelligence tool, especially one about to close a task or license a deletion.**
+
+⛔⛔ **THE SPAWN-PROMPT TRAPS LINE MUST CARRY THE ASYMMETRY, NOT THE BUG — lead instruction, and the wording matters more than the finding.** Use: ***"`codegraph`: a HIT is evidence; an EMPTY is not. Callback-position call sites can be invisible to `codegraph_callers`, so a 'no callers found' result is a QUESTION, not a verdict."*** ⛔ **Do NOT write *"codegraph is unreliable"* — that would cost more than the defect does**, discarding a tool that is genuinely better than grep for every positive question, and it is `L111`'s false-doubt failure in one sentence: **a false claim is specific and gets killed; a false doubt is unfalsifiable and makes people abandon working machinery.**
