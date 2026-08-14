@@ -3270,3 +3270,32 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⚠ **Do not over-correct into ignoring cross-track reds** — they are sometimes real, and `L136` already records a documented false-positive signature being *silently* skipped as its own defect. **Cite the signature and the reproduction attempt; never skip silently, never attribute unreproduced.**
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any test/typecheck failure in a shared checkout that implicates another track, and any escalation drafted from one. Re-run on a settled tree and state the structural argument before naming a cause.**
+
+<a id="167"></a>
+## 167. `git commit --amend` IN A SHARED CHECKOUT OPERATES ON WHATEVER HEAD POINTS AT — not on your commit; and per-path verification is STRUCTURALLY BLIND to it
+
+**Date:** 2026-08-14. **Source:** the round-seal incident. **Self-reported by worker-implementer unprompted, and independently measured by the orchestrator from the reflog before that report arrived.** ⭐ **Banked as a PROCEDURE GAP, not a worker error — their verification was correct and could not have caught it.**
+
+**The instance.** Worker committed `9674554e`. The orchestrator committed the round seal `614bcbdc` on top. Worker then ran `git commit --amend` to improve their own message — ⛔ **but HEAD was no longer theirs.** Result: **`1de290d9` = THE SEAL'S TRACKER CONTENT WEARING WORKER'S COMMIT MESSAGE**, and `614bcbdc` unreachable, surviving only in local reflog, **which expires.**
+
+⭐ **NOTHING WAS LOST, and that was verified per-file rather than assumed:** the seal text is present in `git show HEAD:IMPLEMENTATION_PLAN.md`, and worker's `boot.ts` work is intact at `9674554e`. **The damage was to the LABEL, not the content.**
+
+⛔⛔ **THE MECHANISM, in worker's own words and it is the correct general form: *`git commit --amend` in a shared checkout is not an operation on YOUR commit — it is an operation on WHATEVER HEAD POINTS AT WHEN IT RUNS.*** **HEAD is shared mutable state, and the window between *"I committed"* and *"I amend"* is exactly long enough for a teammate to land.**
+
+⛔⛔ **AND THE PART THAT MAKES IT A PROCEDURE GAP RATHER THAN CARELESSNESS: PER-PATH VERIFICATION CANNOT DETECT IT.** This project's standing check is `git log --oneline -- <path>` (`L133`). **Worker ran it, and it correctly resolved `boot.ts` to `9674554e`** — ⇒ ***you check YOUR path, it resolves correctly, and the damage is to a DIFFERENT file's commit.*** **The verification was sound and structurally blind.**
+
+⇒ **DO. Run `git log --oneline -1` IMMEDIATELY BEFORE `--amend` and confirm HEAD is still your commit** — or better, **chain the guard so the race is unrepresentable rather than unlikely** (`L103`, `L83`'s one-invocation rule):
+```sh
+[ "$(git rev-parse --short HEAD)" = "<your-hash>" ] && git commit --amend …
+```
+⭐ **Prefer a FOLLOW-UP COMMIT or an ERRATUM over an amend entirely — both are race-free by construction.**
+
+⛔ **DISPOSITION RULING, AND THE REASON GENERALISES: the damage was NOT repaired by rewriting.** An `--amend` to restore the seal **would ERASE THE EVIDENCE THAT THE INCIDENT HAPPENED**, in the one artifact whose job is to be findable — **and it would re-create the very defect it fixes, in the same tree, with the same race available.** ⇒ ***corrections land IN the record, never OVER it*** (the round's consistent discipline: a retraction in a committed doc, a falsified commit message named rather than reissued, an erratum instead of a rewrite). **A fresh corrective commit dissolves the circularity that "record it in the seal" creates when the SEAL is the damaged artifact.**
+
+⭐⭐ **WORKER'S SELF-DIAGNOSIS, kept because it is sharper than "I forgot": TWO SLICES EARLIER THEY REFUSED TO AMEND A COMMIT FOR EXACTLY THIS REASON — someone else's commit sat on top of it. They checked the same condition here, found HEAD clean, and proceeded — TREATING A SNAPSHOT AS A DURABLE PROPERTY.** ⇒ **`L141`'s class (*a verified path whose TRIGGER was not verified*) with the author as counter-example.**
+
+⚠ **CONTRIBUTING CAUSE, the orchestrator's: a FINAL commit message was issued revising an already-approved one, which is what created the amend pressure at all.** **`L165` says write the message LAST; it was written three times for that slice.** ⭐ **Worker's error was proximate; the message-churn was the setup.**
+
+⭐ **AND THE AUTO-MODE CLASSIFIER DENYING THE REPAIR AMEND WAS CORRECT AND WAS NOT ROUTED AROUND — by worker, who was certain they were right, or by the orchestrator holding a clean recovery.** ***A guard is only worth having if it holds when the person is certain.***
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any `git commit --amend` in a shared checkout, and every spawn-prompt traps list. Confirm HEAD is yours in the same breath, or use a follow-up commit instead.**
