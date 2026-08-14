@@ -5,10 +5,20 @@
 // KnowledgeWriter (the one place every semantic write crosses, safety rule 1) instead of trusting an
 // operator-discipline comment (contracts L123).
 import { describe, it, expect } from "vitest";
-import { ok, isOk, isErr, validKnowledgeMutationPlan, workspaceId as wsId } from "@sow/contracts";
+import {
+  ok,
+  isOk,
+  isErr,
+  validKnowledgeMutationPlan,
+  workspaceId as wsId,
+} from "@sow/contracts";
 import type { KnowledgeMutationPlan, WorkflowRunRef } from "@sow/contracts";
 import { applyPlan } from "../src/knowledge-writer/writer";
-import type { KnowledgeWriteCommand, KnowledgeWriterDeps, WorkspacePathContext } from "../src/knowledge-writer/writer";
+import type {
+  KnowledgeWriteCommand,
+  KnowledgeWriterDeps,
+  WorkspacePathContext,
+} from "../src/knowledge-writer/writer";
 import { computeRevisionId } from "../src/knowledge-writer/revision";
 import { SOURCE_NOTE_SUBTREE } from "../src/knowledge-writer/workspace-path-guard";
 import { MemoryAuditRepo, MemoryRevisionStore, MemoryVaultFs } from "./helpers";
@@ -39,7 +49,10 @@ const wf: WorkflowRunRef = {
 const EMPTY_REV = computeRevisionId(new Map());
 
 /** applyPlan deps with ownership/secret-scan passed through — isolates THIS gate from the others. */
-function deps(vault: MemoryVaultFs): KnowledgeWriterDeps & { revisions: MemoryRevisionStore; audit: MemoryAuditRepo } {
+function deps(vault: MemoryVaultFs): KnowledgeWriterDeps & {
+  revisions: MemoryRevisionStore;
+  audit: MemoryAuditRepo;
+} {
   return {
     vault,
     revisions: new MemoryRevisionStore(),
@@ -57,10 +70,21 @@ function deps(vault: MemoryVaultFs): KnowledgeWriterDeps & { revisions: MemoryRe
 }
 
 function cmd(plan: unknown, key = "idem-24-12"): KnowledgeWriteCommand {
-  return { plan, expectedBaseRevision: EMPTY_REV, actor: "KnowledgeWriter", sourceEventRef: "evt-1", workflowRunRef: { ...wf, idempotencyKey: key }, idempotencyKey: key };
+  return {
+    plan,
+    expectedBaseRevision: EMPTY_REV,
+    actor: "KnowledgeWriter",
+    sourceEventRef: "evt-1",
+    workflowRunRef: { ...wf, idempotencyKey: key },
+    idempotencyKey: key,
+  };
 }
 
-const planWithCreate = (workspaceId: string, path: string, body = "hello"): KnowledgeMutationPlan => ({
+const planWithCreate = (
+  workspaceId: string,
+  path: string,
+  body = "hello",
+): KnowledgeMutationPlan => ({
   ...validKnowledgeMutationPlan,
   workspaceId: wsId(workspaceId),
   creates: [{ path, body }],
@@ -130,7 +154,11 @@ describe("applyPlan — foreign-workspace path consistency (24.12 remedy, constr
     for (const structuralPath of ["index.md", "log.md", "Logs/2026-08-11.md"]) {
       const vault = new MemoryVaultFs();
       const d = deps(vault);
-      const plan: KnowledgeMutationPlan = { ...validKnowledgeMutationPlan, workspaceId: wsId(FOREIGN), patches: [{ path: structuralPath, regionId: "r1", newBody: "x" }] };
+      const plan: KnowledgeMutationPlan = {
+        ...validKnowledgeMutationPlan,
+        workspaceId: wsId(FOREIGN),
+        patches: [{ path: structuralPath, regionId: "r1", newBody: "x" }],
+      };
       const r = await applyPlan(cmd(plan, `idem-${structuralPath}`), d);
       expect(isOk(r), `${structuralPath} was rejected`).toBe(true);
     }
@@ -156,7 +184,11 @@ describe("applyPlan — foreign-workspace path consistency (24.12 remedy, constr
   it("rule 7 — the violation carries a code and a path, and NOTHING else (no entity name, no content fragment)", async () => {
     const vault = new MemoryVaultFs();
     const d = deps(vault);
-    const plan = planWithCreate(FOREIGN, "projects/acme.md", "this body has secret-looking content xyz");
+    const plan = planWithCreate(
+      FOREIGN,
+      "projects/acme.md",
+      "this body has secret-looking content xyz",
+    );
     const r = await applyPlan(cmd(plan), d);
     expect(isOk(r)).toBe(false);
     if (isOk(r)) return;
@@ -194,7 +226,10 @@ describe("applyPlan — foreign-workspace path consistency (24.12 remedy, constr
     // regression before this test + the fix landed.
     const vault = new MemoryVaultFs();
     const d = deps(vault);
-    const plan = planWithCreate(FOREIGN, `${SOURCE_NOTE_SUBTREE}/${FOREIGN}/abc123.md`);
+    const plan = planWithCreate(
+      FOREIGN,
+      `${SOURCE_NOTE_SUBTREE}/${FOREIGN}/abc123.md`,
+    );
     const r = await applyPlan(cmd(plan), d);
     expect(isOk(r)).toBe(true);
   });
@@ -202,7 +237,10 @@ describe("applyPlan — foreign-workspace path consistency (24.12 remedy, constr
   it("sources/<ws>/ still requires the SECOND segment to match — a different workspace's source subtree is still a violation", async () => {
     const vault = new MemoryVaultFs();
     const d = deps(vault);
-    const plan = planWithCreate(FOREIGN, `${SOURCE_NOTE_SUBTREE}/some-other-workspace/abc123.md`);
+    const plan = planWithCreate(
+      FOREIGN,
+      `${SOURCE_NOTE_SUBTREE}/some-other-workspace/abc123.md`,
+    );
     const r = await applyPlan(cmd(plan), d);
     expect(isOk(r)).toBe(false);
     if (isOk(r)) return;
@@ -212,7 +250,10 @@ describe("applyPlan — foreign-workspace path consistency (24.12 remedy, constr
   it("SECURITY (review finding) — a traversal-crafted SOURCES lookalike is rejected", async () => {
     const vault = new MemoryVaultFs();
     const d = deps(vault);
-    const plan = planWithCreate(FOREIGN, `${SOURCE_NOTE_SUBTREE}/${FOREIGN}/../../secret.md`);
+    const plan = planWithCreate(
+      FOREIGN,
+      `${SOURCE_NOTE_SUBTREE}/${FOREIGN}/../../secret.md`,
+    );
     const r = await applyPlan(cmd(plan), d);
     expect(isOk(r)).toBe(false);
     if (isOk(r)) return;
@@ -221,7 +262,13 @@ describe("applyPlan — foreign-workspace path consistency (24.12 remedy, constr
 });
 
 describe("the built check — the pure predicate (unit level, for branches applyPlan's own schema gate makes unreachable in practice)", () => {
-  const ctx = (path: string, workspaceId: unknown): WorkspacePathContext => ({ path, plan: { ...validKnowledgeMutationPlan, workspaceId } as unknown as KnowledgeMutationPlan });
+  const ctx = (path: string, workspaceId: unknown): WorkspacePathContext => ({
+    path,
+    plan: {
+      ...validKnowledgeMutationPlan,
+      workspaceId,
+    } as unknown as KnowledgeMutationPlan,
+  });
 
   it("fails closed on a malformed/absent plan.workspaceId — never silently admits", () => {
     for (const bad of [undefined, null, "", 42]) {
@@ -266,7 +313,13 @@ describe("the built check — the pure predicate (unit level, for branches apply
 // otherwise. ⚠ Legs are anchored to `### 24.26`, never to a bare `#N` — those number independently
 // in this repo, and the id first drafted here resolves in the plan to a different, already-CLOSED task.
 describe("makeEnforceWorkspacePathScope — the exempt workspace id is a required factory argument (24.26 step 1 of 3)", () => {
-  const ctx = (path: string, workspaceId: unknown): WorkspacePathContext => ({ path, plan: { ...validKnowledgeMutationPlan, workspaceId } as unknown as KnowledgeMutationPlan });
+  const ctx = (path: string, workspaceId: unknown): WorkspacePathContext => ({
+    path,
+    plan: {
+      ...validKnowledgeMutationPlan,
+      workspaceId,
+    } as unknown as KnowledgeMutationPlan,
+  });
 
   it("the exempt id is REQUIRED FROM BIRTH — a call omitting it does not compile", () => {
     // The acceptance criterion made executable. `tsc --noEmit` really covers this file
@@ -307,9 +360,15 @@ describe("makeEnforceWorkspacePathScope — the exempt workspace id is a require
     // implementation that happens to agree on the exemption. Mirrors the shipped const's own pins.
     const check = makeEnforceWorkspacePathScope("some-other-workspace");
     expect(isOk(check(ctx("index.md", FOREIGN)))).toBe(true); // KN-12 structural, exempt for every ws
-    expect(isOk(check(ctx("employer-work/projects/acme.md", FOREIGN)))).toBe(true); // own prefix
-    expect(isOk(check(ctx(`${SOURCE_NOTE_SUBTREE}/${FOREIGN}/abc123.md`, FOREIGN)))).toBe(true); // sources/<ws>/
-    expect(isErr(check(ctx("employer-work-x/projects/acme.md", FOREIGN)))).toBe(true); // lookalike segment
+    expect(isOk(check(ctx("employer-work/projects/acme.md", FOREIGN)))).toBe(
+      true,
+    ); // own prefix
+    expect(
+      isOk(check(ctx(`${SOURCE_NOTE_SUBTREE}/${FOREIGN}/abc123.md`, FOREIGN))),
+    ).toBe(true); // sources/<ws>/
+    expect(isErr(check(ctx("employer-work-x/projects/acme.md", FOREIGN)))).toBe(
+      true,
+    ); // lookalike segment
     expect(isErr(check(ctx("employer-work/../secret.md", FOREIGN)))).toBe(true); // traversal
     expect(isErr(check(ctx("projects/acme.md", "")))).toBe(true); // malformed plan workspaceId
   });
@@ -327,9 +386,19 @@ describe("makeEnforceWorkspacePathScope — the exempt workspace id is a require
     // stops an unrelated future throw from keeping it green.
     // The cast entries cover the `typeof` half, which TypeScript makes unreachable but a JS caller or
     // an `as`-cast at a composition root does not — so that branch is defensive, not dead.
-    const blanks: string[] = ["", "   ", "\t", "\n", undefined as unknown as string, null as unknown as string, 42 as unknown as string];
+    const blanks: string[] = [
+      "",
+      "   ",
+      "\t",
+      "\n",
+      undefined as unknown as string,
+      null as unknown as string,
+      42 as unknown as string,
+    ];
     for (const blank of blanks) {
-      expect(() => makeEnforceWorkspacePathScope(blank)).toThrow(/exemptWorkspaceId must be a non-blank string/);
+      expect(() => makeEnforceWorkspacePathScope(blank)).toThrow(
+        /exemptWorkspaceId must be a non-blank string/,
+      );
     }
     // Non-vacuity partner: a real id does NOT throw, so the assertion above is discriminating
     // rather than "this factory always throws."
@@ -352,7 +421,10 @@ describe("workspacePathCheck is REQUIRED — the supplied id is load-bearing, an
     // was therefore indistinguishable from supplying the right one, and no test could tell. With the
     // fallback deleted, the supplied value is the only source, so it is finally observable.
     const vault = new MemoryVaultFs();
-    const d = { ...deps(vault), workspacePathCheck: makeEnforceWorkspacePathScope("some-other-workspace") };
+    const d = {
+      ...deps(vault),
+      workspacePathCheck: makeEnforceWorkspacePathScope("some-other-workspace"),
+    };
     // `EXEMPT_WS` is exempt under the file's own instance; under THIS instance it is not.
     const plan = planWithCreate(EXEMPT_WS, "projects/acme.md");
     const r = await applyPlan(cmd(plan), d);
@@ -368,19 +440,35 @@ describe("workspacePathCheck is REQUIRED — the supplied id is load-bearing, an
     // silently take the default — omission was SAFE. Now there is no fallback, so `workspaceScope`
     // is `undefined` and applyPlan's step-4.5 loop invokes it.
     // ⛔ SCOPE OF THE EXPOSURE — CORRECTED TWICE, and the second correction is the point. The first
-    // version claimed `packages/workflows`' 9 `deps: {} as never` sites "are the only places that can
-    // reach it", and task #49 was scoped from that. The first correction said all 9 feed
-    // `createCommitActivity`. Both were wrong; measured, the 9 are TWO different populations:
-    //   • 4 (`meeting-activities.test.ts:863, :874, :888, :907`) are `createProposeActivity`, whose
-    //     `deps` is `ExternalWriteDeps` — a different type with no `workspacePathCheck` at all, so
-    //     they are unrelated to this flip rather than uncovered by it.
-    //   • 5 (`commit-activity-base-revision.test.ts:32`, `meeting-activities.test.ts:738/756/784/802`)
-    //     do feed `createCommitActivity`, but each injects a FAKE `applyPlan` that never dereferences
-    //     `deps`, so the real one is never invoked. A bare `{}` would throw earlier regardless, at
-    //     `deps.revisions.getByIdempotencyKey`, never reaching the workspace-scope loop.
-    // ⇒ ZERO of the nine can reach this line. The only site in the repo that reaches it is the test
-    //   below. ⚠ A count that survived two corrections was never one population — grouping by the
-    //   literal `deps: {} as never` grouped by SPELLING, not by type.
+    // version claimed `packages/workflows`' `deps: {} as never` sites "are the only places that can
+    // reach it", and task #49 was scoped from that. The first correction said they all feed
+    // `createCommitActivity`. Both were wrong; measured, they are TWO different populations:
+    //   • the `createProposeActivity` sites, whose `deps` is `ExternalWriteDeps` — a DIFFERENT type,
+    //     so they are unrelated to this flip rather than uncovered by it;
+    //   • the `createCommitActivity` sites, which do feed the commit port but each inject a FAKE
+    //     `applyPlan` that never dereferences `deps`, so the real one is never invoked. A bare `{}`
+    //     would throw earlier regardless, at `deps.revisions.getByIdempotencyKey`, never reaching the
+    //     workspace-scope loop.
+    // ⇒ ZERO of them can reach this line. The only site in the repo that reaches it is the test below.
+    // ⚠ A count that survived two corrections was never one population — grouping by the literal
+    //   `deps: {} as never` grouped by SPELLING, not by type.
+    //
+    // ⛔⛔ THE ENUMERATION AND ITS LINE NUMBERS ARE GONE ON PURPOSE (`### 24.78`; `contracts L152`).
+    // This block used to name all nine sites BY LINE. A later slice in `packages/workflows` inserted
+    // comments above them and moved every one — and they did not dangle, they RESOLVED: one landed on
+    // that slice's OWN note ABOUT the sites, which reads exactly like the site it replaced; the rest on
+    // a `describe(` line, an `it(` title, a `};`, and unrelated fields. ⇒ **a symbol that goes missing
+    // gets investigated; a line number that silently resolves to the wrong thing gets believed.**
+    // ⚠ DO NOT "helpfully" restore line numbers here. Renumbering was CONSIDERED AND REJECTED, and the
+    // reason is recorded so the next reader inherits it rather than re-deciding: correct numbers would
+    // be correct only until the next insertion ABOVE them, in a file this package does not own.
+    // ⇒ ⭐ RENUMBERING IS A REPAIR WITH A SCHEDULED EXPIRY — it restores the exact state that just
+    // failed, and hands the next reader the same plausible-but-wrong resolution. Symbols and
+    // populations do not expire, which is why this is anchored on them instead.
+    // ⭐ AND THE SITES NOW CARRY THEIR OWN NOTES, WHICH ARE AUTHORITATIVE OVER THIS ONE: see the
+    // module-level `port()` helper in `commit-activity-base-revision.test.ts`, and the opt-out block
+    // above the `createCommitActivity` cases in `meeting-activities.test.ts`. A note AT the site cannot
+    // be moved away from it; this one can, and was.
     // ⇒ What actually reaches this line is the shape BELOW: a near-complete deps literal missing
     // exactly one field, cast past the type system. That is a BROADER class than "the 9 sites", and
     // it is unbounded by construction — any `as`-cast anywhere can produce it. Typecheck is the only
@@ -393,8 +481,21 @@ describe("workspacePathCheck is REQUIRED — the supplied id is load-bearing, an
     // ⚠ The one thing worth duplicating is a NEGATIVE: do NOT re-derive from the ORIGINAL ruling
     // ("a guard would be the deleted fallback wearing a different hat"). It is FALSE and WITHDRAWN
     // by its author — and unlike the reasons, it is quotable by someone who never reads `writer.ts`.
-    // ⛔ THE THROW PINNED BELOW IS NOT THE WHOLE §16 GAP — see `### 24.72` (a POST-COMMIT store fault
-    // leaves the Markdown durable, reports `commit_failed`, and lands no AuditRecord).
+    // ⛔ THE THROW PINNED BELOW IS NOT THE WHOLE §16 GAP — see `### 24.72`. ⚠ AND THIS SENTENCE WAS
+    // ITSELF STALE WITHIN A DAY, corrected here rather than left: it used to say a post-commit store
+    // fault "reports `commit_failed`". `### 24.72` Leg A replaced that — such a fault now returns a
+    // typed `audit_record_failed` / `revision_record_failed` carrying the durable `revisionId`. The
+    // Markdown-stays-durable half was and remains true; the reporting half was falsified BY MY OWN
+    // LATER SLICE, which is the same decay this block's line numbers suffered, one layer up.
+    //
+    // ⚠ `ExternalWriteDeps` ABOVE IS NAMED, NOT CHARACTERISED — a deliberate `contracts L88` call
+    // (`### 24.78` item 2). An earlier draft also asserted here that it "has no `workspacePathCheck`
+    // at all", which is a claim about a TYPE THAT LIVES IN `packages/workflows`, restated in this
+    // package. Two statements of one fact that MUST AGREE ⇒ single-source it: the guarantee belongs
+    // where the type is declared and is asserted there; this file names the type and states only the
+    // CONSEQUENCE for this test. ⛔ Do not re-add the property here — if `ExternalWriteDeps` ever gains
+    // the field, one of the two copies would have gone stale silently, and this is the copy no
+    // workflows-side change would think to look at.
     const vault = new MemoryVaultFs();
     const omitted = {
       vault,
@@ -404,7 +505,9 @@ describe("workspacePathCheck is REQUIRED — the supplied id is load-bearing, an
       ownershipCheck: () => ok(undefined),
       secretScan: () => ok(undefined),
     } as unknown as KnowledgeWriterDeps; // an `as`-cast past the required field — not the workflows shape
-    await expect(applyPlan(cmd(planWithCreate(EXEMPT_WS, "projects/acme.md")), omitted)).rejects.toThrow(
+    await expect(
+      applyPlan(cmd(planWithCreate(EXEMPT_WS, "projects/acme.md")), omitted),
+    ).rejects.toThrow(
       /is not a function/, // deliberately NOT the local's name — a pure rename must not red this
     );
     // ⭐ 24.67 — WHERE the vault stood when it threw, not merely THAT it threw. The NO-GUARD
@@ -417,7 +520,12 @@ describe("workspacePathCheck is REQUIRED — the supplied id is load-bearing, an
     // ⚠ THE VACUITY TRAP, pinned as its own assertion so nobody "simplifies" the test into it: with
     // ZERO changes the step-4.5 loop is never entered, so omission does NOT throw. A version of this
     // test built on an empty plan would pass while pinning nothing at all.
-    const emptyPlan: KnowledgeMutationPlan = { ...validKnowledgeMutationPlan, workspaceId: wsId(EXEMPT_WS), creates: [], patches: [] };
+    const emptyPlan: KnowledgeMutationPlan = {
+      ...validKnowledgeMutationPlan,
+      workspaceId: wsId(EXEMPT_WS),
+      creates: [],
+      patches: [],
+    };
     const empty = await applyPlan(cmd(emptyPlan, "idem-empty"), omitted);
     // `toBeDefined()` would be satisfied by an `err` too, leaving the stated mechanism ("the loop is
     // never entered") silently false if an empty plan ever failed EARLIER. Pin the mechanism.
@@ -450,7 +558,10 @@ describe("24.67 — the guard runs BEFORE any vault write (the NO-GUARD decision
       return guard(ctx);
     };
     const d = { ...deps(vault), workspacePathCheck: recording };
-    const r = await applyPlan(cmd(planWithCreate(EXEMPT_WS, "projects/acme.md")), d);
+    const r = await applyPlan(
+      cmd(planWithCreate(EXEMPT_WS, "projects/acme.md")),
+      d,
+    );
 
     // (1) The plan genuinely committed — otherwise (2) would be vacuously satisfied by a run that
     // never wrote anything, which is exactly the trap pinned in the omission test above.
