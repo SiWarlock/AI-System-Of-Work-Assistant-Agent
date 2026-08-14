@@ -26,6 +26,56 @@ function recordingApplyPlan(): { fn: ApplyPlanFn; seen: () => string[] } {
   return { fn, seen: () => seen };
 }
 
+// ⛔ `deps: {} as never` BELOW IS A DELIBERATE OPT-OUT (`### 24.85`, the surviving residual of `24.26` step 3),
+// NOT AN OVERSIGHT — and what it costs is stated here rather than left to be re-derived.
+//
+// NOT EXERCISED HERE: the KnowledgeWriter's WORKSPACE-PATH SCOPING. The real `applyPlan` reads
+// `deps.workspacePathCheck` (`packages/knowledge/src/knowledge-writer/writer.ts`, the
+// `const workspaceScope = deps.workspacePathCheck` binding) to reject a changed path that neither matches its
+// own workspace's prefix nor falls in a sanctioned exemption (`workspace_path_violation`).
+// ⚠ That is a SEGMENT-EQUALITY test, NOT containment: the legacy-exempt workspace, KN-12 structural surfaces
+// and the `sources/<ws>/**` shape all escape the workspace subtree BY DESIGN and are admitted; traversal
+// safety comes from a separate pre-check in `workspace-path-guard.ts`, not from this match.
+// Nothing in this file can reach any of it: `createCommitActivity` FORWARDS this object as argument 2
+// (`commitKnowledge.ts`, the `deps.applyPlan(command, deps.deps)` call) and never dereferences it, and no fake
+// `ApplyPlanFn` here declares a SECOND parameter (two fakes: one takes `(command)`, one takes none). The value
+// is passed and discarded.
+// ⚠ NOT a structural guarantee — `ApplyPlanFn` DECLARES two parameters and TS permits fewer-parameter
+// implementations, so a future fake COULD take `(command, deps)`. That is invalidating condition (1) below.
+//
+// WHY NOT SIMPLY SUPPLY A REAL CHECK: it would change nothing observable, and a diff doing so would read as
+// coverage while buying none (`contracts L82`'s forbidden middle; `contracts L85` — mirroring a real guard
+// inside a double buys discrimination for the double, never coverage of the code it stands in for).
+// ⭐ MEASURED at `### 24.85`, not assumed: a `workspacePathCheck` THROWING ON ANY CALL was installed at all 5
+// in-scope sites and all 40 tests stayed GREEN. The control — breaking `expectedBaseRevision`, a SIBLING FIELD
+// OF THIS SAME LITERAL — went RED (3 failed / 2 passed), proving the file executes and this object is live.
+// ⇒ green under the probe means NOT READ rather than "did not run" (`contracts L84`'s two readings, separated
+// by measurement). ⚠ PRECISELY: not-read FOR THE ASSERTIONS THAT WOULD HAVE OBSERVED A FOLD. This activity
+// wraps `applyPlan` in a §16 try/catch folding any throw to `commit_failed`, so the tests here that ASSERT
+// `commit_failed` would stay green even if a throwing check WERE read — the discrimination comes from the
+// ok-asserting tests, not from all five.
+//
+// EXERCISED HERE: `createCommitActivity`'s ORCHESTRATION — base-revision resolution (fixed value and
+// per-commit resolver), idempotency-key derivation, `WriteFailure` → `KnowledgeCommitFailureCode` mapping, and
+// the §16 never-throw folds.
+//
+// REAL ASSURANCE FOR THE OPTED-OUT GUARANTEE LIVES AT: `packages/knowledge/test/workspace-path-guard.test.ts`
+// (`contracts L85` — name the load-bearing test, because nothing in this file's name or output says so).
+// ⚠ INVALIDATING CONDITIONS — THREE, and only the first is about this file:
+//   (1) the injected `applyPlan` stops being a fake that ignores argument 2 — a fake taking `(command, deps)`,
+//       or any test here pointed at the REAL `applyPlan`. That site then needs a genuine `workspacePathCheck`.
+//   (2) `createCommitActivity` ITSELF starts reading `deps.deps.*` — a fact about `commitKnowledge.ts`, not
+//       about this file. `{} as never` would then yield `undefined`, and a resulting throw is absorbed by the
+//       same §16 catch into `commit_failed` — i.e. GREEN in the failure-mapping tests, silently.
+//       ⭐ That premise is independently pinned, so this is checkable rather than merely hoped:
+//       `apps/worker/test/composition/semanticApprovalDispatch.test.ts` — `capturingApplyPlan` reads argument 2
+//       and asserts `workspacePathCheck` is defined on the deps that actually reach the writer.
+//   (3) a SIXTH `createCommitActivity` site added to this file inherits no note and nothing points at it.
+// ⚠ CITATIONS ABOVE ARE SYMBOL-ANCHORED ON PURPOSE — do NOT "helpfully" add line numbers back. The first draft
+// of this note cited `writer.ts:335`; that was correct at `ea8cafd4` and was ALREADY STALE when written,
+// because an in-flight edit in another package had moved the binding — which then moved AGAIN when that work
+// landed. A symbol that goes missing gets investigated; a line number that silently resolves to the wrong
+// thing gets believed (`contracts L152`).
 function port(applyPlan: ApplyPlanFn, expectedBaseRevision: CommitBase): ReturnType<typeof createCommitActivity> {
   return createCommitActivity({
     applyPlan,

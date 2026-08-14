@@ -730,6 +730,41 @@ function idempotentApplyPlan(): { fn: ApplyPlanFn; writeCount: () => number } {
   return { fn, writeCount: () => writes };
 }
 
+// ⛔ THE 4 `deps: {} as never` SITES IN THIS BLOCK ARE A DELIBERATE OPT-OUT (`### 24.85`), NOT AN OVERSIGHT.
+//
+// NOT EXERCISED: the KnowledgeWriter's WORKSPACE-PATH SCOPING. The real `applyPlan` reads
+// `deps.workspacePathCheck` (`packages/knowledge/src/knowledge-writer/writer.ts`, the
+// `const workspaceScope = deps.workspacePathCheck` binding) to reject a changed path that neither matches its
+// own workspace's prefix nor falls in a sanctioned exemption (`workspace_path_violation`).
+// ⚠ SEGMENT-EQUALITY, NOT containment — the legacy-exempt workspace, KN-12 structural surfaces and
+// `sources/<ws>/**` escape the subtree BY DESIGN and are admitted; traversal safety is a separate pre-check.
+// `createCommitActivity` FORWARDS this object as argument 2 (`commitKnowledge.ts`, the
+// `deps.applyPlan(command, deps.deps)` call) and never dereferences it; no fake `ApplyPlanFn` in this file
+// declares a SECOND parameter (three fakes: one takes `(command)`, two take none). The value is passed and
+// discarded, so no value supplied here could exercise that guarantee.
+// ⚠ NOT structural — `ApplyPlanFn` DECLARES two parameters and TS permits fewer-parameter implementations.
+//
+// ⭐ MEASURED at `### 24.85`: a `workspacePathCheck` THROWING ON ANY CALL at all 5 in-scope sites left all 40
+// tests GREEN, while breaking a SIBLING FIELD of the same literal went RED — so the green means NOT READ, not
+// "did not run". Supplying a real check would therefore read as coverage while buying none (`contracts L82`).
+// ⚠ PRECISELY: not-read for the assertions that would have observed a fold — this activity wraps `applyPlan`
+// in a §16 try/catch folding any throw to `commit_failed`, so `commit_failed`-asserting tests would stay green
+// even if a throwing check WERE read. The discrimination comes from the ok-asserting tests.
+//
+// EXERCISED: this activity's ORCHESTRATION — idempotent-by-key replay, `WriteFailure` → commit-code mapping,
+// §16 folds. REAL ASSURANCE for the opted-out guarantee: `packages/knowledge/test/workspace-path-guard.test.ts`.
+// ⚠ INVALIDATING CONDITIONS — THREE, and only the first is about this file: (1) the injected `applyPlan` stops
+// ignoring argument 2 (a fake taking `(command, deps)`, or a test pointed at the REAL `applyPlan`);
+// (2) `createCommitActivity` itself starts reading `deps.deps.*` — `{} as never` then yields `undefined` and
+// any throw is absorbed by the same §16 catch into `commit_failed`, i.e. silently GREEN here. That premise is
+// pinned in `apps/worker/test/composition/semanticApprovalDispatch.test.ts` (`capturingApplyPlan` reads
+// argument 2 and asserts `workspacePathCheck` is defined on the deps reaching the writer);
+// (3) a FIFTH `createCommitActivity` site added to this block inherits no note.
+// ⚠ SCOPE FENCE: this note covers the `createCommitActivity` sites in THIS block ONLY. The
+// `createProposeActivity` sites further down take `ExternalWriteDeps`, a DIFFERENT type with no
+// `workspacePathCheck` field at all — they are unrelated to this finding and are deliberately untouched.
+// Grouping all of them by the literal `deps: {} as never` would group by SPELLING, not by TYPE, which is the
+// error `### 24.85` was re-scoped to undo.
 describe("spec(§9 inv-5) commitKnowledge activity — KnowledgeWriter idempotent-by-key replay", () => {
   it("commits a validated plan → revisionId (replayed:false on first sight)", async () => {
     const applied = idempotentApplyPlan();
