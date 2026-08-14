@@ -3267,6 +3267,8 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⛔⛔ **THE COMPOUNDING MECHANISM, and it is the reusable part: FAITHFUL QUOTATION LAUNDERS IMPRECISION UPWARD.** The implementer's rough summary became **an orchestrator-authored, orchestrator-endorsed sentence in a durable commit message** — ⭐ **`L116` (authority attaches to the SPEAKER, not the claim) composed with this lesson: relaying someone's words accurately transfers YOUR confidence to THEIR precision.** ⚠ **And the author cannot audit it: quoting correctly is the whole of their job at that step, and they did it correctly.**
 
 ⇒ ⭐⭐ **THE RULE GENERALISES: *the lander re-verifies, REGARDLESS OF WHO AUTHORED THE CLAIM.*** **Not "check whether events overtook the author" — check whether the sentence is true, including the sentences that are yours.**
+⭐⭐ **DEMONSTRATED 2026-08-14, and the lead asked it be noted because this is the FIRST TIME THIS LESSON WAS EXECUTED RATHER THAN CITED.** The orchestrator's approved `#75` commit message carried *"worker 2099"*. **That count was authored BEFORE the orchestrator ruled that worker add two disclosed pins — and those pins are exactly what moved it to 2101.** ⭐ **Worker RE-DERIVED at landing rather than adjusting the number, corrected it, and added a VISIBLE ERRATUM PARAGRAPH IN THE COMMIT BODY** saying the approved text differed and why — **then declined to amend.** ⇒ ***all three parts of the resolution, performed by the lander, against the author who wrote the rule into their own dispatch*** — and the falsifying event was **the author's own instruction**, which is the handoff window at its sharpest.
+
 ⚠ **Tell, and it is cheap: a list of KINDS written without a count is a SAMPLE wearing an enumeration's clothes.** *"A comment, an `if`, a blank line, and an `it(` title"* reads as complete and asserts nothing about how many of each. **Give the tally or say it is a sample** (`L155`'s unit discipline, applied to a taxonomy rather than a number).
 
 `accepted: not mechanically enforceable` — **added enforcement point: any Step-9 report enumerating KINDS rather than counts, and any message that quotes a teammate's characterisation into a durable artifact.**
@@ -3543,3 +3545,27 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⚠ **COROLLARY THAT NEARLY SHIPPED, and its author flagged it rather than leaving it: a fix's benefit can be COMPOSITION-DEPENDENT while its commit message is not.** Leg A's message — *"makes the fault observable and identifiable"* — is **true on the composition that was traced and false on one that was not.** It never claimed universality; **it will be read that way**, especially sitting beside a verdict that says *"it routes."* ⇒ **when a fix lands on a shared path with multiple compositions, either state which you measured or measure them all.**
 
 `pin: none` · `pattern: none — lifetime is not visible to a call-path search, which is the finding.` `accepted: not mechanically enforceable` — **enforcement point: `/tdd` Step 7.5 and any `L106` consumer check. Having found a consumer, ask how long it lasts relative to the condition — a reachability trace answers "is there a consumer" and cannot answer "does the record survive."**
+
+<a id="178"></a>
+## 178. A NON-VACUITY CONTROL AND AN APPLICABILITY CONTROL ARE DIFFERENT THINGS — and the second is the one nobody runs
+
+**Date:** 2026-08-14. **Source:** the `git diff`-shim audit. **Banked at the lead's instruction, ABOVE the four measurement mechanisms**, because it is the failure that survives all of them.
+
+⛔⛔ **THE DISTINCTION, and this project has been conflating them all round:**
+> **NON-VACUITY control** → ***did the instrument RUN?*** (a term known present returns hits; a bogus token returns zero)
+> ⭐ **APPLICABILITY control** → ***is this instrument VALID FOR THIS INPUT?***
+⇒ ***A NON-VACUITY CONTROL PASSES HAPPILY ON AN INAPPLICABLE INSTRUMENT.*** **Every mechanism banked so far is an instrument FAILING — truncating, fabricating, returning a false empty. This is an instrument WORKING PERFECTLY on the wrong input, and nothing in its output says so.**
+
+**The instance.** Auditing whether comment-only proofs computed on a lossy `git diff` still held, the orchestrator built a diff-free check: strip comments from both blobs, checksum, compare. **It had a positive control** — it detected a known real code change — **and NO control for applicability.** ⛔ **It then produced TWO false alarms:**
+1. **Wrong input by type:** a Markdown file run against a **TypeScript** comment-stripper (compounded by a `git log --grep` that matched the auditor's own commit).
+2. ⭐⭐ **The teaching case: the check cannot distinguish REFORMATTING from a logic change.** Prettier had reflowed the file — long one-liners split, trailing commas added — so line-level content differed while the code did not. ⛔ **Normalising whitespace to compensate then CORRUPTS STRING LITERALS: that file's fixtures include `"   "`, a deliberate three-space blank-string case.** ⇒ ***the test file most likely to need a whitespace-sensitive check is exactly the one such a check corrupts.***
+
+⛔⛔ **AND THE REFLEXIVE POINT BELONGS ON THE ENTRY: both runs would have produced FABRICATED FINDINGS AGAINST SHIPPED WORK — from the audit commissioned to catch fabricated findings.** ⭐ **A false finding against a teammate's landed commit is more expensive than the defect it was hunting**, because it is defended by a measurement.
+
+⇒ **DO. When you build an instrument for a question, state the class of input it is VALID for, and pick a control that would FAIL if the input were outside it.** A positive control proves the instrument fires; **an applicability control proves you are entitled to read the result.** ⚠ **Cheapest form: run it on an input you KNOW should come out clean and one you KNOW should not — where "should" is a property of the INPUT TYPE, not of the answer.**
+
+⚠ **HONEST LIMIT, recorded rather than papered over: both false alarms were caught by READING THE CONTENT.** ⭐ **Reading is the applicability control here, and it does not scale — which is the limit to record, not a method to recommend.** ⇒ **an automated check whose applicability can only be established by hand is a check you may run and must not report unread.**
+
+⭐ **Kin to [L160](#160)** (*a correct answer from a broken instrument is worse than a wrong one, because the METHOD gets reused*) **one step earlier: L160 is a broken instrument that happens to be right; L178 is a WORKING instrument pointed at input it cannot describe.**
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any purpose-built measurement whose result will be reported — a scratch harness, a census, a checksum comparison, a normalising diff. State the valid input class WITH the result; a positive control alone does not license reading it.**
