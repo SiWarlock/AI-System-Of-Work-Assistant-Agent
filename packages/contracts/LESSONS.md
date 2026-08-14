@@ -3229,3 +3229,25 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⚠ **AND THE CORRECTED COUNT DOES NOT AUTOMATICALLY REVERSE THE DECISION** (the lead's own caution, and it is the right one): ***"breaks few importers" is a different question from "is safe to narrow."*** **Re-derive the decision on the corrected facts; do not let it ride on the arithmetic.**
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any deferral, scope cut, sequencing decision, or separate-task filing whose justification contains a number. That number is a claim and it gets a method.**
+
+<a id="165"></a>
+## 165. THE COMMIT MESSAGE IS AUTHORED BY ONE AGENT AND LANDED BY ANOTHER — so there is a HANDOFF WINDOW in which an approved message can be falsified, and only the lander can see it
+
+**Date:** 2026-08-14. **Source:** `### 24.78` Part 1 — knowledge-implementer edited an approved commit message before committing, and disclosed it immediately. **Third instance of the underlying rule failing this round; the first two were the predecessor's.**
+
+**The structure that creates it, and it is specific to this team's split:** the **orchestrator authors** the commit message at Step 9; the **implementer lands** it at Step 10. ⇒ **between those two moments, work continues** — and a measurement taken in that window can falsify text that has already been approved.
+
+**The instance.** The orchestrator's SHIP message answered `#66`'s Step 9 and carried *"3 files deep-import today"* twice. **The implementer's Step 2.5 on `#67`, sent in the interim, had already measured that as 2 files plus a string literal** (`L164`). ⇒ **the approved message contained a claim its own recipient had disproved.**
+
+⛔ **THE STANDING RULE IS: *issue a commit message AFTER the last thing that can falsify it, OR re-verify every factual claim at landing.*** ⭐⭐ **The author owns the first half and CANNOT own the second — they are not present at landing.** ⇒ ***the second half is structurally the LANDER'S, and the lander is the party least licensed to change the text.*** **That tension is the whole lesson.**
+
+⇒ **THE RESOLUTION, all three parts, because any one alone is wrong:**
+1. ⛔ **Do NOT ship a claim you have measured false.** It is headed for the durable record, and a commit message is re-read far more than it is re-derived.
+2. ⛔ **Do NOT silently alter the author's text.** ⭐ **Add a visible note that the figure was corrected after approval, and why** — so the record shows an *edit-after-approval*, not the author having written it that way. **Silent correction destroys the evidence that the false claim existed and travelled, which is itself data** (`L148`'s erratum discipline, applied to a commit message rather than a session doc).
+3. **Disclose it in the same breath, and offer the amend.** The author may know something you do not.
+
+⚠ **AND THE AUTHOR'S HALF DOES NOT GO AWAY: the cheapest fix is still to write the message LAST.** ⭐ **A message authored before an outstanding Step-2.5 or review response has a known, nonzero chance of being falsified before it lands** — so a Step-9 reply that answers one slice while another measurement is in flight should say which measurements it is NOT conditioned on.
+
+⚠ **Corollary for the corrected party (recorded because it is the easy thing to get wrong): the correct response to being corrected here is NO AMEND.** **Amending to restore the original wording would re-introduce the falsified claim to satisfy authorship; amending to hide the correction would erase the evidence.** **The edited message with its visible note IS the right artifact.**
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: `/tdd` Step 10, immediately before `git commit` — re-read the approved message against anything measured since it was written; and `/tdd` Step 9, where the author should note which in-flight measurements the message assumes.**
