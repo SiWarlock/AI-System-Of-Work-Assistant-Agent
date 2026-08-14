@@ -3185,3 +3185,24 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⭐ **Extends [L149](#149)** (*the author of a piece of reasoning is its worst reviewer*) **from PROSE to ATTACK-SURFACE ENUMERATION** — there the author matches text against intent; here they match a hazard-space against the one they already imagined.
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: reviewer dispatch on any slice that hardens a guard, a predicate, or a parsing boundary. Name the region the author is most confident in and aim the reviewer there; and require a same-file census of every reader of any value whose read was hardened.**
+
+<a id="163"></a>
+## 163. PRECEDENT-BY-RESEMBLANCE — a precedent can be a reason the QUESTION was settled without being a template for the ANSWER
+
+**Date:** 2026-08-13. **Source:** `### 24.77`; the false wording was the orchestrator's, found by knowledge-implementer against **their own** precedent comment. **Banked at the lead's instruction as a new failure shape.**
+
+**The instance.** `applyPlan` needed a guard for *"the plan declares mutations but the diff is empty."* The implementer found that `tombstone.ts:254-265` — **the other KnowledgeWriter entry point** — already guarded an empty-change-set condition, deliberately, with a task citation. ⭐ **That was a genuine and valuable find: it converted `24.77` from a design gap into a DEFECT, because the subsystem had decided the question once and `applyPlan` never got the answer.**
+
+⛔ **Then it was relayed — by the orchestrator, into two tracker entries and a message to the lead — as *"guards the IDENTICAL condition."* IT IS NOT IDENTICAL, and it diverges in exactly the two respects the slice turns on:**
+- **CONDITION:** `tombstone.ts` tests `changes.length === 0` **ALONE** — which is precisely the **WIDENING `24.77` FORBIDS** (`24.77` requires *plan DECLARES mutations AND diff is empty*, so a legitimately empty plan keeps its ordinary row).
+- **DISPOSITION:** `tombstone.ts` **SUPPRESSES**; `24.77` ruled **against** suppression.
+
+⇒ ⛔⛔ ***A READER COMPLETING THE PARALLEL WOULD HAVE UNDONE THE SLICE*** — arriving at the widened predicate and the suppression, both by faithfully following a precedent that was cited to justify the work.
+
+⭐⭐ **THE DISCRIMINATION: a precedent can establish THAT a question was already decided without being a model for HOW.** **The two uses look identical in prose and are completely different in force.** ⚠ **And the failure is asymmetric in a nasty way: the precedent's VALUE (the subsystem already ruled) is what makes it persuasive, and that persuasiveness carries straight over to its DETAILS, which nobody re-checked.**
+
+⭐ **Structural reason it survives review: a precedent citation is normally checked for EXISTENCE — does that code do roughly this? — and existence is exactly what was true here.** ⛔ **Nobody checks a precedent for FIDELITY unless they are about to copy it, and by then they are the person being misled.**
+
+⇒ **DO. When citing a precedent, state WHICH of the two you mean, and if you mean "the question is settled," say what the precedent does DIFFERENTLY and why that is sound there and wrong here.** ⭐ **`24.77`'s corrected comment does exactly that and is the reference form.** ⚠ **Kin to `L124`** (*cite a precedent by what it DID and the file it did it in, never by a name for what it did*) — **`L124` guards against a compressed LABEL; this guards against an accurate label attached to a divergent MECHANISM.**
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any brief, task, comment, or Step-9 report citing an existing implementation as precedent. Name the divergences, or say explicitly that you checked and there are none.**
