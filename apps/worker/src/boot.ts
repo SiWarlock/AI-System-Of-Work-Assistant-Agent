@@ -652,9 +652,49 @@ function failClosedEgress(workspaceId: string): UiSafeEgressStatus {
  * ⇒ the DURABLE RECORD keeps the raw id notwithstanding (2)/(3) — attribution is the record's whole
  * purpose and `workspaceId` is its WS-8 query key, so scrubbing there would destroy the artifact to
  * protect the sink. The LOG SINK does not carry it: safety rule 7 names log sinks specifically, and the
- * two objects have different jobs. ⛔ Do NOT "harden" this by shape-checking the id before logging —
- * the residual class (an employer project codename, a person's name used as an id) is NOT
- * credential-shaped, so such a check would read as coverage of a class it cannot cover (`contracts L5`).
+ * two objects have different jobs.
+ *
+ * ⛔⛔ CORRECTION (`### 24.83`, 2026-08-14) — THE SENTENCE THAT USED TO END THIS PARAGRAPH IS RETRACTED,
+ * AND IT WAS MINE. It read: *"Do NOT harden this by shape-checking the id before logging — the residual
+ * class (an employer project codename, a person's name used as an id) is NOT credential-shaped, so such
+ * a check would read as coverage of a class it cannot cover."* ⚠ **The reasoning held only while the
+ * only conceivable id was an owner-typed codename.** `#52` traced the write path: `parseCreateWorkspace`
+ * admits **ANY NON-EMPTY STRING**, so a **credential-shaped id IS in the admissible class** — and a
+ * shape check would cover exactly it. **I argued against the remedy the measurement then selected.**
+ *
+ * ⭐ WHAT THE MEASUREMENT SAYS (`24.83`) — "shape-check" is not one place, and there are THREE, not two.
+ * **17 frozen contract models carry `workspaceId`**, which is what decides between them:
+ *   • **AUDIT boundary (`persistDenial`) — 1 of 17. REJECTED on coverage.** The id also reaches the
+ *     RENDERER via `UiSafeEgressStatus.workspaceId` (`api/procedures/systemHealth.ts`), and safety rule 7
+ *     names the renderer explicitly alongside logs — so an audit-only check leaves a rule-7 sink
+ *     uncovered **by the rule's own text**, not by anyone's judgement.
+ *   • **WRITE boundary (`parseCreateWorkspace`) — the WORKER-SIDE remedy, and a CALL-SITE check.** It is
+ *     the sole id-introducing gate *today*: `provisionWorkspace` is its only caller-reachable consumer,
+ *     and `provisionDevWorkspace` is handed `{readModels, vault, now}` — the repo dep is not passed, so
+ *     it is incapable **by construction**. ⚠ But a call site is bypassable by a FUTURE second create
+ *     path; it is not complete-by-construction. ⛔ **And the sharper finding: this parser uses
+ *     `isNonEmptyString` and returns `r["id"]` RAW — it never runs `WorkspaceIdSchema` at all.** So the
+ *     worker-side work is *stop bypassing the validator that already exists*, not *add a second rule*.
+ *   • ⭐⭐ **TYPE boundary (`WorkspaceIdSchema`) — THE CLASS FIX.** It is `brandedIdSchema<WorkspaceId>()`
+ *     — `.min(1)` + non-blank, no workspace-specific shape — and **15 of the 17 models validate through
+ *     it**. One site, complete-by-construction, inherited by models not yet written. ⛔ NOT worker
+ *     territory: it needs its OWN schema rather than a tightened shared factory (which would silently
+ *     re-shape `AgentJobId`, `ActionId`, every brand) ⇒ a FROZEN-CONTRACT change, filed separately.
+ *
+ * ⛔ AND THE DEFINITION QUESTION HAS A THIRD DOOR — do NOT try to define "credential-shaped". We cannot
+ * detect a credential reliably: `isRedactionSafe`'s own doc concedes a codename or a person's name
+ * passes it, and a denylist here is `worker L73`'s structurally-unwinnable shape. ⭐ **Invert it: do not
+ * ask "is this a credential?", ask "is this a well-formed workspace id?"** A bounded positive slug
+ * charset makes every credential shape **UNREPRESENTABLE rather than DETECTED** — `L73`'s inversion on a
+ * new surface. ⭐ Measured against `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`: all **3 live production ids**
+ * (`employer-work`, `personal-business`, `personal-life`) ACCEPT, and it rejects `sk-`/`AKIA`/`ghp_`/PEM/
+ * JWT/whitespace/uppercase shapes — **plus `ws/../etc`, so it incidentally closes path-traversal ids,
+ * which matters because this id builds vault paths (`24.26`).**
+ * ⚠ NOT free: **5 worker TEST fixtures would be rejected** (`MARKERWORKSPACE`, `ws_employer`, `ws-A`,
+ * `ws-B`, `ws-OTHER`) — migration work that belongs in the validator's own slice, not a surprise at
+ * implementation time.
+ * ⚠ **NEITHER boundary closes PRE-EXISTING rows** (a read-time concern, separate remedy), and **2 of the
+ * 17 models do not reference the brand** — unidentified, and deliberately not asserted as covered.
  */
 export function createAuditPersistPort(deps: {
   readonly audit: AuditRepository;
