@@ -90,6 +90,15 @@ export function mapWriteFailure(failure: WriteFailure): KnowledgeCommitFailureCo
       return "workspace_path_violation";
     case "commit_failed":
       return "commit_failed";
+    // 24.72 Leg B — POST-COMMIT record faults. Identity mappings like every case above: each keeps
+    // its OWN code because they fail against DIFFERENT stores and imply different remediation, and
+    // because these two are the only codes under which the Markdown write SUCCEEDED. Folding either
+    // onto `commit_failed` would tell the caller "nothing was committed" about a state in which
+    // something WAS — the precise inversion this mapper exists to prevent.
+    case "audit_record_failed":
+      return "audit_record_failed";
+    case "revision_record_failed":
+      return "revision_record_failed";
     default: {
       // A new WriteFailure member reaches here as a non-`never` type → tsc error,
       // forcing a deliberate mapping above. Never a `default:` that silently

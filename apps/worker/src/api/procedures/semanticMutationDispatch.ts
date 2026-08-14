@@ -187,6 +187,18 @@ function dbErrorToFailure(e: DbError): FailureVariant {
  * would instruct the caller to retry a write that can never succeed); an infra
  * `commit_failed` is `degraded_unavailable` + retryable. The writer's `cause` (which may
  * carry a path/secret/raw error) is DROPPED — only the stable code crosses.
+ * ⛔ 24.72 Leg B — `audit_record_failed` / `revision_record_failed` are `degraded_unavailable` and
+ * ⛔ NOT RETRYABLE, which is the opposite of the sibling infra fault directly above them and is the
+ * whole point: those two are the ONLY codes under which THE MARKDOWN WRITE SUCCEEDED, so
+ * `retryable:true` would instruct the caller to retry a write that ALREADY SUCCEEDED — the mirror of
+ * the reason 24.23 gives for the policy-breach codes above. The remedy is RECONCILE.
+ * ⛔⛔ AND RETRY HERE IS THE DEFECT, NOT MERELY A NO-OP. An earlier draft of this docblock said the
+ * writer's "idempotent replay returns `replayed:true` and writes nothing" — FALSE for exactly these
+ * two codes: the replay guard keys on `deps.revisions.getByIdempotencyKey`, the revision record is
+ * written LAST, `audit_record_failed` returns before it and `revision_record_failed` IS it failing.
+ * ⇒ NO revision record exists under either, so a re-drive MISSES the guard, re-enters the pipeline,
+ * and at a resolver-bound caller (live head ⇒ compare-revision passes, empty diff) appends a SECOND
+ * AuditRecord — 24.76's proven defect. `retryable:false` is what closes it, not the replay guard.
  */
 function commitFailureToVariant(f: KnowledgeCommitFailure): FailureVariant {
   switch (f.code) {
@@ -204,6 +216,20 @@ function commitFailureToVariant(f: KnowledgeCommitFailure): FailureVariant {
       return failure("degraded_unavailable", "semantic dispatch: commit failed", {
         retryable: true,
         cause: { code: "SEMANTIC_DISPATCH_COMMIT_FAILED" },
+      });
+    // 24.72 Leg B — POST-COMMIT record faults. ⛔ `retryable: false` DELIBERATELY, unlike the infra
+    // fault directly above: the Markdown write SUCCEEDED and only its bookkeeping did not, so a
+    // retry re-drives a write that already landed and fixes nothing. Distinct cause codes because
+    // they fail against DIFFERENT stores and imply different remediation.
+    case "audit_record_failed":
+      return failure("degraded_unavailable", "semantic dispatch: commit recorded no audit row", {
+        retryable: false,
+        cause: { code: "SEMANTIC_DISPATCH_COMMIT_AUDIT_RECORD_FAILED" },
+      });
+    case "revision_record_failed":
+      return failure("degraded_unavailable", "semantic dispatch: commit recorded no revision row", {
+        retryable: false,
+        cause: { code: "SEMANTIC_DISPATCH_COMMIT_REVISION_RECORD_FAILED" },
       });
     default: {
       // A new KnowledgeCommitFailureCode member reaches here as a non-`never`

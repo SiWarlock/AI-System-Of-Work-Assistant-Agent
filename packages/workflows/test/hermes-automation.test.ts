@@ -294,15 +294,23 @@ describe("runHermesAutomation — knowledge-commit conflict", () => {
 //
 // spec(§16) — a §16 FailureClass reflects the CAUSE, not the resting state
 // (contracts L18). The Hermes resting state `write_conflict` DELIBERATELY conflates
-// all six KnowledgeCommitFailureCode causes (it denotes pipeline position + retry
+// all eight KnowledgeCommitFailureCode causes (it denotes pipeline position + retry
 // posture, not cause), so the class must be threaded from the code at the commit
 // site rather than derived from the state via failureClassFor.
 //
 // ⭐ EXHAUSTIVE BY CONSTRUCTION: this is a TOTAL Record over the union, so adding a
-// seventh KnowledgeCommitFailureCode member is a COMPILE error here — it cannot
-// silently escape coverage the way a hand-written array of six would (the
+// ninth KnowledgeCommitFailureCode member is a COMPILE error here — it cannot
+// silently escape coverage the way a hand-written array would (the
 // 24.39/24.43 shape: a hand-maintained enumeration reporting coverage of a set it
 // does not enumerate).
+// ⭐ AND IT WORKED: 24.72 Leg B added members seven and eight, and this Record is one of the sites
+// the COMPILER surfaced. The counts above were stale the moment the union grew — they are prose,
+// and prose is not exhaustive-by-construction even inside a comment that is.
+// ⚠ THE COMPILER-SURFACED COUNT IS FOUR REPO-WIDE, THREE IN `packages/workflows` — an earlier draft
+// of this line said "exactly three" without the scope, which is a package-scoped measurement stated
+// as a repo-wide fact. The fourth is `commitFailureToVariant` in `apps/worker`, invisible to a
+// package-scoped `tsc`. ⇒ a compiler-enumerated site set inherits the SCOPE OF THE RUN that
+// produced it; "let the compiler enumerate" is complete only across every consuming project.
 const EXPECTED_COMMIT_FAILURE_CLASS: Record<KnowledgeCommitFailureCode, FailureClass> = {
   schema_rejected: "schema_rejection",
   write_conflict: "write_through_failed",
@@ -310,6 +318,15 @@ const EXPECTED_COMMIT_FAILURE_CLASS: Record<KnowledgeCommitFailureCode, FailureC
   secret_found: "security_violation",
   workspace_path_violation: "isolation_breach",
   commit_failed: "write_through_failed",
+  // 24.72 Leg B — POST-COMMIT record faults ⇒ `db_unavailable`, LEAST-WRONG rather than correct.
+  // ⛔ NOT `write_through_failed`: the write-through attempt SUCCEEDED and the Markdown is durable,
+  // so that class would assert the very inversion 24.72 exists to fix. The audit repo and revision
+  // store are the §4 operational store. ⚠ It over-claims on a constraint error or lock contention,
+  // which are not unavailability — see `commitFailureClass`'s arch_gap in sourceIngestion.ts.
+  // ⚠ Partially addresses 24.80 (these no longer share a dedupe class with genuine write-through
+  // failures); does NOT close it (the two still share a class with each other).
+  audit_record_failed: "db_unavailable",
+  revision_record_failed: "db_unavailable",
 };
 
 const ALL_COMMIT_FAILURE_CODES = Object.keys(

@@ -281,6 +281,27 @@ export function commitFailureClass(code: KnowledgeCommitFailureCode): FailureCla
       return "write_through_failed";
     case "commit_failed":
       return "write_through_failed";
+    // 24.72 Leg B — POST-COMMIT record faults ⇒ `db_unavailable`, recorded as LEAST-WRONG, NOT as
+    // correct (`contracts L18`: class by CAUSE, and name the limit rather than imply coverage).
+    // ⛔ THIS REVERSES A DOCUMENTED DECISION made earlier in this slice. The first version returned
+    // `write_through_failed` on the reason "the write-through ATTEMPT errored" — which CONTRADICTS
+    // this task's own premise: the attempt SUCCEEDED and the Markdown is durable. A class asserting
+    // the write failed is the same report inversion 24.72 exists to fix, one layer out.
+    // The audit repo and the revision store ARE the §4 operational store, so `db_unavailable` is
+    // cause-accurate when that store is genuinely unreachable.
+    // ⚠ arch_gap — WHAT IT OVER-CLAIMS: a constraint violation or lock contention is NOT
+    // unavailability, and both land here too. `db_unavailable` is the closest existing member of the
+    // FROZEN §16 enum, not a description of every cause it now carries; the discriminating detail
+    // survives in the `KnowledgeCommitFailureCode` and in the failure MESSAGE, never in the class.
+    // ⚠ Relation to `### 24.80`: this PARTIALLY addresses it — these faults no longer share a class
+    // (and therefore no longer share a `healthItemDedupeKey`, `${failureClass}|${subjectRef}`, 24.58)
+    // with genuine `write_conflict` / `commit_failed` write-through failures, so an acknowledged
+    // benign item can no longer absorb one of these. ⛔ It does NOT close 24.80: `audit_record_failed`
+    // and `revision_record_failed` still share a class with EACH OTHER.
+    case "audit_record_failed":
+      return "db_unavailable";
+    case "revision_record_failed":
+      return "db_unavailable";
     default: {
       // A new KnowledgeCommitFailureCode member reaches here as a non-`never`
       // type → tsc error, forcing a deliberate class above. Never a `default:`
@@ -360,6 +381,55 @@ function commitFailureState(code: KnowledgeCommitFailureCode): SourceState {
     case "workspace_path_violation":
       return "failed_terminal";
     case "commit_failed":
+      return "failed_terminal";
+    // ⛔ 24.72 Leg B — POST-COMMIT record faults are TERMINAL, and the reason is SEMANTIC rather
+    // than a measurement, so it holds even if the reachability facts below change.
+    // THE MARKDOWN WRITE SUCCEEDED; only its bookkeeping did not. The operator needs RECONCILE, not
+    // RE-RUN, and `failed_retryable` would name the wrong remedy.
+    // ⛔⛔ AND RETRY IS NOT MERELY USELESS HERE — IT IS THE DEFECT. An earlier draft of this note
+    // claimed "the writer's idempotent replay returns `replayed:true` and writes nothing". THAT IS
+    // FALSE FOR EXACTLY THESE TWO CODES, and the inversion is load-bearing:
+    //   `applyPlan`'s replay guard keys on `deps.revisions.getByIdempotencyKey`, and the revision
+    //   record is written LAST. `audit_record_failed` returns BEFORE `revisions.record` runs;
+    //   `revision_record_failed` IS that call failing. ⇒ under BOTH codes NO revision record exists,
+    //   so a second `applyPlan` with the same `kw:commit:${planId}` MISSES the replay guard and
+    //   re-enters the full pipeline. At the RESOLVER-bound call site (semanticApprovalDispatch
+    //   resolves the LIVE head) the compare-revision then PASSES, the diff is empty, and a SECOND
+    //   AuditRecord is appended — 24.76's proven misdescribing-audit-row defect.
+    // ⇒ the replay guard does NOT close this; terminal is what closes it. LOAD-BEARING, not cautious.
+    // ⚠ SECOND, WEAKER REASON, recorded because it is the one that can go stale: nothing today
+    // consumes a `failed_retryable` SourceState — it is a workflow-LOCAL variable NOT WRITTEN TO THE
+    // OPERATIONAL STORE, and no caller reads `.state` today. ⚠ Stated precisely: it is NOT
+    // "never persisted" — it is returned as `SourceIngestionOutcome.state`, so it lands in Temporal's
+    // durable event history and is reachable via the run handle's result. What is measured is the
+    // absence of a CONSUMER, not the absence of a record.
+    // The domain machine's `failed_retryable → processing` back-edge also has no performer. A
+    // terminal mapping is correct whether or not a re-driver is added later; a retryable mapping
+    // would be safe only while that census stays true (24.85's measurement discipline, applied to a
+    // taxonomy choice).
+    // ⭐ This is also what preserves 24.76's Claim 2: a re-drivable post-commit fault plus the
+    // deterministic `kw:commit:${planId}` idempotency key is exactly the misdescribing-audit-row
+    // path that task proved and graded NOT LIVE.
+    // ⛔⛔ DO NOT RELAX THIS IF `#79` RESOLVES AS "NO RE-DRIVE". Terminal was chosen to be correct
+    // INDEPENDENT of that open question, and it is correct under BOTH branches:
+    //   • `resume.ts` ledger-keyed (as measured) ⇒ it re-drives regardless of this state, so the
+    //     mapping neither creates nor closes that path, and terminal stands on the reasons above.
+    //   • `resume.ts` state-keyed anywhere ⇒ `failed_retryable` would hand it a LIVE re-drive into
+    //     24.76's precondition, and terminal is MORE clearly right, not less.
+    // ⚠ CORRECTED — an earlier draft of this block named a bare `resume.ts` as the coupling. That is
+    // the WRONG SUBSYSTEM, and the bare filename was also AMBIGUOUS: `packages/workflows/src/runtime/
+    // resume.ts` and `apps/worker/src/api/stream/resume.ts` both exist; the claim concerns the first.
+    // Measured: `packages/workflows/src/runtime/resume.ts` cannot reach `applyPlan` (the loop skips
+    // every non-`external_write` step, `recoverRun` has zero production callers, and nothing in
+    // production constructs a `ResumeInput`). ⇒ THE COUPLING IS THE WRITER'S KEY ORDERING, described
+    // above, and it therefore applies to ANY re-drive mechanism — Temporal retry, an operator re-run,
+    // an approval re-dispatch — not to one subsystem. Naming `resume.ts` would send the next reader
+    // to audit the one place it demonstrably is not.
+    // ⇒ no resolution of the re-drive question licenses relaxing this to retryable (`contracts L146`:
+    // ask what the conservative choice was incidentally preventing before correcting it away).
+    case "audit_record_failed":
+      return "failed_terminal";
+    case "revision_record_failed":
       return "failed_terminal";
     default: {
       // A new KnowledgeCommitFailureCode member reaches here as a non-`never`

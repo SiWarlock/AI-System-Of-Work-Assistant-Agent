@@ -429,6 +429,17 @@ export interface KnowledgeCommitSuccess {
  *                                 different invariant (24.49); it stands on §5 WS-8
  *                                 itself, and is not a generic commit failure).
  *   • `commit_failed`           — the underlying commit failed for another reason.
+ *   • `audit_record_failed`     — POST-COMMIT (24.72): the Markdown write SUCCEEDED and the audit
+ *                                 row did not land. ⛔ The commit STANDS.
+ *   • `revision_record_failed`  — POST-COMMIT (24.72): the Markdown write SUCCEEDED and the
+ *                                 revision-store record did not land. ⛔ The commit STANDS.
+ *
+ * ⛔ THE LAST TWO ARE THE ONLY MEMBERS DESCRIBING A STATE IN WHICH THE WRITE SUCCEEDED — every other
+ * member means nothing was committed. They are kept DISTINCT from each other and from
+ * `commit_failed` deliberately: they fail against different stores and imply different remediation,
+ * and collapsing them is the same absorption an exhaustive mapper exists to prevent, performed in a
+ * `case` instead of a `default` (`contracts L134` — this union's mapper is that lesson's origin
+ * instance). Task 24.58 measured the downstream cost of collapsing at this layer.
  */
 export type KnowledgeCommitFailureCode =
   | "schema_rejected"
@@ -436,7 +447,9 @@ export type KnowledgeCommitFailureCode =
   | "ownership_violation"
   | "secret_found"
   | "workspace_path_violation"
-  | "commit_failed";
+  | "commit_failed"
+  | "audit_record_failed"
+  | "revision_record_failed";
 
 export interface KnowledgeCommitFailure {
   readonly code: KnowledgeCommitFailureCode;

@@ -443,6 +443,52 @@ describe("runSourceIngestion — write conflict", () => {
     expect(outcome.state).toBe("failed_terminal");
     expect(health.surfaced).toHaveLength(1);
   });
+
+  // 24.72 Leg B — the slice's HEADLINE DECISION, pinned. Both POST-COMMIT record faults rest
+  // TERMINAL. These are the only two codes under which the Markdown write SUCCEEDED, so a
+  // `failed_retryable` resting state would invite a re-drive of an already-durable commit — and the
+  // writer's replay guard does NOT catch it, because that guard keys on the revision record and
+  // neither fault writes one. Terminal is what closes it.
+  it("a commit audit_record_failed → failed_terminal (24.72 — the write SUCCEEDED; retry cannot fix a missing audit row)", async () => {
+    const health = new FakeSourceHealthSink();
+    const deps = makeDeps({
+      commit: new FakeCommitPort({ failWith: "audit_record_failed" }),
+      health,
+    });
+
+    const outcome = await runSourceIngestion(makeInput(), deps);
+
+    expect(outcome.state).toBe("failed_terminal");
+    expect(health.surfaced).toHaveLength(1);
+  });
+
+  it("a commit revision_record_failed → failed_terminal (24.72 — distinct code, same resting state, never failed_retryable)", async () => {
+    const health = new FakeSourceHealthSink();
+    const deps = makeDeps({
+      commit: new FakeCommitPort({ failWith: "revision_record_failed" }),
+      health,
+    });
+
+    const outcome = await runSourceIngestion(makeInput(), deps);
+
+    expect(outcome.state).toBe("failed_terminal");
+    expect(health.surfaced).toHaveLength(1);
+  });
+
+  // ⭐ THE DISCRIMINATING PIN, and the one that would actually catch a regression: it asserts the
+  // two new codes do NOT rest retryable. The two tests above would both still pass if someone
+  // "helpfully" made every commit failure terminal; this one fails if either new code is flipped to
+  // `failed_retryable`, which is the specific edit 24.76's precondition makes dangerous.
+  it("neither post-commit record fault ever rests failed_retryable (24.76 precondition)", async () => {
+    for (const failWith of ["audit_record_failed", "revision_record_failed"] as const) {
+      const deps = makeDeps({
+        commit: new FakeCommitPort({ failWith }),
+        health: new FakeSourceHealthSink(),
+      });
+      const outcome = await runSourceIngestion(makeInput(), deps);
+      expect(outcome.state).not.toBe("failed_retryable");
+    }
+  });
 });
 
 // --- external action held / approval → failed_retryable ---------------------

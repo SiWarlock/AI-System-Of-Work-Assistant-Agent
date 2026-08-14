@@ -312,6 +312,36 @@ describe("createSemanticMutationDispatch — commit failure + non-approved statu
     expect(kmp.store.get("plan-f-1")?.status).toBe("pending");
   });
 
+  // 24.72 Leg B — the two POST-COMMIT record faults. ⛔ `degraded_unavailable` + `retryable:false` is
+  // the ONLY such combination in `commitFailureToVariant`; every other `degraded_unavailable` case is
+  // retryable. Without these pins a future edit flipping them to `true` "for consistency" reds
+  // nothing — and it would be actively wrong: these are the only two codes under which THE MARKDOWN
+  // WRITE SUCCEEDED, so a retry re-drives an already-durable commit. It also does not hit the
+  // writer's replay guard, which keys on the revision record that neither fault wrote.
+  it("24.72 — audit_record_failed surfaces as degraded_unavailable and NOT retryable (the write succeeded; retry cannot fix a missing audit row)", async () => {
+    const { dispatch } = makeDispatch(mkRow(), {
+      commit: { failure: { code: "audit_record_failed", message: "boom", cause: { dsn: "leak" } } },
+    });
+    const r = await dispatch(mkApproval());
+    const e = assertErr(r);
+    expect(e.kind).toBe("degraded_unavailable");
+    expect(e.retryable).toBe(false);
+    // rule 7: the writer's raw cause never crosses — only the stable token.
+    expect(JSON.stringify(e)).not.toContain("leak");
+  });
+
+  it("24.72 — revision_record_failed surfaces as degraded_unavailable and NOT retryable, with its OWN cause code (never folded onto its sibling)", async () => {
+    const { dispatch } = makeDispatch(mkRow(), {
+      commit: { failure: { code: "revision_record_failed", message: "boom", cause: { dsn: "leak" } } },
+    });
+    const r = await dispatch(mkApproval());
+    const e = assertErr(r);
+    expect(e.kind).toBe("degraded_unavailable");
+    expect(e.retryable).toBe(false);
+    expect(JSON.stringify(e)).toContain("REVISION_RECORD_FAILED");
+    expect(JSON.stringify(e)).not.toContain("leak");
+  });
+
   it("commit succeeds but the row-status update fails → surfaces the store fault, no double-commit", async () => {
     // The Markdown is already durably (idempotently) written; surfacing the store fault — NOT a
     // second commit — is the safe outcome. The row stays pending (a re-drive replays the writer).
