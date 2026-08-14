@@ -2977,7 +2977,13 @@ awk '…' src > /tmp/sec.txt; grep -o '…' /tmp/sec.txt > /tmp/tok.txt; wc -l <
 
 ⚠ **NOT "never pipe."** Piping is fine for *reading*. The rule binds when a number derived from the pipe will be **reported, recorded, or compared** — which is exactly when it becomes durable and stops being re-derived.
 
-`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any command whose output becomes a count in a commit message, a tracker entry, a Step-9 report, a handoff, or a seal. If a pipe produced the number, re-derive it through a file before writing it down.**
+⭐⭐ **THE HALF THAT MAKES CONCORDANCE MEAN ANYTHING — added at the lead's instruction, same day, from their own instance.** The lead's Phase-24 anchor census had been **corroborated by the predecessor's independent count agreeing with it** — and that corroboration was **worthless**, because both derivations ran the **same pipe shape in the same environment**. ⛔ **If a truncation is deterministic, two piped derivations agree BY CONSTRUCTION.** Same instrument twice is not two measurements.
+
+⇒ ***THE TEST IS NOT "DID TWO DERIVATIONS AGREE." IT IS "COULD THEY HAVE FAILED INDEPENDENTLY."***
+
+⭐ **Contrast, from the same day, showing what real corroboration looks like:** a composition set found by grepping the spelling `workspacePathCheck` and a set derived from the property (`readVaultHeadRevision` in `expectedBaseRevision` position) returned **the same two files** — **different symbol, different mechanism, so the methods could have disagreed and didn't.** That is evidence. **Two `awk | grep -o | sort | uniq -c` runs are one measurement performed twice.** ⚠ **And note which way the asymmetry runs: agreement between dependent methods is the CHEAPEST thing to obtain and the most reassuring to read** — it is what a careful person produces when re-checking their own work the obvious way.
+
+`pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any command whose output becomes a count in a commit message, a tracker entry, a Step-9 report, a handoff, or a seal. If a pipe produced the number, re-derive it through a file before writing it down. And before citing a second derivation as corroboration, state what would have made the two disagree.**
 
 <a id="156"></a>
 ## 156. A SELF-REFERENTIAL COUNT IS CORRECT AS OF ITS OWN WRITING — and the naive "fix" INTRODUCES the error
@@ -2997,3 +3003,34 @@ awk '…' src > /tmp/sec.txt; grep -o '…' /tmp/sec.txt > /tmp/tok.txt; wc -l <
 ⚠ **Kin to `L143`** (a recorded finding decays and triage must re-measure) with the sign flipped: there the record went stale and needed refreshing; **here the record is permanently accurate and refreshing it is the defect.** ⇒ **"re-measure before trusting" and "do not overwrite a snapshot" are both right, and the discriminator between them is whether the artifact sits inside its own population.**
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any round seal, changelog, release note, or archive entry stating a count of the change it is part of; and any later reader about to correct such a count.**
+
+<a id="157"></a>
+## 157. THE CODE-INTELLIGENCE INDEX RETURNS A CONFIDENT "No callers found" FOR CALLBACK-POSITION CALL SITES — and it is the one tool everyone is instructed to prefer over grep
+
+**Date:** 2026-08-13. **Source:** orchestrator, validating a brief premise for `### 24.76`. **Banked at the lead's instruction, with an explicit instruction to carry it into every spawn prompt's traps list.**
+
+**The instance.**
+
+```
+codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVaultHeadRevision"
+```
+
+**There are TWO production call sites**, plus a third consumer:
+- `apps/worker/src/composition/semanticApprovalDispatch.ts:97` — `expectedBaseRevision: () => readVaultHeadRevision(deps.vault)`
+- `apps/worker/src/composition/buildActivities.ts:1109` — `expectedBaseRevision: () => readVaultHeadRevision(backends.vault)`
+- `apps/worker/src/api/procedures/servingContextBootReaders.ts:70` — a serving read
+
+⛔ **Both production sites are in CALLBACK POSITION** — the symbol appears inside an arrow function passed as a field value, never as a direct call in a named function body. **The index misses them.** ⚠ **This is a capability its own documentation claims:** *"including dynamic-dispatch hops — callbacks, React re-render, JSX children — that grep can't follow."*
+
+⛔⛔ **WHY THIS IS WORSE THAN AN ORDINARY TOOL BUG, AND IT IS THE REASON IT IS BANKED:**
+1. **It fails toward the SAFE-LOOKING answer.** *"No callers"* ⇒ *"this is dead code"* ⇒ *"the scenario is unreachable"* ⇒ **task closed with a check mark.** In this instance, trusting it would have concluded **no live-head-resolver compositions exist** and closed a rule-1-adjacent audit-integrity finding as unreachable.
+2. **It carries INDEX AUTHORITY.** A `grep` returning nothing feels like a search that might have been scoped wrong; **a code-intelligence index returning "No callers found" reads as a resolved fact about the whole program.**
+3. ⛔ **Every convention document in this project instructs agents to PREFER it over `grep`+read loops** — root `CLAUDE.md`, the orchestrator briefing, and the per-area guides all say so, and a session hook repeats it on nearly every tool call. ⇒ **the failure mode is installed directly in the path of the recommended workflow.**
+
+⭐ **What caught it was `L152`, prospectively rather than in hindsight: *"no callers found" is UNVERIFIED, not REFUTED.*** The re-run was a redirected `grep` with a non-vacuity control (`applyPlan` → 130 hits repo-wide, proving the search read the tree), which returned 27 references including the two call sites.
+
+⇒ **DO. Never let a code-intelligence census be the sole basis for a NEGATIVE claim** — reachability, dead-code, no-callers, safe-to-delete. **Corroborate with a redirected `grep` + a non-vacuity control, and prefer a derivation by PROPERTY over one by symbol name.** ⚠ **Positive results remain trustworthy and cheap** — the asymmetry is the whole point: the index tells you where something IS, and is not evidence about where it ISN'T.
+
+⚠ **Do not generalise to "distrust the index"** — that would be `L111`'s false-doubt failure, and the tool is genuinely better than grep for the positive questions. **The narrow, checkable claim: a callback-position call site can be invisible to `codegraph_callers`, so a "no callers" result is a QUESTION, not a verdict.**
+
+`pattern: none reliable — the defect is a MISSING result, and no grep finds an absence in another tool's output.` `accepted: not mechanically enforceable` — **enforcement point: any reachability, dead-code, or no-callers claim sourced from a code-intelligence tool, especially one about to close a task or license a deletion. Also: carry this into spawn-prompt traps lists.**
