@@ -237,7 +237,12 @@ export function validateProjectionVisibility(
   // ⛔ RESIDUAL 2, stated so it cannot decay (`contracts L100`): on the equality branch this
   // ref renders the RAW `srcId`. That is trusted PROVENANCE (config-sourced), NOT validated
   // SHAPE. ⇒ ONE residual, TWO sites (`24.65`): the sibling is `denyDirectCrossWorkspaceRaw`'s
-  // `from`/`to` below. **Closing one does NOT shut the class.** Remedy filed as `#54`.
+  // `from`/`to` below. **Closing one does NOT shut the class.**
+  // ⛔ NO REMEDY IS FILED FOR THAT SITE — `### 24.68` MEASURED the obvious one and it does not
+  // exist (no trusted supplier; the only candidate is caller-echoed). Read the note there
+  // before assuming this half is merely awaiting work. *(This previously cited `#54`, a
+  // session-scoped id `contracts L51` forbids for durable debt and which already resolves to a
+  // different historical item.)*
   const srcId: unknown = readOwnData(sourceWorkspace, "id");
   const srcDefault: unknown = readOwnData(sourceWorkspace, "defaultVisibility");
   const refs: readonly string[] = [
@@ -421,21 +426,61 @@ export function denyDirectCrossWorkspaceRaw(
   // weaker second spelling of a control `24.45` proved insufficient ⇒ false assurance, which
   // costs more than a documented gap: a documented gap gets re-checked, a control nobody
   // knows is weak does not.
-  // ⭐ THE ACTUAL REMEDY — pass a trusted counterpart in so the referential check can apply —
-  // is tracked as session task `#54`. Recorded rather than merely accepted, because an
-  // accepted residual with no filed remedy becomes permanent: the acceptance is otherwise the
-  // last thing anyone writes about it. ⚠ `#54` is a SESSION-SCOPED id (`contracts L51`) and
-  // the id space is reused across sessions — a durable `IMPLEMENTATION_PLAN.md` entry is owed
-  // and flagged; cite that once it exists rather than this number.
+  // ⛔⛔ THIS IS NOT "DEFERRED" — a residual filed as remediable when it is not is a false
+  // promise that ages into a false assurance. ⚠ SCOPED PRECISELY, because the categorical
+  // form is broader than the measurement: what is unfixable at this layer is THE REFERENTIAL
+  // REMEDY. `### 24.68` proposed it — pass a trusted counterpart in — and MEASURING IT KILLED
+  // IT (2026-08-14; re-run the chain, do not inherit):
+  //   • `denyDirectCrossWorkspaceRaw` ← `guardCrossWorkspaceRawRead` ← `CrossWorkspaceLinkMap`
+  //     `.authorizeCrossWorkspaceRawRead` ← NOTHING. No production caller supplies anything.
+  //   • ⛔ And the one candidate that LOOKS like an authority is not one: `CrossWorkspaceLinkMap`
+  //     holds `new Map()` and NOTHING ELSE — no registry, no resolver, no repo. Its keys are
+  //     whatever a caller passed to `recordLink`, admitted by `endpointsValid` = non-empty +
+  //     distinct — ⭐ THE SAME CLASS OF CHECK AS THE `typeof`/NON-EMPTY GUARD **ABOVE** THAT WE
+  //     WOULD BE STRENGTHENING. (Direction matters: reading *below* lands on `linkValid`, which
+  //     merely resembles it — the `### 24.66` shape, where the auditor concludes they misread.)
+  //   • ⚠ The INPUT axis was checked too, since a dependency enumeration structurally cannot see
+  //     a parameter-borne counterpart: `RecordLinkInput.approval` carries an `Approval
+  //     .workspaceId` documented as server-bound. It does not rescue the remedy — `recordLink`
+  //     never cross-checks it against `from`/`to`, and it is provenance again, not shape.
+  //   ⇒ any "trusted counterpart" available here is THE SAME CALLER-SUPPLIED STRING ECHOED BACK.
+  //     Passing it would manufacture `contracts L147` deliberately — trusted PROVENANCE
+  //     presented as validated SHAPE — and would read as coverage forever after. That is
+  //     `### 24.83`'s falsified justification exactly: "registry-validated" means "someone
+  //     inserted it".
+  // ⛔⛔ AND THE SAME LESSON APPLIES TO THE REGISTRY, WHICH AN EARLIER DRAFT OF THIS NOTE
+  // EXEMPTED. It called `workspaceConfig` "A REAL authority" one sentence after using `24.83`
+  // to disqualify the `Map` — ⛔ applying a lesson to one instance and not its sibling, in one
+  // paragraph. `workspaceConfig` is an EXISTENCE authority and NOT a shape authority: its own
+  // write boundary (`parseCreateWorkspace`) admits ANY NON-EMPTY STRING as the id and never
+  // runs `WorkspaceIdSchema` (`### 24.62` boundary a / `#52`). ⇒ ⛔ WIRING IT WOULD NOT CLOSE
+  // THIS RESIDUAL: a registry lookup proves NEITHER shape (`### 24.83`) NOR entitlement
+  // (`### 24.62` boundary b — authz gates WHETHER, not WHICH). ⭐ Both halves are needed,
+  // because a reader who notices this is a SHAPE residual will correctly dismiss an
+  // entitlement-only objection and wire the registry anyway.
+  // ⭐ THE ASYMMETRY, recorded because it outlives the timing: ONE counterpart cannot validate
+  // both — `from` (the caller) would need an authenticated identity, none of which is in scope;
+  // `to` (the target) would need an entitlement check.
+  // ⚠ A SHAPE remedy is NOT foreclosed and is not this task's: `### 24.84` exists to give
+  // `WorkspaceIdSchema` a defensible shape, which needs no counterpart and is symmetric across
+  // `from`/`to`. Option (B) was rejected against the CURRENT schema (`.min(1)` + non-blank), so
+  // that rejection expires when `24.84` lands. ⚠ And "cannot reach here" is a WIRING fact, not
+  // a structural impossibility — `apps/worker` already depends on `@sow/policy`, so a worker
+  // caller could supply a counterpart without the `### 24.81`-fenced GCL port binding.
   // ⚠ Reachability MEASURED 2026-08-13 — and stated as REACHABILITY, not as "no caller",
   // because it HAS two production callers: `← guardCrossWorkspaceRawRead`
   // (`packages/knowledge/src/gcl/visibility-gate.ts:255`) `← CrossWorkspaceLinkMap`'s
   // `authorizeCrossWorkspaceRawRead` (`packages/knowledge/src/gcl/cross-workspace-links.ts:237`)
-  // `← NOTHING`. ⛔ NOT production-REACHABLE from any entry point — but BOTH hops are exported
-  // from `@sow/knowledge`'s public barrel, so a SINGLE import makes this live with fully
-  // caller-supplied values, with `CrossWorkspaceLinkMap` never constructed. ⇒ the dormancy
-  // this residual was accepted under is ONE IMPORT away from ending, and that is NOT the
-  // condition the acceptance was argued on.
+  // `← NOTHING`. ⛔ NOT production-REACHABLE from any entry point.
+  // ⚠ CORRECTED 2026-08-14 — this previously read "BOTH hops are exported from
+  // `@sow/knowledge`'s public barrel, so a SINGLE import makes this live … the dormancy is ONE
+  // IMPORT away from ending." **That is no longer true: `### 24.78` Part 1 landed and the barrel
+  // no longer re-exports `./gcl/visibility-gate` or `./gcl/cross-workspace-links`.** Arming this
+  // now takes a deliberate deep import through the surviving `"./*"` wildcard — which that same
+  // barrel classifies as the path taken BY INTENT rather than BY ACCIDENT. ⭐ The dormancy is
+  // narrower than it was, NOT guaranteed: the wildcard fence is `24.78`'s own Done-when and is
+  // still open. **Stale in the ALARMING direction, and corrected anyway** — a severity argument
+  // resting on a false premise is a defect whichever way it leans.
   // ⚠ The four `packages/workflows/src` appearances are COMMENTS, not calls
   // (`contracts L104`, use-vs-mention; filed as `#53`).
   const refs: readonly string[] = [`ref:workspace:from:${from}`, `ref:workspace:to:${to}`];
