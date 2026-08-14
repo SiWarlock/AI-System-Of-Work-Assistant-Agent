@@ -3429,3 +3429,24 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⇒ **DO: when a fix breaks tests, classify each as PINNED or BUILT-ON before touching it, and record which** — a repaired built-on harness should say in-test that its scaffolding changed and why, so the next reader does not mistake the update for a weakened assertion.
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any slice whose fix reds pre-existing tests, and any constraint phrased as "do not pin X" — which does not, on its own, tell an implementer what to do about a test that merely uses X.**
+
+<a id="174"></a>
+## 174. A CORRECTION DOES NOT PROTECT ITS OWN AUTHOR — you re-commit the retracted claim in a different region of the same file, and only a grep of your own diff catches it
+
+**Date:** 2026-08-14. **Source:** `### 24.72` Leg A, knowledge-implementer — **self-reported, against themselves, after the fix had already been approved.** ⭐ **TWO INSTANCES THE SAME DAY, TWO AGENTS, SAME SHAPE.**
+
+**Instance 1 (the implementer's).** Their Step-8 comment read *"nothing caught the fault to MAKE it one, so it escaped as an untyped rejection"* — **the exact claim `L154` was banked to retract.** ⛔⛔ **And the file already contained their OWN correction of it.** `writer.ts:275`, written that morning for `### 24.67`: *"BUT IT DOES NOT ESCAPE PRODUCTION UNTYPED, AND AN EARLIER DRAFT OF THIS COMMENT CLAIMED IT DID."* ⇒ ***they wrote the corrected version, then wrote the false version again, in the same file, in a later slice, 266 lines away.***
+
+**Instance 2 (the orchestrator's, same day).** Brief 285 asserted the identical retracted claim — **in a brief whose own `§16` section cites `L154`.**
+
+⛔⛔ **MECHANISM, and it is structural rather than careless: A CORRECTION LIVES AT THE SITE OF THE ORIGINAL ERROR. A later edit happens in a DIFFERENT REGION.** ⭐⭐ **The author does not re-read their own correction — and KNOWING WHAT IT SAYS IS EXACTLY WHAT PREVENTS RE-READING IT.** ⇒ ***a correction is written for future readers, and its author is the one person who will never be a future reader of it.***
+
+⭐ **This is [L94](#94)'s CEILING.** L94 says a correction must reach every channel carrying the claim — **and even a correction that reaches every channel does not protect the person who WROTE it**, because they do not consult channels they authored. ⚠ **Neighbour of [L149](#149)** (*the author of reasoning is the worst reviewer of text restating it*) **pointed one step further: the author of a CORRECTION is the person most likely to RE-COMMIT the corrected error.**
+
+⭐⭐ **THE DETECTION IS THE REUSABLE HALF, and it is not "be careful" — the implementer's own words: *"Reading your erratum is not what caught it; grepping my own diff for the phrase is."*** ⇒ **[L172](#172) applied to a RETRACTED CLAIM rather than to a forbidden token.**
+
+⇒ **DO: when you retract a claim, add the retracted PHRASE to your own Step-9 self-grep list, permanently.** **The correction is for readers; the grep is for you.** ⭐ **And sweep the whole file, not the region you edited** — the instance that bites is the one in the region you were not thinking about. ⚠ **Expect the surviving match to be the correction itself** (which *negates* the claim) — that is the correct residue, and finding only it is the pass condition.
+
+⚠ **Corollary for reviewers: a file containing an explicit correction of claim X is a HIGHER-risk site for a fresh assertion of X, not a lower one.** The correction's presence reads as immunity and is the opposite.
+
+`pin: none` · `pattern: git diff --cached | grep -nE '<the retracted phrase>'` — **run on your own staged diff, whole-file sweep, expecting only the negating correction to match.** `accepted: partially enforceable` — **enforcement point: `/tdd` Step 9 of any slice touching a file where you have previously retracted a claim; and any erratum, whose author should add its phrase to their own self-check rather than assuming they are now inoculated.**
