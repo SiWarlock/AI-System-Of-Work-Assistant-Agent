@@ -104,10 +104,12 @@ function toBoundaryError(e: RevokeEgressAckError): FailureVariant {
  * the composed failure is blocked upstream — the READ mismatches first, the cell
  * renders `unavailable`, and the revoke control is never offered (`egress.tsx:249`
  * requires `cell.kind === "ready"`). ⛔ THE HAZARD REMAINS REACHABLE BY THREE ROUTES:
- * an edit importing a DIFFERENT same-named `redactString` (this repo has THREE, with
- * divergent pattern sets), "consistency" applied in the OTHER direction (removing the
- * gate from `systemHealth.ts`), or any future revoke path not gated on a successful
- * read. ⛔ NOT grounds to weaken or delete this fence.
+ * an edit importing a DIFFERENT same-named `redactString` (this repo has MULTIPLE,
+ * with divergent pattern sets — census on `### 24.118`, deliberately NOT restated here:
+ * a guard that carries a count rots when someone adds one), "consistency" applied in
+ * the OTHER direction (removing the gate from `systemHealth.ts`), or any future
+ * revoke path not gated on a successful read.
+ * ⛔ NOT grounds to weaken or delete this fence.
  */
 function toUiSafeEgressStatus(status: UiSafeEgressStatus): UiSafeEgressStatus {
   return {
