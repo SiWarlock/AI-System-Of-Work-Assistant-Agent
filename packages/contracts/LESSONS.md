@@ -4601,3 +4601,35 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **Kin `L202`** (a believed claim generates no doubt) — **`202` is about your own conclusion; `228` is about someone ELSE'S evidence, which is worse, because deference supplies the confidence you did not earn.**
 
 **Enforcement:** `pattern: a claim citing a measurement states the measured quantity, its population, and why the claim follows — three clauses, at the point of use` · `accepted: partially enforceable`.
+
+## <a id="229"></a>229. CLOSING A BLOCKER ROUTINELY ARMS A SECOND HAZARD ON THE SAME SURFACE — and the second is never in the task that got closed
+
+⛔⛔ **FOUR INSTANCES IN ONE ROUND, WHICH MAKES IT A PROPERTY OF THIS CODEBASE RATHER THAN A RUN OF BAD LUCK:**
+1. **`### 24.84`'s landing EXPIRED `### 24.93`'s ground** — the fix retired the premise a sibling task rested on.
+2. **`### 24.98`'s landing left `### 24.104`'s precondition live** — a remedy whose safety silently depended on another task's state.
+3. **`### 24.118`'s delegate-order** — *"consolidate for consistency"* becomes a DELETION of a live detector the moment the copy is delegated first.
+4. **`### 24.120`'s landing cleared `### 24.110`'s stated blocker AND armed a second axis** — delegating now means STRIPPING, so policy stops refusing already-redacted content: **a loosening on the sole-writer path that nobody has ruled on.**
+
+⇒ ⭐⭐ ***THE SECOND HAZARD IS NEVER RECORDED IN THE TASK THAT GOT CLOSED, BECAUSE IT DOES NOT EXIST UNTIL THAT TASK CLOSES.*** ⛔ **So every mechanism this project has for carrying context — the entry, its Done-when, its Blocks edge — is structurally incapable of holding it. The blocker's own entry is complete and correct and still leaves you exposed.**
+
+⚠ **AND THE FAILURE MODE IS SPECIFICALLY A *GOOD* READER: someone checks that the blocker is discharged, finds it genuinely is, and proceeds.** ⭐ **Nothing they did was wrong. *"Blocker cleared"* is a true statement that licenses an action whose consequences were never examined, because the examination could only have happened AFTER the clearing.**
+
+⇒ **THE STANDING CHECK: when you close a blocker, do not ask *"is the blocker gone?"* — ask *"what does the now-unblocked action DO?"*** ⭐ **Those are different questions and only the second is about the future.** ⛔ **Record the answer on the DOWNSTREAM entry, not the closed one — that is where the next reader will be standing** (`L187`, applied across a dependency edge rather than within a file).
+
+⚠ **Kin `L106`** (a capability is not a guarantee) — **both are about the gap between a thing being POSSIBLE and a thing being SAFE; `229` is that gap opening as a side effect of progress.**
+
+**Enforcement:** `pattern: a task closing a Blocks edge states what the unblocked work now does differently, recorded on the BLOCKED entry` · `accepted: partially enforceable`.
+
+## <a id="230"></a>230. A TEST WHOSE NAME AND PASS-STATE ARE UNCHANGED WHILE ITS *MEANING* HAS CHANGED IS A SILENT FALSE ASSURANCE
+
+⛔ **THE INSTANCE, SELF-FLAGGED:** a differential test asserted **EQUALITY** between a refactored predicate and a test-local reference copy — **which proved the refactor behaviour-preserving.** **The next commit changed behaviour DELIBERATELY.** ⇒ **equality could no longer hold, and the surviving invariant is SUPERSET-ness.**
+
+⭐⭐ **THE IMPLEMENTER RE-SCOPED IT AND SAID SO, RATHER THAN LETTING IT PASS QUIETLY.** ⛔ ***Had they not, "the differential still passes" would have read as the ORIGINAL claim still holding — a green test, an unchanged name, and a completely different proposition underneath.***
+
+⇒ ⛔⛔ **THIS IS INVISIBLE TO EVERY CONTROL THIS PROJECT HAS.** **The suite is green. The name is unchanged. The diff shows a test file edited, which is unremarkable in a slice that edits tests. Re-derivation finds nothing false — the new assertion is TRUE.** ⭐ **Only the AUTHOR knows the proposition moved, and only in the window where they still remember the old one.**
+
+⇒ **THE RULE: when a slice changes behaviour that an existing test CHARACTERISES, say in the commit message which proposition the test now carries and which it no longer does** — ⭐ **and prefer RENAMING the test to renaming nothing, because a name is the only part of a test a reader checks without reading it.**
+
+⚠ **Kin `L195`** (retain the reasoning, past-tense the state) — **`195` is a stale STATUS line; `230` is a stale PROPOSITION with a live green tick, which is worse, because a passing test actively asserts its own currency.**
+
+**Enforcement:** `pattern: a behaviour-changing slice names any test whose asserted proposition changed, in the commit message` · `accepted: partially enforceable`.
