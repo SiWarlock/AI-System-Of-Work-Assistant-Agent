@@ -202,3 +202,26 @@ While this slice ran, the orchestrator filed a ruling **onto `### 24.120`**: *th
 ⚠ **4 — `grep` emitted the malformed summary form twice** (`7 matches in 3 files` / `1 matches in 1 files` with impossible line numbers). **Content was correct both times; only the summary line was non-standard.** ⛔ **Every census in this document was re-read at source with `sed` before being reported.**
 
 ⛔ **`git commit`'s pathspec-only form CANNOT commit a NEW file** — `error: pathspec … did not match any file(s) known to git`. The safe sequence for a new path is `git add <one path>` then `git commit -F <msg> -- <same path>`; the pathspec still scopes the commit, so the index is not consulted at commit time. **Verified: 1 path in the resulting commit, 0 foreign.** ⚠ Worth stating because `029`'s rule reads as *"never `git add`"* and for a new file that is not achievable.
+
+---
+
+## 13 — ⭐⭐ I MEASURED THE RETRACTED ARGUMENT RATHER THAN INHERITING IT — AND ITS PREMISE IS TRUE WHILE ITS CONCLUSION IS FALSE
+
+**The argument (`963d8eeb`):** *frozen SoW redaction markers are LOGGER-EMITTED and would not normally appear in vault content reaching the KnowledgeWriter, so a marker landing inside a userinfo span is rare.*
+
+**Decomposed into two halves that can be measured separately — which is what nobody had done:**
+
+**H1 — the PRODUCER half. ✅ CONFIRMED.** Non-test emitters of a frozen marker, censused with positive + negative controls and re-read at source: `packages/contracts/.../log-record.ts` (the definitions), `packages/domain`'s two redaction modules, and `apps/worker/.../systemHealth.ts`. **All four are diagnostic / redaction paths. No producer writes a marker onto a vault-content path.** The premise is TRUE.
+
+**H2 — the CONTENT half. ⛔ REFUTED, MEASURED.** Vault content does not come from our producers — it comes from a human and from ingested sources, so H1 does not constrain it. Measured over **656 tracked `.md`**: **19 marker-bearing lines across 6 files**, of which ⛔ **8 lines exhibit the EXACT triggering condition — a marker breaking a real `URL_USERINFO_CREDENTIAL` span** (`IMPLEMENTATION_PLAN.md` ×3, brief `299` ×3, session docs `181` and `182`).
+
+⇒ ⭐⭐ ***THE PREMISE IS TRUE AND THE CONCLUSION DOES NOT FOLLOW FROM IT, BECAUSE THE TWO POPULATIONS ARE NOT DISJOINT.*** **A SoW vault is a second brain for engineering work: a pasted log excerpt, an incident note, a design discussion IS logger-emitted content arriving as vault content.** ⛔ ***"Markers are logger-emitted" CONNECTS the two populations rather than separating them — it is the reason the co-occurrence happens, not the reason it does not.***
+
+⛔⛔ **AND THE COUNT IS NOT STATIC — IT GREW FROM 3 TO 8 IN FIFTEEN MINUTES OF THIS SESSION**, as the tracker entry, the brief, two session docs and this document were written. ⇒ ⭐⭐ ***THE POPULATION OF TRIGGERING LINES IS GROWING MONOTONICALLY, AND EVERY NEW INSTANCE IS CREATED BY THE TEAM DOCUMENTING THIS DEFECT.*** **A team that writes down a credential-redaction defect generates the defect's own triggering input as a by-product.**
+
+⛔⛔ **STATE WHAT THIS DOES AND DOES NOT ESTABLISH — the temptation now runs the OTHER way, and over-claiming here would repeat the error in mirror:**
+- ✅ **ESTABLISHED: the co-occurrence the argument called RARE is ORDINARY.** It arises in ordinary human-authored engineering Markdown, with no adversary and no logger writing to a vault. **That is a class-existence result and it is enough to deny the argument its severity conclusion.**
+- ⛔ **NOT ESTABLISHED: that any REAL secret has ever co-occurred with a marker.** All 8 instances are constructed examples inside prose. **They are CARRIERS OF THE PATTERN, NOT LEAKS.** That claim remains unmeasured, and no vault content was read (owner-gated, `### 24.110`).
+- ⚠ **BIAS, STATED BECAUSE IT IS LARGE: this corpus is SELF-REFERENTIAL. All 8 exist because we are documenting this bug.** It is **not** a base rate for an arbitrary vault. ⭐ **What it is, is a demonstration that the pattern needs no exotic input — and the self-reference is itself the finding, not merely a caveat.**
+
+⇒ ⛔ **DISPOSITION CONSEQUENCE: the low-reachability argument may no longer be used to grade this low-severity, and it is now refuted rather than merely unmeasured.** ⭐ **The finder's retraction was right for a reason even they did not have: the argument does not fail for want of measurement, it fails on its own premise.**
