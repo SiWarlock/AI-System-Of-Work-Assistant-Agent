@@ -3774,3 +3774,30 @@ The orchestrator's first note read: *"THE SHIPPED REALITY HAS TWO GLOBAL LEGS, N
 
 **Enforcement:** `accepted: not mechanically enforceable — when recording a ruling, name the file and the line where the contrary action would be taken, and put the reason THERE as well as in the tracker.`
 
+---
+
+<a id="188"></a>
+## 188. AN ARTIFACT THAT CARRIES A PREMISE IS AN INSTRUMENT — and this round aimed every control at the CODE and none at the SENTENCE
+
+**Date:** 2026-08-17. **Source:** the `### 24.84` decision arc. ⭐ **The lead's formulation, filed against themselves and written up here at their request so it is not their own defence.**
+
+**The instance that names it.** An owner packet described option (a)'s cost as *"a malformed row is **served-after-redaction** rather than refused outright."* ⛔ **`projection.ts:102` puts `isRedactionSafe` INSIDE `persistDenialAudit` — it gates the AUDIT WRITE, not the served output.** ⇒ **there is no "after-redaction"; the row is SERVED.** The packet also omitted the **tamper case** — the read gate's entire stated purpose — and the **`egressRevoke`** surface. ⇒ ***a CONTAINMENT loss was presented as a REDACTION benefit, and the owner priced exactly what they were shown.*** **The four-eyes that caught it were an implementer's, AFTER the answer had come back.**
+
+⛔⛔ **AND IT IS NOT ONE ARTIFACT TYPE — THE SAME ROUND PRODUCED FOUR:**
+1. **An OWNER PACKET** with a false deciding clause (above).
+2. **A BRIEF** — `290` asserted *"the pre-validator population is what the read gate must still redact, and this test is the ONLY control asserting it."* **Measured false by its own implementer at Step 3.**
+3. **A BRIEF REFRESH** — `283` was re-issued after verifying its *census* was stale, **without asking whether its FIX had landed. It had.**
+4. **REVIEWER PROMPTS** — seeded with a ruling that was voided while the reviewers ran, so any finding turning on read-path reachability answered a superseded question.
+
+⭐⭐ **THE CONVERGENT EVIDENCE, AND IT IS THE SHARPEST STATEMENT OF THE CLASS (knowledge-implementer, self-reported): THREE OVERCLAIMS IN ONE SLICE — EVERY ONE IN PROSE OR IN A NAME, NONE IN LOGIC.** A reach claim, a stale schema-valid claim, and a false uniqueness claim. **Their code survived every mutation it was put through; three of its sentences were false.** ⇒ ***THE LOGIC SURVIVES MUTATION. THE SENTENCE ABOUT IT IS WHAT FAILS — and briefs, reviewer prompts, docblocks and owner packets are all sentences.***
+
+⚠ **AND A TEST'S NAME IS ONE OF THEM.** `the_credential_shaped_fixture_is_still_hostile` asserted **out-of-alphabet-ness**; `"ws.acme"` and `"Ws-Acme"` satisfied it while being benign. ⛔ **It passed Step-2.5 review because THE NAME IS WHAT THE REVIEWER EVALUATES** — the reviewer approved a property the assertions did not test.
+
+⇒ **THE RULE: a decision packet, a brief, a reviewer prompt and a docblock get the SAME controls as a census — state the mechanism, and have someone who can FALSIFY it read it BEFORE it goes.** ⛔ **Every discipline this ledger holds — applicability controls, non-vacuity controls, mutation proofs, refutation attempts — was pointed DOWNWARD at code. None was pointed at the artifact carrying the decision.**
+
+⚠ **WHY IT EVADED EVERYONE, AND IT IS NOT CARELESSNESS: prose is the medium we REPORT measurements in, so it reads as the OUTPUT of rigor rather than as a thing needing any.** ⭐ **`L185` gives the mechanism one layer down — *the artifact in front of you does not feel like the deliverable*; this is that at the scale of a whole decision.**
+
+⭐ **ROUTING COROLLARY, from correcting the lead's own account: the crossing that delivered the retraction late cost nothing. What cost the round is that the falsifying objection EXISTED FOR AN HOUR BEFORE REACHING THE ARTIFACT THAT NEEDED IT.** ⛔ **That is a ROUTING property, not a timing accident — the packet would have been just as false ten minutes later.** ⇒ **speed is not the fix; getting the objection to the artifact is.**
+
+**Enforcement:** `accepted: not mechanically enforceable — before a premise-carrying artifact ships (packet, brief, reviewer prompt, docblock), name its load-bearing claim and route it to someone positioned to falsify it. A reviewer who can only agree is not four eyes.`
+
