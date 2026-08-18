@@ -388,3 +388,47 @@ Running `P2` over **realistic marker-bearing carriers** instead of exemplars, **
 
 ⭐ **FIX: the baseline must be an OPAQUE TOKEN (the PUA probe), never the incumbent space** — because the space is not a neutral reference, it is itself in an alphabet. **Against a PUA baseline, `^` is not worse anywhere.**
 ⚠ **This was invisible while `P2` ran over exemplars: inserting anything into `password` leaves `password` matching, so exemplar-based `P2` could not see it.** ⇒ **`P2` needs realistic carriers; `P1′`/`P1″` need exemplars. Different inputs for different properties, and using one set for both hid a contradiction.**
+
+---
+
+## 20 — ⛔⛔ (C) WITH `^` IS **NOT MONOTONE** — AND `(C')` RESTORES IT AT ZERO MEASURED COST
+
+**First, the harness discipline, because it is why this section is trustworthy and §15's was not.** ⛔ **Raw non-ASCII does NOT survive reliably into these probe files — measured `length === 0` twice.** ⭐ **The fix is the one already banked for this project (*Unicode-in-regex → charCode, not a literal*): `String.fromCharCode(0xe000)` — pure-ASCII source that no transport can strip — plus a POSITIVE CONTROL asserting `length === 1` as the FIRST test.** ⚠ **The control fired on its first outing and caught the defect a third time.** **With constructed probes, §17's table REPRODUCES EXACTLY** (space 2/0 · `^` 0/0 · `-` 22/18 · `_` 16/13 · `.` 1/1 · empty 4/130 · word-char control 40/30), **so that table stands — now for a checked reason.**
+
+### The finding
+
+**`(C)` with `^` admits one class of value that is refused today:**
+
+| case | TODAY | `(C)` `^` |
+|---|---|---|
+| `private<RAW>key` | **UNSAFE** | ⛔ **safe — NEWLY ADMITTED** |
+
+⇒ ⛔ **The lead approved `(C)` partly on my measurement that 0 values are newly admitted. That measurement was TRUE OF THE CORPUS and the class exists anyway** — the corpus contains no line of that shape. **`L190`'s family again: the number was right and the claim it was carrying was broader than the number.**
+
+⭐ **The class is EXACTLY ONE ALTERNATIVE WIDE and fully enumerable: `private[_ -]?key` is the ONLY alternative in any of the three nets that admits a SPACE.** ⇒ **the incumbent filler manufactures the phrase; `^` does not.**
+⚠ **BOTH READINGS ARE LEGITIMATE AND I AM NOT PICKING:** *(a)* `private<redacted>key` is not the phrase "private key", so today's match is a FALSE POSITIVE the space synthesises; *(b)* the original may genuinely have read `private RSA key` with the middle redacted, in which case it is a REAL detection being lost. **Narrow either way, and on a rule-7 surface, so it routes on kind.**
+
+### `(C')` — OR the two STRIPPED forms. Monotone by construction.
+
+`looksUnsafe(s) = nets(strip(s,"^")) || nets(strip(s," "))`
+
+| case | TODAY | `(C)` | **`(C')`** |
+|---|---|---|---|
+| `//u:p<RAW>q@h` | safe | UNSAFE | ✅ **UNSAFE** |
+| `//user:REALSECRET<RAW>@host` | safe | UNSAFE | ✅ **UNSAFE** |
+| control — same span, no marker | UNSAFE | UNSAFE | ✅ UNSAFE |
+| row 4 — marker supplies the colon | safe | safe | ✅ safe |
+| idempotency — scrubbed userinfo | safe | safe | ✅ safe |
+| idempotency — marker alone | safe | safe | ✅ safe |
+| **`private<RAW>key`** | UNSAFE | ⛔ safe | ✅ **UNSAFE** |
+
+**Corpus, 656 files / 90,250 lines: `(C)` and `(C')` cost the SAME — newly-UNSAFE 4, newly-SAFE 0.**
+
+⛔⛔ **`(C')` IS NOT OPTION (A).** **(A) OR'd the stripped form with the ***UNSTRIPPED*** string, so the marker's own literal text could match — which is what destroyed idempotency and dropped every scrubbed field.** ⭐ ***`(C')` ORs TWO STRIPPED FORMS: the marker's text is neutralised in both arms, so idempotency survives — measured on all three idempotency rows.***
+
+⇒ ⭐⭐ **`(C')` = `(C)` with monotonicity restored, at zero measured additional cost, and it is monotone BY CONSTRUCTION rather than by measurement — its result is a superset of today's for every input, not merely for the corpus.** **That is strictly stronger than the property the approval rested on.**
+
+### ⭐ And it DISSOLVES §19's contradiction
+
+Under `(C')` the two guard properties stop fighting: **"never worse than today" is satisfied by construction**, so `P2` can keep the incumbent baseline and no opaque-token baseline is needed.
+⭐⭐ **The clean statement of why: the SPACE arm is FAIL-SAFE — it can only manufacture extra refusals — while the FILLER arm is the one that can ADMIT. `P1′`/`P1″` are needed for the admitting arm ONLY.** ⇒ ***a fail-safe arm needs no alphabet guard; a fail-open arm does.*** **That is the property that decides where the guard applies, and it is derivable rather than stipulated.**
