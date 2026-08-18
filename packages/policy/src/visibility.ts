@@ -497,16 +497,42 @@ export function denyDirectCrossWorkspaceRaw(
   //     THIS NOTE ALMOST SHIPPED IT: an earlier draft said "a WELL-FORMEDNESS RULE cannot
   //     exclude credential shapes" and the security review CONSTRUCTED THE COUNTER-EXAMPLE —
   //     `^(employer-work|personal-business|personal-life)$` is a well-formedness rule, admits
-  //     all 3 ids `### 24.84` measured live, and excludes every credential. ⇒ what forecloses
-  //     an ENUMERATION here is not logic but AVAILABILITY: the id set is OPEN BY CONSTRUCTION
-  //     — `parseCreateWorkspace` (`apps/worker/src/api/procedures/onboarding.ts:112`) admits
-  //     ANY non-empty string as the id — so enumerating would reject a live id, which
-  //     `### 24.84`'s own binding gate names an AVAILABILITY BREAK rather than a hardening.
-  //     ⛔ THEREFORE THIS GROUND IS CONDITIONAL, AND THE CONDITION IS NAMED RATHER THAN LEFT
-  //     IMPLICIT: it holds WHILE the create path stays open, and `### 24.84`'s WORKER leg
-  //     exists to close exactly that path (undispatched at `25ae6c49` — the shape is DEFINED,
-  //     not ENFORCED at create). ⭐ Named because the alternative was a SECOND UNWATCHED EXPIRY
-  //     INSIDE THE FIX FOR THE FIRST — this note's own rule, applied to this note.
+  //     all 3 ids `### 24.84` measured live, and excludes every credential.
+  //     ⇒ ⛔ WHAT FORECLOSES AN ENUMERATION HERE IS NOT LOGIC BUT MEMBERSHIP, AND THAT
+  //     GROUND IS STRUCTURAL RATHER THAN CONTINGENT — WHICH IS THE WHOLE REPAIR, BECAUSE
+  //     THIS NOTE HAS NOW EXPIRED A GROUND TWICE AND BOTH TIMES IT WAS A CONTINGENT ONE.
+  //     ⛔ A WORKSPACE ID'S MEMBERSHIP IS USER-DETERMINED BY DESIGN: `id` is a FREE field on
+  //     the create path, DISTINCT from the closed `WorkspaceType` enum, and `WorkspaceIdSchema`
+  //     constrains an id's SHAPE — never the SET of ids that exist. ⇒ a user creating
+  //     `acme-corp` produces a perfectly slug-valid id that no enumeration written today
+  //     contains, so an enumeration would reject a live id whatever the brand does.
+  //     ⭐ THE TWO NAMESPACES ARE DEMONSTRABLY DIFFERENT, NOT TWO SPELLINGS OF ONE THING —
+  //     `WorkspaceType` is `employer_work | personal_business | personal_life` (UNDERSCORES,
+  //     `packages/contracts/src/primitives/enums.ts`) and would itself FAIL `WorkspaceIdSchema`,
+  //     while the live ids are hyphen-spelled. ⇒ deriving an enumeration from the type enum is
+  //     not merely incomplete, it is ILL-TYPED — a checkable fact, not a judgement.
+  //     ⛔ THE PRIOR GROUND — "the id set is OPEN BY CONSTRUCTION, `parseCreateWorkspace` admits
+  //     ANY non-empty string" — ~~HELD UNTIL `### 24.84`'s WORKER LEG~~ and is RETAINED AS
+  //     REASONING ONLY: that leg has landed and the create path now runs the brand, so the
+  //     sentence is true of the past and false of the present (`L195` — retain the reasoning,
+  //     past-tense the state). ⭐ IT WAS NOT WRONG; IT WAS CONTINGENT, AND IT NAMED ITS OWN
+  //     CONTINGENCY AND THE TASK THAT OWNED IT, WHICH IS WHY THIS EDIT IS AN EXPECTED
+  //     SUCCESSION RATHER THAN A DISCOVERED DEFECT. That is the note's own rule working.
+  //     ⚠ AND THE INTERIM RESIDUAL IS PRICED, NOT UNKNOWN — SAID PLAINLY BECAUSE A READER WHO
+  //     CANNOT FIND IT WILL CONCLUDE THE GAP IS UNEXAMINED: the brand binds at CREATE and does
+  //     NOT migrate rows written before it, and that pre-brand population is UNMEASURED ACROSS
+  //     INSTALLS (`### 24.84` measured 3 of 3 conforming on ONE deployment at ONE moment —
+  //     other installs unmeasured, `L106`: dormancy is not a guarantee). ⛔ `### 24.106` OWNS
+  //     that migration and is FILED, NOT BUILT — an OWNER-ACCEPTED cost, deliberately carried.
+  //     ⇒ so the enumeration is foreclosed TWICE OVER right now, and only the MEMBERSHIP half
+  //     survives `### 24.106` landing. ⭐ Recorded because a reader who sees the migration land
+  //     must NOT read it as licence to enumerate.
+  //     ⛔ THE ONE CONTINGENCY THAT REMAINS, NAMED RATHER THAN LEFT IMPLICIT AND DELIBERATELY
+  //     NOT FILED: if the id set were ever ARCHITECTURALLY FIXED to a closed set, membership
+  //     would stop being user-determined and this ground would change. NO TASK OWNS THAT
+  //     BECAUSE NO SUCH CHANGE IS PROPOSED — ⚠ and filing a speculative task to look thorough
+  //     is how a tracker acquires work nobody asked for (`### 24.94`'s population, from the
+  //     other direction). It is named here so the next author checks it rather than assumes it.
   //   ⇒ the bad case is the one stated at the top of this residual — a credential-shaped id
   //     reaching the audit — and a shape gate does NOT close it. Recording one as if it did is
   //     the FALSE-ASSURANCE principle that rejected option (C) above: a weaker second spelling

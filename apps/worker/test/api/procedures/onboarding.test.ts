@@ -120,6 +120,105 @@ describe("onboarding.createWorkspace procedure (14.1)", () => {
     expect(port.calls).toHaveLength(0);
   });
 
+  // ── `### 24.84` WORKER LEG — the brand is ENFORCED at create (safety rule 7) ──
+  //
+  // The contracts leg (`25ae6c49`) gave `WorkspaceIdSchema` a bounded slug shape.
+  // Until this leg, `parseCreateWorkspace` gated the id on `isNonEmptyString` alone
+  // and returned it raw ⇒ the shape was DEFINED and NOT ENFORCED, and the create
+  // path was the sole id-introducing gate. These pins close that.
+
+  // spec(§5) — a non-conforming id is REFUSED at create, by CODE, never a throw.
+  // `ws_employer` is the underscore-bearing legacy shape `### 24.99` cited: it is a
+  // perfectly good non-empty string, which is exactly why the old gate admitted it.
+  it("non_conforming_workspace_id_is_refused_at_create: the brand runs, and the refusal carries its own code [spec(§5)]", async () => {
+    const port = new FakeOnboardingPort(okOutcome);
+    const res = await caller(port).onboarding.createWorkspace({
+      ...VALID_INPUT,
+      id: "ws_employer",
+    });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) {
+      expect(res.error.kind).toBe("validation_rejected");
+      // A DISTINCT code from the empty/missing case — a reader of the audit trail can
+      // tell "no id supplied" from "id supplied, wrong shape".
+      expect(res.error.cause?.code).toBe("CREATE_WORKSPACE_ID_SHAPE");
+    }
+    // Fail-closed: a refused id never reaches provisioning.
+    expect(port.calls).toHaveLength(0);
+  });
+
+  // spec(§5) — ⛔ THE AVAILABILITY GUARANTEE `### 24.84`'s OWN BINDING GATE NAMES.
+  // Rejecting a live id is an availability break, not a hardening. Not a formality:
+  // this is the pin that would catch a brand tightened past the real population.
+  it.each([["employer-work"], ["personal-business"], ["personal-life"]])(
+    "the_three_live_workspace_ids_still_create (%s) [spec(§5)]",
+    async (id) => {
+      const port = new FakeOnboardingPort(okOutcome);
+      const res = await caller(port).onboarding.createWorkspace({ ...VALID_INPUT, id });
+      expect(isOk(res)).toBe(true);
+      // It really provisioned, with the id intact — not merely "did not error".
+      expect(port.calls).toHaveLength(1);
+      expect(port.calls[0]?.id).toBe(id);
+    },
+  );
+
+  // spec(§16) — ⛔ RULE 7. The rejected VALUE must not ride out on the refusal.
+  // ⛔⛔ READ THIS BEFORE CITING THIS PIN AS CREDENTIAL COVERAGE — IT IS NOT.
+  // The fixture is refused for its UPPERCASE LETTERS, not for being a credential.
+  // `WORKSPACE_ID_RE` is `/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/`, so the lowercase sibling
+  // `sk-ant-api03-abc123def456` — same credential shape — ACCEPTS, BY DESIGN, and
+  // `packages/contracts/test/primitives/zod-brands.test.ts` pins that acceptance
+  // deliberately (`zod-brands.ts`: "⛔ WHAT THIS IS NOT: a credential detector").
+  // ⇒ this pin asserts the NON-ECHO property only. The `visibility.ts` residual landing
+  // in this same commit turns on the opposite claim — "a shape gate does NOT close"
+  // the credential-reaching-the-audit case — and an auditor censusing "what pins the
+  // credential case" must not read this green line as closing it.
+  it("refusal_does_not_echo_the_rejected_id: the refusal carries no trace of the rejected value [spec(§16)]", async () => {
+    const credentialShaped = "sk-ant-api03-AbCdEfGhIjKlMnOpQrStUv";
+    const port = new FakeOnboardingPort(okOutcome);
+    const res = await caller(port).onboarding.createWorkspace({
+      ...VALID_INPUT,
+      id: credentialShaped,
+    });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) {
+      expect(res.error.cause?.code).toBe("CREATE_WORKSPACE_ID_SHAPE");
+      // Deep scan of the WHOLE serialized error, not a field-by-field check — a
+      // field-by-field check only covers the fields someone thought of.
+      expect(JSON.stringify(res.error)).not.toContain(credentialShaped);
+      expect(JSON.stringify(res.error)).not.toContain("sk-ant-api03");
+    }
+    expect(port.calls).toHaveLength(0);
+  });
+
+  // spec(§19.1) — no behaviour drifts sideways. The pre-existing sibling pin asserts a
+  // bare `isErr` for these; this asserts each refusal's CODE (`### 24.101` — a bare
+  // falsity cannot detect a refusal that starts passing for the wrong reason).
+  it("create_still_rejects_the_other_malformed_inputs, each by its own code [spec(§19.1)]", async () => {
+    const port = new FakeOnboardingPort(okOutcome);
+    const c = caller(port);
+    const cases: readonly (readonly [Record<string, unknown>, string])[] = [
+      [{ id: "" }, "CREATE_WORKSPACE_ID"],
+      [{ name: "" }, "CREATE_WORKSPACE_NAME"],
+      [{ type: "not_a_type" }, "CREATE_WORKSPACE_TYPE"],
+      [{ vaultRoot: "" }, "CREATE_WORKSPACE_VAULT_ROOT"],
+      [{ gbrainBrainId: "" }, "CREATE_WORKSPACE_GBRAIN_BRAIN_ID"],
+      [{ preset: "enterprise" }, "CREATE_WORKSPACE_PRESET"],
+      // ⛔ THE `max(64)` BOUND. Without this row every pin here is satisfied by a
+      // CHARSET-ONLY predicate, so swapping `WorkspaceIdSchema.safeParse` for a bare
+      // `WORKSPACE_ID_RE.test` — a plausible "drop the zod call" edit — would keep the
+      // suite green while silently removing bounded-input hygiene from the sole
+      // id-introducing gate. 65 chars is otherwise a perfectly valid slug.
+      [{ id: "a".repeat(65) }, "CREATE_WORKSPACE_ID_SHAPE"],
+    ];
+    for (const [patch, code] of cases) {
+      const res = await c.onboarding.createWorkspace({ ...VALID_INPUT, ...patch });
+      expect(isErr(res)).toBe(true);
+      if (isErr(res)) expect(res.error.cause?.code).toBe(code);
+    }
+    expect(port.calls).toHaveLength(0);
+  });
+
   it("createWorkspace_requires_auth: an unauthenticated caller gets the interceptor's typed err (never provisions) [spec(§19.1)]", async () => {
     const port = new FakeOnboardingPort(okOutcome);
     const c = caller(port, UNAUTH_CTX);

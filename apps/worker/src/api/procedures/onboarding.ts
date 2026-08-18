@@ -16,6 +16,7 @@ import {
   err,
   failure,
   isWorkspaceType,
+  WorkspaceIdSchema,
   type Result,
   type FailureVariant,
   type WorkspaceType,
@@ -109,7 +110,35 @@ const passthroughInput = (raw: unknown): unknown => raw;
 function parseCreateWorkspace(raw: unknown): Result<CreateWorkspaceInput, FailureVariant> {
   if (typeof raw !== "object" || raw === null) return err(invalidInput("CREATE_WORKSPACE_INPUT_SHAPE"));
   const r = raw as Record<string, unknown>;
-  if (!isNonEmptyString(r["id"])) return err(invalidInput("CREATE_WORKSPACE_ID"));
+  const rawId = r["id"];
+  if (!isNonEmptyString(rawId)) return err(invalidInput("CREATE_WORKSPACE_ID"));
+  // `### 24.84` WORKER LEG (safety rule 7). The contracts leg gave `WorkspaceIdSchema`
+  // a bounded slug shape; until this line the create path — the SOLE id-introducing
+  // gate — admitted ANY non-empty string, so the shape was DEFINED and NOT ENFORCED.
+  //
+  // ⛔ `parsedId.error` IS DELIBERATELY DISCARDED. Stating the grounds precisely,
+  // because an earlier draft of this comment overstated them in BOTH directions and a
+  // reader who checks a false ground concludes the discard is unnecessary:
+  //   - What actually contains the rejected value today: NOTHING. Measured against the
+  //     installed zod (3.25.76) for every failure mode reachable through this schema —
+  //     `invalid_string`/regex, `too_big`, `invalid_type` — no issue payload and no
+  //     `error.message` carries the input. So the discard is NOT today's only barrier.
+  //   - What IS the barrier, and it is structural: `FailureVariant.cause` is
+  //     `{ code: string }` under a `.strict()` schema at BOTH levels
+  //     (`packages/contracts/src/primitives/failure.ts`). A value cannot ride out
+  //     without a TYPE CHANGE — not by accident.
+  //   - Why discard anyway: the zod fact is VERSION- AND ISSUE-KIND-SPECIFIC. Other
+  //     issue kinds (`invalid_enum_value`, `invalid_literal`) DO put the value in
+  //     `received`, a custom `errorMap` receives `ctx.data`, and zod 4 reshapes issue
+  //     payloads. Discarding is the form that does not depend on any of that.
+  // ⇒ THE REAL LEAK VECTOR IS A DIRECT ECHO — `cause: { code, received: rawId }`, or a
+  // templated message — written by someone making the refusal "more helpful". The value
+  // that fails here is exactly the string this arc exists to contain.
+  // ⭐ AND THE SUITE IS NOT BLIND TO THAT: `refusal_does_not_echo_the_rejected_id`
+  // deep-scans the WHOLE serialized error and reds on any such edit. That pin is the
+  // live control for this paragraph — do not delete it as redundant.
+  const parsedId = WorkspaceIdSchema.safeParse(rawId);
+  if (!parsedId.success) return err(invalidInput("CREATE_WORKSPACE_ID_SHAPE"));
   if (!isNonEmptyString(r["name"])) return err(invalidInput("CREATE_WORKSPACE_NAME"));
   const type = r["type"];
   if (typeof type !== "string" || !isWorkspaceType(type)) return err(invalidInput("CREATE_WORKSPACE_TYPE"));
@@ -120,7 +149,12 @@ function parseCreateWorkspace(raw: unknown): Result<CreateWorkspaceInput, Failur
     return err(invalidInput("CREATE_WORKSPACE_PRESET"));
   }
   return ok({
-    id: r["id"],
+    // The value the brand VALIDATED, not a re-read of `r["id"]`. ⚠ Precisely: a re-read
+    // would NOT make the gate decorative — `parsedId.success` is the gate and still
+    // refuses. What this buys is that the value PROVISIONED is the value VALIDATED
+    // (no validate-then-re-read window), and it stays correct if the schema's transform
+    // ever normalizes. Unobservable today: the transform is an identity cast.
+    id: parsedId.data,
     name: r["name"],
     type,
     vaultRoot: r["vaultRoot"],
