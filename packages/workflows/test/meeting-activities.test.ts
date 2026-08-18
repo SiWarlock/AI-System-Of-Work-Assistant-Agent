@@ -831,7 +831,23 @@ describe("spec(§9 inv-5) commitKnowledge activity — KnowledgeWriter idempoten
 
   it("maps a WriteFailure(schema_rejected) → schema_rejected", async () => {
     const failing: ApplyPlanFn = () =>
-      Promise.resolve(err({ code: "schema_rejected", stage: "ajv", issues: [] } as WriteFailure));
+      // `### 24.103` — `audit` is now required on `SchemaRejected`; fixture value only, the
+      // assertion below is unchanged (it pins the code mapping, not the signal).
+      Promise.resolve(
+        err({
+          code: "schema_rejected",
+          stage: "ajv",
+          issues: [],
+          audit: {
+            actor: "test:fixture",
+            event: "test.fixture.schema_rejected",
+            refs: [],
+            payloadHash: "test:fixture",
+            beforeSummary: "fixture",
+            afterSummary: "fixture",
+          },
+        } as WriteFailure),
+      );
     const port = createCommitActivity({
       applyPlan: failing,
       deps: {} as never,

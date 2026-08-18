@@ -25,6 +25,18 @@ describe("24.23 — mapWriteFailure is exhaustive over WriteFailure.code", () =>
       code: "schema_rejected",
       stage: "zod",
       issues: [],
+      // `### 24.103` — `SchemaRejected` now extends the shared issue-carrying shape, so an
+      // `AuditSignal` is REQUIRED at every construction site. FIXTURE VALUE ONLY: this pin asserts
+      // the failure-code MAPPING, which is unchanged. The signal's content and its redaction
+      // properties are pinned in `packages/knowledge`'s own suite, deliberately not restated here.
+      audit: {
+        actor: "test:fixture",
+        event: "test.fixture.schema_rejected",
+        refs: [],
+        payloadHash: "test:fixture",
+        beforeSummary: "fixture",
+        afterSummary: "fixture",
+      },
     };
     expect(mapWriteFailure(schemaRejected)).toBe("schema_rejected");
 
