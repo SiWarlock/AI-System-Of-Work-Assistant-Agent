@@ -13,8 +13,10 @@
 //     `err(FailureVariant)` (`validation_rejected` / `WORKSPACE_NOT_FOUND`) — never
 //     a partial raw leak (no cards, no approvals, no refs cross for an unknown ws).
 //   • ABSENT read-model ≠ error. A KNOWN workspace (or the global dashboard) whose
-//     read-model row does not yet exist is an EMPTY ok list — the workflows
-//     populate the rows later; a missing rebuildable read-model is not a fault.
+//     read-model row does not yet exist is an EMPTY ok list — a producer fills the
+//     row later; a missing rebuildable read-model is not a fault. ⚠ For the GLOBAL
+//     dashboard NO production producer exists today (`### 24.79`) — see
+//     `dashboardCards`, which carries the measurement and what a producer owes.
 //   • §16 typed boundary. A genuine store fault (a `DbError` that is NOT the
 //     benign `not_found` miss) folds to a redaction-safe typed
 //     `degraded_unavailable` err — the driver cause never crosses.
@@ -361,7 +363,7 @@ function pluckArray(data: unknown, key: string): readonly unknown[] {
 /**
  * Read one read-model row and fold the outcome: a genuine store fault → a typed
  * `err`; the benign `not_found` MISS → `ok(undefined)` (an absent read-model is an
- * EMPTY result, NOT an error — the workflows populate the row later); a hit →
+ * EMPTY result, NOT an error — a producer fills the row later); a hit →
  * `ok(record)`. Keeps the "absent read-model = empty ok" rule in ONE place.
  */
 async function getReadModel(
@@ -510,9 +512,23 @@ export function createDbReadModelQueryPort(
 
   return {
     async dashboardCards(): Promise<Result<readonly DashboardCardSource[], FailureVariant>> {
-      // The Global Today dashboard is a GLOBAL (workspaceId = null) read-model; an
-      // absent row is an EMPTY ok list (no workspace gate — this surface is
-      // cross-workspace-safe by construction, populated by the workflows).
+      // The Global Today dashboard is a GLOBAL (workspaceId = null) read-model, read with NO
+      // workspace gate. An absent row is an EMPTY ok list, pinned by readModel.test.ts
+      // "an ABSENT dashboard read-model returns an EMPTY ok list (not an error)".
+      // ⛔ NOT "cross-workspace-safe by construction", and §9.4 does NOT sanction the ungated read:
+      // it specifies GCL-sanitized grouped results and "never raw cross-workspace content", reached
+      // through the GCL Visibility Gate (`global_surface`). `dashboard_cards` is the UNRECONCILED
+      // second leg the renderer also reads (`### 24.79`) — a gap, not a design decision.
+      // ⛔ `readCardSources` is a SHAPE control (fixed six-field copy; a malformed row is DROPPED, a
+      // non-array `cards` payload → []), NOT a SCOPE control: `DashboardCardSource` has NO workspace
+      // field at all (projections/uiSafe.ts), so this reader CANNOT scope-check even in principle,
+      // and `query.dashboard` takes NO input and applies no scope gate (procedures/queries.ts).
+      // ⇒ cross-workspace safety lives ENTIRELY in the WRITER.
+      // ⚠ No production writer exists today: the SOLE writer is composition/demoSeed.ts (dev-only,
+      // SOW_DEMO_SEED, default-OFF — L78; ⚠ NO TEARDOWN, so rows persist after the flag is unset);
+      // composition/provisionDev.ts:253-257 deliberately ABSTAINS and names the reason. ⇒ the first
+      // real producer owes the `global_surface` / GCL Visibility Gate decision, NOT the UI-safe
+      // projection, which already lives in `queries.ts` (`projectCards`) per this file's header.
       const rm = await getReadModel(readModels, READ_MODEL_KEYS.dashboard, null);
       if (isErr(rm)) return rm;
       return ok(rm.value === undefined ? [] : readCardSources(rm.value.data));
