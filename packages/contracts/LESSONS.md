@@ -4303,3 +4303,21 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **Generalises past `diff`: any check whose failure mode points the same way as the condition it screens for cannot screen for that condition alone.** ⛔ **`029`'s applicability principle, arriving through the REMEDY rather than through the original measurement — the fix inherited the flaw it was written to close.**
 
 **Enforcement:** `pin: /tdd Step 6 mutation step — a GREEN mutation outcome requires both a diff AND an effect signal; a RED outcome is self-proving and needs neither` · `accepted: partially enforceable`.
+
+## <a id="213"></a>213. RECORD THE BASE, DERIVE THE COUNT — never store a derivable quantity in an artifact that mutates when you store it
+
+⛔ **THE INSTANCE:** the tracker's *"snapshot of NOW"* line carried **"37 commits · 216 unpushed"**, both measured immediately before the commit that carried them. ⇒ ***both were off by one the instant they landed.*** **The lead re-derived independently and got 38 and 217 — confirming the structure, not merely the digit.**
+
+⭐⭐ **THE PROPERTY THAT MAKES IT A LESSON RATHER THAN A TYPO: A COUNT RECORDED IN THE DOCUMENT WHOSE COMMIT CHANGES THE COUNT IS UNFIXABLE BY CONSTRUCTION — every correction is itself falsifying.** There is no value that can be written there and be true when read. ⛔ **This is not "be more careful"; care cannot reach it.**
+
+⛔ **AND IT IS WORSE THAN AN ABSENT NUMBER, WHICH IS THE COUNTERINTUITIVE HALF:** a missing figure prompts the reader to measure. **A stale-but-plausible figure invites RESTATEMENT** — the exact behaviour that produced three separate errors in one hour of this round, each by someone reporting a number that looked settled. ⇒ ***a number nobody can verify cheaply becomes a number everybody repeats.***
+
+⇒ **THE RULE: record the BASE (a ref, a hash, a date — something that does not move) and record the COMMAND that derives the quantity. Never the quantity.** ⭐ **The base is the part that is stable; the count is the part the reader can regenerate in one second and you cannot.**
+
+⚠ **Generalises past commit counts** — test totals, file counts, task counts, "N unpushed", "N of M passing" in any document that is itself part of the population being counted, or that changes when committed.
+
+⭐ **RECORDED WITH ITS OWN PUNCHLINE, because it is the most instructive part and it is three layers deep: the orchestrator filed `### 24.122` — a task about an INSTRUMENT THAT MISCOUNTS COMMITS — in a MESSAGE THAT MISCOUNTED COMMITS, on a LINE THAT CANNOT COUNT COMMITS CORRECTLY.** ⇒ **the same defect at the tool layer, the report layer and the document layer, in a single act, by someone actively thinking about counting.**
+
+⚠ **Kin `L180`** (a count from what you personally saw is a SAMPLE) — **`L180` is a count whose POPULATION is wrong; `213` is a count whose TIMING cannot be right.**
+
+**Enforcement:** `pattern: grep -nE "[0-9]+ (commits|unpushed|tests|files)" over IMPLEMENTATION_PLAN.md and handoff docs` — every hit must be accompanied by the deriving command or be replaced by it · `accepted: partially enforceable`.
