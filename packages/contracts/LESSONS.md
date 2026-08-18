@@ -3652,3 +3652,27 @@ ls docs/briefs/2*.md | wc -l                                                    
 ⭐ **CORROBORATING INSTANCE FROM THE SAME SESSION, RECORDED BECAUSE IT SHOWS THE RULE APPLIES UPWARD: the lead ordered a new task filed for the anchor-set finding without checking for a durable home. `### 24.54` already was that task** — so the instruction would have produced a duplicate roughly two hours after the same lead ruled on the `### 24.75`/`### 24.86` duplicate. **Checking first is what prevented it.**
 
 **Enforcement:** `accepted: not mechanically enforceable today — candidate plan-lint rule: flag "filed separately" / "filed as its own task" in a tracker entry with no cross-reference to a live ### heading.`
+
+---
+
+<a id="183"></a>
+## 183. A DERIVED NUMBER SILENTLY INHERITS ITS SOURCE'S UNIT DEFECT AND THEN PRESENTS AS AN INDEPENDENT FACT — subtracting two counts does not produce a count
+
+**Date:** 2026-08-17. **Source:** `### 24.84`'s `1b` resolution (contract-implementer). ⭐ **The lead's formulation, adopted; banked separately from `L180` because it is a DIFFERENT defect from getting a count wrong.**
+
+**The instance.** `### 24.84` recorded *"17 frozen contract models carry `workspaceId`; 15 validate through the brand"* ⇒ **"2 skippers, UNIDENTIFIED."** That `2` was carried across revisions and into a dispatch as a fact about the codebase. **Measured: there is ONE skipper and ONE NON-MEMBER.**
+
+- `17` was a **TOKEN** count — files where the string `workspaceId` appears. It includes `signed-provenance-stamp.ts`, which mentions it **in an `arch_gap` comment at `:36`** and declares no such field.
+- `15` was a count of files binding the brand **by type**.
+- `17 − 15 = 2` is **arithmetically perfect and semantically void**: the two operands count different things, so their difference counts nothing. The one real skipper is `audit-record.ts:60` (`z.string().min(1).optional()`).
+
+⛔⛔ **THE MECHANISM, AND IT IS WHY THIS OUTRANKS "THE COUNT WAS WRONG": subtraction LAUNDERS the unit error out of view.** A reader who sees `17` and `15` can ask what each counted. **A reader who sees `2` cannot** — the derived number arrives with no unit attached, carries none of its parents' provenance, and **reads as a small, checkable, almost-closed gap.** ⇒ ***`L118` one layer up: the property measured was not the property needed, and the arithmetic removed the evidence of that.***
+
+⚠ **It also SIZED the remaining work wrongly in the safe-looking direction** — "2 unidentified" invites a quick sweep; "1 identified skipper whose optionality is deliberate and whose raw shape is not" is a different task with a different owner (`### 24.62`/`### 24.83` hold rule-7 history on that field).
+
+⇒ **THE RULE: a number you did not measure directly is a CANDIDATE, and its unit is the WEAKEST of its inputs' units. Never publish a derived count without both operands and what each counted** — or per `L100`'s de-inline sibling, **publish the two commands and let the reader subtract.**
+
+⭐ **COROLLARY, RECORDED BECAUSE IT EXPLAINS WHY THE REMEDY WORKS AND IT IS NOT LUCK: the orchestrator's instruction was *"derive by TYPE, not by spelling."* It was right TWICE for reasons the orchestrator had not identified** — they predicted the spelling count would fail on line-breaks and wrapping; it actually failed because the brand binds field **`id`**, not `workspaceId` (`workspace.ts:68`), and separately because the denominator was a token count. ⇒ ***a method that is correct for failure modes you cannot enumerate is what a method IS*** — the alternative, patching the specific failure you predicted, only ever closes the one you already saw (`L94`'s class-vs-instance shape, arriving in measurement).
+
+**Enforcement:** `accepted: not mechanically enforceable — the discipline is publishing both operands with their units, which L61 already mandates for the operands themselves.`
+
