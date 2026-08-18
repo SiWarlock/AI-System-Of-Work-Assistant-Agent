@@ -63,6 +63,7 @@ import { toUiSafeHealthItem } from "../projections/uiSafe";
  * ("the posture on screen is UNCHANGED") — so a revoke that actually LANDED would
  * report failure, on the fail-safe OFF control for employer raw egress. That is a
  * safety-rule-5 regression wearing the shape of a tidy-up. Raised at Step 9.
+ * ⛔ `### 24.112` OWNS THIS TENSION AND ITS RESOLUTION — read it before changing either producer.
  */
 export interface UiSafeEgressStatus {
   workspaceId: string;

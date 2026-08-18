@@ -87,6 +87,28 @@ function toBoundaryError(e: RevokeEgressAckError): FailureVariant {
  * Reconstruct a UI-safe egress status from ONLY the three allowlisted fields (defense-in-depth — mirrors
  * `systemHealth.ts`'s `toUiSafeEgressStatus`, so an over-broad port result can never leak an extra field).
  */
+/**
+ * ⛔ THIS PRODUCER DELIBERATELY DOES NOT REDACT `workspaceId`, AND THE ASYMMETRY WITH
+ * `systemHealth.ts`'s SAME-NAMED `toUiSafeEgressStatus` IS LOAD-BEARING — DO NOT 'MAKE THEM
+ * CONSISTENT' (`### 24.112`). Both results are folded by ONE shared consumer, `foldStatus`
+ * (`apps/desktop/renderer/lib/egress-status.ts`), which COMPARES THE RETURNED `workspaceId`
+ * AGAINST THE REQUESTED ONE and fails closed on a mismatch. On the READ path a mismatch
+ * renders 'posture unavailable' — correct, and priced. On THIS path — the revoke — it renders
+ * 'Couldn't revoke the acknowledgment … the posture on screen is UNCHANGED', so a revoke that
+ * ACTUALLY LANDED would report failure, indistinguishably from a real failure, on the
+ * fail-safe OFF control for employer raw egress (safety rule 5). Redacting here without
+ * resolving that is a rule-5 regression that looks like a cleanup.
+ *
+ * ⚠ PRECONDITION, STATED SO A VERIFIER WHO CANNOT REPRODUCE THE SCENARIO DOES NOT
+ * CONCLUDE THIS FENCE IS STALE: if the consistency edit reuses THIS file's redactor,
+ * the composed failure is blocked upstream — the READ mismatches first, the cell
+ * renders `unavailable`, and the revoke control is never offered (`egress.tsx:249`
+ * requires `cell.kind === "ready"`). ⛔ THE HAZARD REMAINS REACHABLE BY THREE ROUTES:
+ * an edit importing a DIFFERENT same-named `redactString` (this repo has THREE, with
+ * divergent pattern sets), "consistency" applied in the OTHER direction (removing the
+ * gate from `systemHealth.ts`), or any future revoke path not gated on a successful
+ * read. ⛔ NOT grounds to weaken or delete this fence.
+ */
 function toUiSafeEgressStatus(status: UiSafeEgressStatus): UiSafeEgressStatus {
   return {
     workspaceId: status.workspaceId,
