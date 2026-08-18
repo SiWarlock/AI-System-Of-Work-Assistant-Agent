@@ -4472,6 +4472,10 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ⛔⛔ **WORSE, THE PREMISE WAS THE REASON THE CONCLUSION FAILED: *"markers are logger-emitted"* CONNECTS the two populations rather than separating them** — a second brain for engineering work receives pasted log excerpts, so logger-emitted content ARRIVES as vault content. ⇒ ***a compound claim can be structured so that verifying its premise makes its conclusion LESS likely, and nothing about the unit-level result reveals that.***
 
+⛔⛔ **THE COROLLARY GOES ABOVE THE TECHNIQUE, BECAUSE IT IS THE MECHANISM AND THE TECHNIQUE IS ONLY THE REMEDY (lead ruling): *AN UNSPLIT COMPOUND THAT PASSES REVIEW ACQUIRES THE ENDORSEMENT **WHOLE**, SO THE UNMEASURED HALF INHERITS THE MEASURED HALF'S CREDIBILITY.*** ⇒ **that is how this one cleared a Step 9, a lead's explicit praise, AND a filed constraint — three independent gates, NONE of which was looking at a false claim, because there wasn't one.**
+
+⚠⚠ **PAIR IT WITH `L221`: BOTH ARE FAILURE MODES WHERE *NOTHING IS WRONG* — a true-but-mismatched figure, and a compound whose halves have different truth values.** ⛔⛔ ***OUR ENTIRE CONTROL SET TARGETS FALSITY, AND NEITHER OF THESE IS FALSE.*** ⭐ **They are not instances of the measurement family; they are a second family, and a successor should be told that before being handed the first one's rules.**
+
 ⇒ **THE RULE: before measuring any claim of the form *"X is true, therefore Y is rare/safe/unreachable,"* write X and Y as separately falsifiable propositions and measure each.** ⭐ **If you cannot split it, you cannot measure it — you can only find it plausible.**
 
 ⚠ **AND THE COROLLARY THAT MAKES IT URGENT: an unsplit compound claim that survives a review acquires the review's endorsement WHOLE**, so the unmeasured half inherits credibility from the measured one. **That is how this one survived a Step 9, a lead's praise, and a filed constraint.**
