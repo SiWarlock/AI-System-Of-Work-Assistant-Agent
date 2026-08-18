@@ -4,7 +4,7 @@
 
 **Date:** 2026-08-14 · **Phase:** 24 (hardening tail) · **Area:** `packages/policy` (`providers-integrations-implementer`, single-track `main`)
 **Predecessor:** this area's prior session — `168-2026-08-14-24-65-part-2-two-stated-advantages-that-died-on-measurement.md` · chronological — `172-2026-08-14-24-80-re-scoped-and-the-precedent-that-had-not-solved-it.md` (knowledge)
-**Successor:** _(none — team shut down at owner instruction after this session)_
+**Successor:** `176-2026-08-18-the-expiry-that-fired-and-the-ground-that-was-false.md` (providers-integrations) — ⚠ **the team DID shut down at owner instruction after this session; `176` resumes the area across that gap.** ⭐ It re-derives THIS session's own recorded Option-(B) rejection, whose stated expiry fired when `### 24.84` landed at `25ae6c49`.
 
 **Commit:** `7362d199` — 1 file, **comment-only** (non-comment delta mechanically verified empty).
 ⚠ **Written without orchestrator review or approval:** the orchestrator was gone and both successor spawns died at launch. **Lead-authorized self-close-out.** Step-9 routing was therefore unavailable; nothing in this slice required it (zero logic delta, no new findings needing escalation beyond those already filed).
