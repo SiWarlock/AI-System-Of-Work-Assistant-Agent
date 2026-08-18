@@ -2,6 +2,7 @@
 
 **Date:** 2026-08-18 · **Role:** main-orchestrator (#3) · **Track:** main (single-track, root checkout)
 **Predecessor:** `docs/team-handoffs/029-2026-08-17-the-round-that-wrote-itself-down-as-it-went.md`
+**Successor:** `docs/sessions/184-2026-08-18-every-control-fired-on-the-artifact-that-described-it.md`
 **Status:** ⚠ **WRITTEN MID-ROUND WHILE THE ROUND IS STILL HELD, ON LEAD INSTRUCTION — not at the cycle threshold.**
 
 > ⛔ **WHY THE TIMING IS THE FIRST THING IN THE DOC:** *handoff quality degrades exactly when it matters most.* A handoff written now is written by someone who still holds the round; one written at the threshold is written by someone economising. ⭐ **This round produced TWO stale-handoff casualties — the lead's `### 24.99` relay off `029`, and my own struck `vaultRoot` construction argument. Both were written late.**
