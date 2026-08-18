@@ -3638,6 +3638,8 @@ ls docs/briefs/2*.md | wc -l                                                    
 
 ⚠ **Same family, and stated because it caught the orchestrator once: a backgrounded `cmd > f 2>&1; echo "EXIT: $?" >> f` reports the *echo's* status as the task's exit.** Read the exit from the file.
 
+⛔⛔ **INSTRUMENT EIGHT, 2026-08-17 — `vitest run --dir <path>` SILENTLY DOES NOT SCOPE.** `--dir apps/desktop` ran **7755 tests** — the whole monorepo. ⚠ **The dangerous property is NOT the wrong count. It is that a MONOREPO run would have been reported as a DESKTOP measurement — and it would have AGREED with the desktop-only run it was meant to corroborate.** ⇒ ⭐⭐ ***`L179`'s trap RUNNING IN REVERSE: not two censuses disagreeing, but two AGREEING FOR UNRELATED REASONS — false corroboration from two supposedly independent sources.*** ⛔ **Concordance is evidence ONLY when the two methods COULD have disagreed.** **Caught by noticing the MAGNITUDE (7755 for one app); nothing else would have.** ⇒ **verify that a scoped run actually scoped — the count is the check.**
+
 **Enforcement:** `pattern: \bnpx\s+(tsc|vitest|eslint|turbo)\b` — flag `npx` for any load-bearing measurement; use `node_modules/.bin/*` or `pnpm`. And `pin: any reported suite/typecheck green must quote its "Cached:" line.`
 
 ---
@@ -3704,6 +3706,9 @@ max(40) -> 4/5 STILL ACCEPT   (kills only the 44-char ghp)
 ⛔⛔ **THE PROBLEM IS A GAP IN THIS LEDGER, NOT A FAILURE TO FOLLOW IT: every measurement discipline banked here points at claims someone DOUBTED** — censuses, non-vacuity controls, applicability controls, refutation attempts. **Nothing in it says to measure the thing you were about to wave through.** ⇒ ***a believed claim generates no doubt, and doubt is what every existing check is triggered by. That is the definition of believed.***
 
 ⭐ **FRAME IT AS A TRIGGER, NOT AN ATTITUDE — "be skeptical" is not a check** (this project's own standing complaint about *"be careful"*). **THE TRIGGER: a claim you are about to accept as a SECONDARY BENEFIT — an "also", an "and additionally", a bonus inside a rationale — is a claim nobody will ever re-derive, precisely because it was never load-bearing enough to be listed.** It enters the record as support, is never important enough to audit, and is inherited as fact. ⚠ **It is `L183`'s sibling: that one is about NUMBERS that shed their operands; this is about CLAIMS that shed their scrutiny by arriving as extras.**
+
+⭐⭐ **AMENDMENT 2026-08-17 — THE HARDER CASE IS A BELIEVED *PRECEDENT*, NOT A BELIEVED CLAIM** (lead, self-reported; wording adopted from the orchestrator at the lead's own instruction). The lead refused an option because ***"an accepted cost must be MEASURED — an unknown number of desktop tests cannot be accepted"*** — **and in the same message spawned an implementer on a relayed count whose method they never asked for, and which had ALREADY BEEN RETRACTED.** ⇒ ⛔ ***measurement demanded for the option REJECTED, skipped for the option CHOSEN.***
+⛔⛔ **THE MECHANISM, WORSE THAN A BELIEVED CLAIM: a believed PRECEDENT RECRUITS the claim rather than being checked by it.** The lead had staffed an unstaffed area on a real blocker twice before; **the precedent did the reasoning and the number was decoration.** ⚠ ***And it is worse in a LEAD than in an implementer, because supplying precedent is exactly what a lead is FOR — so the failure mode is indistinguishable from doing the job.*** ⇒ **the trigger extends: not only an "also" inside a rationale, but any conclusion that ARRIVES ALREADY-JUSTIFIED BY A PATTERN YOU SET.**
 
 **Enforcement:** `accepted: not mechanically enforceable — the trigger is the words "also" / "additionally" / "as a bonus" inside a rationale you are about to approve.`
 
@@ -3800,4 +3805,23 @@ The orchestrator's first note read: *"THE SHIPPED REALITY HAS TWO GLOBAL LEGS, N
 ⭐ **ROUTING COROLLARY, from correcting the lead's own account: the crossing that delivered the retraction late cost nothing. What cost the round is that the falsifying objection EXISTED FOR AN HOUR BEFORE REACHING THE ARTIFACT THAT NEEDED IT.** ⛔ **That is a ROUTING property, not a timing accident — the packet would have been just as false ten minutes later.** ⇒ **speed is not the fix; getting the objection to the artifact is.**
 
 **Enforcement:** `accepted: not mechanically enforceable — before a premise-carrying artifact ships (packet, brief, reviewer prompt, docblock), name its load-bearing claim and route it to someone positioned to falsify it. A reviewer who can only agree is not four eyes.`
+
+---
+
+<a id="189"></a>
+## 189. BEFORE CONCLUDING A SUITE PASSES UNDER A CHANGE, PROVE THE CHANGE WAS IN EFFECT — a green suite and an inapplicable change are indistinguishable from the outside
+
+**Date:** 2026-08-17. **Source:** contract-implementer's desktop scratch control, `### 24.84`. ⭐ **Lead ruling: remove the FILE, bank the PATTERN.**
+
+**The instance.** Asked whether the tightened `WorkspaceIdSchema` broke `apps/desktop`, contract ran the desktop suite: **62/62 files, 511/511 tests, forced, `0 cached`.** ⛔ **On its own that proves nothing** — a suite passes identically whether the change is harmless **or was never in effect in that environment.**
+
+⭐⭐ **SO THEY BUILT THE INSTRUMENT THAT MAKES THEIR OWN NEGATIVE MEANINGFUL** — a throwaway `apps/desktop/test/__scratch-control.test.ts` asserting `WorkspaceIdSchema.parse("ws_employer")` **throws** and `parse("ws-employer")` **returns**. ⇒ **the tight brand IS live in desktop's test environment, therefore 511/511 green MEANS something.** ⚠ **When they later summarised, they said desktop had "ZERO references" to the schema — a slip about their OWN control, in the CONSERVATIVE direction.**
+
+⛔ **THE RULE: A NEGATIVE RESULT CARRIES AN APPLICABILITY BURDEN THAT A POSITIVE ONE DOES NOT.** *"It broke"* proves the change reached the code. *"It did not break"* proves nothing until you show the change was **present, loaded, and evaluated** there. ⇒ ***"no impact" is a claim about an ENVIRONMENT, not just about a suite.***
+
+⭐ **This is handoff `028`'s applicability finding arriving as THE DEFAULT STATE OF EVERY NEGATIVE RESULT rather than as an occasional instrument defect.** ⚠ **`L178` separates non-vacuity (*did it run?*) from applicability (*is it valid for this input?*); this is applicability asked of a PASS — where nobody thinks to ask, because a pass produces no output to be suspicious of.**
+
+⛔ **AND THE CONTROL DOES NOT SHIP.** A cross-package assertion about a `packages/contracts` schema does not belong in desktop's suite — it is a **measurement instrument**, not a pin. **Build it, use it, report it, DELETE it** — and **state in the report that it existed and what it established**, or the next reader is back to the bare pass. ⚠ **Here it was left UNTRACKED and would have shipped as a leftover: that is the pattern's failure mode, and it is far cheaper than the failure mode of not using it.**
+
+**Enforcement:** `accepted: not mechanically enforceable — any reported "no impact" / "not affected" / "N/N green under X" states how the change was proven live in the measured environment.`
 
