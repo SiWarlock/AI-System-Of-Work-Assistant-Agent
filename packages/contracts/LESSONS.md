@@ -4411,3 +4411,19 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **Kin `L202`** (a believed claim generates no doubt) — **`202` is why YOU do not check your own claim; `218` is how you get SOMEONE ELSE to check it for you.**
 
 **Enforcement:** `pattern: an ADD:/TWEAK:/brief premise resting on unverified reasoning states its own confidence and whether it was executed` · `accepted: partially enforceable`.
+
+## <a id="219"></a>219. A SCRATCH FILE IN A COLLECTED TEST PATH IS NOT LOCAL — it reds every other session's graph, invisibly to its author, and no commit-side discipline can catch it
+
+⛔ **THE INSTANCE, MEASURED:** four untracked probes (`packages/domain/test/__scratch-24120{,b,c,d}.test.ts`) reded `@sow/domain#typecheck` — **`TS2532` at `__scratch-24120b.test.ts(52,40)`** — and **`@sow/domain` is upstream of nearly everything**, so the whole graph was red for every concurrent session.
+
+⇒ ⭐⭐ **THE PROPERTY THAT MAKES IT A LESSON RATHER THAN A TIDINESS NOTE: IT IS INVISIBLE TO EXACTLY ONE PERSON — ITS AUTHOR.** They know the files are theirs and temporary, so the cost never lands where the knowledge is. ⛔⛔ **AND IT APPEARS IN NOBODY'S DIFF: the pathspec discipline that protects every commit in this checkout defends NOTHING here, because the file is never staged by anyone.** ⇒ ***a shared-tree hazard with no commit-side surface — the one class the round's other discipline structurally cannot reach.***
+
+⚠ **The cost lands entirely on people who cannot attribute it.** One session spent **four independent checks** (untracked · named for another session's in-flight task · zero of their own symbols in the error · the failing package is UPSTREAM of theirs, so their change structurally could not cause it) before they could report their own work honestly.
+
+⇒ **THE RULE: scratch harnesses live OUTSIDE collected paths.** If one must live inside, **delete it the moment the measurement is read — not at close-out. The window IS the hazard.** ⛔ **Verify the deletion by LISTING the directory, never by `rm -f`'s exit code** (`L217`).
+
+⭐⭐ **AND AN EPISTEMIC ADDENDUM WORTH MORE THAN THE RULE, recorded because it cut against the person who benefited: the lead attributed a DIFFERENT session's red to these files BEFORE any measurement, then struck it when the actual reds turned out to be `lint`/`format:check`.** **A witness for the mechanism then appeared on a different gate, in another session, hours later.** ⛔ **The strike STANDS anyway.** ⇒ ***a conclusion that happens to be right does not retroactively repair the method that produced it*** — inferring causation from co-presence is struck whether or not it lands on something true. ⚠ **The round punished the mirror of this all evening (a claim that was reasonable and false); this is the harder case — reasoning that was unsound and lucky.**
+
+⚠ **Kin `L217`** (the shared shell) and **`L109`** (a check only gates if a decision sits between reading and acting) — **all three are shared-tree hazards where the actor cannot see the cost they impose.**
+
+**Enforcement:** `pattern: no untracked file matching test-collection globs may persist across a slice boundary; enumerate and attribute untracked paths at every close-out` (`029`'s inventory rule, which is what caught this) · `accepted: partially enforceable`.
