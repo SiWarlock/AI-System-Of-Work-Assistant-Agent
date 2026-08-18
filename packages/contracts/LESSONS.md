@@ -4321,3 +4321,36 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **Kin `L180`** (a count from what you personally saw is a SAMPLE) — **`L180` is a count whose POPULATION is wrong; `213` is a count whose TIMING cannot be right.**
 
 **Enforcement:** `pattern: grep -nE "[0-9]+ (commits|unpushed|tests|files)" over IMPLEMENTATION_PLAN.md and handoff docs` — every hit must be accompanied by the deriving command or be replaced by it · `accepted: partially enforceable`.
+
+## <a id="214"></a>214. A DONE-WHEN THAT CANNOT BE SATISFIED WITHOUT CROSSING AN OWNER GATE IS NOT A DONE-WHEN — it is a BLOCKED task wearing a completable one's clothes
+
+⛔ **THE INSTANCE:** `### 24.123`'s Done-when was written as *"the false-positive rate is measured against a real vault population."* **A real-vault measurement IS a scan over real vault content, and *"do NOT run any scan over real vault content"* is a standing owner gate.** ⇒ **the task read as ordinary work and could not be completed without crossing a line nobody had authorised.**
+
+⇒ ⭐⭐ ***THE MORE DILIGENT THE IMPLEMENTER, THE MORE CERTAINLY THEY CROSS IT.*** **Someone who treats a Done-when as binding — which is exactly the behaviour every other rule here cultivates — walks straight through the gate, because the Done-when is the artifact they were told is authoritative and the gate lives somewhere they were not told to read** (a handoff, a lead ruling, a session doc). ⛔ **Nothing connects the two AT THE POINT OF ACTION.**
+
+⛔ **THIRD INSTANCE IN ONE ROUND OF A REQUIREMENT WHOSE SATISFIABILITY SILENTLY DEPENDS ON ANOTHER DECISION'S STATE** (with `### 24.104`'s terminator-safety precondition and `### 24.110`'s delegation block). ⇒ **that is a CLASS, not a coincidence.**
+
+⇒ **THE RULE, and it is two parts because the annotation alone has already failed:**
+1. **MARK THE STATE, DO NOT ANNOTATE IT** — the checkbox line itself carries **`BLOCKED-ON-<what>`**. ⚠ **A note in the body is read AFTER the reader has already decided the task is actionable.**
+2. **NAME THE HONEST PATH THAT DOES NOT CROSS THE GATE** — for `### 24.123`, a synthetic corpus with its unrepresentativeness owned, or an authorised scan. ⛔ **Without it, a blocked-but-important task gets satisfied by whatever substitute the implementer invents, reported as the real thing.**
+
+⚠ **Kin `L92`** (a certification is an audit artifact) — **both are about a status marker that means less than a reader assumes.** ⭐ **And note the direction: this one fails toward ACTION, where most stale-state defects fail toward inaction.**
+
+**Enforcement:** `pattern: a Done-when naming a population, environment, or system the task's own Track cannot lawfully reach must carry BLOCKED-ON-<what> on the checkbox line` · `accepted: partially enforceable`.
+
+## <a id="215"></a>215. AN ASSERTED ABSENCE ACROSS A SESSION BOUNDARY IS AN INFORMATION-AVAILABILITY DEFECT, NOT A DISCIPLINE FAILURE — replace the reflex to ASSERT with the reflex to GREP
+
+⛔⛔ **THREE INSTANCES IN ONE EVENING, THREE DIFFERENT SEATS, AND THAT IS WHY IT IS STRUCTURAL RATHER THAN PERSONAL:**
+1. **The LEAD** relayed *"`### 24.111`'s finding is UNRECORDED, file it"* — **it had been filed five minutes before the recipient's session began** (`c69285f7`).
+2. **The ORCHESTRATOR** reported *"both Step-9 reports are unreviewed"* from `182 §7c` — **§1 had been refreshed later and said otherwise**, in the same document.
+3. **An IMPLEMENTER** reported three census items *"still unfiled"* — **all three were filed** (`### 24.117`, `### 24.118`, `### 24.121`, at `4d3b0fe4`), **and the filing credited that same implementer as the finder.**
+
+⭐⭐ **NONE OF THE THREE WAS CARELESS. EACH ASSERTED SOMETHING TRUE OF WHAT THEY COULD SEE.** ⇒ ***nobody can observe what landed in a session they were not in, and the tracker is the only witness — so a negative claim about project state is a claim about a population the speaker structurally cannot survey.***
+
+⛔ **THIS IS WHY "BE MORE CAREFUL" CANNOT FIX IT: the speaker has no signal that they are missing anything.** **An absence feels identical from inside whether it is real or merely unobserved** — and `182 §6` already established that an empty result is the CALMING direction and never gets a second look. ⚠ **Team shape makes it worse, not better: more parallel sessions means more landings each participant did not witness.**
+
+⇒ **THE RULE: a negative claim about project state is not utterable from memory. GREP FIRST — `grep -n "^### 24\.NNN" IMPLEMENTATION_PLAN.md`, with a positive control — or say "I have not checked."** ⭐ **The cost is one command; the cost of the alternative is a duplicate entry, or a re-filed finding, or a correction chain across three sessions.**
+
+⚠ **Kin `L180`** (a count from what you saw is a SAMPLE) — **`180` is the positive form of this defect, `215` is the negative form, and the negative form is more dangerous because a missing count invites checking while a confident absence closes the question.**
+
+**Enforcement:** `pattern: any "unfiled" / "not recorded" / "nobody has" / "no task owns" claim must cite the search that established it, with a positive control` · `accepted: partially enforceable`.
