@@ -92,9 +92,9 @@ describe("§5 createStoreBackedWorkspacePosture — durable ack read, fail-close
 
   it("resolver_foreign_readback_fails_closed — a store row whose id ≠ the requested id is REJECTED (WS-8 re-gate)", async () => {
     // A buggy/malicious `get` returns a FOREIGN (more-permissive) workspace's row for the requested id.
-    const foreign = defaultWorkspace({ id: "ws-OTHER", name: "Other", type: "personal_business", markdownRepoPath: "/v", gbrainBrainId: "b" });
+    const foreign = defaultWorkspace({ id: "ws-other", name: "Other", type: "personal_business", markdownRepoPath: "/v", gbrainBrainId: "b" });
     const r = createStoreBackedWorkspacePosture(repoGetting(() => Promise.resolve(ok(foreign))));
-    const p = await r.resolve(WS); // requested id ("ws-employer") ≠ returned row id ("ws-OTHER")
+    const p = await r.resolve(WS); // requested id ("ws-employer") ≠ returned row id ("ws-other")
     expect(isOk(p)).toBe(false); // fail closed — no foreign posture crosses into the veto
   });
 });

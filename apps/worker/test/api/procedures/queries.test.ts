@@ -132,7 +132,7 @@ function fakeWorkflowRunRef(): WorkflowRunRef {
 // cross-workspace content inline.
 function fakeGclProjection(): GclProjection {
   return {
-    workspaceId: "ws_employer" as GclProjection["workspaceId"],
+    workspaceId: "ws-employer" as GclProjection["workspaceId"],
     visibilityLevel: "sanitized",
     projectionType: "calendar_busy",
     sanitizedPayload: { summary: "busy 9-11", priority: "high" },
@@ -142,8 +142,8 @@ function fakeGclProjection(): GclProjection {
 
 // ── The fake ReadModelQueryPort — deterministic, in-memory ────────────────────
 
-const KNOWN_WORKSPACE = "ws_personal";
-const UNKNOWN_WORKSPACE = "ws_does_not_exist";
+const KNOWN_WORKSPACE = "ws-personal";
+const UNKNOWN_WORKSPACE = "ws-does-not-exist";
 
 function notFoundWorkspace(workspaceId: string): FailureVariant {
   return failure("validation_rejected", "workspace not found", {
@@ -788,7 +788,7 @@ describe("buildQueryRouter — global surface is GCL sanitized (REQ-UX-002 / §6
     // multi-line raw value, the global surface must reject it rather than inline
     // raw cross-workspace content (fail-closed — §6 WS-8).
     const leaky: GclProjection = {
-      workspaceId: "ws_employer" as GclProjection["workspaceId"],
+      workspaceId: "ws-employer" as GclProjection["workspaceId"],
       visibilityLevel: "sanitized",
       projectionType: "note",
       // A multi-line raw body — a workspace-isolation breach if it ever inlines.
@@ -875,7 +875,7 @@ describe("buildQueryRouter — globalDrillDown (SAFETY: workspace-scoped, visibi
 
   it("returns DRILL_TARGET_NOT_FOUND when no global projection matches (never a partial leak / probe)", async () => {
     const caller = makeCaller(
-      fakePort({ globalSurface: () => ok([proj("ws_employer", "calendar_busy", "full")]) }),
+      fakePort({ globalSurface: () => ok([proj("ws-employer", "calendar_busy", "full")]) }),
     );
     const res = await caller.query.globalDrillDown({
       workspaceId: KNOWN_WORKSPACE,
@@ -948,7 +948,7 @@ describe("buildQueryRouter — auditDrill (9.41 leg B: resolve an opaque changeI
     // A correctly-scoped sibling sits alongside it so a "match anything in the list" bug would
     // also be exposed (it would still fail: no record in the list hashes to `foreignChangeId`
     // except the foreign one).
-    const foreign = fakeAuditRecord({ workspaceId: "ws_employer", event: "external_write.created" });
+    const foreign = fakeAuditRecord({ workspaceId: "ws-employer", event: "external_write.created" });
     const scoped = fakeAuditRecord({ workspaceId: KNOWN_WORKSPACE });
     const foreignChangeId = deriveChangeId(foreign);
     const caller = makeCaller(fakePort({ auditEvents: () => ok([foreign, scoped]) }));
