@@ -1,6 +1,6 @@
-# Session 178 — two slices with zero production delta, and a mutation that never applied
+# Session 176 — two slices with zero production delta, and a mutation that never applied
 
-**Date:** 2026-08-17 → 2026-08-18 · **Track:** `main` · **Role:** worker-implementer · **Predecessor:** `173-2026-08-14-two-errata-a-vacuous-remedy-and-the-scopes-i-kept-getting-wrong.md` · **Successor:** _(none yet — cycled at a clean boundary)_
+**Date:** 2026-08-17 → 2026-08-18 · **Track:** `main` · **Role:** worker-implementer · **Predecessor:** this area’s prior session — `173-2026-08-14-two-errata-a-vacuous-remedy-and-the-scopes-i-kept-getting-wrong.md` · chronological — `175-2026-08-18-two-audit-paths-and-five-sentences-that-were-false.md` · **Successor:** _(none yet — cycled at a clean boundary)_
 **Phase:** 24 (hardening tail) · **Area:** `apps/worker` (+ `packages/db`, `packages/workflows` owned, untouched)
 **Commits:** `8df1db46` (`### 24.79` residual) · `a883c2f7` (`### 24.84` fixture-migration leg)
 
