@@ -1,8 +1,10 @@
-# Session 176 — the expiry that fired, and the ground that was false
+# Session 178 — the expiry that fired, and the ground that was false
+
+> ⛔ **RENUMBERED `176` → `178` (2026-08-18), and the number was never mine to pick.** **THREE implementers independently computed `176`** — knowledge's `175` landed while all three were reading `docs/sessions/`, so `max+1` returned the same answer concurrently. ⛔ **It committed at `176` first**, because a broad `git add` in this shared checkout swept this file (and my `174` edit) into another agent's commit `5f6a36be`, whose message describes neither. **Nothing was lost — verified byte-identical, not assumed.** ⭐ **The convention's `max+1` is computed from a DIRECTORY READ and therefore assumes close-outs are SERIALIZED; parallel close-out on a single track collides BY CONSTRUCTION**, and the track-prefix rule that would prevent it applies only in multi-track mode. ⚠ **`### 24.93`'s own shape one level up: a rule whose correctness rests on an unstated assumption.** *(Final landing-order assignment: knowledge `175` · worker `176` · contract `177` · providers `178`.)*
 
 **Date:** 2026-08-18 (work spans 2026-08-17 evening) · **Area:** providers-integrations (`packages/policy`)
 **Phase:** 24 · **Task:** `### 24.93`
-**Predecessor:** `docs/sessions/174-2026-08-14-24-68-the-remedy-that-could-not-be-built.md` (providers-integrations)
+**Predecessor:** chronological — `177-2026-08-18-the-option-i-argued-against-and-what-building-it-measured.md` (contract) · this area's prior session — `174-2026-08-14-24-68-the-remedy-that-could-not-be-built.md` (providers-integrations). ⚠ **Both are given because the chain convention is UNSETTLED** (`161` says per-AREA, `162` used chronological) **and a link that carries its area is wrong on sight if mis-drawn.**
 **Successor:** —
 **Commit:** `462d5ad9` · **Brief:** `docs/briefs/291-24.93-option-b-expiry-re-derivation.md` (`spec-lint brief PASS @c3c6d8f2`)
 
