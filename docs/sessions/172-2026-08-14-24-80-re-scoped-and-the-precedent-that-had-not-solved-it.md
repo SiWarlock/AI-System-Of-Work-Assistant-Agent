@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-14 · **Phase:** 24 (hardening tail) · **Area:** `packages/knowledge` (knowledge-implementer, single-track `main`)
 **Predecessor:** `171-2026-08-14-two-measurements-and-a-census-that-lied-in-both-directions.md` (also mine)
-**Successor:** _(filled in by the next `/session-end`)_
+**Successor:** `175-2026-08-18-two-audit-paths-and-five-sentences-that-were-false.md` (also mine)
 
 **Commits:** `ec418c5c` — comment-only correction in `writer.ts`.
 
