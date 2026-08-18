@@ -4466,6 +4466,10 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ⚠ **WHY THIS ONE IS WORSE THAN THE FIGURE CASE: THE MISMATCHED PAIR WAS A MEASUREMENT AND A *DOUBT*, NOT TWO MEASUREMENTS.** ⇒ ***a live measurement can discharge an unrelated worry simply by being nearby and being solid*** — and the worry leaves no trace when it goes, so nothing downstream records that a question was closed by an answer to a different question. ⭐ **It was caught only because the implementer PROTOTYPED the spec instead of agreeing with it.**
 
+⛔⛔ **AND THAT MAKES THIS FORM STRUCTURALLY UNAUDITABLE, WHICH NO OTHER ENTRY ON THIS LIST IS: the figure case leaves TWO NUMBERS ON TWO DOCUMENTS and a reader can find and compare them. A DISMISSED DOUBT LEAVES ZERO ARTIFACTS.** ⇒ ***nobody downstream can discover that a question was ever closed, let alone that it was closed by an answer to a different question.*** ⚠ **Every control in this ledger assumes there is something to re-check. Here there is nothing.**
+
+⇒ ⭐⭐ **THE ONLY AVAILABLE DEFENCE IS TO CREATE THE ARTIFACT: *WHEN A MEASUREMENT DISSOLVES A DOUBT, WRITE DOWN THE DOUBT AND WHAT DISSOLVED IT.*** **One line converts an unauditable failure into an auditable one, which is the most any control can do here.** ⭐ **Demonstrated on this instance: had the ruling said *"worried the filler must be admitted by the userinfo class; the monotonicity result appears to settle it"*, the mismatch is VISIBLE ON THE PAGE and gets caught at Step 2.5 instead of at prototype.**
+
 **Enforcement:** `pattern: a correction to another artifact's figure re-states the METRIC DEFINITION both sides used, and re-runs the target's` · `accepted: partially enforceable`.
 
 ## <a id="222"></a>222. SPLIT A COMPOUND CLAIM AND MEASURE THE HALVES SEPARATELY — measured as a unit it returns "partly true" and gets treated as support
@@ -4489,3 +4493,19 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **Kin `L190`** (the number was never wrong) — **`190` is one quantity mislabelled; `222` is two claims fused.** ⭐ **Both are invisible to re-derivation, because nothing in either is false.**
 
 **Enforcement:** `pattern: a "therefore rare/safe/unreachable" claim entering a brief, ruling or severity grading states its premise and its conclusion as separately falsifiable lines` · `accepted: partially enforceable`.
+
+## <a id="223"></a>223. THE EVIDENCE THAT PROMPTED A QUESTION CANNOT CLOSE IT
+
+⛔ **THE INSTANCE:** `P1′` was accepted as a guard shape partly because it fired for `-` and `_` in a simulated `AIza[0-9A-Za-z_-]{10,}` widening. **The open question was whether `P1′` covers the BRIDGING direction — two non-matching fragments joined into a match by the filler.** ⇒ ⛔ **the tempting close is *"it already caught `-` and `_` in the `AIza` case."***
+
+⛔⛔ **THAT IS CIRCULAR, AND THE REASON IS SPECIFIC RATHER THAN GENERAL: `AIza`'s class is a RUN-LENGTH class, which makes *preserve an existing match* and *bridge two fragments* THE SAME OPERATION.** ⇒ ***the `AIza` result is CONSISTENT WITH BOTH ANSWERS, so it cannot discriminate between them*** — and it is the very instance that raised the question.
+
+⇒ ⭐⭐ **THE RULE: when a result raises a doubt, that same result is DISQUALIFIED as the doubt's answer.** **It was already consistent with both branches — that is why it raised the question — so citing it back is not evidence, it is restatement.** ⛔ **Close it with something that COULD have come out the other way.**
+
+⚠ **WHY IT NEEDS SAYING RATHER THAN BEING OBVIOUS: the prompting evidence is the MOST AVAILABLE evidence — it is already loaded, already trusted, already in the message.** ⭐ **And the closure feels especially safe BECAUSE the evidence is familiar; the reader recognises it rather than re-deriving it, and `L202` names recognition-feeling-like-measurement as the trap.**
+
+⭐ **This is `029`'s *concordance is evidence only when the methods could have DISAGREED*, applied to a single result across time rather than to two results at once** — **the same datum, before and after a question, is one measurement used twice.**
+
+⚠ **Kin `L221`/`L222`** — the family where nothing is false. **Here both the result and the question are sound; only the INFERENCE from one to the other is empty.**
+
+**Enforcement:** `pattern: an answer that cites the same measurement, run or artifact that raised the question is rejected; name what could have come out otherwise` · `accepted: partially enforceable`.
