@@ -3674,5 +3674,51 @@ ls docs/briefs/2*.md | wc -l                                                    
 
 ⭐ **COROLLARY, RECORDED BECAUSE IT EXPLAINS WHY THE REMEDY WORKS AND IT IS NOT LUCK: the orchestrator's instruction was *"derive by TYPE, not by spelling."* It was right TWICE for reasons the orchestrator had not identified** — they predicted the spelling count would fail on line-breaks and wrapping; it actually failed because the brand binds field **`id`**, not `workspaceId` (`workspace.ts:68`), and separately because the denominator was a token count. ⇒ ***a method that is correct for failure modes you cannot enumerate is what a method IS*** — the alternative, patching the specific failure you predicted, only ever closes the one you already saw (`L94`'s class-vs-instance shape, arriving in measurement).
 
+⭐⭐ **AMENDMENT — THE COST HALF OUTRANKS THE MECHANISM HALF, and is recorded second only because it was found second.** The lead's formulation explains **how the defect hides** (subtraction laundering the unit out of view). The sharper half is **what it COSTS: a wrong derived number does not merely MISINFORM — it MISROUTES.** *"2 unidentified"* buys a quick sweep; *"one skipper whose optionality is deliberate and whose raw shape is not"* buys a **rule-7 task with existing history**. ⇒ ⛔ ***A MISINFORMING NUMBER IS CORRECTED ON CONTACT; A MISROUTING ONE IS NEVER CONTACTED, BECAUSE IT ROUTED THE WORK SOMEWHERE ELSE.*** **That is the half a successor needs** — it is why a derived count is not a cosmetic error to fix when noticed, but a **scheduling decision made on a number nobody will revisit.**
+
 **Enforcement:** `accepted: not mechanically enforceable — the discipline is publishing both operands with their units, which L61 already mandates for the operands themselves.`
+
+---
+
+<a id="184"></a>
+## 184. THE CHECK THAT MATTERS IS THE ONE ON THE CLAIM YOU ALREADY BELIEVE — a believed claim generates no doubt to trigger a check
+
+**Date:** 2026-08-17. **Source:** `### 24.84`'s length-bound ruling.
+
+**The instance.** contract-implementer proposed a length bound on `WorkspaceIdSchema` and noted, correctly, that **`max(40)` "also kills ghp-style"** credential strings. The orchestrator was about to accept that as a **secondary benefit** and rule on the number. Running it first, against contract's own measured credential set, under contract's own proposed shape:
+
+```
+max(64) -> 5/5 credential shapes STILL ACCEPT
+max(40) -> 4/5 STILL ACCEPT   (kills only the 44-char ghp)
+```
+
+⇒ **the claim was TRUE and worth 1-of-5.** The bound was still taken — on **bounded-input** grounds, a real and sufficient reason — but the *rationale* was ruled explicitly, and the docblock, commit and Appendix-A row were **forbidden from citing credential rejection**. ⛔ **On a rule-7 surface an overstated guarantee is worse than no control, because it retires the reader's suspicion at the sink where suspicion is the last defense** (`L161` where it bites hardest).
+
+⛔⛔ **THE PROBLEM IS A GAP IN THIS LEDGER, NOT A FAILURE TO FOLLOW IT: every measurement discipline banked here points at claims someone DOUBTED** — censuses, non-vacuity controls, applicability controls, refutation attempts. **Nothing in it says to measure the thing you were about to wave through.** ⇒ ***a believed claim generates no doubt, and doubt is what every existing check is triggered by. That is the definition of believed.***
+
+⭐ **FRAME IT AS A TRIGGER, NOT AN ATTITUDE — "be skeptical" is not a check** (this project's own standing complaint about *"be careful"*). **THE TRIGGER: a claim you are about to accept as a SECONDARY BENEFIT — an "also", an "and additionally", a bonus inside a rationale — is a claim nobody will ever re-derive, precisely because it was never load-bearing enough to be listed.** It enters the record as support, is never important enough to audit, and is inherited as fact. ⚠ **It is `L183`'s sibling: that one is about NUMBERS that shed their operands; this is about CLAIMS that shed their scrutiny by arriving as extras.**
+
+**Enforcement:** `accepted: not mechanically enforceable — the trigger is the words "also" / "additionally" / "as a bonus" inside a rationale you are about to approve.`
+
+---
+
+<a id="185"></a>
+## 185. EVIDENCE OFFERED IN SUPPORT OF A MEASUREMENT IS NOT ITSELF MEASURED — the artifact in front of you does not feel like the deliverable
+
+**Date:** 2026-08-17. **Source:** `### 24.79` residual, worker-implementer's Step 9, **self-reported against their own work.** ⛔ **Banked as a CONVENTION, not a candidate — three instances in one day across three different roles.**
+
+**The instance.** worker ran a genuinely rigorous WS-8 sweep: subject-classified rather than phrase-selected, **64 occurrences → 17 classified**, both controls reported, and it demonstrated that `boot.ts:2184` sat *outside* the phrase intersection — proving phrase-selection alone would have missed a real site. **Exemplary.**
+
+⛔ **Then, writing the corrective comment, they recorded `provisionDev.ts` as a WRITER of `dashboard_cards` on the strength of a TEXTUAL HIT. It writes it zero times** — its only occurrence of the token is a comment saying the global dashboard *"is deliberately NOT written here."* ⇒ ***a textual hit recorded as a classification, inside a comment whose entire subject was correcting a false producer credit, under a "measured, not assumed" banner.*** The brief's own rule — **classify by SUBJECT, never by phrase** — was applied to the sweep and not to the evidence census.
+
+⭐⭐ **THE MECHANISM, AND IT GIVES `L182` ITS WHY: *the artifact in front of you does not FEEL like the deliverable.*** **The sweep felt like the measurement; the census justifying it felt like just a fact.** Rigor attaches to the thing you have named as the work, and **supporting evidence is by definition not that thing.**
+
+⛔ **THREE INSTANCES, ONE DAY, THREE ROLES — which is what promotes it past anecdote:**
+1. **Orchestrator** — refreshed a brief having verified its *census* was stale, never asking whether the *fix* had landed, and reported the whole as refreshed.
+2. **Lead** — ordered a task filed for a finding that already had a durable home, ~2h after ruling on that exact duplicate class.
+3. **Worker** — the above, found and reported by worker themselves.
+
+⇒ **THE RULE: when you publish a measurement, the CLAIMS INSIDE ITS JUSTIFICATION carry the same evidentiary bar as its headline.** A census cited to support a comment is a census. A file named as a writer is a classification. ⚠ **The tell is the word "measured" appearing in the same paragraph as an unmeasured supporting fact** — the banner covers the headline and reads as covering everything beneath it.
+
+**Enforcement:** `accepted: not mechanically enforceable — the discipline is applying the slice's OWN stated method to the evidence inside its deliverable, not only to its headline.`
 
