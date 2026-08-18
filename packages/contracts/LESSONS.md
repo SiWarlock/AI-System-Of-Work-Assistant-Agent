@@ -4164,3 +4164,38 @@ The implementer declined it **on the file's own documented constraint**, not on 
 ⭐ Related but distinct: `L162` (an adversarial reviewer covers the space the author could not see) is about a reviewer improving an implementer's work. **This is the return path — the implementer reviewing the REVIEWER — and the project had no lesson for it.**
 
 **Enforcement:** `accepted: not mechanically enforceable — when a review reply offers more than one option, it must state the constraint the options are filtered against; an unfiltered menu is an unreviewed design instruction. Executing side: treat an option list as a hypothesis and check each branch against the target file's own documented constraints before picking.`
+
+## <a id="205"></a>205. A SUCCESS EXIT IS AMBIGUOUS BETWEEN "IT WORKED" AND "IT NEVER APPLIED" — this is a fact about exit codes, and the mutation rule is its instance
+
+**Date:** 2026-08-18. **Source slice:** `### 24.102` Step 9 (worker-implementer), promoted at the lead's instruction.
+
+The round already carried *"a mutation producing RED is self-proving; a mutation producing GREEN is ambiguous — either the pin is blind, or the mutation never applied."* **That is the narrow form.** The general form arrived from a different direction: **`rm -f` exited 0 without deleting anything.** The implementer's cwd had persisted from an earlier `cd apps/worker`, so a repo-relative path resolved to nothing — and `-f` is *defined* to make a missing target a success.
+
+⇒ ⭐⭐ **THE RULE, AND IT SUBSUMES THE MUTATION ONE RATHER THAN SITTING BESIDE IT: for any destructive or generative command, a SUCCESS outcome does not distinguish *the effect happened* from *the command never reached its target*.** `rm -f` on a wrong path · a `sed` that matched nothing · a patch applied to a stale copy · a `mkdir -p` that was already there · a write to a path under a symlink you did not expect. **Every one exits 0.**
+
+⛔ **The asymmetry is why it survives: FAILURE is informative and SUCCESS is not.** A non-zero exit names a problem and gets investigated; a zero exit closes the question, and closing the question is exactly what you wanted when you ran the command. ⇒ **the reassuring outcome is the one that carries no information, and it is also the one nobody re-checks** (`L184`'s family, arriving through a shell).
+
+⇒ **VERIFY THE EFFECT WITH A DIFFERENT INSTRUMENT THAN THE ONE THAT REPORTED SUCCESS.** `rm` said 0 ⇒ `ls`/`test -f` says gone. A mutation ran ⇒ `git diff`/`--numstat` says the bytes changed. A file was written ⇒ read it back. ⚠ **Re-running the same command is NOT a second instrument** — it reproduces the same resolution against the same wrong target and agrees with itself.
+
+⚠ **Environment specifics that make this concrete here, and they are the mechanism rather than footnotes:** the shell's **cwd persists between calls**, so a relative path means something different than it did one command ago; and this project has already recorded `-f`-style forgiveness in other tools. **State the absolute path, or verify the effect.**
+
+**Enforcement:** `accepted: not mechanically enforceable` — enforcement point: any destructive or generative command whose success will be reported, cited, or built upon. **Report the VERIFYING instrument's output, not the command's exit code.**
+
+## <a id="206"></a>206. THE CROSS-TERRITORY DISCRIMINATOR IS NOT "WHOSE FOLDER" — it is "does landing this require holding the target's argument in your head"
+
+**Date:** 2026-08-18. **Source:** lead ruling, banked after the round produced TWO cross-territory edits handled TWO different ways, **both correct**.
+
+- **`### 24.84`'s worker leg** needed a note rewritten in `packages/policy` — an area whose *argument* had to be understood to touch it at all. ⇒ **the orchestrator authored the replacement text VERBATIM and the implementer transcribed it**, under a halt-do-not-adapt rule.
+- **`### 24.103`'s shape-merge** mechanically broke two fixtures in `packages/workflows`. ⇒ **the breaking party fixed them themselves** (`L121`), assertions preserved.
+
+⇒ ⭐⭐ **THE RULE:**
+> **Requires REASONING about the target area's logic ⇒ the owner does it, or the orchestrator authors it verbatim and someone transcribes.**
+> **MECHANICALLY FORCED by your own change and preserves the target's existing assertions ⇒ the breaking party does it.**
+
+⛔ **The discriminator is the REASONING, not the path.** *"Whose folder"* gives the same answer to both cases and therefore separates nothing — it would either block the mechanical fix (parking a slice uncommitted in a shared tree, `L117`'s loss vector) or license the substantive one (an implementer improvising inside an argument they do not hold).
+
+⚠ **BOTH forms owe DISCLOSURE to the owner at their next slice boundary — hash, files, and that it was mechanical.** Not to seek permission after the fact: ⭐ **an unannounced cross-territory commit and an improvised one are INDISTINGUISHABLE FROM INSIDE THE DIFF**, so the owner must meet it deliberately rather than reconstruct it later.
+
+⚠ **A vacant target area changes the COLLISION risk and not the REASONING risk** — it is why the transcription form was available at all, and it is not a reason to skip it.
+
+**Enforcement:** `accepted: not mechanically enforceable` — enforcement point: any edit landing outside your own territory, at the moment of deciding WHO makes it.
