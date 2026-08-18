@@ -522,7 +522,8 @@ export function denyDirectCrossWorkspaceRaw(
   //     CANNOT FIND IT WILL CONCLUDE THE GAP IS UNEXAMINED: the brand binds at CREATE and does
   //     NOT migrate rows written before it, and that pre-brand population is UNMEASURED ACROSS
   //     INSTALLS (`### 24.84` measured 3 of 3 conforming on ONE deployment at ONE moment —
-  //     other installs unmeasured, `L106`: dormancy is not a guarantee). ⛔ `### 24.106` OWNS
+  //     other installs unmeasured, `L180`: a count sourced from what you
+  //     personally saw is a SAMPLE). ⛔ `### 24.106` OWNS
   //     that migration and is FILED, NOT BUILT — an OWNER-ACCEPTED cost, deliberately carried.
   //     ⇒ so the enumeration is foreclosed TWICE OVER right now, and only the MEMBERSHIP half
   //     survives `### 24.106` landing. ⭐ Recorded because a reader who sees the migration land
