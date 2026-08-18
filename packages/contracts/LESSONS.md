@@ -3847,5 +3847,10 @@ The orchestrator's first note read: *"THE SHIPPED REALITY HAS TWO GLOBAL LEGS, N
 
 ⭐ **RELATION TO `L183`/`L180`: those say STATE THE UNIT. This says the unit is not "files" or "tests" — IT IS THE PREDICATE THAT SELECTED THEM.** *"14 literals the shape rejects"* and *"14 tests that break"* are the same integer over two populations with **zero overlap**, and only one of them was ever true.
 
+⭐⭐ **AMENDMENT 2026-08-17 — THE SAME SHAPE INSIDE A MUTATION, AND IT REACHES BACKWARD OVER EVERY MUTATION CLAIM MADE TONIGHT.** worker-implementer's FIRST control mutation **silently did not apply** — `sed` missed on an escaped `\n` and an em-dash — **the test passed before and after, and `exit 0` was INDISTINGUISHABLE FROM "the pin held."** ⇒ ***"the command succeeded" reported as "the mutation applied"*** — this lesson's translation step, inside the instrument we use to validate everything else.
+⛔⛔ **THE REFINEMENT THAT MAKES IT ACTIONABLE (the lead's, and it is not in the original report): A MUTATION PRODUCING *RED* IS SELF-PROVING — something changed. A MUTATION PRODUCING *GREEN* IS AMBIGUOUS: either the pin is blind, OR THE MUTATION NEVER APPLIED.** ⇒ ***ONLY GREEN-OUTCOME MUTATION CLAIMS NEED AN APPLIED-PROOF (a diff line count). Red-outcome claims prove themselves.***
+⛔ **AND GREEN-OUTCOME IS PRECISELY THE ONE WE ACT ON: *"I mutated it and it stayed green"* is how a control gets declared VACUOUS AND DELETED.** ⚠ **A twice-vacuous control WAS deleted tonight on a green-outcome verdict; its stated basis was STRUCTURAL (*"it asserted a property of a stub declared two lines above, unfailable for any implementation"*), which is immune to this defect — but that was CONFIRMED rather than assumed, because exempting the conclusion you already believe is `L184`.**
+⭐ **Without worker's backup-diff control, all seven of their REDs — six of them WS-8 safety pins — would each have been one unverified assumption from meaning nothing.**
+
 **Enforcement:** `accepted: not mechanically enforceable — every dispatched measurement brief states the POPULATION PREDICATE ("count things satisfying P"), and requires the result to restate P alongside the number.`
 
