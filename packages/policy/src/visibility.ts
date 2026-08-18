@@ -498,42 +498,64 @@ export function denyDirectCrossWorkspaceRaw(
   //     exclude credential shapes" and the security review CONSTRUCTED THE COUNTER-EXAMPLE —
   //     `^(employer-work|personal-business|personal-life)$` is a well-formedness rule, admits
   //     all 3 ids `### 24.84` measured live, and excludes every credential.
-  //     ⇒ ⛔ WHAT FORECLOSES AN ENUMERATION HERE IS NOT LOGIC BUT MEMBERSHIP, AND THAT
-  //     GROUND IS STRUCTURAL RATHER THAN CONTINGENT — WHICH IS THE WHOLE REPAIR, BECAUSE
-  //     THIS NOTE HAS NOW EXPIRED A GROUND TWICE AND BOTH TIMES IT WAS A CONTINGENT ONE.
-  //     ⛔ A WORKSPACE ID'S MEMBERSHIP IS USER-DETERMINED BY DESIGN: `id` is a FREE field on
-  //     the create path, DISTINCT from the closed `WorkspaceType` enum, and `WorkspaceIdSchema`
-  //     constrains an id's SHAPE — never the SET of ids that exist. ⇒ a user creating
-  //     `acme-corp` produces a perfectly slug-valid id that no enumeration written today
-  //     contains, so an enumeration would reject a live id whatever the brand does.
-  //     ⭐ THE TWO NAMESPACES ARE DEMONSTRABLY DIFFERENT, NOT TWO SPELLINGS OF ONE THING —
+  //     ⇒ ⛔⛔ WHAT FORECLOSES AN ENUMERATION HERE IS *NOT* MEMBERSHIP-OPENNESS. THAT GROUND
+  //     IS DEAD, AND IT IS NAMED DEAD RATHER THAN DELETED, BECAUSE AN OMITTED GROUND GETS
+  //     RE-INVENTED BY THE NEXT AUTHOR.
+  //     ⛔ ~~"A WORKSPACE ID'S MEMBERSHIP IS USER-DETERMINED BY DESIGN: `id` is a FREE field
+  //     on the create path ⇒ a user creating `acme-corp` produces a slug-valid id that no
+  //     enumeration written today contains, so an enumeration would reject a live id"~~ —
+  //     RETAINED AS REASONING, FALSE AS STATE (`L195`). ⛔ MEASURED FALSE 2026-08-18,
+  //     `### 24.111`'s completed census (`L106` — A CAPABILITY IS NOT A GUARANTEE):
+  //       • ONE production constructor of the create input exists:
+  //         `apps/desktop/renderer/surfaces/onboarding/index.tsx:82`, and it sets
+  //         `id: scopeForType(type)`.
+  //       • `scopeForType`'s codomain is the CLOSED 3-value `WorkspaceBucketScope` union.
+  //       • ONE production tRPC call site (`renderer/lib/onboard-workspace.ts:48`). NO other
+  //         production client of `onboarding.createWorkspace` exists.
+  //       • THERE IS NO FREE-TEXT ID INPUT ANYWHERE IN ONBOARDING. `acme-corp` IS NOT
+  //         PRODUCIBLE BY ANY PRODUCTION PATH.
+  //     ⇒ `^(employer-work|personal-business|personal-life)$` ADMITS 3 OF 3 IDS THIS PRODUCT
+  //     CAN MINT. The id set is OPEN AS A CAPABILITY — `parseCreateWorkspace` still accepts
+  //     any slug-valid id from any local caller, `createWorkspace` being a `passthroughInput`
+  //     mutation — and CLOSED IN PRACTICE at the only producer. ⛔ THE CAPABILITY IS NOT THE
+  //     GROUND; THE PRODUCER IS.
+  //     ⛔⛔ THE GROUND THAT ACTUALLY SURVIVES IS THE OTHER ONE: THE PRE-BRAND ROW POPULATION
+  //     IS UNMEASURED ACROSS INSTALLS. The brand binds at CREATE and does NOT migrate rows
+  //     written before it; `### 24.84` measured 3 of 3 conforming on ONE deployment at ONE
+  //     moment (`L180` — a count sourced from what you personally saw is a SAMPLE).
+  //     `### 24.106` OWNS that migration and is FILED, NOT BUILT — an OWNER-ACCEPTED cost,
+  //     deliberately carried. ⇒ AN ENUMERATION WRITTEN TODAY COULD STILL REJECT A LEGACY ROW
+  //     THAT NOBODY HAS ENUMERATED.
+  //     ⚠ THIS NOTE PREVIOUSLY HAD THE TWO HALVES INVERTED — it said the enumeration was
+  //     "foreclosed TWICE OVER right now" and that "only the MEMBERSHIP half survives
+  //     `### 24.106` landing." THE MEMBERSHIP HALF IS THE ONE THAT DIED. Corrected here so a
+  //     reader watching `### 24.106` land knows which ground they are watching expire.
+  //     ⛔⛔ WHAT WOULD HAVE TO BE TRUE TO ENUMERATE SAFELY — STATED SO THE HONEST ANSWER IS
+  //     "NOT YET" RATHER THAN "NO REASON REMAINS": the pre-brand population measured ACROSS
+  //     INSTALLS rather than on one deployment, with the result showing every legacy id
+  //     inside the proposed set. ⛔ UNTIL THEN THIS NOTE DOES NOT LICENSE AN ENUMERATION.
+  //     THE LOSS OF THE MEMBERSHIP GROUND IS NOT A LICENCE — it removed one of two locks.
+  //     ⚠ NO LIVE LEAK, AND NOTHING IS BROKEN TODAY: no enumeration is implemented. WHAT
+  //     CHANGED IS THAT A FUTURE AUTHOR IS NOW *LICENSED* TO WRITE ONE — WHICH IS PRECISELY
+  //     WHAT `### 24.55` EXISTS TO STOP. This is that entry's LIVE CASE, not an abstract risk.
+  //     ⭐ THE TWO NAMESPACES ARE STILL DEMONSTRABLY DIFFERENT, AND THAT PART SURVIVES INTACT:
   //     `WorkspaceType` is `employer_work | personal_business | personal_life` (UNDERSCORES,
   //     `packages/contracts/src/primitives/enums.ts`) and would itself FAIL `WorkspaceIdSchema`,
   //     while the live ids are hyphen-spelled. ⇒ deriving an enumeration from the type enum is
-  //     not merely incomplete, it is ILL-TYPED — a checkable fact, not a judgement.
-  //     ⛔ THE PRIOR GROUND — "the id set is OPEN BY CONSTRUCTION, `parseCreateWorkspace` admits
-  //     ANY non-empty string" — ~~HELD UNTIL `### 24.84`'s WORKER LEG~~ and is RETAINED AS
-  //     REASONING ONLY: that leg has landed and the create path now runs the brand, so the
-  //     sentence is true of the past and false of the present (`L195` — retain the reasoning,
-  //     past-tense the state). ⭐ IT WAS NOT WRONG; IT WAS CONTINGENT, AND IT NAMED ITS OWN
-  //     CONTINGENCY AND THE TASK THAT OWNED IT, WHICH IS WHY THIS EDIT IS AN EXPECTED
-  //     SUCCESSION RATHER THAN A DISCOVERED DEFECT. That is the note's own rule working.
-  //     ⚠ AND THE INTERIM RESIDUAL IS PRICED, NOT UNKNOWN — SAID PLAINLY BECAUSE A READER WHO
-  //     CANNOT FIND IT WILL CONCLUDE THE GAP IS UNEXAMINED: the brand binds at CREATE and does
-  //     NOT migrate rows written before it, and that pre-brand population is UNMEASURED ACROSS
-  //     INSTALLS (`### 24.84` measured 3 of 3 conforming on ONE deployment at ONE moment —
-  //     other installs unmeasured, `L180`: a count sourced from what you
-  //     personally saw is a SAMPLE). ⛔ `### 24.106` OWNS
-  //     that migration and is FILED, NOT BUILT — an OWNER-ACCEPTED cost, deliberately carried.
-  //     ⇒ so the enumeration is foreclosed TWICE OVER right now, and only the MEMBERSHIP half
-  //     survives `### 24.106` landing. ⭐ Recorded because a reader who sees the migration land
-  //     must NOT read it as licence to enumerate.
-  //     ⛔ THE ONE CONTINGENCY THAT REMAINS, NAMED RATHER THAN LEFT IMPLICIT AND DELIBERATELY
-  //     NOT FILED: if the id set were ever ARCHITECTURALLY FIXED to a closed set, membership
-  //     would stop being user-determined and this ground would change. NO TASK OWNS THAT
-  //     BECAUSE NO SUCH CHANGE IS PROPOSED — ⚠ and filing a speculative task to look thorough
-  //     is how a tracker acquires work nobody asked for (`### 24.94`'s population, from the
-  //     other direction). It is named here so the next author checks it rather than assumes it.
+  //     not merely incomplete, it is ILL-TYPED — a checkable fact, not a judgement. ⚠ BUT NOTE
+  //     WHAT `### 24.111` MEASURED: `scopeForType` IS EXACTLY THAT DERIVATION, PERFORMED IN
+  //     THE DESKTOP STORE — and it is why ids and scopes coincide at all.
+  //     ⛔⛔ HOW TO WRITE THE NEXT CONTINGENCY IN THIS NOTE. THIS IS THE THIRD GROUND TO EXPIRE
+  //     HERE AND THE FIRST TO EXPIRE *SILENTLY*. The previous text read: "IF the id set were
+  //     EVER architecturally fixed to a closed set, membership WOULD stop being
+  //     user-determined ... NO TASK OWNS THAT BECAUSE NO SUCH CHANGE IS PROPOSED."
+  //     ⛔ THE CONDITION WAS ALREADY MET WHEN THAT SENTENCE WAS WRITTEN.
+  //     ⇒ ⭐⭐ A GUARD WRITTEN IN THE FUTURE TENSE ABOUT AN ALREADY-TRUE CONDITION IS A GUARD
+  //     THAT CLOSES THE QUESTION IT EXISTS TO OPEN: a reader who dutifully checks the named
+  //     contingency reads "no such change is proposed" and STOPS. ⛔ WORSE THAN A ROTTED
+  //     POINTER — every citation resolves, so the reader gets a CLEAN READ and a WRONG
+  //     CONCLUSION. ⇒ WRITE EVERY CONTINGENCY IN THE TENSE OF ITS CURRENT TRUTH VALUE, AND
+  //     STATE THE MEASUREMENT THAT ESTABLISHES IT.
   //   ⇒ the bad case is the one stated at the top of this residual — a credential-shaped id
   //     reaching the audit — and a shape gate does NOT close it. Recording one as if it did is
   //     the FALSE-ASSURANCE principle that rejected option (C) above: a weaker second spelling
