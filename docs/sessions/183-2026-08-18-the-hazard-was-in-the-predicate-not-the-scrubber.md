@@ -432,3 +432,22 @@ Running `P2` over **realistic marker-bearing carriers** instead of exemplars, **
 
 Under `(C')` the two guard properties stop fighting: **"never worse than today" is satisfied by construction**, so `P2` can keep the incumbent baseline and no opaque-token baseline is needed.
 ⭐⭐ **The clean statement of why: the SPACE arm is FAIL-SAFE — it can only manufacture extra refusals — while the FILLER arm is the one that can ADMIT. `P1′`/`P1″` are needed for the admitting arm ONLY.** ⇒ ***a fail-safe arm needs no alphabet guard; a fail-open arm does.*** **That is the property that decides where the guard applies, and it is derivable rather than stipulated.**
+
+---
+
+## 21 — ⛔ THE ARGUMENT FOR `(C)` WAS REAL, AND IT WAS RULED AGAINST. WRITTEN DOWN SO IT IS NOT RE-OPENED AS AN OBVIOUS IMPROVEMENT
+
+**`(C')` refuses a strict SUPERSET of `(C)`.** ⇒ **against `### 24.123`'s ~40% refusal rate on realistic Markdown, dropping the `private[_ -]?key` matches that `(C)` would drop is a GENUINE AVAILABILITY GAIN.** ⚠ **That is not a strawman — it is the strongest case against what shipped, and a future reader will re-derive it in about thirty seconds.**
+
+⛔ **RULED AGAINST (lead, 2026-08-18, on `### 24.120` at `ec874a17`): THE GAIN IS NOT THIS TASK'S TO TAKE.** It rests entirely on an **unmeasured** reading — is `private<marker>key` a false positive the incumbent SPACE manufactures, or a real `private RSA key` detection with the middle redacted? ⇒ ***taking the gain would relax a rule-7 predicate as a SIDE EFFECT of an unrelated fix, on a question nobody has answered.*** **The candidate is routed to `### 24.123`, where the granularity work can decide it deliberately and with the measurement it needs.**
+
+⇒ ⭐⭐ **WHY THIS PARAGRAPH EXISTS AT ALL, and it is the reusable part: without it, the next reader sees `(C)` refusing LESS, sees the 40% problem, and re-opens a settled rule-7 question believing they have found an easy win.** ***A ruling that only records what was chosen leaves the rejected option looking unexamined.*** **`### 24.125`'s shape in a decision record rather than a guard: the artifact has to defend itself where the wrong edit starts.**
+
+⚠ **And the ruling turns on my own restraint, which I want recorded accurately rather than flatteringly: I did not identify the better option — I declined to pick between two readings I could not measure, and the lead's ruling says that is what kept the relaxation from riding in unnoticed.** ⭐ **Declining to decide was worth more here than deciding well would have been.**
+
+## 22 — THE ROUND'S LAST CROSSING, AND WHAT MADE IT CHEAP
+
+**Three message crossings in this slice.** The third: I halted on *"the ruling never names `(C)` or `(C′)`"* while the `(C')` dispatch was already in my inbox, and — more to the point — **already committed to `### 24.120` at `ec874a17`, naming `(C')` in six places.**
+
+⇒ ⭐⭐ **THE ORCHESTRATOR'S CHECK IS THE TRANSFERABLE PART, NOT THE ANSWER: they went and measured WHERE THE AMBIGUITY LIVED rather than simply answering me.** ***Message-level ambiguity costs one round-trip; ENTRY-level ambiguity costs a reader six weeks from now who has the entry and not the conversation.*** **The entry was unambiguous, so the crossing cost one message.**
+⭐ **That is Carry-forward 6 `(a4)`'s remedy working exactly as specified — *a claim that can CROSS must have a home that can be CHECKED* — and this time the durable home existed BEFORE the crossing rather than being written after it.**

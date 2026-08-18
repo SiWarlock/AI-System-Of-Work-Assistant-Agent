@@ -21,10 +21,22 @@
 // completeness test fails until exemplars exist); adding an unexercised
 // ALTERNATIVE to an existing net is NOT.
 //
-// ⛔ WHICH ARM THIS BINDS: `looksUnsafe` is a disjunction of two arms, and only the
-// SPAN-PRESERVING one can return SAFE where an opaque token would not. The legacy
-// space arm is fail-safe (it can only manufacture extra refusals), so it needs no
-// alphabet guard. This suite binds `SPAN_PRESERVING_FILLER` alone.
+// ⛔ WHICH ARM THIS BINDS, AND THE RULE FOR ANY ARM ADDED LATER — stated as a rule
+// rather than a list, because a list would need maintaining and this does not:
+//
+//   IN A DISJUNCTION OF SAFETY CHECKS, ONLY THE ARMS THAT CAN RETURN *SAFE* NEED
+//   ALPHABET GUARDING. A fail-safe arm can only ever manufacture extra REFUSALS,
+//   so no filler it uses can hide a credential.
+//
+// `looksUnsafe` today has two arms: the SPAN-PRESERVING one can return SAFE where
+// an opaque token would not, so it is guarded here; the legacy space arm cannot
+// (a space is a member of `private[_ -]?key`'s alphabet, so it only ever adds
+// refusals), so it is not. This suite binds `SPAN_PRESERVING_FILLER` alone.
+//
+// ⇒ If you add a THIRD arm, decide which kind it is FIRST. If it can return SAFE
+// on an input the others refuse, it needs its filler added to this guard — and
+// `looksUnsafe`'s monotonicity argument has to be re-derived, because a disjunction
+// is only monotone while every arm is additive.
 import { describe, it, expect } from "vitest";
 import {
   CREDENTIAL_NETS,

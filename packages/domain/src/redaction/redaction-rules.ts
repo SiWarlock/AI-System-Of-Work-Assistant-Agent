@@ -117,6 +117,12 @@ export const URL_USERINFO_CREDENTIAL = /\/\/[^/\s:@]+:[^/\s@]+@/;
 // predicate call-count-dependent and fail INTERMITTENTLY. The list shape makes
 // adding a net feel trivial, so this is enforced by a pin (`every net is
 // non-global`) rather than left to this comment.
+//
+// ⭐ THE TWO CONTROLS INTERLOCK, AND NEITHER IS SUFFICIENT ALONE: the FREEZE closes
+// the ARRAY (nothing can be added, removed or replaced), the non-global pin closes
+// the ELEMENTS (nothing already in it carries call-to-call state). A frozen array
+// of stateful regexes is still an intermittently-wrong predicate; a list of
+// stateless regexes that any importer can empty is still a disabled one.
 export const CREDENTIAL_NETS: readonly RegExp[] = Object.freeze([
   CREDENTIAL_PREFIX,
   SENSITIVE_KEYWORD,
