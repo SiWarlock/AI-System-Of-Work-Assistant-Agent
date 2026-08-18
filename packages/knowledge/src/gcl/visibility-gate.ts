@@ -16,6 +16,7 @@ import type { GclProjection, Workspace, VisibilityLevel, Result } from "@sow/con
 import { validate } from "@sow/domain";
 import type { SchemaRegistry } from "@sow/contracts/schema/registry";
 import {
+  buildAuditSignal,
   validateProjectionVisibility,
   denyDirectCrossWorkspaceRaw,
   isAllow,
@@ -25,7 +26,87 @@ import {
   type AuditSignal,
 } from "@sow/policy";
 
-/** A single JSON-path-tagged validation issue (redaction-safe: path + message only). */
+// ── `### 24.98` — the schema-stage rejection signal ─────────────────────────────────────────────
+// ⛔ ASSEMBLED FROM NON-ROW-DERIVED MATERIAL ONLY: the closed `stage` literal, issue PATHS, and a
+// COUNT. ⚠ `GateIssue.message` IS EXCLUDED CATEGORICALLY and this is the line where the wrong edit
+// would happen (`L187`): `message` is validator-authored and MEASURED to echo row content — Zod's
+// `invalid_enum_value` embeds the received value, and `unrecognized_keys` embeds a key the ROW
+// author chose. Threading `issues` wholesale would route row content onto a rule-7 surface, where
+// `isRedactionSafe` would then REFUSE the write — reproducing the very silence this task removes,
+// with the suite green. `L73`: make the unsafe content unrepresentable rather than detecting it.
+// ⚠ PATHS ARE SAFE BY A PROPERTY OF THE SCHEMAS, NOT OF THE VALIDATORS — the invalidating condition,
+// and it holds on BOTH stages for the same structural reason: the only unbounded-key region is
+// `sanitizedPayload`, which accepts anything on either side (`z.record(z.string(), z.unknown())` in
+// Zod; `additionalProperties:{}` in JSON Schema), so neither validator can raise a per-entry issue
+// there and no row-authored key can reach a path. ⛔ GIVE THAT REGION A REAL SCHEMA AND ROW-AUTHORED
+// KEYS BECOME RAISEABLE UNDER THAT REGION — ⛔ AND THAT IS NOW HARMLESS BY CONSTRUCTION, NOT BY
+// ARGUMENT: `structuralPathOnly` cuts every path at `sanitizedPayload`, so a row-authored key cannot
+// reach `refs` even then. ⚠ THE PREVIOUS WORDING HERE CLAIMED "the pins catch it," AND NO SUCH PIN
+// EXISTED — security review executed the condition and produced a real leak ref against a fully
+// green suite. That was this slice's own thesis inverted: a control asserted rather than built.
+// It is pinned now (`a_row_authored_key_cannot_reach_refs_under_a_tightened_stand_in`), through a
+// deliberately-TIGHTENED stand-in registry — the mirror of the permissive one.
+// ⚠ AJV SIDE, ONE LINE ELSEWHERE: `packages/domain/src/validation/schema-gate.ts` maps ajv errors as
+// `{path, message}` and DROPS `e.params` — the only place ajv puts the row-authored key
+// (`params.additionalProperty`). If anyone threads `params` into that mapping, this argument dies on
+// the ajv stage. (Cross-area file; flagged rather than edited from here.)
+const GCL_GATE_ACTOR = "knowledge:gcl-gate" as const;
+// A payloadHash-shaped decision marker — a fixed constant, never a hash of the candidate. Mirrors
+// `visibility.ts`'s VISIBILITY_PAYLOAD_MARKER convention: the identity rides the refs, the row never does.
+const SCHEMA_REJECTED_PAYLOAD_MARKER = "knowledge:gcl-schema-rejection" as const;
+
+// ⛔ THE ONE PROPERTY OF THIS SIGNAL A ROW AUTHOR CAN STILL INFLUENCE IS ITS LENGTH, so it is bounded
+// here (security review). `registry.ts` compiles ajv with `allErrors: true`, so N malformed entries
+// yield N issues: measured, 500 unknown top-level keys produced 500 refs — all the IDENTICAL string,
+// zero information — and 500 malformed `sourceRefs` produced 500 distinct ones. `AuditRecordSchema.refs`
+// has no `.max`, and `serveProjection` exists to re-gate a row TAMPERED POST-WRITE, so the actor who
+// can tamper a stored row controls how many refs each denial writes. Dormant while the
+// `GclAuditPersistPort` binding is deferred — which governs disposition, not whether it is fixed.
+// ⚠ DEDUPE THEN CAP, AND THE DROP IS REPORTED: a silently truncated list reads as a complete one.
+const MAX_ISSUE_PATH_REFS = 20;
+
+// ⛔⛔ THE ROW-AUTHORED-KEY CUT, AND IT IS WHY THE SAFETY ARGUMENT NO LONGER DEPENDS ON A SCHEMA
+// PROPERTY. `sanitizedPayload` is the only free-form-key region in the projection; every other path
+// segment is a field name we authored or a numeric array index. Truncating a path at that field name
+// means a key the ROW author chose can never appear in `refs` — EVEN IF a future schema gives that
+// region a real subschema and starts raising per-entry issues under it.
+// ⭐ THIS REPLACES AN ARGUMENT WITH A CONSTRUCTION. The previous posture was "no per-entry issue can
+// be raised there today, so no key can reach a path" — true, and contingent on a schema nobody
+// promised to keep. Security review EXECUTED the invalidating condition (a plausible
+// `additionalProperties:{type:"string"}` tightening) and produced a real leak:
+// `ref:gcl-issue-path:/sanitizedPayload/Project-Falcon-Q3-codename`, with the suite fully green and
+// `isRedactionSafe` unable to help — `audit-signal.ts` names an "employer project codename" as
+// exactly what its credential-shape heuristic cannot catch. `L73`: make it unrepresentable.
+// ⚠ Handles BOTH path dialects deliberately: ajv emits `/a/b`, Zod emits `a.b`.
+const ROW_KEYED_REGION_CUT = /^(.*?\bsanitizedPayload\b)[./].*$/u;
+
+function structuralPathOnly(path: string): string {
+  const cut = ROW_KEYED_REGION_CUT.exec(path);
+  return cut?.[1] ?? path;
+}
+
+function schemaRejectedSignal(stage: "ajv" | "zod", issues: readonly GateIssue[]): AuditSignal {
+  const paths = [...new Set(issues.map((i) => `ref:gcl-issue-path:${structuralPathOnly(i.path)}`))];
+  const omitted = Math.max(0, paths.length - MAX_ISSUE_PATH_REFS);
+  return buildAuditSignal({
+    actor: GCL_GATE_ACTOR,
+    event: `gcl.projection.schema_rejected.${stage}`,
+    refs: paths.slice(0, MAX_ISSUE_PATH_REFS),
+    payloadHash: SCHEMA_REJECTED_PAYLOAD_MARKER,
+    beforeSummary: `gcl projection candidate refused at the ${stage} schema stage`,
+    afterSummary:
+      `${issues.length} issue(s), ${paths.length} distinct path(s)` +
+      `${omitted > 0 ? `, ${omitted} path(s) not listed` : ""}; nothing admitted`,
+  });
+}
+
+/**
+ * A single JSON-path-tagged validation issue.
+ * ⛔ `path` IS redaction-safe; `message` IS NOT — corrected by `### 24.98`. This docblock previously
+ * claimed "redaction-safe: path + message only", which asserted a property of `path` and then quietly
+ * extended it to `message`. MEASURED: Zod's `invalid_enum_value` embeds the received value and
+ * `unrecognized_keys` embeds a row-authored key. Never put `message` on an audit surface.
+ */
 export interface GateIssue {
   readonly path: string;
   readonly message: string;
@@ -41,11 +122,38 @@ export interface GateIssue {
 // visibility_type_mismatch, malformed_policy_input) carry an OPTIONAL `audit` — the
 // `PolicyDecision`'s mandatory `AuditSignal`, threaded outward instead of dropped
 // (`denialToGateError` is the only constructor of these three and always has one available).
-// `schema_rejected`/`raw_content_present` never carry one — they're pure ajv/Zod shape
-// failures with no `PolicyDecision`/`AuditSignal` behind them at all, so there's nothing to
-// thread; adding the field there would imply a capability that can never manifest.
+// ⛔ REWRITTEN BY `### 24.98`, NOT STRUCK (`L153` half 1) — the original claim was:
+// *"`schema_rejected`/`raw_content_present` never carry one — pure ajv/Zod shape failures with no
+// `PolicyDecision`/`AuditSignal` behind them at all … adding the field there would imply a
+// capability that can never manifest."*
+// ⭐ IT REMAINS TRUE FOR `raw_content_present` and is now FALSE FOR `schema_rejected`, and the
+// reason it expired is worth more than the correction: it held only while write-time and read-time
+// validated against ONE schema, so a stored row could not be shape-invalid. ⛔ ROWS OUTLIVE SCHEMAS.
+// `### 24.84` tightens the write-side shape; a row written before it becomes shape-invalid on READ,
+// and refusing it silently is the gap `### 24.98` closes. The "capability that can never manifest"
+// manifested — which is exactly why the statement is corrected here rather than deleted.
+// ⚠ PRECISION, because it is what stops the correction being over-read (security review): only the
+// CONCLUSION expired. The PREMISE — no `PolicyDecision`/`AuditSignal` sits behind a shape failure —
+// is STILL TRUE. `### 24.98` does not thread a policy signal outward; it MINTS a gate-local one. The
+// original was right that there is nothing to THREAD and wrong that there is therefore nothing to
+// RECORD.
+// ⚠ `raw_content_present` still mints nothing: it has no `PolicyDecision` behind it and its own
+// pin (`raw_content_present_still_carries_no_signal`) exists so this rewrite cannot quietly widen.
 export type GclGateError =
-  | { readonly code: "schema_rejected"; readonly stage: "ajv" | "zod"; readonly issues: readonly GateIssue[] }
+  | {
+      readonly code: "schema_rejected";
+      readonly stage: "ajv" | "zod";
+      readonly issues: readonly GateIssue[];
+      // ⛔ REQUIRED, not optional (`### 24.98`): the compiler then forces every construction site OF
+      // THIS UNION to build one, so a new `GclGateError` rejection path cannot ship silently
+      // signal-less. ⚠ SCOPED DELIBERATELY — it is NOT a package-wide guarantee:
+      // `gbrain/remediation/generative-proposal-intake.ts` constructs a structurally identical
+      // `{code:"schema_rejected", stage, issues}` on its OWN local union with no signal at all, and
+      // the compiler forces nothing there because it is a different type (security review; flagged,
+      // not absorbed). ⚠ The cost is real and recorded — requiring the field created a rule-7
+      // construction at the ajv site, and a third at a test fixture, that had no test until this slice.
+      readonly audit: AuditSignal;
+    }
   | { readonly code: "raw_content_present"; readonly issues: readonly GateIssue[] }
   | {
       readonly code: "visibility_exceeds_source";
@@ -68,16 +176,24 @@ export type GclGateError =
   | { readonly code: "malformed_policy_input"; readonly message: string; readonly audit?: AuditSignal };
 
 /**
- * Extract a deny's `AuditSignal`, when the variant carries one (task 24.33). Only the three
- * policy-decision-derived variants ever do — `schema_rejected`/`raw_content_present` have none
- * to extract (see the `GclGateError` doc comment above). Switches on `.code` with the same
+ * Extract a deny's `AuditSignal`, when the variant carries one (task 24.33).
+ * ⛔ CORRECTED BY `### 24.98`, AND THE CORRECTION IS THE POINT: this docblock still asserted that
+ * `schema_rejected` has "none to extract" — eleven lines above `case "schema_rejected": return
+ * error.audit;` — and it POINTED THE READER at the `GclGateError` block, which by then said the
+ * opposite. ⚠ The task's acceptance named ONE block to rewrite; the same claim had a second home on
+ * the only consumer of the type, and fixing only the named site left the false copy as the one a
+ * caller reads. A claim change owes a claim SWEEP, exactly as a rename owes a citation sweep.
+ * ⇒ CURRENT: `schema_rejected` carries a gate-MINTED signal; `raw_content_present` carries none. Switches on `.code` with the same
  * `assertNever`-style exhaustiveness guard as `denialToGateError`/`denialToCrossWorkspaceRawDenial`
  * (this file's own convention, code-quality review) rather than a structural `"audit" in error`
  * check — a future 6th `GclGateError` variant is a compile error here, not a silent `undefined`.
  */
 export function auditOf(error: GclGateError): AuditSignal | undefined {
   switch (error.code) {
+    // `### 24.98` — `schema_rejected` now CARRIES a signal, so this stays a pure EXTRACTOR: the
+    // minting happens at the rejection sites. A function named "extract" must not mint.
     case "schema_rejected":
+      return error.audit;
     case "raw_content_present":
       return undefined;
     case "visibility_exceeds_source":
@@ -129,13 +245,10 @@ export function admitProjection(
       ? validate(candidate, GCL_PROJECTION_SCHEMA_ID)
       : validate(candidate, GCL_PROJECTION_SCHEMA_ID, registry);
   if (!structural.ok) {
-    return err({
-      code: "schema_rejected",
-      stage: "ajv",
-      issues: structural.error.errors ?? [
-        { path: structural.error.schemaId, message: structural.error.code },
-      ],
-    });
+    const issues = structural.error.errors ?? [
+      { path: structural.error.schemaId, message: structural.error.code },
+    ];
+    return err({ code: "schema_rejected", stage: "ajv", issues, audit: schemaRejectedSignal("ajv", issues) });
   }
 
   // (2) Zod parse — recovers the `.refine` rules JSON-Schema drops (LESSONS §3),
@@ -149,7 +262,11 @@ export function admitProjection(
     // A refine failure anchored at sanitizedPayload is a raw-content leak — the
     // dedicated HARD-reject variant (structural shape already passed ajv above).
     const rawContent = issues.some((i) => i.path === "sanitizedPayload");
-    return err(rawContent ? { code: "raw_content_present", issues } : { code: "schema_rejected", stage: "zod", issues });
+    return err(
+      rawContent
+        ? { code: "raw_content_present", issues }
+        : { code: "schema_rejected", stage: "zod", issues, audit: schemaRejectedSignal("zod", issues) },
+    );
   }
 
   const projection: GclProjection = parsed.data;

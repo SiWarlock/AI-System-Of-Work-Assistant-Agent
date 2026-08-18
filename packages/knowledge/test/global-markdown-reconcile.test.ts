@@ -11,6 +11,10 @@ import { describe, it, expect } from "vitest";
 import { defaultWorkspace } from "@sow/contracts";
 import type { GclProjection, Workspace } from "@sow/contracts";
 import type { GclGateError } from "../src/gcl/visibility-gate";
+// `### 24.98` made `schema_rejected`'s `audit` REQUIRED, so this file's hand-built fixture must
+// carry one. Built through the CANONICAL constructor rather than a literal, so the fixture cannot
+// drift from the real signal's shape.
+import { buildAuditSignal } from "@sow/policy";
 import {
   projectProjectionsToMarkdown,
   parseGlobalMarkdown,
@@ -298,7 +302,23 @@ describe("gateReason — exhaustive over GclGateError.code (task 24.30 / L134)",
   });
 
   it("gate_reason_unchanged_for_pre_existing_correctly_handled_cases: schema_rejected/raw_content_present/visibility_exceeds_source are byte-identical to before", () => {
-    const schemaRejected: GclGateError = { code: "schema_rejected", stage: "ajv", issues: [] };
+    // ⭐ `### 24.98`: the `audit` field is REQUIRED, and the compiler finding THIS fixture is the
+    // argument for that choice — a third construction site nobody had enumerated. The value is
+    // irrelevant to `gateReason`, which is what this test is about; its PRESENCE is what the type
+    // now demands, and that is the point.
+    const schemaRejected: GclGateError = {
+      code: "schema_rejected",
+      stage: "ajv",
+      issues: [],
+      audit: buildAuditSignal({
+        actor: "knowledge:gcl-gate",
+        event: "gcl.projection.schema_rejected.ajv",
+        refs: [],
+        payloadHash: "knowledge:gcl-schema-rejection",
+        beforeSummary: "fixture",
+        afterSummary: "fixture",
+      }),
+    };
     const rawContent: GclGateError = { code: "raw_content_present", issues: [] };
     const exceedsSource: GclGateError = {
       code: "visibility_exceeds_source",
