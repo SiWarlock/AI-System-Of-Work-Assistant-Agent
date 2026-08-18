@@ -3825,3 +3825,27 @@ The orchestrator's first note read: *"THE SHIPPED REALITY HAS TWO GLOBAL LEGS, N
 
 **Enforcement:** `accepted: not mechanically enforceable — any reported "no impact" / "not affected" / "N/N green under X" states how the change was proven live in the measured environment.`
 
+---
+
+<a id="190"></a>
+## 190. A SEARCH INSTRUMENT ANSWERS "WHERE DOES THIS TOKEN APPEAR?" — every question worth asking is "WHAT DOES THIS CODE DO?", and the translation is performed silently by a human at report time
+
+**Date:** 2026-08-17. ⭐ **The lead's formulation, written out by them and banked verbatim** — the orchestrator flagged the class at 70% context and declined to write it badly; supplying the durable statement was the lead's call.
+
+⛔ **THE TRANSLATION IS WHERE THE DEFECT LIVES, AND THE RESULTING NUMBER CARRIES NONE OF IT.**
+
+**THREE INDEPENDENT WITNESSES, ONE DAY, THREE AGENTS:**
+1. **worker-implementer** — a textual hit inside a comment reading *"the global dashboard is deliberately NOT written here"* counted as a **WRITER**.
+2. **contract-implementer** — **`17 − 15 = 2`** over a **token-derived denominator**, presented as a count of **models skipping the brand**. Truth: one skipper and one non-member.
+3. **contract → lead → orchestrator** — **14 literals a shape would reject** reported as **14 tests that break**. Truth: 10 distinct literals bound to a `workspaceId:` key, **zero reaching a validator, therefore zero breaking tests.**
+
+⛔ **EACH IS ARITHMETICALLY CORRECT AND SEMANTICALLY VOID. AND EACH FAILED IN THE ACTIONABLE DIRECTION — producing work, or producing comfort.** (Witness 1 credited a producer that does not exist; witness 2 sized a remedy against a phantom population; witness 3 got an entire area STAFFED.)
+
+⇒ **THE RULE: report a count with the PREDICATE that selected its members AND the inference from predicate to claim.** ⭐⭐ **Where that inference takes a step — *"appears in file"* → *"writes the key"*; *"is a token"* → *"is a model"*; *"a shape rejects it"* → *"a test breaks"* — THAT STEP IS THE FINDING-IN-WAITING, and it is INVISIBLE IN THE INTEGER.**
+
+⛔⛔ **AND THIS IS WHY RE-DERIVATION CANNOT CATCH THE CLASS: RE-DERIVING CONFIRMS THE NUMBER, BECAUSE THE NUMBER WAS NEVER WRONG.** ⇒ ***this round's entire relay discipline — re-derive, never adjust, treat a relayed count as unverified — is structurally incapable of catching it.*** ⚠ **The only question that catches it is *"WHAT POPULATION DID YOU COUNT?"*, and it must be asked of the ORIGINATOR, not of any messenger** — witness 3 was relayed faithfully through two hops and was wrong before the first one.
+
+⭐ **RELATION TO `L183`/`L180`: those say STATE THE UNIT. This says the unit is not "files" or "tests" — IT IS THE PREDICATE THAT SELECTED THEM.** *"14 literals the shape rejects"* and *"14 tests that break"* are the same integer over two populations with **zero overlap**, and only one of them was ever true.
+
+**Enforcement:** `accepted: not mechanically enforceable — every dispatched measurement brief states the POPULATION PREDICATE ("count things satisfying P"), and requires the result to restate P alongside the number.`
+
