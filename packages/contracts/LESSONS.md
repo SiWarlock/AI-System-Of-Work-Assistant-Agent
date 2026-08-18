@@ -4633,3 +4633,17 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **Kin `L195`** (retain the reasoning, past-tense the state) — **`195` is a stale STATUS line; `230` is a stale PROPOSITION with a live green tick, which is worse, because a passing test actively asserts its own currency.**
 
 **Enforcement:** `pattern: a behaviour-changing slice names any test whose asserted proposition changed, in the commit message` · `accepted: partially enforceable`.
+
+## <a id="231"></a>231. CORRECTING THE RECORD FOR THE ABSENT IS A DUTY THAT FALLS TO WHOEVER IS STILL HERE — and it gets weaker every hour
+
+⛔ **THE INSTANCE:** a lead credited one implementer with a construction that was **another implementer's** — and the second had **already terminated.** ⭐ **It was caught by the session that would have RECEIVED the undeserved credit, on their way out, with the reason stated: *"they have already shut down and cannot correct this themselves, which is exactly why it needs correcting now."***
+
+⇒ ⛔⛔ **THAT IS THE WORST-SHAPED VERSION OF A MISATTRIBUTION, AND THE SHAPE IS WHAT MAKES IT URGENT RATHER THAN MERELY UNFAIR: it moves credit OFF a party who can no longer object, ONTO one who can.** ⚠ **Every ordinary correction mechanism in this project assumes the wronged party is present to notice — Step 9, peer review, the parting-corrections pass. None of them reaches a terminated session.**
+
+⇒ ⭐⭐ **AND IT DECAYS: the record hardens as the round seals, the handoff is written, and the people who remember disperse.** ***A misattribution corrected in the hour costs one commit; corrected next round it costs an archaeology; uncorrected it becomes the history.***
+
+⇒ **THE RULE: when you notice the record is wrong about someone who is gone, fix it BEFORE anything else you were going to do — including closing.** ⛔ **Do not defer it to the handoff, because the handoff is the artifact that fixes it in place.** ⭐ **And credit the CORRECTOR too: the party who declines credit they were handed is the only one with both the knowledge and no incentive.**
+
+⚠ **Kin `L195`** (retain the reasoning, past-tense the state) — **both are about a record that outlives the conditions that produced it; `195` is about a claim going stale, `231` is about a claim being wrong with nobody left who would know.**
+
+**Enforcement:** `pattern: a close-out or handoff naming a contribution attributes it to the session that produced it, verified against that session's own record rather than from memory` · `accepted: partially enforceable`.
