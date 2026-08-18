@@ -4565,3 +4565,19 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **Kin `L210`** (an escape consumed by neither layer) — **`210` is how the bad constant gets in; `226` is why nobody notices.**
 
 **Enforcement:** `pattern: any probe/fixture constant whose value is not visually verifiable (escapes, non-ASCII, computed literals) carries a length or identity assertion in the same file` · `accepted: partially enforceable`.
+
+## <a id="227"></a>227. RE-RUNNING UNDER A CHANGED QUESTION IS A DETECTOR; RE-READING THE FIRST RESULT IS NOT
+
+⛔ **THE INSTANCE:** a guard-design table was built on probe constants that were silently EMPTY STRINGS (`L226`). **The table was plausible, discriminating, and approved.** ⭐ **It was caught when a lead asked a DIFFERENT question — *does the classifier cover the bridging direction?* — which forced a re-run, and two candidates came back with SWAPPED verdicts against the author's own earlier table.**
+
+⇒ ⭐⭐ ***THE QUESTION FOUND SOMETHING IT WAS NOT AIMED AT.*** **The bridging question was about coverage; what it surfaced was a broken instrument. Nothing about the question anticipated that, and no amount of re-reading the original table would have produced it** — ⛔ **because neither run looked wrong ALONE. Only their CONJUNCTION did.**
+
+⇒ **THE RULE: when a result is load-bearing, the cheap audit is not to re-read it — it is to ASK A DIFFERENT QUESTION THAT REQUIRES RE-RUNNING THE SAME INSTRUMENT.** ⭐ **A second run under a changed question yields a second artifact, and two artifacts can CONTRADICT. One artifact, however carefully re-read, cannot.**
+
+⚠ **WHY RE-READING FAILS, AND IT IS `L202`'s MECHANISM: re-reading a result you already believe produces RECOGNITION, not measurement.** ⛔ **And a table that DISCRIMINATES reads as a working instrument, so the more structured the wrong output, the more re-reading confirms it** (`L226`).
+
+⭐ **THIS IS THE OPERATIONAL COMPANION TO `L223`.** **`223` says the evidence that PROMPTED a question cannot CLOSE it. `227` says the reverse move is unusually productive: a NEW question aimed at an OLD instrument is one of the few audits that can surface defects nobody suspected.** ⇒ **together: don't close questions with old evidence; do open old evidence with new questions.**
+
+⚠ **AND THE HONEST BOUND: this detector is not aimable.** **You cannot ask a question designed to find an unknown instrument defect — the yield is a by-product.** ⇒ **the actionable form is a POSTURE, not a procedure: when someone asks a question that requires re-measurement, RE-MEASURE rather than answering from the existing table, even when you are confident the existing table answers it.**
+
+**Enforcement:** `pattern: a question about a prior measurement is answered by RE-RUNNING the instrument, not by citing the stored result; discrepancies between runs are reported even when the new question is unaffected` · `accepted: partially enforceable`.
