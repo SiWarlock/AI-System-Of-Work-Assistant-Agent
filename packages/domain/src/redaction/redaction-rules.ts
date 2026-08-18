@@ -68,6 +68,31 @@ export const SENSITIVE_KEYWORD =
 // A URL userinfo credential (`scheme://user:pass@host` or `//user:pass@host`).
 export const URL_USERINFO_CREDENTIAL = /\/\/[^/\s:@]+:[^/\s@]+@/;
 
+// The nets `looksUnsafe` consults, as ONE list rather than three hardcoded calls.
+// WHY IT IS A LIST (task 24.120): the marker-neutralization property guard
+// REFLECTS OVER THIS ARRAY rather than naming nets individually. With three
+// hardcoded `.test()` calls a fourth net could be added and the guard would never
+// see it — so the guard could go stale, which is the one thing it exists not to
+// do. Adding a net here adds its guard cases automatically.
+//
+// ⛔ FROZEN DELIBERATELY, AND IT IS A RULE-7 CONCERN, NOT TIDINESS. An exported
+// mutable array hands every importer of `@sow/domain` a handle on this predicate's
+// contents: a `push`/`splice`/reassign would silently disable a credential net
+// while `looksUnsafe` kept returning `false` and every test stayed green. That
+// exposure is created by the list shape itself and does not exist for the three
+// hardcoded calls it replaces. Pinned by `the net list cannot be mutated`.
+//
+// ⛔ EVERY NET HERE MUST BE NON-GLOBAL. `.test()` on a `/g` regex advances
+// `lastIndex` and alternates true/false across calls, which would make this
+// predicate call-count-dependent and fail INTERMITTENTLY. The list shape makes
+// adding a net feel trivial, so this is enforced by a pin (`every net is
+// non-global`) rather than left to this comment.
+export const CREDENTIAL_NETS: readonly RegExp[] = Object.freeze([
+  CREDENTIAL_PREFIX,
+  SENSITIVE_KEYWORD,
+  URL_USERINFO_CREDENTIAL,
+]);
+
 /**
  * True iff the string trips a credential/secret detector — i.e. it is NOT safe to
  * emit verbatim. The scrubbing net in `redact.ts` re-checks against this after a
@@ -75,11 +100,7 @@ export const URL_USERINFO_CREDENTIAL = /\/\/[^/\s:@]+:[^/\s@]+@/;
  */
 export function looksUnsafe(s: string): boolean {
   const probe = stripMarkers(s);
-  return (
-    CREDENTIAL_PREFIX.test(probe) ||
-    SENSITIVE_KEYWORD.test(probe) ||
-    URL_USERINFO_CREDENTIAL.test(probe)
-  );
+  return CREDENTIAL_NETS.some((net) => net.test(probe));
 }
 
 // ── scrub patterns (global, for in-line substitution) ────────────────────────
