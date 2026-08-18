@@ -5,7 +5,7 @@
 **Date:** 2026-08-18 (work spans 2026-08-17 evening) · **Area:** providers-integrations (`packages/policy`)
 **Phase:** 24 · **Task:** `### 24.93`
 **Predecessor:** chronological — `177-2026-08-18-the-option-i-argued-against-and-what-building-it-measured.md` (contract) · this area's prior session — `174-2026-08-14-24-68-the-remedy-that-could-not-be-built.md` (providers-integrations). ⚠ **Both are given because the chain convention is UNSETTLED** (`161` says per-AREA, `162` used chronological) **and a link that carries its area is wrong on sight if mis-drawn.**
-**Successor:** —
+**Successor:** `docs/sessions/181-2026-08-18-the-flag-that-drifted-and-the-add-i-refuted.md`
 **Commit:** `462d5ad9` · **Brief:** `docs/briefs/291-24.93-option-b-expiry-re-derivation.md` (`spec-lint brief PASS @c3c6d8f2`)
 
 ## Why this session existed
