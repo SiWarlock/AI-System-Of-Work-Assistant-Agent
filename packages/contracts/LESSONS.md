@@ -4247,3 +4247,59 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **Kin `L4`** (isolate the authority before parsing) and `L42` (linear patterns on untrusted markup) — same surface, third distinct way a regex over attacker-influenced input fails.
 
 **Enforcement:** `pin: packages/knowledge/test/validation-refusal-audit.test.ts` (all four terminators, both dialects, trailing-terminator, full assembly; mutation-proven — drop `s` and exactly that pin reds) · `accepted: partially enforceable`.
+
+## <a id="209"></a>209. A GUARD WRITTEN IN THE FUTURE TENSE ABOUT AN ALREADY-TRUE CONDITION IS A GUARD THAT CLOSES THE QUESTION IT EXISTS TO OPEN
+
+⛔⛔ **THE INSTANCE:** a landed `visibility.ts` residual foreclosed an id enumeration on the ground that *"a workspace id's membership is USER-DETERMINED BY DESIGN"*, and named its own contingency responsibly: ***"IF the id set were EVER architecturally fixed to a closed set, membership WOULD stop being user-determined and this ground WOULD change. NO TASK OWNS THAT BECAUSE NO SUCH CHANGE IS PROPOSED."*** ⛔ **THE CONDITION WAS ALREADY MET WHEN THAT SENTENCE WAS WRITTEN** — the sole production create path derives the id from a closed 3-value enum (`### 24.111`).
+
+⇒ ⭐⭐ ***A READER WHO DUTIFULLY CHECKS THE NAMED CONTINGENCY READS "no such change is proposed" AND STOPS.*** **The note routed the check away from the one measurement that would have settled it.**
+
+⛔ **WORSE THAN A ROTTED POINTER (`029`), AND THIS IS THE PART WORTH CARRYING: every citation RESOLVES.** A rotted pointer announces itself — the reader follows it, finds nothing, and gets suspicious. **A future-tense guard gives the reader a CLEAN READ and a WRONG CONCLUSION**, with nothing anywhere to snag on.
+
+⭐ **WHY CARE DOES NOT FIX IT:** the author was being *more* diligent than average — naming a contingency nobody asked them to name is the good behaviour. **The defect is entirely in the TENSE.** ⚠ **And the tense is chosen at the moment of writing, when the condition genuinely has not been checked; it then persists unchanged through every later reading, because a hypothetical does not present as a claim and so never recruits scrutiny.**
+
+⇒ **THE RULE: write every contingency in the TENSE OF ITS CURRENT TRUTH VALUE, and state the measurement that establishes it.** *"This is not currently true — measured 2026-08-18 by X"* ages into a checkable, falsifiable statement. *"If this were ever to become true"* does not age at all. ⛔ **If you have not measured it, say THAT: *"not checked as of <date>"* is honest and stays honest.**
+
+⚠ **Kin `L106`** (a capability is not a guarantee — the same gap between what CAN happen and what DOES) and **`L195`** (retain the reasoning, past-tense the STATE — this is its unfired-condition twin: `L195` covers a status line that stopped being true, `209` covers a condition that started being true).
+
+**Enforcement:** `pattern: grep -nE "if .*(were|was) ever|would (stop|cease) being|no such change is proposed" over source comments and tracker entries` (warn-grep; every hit must carry a measurement or an explicit "not checked as of <date>") · `accepted: partially enforceable`.
+
+## <a id="210"></a>210. A QUOTED HEREDOC FEEDING ANOTHER LANGUAGE MAKES `\n` A LITERAL BACKSLASH-N — the escape is consumed by NEITHER layer and lands in the source
+
+⛔ **THE INSTANCE, AND IT BROKE THE TREE:** a file written through `<<'PY'` into Python emitted a literal backslash-n into a `packages/policy` test file. **`tsc` reported `TS1127` (invalid character) and the package failed both typecheck and test.** ⚠ **The root cause took three sessions and several wrong hypotheses to find** — a line-separator theory was raised and ruled out first — **because the symptom is a parse error at a plausible-looking line and nothing points at the WRITER.**
+
+⭐⭐ **THE MECHANISM: A QUOTED HEREDOC (`<<'EOF'`) SUPPRESSES SHELL INTERPOLATION — WHICH IS EXACTLY WHY YOU USE IT — SO THE SHELL PASSES `\n` THROUGH UNTOUCHED. If the inner language ALSO does not interpret it in that position** (inside a raw string, or in a context where it is data rather than a string literal), **NEITHER layer consumes it and it lands in the output file verbatim.** ⇒ ***the escape survives by falling between two layers, and each layer is behaving correctly.***
+
+⛔ **THE CHECK THAT ACTUALLY CATCHES IT, AND IT IS NOT "read the command carefully": VERIFY THE BYTES OF THE FILE YOU WROTE, NOT THE EXIT CODE OF THE WRITER.** A heredoc that produces a corrupt file **exits 0**. ⇒ **after writing source through any nested writer, grep the RESULT for the artifact you were trying to emit.**
+
+⭐ **Same family as the mutation-proof rule (`L212`) and `029`'s applicability principle: the writer's success says nothing about the written.** ⚠ **The safe construction, when you need a literal escape to survive: BUILD IT IN CODE (`chr(92)+"n"`) rather than typing it, so no layer can eat it.**
+
+**Enforcement:** `pattern: after any heredoc/nested-writer file write, grep -c '\\n' the written file and account for every hit` · `accepted: partially enforceable`.
+
+## <a id="211"></a>211. A SIDE-BY-SIDE READ OF TWO NEAR-IDENTICAL LISTS *CONFIRMS* RATHER THAN CATCHES — the defect hides in the DIFF, not in either list
+
+⛔ **THE INSTANCE:** `packages/policy` and `packages/domain` each carry a credential-pattern list. They diverged by **ONE REGEX FLAG on ONE pattern** — `CREDENTIAL_PREFIX` lost its `/i`, so an UPPERCASE credential shape passed the audit-signal gate (`### 24.110`). ⭐⭐ **THE SIBLING PATTERN IN THE SAME FILE, `SENSITIVE_KEYWORD`, KEPT ITS `/i`.**
+
+⇒ ⭐⭐ ***TWO OF THREE PATTERNS MATCHED, SO THE READER'S SAMPLE CONFIRMED THE HYPOTHESIS "THESE ARE THE SAME" AND THEY STOPPED READING.*** **The one that differed was the one nobody reached.**
+
+⛔ **THE GENERAL FORM: a human comparing two long, near-identical lists is running a SAMPLING procedure, not a comparison** — and the sampling terminates early on agreement, which is the exact opposite of what a divergence hunt needs. ⚠ **The more similar the lists are, the FASTER it terminates and the more confident it feels.**
+
+⇒ **THE RULE: never establish list parity by reading. Extract both lists mechanically and `diff` them** — the output is empty or it is the defect, and neither outcome depends on attention. ⭐ **Where the lists are the SAME list by design, delete one; where they must both exist, pin the parity in a test so drift reds rather than waits to be read.**
+
+⚠ **Kin `L46`** (a second hand-maintained copy is the defect) — **`L46` says do not create the copy; `211` is what to do when one already exists and you must judge whether it has drifted.**
+
+**Enforcement:** `pattern: diff <(extract list A) <(extract list B)` — mechanical extraction, never a side-by-side read · `pin: a parity test where both copies must persist` · `accepted: partially enforceable`.
+
+## <a id="212"></a>212. VERIFY A MUTATION BY ITS *EFFECT* AS WELL AS BY ITS DIFF — the diff instrument can fabricate an ABSENCE in the same direction as a failed mutation
+
+⛔ **THE SETUP:** `029` established that a mutation producing GREEN is ambiguous — either the pin is blind or the mutation never applied — and the remedy was **prove the mutation applied, by diff.** ⛔⛔ **THE REMEDY NAMES `diff` AS THE VERIFICATION INSTRUMENT, AND `diff` IS ON THIS PROJECT'S UNRELIABLE-INSTRUMENT LIST.**
+
+⚠ **THE INSTANCE:** `diff` reported ***"Files are identical"* for a provably different pair** — the mutation HAD applied and the tests went red in the same breath. **Did not reproduce across three retries, piped and redirected**, so it is recorded as a non-admitted candidate on the wrapper hypothesis (`### 24.122`) rather than as confirmation — ⭐ **`L202` applied by the implementer it would have benefited.**
+
+⇒ ⛔⛔ **BUT THE STRUCTURAL POINT DOES NOT DEPEND ON WHETHER THAT ONE EVENT REPRODUCES: `diff` FAILED TOWARD A FABRICATED ABSENCE — it would have reported that the mutation never applied.** ***That is the SAME direction as the failure mode the diff-check exists to detect, so a broken instrument and a real finding are indistinguishable at the check.***
+
+⇒ **THE RULE: a mutation's outcome needs TWO independent signals — the DIFF (it changed) and the EFFECT (something observably responded).** ⭐ **In the instance, what saved it was the effect: the tests flipped.** **The effect is also what you actually care about; the diff is only a proxy for it.**
+
+⚠ **Generalises past `diff`: any check whose failure mode points the same way as the condition it screens for cannot screen for that condition alone.** ⛔ **`029`'s applicability principle, arriving through the REMEDY rather than through the original measurement — the fix inherited the flaw it was written to close.**
+
+**Enforcement:** `pin: /tdd Step 6 mutation step — a GREEN mutation outcome requires both a diff AND an effect signal; a RED outcome is self-proving and needs neither` · `accepted: partially enforceable`.
