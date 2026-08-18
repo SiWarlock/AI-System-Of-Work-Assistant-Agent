@@ -4354,3 +4354,30 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **Kin `L180`** (a count from what you saw is a SAMPLE) — **`180` is the positive form of this defect, `215` is the negative form, and the negative form is more dangerous because a missing count invites checking while a confident absence closes the question.**
 
 **Enforcement:** `pattern: any "unfiled" / "not recorded" / "nobody has" / "no task owns" claim must cite the search that established it, with a positive control` · `accepted: partially enforceable`.
+
+## <a id="216"></a>216. A GUARD'S PLACEMENT IS WORTHLESS UNLESS IT RENDERS ON THE SURFACE THE EDITOR ACTUALLY SEES — and a guard must never carry a census
+
+⛔ **PLACEMENT.** `### 24.112`'s fence was first written as `//` comments at the two `toUiSafeEgressStatus` producers. **Measured empirically against the TS language service (`getQuickInfoAtPosition`, TS 5.9.3): `//` comments NEVER appear in quick info; only JSDoc does.**
+⇒ ⛔⛔ ***A `//` FENCE WOULD HAVE LEFT `egressCommands.ts`'s EXISTING "defense-in-depth — mirrors `systemHealth.ts`'s `toUiSafeEgressStatus`" AS THE ONLY TEXT ON HOVER*** — at the exact moment of the dangerous edit, to the exact reader the fence targets, **and that sentence is the one the fence exists to contradict.** ⭐ ***The misleading text would have been the SOLE SURVIVOR of the surface the guard defends.*** ⚠ **The guard was not merely invisible — its absence was worse than never writing it, because the reader would have left the hover CONFIRMED in the wrong belief.**
+
+⇒ **ASK OF EVERY GUARD: on what surface does the dangerous edit BEGIN, and does this text render THERE?** ⛔ **`L187` says put the guard where the wrong edit happens; `216` is its rendering half — the right FILE and the right LINE are not enough if the tooling does not show it.** **In TypeScript that means JSDoc, not `//`, for anything a reader might meet by hover rather than by scrolling.**
+
+⛔ **CENSUS.** The same fence carried *"this repo has THREE `redactString` implementations."* ⇒ ***a guard whose text contains a count rots on someone else's schedule — and the person adding a fourth has no reason to open a fence in another package.***
+⚠ **AND IT ROTS TOWARD DELETION, WHICH IS WHY IT IS IN THIS LESSON RATHER THAN A STYLE NOTE: a verifier counts four, sees the guard says three, and now has DOCUMENTARY EVIDENCE the guard is stale** — about the one clause establishing the hazard is reachable at all. **The census discredits the guard it was inserted to strengthen.**
+⇒ **CITE THE INVARIANT, NOT THE CENSUS.** *"Multiple divergent implementations exist"* does not rot; *"three"* rots on the next commit. **Keep counts in the tracker, where a number is a measurement; keep them out of guards, where a number is a liability.**
+
+⚠ **Kin `L152`** (a pointer that resolves to the wrong thing is the expensive kind) and **`029`'s rotted-guard finding** — three ways one guard fails: unresolvable pointer, unrenderable placement, self-invalidating count.
+
+**Enforcement:** `pattern: a source guard on a hover-reachable symbol uses JSDoc, never //; and contains no numeric census of anything outside its own sentence` · `accepted: partially enforceable`.
+
+## <a id="217"></a>217. THE SHELL'S CWD PERSISTS BETWEEN TOOL CALLS — every repo-relative path is only as good as an assumption nobody re-checks
+
+⛔ **THREE INSTANCES IN ONE SESSION, ONE IMPLEMENTER:** a `git commit` refused with *"pathspec … did not match any file(s) known to git"* because cwd had persisted to `apps/worker` from an earlier `cd`, so repo-relative pathspecs resolved against the wrong root; and an `rm -f` that **exited 0 without deleting anything** for the same reason.
+
+⭐⭐ **THE TWO OUTCOMES ARE THE WHOLE LESSON, AND THEY ARE OPPOSITE:** ⛔ **`git commit` FAILED SAFE** — the pathspec form refused rather than guessing, nothing was committed, nothing lost. ⛔⛔ **`rm -f` FAILED SILENT — exit 0, no deletion, no message.** ⇒ ***the same root cause is loud on one command and invisible on another, so the ones that bite are the ones with a permissive flag.*** ⚠ **`-f` exists precisely to suppress the complaint that would have surfaced this.**
+
+⇒ **THE RULE: pass the root explicitly on every invocation — `git -C <root>`, absolute paths, or a leading `cd` in the same command — never rely on inherited cwd.** ⭐ **And treat a `0` exit from a permissive-flagged command (`rm -f`, `mkdir -p`, `cp -f`) as *no information*: verify the EFFECT** (`L212`'s rule, arriving through the filesystem instead of through a mutation).
+
+⚠ **Compounding factor worth naming: this harness reports cwd persistence nowhere in the output**, so a session can drift for many calls before anything reveals it — and the reveal, when it comes, is usually attributed to the command rather than to the cwd.
+
+**Enforcement:** `pattern: repo-relative paths in Bash calls carry an explicit root (git -C, absolute path, or leading cd)` · `accepted: partially enforceable`.
