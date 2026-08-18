@@ -4441,3 +4441,23 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **Kin `L215`'s shared-horizon corollary** — **`215` is two OBSERVERS who share a blind spot; `220` is two INSTRUMENTS that do.** ⭐ **Same defect, and both feel like independent confirmation for the same reason: independence is assumed from COUNT rather than established from MECHANISM.**
 
 **Enforcement:** `pin: a close-out that claims a package is green runs BOTH a test surface and a --force typecheck surface, and names them` · `accepted: partially enforceable`.
+
+## <a id="221"></a>221. VERIFYING SOMEONE ELSE'S TRANSCRIPTION OF *YOUR OWN* MEASUREMENT IS THE MOMENT YOU ARE LEAST LIKELY TO RE-MEASURE AND MOST LIKELY TO BE BELIEVED
+
+⛔ **THE INSTANCE, AND IT WAS CAUGHT ONE MESSAGE BEFORE IT LANDED:** an implementer checked the orchestrator's transcription of their own figures, saw **3** on the tracker where their session doc said **8**, and **composed** *"the lead's decision input is understated 2.6× and growing."* ⭐⭐ **BOTH NUMBERS WERE THEIRS AND BOTH WERE CORRECT.** They measured **different quantities**: *(cost)* lines where no net trips today but some net trips under the fix ⇒ **4** · *(triggering condition)* lines where one specific net is broken by a marker, **regardless of whether another net already flags the line** ⇒ **8**.
+
+⇒ ⭐⭐ ***NEITHER NUMBER WAS EVER WRONG, SO RE-DERIVATION COULD NOT HAVE CAUGHT IT*** (`L190`'s class). **What caught it was RE-RUNNING THE EXACT METRIC THE OTHER DOCUMENT QUOTES, instead of comparing two remembered figures.**
+
+⛔⛔ **WHY THIS POSITION IS UNIQUELY DANGEROUS, AND IT IS THE WHOLE LESSON:**
+- **You are the ORIGINATOR, so you feel no need to re-measure** — you already did, and you remember the number.
+- **You are the AUTHORITY, so the correction is close to unarguable** — *"you transcribed my measurement wrong"* is the one claim the recipient cannot check better than you.
+- **It arrives as a CORRECTION, which carries its own endorsement** — `029` already recorded that **two of this area's defects were introduced AS corrections**, precisely because a correction reads as already-vetted.
+⇒ ***the three properties compound: maximum confidence, maximum credibility, minimum verification.***
+
+⭐ **AND THE DIRECTION MATTERS: the composed message would have reported the LEAD'S DECISION INPUT as understated on a live rule-7 ruling.** ⚠ **A correction aimed UPWARD at a decision already made is the one most likely to be acted on immediately and least likely to be re-checked.**
+
+⇒ **THE RULE: before correcting anyone's transcription of your own work, RE-RUN THE METRIC THE OTHER DOCUMENT NAMES — not the metric you remember producing.** ⭐ **If the two documents count different populations, you will only discover it by executing both definitions; comparing figures cannot reveal it, because both figures are right.**
+
+⚠ **Kin `L190`** (token vs behaviour — the number was never wrong) and **`L215`** (a claim you have no doubt about). ⭐ **Filed at the finder's own suggestion, who preferred it over any of their slice's technical results.**
+
+**Enforcement:** `pattern: a correction to another artifact's figure re-states the METRIC DEFINITION both sides used, and re-runs the target's` · `accepted: partially enforceable`.
