@@ -4542,6 +4542,26 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ⇒ **TWO CONSEQUENCES, BOTH ACTIONABLE:** **(a) EXPECT the control to fire while you write about it — treat the block as CONFIRMATION, not obstruction, and never route around it silently** (instance 1's workaround is itself the proof the guard matches text, not intent). **(b) When the trigger is a literal, the DOCUMENTATION IS PART OF THE POPULATION — count it, and say so, or your census silently includes its own observer.**
 
+⛔⛔ **FIFTH INSTANCE, AND IT IS THE TIGHTEST LOOP OF THE FIVE: in the SAME message warning that *a raw non-ASCII codepoint in source is the trap this team hit four times tonight*, the author wrote their own probe constants AS RAW CHARACTERS — and they came out `length === 0`.** ⇒ ***the warning and the violation were in one message, from one person, about one hazard.*** ⭐ **Not carelessness — `L225`'s own mechanism: writing about the hazard required handling the literal, and handling it is where it bites.**
+
 ⚠ **Kin `L219`** (a hazard created by a file nobody commits) — **both are costs a team imposes on itself through the act of working, invisible from inside the act.**
 
 **Enforcement:** `pattern: a census over a corpus that includes this repo's own docs states whether the documentation of the hazard is inside the population` · `accepted: partially enforceable`.
+
+## <a id="226"></a>226. A SCRATCH HARNESS'S OWN CONSTANTS NEED A POSITIVE CONTROL — "just scratch" describes the CODE, never the NUMBERS it produces
+
+⛔ **THE INSTANCE, AND IT REACHED A LEAD RULING:** a guard-design prototype defined two probe constants as **raw non-ASCII characters in source**. **They evaluated to `length === 0`.** ⇒ ***the classifier silently became a DIFFERENT classifier*** — instead of *"can an opaque token sit at this position?"* it measured *"does the match survive DELETING this character?"*
+
+⛔⛔ **AND IT WAS WRONG IN BOTH DIRECTIONS, WHICH IS EXACTLY WHY NOTHING LOOKED ODD: the intended filler was falsely REJECTED, and the known-defective incumbent falsely PASSED.** ⇒ ***a plausible, DISCRIMINATING, entirely coincidental table*** — it separated candidates, which is what a working classifier does, so it read as a result. ⭐ **A broken instrument that returns noise gets caught; one that returns STRUCTURE does not.**
+
+⚠ **HOW IT WAS ACTUALLY CAUGHT, and it is luck dressed as diligence: a later re-run produced SWAPPED verdicts for two candidates against the author's own earlier table.** ⇒ ***a contradiction between two of their own runs was the only signal, and neither run looked wrong alone.*** ⛔ **Nothing in either table was implausible; only their conjunction was.**
+
+⇒ **THE RULE: assert the harness's OWN CONSTANTS before trusting its output.** `expect(PROBE.length).toBe(1)` is one line and would have fired instantly.
+
+⭐⭐ **AND THE REASON THE LINE DOES NOT GET WRITTEN IS THE LESSON'S TITLE: the harness was *"just scratch."*** ⛔ ***THE ARTIFACT'S DISPOSABILITY DOES NOT TRANSFER TO ITS OUTPUTS. Scratch harnesses produce the numbers that reach briefs, Step 2.5 write-ups and lead rulings*** — this one produced a table that a lead approved as a control's shape. **Nothing about the code being temporary makes its numbers temporary.**
+
+⛔ **THIS IS A THIRD SLOT IN THE CONTROL TAXONOMY, NOT A RESTATEMENT OF THE OTHER TWO:** **NON-VACUITY** (`L178`) asks *did the instrument RUN?* · **APPLICABILITY** (`182` §6) asks *was it pointed at the right question?* · ⭐ **CONSTANT-INTEGRITY (`226`) asks *are its INPUTS what I wrote?*** ⇒ **all three of this round's probes passed the first two and failed the third.**
+
+⚠ **Kin `L210`** (an escape consumed by neither layer) — **`210` is how the bad constant gets in; `226` is why nobody notices.**
+
+**Enforcement:** `pattern: any probe/fixture constant whose value is not visually verifiable (escapes, non-ASCII, computed literals) carries a length or identity assertion in the same file` · `accepted: partially enforceable`.
