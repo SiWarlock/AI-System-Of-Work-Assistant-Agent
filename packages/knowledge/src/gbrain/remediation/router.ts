@@ -38,6 +38,8 @@ import {
 import type { Result, Divergence, KnowledgeMutationPlan, ProvenanceOrigin } from "@sow/contracts";
 import { ruleSchemaValid, ruleScopedMutation } from "@sow/domain";
 import type { SchemaRegistry } from "@sow/contracts/schema/registry";
+import { buildRefusalSignal, type IssueCarryingRefusal, type RefusalIssue } from "../../audit/validation-refusal";
+import type { AuditSignal } from "@sow/policy";
 
 // ── the purge-ONLY token ─────────────────────────────────────────────────────────
 
@@ -106,11 +108,31 @@ export type RemediationError =
   | { readonly code: "purge_requires_positive_proof"; readonly detail: string }
   | { readonly code: "plan_wrong_origin"; readonly origin: ProvenanceOrigin }
   | { readonly code: "workspace_mismatch"; readonly expected: string; readonly planWorkspace: string }
-  | {
+  // `### 24.103` — extends the shared `IssueCarryingRefusal`, so `audit` is REQUIRED and the compiler
+  // enumerates all three `materialize` construction sites. The union keeps its OWN vocabulary
+  // (`plan_invalid`, not `schema_rejected`): the shape is shared, the unions are not merged.
+  // ⚠ Signal is produced and gated; NO ADAPTER PERSISTS IT — `### 24.109`.
+  | ({
       readonly code: "plan_invalid";
       readonly stage: "ajv" | "zod" | "scoped";
-      readonly issues: readonly { readonly path: string; readonly message: string }[];
-    };
+    } & IssueCarryingRefusal);
+
+// `### 24.103` — this gate's refusal signal. Structural material only; `issues[].message` excluded
+// categorically (see `src/audit/validation-refusal.ts` for the predicate and why it is not optional).
+const REMEDIATION_ACTOR = "knowledge:remediation-router" as const;
+const PLAN_INVALID_PAYLOAD_MARKER = "knowledge:remediation-plan-rejection" as const;
+
+function planInvalidSignal(stage: "ajv" | "zod" | "scoped", issues: readonly RefusalIssue[]): AuditSignal {
+  return buildRefusalSignal({
+    actor: REMEDIATION_ACTOR,
+    event: `knowledge.remediation.plan_invalid.${stage}`,
+    refPrefix: "remediation-issue-path",
+    payloadHash: PLAN_INVALID_PAYLOAD_MARKER,
+    beforeSummary: `remediation plan candidate refused at the ${stage} schema stage`,
+    schemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
+    issues,
+  });
+}
 
 // Resync-class: Markdown ALWAYS wins; the DB body is never materialized/proposed.
 const RESYNC_CLASSES: ReadonlySet<string> = new Set([
@@ -240,31 +262,24 @@ function materialize(
   // 1 — ajv structural gate (REQ-S-006).
   const ajv = ruleSchemaValid(plan, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID, registry);
   if (!ajv.ok) {
-    return {
-      ok: false,
-      error: { code: "plan_invalid", stage: "ajv", issues: (ajv.error.errors ?? []).map((e) => ({ path: e.path, message: e.message })) },
-    };
+    const issues: readonly RefusalIssue[] = (ajv.error.errors ?? []).map((e) => ({ path: e.path, message: e.message }));
+    return { ok: false, error: { code: "plan_invalid", stage: "ajv", issues, audit: planInvalidSignal("ajv", issues) } };
   }
   // 2 — Zod parse (catches the `.refine` REQ-F-006 + branded-id shape ajv can't).
   const parsed = KnowledgeMutationPlanSchema.safeParse(plan);
   if (!parsed.success) {
-    return {
-      ok: false,
-      error: {
-        code: "plan_invalid",
-        stage: "zod",
-        issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
-      },
-    };
+    const issues: readonly RefusalIssue[] = parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message }));
+    return { ok: false, error: { code: "plan_invalid", stage: "zod", issues, audit: planInvalidSignal("zod", issues) } };
   }
   const validated = parsed.data;
   // 3 — §3 universal scoped-mutation rule (workspaceId + ≥1 sourceRef).
+  // ⚠ MEASURED UNREACHABLE for the same reason as `writer.ts`'s third stage — it runs the SAME rule
+  // after the SAME Zod model, which enforces a superset of the rule's two conditions. Retained as a
+  // fail-closed layer, NOT deleted (`### 24.103` Step 9).
   const scoped = ruleScopedMutation(validated);
   if (!isOk(scoped)) {
-    return {
-      ok: false,
-      error: { code: "plan_invalid", stage: "scoped", issues: [{ path: (scoped.error.fields ?? []).join(","), message: scoped.error.code }] },
-    };
+    const issues: readonly RefusalIssue[] = [{ path: (scoped.error.fields ?? []).join(","), message: scoped.error.code }];
+    return { ok: false, error: { code: "plan_invalid", stage: "scoped", issues, audit: planInvalidSignal("scoped", issues) } };
   }
   // 4 — workspace isolation: the plan must target the divergence's workspace.
   if ((validated.workspaceId as string) !== workspaceId) {

@@ -82,6 +82,8 @@ import type { StamperDeps } from "./provenance-stamp";
 // The SHARED page-hash core (gate 4 G1d-1): the writer mints its stamp through the SAME function
 // deriveCanonicalFacts uses, so the (factIdentity, mdContentSha) bound here == what the serving gate re-derives.
 import { computePageProvenance } from "../gbrain/derive/canonical-fact-deriver";
+import { buildRefusalSignal, type IssueCarryingRefusal, type RefusalIssue } from "../audit/validation-refusal";
+import type { AuditSignal } from "@sow/policy";
 
 // ── injected hooks (tasks 4.2 / 4.3) ────────────────────────────────────────
 
@@ -195,13 +197,18 @@ export interface WriteSuccess {
   readonly replayed: boolean;
 }
 
-export interface SchemaRejected {
+/**
+ * ⛔ SAFETY RULE 1 SURFACE — this is the LIVE member of `### 24.103`'s population (production caller:
+ * `packages/workflows/src/activities/commitKnowledge.ts`). It extends the shared
+ * `IssueCarryingRefusal`, so `audit` is REQUIRED and the compiler enumerates every construction site
+ * in `runGate`. See `src/audit/validation-refusal.ts` for why the shape is shared but the unions are
+ * NOT merged, and for what breaks if `audit` is made optional again.
+ * ⚠ `stage` keeps THREE members here (`### 24.98`'s GCL helper accepts only two) — the `scoped` stage
+ * is this gate's §3 universal-rule layer and has no counterpart on the projection gate.
+ */
+export interface SchemaRejected extends IssueCarryingRefusal {
   readonly code: "schema_rejected";
   readonly stage: "ajv" | "zod" | "scoped";
-  readonly issues: readonly {
-    readonly path: string;
-    readonly message: string;
-  }[];
 }
 export interface WriteConflict {
   readonly code: "write_conflict";
@@ -629,6 +636,32 @@ export async function applyPlan(
 
 // ── the composed candidate-data gate ─────────────────────────────────────────
 
+// ── `### 24.103` — the KnowledgeWriter gate's refusal signal ─────────────────
+// ⛔ THE LIVE CHANNEL. Every `runGate` refusal now carries an `AuditSignal` built from structural
+// material ONLY — the closed `stage` literal, issue PATHS cut at this schema's free-form-key regions,
+// and counts. `issues[].message` is EXCLUDED CATEGORICALLY; the predicate and the reason it is not
+// negotiable live in `src/audit/validation-refusal.ts`, stated once rather than copied here.
+// ⚠ CONSUMER STATUS, STATED SCOPED BECAUSE THE UNQUALIFIED VERSION WOULD BE FALSE: the signal is
+// produced and gated; NO ADAPTER PERSISTS IT — see `### 24.109`. This gate is not "now audited".
+const KW_GATE_ACTOR = "knowledge:kw-gate" as const;
+// A payloadHash-shaped decision marker — a fixed constant, never a hash of the candidate.
+const KW_SCHEMA_REJECTED_PAYLOAD_MARKER = "knowledge:kw-schema-rejection" as const;
+
+function kwSchemaRejectedSignal(
+  stage: SchemaRejected["stage"],
+  issues: readonly RefusalIssue[],
+): AuditSignal {
+  return buildRefusalSignal({
+    actor: KW_GATE_ACTOR,
+    event: `knowledge.writer.schema_rejected.${stage}`,
+    refPrefix: "kw-issue-path",
+    payloadHash: KW_SCHEMA_REJECTED_PAYLOAD_MARKER,
+    beforeSummary: `knowledge mutation plan candidate refused at the ${stage} schema stage`,
+    schemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
+    issues,
+  });
+}
+
 function runGate(
   candidate: unknown,
   registry: SchemaRegistry | undefined,
@@ -639,12 +672,14 @@ function runGate(
       ? validate(candidate, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID)
       : validate(candidate, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID, registry);
   if (!structural.ok) {
+    const issues: readonly RefusalIssue[] = structural.error.errors ?? [
+      { path: structural.error.schemaId, message: structural.error.code },
+    ];
     return err({
       code: "schema_rejected",
       stage: "ajv",
-      issues: structural.error.errors ?? [
-        { path: structural.error.schemaId, message: structural.error.code },
-      ],
+      issues,
+      audit: kwSchemaRejectedSignal("ajv", issues),
     });
   }
 
@@ -652,27 +687,36 @@ function runGate(
   // e.g. the non-empty sourceRefs requirement.
   const parsed = KnowledgeMutationPlanSchema.safeParse(candidate);
   if (!parsed.success) {
+    const issues: readonly RefusalIssue[] = parsed.error.issues.map((i) => ({
+      path: i.path.join("."),
+      message: i.message,
+    }));
     return err({
       code: "schema_rejected",
       stage: "zod",
-      issues: parsed.error.issues.map((i) => ({
-        path: i.path.join("."),
-        message: i.message,
-      })),
+      issues,
+      audit: kwSchemaRejectedSignal("zod", issues),
     });
   }
   const plan = parsed.data;
 
   // (c) §3 universal scoped-mutation rule (REQ-F-006): workspaceId + ≥1 sourceRef.
+  // ⚠ MEASURED UNREACHABLE VIA THIS FUNCTION, AND DELIBERATELY RETAINED (`### 24.103` Step 9):
+  // `ruleScopedMutation` refuses on exactly two conditions and the Zod model at (b) enforces a
+  // SUPERSET of both, so every candidate this stage would reject is already rejected above. It is
+  // kept as a fail-closed layer that fires if the Zod model ever loosens — ⛔ "unreachable" is not a
+  // licence to delete it, and its signal is pinned directly rather than through a synthetic driver.
   const scoped = ruleScopedMutation(plan);
   if (!scoped.ok) {
+    const issues: readonly RefusalIssue[] = (scoped.error.fields ?? []).map((f) => ({
+      path: f,
+      message: scoped.error.code,
+    }));
     return err({
       code: "schema_rejected",
       stage: "scoped",
-      issues: (scoped.error.fields ?? []).map((f) => ({
-        path: f,
-        message: scoped.error.code,
-      })),
+      issues,
+      audit: kwSchemaRejectedSignal("scoped", issues),
     });
   }
 

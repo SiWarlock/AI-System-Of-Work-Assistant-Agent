@@ -15,6 +15,7 @@ import { GclProjectionSchema, GCL_PROJECTION_SCHEMA_ID, ok, err } from "@sow/con
 import type { GclProjection, Workspace, VisibilityLevel, Result } from "@sow/contracts";
 import { validate } from "@sow/domain";
 import type { SchemaRegistry } from "@sow/contracts/schema/registry";
+import { buildRefusalSignal, type RefusalIssue } from "../audit/validation-refusal";
 import {
   buildAuditSignal,
   validateProjectionVisibility,
@@ -78,25 +79,24 @@ const MAX_ISSUE_PATH_REFS = 20;
 // `isRedactionSafe` unable to help — `audit-signal.ts` names an "employer project codename" as
 // exactly what its credential-shape heuristic cannot catch. `L73`: make it unrepresentable.
 // ⚠ Handles BOTH path dialects deliberately: ajv emits `/a/b`, Zod emits `a.b`.
-const ROW_KEYED_REGION_CUT = /^(.*?\bsanitizedPayload\b)[./].*$/u;
-
-function structuralPathOnly(path: string): string {
-  const cut = ROW_KEYED_REGION_CUT.exec(path);
-  return cut?.[1] ?? path;
-}
-
+// ⭐ `### 24.103` — THE CUT AND THE BOUNDED ASSEMBLY NOW LIVE IN THE SHARED MODULE
+// (`src/audit/validation-refusal.ts`), keyed by candidate schema id. ⛔ THE BEHAVIOUR IS UNCHANGED
+// AND THAT IS LOAD-BEARING: this channel is the DISCRIMINATING CONTROL for `### 24.103`'s census —
+// the one channel that already resolved `audit=true`, which is what proves the selector separates
+// covered from uncovered. A control whose behaviour moved when it was refactored is no longer a
+// control, so the signal's exact field values are pinned byte-for-byte in
+// `validation-refusal-audit.test.ts`, from values captured BEFORE this edit.
+// ⚠ `sanitizedPayload` is now an entry in `FREE_FORM_KEY_REGIONS["sow:gcl-projection"]` rather than a
+// literal here — same region, derived by the same two-surface walk as the other three schemas.
 function schemaRejectedSignal(stage: "ajv" | "zod", issues: readonly GateIssue[]): AuditSignal {
-  const paths = [...new Set(issues.map((i) => `ref:gcl-issue-path:${structuralPathOnly(i.path)}`))];
-  const omitted = Math.max(0, paths.length - MAX_ISSUE_PATH_REFS);
-  return buildAuditSignal({
+  return buildRefusalSignal({
     actor: GCL_GATE_ACTOR,
     event: `gcl.projection.schema_rejected.${stage}`,
-    refs: paths.slice(0, MAX_ISSUE_PATH_REFS),
+    refPrefix: "gcl-issue-path",
     payloadHash: SCHEMA_REJECTED_PAYLOAD_MARKER,
     beforeSummary: `gcl projection candidate refused at the ${stage} schema stage`,
-    afterSummary:
-      `${issues.length} issue(s), ${paths.length} distinct path(s)` +
-      `${omitted > 0 ? `, ${omitted} path(s) not listed` : ""}; nothing admitted`,
+    schemaId: GCL_PROJECTION_SCHEMA_ID,
+    issues,
   });
 }
 
@@ -107,10 +107,7 @@ function schemaRejectedSignal(stage: "ajv" | "zod", issues: readonly GateIssue[]
  * extended it to `message`. MEASURED: Zod's `invalid_enum_value` embeds the received value and
  * `unrecognized_keys` embeds a row-authored key. Never put `message` on an audit surface.
  */
-export interface GateIssue {
-  readonly path: string;
-  readonly message: string;
-}
+export type GateIssue = RefusalIssue;
 
 /**
  * Enumerable rejection reasons the Visibility Gate can emit (§16 — a closed set,

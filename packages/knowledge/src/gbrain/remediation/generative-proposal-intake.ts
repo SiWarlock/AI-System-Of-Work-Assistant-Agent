@@ -28,6 +28,7 @@ import {
   KnowledgeMutationPlanSchema,
   GBrainProposedFactSchema,
   GBRAIN_PROPOSED_FACT_SCHEMA_ID,
+  KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
 } from "@sow/contracts";
 import type {
   Result,
@@ -41,6 +42,8 @@ import type {
 } from "@sow/contracts";
 import { ruleSchemaValid, validateNoInference } from "@sow/domain";
 import type { SchemaRegistry } from "@sow/contracts/schema/registry";
+import { buildRefusalSignal, type IssueCarryingRefusal, type RefusalIssue } from "../../audit/validation-refusal";
+import type { AuditSignal } from "@sow/policy";
 
 // ── P5 in-package ModelProviderPort inversion ──────────────────────────────────────
 
@@ -100,18 +103,41 @@ export interface GenerativeIntakeOutcome {
 
 export type IntakeError =
   | { readonly code: "uncontained_generation" }
-  | {
+  // `### 24.103`'s ORIGINALLY NAMED TARGET. ⚠ The census found this channel is the DORMANT one
+  // (zero production callers) and that the LIVE risk was `writer.ts`, which the entry never
+  // mentioned — recorded here so the asymmetry is not re-discovered.
+  // ⚠ Signal is produced and gated; NO ADAPTER PERSISTS IT — `### 24.109`.
+  | ({
       readonly code: "schema_rejected";
       readonly stage: "ajv" | "zod";
-      readonly issues: readonly { readonly path: string; readonly message: string }[];
-    }
+    } & IssueCarryingRefusal)
   | { readonly code: "inadmissible_evidence"; readonly refs: readonly string[] }
   | { readonly code: "no_inference"; readonly fields: readonly string[] }
   | { readonly code: "proposed_content_incomplete"; readonly factKind: string; readonly missing: readonly string[] }
-  | {
-      readonly code: "plan_invalid";
-      readonly issues: readonly { readonly path: string; readonly message: string }[];
-    };
+  // ⛔ THE SECOND ECHOING MEMBER `### 24.103`'s ENTRY NEVER NAMED. It validates a DIFFERENT candidate
+  // type from the two above (the derived `KnowledgeMutationPlan`, not the proposal) — which is why
+  // the region cut is keyed by SCHEMA ID rather than by channel: one channel, two schemas.
+  | ({ readonly code: "plan_invalid" } & IssueCarryingRefusal);
+
+// `### 24.103` — this gate's refusal signals. Structural material only; `issues[].message` excluded
+// categorically (predicate in `src/audit/validation-refusal.ts`).
+const INTAKE_ACTOR = "knowledge:generative-intake" as const;
+const INTAKE_REJECTED_PAYLOAD_MARKER = "knowledge:intake-proposal-rejection" as const;
+const INTAKE_PLAN_INVALID_PAYLOAD_MARKER = "knowledge:intake-plan-rejection" as const;
+
+function proposalRejectedSignal(stage: "ajv" | "zod", issues: readonly RefusalIssue[]): AuditSignal {
+  return buildRefusalSignal({
+    actor: INTAKE_ACTOR,
+    event: `knowledge.intake.schema_rejected.${stage}`,
+    refPrefix: "intake-issue-path",
+    payloadHash: INTAKE_REJECTED_PAYLOAD_MARKER,
+    beforeSummary: `generative proposal candidate refused at the ${stage} schema stage`,
+    // ⛔ THE PROPOSAL'S OWN SCHEMA — its free-form-key region is `proposedContent`, which shares no
+    // token with the plan's regions or with `### 24.98`'s `sanitizedPayload`.
+    schemaId: GBRAIN_PROPOSED_FACT_SCHEMA_ID,
+    issues,
+  });
+}
 
 // ── the intake ─────────────────────────────────────────────────────────────────────
 
@@ -131,14 +157,13 @@ export function intakeGenerativeProposal(
   // 2 — JSON-Schema gate (REQ-S-006): ajv structural gate + the model's Zod parse.
   const ajv = ruleSchemaValid(candidate.proposal, GBRAIN_PROPOSED_FACT_SCHEMA_ID, deps.registry);
   if (!ajv.ok) {
-    return { ok: false, error: { code: "schema_rejected", stage: "ajv", issues: (ajv.error.errors ?? []).map((e) => ({ path: e.path, message: e.message })) } };
+    const issues: readonly RefusalIssue[] = (ajv.error.errors ?? []).map((e) => ({ path: e.path, message: e.message }));
+    return { ok: false, error: { code: "schema_rejected", stage: "ajv", issues, audit: proposalRejectedSignal("ajv", issues) } };
   }
   const parsed = GBrainProposedFactSchema.safeParse(candidate.proposal);
   if (!parsed.success) {
-    return {
-      ok: false,
-      error: { code: "schema_rejected", stage: "zod", issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })) },
-    };
+    const issues: readonly RefusalIssue[] = parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message }));
+    return { ok: false, error: { code: "schema_rejected", stage: "zod", issues, audit: proposalRejectedSignal("zod", issues) } };
   }
   const proposal = parsed.data;
 
@@ -184,9 +209,24 @@ export function intakeGenerativeProposal(
   };
   const parsedPlan = KnowledgeMutationPlanSchema.safeParse(planInput);
   if (!parsedPlan.success) {
+    const issues: readonly RefusalIssue[] = parsedPlan.error.issues.map((i) => ({ path: i.path.join("."), message: i.message }));
+    // ⛔ NOTE THE SCHEMA ID — this site validates the derived PLAN, so it cuts at the plan's regions,
+    // NOT the proposal's. A per-channel cut would have used the wrong region set here.
     return {
       ok: false,
-      error: { code: "plan_invalid", issues: parsedPlan.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })) },
+      error: {
+        code: "plan_invalid",
+        issues,
+        audit: buildRefusalSignal({
+          actor: INTAKE_ACTOR,
+          event: "knowledge.intake.plan_invalid",
+          refPrefix: "intake-issue-path",
+          payloadHash: INTAKE_PLAN_INVALID_PAYLOAD_MARKER,
+          beforeSummary: "derived knowledge mutation plan refused at the zod schema stage",
+          schemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
+          issues,
+        }),
+      },
     };
   }
 

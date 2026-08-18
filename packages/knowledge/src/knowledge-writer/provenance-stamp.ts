@@ -56,7 +56,8 @@ import type {
   RevisionId,
   SignedProvenanceStamp,
 } from "@sow/contracts";
-import { SignedProvenanceStampSchema } from "@sow/contracts";
+import { SignedProvenanceStampSchema, SIGNED_PROVENANCE_STAMP_SCHEMA_ID } from "@sow/contracts";
+import { buildRefusalSignal, type IssueCarryingRefusal, type RefusalIssue } from "../audit/validation-refusal";
 import { serializeScalar, readFrontmatterField, KW_STAMP_FRONTMATTER_KEY } from "./frontmatter";
 
 // ── injected SecretsPort (safety rule 7) ─────────────────────────────────────
@@ -130,10 +131,18 @@ export interface VerifyInputs extends SignedTuple {
   readonly stamp: SignedProvenanceStamp;
 }
 
-/** A minted stamp that failed the frozen contract gate (should be unreachable). */
-export interface StampInvalid {
+/**
+ * A minted stamp that failed the frozen contract gate (should be unreachable).
+ * ⚠ `### 24.103` SCOPING, STATED SO IT IS NOT OVER-READ: this member refuses INTERNALLY-MINTED data
+ * — a contract-drift bug — not row candidate data. It is in the shared-shape population because it
+ * HOLDS THE ISSUE-CARRYING SHAPE, which is what would make `issues` the obvious thing to reach for
+ * when someone adds a signal here. That is the build-time hazard; no row can reach this today.
+ * ⛔ `sow:signed-provenance-stamp` has NO free-form-key region on either validator surface
+ * (measured), so its cut is the empty set and no row-key pin is possible — recorded, not faked.
+ * ⚠ Signal is produced and gated; NO ADAPTER PERSISTS IT — `### 24.109`.
+ */
+export interface StampInvalid extends IssueCarryingRefusal {
   readonly code: "stamp_invalid";
-  readonly issues: readonly { readonly path: string; readonly message: string }[];
 }
 
 export type StampError = SecretUnresolved | StampInvalid;
@@ -229,12 +238,22 @@ export async function stampProvenance(
   // contract-drift bug, not candidate data — still typed, never thrown.
   const parsed = SignedProvenanceStampSchema.safeParse(candidate);
   if (!parsed.success) {
+    const issues: readonly RefusalIssue[] = parsed.error.issues.map((i) => ({
+      path: i.path.join("."),
+      message: i.message,
+    }));
     return err({
       code: "stamp_invalid",
-      issues: parsed.error.issues.map((i) => ({
-        path: i.path.join("."),
-        message: i.message,
-      })),
+      issues,
+      audit: buildRefusalSignal({
+        actor: "knowledge:provenance-stamper",
+        event: "knowledge.stamp.stamp_invalid",
+        refPrefix: "stamp-issue-path",
+        payloadHash: "knowledge:stamp-contract-rejection",
+        beforeSummary: "minted provenance stamp refused by the frozen contract gate",
+        schemaId: SIGNED_PROVENANCE_STAMP_SCHEMA_ID,
+        issues,
+      }),
     });
   }
   return ok(parsed.data);
