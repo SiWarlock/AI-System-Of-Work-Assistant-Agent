@@ -308,3 +308,30 @@ While this slice ran, the orchestrator filed a ruling **onto `### 24.120`**: *th
 ### Construction that keeps the guard honest
 
 ⛔ **`looksUnsafe` currently hardcodes three `.test()` calls, so a fourth net could be added without the guard ever seeing it.** ⇒ **export the net list as ONE array, have `looksUnsafe` iterate it (behaviour-identical — short-circuit `||` ≡ `.some()`), and have the guard reflect over the SAME array.** **Individual pattern exports stay (other packages import them).** ⭐ ***Then the guard covers exactly what the predicate uses, by construction, and cannot drift from it.***
+
+---
+
+## 16 — BUILD NOTES AGAINST RULINGS 1 AND 2, RECORDED WHILE HOLDING (no source touched)
+
+⛔ **Written now rather than at build time because the round's own structural finding is that a design consideration held only in a head or a message dies with the session.** **Nothing here is construction; all of it is against scope already ruled in.**
+
+### ⛔⛔ A RULE-7 HAZARD MY OWN NET-LIST PROPOSAL INTRODUCES, AND IT IS NOT COVERED BY "BEHAVIOUR-IDENTICAL"
+
+**Exporting the net list as an array gives every importer a handle on the safety predicate's contents.** ⇒ ***a consumer can `push`, `splice` or reassign entries and silently disable a credential net at runtime, in a package that imports `@sow/domain` for an unrelated reason.*** ⛔ **`looksUnsafe` would keep returning `false` and every test would stay green.**
+
+⚠ **This is NOT caught by the behaviour-identity requirement**, which compares the new implementation to the old on *inputs* — it says nothing about a new *mutable surface*. ⭐ **The current three hardcoded `.test()` calls have no such surface; my change creates one.** ⇒ **the array must be deeply immutable — `Object.freeze` on the array, `readonly` in the type — and a pin must assert a mutation attempt does not change `looksUnsafe`'s verdict.**
+⭐ **Recorded against myself: I proposed this as a purely structural improvement and it carries a real regression vector. The orchestrator's instinct to demand proof rather than accept `||` ≡ `.some()` was right for a reason neither of us had named — the risk is not in the EQUIVALENCE, it is in the SURFACE.**
+
+### How "behaviour-identical" gets PROVEN rather than asserted (Ruling 2's condition)
+
+⛔ **`||` ≡ `.some()` cannot be mutation-proven directly — there is no mutation of the claim itself to make.** **The provable form is DIFFERENTIAL:** keep the old three-call expression as a **test-local reference implementation** and assert `looksUnsafe(s) === reference(s)` over every input available — the 656-file corpus, all existing redaction fixtures, and the constructed `### 24.120` cases.
+⭐ **That IS mutation-provable, and in the direction that matters: remove one net from the array and the differential reds immediately.** ⚠ **A green differential with the reference deleted proves nothing — so the reference must be present and the mutation must be shown to red before the green is trusted** (`029`: a mutation producing GREEN is ambiguous).
+
+### ⚠ A trap the array shape sets for a FUTURE net, worth stating at the site
+
+**`.test()` on a `/g` regex is STATEFUL — it advances `lastIndex` and alternates true/false across calls.** All three current nets are non-global, so the shape is safe today. ⛔ **The moment someone adds a global pattern to the list, the predicate becomes order- and call-count-dependent, and it will fail INTERMITTENTLY.** ⭐ **The array shape makes adding a net feel trivial, which is exactly what makes this worth a fence — and `P1′`'s exemplar-completeness check does NOT catch it** (a `/g` net can have an exemplar and still be stateful).
+
+### Fence wording owed under Ruling 1's condition (`### 24.127`)
+
+The fourth-vocabulary literal is copied into domain's guard because **importing it would invert the layer** — `@sow/domain` is the producer, `packages/providers` and `packages/integrations` are consumers. ⛔ **The fence must say, in the file:** *this value is a COPY; its owners are `packages/providers/src/redaction/provider-log-redaction.ts` and `packages/integrations/src/redaction/gateway-log-redaction.ts`; **NO MECHANICAL DRIFT CHECK EXISTS — if an owner changes their literal this guard tests a stale value and nothing reds**; the owning task is `### 24.127`.*
+⭐ **`L216` binds: the fence claims only what it provides, and it names where to check rather than asserting the values agree.**
