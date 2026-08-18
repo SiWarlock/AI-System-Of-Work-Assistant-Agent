@@ -4357,6 +4357,10 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ⇒ ⭐⭐ ***TWO INDEPENDENT WITNESSES REPORTING THE SAME ABSENCE FELT LIKE CORROBORATION — AND WAS NOT, BECAUSE THEY SHARE THE BLIND SPOT: neither can see a Phase-1 residual from July.*** ⛔ **This is `029`'s *concordance is evidence only when the methods could have DISAGREED*, arriving through OBSERVERS rather than instruments — and it is the STRONGER form, because two people feel more independent than two tools do.** ⚠ **Corollary: agreement between reporters who share a horizon is not evidence about anything beyond that horizon** — and on a team, a shared horizon is the default, not the exception.
 
+⛔⛔ **FIFTH INSTANCE, AND IT IS THE LEAD'S — WHICH IS WHY IT IS THE STRONGEST WITNESS, NOT AN EXCEPTION.** They asserted *"the tracked item says a step cannot run; what nobody had written is that every red report was partly noise."* **The July residual says `/preflight` steps 2-3 are STRUCTURAL NO-OPS. That IS the consequence, written 2026-07-26.** ⭐ **Their own disposition: *I could not have seen it — I share the horizon*** ⇒ ⛔ **the seat with the WIDEST REACH and the SHALLOWEST READ produces this defect most, not least.**
+
+⭐⭐ **AND THE TWO SIGNATURES ARE MIRRORS — record both, because a reader who learns only one will miss the other:** **CONVERGENT** — two implementers AGREED an item was unfiled, and the agreement was uninformative because they shared a horizon. **DIVERGENT** — four sessions attributed the SAME always-on `/preflight` red to FOUR DIFFERENT local causes, and *the disagreement is the informative part.* ⇒ ***concordance and discordance are both evidence only once you know whether the observers could have differed*** — `029`'s rule, now proven from both ends in one evening.
+
 **Enforcement:** `pattern: any "unfiled" / "not recorded" / "nobody has" / "no task owns" claim must cite the search that established it, with a positive control` · `accepted: partially enforceable`.
 
 ## <a id="216"></a>216. A GUARD'S PLACEMENT IS WORTHLESS UNLESS IT RENDERS ON THE SURFACE THE EDITOR ACTUALLY SEES — and a guard must never carry a census
@@ -4391,3 +4395,19 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **Compounding factor worth naming: this harness reports cwd persistence nowhere in the output**, so a session can drift for many calls before anything reveals it — and the reveal, when it comes, is usually attributed to the command rather than to the cwd.
 
 **Enforcement:** `pattern: repo-relative paths in Bash calls carry an explicit root (git -C, absolute path, or leading cd)` · `accepted: partially enforceable`.
+
+## <a id="218"></a>218. NAMING YOUR OWN UNCERTAINTY IN AN INSTRUCTION IS WHAT BUYS THE CONSTRUCTION — it is a property of how the instruction was WRITTEN, not of how it was received
+
+⛔ **THE INSTANCE, AND IT IS THE MOST EXPENSIVE THING ANYONE PREVENTED IN THE ROUND:** an orchestrator approved a wholesale delegation, the lead endorsed it, and the orchestrator attached an `ADD:` — *prove that stripping cannot destroy a match* — **while writing that their own reasoning said *"probably not."*** ⭐⭐ **The implementer CONSTRUCTED the counter-example instead of executing the `ADD:` as written, and BOTH approvals died on it** (`### 24.120`).
+
+⇒ ⭐⭐ **THE IMPLEMENTER'S OWN ACCOUNT IS THE LESSON, AND IT POINTS AT THE SENDER: *the hedge is what made building the input the obvious next move.*** ⛔ ***An `ADD:` stated CONFIDENTLY would most likely have been executed as written — fixture and all — asserting the false thing, with a green suite and two approvals behind it.***
+
+⛔ **SO THE TRANSFERABLE RULE IS NOT *"implementers should construct."*** **That credits the receiver for something the sender caused, and this project spent an entire evening handing out that credit in the wrong direction.** ⇒ **THE RULE: an instruction resting on unverified reasoning MUST SAY SO INSIDE THE INSTRUCTION.**
+
+⭐ **The difference is one clause and it changes the work:** *"Prove X"* states a **conclusion** and invites a fixture that demonstrates it. *"Prove X — my reasoning says probably, and I have not run it"* states a **task** and invites an attempt to break it. ⚠ **The second is not politeness or hedging; it is the only version that transfers the doubt along with the request.**
+
+⛔⛔ **IT INVERTS `029`'s ORCHESTRATOR AMENDMENT, WHICH POINTED THE OTHER WAY DOWN THE CHAIN.** That one found corrections landed because implementers *made them cheap to accept* — a property of how they REPORTED. **This is the same mechanism running upstream: whether a recipient CHECKS an instruction is largely determined by how the SENDER phrased their confidence.** ⇒ ***both directions of the chain are governed by the writer, not the reader.***
+
+⚠ **Kin `L202`** (a believed claim generates no doubt) — **`202` is why YOU do not check your own claim; `218` is how you get SOMEONE ELSE to check it for you.**
+
+**Enforcement:** `pattern: an ADD:/TWEAK:/brief premise resting on unverified reasoning states its own confidence and whether it was executed` · `accepted: partially enforceable`.
