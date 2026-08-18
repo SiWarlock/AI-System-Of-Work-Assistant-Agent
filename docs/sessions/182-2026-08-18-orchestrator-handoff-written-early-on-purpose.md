@@ -13,8 +13,8 @@
 | area | state | artifact |
 |---|---|---|
 | **knowledge** | ✅ **CLOSED OUT.** `### 24.103` COMPLETE. Session doc `179` (`c6caff97`). Held at shutdown pending ONE answer (§4). | `295` |
-| **worker** | 🔵 **IN FLIGHT — `### 24.84` worker leg**, Step 2.5 `APPROVED.`, at Step 3+. | `297` |
-| **providers-integrations** | 🔵 **IN FLIGHT — `### 24.110`**, Step 2.5 answered `ADD:` + an (A)/(B) design ruling. | `298` |
+| **worker** | ✅ **LANDED `61d9e02c`** — `### 24.84` worker leg, BOTH halves in one commit, 0 foreign. Step 9 ruled. **Session doc `180` owed.** ⛔ **`### 24.84` is recorded-landed but DELIBERATELY NOT TICKED — verify its Done-when, then tick; do NOT re-dispatch.** **Next: the `### 24.112` fence slice.** | `297` |
+| **providers-integrations** | 🔵 **IN FLIGHT — `### 24.110`, RE-RULED TO (C): `/i` ONLY.** ⛔ **Delegation deferred, blocked on `### 24.120`; the lead's *nothing lands on (B)* hold BINDS YOU.** Their Step 9 is yours — unreviewed by instruction. **Session doc `181`.** ⚠ Holds `audit-signal.ts` +20/−1 and `audit-signal.test.ts` +136/−0 uncommitted. | `298` |
 | **contract** | ⬜ **NOT STAFFED — a CLASSIFICATION, not an oversight.** Do not invent work to fill it. | — |
 
 **Session-doc numbers (I am SOLE ASSIGNER this round, lead ruling — from `git ls-files`, never a working-tree listing):** knowledge **179** (used) · worker **180** · providers **181** · this doc **182**. ⛔ **Implementers ASK; they do not compute `max+1`.**
