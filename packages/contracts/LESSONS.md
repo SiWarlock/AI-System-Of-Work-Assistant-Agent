@@ -4416,7 +4416,7 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ⛔ **THE INSTANCE, MEASURED:** four untracked probes (`packages/domain/test/__scratch-24120{,b,c,d}.test.ts`) reded `@sow/domain#typecheck` — **`TS2532` at `__scratch-24120b.test.ts(52,40)`** — and **`@sow/domain` is upstream of nearly everything**, so the whole graph was red for every concurrent session.
 
-⇒ ⭐⭐ **THE PROPERTY THAT MAKES IT A LESSON RATHER THAN A TIDINESS NOTE: IT IS INVISIBLE TO EXACTLY ONE PERSON — ITS AUTHOR.** They know the files are theirs and temporary, so the cost never lands where the knowledge is. ⛔⛔ **AND IT APPEARS IN NOBODY'S DIFF: the pathspec discipline that protects every commit in this checkout defends NOTHING here, because the file is never staged by anyone.** ⇒ ***a shared-tree hazard with no commit-side surface — the one class the round's other discipline structurally cannot reach.***
+⇒ ⭐⭐ **THE PROPERTY THAT MAKES IT A LESSON RATHER THAN A TIDINESS NOTE: IT IS INVISIBLE TO EXACTLY ONE PERSON — ITS AUTHOR.** They know the files are theirs and temporary, so the cost never lands where the knowledge is. ⛔⛔ **AND IT APPEARS IN NOBODY'S DIFF: the pathspec discipline that protects every commit in this checkout defends NOTHING here, because the file is never staged by anyone.** ⭐⭐ **THE FINDER'S SHARPENING, WHICH IS THE GENERAL FORM: *THE PATHSPEC FORM PROTECTS THE **RECORD**; THIS DEFECT LIVES ENTIRELY IN THE **WORKING TREE**.*** ⇒ ***every discipline in this checkout is aimed at what gets COMMITTED, so the one hazard they all miss is created by a file nobody ever commits.*** ⇒ ***a shared-tree hazard with no commit-side surface — the one class the round's other discipline structurally cannot reach.***
 
 ⚠ **The cost lands entirely on people who cannot attribute it.** One session spent **four independent checks** (untracked · named for another session's in-flight task · zero of their own symbols in the error · the failing package is UPSTREAM of theirs, so their change structurally could not cause it) before they could report their own work honestly.
 
@@ -4427,3 +4427,17 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **Kin `L217`** (the shared shell) and **`L109`** (a check only gates if a decision sits between reading and acting) — **all three are shared-tree hazards where the actor cannot see the cost they impose.**
 
 **Enforcement:** `pattern: no untracked file matching test-collection globs may persist across a slice boundary; enumerate and attribute untracked paths at every close-out` (`029`'s inventory rule, which is what caught this) · `accepted: partially enforceable`.
+
+## <a id="220"></a>220. TWO SURFACES OF THE SAME *KIND* ARE ONE SURFACE — `vitest` does not typecheck, so "green on two surfaces" can be true and mean nothing
+
+⛔ **THE INSTANCE, SELF-REPORTED BY THE PERSON IT CAUGHT:** an implementer deleted a scratch harness, **verified afterwards**, and reported *"`packages/domain` green on two surfaces"* — measured through `node_modules/.bin/vitest` **and** `pnpm --filter`. **A `TS2532` in a leftover probe reded `@sow/domain#typecheck` for every other session anyway.**
+
+⇒ ⭐⭐ ***`vitest` DOES NOT TYPECHECK. The error was STRUCTURALLY INVISIBLE to both surfaces they ran.*** **The two-surface claim was TRUE, was about `test`, and read as being about the PACKAGE.** ⛔ **This is not carelessness and it is not a wrong number — it is an APPLICABILITY failure: the instrument was pointed at the wrong question, twice.**
+
+⛔⛔ **THE RULE: TWO SURFACES OF THE SAME KIND ARE ONE SURFACE.** ⇒ **`029`'s concordance rule, stated for instruments rather than for people: *evidence only when the methods COULD HAVE DISAGREED* — and two runners of the same check could not.** ⚠ **Doubling a surface feels like doubling the evidence, and the cost of the mistake scales with how diligent the person was: someone who runs ONE check knows they ran one.**
+
+⇒ **THE CHECK: before citing N surfaces, state what each could have returned that the others could not.** ⭐ **If the answer is "nothing," you have one measurement reported twice** — the `029` formulation, arriving through a test runner instead of through a reviewer.
+
+⚠ **Kin `L215`'s shared-horizon corollary** — **`215` is two OBSERVERS who share a blind spot; `220` is two INSTRUMENTS that do.** ⭐ **Same defect, and both feel like independent confirmation for the same reason: independence is assumed from COUNT rather than established from MECHANISM.**
+
+**Enforcement:** `pin: a close-out that claims a package is green runs BOTH a test surface and a --force typecheck surface, and names them` · `accepted: partially enforceable`.
