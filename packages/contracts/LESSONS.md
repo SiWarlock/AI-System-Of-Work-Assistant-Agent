@@ -4211,3 +4211,39 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **A vacant target area changes the COLLISION risk and not the REASONING risk** — it is why the transcription form was available at all, and it is not a reason to skip it.
 
 **Enforcement:** `accepted: not mechanically enforceable` — enforcement point: any edit landing outside your own territory, at the moment of deciding WHO makes it.
+
+## <a id="207"></a>207. A COMPILER ENUMERATION IS ONLY AS WIDE AS THE COMPILATION YOU RAN — and "I ran tsc" does not say which tsc
+
+**Date:** 2026-08-18. **Source slice:** `### 24.103` Step 7.5 (knowledge-implementer), banked at the lead's instruction.
+
+`### 24.98` made a field **required** so the compiler would enumerate every construction site — and that enumeration **stopped at the UNION boundary**, so a duplicated shape on a second union was invisible. ⭐ **That blind spot is the entire reason `### 24.103` exists.**
+
+⛔⛔ **THEN `### 24.103`'s OWN ENUMERATION STOPPED AT THE PACKAGE BOUNDARY.** `tsc` was run **inside `packages/knowledge`** and reported **10 sites, zero in test files**, offered with a `--listFiles` non-vacuity proof showing 54 test files loaded. **Repo-wide the count is 12, and 2 ARE in test files** — in `packages/workflows`. ⇒ ***the instrument being used to fix a boundary-limited enumeration was itself boundary-limited, one scope up.***
+
+⭐ **The non-vacuity control did not help and could not have: it proved the compilation READ 54 test files, which was true, and said nothing about the files it was never pointed at.** (`L178`: non-vacuity and applicability are different checks.)
+
+⛔ **THE ORCHESTRATOR MADE IT WORSE BY CONFIRMING IT.** The reviewer's hand-derived table also covered only `packages/knowledge`, so *"your count AGREES with my table"* was **two instruments sharing a boundary** — agreement that carried no information, cited as corroboration. ⇒ **and it was then relayed upward as *"the concordance this round has been asking for."*** ⚠ **A shared boundary is the cheapest way to manufacture agreement and the hardest to notice, because both numbers are correct.**
+
+⇒ **REPORT THE ENUMERATION'S BOUNDARY BESIDE ITS COUNT, ALWAYS** — *"10, from `tsc` inside `packages/knowledge`"* is a measurement; *"10 sites"* is not. ⭐ **And before citing two counts as corroborating, state what each could have returned that the other could not** — if the answer is *nothing*, you have one measurement written twice.
+
+⚠ **Generalises past `tsc`:** every whole-program instrument has a program boundary — a workspace filter, a `tsconfig` `include`, a lint scope, a test-runner root. **The boundary is a parameter you chose, and it does not appear in the output.**
+
+**Enforcement:** `accepted: not mechanically enforceable` — enforcement point: any Step-2.5 or Step-9 report stating a count from a compiler, linter, or test runner. **State the invocation's scope, or the number is a candidate.**
+
+## <a id="208"></a>208. A REGEX SAFETY CUT MUST BE PROVEN AGAINST INPUTS CONTAINING LINE TERMINATORS — `.` and `$` silently opt out of them, and the failure is fail-OPEN
+
+**Date:** 2026-08-18. **Source slice:** `### 24.103` Step 8 — found by `security-reviewer`, reproduced independently by the implementer before the fix.
+
+`structuralPathOnly` cut a row-authored key out of an audit signal with `^(.*?\b<region>\b)[./].*$`. ⛔ **Without the `s` flag `.` does not match a line terminator; without `m`, `$` matches only at end of input.** ⇒ **a key containing `\n`, `\r`, U+2028 or U+2029 makes the whole pattern FAIL TO MATCH, and the `?? path` fallback returns the path VERBATIM.**
+
+⛔⛔ **THE FAILURE DIRECTION IS THE POINT: a non-matching safety regex whose fallback is *"return the input"* is FAIL-OPEN.** The cut looks present, runs on every rejection, and passes every test built from single-line fixtures — **which is every fixture anyone writes by hand.**
+
+⭐⭐ **AND THE BACKSTOP MEASURABLY DID NOT BACKSTOP: `isRedactionSafe` returned `true` on the leaked value**, because a project codename matches none of its credential patterns — **exactly what `audit-signal.ts` already warns about itself.** ⇒ ***this cut IS the control; there is nothing behind it.*** **Strongest evidence yet for `L103`'s posture — a control that a newline in a key can silently disable is not one.**
+
+⭐ **HOW IT WAS FOUND, and it is the transferable half: the reviewer BUILT THE INPUT AND RAN IT rather than reasoning about the pattern.** Reading that regex does not surface the flag; **executing it against `key\nmore` does, instantly.**
+
+⇒ **For any regex on an untrusted-content safety path: fixture it with all four terminators, both path dialects, and a trailing terminator; state the flags and why each is present; and make the FALLBACK fail-closed** — ⛔ **`?? path` is the defect, independent of the flags. A cut that cannot determine the safe prefix should return `MAXIMAL_CUT`, never the input.**
+
+⚠ **Kin `L4`** (isolate the authority before parsing) and `L42` (linear patterns on untrusted markup) — same surface, third distinct way a regex over attacker-influenced input fails.
+
+**Enforcement:** `pin: packages/knowledge/test/validation-refusal-audit.test.ts` (all four terminators, both dialects, trailing-terminator, full assembly; mutation-proven — drop `s` and exactly that pin reds) · `accepted: partially enforceable`.
