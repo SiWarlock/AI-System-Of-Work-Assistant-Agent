@@ -461,10 +461,62 @@ export function denyDirectCrossWorkspaceRaw(
   // ⭐ THE ASYMMETRY, recorded because it outlives the timing: ONE counterpart cannot validate
   // both — `from` (the caller) would need an authenticated identity, none of which is in scope;
   // `to` (the target) would need an entitlement check.
-  // ⚠ A SHAPE remedy is NOT foreclosed and is not this task's: `### 24.84` exists to give
-  // `WorkspaceIdSchema` a defensible shape, which needs no counterpart and is symmetric across
-  // `from`/`to`. Option (B) was rejected against the CURRENT schema (`.min(1)` + non-blank), so
-  // that rejection expires when `24.84` lands. ⚠ And "cannot reach here" is a WIRING fact, not
+  // ⛔ A SHAPE remedy WAS RE-DERIVED AGAINST `### 24.84` AND IS STILL REJECTED — BUT ONLY AS A
+  // REMEDY FOR **THIS RESIDUAL**, AND THE SCOPE IS LOAD-BEARING: ⚠ the SAME edit at this sink
+  // IS wanted, for a DIFFERENT reason (`### 24.95`, bounded-input hygiene). ⛔ Do not close
+  // `### 24.95` on the strength of this rejection — it would retire a rule-7 fix that this
+  // rejection was never about.
+  // ⛔ WHY THIS PARAGRAPH WAS REWRITTEN (`### 24.93`, 2026-08-17): the sentence it replaces
+  // carried its own expiry and nothing watched it — `L176`'s FIRES-AND-LOOKS-SILENT direction,
+  // and `L187` from the other side: the decision WAS defended at the site where it mattered,
+  // but an expiry condition needs a WATCHER, not a location. It read: "rejected against the
+  // CURRENT schema … so that rejection expires when `24.84` lands."
+  // ⭐ THE PRIOR GROUND WAS HALF RIGHT, AND THE HALVES SEPARATE. Option (B) — run
+  // `WorkspaceIdSchema` on `from`/`to` before they render — was rejected as "cosmetic AND
+  // provably admits the bad case" in
+  // `docs/briefs/286-24.68-trusted-counterpart-for-cross-workspace-deny.md:45`
+  // (⚠ the ADJACENT row `:44` is option (A), a different rejection — check the row you land
+  // on), decided against the generic factory at
+  // `packages/contracts/src/primitives/zod-brands.ts:30-35` @ `54b052a7` (`.min(1)` +
+  // non-blank refine), which `WorkspaceIdSchema` merely BOUND at `:38`.
+  //   • "COSMETIC" IS NOW FALSE, as of `25ae6c49` (`### 24.84` contracts leg): `WorkspaceId`
+  //     carries a bounded positive slug shape, which strictly narrows against the
+  //     `typeof`/non-empty guard ABOVE. ⛔ That shape is OWNED THERE and is NOT RESTATED IN
+  //     THIS COMMENT — a second hand-maintained copy is `### 24.46`'s class. ⚠ Option (B) was
+  //     an IMPORT, so `### 24.46` is NOT a third reason to reject it.
+  //   • "ADMITS THE BAD CASE" SURVIVES, AND ITS GROUND IS NOW STRUCTURAL RATHER THAN
+  //     SCHEMA-SPECIFIC — WHICH IS THE ENTIRE REPAIR, BECAUSE A SCHEMA-SPECIFIC GROUND IS
+  //     EXACTLY WHAT EXPIRED: ⛔ NO CHARSET+LENGTH SHAPE CAN EXCLUDE CREDENTIAL SHAPES OVER AN
+  //     OPEN ID SET. A credential is not charset-distinguishable from a well-formed id, and
+  //     not length-distinguishable either — measured at `25ae6c49`: `hunter2abcdef` ACCEPTS
+  //     and is EXACTLY as long as `employer-work` (13), so no bound separates them. `### 24.84`
+  //     ships the same limitation about itself and PINS it executably
+  //     (`packages/contracts/test/primitives/zod-brands.test.ts:161`); `worker L73` is why —
+  //     "is this a credential?" is the unwinnable denylist question.
+  //     ⛔⛔ SCOPED TO "CHARSET+LENGTH" DELIBERATELY, BECAUSE THE UNSCOPED FORM IS FALSE AND
+  //     THIS NOTE ALMOST SHIPPED IT: an earlier draft said "a WELL-FORMEDNESS RULE cannot
+  //     exclude credential shapes" and the security review CONSTRUCTED THE COUNTER-EXAMPLE —
+  //     `^(employer-work|personal-business|personal-life)$` is a well-formedness rule, admits
+  //     all 3 ids `### 24.84` measured live, and excludes every credential. ⇒ what forecloses
+  //     an ENUMERATION here is not logic but AVAILABILITY: the id set is OPEN BY CONSTRUCTION
+  //     — `parseCreateWorkspace` (`apps/worker/src/api/procedures/onboarding.ts:112`) admits
+  //     ANY non-empty string as the id — so enumerating would reject a live id, which
+  //     `### 24.84`'s own binding gate names an AVAILABILITY BREAK rather than a hardening.
+  //     ⛔ THEREFORE THIS GROUND IS CONDITIONAL, AND THE CONDITION IS NAMED RATHER THAN LEFT
+  //     IMPLICIT: it holds WHILE the create path stays open, and `### 24.84`'s WORKER leg
+  //     exists to close exactly that path (undispatched at `25ae6c49` — the shape is DEFINED,
+  //     not ENFORCED at create). ⭐ Named because the alternative was a SECOND UNWATCHED EXPIRY
+  //     INSIDE THE FIX FOR THE FIRST — this note's own rule, applied to this note.
+  //   ⇒ the bad case is the one stated at the top of this residual — a credential-shaped id
+  //     reaching the audit — and a shape gate does NOT close it. Recording one as if it did is
+  //     the FALSE-ASSURANCE principle that rejected option (C) above: a weaker second spelling
+  //     of a control already proved insufficient.
+  // ⭐ And the asymmetry above survives all of this untouched: a shape validates
+  // WELL-FORMEDNESS — never AUTHENTICITY (`from`) or ENTITLEMENT (`to`).
+  // ⭐ THE GENERAL RULE, for the next author of a conditional note: PREFER A GROUND THAT
+  // CANNOT EXPIRE; where contingency is unavoidable, name the contingency AND THE TASK THAT
+  // OWNS IT — never a relative word like "current" or "in the tree".
+  // ⚠ And "cannot reach here" is a WIRING fact, not
   // a structural impossibility — `apps/worker` already depends on `@sow/policy`, so a worker
   // caller could supply a counterpart without the `### 24.81`-fenced GCL port binding.
   // ⚠ Reachability MEASURED 2026-08-13 — and stated as REACHABILITY, not as "no caller",
