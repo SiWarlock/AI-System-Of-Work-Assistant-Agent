@@ -4581,3 +4581,23 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **AND THE HONEST BOUND: this detector is not aimable.** **You cannot ask a question designed to find an unknown instrument defect — the yield is a by-product.** ⇒ **the actionable form is a POSTURE, not a procedure: when someone asks a question that requires re-measurement, RE-MEASURE rather than answering from the existing table, even when you are confident the existing table answers it.**
 
 **Enforcement:** `pattern: a question about a prior measurement is answered by RE-RUNNING the instrument, not by citing the stored result; discrepancies between runs are reported even when the new question is unaffected` · `accepted: partially enforceable`.
+
+## <a id="228"></a>228. A MEASUREMENT'S *SOLIDITY* IS WHAT MAKES IT DANGEROUS — the more trusted a number, the wider the claims that attach to it and the less anyone asks whether it measures them
+
+⛔⛔ **THE UNIFYING ACCOUNT OF `L190`, `L221` AND `L222` — filed above them because it explains why all three keep recurring among people who can state the rules.**
+
+**THE INSTANCE: ONE FIGURE CAUSED TWO SEPARATE OVER-EXTENSIONS, BY TWO DIFFERENT PEOPLE, NEITHER NOTICING.** An implementer measured *"0 values newly admitted"* over a corpus — **carefully, correctly, with its denominator stated.** It then carried:
+1. ⛔ **AN ORCHESTRATOR'S MONOTONICITY CLAIM** — *"the fix is monotone"* — **broader than the number, which was true of the CORPUS and silent about the CLASS** (`L190`). **A `private<SPACE>key` shape exists that no corpus line has.**
+2. ⛔ **A LEAD'S DISMISSAL OF A DOUBT ABOUT THE GUARD'S *SHAPE*** — an entirely different question — **producing a spec that could not be built** (`L221`'s sixth instance).
+
+⇒ ⭐⭐ ***THE FIGURE WAS NEVER WRONG. IT WAS SOLID, AND ITS SOLIDITY IS PRECISELY WHAT LET TWO UNRELATED CLAIMS LEAN ON IT.***
+
+⛔ **THE MECHANISM, AND IT IS THE OPPOSITE OF THE INTUITIVE ONE: a WEAK measurement gets interrogated — *what was the denominator? was the instrument pointed right? could it have disagreed?*** ⭐ **A STRONG one gets USED.** ⇒ ***trust in a number transfers to trust in the SENTENCE CONTAINING IT, and nobody re-asks the boundary question — "does this figure measure what I am now claiming?" — because the figure itself is beyond reproach.***
+
+⚠ **AND IT SCALES WITH CARE: the more rigorously a measurement is produced and caveated, the more load it is asked to bear.** **This one arrived with its population predicate, its denominator, and a self-referentiality caveat — and that is exactly why two experienced readers reached for it.**
+
+⇒ **THE RULE: attach the CLAIM to the measurement explicitly, in one sentence, at the point of use — *"X measures Y over population P; I am claiming Z; Z follows because …"*** ⭐ **If the third clause cannot be written, the measurement is being borrowed rather than used.** ⛔ **This is cheap and it is the ONLY control that fires here, because every other control in this ledger triggers on doubt — and a solid number produces none.**
+
+⚠ **Kin `L202`** (a believed claim generates no doubt) — **`202` is about your own conclusion; `228` is about someone ELSE'S evidence, which is worse, because deference supplies the confidence you did not earn.**
+
+**Enforcement:** `pattern: a claim citing a measurement states the measured quantity, its population, and why the claim follows — three clauses, at the point of use` · `accepted: partially enforceable`.
