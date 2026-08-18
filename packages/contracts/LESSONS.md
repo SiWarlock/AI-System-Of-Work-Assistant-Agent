@@ -3804,6 +3804,13 @@ The orchestrator's first note read: *"THE SHIPPED REALITY HAS TWO GLOBAL LEGS, N
 
 ⭐ **ROUTING COROLLARY, from correcting the lead's own account: the crossing that delivered the retraction late cost nothing. What cost the round is that the falsifying objection EXISTED FOR AN HOUR BEFORE REACHING THE ARTIFACT THAT NEEDED IT.** ⛔ **That is a ROUTING property, not a timing accident — the packet would have been just as false ten minutes later.** ⇒ **speed is not the fix; getting the objection to the artifact is.**
 
+⛔⛔ **AMENDMENT 2026-08-17 (lead-directed, `### 24.98`) — RECORD THIS AS AN EXTENSION, NOT A FIFTH WITNESS. THE ARTIFACT TYPE THIS LESSON'S OWN RULE NAMED BUT NEVER EVIDENCED HAS NOW BEEN CAUGHT, AND IT IS THE WORST OF THE FOUR.**
+**The rule above already said *"a decision packet, a brief, a reviewer prompt and a docblock."* The first three had witnesses. The DOCBLOCK did not — it was reasoned into the list.** ⭐ **It now has one, and unlike the others it did not merely mislead a reader: IT WAS EXECUTED AND IT LEAKED.**
+⛔ **THE INSTANCE:** a source comment in `visibility-gate.ts` named its own invalidating condition and then asserted *"the pins test the SIGNAL, so they catch it."* **A `security-reviewer` RAN the condition** — gave `sanitizedPayload` a plausible subschema — and a row-authored key reached `refs` as `ref:gcl-issue-path:/sanitizedPayload/Project-Falcon-Q3-codename`, ⛔ **against a fully green suite, with `isRedactionSafe` unable to backstop it** (its own doc concedes an employer codename passes, `L151`).
+⇒ ⭐⭐ ***A SOURCE COMMENT IS THE ARTIFACT A MAINTAINER TRUSTS MOST AND REVIEWS LEAST.*** **A brief is read once and discarded; an owner packet is read by someone deciding; a reviewer prompt is read by a reviewer. A source comment is read by every future maintainer, carries no review step of its own, and is believed *because it sits next to the code it describes.*** ⛔ **Proximity reads as provenance.**
+⭐ **AND THE ROUND-LEVEL RESULT, which is the actual thesis: EVERY defect found in one implementer's work across the day was in PROSE OR NAMING — a reach claim, a stale schema-valid claim, a false uniqueness claim, a decorative assertion, a false assurance in a comment. FIVE. THE LOGIC SURVIVED EVERY MUTATION IT WAS GIVEN.** ⇒ ***the failure rate of the code and the failure rate of the sentences about the code are not the same number, and we only ever measure the first.***
+⚠ **`security-reviewer` earned its per-slice cost here on a single finding: it EXECUTED a condition the author had only ASSERTED about.** ⭐ **That is the transferable half — the reviewer's value was not a second opinion, it was a second EXECUTION.**
+
 **Enforcement:** `accepted: not mechanically enforceable — before a premise-carrying artifact ships (packet, brief, reviewer prompt, docblock), name its load-bearing claim and route it to someone positioned to falsify it. A reviewer who can only agree is not four eyes.`
 
 ---
@@ -3854,3 +3861,266 @@ The orchestrator's first note read: *"THE SHIPPED REALITY HAS TWO GLOBAL LEGS, N
 
 **Enforcement:** `accepted: not mechanically enforceable — every dispatched measurement brief states the POPULATION PREDICATE ("count things satisfying P"), and requires the result to restate P alongside the number.`
 
+<a id="191"></a>
+## 191. A CLAIM CHANGE OWES A CLAIM SWEEP — exactly as a rename owes a citation sweep, and nobody thinks to run one
+
+**Date:** 2026-08-17. **Provenance: knowledge-implementer's own, surfaced by a `code-quality-reviewer` and filed against themselves — the fourth instance of the claim-with-two-homes pattern that day and the first of theirs caught by someone else.**
+
+⛔ **THE MECHANISM:** brief `293` named `visibility-gate.ts:44-46` as the doc block to rewrite. It was rewritten. ⚠ **`auditOf`'s own docblock — ELEVEN LINES ABOVE `return error.audit` — still said `schema_rejected` has no signal to extract, and pointed readers at the block that now says the opposite.**
+
+⇒ ⭐ **A brief that names a location is answering *"where is the claim I know about?"* — never *"where does this claim LIVE?"*** **The author had named this exact pattern three times that day and still did not ask the second question, because a named location retires the question that would have found the others.**
+
+⛔ **THE RULE: when you change what a doc block ASSERTS, sweep for the assertion — not for the file, not for the line the brief cited.** A rename owes a citation sweep and everyone knows it; **a claim change owes the same sweep and nobody runs one**, because a claim has no compiler and no grep-able spelling of its own.
+
+⭐⭐ **AND THE COUNTER-EXAMPLE, BANKED THE SAME DAY BECAUSE IT IS THE SHAPE THAT WORKS:** `@sow/policy`'s `audit-signal.ts` carries a producer census (recorded 41 production sites; this slice made it 42, its knowledge line 2 → 3) — ⛔ **stale, and stale in the SAFE direction, because the block OPENS with *"RE-RUN IT RATHER THAN TRUSTING THE NUMBERS."*** ⇒ ***a claim that instructs its own re-derivation defuses its own staleness.*** **Against four stale-claim findings in one day, this is the only one that cost nothing.** ⭐ **Write counts that way: state the command, not just the value** — the de-inlined-literal discipline, arriving from the direction that PROVES it.
+
+⛔⛔ **AMENDMENT 2026-08-17 (same day, brief `290`) — THE TRIGGER IS BROADER AND THE BROADER ONE IS INVISIBLE: A *FIXTURE* CHANGE IS ALSO A CLAIM CHANGE.**
+**The original trigger was *"you edited what a doc block asserts"* — which at least involves opening the prose.** ⛔ **This instance edited NO PROSE AT ALL: a test's FIXTURE was swapped (a URL-userinfo credential-shaped id → a slug-valid credential-shaped one, because `### 24.84` made the first inadmissible) and THREE SENTENCES WENT FALSE, none of them in the lines being edited:**
+> 1. **the test's NAME**, which embedded the old fixture's shape — ⭐ **and a name is the artifact the Step-2.5 reviewer actually evaluates** (`L188`);
+> 2. **a comment's stated REASON** (*"nothing constrains that id's shape"*), which expired under the new brand **while its FACT survived** — ⛔ **a true fact with a dead reason is the worse defect, because nobody re-checks it**;
+> 3. **a comment ATTRIBUTING a claim to a test that no longer carried it** — the pre-validator population moved to a different pin.
+⇒ ⭐⭐ ***DATA IS A CLAIM. CHANGING A FIXTURE CHANGES WHAT EVERY SENTENCE ABOUT THAT FIXTURE ASSERTS, AND NONE OF THOSE SENTENCES IS IN YOUR DIFF.*** ⚠ **A prose edit at least announces itself; a fixture swap looks like a one-line data change and is reviewed as one.**
+⭐ **PRACTICAL TRIGGER: when you change a fixture, grep for the fixture's DESCRIPTION — its shape, its adjective, the property it was chosen for — not for its VALUE.** The value is what you changed; the description is what went stale.
+
+**Enforcement:** `accepted: not mechanically enforceable` — a claim has no spelling. ⭐ **The buyable half IS enforceable and is the actionable half: every recorded count carries the command that reproduces it, so the number defuses itself when it rots.**
+
+<a id="192"></a>
+## 192. AN ASSERTION OVER A HEURISTIC GATE IS DECORATIVE UNLESS THE FIXTURE TRIPS THE HEURISTIC
+
+**Date:** 2026-08-17. **Provenance: knowledge-implementer, `### 24.98`; three of their own assertions were decorative and a `security-reviewer` found it. Their third instance of this shape in one day.**
+
+⛔ **THE MECHANISM:** three pins asserted `isRedactionSafe(signal) === true`. **`looksUnsafe` is THREE CREDENTIAL-SHAPE REGEXES — not a content allowlist.** The fixtures used a *neutral* sentinel, which matched none of them. ⇒ ⛔ **the assertion could not fail for the reason it existed: a signal built from the dangerous source (Zod's `message`, which echoes row content) would have passed the gate, persisted, and gone green.**
+
+⭐ **THE TEST OF A TEST OVER A HEURISTIC: can the fixture TRIP the heuristic?** If not, `expect(gate(x)).toBe(true)` asserts *"this input is not one of the three shapes the gate knows"* — **which is true of almost everything, and is not the property the pin claims.**
+
+⇒ ⭐⭐ ***THIS IS `### 24.99`'s DEFECT AT TEST SCOPE: a control credited with coverage it does not provide.*** **The gate's own doc concedes an employer project codename passes** (`L151`), so the gate was never the backstop the pins treated it as.
+
+⛔ **REMEDY, AND VERIFY THE REMEDY TOO — the author did:** a proposed replacement sentinel was ALSO matched by a `SAFE_STRUCTURED_TOKEN` regex in the same file, which would have re-created the defect one layer down. **Confirm the fixture trips the specific predicate, by mutation: implement the dangerous version and watch the pins RED.** Here that mutation reds 3 tests including a persistence pin that was previously green under it.
+
+⚠ **AND STATE THE HONEST SCOPE WHEN A PIN CANNOT BE MADE DISCRIMINATING.** The same slice's ajv-stage pin cannot trip the heuristic at all — ajv's messages are fixed and the mapping drops `params`, so nothing could carry the sentinel even under a wrong implementation. ⭐ **It was shipped with its own weakness written into it, establishing the narrower true property (a signal is PRODUCED and is redaction-safe) rather than the one it appeared to assert.**
+
+**Enforcement:** `pin: packages/knowledge/test/gcl-visibility-gate.test.ts` — the dangerous-implementation mutation reds 3 pins; the honest-scope caveat sits in-file at the non-discriminating one.
+
+<a id="193"></a>
+## 193. MEASURED THE ARTIFACT I HAD OPEN, NOT THE ONE THE CODE WILL USE — one mechanism, two directions, two agents, one message apart
+
+**Date:** 2026-08-17. ⭐ **Banked as ONE item on the implementer's own suggestion, because the symmetry is the finding.** Orchestrator and knowledge-implementer made the same error in opposite directions during `### 24.98`'s Step 2.5 — **each caught the other's, neither caught their own.**
+
+⛔ **DIRECTION 1 (implementer):** probed `GclProjectionSchema` **in isolation** and reported two Zod codes that echo row content into `message`. ⚠ **True of the schema; false of production** — `admitProjection` runs **ajv first**, and the JSON Schema pins the enum and `additionalProperties:false`, so both codes are intercepted upstream and unreachable at the Zod stage.
+
+⛔ **DIRECTION 2 (orchestrator):** read **HEAD's** JSON Schema and concluded the reachable Zod-stage class was the tightened brand. ⚠ **True at HEAD; false in the tree** — contract's WIP regenerates the schema with `"pattern"`, so ajv enforces the slug and the case **migrates to the ajv stage** the moment the sibling slice lands.
+
+⇒ ⭐⭐ ***BOTH READ A REAL ARTIFACT AND REPORTED A PROPERTY OF IT AS A PROPERTY OF THE RUNNING SYSTEM. THE ARTIFACT WAS NEVER WRONG; IT WAS NEVER THE ONE IN PLAY.***
+
+⛔ **WHY RE-DERIVATION DOES NOT CATCH IT (`L190`'s family): re-running the same probe against the same artifact reproduces the same number.** The question that catches it is not *"is this right?"* but ***"which artifact will the CODE load at the moment this runs — and is it the one I opened?"***
+
+⚠ **TWO CONDITIONS MAKE IT LIKELY, AND BOTH WERE PRESENT:** (a) a **generated** artifact whose source of truth is elsewhere (`schemas/*.json` regenerated from Zod), and (b) a **pending landing** that changes it — so `git show HEAD:` and the working tree disagree, and both are "the file."
+
+⭐ **DISCIPLINE: before asserting from a file, check whether it is dirty and whether it is generated** — `git diff HEAD --stat -- <path>` — **and when a landing is pending, state WHICH WORLD the claim holds in.** *(The lead's standing chain rule is the process form of this lesson; this is its mechanism.)*
+
+**Enforcement:** `accepted: not mechanically enforceable` — but the cheap habit is: **quote `git diff HEAD --stat -- <path>` alongside any claim read from a file a pending slice touches.**
+
+<a id="194"></a>
+## 194. DELETING A FALSE ASSURANCE REPAIRS THE DOCUMENT AND LEAVES THE DEFECT — and destroys the only map to it
+
+**Date:** 2026-08-17. **Provenance: the lead's formulation, from `### 24.98`'s security finding — banked here because `029` is a handoff and this is an engineering rule.**
+
+⛔ **THE SITUATION:** a source comment named an invalidating condition and then falsely asserted the tests covered it. The reviewer found the assertion false and offered the cheap fix: **delete the sentence.**
+
+⇒ ⛔⛔ ***DELETING IT WOULD HAVE REPAIRED THE DOCUMENT AND LEFT THE DEFECT — AND DESTROYED THE ONE ARTIFACT THAT NAMED THE INVALIDATING CONDITION, SO NOBODY WOULD KNOW TO LOOK AGAIN.*** ⭐ ***THE OVERCLAIM WAS SIMULTANEOUSLY THE DEFECT AND THE ONLY MAP TO IT.***
+
+⭐⭐ **THIS IS THE INVERSE OF A TRAP BANKED THE SAME DAY, AND THE PAIR IS THE LESSON:**
+- **A doc edited to MATCH a defect** makes the defect unfindable — *a doc is a CONTRACT, not a REPORT; amend it and nothing is in breach.*
+- **A doc edited to REMOVE a false claim** makes the defect unfindable *too.*
+⇒ ⛔ **BOTH EDITS ARE LOCALLY CORRECT. BOTH DESTROY THE FINDING.** ⚠ **And neither looks like damage — one reads as accuracy, the other as tidying, and nobody audits an impulse toward either.**
+
+⛔ **THE TEST, AND IT REPLACES THE OBVIOUS ONE:** not *"is this sentence TRUE?"* but ***"what does this sentence POINT AT, and does the pointer SURVIVE my fix?"***
+
+⭐ **THE CORRECT REPAIR IS THE THIRD OPTION, AND IT IS WHAT SHIPPED: make the false assurance TRUE BY CONSTRUCTION.** Here, a path normalizer cut every issue path at the only free-form-key region, so a row-authored key became **unrepresentable** in `refs` — **even if a future schema starts raising per-entry issues there.** ⇒ **an ARGUMENT was replaced by a CONSTRUCTION, and the comment that made the claim survives, now describing a mechanism instead of a hope.**
+
+⚠ **WHEN CONSTRUCTION IS NOT AVAILABLE:** keep the pointer and demote the claim — *"this is NOT covered; here is the condition that would break it"* — ⛔ **never delete the only sentence that names the hazard.** A known gap beats a gap nobody can find (`L89`).
+
+**Enforcement:** `accepted: not mechanically enforceable — on any edit that removes or weakens a claim, ask what the claim POINTED AT and where that pointer now lives. Prefer make-it-true-by-construction; failing that, demote and keep. Deletion is the option that needs an argument.`
+
+<a id="195"></a>
+## 195. A RETAINED-STRUCK RULING KEEPS ITS STATUS LINE, AND A STATUS LINE READS AS PRESENT TENSE
+
+**Date:** 2026-08-17. **Provenance: knowledge-implementer, brief `290` Step-2.5 delta — they read a superseded status as live and correctly ROUTED rather than ruled, which is the only reason it cost nothing.** ⭐ **The trap was set by the record, not by the reader.**
+
+⛔ **THE PRACTICE THIS COSTS, AND IT IS A GOOD PRACTICE WE ARE KEEPING:** this project retains superseded rulings **struck rather than deleted**, because *the failure is the record* (`L153` half 1). `### 24.84` carries a voided first owner ruling in full, struck, inside a blockquote.
+
+⛔⛔ **THE COST, NOW MEASURED:** that retained block ends with **`STATUS: RE-PUT TO THE OWNER, UNDECIDED`**. ⚠ **An implementer lifted it and concluded a cat-4 packet was still in flight and its premise had gone stale under it.** **Measured offsets in the entry: the live `FINAL OWNER RULING` at 13309, the retained-struck block opening at 15816, the status line at 18119** ⇒ ***the CURRENT answer sits ~4,800 characters ABOVE the stale one, so a reader scanning for status finds the dead line LAST and most recent-looking.***
+
+⇒ ⭐⭐ ***NARRATIVE PROSE SURVIVES STRIKING; A STATUS LINE DOES NOT. "We considered X" stays true forever. "STATUS: UNDECIDED" is a claim about NOW, and striking its container does not tense-shift it.***
+
+⛔ **THE RULE: when retaining a superseded block, STRIP OR REWRITE ITS STATUS/NEXT-ACTION LINES — keep the reasoning, never the state.** A retained ruling should say *what was believed and why it was wrong*; it must not say *what happens next*, because that sentence has no way to announce that it stopped being true.
+
+⚠ **AND POSITION IS NOT A DEFENCE:** the live ruling was ABOVE and the struck one BELOW, which is the natural order (newest first) — **and it puts the dead status line closer to the entry's end, where a reader looks for current state.** ⛔ **Ordering cannot fix this; only removing the tense can.**
+
+⭐ **GENERAL FORM: an artifact preserved for PROVENANCE and an artifact consulted for STATE want opposite things.** Every retain-struck decision should ask which sentences are *history* and which are *state* — and state does not survive the strike.
+
+**Enforcement:** `pattern: on any struck/retained block, grep it for STATUS: / NEXT: / PENDING / UNDECIDED / IN FLIGHT / AWAITING — those lines are state, and must be removed or rewritten past-tense when the block is struck.` *(added to the forbidden-patterns block)*
+
+<a id="196"></a>
+## 196. PIN A FIXTURE'S PREMISE AS THE CONJUNCTION IT IS — so a future narrowing of either half REDS instead of silently removing coverage
+
+**Date:** 2026-08-17. **Provenance: knowledge-implementer, brief `290`, found AFTER the orchestrator's TWEAK and volunteered unprompted — the gap was in their own new fixture.**
+
+⛔ **THE SITUATION:** a rule-7 control's fixture was re-pointed at an id that is **slug-valid AND credential-shaped**. ⭐ **Each half is load-bearing for a DIFFERENT reason, and neither half alone reaches the gate:**
+- **slug-valid** is why the brand **ADMITS** it — so the test needs no bypass and is state-independent across the pending landing;
+- **credential-shaped** is why the redaction gate **REFUSES** it — which is what keeps `### 24.55`'s protection obligation reachable at all.
+
+⛔ **A fixture whose premise is a conjunction, pinned only by its OUTCOME, degrades silently when either conjunct stops holding.** ⚠ **The suite stays green while the coverage evaporates**, because the outcome can survive for the wrong reason — the `### 24.99` shape, at fixture scope.
+
+⇒ ⭐⭐ ***PIN EACH CONJUNCT SEPARATELY, AS ITS OWN ASSERTION.*** **Then a future change that narrows one half REDS AND SAYS WHICH HALF.**
+
+⭐⭐ **AND THE REAL PAYOFF IS THE FAILURE MODE IT BUYS — THIS IS A TEST THAT FAILS TOWARD A DECISION RATHER THAN TOWARD A REPAIR.** If a later tightening makes the brand reject credential shapes too, the conjunct pin reds **and the message says the gate has lost its last reachable carrier**, so the correct response is to **RE-DECIDE `### 24.55`, not to re-green the test.** ⛔ **Without it, the natural repair is to swap in another fixture that passes — which would remove the control while looking like maintenance.**
+
+⚠ **GENERAL FORM: whenever a fixture is chosen for a CONJUNCTION of properties, the properties are the contract and the outcome is only evidence.** ⭐ **Ask what this fixture had to be TRUE OF, and assert each of those things — the count of assertions should equal the count of reasons it was chosen.**
+
+**Enforcement:** `pin: packages/knowledge/test/gcl-projection.test.ts` — the re-pointed redaction-gate control asserts slug-validity and credential-shape as separate assertions alongside its outcome.
+
+<a id="197"></a>
+## 197. A CORRECTED CLAIM MUST CARRY ITS PAST FAILURE *AND ITS DIRECTION* — the corrected answer alone tells a reader nothing about which way to distrust it
+
+**Date:** 2026-08-17. **Provenance: contract-implementer, `### 24.84` Step 9, volunteered about their own docblock.** ⭐ **`L153` half 1 (*the failure is the record*) aimed at SOURCE COMMENTS rather than at rulings — and the pair to `L194`.**
+
+⛔ **THE OBSERVATION:** a docblock that had carried a **withdrawn spelling census** was rewritten to state the corrected answer. **The correction was right, and it erased the shape of the error.** ⇒ ⚠ **a reader who trusts the corrected text has no way to know it was wrong once, and — the load-bearing half — NO WAY TO KNOW IN WHICH DIRECTION.**
+
+⭐⭐ **DIRECTION IS THE PART THAT TRANSFERS, AND IT IS WHY "just fix it" IS INSUFFICIENT:** a claim that was once **too NARROW** (a census that missed members) invites *"this list is probably still incomplete"*; a claim once **too BROAD** (a universal falsified by one counter-example) invites *"check whether this still over-claims."* ⛔ **Those are OPPOSITE audits, and the corrected text alone selects neither.** ⇒ ***the residual risk of a corrected claim points the same way the original error did, and only the record preserves that vector.***
+
+⚠ **THIS IS NOT A LICENCE TO KEEP FALSE TEXT.** `L194` governs: prefer making the claim TRUE BY CONSTRUCTION; failing that, demote and keep. **Here the claim is corrected AND the failure noted beside it** — one line, past tense, naming the direction. ⛔ **Never leave the false version stated in the present tense** (`L195`).
+
+⭐ **THE SHAPE THAT WORKS, all three seen in this round:** the corrected claim · the direction it was wrong in · the command or pin that reproduces the check. **`### 24.84`'s own struck renderer clause is the ruling-level instance; this is the docblock-level one.**
+
+**Enforcement:** `accepted: not mechanically enforceable — when correcting a claim in place, add one past-tense line naming what it previously said and WHICH WAY it was wrong (too narrow / too broad). The direction is the transferable part; the corrected answer is not.`
+
+<a id="198"></a>
+## 198. A CHARSET IS NOT A LANGUAGE — and "a well-formedness rule cannot exclude credential shapes" is FALSE as stated
+
+**Date:** 2026-08-17. **Provenance: providers-integrations-implementer, `### 24.93` Step 9 — their `security-reviewer` CONSTRUCTED the counter-example.** ⛔ **The false version was APPROVED AT STEP 2.5 BY BOTH the implementer and the orchestrator; only construction caught it.**
+
+⛔ **THE FALSE CLAIM:** *"a WELL-FORMEDNESS RULE cannot exclude credential shapes."* ⇒ **counter-example: `^(employer-work|personal-business|personal-life)$` IS a well-formedness rule, admits all three workspace ids measured live, and excludes every credential shape.**
+
+⇒ ⭐⭐ ***A CHARSET DOES NOT DETERMINE A LANGUAGE.*** **`[a-z0-9-]+` and a three-member enumeration are both "well-formedness rules" and they have wildly different exclusion power. Reasoning about the CATEGORY ("shape rule") licensed a conclusion that only holds for one MEMBER of it.**
+
+⭐ **WHAT ACTUALLY MAKES THE INTENDED CLAIM TRUE, and it had to be found rather than assumed: the id set is OPEN BY CONSTRUCTION** — the create path admits any non-empty string — **so an enumeration would reject a live id, which is an AVAILABILITY BREAK, not a hardening.** ⇒ **the true ground is a property of THIS system's id lifecycle, not a theorem about shape rules.**
+
+⛔⛔ **AND THE SECOND-ORDER POINT IS THE LESSON'S REAL PAYLOAD: THAT TRUE GROUND HAS AN OWNER, AND COULD ITSELF EXPIRE.** The sibling worker leg closes exactly that open create path. ⇒ ***a claim asserted as "cannot expire" could have expired silently through a sibling slice — a second unwatched expiry inside the fix for the first.*** ⭐ **The remedy shipped is the right one: name the contingency AND THE TASK THAT OWNS IT, rather than claiming unconditionality.**
+
+⚠ **GENERAL FORM: when a claim is about a CATEGORY, find the member of that category that refutes it before shipping the claim.** ⛔ **A universal needs one search that could REFUTE it, not three that confirm it** — and a Step-2.5 approval is not that search, because a reviewer evaluating a plausible category-claim will reason about the same typical member the author did.
+
+**Enforcement:** `accepted: not mechanically enforceable — a claim of the form "an X cannot do Y" requires naming the X that CAN, or restating the claim about the specific instance rather than the category.`
+
+<a id="199"></a>
+## 199. "I VERIFIED IT" FROM A SUBAGENT IS A CLAIM, NOT A MEASUREMENT — and two reviewers disagreeing is the only reason anyone checked
+
+**Date:** 2026-08-17. **Provenance: providers-integrations-implementer, `### 24.93` Step 9.**
+
+⛔ **THE INSTANCE:** `security-reviewer` reported it had **verified** that a brief's option (B) sat at `docs/briefs/286-…:44`. `code-quality-reviewer`, reviewing the same slice, reported `:44` is option **(A)** and (B) is `:45`. **The implementer's own `sed` read settled it: `:44`=(A), `:45`=(B), `:46`=(C)** — and the brief is unmodified, **so it is not line drift; one reviewer was simply wrong while using the word "verified."**
+
+⇒ ⭐⭐ ***A SUBAGENT'S "I VERIFIED X" IS A NATURAL-LANGUAGE ASSERTION THAT X WAS CHECKED. IT IS NOT EVIDENCE THAT X WAS CHECKED, AND IT CARRIES THE SAME CONFIDENCE EITHER WAY.*** ⛔ **`L188`'s class arriving from a new direction: the artifact carrying the premise is now a REVIEW REPORT, and review reports are read as measurements because that is what a review is for.**
+
+⭐ **WHAT CAUGHT IT — and it generalises past reviewers: TWO INSTRUMENTS THAT COULD DISAGREE, AND DID.** ⚠ **A single reviewer's confident wrong citation would have been adopted.** ⇒ **this is the concordance rule inverted: *concordance is evidence only when the methods could have disagreed* — here they DID disagree, and the disagreement is what triggered the only real measurement.**
+
+⛔ **AND THE IMPLEMENTER FOUND THE SAME DEFECT IN THEMSELVES: their own note had cited `:44`** — in a comment block that cites a task about exactly this class. ⚠ **Knowing the class does not immunise you against it** (`L188`'s trap, third recurrence).
+
+**PRACTICE:** ⛔ **re-read any file:line a subagent reports, before it enters a durable artifact.** It is seconds with `sed`, and the failure mode is a confidently wrong pointer in a comment that outlives everyone who could correct it.
+
+**Enforcement:** `accepted: not mechanically enforceable — treat a subagent's cited file:line as UNVERIFIED until re-read locally. Their verdict may be sound while their pointer is wrong; the two are independent.`
+
+<a id="200"></a>
+## 200. A CANCELLED TASK IS TEXTUALLY INDISTINGUISHABLE FROM A REAL FAILURE — "name whose WIP it is" is not sufficient
+
+**Date:** 2026-08-17. **Provenance: providers-integrations-implementer, `### 24.93` Step 9. ⭐ Sharpens `L18x`'s turbo trap from the direction that ACCUSES rather than reassures.**
+
+⛔ **THE INSTANCE:** a full `turbo run test --force` reported `@sow/db:test` and `@sow/integrations:build` as `[ELIFECYCLE]` failures. ⭐ **Both PASS in isolation, forced, `0 cached`.** **They were turbo CANCELLING in-flight tasks when a different package's test failed.**
+
+⇒ ⛔⛔ ***A CANCELLATION ARTIFACT RENDERS AS A FAILURE AND READS AS ONE — and in this instance one of the phantom failures pointed at the implementer's OWN territory.*** ⚠ **The previously-recorded half of this trap is that turbo's TOTALS include cancelled tasks and OVERSTATE coverage. This is the other half: the per-task OUTPUT overstates FAILURE, and it accuses a specific package by name.**
+
+⛔ **WHY THE EXISTING DISCIPLINE IS INSUFFICIENT: "on a shared tree, name whose WIP the red belongs to" assumes the RED IS REAL and only its ownership is in question.** ⇒ **here the red did not exist at all, and the named package was innocent.**
+
+⭐ **THE RULE: on a shared-tree full run, RE-RUN THE ACCUSED PACKAGE IN ISOLATION (forced) BEFORE attributing, filing, or reporting its failure.** **Check `successful == total` for the coverage half, and isolate for the failure half — they are two different defects in the same instrument.**
+
+**Enforcement:** `accepted: not mechanically enforceable — never quote a per-package failure from a multi-package run without an isolated forced re-run of that package. Cancellation and failure are not distinguishable in the output.`
+
+<a id="201"></a>
+## 201. `git show -U0 --` DUPLICATED ITS OWN DIFF — the commit-verification surface inflates, and the same family is already recorded OMITTING
+
+**Date:** 2026-08-17. **Provenance: providers-integrations-implementer, verifying their own landed commit `462d5ad9`.** ⛔ **This is the surface this team verifies commits against.**
+
+⛔ **THE INSTANCE:** `git show <rev> -U0 -- <path>` on a **one-file, one-hunk** commit emitted the diff **TWICE** — `awk '/^diff --git/'` → **2 headers**, `awk '/^@@/'` → **2 hunks** — so every derived count doubled **exactly**: `112 added / 8 removed` against a true `56 / 4`.
+
+⭐⭐ **IT WAS CAUGHT ONLY BECAUSE THE RATIO WAS EXACTLY 2× AND A PRIOR MEASUREMENT CONTRADICTED IT.** ⛔ ***Had the duplication been PARTIAL, or had no earlier count existed, the inflated figure would have been reported — or the commit message "corrected" to match it.***
+
+**Three surfaces agree on the truth and identify the outlier:** `git show --numstat` → `56 4` · `git commit`'s own report → `56 insertions(+), 4 deletions(-)` · pre-commit `git diff -U0` → 60 changed. **`git show -U0 --` is the sole disagreeing surface.**
+
+⛔⛔ **WHY THIS OUTRANKS A COUNTING NUISANCE: `git diff -U0` + a non-comment filter IS the method that proves a change is COMMENT-ONLY, and comment-only proofs have gated lead-authorized crossings.** ⚠ **Handoff `028` records this same tool family as a SUMMARIZING SHIM THAT OMITS whole blocks.** ⇒ ***the shim fails in BOTH directions, so "it under-reports" is not a safe assumption either — there is no safe direction to lean.***
+
+⭐ **THE RULE, AND IT COSTS NOTHING: verify a line COUNT with `--numstat`, never by counting `+`/`-` lines out of a diff BODY.** **`--numstat` was correct and is cheaper. A count derived from a diff body needs a second surface, and `--numstat` IS that surface.**
+
+⛔⛔ **AND THE SHARPER HALF, WHICH NEARLY COST THE FINDING: IT WAS NOT `grep`.** The finder opened the investigation **expecting** grep (4 fabrications that day) — **but `awk` independently reproduced `112/8`, so the duplication was real in the BYTE STREAM.** ⇒ ⭐ ***AN INSTRUMENT CAN REPORT A WRONG NUMBER CORRECTLY, AND BLAMING THE KNOWN-BAD TOOL WOULD HAVE HIDDEN THE ACTUAL DEFECT.*** ⚠ **A known-unreliable instrument in the vicinity is an attractive explanation, and reaching for it closes the investigation at the wrong layer.**
+
+⚠ **OPEN CLUE, offered as a lead and NOT a conclusion: the output's first line carried the commit subject, author and a relative date (`462d5ad9 docs(policy): … (38 seconds ago) <…>`), which is not plain `git show` output.** ⛔ **Something is WRAPPING git in this environment. Unchased — a shared-tooling question, not one slice's.**
+
+⛔⛔⛔ **AMENDED WITHIN MINUTES OF FILING — THE ORCHESTRATOR COULD NOT REPRODUCE IT, AND THAT MAKES THE FINDING WORSE RATHER THAN WEAKER. READ THIS BEFORE CONCLUDING ANYTHING FROM A CLEAN RUN.**
+**Same command, same commit, same path, minutes later:** `headers: 1 · hunks: 1 · added: 56 · removed: 4` — **CLEAN**, and `--numstat` agreed at `56 4`.
+⇒ ⛔⛔ ***THE DEFECT IS INTERMITTENT, AND PER THIS ENVIRONMENT'S STANDING RULE, INTERMITTENCY IS THE FINDING: "a single clean probe proves nothing, and 'I CHECKED, IT'S FINE HERE' IS AN UNSAFE SENTENCE."*** **That rule was recorded for `npx` interception; it now has a second tool family.**
+⛔ **THE NON-REPRODUCTION IS A THIRD DATA POINT FOR NON-DETERMINISM, NOT A REFUTATION.** ⚠ **The finder measured `112/8` under TWO independent tools (`grep` AND `awk`) with a prior contradicting measurement; the orchestrator measured `56/4` once. ⇒ the tool returned DIFFERENT ANSWERS FOR THE SAME INPUT — which is strictly worse than a tool that is reliably wrong, because a reliably wrong tool can be corrected for.**
+⭐ **AND THE PULL TOWARD THE WRONG CONCLUSION IS RECORDED BECAUSE IT WAS FELT: the natural reading of a clean reproduction is *"the report was mistaken."* ⛔ It is not available here** — a deterministic tool cannot produce `112/8` once and `56/4` once. **Whichever run is anomalous, the TOOL is non-deterministic, and that is the property that matters.**
+⇒ ⭐ **THE ENFORCEMENT BELOW IS UNCHANGED AND NOW BINDS HARDER: `--numstat` agreed with truth in BOTH runs.** **It is the stable surface; the diff BODY is the unstable one.**
+⭐⭐ **CHARACTERISED FURTHER, AND THE SHAPE HAS A CONSEQUENCE NOBODY HAD: FOUR CONSECUTIVE CLEAN PROBES in the orchestrator's session against a DUPLICATED read in the implementer's — reproduced there under two tools.** ⇒ **this looks SESSION- or CONTEXT-SCOPED rather than randomly per-call**, matching the `npx`-interception shape already recorded (*intermittently intercepted ACROSS TOOLS*).
+⇒ ⛔⛔ ***THE CONSEQUENCE: A COMMENT-ONLY PROOF CANNOT BE VALIDATED BY A DIFFERENT AGENT RE-RUNNING IT IN A DIFFERENT SESSION.*** **The orchestrator's clean re-run does not certify the implementer's diff-body count, and the implementer's inflated count does not indict the orchestrator's.** ⚠ **Cross-session "I re-ran it and it's fine" is NOT corroboration for this instrument — it is two measurements of two different environments** (`L193`'s shape, arriving through the TOOL rather than the artifact). ⭐ **`--numstat` is the only surface that agreed across BOTH sessions, which is precisely why it is the enforcement.**
+
+⛔⛔⛔ **EXTENDED 2026-08-18 — THE WRAPPED-TOOL CLASS IS NOT ONLY `git`. `diff` REPORTED *"Files are identical"* FOR A PROVABLY-DIFFERENT PAIR, ONCE, NON-REPRODUCING.** *(main-orchestrator #2, on its own plan-lint gate.)*
+**The pair differed visibly** (four `warn L143/L123/L177/L191` lines against `L146/L126/L180/L194`), **`cmp` reported `differ: char 9, line 1`, and the two sha256s disagreed.** ⛔ **`diff` printed `[ok] Files are identical`.** ⭐ **FIVE consecutive re-runs on the same pair were all CORRECT (`exit=1`, `1,4c1,4`), and a fresh two-file control behaved perfectly in both directions.**
+⇒ ⭐⭐ ***SAME SIGNATURE AS THE `git show -U0` DUPLICATION — INTERMITTENT, NON-REPRODUCING, AND FAILING IN THE REASSURING DIRECTION — BUT IN A DIFFERENT TOOL.*** ⛔ **This EXTENDS the wrapper hypothesis rather than merely confirming it: the hypothesis predicted further anomalies, and the first one found afterwards was NOT in `git`.**
+⚠ **DISCIPLINE APPLIED BEFORE ATTRIBUTING (`L202`, one entry down and written minutes earlier): the discriminating tests were run FIRST** — a control pair that genuinely differs (diff correct), an identical pair (diff correct), five repeats on the failing pair (all correct), plus `cmp` and `shasum` as independent surfaces. ⛔ **Only after all of those did this get recorded. The benign explanations were eliminated, not assumed away.**
+⭐⭐ **AND THE SELF-AUDIT THAT MATTERS, BECAUSE THIS TOOL WAS LOAD-BEARING FOR ~20 GATE CHECKS IN ONE SESSION: the `plan-lint` before/after gate did NOT rest on `diff`.** **The primary signal was read directly every time — `plan-lint`'s own exit code plus its `0 violation(s)` line** — and `diff` was a SECONDARY convenience comparing the warning set. ⇒ **the gate holds; the decoration was unreliable.** ⚠ **Stated explicitly because an auditor reading that session would see ~20 `diff`-based *"IDENTICAL to baseline"* claims and might reasonably trust them — they were never the gate, and that was luck of habit rather than design.**
+⛔ **RULE: a comparison tool's *"no differences"* is a REASSURING output, and reassuring outputs from wrapped tools need a second surface. `cmp` + `shasum` are cheap and disagreed correctly here.**
+
+**Enforcement:** `pattern: a line count quoted from a commit MUST come from 'git show --numstat' or 'git commit's own summary — never from counting +/- lines in a diff body. A comment-only proof needs BOTH the non-comment filter AND a --numstat total.`
+
+<a id="202"></a>
+## 202. A LIVE HYPOTHESIS MAKES EVERY ANOMALY LOOK LIKE CONFIRMATION — test the next one AGAINST it, not into it
+
+**Date:** 2026-08-18. **Provenance: main-orchestrator #2, on itself, minutes after the lead banked *"`git` is wrapped in this environment"* as a unifying hypothesis explicitly framed as PREDICTING further anomalies.**
+
+⛔ **THE NEAR-MISS:** a close-out enumeration showed `git diff --name-only` listing a **previous round's** session doc as modified. `git diff` on that path returned **EMPTY**. ⇒ **an instrument reporting a modification that does not exist — and `029` already records the INVERSE (`--name-only` returning 0 on a demonstrably modified file).** ⭐ **Same instrument, both directions, one day apart. It fit the reigning hypothesis perfectly.**
+
+⛔⛔ **IT WAS BENIGN.** Two discriminating checks, ~30 seconds: **(1)** re-running `--name-only` after the earlier `git diff` had refreshed the stat cache — **the path was GONE**; **(2)** content compared to `HEAD` — **byte-identical, sha `fe4cca51…` both sides.** ⇒ ***something touched the file's MTIME without changing its content; git's stat cache flagged it and the next content comparison cleared it. Ordinary git behaviour, correctly performed.***
+
+⇒ ⭐⭐ ***HAD IT BEEN REPORTED, IT WOULD HAVE BEEN A FALSE DATA POINT INSIDE A TRUE HYPOTHESIS — the worst kind, because it STRENGTHENS a claim that is already believed and is indistinguishable from the real evidence beside it.***
+
+⛔ **WHY THIS IS THE HARD DIRECTION: the round's other discipline is aimed at claims we DOUBT. A live, freshly-validated hypothesis generates no doubt** — it generates recognition, and recognition feels like measurement. ⚠ **The pull was real and is recorded because of it: the anomaly was the right SHAPE, in the right TOOL, on the right DAY.**
+
+⭐ **THE RULE: when a unifying hypothesis is live, the NEXT anomaly gets a DISCRIMINATING test before it gets attributed — one whose outcome differs depending on whether the hypothesis explains it.** ⛔ **"It fits" is not a test; every instance of the class fits, and so do the benign ones.**
+
+⚠ **AND THE HYPOTHESIS IS NOT WEAKENED BY THIS — that inference would be the same error mirrored.** The wrapper evidence (`--porcelain` returning `ok`, `show -U0` duplicating under two tools, the subject+author+relative-date first line) stands on its own measurements. ⭐ **What this establishes is that its PREDICTIVE POWER makes false positives cheaper to accept, so the bar for adding to it must go UP as it gets stronger, not down.**
+
+**Enforcement:** `accepted: not mechanically enforceable — before attributing an anomaly to a live hypothesis, state the check whose result would DIFFER if the hypothesis did not explain it, and run that check. For a git stat anomaly the cheap pair is: re-run after a content comparison has refreshed the cache, and compare the blob to HEAD.`
+
+<a id="203"></a>
+## 203. THE NUMBERED-DOC CONVENTION ASSUMES SERIALIZED CLOSE-OUTS — parallel close-out collides BY CONSTRUCTION, and the rule that would prevent it is scoped to the wrong mode
+
+**Date:** 2026-08-18. **Provenance: main-orchestrator #2, at an owner-called round close-out. ⛔ Nobody did anything wrong — three implementers each followed the documented procedure exactly and all three produced the same number.**
+
+⛔ **THE MECHANISM:** the convention says compute the next `NNN` by listing the directory and taking `max + 1`. **Three implementers were told to `/session-end` concurrently.** Knowledge's `175` landed while all three were reading `docs/sessions/`, so **`max + 1` returned `176` for every one of them.** ⇒ **three session docs claiming one sequence number.**
+
+⚠ **NOT a git conflict — the filenames differ by topic, so all three would commit cleanly.** ⛔ **It is a STABLE-ID violation: "numbers are stable IDs, never reused, never reordered" is broken silently, and predecessor/successor links become ambiguous — three docs can each claim `175` as predecessor and nothing detects it.**
+
+⇒ ⭐⭐ ***A `max+1` COUNTER IS A READ-MODIFY-WRITE WITH NO LOCK. IT IS CORRECT ONLY UNDER SERIALIZED WRITERS, AND NOTHING IN THE CONVENTION SAYS SO.*** **The assumption is invisible because close-outs had always been sequential.**
+
+⛔⛔ **AND THE RULE THAT WOULD PREVENT IT IS SCOPED TO THE WRONG MODE.** The track-prefix convention (`<track>-NNN-…`, next `NNN` computed *within* the prefix) exists precisely to stop numbered-doc collisions — **but it is scoped to MULTI-TRACK builds, on the reasoning that parallel worktrees are what collide.** ⇒ ⭐ ***the actual collision condition is CONCURRENT WRITERS, not separate worktrees — and single-track team mode has concurrent writers while being explicitly exempted from the fix.*** ⚠ **The exemption is stated as a mode, and the hazard is a property of concurrency; those are not the same predicate.**
+
+⭐ **REMEDY APPLIED THIS ROUND (assignment, not prevention): the orchestrator assigned numbers deterministically by the round's LANDING ORDER** — a rule that is meaningful, reproducible from the git log, and does not depend on who read the directory first. ⛔ **Prevention belongs in the convention: either the orchestrator allocates numbers at close-out dispatch, or the per-directory counter is prefixed whenever more than one writer can be live — which is a property of the TEAM, not of the worktree layout.**
+
+⛔⛔⛔ **AND THE REMEDY REPRODUCED THE DEFECT — RECORDED THE SAME HOUR, AGAINST THE ORCHESTRATOR, BECAUSE IT IS THE MOST USEFUL PART OF THIS ENTRY.**
+**The fix applied was *assignment by landing order*, sent as a CORRECTION after the three `/session-end`s were already running.** ⇒ ⛔ **the allocation RACED the very collision it was fixing:** one implementer had already computed a number, seen two `176`s, sensibly taken the next free `178`, **and COMMITTED it (`9b838321`) before the assignment arrived.** ⇒ **the assignment then conflicted with committed history, and a second correction was needed — which is churn the first correction was supposed to end.**
+⭐⭐ **THE RESOLUTION IS THE RULE, AND IT OUTRANKS THE TIE-BREAK: a COMMITTED number is a STABLE ID and must not be renumbered — *never reused, never reordered* — so the ASSIGNMENT adapts to the committed reality, never the reverse.** **Final state took the committed `178` as fixed and re-fitted the rest around it, abandoning the landing-order rationale, which was an orchestrator tie-break and not a project convention.**
+⇒ ⭐ ***A CORRECTION ISSUED INTO A RUNNING CONCURRENT OPERATION IS ITSELF A CONCURRENT WRITE.***
+⛔⛔ **AND IT HAPPENED A SECOND TIME, WORSE, WITH THE SHARPER MECHANISM — TOCTOU: THE CORRECTION WAS COMPUTED FROM A READ THAT WENT STALE DURING COMPOSITION.** The orchestrator read the tree (worker at `178`, committed), concluded *"a committed number is a stable ID, so worker keeps `178`"*, and sent it — ⛔ **but worker had ALREADY renamed `178 → 176` on the first assignment, in the window between the read and the send.** ⇒ **the second correction contradicted the first, contradicted reality, and would have made CONTRACT collide with worker had they acted on it.** ⚠ **A stand-down had to be issued to cancel it.**
+⇒ ⭐⭐ ***THE ORIGINAL ASSIGNMENT WAS RIGHT ALL ALONG. BOTH "CORRECTIONS" WERE THE ERRORS, AND EACH WAS CAUSED BY MEASURING A MOVING TARGET AND THEN SPENDING TIME COMPOSING BEFORE ACTING ON THE MEASUREMENT.***
+⭐ **THE RULE THAT ENDED IT, AND IT IS THE TRANSFERABLE ONE: DERIVE A CORRECTION FROM *COMMITTED HISTORY*, NEVER FROM WORKING-TREE STATE.** **Committed history is immutable and cannot be raced; a working tree under N concurrent agents changes between the read and the send.** ⛔ **Say so IN the correction — *"derived from committed history so it cannot be raced"* — because the recipients' next question is whether another correction is coming, and that question is what makes them wait or act wrongly.** ⛔ **This is why the enforcement below says IN THE DISPATCH and not "as soon as you notice" — by the time a collision is visible, the participants have already acted on the value they read, and a later instruction races their commits.** ⚠ **Nobody did anything wrong at any point; the convention had an unstated concurrency assumption and so did the first attempt to patch it.**
+
+**Enforcement:** `accepted: not mechanically enforceable — when dispatching more than one /session-end at once, ALLOCATE the numbers in the dispatch message. A max+1 counter read concurrently returns the same value to every reader.`
