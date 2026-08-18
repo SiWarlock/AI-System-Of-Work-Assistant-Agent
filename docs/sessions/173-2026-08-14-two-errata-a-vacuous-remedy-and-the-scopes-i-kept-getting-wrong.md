@@ -1,6 +1,6 @@
 # Session 173 — worker: two errata, a vacuous remedy, and the scopes I kept getting wrong
 
-**Date:** 2026-08-14 · **Track:** `main` · **Role:** worker-implementer · **Predecessor:** `169` · **Successor:** _(none yet)_
+**Date:** 2026-08-14 · **Track:** `main` · **Role:** worker-implementer · **Predecessor:** `169` · **Successor:** `178-2026-08-18-two-slices-with-zero-production-delta-and-a-mutation-that-never-applied.md`
 
 ⚠ **Chains run PER-AREA. `170`/`171`/`172` are `packages/knowledge` docs and are NOT in this chain** — verified from their headers before writing the predecessor link, not inferred from the numbering.
 
