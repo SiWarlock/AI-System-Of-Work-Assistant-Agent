@@ -4460,6 +4460,12 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ⚠ **Kin `L190`** (token vs behaviour — the number was never wrong) and **`L215`** (a claim you have no doubt about). ⭐ **Filed at the finder's own suggestion, who preferred it over any of their slice's technical results.**
 
+⛔⛔ **SIXTH INSTANCE, AND THE SUBTLEST — SELF-REPORTED BY THE LEAD, INSIDE THE RULING THAT SPECIFIED A CONTROL.** **Ruling the guard's shape, they NOTICED the tension — *a filler that preserves the userinfo span must be ADMITTED by `[^/\s@]+`, which is exactly what "in no pattern's alphabet" forbids* — and TALKED THEMSELVES OUT OF IT, because the implementer had measured MONOTONICITY at 0 newly-admitted values.**
+
+⇒ ⭐⭐ ***THEY LET A MEASUREMENT OF ONE QUANTITY ANSWER A QUESTION ABOUT A DIFFERENT ONE.*** **The monotonicity result was true; the doubt was about span-preservation versus alphabet-exclusion. Both correct, unrelated — and the first was treated as settling the second.** ⛔ **The spec that shipped was SELF-CONTRADICTORY and could not be built; every candidate failed it, including ones already proven correct.**
+
+⚠ **WHY THIS ONE IS WORSE THAN THE FIGURE CASE: THE MISMATCHED PAIR WAS A MEASUREMENT AND A *DOUBT*, NOT TWO MEASUREMENTS.** ⇒ ***a live measurement can discharge an unrelated worry simply by being nearby and being solid*** — and the worry leaves no trace when it goes, so nothing downstream records that a question was closed by an answer to a different question. ⭐ **It was caught only because the implementer PROTOTYPED the spec instead of agreeing with it.**
+
 **Enforcement:** `pattern: a correction to another artifact's figure re-states the METRIC DEFINITION both sides used, and re-runs the target's` · `accepted: partially enforceable`.
 
 ## <a id="222"></a>222. SPLIT A COMPOUND CLAIM AND MEASURE THE HALVES SEPARATELY — measured as a unit it returns "partly true" and gets treated as support
