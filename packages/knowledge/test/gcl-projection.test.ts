@@ -3,11 +3,15 @@
 // concrete driver); a raw / over-visibility candidate is HARD-rejected and NEVER
 // upserted; a tampered stored row is re-gated on serve (defense in depth).
 import { describe, it, expect } from "vitest";
-import { ok, err, defaultWorkspace } from "@sow/contracts";
+import { ok, err, defaultWorkspace, buildSchemaRegistry, GCL_PROJECTION_SCHEMA_ID } from "@sow/contracts";
 import type { GclProjection, Workspace } from "@sow/contracts";
 import type { DbError, DbResult } from "@sow/db";
 import type { ProjectionTypeVisibilityTaxonomy, AuditSignal } from "@sow/policy";
 import { buildAuditSignal, isRedactionSafe } from "@sow/policy";
+// The CANONICAL string-form redaction predicate (`packages/domain/src/redaction/redact.ts`).
+// Aliased: `@sow/policy`'s signal-form above shares the name. Both delegate to the SAME
+// `redaction-rules.ts` `looksUnsafe`, so using it here adds no second home for the predicate.
+import { isRedactionSafe as isValueRedactionSafe } from "@sow/domain";
 import {
   admitAndPersistProjection,
   serveProjection,
@@ -187,9 +191,18 @@ describe("admitAndPersistProjection", () => {
 // permanently). This block used to read: "Every real GCL-produced AuditSignal is safe by
 // construction (policy-authored refs/codes only), so the refusal case is pinned directly against a
 // hand-built unsafe signal … for cases the real chain can't produce." ⛔ THAT IS FALSE, and THIS
-// FILE NOW DISPROVES IT: `serve_projection_denial_routes_through_the_redaction_gate` below drives an
-// unsafe signal through the REAL chain, because `visibility.ts`'s `ref:workspace:` interpolates the
-// raw workspace id whenever the candidate matches it, and nothing constrains that id's shape.
+// FILE NOW DISPROVES IT: the redaction-gate test below drives an unsafe signal through the REAL
+// chain, because `visibility.ts`'s `ref:workspace:` interpolates the raw workspace id whenever the
+// candidate matches it.
+// ⛔ THE FACT SURVIVES; ITS REASON EXPIRED, AND A TRUE FACT WITH A DEAD REASON IS WORSE THAN A FALSE
+// ONE BECAUSE NOBODY RE-CHECKS IT. This clause used to end "…and nothing constrains that id's
+// shape." `### 24.84` constrains it: the id is now a bounded lowercase slug.
+// ⭐ THE REAL CHAIN STILL PRODUCES AN UNSAFE SIGNAL FOR A DIFFERENT AND BETTER-EVIDENCED REASON —
+// `zod-brands.ts` says so itself: *"WHAT THIS IS NOT: a credential detector. Lowercase
+// credential-shaped strings ACCEPT (`sk-ant-api03-abc123def456`, …)"*. A slug-valid id can still be
+// credential-shaped, so it passes the brand and reaches the gate. ⇒ THE TWO CONTROLS ARE
+// COMPLEMENTARY PRECISELY BECAUSE THE BRAND IS A WELL-FORMEDNESS RULE AND NOT A CREDENTIAL DETECTOR;
+// the brand's documented limitation is what preserves the redaction gate's reachability.
 // ⇒ The hand-built signals below are a UNIT-LEVEL convenience for enumerating gate behaviour, NOT
 // evidence that the real chain cannot produce one. Do not read them as a reason to skip a
 // real-chain pin for a new GCL audit path.
@@ -230,6 +243,79 @@ describe("persistDenialAudit — the fail-closed redaction-safety gate before an
     await expect(persistDenialAudit(safeSignal, "ws-001", undefined)).resolves.toBeUndefined();
   });
 });
+
+// ── `### 24.84` fixture leg — a NAMED bypass for a credential-shaped workspace id ─────────────
+//
+// ⛔ THIS IS A DELIBERATE VALIDATOR BYPASS, AND IT IS A NAMED FUNCTION RATHER THAN AN `as` CAST ON
+// PURPOSE. `contracts L179` / `### 24.87` measured that `as X` casts are INVISIBLE to compiler enumeration —
+// a cast is anonymous, so a later sweep asking "where do we bypass the brand?" structurally cannot
+// find it. A NAME is greppable and declares intent at every call site, not only where a comment
+// happens to sit.
+//
+// ⛔ THE POPULATION THIS MODELS — READ THIS BEFORE DELETING THE HELPER AS AN OBSTACLE TO A CLEAN
+// BRAND. `### 24.84`'s tightened `WorkspaceIdSchema` is a WRITE-boundary control and it is
+// PROSPECTIVE: it makes a malformed id unrepresentable from the moment it ships. It does NOT reach
+// a row ALREADY IN A USER'S DB — a workspace written BEFORE the validator existed. That
+// pre-validator population is what the WRITE gate cannot reach.
+// ⛔ WHAT HAPPENS TO IT POST-`24.84`, MEASURED, NOT ASSUMED — and this replaces an earlier claim of
+// mine that the READ gate must still REDACT that population. It does not: the row is refused one
+// stage EARLIER, at ajv, as `schema_rejected`. ⭐ `### 24.98` (`124e3f45`) makes that refusal
+// RECORDED rather than silent, and the record carries structural paths only, so the credential-shaped
+// id never reaches an audit surface at all. ⇒ THE COVERAGE DID NOT EVAPORATE, IT MOVED — from
+// "the gate refuses an unsafe signal" to "no unsafe signal is ever constructed."
+// ⇒ ⛔ THE CLAIM SPLITS, AND CONFLATING THE TWO HALVES IS WHAT MADE THE OLD SENTENCE WRONG:
+//   • the PRE-VALIDATOR POPULATION is carried by `pre_validator_row_is_refused_recorded_and_credential_free`;
+//   • the REDACTION-GATE REACHABILITY is carried by
+//     `serve_projection_denial_routes_through_the_redaction_gate`, whose fixture MOVED to a
+//     slug-valid credential-shaped id for exactly the reason above.
+// ⇒ ⭐ THE WRITE GATE AND THE READ GATE ARE GENUINELY DIFFERENT CONTROLS AND MUST NOT BE COLLAPSED —
+// the principle survives; only its factual half was wrong.
+// ⚠ AND THE CARRIER IS PINNED, NOT CLOSED BY CONSTRUCTION. I assumed it was closed; my own
+// measurement falsified that (`### 24.55`'s obligation therefore still has a live control).
+// ⛔ ONE CALLER IS SUFFICIENT JUSTIFICATION, AND THE NARROWING IS A FINDING RATHER THAN DECAY. This
+// helper once looked like "what keeps the rule-7 test alive across the landing." It is not: the
+// redaction-gate test needs NO bypass, because its fixture is now a slug-valid credential-shaped id
+// that the brand admits. The helper's sole caller is the PRE-VALIDATOR-ROW test — which is exactly
+// what its name and this docblock always claimed it was for. ⚠ THE RISK MOVED THE WRONG WAY: at one
+// caller a reader is MORE likely to read this as over-engineered and delete it, and that deletion
+// would be GREEN. The narrower reason is the TRUE one.
+// ⚠ SUBSTITUTING A VALID SLUG HERE TURNS THE SUITE GREEN WHILE DELETING THE RULE-7 COVERAGE
+// (`contracts L82`'s completion badge, on a rule-7 surface). The guard inside the constructor and the
+// `the_fixture_stays_hostile_and_its_bypass_resists_substitution` test exist to make that
+// substitution RED.
+// (B)'s fixture — a PRE-VALIDATOR row: credential-shaped AND not slug-valid, so it is exactly what
+// `### 24.84` makes unconstructible and what the named bypass exists to model.
+const CREDENTIAL_SHAPED_WS_ID = "https://u:hunter2@evil.example";
+// ⭐ (A)'s fixture — SLUG-VALID *and* credential-shaped, taken verbatim from `zod-brands.ts`'s own
+// docblock, which states: "WHAT THIS IS NOT: a credential detector. Lowercase credential-shaped
+// strings ACCEPT (`sk-ant-api03-abc123def456`, …)". It passes the tightened brand, reaches the
+// visibility stage, renders RAW into `ref:workspace:` on the equality branch, and `isRedactionSafe`
+// refuses it — measured. ⛔ NO BYPASS NEEDED: the brand admits it, which is the whole point.
+const SLUG_VALID_CREDENTIAL_WS_ID = "sk-ant-api03-abc123def456";
+
+function unsafeWorkspaceIdForTest(raw: string): Workspace["id"] {
+  // ⛔ AN ALPHABET PRECONDITION — ⚠ AND IT IS *NOT* A HOSTILITY CHECK. Naming it one was the defect
+  // security review caught: this predicate answers "would the brand reject this?", NOT "is this
+  // credential-shaped?" `"ws.acme"` and `"Ws Acme"` satisfy it and are entirely benign. The value's
+  // actual hostility is pinned separately, over the canonical redaction predicate, in
+  // `the_fixture_stays_hostile_and_its_bypass_resists_substitution` below.
+  // ⛔ DELIBERATELY NOT A MIRROR OF THE BRAND'S REGEX. Re-stating
+  // `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` here would copy a safety predicate into a second home (which
+  // this codebase forbids — a safety predicate lives once) and would go stale the moment contract
+  // tunes the pattern, for no safety benefit. What is asserted instead is the WEAKER, DURABLE
+  // property this fixture actually depends on: the value carries at least one character OUTSIDE
+  // `[a-z0-9-]`. That is implied by the brand's ALPHABET rather than by its exact shape, so it holds
+  // under ANY id rule drawn from that alphabet — and, load-bearing for landing order, it is
+  // checkable TODAY, against the CURRENT loose brand, before the tightened one exists.
+  if (!/[^a-z0-9-]/u.test(raw)) {
+    throw new Error(
+      "unsafeWorkspaceIdForTest: refusing a benign value — this constructor exists ONLY to model a " +
+        "pre-validator row, and a value drawn entirely from [a-z0-9-] does not need it. Build a " +
+        "well-formed id through the schema instead of bypassing it.",
+    );
+  }
+  return raw as Workspace["id"];
+}
 
 describe("serveProjection — re-gate a stored row before it crosses a workspace boundary", () => {
   it("serves a clean stored row unchanged", async () => {
@@ -385,25 +471,41 @@ describe("serveProjection — re-gate a stored row before it crosses a workspace
   // expression evaluate to the same string — and this is the exceeds-source path, one of the three
   // 24.45's own comment names as "byte-identical to before." Verified by running the suite against
   // both producer states, not by reading.
-  // ⭐ THE FIXTURE IS A SCHEMA-VALID WORKSPACE, which is load-bearing: it is built through
+  // ⭐ THE FIXTURE'S BASE IS A SCHEMA-VALID WORKSPACE, which is load-bearing: `schemaValidBase` is built through
   // `defaultWorkspace`, which itself calls `WorkspaceSchema.parse` and propagates `id` into BOTH
   // `egressPolicy.workspaceId` and `providerMatrix.workspaceId` — so it cannot return a
   // referentially-inconsistent aggregate, and a construction that violated the schema would THROW
-  // here. ⛔ An earlier draft hand-built the workspace with `as`-casts and a bogus `defaultVisibility`;
+  // here. ⚠ RETARGETED (`### 24.84` fixture leg): the aggregate handed to `serveProjection` is
+  // `schemaValidBase` with EXACTLY the three id fields rewired through the named bypass, so it is
+  // deliberately out-of-shape in one property and parse-validated in every other. The claim above is
+  // about the BASE; it is no longer true of `workspace` itself, and saying so is the point.
+  // ⛔ An earlier draft hand-built the workspace with `as`-casts and a bogus `defaultVisibility`;
   // that state is one `WorkspaceSchema` forbids, and a reader checking whether the state this test's
   // conclusions rest on is representable would have found it is not — reopening the very deletion
   // the note at `src/gcl/projection.ts` exists to prevent (security review).
-  // ⚠ REPRESENTABLE, and only that: `WorkspaceIdSchema` (`zod-brands.ts:30-35`) is `.min(1)` + a
-  // non-blank refine, so it admits a credential-shaped id. No enumeration of workspace-id PRODUCERS
-  // was run, so this does not claim such an id is reachable in production.
-  it("serve_projection_denial_routes_through_the_redaction_gate: a re-gate denial whose AuditSignal is unsafe (URL-userinfo-credential-shaped workspace ref) persists zero times via the real chain, not via persistDenialAudit's own isolated unit test", async () => {
+  // ⚠ REPRESENTABLE, and only that. The LOOSE brand admitted a credential-shaped id directly
+  // (`.min(1)` + a non-blank refine); `### 24.84`'s tightened brand does not — which is precisely why
+  // the named bypass above exists. Cited by SYMBOL — `zod-brands.ts`'s `WorkspaceIdSchema` — not by
+  // line, because those line numbers differ between HEAD and the working tree while `24.84` is in
+  // flight. No enumeration of workspace-id PRODUCERS was run, so this does not claim such an id is
+  // reachable in production.
+  // ⛔ NAME MOVED WITH THE FIXTURE (`L188`/`L191`). It read "…(URL-userinfo-credential-shaped workspace
+  // ref)…", which describes a fixture this test no longer uses. A test's NAME is one of the artifacts
+  // that carries a premise, and it is the one a Step-2.5 reviewer actually evaluates — leaving it
+  // would have been a fresh instance of the defect this round banked.
+  it("serve_projection_denial_routes_through_the_redaction_gate: a re-gate denial whose AuditSignal is unsafe (SLUG-VALID but credential-shaped workspace ref, admitted by the brand) persists zero times via the real chain, not via persistDenialAudit's own isolated unit test", async () => {
     const auditPersist = new FakeAuditPersistPort();
-    const CREDENTIAL_SHAPED_WS_ID = "https://u:hunter2@evil.example";
     // The workspace names itself with the credential-shaped id and the candidate matches it, so the
     // referential pin PASSES and the raw id is interpolated into refs. Denial then comes from the
     // ceiling: the candidate's "coordination" exceeds this workspace's "isolated" default.
+    // ⭐ NO BYPASS HERE, DELIBERATELY, AND THE ABSENCE IS THE FINDING: this id is SLUG-VALID, so the
+    // tightened brand ADMITS it and `defaultWorkspace` builds it directly. The reachability of the
+    // redaction gate does not depend on constructing an out-of-shape id at all — it depends on the
+    // brand being a well-formedness rule rather than a credential detector, which `zod-brands.ts`
+    // states about itself. ⇒ STATE-INDEPENDENT BY CONSTRUCTION: identical behaviour under the loose
+    // and tightened brands, so this pin does not flip when contract lands.
     const workspace = defaultWorkspace({
-      id: CREDENTIAL_SHAPED_WS_ID,
+      id: SLUG_VALID_CREDENTIAL_WS_ID,
       name: "Acme",
       type: "personal_business",
       markdownRepoPath: "/vault/acme",
@@ -412,7 +514,7 @@ describe("serveProjection — re-gate a stored row before it crosses a workspace
     });
     const candidate = {
       ...validCandidate,
-      workspaceId: CREDENTIAL_SHAPED_WS_ID as GclProjection["workspaceId"],
+      workspaceId: SLUG_VALID_CREDENTIAL_WS_ID as GclProjection["workspaceId"],
     };
     const r = await serveProjection(candidate, workspace, undefined, undefined, auditPersist);
     expect(r.ok).toBe(false);
@@ -434,6 +536,119 @@ describe("serveProjection — re-gate a stored row before it crosses a workspace
     // signals as a reason to skip a real-chain pin, and a new suite of only hand-built ones would
     // have done exactly that. The refusal notice fires on the path a real denial actually takes.
     expect(auditPersist.refusals).toHaveLength(1);
+  });
+
+  // ⛔⛔ (B) — THE PRE-VALIDATOR POPULATION, WHICH THE TEST ABOVE NO LONGER CARRIES. Splitting these
+  // is the correction: one sentence used to claim the redaction-gate test covered both, and after the
+  // fixture moved it covered neither half of that claim honestly.
+  // ⭐ STATE-INDEPENDENT BY CONSTRUCTION, the `### 24.98` discipline: the ajv schema is supplied as an
+  // INPUT (a tightened stand-in carrying `24.84`'s pattern), so this pin asserts the POST-landing end
+  // state deterministically — at HEAD, where the real schema has no pattern, and after contract lands,
+  // where it does. ⚠ Without that, this test would assert one thing today and another tomorrow, which
+  // is the red window the whole landing-order arc exists to avoid.
+  it("pre_validator_row_is_refused_recorded_and_credential_free", async () => {
+    const auditPersist = new FakeAuditPersistPort();
+    const tightenedAjv = buildSchemaRegistry([
+      {
+        $id: GCL_PROJECTION_SCHEMA_ID,
+        type: "object",
+        properties: {
+          workspaceId: { type: "string", pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$", maxLength: 64 },
+        },
+      },
+    ]);
+    // ⛔ THE BYPASS'S SOLE REMAINING CALLER, and its docblock's population verbatim: a row written
+    // BEFORE the validator existed. The three id fields are rewired together — `defaultWorkspace`
+    // propagates `id` into `egressPolicy` and `providerMatrix`, and rewiring only `id` would break
+    // the referential pin while the test kept passing.
+    const base = defaultWorkspace({
+      id: "ws-acme",
+      name: "Acme",
+      type: "personal_business",
+      markdownRepoPath: "/vault/acme",
+      gbrainBrainId: "brain-acme",
+      defaultVisibility: "isolated",
+    });
+    const legacyId = unsafeWorkspaceIdForTest(CREDENTIAL_SHAPED_WS_ID);
+    const workspace: Workspace = {
+      ...base,
+      id: legacyId,
+      egressPolicy: { ...base.egressPolicy, workspaceId: legacyId },
+      providerMatrix: { ...base.providerMatrix, workspaceId: legacyId },
+    };
+    const candidate = { ...validCandidate, workspaceId: legacyId };
+    const r = await serveProjection(candidate, workspace, tightenedAjv, undefined, auditPersist);
+
+    // 1 — STILL REFUSED, and asserted by CODE not by bare falsity (`### 24.101`). The row does not
+    //     become readable; `### 24.84` shipping as built is the owner-ruled end state.
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe("schema_rejected");
+
+    // 2 — NO LONGER SILENT. This is the owner-accepted cost `### 24.98` (`124e3f45`) closed: before
+    //     it, `auditOf` returned undefined for `schema_rejected` and `persistDenialAudit` returned at
+    //     its guard, so the refusal left no trace at all.
+    expect(auditPersist.calls).toHaveLength(1);
+    expect(auditPersist.refusals).toHaveLength(0);
+
+    // 3 — ⛔ AND THE RECORD IS CREDENTIAL-FREE. The coverage did not evaporate when the row stopped
+    //     reaching the redaction gate; it MOVED — from "the gate refuses an unsafe signal" to "no
+    //     unsafe signal is ever constructed." `refs` carries the structural path only.
+    const persisted = auditPersist.calls[0]!.signal;
+    expect(isRedactionSafe(persisted)).toBe(true);
+    for (const ref of persisted.refs) expect(ref).not.toContain("hunter2");
+    expect(persisted.refs).toEqual(["ref:gcl-issue-path:/workspaceId"]);
+  });
+
+  // ⛔⛔ THE PIN THAT MAKES THE DANGEROUS FIX RED. When `### 24.84`'s tightened `WorkspaceIdSchema`
+  // lands, the obvious repair for a red here is to swap the fixture for a well-formed slug: the file
+  // keeps its name, the test above keeps passing, and it SILENTLY STOPS TESTING that a
+  // credential-shaped workspace id is redacted on the read path. That is `contracts L82`'s completion
+  // badge on a rule-7 surface, and it is the path of least resistance.
+  // ⚠ A TEST THAT MERELY PASSES IS EXACTLY WHAT THE DANGEROUS FIX ALSO PRODUCES.
+  // ⛔ SCOPE OF THIS TEST, CORRECTED — the earlier wording here claimed it was "the only assertion in
+  // the file that can tell the two apart," which is FALSE and was actively dangerous (security
+  // review): the comment ~20 lines above already records that the premise dying reds the redaction
+  // test WITHOUT that line. Two discriminators exist and they cover DIFFERENT classes:
+  //   • THIS test reds the VALID-SLUG substitution at its own line (the constructor throws, and
+  //     assertions 1 + 4 fail) — a named, local, immediate failure.
+  //   • `isRedactionSafe(r.error.audit)` in the redaction test above is the co-discriminator for the
+  //     BENIGN-BUT-OUT-OF-ALPHABET class (`"ws.acme"`), where a sanitized signal becomes
+  //     redaction-SAFE, gets persisted, and reds the `toHaveLength(0)` below it.
+  // ⚠ THAT LINE IS NOT DELETABLE AS A MERE DIAGNOSTIC CONVENIENCE, whatever its own comment says
+  // about not being a non-vacuity guard — it is the only cover for a class this test does not reach.
+  it("the_fixture_stays_hostile_and_its_bypass_resists_substitution", () => {
+    // 1 — the fixture value itself is out-of-alphabet, so it is rejected by ANY id rule drawn from
+    //     `[a-z0-9-]`. Stated over the alphabet, not over contract's exact regex, so this does not
+    //     go stale when the pattern is tuned and does not copy a safety predicate into a second home.
+    expect(CREDENTIAL_SHAPED_WS_ID).toMatch(/[^a-z0-9-]/u);
+    // 2 — the bypass REFUSES benign values, so it cannot be quietly repurposed as a general-purpose
+    //     id constructor. A bypass that also accepts well-formed ids gets reached for out of
+    //     convenience and its name stops meaning anything.
+    expect(() => unsafeWorkspaceIdForTest("ws-acme")).toThrow(/refusing a benign value/u);
+    // 3 — the bypass is value-preserving: it brands, it does not normalise. If it ever sanitised the
+    //     id, the test above would be asserting redaction of a value the production path never sees.
+    expect(unsafeWorkspaceIdForTest(CREDENTIAL_SHAPED_WS_ID)).toBe(CREDENTIAL_SHAPED_WS_ID);
+    // 4 — ⛔ THE HOSTILITY ASSERTION, AND IT IS THE ONE ASSERTIONS 1-3 DO NOT MAKE. 1 pins an
+    //     ALPHABET precondition; 2 and 3 pin the CONSTRUCTOR's contract. None of them reads the
+    //     value's SHAPE, so `"ws.acme"` / `"Ws-Acme"` / `"ws acme"` satisfy all three while being
+    //     entirely benign — this test was NAMED for hostility and did not test it (security review;
+    //     `contracts L82` in miniature, inside the test written to prevent exactly that).
+    //     ⭐ Asserted over the CANONICAL predicate, never a copy: `@sow/domain`'s string-form
+    //     `isRedactionSafe` delegates to the same `redaction-rules.ts` `looksUnsafe` that the
+    //     `@sow/policy` signal-form used above delegates to ⇒ one home, not two.
+    expect(isValueRedactionSafe(CREDENTIAL_SHAPED_WS_ID)).toBe(false);
+    // 5 — ⛔ (A)'s FIXTURE CARRIES THE WHOLE FINDING AND MUST BE PINNED THE SAME WAY. Its premise is
+    //     a CONJUNCTION — slug-valid AND credential-shaped — and each half is load-bearing for a
+    //     different reason: slug-valid is why the tightened brand ADMITS it (so no bypass is needed
+    //     and the pin is state-independent); credential-shaped is why the redaction gate REFUSES it
+    //     (so `### 24.55`'s protection obligation keeps a live control). Neither half alone reaches
+    //     the gate, and the conjunction is exactly what `zod-brands.ts` documents about itself.
+    //     ⭐ IF CONTRACT EVER MAKES THE BRAND REJECT CREDENTIAL SHAPES TOO, THIS LINE REDS AND SAYS
+    //     SO — the honest signal, because at that moment the redaction gate loses its last reachable
+    //     carrier and `### 24.55` needs RE-DECIDING rather than re-greening.
+    expect(SLUG_VALID_CREDENTIAL_WS_ID).toMatch(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/u);
+    expect(SLUG_VALID_CREDENTIAL_WS_ID.length).toBeLessThanOrEqual(64);
+    expect(isValueRedactionSafe(SLUG_VALID_CREDENTIAL_WS_ID)).toBe(false);
   });
 });
 
