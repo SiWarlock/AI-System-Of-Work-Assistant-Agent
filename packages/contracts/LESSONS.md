@@ -632,6 +632,16 @@ The reason this recurs is structural, not careless: **the string forms you know 
 
 Applies to: negative test pins, grep sweeps, code review for a known defect class, security audits, doc reconciliations, and any "have we got them all?" question. A one-pass string sweep produces a **confident and wrong all-clear**, which is worse than no sweep — it closes the question.
 
+⛔⛔ **AMENDED 2026-08-18 — A FOURTH MEDIUM, AND IT IS STRICTLY STRONGER THAN THE THREE ABOVE: A CODE CENSUS WHERE THE INSTANCE HAS NO STRING FORM AT ALL.** The rule above says *the string forms you know are the ones you have already found* — which implies a better vocabulary can reach the rest. ⭐ **In a code medium that implication fails: an instance carried by a VARIABLE REFERENCE has no literal to enumerate, in any vocabulary.**
+
+**The witness (`### 24.84` worker-leg pre-dispatch check, on lead ask).** Question: does any site pass a `WorkspaceType` value into a workspace-`id` position? — a conflation that would become a hard create-time rejection the moment the brand bound at create. A spelling pass enumerated **all 31** occurrences of the three type literals across production source and classified every one: **zero in an id position.** ⛔ **That pass could not have found `id: workspace.type`, which is the same defect and contains none of the three literals.** The settling pass traced the create path **by reference** — `id` and `type` declared as separate fields on the input interface, passed through verbatim, read independently by the validator, one production caller — and only that pass could return an answer.
+
+⇒ ⛔ **THE STOPPING CONDITION IN L64's ORIGINAL FORM — *"a pass that adds nothing"* — IS NOT SUFFICIENT IN A CODE MEDIUM. Iterating vocabulary converges to dry while the reference-carried instances remain invisible, so the sweep terminates CORRECTLY and reports a false all-clear.** ⭐ **THE FIX IS TO CHANGE MEDIUM, NOT VOCABULARY: string search → reference/type graph (compiler, code-intelligence index, or reading a short enough path end-to-end).** ⚠ **State which medium produced the answer; a clean spelling scan is evidence about spellings and about nothing else.**
+
+⭐ **Why this earned an amendment rather than a new lesson: the round it was found in had already logged FOUR censuses blind to their own subject** (`### 24.92` derive-by-position, `### 24.100` `makeId` with no cast spelling, `### 24.101` bare-falsity pins, `### 24.103` return-type-string parsing that excluded the one channel that WAS covered). ⛔ **Four witnesses of one class across one round is the signature of an under-specified rule, not four careless authors** — and the rule was under-specified in exactly this way: it named the vocabulary problem and not the medium problem.
+
+⚠ **Corollary worth carrying separately: the loud/silent asymmetry decides how hard to look.** The type→id conflation would have broken **loudly** under the landing, so leaving it unswept was survivable — the code would have said so. Its sibling (a scope→id conflation, where the values are byte-identical to live ids) passes every gate **silently** ⇒ **nothing surfaces it but a deliberate look, which is why it became a filed task (`### 24.111`) while the loud one became a one-line result.** **Spend census effort in proportion to how silent the failure is, not how likely it feels.**
+
 **Rule:** when searching for INSTANCES of a defect (pin, grep, review, audit, doc sweep), enumerate the CONCEPT — the invariant that must hold, or the topic a surface may not address — never the string forms already known, which by construction are the ones already found; cover the opposite-direction phrasing, alternate spellings/unicode, diagrams, and NORMATIVE statements that would re-authorize the thing (the last is the most dangerous and tends to surface last); and iterate until a pass adds nothing, reporting the iteration count. Never report an all-clear from a single string-shaped pass. `accepted: not mechanically enforceable` (mitigation: state the search KEY and the number of dry iterations in the commit/report, so a one-pass sweep is visible as such — cf. L54 non-vacuity, L61 grep-the-construction).
 
 ## <a id="65"></a>65. A fail-safe DEFAULT that resolves through a prototype chain is not a fail-safe — use a `ReadonlyMap` whenever the key is untrusted
@@ -4130,3 +4140,27 @@ The orchestrator's first note read: *"THE SHIPPED REALITY HAS TWO GLOBAL LEGS, N
 ⇒ ⛔ **IT WOULD HAVE CAUGHT `114` IN JULY, `173` LAST WEEK, AND TODAY'S THREE-WAY BEFORE ANYONE RENAMED ANYTHING.**
 
 **Enforcement:** `accepted: not mechanically enforceable — when dispatching more than one /session-end at once, ALLOCATE the numbers in the dispatch message. A max+1 counter read concurrently returns the same value to every reader.`
+
+## <a id="204"></a>204. AN OPTION LIST IS AN ARTIFACT THAT CAN CARRY A DEFECT — and the only reviewer it ever gets is the person about to execute it
+
+**Date:** 2026-08-18. **Source slice:** `### 24.103`'s shape-merge, Step 2.5 — the orchestrator's `ADD:` reply.
+
+The orchestrator asked for a fail-closed guard and wrote: *"an unknown id **throws or cuts maximally** — never returns the path uncut."* Two options, offered as equivalent. **One of them was unsafe on that exact surface.**
+
+`structuralPathOnly` is called from `runGate`, inside `applyPlan`. `writer.ts` documents at length that **`applyPlan` contains NO `try` anywhere** — it is the §16 never-throw boundary on the **sole-writer path, safety rule 1**. ⇒ ***the `throw` option would have converted a silent-refusal defect into an uncaught exception escaping the one path the task existed to protect.*** Strictly worse than the bug being fixed.
+
+The implementer declined it **on the file's own documented constraint**, not on taste, and offered to re-open if the orchestrator disagreed. Cost: one paragraph.
+
+⛔ **WHY THIS IS A DISTINCT FAILURE SURFACE AND NOT JUST "THE REVIEWER WAS WRONG":**
+
+- **Step 2.5 is understood as review of the implementer's TESTS.** Nothing in the protocol frames the *reviewer's own reply* as an artifact under review — yet a reply containing an option list is a design instruction, and it lands in the slot with the least scrutiny.
+- **An option list carries the reviewer's authority onto every branch equally.** A single instruction gets weighed; a menu reads as *"these have been considered and are all acceptable."* ⭐ **The framing does the damage: enumeration implies vetting.**
+- **Its only reviewer is its executor.** A brief is read by the orchestrator who wrote it; a commit message by whoever reads the log. **An option list is read once, by the person who will act on it, under the assumption that the reviewer already checked.**
+
+⇒ ⭐⭐ **THE RULE: when offering N options, state the CONSTRAINT each must satisfy, not just the options.** *"Throws or cuts maximally"* offered a menu; *"must not throw across `applyPlan`'s never-throw boundary — so: cut maximally, or return a sentinel"* offers a menu **with its filter attached**, and the filter is the part that would have caught this.
+
+⚠ **And the corollary for the executing side, which is what actually worked here: an option list is a HYPOTHESIS about what is safe, not a grant of permission.** Check each branch against the target file's documented constraints before picking. **The implementer who reads the docblock beats the reviewer who remembers the architecture** — the reviewer is reasoning from a model, the implementer is reading the source.
+
+⭐ Related but distinct: `L162` (an adversarial reviewer covers the space the author could not see) is about a reviewer improving an implementer's work. **This is the return path — the implementer reviewing the REVIEWER — and the project had no lesson for it.**
+
+**Enforcement:** `accepted: not mechanically enforceable — when a review reply offers more than one option, it must state the constraint the options are filtered against; an unfiltered menu is an unreviewed design instruction. Executing side: treat an option list as a hypothesis and check each branch against the target file's own documented constraints before picking.`
