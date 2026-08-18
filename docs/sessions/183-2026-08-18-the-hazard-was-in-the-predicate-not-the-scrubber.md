@@ -335,3 +335,56 @@ While this slice ran, the orchestrator filed a ruling **onto `### 24.120`**: *th
 
 The fourth-vocabulary literal is copied into domain's guard because **importing it would invert the layer** — `@sow/domain` is the producer, `packages/providers` and `packages/integrations` are consumers. ⛔ **The fence must say, in the file:** *this value is a COPY; its owners are `packages/providers/src/redaction/provider-log-redaction.ts` and `packages/integrations/src/redaction/gateway-log-redaction.ts`; **NO MECHANICAL DRIFT CHECK EXISTS — if an owner changes their literal this guard tests a stale value and nothing reds**; the owning task is `### 24.127`.*
 ⭐ **`L216` binds: the fence claims only what it provides, and it names where to check rather than asserting the values agree.**
+
+---
+
+## 17 — ⛔⛔ MY VERIFIED GUARD TABLE WAS MEASURED WITH BROKEN PROBES, AND THE IRONY IS EXACT
+
+**In the SAME message where I told the orchestrator that a raw non-ASCII codepoint in source is the trap this team hit four times tonight and must be written as an escape, I wrote my own probe constants as RAW CHARACTERS.** ⛔ **They did not survive: `length === 0`, measured.** ⇒ ***`PROBE_A` and `PROBE_B` were EMPTY STRINGS in every guard prototype (§15's table included).***
+
+⛔ **So `P1′` was not classifying positions by "can an opaque token sit here." It was classifying by "does the match survive DELETING this character" — a different classifier that produced a plausible, discriminating, entirely coincidental table.** ⚠ **I gave the advice and did not take it, and the failure was silent in exactly the direction that made it look like a result.**
+
+**IT WAS WRONG IN BOTH DIRECTIONS, WHICH IS WHY NOTHING LOOKED ODD:**
+- **`^` was FALSELY REJECTED** — deleting `u` from `//u:p@h` empties a `+` class and kills the match, so the position read RESTRICTIVE; substituting `^` matched ⇒ spurious flag.
+- **the incumbent space FALSELY PASSED** — deleting the space from `private key` still matches (`[_ -]?` takes zero), so the position read OPAQUE and nothing was asserted.
+
+⭐ **Caught only because I re-ran it on a NEW question (the lead's bridging case) and the verdicts for `^` and `space` had SWAPPED against my own earlier table.** ⛔ ***A contradiction between two of my own runs was the only signal; neither run looked wrong alone.***
+
+### RE-MEASURED WITH REAL `""` ESCAPES — and the conclusion survives
+
+| candidate | `P1′` sub | `P1″` ins | verdict |
+|---|---|---|---|
+| **space (today)** | ⛔ 2 | 0 | rejected — `private key`@7 |
+| **`^` (chosen)** | **0** | **0** | ✅ qualifies |
+| `* # ! ~ % ? +`, `` | 0 | 0 | ✅ qualify |
+| `-` | ⛔ 22 | ⛔ 18 | rejected |
+| `_` | ⛔ 16 | ⛔ 13 | rejected |
+| `.` | ⛔ 1 | ⛔ 1 | rejected |
+| **empty (delete)** | ⛔ 4 | ⛔ **130** | rejected |
+| `A` (control) | ⛔ 40 | ⛔ 30 | rejected |
+
+⭐ **The qualifying set is UNCHANGED and `^` still stands** — but it stood on a broken measurement for two messages. ⚠ **Note the row labelled `U+E000` in §15 WAS the empty string, which the honest run rejects at `P1″`=130.** ⇒ ***that row asserted the opposite of what it measured, and the label and the verdict cancelled into something plausible.***
+
+## 18 — ⭐⭐ THE LEAD'S BRIDGING QUESTION: **NOT COVERED. HERE IS THE EXTRA CASE.**
+
+**Demonstrated on a LIVE pattern — `api[_-]?key`, an alternative of `SENSITIVE_KEYWORD` — deliberately NOT on `AIza`, which is the instance the question was about.** **Exemplar set containing only `apikey` (the optional element ABSENT):**
+
+| filler | `P1′` substitution | `P1″` insertion |
+|---|---|---|
+| `-` | ⛔ **SILENT** | ✅ **FIRES @3** |
+| `_` | ⛔ **SILENT** | ✅ **FIRES @3** |
+| `^` | SILENT | SILENT ✅ correct |
+
+⇒ ⛔⛔ ***SUBSTITUTION CANNOT REACH AN OPTIONAL ELEMENT WHOSE EXEMPLAR OMITS IT.*** `apikey` → substituting `-` for any character never yields `api-key`; **inserting** it does. ⭐ **The lead was right that the `AIza` coincidence is not general: a run-length class makes preserve-a-match and bridge-two-fragments the same operation; an OPTIONAL element separates them.**
+⚠ **And `P1′`'s apparent completeness in §15 was a property of my HAND-WRITTEN exemplars** (which happened to include `api_key` and `api-key`), **not of `P1′`** — the exact hand-maintained dependency the guard exists to remove.
+
+**⇒ THE GUARD IS BOTH FORMS, UNIFIED BY ONE STATEMENT:** ⭐⭐ ***the filler must never match where an opaque token would not*** — tested by **substitution** AND by **insertion**, at every position of every exemplar.
+
+## 19 — ⛔ AND `P2`'s BASELINE WAS WRONG: THE INCUMBENT IS NOT NEUTRAL
+
+Running `P2` over **realistic marker-bearing carriers** instead of exemplars, **every qualifying candidate shows `worse = 1`** — `private<RAW>key` is UNSAFE today and safe under `^`.
+
+⛔ **That is NOT a lost detection. The space CREATES it**, by being a member of `private[_ -]?key`'s alphabet — the same defect `P1′` convicts it of. ⇒ ***`P2` as I specified it ("never worse than today") would FORBID fixing the incumbent's own alphabet-membership defect. The two properties I proposed CONTRADICT each other.***
+
+⭐ **FIX: the baseline must be an OPAQUE TOKEN (the PUA probe), never the incumbent space** — because the space is not a neutral reference, it is itself in an alphabet. **Against a PUA baseline, `^` is not worse anywhere.**
+⚠ **This was invisible while `P2` ran over exemplars: inserting anything into `password` leaves `password` matching, so exemplar-based `P2` could not see it.** ⇒ **`P2` needs realistic carriers; `P1′`/`P1″` need exemplars. Different inputs for different properties, and using one set for both hid a contradiction.**
