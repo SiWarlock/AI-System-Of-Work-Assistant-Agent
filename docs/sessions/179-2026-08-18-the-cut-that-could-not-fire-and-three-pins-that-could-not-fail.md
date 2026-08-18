@@ -81,6 +81,24 @@ The approved remedy was ***merge the SHAPE, not the unions***: one issue-carryin
 I reported **10 sites, zero in test files** — scoped to `packages/knowledge`. Repo-wide it is **12**, and **2 are in test files** (`packages/workflows`).
 ⇒ ⭐ ***`### 24.98`'s enumeration stopped at the UNION boundary — which is why `### 24.103` exists — and mine stopped at the PACKAGE boundary, in the instrument being used to fix that class.*** **A compiler enumeration is only as wide as the compilation you ran, and "I ran tsc" does not say which tsc.** The orchestrator noted its own table shared that boundary, so the two measurements **could not have disagreed**.
 
+### 5a. ⭐⭐ Is the terminator-bearing key forbiddable AT ITS SCHEMA? — MEASURED, and the answer INVERTS the question
+
+**Asked by the lead because the finding is banked as evidence for `L103`'s *unrepresentable-beats-detected* posture, while the remedy — the `s` flag — makes the regex HANDLE terminators, which is the *detected* shape.** A fair challenge. Measured rather than reasoned (throwaway probe in `packages/contracts`, since deleted):
+
+**YES, it is constrainable, on BOTH surfaces, with machinery this repo already has.**
+- **Zod:** `z.record(z.string().regex(/^[^\n\rU+2028U+2029]+$/u), z.unknown())` **rejects** a terminator-bearing key (`invalid_string`) and accepts normal keys.
+- **ajv:** `emitJsonSchema` carries it through as `propertyNames: {pattern: "^[^\\n\\r\\u2028\\u2029]+$"}` — the same `guardCatchallPropertyNames` policy already used for the reserved-key blocklist.
+- **Live regions today carry no such constraint:** `{"type":"object","additionalProperties":{}}`.
+
+⛔⛔ **BUT CONSTRAINING THE KEY DOES NOT RETIRE THE CUT — IT MAKES THE CUT *MORE* NECESSARY, AND THIS IS THE MEASURED PART: the Zod rejection's own issue path is `"frontmatter.Project\nFalcon"` — THE REJECTED KEY IS IN THE PATH.**
+⇒ ***adding the schema constraint ADDS a producer of terminator-bearing paths into exactly the audit surface the cut protects.***
+
+⇒ ⭐ **So the citation and the remedy do NOT disagree.** The schema constraint governs the **candidate** surface; the cut governs the **audit** surface, and it is the cut that makes the key **unrepresentable in the signal** — which is `L103` correctly applied. **The `s` flag is not the detected-shape half; it is what lets the unrepresentable-making construction actually run.**
+
+⚠ **Asymmetry worth keeping: on the AJV side a `propertyNames` violation puts the key in `params.propertyName` with `instancePath` at the parent — and `schema-gate.ts` DROPS `params` (`### 24.104`), so the key would NOT reach the path there. The Zod side DOES carry it.** ⇒ **the two validator surfaces disagree about this, and only one of them is safe by accident.**
+
+**Disposition: nothing built.** Recorded so a future author adding key constraints knows it *strengthens* the case for the cut rather than retiring it.
+
 ### 6. Instruments returning reassuring absences — three, one session
 `grep` fabricating a match-count header · a **mutation that silently failed to apply and returned a full green** (caught only by an applied-by-diff guard) · `awk`'s missing `\b`. ⛔ **All three failed toward "nothing is wrong."**
 
