@@ -3722,3 +3722,44 @@ max(40) -> 4/5 STILL ACCEPT   (kills only the 44-char ghp)
 
 **Enforcement:** `accepted: not mechanically enforceable — the discipline is applying the slice's OWN stated method to the evidence inside its deliverable, not only to its headline.`
 
+---
+
+<a id="186"></a>
+## 186. BEFORE EDITING A SPEC TOWARD WHAT SHIPPED, ASK WHETHER THE DOCUMENT'S JOB IS TO DESCRIBE OR TO CONSTRAIN — a report is IMPROVED by matching reality; a contract is DESTROYED by it
+
+**Date:** 2026-08-17. **Source:** the `### 24.91` architecture note. ⭐ **The lead's sharpening; the orchestrator supplied the instance by nearly committing it.**
+
+**The instance.** `ARCHITECTURE.md §11` says global surfaces show GCL-sanitized grouped results with policy-gated drill-down — **one** global read path. The shipped code has **two**: the gated `global_surface` leg, and `dashboard_cards`, which takes no input, applies no scope gate, and carries no workspace field, so it **cannot scope-check even in principle**.
+
+The orchestrator's first note read: *"THE SHIPPED REALITY HAS TWO GLOBAL LEGS, NOT ONE, AND THIS SENTENCE DESCRIBES ONLY THE GATED ONE."* ⛔ **That frames the spec as INCOMPLETE, which invites widening it to describe both — and it never said the second leg was unsanctioned.** It carried the divergence framing, the rule-4 citation, the not-live bound and the task pointer, **so it read as compliant.** The defect was **one missing clause and an opener leaning the wrong way.**
+
+⛔⛔ **WHY WIDENING WOULD HAVE BEEN THE WORSE OUTCOME, AND IT IS NOT OBVIOUS: amend the contract and NOTHING IS IN BREACH ANY MORE — which is the same end state as the code having been correct all along.** The rule-4 violation becomes **documented behaviour**, and the precondition task re-reads as an *enhancement*. ⇒ ⭐ ***a doc edited to match a defect makes the defect UNFINDABLE: the next auditor diffs code against spec, finds agreement, and moves on. That is worse than stale text, because stale text still disagrees with something.***
+
+⭐⭐ **THE TEST, AND IT IS WHAT MAKES THIS ENFORCEABLE RATHER THAN A CAUTION: ask what GENRE the document is.**
+> **A REPORT describes.** Matching reality improves it. Session docs, audit outputs, handoffs.
+> **A CONTRACT constrains.** Matching reality **guts** it. `ARCHITECTURE.md`, the safety rules, a frozen schema.
+⇒ ***accuracy pressure is dangerous PRECISELY BECAUSE it is a correct instinct applied to the wrong genre of document.***
+
+⚠ **DISTINCT FROM `### 24.54`, AND THE DIFFERENCE IS THE POINT: there, a LINT demanded the widening. Here, DILIGENCE did.** ⛔ **The second is harder to catch because nobody audits an impulse toward accuracy** — a tool demanding a bad edit feels like friction; wanting the doc to be true feels like doing the job.
+
+**Enforcement:** `accepted: not mechanically enforceable — the trigger is any edit that moves a spec TOWARD shipped code. Ask: does this document DESCRIBE or CONSTRAIN? If it constrains, record the breach and cite the task; never amend the clause.`
+
+---
+
+<a id="187"></a>
+## 187. DEFEND A DECISION AT THE POINT WHERE IT WILL BE UNDONE, NOT AT THE POINT WHERE IT WAS MADE
+
+**Date:** 2026-08-17. **Source:** two independent successes in one day. ⭐ **The lead's formulation.**
+
+**Instance 1 — the one that survived a session death.** `### 24.84`'s deferral rested on a reason recorded **in the task entry itself**, closing: *"reason recorded HERE rather than on session-scoped task `#73`, because a `#NN` dies with the session."* ⛔ **`#73` did die.** Two agents later independently tried to recover it **by number** and failed; it was recovered **by content**, from the entry. ⇒ ***the decision survived only because its author wrote the defence where a later reader would stand, not where the decision happened.***
+
+**Instance 2 — the one that pre-empted a re-edit.** The lead ruled that a spec must not be widened toward shipped code (`L186`). The orchestrator put **the lead's REASON inside the architecture note itself**, not only in the tracker: *so a future editor meets it before reaching for the tidier phrasing.* ⇒ **the argument now sits at the exact keystroke where the wrong edit would be made.**
+
+⭐ **THE RULE: a ruling stored WHERE IT WAS DECIDED protects nothing. Stored WHERE THE TEMPTING EDIT HAPPENS, it is the last thing the editor reads before doing the wrong thing.** ⇒ **ask not "is this recorded?" but "is it recorded where the mistake will be made?"**
+
+⚠ **DISTINCT FROM `L51`, AND THE REFINEMENT MATTERS.** `L51` says close-out debt belongs in a **file**, never only in a head or a message — that is about **DURABILITY**. This is about **LOCATION**: *which* file, and *where in it*. ⛔ **A perfectly durable ruling filed in the tracker still fails if the tempting edit happens in `ARCHITECTURE.md` and the editor never opens the tracker.** **Durable and un-encountered is indistinguishable from absent** — the same shape as `L106` (a correct signal that reaches no consumer), applied to prose.
+
+⭐ **COROLLARY — it explains why in-file guard comments keep earning their place in this project, and it bounds them: they are only worth writing at a site where someone would otherwise act wrongly.** A comment restating a decision at its origin is noise; the same comment at the deletion site is a control. ⚠ **And per the standing ruling, such a comment must say what makes the thing load-bearing, or it invites the very deletion it exists to prevent.**
+
+**Enforcement:** `accepted: not mechanically enforceable — when recording a ruling, name the file and the line where the contrary action would be taken, and put the reason THERE as well as in the tracker.`
+
