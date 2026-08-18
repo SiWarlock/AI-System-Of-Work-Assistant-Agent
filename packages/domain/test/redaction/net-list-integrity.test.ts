@@ -2,11 +2,17 @@
 // instead of making three hardcoded `.test()` calls, so the marker-filler property
 // guard can REFLECT over the net list and cannot go stale when a net is added.
 //
-// This file pins the three things that refactor is responsible for:
-//   1. BEHAVIOUR IDENTITY — proven differentially against the pre-change
-//      expression, kept below as a reference implementation. `|| ≡ .some()` has no
-//      mutation of its own to make, so the satisfiable proof obligation is
-//      equality over real inputs; remove a net from the array and this reds.
+// This file pins three things:
+//   1. MONOTONICITY — `looksUnsafe` refuses a SUPERSET of the pre-24.120
+//      predicate, which is kept below as a reference implementation and compared
+//      over the whole Markdown corpus. Nothing refused before may be admitted now.
+//      ⚠ This test previously asserted EQUALITY, which proved the net-list
+//      refactor was behaviour-preserving; that proof was performed and recorded at
+//      commit `65524874` (mutation-proven, restored byte-identical). The 24.120
+//      fix then changed behaviour DELIBERATELY, so equality no longer holds and
+//      superset-ness is the invariant that survives. The reference implementation
+//      is retained rather than deleted — comparing the predicate to a copy of
+//      itself would be tautological.
 //   2. IMMUTABILITY — the exported array is a rule-7 surface (see the fence at its
 //      declaration): a mutable one would let any importer disable a credential net.
 //   3. NON-GLOBAL — `.test()` on a `/g` regex advances `lastIndex`, which would
@@ -102,16 +108,20 @@ describe("CREDENTIAL_NETS — the net list `looksUnsafe` iterates", () => {
   });
 });
 
-describe("net-list refactor is behaviour-identical (differential)", () => {
-  it("agrees with the pre-change expression on constructed inputs", () => {
+describe("monotonicity vs the pre-24.120 predicate (differential)", () => {
+  it("admits nothing the pre-change predicate refused, on constructed inputs", () => {
+    let witnessed = 0;
     for (const s of CONSTRUCTED) {
-      expect(looksUnsafe(s), `disagreement on ${JSON.stringify(s)}`).toBe(
-        looksUnsafeReference(s),
-      );
+      if (looksUnsafeReference(s))
+        expect(looksUnsafe(s), `newly ADMITTED: ${JSON.stringify(s)}`).toBe(true);
+      if (looksUnsafe(s) && !looksUnsafeReference(s)) witnessed += 1;
     }
+    // Applicability: superset-ness is vacuous unless the span-preserving arm
+    // actually adds refusals. This is the 24.120 fix, seen from the pin.
+    expect(witnessed).toBeGreaterThan(0);
   });
 
-  it("agrees with the pre-change expression on every line of every tracked Markdown file", () => {
+  it("admits nothing the pre-change predicate refused, on every line of every tracked Markdown file", () => {
     const files = execSync("git ls-files '*.md'", {
       cwd: REPO_ROOT,
       encoding: "utf8",
@@ -123,6 +133,7 @@ describe("net-list refactor is behaviour-identical (differential)", () => {
 
     let lines = 0;
     let unsafe = 0;
+    let newlyRefused = 0;
     for (const rel of files) {
       let body: string;
       try {
@@ -132,19 +143,25 @@ describe("net-list refactor is behaviour-identical (differential)", () => {
       }
       for (const line of body.split("\n")) {
         lines += 1;
-        const actual = looksUnsafe(line);
-        if (actual) unsafe += 1;
-        if (actual !== looksUnsafeReference(line)) {
+        const now = looksUnsafe(line);
+        const before = looksUnsafeReference(line);
+        if (now) unsafe += 1;
+        if (before && !now) {
           throw new Error(
-            `net-list refactor changed the verdict for ${rel}: ${JSON.stringify(line.slice(0, 120))}`,
+            `24.120 newly ADMITTED a line that was refused before, in ${rel}: ${JSON.stringify(line.slice(0, 120))}`,
           );
         }
+        if (now && !before) newlyRefused += 1;
       }
     }
-    // Applicability: the corpus must actually exercise BOTH verdicts, or agreement
-    // is agreement about nothing.
+    // Applicability: the corpus must exercise BOTH verdicts, or agreement is
+    // agreement about nothing.
     expect(lines).toBeGreaterThan(1000);
     expect(unsafe).toBeGreaterThan(0);
     expect(unsafe).toBeLessThan(lines);
+    // The corpus is SELF-REFERENTIAL here — the lines the fix newly refuses are
+    // the documents describing this defect — so this is recorded as a witness that
+    // the arm fires at corpus scale, NOT as a base rate for any vault.
+    expect(newlyRefused).toBeGreaterThan(0);
   });
 });

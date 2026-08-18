@@ -47,9 +47,39 @@ const MARKER_LITERALS: readonly string[] = [
   REDACTED_FIELD,
 ];
 
-function stripMarkers(s: string): string {
+// ⛔ THE SUBSTITUTE MATTERS, AND A SPACE WAS THE WRONG ONE (task 24.120).
+// `URL_USERINFO_CREDENTIAL`'s second character class is `[^/\s@]+` — it admits a
+// marker's own characters (`[`, `]`, `:`) and excludes WHITESPACE. So a marker
+// landing inside a `//user:pass@host` span BROKE the span and the value stopped
+// being refused: `//user:REALSECRET[REDACTED:raw]@host` was classified SAFE while
+// carrying a real surviving secret.
+//
+// It is exactly ONE of the three nets, for a structural reason worth keeping:
+// every `CREDENTIAL_PREFIX` alternative is a contiguous literal/class run that
+// admits no `[`, so a marker inside it already breaks the match with or without
+// substitution; `SENSITIVE_KEYWORD` is `\b`-delimited and a space, a `]` and a `^`
+// are all non-word, so its verdict never changes. `URL_USERINFO_CREDENTIAL` is the
+// only net whose class admits a marker's alphabet while excluding the substitute.
+//
+// ⭐ REQUIREMENT ON ANY FILLER, and it is checked rather than remembered: the
+// filler must behave as ONE OPAQUE TOKEN — it must never match where an opaque
+// token would not. `test/redaction/marker-filler-property.test.ts` derives that
+// from the live patterns (`P1'` substitution + `P1''` insertion). `-`, `_` and `.`
+// FAIL it (they are members of a pattern's alphabet and would BRIDGE two fragments
+// into a match); deleting the marker outright fails it too, and so does a space —
+// the incumbent is itself a member of `private[_ -]?key`'s alphabet.
+export const SPAN_PRESERVING_FILLER = "^";
+
+// The historical substitute. RETAINED AS A SECOND ARM below, not replaced: on its
+// own it is the defect above, but removing it would ADMIT values that are refused
+// today (`private[REDACTED:raw]key`), and whether those matches are real
+// detections or artefacts the space manufactures is UNMEASURED. Task 24.120 ruled
+// `(C')` rather than decide it; the availability candidate lives on `### 24.123`.
+const LEGACY_SPACE_FILLER = " ";
+
+function stripMarkers(s: string, filler: string): string {
   let out = s;
-  for (const m of MARKER_LITERALS) out = out.split(m).join(" ");
+  for (const m of MARKER_LITERALS) out = out.split(m).join(filler);
   return out;
 }
 
@@ -99,8 +129,24 @@ export const CREDENTIAL_NETS: readonly RegExp[] = Object.freeze([
  * scrub pass and fail-safe drops the whole field when it still trips. Pure.
  */
 export function looksUnsafe(s: string): boolean {
-  const probe = stripMarkers(s);
-  return CREDENTIAL_NETS.some((net) => net.test(probe));
+  // TWO ARMS, and they are DELIBERATELY NOT SYMMETRIC — writing them as one loop
+  // over a filler list would hide the asymmetry that decides where the guard binds:
+  //
+  //   * the SPAN-PRESERVING arm can return SAFE where the legacy arm returned
+  //     UNSAFE, so it is the arm that can ADMIT. It is alphabet-guarded.
+  //   * the LEGACY SPACE arm is FAIL-SAFE: a space can only ever manufacture EXTRA
+  //     refusals (it is in `private[_ -]?key`'s alphabet), never admit. An arm that
+  //     cannot return SAFE where an opaque token would not needs no alphabet guard.
+  //
+  // Their disjunction refuses a SUPERSET of the pre-24.120 predicate for every
+  // input — monotone BY CONSTRUCTION, not by corpus measurement — so this change
+  // cannot admit anything that was refused before.
+  const spanPreserving = stripMarkers(s, SPAN_PRESERVING_FILLER);
+  const legacy = stripMarkers(s, LEGACY_SPACE_FILLER);
+  return (
+    CREDENTIAL_NETS.some((net) => net.test(spanPreserving)) ||
+    CREDENTIAL_NETS.some((net) => net.test(legacy))
+  );
 }
 
 // ── scrub patterns (global, for in-line substitution) ────────────────────────
