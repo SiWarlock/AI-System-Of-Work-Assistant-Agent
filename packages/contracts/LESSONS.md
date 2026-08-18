@@ -3591,3 +3591,64 @@ codegraph_callers("readVaultHeadRevision")  →  "No callers found for readVault
 ⚠ **Corollary worth its own line: agreement between two methods is only evidence if they COULD have disagreed** (`L155`'s amendment) — **and this is the other half: disagreement is only useful if you EXPLAIN it rather than resolve it.** **Both halves are about refusing to let a reconciliation stand in for an understanding.**
 
 `pin: none` · `accepted: not mechanically enforceable` — **enforcement point: any moment you hold two counts of the same thing. The delta gets enumerated and explained before either number is reported, and a task/commit citing a corrected count says what the other method saw.**
+
+---
+
+<a id="180"></a>
+## 180. A COUNT SOURCED FROM WHAT YOU PERSONALLY SAW IS A SAMPLE, AND EVERY CAREFUL PERSON REPORTS IT AS THE POPULATION
+
+**Date:** 2026-08-17. **Source:** `### 24.54`'s re-measurement. ⭐ **Three people, three numbers, none of them a miscount — and the lead asked to be named.**
+
+**The instance.** How many `/tdd` briefs have had to declare a `widens phase scope because…` escape to pass `spec-lint`? `### 24.54` was **filed on 3** (briefs `269`/`270`/`271`). The **lead observed 5** and relayed *"five consecutive"* to the owner as a property of the round. The **orchestrator observed 6**. Measured by enumerating every brief on disk: **50 of 90 — 56%.**
+
+```sh
+for f in docs/briefs/2*.md; do grep -q "widens phase scope" "$f" && echo "$f"; done | wc -l   # 50
+ls docs/briefs/2*.md | wc -l                                                                  # 90
+```
+
+⛔⛔ **NOBODY MISCOUNTED. All three figures were CORRECT ABOUT THEIR OWN SAMPLE and wrong about the population — the unit was *briefs-I-recently-authored*, not *briefs*.** ⇒ ***this is `L118` (the property measured was not the property needed) arriving through RECENCY rather than through an instrument*** — which is a **new delivery path**, and the reason it evaded three people who were each independently being careful. **There was no bad tool to blame; the tool was memory, and memory does not announce its boundary.**
+
+⭐ **THE SECOND-ORDER FINDING, WHICH IS THE BETTER ONE: nine of the fifty are Phase-13 briefs that PREDATE `### 24.54`.** That entry warned *"the habit travels to the phases where the subset check genuinely works."* ⇒ ***its forecast had already come true before it was written. It was a prediction that was actually a description*** — and nobody could see that, because the evidence was outside everyone's sample.
+
+⇒ **THE RULE: before writing a count, name its UNIT and its SOURCE. If the source is "instances I have seen," it is a CANDIDATE and must be labelled one.** ⛔ **A count with no stated instrument was produced by memory** — and per `L61`, a count without its method is `L118` wearing a number. ⚠ **Corollary: three people agreeing is not corroboration when all three drew from the same kind of sample** (concordance without independence, the shape recorded at handoff `027`).
+
+**Enforcement:** `accepted: not mechanically enforceable — the discipline is stating the unit and the source alongside every count; the mechanical half is already carried by L61.`
+
+---
+
+<a id="181"></a>
+## 181. THE DANGEROUS INSTRUMENTS ARE THE ONES THAT FABRICATE *ABSENCE* — THEY RETURN THE REASSURING ANSWER, AND A NON-VACUITY CHECK PASSES ON THEM
+
+**Date:** 2026-08-17. **Source:** two instruments found in one session, independently, by the orchestrator and by worker.
+
+**Instrument six — turbo cache replay.** `pnpm -w turbo test` returned **green in 55ms: `Cached: 20 cached, 20 total, >>> FULL TURBO`.** It executed **nothing** and replayed stored results. Re-run with `--force`: `Cached: 0 cached, 20 total`, `1m25.939s`, and only then is the green a measurement. ⛔ **A "did the suite run?" check passes happily on the replay.**
+
+**Instrument seven — `npx` as a fabricating wrapper.** `npx tsc --version` returned the literal **`TypeScript: No errors found`** — a clean *verdict* in answer to a *version* query — and `--listFiles` compiled **0** files. `npx vitest --version` returned **`PASS (628) FAIL (0)`**. ⇒ **`npx tsc` is STRUCTURALLY INCAPABLE OF REPORTING RED.** Real binaries are fine: `node_modules/.bin/tsc` → `Version 5.9.3`.
+
+⛔⛔ **AND IT IS INTERMITTENT, WHICH IS WORSE THAN DETERMINISTIC.** Worker's probe fabricated; the orchestrator ran the identical probe minutes later, same repo, and got the real version string. ⇒ ***"I probed it, it's fine here" is an UNSAFE SENTENCE*** — a single clean probe is not clearance. **Lead ruling: no measurement stands on an `npx`-only surface; confirm from a non-`npx` path and state BOTH.**
+
+⭐ **WHAT UNITES THEM, AND IT IS WHY THEY OUTRANK handoff `028`'s FIVE: those five fabricate FINDINGS or OMIT them — noisy, and a wrong finding gets challenged. These two fabricate ABSENCE.** They answer *"is anything wrong?"* with *"no."* ⇒ ***the failure direction is the one nobody re-checks*** (the reassuring-direction bias recorded at `#43` face 2), **and it is the direction that closes tasks.**
+
+⚠ **Same family, and stated because it caught the orchestrator once: a backgrounded `cmd > f 2>&1; echo "EXIT: $?" >> f` reports the *echo's* status as the task's exit.** Read the exit from the file.
+
+**Enforcement:** `pattern: \bnpx\s+(tsc|vitest|eslint|turbo)\b` — flag `npx` for any load-bearing measurement; use `node_modules/.bin/*` or `pnpm`. And `pin: any reported suite/typecheck green must quote its "Cached:" line.`
+
+---
+
+<a id="182"></a>
+## 182. "FILED SEPARATELY" IS WRITTEN BY THE PERSON MAKING THE SPLIT, AT THE MOMENT THEY ARE LEAST LIKELY TO CHECK — ASK WHETHER IT WAS FILED, NOT ONLY WHETHER IT IS BUILDABLE
+
+**Date:** 2026-08-17. **Source:** three instances in one session, each found by content search after a numeric pointer failed.
+
+**The instances.**
+1. `### 24.84`'s deferral names a cheaper contracts-first path; the shared-task pointer `#73` died with its session. **Recovered only because the prior orchestrator had written the reason into the ENTRY**, closing with *"recorded HERE rather than on session-scoped task `#73`, because a `#NN` dies with the session."* ⭐ **They anticipated the exact failure and defended against it.**
+2. `### 24.84` also says of the contracts change: *"Filed separately; worker does not reach into it."* **Measured by contract-implementer, enumerating every `Track:` value: no such task existed.**
+3. `### 24.80` says the port-family class fix is *"filed as its own task and it OUTRANKS all four symptoms."* **Measured: 1 unrelated row. It did not exist** — filed as `### 24.88`.
+
+⇒ **handoff `028` already said *ask whether a remedy is BUILDABLE, not just whether it is filed.* This is its sibling and it is the cheaper check: ASK WHETHER IT WAS FILED AT ALL.**
+
+⛔ **THE MECHANISM, WHICH IS THE LOAD-BEARING PART: the phrase is written in the same breath as the decision to split — the author is describing an INTENTION, and at that instant they are the person least able to notice it has not become an artifact.** ⚠ **It reads as a completed action to every later reader, which is exactly `L51`'s shape** (close-out debt in a head or a message rather than a file) **arriving in the voice of a finished task.**
+
+⭐ **CORROBORATING INSTANCE FROM THE SAME SESSION, RECORDED BECAUSE IT SHOWS THE RULE APPLIES UPWARD: the lead ordered a new task filed for the anchor-set finding without checking for a durable home. `### 24.54` already was that task** — so the instruction would have produced a duplicate roughly two hours after the same lead ruled on the `### 24.75`/`### 24.86` duplicate. **Checking first is what prevented it.**
+
+**Enforcement:** `accepted: not mechanically enforceable today — candidate plan-lint rule: flag "filed separately" / "filed as its own task" in a tracker entry with no cross-reference to a live ### heading.`
