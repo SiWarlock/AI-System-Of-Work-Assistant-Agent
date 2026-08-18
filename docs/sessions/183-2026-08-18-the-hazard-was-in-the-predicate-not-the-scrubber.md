@@ -244,3 +244,67 @@ While this slice ran, the orchestrator filed a ruling **onto `### 24.120`**: *th
 ⛔ **AND IT IS THE CLASS THIS AREA ALREADY OWNS — `029`: *two of contract's defects were introduced AS CORRECTIONS.*** ***A correction carries its own endorsement and reads as already-vetted*** — and this one was aimed at a decision input sitting in front of the lead, which is the worst available target.
 
 ⭐ **The growth claim in §13 survives and shrinks: the triggering population did grow 3→8 during the session, but the (C) COST grew only 3→4.** ⇒ **"(C)'s cost grows as we document the defect" is TRUE BUT SMALL, and I stated it larger than it is.** ⚠ **§13's 8 stands as the H2 class-existence result; it was never a cost figure and must not be read as one.**
+
+---
+
+## 15 — THE GUARD DESIGN, AND THE FORMULATION I HAD TO THROW AWAY FIRST
+
+⛔⛔ **MY FIRST GUARD FORMULATION WAS WRONG, AND IT FAILED ON CONTACT RATHER THAN IN REVIEW.** I wrote it as *"F must be in NO pattern's alphabet"* — substitute the filler for any character of any known-matching exemplar and require no match. **Measured: EVERY candidate fails it, including the ones I had already proven correct.**
+
+⇒ ⭐⭐ **THE REASON IS THE FIX'S OWN REQUIREMENT: `URL_USERINFO_CREDENTIAL`'s classes (`[^/\s:@]+`, `[^/\s@]+`) are PERMISSIVE BY DESIGN, so any filler that preserves a span MUST be admitted there.** ***"In no alphabet" and "preserves spans" are contradictory demands, and the guard that enforced the first would have forbidden the second.***
+⚠ **It would have PASSED review.** *"The filler must appear in no pattern's alphabet"* reads as obviously correct, and the only way to find out otherwise was to run it. ⛔ **The likely outcome had I proposed it: an implementation with the userinfo net excluded BY HAND — a hand-maintained exception inside the guard written to prevent hand-maintained exceptions.**
+
+### The corrected form — `P1′`, and it needs no hand classification
+
+**Classify each position AUTOMATICALLY before asserting anything about it.** Substitute **two structurally-unrelated private-use codepoints** (U+E000, U+E001) at position *i*:
+- **both still match ⇒ the position is OPAQUE** (governed by a permissive class — any character works there). **Assert nothing.**
+- **either fails ⇒ the position is RESTRICTIVE** (a literal, or an enumerated alphabet). ⛔ **Assert the filler does NOT complete a match there.**
+
+⭐ **No list of "permissive vs restrictive" is ever written down — it is DERIVED from the patterns on every run.** ⇒ ***a new pattern adds its own cases and classifies its own positions.***
+
+**Three properties together:**
+- **`P1′`** — the filler completes no match at a RESTRICTIVE position.
+- **`P2`** — the filler is never WORSE than today's space (`worse-than-space` must be 0).
+- **`P3`** — the filler is BETTER somewhere (`better > 0`) — **the `### 24.120` fix witness, so the guard cannot pass vacuously on a no-op change.**
+
+### Measured results — every disqualification has an automatic detector
+
+| candidate | `P1′` | `P2` worse | `P3` better | verdict |
+|---|---|---|---|---|
+| **space (today)** | ⛔ FAIL(2) — `private key`@7 | 0 | **0** | ⛔ **rejected TWICE over** |
+| `* ^ # ! ~ % ? +` | pass | 0 | 4 | ✅ qualifies |
+| **U+E000 (PUA)** | pass | 0 | 4 | ✅ qualifies |
+| `-` | ⛔ FAIL(22) — `sk-a`@2 | 0 | 21 | ⛔ rejected |
+| `_` | ⛔ FAIL(16) | ⛔ **18** | 16 | ⛔ rejected twice |
+| `.` | ⛔ FAIL(1) — `eyJ…`@13 | 0 | 5 | ⛔ rejected |
+| **U+2028** | pass | 0 | **0** | ⛔ **rejected — JS `\s` INCLUDES it, so it breaks spans exactly like a space** |
+| `A` (sanity control) | ⛔ FAIL(39) | ⛔ 18 | 34 | ⛔ **the control — proves the guard is not vacuous** |
+
+⭐⭐ **AND THE NON-VACUITY TEST THAT MATTERS — SIMULATING `### 24.118` STEP 1's FUTURE PATTERN `AIza[0-9A-Za-z_-]{10,}`:**
+
+| filler | `P1′` against the future pattern |
+|---|---|
+| `-` | ⛔ **FIRES at 10 positions** |
+| `_` | ⛔ **FIRES at 10 positions** |
+| `^` / U+E000 | silent |
+
+⇒ ⭐⭐ ***THE GUARD CATCHES EXACTLY THE BRIDGE `### 24.118` STEP 1 WOULD HAVE ARMED, AUTOMATICALLY, WITH NO MAINTAINED LIST.*** **That is `### 24.118`'s rule inverted — demonstrated rather than argued.**
+
+### ⛔ The filler: I CANNOT refute `^`, and I am saying so rather than manufacturing a reason
+
+**All eight ASCII qualifiers AND U+E000 are INDISTINGUISHABLE on today's patterns** — identical `P1′`/`P2`/`P3`. ⇒ ***today's measurement does not discriminate, so my "authority to refute from measurement" produces no refutation. `^` stands.***
+
+**On the lead's own stated criterion — *what a future pattern might ADOPT* — U+E000 dominates by CONSTRUCTION rather than by prediction:** Unicode guarantees private-use codepoints are permanently unassigned, so no credential format can ever standardise on one, whereas `^` rests on a forecast. ⭐ **And the usual objection does not apply, verified at source: `stripMarkers`' output is a `.test()` probe only — THE FILLER NEVER APPEARS IN ANY OUTPUT**, so legibility costs nothing.
+
+⛔ **AND THE ARGUMENT AGAINST MY OWN PREFERENCE, WHICH I THINK WINS: THE GUARD MAKES THE CHOICE RECOVERABLE.** If a future pattern adopts `^`, `P1′` fires and we change one character. ⇒ ***the marginal value of a guaranteed-unadoptable filler over a very-unlikely-adopted one is small, while the marginal cost is immediate and this team has already paid it four times tonight*** — a raw non-ASCII codepoint in source is the U+2028 trap. **Mitigable by writing `""` as an escape, but it is a real hazard against a small gain.**
+⇒ ⭐ **RECOMMENDATION: take `^`.** **Recorded because the reasoning is the deliverable, not the character** — and because *"the guard makes it recoverable"* is only available as an argument once the guard is a certainty.
+
+### Fourth vocabulary — measured, and the answer is GUARD it, not STRIP it
+
+`packages/providers` and `packages/integrations` **both** export `REDACTED = "[REDACTED]"` (5 literals, 4 distinct strings). **Measured against a real userinfo carrier: creates a false match in 0 of 3 probes, and destroys a span only by splitting the `//` literal itself — which ANY inserted text does, including our filler.**
+⇒ ⭐ **It is INERT, and for a statable reason: it contains no whitespace, no `:`, and no sensitive keyword, so it can neither break a permissive span nor supply a delimiter.** ⛔ **Adding it to `MARKER_LITERALS` is unnecessary — but "inert today" is exactly the claim that rots, so it goes THROUGH `P1′`/`P2` as a guarded literal rather than being stripped.**
+⚠ **TERRITORY QUESTION FOR THE ORCHESTRATOR:** the literal is owned by two other areas. **I propose encoding its VALUE in domain's guard with a fence naming both owning files — no import, no cross-package edit.** Routed, not assumed.
+
+### Construction that keeps the guard honest
+
+⛔ **`looksUnsafe` currently hardcodes three `.test()` calls, so a fourth net could be added without the guard ever seeing it.** ⇒ **export the net list as ONE array, have `looksUnsafe` iterate it (behaviour-identical — short-circuit `||` ≡ `.some()`), and have the guard reflect over the SAME array.** **Individual pattern exports stay (other packages import them).** ⭐ ***Then the guard covers exactly what the predicate uses, by construction, and cannot drift from it.***
