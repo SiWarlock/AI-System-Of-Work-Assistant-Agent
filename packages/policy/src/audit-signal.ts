@@ -72,8 +72,36 @@ export function buildAuditSignal(input: BuildAuditSignalInput): AuditSignal {
 
 // Credential-shaped prefixes (provider API keys, cloud creds, PEM blocks). A
 // content hash such as "sha256:deadbeef" does NOT match any of these.
+//
+// task 24.110 — the `/i` IS LOAD-BEARING AND WAS MISSING. This alternation is
+// character-identical to `@sow/domain`'s `CREDENTIAL_PREFIX` and had drifted from it by
+// exactly this one flag, so a case-transformed credential shape (`SK-ANT-...`,
+// `-----Begin Certificate-----`, a lowercased `AKIA...`) was judged SAFE here while
+// domain judged it unsafe. That mattered because this predicate is not only an audit
+// gate — see the EXTERNAL CONSUMER note on {@link isRedactionSafe}, which is this file's
+// single statement of that reach and is deliberately not restated here.
+//
+// ⚠ THE COST, NAMED — this widening cuts BOTH ways and the block below argued only one.
+// `sk-[a-z0-9]` has no word boundary, so `/i` also newly refuses benign prose: `TASK-1`,
+// `RISK-001`, `Full-Disk-Access`. That class is pre-existing in the lowercase direction
+// (`task-123` was already refused) and this change extends it to every casing — measured
+// at 9 newly-rejected of 612 repo Markdown files, atop 236 already rejected. On the
+// reject-not-redact sole-writer path that is an AVAILABILITY cost, not a leak. Shipped
+// deliberately: parity with domain (which carries the identical unbounded alternative)
+// is worth more than shaving it here, and a word boundary is a domain-parity question.
+// Pinned by `known_false_positives_are_pinned_so_the_class_is_not_INVISIBLE`.
+//
+// WHY THIS IS STILL A LOCAL COPY, AND WHY DELEGATING IS NOT THE OBVIOUS CLEANUP:
+// `@sow/domain` exports these patterns and its own `looksUnsafe`, and consuming them
+// would remove this copy entirely. That is DEFERRED, not overlooked — domain's
+// `looksUnsafe` first applies `stripMarkers`, which substitutes a SPACE, and every
+// `URL_USERINFO_CREDENTIAL` character class excludes whitespace. So a frozen redaction
+// marker embedded inside a `//user:pass@host` span BREAKS the span and the value stops
+// being refused (measured: `//u:p[REDACTED:raw]q@h` is unsafe here, safe in domain).
+// Delegating would hand that loosening to the sole-writer path above. Tracked as task
+// 24.120 against `packages/domain`; do NOT delegate this module until it is resolved.
 const CREDENTIAL_PREFIX =
-  /(sk-[a-z0-9]|sk_(live|test)|xox[baprs]-|gh[pousr]_|AKIA[0-9A-Z]{16}|-----BEGIN|eyJ[A-Za-z0-9_-]{10,}\.)/;
+  /(sk-[a-z0-9]|sk_(live|test)|xox[baprs]-|gh[pousr]_|AKIA[0-9A-Z]{16}|-----BEGIN|eyJ[A-Za-z0-9_-]{10,}\.)/i;
 
 // Sensitive keywords that indicate a raw-content / secret leak. Deliberately
 // omits "token" so a structured code (e.g. AUTH_TOKEN_INVALID) — which is never
