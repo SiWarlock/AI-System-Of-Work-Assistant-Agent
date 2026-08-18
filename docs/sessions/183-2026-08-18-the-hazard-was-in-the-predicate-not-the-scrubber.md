@@ -225,3 +225,22 @@ While this slice ran, the orchestrator filed a ruling **onto `### 24.120`**: *th
 - ⚠ **BIAS, STATED BECAUSE IT IS LARGE: this corpus is SELF-REFERENTIAL. All 8 exist because we are documenting this bug.** It is **not** a base rate for an arbitrary vault. ⭐ **What it is, is a demonstration that the pattern needs no exotic input — and the self-reference is itself the finding, not merely a caveat.**
 
 ⇒ ⛔ **DISPOSITION CONSEQUENCE: the low-reachability argument may no longer be used to grade this low-severity, and it is now refuted rather than merely unmeasured.** ⭐ **The finder's retraction was right for a reason even they did not have: the argument does not fail for want of measurement, it fails on its own premise.**
+
+---
+
+## 14 — ⛔⛔ A DEFECT IN *THIS DOCUMENT*, CAUGHT BY RE-MEASURING BEFORE ROUTING IT: §6's `3` AND §13's `8` ARE **DIFFERENT METRICS**, AND I READ THEM AS THE SAME ONE
+
+**On reviewing the landed tracker corrections I saw `(C)` costed at *3 lines of 89,451* while §13 of this document said *8*, and I was one message from routing "the lead's decision input is understated 2.6× and growing."** ⛔ **It is not. Both numbers are mine, both are correct, and they measure different quantities.**
+
+| metric | definition | value at HEAD |
+|---|---|---|
+| **(C)'s COST** (§6, the tracker's figure) | lines where **no net** trips today but **some net** trips under an inert filler — i.e. **newly REFUSED** | **4** (was 3; corpus grew 654→656) |
+| **TRIGGERING CONDITION** (§13, the H2 refutation) | lines where **`URL_USERINFO_CREDENTIAL` specifically** is broken by a marker, **regardless of whether another net already flags the line** | **8** |
+
+⇒ ⭐ **The gap is not drift — it is that 4 of the 8 triggering lines are ALREADY UNSAFE TODAY VIA ANOTHER NET**, because prose discussing credential redaction contains the words *credential* / *secret* / *password*. **`SENSITIVE_KEYWORD` incidentally covers half the triggering population.** ⚠ **That is real defence-in-depth and it softens H2's practical bite — stated because it cuts against my own §13 and would have been convenient to omit.**
+
+⛔⛔ **THE MECHANISM, AND IT IS `L190` ARRIVING IN MY OWN WORK: TWO CORRECT NUMBERS FROM THE SAME PREDICATE FAMILY, MEASURED MINUTES APART, READ AS ONE QUANTITY BECAUSE THE SECOND WAS BIGGER AND I HAD A STORY FOR WHY IT WOULD GROW.** ***Re-derivation cannot catch this class, because neither number was ever wrong.*** ⭐ **What caught it was re-running the EXACT metric the tracker quotes rather than comparing two remembered figures.**
+
+⛔ **AND IT IS THE CLASS THIS AREA ALREADY OWNS — `029`: *two of contract's defects were introduced AS CORRECTIONS.*** ***A correction carries its own endorsement and reads as already-vetted*** — and this one was aimed at a decision input sitting in front of the lead, which is the worst available target.
+
+⭐ **The growth claim in §13 survives and shrinks: the triggering population did grow 3→8 during the session, but the (C) COST grew only 3→4.** ⇒ **"(C)'s cost grows as we document the defect" is TRUE BUT SMALL, and I stated it larger than it is.** ⚠ **§13's 8 stands as the H2 class-existence result; it was never a cost figure and must not be read as one.**
