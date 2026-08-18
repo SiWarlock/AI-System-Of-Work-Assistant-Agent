@@ -139,3 +139,23 @@ END {
   exit (violations > 0 ? 1 : 0)
 }
 ' "$PLAN"
+
+# ---- session-doc duplicate-NNN guard (added 2026-08-18) --------------------------------------------
+# WHY: the numbered-doc convention computes the next NNN as `max+1` from a directory read. That is a
+# read-modify-write with NO LOCK, so N sessions closing out concurrently all compute the same number.
+# It has now fired at least three times: 114 (two-way, SILENT, survived ~3 weeks unnoticed), 173, and a
+# three-way collision at the 2026-08-18 close-out. See contracts L203.
+# ⛔ DETECTION CURRENTLY SCALES WITH COLLISION MULTIPLICITY, NOT WITH ANY CONTROL — a three-way collision
+# is unmissable, a two-way one is silent. This check is that missing control, and it needs no
+# concurrency assumption at all.
+# WARN not FAIL: `114` is a live pre-existing duplicate whose rename would break inbound links, so
+# failing here would block every tracker commit. Promote to a violation once 114 is dispositioned.
+if [ -d docs/sessions ]; then
+  dup_nnn=$(ls docs/sessions 2>/dev/null | sed -nE 's/^([0-9]{3})-.*/\1/p' | sort | uniq -d)
+  if [ -n "$dup_nnn" ]; then
+    for n in $dup_nnn; do
+      printf '  warn: docs/sessions/ has DUPLICATE number %s — the max+1 counter is not concurrency-safe (contracts L203)\n' "$n"
+      ls docs/sessions | sed -nE "s/^($n-.*)$/    \1/p"
+    done
+  fi
+fi

@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-17 → 2026-08-18 · **Phase:** 24 (hardening tail) · **Area:** `packages/contracts` (`contract-implementer`, single-track `main`)
 **Predecessor (this area):** **NONE — this is the `contract` area's first session doc.** The track was deliberately unqueued (handoff `028`); the owner staffed it this round.
-**Predecessor (chronological):** `176-2026-08-18-the-expiry-that-fired-and-the-ground-that-was-false.md` (providers-integrations)
+**Predecessor (chronological):** `178-2026-08-18-the-expiry-that-fired-and-the-ground-that-was-false.md` (providers-integrations)
 
 > ⚠ **RENUMBERED 176 → 177 AT WRITE TIME (2026-08-18).** Providers and I wrote a doc numbered `176` **eight seconds apart**, in the same tree — the `173`/`174` collision **repeating, four days after it was recorded as a defect and renumbered.** ⛔ **A per-directory `NNN` counter is not concurrency-safe, the follow-up was filed and never adopted, and filing it did not stop the second occurrence** (`L110`: a mitigation recorded as an option is not a mitigation). **Resolved by the `173`→`174` precedent — inbound links decide:** providers' doc already had **2** inbound links from its predecessor `174`; mine had **0**, because this chain starts here. ⭐ **Renumbering mine therefore broke nothing, which is the only reason this was cheap.**
 **Successor:** _(none yet)_
