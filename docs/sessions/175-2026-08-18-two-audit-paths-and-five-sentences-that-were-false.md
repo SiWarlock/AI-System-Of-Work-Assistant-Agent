@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-17 → 2026-08-18 · **Phase:** 24 (hardening tail) · **Area:** `packages/knowledge` (`knowledge-implementer`, single-track `main`)
 **Predecessor:** this area's prior session — `172-2026-08-14-24-80-re-scoped-and-the-precedent-that-had-not-solved-it.md`
-**Successor:** _(none yet — cycled at a clean boundary; see "For your successor")_
+**Successor:** `179-2026-08-18-the-cut-that-could-not-fire-and-three-pins-that-could-not-fail.md`
 
 **Commits (mine):** `124e3f45` (`### 24.98`) · `e3ae23e3` (brief `290` / `### 24.84` knowledge leg)
 **Baseline at start:** `3b74e497`. **Tree at close:** `packages/knowledge` fully clean, no untracked.
