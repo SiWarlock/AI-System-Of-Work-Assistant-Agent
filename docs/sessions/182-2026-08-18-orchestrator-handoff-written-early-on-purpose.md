@@ -66,6 +66,28 @@
 - ⭐⭐ **NEW, from knowledge and relayed to providers: a literal U+2028/U+2029 pasted into a `//` comment TERMINATES THE COMMENT and breaks the parse.** ⇒ ***the fixture that tests a line-terminator hazard is written in a language whose SOURCE ENCODING has the same hazard.*** Write the token as text (`U+2028`), never as the character.
 - ⛔ **`pnpm lint` is RED repo-wide and it is NOT any slice's fault** — `eslint` is in **zero** manifests; reproduces in untouched packages. **Deterministic, not intermittent.** Open Carry-forward `(0)`. ⛔ **`lint` here IS `tsc --noEmit`; never report it as lint coverage.**
 
+## 7b — ⛔⛔ THE HIGHEST-STAKES OPEN ITEM, AND IT IS RE-RULED AND RECORDED (added at the cycle)
+
+**`### 24.110` SHIPS ITS `/i` HALF ONLY. THE DELEGATION HALF IS DEFERRED, BLOCKED ON `### 24.120`.** ⛔ **This ruling BINDS you. The lead's hold — *nothing lands on (B)* — stands through the cycle.**
+
+**The history, because it is the expensive part and rebuilding it is the single costliest thing this round could hand over:**
+1. Providers measured the two `looksUnsafe` diverging in **BOTH** directions — policy misses uppercase credentials, **and policy flags `[REDACTED:credential]` unsafe while domain does not, because domain applies `stripMarkers` first.** ⇒ **the COMPOSITION drifted, not just the lists.**
+2. I ruled **(B) delegate wholesale**; the lead endorsed it. **I added an ADD: prove stripping cannot destroy a match.**
+3. ⭐⭐ **They CONSTRUCTED the counter-example instead of accepting the premise.** `stripMarkers` substitutes a **SPACE**; every `URL_USERINFO_CREDENTIAL` class excludes whitespace ⇒ **a marker inside a userinfo span breaks the span.** `//u:p[REDACTED:raw]q@h` → policy **unsafe**, domain **SAFE** — and `//user:REALSECRET[REDACTED:raw]@host` **loses a real secret.**
+4. **Both GOs died on their own premise.** ⛔ **Re-ruled (C): ship `/i` alone.**
+
+⛔ **THE DECIDING POINT, and it is NOT the obvious one: (B) does NOT invent the hole** — it is `@sow/domain`'s and already inherited twice. ⇒ ***(B) newly exposes THE ONE PATH THAT MADE THE TASK URGENT** — `secret-scan.ts` → policy's `isRedactionSafe` does not strip today and would post-(B), so the sole-writer blocking gate would newly acquire a demonstrated loosening in the same commit that fixes a different one.* **`L174` on a rule-1 surface.**
+⚠ **What settled it: the low-reachability argument for markers on that path was flagged BY ITS OWN AUTHOR as reasoning, not measurement.** ⛔ **A certain tightening is not traded against an unmeasured bound.**
+⛔ **NOT a collapse to (A) — (A) is the other REJECTED option, not the fallback.** (C) leaves the divergence **filed and unfixed** rather than papered over.
+
+**Everything is on entries:** `### 24.110` (the re-ruling in full) · `### 24.120` (the `stripMarkers` property, contract territory, **blocks the delegation only**) · `### 24.121` (a test citing a delegation that does not exist, as the REASON it is trusted) · `### 24.118` (**three** detectors deep + the general rule).
+
+## 7c — WHAT I DELIBERATELY DID NOT DO AT THE CYCLE
+
+⛔ **Worker's `### 24.84` Step 9 and providers' `### 24.110` Step 9 are UNREVIEWED BY INSTRUCTION.** ⭐ **The lead's reasoning, which is right: a Step 9 is reviewed against a COMMITTED brief by someone with fresh context — the cheapest thing to hand over. The re-ruling was the most expensive.** **Both briefs are committed (`297` at `90477c47`/`de456a30`, `298` at `4cfecffe`); both Step-9 reports will be in your inbox or their transcripts.**
+
+⛔ **`### 24.104` NOW CARRIES A PRECONDITION, not a note:** it must not land unless `structuralPathOnly` is terminator-safe — **satisfied today by `### 24.119`'s `s` fix.** ⚠ **Third instance this round of a fix whose safety silently depends on another task's state.**
+
 ## 8 — STATE AT WRITING
 
 **24 commits this round** (base `46ef6c03`), **203 unpushed. ⛔ NOT PUSHED — owner-run only.** `plan-lint` **0 violations** before and after every tracker edit. My territory clean.
