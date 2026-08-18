@@ -4353,6 +4353,10 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ⚠ **Kin `L180`** (a count from what you saw is a SAMPLE) — **`180` is the positive form of this defect, `215` is the negative form, and the negative form is more dangerous because a missing count invites checking while a confident absence closes the question.**
 
+⛔⛔ **FOURTH INSTANCE, SAME EVENING, AND IT UPGRADES THE LESSON: TWO IMPLEMENTERS INDEPENDENTLY REPORTED THE `/preflight` `format:check` GAP AS *UNFILED*. It had been filed since 2026-07-26** — in a Phase-1 `#### Residuals` entry, **including the `format:check` half verbatim.** ⭐ **The orchestrator was one command from filing the duplicate and stopped only by running this lesson's own grep on itself, with a positive control.**
+
+⇒ ⭐⭐ ***TWO INDEPENDENT WITNESSES REPORTING THE SAME ABSENCE FELT LIKE CORROBORATION — AND WAS NOT, BECAUSE THEY SHARE THE BLIND SPOT: neither can see a Phase-1 residual from July.*** ⛔ **This is `029`'s *concordance is evidence only when the methods could have DISAGREED*, arriving through OBSERVERS rather than instruments — and it is the STRONGER form, because two people feel more independent than two tools do.** ⚠ **Corollary: agreement between reporters who share a horizon is not evidence about anything beyond that horizon** — and on a team, a shared horizon is the default, not the exception.
+
 **Enforcement:** `pattern: any "unfiled" / "not recorded" / "nobody has" / "no task owns" claim must cite the search that established it, with a positive control` · `accepted: partially enforceable`.
 
 ## <a id="216"></a>216. A GUARD'S PLACEMENT IS WORTHLESS UNLESS IT RENDERS ON THE SURFACE THE EDITOR ACTUALLY SEES — and a guard must never carry a census
@@ -4364,7 +4368,13 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ⛔ **CENSUS.** The same fence carried *"this repo has THREE `redactString` implementations."* ⇒ ***a guard whose text contains a count rots on someone else's schedule — and the person adding a fourth has no reason to open a fence in another package.***
 ⚠ **AND IT ROTS TOWARD DELETION, WHICH IS WHY IT IS IN THIS LESSON RATHER THAN A STYLE NOTE: a verifier counts four, sees the guard says three, and now has DOCUMENTARY EVIDENCE the guard is stale** — about the one clause establishing the hazard is reachable at all. **The census discredits the guard it was inserted to strengthen.**
-⇒ ⭐⭐ **THE RULE IS SHARPER THAN *"CITE THE INVARIANT, NOT THE CENSUS"*, AND THE SHARP FORM IS WHAT MAKES IT APPLICABLE (lead refinement): A COUNT YOU CAN CHECK BY READING THE SENTENCE IS FINE; A COUNT YOU MUST LEAVE THE FILE TO CHECK IS NOT.** ⭐ **The same fence's *"REACHABLE BY THREE ROUTES"* was KEPT, and correctly — it enumerates its own three routes in that sentence, so it is self-verifying in place.** ⛔ **"This repo has THREE `redactString` implementations" was struck — verifying it means leaving the file, and nothing in the file changes when the census does.** ⇒ ***the test is not "is it a number" but "can the reader falsify it without leaving the guard?"*** **Keep unverifiable-in-place counts in the tracker, where a number is a measurement; keep them out of guards, where a number is a liability.**
+⇒ ⭐⭐ **THE GENERAL RULE, AND IT WAS NEVER ABOUT COUNTS (lead adoption 2026-08-18): A GUARD'S CLAIMS MUST BE FALSIFIABLE *IN PLACE*, OR NAME WHERE TO CHECK THEM.** ⛔ **The decidable test — *can the reader falsify this without leaving the guard?* — replaces the earlier *"cite the invariant, not the census"*, which over-forbade and required a judgement call at the moment of writing.**
+
+⭐ **Applied, it sorts cleanly:** the same fence's *"REACHABLE BY THREE ROUTES"* is **KEPT** — it enumerates its own three routes in that sentence, so it is self-verifying in place. *"This repo has THREE `redactString` implementations"* is **STRUCK** — verifying it means leaving the file, and nothing in the file changes when the census does.
+
+⛔⛔ **AND IT SUBSUMES `029`'s ROTTED-POINTER FINDING, WHICH HAD BEEN ARRIVING AS A SEPARATE LESSON ALL ROUND: *"`persistDenialAudit` has exactly two call sites (`:110`, `:153`)"* — count correct, pointers rotted.** ⇒ ***a cited line number, a claimed call-site total, an "only two producers" and a package census are ONE defect: a guard making a claim the reader cannot check from where they stand.*** ⛔ **All of them fail in the same direction — the reader concludes the guard is stale and is now LICENSED to delete it.**
+
+⇒ **So a guard may assert (a) what is verifiable in its own sentence, (b) what is verifiable in the file it sits in, or (c) an external claim WITH the pointer to where it is checked and owned** — ⭐ **never (d) an external claim stated as settled fact.** **Keep unverifiable-in-place claims in the tracker, where a number is a measurement; keep them out of guards, where a number is a liability.**
 
 ⚠ **Kin `L152`** (a pointer that resolves to the wrong thing is the expensive kind) and **`029`'s rotted-guard finding** — three ways one guard fails: unresolvable pointer, unrenderable placement, self-invalidating count.
 
