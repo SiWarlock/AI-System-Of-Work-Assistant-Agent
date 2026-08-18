@@ -4509,3 +4509,39 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **Kin `L221`/`L222`** — the family where nothing is false. **Here both the result and the question are sound; only the INFERENCE from one to the other is empty.**
 
 **Enforcement:** `pattern: an answer that cites the same measurement, run or artifact that raised the question is rejected; name what could have come out otherwise` · `accepted: partially enforceable`.
+
+## <a id="224"></a>224. "BEHAVIOUR-IDENTICAL" IS A CLAIM ABOUT INPUTS AND IS STRUCTURALLY SILENT ABOUT A NEW MUTABLE SURFACE — a refactor proven equivalent can still be a security regression
+
+⛔ **THE INSTANCE:** `looksUnsafe` hardcoded three `.test()` calls. **Exporting the nets as ONE array so a guard can reflect over them is behaviour-identical** — `||` and `.some()` agree on every input — **and the orchestrator admitted it on a *"prove behaviour-identity"* condition.**
+
+⇒ ⛔⛔ **THE CONDITION CAN BE FULLY SATISFIED BY A CHANGE THAT HANDS EVERY IMPORTER OF `@sow/domain` A HANDLE ON THE SAFETY PREDICATE'S CONTENTS.** ***Any package importing it for an unrelated reason can `push`, `splice` or reassign entries and silently disable a credential net — `looksUnsafe` keeps returning `false`, and every test stays green.*** ⭐ **The three hardcoded calls had NO such surface; the change CREATES one.**
+
+⇒ ⭐⭐ **THE PROOF'S DOMAIN IS *BEHAVIOUR*; THE RISK'S DOMAIN IS *REACHABILITY*. An equivalence proof cannot see a new handle, because a handle is not an input.**
+
+⚠ **AND THE DELIVERY IS THE DANGEROUS PART: it travels as a PURELY STRUCTURAL IMPROVEMENT** — better testability, less duplication, no behaviour change — ⇒ ***which is precisely how a rule-7 exposure gets waved through by people applying a real and satisfied standard.*** ⛔ **Nobody has to be careless: the standard was met.**
+
+⇒ **THE RULE: for any refactor on a safety surface, ask separately — *what is now REACHABLE that was not?*** **New exports, new mutable objects, new handles, widened visibility.** ⭐ **Answer it BEFORE the equivalence question, because equivalence is the one that will be answered convincingly and the one that cannot detect this.**
+
+⭐ **REMEDY SHAPE, from the instance: `Object.freeze` + `readonly` closes the ARRAY, and a `every net has .global === false` pin closes the ELEMENTS** (freeze is shallow; `lastIndex` is only harmless on non-global patterns). ⛔ **The two INTERLOCK — neither covers the other's vector — and they read as duplicate caution to anyone tidying later.**
+
+⚠ **Kin `L46`** (a second hand-maintained copy) — **both are cases where the STRUCTURE, not the logic, carries the defect.** ⭐ **Found by the change's own proposer, in the round's last slice, against a ruling already approved.**
+
+**Enforcement:** `pattern: a refactor touching a safety predicate states what became reachable — new exports, mutable objects, widened visibility — separately from any equivalence claim` · `accepted: partially enforceable`.
+
+## <a id="225"></a>225. AN ARTIFACT *ABOUT* A FAILURE MODE IS THE ARTIFACT MOST LIKELY TO EXHIBIT IT — four instances in one night
+
+⛔ **FOUR, IN ONE SESSION, ACROSS FOUR DIFFERENT CONTROLS:**
+1. **`git-guard.sh` BLOCKED the tracker entry describing `git-guard.sh`'s inability to tell a command from a document about one** — the entry quoted the banned literal.
+2. **`plan-lint` REJECTED the commit filing a task about guards that go stale** — the new entry was inserted out of numeric order.
+3. **The `P1′` prototype CONVICTED THE INCUMBENT FILLER it was written to replace** — a space fails the guard's own criterion, twice over.
+4. ⭐⭐ **THE PUREST: the marker-co-occurrence census grew from 3 to 8 DURING the session that wrote it** — writing about the marker defect required writing markers.
+
+⇒ ⭐⭐ **THE MECHANISM IS NOT IRONY, IT IS NECESSITY: *DESCRIBING A FAILURE MODE REQUIRES REPRODUCING ITS CONDITIONS.*** **You must quote the banned pattern, exercise the stale-guard shape, run the rejected input, or write the triggering literal — that is what description IS.**
+
+⛔ **AND INSTANCE 4 IS ONE STEP FURTHER THAN THE OTHERS AND WORTH SEPARATING: in 1–3 the artifact EXHIBITED the failure mode; in 4 it MANUFACTURED A LIVE INPUT to the system under discussion.** ⇒ ***a team that documents a hazard whose trigger is a LITERAL generates that hazard's own triggering input as a by-product*** — **and this repo documents hazards for a living.**
+
+⇒ **TWO CONSEQUENCES, BOTH ACTIONABLE:** **(a) EXPECT the control to fire while you write about it — treat the block as CONFIRMATION, not obstruction, and never route around it silently** (instance 1's workaround is itself the proof the guard matches text, not intent). **(b) When the trigger is a literal, the DOCUMENTATION IS PART OF THE POPULATION — count it, and say so, or your census silently includes its own observer.**
+
+⚠ **Kin `L219`** (a hazard created by a file nobody commits) — **both are costs a team imposes on itself through the act of working, invisible from inside the act.**
+
+**Enforcement:** `pattern: a census over a corpus that includes this repo's own docs states whether the documentation of the hazard is inside the population` · `accepted: partially enforceable`.
