@@ -4461,3 +4461,21 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **Kin `L190`** (token vs behaviour — the number was never wrong) and **`L215`** (a claim you have no doubt about). ⭐ **Filed at the finder's own suggestion, who preferred it over any of their slice's technical results.**
 
 **Enforcement:** `pattern: a correction to another artifact's figure re-states the METRIC DEFINITION both sides used, and re-runs the target's` · `accepted: partially enforceable`.
+
+## <a id="222"></a>222. SPLIT A COMPOUND CLAIM AND MEASURE THE HALVES SEPARATELY — measured as a unit it returns "partly true" and gets treated as support
+
+⛔ **THE INSTANCE:** a low-reachability argument had gated a rule-7 severity grading for hours — *"frozen redaction markers are LOGGER-EMITTED and would not normally appear in vault content reaching the KnowledgeWriter."* **Flagged as reasoning-not-measurement, praised for the flag, and still never executed.**
+
+⭐⭐ **THE MOVE THAT SETTLED IT WAS ANALYTICAL, NOT INSTRUMENTAL: the implementer SPLIT IT INTO TWO CLAIMS THAT COULD FAIL INDEPENDENTLY.** **H1 (producer): do our emitters write markers onto vault-content paths? → ✅ CONFIRMED, no producer does.** **H2 (content): does that constrain what vault content CONTAINS? → ⛔ REFUTED — vault content comes from a human and from ingested sources, which H1 does not govern.**
+
+⇒ ⭐⭐ ***THE PREMISE WAS TRUE AND THE CONCLUSION WAS FALSE, AND ONLY THE SPLIT COULD SHOW THAT.*** ⛔ **Measured as a UNIT, the argument returns "partly true" — and a partly-true safety argument is READ AS SUPPORT, because the half that confirms is the half that was stated most confidently.**
+
+⛔⛔ **WORSE, THE PREMISE WAS THE REASON THE CONCLUSION FAILED: *"markers are logger-emitted"* CONNECTS the two populations rather than separating them** — a second brain for engineering work receives pasted log excerpts, so logger-emitted content ARRIVES as vault content. ⇒ ***a compound claim can be structured so that verifying its premise makes its conclusion LESS likely, and nothing about the unit-level result reveals that.***
+
+⇒ **THE RULE: before measuring any claim of the form *"X is true, therefore Y is rare/safe/unreachable,"* write X and Y as separately falsifiable propositions and measure each.** ⭐ **If you cannot split it, you cannot measure it — you can only find it plausible.**
+
+⚠ **AND THE COROLLARY THAT MAKES IT URGENT: an unsplit compound claim that survives a review acquires the review's endorsement WHOLE**, so the unmeasured half inherits credibility from the measured one. **That is how this one survived a Step 9, a lead's praise, and a filed constraint.**
+
+⚠ **Kin `L190`** (the number was never wrong) — **`190` is one quantity mislabelled; `222` is two claims fused.** ⭐ **Both are invisible to re-derivation, because nothing in either is false.**
+
+**Enforcement:** `pattern: a "therefore rare/safe/unreachable" claim entering a brief, ruling or severity grading states its premise and its conclusion as separately falsifiable lines` · `accepted: partially enforceable`.
