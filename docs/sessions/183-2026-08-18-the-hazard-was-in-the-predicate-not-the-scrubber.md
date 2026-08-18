@@ -160,3 +160,45 @@ A filler is only inert **against today's pattern set**. **Measured filler table 
 ## 10 — SCOPE HELD
 
 ⛔ **Nothing outside `### 24.120` was touched.** No edits to `### 24.118` / `### 24.124`'s domain legs (their meaning could move on this answer — the sequencing reason this slice went first). No edits in `packages/policy`, `packages/providers`, `packages/integrations`, `packages/knowledge`. **No commits to `IMPLEMENTATION_PLAN.md`** — hook-enforced against implementer writes; the tracker text above is for the orchestrator to land.
+
+---
+
+## 11 — ⛔⛔ APPENDED AFTER `963d8eeb` LANDED ON THIS ENTRY MID-SLICE: MY §5 IS **NOT** THE RETRACTED ARGUMENT, AND MUST NOT BE READ AS RETIRING IT
+
+While this slice ran, the orchestrator filed a ruling **onto `### 24.120`**: *the low-reachability argument is UNMEASURED and this entry must not close on it* — providers-integrations' final act before termination, retracting a **credit** rather than a claim, because *"flagging it as reasoning did not make it measured, and the praise is what makes it look checked."*
+
+⛔ **I have to state plainly that §5 of this document is the single most likely artifact to be misused against that ruling**, so the separation goes here rather than being left to a reader:
+
+| claim | status |
+|---|---|
+| **(i) CALL-GRAPH** — which code paths consume the stripping composition | ✅ **MEASURED HERE** (source-read census, positive + negative controls) |
+| **(ii) INPUT DISTRIBUTION** — whether a frozen marker ever lands inside a userinfo span in real content | ⛔ **UNMEASURED. I DID NOT MEASURE IT.** The retraction stands untouched by anything above. |
+
+⇒ ⛔⛔ ***THE DANGEROUS READ IS "contract measured reachability, so the rarity argument is now checked." IT IS NOT.*** **§5 bounds WHO could be affected; it says nothing about HOW OFTEN the triggering input occurs. A severity claim needs both, and only one exists.**
+
+⭐⭐ **AND THE DIRECTION IS THE OPPOSITE OF REASSURING — this is the part worth carrying: §5 makes the UNMEASURED argument MORE load-bearing, not less.** Today the consumer set is empty, so the input distribution does not matter. ***The moment `### 24.110`'s delegation lands, the consumer set becomes non-empty and the ONLY remaining bound on severity is exactly the unmeasured rarity argument.*** ⇒ **the retraction's importance is scheduled to arrive at the same moment the fix is.**
+
+⚠ **The finder's formulation, honoured here because it is the operative part: *the flag only holds while the word "unmeasured" travels with it.*** **The word is now on this document too.**
+
+---
+
+## 12 — INSTRUMENT REPORT (shared tooling — routed to `### 24.122`, NOT chased)
+
+⭐⭐ **1 — I NEARLY FILED A FALSE ANOMALY, AND THE CHECK THAT STOPPED IT COST 30 SECONDS.** `git diff <base>..HEAD -- IMPLEMENTATION_PLAN.md | grep -c '24\.120'` returned **0** on a delta whose first commit subject is *about* `24.120`. With four recorded `git` anomalies fresh in context, my first reading was fabrication.
+⛔ **It was not. `grep`, `awk` and `sed` all three returned 0 independently; the positive control on the same stream returned 2.** ⇒ **the added lines refer to the task as *"THIS ENTRY"* and never spell `24.120`.** ⭐ ***A token census blind to its own subject*** — the class already logged four times this round, arriving inside the instrument-distrust discipline itself. **`L202` exactly: a strong hypothesis makes false positives cheaper to accept, and mine was one check away from being confirmed.**
+
+⛔⛔ **2 — ANOMALY 3 + 4 REPRODUCED CROSS-SESSION, AND THEY ARE ONE BEHAVIOUR WITH A DISCRIMINATOR.** `029` recorded that the doubled-diff *"would not reproduce across four clean probes in another session."* **It reproduces here — deterministically — and the reason the probes disagreed is that the flag set differed.** Controlled A/B, same commit, same path, same `-U0`, ground truth `--numstat` = **5 insertions**:
+
+| form | body emission | header |
+|---|---|---|
+| `git show <rev> -U0 -- <path>` | ⛔ **3× (3/3 trials, deterministic)** | ⛔ carries subject + author + **relative date** |
+| `git show <rev> -U0 --format='%h' -- <path>` | ✅ **1×** | ✅ clean |
+
+⇒ ⭐⭐ ***AN EXPLICIT `--format` SUPPRESSES BOTH THE INJECTED HEADER AND THE BODY DUPLICATION*** — so anomalies 3 and 4 are **one** behaviour (the header-rewriting path re-emits the body), it is **deterministic rather than intermittent on a given flag set**, and `### 24.122` gains a **workaround with a reason** rather than only a warning.
+⚠ **BOUND, STATED SO IT IS NOT OVER-READ: one commit, one path, `-U0`. This explains anomalies 3 and 4 ONLY. It does NOT explain 1 (`status --porcelain`), 5 (bare `git log`) or 6 (`commit`) — none of which involve `--format`.**
+
+⚠ **3 — ANOMALY 6 REPRODUCED IN THIS SESSION:** `git commit -F … -- <path>` printed **`ok 1 file changed, 162 insertions(+)`** then a bare **`ok`** — the `[main <hash>] <subject>` line replaced by the literal `ok`. **Operation verified correct independently of its own output** (`fd6fe971`, exactly 1 path, 162 insertions, tree clean after). ⭐ **Corroborates `### 24.122`'s "rare and per-invocation" counter-datum with a second actor.**
+
+⚠ **4 — `grep` emitted the malformed summary form twice** (`7 matches in 3 files` / `1 matches in 1 files` with impossible line numbers). **Content was correct both times; only the summary line was non-standard.** ⛔ **Every census in this document was re-read at source with `sed` before being reported.**
+
+⛔ **`git commit`'s pathspec-only form CANNOT commit a NEW file** — `error: pathspec … did not match any file(s) known to git`. The safe sequence for a new path is `git add <one path>` then `git commit -F <msg> -- <same path>`; the pathspec still scopes the commit, so the index is not consulted at commit time. **Verified: 1 path in the resulting commit, 0 foreign.** ⚠ Worth stating because `029`'s rule reads as *"never `git add`"* and for a new file that is not achievable.
