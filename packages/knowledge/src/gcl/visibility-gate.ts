@@ -17,7 +17,6 @@ import { validate } from "@sow/domain";
 import type { SchemaRegistry } from "@sow/contracts/schema/registry";
 import { buildRefusalSignal, type RefusalIssue } from "../audit/validation-refusal";
 import {
-  buildAuditSignal,
   validateProjectionVisibility,
   denyDirectCrossWorkspaceRaw,
   isAllow,
@@ -56,38 +55,28 @@ const GCL_GATE_ACTOR = "knowledge:gcl-gate" as const;
 // `visibility.ts`'s VISIBILITY_PAYLOAD_MARKER convention: the identity rides the refs, the row never does.
 const SCHEMA_REJECTED_PAYLOAD_MARKER = "knowledge:gcl-schema-rejection" as const;
 
-// ⛔ THE ONE PROPERTY OF THIS SIGNAL A ROW AUTHOR CAN STILL INFLUENCE IS ITS LENGTH, so it is bounded
-// here (security review). `registry.ts` compiles ajv with `allErrors: true`, so N malformed entries
-// yield N issues: measured, 500 unknown top-level keys produced 500 refs — all the IDENTICAL string,
-// zero information — and 500 malformed `sourceRefs` produced 500 distinct ones. `AuditRecordSchema.refs`
-// has no `.max`, and `serveProjection` exists to re-gate a row TAMPERED POST-WRITE, so the actor who
-// can tamper a stored row controls how many refs each denial writes. Dormant while the
-// `GclAuditPersistPort` binding is deferred — which governs disposition, not whether it is fixed.
-// ⚠ DEDUPE THEN CAP, AND THE DROP IS REPORTED: a silently truncated list reads as a complete one.
-const MAX_ISSUE_PATH_REFS = 20;
+// ⚠ The ref-count bound that used to live here (dedupe-then-cap, drop reported) moved WITH the
+// assembly into `src/audit/validation-refusal.ts` and is shared by all five channels. Deliberately
+// NOT restated here: two copies of a security-relevant cap means raising one silently leaves a
+// stale, authoritative-looking number beside the reasoning for it.
 
-// ⛔⛔ THE ROW-AUTHORED-KEY CUT, AND IT IS WHY THE SAFETY ARGUMENT NO LONGER DEPENDS ON A SCHEMA
-// PROPERTY. `sanitizedPayload` is the only free-form-key region in the projection; every other path
-// segment is a field name we authored or a numeric array index. Truncating a path at that field name
-// means a key the ROW author chose can never appear in `refs` — EVEN IF a future schema gives that
-// region a real subschema and starts raising per-entry issues under it.
-// ⭐ THIS REPLACES AN ARGUMENT WITH A CONSTRUCTION. The previous posture was "no per-entry issue can
-// be raised there today, so no key can reach a path" — true, and contingent on a schema nobody
-// promised to keep. Security review EXECUTED the invalidating condition (a plausible
-// `additionalProperties:{type:"string"}` tightening) and produced a real leak:
-// `ref:gcl-issue-path:/sanitizedPayload/Project-Falcon-Q3-codename`, with the suite fully green and
-// `isRedactionSafe` unable to help — `audit-signal.ts` names an "employer project codename" as
-// exactly what its credential-shape heuristic cannot catch. `L73`: make it unrepresentable.
-// ⚠ Handles BOTH path dialects deliberately: ajv emits `/a/b`, Zod emits `a.b`.
-// ⭐ `### 24.103` — THE CUT AND THE BOUNDED ASSEMBLY NOW LIVE IN THE SHARED MODULE
-// (`src/audit/validation-refusal.ts`), keyed by candidate schema id. ⛔ THE BEHAVIOUR IS UNCHANGED
-// AND THAT IS LOAD-BEARING: this channel is the DISCRIMINATING CONTROL for `### 24.103`'s census —
-// the one channel that already resolved `audit=true`, which is what proves the selector separates
-// covered from uncovered. A control whose behaviour moved when it was refactored is no longer a
-// control, so the signal's exact field values are pinned byte-for-byte in
-// `validation-refusal-audit.test.ts`, from values captured BEFORE this edit.
-// ⚠ `sanitizedPayload` is now an entry in `FREE_FORM_KEY_REGIONS["sow:gcl-projection"]` rather than a
-// literal here — same region, derived by the same two-surface walk as the other three schemas.
+// ⛔⛔ THE ROW-AUTHORED-KEY CUT — WHY THE SAFETY ARGUMENT DOES NOT DEPEND ON A SCHEMA PROPERTY.
+// `sanitizedPayload` is this projection's only free-form-key region; truncating a path there means a
+// key the ROW author chose can never appear in `refs`, EVEN IF a future schema gives that region a
+// real subschema and starts raising per-entry issues under it. That replaced an ARGUMENT with a
+// CONSTRUCTION: the earlier posture ("no per-entry issue can be raised there today") was true and
+// contingent on a schema nobody promised to keep, and security review EXECUTED the invalidating
+// condition to produce a real leak ref against a fully green suite —
+// `isRedactionSafe` could not help, because `audit-signal.ts` names an employer project codename as
+// precisely what its credential-shape heuristic misses (`contracts L73`: make it unrepresentable).
+// ⭐ `### 24.103` — THE CUT AND THE BOUNDED ASSEMBLY NOW LIVE IN `src/audit/validation-refusal.ts`,
+// keyed by candidate schema id; `sanitizedPayload` is this schema's entry in `FREE_FORM_KEY_REGIONS`,
+// derived by the same two-surface walk as the other three. Both path dialects are handled there.
+// ⛔ THE BEHAVIOUR IS UNCHANGED AND THAT IS LOAD-BEARING: this channel is the DISCRIMINATING CONTROL
+// for `### 24.103`'s census — the one channel that already resolved `audit=true`, which is what
+// proves the selector separates covered from uncovered. A control whose behaviour moved when it was
+// refactored is no longer a control, so the signal's exact field values are pinned byte-for-byte in
+// `validation-refusal-audit.test.ts` from a capture taken BEFORE the re-expression.
 function schemaRejectedSignal(stage: "ajv" | "zod", issues: readonly GateIssue[]): AuditSignal {
   return buildRefusalSignal({
     actor: GCL_GATE_ACTOR,

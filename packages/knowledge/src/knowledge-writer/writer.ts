@@ -647,7 +647,13 @@ const KW_GATE_ACTOR = "knowledge:kw-gate" as const;
 // A payloadHash-shaped decision marker — a fixed constant, never a hash of the candidate.
 const KW_SCHEMA_REJECTED_PAYLOAD_MARKER = "knowledge:kw-schema-rejection" as const;
 
-function kwSchemaRejectedSignal(
+/**
+ * @internal EXPORTED FOR PINNING, not for callers. The `scoped` stage is measured unreachable
+ * end-to-end, so its only honest pin drives THIS function — the real producer — rather than a
+ * hand-copied duplicate of its literals, which would stay green if the producer's `refPrefix`,
+ * `beforeSummary` or region cut changed.
+ */
+export function kwSchemaRejectedSignal(
   stage: SchemaRejected["stage"],
   issues: readonly RefusalIssue[],
 ): AuditSignal {

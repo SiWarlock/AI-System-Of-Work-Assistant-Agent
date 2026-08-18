@@ -122,7 +122,9 @@ export type RemediationError =
 const REMEDIATION_ACTOR = "knowledge:remediation-router" as const;
 const PLAN_INVALID_PAYLOAD_MARKER = "knowledge:remediation-plan-rejection" as const;
 
-function planInvalidSignal(stage: "ajv" | "zod" | "scoped", issues: readonly RefusalIssue[]): AuditSignal {
+/** @internal EXPORTED FOR PINNING (see `kwSchemaRejectedSignal`) — the unreachable `scoped` stage's
+ * pin must drive the real producer, not a copy of its literals. */
+export function planInvalidSignal(stage: "ajv" | "zod" | "scoped", issues: readonly RefusalIssue[]): AuditSignal {
   return buildRefusalSignal({
     actor: REMEDIATION_ACTOR,
     event: `knowledge.remediation.plan_invalid.${stage}`,

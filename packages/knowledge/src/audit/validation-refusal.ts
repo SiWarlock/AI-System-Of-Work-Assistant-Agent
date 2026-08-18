@@ -16,7 +16,7 @@
 // weaken a check. IT DELETES THE ENUMERATION, and the four gates go back to being silently
 // signal-less with the suite fully green, which is the exact state this task was filed about.
 //
-// ⛔⛔ AND THE SECOND ONE, BECAUSE THE WRONG EDIT HAPPENS AT A DIFFERENT LINE (`L187`):
+// ⛔⛔ AND THE SECOND ONE, BECAUSE THE WRONG EDIT HAPPENS AT A DIFFERENT SITE (`contracts L187`):
 // `structuralPathOnly` TAKES A SCHEMA ID, NOT A REGION ARRAY, AND THAT SIGNATURE IS THE GUARD.
 // ⚠ THE REFACTOR THAT DESTROYS IT LOOKS LIKE A FAVOUR — *"let callers pass their own regions"* /
 // *"decouple this from the schema-id table"* — and it is the natural next edit for anyone adding a
@@ -38,7 +38,7 @@ import { buildAuditSignal, type AuditSignal } from "@sow/policy";
 /**
  * A single path-tagged validation issue, as every gate in this package already emits.
  * ⛔ `path` IS redaction-safe (after `structuralPathOnly`); `message` IS NOT, CATEGORICALLY.
- * MEASURED (`### 24.98` / `L192`): Zod's `invalid_enum_value` embeds the RECEIVED VALUE and
+ * MEASURED (`### 24.98` / `contracts L192`): Zod's `invalid_enum_value` embeds the RECEIVED VALUE and
  * `unrecognized_keys` embeds a ROW-AUTHORED KEY. Never put `message` on an audit surface.
  */
 export interface RefusalIssue {
@@ -114,17 +114,26 @@ export const FREE_FORM_KEY_REGIONS: Readonly<Record<CandidateSchemaId, readonly 
 
 // One precompiled alternation per schema; a schema with no regions gets no pattern (identity cut).
 // ⚠ Handles BOTH path dialects deliberately: ajv emits `/a/b`, Zod emits `a.b`.
+// ⛔⛔ THE `s` (dotAll) FLAG IS A SAFETY CONTROL, NOT A STYLE FLAG — DO NOT DROP IT. Without it, `.`
+// does not match a LINE TERMINATOR (`\n`, `\r`, `U+2028`, `U+2029`), and `$` without `m` matches only
+// at end of input ⇒ a row-authored key CONTAINING ONE makes the whole pattern fail to match, and the
+// `?? path` fallback below then returns the path VERBATIM — the row key reaches `refs` uncut.
+// ⭐ MEASURED, NOT THEORISED (security review built the input and ran it): every channel leaked,
+// INCLUDING the GCL control, and `isRedactionSafe` returned TRUE on the result — a project codename
+// matches none of its credential patterns, exactly as `audit-signal.ts` warns. Detection is not a
+// backstop here; this cut IS the control.
+// ⚠ dotAll only lets `.*?` find the region MORE often, which is the fail-safe direction.
 const REGION_PATTERNS: ReadonlyMap<CandidateSchemaId, RegExp> = new Map(
   (Object.entries(FREE_FORM_KEY_REGIONS) as [CandidateSchemaId, readonly string[]][])
     .filter(([, regions]) => regions.length > 0)
-    .map(([id, regions]) => [id, new RegExp(`^(.*?\\b(?:${regions.join("|")})\\b)[./].*$`, "u")]),
+    .map(([id, regions]) => [id, new RegExp(`^(.*?\\b(?:${regions.join("|")})\\b)[./].*$`, "us")]),
 );
 
 /**
  * Truncate a validation issue path at the candidate schema's free-form-key region, so a key the ROW
  * author chose can never appear in an audit ref — EVEN IF a future schema gives that region a real
  * subschema and starts raising per-entry issues under it. Replaces an argument with a construction
- * (`L73`: make the unsafe content unrepresentable rather than detecting it — `isRedactionSafe`
+ * (`contracts L73`: make the unsafe content unrepresentable rather than detecting it — `isRedactionSafe`
  * provably cannot help here, since `audit-signal.ts` names an employer project codename as exactly
  * what its credential-shape heuristic misses).
  *
@@ -134,14 +143,22 @@ const REGION_PATTERNS: ReadonlyMap<CandidateSchemaId, RegExp> = new Map(
  * system is structurally blind. ⚠ THE TEMPTING IMPLEMENTATION IS `return path` — it looks like a
  * harmless pass-through and it is the fail-OPEN hole: the row-authored key reaches the signal with
  * no error and nothing to notice.
- * ⛔ AND IT MUST NOT THROW, WHICH IS A MEASURED CONSTRAINT AND NOT A STYLE CHOICE: `applyPlan`
- * contains NO `try` ANYWHERE (its own header documents this), so a throw here escapes uncaught on
- * the SOLE-WRITER PATH — safety rule 1, at the §16 never-throw boundary. That would convert a
- * silent-refusal defect into an uncaught throw on the one path this task exists to protect.
+ * ⛔ AND IT MUST NOT THROW, WHICH IS A MEASURED CONSTRAINT AND NOT A STYLE CHOICE — stated as a
+ * CHECKABLE claim, because the shorter version of it is false: `applyPlan`'s ONLY `try` blocks are
+ * the two post-commit recording writes (`writer.ts` — the `deps.audit.append` and
+ * `deps.revisions.record` calls); the gate call `runGate(...)` runs BEFORE them and is outside both.
+ * ⇒ a throw from here escapes `applyPlan` uncaught on the SOLE-WRITER PATH — safety rule 1, at the
+ * §16 never-throw boundary — converting a silent-refusal defect into an uncaught throw on the one
+ * path this task exists to protect.
+ * ⚠ DO NOT RESTATE THIS AS "`applyPlan` CONTAINS NO `try`". That sentence appears in `writer.ts`'s
+ * own header and is FALSIFIED BY ITS OWN BODY; this slice copied it here and code review caught it.
+ * An auditor greps `try`, finds hits inside `applyPlan`, and concludes the whole argument is stale.
  */
 export function structuralPathOnly(path: string, schemaId: CandidateSchemaId): string {
-  const regions = FREE_FORM_KEY_REGIONS[schemaId];
-  if (regions === undefined) {
+  // ⛔ `Object.hasOwn`, NOT `=== undefined`: a widened id colliding with an INHERITED key
+  // (`"constructor"`, `"toString"`) yields a non-undefined lookup, falls past the guard, and returns
+  // the path UNCUT — the exact fail-OPEN branch this function declares impossible. Own-property only.
+  if (!Object.hasOwn(FREE_FORM_KEY_REGIONS, schemaId)) {
     return MAXIMAL_CUT;
   }
   const pattern = REGION_PATTERNS.get(schemaId);

@@ -19,13 +19,14 @@ import {
   KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
   GBRAIN_PROPOSED_FACT_SCHEMA_ID,
   SIGNED_PROVENANCE_STAMP_SCHEMA_ID,
+  GCL_PROJECTION_SCHEMA_ID,
 } from "@sow/contracts";
 import { buildSchemaRegistry } from "@sow/contracts/schema/registry";
 import type { WorkflowRunRef, Workspace, MdContentSha } from "@sow/contracts";
 import { isRedactionSafe, type AuditSignal } from "@sow/policy";
-import { applyPlan, type KnowledgeWriteCommand, type KnowledgeWriterDeps } from "../src/knowledge-writer/writer";
+import { applyPlan, kwSchemaRejectedSignal, type KnowledgeWriteCommand, type KnowledgeWriterDeps } from "../src/knowledge-writer/writer";
 import { computeRevisionId } from "../src/knowledge-writer/revision";
-import { routeRemediation, type RemediationRequest } from "../src/gbrain/remediation/router";
+import { routeRemediation, planInvalidSignal, type RemediationRequest } from "../src/gbrain/remediation/router";
 import { intakeGenerativeProposal, type GenerativeIntakeDeps, type RawGenerativeCandidate } from "../src/gbrain/remediation/generative-proposal-intake";
 import { stampProvenance, type StampInputs, type StamperDeps } from "../src/knowledge-writer/provenance-stamp";
 import { admitProjection, auditOf } from "../src/gcl/visibility-gate";
@@ -170,7 +171,8 @@ const permissiveProposedFact = buildSchemaRegistry([{ $id: GBRAIN_PROPOSED_FACT_
 describe("the shared shape makes a signal-less issue-carrying refusal unrepresentable", () => {
   it("a_construction_site_omitting_audit_is_a_compile_error", () => {
     // ⛔ THIS IS THE WHOLE REMEDY, ASSERTED AT THE ONLY LEVEL IT EXISTS AT. `@ts-expect-error`
-    // FAILS THE BUILD if the construction becomes legal — so this pin reds the moment the shared
+    // FAILS THE BUILD **under `pnpm typecheck`** if the construction becomes legal (under `pnpm test`
+    // alone this body cannot fail — vitest does not typecheck, so the typecheck gate is load-bearing) — so this pin reds the moment the shared
     // shape stops requiring `audit`, which no runtime assertion can detect.
     // ⭐ It is also the pin that generalizes: it is expressed against the SHARED type, so a FIFTH
     // union adopting the shape inherits the guarantee without a fifth test.
@@ -191,6 +193,10 @@ describe("the shared shape makes a signal-less issue-carrying refusal unrepresen
     // region on either surface, so there is nothing to cut and no row-key pin is possible for it.
     // Recorded rather than faked — a synthetic region to keep a green test is forbidden.
     expect(FREE_FORM_KEY_REGIONS[SIGNED_PROVENANCE_STAMP_SCHEMA_ID]).toEqual([]);
+    // ⛔ THE FOURTH ENTRY — the one whose value this refactor physically MOVED out of
+    // `visibility-gate.ts`. Omitting it left the only relocated region unpinned in this file while
+    // the test's name promised "every candidate schema".
+    expect(FREE_FORM_KEY_REGIONS[GCL_PROJECTION_SCHEMA_ID]).toEqual(["sanitizedPayload"]);
   });
 
   it("the_cut_stops_at_the_region_and_does_not_over_cut_a_similarly_named_sibling", () => {
@@ -233,6 +239,66 @@ describe("the shared shape makes a signal-less issue-carrying refusal unrepresen
     // ⛔ THE ANTI-FAIL-OPEN ASSERTION, stated separately because it is the one that reds on the
     // tempting implementation (`return path` when the lookup misses).
     expect(cut).not.toContain("creates");
+
+    // ⛔⛔ INHERITED-KEY IDS, AND THIS HALF WAS MISSING UNTIL SECURITY REVIEW BUILT IT. A plain object
+    // literal resolves `FREE_FORM_KEY_REGIONS["toString"]` through the PROTOTYPE CHAIN to a non-
+    // undefined value, so a `=== undefined` guard is skipped entirely, the `Map` lookup then misses,
+    // and the path returns UNCUT — defeating this exact defence under the exact threat model it
+    // exists for. `Object.hasOwn` is what makes the guard true.
+    // ⚠ THE ORIGINAL PIN SAMPLED ONLY `"sow:..."` — the direction that already worked. That is the
+    // project's own "only the SAFE direction has ever been sampled" shape, reproduced inside the
+    // remedy for it.
+    for (const magic of ["toString", "constructor", "__proto__", "valueOf", "hasOwnProperty"]) {
+      const inherited = structuralPathOnly(
+        `/creates/0/frontmatter/${ROW_AUTHORED_KEY}`,
+        magic as CandidateSchemaId,
+      );
+      expect(inherited).toBe(MAXIMAL_CUT);
+      expect(inherited).not.toContain(ROW_AUTHORED_KEY);
+    }
+  });
+
+  it("a_line_terminator_in_a_row_authored_key_cannot_defeat_the_cut", () => {
+    // ⛔⛔ REGRESSION PIN FOR A REAL LEAK THIS SLICE SHIPPED AND SECURITY REVIEW CAUGHT BY EXECUTION.
+    // The cut is `^(.*?\b<region>\b)[./].*$`. Without the `s` (dotAll) flag `.` does not match a line
+    // terminator and `$` (no `m`) matches only at end of input ⇒ a row-authored key CONTAINING one
+    // makes the pattern fail to match, and the `?? path` fallback returns the path VERBATIM.
+    // ⭐ MEASURED BEFORE THE FIX: every channel leaked, INCLUDING the GCL control, and
+    // `isRedactionSafe` returned TRUE on the result — a project codename matches none of its
+    // credential patterns, so detection provably could not have backstopped it.
+    // ⛔ THIS HAD TO BE A NEW CASE, NOT AN EDIT TO THE EXISTING ROW-KEY PIN: that pin's sentinel has
+    // no terminator, so it passes identically on the broken AND the fixed implementation.
+    for (const [label, terminator] of [
+      ["LF", "\n"],
+      ["CR", "\r"],
+      ["LS", "\u2028"],
+      ["PS", "\u2029"],
+    ] as const) {
+      const key = `Project-Falcon-Q3${terminator}codename`;
+      // both dialects, and the control's own region
+      expect(structuralPathOnly(`/creates/0/frontmatter/${key}`, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID)).toBe(
+        "/creates/0/frontmatter",
+      );
+      expect(structuralPathOnly(`creates.0.frontmatter.${key}`, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID)).toBe(
+        "creates.0.frontmatter",
+      );
+      expect(structuralPathOnly(`/sanitizedPayload/${key}`, GCL_PROJECTION_SCHEMA_ID)).toBe(
+        `/sanitizedPayload`,
+      );
+      // and through the full assembly, which is where it would actually have leaked
+      const signal = buildRefusalSignal({
+        actor: "knowledge:kw-gate",
+        event: "knowledge.writer.schema_rejected.ajv",
+        refPrefix: "kw-issue-path",
+        payloadHash: "knowledge:kw-schema-rejection",
+        beforeSummary: "b",
+        schemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
+        issues: [{ path: `/creates/0/frontmatter/${key}`, message: "m" }],
+      });
+      for (const field of allFieldsOf(signal)) expect(field, label).not.toContain("Falcon");
+    }
+    // ⛔ TERMINATOR AS THE FINAL CHARACTER — there is no "trailing newline is harmless" carve-out.
+    expect(structuralPathOnly("sanitizedPayload.k\n", GCL_PROJECTION_SCHEMA_ID)).toBe("sanitizedPayload");
   });
 });
 
@@ -283,15 +349,18 @@ describe("writer.ts — SchemaRejected (⛔ LIVE, safety rule 1: the sole-writer
     // ⚠ THE STAGE IS NOT DEAD CODE AND MUST NOT BE DELETED ON THIS FINDING — it is a fail-closed
     // layer that fires if the Zod model ever loosens, which is exactly the "unreachable is not a
     // licence to delete" case. Flagged at Step 9; disposition is not mine to make here.
-    const signal = buildRefusalSignal({
-      actor: "knowledge:kw-gate",
-      event: "knowledge.writer.schema_rejected.scoped",
-      refPrefix: "kw-issue-path",
-      payloadHash: "knowledge:kw-schema-rejection",
-      beforeSummary: "knowledge mutation plan candidate refused at the scoped schema stage",
-      schemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
-      issues: [{ path: "sourceRefs", message: "unscoped_mutation" }],
-    });
+    // ⛔ DRIVES THE REAL PRODUCER (`kwSchemaRejectedSignal`), not a hand-copy of its literals. An
+    // earlier version of this pin rebuilt the actor/event/payloadHash/beforeSummary inline and then
+    // asserted the string it had just passed in one line above — it could not fail, and a change to
+    // the producer's refPrefix or region cut would have left it green. Code review caught it.
+    const signal = kwSchemaRejectedSignal("scoped", [
+      { path: `creates.0.frontmatter.${ROW_AUTHORED_KEY}`, message: "unscoped_mutation" },
+    ]);
+    expect(signal.event).toBe("knowledge.writer.schema_rejected.scoped");
+    expect(signal.actor).toBe("knowledge:kw-gate");
+    // the region cut really runs on this path, through the real producer
+    expect(signal.refs).toEqual(["ref:kw-issue-path:creates.0.frontmatter"]);
+    for (const field of allFieldsOf(signal)) expect(field).not.toContain(ROW_AUTHORED_KEY);
     expect(signal.event).toContain("scoped");
     expect(isRedactionSafe(signal)).toBe(true);
   });
@@ -350,6 +419,8 @@ describe("writer.ts — SchemaRejected (⛔ LIVE, safety rule 1: the sole-writer
     expect(isErr(r)).toBe(true);
     if (!isErr(r)) return;
     expect(r.error.code).toBe("schema_rejected");
+    // assert the STAGE too — this file's own instruction, which this pin was violating
+    if (r.error.code === "schema_rejected") expect(r.error.stage).toBe("zod");
     expect((d.vault as MemoryVaultFs).snapshot()).toEqual({});
     expect((d.audit as MemoryAuditRepo).records).toHaveLength(0);
   });
@@ -416,15 +487,14 @@ describe("router.ts — RemediationError.plan_invalid", () => {
 
   it("router_scoped_stage_signal_is_built_for_the_stage_that_cannot_be_driven_end_to_end", () => {
     // Same measured unreachability as the writer's third stage, same refusal to synthesise a driver.
-    const signal = buildRefusalSignal({
-      actor: "knowledge:remediation-router",
-      event: "knowledge.remediation.plan_invalid.scoped",
-      refPrefix: "remediation-issue-path",
-      payloadHash: "knowledge:remediation-plan-rejection",
-      beforeSummary: "remediation plan candidate refused at the scoped schema stage",
-      schemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
-      issues: [{ path: "sourceRefs", message: "unscoped_mutation" }],
-    });
+    // Drives the REAL producer, same reason as the writer's scoped pin.
+    const signal = planInvalidSignal("scoped", [
+      { path: `/creates/0/frontmatter/${ROW_AUTHORED_KEY}`, message: "unscoped_mutation" },
+    ]);
+    expect(signal.event).toBe("knowledge.remediation.plan_invalid.scoped");
+    expect(signal.actor).toBe("knowledge:remediation-router");
+    expect(signal.refs).toEqual(["ref:remediation-issue-path:/creates/0/frontmatter"]);
+    for (const field of allFieldsOf(signal)) expect(field).not.toContain(ROW_AUTHORED_KEY);
     expect(signal.event).toContain("scoped");
     expect(isRedactionSafe(signal)).toBe(true);
   });
@@ -451,15 +521,24 @@ describe("generative-proposal-intake.ts — IntakeError (`### 24.103`'s named ta
   it("intake_plan_invalid_produces_an_audit_signal", () => {
     // ⛔ THE SECOND ECHOING MEMBER `### 24.103`'s ENTRY NEVER NAMED. It is a distinct construction
     // site on a distinct candidate type (the derived KnowledgeMutationPlan, not the proposal), so
-    // covering `schema_rejected` alone would leave this one silent — the partial fix wearing a
-    // completion badge, on the member nobody had listed.
-    const r = intakeGenerativeProposal(intakeCandidate({ factKind: "page", proposedContent: {} }), intakeDeps());
+    // covering `schema_rejected` alone would leave this one silent.
+    // ⛔⛔ THIS PIN WAS VACUOUS AS FIRST WRITTEN AND CODE REVIEW CAUGHT IT: the fixture
+    // (`proposedContent: {}`) returns `proposed_content_incomplete`, an EARLIER gate — the test
+    // tolerated that code and returned before its only audit assertions ran. It was green with zero
+    // coverage of the site its own comment calls the one nobody had listed.
+    // ⭐ THE SEAM THAT DRIVES IT DETERMINISTICALLY: `newPlanId` is injected, so an empty plan id
+    // makes the DERIVED plan Zod-invalid — past mapping and past the no-inference gate, landing
+    // exactly on `plan_invalid`. Asserted, not assumed: the code is pinned first.
+    const r = intakeGenerativeProposal(intakeCandidate(), {
+      ...intakeDeps(),
+      newPlanId: () => "",
+    } as unknown as GenerativeIntakeDeps);
     expect(isErr(r)).toBe(true);
-    if (!isErr(r)) return;
-    expect(["plan_invalid", "proposed_content_incomplete"]).toContain(r.error.code);
-    if (r.error.code !== "plan_invalid") return;
+    if (!isErr(r) || r.error.code !== "plan_invalid") return expect(isErr(r) && r.error.code).toBe("plan_invalid");
     expect(r.error.audit).toBeDefined();
+    expect(r.error.audit.event).toBe("knowledge.intake.plan_invalid");
     expect(isRedactionSafe(r.error.audit)).toBe(true);
+    for (const field of allFieldsOf(r.error.audit)) expect(field).not.toContain(CREDENTIAL_SENTINEL);
   });
 
   it("intake_signal_carries_no_row_derived_content", () => {
@@ -499,7 +578,10 @@ describe("generative-proposal-intake.ts — IntakeError (`### 24.103`'s named ta
   it("intake_candidate_is_still_refused_with_the_same_code_and_stage", () => {
     const r = intakeGenerativeProposal(intakeCandidate({ proposalId: 42 }), intakeDeps());
     expect(isErr(r)).toBe(true);
-    if (!isErr(r) || r.error.code !== "schema_rejected") return;
+    // ⛔ NOT a bare `return` on the wrong-code branch: this is the pin guarding against buying a
+    // signal with a WEAKENED gate, so a drift to `no_inference`/`uncontained_generation` must RED,
+    // not silently satisfy it.
+    if (!isErr(r) || r.error.code !== "schema_rejected") return expect(isErr(r) && r.error.code).toBe("schema_rejected");
     expect(r.error.stage).toBe("ajv");
   });
 });
