@@ -114,6 +114,9 @@ Open design questions the implementer should surface before going GREEN. Pre-loa
 1. **<Question>.** <Two or three plausible answers.> My default vote: **<recommendation>**. <one-sentence rationale>.
 2. **<Question>.** ...
 
+> ⛔⛔ **STANDING LINE — WHEN A SLICE IS SEQUENCED BEHIND ANOTHER TO SATISFY A PRECONDITION: AFTER THE MERGE OR REBASE, MEASURE THE PRECONDITION AGAINST THE MERGED STATE **BEFORE ANYTHING ELSE**.** ⭐ **Not *"verify the merge is clean"* — verify that the REASON FOR THE MERGE STILL HOLDS IN THE MERGED WORLD.**
+> ⚠ **Adopted 2026-08-18 because the process did NOT produce this catch reliably — it produced it by LUCK.** **An implementer ran the payoff measurement because it was the obvious next act after a merge, not because they suspected anything; had the merge been cheap, or had they gone straight to `/session-end`, a FALSE PRECONDITION would have survived and the held slice would eventually have shipped against it.** ⛔ **The measurement showed the blocking slice did NOT make the promotion safe: the regression that justified the ordering had been measured on the one field the remedy structurally cannot fix.**
+
 ## Dependencies + sequencing
 - **Depends on:** <prior slices that must have landed>
 - **Blocks:** <future slices that need this>

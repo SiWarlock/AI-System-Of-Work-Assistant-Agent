@@ -4910,7 +4910,13 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ⇒ ⛔⛔ **THE ENFORCEMENT IS ONE WORD OF DISCIPLINE AND IT IS THE ONLY CHANGE THAT MAKES THIS CLASS VISIBLE AT ALL: RECORD THE CONTROL'S *VALUE*, NOT ITS *VERDICT*.** ⭐ ***"positive control returned 8" would have COLLIDED VISIBLY with HEAD's 9. "Positive control passed" could not.*** ⛔ **The information was in the measurer's hands and THE FORMAT DISCARDED IT.**
 
-**Enforcement:** `pattern: a positive control reports its VALUE (and, where known, the value expected) — never a bare pass/fail; a blob-level measurement states the ref explicitly` · `accepted: enforceable in review`.
+⇒ ⭐⭐ **GENERAL FORM, FOLDED IN AFTER A THIRD INSTANCE RATHER THAN BANKED SEPARATELY (lead ruling): *A CONTROL'S **OUTPUT** IS RICHER THAN ITS **VERDICT**, AND THE FORMAT DISCARDS THE DIFFERENCE.*** **Three times in one round a control answered a question nobody asked it, and twice the answer was recovered only by accident:**
+1. **the off-by-one MAGNITUDE above** — 8 where HEAD held 9;
+2. **a `correlationId` count of 8 vs 9** across two refs, carrying the same signal;
+3. ⛔ **`spec-lint` PASSING brief `303` while FAILING brief `305` — which could BOTH hold only if a task the orchestrator had reported as ticked was still `- [ ] OPEN`.** ⚠ **The narrative said done; the state line said open — this file's own format contract (*state lives on ONE checkbox line; narrative never carries state*) violated by the person who enforces it.**
+⇒ **THE HABIT: when a control or gate returns anything beyond pass/fail, READ IT AS DATA about the subject, not as noise around a verdict.**
+
+**Enforcement:** `pattern: a positive control reports its VALUE (and, where known, the value expected) — never a bare pass/fail; a blob-level measurement states the ref explicitly; a gate's incidental output is read as data` · `accepted: enforceable in review`.
 
 ## <a id="250"></a>250. A QUESTION ABOUT INPUTS CANNOT BE CLOSED; THE SAME CONCERN AS A QUESTION ABOUT BEHAVIOUR DELTAS CAN
 
