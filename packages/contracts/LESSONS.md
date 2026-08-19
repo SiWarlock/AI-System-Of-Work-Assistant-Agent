@@ -4954,3 +4954,29 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 **Enforcement:** `pattern: a finding's record names the party that EXECUTED the establishing check, distinctly from the party that reported it` · `accepted: partially enforceable`.
 
+## <a id="253"></a>253. A MAX OVER A PATTERN IS AN ABSENCE CLAIM WEARING A NUMBER
+
+⛔ **THE INSTANCE:** an implementer reported *"`packages/contracts/LESSONS.md` tops out at `## 203`"* and concluded three cited lessons did not exist. **False: the file carries 133 plain `## N.` headings and 116 anchored `## <a id="N"></a>N.` ones, and the pattern could see only one format.** ⭐ **`code-quality-reviewer` reproduced it independently with the same instrument and reached the same wrong answer.**
+
+⇒ ⭐⭐ **A MAXIMUM IS AN EXISTENTIAL CLAIM IN DISGUISE: *"the highest is 203"* asserts **nothing above 203 exists**, over the whole file — and it arrives as a NUMBER, which reads as a measurement rather than as a negative.** ⛔ **The positive-control rule fires on *"I found nothing"* and NOT on *"the max is N"*, because the second one produced a value and feels like a result.**
+
+⇒ ⛔⛔ **AND A CONTROL DOES NOT SAVE IT UNLESS THE CONTROL SPANS THE FORMATS: their instrument DID find real headings, so it demonstrably ran.** ***Non-vacuity proves the instrument executed; APPLICABILITY proves it could see every form the data takes*** (`L178`) — **and a heading-format split is invisible to both the author and the reviewer when they share the pattern.**
+
+⇒ **THE RULE: treat any MAX, COUNT, LATEST or HIGHEST over a pattern as an absence claim, and control it the way you would control an empty result — with an instance you KNOW is in the population and in a DIFFERENT form from the ones you expect.**
+
+⚠ **`L141`'s shape: two careful parties, one method, one wrong answer. The METHOD was under-specified and no amount of care by either would have caught it.**
+
+**Enforcement:** `pattern: a max/count/latest over a pattern is reported with the pattern used and a control instance drawn from a different formatting of the same data` · `accepted: partially enforceable`.
+
+## <a id="254"></a>254. A PIN NAMED FOR A HAZARD IS NOT A PIN THAT CAN DETECT IT — ask which mutation reds ONLY this pin
+
+⛔ **THE INSTANCE, THREE TIMES IN ONE ROUND BY ONE AUTHOR:** a pin named for an ordering hazard was measured to add **zero unique mutation coverage** — the reorder mutation redded four other pins too, so the pin named for the hazard **could not discriminate it.** ⭐ **Found by review MEASURING it, not by reading the name.**
+
+⇒ ⭐⭐ **A TEST'S NAME IS A CLAIM ABOUT WHAT IT WOULD CATCH, AND NOTHING CHECKS IT.** ⛔ **A pin can be green, correct, well-named, and contribute NOTHING — its assertions all covered by neighbours — and every gate we have reports it as coverage.**
+
+⇒ **THE TEST, AND IT IS MECHANICAL: *WHICH MUTATION REDS **ONLY** THIS PIN?*** **If none, the pin is documentation — which may be fine, but it must not be counted as detection, and the docblock's *enforced by* pointer must aim at the pin that actually reds.**
+
+⚠ **Kin `L237` (a mutation over a multi-assertion block proves ONE assertion): `237` is a pin proving less than it appears; `254` is a pin proving nothing it appears to.** ⭐ **Together they are the two ways a mutation count over-reports coverage.**
+
+**Enforcement:** `pattern: a pin named for a specific hazard cites the mutation that reds it and no other; a docblock's "enforced by" names the pin that discriminates` · `accepted: enforceable in review`.
+
