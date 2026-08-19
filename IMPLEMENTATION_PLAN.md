@@ -54,11 +54,15 @@ _One row per phase; `Open` = tasks not yet DONE-class (open + partial + deferred
 | 21 | External Write / Tool-Sync | prov-int | ⬜ open (4 gated) | — (§ARM-21) | 10 | §19.8 |
 | 22 | Propose Activation (last flip) | worker | ⛔ gated | — (crossing 6, §ARM-GBRAIN) | 5 | §19.9 |
 | 23 | Per-Vendor Connector Enablement | prov-int | ⛔ gated | — (crossing 7, §ARM-23) | 7 | §19.10 |
-| 24 | OS One-Writer Enforcement & Real Packaging | worker | ⬜ open | — | 5 | §19.11 |
+| 24 | OS One-Writer Enforcement, Hardening & Real Packaging | **multi — 6 areas** | 🔶 active | — | **79** | §19.11 |
 | 25 | Second-Brain Output Workflows | worker | ⬜ open | — | 6 | §19.12 |
 | 26 | Research/Web-Retrieval Provider Go-Live + Living-Vault Scheduling | prov-int+worker | ⛔ gated | — (§ARM-RESEARCH) | 2 | §19.13 |
 
 _`*` = a residual/deferred bullet remains inside a certified phase (see that phase's `#### Residuals`)._
+
+⛔ **PHASE 24's ROW IS RE-MEASURED 2026-08-18 @ `40bbf578`; EVERY OTHER ROW REMAINS AT THE 2026-07-19 `db45eb6e` VINTAGE — stated so the table does not carry two ages silently** (Carry-forward 8(b): a numeric literal that diverges in place is invisible because both readings look authoritative).
+**METHOD, not a recollection:** `awk` over this file's Phase-24 span, pairing each `### 24.NN` heading with its first `- [` line — **128 entries, 79 open, 49 DONE-class.** ⛔ **Not `grep`, which fabricated a count twice in the session that took this measurement (`### 24.122`).**
+⛔⛔ **THE `Track` CELL WAS THE LOAD-BEARING HALF, NOT THE COUNT.** It read `worker`. **Measured across the 79 open: worker 16 · knowledge 15 · providers-integrations 11 · contract 5 · desktop 2 · eval-security 1 — and 29 declare NO dispatchable territory at all** (13 carry no `Track:` line, 11 declare `NONE`, 5 are cross-area). ⇒ ***34 open Phase-24 tasks declare a NON-worker area against 16 that declare worker, so the single-area label was the ALLOCATION-reading failure `### 24.40` fixed this column for*** — and it is the row an idle area reads INSTEAD OF the source. ⚠ **The 29 remain unreachable by any territory dispatch, however many run — that is `### 24.94`, and this row cannot express it.**
 
 ---
 
