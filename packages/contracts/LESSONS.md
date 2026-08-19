@@ -4725,5 +4725,9 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ⭐ **PROVENANCE: the author of the harness-layer inference REFUTED IT THEMSELVES within the hour, by piping git's own output to `wc` — proving the truncation was below the shell.** ⇒ **the cheapest disproof in the whole arc, available the entire time.**
 
+⛔⛔ **AMENDED SAME DAY — THE WORSE FORM IS THE ONE NOBODY WROTE DOWN.** **Hours after this lesson was banked, its own instigator caught themselves *"half-holding 'volume' as the mechanism and never writing it down"*, and wrote it down expressly so it could be shot — then shot it** (`git ls-files` → **2066 lines uncapped**, forty times the cap).
+⇒ ⭐⭐ ***AN AMBIENT MECHANISM DOES EVERYTHING THIS LESSON DESCRIBES — it answers the question and stops the tests — AND IT IS IMMUNE TO CORRECTION, BECAUSE NOBODY ELSE CAN SEE IT TO REFUTE IT.*** ⛔ **A written wrong mechanism at least recruits an opponent. An unwritten one is a private explanation doing public work.**
+⇒ **STRENGTHENS THE RULE RATHER THAN QUALIFYING IT: write the mechanism down PRECISELY WHEN YOU ARE NOT READY TO ASSERT IT** — labelled HYPOTHESIS, with the tests that would kill it. ⭐ **The cheapest disproof in this whole arc was one command, and it stayed unrun while the belief stayed unspoken.**
+
 **Enforcement:** `pattern: an entry recording an unexplained anomaly states the enforcement independently of any mechanism, and any mechanism it carries is labelled HYPOTHESIS with its disproving tests listed` · `accepted: partially enforceable`.
 
