@@ -5,7 +5,7 @@
 **Area:** providers-integrations (`packages/policy`, `packages/providers`, `packages/integrations`)
 **Phase:** 24
 **Predecessor:** `docs/sessions/178-2026-08-18-the-expiry-that-fired-and-the-ground-that-was-false.md`
-**Successor:** —
+**Successor:** `docs/sessions/186-2026-08-18-the-defect-i-fixed-and-then-rebuilt-one-slice-later.md`
 **Landed:** `f621bd06` (`### 24.110`, scope (C))
 **Session doc number ASSIGNED by main-orchestrator from committed history — not computed here** (029's deterministic close-out race; every implementer-side remedy re-runs it).
 
