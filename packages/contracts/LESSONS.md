@@ -4835,3 +4835,33 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 **Enforcement:** `pattern: an instrument finding names the session it was measured in, and its enforcement is stated so it holds regardless of which variant the reader has` · `accepted: partially enforceable`.
 
+## <a id="245"></a>245. A HOLE FROM ONE CONCERN'S SIDE IS THE MECHANISM FROM ANOTHER'S — and both readings are correct
+
+⛔ **THE INSTANCE:** a redactor's early return (*if scrubbing changed anything, skip the type gate*) was measured as a live rule-5/rule-7 bypass and a fix was ruled: **run the gate regardless.** ⭐ **An implementer then read `isSafeFieldValue` and found that for `errorMessage`/`errorStack` it returns `false` UNCONDITIONALLY — they are not in the switch, not id-named, not timestamp keys.**
+
+⇒ ⛔⛔ ***THE "BYPASS" IS THE ONLY PATH BY WHICH THOSE FIELDS EVER EMIT ANY CONTENT.*** **Running the gate regardless would have DELETED DIAGNOSTIC ERROR LOGGING FROM THE SYSTEM** — measured: `auth failed with sk-…` goes from *scrubbed, message preserved* to `[REDACTED:raw]`.
+
+⇒ ⭐⭐ **WHAT LOOKS LIKE A HOLE FROM THE SECURITY SIDE IS THE MECHANISM FROM THE DIAGNOSTICS SIDE, AND NEITHER READING IS WRONG.** ⛔ ***So "fix the defect" is UNDER-SPECIFIED until you know which concern's reading you are acting on*** — and the person who found the defect is, by construction, reading it from one side only.
+
+⛔ **AND THE RULING'S AUTHOR NAMED WHY CARE WOULD NOT HAVE HELPED:** *"it was wrong in a way no amount of care about the leak would have caught — I was reasoning about a gate I had not read."* ⇒ **the failure is not insufficient caution about the hazard; it is having modelled only one side of the construct.**
+
+⇒ **THE RULE: BEFORE REMOVING OR CLOSING SOMETHING THAT LOOKS LIKE A DEFECT, ASK WHAT DEPENDS ON IT BEING THERE — and answer it by READING the dependent, not by reasoning about it.** ⭐ **A construct that survived review is more likely to be load-bearing than sloppy; the burden is on the remover.**
+
+⚠ **Kin `L239` (assess the path it exists to serve) — that is about a CHANGE's success path; this is about an EXISTING construct's second consumer.** **`L241` is the same code seen from the third side.**
+
+**Enforcement:** `pattern: a slice removing or gating an existing early-return/short-circuit states what currently depends on it, cited from the dependent's source` · `accepted: partially enforceable`.
+
+## <a id="246"></a>246. A TASK WHOSE DONE-WHEN CANNOT DISCHARGE THE EVIDENCE THAT CREATED IT IS MALFORMED, NOT MERELY HARD
+
+⛔ **THE INSTANCE:** an entry was filed on a measured leak — PII and an employer codename emitted under `errorMessage` — with the Done-when *"the field-type gate runs regardless of whether a scrub fired."* ⭐ **Measured later: that gate is VACUOUS for `errorMessage`.** ⇒ ***the remedy is either a NO-OP for the field the evidence came from, or it deletes the field.***
+
+⇒ ⛔⛔ **THE ENTRY WAS NOT DIFFICULT — IT WAS MALFORMED: its ACCEPTANCE and its WITNESS pointed at different things**, and any amount of effort against the Done-when as written would have left the originating leak open.
+
+⇒ ⭐⭐ **THE TEST IS CHEAP, MECHANICAL, AND BELONGS AT FILING TIME: *take the evidence that produced this entry and ask whether satisfying the Done-when would close it.*** ⛔ **If not, the entry needs re-scoping before anyone is dispatched against it.** ⚠ **The failure is invisible afterwards: a slice that satisfies a malformed Done-when SHIPS GREEN and TICKS, and the evidence quietly remains true.**
+
+⭐ **WHY IT ESCAPES REVIEW: the Done-when is written by someone who has just understood the MECHANISM, and it encodes the mechanism's remedy — while the WITNESS is a specific input, and nobody re-runs the witness against the proposed remedy.** ⇒ **the two are never compared, because they feel like the same thing.**
+
+⚠ **Kin `029`'s cost-bounded-by-the-wrong-milestone: there a cost's stated END arrived while the cost continued; here a task's stated COMPLETION arrives while its defect continues.** **Both are discharge conditions that discharge the wrong thing.**
+
+**Enforcement:** `pattern: a task filed from a measured witness states, in the Done-when, that satisfying it would make that witness stop reproducing — or names why the witness is out of its scope` · `accepted: enforceable in review`.
+
