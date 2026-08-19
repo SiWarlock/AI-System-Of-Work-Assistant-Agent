@@ -4867,7 +4867,8 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ## <a id="247"></a>247. A GUARD'S JUSTIFICATION MUST BE QUANTIFIED OVER EVERY SHAPE IT BLOCKS — not over the shape that motivated it
 
-⛔ **THE INSTANCE, self-filed by its author against themselves and NOT credited to the reviewer who caught it:** a delegation block was re-grounded on the reason *"delegating makes this module START STRIPPING and therefore STOP refusing already-redacted content."* ⭐ **`security-reviewer` executed the counter-example: under `(C')` — `domain.looksUnsafe(s) || <these nets un-stripped>` — the un-stripped arm still fires, so the value STAYS refused.**
+⛔⛔ **ATTRIBUTION CORRECTED 2026-08-18, ON THE AUTHOR'S OWN PARTING CORRECTION, BECAUSE THE FIRST VERSION READ AS IF THEY HAD CAUGHT IT: THE IMPLEMENTER *WROTE* THE DEFECT; `security-reviewer` *CAUGHT* IT by constructing and executing the counter-example; the implementer then SELF-DIAGNOSED and ROUTED.** ⭐ **What is theirs is the self-diagnosis and the routing — which is not nothing, and is not the catch.** ⚠ **They asked the DEFECT be recorded against them rather than credited to the reviewer; that request must not be read as a claim on the FINDING.**
+⛔ **THE INSTANCE:** a delegation block was re-grounded on the reason *"delegating makes this module START STRIPPING and therefore STOP refusing already-redacted content."* ⭐ **`security-reviewer` executed the counter-example: under `(C')` — `domain.looksUnsafe(s) || <these nets un-stripped>` — the un-stripped arm still fires, so the value STAYS refused.**
 
 ⇒ ⛔⛔ ***A READER IMPLEMENTING `(C')` — the shape the plan tells them to implement — CHECKS THE STATED REASON, FINDS IT DOES NOT APPLY TO WHAT THEY ARE BUILDING, AND CONCLUDES THE BLOCK WAS WRITTEN ABOUT SOMETHING ELSE.*** **A block that is true of one blocked shape and false of another does not merely under-inform — it ISSUES A PERMISSION for the shape it does not cover.**
 
@@ -4883,6 +4884,7 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ## <a id="248"></a>248. A SATISFIED PRECONDITION IS AN INSTRUCTION TO PROCEED — so a re-grounded block must defend its own pointer
 
+⚠ **ATTRIBUTION, same correction: the anchored-to-a-planned-closure catch was `security-reviewer`'s. The implementer self-diagnosed and routed it, and wrote the remedy.**
 ⛔ **THE DIAGNOSIS:** a source block closed *"do NOT delegate until task X is resolved."* **Task X resolved.** ⇒ ***the instruction now reads as SATISFIED and LICENSES exactly what it exists to forbid.*** ⭐ **This is NOT the rotted-pointer class: a rotted pointer invites a reader to DISMISS the guard; a satisfied precondition invites them to ACT.** ⛔ **Rot in the RELEASE direction, and it goes GREEN rather than breaking.**
 
 ⇒ **REMEDY 1 — re-ground, never un-annotate.** **Deleting the dead reason DELETES THE BLOCK.** Strike the spent ground, retain it in the past tense (`L195`), and state a LIVE reason in the present tense.
@@ -4906,7 +4908,9 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ⭐ **Caught by the implementer whose work was being measured, who then asked that the gate be KEPT rather than replaced with their word: *"a tick from a ship report rather than from the blob is exactly the discharge-without-code failure you were guarding against — please re-measure at HEAD and tick from that, not from this message."***
 
-**Enforcement:** `pattern: a blob-level measurement states the ref explicitly; a positive control reports its VALUE and the value that was expected` · `accepted: enforceable in review`.
+⇒ ⛔⛔ **THE ENFORCEMENT IS ONE WORD OF DISCIPLINE AND IT IS THE ONLY CHANGE THAT MAKES THIS CLASS VISIBLE AT ALL: RECORD THE CONTROL'S *VALUE*, NOT ITS *VERDICT*.** ⭐ ***"positive control returned 8" would have COLLIDED VISIBLY with HEAD's 9. "Positive control passed" could not.*** ⛔ **The information was in the measurer's hands and THE FORMAT DISCARDED IT.**
+
+**Enforcement:** `pattern: a positive control reports its VALUE (and, where known, the value expected) — never a bare pass/fail; a blob-level measurement states the ref explicitly` · `accepted: enforceable in review`.
 
 ## <a id="250"></a>250. A QUESTION ABOUT INPUTS CANNOT BE CLOSED; THE SAME CONCERN AS A QUESTION ABOUT BEHAVIOUR DELTAS CAN
 
@@ -4916,12 +4920,14 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ⇒ ⛔ ***ENFORCEMENT HAS PROVABLY ZERO EFFECT ON EVERY INPUT THAT IS NOT ALREADY LEAKING — established WITHOUT knowing the producers at all.*** ⭐ **A universal claim about callers became a finite claim about branches, decidable from the code in front of you.**
 
+⇒ ⭐⭐ **THE GENERAL FORM, WHICH IS WHAT WILL BE REACHED FOR: *WHEN A QUESTION REQUIRES UNIVERSAL KNOWLEDGE, ASK FOR THE DELTA INSTEAD.*** **A question about the world needs a census that can always be incomplete; a question about a DELTA is answered by the code in front of you.**
 ⇒ **THE RULE: when a decision hangs on *"can X ever happen?"*, convert it to *"what would change if I assumed it does?"*** ⛔ **The first needs a census that can always be incomplete; the second needs a partition of the code you are editing.** ⚠ **And the converted question is often STRONGER: it holds for inputs no corpus contains and no producer has written yet.**
 
 **Enforcement:** `pattern: a scope decision resting on "no legitimate input reaches here" is restated as a per-class behaviour-delta table before it is accepted` · `accepted: enforceable in review`.
 
 ## <a id="251"></a>251. A COMMENT-ONLY FIX IS INVISIBLE TO EVERY GATE — so any merge that drops one is GREEN
 
+⛔⛔ **LEAD WITH THE SEVERITY, BECAUSE IT IS NOT WHAT THE TITLE SUGGESTS: THE LOST FIXES WERE *CORRECTIONS TO COMMENTS THAT WERE THEMSELVES WRONG*.** ⇒ ***the merge would not have dropped a fix — it would have RESURRECTED TWO FALSE STATEMENTS that had already been found and fixed, with every gate green.*** ⛔ **"Silently loses a fix" and "silently restores a falsehood" are different failures, and ONLY THE SECOND ONE PROPAGATES.**
 ⛔ **THE INSTANCE:** re-merging a held slice onto a new base **silently lost two reviewer-mandated comment fixes** that sat above the extraction boundary. ⇒ ***every test passed, typecheck passed, the diff looked complete.*** ⭐ **Caught only by RECONCILING OCCURRENCE COUNTS AGAINST A VERIFIED BACKUP — 4 against an expected 2.**
 
 ⇒ ⛔⛔ **NO GATE THIS PROJECT HAS CAN SEE IT: a comment has no behaviour, so the suite is silent; a merge is not a review, so nobody re-reads it; and the diff shows what moved, not what failed to.**
@@ -4933,4 +4939,18 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **SCOPE, because it decides how often this matters: a round that ships comment-only slices — fences, re-groundings, corrected rationales — is MAXIMALLY exposed, and those are exactly the slices whose value is entirely in their text.**
 
 **Enforcement:** `pattern: a merge or extraction into a file with comment-only history reports occurrence counts of the affected tokens against the pre-merge baseline` · `accepted: partially enforceable`.
+
+## <a id="252"></a>252. A PATTERN BECOMES A THESIS ONLY WHEN SOMEONE ELSE *EXECUTED* WHAT YOU MERELY *ASSERTED*
+
+⛔ **THE INSTANCE:** an implementer's round was being credited with two of its sharpest findings. **On the way out they corrected it: `security-reviewer` CONSTRUCTED AND EXECUTED the counter-examples; they had WRITTEN the defects, then self-diagnosed and routed.** ⭐ **They supplied the rule for why the distinction matters rather than merely declining the credit.**
+
+⇒ ⭐⭐ ***AN ASSERTION AND AN EXECUTION LOOK IDENTICAL IN A REPORT — both arrive as a sentence — and only one of them has been tested against the world.*** ⛔ **A round's write-up therefore records both under the same verb, and the credit drifts to whoever wrote the sentence rather than whoever ran the thing.**
+
+⇒ **THE RULE: when recording a finding, name WHO EXECUTED the check that established it, separately from who wrote it up.** ⭐ **And when the answer is "a reviewer," say so — a review that produces a finding is not a formality, and a round that hides it will under-fund reviews next time.**
+
+⚠ **THE PRACTICAL CONSEQUENCE, MEASURED THE SAME NIGHT: the reviewer subagents produced TWO of the round's sharpest findings AND one process defect (a probe file written into another area's tree).** ⛔ **Both halves belong in the record — a seal that keeps only the findings over-values them, and one that keeps only the defect retires a control that is paying out.**
+
+⭐ **KIN, and it is the same discipline pointed at a different absence: `L231` (correcting the record for someone who has already gone). This is correcting it for someone who is still here and would benefit from the error.**
+
+**Enforcement:** `pattern: a finding's record names the party that EXECUTED the establishing check, distinctly from the party that reported it` · `accepted: partially enforceable`.
 
