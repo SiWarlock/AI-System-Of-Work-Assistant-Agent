@@ -4894,3 +4894,43 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 **Enforcement:** `pattern: a block citing a task states what that task's CLOSURE would mean for the block; a task closing checks for blocks naming it` · `accepted: partially enforceable`.
 
+## <a id="249"></a>249. A POSITIVE CONTROL VALIDATES THE INSTRUMENT AND IS SILENT ABOUT THE SUBJECT — and its magnitude is the part nobody reads
+
+⛔ **THE INSTANCE:** an orchestrator refused to tick a task from a ship report and measured the landed blob instead — **correctly, with a positive control.** ⭐ **The control passed: the searched-for token was absent, and a known-present token returned 8 hits, proving the instrument was pointed at real content.** ⛔ **The conclusion — *"the owner's condition is not in the code"* — was FALSE. The work had landed in a SECOND commit, and the measurement named the FIRST.**
+
+⇒ ⭐⭐ **THE CONTROL CARRIED THE EVIDENCE THAT WOULD HAVE CAUGHT IT: the known-present token is 8 at the measured ref and 9 at `HEAD`.** ⛔ ***AN OFF-BY-ONE IN THE CONTROL WAS THE SIGNAL THAT THE REF WAS STALE — and a control is consumed as PASS/FAIL, so its MAGNITUDE is exactly the part nobody looks at.***
+
+⇒ ⛔⛔ **THE CONTROL PROVES THE INSTRUMENT IS POINTED AT SOMETHING REAL. IT CANNOT PROVE IT IS POINTED AT THE RIGHT SUBJECT — AND IT READS AS IF IT DOES.** ⚠ **This is NOT the inferred-from-output-shape class (`L235`): the measurement was at source, controlled, and executed correctly. The defect is that a satisfied control ENDS the questioning.**
+
+⇒ **THE RULE: NAME THE REF IN THE COMMAND AND IN THE REPORT.** ⭐ ***"I measured the landed blob" does not say WHICH landing.*** **And when a control returns a NUMBER, compare it to the number you expected — a control whose value you never predicted is a boolean wearing a count.**
+
+⭐ **Caught by the implementer whose work was being measured, who then asked that the gate be KEPT rather than replaced with their word: *"a tick from a ship report rather than from the blob is exactly the discharge-without-code failure you were guarding against — please re-measure at HEAD and tick from that, not from this message."***
+
+**Enforcement:** `pattern: a blob-level measurement states the ref explicitly; a positive control reports its VALUE and the value that was expected` · `accepted: enforceable in review`.
+
+## <a id="250"></a>250. A QUESTION ABOUT INPUTS CANNOT BE CLOSED; THE SAME CONCERN AS A QUESTION ABOUT BEHAVIOUR DELTAS CAN
+
+⛔ **THE INSTANCE:** an orchestrator asked *"does a legitimate value EVER reach this branch?"* to decide whether six fields could be tightened without an owner ruling. ⭐ **The implementer refused to answer it as posed: the parameter is `Record<string, unknown>`, so the question is a claim about EVERY PRODUCER, PRESENT AND FUTURE — and a call-site spelling census is precisely the instrument that keeps proving blind to its own subject.**
+
+⇒ ⭐⭐ **THEY REPOSED IT: *DO NOT ASK WHAT INPUTS ARRIVE — MEASURE WHAT ENFORCEMENT WOULD CHANGE.*** **Partition the input space by what the code does to it, then check each class:** native types pass earlier by type · nested containers recurse · strings with no secret are already refused · **only strings WITH a secret change** — and that class is anomalous twice over and already leaking.
+
+⇒ ⛔ ***ENFORCEMENT HAS PROVABLY ZERO EFFECT ON EVERY INPUT THAT IS NOT ALREADY LEAKING — established WITHOUT knowing the producers at all.*** ⭐ **A universal claim about callers became a finite claim about branches, decidable from the code in front of you.**
+
+⇒ **THE RULE: when a decision hangs on *"can X ever happen?"*, convert it to *"what would change if I assumed it does?"*** ⛔ **The first needs a census that can always be incomplete; the second needs a partition of the code you are editing.** ⚠ **And the converted question is often STRONGER: it holds for inputs no corpus contains and no producer has written yet.**
+
+**Enforcement:** `pattern: a scope decision resting on "no legitimate input reaches here" is restated as a per-class behaviour-delta table before it is accepted` · `accepted: enforceable in review`.
+
+## <a id="251"></a>251. A COMMENT-ONLY FIX IS INVISIBLE TO EVERY GATE — so any merge that drops one is GREEN
+
+⛔ **THE INSTANCE:** re-merging a held slice onto a new base **silently lost two reviewer-mandated comment fixes** that sat above the extraction boundary. ⇒ ***every test passed, typecheck passed, the diff looked complete.*** ⭐ **Caught only by RECONCILING OCCURRENCE COUNTS AGAINST A VERIFIED BACKUP — 4 against an expected 2.**
+
+⇒ ⛔⛔ **NO GATE THIS PROJECT HAS CAN SEE IT: a comment has no behaviour, so the suite is silent; a merge is not a review, so nobody re-reads it; and the diff shows what moved, not what failed to.**
+
+⛔ **AND THE SHARPEST FORM IS THE IMPLEMENTER'S: THE TWO LOST FIXES WERE *CORRECTIONS TO COMMENTS THAT WERE THEMSELVES WRONG*** — a claim that one pattern mirrored another, and a false enumeration. ⇒ ***the merge would have silently RESURRECTED TWO FALSE STATEMENTS that had already been found and fixed, with every gate green.*** **Not merely lost work — restored defects.**
+
+⇒ **THE RULE: after any merge, rebase, cherry-pick or hand-extraction that touches a file carrying comment-only work, RECONCILE OCCURRENCE COUNTS OF THE CHANGED TOKENS against a known-good baseline.** ⭐ **It is the only check that can see this class, and it costs one command.**
+
+⚠ **SCOPE, because it decides how often this matters: a round that ships comment-only slices — fences, re-groundings, corrected rationales — is MAXIMALLY exposed, and those are exactly the slices whose value is entirely in their text.**
+
+**Enforcement:** `pattern: a merge or extraction into a file with comment-only history reports occurrence counts of the affected tokens against the pre-merge baseline` · `accepted: partially enforceable`.
+
