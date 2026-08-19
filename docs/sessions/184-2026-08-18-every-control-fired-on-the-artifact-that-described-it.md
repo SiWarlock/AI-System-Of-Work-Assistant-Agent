@@ -2,6 +2,7 @@
 
 **Date:** 2026-08-18 · **Role:** main-orchestrator (#4) · **Track:** main (single-track, root checkout)
 **Predecessor:** `docs/sessions/182-2026-08-18-orchestrator-handoff-written-early-on-purpose.md`
+**Successor:** `docs/sessions/188-2026-08-18-the-round-that-found-its-controls-failing.md`
 **Status:** ✅ **ROUND SEALED.** Base `46ef6c03`. ⛔ **NOT PUSHED — owner-run.**
 
 ---
