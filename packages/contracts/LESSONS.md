@@ -5000,3 +5000,20 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 **Enforcement:** `pattern: a review report states which methods were supplied by the author; agreement on a supplied method is not counted as independent corroboration` · `accepted: partially enforceable`.
 
+## <a id="256"></a>256. THE POSITIVE-CONTROL DISCIPLINE HAS ITS OWN FAILURE MODES — this round found three, and all three fail CALMING
+
+⛔ **THE INSTANCE THAT NAMES IT:** verifying a working tree was clean, an implementer probed the untracked-file lister with a file named `.__revert_probe`. **The lister showed nothing — and they almost reported CLEAN on it.** ⭐ **Cause MEASURED, not guessed: `.gitignore:138` is `._*`, which matches the probe.** ⇒ ***THE CONTROL WAS ITSELF INVISIBLE TO THE INSTRUMENT, so an empty result proved nothing at all.*** **Redone with an ordinary filename in a tracked directory; the lister saw it; only then was "empty" reported.**
+
+⇒ ⛔⛔ **A POSITIVE CONTROL IS A MEASUREMENT AND INHERITS EVERY WEAKNESS OF ONE. Three distinct ways it failed in a single round, and ALL THREE FAIL TOWARD REASSURANCE:**
+1. **INVISIBLE CONTROL** *(this one)* — the control is of a kind the instrument is configured to skip, so it can never appear. **Check: did the control actually SHOW UP?**
+2. **UNREAD MAGNITUDE** (`L249`) — the control passes, and its VALUE, which disagrees with the subject, is discarded because a control is consumed as pass/fail. **Check: predict the control's value.**
+3. **WRONG POPULATION** (`L253`) — a control drawn from the same FORM as everything else proves the instrument runs, not that it can see every form. **Check: draw the control from a form you did NOT expect.**
+
+⇒ ⭐⭐ **THE UNIFYING SHAPE: A CONTROL ANSWERS *"CAN THIS INSTRUMENT PRODUCE A NON-EMPTY RESULT?"* AND IS READ AS ANSWERING *"IS THIS RESULT TRUE?"*** ⛔ **The gap between those two questions is where all three live.**
+
+⇒ **THE RULE: state the control's IDENTITY, its VALUE, and that it APPEARED — three facts, not a verdict.** ⚠ **And when the subject is an ABSENCE, the control must be as close to the subject as possible: same directory, same naming shape, same tracked/untracked state — because the ways an instrument can skip a thing are exactly the ways it skipped the thing you are looking for.**
+
+⭐ **This lesson exists because the discipline is WORKING — every one of these was caught by someone running a control on their control. `L178` gave us positive controls; this is the year-two version.**
+
+**Enforcement:** `pattern: a report of an empty/absent result names the control used, confirms it APPEARED, and states its value` · `accepted: enforceable in review`.
+
