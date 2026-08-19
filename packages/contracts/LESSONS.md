@@ -4783,3 +4783,39 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 **Enforcement:** `pattern: a guard or pin citing a task cites one whose closure condition matches the guard's own; a closing task checks for pins naming it` · `accepted: partially enforceable`.
 
+## <a id="241"></a>241. WHEN A GATE IS SKIPPED *BECAUSE* SOMETHING WAS FOUND, DETECTION STRENGTH AND LEAK SIZE MOVE IN THE SAME DIRECTION
+
+⛔ **THE INSTANCE, MEASURED WITH TWO CONTROLS:** a redactor scrubs recognized secrets, then `if (scrubbed !== value) return scrubbed;` — **so a successful scrub SKIPS the downstream type gate.** **Adding a Google-key detector therefore made lines carrying a REAL key go from `[REDACTED:raw]` to *key scrubbed, `alice@acme.com` and an employer codename SURVIVING*.**
+
+⇒ ⭐⭐ ***THE MORE SENSITIVE CONTEXT ACCOMPANIES THE SECRET, THE MORE THE SYSTEM LEAKS — because the gate that would catch the context is skipped PRECISELY WHEN THE SECRET IS FOUND.*** ⛔ **The only inputs that IMPROVE are those where the secret is the ENTIRE value — the least realistic shape a secret takes in real data.**
+
+⇒ ⛔⛔ **THE STRUCTURAL FORM, WHICH IS WHAT TRANSFERS: A PARTIAL SUCCESS CONSUMED AS A FULL PASS INVERTS THE VALUE OF DETECTION.** *Evidence that a value CONTAINED something dangerous is treated as evidence that the value is NOW SAFE.* ⭐ **Look for it wherever a pipeline says *"we handled it, skip the rest"* — `if (changed) return`, `if (matched) continue`, early-return-on-hit.**
+
+⭐ **AND THE FINDER'S RETRACTION IS THE SHARPEST SENTENCE IN IT: they had already measured *"an AVAILABILITY GAIN, not a leak fix"* and priced it as a benefit.** ⇒ ***THE AVAILABILITY GAIN AND THE LEAK ARE THE SAME EVENT: the text that "becomes available" IS the sensitive context.*** ⛔ **The measurement was in hand and the question asked of it was wrong** (`L234`, `L239`).
+
+**Enforcement:** `pattern: any early return conditioned on "something was handled" states what it SKIPS and is pinned with a fixture where the handled item is accompanied by other sensitive content` · `accepted: partially enforceable`.
+
+## <a id="242"></a>242. A DEFECT FIXED IN A DATA STRUCTURE RECURS IN THE TOOLING BUILT TO AUDIT THAT DATA STRUCTURE
+
+⛔ **THE INSTANCE:** a slice fixed a prototype-chain lookup (`Object.hasOwn`) on a production table. **The very next slice — a walk written to DERIVE that table and prove it has not drifted — reintroduced the identical defect:** `WRAPPERS[typeName]` resolved `"toString"` through the prototype chain, passed `!== undefined`, and **dropped the subtree without reaching the throw the fail-loud test exists to pin.**
+
+⇒ ⭐⭐ **THE MECHANISM IS ORDINARY AND THAT IS WHY IT RECURS: the fix is applied to the SUBJECT, and the instrument is written AFTERWARDS by someone thinking about the subject.** ⛔ **The lesson lives with the thing that was broken, not with the class of code that can break the same way — so the auditor inherits the hazard and none of the mitigation.**
+
+⇒ ⛔ **AND THE AUDITOR IS THE WORSE PLACE FOR IT: a defect in the subject is what the auditor exists to catch; a defect in the AUDITOR is what makes it report clean.** ⚠ **Same shape as the guard whose fixture list is hand-maintained, and the census that misses its own observer — *the instrument is part of the population.***
+
+⇒ **THE RULE: when you write a tool that reads a structure you recently fixed, RE-READ THE FIX AND APPLY IT TO THE TOOL. Treat every banked defect as a checklist item for any new code that TOUCHES the same shape, not just for the shape itself.**
+
+**Enforcement:** `pattern: a slice adding an auditor/derivation over a structure cites the defects previously fixed in that structure and states whether each applies to the new code` · `accepted: partially enforceable`.
+
+## <a id="243"></a>243. BRANCH ON EXIT CODES INSIDE THE SHELL; DO NOT PARSE RENDERED OUTPUT
+
+⛔ **THE INSTANCE, AND IT CORRECTS A RULE THIS LEDGER NEARLY ADOPTED:** an implementer's mutation proof read `diff` piped into `head` and concluded two APPLIED mutations had NOT applied. **The proposed rule was *"use `cmp -s`, never `diff`."*** ⭐ **They then measured `diff` at source and RETRACTED: it is real POSIX diff, exits correctly, and is not wrapped at all.**
+
+⇒ ⭐⭐ **THE DISCRIMINATOR WAS NEVER `cmp`-vs-`diff`. IT IS EXIT-CODE vs RENDERED TEXT.** The failing proof **read text**; the working one branched on `$?`, **which the shell evaluates before anything is rendered.** ⇒ **`cmp -s` is merely the cheapest exit-code-only comparand; `diff` gated on `$?` would have been fine.**
+
+⛔ **WHY THE WRONG RULE WAS WORSE THAN NO RULE (`L236`): *"switch tools"* would have had people keep parsing text in a new tool — the failure mode unchanged, now wearing a remedy.** ⭐ **And it explains the observed evidence equally well, which is exactly why it was persuasive.**
+
+⇒ **THE RULE: any programmatic check branches on an exit status. If you must read output, read a MACHINE surface (`--numstat`, `--porcelain`, `shasum`), never a human-rendered one** — ⚠ **rendered output is where colour, pagers, summaries, wrappers and truncation live, and every instrument failure in this project's ledger has been in that layer.**
+
+**Enforcement:** `pattern: a proof or gate reports the exit status it branched on; no claim rests on parsing a human-rendered diff/summary/progress line` · `accepted: enforceable in review`.
+
