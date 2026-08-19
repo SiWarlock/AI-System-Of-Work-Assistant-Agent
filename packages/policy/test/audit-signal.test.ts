@@ -1,6 +1,6 @@
 // spec(§5) — AuditSignal: clock-free build for allow+deny; redaction-safety guard; toAuditRecordInput passes AuditRecordSchema.parse
 import { describe, it, expect } from "vitest";
-import { AuditRecordSchema } from "@sow/contracts";
+import { AuditRecordSchema, REDACTED_CREDENTIAL, REDACTED_RAW } from "@sow/contracts";
 import { looksUnsafe as domainLooksUnsafe } from "@sow/domain";
 import {
   buildAuditSignal,
@@ -118,20 +118,30 @@ describe("toAuditRecordInput", () => {
 // secret-scan.ts -> writer.ts step 6, production-wired at three composition sites) on
 // the sole-writer path — safety rule 7, and rule 1 by reach.
 //
-// SCOPE (orchestrator ruling, this slice): the `/i` fix ONLY. Delegating this module to
-// @sow/domain's `looksUnsafe` is DEFERRED and BLOCKED on task 24.120 — domain's
-// `stripMarkers` can DESTROY a match (it substitutes a space, and every
-// URL_USERINFO_CREDENTIAL character class excludes whitespace), so delegating would
-// newly hand a demonstrated loosening to the one path that made 24.110 urgent.
+// SCOPE (orchestrator ruling, the 24.110 slice): the `/i` fix ONLY. Delegating this module
+// to @sow/domain's `looksUnsafe` is still DEFERRED — but NOT for the reason first recorded
+// here, and the difference decides whether a future reader thinks the gate has opened.
+// THE ORIGINAL BLOCKER WAS task 24.120: domain's `stripMarkers` substituted a SPACE, every
+// URL_USERINFO_CREDENTIAL character class excludes whitespace, so a marker inside a
+// `//user:pass@host` span BROKE the span and domain stopped refusing the value. THAT AXIS
+// CLOSED on 2026-08-18 (24.120) — the filler is now a span-preserving `^`, with the space
+// retained as a second fail-safe arm.
+// ⛔ THE CURRENT BLOCKER IS task 24.110's deliberately-UNRULED second axis: delegating makes
+// policy START STRIPPING, so it STOPS refusing already-redacted content — a loosening on the
+// sole-writer path that nobody has ruled on. See the pin at the end of this block.
 const refSignal = (value: string): AuditSignal =>
   buildAuditSignal({ ...base, refs: [value] });
 
 // Case-transformed credential shapes: the population the missing `/i` admitted.
 // ADMISSIBILITY CONSTRAINT (all three arrays below): a member must have the SAME verdict
 // in @sow/domain as here, because `policy_and_domain_agree_on_the_credential_shape_axis`
-// iterates all three. A marker-carrying or URL-userinfo value diverges by design (see the
-// task 24.120 pin at the end of this block) and MUST NOT be added to these arrays — doing
-// so breaks that pin spuriously, and the tempting repair is to weaken it.
+// iterates all three. A MARKER-CARRYING value diverges by design — see
+// `the_marker_axis_still_diverges_and_that_divergence_is_OWNED` at the end of this block —
+// and MUST NOT be added to these arrays, because doing so breaks that pin spuriously and the
+// tempting repair is to weaken it.
+// ⚠ URL-USERINFO VALUES NO LONGER DIVERGE. task 24.120 closed that axis, so they are now
+// ADMISSIBLE here. This constraint previously named them alongside markers; leaving that in
+// place would have suppressed exactly the cross-module coverage the closure makes possible.
 const CASE_TRANSFORMED_CREDENTIALS: readonly string[] = [
   "SK-ANT-API03-ABCDEF",
   "XOXB-123456789012",
@@ -257,34 +267,119 @@ describe("isRedactionSafe — the credential net is case-insensitive (task 24.11
     }
   });
 
-  it("the_url_userinfo_axis_still_diverges_and_that_divergence_is_OWNED: task 24.120 [spec(§16)]", () => {
-    // NOT papering over a divergence — pinning a FILED one so it cannot drift unnoticed,
-    // and so the test above cannot be mistaken for full equivalence.
+  it("the_marker_axis_still_diverges_and_that_divergence_is_OWNED: task 24.110 [spec(§16)]", () => {
+    // NOT papering over a divergence — pinning a FILED one so it cannot drift unnoticed, and
+    // so `policy_and_domain_agree_on_the_credential_shape_axis` cannot be mistaken for full
+    // equivalence between the two modules.
     //
-    // ⛔ PINNED ON THE MECHANISM THAT ACTUALLY BLOCKS DELEGATION, which is NOT the keyword
-    // net. @sow/domain's `stripMarkers` substitutes a SPACE, and every
-    // URL_USERINFO_CREDENTIAL character class excludes whitespace — so a frozen marker
-    // embedded inside a `//user:pass@host` span BREAKS the span and domain STOPS refusing
-    // the value. That is the direction where DOMAIN IS LOOSER, and it is the whole reason
-    // delegating this module would hand a loosening to the sole-writer path.
+    // NAMED FOR task 24.110, NOT for the narrowing task that last edited it: the name should
+    // resolve to the entry that OWNS the divergence and can still change it. 24.128 narrowed
+    // this pin and closes with that edit; greping its number later lands a reader on finished
+    // work.
     //
-    // (The marker/KEYWORD axis diverges too — `[REDACTED:credential]` is refused here and
-    // safe in domain — but there policy is STRICTER, which blocks nothing. Pinning that
-    // axis would have documented the deferral with a case that does not justify it.)
+    // HISTORY, RETAINED IN PAST TENSE BECAUSE THE REASONING IS STILL LOAD-BEARING AND ONLY
+    // THE STATE EXPIRED (L195: striking a block does not tense-shift the sentences inside it).
+    // This pin ORIGINALLY asserted the URL-USERINFO axis: @sow/domain's `stripMarkers`
+    // substituted a SPACE, every URL_USERINFO_CREDENTIAL character class excludes whitespace,
+    // so a frozen marker inside a `//user:pass@host` span BROKE the span and domain STOPPED
+    // refusing the value. That was the direction where DOMAIN WAS LOOSER, and it was the whole
+    // reason delegating this module would have handed a loosening to the sole-writer path.
     //
-    // Filed as task 24.120 against @sow/domain, already inherited by packages/providers'
-    // redactor and by domain's own redact.ts. When 24.120 is resolved this pin REDS rather
-    // than passing silently: the minimal fix (substituting "" instead of " ") leaves
-    // `//u:pq@h`, which still matches URL_USERINFO_CREDENTIAL, so domain flips to unsafe
-    // and the second assertion fails. Verified as a regex property, not assumed.
-    const markerInsideUserinfo = "//u:p[REDACTED:raw]q@h";
+    // THAT AXIS CLOSED on 2026-08-18 (task 24.120, commits 65524874 + 8b2b53ac + bf442753):
+    // domain now strips to a SPAN-PRESERVING "^" and retains the space substitution as a
+    // second, fail-safe arm. `//u:p[REDACTED:raw]q@h` is refused by BOTH modules today, so the
+    // old assertion asserted a falsehood and was removed. The pin is NARROWED, not deleted.
+    //
+    // WHAT THIS PIN GOT RIGHT, AND IT IS THE REASON THE PIN WAS NARROWED RATHER THAN
+    // REWRITTEN: it predicted the WRONG REMEDY — its comment said the minimal fix would be
+    // substituting "" instead of " " — and the shipped fix was "^" plus a RETAINED space arm.
+    // It caught the change anyway, because its MECHANISM prediction held.
+    //
+    // THE SURVIVING DIVERGENCE, AND WHY IT IS PINNED NOW WHEN IT DELIBERATELY WAS NOT BEFORE:
+    // the earlier comment declined to pin the marker/keyword axis because "policy is STRICTER,
+    // which blocks nothing" — correct WHEN THE URL AXIS EXISTED, because the pin's job then was
+    // to justify a DEFERRAL and a stricter-here case cannot do that. That reason has expired
+    // twice over. (1) It is now the only marker divergence, so it is no longer being asked to
+    // justify a deferral — it is being asked to keep a real difference from going silent.
+    // (2) Task 24.110's lead ruling of 2026-08-18 makes this axis the ACTIVE blocker of the
+    // delegation: policy delegating to domain would start STRIPPING and therefore STOP refusing
+    // already-redacted content, a LOOSENING on the sole-writer path that nobody has ruled on.
+    // A divergence that blocks nothing while two copies coexist becomes the whole behaviour
+    // change the moment one delegates to the other.
+    //
+    // OWNER OF THE SURVIVING DIVERGENCE: task 24.110's deliberately-UNRULED second axis.
+    // Stated precisely because "policy stricter blocks nothing today" is exactly the kind of
+    // fact that goes stale silently. It is NOT owned by task 24.123 — 24.123 changes the
+    // GRANULARITY or the DECISION of the knowledge-side whole-file scan, and neither of those
+    // two remedy shapes changes the MARKER pair asserted immediately below.
+    //
+    // ⛔ THAT SCOPING IS DELIBERATE — IT COVERS THE MARKER PAIR ONLY, AND THE CONTROL PAIR IS
+    // A KNOWN EXCEPTION RATHER THAN AN OVERSIGHT. task 24.123 also carries a THIRD item, routed
+    // to it from 24.120 by lead ruling: dropping the `private[_ -]?key` matches that exist ONLY
+    // because the legacy SPACE is a member of that alternative's alphabet. Under THAT remedy
+    // the control pair's domain verdict flips and this test REDS — intended, because the
+    // control is a deliberate 24.123 tripwire.
+    //
+    // ⛔⛔ AND A (C')-SHAPED DELEGATION REDS THIS TEST TOO. READ THIS BEFORE "REPAIRING" THAT
+    // RED. (C') is `domain.looksUnsafe(s) || policy_today(s)`. It is monotone in the REFUSAL
+    // direction, so every value refused today stays refused — but THIS BLOCK ALSO ASSERTS A
+    // *SAFE* VERDICT, AND (C') FLIPS IT: policy would inherit domain's refusal of
+    // `private[REDACTED:raw]key`, so the control's `.toBe(true)` fails. THAT RED IS CORRECT AND
+    // MUST NOT BE WEAKENED — it is this pin reporting a real behaviour change, which is the
+    // entire reason it exists. "Monotone by construction" is a claim about LEAKS and is SILENT
+    // about AVAILABILITY: on the reject-not-redact sole-writer path, a note carrying an
+    // already-redacted `private[REDACTED:raw]key` would newly have its ENTIRE COMMIT rejected.
+    const marker = REDACTED_CREDENTIAL;
+
+    // NON-VACUITY: name the mechanism rather than assume it. policy's SENSITIVE_KEYWORD net
+    // fires on the literal word inside the marker; domain never sees it because it strips the
+    // marker first.
+    // ⚠ WHAT THIS GUARD IS ACTUALLY FOR, because the obvious reading of it is wrong: if the
+    // marker lost its keyword ENTIRELY, policy would judge it SAFE and the first assertion
+    // below would RED on its own, loudly. The case that would otherwise pass SILENTLY is a swap
+    // to a DIFFERENT SENSITIVE_KEYWORD member (say `[REDACTED:secret]`), where both assertions
+    // still hold for a reason that is no longer the one documented here.
     expect(
-      isRedactionSafe(refSignal(markerInsideUserinfo)),
-      "packages/policy does NOT strip markers, so the //user:pass@ span survives and is refused — deliberate under task 24.120, not an oversight",
+      /\bcredential\b/i.test(marker),
+      "the frozen credential marker no longer carries the keyword this divergence rests on — if it swapped to another SENSITIVE_KEYWORD member the assertions below would still pass for a DIFFERENT reason, which is the case this guard exists to catch",
+    ).toBe(true);
+
+    expect(
+      isRedactionSafe(refSignal(marker)),
+      "packages/policy does NOT strip frozen markers, so the marker's own keyword trips SENSITIVE_KEYWORD and already-redacted content is refused — deliberate under task 24.110, not an oversight",
     ).toBe(false);
     expect(
-      domainLooksUnsafe(markerInsideUserinfo),
-      "@sow/domain strips the marker to a SPACE, breaking the userinfo span, and judges the same value SAFE — the loosening task 24.120 owns, and the reason this module does not delegate",
+      domainLooksUnsafe(marker),
+      "@sow/domain strips the frozen marker before testing, so it judges already-redacted content SAFE — POLICY IS STRICTER on this axis, and that is the behaviour change a delegation would make",
     ).toBe(false);
+
+    // THE CONTROL, AND IT IS THE POINT OF THIS BLOCK: the two predicates could have disagreed
+    // in the OTHER direction, and on this fixture they do. Domain's retained legacy-space arm
+    // rewrites `private[REDACTED:raw]key` to `private key`, which matches SENSITIVE_KEYWORD's
+    // `private[_ -]?key` alternative; policy, which does not strip, sees a 14-character gap and
+    // no alternative matches. So DOMAIN is stricter here while POLICY is stricter above.
+    // Without this, "policy is stricter" would be one measurement written twice — a direction
+    // asserted from a fixture chosen to show it. Recorded on task 24.110 (commit 40bbf578) and
+    // stated by redaction-rules.ts about itself.
+    //
+    // ⚠ GAP, STATED RATHER THAN COVERED: this pair has NO local non-vacuity guard, and it is
+    // the pair that needs one more, because its mechanism is scheduled for possible removal by
+    // 24.123. It isolates the LEGACY-SPACE arm only while domain's span-preserving filler is
+    // NOT a member of `private[_ -]?key`'s alphabet; were that filler ever to become `_` or
+    // `-`, the span arm would match on its own and this assertion would keep passing while the
+    // tripwire retired SILENTLY. A local guard would need `SPAN_PRESERVING_FILLER` exported
+    // from `@sow/domain`, which it is NOT (measured) — adding it is contract territory.
+    // What DOES cover it today is cross-package, in `@sow/domain`'s own
+    // `test/redaction/marker-filler-property.test.ts`, which rejects `-`, `_` and `.` as
+    // fillers. ⛔ That is a real guard in another package, NOT coverage this file provides.
+    const spaceManufactured = `private${REDACTED_RAW}key`;
+    expect(
+      isRedactionSafe(refSignal(spaceManufactured)),
+      "packages/policy does not strip, so no alternative spans the marker and the value is SAFE here",
+    ).toBe(true);
+    expect(
+      domainLooksUnsafe(spaceManufactured),
+      "@sow/domain's legacy-space arm collapses the marker to a space and matches private[_ -]?key — DOMAIN IS STRICTER on this axis, which is why the divergence is not one-directional",
+    ).toBe(true);
   });
 });
