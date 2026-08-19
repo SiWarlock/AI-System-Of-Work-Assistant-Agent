@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-18 · **Phase:** 24 (hardening tail) · **Area:** `packages/knowledge` (`knowledge-implementer`, single-track `main`)
 **Predecessor:** this area's prior session — `175-2026-08-18-two-audit-paths-and-five-sentences-that-were-false.md`
-**Successor:** _(none yet)_
+**Successor:** `187-2026-08-18-two-guards-and-the-absence-i-measured-wrong.md`
 **Task:** `### 24.103` · **Brief:** `docs/briefs/295-24.103-validation-refusal-shape-merge.md`
 **Commits:** `ca8dc207` (workflows fixtures) · `cbf1c4f3` (the slice) · `324a068d` (review fixes)
 **Session-doc number `179` was ASSIGNED by the orchestrator** from committed history, not computed here — see `178`'s banner for why that rule now exists.
