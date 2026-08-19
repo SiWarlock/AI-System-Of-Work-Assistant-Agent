@@ -10,6 +10,7 @@
       "sow-built": "./dist/index.js",
       "default": "./src/index.ts"
     },
+    "./audit/validation-refusal": null,
     "./gcl/visibility-gate": null,
     "./gcl/cross-workspace-links": null,
     "./*": {

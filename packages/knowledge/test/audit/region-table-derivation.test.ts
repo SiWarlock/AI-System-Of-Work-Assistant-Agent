@@ -39,6 +39,7 @@ import {
 import { emitJsonSchema } from "@sow/contracts/schema/emit";
 import {
   FREE_FORM_KEY_REGIONS,
+  SAFE_REGION_NAME,
   type CandidateSchemaId,
 } from "../../src/audit/validation-refusal";
 
@@ -388,8 +389,11 @@ describe("FREE_FORM_KEY_REGIONS is derived, not trusted (`### 24.113`)", () => {
       // equality passes. Verified against the real construction (`node`, this session): with
       // regions `["@ext"]` the path `a.@ext.ROW_KEY` comes back VERBATIM.
       for (const region of ajvRegionsFor(id).regions) {
+        // ⭐ THE PRODUCTION PREDICATE ITSELF, NOT A COPY (`### 24.136`). A second literal here could
+        // drift from the one `REGION_PATTERNS` actually compiles against, and whichever was laxer
+        // would be the one that mattered. Sharing the instance makes divergence unrepresentable.
         expect(region, `region "${region}" (${id}) must be regex-safe for the cut`).toMatch(
-          /^[A-Za-z0-9_]+$/u,
+          SAFE_REGION_NAME,
         );
       }
       expect(ajvRegionsFor(id).regions, `ajv-derived regions for ${id}`).toEqual(tableRow(id));

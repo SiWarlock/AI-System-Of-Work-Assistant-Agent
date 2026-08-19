@@ -123,17 +123,142 @@ export const FREE_FORM_KEY_REGIONS: Readonly<Record<CandidateSchemaId, readonly 
 // matches none of its credential patterns, exactly as `audit-signal.ts` warns. Detection is not a
 // backstop here; this cut IS the control.
 // ⚠ dotAll only lets `.*?` find the region MORE often, which is the fail-safe direction.
-const REGION_PATTERNS: ReadonlyMap<CandidateSchemaId, RegExp> = new Map(
-  (Object.entries(FREE_FORM_KEY_REGIONS) as [CandidateSchemaId, readonly string[]][])
-    .filter(([, regions]) => regions.length > 0)
-    .map(([id, regions]) => [id, new RegExp(`^(.*?\\b(?:${regions.join("|")})\\b)[./].*$`, "us")]),
-);
+/**
+ * A region name safe to interpolate into the pattern above (`### 24.136`).
+ *
+ * ⛔⛔ EXPORTED SO `### 24.113`'s DERIVATION TEST CONSUMES THIS EXACT INSTANCE. That test certifies
+ * every name the derivation PRODUCES; this certifies every name the hand-maintained table CONTAINS,
+ * and the table is hand-maintained — which is the entire reason `### 24.113` exists. If the two
+ * predicates ever diverged, one path would be laxer and the laxer one is what an author would use.
+ * ⭐ Sharing the instance makes divergence UNREPRESENTABLE rather than forbidden by a paragraph
+ * nobody re-reads (`contracts L103`). Safe to share: no `g` flag, so no `lastIndex` state.
+ *
+ * ⛔ WHAT AN UNSAFE NAME DOES, MEASURED EXECUTABLY (`### 24.113` Step 9), NOT REASONED:
+ *   `["@ext"]`     → `a.@ext.ROW_KEY` comes back VERBATIM. `\b` requires a WORD character on the
+ *                    region's inside edge, so the whole pattern fails and `?? path` returns the
+ *                    row-authored key uncut — `### 24.119`'s fail-open by a different door.
+ *   `["ext$"]`     → VERBATIM, same mechanism on the trailing edge.
+ *   `["a|b"]`      → MIS-cuts: the alternation is injected, so `zzz.b.ROW_KEY` truncates to `zzz.b`.
+ *                    A wrong answer rather than an absent one, which is harder to notice.
+ *   `["pay(load"]` → `SyntaxError` while CONSTRUCTING the pattern ⇒ rule 1, see below.
+ */
+export const SAFE_REGION_NAME = /^[A-Za-z0-9_]+$/u;
+
+/** The compiled form of a region table: usable patterns, refused ids, and the ids it covers. */
+export interface CompiledRegions {
+  readonly patterns: ReadonlyMap<string, RegExp>;
+  /** Ids carrying at least one unsafe region name. They get NO pattern and cut MAXIMALLY. */
+  readonly poisoned: ReadonlySet<string>;
+  /** Ids present in the source table — an id absent here is unknown and fails closed. */
+  readonly known: ReadonlySet<string>;
+}
+
+/**
+ * Compile a region table. **PURE, AND IT MUST NEVER THROW FOR ANY WELL-TYPED TABLE** (`### 24.136`).
+ *
+ * ⚠ THAT QUALIFIER IS LOAD-BEARING AND WAS ADDED AFTER REVIEW FALSIFIED THE SHORTER SENTENCE. The
+ * first wording said "PURE, TOTAL, AND IT MUST NEVER THROW", and security review found SEVEN throw
+ * vectors reachable with a hostile, off-type table (`regions` a bare string or `null`; `table`
+ * `null`; a throwing enumerable getter). ⛔ THAT IS THE EXACT DEFECT THIS FILE WARNS ABOUT SIXTY
+ * LINES BELOW — a universal claim in a comment, falsified by its own body, which teaches an auditor
+ * that the surrounding argument is stale. The guards below now make the well-typed claim true for
+ * off-type input too, but the sentence is scoped rather than restored.
+ *
+ * ⛔⛔ THE NEVER-THROW PROPERTY IS THE RULE-1 HALF OF THIS TASK AND IS NOT A STYLE CHOICE. The
+ * module-level `COMPILED_REGIONS` below is built at MODULE INIT, so anything that throws here
+ * throws while `validation-refusal.ts` is being IMPORTED — on `applyPlan`'s import path. ⇒ ***the
+ * SOLE WRITER (safety rule 1) would fail to load because of a typo in a refusal-path table.*** A
+ * bad region name must degrade a cut, never prevent the writer from existing.
+ * ⚠ THE TEMPTING IMPLEMENTATION IS TO VALIDATE AND THROW — it is louder, it is what a linter would
+ * suggest, and it reintroduces the exact module-init failure this exists to remove, just with a
+ * better message. The loudness belongs in the SUITE (`no_live_schema_id_is_poisoned`), where a
+ * human is watching; the runtime belongs on the fail-safe path, where a user is.
+ * ⭐ AND THE THROW IS UNREPRESENTABLE, NOT CAUGHT: no string matching `SAFE_REGION_NAME` can be an
+ * invalid regex fragment, so `new RegExp` below cannot fail once the filter has run (`contracts
+ * L103` — make the violation unrepresentable; a detector is belt, never the mechanism). There is deliberately no `try`/`catch`; adding
+ * one would suggest the guard above is optional.
+ *
+ * @internal Exported to be pinned — and FENCED, not merely labelled. ⛔ `@internal` is a convention,
+ * not a boundary: `package.json` declares a `"./*"` wildcard subpath export, so every internal here
+ * would otherwise be deep-importable from outside (`### 24.78`, OPEN, names three files already
+ * doing it). This module is therefore denied an exports entry —
+ * `"./audit/validation-refusal": null` — which beats the wildcard in Node's resolver. Verified
+ * blocking: the specifier returns `ERR_PACKAGE_PATH_NOT_EXPORTED` while an unfenced sibling deep
+ * path still resolves.
+ * ⚠ IF `### 24.78` EVER CLOSES, THAT MAKES THIS LINE REDUNDANT — NOT WRONG (`contracts L248`).
+ * Do not read that entry's tick as permission to delete the fence; deleting it re-opens the path by
+ * which a caller hand-builds a `CompiledRegions` and gets the row-authored path back verbatim.
+ */
+export function compileRegionPatterns(
+  table: Readonly<Record<string, readonly string[]>>,
+): CompiledRegions {
+  const patterns = new Map<string, RegExp>();
+  const poisoned = new Set<string>();
+  const known = new Set<string>();
+  for (const [id, regions] of Object.entries(table)) {
+    known.add(id);
+    // ⛔ READ THE ELEMENTS EXACTLY ONCE, AND VALIDATE THE COPY. Validating `regions` and then
+    // `join`ing `regions` reads each element TWICE — measured by review with a getter-backed array
+    // returning `"payload"` on the first read and `"a|b"` on the second: the guard passed and the
+    // compiled pattern carried the injected alternation. Validate-then-reread is a TOCTOU on the
+    // value the guard just approved.
+    const safe: string[] | undefined = Array.isArray(regions) ? [...regions].map(String) : undefined;
+    // ⛔ An off-type row is REFUSED, not thrown on: this runs at module init, so a throw here means
+    // the sole writer cannot load (see the never-throw note above).
+    if (safe === undefined || !safe.every((region) => SAFE_REGION_NAME.test(region))) {
+      poisoned.add(id);
+      continue;
+    }
+    // A schema with no regions gets no pattern — that is the identity cut, not a refusal.
+    if (safe.length === 0) continue;
+    patterns.set(id, new RegExp(`^(.*?\\b(?:${safe.join("|")})\\b)[./].*$`, "us"));
+  }
+  return { patterns, poisoned, known };
+}
+
+/**
+ * The cut itself, against an explicitly supplied compilation.
+ *
+ * ⛔⛔ THE BRANCH ORDER IS THE GUARD. READ THIS BEFORE REORDERING ANYTHING BELOW.
+ * A POISONED id and a REGION-LESS id are INDISTINGUISHABLE by pattern-presence — neither has one.
+ * But the `pattern === undefined` branch returns the path **UNCHANGED**, which is correct for a
+ * region-less schema (`sow:signed-provenance-stamp` has no free-form key region, so its paths are
+ * already structural) and is the FAIL-OPEN for a poisoned one. ⇒ ***if the poisoned check moves
+ * below it, every poisoned id returns the row-authored path VERBATIM — precisely the leak
+ * `### 24.136` exists to close, reached through this function's own default branch.***
+ * ⭐ The general shape (banked as a lesson, not restated here): a remedy that introduces a NEW
+ * failure state routes it into an EXISTING default branch whose semantics were correct for the OLD
+ * states only. ⛔ ENFORCED BY `a_region_with_a_non_word_leading_edge_is_REJECTED_not_silently_uncut`
+ * — measured at code review to be the pin that reds on a reorder. ⚠ It is NOT enforced by the
+ * region-less identity pin, which was named for this hazard and cannot discriminate it.
+ *
+ * @internal Enforces nothing here — see `compileRegionPatterns` (`### 24.78`).
+ */
+export function cutWithCompiled(path: string, schemaId: string, compiled: CompiledRegions): string {
+  // ⛔ `Set.has` carries `### 24.103`'s protection where that fix used `Object.hasOwn` — an
+  // inherited key (`"toString"`) is not a Set member. Stated because the `Object.hasOwn` call this
+  // replaced was itself the remedy for a real defect, so a reader who finds it gone needs to see
+  // where it went; pinned next door by `validation-refusal-audit.test.ts`'s
+  // `an_unknown_schema_id_fails_closed_rather_than_silently_not_cutting`, which covers five
+  // inherited keys including `__proto__`.
+  if (!compiled.known.has(schemaId)) return MAXIMAL_CUT;
+  if (compiled.poisoned.has(schemaId)) return MAXIMAL_CUT; // ⛔ MUST precede the branch below
+  const pattern = compiled.patterns.get(schemaId);
+  if (pattern === undefined) return path;
+  return pattern.exec(path)?.[1] ?? path;
+}
+
+const COMPILED_REGIONS: CompiledRegions = compileRegionPatterns(FREE_FORM_KEY_REGIONS);
 
 /**
  * Truncate a validation issue path at the candidate schema's free-form-key region, so a key the ROW
  * author chose can never appear in an audit ref — EVEN IF a future schema gives that region a real
  * subschema and starts raising per-entry issues under it. Replaces an argument with a construction
- * (`contracts L73`: make the unsafe content unrepresentable rather than detecting it — `isRedactionSafe`
+ * (`contracts L103` — ⚠ this cite read `contracts L73` until `### 24.136`, and
+ * the wrong number was COPIED into that slice's new code before review caught it; `contracts L73` is about
+ * multi-axis fixtures. Corrected at both sites in one commit, and noted here so the next reader
+ * knows the pointer was audited rather than guessed: make the unsafe content unrepresentable
+ * rather than detecting it — `isRedactionSafe`
  * provably cannot help here, since `audit-signal.ts` names an employer project codename as exactly
  * what its credential-shape heuristic misses).
  *
@@ -155,17 +280,13 @@ const REGION_PATTERNS: ReadonlyMap<CandidateSchemaId, RegExp> = new Map(
  * An auditor greps `try`, finds hits inside `applyPlan`, and concludes the whole argument is stale.
  */
 export function structuralPathOnly(path: string, schemaId: CandidateSchemaId): string {
-  // ⛔ `Object.hasOwn`, NOT `=== undefined`: a widened id colliding with an INHERITED key
-  // (`"constructor"`, `"toString"`) yields a non-undefined lookup, falls past the guard, and returns
-  // the path UNCUT — the exact fail-OPEN branch this function declares impossible. Own-property only.
-  if (!Object.hasOwn(FREE_FORM_KEY_REGIONS, schemaId)) {
-    return MAXIMAL_CUT;
-  }
-  const pattern = REGION_PATTERNS.get(schemaId);
-  if (pattern === undefined) {
-    return path;
-  }
-  return pattern.exec(path)?.[1] ?? path;
+  // ⛔ ONE IMPLEMENTATION, ONE COMPILATION. This delegates rather than duplicating the branch order,
+  // because the order IS the guard (see `cutWithCompiled`) and a second copy would drift from it.
+  // ⚠ THE SIGNATURE IS UNCHANGED AND MUST STAY SO: this takes a `CandidateSchemaId`, never a region
+  // array or a compilation, which is what makes consulting the table non-optional at every call
+  // site. `cutWithCompiled` accepts a compilation and therefore does NOT carry that guarantee — it
+  // exists to be pinned, and is pinned as having no caller outside this module.
+  return cutWithCompiled(path, schemaId, COMPILED_REGIONS);
 }
 
 // ⛔ THE ONE PROPERTY OF THIS SIGNAL A ROW AUTHOR CAN STILL INFLUENCE IS ITS LENGTH, so it is bounded
