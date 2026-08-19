@@ -306,50 +306,69 @@ const inEnum = (set: ReadonlySet<string>, v: string): boolean => set.has(v);
  * consulted, so a credential-shaped string is scrubbed to REDACTED_CREDENTIAL rather
  * than reaching here. This gate only decides enum/id/timestamp membership.
  */
+/**
+ * The per-field frozen vocabularies. ONE TABLE rather than a `switch`, and the
+ * reason is task 24.132 rather than tidiness: `hasFieldVocabulary` below must
+ * answer "does this key have a vocabulary at all?", and a hand-written second
+ * list answering that would be A SECOND HAND-MAINTAINED SET GUARDING THE FIRST —
+ * `### 24.133`'s class exactly, where a parity guard is only as wide as its
+ * hand-kept fixture list. Both functions now read THIS table, so they cannot
+ * disagree about which keys are covered.
+ *
+ * ⛔ ORDER IS LOAD-BEARING AND IS PRESERVED FROM THE `switch` THIS REPLACES: a key
+ * with a dedicated vocabulary is validated by it EVEN WHEN its name ends in
+ * `Id`/`Ref`. `providerId` is a fixed categorical enum, NOT a system-generated id;
+ * if the id-named rule ran first, the `Id` suffix would silently defeat the enum
+ * and let a raw codename / OTP / opaque token pass under `providerId`.
+ */
+const FIELD_VOCABULARY: ReadonlyMap<string, (value: string) => boolean> = new Map([
+  ["level", (v: string): boolean => inEnum(LOG_LEVEL_SET, v)],
+  ["failureClass", (v: string): boolean => inEnum(FAILURE_CLASS_SET, v)],
+  ["state", (v: string): boolean => inEnum(HEALTH_STATE_SET, v)],
+  ["status", (v: string): boolean => inEnum(KNOWN_STATUS, v)],
+  ["kind", (v: string): boolean => inEnum(KNOWN_KIND, v)],
+  ["event", (v: string): boolean => inEnum(KNOWN_EVENT, v) || EVENT_NAME_TOKEN.test(v)],
+  // a stable cause/status code: known structured UPPER_SNAKE, an EventName-style
+  // token, or a known enum member — never a bare word or an OTP.
+  [
+    "code",
+    (v: string): boolean =>
+      STRUCTURED_CODE.test(v) || inEnum(FAILURE_CLASS_SET, v) || inEnum(KNOWN_STATUS, v),
+  ],
+  ["provider", (v: string): boolean => inEnum(PROVIDER_ID_SET, v)],
+  ["providerId", (v: string): boolean => inEnum(PROVIDER_ID_SET, v)],
+  ["targetSystem", (v: string): boolean => inEnum(TARGET_SYSTEM_SET, v)],
+  ["transport", (v: string): boolean => v === "http"],
+  // Capability is an OPEN branded id upstream; accept only a dotted/snake token
+  // (e.g. `meeting.close`), never a bare raw word.
+  ["capability", (v: string): boolean => EVENT_NAME_TOKEN.test(v)],
+]);
+
+/**
+ * True iff `key` has ANY vocabulary `isSafeFieldValue` can judge it against — a
+ * dedicated validator, the id-named rule, or the timestamp rule.
+ *
+ * ⛔ WHY THIS EXISTS, AND IT IS A RULE-5/7 CONCERN (task 24.132): for a key with NO
+ * vocabulary, `isSafeFieldValue` returns `false` for EVERY possible value, so
+ * enforcing it there would not tighten anything — it would delete the field. This
+ * predicate is what lets `redactAllowlistedValue` enforce the type gate exactly
+ * where the gate can actually judge, instead of choosing between "enforce nowhere"
+ * and "delete diagnostics."
+ *
+ * ⭐ DERIVED, NOT DECLARED: it reads `FIELD_VOCABULARY` and the same two predicates
+ * `isSafeFieldValue` reads. There is no second list to keep in sync — a field that
+ * gains or loses a vocabulary changes both answers in the same edit, by
+ * construction. A comment saying "keep these in sync" would not have been enough.
+ */
+export function hasFieldVocabulary(key: string): boolean {
+  return FIELD_VOCABULARY.has(key) || isIdNamedKey(key) || isTimestampKey(key);
+}
+
 export function isSafeFieldValue(key: string, value: string): boolean {
   if (value.length === 0 || value.length > SAFE_TOKEN_MAX_LEN) return false;
-  // (c) per-field frozen vocabulary FIRST — a key that has a dedicated enum
-  // validator uses it even when its NAME ends in `Id`/`Ref`. `providerId` is a
-  // fixed categorical enum (ProviderId), NOT a system-generated id, so it must be
-  // enum-validated: were the id-named short-circuit (d) allowed to run first, the
-  // `Id` suffix would silently defeat this case and let a raw codename / OTP /
-  // opaque token pass under `providerId` (redaction re-verify HIGH). A key WITHOUT
-  // a dedicated case falls through to the generic id/timestamp rules below.
-  switch (key) {
-    case "level":
-      return inEnum(LOG_LEVEL_SET, value);
-    case "failureClass":
-      return inEnum(FAILURE_CLASS_SET, value);
-    case "state":
-      return inEnum(HEALTH_STATE_SET, value);
-    case "status":
-      return inEnum(KNOWN_STATUS, value);
-    case "kind":
-      return inEnum(KNOWN_KIND, value);
-    case "event":
-      return inEnum(KNOWN_EVENT, value) || EVENT_NAME_TOKEN.test(value);
-    case "code":
-      // a stable cause/status code: known structured UPPER_SNAKE, an EventName-style
-      // token, or a known enum member — never a bare word or an OTP.
-      return (
-        STRUCTURED_CODE.test(value) ||
-        inEnum(FAILURE_CLASS_SET, value) ||
-        inEnum(KNOWN_STATUS, value)
-      );
-    case "provider":
-    case "providerId":
-      return inEnum(PROVIDER_ID_SET, value);
-    case "targetSystem":
-      return inEnum(TARGET_SYSTEM_SET, value);
-    case "transport":
-      return value === "http";
-    case "capability":
-      // Capability is an OPEN branded id upstream; accept only a dotted/snake token
-      // (e.g. `meeting.close`), never a bare raw word.
-      return EVENT_NAME_TOKEN.test(value);
-    default:
-      break; // no dedicated vocabulary — fall to the generic id/timestamp rules.
-  }
+  // (c) per-field frozen vocabulary FIRST — see the ORDER note on FIELD_VOCABULARY.
+  const validator = FIELD_VOCABULARY.get(key);
+  if (validator !== undefined) return validator(value);
   // (d) id-named keys → bounded id charset (system-generated, §16-loggable).
   if (isIdNamedKey(key)) return isSafeStructuredToken(value);
   // (b) timestamp-typed keys → ISO-8601 only.

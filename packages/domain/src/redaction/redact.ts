@@ -24,6 +24,7 @@ import {
 import {
   looksUnsafe,
   isSafeFieldValue,
+  hasFieldVocabulary,
   isAllowlistedField,
   PEM_BLOCK,
   URL_USERINFO_SEGMENT,
@@ -103,12 +104,45 @@ export function redactString(value: string): string {
  */
 function redactAllowlistedValue(key: string, value: unknown): unknown {
   if (typeof value === "string") {
-    // credential-scrub first: a recognized secret becomes REDACTED_CREDENTIAL and a
-    // residual-unsafe field drops whole — either way it never reaches the type gate.
+    // ⛔⛔ SCRUBBING AND TYPE-VALIDATION ARE INDEPENDENT OBLIGATIONS. NEITHER MAY
+    // SATISFY THE OTHER (task 24.132, safety rules 5 AND 7).
+    //
+    // THIS CODE PREVIOUSLY READ `if (scrubbed !== value) return scrubbed;` — i.e. if
+    // the scrub changed ANYTHING, the value was emitted and the type gate never ran.
+    // ⇒ removing ONE recognized secret waived the gate for the ENTIRE remaining
+    // value, INCLUDING the parts the scrub never examined. Measured leak: a
+    // credential riding alongside an email address and an employer project codename
+    // emitted both verbatim under `correlationId` and `sourceId`.
+    //
+    // ⭐ THE COUNTER-INTUITIVE PART, WORTH KEEPING BECAUSE IT INVERTS THE OBVIOUS
+    // READING: the gate was skipped PRECISELY WHEN A SECRET WAS FOUND, so detection
+    // strength and leak size moved in the SAME direction — adding a detector made
+    // matching lines LESS redacted, not more.
+    //
+    // ⚠ THE OLD COMMENT HERE CLAIMED TWO OUTCOMES ("a recognized secret becomes
+    // REDACTED_CREDENTIAL and a residual-unsafe field drops whole — either way it
+    // never reaches the type gate"). There were always THREE: the third —
+    // PARTIALLY scrubbed and residually innocuous-looking — is the one that emitted.
     const scrubbed = redactString(value);
-    if (scrubbed !== value) return scrubbed;
-    // clean string: emit ONLY if provably safe by TYPE for this field; else raw.
-    return isSafeFieldValue(key, value) ? value : REDACTED_RAW;
+    // (1) unredactable ⇒ drop. Its OWN arm, kept distinct from REDACTED_RAW:
+    //     "could not be made safe" and "not provably safe by type" are different
+    //     facts and collapsing them loses the distinction.
+    if (scrubbed === REDACTED_FIELD) return REDACTED_FIELD;
+    // (2) the type gate runs on the SCRUBBED value — never on the original, which
+    //     would re-drop every successfully scrubbed field and defeat the scrub.
+    if (isSafeFieldValue(key, scrubbed)) return scrubbed;
+    // (3) the gate said no. Enforce it wherever it can actually judge.
+    if (hasFieldVocabulary(key)) return REDACTED_RAW;
+    // (4) ⛔ RESIDUAL — DELIBERATELY UNCHANGED, ROUTED, NOT AN OVERSIGHT.
+    //     For a key with NO vocabulary (`errorMessage`, `errorStack`),
+    //     `isSafeFieldValue` returns false for EVERY possible value, so enforcing
+    //     the gate here would not tighten anything — it would delete the field and
+    //     remove diagnostic error logging from the system. Today's behaviour is
+    //     preserved EXACTLY, which means the measured leak REMAINS OPEN on those
+    //     two fields. That is a safety/availability trade on rules 5 and 7 and it
+    //     is an owner decision, tracked on `### 24.132`. ⛔ Do not "finish" this by
+    //     deleting the arm: read the task first.
+    return scrubbed !== value ? scrubbed : REDACTED_RAW;
   }
   if (typeof value === "number" || typeof value === "boolean") return value;
   if (value === null || value === undefined) return value;

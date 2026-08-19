@@ -108,10 +108,25 @@ describe("redactRecord — field-level ALLOWLIST classifier (fail-safe default R
   });
 
   it("REDACTS a credential-shaped value even under an allowlisted field name", () => {
+    // ⛔ THE SAFETY PROPERTY. If this reds, A CREDENTIAL SURVIVED — a rule-7 breach.
+    // The marker this redacts TO is a separate, lower-level claim and lives in its
+    // own pin below; it was split out at task 24.132 because the two were one
+    // assertion block and a red could not be attributed to either.
     const out = redactRecord({ status: "sk-Abc123Def456Ghi789Jkl" });
     expect(out["status"]).not.toContain("sk-Abc123Def456Ghi789Jkl");
-    // an allowlisted field carrying a credential is scrubbed via the credential marker
-    expect(String(out["status"])).toContain(REDACTED_CREDENTIAL);
+  });
+
+  it("MARKER SEMANTICS — a credential under a VOCABULARY-BEARING field redacts to :raw", () => {
+    // ⚠ CHANGED AT TASK 24.132, DELIBERATELY. This previously expected
+    // REDACTED_CREDENTIAL, which was only reachable because a successful scrub
+    // RETURNED EARLY and waived the field type gate. With the gate restored, a
+    // credential under `status` is scrubbed, then fails `KNOWN_STATUS`, and drops.
+    // ⭐ `:raw` is the TRUER statement: `:credential` asserts "we identified and
+    // handled it", which is exactly the vouching 24.132 removes — and the value was
+    // never legitimate for this field in the first place.
+    // ⛔ If this reds, THE MARKER MOVED — a diagnostic change, NOT a leak. The
+    // safety property is pinned above.
+    expect(redactRecord({ status: "sk-Abc123Def456Ghi789Jkl" })["status"]).toBe(REDACTED_RAW);
   });
 
   it("REDACTS raw-content-shaped values (multi-line / over-length) as REDACTED_RAW", () => {
@@ -256,10 +271,17 @@ describe("redactRecord — positive-shape classifier (SHORT single-line raw is R
     expect(out["retryable"]).toBe(true);
   });
 
-  it("still scrubs a credential-shaped string under an allowlisted field to the credential marker", () => {
+  it("still REDACTS a credential-shaped string under an allowlisted field", () => {
+    // The safety property — see the split note at the `status` pair above.
     const out = redactRecord({ code: "sk-Abc123Def456Ghi789Jkl" });
     expect(String(out["code"])).not.toContain("sk-Abc123Def456Ghi789Jkl");
-    expect(String(out["code"])).toContain(REDACTED_CREDENTIAL);
+  });
+
+  it("MARKER SEMANTICS — a credential under `code` redacts to :raw (24.132)", () => {
+    // Same change, second vocabulary-bearing field: `STRUCTURED_CODE` rejects the
+    // scrubbed marker, so the gate drops it. Two fields deliberately, so this reads
+    // as the rule it is rather than one field's quirk.
+    expect(redactRecord({ code: "sk-Abc123Def456Ghi789Jkl" })["code"]).toBe(REDACTED_RAW);
   });
 });
 
