@@ -50,6 +50,61 @@ describe("24.132 — a scrub does not waive the field type gate", () => {
   });
 });
 
+describe("24.132 — THE RESIDUAL: a leak that is OPEN BY OWNER DECISION", () => {
+  // ⛔⛔ THIS PIN ASSERTS THAT SENSITIVE CONTENT SURVIVES. THAT IS ITS PURPOSE.
+  // It is uncomfortable to read, and that is the function: if someone later
+  // "fixes" this, the pin REDS and they learn it was A DECISION, not an oversight.
+  //
+  // ⭐ STATE: DECIDED-AND-UNBUILT, which is NOT the same as unruled-and-unbuilt.
+  // The owner was given the measurement and the options and chose to keep today's
+  // behaviour on `errorMessage` / `errorStack` (2026-08-18, recorded on the
+  // tracker). A future reader must not close this as an obvious improvement.
+  //
+  // WHY (the reason travels with the decision, because a decision without its
+  // reason cannot be re-decided): error diagnostics are load-bearing during a
+  // build, and NOTHING IS ARMED, so the exposure is LOCAL LOGS rather than EGRESS.
+  // ⛔⛔ BOTH HALVES ARE TIME-BOUND AND NEITHER SURVIVES GO-LIVE BY ITSELF.
+  //
+  // ⛔ WHERE THE EXPIRY LIVES IS **NOT HERE**: it is recorded at the head of the
+  // arming-ledger section, so every future crossing walks past the question "does
+  // this arming change where errorMessage/errorStack content can travel?" This
+  // comment POINTS at that; it is deliberately not the only copy, because a note
+  // on a task is invisible from the place a decision expires.
+  //
+  // ⛔ THE STRUCTURAL REASON THE TYPE GATE CANNOT HELP HERE: `errorMessage` and
+  // `errorStack` have NO vocabulary at all — `isSafeFieldValue` returns false for
+  // EVERY possible value — so enforcing it would not tighten anything, it would
+  // delete the field. That is why this is a trade and not a bug.
+  //
+  // ⛔ THE THIRD OPTION IS REFUSED-FOR-NOW, WITH PROVENANCE, AND IS NOT A FALLBACK:
+  // giving these fields a real raw-content-shape predicate was attempted TWICE and
+  // REFUTED BOTH TIMES — the module header records v0 (a length/multiline
+  // heuristic) and v1 (a syntactic token-shape gate) and why each failed.
+  const CARRIER = `sync failed for ${PII} on Project ${CODENAME} key=${SK}`;
+
+  it("OPEN BY DECISION — companion PII survives under `errorMessage`", () => {
+    // The credential is still removed; it is the COMPANION content that survives.
+    expect(one("errorMessage", CARRIER)).toContain(PII);
+  });
+
+  it("OPEN BY DECISION — the employer codename survives under `errorMessage`", () => {
+    // Separate assertion: this is the rule-5 half and it must be attributable
+    // independently of the rule-7 half above.
+    expect(one("errorMessage", CARRIER)).toContain(CODENAME);
+  });
+
+  it("the credential ITSELF is still removed — the decision is scoped, not a blanket", () => {
+    expect(one("errorMessage", CARRIER)).not.toContain(SK);
+  });
+
+  it("SCOPE CONTROL — the same carrier under a VOCABULARY field does NOT leak", () => {
+    // Without this, the pins above read as "redaction is broken." They are not:
+    // the waiver is confined to the vocabulary-less fields, and 24.132 closed it
+    // everywhere else. This is what makes the residual legible as a boundary.
+    expect(one("correlationId", CARRIER)).not.toContain(PII);
+  });
+});
+
 describe("24.132 — the controls, without which the above is an anecdote", () => {
   it("CONTROL_the_same_line_with_no_credential_is_unchanged_by_this_fix", () => {
     // Identical either side of the change: it already dropped, and must keep
