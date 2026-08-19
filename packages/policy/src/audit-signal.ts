@@ -93,13 +93,51 @@ export function buildAuditSignal(input: BuildAuditSignalInput): AuditSignal {
 //
 // WHY THIS IS STILL A LOCAL COPY, AND WHY DELEGATING IS NOT THE OBVIOUS CLEANUP:
 // `@sow/domain` exports these patterns and its own `looksUnsafe`, and consuming them
-// would remove this copy entirely. That is DEFERRED, not overlooked — domain's
-// `looksUnsafe` first applies `stripMarkers`, which substitutes a SPACE, and every
-// `URL_USERINFO_CREDENTIAL` character class excludes whitespace. So a frozen redaction
-// marker embedded inside a `//user:pass@host` span BREAKS the span and the value stops
-// being refused (measured: `//u:p[REDACTED:raw]q@h` is unsafe here, safe in domain).
-// Delegating would hand that loosening to the sole-writer path above. Tracked as task
-// 24.120 against `packages/domain`; do NOT delegate this module until it is resolved.
+// would remove this copy entirely. That is DEFERRED, not overlooked.
+//
+// ⛔ DO NOT DELEGATE THIS MODULE — AND THAT COVERS BOTH SHAPES ON THE TABLE. They fail in
+// OPPOSITE directions, and stating only the obvious one lets the other shape out:
+//   (B) WHOLESALE — this module adopts domain's `looksUnsafe`, which applies `stripMarkers`
+//       before any net sees the value, so it STOPS refusing already-redacted content
+//       (`[REDACTED:credential]` is refused here, judged SAFE there). A LOOSENING on the
+//       reject-not-redact sole-writer path — see the EXTERNAL CONSUMER note on
+//       {@link isRedactionSafe}.
+//   (C') UNION — `domain.looksUnsafe(s) || <these nets, un-stripped>`, recorded on task
+//       24.110 as composing and as satisfying that entry's Done-when. ⛔ THE (B) REASON DOES
+//       NOT APPLY HERE AND MUST NOT BE READ AS COVERING IT: the un-stripped arm still fires,
+//       so `[REDACTED:credential]` STAYS refused. (C') moves the OTHER direction — this
+//       module INHERITS domain's refusals, so `private[REDACTED:raw]key` becomes refused
+//       where it is admitted today, and a KnowledgeWriter commit carrying already-redacted
+//       content is newly REJECTED. An AVAILABILITY cost on rule 1, ORDER-COUPLED with task
+//       24.123, which is weighing REMOVING exactly those matches.
+// ⇒ BOTH SHAPES ARE BLOCKED, FOR DIFFERENT REASONS. Neither is a refactor.
+//
+// ⛔ WHAT WOULD UNBLOCK IT: a ruling that PERMITS the change — not a ruling merely OCCURRING,
+// and not a task being ticked. Task 24.110 owns the (B) axis and records it as deliberately
+// UNRULED (lead, 2026-08-18); its (C') gate is re-homing the marker divergence plus the
+// 24.123 ordering. ⚠ IF 24.110 IS CLOSED, THAT MEANS THE DIVERGENCE WAS RE-HOMED, NOT
+// RELEASED — find its new owner before reading a tick as permission.
+// Checkable in place: `the_marker_axis_still_diverges_and_that_divergence_is_OWNED` in this
+// package's suite asserts both marker verdicts. ⚠ It ALSO carries a control pair that reds
+// for other reasons — a deliberate 24.123 tripwire, and it reds under (C') too — so a red
+// there does NOT mean the marker axis moved. Read that pin's own comment before repairing it.
+//
+// ⚠ MECHANISM CORROBORATION ONLY, NOT A SECOND BLOCKER: task 24.129 measured the same
+// ordering independently, from `packages/domain`'s side. It blocks a DIFFERENT thing:
+// promoting a net INTO domain.
+//
+// ⚠ THE REASON ORIGINALLY RECORDED HERE IS SPENT. It is RETAINED rather than deleted because
+// it is the only PRODUCTION-SOURCE artifact naming this relationship (`L194`), and because
+// striking a block does not tense-shift the sentences inside it (`L195`). It read: domain's
+// `stripMarkers` substituted a SPACE, which the whitespace-excluding
+// `URL_USERINFO_CREDENTIAL` character classes could not match, so a frozen marker inside a
+// `//user:pass@host` span BROKE the span and the value stopped being refused
+// (`//u:p[REDACTED:raw]q@h` was unsafe here, safe in domain).
+// ⛔ THAT AXIS CLOSED on 2026-08-18 — task 24.120, commits `65524874` + `8b2b53ac` +
+// `bf442753`. As of those commits the filler is a span-preserving `^` with the space retained
+// as a second, fail-safe arm, and both modules refuse that value.
+// ⇒ THE AXIS IS CLOSED; THE BLOCK IS NOT. A precondition that has been SATISFIED reads as an
+// instruction to PROCEED.
 const CREDENTIAL_PREFIX =
   /(sk-[a-z0-9]|sk_(live|test)|xox[baprs]-|gh[pousr]_|AKIA[0-9A-Z]{16}|-----BEGIN|eyJ[A-Za-z0-9_-]{10,}\.)/i;
 
