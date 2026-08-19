@@ -4647,3 +4647,33 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⚠ **Kin `L195`** (retain the reasoning, past-tense the state) — **both are about a record that outlives the conditions that produced it; `195` is about a claim going stale, `231` is about a claim being wrong with nobody left who would know.**
 
 **Enforcement:** `pattern: a close-out or handoff naming a contribution attributes it to the session that produced it, verified against that session's own record rather than from memory` · `accepted: partially enforceable`.
+
+## <a id="232"></a>232. A GUARD HOLDS TWO KINDS OF ASSERTION AND ONLY ONE OF THEM IS SACRED — *property* vs *completeness*, and the discriminator is checkable
+
+⛔ **THE INSTANCE:** a dispatch said *"if a guard reds, that is a FINDING to route — never adjust a guard so a new member fits."* **An implementer adding a net to a reflected-over frozen array hit two reds and STOPPED TO ASK rather than deciding:** `NET_EXEMPLARS.length === CREDENTIAL_NETS.length` and a hardcoded `expect(length).toBe(3)`. ⭐ **The guard file's OWN header said the completeness test *"fails until exemplars exist"*** — i.e. **the red was the guard reporting success.**
+
+⇒ ⛔⛔ **THE DISTINCTION THE DISPATCH COLLAPSED:**
+- **PROPERTY** — *the world has a shape* (this filler satisfies the substitution/insertion property; the differential admits nothing new). ⛔ **Editing it to pass CHANGES WHAT IS GUARANTEED. Never.**
+- **COMPLETENESS / REGISTRATION** — *every member of the set has been CONSIDERED.* ⭐ **It is BUILT to red when the set grows. Discharging it by considering the new member is what USING it looks like.**
+
+⇒ ⭐⭐ **THE DISCRIMINATOR, AND IT IS A CHECK RATHER THAN A JUDGEMENT CALL: *does the edit change what would be caught in FUTURE, or only acknowledge what has ALREADY been caught?*** Bumping `3`→`4` and supplying an exemplar leaves member #5 caught exactly as #4 was. Relaxing the property leaves nothing catching anything.
+
+⛔ **AND THE DISCRIMINATOR NEEDS A PROOF, BECAUSE AT THE DIFF THE TWO EDITS LOOK IDENTICAL:** *"bumped the count, added an exemplar"* is indistinguishable from *"silenced the alarm"* to a reviewer with no transcript. ⇒ **After discharging a completeness assertion, INTRODUCE A HYPOTHETICAL NEXT MEMBER, show the assertion still REDS on it, and revert byte-identical.** ⭐ **The mutation discipline, pointed at the guard instead of the subject.**
+
+⚠ **A hardcoded count in a completeness anchor is NOT a defect to derive away** — a derived count is circular for a non-vacuity anchor. ⛔ **But say so AT THE SITE** (`L216`), or the next reader "improves" it into `MEMBERS.length` and destroys the property it exists to prove.
+
+⭐ **PROVENANCE, because it is the transferable half: the rule did not exist until someone ASKED instead of deciding.** ⚠ **The dispatch's blanket wording was UNDER-SPECIFIED, not misapplied — `L141`'s amendment shape: when a careful reader cannot tell which case they are in, the RULE is what failed.**
+
+**Enforcement:** `pattern: a commit that edits a guard file states which KIND of assertion it touched, and a completeness discharge carries the still-reds-on-the-next-member proof` · `accepted: partially enforceable`.
+
+## <a id="233"></a>233. A RIGHT CONCLUSION CARRIED BY A WRONG MECHANISM LICENSES THE WRONG REMEDY — and being right is what stops anyone checking
+
+⛔ **THE INSTANCE:** an orchestrator's brief claimed a marker-stripping step DEFEATED an already-scrubbed lookahead, and concluded *hold this net.* **The hold was correct. The mechanism was false** — measured, the lookahead was **never engaged**, for two independent reasons (a vocabulary mismatch, and a composition ordering that means **no** lookahead over marker text can suppress in that module at all).
+
+⇒ ⛔⛔ **THE COST IS NOT THE WRONG SENTENCE, IT IS THE REMEDY THE WRONG SENTENCE LEAVES STANDING: *"then widen the lookahead"* is the obvious next move under the false mechanism, AND IT DOES NOT WORK.** ⭐ **The true mechanism forecloses it; the false one recommends it.** ⚠ **The implementer's refutation was strictly STRONGER than the claim it replaced — that is the tell for this class.**
+
+⇒ ⭐⭐ **WHY NO CONTROL HERE CATCHES IT: re-derivation targets FALSITY, and the CONCLUSION was true.** ⛔ **A correct call generates no doubt, so the reasoning under it is never re-opened** — `L228`'s family, one level up: **trust in an ANSWER transfers to the ARGUMENT that produced it.**
+
+⇒ **THE RULE: when you accept someone's conclusion, state separately whether you accept their MECHANISM — and when you WRITE a conclusion, mark which parts are measured and which are the story you told yourself about why.** ⛔ **A brief's premise carries the remedy; the conclusion only carries the verdict.**
+
+**Enforcement:** `pattern: a brief or ruling that states a mechanism marks it MEASURED or REASONED, and a Step-2.5 answer says whether it is confirming the outcome, the mechanism, or both` · `accepted: partially enforceable`.
