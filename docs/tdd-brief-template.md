@@ -94,6 +94,8 @@ Tests to write in `<test_path>`:
 
 2. **`test_<name>`** — ...
 
+> ⛔ **STANDING STEP-2.5 CHECKLIST LINE — ANSWER IT PER PIN, DO NOT RESTATE IT AS A PRINCIPLE: *WHICH MUTATION REDS **ONLY** THIS PIN?*** **If none, the pin is DOCUMENTATION, not detection — which may be fine, but it must not be counted as coverage, and any docblock *"enforced by"* must name the pin that actually discriminates.** ⚠ **Adopted 2026-08-18 after a pin named for a hazard was measured, THREE times across two slices by one author, to add zero unique mutation coverage — and every time it was someone ELSE who measured it.** ⭐ **The author had PROPOSED this exact test and never ran it on their own pins unprompted, which is why it is a checklist item here rather than a lesson to remember** (contracts `L254`).
+
 ## Cross-doc invariant impact (implementer flags at Step 9; orchestrator writes the docs)
 - **Model field changes:** <none / list of contract models touched>
 - **Orchestrator doc rows to write hot (Step 9 routing):** <none / which `packages/contracts/CLAUDE.md` cross-doc rows + `ARCHITECTURE.md` Appendix A rows the orchestrator authors atomic with the round>

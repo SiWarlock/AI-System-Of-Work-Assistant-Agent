@@ -4966,7 +4966,9 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ⚠ **`L141`'s shape: two careful parties, one method, one wrong answer. The METHOD was under-specified and no amount of care by either would have caught it.**
 
-**Enforcement:** `pattern: a max/count/latest over a pattern is reported with the pattern used and a control instance drawn from a different formatting of the same data` · `accepted: partially enforceable`.
+⇒ ⛔⛔ **THE CONTROL, AND WITHOUT IT THIS LESSON NAMES THE TRAP AND HANDS NOBODY A WAY TO TRIP IT: POSITIVE-CONTROL A MAX THE SAME WAY YOU WOULD AN EMPTY RESULT — INJECT A VALUE **ABOVE** THE REPORTED MAX AND CONFIRM THE INSTRUMENT REPORTS THE INJECTED ONE.** ⭐ ***If it does not, the max was a ceiling on the INSTRUMENT'S REACH, not on the data.*** ⚠ **Injecting BELOW the max proves nothing — it lands inside the range the instrument already sees.**
+
+**Enforcement:** `pattern: a max/count/latest over a pattern is reported with the pattern used AND a control injected ABOVE the reported value, confirmed visible` · `accepted: enforceable in review`.
 
 ## <a id="254"></a>254. A PIN NAMED FOR A HAZARD IS NOT A PIN THAT CAN DETECT IT — ask which mutation reds ONLY this pin
 
@@ -4978,5 +4980,23 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ⚠ **Kin `L237` (a mutation over a multi-assertion block proves ONE assertion): `237` is a pin proving less than it appears; `254` is a pin proving nothing it appears to.** ⭐ **Together they are the two ways a mutation count over-reports coverage.**
 
-**Enforcement:** `pattern: a pin named for a specific hazard cites the mutation that reds it and no other; a docblock's "enforced by" names the pin that discriminates` · `accepted: enforceable in review`.
+⛔ **AND THE DOCBLOCK POINTER IS PART OF THE DEFECT, NOT A DETAIL: an *"enforced by"* aimed at a pin that cannot discriminate the hazard ***LAUNDERS DOCUMENTATION INTO ENFORCEMENT*** — a reader follows the citation, finds a green test with the right name, and stops.**
+
+**Enforcement:** `pattern: a pin named for a specific hazard cites the mutation that reds it AND NO OTHER; a docblock's "enforced by" names the pin that discriminates` · `accepted: enforceable in review`.
+
+## <a id="255"></a>255. BRIEFING A REVIEWER ON YOUR INSTRUMENT SPENDS THEIR INDEPENDENCE — state the trade, do not pretend it is free
+
+⛔ **THE INSTANCE:** an implementer reported a false negative (*"the ledger tops out at 203"*), and `code-quality-reviewer` **independently reproduced it** — same instrument, same wrong answer. ⭐⭐ **That is not two witnesses. It is ONE MEASUREMENT TAKEN TWICE.**
+
+⇒ **THE MECHANISM, IN THE IMPLEMENTER'S WORDS:** ***"a reviewer who inherits my method is not an independent check on it, and EVERY MEASUREMENT I HAND A REVIEWER INHERITS MY BLIND SPOTS WITH IT."*** ⛔ **The exposure is not the reviewer's competence — handing them an instrument hands them its LIMITS, silently, and their agreement then arrives with a reviewer's authority while carrying no information.**
+
+⛔⛔ **AND IT CUTS AGAINST SOMETHING BEING DONE AS A KINDNESS: this project arms reviewers with its instrument cautions — *`grep` is wrapped, use `FNR`, positive-control empties* — and the same implementer briefed BOTH reviewers on their instrument warnings that day, ⇒ *propagating their own blind spot to both.***
+
+⇒ ⭐⭐ **THE HONEST FORM IS A TRADE, NOT A RULE: briefing a reviewer on known traps is CORRECT — it stops them re-walking into documented ones. It also DESTROYS their independence on the UNDOCUMENTED ones, which are the ones you needed a second party for.** ⛔ ***You cannot have both from one reviewer.***
+
+⇒ **THE RULE: brief the reviewer, and KNOW you have spent their independence to do it — then treat their agreement on any measurement you supplied the method for as CONFIRMATION OF ARITHMETIC, not of approach.** ⭐ **If a measurement is load-bearing, one party must reach it by a method the other did not supply.**
+
+⚠ **`029`'s concordance rule, arriving through the review channel: two measurements are evidence only when the methods COULD have disagreed — and a briefed reviewer's could not.**
+
+**Enforcement:** `pattern: a review report states which methods were supplied by the author; agreement on a supplied method is not counted as independent corroboration` · `accepted: partially enforceable`.
 
