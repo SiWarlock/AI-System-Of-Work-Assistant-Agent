@@ -4694,3 +4694,20 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⭐ **WHY THE ROUND SURVIVED IT, AND IT IS THE TRANSFERABLE HALF: BOTH BRIEFS TOLD THE IMPLEMENTER THE PREMISE WAS A HYPOTHESIS TO FALSIFY.** ⇒ ***the control that caught the author's own defect was one the author wrote into the artifact carrying it.*** ⛔ **Not luck, and not the implementers being sharp — an instruction to verify is the only control in this project that survives its author being confidently wrong.**
 
 **Enforcement:** `pattern: a brief or ruling restating a measurement cites the commit/command that produced it rather than the value alone; every load-bearing premise is marked as one to falsify` · `accepted: partially enforceable`.
+
+## <a id="235"></a>235. A HEDGE PROTECTS THE CLAIM, NOT THE ARTIFACT — put the uncertainty in the NAME, or the unhedged specific is what travels
+
+⛔ **THE INSTANCE, AND IT IS THE SHARPEST AVAILABLE BECAUSE THE AUTHOR DID EVERYTHING RIGHT EXCEPT ONE THING:** an orchestrator filed an entry titled *"`grep` HERE IS AN `rg` WRAPPER."* **The tool was inferred from OUTPUT SHAPE and was WRONG — it is `ugrep`.**
+
+⭐ **THE HEDGE WAS PRESENT, CORRECT, AND IN TWO PLACES.** The entry's own Done-when demanded the identity *"be confirmed at source rather than inferred from output shape."* The routing message said *"I am not stating it as established."* ⇒ **the author named the exact gap that later proved to be the error.**
+
+⇒ ⛔⛔ **AND IT DID NOT HELP, BECAUSE THE HEDGE AND THE SPECIFIC LIVED IN DIFFERENT PLACES: the caveat sat in the Done-when while the unhedged wrong name sat in the TITLE, in three symptom bullets, and in the remedy.** ⭐ ***A reader carries the title. Nobody reads a Done-when to find out what a thing IS.***
+
+⇒ ⭐⭐ **THE RULE: AN UNVERIFIED SPECIFIC MAY NOT APPEAR IN THE TITLE, THE SUMMARY, OR THE REMEDY — only in the section that owns the uncertainty. USE THE GENERAL TERM UNTIL THE SPECIFIC IS MEASURED.** ⛔ *"`grep` is wrapped — tool identity UNVERIFIED"* would have propagated nothing and cost nothing; **the class was right the whole time.**
+
+⚠ **WHY THIS IS NOT `L233` AGAIN, THOUGH IT ARRIVED AS ONE:** `L233` is *a right conclusion carried by a wrong mechanism*. **This is one level down and it is about ARTIFACT SHAPE rather than reasoning** — *how does an acknowledged uncertainty still propagate as a fact?* ⇒ **because hedges attach to sentences and readers consume headings.** ⛔ **`L233` says mark it REASONED; `235` says marking it is not enough if you marked it somewhere nobody looks.**
+
+⭐ **PROVENANCE WORTH KEEPING: the entry was filed FOUR HOURS AFTER its author banked `L233` to prevent exactly this class, and the correction came from the one party who INTERROGATED THE ENVIRONMENT DIRECTLY (`type` + `--version`) instead of reading output.** ⇒ ***the remedy for an inference-from-output is never a better inference — it is a different KIND of measurement.***
+
+**Enforcement:** `pattern: a title, summary or remedy naming a specific tool/version/symbol carries it only if measured; otherwise the general term plus an explicit UNVERIFIED marker in the name itself` · `accepted: partially enforceable`.
+
