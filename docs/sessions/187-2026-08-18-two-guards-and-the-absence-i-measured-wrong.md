@@ -162,6 +162,22 @@ pnpm -w turbo lint --force   -> 11 successful, 11 total · Cached: 0 cached, 11 
 
 ---
 
+## ⛔ A CROSSING, RECORDED NOT REWRITTEN — `0e2b7ec3`'s MESSAGE IS ONE REVISION BEHIND ITS OWN CODE
+
+**The orchestrator's revised commit message for `### 24.136` arrived AFTER the commit had landed.** Message ordering is not guaranteed — Carry-forward 6 `(a4)`, live, in this session's final exchange.
+
+**Verified, so the record is exact rather than remembered:**
+- ✅ **THE CODE IS COMPLETE.** `0e2b7ec3` carries the manifest fence (`"./audit/validation-refusal": null`) and the fence-integrity pin (`the_audit_module_is_FENCED_from_deep_import_by_the_exports_map`), across all four files. **Nothing is missing from the tree.**
+- ⚠ **THE MESSAGE IS THE EARLIER WORDING.** It carries *"The seam the pins require is FENCED rather than documented"* but not three later additions: the **verified-blocking** evidence (`ERR_PACKAGE_PATH_NOT_EXPORTED` through Node's real resolver, plus the positive control proving the wildcard still resolves), the **"the fence itself is pinned"** paragraph, and the **citation-qualification** paragraph.
+
+⛔ **DISPOSITION: RECORD IT, DO NOT REWRITE IT.** `--amend` is forbidden in this checkout and destroyed a seal on a prior round. **This is the same ruling the round already made for a misattributed commit: a divergence is a fact about the record; a rewritten history is a new defect.** The three missing paragraphs are preserved here and in the orchestrator's round close-out, so nothing is lost — only relocated.
+
+⭐ **AND THIS IS WHY THE ROUND'S OWN REMEDY IS THE FILE, NOT THE MESSAGE.** Handoff `029` opens on exactly this: *a `SendMessage` may carry a pointer; it may not carry the only copy.* The revised wording existed solely inside a message that arrived one turn too late — so it is written down here, where it cannot cross.
+
+⚠ **What would have prevented it: nothing either party did wrong.** The orchestrator ruled, I shipped on the ruling I had, and the better wording was in flight. **That is the structural case for `(a4)`, not an argument for more care** — care was present on both sides, as it was both times in `029`'s opening.
+
+---
+
 ## How to use what was built
 
 **Adding a fifth candidate schema:** add it to `CandidateSchemaId` and `FREE_FORM_KEY_REGIONS`, then run the suite. The derivation test reds if your regions disagree with the live schemas on either surface; the name guard reds if any region is not `[A-Za-z0-9_]+`; `no_live_schema_id_is_poisoned` reds if the table compiled to a refusal.
