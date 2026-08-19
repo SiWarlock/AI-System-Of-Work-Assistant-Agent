@@ -5017,6 +5017,8 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 ⇒ ⭐⭐ **THE UNIFYING SHAPE: A CONTROL ANSWERS *"CAN THIS INSTRUMENT PRODUCE A NON-EMPTY RESULT?"* AND IS READ AS ANSWERING *"IS THIS RESULT TRUE?"*** ⛔ **The gap between those two questions is where all three live.**
 
+⛔⛔ **BOUND — READ THIS BEFORE USING THE LIST, OR THIS ENTRY BECOMES THE THING IT WARNS ABOUT: *THE THREE ARE NOT A COMPLETE TAXONOMY, AND THE FACT THAT ALL THREE FAIL TOWARD REASSURANCE IS A SELECTION EFFECT RATHER THAN A PROPERTY OF CONTROLS.*** ⇒ ***a control failing toward ALARM is investigated within minutes and never becomes a lesson; only the reassuring ones survive long enough to be found and named.*** ⛔ **So these are three modes THAT SURVIVE, not three that EXIST.** ⚠ **A successor who checks their control against these three and concludes it is sound has done exactly what this entry describes — treated a check as covering more than it does.** ⭐ **The list is OPEN, and it is biased in the same direction the whole round has been about.**
+
 ⇒ **THE RULE: state the control's IDENTITY, its VALUE, and that it APPEARED — three facts, not a verdict.** ⚠ **And when the subject is an ABSENCE, the control must be as close to the subject as possible: same directory, same naming shape, same tracked/untracked state — because the ways an instrument can skip a thing are exactly the ways it skipped the thing you are looking for.**
 
 ⭐ **This lesson exists because the discipline is WORKING — every one of these was caught by someone running a control on their control. `L178` gave us positive controls; this is the year-two version.**
