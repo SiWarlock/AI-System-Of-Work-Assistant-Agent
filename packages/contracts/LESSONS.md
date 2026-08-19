@@ -4865,3 +4865,32 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 **Enforcement:** `pattern: a task filed from a measured witness states, in the Done-when, that satisfying it would make that witness stop reproducing — or names why the witness is out of its scope` · `accepted: enforceable in review`.
 
+## <a id="247"></a>247. A GUARD'S JUSTIFICATION MUST BE QUANTIFIED OVER EVERY SHAPE IT BLOCKS — not over the shape that motivated it
+
+⛔ **THE INSTANCE, self-filed by its author against themselves and NOT credited to the reviewer who caught it:** a delegation block was re-grounded on the reason *"delegating makes this module START STRIPPING and therefore STOP refusing already-redacted content."* ⭐ **`security-reviewer` executed the counter-example: under `(C')` — `domain.looksUnsafe(s) || <these nets un-stripped>` — the un-stripped arm still fires, so the value STAYS refused.**
+
+⇒ ⛔⛔ ***A READER IMPLEMENTING `(C')` — the shape the plan tells them to implement — CHECKS THE STATED REASON, FINDS IT DOES NOT APPLY TO WHAT THEY ARE BUILDING, AND CONCLUDES THE BLOCK WAS WRITTEN ABOUT SOMETHING ELSE.*** **A block that is true of one blocked shape and false of another does not merely under-inform — it ISSUES A PERMISSION for the shape it does not cover.**
+
+⭐ **AND `(C')`'s real cost is in the OPPOSITE DIRECTION, which the justification never mentioned:** policy would INHERIT domain's refusals, so already-redacted content that lands today is newly REJECTED — availability, on a sole-writer path.
+
+⇒ ⛔⛔ **THE AUTHOR'S OWN ACCOUNT IS THE LESSON: *"I fixed a precondition satisfiable by A TASK COMPLETING by installing one satisfiable by A MECHANISM BEING WRONG. Same defect class, new form, one slice later."***
+
+⚠⚠ **AND THE PART THAT DECIDES THE ENFORCEMENT: THIS WAS THE THIRD INSTANCE OF ONE SHAPE ACROSS TWO SLICES BY ONE AUTHOR — *while they were quoting their own sentence, "monotone is a claim about LEAKS and is SILENT about AVAILABILITY", in the artifacts that under-covered availability.*** ⇒ ***KNOWING THE RULE DID NOT MAKE THEM APPLY IT.*** ⛔ **That is why this needs a mechanical check and not more care.**
+
+⇒ **THE RULE: enumerate the shapes the guard blocks, and state a reason FOR EACH, with its failure DIRECTION. If two shapes fail in opposite directions, say so — a single justification cannot cover both.**
+
+**Enforcement:** `pattern: a guard/fence/block naming a forbidden action enumerates each blocked variant with its own reason and failure direction; a single-reason block asserts that only one variant exists` · `accepted: partially enforceable`.
+
+## <a id="248"></a>248. A SATISFIED PRECONDITION IS AN INSTRUCTION TO PROCEED — so a re-grounded block must defend its own pointer
+
+⛔ **THE DIAGNOSIS:** a source block closed *"do NOT delegate until task X is resolved."* **Task X resolved.** ⇒ ***the instruction now reads as SATISFIED and LICENSES exactly what it exists to forbid.*** ⭐ **This is NOT the rotted-pointer class: a rotted pointer invites a reader to DISMISS the guard; a satisfied precondition invites them to ACT.** ⛔ **Rot in the RELEASE direction, and it goes GREEN rather than breaking.**
+
+⇒ **REMEDY 1 — re-ground, never un-annotate.** **Deleting the dead reason DELETES THE BLOCK.** Strike the spent ground, retain it in the past tense (`L195`), and state a LIVE reason in the present tense.
+
+⇒ ⭐⭐ **REMEDY 2, AND IT IS THE ONE PEOPLE MISS — THE RE-GROUNDING RECURSES: the new live reason was anchored to an OPEN task WHOSE CLOSURE IS EXPLICITLY PLANNED** (*"may not be closed without re-homing the divergence first"* — i.e. re-home, then close). ⇒ ***the moment it is re-homed and ticked, the next reader greps it, finds it closed, and the block reads as discharged — reproducing the original defect on a fresh date.***
+⇒ ⛔ ***A BLOCK RE-GROUNDED ON A TASK POINTER MUST STATE WHAT THAT POINTER'S CLOSURE MEANS*** — e.g. *"a tick there means the divergence was RE-HOMED, not RELEASED; find its new owner before reading it as permission."* **Otherwise it is a satisfiable precondition wearing a fresh date.**
+
+⚠ **Kin `L240` (cite the entry that OWNS the condition) — `240` decides WHICH pointer; `248` decides what you must say ABOUT it.** **Both are needed: the right pointer, closing, still reads as permission.**
+
+**Enforcement:** `pattern: a block citing a task states what that task's CLOSURE would mean for the block; a task closing checks for blocks naming it` · `accepted: partially enforceable`.
+
