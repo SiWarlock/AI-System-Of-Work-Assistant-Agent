@@ -4731,3 +4731,55 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 **Enforcement:** `pattern: an entry recording an unexplained anomaly states the enforcement independently of any mechanism, and any mechanism it carries is labelled HYPOTHESIS with its disproving tests listed` · `accepted: partially enforceable`.
 
+## <a id="237"></a>237. A MUTATION PROOF OVER A MULTI-ASSERTION BLOCK IS PARTIAL BY DEFAULT AND LOOKS TOTAL — the runner aborts at the first failing assertion
+
+⛔ **THE INSTANCE:** an implementer mutated a predicate to prove a narrowed pin could fail, **saw the expected RED, and did not stop there.** They ran a SECOND mutation — and the reason is the finding: ⭐ ***vitest ABORTS A TEST AT ITS FIRST FAILING ASSERTION, so mutation 1 left the block's second assertion UNEXECUTED.***
+
+⇒ ⛔⛔ **ONE MUTATION WOULD HAVE READ AS A COMPLETE PROOF WHILE COVERING ONE ASSERTION OF TWO.** ⭐ **And the report would have been true — *"mutated, it redded, restored"* — which is why nothing downstream could have caught it.**
+
+⇒ ⭐⭐ **THE GENERAL FORM, AND IT INVALIDATES A PROOF SHAPE THIS PROJECT USES EVERYWHERE: a RED tells you SOMETHING in the block failed. It does not tell you WHICH, and it actively PREVENTS the rest from running.** ⇒ ***mutation coverage is per-ASSERTION, not per-TEST, and a single mutation can only ever prove ONE assertion — the first one it happens to break.***
+
+⛔ **THE RULE: for a block with N assertions, either run N mutations each targeting one assertion, or split the block so each assertion is its own test.** ⭐ **Prefer the split — it makes the coverage structural rather than dependent on the prover remembering.**
+
+⚠ **AND IT COMPOUNDS WITH THE `diff` FINDING BANKED THE SAME DAY: proving the mutation APPLIED (`cmp -s`/sha256, never `diff`) establishes that the change reached the file. `237` is the OTHER half — that the change reached the ASSERTION.** ⇒ ***applied-and-redded is still not proof for any assertion after the first.***
+
+**Enforcement:** `pattern: a mutation proof states which ASSERTION it exercised, and a block with N assertions carries N mutations or is split into N tests` · `accepted: partially enforceable`.
+
+## <a id="238"></a>238. ADDING AN ASSERTION IN THE OPPOSITE DIRECTION SILENTLY WIDENS EVERY PROSE CLAIM ABOUT THE BLOCK
+
+⛔ **THE INSTANCE, self-caught and then caught again by a reviewer:** an implementer wrote *"under either of `24.123`'s two remedy shapes, both verdicts asserted below are unchanged."* **TRUE when the block held two assertions.** They then **added a control pair in the opposite direction**, and the sentence — unedited — **silently quantified over the new assertions too.** ⛔ **Under a third remedy the entry carries, the new control's verdict FLIPS and the test reds.**
+
+⛔ **THE WORSE SIBLING, SAME BLOCK:** *"`(C')` is monotone by construction and therefore preserves every refusal asserted here."* ⭐ **Literally true and dangerously incomplete — the block also asserts a SAFE verdict, and `(C')` FLIPS it.** ⇒ ***an implementer lands `(C')`, hits a CORRECT red, reads a paragraph saying `(C')` preserves everything, and WEAKENS THE ASSERTION*** — the exact move the file's own header warns about, recreated 33 lines away while fixing its sibling.
+
+⇒ ⭐⭐ **THE CAUSE: PROSE ABOUT A TEST BLOCK IS QUANTIFIED IMPLICITLY OVER *"what this block asserts"* — AND THAT IS A MOVING SET.** ⛔ **The claim does not have to be edited to become false; the block only has to grow.** ⚠ **`L222`'s family with a mechanism attached: nothing in the sentence is wrong, and re-derivation finds nothing.**
+
+⇒ **THE RULE: when you ADD an assertion to a block, RE-READ EVERY PROSE CLAIM ABOUT THAT BLOCK AS IF IT WERE WRITTEN TODAY.** ⭐ **And prefer claims scoped to a NAMED assertion over claims scoped to "here" / "below" / "this block."** ⛔ **Also: *monotone* is a claim about LEAKS and is SILENT about AVAILABILITY — a directional property never quantifies over the opposite direction.**
+
+**Enforcement:** `pattern: prose claims inside a test block name the assertions they range over; a commit adding an assertion re-states or re-scopes them` · `accepted: partially enforceable`.
+
+## <a id="239"></a>239. ASSESS A CHANGE ON THE PATH IT EXISTS TO SERVE, NOT ONLY ON THE PATH YOU ARE WORRIED ABOUT
+
+⛔ **THE INSTANCE:** an orchestrator assessed adding a credential detector and reported the risk as *"one more forgeable trigger on a door that is already open"* — **marginal, ship it.** ⭐ **The lead constructed the case that was missed: on a line carrying a REAL key, the detector causes the scrub to fire, the scrub short-circuits a downstream gate, and the REST OF THE LINE IS EMITTED RAW — where before the whole field was redacted.**
+
+⇒ ⛔⛔ ***ADDING THE DETECTOR MOVES THE EXACT POPULATION IT EXISTS TO PROTECT FROM FULLY REDACTED TO PARTIALLY RAW.*** **Not a marginal addition — a REGRESSION, caused by an improvement.**
+
+⇒ ⭐⭐ **THE MECHANISM IS AN ATTENTION DEFECT, NOT A MEASUREMENT ONE: the forged trigger is the ATTACKER'S string and the real key is the PRODUCT'S, and only the first was reasoned about.** ⛔ **Every fact needed was in the packet being reviewed.** ⚠ ***A missing QUESTION, not a missing measurement — which is why no amount of re-deriving the stated claims would have surfaced it.***
+
+⇒ **THE RULE: for any change that adds DETECTION, RECOGNITION or CLASSIFICATION, ask explicitly what happens on a TRUE POSITIVE — the case the change was built for — before assessing false positives or adversarial inputs.** ⭐ **A detector's success path is the one nobody simulates, because success is assumed to be the good outcome.**
+
+⚠ **KIN `L233`: there the conclusion was right and the mechanism wrong; here the analysed PATH was wrong, so the conclusion inherited a hazard from a case never considered.** ⛔ **Both are failures of what was ASKED, not of what was measured.**
+
+**Enforcement:** `pattern: a slice adding a detector/classifier states the measured behaviour on a TRUE POSITIVE end-to-end, not only on benign and adversarial inputs` · `accepted: partially enforceable`.
+
+## <a id="240"></a>240. NAME A CROSS-AREA PIN FOR THE ENTRY THAT *OWNS* THE DIVERGENCE, NOT THE ONE THAT LAST EDITED IT
+
+⛔ **THE INSTANCE:** an implementer narrowing a cross-area pin first tagged it with the task performing the narrowing. ⭐ **They caught it themselves: *that entry CLOSES WITH THIS SLICE, so the name would resolve to finished work.*** **Retagged to the entry that owns the surviving divergence.**
+
+⇒ ⛔⛔ **A POINTER TO A CLOSED TASK IS WORSE THAN NO POINTER: it resolves, it looks authoritative, and it says the matter is SETTLED** — so a reader hitting the pin concludes the divergence was dealt with and stops.
+
+⇒ **THE RULE: a pin, fence or guard cites the entry that OWNS the condition it guards — the one that stays open while the condition persists — never the slice that touched it last.** ⭐ **Test: *when this citation's task closes, will the thing I am guarding be gone?* If no, the citation is wrong.**
+
+⚠ **Kin `L194`/`029`'s rotted-guard finding, and this is the ROT-BY-CLOSURE variant: the pointer does not break, it goes GREEN.**
+
+**Enforcement:** `pattern: a guard or pin citing a task cites one whose closure condition matches the guard's own; a closing task checks for pins naming it` · `accepted: partially enforceable`.
+
