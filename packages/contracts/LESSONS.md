@@ -4677,3 +4677,20 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 ⇒ **THE RULE: when you accept someone's conclusion, state separately whether you accept their MECHANISM — and when you WRITE a conclusion, mark which parts are measured and which are the story you told yourself about why.** ⛔ **A brief's premise carries the remedy; the conclusion only carries the verdict.**
 
 **Enforcement:** `pattern: a brief or ruling that states a mechanism marks it MEASURED or REASONED, and a Step-2.5 answer says whether it is confirming the outcome, the mechanism, or both` · `accepted: partially enforceable`.
+
+## <a id="234"></a>234. THE AUTHOR OF A MEASUREMENT IS THE PERSON LEAST LIKELY TO RE-READ IT — and a brief is written from the mental model, not from the file
+
+⛔ **THE INSTANCE, AND THE COUNT IS THE FINDING: an orchestrator authored THREE briefs in one session and the FIRST TWO EACH CARRIED A FALSE PREMISE. Both were caught at Step 2.5 by the implementer.** (The third was unreported at time of writing — ⚠ **stated as `2 of 2 reported`, NOT as a rate; the `0 of 6` ruling binds and n=2 carries nothing.**)
+
+- **Brief A** asserted a MECHANISM (*"marker-stripping defeats this lookahead"*) after reading both sources and running neither. **The lookahead was never engaged** — see `L233`.
+- **Brief B** asserted *"it is now the ONLY divergence"* — ⛔⛔ **the orchestrator had MEASURED AND COMMITTED the second divergence THEMSELVES roughly an hour earlier, in the same session.** The implementer's catch opened *"this is not my find — you recorded it at `<hash>`."*
+
+⇒ ⭐⭐ **THE UNIFYING MECHANISM IS NOT *"failed to check"*, WHICH IS WHY *"check your premises"* HAS NOTHING TO GRIP: BOTH BRIEFS WERE WRITTEN FROM THE AUTHOR'S MENTAL MODEL WHILE THE CONTRADICTING RECORD WAS THEIR OWN, COMMITTED, AND ONE COMMAND AWAY.** ⛔ ***Having produced a measurement produces CONFIDENCE ABOUT ITS CONTENT that does not decay at the same rate as the CONTENT DOES.*** ⚠ **A stranger citing that measurement would have opened the file; the author does not, because they remember writing it.**
+
+⇒ ⛔ **AND IT IS INVISIBLE TO EVERY CONTROL AIMED AT OTHER PEOPLE'S CLAIMS.** *Re-derive what you relay* fires on inherited claims. **A claim you authored is not inherited** — it arrives as recall, and recall feels like knowledge (`L202`'s *recognition feels like measurement*, in the first person).
+
+⇒ **THE RULE: when a brief, ruling or handoff states something YOU measured, RE-OPEN YOUR OWN ARTIFACT AND QUOTE IT — do not restate it from memory. Cite the commit or the command, never the recollection.** ⭐ **A citation is cheap and it makes the staleness someone else's to catch rather than yours to remember.**
+
+⭐ **WHY THE ROUND SURVIVED IT, AND IT IS THE TRANSFERABLE HALF: BOTH BRIEFS TOLD THE IMPLEMENTER THE PREMISE WAS A HYPOTHESIS TO FALSIFY.** ⇒ ***the control that caught the author's own defect was one the author wrote into the artifact carrying it.*** ⛔ **Not luck, and not the implementers being sharp — an instruction to verify is the only control in this project that survives its author being confidently wrong.**
+
+**Enforcement:** `pattern: a brief or ruling restating a measurement cites the commit/command that produced it rather than the value alone; every load-bearing premise is marked as one to falsify` · `accepted: partially enforceable`.
