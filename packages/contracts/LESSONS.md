@@ -4819,3 +4819,19 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 **Enforcement:** `pattern: a proof or gate reports the exit status it branched on; no claim rests on parsing a human-rendered diff/summary/progress line` · `accepted: enforceable in review`.
 
+## <a id="244"></a>244. AN INSTRUMENT CHARACTERIZATION IS SESSION-SCOPED — measuring what your tools ARE does not tell anyone else what theirs are
+
+⛔ **THE INSTANCE:** two sessions on ONE machine measured `grep --version` and got **`ugrep 7.5.0`** and **`BSD grep (GNU compatible) 2.6.0-FreeBSD`.** **Neither was wrong.** ⭐ **Resolution: there are 14 per-session shell snapshots, so `grep` resolves differently per session** — and a second tool (`diff`, exit 0 vs exit 1 on the same known-different comparison) contradicted the same way.
+
+⇒ ⭐⭐ ***A LEDGER THAT SAYS "`grep` FABRICATES" OR "`grep` IS `ugrep`" IS RECORDING A MACHINE FACT ABOUT SESSION-SCOPED BEHAVIOUR.*** ⛔ **A successor inherits a characterization that may be FALSE WHERE THEY STAND — and it arrives with measurements attached, which is what makes it credible.**
+
+⇒ ⛔⛔ **AND IT RE-READS EVERY "INTERMITTENT" IN THE LEDGER. *Intermittent across sessions* and *stable within each session but differing between them* produce IDENTICAL observations when nobody records which session saw what.** ⭐ ***We had been calling something intermittent that nobody had tested for session-stability*** — and the test is one command run in two sessions.
+
+⇒ **THE RULE, TWO PARTS:**
+1. **Every instrument claim states the SESSION that measured it.** *"`grep` is `ugrep`"* → *"`grep` was `ugrep` in session X."*
+2. ⭐ **PREFER ENFORCEMENTS THAT DO NOT DEPEND ON THE ANSWER.** *"Use `awk`/`sed` with `FNR`; positive-control every empty result"* survives whichever `grep` you have; *"`grep` is `ugrep`, use its dialect"* does not. ⛔ **A remedy keyed to an instrument's identity inherits that identity's scope.**
+
+⚠ **AND THE BOUND ITS DISCOVERER ATTACHED, WHICH IS THE MODEL: their search for the function's DEFINITION found nothing while `type` said it existed** ⇒ *"that is my PATTERN failing, not evidence of absence — do not record *no snapshot defines grep*."* ⭐ **A resolution is not a licence to add the convenient corollary.**
+
+**Enforcement:** `pattern: an instrument finding names the session it was measured in, and its enforcement is stated so it holds regardless of which variant the reader has` · `accepted: partially enforceable`.
+
