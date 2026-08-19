@@ -4711,3 +4711,19 @@ The round already carried *"a mutation producing RED is self-proving; a mutation
 
 **Enforcement:** `pattern: a title, summary or remedy naming a specific tool/version/symbol carries it only if measured; otherwise the general term plus an explicit UNVERIFIED marker in the name itself` · `accepted: partially enforceable`.
 
+## <a id="236"></a>236. A WRONG MECHANISM IS MORE EXPENSIVE THAN NO MECHANISM — an explanation stops the questioning that a bare anomaly would have provoked
+
+⛔ **THE INSTANCE, AND THE ARITHMETIC IS THE ARGUMENT:** six output anomalies were carried for **WEEKS** under the heading *"something is wrapping `git` in this checkout."* **It was false — `type git` → `/usr/bin/git`, no function, no shim.** ⭐⭐ ***Every test that disproved it is ONE COMMAND***: `type git` · `git --version` · `--no-pager` · `GIT_PAGER=cat` · `seq 200` · `ls -1 /usr/bin` · `git config --list`.
+
+⇒ ⛔⛔ **NOBODY RAN THEM, AND NOT THROUGH CARELESSNESS: *the hypothesis had already answered the question.*** ⭐ ***An unexplained anomaly stays itchy and keeps recruiting tests. An EXPLAINED one stops being interesting.*** ⇒ **the mechanism's job — ending the discomfort — is done equally well by a false one.**
+
+⇒ ⭐⭐ **AND THE COST SCALES WITH HOW WELL THE EXPLANATION FITS, WHICH INVERTS THE INTUITION: the wrapper hypothesis fit SIX anomalies across FOUR sessions.** ⛔ ***A poor explanation would have been challenged; a good one was adopted — so the better the wrong mechanism, the longer it survives and the more it suppresses.*** ⚠ **`L202`'s neighbour, one step further: `202` says a strong hypothesis makes false POSITIVES cheap to accept; `236` says it makes TESTS feel unnecessary.**
+
+⇒ **THE RULE: an anomaly with NO mechanism must be recorded as *unexplained*, and the enforcement written so it does not depend on the explanation.** ⭐ **The replacement entry is the model: *bare `git log` emits exactly 50 lines — git-log-specific, below the shell, not the pager, not config, overridden by `-n`. WHAT SETS IT IS UNKNOWN.* And the enforcement — *never enumerate with bare `git log`* — was ALWAYS available without knowing why.** ⛔ ***The mechanism was never needed for the remedy; it was only needed for the comfort.***
+
+⚠ **COROLLARY, because this is where a reader will over-correct: this is NOT *"do not hypothesise."* It is *do not let a hypothesis occupy the slot where the anomaly was.*** **Keep the anomaly stated as an anomaly, keep the hypothesis clearly subordinate to it, and keep the one-command tests written down UNRUN rather than not written down at all.**
+
+⭐ **PROVENANCE: the author of the harness-layer inference REFUTED IT THEMSELVES within the hour, by piping git's own output to `wc` — proving the truncation was below the shell.** ⇒ **the cheapest disproof in the whole arc, available the entire time.**
+
+**Enforcement:** `pattern: an entry recording an unexplained anomaly states the enforcement independently of any mechanism, and any mechanism it carries is labelled HYPOTHESIS with its disproving tests listed` · `accepted: partially enforceable`.
+
