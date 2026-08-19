@@ -457,7 +457,8 @@ Under `(C')` the two guard properties stop fighting: **"never worse than today" 
 
 # CLOSE-OUT (`/session-end`)
 
-**Successor session:** none — this is the last implementer session of the round.
+**Successor session:** `docs/sessions/185-2026-08-18-the-scrub-that-unlocked-the-gate.md`.
+⚠ **This line previously read "none — this is the last implementer session of the round."** That was accurate when written and became false when the round continued and `contract` was re-staffed; the successor picked up `### 24.118` (this doc's own `### 24.120` family) and then `### 24.132`. **Corrected by the successor rather than left dangling** — the round's own crossing-defect class, and the same shape `029` recorded as *"accurate when written, false when read."*
 ⚠ **Bidirectional-link note:** the predecessor pointer at the top of this doc is handoff `029`. **`docs/sessions/182-…` is the orchestrator's own doc and I have not edited it** — if a successor link is owed there, it belongs to its author. **Flagged, not written.**
 
 ## Files created
