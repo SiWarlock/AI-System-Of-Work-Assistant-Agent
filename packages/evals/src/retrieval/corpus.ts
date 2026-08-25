@@ -192,3 +192,87 @@ export const RETRIEVAL_CORPUS: RetrievalCorpus = buildRetrievalCorpus();
  * `below_bar_fails_suite` is non-vacuous.
  */
 export const DEGRADED_CORPUS: RetrievalCorpus = buildDegradedCorpus();
+
+// ── relevance (usefulness/precision@K) corpora — PURPOSE-BUILT, not a repurposed
+// recall corpus. RETRIEVAL_CORPUS's gold is ONE arbitrary doc among four
+// byte-identical same-topic docs, so precision on it is decided by an id
+// tie-break and is meaningless (see EVALUATION_CRITERIA / task 12.1 notes). Here
+// each query's gold is ALL FOUR same-topic docs, so precision@K is well-posed: a
+// correct ranker's top-K IS the gold set, not a lucky pick among ties.
+const RELEVANCE_DOCS_PER_TOPIC = 4;
+
+function buildRelevanceDocs(prefix: string): RetrievalDoc[] {
+  const docs: RetrievalDoc[] = [];
+  TOPICS.forEach((t, ti) => {
+    for (let n = 0; n < RELEVANCE_DOCS_PER_TOPIC; n++) {
+      docs.push({ id: `${prefix}-${t}-${n}`, text: TOPIC_TEXT[t], embedding: basis(ti) });
+    }
+  });
+  return docs;
+}
+
+function relevanceGoldIds(prefix: string, t: (typeof TOPICS)[number]): readonly string[] {
+  return Array.from({ length: RELEVANCE_DOCS_PER_TOPIC }, (_, n) => `${prefix}-${t}-${n}`);
+}
+
+function buildRelevanceCorpus(): RetrievalCorpus {
+  // 10 topics × 4 docs = 40 docs, no rescue docs. 3 clean queries per topic (30 ≥
+  // the RETRIEVAL_QUERY_FLOOR), each query's gold = all four same-topic doc ids —
+  // dense cosine ties all four at 1.0 and everything else at 0, and the sparse
+  // leg ties the same four on the identical TOPIC_TEXT, so a correct fused ranker
+  // scores usefulness@4 = 1.0.
+  const prefix = "rel";
+  const docs = buildRelevanceDocs(prefix);
+  const cases: RetrievalCase[] = [];
+  TOPICS.forEach((t, ti) => {
+    for (let q = 0; q < 3; q++) {
+      cases.push({
+        id: `relq-${t}-${q}`,
+        query: TOPIC_TEXT[t],
+        queryEmbedding: basis(ti),
+        goldDocIds: relevanceGoldIds(prefix, t),
+        workspace: WS,
+      });
+    }
+  });
+  return { docs, cases };
+}
+
+function buildDegradedRelevanceCorpus(): RetrievalCorpus {
+  // Same 40-doc/30-query shape, but each query's embedding is the NEXT topic's
+  // basis (orthogonal to its own gold topic — cosine 0) and its text ("probe
+  // residual echo drift signal") shares no token with ANY doc's TOPIC_TEXT — so
+  // neither the dense nor the sparse leg can surface gold. Deterministic: the
+  // only nonzero-cosine docs are the (unrelated) next topic's four, which occupy
+  // the fused top-4 instead of gold ⇒ usefulness@4 = 0 for every case.
+  const prefix = "reld";
+  const docs = buildRelevanceDocs(prefix);
+  const cases: RetrievalCase[] = [];
+  TOPICS.forEach((t, ti) => {
+    const orthogonalTopicIndex = (ti + 1) % TOPICS.length;
+    for (let q = 0; q < 3; q++) {
+      cases.push({
+        id: `reldq-${t}-${q}`,
+        query: "probe residual echo drift signal",
+        queryEmbedding: basis(orthogonalTopicIndex),
+        goldDocIds: relevanceGoldIds(prefix, t),
+        workspace: WS,
+      });
+    }
+  });
+  return { docs, cases };
+}
+
+/**
+ * The purpose-built relevance corpus: 40 docs (10 topics × 4), 30 labeled
+ * queries (clears the ≥30 retrieval floor), gold = all four same-topic docs per
+ * query — well-posed for usefulness@K (§20.1/KN-10 `RETRIEVAL_RELEVANCE`).
+ */
+export const RELEVANCE_CORPUS: RetrievalCorpus = buildRelevanceCorpus();
+
+/**
+ * A deliberately-DEGRADED relevance corpus (gold missed by BOTH the dense and
+ * sparse legs), proving the usefulness bar is a REAL gate: its fused
+ * usefulness@K falls below the bar, so `below_bar_fails_suite` is non-vacuous.
+ */
+export const DEGRADED_RELEVANCE_CORPUS: RetrievalCorpus = buildDegradedRelevanceCorpus();
