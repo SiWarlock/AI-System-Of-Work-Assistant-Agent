@@ -135,6 +135,39 @@ export const DEFAULT_PROJECTION_TYPE_VISIBILITY_TAXONOMY: ProjectionTypeVisibili
  * production); a future caller bypassing that stage would need its own enumeration,
  * not this one.
  *
+ * ⛔ `### 24.81` REVIEWER SCOPE NOTE — TRACED, NOT CLAIMED UNREACHABLE. The reviewer traced
+ * ONE production call site for `projection`/`candidate` (the Zod `parsed.data` inside
+ * `admitProjection` itself, two paragraphs down) and explicitly left `sourceWorkspace`
+ * UNTRACED. Traced here, BACKWARD from `validateProjectionVisibility`'s `sourceWorkspace`
+ * parameter through every non-test production caller of the three functions that supply it
+ * (`admitProjection`, `admitAndPersistProjection`, `serveProjection` — `packages/knowledge/
+ * src/gcl/{visibility-gate,projection}.ts`):
+ *   • `admitAndPersistProjection` (the WRITE leg) — ZERO production callers; every call site
+ *     is `packages/knowledge/test/gcl-projection.test.ts`.
+ *   • `serveProjection` ← `createGclProjectionGate` (`packages/workflows/src/activities/
+ *     gclProjectionGate.ts`), whose `sourceWorkspace` is `lookupWorkspace(candidate.workspaceId)`
+ *     — an INJECTED function bound at exactly one site (`deps.gclProjection.lookupWorkspace`,
+ *     `outputWorkflows.ts:347`) inside `createOutputWorkflowActivities`, which itself has ZERO
+ *     production callers in `apps/worker/src` (only self-referential mentions inside its own
+ *     package; the worker composition root never calls it — its own file names this Phase
+ *     25.2/25.4).
+ *   • `serveProjection` ← `resolveApprovedCrossWorkspaceSlice` (`apps/worker/src/composition/
+ *     crossWorkspaceRead.ts`), whose `sourceWorkspace` IS a real, wired store read
+ *     (`deps.workspaceConfig.get(link.toWorkspaceId)`) — but that function itself has ZERO
+ *     production callers (its own module header: "ships behind a reachability waiver until
+ *     25.2/25.4"; re-confirmed here, not merely relayed from that comment).
+ * ⇒ ABSENCE STATED, not an entry point resolved: `sourceWorkspace` reaches this function via NO
+ * production entry point today — the write leg and both read legs each terminate at a function
+ * with zero production callers. This does not make the descriptor/`[[Get]]` divergence above
+ * safe forever, only unexposed on the chains that exist NOW; the same Phase-25.2/25.4 binding
+ * that would arm any of the three chains is what would open one — re-derive this note when that
+ * binding lands, don't inherit it as still true.
+ * METHOD: `grep -rn "admitAndPersistProjection(\|serveProjection(\|createGclProjectionGate\|
+ * resolveApprovedCrossWorkspaceSlice" packages apps --include='*.ts'`, every SRC hit read to
+ * classify test vs production caller. BOUNDARY: `packages/knowledge/src`, `packages/workflows/
+ * src`, `apps/worker/src` — SRC only, same convention as the enumeration above. Taken at commit
+ * `67adf09f8a9b23bcd79fd88818f9a8819f5d6511`.
+ *
  * ⚠ FAIL-CLOSED BEHAVIOUR CHANGE, and it is safe because of what produces a `Workspace`:
  * both production producers terminate in `WorkspaceSchema.parse()` (`defaultWorkspace`,
  * and `packages/db`'s workspace read gate returning `parsed.data`), and a Zod parse emits
