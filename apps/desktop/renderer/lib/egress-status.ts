@@ -49,6 +49,19 @@ export type EgressStatusResult =
  * its workspace, so a server-side projector/command regression answering with a different workspace's
  * posture folds to UNKNOWN rather than rendering one workspace's "acknowledged" under another's label
  * (WS-8 + rule 5).
+ *
+ * ⚠ ### 24.102 / ### 24.108 — DELIBERATE caller-provenance discipline, not a closure of 24.102.
+ * The returned `status.workspaceId` is built from the CALLER's local `workspaceId` parameter, NEVER
+ * from a second read of `v["workspaceId"]` off the wire, even though the equality check just above
+ * proved the two are equal at that instant. A store-authored (possibly credential-shaped) id is a
+ * rule-7 rendered-sink risk (### 24.102) the moment it is echoed back from the wire; discarding the
+ * wire's copy after the equality gate means this consumer never re-emits it, no matter what a future
+ * TOCTOU-style server/transport regression does between the check and a (hypothetical) second read.
+ * This is ONE consumer's discipline — it does NOT close or soften ### 24.102, which is a property the
+ * SINK (whatever eventually renders `workspaceId`) still owns independently. The executable witness is
+ * `egress-status.test.ts`'s "renders the CALLER's workspaceId, never a re-read of the wire's (24.108
+ * witness)" — a TOCTOU getter that answers truthfully once (to pass the gate) then lies on every
+ * subsequent read, so a regression that re-reads `v["workspaceId"]` here is caught, not merely argued.
  */
 function foldStatus(res: { ok?: unknown; value?: unknown }, workspaceId: string): EgressStatusResult {
   if (res.ok !== true || res.value == null || typeof res.value !== "object") return { ok: false };

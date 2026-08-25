@@ -136,6 +136,46 @@ describe("createRevokeEgressAck (WRITE — the ONLY mutating egress affordance, 
     expect((await revoke("ws_employer")).ok).toBe(false);
   });
 
+  it("renders the CALLER's workspaceId, never a re-read of the wire's (24.108 witness)", async () => {
+    // spec(### 24.102 / ### 24.108) — a store-authored, possibly credential-shaped workspaceId must not
+    // reach a rule-7 rendered sink. `foldStatus` returns the CALLER's local `workspaceId` (the equality
+    // gate at :57 already proved it matches), never a SECOND read of the wire's `v["workspaceId"]`. A
+    // plain equal-valued string can't witness this (JS strings compare by value, so re-reading an
+    // equal-valued property is indistinguishable from not re-reading it) — a TOCTOU getter can: it
+    // answers truthfully ("ws_employer") on the FIRST read (satisfying the equality gate) and lies
+    // ("ws_attacker") on every read after, so a second read is observable in the RETURNED value.
+    const toctouValue = (): { workspaceId: string; employerRawEgressAcknowledged: boolean; zeroEgressOnly: boolean } => {
+      let reads = 0;
+      const v = { employerRawEgressAcknowledged: true, zeroEgressOnly: false } as {
+        workspaceId: string;
+        employerRawEgressAcknowledged: boolean;
+        zeroEgressOnly: boolean;
+      };
+      Object.defineProperty(v, "workspaceId", {
+        enumerable: true,
+        get: () => {
+          reads += 1;
+          return reads === 1 ? "ws_employer" : "ws_attacker";
+        },
+      });
+      return v;
+    };
+
+    const read = createEgressStatus(
+      fakeClient({ egressStatus: () => Promise.resolve({ ok: true, value: toctouValue() }) }),
+    );
+    const r = await read("ws_employer");
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.status.workspaceId).toBe("ws_employer");
+
+    const revoke = createRevokeEgressAck(
+      fakeClient({ revokeEgressAck: () => Promise.resolve({ ok: true, value: toctouValue() }) }),
+    );
+    const r2 = await revoke("ws_employer");
+    expect(r2.ok).toBe(true);
+    if (r2.ok) expect(r2.status.workspaceId).toBe("ws_employer");
+  });
+
   it("the module exposes NO ack-ON caller — the ack direction is an owner-gated rule-5 crossing", () => {
     // spec(§5) safety rule 5 — turning employer raw-cloud egress ON is a provisioning-time owner crossing
     // (`bcde3d61`); the worker exposes no re-ack command. Pin the ABSENCE so a later "complete the toggle"
