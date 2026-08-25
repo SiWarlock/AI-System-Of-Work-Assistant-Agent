@@ -55,6 +55,7 @@ import {
 } from "../../../src/api/procedures/copilotAgentSynthesis";
 import { buildCopilotDeps } from "../../../src/api/procedures/copilotClaudeSynthesis";
 import type { AuditPersistPort, RetrievedContext } from "../../../src/api/procedures/copilot";
+import { createLocalWorkspacePosture, localWorkspacePosture } from "../../../src/api/procedures/copilot";
 // 24.7 — none of this file's cases exercise audit persistence; a shared no-op satisfies the now-required
 // `CopilotDepsOptions.auditPersist` / `AgentSynthesisOpts.auditPersist` fields at every call site below.
 const auditNoop: AuditPersistPort = { persistDenial: async () => {} };
@@ -1247,6 +1248,15 @@ describe("createClaudeAgentCopilotRunner — the C5.3 propose grant (defense-in-
 describe("buildCopilotDeps — an injected agentSynthesis factory swaps in the agent-runtime synthesis", () => {
   const baseCompletion = () =>
     ({ complete: async () => ok({ structuredOutput: { answer: ["stub"], citations: [] } }) }) as never;
+  // Task 9.10 — `CopilotDepsOptions.workspacePosture` is STRUCTURALLY REQUIRED (the retired
+  // `cloudCopilotPosture` type⇒auto-ack fallback was physically deleted, so a caller cannot silently
+  // omit it). None of this describe's cases route through the posture: each calls
+  // `deps.synthesis.synthesize(...)` directly to observe WHICH synthesis was assembled. The fixture is
+  // therefore the fail-closed `localWorkspacePosture` for the one workspace these cases provision —
+  // resolvable (so the deps bundle is coherent, not a resolver that would reject its own workspace) and
+  // egress-ack OFF, i.e. it grants nothing that could make an assertion pass for the wrong reason.
+  const AGENT_WS = "personal-business";
+  const basePosture = () => createLocalWorkspacePosture({ [AGENT_WS]: localWorkspacePosture(AGENT_WS) });
 
   it("routes synthesis through the injected agent synthesis when realCopilot + agentSynthesis are present", async () => {
     let ran = false;
@@ -1257,6 +1267,7 @@ describe("buildCopilotDeps — an injected agentSynthesis factory swaps in the a
       },
     };
     const deps = buildCopilotDeps({ auditPersist: auditNoop,
+      workspacePosture: basePosture(),
       realCopilot: true,
       agentSynthesis: () => createAgentRuntimeCopilotSynthesis(runner),
       workspaces: [{ id: "personal-business", type: "personal_business" }],
@@ -1269,6 +1280,7 @@ describe("buildCopilotDeps — an injected agentSynthesis factory swaps in the a
 
   it("uses the completion path when NO agentSynthesis is injected (the default real path is unchanged)", async () => {
     const deps = buildCopilotDeps({ auditPersist: auditNoop,
+      workspacePosture: basePosture(),
       realCopilot: true,
       workspaces: [{ id: "personal-business", type: "personal_business" }],
       completion: baseCompletion,
@@ -1281,6 +1293,7 @@ describe("buildCopilotDeps — an injected agentSynthesis factory swaps in the a
   it("does NOT invoke the agentSynthesis factory when realCopilot is OFF (stub wins; nothing is constructed)", async () => {
     let factoryCalls = 0;
     const deps = buildCopilotDeps({ auditPersist: auditNoop,
+      workspacePosture: basePosture(),
       realCopilot: false,
       agentSynthesis: () => {
         factoryCalls += 1;
