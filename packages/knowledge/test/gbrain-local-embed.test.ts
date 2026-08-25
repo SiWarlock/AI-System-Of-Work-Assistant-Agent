@@ -59,6 +59,10 @@ const employerRawUnacked: RetrievalWorkspaceContext = {
   employerRawEgressAcknowledged: false,
 };
 
+/** A gate that always proves the backend genuine (24.9: egressGate is now REQUIRED,
+ *  so every call site needs one; this double is neutral for tests not about the gate itself). */
+const allowGate: RetrievalEgressGate = { check: () => ok(undefined) };
+
 const P = (id: string, text: string): Passage => ({ id, text });
 
 // ── 1. RRF fusion determinism (the ranking contract 13.17 / 13.8c depend on) ─────
@@ -119,7 +123,7 @@ describe("retrieveLocalEmbed — Employer-Work raw content egress veto (rule 5)"
     });
     const res = await retrieveLocalEmbed(
       { query: "auth", passages: [P("p1", "auth flow")], workspace: employerRawUnacked },
-      { backend },
+      { backend, egressGate: allowGate }, // floor denies even though the gate would allow
     );
     expect(isErr(res)).toBe(true);
     if (!isErr(res)) return;
@@ -141,7 +145,7 @@ describe("retrieveLocalEmbed — Employer-Work raw content egress veto (rule 5)"
         passages: [P("p1", "beta gamma"), P("p2", "alpha")],
         workspace: employerRawUnacked,
       },
-      { backend },
+      { backend, egressGate: allowGate },
     );
     expect(res.ok).toBe(true);
     if (!res.ok) return;
@@ -173,7 +177,7 @@ describe("retrieveLocalEmbed — end-to-end hybrid fusion ordering", () => {
         passages: [P("p1", "alpha beta"), P("p2", "zzz"), P("p3", "alpha")],
         workspace: personal,
       },
-      { backend },
+      { backend, egressGate: allowGate },
     );
     expect(res.ok).toBe(true);
     if (!res.ok) return;
@@ -184,7 +188,7 @@ describe("retrieveLocalEmbed — end-to-end hybrid fusion ordering", () => {
     const backend = vectorBackend([[1, 0], [1, 0], [0, 1]], "ollama", "local");
     const ranked = await retrieveLocalEmbed(
       { query: "alpha", passages: [P("p1", "zzz"), P("p2", "yyy")], workspace: personal },
-      { backend },
+      { backend, egressGate: allowGate },
     );
     expect(ranked.ok).toBe(true);
     if (!ranked.ok) return;
@@ -192,7 +196,7 @@ describe("retrieveLocalEmbed — end-to-end hybrid fusion ordering", () => {
 
     const capped = await retrieveLocalEmbed(
       { query: "alpha", passages: [P("p1", "zzz"), P("p2", "yyy")], workspace: personal },
-      { backend, limit: 0 },
+      { backend, egressGate: allowGate, limit: 0 },
     );
     expect(capped.ok).toBe(true);
     if (!capped.ok) return;
@@ -206,7 +210,34 @@ describe("retrieveLocalEmbed — injected egress gate is consulted and fail-clos
   const denyGate: RetrievalEgressGate = {
     check: () => err({ code: "egress_denied", reason: "processor_not_allowed" }),
   };
-  const allowGate: RetrievalEgressGate = { check: () => ok(undefined) };
+
+  it("egressGate is a REQUIRED dependency (24.9) — omitting it must not compile", () => {
+    // A self-declared `egressClass` alone is not proof (the finding this task fixes).
+    // The endpoint-check authority can only be exercised through a BOUND gate, so the
+    // seam must make the unbound (unproven) path unrepresentable, not merely "MUST
+    // bind" in a comment. If `egressGate` is ever made optional again, this line stops
+    // producing a type error and `@ts-expect-error` itself becomes a typecheck failure
+    // ("Unused '@ts-expect-error' directive") — the pin fires on the regression.
+    const backend = vectorBackend([[1, 0], [1, 0]], "ollama", "local");
+    // @ts-expect-error — egressGate is required; a deps object without it must be rejected.
+    void retrieveLocalEmbed({ query: "q", passages: [P("p1", "x")], workspace: personal }, { backend });
+  });
+
+  it("self_declared_local_does_not_bypass_the_gate — a backend that CLAIMS local still answers to the mandatory endpoint-check gate", async () => {
+    // The backend self-declares "local" — exactly the value the rule-5 floor alone
+    // would trust — but the bound gate (standing in for the real endpoint-proof
+    // egressVeto) determines it is not genuinely local and denies. The self-declared
+    // class must never be the sole authority once a gate is bound.
+    const backend = vectorBackend([[1, 0], [1, 0]], "ollama", "local");
+    const res = await retrieveLocalEmbed(
+      { query: "q", passages: [P("p1", "x")], workspace: personal },
+      { backend, egressGate: denyGate },
+    );
+    expect(isErr(res)).toBe(true);
+    if (!isErr(res)) return;
+    expect(res.error.code).toBe("egress_denied");
+    expect(backend.embedSpy).not.toHaveBeenCalled();
+  });
 
   it("injected_egress_gate_deny_fails_closed — a gate deny ⇒ err, backend never called", async () => {
     const backend = vectorBackend([[1], [1]], "openai", "cloud");
@@ -261,7 +292,7 @@ describe("retrieveLocalEmbed — TOTAL never-throws (§16 / Lesson 11)", () => {
     });
     const res = await retrieveLocalEmbed(
       { query: "q", passages: [P("p1", "x")], workspace: personal },
-      { backend },
+      { backend, egressGate: allowGate },
     );
     expect(isErr(res)).toBe(true);
     if (!isErr(res)) return;
@@ -278,7 +309,7 @@ describe("retrieveLocalEmbed — TOTAL never-throws (§16 / Lesson 11)", () => {
     });
     const res = await retrieveLocalEmbed(
       { query: "q", passages: [P("p1", "x")], workspace: personal },
-      { backend },
+      { backend, egressGate: allowGate },
     );
     expect(isErr(res)).toBe(true);
     if (!isErr(res)) return;
@@ -294,7 +325,7 @@ describe("retrieveLocalEmbed — TOTAL never-throws (§16 / Lesson 11)", () => {
     });
     const res = await retrieveLocalEmbed(
       { query: "q", passages: [P("p1", "a"), P("p2", "b")], workspace: personal },
-      { backend },
+      { backend, egressGate: allowGate },
     );
     expect(isErr(res)).toBe(true);
     if (!isErr(res)) return;
@@ -305,7 +336,7 @@ describe("retrieveLocalEmbed — TOTAL never-throws (§16 / Lesson 11)", () => {
     const backend = vectorBackend([], "ollama", "local");
     const res = await retrieveLocalEmbed(
       { query: "q", passages: [], workspace: personal },
-      { backend },
+      { backend, egressGate: allowGate },
     );
     expect(res.ok).toBe(true);
     if (!res.ok) return;

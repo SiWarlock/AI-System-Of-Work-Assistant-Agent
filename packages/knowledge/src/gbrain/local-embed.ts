@@ -15,9 +15,11 @@
 // backend is NEVER called — there is NO cloud fallback. This "select a local backend
 // or fail closed" floor is safe-by-construction (keyed on the backend's own declared
 // egressClass, mirroring the egressVeto condition — NOT a re-derivation of the
-// processor allowlist). An OPTIONAL injected `egressGate` carries the reuse of the
-// real §5 `egressVeto` for the full allowlist when a consumer wires it (downstream);
-// a deny / throw / (its absence leaves the floor as the sole authority) fails closed.
+// processor allowlist) but it is NOT proof: `egressClass` is self-declared by the
+// caller. The proof is a REQUIRED injected `egressGate`, which carries the reuse of
+// the real §5 `egressVeto` (the endpoint-check authority) — omitting it is a type
+// error, so a caller cannot retrieve on a self-declared class alone (24.9). A deny or
+// a throw from the gate fails closed the same way the floor does.
 //
 // Rule 1 posture: the embedding index is a REBUILDABLE sidecar OUTSIDE the canonical
 // Markdown tree — never a 2nd canonical-truth store (`resolveLocalEmbedIndexPath` +
@@ -83,8 +85,10 @@ export interface EgressDenied {
 /**
  * The injected egress gate — the reuse hook for the real §5 `egressVeto`. Its
  * production binding (downstream, knowledge → policy) wraps `egressVeto`; here it is
- * OPTIONAL and faked in tests. PURE + synchronous like the veto; a deny is returned,
- * never thrown (the primitive additionally fail-closes a throwing gate).
+ * REQUIRED (24.9) and faked in tests — a self-declared `EmbeddingBackend.egressClass`
+ * is not proof, so `retrieveLocalEmbed` cannot be called without it. PURE + synchronous
+ * like the veto; a deny is returned, never thrown (the primitive additionally
+ * fail-closes a throwing gate).
  */
 export interface RetrievalEgressGate {
   check(
@@ -103,8 +107,13 @@ export interface RetrieveLocalEmbedInput {
 
 export interface RetrieveLocalEmbedDeps {
   readonly backend: EmbeddingBackend;
-  /** Optional reuse of the real §5 egressVeto (bound downstream). Absent ⇒ the floor is the authority. */
-  readonly egressGate?: RetrievalEgressGate;
+  /**
+   * REQUIRED reuse of the real §5 `egressVeto` (24.9). A self-declared
+   * `backend.egressClass` alone is not proof of a genuine non-egress endpoint — the
+   * gate is the only path that can invoke the real endpoint-check authority, so the
+   * unproven (gate-omitted) path is made unrepresentable rather than left optional.
+   */
+  readonly egressGate: RetrievalEgressGate;
   /** Cap on the fused result count (default: all). */
   readonly limit?: number;
 }
@@ -223,11 +232,8 @@ export async function retrieveLocalEmbed(
   //      the backend is never invoked (no cloud egress, no fallback).
   //      TRUST NOTE: this keys on the backend's DECLARED egressClass — the seam has
   //      no endpoint to prove genuineness the way egressVeto does (its loopback-
-  //      endpoint proof). The composition root wires only genuinely-local adapters
-  //      (e.g. ollama-provider's allowlisted-endpoint gate), so the label is honest
-  //      there; a consumer that could route raw Employer-Work through a MISLABELED
-  //      remote backend MUST bind `egressGate` (the real egressVeto, endpoint-proof)
-  //      — MANDATORY at 13.17/13.8c wiring (security-review MEDIUM, carried Step-9). ─
+  //      endpoint proof). This floor alone is NOT proof; it is defense-in-depth
+  //      alongside step 2, which is where the real endpoint-check authority runs. ─
   const employerRawUnacked =
     workspace.type === "employer_work" &&
     workspace.carriesRawContent === true &&
@@ -239,20 +245,20 @@ export async function retrieveLocalEmbed(
     });
   }
 
-  // ── 2. Injected egress gate (reuse of the real §5 veto): a deny OR a throw fails
+  // ── 2. Egress gate (REQUIRED, 24.9): the reuse of the real §5 veto — the only
+  //      path that can invoke the endpoint-check authority (`egressVeto`) to catch a
+  //      backend whose declared `egressClass` is wrong. A deny OR a throw fails
   //      closed. Runs BEFORE any embed so a denied job never reaches the backend. ─
-  if (egressGate !== undefined) {
-    let decision: Result<void, EgressDenied>;
-    try {
-      decision = egressGate.check(
-        { providerId: backend.providerId, egressClass: backend.egressClass },
-        workspace,
-      );
-    } catch {
-      return err({ code: "egress_denied", reason: "egress_gate_faulted" });
-    }
-    if (isErr(decision)) return decision;
+  let decision: Result<void, EgressDenied>;
+  try {
+    decision = egressGate.check(
+      { providerId: backend.providerId, egressClass: backend.egressClass },
+      workspace,
+    );
+  } catch {
+    return err({ code: "egress_denied", reason: "egress_gate_faulted" });
   }
+  if (isErr(decision)) return decision;
 
   // ── 3. Nothing to rank ⇒ no embedding, no egress, empty result. ───────────────
   if (passages.length === 0) return ok([]);
