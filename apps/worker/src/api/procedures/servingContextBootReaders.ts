@@ -84,11 +84,14 @@ export interface ServingCoverageReaderDeps {
   /** Clock for `checkVersionPin`'s ctx (the degrade HealthItem it builds is DISCARDED here) — no ambient clock. */
   readonly now: () => string;
   /**
-   * OPTIONAL serve-time {@link ParityReportStore} (B1). UNBOUND in production today — boot binds the real
-   * `createParityReportStoreAdapter(parityRepo)` in B4 — so the parity leg is `undefined` ⇒ degrade,
-   * byte-equivalent to the pre-B2 default. When bound, the parity leg reads the LATEST persisted report for
-   * the workspace @ its head revision; a store REJECT (`DbError`, incl. B1's corrupt/identity-mismatch
-   * re-gate) degrades ALL legs (fail-closed — never a false green).
+   * OPTIONAL serve-time {@link ParityReportStore} (B1). BOUND today on the ARMED path — `boot.ts` constructs
+   * `createParityReportStoreAdapter(backends.repos.parityReports)` unconditionally whenever
+   * `config.copilotProvenanceStamping === true && provenanceBundle !== undefined` (B4 landed this). Still
+   * UNBOUND in the true shipped default (that flag off) — `createServingCoverageReader` (and the loader it
+   * feeds) is not even CONSTRUCTED on that path, so this field's absence never observably matters there;
+   * `undefined` here degrades the parity leg the same as the pre-B2 default. When bound, the parity leg
+   * reads the LATEST persisted report for the workspace @ its head revision; a store REJECT (`DbError`,
+   * incl. B1's corrupt/identity-mismatch re-gate) degrades ALL legs (fail-closed — never a false green).
    */
   readonly store?: ParityReportStore;
   /**
@@ -108,14 +111,20 @@ const SERVING_COVERAGE_AUDIT_REF = "serving-coverage-pin-check";
  * Build a real {@link ServingCoverageReader}. All THREE serving-coverage signals it produces are now BINDABLE:
  * `pinValid` (via `checkVersionPin` — `isOk` means the running gbrain matches the pinned build), `parity` (B2 — the LATEST
  * persisted `ParityReport` for the workspace @ its head revision, from the OPTIONAL {@link ParityReportStore}),
- * and `oracleBuildOk` (B5 — the OPTIONAL boot-resolved `resolveOracleBuild` rebuild-oracle build-status leg,
- * the last hardwired-false leg removed). DORMANT: the store + `resolveOracleBuild` deps are UNBOUND in
- * production today (boot binds neither in the shipped default), so `parity` is `undefined` + `oracleBuildOk` is
- * `false` ⇒ the loader's coverage derivation degrades every workspace regardless of `pinValid` (sound + inert;
- * propose stays OFF — a green coverage still cannot admit until the owner arms `goLiveArmed`). ASYNC (the store
- * read is async) — the loader `await`s it (the {@link ServingCoverageReader} seam is sync-or-async). Never
- * throws / fail-closed (§6/§16): a store REJECT, a throwing `resolveOracleBuild`, or any other fault ⇒ ALL legs
- * false — a fault never crosses the boundary and never becomes a false green (the trust-gate kill-switch's substrate).
+ * and `oracleBuildOk` (B5 — the OPTIONAL boot-resolved `resolveOracleBuild` rebuild-oracle build-status leg).
+ * CORRECTED (19.9): "boot binds neither in the shipped default" is STALE — `store` IS bound today whenever
+ * boot's `copilotProvenanceStamping` ARMED path is taken (`config.copilotProvenanceStamping === true &&
+ * provenanceBundle !== undefined`; B4 landed this unconditionally within that branch). `resolveOracleBuild`
+ * is the one leg boot still leaves UNBOUND in every configuration (the real binding sources the rebuild-
+ * oracle build-status producer — real gbrain I/O, OWNER-GATED, deferred), so `oracleBuildOk` stays `false`
+ * on the armed path today ⇒ the loader's coverage derivation still degrades every workspace regardless of
+ * `pinValid`/`parity` (sound + inert; propose stays OFF — a green coverage still cannot admit until the
+ * owner both arms `goLiveArmed` AND the rebuild-oracle leg is bound). In the TRUE shipped default
+ * (`copilotProvenanceStamping` off), this reader is not even constructed — `store`/`resolveOracleBuild`
+ * being unset then is moot, not the load-bearing degrade cause. ASYNC (the store read is async) — the
+ * loader `await`s it (the {@link ServingCoverageReader} seam is sync-or-async). Never throws / fail-closed
+ * (§6/§16): a store REJECT, a throwing `resolveOracleBuild`, or any other fault ⇒ ALL legs false — a fault
+ * never crosses the boundary and never becomes a false green (the trust-gate kill-switch's substrate).
  */
 export function createServingCoverageReader(deps: ServingCoverageReaderDeps): ServingCoverageReader {
   return async (workspaceId: string, revisionId: RevisionId): Promise<ServingCoverageSources> => {

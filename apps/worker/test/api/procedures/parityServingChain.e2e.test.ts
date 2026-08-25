@@ -12,16 +12,44 @@
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { describe, it, expect } from "vitest";
-import { ok, validParityReport, type ParityReport, type RevisionId, type GbrainPin } from "@sow/contracts";
+import {
+  ok,
+  err,
+  isOk,
+  validParityReport,
+  type Result,
+  type ParityReport,
+  type RevisionId,
+  type WorkspaceId,
+  type FactIdentity,
+  type MdContentSha,
+  type GbrainPin,
+} from "@sow/contracts";
 import { createSqliteRepositories, type ParityReportRepository } from "@sow/db";
-import { isDegradedCoverage, type ReconcilerOutcome } from "@sow/knowledge";
+import {
+  isDegradedCoverage,
+  computePageProvenance,
+  stampProvenance,
+  serializeStampFieldValue,
+  type ReconcilerOutcome,
+  type CanonicalVaultSnapshot,
+  type SecretsPort,
+  type SecretUnresolved,
+  type StamperDeps,
+} from "@sow/knowledge";
 import {
   createParityReportStoreAdapter,
   createParityReportRecorderAdapter,
   recordReconcileOutcome,
 } from "../../../src/composition/parityReportStore";
-import { createServingCoverageReader } from "../../../src/api/procedures/servingContextBootReaders";
-import { deriveServingCoverage } from "../../../src/api/procedures/servingContextLoader";
+import {
+  createServingCoverageReader,
+  type ServingCoverageReaderDeps,
+} from "../../../src/api/procedures/servingContextBootReaders";
+import {
+  deriveServingCoverage,
+  createServingContextLoader,
+} from "../../../src/api/procedures/servingContextLoader";
 
 const WS = "ws-personal";
 const REV = "rev-1" as unknown as RevisionId;
@@ -40,6 +68,52 @@ const READER_DEPS = {
   resolveRunning: (): { sha: string; indexSchemaVersion: number } => ({ sha: "abc1234def", indexSchemaVersion: 1 }),
   now: (): string => CLOCK,
 };
+
+// ── 19.9 — the one missing pin: an ALL-FOUR-LEGS-TRUE READY case + a shipped-default DEGRADE case ──────
+const WS_BRAND = WS as unknown as WorkspaceId;
+const SIGNING_REF = "kw-key";
+const SIGNING_KEY = new Uint8Array(32).fill(7);
+
+class FakeSecretsPort implements SecretsPort {
+  constructor(private readonly keys: Record<string, Uint8Array>) {}
+  resolveSigningKey(ref: string): Promise<Result<Uint8Array, SecretUnresolved>> {
+    const k = this.keys[ref];
+    return Promise.resolve(k !== undefined ? ok(k) : err({ code: "secret_unresolved", ref }));
+  }
+}
+const stamperDeps: StamperDeps = {
+  secrets: new FakeSecretsPort({ [SIGNING_REF]: SIGNING_KEY }),
+  signingKeyRef: SIGNING_REF,
+};
+
+/** Stamp a note exactly as the KnowledgeWriter does (mirrors servingContextLoader.test.ts's helper) so the
+ *  loader's deriveCanonicalFacts sees a real, admissible page fact — never a hand-built allow-set. */
+async function stampNote(path: string, base: string): Promise<string> {
+  const page = computePageProvenance(path, base);
+  if (page === null) throw new Error("no slug");
+  const minted = await stampProvenance(
+    {
+      workspaceId: WS_BRAND,
+      factIdentity: page.pageIdentity as FactIdentity,
+      originPath: path,
+      mdContentSha: page.pageSha as MdContentSha,
+      kwRevision: REV,
+      sourceEventRef: "src-1",
+      committedAt: CLOCK,
+    },
+    stamperDeps,
+  );
+  if (!minted.ok) throw new Error("mint failed");
+  const value = serializeStampFieldValue(minted.value);
+  const close = base.indexOf("\n---\n", 4);
+  return `${base.slice(0, close)}\nkwStamp: ${value}${base.slice(close)}`;
+}
+
+async function stampedSnapshot(): Promise<CanonicalVaultSnapshot> {
+  const path = "notes/acme.md";
+  const stamped = await stampNote(path, "---\ntitle: Acme\n---\nprose");
+  return { workspaceId: WS_BRAND, revisionId: REV, files: new Map([[path, stamped]]) };
+}
 
 // The 0006 sqlite migration DDL for parity_reports (the one table this chain touches).
 const PARITY_TABLE_DDL = `CREATE TABLE \`parity_reports\` (
@@ -114,5 +188,62 @@ describe("parity serving chain e2e (B4) — write→read round-trip over a REAL 
     // swallowed store fault (a reject would collapse ALL legs incl. pinValid to false — a different cause).
     expect(coverage.pinValid).toBe(true);
     expect(isDegradedCoverage(coverage)).toBe(true);
+  });
+
+  // 19.9 — deriveServingCoverage/createServingContextLoader already read all four legs with strict
+  // `=== true` and no hardcoded green (there is no leg-ASSEMBLY code to write); what was missing was a
+  // test that actually reaches READY through the loader with every leg genuinely true.
+  it("parity_chain_all_four_legs_true_reaches_READY_e2e", async () => {
+    const repo = realParityRepo();
+    await recordReconcileOutcome(ok(cleanOutcome("rev-1")), createParityReportRecorderAdapter(repo, () => CLOCK));
+    // The 4th (deferred) leg: a fake resolveOracleBuild returning true, alongside the already-green
+    // parity legs (via the real store-bound reader, as above) and the valid pin (via READER_DEPS).
+    const readServingCoverage = createServingCoverageReader({
+      ...READER_DEPS,
+      store: createParityReportStoreAdapter(repo),
+      resolveOracleBuild: () => true,
+    });
+    // Sanity: the coverage reader itself now greens all four legs (isolates "the reader is green" from
+    // "the loader reaches READY off it" — two different things that could each independently break).
+    const coverage = deriveServingCoverage(await readServingCoverage(WS, REV));
+    expect(coverage).toEqual({ cleanForServing: true, coverageComplete: true, pinValid: true, oracleBuildOk: true });
+    expect(isDegradedCoverage(coverage)).toBe(false);
+
+    const loader = createServingContextLoader({
+      readCommittedVault: () => stampedSnapshot(),
+      readServingCoverage,
+      secrets: stamperDeps.secrets,
+      signingKeyRef: stamperDeps.signingKeyRef,
+    });
+    const r = await loader(WS);
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    expect(r.value.mode).toBe("ready");
+    if (r.value.mode !== "ready") return;
+    expect(isDegradedCoverage(r.value.context.coverage)).toBe(false);
+    expect(r.value.context.allowSet.facts.some((f) => String(f.fact.factIdentity) === "page:acme")).toBe(true);
+  });
+
+  // 19.9 — the shipped-default configuration (no ParityReportStore bound, no resolveOracleBuild bound —
+  // exactly the deps shape boot.ts constructs when config.copilotProvenanceStamping is unset/off) still
+  // DEGRADES even over a perfectly valid, stamped vault: nothing gates green by omission.
+  it("parity_chain_shipped_default_degrades_e2e (no store, no resolveOracleBuild bound)", async () => {
+    const shippedDefaultDeps: ServingCoverageReaderDeps = {
+      pin: PIN,
+      resolveRunning: () => undefined, // no cached startup probe bound — the shipped default
+      now: () => CLOCK,
+      // store OMITTED, resolveOracleBuild OMITTED — the real byte-equivalent shipped-default shape.
+    };
+    const readServingCoverage = createServingCoverageReader(shippedDefaultDeps);
+    const loader = createServingContextLoader({
+      readCommittedVault: () => stampedSnapshot(), // the vault itself is fine — coverage alone must degrade it
+      readServingCoverage,
+      secrets: stamperDeps.secrets,
+      signingKeyRef: stamperDeps.signingKeyRef,
+    });
+    const r = await loader(WS);
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    expect(r.value.mode).toBe("degraded");
   });
 });
