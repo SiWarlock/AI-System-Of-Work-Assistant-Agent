@@ -34,7 +34,7 @@ import type {
 import { dispatchRouted, createUnroutedWriteAdapter } from "@sow/integrations";
 import type { ExternalWriteDeps, ExternalWriteResult } from "@sow/integrations";
 import type { ResolvedWorkspacePolicy } from "@sow/policy";
-import type { AgentExtraction, MeetingCloseoutContext, MeetingJobInputs } from "@sow/workflows";
+import type { AgentExtraction, MeetingCloseoutContext, MeetingJobInputs, ValidatedExtraction, SourceNoteIdentity } from "@sow/workflows";
 import type { CommittedRevision, KnowledgeRevisionStore } from "@sow/knowledge";
 import { computeRevisionId } from "@sow/knowledge";
 
@@ -235,6 +235,32 @@ describe("buildProofSpineActivities — the plain-async-function shape Temporal 
   });
 });
 
+// task 24.105 — the binding-site precondition guard's non-vacuity test. `createCommitActivity`'s
+// returned CommitKnowledgePort ("commit"/"sourceCommit" LOCAL variables in buildActivities.ts) must
+// NEVER itself be a member of the registered Temporal activity object — only through a WRAPPED plain
+// async function (see the guard comments at both buildActivities.ts construction sites + the
+// semanticApprovalDispatch.ts sibling). A bare prohibition invites its own deletion; this pins it.
+describe("buildProofSpineActivities — task 24.105: the raw commit PORT is never a registered activity member", () => {
+  it("no \"commit\" key exists at all, and the exposed commit-bearing activities carry no nested .commit method", async () => {
+    const b = await freshBackends(LOCAL_ENDPOINT);
+    const acts = buildProofSpineActivities(b, paramsFor(LOCAL_ENDPOINT));
+    const record = acts as unknown as Record<string, unknown>;
+    // The LOCAL const is named `commit`, but the REGISTERED activity name is `meetingCommit` — a
+    // literal "commit" key would mean the raw port (or a mis-wired duplicate) leaked into the
+    // registered surface.
+    expect("commit" in record).toBe(false);
+    // Both commit-bearing activities exist and are plain functions (the shape Temporal registers)...
+    expect(typeof record["meetingCommit"]).toBe("function");
+    expect(typeof record["sourceCommit"]).toBe("function");
+    // ...never the raw CommitKnowledgePort OBJECT (which carries a nested `.commit` method) — a
+    // regression that spread `{...commit}`/`{...sourceCommit}` into the returned literal instead of
+    // wrapping it would put a `.commit` property on the exposed value; this is what proves it was
+    // WRAPPED, not aliased.
+    expect((record["meetingCommit"] as { readonly commit?: unknown }).commit).toBeUndefined();
+    expect((record["sourceCommit"] as { readonly commit?: unknown }).commit).toBeUndefined();
+  });
+});
+
 describe("meetingRunAgentJob — localConfig is threaded to the broker AND consulted", () => {
   it("ACCEPTS a meeting.close job when the local route endpoint matches localConfig", async () => {
     const b = await freshBackends(LOCAL_ENDPOINT);
@@ -297,6 +323,61 @@ describe("meetingCommit — the KnowledgeWriter keeps its REAL secret-scan defau
     if (res.ok) return;
     // The real scanForSecrets default fired — not a schema/other rejection.
     expect(res.error.code).toBe("secret_found");
+  });
+});
+
+// ── task 24.75 — differential exempt-id pin for buildActivities.ts's SECOND workspacePathCheck supply
+// site (the sibling of semanticApprovalDispatch.test.ts's own "24.26 step 2" differential above). That
+// existing pin defends `semanticApprovalDispatch.ts`'s literal via a CAPTURED check + a recording fake;
+// THIS site (`knowledgeWriterDeps` inside `buildProofSpineActivities`, shared by BOTH `meetingCommit`
+// and `sourceCommit`) has NO injectable `applyPlan` seam (`buildActivities.ts` imports the real
+// `@sow/knowledge` `applyPlan` at module scope) — so the differential runs end-to-end over the REAL
+// writer instead of a captured check function: LEGACY_UNPREFIXED_WORKSPACE_ID ("personal-business")
+// committing an UNPREFIXED path is admitted (the exempt workspace); a plausible WRONG workspace id
+// committing the SAME unprefixed-path SHAPE is rejected `workspace_path_violation`. A factory wired
+// with the wrong exempt id would flip BOTH outcomes — the differential is what catches that, an
+// isolated "it rejects" test would not (worker L28's precedent, applied to the higher-traffic site).
+describe("meetingCommit — the exempt workspace id from buildActivities.ts's SECOND KnowledgeWriterDeps supply site (task 24.75)", () => {
+  it("the LEGACY exempt workspace commits an UNPREFIXED path — ok", async () => {
+    const b = await freshBackends(LOCAL_ENDPOINT);
+    const acts = buildProofSpineActivities(b, paramsFor(LOCAL_ENDPOINT));
+    const plan: KnowledgeMutationPlan = {
+      planId: planId("plan:exempt-ok"),
+      workspaceId: workspaceId("personal-business"), // LEGACY_UNPREFIXED_WORKSPACE_ID's value
+      sourceRefs: [{ sourceId: sourceId("src-1") }],
+      creates: [{ path: "notes/exempt-ok.md", title: "note", body: "hello world", frontmatter: {} }],
+      patches: [],
+      linkMutations: [],
+      frontmatterUpdates: [],
+      externalActionProposals: [],
+      confidence: 1,
+      requiresApproval: false,
+      provenanceOrigin: "meeting_close",
+    };
+    const res = await acts.meetingCommit(plan);
+    expect(res.ok).toBe(true);
+  });
+
+  it("a plausible WRONG workspace id committing the SAME unprefixed-path SHAPE is REJECTED workspace_path_violation", async () => {
+    const b = await freshBackends(LOCAL_ENDPOINT);
+    const acts = buildProofSpineActivities(b, paramsFor(LOCAL_ENDPOINT));
+    const plan: KnowledgeMutationPlan = {
+      planId: planId("plan:exempt-wrong"),
+      workspaceId: workspaceId("employer-work"), // NOT the exempt id — a live, real workspace id
+      sourceRefs: [{ sourceId: sourceId("src-1") }],
+      creates: [{ path: "notes/exempt-wrong.md", title: "note", body: "hello world", frontmatter: {} }],
+      patches: [],
+      linkMutations: [],
+      frontmatterUpdates: [],
+      externalActionProposals: [],
+      confidence: 1,
+      requiresApproval: false,
+      provenanceOrigin: "meeting_close",
+    };
+    const res = await acts.meetingCommit(plan);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error.code).toBe("workspace_path_violation");
   });
 });
 
@@ -534,5 +615,72 @@ describe("write-adapter routing binding (21.1/2 / §19.8 — composition root ro
     );
     expect(reserve.ok).toBe(true);
     if (reserve.ok) expect(reserve.value.kind).not.toBe("committed"); // no real transport bound (dormant)
+  });
+});
+
+// ── task R18-a — frontmatter key casing: TASK_FRONTMATTER_FIELD must match the model's REAL
+// multi-task field shape. Documented LIVE finding (IMPLEMENTATION_PLAN.md, §ARM-18 crossing Step A,
+// 2026-07-24): the real model emits `task1Owner`/`task1DueDate` (camelCase) — buildActivities.ts's
+// regex (`^task(\d+)_(owner|dueDate)$`, underscore) never matched it, so every multi-task owner/dueDate
+// silently degraded to the TBD sentinel even though real evidence-backed values were present. Both
+// casings are NEVER accepted at once (doubling the MAX_FRONTMATTER_TASKS=50 cap slots) — ONE casing,
+// matching reality. The NOTE's own OUTPUT frontmatter key convention (`task1_owner`, underscore) is a
+// separate, worker-owned choice and stays unchanged — only the INPUT match (which field names in the
+// model's `fields` object count as a task field) moves to camelCase.
+describe("sourceBuildOutputs — task R18-a: TASK_FRONTMATTER_FIELD matches the model's real camelCase key shape", () => {
+  function sourceParamsFor(endpoint: string): ProofSpineParams {
+    return {
+      ...paramsFor(endpoint),
+      sourceIngestion: {
+        boundWorkspaceId: WS,
+        extraction: meetingExtraction, // unread by sourceBuildOutputs.build itself
+        sourceRef,
+        planIdentity: { source: "src-casing" },
+      },
+    };
+  }
+
+  it("a validated extraction carrying the model's REAL camelCase keys (task1Owner/task1DueDate) projects owner/dueDate onto frontmatter — NOT a TBD degrade", async () => {
+    const b = await freshBackends(LOCAL_ENDPOINT);
+    const acts = buildProofSpineActivities(b, sourceParamsFor(LOCAL_ENDPOINT));
+    const validated: ValidatedExtraction = {
+      validated: true,
+      fields: {
+        task1Owner: { value: "Alice", evidenceRef: "src:1#0" },
+        task1DueDate: { value: "2026-08-01", evidenceRef: "src:1#1" },
+      },
+    };
+    const source: SourceNoteIdentity = { sourceId: sourceId("src-casing-1"), contentHash: "hash:casing-1" };
+    const res = await acts.sourceBuildOutputs(validated, WS, source);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const frontmatter = res.value.plan.creates[0]?.frontmatter as Record<string, unknown> | undefined;
+    expect(frontmatter).toBeDefined();
+    // The OUTPUT key convention is UNCHANGED (underscore) — only the INPUT match moved.
+    expect(frontmatter?.["task1_owner"]).toBe("Alice");
+    expect(frontmatter?.["task1_dueDate"]).toBe("2026-08-01");
+    // No spurious truncation sentinel for a single task well under the cap.
+    expect(frontmatter?.["tasksTruncated"]).toBeUndefined();
+  });
+
+  it("a SECOND task's camelCase keys also project (multi-task, not just index 1)", async () => {
+    const b = await freshBackends(LOCAL_ENDPOINT);
+    const acts = buildProofSpineActivities(b, sourceParamsFor(LOCAL_ENDPOINT));
+    const validated: ValidatedExtraction = {
+      validated: true,
+      fields: {
+        task1Owner: { value: "Alice", evidenceRef: "src:1#0" },
+        task1DueDate: { value: "2026-08-01", evidenceRef: "src:1#1" },
+        task2Owner: { value: "Bob", evidenceRef: "src:1#2" },
+        // task2DueDate deliberately ABSENT — its sibling must degrade to TBD, not crash / drop the task.
+      },
+    };
+    const source: SourceNoteIdentity = { sourceId: sourceId("src-casing-2"), contentHash: "hash:casing-2" };
+    const res = await acts.sourceBuildOutputs(validated, WS, source);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const frontmatter = res.value.plan.creates[0]?.frontmatter as Record<string, unknown> | undefined;
+    expect(frontmatter?.["task2_owner"]).toBe("Bob");
+    expect(frontmatter?.["task2_dueDate"]).toBe("TBD");
   });
 });
