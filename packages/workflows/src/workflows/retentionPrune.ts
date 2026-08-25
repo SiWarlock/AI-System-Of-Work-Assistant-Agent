@@ -34,8 +34,9 @@
 // §16 error convention: the driver NEVER throws across a boundary. It folds every typed
 // port rejection onto a distinct retentionPruneMachine failure STATE and routes it
 // through the health sink (nothing fails silently). No new FailureClass member — reuses
-// `missed_or_late_schedule` (a missed/late prune) + `write_through_failed` (a KW-removal
-// or store-delete fault).
+// `missed_or_late_schedule` (a missed/late prune), `db_unavailable` (a store-read /
+// candidate-selection fault), and `write_through_failed` (a KW-removal or store-delete
+// fault).
 import { isOk } from "@sow/contracts";
 import type {
   Result,
@@ -194,10 +195,8 @@ export interface PruneSelection {
 
 /**
  * Closed, enumerable selection failure set (§16 — never thrown). `enumeration_failed` is
- * a candidate-enumeration/store-READ fault. NOTE(arch_gap §DEC-CAT4 / 13.15): a store-read
- * fault's correct §16 home is `db_unavailable`; until that frozen-enum member lands
- * (via 13.15 this session) the driver maps this to the least-wrong EXISTING member
- * (`write_through_failed`) — see {@link failureClassFor}.
+ * a candidate-enumeration/store-READ fault — its §16 home is `db_unavailable`, since no
+ * write was ever attempted — see {@link failureClassFor}.
  */
 export type PrunePolicyErrorCode = "enumeration_failed";
 export interface PrunePolicyError {
@@ -403,11 +402,9 @@ function failureClassFor(state: RetentionPruneState): FailureClass {
       // A missed/late (or not-yet-elapsed) prune schedule — the LIFE-2 miss class.
       return "missed_or_late_schedule";
     case "selection_failed":
-      // arch_gap (§DEC-CAT4 / task 13.15): a store-read / candidate-enumeration fault's
-      // correct §16 home is `db_unavailable`, which lands via 13.15 this session. Until
-      // then, map to the least-wrong EXISTING member (no new FailureClass in 7.19 —
-      // decoupled from ARC-2). RECLASSIFY to `db_unavailable` once 13.15 merges.
-      return "write_through_failed";
+      // A store-read / candidate-enumeration fault — no write was ever attempted, so this
+      // is a §16 `db_unavailable`, not a write-through failure.
+      return "db_unavailable";
     case "tombstone_failed":
       // A KnowledgeWriter Markdown-removal fault.
       return "write_through_failed";
@@ -492,8 +489,7 @@ export async function runRetentionPrune(
   });
   if (!isOk(selected)) {
     state = advance(state, ["selection_failed"]);
-    // arch_gap (§DEC-CAT4 / 13.15): store-read/selection fault; least-wrong existing member.
-    return surface(state, `prune candidate selection failed (store-read/selection fault; reclassify to db_unavailable once 13.15 lands): ${selected.error.code}`);
+    return surface(state, `prune candidate selection failed (store-read/selection fault): ${selected.error.code}`);
   }
   state = advance(state, ["candidates_selected"]);
   const selection = selected.value;

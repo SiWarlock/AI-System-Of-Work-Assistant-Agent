@@ -458,7 +458,13 @@ describe("§16.4 runRetentionPrune — RET-3 one-writer + idempotent + LIFE-2 + 
   it("prune_failure_mints_existing_failureclass — every failure/park reuses an EXISTING FailureClass (no new member)", async () => {
     const dueRecord = () => new InMemoryPrunableStore([rawRecord({ recordId: "raw-1", days: 40, markdownRemoval: tombstonePlanFor("raw-transcript") })]);
 
-    const cases: Array<{ name: string; deps: () => RetentionPruneDeps; expectState: string; expectClass: string }> = [
+    const cases: Array<{
+      name: string;
+      deps: () => RetentionPruneDeps;
+      expectState: string;
+      expectClass: string;
+      expectMessageContains?: readonly string[];
+    }> = [
       {
         name: "kw tombstone fault",
         deps: () => {
@@ -478,10 +484,14 @@ describe("§16.4 runRetentionPrune — RET-3 one-writer + idempotent + LIFE-2 + 
         expectClass: "write_through_failed",
       },
       {
-        name: "selection fault",
+        name: "a store-read/candidate-selection fault surfaces failureClass db_unavailable (7.19 residual, unblocked by 13.15)",
         deps: () => makeDeps({ store: new FailingPayloadStore(), policy: new FailingPolicyPort() }),
         expectState: "selection_failed",
-        expectClass: "write_through_failed",
+        expectClass: "db_unavailable",
+        // FailingPolicyPort surfaces { code: "enumeration_failed", message: "candidate
+        // enumeration faulted" } — the workflow message must carry the selection-failure
+        // framing text plus the underlying error CODE (not the port's own message).
+        expectMessageContains: ["prune candidate selection failed", "enumeration_failed"],
       },
       {
         name: "missed / nothing-due",
@@ -504,6 +514,12 @@ describe("§16.4 runRetentionPrune — RET-3 one-writer + idempotent + LIFE-2 + 
       expect(out.state, c.name).toBe(c.expectState);
       const sink = deps.health as unknown as RecordingHealthSink;
       expect(sink.surfaced.at(-1)?.failureClass, c.name).toBe(c.expectClass);
+      if (c.expectMessageContains !== undefined) {
+        const surfacedMessage = sink.surfaced.at(-1)?.message ?? "";
+        for (const fragment of c.expectMessageContains) {
+          expect(surfacedMessage, `${c.name} — message should contain "${fragment}"`).toContain(fragment);
+        }
+      }
     }
   });
 
