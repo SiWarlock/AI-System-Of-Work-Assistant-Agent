@@ -268,6 +268,18 @@ describe("persistDenialAudit — the fail-closed redaction-safety gate before an
     expect(auditPersist.calls).toHaveLength(0);
     await expect(persistDenialAudit(safeSignal, "ws-001", undefined)).resolves.toBeUndefined();
   });
+
+  // task 24.62 — `persistDenialAudit` gated ONE of its TWO data channels: `isRedactionSafe`
+  // scanned `audit`, but `workspaceId` rode beside it as a bare second parameter and was NEVER
+  // scanned, so a credential-shaped id reached `auditPersist.persistDenial` even when the signal
+  // itself was perfectly safe. This is that reachable combination: `safeSignal` alone (unchanged
+  // fixture, still passes `isRedactionSafe`) paired with a credential-shaped `workspaceId`.
+  it("workspaceId_channel_is_gated_the_same_way_as_the_signal: a credential-shaped workspaceId is refused even when the signal itself is redaction-safe (task 24.62)", async () => {
+    const auditPersist = new FakeAuditPersistPort();
+    await persistDenialAudit(safeSignal, "https://u:hunter2@evil.example", auditPersist);
+    expect(auditPersist.calls).toHaveLength(0);
+    expect(auditPersist.refusals).toHaveLength(1);
+  });
 });
 
 // ── `### 24.84` fixture leg — a NAMED bypass for a credential-shaped workspace id ─────────────
@@ -572,7 +584,18 @@ describe("serveProjection — re-gate a stored row before it crosses a workspace
   // state deterministically — at HEAD, where the real schema has no pattern, and after contract lands,
   // where it does. ⚠ Without that, this test would assert one thing today and another tomorrow, which
   // is the red window the whole landing-order arc exists to avoid.
-  it("pre_validator_row_is_refused_recorded_and_credential_free", async () => {
+  //
+  // ⛔⛔ REWRITTEN BY `### 24.62`, NOT STRUCK — the fixture is UNCHANGED (still the pre-validator row:
+  // `legacyId` = `CREDENTIAL_SHAPED_WS_ID`, a credential-shaped id that predates the write-boundary
+  // validator) but this fixture ALSO happens to be `sourceWorkspace.id`, i.e. exactly the second data
+  // channel `24.62` found ungated: `serveProjection(candidate, workspace, …)` passes `workspace.id`
+  // (= `legacyId`) straight through to `persistDenialAudit`'s `workspaceId` parameter. Before the fix,
+  // assertions 2+3 below asserted that credential-shaped id reached `auditPersist.persistDenial` and
+  // was durably written — the record it landed happened to be credential-FREE at the signal-field
+  // level (that half of the finding, not this one), but the raw id itself still went out the door as
+  // the second, unscanned argument. `24.62` closes that: `workspaceId` is now scanned the same way the
+  // signal is, so this exact combination is now REFUSED, not persisted-with-a-clean-signal.
+  it("pre_validator_row_is_refused_and_never_reaches_a_durable_record_at_all (24.62: the workspaceId channel is now gated too)", async () => {
     const auditPersist = new FakeAuditPersistPort();
     const tightenedAjv = buildSchemaRegistry([
       {
@@ -610,19 +633,23 @@ describe("serveProjection — re-gate a stored row before it crosses a workspace
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.code).toBe("schema_rejected");
 
-    // 2 — NO LONGER SILENT. This is the owner-accepted cost `### 24.98` (`124e3f45`) closed: before
-    //     it, `auditOf` returned undefined for `schema_rejected` and `persistDenialAudit` returned at
-    //     its guard, so the refusal left no trace at all.
-    expect(auditPersist.calls).toHaveLength(1);
-    expect(auditPersist.refusals).toHaveLength(0);
+    // 2 — ⛔ REVERSED BY `### 24.62`, AND THAT REVERSAL IS THE FIX, NOT A REGRESSION. `### 24.98`
+    //     (`124e3f45`) made the SIGNAL side observable (a `schema_rejected` refusal is no longer a
+    //     silent no-op). `24.62` adds the second gate: `workspaceId` here IS `legacyId` — the same
+    //     credential-shaped value the fixture models — so it now fails `auditFieldContainsSecret` and
+    //     the WHOLE call is refused before anything is persisted, exactly like an unsafe signal
+    //     always was. The refusal notice fires (task 24.53's observability channel) instead of a
+    //     durable write landing.
+    expect(auditPersist.calls).toHaveLength(0);
+    expect(auditPersist.refusals).toHaveLength(1);
 
-    // 3 — ⛔ AND THE RECORD IS CREDENTIAL-FREE. The coverage did not evaporate when the row stopped
-    //     reaching the redaction gate; it MOVED — from "the gate refuses an unsafe signal" to "no
-    //     unsafe signal is ever constructed." `refs` carries the structural path only.
-    const persisted = auditPersist.calls[0]!.signal;
-    expect(isRedactionSafe(persisted)).toBe(true);
-    for (const ref of persisted.refs) expect(ref).not.toContain("hunter2");
-    expect(persisted.refs).toEqual(["ref:gcl-issue-path:/workspaceId"]);
+    // 3 — ⛔ "CREDENTIAL-FREE" IS NOW TRIVIALLY AND MORE STRONGLY TRUE: there is no persisted record
+    //     for a credential to hide in at all. Before `24.62` this test asserted the persisted
+    //     record's SIGNAL fields were clean while the raw id still rode along unscanned as the
+    //     second argument — a true but incomplete property (`contracts L82`'s shape: a narrower true
+    //     claim standing in for a broader one nobody re-checked). `onRefused` is zero-arg BY DESIGN
+    //     (task 24.53's `GclAuditPersistPort.onRefused` contract), so there is no captured value left
+    //     to inspect here — the absence of a persisted call IS the assertion.
   });
 
   // ⛔⛔ THE PIN THAT MAKES THE DANGEROUS FIX RED. When `### 24.84`'s tightened `WorkspaceIdSchema`

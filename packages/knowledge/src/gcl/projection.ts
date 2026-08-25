@@ -21,6 +21,13 @@ import type { SchemaRegistry } from "@sow/contracts/schema/registry";
 import type { ProjectionTypeVisibilityTaxonomy, AuditSignal } from "@sow/policy";
 import { isRedactionSafe } from "@sow/policy";
 import { admitProjection, auditOf, type GclGateError, type GclAdmitResult } from "./visibility-gate";
+// task 24.62 — `workspaceId` is `persistDenialAudit`'s SECOND data channel and `isRedactionSafe`
+// only ever scanned the first (`audit`). `auditFieldContainsSecret` is the same package's own
+// AUDIT-granularity predicate (`knowledge-writer/secret-scan.ts`) — "would this string be safe as
+// an audit field?" — already reused there for exactly this shape of question (a bare short string,
+// not a whole `AuditSignal`). Reusing it here keeps the credential-shape nets at their single home
+// instead of re-deriving a second copy in this file.
+import { auditFieldContainsSecret } from "../knowledge-writer/secret-scan";
 
 /** Enumerable failure reasons for a gated persist (§16 closed set). */
 export type GclPersistError =
@@ -99,7 +106,18 @@ export async function persistDenialAudit(
   //     reach this function at all — the CALL GRAPH stops them, not this gate.
   // ⇒ The honest statement of the obligation: this is the only thing that would refuse a signal
   //   reaching here — today from the GCL gate, and from any producer ever routed here later.
-  if (!isRedactionSafe(audit)) {
+  // task 24.62 — TWO data channels reach `auditPersist.persistDenial`, and BOTH must clear a
+  // redaction check before anything durable or logged happens (mirroring 24.45's own remedy:
+  // validate-or-omit, never pass-through unscanned). `isRedactionSafe(audit)` covers the first;
+  // `auditFieldContainsSecret(workspaceId)` covers the second. ⛔ `workspaceId` is ONLY ever the
+  // gate's own `sourceWorkspace.id` (never candidate-derived — see the `serve_projection_denial_
+  // persists_under_sourceWorkspace_id_never_the_stored_rows_own_value` pin), but a workspace RECORD
+  // can still carry a credential-shaped id (`WorkspaceIdSchema` is a well-formedness rule, not a
+  // credential detector — `zod-brands.ts` says so of itself), so trusted PROVENANCE is still not
+  // validated SHAPE (`24.55`'s mistake, one layer down). Combined with the signal check below (a
+  // single refusal path, one `onRefused` call) rather than two separate gates, so a caller that
+  // fails EITHER channel sees the same fail-closed behavior.
+  if (!isRedactionSafe(audit) || auditFieldContainsSecret(workspaceId)) {
     // task 24.53 — a refused signal WAS indistinguishable from one never produced. The notice fires
     // with no arguments; see `GclAuditPersistPort.onRefused` for why it must stay that way.
     // ⚠ PARITY, NOT A CLAIM THAT ANYONE IS WATCHING (contracts L82): this makes the refusal EMITTABLE, matching
