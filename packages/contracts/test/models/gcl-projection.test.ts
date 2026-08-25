@@ -306,4 +306,20 @@ describe("GclProjection contract — spec(§3/§5/§6/§11)", () => {
     const bad = GclProjectionSchema.safeParse(proj({ tags: new Set(["x".repeat(1025)]) }));
     expect(bad.success).toBe(false);
   });
+
+  // ── task 24.46: RAW_CONTENT_SHAPED_KEYS is a demoted FAST PATH, never the
+  // gate. "notebody" is deliberately NOT added as a member — see the
+  // constant's own docblock: completing an English-word enumeration is the
+  // unwinnable-denylist pattern this project has already retired elsewhere
+  // (credential-shape detection, blank-string detection). These two tests
+  // prove what actually governs a key absent from the list: its VALUE.
+  it("a key absent from RAW_CONTENT_SHAPED_KEYS ('notebody') with a short single-line value is ACCEPTED — the named list is a fast path, not the gate (### 24.46)", () => {
+    expect(GclProjectionSchema.safeParse(proj({ notebody: "Standup" })).success).toBe(true);
+  });
+
+  it("a key absent from RAW_CONTENT_SHAPED_KEYS ('notebody') with a multi-line value is STILL rejected — the value-shape check is the primary gate (### 24.46)", () => {
+    expect(
+      GclProjectionSchema.safeParse(proj({ notebody: "line one\nline two — raw transcript" })).success,
+    ).toBe(false);
+  });
 });

@@ -51,6 +51,31 @@ export const GCL_PROJECTION_SCHEMA_ID = "sow:gcl-projection" as const;
 // can enforce this, not a missing defense-in-depth layer.
 const MAX_SUMMARY_VALUE_LEN = 1024;
 
+// ⛔ NAMED FAST PATH — NOT THE GATE (task ### 24.46, demoted explicitly here,
+// where a reader who wonders "is this list complete?" actually lands). This
+// set is authoritative by DESIGNATION only: a hand-picked sample of common
+// English words for "this field holds free-text content." No such
+// enumeration can be COMPLETE — "notebody", "log", "description", "comment",
+// "summary_full", … are all equally plausible omissions, and completing it
+// is the same unwinnable-denylist shape this project has already retired
+// for credential-shape detection (`zod-brands.ts` `WorkspaceIdSchema`
+// docblock) and blank-string detection (`worker L73`). DO NOT "fix" a missed
+// key by adding it here; that treats an open English vocabulary as a closed
+// set, which it structurally is not.
+//
+// The PRIMARY, KEY-NAME-INDEPENDENT gate is the VALUE-SHAPE check inside
+// `isRawContentShaped` below (multi-line OR over-`MAX_SUMMARY_VALUE_LEN`,
+// scanned recursively over EVERY value regardless of key name — §6
+// Visibility Gate, safety rule 4). That is what actually forecloses a
+// raw-content leak. This named list is only a FAST PATH: for a value that
+// would be caught anyway once it is genuinely long-form, matching the key
+// name catches it one string-comparison sooner than the value-shape scan
+// would. A key ABSENT from this list (e.g. "notebody") is rejected if and
+// only if its VALUE is raw-content-shaped — exactly the rule every OTHER key
+// is held to, list member or not. See `gcl-projection.test.ts`'s two
+// `notebody` tests (### 24.46) for the demonstration in both directions: a
+// short single-line value under a non-member key is ACCEPTED (correctly —
+// it is not raw-content-shaped), a multi-line one is still REJECTED.
 const RAW_CONTENT_SHAPED_KEYS: ReadonlySet<string> = new Set([
   "rawcontent", "raw", "body", "content", "text", "transcript",
   "markdown", "html", "note", "notes", "message", "email", "prompt", "payload",
