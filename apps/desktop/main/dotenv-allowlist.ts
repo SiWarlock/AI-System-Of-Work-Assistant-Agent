@@ -24,6 +24,7 @@ export const RECOGNIZED_SOW_ENV_KEYS: readonly string[] = [
   "SOW_SUBSCRIPTION_ARM",
   "SOW_SUBSCRIPTION_MODEL",
   "SOW_EGRESS_ALLOWED_PROCESSORS",
+  "SOW_SUBSCRIPTION_REACHABILITY_LIVE",
 ];
 
 // The subscription-shadowing / egress-redirect env set, INLINED verbatim from the canonical source
