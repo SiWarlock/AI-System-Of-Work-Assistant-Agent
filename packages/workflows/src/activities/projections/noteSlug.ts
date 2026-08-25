@@ -123,6 +123,25 @@ export function meetingNotePath(workspaceId: WorkspaceId, rawTitle: string): str
 }
 
 /**
+ * WS-8 canonical research-note path: `Research/Web/<workspaceId>/<safeLeaf>.md` (13.14 — the
+ * /research governed flow's single note-create target). Mirrors `meetingNotePath`/`projectNotePath`
+ * exactly: the workspace-folder segment is the SERVER-BOUND workspaceId (never a model value) and
+ * the leaf is the research topic/query run through `safeNoteSlug` (no separators / no `..` — cannot
+ * inject path structure or escape the workspace folder after the vault's `join(root, note.path)`).
+ * Returns null when the topic sanitizes to empty (no safe anchor) OR the workspace SEGMENT is unsafe
+ * (`/`,`\`,`..`) → callers MUST fail closed. This is the SINGLE research-note path authority shared
+ * by the plan builder AND (a future create-vs-patch probe, if one is added) so they can never check a
+ * different note than they write.
+ */
+export function researchNotePath(workspaceId: WorkspaceId, topic: string): string | null {
+  const ws = String(workspaceId);
+  if (ws.length === 0 || ws.includes("/") || ws.includes("\\") || ws.includes("..")) return null;
+  const leaf = safeNoteSlug(topic);
+  if (leaf.length === 0) return null;
+  return `Research/Web/${ws}/${leaf}.md`;
+}
+
+/**
  * The KN-7 assistant-region id wrapping the meeting note's committed body. A first-close NoteCreate writes this
  * region; a re-close region-PATCHes it in place (leaving frontmatter + any human content OUTSIDE the markers
  * byte-stable). The SINGLE source of the id so the create + the patch always target the SAME region.
