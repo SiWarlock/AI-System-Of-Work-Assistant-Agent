@@ -139,7 +139,11 @@ import {
   DEFAULT_GBRAIN_HTTP_URL,
 } from "./api/procedures/copilotGbrainHttp";
 import type { GbrainTokenProvider } from "./api/procedures/copilotGbrainHttp";
-import { readdirSync } from "node:fs";
+import { readdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+// task 11.1/24.1 (REQ-D-005, safety rule 1) — the REAL OS-atomic single-owner lock primitive.
+import { acquireSingleOwnerLock, type LockAcquireResult } from "./install/lock/singleOwnerLock";
 import { createFsVaultReadFileExec, createFsRealpath } from "./api/procedures/copilotVaultRead";
 import {
   createAgentRuntimeCopilotSynthesis,
@@ -262,7 +266,7 @@ import {
 } from "./watch/vaultWatcher";
 // §13 task 11.3-b — the GBrain version-pin BOOT verify step (closes the 11.3-a reachability waiver).
 import { readFile } from "node:fs/promises";
-import { createGbrainVersionProbe, computeRevisionId, type GbrainVersionProbe, type KnowledgeRevisionStore, type CommittedRevision, type SecretsPort, type SecretRef, type SecretUnresolved, type StamperDeps, type RunningGbrainVersion, type VaultFs, type GbrainReadAdapter, type ReconcilerDbProjection, type IndexRebuildClient, type EntityGbrainReadPort, type SynthesisReasonPort } from "@sow/knowledge";
+import { createGbrainVersionProbe, computeRevisionId, auditFieldContainsSecret, type GbrainVersionProbe, type KnowledgeRevisionStore, type CommittedRevision, type SecretsPort, type SecretRef, type SecretUnresolved, type StamperDeps, type RunningGbrainVersion, type VaultFs, type GbrainReadAdapter, type ReconcilerDbProjection, type IndexRebuildClient, type EntityGbrainReadPort, type SynthesisReasonPort } from "@sow/knowledge";
 import { gbrainStartupVerify } from "./gbrainStartupVerify";
 
 // ── config ────────────────────────────────────────────────────────────────────
@@ -785,7 +789,16 @@ export function createAuditPersistPort(deps: {
 }): AuditPersistPort {
   return {
     persistDenial: async (signal, workspaceId): Promise<void> => {
-      if (!isRedactionSafe(signal)) {
+      // ⛔⛔ CLOSED (DOD-worker-boot task 1, 2026-08-25) — THE SECOND CHANNEL IS NOW GATED. `workspaceId`
+      // rides `auditFieldContainsSecret` (`@sow/knowledge`, `knowledge-writer/secret-scan.ts`) — the SAME
+      // predicate the knowledge-side sibling `persistDenialAudit` uses for its own bare-string
+      // `workspaceId` channel (`packages/knowledge/src/gcl/projection.ts`, task 24.62, `92595096`) — so
+      // the two implementations agree rather than diverging on what "safe as an audit field" means. This
+      // does NOT close the "AUDIT boundary — 1 of 17, REJECTED on coverage" measurement above in full: it
+      // closes the SHAPE gap at THIS sink specifically (never persist a credential-shaped id), which is
+      // independent of the WRITE-boundary / TYPE-boundary remedies discussed above (those constrain what a
+      // workspaceId CAN be at its point of origin; this constrains what reaches THIS log/persist sink).
+      if (!isRedactionSafe(signal) || auditFieldContainsSecret(workspaceId)) {
         // eslint-disable-next-line no-console -- deliberate visibility; 9.33's house rule — DENY the
         // persist, never throw. ⛔ THE NOTICE CARRIES NOTHING DERIVED FROM THE SIGNAL, AND THAT IS THE
         // SAFETY PROPERTY, NOT AN OVERSIGHT (task 24.62). A refusal means at least one of the six
@@ -819,7 +832,12 @@ export function createAuditPersistPort(deps: {
         // (event · denialCode · workspaceId, three separate mutations) — an unobserved pin is unproven.
         // The 24.70 field-NAME POSITIVE assertion added to that same block was mutation-proved RED the
         // same way before this line started interpolating it.
-        const unsafeField = firstUnsafeAuditField(signal);
+        // `auditFieldContainsSecret(workspaceId)` is checked FIRST so the field name reported is honest
+        // when workspaceId is the one that tripped: `firstUnsafeAuditField` only ever inspects `signal`'s
+        // six fields and would report "unknown" for a signal that itself passed. "workspaceId" here is a
+        // fixed literal (a channel NAME, not the value — same rule-7 discipline task 24.70 established for
+        // the six signal fields), so naming it leaks nothing.
+        const unsafeField = auditFieldContainsSecret(workspaceId) ? "workspaceId" : firstUnsafeAuditField(signal);
         console.error(
           `[copilot.denial-audit] REFUSED to persist — a denial signal failed the redaction-safety gate (9.33) — unsafe field: ${unsafeField ?? "unknown"}`,
         );
@@ -2006,6 +2024,30 @@ export function buildBackendsConfig(config: BootConfig): BackendsConfig {
 }
 
 /**
+ * Derive the single-owner lock's file path from the boot config (task 11.1/24.1, REQ-D-005, safety
+ * rule 1). PURE aside from the tmpdir `mkdtempSync` side effect on the ephemeral branch (unavoidable —
+ * the path itself must be freshly unique, and `mkdtempSync` is the only atomic way to mint one).
+ *
+ * A durable `dbPath` (a real deployment) yields a STABLE path tied to that exact operational-store
+ * file: two real worker processes pointed at the SAME `dbPath` collide on the SAME lock path, so the
+ * second is physically refused — the intended safety property (a second instance is refused rather
+ * than racing the operational store).
+ *
+ * An UNSET (or explicit `":memory:"`) `dbPath` — the test/dev default `assembleBackends` itself falls
+ * back to (`backends.ts`'s own `config.dbPath ?? ":memory:"`) — yields a FRESH, unique tmpdir path on
+ * EVERY call, mirroring `BackendsConfig.vaultRoot`'s own "defaults to a fresh tmpdir" contract. This is
+ * load-bearing: the default worker-test suite boots dozens of independent `bootWorker()` instances
+ * (often concurrently) with no `dbPath` configured, and a single SHARED default lock path would make
+ * them all spuriously refuse each other.
+ */
+export function deriveSingleOwnerLockPath(config: Pick<BootConfig, "dbPath">): string {
+  if (config.dbPath !== undefined && config.dbPath !== ":memory:") {
+    return `${config.dbPath}.single-owner.lock`;
+  }
+  return join(mkdtempSync(join(tmpdir(), "sow-single-owner-lock-")), "single-owner.lock");
+}
+
+/**
  * Boot the live worker control plane. Assembles the persistent backends, stands up
  * the real loopback API transport over the @sow/db port adapters (behind the injected
  * token + allowlist), wires the redacting logger + the Temporal-unavailable degraded
@@ -2013,6 +2055,37 @@ export function buildBackendsConfig(config: BootConfig): BackendsConfig {
  * the proof-spine register hook. See the header for the Phase-9/11 residual deferrals.
  */
 export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
+  // 0.99) task 11.1/24.1 (REQ-D-005, safety rule 1) — ACQUIRE the real OS-atomic single-owner lock
+  //   BEFORE the operational store opens (`assembleBackends` below), so a second worker instance
+  //   pointed at the SAME durable `dbPath` is PHYSICALLY refused (O_CREAT|O_EXCL, no TOCTOU window)
+  //   rather than racing it. This closes 24.1's own recorded gap — "`acquireSingleOwnerLock` has ZERO
+  //   production callers repo-wide … nothing acquires the lock at boot."
+  //   NEVER THROWS (§16): `acquireSingleOwnerLock` itself only throws on an unexpected fs fault (never
+  //   a false "held" — see that module's own header), and that propagation is caught here so an exotic
+  //   fs state degrades the worker rather than crashing it.
+  //   BYTE-EQUIVALENT WHEN THE LOCK IS FREE: on a successful acquire (the overwhelmingly common case —
+  //   every default-config test boot included) nothing else about `bootWorker`'s observable behavior
+  //   changes; the lock is released idempotently at `close()`.
+  //   ON REFUSAL/FAULT: never a boot-throw (mirrors this file's `armRefused`/`settingsFault` degrade-
+  //   and-surface precedent below, never a hard stop). The worker DOES still boot — restructuring
+  //   `bootWorker`'s return contract to hard-refuse serving is a materially larger change than "bind
+  //   the lock" and is NOT this slice's scope — but a `worker_down` HealthItem is minted (best-effort,
+  //   once `backends` exists below) and the refusal is logged loudly, CODE-ONLY (rule 7 — the other
+  //   holder's pid is never rendered raw, matching `singleOwnerLockDoctorCheck.ts`'s own repair-message
+  //   discipline: "a repair message names no pid").
+  //   ⚠ SCOPE, STATED RATHER THAN IMPLIED: this closes 24.1's "zero production callers" gap (the lock
+  //   is now genuinely ACQUIRED at boot) but does NOT bind `resolvePgliteLockHolder` →
+  //   `packages/knowledge`'s `evaluateWriteFence` — that binding has NO caller anywhere in this repo
+  //   today (measured: zero references outside its own module/tests), so the OS lock is a real
+  //   ACQUISITION but not yet the thing that would make a refused write PHYSICALLY blocked at the
+  //   gbrain/vault write layer. A separate, larger cross-package task; recorded, not silently assumed.
+  const singleOwnerLockPath = deriveSingleOwnerLockPath(config);
+  let singleOwnerLockResult: LockAcquireResult | undefined;
+  try {
+    singleOwnerLockResult = acquireSingleOwnerLock(singleOwnerLockPath);
+  } catch {
+    singleOwnerLockResult = undefined; // an unexpected fs fault degrades — never a boot crash (§16)
+  }
   // 0.8) 18.25 step-6 — CONSTRUCT the subscription-ONLY arm gate from the owner opt-in (`config.subscriptionArm`).
   //   This is the deferred FINDING piece: the subscription runner's `ExtractionContentResolver` needs
   //   `createDurableParkedReader(backends.repos.sourceDisposition)` — a repo that exists ONLY after `assembleBackends`,
@@ -2089,6 +2162,28 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
       : { ...config, providerTransport: effectiveProviderTransport },
   );
   const backends = await assembleBackends(backendsConfig, config.stubExtraction);
+
+  // 1.01) task 11.1/24.1 — surface a single-owner-lock refusal/fault now that `backends` exists (the
+  //   acquire attempt itself ran BEFORE the store opened, above). Best-effort, never blocks boot.
+  if (singleOwnerLockResult === undefined || singleOwnerLockResult.ok === false) {
+    const code = singleOwnerLockResult?.ok === false ? "single_owner_lock_held" : "single_owner_lock_fault";
+    backends.logger.error("boot.single_owner_lock.refused", { fields: { code } });
+    try {
+      await backends.healthItems.put({
+        id: `single-owner-lock:${backends.now()}`,
+        failureClass: "worker_down",
+        severity: "warn",
+        message:
+          "Another process holds the canonical brain/vault lock, or this worker could not acquire it — " +
+          "a second write-capable instance may be racing the operational store (REQ-D-005).",
+        auditRef: "single-owner-lock:not-held" as AuditId,
+        openedAt: backends.now(),
+        state: "open",
+      });
+    } catch {
+      /* best-effort — a health-mint fault must never block boot (§16) */
+    }
+  }
 
   // 1.02) task 19.1 — the durable GBrain post-commit sync-outbox binding, over the SAME
   //   `backendsConfig.dbPath` the operational store just opened (own connection — see
@@ -3072,6 +3167,16 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   const close = async (): Promise<void> => {
     if (closed) return;
     closed = true;
+    // task 11.1/24.1 — release the single-owner lock (idempotent by construction; a no-op if this
+    // instance never held it). Wrapped defensively even though the primitive documents itself
+    // never-throwing — a shutdown path must never itself become a crash (§16).
+    if (singleOwnerLockResult?.ok === true) {
+      try {
+        singleOwnerLockResult.release();
+      } catch {
+        /* best-effort — a release fault must never block shutdown */
+      }
+    }
     vaultWatcher?.stop();
     if (vaultDispatchConnection !== undefined) {
       try {

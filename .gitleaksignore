@@ -30,3 +30,8 @@ packages/integrations/test/gateway-redaction-credentials.test.ts:generic-api-key
 packages/knowledge/test/writer-audit-gate.test.ts:generic-api-key:101
 # fake sk- deletionId testing the tombstone commit AuditRecord sanitiser (FIX-3, tombstone.ts:306)
 packages/knowledge/test/tombstone.test.ts:generic-api-key:384
+
+# ── DOD-worker-boot task 1 TDD fixtures (fake credential-shaped workspaceIds EXERCISING the new
+#    auditFieldContainsSecret gate on createAuditPersistPort's workspaceId channel, boot.ts:797) ──
+apps/worker/test/boot/auditPersistWorkspaceIdGate.test.ts:generic-api-key:85
+apps/worker/test/boot/auditPersistWorkspaceIdGate.test.ts:generic-api-key:124
