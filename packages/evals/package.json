@@ -12,7 +12,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit"
+    "lint": "eslint ."
   },
   "dependencies": {
     "@sow/contracts": "workspace:*",

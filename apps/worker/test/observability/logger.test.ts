@@ -6,11 +6,7 @@
 // credential in a field value, and a secret carried by a thrown Error are all
 // scrubbed BEFORE the record reaches the sink — even at debug level.
 import { describe, it, expect } from "vitest";
-import {
-  REDACTED_RAW,
-  REDACTED_FIELD,
-  logRecordSchema,
-} from "@sow/contracts";
+import { REDACTED_RAW, REDACTED_FIELD, logRecordSchema } from "@sow/contracts";
 import type { LogRecord } from "@sow/contracts";
 import { createLogger } from "../../src/observability/logger";
 
@@ -84,10 +80,9 @@ describe("createLogger — the redaction chokepoint", () => {
     });
     const emitted = records[0]!.fields as Record<string, unknown>;
     expect(emitted["rawContent"]).not.toContain("headcount");
-    expect(
-      emitted["rawContent"] === REDACTED_RAW ||
-        emitted["rawContent"] === REDACTED_FIELD,
-    ).toBe(true);
+    expect(emitted["rawContent"] === REDACTED_RAW || emitted["rawContent"] === REDACTED_FIELD).toBe(
+      true,
+    );
   });
 
   it("drops a SHORT single-line raw value under an allowlisted field before the sink (positive-shape)", () => {
