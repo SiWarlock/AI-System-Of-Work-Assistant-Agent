@@ -15,6 +15,7 @@
 import { ok, err, isErr, type Result } from "@sow/contracts";
 import { auditId as makeAuditId } from "@sow/contracts";
 import type { AuditId, SourceEnvelope, WorkflowRunRef } from "@sow/contracts";
+import { isRedactionSafe } from "@sow/policy";
 import type { AuditRepository, ProjectRegistryRepository, ReadModelRepository, SourceDispositionRepository, SourceDispositionRow } from "@sow/db";
 import type { KnowledgeRevisionStore } from "@sow/knowledge";
 import {
@@ -72,7 +73,16 @@ export function createDurableDispositionStore(deps: DurableDispositionStoreDeps)
       const auditRef = makeAuditId(`audit:disposition:${key}`);
       // Redaction-safe audit FIRST (summaries only — NEVER the raw parked body/content, rule 7); a
       // record always carries its audit (nothing silent).
-      const appended = await deps.audit.append({
+      //
+      // Task 24.64 (worker leg A) — this constructs the audit record inline and calls
+      // `deps.audit.append` DIRECTLY, so it never reached `isRedactionSafe`'s producer coverage via
+      // `buildAuditSignal`. `refs` interpolates `disposition.sourceId` / `disposition.workspaceId`
+      // and `payloadHash` interpolates `key` — none of those are producer-validated, so a
+      // credential-shaped value there would previously have reached the sink verbatim. Gated here,
+      // mirroring the sibling site (`egressRevoke.ts`'s `revokeEgressAck`, task 24.64 leg B).
+      // `AuditRecord` is a strict superset of `AuditSignal`, so `isRedactionSafe` applies with no
+      // reshaping. The rejection NEVER echoes the offending value (rule 7) — a static string only.
+      const auditRecord = {
         actor: "ingestion-triage",
         event: "ingestion.triage.disposition.recorded",
         refs: [
@@ -85,7 +95,11 @@ export function createDurableDispositionStore(deps: DurableDispositionStoreDeps)
         beforeSummary: "parked source awaiting owner disposition",
         afterSummary: "owner disposition recorded; source re-scoped for re-entry",
         timestamps: { occurredAt: deps.now() },
-      });
+      };
+      if (!isRedactionSafe(auditRecord)) {
+        return err({ code: "record_failed", message: "disposition audit rejected by redaction gate" });
+      }
+      const appended = await deps.audit.append(auditRecord);
       if (isErr(appended)) return err({ code: "record_failed", message: "disposition audit append failed" });
       const recorded = await deps.repo.recordDisposition(disposition.sourceId, key, String(auditRef), deps.now());
       if (isErr(recorded)) return err({ code: "record_failed", message: "disposition record failed" });

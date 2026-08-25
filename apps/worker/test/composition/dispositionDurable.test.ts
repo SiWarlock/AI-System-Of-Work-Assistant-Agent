@@ -160,6 +160,18 @@ describe("createDurableDispositionStore (15.5 — real isParked + CAS + redactio
     expect(audit.appended).toHaveLength(1);
   });
 
+  it("insert_refuses_a_credential_shaped_scanned_field: a disposition whose workspaceId lands a credential-shaped/sensitive-keyword value in the audit `refs` is REFUSED by the isRedactionSafe gate BEFORE audit.append is ever called — no audit row, no CAS record (task 24.64 Site 1 / rule 7) [spec(§16)]", async () => {
+    const repo = new FakeDispositionRepo().seed(dbRow());
+    const audit = new FakeAudit();
+    const store = createDurableDispositionStore({ repo, audit, now: () => NOW, runRef });
+    const hostile = disp({ workspaceId: "employer-secret-project" as TriageDisposition["workspaceId"] });
+    const res = await store.insert("dkey-1", hostile);
+    expect(isErr(res)).toBe(true); // fail-closed — never a masked ok
+    if (isErr(res)) expect(res.error.code).toBe("record_failed");
+    expect(audit.appended).toHaveLength(0); // the sink was NEVER reached
+    expect(repo.rows.get("src-1")?.dispositionKey).toBeNull(); // the CAS record was NEVER made
+  });
+
   it("isParked / insert faults are typed errs — never masked (fail-closed, Lesson 3) [spec(§16)]", async () => {
     const repoA = new FakeDispositionRepo().seed(dbRow()); repoA.faultOn = "getBySourceId";
     const storeA = createDurableDispositionStore({ repo: repoA, audit: new FakeAudit(), now: () => NOW, runRef });
