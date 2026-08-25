@@ -107,21 +107,28 @@ const SECRET_KEY_NAME =
 //       literally in "sk-" with no following character, or "sk-" followed by
 //       punctuation — so narrowing to `sk-[a-z0-9]` is a LOOSENING (fewer
 //       configs rejected as `secret_in_config`), the opposite direction from
-//       fix (1). Aligned anyway: this is the SAME unbounded, no-word-boundary
-//       alternative `@sow/domain`'s own `CREDENTIAL_PREFIX` comment and
-//       `packages/policy`'s `known_false_positives_are_pinned_so_the_class_is_
-//       not_INVISIBLE` pin already name and accept as a KNOWN cost elsewhere
-//       (a word boundary is a domain-parity question, not this file's to
-//       decide alone) — matching the shape exactly is what "hand-mirrored
-//       copy, not a fork" requires; inventing a THIRD variant (bare `sk-`
-//       nowhere else in the repo) would be the actual novel risk.
+//       fix (1). Aligned anyway: matching the shape exactly is what
+//       "hand-mirrored copy, not a fork" requires.
+//
+// ⚠ UPDATED (task 24.124, same session): `@sow/domain`'s `CREDENTIAL_PREFIX` and
+// `packages/policy`'s independently-maintained copy have SINCE gained a `\b` word
+// boundary before `sk-` (both no longer carry the no-word-boundary cost this
+// comment used to name as a "KNOWN cost elsewhere"). Mirrored here in the same
+// pattern-alignment spirit as (2) above, so this module does not become the LAST
+// hand-mirrored copy carrying the retired false-positive class: a config VALUE
+// shaped like `"TASK-1"` (e.g. inside `vaultRootPaths`) would otherwise be
+// rejected as `secret_in_config` here while every other credential net in the
+// repo now correctly admits it. The measured leak/availability trade is
+// `@sow/domain`'s `CREDENTIAL_PREFIX` comment's to own (235 lines of this repo's
+// own Markdown corpus newly admitted end-to-end); not re-measured a third time
+// here, since the shape — not a fresh decision — is what this file mirrors.
 //
 // REACHABILITY, MEASURED (not assumed): `secretShapeGuard` → `hasCredentialShapedValue`
 // → this pattern is called from `apps/worker/src/config/load-config.ts`'s
 // `loadConfig`, the worker's config-load ENTRY POINT (REQ-S-003) — production-wired,
 // not dormant.
 const CREDENTIAL_VALUE_SHAPE =
-  /sk-[a-z0-9]|sk_(live|test)|xox[baprs]-|gh[pousr]_|AKIA[0-9A-Z]{16}|-----BEGIN|eyJ[A-Za-z0-9_-]{10,}\./i;
+  /\bsk-[a-z0-9]|sk_(live|test)|xox[baprs]-|gh[pousr]_|AKIA[0-9A-Z]{16}|-----BEGIN|eyJ[A-Za-z0-9_-]{10,}\./i;
 
 // ── Recursive value scan ────────────────────────────────────────────────────
 
