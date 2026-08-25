@@ -20,6 +20,7 @@
 //
 // PURE — the schema gate NEVER coerces (no default-fill); it only decides ok/reject. Never throws.
 import { ok, err } from "@sow/contracts";
+import { LIST_VALUED_EXTRACTION_FIELDS } from "@sow/contracts";
 import type { Result } from "@sow/contracts";
 import type { AgentExtraction, MeetingSchemaGate } from "@sow/workflows";
 import type { BrokerOutcome } from "@sow/providers";
@@ -68,9 +69,35 @@ export function mapAcceptedMeetingExtraction(outcome: BrokerOutcome): AgentExtra
 
 /** A value is a well-formed `ExtractionField.value` iff it is a string/number/boolean (the `TBD`
  *  sentinel is the string "TBD", so it's covered). NOT null/undefined (absence is expressed as
- *  `TBD`, never null), NOT an object/array/function (the model must not emit a structured value). */
+ *  `TBD`, never null), NOT an object/array/function (the model must not emit a structured value).
+ *  ⛔ 13.8g-C leg B: this predicate is NEVER globally widened to admit an array — that would flip
+ *  a rule-2 candidate-data surface default-OPEN for every field name, not just the declared list
+ *  ones. List admission is a SEPARATE, per-field-name predicate ({@link isListValueForField}),
+ *  applied only when the field's own name is declared in `LIST_VALUED_EXTRACTION_FIELDS`. */
 function isPrimitiveOrTbd(v: unknown): boolean {
   return typeof v === "string" || typeof v === "number" || typeof v === "boolean";
+}
+
+// 13.8g-C leg B — the SINGLE SOURCE of list-ness (imported from contracts, never re-declared —
+// two independent authors disagreeing about which fields are list-shaped is exactly the defect
+// this task exists to close). A `Set` for O(1) per-field membership.
+const LIST_VALUED_FIELD_SET: ReadonlySet<string> = new Set<string>(LIST_VALUED_EXTRACTION_FIELDS);
+
+// Mirrors packages/contracts/src/models/agent-extraction.ts's `LIST_VALUE_MAX_ITEMS` (200) — contracts
+// does not export that constant (it is a private module-local `const`), so this is the SAME numeric
+// bound, recorded here rather than re-derived, so a future contracts-side change is a visible two-file
+// diff instead of a silent drift.
+const LIST_VALUE_MAX_ITEMS = 200;
+
+/**
+ * A value is a well-formed LIST value for a declared list-valued field: an array of `string` elements
+ * (never number/boolean/null — matches the contracts `z.array(z.string())` element type exactly),
+ * capped at `LIST_VALUE_MAX_ITEMS`, and NESTING-REJECTED — an array element that is itself an
+ * array/object fails the `typeof el === "string"` check, so array-of-array and array-of-object are
+ * both structurally rejected by the same predicate (no separate nesting guard needed).
+ */
+function isListValue(v: unknown): boolean {
+  return Array.isArray(v) && v.length <= LIST_VALUE_MAX_ITEMS && v.every((el) => typeof el === "string");
 }
 
 /**
@@ -101,7 +128,15 @@ export function createMeetingExtractionSchemaGate(): MeetingSchemaGate {
           message: `field '${key}' is not a well-formed ExtractionField`,
         });
       }
-      if (!isPrimitiveOrTbd((f as { value: unknown }).value)) {
+      const value = (f as { value: unknown }).value;
+      // 13.8g-C leg B: a field DECLARED list-valued (contracts' LIST_VALUED_EXTRACTION_FIELDS) admits
+      // EITHER its ordinary scalar-or-TBD shape (additive, never required) OR a capped, nesting-free
+      // string[]. Every OTHER field name keeps the scalar-only rejection UNCHANGED — the declaration is
+      // structural (per-field-name), never a payload-driven opt-in.
+      const admitted = LIST_VALUED_FIELD_SET.has(key)
+        ? isPrimitiveOrTbd(value) || isListValue(value)
+        : isPrimitiveOrTbd(value);
+      if (!admitted) {
         return err({
           code: "schema_rejected",
           message: `field '${key}' value is not a primitive or TBD`,

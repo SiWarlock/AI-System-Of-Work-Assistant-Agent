@@ -14,6 +14,7 @@
 // candidate (task #18) — the accepted BrokerCandidate (KMP stand-in) discards `evidenceRef`.
 import { describe, it, expect } from "vitest";
 import { ok, err, isOk, isErr } from "@sow/contracts";
+import { LIST_VALUED_EXTRACTION_FIELDS } from "@sow/contracts";
 import { TBD, type ExtractionField } from "@sow/domain";
 import { createValidateActivity } from "@sow/workflows";
 import type { AgentExtraction } from "@sow/workflows";
@@ -162,6 +163,67 @@ describe("createMeetingExtractionSchemaGate — real structural candidate-data g
 
   it("safe_build_schema_gate_is_pure_no_model — deterministic, no I/O; identical input ⇒ identical result (spec SAFE-BUILD)", () => {
     expect(gate(validExtraction)).toEqual(gate(validExtraction));
+  });
+});
+
+// ── 2b. 13.8g-C leg B — the worker gate READS the contracts list-valued declaration ────────────
+describe("createMeetingExtractionSchemaGate — 13.8g-C leg B: list-valued fields (18.3, rule 2)", () => {
+  const gate = createMeetingExtractionSchemaGate();
+
+  it("attendees_admits_a_string_array — a declared list-valued field admits string[] (spec 13.8g-C)", () => {
+    const res = gate({ fields: { attendees: { value: ["A", "B"] } } } as unknown as AgentExtraction);
+    expect(isOk(res)).toBe(true);
+  });
+
+  it("attendees_rejects_nesting — attendees:[['A']] is rejected for nesting (array-of-array)", () => {
+    const res = gate({ fields: { attendees: { value: [["A"]] } } } as unknown as AgentExtraction);
+    expect(isErr(res)).toBe(true);
+    if (!isErr(res)) return;
+    expect(res.error.code).toBe("schema_rejected");
+  });
+
+  it("attendees_rejects_array_of_object — nesting via an object element is also rejected", () => {
+    const res = gate({ fields: { attendees: { value: [{ name: "A" }] } } } as unknown as AgentExtraction);
+    expect(isErr(res)).toBe(true);
+  });
+
+  it("attendees_caps_at_the_contracts_cap — 201 elements is rejected (cap is 200)", () => {
+    const over = Array.from({ length: 201 }, (_, i) => `n${i}`);
+    const res = gate({ fields: { attendees: { value: over } } } as unknown as AgentExtraction);
+    expect(isErr(res)).toBe(true);
+    if (!isErr(res)) return;
+    expect(res.error.code).toBe("schema_rejected");
+  });
+
+  it("attendees_admits_exactly_the_cap — 200 elements is admitted", () => {
+    const atCap = Array.from({ length: 200 }, (_, i) => `n${i}`);
+    const res = gate({ fields: { attendees: { value: atCap } } } as unknown as AgentExtraction);
+    expect(isOk(res)).toBe(true);
+  });
+
+  it("attendees_rejects_non_string_elements — a number element in the list is rejected", () => {
+    const res = gate({ fields: { attendees: { value: ["A", 1] } } } as unknown as AgentExtraction);
+    expect(isErr(res)).toBe(true);
+  });
+
+  it("attendees_still_admits_a_scalar_or_TBD — list-capable is ADDITIVE, never required (spec 13.8g-C)", () => {
+    expect(isOk(gate({ fields: { attendees: { value: TBD } } } as unknown as AgentExtraction))).toBe(true);
+    expect(isOk(gate({ fields: { attendees: { value: "Jane Doe" } } } as unknown as AgentExtraction))).toBe(
+      true,
+    );
+  });
+
+  it("non_list_field_given_an_array_is_still_rejected — a field NOT in LIST_VALUED_EXTRACTION_FIELDS keeps scalar-only rejection byte-for-byte (spec 13.8g-C)", () => {
+    const res = gate({ fields: { title: { value: ["a", "b"] } } } as unknown as AgentExtraction);
+    expect(isErr(res)).toBe(true);
+    if (!isErr(res)) return;
+    expect(res.error.code).toBe("schema_rejected");
+  });
+
+  it("uses_the_contracts_declared_field_set — 'decisions' (the OTHER LIST_VALUED_EXTRACTION_FIELDS member) also admits a list", () => {
+    expect(LIST_VALUED_EXTRACTION_FIELDS).toContain("decisions");
+    const res = gate({ fields: { decisions: { value: ["shipped X", "cut Y"] } } } as unknown as AgentExtraction);
+    expect(isOk(res)).toBe(true);
   });
 });
 

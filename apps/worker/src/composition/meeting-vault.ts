@@ -29,11 +29,13 @@
 // 13.8g-B — `entityRefs`/`identifierOnlyRefs` are now threaded, via `normalizeAttendees` (13.8g-A) over
 // the meeting's attendee data. `linkCandidates` remains NOT threaded (a real residual — nothing today
 // supplies a workspace note-candidate list for `healLinks`; a future follow-up, not this slice's job).
-// ⚠ SCOPED CLAIM (13.8g-C, not yet decided): attendee refs are threaded, but the path yields ZERO refs
-// today — the real meeting-extraction schema gate (`meeting-extraction.ts`'s `isPrimitiveOrTbd`) admits
-// only scalars, so an array can never reach this adapter in a validated extraction; a realistic
-// delimited string hits `normalizeAttendees`' non-array branch. Never state this as "attendees now
-// update person pages" — see `packages/composition/meeting-vault.test.ts`'s own characterization pin.
+// ✅ 13.8g-C leg B (DECIDED + LANDED): the real meeting-extraction schema gate
+// (`meeting-extraction.ts`'s `createMeetingExtractionSchemaGate`) now reads contracts'
+// `LIST_VALUED_EXTRACTION_FIELDS` and admits `attendees` as a capped, nesting-free `string[]` (additive
+// over its prior scalar-or-TBD shape) — so a realistic validated extraction CAN carry attendees as an
+// array, and this adapter's `normalizeAttendees` call reaches its array branch and yields real refs. See
+// `meeting-vault.test.ts`'s `attendees_reach_the_rewrite_input_now_that_the_gate_admits_a_list` for the
+// end-to-end proof (real gate + this adapter, not a stand-in).
 import { rewriteVaultForMeeting, normalizeAttendees } from "@sow/knowledge";
 import type { MeetingRewriteDeps } from "@sow/knowledge";
 import type { WorkspaceId, SourceRef, ProvenanceOrigin } from "@sow/contracts";
@@ -51,8 +53,9 @@ import type {
  * deliberately DROPPED, not threaded — surfacing it with no reader today would mint a fresh L106; its
  * future consumer is 13.8m. `linkCandidates` remains unthreaded (a genuine residual, not this slice's
  * job — see the module header). An armed run can now ground against real attendee-derived person
- * entities in principle; in practice it yields zero today (13.8g-C, module header). That is acceptable
- * only because this ships DORMANT still — mirrors `createIngestRewriteAdapter`'s own documented residual
+ * entities for real (13.8g-C leg B, module header) — no longer a "yields zero" residual. That the
+ * capability still ships DORMANT is a SEPARATE fact (the boot gate/deps construction, unrelated to
+ * whether this adapter's logic is correct) — mirrors `createIngestRewriteAdapter`'s own dormancy note
  * in living-vault.ts.
  */
 export function createMeetingVaultPort(knowledgeDeps: MeetingRewriteDeps): MeetingVaultRewritePort {
@@ -64,9 +67,11 @@ export function createMeetingVaultPort(knowledgeDeps: MeetingRewriteDeps): Meeti
       provenanceOrigin: ProvenanceOrigin,
       attendees?: unknown,
     ): Promise<MeetingVaultRewriteResult> {
-      // 13.8g-C (not yet decided): `normalizeAttendees` requires Array.isArray — the real meeting-
-      // extraction schema gate admits only scalars, so `attendees` can never be an array in a validated
-      // extraction. This call is correct and total either way; it yields empty refs today.
+      // 13.8g-C leg B (landed): `normalizeAttendees` requires Array.isArray — the real meeting-
+      // extraction schema gate now ADMITS `attendees` as a string[] (contracts'
+      // LIST_VALUED_EXTRACTION_FIELDS), so this reaches the array branch on a realistic validated
+      // extraction and yields real refs. A non-array (a legacy scalar, or an un-gated caller) still
+      // hits the non-array branch and yields empty — total either way.
       const { refs, identifierOnlyRefs } = normalizeAttendees(attendees);
       const receipt = await rewriteVaultForMeeting(
         {

@@ -10,10 +10,12 @@
 // through it IS this adapter's own contract this slice adds — mocking it too would test a double
 // standing in for the exact logic under test (contracts L85), not this adapter's real behavior.
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { workspaceId, sourceId } from "@sow/contracts";
+import { workspaceId, sourceId, isOk } from "@sow/contracts";
 import type { SourceRef } from "@sow/contracts";
 import { TBD } from "@sow/domain";
 import type { MeetingRewriteReceipt, MeetingRewriteDeps } from "@sow/knowledge";
+import type { AgentExtraction } from "@sow/workflows";
+import { createMeetingExtractionSchemaGate } from "../../src/composition/meeting-extraction";
 
 const rewriteVaultForMeetingMock = vi.fn<(...args: unknown[]) => Promise<MeetingRewriteReceipt>>();
 vi.mock("@sow/knowledge", async (importOriginal) => {
@@ -181,27 +183,29 @@ describe("createMeetingVaultPort — 13.8g-B: attendee refs feed the rewrite inp
     });
   });
 
-  it("[FINDING, tracked] a REALISTIC schema-gated attendee value (a scalar string) yields ZERO refs today — pinned, not silently shipped", async () => {
-    // apps/worker/src/composition/meeting-extraction.ts:72-74's isPrimitiveOrTbd is the REAL, production-
-    // wired structural gate (buildActivities.ts:518) every meeting-close field passes through before
-    // buildOutputs.ts ever sees it — string | number | boolean | "TBD" ONLY. An array is structurally
-    // IMPOSSIBLE here: createMeetingExtractionSchemaGate rejects the WHOLE extraction (schema_rejected,
-    // no commit) if any field.value isn't primitive-or-TBD, so a validated meeting extraction can never
-    // carry attendees as an array. normalizeAttendees requires Array.isArray(raw) to do anything — so a
-    // realistic delimited string (the only shape that can survive the gate) hits its non-array branch
-    // and yields empty. This is a KNOWN, ACCEPTED gap this slice does not close — task 13.8g-C tracks
-    // the follow-up decision — pinned here so it fails loudly if silently "fixed" by accident in a way
-    // that doesn't match the eventual owner ruling.
+  it("attendees_reach_the_rewrite_input_now_that_the_gate_admits_a_list — 13.8g-C leg B closes the prior zero-refs gap: the REAL, production-wired schema gate (meeting-extraction.ts, LIST_VALUED_EXTRACTION_FIELDS) now ADMITS attendees as string[], so a realistic validated extraction can carry named attendees through to entityRefs", async () => {
+    // First: prove the REAL production gate (not a stand-in) admits this exact shape — the array this
+    // test drives through the adapter below is genuinely reachable from a validated extraction, closing
+    // the 13.8g-B finding ("an array can never reach this argument in a validated extraction").
+    const gate = createMeetingExtractionSchemaGate();
+    const gated = gate({
+      fields: { attendees: { value: ["Jane Doe", "John Smith"] } },
+    } as unknown as AgentExtraction);
+    expect(isOk(gated)).toBe(true);
+
+    // Then: the SAME array, threaded through createMeetingVaultPort exactly as buildOutputs.ts would
+    // thread `validated.fields["attendees"].value`, reaches rewriteVaultForMeeting as real entityRefs —
+    // never zero, never the identifier-only channel (these are named attendees, not bare emails).
     rewriteVaultForMeetingMock.mockResolvedValueOnce(fixtureReceipt());
     const port = createMeetingVaultPort(stubKnowledgeDeps);
-    await port.rewrite(
-      WS,
-      NOTE_PATH,
-      SOURCE_REF,
-      "meeting_close",
-      "Jane Doe <jane@acme.com>, John Smith <john@acme.com>",
-    );
+    await port.rewrite(WS, NOTE_PATH, SOURCE_REF, "meeting_close", ["Jane Doe", "John Smith"]);
     const [input] = rewriteVaultForMeetingMock.mock.calls[0]!;
-    expect(input).toMatchObject({ entityRefs: [], identifierOnlyRefs: [] });
+    expect(input).toMatchObject({
+      entityRefs: [
+        { name: "Jane Doe", kind: "person" },
+        { name: "John Smith", kind: "person" },
+      ],
+      identifierOnlyRefs: [],
+    });
   });
 });
