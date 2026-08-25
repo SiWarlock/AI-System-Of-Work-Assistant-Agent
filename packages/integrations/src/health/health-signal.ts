@@ -13,11 +13,10 @@
 //
 // The `outbox_blocked` / `write_through_blocked` FailureClass members DO exist
 // (shared-enums.ts:154-155, task 13.15/ARC-2) — this comment previously claimed otherwise
-// (citation rot, task 24.16, now corrected). `WRITE_THROUGH_FAILED_HEALTH_CLASS` below is a
-// deliberate, exact-value constant for `write_through_failed`, not a reuse-alias for either
-// new member; `buildToolWriteHealthSignal`'s `kind` parameter still conflates a genuine
-// attempt-error with a blocked/held drain into that one value — a real, separately-tracked
-// finding (a behavior/severity change, not a citation fix; not addressed here).
+// (citation rot, task 24.16, now corrected). `buildToolWriteHealthSignal`'s `kind` union was
+// widened (task 24.21) to a real 4-member exhaustive switch, so a precondition HOLD
+// (`outbox_blocked` / `write_through_blocked`) and an errored ATTEMPT (`write_through_failed`
+// / `schema_rejection`) now map onto distinct FailureClass values and dedupe keys.
 //
 // arch_gap (FLAGGED as carry-forward): the frozen `FailureClass` enum has NO dedicated
 // `coverage_degraded` member, so a partial-coverage read reuses `sync_lagging` via
@@ -43,17 +42,28 @@ export const CONNECTOR_COVERAGE_DEGRADED_HEALTH_CLASS: FailureClass = "sync_lagg
 /**
  * The `write_through_failed` FailureClass, named exact-value like its siblings below.
  * Previously named `WRITE_THROUGH_BLOCKED_HEALTH_CLASS`, which asserted a distinction
- * (blocked vs failed) its value collapsed — a name/value contradiction (task 24.16). Both
- * `outbox_blocked` and `write_through_blocked` are real, dedicated FailureClass members
- * (shared-enums.ts:154-155, task 13.15/ARC-2); this constant is `write_through_failed`
- * DELIBERATELY, not a reuse-alias standing in for either. `buildToolWriteHealthSignal`'s
- * `kind` parameter still conflates a genuine attempt-error with a blocked/held drain into
- * this one value — tracked separately, not fixed here (a behavior/severity change).
+ * (blocked vs failed) its value collapsed — a name/value contradiction (task 24.16), now
+ * corrected: `write_through_failed` is a genuine errored ATTEMPT, distinct from the
+ * `write_through_blocked` HOLD constant below (task 24.21).
  */
 export const WRITE_THROUGH_FAILED_HEALTH_CLASS: FailureClass = "write_through_failed";
 
 /** A candidate/envelope failed the schema/candidate gate (§8 write path). */
 export const SCHEMA_REJECTION_HEALTH_CLASS: FailureClass = "schema_rejection";
+
+/**
+ * A precondition/gate HOLDS the write-through — the write was never attempted
+ * (distinct from `write_through_failed`, where the attempt itself errored;
+ * shared-enums.ts:157-159, task 13.15/ARC-2, task 24.21).
+ */
+export const WRITE_THROUGH_BLOCKED_HEALTH_CLASS: FailureClass = "write_through_blocked";
+
+/**
+ * The external-write outbox is gated/held (§8 pre-dispatch hold) — a backlog
+ * of held writes that were never attempted. Severity `error`: a gated outbox
+ * is operator-actionable (shared-enums.ts:154-156, task 13.15/ARC-2, task 24.21).
+ */
+export const OUTBOX_BLOCKED_HEALTH_CLASS: FailureClass = "outbox_blocked";
 
 // --- signal shape -----------------------------------------------------------
 
@@ -75,6 +85,10 @@ export interface GatewayHealthSignal {
 // arch_gap (open) owned by the Phase-7 materializer; a gateway signal is
 // operator-actionable, so "warn" is the safe non-blocking default.
 const DEFAULT_SEVERITY = "warn" as const;
+// Elevated severity for a gated outbox (task 24.21) — a backlog of held writes
+// that were never attempted is operator-actionable in a way a single failed
+// attempt is not.
+const ELEVATED_SEVERITY = "error" as const;
 
 // --- builders ---------------------------------------------------------------
 
@@ -121,23 +135,53 @@ export function buildConnectorCoverageDegradeSignal(input: {
 
 /**
  * Build the health signal for a tool-write / outbox-drain fault. `kind` selects
- * the failure class: `write_through_failed` (blocked drain / target unreachable)
- * or `schema_rejection` (candidate-gate failure). `subjectRef` is the dedupe
- * subject (canonicalObjectKey or actionId). Pure/clock-free.
+ * the failure class AND its severity — a precondition HOLD (never attempted) is
+ * distinct from an errored ATTEMPT (task 24.21):
+ *   • `write_through_blocked` — a precondition/gate holds the write-through (HOLD) → warn.
+ *   • `outbox_blocked`        — the outbox itself is gated/held (HOLD, backlog)   → error.
+ *   • `write_through_failed`  — the write attempt errored (ATTEMPT)              → warn.
+ *   • `schema_rejection`      — the candidate gate rejected the envelope (ATTEMPT) → warn.
+ * `outbox_blocked` alone is `error`: a gated outbox is operator-actionable in a way
+ * a single failed attempt or a single blocked write is not. `subjectRef` is the
+ * dedupe subject (canonicalObjectKey or actionId). Pure/clock-free.
  */
 export function buildToolWriteHealthSignal(input: {
   subjectRef: string;
   reason: string;
-  kind: "write_through_failed" | "schema_rejection";
+  kind: "write_through_failed" | "schema_rejection" | "write_through_blocked" | "outbox_blocked";
 }): GatewayHealthSignal {
-  const failureClass: FailureClass =
-    input.kind === "schema_rejection"
-      ? SCHEMA_REJECTION_HEALTH_CLASS
-      : WRITE_THROUGH_FAILED_HEALTH_CLASS;
+  let failureClass: FailureClass;
+  let severity: string;
+  switch (input.kind) {
+    case "schema_rejection":
+      failureClass = SCHEMA_REJECTION_HEALTH_CLASS;
+      severity = DEFAULT_SEVERITY;
+      break;
+    case "write_through_blocked":
+      failureClass = WRITE_THROUGH_BLOCKED_HEALTH_CLASS;
+      severity = DEFAULT_SEVERITY;
+      break;
+    case "outbox_blocked":
+      failureClass = OUTBOX_BLOCKED_HEALTH_CLASS;
+      severity = ELEVATED_SEVERITY;
+      break;
+    case "write_through_failed":
+      failureClass = WRITE_THROUGH_FAILED_HEALTH_CLASS;
+      severity = DEFAULT_SEVERITY;
+      break;
+    default: {
+      // Exhaustiveness guard (mirrors packages/workflows/src/activities/healthItem.ts:71-80):
+      // a future `kind` member breaks tsc HERE, forcing a deliberate severity decision above.
+      const _never: never = input.kind;
+      failureClass = WRITE_THROUGH_FAILED_HEALTH_CLASS;
+      severity = DEFAULT_SEVERITY;
+      void _never;
+    }
+  }
   return {
     failureClass,
     subjectRef: input.subjectRef,
-    severity: DEFAULT_SEVERITY,
+    severity,
     message: redactString(`tool write ${input.subjectRef} ${input.kind}: ${input.reason}`),
     refs: [input.subjectRef],
   };

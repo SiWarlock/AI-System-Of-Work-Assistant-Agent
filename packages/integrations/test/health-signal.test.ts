@@ -124,6 +124,65 @@ describe("buildToolWriteHealthSignal", () => {
     expect(sig.failureClass).toBe("schema_rejection");
     expect(isFailureClass(sig.failureClass)).toBe(true);
   });
+
+  // 24.21: the union previously collapsed a precondition HOLD (never attempted)
+  // and an errored ATTEMPT into one `write_through_failed` member. These four
+  // cases split them: two new kinds, a regression pin on the two originals, and
+  // a dedupe-key split so a hold and a failed attempt on the same subject never
+  // coalesce into one HealthItem.
+  it("kind 'write_through_blocked' maps to write_through_blocked / severity warn (a precondition hold, not an errored attempt)", () => {
+    const sig = buildToolWriteHealthSignal({
+      subjectRef: "cok_drive_hold",
+      reason: "write-through blocked by a precondition gate",
+      kind: "write_through_blocked",
+    });
+    expect(sig.failureClass).toBe("write_through_blocked");
+    expect(isFailureClass(sig.failureClass)).toBe(true);
+    expect(sig.severity).toBe("warn");
+  });
+
+  it("kind 'outbox_blocked' maps to outbox_blocked / severity error (a gated outbox is operator-actionable)", () => {
+    const sig = buildToolWriteHealthSignal({
+      subjectRef: "outbox",
+      reason: "outbox depth exceeds threshold",
+      kind: "outbox_blocked",
+    });
+    expect(sig.failureClass).toBe("outbox_blocked");
+    expect(isFailureClass(sig.failureClass)).toBe(true);
+    expect(sig.severity).toBe("error");
+  });
+
+  it("REGRESSION PIN (both directions): 'write_through_failed' still maps write_through_failed/warn; 'schema_rejection' still maps schema_rejection/warn", () => {
+    const failed = buildToolWriteHealthSignal({
+      subjectRef: "cok_drive_abc",
+      reason: "attempt errored",
+      kind: "write_through_failed",
+    });
+    expect(failed.failureClass).toBe("write_through_failed");
+    expect(failed.severity).toBe("warn");
+
+    const rejected = buildToolWriteHealthSignal({
+      subjectRef: "action_42",
+      reason: "candidate gate rejected",
+      kind: "schema_rejection",
+    });
+    expect(rejected.failureClass).toBe("schema_rejection");
+    expect(rejected.severity).toBe("warn");
+  });
+
+  it("healthDedupeKey differs for a HOLD (write_through_blocked) vs an ERRORED ATTEMPT (write_through_failed) on the SAME subjectRef", () => {
+    const hold = buildToolWriteHealthSignal({
+      subjectRef: "cok_drive_same",
+      reason: "held pending reconnect",
+      kind: "write_through_blocked",
+    });
+    const failedAttempt = buildToolWriteHealthSignal({
+      subjectRef: "cok_drive_same",
+      reason: "attempt errored",
+      kind: "write_through_failed",
+    });
+    expect(healthDedupeKey(hold)).not.toBe(healthDedupeKey(failedAttempt));
+  });
 });
 
 describe("healthDedupeKey", () => {
