@@ -3,44 +3,21 @@
 // rejection) — getValidator NEVER throws. Strict ajv + format assertions so
 // provider drift cannot smuggle unknown fields. PURE at the registry surface
 // (the default registry reads schema files lazily, once, on first use).
-import Ajv from "ajv";
-import addFormats from "ajv-formats";
+//
+// `SchemaRegistry` + `buildSchemaRegistry` are defined in `../index.ts` (the
+// fs-FREE half, reachable from the @sow/contracts barrel) and re-exported here
+// so every existing importer of THIS module (deep import
+// `@sow/contracts/schema/registry`, e.g. packages/domain/src/validation/
+// schema-gate.ts) keeps working unchanged. This module keeps the node:fs-backed
+// `defaultSchemaRegistry` — deliberately NOT re-exported from the barrel, so
+// `@sow/contracts`'s public surface stays free of Node built-ins.
 import type { ValidateFunction } from "ajv";
 import { readdirSync, readFileSync } from "node:fs";
+import { buildSchemaRegistry } from "../index";
+import type { SchemaRegistry } from "../index";
 
-export interface SchemaRegistry {
-  has(id: string): boolean;
-  getValidator(id: string): ValidateFunction | undefined;
-  ids(): string[];
-}
-
-/**
- * Build a registry over a set of self-contained JSON Schemas, each keyed by its
- * own `$id`. Compiles every schema up front under `strict: true` + formats.
- */
-export function buildSchemaRegistry(schemas: Record<string, unknown>[]): SchemaRegistry {
-  const ajv = new Ajv({ strict: true, allErrors: true });
-  addFormats(ajv);
-
-  const validators = new Map<string, ValidateFunction>();
-  const idList: string[] = [];
-
-  for (const schema of schemas) {
-    const id = schema["$id"];
-    if (typeof id !== "string" || id.length === 0) {
-      throw new Error("buildSchemaRegistry: every schema must carry a non-empty string $id");
-    }
-    const validate = ajv.compile(schema);
-    validators.set(id, validate);
-    idList.push(id);
-  }
-
-  return {
-    has: (id: string): boolean => validators.has(id),
-    getValidator: (id: string): ValidateFunction | undefined => validators.get(id),
-    ids: (): string[] => [...idList],
-  };
-}
+export { buildSchemaRegistry };
+export type { SchemaRegistry };
 
 function loadSchemasFromDir(): Record<string, unknown>[] {
   try {

@@ -6,6 +6,58 @@
 // the frozen models (plus shared-enums / shared-shapes). `export *` is safe
 // under verbatimModuleSyntax. No symbol collides across these modules (verified
 // at freeze time); see registry-all.test.ts for the REQ-S-006 coverage proof.
+//
+// `SchemaRegistry` + `buildSchemaRegistry` (R7-c) are defined RIGHT HERE rather
+// than re-exported from `./schema/registry.ts`, on purpose: that module also
+// carries the fs-backed `defaultSchemaRegistry` (`import { readdirSync,
+// readFileSync } from "node:fs"` at module scope), and `export *`ing it would
+// pull that node:fs import into every consumer of this barrel — including a
+// bundled/sandboxed context (e.g. a Temporal workflow bundle) that cannot
+// resolve Node built-ins. Defining the ajv-only, fs-FREE half directly in the
+// barrel keeps the whole barrel's transitive import graph free of node:fs /
+// node:crypto (pinned by packages/domain/test/boundary/barrel-node-builtin-free
+// .test.ts). `./schema/registry.ts` imports these two symbols back from here
+// for its own re-export, so `@sow/contracts/schema/registry` (the deep-import
+// path `packages/domain/src/validation/schema-gate.ts` uses) keeps exporting
+// both `defaultSchemaRegistry` AND `SchemaRegistry`/`buildSchemaRegistry`
+// unchanged.
+import Ajv from "ajv";
+import addFormats from "ajv-formats";
+import type { ValidateFunction } from "ajv";
+
+export interface SchemaRegistry {
+  has(id: string): boolean;
+  getValidator(id: string): ValidateFunction | undefined;
+  ids(): string[];
+}
+
+/**
+ * Build a registry over a set of self-contained JSON Schemas, each keyed by its
+ * own `$id`. Compiles every schema up front under `strict: true` + formats.
+ */
+export function buildSchemaRegistry(schemas: Record<string, unknown>[]): SchemaRegistry {
+  const ajv = new Ajv({ strict: true, allErrors: true });
+  addFormats(ajv);
+
+  const validators = new Map<string, ValidateFunction>();
+  const idList: string[] = [];
+
+  for (const schema of schemas) {
+    const id = schema["$id"];
+    if (typeof id !== "string" || id.length === 0) {
+      throw new Error("buildSchemaRegistry: every schema must carry a non-empty string $id");
+    }
+    const validate = ajv.compile(schema);
+    validators.set(id, validate);
+    idList.push(id);
+  }
+
+  return {
+    has: (id: string): boolean => validators.has(id),
+    getValidator: (id: string): ValidateFunction | undefined => validators.get(id),
+    ids: (): string[] => [...idList],
+  };
+}
 
 // --- primitives ---
 export * from "./primitives/ids";
@@ -20,7 +72,8 @@ export * from "./events/catalog";
 // --- schema infrastructure ---
 export * from "./schema/emit";
 export * from "./schema/field-set";
-export * from "./schema/registry";
+// (SchemaRegistry + buildSchemaRegistry are defined above, not re-exported
+// from ./schema/registry — see the header comment.)
 
 // --- shared model vocabulary ---
 export * from "./models/shared-enums";
