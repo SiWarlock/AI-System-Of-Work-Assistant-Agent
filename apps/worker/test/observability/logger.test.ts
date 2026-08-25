@@ -7,7 +7,6 @@
 // scrubbed BEFORE the record reaches the sink — even at debug level.
 import { describe, it, expect } from "vitest";
 import {
-  REDACTED_CREDENTIAL,
   REDACTED_RAW,
   REDACTED_FIELD,
   logRecordSchema,
@@ -47,7 +46,24 @@ describe("createLogger — the redaction chokepoint", () => {
     });
     const serialized = JSON.stringify(records[0]);
     expect(serialized).not.toContain("sk-Abc123Def456Ghi789Jkl");
-    expect(serialized).toContain(REDACTED_CREDENTIAL);
+  });
+
+  // ### 24.132 — split out of the test above. The field-type gate now runs on
+  // the SCRUBBED value regardless of whether a scrub occurred (that was the
+  // 24.132 fix: scrubbing and type-validation are independent obligations,
+  // neither may satisfy the other). `status` carries a frozen vocabulary, and
+  // the scrubbed credential marker is not a member of it, so the type gate
+  // overrides the scrub outcome and the field lands on REDACTED_RAW, not
+  // REDACTED_CREDENTIAL — the credential is still gone before the sink, only
+  // the marker naming its removal moved.
+  it("routes a credential-shaped value under a vocabulary field to REDACTED_RAW, not REDACTED_CREDENTIAL (### 24.132)", () => {
+    const { sink, records } = capture();
+    const log = createLogger(sink);
+    log.error("provider.failed", {
+      fields: { status: "sk-Abc123Def456Ghi789Jkl" },
+    });
+    const serialized = JSON.stringify(records[0]);
+    expect(serialized).toContain(REDACTED_RAW);
   });
 
   it("DROPS a non-allowlisted field to REDACTED_FIELD before the sink (allowlist fail-safe)", () => {
