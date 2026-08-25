@@ -32,6 +32,22 @@ describe("branded ID constructors (1.1)", () => {
     expect(() => agentJobId("\t\n")).toThrowError(InvalidIdError);
   });
 
+  // ### 24.100 — `makeId` casts without ever running the brand's own schema:
+  // it was a non-empty check + a bare cast, so anything non-blank passed
+  // regardless of shape. `WorkspaceIdSchema` has carried a NARROWER
+  // well-formedness shape since `### 24.84` (`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`,
+  // max 64), but `workspaceId()` never invoked it — this is the defect,
+  // pinned directly against the public constructor (not the schema, which
+  // already had its own coverage in `zod-brands.test.ts`).
+  it("rejects a non-empty but malformed workspace id — the constructor now RUNS WorkspaceIdSchema (### 24.100)", () => {
+    expect(() => workspaceId("NOT a valid workspace id!!")).toThrowError(InvalidIdError);
+  });
+
+  it("still accepts every well-formed slug-shaped workspace id (### 24.100 non-regression)", () => {
+    expect(workspaceId("employer-work")).toBe("employer-work");
+    expect(workspaceId("ws-1")).toBe("ws-1");
+  });
+
   it("the error carries the id type + raw value for diagnostics", () => {
     try {
       approvalId("");

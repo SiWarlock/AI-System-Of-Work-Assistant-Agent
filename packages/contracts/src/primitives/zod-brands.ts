@@ -89,6 +89,24 @@ const WORKSPACE_ID_MAX = 64;
  * the spelling" are different populations — the second includes return-type
  * annotations, which are not bypasses.
  *
+ * ⛔⛔ A FOURTH SPELLING THE `as` CENSUS CANNOT FIND (task `### 24.100`,
+ * corrected here so the census guidance can locate this CLASS, not just the
+ * cast forms above): a NAMED FUNCTION that mints a brand without ever
+ * invoking the brand's own schema is a bypass too, and it carries no `as`
+ * token to grep for — `ids.ts`'s `workspaceId(raw)` was exactly this until
+ * `### 24.100`: it routed through `makeId`'s bare `raw.trim().length===0`
+ * check + `raw as Branded<...>` cast, never touching `WorkspaceIdSchema`, so
+ * `workspaceId("NOT a valid workspace id!!")` returned a value this schema
+ * would reject. FIXED: `makeId` now REQUIRES and RUNS the brand's governing
+ * schema (`ids.ts`'s `BrandParser<B>` parameter) — every constructor it
+ * backs (`workspaceId`, `agentJobId`, …, `processorId`, `toolId`) invokes its
+ * own `*Schema.safeParse` and wraps a rejection in `InvalidIdError`, so this
+ * particular named-function bypass is closed. The CLASS remains real for any
+ * future brand constructor: to find one, do not grep for a spelling — read
+ * every EXPORTED function whose return type is a brand and check whether its
+ * body references that brand's `*Schema` (position/type census, `L179`, the
+ * same method this file's `as`-cast guidance above already prescribes).
+ *
  * ⛔ WHAT THIS IS NOT: a credential detector. Lowercase credential-shaped
  * strings ACCEPT (`sk-ant-api03-abc123def456`, `akiaiosfodnn7example`, a 32-char
  * lowercase hex, …) and `test/primitives/zod-brands.test.ts` PINS that
@@ -185,7 +203,20 @@ export function factIdentity(parts: FactIdentityParts): FactIdentity {
 
 // ── MdContentSha — sha256 hex of normalized semantic content (Appendix A) ────
 export type MdContentSha = Branded<string, "MdContentSha">;
+//
+// ⛔ NO `/i` FLAG (task ### 24.89 — do not re-add it). `zod-to-json-schema`
+// emits a `.regex()` brand's `pattern` as the regex SOURCE only — JSON
+// Schema draft-07's `pattern` keyword carries no flags mechanism, so a Zod
+// `/i` flag is silently DROPPED the moment this schema is emitted and
+// compiled by ajv. Verified: with `/i`, Zod ACCEPTED an uppercase sha256 hex
+// that every emitted embedding schema (`semantic-fact.schema.json`,
+// `fact-provenance.schema.json`, `signed-provenance-stamp.schema.json`,
+// `divergence.schema.json`, `knowledge-mutation-plan.schema.json` — all
+// embed this brand) compiled to REJECT via ajv, a live Zod-vs-ajv
+// candidate-data-gate disagreement. sha256 hex is canonically lowercase, so
+// the fix is to TIGHTEN Zod to match every emitted `pattern`, not to widen
+// ajv. Pinned: `test/primitives/zod-ajv-regex-parity.test.ts`.
 export const MdContentShaSchema = z
   .string()
-  .regex(/^[0-9a-f]{64}$/i, "sha256 hex")
+  .regex(/^[0-9a-f]{64}$/, "sha256 hex")
   .transform((s): MdContentSha => s as MdContentSha);

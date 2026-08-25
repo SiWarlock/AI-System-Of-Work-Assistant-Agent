@@ -1,6 +1,9 @@
 // Shared enums with exact literal membership (1.1). Const tuples are the single
 // source of the literal set; the matching union type is derived from the tuple.
 import { type Branded, makeId } from "./ids";
+// ### 24.100 — processorId/toolId now RUN their brand's own schema via
+// makeId's required parameter, same as every ids.ts constructor.
+import { ProcessorIdSchema, ToolIdSchema } from "./zod-brands";
 
 export const WorkspaceType = ["employer_work", "personal_business", "personal_life"] as const;
 export type WorkspaceType = (typeof WorkspaceType)[number];
@@ -37,5 +40,5 @@ export const isEgressClass = member(EgressClass);
 // unspecified upstream (arch_gaps); validated for non-emptiness only here.
 export type ProcessorId = Branded<string, "ProcessorId">;
 export type ToolId = Branded<string, "ToolId">;
-export const processorId = (raw: string): ProcessorId => makeId("ProcessorId", raw);
-export const toolId = (raw: string): ToolId => makeId("ToolId", raw);
+export const processorId = (raw: string): ProcessorId => makeId("ProcessorId", raw, ProcessorIdSchema);
+export const toolId = (raw: string): ToolId => makeId("ToolId", raw, ToolIdSchema);
