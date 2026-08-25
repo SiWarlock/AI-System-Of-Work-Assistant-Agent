@@ -16,7 +16,11 @@
 //   (b) IDEMPOTENCY — the SAME application idempotencyKey twice → ONE committed
 //       revision + ZERO duplicate external write (the DB-backed ReceiptStore reserve
 //       returns committed-reuse on the replay);
-//   (c) approval-flow EXACTLY-ONCE — a double apply → ONE transition, ONE external write;
+//   (c) approval-flow EXACTLY-ONCE — a double apply → ONE transition; the write
+//       itself rests REJECTED under this fixture's unarmed transport (25.SCHED
+//       leg 5 correction — see the write-receipt assertion below), so what this
+//       pins is narrower than "one external write": ZERO receipts after either
+//       drive (no phantom/partial write), never a duplicate to have zero of;
 //   (d) ingestion-triage replay reuses the idempotencyKey (the disposition record is a
 //       no-op on the second drive; the re-entry reuses the run).
 //
@@ -381,6 +385,30 @@ describe.skipIf(!SOW_TEMPORAL)("proof spine — end-to-end over a real Temporal 
     const approved = await rig().backends.repos.approvals.listByStatus("approved");
     expect(approved.ok).toBe(true);
     if (approved.ok) expect(approved.value.length).toBe(1);
+    // 25.SCHED leg 5 (AC-2) — the header ABOVE claimed "ONE external write," but
+    // nothing checked the write-receipt store until now. Measured (not assumed):
+    // under THIS fixture's deterministic (unarmed) write transport, the FIRST
+    // drive's `dispatchApproved` rests at a `rejected` outcome
+    // (`first.surfaced.message` reads "approved-action dispatch failed: rejected")
+    // — `requireApproval` is re-consulted at DISPATCH time (the same
+    // `externalWriteDeps` the propose leg uses), so the write never lands even
+    // though the human decision is "approved." The load-bearing fact this fixture
+    // actually proves is narrower than the header's "one write": the write-receipt
+    // store shows ZERO receipts after BOTH drives — no phantom/partial write
+    // occurred on the rejected first attempt, and the CAS-reused second attempt
+    // (which does not even re-surface a dispatch failure — its `surfaced` is
+    // absent, confirming it never re-attempted the write) created no receipt
+    // either. A real successful-write idempotency proof needs an armed transport +
+    // a requireApproval fixture that clears post-approval — flagged as a
+    // providers-integrations Finding (Step-9), not built here.
+    expect(first.surfaced?.message).toBe("approved-action dispatch failed: rejected");
+    expect(second.surfaced).toBeUndefined();
+    const receipt = await rig().backends.repos.writeReceipts.getByCanonicalObjectKey(
+      approvalEnvelope.targetSystem,
+      approvalEnvelope.canonicalObjectKey,
+    );
+    expect(receipt.ok).toBe(false);
+    if (!receipt.ok) expect(receipt.error.code).toBe("not_found");
   });
 
   it("(d) ingestion-triage replay — a second drive of the same disposition is a record no-op", async () => {
