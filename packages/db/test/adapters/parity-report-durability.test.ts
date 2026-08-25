@@ -14,16 +14,37 @@
 // use. "Restart" = CLOSE the first connection and OPEN a brand-new one over the same file. The
 // malformed-payload row is inserted RAW (bypassing the repo's typed `record`) to simulate a corrupt
 // on-disk blob the read-back gate must reject. Mirror of `knowledge-revision-durability.test.ts`.
+//
+// 2026-08-24 (task 24.96) — CORRECTED PREMISE; do not re-derive this or re-open the entry on the
+// old headline. 24.96's headline implied the corrupt-stored-row `ParityReportSchema.parse` throw
+// (`sqlite/index.ts:261` AND `postgres/index.ts:273` both run it) crosses the repository boundary
+// uncontained on one of the two dialects. MEASURED and FALSE for BOTH: each call site sits inside
+// its adapter's `run()` unit-of-work wrapper, which catches any thrown error and returns a typed
+// `err` — see the comment "surrounding run() → typed err" at `sqlite/index.ts:1086-1088` (the
+// `getLatestForRevision` call site; the Postgres call site is the identical shape). The §16
+// never-throws contract already held on BOTH dialects before this file's Postgres block existed;
+// nothing here was ever uncontained. What this suite actually pins is narrower and real: the
+// FAULT-not-ABSENCE mapping (a corrupt/tampered stored row must surface as a typed `err`, never a
+// silent `ok(undefined)` that a serving-gate reader would misread as "never reconciled ⇒ degrade")
+// was PROVEN for SQLite only (the `11.1 ...` describe block below) and had NO equivalent proof for
+// Postgres, even though `postgres/index.ts:273` runs the identical throwing parse — a real, narrow
+// coverage gap given the serve-time coverage kill-switch runs on whichever dialect is deployed. The
+// `24.96 ... ON POSTGRES` describe block below closes that gap; it does not touch the sqlite block.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isErr, isOk, validParityReport, validDivergence, type ParityReport } from "@sow/contracts";
 import { createSqliteRepositories } from "../../src/adapters/sqlite/index";
 import { createSqliteSchema } from "./create-sqlite-schema";
+import { PGlite } from "@electric-sql/pglite";
+import { drizzle as pgDrizzle, type PgliteDatabase } from "drizzle-orm/pglite";
+import { createPostgresRepositories } from "../../src/adapters/postgres/index";
+import { createPgSchema } from "./create-pg-schema";
+import * as pgSchema from "../../src/schema/pg/index";
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -165,6 +186,110 @@ describe("11.1 ParityReportRepository — durable across a worker restart (§4/�
     const got = await repos.parityReports.getLatestForRevision("ws-tamper", "rev-tamper");
     sqlite.close();
 
+    expect(isErr(got)).toBe(true);
+    if (!isErr(got)) return;
+    expect(got.error.code).not.toBe("not_found");
+  });
+});
+
+describe("24.96 ParityReportRepository — the SAME corrupt-stored-payload gate on POSTGRES", () => {
+  // Harness per `postgres.test.ts:44-57`: `new PGlite()` (in-process real PG16, server-free +
+  // deterministic), `createPgSchema(client)`, `drizzle(client)`, `createPostgresRepositories(db)`,
+  // and an `afterEach` that closes the client. Read-only import of `create-pg-schema.ts` — that
+  // helper is owned by another agent, not edited here.
+  let pgClient: PGlite;
+  let pgDb: PgliteDatabase;
+  let pgRepos: ReturnType<typeof createPostgresRepositories>;
+
+  beforeEach(async () => {
+    pgClient = new PGlite();
+    await createPgSchema(pgClient);
+    pgDb = pgDrizzle(pgClient);
+    pgRepos = createPostgresRepositories(pgDb);
+  });
+  afterEach(async () => {
+    await pgClient.close();
+  });
+
+  it("[pg] positive control: a VALID raw row DOES read back ok — proves the raw insert reaches the parse gate", async () => {
+    // A direct drizzle insert (bypassing the repository's typed `record`) of a VALID payload —
+    // proves the raw-insert path itself lands rows the repository can read back, so the two
+    // corrupt-payload cases below are known to actually exercise the parse gate rather than
+    // failing for some unrelated harness reason.
+    await pgDb.insert(pgSchema.parityReports).values({
+      reportId: REPORT.reportId,
+      workspaceId: REPORT.workspaceId,
+      reconciledAtRevision: REPORT.reconciledAtRevision,
+      recordedAt: "2026-07-13T00:00:00.000Z",
+      payload: REPORT,
+    });
+
+    const got = await pgRepos.parityReports.getLatestForRevision(
+      REPORT.workspaceId,
+      REPORT.reconciledAtRevision,
+    );
+
+    expect(isOk(got)).toBe(true);
+    if (!isOk(got)) return;
+    expect(got.value).toEqual(REPORT);
+  });
+
+  it("[pg] a stored payload that fails ParityReportSchema.parse surfaces a typed err (FAULT), not undefined (ABSENCE)", async () => {
+    // Insert a CORRUPT payload directly via drizzle (bypass the repo's typed `record`) — valid
+    // JSON but NOT a ParityReport (missing every required field except workspaceId/
+    // reconciledAtRevision, which DELIBERATELY match the query key). Mirrors sqlite case at :110,
+    // but keeps the payload's own identity fields correct so this case is gated SOLELY by the
+    // `ParityReportSchema.parse` shape check, never by the separate identity-mismatch check
+    // exercised below — an identity-matching-but-shape-invalid payload only a schema gate rejects.
+    await pgDb.insert(pgSchema.parityReports).values({
+      reportId: "report-bad-pg",
+      workspaceId: "ws-corrupt-pg",
+      reconciledAtRevision: "rev-corrupt-pg",
+      recordedAt: "2026-07-13T00:00:00.000Z",
+      payload: { workspaceId: "ws-corrupt-pg", reconciledAtRevision: "rev-corrupt-pg", garbage: true },
+    });
+
+    const got = await pgRepos.parityReports.getLatestForRevision("ws-corrupt-pg", "rev-corrupt-pg");
+
+    // A fault is a typed err — DISTINGUISHABLE from a true absence (ok(undefined)): the coverage
+    // reader must degrade on a fault, never treat a corrupt row as "no report". Explicitly not
+    // ok(undefined): `isErr` and `isOk` are mutually exclusive on a Result, so asserting isErr
+    // true already rules out ok(undefined), and the code assertion below rules out `not_found`
+    // (the ok(undefined) case's typed-err analogue) too.
+    expect(isErr(got)).toBe(true);
+    if (!isErr(got)) return;
+    expect(got.error.code).not.toBe("not_found");
+    expect(["constraint_violation", "serialization_failure", "unavailable", "unknown", "conflict"]).toContain(
+      got.error.code,
+    );
+  });
+
+  it("[pg] a stored payload whose OWN workspaceId/revision disagree with the query-key columns is a typed err (WS-8 fail-closed), never a cross-workspace surface", async () => {
+    // A TAMPERED row: the denormalized query-key COLUMNS say (ws-tamper-pg, rev-tamper-pg) — so
+    // the query FINDS it — but the embedded payload is a valid ParityReport claiming a DIFFERENT
+    // workspace and revision (ws-other-pg/rev-other-pg). Mirrors sqlite case at :136. The typed
+    // `record` can NEVER produce this; only out-of-band tampering/corruption can. The read-back
+    // identity gate (safety rule 4 / WS-8 defense-in-depth) must reject it as a FAULT, so a query
+    // for ws-tamper-pg cannot surface ws-other-pg's report.
+    const mismatchedPayload: ParityReport = {
+      ...REPORT,
+      reportId: "report-tampered-pg" as ParityReport["reportId"],
+      workspaceId: "ws-other-pg" as ParityReport["workspaceId"],
+      reconciledAtRevision: "rev-other-pg" as ParityReport["reconciledAtRevision"],
+    };
+    await pgDb.insert(pgSchema.parityReports).values({
+      reportId: "report-tampered-pg",
+      workspaceId: "ws-tamper-pg",
+      reconciledAtRevision: "rev-tamper-pg",
+      recordedAt: "2026-07-13T00:00:00.000Z",
+      payload: mismatchedPayload,
+    });
+
+    const got = await pgRepos.parityReports.getLatestForRevision("ws-tamper-pg", "rev-tamper-pg");
+
+    // WS-8 fail-closed: a typed err, never a cross-workspace surface. If Postgres behaved
+    // differently from SQLite here (e.g. surfaced ws-other-pg's report), that would be a safety
+    // rule 4 breach — this assertion is deliberately NOT weakened to accommodate a divergence.
     expect(isErr(got)).toBe(true);
     if (!isErr(got)) return;
     expect(got.error.code).not.toBe("not_found");
