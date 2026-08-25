@@ -23,6 +23,7 @@ import {
 } from "@sow/contracts";
 import {
   looksUnsafe,
+  looksLikeCredentialShape,
   isSafeFieldValue,
   hasFieldVocabulary,
   isAllowlistedField,
@@ -52,6 +53,7 @@ export {
   SAFE_FIELD_ALLOWLIST,
   isAllowlistedField,
   looksUnsafe,
+  looksLikeCredentialShape,
   looksLikeRawContent,
   isSafeStructuredToken,
   isSafeFieldValue,
@@ -97,6 +99,31 @@ export function redactString(value: string): string {
     .replace(URL_USERINFO_SEGMENT, `$1${REDACTED_CREDENTIAL}@`)
     .replace(CREDENTIAL_TOKEN, REDACTED_CREDENTIAL);
   if (looksUnsafe(scrubbed)) return REDACTED_FIELD;
+  return scrubbed;
+}
+
+/**
+ * Scrub credential-shaped substrings from a SHORT, HUMAN-CHOSEN IDENTIFIER (a
+ * workspace name/slug) — task 24.130 deposit 2. Same scrub as {@link redactString}
+ * (a real credential shape still gets replaced / drops the field if
+ * unredactable), but the fail-safe re-check is SHAPE-ONLY
+ * ({@link looksLikeCredentialShape}, `SENSITIVE_KEYWORD` excluded): an identifier
+ * is a human-chosen NAME, not prose and not a machine ref, so a bare word like
+ * "credential" inside it (`acme-credential-review`) is not itself suspicious —
+ * the same granularity error task 24.123 fixed for whole documents, applied to a
+ * value class 24.123 did not cover. Idempotent + pure.
+ *
+ * ⛔ NOT a replacement for `redactString` on prose or on a machine-generated
+ * audit ref — those still want the keyword arm. Use this ONLY for a short,
+ * human-chosen name/id (e.g. a workspace id reaching a renderer-bound
+ * projection).
+ */
+export function redactStructuredIdentifier(value: string): string {
+  const scrubbed = value
+    .replace(PEM_BLOCK, REDACTED_CREDENTIAL)
+    .replace(URL_USERINFO_SEGMENT, `$1${REDACTED_CREDENTIAL}@`)
+    .replace(CREDENTIAL_TOKEN, REDACTED_CREDENTIAL);
+  if (looksLikeCredentialShape(scrubbed)) return REDACTED_FIELD;
   return scrubbed;
 }
 

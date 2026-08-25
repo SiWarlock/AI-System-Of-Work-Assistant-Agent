@@ -177,6 +177,42 @@ export const CREDENTIAL_NETS: readonly RegExp[] = Object.freeze([
   URL_USERINFO_CREDENTIAL,
 ]);
 
+// task 24.130 deposit 2 — shape-only nets, `SENSITIVE_KEYWORD` excluded. A SHORT,
+// HUMAN-CHOSEN IDENTIFIER (a workspace name/slug) is a THIRD scan granularity,
+// distinct from the two task 24.123 named:
+//   * COMMIT granularity (a whole rendered document) — prose, where a bare
+//     keyword like "password" is common and not suspicious.
+//   * AUDIT-REF granularity (a machine-generated ref/hash/token) — the SAME bare
+//     keyword IS suspicious there, because nothing legitimate puts "password" in
+//     a system-generated ref.
+// An identifier NAME is neither: it is short and structured like an audit ref,
+// but HUMAN-CHOSEN like prose — a person can legitimately name a workspace
+// `acme-credential-review` (a project ABOUT credential review) without the name
+// carrying a credential (task 24.102's accepted-cost note, five measured
+// witnesses, none holding a secret). The keyword net's false-positive mode is
+// 24.123's, applied to a value class 24.123 never covered. A genuine credential
+// SHAPE (an API-key prefix, a URL userinfo credential) still refuses — only the
+// bare-word keyword arm is dropped.
+const IDENTIFIER_CREDENTIAL_NETS: readonly RegExp[] = Object.freeze([
+  CREDENTIAL_PREFIX,
+  URL_USERINFO_CREDENTIAL,
+]);
+
+/**
+ * True iff `s` carries a credential SHAPE — `SENSITIVE_KEYWORD` excluded. See
+ * `IDENTIFIER_CREDENTIAL_NETS` above. Markers are stripped with the
+ * SPAN_PRESERVING_FILLER arm first (task 24.129's class: a successfully-scrubbed
+ * marker must not re-trip this predicate). ⚠ The LEGACY_SPACE_FILLER arm is not
+ * needed here: unlike `SENSITIVE_KEYWORD`'s `private[_ -]?key`, NEITHER net in
+ * this reduced list admits a bare space anywhere in its alphabet (both explicitly
+ * exclude `\s`), so a legacy-space substitution can never complete a match the
+ * span-preserving arm would otherwise miss. Pure.
+ */
+export function looksLikeCredentialShape(s: string): boolean {
+  const spanPreserving = stripMarkers(s, SPAN_PRESERVING_FILLER);
+  return IDENTIFIER_CREDENTIAL_NETS.some((net) => net.test(spanPreserving));
+}
+
 /**
  * True iff the string trips a credential/secret detector — i.e. it is NOT safe to
  * emit verbatim. The scrubbing net in `redact.ts` re-checks against this after a

@@ -35,3 +35,8 @@ packages/knowledge/test/tombstone.test.ts:generic-api-key:384
 #    auditFieldContainsSecret gate on createAuditPersistPort's workspaceId channel, boot.ts:797) ──
 apps/worker/test/boot/auditPersistWorkspaceIdGate.test.ts:generic-api-key:85
 apps/worker/test/boot/auditPersistWorkspaceIdGate.test.ts:generic-api-key:124
+
+# ── task 24.130 deposit 2 TDD fixture (fake AKIA-shaped credential glued into an
+#    otherwise id-legal string, proving looksLikeCredentialShape still refuses a
+#    genuine credential shape even when it would pass the id charset) ──
+packages/domain/test/redaction/identifier-benign-keyword.test.ts:generic-api-key:144
