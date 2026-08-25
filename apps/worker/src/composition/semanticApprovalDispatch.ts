@@ -19,7 +19,7 @@ import type { WorkflowRunRef } from "@sow/contracts";
 import { applyPlan as realApplyPlan, readVaultHeadRevision } from "@sow/knowledge";
 import { makeEnforceWorkspacePathScope } from "@sow/knowledge";
 import { LEGACY_UNPREFIXED_WORKSPACE_ID } from "./legacy-workspace";
-import type { KnowledgeWriterDeps, VaultFs, KnowledgeRevisionStore } from "@sow/knowledge";
+import type { KnowledgeWriterDeps, VaultFs, KnowledgeRevisionStore, StamperDeps } from "@sow/knowledge";
 import { createCommitActivity } from "@sow/workflows";
 import type { ApplyPlanFn } from "@sow/workflows";
 import type { PendingKnowledgeMutationRepository } from "@sow/db";
@@ -51,6 +51,16 @@ export interface SemanticApprovalDispatchDeps {
   };
   /** The KnowledgeWriter apply entry — defaults to the real writer; injected in tests. */
   readonly applyPlan?: ApplyPlanFn;
+  /**
+   * task 20.2 — the KnowledgeWriter provenance-signing dep (gate 4/G1d-2, already optional on
+   * `KnowledgeWriterDeps.signing` — see writer.ts:190). OPTIONAL/DORMANT BY DEFAULT: UNSET ⇒
+   * `writerDeps.signing` stays key-ABSENT (conditional spread below) ⇒ `embedProvenanceStamps`
+   * never runs ⇒ the committed Markdown bytes are BYTE-IDENTICAL to pre-20.2. Mirrors the sibling
+   * `buildActivities.ts` site (task 19.2, `buildActivities.ts:379`) — the SAME `StamperDeps` pair
+   * `boot.ts` sources from `keychainSecrets`/`provenanceServingOracle` threads here too; no new
+   * arming surface.
+   */
+  readonly signing?: StamperDeps;
 }
 
 /**
@@ -77,6 +87,11 @@ export function buildSemanticApprovalDispatch(deps: SemanticApprovalDispatchDeps
     // rule-4 / WS-8 path guard on the approval-driven commit path. ⚠ It read "behaviourally inert until
     // step 3" until step 3 landed — true when written, falsified from another package with nothing red.
     workspacePathCheck: makeEnforceWorkspacePathScope(LEGACY_UNPREFIXED_WORKSPACE_ID),
+    // task 20.2 — the provenance-signing dep, same conditional-spread idiom as buildActivities.ts's
+    // sibling site (task 19.2): the key is ABSENT, not `undefined`-valued, when `deps.signing` is
+    // unset, so the shipped default stays byte-identical (writer.ts:626-637 gates ALL stamping on
+    // `deps.signing !== undefined`).
+    ...(deps.signing !== undefined ? { signing: deps.signing } : {}),
   };
   return createSemanticMutationDispatch({
     pendingKmp: deps.pendingKmp,
