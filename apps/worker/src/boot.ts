@@ -226,6 +226,15 @@ import {
   makeProofSpineRegisterHook,
   PROOF_SPINE_TASK_QUEUE,
 } from "./temporal/registerWorker";
+// task 25.5 — the 25.SCHED leg-1 durable schedule registrar + the ingestion-triage default-OFF gate.
+// scheduleRegistrar.ts's own header: "wiring this gate into bootWorker ... is PKG-W1's boot.ts,
+// outside this package's territory" — this IS that wiring.
+import {
+  createTemporalScheduleRegistrar,
+  gateIngestionTriageSchedule,
+  type ScheduleClientPort,
+  type TemporalScheduleSpec,
+} from "./temporal/scheduleRegistrar";
 import type { ProofSpineParams } from "./composition/buildActivities";
 // 21.10/21.8 — the credential-seam accessor + card-transport gate types `proofSpineParams` carries.
 // Deep subpath import: the main @sow/integrations barrel does not re-export tools/cards (its own
@@ -298,6 +307,20 @@ export interface BootConfig extends BackendsConfig {
    *  (byte-equivalent; NO reconcile machinery constructed). Set ONLY at the owner's ARMING, bundled with the
    *  transport provisioning + the trigger-source wiring (the HARD LINE). Needs a `vaultRoot` precondition. */
   readonly reconcile?: boolean;
+  /**
+   * task 25.5 — owner opt-in for the ingestion-triage DURABLE schedule (default absent ⇒ no schedule
+   * registered; byte-equivalent). Strict `=== true` — a truthy non-boolean never arms (mirrors every
+   * other gate in this file, worker LESSONS §2). Even armed, `ensure()` can only CREATE a schedule
+   * PAUSED or converge an EXISTING one's spec/cadence — it can NEVER unpause one
+   * (`scheduleRegistrar.ts`'s own structural guarantee: `create` always `{paused: true}`, `update`
+   * never carries a `paused` field at all) — so this flag can never create a LIVE (actively firing)
+   * schedule, only a durably-registered-but-paused one an operator later unpauses by hand.
+   */
+  readonly ingestionTriageSchedule?: {
+    readonly enabled?: boolean;
+    /** The re-surface cadence. Defaults to 6 hours if armed without an override. */
+    readonly intervalMs?: number;
+  };
   /** Loopback bind host — defaults to 127.0.0.1 (a non-loopback host is REFUSED). */
   readonly apiHost?: string;
   /** Loopback bind port — defaults to 0 (ephemeral); a deployment pins one. */
@@ -2154,6 +2177,103 @@ export function deriveSingleOwnerLockPath(config: Pick<BootConfig, "dbPath">): s
   return join(mkdtempSync(join(tmpdir(), "sow-single-owner-lock-")), "single-owner.lock");
 }
 
+// ── task 25.5 — the REAL ScheduleClientPort adapter (the boot-level wiring scheduleRegistrar.ts's
+// own header names as outside its package's territory) ──────────────────────────────────────────
+
+/** The `{type: 'startWorkflow', ...}` action shape the real `@temporalio/client` Schedule API wants. */
+interface RealScheduleAction {
+  readonly type: "startWorkflow";
+  readonly workflowType: string;
+  readonly workflowId: string;
+  readonly taskQueue: string;
+  readonly args: readonly unknown[];
+}
+
+function toRealScheduleAction(action: TemporalScheduleSpec["action"]): RealScheduleAction {
+  return {
+    type: "startWorkflow",
+    workflowType: action.workflowType,
+    workflowId: action.workflowId,
+    taskQueue: action.taskQueue,
+    args: action.args,
+  };
+}
+
+/**
+ * The narrow slice of `@temporalio/client`'s `ScheduleClient` surface {@link createRealScheduleClientPort}
+ * drives — never the concrete SDK class injected directly, mirroring `createTemporalClientStartRun`'s own
+ * narrow-port convention (dispatchSourceIngestion.ts) and `scheduleRegistrar.ts`'s own stated reason for
+ * `ScheduleClientPort` existing at all. A real `new Client({connection}).schedule` instance structurally
+ * satisfies this (verified against the installed `@temporalio/client@1.19.0` `.d.ts` — `ScheduleClient.
+ * getHandle().describe()`/`.update()` and `ScheduleClient.create()`).
+ */
+export interface RealScheduleClientSurface {
+  getHandle(scheduleId: string): {
+    describe(): Promise<{ readonly state: { readonly paused: boolean } }>;
+    update(
+      updateFn: (previous: unknown) => {
+        spec: { intervals: { every: number }[] };
+        action: RealScheduleAction;
+        // REQUIRED by the real SDK's update-options shape, but ALWAYS `{}` here — never a `paused`
+        // key — mirrors scheduleRegistrar.ts's own structural guarantee that `update` can never
+        // touch pause state.
+        state: Record<string, never>;
+      },
+    ): Promise<void>;
+  };
+  create(options: {
+    scheduleId: string;
+    spec: { intervals: { every: number }[] };
+    action: RealScheduleAction;
+    state: { paused: true };
+  }): Promise<unknown>;
+}
+
+/**
+ * Task 25.5 — the REAL `ScheduleClientPort` adapter. `isNotFoundError` is INJECTED rather than an
+ * `instanceof ScheduleNotFoundError` baked in here, so this function needs NO static
+ * `@temporalio/client` import — boot.ts's own established convention is that every `@temporalio/client`
+ * touch in this file is a LAZY dynamic `await import(...)` (see the vault-watcher block below, and this
+ * function's own call site); the real caller supplies `(e) => e instanceof ScheduleNotFoundError` from
+ * ITS dynamic import. Pure adapter logic — testable over a fake `RealScheduleClientSurface`, no real
+ * Temporal server needed (mirrors `scheduleRegistrar.test.ts`'s own fake-port-only discipline).
+ */
+export function createRealScheduleClientPort(
+  client: RealScheduleClientSurface,
+  isNotFoundError: (e: unknown) => boolean,
+): ScheduleClientPort {
+  return {
+    async describe(scheduleId: string) {
+      try {
+        const desc = await client.getHandle(scheduleId).describe();
+        return { paused: desc.state.paused };
+      } catch (cause) {
+        if (isNotFoundError(cause)) return undefined;
+        throw cause;
+      }
+    },
+    async create(spec: TemporalScheduleSpec, opts: { readonly paused: true }) {
+      await client.create({
+        scheduleId: spec.scheduleId,
+        spec: { intervals: [{ every: spec.intervalMs }] },
+        action: toRealScheduleAction(spec.action),
+        state: { paused: opts.paused },
+      });
+    },
+    async update(spec: TemporalScheduleSpec) {
+      // `update`'s NEW spec/action NEVER carries `paused` — mirrors scheduleRegistrar.ts's own
+      // structural guarantee (a converge can change cadence/action, never pause state). `state: {}` is
+      // the REQUIRED-but-empty shape the real SDK's update-options type demands — no `paused` key ever
+      // rides along.
+      await client.getHandle(spec.scheduleId).update(() => ({
+        spec: { intervals: [{ every: spec.intervalMs }] },
+        action: toRealScheduleAction(spec.action),
+        state: {},
+      }));
+    },
+  };
+}
+
 /**
  * Boot the live worker control plane. Assembles the persistent backends, stands up
  * the real loopback API transport over the @sow/db port adapters (behind the injected
@@ -3300,6 +3420,60 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
       auditRef: GBRAIN_VERIFY_AUDIT_REF,
       logger: backends.logger,
     });
+  }
+
+  // task 25.5 — the ingestion-triage DURABLE schedule (default-OFF, strict `=== true`). Mirrors the
+  // GBrain version-pin verify's own FIRE-AND-FORGET + DEGRADED-SAFE discipline just above (never blocks
+  // boot, never crashes it — §16) AND the vault-watcher's LAZY-connect discipline (a down Temporal
+  // degrades to a warned no-op, no boot-time connect stall). ⛔ NOTHING ARMS: `gateIngestionTriageSchedule`
+  // returns undefined unless the owner has flipped `config.ingestionTriageSchedule.enabled` to the
+  // STRICT literal `true`, and even on the ON path `ensure()` can only create/converge a PAUSED schedule
+  // (scheduleRegistrar.ts's own structural guarantee) — no code path here or in that module can start a
+  // LIVE (actively firing) schedule; an operator unpauses it by hand, outside this process entirely.
+  const ingestionTriageScheduleSpec = gateIngestionTriageSchedule({
+    enabled: config.ingestionTriageSchedule?.enabled === true,
+    taskQueue: PROOF_SPINE_TASK_QUEUE,
+    intervalMs: config.ingestionTriageSchedule?.intervalMs ?? 6 * 60 * 60 * 1000,
+  });
+  if (ingestionTriageScheduleSpec !== undefined) {
+    const spec = ingestionTriageScheduleSpec;
+    void (async (): Promise<void> => {
+      let closeConnection: (() => Promise<void>) | undefined;
+      try {
+        const { Client, Connection, ScheduleNotFoundError } = await import("@temporalio/client");
+        const connection = Connection.lazy({ address: config.temporalAddress ?? "127.0.0.1:7233" });
+        closeConnection = (): Promise<void> => connection.close();
+        const scheduleClient = new Client({ connection }).schedule;
+        const registrar = createTemporalScheduleRegistrar({
+          client: createRealScheduleClientPort(
+            scheduleClient,
+            (e): boolean => e instanceof ScheduleNotFoundError,
+          ),
+        });
+        const outcome = await registrar.ensure(spec);
+        if (isErr(outcome)) {
+          backends.logger.warn("schedule.ingestion_triage.ensure_failed", {
+            fields: { code: outcome.error.code },
+          });
+        } else {
+          backends.logger.info("schedule.ingestion_triage.ensured", {
+            fields: { action: outcome.value.action },
+          });
+        }
+      } catch {
+        // A client-build/connect fault degrades to a warned no-op — never crashes boot (§16), mirrors
+        // the vault-watcher's own client_build_failed discipline above.
+        backends.logger.warn("schedule.ingestion_triage.client_unavailable", {
+          fields: { code: "client_build_failed" },
+        });
+      } finally {
+        try {
+          await closeConnection?.();
+        } catch {
+          /* best-effort close — a teardown fault must never surface (§16) */
+        }
+      }
+    })();
   }
 
   let closed = false;
