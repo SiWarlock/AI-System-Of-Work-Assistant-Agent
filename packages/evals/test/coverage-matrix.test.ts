@@ -10,7 +10,7 @@
 // It is deterministic and pure (no clock/network/randomness) — the harness
 // itself is test-first code.
 import { describe, it, expect } from "vitest";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { isOk, isErr } from "@sow/contracts";
@@ -34,6 +34,62 @@ const PKG_ROOT = resolve(HERE, "..");
 
 const acceptance = (): readonly EvalCriterion[] =>
   EVAL_CRITERIA.filter((c) => c.category === "acceptance");
+
+// spec(§12/§20.1) — hollow-coverage detector (task AC-1). `existsSync` alone
+// answers "does the declared suite file exist", not "does anything in it
+// actually run" — a file of pure `it.todo` stubs satisfies the former while
+// certifying nothing. This counts EXECUTING it()/test() calls (including the
+// `.each`/`.concurrent`/`.extend` modifier forms) and deliberately excludes
+// the dormant `.todo`/`.skip`/`.fails` forms AND any mention of either inside
+// a comment — `clean-install.test.ts:6` and `doctor-prereqs.test.ts:203` both
+// say "it.todo" in prose, and a regex that doesn't strip comments first
+// miscounts both as executing.
+//
+function executingTestCount(source: string): number {
+  // Strip block comments then line comments FIRST — otherwise a comment that
+  // echoes real call syntax (e.g. documenting `it("...")` in prose, exactly
+  // like the two real files above) gets miscounted as an executing call.
+  const stripped = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  // Bare `it(`/`test(` calls. The dormant forms `it.todo(`/`it.skip(`/`it.fails(`
+  // never match this — the `.todo` etc. sits directly between `it` and `(`, so
+  // `\s*\(` cannot bridge it. No explicit subtraction is needed.
+  const calls = stripped.match(/\b(?:it|test)\s*\(/g) ?? [];
+  // `.each`/`.concurrent`/`.extend` are executing modifier forms; `.todo`/
+  // `.skip`/`.fails` are deliberately excluded from this alternation.
+  const modifiers = stripped.match(/\b(?:it|test)\.(?:each|concurrent|extend)\b/g) ?? [];
+  return calls.length + modifiers.length;
+}
+
+describe("executingTestCount — the hollow-coverage detector", () => {
+  it("counts an executing it()", () => {
+    expect(executingTestCount('it("x", () => {});')).toBe(1);
+  });
+
+  it("does not count it.todo / it.skip / test.todo (dormant forms)", () => {
+    const source = ['it.todo("a");', 'it.skip("b", () => {});', 'test.todo("c");'].join("\n");
+    expect(executingTestCount(source)).toBe(0);
+  });
+
+  it("does not count a mention inside a line comment", () => {
+    // Mirrors the real regression (clean-install.test.ts:6, doctor-prereqs.test.ts:203
+    // both mention `it.todo` in prose) AND adds a live `it("...")` call-shape so this
+    // assertion is load-bearing against a naive (non-comment-stripping) implementation,
+    // not just the dormant-token exclusion — a bare mention of `it.todo` never contains
+    // an opening paren, so it can't discriminate the stripping step on its own.
+    const source = '// tracked as `it.todo` so the row is visible; see it("example") in the sibling suite\n';
+    expect(executingTestCount(source)).toBe(0);
+  });
+
+  it("does not count a mention inside a block comment", () => {
+    const source = '/* tracked as it.todo; see it("example") for context */\n';
+    expect(executingTestCount(source)).toBe(0);
+  });
+
+  it("counts it.each and a plain test() as executing", () => {
+    expect(executingTestCount('it.each([1, 2])("case %i", (n) => {});')).toBeGreaterThanOrEqual(1);
+    expect(executingTestCount('test("y", () => {});')).toBeGreaterThanOrEqual(1);
+  });
+});
 
 describe("§20.1 coverage oracle", () => {
   it("names exactly 19 unique PRD §20.1 acceptance tests", () => {
@@ -134,14 +190,6 @@ describe("registry integrity", () => {
     "MEETING_CLOSEOUT_REPLAY", // the real-integration DoD spine
     "WORKSPACE_ROUTING", // rule 4 (workspace isolation)
     "KNOWLEDGE_WRITE", // rule 1 (one-writer)
-    // ⛔ (b) by READ, not by default. `retrieval-recall.test.ts` exists and is the obvious neighbour,
-    // but this criterion's metric is `retrieval-usefulness` and that suite computes
-    // |gold ∩ top-K| / |gold| — RECALL by definition (16 mentions of recall; none of usefulness,
-    // precision or ndcg). Recall asks "was the gold doc retrieved at all", relevance asks "are the
-    // retrieved ones the right ones" — a system that retrieves EVERYTHING scores recall 1.0 with
-    // poor relevance, so recall cannot stand in for it. Re-pointing here would have been the exact
-    // proximity trap. Also `requiresRealIntegration: true`.
-    "RETRIEVAL_RELEVANCE",
   ];
 
   it("resolves every declared suite path to a file on disk (known-dangling set may only shrink)", () => {
@@ -155,19 +203,80 @@ describe("registry integrity", () => {
     // ⛔ THE RATCHET. Appending to the baseline to silence a failure raises this count and fails,
     // so widening the known-false set is a visible, reviewable act rather than a quiet one. When a
     // criterion is genuinely fixed, DELETE its entry and lower this number — never the reverse.
-    // ⚠ THE CEILING COUNTS **CRITERIA**, NOT PATHS. The two differ — today it is 4 CRITERIA across
-    // 2 paths, because `meeting-closeout-e2e.test.ts` is cited by three separate criteria. State the
-    // unit explicitly: a ceiling ambiguous between the two invites a later "correction" in the wrong
-    // direction, and because this number may only ever be LOWERED, a wrong unit bakes in permanently.
+    // ⚠ THE CEILING COUNTS **CRITERIA**, NOT PATHS. The two differ — today it is 3 CRITERIA across
+    // 1 path (`suites/meeting-closeout/meeting-closeout-e2e.test.ts`, still cited by all three of
+    // MEETING_CLOSEOUT_REPLAY, WORKSPACE_ROUTING and KNOWLEDGE_WRITE). State the unit explicitly: a
+    // ceiling ambiguous between the two invites a later "correction" in the wrong direction, and
+    // because this number may only ever be LOWERED, a wrong unit bakes in permanently.
     expect(
       KNOWN_DANGLING_SUITES.length,
       "the known-dangling baseline may only shrink — this ceiling counts CRITERIA (not paths); fix a criterion, do not add one",
-    ).toBeLessThanOrEqual(4);
+    ).toBeLessThanOrEqual(3);
     // Non-vacuity: a stale baseline naming criteria that now resolve is itself a false record.
     const staleBaseline = KNOWN_DANGLING_SUITES.filter((id) => !dangling.includes(id));
     expect(staleBaseline, `baseline lists criteria that now RESOLVE — delete them: ${staleBaseline.join(", ")}`).toEqual(
       [],
     );
+  });
+
+  // ⚠ A file that RESOLVES is not a suite that RUNS. The tripwire above only asks "does the declared
+  // path exist" — `suites/clean-install/clean-install.test.ts` exists and is entirely `it.todo`, so it
+  // satisfies that check completely while certifying nothing. That is the SAME false-coverage shape as
+  // the dangling-pointer defect above, one layer deeper: the matrix reported OPEN_SOURCE_INSTALL
+  // covered, and zero tests for it have ever executed.
+  //
+  // ⛔ KNOWN-HOLLOW BASELINE — same discipline as KNOWN_DANGLING_SUITES: a recorded, reviewable ratchet,
+  // not an allowlist. THIS LIST MAY ONLY EVER SHRINK (see the length assertion below). A suite of
+  // `it.todo` stubs is a coverage CLAIM with nothing behind it; adding a stub `it()` here to silence a
+  // failure — rather than a real assertion, or an entry in this ratchet — is the exact defect this
+  // tripwire exists to catch.
+  const KNOWN_HOLLOW_SUITES: readonly string[] = [
+    "OPEN_SOURCE_INSTALL", // suites/clean-install/clean-install.test.ts — 3 it.todo, 0 executing (Phase-11 / live-install gated)
+  ];
+
+  it("every declared .test.ts suite contains at least one EXECUTING test (hollow-coverage ratchet)", () => {
+    // Restricted to `.test.ts` deliberately, and pinned so a later tightening can't silently break it:
+    // PROVIDER_CONFORMANCE and RUNTIME_CONFORMANCE declare `src/conformance/*.ts` HARNESS MODULES (the
+    // conformance runners themselves), not test files — `executingTestCount` has no meaning on them.
+    for (const id of ["PROVIDER_CONFORMANCE", "RUNTIME_CONFORMANCE"]) {
+      const c = criterionById(id);
+      expect(c, `expected ${id} to exist in the registry`).toBeDefined();
+      expect(
+        c!.suite.endsWith(".test.ts"),
+        `${id} suite "${c!.suite}" was expected to be a non-.test.ts harness module, excluded from the hollow check`,
+      ).toBe(false);
+    }
+
+    const checkable = EVAL_CRITERIA.filter(
+      (c) => c.suite.endsWith(".test.ts") && existsSync(resolve(PKG_ROOT, c.suite)),
+    );
+    // Non-vacuity: the .test.ts + exists filter must not have emptied the checked set.
+    expect(checkable.length).toBeGreaterThan(0);
+
+    const hollow = checkable
+      .filter((c) => executingTestCount(readFileSync(resolve(PKG_ROOT, c.suite), "utf8")) < 1)
+      .map((c) => c.id);
+    const unexpectedHollow = hollow.filter((id) => !KNOWN_HOLLOW_SUITES.includes(id));
+    const hollowDetail = EVAL_CRITERIA.filter((c) => unexpectedHollow.includes(c.id))
+      .map((c) => `${c.id} → ${c.suite}`)
+      .join("\n");
+    // A NEW hollow suite fails here — the regression this tripwire exists for.
+    expect(
+      unexpectedHollow,
+      `NEW hollow suite(s) — declared, resolves, but zero EXECUTING tests:\n${hollowDetail}`,
+    ).toEqual([]);
+    // ⛔ THE RATCHET, same shape as the dangling-pointer ceiling above: appending to silence a failure
+    // raises this count and fails, so widening the known-hollow set is a visible, reviewable act.
+    expect(
+      KNOWN_HOLLOW_SUITES.length,
+      "the known-hollow baseline may only shrink — fix the criterion's suite (add a real test), do not add one to this list",
+    ).toBeLessThanOrEqual(1);
+    // Non-vacuity: a stale baseline naming a criterion that now has executing tests is a false record.
+    const staleHollowBaseline = KNOWN_HOLLOW_SUITES.filter((id) => !hollow.includes(id));
+    expect(
+      staleHollowBaseline,
+      `hollow baseline lists criteria that now have executing tests — delete them: ${staleHollowBaseline.join(", ")}`,
+    ).toEqual([]);
   });
 
   it("flags at least one real-integration-required DoD criterion", () => {
