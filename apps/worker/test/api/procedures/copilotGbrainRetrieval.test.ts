@@ -7,11 +7,13 @@
 // separate live-wiring blockers; THIS pins the mapping + scoping + fail-closed logic with a fake adapter.
 import { describe, it, expect } from "vitest";
 import { ok, err, isOk, isErr } from "@sow/contracts";
-import type { WorkspaceId, BrainId } from "@sow/contracts";
+import type { WorkspaceId, BrainId, AgentJob, ProviderRoute, EgressPolicy } from "@sow/contracts";
 import type { GbrainReadAdapter, GbrainReadResult } from "@sow/knowledge";
+import { egressVeto, isDeny } from "@sow/policy";
 import {
   createGbrainCopilotRetrieval,
   parseGbrainSearchResult,
+  RERANK_OVER_FETCH_MULTIPLIER,
 } from "../../../src/api/procedures/copilotGbrainRetrieval";
 
 /** A fake read adapter that records the search payload and returns a canned result. */
@@ -62,14 +64,18 @@ describe("createGbrainCopilotRetrieval — workspace-scoped, WS-8 fail-closed", 
     }
   });
 
-  it("passes the question + a bounded limit to adapter.search", async () => {
+  // 13.17 CHANGED: this used to assert `payload.limit === 7` (the raw display cap). That assertion
+  // is now WRONG on its own terms — 13.17 requires an OVER-FETCH window wider than the display cap
+  // (so rerank has candidates below the old cutoff to promote), so the adapter is deliberately asked
+  // for MORE than `limit`. The old value pinned the pre-13.17 behavior this task exists to change.
+  it("passes the question + an OVER-FETCH window (limit × RERANK_OVER_FETCH_MULTIPLIER) to adapter.search — 13.17 reorder-before-cap", async () => {
     const { adapter, calls } = fakeAdapter(WS, ok([]));
     const retrieval = createGbrainCopilotRetrieval({ adapters: new Map([[WS, adapter]]), limit: 7 });
     await retrieval.retrieve(WS, "the question");
     expect(calls).toHaveLength(1);
     const payload = calls[0] as { query?: unknown; limit?: unknown };
     expect(payload.query).toBe("the question");
-    expect(payload.limit).toBe(7);
+    expect(payload.limit).toBe(7 * RERANK_OVER_FETCH_MULTIPLIER); // the WIDER over-fetch window, not the display cap
   });
 
   it("an UNKNOWN workspace (not provisioned) fails CLOSED (WORKSPACE_NOT_FOUND)", async () => {
@@ -138,6 +144,131 @@ describe("createGbrainCopilotRetrieval — workspace-scoped, WS-8 fail-closed", 
       expect(r.value.blocks).toHaveLength(3);
       expect(r.value.sources).toHaveLength(3);
     }
+  });
+
+  // ── 13.17 — over-fetch, rerank, THEN cap (reorder-before-cap) ────────────────────────────────────
+  it("13.17: reorders BEFORE capping — a best-matching passage BELOW the raw cap position survives into the final capped set", async () => {
+    const QUERY = "quarterly vendor contract renewal deadline";
+    // 15 filler hits (positions 0-14) sharing NO lexical overlap with the query, then the ONE best
+    // match at position 15 — strictly below the OLD raw cap of 8, so a naive raw-order cap would
+    // have dropped it entirely.
+    const filler = Array.from({ length: 15 }, (_v, i) => ({
+      content: `unrelated filler note number ${String(i)} about the weather`,
+      source_id: `filler-${String(i)}`,
+      title: `Filler ${String(i)}`,
+    }));
+    const best = {
+      content: "The quarterly vendor contract renewal deadline is next Friday.",
+      source_id: "best-match",
+      title: "Vendor contract",
+    };
+    const hits = [...filler, best]; // best sits at index 15
+    const { adapter, calls } = fakeAdapter(WS, ok(hits));
+    const retrieval = createGbrainCopilotRetrieval({ adapters: new Map([[WS, adapter]]), limit: 8 });
+    const r = await retrieval.retrieve(WS, QUERY);
+    // The adapter was asked for a window wide enough to include position 15 in the first place.
+    const payload = calls[0] as { limit?: number };
+    expect(payload.limit).toBeGreaterThanOrEqual(16);
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.blocks).toHaveLength(8); // still capped at the display limit
+      // THE assertion: the best-matching passage — which a raw positional cap at 8 would have
+      // dropped (it sat at index 15) — is PRESENT in the final capped set.
+      expect(r.value.blocks).toContain(best.content);
+      expect(r.value.sources.map((s) => s.citationId)).toContain(`gbrain:${best.source_id}`);
+      // It should in fact rank FIRST — it is the only hit with any lexical relevance to the query.
+      expect(r.value.blocks[0]).toBe(best.content);
+    }
+  });
+
+  it("13.17: content-preserving — reranking never fabricates or mutates a passage's text or citation", async () => {
+    const hits = [
+      { content: "Alpha passage about the annual budget review.", source_id: "a", title: "Budget" },
+      { content: "Beta passage about the annual budget timeline.", source_id: "b", title: "Timeline" },
+      { content: "Gamma passage, unrelated to anything.", source_id: "c", title: "Other" },
+    ];
+    const originalByCitation = new Map(hits.map((h) => [`gbrain:${h.source_id}`, h.content]));
+    const { adapter } = fakeAdapter(WS, ok(hits));
+    const retrieval = createGbrainCopilotRetrieval({ adapters: new Map([[WS, adapter]]), limit: 3 });
+    const r = await retrieval.retrieve(WS, "annual budget");
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) {
+      expect(r.value.blocks).toHaveLength(3);
+      // Every returned block is EXACTLY one of the original hit contents — never truncated, altered,
+      // or synthesized — and stays aligned with its OWN original citation, not a swapped one.
+      r.value.sources.forEach((source, i) => {
+        const expectedContent = originalByCitation.get(source.citationId);
+        expect(expectedContent).toBeDefined();
+        expect(r.value.blocks[i]).toBe(expectedContent);
+      });
+      // No passage id/content pair is invented: the set of returned citationIds is a SUBSET of the
+      // original hits' ids (never a synthesized/extra one).
+      const returnedIds = new Set(r.value.sources.map((s) => s.citationId));
+      for (const id of returnedIds) expect(originalByCitation.has(id)).toBe(true);
+    }
+  });
+
+  // ── 13.17 SEC-MED pin — a raw Employer-Work retrieval still hits the REAL egressVeto downstream ──
+  // Retrieval itself never egresses (gbrain is local); the veto gate sits at SYNTHESIS time, upstream
+  // of which retrieved content is handed off (`copilot.ts` `runGovernedCopilotSynthesis`, out of this
+  // slice's territory and UNCHANGED by it). This pin proves the REAL, unmodified `egressVeto` still
+  // fails closed for exactly the content this port can hand it — never a cloud fallback (safety rule 5).
+  describe("13.17 SEC-MED — raw Employer-Work content still hits the real egressVeto and fails closed", () => {
+    const cloudRoute: ProviderRoute = {
+      provider: "claude",
+      model: "claude-opus-4",
+      endpoint: "https://api.anthropic.com",
+      egressClass: "cloud",
+    };
+    const employerWorkspace = { type: "employer_work" as const, dataOwner: "employer" as const };
+    const ackOffPolicy: EgressPolicy = {
+      workspaceId: "ws-employer" as EgressPolicy["workspaceId"],
+      allowedProcessors: [],
+      rawContentAllowedProcessors: [],
+      employerRawEgressAcknowledged: false,
+    };
+    const rawContentJob = {
+      id: "job-1",
+      workflowRunId: "wf-1",
+      workspaceId: "ws-employer",
+      capability: "copilot.ask",
+      contextRefs: [],
+      outputSchemaId: "sow:agent-extraction",
+      toolPolicy: { mode: "read_only", allowedTools: [], deniedTools: [], allowsMutating: false },
+      providerRoute: cloudRoute,
+      trustLevel: "trusted",
+      carriesRawContent: true, // retrieval fed real Employer-Work passages into the candidate route
+      maxRuntimeSeconds: 60,
+      idempotencyKey: "idem-1",
+    } as unknown as AgentJob;
+
+    it("retrieving Employer-Work content, then routing it through a cloud route, DENIES via the real egressVeto — no cloud fallback", async () => {
+      const hits = [{ content: "raw employer content", source_id: "emp-1", title: "Employer note" }];
+      const { adapter } = fakeAdapter("ws-employer", ok(hits));
+      const retrieval = createGbrainCopilotRetrieval({ adapters: new Map([["ws-employer", adapter]]) });
+      const retrieved = await retrieval.retrieve("ws-employer", "q");
+      expect(isOk(retrieved)).toBe(true); // retrieval itself succeeds (a local, non-egress read)
+
+      // The REAL, unmodified policy veto — never re-implemented here — denies the cloud route for the
+      // raw-content job over this exact ack-OFF employer-work posture.
+      const decision = egressVeto(rawContentJob, cloudRoute, ackOffPolicy, employerWorkspace);
+      expect(isDeny(decision)).toBe(true);
+      if (isDeny(decision)) {
+        expect(decision.reason).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
+      }
+    });
+
+    it("positive control: the SAME job/route/workspace with ack ON is ALLOWED — proves the DENY above is discriminating, not a vacuous always-deny", async () => {
+      const ackOnPolicy: EgressPolicy = {
+        ...ackOffPolicy,
+        employerRawEgressAcknowledged: true,
+        allowedProcessors: ["claude" as EgressPolicy["allowedProcessors"][number]],
+        rawContentAllowedProcessors: ["claude" as EgressPolicy["rawContentAllowedProcessors"][number]],
+        acknowledgedAt: "2026-08-24T00:00:00.000Z",
+      };
+      const decision = egressVeto(rawContentJob, cloudRoute, ackOnPolicy, employerWorkspace);
+      expect(isDeny(decision)).toBe(false);
+    });
   });
 });
 
