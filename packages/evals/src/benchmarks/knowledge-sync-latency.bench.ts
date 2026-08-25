@@ -161,6 +161,83 @@ export function assessSyncLatency(
  */
 export type SyncLatencyProbe = () => Promise<Result<SyncTrialSample, string>>;
 
+/** A monotone clock the probe reads to bracket ONE trial. Returns milliseconds. */
+export type Clock = () => number;
+
+/**
+ * Dependencies for {@link makeSyncLatencyProbe}. Closures only, no adapters — the
+ * harness stays transport-free so every unit test runs on plain fakes. A real
+ * caller wires `searchVisible` over `GbrainReadAdapter.search`
+ * (packages/knowledge/src/gbrain/mcp-read-adapter.ts:78 —
+ * `search(payload): Promise<GbrainReadResult>`) at the composition root.
+ */
+export interface SyncLatencyProbeDeps {
+  readonly commit: () => Promise<Result<{ readonly factId: string }, string>>;
+  readonly searchVisible: (factId: string) => Promise<Result<boolean, string>>;
+  readonly readModelReflected: (factId: string) => Promise<Result<boolean, string>>;
+  readonly now: Clock;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly pollIntervalMs: number;
+  readonly timeoutMs: number;
+}
+
+/**
+ * Build a {@link SyncLatencyProbe} that performs ONE real trial over injected,
+ * transport-free deps: commit a fact, then poll BOTH stages — GBrain search
+ * visibility and the dashboard read-model — independently off the SAME commit
+ * time `t0`, recording each stage's own elapsed ms at the poll that first
+ * observes it true (doc comment :44-52 — both stages are deltas off one shared
+ * commit). A poll err on either stage short-circuits the whole trial to a typed
+ * err; exceeding `timeoutMs` on a still-false stage returns a typed
+ * `timeout:<stage>` err instead of polling forever, so a regression cannot hang
+ * CI. Never throws across the boundary (§16) — every path returns the Result
+ * already required by {@link SyncLatencyProbe}.
+ */
+export function makeSyncLatencyProbe(deps: SyncLatencyProbeDeps): SyncLatencyProbe {
+  return async () => {
+    const committed = await deps.commit();
+    if (!committed.ok) {
+      return err(committed.error);
+    }
+    const { factId } = committed.value;
+    const t0 = deps.now();
+
+    let searchMs: number | undefined;
+    let readMs: number | undefined;
+
+    while (searchMs === undefined || readMs === undefined) {
+      await deps.sleep(deps.pollIntervalMs);
+      const elapsed = deps.now() - t0;
+
+      if (searchMs === undefined) {
+        const r = await deps.searchVisible(factId);
+        if (!r.ok) {
+          return err(r.error);
+        }
+        if (r.value) {
+          searchMs = elapsed;
+        } else if (elapsed > deps.timeoutMs) {
+          return err("timeout:gbrain_search_visibility");
+        }
+      }
+
+      if (readMs === undefined) {
+        const r = await deps.readModelReflected(factId);
+        if (!r.ok) {
+          return err(r.error);
+        }
+        if (r.value) {
+          readMs = elapsed;
+        } else if (elapsed > deps.timeoutMs) {
+          return err("timeout:read_model");
+        }
+      }
+    }
+
+    return ok({ commitToSearchVisibleMs: searchMs, commitToReadModelMs: readMs });
+  };
+}
+
 /**
  * Run `trials` probe iterations, collect the samples, and assess them against the
  * budget. A single probe failure aborts with a typed `probe_failed` error (a
