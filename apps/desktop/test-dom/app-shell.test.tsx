@@ -231,6 +231,20 @@ describe("AppShell — §9.4 scope switcher (moved verbatim in R2)", () => {
     expect(screen.queryByRole("listbox")).toBeNull(); // closed on selection
   });
 
+  it("aria-controls (§11 / CF-7): absent while collapsed, names the listbox's id once expanded", () => {
+    render(
+      <AppShell {...base}>
+        <div>content</div>
+      </AppShell>,
+    );
+    const btn = screen.getByRole("button", { name: /workspace scope/i });
+    expect(btn.hasAttribute("aria-controls")).toBe(false);
+    fireEvent.click(btn);
+    const listbox = screen.getByRole("listbox");
+    expect(btn.getAttribute("aria-controls")).toBe(listbox.id);
+    expect(listbox.id).not.toBe("");
+  });
+
   it("Escape closes the open listbox", () => {
     render(
       <AppShell {...base}>

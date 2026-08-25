@@ -92,6 +92,10 @@ function IngestionCard({
   // The project sub-picker is offered ONLY when the picked target IS the current scope's workspace
   // (the only workspace whose projects the renderer holds — WS-8). Rerouting elsewhere sends the
   // workspace alone; the worker validates/assigns the project on its side.
+  // §11 / CF-7 — a unique per-card id (the panel is per-card, not a shared singleton). Only
+  // meaningful while the panel is actually mounted (see the render condition below).
+  const panelId = `sow-reroute-${item.sourceId}`;
+
   const canPickProject =
     reroute !== undefined && selectedWorkspaceId !== "" && selectedWorkspaceId === reroute.projectsWorkspaceId;
 
@@ -142,6 +146,7 @@ function IngestionCard({
             className="sow-ingestion-btn sow-ingestion-btn--reroute"
             disabled={disabled}
             aria-expanded={rerouting}
+            aria-controls={reroute !== undefined && rerouting && !disabled ? panelId : undefined}
             onClick={() => setRerouting((v) => !v)}
             title={disabled ? "Connect the worker to reroute sources" : undefined}
           >
@@ -150,7 +155,7 @@ function IngestionCard({
         ) : null}
       </div>
       {reroute !== undefined && rerouting && !disabled ? (
-        <div className="sow-ingestion-reroute" role="group" aria-label="Reroute this source">
+        <div id={panelId} className="sow-ingestion-reroute" role="group" aria-label="Reroute this source">
           <label className="sow-reroute-field">
             <span className="sow-reroute-label">Reroute to workspace</span>
             <select

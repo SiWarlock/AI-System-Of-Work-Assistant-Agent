@@ -283,6 +283,18 @@ describe("IngestionInbox — reroute / assign-project ACTION UI (15.8)", () => {
     expect(card.querySelector('input[type="text"]')).toBeNull(); // no free-text target
   });
 
+  it("aria_controls_matches_the_panel_id — (§11 / CF-7) absent while collapsed, names the panel's id once expanded", () => {
+    // spec(§11) — the Reroute toggle's aria-controls must name the id of the panel it discloses.
+    render(<IngestionInbox items={[item("s1")]} onDispose={vi.fn(async () => true)} reroute={rerouteOpts} />);
+    const card = cardOf("s1");
+    const toggle = within(card).getByRole("button", { name: "Reroute" });
+    expect(toggle.hasAttribute("aria-controls")).toBe(false);
+    fireEvent.click(toggle);
+    const panel = within(card).getByRole("group", { name: "Reroute this source" });
+    expect(toggle.getAttribute("aria-controls")).toBe(panel.id);
+    expect(panel.id).not.toBe("");
+  });
+
   it("reroute_submit_blocked_without_a_selected_workspace — REQ-F-017 at the edge (no target-less reroute)", () => {
     // spec(REQ-F-017) submitting with no workspace chosen is prevented client-side — the guard the park exists for.
     const onDispose = vi.fn(async () => true);

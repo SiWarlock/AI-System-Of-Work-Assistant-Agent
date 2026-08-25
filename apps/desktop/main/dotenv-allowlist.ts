@@ -27,29 +27,118 @@ export const RECOGNIZED_SOW_ENV_KEYS: readonly string[] = [
   "SOW_SUBSCRIPTION_REACHABILITY_LIVE",
 ];
 
-// The subscription-shadowing / egress-redirect env set, INLINED verbatim from the canonical source
-// `apps/worker/src/composition/subscription-auth-guard.ts:56` (`SUBSCRIPTION_SHADOWING_ENV_KEYS`). It is not
-// barrel-exported from `@sow/worker`, and a deep import would drag a node-heavy worker edge into the main tier
-// (LESSONS §5) — so it is copied here for the ESCALATED warning only. ⚠ Drift note: this set affects ONLY the
-// warning SPECIFICITY, NEVER the gate — a stale copy merely downgrades a shadowing key's warn from "shadowing"
-// to "not_recognized"; the key is still skipped (not on the SOW_* allowlist) and still safe.
-// TODO(barrel-export SUBSCRIPTION_SHADOWING_ENV_KEYS): expose it from @sow/worker so a later slice single-sources this.
-const SUBSCRIPTION_SHADOWING_ENV_KEYS: readonly string[] = [
-  // Class A — auth-shadowing:
+// The subscription-shadowing / egress-redirect env set, MIRRORED verbatim (same order, same section
+// comments) from the canonical source `apps/worker/src/composition/subscription-auth-guard.ts`
+// (`SUBSCRIPTION_SHADOWING_ENV_KEYS`). It is a MIRROR, not a runtime import — `@sow/worker`'s
+// `subscription-auth-guard.ts` does `import { ok, err } from "@sow/contracts"` (the BARREL, not a deep
+// path), and a runtime `@sow/worker` import into the Electron main tier would drag that barrel's zod/ajv
+// graph into the bundle, tripping the 9.18 bundle-leanness regression guard
+// (`test/bundle/main-bundle-resolution.test.ts` — asserts the emitted main bundle has no `require("zod")`/
+// `require("ajv")`); externalizing it instead reproduces the exact 9.18 raw-`.ts`-`require` crash (LESSONS
+// §17). So this stays a plain-data copy, used ONLY for the ESCALATED warning — never the gate.
+//
+// ⚠ Drift note: this set affects ONLY the warning SPECIFICITY, NEVER the gate — the gate is (and stays) the
+// `RECOGNIZED_SOW_ENV_KEYS` allowlist above, so a stale copy here merely downgrades a shadowing key's
+// `skipped[].reason` from `"shadowing"` to `"not_recognized"`; the key is still skipped (not on the SOW_*
+// allowlist) and still never hydrated — behavior is unchanged for every key. Drift is caught NOT by this
+// comment but by `test/main/dotenv-shadowing-parity.test.ts`, which imports the canonical worker export
+// directly (a test file, never bundled into main, so it carries no bundle-leanness constraint) and asserts
+// set-equality against this mirror both ways.
+export const DESKTOP_SUBSCRIPTION_SHADOWING_ENV_KEYS: readonly string[] = [
+  // Class A — auth-shadowing: direct tokens + credential-indirection channels (the *_FILE(_DESCRIPTOR) variants
+  // are the easiest way a credential slips past a name-prefix scan — grounded + corroborated).
   "ANTHROPIC_API_KEY",
+  "CLAUDE_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+  "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+  "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+  "ANTHROPIC_IDENTITY_TOKEN",
+  "ANTHROPIC_IDENTITY_TOKEN_FILE",
+  // Class A — host-managed auth cluster (18.38 Step-8 security re-ground): bearer/access tokens, a creds-file, an
+  // auth-env-var indirection, and a websocket auth FD — all supply auth OTHER than the ambient subscription.
+  "CLAUDE_CODE_HFI_BEARER_TOKEN",
+  "CLAUDE_CODE_SESSION_ACCESS_TOKEN",
+  "CLAUDE_CODE_HOST_CREDS_FILE",
+  "CLAUDE_CODE_HOST_AUTH_ENV_VAR",
+  "CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR",
+  // Class A — provider / gateway / router / host switches (⭐ L72: watching EVERY switch keeps the generic-cred
+  // exclusion sound; PROVIDER_MANAGED_BY_HOST activates the HOST_AUTH_* family — watch-the-switch).
   "CLAUDE_CODE_USE_BEDROCK",
   "CLAUDE_CODE_USE_VERTEX",
-  // Class B — egress-redirect (both proxy cases; NO_PROXY deliberately excluded — a bypass allowlist, not a redirect):
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_MANTLE",
+  "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+  "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+  "CLAUDE_CODE_USE_GATEWAY",
+  "CLAUDE_CODE_USE_CCR_V2",
+  "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
+  // Class A — SKIP-auth gateway-handoff signals ("provider creds held by a gateway, don't sign" ⇒ leaving the subscription).
+  "CLAUDE_CODE_SKIP_BEDROCK_AUTH",
+  "CLAUDE_CODE_SKIP_VERTEX_AUTH",
+  "CLAUDE_CODE_SKIP_FOUNDRY_AUTH",
+  "CLAUDE_CODE_SKIP_MANTLE_AUTH",
+  "CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH",
+  "CLAUDE_CODE_SKIP_ANTHROPIC_GOOGLE_CLOUD_AUTH",
+  // Class A — by-presence provider credentials (Anthropic-namespaced / Bedrock bearer / CCR-router token).
+  "ANTHROPIC_AWS_API_KEY",
+  "ANTHROPIC_AWS_AUTH",
+  "ANTHROPIC_FOUNDRY_API_KEY",
+  "ANTHROPIC_FOUNDRY_AUTH_TOKEN",
+  "ANTHROPIC_BEDROCK_MANTLE_API_KEY",
+  "ANTHROPIC_GOOGLE_CLOUD_AUTH",
+  "ANTHROPIC_ENVIRONMENT_KEY",
+  "ANTHROPIC_PROFILE",
+  "AWS_BEARER_TOKEN_BEDROCK",
+  "CCR_OAUTH_TOKEN_FILE",
+  // Class B — egress-redirect (both proxy cases — Node honors lowercase; NO_PROXY excluded, see above):
   "ANTHROPIC_BASE_URL",
   "ANTHROPIC_API_URL",
+  "CLAUDE_CODE_API_BASE_URL",
+  "CLAUDE_CODE_GB_BASE_URL",
   "ANTHROPIC_CUSTOM_HEADERS",
+  "ANTHROPIC_BEDROCK_BASE_URL",
+  "ANTHROPIC_VERTEX_BASE_URL",
+  "ANTHROPIC_FOUNDRY_BASE_URL",
+  "ANTHROPIC_AWS_BASE_URL",
+  "ANTHROPIC_GOOGLE_CLOUD_BASE_URL",
+  "ANTHROPIC_BEDROCK_MANTLE_BASE_URL",
+  "ANTHROPIC_FOUNDRY_RESOURCE",
+  "CLAUDE_CODE_CUSTOM_OAUTH_URL",
+  "CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL",
+  "ANTHROPIC_UNIX_SOCKET",
+  "ANTHROPIC_CONFIG_DIR",
   "HTTP_PROXY",
   "http_proxy",
   "HTTPS_PROXY",
   "https_proxy",
   "ALL_PROXY",
   "all_proxy",
+  "CLAUDE_CODE_PROXY_URL",
+  "CLAUDE_CODE_PROXY_HOST",
+  "CLAUDE_CODE_HTTP_PROXY",
+  "CLAUDE_CODE_HTTPS_PROXY",
+  // ── bare-CLAUDE_ namespace (18.38 Step-8 re-verify — the mandatory security-reviewer's cross-namespace sweep;
+  //    the denylist's structural leak. Completeness-by-construction lands in 18.40 env-scrub; these close the known
+  //    bare-CLAUDE_ cred/redirect/switch surface as defense-in-depth):
+  "CLAUDE_ENV_FILE", // dotenv pointer → injects arbitrary env into query()'s child, invisible to a process.env scan (a BYPASS)
+  "CLAUDE_AI_AUTHORIZE_URL",
+  "CLAUDE_AI_ORIGIN",
+  "CLAUDE_LOCAL_OAUTH_API_BASE",
+  "CLAUDE_LOCAL_OAUTH_APPS_BASE",
+  "CLAUDE_LOCAL_OAUTH_CONSOLE_BASE",
+  "CLAUDE_BRIDGE_BASE_URL",
+  "CLAUDE_BRIDGE_SESSION_INGRESS_URL",
+  "CLAUDE_BRIDGE_OAUTH_TOKEN",
+  "CLAUDE_BRIDGE_USE_CCR_V2",
+  "CLAUDE_CONFIG_DIR",
+  "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+  // Class C — mTLS client certs + cert-store (change the client identity → mTLS to a custom endpoint w/ a redirect):
+  "CLAUDE_CODE_CLIENT_CERT",
+  "CLAUDE_CODE_CLIENT_KEY",
+  "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
+  "CLAUDE_CODE_CERT_STORE",
 ];
 
 /** Why a parsed .env key was NOT hydrated. Carries the KEY only — never a value (rule 7). */
@@ -115,7 +204,10 @@ export function loadAllowlistedDotenv(
   const skipped: SkippedEntry[] = [];
   for (const [key, value] of Object.entries(parsed)) {
     if (!RECOGNIZED_SOW_ENV_KEYS.includes(key)) {
-      skipped.push({ key, reason: SUBSCRIPTION_SHADOWING_ENV_KEYS.includes(key) ? "shadowing" : "not_recognized" });
+      skipped.push({
+        key,
+        reason: DESKTOP_SUBSCRIPTION_SHADOWING_ENV_KEYS.includes(key) ? "shadowing" : "not_recognized",
+      });
       continue;
     }
     if (existingEnv[key] !== undefined) {

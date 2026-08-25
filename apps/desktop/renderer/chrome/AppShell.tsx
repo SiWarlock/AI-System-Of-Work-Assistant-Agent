@@ -61,6 +61,9 @@ function ScopeSwitcher({
 }): ReactElement {
   const [open, setOpen] = useState(false);
   const current = scopeMeta(scope);
+  // §11 / CF-7 — the listbox is CONDITIONALLY mounted (below), so aria-controls is emitted only
+  // while it exists; an aria-controls pointing at an absent id is itself an a11y violation.
+  const menuId = "sow-ws-menu";
   const wrapRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   // Return focus to the trigger on a KEYBOARD close (Escape / selection) — NOT on outside-click or
@@ -137,6 +140,7 @@ function ScopeSwitcher({
         ref={buttonRef}
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
         aria-label={`Workspace scope: ${current.label}`}
         style={accentVar(current.accent)}
         onClick={() => setOpen((o) => !o)}
@@ -151,7 +155,7 @@ function ScopeSwitcher({
         </span>
       </button>
       {open ? (
-        <ul className="sow-ws-menu" role="listbox" aria-label="Workspace scope" {...roving.listboxProps}>
+        <ul id={menuId} className="sow-ws-menu" role="listbox" aria-label="Workspace scope" {...roving.listboxProps}>
           {WORKSPACE_SCOPES.map((m, i) => {
             const selected = m.id === scope;
             const opt = roving.getOptionProps(i);
