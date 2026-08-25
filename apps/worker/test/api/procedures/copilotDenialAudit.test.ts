@@ -367,6 +367,36 @@ describe("24.62 — the audit-persist port's log sink carries only what its comm
     if (isOk(queried)) expect(queried.value.length).toBe(0);
   });
 
+  // spec(§16, rule 7) — task 24.70: the refusal notice now NAMES which of the six scanned
+  // fields tripped (a closed six-literal set, not content — `packages/policy`'s
+  // `firstUnsafeAuditField`), without ever leaking that field's VALUE. This is the
+  // field-NAME POSITIVE half; the test above pins the value-NEGATIVE half (unchanged by
+  // 24.70 — the marker list there still asserts none of the six VALUES ever appear).
+  it("refused_signal_notice_names_the_unsafe_field_by_name_only — the field NAME appears, the field's VALUE never does", async () => {
+    const mem = memAuditQueryable();
+    const port = createAuditPersistPort({ audit: mem.repo, now: () => NOW });
+    const SENTINEL = "MARKERAFTERVALUE-4471";
+    const unsafe = buildAuditSignal({
+      actor: "actor-ok",
+      event: "event-ok",
+      refs: ["ref-ok"],
+      payloadHash: "hash-ok",
+      beforeSummary: "before-ok",
+      // credential-shaped ⇒ isRedactionSafe() is false, tripping on `afterSummary` — the
+      // fifth scanned position, deliberately not `actor` (the trivial first-position case).
+      afterSummary: `${SENTINEL} secret ${SENTINEL}TAIL`,
+    });
+    const lines = await captureConsoleError(() => port.persistDenial(unsafe, "ws-field-name-pin"));
+
+    expect(lines.length).toBe(1);
+    const notice = lines.join("\n");
+    expect(notice).toContain("REFUSED");
+    // POSITIVE: the field NAME appears.
+    expect(notice).toContain("afterSummary");
+    // NEGATIVE: the field's own VALUE never does, even though it's the one that tripped.
+    expect(notice).not.toContain(SENTINEL);
+  });
+
   // spec(§5) — the non-vacuity control for the test above AND for the append-failure test below.
   // Both of those assert ABSENCE; absence is satisfied by a port that does nothing at all. This pins
   // that the success path still produces its durable record, `workspaceId` included — the record's

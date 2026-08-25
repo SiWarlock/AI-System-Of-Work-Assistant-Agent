@@ -52,6 +52,11 @@ import type {
 } from "@sow/contracts";
 import { descriptorFor, isZeroEgressOnlyWorkspace, toAuditRecordInput, isRedactionSafe } from "@sow/policy";
 import type { SessionToken, LegacyContentPolicy, CopilotWorkspaceScope, ResolvedWorkspacePolicy } from "@sow/policy";
+// task 24.70 — names WHICH of the six `isRedactionSafe`-scanned fields tripped a refusal.
+// Deep-imported (not the `@sow/policy` barrel) per that module's own header: the barrel's
+// `export * from "./audit-signal"` stays untouched to avoid a merge collision with a
+// concurrent wave-1 slice; the package's `exports` map carries the `./*` wildcard.
+import { firstUnsafeAuditField } from "@sow/policy/audit-signal-field";
 import { TBD } from "@sow/domain";
 import type { MeetingJobInputs, AgentExtraction, HealthItemStore } from "@sow/workflows";
 
@@ -796,17 +801,27 @@ export function createAuditPersistPort(deps: {
         // Same doctrine `packages/knowledge`'s `GclAuditPersistPort.onRefused` (24.53) discharges by
         // SIGNATURE; here the obligation is held by convention + the pins in `copilotDenialAudit.test.ts`.
         // ⇒ the notice is a COUNTER, not a describer — that the refusal is EMITTABLE AT ALL is its whole
-        // function (24.53's "a notice that carries nothing" cost, accepted knowingly). ⚠ The cost is
-        // real and priced: two concurrent denials on the two Copilot paths are indistinguishable here.
+        // function (24.53's "a notice that carries nothing" cost, accepted knowingly). ⚠ The cost WAS
+        // real and priced: two concurrent denials on the two Copilot paths were indistinguishable here.
+        // ⛔⛔ DONE (task 24.70, shared-task-list `#59`) — the follow-up the next two lines used to name
+        // as open is now built. Field NAMES are a closed six-literal set, not content, so naming one is
+        // safe: `packages/policy/src/audit-signal-field.ts`'s `firstUnsafeAuditField` recovers WHICH of
+        // the six scanned fields tripped by PROBING the exported `isRedactionSafe` (never re-implementing
+        // its module-private `looksUnsafe` union — see that sibling file's own header), and structurally
+        // never returns anything but one of the six literals or `null`. The two lines below are RETAINED
+        // (not deleted) as the reasoning that motivated the fix, per this codebase's erratum discipline —
+        // they describe the notice's state BEFORE this task, not its current shape.
         // The follow-up that would fix it is SMALL, not a rewrite — naming WHICH field was unsafe is
         // safe (field NAMES are a closed six-literal set, not content) and is ~5 lines in
         // `packages/policy`'s `audit-signal.ts`, whose `isRedactionSafe` returns a bare boolean today.
-        // Open as shared-task-list `#59`; deliberately not built here (another area's territory).
         // ⚠ The pins for everything above live in `copilotDenialAudit.test.ts`'s `24.62` block, and
         // each NEGATIVE assertion there was mutation-proved to RED before this comment was written
         // (event · denialCode · workspaceId, three separate mutations) — an unobserved pin is unproven.
+        // The 24.70 field-NAME POSITIVE assertion added to that same block was mutation-proved RED the
+        // same way before this line started interpolating it.
+        const unsafeField = firstUnsafeAuditField(signal);
         console.error(
-          "[copilot.denial-audit] REFUSED to persist — a denial signal failed the redaction-safety gate (9.33)",
+          `[copilot.denial-audit] REFUSED to persist — a denial signal failed the redaction-safety gate (9.33) — unsafe field: ${unsafeField ?? "unknown"}`,
         );
         return;
       }
