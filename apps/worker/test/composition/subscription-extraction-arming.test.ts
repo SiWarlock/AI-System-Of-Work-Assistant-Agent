@@ -147,6 +147,20 @@ describe("gateSubscriptionOnlyExtraction — the subscription-ONLY arm builder (
     expect(sources.availability(HS_ROUTE, HS_JOB).modelPresent).toBe(true);
     expect(checkReachable).toHaveBeenCalledTimes(1); // short-TTL memoize coalesces both dims
   });
+
+  it("only_health_source_reprobes_after_ttl — advancing the injected clock past healthTtlMs ⇒ checkReachable RE-invoked (a fresh verdict, never a permanent cache) [spec(§7); FIX-5]", () => {
+    let t = 1000;
+    const checkReachable = vi.fn(() => ({ loginPresent: true, sdkReachable: true }));
+    const { deps } = makeOnlyDeps({ checkReachable, now: () => t, healthTtlMs: 100 });
+    const wiring = gateSubscriptionOnlyExtraction({ enabled: true }, deps)!;
+    const sources = wiring.providerTransport.healthSource!();
+    sources.health(HS_ROUTE, HS_JOB); // t=1000 → probe #1
+    sources.availability(HS_ROUTE, HS_JOB); // t=1000 → same window ⇒ cached (no 2nd probe)
+    expect(checkReachable).toHaveBeenCalledTimes(1);
+    t = 1000 + 100 + 1; // advance the clock PAST the TTL window
+    sources.health(HS_ROUTE, HS_JOB); // ⇒ the cache is stale ⇒ RE-probe (a permanent cache would fail this)
+    expect(checkReachable).toHaveBeenCalledTimes(2);
+  });
 });
 
 // ── buildSubscriptionArmWiring — the boot-composition glue: the late-bound reader assembly (18.25 step-6) ──
