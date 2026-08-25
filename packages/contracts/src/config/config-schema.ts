@@ -12,11 +12,20 @@
 // *_SCHEMA_ID). A focused Zod schema is the runtime gate; the guard adds the two
 // secret-shape screens on top. PURE — imports only the foundation Result primitive.
 //
-// CARRY-FORWARD NOTE: the credential-shape detectors below (SECRET_KEY_NAME /
-// CREDENTIAL_VALUE_SHAPE) intentionally DUPLICATE the ones in
-// `packages/providers/src/redaction/provider-log-redaction.ts` for now. Task 10.1
-// (the domain redactor, built later) will converge them into a SINGLE shared pure
-// detector; until then both copies must be kept in lockstep. Do not let them drift.
+// CARRY-FORWARD NOTE, CORRECTED (task 24.117): the credential-shape detectors below
+// (SECRET_KEY_NAME / CREDENTIAL_VALUE_SHAPE) were DUPLICATED from
+// `packages/providers/src/redaction/provider-log-redaction.ts`. Task 10.1 (the
+// domain redactor) has since LANDED — `packages/providers` no longer keeps a local
+// copy; it imports the detectors from `@sow/domain` (see that module's own header).
+// ⛔ THIS PACKAGE STILL CANNOT DO THAT: `@sow/domain` depends on `@sow/contracts`
+// (the layer DAG is `packages/domain → packages/contracts`, never the reverse —
+// see `packages/contracts/CLAUDE.md`'s "Layer dependency direction" and forbidden
+// pattern #2), so `@sow/contracts` importing `@sow/domain` would invert the
+// dependency graph. This module therefore stays a HAND-MIRRORED COPY of
+// `@sow/domain`'s `CREDENTIAL_PREFIX` pattern by necessity, not oversight — kept
+// in lockstep by matching its literal text, the same discipline
+// `packages/policy/src/audit-signal.ts` used before it additionally gained a
+// runtime union (task 24.110; policy CAN import domain, contracts cannot).
 import { z } from "zod";
 import { ok, err } from "../primitives/result";
 import type { Result } from "../primitives/result";
@@ -71,18 +80,48 @@ export interface ConfigLoadError {
   offendingKey?: string;
 }
 
-// ── Secret-shape detectors (DUPLICATED from provider-log-redaction — see note) ─
+// ── Secret-shape detectors (HAND-MIRRORED from @sow/domain — see the note above) ─
 
 // Secret-bearing KEY names. Any config key whose NAME matches this must never
 // exist — the value belongs in Keychain, not a config file.
 const SECRET_KEY_NAME =
   /secret|password|passwd|api[_-]?key|token|bearer|credential|private[_-]?key|passphrase/i;
 
-// Credential-shaped string VALUES (provider API keys, cloud creds, PEM blocks,
-// JWTs). A benign path/host value that merely contains "sk" as a substring does
-// NOT match — the shapes are anchored to real credential prefixes.
+// task 24.117 — TWO DEFECTS LIVED ON ONE LINE, and they are dispositioned
+// separately because they pull in OPPOSITE directions:
+//
+//   (1) MISSING `/i` — LEAK-DIRECTION. This pattern was the ONLY case-sensitive
+//       credential-value copy left in the repo (packages/policy carried the
+//       identical gap until task 24.110). A case-transformed credential shape
+//       (`SK-ANT-...`, `-----Begin Certificate-----`, a lowercased `AKIA...`)
+//       was judged SAFE here while `@sow/domain`'s `CREDENTIAL_PREFIX` — and
+//       `secretShapeGuard`'s own SIBLING `SECRET_KEY_NAME` two lines above,
+//       which already carries `/i` — judged it unsafe. Fixed unconditionally:
+//       a leak-direction fix that widens WHAT IS CAUGHT has no availability
+//       trade to weigh against it.
+//
+//   (2) BARE `sk-` — AVAILABILITY-DIRECTION. The leading alternative had no
+//       character class after the hyphen at all (`@sow/domain`'s is
+//       `sk-[a-z0-9]`, requiring one more alphanumeric). A bare `sk-` matches
+//       STRICTLY MORE strings than `sk-[a-z0-9]` — e.g. a value ending
+//       literally in "sk-" with no following character, or "sk-" followed by
+//       punctuation — so narrowing to `sk-[a-z0-9]` is a LOOSENING (fewer
+//       configs rejected as `secret_in_config`), the opposite direction from
+//       fix (1). Aligned anyway: this is the SAME unbounded, no-word-boundary
+//       alternative `@sow/domain`'s own `CREDENTIAL_PREFIX` comment and
+//       `packages/policy`'s `known_false_positives_are_pinned_so_the_class_is_
+//       not_INVISIBLE` pin already name and accept as a KNOWN cost elsewhere
+//       (a word boundary is a domain-parity question, not this file's to
+//       decide alone) — matching the shape exactly is what "hand-mirrored
+//       copy, not a fork" requires; inventing a THIRD variant (bare `sk-`
+//       nowhere else in the repo) would be the actual novel risk.
+//
+// REACHABILITY, MEASURED (not assumed): `secretShapeGuard` → `hasCredentialShapedValue`
+// → this pattern is called from `apps/worker/src/config/load-config.ts`'s
+// `loadConfig`, the worker's config-load ENTRY POINT (REQ-S-003) — production-wired,
+// not dormant.
 const CREDENTIAL_VALUE_SHAPE =
-  /sk-|sk_(live|test)|xox[baprs]-|gh[pousr]_|AKIA[0-9A-Z]{16}|-----BEGIN|eyJ[A-Za-z0-9_-]{10,}\./;
+  /sk-[a-z0-9]|sk_(live|test)|xox[baprs]-|gh[pousr]_|AKIA[0-9A-Z]{16}|-----BEGIN|eyJ[A-Za-z0-9_-]{10,}\./i;
 
 // ── Recursive value scan ────────────────────────────────────────────────────
 
