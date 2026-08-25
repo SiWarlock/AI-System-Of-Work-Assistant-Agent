@@ -160,9 +160,12 @@ describe("per-source ingestion build — distinct files → distinct notes (§13
     const backends = await assembleBackends({ now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT] }, { candidateOutput: {} });
     try {
       const acts = buildProofSpineActivities(backends, paramsFor());
-      // `workspaceId("..")` passes the brand constructor (charset-unvalidated) but the note-path
-      // helper rejects it → the build folds that to build_failed (never a `sources/../…` escape).
-      const r = await acts.sourceBuildOutputs(VALIDATED, workspaceId(".."), src("file:x:a.md"));
+      // DEFENSE-IN-DEPTH, and the bypass below is the point of the test.
+      // Since 24.100 `workspaceId()` RUNS the brand's schema, so ".." is no longer constructable
+      // through the front door — the upstream gate now rejects it itself. The cast stays because
+      // this assertion pins the SECOND line of defense: the note-path helper must reject the
+      // segment on its own, so the build folds to build_failed (never a `sources/../…` escape).
+      const r = await acts.sourceBuildOutputs(VALIDATED, ".." as WorkspaceId, src("file:x:a.md"));
       expect(r.ok).toBe(false);
       if (r.ok) return;
       expect(r.error.code).toBe("build_failed");

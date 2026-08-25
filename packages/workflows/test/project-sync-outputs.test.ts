@@ -67,10 +67,14 @@ describe("createProjectSyncOutputsProjection", () => {
   });
 
   it("WS-8 (defense-in-depth): a workspaceId SEGMENT carrying a separator or `..` FAILS CLOSED (no escape from projects/)", () => {
-    // the WorkspaceId brand rejects only empty/whitespace, so an adversarial `../../vault` value is constructable;
-    // the shared projectNotePath authority must reject it rather than emit `projects/../../vault/...md`.
-    expect(isOk(run({}, identity, progress, workspaceId("../../vault-root")))).toBe(false);
-    expect(isOk(run({}, identity, progress, workspaceId("a/b")))).toBe(false);
+    // DEFENSE-IN-DEPTH, and the bypass below is the point of the test.
+    // Since 24.100 `workspaceId()` RUNS the brand's schema, so these adversarial values are no
+    // longer constructable through the front door — the upstream gate now rejects them itself.
+    // That is exactly why the cast stays: this assertion pins the SECOND line of defense, which
+    // must hold independently of the first. If it were rewritten to go through the brand it would
+    // silently become a test of the brand and stop covering projectNotePath at all.
+    expect(isOk(run({}, identity, progress, "../../vault-root" as WorkspaceId))).toBe(false);
+    expect(isOk(run({}, identity, progress, "a/b" as WorkspaceId))).toBe(false);
   });
 
   it("WS-8: the slug is preserved in FRONTMATTER only (display), path stays workspace-rooted", () => {
