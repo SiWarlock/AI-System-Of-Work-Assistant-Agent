@@ -524,7 +524,12 @@ export interface BootConfig extends BackendsConfig {
    * no adapter/backend/`security` process constructed, byte-equivalent boot). When present, `buildKeychainSecrets`
    * builds the Keychain adapter and boot sources `provenanceServingOracle.secrets` (C5.4b OFF-lock 2) from it. The
    * first real Keychain touch is owner-gated. `execFile` is a test seam; production omits it (the real bounded
-   * wrapper). NOTE: the `getSecret` provider facade + the Keychain-locked degraded routing land in a Slice-4 follow-up.
+   * wrapper). The `getSecret` provider facade + the Keychain-locked degraded routing are NOT a future follow-up —
+   * they already landed (task 17.3, `09e0630e`) as `createLockRoutingSecretsAccessor` in
+   * `apps/worker/src/secrets/keychain-boot.ts`, addressed via the 17.4 secret-ref convention
+   * (`secretRefConvention.ts`), and are consumed by all five `ModelProviderPort` adapters (Claude/OpenAI/
+   * OpenRouter cloud + Ollama/LM Studio local, no key) in `apps/worker/src/composition/provider-runner.ts`
+   * (task 18.1) — dormant behind the default-OFF `ProviderTransportGate`, same as this gate (task 11.4).
    */
   readonly keychainSecrets?: KeychainSecretsGate;
   /**
