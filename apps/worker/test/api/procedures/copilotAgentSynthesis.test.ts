@@ -586,6 +586,47 @@ describe("createAgentRuntimeCopilotSynthesis — the agentic CopilotSynthesisPor
     if (!isErr(r)) return;
     expect(r.error.cause?.code).toBe("COPILOT_AGENT_TOOL_VIOLATION");
   });
+
+  // ── task 22.5 — ASSEMBLED-level mutual-exclusion + untrusted-content regression guard ──────────
+  // resolveCopilotAgentCapability (:256/:261/:263) already unit-pins these two verdicts in isolation
+  // (:338-343 untrusted-content, :336 mutual-exclusion). The gap this closes is the ASSEMBLED level:
+  // driving createAgentRuntimeCopilotSynthesis end-to-end (through buildCopilotAgentJob + the resolver)
+  // over a FORCED resolveContentTrust stub, so a regression that stopped WIRING the resolver's verdict
+  // into the actually-built job (as opposed to a regression in the resolver's own logic) would ALSO be
+  // caught — a resolver-only pin cannot see that class of defect.
+  it("22.5: both propose flags true + FORCED-untrusted content ⇒ the ASSEMBLED job is read_only with NO propose tool in allowedTools", async () => {
+    const f = fakeRunner(() => ok(completed({ answer: ["ok"], citations: [] })));
+    const synth = createAgentRuntimeCopilotSynthesis(f.runner, {
+      proposeEnabled: true,
+      knowledgeProposeEnabled: true,
+      resolveContentTrust: () => "untrusted",
+      auditPersist: auditNoop,
+    });
+    const r = await synth.synthesize("personal-business", "q?", ctx(), CLAUDE_ROUTE);
+    expect(isOk(r)).toBe(true); // a read_only job is ING-7-admissible regardless of trust
+    const job = f.lastJob();
+    expect(job).toBeDefined();
+    expect(job?.toolPolicy.mode).toBe("read_only");
+    expect(job?.toolPolicy.allowedTools).not.toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
+    expect(job?.toolPolicy.allowedTools).not.toContain(COPILOT_PROPOSE_KNOWLEDGE_MCP_TOOL_NAME);
+  });
+
+  it("22.5: both propose flags true + TRUSTED content ⇒ STILL read_only, no propose tool (mutual exclusion holds at the assembled level too)", async () => {
+    const f = fakeRunner(() => ok(completed({ answer: ["ok"], citations: [] })));
+    const synth = createAgentRuntimeCopilotSynthesis(f.runner, {
+      proposeEnabled: true,
+      knowledgeProposeEnabled: true,
+      resolveContentTrust: () => "trusted",
+      auditPersist: auditNoop,
+    });
+    const r = await synth.synthesize("personal-business", "q?", ctx(), CLAUDE_ROUTE);
+    expect(isOk(r)).toBe(true);
+    const job = f.lastJob();
+    expect(job).toBeDefined();
+    expect(job?.toolPolicy.mode).toBe("read_only");
+    expect(job?.toolPolicy.allowedTools).not.toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
+    expect(job?.toolPolicy.allowedTools).not.toContain(COPILOT_PROPOSE_KNOWLEDGE_MCP_TOOL_NAME);
+  });
 });
 
 // ── createClaudeAgentCopilotRunner (token → mcpServers → transport → runtime) ──
