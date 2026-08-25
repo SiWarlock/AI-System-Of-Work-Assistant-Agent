@@ -38,6 +38,7 @@
 // `looksUnsafe`'s monotonicity argument has to be re-derived, because a disjunction
 // is only monotone while every arm is additive.
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   CREDENTIAL_NETS,
   CREDENTIAL_PREFIX,
@@ -297,11 +298,19 @@ describe("the fourth marker vocabulary", () => {
   // stripped, so it reaches the nets as ordinary content.
   //
   // ⛔ THIS VALUE IS A COPY, AND THE COPY IS FORCED, NOT CHOSEN: `@sow/domain` is
-  // the PRODUCER and both owners are CONSUMERS, so importing it here would invert
-  // the layer. ⛔ NO MECHANICAL DRIFT CHECK EXISTS — if either owner changes its
-  // literal, this test goes on checking a stale value and NOTHING WILL RED. Owning
-  // task: `### 24.127`. To verify by hand, read the `REDACTED` const in the two
-  // files named above.
+  // the PRODUCER and both owners are CONSUMERS, so a real TypeScript `import` of
+  // either package HERE would invert the §2.5 layer (verified: `@sow/domain`'s own
+  // `test/boundary/pure-root.test.ts` pins that its `package.json` devDependencies
+  // must carry NO `@sow/*` package at all — Q3, a devDep-only test import, is a
+  // REJECTED option there, not an oversight; adding `@sow/providers`/
+  // `@sow/integrations` as devDependencies to enable a real import would red that
+  // pin immediately). ⭐ MECHANICAL DRIFT CHECK, task 24.127 — closed WITHOUT an
+  // import: `node:fs` reads the two files' SOURCE TEXT (a file read is not an
+  // import — it creates no dependency edge and is exactly the mechanism this
+  // package's own "the two pure-root-scan.ts copies do not diverge" test already
+  // uses for the identical cross-package-comparison-without-a-dependency-edge
+  // problem, immediately below in this suite's sibling file). If either owner's
+  // literal changes, the extraction below changes with it and this test REDS.
   const FOURTH_VOCABULARY = "[REDACTED]";
 
   it("is inert: it can neither supply a delimiter nor break a permissive span", () => {
@@ -312,6 +321,77 @@ describe("the fourth marker vocabulary", () => {
     expect(looksUnsafe(FOURTH_VOCABULARY)).toBe(false);
     expect(looksUnsafe(`//user${FOURTH_VOCABULARY}@host`)).toBe(false);
     expect(looksUnsafe(`//user:REALSECRET${FOURTH_VOCABULARY}@host`)).toBe(true);
+  });
+
+  describe("24.127 — mechanical drift check against @sow/providers and @sow/integrations", () => {
+    // Both files declare the identical form: `export const REDACTED = "..." as const;`.
+    // Extracted by TEXT, not by import — see the block comment above for why an
+    // import is architecturally unavailable here.
+    const REDACTED_DECL_RE = /export const REDACTED = "([^"]*)" as const;/;
+
+    function extractRedactedLiteral(fileContent: string): string | undefined {
+      return fileContent.match(REDACTED_DECL_RE)?.[1];
+    }
+
+    // Non-vacuity / discrimination proof FIRST, on SYNTHETIC content — never on
+    // the real shared files (a temporary on-disk mutation of a file two other
+    // areas' packages depend on is a live-tree hazard this project's own lessons
+    // warn against; the extractor's correctness is provable without touching
+    // them). Proves the extractor genuinely READS the value rather than being
+    // hardcoded to always return "[REDACTED]".
+    it("the extractor reads the declared value, not a hardcoded expectation", () => {
+      expect(
+        extractRedactedLiteral('export const REDACTED = "[REDACTED]" as const;'),
+      ).toBe("[REDACTED]");
+      expect(
+        extractRedactedLiteral('export const REDACTED = "[SOMETHING_ELSE]" as const;'),
+      ).toBe("[SOMETHING_ELSE]");
+      expect(
+        extractRedactedLiteral("export const NOT_REDACTED = 1;"),
+        "a file with no matching declaration must extract to undefined, not silently pass",
+      ).toBeUndefined();
+    });
+
+    it("packages/providers' REDACTED literal matches FOURTH_VOCABULARY", () => {
+      const content = readFileSync(
+        new URL(
+          "../../../providers/src/redaction/provider-log-redaction.ts",
+          import.meta.url,
+        ),
+        "utf8",
+      );
+      const extracted = extractRedactedLiteral(content);
+      expect(
+        extracted,
+        "could not find `export const REDACTED = \"...\" as const;` in packages/providers/src/redaction/provider-log-redaction.ts — the declaration form changed; re-derive the extraction pattern, do not weaken this to pass",
+      ).toBeDefined();
+      expect(extracted).toBe(FOURTH_VOCABULARY);
+    });
+
+    it("packages/integrations' REDACTED literal matches FOURTH_VOCABULARY", () => {
+      const content = readFileSync(
+        new URL(
+          "../../../integrations/src/redaction/gateway-log-redaction.ts",
+          import.meta.url,
+        ),
+        "utf8",
+      );
+      const extracted = extractRedactedLiteral(content);
+      expect(
+        extracted,
+        "could not find `export const REDACTED = \"...\" as const;` in packages/integrations/src/redaction/gateway-log-redaction.ts — the declaration form changed; re-derive the extraction pattern, do not weaken this to pass",
+      ).toBeDefined();
+      expect(extracted).toBe(FOURTH_VOCABULARY);
+    });
+
+    // Areas that must move TOGETHER if the literal ever changes, named so a
+    // future editor of any ONE of them knows the other two exist:
+    //   1. @sow/providers  — packages/providers/src/redaction/provider-log-redaction.ts
+    //   2. @sow/integrations — packages/integrations/src/redaction/gateway-log-redaction.ts
+    //   3. @sow/domain (this file) — `FOURTH_VOCABULARY` above, the reference value
+    //      this describe block checks BOTH producers against.
+    // A change to any one WITHOUT the other two reds exactly one of the two
+    // extraction tests above, naming which file drifted.
   });
 });
 
