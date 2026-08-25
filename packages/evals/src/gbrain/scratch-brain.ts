@@ -13,7 +13,7 @@
 // threads it into the child's environment; nothing here ever execs `gbrain` without it.
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
@@ -41,9 +41,43 @@ export async function rmScratchGbrainHome(home: string): Promise<void> {
   }
 }
 
+/** The embedding dimension every scratch brain this harness creates is pinned to — matches the
+ *  owner's real `~/.gbrain/config.json` (`embedding_dimensions: 1024`) and the `voyage-code-3`
+ *  model's actual configured output width (Voyage only permits {256, 512, 1024, 2048} for that
+ *  model — never gbrain's own `DEFAULT_EMBEDDING_DIMENSIONS = 1536` fallback). */
+export const SCRATCH_EMBEDDING_DIMENSIONS = 1024;
+
 /**
  * `gbrain init --pglite` scoped to `home` via `GBRAIN_HOME` — creates a brand-new, empty
  * PGLite brain under `<home>/.gbrain`. Fixed argv, `shell:false`, bounded timeout.
+ *
+ * ⛔ TRAP folded in here (confirmed live, task PAID-GO34-RETRY, 2026-08-25): a bare `gbrain init`
+ * writes a FRESH `config.json` that OMITS `embedding_dimensions` entirely — confirmed by writing
+ * the key into a config.json that already exists BEFORE `init` runs: `init` overwrites the file
+ * unconditionally, the key does not survive. Without it, gbrain's pre-engine-connect
+ * `configureGateway` (installed `gbrain` 0.35.1.0, `src/cli.ts:1334`) falls back to
+ * `DEFAULT_EMBEDDING_DIMENSIONS = 1536` (`src/core/ai/gateway.ts:46`), and every `gbrain
+ * put`/`embed` then fails closed with a Voyage API rejection ("voyage-code-3 supports
+ * output_dimension only in {256,512,1024,2048}, got 1536") BEFORE any embedding is
+ * computed/billed — the exact defect the owner's real `~/.gbrain/config.json` hit and was fixed
+ * for by hand-adding the key. So a SCRATCH brain reproduces that trap cold unless something
+ * patches it in — which is what this function now does, unconditionally, right after `init`, so
+ * every scratch brain this harness creates is born correct rather than re-hitting it.
+ *
+ * ⚠ THIS FIX ALONE DOES NOT MAKE A FRESH SCRATCH `put`/`embed` SUCCEED (re-confirmed live the
+ * same session — see the "GO#3/GO#4 paid-embedding leg" describe block in
+ * `gbrain-four-go-acceptance.test.ts`). It only fixes the API-rejection layer above. A SEPARATE,
+ * PGLite-specific defect remains, confirmed by reading the installed `gbrain` 0.35.1.0 source at
+ * `/Users/dreddy/gbrain` (a different repo entirely — not fixed here, per root CLAUDE.md and this
+ * package's territory): the embedded/PGLite schema (`src/core/schema-embedded.ts:139`) hardcodes
+ * `embedding vector(1536)`, and — unlike the Postgres/Supabase engine path
+ * (`src/core/postgres-engine.ts:57`, which regex-substitutes `vector(1536)` → `vector(${dims})`
+ * at connect time) — the embedded/PGLite path never receives that substitution, REGARDLESS of
+ * `--embedding-dimensions`/config value passed to `gbrain init --pglite`. So a fresh scratch
+ * PGLite brain's `content_chunks.embedding` column is ALWAYS `vector(1536)`, while
+ * `voyage-code-3` can only be configured to output {256,512,1024,2048} — no value satisfies
+ * both. `put`/`embed` still fails, now one layer deeper: at the DB-insert step (pgvector:
+ * "expected 1536 dimensions, not 1024") AFTER a real, billed Voyage call has already succeeded.
  */
 export async function initScratchBrain(home: string): Promise<void> {
   await execFileAsync("gbrain", ["init", "--pglite"], {
@@ -53,6 +87,12 @@ export async function initScratchBrain(home: string): Promise<void> {
     shell: false,
     windowsHide: true,
   });
+
+  const configPath = join(home, ".gbrain", "config.json");
+  const raw = await readFile(configPath, "utf8");
+  const config = JSON.parse(raw) as Record<string, unknown>;
+  config["embedding_dimensions"] = SCRATCH_EMBEDDING_DIMENSIONS;
+  await writeFile(configPath, JSON.stringify(config, null, 2), "utf8");
 }
 
 /** Outcome of a real `gbrain put` — deliberately fail-closed to a typed result (never throws) so a
@@ -290,6 +330,54 @@ export async function runFsExtractLinksDryRun(
     const pagesProcessed = raw["pages_processed"];
     if (typeof linksCreated !== "number" || typeof pagesProcessed !== "number") return undefined;
     return { links_created: linksCreated, pages_processed: pagesProcessed };
+  } catch {
+    return undefined;
+  }
+}
+
+export interface ScratchImportResult {
+  readonly imported: number;
+  readonly skipped: number;
+  readonly errors: number;
+  readonly chunks: number;
+}
+
+/**
+ * `gbrain import <fixtureDir> --no-embed --json` scoped to `home` via `GBRAIN_HOME` — a REAL
+ * page write into the scratch brain's DB that makes ZERO embedding-API calls (`--no-embed`
+ * chunks the content but skips the embed step — live-verified: no Voyage network call is made,
+ * `chunks` still reports the chunk count, `imported`/`errors` reflect the real DB write).
+ * Extends the GO#4 fs-extract oracle leg (task PAID-GO34-RETRY) from a
+ * read-only fs walk to a real DB round-trip, without touching the paid-embedding path.
+ * Fail-closed to `undefined` (never throws).
+ */
+export async function runScratchGbrainImportNoEmbed(
+  home: string,
+  fixtureDir: string,
+): Promise<ScratchImportResult | undefined> {
+  try {
+    const { stdout } = await execFileAsync("gbrain", ["import", fixtureDir, "--no-embed", "--json"], {
+      env: { ...process.env, GBRAIN_HOME: home },
+      timeout: SCRATCH_GBRAIN_EXEC_TIMEOUT_MS,
+      maxBuffer: MAX_BUFFER,
+      shell: false,
+      windowsHide: true,
+    });
+    const raw = extractLastJsonObject(stdout);
+    if (raw === undefined) return undefined;
+    const imported = raw["imported"];
+    const skipped = raw["skipped"];
+    const errors = raw["errors"];
+    const chunks = raw["chunks"];
+    if (
+      typeof imported !== "number" ||
+      typeof skipped !== "number" ||
+      typeof errors !== "number" ||
+      typeof chunks !== "number"
+    ) {
+      return undefined;
+    }
+    return { imported, skipped, errors, chunks };
   } catch {
     return undefined;
   }
