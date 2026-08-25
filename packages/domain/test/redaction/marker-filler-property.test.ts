@@ -52,6 +52,13 @@ import {
   REDACTED_RAW,
   REDACTED_FIELD,
 } from "@sow/contracts";
+// task 24.135 — `SPAN_PRESERVING_FILLER` is declared in `redaction-rules.ts` but the
+// barrel re-export block in `redact.ts` (which `src/index.ts` re-exports wholesale)
+// omitted it, so the package's own PUBLIC surface — the one every OTHER package
+// imports through (`@sow/domain`) — could not name the filler this whole file binds.
+// Imported from the barrel under a distinct alias (never the internal module path
+// above) so a regression here is a genuine barrel omission, not a naming collision.
+import { SPAN_PRESERVING_FILLER as SPAN_PRESERVING_FILLER_FROM_BARREL } from "../../src/index";
 
 // Two unrelated private-use codepoints. CONSTRUCTED, never written as literals:
 // a raw non-ASCII character does not survive every transport into a source file,
@@ -155,6 +162,13 @@ function violationsFor(filler: string): string[] {
   }
   return found;
 }
+
+describe("24.135 — SPAN_PRESERVING_FILLER is reachable from the package barrel", () => {
+  it("the barrel export equals the internal module's value — one filler, one home", () => {
+    expect(SPAN_PRESERVING_FILLER_FROM_BARREL).toBe("^");
+    expect(SPAN_PRESERVING_FILLER_FROM_BARREL).toBe(SPAN_PRESERVING_FILLER);
+  });
+});
 
 describe("constant integrity — asserted BEFORE anything depends on these", () => {
   // Every verdict in this file is a function of these constants. A suite whose

@@ -1,7 +1,7 @@
 // spec(§5) — AuditSignal: clock-free build for allow+deny; redaction-safety guard; toAuditRecordInput passes AuditRecordSchema.parse
 import { describe, it, expect } from "vitest";
 import { AuditRecordSchema, REDACTED_CREDENTIAL, REDACTED_RAW } from "@sow/contracts";
-import { looksUnsafe as domainLooksUnsafe } from "@sow/domain";
+import { looksUnsafe as domainLooksUnsafe, SPAN_PRESERVING_FILLER } from "@sow/domain";
 import {
   buildAuditSignal,
   toAuditRecordInput,
@@ -362,16 +362,23 @@ describe("isRedactionSafe — the credential net is case-insensitive (task 24.11
     // asserted from a fixture chosen to show it. Recorded on task 24.110 (commit 40bbf578) and
     // stated by redaction-rules.ts about itself.
     //
-    // ⚠ GAP, STATED RATHER THAN COVERED: this pair has NO local non-vacuity guard, and it is
-    // the pair that needs one more, because its mechanism is scheduled for possible removal by
-    // 24.123. It isolates the LEGACY-SPACE arm only while domain's span-preserving filler is
-    // NOT a member of `private[_ -]?key`'s alphabet; were that filler ever to become `_` or
-    // `-`, the span arm would match on its own and this assertion would keep passing while the
-    // tripwire retired SILENTLY. A local guard would need `SPAN_PRESERVING_FILLER` exported
-    // from `@sow/domain`, which it is NOT (measured) — adding it is contract territory.
-    // What DOES cover it today is cross-package, in `@sow/domain`'s own
-    // `test/redaction/marker-filler-property.test.ts`, which rejects `-`, `_` and `.` as
-    // fillers. ⛔ That is a real guard in another package, NOT coverage this file provides.
+    // ⚠ GAP CLOSED (task 24.135): this pair had NO local non-vacuity guard — it isolates the
+    // LEGACY-SPACE arm only while domain's span-preserving filler is NOT a member of
+    // `private[_ -]?key`'s alphabet, and were that filler ever to become `_` or `-`, the span
+    // arm would match on its own and the tripwire below would keep passing while the mechanism
+    // it names retired SILENTLY. A local guard needed `SPAN_PRESERVING_FILLER` exported from
+    // `@sow/domain`; 24.135 added it to the barrel (it was declared but omitted), which is what
+    // makes the assertion immediately below possible. The reasoning that made this a real gap is
+    // retained rather than deleted (striking a block does not tense-shift the sentences inside
+    // it) — only the STATE changed: cross-package coverage in `@sow/domain`'s own
+    // `test/redaction/marker-filler-property.test.ts` (which rejects `-`, `_` and `.` as fillers)
+    // still exists and is still not coverage THIS file provides on its own; this file now ALSO
+    // carries a local tripwire so a reader of this pin does not have to trust another package's
+    // suite to know the mechanism is still intact.
+    expect(
+      /^[_ -]$/.test(SPAN_PRESERVING_FILLER),
+      "SPAN_PRESERVING_FILLER became a member of `private[_ -]?key`'s alphabet — the span-preserving arm now matches this fixture on its own, so the isolation the assertions below claim (\"only the LEGACY-SPACE arm produces this refusal\") is FALSE. This does not mean the fixture is wrong; it means the comment above and the 24.123 removal-candidate framing need re-deriving, not re-greening.",
+    ).toBe(false);
     const spaceManufactured = `private${REDACTED_RAW}key`;
     expect(
       isRedactionSafe(refSignal(spaceManufactured)),

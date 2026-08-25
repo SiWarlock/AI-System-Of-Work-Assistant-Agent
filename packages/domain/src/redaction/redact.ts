@@ -35,6 +35,19 @@ import {
 // The scrub patterns (PEM_BLOCK / URL_USERINFO_SEGMENT / CREDENTIAL_TOKEN) are
 // re-exported too so the provider boundary can reuse the SAME detectors instead of
 // keeping a second copy (task 10.1 "generalize, do not duplicate").
+//
+// task 24.135 — `SPAN_PRESERVING_FILLER` and `CREDENTIAL_NETS` were declared in
+// `redaction-rules.ts` but OMITTED from this block, so `@sow/domain`'s own public
+// barrel (this module, wholesale-re-exported by `src/index.ts`) could not name
+// them — a cross-package consumer had no way to reach either symbol without
+// reaching past the barrel into the internal module path. `CREDENTIAL_NETS` is
+// added alongside it for the identical reason (same omission, same fix): it is
+// the one canonical, frozen list of credential nets this package maintains, and a
+// cross-package parity test deriving its corpus from "the nets domain knows about"
+// (task 24.133) needs the ARRAY, not a hand-re-declared copy of its three members —
+// re-declaring it would recreate exactly the "second hand-maintained net list" gap
+// `CREDENTIAL_NETS` itself exists to prevent (see its own comment in
+// `redaction-rules.ts`).
 export {
   SAFE_FIELD_ALLOWLIST,
   isAllowlistedField,
@@ -44,9 +57,11 @@ export {
   isSafeFieldValue,
   isIdNamedKey,
   isTimestampKey,
+  CREDENTIAL_NETS,
   CREDENTIAL_PREFIX,
   SENSITIVE_KEYWORD,
   URL_USERINFO_CREDENTIAL,
+  SPAN_PRESERVING_FILLER,
   PEM_BLOCK,
   URL_USERINFO_SEGMENT,
   CREDENTIAL_TOKEN,
