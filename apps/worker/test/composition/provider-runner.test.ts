@@ -138,6 +138,11 @@ function makeController(): {
     resolve: () => Promise.resolve(ok(undefined)),
     list: () => Promise.resolve(ok([])),
     readModel: () => Promise.resolve(ok({} as never)),
+    // Task 24.3 operator read-cursor. This file drives the KeychainLockController, which only ever
+    // calls `record`/`resolve`; `markRead` is here to satisfy the port, and mirrors the real
+    // surface's no-such-item arm (`ok(undefined)`) — the same shape `acknowledge`/`resolve` use
+    // above, so the fake never claims a read-cursor stamp the controller did not make.
+    markRead: () => Promise.resolve(ok(undefined)),
   };
   const degradationStore: ProviderDegradationStore = {
     markDegraded: () => Promise.resolve(),
