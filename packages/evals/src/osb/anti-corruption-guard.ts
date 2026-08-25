@@ -80,8 +80,13 @@ export const WRITE_SURFACE_TOKENS: ReadonlyArray<WriteSurfaceToken> = [
   { token: "rename", pattern: /\brename(Sync)?\b/ },
   { token: "rm", pattern: /\brm(dir|Sync)?\b/ },
   { token: "unlink", pattern: /\bunlink(Sync)?\b/ },
-  { token: "symlink", pattern: /\bsymlink(Sync)?\b/ },
-  // hard-link + generic write-handle call — call-form (`(`) so prose "link"/"write" can't fire.
+  // hard-link + symlink + generic write-handle call — call-form (`(`) so prose "link"/"symlink"/"write"
+  // can't fire. `symlink(` closes the long-deferred prose FALSE POSITIVE this guard owed: a doc comment
+  // saying a compare is "purely lexical (no fs/symlink resolution)" (coding-session-capture.ts:48)
+  // describes the ABSENCE of a write and must not trip. NOT a weakening — a real fs symlink is ALWAYS a
+  // call (`symlink(`, `symlinkSync(`, `fsp.symlink(`), and the no-weakening test pins every such form.
+  // Note `link(` cannot cover it: `\blink` finds no word boundary inside "symlink".
+  { token: "symlink(", pattern: /\bsymlink(Sync)?\(/ },
   { token: "link(", pattern: /\blink(Sync)?\(/ },
   { token: ".write(", pattern: /\.write(Sync)?\(/ },
   // Tool-Gateway external-write surface (§8) — extractors are read/emit-only, not writers.

@@ -41,7 +41,53 @@ const OSB_PIN_PATH = resolve(REPO_ROOT, "config/osb.pin");
 // +1: 13.2a web-fetch-transport.ts, dormant SSRF-guarded read-only web-fetch transport (emit-only; real fetch = §ARM-23) —
 //     write-free per eval-security's OWN scanForWriteSurfaces (0 violations, the deciding CERTIFY); its doc-comment
 //     `@sow/knowledge` prose is now correctly NOT flagged (L12: the token is the QUOTED import specifier), 2026-07-26.
-const EXPECTED_CONNECTOR_ADAPTER_COUNT = 21;
+// +5 (2026-08-25, 21 → 26): the parallel-autobuild round landed five NEW read-edge adapters. The pin FIRED as
+//     designed (`expected 26 to be 21`) — this bump is the deliberate, per-file review it exists to force. Each was
+//     re-scanned with eval-security's OWN scanForWriteSurfaces and is write-free:
+//       coding-session-capture.ts    — lexical repo-path/origin verifier, emit-only; ZERO fs ops. Its ONLY hit was a
+//                                      doc-comment PROSE "no fs/symlink resolution" — a guard-pattern FALSE POSITIVE,
+//                                      not a write. Closed HERE by anchoring the `symlink` token to a CALL (the
+//                                      long-deferred prose-FP fix this header already owed to eval-security), with a
+//                                      no-weakening test proving every real symlink CALL form still trips.
+//       gmail-source.ts              — Gmail ingestion source adapter (candidate-data emit-only). 0 hits.
+//       oauth-token.ts               — OAuth refresh loop / token seam. 0 hits.
+//       podcast-extract-transport.ts — podcast extractor transport (emit-only). 0 hits.
+//       youtube-extract-transport.ts — YouTube extractor transport (emit-only). 0 hits.
+//     The scan is proven to have INSPECTED (not merely counted) every one of the 26 — see the NON-VACUITY test below,
+//     which mutates each file's own content and asserts the violation is attributed back to THAT path.
+// The pinned SET, not just the size: a rename or a swap (one added + one deleted) keeps the count at 26 but shows up
+// here as a named diff, so the next reader can tell an INTENDED addition from a regression.
+const EXPECTED_CONNECTOR_ADAPTER_FILES: ReadonlyArray<string> = [
+  "asana.ts",
+  "base.ts",
+  "calendar.ts",
+  "capture-source.ts",
+  "coding-session-capture.ts",
+  "drive.ts",
+  "file-read-transport.ts",
+  "file-source.ts",
+  "free-source-aggregator.ts",
+  "github.ts",
+  "gmail-source.ts",
+  "gmail.ts",
+  "granola.ts",
+  "http-transport.ts",
+  "linear.ts",
+  "oauth-token.ts",
+  "obsidian-vault-mcp.ts",
+  "podcast-extract-transport.ts",
+  "podcast-source.ts",
+  "telegram-capture.ts",
+  "todoist.ts",
+  "url-source.ts",
+  "web-fetch-transport.ts",
+  "web-source.ts",
+  "youtube-extract-transport.ts",
+  "youtube-source.ts",
+];
+// Kept as a LITERAL (not `…FILES.length`) on purpose: two independent statements of the same fact, cross-checked
+// below, so a careless edit to the list alone still trips the numeric pin.
+const EXPECTED_CONNECTOR_ADAPTER_COUNT = 26;
 
 function loadConnectorAdapterSources(): ReadonlyArray<{ path: string; content: string }> {
   return readdirSync(ADAPTERS_DIR)
@@ -165,6 +211,55 @@ describe("Phase-13 §13.1 gate (a) — OSB anti-corruption write-path guard", ()
     expect(res.scannedCount).toBeGreaterThan(0);
     expect(res.scannedCount).toBe(EXPECTED_CONNECTOR_ADAPTER_COUNT);
     expect(res.violations).toEqual([]);
+  });
+
+  it("the count-pin and the file-set pin state the SAME fact — the scanned set is EXACTLY the pinned set (a rename/swap holds the count but shows as a named diff)", () => {
+    expect(EXPECTED_CONNECTOR_ADAPTER_FILES.length).toBe(EXPECTED_CONNECTOR_ADAPTER_COUNT);
+    const scanned = readdirSync(ADAPTERS_DIR).filter(isConnectorAdapterScanFile).sort();
+    expect(scanned).toEqual([...EXPECTED_CONNECTOR_ADAPTER_FILES].sort());
+  });
+
+  it("NON-VACUITY: the live scan INSPECTED each file's CONTENT, it did not merely COUNT files — mutating any one adapter's own content trips a violation attributed back to THAT path", () => {
+    const files = loadConnectorAdapterSources();
+    expect(files.length).toBe(EXPECTED_CONNECTOR_ADAPTER_COUNT);
+    for (const f of files) {
+      expect(f.content.length, `${f.path}: content must have been READ (non-empty)`).toBeGreaterThan(0);
+      const mutated = scanForWriteSurfaces([{ path: f.path, content: `${f.content}\nawait writeFile(p, d);` }]);
+      expect(
+        mutated.violations.some((v) => v.path === f.path && v.token === "writeFile"),
+        `${f.path}: the scan must inspect THIS file's content (a silently-skipped file would report 0 violations)`,
+      ).toBe(true);
+    }
+  });
+
+  it("L12 no-weakening (symlink): every idiomatic fs symlink CALL still trips; a bare PROSE 'symlink' mention does NOT (closes the coding-session-capture.ts doc-comment FP)", () => {
+    const realCalls = [
+      "await symlink(target, linkPath);",
+      "symlinkSync(target, linkPath);",
+      "await fsp.symlink(target, linkPath);",
+      "await fs.promises.symlink(target, linkPath);",
+      'const { symlink } = await import("node:fs/promises");\nawait symlink(a, b);',
+    ];
+    for (const form of realCalls) {
+      const res = scanForWriteSurfaces([{ path: "evil.ts", content: form }]);
+      expect(
+        res.violations.some((v) => v.token === "symlink("),
+        `real fs symlink CALL must STILL trip (no weakening): ${form}`,
+      ).toBe(true);
+    }
+    // Doc-comment prose ABOUT not resolving symlinks (coding-session-capture.ts line 48) is not a write.
+    const prose = [
+      " * Normalize a repo path for EXACT-SEGMENT comparison: purely lexical (no fs/symlink",
+      "// no symlink resolution is performed — the compare is lexical.",
+      "/* a symlink would change the answer, so we never follow one. */",
+    ];
+    for (const line of prose) {
+      const res = scanForWriteSurfaces([{ path: "clean.ts", content: line }]);
+      expect(
+        res.violations.some((v) => v.token.startsWith("symlink")),
+        `bare PROSE 'symlink' must NOT trip: ${line}`,
+      ).toBe(false);
+    }
   });
 
   it("the Finding's file is now COVERED — obsidian-vault-mcp.ts is in the scanned read-edge set (closes the naming-convention coverage bound)", () => {
