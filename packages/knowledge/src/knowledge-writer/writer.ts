@@ -83,7 +83,7 @@ import type { StamperDeps } from "./provenance-stamp";
 // deriveCanonicalFacts uses, so the (factIdentity, mdContentSha) bound here == what the serving gate re-derives.
 import { computePageProvenance } from "../gbrain/derive/canonical-fact-deriver";
 import { buildRefusalSignal, type IssueCarryingRefusal, type RefusalIssue } from "../audit/validation-refusal";
-import type { AuditSignal } from "@sow/policy";
+import { isRedactionSafe, type AuditSignal } from "@sow/policy";
 
 // ── injected hooks (tasks 4.2 / 4.3) ────────────────────────────────────────
 
@@ -272,6 +272,84 @@ export type WriteFailure =
   | AuditRecordFailed
   | RevisionRecordFailed;
 
+// ── 24.64 (knowledge leg) — commit AuditRecord redaction sanitiser ──────────
+//
+// ⭐ THE BY-CONCEPT ENUMERATION (24.64's full scope, restated from the worker leg's own copy at
+// `apps/worker/src/composition/egressRevoke.ts` so a reader of EITHER package's leg sees the whole
+// picture): the task's census of direct `audit.append(` producers repo-wide in `src` (i.e. producers
+// that construct an `AuditRecord`-shaped object INLINE and call `deps.audit.append` directly,
+// bypassing `buildAuditSignal` — `packages/policy/src/audit-signal.ts:205-211` names this exact
+// producer shape in its own retraction) found FOUR sites, split two-and-two by package:
+//   • worker leg (CA-5A, not this file): `apps/worker/src/composition/dispositionDurable.ts:75` and
+//     `egressRevoke.ts:80` — disposition-BEARING triage steps, not the sole-writer path, so THEIR
+//     disposition is gate-and-fail-closed (`isRedactionSafe` check that REJECTS the operation on
+//     failure — see `egressRevoke.ts:105`).
+//   • knowledge leg (HERE): `writer.ts:603` (below) and `tombstone.ts:306` — the KnowledgeWriter
+//     COMMIT path itself (safety rule 1: the sole autonomous Markdown writer). A gate that can REJECT
+//     here can BLOCK a semantic write that already committed durably to disk, so the disposition
+//     inverts: VALIDATE-OR-OMIT, never fail-closed-on-commit. On failure this sanitiser replaces only
+//     the individual `refs` entries that themselves fail the check with a bounded opaque placeholder,
+//     and the SANITISED record is what gets appended — the audit is never dropped (nothing silent)
+//     and the commit never fails because of this check.
+//   • explicitly SCOPED OUT of 24.64 (a named exclusion, not a miss): `buildActivities.ts:657` and
+//     `boot.ts:736` take an ALREADY-BUILT record from their caller — there is no local construction
+//     for a gate to sit next to.
+// `secret-scan.ts:90`'s `buildSecretScanRejectionAudit` is a FIFTH direct-append-adjacent producer but
+// is OUT of this census on a different axis: it already goes through `buildAuditSignal` (never
+// bypasses it), so it is not a "direct construction" site at all — see its own doc comment for the
+// explicit ACCEPTED-WITH-REASON disposition (already covered, nothing to gate).
+//
+// WHY ONLY `refs` — and not `beforeSummary`/`afterSummary`/`payloadHash`/`actor`/`event` — IS EVER
+// REWRITTEN: every one of those other fields is built here from a FIXED template or an internal
+// counter (`summarize`/`summarizeAlreadyApplied`, `hashPayload`, the literal `"KnowledgeWriter"`
+// actor, the literal `"knowledge_writer.commit"` event) — never from candidate-controlled text. `refs`
+// is the one field that folds in `plan.planId`: `PlanIdSchema` (`packages/contracts`) validates only
+// non-emptiness, not content SHAPE, so a schema-valid plan can still carry a credential-shaped planId.
+// That is the representable violation this sanitiser exists to catch — not a second copy of the
+// secret-scan content gate (which scans rendered Markdown BODIES, a disjoint surface).
+export const KW_AUDIT_REF_REDACTED_PLACEHOLDER = "kw-audit-ref-redacted" as const;
+
+/** Fixed, keyword-free placeholder fields so ONLY the probed `ref` drives the per-entry verdict. */
+const REF_PROBE_ACTOR = "kw-ref-probe";
+const REF_PROBE_EVENT = "kw-ref-probe";
+const REF_PROBE_HASH = "kw-ref-probe";
+
+/** True iff this single `refs` entry, scanned in isolation, is redaction-safe. */
+function isRefRedactionSafe(ref: string): boolean {
+  return isRedactionSafe({
+    actor: REF_PROBE_ACTOR,
+    event: REF_PROBE_EVENT,
+    payloadHash: REF_PROBE_HASH,
+    beforeSummary: "",
+    afterSummary: "",
+    refs: [ref],
+  });
+}
+
+/**
+ * VALIDATE-OR-OMIT sanitiser for a constructed commit `AuditRecord`, immediately before
+ * `deps.audit.append` (writer.ts) / the tombstone's equivalent (tombstone.ts). Never rejects, never
+ * drops the audit, never touches `payloadHash` or either summary — see the block comment above for
+ * why `refs` is the only field in scope. Returns the SAME object (no new allocation) when the record
+ * is already redaction-safe, so the byte-identical-on-the-safe-path guarantee holds by construction,
+ * not by a downstream equality check.
+ */
+function sanitizeCommitAuditRecordForAppend(record: AuditRecord): AuditRecord {
+  const signal: AuditSignal = {
+    actor: record.actor,
+    event: record.event,
+    refs: record.refs,
+    payloadHash: record.payloadHash,
+    beforeSummary: record.beforeSummary,
+    afterSummary: record.afterSummary,
+  };
+  if (isRedactionSafe(signal)) return record;
+  const refs = record.refs.map((ref) =>
+    isRefRedactionSafe(ref) ? ref : KW_AUDIT_REF_REDACTED_PLACEHOLDER,
+  );
+  return { ...record, refs };
+}
+
 // ── the writer ───────────────────────────────────────────────────────────────
 
 // (The former pass-through no-op defaults were a fail-OPEN hole — an uninjected
@@ -289,8 +367,8 @@ export type WriteFailure =
  * and concludes the whole argument is stale"), and the copy got fixed while the original stayed
  * wrong. Named so a future `try` addition without a comment update is checkable,
  * not merely re-assertable: both wrap a POST-COMMIT recording write (24.72 — typed, not thrown) — the
- * `try` at `:624` wraps `deps.audit.append`, folding a throw to `audit_record_failed`; the `try` at
- * `:646` wraps `deps.revisions.record`, folding a throw to `revision_record_failed`. ⚠ THESE TWO
+ * `try` at `:708` wraps `deps.audit.append`, folding a throw to `audit_record_failed`; the `try` at
+ * `:730` wraps `deps.revisions.record`, folding a throw to `revision_record_failed`. ⚠ THESE TWO
  * NUMBERS ARE THE CHECKABLE PART, NOT DECORATION: `writer.test.ts`'s
  * `applyPlan_docblock_makes_no_false_universal_try_claim` extracts them from this very paragraph and
  * cross-checks them against a live scan of the function body, so a future `try` block added — or
@@ -621,8 +699,14 @@ export async function applyPlan(
   // repair the typed-failure surface by destroying a committed write — strictly worse.
   // ⚠ `catch` covers BOTH escapes: an async rejection AND a synchronous throw from the adapter before
   // its first await. Both were measured; an adapter can do either.
+  // 24.64 (knowledge leg) — sanitise IMMEDIATELY before the append call (kept adjacent so a future
+  // edit cannot slip a new append in between): validate-or-omit, never fail-closed-on-commit — see
+  // the block comment above `sanitizeCommitAuditRecordForAppend`. `record` (below) and this function's
+  // `WriteSuccess`/replay-path `auditRecord` deliberately still carry the UNSANITISED value — this
+  // gate's scope is the append call only (§16 log-sink surface), not the in-process return/idempotency
+  // shapes, which are never a log/redaction sink themselves.
   try {
-    await deps.audit.append(auditRecord);
+    await deps.audit.append(sanitizeCommitAuditRecordForAppend(auditRecord));
   } catch (cause) {
     return err({ code: "audit_record_failed", revisionId: newRevision, cause });
   }

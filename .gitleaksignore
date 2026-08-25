@@ -24,3 +24,7 @@ packages/providers/test/provider-log-redaction.test.ts:github-pat:27
 packages/integrations/test/connector-gateway.test.ts:generic-api-key:249
 # fake Google AIza key testing the broadened gateway-log redaction (Phase-6 finding-2 fix)
 packages/integrations/test/gateway-redaction-credentials.test.ts:generic-api-key:13
+
+# ── task 24.64 (knowledge leg) TDD fixture ──
+# fake sk- planId testing the KnowledgeWriter commit AuditRecord sanitiser (writer.ts:603)
+packages/knowledge/test/writer-audit-gate.test.ts:generic-api-key:101
