@@ -12,6 +12,15 @@
 // where the production KnowledgeWriter→GBrain pipeline + vault-ACL/write-fence machinery this
 // gate ultimately needs actually lives).
 //
+// task PAID-GO34 (2026-08-25): the owner explicitly authorized real paid Voyage embedding
+// spend, narrowly, for GO#3's and GO#4's live legs — lifting constraint (a) above for those two
+// legs only. The "GO#3/GO#4 paid-embedding leg — REAL preflight probe" describe block below is
+// what that authorization actually bought: a real, live, $0-spent proof that the embed path
+// itself currently fails (a pre-existing `embedding_provider` defect in the installed gbrain
+// binary, reproduced cold on a fresh scratch brain — see that block's comments). GO#3(a)-(d) and
+// GO#4's embedding-dependent half stay `it.todo`, now blocked by that tooling defect rather than
+// by the lifted authorization gap.
+//
 // 12.23 (sibling, `[x] DONE`, `packages/evals/test/gbrain-failclosed.test.ts`) already pins the
 // DETERMINISTIC decision logic behind GO #2 (monotonic apply/no-lost-update) and GO #3 (parity
 // classification of db_only/unstamped/borrowed-stamp/forged-hash) against the REAL
@@ -28,7 +37,13 @@ import { join } from "node:path";
 import { workspaceId } from "@sow/contracts";
 import type { RevisionId } from "@sow/contracts";
 import { deriveCanonicalFacts } from "@sow/knowledge";
-import { runFsExtractLinksDryRun } from "../src/gbrain/scratch-brain";
+import {
+  runFsExtractLinksDryRun,
+  mkScratchGbrainHome,
+  rmScratchGbrainHome,
+  initScratchBrain,
+  putScratchBrainPage,
+} from "../src/gbrain/scratch-brain";
 
 const LIVE = process.env["SOW_GBRAIN_LIVE"] === "1";
 
@@ -86,6 +101,55 @@ describe.skipIf(!LIVE)("12.7 GO#4 (round-trip) supporting leg — the REAL gbrai
   });
 });
 
+describe.skipIf(!LIVE)(
+  "12.7 GO#3/GO#4 paid-embedding leg — REAL preflight probe (task PAID-GO34, owner-authorized Voyage spend)",
+  () => {
+    // The owner explicitly authorized REAL paid Voyage embedding spend for GO#3's four-shape
+    // db_only/unstamped injection and GO#4's full round-trip (task PAID-GO34) — narrowly, embedding
+    // spend for THESE TWO LEGS ONLY (root CLAUDE.md "nothing arms": no write_through_enabled flip, no
+    // real-brain write, no key provisioning). Per that task's own instruction this ONE probe runs
+    // FIRST and CHEAPLY, before any further spend: it either clears the way to build GO#3(a)-(d)/GO#4's
+    // live injection for real, or it proves — live, on a BRAND-NEW isolated scratch brain (never the
+    // owner's real `~/.gbrain`) — that the pre-existing `embedding_provider` defect blocks the embed
+    // path itself, in which case the it.todo rows below stay blocked for a TOOLING reason, not an
+    // authorization one.
+    it(
+      "a real `gbrain put` against a fresh scratch brain — pins the CURRENTLY OBSERVED outcome of the owner-authorized embed spend",
+      async () => {
+        const home = await mkScratchGbrainHome();
+        try {
+          await initScratchBrain(home);
+          const content =
+            "---\nslug: paid-go34-probe\ntype: note\n---\n# Probe\nOne short sentence to test the real embed path.\n";
+          const result = await putScratchBrainPage(home, "paid-go34-probe", content);
+
+          // MEASURED LIVE this session (task PAID-GO34): 5/5 real attempts against a FRESH scratch
+          // brain — 1 `doctor --json` embedding_provider probe + 4 `put` attempts (the last AFTER
+          // explicitly `gbrain config set embedding_dimensions 1024`, ruling out "the value merely
+          // isn't stored" — some code path ignores the stored value regardless) — ALL failed
+          // IDENTICALLY with the same Voyage output_dimension rejection the owner found on the real
+          // brain. This is therefore NOT specific to the owner's `~/.gbrain` state; it reproduces
+          // cold on an empty brain. Zero dollars spent: every attempt was rejected by Voyage's own
+          // dimension validation BEFORE any embedding was computed/billed.
+          //
+          // This assertion PINS that observed state as a positive control on the EXACT failure mode
+          // (provider name + parameter name + the offending value) — not a bare "it failed". If
+          // gbrain's upstream embed-path defect is ever fixed, THIS assertion is what starts failing
+          // — the signal to come back and build GO#3(a)-(d)/GO#4's live injection using
+          // `putScratchBrainPage` (already built in this package's `src/gbrain/scratch-brain.ts`).
+          expect(result.ok).toBe(false);
+          expect(result.stderr).toContain("voyage-code-3");
+          expect(result.stderr).toContain("output_dimension");
+          expect(result.stderr).toContain("1536");
+        } finally {
+          await rmScratchGbrainHome(home);
+        }
+      },
+      90_000,
+    );
+  },
+);
+
 describe("12.7 — the four GO conditions' remaining LIVE proof (genuinely infra/cost-gated — precise blockers, not a blanket 'no gbrain')", () => {
   // Each row below states EXACTLY what is missing, per this package's territory + safety
   // constraints — never "needs more investigation."
@@ -104,14 +168,16 @@ describe("12.7 — the four GO conditions' remaining LIVE proof (genuinely infra
   it.todo(
     "GO#3 parity-catches-DB-only-facts LIVE injection: inject 4 real DB-only facts via (a) manual `gbrain put`, (b) a dream/synthesize-style page, (c) a borrowed-stamp page, (d) a forged-content_hash collision, asserting each classifies db_only/unstamped (HARD floor) against the REAL classifier. " +
       "The DETERMINISTIC classification logic for all 4 shapes is ALREADY covered live against the real @sow/knowledge modules — see 12.23 `gbrain-failclosed.test.ts` describe(12.23c). " +
-      "BLOCKED (this leg only): (a)/(b) require a real `gbrain put`/`dream` call, which triggers a REAL PAID Voyage embedding-API write per this session's own `gbrain put --help` ('Chunks, embeds...') — out of scope for a read-only acceptance suite without explicit owner cost authorization (root CLAUDE.md 'nothing arms' / 'no real external write').",
+      "COST-AUTHORIZATION BLOCKER LIFTED (task PAID-GO34): the owner explicitly authorized real paid Voyage embedding spend for this leg. " +
+      "STILL BLOCKED, now by a DIFFERENT cause: a TOOLING defect, not an authorization gap. See the 'GO#3/GO#4 paid-embedding leg — REAL preflight probe' describe block above (`putScratchBrainPage`) — 5/5 real live attempts against a FRESH scratch brain (never the owner's real brain) failed identically with 'Voyage model \"voyage-code-3\" supports output_dimension only in {256, 512, 1024, 2048}, got 1536', including after explicitly `gbrain config set embedding_dimensions 1024` (ruling out 'the value merely isn't stored' — some code path ignores it regardless). Zero dollars spent (every attempt rejected before any embedding was computed/billed). This is a defect in the owner's local `gbrain` checkout (outside this repo, outside this package's territory — root CLAUDE.md: do not attempt to fix it here). (a)-(d) cannot be built until it is fixed upstream; when it is, `putScratchBrainPage` is the ready-built injection primitive.",
   );
 
   it.todo(
     "GO#4 round-trip-lossless LIVE: a real KW-write → commit → import/sync → DB → rebuild-oracle → compare cycle, asserting SEMANTIC-field equality AND doctor embeddings/embedding_provider GREEN. " +
       "The fs-extract corroborating-oracle leg above IS built and live-verified (no embedding needed). " +
-      "BLOCKED (the full cycle): needs real embeddings (real paid Voyage API write — same constraint as GO#3) PLUS a live KnowledgeWriter→Temporal commit pipeline (apps/worker territory). " +
-      "ALSO: this session measured the REAL doctor `embedding_provider` check FLAKY against the pinned installed brain — two consecutive live `gbrain doctor --json` calls (no code change between them) flipped ok/'1024 dims, DB aligned' → warn/'Voyage model \"voyage-code-3\" supports output_dimension only in {256, 512, 1024, 2048}, got 1536' — so 'doctor embeddings/embedding_provider GREEN' is not currently a STABLE live precondition even where reachable; recorded here as a real Finding, not silently assumed green.",
+      "COST-AUTHORIZATION BLOCKER LIFTED for the embedding half (task PAID-GO34): the owner explicitly authorized real paid Voyage spend. " +
+      "STILL BLOCKED: (1) the SAME tooling defect as GO#3 above — real embeds do not currently succeed at all (see the preflight-probe describe block; 5/5 live failures this session, $0 spent), so 'doctor embeddings/embedding_provider GREEN' is not reachable today, and (2) independently, the full cycle also needs a live KnowledgeWriter→Temporal commit pipeline (apps/worker territory, outside this package). " +
+      "This session's re-measurement found the embedding_provider probe FAILING DETERMINISTICALLY (5/5), not flaky as a prior session reported on the owner's real brain — the two reports do not contradict (different environments/timing can differ), but what this session newly establishes is that the failure reproduces COLD on a brand-new brain and SURVIVES an explicit `embedding_dimensions=1024` config override, narrowing it to a real code-path bug rather than a per-brain config or ordering artifact.",
   );
 
   it.todo(

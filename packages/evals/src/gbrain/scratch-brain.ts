@@ -55,6 +55,46 @@ export async function initScratchBrain(home: string): Promise<void> {
   });
 }
 
+/** Outcome of a real `gbrain put` — deliberately fail-closed to a typed result (never throws) so a
+ *  caller can assert on EITHER outcome (the embed-path defect this call exists to probe currently
+ *  makes every real `put` fail; a caller pins that fact rather than the helper masking it). */
+export interface PutScratchPageResult {
+  readonly ok: boolean;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/**
+ * `gbrain put <slug> --content <md>` scoped to `home` via `GBRAIN_HOME` — a REAL page write that
+ * chunks + embeds (a REAL paid Voyage embedding-API call per `gbrain put --help`: "Chunks, embeds,
+ * reconciles tags..."). Fixed argv, `shell:false`, bounded timeout, `content` passed as a single
+ * argv element (never shell-interpolated). Callers MUST gate this behind `SOW_GBRAIN_LIVE=1` and an
+ * explicit owner cost authorization — see this package's `gbrain-four-go-acceptance.test.ts` header.
+ */
+export async function putScratchBrainPage(
+  home: string,
+  slug: string,
+  content: string,
+): Promise<PutScratchPageResult> {
+  try {
+    const { stdout, stderr } = await execFileAsync("gbrain", ["put", slug, "--content", content], {
+      env: { ...process.env, GBRAIN_HOME: home },
+      timeout: SCRATCH_GBRAIN_EXEC_TIMEOUT_MS,
+      maxBuffer: MAX_BUFFER,
+      shell: false,
+      windowsHide: true,
+    });
+    return { ok: true, stdout, stderr };
+  } catch (cause) {
+    const asExecError = cause as { readonly stdout?: string; readonly stderr?: string };
+    return {
+      ok: false,
+      stdout: asExecError.stdout ?? "",
+      stderr: asExecError.stderr ?? (cause instanceof Error ? cause.message : String(cause)),
+    };
+  }
+}
+
 /** Bind to loopback port 0 to obtain an OS-assigned free port, then release it. */
 export async function findFreeLoopbackPort(): Promise<number> {
   return new Promise((resolve, reject) => {
