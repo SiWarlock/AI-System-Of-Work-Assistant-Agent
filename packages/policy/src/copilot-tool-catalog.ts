@@ -23,11 +23,35 @@ import { toolId } from "@sow/contracts";
 import type { ToolId, ToolPolicy } from "@sow/contracts";
 import { effectiveAllowedTools } from "@sow/contracts";
 
-/** One Copilot tool: its opaque id, whether it can MUTATE (ING-7 gate input), and a one-line description. */
+/**
+ * The Copilot tool catalog's governance tier — a closed set mirroring the rollout classes in
+ * `docs/planning/copilot-skill-catalog.md` §4 (Tier 1 catalog-extend read-only · Tier 2 synthesis ·
+ * Tier 3 ingest-trigger · Tier 4 semantic/action propose-only bridge · Tier 5 external-action). This slice
+ * only populates 1 and 4 on the 23 entries that already exist here — Tier 2/3/5 have NO catalog entries yet
+ * (the web/podcast/youtube ingest triggers, the web-research adapters, and the external-action adapters are
+ * external-fetch/external-write surfaces sitting behind the pending §ARM-23 owner gate). Adding a Tier-2/3/5
+ * entry is a separate, later, owner-gated slice — never a side effect of typing this field.
+ */
+export type CopilotTier = 1 | 2 | 3 | 4 | 5;
+
+/** Runtime guard mirroring the closed `CopilotTier` literal union — anything outside {1,2,3,4,5} is rejected. */
+export function isCopilotTier(v: unknown): v is CopilotTier {
+  return v === 1 || v === 2 || v === 3 || v === 4 || v === 5;
+}
+
+/** One Copilot tool: its opaque id, whether it can MUTATE (ING-7 gate input), its governance tier, and a
+ * one-line description. */
 export interface CopilotToolSpec {
   readonly id: ToolId;
   /** ING-7: an untrusted-content Copilot may hold ONLY non-mutating tools. */
   readonly mutating: boolean;
+  /**
+   * The governance tier (`CopilotTier`) — the MACHINE-CHECKABLE source of truth for a tool's governance
+   * class. Required on every entry so a catalog-wide gate-(c) governance eval (§13.10) can enumerate tiers
+   * without parsing prose comments; a prose "Tier-1" label duplicating this field is exactly the drift
+   * hazard the typed field exists to remove.
+   */
+  readonly tier: CopilotTier;
   readonly description: string;
 }
 
@@ -49,7 +73,7 @@ export interface CopilotToolSpec {
 // `COPILOT_PROPOSE_TOOL.mutating = false` (which would silently downgrade a mutating tool) is prevented at
 // runtime, not just by the compile-time `readonly`.
 export const COPILOT_READ_TOOLS: readonly CopilotToolSpec[] = Object.freeze([
-  Object.freeze({ id: toolId("gbrain.search"), mutating: false, description: "semantic search over the workspace brain" }),
+  Object.freeze({ id: toolId("gbrain.search"), mutating: false, tier: 1, description: "semantic search over the workspace brain" }),
   // §13.10 go-live gate (d) — the one-time phantom cleanup (verified against live gbrain v0.35.1):
   // `graph`/`timeline` were renamed to the REAL MCP tool names below; `schema_read` and
   // `contained_synthesis` had NO live MCP tool and were pruned; `health` was pruned because the real op
@@ -57,13 +81,16 @@ export const COPILOT_READ_TOOLS: readonly CopilotToolSpec[] = Object.freeze([
   // scope=read, so cataloging an admin op would be an admitted-but-unreachable phantom allow-list entry.
   // Servable-under-read-scope is a catalog PRECONDITION, alongside read-purity.
   // Both reads take a MODEL-SUPPLIABLE `slug`, so the ⚠ WS-8 GO-LIVE GATE (below) applies to them too.
-  Object.freeze({ id: toolId("gbrain.traverse_graph"), mutating: false, description: "walk the knowledge-graph neighborhood of a note (slug + depth)" }),
-  Object.freeze({ id: toolId("gbrain.get_timeline"), mutating: false, description: "read a note's timeline entries (per-page history; slug-keyed)" }),
-  // Tier-1 §13.10 — the conflict/gap-detection analysis reads (led by find_contradictions). PURE reads
+  Object.freeze({ id: toolId("gbrain.traverse_graph"), mutating: false, tier: 1, description: "walk the knowledge-graph neighborhood of a note (slug + depth)" }),
+  Object.freeze({ id: toolId("gbrain.get_timeline"), mutating: false, tier: 1, description: "read a note's timeline entries (per-page history; slug-keyed)" }),
+  // §13.10 — the conflict/gap-detection analysis reads (led by find_contradictions). PURE reads
   // (verified against the live gbrain MCP: find_contradictions reads the cached run row + never triggers a
   // probe; find_anomalies is statistical; find_orphans is a graph read). Op-suffix == the live gbrain MCP
   // tool name EXACTLY, so `copilotToolToMcpName` maps them identity → mcp__gbrain__<op>. Surfacing conflicts
   // BEFORE answering feeds the no-inference posture (REQ-F-017): route to clarification instead of guessing.
+  // GOVERNANCE TIER: carried by each entry's typed `tier` field below (CopilotTier), NOT by this comment —
+  // this block is history/rationale only; a live prose tier label duplicating the field is the drift hazard
+  // the typed field exists to remove.
   //
   // ⚠ WS-8 GO-LIVE GATE (do NOT flip copilotAgentMode against a MULTI-workspace brain until fixed): these
   // three ENUMERATE THE WHOLE BRAIN with no workspace-scope arg — strictly broader than the query-scoped
@@ -74,18 +101,18 @@ export const COPILOT_READ_TOOLS: readonly CopilotToolSpec[] = Object.freeze([
   // per-workspace brain partitioning / server-enforced scope (NOT find_contradictions' optional `slug` arg,
   // which a model can equally use to TARGET another workspace). Safe today: dormant (copilotAgentMode OFF) +
   // a single seeded served workspace. Tracked as a hard go-live blocker + a C6 governance-eval item.
-  Object.freeze({ id: toolId("gbrain.find_contradictions"), mutating: false, description: "read cached suspected-contradiction findings for the workspace brain" }),
-  Object.freeze({ id: toolId("gbrain.find_anomalies"), mutating: false, description: "read statistical anomalies in the workspace brain" }),
-  Object.freeze({ id: toolId("gbrain.find_orphans"), mutating: false, description: "read orphaned / unlinked notes in the workspace brain" }),
+  Object.freeze({ id: toolId("gbrain.find_contradictions"), mutating: false, tier: 1, description: "read cached suspected-contradiction findings for the workspace brain" }),
+  Object.freeze({ id: toolId("gbrain.find_anomalies"), mutating: false, tier: 1, description: "read statistical anomalies in the workspace brain" }),
+  Object.freeze({ id: toolId("gbrain.find_orphans"), mutating: false, tier: 1, description: "read orphaned / unlinked notes in the workspace brain" }),
   // Expertise routing + the takes calibration memory. PURE reads (live gbrain MCP: find_experts ranks
   // person/company pages by expertise via SQL; takes_* list/search/score the owner's claims & bets — no
   // take-WRITE tool exists in this set). These read the BRAIN, so the same ⚠ WS-8 GO-LIVE GATE above applies
   // (whole-brain reads against a combined brain leak cross-workspace until per-workspace partitioning lands).
-  Object.freeze({ id: toolId("gbrain.find_experts"), mutating: false, description: "route a topic to who-in-the-brain knows it (ranked person/company pages)" }),
-  Object.freeze({ id: toolId("gbrain.takes_list"), mutating: false, description: "list the owner's takes (typed/weighted/attributed claims)" }),
-  Object.freeze({ id: toolId("gbrain.takes_search"), mutating: false, description: "keyword-search the owner's takes" }),
-  Object.freeze({ id: toolId("gbrain.takes_scorecard"), mutating: false, description: "read the calibration scorecard for resolved bets" }),
-  Object.freeze({ id: toolId("gbrain.takes_calibration"), mutating: false, description: "read the calibration curve for resolved bets" }),
+  Object.freeze({ id: toolId("gbrain.find_experts"), mutating: false, tier: 1, description: "route a topic to who-in-the-brain knows it (ranked person/company pages)" }),
+  Object.freeze({ id: toolId("gbrain.takes_list"), mutating: false, tier: 1, description: "list the owner's takes (typed/weighted/attributed claims)" }),
+  Object.freeze({ id: toolId("gbrain.takes_search"), mutating: false, tier: 1, description: "keyword-search the owner's takes" }),
+  Object.freeze({ id: toolId("gbrain.takes_scorecard"), mutating: false, tier: 1, description: "read the calibration scorecard for resolved bets" }),
+  Object.freeze({ id: toolId("gbrain.takes_calibration"), mutating: false, tier: 1, description: "read the calibration curve for resolved bets" }),
   // Code intelligence over the indexed code graph. PURE reads (symbol def / refs / callers / callees / flow /
   // blast-radius). code_flow + code_blast populate an internal traversal MEMOIZATION cache — a non-semantic,
   // non-external, non-brain-truth side effect (transparent to callers), so `mutating:false` is correct. Its
@@ -96,24 +123,24 @@ export const COPILOT_READ_TOOLS: readonly CopilotToolSpec[] = Object.freeze([
   // (where one code index spans e.g. an employer repo + a personal repo) source_id ≠ workspace and a model
   // could target/enumerate another workspace's source. Go-live must map source→workspace + enforce scope
   // server-side (same hard blocker + C6 eval item as the brain-reading tools); safe today (dormant + single seed).
-  Object.freeze({ id: toolId("gbrain.code_def"), mutating: false, description: "the definition site(s) of a symbol" }),
-  Object.freeze({ id: toolId("gbrain.code_refs"), mutating: false, description: "every reference to a symbol across the codebase" }),
-  Object.freeze({ id: toolId("gbrain.code_callers"), mutating: false, description: "direct callers of a symbol (call graph)" }),
-  Object.freeze({ id: toolId("gbrain.code_callees"), mutating: false, description: "outbound calls from a symbol (call graph)" }),
-  Object.freeze({ id: toolId("gbrain.code_flow"), mutating: false, description: "ordered execution chain from an entry point to its sinks" }),
-  Object.freeze({ id: toolId("gbrain.code_blast"), mutating: false, description: "transitive callers of a symbol grouped by depth (blast radius)" }),
+  Object.freeze({ id: toolId("gbrain.code_def"), mutating: false, tier: 1, description: "the definition site(s) of a symbol" }),
+  Object.freeze({ id: toolId("gbrain.code_refs"), mutating: false, tier: 1, description: "every reference to a symbol across the codebase" }),
+  Object.freeze({ id: toolId("gbrain.code_callers"), mutating: false, tier: 1, description: "direct callers of a symbol (call graph)" }),
+  Object.freeze({ id: toolId("gbrain.code_callees"), mutating: false, tier: 1, description: "outbound calls from a symbol (call graph)" }),
+  Object.freeze({ id: toolId("gbrain.code_flow"), mutating: false, tier: 1, description: "ordered execution chain from an entry point to its sinks" }),
+  Object.freeze({ id: toolId("gbrain.code_blast"), mutating: false, tier: 1, description: "transitive callers of a symbol grouped by depth (blast radius)" }),
   // Resume-context recency read ("what's been going on / what's hot"): pages ranked by salience over a window.
   // Whole-brain read ⇒ the same ⚠ WS-8 GO-LIVE GATE (above) applies. NOTE: the sibling `get_recent_transcripts`
   // is DELIBERATELY EXCLUDED — it is LOCAL-ONLY (rejects remote MCP/http callers with permission_denied), so a
   // catalog entry would be a dead allow-list entry for the served (http-transport) agent.
-  Object.freeze({ id: toolId("gbrain.get_recent_salience"), mutating: false, description: "recently-salient pages (activity + salience ranked over a window)" }),
-  Object.freeze({ id: toolId("vault.read"), mutating: false, description: "read a canonical Markdown note by path" }),
+  Object.freeze({ id: toolId("gbrain.get_recent_salience"), mutating: false, tier: 1, description: "recently-salient pages (activity + salience ranked over a window)" }),
+  Object.freeze({ id: toolId("vault.read"), mutating: false, tier: 1, description: "read a canonical Markdown note by path" }),
   // §13.10d skill self-introspection — the C6 skill-catalog-over-MCP pattern (the agent enumerating which
   // read-skills it can invoke + reading one skill's metadata). These read the STATIC tool catalog, touching
   // NO workspace data (no brain read, no vault read), so they carry ZERO cross-workspace leak risk and are
   // classified `workspace-agnostic` below (the 4th scoping class). Pure reads, ING-7-safe, zero approval.
-  Object.freeze({ id: toolId("skills.list"), mutating: false, description: "list the Copilot's own read-skills (id + description) — skill self-introspection" }),
-  Object.freeze({ id: toolId("skills.get"), mutating: false, description: "read one Copilot read-skill's metadata by id" }),
+  Object.freeze({ id: toolId("skills.list"), mutating: false, tier: 1, description: "list the Copilot's own read-skills (id + description) — skill self-introspection" }),
+  Object.freeze({ id: toolId("skills.get"), mutating: false, tier: 1, description: "read one Copilot read-skill's metadata by id" }),
 ]);
 
 /**
@@ -125,6 +152,10 @@ export const COPILOT_READ_TOOLS: readonly CopilotToolSpec[] = Object.freeze([
 export const COPILOT_PROPOSE_TOOL: CopilotToolSpec = Object.freeze({
   id: toolId("copilot.propose_action"),
   mutating: true,
+  // §13.10a/13.10 — the semantic/action propose-only bridge: routes to §9.8 Approvals, never a direct
+  // write (see IMPLEMENTATION_PLAN.md §13.10 Tier-4). Never Tier-5 (external-action ADAPTERS, still
+  // owner-gated) — this tool only ever produces a human-approvable proposal.
+  tier: 4,
   description: "propose an external write for human approval (routes to §9.8 Approvals; never a direct write)",
 });
 
@@ -138,11 +169,16 @@ export const COPILOT_PROPOSE_TOOL: CopilotToolSpec = Object.freeze({
 export const COPILOT_PROPOSE_KNOWLEDGE_TOOL: CopilotToolSpec = Object.freeze({
   id: toolId("copilot.propose_knowledge"),
   mutating: true,
+  // §13.10a/13.10 — the semantic/action propose-only bridge: routes to §9.8 Approvals, never a direct
+  // write (see IMPLEMENTATION_PLAN.md §13.10 Tier-4). Never Tier-5 (external-action ADAPTERS, still
+  // owner-gated) — this tool only ever produces a human-approvable proposal.
+  tier: 4,
   description: "propose a project-note semantic write for human approval (routes to §9.8 Approvals; never a direct write)",
 });
 
-/** The full catalog, keyed by the raw tool id. */
-const CATALOG: ReadonlyMap<string, CopilotToolSpec> = new Map(
+/** The full catalog, keyed by the raw tool id. Exported so a totality test (and the §13.10 gate-(c)
+ * catalog-wide governance eval) can enumerate every entry's `tier` without reconstructing the source lists. */
+export const CATALOG: ReadonlyMap<string, CopilotToolSpec> = new Map(
   [...COPILOT_READ_TOOLS, COPILOT_PROPOSE_TOOL, COPILOT_PROPOSE_KNOWLEDGE_TOOL].map((s) => [s.id as string, s]),
 );
 

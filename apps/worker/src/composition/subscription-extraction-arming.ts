@@ -1,11 +1,13 @@
-// 18.24 step-6 — the SINGLE default-OFF arming helpers that compose the staged 18.20–18.23 pieces into the
-// owner's ENABLE bundle (DORMANT). Two pure helpers:
+// 18.25 step-6 — the SINGLE default-OFF arming helpers that compose the staged 18.20–18.23 pieces into the
+// owner's ENABLE bundle (DORMANT). Three pure helpers:
 //
-//   • gateSubscriptionExtraction(opts, deps) — the owner's step-6 BUILDER of the `ProviderTransportGate`:
+//   • gateSubscriptionOnlyExtraction(opts, deps) — the owner's step-6 BUILDER of the `ProviderTransportGate`:
 //     armed ⇒ { providerTransport (subscription deps threaded + a short-TTL-memoized health source), route
 //     (the cloud {runtime} subscription route) }; OFF (the shipped default) ⇒ `undefined` + ZERO dep-thunk
-//     invocations (byte-equivalent — the factory-spy pin, L23/L27/L58). Reachability-WAIVERED (L11): the owner
-//     ENABLE (step 6, HARD STOP) calls it — building it arms nothing.
+//     invocations (byte-equivalent — the factory-spy pin, L23/L27/L58). NO `RealProviderRunnerDeps` registry
+//     dep (the eager-consumption ordering fix — `buildSubscriptionArmWiring` below is the boot-composition
+//     seam that wires it over the late-bound reader holder). Reachability-WAIVERED (L11): the owner ENABLE
+//     (step 6, HARD STOP) calls it — building it arms nothing.
 //
 //   • resolveSubscriptionArming(providerTransport, env) — the BOOT-side degrade decision. `config.providerTransport`
 //     is the SINGLE arming signal (the SAME `isProviderTransportArmed` predicate `selectProviderRunner` reads —
@@ -14,9 +16,14 @@
 //     a typed fault — it does NOT crash the worker (L52: degrade+surface, never boot-throw; a persisted armed
 //     config + a later-set env var must not take the worker down on restart).
 //
-// ⛔ THIS SLICE DOES NOT ARM: the shipped default leaves `config.providerTransport` unset ⇒ `gateSubscriptionExtraction`
-// is never called + `resolveSubscriptionArming` returns unarmed ⇒ byte-equivalent. The owner's step-6 flip (set
-// `config.providerTransport` via this builder) + the first real run are the HARD LINES (owner+lead-gated).
+// ⛔ THIS SLICE DOES NOT ARM: the shipped default leaves `config.providerTransport` unset ⇒
+// `gateSubscriptionOnlyExtraction` is never called + `resolveSubscriptionArming` returns unarmed ⇒
+// byte-equivalent. The owner's step-6 flip (set `config.providerTransport` via this builder) + the first real
+// run are the HARD LINES (owner+lead-gated).
+//
+// R18-c: the SIBLING full-registry builder `gateSubscriptionExtraction` (18.24) is DELETED — every non-test
+// caller was already wired to this file's `gateSubscriptionOnlyExtraction` successor, and two arming helpers
+// on the same rule-5 surface is exactly the split-brain shape 18.36 came from.
 import { isErr } from "@sow/contracts";
 import type { ProviderRoute } from "@sow/contracts";
 import {
@@ -26,15 +33,10 @@ import {
   type SubscriptionReachabilityCheck,
   type SubscriptionHealthVerdict,
   type HealthGateSources,
-  type ProviderRunner,
 } from "@sow/providers";
-import {
-  buildRealProviderTransportGate,
-} from "./real-provider-transport-gate";
 import {
   isProviderTransportArmed,
   type ProviderTransportGate,
-  type RealProviderRunnerDeps,
 } from "./provider-runner";
 import { selectExtractionRoute, DEFAULT_EXTRACTION_MODEL } from "./extraction-route-gate";
 import { createSubscriptionHealthSources } from "./subscription-health-sources";
@@ -52,7 +54,7 @@ import {
   type SubscriptionAuthFault,
 } from "./subscription-auth-guard";
 
-// ── gateSubscriptionExtraction — the owner step-6 gate BUILDER (dormant) ──────────────────────
+// ── gateSubscriptionOnlyExtraction — the SUBSCRIPTION-ONLY arm builder (18.25 step-6) ─────────────
 
 /** The default short-TTL window (ms) the health probe is memoized over so one reachability check feeds
  *  BOTH HealthGateSources dimensions per gate evaluation (kills the double-probe, subscription-health-sources.ts:22). */
@@ -66,27 +68,6 @@ export interface SubscriptionArmingOpts {
   readonly model?: string;
   /** SDK beta flags; defaults to `DEFAULT_EXTRACTION_BETAS`. */
   readonly betas?: readonly string[];
-}
-
-/** Injected collaborators — all THUNKS/values so the OFF path constructs NOTHING (factory-spy-pinned). */
-export interface SubscriptionArmingDeps {
-  /** The base run-leg deps `createRealProviderRunner` needs, MINUS `subscription` (this helper threads that in). */
-  readonly runnerDeps: RealProviderRunnerDeps;
-  /** The subscription completion client factory (`() => createClaudeSubscriptionCompletion()`). */
-  readonly makeCompletion: () => ClaudeSubscriptionCompletion;
-  /**
-   * The content-resolution seam factory (fake in tests; the real `createRealExtractionContentResolver({reader})`
-   * binds at ENABLE — its `reader` is a post-`assembleBackends` late-bind, see the #13 note in `boot.ts`).
-   */
-  readonly makeContentResolver: () => ExtractionContentResolver;
-  /** The injected reachability check the health probe folds (fake in tests; the real fs/SDK check at ENABLE). */
-  readonly checkReachable: SubscriptionReachabilityCheck;
-  /** Injected numeric ms clock for the short-TTL health memoize (never `Date.now()` — the composition root injects it). */
-  readonly now: () => number;
-  /** Optional short-TTL override for the health memoize; defaults to {@link DEFAULT_HEALTH_PROBE_TTL_MS}. */
-  readonly healthTtlMs?: number;
-  /** Optional runner-factory override (test factory-spy); defaults inside `buildRealProviderTransportGate`. */
-  readonly createRunner?: (deps: RealProviderRunnerDeps) => ProviderRunner;
 }
 
 /** The owner's step-6 wiring bundle — the gate (the single arming signal) + the armed cloud route. */
@@ -112,55 +93,6 @@ function memoizeVerdict(
     return verdict;
   };
 }
-
-/**
- * Compose the owner's step-6 bundle from the staged helpers. OFF guard FIRST + STRICT `=== true` on
- * `opts.enabled` (a truthy-not-`true` value ⇒ `undefined`, never arms — L28) ⇒ returns `undefined` with ZERO
- * dep-thunk invocations (byte-equivalent shipped default; factory-spy-pinned). Armed ⇒ the wiring bundle: the
- * `ProviderTransportGate` (subscription deps THUNKED so nothing constructs until `gate.make()`, the memoized
- * real health source riding `gate.healthSource` — never `config.healthSources`, L52) + the armed cloud route.
- * Pure; total.
- */
-export function gateSubscriptionExtraction(
-  opts: SubscriptionArmingOpts | undefined,
-  deps: SubscriptionArmingDeps,
-): SubscriptionArmingWiring | undefined {
-  if (opts?.enabled !== true) return undefined;
-
-  const model = opts.model ?? DEFAULT_EXTRACTION_MODEL;
-  const betas = opts.betas ?? DEFAULT_EXTRACTION_BETAS;
-  const ttlMs = deps.healthTtlMs ?? DEFAULT_HEALTH_PROBE_TTL_MS;
-
-  // The real health source: a short-TTL-memoized probe folded into HealthGateSources. The memoize is at the
-  // BINDING (not the pure wrap) so one `checkReachable` feeds both dimensions per gate evaluation (item vi).
-  const memoProbe = memoizeVerdict(
-    () => probeClaudeSubscriptionHealth({ checkReachable: deps.checkReachable }),
-    ttlMs,
-    deps.now,
-  );
-  const healthSource = (): HealthGateSources => createSubscriptionHealthSources(memoProbe);
-
-  // Thread the subscription deps into the run-leg deps as THUNKS — nothing constructs until `gate.make()`.
-  const runnerDeps: RealProviderRunnerDeps = {
-    ...deps.runnerDeps,
-    subscription: {
-      completion: deps.makeCompletion,
-      content: deps.makeContentResolver,
-      model,
-      betas,
-    },
-  };
-
-  const providerTransport = buildRealProviderTransportGate({
-    runnerDeps,
-    healthSource,
-    ...(deps.createRunner !== undefined ? { createRunner: deps.createRunner } : {}),
-  });
-
-  return { providerTransport, route: selectExtractionRoute(true) };
-}
-
-// ── gateSubscriptionOnlyExtraction — the SUBSCRIPTION-ONLY arm builder (18.25 step-6) ─────────────
 
 /** Injected deps for {@link gateSubscriptionOnlyExtraction} — the subscription deps ONLY (no
  *  `RealProviderRunnerDeps`, so NONE of the post-`assembleBackends` registry deps are needed). */

@@ -33,6 +33,14 @@ import {
 } from "../health/health-signal";
 
 /**
+ * Fixed, safe literal reason for a `probe_failed` OBS-2 result. The store's raw
+ * error text is NEVER surfaced through the health sink (§16 rule 7: redaction
+ * strips raw content before any log/health sink) — this constant is the only
+ * text a store fault may produce.
+ */
+const OUTBOX_HEALTH_PROBE_FAILED_REASON = "outbox health probe failed (store read fault)";
+
+/**
  * Why a write is being held. Each maps onto a NON-TERMINAL machine state so the
  * entry stays drainable (never expires):
  *   • `unreachable` — the target/existence probe faulted (dispatch returned held)
@@ -49,6 +57,30 @@ export interface HoldDeps {
   readonly clock: () => string;
   /** Fresh outbox id source (injected — never `Math.random()`/`crypto`). */
   readonly outboxId: () => string;
+  /**
+   * OPTIONAL OBS-2 depth probe (task 24.8), run AFTER a successful hold — both
+   * the replay-reuse early return and a fresh enqueue. Absent by default: the
+   * shipped default calls `listDue` ZERO times (dormant — binding a real sink
+   * is worker-area, out of scope here). A `sink` that throws is swallowed; a
+   * health probe never fails the hold.
+   */
+  readonly health?: {
+    readonly probe: OutboxHealthDeps;
+    readonly sink: (probe: OutboxHealthProbe) => void;
+  };
+}
+
+/** Run the OBS-2 depth probe and hand the result to `health.sink`, never throwing. */
+async function runHealthProbe(
+  outbox: OutboxRepository,
+  health: NonNullable<HoldDeps["health"]>,
+): Promise<void> {
+  try {
+    const probe = await outboxHealth(outbox, health.probe);
+    health.sink(probe);
+  } catch {
+    // A health probe must never fail the hold (a throwing sink is swallowed).
+  }
 }
 
 /** The write to hold: the linked envelope + action + the reason + workspace. */
@@ -87,6 +119,9 @@ export async function holdWrite(
   // re-enqueued. (A `not_found` from the store means novel → enqueue below.)
   const existing = await outbox.getByIdempotencyKey(env.idempotencyKey);
   if (isOk(existing)) {
+    if (deps.health) {
+      await runHealthProbe(outbox, deps.health);
+    }
     return ok(existing.value);
   }
 
@@ -114,6 +149,9 @@ export async function holdWrite(
   if (!isOk(enqueued)) {
     return err(enqueued.error);
   }
+  if (deps.health) {
+    await runHealthProbe(outbox, deps.health);
+  }
   return ok(enqueued.value);
 }
 
@@ -126,28 +164,47 @@ export interface OutboxHealthDeps {
 }
 
 /**
- * OBS-2 depth signal. When the count of DUE (non-terminal, held) outbox entries
- * exceeds `depthThreshold`, emit a `write_through_failed` GatewayHealthSignal so
- * the operator sees the blocked write-through backlog. This is READ-ONLY — it
- * NEVER expires or mutates a held entry (held items never silently expire).
- * Returns `undefined` when depth is at/below the threshold (or on a store fault —
- * a health probe never fails the caller). Never throws.
+ * The tri-state result of an OBS-2 depth probe (task 24.8). Split so a STORE
+ * FAULT can never be confused with a healthy (below-threshold) outbox — the
+ * bug the prior `GatewayHealthSignal | undefined` return type could not avoid
+ * (both a fault and an empty queue produced `undefined`):
+ *   • `ok`           — depth is at or below `depthThreshold`.
+ *   • `breach`       — depth exceeds `depthThreshold`; `signal` is an
+ *     `outbox_blocked` GatewayHealthSignal (severity `error` — a gated backlog
+ *     of held writes was never attempted, and is operator-actionable).
+ *   • `probe_failed` — the `listDue` read itself faulted; `reason` is a FIXED
+ *     safe literal, never the store's raw error text (§16 rule 7).
+ */
+export type OutboxHealthProbe =
+  | { readonly kind: "ok" }
+  | { readonly kind: "breach"; readonly signal: GatewayHealthSignal }
+  | { readonly kind: "probe_failed"; readonly reason: string };
+
+/**
+ * OBS-2 depth probe. When the count of DUE (non-terminal, held) outbox entries
+ * exceeds `depthThreshold`, reports a `breach` carrying an `outbox_blocked`
+ * GatewayHealthSignal so the operator sees the blocked write-through backlog.
+ * This is READ-ONLY — it NEVER expires or mutates a held entry (held items
+ * never silently expire). Never throws.
  */
 export async function outboxHealth(
   outbox: OutboxRepository,
   deps: OutboxHealthDeps,
-): Promise<GatewayHealthSignal | undefined> {
+): Promise<OutboxHealthProbe> {
   const due = await outbox.listDue(deps.now, deps.limit);
   if (!isOk(due)) {
-    return undefined;
+    return { kind: "probe_failed", reason: OUTBOX_HEALTH_PROBE_FAILED_REASON };
   }
   const depth = due.value.length;
   if (depth <= deps.depthThreshold) {
-    return undefined;
+    return { kind: "ok" };
   }
-  return buildToolWriteHealthSignal({
-    subjectRef: "outbox",
-    reason: `outbox depth ${depth} exceeds threshold ${deps.depthThreshold}`,
-    kind: "write_through_failed",
-  });
+  return {
+    kind: "breach",
+    signal: buildToolWriteHealthSignal({
+      subjectRef: "outbox",
+      reason: `outbox depth ${depth} exceeds threshold ${deps.depthThreshold}`,
+      kind: "outbox_blocked",
+    }),
+  };
 }

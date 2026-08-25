@@ -13,23 +13,42 @@
 //   • Held items NEVER silently expire — a held entry is due (listDue returns it).
 //   • Replay idempotency — re-holding the SAME idempotencyKey is a no-op (the
 //     existing entry is reused, never a second enqueue).
-//   • OBS-2 — outbox depth over a threshold emits a `write_through_failed`
-//     GatewayHealthSignal; held items are not expired by the health check.
-import { describe, it, expect } from "vitest";
-import { isOk, isErr } from "@sow/contracts";
+//   • OBS-2 — outbox depth over a threshold reports a `breach` probe carrying an
+//     `outbox_blocked` GatewayHealthSignal; held items are not expired by the
+//     health check; a store fault reports `probe_failed`, never confusable with
+//     an empty (healthy) queue (task 24.8).
+//   • Reachability (task 24.8) — an OPTIONAL `HoldDeps.health` binding runs the
+//     depth probe after a successful hold (replay-reuse or fresh enqueue) and
+//     hands the result to an injected sink; with NO binding, `holdWrite` never
+//     calls `listDue` (the shipped default stays dormant/unchanged).
+import { describe, it, expect, vi } from "vitest";
+import { isOk, isErr, err } from "@sow/contracts";
+import type { DbError } from "@sow/db";
 import {
   holdWrite,
   outboxHealth,
   toOutboxStatus,
   type HoldReason,
+  type OutboxHealthProbe,
 } from "../src/tools/outbox";
-import { WRITE_THROUGH_FAILED_HEALTH_CLASS } from "../src/health/health-signal";
+import { OUTBOX_BLOCKED_HEALTH_CLASS } from "../src/health/health-signal";
 import {
   InMemoryOutbox,
   makeEnvelope,
   makeProposedAction,
   makeOutboxEntry,
 } from "./support/fakes";
+
+/**
+ * An `InMemoryOutbox` whose `listDue` always faults — used only to exercise
+ * `outboxHealth`'s `probe_failed` branch. Subclassed here (test-local, not in
+ * `support/fakes.ts`) rather than modifying the shared fake.
+ */
+class FaultingListDueOutbox extends InMemoryOutbox {
+  override async listDue(): ReturnType<InMemoryOutbox["listDue"]> {
+    return err<DbError>({ code: "unavailable", message: "listDue store fault (test double)" });
+  }
+}
 
 const clock = (): string => "2026-07-01T00:00:00.000Z";
 
@@ -189,8 +208,22 @@ describe("toOutboxStatus — machine-state mapping", () => {
   });
 });
 
-describe("outboxHealth — OBS-2 depth breach", () => {
-  it("emits a write_through_failed signal when depth exceeds the threshold", async () => {
+// 24.8: outboxHealth's return type widened from `GatewayHealthSignal | undefined`
+// to the tri-state `OutboxHealthProbe`. The two tests below REPLACE the prior
+// pair pinning the old two-state contract — that contract is what task 24.8
+// corrects, not a behavior this package still owns:
+//   • the breach case previously asserted `write_through_failed` (an ATTEMPT
+//     class) for what is actually a HOLD condition (a backlog that was never
+//     attempted); 24.21 added the correct `outbox_blocked` class + `error`
+//     severity specifically so 24.8 could wire it here — asserting the OLD
+//     class now would pin the exact defect this package exists to fix.
+//   • `undefined` for "no signal" is no longer distinguishable from a store
+//     fault (the bug 24.8 fixes); the tri-state `{kind:"ok"}` fixes that.
+// A third, genuinely NEW test (`probe_failed`) is added below — there was no
+// prior assertion for a `listDue` fault because the old signature could not
+// express it (a fault and an empty queue both produced `undefined`).
+describe("outboxHealth — OBS-2 depth breach (tri-state)", () => {
+  it("reports a breach probe (outbox_blocked / severity error) when depth exceeds the threshold", async () => {
     const outbox = new InMemoryOutbox();
     for (let i = 0; i < 5; i += 1) {
       await holdWrite(
@@ -204,12 +237,18 @@ describe("outboxHealth — OBS-2 depth breach", () => {
         { clock, outboxId: () => `outbox_${i}` },
       );
     }
-    const signal = await outboxHealth(outbox, { now: clock(), depthThreshold: 3, limit: 1000 });
-    expect(signal).not.toBeUndefined();
-    expect(signal?.failureClass).toBe(WRITE_THROUGH_FAILED_HEALTH_CLASS);
+    const probe: OutboxHealthProbe = await outboxHealth(outbox, {
+      now: clock(),
+      depthThreshold: 3,
+      limit: 1000,
+    });
+    expect(probe.kind).toBe("breach");
+    if (probe.kind !== "breach") return;
+    expect(probe.signal.failureClass).toBe(OUTBOX_BLOCKED_HEALTH_CLASS);
+    expect(probe.signal.severity).toBe("error");
   });
 
-  it("emits NO signal when depth is at or below the threshold (held items still present, not expired)", async () => {
+  it("reports {kind:'ok'} when depth is at or below the threshold (held items still present, not expired)", async () => {
     const outbox = new InMemoryOutbox();
     await holdWrite(
       {
@@ -221,13 +260,165 @@ describe("outboxHealth — OBS-2 depth breach", () => {
       outbox,
       { clock, outboxId: () => "outbox_only" },
     );
-    const signal = await outboxHealth(outbox, { now: clock(), depthThreshold: 3, limit: 1000 });
-    expect(signal).toBeUndefined();
+    const probe = await outboxHealth(outbox, { now: clock(), depthThreshold: 3, limit: 1000 });
+    expect(probe).toEqual({ kind: "ok" });
 
     // The held item is NOT expired by the health check — it remains due.
     const due = await outbox.listDue("2026-07-01T02:00:00.000Z", 100);
     expect(isOk(due)).toBe(true);
     if (!isOk(due)) return;
     expect(due.value.map((e) => e.idempotencyKey)).toContain("idem_only");
+  });
+
+  it("reports {kind:'probe_failed'} with a FIXED safe literal reason when listDue faults — never the store's raw error text (rule 7)", async () => {
+    const faulting = new FaultingListDueOutbox();
+    const probe = await outboxHealth(faulting, { now: clock(), depthThreshold: 3, limit: 1000 });
+    expect(probe.kind).toBe("probe_failed");
+    if (probe.kind !== "probe_failed") return;
+    // The store's raw error text must never leak into the probe.
+    expect(probe.reason).not.toContain("listDue store fault (test double)");
+    expect(probe.reason.length).toBeGreaterThan(0);
+  });
+
+  it("a store fault (probe_failed) is never confusable with a healthy empty queue (ok) — distinct kinds", async () => {
+    const empty = new InMemoryOutbox();
+    const okProbe = await outboxHealth(empty, { now: clock(), depthThreshold: 3, limit: 1000 });
+    const faulting = new FaultingListDueOutbox();
+    const faultProbe = await outboxHealth(faulting, {
+      now: clock(),
+      depthThreshold: 3,
+      limit: 1000,
+    });
+    expect(okProbe.kind).toBe("ok");
+    expect(faultProbe.kind).toBe("probe_failed");
+    expect(okProbe.kind).not.toBe(faultProbe.kind);
+  });
+});
+
+describe("holdWrite — OBS-2 reachability (task 24.8)", () => {
+  it("with a bound health sink and depthThreshold 0, delivers exactly ONE breach probe to the sink", async () => {
+    const outbox = new InMemoryOutbox();
+    const sink = vi.fn<(p: OutboxHealthProbe) => void>();
+    const held = await holdWrite(
+      {
+        env: makeEnvelope({ idempotencyKey: "idem_reach" }),
+        action: makeProposedAction({ idempotencyKey: "idem_reach" }),
+        reason: "unreachable",
+        workspaceId: "employer-work",
+      },
+      outbox,
+      {
+        clock,
+        outboxId: () => "outbox_reach",
+        health: {
+          probe: { now: clock(), depthThreshold: 0, limit: 1000 },
+          sink,
+        },
+      },
+    );
+    expect(isOk(held)).toBe(true);
+    expect(sink).toHaveBeenCalledTimes(1);
+    const delivered = sink.mock.calls[0]?.[0];
+    expect(delivered?.kind).toBe("breach");
+  });
+
+  it("runs the probe on the REPLAY-REUSE path too, not only on a fresh enqueue", async () => {
+    const outbox = new InMemoryOutbox();
+    const args = {
+      env: makeEnvelope({ idempotencyKey: "idem_replay_reach" }),
+      action: makeProposedAction({ idempotencyKey: "idem_replay_reach" }),
+      reason: "unreachable" as HoldReason,
+      workspaceId: "employer-work",
+    };
+    const sink = vi.fn<(p: OutboxHealthProbe) => void>();
+    const healthDeps = { probe: { now: clock(), depthThreshold: 0, limit: 1000 }, sink };
+    // First call: fresh enqueue.
+    await holdWrite(args, outbox, { clock, outboxId: () => "outbox_replay_1", health: healthDeps });
+    // Second call: same idempotencyKey -> replay-reuse early-return path.
+    await holdWrite(args, outbox, { clock, outboxId: () => "outbox_replay_2", health: healthDeps });
+    expect(sink).toHaveBeenCalledTimes(2);
+  });
+
+  it("swallows a sink that throws — a health probe never fails the hold", async () => {
+    const outbox = new InMemoryOutbox();
+    const throwingSink = vi.fn(() => {
+      throw new Error("sink boom");
+    });
+    const held = await holdWrite(
+      {
+        env: makeEnvelope({ idempotencyKey: "idem_sink_throws" }),
+        action: makeProposedAction({ idempotencyKey: "idem_sink_throws" }),
+        reason: "unreachable",
+        workspaceId: "employer-work",
+      },
+      outbox,
+      {
+        clock,
+        outboxId: () => "outbox_sink_throws",
+        health: { probe: { now: clock(), depthThreshold: 0, limit: 1000 }, sink: throwingSink },
+      },
+    );
+    expect(isOk(held)).toBe(true);
+    expect(throwingSink).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("holdWrite — dormancy pin (POSITIVE CONTROL, task 24.8)", () => {
+  it("with NO health dep, holdWrite calls listDue ZERO times and returns results byte-identical to the pre-24.8 shape", async () => {
+    const outbox = new InMemoryOutbox();
+    const listDueSpy = vi.spyOn(outbox, "listDue");
+
+    const held = await holdWrite(
+      {
+        env: makeEnvelope({ idempotencyKey: "idem_dormant" }),
+        action: makeProposedAction({ idempotencyKey: "idem_dormant" }),
+        reason: "unreachable",
+        workspaceId: "employer-work",
+      },
+      outbox,
+      { clock, outboxId: () => "outbox_dormant" },
+    );
+
+    // POSITIVE CONTROL: the spy itself is live — a second, health-bound call on
+    // an otherwise-identical outbox DOES invoke listDue, so a spy stuck at zero
+    // calls above is a real dormancy result, not a broken/no-op spy.
+    const controlOutbox = new InMemoryOutbox();
+    const controlSpy = vi.spyOn(controlOutbox, "listDue");
+    await holdWrite(
+      {
+        env: makeEnvelope({ idempotencyKey: "idem_control" }),
+        action: makeProposedAction({ idempotencyKey: "idem_control" }),
+        reason: "unreachable",
+        workspaceId: "employer-work",
+      },
+      controlOutbox,
+      {
+        clock,
+        outboxId: () => "outbox_control",
+        health: { probe: { now: clock(), depthThreshold: 0, limit: 1000 }, sink: () => {} },
+      },
+    );
+    expect(controlSpy).toHaveBeenCalledTimes(1);
+
+    // The actual assertion: the no-health-dep call above never touched listDue.
+    expect(listDueSpy).toHaveBeenCalledTimes(0);
+
+    expect(isOk(held)).toBe(true);
+    if (!isOk(held)) return;
+    expect(held.value).toEqual({
+      outboxId: "outbox_dormant",
+      actionRef: "action_1",
+      workspaceId: "employer-work",
+      targetSystem: "drive",
+      canonicalObjectKey: "cok_drive_abc",
+      idempotencyKey: "idem_dormant",
+      payloadHash: "sha256:deadbeef",
+      status: "retry_queued",
+      payload: { title: "x" },
+      approvalPolicy: "requires_approval",
+      attempts: 0,
+      enqueuedAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z",
+    });
   });
 });

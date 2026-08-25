@@ -23,7 +23,10 @@ import {
   copilotToolScopingClass,
   copilotScopedReadToolIds,
   COPILOT_TOOL_SCOPING,
+  CATALOG,
+  isCopilotTier,
 } from "../src/copilot-tool-catalog";
+import type { CopilotToolSpec } from "../src/copilot-tool-catalog";
 
 /** A Copilot AgentJob with the given tool policy + trust level (reuses the proven admission.test shape). */
 function job(toolPolicy: ToolPolicy, trustLevel: "trusted" | "untrusted"): AgentJob {
@@ -446,5 +449,112 @@ describe("§13.10a — copilot.propose_knowledge (the semantic-write proposing t
     const ids = copilotAgentToolPolicy().allowedTools.map(String);
     expect(ids).toContain(String(COPILOT_PROPOSE_TOOL.id));
     expect(ids).not.toContain("copilot.propose_knowledge");
+  });
+});
+
+// ── §13.10 catalog governance class — the tier is now a TYPED, machine-checkable field, not a prose
+// comment. §13.10's Done-when includes a catalog-wide gate-(c) governance eval, which cannot be written
+// against a catalog whose governance class exists only in English. These pin the field's shape + the
+// class/rail consistency invariants that make an un-tiered or mis-tiered future entry impossible.
+describe("CopilotTier — every catalog entry's governance class is a typed field", () => {
+  const ALL_SPECS: readonly CopilotToolSpec[] = [
+    ...COPILOT_READ_TOOLS,
+    COPILOT_PROPOSE_TOOL,
+    COPILOT_PROPOSE_KNOWLEDGE_TOOL,
+  ];
+
+  it("every_catalog_entry_declares_a_governance_tier", () => {
+    // positive control: the catalog is non-empty, so an empty loop below can't masquerade as a pass
+    expect(CATALOG.size).toBeGreaterThan(0);
+    for (const [id, spec] of CATALOG) {
+      expect(isCopilotTier(spec.tier), `entry ${id} has an invalid tier: ${String(spec.tier)}`).toBe(true);
+    }
+  });
+
+  it("tier_is_a_closed_literal_union_not_a_number", () => {
+    // runtime half: isCopilotTier accepts exactly {1,2,3,4,5} and rejects everything else
+    expect(isCopilotTier(1)).toBe(true);
+    expect(isCopilotTier(2)).toBe(true);
+    expect(isCopilotTier(3)).toBe(true);
+    expect(isCopilotTier(4)).toBe(true);
+    expect(isCopilotTier(5)).toBe(true);
+    expect(isCopilotTier(0)).toBe(false);
+    expect(isCopilotTier(6)).toBe(false);
+    expect(isCopilotTier(4.5)).toBe(false);
+    expect(isCopilotTier("1")).toBe(false);
+    expect(isCopilotTier(undefined)).toBe(false);
+    expect(isCopilotTier(null)).toBe(false);
+
+    // compile-time half: `tier: 6` must NOT typecheck against CopilotToolSpec. Verified by `tsc --noEmit`:
+    // if 6 ever became assignable to CopilotTier, this directive would be UNUSED and tsc would fail the
+    // build on this line — so the pin is enforced at typecheck, not just by the runtime guard above.
+    const outOfRangeFixture: CopilotToolSpec = {
+      id: toolId("test.compile.only.never.invoked"),
+      mutating: false,
+      // @ts-expect-error tier must be 1 | 2 | 3 | 4 | 5 (CopilotTier), not an arbitrary number
+      tier: 6,
+      description: "compile-time-only fixture; never reaches the real catalog",
+    };
+    expect(outOfRangeFixture.tier).toBe(6); // the value still flows through at runtime; the TYPE is what's closed
+  });
+
+  it("no_cataloged_tool_performs_a_direct_external_write", () => {
+    // pin the EXACT id set, not a count — a count passes when one propose sink is silently swapped for
+    // some other mutating tool.
+    const mutatingIds = ALL_SPECS.filter((s) => s.mutating).map((s) => String(s.id)).sort();
+    expect(mutatingIds).toEqual(["copilot.propose_action", "copilot.propose_knowledge"]);
+  });
+
+  it("every_mutating_entry_is_tier_4_or_5_and_every_tier_1_entry_is_non_mutating", () => {
+    for (const spec of ALL_SPECS) {
+      if (spec.mutating) {
+        expect([4, 5], `mutating entry ${String(spec.id)} has tier ${spec.tier}, expected 4 or 5`).toContain(
+          spec.tier,
+        );
+      }
+      if (spec.tier === 1) {
+        expect(spec.mutating, `tier-1 entry ${String(spec.id)} is mutating`).toBe(false);
+      }
+    }
+  });
+
+  it("the_tier_1_read_set_is_exactly_the_entries_the_prose_block_named", () => {
+    // Freezes TODAY's Tier-1 membership as an explicit id list, so a later re-tiering is a visible diff
+    // against this list, never a silent reclassification.
+    const EXPECTED_TIER_1_IDS = new Set([
+      "gbrain.search",
+      "gbrain.traverse_graph",
+      "gbrain.get_timeline",
+      "gbrain.find_contradictions",
+      "gbrain.find_anomalies",
+      "gbrain.find_orphans",
+      "gbrain.find_experts",
+      "gbrain.takes_list",
+      "gbrain.takes_search",
+      "gbrain.takes_scorecard",
+      "gbrain.takes_calibration",
+      "gbrain.code_def",
+      "gbrain.code_refs",
+      "gbrain.code_callers",
+      "gbrain.code_callees",
+      "gbrain.code_flow",
+      "gbrain.code_blast",
+      "gbrain.get_recent_salience",
+      "vault.read",
+      "skills.list",
+      "skills.get",
+    ]);
+    const actualTier1Ids = new Set(ALL_SPECS.filter((s) => s.tier === 1).map((s) => String(s.id)));
+    expect(actualTier1Ids).toEqual(EXPECTED_TIER_1_IDS);
+    // today every read tool is Tier-1 (no Tier-2/3 catalog entries exist yet) — the read surface IS the
+    // tier-1 set. A future Tier-2/3 read entry must fail THIS assertion, not silently widen tier-1.
+    expect(actualTier1Ids).toEqual(new Set(COPILOT_READ_TOOLS.map((s) => String(s.id))));
+  });
+
+  it("catalog_ids_are_unique_and_the_map_size_equals_the_entry_count", () => {
+    const idList = ALL_SPECS.map((s) => String(s.id));
+    const uniqueIds = new Set(idList);
+    expect(uniqueIds.size).toBe(idList.length); // no copy-paste duplicate id across the source arrays
+    expect(CATALOG.size).toBe(idList.length); // no duplicate id silently shadowed an entry in the real Map
   });
 });
