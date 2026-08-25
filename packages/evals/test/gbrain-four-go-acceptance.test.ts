@@ -14,12 +14,35 @@
 //
 // task PAID-GO34 (2026-08-25): the owner explicitly authorized real paid Voyage embedding
 // spend, narrowly, for GO#3's and GO#4's live legs — lifting constraint (a) above for those two
-// legs only. The "GO#3/GO#4 paid-embedding leg — REAL preflight probe" describe block below is
-// what that authorization actually bought: a real, live, $0-spent proof that the embed path
-// itself currently fails (a pre-existing `embedding_provider` defect in the installed gbrain
-// binary, reproduced cold on a fresh scratch brain — see that block's comments). GO#3(a)-(d) and
-// GO#4's embedding-dependent half stay `it.todo`, now blocked by that tooling defect rather than
-// by the lifted authorization gap.
+// legs only. task PAID-GO34-RETRY (2026-08-25, same day): the owner fixed the root cause found
+// by PAID-GO34 — `~/.gbrain/config.json` was missing `embedding_dimensions`, so gbrain's
+// pre-engine-connect `configureGateway` fell back to `DEFAULT_EMBEDDING_DIMENSIONS = 1536`,
+// which Voyage's `voyage-code-3` model rejects outright (it only permits {256,512,1024,2048}).
+// That fix is RE-CONFIRMED live this session (`gbrain doctor --json` on the real brain: 1024
+// dims, DB aligned) and is now folded into every SCRATCH brain too, unconditionally, inside
+// `initScratchBrain` (`../src/gbrain/scratch-brain.ts`) — see that function's doc comment for
+// the full trap + fix.
+//
+// That fix genuinely holds at the layer it targets: a scratch `gbrain put` no longer gets
+// rejected by Voyage before any embedding is computed. But this session ALSO found — live,
+// reading the installed `gbrain` 0.35.1.0 source at `/Users/dreddy/gbrain` (a different repo,
+// not fixed here) — a SEPARATE, deeper, PGLite-specific defect one layer down: the
+// embedded/PGLite schema hardcodes `embedding vector(1536)`
+// (`src/core/schema-embedded.ts:139`) and never receives the dimension substitution the
+// Postgres/Supabase engine path gets (`src/core/postgres-engine.ts:57`), regardless of
+// `--embedding-dimensions`/config. So a fresh scratch PGLite brain's vector column is ALWAYS
+// 1536-wide while `voyage-code-3` can only emit {256,512,1024,2048} — no value satisfies both.
+// `put`/`embed` still fails on a fresh scratch brain, now one layer deeper: at the DB-insert
+// step (pgvector: "expected 1536 dimensions, not 1024") AFTER a real, billed Voyage call
+// succeeds. The "GO#3/GO#4 paid-embedding leg — REAL preflight probe" describe block below pins
+// this NEW state (confirmed via 3 real, minimal, owner-authorized billed `put` attempts this
+// session — each a single short sentence). GO#3(a)-(d) and GO#4's embedding-dependent half stay
+// `it.todo`, now blocked by this NEW, more precise tooling defect — the injection primitive
+// (`putScratchBrainPage`, the exact mechanism GO#3 names) cannot land ANY page on a fresh
+// scratch brain today, so there is nothing yet to classify. GO#4's round-trip leg is extended
+// instead in the direction that doesn't need embeddings at all: a real `gbrain import
+// --no-embed` DB write (genuinely $0 — no Voyage call), corroborated against the same
+// fs-extract oracle.
 //
 // 12.23 (sibling, `[x] DONE`, `packages/evals/test/gbrain-failclosed.test.ts`) already pins the
 // DETERMINISTIC decision logic behind GO #2 (monotonic apply/no-lost-update) and GO #3 (parity
@@ -39,6 +62,7 @@ import type { RevisionId } from "@sow/contracts";
 import { deriveCanonicalFacts } from "@sow/knowledge";
 import {
   runFsExtractLinksDryRun,
+  runScratchGbrainImportNoEmbed,
   mkScratchGbrainHome,
   rmScratchGbrainHome,
   initScratchBrain,
@@ -99,48 +123,89 @@ describe.skipIf(!LIVE)("12.7 GO#4 (round-trip) supporting leg — the REAL gbrai
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  // task PAID-GO34-RETRY: extends the round-trip one link further — from a read-only fs walk to
+  // a REAL DB write on a scratch brain — WITHOUT touching the paid-embedding path at all.
+  // `--no-embed` makes zero Voyage calls (live-verified: `gbrain import --no-embed --json`
+  // returns real `imported`/`chunks` counts with no network embedding call). The
+  // embedding-dependent remainder of the round trip (doctor embeddings/embedding_provider GREEN)
+  // is separately, precisely blocked — see the paid-embedding leg describe block below.
+  it(
+    "gbrain import --no-embed lands the SAME fixture into a scratch brain's REAL DB, and the persisted page count agrees with the fs-extract oracle (extends GO#4 toward the full round-trip, still $0)",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "sow-eval-extract-roundtrip-"));
+      const home = await mkScratchGbrainHome();
+      try {
+        await writeFile(join(dir, "auth.md"), "---\nslug: auth\n---\n# Auth\nSee [[oauth]].\n", "utf8");
+        await writeFile(join(dir, "oauth.md"), "---\nslug: oauth\n---\n# OAuth\n", "utf8");
+
+        const extracted = await runFsExtractLinksDryRun(dir);
+        expect(extracted).toBeDefined();
+        if (extracted === undefined) return;
+
+        await initScratchBrain(home);
+        const imported = await runScratchGbrainImportNoEmbed(home, dir);
+        expect(imported).toBeDefined();
+        if (imported === undefined) return;
+
+        // the fs-extract oracle's page count and the REAL scratch DB's post-import page count
+        // agree — the round-trip now covers fs → real gbrain DB, not just a read-only fs walk.
+        expect(imported.imported).toBe(extracted.pages_processed);
+        expect(imported.errors).toBe(0);
+      } finally {
+        await rmScratchGbrainHome(home);
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+    45_000,
+  );
 });
 
 describe.skipIf(!LIVE)(
-  "12.7 GO#3/GO#4 paid-embedding leg — REAL preflight probe (task PAID-GO34, owner-authorized Voyage spend)",
+  "12.7 GO#3/GO#4 paid-embedding leg — REAL preflight probe (task PAID-GO34-RETRY, owner-authorized Voyage spend)",
   () => {
     // The owner explicitly authorized REAL paid Voyage embedding spend for GO#3's four-shape
     // db_only/unstamped injection and GO#4's full round-trip (task PAID-GO34) — narrowly, embedding
     // spend for THESE TWO LEGS ONLY (root CLAUDE.md "nothing arms": no write_through_enabled flip, no
-    // real-brain write, no key provisioning). Per that task's own instruction this ONE probe runs
-    // FIRST and CHEAPLY, before any further spend: it either clears the way to build GO#3(a)-(d)/GO#4's
-    // live injection for real, or it proves — live, on a BRAND-NEW isolated scratch brain (never the
-    // owner's real `~/.gbrain`) — that the pre-existing `embedding_provider` defect blocks the embed
-    // path itself, in which case the it.todo rows below stay blocked for a TOOLING reason, not an
-    // authorization one.
+    // real-brain write, no key provisioning).
+    //
+    // task PAID-GO34 first measured this probe against the UNFIXED bug: every `put` was rejected
+    // by Voyage's own API validation before any embedding was computed/billed ("voyage-code-3
+    // supports output_dimension only in {256,512,1024,2048}, got 1536"). task PAID-GO34-RETRY
+    // (same day) re-runs this probe after the owner fixed the root cause
+    // (`~/.gbrain/config.json` now carries `embedding_dimensions`) and after `initScratchBrain`
+    // was updated to fold the same fix into every scratch brain unconditionally.
     it(
-      "a real `gbrain put` against a fresh scratch brain — pins the CURRENTLY OBSERVED outcome of the owner-authorized embed spend",
+      "a real `gbrain put` against a fresh, correctly-configured scratch brain — pins the CURRENTLY OBSERVED outcome of the owner-authorized embed spend",
       async () => {
         const home = await mkScratchGbrainHome();
         try {
           await initScratchBrain(home);
           const content =
-            "---\nslug: paid-go34-probe\ntype: note\n---\n# Probe\nOne short sentence to test the real embed path.\n";
-          const result = await putScratchBrainPage(home, "paid-go34-probe", content);
+            "---\nslug: paid-go34-retry-probe\ntype: note\n---\n# Probe\nOne short sentence to test the real embed path.\n";
+          const result = await putScratchBrainPage(home, "paid-go34-retry-probe", content);
 
-          // MEASURED LIVE this session (task PAID-GO34): 5/5 real attempts against a FRESH scratch
-          // brain — 1 `doctor --json` embedding_provider probe + 4 `put` attempts (the last AFTER
-          // explicitly `gbrain config set embedding_dimensions 1024`, ruling out "the value merely
-          // isn't stored" — some code path ignores the stored value regardless) — ALL failed
-          // IDENTICALLY with the same Voyage output_dimension rejection the owner found on the real
-          // brain. This is therefore NOT specific to the owner's `~/.gbrain` state; it reproduces
-          // cold on an empty brain. Zero dollars spent: every attempt was rejected by Voyage's own
-          // dimension validation BEFORE any embedding was computed/billed.
+          // MEASURED LIVE this session (task PAID-GO34-RETRY), after the config fix: the ORIGINAL
+          // defect (Voyage API-level rejection of the 1536 fallback) is CONFIRMED GONE — the
+          // config fix holds. But `put` STILL fails, now one layer deeper: a real, billed Voyage
+          // call succeeds and returns a genuine 1024-dim embedding, which then fails to persist
+          // because the scratch PGLite brain's `content_chunks.embedding` column was created as
+          // `vector(1536)` (a SEPARATE, PGLite-specific gbrain defect — the embedded schema never
+          // receives the dimension substitution the Postgres/Supabase engine path gets; see
+          // `initScratchBrain`'s doc comment in `../src/gbrain/scratch-brain.ts` for the full
+          // trace with file:line citations). Reproduced identically 3/3 times this session on
+          // fresh scratch brains — never the owner's real `~/.gbrain` (whose existing DB is
+          // already 1024-wide, hence "DB aligned" in its own `doctor --json`).
           //
-          // This assertion PINS that observed state as a positive control on the EXACT failure mode
-          // (provider name + parameter name + the offending value) — not a bare "it failed". If
-          // gbrain's upstream embed-path defect is ever fixed, THIS assertion is what starts failing
-          // — the signal to come back and build GO#3(a)-(d)/GO#4's live injection using
-          // `putScratchBrainPage` (already built in this package's `src/gbrain/scratch-brain.ts`).
+          // This assertion PINS that observed state as a positive control on the EXACT failure
+          // mode (the pgvector dimension-mismatch message) AND a negative control ruling out the
+          // OLD failure mode (asserting the API-rejection string is now ABSENT) — not a bare "it
+          // still fails". If gbrain's PGLite schema-substitution defect is ever fixed upstream,
+          // THIS assertion is what starts failing — the signal to come back and build
+          // GO#3(a)-(d)/GO#4's live injection for real using `putScratchBrainPage`.
           expect(result.ok).toBe(false);
-          expect(result.stderr).toContain("voyage-code-3");
-          expect(result.stderr).toContain("output_dimension");
-          expect(result.stderr).toContain("1536");
+          expect(result.stderr).not.toContain("output_dimension");
+          expect(result.stderr).toContain("expected 1536 dimensions, not 1024");
         } finally {
           await rmScratchGbrainHome(home);
         }
@@ -169,15 +234,17 @@ describe("12.7 — the four GO conditions' remaining LIVE proof (genuinely infra
     "GO#3 parity-catches-DB-only-facts LIVE injection: inject 4 real DB-only facts via (a) manual `gbrain put`, (b) a dream/synthesize-style page, (c) a borrowed-stamp page, (d) a forged-content_hash collision, asserting each classifies db_only/unstamped (HARD floor) against the REAL classifier. " +
       "The DETERMINISTIC classification logic for all 4 shapes is ALREADY covered live against the real @sow/knowledge modules — see 12.23 `gbrain-failclosed.test.ts` describe(12.23c). " +
       "COST-AUTHORIZATION BLOCKER LIFTED (task PAID-GO34): the owner explicitly authorized real paid Voyage embedding spend for this leg. " +
-      "STILL BLOCKED, now by a DIFFERENT cause: a TOOLING defect, not an authorization gap. See the 'GO#3/GO#4 paid-embedding leg — REAL preflight probe' describe block above (`putScratchBrainPage`) — 5/5 real live attempts against a FRESH scratch brain (never the owner's real brain) failed identically with 'Voyage model \"voyage-code-3\" supports output_dimension only in {256, 512, 1024, 2048}, got 1536', including after explicitly `gbrain config set embedding_dimensions 1024` (ruling out 'the value merely isn't stored' — some code path ignores it regardless). Zero dollars spent (every attempt rejected before any embedding was computed/billed). This is a defect in the owner's local `gbrain` checkout (outside this repo, outside this package's territory — root CLAUDE.md: do not attempt to fix it here). (a)-(d) cannot be built until it is fixed upstream; when it is, `putScratchBrainPage` is the ready-built injection primitive.",
+      "task PAID-GO34-RETRY (2026-08-25, same day): the owner FIXED the config-layer defect PAID-GO34 found (`~/.gbrain/config.json` missing `embedding_dimensions`) — re-confirmed live (`gbrain doctor --json` on the real brain: 1024 dims, DB aligned) and now folded into every scratch brain unconditionally (`initScratchBrain`, `../src/gbrain/scratch-brain.ts`). " +
+      "STILL BLOCKED, now by a NEW, DIFFERENT, DEEPER tooling defect — confirmed live this session by reading the installed `gbrain` 0.35.1.0 source at `/Users/dreddy/gbrain` (a different repo, not this package's territory): the embedded/PGLite schema hardcodes `embedding vector(1536)` (`src/core/schema-embedded.ts:139`) and never receives the dimension substitution the Postgres/Supabase engine path gets (`src/core/postgres-engine.ts:57`) — regardless of `--embedding-dimensions`/config passed to `gbrain init --pglite`. So even after the config fix, a real Voyage call now SUCCEEDS (returns a genuine 1024-dim embedding — real, billed) but the DB INSERT then fails ('expected 1536 dimensions, not 1024', pgvector) because the column is still `vector(1536)`. Reproduced identically 3/3 times this session on fresh scratch brains — see the 'GO#3/GO#4 paid-embedding leg — REAL preflight probe' describe block above, which now pins this exact new state. " +
+      "`putScratchBrainPage` — the exact mechanism shape (a) names — therefore cannot land ANY page on a fresh scratch brain today: there is nothing yet to classify. (a)-(d) cannot be built until the PGLite schema-substitution defect is fixed upstream (outside this repo, outside this package's territory — root CLAUDE.md: do not attempt to fix it here); when it is, `putScratchBrainPage` remains the ready-built injection primitive.",
   );
 
   it.todo(
     "GO#4 round-trip-lossless LIVE: a real KW-write → commit → import/sync → DB → rebuild-oracle → compare cycle, asserting SEMANTIC-field equality AND doctor embeddings/embedding_provider GREEN. " +
-      "The fs-extract corroborating-oracle leg above IS built and live-verified (no embedding needed). " +
+      "The fs-extract corroborating-oracle leg above IS built and live-verified (no embedding needed), and task PAID-GO34-RETRY extended it one link further: a real `gbrain import --no-embed` DB write on a scratch brain, corroborated against the same fs-extract oracle counts (genuinely $0 — `--no-embed` makes zero Voyage calls). " +
       "COST-AUTHORIZATION BLOCKER LIFTED for the embedding half (task PAID-GO34): the owner explicitly authorized real paid Voyage spend. " +
-      "STILL BLOCKED: (1) the SAME tooling defect as GO#3 above — real embeds do not currently succeed at all (see the preflight-probe describe block; 5/5 live failures this session, $0 spent), so 'doctor embeddings/embedding_provider GREEN' is not reachable today, and (2) independently, the full cycle also needs a live KnowledgeWriter→Temporal commit pipeline (apps/worker territory, outside this package). " +
-      "This session's re-measurement found the embedding_provider probe FAILING DETERMINISTICALLY (5/5), not flaky as a prior session reported on the owner's real brain — the two reports do not contradict (different environments/timing can differ), but what this session newly establishes is that the failure reproduces COLD on a brand-new brain and SURVIVES an explicit `embedding_dimensions=1024` config override, narrowing it to a real code-path bug rather than a per-brain config or ordering artifact.",
+      "task PAID-GO34-RETRY: the owner fixed the config-layer defect PAID-GO34 found, re-confirmed live and folded into `initScratchBrain`. STILL BLOCKED, now for TWO independent reasons: (1) a NEW, deeper, PGLite-specific gbrain defect — the embedded schema's `embedding` column is hardcoded `vector(1536)` and never receives the dimension substitution the Postgres/Supabase path gets (see the GO#3 row above and the preflight-probe describe block for the full citation + live proof), so 'doctor embeddings/embedding_provider GREEN' is still not reachable on a scratch brain even though the config fix genuinely holds and a real embed call now succeeds; and (2) independently, unchanged from before, the full cycle also needs a live KnowledgeWriter→Temporal commit pipeline (apps/worker territory, outside this package). " +
+      "The embedding authorization does not conjure a working PGLite schema, any more than it conjures a commit pipeline — both stay it.todo for their own precise reasons, not a blanket 'no gbrain'.",
   );
 
   it.todo(
