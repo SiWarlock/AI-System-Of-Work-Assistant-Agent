@@ -334,24 +334,56 @@ describe("planSynthesis — PURE / TOTAL never-throws; a fault fails safe (Lesso
 // ── 9. dormant — no production caller (L24 logic-in-package / wire-at-boot) ────────
 
 describe("planSynthesis — dormant: no PRODUCTION caller (L24 wire-at-boot)", () => {
-  it("no_production_caller — planSynthesis has NO apps/ or workflows/ (production) importer; dormant/eval consumers are allowed", () => {
+  it("no_production_caller — planSynthesis has NO REACHABLE production entry; dormant consumers are allowed BY NAME", () => {
     // planSynthesis is legitimately consumed by DORMANT/eval callers — the 13.8d knowledge ingest-rewrite
     // (synthesis/ingest-rewrite.ts, itself dormant) and the 13.8c-eval scorer (packages/evals). The
     // dormancy that matters is that it is NOT wired into a PRODUCTION entry — no apps/ or workflows/ caller.
+    //
+    // ⛔ WHY THIS PIN WAS REWRITTEN (13.8e, 2026-08-25) — its TEXT and its INTENT had diverged.
+    // 13.8e built `apps/worker/src/composition/living-vault-synthesis.ts`, which really does
+    // `import { planSynthesis }`. The old predicate said "no apps/ file MENTIONS it" and so went red,
+    // but the module it caught is ITSELF DORMANT: nothing in boot.ts or temporal/ constructs it
+    // (verified — its only importer is its own test). Presence in `apps/` is not reachability.
+    //
+    // Two changes, and the second is the one that matters:
+    //   1. `dist/` is excluded. The old scan read BUILD ARTIFACTS, so a stale dist could fire this pin
+    //      (or, worse, keep it green after the source stopped matching).
+    //   2. A dormant consumer is allowed only BY NAME, and only while a SECOND assertion proves the
+    //      allowance is still true — that the named file has no composition-root call site. That keeps
+    //      the safety property this pin exists for: the moment someone wires 13.8e at boot, this REDS.
     const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-    let out = "";
-    try {
-      out = execSync("grep -rn 'planSynthesis' packages apps --include='*.ts' || true", { cwd: repoRoot, encoding: "utf8" });
-    } catch {
-      out = "";
-    }
-    const offenders = out
-      .split("\n")
-      .filter(Boolean)
+    const scan = (needle: string, where: string): string[] => {
+      let out = "";
+      try {
+        out = execSync(`grep -rn '${needle}' ${where} --include='*.ts' || true`, { cwd: repoRoot, encoding: "utf8" });
+      } catch {
+        out = "";
+      }
+      return out.split("\n").filter(Boolean);
+    };
+
+    // Dormant production-directory consumers, each allowed with the reason it is not reachable.
+    const ALLOWED_DORMANT = [
+      // 13.8e scheduled living-vault synthesis — built, unbound. Guarded by the assertion below.
+      "apps/worker/src/composition/living-vault-synthesis.ts",
+    ];
+
+    const offenders = scan("planSynthesis", "packages apps")
       .filter((l) => !l.includes(".test.ts") && !l.includes("/test/"))
-      // a PRODUCTION importer lives under apps/ or packages/workflows/ (the runtime/orchestration layers)
-      .filter((l) => /^(apps|packages\/workflows)\//.test(l));
+      .filter((l) => !l.includes("/dist/"))
+      .filter((l) => /^(apps|packages\/workflows)\//.test(l))
+      .filter((l) => !ALLOWED_DORMANT.some((a) => l.startsWith(a + ":")));
     expect(offenders).toEqual([]);
+
+    // The allowance is only honest while the allowed file stays UNREACHABLE. If 13.8e is ever wired
+    // into the composition root, this fails and the dormancy claim above must be retired — not widened.
+    const bootCallers = scan("createLivingVaultSynthesisActivity", "apps/worker/src")
+      .filter((l) => !l.startsWith("apps/worker/src/composition/living-vault-synthesis.ts:"));
+    expect(bootCallers, "13.8e gained a composition-root call site — planSynthesis is no longer dormant").toEqual([]);
+
+    // Non-vacuity: the scanner must actually be able to see this repo's source.
+    const control = scan("planSynthesis", "packages/knowledge/src");
+    expect(control.length, "positive control: planSynthesis must appear in its own package's src").toBeGreaterThan(0);
   });
 });
 
