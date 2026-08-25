@@ -681,3 +681,137 @@ describe("createConnectorHttpTransport — send seam is UNBOUND (dormant, no rea
     expect(offenders).toEqual([]);
   });
 });
+
+// ── §23.3 — OPTIONAL retry-on-401 (deps.onUnauthorized, the OAuth refresh loop's http-transport half) ────
+// A transport-level fake that returns a DIFFERENT response on each successive `send` call (sequenced), so a
+// test can pin exactly what the FIRST vs the RETRIED dispatch each receive. The LAST behavior repeats if
+// `send` is called more times than provided (defensive; no test here calls it a 3rd time).
+function sequencedTransport(
+  behaviors: ReadonlyArray<{ response?: HttpTransportResponse; throw?: unknown }>,
+): HttpTransport & { calls: HttpTransportRequest[] } {
+  const calls: HttpTransportRequest[] = [];
+  let i = 0;
+  return {
+    calls,
+    async send(req) {
+      calls.push(req);
+      const behavior = behaviors[Math.min(i, behaviors.length - 1)];
+      i += 1;
+      if (behavior?.throw !== undefined) throw behavior.throw;
+      return behavior?.response ?? { status: 200, body: JSON.stringify({ data: [] }) };
+    },
+  };
+}
+
+// A secrets fake that returns a DIFFERENT resolved value on each successive `getSecret` call — models a
+// refreshing `SecretsAccessor` (createRefreshingSecretsAccessor) returning a fresh token on the re-resolve
+// the retry triggers.
+function sequencedSecrets(values: ReadonlyArray<Result<string, SecretUnavailable>>): SecretsAccessor & { refs: string[] } {
+  const refs: string[] = [];
+  let i = 0;
+  return {
+    refs,
+    async getSecret(ref) {
+      refs.push(ref);
+      const v = values[Math.min(i, values.length - 1)];
+      i += 1;
+      return v ?? ok(TOKEN);
+    },
+  };
+}
+
+describe("createConnectorHttpTransport — retry-on-401 (§23.3 OAuth refresh loop, deps.onUnauthorized)", () => {
+  it("401 then 200 with onUnauthorized bound ⇒ exactly two dispatches and a successful page", async () => {
+    const transport = sequencedTransport([
+      { response: { status: 401, body: "{}" } },
+      { response: { status: 200, body: '{"data":[]}' } },
+    ]);
+    const secrets = sequencedSecrets([ok(TOKEN), ok("REFRESHED-TOKEN")]);
+    const onUnauthorizedCalls: string[] = [];
+    const onUnauthorized = async (ref: string): Promise<void> => {
+      onUnauthorizedCalls.push(ref);
+    };
+    const t = createConnectorHttpTransport(CORE_SPEC, { transport, secrets, tokenRef: TOKEN_REF, onUnauthorized });
+    const res = await t(REQ);
+    expect(transport.calls).toHaveLength(2);
+    expect(onUnauthorizedCalls).toEqual([TOKEN_REF]); // the hook fires exactly once
+    expect(res.ok).toBe(true);
+  });
+
+  it("401 then 401 ⇒ exactly two dispatches and an auth_locked TransportFailure carrying only the status", async () => {
+    const transport = sequencedTransport([
+      { response: { status: 401, body: JSON.stringify({ secret_body: "BODY_LEAK_1" }) } },
+      { response: { status: 401, body: JSON.stringify({ secret_body: "BODY_LEAK_2" }) } },
+    ]);
+    const secrets = sequencedSecrets([ok(TOKEN), ok("REFRESHED-TOKEN")]);
+    const onUnauthorized = async (): Promise<void> => {};
+    const t = createConnectorHttpTransport(CORE_SPEC, { transport, secrets, tokenRef: TOKEN_REF, onUnauthorized });
+    const res = await t(REQ);
+    expect(transport.calls).toHaveLength(2); // no THIRD dispatch — a second 401 is not itself retried
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.code).toBe("auth_locked");
+      expect(res.message).toBe("HTTP 401");
+      expect(res.message).not.toContain("BODY_LEAK");
+    }
+  });
+
+  it("DORMANCY PIN: 401 with onUnauthorized ABSENT ⇒ exactly ONE dispatch, auth_locked, byte-identical to today", async () => {
+    const transport = fakeTransport({ response: { status: 401, body: "{}" } });
+    const t = createConnectorHttpTransport(CORE_SPEC, depsWith({ transport })); // depsWith carries no onUnauthorized
+    const res = await t(REQ);
+    expect(transport.calls).toHaveLength(1);
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.code).toBe("auth_locked");
+      expect(res.message).toBe("HTTP 401");
+    }
+  });
+
+  it.each([
+    [403, "auth_locked"],
+    [429, "rate_limited"],
+  ])("does NOT retry for HTTP %s even with onUnauthorized bound ⇒ exactly ONE dispatch", async (status, code) => {
+    const transport = fakeTransport({ response: { status, body: "{}" } });
+    const onUnauthorized = async (): Promise<void> => {};
+    const t = createConnectorHttpTransport(CORE_SPEC, {
+      transport,
+      secrets: fakeSecrets(),
+      tokenRef: TOKEN_REF,
+      onUnauthorized,
+    });
+    const res = await t(REQ);
+    expect(transport.calls).toHaveLength(1);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.code).toBe(code);
+  });
+
+  it("does NOT retry for a network throw even with onUnauthorized bound ⇒ exactly ONE dispatch", async () => {
+    const transport = fakeTransport({ throw: new Error("ECONNREFUSED") });
+    const onUnauthorized = async (): Promise<void> => {};
+    const t = createConnectorHttpTransport(CORE_SPEC, {
+      transport,
+      secrets: fakeSecrets(),
+      tokenRef: TOKEN_REF,
+      onUnauthorized,
+    });
+    const res = await t(REQ);
+    expect(transport.calls).toHaveLength(1);
+    expect(res.ok).toBe(false);
+  });
+
+  it("the re-dispatch re-reads the token via secrets (a refreshed accessor returns a NEW value); the new token never appears in a failure", async () => {
+    const NEW_TOKEN = "REFRESHED-TOKEN-do-not-leak-77c1";
+    const transport = sequencedTransport([
+      { response: { status: 401, body: "{}" } },
+      { response: { status: 500, body: "{}" } }, // the retry still fails, but must never leak the new token
+    ]);
+    const secrets = sequencedSecrets([ok(TOKEN), ok(NEW_TOKEN)]);
+    const onUnauthorized = async (): Promise<void> => {};
+    const t = createConnectorHttpTransport(CORE_SPEC, { transport, secrets, tokenRef: TOKEN_REF, onUnauthorized });
+    const res = await t(REQ);
+    expect(secrets.refs).toEqual([TOKEN_REF, TOKEN_REF]); // token re-resolved on the retry, same ref
+    expect(transport.calls[1]!.headers.Authorization).toBe(`Bearer ${NEW_TOKEN}`); // retry used the FRESH token
+    expect(JSON.stringify(res)).not.toContain(NEW_TOKEN);
+  });
+});

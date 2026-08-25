@@ -136,6 +136,17 @@ export interface ConnectorHttpTransportDeps {
   readonly transport: HttpTransport;
   readonly secrets: SecretsAccessor;
   readonly tokenRef: string;
+  /**
+   * OPTIONAL 401-retry hook (§23.3 OAuth refresh loop). ABSENT ⇒ byte-identical to before this slice — a
+   * 401 returns the `auth_locked` failure on the first miss, no retry, no extra `secrets`/`transport` call.
+   * BOUND: a literal HTTP 401 on the FIRST dispatch triggers exactly ONE call to this hook (e.g. tell a
+   * refreshing `SecretsAccessor` its cached value is stale so the NEXT `getSecret` refreshes), then a
+   * re-resolve of the token through `secrets` and exactly ONE re-dispatch of the SAME request (same url/
+   * method/body — only the Authorization/path token changes). A second 401 (or any other status) on the
+   * retry is returned UNCHANGED — no second retry, no loop. Never triggered for 403/429/other codes or a
+   * network throw — only a literal 401 on the first attempt is retry-eligible.
+   */
+  readonly onUnauthorized?: (tokenRef: string) => Promise<void>;
 }
 
 /** Build a redaction-safe typed transport failure. `code` is diagnostic-only (the base `makeConnector`
@@ -216,28 +227,38 @@ export function createConnectorHttpTransport(
     //     with no buildBody ⇒ a redacted failure, no dispatch). The token rides ONLY the Authorization header
     //     (never the body / url) — rule 7. (`method` was resolved + read-only-admitted at step (0).)
     // Auth: Bearer-header (default — byte-identical to before) OR token-in-PATH (`pathAuth`, Telegram).
-    const headers: Record<string, string> = { accept: "application/json" };
-    let requestUrl = fullUrl;
-    if (spec.pathAuth === true) {
-      // A pathAuth spec MUST carry the `{token}` placeholder — else `.replace` is a no-op and the token
-      // is silently DROPPED (a tokenless dispatch). Fail-closed BY CONSTRUCTION so a future pathAuth
-      // connector can't misconfigure into an unauthenticated request (host-only ref, rule 7).
-      if (!spec.resourcePath.includes("{token}")) {
-        return transportFailure("unknown", `pathAuth spec missing {token} placeholder (${hostRef})`);
+    // Factored into a closure (`buildAuthedRequest`) so the OPTIONAL 401-retry below can rebuild the SAME
+    // request with a freshly re-resolved token — the request-building logic itself is otherwise UNCHANGED.
+    const buildAuthedRequest = (
+      secretValue: string,
+    ): { readonly headers: Record<string, string>; readonly requestUrl: string } | TransportFailure => {
+      const headers: Record<string, string> = { accept: "application/json" };
+      let requestUrl = fullUrl;
+      if (spec.pathAuth === true) {
+        // A pathAuth spec MUST carry the `{token}` placeholder — else `.replace` is a no-op and the token
+        // is silently DROPPED (a tokenless dispatch). Fail-closed BY CONSTRUCTION so a future pathAuth
+        // connector can't misconfigure into an unauthenticated request (host-only ref, rule 7).
+        if (!spec.resourcePath.includes("{token}")) {
+          return transportFailure("unknown", `pathAuth spec missing {token} placeholder (${hostRef})`);
+        }
+        // Token-in-PATH: validate against a safe-path-segment ALLOWLIST (unreserved path chars + `:`,
+        // which a legit `\d+:[A-Za-z0-9_-]+` telegram token satisfies) — fail-closed BY CONSTRUCTION on
+        // `\` / `/` / `@` / any authority-injection char (Lessons 12/13). NOT encoded (Telegram needs the
+        // literal `:`); validation is the guard. Substitute into the PATH for the request url ONLY — no
+        // Authorization header, and the token never touches a fault/hostRef (rule 7). Function-form
+        // replace so a `$` in a (rejected-anyway) token can't be a replacement special.
+        if (!/^[A-Za-z0-9:._~-]+$/.test(secretValue)) {
+          return transportFailure("auth_locked", `token malformed (${hostRef})`);
+        }
+        requestUrl = `${trimTrailingSlash(spec.baseUrl)}${spec.resourcePath.replace("{token}", () => secretValue)}${query}`;
+      } else {
+        headers["Authorization"] = `Bearer ${secretValue}`;
       }
-      // Token-in-PATH: validate against a safe-path-segment ALLOWLIST (unreserved path chars + `:`,
-      // which a legit `\d+:[A-Za-z0-9_-]+` telegram token satisfies) — fail-closed BY CONSTRUCTION on
-      // `\` / `/` / `@` / any authority-injection char (Lessons 12/13). NOT encoded (Telegram needs the
-      // literal `:`); validation is the guard. Substitute into the PATH for the request url ONLY — no
-      // Authorization header, and the token never touches a fault/hostRef (rule 7). Function-form
-      // replace so a `$` in a (rejected-anyway) token can't be a replacement special.
-      if (!/^[A-Za-z0-9:._~-]+$/.test(secret.value)) {
-        return transportFailure("auth_locked", `token malformed (${hostRef})`);
-      }
-      requestUrl = `${trimTrailingSlash(spec.baseUrl)}${spec.resourcePath.replace("{token}", () => secret.value)}${query}`;
-    } else {
-      headers["Authorization"] = `Bearer ${secret.value}`;
-    }
+      return { headers, requestUrl };
+    };
+
+    const built = buildAuthedRequest(secret.value);
+    if ("ok" in built) return built; // pathAuth misconfiguration/malformed token — fails closed before dispatch
     let body: string | undefined;
     if (method === "POST") {
       if (spec.buildBody === undefined) {
@@ -248,13 +269,38 @@ export function createConnectorHttpTransport(
       } catch {
         return transportFailure("unknown", `body build error (${hostRef})`);
       }
-      headers["content-type"] = "application/json";
+      built.headers["content-type"] = "application/json";
     }
     const httpRequest: HttpTransportRequest = {
-      url: requestUrl,
+      url: built.requestUrl,
       method,
-      headers,
+      headers: built.headers,
       ...(body !== undefined ? { body } : {}),
+    };
+    // (5)-(7) factored so the OPTIONAL 401-retry can run the SAME gate/parse/map pipeline on the retried
+    // response without duplicating it (byte-identical logic to before this slice).
+    const finishFromResponse = (response: HttpTransportResponse): ConnectorTransportResult => {
+      // (5) POSITIVE 2xx gate → a failure carrying ONLY the safe status number (never the body). A non-integer
+      //     status (NaN/undefined) fails CLOSED — NOT treated as success.
+      if (!Number.isInteger(response.status) || response.status < 200 || response.status >= 300) {
+        return transportFailure(statusToCode(response.status), `HTTP ${response.status}`);
+      }
+      // (6) Parse the 2xx body; non-JSON ⇒ a redacted failure (the raw body is never echoed).
+      let json: unknown;
+      try {
+        json = JSON.parse(response.body) as unknown;
+      } catch {
+        return transportFailure("unknown", `malformed body (${hostRef})`);
+      }
+      // (7) Map via the per-connector CANDIDATE wire-mapper (fail-closed inside — a renamed/missing field ⇒ a
+      //     failure, never a false page). `request` is the token-free TransportRequest (rule 7) — a page-number /
+      //     bare-array mapper reads its cursor to compute the next page. Wrapped: a THROWING mapper also fails
+      //     closed redacted (the thrown content never escapes to the log sink).
+      try {
+        return spec.mapPage(json, request);
+      } catch {
+        return transportFailure("unknown", `map error (${hostRef})`);
+      }
     };
     // (4) Dispatch — a transport reject ⇒ a redacted failure (the raw cause is DISCARDED, never surfaced).
     let response: HttpTransportResponse;
@@ -263,26 +309,50 @@ export function createConnectorHttpTransport(
     } catch {
       return transportFailure("unreachable", `transport error (${hostRef})`);
     }
-    // (5) POSITIVE 2xx gate → a failure carrying ONLY the safe status number (never the body). A non-integer
-    //     status (NaN/undefined) fails CLOSED — NOT treated as success.
-    if (!Number.isInteger(response.status) || response.status < 200 || response.status >= 300) {
-      return transportFailure(statusToCode(response.status), `HTTP ${response.status}`);
+    // (4.5) OPTIONAL retry-on-401 (§23.3, `deps.onUnauthorized`). ABSENT ⇒ falls straight through to
+    // `finishFromResponse(response)` below — byte-identical to before this slice, zero extra secrets/
+    // transport call. A non-401 status (403/429/…) also falls straight through — only a literal 401 on
+    // THIS first dispatch is retry-eligible, and the retry path below never re-enters itself (at most one
+    // retry, ever, per call).
+    if (response.status === 401 && deps.onUnauthorized !== undefined) {
+      try {
+        await deps.onUnauthorized(tokenRef);
+      } catch {
+        // the hook itself must never throw across this boundary (L11) — fall back to the ORIGINAL 401,
+        // no retry attempted.
+        return finishFromResponse(response);
+      }
+      // Re-resolve the token — mirrors step (2)'s fail-closed handling exactly (typed-unavailable AND a
+      // THROWING accessor both fail closed, never leak the thrown cause).
+      let retrySecret: Result<string, SecretUnavailable>;
+      try {
+        retrySecret = await secrets.getSecret(tokenRef);
+      } catch {
+        return transportFailure("auth_locked", "token unavailable");
+      }
+      if (isErr(retrySecret)) {
+        return transportFailure("auth_locked", `token unavailable (${retrySecret.error.reason})`);
+      }
+      const retryBuilt = buildAuthedRequest(retrySecret.value);
+      if ("ok" in retryBuilt) return retryBuilt;
+      if (method === "POST") {
+        retryBuilt.headers["content-type"] = "application/json"; // mirror the first attempt's header exactly
+      }
+      const retryHttpRequest: HttpTransportRequest = {
+        url: retryBuilt.requestUrl,
+        method,
+        headers: retryBuilt.headers,
+        ...(body !== undefined ? { body } : {}),
+      };
+      let retryResponse: HttpTransportResponse;
+      try {
+        retryResponse = await transport.send(retryHttpRequest);
+      } catch {
+        return transportFailure("unreachable", `transport error (${hostRef})`);
+      }
+      // A second 401 (or any other status) is returned UNCHANGED by finishFromResponse — no second retry.
+      return finishFromResponse(retryResponse);
     }
-    // (6) Parse the 2xx body; non-JSON ⇒ a redacted failure (the raw body is never echoed).
-    let json: unknown;
-    try {
-      json = JSON.parse(response.body) as unknown;
-    } catch {
-      return transportFailure("unknown", `malformed body (${hostRef})`);
-    }
-    // (7) Map via the per-connector CANDIDATE wire-mapper (fail-closed inside — a renamed/missing field ⇒ a
-    //     failure, never a false page). `request` is the token-free TransportRequest (rule 7) — a page-number /
-    //     bare-array mapper reads its cursor to compute the next page. Wrapped: a THROWING mapper also fails
-    //     closed redacted (the thrown content never escapes to the log sink).
-    try {
-      return spec.mapPage(json, request);
-    } catch {
-      return transportFailure("unknown", `map error (${hostRef})`);
-    }
+    return finishFromResponse(response);
   };
 }
