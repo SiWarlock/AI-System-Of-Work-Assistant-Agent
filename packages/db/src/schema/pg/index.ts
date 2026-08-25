@@ -42,3 +42,5 @@ export * from "./source-disposition";
 export * from "./health-items";
 export * from "./schedule-bookkeeping";
 export * from "./instance-leases";
+// §16 — the durable cross-run cost/budget ledger (task 19.11).
+export * from "./cost-ledger";

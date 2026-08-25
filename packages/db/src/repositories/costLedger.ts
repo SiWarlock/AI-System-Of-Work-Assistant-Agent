@@ -17,12 +17,14 @@
 // canonical dual-dialect schema pair — the SQLite `sqliteTable`
 // (`../schema/cost-ledger`) and its PG-CORE MIRROR (`../schema/pg/cost-ledger`).
 // Mirrors `packages/db/src/repositories/gbrain-sync-outbox-repository.ts` (task 19.1)
-// exactly — see that module's header for the fuller rationale of this shape. Because
-// the schema is deliberately NOT registered in the schema barrel this slice (see
-// `../schema/cost-ledger.ts`'s header) and no migration exists yet, this repository
-// has no real-migration-backed table today; the test suite materializes the table
-// directly from this Drizzle schema (mirrors `test/adapters/create-sqlite-schema.ts`'s
-// own DDL-from-schema generator, scoped to just this table).
+// exactly — see that module's header for the fuller rationale of this shape. The
+// schema IS registered in the schema barrel (`../schema/cost-ledger.ts`'s header) and
+// backed by migration `migrations/{sqlite,pg}/0015_cost_ledger.sql` — a real migrated
+// database now has this table. The contract test suite still materializes the table
+// directly from this Drizzle schema for speed (mirrors `test/adapters/create-sqlite-
+// schema.ts`'s own DDL-from-schema generator, scoped to just this table); the
+// schema↔migration coverage detector (`test/migrate/schema-migration-coverage.
+// test.ts`) is what proves the migrated path independently produces the same table.
 //
 // ERROR CONVENTION (§16): NOTHING throws across a repository boundary. Every method
 // returns a typed `DbResult<T>`; a driver throw is caught and mapped through the same

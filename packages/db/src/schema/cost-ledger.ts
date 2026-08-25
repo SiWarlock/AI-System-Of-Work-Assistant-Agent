@@ -16,16 +16,11 @@
 // SAFETY (rule 7 / REQ-S-003): every column is a redaction-safe id, a numeric bound,
 // or an ISO-8601 timestamp — NEVER raw content, a prompt, or a secret.
 //
-// STANDALONE (mirrors `gbrain-sync-outbox.ts`, task 19.1): this table is deliberately
-// NOT registered in the schema barrel (`./index.ts`) and has NO migration file yet.
-// `packages/db/migrations` and the adapter wiring in `src/adapters/{sqlite,postgres}`
-// are OUT OF TERRITORY for this slice (a separate, concurrently-worked package). Were
-// this table added to the barrel without a migration, it would trip the schema↔
-// migration coverage detector (`packages/db/test/migrate/schema-migration-coverage.
-// test.ts`, task 24.39/24.43) the exact way task 13.15's `task` table did before that
-// detector existed — so the barrel export is withheld on purpose. Whoever lands the
-// migration must ADD `export * from "./cost-ledger"` to `./index.ts` (and the pg
-// mirror to `./pg/index.ts`) in the SAME change as the migration file, never before.
+// REGISTERED in the schema barrel (`./index.ts`, and the pg mirror in `./pg/
+// index.ts`) with migration `migrations/{sqlite,pg}/0015_cost_ledger.sql` landed in
+// the SAME change — satisfies the schema↔migration coverage detector (`packages/db/
+// test/migrate/schema-migration-coverage.test.ts`, task 24.39/24.43) the exact way
+// task 13.15's `task` table failed to before that detector existed.
 //
 // DIALECT/portability: SQLite single-source — ONLY text/scalar columns, no pg-only
 // types. Mirrored field-for-field into `./pg/cost-ledger.ts`.

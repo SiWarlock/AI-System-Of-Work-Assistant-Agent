@@ -6,14 +6,14 @@
 // SQLite table survives a real connection close/reopen (a real on-disk temp file,
 // never `:memory:`), mirroring `test/adapters/knowledge-revision-durability.test.ts`.
 //
-// SCHEMA MATERIALIZATION: this table is deliberately NOT registered in the schema
-// barrel and has no migration yet (see `src/schema/cost-ledger.ts`'s header — the
-// migration + barrel wiring are a different, concurrently-worked package's
-// territory). So unlike `repository-contract.test.ts`'s `createSqliteSchema`/
-// `createPgSchema` helpers, this suite generates DDL directly from the Drizzle
-// schema itself (via `getTableConfig`, never a hand-maintained string) SCOPED TO
-// JUST THIS TABLE — the same technique those two helpers use, reproduced locally so
-// this slice does not have to touch files outside its territory.
+// SCHEMA MATERIALIZATION: the table IS now registered in the schema barrel and
+// backed by migration `migrations/{sqlite,pg}/0015_cost_ledger.sql` (see
+// `src/schema/cost-ledger.ts`'s header). This suite still generates DDL directly
+// from the Drizzle schema itself (via `getTableConfig`, never a hand-maintained
+// string) SCOPED TO JUST THIS TABLE, rather than routing through `repository-
+// contract.test.ts`'s full-barrel `createSqliteSchema`/`createPgSchema` helpers —
+// the migrated path is independently proven by `test/migrate/schema-migration-
+// coverage.test.ts`, which builds its databases via the REAL migration runner.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
