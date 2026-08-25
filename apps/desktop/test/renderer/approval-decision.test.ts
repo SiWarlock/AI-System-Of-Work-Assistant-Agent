@@ -71,6 +71,94 @@ describe("createApprovalDecision", () => {
     expect((await decide("apr_1", "approve")).ok).toBe(false);
   });
 
+  it("§9.8 a write_conflict err (the CAS's exactly-once loser) folds to { ok: false, reason: \"already_resolved\" } — client-visible, distinct from a transport failure", async () => {
+    const decide = createApprovalDecision(
+      fakeClient(() =>
+        Promise.resolve({
+          ok: false,
+          error: {
+            kind: "write_conflict",
+            message: "approval transition lost the compare-and-set",
+            retryable: false,
+            cause: { code: "APPROVAL_CAS_CONFLICT" },
+          },
+        }),
+      ),
+    );
+    const r = await decide("apr_1", "approve");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("already_resolved");
+  });
+
+  it("§9.8 a degraded_unavailable err, a validation_rejected err, a malformed ok, and a thrown transport error ALL fold to { ok: false, reason: \"unavailable\" }", async () => {
+    const degraded = createApprovalDecision(
+      fakeClient(() =>
+        Promise.resolve({
+          ok: false,
+          error: { kind: "degraded_unavailable", message: "approval store retryable", retryable: true },
+        }),
+      ),
+    );
+    const r1 = await degraded("apr_1", "approve");
+    expect(r1.ok).toBe(false);
+    if (!r1.ok) expect(r1.reason).toBe("unavailable");
+
+    const rejected = createApprovalDecision(
+      fakeClient(() =>
+        Promise.resolve({ ok: false, error: { kind: "validation_rejected", message: "approval not found", retryable: false } }),
+      ),
+    );
+    const r2 = await rejected("apr_1", "approve");
+    expect(r2.ok).toBe(false);
+    if (!r2.ok) expect(r2.reason).toBe("unavailable");
+
+    const malformed = createApprovalDecision(fakeClient(() => Promise.resolve({ ok: true, value: { applied: true } })));
+    const r3 = await malformed("apr_1", "approve");
+    expect(r3.ok).toBe(false);
+    if (!r3.ok) expect(r3.reason).toBe("unavailable");
+
+    const thrown = createApprovalDecision(fakeClient(() => Promise.reject(new Error("socket down"))));
+    const r4 = await thrown("apr_1", "reject");
+    expect(r4.ok).toBe(false);
+    if (!r4.ok) expect(r4.reason).toBe("unavailable");
+  });
+
+  it("§9.8 the failed-decision shape carries NO error/message/kind/cause key (rule 7 — the worker's enum + prose never leak verbatim)", async () => {
+    const decide = createApprovalDecision(
+      fakeClient(() =>
+        Promise.resolve({
+          ok: false,
+          error: {
+            kind: "write_conflict",
+            message: "approval transition lost the compare-and-set — internal store detail",
+            retryable: false,
+            cause: { code: "APPROVAL_CAS_CONFLICT" },
+          },
+        }),
+      ),
+    );
+    const r = await decide("apr_1", "approve");
+    expect(r.ok).toBe(false);
+    expect(Object.keys(r).sort()).toEqual(["ok", "reason"]);
+  });
+
+  it("§9.8 an ok result with applied:false still returns { ok: true, applied: false, approval } (idempotent no-op, distinct from a fail-closed reason)", async () => {
+    const decide = createApprovalDecision(
+      fakeClient(() =>
+        Promise.resolve({
+          ok: true,
+          value: { applied: false, approval: { id: "apr_1", actionRef: "a", status: "approved", channel: "mac" } },
+        }),
+      ),
+    );
+    const r = await decide("apr_1", "approve");
+    expect(r).toEqual({
+      ok: true,
+      applied: false,
+      approval: { id: "apr_1", actionRef: "a", status: "approved", channel: "mac" },
+    });
+  });
+
   it("DROPS a leaky record (extra actor/payloadHash) — .strict re-validation folds to { ok: false }", async () => {
     // Defense-in-depth: even if a future server-projector regression returned the raw
     // Approval, the client re-validates against UiSafeApprovalSchema (.strict), so a

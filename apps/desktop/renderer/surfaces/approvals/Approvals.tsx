@@ -18,19 +18,30 @@
 //     honest, not a dead control that silently no-ops.
 // NEVER import electron, node, or @sow/worker from a renderer file.
 
-import { type ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 import type { UiSafeApproval } from "@sow/contracts/api/ui-safe";
 import type { ApprovalDecision } from "../../lib/approval-decision";
+
+/**
+ * The client-visible result of a decision request (§9.8). `"already_resolved"` covers BOTH wire
+ * shapes that mean the same thing to the user — an ok result with `applied:false` (an idempotent
+ * replay / cross-channel no-op) and a `write_conflict` err (the CAS's exactly-once loser) — so the
+ * card renders one honest line regardless of which shape the worker returned. `"unavailable"` is
+ * everything else (not-found / auth / a malformed result / a transport failure).
+ */
+export type ApprovalDecisionOutcome = "applied" | "already_resolved" | "unavailable";
 
 export interface ApprovalsProps {
   /** The GLOBAL approval inbox (all statuses; the surface filters to the actionable + snoozed views). */
   readonly approvals: readonly UiSafeApproval[];
   /**
    * Decide a pending approval (§9.8). Absent when there is no live worker → the action
-   * buttons render DISABLED (a decision can't be issued offline). `edit` (with a payload
+   * buttons render DISABLED (a decision can't be issued offline). Resolves to the outcome so the
+   * card can render it: "already_resolved" (a lost CAS race, from either wire shape) is honest
+   * feedback, not a silent no-op; "unavailable" covers every other failure. `edit` (with a payload
    * editor) is a deliberate follow-up — the three offered map to legal pending transitions.
    */
-  readonly onDecide?: (approvalId: string, decision: ApprovalDecision) => void;
+  readonly onDecide?: (approvalId: string, decision: ApprovalDecision) => Promise<ApprovalDecisionOutcome>;
 }
 
 /** The three decisions offered on a pending item — each a legal `pending -> …` transition. */
@@ -55,16 +66,27 @@ function cardSubject(a: UiSafeApproval): string {
   return a.subjectKind === "semantic_mutation" ? "Proposed note write (Copilot)" : (a.actionRef ?? "External action");
 }
 
-/** A pending approval card — the action, its metadata, and the three decision buttons. */
+/** A pending approval card — the action, its metadata, the three decision buttons, and the last
+ *  decision outcome (§9.8: "already resolved" vs "unavailable" — never silent on a failed decision). */
 function PendingCard({
   approval,
   onDecide,
 }: {
   readonly approval: UiSafeApproval;
-  readonly onDecide?: (approvalId: string, decision: ApprovalDecision) => void;
+  readonly onDecide?: (approvalId: string, decision: ApprovalDecision) => Promise<ApprovalDecisionOutcome>;
 }): ReactElement {
   const disabled = onDecide === undefined;
   const semantic = approval.subjectKind === "semantic_mutation";
+  // The most recent non-"applied" outcome — a real transition ("applied") clears it and the item
+  // drops out of the pending list on the parent's next render, so there is nothing left to show.
+  const [outcome, setOutcome] = useState<"already_resolved" | "unavailable" | undefined>(undefined);
+  const decide = (decision: ApprovalDecision): void => {
+    if (onDecide === undefined) return;
+    setOutcome(undefined);
+    void onDecide(approval.id, decision).then((o) => {
+      if (o !== "applied") setOutcome(o);
+    });
+  };
   return (
     <li
       className={`sow-approval-card${semantic ? " sow-approval-card--semantic" : ""}`}
@@ -87,13 +109,22 @@ function PendingCard({
             type="button"
             className={`sow-approval-btn sow-approval-btn--${d.decision}`}
             disabled={disabled}
-            onClick={() => onDecide?.(approval.id, d.decision)}
+            onClick={() => decide(d.decision)}
             title={disabled ? "Connect the worker to act on approvals" : undefined}
           >
             {d.label}
           </button>
         ))}
       </div>
+      {outcome === "already_resolved" ? (
+        <div className="sow-approval-outcome" role="status">
+          already resolved
+        </div>
+      ) : outcome === "unavailable" ? (
+        <div className="sow-approval-outcome sow-approval-outcome--error" role="alert">
+          Couldn&apos;t decide — try again
+        </div>
+      ) : null}
     </li>
   );
 }

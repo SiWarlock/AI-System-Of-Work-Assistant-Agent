@@ -12,12 +12,12 @@ function apr(id: string, over: Partial<UiSafeApproval> = {}): UiSafeApproval {
 
 describe("Approvals surface (§9.8) — render behavior", () => {
   it("empty inbox shows the 'No pending approvals' state", () => {
-    render(<Approvals approvals={[]} onDecide={() => {}} />);
+    render(<Approvals approvals={[]} onDecide={() => Promise.resolve("applied" as const)} />);
     expect(screen.getByText(/no pending approvals/i)).toBeTruthy();
   });
 
   it("renders a pending card per pending approval with Approve / Reject / Defer", () => {
-    render(<Approvals approvals={[apr("a1"), apr("a2")]} onDecide={() => {}} />);
+    render(<Approvals approvals={[apr("a1"), apr("a2")]} onDecide={() => Promise.resolve("applied" as const)} />);
     expect(screen.getByText("action:a1")).toBeTruthy();
     expect(screen.getByText("action:a2")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(2);
@@ -26,7 +26,7 @@ describe("Approvals surface (§9.8) — render behavior", () => {
   });
 
   it("clicking a decision button calls onDecide(id, decision)", () => {
-    const onDecide = vi.fn();
+    const onDecide = vi.fn(() => Promise.resolve("applied" as const));
     render(<Approvals approvals={[apr("a1")]} onDecide={onDecide} />);
     const card = screen.getByText("action:a1").closest("li") as HTMLElement;
     fireEvent.click(within(card).getByRole("button", { name: "Defer" }));
@@ -44,7 +44,7 @@ describe("Approvals surface (§9.8) — render behavior", () => {
     render(
       <Approvals
         approvals={[apr("d1", { status: "deferred", snoozeUntil: "2026-07-08T09:00:00.000Z" })]}
-        onDecide={() => {}}
+        onDecide={() => Promise.resolve("applied" as const)}
       />,
     );
     // It shows under the snoozed section with its re-surface date, but offers NO decision buttons.
@@ -63,7 +63,7 @@ describe("Approvals surface (§9.8) — render behavior", () => {
           apr("t3", { status: "expired" }),
           apr("t4", { status: "edited" }),
         ]}
-        onDecide={() => {}}
+        onDecide={() => Promise.resolve("applied" as const)}
       />,
     );
     expect(screen.getByText(/no pending approvals/i)).toBeTruthy();
@@ -72,9 +72,51 @@ describe("Approvals surface (§9.8) — render behavior", () => {
   });
 
   it("a pending card shows its channel + expiry date", () => {
-    render(<Approvals approvals={[apr("a1", { expiresAt: "2026-07-10T09:00:00.000Z" })]} onDecide={() => {}} />);
+    render(<Approvals approvals={[apr("a1", { expiresAt: "2026-07-10T09:00:00.000Z" })]} onDecide={() => Promise.resolve("applied" as const)} />);
     expect(screen.getByText(/via mac/i)).toBeTruthy();
     expect(screen.getByText(/expires 2026-07-10/i)).toBeTruthy();
+  });
+});
+
+describe("Approvals surface (§9.8) — already-resolved vs unavailable decision outcome", () => {
+  it("an ok result with applied:false renders 'already resolved' as a role=status line", async () => {
+    const onDecide = vi.fn(() => Promise.resolve<"applied" | "already_resolved" | "unavailable">("already_resolved"));
+    render(<Approvals approvals={[apr("a1")]} onDecide={onDecide} />);
+    const card = screen.getByText("action:a1").closest("li") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Approve" }));
+    // `role="status"` does not derive its accessible NAME from its content (name-from-contents
+    // does not apply to that role) — query by role, then assert the text separately.
+    const line = await within(card).findByRole("status");
+    expect(line.textContent).toMatch(/already resolved/i);
+  });
+
+  it("a write_conflict err ALSO renders the same 'already resolved' status line (same outcome, both wire shapes)", async () => {
+    const onDecide = vi.fn(() => Promise.resolve<"applied" | "already_resolved" | "unavailable">("already_resolved"));
+    render(<Approvals approvals={[apr("a2")]} onDecide={onDecide} />);
+    const card = screen.getByText("action:a2").closest("li") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Reject" }));
+    const line = await within(card).findByRole("status");
+    expect(line.textContent).toMatch(/already resolved/i);
+  });
+
+  it("an 'unavailable' outcome renders a distinct 'Couldn't decide — try again' line, not 'already resolved'", async () => {
+    const onDecide = vi.fn(() => Promise.resolve<"applied" | "already_resolved" | "unavailable">("unavailable"));
+    render(<Approvals approvals={[apr("a3")]} onDecide={onDecide} />);
+    const card = screen.getByText("action:a3").closest("li") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Defer" }));
+    expect(await within(card).findByText(/couldn.t decide — try again/i)).toBeTruthy();
+    expect(within(card).queryByText(/already resolved/i)).toBeNull();
+  });
+
+  it("an 'applied' outcome (a real transition) shows NO outcome line on the card", async () => {
+    const onDecide = vi.fn(() => Promise.resolve<"applied" | "already_resolved" | "unavailable">("applied"));
+    render(<Approvals approvals={[apr("a4")]} onDecide={onDecide} />);
+    const card = screen.getByText("action:a4").closest("li") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Approve" }));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(within(card).queryByText(/already resolved/i)).toBeNull();
+    expect(within(card).queryByText(/couldn.t decide/i)).toBeNull();
   });
 });
 
@@ -88,7 +130,7 @@ describe("Approvals surface (§13.10a Slice H) — semantic-mutation cards", () 
   });
 
   it("renders a Copilot-proposed semantic card with a descriptive label (no actionRef) + the decision buttons", () => {
-    render(<Approvals approvals={[semantic("s1")]} onDecide={() => {}} />);
+    render(<Approvals approvals={[semantic("s1")]} onDecide={() => Promise.resolve("applied" as const)} />);
     const card = document.querySelector('[data-approval-id="s1"]') as HTMLElement;
     expect(card).toBeTruthy();
     expect(card.getAttribute("data-subject-kind")).toBe("semantic_mutation");
@@ -100,7 +142,7 @@ describe("Approvals surface (§13.10a Slice H) — semantic-mutation cards", () 
   });
 
   it("a decision on a semantic card calls onDecide(id, decision) (same idempotent path)", () => {
-    const onDecide = vi.fn();
+    const onDecide = vi.fn(() => Promise.resolve("applied" as const));
     render(<Approvals approvals={[semantic("s1")]} onDecide={onDecide} />);
     const card = document.querySelector('[data-approval-id="s1"]') as HTMLElement;
     fireEvent.click(within(card).getByRole("button", { name: "Approve" }));
@@ -111,7 +153,7 @@ describe("Approvals surface (§13.10a Slice H) — semantic-mutation cards", () 
     render(
       <Approvals
         approvals={[semantic("s2", { status: "deferred", snoozeUntil: "2026-07-09T09:00:00.000Z" })]}
-        onDecide={() => {}}
+        onDecide={() => Promise.resolve("applied" as const)}
       />,
     );
     const card = document.querySelector('[data-approval-id="s2"]') as HTMLElement;
@@ -121,7 +163,7 @@ describe("Approvals surface (§13.10a Slice H) — semantic-mutation cards", () 
   });
 
   it("an external card WITHOUT subjectKind stays backward-compatible (shows actionRef, no semantic class)", () => {
-    render(<Approvals approvals={[apr("e1")]} onDecide={() => {}} />);
+    render(<Approvals approvals={[apr("e1")]} onDecide={() => Promise.resolve("applied" as const)} />);
     const card = document.querySelector('[data-approval-id="e1"]') as HTMLElement;
     expect(within(card).getByText("action:e1")).toBeTruthy();
     expect(card.className).not.toContain("sow-approval-card--semantic");

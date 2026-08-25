@@ -163,13 +163,22 @@ export function App(): ReactElement {
   // §9.8 approval decision: REQUEST the worker's exactly-once transition (mac channel). On a
   // decided (or idempotent no-op) result, fold the worker's authoritative UI-safe record into
   // the inbox Map — the item transitions in place (approved/rejected drop it from the inbox;
-  // deferred moves it to snoozed). A failed decision / no live worker is a safe no-op — the
-  // worker owns the CAS + one-writer dispatch; the renderer only asks.
-  const onDecideApproval = (approvalId: string, decision: ApprovalDecision): void => {
+  // deferred moves it to snoozed). Resolves to the outcome so the card can render it: a real
+  // transition is "applied"; an idempotent no-op (`applied:false`) OR a lost-CAS `write_conflict`
+  // BOTH map to the same honest "already_resolved" (§9.8's DecisionResult already collapsed the
+  // two wire shapes into one reason — this just also folds the `applied:false` ok case in); every
+  // other failure (incl. no live worker) is "unavailable". Never surfaces the worker's raw kind/
+  // message (rule 7) — only this closed 3-value outcome crosses into the surface.
+  const onDecideApproval = (
+    approvalId: string,
+    decision: ApprovalDecision,
+  ): Promise<"applied" | "already_resolved" | "unavailable"> => {
     const handle = liveRef.current;
-    if (handle === null) return;
-    void handle.decideApproval(approvalId, decision).then((r) => {
-      if (r.ok) store.dispatch((s) => hydrateApprovals(s, [r.approval]));
+    if (handle === null) return Promise.resolve("unavailable");
+    return handle.decideApproval(approvalId, decision).then((r) => {
+      if (!r.ok) return r.reason;
+      store.dispatch((s) => hydrateApprovals(s, [r.approval]));
+      return r.applied ? "applied" : "already_resolved";
     });
   };
 

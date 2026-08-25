@@ -20,9 +20,17 @@ import { UiSafeApprovalSchema, type UiSafeApproval } from "@sow/contracts/api/ui
  */
 export type ApprovalDecision = "approve" | "edit" | "reject" | "defer";
 
+/**
+ * §9.8 — a client-visible outcome, distinct from a transport failure. `"already_resolved"` is the
+ * CAS's exactly-once loser (a `write_conflict`: the item transitioned via another channel/click
+ * before this decision landed) — the honest, expected outcome of losing a race, not an error. Every
+ * other failure (not-found / auth / malformed / a thrown transport error) folds to `"unavailable"`.
+ * A CLOSED two-value union so the worker's `FailureVariant` enum + its prose message never reach the
+ * renderer (rule 7) — only this reason survives the fold.
+ */
 export type DecisionResult =
   | { readonly ok: true; readonly applied: boolean; readonly approval: UiSafeApproval }
-  | { readonly ok: false };
+  | { readonly ok: false; readonly reason: "already_resolved" | "unavailable" };
 
 /** Build the approval-decision caller over a live tRPC client. */
 export function createApprovalDecision(
@@ -46,10 +54,13 @@ export function createApprovalDecision(
         }
       }
       // A typed err (CAS conflict / not-found / auth) or a malformed/leaky result → fail closed.
-      return { ok: false };
+      // Only a write_conflict (the CAS's exactly-once loser) is the honest "already resolved";
+      // everything else (not-found / auth / degraded / a malformed or leaky ok) is "unavailable".
+      // The worker's `kind`/`message`/`cause` never survive the fold (rule 7).
+      return { ok: false, reason: res.ok === false && res.error.kind === "write_conflict" ? "already_resolved" : "unavailable" };
     } catch {
       // Transport failure → fail closed (never surface a partial / stale decision).
-      return { ok: false };
+      return { ok: false, reason: "unavailable" };
     }
   };
 }
