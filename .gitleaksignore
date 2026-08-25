@@ -40,3 +40,10 @@ apps/worker/test/boot/auditPersistWorkspaceIdGate.test.ts:generic-api-key:124
 #    otherwise id-legal string, proving looksLikeCredentialShape still refuses a
 #    genuine credential shape even when it would pass the id charset) ──
 packages/domain/test/redaction/identifier-benign-keyword.test.ts:generic-api-key:144
+
+# ── task 24.123 measurement-leg synthetic corpus (fake credential shapes in the
+#    POSITIVE_CONTROL_NOTES bucket, one per CREDENTIAL_PREFIX alternative family —
+#    proving the false-positive measurement's benign bucket is 0/63 because the
+#    notes are genuinely benign, not because the predicate is inert) ──
+packages/domain/test/redaction/synthetic-note-corpus-false-positive-rate.test.ts:jwt:159
+packages/domain/test/redaction/synthetic-note-corpus-false-positive-rate.test.ts:private-key:162
