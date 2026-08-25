@@ -7,8 +7,8 @@
 // one-time FLIP-PRECONDITION gate — distinct from `evaluateEnablementGate` (runtime
 // auto-revert). Real leg PRODUCERS + the flip itself are deferred (bucket B / HITL).
 import { describe, it, expect } from "vitest";
-import type { GbrainPin, ParityReport, WorkspaceId, RevisionId } from "@sow/contracts";
-import { GbrainPinSchema, ParityReportSchema } from "@sow/contracts";
+import type { GbrainPin, ParityReport, RevisionId } from "@sow/contracts";
+import { GbrainPinSchema, ParityReportSchema, workspaceId } from "@sow/contracts";
 import { pinValidatedForEnablement } from "../src/gbrain/enablement/write-through-flag";
 import {
   decideWriteThroughEnablement,
@@ -17,7 +17,10 @@ import {
 } from "../src/gbrain/enablement/decide-enablement";
 
 const SHA40 = "3933eb6a3933eb6a3933eb6a3933eb6a3933eb6a";
-const WS = "ws-employer" as WorkspaceId;
+// 24.92 housekeeping (KNOW-2) — was an anonymous `as WorkspaceId` cast over a BENIGN,
+// well-formed id (entirely `[a-z0-9-]`); the real `workspaceId()` constructor accepts it
+// directly (no bypass needed — `unsafeWorkspaceIdForTest` would THROW on a benign value).
+const WS = workspaceId("ws-employer");
 const REV = "rev-current" as RevisionId;
 
 /** A pin whose `validatedOn` is a real date ⇒ enablement-eligible (`pinValidatedForEnablement` true). */
