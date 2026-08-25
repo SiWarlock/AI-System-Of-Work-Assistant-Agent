@@ -13,8 +13,10 @@
 import type {
   AgentJob,
   DataOwner,
+  EgressClass,
   EgressPolicy,
   ProcessorId,
+  ProviderId,
   ProviderRoute,
   WorkspaceType,
 } from "@sow/contracts";
@@ -205,6 +207,152 @@ function deny(
     refs,
     payloadHash: EGRESS_PAYLOAD_MARKER,
     beforeSummary: "egress not evaluated",
+    afterSummary: message,
+    denialCode: reason,
+    healthSignalClass: EGRESS_STATUS_HEALTH_CLASS,
+  });
+  return denyDecision(reason, message, audit);
+}
+
+// ─── §19 embedding-backend egress predicate (safety rule 5, the gbrain-layer
+// gap) ───────────────────────────────────────────────────────────────────────
+//
+// `packages/knowledge/src/gbrain/local-embed.ts:220-231` records the exact gap
+// this predicate closes: an `EmbeddingBackend` descriptor carries NO endpoint,
+// so there is no loopback-endpoint PROOF the way `egressVeto` has one
+// (`route.endpoint` + `isLoopbackEndpoint`). `embeddingEgressVeto` is
+// therefore WEAKER than `egressVeto` — it cannot close the tunneled-local hole
+// by endpoint proof, because there is no endpoint to check. The compensating
+// requirement is that BOTH the declared `egressClass` AND the provider
+// identity must be local: a cloud provider id claiming `egressClass: 'local'`
+// still denies (mirrors `processorOfRoute`'s "the named provider identity
+// wins" rule — reused via `processorOfRoute` itself below, never re-declared
+// as a second copy of the local-provider set). Never describe this predicate
+// as "endpoint-verified" — it is not.
+//
+// Scope: this predicate implements ONLY the hard veto (rule 5), not a general
+// allowlist — an `EmbeddingBackend` descriptor carries no configured
+// `allowedProcessors` the way `EgressPolicy` does, so there is nothing to
+// allowlist against here. Outside the veto condition (ack ON, non-employer
+// workspace, or non-raw content) ANY backend is permitted — mirroring
+// `egressVeto`'s own escape hatch once the veto condition no longer holds.
+
+/** A fixed loopback proof endpoint — see {@link isGenuinelyLocalEmbeddingProvider}. */
+const EMBED_PROOF_ENDPOINT = "http://127.0.0.1" as const;
+
+/**
+ * True IFF `providerId` is a genuinely local (zero-egress) provider identity.
+ * REUSES `processorOfRoute`'s proof rather than re-declaring the local-
+ * provider set in this module: a synthetic route claiming `egressClass:
+ * 'local'` on a FIXED loopback endpoint classifies as non-egress (`null`)
+ * ONLY for a provider identity `processorOfRoute` itself treats as genuinely
+ * local (ollama / lm_studio today) — a cloud provider id (claude / openai /
+ * openrouter / …) never launders through a claimed-loopback route, by that
+ * function's own design (the named provider identity wins). The endpoint is a
+ * fixed PROOF value, not evidence about the real backend — the real backend
+ * carries none (see the module note above). Pure; never throws (totality is
+ * inherited from `processorOfRoute`, including its blank-identity handling).
+ */
+function isGenuinelyLocalEmbeddingProvider(providerId: ProviderId): boolean {
+  return (
+    processorOfRoute({
+      provider: providerId,
+      model: "embedding-proof",
+      endpoint: EMBED_PROOF_ENDPOINT,
+      egressClass: "local",
+    }) === null
+  );
+}
+
+/**
+ * Embedding-backend egress VETO (§19, safety rule 5). Mirrors `egressVeto`'s
+ * employer-raw-unacked veto shape exactly, adapted to the no-endpoint
+ * `EmbeddingBackend` seam (`RetrievalEgressGate.check`,
+ * `local-embed.ts:74-94`): raw Employer-Work content with the egress
+ * acknowledgment OFF may use ONLY a genuinely local backend —
+ * `egressClass === 'local'` AND a genuinely local provider identity (never a
+ * label alone). No cloud fallback. Every decision — allow AND deny — emits a
+ * redaction-safe `AuditSignal` with `healthSignalClass` set, matching
+ * `egressVeto`'s allow-and-deny visibility contract. Pure; never throws.
+ */
+export function embeddingEgressVeto(
+  backend: { readonly providerId: ProviderId; readonly egressClass: EgressClass },
+  workspace: {
+    readonly type: WorkspaceType;
+    readonly carriesRawContent: boolean;
+    readonly employerRawEgressAcknowledged: boolean;
+  },
+): PolicyDecision<{ readonly backendPermitted: true }> {
+  // ── 0. FAIL-CLOSED malformed guard (never fail-open) ───────────────────────
+  if (
+    backend == null ||
+    typeof backend !== "object" ||
+    typeof backend.providerId !== "string" ||
+    typeof backend.egressClass !== "string" ||
+    workspace == null ||
+    typeof workspace !== "object" ||
+    typeof workspace.type !== "string" ||
+    typeof workspace.carriesRawContent !== "boolean" ||
+    typeof workspace.employerRawEgressAcknowledged !== "boolean"
+  ) {
+    return embedDeny(
+      "MALFORMED_POLICY_INPUT",
+      "embedding-backend egress evaluation received missing or malformed backend/workspace input",
+      ["ref:embedding-egress:malformed-input"],
+    );
+  }
+
+  const genuinelyLocal =
+    backend.egressClass === "local" && isGenuinelyLocalEmbeddingProvider(backend.providerId);
+
+  const refs: readonly string[] = [
+    `ref:provider:${backend.providerId}`,
+    `ref:egress-class:${backend.egressClass}`,
+  ];
+
+  const employerRawUnacked =
+    workspace.type === "employer_work" &&
+    workspace.carriesRawContent === true &&
+    workspace.employerRawEgressAcknowledged === false;
+
+  if (employerRawUnacked && !genuinelyLocal) {
+    return embedDeny(
+      "EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED",
+      "raw Employer-Work content may not embed with acknowledgment OFF; only a genuinely local embedding backend is eligible (no cloud fallback)",
+      refs,
+    );
+  }
+
+  return embedAllow(refs, "embedding backend permitted");
+}
+
+function embedAllow(
+  refs: readonly string[],
+  afterSummary: string,
+): PolicyDecision<{ readonly backendPermitted: true }> {
+  const audit: AuditSignal = buildAuditSignal({
+    actor: EGRESS_ACTOR,
+    event: "embedding-egress.allowed",
+    refs,
+    payloadHash: EGRESS_PAYLOAD_MARKER,
+    beforeSummary: "embedding egress not evaluated",
+    afterSummary,
+    healthSignalClass: EGRESS_STATUS_HEALTH_CLASS,
+  });
+  return allowDecision({ backendPermitted: true }, audit);
+}
+
+function embedDeny(
+  reason: "EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED" | "MALFORMED_POLICY_INPUT",
+  message: string,
+  refs: readonly string[],
+): PolicyDecision<{ readonly backendPermitted: true }> {
+  const audit: AuditSignal = buildAuditSignal({
+    actor: EGRESS_ACTOR,
+    event: "embedding-egress.denied",
+    refs,
+    payloadHash: EGRESS_PAYLOAD_MARKER,
+    beforeSummary: "embedding egress not evaluated",
     afterSummary: message,
     denialCode: reason,
     healthSignalClass: EGRESS_STATUS_HEALTH_CLASS,

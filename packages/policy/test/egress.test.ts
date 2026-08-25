@@ -9,9 +9,9 @@
 // is always egress-safe. Every decision emits a redaction-safe AuditSignal with
 // healthSignalClass set (egress System-Health visibility, REQ-S-002).
 import { describe, it, expect } from "vitest";
-import type { AgentJob, DataOwner, EgressPolicy, ProviderRoute, WorkspaceType } from "@sow/contracts";
-import { processorId } from "@sow/contracts";
-import { egressVeto } from "../src/egress";
+import type { AgentJob, DataOwner, EgressPolicy, ProviderId, ProviderRoute, WorkspaceType } from "@sow/contracts";
+import { EgressClass, processorId } from "@sow/contracts";
+import { egressVeto, embeddingEgressVeto, EGRESS_STATUS_HEALTH_CLASS } from "../src/egress";
 import { isAllow, isDeny, type PolicyDecision } from "../src/decision";
 import { isRedactionSafe } from "../src/audit-signal";
 
@@ -373,5 +373,112 @@ describe("egressVeto — fail-closed on malformed input (never fail-open)", () =
     expect(isDeny(d)).toBe(true);
     if (isDeny(d)) expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
     expectAuditable(d);
+  });
+});
+
+// ── §19 embedding-backend egress predicate (safety rule 5, the gbrain-layer
+// gap) ──────────────────────────────────────────────────────────────────────
+// `packages/knowledge/src/gbrain/local-embed.ts:220-231` records the gap this
+// predicate closes: an EmbeddingBackend descriptor carries NO endpoint, so
+// there is no loopback-endpoint proof the way `egressVeto` has one — the
+// compensating requirement is that BOTH `egressClass` and the provider
+// identity must be genuinely local (ollama / lm_studio), never a label alone.
+describe("embeddingEgressVeto — §19 embedding-backend egress (safety rule 5)", () => {
+  const employerRawUnackedWs = {
+    type: "employer_work" as WorkspaceType,
+    carriesRawContent: true,
+    employerRawEgressAcknowledged: false,
+  };
+
+  it("employer_raw_unacked_denies_every_cloud_egress_class", () => {
+    // Iterate the FULL EgressClass union (not a hand-listed subset) so a
+    // future added class fails this test instead of silently passing.
+    for (const cls of EgressClass) {
+      if (cls === "local") continue; // the local direction is exercised in the next two tests
+      const d = embeddingEgressVeto({ providerId: "claude", egressClass: cls }, employerRawUnackedWs);
+      expect(isDeny(d)).toBe(true);
+      if (isDeny(d)) expect(d.reason).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
+    }
+  });
+
+  it("a_local_egress_class_on_a_cloud_provider_id_still_denies", () => {
+    for (const providerId of ["openrouter", "claude", "openai"] as const) {
+      const d = embeddingEgressVeto({ providerId, egressClass: "local" }, employerRawUnackedWs);
+      expect(isDeny(d)).toBe(true);
+      if (isDeny(d)) expect(d.reason).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
+    }
+  });
+
+  it("only_a_genuinely_local_provider_id_with_local_class_allows", () => {
+    for (const providerId of ["ollama", "lm_studio"] as const) {
+      const d = embeddingEgressVeto({ providerId, egressClass: "local" }, employerRawUnackedWs);
+      expect(isAllow(d)).toBe(true);
+      if (isAllow(d)) expect(d.value).toEqual({ backendPermitted: true });
+    }
+    // A local PROVIDER with a mismatched CLOUD-claimed class still denies —
+    // both the class and the identity must agree.
+    const mismatched = embeddingEgressVeto(
+      { providerId: "ollama", egressClass: "cloud" },
+      employerRawUnackedWs,
+    );
+    expect(isDeny(mismatched)).toBe(true);
+  });
+
+  it("malformed_backend_or_workspace_denies", () => {
+    const validBackend = { providerId: "ollama", egressClass: "local" } as const;
+    const cases: ReadonlyArray<readonly [unknown, unknown]> = [
+      [null, employerRawUnackedWs],
+      [{ providerId: "ollama", egressClass: undefined }, employerRawUnackedWs],
+      [validBackend, { ...employerRawUnackedWs, carriesRawContent: "yes" }],
+      [validBackend, { ...employerRawUnackedWs, employerRawEgressAcknowledged: "true" }],
+    ];
+    for (const [backend, workspace] of cases) {
+      const run = (): PolicyDecision<{ readonly backendPermitted: true }> =>
+        embeddingEgressVeto(
+          backend as unknown as { readonly providerId: ProviderId; readonly egressClass: EgressClass },
+          workspace as unknown as {
+            readonly type: WorkspaceType;
+            readonly carriesRawContent: boolean;
+            readonly employerRawEgressAcknowledged: boolean;
+          },
+        );
+      expect(run).not.toThrow();
+      const d = run();
+      expect(isAllow(d)).toBe(false);
+      expect(isDeny(d)).toBe(true);
+      if (isDeny(d)) expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
+    }
+  });
+
+  it("ack_ON_reopens_the_allowlist_path_per_call", () => {
+    // Purity: three calls, same backend, ONLY the ack flag flips — no cached
+    // allow/deny survives across calls.
+    const cloudBackend = { providerId: "claude", egressClass: "cloud" } as const;
+    const ackOnWs = { ...employerRawUnackedWs, employerRawEgressAcknowledged: true };
+
+    const first = embeddingEgressVeto(cloudBackend, ackOnWs);
+    const second = embeddingEgressVeto(cloudBackend, employerRawUnackedWs);
+    const third = embeddingEgressVeto(cloudBackend, ackOnWs);
+
+    expect(isAllow(first)).toBe(true);
+    expect(isDeny(second)).toBe(true);
+    if (isDeny(second)) expect(second.reason).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
+    expect(isAllow(third)).toBe(true);
+  });
+
+  it("every_decision_emits_a_redaction_safe_signal", () => {
+    const cloudBackend = { providerId: "claude", egressClass: "cloud" } as const;
+    const denied = embeddingEgressVeto(cloudBackend, employerRawUnackedWs);
+    const allowed = embeddingEgressVeto(cloudBackend, {
+      ...employerRawUnackedWs,
+      employerRawEgressAcknowledged: true,
+    });
+
+    for (const d of [denied, allowed]) {
+      expect(isRedactionSafe(d.audit)).toBe(true);
+      expect(d.audit.healthSignalClass).toBe(EGRESS_STATUS_HEALTH_CLASS);
+      // NOTHING else identity-bearing rides the refs — exactly these two.
+      expect(d.audit.refs).toEqual(["ref:provider:claude", "ref:egress-class:cloud"]);
+    }
   });
 });
