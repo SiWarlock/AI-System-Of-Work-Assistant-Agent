@@ -765,7 +765,17 @@ Because this phase performs no signing, no serving, and no external write, rolli
 
 ## Phase 4 — Serving oracle go-live (C5.4b provenance trust) — HARD-LINE, crossing 4 of 8 (= ARCHITECTURE Phase 20 / §19.7)
 
-> ⚠ **ORDER NOTE (do not follow section order here): this phase's own Preconditions below require Phase 5's reconcile output to already exist** ("A serve-time `ParityReport` store is populated… must have produced a `cleanForServing: true, coverageComplete: true` report"). The real dependency order is **crossing 3 (Phase 5, Reconcile/serving-coverage arc) before crossing 4 (this phase)** — the reverse of these two sections' position in this document. This section-order-vs-dependency-order contradiction is tracked as its own task, `### 24.28`; this callout exists so a reader following Part I strictly top-to-bottom is not silently misled in the meantime.
+> ⛔⛔ **STOP — DO NOT FOLLOW SECTION ORDER HERE.** ⛔⛔
+>
+> **(a) Do not execute this phase next just because it reads next.** This phase's own Preconditions below require Phase 5's reconcile output to already exist ("A serve-time `ParityReport` store is populated… must have produced a `cleanForServing: true, coverageComplete: true` report") — that output does not exist until Phase 5 has run.
+>
+> **(b) Crossing 3 comes first.** The real dependency order is **crossing 3 (Phase 5, Reconcile/serving-coverage arc, below) before crossing 4 (this phase)** — the reverse of these two sections' position in this document.
+>
+> **(c) Why this is not just an ordering nuisance:** this phase arms the mechanism that lets a retrieved source resolve `trusted` — the single precondition that unlocks the write/propose path. Phase 5 is the mechanism that VERIFIES those same facts still match canonical Markdown. Arm this phase before Phase 5 exists and you are trusting facts nothing has checked — an unverified fact could become an approved write into the vault.
+>
+> **(d) Before starting this phase, verify:** a serve-time `ParityReport` for the served workspace's head revision already reports `cleanForServing: true, coverageComplete: true` (Phase 5, below, is what produces it). If no such report exists yet, stop here and complete Phase 5 first.
+>
+> This section-order-vs-dependency-order contradiction is tracked as `### 24.28`. Per owner ruling, the fix is this callout, not reordering — Part I's ~1,300 lines carry cross-references that a reorder risks breaking for no safety gain this STOP does not already deliver.
 
 ### What we are doing
 
@@ -890,6 +900,16 @@ Each: **Action** → **Expected result** → _what it proves_.
 
 ## Phase 5 — Reconcile / serving-coverage arc — HARD-LINE, crossing 3 of 8 (= ARCHITECTURE Phase 19 / §19.6) ⚠ despite the section number, this crossing comes BEFORE Phase 4 (crossing 4) — see the order note in Phase 4 above / `### 24.28`
 
+> ⛔⛔ **STOP — READ THIS BEFORE PHASE 4, NOT AFTER.** ⛔⛔
+>
+> **(a) This phase runs first, even though it is numbered "Phase 5" and sits after "Phase 4" in this document.** Crossing 3 (this phase) must complete before crossing 4 (Phase 4, above) — the reverse of these two sections' position here.
+>
+> **(b) Why:** this phase is what VERIFIES that facts served to the Copilot still match canonical Markdown. Phase 4 is what lets a verified fact resolve `trusted` — the single precondition that unlocks the write/propose path. Complete this phase before Phase 4 and Phase 4 only ever trusts facts this phase has checked. Skip ahead to Phase 4 first and it trusts facts nothing has checked — an unverified fact could become an approved write into the vault.
+>
+> **(c) Coming from Phase 4's Preconditions?** You are in the right place — finish this phase, confirm its Activation steps below have produced a `cleanForServing: true, coverageComplete: true` `ParityReport` for the served workspace's head revision, then return to Phase 4.
+>
+> Tracked as `### 24.28`. See the matching STOP block at the top of Phase 4, above.
+>
 > **⚠ HARD LINE — explicit owner confirmation required at the crossing.** This is the single most delicate mis-arm point in the whole go-live ladder. Turning it on makes **real `coverageComplete` verdicts feed the Copilot serving gate** — the trust kill-switch that decides whether a retrieved source is admitted as `trusted`. A wire-shape slip here can silently manufacture a false-green. Do not arm without the owner's explicit per-crossing confirmation, and only after the build round in "Build-first" below has landed **and been adversarially reviewed.**
 
 ### What we are doing
