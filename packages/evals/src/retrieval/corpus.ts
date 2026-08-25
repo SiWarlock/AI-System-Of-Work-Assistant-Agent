@@ -10,8 +10,8 @@
 //
 // Zero-egress by construction: the backend is a pure in-memory text→vector lookup
 // declaring egressClass "local"; nothing here reaches a network/model.
-import type { RetrievalWorkspaceContext, EmbeddingBackend } from "@sow/knowledge";
-import { ok } from "@sow/contracts";
+import type { RetrievalWorkspaceContext, EmbeddingBackend, RetrievalEgressGate } from "@sow/knowledge";
+import { ok, err } from "@sow/contracts";
 import type { ProviderId, EgressClass } from "@sow/contracts";
 
 /** A candidate document: stable id, text (drives the sparse lexical leg), recorded embedding. */
@@ -276,3 +276,33 @@ export const RELEVANCE_CORPUS: RetrievalCorpus = buildRelevanceCorpus();
  * usefulness@K falls below the bar, so `below_bar_fails_suite` is non-vacuous.
  */
 export const DEGRADED_RELEVANCE_CORPUS: RetrievalCorpus = buildDegradedRelevanceCorpus();
+
+/**
+ * The eval's injected §5 egress gate (24.9 made `RetrieveLocalEmbedDeps.egressGate`
+ * REQUIRED, so every call site must supply one).
+ *
+ * ⛔ This is LOCAL-ONLY ON PURPOSE, not a permissive test double. The whole retrieval
+ * eval is defined as zero-egress, so a gate that admitted a cloud backend would let a
+ * future corpus change silently score over one — the eval would still be "green" while
+ * no longer measuring what its own name claims. Denying by `egressClass` keeps the
+ * harness's stated posture enforced by the harness itself.
+ *
+ * ⭐ It is NOT the thing under test. `retrieveLocalEmbed` carries its own rule-5 FLOOR,
+ * and the floor is what `eval_is_zero_egress_local_only` proves — that case deliberately
+ * passes a PERMISSIVE gate so a denial can only have come from the floor.
+ */
+export const LOCAL_ONLY_EGRESS_GATE: RetrievalEgressGate = {
+  check: (backend) =>
+    backend.egressClass === "local"
+      ? ok(undefined)
+      : err({
+          code: "egress_denied" as const,
+          reason: `retrieval eval is zero-egress: refusing a ${backend.egressClass} backend`,
+        }),
+};
+
+/**
+ * A gate that proves nothing, for the cases whose SUBJECT is the floor. Named so a
+ * reader cannot mistake it for the harness's real posture above.
+ */
+export const GATE_THAT_ALLOWS_ANYTHING: RetrievalEgressGate = { check: () => ok(undefined) };

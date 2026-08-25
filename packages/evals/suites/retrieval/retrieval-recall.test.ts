@@ -14,6 +14,7 @@ import {
   DEGRADED_CORPUS,
   RECALL_AT_10_BAR,
   RETRIEVAL_QUERY_FLOOR,
+  GATE_THAT_ALLOWS_ANYTHING,
   recordedBackend,
 } from "../../src/retrieval/corpus";
 import { measureRecallAt10, recallAtK, type RecallReport } from "../../src/retrieval/recall";
@@ -67,7 +68,9 @@ describe("§13.1c — retrieval recall@10 bar (local-embed 13.3a + re-ranker 13.
         passages: [{ id: "d1", text: "some passage" }],
         workspace: { type: "employer_work", carriesRawContent: true, employerRawEgressAcknowledged: false },
       },
-      { backend: spyCloud },
+      // PERMISSIVE on purpose: the subject is retrieveLocalEmbed's own rule-5 FLOOR.
+      // A denial here therefore cannot have come from the gate.
+      { backend: spyCloud, egressGate: GATE_THAT_ALLOWS_ANYTHING },
     );
     expect(isErr(denied)).toBe(true);
     if (isErr(denied)) expect(denied.error.code).toBe("egress_denied");
@@ -81,7 +84,7 @@ describe("§13.1c — retrieval recall@10 bar (local-embed 13.3a + re-ranker 13.
         passages: [{ id: "d1", text: "some passage" }],
         workspace: { type: "employer_work", carriesRawContent: true, employerRawEgressAcknowledged: false },
       },
-      { backend: recordedBackend(RETRIEVAL_CORPUS) },
+      { backend: recordedBackend(RETRIEVAL_CORPUS), egressGate: GATE_THAT_ALLOWS_ANYTHING },
     );
     expect(isOk(local)).toBe(true);
   });

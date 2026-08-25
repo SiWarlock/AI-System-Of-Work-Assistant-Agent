@@ -13,7 +13,7 @@
 // shared `recordedBackend` (corpus.ts).
 import { isOk } from "@sow/contracts";
 import { retrieveLocalEmbed, type Passage, type EmbeddingBackend } from "@sow/knowledge";
-import { recordedBackend, type RetrievalCorpus } from "./corpus";
+import { recordedBackend, LOCAL_ONLY_EGRESS_GATE, type RetrievalCorpus } from "./corpus";
 
 /** The usefulness (precision@K) cutoff rank. */
 export const USEFULNESS_K = 4 as const;
@@ -104,7 +104,7 @@ export async function measureUsefulnessAtK(
     const rawIds = denseOrder(c.queryEmbedding, corpus.docs);
     raw += usefulnessAtK(rawIds, c.goldDocIds, USEFULNESS_K);
 
-    const f = await retrieveLocalEmbed({ query: c.query, passages, workspace: c.workspace }, { backend });
+    const f = await retrieveLocalEmbed({ query: c.query, passages, workspace: c.workspace }, { backend, egressGate: LOCAL_ONLY_EGRESS_GATE });
     const fusedIds = isOk(f) ? f.value.map((r) => r.id) : [];
     fused += usefulnessAtK(fusedIds, c.goldDocIds, USEFULNESS_K);
   }

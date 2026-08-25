@@ -17,7 +17,7 @@ import {
   type Passage,
   type EmbeddingBackend,
 } from "@sow/knowledge";
-import { RECALL_K, recordedBackend, type RetrievalCorpus } from "./corpus";
+import { RECALL_K, recordedBackend, LOCAL_ONLY_EGRESS_GATE, type RetrievalCorpus } from "./corpus";
 
 /** recall@K for one ranked id list vs a gold set: |gold ∩ top-K| / |gold|. */
 export function recallAtK(rankedIds: readonly string[], goldIds: readonly string[], k: number): number {
@@ -105,7 +105,7 @@ export async function measureRecallAt10(corpus: RetrievalCorpus, deps?: MeasureD
     raw += recallAtK(rawIds, c.goldDocIds, RECALL_K);
 
     // fused — the REAL 13.3a hybrid (dense ⊕ sparse RRF).
-    const f = await retrieveLocalEmbed({ query: c.query, passages, workspace: c.workspace }, { backend });
+    const f = await retrieveLocalEmbed({ query: c.query, passages, workspace: c.workspace }, { backend, egressGate: LOCAL_ONLY_EGRESS_GATE });
     const fusedIds = isOk(f) ? f.value.map((r) => r.id) : [];
     fused += recallAtK(fusedIds, c.goldDocIds, RECALL_K);
 
