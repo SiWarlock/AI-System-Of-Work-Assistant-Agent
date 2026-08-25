@@ -431,7 +431,11 @@ describe("§12 degraded conformance — Keychain-locked holds jobs retryable + r
     };
   }
   const provider = "openrouter" as ProviderId;
-  const emptyDrain: DrainResult = { drained: 0, reused: 0, held: 0, failed: 0 };
+  // 24.50 added `DrainResult.skipped` — the workspace-mismatch count (safety rule 4). This is a
+  // STUB drain, so its counts mean "no outbox entry existed to sweep", NOT "a real pass ran and
+  // skipped every entry for the wrong workspace". Both present as `drained: 0`, which is why the
+  // unlock assertion below pins `skipped` explicitly rather than only `wakeDrain` having been called.
+  const emptyDrain: DrainResult = { drained: 0, reused: 0, held: 0, failed: 0, skipped: 0 };
 
   it("lock → provider degraded + worker_down item; jobs held RETRYABLE (never terminal); unlock re-attempts", async () => {
     const { surface } = makeHealthSurface();
@@ -463,6 +467,12 @@ describe("§12 degraded conformance — Keychain-locked holds jobs retryable + r
     expect(isOk(unlocked)).toBe(true);
     if (isOk(unlocked)) expect(unlocked.value.releasedCount).toBe(1);
     expect(wakeDrain).toHaveBeenCalledTimes(1); // the idempotent §8 outbox drain ran
+    // the controller PROPAGATES the drain counts verbatim — it does not rebuild the record (which
+    // would silently drop 24.50's `skipped` and hide a cross-workspace redrive behind `drained: 0`).
+    if (isOk(unlocked)) {
+      expect(unlocked.value.drain.skipped).toBe(0);
+      expect(unlocked.value.drain).toEqual(emptyDrain);
+    }
     expect(await degradationStore.isDegraded(provider)).toBe(false); // cleared
     expect(ctrl.heldJobs()).toEqual([]); // released
   });
