@@ -306,7 +306,12 @@ describe("meetingCommit — the KnowledgeWriter keeps its REAL secret-scan defau
         {
           path: `${WS}/meetings/note.md`,
           title: "note",
-          body: "password: hunter2-supersecret-value",
+          // task 24.123: a credential SHAPE, not the WORD "password". The commit-
+          // granularity predicate stopped tripping on prose keywords by owner decision
+          // (they rejected 218 of 668 tracked .md files on the sole-writer path). A
+          // real key shape still rejects — which is what this pin actually needs, since
+          // its subject is "the REAL scanForSecrets default is wired, not a pass-through".
+          body: "key: sk-Abc123Def456Ghi789Jkl",
           frontmatter: {},
         },
       ],

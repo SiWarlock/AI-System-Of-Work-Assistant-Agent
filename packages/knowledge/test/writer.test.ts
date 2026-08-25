@@ -83,7 +83,11 @@ describe("applyPlan — secure-by-default gates (regression)", () => {
   it("rejects a secret-bearing plan via the REAL default scanner (no injected secretScan)", async () => {
     const vault = new MemoryVaultFs();
     const d = deps(vault); // deps() injects neither ownershipCheck nor secretScan
-    const plan = planWithCreate("notes/leak.md", "this note has a secret value inside");
+    // task 24.123: the fixture is now a credential SHAPE, not the WORD "secret".
+    // The commit-granularity predicate no longer trips on prose keywords (see the
+    // companion admits-prose pin below); it still trips on a real key shape, which
+    // is what this regression exists to prove.
+    const plan = planWithCreate("notes/leak.md", "this note has sk-Abc123Def456Ghi789Jkl inside");
     const r = await applyPlan(cmd(plan), d);
     expect(isOk(r)).toBe(false);
     if (isOk(r)) return;
@@ -91,6 +95,23 @@ describe("applyPlan — secure-by-default gates (regression)", () => {
     // fail-closed: nothing committed, no revision recorded
     expect(vault.snapshot()["notes/leak.md"]).toBeUndefined();
     expect(d.revisions.recordCalls).toBe(0);
+  });
+
+  // ⛔ task 24.123 (OWNER DECISION 2026-08-25) — THE ADMITTING DIRECTION, PINNED.
+  // A note that merely SAYS "secret"/"password" is ordinary prose and MUST commit.
+  // Measured before the split: the keyword arm rejected 218 of 668 tracked .md files
+  // (32.8% of the vault unwritable) and accounted for 218 of 219 total rejections.
+  // This pin is what makes re-adding the keyword arm to the COMMIT path fail loudly
+  // instead of silently restoring a 1-in-3 refusal rate on the sole-writer path.
+  it("ADMITS ordinary prose containing the words secret/password (24.123 granularity split)", async () => {
+    const vault = new MemoryVaultFs();
+    const d = deps(vault);
+    const plan = planWithCreate("notes/prose.md", "Rotate the password quarterly; never email a secret.");
+    const r = await applyPlan(cmd(plan), d);
+    expect(isOk(r)).toBe(true);
+    // non-vacuous: it really committed, rather than passing on an unrelated early return
+    expect(vault.snapshot()["notes/prose.md"]).toContain("Rotate the password quarterly");
+    expect(d.revisions.recordCalls).toBe(1);
   });
 });
 

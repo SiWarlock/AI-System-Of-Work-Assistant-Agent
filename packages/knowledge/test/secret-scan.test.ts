@@ -15,6 +15,7 @@ import { computeRevisionId } from "../src/knowledge-writer/revision";
 import {
   scanForSecrets,
   contentContainsSecret,
+  auditFieldContainsSecret,
   buildSecretScanRejectionAudit,
   SECRET_SCAN_KIND,
   SECRET_SCAN_FAILURE_CLASS,
@@ -72,9 +73,32 @@ describe("secret-scan — detection (reuses @sow/policy redaction patterns)", ()
     expect(contentContainsSecret(`see ${USERINFO_URL}`)).toBe(true);
   });
 
-  it("flags a sensitive keyword (password/passphrase/api-key/bearer)", () => {
-    expect(contentContainsSecret("the password is on the sticky note")).toBe(true);
-    expect(contentContainsSecret("Authorization: bearer xyz")).toBe(true);
+  // ⛔ task 24.123 (OWNER DECISION 2026-08-25) — INVERTED DELIBERATELY, not relaxed.
+  // The old assertion (`contentContainsSecret("the password is …") === true`) pinned
+  // the AUDIT-granularity predicate on the COMMIT path. That is the defect 24.123
+  // names: one predicate over two granularities. At commit granularity the scanned
+  // value is a whole Markdown FILE, where these words are prose — and it rejected
+  // 218 of 668 tracked .md files, 218 of all 219 rejections, on the sole-writer path
+  // whose failure mode is REFUSAL TO WRITE.
+  //
+  // The keyword arm still applies at AUDIT granularity via `auditFieldContainsSecret`,
+  // asserted below, so this is a SPLIT rather than a deletion.
+  it("does NOT flag a bare keyword at COMMIT granularity — prose is not a credential", () => {
+    expect(contentContainsSecret("the password is on the sticky note")).toBe(false);
+    expect(contentContainsSecret("Authorization: bearer xyz")).toBe(false);
+  });
+
+  it("STILL flags a bare keyword at AUDIT granularity (the split's other half)", () => {
+    // a short structured audit field has no legitimate reason to carry these words
+    expect(auditFieldContainsSecret("the password is on the sticky note")).toBe(true);
+    expect(auditFieldContainsSecret("Authorization: bearer xyz")).toBe(true);
+  });
+
+  it("a real credential SHAPE is still rejected at COMMIT granularity", () => {
+    // non-vacuity for the split: dropping the keyword arm must not have disarmed the scan
+    expect(contentContainsSecret("key: sk-Abc123Def456Ghi789Jkl")).toBe(true);
+    expect(contentContainsSecret("-----BEGIN RSA PRIVATE KEY-----")).toBe(true);
+    expect(contentContainsSecret("ghp_0123456789abcdefghijklmnopqrstuvwxyz")).toBe(true);
   });
 
   it("passes clean prose with no credential shape", () => {

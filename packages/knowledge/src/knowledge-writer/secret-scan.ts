@@ -18,7 +18,42 @@
 import { ok, err } from "@sow/contracts";
 import type { Result, FailureClass } from "@sow/contracts";
 import { buildAuditSignal, isRedactionSafe, type AuditSignal } from "@sow/policy";
+import { CREDENTIAL_PREFIX, URL_USERINFO_CREDENTIAL } from "@sow/domain";
 import type { SecretScan, SecretScanContext, SecretFound } from "./writer";
+
+// ── task 24.123 — THE GRANULARITY SPLIT (owner decision 2026-08-25) ──────────────
+//
+// ⛔ THE FINDING, restated because the remedy only makes sense against it: ONE
+// predicate was reused across TWO VERY DIFFERENT SCAN GRANULARITIES.
+//   * AUDIT granularity — short structured refs (`actor`, `event`, a ref token).
+//     There, the bare word "password" IS suspicious: nothing legitimate puts it in
+//     a structured audit field.
+//   * COMMIT granularity — a WHOLE RENDERED MARKDOWN FILE of human prose. There,
+//     "password" is just a word people write.
+//
+// MEASURED on this repo's real Markdown (668 tracked `.md` files), which is the
+// closest realistic-note corpus available in-repo:
+//   * rejected under the shared predicate ......... 219 / 668  (32.8%)
+//   * of those, tripped by SENSITIVE_KEYWORD ...... 218
+//   * tripped by a genuine credential SHAPE ....... 12 (prefix) + 11 (URL userinfo)
+//   * rejected with the keyword arm removed ....... 20 / 668  (3.0%)
+// ⇒ the keyword arm was 218 of 219 rejections and caught nothing a shape net did not.
+//
+// ⭐ THE COST THIS BUYS BACK IS NOT COSMETIC: this is the SOLE-WRITER path (safety
+// rule 1) and its failure mode is REFUSAL TO WRITE. A third of the vault being
+// unwritable is an availability failure on the one path that owns canonical truth.
+//
+// ⛔ WHAT IS DELIBERATELY KEPT: the credential-SHAPE nets. They cost 3% and they are
+// the only thing standing between a pasted `sk-…` / PEM block / JWT / `user:pass@host`
+// and a durable commit into the vault. Turning those off too would have made the
+// scan's remaining 1-in-33 rejections vanish along with its entire reason to exist.
+//
+// The audit path is UNCHANGED — `isRedactionSafe` keeps every arm, including the
+// keyword, because at audit granularity the keyword is doing real work.
+const CONTENT_CREDENTIAL_NETS: readonly RegExp[] = Object.freeze([
+  CREDENTIAL_PREFIX,
+  URL_USERINFO_CREDENTIAL,
+]);
 
 /** Fixed, redaction-safe category label for a rejection — never the value. */
 export const SECRET_SCAN_KIND = "credential_shaped" as const;
@@ -52,6 +87,19 @@ const PROBE_HASH = "sha256:scan";
  * Pure; reuses the @sow/policy redaction patterns via `isRedactionSafe`.
  */
 export function contentContainsSecret(value: string): boolean {
+  return CONTENT_CREDENTIAL_NETS.some((net) => net.test(value));
+}
+
+/**
+ * The pre-24.123 predicate — the AUDIT-granularity one, keyword arm included.
+ *
+ * ⛔ RETAINED, NOT DEAD: it is the honest way to ask "would this string be safe as an
+ * AUDIT FIELD?", which is a different question from "may this file be committed?".
+ * Anything scanning short structured values should use THIS, not
+ * {@link contentContainsSecret}. Collapsing the two again is exactly the defect
+ * 24.123 records.
+ */
+export function auditFieldContainsSecret(value: string): boolean {
   const probe: AuditSignal = buildAuditSignal({
     actor: PROBE_ACTOR,
     event: PROBE_EVENT,
