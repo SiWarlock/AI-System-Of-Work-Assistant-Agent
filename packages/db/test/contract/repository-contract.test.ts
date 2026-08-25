@@ -1300,18 +1300,15 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(due.map((e) => e.outboxId).sort()).toEqual(["due-now", "retry-elapsed"]);
     });
 
-    it("task 24.35 — approvalPolicy round-trips through enqueue→get and update→get (nullable, additive)", async () => {
+    // task 24.51 REVISED this test: the original also asserted update→get CHANGED
+    // approvalPolicy to "queued" — that was the exact TOCTOU mutability gap 24.51 requires
+    // closed (approvalPolicy is the frozen historical record of the token in effect at
+    // propose time). The update-freezes-it half now lives in the two dedicated "task 24.51"
+    // pins below (which also cover a status advance alongside the frozen field); this test
+    // stays scoped to the enqueue→get round-trip it was originally named for.
+    it("task 24.35 — approvalPolicy round-trips through enqueue→get (nullable, additive)", async () => {
       unwrap(await repos.outbox.enqueue(outboxEntry({ outboxId: "o-policy", approvalPolicy: "auto_private" })));
       expect(unwrap(await repos.outbox.get("o-policy")).approvalPolicy).toBe("auto_private");
-      const updated = unwrap(
-        await repos.outbox.update({
-          ...outboxEntry({ outboxId: "o-policy" }),
-          approvalPolicy: "queued",
-          updatedAt: "2026-06-30T00:00:05.000Z",
-        }),
-      );
-      expect(updated.approvalPolicy).toBe("queued");
-      expect(unwrap(await repos.outbox.get("o-policy")).approvalPolicy).toBe("queued");
     });
 
     it("task 24.35 — approvalPolicy is absent (undefined), not a stored empty/null artifact, when never supplied", async () => {
@@ -1319,13 +1316,15 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(unwrap(await repos.outbox.get("o-no-policy")).approvalPolicy).toBeUndefined();
     });
 
-    // orchestrator ADD — `update()`'s `.set({...})` block lists every field EXPLICITLY (unlike `enqueue`'s
-    // `.values(entry)` spread), making a silently-forgotten field the single highest-risk spot here (the
-    // same L134-family shape this round keeps finding: a mechanical thing quietly not wired). Deliberately
-    // a SEPARATE test from the round-trip one above: that test enqueues WITH the field already set and only
-    // exercises value→different-value; this one starts from genuinely ABSENT and exercises the
-    // never-set→first-set-via-update transition specifically.
-    it("task 24.35 — update() SETS approvalPolicy for the first time on an entry enqueued WITHOUT it", async () => {
+    // orchestrator ADD (pre-24.51) — `update()`'s `.set({...})` block lists every field EXPLICITLY
+    // (unlike `enqueue`'s `.values(entry)` spread), making a silently-forgotten field the single
+    // highest-risk spot here. task 24.51 INVERTS this test's assertion: the field's whole point is
+    // that update() must NOT be a route to SET it either — a never-set→first-set-via-update
+    // transition is exactly the "late binding of the propose-time token" the freeze forecloses (a
+    // redrive must re-derive requiresApproval() against the value actually in effect when this
+    // action was PROPOSED, never one attached after the fact). This is a SEPARATE test from the
+    // round-trip one above precisely because it starts from genuinely ABSENT, not already-set.
+    it("task 24.51 — approvalPolicy NEVER set at enqueue stays absent through update() — no late-set escape hatch around the freeze", async () => {
       unwrap(await repos.outbox.enqueue(outboxEntry({ outboxId: "o-late-policy" })));
       expect(unwrap(await repos.outbox.get("o-late-policy")).approvalPolicy).toBeUndefined();
       const updated = unwrap(
@@ -1335,13 +1334,33 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
           updatedAt: "2026-06-30T00:00:05.000Z",
         }),
       );
-      expect(updated.approvalPolicy).toBe("auto_private");
-      expect(unwrap(await repos.outbox.get("o-late-policy")).approvalPolicy).toBe("auto_private");
+      expect(updated.updatedAt).toBe("2026-06-30T00:00:05.000Z");
+      expect(updated.approvalPolicy).toBeUndefined();
+      expect(unwrap(await repos.outbox.get("o-late-policy")).approvalPolicy).toBeUndefined();
     });
 
     it("enqueue with a duplicate outboxId is a typed conflict", async () => {
       unwrap(await repos.outbox.enqueue(outboxEntry({ outboxId: "o1" })));
       expect(unwrapErr(await repos.outbox.enqueue(outboxEntry({ outboxId: "o1" }))).code).toBe("conflict");
+    });
+
+    it("task 24.51 — approvalPolicy is IMMUTABLE after enqueue; update() cannot swap the token in effect at propose time (same TOCTOU freeze as pendingKnowledgeMutations.update, §13.10a)", async () => {
+      unwrap(await repos.outbox.enqueue(outboxEntry({ outboxId: "o-frozen", approvalPolicy: "auto_private" })));
+      // The update call deliberately supplies a DIVERGENT approvalPolicy alongside an
+      // otherwise-legitimate status advance — an attempted post-enqueue policy swap.
+      const updated = unwrap(
+        await repos.outbox.update({
+          ...outboxEntry({ outboxId: "o-frozen" }),
+          approvalPolicy: "queued",
+          status: "retry_queued",
+          updatedAt: "2026-06-30T00:00:05.000Z",
+        }),
+      );
+      // status DID advance…
+      expect(updated.status).toBe("retry_queued");
+      // …but the approval policy in effect at propose time is UNCHANGED (immutable post-enqueue).
+      expect(updated.approvalPolicy).toBe("auto_private");
+      expect(unwrap(await repos.outbox.get("o-frozen")).approvalPolicy).toBe("auto_private");
     });
   });
 

@@ -1006,6 +1006,12 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
       }),
     update: (entry) =>
       run(async () => {
+        // Task 24.51 TOCTOU: `approvalPolicy` (task 24.35) is the FROZEN historical record of
+        // the token in effect at propose time — that is the entire reason it is persisted (a
+        // redrive re-derives requiresApproval() against THIS SAME value, never a fixed literal
+        // reconstructed later). It is therefore IMMUTABLE post-enqueue (structurally — never in
+        // this set-clause), the same mechanism `pendingKnowledgeMutations.update` already uses
+        // for `plan`/`payloadHash`/`workspaceId` below (reuse, not a re-implementation — L39).
         const rows = await db
           .update(schema.outbox)
           .set({
@@ -1015,7 +1021,6 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
             canonicalObjectKey: entry.canonicalObjectKey,
             idempotencyKey: entry.idempotencyKey,
             payloadHash: entry.payloadHash,
-            approvalPolicy: entry.approvalPolicy ?? null,
             status: entry.status,
             payload: entry.payload ?? null,
             writeReceipt: entry.writeReceipt ?? null,
