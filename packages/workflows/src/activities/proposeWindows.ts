@@ -48,6 +48,7 @@ import type {
   ValidatedProposal,
   ProposedWindow,
 } from "../ports/crossCalendarScheduling";
+import { unknownCalendarPayloadKey } from "./calendar-payload-allowlist";
 
 /** The generic-explanation length cap (mirrors the GCL projection summary cap). A
  * longer or multi-line string is treated as potential raw content and rejected. */
@@ -187,6 +188,29 @@ export function createProposeWindowsActivity(
             code: "build_failed" as const,
             message:
               "derived conflict explanation is raw-content-shaped (multi-line / over-length) — refused (Flow 3 leakage)",
+          }),
+        );
+      }
+
+      // Flow-3 leakage guard (fail-closed) — the ALLOWLIST axis (R7-g,
+      // `calendar-payload-allowlist.ts`): WHICH fields may ride the ACTUALLY-
+      // DISPATCHED payload at all. Runs BEFORE the value-shape check below so an
+      // unknown key is refused before its value is even inspected — a leaked field
+      // (e.g. `attendeeEmail` / `organizerNote` / `sourceEventTitle`) whose value
+      // happens to be short and single-line would pass the value-shape check by
+      // shape alone; the allowlist closes that hole by bounding WHICH keys are
+      // permitted, independent of what their values look like. The allowlist is now
+      // the authority on WHICH fields may ride a cross-workspace proposal; the
+      // value-shape check below remains the authority on WHAT may be in the fields
+      // it allows — the two compose, neither replaces the other. Adding a key to
+      // `CALENDAR_PAYLOAD_KEYS` is a rule-4 (workspace-isolation) decision, not a
+      // refactor.
+      const unknownKey = unknownCalendarPayloadKey(d.payload);
+      if (unknownKey !== null) {
+        return Promise.resolve(
+          err({
+            code: "build_failed" as const,
+            message: `dispatched calendar payload carries an unrecognized key "${unknownKey}" — refused (Flow 3 leakage)`,
           }),
         );
       }
