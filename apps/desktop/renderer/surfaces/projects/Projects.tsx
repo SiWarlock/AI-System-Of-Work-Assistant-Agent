@@ -17,6 +17,7 @@ import type { UiSafeProjectDashboard, UiSafeManagedDoc } from "@sow/contracts/ap
 import type { WorkspaceScope } from "../../store/scope";
 import type { VaultRepoTarget } from "../../../preload/bridge";
 import { useRovingListbox, type RovingOptionProps } from "../../lib/a11y/useRovingListbox";
+import { relativeTime } from "../../lib/relative-time";
 import { resolveSelectedProject } from "./select";
 import { resolveDocPack } from "./docpack";
 import { RepoActions } from "./RepoActions";
@@ -146,6 +147,10 @@ function ProjectDetail({ project }: { readonly project: UiSafeProjectDashboard }
         <h2 className="sow-project-detail-title">{project.title}</h2>
         <span className="sow-project-status">{project.status}</span>
       </div>
+      {/* 25.6 — the deterministic progress + prose ARE the projectDashboard/projectSync workflow's
+          result; `updatedAt` was already in the projection but never rendered, so the detail pane
+          could not show whether a scheduled run had actually happened (or how stale it was). */}
+      <div className="sow-card-sub">Updated {relativeTime(project.updatedAt)}</div>
       <div
         className="sow-project-progress"
         role="progressbar"

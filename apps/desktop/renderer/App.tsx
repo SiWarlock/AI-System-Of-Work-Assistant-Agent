@@ -394,6 +394,7 @@ export function App(): ReactElement {
           workspaceMeta={workspaceMeta}
           brief={brief}
           tasks={state.taskRollup}
+          workflowRuns={[...state.workflows.values()]}
           onDrillDown={onDrillDown}
           onAuditDrill={onAuditDrill}
         />

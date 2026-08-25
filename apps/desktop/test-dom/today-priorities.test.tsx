@@ -26,6 +26,7 @@ const base: Omit<TodayProps, "tasks"> = {
   recentChanges: [],
   workspaceMeta: new Map(),
   brief,
+  workflowRuns: [],
   onDrillDown: () => {},
   onAuditDrill: () => Promise.resolve({ ok: false }),
 };

@@ -24,6 +24,7 @@ const base: Omit<TodayProps, "recentChanges" | "onAuditDrill"> = {
   workspaceMeta: new Map(),
   brief,
   tasks: [],
+  workflowRuns: [],
   onDrillDown: () => {},
 };
 

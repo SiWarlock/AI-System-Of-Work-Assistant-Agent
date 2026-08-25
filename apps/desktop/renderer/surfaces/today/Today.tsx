@@ -17,6 +17,7 @@ import { type WorkspaceScope } from "../../store/scope";
 export type WorkspaceMetaMap = ReadonlyMap<string, { readonly label: string; readonly accent: string }>;
 import { groupGlobalByWorkspace } from "../../store/projections";
 import { accentVar } from "../../lib/accent";
+import { relativeTime } from "../../lib/relative-time";
 import type {
   UiSafeDashboardCard,
   UiSafeHealthItem,
@@ -24,6 +25,7 @@ import type {
   UiSafeRecentChange,
   UiSafeTaskRollupItem,
   UiSafeAuditDrillSummary,
+  UiSafeWorkflowRunRef,
 } from "@sow/contracts/api/ui-safe";
 import type { DailyBrief } from "../../lib/daily-brief";
 import type { AuditDrillResult } from "../../lib/audit-drill";
@@ -46,6 +48,16 @@ export interface TodayProps {
    * Rendered in the worker's deterministic priority/dueDate order VERBATIM — the renderer NEVER re-sorts.
    */
   readonly tasks: readonly UiSafeTaskRollupItem[];
+  /**
+   * The GLOBAL most-recent run per workflowId of every registered output workflow (25.6;
+   * store.workflows, populated by the `workflow.status` push-stream event — unscoped, mirrors
+   * health/approvals, no WS-8 concern since `UiSafeWorkflowRunRef` carries no workspaceId).
+   * There is no per-family discriminator on the projection yet, so dailyBrief / periodReview /
+   * projectSync / projectDashboard / crossCalendarScheduling / ingestionTriage all land in this
+   * ONE generic status list until one exists. Empty-until-a-workflow-runs (25.1–25.5 unregistered
+   * today) — an honest empty state, not a fabricated row.
+   */
+  readonly workflowRuns: readonly UiSafeWorkflowRunRef[];
   /** Request a policy-gated drill-down into a workspace's context (worker-enforced). */
   readonly onDrillDown: (workspaceId: string, projectionType: string) => void;
   /** 9.41 leg C — resolve a Recent Activity row's opaque `changeId` (worker-mediated, re-scoped
@@ -76,6 +88,12 @@ function DashboardCards({ cards }: { readonly cards: readonly UiSafeDashboardCar
             {card.count}
           </div>
           <div className="sow-card-name">{card.title}</div>
+          {/* 25.6 — a card is a produced WORKFLOW result (e.g. dailyBrief/periodReview/projectSync via
+              the shared rebuildable dashboard read-model); status + updatedAt were in the projection
+              but never rendered, so a card looked identical whether it was fresh or stale. */}
+          <div className="sow-card-sub">
+            {humanizeToken(card.status)} · updated {relativeTime(card.updatedAt)}
+          </div>
         </div>
       ))}
     </div>
@@ -122,6 +140,40 @@ function HealthSection({ health }: { readonly health: readonly UiSafeHealthItem[
               {item.severity} · {humanizeToken(item.state)}
             </div>
           </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Workflow runs (§9/§10, 25.6) ────────────────────────────────────────────
+
+/**
+ * Workflow runs (§9/§10) — the GLOBAL, per-family-agnostic status list closing the
+ * `state.workflows` gap (populated by the already-wired `workflow.status` push-stream event;
+ * had ZERO UI consumers before this). Every registered output workflow (dailyBrief /
+ * periodReview / projectSync / projectDashboard / crossCalendarScheduling / ingestionTriage)
+ * lands here — `UiSafeWorkflowRunRef` carries no family discriminator today, so the renderer
+ * cannot route a run to a dedicated per-family surface (25.6 crossTerritoryNeeds). Renders ONLY
+ * the allowlisted `trigger`/`state` open display tokens; `workflowId` rides as a non-interactive
+ * data-attr (mirrors `changeId`/`taskId` — an opaque handle, not display text); `idempotencyKey`
+ * is UI-safe but has no defined UI use yet, so it is not rendered. Empty-until-a-run (25.1–25.5
+ * unregistered at HEAD — an honest empty state, never a fabricated row).
+ */
+function WorkflowRuns({ runs }: { readonly runs: readonly UiSafeWorkflowRunRef[] }): ReactElement {
+  if (runs.length === 0) {
+    return (
+      <div className="sow-empty" role="status">
+        No workflow runs yet
+      </div>
+    );
+  }
+  return (
+    <div className="sow-activity sow-workflow-runs" role="list" aria-label="Workflow runs">
+      {runs.map((r) => (
+        <div className="sow-activity-row" role="listitem" key={r.workflowId} data-workflow-id={r.workflowId}>
+          <span className="sow-activity-kind">{humanizeToken(r.trigger)}</span>
+          <span className="sow-activity-summary">{humanizeToken(r.state)}</span>
         </div>
       ))}
     </div>
@@ -202,18 +254,7 @@ function todayLabel(): string {
 }
 
 // ── Recent activity (§9.5) ─────────────────────────────────────────────────
-
-/** A short human relative-time from an ISO instant ("just now" / "3h" / "2d"). Display-only. */
-function relativeTime(iso: string): string {
-  const then = Date.parse(iso);
-  if (Number.isNaN(then)) return "";
-  const mins = Math.floor((Date.now() - then) / 60_000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
-  return `${Math.floor(hrs / 24)}d`;
-}
+// (relativeTime moved to ../../lib/relative-time — 25.6, single-sourced with Projects' `updatedAt`.)
 
 /** A Recent Activity row's audit-drill state (9.41 leg C) — mirrors `egress.tsx`'s `PostureCell`:
  *  absent (no entry in `cells`) ⇒ not yet activated; `loading` ⇒ pending; `ready` ⇒ resolved;
@@ -437,7 +478,8 @@ function TopPriorities({ tasks }: { readonly tasks: readonly UiSafeTaskRollupIte
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function Today(props: TodayProps): ReactElement {
-  const { scope, cards, health, global, recentChanges, workspaceMeta, brief, tasks, onDrillDown, onAuditDrill } = props;
+  const { scope, cards, health, global, recentChanges, workspaceMeta, brief, tasks, workflowRuns, onDrillDown, onAuditDrill } =
+    props;
 
   return (
     <main className="sow-content" aria-label="Today dashboard">
@@ -484,6 +526,10 @@ export function Today(props: TodayProps): ReactElement {
       {/* System health — driven from props.health */}
       <div className="sow-section-label">System health</div>
       <HealthSection health={health} />
+
+      {/* Workflow runs (25.6) — GLOBAL, driven from props.workflowRuns (store.workflows). */}
+      <div className="sow-section-label">Workflow runs</div>
+      <WorkflowRuns runs={workflowRuns} />
 
       {/* Recent activity — workspace-scoped, from props.recentChanges (§9.5) */}
       <div className="sow-section-label">Recent activity</div>

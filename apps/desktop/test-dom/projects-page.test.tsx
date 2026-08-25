@@ -64,4 +64,20 @@ describe("Projects page (§4.5 / §9.5) — render behavior", () => {
     expect(readd).toHaveLength(5);
     expect(readd.every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
   });
+
+  it("25.6 — surfaces the projectDashboard/projectSync workflow's freshness (updatedAt) in the detail pane", () => {
+    // spec(§25.6) — the dashboard is the operator-visible RESULT of a scheduled projectSync/
+    // projectDashboard run; `updatedAt` is in the projection but was previously never rendered,
+    // leaving the surface unable to show whether a run had happened at all.
+    const updatedAt = new Date(Date.now() - 3 * 60 * 60_000).toISOString(); // 3h ago
+    render(
+      <Projects
+        scope="employer-work"
+        projects={[proj("a", { updatedAt })]}
+        selectedProjectId="a"
+        onSelectProject={() => {}}
+      />,
+    );
+    expect(screen.getByText(/3h/)).toBeTruthy();
+  });
 });
