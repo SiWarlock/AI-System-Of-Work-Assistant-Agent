@@ -8,7 +8,7 @@
 // get-before-upsert guard.
 import { ok, err, isErr } from "@sow/contracts";
 import type { Result, Workspace } from "@sow/contracts";
-import { isZeroEgressOnlyWorkspace } from "@sow/policy";
+import { isZeroEgressOnlyWorkspace, isRedactionSafe } from "@sow/policy";
 import type { WorkspaceConfigRepository, AuditRepository } from "@sow/db";
 import type { UiSafeEgressStatus } from "../api/procedures/systemHealth";
 import type {
@@ -77,7 +77,22 @@ export function createEgressCommandPort(deps: EgressCommandDeps): EgressCommandP
         //     Audit-fidelity carry-forward: a retry AFTER an audit fault re-reads the already-OFF state, so the
         //     completing row records before=false (loses the original true→false transition) — acceptable (the
         //     direction is fail-safe OFF + `egressStatus` disambiguates the actual state; a distinct code is deferred).
-        const audited = await deps.audit.append({
+        //
+        // Task 24.64 (worker leg B) — this constructs the audit record inline and calls
+        // `deps.audit.append` DIRECTLY, so it never reached `isRedactionSafe`'s producer coverage
+        // via `buildAuditSignal` (`packages/policy/src/audit-signal.ts:205-211` names this exact
+        // site in its own retraction). Gated here. By-concept census of direct `audit.append(`
+        // producers repo-wide in `src` (task 24.64's full scope): `dispositionDurable.ts:75` (the
+        // sibling worker leg) and this site are the two gated by 24.64;
+        // `packages/knowledge/src/knowledge-writer/writer.ts:603` and `tombstone.ts:306` are a
+        // separate package's leg of the same task; `apps/worker/src/composition/buildActivities.ts:657`
+        // and `apps/worker/src/boot.ts:736` take an ALREADY-BUILT record from their caller and are
+        // EXPLICITLY SCOPED OUT of 24.64 — a named exclusion, not a miss. `AuditRecord` is a strict
+        // superset of `AuditSignal` (actor/event/refs/payloadHash/beforeSummary/afterSummary), so
+        // `isRedactionSafe` applies to this record's signal fields with no reshaping. Gate kept
+        // IMMEDIATELY adjacent to the `append` call so a future edit cannot slip between them. The
+        // rejection message NEVER echoes the offending value (rule 7) — a static string only.
+        const auditRecord = {
           actor: "owner",
           event: "egress_ack_revoked",
           refs: [wsId],
@@ -86,7 +101,11 @@ export function createEgressCommandPort(deps: EgressCommandDeps): EgressCommandP
           beforeSummary: `employerRawEgressAcknowledged=${before}`,
           afterSummary: "employerRawEgressAcknowledged=false; acknowledgedAt cleared",
           timestamps: { occurredAt: deps.now() },
-        });
+        };
+        if (!isRedactionSafe(auditRecord)) {
+          return err({ code: "store_fault", message: "audit rejected by redaction gate" });
+        }
+        const audited = await deps.audit.append(auditRecord);
         if (isErr(audited)) return err({ code: "store_fault", message: "audit append failed" });
         // (5) the NEW UI-safe status — zeroEgressOnly DERIVED from the just-written `revoked` state via
         //     the SAME predicate the visibility reader uses (boot.ts `createSystemHealthQueryPort`), so
