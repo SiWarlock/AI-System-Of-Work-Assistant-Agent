@@ -54,9 +54,12 @@ export interface ConnectorPollActivityDeps {
  * Project the gateway's {@link ConnectorSyncResult} onto the driver-facing
  * {@link ConnectorPollResult}. PURE. `cursorAdvanced` is derived from
  * `status === 'advanced'` (REQ-I-005: the only status on which the gateway advanced +
- * persisted the cursor) — never fabricated. `healthReason` is carried ONLY on a
- * held/degraded pass (from the redaction-safe §8 health signal message), so a raw
- * fetched payload never rides along.
+ * persisted the cursor) — never fabricated. `healthReason` is carried whenever the
+ * gateway emitted a `healthSignal` — INCLUDING an advanced pass with incomplete
+ * coverage (16.4, fail-VISIBLE: the records already committed, the cursor DID
+ * advance, and the partiality is announced rather than dropped or held). It is
+ * always the redaction-safe §8 signal message, so a raw fetched payload never rides
+ * along.
  */
 export function projectSyncResult(
   connectorId: string,
@@ -71,12 +74,13 @@ export function projectSyncResult(
     cursorAdvanced: result.status === "advanced",
     ...(result.cursor !== undefined ? { cursor: result.cursor } : {}),
   };
-  if (result.status === "advanced") {
-    return base;
-  }
-  // Held/degraded: carry the redaction-safe reason for the driver's degraded surface.
-  const reason = result.healthSignal?.message ?? `connector ${result.status}`;
-  return { ...base, healthReason: reason };
+  // A healthSignal takes priority whenever the gateway emitted one (advanced-with-
+  // coverage-degrade, 16.4, included). Absent a signal, a held/degraded pass still
+  // gets a fallback reason; an advanced pass with no signal carries none.
+  const reason =
+    result.healthSignal?.message ??
+    (result.status === "advanced" ? undefined : `connector ${result.status}`);
+  return reason === undefined ? base : { ...base, healthReason: reason };
 }
 
 /**
