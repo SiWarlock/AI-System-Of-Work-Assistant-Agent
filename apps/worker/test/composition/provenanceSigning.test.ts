@@ -267,8 +267,13 @@ describe("keychain_locked_degrades_to_an_unstamped_parity_defect_signal", () => 
     expect(puts[0]?.state).toBe("open");
   });
 
-  it("a NON-locked resolution (missing key) does NOT mint the parity_defect signal", async () => {
-    const missingPort: SecretsPort = {
+  // NOTE: this fixture's `reason` field is ABSENT (not the literal `"missing"` the real
+  // `KeychainUnresolvedReason` adapter emits — apps/worker/src/secrets/keychain-adapter.ts) — it pins
+  // the UNSPECIFIED-reason case, a THIRD disposition distinct from both `locked` and the real `missing`
+  // case task 19.2 adds coverage for immediately below. Renamed from its former "(missing key)"
+  // description, which mis-labeled this fixture — no assertion changed.
+  it("an UNSPECIFIED-reason resolution (no reason field at all) does NOT mint the parity_defect signal", async () => {
+    const unspecifiedReasonPort: SecretsPort = {
       async resolveSigningKey(ref: SecretRef) {
         return err({ code: "secret_unresolved" as const, ref });
       },
@@ -285,9 +290,83 @@ describe("keychain_locked_degrades_to_an_unstamped_parity_defect_signal", () => 
         return puts;
       },
     };
-    const wrapped = withParityDefectSignalOnLockedKeychain(missingPort, fakeHealthItems, () => NOW, () => "hi-x");
+    const wrapped = withParityDefectSignalOnLockedKeychain(
+      unspecifiedReasonPort,
+      fakeHealthItems,
+      () => NOW,
+      () => "hi-x",
+    );
     await wrapped.resolveSigningKey(SIGNING_KEY_REF);
     expect(puts).toHaveLength(0);
+  });
+
+  // task 19.2 — the MISSING-key half. `reason: "missing"` is the REAL `KeychainUnresolvedReason` the
+  // keychain adapter emits when the signing key was never provisioned (apps/worker/src/secrets/
+  // keychain-adapter.ts:38) — a DISTINCT disposition from `locked`, previously minting NOTHING.
+  it("a MISSING-key resolution (reason: 'missing') ALSO mints a parity_defect HealthItem AND still returns the fail-closed err", async () => {
+    const missingPort: SecretsPort = {
+      async resolveSigningKey(ref: SecretRef): Promise<import("@sow/contracts").Result<Uint8Array, SecretUnresolved>> {
+        return err({ code: "secret_unresolved", ref, reason: "missing" });
+      },
+    };
+    const puts: HealthItem[] = [];
+    const fakeHealthItems: HealthItemStore = {
+      async getByDedupeKey() {
+        return undefined;
+      },
+      async put(item) {
+        puts.push(item);
+      },
+      async list() {
+        return puts;
+      },
+    };
+    const wrapped = withParityDefectSignalOnLockedKeychain(
+      missingPort,
+      fakeHealthItems,
+      () => NOW,
+      () => "hi-missing-1",
+    );
+    const result = await wrapped.resolveSigningKey(SIGNING_KEY_REF);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.reason).toBe("missing");
+    expect(puts).toHaveLength(1);
+    expect(puts[0]?.failureClass).toBe("parity_defect");
+    expect(puts[0]?.state).toBe("open");
+    // The message names WHICH condition applies (remediation differs: unlock vs. provision) — never
+    // conflates a missing key with a locked one.
+    expect(puts[0]?.message).toContain("MISSING");
+    expect(puts[0]?.message).not.toContain("LOCKED");
+  });
+
+  it("a locked resolution's message names LOCKED, never MISSING (the two dispositions stay distinguishable)", async () => {
+    const lockedPort: SecretsPort = {
+      async resolveSigningKey(ref: SecretRef): Promise<import("@sow/contracts").Result<Uint8Array, SecretUnresolved>> {
+        return err({ code: "secret_unresolved", ref, reason: "locked" });
+      },
+    };
+    const puts: HealthItem[] = [];
+    const fakeHealthItems: HealthItemStore = {
+      async getByDedupeKey() {
+        return undefined;
+      },
+      async put(item) {
+        puts.push(item);
+      },
+      async list() {
+        return puts;
+      },
+    };
+    const wrapped = withParityDefectSignalOnLockedKeychain(
+      lockedPort,
+      fakeHealthItems,
+      () => NOW,
+      () => "hi-locked-2",
+    );
+    await wrapped.resolveSigningKey(SIGNING_KEY_REF);
+    expect(puts).toHaveLength(1);
+    expect(puts[0]?.message).toContain("LOCKED");
+    expect(puts[0]?.message).not.toContain("MISSING");
   });
 
   it("end-to-end: a commit through a locked signing dep NEVER crashes and STILL commits (unstamped)", async () => {

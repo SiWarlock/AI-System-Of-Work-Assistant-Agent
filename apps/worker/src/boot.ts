@@ -1848,15 +1848,24 @@ export function withGbrainSyncOutbox(
 }
 
 /**
- * Task 19.2 — wrap a `SecretsPort` so a `locked` Keychain resolution ALSO mints a `parity_defect`
- * System-Health item (§16 observability) before returning the SAME fail-closed `secret_unresolved`
- * err unchanged. Mirrors `apps/worker/src/secrets/keychain-boot.ts`'s `createLockRoutingSecretsAccessor`
- * (L41's degraded-by-default lock-routing shape) but over `resolveSigningKey` (the `StamperDeps`
- * shape `stampProvenance` needs), not `getSecret` — the two secrets ports are structurally distinct,
- * so this is a SIBLING wrapper, not a re-use of that one. A health-mint fault is best-effort (never
- * changes the fail-closed secret Result, mirrors L21/L29/L53). Never throws — the underlying port's
- * OWN throw is caught here too, folded to the SAME `secret_unresolved` shape `computeSig` already
- * defends against, so the parity-defect mint still fires on a throwing accessor.
+ * Task 19.2 — wrap a `SecretsPort` so a `locked` OR `missing` Keychain resolution ALSO mints a
+ * `parity_defect` System-Health item (§16 observability) before returning the SAME fail-closed
+ * `secret_unresolved` err unchanged. Mirrors `apps/worker/src/secrets/keychain-boot.ts`'s
+ * `createLockRoutingSecretsAccessor` (L41's degraded-by-default lock-routing shape) but over
+ * `resolveSigningKey` (the `StamperDeps` shape `stampProvenance` needs), not `getSecret` — the two
+ * secrets ports are structurally distinct, so this is a SIBLING wrapper, not a re-use of that one.
+ * A health-mint fault is best-effort (never changes the fail-closed secret Result, mirrors
+ * L21/L29/L53). Never throws — the underlying port's OWN throw is caught here too, folded to the
+ * SAME `secret_unresolved` shape `computeSig` already defends against, so the parity-defect mint
+ * still fires on a throwing accessor.
+ *
+ * The MISSING-key half (this task's own extension): the real `KeychainUnresolvedReason`
+ * (apps/worker/src/secrets/keychain-adapter.ts) is a closed set including BOTH `locked` (the
+ * Keychain is present but locked) AND `missing` (the key was never provisioned at all) — two
+ * DISTINCT degraded causes, previously only the first minted a signal, so an operator saw NOTHING
+ * for a never-provisioned key even though the commit degrades the identical way (unstamped, never
+ * a crash). The minted message NAMES which condition applies — remediation differs (unlock the
+ * Keychain vs. provision the missing key) — never conflating the two.
  */
 export function withParityDefectSignalOnLockedKeychain(
   port: SecretsPort,
@@ -1879,16 +1888,20 @@ export function withParityDefectSignalOnLockedKeychain(
           },
         };
       }
-      if (!resolved.ok && resolved.error.reason === "locked") {
+      if (!resolved.ok && (resolved.error.reason === "locked" || resolved.error.reason === "missing")) {
+        const conditionText =
+          resolved.error.reason === "locked"
+            ? "the Keychain signing key is LOCKED"
+            : "the Keychain signing key is MISSING (never provisioned)";
         try {
           await healthItems.put({
             id: newHealthItemId(),
             failureClass: "parity_defect",
             severity: "warn",
             message:
-              "KnowledgeWriter provenance signing degraded: the Keychain signing key is LOCKED — " +
+              `KnowledgeWriter provenance signing degraded: ${conditionText} — ` +
               "the commit proceeds UNSTAMPED (never a crash, never a silent unsigned commit).",
-            auditRef: `gbrain-sign-key-locked:${ref}` as AuditId,
+            auditRef: `gbrain-sign-key-${resolved.error.reason}:${ref}` as AuditId,
             openedAt: now(),
             state: "open",
           });
