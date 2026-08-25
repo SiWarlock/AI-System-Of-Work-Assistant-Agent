@@ -35,4 +35,40 @@ describe("schema-gate validate (1.2, REQ-S-006)", () => {
       expect(r.error.schemaId).toBe("sow:none");
     }
   });
+
+  // ### 24.104 — regression pin for the comment above the error-mapping in
+  // `validate()`: ajv puts a `propertyNames`-rejection's row-authored
+  // offending key ONLY in `params`/`propertyName` (measured directly, both
+  // sit outside `path`/`message`), never in `message` — so `params` staying
+  // dropped is what keeps a row-authored key out of a rule-7 audit record.
+  // This pin fails the moment a future edit threads `e.params` (or reads
+  // ajv's sibling `propertyName` field) into the returned errors.
+  //
+  // The schema's `propertyNames.pattern` is a fixed STRUCTURAL rule
+  // (kebab-case) independent of any specific key value — unlike a pattern
+  // that spells the forbidden key literally (e.g. a negative lookahead
+  // baked from the value itself), which would make ajv's generic "must
+  // match pattern <schema-pattern>" message echo the row-authored value for
+  // an unrelated reason and falsely pass this pin. The row-authored key
+  // below (secret-shaped, uppercase + punctuation) is rejected BY the
+  // structural rule without ever appearing IN it.
+  it("never surfaces a row-authored key from a propertyNames rejection — the key sits ONLY in ajv's params/propertyName (### 24.104)", () => {
+    const keyedReg = buildSchemaRegistry([
+      {
+        $id: "sow:fixture-propertynames-24-104",
+        type: "object",
+        propertyNames: { pattern: "^[a-z][a-z0-9-]*$" },
+        additionalProperties: true,
+      },
+    ]);
+    const rowAuthoredKey = "SuperSecretApiKey123!";
+    const r = validate({ [rowAuthoredKey]: "value" }, "sow:fixture-propertynames-24-104", keyedReg);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error.code).toBe("schema_violation");
+      // The row-authored key must not appear ANYWHERE in the mapped errors —
+      // not in path, not in message.
+      expect(JSON.stringify(r.error.errors)).not.toContain(rowAuthoredKey);
+    }
+  });
 });
