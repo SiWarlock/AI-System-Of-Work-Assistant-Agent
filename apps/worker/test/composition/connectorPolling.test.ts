@@ -240,7 +240,10 @@ describe("enumerateEnabledConnectorTargets (16.2 — poll only enabled 14.2 inst
     const { sink, surfaced } = makeHealthSink();
     const outcome = await runConnectorSyncHealth(syncHealthInput({ connectors: enumerateEnabledConnectorTargets([]) }), {
       poll: poll as unknown as ConnectorSyncHealthDeps["poll"],
-      wakeDrain: { drain: vi.fn(() => Promise.resolve(ok({ drained: 0, reused: 0, held: 0, failed: 0 }))) },
+      // 24.50 — `skipped` is the workspace-mismatch count. 0 here because these ticks assert about the
+      // POLL/schedule legs, not the drain: nothing was enqueued, so nothing could be skipped. It is NOT
+      // a stand-in for "a pass ran and skipped everything" — that case also reads `drained: 0`.
+      wakeDrain: { drain: vi.fn(() => Promise.resolve(ok({ drained: 0, reused: 0, held: 0, failed: 0, skipped: 0 }))) },
       health: sink,
       runs: makeRuns(),
       schedule: makeSchedule(),
@@ -267,7 +270,10 @@ describe("connectorSyncHealth registration + schedule (16.2)", () => {
     const bookkeeping: ScheduleBookkeeping = { scheduleId: CONNECTOR_SYNC_SCHEDULE.scheduleId, lastRunWall: staleAt };
     const outcome = await runConnectorSyncHealth(syncHealthInput({ connectors: [] }), {
       poll: { poll: vi.fn() } as unknown as ConnectorSyncHealthDeps["poll"],
-      wakeDrain: { drain: vi.fn(() => Promise.resolve(ok({ drained: 0, reused: 0, held: 0, failed: 0 }))) },
+      // 24.50 — `skipped` is the workspace-mismatch count. 0 here because these ticks assert about the
+      // POLL/schedule legs, not the drain: nothing was enqueued, so nothing could be skipped. It is NOT
+      // a stand-in for "a pass ran and skipped everything" — that case also reads `drained: 0`.
+      wakeDrain: { drain: vi.fn(() => Promise.resolve(ok({ drained: 0, reused: 0, held: 0, failed: 0, skipped: 0 }))) },
       health: makeHealthSink().sink,
       runs: makeRuns(),
       schedule: makeSchedule(bookkeeping),

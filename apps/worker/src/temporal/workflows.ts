@@ -504,7 +504,11 @@ export async function connectorSyncHealthWorkflow(
   // Phase-23 TODO #1: the REAL §8 replay-safe wake-drain. In-sandbox no-op stub — the shipped default
   // holds nothing to drain, and a pure `schedule` trigger never drains anyway.
   const wakeDrain: WakeDrainPort = {
-    drain: () => Promise.resolve(ok({ drained: 0, reused: 0, held: 0, failed: 0 })),
+    // `skipped: 0` is honest for THIS stub specifically: it drains nothing because it is a no-op,
+    // not because 24.50's workspace gate diverted anything. When Phase-23 TODO #1 replaces this
+    // with the real drain, `skipped` becomes a live count and a non-zero value means the pass was
+    // bound to the wrong workspace — do not carry this literal 0 forward into that binding.
+    drain: () => Promise.resolve(ok({ drained: 0, reused: 0, held: 0, failed: 0, skipped: 0 })),
   };
   const health: ConnectorSyncHealthHealthSink = {
     surface: (failure: ConnectorSyncHealthFailure) => activities.surfaceFailure(failure),

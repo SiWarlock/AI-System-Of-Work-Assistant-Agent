@@ -273,7 +273,7 @@ describe("Keychain-locked — providers DEGRADED, jobs HELD retryable (never ter
   }
 
   it("marks the affected provider DEGRADED and surfaces a health item on lock", async () => {
-    const { ctl, surface, degraded } = makeController({ drained: 0, reused: 0, held: 0, failed: 0 });
+    const { ctl, surface, degraded } = makeController({ drained: 0, reused: 0, held: 0, failed: 0, skipped: 0 });
     const locked = await ctl.onKeychainLocked({ subjectRef: PROVIDER, now: T0 });
     expect(isOk(locked)).toBe(true);
     if (!isOk(locked)) return;
@@ -284,7 +284,7 @@ describe("Keychain-locked — providers DEGRADED, jobs HELD retryable (never ter
   });
 
   it("HOLDS a dependent job as RETRYABLE — never failed_terminal (no work lost)", async () => {
-    const { ctl } = makeController({ drained: 0, reused: 0, held: 0, failed: 0 });
+    const { ctl } = makeController({ drained: 0, reused: 0, held: 0, failed: 0, skipped: 0 });
     await ctl.onKeychainLocked({ subjectRef: PROVIDER, now: T0 });
     const held = await ctl.holdJob("job-K", { subjectRef: PROVIDER });
     expect(isOk(held)).toBe(true);
@@ -298,7 +298,11 @@ describe("Keychain-locked — providers DEGRADED, jobs HELD retryable (never ter
   it("re-attempts held jobs on LIFE-6 UNLOCK, IDEMPOTENTLY — a committed write returns `reused` (no duplicate side effect)", async () => {
     // Drain reports one entry whose receipt was REUSED and zero fresh creates:
     // proof the crash/lock-interrupted external write was NOT duplicated.
-    const { ctl, surface, degraded } = makeController({ drained: 0, reused: 1, held: 0, failed: 0 });
+    // `skipped: 0` (24.50) is load-bearing, not filler: a workspace-MISMATCHED drain also yields
+    // drained:0 with an adapter that was never called — the exact shape this test claims proves
+    // safety. Without pinning skipped, "no duplicate external write" could hold because nothing
+    // was attempted at all.
+    const { ctl, surface, degraded } = makeController({ drained: 0, reused: 1, held: 0, failed: 0, skipped: 0 });
     await ctl.onKeychainLocked({ subjectRef: PROVIDER, now: T0 });
     await ctl.holdJob("job-K", { subjectRef: PROVIDER });
 
@@ -308,6 +312,8 @@ describe("Keychain-locked — providers DEGRADED, jobs HELD retryable (never ter
     // The held work re-drove through the §8 drain: reused ⇒ zero duplicate create.
     expect(unlocked.value.drain.reused).toBe(1);
     expect(unlocked.value.drain.drained).toBe(0);
+    // …and the drain actually re-drove this workspace's entries rather than skipping them all.
+    expect(unlocked.value.drain.skipped).toBe(0);
     // Provider cleared DEGRADED and the health item resolved.
     expect(degraded.has(PROVIDER)).toBe(false);
     expect(ctl.heldJobs()).toHaveLength(0);
@@ -319,7 +325,7 @@ describe("Keychain-locked — providers DEGRADED, jobs HELD retryable (never ter
   });
 
   it("a held job is NEVER discarded on lock — it survives to the unlock re-attempt", async () => {
-    const { ctl } = makeController({ drained: 1, reused: 0, held: 0, failed: 0 });
+    const { ctl } = makeController({ drained: 1, reused: 0, held: 0, failed: 0, skipped: 0 });
     await ctl.onKeychainLocked({ subjectRef: PROVIDER, now: T0 });
     await ctl.holdJob("job-K", { subjectRef: PROVIDER });
     // Still locked → the job stays held (not dropped, not terminal).
@@ -329,7 +335,29 @@ describe("Keychain-locked — providers DEGRADED, jobs HELD retryable (never ter
     if (!isOk(out)) return;
     // On unlock the outbox drain ran (the re-attempt path) and the queue cleared.
     expect(out.value.drain.drained).toBe(1);
+    // 24.50 discriminator: a drain bound to the WRONG workspace re-drives nothing, so "the job
+    // survived to a re-attempt" must not be satisfied by a pass that skipped every entry.
+    expect(out.value.drain.skipped).toBe(0);
     expect(ctl.heldJobs()).toHaveLength(0);
+  });
+
+  // 24.50 (safety rule 4, workspace isolation) — the unlock seam must SURFACE the workspace-mismatch
+  // count, not fold it away. A drain whose `DrainDeps.workspaceId` disagrees with the held entries
+  // re-drives nothing and returns drained:0/reused:0 — byte-identical, at the outcome, to "the outbox
+  // was empty and there was nothing to re-attempt." Only `skipped` tells an operator which one happened,
+  // so it has to survive the controller's outcome mapping. The three sibling tests above rely on exactly
+  // this: their `skipped: 0` assertions are meaningless if the field never reaches `outcome.drain`.
+  it("SURFACES the 24.50 workspace-skip count on the unlock outcome — a mis-scoped drain is not silently a clean sweep", async () => {
+    const { ctl } = makeController({ drained: 0, reused: 0, held: 0, failed: 0, skipped: 3 });
+    await ctl.onKeychainLocked({ subjectRef: PROVIDER, now: T0 });
+    await ctl.holdJob("job-K", { subjectRef: PROVIDER });
+    const out = await ctl.onUnlock({ reason: "power_resume", now: T1 });
+    expect(isOk(out)).toBe(true);
+    if (!isOk(out)) return;
+    expect(out.value.drain.skipped).toBe(3);
+    // …and it is genuinely distinguishable from a clean empty sweep, which is the whole point.
+    expect(out.value.drain.drained).toBe(0);
+    expect(out.value.drain.reused).toBe(0);
   });
 
   // 18.16/CP-6 (a) — the missing-key observability mint. A genuinely-missing (un-provisioned) credential
@@ -337,7 +365,7 @@ describe("Keychain-locked — providers DEGRADED, jobs HELD retryable (never ter
   // Keychain LOCK (L41): it REUSES the existing frozen `worker_down` FailureClass (no enum expansion, L25) but
   // is DISTINCT from a lock by a `credential:` subjectRef prefix + a generic message. Value-free (rule 7).
   it("onCredentialUnavailable mints a DISTINCT redaction-safe credential-unavailable item (worker_down, distinct subjectRef, generic message, no key/ref)", async () => {
-    const { ctl } = makeController({ drained: 0, reused: 0, held: 0, failed: 0 });
+    const { ctl } = makeController({ drained: 0, reused: 0, held: 0, failed: 0, skipped: 0 });
     const out = await ctl.onCredentialUnavailable({ subjectRef: PROVIDER, now: T0 });
     expect(isOk(out)).toBe(true);
     if (!isOk(out)) return;
