@@ -53,7 +53,7 @@ import type {
 import { descriptorFor, isZeroEgressOnlyWorkspace, toAuditRecordInput, isRedactionSafe } from "@sow/policy";
 import type { SessionToken, LegacyContentPolicy, CopilotWorkspaceScope, ResolvedWorkspacePolicy } from "@sow/policy";
 import { TBD } from "@sow/domain";
-import type { MeetingJobInputs, AgentExtraction } from "@sow/workflows";
+import type { MeetingJobInputs, AgentExtraction, HealthItemStore } from "@sow/workflows";
 
 import {
   assembleBackends,
@@ -213,6 +213,17 @@ import type { ProofSpineParams } from "./composition/buildActivities";
 // rebound into the proof-spine params post-backends so the ingestion sourceCommit + propose dispatch
 // persist idempotency across a worker restart. Kept OFF the OFF-config path (see withDurableRevisions).
 import { createKnowledgeRevisionStoreAdapter } from "./composition/knowledgeRevisionStore";
+// task 19.1 — the durable GBrain post-commit sync-outbox binding + drain-on-wake re-driver.
+// See withGbrainSyncOutbox's own doc for why this runs UNCONDITIONALLY (not gated on
+// config.proofSpineParams the way withDurableRevisions is) — the store + drain are harmless,
+// modest internal machinery, not an arming crossing.
+import {
+  createGbrainSyncOutboxBinding,
+  createWorkingTreeMarkdownSource,
+  drainGbrainSyncOutbox,
+} from "./composition/gbrainSyncOutbox";
+// task 11.3b — the write-through enablement gate's real (if today unprovisioned) production caller.
+import { evaluateWriteThroughEnablement, surfaceEnablementDecision } from "./composition/enablementLegs";
 // C5.4b B4 — the durable ParityReportStore read-adapter, bound into the serving-coverage reader inside the
 // triple-locked loaderBackedServingOracle branch (closes the B2 store-consuming reachability waiver).
 import { createParityReportStoreAdapter } from "./composition/parityReportStore";
@@ -233,7 +244,7 @@ import {
 } from "./watch/vaultWatcher";
 // §13 task 11.3-b — the GBrain version-pin BOOT verify step (closes the 11.3-a reachability waiver).
 import { readFile } from "node:fs/promises";
-import { createGbrainVersionProbe, computeRevisionId, type GbrainVersionProbe, type KnowledgeRevisionStore, type CommittedRevision, type SecretsPort, type SecretRef, type RunningGbrainVersion, type VaultFs, type GbrainReadAdapter, type ReconcilerDbProjection, type IndexRebuildClient } from "@sow/knowledge";
+import { createGbrainVersionProbe, computeRevisionId, type GbrainVersionProbe, type KnowledgeRevisionStore, type CommittedRevision, type SecretsPort, type SecretRef, type SecretUnresolved, type StamperDeps, type RunningGbrainVersion, type VaultFs, type GbrainReadAdapter, type ReconcilerDbProjection, type IndexRebuildClient } from "@sow/knowledge";
 import { gbrainStartupVerify } from "./gbrainStartupVerify";
 
 // ── config ────────────────────────────────────────────────────────────────────
@@ -1555,6 +1566,91 @@ export function withDurableRevisions(
 }
 
 /**
+ * Task 19.1 — attach the REAL file-backed {@link GbrainSyncOutboxBinding} (built over
+ * `backendsConfig.dbPath`, so it shares the SAME durable file the operational store uses) so the
+ * commit-triggered sync — `withGbrainSync` inside `buildProofSpineActivities` — persists across a
+ * worker restart. UNLIKE `withDurableRevisions` this is NOT an arming/opt-in gate: the binding itself
+ * is harmless internal machinery (a small additive table + a deterministic stub index client), so the
+ * only guard here is the SAME `proofSpineParams === undefined` passthrough every other `with*`
+ * rebind in this chain already applies (nothing to attach the binding TO when the proof-spine
+ * subsystem itself is not provisioned).
+ */
+export function withGbrainSyncOutbox(
+  proofSpineParams: ProofSpineParams | undefined,
+  gbrainSyncOutbox: ReturnType<typeof createGbrainSyncOutboxBinding>,
+): ProofSpineParams | undefined {
+  if (proofSpineParams === undefined) return undefined;
+  return { ...proofSpineParams, gbrainSyncOutbox };
+}
+
+/**
+ * Task 19.2 — wrap a `SecretsPort` so a `locked` Keychain resolution ALSO mints a `parity_defect`
+ * System-Health item (§16 observability) before returning the SAME fail-closed `secret_unresolved`
+ * err unchanged. Mirrors `apps/worker/src/secrets/keychain-boot.ts`'s `createLockRoutingSecretsAccessor`
+ * (L41's degraded-by-default lock-routing shape) but over `resolveSigningKey` (the `StamperDeps`
+ * shape `stampProvenance` needs), not `getSecret` — the two secrets ports are structurally distinct,
+ * so this is a SIBLING wrapper, not a re-use of that one. A health-mint fault is best-effort (never
+ * changes the fail-closed secret Result, mirrors L21/L29/L53). Never throws — the underlying port's
+ * OWN throw is caught here too, folded to the SAME `secret_unresolved` shape `computeSig` already
+ * defends against, so the parity-defect mint still fires on a throwing accessor.
+ */
+export function withParityDefectSignalOnLockedKeychain(
+  port: SecretsPort,
+  healthItems: HealthItemStore,
+  now: () => string,
+  newHealthItemId: () => string,
+): SecretsPort {
+  return {
+    async resolveSigningKey(ref: SecretRef): Promise<Result<Uint8Array, SecretUnresolved>> {
+      let resolved: Result<Uint8Array, SecretUnresolved>;
+      try {
+        resolved = await port.resolveSigningKey(ref);
+      } catch (cause) {
+        resolved = {
+          ok: false,
+          error: {
+            code: "secret_unresolved",
+            ref,
+            reason: cause instanceof Error ? cause.name : "resolve_threw",
+          },
+        };
+      }
+      if (!resolved.ok && resolved.error.reason === "locked") {
+        try {
+          await healthItems.put({
+            id: newHealthItemId(),
+            failureClass: "parity_defect",
+            severity: "warn",
+            message:
+              "KnowledgeWriter provenance signing degraded: the Keychain signing key is LOCKED — " +
+              "the commit proceeds UNSTAMPED (never a crash, never a silent unsigned commit).",
+            auditRef: `gbrain-sign-key-locked:${ref}` as AuditId,
+            openedAt: now(),
+            state: "open",
+          });
+        } catch {
+          /* best-effort — a health-mint fault never changes the fail-closed secret Result */
+        }
+      }
+      return resolved;
+    },
+  };
+}
+
+/**
+ * Task 19.2 — attach the provenance-signing dep, mirroring `withGbrainSyncOutbox`'s shape: `undefined`
+ * `signing` (no provisioning) or `undefined` `proofSpineParams` (nothing to attach to) both pass through
+ * unchanged, so the shipped default stays byte-identical.
+ */
+export function withSigning(
+  proofSpineParams: ProofSpineParams | undefined,
+  signing: StamperDeps | undefined,
+): ProofSpineParams | undefined {
+  if (proofSpineParams === undefined || signing === undefined) return proofSpineParams;
+  return { ...proofSpineParams, signing };
+}
+
+/**
  * 18.24 step-6 — the proof-spine post-processor that co-gates the subscription extraction route + ContextRef to
  * the SAME `config.providerTransport` arming signal (`resolveSubscriptionArming.effectiveArmed`; one flip, no
  * split-brain — L52). Mirrors {@link withDurableRevisions}.
@@ -1769,6 +1865,40 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   );
   const backends = await assembleBackends(backendsConfig, config.stubExtraction);
 
+  // 1.02) task 19.1 — the durable GBrain post-commit sync-outbox binding, over the SAME
+  //   `backendsConfig.dbPath` the operational store just opened (own connection — see
+  //   gbrainSyncOutbox.ts's module header for why that is safe/correct for both a real file
+  //   path and the `:memory:` test/dev default). Drain-on-wake: re-drive any rows a PRIOR
+  //   boot left held (LIFE-6 catch-up), best-effort — a drain fault never blocks boot.
+  const gbrainSyncOutboxBinding = createGbrainSyncOutboxBinding(backendsConfig.dbPath);
+  try {
+    await drainGbrainSyncOutbox({
+      outbox: gbrainSyncOutboxBinding.store,
+      snapshotSource: createWorkingTreeMarkdownSource(backends.vault),
+      indexClient: backends.indexClient,
+      now: backends.now,
+      newHealthItemId: (): string =>
+        `gbrain-sync:${backends.now()}:${Math.random().toString(36).slice(2)}`,
+    });
+  } catch {
+    /* fail-SAFE: a drain-on-wake fault never blocks boot */
+  }
+
+  // 1.03) task 11.3b — give the pure write-through enablement flip-precondition gate
+  // (`decideWriteThroughEnablement`) a REAL production caller by evaluating it once at boot and
+  // surfacing the refusals through the structured logger (the observable surface — see
+  // enablementLegs.ts's module header). NO readers/pin/report are supplied yet (the real bucket-B
+  // signal sources are a separate later task), so EVERY boot logs all six legs refusing — that is
+  // the honest, expected, non-arming state this slice's deliverable is limited to. Best-effort:
+  // an evaluate/surface fault never blocks boot. ⛔ NOTHING ARMS — this call only READS/OBSERVES;
+  // no code path here ever sets `writeThroughEnabled`.
+  try {
+    const enablementDecision = await evaluateWriteThroughEnablement({});
+    surfaceEnablementDecision(enablementDecision, backends.logger);
+  } catch {
+    /* fail-SAFE: an enablement-evaluation fault never blocks boot */
+  }
+
   // 1.05) 18.25 step-6 — FILL the late-bound reader holder POST-`assembleBackends` (only when the arm is
   //   effectively armed): the durable parked reader exists only now. On the dormant/refused path the holder stays
   //   empty (the late-bound reader fails closed — never a real read). This closes the eager-consumption ordering.
@@ -1818,7 +1948,10 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   //   LAST so it always sees the fully-assembled params from the two rebinds above.
   const proofSpineParams = withProposeKnowledgeApproval(
     withSubscriptionExtractionArming(
-      withDurableRevisions(config.proofSpineParams, backends.repos.knowledgeRevisions),
+      withGbrainSyncOutbox(
+        withDurableRevisions(config.proofSpineParams, backends.repos.knowledgeRevisions),
+        gbrainSyncOutboxBinding,
+      ),
       // 18.36 — the COMBINED effective arm (settings-injection folded in), NOT `arming.effectiveArmed`: a settings
       //   key-injection must strip the route/ContextRef/schema arming in lockstep with the transport (L52 no split-brain).
       armEffective,
@@ -2436,15 +2569,37 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
       ? createOperationalBackupService(config.backupPorts.opDb, config.backupPorts.temporal)
       : undefined;
 
+  // task 19.2 — the KnowledgeWriter provenance-signing dep, sourced from the SAME owner-provisioned
+  // `keychainSecrets`/`provenanceBundle` pair the C5.4b serving oracle already uses (boot.ts:~2225 —
+  // NO new arming surface). `provenanceBundle` absent, or BOTH secrets sources absent, ⇒ `signing`
+  // stays `undefined` ⇒ `knowledgeWriterDeps.signing` is unset ⇒ byte-identical unstamped commit
+  // (buildActivities.ts's conditional-spread). Present ⇒ a locked Keychain resolution degrades to an
+  // unstamped commit AND mints a `parity_defect` HealthItem (never a crash, never silent).
+  let signingHealthIdSeq = 0;
+  const resolvedSigningSecrets = keychainSecrets?.secrets ?? provenanceBundle?.secrets;
+  const signing: StamperDeps | undefined =
+    provenanceBundle === undefined || resolvedSigningSecrets === undefined
+      ? undefined
+      : {
+          secrets: withParityDefectSignalOnLockedKeychain(
+            resolvedSigningSecrets,
+            backends.healthItems,
+            backends.now,
+            (): string => `gbrain-sign-key-locked-health:${(signingHealthIdSeq += 1)}`,
+          ),
+          signingKeyRef: provenanceBundle.signingKeyRef,
+        };
+  const proofSpineParamsWithSigning = withSigning(proofSpineParams, signing);
+
   // The Temporal registration hook: on a successful connect, register the workflows
   // + activities over the resolved proof-spine params (backends re-assembled inside
   // the hook per the registerWorker contract — it owns the connection lifetime).
   // Built ONLY when proof-spine params are supplied; absent them there is no identity
   // to register under and connectTemporal degrades instead (see below).
   const registerHook =
-    proofSpineParams !== undefined
+    proofSpineParamsWithSigning !== undefined
       ? makeProofSpineRegisterHook({
-          params: proofSpineParams,
+          params: proofSpineParamsWithSigning,
           backendsConfig,
           ...(config.stubExtraction !== undefined ? { stubExtraction: config.stubExtraction } : {}),
         })

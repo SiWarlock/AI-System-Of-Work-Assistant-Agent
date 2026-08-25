@@ -55,7 +55,16 @@ import type {
   KnowledgeWriterDeps,
   KnowledgeRevisionStore,
   RevisionId,
+  StamperDeps,
 } from "@sow/knowledge";
+// 19.1 — the durable GBrain post-commit sync outbox (triggerGbrainSync/toIndexDispatcher already
+// exist, §6/task 4.4/4.8; this leg gives them a real substrate + their first production caller).
+import { triggerGbrainSync, toIndexDispatcher } from "@sow/knowledge";
+import {
+  createGbrainSyncOutboxBinding,
+  createWorkingTreeMarkdownSource,
+  type GbrainSyncOutboxBinding,
+} from "./gbrainSyncOutbox";
 
 // The §8 Tool Gateway external-write entry + its deps.
 import { dispatchRouted, createUnroutedWriteAdapter } from "@sow/integrations";
@@ -344,6 +353,23 @@ export interface ProofSpineParams {
    * fallback this field's absence still triggers (test-only / a future construction site that omits it).
    */
   readonly proposeKnowledgeApproval?: ProposeKnowledgeApprovalPort;
+  /**
+   * 19.1 — the durable GBrain post-commit sync outbox binding. OPTIONAL: UNSET ⇒ this
+   * builder constructs its OWN `:memory:`-backed binding (byte-equivalent-in-effect for
+   * every existing call site — a private, never-otherwise-observed table). `boot.ts`
+   * supplies the REAL file-backed binding (built once, over `config.dbPath`) so the
+   * commit-triggered sync + drain-on-wake share the SAME durable store across a restart.
+   */
+  readonly gbrainSyncOutbox?: GbrainSyncOutboxBinding;
+  /**
+   * task 19.2 — the KnowledgeWriter provenance-signing dep (gate 4/G1d-2, already optional on
+   * `KnowledgeWriterDeps.signing` — see writer.ts:190). OPTIONAL/DORMANT BY DEFAULT: UNSET ⇒
+   * `knowledgeWriterDeps.signing` stays unset ⇒ `embedProvenanceStamps` never runs ⇒ the
+   * committed Markdown bytes are BYTE-IDENTICAL to pre-19.2. `boot.ts` sources the real value
+   * from the SAME owner-provisioned `keychainSecrets`/`provenanceServingOracle` pair the C5.4b
+   * serving oracle already uses (boot.ts:~2171) — no new arming surface.
+   */
+  readonly signing?: StamperDeps;
 }
 
 // ---------------------------------------------------------------------------
@@ -483,6 +509,53 @@ export function buildProofSpineActivities(
 ): ProofSpineActivities {
   const { now } = backends;
 
+  // 19.1 — the durable GBrain post-commit sync-outbox binding + the index-apply dispatcher over the
+  // EXISTING `backends.indexClient` (createStubIndexApplyClient, untouched) and a working-tree
+  // CanonicalMarkdownSource. `params.gbrainSyncOutbox` lets `boot.ts` supply the real file-backed
+  // binding; every other (existing, unmodified) call site gets this builder's own private `:memory:`
+  // fallback — a table nothing else ever reads, so the new side effect is unobservable there.
+  const gbrainSyncOutboxBinding = params.gbrainSyncOutbox ?? createGbrainSyncOutboxBinding(undefined);
+  const gbrainIndexDispatcher = toIndexDispatcher({
+    outbox: gbrainSyncOutboxBinding.store,
+    snapshotSource: createWorkingTreeMarkdownSource(backends.vault),
+    indexClient: backends.indexClient,
+    now,
+    newHealthItemId: (): string => `gbrain-sync:${now()}:${Math.random().toString(36).slice(2)}`,
+  });
+  /**
+   * Best-effort post-commit GBrain sync trigger (task 4.4's `triggerGbrainSync`, now REACHABLE — see
+   * module header). NEVER blocks/fails the commit (mirrors the `sourceCommit`/`refreshRecentChanges`
+   * post-commit hook a few lines below, worker Lesson 76/77): a trigger fault is swallowed, the ORIGINAL
+   * commit `Result` is returned unchanged. `auditRef` reuses the SAME `kw:commit:${planId}` string both
+   * commit sites already derive their idempotencyKey from — `buildCommitAuditRecord` (revision.ts) folds
+   * that exact string into the committed AuditRecord's `refs`, so it is a genuine, queryable audit
+   * linkage, not an invented value (the frozen `AuditRecord` model carries no `id` field to read back).
+   */
+  async function withGbrainSync(
+    plan: KnowledgeMutationPlan,
+    result: Awaited<ReturnType<CommitKnowledgePort["commit"]>>,
+  ): Promise<void> {
+    if (!isOk(result)) return;
+    try {
+      await triggerGbrainSync(
+        {
+          workspaceId: String(plan.workspaceId),
+          committedRevisionId: result.value.revisionId as RevisionId,
+          planId: String(plan.planId),
+          auditRef: `kw:commit:${String(plan.planId)}`,
+        },
+        {
+          outbox: gbrainSyncOutboxBinding.store,
+          now,
+          newHealthItemId: (): string => `gbrain-sync:${now()}:${Math.random().toString(36).slice(2)}`,
+          dispatchIndex: gbrainIndexDispatcher,
+        },
+      );
+    } catch {
+      /* fail-SAFE: a sync-trigger fault (even a totality regression) never fails the commit */
+    }
+  }
+
   // 18.6/18.5 + 9.16 — the Ingestion-Inbox PARK sink the content classifier + correlation producer
   // record to on a no-match/below-threshold (REQ-F-017 clarification surface). ALWAYS-ON: the default
   // is the REAL readModels-backed `createIngestionInboxProjectionPort` (9.7-B producer core — WS-8-safe
@@ -608,6 +681,11 @@ export function buildProofSpineActivities(
     // (`worker L28`). The boundary pins in `test/composition/semanticApprovalDispatch.test.ts` carry
     // that reasoning in full.
     workspacePathCheck: makeEnforceWorkspacePathScope(LEGACY_UNPREFIXED_WORKSPACE_ID),
+    // task 19.2 — the provenance-signing dep, NESTED inside this SAME dormancy gate (conditional-
+    // spread: the key is ABSENT, not `undefined`-valued, when `params.signing` is unset) so the
+    // shipped default stays byte-identical to pre-19.2 (writer.ts:626-637 gates ALL stamping on
+    // `deps.signing !== undefined`).
+    ...(params.signing !== undefined ? { signing: params.signing } : {}),
   };
   const commit: CommitKnowledgePort = createCommitActivity({
     applyPlan,
@@ -1155,7 +1233,11 @@ export function buildProofSpineActivities(
     meetingValidate: (extraction) => validate.validate(extraction),
     meetingBuildOutputs: (validated: import("@sow/workflows").ValidatedExtraction, workspaceId: WorkspaceId) =>
       buildOutputs.build(validated, workspaceId),
-    meetingCommit: (plan) => commit.commit(plan),
+    meetingCommit: async (plan) => {
+      const result = await commit.commit(plan);
+      await withGbrainSync(plan, result);
+      return result;
+    },
     meetingPropose: (action, env) => propose.propose(action, env),
     meetingReindex: (revisionId) => reindex.reindex(revisionId),
     meetingPark: (source, idempotencyKey) => meetingParkPort.park(source, idempotencyKey),
@@ -1227,6 +1309,8 @@ export function buildProofSpineActivities(
           /* fail-SAFE: a refresh fault (even a totality regression) never fails the commit */
         }
       }
+      // 19.1 — same fail-SAFE post-commit hook as the meeting path (see `withGbrainSync` above).
+      await withGbrainSync(plan, result);
       return result;
     },
     sourcePropose: (action, env) => propose.propose(action, env),
