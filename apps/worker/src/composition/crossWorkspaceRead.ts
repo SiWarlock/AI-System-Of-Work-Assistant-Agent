@@ -34,15 +34,97 @@
 import { ok, err, isErr, type Result } from "@sow/contracts";
 import { isVisibilityLevel, type GclProjection, type WorkspaceId } from "@sow/contracts";
 import type { CrossWorkspaceLinkRepository, GclProjectionRepository, WorkspaceConfigRepository } from "@sow/db";
-import { serveProjection } from "@sow/knowledge";
+import { serveProjection, type GclAuditPersistPort } from "@sow/knowledge";
+
+/**
+ * Task 24.52 — bound `serveProjection`'s optional audit-persist write BEFORE any real
+ * `GclAuditPersistPort` binds (today it is unbound — see the module header; `auditPersist` below
+ * is dormant/reachability-waived, same as the rest of this gate).
+ *
+ * `persistDenialAudit` (`@sow/knowledge`, out of this package's layer) `await`s
+ * `auditPersist.persistDenial(...)` directly, and this file's own read loop `await`s
+ * `serveProjection` PER ROW, serially. Left unbound, once a real port lands: N denials cost N
+ * serial write-latencies, and a port that never resolves hangs the WHOLE read forever — a
+ * regression on the denial's own fail-closed guarantee (24.33), which must never depend on the
+ * audit write landing.
+ *
+ * `boundAuditPersist` wraps a real port so its `persistDenial` returns to its OWN caller
+ * (`persistDenialAudit`, awaited by `serveProjection`, awaited by this file's loop) as soon as the
+ * call is ACCEPTED — never once the real write actually lands. The real write proceeds
+ * fire-and-forget, capped at `maxConcurrent` in-flight writes and `perWriteTimeoutMs` each:
+ *   - queue full (⇒ maxConcurrent already in flight)  ⇒ the call is DROPPED — the real port's
+ *     `persistDenial` is never even invoked for it.
+ *   - a write that outlives `perWriteTimeoutMs`        ⇒ counted as DROPPED and its slot is freed
+ *     (the underlying promise cannot be cancelled — this stops ACCOUNTING it as in-flight, it does
+ *     not abort it) so one hung write cannot permanently shrink the queue's capacity.
+ * Every drop calls `onDrop()` — audits dropped by this bound are COUNTED, never silent (a silently
+ * dropped audit re-creates task 24.53's defect through this very fix). `onDrop` never throws by
+ * contract (a caller-supplied counter increment); this wrapper never surfaces a real-port throw or
+ * rejection either — `persistDenialAudit`'s never-throw contract on ITS caller is preserved.
+ */
+export interface BoundAuditPersistOptions {
+  /** Max concurrent in-flight real writes; a call beyond this is dropped immediately. */
+  readonly maxConcurrent?: number;
+  /** Per-write ceiling; a write outliving this is counted dropped and its slot freed. */
+  readonly perWriteTimeoutMs?: number;
+}
+
+const DEFAULT_MAX_CONCURRENT = 8;
+const DEFAULT_PER_WRITE_TIMEOUT_MS = 2000;
+
+export function boundAuditPersist(
+  port: GclAuditPersistPort,
+  onDrop: () => void,
+  opts: BoundAuditPersistOptions = {},
+): GclAuditPersistPort {
+  const maxConcurrent = opts.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
+  const perWriteTimeoutMs = opts.perWriteTimeoutMs ?? DEFAULT_PER_WRITE_TIMEOUT_MS;
+  let inFlight = 0;
+  return {
+    // NOTE: an `async` function with no `await` before its (implicit) return resolves on the NEXT
+    // microtask — i.e. this returns to `persistDenialAudit` WITHOUT waiting on the real write.
+    async persistDenial(signal, workspaceId): Promise<void> {
+      if (inFlight >= maxConcurrent) {
+        onDrop(); // queue full — the real port is never invoked for this call.
+        return;
+      }
+      inFlight += 1;
+      let freed = false;
+      const free = (): void => {
+        if (freed) return;
+        freed = true;
+        inFlight -= 1;
+      };
+      const timer = setTimeout(() => {
+        onDrop(); // outlived the per-write bound — counted, slot freed (write left running, unawaited).
+        free();
+      }, perWriteTimeoutMs);
+      // Fire-and-forget: NOT awaited by this function's own return.
+      void Promise.resolve(port.persistDenial(signal, workspaceId))
+        .catch(() => undefined) // a real-port throw/rejection never surfaces here (never-throw, §16).
+        .finally(() => {
+          clearTimeout(timer);
+          free();
+        });
+    },
+    onRefused: port.onRefused,
+  };
+}
 
 /** Deps for the read gate — the link store, the GCL projection store, and (24.17) the LIVE workspace
  *  config store the §5 ceiling re-derivation reads the source workspace's CURRENT defaultVisibility
- *  from (never a value frozen on the link). */
+ *  from (never a value frozen on the link). `auditPersist` (24.52) is OPTIONAL and UNBOUND in
+ *  production today (see the module header) — when a caller does inject one, `resolveApprovedCrossWorkspaceSlice`
+ *  wraps it in {@link boundAuditPersist} before handing it to `serveProjection`, so the bound is in
+ *  place BEFORE the port composition-root wiring that would otherwise need to remember it. */
 export interface CrossWorkspaceReadDeps {
   readonly links: CrossWorkspaceLinkRepository;
   readonly gclProjections: GclProjectionRepository;
   readonly workspaceConfig: WorkspaceConfigRepository;
+  readonly auditPersist?: GclAuditPersistPort;
+  /** 24.52 bound tuning; defaults apply when omitted. Test-only in practice today (`auditPersist`
+   *  is unbound in production), kept on the same deps object rather than a module-level constant. */
+  readonly auditPersistBound?: BoundAuditPersistOptions;
 }
 
 /** Typed, redaction-safe read failures. */
@@ -66,12 +148,18 @@ export interface CrossWorkspaceReadOutcome {
    *  not-found, a returned workspace whose own id didn't match the requested one, or a malformed
    *  defaultVisibility) — that link's rows were withheld defensively. */
   readonly workspaceCeilingUnavailableCount: number;
+  /** 24.52 — denial-audit writes DROPPED by {@link boundAuditPersist} (queue-full or per-write
+   *  timeout). Zero when `deps.auditPersist` is unbound (today's production default) or when every
+   *  write completed within the bound. A drop never withholds a projection or alters a verdict — it
+   *  only means the OPERATIONAL audit trail for that denial did not land; never silent (24.53's class). */
+  readonly auditPersistDroppedCount: number;
 }
 
 const EMPTY_OUTCOME: CrossWorkspaceReadOutcome = {
   projections: [],
   visibilityExceededCount: 0,
   workspaceCeilingUnavailableCount: 0,
+  auditPersistDroppedCount: 0,
 };
 
 /**
@@ -91,6 +179,21 @@ export async function resolveApprovedCrossWorkspaceSlice(
     const out: GclProjection[] = [];
     let visibilityExceededCount = 0;
     let workspaceCeilingUnavailableCount = 0;
+    // 24.52 — wrap `deps.auditPersist` (unbound in production today) ONCE per call so the
+    // concurrency cap spans the WHOLE read, not per-link/per-row. `undefined` deps.auditPersist
+    // ⇒ `wrappedAuditPersist` stays `undefined` ⇒ `serveProjection` is called exactly as before
+    // this fix (byte-equivalent on the dormant, unbound production path).
+    let auditPersistDroppedCount = 0;
+    const wrappedAuditPersist =
+      deps.auditPersist === undefined
+        ? undefined
+        : boundAuditPersist(
+            deps.auditPersist,
+            () => {
+              auditPersistDroppedCount += 1;
+            },
+            deps.auditPersistBound,
+          );
     for (const link of approved.value) {
       // Defense-in-depth: the store already filters status + reader, re-assert both here so a
       // looser store binding can never widen the gate.
@@ -136,7 +239,16 @@ export async function resolveApprovedCrossWorkspaceSlice(
         // link.toWorkspaceId === projection.workspaceId), and the malformed-defaultVisibility case is
         // already excluded by the `isVisibilityLevel` pre-check above — so only the two reachable cases
         // are handled explicitly below.
-        const admitted = await serveProjection(projection, sourceWorkspace.value);
+        // 24.52 — the 5th arg is the BOUNDED port (or `undefined`, byte-equivalent to before this
+        // fix). Passing it here, not changing `persistDenialAudit`/`serveProjection` themselves
+        // (out of this package's layer), is what bounds the audit-persist wait for THIS caller.
+        const admitted = await serveProjection(
+          projection,
+          sourceWorkspace.value,
+          undefined,
+          undefined,
+          wrappedAuditPersist,
+        );
         if (isErr(admitted)) {
           if (admitted.error.code === "visibility_exceeds_source") {
             visibilityExceededCount += 1;
@@ -150,7 +262,7 @@ export async function resolveApprovedCrossWorkspaceSlice(
         out.push(admitted.value);
       }
     }
-    return ok({ projections: out, visibilityExceededCount, workspaceCeilingUnavailableCount });
+    return ok({ projections: out, visibilityExceededCount, workspaceCeilingUnavailableCount, auditPersistDroppedCount });
   } catch {
     return err({ code: "store_fault", message: "cross-workspace read failed" });
   }
