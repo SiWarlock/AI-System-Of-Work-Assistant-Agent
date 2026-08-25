@@ -47,6 +47,22 @@ import { verifySessionToken as policyVerifySessionToken, isAllow, type SessionTo
  * the caller, not the string. `parseCreateWorkspace` admits any non-empty string as an id,
  * so "registry-validated" means "someone inserted it", not "an authority vouched for its
  * shape" (`contracts L147`; traced at `#52`).
+ * ⛔⛔ ERRATUM (`### 24.83`, 2026-08-25) — THE PRECEDING SENTENCE'S PREMISE IS NOW FALSE;
+ * THE CONCLUSION SURVIVES ON NARROWER GROUND. Task `24.84` landed `WorkspaceIdSchema.safeParse`
+ * at `parseCreateWorkspace` (`apps/worker/src/api/procedures/onboarding.ts`) — it no longer
+ * admits any non-empty string; it rejects anything that is not a bounded lowercase slug
+ * (`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, max 64 chars). Retained per this codebase's erratum
+ * discipline (`L82`) — it was true when written and is the reasoning that motivated the fix.
+ * ⭐ BUT "an authority vouched for its shape" is STILL the wrong read, for a narrower reason:
+ * `WorkspaceIdSchema`'s own docblock states it plainly — "WHAT THIS IS NOT: a credential
+ * detector." A lowercase credential-shaped string (`sk-ant-…`, an AWS access-key id, a 32-char
+ * hex, …) is itself a valid slug and PASSES the schema (pinned:
+ * `packages/contracts/test/primitives/zod-brands.test.ts`, "accepts lowercase credential
+ * shapes"). ⇒ the write boundary now vouches for WELL-FORMEDNESS, not for the absence of a
+ * credential shape — so a credential-shaped id can still become registry-valid BY
+ * CONSTRUCTION and reach `persistDenial`'s durable `AuditRecord` raw. The audit-boundary and
+ * renderer-sink questions this file's neighbours already treat as open (`boot.ts`'s
+ * `createAuditPersistPort` doc comment) are UNCHANGED by this correction.
  */
 export interface AuthedContext {
   readonly authenticated: true;
