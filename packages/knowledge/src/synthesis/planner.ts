@@ -45,7 +45,7 @@ import { checkExtractionField, TBD } from "@sow/domain";
 import { renderGeneratedRegion } from "../markdown-vault/sections";
 import {
   resolveEntity,
-  stubNotePathFor,
+  mintEntityStub,
   type EntityRef,
   type EntityCandidate,
   type EntityGbrainReadPort,
@@ -419,13 +419,14 @@ async function collectEntities(
         // holds; only detection was missing). Never the ref/name/path (rule 7) — only the closed code.
         withheldMap.set(res.reason, (withheldMap.get(res.reason) ?? 0) + 1);
       }
-      // 13.8j: the stub path comes from the ONE shared namespaced derivation — never built inline
-      // here, so an untrusted entity name can't mint a root structural surface (index.md / log.md).
-      const stubPath = stubNotePathFor(res, validRef.kind);
-      if (stubPath !== null) {
+      // 13.8j/13-residual-1: the stub CREATE comes from the ONE shared namespaced derivation — never
+      // built inline here, so an untrusted entity name can't mint a root structural surface, and the
+      // body can never drift from the sibling call site in meeting-rewrite.ts.
+      const stub = mintEntityStub(res, validRef.kind);
+      if (stub !== null) {
         // Skip if a create already targets this path — never let an empty stub clobber a content-bearing create.
-        if (!autoM.creates.some((c) => c.path === stubPath)) {
-          autoM.creates.push({ path: stubPath, body: renderGeneratedRegion("stub", "") });
+        if (!autoM.creates.some((c) => c.path === stub.path)) {
+          autoM.creates.push(stub);
         }
       }
       // resolved ⇒ the note exists (no create); withheld ⇒ nothing fabricated (ground-before-write, L32).

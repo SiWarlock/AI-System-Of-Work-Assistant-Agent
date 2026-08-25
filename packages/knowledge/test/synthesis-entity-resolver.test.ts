@@ -8,11 +8,12 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve, join } from "node:path";
-import { ok, err, EntityRefSchema } from "@sow/contracts";
-import type { Result, WorkspaceId } from "@sow/contracts";
+import { ok, err, EntityRefSchema, workspaceId } from "@sow/contracts";
+import type { Result, WorkspaceId, ProvenanceOrigin } from "@sow/contracts";
 import {
   resolveEntity,
   stubNotePathFor,
+  mintEntityStub,
   NAMESPACED_ENTITY_KINDS,
   type EntityCandidate,
   type EntityGbrainReadPort,
@@ -21,9 +22,15 @@ import {
   type EntityKind,
   type EntityRef,
 } from "../src/synthesis/entity-resolver";
+import { renderGeneratedRegion } from "../src/markdown-vault/sections";
+import { rewriteVaultForMeeting, type MeetingRewriteDeps } from "../src/synthesis/meeting-rewrite";
+import { planSynthesis, type SynthesisDeps, type SynthesisInput } from "../src/synthesis/planner";
+import { unsafeWorkspaceIdForTest } from "./support/workspace-id";
 
-const WS_A = "ws-a" as WorkspaceId;
-const WS_B = "ws-b" as WorkspaceId;
+// 24.92: real branded constructors, not anonymous casts — `makeId` now runs the brand's own
+// schema (L-series), so these two also double as a (weak) proof the fixture ids are well-formed.
+const WS_A = workspaceId("ws-a");
+const WS_B = workspaceId("ws-b");
 
 const cand = (o: Partial<EntityCandidate> & Pick<EntityCandidate, "path" | "slug">): EntityCandidate => ({
   workspaceId: WS_A,
@@ -301,20 +308,127 @@ describe("stubNotePathFor — entity stubs are namespaced, never root (13.8j)", 
     expect(path.startsWith("/")).toBe(false);
   });
 
-  it("path_derivation_lives_once — no inline `${…proposedSlug}.md` remains in packages/knowledge/src", () => {
+  it("path_derivation_lives_once_repo_wide — no inline stub-path template-literal construction remains ANYWHERE in the repo, not just packages/knowledge/src", () => {
     // The duplication IS what enabled the defect: two call sites derived the same path, so the fix
     // had to be applied twice by hand. This pins the single-derivation property (forbidden-pattern
     // #6 / L39) so a third consumer inherits the namespace instead of re-deriving the bug.
-    const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
+    //
+    // 13-residual-2: `stubNotePathFor` is PUBLIC via the `@sow/knowledge` barrel (a cross-file import
+    // already exists at meeting-rewrite.ts:47), so a consumer OUTSIDE `packages/knowledge/src` — a
+    // different package entirely — could re-derive a stub path inline with this pin, scoped to
+    // `packages/knowledge/src` only, never seeing it. Widened to the REPO ROOT, excluding only
+    // build/dependency artifacts (never a source directory — the whole point is to stop excluding
+    // source).
+    const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+    const EXCLUDE_DIRS = new Set(["node_modules", "dist", "out", "graphify-out"]);
     const INLINE_MINT = /\$\{[^}]*proposedSlug[^}]*\}\s*\.md|\$\{[^}]*proposedSlug[^}]*\}`?\s*\+?\s*"\.md"/;
+    const walk = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        if (e.isDirectory()) return EXCLUDE_DIRS.has(e.name) ? [] : walk(join(dir, e.name));
+        return e.name.endsWith(".ts") ? [join(dir, e.name)] : [];
+      });
+    const allFiles = walk(repoRoot);
+    const offenders = allFiles.filter((f) => INLINE_MINT.test(readFileSync(f, "utf8")));
+    expect(offenders).toEqual([]);
+    // non-vacuity #1 (inherited from the narrower pin this widens): the pattern DOES catch the
+    // construction it is meant to forbid. Built via `.replace`, not a literal template string —
+    // spelling the violation out literally here would make THIS FILE's own source match the pattern
+    // once the walk includes `packages/knowledge/test/` (as the repo-wide walk now does), which would
+    // be this pin failing on itself rather than proving anything about production code.
+    const syntheticViolation = "const stubPath = `${resolution.PLACEHOLDER}.md`;".replace(
+      "PLACEHOLDER",
+      "proposedSlug",
+    );
+    expect(INLINE_MINT.test(syntheticViolation)).toBe(true);
+    // non-vacuity #2 (13-residual-2's OWN point, not inherited): the widened walk genuinely reaches
+    // OUTSIDE packages/knowledge/src. An over-narrow EXCLUDE that silently visited nothing outside it
+    // would make `offenders` pass VACUOUSLY, indistinguishable from the old, narrower scope this test
+    // replaces — so assert the walk actually left it, not merely that its result "looks the same".
+    const knowledgeSrcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
+    const outsideKnowledgeSrc = allFiles.filter((f) => !f.startsWith(knowledgeSrcRoot));
+    expect(outsideKnowledgeSrc.length).toBeGreaterThan(0);
+    expect(outsideKnowledgeSrc.some((f) => f.includes(join("packages", "contracts", "src")))).toBe(true);
+  });
+
+  it("stub_body_derivation_lives_once — renderGeneratedRegion(\"stub\" is rendered in EXACTLY ONE file", () => {
+    // 13-residual-1's companion to `path_derivation_lives_once_repo_wide` above: `stubNotePathFor`
+    // derived the PATH once already (13.8j); the BODY (`renderGeneratedRegion("stub", "")`) was still
+    // built independently at both call sites until `mintEntityStub` (above) unified it. Scoped to
+    // `packages/knowledge/src` (not repo-wide, unlike the path pin): the body-render call is not
+    // exported through the barrel the way `stubNotePathFor` is, so there is no cross-package exposure
+    // to widen against.
+    const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
     const walk = (dir: string): string[] =>
       readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
         e.isDirectory() ? walk(join(dir, e.name)) : e.name.endsWith(".ts") ? [join(dir, e.name)] : [],
       );
-    const offenders = walk(srcRoot).filter((f) => INLINE_MINT.test(readFileSync(f, "utf8")));
-    expect(offenders).toEqual([]);
-    // non-vacuity: the pattern DOES catch the construction it is meant to forbid
-    expect(INLINE_MINT.test("const stubPath = `${resolution.proposedSlug}.md`;")).toBe(true);
+    const STUB_BODY = 'renderGeneratedRegion("stub"';
+    const withStubBody = walk(srcRoot).filter((f) => readFileSync(f, "utf8").includes(STUB_BODY));
+    expect(withStubBody).toEqual([resolve(srcRoot, "synthesis", "entity-resolver.ts")]);
+    // non-vacuity: the substring check DOES catch the exact shape a hand-copied duplicate call takes
+    // (the shape planner.ts and meeting-rewrite.ts each carried independently before this slice).
+    expect(`autoM.creates.push({ path: stubPath, body: ${STUB_BODY}, "") });`.includes(STUB_BODY)).toBe(true);
+  });
+
+  it("mintEntityStub returns null in EXACTLY the cases stubNotePathFor does, else the NoteCreate", () => {
+    const resolved: EntityResolution = { kind: "resolved", path: "people/jane-doe.md" };
+    const withheld: EntityResolution = { kind: "withheld", reason: "ambiguous" };
+    const stub: EntityResolution = { kind: "create_stub", proposedSlug: "new-person" };
+    expect(mintEntityStub(resolved, "person")).toBeNull();
+    expect(mintEntityStub(withheld, "person")).toBeNull();
+    expect(mintEntityStub(stub, "person")).toEqual({
+      path: "people/new-person.md",
+      body: renderGeneratedRegion("stub", ""),
+    });
+  });
+
+  it("meeting_and_planner_paths_mint_byte_identical_stub_creates_for_the_same_resolution", async () => {
+    // Drives BOTH real production entry points end-to-end (not just `mintEntityStub` called twice,
+    // which would only prove the function agrees with itself, never that either call site actually
+    // uses it) with the SAME entity ref, and compares the resulting `NoteCreate`.
+    const ref: EntityRef = { name: "New Person", kind: "person" };
+    const emptyPort: EntityGbrainReadPort = { workspaceId: WS_A, findCandidates: async () => ok([]) };
+
+    const meetingReceipt = await rewriteVaultForMeeting(
+      {
+        workspaceId: WS_A,
+        provenanceOrigin: "meeting_close" as ProvenanceOrigin,
+        meetingNotePath: "meetings/standup.md",
+        sourceRefs: [{ sourceId: "meeting-1" }],
+        entityRefs: [ref],
+      },
+      {
+        gbrain: emptyPort,
+        reason: { reason: async () => ({}) },
+        sections: { describe: () => ({ generatedRegionIds: [] }) },
+        newPlanId: () => "plan-meeting",
+        newRunId: () => "run-meeting",
+      } satisfies MeetingRewriteDeps,
+    );
+    const meetingStub = meetingReceipt.plans.flatMap((p) => p.creates).find((c) => c.path === "people/new-person.md");
+
+    const plannerOutcome = await planSynthesis(
+      {
+        workspaceId: WS_A,
+        provenanceOrigin: "meeting_close" as ProvenanceOrigin,
+        sourceRefs: [{ sourceId: "src-1" }],
+      } satisfies SynthesisInput,
+      {
+        gbrain: emptyPort,
+        reason: { reason: async () => ({ entityRefs: [ref] }) },
+        sections: { describe: () => ({ generatedRegionIds: [] }) },
+        newPlanId: () => "plan-planner",
+      } satisfies SynthesisDeps,
+    );
+    const plannerStub =
+      plannerOutcome.ok &&
+      plannerOutcome.value.plans.flatMap((p) => p.creates).find((c) => c.path === "people/new-person.md");
+
+    // non-vacuity FIRST — `undefined === undefined` would satisfy a bare `toEqual` below.
+    expect(meetingStub, "the meeting path minted no stub").toBeDefined();
+    expect(plannerStub, "the planner path minted no stub").toBeDefined();
+    expect(meetingStub).toEqual(plannerStub); // byte-identical NoteCreate from two independent call sites
+    expect(meetingStub).toEqual({ path: "people/new-person.md", body: renderGeneratedRegion("stub", "") });
   });
 });
 
@@ -449,5 +563,85 @@ describe("EntityRef — element-immutable through knowledge's own import path (1
     }
     void neverInvoked;
     expect(true).toBe(true);
+  });
+});
+
+// ── 24.92 — no anonymous `as WorkspaceId` cast remains in the OWNED test files ────────────────────
+//
+// An EXPLICIT population, never a directory walk: `packages/knowledge/test/` also holds
+// `gcl-projection.test.ts` (wave 1) and `decide-enablement.test.ts`/`provenance-stamp.test.ts`
+// (owned by KNOW-2) — all three OUT OF SCOPE for this task, and a directory walk would flag files
+// this package must not touch (or silently mask a real one of ITS OWN as "covered"). Every anonymous
+// cast found here was converted to the REAL `workspaceId()` constructor (`@sow/contracts`) — every
+// site was a benign fixture id, never a value the brand would reject, so the NEW
+// `unsafeWorkspaceIdForTest` (`./support/workspace-id.ts`) has zero callers among these files.
+
+describe("24.92 — no anonymous WorkspaceId cast remains in the owned test files", () => {
+  it("no_anonymous_workspace_id_cast_remains_in_the_owned_test_files", () => {
+    const testDir = dirname(fileURLToPath(import.meta.url));
+    // The EXACT population this task owns (brief's `ownedDirs`, minus the three explicit exclusions
+    // above). Listing it explicitly — rather than walking `readdirSync(testDir)` — is what keeps this
+    // pin from either flagging an out-of-scope file or silently widening its own coverage unnoticed.
+    const OWNED_FILES = [
+      "synthesis-entity-resolver.test.ts",
+      "synthesis-planner.test.ts",
+      "synthesis-link-healer.test.ts",
+      "meeting-rewrite.test.ts",
+      "validation-refusal-audit.test.ts",
+      "gcl-visibility-gate.test.ts",
+      "writer.test.ts",
+      "remediation-router.test.ts",
+      "generative-proposal-intake.test.ts",
+      "attendee-refs.test.ts",
+      "gbrain-crash-recovery-reconciler.test.ts",
+      "gbrain-mcp-read-adapter.test.ts",
+      "gbrain-parity.test.ts",
+      "gbrain-rebuild.test.ts",
+      "gbrain-write-through-flag.test.ts",
+      "grounded-path.test.ts",
+      "ingest-rewrite.test.ts",
+      "quarantine-ledger.test.ts",
+      "rehydration-serving-gate.test.ts",
+      "vault-rehydrate.test.ts",
+    ];
+    // A prose reference to the OLD pattern (e.g. this very describe block's own header comment, or a
+    // file's own "24.92" migration note) must not read as a live offender — only a CODE line counts.
+    const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*)/;
+    const ANONYMOUS_CAST = /\bas\s+WorkspaceId\b/;
+    const offenders: string[] = [];
+    for (const file of OWNED_FILES) {
+      const src = readFileSync(resolve(testDir, file), "utf8");
+      src.split("\n").forEach((line, i) => {
+        if (COMMENT_LINE.test(line)) return;
+        if (ANONYMOUS_CAST.test(line)) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    expect(offenders).toEqual([]);
+    // non-vacuity: the pattern DOES catch a synthetic bare cast on a CODE line, and correctly
+    // IGNORES the identical text sitting in a comment (the shape this file's own 24.92 migration
+    // notes now take, which must never self-trigger this pin). Built via `.replace`, not a literal
+    // template — spelling the violation out unbroken here would make THIS FILE's own source an
+    // offender the moment the scan reaches this line, which is this pin failing on itself rather
+    // than proving anything about the owned population.
+    const syntheticCast = 'const bad = "x" PLACEHOLDER WorkspaceId;'.replace("PLACEHOLDER", "as");
+    expect(ANONYMOUS_CAST.test(syntheticCast)).toBe(true);
+    const syntheticCommentedCast = "// " + syntheticCast;
+    expect(COMMENT_LINE.test(syntheticCommentedCast)).toBe(true);
+  });
+});
+
+describe("24.92 — the shared unsafeWorkspaceIdForTest (./support/workspace-id.ts) behaves as documented", () => {
+  // Not exercised by any OTHER test in the files this package owns — zero genuine bypasses were
+  // found among them (every anonymous cast was a benign fixture id, converted to `workspaceId()`
+  // instead — see the pin above). Verified here directly so the shared helper itself is proven, not
+  // merely asserted, for whichever future OWNED test genuinely needs it.
+  it("refuses a benign value — the SAME guard gcl-projection.test.ts's own copy enforces", () => {
+    expect(() => unsafeWorkspaceIdForTest("ws-acme")).toThrow(/refusing a benign value/u);
+    expect(() => unsafeWorkspaceIdForTest("ws.acme")).not.toThrow(); // a `.` is outside [a-z0-9-] ⇒ admitted
+  });
+
+  it("passes a value the brand would reject straight through, byte-identical", () => {
+    const hostile = "https://u:hunter2@evil.example";
+    expect(unsafeWorkspaceIdForTest(hostile)).toBe(hostile);
   });
 });

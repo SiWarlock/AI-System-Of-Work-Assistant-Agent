@@ -18,9 +18,10 @@
 // WITHHELD — resolving it would risk binding to a DIFFERENT note that slugifies the
 // same. TOTAL never-throws; fail-closed to withheld on any fault/empty/malformed.
 import { isErr } from "@sow/contracts";
-import type { Result, WorkspaceId, EntityKind, EntityRef as ContractsEntityRef } from "@sow/contracts";
+import type { Result, WorkspaceId, EntityKind, EntityRef as ContractsEntityRef, NoteCreate } from "@sow/contracts";
 import { faithfulKey, entitySlug, identifiers } from "./match-keys";
 import { admitGroundedPath, type GroundedPathRefusal } from "./grounded-path";
+import { renderGeneratedRegion } from "../markdown-vault/sections";
 
 /**
  * `EntityKind` is the `packages/contracts` frozen contract (§DEC-CANDGATE leg 1, task 13.18) —
@@ -178,6 +179,22 @@ export function stubNotePathFor(resolution: EntityResolution, kind: EntityKind |
   // push the dishonesty into a cast at the call site.
   const namespace = ENTITY_NAMESPACES.get(kind ?? "") ?? FALLBACK_NAMESPACE;
   return `${namespace}${slug}.md`;
+}
+
+/**
+ * The ONE place an entity stub's `NoteCreate` BODY is derived (13-residual-1) — the companion to
+ * {@link stubNotePathFor} immediately above, which derives the PATH once. Before this, `planner.ts`
+ * and `meeting-rewrite.ts` each built `{ path, body: renderGeneratedRegion("stub", "") }` inline,
+ * independently, from the SAME `stubNotePathFor` result — identical today by coincidence, not by
+ * construction, so a future edit to one call site would not propagate to the other (the exact
+ * duplication shape `stubNotePathFor`'s own header names as the reason it was pulled out once).
+ * Returns `null` in EXACTLY the cases `stubNotePathFor` returns `null` — never partially construct a
+ * `NoteCreate` from a path that was refused a mint.
+ */
+export function mintEntityStub(resolution: EntityResolution, kind: EntityKind | undefined): NoteCreate | null {
+  const path = stubNotePathFor(resolution, kind);
+  if (path === null) return null;
+  return { path, body: renderGeneratedRegion("stub", "") };
 }
 
 // The faithful-match discipline — the key (`faithfulKey`), the lossy slug (`entitySlug`), and the
