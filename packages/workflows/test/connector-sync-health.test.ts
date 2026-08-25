@@ -211,6 +211,45 @@ describe("spec(REQ-I-005) happy path — a successful poll advances the cursor",
 });
 
 // ---------------------------------------------------------------------------
+// task 24.24 (16.4 HOP 2) — an ADVANCED poll carrying a coverage-degrade
+// healthReason must still reach the health sink. HOP 1 (connectorPoll's
+// projectSyncResult) already carries the signal onto ConnectorPollResult on the
+// 'advanced' branch (see connector-poll-coverage.test.ts); this driver must not
+// then discard it a second time by only ever calling deps.health.surface on the
+// non-advanced branch.
+// ---------------------------------------------------------------------------
+
+describe("spec(16.4, REQ-I-005) task 24.24 — advanced-with-coverage-degrade reaches the health sink", () => {
+  it("an advanced poll with a healthReason surfaces a health item WITHOUT queuing the connector for retry", async () => {
+    const { port, calls } = pollReturning({
+      todoist: ok({
+        connectorId: "todoist",
+        status: "advanced",
+        processed: 4,
+        cursorAdvanced: true,
+        cursor: "c9",
+        healthReason:
+          "connector todoist coverage degraded: connector reported partial corpus coverage (incompleteSearch)",
+      }),
+    });
+    const { sink, surfaced } = makeHealthSink();
+    const out = await runConnectorSyncHealth(baseInput(), makeDeps({ poll: port, health: sink }));
+
+    // Records DID commit and the cursor DID advance — a coverage-degrade on an
+    // advanced pass is fail-VISIBLE, not a retry/queue case (16.4).
+    expect(calls).toEqual(["todoist"]);
+    expect(out.state).toBe("done");
+    expect(out.syncedConnectors).toContain("todoist");
+    expect(out.degradedConnectors).not.toContain("todoist");
+    // The signal minted by the gateway must reach the health sink at THIS hop too,
+    // or it dies in transit exactly like the drop this task fixes.
+    expect(surfaced).toHaveLength(1);
+    expect(surfaced[0]!.message).toContain("todoist");
+    expect(surfaced[0]!.message).toContain("coverage degraded");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // LIFE-4 — unreachable/degraded connector: queue + degraded health + no drop
 // ---------------------------------------------------------------------------
 

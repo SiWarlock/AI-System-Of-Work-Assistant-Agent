@@ -150,7 +150,11 @@ export interface ConnectorPollResult {
   /** REQ-I-005: true ONLY when the gateway advanced + persisted the cursor (status advanced). */
   readonly cursorAdvanced: boolean;
   readonly cursor?: string;
-  /** Redaction-safe reason for a held/degraded outcome (from the §8 health signal). */
+  /**
+   * Redaction-safe reason from the §8 health signal — present on a held/degraded
+   * outcome, AND on an 'advanced' outcome that carries a coverage-degrade signal
+   * (16.4 fail-VISIBLE: records committed, cursor advanced, partiality announced).
+   */
   readonly healthReason?: string;
 }
 
@@ -450,6 +454,21 @@ export async function runConnectorSyncHealth(
     // cursor put (REQ-I-005: no silent drop); the connector is QUEUED for retry.
     if (result.status === "advanced") {
       syncedConnectors.push(result.connectorId);
+      // 24.24 (16.4 HOP 2): the cursor DID advance and records DID commit — this
+      // is not a degrade/retry case, so the connector is NOT queued. But when the
+      // gateway minted a coverage-degrade signal on this very pass (HOP 1 already
+      // carries it onto `result.healthReason` for the advanced branch), it must
+      // still reach the health sink here, or the fail-VISIBLE signal dies one hop
+      // past where it was minted — silently indistinguishable from "nothing
+      // happened".
+      if (result.healthReason !== undefined) {
+        await deps.health.surface({
+          failureClass: "sync_lagging",
+          subjectRef: result.connectorId,
+          message: `connector ${result.connectorId} advanced with degraded coverage: ${result.healthReason}`,
+          auditRef: input.run.workflowId as unknown as AuditId,
+        });
+      }
     } else {
       degradedConnectors.push(result.connectorId);
       await deps.health.surface({
