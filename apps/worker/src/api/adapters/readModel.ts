@@ -529,6 +529,22 @@ export function createDbReadModelQueryPort(
       // composition/provisionDev.ts:253-257 deliberately ABSTAINS and names the reason. ⇒ the first
       // real producer owes the `global_surface` / GCL Visibility Gate decision, NOT the UI-safe
       // projection, which already lives in `queries.ts` (`projectCards`) per this file's header.
+      //
+      // ⭐ `### 24.91` RESOLUTION (safety rule 4) — PROVE-BY-TEST chosen over routing this reader
+      // through the GCL Visibility Gate. Routing would mean minting a `global_surface`-shaped
+      // GclProjection PER dashboard card (a real re-architecture with no producer to drive it yet —
+      // see the ⚠ above); prove-by-test costs nothing today and closes the gap at the layer that is
+      // actually reachable now. The proof is STRUCTURAL, not a sampled string: `readCardSources`
+      // below copies data into `DashboardCardSource` by NAMING each of its exactly six fields (no
+      // `...spread`, ever) — a stored row carrying `workspaceId` / any other adversarial key cannot
+      // reach the output BY CONSTRUCTION, because nothing in this function ever reads that key.
+      // Pinned end-to-end (seeded row → `dashboardCards()` → full key-set assertion, marker sourced
+      // from a specific workspace) in `readModel.test.ts`.
+      // ⚠ THE COST, STATED: this proof covers the READ boundary only. It guarantees that IF a row
+      // carrying cross-workspace attribution is ever stored, no caller can read that attribution back
+      // out — it does NOT stop a future producer from writing such a row in the first place (there is
+      // none today to police). The first real producer still owes its own write-side review; this
+      // gate is not a substitute for one, only the reason the read side is safe in the meantime.
       const rm = await getReadModel(readModels, READ_MODEL_KEYS.dashboard, null);
       if (isErr(rm)) return rm;
       return ok(rm.value === undefined ? [] : readCardSources(rm.value.data));

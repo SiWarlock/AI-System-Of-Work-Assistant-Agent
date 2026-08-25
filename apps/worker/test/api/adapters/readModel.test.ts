@@ -115,6 +115,47 @@ describe("createDbReadModelQueryPort — global card + GCL surfaces", () => {
     }
   });
 
+  it("24.91 — a `dashboard_cards` row carrying cross-workspace-attributable content (workspaceId + a marker sourced from workspace A) never rides out to ANY caller — the FULL key set is proven, not one sampled field [safety rule 4]", async () => {
+    const o = await freshDb();
+    const MARKER = "ws-a-only-secret-marker-9f3c";
+    await seedReadModel(o, READ_MODEL_KEYS.dashboard, undefined, {
+      cards: [
+        {
+          cardId: "card_today",
+          kind: "global_today",
+          title: "Today",
+          status: "ok",
+          count: 1,
+          updatedAt: REBUILT_AT,
+          // Adversarial: a stored row carrying workspace attribution + a workspace-A-sourced marker
+          // — exactly the shape a future producer bug or a tampered row could carry.
+          workspaceId: "ws-a",
+          sourceWorkspaceId: "ws-a",
+          marker: MARKER,
+        },
+      ],
+    });
+    const port = createDbReadModelQueryPort(o.repos);
+    // "query as workspace B": `dashboardCards()` takes NO caller-scoped input at all — every caller,
+    // including a hypothetical workspace-B reader, gets the IDENTICAL output (see the header
+    // comment on `dashboardCards` in readModel.ts — there is no per-caller parameter to scope on).
+    const res = await port.dashboardCards();
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) {
+      expect(res.value.length).toBe(1);
+      const card = res.value[0]!;
+      // STRUCTURAL, not sampled: the FULL key set is exactly the six-field DashboardCardSource
+      // allowlist — `workspaceId` (or any other adversarial key) cannot appear, by construction.
+      expect(Object.keys(card).sort()).toEqual(["cardId", "count", "kind", "status", "title", "updatedAt"]);
+      expect((card as unknown as Record<string, unknown>)["workspaceId"]).toBeUndefined();
+      expect((card as unknown as Record<string, unknown>)["sourceWorkspaceId"]).toBeUndefined();
+      // The marker itself never rides out in ANY form — not merely absent under an expected key name.
+      const serialized = JSON.stringify(res.value);
+      expect(serialized).not.toContain(MARKER);
+      expect(serialized).not.toContain("ws-a");
+    }
+  });
+
   it("an ABSENT global surface read-model returns an EMPTY ok list", async () => {
     const o = await freshDb();
     const port = createDbReadModelQueryPort(o.repos);
@@ -311,7 +352,11 @@ describe("createDbReadModelQueryPort — workspace-scoped card + copilot surface
     }
 
     const unknown = await port.recentChanges(UNKNOWN_WS);
+    // 24.101 — cause code, not bare falsity: discriminates the WS-8 unknown-workspace path
+    // (unknownWorkspace()) from a genuine store fault (storeFault()) — this file's own two typed
+    // failure codes.
     expect(isErr(unknown)).toBe(true); // fail-closed (WS-8)
+    if (isErr(unknown)) expect(unknown.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
   });
 
   it("projectDashboards: KNOWN ws reads seeded projects; absent → empty; UNKNOWN → fail-closed", async () => {
@@ -347,7 +392,9 @@ describe("createDbReadModelQueryPort — workspace-scoped card + copilot surface
     }
 
     const unknown = await port.projectDashboards(UNKNOWN_WS);
+    // 24.101 — cause code, not bare falsity (see recentChanges' identical pin above for rationale).
     expect(isErr(unknown)).toBe(true); // fail-closed (WS-8)
+    if (isErr(unknown)) expect(unknown.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
   });
 });
 
@@ -404,7 +451,9 @@ describe("createDbReadModelQueryPort — ingestion + approval inboxes", () => {
     }
 
     const unknown = await port.ingestionInbox(UNKNOWN_WS);
+    // 24.101 — cause code, not bare falsity (see recentChanges' identical pin above for rationale).
     expect(isErr(unknown)).toBe(true); // fail-closed (WS-8)
+    if (isErr(unknown)) expect(unknown.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
   });
 
   it("taskRollup reads the workspace-scoped task_rollup read-model: absent → empty; field-copy drops a smuggled workspaceId + a malformed row; UNKNOWN → fail-closed (WS-8)", async () => {
@@ -433,7 +482,9 @@ describe("createDbReadModelQueryPort — ingestion + approval inboxes", () => {
     }
 
     const unknownTr = await port.taskRollup(UNKNOWN_WS);
+    // 24.101 — cause code, not bare falsity (see recentChanges' identical pin above for rationale).
     expect(isErr(unknownTr)).toBe(true); // fail-closed (WS-8)
+    if (isErr(unknownTr)) expect(unknownTr.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
   });
 
   it("ingestionInbox is WORKSPACE-SCOPED: workspace A's rows NEVER surface for workspace B (WS-8 shared-global-key guard — safety rule 4)", async () => {
@@ -563,7 +614,12 @@ describe("createDbReadModelQueryPort — auditEvents", () => {
     await seedRegistry(o, [KNOWN_WS]);
     const port = createDbReadModelQueryPort({ ...o.repos, audit: auditThrows });
     const res = await port.auditEvents(KNOWN_WS);
+    // 24.101 — cause code, not bare falsity: proves this SPECIFIC test exercises the caught-throw →
+    // storeFault() branch, distinct from the WS-8 unknownWorkspace() branch pinned elsewhere in this
+    // file (a bare `isErr` can't tell "the catch caught a thrown driver error" from "some other
+    // failure entirely").
     expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("READ_MODEL_STORE_UNAVAILABLE");
   });
 });
 
