@@ -9,10 +9,14 @@
 // `=== true` of its own.
 //
 // ⚠ STATE OF THE WIRING (do not read the line above as "already live"): `gateLivingVaultRewrite` has NO
-// call site in `bootWorker` yet, and nothing constructs the `IngestRewriteDeps` the real rewrite needs.
-// So `ProofSpineParams.livingVault` is never populated, `createLivingVaultActivity(undefined)` returns an
-// empty plan set, and the capability is inert by ABSENCE as well as by flag. Completing that call site
-// (plus the `linkCandidates` threading below) is the arming follow-up.
+// call site in `bootWorker` yet. `buildIngestRewriteDeps` (ARM-RESEARCH-3, below) now EXPORTS a builder
+// that constructs the real `IngestRewriteDeps`, but nothing calls it in `bootWorker` — `boot.ts` is a
+// different package's territory (this is the worker-composable half only; the single boot call site is
+// a hand-off). So `ProofSpineParams.livingVault` is never populated, `createLivingVaultActivity(undefined)`
+// returns an empty plan set, and the capability is inert by ABSENCE as well as by flag. The
+// `linkCandidates`/`confidence`/`date` threading (ARM-RESEARCH-2) is DONE — see `createIngestRewriteAdapter`
+// below — so once the boot call site lands, an armed run synthesizes against REAL entity candidates
+// rather than the prior "armed, spends, produces nothing" (L64) degenerate case.
 //
 // WHY CONTAINMENT LIVES HERE. The note paths in a rewrite plan are derived from SYNTHESIZED entity
 // content, and the KnowledgeWriter commit gate does not itself verify that a note path lies inside the
@@ -25,7 +29,7 @@ import { dirname, resolve, sep } from "node:path";
 import { ok, err, isOk } from "@sow/contracts";
 import type { KnowledgeMutationPlan, Result, WorkspaceId } from "@sow/contracts";
 import { rewriteVaultForSource } from "@sow/knowledge";
-import type { IngestRewriteDeps, GroundedPathRefusal, WithheldReason } from "@sow/knowledge";
+import type { IngestRewriteDeps, GroundedPathRefusal, WithheldReason, EntityCandidate } from "@sow/knowledge";
 import type {
   SourceLivingVaultPort,
   LivingVaultFailure,
@@ -310,16 +314,75 @@ export function createLivingVaultActivity(
  * identity — never from extracted content (WS-2/WS-8: content can never redirect which workspace or
  * source a rewrite is attributed to).
  *
- * ⚠ DELIBERATELY MINIMAL, and NOT yet the full adapter. `IngestRewriteInput` also accepts
- * `linkCandidates` (the entity context the synthesis planner links against), `confidence`, and `date`;
- * deriving those from the validated extraction is its own piece of work, so `validated` is intentionally
- * unread here. Consequence while it stays this way: an ARMED run synthesizes against NO entity
- * candidates and will mostly produce a thin or empty plan set. That is acceptable only because this
- * ships DORMANT — it must be completed before the capability is armed (Step-9 follow-up).
+ * ✅ ARM-RESEARCH-2 (landed): `IngestRewriteInput` also accepts `linkCandidates` (the entity context
+ * the synthesis planner links against), `confidence`, and `date` — {@link deriveLinkCandidates},
+ * {@link deriveConfidence}, and {@link deriveDate} thread them from the VALIDATED extraction's `fields`
+ * map (a `validated` extraction is the only thing this adapter is ever handed; there is nothing else to
+ * derive them from). Prior consequence this closes: an ARMED run synthesized against NO entity
+ * candidates and mostly produced a thin or empty plan set — the L64 "armed, spends, produces nothing"
+ * class this file's own header names. Fail-safe throughout: an absent/malformed/wrong-typed field
+ * degrades that ONE channel to `undefined` (never a crash, never a guessed value — REQ-F-017 posture
+ * extended to this seam) rather than aborting the whole derivation.
  */
+
+// ARM-RESEARCH-2 — the reserved field-name convention this adapter reads off a validated extraction's
+// `fields` map to populate `IngestRewriteInput`'s entity-context inputs. This is a §9 arch_gap (the
+// concrete extraction field catalog is undefined project-wide — `meeting-extraction.ts`'s own schema
+// gate comment names the same gap) — rather than leave the channel permanently unread, this adapter
+// pins a NARROW, documented convention. A field absent under these names, or present but the wrong
+// shape, simply degrades that channel to `undefined` — never a crash, never a guess.
+const LINK_CANDIDATES_FIELD = "linkCandidates";
+const CONFIDENCE_FIELD = "confidence";
+const DATE_FIELD = "date";
+
+/** A value is a well-formed {@link EntityCandidate} iff it has non-empty string `path`/`slug`/
+ *  `workspaceId` — the same three fields `entity-resolver.ts`'s own candidate filter checks. A
+ *  malformed/hostile element (missing field, empty string, wrong type) is REJECTED, never repaired
+ *  (REQ-F-017 no-inference — this adapter must never fabricate a path/slug for a bad candidate). */
+function isEntityCandidateShape(v: unknown): v is EntityCandidate {
+  if (v === null || typeof v !== "object") return false;
+  const c = v as Record<string, unknown>;
+  return (
+    typeof c["path"] === "string" &&
+    c["path"].length > 0 &&
+    typeof c["slug"] === "string" &&
+    c["slug"].length > 0 &&
+    typeof c["workspaceId"] === "string" &&
+    c["workspaceId"].length > 0
+  );
+}
+
+/** Derive `IngestRewriteInput.linkCandidates` from `validated.fields[LINK_CANDIDATES_FIELD].value` — an
+ *  array whose WELL-FORMED elements survive (a malformed element is dropped, never repaired); an absent
+ *  field, a non-array value, or an array with zero surviving elements degrades to `undefined`
+ *  (byte-equivalent to the pre-ARM-RESEARCH-2 shape — `rewriteVaultForSource` itself treats `undefined`
+ *  and `[]` identically, see `ingest-rewrite.ts`'s `Array.isArray(input.linkCandidates)` guard). */
+function deriveLinkCandidates(validated: ValidatedExtraction): readonly EntityCandidate[] | undefined {
+  const raw = validated?.fields?.[LINK_CANDIDATES_FIELD]?.value;
+  if (!Array.isArray(raw)) return undefined;
+  const filtered = raw.filter(isEntityCandidateShape);
+  return filtered.length > 0 ? filtered : undefined;
+}
+
+/** Derive `IngestRewriteInput.confidence` from `validated.fields[CONFIDENCE_FIELD].value` — a finite
+ *  number, else `undefined` (never coerced from a string — no-inference posture: a malformed value is
+ *  withheld, not guessed). */
+function deriveConfidence(validated: ValidatedExtraction): number | undefined {
+  const raw = validated?.fields?.[CONFIDENCE_FIELD]?.value;
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+}
+
+/** Derive `IngestRewriteInput.date` from `validated.fields[DATE_FIELD].value` — a non-empty string,
+ *  else `undefined` (the TBD sentinel is itself a non-empty string and threads through unchanged; the
+ *  op-log date format is validated downstream by the structural-file writer, not here). */
+function deriveDate(validated: ValidatedExtraction): string | undefined {
+  const raw = validated?.fields?.[DATE_FIELD]?.value;
+  return typeof raw === "string" && raw.length > 0 ? raw : undefined;
+}
+
 export function createIngestRewriteAdapter(knowledgeDeps: IngestRewriteDeps): LivingVaultRewrite {
   return async (
-    _validated: ValidatedExtraction,
+    validated: ValidatedExtraction,
     workspaceId: WorkspaceId,
     source: SourceNoteIdentity,
   ): Promise<{
@@ -338,6 +401,10 @@ export function createIngestRewriteAdapter(knowledgeDeps: IngestRewriteDeps): Li
         // produces nothing" rather than as an error — the L64 failure class.
         provenanceOrigin: "ingestion",
         sourceRefs: [{ sourceId: String(source.sourceId) }],
+        // ARM-RESEARCH-2: the validated extraction's entity context — see the derive* helpers above.
+        linkCandidates: deriveLinkCandidates(validated),
+        confidence: deriveConfidence(validated),
+        date: deriveDate(validated),
       },
       knowledgeDeps,
     );

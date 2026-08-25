@@ -8,7 +8,7 @@
 // the producer's own hoisted-accumulator reasoning (`ingest-rewrite.ts:112-115`). A fault after
 // admission must not discard what was already refused, or a hostile run that hijacks paths and then
 // trips a later guard becomes byte-identical to a benign one again.
-import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -181,5 +181,120 @@ describe("living-vault refusal audit (13.8m-B)", () => {
 
     // Verbatim: not re-mapped, not deduped, not truncated — a fix at :122 alone would leave THIS broken.
     expect(out.refusals).toEqual(["structural_surface", "unsafe_shape"]);
+  });
+});
+
+// ── ARM-RESEARCH-2 — createIngestRewriteAdapter threads the validated extraction's entity context ──
+describe("createIngestRewriteAdapter — ARM-RESEARCH-2: linkCandidates/confidence/date threaded from validated", () => {
+  // The module-level mock is never globally cleared (this file's own convention, see the header
+  // comment) and the sibling `adapter_forwards_refusals_verbatim` test above already invoked it —
+  // clear THIS describe block's call history so `mock.calls[0]` always means "this test's own call."
+  beforeEach(async () => {
+    const { rewriteVaultForSource } = await import("@sow/knowledge");
+    vi.mocked(rewriteVaultForSource).mockClear();
+  });
+
+  function emptyReceipt() {
+    return {
+      runId: "run-1",
+      plans: [],
+      planIds: [],
+      autoCount: 0,
+      proposeCount: 0,
+      refusals: [],
+      entityRefsTruncated: 0,
+      entityRefsRejected: 0,
+      entityRefsWithheldByReason: {},
+    };
+  }
+
+  it("two_link_candidates_and_a_date_reach_the_planner — today's gap: the adapter carried neither", async () => {
+    const { rewriteVaultForSource } = await import("@sow/knowledge");
+    vi.mocked(rewriteVaultForSource).mockResolvedValueOnce(
+      emptyReceipt() as Awaited<ReturnType<typeof rewriteVaultForSource>>,
+    );
+
+    const candidateA = { path: "projects/acme.md", slug: "acme", workspaceId: WS };
+    const candidateB = { path: "people/jane-doe.md", slug: "jane-doe", workspaceId: WS };
+    const validatedWithContext = {
+      validated: true,
+      fields: {
+        linkCandidates: { value: [candidateA, candidateB] },
+        date: { value: "2026-08-24" },
+      },
+    } as unknown as ValidatedExtraction;
+
+    const adapter = createIngestRewriteAdapter(
+      {} as unknown as Parameters<typeof createIngestRewriteAdapter>[0],
+    );
+    await adapter(validatedWithContext, WS, SOURCE);
+
+    expect(vi.mocked(rewriteVaultForSource)).toHaveBeenCalledTimes(1);
+    const [input] = vi.mocked(rewriteVaultForSource).mock.calls[0]!;
+    expect(input).toMatchObject({
+      linkCandidates: [candidateA, candidateB],
+      date: "2026-08-24",
+    });
+  });
+
+  it("a_numeric_confidence_field_reaches_the_planner", async () => {
+    const { rewriteVaultForSource } = await import("@sow/knowledge");
+    vi.mocked(rewriteVaultForSource).mockResolvedValueOnce(
+      emptyReceipt() as Awaited<ReturnType<typeof rewriteVaultForSource>>,
+    );
+
+    const validatedWithConfidence = {
+      validated: true,
+      fields: { confidence: { value: 0.85 } },
+    } as unknown as ValidatedExtraction;
+
+    const adapter = createIngestRewriteAdapter(
+      {} as unknown as Parameters<typeof createIngestRewriteAdapter>[0],
+    );
+    await adapter(validatedWithConfidence, WS, SOURCE);
+
+    const [input] = vi.mocked(rewriteVaultForSource).mock.calls[0]!;
+    expect(input).toMatchObject({ confidence: 0.85 });
+  });
+
+  it("an_empty_or_malformed_validated_extraction_degrades_to_undefined — never a crash, never a guess", async () => {
+    const { rewriteVaultForSource } = await import("@sow/knowledge");
+    vi.mocked(rewriteVaultForSource).mockResolvedValueOnce(
+      emptyReceipt() as Awaited<ReturnType<typeof rewriteVaultForSource>>,
+    );
+
+    const adapter = createIngestRewriteAdapter(
+      {} as unknown as Parameters<typeof createIngestRewriteAdapter>[0],
+    );
+    await adapter(VALIDATED, WS, SOURCE); // VALIDATED = { fields: {} } — today's fixture, unchanged
+
+    const [input] = vi.mocked(rewriteVaultForSource).mock.calls[0]!;
+    expect(input).toMatchObject({
+      linkCandidates: undefined,
+      confidence: undefined,
+      date: undefined,
+    });
+  });
+
+  it("malformed_linkCandidates_elements_are_dropped_not_guessed — a hostile/malformed candidate never fabricates a note path", async () => {
+    const { rewriteVaultForSource } = await import("@sow/knowledge");
+    vi.mocked(rewriteVaultForSource).mockResolvedValueOnce(
+      emptyReceipt() as Awaited<ReturnType<typeof rewriteVaultForSource>>,
+    );
+
+    const wellFormed = { path: "projects/acme.md", slug: "acme", workspaceId: WS };
+    const hostile = { path: "", slug: "x", workspaceId: WS }; // empty path — not a valid candidate
+    const validatedHostile = {
+      validated: true,
+      fields: { linkCandidates: { value: [wellFormed, hostile, "not-an-object", 42, null] } },
+    } as unknown as ValidatedExtraction;
+
+    const adapter = createIngestRewriteAdapter(
+      {} as unknown as Parameters<typeof createIngestRewriteAdapter>[0],
+    );
+    await adapter(validatedHostile, WS, SOURCE);
+
+    const [input] = vi.mocked(rewriteVaultForSource).mock.calls[0]!;
+    expect(input).toMatchObject({ linkCandidates: [wellFormed] });
   });
 });
