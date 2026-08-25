@@ -10,7 +10,15 @@
 // arming a capability that mutates the vault is precisely the false-green vector those lessons exist to
 // close, so anything that is not the boolean `true` leaves the capability inert.
 import { describe, it, expect } from "vitest";
-import { gateLivingVaultRewrite } from "../src/boot";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ok, workspaceId, sourceId } from "@sow/contracts";
+import type { WorkspaceId } from "@sow/contracts";
+import type { EntityGbrainReadPort, SynthesisReasonPort } from "@sow/knowledge";
+import type { ValidatedExtraction, SourceNoteIdentity } from "@sow/workflows";
+import { gateLivingVaultRewrite, withLivingVaultRewrite } from "../src/boot";
+import type { ProofSpineParams } from "../src/composition/buildActivities";
 
 const VAULT = "/tmp/sow-test-vault";
 
@@ -63,5 +71,70 @@ describe("gateLivingVaultRewrite — dormant by default (13.8d)", () => {
     );
     expect(wiring).toEqual({ bound: true });
     expect(roots).toEqual([VAULT]);
+  });
+});
+
+// ── task ARM-RESEARCH-3 — the bootWorker CALL SITE `gateLivingVaultRewrite` never had. Drives the REAL
+// `withLivingVaultRewrite` (the exact function `bootWorker` calls, not a re-derivation) so dormancy is
+// pinned BY RUNNING the composition, never by asserting a constant — mirroring worker Lesson 59's
+// "dormant must be observationally identical to not having the capability, proven by running the
+// unarmed activity" discipline. `stubParams` deliberately carries NONE of ProofSpineParams' other
+// fields real — `withLivingVaultRewrite` only ever reads/writes `.livingVault`, so a minimal stub is
+// the correct fixture, not an omission.
+describe("withLivingVaultRewrite — the bootWorker call site (task ARM-RESEARCH-3)", () => {
+  const stubParams = {} as unknown as ProofSpineParams;
+  const WS: WorkspaceId = workspaceId("ws-lv");
+  const fakeGbrain: EntityGbrainReadPort = { workspaceId: WS, findCandidates: () => Promise.resolve(ok([])) };
+  const fakeReason: SynthesisReasonPort = { reason: () => Promise.resolve({}) };
+
+  it("flag ABSENT ⇒ SourceIngestionDeps.livingVault (ProofSpineParams.livingVault) is undefined — pinned BY RUNNING withLivingVaultRewrite, not by asserting gateLivingVaultRewrite alone", () => {
+    const result = withLivingVaultRewrite(stubParams, {}, undefined);
+    expect(result).toBeDefined();
+    expect(result?.livingVault).toBeUndefined();
+  });
+
+  it("flag=== true + vaultRoot present BUT providers ABSENT ⇒ STILL undefined — the THIRD independent OFF-lock (flag+vaultRoot alone can never arm a real adapter)", () => {
+    const result = withLivingVaultRewrite(
+      stubParams,
+      { livingVaultRewrite: true, vaultRoot: VAULT },
+      undefined, // providers OMITTED — the shipped-default state even if the flag were somehow set
+    );
+    expect(result?.livingVault).toBeUndefined();
+  });
+
+  it("flag strictly === true + a vaultRoot + providers ALL present ⇒ a NON-DEGENERATE SourceLivingVaultPort is bound (real, callable, wired to the injected providers — not a stub)", async () => {
+    let gbrainCalls = 0;
+    let reasonCalls = 0;
+    const observingGbrain: EntityGbrainReadPort = {
+      workspaceId: WS,
+      findCandidates: (...args) => {
+        gbrainCalls += 1;
+        return fakeGbrain.findCandidates(...args);
+      },
+    };
+    const observingReason: SynthesisReasonPort = {
+      reason: (...args) => {
+        reasonCalls += 1;
+        return fakeReason.reason(...args);
+      },
+    };
+    // A REAL, on-disk directory — createLivingVaultPort realpath-resolves the vault root for
+    // containment (unlike the pure-gate tests above, this exercises the actual fs check).
+    const realVaultRoot = mkdtempSync(join(tmpdir(), "sow-lv-gate-"));
+    const result = withLivingVaultRewrite(
+      stubParams,
+      { livingVaultRewrite: true, vaultRoot: realVaultRoot },
+      { gbrain: observingGbrain, reason: observingReason },
+    );
+    expect(result?.livingVault).toBeDefined();
+    expect(typeof result?.livingVault?.rewrite).toBe("function");
+    // NON-DEGENERATE: actually drive it (this is what `createLivingVaultActivity(undefined)`'s dormant
+    // `ok([])` stub can NEVER do — it invokes zero deps). A real adapter reaches the injected reason
+    // port (the pure planner's SENSE step) on a genuine run.
+    const validated = { validated: true, fields: {} } as unknown as ValidatedExtraction;
+    const source: SourceNoteIdentity = { sourceId: sourceId("src-lv-1"), contentHash: "hash:lv-1" };
+    const rewriteResult = await result!.livingVault!.rewrite(validated, WS, source);
+    expect(rewriteResult.ok).toBe(true); // an empty synthesis candidate yields an empty (not failed) plan set
+    expect(reasonCalls).toBeGreaterThan(0); // the injected reason port was genuinely invoked
   });
 });
