@@ -68,7 +68,14 @@ import {
 
 // The §8 Tool Gateway external-write entry + its deps.
 import { dispatchRouted, createUnroutedWriteAdapter } from "@sow/integrations";
-import type { ExternalWriteDeps, ExternalWriteResult } from "@sow/integrations";
+import type { ExternalWriteDeps, ExternalWriteResult, WriteSecretsAccessor } from "@sow/integrations";
+
+// 21.8 — PROV-3's default-OFF card-transport owner gate (@sow/integrations/tools/cards). Deep
+// subpath import (explicit /index — the package's "./*" export map is file-literal, no directory
+// resolution): the main @sow/integrations barrel does not re-export this module (its own header
+// notes worker wiring is THIS package's territory, not integrations' — see cards/index.ts:1-20).
+import { selectCardRenderer } from "@sow/integrations/tools/cards/index";
+import type { CardTransportGate } from "@sow/integrations/tools/cards/index";
 
 // The REAL §8 source-register candidate gate (ajv structural + Zod .strict() + the
 // Flow-4 dedupe probe). This is the ONE source-ingestion leaf that runs FOR REAL in
@@ -370,6 +377,26 @@ export interface ProofSpineParams {
    * serving oracle already uses (boot.ts:~2171) — no new arming surface.
    */
   readonly signing?: StamperDeps;
+  /**
+   * 21.10 — the external-write CREDENTIAL SEAM accessor (mirrors `signing`'s optional-attach shape
+   * above). UNSET (the shipped default) ⇒ `externalWriteDeps.secrets` stays ABSENT — a conditional
+   * spread key-omits it rather than setting `undefined` — so `dispatchExternalWrite`'s credential-
+   * seam step (gateway.ts:182, `deps.secrets !== undefined`) is skipped entirely and dispatch stays
+   * BYTE-EQUIVALENT to pre-21.10 (packages/integrations/test/credential-seam.test.ts's ABSENT-
+   * accessor pin). `boot.ts` sources the real value from the SAME owner-provisioned `keychainSecrets`
+   * facade the C5.4b serving oracle / provenance signing already use (via `withWriteSecretsAccessor`)
+   * — no new arming surface; the real Keychain touch stays owner-gated.
+   */
+  readonly secretsAccessor?: WriteSecretsAccessor;
+  /**
+   * 21.8 — the OPTIONAL default-OFF card-transport owner gate (mirrors PROV-3's `CardTransportGate`,
+   * @sow/integrations/tools/cards/index.ts, itself modelled on `WriteTransportGate`, backends.ts:155).
+   * UNSET (the shipped default) ⇒ `selectCardRenderer(undefined)` returns the SAME deterministic
+   * no-op renderer this builder used inline pre-21.8 (byte-identical) — the real Mac/Telegram
+   * transports are NEVER constructed/invoked on the OFF path. `boot.ts` threads `config.cardTransport`
+   * here unchanged; NOTHING in this slice arms it (no default flips, no key provisioned).
+   */
+  readonly cardTransport?: CardTransportGate;
 }
 
 // ---------------------------------------------------------------------------
@@ -735,6 +762,9 @@ export function buildProofSpineActivities(
       await backends.repos.audit.append(rec);
     },
     clock: now,
+    // 21.10 — conditional-spread (key ABSENT when unset, never `undefined`-valued) so the shipped
+    // default is BYTE-IDENTICAL to pre-21.10 (credential-seam.test.ts's ABSENT-accessor pin; L57).
+    ...(params.secretsAccessor !== undefined ? { secrets: params.secretsAccessor } : {}),
   };
   const propose: ProposeActionsPort = createProposeActivity({
     // 21.1/2 binding: route by `action.targetSystem` through the registry (dispatchRouted overrides
@@ -802,11 +832,11 @@ export function buildProofSpineActivities(
     seedChannel: "mac",
   });
 
-  // surfaceCard — render on BOTH channels with parity (a deterministic renderer that
-  // always renders both; the real transport pushes Mac + Telegram cards).
-  const cardRenderer: CardRenderer = {
-    render: () => Promise.resolve(ok(undefined)),
-  };
+  // surfaceCard — render on BOTH channels with parity (21.8: the renderer is now SELECTED via
+  // PROV-3's default-OFF `selectCardRenderer` gate rather than hardcoded — `params.cardTransport`
+  // UNSET (the shipped default) returns the SAME deterministic no-op literal byte-identical to
+  // pre-21.8; an owner-armed gate swaps in the real Mac/Telegram transports, still rendering both).
+  const cardRenderer: CardRenderer = selectCardRenderer(params.cardTransport);
   const surfaceCard: SurfaceCardPort = createSurfaceCardActivity(cardRenderer);
 
   // applyTransition — the REAL ApprovalRepository CAS (exactly-once across channels).

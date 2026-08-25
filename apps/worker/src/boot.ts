@@ -209,6 +209,13 @@ import {
   PROOF_SPINE_TASK_QUEUE,
 } from "./temporal/registerWorker";
 import type { ProofSpineParams } from "./composition/buildActivities";
+// 21.10/21.8 — the credential-seam accessor + card-transport gate types `proofSpineParams` carries.
+// Deep subpath import: the main @sow/integrations barrel does not re-export tools/cards (its own
+// header notes worker wiring is THIS package's territory). `WriteSecretsAccessor` IS re-exported from
+// the main barrel (tools/adapters/adapter-core.ts) — imported alongside for the local adapter below.
+import type { CardTransportGate } from "@sow/integrations/tools/cards/index";
+import type { WriteSecretsAccessor } from "@sow/integrations";
+import type { SecretsAccessor } from "@sow/providers";
 // §11.1 slice 2b — the durable KnowledgeRevisionStore adapter (over the 2a operational-store repo),
 // rebound into the proof-spine params post-backends so the ingestion sourceCommit + propose dispatch
 // persist idempotency across a worker restart. Kept OFF the OFF-config path (see withDurableRevisions).
@@ -489,6 +496,14 @@ export interface BootConfig extends BackendsConfig {
    * wrapper). NOTE: the `getSecret` provider facade + the Keychain-locked degraded routing land in a Slice-4 follow-up.
    */
   readonly keychainSecrets?: KeychainSecretsGate;
+  /**
+   * 21.8 — the OWNER-PROVISIONING gate for the real approval-card renderer (default ABSENT ⇒ INERT:
+   * `buildProofSpineActivities` keeps the deterministic no-op literal, byte-equivalent boot). Mirrors
+   * `keychainSecrets` above and PROV-3's `CardTransportGate` (@sow/integrations/tools/cards) — both
+   * `enabled === true` (strict) AND a `make` factory are required to arm; either absent/false stays
+   * the no-op. NOTHING in this slice arms it: `make` is never bound here, no default flips.
+   */
+  readonly cardTransport?: CardTransportGate;
   /**
    * Explicit Copilot workspace set (id + type). Decoupled from `devProvision` (which is SURFACE data).
    * When omitted: devProvision-derived if present, else — on the real path — the 3 well-known scopes
@@ -1651,6 +1666,48 @@ export function withSigning(
 }
 
 /**
+ * 21.10 — thin, EXPLICIT structural adapter from the boot-level `SecretsAccessor` facade
+ * (`keychain-boot.ts`'s `getSecret`: string-in/string-out, `SecretUnavailableReason =
+ * ["missing","locked","denied"]`) to the Tool-Gateway `WriteSecretsAccessor` shape
+ * (`adapter-core.ts:91`, the SAME three-token reason set). The two are already structurally
+ * assignable (identical shape), but naming the seam here — rather than relying on bare structural
+ * assignability at the call site — means a future divergence between the two reason enums surfaces
+ * as a visible type error on THIS function, not a silent mismatch. Never resolves/reads the token
+ * itself (rule 7) — a pure pass-through of the injected accessor's own call.
+ */
+function toWriteSecretsAccessor(accessor: SecretsAccessor): WriteSecretsAccessor {
+  return { getSecret: (ref) => accessor.getSecret(ref) };
+}
+
+/**
+ * Task 21.10 — attach the external-write credential-seam accessor, mirroring `withSigning`'s shape:
+ * `undefined` `secretsAccessor` (no Keychain provisioning) or `undefined` `proofSpineParams` (nothing
+ * to attach to) both pass through UNCHANGED, so the shipped default stays byte-identical —
+ * `externalWriteDeps.secrets` stays ABSENT (`credential-seam.test.ts`'s ABSENT-accessor pin).
+ */
+export function withWriteSecretsAccessor(
+  proofSpineParams: ProofSpineParams | undefined,
+  secretsAccessor: WriteSecretsAccessor | undefined,
+): ProofSpineParams | undefined {
+  if (proofSpineParams === undefined || secretsAccessor === undefined) return proofSpineParams;
+  return { ...proofSpineParams, secretsAccessor };
+}
+
+/**
+ * Task 21.8 — attach the OPTIONAL card-transport owner gate, mirroring `withWriteSecretsAccessor`
+ * immediately above. `cardTransport` UNSET (the shipped default — `config.cardTransport` unset) ⇒
+ * params pass through UNCHANGED, so `buildProofSpineActivities`'s `selectCardRenderer(undefined)`
+ * keeps the deterministic no-op literal. NOTHING in this slice arms the gate (no `make` bound here).
+ */
+export function withCardTransport(
+  proofSpineParams: ProofSpineParams | undefined,
+  cardTransport: CardTransportGate | undefined,
+): ProofSpineParams | undefined {
+  if (proofSpineParams === undefined || cardTransport === undefined) return proofSpineParams;
+  return { ...proofSpineParams, cardTransport };
+}
+
+/**
  * 18.24 step-6 — the proof-spine post-processor that co-gates the subscription extraction route + ContextRef to
  * the SAME `config.providerTransport` arming signal (`resolveSubscriptionArming.effectiveArmed`; one flip, no
  * split-brain — L52). Mirrors {@link withDurableRevisions}.
@@ -1934,6 +1991,14 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     });
   }
 
+  // 11.4 Slice 3 / 21.10 — the owner-provisioning gate: build the real Keychain `SecretsPort` +
+  // `getSecret` facade ONLY when provisioned (gate absent ⇒ `undefined`, inert — no adapter/backend/
+  // `security` process, byte-equivalent). MOVED here (was constructed further down, alongside the
+  // C5.4b serving-oracle branch) so the SAME instance can also feed the 21.10 credential-seam rebind
+  // below — nothing between here and the original site reads `keychainSecrets`, so this is a pure
+  // reordering (still consulted at C5.4b OFF-lock 2 + the provenance-signing resolve, unchanged).
+  const keychainSecrets = buildKeychainSecrets(config.keychainSecrets);
+
   // 1.4) §11.1 slice 2b — DURABLE revisions. Rebind the proof-spine params' placeholder `revisions` to the
   //   durable slice-2a KnowledgeRevisionStore over `backends.repos.knowledgeRevisions` (the repo exists only now;
   //   the params were assembled at the worker-host before boot). This runs BEFORE any `proofSpineParams.revisions`
@@ -1944,19 +2009,33 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   //   18.24 step-6 — then co-gate the subscription extraction route + source ContextRef to the SAME effective
   //   arm (dormant: `effectiveArmed=false` on the shipped default ⇒ params UNCHANGED, byte-equivalent).
   // 1.4b) 13.8i-B — bind the propose-knowledge-approval port UNCONDITIONALLY (no separate arming flag;
-  //   see withProposeKnowledgeApproval's own doc for why the zero-cards guarantee still holds). Runs
-  //   LAST so it always sees the fully-assembled params from the two rebinds above.
-  const proofSpineParams = withProposeKnowledgeApproval(
-    withSubscriptionExtractionArming(
-      withGbrainSyncOutbox(
-        withDurableRevisions(config.proofSpineParams, backends.repos.knowledgeRevisions),
-        gbrainSyncOutboxBinding,
+  //   see withProposeKnowledgeApproval's own doc for why the zero-cards guarantee still holds).
+  // 1.4c) 21.10 — thread the credential-seam accessor from the SAME `keychainSecrets` facade above
+  //   (`undefined` gate ⇒ `keychainSecrets` is `undefined` ⇒ `withWriteSecretsAccessor` no-ops, byte-
+  //   equivalent — no new arming surface). 1.4d) 21.8 — thread `config.cardTransport` (unset by
+  //   default ⇒ `withCardTransport` no-ops too). Runs LAST so both always see the fully-assembled
+  //   params from every rebind above.
+  const proofSpineParams = withCardTransport(
+    withWriteSecretsAccessor(
+      withProposeKnowledgeApproval(
+        withSubscriptionExtractionArming(
+          withGbrainSyncOutbox(
+            withDurableRevisions(config.proofSpineParams, backends.repos.knowledgeRevisions),
+            gbrainSyncOutboxBinding,
+          ),
+          // 18.36 — the COMBINED effective arm (settings-injection folded in), NOT `arming.effectiveArmed`: a
+          //   settings key-injection must strip the route/ContextRef/schema arming in lockstep with the
+          //   transport (L52 no split-brain).
+          armEffective,
+        ),
+        backends,
       ),
-      // 18.36 — the COMBINED effective arm (settings-injection folded in), NOT `arming.effectiveArmed`: a settings
-      //   key-injection must strip the route/ContextRef/schema arming in lockstep with the transport (L52 no split-brain).
-      armEffective,
+      // 21.10 — `undefined` gate (the shipped default) ⇒ `keychainSecrets` is `undefined` ⇒ this whole
+      //   expression is `undefined` ⇒ `withWriteSecretsAccessor` no-ops (byte-equivalent).
+      keychainSecrets !== undefined ? toWriteSecretsAccessor(keychainSecrets.getSecret) : undefined,
     ),
-    backends,
+    // 21.8 — `config.cardTransport` unset (the shipped default) ⇒ `withCardTransport` no-ops.
+    config.cardTransport,
   );
 
   // 1.5) DEV data-unlock (OFF by default). When dev-provision specs are supplied, turn
@@ -2253,9 +2332,8 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     servedVaultRoots.set(config.copilotGbrainWorkspaceId, backends.vault);
   }
   const provenanceBundle = config.provenanceServingOracle;
-  // 11.4 Slice 3 — the owner-provisioning gate: build the real Keychain `SecretsPort` ONLY when provisioned (gate
-  // absent ⇒ `undefined`, inert — no adapter/backend/`security` process, byte-equivalent). Sources OFF-lock 2.
-  const keychainSecrets = buildKeychainSecrets(config.keychainSecrets);
+  // `keychainSecrets` (OFF-lock 2) is now built EARLIER — see its construction site above the
+  // `proofSpineParams` assembly (moved for 21.10; same single instance, unchanged behavior here).
   // Task 13.10 piece C (CLOSES the rebuild-oracle arc): the boot binding, constructed in the SAME serving-oracle
   // construction branch. makeRebuildClient is OMITTED ⇒ the owner-gated real gbrain scratch-import stays UNBOUND ⇒
   // gateRebuildOracle returns undefined ⇒ no compute, no health routing, resolveOracleBuild unbound ⇒ oracleBuildOk
