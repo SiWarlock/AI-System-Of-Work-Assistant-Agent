@@ -28,7 +28,11 @@ vi.mock("../renderer/lib/live", async (importOriginal) => {
     auditDrill: async () => ({ ok: false }),
     hydrateScope: async () => {},
     askCopilot: async () => ({ ok: false }),
-    decideApproval: async () => ({ ok: false }),
+    // §9.8's DecisionResult now REQUIRES a closed reason on the ok:false arm. "unavailable" is the
+    // honest one for a scaffold stub: this handle has no live worker behind it, which is exactly
+    // the case App.tsx:177 maps to "unavailable". "already_resolved" would assert a server fact
+    // this stub never observed.
+    decideApproval: async () => ({ ok: false, reason: "unavailable" }),
     disposeTriage: async () => ({ ok: false }),
     onboardWorkspace,
     previewPreset: async () => ({ ok: false }),
