@@ -12,7 +12,7 @@
 // PURE + FAIL-CLOSED: missing / unrecognized / malformed input ⇒ DENY. Every
 // decision emits a redaction-safe AuditSignal (refs / hashes / codes only).
 import type { GclProjection, Workspace, VisibilityLevel } from "@sow/contracts";
-import { isVisibilityLevel } from "@sow/contracts";
+import { isVisibilityLevel, WorkspaceIdSchema } from "@sow/contracts";
 import { allowDecision, denyDecision, type PolicyDecision } from "./decision";
 import { buildAuditSignal, POLICY_DENIAL_HEALTH_CLASS } from "./audit-signal";
 
@@ -90,11 +90,74 @@ export const DEFAULT_PROJECTION_TYPE_VISIBILITY_TAXONOMY: ProjectionTypeVisibili
  * refuse on the descriptor it sees), but an ALLOWED projection can still read differently
  * downstream. Filed rather than fixed — closing it means validating and re-emitting.
  *
+ * ⛔ `### 24.81` — THE ENUMERATION THIS RESIDUAL GESTURES AT, PRODUCED RATHER THAN LEFT
+ * IMPLICIT. Named by SYMBOL, tracing `admitProjection`'s ALLOW value
+ * (`packages/knowledge/src/gcl/visibility-gate.ts`'s `decision.value`) forward through
+ * its production callers in `packages/knowledge/src/gcl/projection.ts`:
+ *   • `admitAndPersistProjection` passes `admitted.value` straight to
+ *     `repo.upsert(admitted.value)` — the `GclProjectionRepository` INTERFACE call, not
+ *     yet a concrete read.
+ *   • The interface's two concrete dialect implementations RE-READ the same object via
+ *     ordinary property access, never a descriptor — these ARE the `[[Get]]` consumers
+ *     this note names: `gclProjections.upsert` in
+ *     `packages/db/src/adapters/sqlite/index.ts` (`.values(projection)` +
+ *     `projection.sanitizedPayload` / `projection.sourceRefs`) and its byte-identical
+ *     mirror in `packages/db/src/adapters/postgres/index.ts`.
+ *   • `serveProjection` (same file as `admitAndPersistProjection`) returns `admitted` —
+ *     carrying the identical gate-validated object on its `ok` branch — straight to ITS
+ *     caller. The one named production call site, `resolveApprovedCrossWorkspaceSlice`
+ *     (`apps/worker/src/composition/crossWorkspaceRead.ts`), is a THIRD `[[Get]]`
+ *     consumer IN SOURCE but is NOT production-reachable as of this measurement (that
+ *     file's own doc comment: zero production callers of its own, every real caller is
+ *     in a test file) — a dormant consumer, not a live one.
+ * METHOD: a forward SYMBOL trace from `admitProjection`'s success branch (not a
+ * name-grep, which would miss the interface indirection through
+ * `GclProjectionRepository`), reading each landing site's body to classify it as a
+ * `[[Get]]` re-read (ordinary property access / spread / destructure) vs. a fresh
+ * re-parse (which would close the divergence — see `WorkspaceSchema.parse` two
+ * paragraphs down, which already does this for `Workspace`). `get` /
+ * `listByWorkspace` / `listByVisibility` on the same repository are OUT OF SCOPE for
+ * THIS residual: they read a DIFFERENT object (a freshly `row as GclProjection`-cast
+ * STORED row, not the in-memory gate-validated reference) — a distinct unchecked-cast
+ * hazard tracked separately (`contracts L76`'s remaining `pattern:` census).
+ * BOUNDARY: `packages/knowledge/src`, `packages/db/src`, `apps/worker/src` — SRC ONLY,
+ * no test trees (a test-only reader carries no production risk); traced FORWARD from
+ * this module's own gate, not backward from every `GclProjectionRepository` caller for
+ * unrelated reasons. Taken at commit `16169caf0a0e4575caa7b8faae2e6bbd8ddd2911`.
+ * BOUNDED, not open-ended, WITHIN that boundary: exactly two concrete repository
+ * implementations exist and `admitProjection`'s success value has exactly two
+ * production call sites in `projection.ts`. NOT bounded ACROSS TIME: this exported
+ * `validateProjectionVisibility` is directly callable with an un-Zod-parsed candidate
+ * from anywhere in `packages/policy`'s dependents — `admitProjection`'s Zod stage is
+ * what currently defuses the divergence for every production caller (`GclProjectionSchema
+ * .safeParse` constructs a FRESH plain object from the candidate before this function
+ * ever sees it, so `projection` here already coincides descriptor-vs-`[[Get]]` in
+ * production); a future caller bypassing that stage would need its own enumeration,
+ * not this one.
+ *
  * ⚠ FAIL-CLOSED BEHAVIOUR CHANGE, and it is safe because of what produces a `Workspace`:
  * both production producers terminate in `WorkspaceSchema.parse()` (`defaultWorkspace`,
  * and `packages/db`'s workspace read gate returning `parsed.data`), and a Zod parse emits
  * a fresh plain object with own data properties. An accessor-bearing or class-instance
  * producer would now be DENIED — deliberate for a safety gate, and measured, not assumed.
+ *
+ * ⛔ `### 24.82` leg (a) — NO ENUMERABILITY CHECK, AND THAT IS DELIBERATE, NOT AN
+ * OVERSIGHT. `Object.getOwnPropertyDescriptor` returns a descriptor for an OWN property
+ * regardless of whether it is enumerable, and this function only inspects `"value" in
+ * descriptor` — never `descriptor.enumerable`. So a workspace whose every property was
+ * defined non-enumerable (`Object.keys(w)` returns `[]`) still reads as well-formed here
+ * and still passes. ⚠ ENUMERABILITY GOVERNS ITERATION (`for...in` / `Object.keys()` /
+ * object-spread), NOT PROPERTY EXISTENCE — a security predicate that DENIED a hidden-but-
+ * real property would be refusing based on how the object enumerates, not on what it
+ * contains, which is the wrong axis for a fail-closed gate to key on (the fail-open this
+ * function exists to close, `Object.create({...})`, is about the property being ABSENT
+ * from the object entirely, not merely hidden from enumeration).
+ * ⛔⛔ THE CONSEQUENCE FOR AN AUDITOR: an `Object.keys()`-based sweep of this gate's
+ * admission criterion reaches the WRONG CONCLUSION. `Object.keys(workspace).length === 0`
+ * looks exactly like the `Object.create({...})` fail-open this module closes, and is NOT
+ * — the two are distinguishable only by `Object.getOwnPropertyDescriptor`, never by
+ * `Object.keys`/`for...in`/`JSON.stringify`. Pinned so a future "tighten to require
+ * enumerable properties" change is a visible RED, not a silent behavior change.
  */
 interface OwnDataRead {
   /** `true` only for an OWN DATA property — distinct from one whose value is `undefined`. */
@@ -584,7 +647,29 @@ export function denyDirectCrossWorkspaceRaw(
   // resting on a false premise is a defect whichever way it leans.
   // ⚠ The four `packages/workflows/src` appearances are COMMENTS, not calls
   // (`contracts L104`, use-vs-mention; filed as `#53`).
-  const refs: readonly string[] = [`ref:workspace:from:${from}`, `ref:workspace:to:${to}`];
+  //
+  // ⭐ `### 24.95` — a DIFFERENT fix, for a DIFFERENT reason, at the SAME sink. The residual
+  // above rejects a "shape remedy" AS A REMEDY FOR THAT RESIDUAL (authenticity/entitlement
+  // cannot be proven by shape) and says explicitly not to close that residual on this fix's
+  // strength. This edit is not that: it is bounded-input hygiene at a DURABLE sink, mirroring
+  // `validateProjectionVisibility`'s own `wsId`-vs-`srcId` shape guard two paragraphs of
+  // context up. `WorkspaceIdSchema.safeParse` bounds SHAPE ONLY — a lowercase alphanumeric
+  // slug, hyphen-separated, ≤64 chars (`packages/contracts/src/primitives/zod-brands.ts`).
+  // It is NEVER described as "validated": a credential-shaped id that happens to conform to
+  // the slug shape (`sk-ant-api03-...`) still passes and is still interpolated verbatim —
+  // pinned in `visibility.test.ts`'s task-24.95 describe block so the limitation stays
+  // stated, not assumed (per that schema's own docblock: "is this a credential?" is a
+  // structurally unwinnable denylist question this check does not attempt to answer).
+  // Each side is checked INDEPENDENTLY so a malformed `from` cannot hide a malformed `to`;
+  // on failure the withheld sentinel replaces ONLY that side. The DECISION below (from===to,
+  // link validity, final deny) is computed from the RAW `from`/`to` — unchanged — this
+  // touches only what is RECORDED in the durable ref.
+  const fromShapeBounded = WorkspaceIdSchema.safeParse(from).success;
+  const toShapeBounded = WorkspaceIdSchema.safeParse(to).success;
+  const refs: readonly string[] = [
+    `ref:workspace:from:${fromShapeBounded ? from : "UNVALIDATED"}`,
+    `ref:workspace:to:${toShapeBounded ? to : "UNVALIDATED"}`,
+  ];
 
   // Same-workspace: not a cross-workspace request — the hard denial does not apply.
   if (from === to) {

@@ -269,6 +269,17 @@ describe("validateProjectionVisibility", () => {
 // cross-package line citation rots on the other track's first edit):
 // `admitAndPersistProjection` and `serveProjection` (packages/knowledge/src/gcl/
 // projection.ts) → `admitProjection` → `validateProjectionVisibility`.
+//
+// ⚠ task 24.63 — REVERT-COST NOTE. This describe block is the ONLY coverage of the
+// audit-refs-never-carry-an-unvalidated-workspaceId guarantee IN THIS FILE. Reverting
+// it (or the `readOwnData`/referential-pin fix it pins) drops that coverage back to
+// zero HERE — but NOT project-wide: a SECOND, independent pin lives in a different
+// file, using a DIFFERENT foreign-workspace-id constant so a copy-paste revert of this
+// block's `FOREIGN_SENSITIVE_WS_ID` fixture cannot silently green that one too — file
+// `packages/policy/test/adversarial-regressions.test.ts`, describe "regression #5 — a
+// SECOND, independent candidate-side pin of task 24.45's workspaceId-withholding
+// guarantee (task 24.63)", test "a foreign workspaceId candidate never reaches the
+// audit refs verbatim (24.63)".
 describe("validateProjectionVisibility — audit refs never carry an unvalidated workspaceId (task 24.45)", () => {
   // Sensitive but NOT credential-shaped: no key prefix, no sensitive keyword, no
   // URL userinfo ⇒ it passes all three isRedactionSafe regexes. That is the whole
@@ -484,6 +495,26 @@ describe("validateProjectionVisibility — own-data-property reads (task 24.65 /
     if (d.decision === "allow") expect(d.audit.refs).toContain("ref:workspace:ws-1");
   });
 
+  // task 24.82 leg (a) — the DELIBERATE non-enumerability acceptance, contrasted with the
+  // zero-OWN-property denial above: this workspace has real own properties (so it must
+  // NOT be denied the way the prototype-only fixture above is), they are just hidden from
+  // enumeration. Pins that the gate reads DESCRIPTOR presence, never enumerability.
+  it("a workspace whose properties are OWN but NON-ENUMERABLE is still ACCEPTED — deliberate, not a bypass [spec(§5)]", () => {
+    const w = {} as Workspace;
+    Object.defineProperty(w, "id", { value: "ws-1", enumerable: false, writable: true, configurable: true });
+    Object.defineProperty(w, "defaultVisibility", {
+      value: "full",
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    });
+    // Non-vacuity: confirms the fixture really is non-enumerable — an `Object.keys()`
+    // audit of this exact object would (wrongly) conclude it carries nothing.
+    expect(Object.keys(w)).toEqual([]);
+    const d = validateProjectionVisibility(projection("ws-1", "isolated"), w);
+    expect(d.decision).toBe("allow");
+  });
+
   it("a genuine defaultWorkspace() still allows — the real production producer [spec(§5)]", () => {
     const d = validateProjectionVisibility(projection("ws-1", "isolated"), realWs());
     expect(d.decision).toBe("allow");
@@ -647,6 +678,80 @@ describe("denyDirectCrossWorkspaceRaw (hard denial #2)", () => {
     });
     expect(d.decision).toBe("deny");
     if (d.decision === "deny") expect(d.reason).toBe("DIRECT_CROSS_WORKSPACE_RAW_RETRIEVAL");
+  });
+});
+
+// task 24.95 — bound the `from`/`to` interpolation at the durable ref, all three sink
+// branches. SCOPED CLAIM ONLY (see visibility.ts's residual block just above the fix):
+// `WorkspaceIdSchema` bounds workspace-id SHAPE (a lowercase alphanumeric slug,
+// hyphen-separated, ≤64 chars) before it reaches a durable ref. It is NOT a secret
+// filter and is never described as "validated" — a credential-shaped id that happens to
+// conform to the slug shape is still recorded verbatim (test 2 below pins that
+// limitation so it stays stated, never assumed).
+describe("denyDirectCrossWorkspaceRaw — workspace-id SHAPE bounded before it reaches a durable ref (task 24.95)", () => {
+  // Withheld sentinel per side, mirroring 24.45's `UNVALIDATED` convention.
+  const SENTINEL = "UNVALIDATED";
+
+  it("a_slug_violating_workspace_id_never_reaches_a_durable_ref: a newline-bearing `from` and a 4KB `to` are both withheld [spec(§5/§7)]", () => {
+    const badFrom = "workspace\nid"; // violates WorkspaceIdSchema's `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` regex
+    const badTo = "x".repeat(4096); // exceeds WorkspaceIdSchema's 64-char max — a 4KB id
+    const d = denyDirectCrossWorkspaceRaw({ fromWorkspaceId: badFrom, toWorkspaceId: badTo });
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") {
+      expect(d.reason).toBe("DIRECT_CROSS_WORKSPACE_RAW_RETRIEVAL");
+      // Exact-array pin (not `not.toContain`) — a deleted/hashed/truncated ref would also
+      // pass a bare `not.toContain`, per the 24.45 precedent this mirrors (visibility.test.ts:290).
+      expect(d.audit.refs).toEqual([`ref:workspace:from:${SENTINEL}`, `ref:workspace:to:${SENTINEL}`]);
+      expect(d.audit.refs.join("|")).not.toContain(badFrom);
+      expect(d.audit.refs.join("|")).not.toContain(badTo);
+    }
+  });
+
+  it("a_credential_shaped_id_that_CONFORMS_to_the_brand_is_still_ACCEPTED: WorkspaceIdSchema bounds shape, not secrecy [spec(§5/§7)]", () => {
+    // Credential-shaped (an Anthropic-key-prefix lookalike) yet lowercase-alnum-hyphen —
+    // it CONFORMS to WorkspaceIdSchema's slug shape, so the limitation must be asserted:
+    // shape-conformance is not a secret filter, and this id IS interpolated verbatim.
+    const credentialShapedButConforming = "sk-ant-api03-abc123def456";
+    const d = denyDirectCrossWorkspaceRaw({
+      fromWorkspaceId: credentialShapedButConforming,
+      toWorkspaceId: "ws-b",
+    });
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") {
+      expect(d.audit.refs).toEqual([
+        `ref:workspace:from:${credentialShapedButConforming}`,
+        "ref:workspace:to:ws-b",
+      ]);
+    }
+  });
+
+  // Repeat the shape-violation pin for the OTHER two durable sink branches (:593
+  // same_workspace, :616 permitted_via_link) — a fix on only the denied branch above
+  // cannot green these; each mutates independently.
+  it("shape-invalid ids are withheld from the same_workspace ALLOW ref too [spec(§5/§7)]", () => {
+    const badId = "workspace\nid";
+    const d = denyDirectCrossWorkspaceRaw({ fromWorkspaceId: badId, toWorkspaceId: badId });
+    expect(d.decision).toBe("allow");
+    if (d.decision === "allow") {
+      expect(d.audit.refs).toEqual([`ref:workspace:from:${SENTINEL}`, `ref:workspace:to:${SENTINEL}`]);
+    }
+  });
+
+  it("shape-invalid ids are withheld from the permitted_via_link ALLOW ref too [spec(§5/§7)]", () => {
+    const badFrom = "workspace\nid";
+    const d = denyDirectCrossWorkspaceRaw({
+      fromWorkspaceId: badFrom,
+      toWorkspaceId: "ws-b",
+      approvedLink: { level3: true, recordedApprovalRef: "approval-7" },
+    });
+    expect(d.decision).toBe("allow");
+    if (d.decision === "allow") {
+      expect(d.audit.refs).toEqual([
+        `ref:workspace:from:${SENTINEL}`,
+        "ref:workspace:to:ws-b",
+        "ref:approved-link:level3:recorded",
+      ]);
+    }
   });
 });
 

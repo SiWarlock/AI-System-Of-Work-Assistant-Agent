@@ -15,10 +15,13 @@ import type {
   AgentJob,
   Capability,
   EgressPolicy,
+  GclProjection,
   ProposedAction,
   ProviderMatrix,
   ProviderRoute,
+  Workspace,
 } from "@sow/contracts";
+import { defaultWorkspace } from "@sow/contracts";
 import { egressVeto } from "../src/egress";
 import { isLoopbackEndpoint, processorOfRoute } from "../src/processors";
 import { resolveRoute } from "../src/provider-matrix";
@@ -26,6 +29,7 @@ import { requiresApproval } from "../src/approval-policy";
 import type { ResolvedWorkspacePolicy } from "../src/workspace-policy";
 import { buildAuditSignal, isRedactionSafe } from "../src/audit-signal";
 import { isAllow, isDeny, type PolicyDecision } from "../src/decision";
+import { validateProjectionVisibility } from "../src/visibility";
 
 // ── shared fixtures ──────────────────────────────────────────────────────────
 const employerJob = (over: Partial<AgentJob> = {}): AgentJob => ({
@@ -195,5 +199,49 @@ describe("regression #4 — resolveRoute must fail closed for prototype-member c
   it("a genuinely configured capability still resolves", () => {
     const d = resolveRoute(m, "meeting.close" as Capability);
     expect(isAllow(d)).toBe(true);
+  });
+});
+
+// ── FINDING #5 (task 24.63) — a SECOND, independent candidate-side pin ──────────
+// `validateProjectionVisibility`'s audit-refs-never-carry-an-unvalidated-workspaceId
+// guarantee (task 24.45) previously had its SOLE coverage inside ONE describe block in
+// visibility.test.ts. This is a second pin, deliberately in a DIFFERENT FILE (outside
+// that block's revert blast radius) using a DIFFERENT foreign-workspace-id constant —
+// so a copy-paste revert of visibility.test.ts's `FOREIGN_SENSITIVE_WS_ID` fixture
+// cannot silently green both suites at once. See visibility.test.ts's task-24.45
+// describe block header for the reciprocal pointer back to this test.
+//
+// Deliberately NOT placed in packages/knowledge/test/gcl-projection.test.ts — that
+// file is owned by a wave-1 slice landing in parallel; out of territory here.
+describe("regression #5 — a SECOND, independent candidate-side pin of task 24.45's workspaceId-withholding guarantee (task 24.63)", () => {
+  // Distinct from visibility.test.ts's `FOREIGN_SENSITIVE_WS_ID` on purpose.
+  const SECOND_FOREIGN_WS_ID = "ws-acme-corp-merger-2027";
+  const sourceWorkspace: Workspace = defaultWorkspace({
+    id: "ws-real",
+    name: "Real WS",
+    type: "personal_business",
+    markdownRepoPath: "/repos/real",
+    gbrainBrainId: "brain-real",
+    defaultVisibility: "full",
+  });
+
+  it("a foreign workspaceId candidate never reaches the audit refs verbatim (24.63)", () => {
+    const candidate: GclProjection = {
+      workspaceId: SECOND_FOREIGN_WS_ID,
+      visibilityLevel: "isolated",
+      projectionType: "summary",
+      sanitizedPayload: {},
+      sourceRefs: [],
+    } as unknown as GclProjection;
+    const d = validateProjectionVisibility(candidate, sourceWorkspace);
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") {
+      expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
+      // Exact-array pin, not a bare `not.toContain` — a deleted/hashed/truncated ref
+      // would also pass a `not.toContain` alone.
+      expect(d.audit.refs).toEqual(["ref:workspace:UNVALIDATED", "ref:visibility:isolated"]);
+      expect(d.audit.refs.join("|")).not.toContain(SECOND_FOREIGN_WS_ID);
+      expect(isRedactionSafe(d.audit)).toBe(true);
+    }
   });
 });
