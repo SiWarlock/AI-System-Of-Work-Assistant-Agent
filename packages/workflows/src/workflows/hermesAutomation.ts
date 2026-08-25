@@ -421,8 +421,54 @@ function advance(
   return cursor;
 }
 
-/** Map a Hermes-automation failure/park state to a §16 FailureClass for the sink. */
-function failureClassFor(state: HermesAutomationState): FailureClass {
+// 24.57 — `failureClassFor` used to switch over the FULL 15-member
+// HermesAutomationState alphabet with a bare `default:` returning
+// `write_through_failed`, so a new failure/park state added to
+// HERMES_AUTOMATION_STATES would absorb SILENTLY with no compile error (L134's
+// shape). ⛔ A `default:`→`assertNever` swap over the FULL alphabet is the wrong
+// fix: 9 of the 15 members are happy/positional states (`triggered`, `routed`,
+// `agent_ran`, `validated`, `outputs_built`, `knowledge_committed`,
+// `external_actions_pending`, `external_actions_applied`, `completed`) that
+// legitimately NEVER reach this function — forcing 9 meaningless cases. The
+// honest fix narrows the PARAMETER to the 6-member failure/park subtype below,
+// so `assertNever` below is checking something that can actually be violated.
+const HERMES_AUTOMATION_FAILURE_STATES = [
+  "routing_failed",
+  "provider_failed",
+  "schema_rejected",
+  "write_conflict",
+  "approval_pending",
+  "outbox_retry",
+] as const;
+
+/**
+ * The 6-member failure/park subset of {@link HermesAutomationState} — the ONLY
+ * states {@link failureClassFor} can receive. Declared as a literal subtype
+ * (not `Extract<HermesAutomationState, ...>`) so a typo here is caught the
+ * normal way (an unknown string literal), and the runtime guard below is what
+ * ties it back to the real alphabet.
+ */
+export type HermesAutomationFailureState =
+  (typeof HERMES_AUTOMATION_FAILURE_STATES)[number];
+
+/** Runtime narrowing guard for {@link HermesAutomationFailureState} (24.57). */
+function isHermesAutomationFailureState(
+  state: HermesAutomationState,
+): state is HermesAutomationFailureState {
+  return (HERMES_AUTOMATION_FAILURE_STATES as readonly HermesAutomationState[]).includes(
+    state,
+  );
+}
+
+/**
+ * Map a Hermes-automation failure/park state to a §16 FailureClass for the
+ * sink. EXHAUSTIVE BY DESIGN: the `default` branch's never-assignment (an
+ * exhaustiveness check, matching `defaultSeverityForFailureClass` /
+ * `commitFailureClass`'s convention) makes a FUTURE
+ * `HermesAutomationFailureState` member break tsc HERE — remove a `case` and
+ * `tsc` fails (24.57 done-when, verified empirically).
+ */
+function failureClassFor(state: HermesAutomationFailureState): FailureClass {
   switch (state) {
     case "routing_failed":
       return "conflict_review";
@@ -436,8 +482,11 @@ function failureClassFor(state: HermesAutomationState): FailureClass {
       return "conflict_review";
     case "outbox_retry":
       return "write_through_failed";
-    default:
+    default: {
+      const _exhaustive: never = state;
+      void _exhaustive;
       return "write_through_failed";
+    }
   }
 }
 
@@ -510,7 +559,16 @@ export async function runHermesAutomation(
     // `surface` seam (a named default parameter) rather than inventing a second convention
     // for the same job — this slice's whole point is to stop hermes diverging from the
     // taxonomy its two sibling commit paths already share (L119).
-    failureClass: FailureClass = failureClassFor(failState),
+    //
+    // 24.57 — `failState` stays typed as the FULL `HermesAutomationState` here (every
+    // call site passes the driver's broad `state` cursor, and this closure's contract is
+    // "the state the outcome rests in", not "a failure state"); the runtime guard narrows
+    // it for `failureClassFor` instead of an unsafe `as`. Every REAL call site only ever
+    // passes one of the 6 failure/park states, so the `false` arm is defensive dead code,
+    // not a behavior change — it reproduces the prior default exactly.
+    failureClass: FailureClass = isHermesAutomationFailureState(failState)
+      ? failureClassFor(failState)
+      : "write_through_failed",
   ): Promise<HermesAutomationOutcome> => {
     const failure: MeetingWorkflowFailure = {
       failureClass,

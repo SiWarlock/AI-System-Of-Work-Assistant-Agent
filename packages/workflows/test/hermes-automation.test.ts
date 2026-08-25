@@ -239,6 +239,9 @@ describe("runHermesAutomation — agent rejection", () => {
     expect(outcome.state).toBe("provider_failed");
     expect(commit.writeCount).toBe(0);
     expect(health.surfaced).toHaveLength(1);
+    // 24.57 — pins failureClassFor("provider_failed"), previously uncovered by any
+    // failureClass assertion.
+    expect(health.surfaced[0]?.failureClass).toBe("write_through_failed");
   });
 });
 
@@ -444,6 +447,9 @@ describe("runHermesAutomation — external action gating", () => {
     expect(commit.writeCount).toBe(1);
     expect(propose.createCount).toBe(0);
     expect(health.surfaced).toHaveLength(1);
+    // 24.57 — pins failureClassFor("approval_pending"), previously uncovered by any
+    // failureClass assertion.
+    expect(health.surfaced[0]?.failureClass).toBe("conflict_review");
   });
 
   it("holds to outbox_retry when the external action is held (non-terminal)", async () => {
@@ -456,6 +462,9 @@ describe("runHermesAutomation — external action gating", () => {
 
     expect(outcome.state).toBe("outbox_retry");
     expect(health.surfaced).toHaveLength(1);
+    // 24.57 — pins failureClassFor("outbox_retry"), previously uncovered by any
+    // failureClass assertion.
+    expect(health.surfaced[0]?.failureClass).toBe("write_through_failed");
   });
 });
 
