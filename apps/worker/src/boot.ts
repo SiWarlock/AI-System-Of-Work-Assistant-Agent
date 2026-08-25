@@ -169,6 +169,7 @@ import {
   createIngestRewriteAdapter,
   buildIngestRewriteDeps,
 } from "./composition/living-vault";
+import type { SignalCountsHealth } from "./composition/living-vault";
 import type { CopilotNoteExistsProbe } from "./api/procedures/copilotProposeKnowledge";
 import type { CopilotServingOracle } from "./api/procedures/copilotProvenanceStamp";
 import { selectServingOracleFactory } from "./api/procedures/servingContextLoader";
@@ -1054,6 +1055,54 @@ export function gateLivingVaultRewrite<T>(
   return buildWiring(gate.vaultRoot);
 }
 
+// ── task 13.23 leg B/C — the entity-ref signal-count health sink ──────────────────────────────────────
+
+/** Injected deps for {@link createEntityRefSignalsHealthSink} — mirrors `ReconcileHealthDeps`'s shape. */
+export interface EntityRefSignalsHealthDeps {
+  readonly recordFailure: (failure: HealthFailure) => Promise<unknown>;
+  readonly now: () => string;
+  readonly newAuditId: () => string;
+}
+
+/** A SAFE entity-ref-signals health message — the workspace id + the three counts only; safety rule 7
+ *  (no raw content, no path, no entity name — just the closed-enum `WithheldReason` keys + counts). */
+function entityRefSignalsHealthMessage(health: SignalCountsHealth): string {
+  const withheldParts = Object.entries(health.withheldByReason)
+    .map(([reason, count]) => `${reason}=${count}`)
+    .join(", ");
+  return (
+    `arch_gap:entity-ref-signals — living-vault synthesis withheld entity references for workspace ` +
+    `'${health.workspaceId}' (truncated=${health.truncated}, rejected=${health.rejected}` +
+    (withheldParts.length > 0 ? `, withheld={${withheldParts}})` : ")")
+  );
+}
+
+/**
+ * Task 13.23 leg B/C — the `LivingVaultAdapterDeps.recordEntityRefSignals` sink: reproject the CA-2
+ * entity-ref signal counts (truncated/rejected/withheldByReason) into a `HealthFailure` and route it
+ * through the injected `recordFailure` (boot.ts binds this to `HealthSurface.record` — mint/dedupe/
+ * audit-link, never a raw store put). No existing `FailureClass` member names "entity-ref signals
+ * withheld during synthesis"; `schema_rejection` is the least-wrong member (Lesson 18) — the counts ARE
+ * a form of candidate-data rejection/truncation at the synthesis boundary — carrying a greppable
+ * `arch_gap:entity-ref-signals` token in the message so this is never mistaken for a genuine
+ * schema-rejection producer. `emitEntityRefSignals` (living-vault.ts) already gates the ZERO case (fires
+ * only when at least one count is non-zero/non-empty) AND already best-effort-wraps the sink call (never
+ * escapes as an unhandled rejection) — this sink itself stays UNWRAPPED and lets a genuine
+ * `recordFailure` fault propagate to that existing wrapper, rather than double-swallowing it.
+ */
+export function createEntityRefSignalsHealthSink(
+  deps: EntityRefSignalsHealthDeps,
+): (health: SignalCountsHealth) => Promise<unknown> {
+  return (health: SignalCountsHealth): Promise<unknown> =>
+    deps.recordFailure({
+      failureClass: "schema_rejection",
+      subjectRef: `entity-ref-signals:${health.workspaceId}`,
+      message: entityRefSignalsHealthMessage(health),
+      auditRef: deps.newAuditId() as AuditId,
+      now: deps.now(),
+    });
+}
+
 /**
  * task ARM-RESEARCH-3 — the `bootWorker` call site {@link gateLivingVaultRewrite} never had. Attaches
  * a REAL `SourceLivingVaultPort` onto `ProofSpineParams.livingVault` IFF `gateLivingVaultRewrite`'s two
@@ -1066,11 +1115,20 @@ export function gateLivingVaultRewrite<T>(
  * (buildActivities.ts) then yields an empty plan set, byte-equivalent to today. Never throws (§16):
  * `buildIngestRewriteDeps`/`createIngestRewriteAdapter`/`createLivingVaultPort` are pure constructors,
  * not I/O.
+ *
+ * `recordEntityRefSignals` (task 13.23 leg B, OPTIONAL — 4th param, backward-compatible with every
+ * existing 3-arg call, including `test/boot-living-vault-gating.test.ts`'s) threads
+ * `createLivingVaultPort`'s CA-2 entity-ref signal-count sink through to the ON path only —
+ * `LivingVaultAdapterDeps.recordEntityRefSignals` had nothing constructing it in production (living-
+ * vault.ts's own doc comment). Absent (the default) ⇒ `createLivingVaultPort` gets no sink, byte-
+ * equivalent to pre-13.23-bind. Threading it here (not widening `gateLivingVaultRewrite`'s own
+ * signature) mirrors how `providers` above is already a `withLivingVaultRewrite`-only concern.
  */
 export function withLivingVaultRewrite(
   proofSpineParams: ProofSpineParams | undefined,
   gate: { readonly livingVaultRewrite?: boolean; readonly vaultRoot?: string },
   providers: { readonly gbrain: EntityGbrainReadPort; readonly reason: SynthesisReasonPort } | undefined,
+  recordEntityRefSignals?: (health: SignalCountsHealth) => Promise<unknown>,
 ): ProofSpineParams | undefined {
   if (proofSpineParams === undefined) return proofSpineParams;
   const livingVault = gateLivingVaultRewrite(gate, (vaultRoot) => {
@@ -1082,6 +1140,10 @@ export function withLivingVaultRewrite(
       rewrite: createIngestRewriteAdapter(
         buildIngestRewriteDeps({ gbrain: providers.gbrain, reason: providers.reason, vaultRoot }),
       ),
+      // 13.23 leg B — conditional spread (key ABSENT when unset, never `undefined`-valued) so an
+      // omitted sink stays byte-identical to pre-13.23-bind (mirrors this file's own established
+      // convention for every other optional dep, e.g. `stubExtraction` at L57/L1204).
+      ...(recordEntityRefSignals !== undefined ? { recordEntityRefSignals } : {}),
     });
   });
   if (livingVault === undefined) return proofSpineParams;
@@ -2327,6 +2389,22 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   //   it sees the fully-assembled params, mirroring `withCardTransport`'s own "runs LAST" note.
   //   Three independent OFF-locks (flag + vaultRoot inside `gateLivingVaultRewrite`, providers here) —
   //   the shipped default (all three unset) leaves `proofSpineParams.livingVault` UNSET, byte-equivalent.
+  // task 13.23 leg B/C — bind `recordEntityRefSignals` so the three CA-2 counts reach a HealthItem
+  // (in-process mint, no external effect). `surface` (the `HealthSurface`) is constructed FURTHER DOWN
+  // in this function (after the Temporal-unavailable controller setup) — this mutable holder is the SAME
+  // late-bound pattern `readerHolder` uses a few lines up (1.05) for exactly this "needed now, built
+  // later" ordering; `entityRefSignalsHealthSurfaceHolder.surface` is filled in right after `surface`
+  // exists, well before any real living-vault rewrite could ever invoke this sink.
+  const entityRefSignalsHealthSurfaceHolder: { surface?: HealthSurface } = {};
+  let entityRefSignalsAuditSeq = 0;
+  const recordEntityRefSignalsHealth = createEntityRefSignalsHealthSink({
+    recordFailure: (failure: HealthFailure): Promise<unknown> =>
+      entityRefSignalsHealthSurfaceHolder.surface !== undefined
+        ? entityRefSignalsHealthSurfaceHolder.surface.record(failure)
+        : Promise.resolve(undefined),
+    now: backends.now,
+    newAuditId: (): string => auditId(`entity-ref-signals-audit:${(entityRefSignalsAuditSeq += 1)}`),
+  });
   const proofSpineParams = withLivingVaultRewrite(
     withCardTransport(
       withWriteSecretsAccessor(
@@ -2352,6 +2430,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     ),
     { livingVaultRewrite: config.livingVaultRewrite, vaultRoot: config.vaultRoot },
     config.livingVaultProviders,
+    recordEntityRefSignalsHealth,
   );
 
   // 1.5) DEV data-unlock (OFF by default). When dev-provision specs are supplied, turn
@@ -2945,6 +3024,9 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   const surface: HealthSurface = createHealthSurface(
     createPersistentHealthSurfaceStore(backends.healthItems),
   );
+  // task 13.23 leg B/C — fill the late-bound holder now that `surface` exists (see its construction
+  // site up at the `withLivingVaultRewrite` call for why this is deferred this far).
+  entityRefSignalsHealthSurfaceHolder.surface = surface;
   const degraded: TemporalUnavailabilityController = createTemporalUnavailabilityController({
     surface,
     auditRef: BOOT_AUDIT_REF,
