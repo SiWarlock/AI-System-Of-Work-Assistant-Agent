@@ -110,6 +110,22 @@ function toBoundaryError(e: RevokeEgressAckError): FailureVariant {
  * the OTHER direction (removing the gate from `systemHealth.ts`), or any future
  * revoke path not gated on a successful read.
  * ⛔ NOT grounds to weaken or delete this fence.
+ *
+ * ⭐ `### 24.112` RESOLUTION (safety rules 5 AND 7), SUPERSEDING NOTHING ABOVE — read it as an
+ * ADDENDUM: rule 5 wins THIS sink (the wire response stays unredacted, as argued above), and that
+ * is safe specifically BECAUSE rule 7's real enforcement point for `workspaceId` is NOT this
+ * return value — it is the DURABLE audit sink, one layer down. `composition/egressRevoke.ts`'s
+ * `revokeEgressAck` builds an `AuditRecord` with `refs: [wsId]` and runs it through
+ * `@sow/policy`'s `isRedactionSafe` (which DOES scan `refs`, task 24.45) BEFORE `deps.audit.append`
+ * — a credential-/keyword-shaped `workspaceId` is rejected there (`store_fault`, "audit rejected by
+ * redaction gate"), never persisted raw. So the two sinks divide the obligation: the EPHEMERAL wire
+ * reply stays verbatim (rule 5 — a landed revoke must report success), the DURABLE audit trail
+ * stays gated (rule 7 — a rule-7 log sink never gets an unredacted id). Neither producer needs the
+ * other's behavior; each is responsible for its OWN sink. THE PIN: `egressCommands.test.ts`'s
+ * `revoke_landed_reports_success_workspaceid_unredacted` (this file's projector, wire sink) and
+ * `revoke_credential_shaped_workspaceid_never_reaches_the_durable_audit_sink` (the composition
+ * layer's audit sink) — both RED-verified by mutation, so neither producer can silently regress
+ * into the other's job.
  */
 function toUiSafeEgressStatus(status: UiSafeEgressStatus): UiSafeEgressStatus {
   return {

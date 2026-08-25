@@ -4,12 +4,15 @@
 // get→upsert with the L30 immutable-binding guard), audited (summaries-only), fail-closed. The fail-SAFE
 // direction (turns employer cloud egress OFF). Non-vacuous visibility pin: egressStatus on-before/off-after.
 import { describe, it, expect } from "vitest";
-import { isOk, isErr, validWorkspace } from "@sow/contracts";
+import { ok, isOk, isErr, validWorkspace } from "@sow/contracts";
 import type { Workspace, AuditRecord } from "@sow/contracts";
 import type { WorkspaceConfigRepository, AuditRepository, DbResult, DbError, AuditQuery } from "@sow/db";
 import { createEgressCommandPort } from "../../../src/composition/egressRevoke";
 import { createSystemHealthQueryPort } from "../../../src/boot";
 import type { ProofSpineBackends } from "../../../src/composition/backends";
+import { buildEgressCommandRouter, type EgressCommandPort } from "../../../src/api/procedures/egressCommands";
+import { createCallerFactory, router, type ApiContext } from "../../../src/api/trpc";
+import type { AuthedContext } from "../../../src/api/auth/sessionAuth";
 
 const NOW = "2026-07-26T00:00:00.000Z";
 const nf: DbError = { code: "not_found", message: "nf" } as DbError;
@@ -184,7 +187,11 @@ describe("§9.10-B egress-ack REVOKE command (⚠ rule-5 fail-safe OFF)", () => 
     const audit = memAudit(true); // append faults
     const port = createEgressCommandPort({ workspaceConfig: repo, audit: audit.repo, now: () => NOW });
     const r = await port.revokeEgressAck({ workspaceId: WS_ID });
+    // 24.101 — cause code, not bare falsity: proves this is SPECIFICALLY the audit-append store_fault
+    // (not, say, workspace_not_found or stored_row_schema_violation — the OTHER two codes this port
+    // can return), discriminating it from every other RevokeEgressAckError variant.
     expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.code).toBe("store_fault");
     expect(upserts.length).toBe(1); // the fail-safe OFF is durable (egress already off); the err is the missing trail
   });
 
@@ -219,5 +226,77 @@ describe("§9.10-B egress-ack REVOKE command (⚠ rule-5 fail-safe OFF)", () => 
       expect(JSON.stringify(r.error)).not.toContain("boom"); // the thrown cause never crosses
     }
     expect(throwing.upserts.length).toBe(0);
+  });
+});
+
+// ── `### 24.112` — the wire-sink projector deliberately does NOT redact `workspaceId` (rule 5) ──
+//
+// The unresolved tension this file's `toUiSafeEgressStatus` fence names: copying `systemHealth.ts`'s
+// sink redaction into THIS producer would make a LANDED revoke report FAILURE (the redacted id would
+// diverge from the request, and `apps/desktop`'s `foldStatus` treats a divergence as "couldn't
+// revoke"). This is the pin nothing before this task caught — RED-verified by mutation.
+const AUTHED_CTX: ApiContext = { auth: ok<AuthedContext>({ authenticated: true }) };
+function makeEgressCaller(port: EgressCommandPort) {
+  const appRouter = router({ egress: buildEgressCommandRouter({ egressCommand: port }) });
+  return createCallerFactory(appRouter)(AUTHED_CTX);
+}
+
+describe("§9.10-B / `### 24.112` — the wire-sink projector (rule 5: a landed revoke must report success)", () => {
+  it("revoke_landed_reports_success_workspaceid_unredacted — a landed revoke's workspaceId crosses BYTE-IDENTICAL to the request, even for a credential/keyword-shaped id", async () => {
+    // "client-secret-audit" is the SAME benign-but-keyword-bearing id `systemHealth.test.ts` pins as
+    // getting dropped WHOLE by the canonical redactor (REDACTED_FIELD) — chosen here for the mirror
+    // reason: it is exactly where a naive copy of that redaction would make the served value diverge
+    // from the request, which is the failure mode this pin exists to catch.
+    const landedId = "client-secret-audit";
+    const landedPort: EgressCommandPort = {
+      revokeEgressAck: (input) =>
+        Promise.resolve(
+          ok({
+            workspaceId: input.workspaceId, // the port ECHOES the workspace it actually revoked
+            employerRawEgressAcknowledged: false,
+            zeroEgressOnly: false,
+          }),
+        ),
+    };
+    const res = await makeEgressCaller(landedPort).egress.revokeEgressAck({ workspaceId: landedId });
+    // "reports success" = ok AND byte-identical to the request — the exact comparison
+    // `apps/desktop`'s `foldStatus` performs to decide "landed" vs "posture unavailable" (out of this
+    // package's territory; asserted directly here as the observable proxy).
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value.workspaceId).toBe(landedId);
+  });
+});
+
+// ── `### 24.112` — the DURABLE audit sink independently redaction-gates workspaceId (rule 7) ────
+//
+// The OTHER half of the resolution: rule 5 wins the wire sink above, and that is safe BECAUSE rule
+// 7's real enforcement point for `workspaceId` is the DURABLE audit trail, one layer down
+// (`composition/egressRevoke.ts`), which already runs `isRedactionSafe` (scanning `refs`, task
+// 24.45) before `deps.audit.append`. This pin proves that gate actually fires for exactly the id
+// shape the wire-sink test above deliberately serves unredacted.
+describe("§9.10-B / `### 24.112` — the durable audit sink (rule 7: no un-redacted workspaceId reaches it)", () => {
+  it("revoke_credential_shaped_workspaceid_never_reaches_the_durable_audit_sink — the store flip still lands durably, but the audit append is BLOCKED for a credential/keyword-shaped id", async () => {
+    const credentialShapedId = "client-secret-audit";
+    const credentialShapedWorkspace: Workspace = {
+      ...employerAcked,
+      id: credentialShapedId as Workspace["id"],
+      egressPolicy: {
+        ...employerAcked.egressPolicy,
+        workspaceId: credentialShapedId as Workspace["egressPolicy"]["workspaceId"],
+      },
+    };
+    const { repo, upserts } = memConfig(credentialShapedWorkspace);
+    const audit = memAudit();
+    const port = createEgressCommandPort({ workspaceConfig: repo, audit: audit.repo, now: () => NOW });
+    const r = await port.revokeEgressAck({ workspaceId: credentialShapedId });
+    // The COMMAND overall reports err (the audit gate blocked the trail) — but the fail-safe OFF
+    // flip already landed DURABLY in the store (rule-5 direction preserved: employer raw egress IS
+    // off, even though this specific call also reports the missing audit trail — mirrors
+    // `revoke_audit_fault_fails_closed` above).
+    expect(isErr(r)).toBe(true);
+    expect(upserts.length).toBe(1);
+    expect(upserts[0]!.egressPolicy.employerRawEgressAcknowledged).toBe(false);
+    // THE PIN: the raw credential-shaped id NEVER reached the durable audit sink.
+    expect(audit.appended.length).toBe(0);
   });
 });
