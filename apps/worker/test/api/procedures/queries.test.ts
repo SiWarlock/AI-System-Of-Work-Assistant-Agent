@@ -329,6 +329,71 @@ describe("buildQueryRouter — UI-safe read-model serving (§10/§13)", () => {
     }
   });
 
+  it("dashboard fails CLOSED if ANY card has a multi-line title (24.91 re-validation leak gate — dashboard_cards has no workspace scope to gate ON, so the fields that DO cross must be content-bounded)", async () => {
+    const caller = makeCaller(
+      fakePort({
+        dashboardCards: () =>
+          ok([
+            {
+              cardId: "card_leak",
+              kind: "global_today",
+              title: "line one\nverbatim raw content that leaked",
+              status: "ok",
+              count: 1,
+              updatedAt: "2026-06-30T00:00:00.000Z",
+            },
+          ]),
+      }),
+    );
+    const res = await caller.query.dashboard();
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("DASHBOARD_CARD_SANITIZATION_REJECTED");
+  });
+
+  it("dashboard fails CLOSED if ANY card's title exceeds the 1024-char summary-line cap (over-length is the shape of a smuggled document)", async () => {
+    const caller = makeCaller(
+      fakePort({
+        dashboardCards: () =>
+          ok([
+            {
+              cardId: "card_overlong",
+              kind: "global_today",
+              title: "x".repeat(1025),
+              status: "ok",
+              count: 1,
+              updatedAt: "2026-06-30T00:00:00.000Z",
+            },
+          ]),
+      }),
+    );
+    const res = await caller.query.dashboard();
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("DASHBOARD_CARD_SANITIZATION_REJECTED");
+  });
+
+  it("workspace/project card surfaces run the SAME re-validation leak gate as dashboard (a multi-line title fails CLOSED on the workspace surface too)", async () => {
+    const caller = makeCaller(
+      fakePort({
+        workspaceCards: (workspaceId) =>
+          workspaceId === KNOWN_WORKSPACE
+            ? ok([
+                {
+                  cardId: "card_ws_leak",
+                  kind: "workspace",
+                  title: "line one\nleaked",
+                  status: "ok",
+                  count: 1,
+                  updatedAt: "2026-06-30T00:00:00.000Z",
+                },
+              ])
+            : err(notFoundWorkspace(workspaceId)),
+      }),
+    );
+    const res = await caller.query.workspace({ workspaceId: KNOWN_WORKSPACE });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("DASHBOARD_CARD_SANITIZATION_REJECTED");
+  });
+
   it("workspace query returns UI-safe cards for a KNOWN workspace", async () => {
     const caller = makeCaller(fakePort());
     const res = await caller.query.workspace({ workspaceId: KNOWN_WORKSPACE });

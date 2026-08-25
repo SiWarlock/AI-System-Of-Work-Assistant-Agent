@@ -43,6 +43,7 @@ import {
   type GclProjection,
   type UiSafeApproval,
   type UiSafeDashboardCard,
+  UiSafeDashboardCardSchema,
   type UiSafeWorkflowRunRef,
   type UiSafeGclProjection,
   type UiSafeRecentChange,
@@ -335,11 +336,51 @@ function parseAuditDrillInput(value: unknown): AuditDrillInput {
 
 // ── Internal helpers (pure; map a port Result → a UI-safe projection Result) ──
 
-/** Map a port's card `Result` through the UI-safe dashboard-card projector. */
+/**
+ * 24.91 — the dashboard/workspace/project card content-shape boundary: RE-VALIDATE each
+ * projected card through the frozen `UiSafeDashboardCardSchema` (defense-in-depth over
+ * `readModel.ts`'s `readCardSources`, whose explicit six-field copy proves SHAPE + ATTRIBUTION
+ * only — it structurally excludes `workspaceId`, but places NO bound on what a `title`/`kind`/
+ * `status` string may CONTAIN), fail CLOSED on ANY poisoned row (a multi-line or over-length
+ * `title`, or a non-token `kind`/`status`, is the shape of a smuggled cross-workspace payload —
+ * one bad row rejects the WHOLE result rather than partially serving). Mirrors
+ * {@link sanitizeRecentChanges}.
+ *
+ * This is the "cannot carry cross-workspace CONTENT" half of 24.91's Done-when:
+ * `dashboard_cards` has no `workspaceId` to scope-gate ON (it is a SECOND cross-workspace read
+ * path outside the single GCL Visibility Gate, safety rule 4) — so instead every field that DOES
+ * cross is bounded to a short single-line token/summary, the same structural argument
+ * `GclProjection.sanitizedPayload`'s raw-content gate makes for the ONE sanctioned path, applied
+ * here to this shape's own fields. Redaction-safe: a rejection crosses only a stable code, never
+ * the raw row.
+ */
+function sanitizeDashboardCards(
+  r: Result<readonly UiSafeDashboardCard[], FailureVariant>,
+): Result<readonly UiSafeDashboardCard[], FailureVariant> {
+  if (!r.ok) return r;
+  const out: UiSafeDashboardCard[] = [];
+  for (const card of r.value) {
+    const parsed = UiSafeDashboardCardSchema.safeParse(card);
+    if (!parsed.success) {
+      return err(
+        failure("validation_rejected", "dashboard-card row failed sanitization", {
+          cause: { code: "DASHBOARD_CARD_SANITIZATION_REJECTED" },
+        }),
+      );
+    }
+    out.push(parsed.data);
+  }
+  return ok(out);
+}
+
+/** Map a port's card `Result` through the UI-safe dashboard-card projector, THEN re-validate
+ *  fail-closed (24.91 — {@link sanitizeDashboardCards} closes the content-shape gap the
+ *  read-model layer's field-copy narrowing leaves open). */
 function projectCards(
   r: Result<readonly DashboardCardSource[], FailureVariant>,
 ): Result<readonly UiSafeDashboardCard[], FailureVariant> {
-  return r.ok ? ok(r.value.map(toUiSafeDashboardCard)) : r;
+  if (!r.ok) return r;
+  return sanitizeDashboardCards(ok(r.value.map(toUiSafeDashboardCard)));
 }
 
 /** Map a port's approval `Result` through the UI-safe approval projector.
