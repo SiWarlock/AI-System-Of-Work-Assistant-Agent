@@ -106,6 +106,20 @@
       "when": 1787635800979,
       "tag": "0014_gbrain_sync_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1787684912308,
+      "tag": "0015_cost_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1787684924982,
+      "tag": "0016_health_items_last_read_at",
+      "breakpoints": true
     }
   ]
 }

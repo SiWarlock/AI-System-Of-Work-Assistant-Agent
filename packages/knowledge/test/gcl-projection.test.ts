@@ -288,6 +288,21 @@ describe("persistDenialAudit — the fail-closed redaction-safety gate before an
     expect(auditPersist.calls).toHaveLength(0);
     expect(auditPersist.refusals).toHaveLength(1);
   });
+
+  // task 24.130 deposit 2 — the workspaceId channel above was gated (24.62) through
+  // `auditFieldContainsSecret`, which runs the FULL keyword-inclusive `isRedactionSafe` net
+  // (`SENSITIVE_KEYWORD` included) on a value that is a WORKSPACE NAME, not a secret. A person can
+  // legitimately name a workspace `acme-credential-review` (a project ABOUT credential review, the
+  // exact example `looksLikeCredentialShape`'s own docblock names) without the name carrying a
+  // credential — the bare word "credential" trips `SENSITIVE_KEYWORD` even though the value carries
+  // no credential SHAPE at all (no key-prefix, no URL-userinfo pattern). This is that reachable
+  // false positive: a benign, human-chosen workspace id must be admitted, not refused.
+  it("workspaceId_channel_does_not_false_positive_on_a_benign_keyword_bearing_workspace_name (24.130 deposit 2)", async () => {
+    const auditPersist = new FakeAuditPersistPort();
+    await persistDenialAudit(safeSignal, "acme-credential-review", auditPersist);
+    expect(auditPersist.calls).toHaveLength(1);
+    expect(auditPersist.refusals).toHaveLength(0);
+  });
 });
 
 // ── `### 24.84` fixture leg — a NAMED bypass for a credential-shaped workspace id ─────────────
@@ -648,8 +663,10 @@ describe("serveProjection — re-gate a stored row before it crosses a workspace
     // 2 — ⛔ REVERSED BY `### 24.62`, AND THAT REVERSAL IS THE FIX, NOT A REGRESSION. `### 24.98`
     //     (`124e3f45`) made the SIGNAL side observable (a `schema_rejected` refusal is no longer a
     //     silent no-op). `24.62` adds the second gate: `workspaceId` here IS `legacyId` — the same
-    //     credential-shaped value the fixture models — so it now fails `auditFieldContainsSecret` and
-    //     the WHOLE call is refused before anything is persisted, exactly like an unsafe signal
+    //     credential-shaped value the fixture models — so it now fails the workspaceId-channel gate
+    //     (`looksLikeCredentialShape`, 24.130 deposit 2 — a URL-userinfo credential shape still
+    //     refuses under the identifier-granularity predicate too) and the WHOLE call is refused
+    //     before anything is persisted, exactly like an unsafe signal
     //     always was. The refusal notice fires (task 24.53's observability channel) instead of a
     //     durable write landing.
     expect(auditPersist.calls).toHaveLength(0);

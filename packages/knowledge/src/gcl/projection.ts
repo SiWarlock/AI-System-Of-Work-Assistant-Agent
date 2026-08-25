@@ -22,12 +22,18 @@ import type { ProjectionTypeVisibilityTaxonomy, AuditSignal } from "@sow/policy"
 import { isRedactionSafe } from "@sow/policy";
 import { admitProjection, auditOf, type GclGateError, type GclAdmitResult } from "./visibility-gate";
 // task 24.62 — `workspaceId` is `persistDenialAudit`'s SECOND data channel and `isRedactionSafe`
-// only ever scanned the first (`audit`). `auditFieldContainsSecret` is the same package's own
-// AUDIT-granularity predicate (`knowledge-writer/secret-scan.ts`) — "would this string be safe as
-// an audit field?" — already reused there for exactly this shape of question (a bare short string,
-// not a whole `AuditSignal`). Reusing it here keeps the credential-shape nets at their single home
-// instead of re-deriving a second copy in this file.
-import { auditFieldContainsSecret } from "../knowledge-writer/secret-scan";
+// only ever scanned the first (`audit`).
+// ⛔ CORRECTED task 24.130 deposit 2 — this used to reuse `auditFieldContainsSecret`
+// (`knowledge-writer/secret-scan.ts`), the AUDIT-granularity predicate: it runs the FULL
+// keyword-inclusive `isRedactionSafe` net (`SENSITIVE_KEYWORD` included) on the probe. `workspaceId`
+// here is a WORKSPACE NAME, not an audit ref — a human-chosen identifier, not a machine-generated
+// one — and a person can legitimately name a workspace `acme-credential-review` without the name
+// carrying a credential (see `@sow/domain`'s `looksLikeCredentialShape` docblock, which names this
+// exact identifier-granularity distinction). The keyword arm made that a false-positive refusal.
+// `looksLikeCredentialShape` is the identifier-granularity predicate: the same credential-SHAPE nets
+// (key-prefix, URL-userinfo), `SENSITIVE_KEYWORD` deliberately excluded. A genuine credential shape
+// still refuses; a bare keyword in an ordinary name no longer does.
+import { looksLikeCredentialShape } from "@sow/domain";
 
 /** Enumerable failure reasons for a gated persist (§16 closed set). */
 export type GclPersistError =
@@ -109,15 +115,19 @@ export async function persistDenialAudit(
   // task 24.62 — TWO data channels reach `auditPersist.persistDenial`, and BOTH must clear a
   // redaction check before anything durable or logged happens (mirroring 24.45's own remedy:
   // validate-or-omit, never pass-through unscanned). `isRedactionSafe(audit)` covers the first;
-  // `auditFieldContainsSecret(workspaceId)` covers the second. ⛔ `workspaceId` is ONLY ever the
+  // `looksLikeCredentialShape(workspaceId)` covers the second. ⛔ `workspaceId` is ONLY ever the
   // gate's own `sourceWorkspace.id` (never candidate-derived — see the `serve_projection_denial_
   // persists_under_sourceWorkspace_id_never_the_stored_rows_own_value` pin), but a workspace RECORD
   // can still carry a credential-shaped id (`WorkspaceIdSchema` is a well-formedness rule, not a
   // credential detector — `zod-brands.ts` says so of itself), so trusted PROVENANCE is still not
-  // validated SHAPE (`24.55`'s mistake, one layer down). Combined with the signal check below (a
-  // single refusal path, one `onRefused` call) rather than two separate gates, so a caller that
-  // fails EITHER channel sees the same fail-closed behavior.
-  if (!isRedactionSafe(audit) || auditFieldContainsSecret(workspaceId)) {
+  // validated SHAPE (`24.55`'s mistake, one layer down).
+  // ⛔ CORRECTED task 24.130 deposit 2 — a workspace id is a human-chosen NAME, not a machine-
+  // generated audit ref, so it gets the identifier-granularity predicate (credential SHAPE only)
+  // rather than the audit-granularity one (which also trips on a bare `SENSITIVE_KEYWORD` — see the
+  // import comment above). Combined with the signal check below (a single refusal path, one
+  // `onRefused` call) rather than two separate gates, so a caller that fails EITHER channel sees the
+  // same fail-closed behavior.
+  if (!isRedactionSafe(audit) || looksLikeCredentialShape(workspaceId)) {
     // task 24.53 — a refused signal WAS indistinguishable from one never produced. The notice fires
     // with no arguments; see `GclAuditPersistPort.onRefused` for why it must stay that way.
     // ⚠ PARITY, NOT A CLAIM THAT ANYONE IS WATCHING (contracts L82): this makes the refusal EMITTABLE, matching
