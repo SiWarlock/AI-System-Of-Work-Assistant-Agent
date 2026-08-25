@@ -21,7 +21,7 @@ import type {
   LinkMutation,
   FrontmatterPatch,
 } from "@sow/contracts";
-import type { EntityCandidate, EntityGbrainReadPort } from "./entity-resolver";
+import type { EntityCandidate, EntityGbrainReadPort, WithheldReason } from "./entity-resolver";
 import { planSynthesis, type SynthesisReasonPort, type SynthesisSectionPort } from "./planner";
 import { admitPlanMutations, rebuildPlanWithMutations, type GroundedPathRefusal } from "./grounded-path";
 
@@ -95,6 +95,28 @@ export interface IngestRewriteReceipt {
    * a poisoned one. Dormant — the consumer is 13.8m-B (worker).
    */
   readonly refusals: readonly GroundedPathRefusal[];
+  /**
+   * 13.23 leg B (producer) — forwarded verbatim from this run's SINGLE `planSynthesis` call's
+   * `SynthesisOutcome.entityRefsTruncated` (planner.ts). Count of MODEL-supplied `candidate.entityRefs`
+   * dropped by the `MAX_MODEL_ENTITY_REFS` cap. 0 means nothing was truncated. Never a ref/name/path
+   * (rule 7).
+   */
+  readonly entityRefsTruncated: number;
+  /**
+   * 13.23 leg B (producer) — forwarded verbatim from `SynthesisOutcome.entityRefsRejected`. Count of
+   * MODEL-supplied `candidate.entityRefs` rejected by `EntityRefSchema` (§DEC-CANDGATE leg 2, REQ-S-006)
+   * within the capped set. 0 means nothing was rejected. Deliberately disjoint from `entityRefsTruncated`
+   * (never merged) — a reader can tell which failure class fired. Never a ref/name/path (rule 7).
+   */
+  readonly entityRefsRejected: number;
+  /**
+   * 13.23 leg B (producer) — forwarded verbatim from `SynthesisOutcome.entityRefsWithheldByReason`: a
+   * per-code count of `resolveEntity`'s `WithheldReason`s this run, sparse (an absent key means that
+   * code never fired). Code-ONLY (rule 7) — `WithheldReason` is a closed literal union, so the key
+   * TYPE makes carrying a free string structurally impossible. Dormant — the consumer is the worker
+   * health sink (13.23 leg B consumer, CA-3), NOT the audit trail (24.7's scope).
+   */
+  readonly entityRefsWithheldByReason: Readonly<Partial<Record<WithheldReason, number>>>;
 }
 
 const clamp01 = (n: unknown): number => (typeof n === "number" && Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0);
@@ -113,7 +135,26 @@ export async function rewriteVaultForSource(
   // hostile run that hijacks paths and then trips a throwing port becomes byte-identical to a benign
   // empty one — destroying exactly the distinction 13.8m-A exists to create.
   const refusals: GroundedPathRefusal[] = [];
-  const empty = (): IngestRewriteReceipt => ({ runId, plans: [], planIds: [], autoCount: 0, proposeCount: 0, refusals });
+  // 13.23 leg B (producer) — hoisted ABOVE the try for the SAME reason as `refusals`: a fault AFTER
+  // `planSynthesis` returns (e.g. a throwing `newPlanId` inside `mergeStructural`) must not discard the
+  // entity-ref signal counts it already computed, or a poisoned run that trips a later fault becomes
+  // byte-identical to a benign empty one on these three channels too. Assigned (not accumulated in a
+  // loop) — this function makes exactly ONE `planSynthesis` call per run (L40), so there is only ever
+  // one `SynthesisOutcome` to forward.
+  let entityRefsTruncated = 0;
+  let entityRefsRejected = 0;
+  let entityRefsWithheldByReason: Readonly<Partial<Record<WithheldReason, number>>> = {};
+  const empty = (): IngestRewriteReceipt => ({
+    runId,
+    plans: [],
+    planIds: [],
+    autoCount: 0,
+    proposeCount: 0,
+    refusals,
+    entityRefsTruncated,
+    entityRefsRejected,
+    entityRefsWithheldByReason,
+  });
   if (input == null || typeof input !== "object") return empty();
 
   try {
@@ -129,6 +170,13 @@ export async function rewriteVaultForSource(
       },
       { gbrain: deps.gbrain, reason: deps.reason, sections: deps.sections, newPlanId: deps.newPlanId },
     );
+    // 13.23 leg B (producer) — forward this run's entity-ref signal counts verbatim, BEFORE admission
+    // runs, so a later fault (mergeStructural's fresh-plan newPlanId call) still has them hoisted above.
+    if (res.ok) {
+      entityRefsTruncated = res.value.entityRefsTruncated;
+      entityRefsRejected = res.value.entityRefsRejected;
+      entityRefsWithheldByReason = res.value.entityRefsWithheldByReason;
+    }
     // 13.8l — ADMIT the model-proposed targets (the 4th door to 13.8k's invariant). Placed HERE, once:
     // `touchedNotePaths` and `mergeStructural` both read `semantic`, so a single admission gives the
     // KMP *and* the structural writer's context the guarantee, with no second enforcement point.
@@ -158,9 +206,12 @@ export async function rewriteVaultForSource(
       autoCount: plans.filter((p) => p.requiresApproval === false).length,
       proposeCount: plans.filter((p) => p.requiresApproval === true).length,
       refusals,
+      entityRefsTruncated,
+      entityRefsRejected,
+      entityRefsWithheldByReason,
     };
   } catch {
-    return empty(); // keeps any refusals accumulated before the fault
+    return empty(); // keeps any refusals + entity-ref signal counts accumulated before the fault
   }
 }
 

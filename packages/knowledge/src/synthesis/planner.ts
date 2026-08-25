@@ -168,11 +168,14 @@ export interface SynthesisOutcome {
    * NOT flow through here — pinned by
    * `the_meeting_rewrite_direct_call_site_does_NOT_flow_through_this_channel`. Tracked as leg C.
    *
-   * ⛔ DORMANT — leg B (13.23, worker) is the consumer: it surfaces this map (alongside
-   * `entityRefsTruncated`/`entityRefsRejected`, both ALSO produced-and-dropped today) to System Health
-   * via the driver's `deps.health.surface`, NOT to the audit trail (24.7's scope). Until leg B lands,
-   * this field is produced-and-unread by every caller of `planSynthesis` — a NAMED dormant seam, not a
-   * silent one (L106).
+   * ⛔ STILL DORMANT, but the PRODUCER half of leg B (13.23) has landed: `rewriteVaultForSource`
+   * (`ingest-rewrite.ts`, its sole production caller) now forwards this map verbatim onto
+   * `IngestRewriteReceipt.entityRefsWithheldByReason`, alongside `entityRefsTruncated`/
+   * `entityRefsRejected` (also forwarded, no longer produced-and-dropped at that boundary). The
+   * remaining gap is the CONSUMER: a worker health sink that surfaces the receipt's three fields to
+   * System Health via the driver's `deps.health.surface`, NOT the audit trail (24.7's scope) — until
+   * that sink lands, nothing yet READS the receipt's copy, so this is still a NAMED dormant seam
+   * (L106), just one hop further along than before.
    */
   readonly entityRefsWithheldByReason: Readonly<Partial<Record<WithheldReason, number>>>;
 }

@@ -6,14 +6,16 @@ import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { classifyImporterSource, scanProductionImporters, ungatedImporters } from "./support/dormancy-pin";
-import { ok, workspaceId } from "@sow/contracts";
+import { ok, err, workspaceId } from "@sow/contracts";
 import type { Result, ProvenanceOrigin } from "@sow/contracts";
 import type { EntityCandidate, EntityGbrainReadPort, EntityReadFault } from "../src/synthesis/entity-resolver";
+import { MAX_MODEL_ENTITY_REFS } from "../src/synthesis/planner";
 import type { SynthesisCandidate, SynthesisSectionPort, NoteRegionDescriptor } from "../src/synthesis/planner";
 import {
   rewriteVaultForSource,
   type IngestRewriteInput,
   type IngestRewriteDeps,
+  type IngestRewriteReceipt,
   type StructuralFileWriterPort,
   type StructuralMutations,
 } from "../src/synthesis/ingest-rewrite";
@@ -377,5 +379,109 @@ describe("rewriteVaultForSource — a refusal is observable and carries no conte
     expect(serialized).not.toContain("index.md");
     // every entry is one of the two known code-only reasons
     for (const r of receipt.refusals) expect(["structural_surface", "unsafe_shape"]).toContain(r);
+  });
+});
+
+// ── 13.23 leg B — PRODUCER half: the three entity-ref signal counts survive onto the receipt ────
+//
+// Leg A (planner.ts) already produces `entityRefsTruncated`/`entityRefsRejected`/
+// `entityRefsWithheldByReason` on `SynthesisOutcome`; until this slice they died at the
+// `planSynthesis` call inside `rewriteVaultForSource` (`IngestRewriteReceipt` never declared the
+// fields). This is the producer half — CA-3 (worker health sink) is the consumer and depends on it.
+
+describe("rewriteVaultForSource — the three entity-ref signal counts reach the receipt (13.23 leg B producer)", () => {
+  it("receipt_carries_entity_ref_signal_counts — a poisoned run reports non-zero on all three channels", async () => {
+    const port = fakeGbrain({ Ghost: () => err({ code: "read_fault" }) }); // ⇒ withheld gbrain_unavailable
+    // 3 filler refs beyond the cap (⇒ truncated>0), 1 malformed (blank name ⇒ rejected>0, within cap),
+    // 1 "Ghost" (⇒ withheld gbrain_unavailable>0, within cap). None of these resolve via create_stub,
+    // so no side-effect KMP content is produced — this test is purely about the signal counts.
+    const entityRefs = [
+      { name: "", kind: "person" as const }, // schema-invalid (blank name) ⇒ rejected
+      { name: "Ghost", kind: "person" as const }, // gbrain err ⇒ withheld gbrain_unavailable
+      ...Array.from({ length: MAX_MODEL_ENTITY_REFS + 1 }, (_, i) => ({ name: `Filler-${i}`, kind: "person" as const })),
+    ];
+    const candidate: SynthesisCandidate = { entityRefs };
+    const receipt = await rewriteVaultForSource(baseInput(), mkDeps({ gbrain: port, reason: fakeReason(candidate) }));
+    expect(receipt.entityRefsTruncated).toBeGreaterThan(0);
+    expect(receipt.entityRefsRejected).toBeGreaterThan(0);
+    expect(Object.keys(receipt.entityRefsWithheldByReason).length).toBeGreaterThanOrEqual(1);
+    expect(receipt.entityRefsWithheldByReason.gbrain_unavailable).toBeGreaterThanOrEqual(1);
+  });
+
+  it("benign_run_surfaces_zero_signals — the mandatory positive control: a clean run is zero on all three, in both directions", async () => {
+    // "Jane Doe" resolves via create_stub (default gbrain returns ok([]) for any unlisted name) —
+    // never truncated, never rejected, never withheld.
+    const candidate: SynthesisCandidate = { entityRefs: [{ name: "Jane Doe", kind: "person" }] };
+    const receipt = await rewriteVaultForSource(baseInput(), mkDeps({ reason: fakeReason(candidate) }));
+    expect(receipt.entityRefsTruncated).toBe(0);
+    expect(receipt.entityRefsRejected).toBe(0);
+    expect(Object.keys(receipt.entityRefsWithheldByReason).length).toBe(0);
+  });
+
+  it("counts_survive_a_post_admission_fault — a throwing newPlanId AFTER planSynthesis returns must not discard the counts already computed", async () => {
+    // Mirrors 13.8m-A's `refusals_survive_a_late_fault` guarantee for the entity-ref signal counts.
+    // Neither entityRef resolves via create_stub (one rejected before resolveEntity runs, one
+    // withheld), so autoM/proposeM stay empty inside planSynthesis ⇒ `deps.newPlanId` is NEVER called
+    // there — the ONLY call happens in `mergeStructural`'s fresh-auto-plan branch (structural
+    // mutations present, no semantic auto plan to merge into), directly inside `rewriteVaultForSource`'s
+    // own try block, so throwing there routes straight to the OUTER catch (`empty()`).
+    const port = fakeGbrain({ Ghost: () => err({ code: "read_fault" }) });
+    const candidate: SynthesisCandidate = {
+      entityRefs: [
+        { name: "", kind: "person" }, // rejected
+        { name: "Ghost", kind: "person" }, // withheld gbrain_unavailable
+      ],
+    };
+    const receipt = await rewriteVaultForSource(
+      baseInput(),
+      mkDeps({
+        gbrain: port,
+        reason: fakeReason(candidate),
+        structural: fakeStructural({ patches: [{ path: "index.md", regionId: "people", newBody: "- [[x]]" }] }),
+        newPlanId: () => {
+          throw new Error("boom");
+        },
+      }),
+    );
+    expect(receipt.plans).toEqual([]); // the fault fails safe: no plans
+    expect(receipt.entityRefsRejected).toBe(1); // NOT reset by the later fault
+    expect(receipt.entityRefsWithheldByReason).toEqual({ gbrain_unavailable: 1 }); // NOT reset by the later fault
+  });
+
+  it("signal_counts_are_numbers_and_codes_only — rule 7: no path/slug/name/ref on any of the three channels", async () => {
+    // Compile-level: WithheldReason is a closed literal union, so the map's KEY TYPE makes carrying a
+    // free string structurally impossible (excess-property checking on the object literal below).
+    // @ts-expect-error — "some_entity_name_or_path" is not a member of WithheldReason.
+    const illegal: IngestRewriteReceipt["entityRefsWithheldByReason"] = { some_entity_name_or_path: 1 };
+    void illegal;
+
+    // Runtime: drive a real run populating all three channels, then assert every value is a finite
+    // number, every withheld key resolves to a genuine WithheldReason member (never a smuggled
+    // string), and the serialized three-field slice carries no path/name text.
+    const port = fakeGbrain({ Ghost: () => err({ code: "read_fault" }) });
+    const candidate: SynthesisCandidate = {
+      entityRefs: [
+        { name: "", kind: "person" },
+        { name: "Ghost", kind: "person" },
+        ...Array.from({ length: MAX_MODEL_ENTITY_REFS + 1 }, (_, i) => ({ name: `Filler-${i}`, kind: "person" as const })),
+      ],
+    };
+    const receipt = await rewriteVaultForSource(baseInput(), mkDeps({ gbrain: port, reason: fakeReason(candidate) }));
+    expect(Number.isFinite(receipt.entityRefsTruncated)).toBe(true);
+    expect(Number.isFinite(receipt.entityRefsRejected)).toBe(true);
+    // NON-VACUITY: the map must actually carry something, else the loop below checks nothing.
+    expect(Object.keys(receipt.entityRefsWithheldByReason)).toEqual(["gbrain_unavailable"]);
+    for (const [code, count] of Object.entries(receipt.entityRefsWithheldByReason)) {
+      expect(code).toBe("gbrain_unavailable"); // the only genuine WithheldReason member this run produced
+      expect(Number.isFinite(count)).toBe(true);
+    }
+    const signalsOnly = JSON.stringify({
+      entityRefsTruncated: receipt.entityRefsTruncated,
+      entityRefsRejected: receipt.entityRefsRejected,
+      entityRefsWithheldByReason: receipt.entityRefsWithheldByReason,
+    });
+    expect(signalsOnly).not.toMatch(/\.md/i); // no note path
+    expect(signalsOnly).not.toContain("Ghost"); // no entity name
+    expect(signalsOnly).not.toContain("Filler"); // no entity name
   });
 });
