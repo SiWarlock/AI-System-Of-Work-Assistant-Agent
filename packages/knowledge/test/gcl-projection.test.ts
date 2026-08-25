@@ -9,8 +9,34 @@ import type { DbError, DbResult } from "@sow/db";
 import type { ProjectionTypeVisibilityTaxonomy, AuditSignal } from "@sow/policy";
 import { buildAuditSignal, isRedactionSafe } from "@sow/policy";
 // The CANONICAL string-form redaction predicate (`packages/domain/src/redaction/redact.ts`).
-// Aliased: `@sow/policy`'s signal-form above shares the name. Both delegate to the SAME
-// `redaction-rules.ts` `looksUnsafe`, so using it here adds no second home for the predicate.
+// Aliased: `@sow/policy`'s signal-form above shares the name.
+//
+// ⛔ CORRECTED (task 24.121) — THE PRIOR COMMENT HERE CLAIMED "Both delegate to the
+// SAME `redaction-rules.ts` `looksUnsafe`". FALSE when written: `@sow/policy`'s
+// `isRedactionSafe` (imported above from "@sow/policy") wrapped an
+// INDEPENDENTLY-MAINTAINED, byte-identical COPY of domain's credential-detection
+// nets in `packages/policy/src/audit-signal.ts` — a second hand-maintained home
+// for the predicate, not a delegation to this one.
+//
+// ⭐ STATE AS OF task 24.110 (landed the same session as this correction): policy's
+// `looksUnsafe` now runs `domainLooksUnsafe(s) || <policy's own nets, un-stripped>`
+// — a UNION, not a delegation. It genuinely CONSULTS this module's `looksUnsafe`
+// now (so "adds no second home" is closer to true in the refusal direction than it
+// was), but it is still NOT the same function: policy's own local nets remain and
+// independently refuse values domain's `looksUnsafe` alone would not (see
+// `packages/policy/src/audit-signal.ts`'s own extensive comment on the (C') union
+// and its residual marker-keyword divergence). "Delegates to" overclaims a
+// same-function identity that does not exist even today.
+//
+// OWNER OF CLOSING THE REMAINING GAP: task 24.110 (its (B)-wholesale-delegation
+// axis is explicitly still BLOCKED, not this correction's to resolve).
+//
+// ⛔ RE-CHECK TRIGGER, NOT A RE-GREEN: if a future slice makes `@sow/policy`'s
+// `isRedactionSafe` a genuine delegation (calling `@sow/domain`'s `looksUnsafe`
+// directly with no local nets of its own, i.e. (B) landing), THIS COMMENT — and the
+// "one home, not two" framing on the hostile-fixture assertion below — must be
+// RE-DERIVED from the real source at that time, never simply restored to its
+// pre-24.121 wording because the destination claim happens to have become true.
 import { isRedactionSafe as isValueRedactionSafe } from "@sow/domain";
 import {
   admitAndPersistProjection,
@@ -633,9 +659,17 @@ describe("serveProjection — re-gate a stored row before it crosses a workspace
     //     value's SHAPE, so `"ws.acme"` / `"Ws-Acme"` / `"ws acme"` satisfy all three while being
     //     entirely benign — this test was NAMED for hostility and did not test it (security review;
     //     `contracts L82` in miniature, inside the test written to prevent exactly that).
-    //     ⭐ Asserted over the CANONICAL predicate, never a copy: `@sow/domain`'s string-form
-    //     `isRedactionSafe` delegates to the same `redaction-rules.ts` `looksUnsafe` that the
-    //     `@sow/policy` signal-form used above delegates to ⇒ one home, not two.
+    //     ⭐ Asserted over the CANONICAL predicate, `@sow/domain`'s own string-form
+    //     `isRedactionSafe`, which IS its `redaction-rules.ts` `looksUnsafe` (no copy — this
+    //     is the producer). ⛔ CORRECTED (task 24.121): the prior wording here claimed
+    //     `@sow/policy`'s signal-form "delegates to" the SAME function, i.e. "one home, not
+    //     two" — FALSE when written (policy carried an independently-maintained copy) and
+    //     STILL NOT TRUE today even after task 24.110 landed the same session: policy's
+    //     `looksUnsafe` now ORs domain's verdict with its own un-stripped local nets — it
+    //     CONSULTS this predicate, it does not delegate to it. See the corrected comment on
+    //     the `isRedactionSafe as isValueRedactionSafe` import above for the full state +
+    //     the re-check trigger (24.110 owns closing the gap; if it ever lands a genuine
+    //     delegation, THIS line's claim must be re-derived, not re-greened).
     expect(isValueRedactionSafe(CREDENTIAL_SHAPED_WS_ID)).toBe(false);
     // 5 — ⛔ (A)'s FIXTURE CARRIES THE WHOLE FINDING AND MUST BE PINNED THE SAME WAY. Its premise is
     //     a CONJUNCTION — slug-valid AND credential-shaped — and each half is load-bearing for a
