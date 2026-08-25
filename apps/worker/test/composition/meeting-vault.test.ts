@@ -48,6 +48,12 @@ function fixtureReceipt(over: Partial<MeetingRewriteReceipt> = {}): MeetingRewri
     meetingNoteLinkMutations: [],
     groundedPaths: [],
     refusals: [],
+    // 13.23 leg B / KNOW-3 — the per-`WithheldReason` count of this run's own DIRECT `resolveEntity`
+    // withholds. SPARSE by contract: `{}` is what the real producer emits when nothing was withheld
+    // (`Object.fromEntries` over an empty Map), so this is the genuine no-withhold receipt, not a
+    // placeholder. It is also the honest fixture for THIS file: the adapter under test narrows the
+    // receipt to exactly `{meetingNoteLinkMutations}`, so no case here reads this channel.
+    directEntityRefsWithheldByReason: {},
     ...over,
   };
 }
