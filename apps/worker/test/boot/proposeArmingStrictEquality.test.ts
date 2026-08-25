@@ -60,3 +60,37 @@ describe("propose / serving-oracle arming — strict `=== true` regression guard
     expect(loaderSource).toMatch(/if\s*\(\s*sel\.goLiveArmed\s*===\s*true/);
   });
 });
+
+// ── task 24.2 — the FOUR previously-UNCOVERED arming knobs (SAME source-anchored methodology as
+// above; each has the SAME "no lightweight runtime seam" property — an inline check with no pure-fn
+// wrapper — EXCEPT writeTransportArmed, which additionally gets a real behavioral pin below since it
+// now feeds gateProposeArming, a genuine pure fn). Do NOT re-test copilotProvenanceStamping /
+// copilotServingOracleGoLive / goLiveArmed (covered above) or apps/worker/test/boot-auto-ingest-gating.test.ts:104.
+describe("propose / gbrain / write-transport arming — strict `=== true` regression guard (task 24.2)", () => {
+  it("boot maps copilotProposeMode with strict `=== true` (the proposeEnabled mapping)", () => {
+    // Anchor on the `proposeEnabled:` key so this pins THIS specific mapping, not a stray other read
+    // of `config.copilotProposeMode` elsewhere in the file.
+    expect(bootSource).toMatch(
+      /proposeEnabled:\s*proposeArming\.propose\s*===\s*"ON"\s*&&\s*config\.copilotProposeMode\s*===\s*true/,
+    );
+  });
+
+  it("boot maps copilotProposeKnowledge with strict `=== true` (the knowledgeProposeEnabled mapping)", () => {
+    expect(bootSource).toMatch(
+      /knowledgeProposeEnabled:\s*proposeArming\.propose\s*===\s*"ON"\s*&&\s*config\.copilotProposeKnowledge\s*===\s*true/,
+    );
+  });
+
+  it("boot gates the gbrain READ seam (copilotGbrainRetrieval) with strict `=== true` (gbrainExecFactory)", () => {
+    // Anchor on the `gbrainExecFactory` construction so this pins the SPECIFIC read-seam gate, not any
+    // other `copilotGbrainRetrieval` mention.
+    const idx = bootSource.indexOf("const gbrainExecFactory: (() => GbrainQueryExec) | undefined =");
+    expect(idx).toBeGreaterThan(-1);
+    const body = bootSource.slice(idx, idx + 200);
+    expect(body).toMatch(/config\.copilotGbrainRetrieval\s*===\s*true/);
+  });
+
+  it("boot gates the write-transport arming (writeTransportArmed) with strict `=== true` (task 22.1 precondition 4)", () => {
+    expect(bootSource).toMatch(/writeTransportArmed:\s*config\.writeTransport\?\.enabled\s*===\s*true/);
+  });
+});
