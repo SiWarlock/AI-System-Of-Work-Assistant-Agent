@@ -27,14 +27,14 @@
 // operation strings cannot inject unsafe characters into the key). The distinct
 // version tag + `idem_` prefix keep idempotency keys from ever colliding with a
 // canonicalObjectKey (`cok_`) built from structurally-similar inputs.
-import { createHash } from "node:crypto";
-import { normalizeIdentity } from "./canonical-key";
+//
+// R7-c: shares the PURE `sha256Hex` from `./canonical-key.ts` (no
+// `node:crypto`) so this module stays reachable from the @sow/domain barrel
+// without dragging a Node built-in into it — see that module's header for why
+// the hash lives there instead of a standalone file.
+import { normalizeIdentity, sha256Hex } from "./canonical-key";
 
 const IDEMPOTENCY_KEY_VERSION = "sow.idem.v1";
-
-function sha256hex(preimage: string): string {
-  return createHash("sha256").update(preimage, "utf8").digest("hex");
-}
 
 /**
  * Build the deterministic, replay-stable idempotencyKey for `operation` over its
@@ -47,5 +47,5 @@ export function buildIdempotencyKey(input: {
   const operation = input.operation.trim().toLowerCase();
   const entries = normalizeIdentity(input.identity);
   const preimage = JSON.stringify([IDEMPOTENCY_KEY_VERSION, operation, entries]);
-  return `idem_${sha256hex(preimage)}`;
+  return `idem_${sha256Hex(preimage)}`;
 }
