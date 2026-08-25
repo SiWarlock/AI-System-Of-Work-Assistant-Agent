@@ -165,6 +165,13 @@ describe("living-vault refusal audit (13.8m-B)", () => {
       autoCount: 0,
       proposeCount: 0,
       refusals: ["structural_surface", "unsafe_shape"],
+      // 13.23 leg B (producer) added these three REQUIRED fields to IngestRewriteReceipt after this
+      // test was written; this test exercises `refusals` only, so they carry benign zero/empty
+      // values here (a compile-break-forced touch, not a scope change — see CA-3's living-vault
+      // -health-signals.test.ts for the tests that pin these fields' behavior).
+      entityRefsTruncated: 0,
+      entityRefsRejected: 0,
+      entityRefsWithheldByReason: {},
     } as Awaited<ReturnType<typeof rewriteVaultForSource>>);
 
     const adapter = createIngestRewriteAdapter(

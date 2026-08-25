@@ -25,7 +25,7 @@ import { dirname, resolve, sep } from "node:path";
 import { ok, err, isOk } from "@sow/contracts";
 import type { KnowledgeMutationPlan, Result, WorkspaceId } from "@sow/contracts";
 import { rewriteVaultForSource } from "@sow/knowledge";
-import type { IngestRewriteDeps, GroundedPathRefusal } from "@sow/knowledge";
+import type { IngestRewriteDeps, GroundedPathRefusal, WithheldReason } from "@sow/knowledge";
 import type {
   SourceLivingVaultPort,
   LivingVaultFailure,
@@ -48,6 +48,13 @@ import type { CopilotKnowledgeProposeSink } from "../api/procedures/copilotPropo
  * second producer bound to this seam MUST forward its own refusals the same way, or refusals from that
  * producer silently never reach the sink. Scoped the way 13.8k's module header scoped its invariant:
  * a statement about THIS producer, not an unqualified "refusals are surfaced".
+ *
+ * `entityRefsTruncated` / `entityRefsRejected` / `entityRefsWithheldByReason` (13.23 leg B consumer)
+ * are OPTIONAL for the SAME fake-compatibility reason as `refusals` above: an old-shaped hand-rolled
+ * fake that predates 13.23 may omit them and degrades to `0` / `0` / `{}` — a benign-looking run, never
+ * a crash. The guarantee that a non-zero signal is ever observed rests entirely on
+ * {@link createIngestRewriteAdapter} forwarding the producer's REQUIRED `IngestRewriteReceipt` fields
+ * verbatim (pinned by `adapter_forwards_signal_counts_verbatim`).
  */
 export type LivingVaultRewrite = (
   validated: ValidatedExtraction,
@@ -56,12 +63,28 @@ export type LivingVaultRewrite = (
 ) => Promise<{
   readonly plans: readonly KnowledgeMutationPlan[];
   readonly refusals?: readonly GroundedPathRefusal[];
+  readonly entityRefsTruncated?: number;
+  readonly entityRefsRejected?: number;
+  readonly entityRefsWithheldByReason?: Readonly<Partial<Record<WithheldReason, number>>>;
 }>;
 
 /** Code-only refusal-audit payload (rule 7) — reason codes + workspace only, never a path/title/entity name. */
 export interface RefusalAudit {
   readonly workspaceId: WorkspaceId;
   readonly codes: readonly GroundedPathRefusal[];
+}
+
+/**
+ * Code-only entity-ref signal-count payload (rule 7) — the workspace id, the two drop counts, and a
+ * per-reason-code map. `withheldByReason`'s key type is the closed `WithheldReason` literal union
+ * (never a free string), so carrying an entity name/slug/path here is structurally impossible, the
+ * same discipline {@link RefusalAudit} uses for its `codes` array.
+ */
+export interface SignalCountsHealth {
+  readonly workspaceId: WorkspaceId;
+  readonly truncated: number;
+  readonly rejected: number;
+  readonly withheldByReason: Readonly<Partial<Record<WithheldReason, number>>>;
 }
 
 export interface LivingVaultAdapterDeps {
@@ -79,6 +102,22 @@ export interface LivingVaultAdapterDeps {
    * `IngestRewriteDeps` — constructing one here would wire a clock/id pair for a path nothing reaches.
    */
   readonly recordRefusals?: (audit: RefusalAudit) => Promise<unknown>;
+  /**
+   * 13.23 leg B (consumer) — optional best-effort HEALTH sink for CA-2's three entity-ref signal
+   * counts, following the EXACT dormancy posture `recordRefusals` above already ships. Fired ONCE
+   * per run, ONLY when at least one signal is non-zero/non-empty (`truncated !== 0 || rejected !== 0
+   * || Object.keys(withheldByReason).length > 0`) — a benign run with all three at their zero/empty
+   * default invokes it ZERO times, so a poisoned run is never byte-identical to a benign one and a
+   * benign run never manufactures noise. Never alters the returned `Result` and never escapes as an
+   * unhandled rejection, whether the sink throws sync or rejects async (L25/L53 best-effort).
+   * Destination is HEALTH, not the audit trail — `toAuditRecordInput` has zero callers and building
+   * it is task 24.7's scope, which this slice does not touch. Unbound (the shipped default — nothing
+   * constructs this dep in production today) ⇒ zero invocations (L11 byte-equivalent). The concrete
+   * `HealthItem` mint through `../health/surface` (`createHealthSurface`) is the deferred follow-up —
+   * a NAMED dormant seam, not a silent one — where boot.ts already binds the OTHER
+   * `IngestRewriteDeps`; constructing one here would wire a clock/id pair for a path nothing reaches.
+   */
+  readonly recordEntityRefSignals?: (health: SignalCountsHealth) => Promise<unknown>;
 }
 
 /** Best-effort, fire-and-forget: never throws, never awaited, never alters the caller's Result (L25/L53). */
@@ -90,6 +129,27 @@ function emitRefusalAudit(
   if (refusals.length === 0 || typeof sink !== "function") return;
   try {
     void sink({ workspaceId, codes: refusals }).catch(() => {});
+  } catch {
+    /* best-effort — a throwing sink must never alter the primary Result. */
+  }
+}
+
+/**
+ * Best-effort, fire-and-forget: never throws, never awaited, never alters the caller's Result
+ * (L25/L53) — a byte-for-byte structural twin of {@link emitRefusalAudit} above, over the 13.23
+ * signal-count channel instead of the refusal channel.
+ */
+function emitEntityRefSignals(
+  sink: LivingVaultAdapterDeps["recordEntityRefSignals"],
+  workspaceId: WorkspaceId,
+  truncated: number,
+  rejected: number,
+  withheldByReason: Readonly<Partial<Record<WithheldReason, number>>>,
+): void {
+  const hasSignal = truncated !== 0 || rejected !== 0 || Object.keys(withheldByReason).length > 0;
+  if (!hasSignal || typeof sink !== "function") return;
+  try {
+    void sink({ workspaceId, truncated, rejected, withheldByReason }).catch(() => {});
   } catch {
     /* best-effort — a throwing sink must never alter the primary Result. */
   }
@@ -172,6 +232,15 @@ export function createLivingVaultPort(deps: LivingVaultAdapterDeps): SourceLivin
         // Fired here, BEFORE root resolution / containment below, so a refusal is reported on EVERY
         // subsequent exit path — including one that later rejects (13.8m-B's highest-value guarantee).
         emitRefusalAudit(deps.recordRefusals, workspaceId, receipt?.refusals ?? []);
+        // Same placement reasoning as the refusal emit immediately above: a signal is reported on
+        // EVERY subsequent exit path, including one that later rejects on containment.
+        emitEntityRefSignals(
+          deps.recordEntityRefSignals,
+          workspaceId,
+          receipt?.entityRefsTruncated ?? 0,
+          receipt?.entityRefsRejected ?? 0,
+          receipt?.entityRefsWithheldByReason ?? {},
+        );
       } catch {
         return err({ code: "rewrite_failed", message: "living-vault rewrite failed" });
       }
@@ -256,6 +325,9 @@ export function createIngestRewriteAdapter(knowledgeDeps: IngestRewriteDeps): Li
   ): Promise<{
     readonly plans: readonly KnowledgeMutationPlan[];
     readonly refusals: readonly GroundedPathRefusal[];
+    readonly entityRefsTruncated: number;
+    readonly entityRefsRejected: number;
+    readonly entityRefsWithheldByReason: Readonly<Partial<Record<WithheldReason, number>>>;
   }> => {
     const receipt = await rewriteVaultForSource(
       {
@@ -269,7 +341,16 @@ export function createIngestRewriteAdapter(knowledgeDeps: IngestRewriteDeps): Li
       },
       knowledgeDeps,
     );
-    return { plans: receipt.plans, refusals: receipt.refusals };
+    // Verbatim (13.23 leg B consumer): not re-mapped, not merged, not truncated further — the same
+    // discipline `refusals` already gets, so `adapter_forwards_signal_counts_verbatim` proves the
+    // three fields cross this boundary unmodified.
+    return {
+      plans: receipt.plans,
+      refusals: receipt.refusals,
+      entityRefsTruncated: receipt.entityRefsTruncated,
+      entityRefsRejected: receipt.entityRefsRejected,
+      entityRefsWithheldByReason: receipt.entityRefsWithheldByReason,
+    };
   };
 }
 
