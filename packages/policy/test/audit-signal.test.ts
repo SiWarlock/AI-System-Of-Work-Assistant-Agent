@@ -1,7 +1,14 @@
 // spec(§5) — AuditSignal: clock-free build for allow+deny; redaction-safety guard; toAuditRecordInput passes AuditRecordSchema.parse
 import { describe, it, expect } from "vitest";
 import { AuditRecordSchema, REDACTED_CREDENTIAL, REDACTED_RAW } from "@sow/contracts";
-import { looksUnsafe as domainLooksUnsafe, SPAN_PRESERVING_FILLER } from "@sow/domain";
+import {
+  looksUnsafe as domainLooksUnsafe,
+  SPAN_PRESERVING_FILLER,
+  CREDENTIAL_NETS,
+  CREDENTIAL_PREFIX as DOMAIN_CREDENTIAL_PREFIX,
+  SENSITIVE_KEYWORD as DOMAIN_SENSITIVE_KEYWORD,
+  URL_USERINFO_CREDENTIAL as DOMAIN_URL_USERINFO_CREDENTIAL,
+} from "@sow/domain";
 import {
   buildAuditSignal,
   toAuditRecordInput,
@@ -245,6 +252,124 @@ describe("isRedactionSafe — the credential net is case-insensitive (task 24.11
         `${v}: packages/policy and @sow/domain returned DIFFERENT verdicts on a credential shape — a second hand-maintained copy has re-diverged (task 24.46)`,
       ).toBe(!domainLooksUnsafe(v));
     }
+  });
+
+  // task 24.133 — `policy_and_domain_agree_on_the_credential_shape_axis` above only iterates
+  // three HAND-PICKED fixture arrays. A net present in `CREDENTIAL_NETS` (domain's canonical,
+  // frozen list, exported task 24.135) but never represented in a hand-picked fixture is
+  // INVISIBLE to that pin — it could agree or disagree and nobody would know, because nothing
+  // derives the corpus FROM the net list itself. This block closes that: it iterates
+  // `CREDENTIAL_NETS` directly, so a net ADDED there without a matching exemplar HERE reds —
+  // the identical "exemplar completeness" shape `@sow/domain`'s own
+  // `test/redaction/marker-filler-property.test.ts` already uses, for the same reason.
+  describe("task 24.133 — the parity corpus is DERIVED from the canonical net list, not a hand-maintained copy", () => {
+    const CANONICAL_NET_EXEMPLARS: ReadonlyArray<{
+      readonly name: string;
+      readonly net: RegExp;
+      readonly exemplar: string;
+    }> = [
+      {
+        name: "CREDENTIAL_PREFIX",
+        net: DOMAIN_CREDENTIAL_PREFIX,
+        exemplar: "sk-ant-api03-abcdefghijklmnop",
+      },
+      {
+        name: "SENSITIVE_KEYWORD",
+        net: DOMAIN_SENSITIVE_KEYWORD,
+        exemplar: "rotate the api_key before friday",
+      },
+      {
+        name: "URL_USERINFO_CREDENTIAL",
+        net: DOMAIN_URL_USERINFO_CREDENTIAL,
+        exemplar: "//user:pass@host",
+      },
+    ];
+
+    it("every net in the canonical CREDENTIAL_NETS list has an exemplar here — non-vacuity against a net added there and not here", () => {
+      const covered = CANONICAL_NET_EXEMPLARS.map((e) => e.net);
+      for (const net of CREDENTIAL_NETS) {
+        expect(
+          covered,
+          `CREDENTIAL_NETS grew a net (${net.source}) with no exemplar in this corpus — task 24.133's whole point is that this must be VISIBLE, not silently invisible`,
+        ).toContain(net);
+      }
+      expect(CANONICAL_NET_EXEMPLARS.length).toBe(CREDENTIAL_NETS.length);
+    });
+
+    it("policy agrees with domain on every canonical net's exemplar — derived from the net list, not re-typed by hand", () => {
+      for (const { name, net, exemplar } of CANONICAL_NET_EXEMPLARS) {
+        expect(
+          net.test(exemplar),
+          `${name}: exemplar ${JSON.stringify(exemplar)} does not even match its own net`,
+        ).toBe(true);
+        expect(
+          isRedactionSafe(refSignal(exemplar)),
+          `${name}: ${JSON.stringify(exemplar)} — policy and domain must agree on a value derived from the CANONICAL net list`,
+        ).toBe(!domainLooksUnsafe(exemplar));
+      }
+    });
+  });
+
+  // task 24.133 — the derived corpus above is bounded by EXACTLY the three nets
+  // `CREDENTIAL_NETS` contains. It cannot, by construction, surface a credential SHAPE that
+  // no net in the list recognizes at all — the blind spot is invisible to a corpus that is
+  // itself derived from the thing that has the blind spot. This block supplies an
+  // OUT-OF-CORPUS probe: a real, structurally valid credential shape recognized by a FOURTH
+  // net that exists elsewhere in this codebase (packages/integrations'
+  // gateway-log-redaction.ts `GOOGLE_API_KEY` / `CREDENTIAL_TOKEN`) but by NONE of the three
+  // nets `@sow/domain` or `packages/policy` know about.
+  describe("24.133 — an AIza-shaped probe outside every net in the derived corpus", () => {
+    // A syntactically valid Google API key shape: `AIza` + 35 base64url-ish characters —
+    // the exact shape `packages/integrations/src/redaction/gateway-log-redaction.ts`'s
+    // `GOOGLE_API_KEY = /AIza[0-9A-Za-z_-]{10,}/` recognizes. Fabricated, never a real key.
+    const AIZA_SHAPED_KEY = "AIzaSyDaGmWKa4JsXZ-HjGw7ISLn_3namBGewQe";
+
+    it("matches NO net in the canonical list — the census that makes the gap explicit rather than assumed", () => {
+      for (const net of CREDENTIAL_NETS) {
+        expect(
+          net.test(AIZA_SHAPED_KEY),
+          `${net.source} unexpectedly matched an AIza-shaped key — the gap this block documents has closed; the disposition test below needs re-deriving, not re-greening`,
+        ).toBe(false);
+      }
+    });
+
+    it("known_gap_AIza_shaped_credentials_are_not_refused_by_domain_or_policy: pinned so the class is not invisible, held by task 24.118 [spec(§16 / rule 1 / rule 7)]", () => {
+      // ⛔ NOT A PASSING GRADE. This pins a REAL leak-direction gap. An AIza-shaped Google API
+      // key riding in this signal's refs/summaries is judged SAFE by BOTH @sow/domain and
+      // packages/policy, so it does NOT trip the KnowledgeWriter's BLOCKING pre-commit secret
+      // scan (packages/knowledge secret-scan.ts's `contentContainsSecret = !isRedactionSafe`)
+      // and does NOT trip this signal's own redaction-safety guard — on the sole-writer path
+      // (rule 1 by reach) and the secret-redaction floor (rule 7).
+      //
+      // WHY IT IS NOT SILENTLY "FIXED" HERE, AND WHY THAT IS NOT A DODGE: promoting AIza
+      // detection into @sow/domain is task 24.118, and 24.118 is EXPLICITLY HELD BY LEAD
+      // RULING pending a specific cmp-verified backup — the first promotion attempt silently
+      // dropped two reviewer-mandated comment fixes above the extraction boundary while
+      // staying green (`L251`), and the only artifact that catches that class of loss (an
+      // occurrence-count reconciliation against a verified backup) does not exist for a
+      // policy-local patch invented here. Adding a FOURTH, policy-local-only AIza net would
+      // not be a tidy-up — it is exactly the "second [now fourth] hand-maintained net"
+      // divergence this whole task exists to stop, made unilaterally, by the one module least
+      // positioned to own the decision (this signal's job is to gate an audit trail, not to
+      // be the place a new credential-shape net is first designed).
+      //
+      // THE TRADE, NAMED SO IT CANNOT BE REDISCOVERED AS A SURPRISE (mirrors
+      // `known_false_positives_are_pinned_so_the_class_is_not_INVISIBLE` above): closing this
+      // gap is a LEAK-direction fix with an unmeasured AVAILABILITY cost. `AIza` is a fixed,
+      // distinctive 4-character prefix (lower collision risk than `sk-`'s two-character,
+      // no-word-boundary alternative), but the charset that follows (`[0-9A-Za-z_-]{10,}`) is
+      // unbounded on the high end and could still trip on an opaque non-secret token of the
+      // right shape. That measurement is 24.118's to run, not this task's — this pin exists so
+      // the gap is VISIBLE and OWNED, not so it is closed.
+      expect(
+        isRedactionSafe(refSignal(AIZA_SHAPED_KEY)),
+        "AIza-shaped Google API key: currently judged SAFE by packages/policy — this is the measured blind spot, held open by task 24.118, not a passing grade",
+      ).toBe(true);
+      expect(
+        domainLooksUnsafe(AIZA_SHAPED_KEY),
+        "@sow/domain does not recognize the AIza shape either — the gap is NOT policy-specific, so a policy-local fix would create a FOURTH divergent copy rather than closing the real one",
+      ).toBe(false);
+    });
   });
 
   it("known_false_positives_are_pinned_so_the_class_is_not_INVISIBLE: the missing word boundary [spec(§16)]", () => {
