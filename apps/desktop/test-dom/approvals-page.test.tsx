@@ -169,3 +169,75 @@ describe("Approvals surface (§13.10a Slice H) — semantic-mutation cards", () 
     expect(card.className).not.toContain("sow-approval-card--semantic");
   });
 });
+
+describe("Approvals surface (§9.8) — edit payload-editing form", () => {
+  it("shows an Edit button among the pending decisions", () => {
+    render(<Approvals approvals={[apr("a1")]} onDecide={() => Promise.resolve("applied" as const)} />);
+    const card = screen.getByText("action:a1").closest("li") as HTMLElement;
+    expect(within(card).getByRole("button", { name: "Edit" })).toBeTruthy();
+  });
+
+  it("clicking Edit opens the payload-editing form WITHOUT deciding yet (no onDecide call)", () => {
+    const onDecide = vi.fn(() => Promise.resolve("applied" as const));
+    render(<Approvals approvals={[apr("a1")]} onDecide={onDecide} />);
+    const card = screen.getByText("action:a1").closest("li") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Edit" }));
+    expect(within(card).getByRole("button", { name: "Confirm edit" })).toBeTruthy();
+    expect(onDecide).not.toHaveBeenCalled();
+  });
+
+  it("Cancel closes the form without calling onDecide", () => {
+    const onDecide = vi.fn(() => Promise.resolve("applied" as const));
+    render(<Approvals approvals={[apr("a1")]} onDecide={onDecide} />);
+    const card = screen.getByText("action:a1").closest("li") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(card).getByRole("button", { name: "Cancel" }));
+    expect(within(card).queryByRole("button", { name: "Confirm edit" })).toBeNull();
+    expect(onDecide).not.toHaveBeenCalled();
+  });
+
+  it("Confirm edit calls onDecide(id, 'edit') and closes the form", () => {
+    const onDecide = vi.fn(() => Promise.resolve("applied" as const));
+    render(<Approvals approvals={[apr("a1")]} onDecide={onDecide} />);
+    const card = screen.getByText("action:a1").closest("li") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(card).getByRole("button", { name: "Confirm edit" }));
+    expect(onDecide).toHaveBeenCalledWith("a1", "edit");
+    expect(within(card).queryByRole("button", { name: "Confirm edit" })).toBeNull();
+  });
+
+  it("the form shows the card's known target system + workspace attribution (the UI-safe payload fields)", () => {
+    render(
+      <Approvals
+        approvals={[apr("a1", { targetSystem: "linear", workspaceId: "ws-1" })]}
+        onDecide={() => Promise.resolve("applied" as const)}
+      />,
+    );
+    const card = screen.getByText("action:a1").closest("li") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Edit" }));
+    expect(within(card).getByText(/linear/i)).toBeTruthy();
+    expect(within(card).getByText(/ws-1/i)).toBeTruthy();
+  });
+
+  it("shows an honest 'no additional details' message when target system + workspace are both absent — never a fabricated payload", () => {
+    render(<Approvals approvals={[apr("a1")]} onDecide={() => Promise.resolve("applied" as const)} />);
+    const card = screen.getByText("action:a1").closest("li") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Edit" }));
+    expect(within(card).getByText(/no additional details/i)).toBeTruthy();
+  });
+
+  it("a decided edit shares the same already-resolved/unavailable outcome rendering as the other decisions", async () => {
+    const onDecide = vi.fn(() => Promise.resolve<"applied" | "already_resolved" | "unavailable">("unavailable"));
+    render(<Approvals approvals={[apr("a1")]} onDecide={onDecide} />);
+    const card = screen.getByText("action:a1").closest("li") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(card).getByRole("button", { name: "Confirm edit" }));
+    expect(await within(card).findByText(/couldn.t decide — try again/i)).toBeTruthy();
+  });
+
+  it("the Edit button is disabled when there is no live worker (onDecide absent)", () => {
+    render(<Approvals approvals={[apr("a1")]} />);
+    const card = screen.getByText("action:a1").closest("li") as HTMLElement;
+    expect((within(card).getByRole("button", { name: "Edit" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});

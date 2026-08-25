@@ -38,17 +38,20 @@ export interface ApprovalsProps {
    * Decide a pending approval (§9.8). Absent when there is no live worker → the action
    * buttons render DISABLED (a decision can't be issued offline). Resolves to the outcome so the
    * card can render it: "already_resolved" (a lost CAS race, from either wire shape) is honest
-   * feedback, not a silent no-op; "unavailable" covers every other failure. `edit` (with a payload
-   * editor) is a deliberate follow-up — the three offered map to legal pending transitions.
+   * feedback, not a silent no-op; "unavailable" covers every other failure. `edit` opens a
+   * payload-editing form (below) that reviews the card's known UI-safe fields before confirming —
+   * it issues the SAME `onDecide(id, "edit")` call as the other three, no extra payload on the wire.
    */
   readonly onDecide?: (approvalId: string, decision: ApprovalDecision) => Promise<ApprovalDecisionOutcome>;
 }
 
-/** The three decisions offered on a pending item — each a legal `pending -> …` transition. */
+/** The four decisions offered on a pending item — each a legal `pending -> …` transition. `edit`
+ *  is rendered specially (it opens the payload-editing form instead of deciding immediately). */
 const PENDING_DECISIONS: readonly { readonly decision: ApprovalDecision; readonly label: string }[] = [
   { decision: "approve", label: "Approve" },
   { decision: "reject", label: "Reject" },
   { decision: "defer", label: "Defer" },
+  { decision: "edit", label: "Edit" },
 ];
 
 /** The date portion of an ISO timestamp (deterministic; avoids locale/timezone drift). */
@@ -66,8 +69,52 @@ function cardSubject(a: UiSafeApproval): string {
   return a.subjectKind === "semantic_mutation" ? "Proposed note write (Copilot)" : (a.actionRef ?? "External action");
 }
 
-/** A pending approval card — the action, its metadata, the three decision buttons, and the last
- *  decision outcome (§9.8: "already resolved" vs "unavailable" — never silent on a failed decision). */
+/** Deterministic id for a card's edit-form region — links the `Edit` toggle's `aria-controls`
+ *  to the disclosed form (§11 / CF-7: every `aria-expanded` trigger names what it discloses). */
+function editFormId(approvalId: string): string {
+  return `sow-approval-edit-${approvalId}`;
+}
+
+/**
+ * §9.8 — the `edit` payload-editing form. There is no raw action payload on the UI-safe wire
+ * (rule 2/7: candidate/action content never crosses to the renderer — only an opaque
+ * `payloadHash`), so this reviews the card's known UI-safe fields (`targetSystem` /
+ * `workspaceId`, the fields `UiSafeApproval` carries specifically "for the renderer's payload
+ * editor") rather than inventing an editable content field. Confirming issues the SAME
+ * `onDecide(id, "edit")` call as the other three decisions — no extra payload on the wire.
+ */
+function EditForm({
+  approval,
+  onCancel,
+  onConfirm,
+}: {
+  readonly approval: UiSafeApproval;
+  readonly onCancel: () => void;
+  readonly onConfirm: () => void;
+}): ReactElement {
+  const hasDetail = approval.targetSystem !== undefined || approval.workspaceId !== undefined;
+  return (
+    <div id={editFormId(approval.id)} className="sow-approval-edit-form" role="group" aria-label="Edit this approval">
+      <div className="sow-approval-edit-summary">
+        {approval.targetSystem !== undefined ? <div>Target: {approval.targetSystem}</div> : null}
+        {approval.workspaceId !== undefined ? <div>Workspace: {approval.workspaceId}</div> : null}
+        {!hasDetail ? <div>No additional details available for this action.</div> : null}
+      </div>
+      <div className="sow-approval-edit-actions">
+        <button type="button" className="sow-approval-btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="button" className="sow-approval-btn sow-approval-btn--approve" onClick={onConfirm}>
+          Confirm edit
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** A pending approval card — the action, its metadata, the four decision buttons (`edit` opens
+ *  the payload-editing form above instead of deciding immediately), and the last decision outcome
+ *  (§9.8: "already resolved" vs "unavailable" — never silent on a failed decision). */
 function PendingCard({
   approval,
   onDecide,
@@ -80,6 +127,7 @@ function PendingCard({
   // The most recent non-"applied" outcome — a real transition ("applied") clears it and the item
   // drops out of the pending list on the parent's next render, so there is nothing left to show.
   const [outcome, setOutcome] = useState<"already_resolved" | "unavailable" | undefined>(undefined);
+  const [editing, setEditing] = useState(false);
   const decide = (decision: ApprovalDecision): void => {
     if (onDecide === undefined) return;
     setOutcome(undefined);
@@ -109,13 +157,25 @@ function PendingCard({
             type="button"
             className={`sow-approval-btn sow-approval-btn--${d.decision}`}
             disabled={disabled}
-            onClick={() => decide(d.decision)}
+            aria-expanded={d.decision === "edit" ? editing : undefined}
+            aria-controls={d.decision === "edit" ? editFormId(approval.id) : undefined}
+            onClick={() => (d.decision === "edit" ? setEditing((v) => !v) : decide(d.decision))}
             title={disabled ? "Connect the worker to act on approvals" : undefined}
           >
             {d.label}
           </button>
         ))}
       </div>
+      {editing ? (
+        <EditForm
+          approval={approval}
+          onCancel={() => setEditing(false)}
+          onConfirm={() => {
+            decide("edit");
+            setEditing(false);
+          }}
+        />
+      ) : null}
       {outcome === "already_resolved" ? (
         <div className="sow-approval-outcome" role="status">
           already resolved
