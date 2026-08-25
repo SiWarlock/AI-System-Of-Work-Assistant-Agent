@@ -152,6 +152,15 @@ export type GclGateError =
   // projection's projectionType — a DERIVATION mismatch, distinct from
   // `visibility_exceeds_source` (a ceiling breach). Keep the two separate; see
   // `@sow/policy` `VISIBILITY_TYPE_MISMATCH` vs `VISIBILITY_EXCEEDS_SOURCE`.
+  // task 24.31 — `projectionType` below is a producer-declared OPEN string
+  // (`packages/contracts/src/models/gcl-projection.ts`: `z.string().min(1)`,
+  // no max length, no newline ban). This variant is still consumer-less (no
+  // renderer reads it yet), but the redaction obligation is attached HERE, at
+  // the mint site (`denialToGateError`, via the module-local
+  // `boundProjectionType`), so no future consumer inherits an unbounded
+  // string. `visibility_exceeds_source` above needs no such step: both its
+  // fields (`declaredLevel`/`sourceDefault`) are closed `VisibilityLevel`
+  // enums, never producer-controlled free text.
   | {
       readonly code: "visibility_type_mismatch";
       readonly declaredLevel: VisibilityLevel;
@@ -290,6 +299,24 @@ export function admitProjection(
  * `decision.audit` is mandatory on `PolicyDecision`) — the exhaustive unit tests below
  * call this directly without a 5th arg and are unaffected (no `audit` key on the result).
  */
+// task 24.31 — cap on `visibility_type_mismatch.projectionType` (a taxonomy
+// TOKEN, not display prose — tighter than `buildGclSummary`'s 1024 in
+// `apps/worker/src/api/projections/uiSafe.ts`, whose shape this mirrors).
+const MAX_PROJECTION_TYPE = 256;
+
+/**
+ * Bound a producer-declared `projectionType` before it is minted onto a
+ * `visibility_type_mismatch` error: collapse any newline run (with its
+ * surrounding whitespace) to a single space, trim, then cap length. Mirrors
+ * `buildGclSummary`'s collapse-then-slice shape (`apps/worker/src/api/
+ * projections/uiSafe.ts`) — same treatment, tighter cap, applied at the
+ * knowledge-side mint site rather than at a downstream projection.
+ */
+function boundProjectionType(raw: string): string {
+  const oneLine = raw.replace(/\s*[\r\n]+\s*/g, " ").trim();
+  return oneLine.length > MAX_PROJECTION_TYPE ? oneLine.slice(0, MAX_PROJECTION_TYPE) : oneLine;
+}
+
 export function denialToGateError(
   reason: DenialReason,
   message: string,
@@ -310,7 +337,7 @@ export function denialToGateError(
       return {
         code: "visibility_type_mismatch",
         declaredLevel: projection.visibilityLevel,
-        projectionType: projection.projectionType,
+        projectionType: boundProjectionType(projection.projectionType),
         message,
         ...(audit !== undefined ? { audit } : {}),
       };
