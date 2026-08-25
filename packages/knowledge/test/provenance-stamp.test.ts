@@ -7,13 +7,12 @@
 import { describe, it, expect } from "vitest";
 import { createHmac } from "node:crypto";
 import type {
-  WorkspaceId,
   FactIdentity,
   MdContentSha,
   RevisionId,
   SignedProvenanceStamp,
 } from "@sow/contracts";
-import { SignedProvenanceStampSchema } from "@sow/contracts";
+import { SignedProvenanceStampSchema, workspaceId } from "@sow/contracts";
 import {
   stampProvenance,
   verifyProvenanceStamp,
@@ -60,7 +59,7 @@ const T0 = "2026-06-30T12:00:00.000Z";
 
 function baseInputs(over: Partial<StampInputs> = {}): StampInputs {
   return {
-    workspaceId: "ws-emp" as WorkspaceId,
+    workspaceId: workspaceId("ws-emp"), // 24.92: real branded constructor, not an anonymous cast
     factIdentity: "page:acme/auth" as FactIdentity,
     originPath: "acme/auth.md",
     mdContentSha: SHA_1 as MdContentSha,
@@ -110,7 +109,7 @@ describe("stampProvenance — minting", () => {
     if (!base.ok) return;
     const sig0 = base.value.sig;
     const variants: Partial<StampInputs>[] = [
-      { workspaceId: "ws-personal" as WorkspaceId },
+      { workspaceId: workspaceId("ws-personal") }, // 24.92: real branded constructor, not an anonymous cast
       { factIdentity: "page:acme/other" as FactIdentity },
       { originPath: "acme/other.md" },
       { mdContentSha: SHA_2 as MdContentSha },
@@ -232,7 +231,7 @@ describe("verifyProvenanceStamp — serve-time content rebinding", () => {
     for (const over of [
       { factIdentity: "page:acme/evil" as FactIdentity },
       { originPath: "acme/evil.md" },
-      { workspaceId: "ws-personal" as WorkspaceId },
+      { workspaceId: workspaceId("ws-personal") }, // 24.92: real branded constructor, not an anonymous cast
       // NOTE: kwRevision is NOT in this list — it is UNSIGNED (v2), so re-deriving it differently does NOT
       // fail verify (pinned by the "VERIFIES ... kwRevision DIFFERS" test above). Only content+location bind.
     ]) {
