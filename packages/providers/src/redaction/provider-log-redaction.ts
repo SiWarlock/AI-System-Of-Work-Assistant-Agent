@@ -44,6 +44,34 @@ export const DROPPED_FIELD = "[REDACTED:field-dropped]" as const;
  * True iff the string carries no credential-shaped substring and no raw-content /
  * secret marker — i.e. it is safe to emit to a log sink verbatim. Delegates to the
  * single-sourced domain detector. Pure.
+ *
+ * ⚠ task 24.126 — DELIBERATELY ZERO PRODUCTION CALLERS, RETAINED WITH REASON, not
+ * dead code to delete. `redactString`/`redactLogEntry`/`buildSafeProviderLog`
+ * (this module's actual production call surface — every provider-boundary log
+ * write scrubs UNCONDITIONALLY via `redactString`, which runs `looksUnsafe`
+ * internally as its own post-scrub re-check) never needed a standalone boolean
+ * gate: nothing in this codebase's provider path branches on "is this safe?"
+ * before deciding whether to log — it always scrubs, then emits the scrub
+ * result. This function is the pure predicate half of that internal check,
+ * exported for a caller that DOES need to branch on safety rather than always
+ * scrub-and-emit (e.g. a future gate deciding whether to include an optional
+ * diagnostic field at all, or a caller wanting a bare boolean without building a
+ * full `SafeProviderLog` record).
+ *
+ * CENSUS, WITH ITS METHOD (re-run this, don't trust the number): `rg -n
+ * "isProviderLogSafe" --type ts` over `packages` and `apps`, excluding any
+ * `dist` or `node_modules` path, then drop this definition's own line.
+ * Every hit lives in `packages/providers/test/provider-log-redaction.test.ts`
+ * (13 call sites + 1 import + 1 describe-block name). Zero hits anywhere else in
+ * `packages/` or `apps/`, including the `@sow/providers` barrel's consumers
+ * (`export * from "./redaction/provider-log-redaction"` in `src/index.ts` makes
+ * it REACHABLE, not CALLED — a positive control confirms the search mechanism
+ * itself works: `redactString` in this same file returns 7 hits).
+ *
+ * WHAT WOULD MAKE IT REACHABLE: a call site that needs to know a value's safety
+ * BEFORE deciding whether to proceed — not merely to scrub it. Do NOT "helpfully"
+ * wire it into an existing scrub-and-emit path (that would duplicate the check
+ * `redactString` already performs internally, for no behavioral gain).
  */
 export function isProviderLogSafe(value: string): boolean {
   return !looksUnsafe(value);
