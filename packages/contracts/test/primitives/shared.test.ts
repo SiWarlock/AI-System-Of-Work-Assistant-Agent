@@ -150,9 +150,24 @@ describe("FactIdentitySchema (content-INDEPENDENT structured string)", () => {
 
 describe("MdContentShaSchema (sha256 hex)", () => {
   const hex = "a".repeat(64);
-  it("accepts 64-char hex (case-insensitive)", () => {
+  it("accepts 64-char lowercase hex", () => {
     expect(MdContentShaSchema.parse(hex)).toBe(hex);
-    expect(MdContentShaSchema.parse("A".repeat(64))).toBe("A".repeat(64));
+  });
+  // ⛔ CHANGED (### 24.89): this schema's `.regex()` used to carry `/i`, so an
+  // UPPERCASE 64-char hex string PARSED here — while every JSON Schema this
+  // brand is embedded into (semantic-fact, fact-provenance,
+  // signed-provenance-stamp, divergence, knowledge-mutation-plan) emits the
+  // flag-less pattern `^[0-9a-f]{64}$`, which ajv compiles as CASE-SENSITIVE
+  // (JSON Schema's `pattern` keyword has no flags mechanism — the `/i` was
+  // silently dropped on emission, not honored). So the OLD assertion below
+  // ("case-insensitive") pinned a live Zod-vs-ajv candidate-data-gate
+  // disagreement: the exact defect `### 24.89` fixes. sha256 hex is
+  // canonically lowercase (how it is actually computed/stored), so the fix
+  // tightens Zod to match ajv, not the other way — this brand now REJECTS
+  // uppercase, matching every emitted schema. See
+  // `test/primitives/zod-ajv-regex-parity.test.ts` for the round-trip pin.
+  it("rejects an uppercase 64-char hex string (### 24.89 — Zod now matches every emitted ajv pattern)", () => {
+    expect(MdContentShaSchema.safeParse("A".repeat(64))).toMatchObject({ success: false });
   });
   it("rejects wrong length / non-hex", () => {
     expect(MdContentShaSchema.safeParse("a".repeat(63))).toMatchObject({ success: false });
