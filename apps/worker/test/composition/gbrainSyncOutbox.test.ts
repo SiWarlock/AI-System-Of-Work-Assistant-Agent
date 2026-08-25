@@ -161,6 +161,70 @@ describe("drainGbrainSyncOutbox — LIFE-6 catch-up, exactly-once per row", () =
   });
 });
 
+describe("createGbrainSyncOutboxBinding — file-backed durability across close/reopen (19.1)", () => {
+  it("an enqueued entry survives closing the binding and reopening a NEW binding over the SAME file path — the store round-trips across restart", async () => {
+    const dbPath = tempDbPath();
+    const first = createGbrainSyncOutboxBinding(dbPath);
+    const entry = buildSyncOutboxEntry({
+      workspaceId: "ws-durable",
+      revisionId: EMPTY_VAULT_REVISION,
+      planId: "plan-durable-1",
+      auditRef: "kw:commit:plan-durable-1",
+      enqueuedAt: NOW,
+    });
+    try {
+      const enq = await first.store.enqueue(entry);
+      expect(enq.ok).toBe(true);
+    } finally {
+      // Simulates a worker restart: the connection is torn down entirely, no
+      // process-lifetime state (e.g. a shared in-memory :memory: handle) survives.
+      first.close();
+    }
+
+    // A REOPENED binding — a distinct connection object, over the SAME file path.
+    const reopened = createGbrainSyncOutboxBinding(dbPath);
+    try {
+      const found = await reopened.store.getByKey("ws-durable", EMPTY_VAULT_REVISION);
+      expect(found.ok).toBe(true);
+      if (found.ok) {
+        expect(found.value?.planId).toBe("plan-durable-1");
+        expect(found.value?.auditRef).toBe("kw:commit:plan-durable-1");
+        expect(found.value?.status).toBe("gbrain_sync_queued");
+      }
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it("NEGATIVE CONTROL — a binding reopened over a DIFFERENT (never-written) file path does NOT see the entry — proves the round-trip above reads the FILE, not shared/global process state", async () => {
+    const writtenPath = tempDbPath();
+    const untouchedPath = tempDbPath();
+    const writer = createGbrainSyncOutboxBinding(writtenPath);
+    const entry = buildSyncOutboxEntry({
+      workspaceId: "ws-durable-neg",
+      revisionId: EMPTY_VAULT_REVISION,
+      planId: "plan-durable-neg-1",
+      auditRef: "kw:commit:plan-durable-neg-1",
+      enqueuedAt: NOW,
+    });
+    try {
+      const enq = await writer.store.enqueue(entry);
+      expect(enq.ok).toBe(true);
+    } finally {
+      writer.close();
+    }
+
+    const reader = createGbrainSyncOutboxBinding(untouchedPath);
+    try {
+      const found = await reader.store.getByKey("ws-durable-neg", EMPTY_VAULT_REVISION);
+      expect(found.ok).toBe(true);
+      if (found.ok) expect(found.value).toBeUndefined();
+    } finally {
+      reader.close();
+    }
+  });
+});
+
 // ── production caller — buildActivities' sourceCommit REALLY triggers a sync ────
 
 const SRC_WS: WorkspaceId = workspaceId("ws-19-1");
