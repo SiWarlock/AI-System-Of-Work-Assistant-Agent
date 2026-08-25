@@ -305,6 +305,49 @@ describe("24.77 — a retry must not record an AuditRecord describing a diff aga
     ]);
   });
 
+  it("retry_with_the_stale_pre_mutation_base_hits_write_conflict_not_a_misdescribing_row", async () => {
+    // ⛔ REACH-PROOF #2, DIRECT — closes the 2026-08-17 gap finding on `### 24.76`'s Done-when.
+    // `expect(isOk(s.retry)).toBe(true)` above (the pre-existing pins) is a PROXY for "compare-revision
+    // passed against the moved head" (`contracts L176` — a condition names the most OBSERVABLE proxy
+    // for its event, not the event itself): it would stay green even if `applyPlan` reached `ok` some
+    // OTHER way. This test proves compare-revision is the actual, discriminating gate at this exact
+    // call: retrying with the STALE pre-mutation base (the one attempt 1 STARTED from, never the one it
+    // left behind) must hit `write_conflict` — the only way this stage can fail. Paired with the
+    // existing pins (which retry against the MOVED head and get `ok`), this is a positive/negative
+    // control on the SAME predicate, not an inferred proxy on one side of it alone.
+    const vault = new MemoryVaultFs();
+    const revisions = new TracingRevisions();
+    const audit = new TracingAudit();
+    const deps: KnowledgeWriterDeps = {
+      vault,
+      revisions,
+      audit,
+      now: () => "2026-08-14T00:00:00.000Z",
+      ownershipCheck: () => ok(undefined),
+      secretScan: () => ok(undefined),
+      workspacePathCheck: guard,
+    };
+    audit.failAppend = true;
+    const key = "idem-stale-base";
+    const base1 = await readVaultHeadRevision(vault); // the PRE-mutation head
+    const attempt1 = await applyPlan(cmd(mutatingPlan, String(base1), key), deps);
+    expect(isOk(attempt1)).toBe(false); // fault fired, Markdown is durable, no audit row landed
+
+    audit.failAppend = false;
+    // Deliberately re-submit against `base1` — the STALE base, not the moved head the existing pins
+    // use. Same idempotency key, so step 1's lookup is still empty (attempt 1 never reached
+    // `revisions.record`); this isolates step 3 (compare-revision) as the only remaining gate.
+    const staleRetry = await applyPlan(cmd(mutatingPlan, String(base1), key), deps);
+
+    expect(isOk(staleRetry)).toBe(false);
+    if (!isOk(staleRetry)) {
+      expect(staleRetry.error.code).toBe("write_conflict");
+    }
+    // No audit row for the stale retry — the failure happened AT compare-revision (step 3), before
+    // step 8's audit write, never after it.
+    expect(audit.records).toHaveLength(0);
+  });
+
   it("the_discriminator_covers_a_NON_creates_mutation_kind", async () => {
     // ⛔⛔ REVIEWER-FOUND VACUITY GAP IN THIS SUITE'S OWN COVERAGE, and it is the one that mattered:
     // every other plan here declares mutations ONLY via `creates`, so narrowing
