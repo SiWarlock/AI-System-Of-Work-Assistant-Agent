@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { workspaceId, sourceId, isOk } from "@sow/contracts";
 import type { SourceRef } from "@sow/contracts";
 import { TBD } from "@sow/domain";
-import type { MeetingRewriteReceipt, MeetingRewriteDeps } from "@sow/knowledge";
+import type { MeetingRewriteReceipt, MeetingRewriteDeps, GroundedPathRefusal } from "@sow/knowledge";
 import type { AgentExtraction } from "@sow/workflows";
 import { createMeetingExtractionSchemaGate } from "../../src/composition/meeting-extraction";
 
@@ -207,5 +207,106 @@ describe("createMeetingVaultPort — 13.8g-B: attendee refs feed the rewrite inp
       ],
       identifierOnlyRefs: [],
     });
+  });
+});
+
+// ── 13.8m-C — the MEETING-path refusals consumer (code-only, rule 7) ─────────────────────────────
+describe("createMeetingVaultPort — 13.8m-C: code-only refusal audit (rule 7)", () => {
+  const PERSON_NAME_CANARY = "Jane Doe";
+
+  it("two_refused_paths_same_code_emit_one_tallied_record_no_names_leak", async () => {
+    rewriteVaultForMeetingMock.mockResolvedValueOnce(
+      fixtureReceipt({
+        refusals: ["structural_surface", "structural_surface"] as GroundedPathRefusal[],
+        groundedPaths: [`people/${PERSON_NAME_CANARY.toLowerCase().replace(" ", "-")}.md`],
+      }),
+    );
+    const calls: unknown[] = [];
+    const port = createMeetingVaultPort(stubKnowledgeDeps, {
+      recordRefusals: (audit): Promise<unknown> => {
+        calls.push(audit);
+        return Promise.resolve();
+      },
+    });
+    await port.rewrite(WS, NOTE_PATH, SOURCE_REF, "meeting_close", [PERSON_NAME_CANARY]);
+
+    expect(calls).toEqual([{ workspaceId: WS, code: "structural_surface", count: 2 }]);
+    const serialized = JSON.stringify(calls);
+    expect(serialized).not.toContain(PERSON_NAME_CANARY);
+    expect(serialized).not.toContain("people/");
+  });
+
+  it("two_distinct_codes_emit_two_records", async () => {
+    rewriteVaultForMeetingMock.mockResolvedValueOnce(
+      fixtureReceipt({ refusals: ["structural_surface", "unsafe_shape"] as GroundedPathRefusal[] }),
+    );
+    const calls: unknown[] = [];
+    const port = createMeetingVaultPort(stubKnowledgeDeps, {
+      recordRefusals: (audit): Promise<unknown> => {
+        calls.push(audit);
+        return Promise.resolve();
+      },
+    });
+    await port.rewrite(WS, NOTE_PATH, SOURCE_REF, "meeting_close");
+
+    expect(calls).toHaveLength(2);
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        { workspaceId: WS, code: "structural_surface", count: 1 },
+        { workspaceId: WS, code: "unsafe_shape", count: 1 },
+      ]),
+    );
+  });
+
+  it("benign_empty_refusals_invokes_no_sink", async () => {
+    rewriteVaultForMeetingMock.mockResolvedValueOnce(fixtureReceipt({ refusals: [] }));
+    const calls: unknown[] = [];
+    const port = createMeetingVaultPort(stubKnowledgeDeps, {
+      recordRefusals: (audit): Promise<unknown> => {
+        calls.push(audit);
+        return Promise.resolve();
+      },
+    });
+    await port.rewrite(WS, NOTE_PATH, SOURCE_REF, "meeting_close");
+
+    expect(calls).toHaveLength(0);
+  });
+
+  it("unbound_sink_is_byte_equivalent — recordRefusals omitted ⇒ the SAME narrowed result", async () => {
+    rewriteVaultForMeetingMock.mockResolvedValueOnce(
+      fixtureReceipt({ refusals: ["unsafe_shape"] as GroundedPathRefusal[] }),
+    );
+    const port = createMeetingVaultPort(stubKnowledgeDeps);
+    const result = await port.rewrite(WS, NOTE_PATH, SOURCE_REF, "meeting_close");
+
+    expect(result).toEqual({ meetingNoteLinkMutations: [], plans: [] });
+  });
+
+  it("sink_throw_does_not_alter_the_result — a synchronously-throwing sink is swallowed", async () => {
+    rewriteVaultForMeetingMock.mockResolvedValueOnce(
+      fixtureReceipt({ refusals: ["unsafe_shape"] as GroundedPathRefusal[] }),
+    );
+    const port = createMeetingVaultPort(stubKnowledgeDeps, {
+      recordRefusals: (): Promise<unknown> => {
+        throw new Error("sink exploded");
+      },
+    });
+    const result = await port.rewrite(WS, NOTE_PATH, SOURCE_REF, "meeting_close");
+
+    expect(result).toEqual({ meetingNoteLinkMutations: [], plans: [] });
+  });
+
+  it("sink_rejection_does_not_alter_the_result — a rejecting-promise sink is swallowed, no unhandled rejection", async () => {
+    rewriteVaultForMeetingMock.mockResolvedValueOnce(
+      fixtureReceipt({ refusals: ["unsafe_shape"] as GroundedPathRefusal[] }),
+    );
+    const port = createMeetingVaultPort(stubKnowledgeDeps, {
+      recordRefusals: (): Promise<unknown> => Promise.reject(new Error("sink rejected")),
+    });
+    const result = await port.rewrite(WS, NOTE_PATH, SOURCE_REF, "meeting_close");
+
+    expect(result).toEqual({ meetingNoteLinkMutations: [], plans: [] });
+    // Give the rejected promise's microtask a turn; an unhandled rejection would fail the test run.
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 });
