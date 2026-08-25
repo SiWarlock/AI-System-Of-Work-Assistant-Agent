@@ -314,21 +314,38 @@ describe("isRedactionSafe — the credential net is case-insensitive (task 24.11
     // two remedy shapes changes the MARKER pair asserted immediately below.
     //
     // ⛔ THAT SCOPING IS DELIBERATE — IT COVERS THE MARKER PAIR ONLY, AND THE CONTROL PAIR IS
-    // A KNOWN EXCEPTION RATHER THAN AN OVERSIGHT. task 24.123 also carries a THIRD item, routed
-    // to it from 24.120 by lead ruling: dropping the `private[_ -]?key` matches that exist ONLY
-    // because the legacy SPACE is a member of that alternative's alphabet. Under THAT remedy
-    // the control pair's domain verdict flips and this test REDS — intended, because the
-    // control is a deliberate 24.123 tripwire.
+    // A KNOWN EXCEPTION RATHER THAN AN OVERSIGHT — SEE "THE CONTROL PAIR, UPDATED" BELOW FOR
+    // WHAT THAT EXCEPTION MEANS NOW THAT (C') HAS LANDED. task 24.123 also carries a THIRD
+    // item, routed to it from 24.120 by lead ruling: dropping the `private[_ -]?key` matches
+    // that exist ONLY because the legacy SPACE is a member of that alternative's alphabet.
+    // Under THAT remedy the control pair's domain verdict flips and this test REDS —
+    // intended, because the control is a deliberate 24.123 tripwire.
     //
-    // ⛔⛔ AND A (C')-SHAPED DELEGATION REDS THIS TEST TOO. READ THIS BEFORE "REPAIRING" THAT
-    // RED. (C') is `domain.looksUnsafe(s) || policy_today(s)`. It is monotone in the REFUSAL
-    // direction, so every value refused today stays refused — but THIS BLOCK ALSO ASSERTS A
-    // *SAFE* VERDICT, AND (C') FLIPS IT: policy would inherit domain's refusal of
-    // `private[REDACTED:raw]key`, so the control's `.toBe(true)` fails. THAT RED IS CORRECT AND
-    // MUST NOT BE WEAKENED — it is this pin reporting a real behaviour change, which is the
-    // entire reason it exists. "Monotone by construction" is a claim about LEAKS and is SILENT
-    // about AVAILABILITY: on the reject-not-redact sole-writer path, a note carrying an
-    // already-redacted `private[REDACTED:raw]key` would newly have its ENTIRE COMMIT rejected.
+    // ⛔⛔ (C') LANDED (task 24.110, this commit). RETAINED IN PAST TENSE BECAUSE THE
+    // REASONING IS STILL LOAD-BEARING (L195). (C') is `domain.looksUnsafe(s) ||
+    // policy_today(s)`, wired into `packages/policy/src/audit-signal.ts`'s `looksUnsafe`. It
+    // is monotone in the REFUSAL direction, so every value refused before stays refused — but
+    // THIS BLOCK ALSO ASSERTED A *SAFE* VERDICT for `private[REDACTED:raw]key`, AND (C')
+    // FLIPPED IT: policy now inherits domain's refusal of that value, so the control's
+    // `.toBe(true)` reds — measured, not merely predicted (this commit's own test run). That
+    // RED WAS CORRECT and is not "repaired" by restoring the old expectation; the control pair
+    // below is REWRITTEN to assert the new, measured verdict instead. "Monotone by
+    // construction" is a claim about LEAKS and is SILENT about AVAILABILITY: on the
+    // reject-not-redact sole-writer path, a note carrying an already-redacted
+    // `private[REDACTED:raw]key` NOW has its ENTIRE COMMIT rejected, where it did not before —
+    // an AVAILABILITY cost, recorded here rather than hidden by a quietly-adjusted assertion.
+    //
+    // ⭐ WHAT (C') DID AND DID NOT MOOT, MEASURED RATHER THAN ASSUMED: it moots exactly the
+    // direction where POLICY WAS LOOSER THAN DOMAIN (this file's `spaceManufactured` pair,
+    // below) — policy now agrees with domain and refuses. It does NOT moot the direction where
+    // POLICY IS STRICTER THAN DOMAIN (the `marker` pair immediately below): domain strips the
+    // marker before testing and judges it safe; (C') ORs domain's "safe" with policy's
+    // un-stripped nets, and OR cannot turn an existing "unsafe" into "safe" — so policy still
+    // refuses `marker` on its own keyword, exactly as before. The marker axis THEREFORE STILL
+    // DIVERGES (the describe block's name stays accurate), just in one direction rather than
+    // two — and closing that remaining direction is NOT this task's scope: it would mean
+    // making policy STOP refusing something domain calls safe, which is the (B)-wholesale
+    // hazard 24.110's header still names as blocked.
     const marker = REDACTED_CREDENTIAL;
 
     // NON-VACUITY: name the mechanism rather than assume it. policy's SENSITIVE_KEYWORD net
@@ -353,14 +370,23 @@ describe("isRedactionSafe — the credential net is case-insensitive (task 24.11
       "@sow/domain strips the frozen marker before testing, so it judges already-redacted content SAFE — POLICY IS STRICTER on this axis, and that is the behaviour change a delegation would make",
     ).toBe(false);
 
-    // THE CONTROL, AND IT IS THE POINT OF THIS BLOCK: the two predicates could have disagreed
-    // in the OTHER direction, and on this fixture they do. Domain's retained legacy-space arm
-    // rewrites `private[REDACTED:raw]key` to `private key`, which matches SENSITIVE_KEYWORD's
-    // `private[_ -]?key` alternative; policy, which does not strip, sees a 14-character gap and
-    // no alternative matches. So DOMAIN is stricter here while POLICY is stricter above.
-    // Without this, "policy is stricter" would be one measurement written twice — a direction
-    // asserted from a fixture chosen to show it. Recorded on task 24.110 (commit 40bbf578) and
-    // stated by redaction-rules.ts about itself.
+    // THE CONTROL, UPDATED FOR (C') — HISTORY RETAINED IN PAST TENSE (L195). Before (C'),
+    // this fixture showed the two predicates disagreeing in the OTHER direction from `marker`
+    // above: domain's retained legacy-space arm rewrote `private[REDACTED:raw]key` to
+    // `private key`, matching SENSITIVE_KEYWORD's `private[_ -]?key` alternative; policy,
+    // which does not strip, saw a 14-character gap and no alternative matched — DOMAIN was
+    // stricter here while POLICY was stricter on `marker` above, so "policy is stricter" was
+    // never one measurement written twice, it was a direction asserted from a fixture chosen
+    // to show it did not hold everywhere. Recorded on task 24.110 (commit 40bbf578) and stated
+    // by redaction-rules.ts about itself.
+    //
+    // ⛔ THAT DISAGREEMENT IS NOW CLOSED, MEASURED BY THIS COMMIT'S TEST RUN: (C')'s union arm
+    // makes policy inherit domain's legacy-space refusal directly, so BOTH predicates now
+    // refuse `spaceManufactured` — the assertions below assert the NEW verdict, not the old
+    // one. This is the ONE fixture in this describe block whose expected value changed; it is
+    // not a weakened test, it is the pin doing its job (`L230`: a test's proposition can move
+    // while its name and pass-state stay put, and that must be said, not left implicit — this
+    // comment is that statement).
     //
     // ⚠ GAP CLOSED (task 24.135): this pair had NO local non-vacuity guard — it isolates the
     // LEGACY-SPACE arm only while domain's span-preserving filler is NOT a member of
@@ -382,11 +408,11 @@ describe("isRedactionSafe — the credential net is case-insensitive (task 24.11
     const spaceManufactured = `private${REDACTED_RAW}key`;
     expect(
       isRedactionSafe(refSignal(spaceManufactured)),
-      "packages/policy does not strip, so no alternative spans the marker and the value is SAFE here",
-    ).toBe(true);
+      "MEASURED POST-(C') (task 24.110): policy's own nets still see no span across the marker, but the union arm now also runs domain's looksUnsafe over the SAME un-stripped string, and domain's legacy-space arm refuses it — so this module inherits that refusal and is no longer SAFE here. Before (C') this was `true`; if it goes back to passing as `true` without domainLooksUnsafe having changed, the union arm was removed and this pin must be re-examined, not re-greened.",
+    ).toBe(false);
     expect(
       domainLooksUnsafe(spaceManufactured),
-      "@sow/domain's legacy-space arm collapses the marker to a space and matches private[_ -]?key — DOMAIN IS STRICTER on this axis, which is why the divergence is not one-directional",
+      "@sow/domain's legacy-space arm collapses the marker to a space and matches private[_ -]?key — unchanged by (C'), which only adds domain's verdict to policy's union, never the reverse",
     ).toBe(true);
   });
 });

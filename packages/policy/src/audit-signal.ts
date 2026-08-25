@@ -7,6 +7,7 @@
 // a signal carries refs / hashes / codes ONLY — never raw content, prompts,
 // credentials, or tokens (CLAUDE.md safety rule 7 + §16).
 import type { AuditRecord } from "@sow/contracts";
+import { looksUnsafe as domainLooksUnsafe } from "@sow/domain";
 import type { DenialReason } from "./denials";
 
 // ARCH_GAP: the frozen `FailureClass` enum (packages/contracts shared-enums) has
@@ -93,34 +94,38 @@ export function buildAuditSignal(input: BuildAuditSignalInput): AuditSignal {
 //
 // WHY THIS IS STILL A LOCAL COPY, AND WHY DELEGATING IS NOT THE OBVIOUS CLEANUP:
 // `@sow/domain` exports these patterns and its own `looksUnsafe`, and consuming them
-// would remove this copy entirely. That is DEFERRED, not overlooked.
+// wholesale would remove this copy entirely. That remains DEFERRED — see (B) below,
+// which is STILL BLOCKED. This module's nets stay declared here even after (C')
+// landed, because (C') is additive (an OR with domain's verdict), never a replacement.
 //
-// ⛔ DO NOT DELEGATE THIS MODULE — AND THAT COVERS BOTH SHAPES ON THE TABLE. They fail in
-// OPPOSITE directions, and stating only the obvious one lets the other shape out:
-//   (B) WHOLESALE — this module adopts domain's `looksUnsafe`, which applies `stripMarkers`
-//       before any net sees the value, so it STOPS refusing already-redacted content
-//       (`[REDACTED:credential]` is refused here, judged SAFE there). A LOOSENING on the
-//       reject-not-redact sole-writer path — see the EXTERNAL CONSUMER note on
-//       {@link isRedactionSafe}.
-//   (C') UNION — `domain.looksUnsafe(s) || <these nets, un-stripped>`, recorded on task
-//       24.110 as composing and as satisfying that entry's Done-when. ⛔ THE (B) REASON DOES
-//       NOT APPLY HERE AND MUST NOT BE READ AS COVERING IT: the un-stripped arm still fires,
-//       so `[REDACTED:credential]` STAYS refused. (C') moves the OTHER direction — this
-//       module INHERITS domain's refusals, so `private[REDACTED:raw]key` becomes refused
-//       where it is admitted today, and a KnowledgeWriter commit carrying already-redacted
-//       content is newly REJECTED. An AVAILABILITY cost on rule 1, ORDER-COUPLED with task
-//       24.123, which is weighing REMOVING exactly those matches.
-// ⇒ BOTH SHAPES ARE BLOCKED, FOR DIFFERENT REASONS. Neither is a refactor.
+// ⛔ TWO SHAPES WERE ON THIS TABLE. THEY FAIL IN OPPOSITE DIRECTIONS, AND STATING ONLY
+// THE OBVIOUS ONE LETS THE OTHER SHAPE OUT:
+//   (B) WHOLESALE — this module ADOPTS domain's `looksUnsafe` in place of its own nets,
+//       which applies `stripMarkers` before any net sees the value, so it STOPS refusing
+//       already-redacted content (`[REDACTED:credential]` is refused here, judged SAFE
+//       there). A LOOSENING on the reject-not-redact sole-writer path — see the EXTERNAL
+//       CONSUMER note on {@link isRedactionSafe}. ⛔ STILL BLOCKED. Nothing in this commit
+//       implements it, and (C') landing below does not relax this prohibition — they are
+//       independent shapes with opposite costs, and only one shipped.
+//   (C') UNION — `domain.looksUnsafe(s) || <these nets, un-stripped>`. ⛔ THE (B) REASON
+//       DOES NOT APPLY HERE AND MUST NOT BE READ AS COVERING IT: the un-stripped arm
+//       still fires, so `[REDACTED:credential]` STAYS refused. (C') moves the OTHER
+//       direction — this module now INHERITS domain's refusals, so
+//       `private[REDACTED:raw]key` is refused where it was admitted before, and a
+//       KnowledgeWriter commit carrying already-redacted content is now REJECTED. An
+//       AVAILABILITY cost on rule 1, ORDER-COUPLED with task 24.123 (out of this
+//       module's scope), which is weighing REMOVING exactly those matches from domain.
+//       ⭐ LANDED (task 24.110, this commit) — see `looksUnsafe` below.
 //
-// ⛔ WHAT WOULD UNBLOCK IT: a ruling that PERMITS the change — not a ruling merely OCCURRING,
-// and not a task being ticked. Task 24.110 owns the (B) axis and records it as deliberately
-// UNRULED (lead, 2026-08-18); its (C') gate is re-homing the marker divergence plus the
-// 24.123 ordering. ⚠ IF 24.110 IS CLOSED, THAT MEANS THE DIVERGENCE WAS RE-HOMED, NOT
-// RELEASED — find its new owner before reading a tick as permission.
-// Checkable in place: `the_marker_axis_still_diverges_and_that_divergence_is_OWNED` in this
-// package's suite asserts both marker verdicts. ⚠ It ALSO carries a control pair that reds
-// for other reasons — a deliberate 24.123 tripwire, and it reds under (C') too — so a red
-// there does NOT mean the marker axis moved. Read that pin's own comment before repairing it.
+// ⛔ WHAT WOULD UNBLOCK (B): still a ruling that PERMITS the change — not a ruling merely
+// OCCURRING, and not a task being ticked. (C') landing supplies NO such ruling; it is a
+// different, additive shape with a measured, recorded cost of its own, not a step toward
+// (B). Checkable in place: `the_marker_axis_still_diverges_and_that_divergence_is_OWNED`
+// in this package's suite asserts the marker verdict (STILL diverges — policy stricter,
+// unaffected by (C')) and the spaceManufactured verdict (NOW closed by (C') — both
+// modules refuse it). ⚠ That pin ALSO carries a control pair that reds for OTHER
+// reasons — a deliberate 24.123 tripwire — so a red there does not by itself mean the
+// marker axis moved further. Read that pin's own comment before repairing it.
 //
 // ⚠ MECHANISM CORROBORATION ONLY, NOT A SECOND BLOCKER: task 24.129 measured the same
 // ordering independently, from `packages/domain`'s side. It blocks a DIFFERENT thing:
@@ -153,8 +158,32 @@ const SENSITIVE_KEYWORD =
 // `user:pass@` is flagged even though the modules now emit host-only refs.
 const URL_USERINFO_CREDENTIAL = /\/\/[^/\s:@]+:[^/\s@]+@/;
 
+// task 24.110 — (C') LANDED. `domainLooksUnsafe(s)` is the UN-STRIPPED union arm
+// recorded above as the (C') candidate: `domain.looksUnsafe(s) || <this module's
+// own nets, un-stripped>`. Measured effect (this module's test suite, task 24.110):
+//   * it does NOT strip markers before testing — the (B)-WHOLESALE hazard (stop
+//     refusing `[REDACTED:credential]`) does not apply, because this arm is added
+//     to the disjunction, never substituted for the local nets;
+//   * it DOES make this module inherit every refusal domain's own two arms
+//     produce, including domain's legacy-space arm — so a value refused ONLY
+//     because domain's `stripMarkers(s, " ")` manufactures a `private key` match
+//     (e.g. `private[REDACTED:raw]key`) is now ALSO refused here, where it was
+//     judged safe before. That is an AVAILABILITY cost on the reject-not-redact
+//     KnowledgeWriter pre-commit path (rule 1 by reach), not a leak — see
+//     `the_marker_axis_still_diverges_and_that_divergence_is_OWNED` in this
+//     module's test suite for the measured before/after and the one direction
+//     that does NOT close (this module's un-stripped nets still refuse an
+//     already-redacted marker on its own keyword — domain, which strips first,
+//     does not; (C') does not touch that direction because domain agreeing
+//     "safe" cannot flip an OR whose other arm is already "unsafe").
+//   * it does NOT moot the divergence — it closes exactly the ONE direction
+//     (policy looser than domain) that was open, and leaves the other (policy
+//     stricter than domain, on an already-redacted marker's own keyword) exactly
+//     as it was. The pin above states this as a fact to re-derive, not a note to
+//     trust.
 function looksUnsafe(s: string): boolean {
   return (
+    domainLooksUnsafe(s) ||
     CREDENTIAL_PREFIX.test(s) ||
     SENSITIVE_KEYWORD.test(s) ||
     URL_USERINFO_CREDENTIAL.test(s)
