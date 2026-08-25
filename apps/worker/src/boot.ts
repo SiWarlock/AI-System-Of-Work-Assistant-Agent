@@ -60,6 +60,7 @@ import {
   type ProofSpineBackends,
   type BackendsConfig,
   type StubMeetingExtraction,
+  type WriteTransportGate,
 } from "./composition/backends";
 import {
   LOCAL_EXTRACTION_ROUTE,
@@ -153,7 +154,12 @@ import { createApprovalsKnowledgeProposeSink } from "./api/procedures/copilotPro
 // 13.8i-B — the fresh sink object over the SAME repos, wrapped by the EXISTING factory (a second sink
 // OBJECT over identical repos + planId idempotency is one minting path instantiated twice, never a
 // second minting PATH — the prohibition is on the behaviour, not the object; contracts L59/brief 241 v2).
-import { createProposeKnowledgeApprovalPort } from "./composition/living-vault";
+import {
+  createProposeKnowledgeApprovalPort,
+  createLivingVaultPort,
+  createIngestRewriteAdapter,
+  buildIngestRewriteDeps,
+} from "./composition/living-vault";
 import type { CopilotNoteExistsProbe } from "./api/procedures/copilotProposeKnowledge";
 import type { CopilotServingOracle } from "./api/procedures/copilotProvenanceStamp";
 import { selectServingOracleFactory } from "./api/procedures/servingContextLoader";
@@ -251,7 +257,7 @@ import {
 } from "./watch/vaultWatcher";
 // §13 task 11.3-b — the GBrain version-pin BOOT verify step (closes the 11.3-a reachability waiver).
 import { readFile } from "node:fs/promises";
-import { createGbrainVersionProbe, computeRevisionId, type GbrainVersionProbe, type KnowledgeRevisionStore, type CommittedRevision, type SecretsPort, type SecretRef, type SecretUnresolved, type StamperDeps, type RunningGbrainVersion, type VaultFs, type GbrainReadAdapter, type ReconcilerDbProjection, type IndexRebuildClient } from "@sow/knowledge";
+import { createGbrainVersionProbe, computeRevisionId, type GbrainVersionProbe, type KnowledgeRevisionStore, type CommittedRevision, type SecretsPort, type SecretRef, type SecretUnresolved, type StamperDeps, type RunningGbrainVersion, type VaultFs, type GbrainReadAdapter, type ReconcilerDbProjection, type IndexRebuildClient, type EntityGbrainReadPort, type SynthesisReasonPort } from "@sow/knowledge";
 import { gbrainStartupVerify } from "./gbrainStartupVerify";
 
 // ── config ────────────────────────────────────────────────────────────────────
@@ -437,6 +443,22 @@ export interface BootConfig extends BackendsConfig {
    */
   readonly livingVaultRewrite?: boolean;
   /**
+   * task ARM-RESEARCH-3 — the OWNER-PROVISIONING bundle `gateLivingVaultRewrite`'s ON path needs to
+   * actually construct the real `IngestRewriteDeps` (via `buildIngestRewriteDeps`, apps/worker/src/
+   * composition/living-vault.ts): the two PROVIDER-territory ports (`gbrain` entity-lookup, `reason`
+   * synthesis) that this composition root does not itself implement (a guessed mapping risks a
+   * silently-wrong entity resolution or a fabricated model call — see that module's own header).
+   * ABSENT (the shipped default) ⇒ `withLivingVaultRewrite`'s `buildWiring` thunk returns `undefined`
+   * even when `livingVaultRewrite === true` AND `vaultRoot` is configured — a THIRD independent
+   * OFF-lock alongside the flag + vaultRoot, so the flag alone can never arm a real adapter. Present
+   * (owner/test-provisioned) ⇒ a genuine `SourceLivingVaultPort` is bound. NOTHING in this slice
+   * arms it — no default flips, no key/route provisioned.
+   */
+  readonly livingVaultProviders?: {
+    readonly gbrain: EntityGbrainReadPort;
+    readonly reason: SynthesisReasonPort;
+  };
+  /**
    * 13.8f-B — the OWNER opt-in that arms the meeting-path living-vault rewrite (§6 KN-10 — the meeting
    * analog of `livingVaultRewrite`). ABSENT (the shipped default) ⇒ the leg is unbound and the meeting
    * closeout's `linkMutations` stays `[]`, byte-equivalent to pre-13.8f-B. Read ONLY through
@@ -504,6 +526,17 @@ export interface BootConfig extends BackendsConfig {
    * the no-op. NOTHING in this slice arms it: `make` is never bound here, no default flips.
    */
   readonly cardTransport?: CardTransportGate;
+  /**
+   * task 22.1 (precondition 4/5 for `gateProposeArming`) — the OWNER-PROVISIONING gate for the real
+   * external-write {@link AdapterTransport} (Phase 21). UNSET (the shipped default) ⇒ `assembleBackends`
+   * keeps the deterministic stub transport (byte-equivalent, dormant) AND `gateProposeArming` reads
+   * `writeTransportArmed: false` ⇒ propose stays OFF regardless of the other four preconditions. NEW
+   * `BootConfig` surface (task 22.1) — no prior boot-time signal existed at all, so today's shipped boot
+   * has no way to know whether the real external-write transport is armed; forwarded unchanged to
+   * `assembleBackends` via `buildBackendsConfig`, mirroring the already-forwarded `providerTransport`
+   * sibling field. Unset by default ⇒ byte-equivalent (the stub transport, `writeTransportArmed: false`).
+   */
+  readonly writeTransport?: WriteTransportGate;
   /**
    * Explicit Copilot workspace set (id + type). Decoupled from `devProvision` (which is SURFACE data).
    * When omitted: devProvision-derived if present, else — on the real path — the 3 well-known scopes
@@ -663,7 +696,14 @@ function failClosedEgress(workspaceId: string): UiSafeEgressStatus {
  *     method name: every production write is inside the two `@sow/db` adapters), and its create path IS
  *     caller-reachable — the `onboarding.createWorkspace` tRPC MUTATION reaches `insertIfAbsent` via
  *     `provisionWorkspace`. ⛔ **`parseCreateWorkspace` admits ANY NON-EMPTY STRING as the id: there is
- *     NO shape validation at the write boundary.** ⇒ *"registry-validated"* means **"someone inserted
+ *     NO shape validation at the write boundary.**
+ *     ⛔⛔ **ERRATUM (2026-08-24/25, PKG-W1) — THIS SENTENCE IS NOW FALSE; SEE THE DATED CORRECTION
+ *     BELOW THE `24.83` MEASUREMENT PARAGRAPH.** Task `24.84` landed `WorkspaceIdSchema.safeParse` at
+ *     `apps/worker/src/api/procedures/onboarding.ts`'s `parseCreateWorkspace` — the write boundary now
+ *     DOES shape-validate. Retained (not deleted) per the erratum discipline; the reasoning that
+ *     follows in this paragraph about the CONSEQUENCE of an unvalidated write boundary is history, not
+ *     current state.
+ *     ⇒ *"registry-validated"* means **"someone inserted
  *     it"**, NOT **"an authority vouched for its shape"** — so a credential-shaped id can be made
  *     registry-valid BY CONSTRUCTION and will pass every gate above on its way into the durable record.
  *     ⚠ **THE OWNER RULING OF 2026-08-14 DOES NOT CLOSE THIS.** That ruling is about the CALLER
@@ -701,6 +741,18 @@ function failClosedEgress(workspaceId: string): UiSafeEgressStatus {
  *     path; it is not complete-by-construction. ⛔ **And the sharper finding: this parser uses
  *     `isNonEmptyString` and returns `r["id"]` RAW — it never runs `WorkspaceIdSchema` at all.** So the
  *     worker-side work is *stop bypassing the validator that already exists*, not *add a second rule*.
+ *     ⛔⛔ **ERRATUM (2026-08-24/25, PKG-W1) — THE WORKER-SIDE WORK NAMED ABOVE IS NOW DONE.** Task
+ *     `24.84` closed this leg: `parseCreateWorkspace` (`apps/worker/src/api/procedures/onboarding.ts`)
+ *     now calls `WorkspaceIdSchema.safeParse(rawId)` and returns `parsedId.data` (the VALIDATED value,
+ *     never the raw re-read `r["id"]`) — verified by reading the current source, not inferred. The
+ *     preceding sentence ("this parser uses `isNonEmptyString` and returns `r["id"]` RAW — it never
+ *     runs `WorkspaceIdSchema` at all") is retained per the erratum discipline (it was TRUE when
+ *     written and is the reasoning that MOTIVATED the fix) but is no longer a description of the
+ *     current write boundary. The WRITE-boundary item above is therefore no longer "1 of 17 REJECTED
+ *     on coverage" for shape — it is validated at the write site; the AUDIT-boundary (`persistDenial`)
+ *     and RENDERER (`UiSafeEgressStatus.workspaceId`) sinks this whole `24.62`/`24.83` block opened
+ *     remain open questions, UNCHANGED by this correction (this erratum is scoped to the WRITE
+ *     boundary claim only, not a re-audit of the other two boundaries above).
  *   • ⭐⭐ **TYPE boundary (`WorkspaceIdSchema`) — THE CLASS FIX.** It is `brandedIdSchema<WorkspaceId>()`
  *     — `.min(1)` + non-blank, no workspace-specific shape — and **15 of the 17 models validate through
  *     it**. One site, complete-by-construction, inherited by models not yet written. ⛔ NOT worker
@@ -957,6 +1009,40 @@ export function gateLivingVaultRewrite<T>(
   if (gate.livingVaultRewrite !== true) return undefined;
   if (typeof gate.vaultRoot !== "string" || gate.vaultRoot.length === 0) return undefined;
   return buildWiring(gate.vaultRoot);
+}
+
+/**
+ * task ARM-RESEARCH-3 — the `bootWorker` call site {@link gateLivingVaultRewrite} never had. Attaches
+ * a REAL `SourceLivingVaultPort` onto `ProofSpineParams.livingVault` IFF `gateLivingVaultRewrite`'s two
+ * preconditions (strict `livingVaultRewrite === true` + a configured `vaultRoot`) pass AND the owner
+ * has provisioned the `livingVaultProviders` bundle — a THIRD independent OFF-lock the pure gate
+ * itself has no slot for (its `buildWiring` thunk degrades to `undefined` when providers are absent,
+ * rather than widening the gate's own signature). Mirrors `withGbrainSyncOutbox`'s shape: `undefined`
+ * `proofSpineParams` (nothing to attach to) passes through unchanged; the OFF path (any of the three
+ * locks missing) leaves `proofSpineParams.livingVault` UNSET — `createLivingVaultActivity(undefined)`
+ * (buildActivities.ts) then yields an empty plan set, byte-equivalent to today. Never throws (§16):
+ * `buildIngestRewriteDeps`/`createIngestRewriteAdapter`/`createLivingVaultPort` are pure constructors,
+ * not I/O.
+ */
+export function withLivingVaultRewrite(
+  proofSpineParams: ProofSpineParams | undefined,
+  gate: { readonly livingVaultRewrite?: boolean; readonly vaultRoot?: string },
+  providers: { readonly gbrain: EntityGbrainReadPort; readonly reason: SynthesisReasonPort } | undefined,
+): ProofSpineParams | undefined {
+  if (proofSpineParams === undefined) return proofSpineParams;
+  const livingVault = gateLivingVaultRewrite(gate, (vaultRoot) => {
+    // The THIRD OFF-lock — providers absent (the shipped default) ⇒ no adapter, even though the flag
+    // + vaultRoot both passed to reach this thunk at all.
+    if (providers === undefined) return undefined;
+    return createLivingVaultPort({
+      vaultRoot,
+      rewrite: createIngestRewriteAdapter(
+        buildIngestRewriteDeps({ gbrain: providers.gbrain, reason: providers.reason, vaultRoot }),
+      ),
+    });
+  });
+  if (livingVault === undefined) return proofSpineParams;
+  return { ...proofSpineParams, livingVault };
 }
 
 /**
@@ -1767,6 +1853,70 @@ export function withSubscriptionExtractionArming(
   };
 }
 
+// ── task 22.1 — the propose precondition gate (five AND-composed preconditions) ────────────────────
+//
+// Today boot has only two ISOLATED checks — `proposeEnabled: config.copilotProposeMode === true` and
+// `knowledgeProposeEnabled: config.copilotProposeKnowledge === true && proofSpineParams !== undefined`
+// (the mappings below, inside `agentSynthesisFactory`'s thunk) — no COMPOSITE gate exists. Per the
+// plan's own five-precondition text (task 22.1), propose stays OFF unless ALL FIVE hold:
+//   (1) content trust is REAL — `deriveCopilotContentTrust` can actually return 'trusted' (Phase 20).
+//       Boot-time proxy: the go-live SELECTED serving oracle is live (`servingOracleFactory !==
+//       undefined`, i.e. `copilotProvenanceStamping && provenanceBundle && copilotServingOracleGoLive`
+//       all hold) — the mechanism the trust-flip depends on per the L580 spec note.
+//   (2) the KnowledgeWriter commit / auto-ingest path is provisioned (Phase 18): `proofSpineParams !==
+//       undefined`.
+//   (3) the Keychain signing key resolves (Phase 17): the boot-computed `signing: StamperDeps |
+//       undefined` is bound (task 19.2/22.4's SAME provisioning bundle — no second key source).
+//   (4) the real external-write transport is armed (Phase 21): `config.writeTransport?.enabled ===
+//       true` (task 22.1 threads this new `BootConfig` field — see its own doc comment).
+//   (5) gbrain provenance stamping is REAL, independent of the go-live SELECTION flip (Phase 19):
+//       the loader-backed oracle is BUILT (`loaderBackedServingOracle !== undefined`,
+//       `copilotProvenanceStamping && provenanceBundle`) — distinct from (1), which additionally
+//       requires the go-live arm.
+//
+// PURE, unit-testable without booting (mirrors `gateReconcile`/`gateRebuildOracle`'s shape): the
+// caller resolves each boolean from its own boot-time signal and hands them in as a flat struct — this
+// function does no I/O and constructs nothing. Called AHEAD of the `proposeEnabled`/`knowledgeProposeEnabled`
+// mappings so NEITHER flag is honored unless all five preconditions pass — first-missing-precondition
+// short-circuit, so the OFF verdict names exactly one reason.
+
+/** The five booleans `gateProposeArming` AND-composes, each resolved from an existing boot-time signal. */
+export interface ProposeArmingPreconditions {
+  readonly contentTrustReal: boolean;
+  readonly proofSpineProvisioned: boolean;
+  readonly signingKeyResolved: boolean;
+  readonly writeTransportArmed: boolean;
+  readonly provenanceStampingReal: boolean;
+}
+
+/** The FIRST missing precondition, in the fixed check order above — never a set (a caller-visible reason names ONE cause). */
+export type ProposeArmingReason =
+  | "content_trust_not_real"
+  | "proof_spine_not_provisioned"
+  | "signing_key_not_resolved"
+  | "write_transport_not_armed"
+  | "provenance_stamping_not_real";
+
+export type ProposeArmingVerdict =
+  | { readonly propose: "OFF"; readonly reason: ProposeArmingReason }
+  | { readonly propose: "ON" };
+
+/**
+ * The composite propose precondition gate (task 22.1). Any ONE precondition absent ⇒ `{propose:'OFF',
+ * reason:<first-missing>}`; all five present ⇒ `{propose:'ON'}` — the caller then (and ONLY then) may
+ * honor `config.copilotProposeMode`/`config.copilotProposeKnowledge`. Checked in the fixed order above
+ * so the reported reason is deterministic and always names the FIRST unmet precondition, never a
+ * summary of several. Never throws; takes only booleans, so it cannot itself construct anything.
+ */
+export function gateProposeArming(p: ProposeArmingPreconditions): ProposeArmingVerdict {
+  if (p.contentTrustReal !== true) return { propose: "OFF", reason: "content_trust_not_real" };
+  if (p.proofSpineProvisioned !== true) return { propose: "OFF", reason: "proof_spine_not_provisioned" };
+  if (p.signingKeyResolved !== true) return { propose: "OFF", reason: "signing_key_not_resolved" };
+  if (p.writeTransportArmed !== true) return { propose: "OFF", reason: "write_transport_not_armed" };
+  if (p.provenanceStampingReal !== true) return { propose: "OFF", reason: "provenance_stamping_not_real" };
+  return { propose: "ON" };
+}
+
 /**
  * 13.8i-B — bind the propose-knowledge-approval port onto the proof-spine params, for BOTH the
  * source-ingestion and meeting-closeout paths (one shared port instance, two registered activity names —
@@ -1834,6 +1984,9 @@ export function buildBackendsConfig(config: BootConfig): BackendsConfig {
     ...(config.providerTransport !== undefined
       ? { providerTransport: config.providerTransport }
       : {}),
+    // task 22.1 — forward the write-transport gate unchanged (mirrors `providerTransport` immediately
+    // above). Unset ⇒ key ABSENT ⇒ `assembleBackends` keeps the stub transport, byte-equivalent.
+    ...(config.writeTransport !== undefined ? { writeTransport: config.writeTransport } : {}),
   };
 }
 
@@ -2015,27 +2168,35 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   //   equivalent — no new arming surface). 1.4d) 21.8 — thread `config.cardTransport` (unset by
   //   default ⇒ `withCardTransport` no-ops too). Runs LAST so both always see the fully-assembled
   //   params from every rebind above.
-  const proofSpineParams = withCardTransport(
-    withWriteSecretsAccessor(
-      withProposeKnowledgeApproval(
-        withSubscriptionExtractionArming(
-          withGbrainSyncOutbox(
-            withDurableRevisions(config.proofSpineParams, backends.repos.knowledgeRevisions),
-            gbrainSyncOutboxBinding,
+  // task ARM-RESEARCH-3 — `withLivingVaultRewrite` runs OUTERMOST (after every other rebind above) so
+  //   it sees the fully-assembled params, mirroring `withCardTransport`'s own "runs LAST" note.
+  //   Three independent OFF-locks (flag + vaultRoot inside `gateLivingVaultRewrite`, providers here) —
+  //   the shipped default (all three unset) leaves `proofSpineParams.livingVault` UNSET, byte-equivalent.
+  const proofSpineParams = withLivingVaultRewrite(
+    withCardTransport(
+      withWriteSecretsAccessor(
+        withProposeKnowledgeApproval(
+          withSubscriptionExtractionArming(
+            withGbrainSyncOutbox(
+              withDurableRevisions(config.proofSpineParams, backends.repos.knowledgeRevisions),
+              gbrainSyncOutboxBinding,
+            ),
+            // 18.36 — the COMBINED effective arm (settings-injection folded in), NOT `arming.effectiveArmed`: a
+            //   settings key-injection must strip the route/ContextRef/schema arming in lockstep with the
+            //   transport (L52 no split-brain).
+            armEffective,
           ),
-          // 18.36 — the COMBINED effective arm (settings-injection folded in), NOT `arming.effectiveArmed`: a
-          //   settings key-injection must strip the route/ContextRef/schema arming in lockstep with the
-          //   transport (L52 no split-brain).
-          armEffective,
+          backends,
         ),
-        backends,
+        // 21.10 — `undefined` gate (the shipped default) ⇒ `keychainSecrets` is `undefined` ⇒ this whole
+        //   expression is `undefined` ⇒ `withWriteSecretsAccessor` no-ops (byte-equivalent).
+        keychainSecrets !== undefined ? toWriteSecretsAccessor(keychainSecrets.getSecret) : undefined,
       ),
-      // 21.10 — `undefined` gate (the shipped default) ⇒ `keychainSecrets` is `undefined` ⇒ this whole
-      //   expression is `undefined` ⇒ `withWriteSecretsAccessor` no-ops (byte-equivalent).
-      keychainSecrets !== undefined ? toWriteSecretsAccessor(keychainSecrets.getSecret) : undefined,
+      // 21.8 — `config.cardTransport` unset (the shipped default) ⇒ `withCardTransport` no-ops.
+      config.cardTransport,
     ),
-    // 21.8 — `config.cardTransport` unset (the shipped default) ⇒ `withCardTransport` no-ops.
-    config.cardTransport,
+    { livingVaultRewrite: config.livingVaultRewrite, vaultRoot: config.vaultRoot },
+    config.livingVaultProviders,
   );
 
   // 1.5) DEV data-unlock (OFF by default). When dev-provision specs are supplied, turn
@@ -2300,13 +2461,21 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
           // proposeEnabled mirrors the flag; resolveContentTrust is the REAL per-source-provenance derivation
           // (C5.4a). The flag is an AND-term with the trust verdict — so propose stays OFF at runtime until a
           // live retrieval adapter actually stamps `knowledge_writer` provenance (C5.4b), never a flag-only override.
+          //
+          // task 22.1 — BOTH flags are ADDITIONALLY AND-gated on `proposeArming.propose === "ON"` (the
+          // composite five-precondition verdict, computed above): neither flag is honored unless ALL
+          // FIVE preconditions pass, regardless of what the owner flag itself says. `proposeArming` is
+          // a plain boolean-in-boolean-out `const` closed over here — no I/O, no re-evaluation per ask.
           return createAgentRuntimeCopilotSynthesis(runner, {
-            proposeEnabled: config.copilotProposeMode === true,
+            proposeEnabled: proposeArming.propose === "ON" && config.copilotProposeMode === true,
             // §13.10a — COUPLED to the dispatch side: propose_knowledge stays OFF unless proofSpineParams is
             // provisioned (the KnowledgeWriter commit path), so an approved semantic card is always committable
             // (never stranded on the external-only dispatch). Mutually exclusive with proposeEnabled (both on ⇒
             // the capability resolver fails closed to read_only).
-            knowledgeProposeEnabled: config.copilotProposeKnowledge === true && proofSpineParams !== undefined,
+            knowledgeProposeEnabled:
+              proposeArming.propose === "ON" &&
+              config.copilotProposeKnowledge === true &&
+              proofSpineParams !== undefined,
             resolveContentTrust: deriveCopilotContentTrust,
             // 24.7 — same durable sink as the completion path below (`copilotAuditPersist`); safe forward
             // reference — this thunk runs only when `buildCopilotDeps` invokes it, after that const inits
@@ -2332,6 +2501,35 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     servedVaultRoots.set(config.copilotGbrainWorkspaceId, backends.vault);
   }
   const provenanceBundle = config.provenanceServingOracle;
+  // task 19.2/22.4 — the KnowledgeWriter provenance-signing dep, sourced from the SAME owner-provisioned
+  // `keychainSecrets`/`provenanceBundle` pair the C5.4b serving oracle already uses (NO new arming
+  // surface). `provenanceBundle` absent, or BOTH secrets sources absent, ⇒ `signing` stays `undefined`
+  // ⇒ `knowledgeWriterDeps.signing`/`writerDeps.signing` are unset ⇒ byte-identical unstamped commit at
+  // BOTH production supply sites (buildActivities.ts's + semanticApprovalDispatch.ts's conditional-
+  // spreads). Present ⇒ a locked Keychain resolution degrades to an unstamped commit AND mints a
+  // `parity_defect` HealthItem (never a crash, never silent).
+  //
+  // ⛔ HOISTED HERE (task 22.4 — closes a CONFIRMED verification finding): previously this const was
+  // computed much later (right before `withSigning(proofSpineParams, signing)`) — AFTER the semantic-
+  // approval-dispatch call site below had already built its `buildSemanticApprovalDispatch({...})`
+  // literal without `signing` in scope at all, so that call site could NEVER receive it. Computing
+  // `signing` here (before EITHER production call site) makes it available to both; the 20.2/22.4
+  // signing path is now reachable from the semantic-approval-dispatch path, not only the
+  // buildActivities.ts path (task 19.2, already wired).
+  let signingHealthIdSeq = 0;
+  const resolvedSigningSecrets = keychainSecrets?.secrets ?? provenanceBundle?.secrets;
+  const signing: StamperDeps | undefined =
+    provenanceBundle === undefined || resolvedSigningSecrets === undefined
+      ? undefined
+      : {
+          secrets: withParityDefectSignalOnLockedKeychain(
+            resolvedSigningSecrets,
+            backends.healthItems,
+            backends.now,
+            (): string => `gbrain-sign-key-locked-health:${(signingHealthIdSeq += 1)}`,
+          ),
+          signingKeyRef: provenanceBundle.signingKeyRef,
+        };
   // `keychainSecrets` (OFF-lock 2) is now built EARLIER — see its construction site above the
   // `proofSpineParams` assembly (moved for 21.10; same single instance, unchanged behavior here).
   // Task 13.10 piece C (CLOSES the rebuild-oracle arc): the boot binding, constructed in the SAME serving-oracle
@@ -2388,6 +2586,27 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     provenanceStampingEnabled: config.copilotProvenanceStamping === true,
     loaderBacked: loaderBackedServingOracle,
     goLiveArmed: config.copilotServingOracleGoLive === true, // OFF-lock 1 (default unset ⇒ false)
+  });
+
+  // task 22.1 — the composite propose precondition verdict, resolved from the five boot-time signals
+  // (see `gateProposeArming`'s own header for the full mapping). All five inputs are ALREADY in scope
+  // here — nothing new is constructed to resolve them. Referenced inside `agentSynthesisFactory`'s
+  // LAZY thunk (defined above, closes over this `const` — the thunk body executes only per-ask, long
+  // after this line runs, so the closure is safe despite the textual ordering) AND used below (once
+  // `surface` exists) to mint the operator-visible OFF health item.
+  const proposeArming = gateProposeArming({
+    // (1) content trust real — the go-live SELECTED serving oracle is live (Phase 20).
+    contentTrustReal: servingOracleFactory !== undefined,
+    // (2) the KnowledgeWriter commit / auto-ingest path is provisioned (Phase 18).
+    proofSpineProvisioned: proofSpineParams !== undefined,
+    // (3) the Keychain signing key resolves (Phase 17) — the SAME `signing` task 22.4 threads to both
+    // production supply sites.
+    signingKeyResolved: signing !== undefined,
+    // (4) the real external-write transport is armed (Phase 21).
+    writeTransportArmed: config.writeTransport?.enabled === true,
+    // (5) gbrain provenance stamping is REAL — the loader-backed oracle is BUILT, independent of the
+    // go-live SELECTION flip (Phase 19; distinct from (1) above).
+    provenanceStampingReal: loaderBackedServingOracle !== undefined,
   });
 
   // Workspace set is resolved DECOUPLED from devProvision (which is SURFACE data, not Copilot reachability):
@@ -2493,6 +2712,14 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
               sourceEventRef: "copilot.propose_knowledge",
               workflowRunRef: proofSpineParams.commit.workflowRunRef,
             },
+            // task 22.4 — the SAME hoisted `signing` instance buildActivities.ts's `knowledgeWriterDeps`
+            // already receives (task 19.2). Conditional-spread (key ABSENT, not `undefined`-valued) so
+            // the shipped default (no provisioning bundle ⇒ `signing === undefined`) keeps
+            // `SemanticApprovalDispatchDeps.signing` unset ⇒ `writerDeps` inside
+            // `buildSemanticApprovalDispatch` stays byte-identical to pre-22.4 (its own
+            // `deps.signing !== undefined` check reads the same either way; the spread just makes the
+            // key-absence explicit + consistent with every other conditional-attach in this file).
+            ...(signing !== undefined ? { signing } : {}),
           }),
           external: config.dispatchApproval,
         })
@@ -2573,6 +2800,35 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     config: DEFAULT_TEMPORAL_UNAVAILABLE_CONFIG,
   });
 
+  // task 22.1 — surface the propose precondition verdict: an operator-visible HealthItem naming the
+  // missing precondition (through the SAME `surface.record` sink every other boot-time health signal
+  // in this file uses) + a redacted log line. UNLIKE every other dormant gate in this file (which stays
+  // SILENT when OFF — the absence of wiring IS the signal), propose sits behind FIVE preconditions
+  // spanning multiple owner-gated phases; an operator working through the arming chain needs to know
+  // WHICH one is still missing, not merely that nothing happened. Fires on EVERY boot while any
+  // precondition is unmet (today: every default boot, since none of the five are provisioned) — this is
+  // diagnostic, never a fault, so it carries no severity escalation. `policy_denial` is the closest
+  // existing FailureClass fit (a policy/precondition gate holding a capability closed) — none of the 18
+  // closed members names "arming precondition unmet"; a dedicated member is an arch_gap, per Lesson 18's
+  // least-wrong-member discipline. Fire-and-forget + best-effort (never blocks/fails boot — a mint fault
+  // is swallowed, mirroring every other terminal health sink below).
+  if (proposeArming.propose === "OFF") {
+    backends.logger.info(`propose=OFF (reason=${proposeArming.reason})`, {
+      fields: { reason: proposeArming.reason },
+    });
+    void surface
+      .record({
+        failureClass: "policy_denial",
+        subjectRef: "copilot-propose-arming",
+        message: `Copilot propose held OFF (reason=${proposeArming.reason}) — all five task-22.1 preconditions must pass before propose_action/propose_knowledge are honored.`,
+        auditRef: auditId("propose-arming-health:boot"),
+        now: backends.now(),
+      })
+      .catch(() => {
+        /* best-effort — a health-mint fault never blocks/fails boot (mirrors every other terminal sink) */
+      });
+  }
+
   // ── piece F2 — the reconcile-TRIGGER arc's composition-root gate binding (task 13.10, DORMANT) ──────────────
   // Default-OFF: `config.reconcile` unset ⇒ `gateReconcile` returns undefined (NO reconcile machinery constructed
   // — byte-equivalent; the `reconcile` field is omitted from the returned BootedWorker). On the armed path
@@ -2647,26 +2903,13 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
       ? createOperationalBackupService(config.backupPorts.opDb, config.backupPorts.temporal)
       : undefined;
 
-  // task 19.2 — the KnowledgeWriter provenance-signing dep, sourced from the SAME owner-provisioned
-  // `keychainSecrets`/`provenanceBundle` pair the C5.4b serving oracle already uses (boot.ts:~2225 —
-  // NO new arming surface). `provenanceBundle` absent, or BOTH secrets sources absent, ⇒ `signing`
-  // stays `undefined` ⇒ `knowledgeWriterDeps.signing` is unset ⇒ byte-identical unstamped commit
-  // (buildActivities.ts's conditional-spread). Present ⇒ a locked Keychain resolution degrades to an
-  // unstamped commit AND mints a `parity_defect` HealthItem (never a crash, never silent).
-  let signingHealthIdSeq = 0;
-  const resolvedSigningSecrets = keychainSecrets?.secrets ?? provenanceBundle?.secrets;
-  const signing: StamperDeps | undefined =
-    provenanceBundle === undefined || resolvedSigningSecrets === undefined
-      ? undefined
-      : {
-          secrets: withParityDefectSignalOnLockedKeychain(
-            resolvedSigningSecrets,
-            backends.healthItems,
-            backends.now,
-            (): string => `gbrain-sign-key-locked-health:${(signingHealthIdSeq += 1)}`,
-          ),
-          signingKeyRef: provenanceBundle.signingKeyRef,
-        };
+  // task 19.2/22.4 — `signing` (the KnowledgeWriter provenance-signing dep) is now computed EARLIER
+  // (see its construction site right after `provenanceBundle`, above) so BOTH production supply sites —
+  // this `proofSpineParamsWithSigning` (→ buildActivities.ts's `knowledgeWriterDeps`) AND the semantic-
+  // approval-dispatch call below (→ semanticApprovalDispatch.ts's `writerDeps`) — read the SAME
+  // instance. Hoisted, not duplicated: task 22.4 found the semantic-dispatch call site (below) never
+  // received `signing` at all (it ran before `signing` existed in scope) — the confirmed finding this
+  // hoist closes.
   const proofSpineParamsWithSigning = withSigning(proofSpineParams, signing);
 
   // The Temporal registration hook: on a successful connect, register the workflows

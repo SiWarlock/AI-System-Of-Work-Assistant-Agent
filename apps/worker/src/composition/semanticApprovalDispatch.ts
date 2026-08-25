@@ -100,6 +100,22 @@ export function buildSemanticApprovalDispatch(deps: SemanticApprovalDispatchDeps
     // linkage is folded into `sourceEventRef` — which the writer records on BOTH the AuditRecord and the
     // CommittedRevision — as `<base>#approval:<id>`. So a committed KMP is traceable to the exact §9.8 approval
     // that authorized it (not only via the pending-KMP row). `#approval:` is an unambiguous, parseable suffix.
+    // task 24.105 — binding-site precondition guard. UNLIKE buildActivities.ts's two sibling
+    // `createCommitActivity` sites (which feed the ALREADY-registered `meetingCommit`/`sourceCommit`
+    // Temporal activities by deliberate design), this port is consumed ONLY in-process by
+    // `createSemanticMutationDispatch`'s executor — invoked synchronously from `decideApprovalCommand`
+    // (the tRPC approve/reject command), NEVER via a Temporal workflow. The executor's own
+    // `commitFailureToVariant` DROPS the raw `cause` (only a stable code crosses, safety rule 7) before
+    // returning to its caller — so today NOTHING raw leaves this boundary. ⛔ THAT REDACTION IS THE
+    // EXECUTOR'S, NOT THIS PORT'S: a rejection here still carries `cause: result.error`, the WHOLE
+    // `WriteFailure` with validator-authored messages constructed at
+    // `packages/workflows/src/activities/commitKnowledge.ts:164`. If this port (or the dispatch function
+    // built over it) were EVER registered as a Temporal activity directly — bypassing
+    // `createSemanticMutationDispatch`'s redaction — that full unredacted `WriteFailure` would be
+    // serialized into Temporal's DURABLE, REPLAYED workflow history with no drop on that path and no way
+    // to scrub it after the fact. This factory must stay in-process; pinned in
+    // `proof-spine-composition.test.ts` (the SAME assertion the buildActivities.ts sites carry) that no
+    // registered proof-spine Temporal activity exposes a raw commit port.
     commit: ({ approvalId }) =>
       createCommitActivity({
         applyPlan: deps.applyPlan ?? realApplyPlan,

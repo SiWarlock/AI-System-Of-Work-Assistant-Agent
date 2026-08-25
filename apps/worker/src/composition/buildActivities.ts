@@ -714,6 +714,21 @@ export function buildProofSpineActivities(
     // `deps.signing !== undefined`).
     ...(params.signing !== undefined ? { signing: params.signing } : {}),
   };
+  // task 24.105 — binding-site precondition guard. `commit`'s `.commit(plan)` returns the RAW
+  // `CommitKnowledgePort` Result — a rejection carries `cause: result.error`, the WHOLE `WriteFailure`
+  // with validator-authored messages constructed at `packages/workflows/src/activities/commitKnowledge.ts:164`
+  // (e.g. the secret-scan/workspace-path/ownership rejection detail). That full Result — cause included —
+  // IS the value `meetingCommit` below returns verbatim as its Temporal ACTIVITY result, so it lands in
+  // WORKFLOW HISTORY by construction on every failed commit, with no drop on that path (this is the
+  // existing, deliberate shape: the workflow needs the writer's specific failure to branch on). ⛔ NEVER
+  // expose this raw `commit` PORT OBJECT itself as a registered Temporal activity VALUE — only ever
+  // through the plain-async WRAPPER function (`meetingCommit:` below). Spreading `commit` directly into
+  // the returned activities literal (e.g. a future `{...commit, ...}` shorthand) would register a
+  // `CommitKnowledgePort`-shaped OBJECT (with a `.commit` method) under a Temporal activity key — this
+  // module's own header requires PLAIN ASYNC FUNCTIONS, and Temporal's `Worker.create({activities})`
+  // expects each member directly invocable, not a nested method. A prohibition alone invites its own
+  // deletion — `proof-spine-composition.test.ts` pins that every exposed commit-bearing activity is a
+  // bare function with no nested `.commit`, never this port spread in.
   const commit: CommitKnowledgePort = createCommitActivity({
     applyPlan,
     deps: knowledgeWriterDeps,
@@ -1107,8 +1122,21 @@ export function buildProofSpineActivities(
       // region boundary (parity with the meeting projection). The content reaches the note ONLY via this
       // validated KMP → createCommitActivity → applyPlan (the sole writer, which re-runs the gate — rule 1).
       const BARE_FRONTMATTER_FIELDS = ["owner", "dueDate"] as const;
-      // A task field key: `task<index>_(owner|dueDate)`, anchored (no `g` flag ⇒ stateless `.exec`).
-      const TASK_FRONTMATTER_FIELD = /^task(\d+)_(owner|dueDate)$/;
+      // task R18-a (documented LIVE finding, IMPLEMENTATION_PLAN.md §ARM-18 crossing Step A,
+      // 2026-07-24): the underscore form `^task(\d+)_(owner|dueDate)$` NEVER matched the real
+      // model's multi-task INPUT field names — the maiden run's live output is camelCase
+      // (`task1Owner`/`task1DueDate`), so every multi-task owner/dueDate silently degraded to
+      // absent (worse than TBD — the field never even entered the loop below) despite real
+      // evidence-backed values being present. ONE casing only (never both — accepting both would
+      // double the MAX_FRONTMATTER_TASKS cap slots for what could be the SAME logical task under
+      // two spellings): this regex now matches the MODEL's real INPUT shape. The NOTE's own OUTPUT
+      // frontmatter key convention stays UNCHANGED (underscore, `task1_owner`) — that is this
+      // worker's own choice for how a note looks, independent of what the model called its fields;
+      // only the INPUT match (which `vfields` keys count as a task field, and which SUFFIX reads
+      // owner vs dueDate) moved. Anchored (no `g` flag ⇒ stateless `.exec`).
+      const TASK_FRONTMATTER_FIELD = /^task(\d+)(Owner|DueDate)$/;
+      /** Map the regex's matched INPUT suffix (`Owner`/`DueDate`) to the OUTPUT field name + key segment (unchanged). */
+      const TASK_FIELD_BY_INPUT_SUFFIX = { Owner: "owner", DueDate: "dueDate" } as const;
       // Defensive bound on the projected task COUNT: the agent_extraction candidate is not yet key-count-bounded
       // (maxProperties is a deferred §9-catalog Future-TODO, L51), so a pathological/hostile extraction could
       // emit unbounded taskN_* keys. Cap the tasks (NOT a silent per-key drop) — beyond the cap a single
@@ -1142,9 +1170,15 @@ export function buildProofSpineActivities(
       ].sort((a, b) => Number(a) - Number(b) || (a < b ? -1 : a > b ? 1 : 0));
       const projectedTasks = taskIndices.slice(0, MAX_FRONTMATTER_TASKS);
       for (const idx of projectedTasks) {
-        for (const field of ["owner", "dueDate"] as const) {
-          const key = `task${idx}_${field}`;
-          noteFrontmatter[key] = neutralizeFrontmatterValue(frontmatterValue(vfields[key]));
+        for (const [inputSuffix, outputField] of Object.entries(TASK_FIELD_BY_INPUT_SUFFIX) as readonly [
+          keyof typeof TASK_FIELD_BY_INPUT_SUFFIX,
+          "owner" | "dueDate",
+        ][]) {
+          // INPUT key: the model's REAL casing (`task1Owner`) — what `vfields` is actually keyed by.
+          const inputKey = `task${idx}${inputSuffix}`;
+          // OUTPUT key: the note's own UNCHANGED convention (`task1_owner`).
+          const outputKey = `task${idx}_${outputField}`;
+          noteFrontmatter[outputKey] = neutralizeFrontmatterValue(frontmatterValue(vfields[inputKey]));
         }
       }
       // No silent cap (L51): a truncated projection stamps a visible sentinel (a projection-added literal,
@@ -1208,6 +1242,13 @@ export function buildProofSpineActivities(
   //   • fail-closed: a durable-store fault (getByIdempotencyKey/record reject) folds to `commit_failed`
   //     inside `createCommitActivity` (§16) — never a silent proceed / re-commit.
   // Metadata is the proof-spine run context (`params.commit` — derived, not caller-supplied → honest audit).
+  //
+  // task 24.105 — the SAME binding-site precondition guard as `commit`'s site above (its own comment
+  // carries the full reasoning): a rejection's `cause: result.error` — the WHOLE `WriteFailure` with
+  // validator-authored messages (`commitKnowledge.ts:164`) — is what the `sourceCommit:` wrapper below
+  // returns verbatim as its Temporal activity result, landing in WORKFLOW HISTORY by construction. NEVER
+  // expose this `sourceCommit` PORT OBJECT itself as a registered activity value — only through the
+  // wrapper function. Pinned in `proof-spine-composition.test.ts`.
   const sourceCommit: CommitKnowledgePort = createCommitActivity({
     applyPlan,
     deps: knowledgeWriterDeps,
