@@ -64,10 +64,12 @@ export interface BuildCaptureInput {
  * to check in isolation; a future real verifier decides what evidence it needs). REQUIRED,
  * no default — the caller must always supply real logic, exactly like
  * `isAllowedTelegramSender`; there is no permissive fallback to accidentally ship.
- * ⛔ BINDING STATUS: no production caller exists yet, so no real verifier is bound anywhere.
- * accepted: no mechanical backstop exists preventing a future binding from supplying a
- * permissive `() => true` — the binding slice (§13.6 trigger work) must supply BOTH the real
- * verifier AND that guard when it wires a caller.
+ * ⛔ BINDING STATUS (23.6): the SANCTIONED binding is `createCodingSessionOriginVerifier`
+ * (./coding-session-capture.ts) — it rejects in BOTH directions (an unknown repo, and a
+ * commit its injected `verifyCommitSha` refuses) so a future caller has a correct verifier
+ * ready rather than an incentive to hand-roll a permissive `() => true`. Still no
+ * production caller wires it (that ingress — receiving a real git-hook invocation — is
+ * apps/worker territory); a permissive verifier remains forbidden regardless.
  */
 export interface CaptureDeps {
   readonly isAllowedTelegramSender: (sender: string) => boolean;

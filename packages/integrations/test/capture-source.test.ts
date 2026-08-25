@@ -15,6 +15,10 @@ import {
   type CaptureDeps,
 } from "../src/connectors/adapters/capture-source";
 import { registerSource, type RegisterSourceDeps } from "../src/connectors/source-register";
+import {
+  buildCodingSessionCapture,
+  createCodingSessionOriginVerifier,
+} from "../src/connectors/adapters/coding-session-capture";
 
 const neverSeen: RegisterSourceDeps["seenContentHash"] = async () => false;
 const allowAll: CaptureDeps = { isAllowedTelegramSender: () => true, verifyCodingSessionOrigin: () => true };
@@ -126,5 +130,75 @@ describe("Phase-13 §13.6 — buildCaptureSource (git + telegram triggers, one g
     const res = buildCaptureSource(frozen, allowAll);
     expect(res.ok).toBe(true);
     expect(frozen).toEqual(input);
+  });
+
+  // 23.6 mirror case: the REAL producer (buildCodingSessionCapture) + the REAL sanctioned
+  // verifier (createCodingSessionOriginVerifier) wired through this UNCHANGED gate.
+  describe("23.6 end-to-end — the real coding-session producer + verifier through the unchanged gate", () => {
+    const verifier = createCodingSessionOriginVerifier({
+      knownRepos: ["/repos/acme-api"],
+      verifyCommitSha: (_repo, sha) => sha === "goodsha",
+    });
+    const deps: CaptureDeps = { isAllowedTelegramSender: () => true, verifyCodingSessionOrigin: verifier };
+
+    it("a verified origin (known repo + good sha) => trustLevel 'trusted'", () => {
+      const built = buildCodingSessionCapture({
+        repoPath: "/repos/acme-api",
+        commitSha: "goodsha",
+        subject: "Add the resolver",
+        changedFiles: ["a.ts"],
+        insertions: 10,
+        deletions: 0,
+      });
+      expect(built.ok).toBe(true);
+      if (!built.ok) return;
+      const res = buildCaptureSource(
+        { sourceId: "src_e2e_1", workspaceId: "employer-work", sensitivity: "normal", capture: built.value },
+        deps,
+      );
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value.routingHints).toMatchObject({ trustLevel: "trusted" });
+    });
+
+    it("an UNVERIFIED origin (bad sha) => trustLevel 'untrusted' — a downgrade, never a rejection", () => {
+      const built = buildCodingSessionCapture({
+        repoPath: "/repos/acme-api",
+        commitSha: "badsha",
+        subject: "Add the resolver",
+        changedFiles: ["a.ts"],
+        insertions: 10,
+        deletions: 0,
+      });
+      expect(built.ok).toBe(true);
+      if (!built.ok) return;
+      const res = buildCaptureSource(
+        { sourceId: "src_e2e_2", workspaceId: "employer-work", sensitivity: "normal", capture: built.value },
+        deps,
+      );
+      expect(res.ok).toBe(true); // still emits a candidate — emit-only posture (rule 1)
+      if (!res.ok) return;
+      expect(res.value.routingHints).toMatchObject({ trustLevel: "untrusted" });
+    });
+
+    it("an UNKNOWN repo (not in knownRepos) => trustLevel 'untrusted' too — the repo gate alone must downgrade", () => {
+      const built = buildCodingSessionCapture({
+        repoPath: "/repos/some-other-repo",
+        commitSha: "goodsha",
+        subject: "Add the resolver",
+        changedFiles: ["a.ts"],
+        insertions: 10,
+        deletions: 0,
+      });
+      expect(built.ok).toBe(true);
+      if (!built.ok) return;
+      const res = buildCaptureSource(
+        { sourceId: "src_e2e_3", workspaceId: "employer-work", sensitivity: "normal", capture: built.value },
+        deps,
+      );
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value.routingHints).toMatchObject({ trustLevel: "untrusted" });
+    });
   });
 });

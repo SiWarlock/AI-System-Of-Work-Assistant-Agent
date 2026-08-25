@@ -72,3 +72,39 @@ export type {
   FreeSourceAggregatorDeps,
   FreeSourceAggregator,
 } from "./free-source-aggregator";
+
+// §13.2b/13.2c/23.5 podcast + youtube real-extract transports + the generic URL-source candidate
+// HTTP transport (ALL DORMANT — SSRF-guarded over injected httpGet/run/transport seams; real
+// network/spawn binds only at §ARM-23).
+export { parseRssFeed, createPodcastExtractTransport } from "./podcast-extract-transport";
+export type {
+  PodcastHttpResponse,
+  PodcastHttpGet,
+  PodcastExtractTransportDeps,
+  PodcastRssParseError,
+} from "./podcast-extract-transport";
+export { createYouTubeExtractTransport } from "./youtube-extract-transport";
+export type { YouTubeRunResult, YouTubeRunner, YouTubeExtractTransportDeps } from "./youtube-extract-transport";
+export { createUrlSourceHttpTransport } from "./url-source";
+export type { UrlSourceHttpTransportDeps } from "./url-source";
+
+// §13.10c Gmail ingestion source adapter (emit-only, on the §13.2 pattern) — maps ONE hydrated
+// Gmail message to a CANDIDATE RegisterSourceInput. DORMANT: no transport bound here; nothing arms.
+export { extractGmailSource } from "./gmail-source";
+export type {
+  GmailMessage,
+  GmailSourceResult,
+  GmailSourceTransport,
+  ExtractGmailSourceInput,
+  GmailSourceError,
+} from "./gmail-source";
+
+// 23.6 coding-session git-hook capture producer + repo→workspace resolver + the sanctioned
+// verifyCodingSessionOrigin binding (24.14) — ALL DORMANT: no hook installed, no git binary
+// invoked, zero production callers. See capture-source.ts's CaptureDeps doc for binding status.
+export {
+  buildCodingSessionCapture,
+  createRepoWorkspaceResolver,
+  createCodingSessionOriginVerifier,
+} from "./coding-session-capture";
+export type { GitHookEvent, CaptureBuildError } from "./coding-session-capture";
