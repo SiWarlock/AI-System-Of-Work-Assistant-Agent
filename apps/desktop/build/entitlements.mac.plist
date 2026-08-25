@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for System of Work (task 11.6).
+
+  These are INERT on today's unsigned `--dir` build — the hardened runtime
+  only enforces entitlements under a real Apple code signature, which this
+  project does not hold (see electron-builder.config.ts's header comment).
+  The file exists now so the eventual signed build needs no new file, only
+  a certificate.
+
+  com.apple.security.cs.disable-library-validation is the load-bearing one
+  once signed: main forks the worker-host child under a SYSTEM node binary
+  (apps/desktop/main/index.ts, LESSONS.md #2), not an embedded/signed one —
+  without this entitlement a hardened, signed app would refuse to load
+  that child's native dependencies (e.g. better-sqlite3).
+-->
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>
