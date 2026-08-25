@@ -26,6 +26,7 @@ import { setVaultRoots } from "./vault-roots";
 import { setFirstRunMarkerPath } from "./first-run-holder";
 import { readWorkerArmingEnv } from "./worker-arming-env";
 import { loadAllowlistedDotenv } from "./dotenv-allowlist";
+import { resolveGbrainPinPath } from "./gbrain-pin-path";
 
 const isDev = typeof process.env["ELECTRON_RENDERER_URL"] === "string";
 
@@ -126,6 +127,15 @@ function startWorker(): void {
     dbPath: join(userData, "sow.db"),
     vaultRoot,
     autoIngest,
+    // 11.3a — the GBrain version-pin startup verify's pin path (packaged vs dev resolution). Threaded to the
+    // worker-host over IPC the same way dbPath/vaultRoot are; forwarded on to bootWorker by
+    // gbrainStartupVerifyForward. Always present (the resolver has no failure mode), so this always wires the
+    // verify — degrade-safe by construction (a probe throw / pin-load failure never blocks boot).
+    gbrainPinPath: resolveGbrainPinPath({
+      packaged: app.isPackaged,
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+    }),
     ...(process.env["SOW_INGEST_WORKSPACE"] !== undefined
       ? { ingestWorkspaceId: process.env["SOW_INGEST_WORKSPACE"] }
       : {}),

@@ -42,3 +42,18 @@ export function buildAutoIngestGateOpts(config: WorkerHostConfig): boot.AutoInge
       : {}),
   };
 }
+
+/**
+ * 11.3a — the conditional-spread slice forwarding the resolved gbrain.pin path into the bootWorker arg.
+ * Unset `gbrainPinPath` ⇒ `{}` (the `gbrainStartupVerify` key is OMITTED, never `gbrainStartupVerify:
+ * undefined`) ⇒ byte-equivalent shipped default (the startup verify never runs — today's degraded boot).
+ * Mirrors `subscriptionArmForward`'s conditional-spread shape exactly. `bootWorker` supplies the real
+ * `probe` default (`createGbrainVersionProbe()`) — this forwards only the plain-data `pinPath`.
+ */
+export function gbrainStartupVerifyForward(
+  config: WorkerHostConfig,
+): { readonly gbrainStartupVerify?: { readonly pinPath: string } } {
+  return config.gbrainPinPath !== undefined
+    ? { gbrainStartupVerify: { pinPath: config.gbrainPinPath } }
+    : {};
+}

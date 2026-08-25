@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { subscriptionArmForward, buildAutoIngestGateOpts } from "../../worker-host/arming-forward";
+import {
+  subscriptionArmForward,
+  buildAutoIngestGateOpts,
+  gbrainStartupVerifyForward,
+} from "../../worker-host/arming-forward";
 import type { WorkerHostConfig as MainInjectedConfig } from "../../main/worker-supervisor";
 import type { WorkerHostConfig as HostReceivedConfig } from "../../worker-host/index";
 
@@ -57,6 +61,19 @@ describe("buildAutoIngestGateOpts — WorkerHostConfig → gateAutoIngest opts (
     expect(opts.autoIngest).toBe(true);
     expect(opts.ingestWorkspaceId).toBe("personal-business");
     expect(opts.temporalAddress).toBe("127.0.0.1:7233");
+  });
+});
+
+describe("gbrainStartupVerifyForward — WorkerHostConfig → bootWorker conditional-spread (11.3a)", () => {
+  it("omits gbrainStartupVerify when unset (byte-equivalent bootWorker arg — the shipped default)", () => {
+    expect(gbrainStartupVerifyForward(BASE)).toStrictEqual({});
+    expect("gbrainStartupVerify" in gbrainStartupVerifyForward(BASE)).toBe(false);
+  });
+
+  it("forwards { gbrainStartupVerify: { pinPath } } when gbrainPinPath is set (mirrors subscriptionArmForward's shape)", () => {
+    expect(
+      gbrainStartupVerifyForward({ ...BASE, gbrainPinPath: "/repo/config/gbrain.pin" }),
+    ).toStrictEqual({ gbrainStartupVerify: { pinPath: "/repo/config/gbrain.pin" } });
   });
 });
 

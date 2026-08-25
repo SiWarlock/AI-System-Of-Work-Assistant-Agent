@@ -27,6 +27,10 @@ export interface WorkerHostConfig {
   readonly subscriptionArm?: { readonly enabled?: boolean; readonly model?: string };
   /** §5 egress-processor allowlist forwarded into the auto-ingest proof-spine EgressPolicy (18.31); default absent ⇒ []. */
   readonly egressAllowedProcessors?: readonly string[];
+  /** 11.3a — the resolved `config/gbrain.pin` path (packaged vs dev; see main/gbrain-pin-path.ts), forwarded
+   *  to bootWorker's `gbrainStartupVerify.pinPath`. Default absent ⇒ the startup verify never runs (today's
+   *  degraded boot, byte-equivalent). Mirrors worker-host/index.ts. */
+  readonly gbrainPinPath?: string;
 }
 
 /** The minimal child-process surface the supervisor drives (a real fork or a fake). */

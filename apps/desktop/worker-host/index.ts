@@ -21,7 +21,7 @@ import {
   temporalManagementPlan,
   type TemporalSupervisor,
 } from "./temporal-supervisor";
-import { subscriptionArmForward, buildAutoIngestGateOpts } from "./arming-forward";
+import { subscriptionArmForward, buildAutoIngestGateOpts, gbrainStartupVerifyForward } from "./arming-forward";
 
 // Option A (app-managed serve): worker-host owns the local `gbrain serve --http --enable-dcr` lifecycle so the
 // agentic Copilot tools + the http retrieval transport share ONE server (one PGlite connection — no CLI/serve
@@ -78,6 +78,10 @@ export interface WorkerHostConfig {
   readonly subscriptionArm?: { readonly enabled?: boolean; readonly model?: string };
   /** §5 egress-processor allowlist forwarded into the auto-ingest proof-spine EgressPolicy (18.31); default absent ⇒ []. */
   readonly egressAllowedProcessors?: readonly string[];
+  /** 11.3a — the resolved `config/gbrain.pin` path (packaged vs dev; see main/gbrain-pin-path.ts), forwarded
+   *  to bootWorker's `gbrainStartupVerify.pinPath`. Default absent ⇒ the startup verify never runs (today's
+   *  degraded boot, byte-equivalent). Mirrors main/worker-supervisor.ts. */
+  readonly gbrainPinPath?: string;
 }
 
 /** Messages the host emits back to main. */
@@ -222,6 +226,9 @@ async function start(config: WorkerHostConfig): Promise<void> {
       copilotSkillIntrospection: true,
       // Option A: when the managed serve came up, route retrieval + tools over it (http); else omitted (CLI + fail-closed).
       ...(gbrainHttpConfig ?? {}),
+      // 11.3a — the GBrain version-pin STARTUP verify (degraded-safe, fire-and-forget; §13 task 11.3-b is the
+      // production consumer). Unset gbrainPinPath ⇒ omitted ⇒ byte-equivalent (verify never runs, today's boot).
+      ...gbrainStartupVerifyForward(config),
       // No-op dispatch stubs — a first render triggers neither path (no jobs/approvals yet).
       triageDispatch: (input) =>
         Promise.resolve({ ok: true, value: { idempotencyKey: input.idempotencyKey } }),
