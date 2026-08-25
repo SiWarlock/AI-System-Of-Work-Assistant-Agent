@@ -87,8 +87,36 @@ function stripMarkers(s: string, filler: string): string {
 
 // Credential-shaped prefixes (provider API keys, cloud creds, PEM blocks, JWTs).
 // A content hash such as "sha256:deadbeef" does NOT match any of these.
+//
+// task 24.124 — the leading `sk-[a-z0-9]` alternative gained a `\b` word
+// boundary. Unbounded, it matched "sk-" as a substring ANYWHERE, so any word
+// ending in "sk" followed by `-` and an alphanumeric tripped this net:
+// `TASK-1`, `RISK-001`, `Full-Disk-Access` (pre-existing lowercase-only, then
+// widened to every casing by task 24.110's `/i` fix — measured there at 9
+// newly-rejected of 612 Markdown files atop 236 already-rejected, and pinned
+// deliberately in `packages/policy/test/audit-signal.test.ts`'s
+// `known_false_positives_are_pinned_so_the_class_is_not_INVISIBLE`, whose own
+// comment named "a word boundary" as the durable remedy).
+//
+// ⚠ THE TRADE, MEASURED (task 24.124, `test/redaction/credential-prefix-word-
+// boundary.test.ts`): AVAILABILITY improves (fewer benign values refused) at a
+// real, non-zero LEAK-direction cost — a credential token glued DIRECTLY onto a
+// preceding word character with no separator (`keysk-liveABC...`) is no longer
+// caught by THIS alternative. Measured over this repo's own tracked Markdown
+// corpus (668 files / 93,160 lines): the OLD (unbounded) predicate refused 1279
+// lines end-to-end (all three credential nets); the NEW predicate refuses 1044;
+// 235 lines are newly admitted, every sampled one ordinary prose, none a
+// credential shape. Accepted: every OTHER credential-shape alternative here
+// (xox/gh_/AKIA/-----BEGIN/eyJ) is unaffected — only the two-character,
+// no-distinctive-charset `sk-` alternative had this failure mode, and a real
+// leaked secret overwhelmingly appears after a delimiter (`=`, `:`, whitespace,
+// or line start), not glued to a preceding word.
+//
+// PRODUCER-FIRST: this is the canonical copy. `packages/policy`'s
+// independently-maintained copy (task 24.110's (C') union did not replace it)
+// gets the identical fix in the same commit round — never the copy alone.
 export const CREDENTIAL_PREFIX =
-  /(sk-[a-z0-9]|sk_(live|test)|xox[baprs]-|gh[pousr]_|AKIA[0-9A-Z]{16}|-----BEGIN|eyJ[A-Za-z0-9_-]{10,}\.)/i;
+  /(\bsk-[a-z0-9]|sk_(live|test)|xox[baprs]-|gh[pousr]_|AKIA[0-9A-Z]{16}|-----BEGIN|eyJ[A-Za-z0-9_-]{10,}\.)/i;
 
 // Sensitive keywords that indicate a raw-content / secret leak. Deliberately omits
 // "token" so a structured status code (e.g. AUTH_TOKEN_INVALID) is not a false hit.

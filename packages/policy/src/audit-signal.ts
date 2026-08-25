@@ -143,8 +143,17 @@ export function buildAuditSignal(input: BuildAuditSignalInput): AuditSignal {
 // as a second, fail-safe arm, and both modules refuse that value.
 // ⇒ THE AXIS IS CLOSED; THE BLOCK IS NOT. A precondition that has been SATISFIED reads as an
 // instruction to PROCEED.
+//
+// task 24.124 — the leading `sk-[a-z0-9]` alternative gained a `\b` word boundary,
+// PRODUCER-FIRST alongside the identical fix in `@sow/domain`'s `CREDENTIAL_PREFIX`
+// (same commit round — see that module's comment for the full measurement: 235
+// lines of this repo's own Markdown corpus newly admitted end-to-end, a real but
+// accepted AVAILABILITY-direction gain with a named LEAK-direction cost). Retires
+// this file's `known_false_positives_are_pinned_so_the_class_is_not_INVISIBLE`
+// pin DELIBERATELY — see that test, rewritten below to assert the new behaviour
+// rather than silently going green.
 const CREDENTIAL_PREFIX =
-  /(sk-[a-z0-9]|sk_(live|test)|xox[baprs]-|gh[pousr]_|AKIA[0-9A-Z]{16}|-----BEGIN|eyJ[A-Za-z0-9_-]{10,}\.)/i;
+  /(\bsk-[a-z0-9]|sk_(live|test)|xox[baprs]-|gh[pousr]_|AKIA[0-9A-Z]{16}|-----BEGIN|eyJ[A-Za-z0-9_-]{10,}\.)/i;
 
 // Sensitive keywords that indicate a raw-content / secret leak. Deliberately
 // omits "token" so a structured code (e.g. AUTH_TOKEN_INVALID) — which is never

@@ -353,14 +353,14 @@ describe("isRedactionSafe — the credential net is case-insensitive (task 24.11
       // positioned to own the decision (this signal's job is to gate an audit trail, not to
       // be the place a new credential-shape net is first designed).
       //
-      // THE TRADE, NAMED SO IT CANNOT BE REDISCOVERED AS A SURPRISE (mirrors
-      // `known_false_positives_are_pinned_so_the_class_is_not_INVISIBLE` above): closing this
-      // gap is a LEAK-direction fix with an unmeasured AVAILABILITY cost. `AIza` is a fixed,
-      // distinctive 4-character prefix (lower collision risk than `sk-`'s two-character,
-      // no-word-boundary alternative), but the charset that follows (`[0-9A-Za-z_-]{10,}`) is
-      // unbounded on the high end and could still trip on an opaque non-secret token of the
-      // right shape. That measurement is 24.118's to run, not this task's — this pin exists so
-      // the gap is VISIBLE and OWNED, not so it is closed.
+      // THE TRADE, NAMED SO IT CANNOT BE REDISCOVERED AS A SURPRISE: closing this gap is a
+      // LEAK-direction fix with an unmeasured AVAILABILITY cost. `AIza` is a fixed, distinctive
+      // 4-character prefix — a narrower collision surface than `sk-`'s bare two-character
+      // alternative EVER carried, and `sk-` itself gained a word boundary at task 24.124 (see
+      // that task's tests, below and in `@sow/domain`) — but the charset that follows AIza's
+      // prefix (`[0-9A-Za-z_-]{10,}`) is unbounded on the high end and could still trip on an
+      // opaque non-secret token of the right shape. That measurement is 24.118's to run, not
+      // this task's — this pin exists so the gap is VISIBLE and OWNED, not so it is closed.
       expect(
         isRedactionSafe(refSignal(AIZA_SHAPED_KEY)),
         "AIza-shaped Google API key: currently judged SAFE by packages/policy — this is the measured blind spot, held open by task 24.118, not a passing grade",
@@ -372,23 +372,34 @@ describe("isRedactionSafe — the credential net is case-insensitive (task 24.11
     });
   });
 
-  it("known_false_positives_are_pinned_so_the_class_is_not_INVISIBLE: the missing word boundary [spec(§16)]", () => {
-    // ⛔ NOT a passing grade — this pins a COST so it cannot be rediscovered as a surprise.
-    // `sk-[a-z0-9]` carries NO word boundary, so any word ending in "sk" followed by `-`
-    // and an alphanumeric trips the credential net. That class is PRE-EXISTING in the
-    // lowercase direction (`task-123` was refused before this slice) and this slice WIDENS
-    // it to every casing. Measured by security-reviewer over 612 repo Markdown files:
-    // 236 already rejected before the slice, 9 NEWLY rejected by it.
+  it("RETIRED task 24.124 — the word boundary landed: the former false positives are now correctly safe [spec(§16)]", () => {
+    // ⛔ RETIRED DELIBERATELY, NOT SILENTLY GREEN — history retained in past tense
+    // (L195: striking a block does not tense-shift the sentences inside it).
     //
-    // This matters because packages/knowledge's secret-scan.ts is REJECT-NOT-REDACT over
-    // the WHOLE rendered file on the sole-writer path: a note containing "TASK-1" does not
-    // land. Routed to the lead at Step 9; the durable remedy is a word boundary, which is a
-    // domain-parity question (@sow/domain carries the identical unbounded alternative).
+    // WHAT THIS TEST USED TO PIN: `sk-[a-z0-9]` carried NO word boundary, so any
+    // word ending in "sk" followed by `-` and an alphanumeric tripped the
+    // credential net. That class was PRE-EXISTING in the lowercase direction
+    // (`task-123` was refused before task 24.110) and 24.110's `/i` fix widened it
+    // to every casing. Measured by security-reviewer over 612 repo Markdown files
+    // at 24.110: 236 already rejected before that slice, 9 newly rejected by it.
+    // This mattered because packages/knowledge's secret-scan.ts is
+    // REJECT-NOT-REDACT over the WHOLE rendered file on the sole-writer path: a
+    // note containing "TASK-1" did not land.
+    //
+    // WHAT CLOSED IT: task 24.124 added `\b` before `sk-` in BOTH `@sow/domain`'s
+    // `CREDENTIAL_PREFIX` and this module's own copy, in the same commit round
+    // (producer-first — see `@sow/domain`'s `CREDENTIAL_PREFIX` comment for the
+    // full leak-direction measurement: 235 lines of this repo's Markdown corpus
+    // newly admitted end-to-end, an accepted trade, not an oversight). The
+    // fixture set below is the SAME ONE this test used to assert `false` (refused)
+    // for — this test's own retired comment said "if this ever goes green the
+    // word boundary was added, and this pin should be retired deliberately." It
+    // did; this is that retirement, not an accident.
     for (const v of ["ref:task:TASK-123", "RISK-001", "Full-Disk-Access"]) {
       expect(
         isRedactionSafe(refSignal(v)),
-        `${v}: refused as a KNOWN false positive of the unbounded sk- alternative — if this ever goes green the word boundary was added, and this pin should be retired deliberately`,
-      ).toBe(false);
+        `${v}: task 24.124 retired this false positive — if this ever REDS again the word-boundary fix was reverted, and that is a regression to investigate, not a pin to re-loosen`,
+      ).toBe(true);
     }
   });
 
