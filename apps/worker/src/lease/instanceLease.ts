@@ -179,3 +179,65 @@ export async function decideLease(
 
   return ok({ action, next });
 }
+
+// ── R10-d — threading the fencing token through durable write paths ────────────────────────
+//
+// `isFencedStale` was minted (the lease `generation` bumps on a fresh acquire) but never CALLED
+// anywhere outside this file/its own tests — the generation was threaded onto every lease record
+// and checked by nothing. This closes that gap with a reusable guard a durable write path wraps
+// itself in: capture the generation the write was ISSUED under (the lease held at the moment the
+// operation was decided), then — immediately before the actual write — re-read the LATEST
+// committed generation and fence the write out if the issuing generation has fallen behind.
+//
+// WIRING NOTE (cross-territory): this guard is the mechanism; threading it into the REAL durable
+// write call sites (KnowledgeWriter's applyPlan, ParityReportStore.record, the operational-store
+// writers) is a follow-up — those call sites live outside this package's lease/ territory (several
+// in packages/knowledge, several in sibling apps/worker/src/composition files owned by other
+// concurrent work packages this round). See the PKG-W6 Step-9 report for the exact list.
+
+/** The closed, enumerable failure this guard returns (§16 — never throws). `operationGeneration`
+ *  is the generation the write was issued under; `latestGeneration` is what it lost the race to. */
+export interface FencedWriteError {
+  readonly code: "fenced_stale";
+  readonly operationGeneration: number;
+  readonly latestGeneration: number;
+}
+
+/**
+ * Guard a durable write with the LIFE-1 fencing check. `operationGeneration` is captured by the
+ * caller at the moment it decided to act (typically `decideLease`'s `next.generation`, held from
+ * the lease read that authorized this unit of work — never re-read here, so a caller that paused
+ * mid-operation still carries its OLD value). `readLatestGeneration` is called FRESH, immediately
+ * before the write, to observe whichever generation is currently committed (a newer holder may
+ * have reclaimed the lease while this operation was paused/in flight). `isFencedStale` compares
+ * the two: a stale (behind) operation is refused — `performWrite` is NEVER invoked — closing the
+ * Mac-sleep split-brain window a TTL-only check cannot (the paused holder's lease has not
+ * necessarily EXPIRED yet; the generation bump is what catches it). Never throws (§16): a fault
+ * from `readLatestGeneration` itself is NOT swallowed here — it propagates as a rejection, exactly
+ * like a `performWrite` fault, so the caller's own fail-closed handling governs both uniformly.
+ */
+export async function withLeaseFence<T>(
+  operationGeneration: number,
+  readLatestGeneration: () => Promise<number>,
+  performWrite: () => Promise<T>,
+): Promise<Result<T, FencedWriteError>> {
+  const latestGeneration = await readLatestGeneration();
+  if (isFencedStale(operationGeneration, latestGeneration)) {
+    return err({ code: "fenced_stale", operationGeneration, latestGeneration });
+  }
+  return ok(await performWrite());
+}
+
+/** Convenience `readLatestGeneration` over an {@link InstanceLeaseStore} — the most common real
+ *  source of "the latest committed generation" (the lease record's own `generation` field). A
+ *  missing lease record (never acquired / store not yet seeded) reads as generation `0`, which
+ *  fences out any positive `operationGeneration` — fail-closed, never a false "still current". */
+export function readLatestGenerationFromStore(
+  store: InstanceLeaseStore,
+  taskQueue: SowTaskQueue,
+): () => Promise<number> {
+  return async (): Promise<number> => {
+    const current = await store.get(taskQueue);
+    return current?.generation ?? 0;
+  };
+}

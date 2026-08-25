@@ -16,6 +16,8 @@ import { SOW_CONTROL_PLANE_TASK_QUEUE } from "@sow/workflows/runtime/taskQueue";
 import {
   decideLease,
   isFencedStale,
+  withLeaseFence,
+  readLatestGenerationFromStore,
   type LeaseDecisionInput,
 } from "../src/lease/instanceLease";
 
@@ -237,5 +239,86 @@ describe("decideLease — LIFE-1 single-active-instance", () => {
     expect(isFencedStale(6, 6)).toBe(false);
     // A future/ahead generation is never fenced (defensive: strictly-below only).
     expect(isFencedStale(7, 6)).toBe(false);
+  });
+});
+
+describe("withLeaseFence — R10-d: the fencing token threaded through a durable write (Mac-sleep split-brain)", () => {
+  it("a Mac-sleep scenario end-to-end: owner-A acquires (gen 1), PAUSES mid-write, owner-B reclaims the expired lease (gen 2) — owner-A's paused write is FENCED OUT, never reaching performWrite", async () => {
+    const store = new MemLeaseStore(undefined);
+
+    // 1. owner-A acquires the lease — a fresh acquire, generation bumps to 1.
+    const acquireA = await decideLease(baseInput({ ownerId: "owner-A", current: undefined }), store);
+    expect(isOk(acquireA)).toBe(true);
+    if (!isOk(acquireA)) return;
+    const issuedGeneration = acquireA.value.next!.generation; // captured ONCE, at decision time
+    expect(issuedGeneration).toBe(1);
+
+    // 2. owner-A's process now PAUSES (e.g. laptop sleep) before it gets to actually write —
+    //    it still holds `issuedGeneration = 1` in memory; it does NOT re-read the lease.
+
+    // 3. Time passes PAST owner-A's TTL (30s); owner-B observes the now-expired lease (still the
+    //    SAME record `decideLease` wrote to the store in step 1 — nothing force-written) and
+    //    reclaims it at a LATER `now` — a FRESH acquire by a NEW holder, bumping the generation to 2.
+    const laterNow = "2026-07-01T00:01:00.000Z"; // 60s after NOW — past the 30s TTL
+    const acquireB = await decideLease(
+      baseInput({ ownerId: "owner-B", now: laterNow, current: store.peek() }),
+      store,
+    );
+    expect(isOk(acquireB)).toBe(true);
+    if (!isOk(acquireB)) return;
+    expect(acquireB.value.next?.generation).toBe(2); // the new holder bumped past owner-A's 1
+
+    // 4. owner-A now WAKES UP and attempts the durable write it decided back at step 1, still
+    //    carrying its stale `issuedGeneration = 1`. withLeaseFence reads the LATEST generation
+    //    fresh (now 2, owner-B's) and must refuse — performWrite is NEVER invoked.
+    let writeInvoked = false;
+    const result = await withLeaseFence(
+      issuedGeneration,
+      readLatestGenerationFromStore(store, TQ),
+      async () => {
+        writeInvoked = true;
+        return "wrote";
+      },
+    );
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) {
+      expect(result.error.code).toBe("fenced_stale");
+      expect(result.error.operationGeneration).toBe(1);
+      expect(result.error.latestGeneration).toBe(2);
+    }
+    expect(writeInvoked).toBe(false); // the fence held — the stale write never ran
+  });
+
+  it("a write issued under the CURRENT generation (no pause/reclaim) proceeds — performWrite runs and its result is returned", async () => {
+    const store = new MemLeaseStore(undefined);
+    const acquireA = await decideLease(baseInput({ ownerId: "owner-A", current: undefined }), store);
+    expect(isOk(acquireA)).toBe(true);
+    if (!isOk(acquireA)) return;
+    const issuedGeneration = acquireA.value.next!.generation;
+
+    const result = await withLeaseFence(
+      issuedGeneration,
+      readLatestGenerationFromStore(store, TQ),
+      async () => "wrote-for-real",
+    );
+    expect(isOk(result)).toBe(true);
+    if (isOk(result)) expect(result.value).toBe("wrote-for-real");
+  });
+
+  it("readLatestGenerationFromStore against a NEVER-acquired lease reads generation 0 — a genuinely first operation (gen 1) is NOT behind that and proceeds", async () => {
+    const store = new MemLeaseStore(undefined); // no lease record at all — a legitimate fresh-start state
+    const result = await withLeaseFence(1, readLatestGenerationFromStore(store, TQ), async () => "first-write");
+    expect(isOk(result)).toBe(true);
+    if (isOk(result)) expect(result.value).toBe("first-write");
+  });
+
+  it("a fault from readLatestGeneration PROPAGATES (rejects) rather than being swallowed into a false fence-pass or fence-fail", async () => {
+    await expect(
+      withLeaseFence(
+        1,
+        () => Promise.reject(new Error("store unreachable")),
+        async () => "should-not-run",
+      ),
+    ).rejects.toThrow("store unreachable");
   });
 });
