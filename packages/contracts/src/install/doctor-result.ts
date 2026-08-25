@@ -26,6 +26,8 @@ export const DOCTOR_CHECK_IDS = [
   "vault_acl",
   "gbrain_readonly_mount",
   "stray_gbrain_process",
+  // ── REQ-D-005 single-owner advisory-lock (task 24.1 / 11.1, safety rule 1) ──
+  "single_owner_lock",
 ] as const;
 export const doctorCheckIdSchema = z.enum(DOCTOR_CHECK_IDS);
 export type DoctorCheckId = z.infer<typeof doctorCheckIdSchema>;
@@ -58,6 +60,8 @@ export const doctorFailureVariantSchema = z.enum([
   "vault_acl_not_worker_exclusive",
   "gbrain_mount_writable_or_mispointed",
   "stray_gbrain_writer_detected",
+  // ── REQ-D-005 single-owner advisory-lock (task 24.1 / 11.1, safety rule 1) ──
+  "single_owner_lock_not_held",
   // ── §16: a diagnoser threw over a malformed probe → folded fail-closed ──
   "probe_error",
 ]);

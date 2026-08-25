@@ -172,6 +172,53 @@ describe("secretShapeGuard — credential-shaped string VALUES → err secret_in
   });
 });
 
+// task 24.117 — pins the two behaviors CREDENTIAL_VALUE_SHAPE gained since the
+// original slice: case-insensitivity (`/i`, the LEAK-direction fix) and the `\b`
+// word boundary before `sk-` (the AVAILABILITY-direction fix). Neither had a
+// fixture before this task.
+describe("secretShapeGuard — CREDENTIAL_VALUE_SHAPE is case-insensitive (task 24.117, leak direction)", () => {
+  it("rejects case-TRANSFORMED credential shapes (uppercase/mixed-case prefixes)", () => {
+    const shaped: ReadonlyArray<readonly [string, string]> = [
+      ["temporalAddress", "SK-LIVE-ABC123DEFGHI456JKL"],
+      ["temporalAddress", "Sk_Live_ABCDEFGHIJ"],
+      ["temporalAddress", "XOXB-1234-5678-abcd"],
+      ["temporalAddress", "GHP_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"],
+      ["temporalAddress", "akiaABCDEFGHIJKLMNOP"], // AKIA lowercased
+      ["temporalAddress", "-----begin private key-----"],
+      ["temporalAddress", "EYJhbGciOiJIUzI1NiIsInR5cCI6.payload"],
+    ];
+    for (const [key, value] of shaped) {
+      const r = secretShapeGuard({ ...minimalConfig, [key]: value });
+      expect(isErr(r), `case-transformed value ${value} should be rejected`).toBe(true);
+      if (isErr(r)) expect(r.error.kind).toBe("secret_in_config");
+    }
+  });
+});
+
+describe("secretShapeGuard — CREDENTIAL_VALUE_SHAPE anchors `sk-` on a word boundary (task 24.117, availability direction)", () => {
+  it("admits a benign hyphenated value carrying 'sk-' MID-WORD, not at a word boundary", () => {
+    // Each contains the substring "sk-" starting mid-word (preceded by a word
+    // character, so `\b` does not match there) — pre-24.117 these were rejected.
+    const benign = ["task-1", "desk-2"];
+    for (const value of benign) {
+      const r = secretShapeGuard({ ...minimalConfig, temporalAddress: value });
+      expect(isOk(r), `benign mid-word value ${value} should be admitted`).toBe(true);
+    }
+    const nested = secretShapeGuard({
+      ...minimalConfig,
+      vaultRootPaths: { primary: "TASK-99" },
+    });
+    expect(isOk(nested)).toBe(true);
+  });
+
+  it("still rejects 'sk-' at a genuine word boundary (start of string / after a separator)", () => {
+    const r1 = secretShapeGuard({ ...minimalConfig, temporalAddress: "sk-ABCDEFGHIJKLMNOP" });
+    expect(isErr(r1)).toBe(true);
+    const r2 = secretShapeGuard({ ...minimalConfig, temporalAddress: "prefix sk-ABCDEFGHIJKLMNOP" });
+    expect(isErr(r2)).toBe(true);
+  });
+});
+
 describe("secretShapeGuard — structurally-invalid config → err invalid_config", () => {
   it("rejects a config missing operationalDbPath (structurally invalid)", () => {
     const r = secretShapeGuard({ apiPort: 8787 });

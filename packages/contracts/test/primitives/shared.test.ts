@@ -23,6 +23,7 @@ import type {
   Capability,
   RevisionId,
   FactIdentity,
+  FactIdentityParts,
   MdContentSha,
 } from "../../src/primitives/zod-brands";
 import type {
@@ -145,6 +146,33 @@ describe("FactIdentitySchema (content-INDEPENDENT structured string)", () => {
     expect(FactIdentitySchema.parse(factIdentity({ kind: "tag", page: "p", tag: "t" }))).toBe(
       "tag:p:t",
     );
+  });
+
+  // task 24.100 — `factIdentity()` is a NAMED EXPORTED FUNCTION whose return type is a brand
+  // (`FactIdentity`) that never calls `FactIdentitySchema` (each switch branch string-templates + casts,
+  // by design — see the module's own "Builder: assemble (but do not validate)" doc). The line above only
+  // round-trips ONE of its four branches through the schema; these four pin that EVERY branch's template
+  // still produces a string `FactIdentitySchema.safeParse` actually accepts, so a future edit to either the
+  // templates or `FACT_IDENTITY_RE` that drifts them apart reds HERE instead of silently shipping a builder
+  // that mints identities its own schema would reject.
+  it("factIdentity() 'page' branch parses via FactIdentitySchema", () => {
+    const id = factIdentity({ kind: "page", slug: "projects/acme" });
+    expect(FactIdentitySchema.safeParse(id).success).toBe(true);
+  });
+
+  it("factIdentity() 'link' branch parses via FactIdentitySchema", () => {
+    const parts: FactIdentityParts = { kind: "link", src: "a", dst: "b", field: "rel" };
+    expect(FactIdentitySchema.safeParse(factIdentity(parts)).success).toBe(true);
+  });
+
+  it("factIdentity() 'timeline' branch parses via FactIdentitySchema", () => {
+    const parts: FactIdentityParts = { kind: "timeline", page: "p", seq: 3 };
+    expect(FactIdentitySchema.safeParse(factIdentity(parts)).success).toBe(true);
+  });
+
+  it("factIdentity() 'tag' branch parses via FactIdentitySchema (the pre-existing pin, restated for the full-population census)", () => {
+    const parts: FactIdentityParts = { kind: "tag", page: "p", tag: "t" };
+    expect(FactIdentitySchema.safeParse(factIdentity(parts)).success).toBe(true);
   });
 });
 

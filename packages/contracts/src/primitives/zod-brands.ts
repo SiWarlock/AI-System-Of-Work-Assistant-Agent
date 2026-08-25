@@ -187,7 +187,30 @@ export type FactIdentityParts =
   | { kind: "timeline"; page: string; seq: string | number }
   | { kind: "tag"; page: string; tag: string };
 
-/** Builder: assemble (but do not validate) a `FactIdentity` from typed parts. */
+/**
+ * Builder: assemble (but do not validate) a `FactIdentity` from typed parts.
+ *
+ * ⚠ TASK 24.100 DISPOSITION — this is the ONE genuine member the census found (method below), and it is
+ * KEPT as a deliberate builder, not bound to `FactIdentitySchema.parse`: unlike `makeId`'s constructors
+ * (which parse an UNTRUSTED raw string), this assembles from ALREADY-TYPED `FactIdentityParts` — there is
+ * no untrusted string to validate, only a template to apply. Running the schema here would be a
+ * structural-shape re-check of the function's OWN output, not a boundary gate. The compensating control is
+ * test/primitives/shared.test.ts's four `factIdentity() '<kind>' branch parses via FactIdentitySchema`
+ * pins (one per switch arm, mutation-verified) — they prove every template still produces a string
+ * `FACT_IDENTITY_RE` accepts, so a future edit that drifts a template from the regex reds THERE instead of
+ * silently minting an identity its own schema would reject.
+ *
+ * CENSUS METHOD (24.100 — "derive by the PROPERTY 'produces a branded id without running its schema'",
+ * never by spelling): read every function in `packages/contracts/src` EXPORTING a return type naming one of
+ * the 19 `Branded<string, "…">` brands defined in this file + `./ids.ts` + `./enums.ts`, and check whether
+ * its body references that brand's own `*Schema`. BOUNDARY: `packages/contracts/src` only (this task's
+ * `Track:`). Population = 11 such functions: `workspaceId`/`agentJobId`/`actionId`/`planId`/`sourceId`/
+ * `approvalId`/`workflowId`/`auditId` (`./ids.ts`) + `processorId`/`toolId` (`./enums.ts`) — all 10 route
+ * through `makeId`'s required `schema` parameter (fixed at `27640ebe`) — + `factIdentity` here, the sole
+ * remaining bypass, dispositioned above. The other 8 brands (`Capability`/`RevisionId`/`ProposalId`/
+ * `ReportId`/`BrainId`/`ProjectId`/`TaskId`/`MdContentSha`) have NO exported constructor function in this
+ * package at all — nothing to census; callers invoke their `*Schema` directly.
+ */
 export function factIdentity(parts: FactIdentityParts): FactIdentity {
   switch (parts.kind) {
     case "page":
