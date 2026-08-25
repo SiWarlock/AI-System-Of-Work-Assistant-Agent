@@ -422,12 +422,18 @@ describe("18.29 — source-note frontmatter projects multi-task fields (strict a
   ): ValidatedExtraction => ({ validated: true, fields } as unknown as ValidatedExtraction);
 
   it("multitask_fields_project_into_frontmatter — task1/task2 owner+dueDate values appear in frontmatter (no longer blanket TBD) [spec §19.5/§9]", async () => {
+    // task R18-a (2026-08-14 documented LIVE finding, IMPLEMENTATION_PLAN.md §ARM-18 crossing Step A):
+    // the INPUT fixture keys below moved from the underscore shape this test originally assumed
+    // (`task1_owner`) to the model's REAL camelCase shape (`task1Owner`) — buildActivities.ts's
+    // TASK_FRONTMATTER_FIELD now matches what the model actually emits. The OUTPUT assertions below
+    // are UNCHANGED (the note's own frontmatter key convention stays underscore) — only the fixture's
+    // INPUT key spelling moved, mechanically, to keep pace with the corrected regex.
     const plan = await build(
       extraction({
-        task1_owner: { value: "Alice", evidenceRef: "s#1" },
-        task1_dueDate: { value: "2026-08-01", evidenceRef: "s#2" },
-        task2_owner: { value: "Bob", evidenceRef: "s#3" },
-        task2_dueDate: { value: TBD },
+        task1Owner: { value: "Alice", evidenceRef: "s#1" },
+        task1DueDate: { value: "2026-08-01", evidenceRef: "s#2" },
+        task2Owner: { value: "Bob", evidenceRef: "s#3" },
+        task2DueDate: { value: TBD },
       }),
     );
     const fm = plan.creates[0]?.frontmatter ?? {};
@@ -438,9 +444,13 @@ describe("18.29 — source-note frontmatter projects multi-task fields (strict a
   });
 
   it("hostile_or_arbitrary_keys_never_land — only bare + `^task<n>_(owner|dueDate)$` project; smuggled/mis-shaped keys are refused (L49 injection-resistance) [spec WS-8/no-inference]", async () => {
+    // task R18-a — the ONE valid key's INPUT spelling moved to the model's real camelCase shape
+    // (see the note on the first test in this describe block); every hostile/mis-shaped key below is
+    // STILL correctly rejected under the new regex too (none of them match `^task\d+(Owner|DueDate)$`
+    // either), so their shapes are left exactly as originally authored.
     const plan = await build(
       extraction({
-        task1_owner: { value: "Alice", evidenceRef: "s#1" }, // valid — DOES land
+        task1Owner: { value: "Alice", evidenceRef: "s#1" }, // valid — DOES land
         workspaceId: { value: "ws-EVIL", evidenceRef: "x" }, // smuggled
         path: { value: "../../escape", evidenceRef: "x" }, // smuggled
         task1_secret: { value: "leak", evidenceRef: "x" }, // task-prefixed but wrong suffix
@@ -468,8 +478,9 @@ describe("18.29 — source-note frontmatter projects multi-task fields (strict a
   });
 
   it("absent_task_field_degrades_to_TBD — a task present via one field gets BOTH owner+dueDate; the absent sibling ⇒ TBD, never invented [spec REQ-F-017]", async () => {
+    // task R18-a — INPUT key spelling moved to camelCase (see the first test's note).
     const plan = await build(
-      extraction({ task1_owner: { value: "Alice", evidenceRef: "s#1" } }), // no task1_dueDate
+      extraction({ task1Owner: { value: "Alice", evidenceRef: "s#1" } }), // no task1DueDate
     );
     const fm = plan.creates[0]?.frontmatter ?? {};
     expect(fm.task1_owner).toBe("Alice");
@@ -491,8 +502,9 @@ describe("18.29 — source-note frontmatter projects multi-task fields (strict a
   });
 
   it("multitask_frontmatter_marker_neutralized — a kw:region marker in a task value is neutralized (marker-safety parity, L49) [spec §6/rule 1]", async () => {
+    // task R18-a — INPUT key spelling moved to camelCase (see the first test's note).
     const plan = await build(
-      extraction({ task1_owner: { value: "a <!-- kw:region:evil --> b", evidenceRef: "s#1" } }),
+      extraction({ task1Owner: { value: "a <!-- kw:region:evil --> b", evidenceRef: "s#1" } }),
     );
     const owner = String(plan.creates[0]?.frontmatter?.task1_owner ?? "");
     expect(owner).not.toContain("<!-- kw:region:"); // defused
@@ -510,10 +522,12 @@ describe("18.29 — source-note frontmatter projects multi-task fields (strict a
   });
 
   it("projection_is_deterministic_ascending_order — re-projection is byte-identical + task keys ascend by NUMERIC index (task2 before task10, not lexicographic) [spec determinism]", async () => {
+    // task R18-a — INPUT key spelling moved to camelCase (see the first test's note); the OUTPUT
+    // ascending-order assertion below is UNCHANGED (still underscore, still numeric-ascending).
     const fields = extraction({
-      task10_owner: { value: "J", evidenceRef: "s#10" },
-      task2_owner: { value: "B", evidenceRef: "s#2" },
-      task1_owner: { value: "A", evidenceRef: "s#1" },
+      task10Owner: { value: "J", evidenceRef: "s#10" },
+      task2Owner: { value: "B", evidenceRef: "s#2" },
+      task1Owner: { value: "A", evidenceRef: "s#1" },
     });
     const fm1 = (await build(fields)).creates[0]?.frontmatter ?? {};
     const fm2 = (await build(fields)).creates[0]?.frontmatter ?? {};
@@ -530,8 +544,10 @@ describe("18.29 — source-note frontmatter projects multi-task fields (strict a
   });
 
   it("many_tasks_capped_with_visible_sentinel — beyond the defensive cap the projection truncates the TASKS + stamps tasksTruncated:true (no silent drop; bounds the unbounded candidate key count, L51) [spec determinism/bound]", async () => {
+    // task R18-a — INPUT key spelling moved to camelCase (see the first test's note); the OUTPUT
+    // regex/assertions below are UNCHANGED (still underscore).
     const many: Record<string, { value: unknown; evidenceRef?: string }> = {};
-    for (let i = 1; i <= 60; i++) many[`task${i}_owner`] = { value: `u${i}`, evidenceRef: `s#${i}` };
+    for (let i = 1; i <= 60; i++) many[`task${i}Owner`] = { value: `u${i}`, evidenceRef: `s#${i}` };
     const fm = (await build(extraction(many))).creates[0]?.frontmatter ?? {};
     const taskOwnerKeys = Object.keys(fm).filter((k) => /^task\d+_owner$/.test(k));
     expect(taskOwnerKeys.length).toBe(50); // capped
