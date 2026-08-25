@@ -28,3 +28,5 @@ packages/integrations/test/gateway-redaction-credentials.test.ts:generic-api-key
 # ── task 24.64 (knowledge leg) TDD fixture ──
 # fake sk- planId testing the KnowledgeWriter commit AuditRecord sanitiser (writer.ts:603)
 packages/knowledge/test/writer-audit-gate.test.ts:generic-api-key:101
+# fake sk- deletionId testing the tombstone commit AuditRecord sanitiser (FIX-3, tombstone.ts:306)
+packages/knowledge/test/tombstone.test.ts:generic-api-key:384

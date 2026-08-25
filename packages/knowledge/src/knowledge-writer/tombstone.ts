@@ -56,6 +56,8 @@ import {
   type VaultSnapshot,
 } from "./revision";
 import type { WriteConflict, CommitFailed } from "./writer";
+import { KW_AUDIT_REF_REDACTED_PLACEHOLDER } from "./writer";
+import { isRedactionSafe, type AuditSignal } from "@sow/policy";
 import type {
   GbrainSyncOutcome,
   GbrainSyncTriggerFault,
@@ -167,6 +169,69 @@ export interface TombstoneRejected {
 
 /** Enumerable, never-silent failure surface (§16). */
 export type TombstoneFailure = TombstoneRejected | WriteConflict | CommitFailed;
+
+// ── 24.64 (knowledge leg) — commit AuditRecord redaction sanitiser ──────────
+//
+// This primitive is the SECOND of the two knowledge-leg commit sites 24.64's by-concept
+// enumeration names (`writer.ts`'s own docblock: "knowledge leg (HERE): `writer.ts:603` (below)
+// and `tombstone.ts:306` — the KnowledgeWriter COMMIT path itself"). Same disposition as that
+// leg and for the same reason: a gate that can REJECT here can BLOCK a semantic write that
+// already committed durably to disk (the tombstone Markdown lands in step 6, before this runs),
+// so the disposition is VALIDATE-OR-OMIT, never fail-closed-on-commit — this sanitiser replaces
+// only the individual `refs` entries that themselves fail the check with a bounded opaque
+// placeholder, and the SANITISED record is what gets appended; the audit is never dropped and
+// the commit never fails because of this check.
+//
+// WHY ONLY `refs`: `beforeSummary`/`afterSummary`/`payloadHash`/`actor`/`event` are all built
+// here from a fixed template, an internal counter, or a literal — never from candidate-controlled
+// text. `refs` is the one field that folds in `command.deletionId` — the §9 deletion-saga plan
+// id — which is structurally validated (non-empty, `TombstoneCommand.deletionId: string`) but
+// never shape-validated, so a schema-valid command can still carry a credential-shaped
+// deletionId. That is the representable violation this sanitiser exists to catch.
+//
+// `sanitizeCommitAuditRecordForAppend` in `writer.ts` is module-private (not exported), so this
+// is a small LOCAL TWIN rather than a cross-file call — the REDACTED placeholder constant IS
+// shared (imported from `writer.ts`, which exports it) so both knowledge-leg commit sites emit
+// the identical marker.
+const REF_PROBE_ACTOR = "kw-ref-probe";
+const REF_PROBE_EVENT = "kw-ref-probe";
+const REF_PROBE_HASH = "kw-ref-probe";
+
+/** True iff this single `refs` entry, scanned in isolation, is redaction-safe. */
+function isRefRedactionSafe(ref: string): boolean {
+  return isRedactionSafe({
+    actor: REF_PROBE_ACTOR,
+    event: REF_PROBE_EVENT,
+    payloadHash: REF_PROBE_HASH,
+    beforeSummary: "",
+    afterSummary: "",
+    refs: [ref],
+  });
+}
+
+/**
+ * VALIDATE-OR-OMIT sanitiser for a constructed commit `AuditRecord`, immediately before
+ * `deps.audit.append` below. Never rejects, never drops the audit, never touches `payloadHash`
+ * or either summary — see the block comment above for why `refs` is the only field in scope.
+ * Returns the SAME object (no new allocation) when the record is already redaction-safe, so the
+ * byte-identical-on-the-safe-path guarantee holds by construction, not by a downstream equality
+ * check.
+ */
+function sanitizeCommitAuditRecordForAppend(record: AuditRecord): AuditRecord {
+  const signal: AuditSignal = {
+    actor: record.actor,
+    event: record.event,
+    refs: record.refs,
+    payloadHash: record.payloadHash,
+    beforeSummary: record.beforeSummary,
+    afterSummary: record.afterSummary,
+  };
+  if (isRedactionSafe(signal)) return record;
+  const refs = record.refs.map((ref) =>
+    isRefRedactionSafe(ref) ? ref : KW_AUDIT_REF_REDACTED_PLACEHOLDER,
+  );
+  return { ...record, refs };
+}
 
 // ── the primitive ────────────────────────────────────────────────────────────
 
@@ -303,7 +368,14 @@ export async function applyTombstone(
     // WS-8 scope for the §9.5 recent-changes projector — the tombstone command carries its workspaceId.
     workspaceId: command.workspaceId,
   };
-  await deps.audit.append(auditRecord);
+  // 24.64 (knowledge leg) — sanitise IMMEDIATELY before the append call (kept adjacent so a
+  // future edit cannot slip a new append in between): validate-or-omit, never
+  // fail-closed-on-commit — see the block comment above `sanitizeCommitAuditRecordForAppend`.
+  // `auditRecord` (below, in `success`/`CommittedRevision.auditRecord`) deliberately still
+  // carries the UNSANITISED value — this gate's scope is the append call only (§16 log-sink
+  // surface), not the in-process return/idempotency shapes, which are never a log/redaction
+  // sink themselves.
+  await deps.audit.append(sanitizeCommitAuditRecordForAppend(auditRecord));
 
   const record: CommittedRevision = {
     revisionId: newRevision,

@@ -6,7 +6,8 @@
 // path (async, never rolls back the durable Markdown tombstone).
 import { describe, it, expect } from "vitest";
 import { ok, err, isOk, isErr } from "@sow/contracts";
-import type { Result, WorkflowRunRef } from "@sow/contracts";
+import type { Result, WorkflowRunRef, AuditRecord } from "@sow/contracts";
+import { isRedactionSafe } from "@sow/policy";
 import { applyTombstone } from "../src/knowledge-writer/tombstone";
 import type {
   TombstoneCommand,
@@ -326,5 +327,83 @@ describe("applyTombstone — post-commit GBrain purge (4.4 path, async, never ro
     expect(isOk(r)).toBe(true);
     expect(d.audit.records).toHaveLength(1);
     expect(vault.snapshot()["notes/a.md"]).toContain(TOMBSTONE_MARKER);
+  });
+});
+
+// spec(24.64 knowledge leg) — this primitive's own module docblock (`tombstone.ts:12-14`,
+// "records exactly one AuditRecord … Like every KnowledgeWriter mutation") plus writer.ts's
+// 24.64 by-concept enumeration name `tombstone.ts:306`'s `deps.audit.append` as one of exactly
+// two knowledge-leg commit sites in scope (the other is `writer.ts:709`, already sanitised via
+// `sanitizeCommitAuditRecordForAppend`). VALIDATE-OR-OMIT, never fail-closed-on-commit: the
+// sole-writer commit path (safety rule 1) may never be BLOCKED by an audit redaction-safety
+// check. `refs` folds in `command.deletionId` — the §9 deletion-saga plan id — which is
+// structurally validated (non-empty) but never shape-validated, so a credential-shaped
+// deletionId is the representable violation this sanitiser exists to catch.
+function recordSignal(record: AuditRecord): {
+  actor: string;
+  event: string;
+  refs: readonly string[];
+  payloadHash: string;
+  beforeSummary: string;
+  afterSummary: string;
+} {
+  return {
+    actor: record.actor,
+    event: record.event,
+    refs: record.refs,
+    payloadHash: record.payloadHash,
+    beforeSummary: record.beforeSummary,
+    afterSummary: record.afterSummary,
+  };
+}
+
+describe("applyTombstone — commit AuditRecord redaction sanitiser (24.64 knowledge leg)", () => {
+  // Positive control: on the ORDINARY (non-credential-shaped) path, sanitisation must be a total
+  // no-op. Proven by REFERENCE equality (not deep-equality) — the appended record is the very
+  // same object `TombstoneSuccess.auditRecord` carries, never a reconstructed copy — so this
+  // control cannot pass by accident (a sanitiser that always rebuilds an equal-by-value object
+  // would fail it).
+  it("benign_tombstone_audit_record_is_unchanged", async () => {
+    const vault = new MemoryVaultFs({ "notes/a.md": region("r1", "body") });
+    const d = deps(vault);
+    const r = await applyTombstone(cmd([{ path: "notes/a.md" }], revOf(vault)), d);
+
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    expect(d.audit.records).toHaveLength(1);
+    expect(d.audit.records[0]).toBe(r.value.auditRecord);
+    expect(isRedactionSafe(recordSignal(d.audit.records[0]!))).toBe(true);
+  });
+
+  // Adversarial case: `deletionId` is a plain `string` (never shape-validated), so a
+  // credential-shaped value is representable. `applyTombstone` folds `command.deletionId`
+  // into `refs`, so this is the representable violation the sanitiser exists to catch.
+  it("tombstone_audit_record_with_credential_shaped_deletionId_is_redaction_safe", async () => {
+    const vault = new MemoryVaultFs({ "notes/a.md": region("r1", "body") });
+    const d = deps(vault);
+    const credentialShapedDeletionId = "sk-test1234567890abcdef";
+    const command = { ...cmd([{ path: "notes/a.md" }], revOf(vault)), deletionId: credentialShapedDeletionId };
+    const r = await applyTombstone(command, d);
+
+    // (a) the commit SUCCEEDS — safety rule 1: audit sanitisation never blocks the sole writer.
+    expect(isOk(r)).toBe(true);
+    if (!isOk(r)) return;
+    expect(vault.snapshot()["notes/a.md"]).toContain(TOMBSTONE_MARKER);
+
+    // (b) exactly one append occurred.
+    expect(d.audit.records).toHaveLength(1);
+    const appended = d.audit.records[0]!;
+
+    // (c) isRedactionSafe over the appended record's signal fields is true.
+    expect(isRedactionSafe(recordSignal(appended))).toBe(true);
+
+    // (d) the offending substring appears nowhere on the appended record.
+    const serialized = JSON.stringify(appended);
+    expect(serialized).not.toContain(credentialShapedDeletionId);
+
+    // The unsanitised deletionId DID reach the pre-append record (sanity: the vector is real,
+    // the fix sanitises rather than the value never having been credential-shaped at all) — the
+    // in-process TombstoneSuccess.auditRecord (never a log/redaction sink) still carries it.
+    expect(r.value.auditRecord?.refs).toContain(credentialShapedDeletionId);
   });
 });
