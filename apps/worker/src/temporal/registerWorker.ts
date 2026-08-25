@@ -96,11 +96,35 @@ export function proofSpineWorkflowsPath(): string {
  * bundlerOptions })` and the integration test's `bundleWorkflowCode` so the two
  * bundles are the same.
  *
- * CARRY-FORWARD (Finding — cross-track, packages/contracts + packages/domain): a
- * workflow-safe subpath (or `sideEffects:false` + a fs-free schema-registry seam)
- * on those barrels would let a workflow import them WITHOUT dragging node:fs/crypto
- * into the graph, and this ignore list could shrink to empty. Flagged, not fixed
- * here — it is not this track's territory.
+ * R7-c UPDATE (2026-08-25): the two barrels named above ARE now split —
+ * `@sow/contracts`'s `SchemaRegistry`/`buildSchemaRegistry` are defined directly
+ * in its own barrel (fs-free; `defaultSchemaRegistry` stays in `./schema/
+ * registry.ts`, deliberately NOT re-exported from the barrel) and
+ * `@sow/domain`'s key builders hash with a pure, dependency-free SHA-256
+ * (`packages/domain/src/keys/canonical-key.ts`), not `node:crypto`. Pinned by
+ * `packages/domain/test/boundary/barrel-node-builtin-free.test.ts`.
+ *
+ * DESPITE THAT, removing this stub (and its {@link proofSpineWebpackConfigHook}
+ * companion) EMPIRICALLY BREAKS the real bundle — confirmed by actually running
+ * `bundleWorkflowCode` (SOW_TEMPORAL=1, `test/integration/proof-spine.test.ts`)
+ * with the plugin removed: webpack still hits `node:fs` AND
+ * `Module not found … '../../schemas'`, both inside `packages/contracts/src/
+ * schema/registry.ts`. The REMAINING reachability path is OUTSIDE
+ * packages/contracts + packages/domain: `packages/workflows/src/workflows/
+ * connectorSyncHealth.ts` does `import { defineMachine } from "@sow/domain"` —
+ * a VALUE import of the FULL @sow/domain barrel — which reaches `export *
+ * from "./validation/schema-gate"`, whose `import { defaultSchemaRegistry }
+ * from "@sow/contracts/schema/registry"` (also a VALUE import, not type-only —
+ * verbatimModuleSyntax does not erase it) pulls in the fs-backed registry
+ * module for real. `schema-gate.ts` is a validation.md deep-consumer
+ * (packages/domain territory) and `connectorSyncHealth.ts` is packages/
+ * workflows territory — BOTH outside this track's territory, so this stub
+ * STAYS. CARRY-FORWARD (Finding, cross-track: packages/workflows +
+ * packages/domain/src/validation): narrow `connectorSyncHealth.ts`'s import to
+ * a workflow-safe deep path (e.g. `@sow/domain/state/transition`) instead of
+ * the full barrel, OR make `schema-gate.ts`'s `defaultSchemaRegistry` binding
+ * lazy — either would let this ignore list + stub shrink to empty. Flagged,
+ * not fixed here.
  */
 // The Temporal bundler strips a leading `node:` before matching ignoreModules
 // against its DISALLOWED-warning set (bundler.js: `data.request.slice("node:")`), so
