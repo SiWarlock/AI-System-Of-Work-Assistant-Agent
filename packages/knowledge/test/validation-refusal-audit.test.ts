@@ -302,6 +302,100 @@ describe("the shared shape makes a signal-less issue-carrying refusal unrepresen
   });
 });
 
+// ── 1.5. `### 24.114` — MAX_ISSUE_PATH_REFS (above) bounds CARDINALITY only; each ref's own LENGTH
+// is unbounded absent a separate clamp. `structuralPathOnly` is the primary defense; this is the
+// backstop for when that cut fails to fire (an unmapped schema id, a region-less schema returning its
+// path unchanged, or a pattern miss falling through `?? path`) — bounds a cut failure, does not claim
+// to prevent one (validation-refusal.ts's own comment beside `MAX_REF_LENGTH`).
+describe("buildRefusalSignal — each individual ref is LENGTH-clamped, visibly (`### 24.114`)", () => {
+  // `sow:signed-provenance-stamp` has NO free-form-key region (measured, `FREE_FORM_KEY_REGIONS`
+  // above) — its cut returns the path UNCHANGED, the simplest reachable way to feed
+  // `buildRefusalSignal` a path that survives `structuralPathOnly` at full length.
+  const regionless = SIGNED_PROVENANCE_STAMP_SCHEMA_ID;
+
+  it("an_overlong_ref_is_clamped_and_visibly_marked", () => {
+    const longPath = "p".repeat(500);
+    const signal = buildRefusalSignal({
+      actor: "test-actor",
+      event: "test.overlong",
+      refPrefix: "test-issue-path",
+      payloadHash: "test-marker",
+      beforeSummary: "b",
+      schemaId: regionless,
+      issues: [{ path: longPath, message: "m" }],
+    });
+    expect(signal.refs).toHaveLength(1);
+    const ref = signal.refs[0]!;
+    expect(ref.length).toBeLessThanOrEqual(200);
+    expect(ref.endsWith("…[clamped]")).toBe(true);
+    // non-vacuity: the UNCLAMPED ref genuinely would have exceeded the bound — the clamp fired
+    // because the input was overlong, not because every ref is unconditionally truncated.
+    expect(`ref:test-issue-path:${longPath}`.length).toBeGreaterThan(200);
+  });
+
+  it("a_clamped_ref_is_never_mistakable_for_a_complete_one", () => {
+    // A ref built from this codebase's own four live schemas is `ref:<closed-literal>:<structural
+    // path>` — schema property names, array indices, `.`/`/` separators only, never an ellipsis or
+    // brackets — so an UNCLAMPED ref can never end with the marker.
+    const shortSignal = buildRefusalSignal({
+      actor: "test-actor",
+      event: "test.short",
+      refPrefix: "test-issue-path",
+      payloadHash: "test-marker",
+      beforeSummary: "b",
+      schemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
+      issues: [{ path: "/creates/0/path", message: "m" }],
+    });
+    for (const ref of shortSignal.refs) expect(ref).not.toContain("…[clamped]");
+
+    const longSignal = buildRefusalSignal({
+      actor: "test-actor",
+      event: "test.long",
+      refPrefix: "test-issue-path",
+      payloadHash: "test-marker",
+      beforeSummary: "b",
+      schemaId: regionless,
+      issues: [{ path: "q".repeat(500), message: "m" }],
+    });
+    expect(longSignal.refs[0]).toContain("…[clamped]");
+    expect(longSignal.refs[0]!.length).toBe(200); // clamped to EXACTLY the bound, never merely under it
+  });
+
+  it("the_cardinality_cap_still_holds_after_clamping", () => {
+    // 25 distinct overlong paths ⇒ still capped at MAX_ISSUE_PATH_REFS (20) — the length clamp and the
+    // cardinality cap are independent; neither weakens the other (L3's cap/gate composition discipline).
+    const issues = Array.from({ length: 25 }, (_, i) => ({ path: `${"z".repeat(300)}${i}`, message: "m" }));
+    const signal = buildRefusalSignal({
+      actor: "test-actor",
+      event: "test.cardinality",
+      refPrefix: "test-issue-path",
+      payloadHash: "test-marker",
+      beforeSummary: "b",
+      schemaId: regionless,
+      issues,
+    });
+    expect(signal.refs).toHaveLength(20);
+    for (const ref of signal.refs) expect(ref.length).toBeLessThanOrEqual(200);
+  });
+
+  it("clamping_does_not_admit_message_text", () => {
+    // Reasserts the EXISTING categorical exclusion of `RefusalIssue.message` (the predicate this
+    // module's header names) survives the length-clamp change: `message` must never reach `refs`,
+    // clamped or not.
+    const hostileMessage = "LEAKED-VIA-MESSAGE-" + "m".repeat(300);
+    const signal = buildRefusalSignal({
+      actor: "test-actor",
+      event: "test.message-excluded",
+      refPrefix: "test-issue-path",
+      payloadHash: "test-marker",
+      beforeSummary: "b",
+      schemaId: regionless,
+      issues: [{ path: "short", message: hostileMessage }],
+    });
+    for (const field of allFieldsOf(signal)) expect(field).not.toContain("LEAKED-VIA-MESSAGE");
+  });
+});
+
 // ── 2. per-channel: a refusal now produces a signal ───────────────────────────────────────────
 
 describe("writer.ts — SchemaRejected (⛔ LIVE, safety rule 1: the sole-writer path)", () => {

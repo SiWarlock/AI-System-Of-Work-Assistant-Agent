@@ -588,3 +588,46 @@ describe("### 24.98 — a schema_rejected denial carries a redaction-safe AuditS
     }
   });
 });
+
+// ── `### 24.114` — this producer's own refusal signal is ALSO length-clamped per ref ──────────────
+//
+// `visibility-gate.ts` builds its `schema_rejected` signal through the SAME shared
+// `buildRefusalSignal` (`src/audit/validation-refusal.ts`) every other channel uses — there is no
+// second ref-assembly here to independently fix. This proves the shared clamp reaches THIS producer's
+// real call path end-to-end, not merely that the shared function has the property in isolation.
+describe("admitProjection — the schema_rejected signal's refs are LENGTH-clamped too (`### 24.114`)", () => {
+  it("an_overlong_ref_is_clamped_and_visibly_marked", () => {
+    // `sanitizedPayload` (this schema's ONE free-form-key region) gets CUT to a short constant, so it
+    // cannot demonstrate an overlong ref. A path that never mentions "sanitizedPayload" at all makes
+    // the compiled cut pattern MISS (`cutWithCompiled`'s own `?? path` fallback), returning the RAW
+    // ajv path unchanged — reachable for real, not simulated, via a deeply right-nested permissive
+    // registry that rejects a wrong-typed value many levels down.
+    const DEPTH = 150; // "/a" × 150 ⇒ a 300-char instancePath, comfortably past the 200-char bound
+    const deepSchema = (): Record<string, unknown> => {
+      let s: Record<string, unknown> = { type: "string" };
+      for (let i = 0; i < DEPTH; i++) {
+        s = { type: "object", properties: { a: s }, required: ["a"], additionalProperties: false };
+      }
+      return s;
+    };
+    const deepCandidate = (): unknown => {
+      let v: unknown = 999; // wrong type at the leaf — the schema requires a string there
+      for (let i = 0; i < DEPTH; i++) v = { a: v };
+      return v;
+    };
+    const deepRegistry = buildSchemaRegistry([{ $id: GCL_PROJECTION_SCHEMA_ID, ...deepSchema() }]);
+
+    const r = admitProjection(deepCandidate(), wsWithDefault("full"), deepRegistry);
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable: expected a rejection");
+    expect(r.error.code).toBe("schema_rejected");
+    if (r.error.code !== "schema_rejected") throw new Error("unreachable");
+    const sig = auditOf(r.error);
+    expect(sig).toBeDefined();
+    expect(sig!.refs.length).toBeGreaterThan(0);
+    for (const ref of sig!.refs) expect(ref.length).toBeLessThanOrEqual(200);
+    // non-vacuity: at least one ref actually hit the clamp (proving the deep-nesting fixture really
+    // produced an overlong path, not that every path here happened to already be short).
+    expect(sig!.refs.some((ref) => ref.endsWith("…[clamped]"))).toBe(true);
+  });
+});

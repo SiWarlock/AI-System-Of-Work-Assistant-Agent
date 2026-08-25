@@ -295,6 +295,40 @@ export function structuralPathOnly(path: string, schemaId: CandidateSchemaId): s
 // silently truncated list reads as a complete one.
 const MAX_ISSUE_PATH_REFS = 20;
 
+// ⛔ `MAX_ISSUE_PATH_REFS` ABOVE IS A CARDINALITY CAP ONLY — it bounds HOW MANY refs this signal
+// carries; nothing bounded how LONG any ONE of them is (`### 24.114`). `structuralPathOnly` is the
+// PRIMARY defense: it cuts a row-authored key out of a path before it ever reaches here. This clamp
+// is the BACKSTOP for a CUT FAILURE, stated honestly — it does not CLAIM to prevent one:
+//   · an unmapped/inherited schema id degrades to the fixed `MAXIMAL_CUT` (already short) — covered;
+//   · a REGION-LESS schema (`cutWithCompiled`, `pattern === undefined`) returns its path UNCHANGED,
+//     deliberately (see that function's own docblock) — measured safe TODAY only because none of the
+//     four live schemas' region-less paths carry row content, a property of the SCHEMAS, not of this
+//     module;
+//   · a path that does not match the compiled pattern falls through `?? path` unmodified.
+// None of those three is EXPECTED to carry unbounded content — this bounds a cut failure, it does not
+// prevent one, the same honest framing `applyPlan`'s corrected docblock uses (`### 24.116`).
+const MAX_REF_LENGTH = 200;
+
+// A ref built from `structuralPathOnly`'s output is composed only of this codebase's own closed
+// schema-property vocabulary + `.`/`/` path separators + numeric array indices — plain ASCII
+// identifiers, never free text (the free-form-key region is exactly what got cut). An ellipsis +
+// bracketed marker is therefore not a substring any of the four live schemas can produce UNCLAMPED,
+// so its presence is a reliable truncation signal, not a coincidence a row author could forge to make
+// a complete ref look clamped (or vice versa) under normal candidate-data paths.
+const REF_CLAMP_MARKER = "…[clamped]";
+
+/**
+ * Clamp ONE ref string to `MAX_REF_LENGTH`, appending a VISIBLE marker on truncation. A silently
+ * shortened ref reads as a complete one — the same reported-drop discipline `buildRefusalSignal`'s
+ * own `omitted` count applies to CARDINALITY, applied here to LENGTH: an operator scanning `refs`
+ * must be able to tell "the whole path" from "the first N characters of it" without comparing string
+ * lengths against a constant nobody displays.
+ */
+function clampRefLength(ref: string): string {
+  if (ref.length <= MAX_REF_LENGTH) return ref;
+  return ref.slice(0, MAX_REF_LENGTH - REF_CLAMP_MARKER.length) + REF_CLAMP_MARKER;
+}
+
 /**
  * Build the `AuditSignal` for an issue-carrying refusal.
  *
@@ -330,7 +364,10 @@ export function buildRefusalSignal(input: {
   return buildAuditSignal({
     actor: input.actor,
     event: input.event,
-    refs: paths.slice(0, MAX_ISSUE_PATH_REFS),
+    // Cardinality cap FIRST (on the true distinct-path count, so `omitted`/`afterSummary` above stay
+    // accurate to how many DISTINCT paths existed), length clamp SECOND, per-element — the two caps
+    // are independent and compose without redefining what either counts (L3's cap/gate-order lesson).
+    refs: paths.slice(0, MAX_ISSUE_PATH_REFS).map(clampRefLength),
     payloadHash: input.payloadHash,
     beforeSummary: input.beforeSummary,
     afterSummary:
