@@ -91,6 +91,18 @@ phase_anchor_line() { # $1 = phase id
   ' "$TRACKER"
 }
 
+# ### 24.54 — a phase whose Spec-anchors line also carries `**Kind:** hardening` or `**Kind:** fix`
+# declares its anchor set OPEN BY CONSTRUCTION: a hardening/fix phase collects findings from
+# wherever the defect happens to live, so `brief ⊆ phase` is not mis-parameterized on it, it is
+# CATEGORICALLY INAPPLICABLE (the set is unpredictable in advance and unbounded by design). This
+# is a NEW, distinct marker from the per-task `**Kind:** build|fix|finding|...` field already used
+# on individual task lines — same field name, different scope (the phase header vs a task line),
+# disambiguated by WHICH line it appears on. Only the subset assertion is skipped; a brief still
+# has to declare at least one real anchor (see cmd_brief's item 3).
+phase_is_open_kind() { # $1 = the phase's raw Spec-anchors-line text (phase_anchor_line's output)
+  printf '%s\n' "$1" | grep -qE '\*\*Kind:\*\* *(hardening|fix)\b'
+}
+
 # ---- brief <path> --------------------------------------------------------------------------------
 cmd_brief() {
   local brief="${1:?usage: spec-lint.sh brief <path>}"
@@ -119,12 +131,18 @@ cmd_brief() {
     fi
   done
 
-  # 3. brief anchors ⊆ the phase's Spec anchors (prefix-aware), unless explicitly widened
+  # 3. brief anchors ⊆ the phase's Spec anchors (prefix-aware), unless explicitly widened OR the
+  #    phase declares itself Kind: hardening/fix (### 24.54 — anchor set OPEN by construction).
+  #    An open-kind phase still requires the brief to cite at least one real anchor; only the
+  #    SUBSET assertion is skipped, never the "must declare where the work lands" requirement.
   local phase="${task_ids%%.*}"; phase="${phase%%$'\n'*}"
   local pline pset
   pline=$(phase_anchor_line "$phase")
   if [ -z "$pline" ]; then
     note "phase $phase has no Spec anchors: line — subset check skipped"
+  elif phase_is_open_kind "$pline"; then
+    [ -n "$anchors" ] || bad "phase $phase is Kind: hardening/fix (anchor set open) but the brief cites no anchors at all — an open-kind phase still requires the brief to declare where the work lands"
+    note "phase $phase is Kind: hardening/fix — anchor set open by construction (### 24.54); subset check skipped"
   else
     pset=$(printf '%s\n' "$pline" | extract_anchors)
     if grep -qi 'widens phase scope because' "$brief"; then
