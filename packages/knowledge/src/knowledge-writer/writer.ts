@@ -367,8 +367,8 @@ function sanitizeCommitAuditRecordForAppend(record: AuditRecord): AuditRecord {
  * and concludes the whole argument is stale"), and the copy got fixed while the original stayed
  * wrong. Named so a future `try` addition without a comment update is checkable,
  * not merely re-assertable: both wrap a POST-COMMIT recording write (24.72 — typed, not thrown) — the
- * `try` at `:708` wraps `deps.audit.append`, folding a throw to `audit_record_failed`; the `try` at
- * `:730` wraps `deps.revisions.record`, folding a throw to `revision_record_failed`. ⚠ THESE TWO
+ * `try` at `:721` wraps `deps.audit.append`, folding a throw to `audit_record_failed`; the `try` at
+ * `:743` wraps `deps.revisions.record`, folding a throw to `revision_record_failed`. ⚠ THESE TWO
  * NUMBERS ARE THE CHECKABLE PART, NOT DECORATION: `writer.test.ts`'s
  * `applyPlan_docblock_makes_no_false_universal_try_claim` extracts them from this very paragraph and
  * cross-checks them against a live scan of the function body, so a future `try` block added — or
@@ -392,19 +392,28 @@ function sanitizeCommitAuditRecordForAppend(record: AuditRecord): AuditRecord {
  *   ⚠ A deps object cast past the type system with a required field missing is the SAME class
  *     reached the same way — not a separate mechanism.
  *
- * ⭐ BUT IT DOES NOT ESCAPE PRODUCTION UNTYPED, AND AN EARLIER DRAFT OF THIS COMMENT CLAIMED IT DID.
- * `createCommitActivity` (`packages/workflows/src/activities/commitKnowledge.ts`) wraps this call in
- * try/catch and folds ANY throw to a typed `commit_failed` — for precisely this reason, in its own
- * words ("its INJECTED substrate … could THROW on an infra fault") — pinned by
- * `commit-activity-base-revision.test.ts`, and all three production compositions funnel through it.
- * ⛔ THE RESIDUAL IS NARROWER AND SHARPER THAN "IT THROWS" (`### 24.72`): on a POST-COMMIT fault the
- * Markdown mutation IS durable, the caller is told `commit_failed`, and NO AuditRecord lands ⇒ a
- * DURABLE SEMANTIC MUTATION REPORTED AS A FAILURE, WITH NO AUDIT ROW. A REPORT INVERSION, not an
+ * ⭐ AND IT DOES NOT ESCAPE PRODUCTION UNTYPED. `createCommitActivity`
+ * (`packages/workflows/src/activities/commitKnowledge.ts`) wraps this function's call in try/catch and
+ * folds any THROW that still reaches it (today: only `deps.now()`, the one remaining post-commit
+ * uncaught site) to a typed `commit_failed` — pinned by `commit-activity-base-revision.test.ts`, and
+ * all three production compositions funnel through it.
+ * ⛔ THE PARAGRAPH THAT USED TO STAND HERE DESCRIBED A LIVE DEFECT (`### 24.72`); IT IS FIXED, READ IN
+ * THE PAST TENSE. Before Leg A, a POST-COMMIT recording fault rejected this function UNTYPED,
+ * `createCommitActivity`'s catch folded that to `commit_failed`, and the caller was told the commit had
+ * failed while the Markdown was durable and no `AuditRecord` had landed — a REPORT INVERSION, not an
  * uncaught escape. ⚠ Step 8's comment ("a recording fault is a System-Health concern, not a
- * rollback — the commit stands") is right that the commit stands; what it does not say is that the
- * recording never happens and the caller is told the opposite.
+ * rollback — the commit stands") was right that the commit stands; the gap was that the caller was told
+ * the opposite.
+ * ⭐ THE FIX, IN TWO LEGS: Leg A (`df39a090`) made the two try blocks above RETURN
+ * `audit_record_failed` / `revision_record_failed` instead of rethrowing, so they never reach
+ * `createCommitActivity`'s catch at all. Leg B (`### 24.72` Leg B, `commitFailureClass` in
+ * `packages/workflows/src/workflows/sourceIngestion.ts`) maps BOTH to `db_unavailable` — the
+ * least-wrong existing `FailureClass`, not `commit_failed` and not `write_through_failed` — so a
+ * durable mutation is no longer classified as a failed one. The audit row is still genuinely missing
+ * when either code fires; the caller is now told the truth about which state that is instead of being
+ * told the commit failed.
  * ⚠ GRADED (lead, 24.67): NOT safety rule 1 — KN-4 governs WHO WRITES, and KnowledgeWriter did the
- * write through a validated plan; this is §16 plus an audit-trail/observability defect. Same class
+ * write through a validated plan; this was §16 plus an audit-trail/observability defect. Same class
  * found independently in `packages/policy`'s `validateProjectionVisibility` (a `### 24.65` finding).
  *
  * ── 24.67 — WHY A NON-FUNCTION `workspacePathCheck` IS *NOT* GUARDED HERE ──────────────────────
@@ -417,9 +426,13 @@ function sanitizeCommitAuditRecordForAppend(record: AuditRecord): AuditRecord {
  *
  * 1. ORDERING — `workspacePathCheck` is the SAFEST of the required deps, not the most exposed.
  *    Omitted via cast, `vault` / `revisions` / `workspacePathCheck` throw with the vault EMPTY;
- *    `now` and `audit` throw with the vault ALREADY COMMITTED. A guard on this one field hardens a
- *    member that is ALREADY fail-closed and leaves the two that already wrote — partial coverage
- *    reading as "§16 is robust at applyPlan" (contracts L137 — a check narrower than its own prose).
+ *    `now` throws with the vault ALREADY COMMITTED. (`audit` no longer belongs in that second group:
+ *    `### 24.72` Leg A moved its post-commit fault INTO this function's own try/catch, so an omitted
+ *    `audit` now returns a typed `audit_record_failed` instead of escaping uncaught — this reason was
+ *    written while it still escaped, and the pairing is stale.) A guard on this one field hardens a
+ *    member that is ALREADY fail-closed and leaves the one that already writes uncaught — partial
+ *    coverage reading as "§16 is robust at applyPlan" (contracts L137 — a check narrower than its own
+ *    prose).
  *    ⚠ QUALIFIED: "throws with the vault empty" holds only for a NON-EMPTY change set. With zero
  *    changes the step-4.5 loop is never entered and `applyPlan` returns `ok` — making this also the
  *    only pre-write dep whose omission can be entirely SIGNAL-FREE.

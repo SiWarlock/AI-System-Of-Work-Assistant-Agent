@@ -551,3 +551,47 @@ describe("applyPlan's docblock makes a CHECKABLE claim about its own try/catch c
     expect(citedLineNumbers).toEqual(realTryLineNumbers);
   });
 });
+
+// ── `### 24.72` residual — the docblock's report-inversion paragraph (and reason 1 of the
+// workspacePathCheck-not-guarded discussion) still described the PRE-LEG-A/B defect in the present
+// tense after the fix landed: "the caller is told `commit_failed`" (false — Leg B's `commitFailureClass`
+// maps `audit_record_failed`/`revision_record_failed` to `db_unavailable`, never `commit_failed`) and
+// "`now` and `audit` throw with the vault ALREADY COMMITTED" (false — Leg A moved `audit`'s post-commit
+// fault inside this function's own try/catch, so an omitted `audit` no longer escapes uncaught; `now`
+// remains the only one that does). A stale comment claiming a fixed defect is still live is worse than
+// no comment (`L161`-adjacent — it tells a future reader to stop trusting the fix).
+describe("applyPlan's docblock does not misdescribe the 24.72 residual as still live", () => {
+  function extractApplyPlanDocblock(): string {
+    const srcPath = resolve(dirname(fileURLToPath(import.meta.url)), "../src/knowledge-writer/writer.ts");
+    const lines = readFileSync(srcPath, "utf8").split("\n");
+    const fnLineIdx = lines.findIndex((l) => l.startsWith("export async function applyPlan("));
+    let closeIdx = fnLineIdx - 1;
+    while (closeIdx >= 0 && lines[closeIdx]!.trim() === "") closeIdx--;
+    let openIdx = closeIdx;
+    while (openIdx >= 0 && lines[openIdx]!.trim() !== "/**") openIdx--;
+    return lines.slice(openIdx, closeIdx + 1).join("\n");
+  }
+
+  it("does not claim audit/revision faults are reported to the caller as commit_failed", () => {
+    const docblock = extractApplyPlanDocblock();
+    // Non-vacuity: this exact phrase is the stale claim the fix removes.
+    expect(/the caller is told `commit_failed`/i.test("the caller is told `commit_failed`, and NO AuditRecord")).toBe(true);
+    expect(
+      /the caller is told `commit_failed`/i.test(docblock),
+      "docblock still claims the (now-typed) post-commit recording faults report as commit_failed",
+    ).toBe(false);
+    // The corrected classification is named in its place.
+    expect(docblock, "docblock does not name the current db_unavailable classification").toMatch(/db_unavailable/);
+  });
+
+  it("does not claim `audit` still throws uncaught with the vault already committed", () => {
+    const docblock = extractApplyPlanDocblock();
+    const staleReason1Pairing = /`now`\s+and\s+`audit`\s+throw/i;
+    // Non-vacuity: the pattern matches the stale sentence it is written to catch.
+    expect(staleReason1Pairing.test("`now` and `audit` throw with the vault ALREADY COMMITTED")).toBe(true);
+    expect(
+      staleReason1Pairing.test(docblock),
+      "docblock still pairs `audit` with `now` as an uncaught post-commit thrower (24.72 Leg A caught it)",
+    ).toBe(false);
+  });
+});
