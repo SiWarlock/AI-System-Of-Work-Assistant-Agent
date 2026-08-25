@@ -15,8 +15,12 @@
 // scheduled flush to pick up everything queued by the time it runs. `collapseToMaxRevision` (inside
 // `scheduler.flush`) then picks the single newest trigger — exactly one `runReconcile` call per burst.
 //
-// DORMANT + reachability-waivered (mirrors reconcileScheduler.ts): no production caller — boot wires the
-// real hook call sites (post-KW-commit / vault-watcher) behind `config.reconcile`, which stays unset.
+// BOUND at the composition root (boot.ts's `gateReconcile`, task 19.4): a real production caller now
+// constructs this over the F1 gate's scheduler and wires `.notify()` into the vault-watcher's dispatched-
+// capture outcome (`fs_watch` origin). Still DORMANT in practice — the gate itself stays default-OFF
+// (`config.reconcile` unset ⇒ `gateReconcile` returns undefined ⇒ this constructor is never invoked), so
+// binding it here arms nothing; only the owner's `config.reconcile = true` + a provisioned `vaultRoot`
+// flips the whole ON path live. A future post-KW-commit hook can call the SAME bound `.notify()`.
 import type { PendingTrigger, ReconcileTriggerOrigin, ReconcilerDbProjection } from "@sow/knowledge";
 import type { GbrainReadAdapter } from "@sow/knowledge";
 import { buildReconcilerDbProjection } from "./reconcilerDbProjection";

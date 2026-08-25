@@ -175,6 +175,8 @@ import { selectServingOracleFactory } from "./api/procedures/servingContextLoade
 import type { CommittedVaultReader } from "./api/procedures/servingContextLoader";
 import { createReconcileScheduler } from "./composition/reconcileScheduler";
 import type { LoggedReconcileOutcome, ReconcileScheduler } from "./composition/reconcileScheduler";
+import { createReconcileTrigger } from "./composition/reconcileTrigger";
+import type { ReconcileTrigger } from "./composition/reconcileTrigger";
 import { runReconcileForWorkspace } from "./composition/reconcileDriver";
 import { buildCanonicalFactSet } from "./composition/canonicalFactSet";
 import { buildReconcilerDbProjection } from "./composition/reconcilerDbProjection";
@@ -263,6 +265,7 @@ import {
   startVaultWatcher,
   type RunningVaultWatcher,
   type VaultDispatch,
+  type CaptureOutcome,
 } from "./watch/vaultWatcher";
 // §13 task 11.3-b — the GBrain version-pin BOOT verify step (closes the 11.3-a reachability waiver).
 import { readFile } from "node:fs/promises";
@@ -609,8 +612,10 @@ export interface BootedWorker {
   connectTemporal(): Promise<Result<BootstrapReady, BootstrapDegraded>>;
   /** Gracefully close the API server + the backends (idempotent). */
   close(): Promise<void>;
-  /** The reconcile-TRIGGER wiring (task 13.10) — present ONLY on the armed path (`config.reconcile === true`); the
-   *  shipped default omits it (byte-equivalent). The owner's arming-era trigger source binds to `scheduler`. */
+  /** The reconcile-TRIGGER wiring (task 13.10/19.4) — present ONLY on the armed path (`config.reconcile === true`
+   *  AND a `vaultRoot`); the shipped default omits it (byte-equivalent). `trigger` is already bound to the
+   *  vault-watcher's dispatched-capture outcome below (`fs_watch` origin, task 19.4); a future post-KW-commit
+   *  hook or schedule can drive the SAME `trigger.notify()` too — both would ride the SAME scheduler. */
   readonly reconcile?: ReconcileWiring;
   /** The composed connector-engine substrate (16.1) — all read adapters over an INERT transport
    *  (no real transport, no tokenRef; dormant until the Phase-23 arming). 16.2 binds poll registration off `ports`. */
@@ -1221,9 +1226,14 @@ export interface ReconcileGateOpts {
   readonly vaultRoot?: string;
 }
 
-/** The assembled reconcile machinery the ON path returns (F2 holds it; a future trigger source drives its flush). */
+/** The assembled reconcile machinery the ON path returns: `scheduler` (piece E, the burst-collapsing
+ *  accumulate+flush primitive) plus `trigger` (task 19.4 — `createReconcileTrigger` bound over the SAME
+ *  scheduler instance). `trigger.notify()` is what `reconcileNotifyForCapture` below drives from the
+ *  vault-watcher's `onCapture` hook (`fs_watch` origin); a future post-KW-commit hook or schedule can
+ *  reuse the same `trigger` (they'd ride the SAME burst-collapsing scheduler). */
 export interface ReconcileWiring {
   readonly scheduler: ReconcileScheduler;
+  readonly trigger: ReconcileTrigger;
 }
 
 /** The leaf collaborators as THUNKS — invoked ONLY on the gated-on path (nothing is constructed on OFF). F2 binds the real ones. */
@@ -1275,7 +1285,37 @@ export function gateReconcile(
     log,
   });
 
-  return { scheduler };
+  // task 19.4 — bind the trigger source over the SAME scheduler instance (previously constructed nowhere in
+  // production; ZERO callers). Still fully contained inside this ON path — a caller reaching here already
+  // passed the `reconcile === true && vaultRoot !== undefined` gate above, so binding the trigger arms nothing
+  // new; it is the missing wiring for an ALREADY-armed path, not a new arming surface.
+  const trigger = createReconcileTrigger({ scheduler });
+
+  return { scheduler, trigger };
+}
+
+/**
+ * Task 19.4 — the pure trigger-source decision: given the (possibly-undefined, default-OFF) armed
+ * {@link ReconcileWiring} + the watched workspace + a vault-watcher `CaptureOutcome`, decide whether to fire
+ * `trigger.notify()` and return its promise, or `undefined` when there is nothing to do. `undefined` on BOTH
+ * the OFF path (`reconcile === undefined` — the shipped default; `.notify` is never even reached) AND a
+ * non-"dispatched" outcome (ignored / extract_failed / dispatch_failed / error — nothing NEW landed in the
+ * vault, so nothing to reconcile). `origin: "fs_watch"` names the real trigger source `reconcileTrigger.ts`'s
+ * header names; `outcome.workflowId` becomes the trigger's `revisionId` (ties the reconcile pass to the
+ * dispatch that captured it — the same ROLE `RevisionId` plays everywhere else in this arc, just sourced from
+ * the watcher's own dispatch id since a filesystem event carries no vault-committed revision id of its own).
+ * Pure + total: never throws. The ON-path notify() promise is the CALLER's to handle — boot.ts's `onCapture`
+ * wraps it fail-closed (mirrors every other capture-observer fault in this file, §16); this function itself
+ * makes no I/O and swallows nothing, so a test can assert the exact call without a fake clock or fake timers.
+ */
+export function reconcileNotifyForCapture(
+  reconcile: ReconcileWiring | undefined,
+  workspaceId: string,
+  outcome: CaptureOutcome,
+): Promise<void> | undefined {
+  if (reconcile === undefined) return undefined;
+  if (outcome.kind !== "dispatched") return undefined;
+  return reconcile.trigger.notify(workspaceId, "fs_watch", outcome.workflowId);
 }
 
 // ── piece F2 — the reconcile health/log sinks bound at the composition root (constraint b/c) ──────────────────
@@ -2949,9 +2989,12 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // — byte-equivalent; the `reconcile` field is omitted from the returned BootedWorker). On the armed path
   // (owner-gated, NEVER the default) it assembles the scheduler over the never-reject builders; the owner-gated
   // GbrainReadGrant transport stays UNBOUND (`makeDbAdapter → undefined` ⇒ the db-projection degrades ⇒ even the
-  // armed path records `coverageComplete=false`, never a false-green). The trigger source + flush timing bind at
-  // the owner's ARMING bundle — NOT here; the wiring is exposed on BootedWorker so the arming-era source reaches
-  // it. NO hard line crossed — nothing armed, transport unbound.
+  // armed path records `coverageComplete=false`, never a false-green). Task 19.4: the trigger source is now
+  // BOUND here too — `gateReconcile`'s ON path constructs `trigger` over the SAME scheduler, and the
+  // vault-watcher setup below wires its `onCapture` into `trigger.notify()` (`fs_watch` origin) via
+  // `reconcileNotifyForCapture`, still gated on the SAME `reconcile !== undefined` check. The flush timing for
+  // a FUTURE post-KW-commit hook still binds at the owner's ARMING bundle; the wiring stays exposed on
+  // BootedWorker too. NO hard line crossed — the ON path itself stays owner-gated, transport unbound.
   let reconcileIdSeq = 0;
   const reconcileHealthDeps = {
     recordFailure: (failure: HealthFailure): Promise<unknown> => surface.record(failure),
@@ -3075,6 +3118,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   let vaultDispatchConnection: { close(): Promise<void> } | undefined;
   if (config.vaultWatch !== undefined && config.vaultRoot !== undefined) {
     const watchRoot = config.vaultRoot;
+    const watchWorkspaceId = config.vaultWatch.workspaceId;
     let startRun: StartWorkflowRun | undefined;
     try {
       const { Client, Connection } = await import("@temporalio/client");
@@ -3139,6 +3183,14 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
               fields: { kind: outcome.kind, path: relPath },
             });
           }
+          // task 19.4 — fire the reconcile trigger on a fresh dispatch (fs_watch origin). `reconcile` is the
+          // F2 gate's ON-path wiring — undefined on the shipped default (byte-equivalent; this call never even
+          // reaches `.notify`). Fire-and-forget + swallowed: a reconcile-trigger fault must never crash the
+          // watcher (§16) — the trigger's own chain (scheduler → driver → pass) already routes every fault to
+          // a redacted log + HealthItem (piece E/F1), so silence here loses nothing but a duplicate report.
+          void reconcileNotifyForCapture(reconcile, watchWorkspaceId, outcome)?.catch(() => {
+            /* best-effort — never crash the watcher on a reconcile-trigger fault */
+          });
         },
         ...(config.vaultWatch.debounceMs !== undefined
           ? { debounceMs: config.vaultWatch.debounceMs }
