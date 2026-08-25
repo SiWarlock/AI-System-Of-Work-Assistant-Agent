@@ -403,12 +403,43 @@ describe("makeEnforceWorkspacePathScope — the exempt workspace id is a require
     // Non-vacuity partner: a real id does NOT throw, so the assertion above is discriminating
     // rather than "this factory always throws."
     expect(() => makeEnforceWorkspacePathScope(FOREIGN)).not.toThrow();
-    // ⛔ KNOWN RESIDUAL, pinned as a COMMENT and deliberately NOT an assertion, so nobody reads it as
-    // intended behaviour: `.trim()` covers the ECMAScript whitespace class only, so a zero-width /
-    // format id (U+200B, U+2060, U+180E) CONSTRUCTS here and also clears WorkspaceIdSchema's identical
-    // `.trim()` test. Asserting it would encode the gap as desired; closing it means validating the
-    // exempt id against the known workspace set at the composition root (brief 271 option (c)) — out
-    // of this slice's scope and owed by whoever supplies the value.
+    // ⛔ 24.61 CLOSED THE RESIDUAL THIS COMMENT USED TO RECORD AS DELIBERATELY UNASSERTED — see the
+    // dedicated test below (`construction FAILS FAST on a ZERO-WIDTH/format-only exempt id too`).
+    // `.trim()` alone covers the ECMAScript whitespace class only; it does not follow that this test
+    // now covers zero-width/format ids too — a SEPARATE test asserts that, so a regression in either
+    // check reds independently rather than one green covering for the other.
+  });
+
+  it("construction FAILS FAST on a ZERO-WIDTH/format-only exempt id too (24.61) — .trim() alone would have missed these", () => {
+    // ⛔ 24.61 — U+200B ZWSP / U+200C ZWNJ / U+2060 WORD JOINER / U+180E are Unicode category `Cf`
+    // (zero-width / format), NOT `.trim()`'s ECMAScript `WhiteSpace`/`LineTerminator` class. Before
+    // this fix, each of these CONSTRUCTED SUCCESSFULLY here and also cleared `WorkspaceIdSchema`'s
+    // identical `.trim()` test — a security review verified end-to-end that a zero-width exempt id
+    // paired with a zero-width plan workspace admits an unprefixed vault-root write
+    // (`IMPLEMENTATION_PLAN.md` `### 24.61`). Pinned by the four SPECIFIC code points the finding
+    // named, not a category-`Cf` regex sweep — see `ZERO_WIDTH_FORMAT_CHARS`'s docblock in
+    // `workspace-path-guard.ts` for why a named set, not "whatever `Cf` includes," is the honest scope.
+    const zeroWidthOnly = [
+      "\u200B", // ZERO WIDTH SPACE
+      "\u200C", // ZERO WIDTH NON-JOINER
+      "\u2060", // WORD JOINER
+      "\u180E", // MONGOLIAN VOWEL SEPARATOR
+      "  \u200B\u200C  ", // mixed with ordinary whitespace — still nothing but non-content
+      "\u2060\u180E", // more than one, still nothing but non-content
+    ];
+    for (const blank of zeroWidthOnly) {
+      expect(() => makeEnforceWorkspacePathScope(blank)).toThrow(
+        /exemptWorkspaceId must be a non-blank string/,
+      );
+    }
+    // Non-vacuity partner, and the discriminating half: a real id that merely CONTAINS a zero-width
+    // character alongside actual content does NOT throw. This check rejects zero-width/whitespace-
+    // ONLY ids, not the presence of one of these code points anywhere in an otherwise-legitimate id —
+    // and it is still NOT validation that the surviving content is a legitimate workspace id (brief
+    // `271` option (c), composition-root territory, remains the only thing that closes that class).
+    expect(() =>
+      makeEnforceWorkspacePathScope(`personal-business\u200B`),
+    ).not.toThrow();
   });
 });
 

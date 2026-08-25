@@ -75,6 +75,16 @@ function violation(path: string): WorkspacePathViolation {
 }
 
 /**
+ * ZERO-WIDTH / FORMAT (Unicode category `Cf`) code points the exempt-id blank-check also treats as
+ * non-content, alongside `.trim()`'s ECMAScript whitespace class (24.61 remedy). Named individually
+ * rather than a category-`Cf` regex sweep: this pins EXACTLY what is covered, not "whatever `Cf`
+ * happens to include" — a future Unicode version could add more `Cf` assignments this hardcoded set
+ * would silently miss, and naming the four the finding actually proved constructible is honest about
+ * that boundary instead of implying totality it does not have.
+ */
+const ZERO_WIDTH_FORMAT_CHARS = /[\u200B\u200C\u2060\u180E]/g;
+
+/**
  * Build a path-scope check whose ONE legacy-exempt workspace is supplied, not asserted (24.26 step 1
  * of 3). The returned predicate rejects a changed path unless it is (a) a KN-12 structural surface,
  * (b) targeted by `exemptWorkspaceId`, (c) prefixed with its OWN `plan.workspaceId` as the first
@@ -106,17 +116,31 @@ function violation(path: string): WorkspacePathViolation {
  * actually do, now that the composition root supplies it (24.26 complete), is SILENTLY DISABLE the
  * legacy-content posture the `{mode:"assign"}` bridge depends on. That is a misconfiguration, and it
  * should name itself at boot rather than surface later as "every personal-business unprefixed write
- * started failing." ⚠ `.trim()` (not `.length`) is deliberate: `" "` has length 1, so it would clear
- * the fail-closed check below and genuinely exempt a `" "` workspace.
+ * started failing." ⚠ `.trim()` (not `.length`) is deliberate: `" "` has length 1, so a raw `.length`
+ * check would clear it and genuinely exempt a `" "` workspace.
  *
- * ⛔ WHAT THIS CHECK DOES **NOT** CLOSE — stated because this comment's first draft claimed it closed
- * "the one real hole," and a security review REFUTED that EMPIRICALLY rather than by reading.
- * `.trim()` covers the ECMAScript `WhiteSpace`/`LineTerminator` class ONLY. Zero-width / format code
- * points — U+200B ZWSP, U+200C ZWNJ, U+2060 WORD JOINER, U+180E — are category Cf, NOT whitespace:
- * they construct successfully here, AND they clear `WorkspaceIdSchema` (`zod-brands.ts:31-34`), which
- * applies the SAME `.trim()` test — so a zero-width exempt id paired with a zero-width plan workspace
- * admits an unprefixed vault-root write. ⇒ THIS IS A BLANK-CONFIG TRIPWIRE, NOT VALIDATION THAT THE
- * ARGUMENT IS A LEGITIMATE WORKSPACE ID.
+ * ⛔ 24.61 REMEDY — ZERO-WIDTH / FORMAT CODE POINTS ARE NOW ALSO TREATED AS NON-CONTENT, stated
+ * because this comment's FIRST draft claimed `.trim()` alone closed "the one real hole," and a
+ * security review REFUTED that EMPIRICALLY rather than by reading. `.trim()` covers the ECMAScript
+ * `WhiteSpace`/`LineTerminator` class ONLY. U+200B ZWSP, U+200C ZWNJ, U+2060 WORD JOINER, U+180E —
+ * Unicode category `Cf`, NOT whitespace — used to construct successfully here, AND cleared
+ * `WorkspaceIdSchema` (`zod-brands.ts:31-34`, which applies the SAME `.trim()` test), so a zero-width
+ * exempt id paired with a zero-width plan workspace admitted an unprefixed vault-root write (verified
+ * end-to-end by the reviewer that filed this). The check below now strips `ZERO_WIDTH_FORMAT_CHARS`
+ * before testing blankness, so an id built ENTIRELY from those four code points (alone or mixed with
+ * ordinary whitespace) throws here, same as `""` or `"   "`.
+ *
+ * ⛔ WHAT THIS CHECK STILL DOES **NOT** CLOSE, AND NEVER WILL BY ITSELF — stated so the 24.61 fix is
+ * not mistaken for the whole remedy. This remains a BLANK-CONFIG TRIPWIRE, NOT VALIDATION THAT THE
+ * ARGUMENT IS A LEGITIMATE WORKSPACE ID: a well-formed but WRONG id — a typo, a stale value, one
+ * workspace's id supplied where another's belongs — is non-blank and sails through untouched, and so
+ * would any future non-`.trim()`/non-`Cf` character a later Unicode version adds that this file's
+ * hardcoded four-code-point set does not name (named deliberately, not a category-`Cf` sweep — see
+ * `ZERO_WIDTH_FORMAT_CHARS` below). ⛔ CLOSING THE CLASS is brief `271`'s option (c): validate the
+ * supplied id against the KNOWN WORKSPACE SET at the composition root, where the set of legitimate
+ * ids actually lives — this factory has no such set to check against, and manufacturing one here
+ * would duplicate it. Deliberately NOT folded into this fix — a composition-root change, outside this
+ * module's territory.
  *
  * ⛔⛔ THE PRECONDITION, AND ITS TRIGGER IS NOT A STEP NUMBER (lead ruling, 24.26):
  * **the exempt workspace id must be validated against the known workspace set before it may be
@@ -133,7 +157,10 @@ export function makeEnforceWorkspacePathScope(exemptWorkspaceId: string): Worksp
   // is a composition root, and a JS caller or an `as`-cast reaches this with anything. Without it,
   // `undefined` throws a bare "Cannot read properties of undefined" naming no parameter. The test's
   // blank-values table includes cast non-strings, so this branch is defensive, not dead.
-  if (typeof exemptWorkspaceId !== "string" || exemptWorkspaceId.trim().length === 0) {
+  if (
+    typeof exemptWorkspaceId !== "string" ||
+    exemptWorkspaceId.replace(ZERO_WIDTH_FORMAT_CHARS, "").trim().length === 0
+  ) {
     // Names the parameter, never echoes the value (rule 7 posture — this is config, not a secret,
     // but the module's discipline is to keep boundary values out of messages).
     throw new Error("makeEnforceWorkspacePathScope: exemptWorkspaceId must be a non-blank string");
