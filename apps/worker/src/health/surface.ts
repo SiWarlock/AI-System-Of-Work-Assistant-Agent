@@ -63,6 +63,12 @@ import {
  * (`failureClass|subjectRef`); `subjectRef` is retained for inspection/grouping;
  * `lastSeen` is refreshed on every dedupe hit; `occurrenceCount` counts recurrences
  * since `openedAt`. `openedAt` mirrors `item.openedAt` for convenience.
+ *
+ * `lastReadAt` (task 24.3 — the operator read-cursor axis) is the ISO-8601 timestamp
+ * the item was last acknowledged AS READ by the panel; `undefined` means UNREAD. Every
+ * `record()` write (fresh mint OR a recurrence bump) resets it to `undefined` — a
+ * materializing failure, first-seen or recurring, is new information the operator has
+ * not yet looked at, so it (re)opens the unread state. Only `markRead` sets it.
  */
 export interface SurfacedHealthItem {
   readonly dedupeKey: string;
@@ -71,6 +77,7 @@ export interface SurfacedHealthItem {
   readonly openedAt: string;
   readonly lastSeen: string;
   readonly occurrenceCount: number;
+  readonly lastReadAt?: string;
 }
 
 /**
@@ -177,6 +184,15 @@ export interface HealthSurface {
   readModel(
     input: HealthReadModelInput,
   ): Promise<Result<HealthReadModel, HealthSurfaceError>>;
+  /**
+   * Task 24.3 — operator read-cursor: stamp `lastReadAt = now` on the item (idempotent; a
+   * no-op re-stamp on an already-read item returns the PRIOR record unchanged; no item →
+   * `ok(undefined)`). Survives a store restart (persisted via the injected store, same as
+   * every other lifecycle field — never held in surface memory).
+   */
+  markRead(
+    ref: HealthItemRef & { readonly now: string },
+  ): Promise<Result<SurfacedHealthItem | undefined, HealthSurfaceError>>;
 }
 
 /**
@@ -363,6 +379,27 @@ export function createHealthSurface(store: HealthSurfaceStore): HealthSurface {
           (activeByClass[r.item.failureClass] ?? 0) + 1;
       }
       return ok({ ...projection, activeByClass });
+    },
+
+    async markRead(
+      ref: HealthItemRef & { readonly now: string },
+    ): Promise<Result<SurfacedHealthItem | undefined, HealthSurfaceError>> {
+      const dedupeKey = healthItemDedupeKey(ref.failureClass, ref.subjectRef);
+      let prior: SurfacedHealthItem | undefined;
+      try {
+        prior = await store.getByDedupeKey(dedupeKey);
+      } catch (cause) {
+        return fail("persist_failed", "failed to read the health item for mark-read", cause);
+      }
+      if (prior === undefined) return ok(undefined);
+      if (prior.lastReadAt !== undefined) return ok(prior); // idempotent — already read
+      const record: SurfacedHealthItem = { ...prior, lastReadAt: ref.now };
+      try {
+        await store.put(record);
+        return ok(record);
+      } catch (cause) {
+        return fail("persist_failed", "failed to persist mark-read", cause);
+      }
     },
   };
 
