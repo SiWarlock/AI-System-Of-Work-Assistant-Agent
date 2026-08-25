@@ -34,6 +34,7 @@
 // no Temporal server and closes the old hardcoded-list's coverage gap on its own.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
+  ok,
   isErr,
   workspaceId,
   workflowId,
@@ -60,6 +61,10 @@ import type {
   SourceIngestionContext,
   IngestionTriageInput,
   IngestionTriageOutcome,
+  SourceLivingVaultPort,
+  ProposeKnowledgeApprovalPort,
+  ValidatedExtraction,
+  SourceNoteIdentity,
 } from "@sow/workflows";
 import type { CommittedRevision, KnowledgeRevisionStore } from "@sow/knowledge";
 import { computeRevisionId } from "@sow/knowledge";
@@ -262,6 +267,141 @@ describe("buildProofSpineActivities — full registered activity-name surface (n
       for (const name of ALL_REGISTERED_ACTIVITY_NAMES) {
         expect(typeof (acts as unknown as Record<string, unknown>)[name]).toBe("function");
       }
+    } finally {
+      backends.close();
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (1b) BINDING IDENTITY for the two per-path pairs 12.24's own header names as
+// still uncovered: `sourceLivingVaultRewrite`, and the
+// `meetingProposeKnowledgeApproval`/`sourceProposeKnowledgeApproval` pair.
+// UNGATED (no Temporal server needed): `buildProofSpineActivities` returns each
+// of these as a PLAIN function closing over the injected port
+// (`createLivingVaultActivity`/`createProposeKnowledgeApprovalActivity`,
+// composition/living-vault.ts — `port === undefined ⇒ the unarmed default; else
+// port.rewrite/propose(...)`), so calling the returned function DIRECTLY
+// exercises the exact composition-root wiring 12.24 names, with no Worker or
+// TestWorkflowEnvironment required.
+//
+// The propose pair is DOCUMENTED (buildActivities.ts ~1394: "SAME shared port
+// instance as meetingProposeKnowledgeApproval") to delegate to ONE shared
+// `params.proposeKnowledgeApproval` instance — 12.24's own severity note
+// already established a NAME SWAP between the two is behaviourally inert
+// (identical right-hand side) and therefore cannot be discriminated by any
+// test. What CAN be discriminated, and is the real risk this closes, is EACH
+// name reaching ITS intended injected dependency AT ALL — the class of
+// regression where one leg is silently left wired to the unarmed default while
+// the other correctly threads the port. The third test below is the
+// mutation-proof for that: with NEITHER port injected (paramsFor's shipped
+// default), production `createProposeKnowledgeApprovalActivity`/
+// `createLivingVaultActivity` return the unarmed outcome for BOTH — the same
+// observable shape a dropped wiring line would produce — proving the spy-based
+// assertions above are load-bearing rather than vacuously satisfied.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("buildProofSpineActivities — sourceLivingVaultRewrite / propose-approval pair reach their injected ports", () => {
+  function spyLivingVault(): { port: SourceLivingVaultPort; calls: Parameters<SourceLivingVaultPort["rewrite"]>[] } {
+    const calls: Parameters<SourceLivingVaultPort["rewrite"]>[] = [];
+    return {
+      calls,
+      port: {
+        rewrite: (...args: Parameters<SourceLivingVaultPort["rewrite"]>) => {
+          calls.push(args);
+          return Promise.resolve(ok([]));
+        },
+      },
+    };
+  }
+  function spyProposeApproval(): { port: ProposeKnowledgeApprovalPort; calls: Parameters<ProposeKnowledgeApprovalPort["propose"]>[] } {
+    const calls: Parameters<ProposeKnowledgeApprovalPort["propose"]>[] = [];
+    return {
+      calls,
+      port: {
+        propose: (...args: Parameters<ProposeKnowledgeApprovalPort["propose"]>) => {
+          calls.push(args);
+          return Promise.resolve(ok({ approvalRef: "appr:bind-spy", created: true }));
+        },
+      },
+    };
+  }
+
+  it("sourceLivingVaultRewrite reaches the INJECTED livingVault port instance (not the unarmed ok([]) default)", async () => {
+    const spy = spyLivingVault();
+    const backends = await assembleBackends(
+      { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT] },
+      { candidateOutput: validKnowledgeMutationPlan },
+    );
+    try {
+      const acts = buildProofSpineActivities(backends, {
+        ...paramsFor(memRevisionStore()),
+        livingVault: spy.port,
+      });
+      const validated: ValidatedExtraction = { validated: true, fields: {} };
+      const source: SourceNoteIdentity = {
+        sourceId: sourceId("src-bind-lv"),
+        contentHash: "hash:bind-lv",
+      };
+      const result = await acts.sourceLivingVaultRewrite(validated, SRC_WS, source);
+      // Reached the SPY, not the unarmed `ok([])` default: the spy's own args round-trip.
+      expect(spy.calls).toHaveLength(1);
+      expect(spy.calls[0]?.[0]).toBe(validated);
+      expect(spy.calls[0]?.[1]).toBe(SRC_WS);
+      expect(spy.calls[0]?.[2]).toEqual(source);
+      expect(result).toEqual(ok([]));
+    } finally {
+      backends.close();
+    }
+  });
+
+  it("meetingProposeKnowledgeApproval AND sourceProposeKnowledgeApproval BOTH reach the SAME injected proposeKnowledgeApproval port instance", async () => {
+    const spy = spyProposeApproval();
+    const backends = await assembleBackends(
+      { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT] },
+      { candidateOutput: validKnowledgeMutationPlan },
+    );
+    try {
+      const acts = buildProofSpineActivities(backends, {
+        ...paramsFor(memRevisionStore()),
+        proposeKnowledgeApproval: spy.port,
+      });
+      const meetingRes = await acts.meetingProposeKnowledgeApproval(validKnowledgeMutationPlan, MEETING_WS);
+      const sourceRes = await acts.sourceProposeKnowledgeApproval(validKnowledgeMutationPlan, SRC_WS);
+      // Both calls reached the SAME spy instance, each carrying its OWN workspace — proving
+      // neither name is silently unbound nor accidentally routed to a DIFFERENT port.
+      expect(spy.calls).toHaveLength(2);
+      expect(spy.calls[0]?.[1]).toBe(MEETING_WS);
+      expect(spy.calls[1]?.[1]).toBe(SRC_WS);
+      expect(meetingRes).toEqual(ok({ approvalRef: "appr:bind-spy", created: true }));
+      expect(sourceRes).toEqual(ok({ approvalRef: "appr:bind-spy", created: true }));
+    } finally {
+      backends.close();
+    }
+  });
+
+  it("MUTATION PROOF — with NEITHER port injected, both names return the unarmed outcome (never a silent success) — proves the two tests above are load-bearing, not vacuous", async () => {
+    const backends = await assembleBackends(
+      { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT] },
+      { candidateOutput: validKnowledgeMutationPlan },
+    );
+    try {
+      // paramsFor(...) alone omits BOTH `livingVault` and `proposeKnowledgeApproval` — the exact
+      // shape a wiring regression that forgot to thread either port would produce.
+      const acts = buildProofSpineActivities(backends, paramsFor(memRevisionStore()));
+      const validated: ValidatedExtraction = { validated: true, fields: {} };
+      const source: SourceNoteIdentity = {
+        sourceId: sourceId("src-bind-lv-unarmed"),
+        contentHash: "hash:bind-lv-unarmed",
+      };
+      const lvResult = await acts.sourceLivingVaultRewrite(validated, SRC_WS, source);
+      expect(lvResult).toEqual(ok([])); // unarmed default — never a thrown/observable failure
+
+      const meetingRes = await acts.meetingProposeKnowledgeApproval(validKnowledgeMutationPlan, MEETING_WS);
+      const sourceRes = await acts.sourceProposeKnowledgeApproval(validKnowledgeMutationPlan, SRC_WS);
+      expect(isErr(meetingRes)).toBe(true);
+      expect(isErr(sourceRes)).toBe(true);
+      if (isErr(meetingRes)) expect(meetingRes.error.code).toBe("not_armed");
+      if (isErr(sourceRes)) expect(sourceRes.error.code).toBe("not_armed");
     } finally {
       backends.close();
     }
