@@ -6,6 +6,7 @@ import {
   defaultWorkspace,
   buildSchemaRegistry,
   GCL_PROJECTION_SCHEMA_ID,
+  workspaceId as wsId,
   type GclProjection,
   type Workspace,
 } from "@sow/contracts";
@@ -33,7 +34,8 @@ function wsWithDefault(level: Workspace["defaultVisibility"]): Workspace {
 }
 
 const validCandidate: GclProjection = {
-  workspaceId: "ws-001" as GclProjection["workspaceId"],
+  // 24.92: a real branded constructor — "ws-001" is a benign fixture id, no anonymous cast needed.
+  workspaceId: wsId("ws-001"),
   visibilityLevel: "coordination",
   projectionType: "calendar_busy",
   sanitizedPayload: { busySlots: 3 },
@@ -111,7 +113,8 @@ describe("admitProjection — composed candidate-data gate + visibility validati
   });
 
   it("rejects when the projection names a different workspace than the source (malformed policy input)", () => {
-    const foreign = { ...validCandidate, workspaceId: "ws-999" as GclProjection["workspaceId"] };
+    // 24.92: "ws-999" is a benign foreign-workspace fixture id — real constructor, no cast.
+    const foreign = { ...validCandidate, workspaceId: wsId("ws-999") };
     const r = admitProjection(foreign, wsWithDefault("full"));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.code).toBe("malformed_policy_input");
@@ -211,7 +214,8 @@ describe("denialToGateError — exhaustive over DenialReason (task 24.36 / L134)
     expect(exceeds.ok).toBe(false);
     if (!exceeds.ok) expect(exceeds.error.code).toBe("visibility_exceeds_source");
 
-    const foreign = { ...validCandidate, workspaceId: "ws-999" as GclProjection["workspaceId"] };
+    // 24.92: "ws-999" is a benign foreign-workspace fixture id — real constructor, no cast.
+    const foreign = { ...validCandidate, workspaceId: wsId("ws-999") };
     const malformed = admitProjection(foreign, wsWithDefault("full"));
     expect(malformed.ok).toBe(false);
     if (!malformed.ok) expect(malformed.error.code).toBe("malformed_policy_input");

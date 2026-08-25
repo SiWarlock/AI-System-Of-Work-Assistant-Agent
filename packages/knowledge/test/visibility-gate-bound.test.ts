@@ -7,7 +7,7 @@
 // Drives the real gate end to end (never hand-builds the error), mirroring the
 // fixture shape `gcl-visibility-gate.test.ts` already uses for this same path.
 import { describe, it, expect } from "vitest";
-import { defaultWorkspace, type GclProjection, type Workspace } from "@sow/contracts";
+import { defaultWorkspace, workspaceId as wsId, type GclProjection, type Workspace } from "@sow/contracts";
 import type { ProjectionTypeVisibilityTaxonomy } from "@sow/policy";
 import { admitProjection } from "../src/gcl/visibility-gate";
 
@@ -23,7 +23,8 @@ function wsWithDefault(level: Workspace["defaultVisibility"]): Workspace {
 }
 
 const baseCandidate: Pick<GclProjection, "workspaceId" | "sanitizedPayload" | "sourceRefs"> = {
-  workspaceId: "ws-001" as GclProjection["workspaceId"],
+  // 24.92: a real branded constructor — "ws-001" is a benign fixture id, no anonymous cast needed.
+  workspaceId: wsId("ws-001"),
   sanitizedPayload: { busySlots: 3 },
   sourceRefs: [{ sourceId: "src-001" as GclProjection["sourceRefs"][number]["sourceId"] }],
 };

@@ -3,7 +3,14 @@
 // concrete driver); a raw / over-visibility candidate is HARD-rejected and NEVER
 // upserted; a tampered stored row is re-gated on serve (defense in depth).
 import { describe, it, expect } from "vitest";
-import { ok, err, defaultWorkspace, buildSchemaRegistry, GCL_PROJECTION_SCHEMA_ID } from "@sow/contracts";
+import {
+  ok,
+  err,
+  defaultWorkspace,
+  buildSchemaRegistry,
+  GCL_PROJECTION_SCHEMA_ID,
+  workspaceId as wsId,
+} from "@sow/contracts";
 import type { GclProjection, Workspace } from "@sow/contracts";
 import type { DbError, DbResult } from "@sow/db";
 import type { ProjectionTypeVisibilityTaxonomy, AuditSignal } from "@sow/policy";
@@ -100,7 +107,8 @@ function ws(level: Workspace["defaultVisibility"]): Workspace {
 }
 
 const validCandidate: GclProjection = {
-  workspaceId: "ws-001" as GclProjection["workspaceId"],
+  // 24.92: a real branded constructor — "ws-001" is a benign fixture id, no anonymous cast needed.
+  workspaceId: wsId("ws-001"),
   visibilityLevel: "coordination",
   projectionType: "calendar_busy",
   sanitizedPayload: { busySlots: 3 },
@@ -466,7 +474,8 @@ describe("serveProjection — re-gate a stored row before it crosses a workspace
   it("serve_projection_denial_persists_under_sourceWorkspace_id_never_the_stored_rows_own_value: a mismatched-but-safe row workspaceId does not leak into the persisted record", async () => {
     const auditPersist = new FakeAuditPersistPort();
     const workspace = ws("full");
-    const foreignSafe = { ...validCandidate, workspaceId: "ws-002" as GclProjection["workspaceId"] };
+    // 24.92: "ws-002" is a benign mismatching-but-safe fixture id — real constructor, no cast.
+    const foreignSafe = { ...validCandidate, workspaceId: wsId("ws-002") };
     const r = await serveProjection(foreignSafe, workspace, undefined, undefined, auditPersist);
     expect(r.ok).toBe(false);
     expect(auditPersist.calls).toHaveLength(1);
@@ -550,9 +559,12 @@ describe("serveProjection — re-gate a stored row before it crosses a workspace
       gbrainBrainId: "brain-acme",
       defaultVisibility: "isolated",
     });
+    // 24.92: the paragraph above already establishes this id is SLUG-VALID and brand-admitted — so
+    // the real constructor is used here too, not a cast standing in for one. A cast would leave this
+    // fixture untested against the brand it claims to pass.
     const candidate = {
       ...validCandidate,
-      workspaceId: SLUG_VALID_CREDENTIAL_WS_ID as GclProjection["workspaceId"],
+      workspaceId: wsId(SLUG_VALID_CREDENTIAL_WS_ID),
     };
     const r = await serveProjection(candidate, workspace, undefined, undefined, auditPersist);
     expect(r.ok).toBe(false);

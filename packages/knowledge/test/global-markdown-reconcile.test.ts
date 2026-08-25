@@ -8,7 +8,7 @@
 // overwrite (4.6 conflict-review semantics), with the DB staying authoritative.
 // Pure + total: never throws across the boundary (§16).
 import { describe, it, expect } from "vitest";
-import { defaultWorkspace } from "@sow/contracts";
+import { defaultWorkspace, workspaceId as wsId } from "@sow/contracts";
 import type { GclProjection, Workspace } from "@sow/contracts";
 import type { GclGateError } from "../src/gcl/visibility-gate";
 // `### 24.98` made `schema_rejected`'s `audit` REQUIRED, so this file's hand-built fixture must
@@ -59,7 +59,8 @@ function deps(
 
 function proj(overrides: Partial<GclProjection> = {}): GclProjection {
   return {
-    workspaceId: "ws-001" as GclProjection["workspaceId"],
+    // 24.92: a real branded constructor — "ws-001" is a benign fixture id, no anonymous cast needed.
+    workspaceId: wsId("ws-001"),
     visibilityLevel: "coordination",
     projectionType: "calendar_busy",
     sanitizedPayload: { busySlots: 3 },
@@ -194,7 +195,8 @@ describe("reconcileGlobalMarkdown — visibility validation on owner edits", () 
   it("REJECTS an owner edit whose JSON identity no longer matches its block key", () => {
     const base = projectProjectionsToMarkdown([proj()]);
     // block key stays ws-001::calendar_busy but the body claims a different workspace.
-    const smuggled = proj({ workspaceId: "ws-999" as GclProjection["workspaceId"] });
+    // 24.92: "ws-999" is a benign smuggled-workspace fixture id — real constructor, no cast.
+    const smuggled = proj({ workspaceId: wsId("ws-999") });
     const bodyOfSmuggled = JSON.stringify(smuggled);
     const current = `<!-- gcl:projection ${KEY} -->\n${bodyOfSmuggled}\n<!-- /gcl:projection -->\n`;
     const out = reconcileGlobalMarkdown(

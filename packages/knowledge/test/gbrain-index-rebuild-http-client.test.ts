@@ -7,8 +7,8 @@
 // (rebuild.ts) over this client to prove the client's honesty (relaying the server's real counts) is
 // what lets `incomplete_recovery` actually fire.
 import { describe, it, expect } from "vitest";
-import { HealthItemSchema, ok, err, isOk, isErr } from "@sow/contracts";
-import type { WorkspaceId, RevisionId, Result, BrainId } from "@sow/contracts";
+import { HealthItemSchema, ok, err, isOk, isErr, workspaceId } from "@sow/contracts";
+import type { RevisionId, Result, BrainId } from "@sow/contracts";
 import { computeRevisionId } from "../src/knowledge-writer/revision";
 import { deriveCanonicalFacts } from "../src/gbrain/derive/canonical-fact-deriver";
 import type { CanonicalVaultSnapshot } from "../src/gbrain/derive/canonical-fact-deriver";
@@ -29,7 +29,8 @@ import {
 const TOKEN = "gb-secret-token-XYZ";
 const TOKEN_REF = "keychain:gbrain-token";
 const LOOPBACK = "http://127.0.0.1:8899";
-const WS = "ws-rebuild" as WorkspaceId;
+// 24.92: a real branded constructor — "ws-rebuild" is a benign fixture id, no anonymous cast needed.
+const WS = workspaceId("ws-rebuild");
 const SCRATCH = "brain-scratch-1" as BrainId;
 const CANONICAL = "brain-canonical-1" as BrainId;
 const NOW = "2026-07-01T00:00:00.000Z";
