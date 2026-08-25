@@ -22,6 +22,7 @@ import {
   KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
 } from "@sow/contracts";
 import type {
+  Capability,
   WorkspaceId,
   WorkflowRunRef,
   SourceRef,
@@ -117,9 +118,12 @@ const localRoute = (endpoint: string) =>
     model: "local-default",
     endpoint,
     egressClass: "local",
-  }) as unknown as ResolvedWorkspacePolicy["providerMatrix"]["capabilityDefaults"][string];
+  }) as unknown as ResolvedWorkspacePolicy["providerMatrix"]["capabilityDefaults"][Capability];
 
-const MEETING_CAP = "meeting.close";
+// `capabilityDefaults` is keyed by the BRANDED `Capability`, not a bare string, so both the indexed
+// access above and this constant are typed at the brand. Branding here (rather than widening the
+// record's key type) keeps a raw unbranded string from being usable as a capability key.
+const MEETING_CAP = "meeting.close" as Capability;
 
 // employer_work + a local route: mirrors proof-spine-composition.test.ts's `resolvedFor` —
 // PROVEN (by that file's CONTROL test) to make `makeRequireApproval` require approval for
@@ -139,7 +143,7 @@ const RESOLVED: ResolvedWorkspacePolicy = {
   providerMatrix: {
     workspaceId: WS,
     allowedProviders: ["ollama"],
-    capabilityDefaults: { [MEETING_CAP]: localRoute(LOCAL_ENDPOINT) } as never,
+    capabilityDefaults: { [MEETING_CAP]: localRoute(LOCAL_ENDPOINT) },
     rawCloudEgressEnabled: false,
   },
 };
