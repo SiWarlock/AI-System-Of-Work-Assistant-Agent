@@ -375,6 +375,10 @@ describe("§9.8 renderer boundary — decideApproval returns a UI-safe approval 
       expect("payloadHash" in a).toBe(false);
       // The projected key set is EXACTLY the UI-safe allowlist — no extra key rides out.
       // §13.10a Slice H: subjectKind (the frozen-enum card discriminator) is now always projected.
+      // §9.8: workspaceId too — server-set attribution already ON the Approval record (bound at
+      // record time, never a client/model value), on the frozen UI_SAFE_ALLOWLIST, and projected
+      // UNCONDITIONALLY by toUiSafeApproval so the global inbox can attribute a card. This stays an
+      // EXACT set equality, so a genuinely unsafe field (actor / payloadHash / planRef) still fails.
       expect(Object.keys(a).sort()).toEqual([
         "actionRef",
         "channel",
@@ -383,6 +387,7 @@ describe("§9.8 renderer boundary — decideApproval returns a UI-safe approval 
         "snoozeUntil",
         "status",
         "subjectKind",
+        "workspaceId",
       ]);
     }
   });
@@ -400,7 +405,15 @@ describe("§9.8 renderer boundary — decideApproval returns a UI-safe approval 
       expect(noop.value.applied).toBe(false); // idempotent no-op contender
       expect("actor" in noop.value.approval).toBe(false);
       expect("payloadHash" in noop.value.approval).toBe(false);
-      expect(Object.keys(noop.value.approval).sort()).toEqual(["actionRef", "channel", "id", "status", "subjectKind"]);
+      // §9.8 adds workspaceId to the allowlist (see the exact-set comment above); still an EXACT set.
+      expect(Object.keys(noop.value.approval).sort()).toEqual([
+        "actionRef",
+        "channel",
+        "id",
+        "status",
+        "subjectKind",
+        "workspaceId",
+      ]);
     }
   });
 
@@ -412,7 +425,16 @@ describe("§9.8 renderer boundary — decideApproval returns a UI-safe approval 
     const r = await c.command.decideApproval({ approvalId: "apr_1", decision: "approve", channel: "telegram" });
     expect(isOk(r)).toBe(true);
     if (isOk(r)) {
-      expect(Object.keys(r.value.approval).sort()).toEqual(["actionRef", "channel", "id", "status", "subjectKind"]);
+      // §9.8 adds workspaceId to the allowlist (see the exact-set comment above); still an EXACT set,
+      // so the point of this case — no snoozeUntil / expiresAt key on a TERMINAL decision — still holds.
+      expect(Object.keys(r.value.approval).sort()).toEqual([
+        "actionRef",
+        "channel",
+        "id",
+        "status",
+        "subjectKind",
+        "workspaceId",
+      ]);
       expect(r.value.approval.status).toBe("approved");
     }
   });
