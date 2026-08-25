@@ -213,6 +213,45 @@ function failureClassFor(state: MeetingCloseoutState): FailureClass {
   }
 }
 
+// --- per-plan health-item subjectRef (data-wf-plan-id-injectivity) ---------
+
+/**
+ * The max length of the planId SEGMENT inside a per-plan health-item `subjectRef`
+ * (see {@link planHealthSubjectRef}). `subjectRef` feeds `healthItemDedupeKey`
+ * (`failureClass|subjectRef`), which is the health-item row's PRIMARY KEY on BOTH
+ * dialects (packages/db/src/schema/health-items.ts, packages/db/src/schema/pg/
+ * health-items.ts). Postgres's btree PK index caps a single index entry at roughly
+ * page_size/3 (~2704 bytes on the default 8kB page) — an oversized `dedupeKey` fails
+ * the `put` outright, so the health item — whose ENTIRE purpose is visibility — is
+ * silently lost on exactly the path meant to surface a fault. `newPlanId` has no
+ * length bound today (`PlanIdSchema`, packages/contracts/src/primitives/
+ * zod-brands.ts, requires only non-empty-after-trim; tightening it is
+ * contracts-territory and still owed — see the obligation comment at both call sites
+ * below), so this clips the planId segment defensively AT THE EMIT SITE. 128 chars
+ * leaves orders-of-magnitude headroom under the Postgres limit even alongside a long
+ * workflowId + ordinal prefix.
+ */
+export const PLAN_ID_SUBJECT_REF_SEGMENT_MAX_LEN = 128;
+
+/**
+ * Build a per-plan health-item `subjectRef` that is STRUCTURALLY injective within a
+ * run and bounded in length, without depending on `newPlanId`'s eventual binding for
+ * either property (data-wf-plan-id-injectivity — see the obligation comment at both
+ * call sites below for the full three-obligation accounting).
+ *
+ * `ordinal` is the plan's position in this run's sibling-plan loop — injective within
+ * a run BY CONSTRUCTION (each element of a fixed array gets a distinct index from
+ * `Array.prototype.entries()`), so two plans sharing an identical (or even
+ * CONSTANT-bound, `() => "plan-1"`-shaped) planId still get distinct subjectRefs. The
+ * planId segment is clipped to {@link PLAN_ID_SUBJECT_REF_SEGMENT_MAX_LEN} so an
+ * oversized id (nothing bounds `newPlanId`'s output today) cannot blow the
+ * health-item primary key.
+ */
+export function planHealthSubjectRef(workflowId: string, ordinal: number, rawPlanId: string): string {
+  const truncatedPlanId = rawPlanId.slice(0, PLAN_ID_SUBJECT_REF_SEGMENT_MAX_LEN);
+  return `${workflowId}:${ordinal}:${truncatedPlanId}`;
+}
+
 // --- driver ----------------------------------------------------------------
 
 /**
@@ -411,7 +450,7 @@ export async function runMeetingCloseout(
   //     sourceIngestion.ts step 7b's comment for the full write_through_blocked/write_through_failed
   //     rationale (identical here; the meeting and source paths share ONE port instance).
   let queuedForApproval = 0;
-  for (const sibling of built.value.siblingPlans) {
+  for (const [siblingIndex, sibling] of built.value.siblingPlans.entries()) {
     if (sibling.requiresApproval !== false) {
       let proposed: Result<ProposeKnowledgeApprovalResult, ProposeKnowledgeApprovalError> | undefined;
       try {
@@ -431,13 +470,34 @@ export async function runMeetingCloseout(
           // 24.58 — PER-PLAN identity. The health dedupe key is `failureClass|subjectRef` AND
           // doubles as the item's `id`, so a per-RUN subjectRef on a per-PLAN failure makes N
           // sibling plans collapse onto ONE item (last message wins, N-1 lost) — including N
-          // failures of the SAME code. Run-anchored composite, NOT a bare planId: `newPlanId`
-          // has no production binding yet, so a bare id would inherit whatever it is bound to
-          // at arming. Mirrors sourceIngestion's own loop (the shared 13.8f-C shape).
-          // ⛔ The three obligations this composite puts on `newPlanId`'s eventual binding —
-          // injective-within-a-run, bounded length, derived from nothing content-bearing — are
-          // stated in full at sourceIngestion.ts's matching site. NONE is enforced today.
-          subjectRef: `${input.run.workflowId}:${String(sibling.planId)}`,
+          // failures of the SAME code.
+          //
+          // data-wf-plan-id-injectivity — this composite no longer TRUSTS `newPlanId`'s eventual
+          // binding for its own correctness. Of the three obligations this site used to place on
+          // that binding:
+          //   (a) INJECTIVE WITHIN A RUN — now DISCHARGED STRUCTURALLY by `siblingIndex`, this
+          //       loop's ordinal (`planHealthSubjectRef`, above). A `for (const [i, x] of
+          //       arr.entries())` index is injective within a run BY CONSTRUCTION, so two
+          //       siblings sharing an identical (or CONSTANT-bound, `() => "plan-1"`-shaped)
+          //       planId still get distinct subjectRefs. The composite no longer depends on
+          //       `newPlanId` being injective at all.
+          //   (b) BOUNDED LENGTH — now bounded AT THE EMIT SITE by `planHealthSubjectRef`
+          //       (`PLAN_ID_SUBJECT_REF_SEGMENT_MAX_LEN`, above). The contracts-side
+          //       `PlanIdSchema` length bound (packages/contracts/src/primitives/
+          //       zod-brands.ts) is STILL ABSENT and still owed — this only guards the
+          //       health-item primary key at this emit site, not `newPlanId`'s output itself.
+          //   (c) DERIVED FROM NOTHING CONTENT-BEARING — UNCHANGED, still fully open. This id
+          //       reaches the renderer via `UiSafeHealthItem.id`, a WS-8 surface that
+          //       deliberately drops `message` as content-bearing; a future title/slug-derived
+          //       `newPlanId` binding would leak a content fragment into the one field on that
+          //       shape assumed opaque. The production binding MUST be reviewed against this
+          //       clause before it is written.
+          //
+          // ⚠ sourceIngestion.ts's matching site (step 7b) has NOT received this fix —
+          // data-wf-plan-id-injectivity's territory this round covered meetingCloseout.ts only —
+          // so it still uses the pre-fix bare `${workflowId}:${planId}` composite. Do not restate
+          // a "mirrors sourceIngestion" claim here until that site is updated to match.
+          subjectRef: planHealthSubjectRef(input.run.workflowId, siblingIndex, String(sibling.planId)),
           message: `meeting sibling PROPOSE plan could not be queued for approval (withheld, never committed): ${reason}`,
           auditRef: input.run.workflowId as unknown as AuditId,
         });
@@ -451,11 +511,13 @@ export async function runMeetingCloseout(
       // (inv-5) and the closeout continues rather than failing a run whose primary output succeeded.
       await deps.health.surface({
         failureClass: commitFailureClass(extra.error.code),
-        // 24.58 — PER-PLAN identity; see the propose branch above for the full reasoning.
+        // 24.58 / data-wf-plan-id-injectivity — PER-PLAN identity; see the propose branch above
+        // for the full obligation-by-obligation accounting ((a) discharged structurally by the
+        // loop ordinal, (b) bounded at the emit site, (c) still fully open).
         // Sharpest case here: `ownership_violation` and `workspace_path_violation` BOTH map
         // to `isolation_breach`, so two distinct breaches in one run previously produced the
         // identical key and the second silently upserted the first.
-        subjectRef: `${input.run.workflowId}:${String(sibling.planId)}`,
+        subjectRef: planHealthSubjectRef(input.run.workflowId, siblingIndex, String(sibling.planId)),
         message: `meeting sibling commit failed (meeting note stands): ${extra.error.code}`,
         auditRef: input.run.workflowId as unknown as AuditId,
       });
