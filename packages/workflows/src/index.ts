@@ -105,6 +105,21 @@ export * from "./activities/validateNarrative";
 export * from "./activities/projections/projectSyncOutputs";
 // 7.19 RETENTION-PRUNE (dormant — live schedule = §19.12)
 export * from "./activities/prunePolicy";
+// Phase 25 (PKG-W3) — output-workflow activity adapters + the single factory
+// (createOutputWorkflowActivities) the composition root binds instead of four
+// scattered families. See activities/outputWorkflows.ts's file-level comment.
+export * from "./activities/gclProjectionGate";
+export * from "./activities/readOnlyAgentJob";
+export * from "./activities/refreshConnectors";
+export * from "./activities/validateFields";
+export * from "./activities/buildBriefOutputs";
+export * from "./activities/buildReviewOutputs";
+export * from "./activities/dashboardUpdate";
+export * from "./activities/gatherAvailability";
+export * from "./activities/classifyAction";
+export * from "./activities/routeToApproval";
+export * from "./activities/outputHealthSink";
+export * from "./activities/outputWorkflows";
 
 // --- src/workflows/ — PURE orchestration drivers ----------------------------
 export * from "./workflows/systemHealthSurfacing";

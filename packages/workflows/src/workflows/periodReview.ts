@@ -262,11 +262,16 @@ export interface ReviewUpdateProjectionsPort {
 
 // --- (B3) RunReviewAgentPort — Flow 2: global scope + in-scope brains ------
 
+// 25.2 (PKG-W3) — WIDENED to add `admission_rejected`, mirroring
+// ports/dailyBrief.ts's BriefingAgentFailureCode widening: the real activity
+// adapter runs ING-7 admission before dispatch (defense in depth) and needs a
+// typed rejection distinct from provider_failed.
 export type ReviewAgentFailureCode =
   | "provider_failed"
   | "schema_rejected"
   | "egress_vetoed"
-  | "budget_exceeded";
+  | "budget_exceeded"
+  | "admission_rejected";
 export interface ReviewAgentFailure {
   readonly code: ReviewAgentFailureCode;
   readonly message: string;
@@ -362,12 +367,20 @@ export interface ReviewCommitSuccess {
   readonly revisionId: string;
   readonly replayed: boolean;
 }
+// 25.2 (PKG-W3) — WIDENED to match KnowledgeCommitFailureCode exactly (mirrors
+// ports/dailyBrief.ts's BriefCommitFailureCode widening) so the real, already-
+// tested KnowledgeWriter commit activity satisfies this port with zero new
+// mapping code. The driver folds every commit failure to write_conflict
+// uniformly, so widening the code set is safe.
 export type ReviewCommitFailureCode =
   | "schema_rejected"
   | "write_conflict"
   | "ownership_violation"
   | "secret_found"
-  | "commit_failed";
+  | "workspace_path_violation"
+  | "commit_failed"
+  | "audit_record_failed"
+  | "revision_record_failed";
 export interface ReviewCommitFailure {
   readonly code: ReviewCommitFailureCode;
   readonly message: string;

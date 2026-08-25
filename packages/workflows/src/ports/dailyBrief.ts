@@ -219,11 +219,18 @@ export interface UpdateProjectionsPort {
  *     no local provider) → fail-closed, never a cloud fallback (safety rule 5).
  *   • `budget_exceeded` — COST-1 budget cap breached.
  */
+// 25.2 (PKG-W3) — WIDENED to add `admission_rejected`: the real activity adapter
+// (activities/readOnlyAgentJob.ts) runs the job through the ING-7 admission
+// predicate BEFORE dispatch (defense in depth over an already-read-only job), and
+// a mutating-tool declaration on read-only content is refused there — the port
+// widens to carry that typed rejection rather than folding it onto a code that
+// implies a different cause (§16, "WHILE YOU ARE IN HERE" convention).
 export type BriefingAgentFailureCode =
   | "provider_failed"
   | "schema_rejected"
   | "egress_vetoed"
-  | "budget_exceeded";
+  | "budget_exceeded"
+  | "admission_rejected";
 
 export interface BriefingAgentFailure {
   readonly code: BriefingAgentFailureCode;
@@ -400,12 +407,24 @@ export interface BriefCommitSuccess {
  * Closed, enumerable KnowledgeWriter commit failure set (§16 — never thrown),
  * mirroring the @sow/knowledge WriteFailure variants the activity folds onto.
  */
+// 25.2 (PKG-W3) — WIDENED to match @sow/knowledge's KnowledgeCommitFailureCode
+// (packages/workflows/src/ports/meetingCloseout.ts) exactly: the real commit
+// activity (activities/commitKnowledge.ts createCommitActivity, reused verbatim
+// here) can also emit `workspace_path_violation` / `audit_record_failed` /
+// `revision_record_failed`. The driver (workflows/dailyBrief.ts) never switches
+// exhaustively on this code — every commit failure folds to the SAME
+// write_conflict machine state — so widening is safe and lets the real,
+// already-tested KnowledgeWriter commit adapter satisfy this port with ZERO new
+// mapping code (never a bare Error, never a silently-dropped cause).
 export type BriefCommitFailureCode =
   | "schema_rejected"
   | "write_conflict"
   | "ownership_violation"
   | "secret_found"
-  | "commit_failed";
+  | "workspace_path_violation"
+  | "commit_failed"
+  | "audit_record_failed"
+  | "revision_record_failed";
 
 export interface BriefCommitFailure {
   readonly code: BriefCommitFailureCode;

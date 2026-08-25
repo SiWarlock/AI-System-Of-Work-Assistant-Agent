@@ -384,8 +384,14 @@ export interface AutoCreateResult {
   readonly envelope: ExternalWriteEnvelope;
 }
 
-/** Closed, enumerable auto-create failure set (§16 — never thrown). */
-export type AutoCreateErrorCode = "held" | "conflict" | "rejected";
+// 25.4 (PKG-W3) — WIDENED to add `approval_pending`: the real activity adapter
+// reuses the SAME Tool Gateway dispatch core as ProjectSyncProposeActionsPort/
+// NotifyPort (createProposeActivity, whose ProposeErrorCode already carries this
+// member) under a `create` alias — auto-create only ever reaches this port on
+// the classify:"auto_create" branch, so `approval_pending` is not expected in
+// practice, but the port stays honest about what the shared gateway path can
+// return rather than narrowing the reused adapter's real error surface.
+export type AutoCreateErrorCode = "held" | "conflict" | "rejected" | "approval_pending";
 
 export interface AutoCreateError {
   readonly code: AutoCreateErrorCode;
@@ -458,12 +464,19 @@ export interface SchedulingCommitSuccess {
 }
 
 /** Closed, enumerable KnowledgeWriter commit failure set (§16 — never thrown). */
+// 25.4 (PKG-W3) — WIDENED to match KnowledgeCommitFailureCode exactly (mirrors
+// ports/dailyBrief.ts's BriefCommitFailureCode widening) so the real, already-
+// tested KnowledgeWriter commit activity satisfies this port with zero new
+// mapping code.
 export type SchedulingCommitFailureCode =
   | "schema_rejected"
   | "write_conflict"
   | "ownership_violation"
   | "secret_found"
-  | "commit_failed";
+  | "workspace_path_violation"
+  | "commit_failed"
+  | "audit_record_failed"
+  | "revision_record_failed";
 
 export interface SchedulingCommitFailure {
   readonly code: SchedulingCommitFailureCode;

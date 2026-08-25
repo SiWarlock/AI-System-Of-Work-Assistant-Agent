@@ -71,15 +71,18 @@ export interface ProjectionSource {
 }
 
 /**
- * The injected GCL Visibility Gate seam. ⚠ DORMANT: no production factory binds this to a
- * real @sow/knowledge `admitProjection`/`serveProjection` implementation today (24.17
- * finding) — the "in production" behavior below describes the CONTRACT a future binding
- * must honor, not current behavior. When bound: a candidate carrying raw content OR
- * exceeding the source's CURRENT default visibility is HARD-rejected — never downgraded. A
- * `false` admission is the leakage HARD-reject (safety rule 4).
+ * The injected GCL Visibility Gate seam. 25.2 (PKG-W3) BINDS THIS FOR REAL —
+ * activities/gclProjectionGate.ts's `createGclProjectionGate` wraps
+ * @sow/knowledge's sanctioned `serveProjection` entry point (the 24.78-fenced
+ * seam that names Phase 25.2/25.4 as its wiring point): a candidate carrying raw
+ * content OR exceeding the source's CURRENT default visibility is HARD-rejected
+ * — never downgraded. A rejected Result is the leakage HARD-reject (safety rule
+ * 4). ASYNC (widened from the original sync signature, zero existing callers
+ * per grep — `serveProjection` itself is async, so the real binding cannot be
+ * sync): `update` below already awaits it.
  */
 export interface ProjectionGate {
-  admit(candidate: CandidateProjection): Result<GclProjection, GateRejection>;
+  admit(candidate: CandidateProjection): Promise<Result<GclProjection, GateRejection>>;
 }
 
 /** A gate rejection — the projection carried raw content or over-visibility. */
@@ -116,7 +119,7 @@ export function createBuildGclProjectionActivity(
 
       const admitted: GclProjection[] = [];
       for (const candidate of candidates.value) {
-        const decision = deps.gate.admit(candidate);
+        const decision = await deps.gate.admit(candidate);
         if (!decision.ok) {
           // A candidate carrying raw content / over-visibility is a leakage HARD
           // reject (safety rule 4). Fail the WHOLE update closed — never return a
