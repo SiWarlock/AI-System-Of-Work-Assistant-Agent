@@ -11,10 +11,10 @@
 // boot epoch; a prior-boot reading is ignored, falling back to the wall reading).
 //
 // Two exports:
-//   • createScheduleStoreAdapter — adapts the @sow/db repo onto the @sow/workflows
-//     `ScheduleStore` PORT (Promise-based, a miss = undefined). @sow/db must NOT
-//     import @sow/workflows, so this worker-layer bridge is where the two meet
-//     (mirrors the WriteReceiptRepository → ReceiptStore adapter pattern).
+//   • createScheduleStoreAdapter — the @sow/db repo → @sow/workflows `ScheduleStore`
+//     PORT adapter. RE-EXPORTED from composition/store-adapters.ts (25.SCHED leg 1
+//     single-sourcing — see the note below); kept importable from here too since
+//     that is the historical/documented home callers reach for.
 //   • createLastRunService — the bookkeeping SERVICE: getLastRun / recordRun /
 //     hasElapsedSince, returning a typed Result over the @sow/db `DbError` set so a
 //     genuine store fault surfaces (fail-closed) while a lookup MISS is ok(undefined).
@@ -32,7 +32,6 @@ import type {
 import type {
   Clock,
   ScheduleBookkeeping,
-  ScheduleStore,
 } from "@sow/workflows/ports/operational";
 import {
   advanceBookkeeping,
@@ -43,39 +42,19 @@ import {
 
 // ── (1) @sow/db repo → @sow/workflows ScheduleStore PORT adapter ──────────────
 
-// The @sow/db `ScheduleBookkeepingRecord` and the @sow/workflows `ScheduleBookkeeping`
-// port DTO are STRUCTURALLY identical (same field set, same optionality) — this is
-// the documented worker-layer adaptation point. A miss is `not_found` in the repo,
-// `undefined` in the port.
-
-/**
- * Adapt the @sow/db {@link ScheduleBookkeepingRepository} onto the @sow/workflows
- * {@link ScheduleStore} port that the pure runtime/schedule logic consults. On a
- * `getBookkeeping` miss (`not_found`) OR any read fault, returns `undefined` (a
- * lookup miss is not an error at this seam; the fail-closed schedule logic treats
- * a missing bookkeeping as "first run"). `put` upserts; a write fault rejects so
- * a lost last-run write cannot be silently swallowed (a lost row re-fires/starves).
- */
-export function createScheduleStoreAdapter(
-  repo: ScheduleBookkeepingRepository,
-): ScheduleStore {
-  return {
-    async getBookkeeping(scheduleId: string): Promise<ScheduleBookkeeping | undefined> {
-      const r = await repo.getBookkeeping(scheduleId);
-      if (isErr(r)) return undefined; // not_found (or any read fault) → miss
-      return r.value;
-    },
-    async put(bookkeeping: ScheduleBookkeeping): Promise<void> {
-      const r = await repo.put(bookkeeping);
-      if (isErr(r)) {
-        // The ScheduleStore port cannot express a typed failure; a lost last-run
-        // write is safety-bearing (re-fire/starve), so surface it as a rejection
-        // rather than silently succeed. Callers above this seam are fail-closed.
-        throw new Error(`schedule bookkeeping put failed: ${r.error.message}`);
-      }
-    },
-  };
-}
+// 25.SCHED leg 1 (single-source): this module used to carry its OWN
+// `createScheduleStoreAdapter` that folded ANY `getBookkeeping` read fault — not
+// just a genuine `not_found` miss — to `undefined`. That silently MASKED a real
+// store fault (e.g. `unavailable`) as "this schedule has never run", which is
+// exactly the fail-closed violation worker LESSONS §3 names (a masked lookup
+// fault reads as "no prior run" → a schedule could re-fire/never-catch-up on a
+// transient DB fault instead of surfacing it). composition/store-adapters.ts's
+// `createScheduleStoreAdapter` is the FAIL-CLOSED version (not_found → undefined;
+// every other DbError REJECTS) and is what `backends.ts` binds at boot. Rather
+// than carry two adapters that disagree on a safety-bearing distinction, this
+// module now RE-EXPORTS that one symbol — single-sourced, pinned by reference
+// identity in test/last-run.test.ts.
+export { createScheduleStoreAdapter } from "../composition/store-adapters";
 
 // ── (2) the last-run bookkeeping SERVICE ──────────────────────────────────────
 

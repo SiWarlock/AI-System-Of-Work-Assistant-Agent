@@ -1,0 +1,206 @@
+// @sow/worker — 25.SCHED leg 1: the DURABLE Temporal schedule registrar + the 25.5
+// ingestionTriage schedule attachment (default-OFF).
+//
+// This is the ONE machinery gap the 25.2/25.3/25.4/25.5 plan tasks silently
+// depend on and none of them build: a repo-wide search finds `ScheduleClient`/
+// `createSchedule` only inside prose comments (temporal/workflows.ts:55,496;
+// composition/connectorPolling.ts:16,39) — every one deferring the live START.
+// This module IS that primitive: `createTemporalScheduleRegistrar(deps).ensure(spec)`
+// performs an IDEMPOTENT create-or-update per scheduleId against an injected,
+// narrow {@link ScheduleClientPort} — never the concrete `@temporalio/client`
+// `ScheduleClient` class directly, so the registrar stays pure + fake-testable
+// (mirroring the `StartWorkflowRun` port / `createTemporalClientStartRun` split
+// in dispatchSourceIngestion.ts: the injected port is the seam, a concrete
+// SDK-backed adapter is a separate, later concern).
+//
+// ⛔ NOTHING ARMS HERE. Three independent facts keep this package's machinery
+// inert:
+//   1. `ensure` ALWAYS creates a NEW schedule PAUSED (`{ paused: true }`) — there
+//      is no code path in this module that can create (or leave) a schedule live.
+//   2. `update` never carries a `paused` field at all — re-`ensure`-ing an
+//      existing schedule can converge its spec/action but can NEVER unpause it.
+//   3. The registrar is constructed ONLY when a caller supplies a real
+//      {@link ScheduleClientPort}. Nothing in this package constructs one or
+//      calls `ensure` with a real client — that wiring is a boot-level decision
+//      (apps/worker/src/boot.ts), out of this package's territory (see the
+//      Step-9 crossTerritoryNeeds note). So on a shipped-default boot, ZERO
+//      schedules are registered by construction, not by a runtime check.
+//
+// The 25.5 leg (`gateIngestionTriageSchedule`) is the SAME default-OFF gate-
+// helper shape worker LESSONS §2 names: `gate(opts) → wiring | undefined`,
+// strict `=== true`, returning `undefined` on anything else (including a
+// truthy-but-not-boolean value — no coercion).
+import { ok, err } from "@sow/contracts";
+import type { Result } from "@sow/contracts";
+import type { SowTaskQueue } from "@sow/workflows/runtime/taskQueue";
+
+// ---------------------------------------------------------------------------
+// (1) the schedule spec + the injected ScheduleClient-shaped port
+// ---------------------------------------------------------------------------
+
+/** The recurring Temporal Workflow the schedule starts on each due occurrence. */
+export interface TemporalScheduleAction {
+  readonly workflowType: string;
+  readonly workflowId: string;
+  readonly taskQueue: SowTaskQueue;
+  readonly args: readonly unknown[];
+}
+
+/** A durable schedule's identity + cadence + the action it takes. */
+export interface TemporalScheduleSpec {
+  readonly scheduleId: string;
+  readonly intervalMs: number;
+  readonly action: TemporalScheduleAction;
+}
+
+/** The subset of a live schedule's state this module reads back. */
+export interface ScheduleDescription {
+  readonly paused: boolean;
+}
+
+/**
+ * The narrow, injected ScheduleClient-SHAPED port `createTemporalScheduleRegistrar`
+ * drives — NOT the `@temporalio/client` `ScheduleClient` class itself (that
+ * coupling belongs in a concrete adapter built at the same seam as
+ * `createTemporalClientStartRun`, a later wiring step). `describe` folds a
+ * genuine "no schedule with this id" to `undefined` — a miss, not a fault,
+ * mirroring the not_found→undefined convention this codebase uses throughout
+ * (composition/store-adapters.ts, lifecycle/last-run.ts).
+ */
+export interface ScheduleClientPort {
+  /** `undefined` ⇔ no schedule exists yet with this id (a miss, not a fault). */
+  describe(scheduleId: string): Promise<ScheduleDescription | undefined>;
+  /**
+   * Create a NEW schedule. `opts.paused` is always the literal `true` — the type
+   * itself makes an unpaused create unrepresentable at this seam.
+   */
+  create(spec: TemporalScheduleSpec, opts: { readonly paused: true }): Promise<void>;
+  /**
+   * Converge an EXISTING schedule's spec/action. Deliberately carries NO
+   * `paused` field — `ensure` can update spec/action but can never unpause (or
+   * re-pause) a schedule through this seam.
+   */
+  update(spec: TemporalScheduleSpec): Promise<void>;
+}
+
+/** The closed, enumerable §16 failure set — never thrown; folded into a Result. */
+export type ScheduleRegistrarErrorCode = "schedule_client_fault";
+
+export interface ScheduleRegistrarError {
+  readonly code: ScheduleRegistrarErrorCode;
+  readonly message: string;
+  readonly cause?: unknown;
+}
+
+export interface EnsureOutcome {
+  readonly scheduleId: string;
+  /** `created` on a fresh (paused) create; `updated` on a converge of an existing schedule. */
+  readonly action: "created" | "updated";
+}
+
+export interface TemporalScheduleRegistrar {
+  /**
+   * Idempotent create-or-update: an UNKNOWN scheduleId is CREATED (always
+   * paused); a KNOWN scheduleId is UPDATED (spec/action converges; pause state
+   * is never touched by this call). A client fault at any step folds to a typed
+   * `err` — never a throw across the boundary (§16).
+   */
+  ensure(spec: TemporalScheduleSpec): Promise<Result<EnsureOutcome, ScheduleRegistrarError>>;
+}
+
+export interface CreateTemporalScheduleRegistrarDeps {
+  readonly client: ScheduleClientPort;
+}
+
+/**
+ * Build the durable Temporal schedule registrar over an injected
+ * {@link ScheduleClientPort}. See the module header for the three independent
+ * reasons nothing arms through this constructor.
+ */
+export function createTemporalScheduleRegistrar(
+  deps: CreateTemporalScheduleRegistrarDeps,
+): TemporalScheduleRegistrar {
+  return {
+    async ensure(spec: TemporalScheduleSpec): Promise<Result<EnsureOutcome, ScheduleRegistrarError>> {
+      try {
+        const existing = await deps.client.describe(spec.scheduleId);
+        if (existing === undefined) {
+          await deps.client.create(spec, { paused: true });
+          return ok({ scheduleId: spec.scheduleId, action: "created" });
+        }
+        await deps.client.update(spec);
+        return ok({ scheduleId: spec.scheduleId, action: "updated" });
+      } catch (cause) {
+        // A fault at describe/create/update all land here — the specific cause
+        // rides `cause`; the message names only the scheduleId (rule 7 — no raw
+        // driver detail is asserted into the message).
+        return err({
+          code: "schedule_client_fault",
+          message: `schedule registrar ensure failed for scheduleId ${spec.scheduleId}`,
+          cause,
+        });
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// (2) 25.5 — the ingestionTriage schedule spec + its default-OFF arming gate
+// ---------------------------------------------------------------------------
+
+/**
+ * The registered sandbox workflow type name `ingestionTriageWorkflow` runs
+ * under (temporal/workflows.ts:379-406 — already a complete, registered bundle
+ * entry point; this module does NOT rebuild it, only attaches a durable
+ * schedule spec pointed at it).
+ */
+export const INGESTION_TRIAGE_WORKFLOW_TYPE = "ingestionTriageWorkflow" as const;
+
+/** The durable schedule id the 25.5 ingestion-triage sweep registers under. */
+export const INGESTION_TRIAGE_SCHEDULE_ID = "ingestion-triage" as const;
+
+/**
+ * arch_gap (Phase 25, flagged not silently assumed): `ingestionTriageWorkflow`'s
+ * input is an owner {@link TriageDisposition} — there is no per-tick disposition
+ * for a periodic schedule to supply, so this spec's `args: []` is a PLACEHOLDER
+ * action shape, not a functioning periodic re-surface. Defining the real
+ * periodic "re-surface parked/low-confidence sources" action (per 25.5's
+ * Done-when) is a follow-up once 25.1 registers the output-workflow bundle;
+ * this function's job is the DORMANT schedule-attachment machinery + the
+ * default-OFF gate, per the 25.SCHED leg-1 brief. Never armed by this package.
+ */
+export function buildIngestionTriageScheduleSpec(opts: {
+  readonly taskQueue: SowTaskQueue;
+  readonly intervalMs: number;
+}): TemporalScheduleSpec {
+  return {
+    scheduleId: INGESTION_TRIAGE_SCHEDULE_ID,
+    intervalMs: opts.intervalMs,
+    action: {
+      workflowType: INGESTION_TRIAGE_WORKFLOW_TYPE,
+      workflowId: `${INGESTION_TRIAGE_SCHEDULE_ID}-workflow`,
+      taskQueue: opts.taskQueue,
+      args: [],
+    },
+  };
+}
+
+/**
+ * The 25.5 arming gate (worker LESSONS §2 shape: `gate(opts) → wiring |
+ * undefined`, default-OFF, strict `=== true`). Returns the durable
+ * ingestion-triage schedule spec ONLY when the owner armed it; otherwise
+ * `undefined` — a truthy-but-not-boolean-`true` value (a stray `"true"`
+ * string, a `1`) does NOT arm (no coercion). NOTHING in this package ever
+ * calls {@link TemporalScheduleRegistrar.ensure} with this spec — wiring this
+ * gate into `bootWorker` (reading the owner config, constructing a real
+ * `ScheduleClientPort`, and calling `ensure` only on the armed path) is
+ * PKG-W1's `boot.ts`, outside this package's territory.
+ */
+export function gateIngestionTriageSchedule(opts: {
+  readonly enabled: boolean;
+  readonly taskQueue: SowTaskQueue;
+  readonly intervalMs: number;
+}): TemporalScheduleSpec | undefined {
+  if (opts.enabled !== true) return undefined;
+  return buildIngestionTriageScheduleSpec(opts);
+}

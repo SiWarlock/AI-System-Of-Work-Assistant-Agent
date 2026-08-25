@@ -21,6 +21,10 @@ import {
   createLastRunService,
   createScheduleStoreAdapter,
 } from "../src/lifecycle/last-run";
+// 25.SCHED leg 1 — the SAME symbol as composition/store-adapters.ts (single-sourced;
+// see the reference-identity pin below). Importing under a distinct local name keeps
+// both call sites in this file legible.
+import { createScheduleStoreAdapter as createScheduleStoreAdapterFromComposition } from "../src/composition/store-adapters";
 
 // ── an in-memory fake ScheduleBookkeepingRepository (not_found on a miss) ──────
 function fakeRepo(): ScheduleBookkeepingRepository & {
@@ -190,5 +194,16 @@ describe("createScheduleStoreAdapter — @sow/db repo → @sow/workflows Schedul
     const got = await store.getBookkeeping(SCHED);
     expect(got?.lastRunMonotonicMs).toBe(42);
     expect(got?.lastRunMonotonicEpoch).toBe("boot-1");
+  });
+
+  // 25.SCHED leg 1 — there used to be TWO independent `createScheduleStoreAdapter`
+  // definitions (this module + composition/store-adapters.ts) that DISAGREED on a
+  // non-not_found read fault: this module's masked ANY read fault to `undefined`
+  // (a real DbError read as "never run"), composition/store-adapters.ts's rejects
+  // (fail-closed, matching worker LESSONS §3). This module now RE-EXPORTS the
+  // composition module's symbol — single-sourced on the fail-closed one. Pin the
+  // identity so a future edit can't silently re-fork a second definition back in.
+  it("is the SAME function reference as composition/store-adapters.ts's export (single-sourced)", () => {
+    expect(createScheduleStoreAdapter).toBe(createScheduleStoreAdapterFromComposition);
   });
 });
