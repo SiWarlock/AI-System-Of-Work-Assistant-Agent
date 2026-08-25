@@ -14,13 +14,12 @@
 //
 // The `route` handed to `synthesize` is the VETO-CLEARED route from `decideCopilotEgress` (P2.1) — the
 // adapter binds to `route.model` and NEVER re-selects, so the egress veto can't be turned advisory.
-import { ok, err, isOk, failure, processorId, workspaceId } from "@sow/contracts";
+import { ok, err, isOk, failure, workspaceId } from "@sow/contracts";
 import type {
   FailureVariant,
   FailureVariantKind,
   ProviderRoute,
   Result,
-  WorkspaceId,
   WorkspaceType,
 } from "@sow/contracts";
 import type { WorkspaceScopeRegistry, LegacyContentPolicy } from "@sow/policy";
@@ -33,8 +32,6 @@ import {
   createFixtureRetrieval,
   createStubSynthesis,
   createLocalRouteSelector,
-  createLocalWorkspacePosture,
-  localWorkspacePosture,
 } from "./copilot";
 import type {
   AuditPersisting,
@@ -46,7 +43,6 @@ import type {
   EgressRouteSelector,
   RetrievedContext,
   RetrievedSource,
-  WorkspacePosture,
   WorkspacePostureResolver,
 } from "./copilot";
 import {
@@ -278,10 +274,11 @@ export function createClaudeCopilotSynthesis(
 
 // ── P2.4 — wire it live: the real cloud route selector + the consent posture ─────────────────
 //
-// When the `copilotRealModel` flag is ON, boot swaps its interim `createLocalRouteSelector` /
-// `localWorkspacePosture` for these, so the egress veto classifies synthesis as CLOUD egress and (under
-// employer-work + ack) the notice fires for real. The route MUST be a Claude PROVIDER route — the P2.3
-// adapter guard rejects anything else, and `processorOfRoute` labels it "claude" (the notice processor).
+// When the `copilotRealModel` flag is ON, boot swaps its interim `createLocalRouteSelector` for
+// `createClaudeCloudRouteSelector`, so the egress veto classifies synthesis as CLOUD egress and (under
+// employer-work + a STORE-BACKED ack, task 9.10) the notice fires for real. The route MUST be a Claude
+// PROVIDER route — the P2.3 adapter guard rejects anything else, and `processorOfRoute` labels it
+// "claude" (the notice processor).
 
 /** The Anthropic cloud endpoint the subscription client egresses to. */
 export const CLAUDE_CLOUD_COPILOT_ENDPOINT = "https://api.anthropic.com";
@@ -323,32 +320,6 @@ export function createClaudeCloudRouteSelector(
 ): EgressRouteSelector {
   const route = buildClaudeCloudCopilotRoute(model);
   return { select: (_workspaceId, _posture): Result<ProviderRoute, FailureVariant> => ok(route) };
-}
-
-/**
- * The interim CONSENT posture — RETAINED ONLY as the `buildCopilotDeps` fixtures/dev FALLBACK
- * (used when no store-backed `workspacePosture` resolver is injected). ⚠ It is UNREACHABLE on the
- * PRODUCTION veto path (task 9.10-A / owner ruling D1=A): boot injects
- * `createStoreBackedWorkspacePosture(WorkspaceConfigRepository)` as the AUTHORITATIVE posture source,
- * so the `employerRawEgressAcknowledged = (type === "employer_work")` flag-derived ack NEVER feeds a
- * real employer egress decision — both employer AND personal egress open via the store-backed seeded
- * allowlist (`seedCloudCopilotAllowlist`): the ⛔ owner-authorized 9.10 default-seed FLIP seeds
- * employer_work ack=true (scoped to [claude]), superseding 9.10-B's audited acknowledge for the open.
- * Physical deletion of this fallback is
- * a tracked follow-up (its test surgery is out of this slice's scope). Pure.
- */
-export function cloudCopilotPosture(workspaceId: string, type: WorkspaceType): WorkspacePosture {
-  const claude = processorId("claude");
-  return {
-    type,
-    dataOwner: type === "employer_work" ? "employer" : "user",
-    egress: {
-      workspaceId: workspaceId as WorkspaceId,
-      allowedProcessors: [claude],
-      rawContentAllowedProcessors: [claude],
-      employerRawEgressAcknowledged: type === "employer_work",
-    },
-  };
 }
 
 /** A provisioned workspace + its resolved type — the input `buildCopilotDeps` builds postures over. */
@@ -427,14 +398,15 @@ export interface CopilotDepsOptions {
   /** The provisioned workspaces (fixtures + postures are built per id). Empty ⇒ every ask fails closed. */
   readonly workspaces: readonly CopilotWorkspace[];
   /**
-   * OPTIONAL (task 9.10-A) the AUTHORITATIVE store-backed posture resolver. When present it is the SOLE
-   * veto-posture source (reads `WorkspaceConfigRepository.egressPolicy` — ack + allowlists); boot injects
-   * `createStoreBackedWorkspacePosture(backends.repos.workspaceConfig)`. Absent ⇒ the fail-closed interim
-   * map over `workspaces` (fixtures/dev; nothing egresses). The retired `type==="employer_work"` cloud
-   * consent HACK is GONE — employer egress opens ONLY via the durable store (9.10-B's audited acknowledge),
-   * personal via its seeded allowlist.
+   * REQUIRED (task 9.10) the AUTHORITATIVE store-backed posture resolver — the SOLE veto-posture source
+   * (reads `WorkspaceConfigRepository.egressPolicy` — ack + allowlists); boot injects
+   * `createStoreBackedWorkspacePosture(backends.repos.workspaceConfig)`. STRUCTURALLY REQUIRED (a
+   * compile error to omit) so a caller can never silently fall back to a flag-derived ack: the retired
+   * `cloudCopilotPosture` (`type==="employer_work"` ⇒ auto-ack) is PHYSICALLY DELETED, not merely
+   * unreachable — employer egress opens ONLY via the durable store (9.10-B's audited acknowledge),
+   * personal via its seeded allowlist. `ARCHITECTURE.md:197`'s 'RETIRED' is now literally true.
    */
-  readonly workspacePosture?: WorkspacePostureResolver;
+  readonly workspacePosture: WorkspacePostureResolver;
   /** Optional model override (BootConfig.copilotModel); defaults to DEFAULT_CLAUDE_COPILOT_MODEL. */
   readonly model?: string;
   /** Optional SDK beta override; defaults to DEFAULT_COPILOT_BETAS (the 1M-context window). */
@@ -516,23 +488,16 @@ export interface CopilotDepsOptions {
 /**
  * Assemble the Copilot ask deps from the flag + provisioned workspaces — the single place the
  * real-vs-interim wiring is decided, so the branch is UNIT-TESTED (a flipped ternary can't ship
- * silently). Real path: Claude-subscription synthesis + cloud route + the CONSENT posture per workspace
- * (employer-work egresses to Anthropic WITH the notice). Interim path: the deterministic stub + a
- * loopback-local route + the fail-closed `localWorkspacePosture` (nothing egresses). Retrieval is the
- * fixture read either way; the authoritative posture-by-workspaceId resolution is identical. Pure apart
- * from the injected `completion` factory (called at most once, only on the real path).
+ * silently). Real path: Claude-subscription synthesis + cloud route. Interim path: the deterministic
+ * stub + a loopback-local route. `opts.workspacePosture` (REQUIRED, task 9.10) is the SAME
+ * store-backed resolver on BOTH paths — posture resolution is no longer branched on `realCopilot` here.
+ * Retrieval is the fixture read either way. Pure apart from the injected `completion` factory (called at
+ * most once, only on the real path).
  */
 export function buildCopilotDeps(opts: CopilotDepsOptions): AuditPersisting<CopilotDeps> {
   const fixtures: Record<string, RetrievedContext> = {};
-  const postures: Record<string, WorkspacePosture> = {};
   for (const ws of opts.workspaces) {
     fixtures[ws.id] = { workspaceId: ws.id, blocks: [], sources: [] };
-    // The interim FALLBACK posture map (used ONLY when no store-backed `opts.workspacePosture` is
-    // injected — fixtures/dev). On the PRODUCTION path boot injects the store-backed resolver, so this
-    // map (and the `cloudCopilotPosture` consent fallback) never feeds a real veto decision (9.10-A).
-    postures[ws.id] = opts.realCopilot
-      ? cloudCopilotPosture(ws.id, ws.type)
-      : localWorkspacePosture(ws.id, ws.type);
   }
   // Retrieval: the fixture stub by default. On the real path WITH a gbrain exec factory (P3-live), WHICH
   // retrieval is built depends on `gbrainWorkspaceScope` — the three-branch selection immediately below is
@@ -588,9 +553,9 @@ export function buildCopilotDeps(opts: CopilotDepsOptions): AuditPersisting<Copi
         ? opts.agentSynthesis()
         : createClaudeCopilotSynthesis(opts.completion(), { betas: opts.betas })
       : createStubSynthesis(),
-    // Authoritative posture resolved by workspaceId (server-side). The store-backed resolver (9.10-A) is
-    // the SOLE source when injected; the interim FAIL-CLOSED map is only the fixtures/dev fallback.
-    workspacePosture: opts.workspacePosture ?? createLocalWorkspacePosture(postures),
+    // Authoritative posture resolved by workspaceId (server-side). REQUIRED (9.10) — the store-backed
+    // resolver is the SOLE source; there is no flag-derived fallback to fall through to.
+    workspacePosture: opts.workspacePosture,
     routeSelector: opts.realCopilot
       ? createClaudeCloudRouteSelector(opts.model)
       : createLocalRouteSelector(),

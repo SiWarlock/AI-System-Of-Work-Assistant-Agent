@@ -11,14 +11,20 @@
 // The completion client is a FAKE — no SDK, no network.
 import { describe, it, expect } from "vitest";
 import { ok, err, isOk, isErr, processorId } from "@sow/contracts";
-import type { ProviderRoute, Result } from "@sow/contracts";
+import type { ProviderRoute, Result, WorkspaceType } from "@sow/contracts";
 import type {
   ClaudeSubscriptionCompletion,
   CompletionRequest,
   CompletionOutput,
   CompletionError,
 } from "@sow/providers";
-import type { AuditPersistPort, RetrievedContext } from "../../../src/api/procedures/copilot";
+import type {
+  AuditPersistPort,
+  RetrievedContext,
+  WorkspacePosture,
+  WorkspacePostureResolver,
+} from "../../../src/api/procedures/copilot";
+import { localWorkspacePosture, createLocalWorkspacePosture } from "../../../src/api/procedures/copilot";
 // 24.7 — none of this file's cases exercise audit persistence; a shared no-op satisfies the now-required
 // `CopilotDepsOptions.auditPersist` field at every `buildCopilotDeps` call site in this file.
 const auditNoop: AuditPersistPort = { persistDenial: async () => {} };
@@ -35,7 +41,6 @@ import {
   mapCompletionToCandidate,
   foldCompletionError,
   createClaudeCloudRouteSelector,
-  cloudCopilotPosture,
   buildCopilotDeps,
   buildInterimCopilotScopeRegistry,
   copilotWorkspaceType,
@@ -53,6 +58,54 @@ import type { LegacyContentPolicy } from "@sow/policy";
 /** Read `provider` off a ProviderRoute union without a cast (only the provider arm carries it). */
 function providerOf(route: ProviderRoute): string | undefined {
   return "provider" in route ? route.provider : undefined;
+}
+
+/**
+ * 9.10 TEST FIXTURE ONLY — mirrors what the now-DELETED `cloudCopilotPosture`/interim-map branch inside
+ * `buildCopilotDeps` used to derive automatically from `realCopilot` alone (never reintroduced in
+ * production: `workspacePosture` is now a REQUIRED, caller-supplied resolver — see the
+ * "workspacePosture is REQUIRED" describe block below for the tests that pin the deletion itself). Most
+ * cases in this file exercise retrieval/model/beta/gbrain concerns unrelated to the posture/ack DECISION,
+ * so they inject this fixture (representing "the owner already acknowledged", exactly what a real
+ * store-backed resolver would return once acknowledged) rather than hand-building a posture map each time.
+ */
+function fixturePostureResolver(
+  workspaces: readonly CopilotWorkspace[],
+  acknowledgeEmployer: boolean,
+): WorkspacePostureResolver {
+  const map: Record<string, WorkspacePosture> = {};
+  for (const ws of workspaces) {
+    map[ws.id] = acknowledgeEmployer
+      ? {
+          type: ws.type,
+          dataOwner: ws.type === "employer_work" ? "employer" : "user",
+          egress: {
+            workspaceId: workspaceId(ws.id),
+            allowedProcessors: [processorId("claude")],
+            rawContentAllowedProcessors: [processorId("claude")],
+            employerRawEgressAcknowledged: ws.type === "employer_work",
+          },
+        }
+      : localWorkspacePosture(ws.id, ws.type);
+  }
+  return createLocalWorkspacePosture(map);
+}
+
+/**
+ * 9.10 TEST CONVENIENCE — `buildCopilotDeps` with `workspacePosture` defaulted to
+ * `fixturePostureResolver(opts.workspaces, true)` unless the caller supplies its own. Used by every case
+ * in this file that does NOT itself exercise the posture/ack decision (those call `buildCopilotDeps`
+ * directly with an explicit resolver, so the requirement stays visible where it matters).
+ */
+function testCopilotDeps(
+  opts: Omit<Parameters<typeof buildCopilotDeps>[0], "workspacePosture"> & {
+    readonly workspacePosture?: WorkspacePostureResolver;
+  },
+): ReturnType<typeof buildCopilotDeps> {
+  return buildCopilotDeps({
+    ...opts,
+    workspacePosture: opts.workspacePosture ?? fixturePostureResolver(opts.workspaces, true),
+  });
 }
 
 const cloudRoute: ProviderRoute = {
@@ -396,11 +449,14 @@ describe("createClaudeCopilotSynthesis — the wired CopilotSynthesisPort over a
   });
 });
 
-// ── P2.4: the real cloud route selector + consent posture (wire it live) ─────────────────
+// ── P2.4: the real cloud route selector (wire it live) ─────────────────
+// The selector's `posture` parameter is UNUSED (`createClaudeCloudRouteSelector` always returns the
+// fixed cloud route regardless of posture) — any valid WorkspacePosture works here; `localWorkspacePosture`
+// stands in (the deleted `cloudCopilotPosture` is no longer available — 9.10).
 describe("createClaudeCloudRouteSelector — the real cloud Claude provider route", () => {
   it("selects a Claude PROVIDER route with cloud egress (satisfies the P2.3 adapter guard)", async () => {
     const sel = createClaudeCloudRouteSelector();
-    const r = await sel.select("ws-employer", cloudCopilotPosture("ws-employer", "employer_work"));
+    const r = await sel.select("ws-employer", localWorkspacePosture("ws-employer", "employer_work"));
     expect(isOk(r)).toBe(true);
     if (isOk(r)) {
       expect(providerOf(r.value)).toBe("claude");
@@ -410,7 +466,7 @@ describe("createClaudeCloudRouteSelector — the real cloud Claude provider rout
 
   it("honors a caller-supplied model id", async () => {
     const sel = createClaudeCloudRouteSelector("claude-sonnet-5");
-    const r = await sel.select("ws", cloudCopilotPosture("ws", "employer_work"));
+    const r = await sel.select("ws", localWorkspacePosture("ws", "employer_work"));
     if (isOk(r)) expect(r.value.model).toBe("claude-sonnet-5");
   });
 
@@ -419,7 +475,7 @@ describe("createClaudeCloudRouteSelector — the real cloud Claude provider rout
     const synth = createClaudeCopilotSynthesis(client);
     const routeR = await createClaudeCloudRouteSelector().select(
       "ws-employer",
-      cloudCopilotPosture("ws-employer", "employer_work"),
+      localWorkspacePosture("ws-employer", "employer_work"),
     );
     expect(isOk(routeR)).toBe(true);
     if (isOk(routeR)) {
@@ -429,25 +485,26 @@ describe("createClaudeCloudRouteSelector — the real cloud Claude provider rout
   });
 });
 
-describe("cloudCopilotPosture — the interim consent posture (owner accepts employer cloud + notice)", () => {
-  it("allowlists the claude processor for raw content and ACKS employer-work egress", () => {
-    const p = cloudCopilotPosture("ws-employer", "employer_work");
-    expect(p.type).toBe("employer_work");
-    expect(p.egress.employerRawEgressAcknowledged).toBe(true);
-    expect(p.egress.allowedProcessors).toContain(processorId("claude"));
-    expect(p.egress.rawContentAllowedProcessors).toContain(processorId("claude"));
-  });
+/** A hand-built posture with the claude processor allowlisted (+ acknowledged for employer_work) —
+ *  exactly the shape a real store-backed resolver returns once the workspace is provisioned for cloud
+ *  egress (employer-work needs the 9.10-B ack; personal needs none). Test-only stand-in for the deleted
+ *  `cloudCopilotPosture` auto-ack helper — NOT reintroducing flag-derived ack. */
+function claudeAllowedPosture(ws: string, type: WorkspaceType): WorkspacePosture {
+  return {
+    type,
+    dataOwner: type === "employer_work" ? "employer" : "user",
+    egress: {
+      workspaceId: workspaceId(ws),
+      allowedProcessors: [processorId("claude")],
+      rawContentAllowedProcessors: [processorId("claude")],
+      employerRawEgressAcknowledged: type === "employer_work",
+    },
+  };
+}
 
-  it("does NOT ack for a personal workspace (the employer branch never applies)", () => {
-    const p = cloudCopilotPosture("ws-personal", "personal_business");
-    expect(p.egress.employerRawEgressAcknowledged).toBe(false);
-    expect(p.egress.allowedProcessors).toContain(processorId("claude"));
-  });
-});
-
-describe("P2.4 governance outcome: cloud route + consent posture → veto ALLOWS, notice fires", () => {
+describe("P2.4 governance outcome: cloud route + acknowledged posture → veto ALLOWS, notice fires", () => {
   it("employer-work → ALLOW the cloud route WITH the egressProcessor notice (the whole point)", async () => {
-    const posture = cloudCopilotPosture("ws-employer", "employer_work");
+    const posture = claudeAllowedPosture("ws-employer", "employer_work");
     const routeR = await createClaudeCloudRouteSelector().select("ws-employer", posture);
     expect(isOk(routeR)).toBe(true);
     if (isOk(routeR)) {
@@ -462,7 +519,7 @@ describe("P2.4 governance outcome: cloud route + consent posture → veto ALLOWS
   });
 
   it("personal-business → ALLOW the cloud route with NO notice (non-employer cloud needs none)", async () => {
-    const posture = cloudCopilotPosture("ws-personal", "personal_business");
+    const posture = claudeAllowedPosture("ws-personal", "personal_business");
     const routeR = await createClaudeCloudRouteSelector().select("ws-personal", posture);
     expect(isOk(routeR)).toBe(true);
     if (isOk(routeR)) {
@@ -483,9 +540,10 @@ describe("buildCopilotDeps — the flag branch, unit-tested (a flipped ternary c
 
   it("OFF: fail-closed posture (ack off) + local route (no notice); the completion factory is NEVER called", async () => {
     let factoryCalls = 0;
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: false,
       workspaces: employer,
+      workspacePosture: fixturePostureResolver(employer, false),
       completion: () => {
         factoryCalls++;
         return okCompletion();
@@ -511,11 +569,17 @@ describe("buildCopilotDeps — the flag branch, unit-tested (a flipped ternary c
     }
   });
 
-  it("ON: consent posture (ack on) + cloud route + real synthesis (fake client); factory called EXACTLY once", async () => {
+  // 9.10: this test used to assert that `realCopilot: true` ALONE derived `employerRawEgressAcknowledged:
+  // true` via the (now-deleted) `cloudCopilotPosture` fallback — exactly the flag-derived-ack leak 9.10
+  // closes. It now injects an EXPLICIT acknowledged resolver (what a real store-backed resolver returns
+  // once the owner has acknowledged) and pins that `buildCopilotDeps` correctly PLUMBS it through —
+  // NOT that the flag alone acknowledges anything.
+  it("ON + an explicit acknowledged resolver: cloud route + real synthesis (fake client); factory called EXACTLY once", async () => {
     let factoryCalls = 0;
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces: employer,
+      workspacePosture: fixturePostureResolver(employer, true),
       completion: () => {
         factoryCalls++;
         return okCompletion();
@@ -527,10 +591,7 @@ describe("buildCopilotDeps — the flag branch, unit-tested (a flipped ternary c
     expect(isOk(posture)).toBe(true);
     if (isOk(posture)) expect(posture.value.egress.employerRawEgressAcknowledged).toBe(true);
 
-    const routeR = await deps.routeSelector.select(
-      "ws-employer",
-      cloudCopilotPosture("ws-employer", "employer_work"),
-    );
+    const routeR = await deps.routeSelector.select("ws-employer", claudeAllowedPosture("ws-employer", "employer_work"));
     expect(isOk(routeR)).toBe(true);
     if (isOk(routeR)) {
       expect(providerOf(routeR.value)).toBe("claude");
@@ -542,7 +603,8 @@ describe("buildCopilotDeps — the flag branch, unit-tested (a flipped ternary c
   });
 
   it("threads the model override into the cloud route selector", async () => {
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({
+      auditPersist: auditNoop,
       realCopilot: true,
       workspaces: employer,
       model: "claude-sonnet-5",
@@ -550,38 +612,46 @@ describe("buildCopilotDeps — the flag branch, unit-tested (a flipped ternary c
     });
     const routeR = await deps.routeSelector.select(
       "ws-employer",
-      cloudCopilotPosture("ws-employer", "employer_work"),
+      localWorkspacePosture("ws-employer", "employer_work"),
     );
     if (isOk(routeR)) expect(routeR.value.model).toBe("claude-sonnet-5");
   });
 
   it("with no provisioned workspaces, every posture resolve fails CLOSED (WORKSPACE_NOT_FOUND)", async () => {
-    const deps = buildCopilotDeps({ auditPersist: auditNoop, realCopilot: true, workspaces: [], completion: okCompletion });
+    const deps = buildCopilotDeps({
+      auditPersist: auditNoop,
+      realCopilot: true,
+      workspaces: [],
+      workspacePosture: createLocalWorkspacePosture({}),
+      completion: okCompletion,
+    });
     const posture = await deps.workspacePosture.resolve("ws-employer");
     expect(isErr(posture)).toBe(true);
   });
 
   it("threads betas into the synthesis request (default 1M-context beta, no explicit override)", async () => {
     const { client, calls } = recordingClient(ok({ structuredOutput: goodOutput, costUsd: 0.01 }));
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({
+      auditPersist: auditNoop,
       realCopilot: true,
       workspaces: employer,
       completion: () => client,
     });
-    const routeR = await deps.routeSelector.select("ws-employer", cloudCopilotPosture("ws-employer", "employer_work"));
+    const routeR = await deps.routeSelector.select("ws-employer", localWorkspacePosture("ws-employer", "employer_work"));
     if (isOk(routeR)) await deps.synthesis.synthesize("ws-employer", "q", ctx, routeR.value);
     expect(calls[0]!.betas).toEqual(["context-1m-2025-08-07"]);
   });
 
   it("threads a NON-default betas OVERRIDE through buildCopilotDeps (not just the default)", async () => {
     const { client, calls } = recordingClient(ok({ structuredOutput: goodOutput, costUsd: 0.01 }));
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({
+      auditPersist: auditNoop,
       realCopilot: true,
       workspaces: employer,
       betas: ["context-1m-2025-08-07", "some-other-beta"],
       completion: () => client,
     });
-    const routeR = await deps.routeSelector.select("ws-employer", cloudCopilotPosture("ws-employer", "employer_work"));
+    const routeR = await deps.routeSelector.select("ws-employer", localWorkspacePosture("ws-employer", "employer_work"));
     if (isOk(routeR)) await deps.synthesis.synthesize("ws-employer", "q", ctx, routeR.value);
     expect(calls[0]!.betas).toEqual(["context-1m-2025-08-07", "some-other-beta"]);
   });
@@ -635,6 +705,26 @@ describe("resolveCopilotWorkspaces / copilotWorkspaceType — decouple Copilot r
   });
 });
 
+describe("9.10: workspacePosture is REQUIRED on CopilotDepsOptions — no flag-derived fallback", () => {
+  it("omitting workspacePosture is a COMPILE ERROR (tsc --noEmit mutation proof)", () => {
+    // Mechanically pinned, not just documented: `tsc --noEmit` FAILS if this line stops erroring — either
+    // because `workspacePosture` regains a `?`/fallback (reopening the 9.10 flag-derived-ack leak) or
+    // because an unrelated change makes this object literal invalid for some OTHER reason. Either way the
+    // directive goes "unused" and the typecheck breaks, so this is a real, mechanically-enforced pin, not
+    // a comment. `tsc` only type-checks — this statement is never actually run (see the early `return`).
+    if (Math.random() > 2) {
+      // @ts-expect-error — 9.10: workspacePosture is now REQUIRED; omitting it must fail to compile.
+      buildCopilotDeps({
+        auditPersist: auditNoop,
+        realCopilot: true,
+        workspaces: [],
+        completion: (): ClaudeSubscriptionCompletion => ({}) as ClaudeSubscriptionCompletion,
+      });
+    }
+    expect(true).toBe(true);
+  });
+});
+
 describe("buildCopilotDeps — P3-live gbrain retrieval branch (only the served workspace reads gbrain)", () => {
   const served = "personal-business";
   const workspaces: readonly CopilotWorkspace[] = [
@@ -649,7 +739,7 @@ describe("buildCopilotDeps — P3-live gbrain retrieval branch (only the served 
 
   it("real path + gbrainExec: the SERVED workspace reads gbrain; the factory is called EXACTLY once", async () => {
     let factoryCalls = 0;
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion: okCompletion,
@@ -669,7 +759,7 @@ describe("buildCopilotDeps — P3-live gbrain retrieval branch (only the served 
 
   it("real path + gbrainExec: a NON-served workspace stays on the fixture (empty) and never reads gbrain (WS-8)", async () => {
     let execCalls = 0;
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion: okCompletion,
@@ -686,7 +776,7 @@ describe("buildCopilotDeps — P3-live gbrain retrieval branch (only the served 
 
   it("gbrainExec is IGNORED when realCopilot is OFF (fixture stub; the factory is NEVER called)", async () => {
     let factoryCalls = 0;
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: false,
       workspaces,
       completion: okCompletion,
@@ -702,14 +792,14 @@ describe("buildCopilotDeps — P3-live gbrain retrieval branch (only the served 
   });
 
   it("WITHOUT gbrainExec the real path keeps the fixture retrieval (served workspace returns empty, not gbrain)", async () => {
-    const deps = buildCopilotDeps({ auditPersist: auditNoop, realCopilot: true, workspaces, completion: okCompletion });
+    const deps = testCopilotDeps({ auditPersist: auditNoop, realCopilot: true, workspaces, completion: okCompletion });
     const r = await deps.retrieval.retrieve(served, "q");
     expect(isOk(r)).toBe(true);
     if (isOk(r)) expect(r.value.blocks).toEqual([]);
   });
 
   it("honors a gbrainWorkspaceId override (that workspace reads gbrain; personal-business falls back to fixture)", async () => {
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion: okCompletion,
@@ -747,7 +837,7 @@ describe("buildCopilotDeps — C5.4b provenance-stamping decorator (a flipped te
       mode: "gated",
       admitted: new Map([["gbrain:sessions:028", { content: "PROVEN", mdContentSha: "sha" }]]),
     });
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion: okCompletion,
@@ -766,7 +856,7 @@ describe("buildCopilotDeps — C5.4b provenance-stamping decorator (a flipped te
   });
 
   it("real path + the INTERIM oracle: a live gbrain hit is STILL un-stamped ⇒ untrusted (structurally OFF today)", async () => {
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion: okCompletion,
@@ -783,7 +873,7 @@ describe("buildCopilotDeps — C5.4b provenance-stamping decorator (a flipped te
 
   it("servingOracle is IGNORED when realCopilot is OFF (the factory is NEVER called)", async () => {
     let factoryCalls = 0;
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: false,
       workspaces,
       completion: okCompletion,
@@ -795,7 +885,7 @@ describe("buildCopilotDeps — C5.4b provenance-stamping decorator (a flipped te
   });
 
   it("WITHOUT servingOracle the real path is UNDECORATED (sources un-provenanced — the pre-C5.4b behavior)", async () => {
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion: okCompletion,
@@ -812,7 +902,7 @@ describe("buildCopilotDeps — C5.4b provenance-stamping decorator (a flipped te
 
 describe("Sonnet 5 1M — the default model + the 1M-context beta (P2.4b)", () => {
   it("the DEFAULT Copilot model is Claude Sonnet 5", async () => {
-    const r = await createClaudeCloudRouteSelector().select("ws", cloudCopilotPosture("ws", "employer_work"));
+    const r = await createClaudeCloudRouteSelector().select("ws", localWorkspacePosture("ws", "employer_work"));
     expect(isOk(r)).toBe(true);
     if (isOk(r)) expect(r.value.model).toBe("claude-sonnet-5");
   });
@@ -868,7 +958,7 @@ describe("buildCopilotDeps — SC3 gbrainWorkspaceScope wires the P1 filter into
   const rawWithForeign = [rawHit("personal-business/mine", "mine", "Mine"), rawHit("employer-work/secret", "leak", "Leak")];
 
   it("with gbrainWorkspaceScope: DROPS the FOREIGN hit from the served workspace's retrieval", async () => {
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion,
@@ -885,7 +975,7 @@ describe("buildCopilotDeps — SC3 gbrainWorkspaceScope wires the P1 filter into
   });
 
   it("WITHOUT gbrainWorkspaceScope: passthrough (back-compat — foreign hit survives)", async () => {
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion,
@@ -897,7 +987,7 @@ describe("buildCopilotDeps — SC3 gbrainWorkspaceScope wires the P1 filter into
   });
 
   it("under the boot DEFAULT {deny}: an unprefixed/legacy hit is DROPPED (⚠ today's whole brain is unprefixed ⇒ zero retrieval — why the owner posture is {assign,personal-business}, not the default)", async () => {
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion,
@@ -911,7 +1001,7 @@ describe("buildCopilotDeps — SC3 gbrainWorkspaceScope wires the P1 filter into
   });
 
   it("the filter is bound to the served id: a legacy hit is KEPT under {assign,personal-business} served=personal-business", async () => {
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion,
@@ -947,7 +1037,7 @@ describe("buildCopilotDeps — Option A multi-served: a NON-served registered wo
   const combined = [rawHit("employer-work/acme", "EW content", "EW"), rawHit("personal-business/mine", "PB content", "PB")];
 
   it("scope present: asking employer-work (≠ the boot-fixed served personal-business) reads the brain, scoped to employer-work", async () => {
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion,
@@ -965,7 +1055,7 @@ describe("buildCopilotDeps — Option A multi-served: a NON-served registered wo
   });
 
   it("scope present: the served personal-business still reads its OWN content (own + legacy-assigned; EW dropped)", async () => {
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion,
@@ -979,7 +1069,7 @@ describe("buildCopilotDeps — Option A multi-served: a NON-served registered wo
 
   it("scope present: an UNREGISTERED workspace fails closed (WORKSPACE_NOT_FOUND) and NEVER reads the brain", async () => {
     let execCalls = 0;
-    const deps = buildCopilotDeps({ auditPersist: auditNoop,
+    const deps = testCopilotDeps({ auditPersist: auditNoop,
       realCopilot: true,
       workspaces,
       completion,
