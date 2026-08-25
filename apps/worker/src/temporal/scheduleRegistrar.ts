@@ -204,3 +204,64 @@ export function gateIngestionTriageSchedule(opts: {
   if (opts.enabled !== true) return undefined;
   return buildIngestionTriageScheduleSpec(opts);
 }
+
+// ---------------------------------------------------------------------------
+// (3) 25.3 — the projectSync schedule spec + its default-OFF arming gate
+// ---------------------------------------------------------------------------
+
+/**
+ * The registered sandbox workflow type name `projectSyncWorkflow` runs under
+ * (temporal/workflows.ts — a complete, registered bundle entry point as of task 25.1; this module
+ * does NOT rebuild it, only attaches a durable schedule spec pointed at it).
+ */
+export const PROJECT_SYNC_WORKFLOW_TYPE = "projectSyncWorkflow" as const;
+
+/** The durable schedule id the 25.3 project-sync tick registers under. */
+export const PROJECT_SYNC_SCHEDULE_ID = "project-sync" as const;
+
+/**
+ * arch_gap (Phase 25, flagged not silently assumed — mirrors {@link buildIngestionTriageScheduleSpec}'s
+ * own note above): `projectSyncWorkflow`'s input is ONE {@link ProjectSyncInput} naming a single
+ * `context.projectRef` — there is no per-tick project selection for a periodic schedule to supply
+ * (the 14.6 typed-Project registry can hold many projects), so this spec's `args: []` is a
+ * PLACEHOLDER action shape, not a functioning periodic "sync every registered project" sweep.
+ * Defining the real per-tick fan-out (one execution per registered project, or a dispatcher
+ * workflow that lists the registry and starts one child per entry) is a follow-up once the 14.6
+ * registry has a production enumeration read — this function's job is the DORMANT
+ * schedule-attachment machinery + the default-OFF gate, per the 25.SCHED leg-1 brief. Never armed
+ * by this package.
+ */
+export function buildProjectSyncScheduleSpec(opts: {
+  readonly taskQueue: SowTaskQueue;
+  readonly intervalMs: number;
+}): TemporalScheduleSpec {
+  return {
+    scheduleId: PROJECT_SYNC_SCHEDULE_ID,
+    intervalMs: opts.intervalMs,
+    action: {
+      workflowType: PROJECT_SYNC_WORKFLOW_TYPE,
+      workflowId: `${PROJECT_SYNC_SCHEDULE_ID}-workflow`,
+      taskQueue: opts.taskQueue,
+      args: [],
+    },
+  };
+}
+
+/**
+ * The 25.3 arming gate (same shape as {@link gateIngestionTriageSchedule}: worker LESSONS §2's
+ * `gate(opts) → wiring | undefined`, default-OFF, strict `=== true`). Returns the durable
+ * project-sync schedule spec ONLY when the owner armed it; otherwise `undefined` — a
+ * truthy-but-not-boolean-`true` value does NOT arm (no coercion). NOTHING in this package ever
+ * calls {@link TemporalScheduleRegistrar.ensure} with this spec — wiring this gate into
+ * `bootWorker` (reading the owner config, constructing a real `ScheduleClientPort`, and calling
+ * `ensure` only on the armed path) is PKG-W1's `boot.ts`, outside this package's territory, same
+ * as the ingestion-triage gate above.
+ */
+export function gateProjectSyncSchedule(opts: {
+  readonly enabled: boolean;
+  readonly taskQueue: SowTaskQueue;
+  readonly intervalMs: number;
+}): TemporalScheduleSpec | undefined {
+  if (opts.enabled !== true) return undefined;
+  return buildProjectSyncScheduleSpec(opts);
+}

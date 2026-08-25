@@ -42,6 +42,7 @@ import { proxyActivities } from "@temporalio/workflow";
 // from their DEEP module paths, never the @sow/workflows barrel (which re-exports the
 // activity set — node:crypto, etc.). See the module header's sandbox-purity note.
 import { ok } from "@sow/contracts/primitives/result";
+import type { Result } from "@sow/contracts/primitives/result";
 
 import { runMeetingCloseout } from "@sow/workflows/workflows/meetingCloseout";
 import { runApprovalFlow } from "@sow/workflows/workflows/approvalFlow";
@@ -54,6 +55,21 @@ import { runSourceIngestion } from "@sow/workflows/workflows/sourceIngestion";
 // sandbox graph stays clean. Its schedule/wakeDrain seams use in-sandbox stubs (Phase-23 binds the real
 // DB-backed bookkeeping + drain + the live createSchedule START); the shipped default polls zero connectors.
 import { runConnectorSyncHealth } from "@sow/workflows/workflows/connectorSyncHealth";
+// 25.1 — the four §9 OUTPUT-WORKFLOW drivers (dailyBrief/periodReview/projectSync/
+// crossCalendarScheduling), deep-imported (barrel-free) for the SAME sandbox-purity reason as every
+// driver above. This is the "extend the registered bundle past the proof spine" leg (task 25.1):
+// registerWorker.ts's `workflowsPath` already resolves to THIS module, so widening what this module
+// EXPORTS is the whole mechanism — no separate bundle/path to repoint. ⚠ CORRECTING THE PLAN TEXT
+// (task 25.1 dispatch note): `IMPLEMENTATION_PLAN.md`'s §25.1 entry frames this file as exposing "the
+// two proof-spine entry points" — that was already false at HEAD before this slice (the file exported
+// FIVE: meetingCloseoutWorkflow, approvalFlowWorkflow, ingestionTriageWorkflow, sourceIngestionWorkflow,
+// connectorSyncHealthWorkflow — see the module header's own wrapper list above). This slice adds a SIXTH
+// through NINTH: dailyBriefWorkflow, periodReviewWorkflow, projectSyncWorkflow,
+// crossCalendarSchedulingWorkflow.
+import { runDailyBrief } from "@sow/workflows/workflows/dailyBrief";
+import { runPeriodReview } from "@sow/workflows/workflows/periodReview";
+import { runProjectSync } from "@sow/workflows/workflows/projectSync";
+import { runCrossCalendarScheduling } from "@sow/workflows/workflows/crossCalendarScheduling";
 // The validate gate is PURE + SYNC (no-inference + schema gate) — it runs IN-SANDBOX,
 // not as a proxied activity, so the driver's synchronous ValidateExtractionPort
 // contract is honored (an activity proxy is always async).
@@ -62,6 +78,19 @@ import { createValidateActivity } from "@sow/workflows/activities/validateCloseo
 // meeting-extraction leaf. PURE (typeof/Object.keys only; @sow/contracts value import + type-only
 // imports) so it is Temporal-workflow-sandbox-safe, exactly like validateCloseout above.
 import { createMeetingExtractionSchemaGate } from "../composition/meeting-extraction";
+// 25.1 — the output-workflow families' "validate" legs. ⛔ NOT proxied via `proxyActivities`:
+// `OutputWorkflowActivities`'s own dailyBriefValidate/periodReviewValidate/
+// projectSyncValidateNarrative/crossCalendarValidateProposal members declare a SYNCHRONOUS
+// `Result<...>` return (matching each port's own sync contract) — @temporalio/workflow's
+// `proxyActivities<T>` REQUIRES every member to return `Promise<...>` (a non-Promise member types
+// to the uncallable `NotAnActivityMethod` — see @temporalio/workflow's own worked example in its
+// .d.ts). So, exactly like `validate`/`createValidateActivity` above (meetingCloseout/
+// sourceIngestion's PURE in-sandbox gate), these run IN-SANDBOX as plain synchronous functions —
+// never proxied. Import shape is IDENTICAL to `validateCloseout` (both value-import the
+// `@sow/contracts` + `@sow/domain` barrels, both PROVEN sandbox-safe by that already-registered
+// import two lines up), so no new sandbox-purity exposure.
+import { createFieldsValidateActivity } from "@sow/workflows/activities/validateFields";
+import { createValidateNarrativePort } from "@sow/workflows/activities/validateNarrative";
 import type {
   // driver input/deps/outcome
   MeetingCloseoutInput,
@@ -124,6 +153,82 @@ import type {
   ConnectorSyncHealthHealthSink,
   ConnectorSyncHealthFailure,
   ScheduleStore,
+  // 25.1 — the four output-workflow input/deps/outcome + leaf-port types. All re-exported by the
+  // @sow/workflows barrel (packages/workflows/src/index.ts) from ports/dailyBrief.ts,
+  // workflows/periodReview.ts (which owns its OWN Review*-prefixed port set — no dedicated
+  // ports/periodReview.ts file), ports/projectSync.ts + workflows/projectSync.ts, and
+  // ports/crossCalendarScheduling.ts + workflows/crossCalendarScheduling.ts — a TYPE-ONLY import here
+  // pulls no runtime code (sandbox-purity note above governs only VALUE imports).
+  DailyBriefInput,
+  DailyBriefDeps,
+  DailyBriefOutcome,
+  BriefDraft,
+  RefreshConnectorsPort,
+  UpdateProjectionsPort,
+  RunBriefingAgentPort,
+  ValidateBriefPort,
+  BuildGlobalBriefPort,
+  BuildWorkspaceBriefPort,
+  CommitBriefPort,
+  UpdateDashboardPort,
+  NotifyPort,
+  DailyBriefHealthSink,
+  DailyBriefFailure,
+  PeriodReviewInput,
+  PeriodReviewDeps,
+  PeriodReviewOutcome,
+  ReviewDraft,
+  ReviewRefreshConnectorsPort,
+  ReviewUpdateProjectionsPort,
+  RunReviewAgentPort,
+  ValidateReviewPort,
+  BuildGlobalReviewPort,
+  BuildWorkspaceReviewPort,
+  CommitReviewPort,
+  ReviewUpdateDashboardPort,
+  ReviewNotifyPort,
+  PeriodReviewHealthSink,
+  PeriodReviewFailure,
+  ProjectSyncInput,
+  ProjectSyncDeps,
+  ProjectSyncOutcome,
+  ResolveRegistryPort,
+  ProjectRegistryEntry,
+  ResolveRegistryError,
+  ProjectSyncContext,
+  ParseProgressPort,
+  SynthesizeNarrativePort,
+  ValidateNarrativePort,
+  BuildSyncOutputsPort,
+  CommitStatusPort,
+  ProjectSyncUpdateDashboardPort,
+  ProjectSyncProposeActionsPort,
+  ProjectSyncHealthSink,
+  ProjectSyncFailure,
+  CrossCalendarSchedulingInput,
+  CrossCalendarSchedulingDeps,
+  CrossCalendarSchedulingOutcome,
+  GatherAvailabilityPort,
+  ProposeWindowsAgentPort,
+  ProposedWindows,
+  ValidateProposalPort,
+  BuildSchedulingOutputsPort,
+  ClassifyActionPort,
+  AutoCreateEventPort,
+  RouteToApprovalPort,
+  CommitSchedulingNotePort,
+  SchedulingHealthSink,
+  SchedulingWorkflowFailure,
+  FieldsDraft,
+  // 25.1 — the flat output-workflow activity surface (packages/workflows/src/activities/
+  // outputWorkflows.ts). ProofSpineActivities (../composition/buildActivities, type-only below)
+  // does NOT yet include these members — the composition-root binding that spreads
+  // `createOutputWorkflowActivities(...)`'s real backends into the registered activities object is a
+  // NAMED, NOT-YET-LANDED follow-up (crossTerritoryNeed: apps/worker/src/composition/buildActivities.ts,
+  // outside this package's territory). Proxying against THIS type independently of ProofSpineActivities
+  // means that follow-up needs no edit here when it lands — only a matching-named function added to the
+  // registered activities object at the composition root.
+  OutputWorkflowActivities,
 } from "@sow/workflows";
 
 // TYPE-ONLY import of the composition-root activities shape. Types are erased, so
@@ -147,6 +252,49 @@ import type { ProofSpineActivities } from "../composition/buildActivities";
  * so a retry never duplicates a durable write).
  */
 const activities = proxyActivities<ProofSpineActivities>({
+  startToCloseTimeout: "1 minute",
+  retry: {
+    initialInterval: "1 second",
+    maximumInterval: "30 seconds",
+    backoffCoefficient: 2,
+    maximumAttempts: 5,
+  },
+});
+
+/**
+ * 25.1 — the output-workflow activity proxies, typed against `OutputWorkflowActivities`
+ * (packages/workflows/src/activities/outputWorkflows.ts) — a SEPARATE flat shape from
+ * {@link ProofSpineActivities} (see the type-import note above for why: the composition-root
+ * binding is a named follow-up, not landed here). Same retry/timeout policy as `activities` (§16
+ * default — every underlying activity is idempotent, inv-5).
+ */
+const outputWorkflowActivities = proxyActivities<OutputWorkflowActivities>({
+  startToCloseTimeout: "1 minute",
+  retry: {
+    initialInterval: "1 second",
+    maximumInterval: "30 seconds",
+    backoffCoefficient: 2,
+    maximumAttempts: 5,
+  },
+});
+
+/**
+ * 25.1 (projectSync leg) — the ONE projectSync activity deliberately EXCLUDED from
+ * `OutputWorkflowActivities` (see that interface's own in-code note: "`registry` stays INJECTED
+ * ... the composition root supplies it directly on ProjectSyncDeps"). A real production
+ * implementation already exists (`createProjectRegistryResolvePort`,
+ * apps/worker/src/composition/projectRegistry.ts) but is NOT YET bound into the registered
+ * activities object — that file's own header names this exact gap as "a named spine follow-up"
+ * (task 14.6). Proxied under its own name here so wiring it later needs no further edit to this
+ * file — only a matching-named `projectSyncResolveRegistry` function added at the composition
+ * root (crossTerritoryNeed, apps/worker/src/composition/buildActivities.ts).
+ */
+interface ProjectSyncRegistryActivities {
+  projectSyncResolveRegistry(
+    ctx: ProjectSyncContext,
+  ): Promise<Result<ProjectRegistryEntry, ResolveRegistryError>>;
+}
+const projectSyncRegistryActivities = proxyActivities<ProjectSyncRegistryActivities>({
   startToCloseTimeout: "1 minute",
   retry: {
     initialInterval: "1 second",
@@ -242,6 +390,21 @@ function sandboxRunRepo(): WorkflowRunRefRepository {
         error: { code: "not_found", message: `no run ${workflowId}` },
       });
     },
+  };
+}
+
+/**
+ * 25.1 — an in-sandbox `ScheduleStore` STUB for the dailyBrief/periodReview LIFE-2 catch-up seam,
+ * mirroring `connectorSyncHealthWorkflow`'s OWN inline stub below (same shape, same reason — see
+ * that wrapper's doc comment): `getBookkeeping → undefined` (every tick reads as first-run, no
+ * durable catch-up window) and a no-op `put`. Phase-23 TODO #1 replaces this with the real
+ * DB-backed bookkeeping at the composition root; a false-durable stub must not survive into a
+ * firing schedule, which is exactly why 25.2/25.3's schedules stay default-OFF until then.
+ */
+function sandboxScheduleStoreStub(): ScheduleStore {
+  return {
+    getBookkeeping: () => Promise.resolve(undefined),
+    put: () => Promise.resolve(),
   };
 }
 
@@ -529,4 +692,245 @@ export async function connectorSyncHealthWorkflow(
     clock: workflowClock,
   };
   return runConnectorSyncHealth(input, deps);
+}
+
+// ---------------------------------------------------------------------------
+// 25.1 — output workflows (dailyBrief, periodReview, projectSync, crossCalendarScheduling)
+// ---------------------------------------------------------------------------
+//
+// Same thin-wrapper shape as every driver above: adapt the activity proxies onto the driver's
+// Deps port set, run the pure driver inside the sandbox. NONE of these four has a production
+// dispatcher yet (no scheduler calls `client.workflow.start(...)` for them — that is 25.2-25.5's
+// scheduling leg, gated default-OFF where built), so exposing them here only WIDENS the bundle;
+// it changes no shipped behavior (NOTHING ARMS).
+
+const dailyBriefValidator = createFieldsValidateActivity<BriefDraft>();
+const reviewValidator = createFieldsValidateActivity<ReviewDraft>();
+const crossCalendarValidator = createFieldsValidateActivity<
+  FieldsDraft & { readonly windows: ProposedWindows["windows"] }
+>();
+const projectSyncValidator = createValidateNarrativePort();
+
+/**
+ * The daily-brief workflow (25.2). `validate` runs IN-SANDBOX (see the module-level import note);
+ * every other port proxies through `outputWorkflowActivities`; `schedule` is the dormant
+ * {@link sandboxScheduleStoreStub} (Phase-23 TODO — LIFE-2 catch-up bookkeeping is not yet durable).
+ */
+export async function dailyBriefWorkflow(input: DailyBriefInput): Promise<DailyBriefOutcome> {
+  const refreshConnectors: RefreshConnectorsPort = {
+    refresh: (ctx) => outputWorkflowActivities.dailyBriefRefreshConnectors(ctx),
+  };
+  const updateProjections: UpdateProjectionsPort = {
+    update: (ctx) => outputWorkflowActivities.dailyBriefUpdateProjections(ctx),
+  };
+  const agent: RunBriefingAgentPort = {
+    run: (ctx) => outputWorkflowActivities.dailyBriefRunAgent(ctx),
+  };
+  const validate: ValidateBriefPort = {
+    validate: (draft) => dailyBriefValidator.validate(draft) as ReturnType<ValidateBriefPort["validate"]>,
+  };
+  const buildGlobal: BuildGlobalBriefPort = {
+    build: (validated, projections, globalWorkspaceId) =>
+      outputWorkflowActivities.dailyBriefBuildGlobal(validated, projections, globalWorkspaceId),
+  };
+  const buildWorkspace: BuildWorkspaceBriefPort = {
+    build: (validated, workspaceId) => outputWorkflowActivities.dailyBriefBuildWorkspace(validated, workspaceId),
+  };
+  const commit: CommitBriefPort = {
+    commit: (plan) => outputWorkflowActivities.dailyBriefCommit(plan),
+  };
+  const dashboard: UpdateDashboardPort = {
+    update: (payload) => outputWorkflowActivities.dailyBriefUpdateDashboard(payload),
+  };
+  const notify: NotifyPort = {
+    notify: (action, env) => outputWorkflowActivities.dailyBriefNotify(action, env),
+  };
+  const health: DailyBriefHealthSink = {
+    surface: (failure: DailyBriefFailure) => outputWorkflowActivities.dailyBriefSurfaceFailure(failure),
+  };
+
+  const deps: DailyBriefDeps = {
+    refreshConnectors,
+    updateProjections,
+    agent,
+    validate,
+    buildGlobal,
+    buildWorkspace,
+    commit,
+    dashboard,
+    notify,
+    health,
+    runs: sandboxRunRepo(),
+    schedule: sandboxScheduleStoreStub(),
+    clock: workflowClock,
+  };
+
+  return runDailyBrief(input, deps);
+}
+
+/**
+ * The period-review workflow (25.2, weekly/monthly). Same shape as {@link dailyBriefWorkflow};
+ * `validate` runs IN-SANDBOX; `schedule` is the same dormant stub.
+ */
+export async function periodReviewWorkflow(input: PeriodReviewInput): Promise<PeriodReviewOutcome> {
+  const refreshConnectors: ReviewRefreshConnectorsPort = {
+    refresh: (ctx) => outputWorkflowActivities.periodReviewRefreshConnectors(ctx),
+  };
+  const updateProjections: ReviewUpdateProjectionsPort = {
+    update: (ctx) => outputWorkflowActivities.periodReviewUpdateProjections(ctx),
+  };
+  const agent: RunReviewAgentPort = {
+    run: (ctx) => outputWorkflowActivities.periodReviewRunAgent(ctx),
+  };
+  const validate: ValidateReviewPort = {
+    validate: (draft) => reviewValidator.validate(draft) as ReturnType<ValidateReviewPort["validate"]>,
+  };
+  const buildGlobal: BuildGlobalReviewPort = {
+    build: (validated, projections, window, globalWorkspaceId) =>
+      outputWorkflowActivities.periodReviewBuildGlobal(validated, projections, window, globalWorkspaceId),
+  };
+  const buildWorkspace: BuildWorkspaceReviewPort = {
+    build: (validated, window, workspaceId) =>
+      outputWorkflowActivities.periodReviewBuildWorkspace(validated, window, workspaceId),
+  };
+  const commit: CommitReviewPort = {
+    commit: (plan) => outputWorkflowActivities.periodReviewCommit(plan),
+  };
+  const dashboard: ReviewUpdateDashboardPort = {
+    update: (payload) => outputWorkflowActivities.periodReviewUpdateDashboard(payload),
+  };
+  const notify: ReviewNotifyPort = {
+    notify: (action, env) => outputWorkflowActivities.periodReviewNotify(action, env),
+  };
+  const health: PeriodReviewHealthSink = {
+    surface: (failure: PeriodReviewFailure) => outputWorkflowActivities.periodReviewSurfaceFailure(failure),
+  };
+
+  const deps: PeriodReviewDeps = {
+    refreshConnectors,
+    updateProjections,
+    agent,
+    validate,
+    buildGlobal,
+    buildWorkspace,
+    commit,
+    dashboard,
+    notify,
+    health,
+    runs: sandboxRunRepo(),
+    schedule: sandboxScheduleStoreStub(),
+    clock: workflowClock,
+  };
+
+  return runPeriodReview(input, deps);
+}
+
+/**
+ * The project-sync workflow (25.3). `validate` runs IN-SANDBOX via the pre-existing, tested
+ * {@link createValidateNarrativePort} (real REQ-F-017 no-inference gate, not a stub). `registry`
+ * proxies through the dedicated {@link projectSyncRegistryActivities} — see that proxy's own doc
+ * comment for why it is a crossTerritoryNeed rather than dormant-by-construction here.
+ */
+export async function projectSyncWorkflow(input: ProjectSyncInput): Promise<ProjectSyncOutcome> {
+  const registry: ResolveRegistryPort = {
+    resolve: (ctx) => projectSyncRegistryActivities.projectSyncResolveRegistry(ctx),
+  };
+  const parse: ParseProgressPort = {
+    parse: (ctx) => outputWorkflowActivities.projectSyncParseProgress(ctx),
+  };
+  const synthesize: SynthesizeNarrativePort = {
+    synthesize: (ctx, progress) => outputWorkflowActivities.projectSyncSynthesizeNarrative(ctx, progress),
+  };
+  const validate: ValidateNarrativePort = {
+    validate: (draft) => projectSyncValidator.validate(draft),
+  };
+  const buildOutputs: BuildSyncOutputsPort = {
+    build: (validated, progress, workspaceId, identity, updatedAt) =>
+      outputWorkflowActivities.projectSyncBuildOutputs(validated, progress, workspaceId, identity, updatedAt),
+  };
+  const commit: CommitStatusPort = {
+    commit: (plan) => outputWorkflowActivities.projectSyncCommitStatus(plan),
+  };
+  const dashboard: ProjectSyncUpdateDashboardPort = {
+    update: (payload) => outputWorkflowActivities.projectSyncUpdateDashboard(payload),
+  };
+  const propose: ProjectSyncProposeActionsPort = {
+    propose: (action, env) => outputWorkflowActivities.projectSyncProposeActions(action, env),
+  };
+  const health: ProjectSyncHealthSink = {
+    surface: (failure: ProjectSyncFailure) => outputWorkflowActivities.projectSyncSurfaceFailure(failure),
+  };
+
+  const deps: ProjectSyncDeps = {
+    registry,
+    parse,
+    synthesize,
+    validate,
+    buildOutputs,
+    commit,
+    dashboard,
+    propose,
+    health,
+    runs: sandboxRunRepo(),
+    clock: workflowClock,
+  };
+
+  return runProjectSync(input, deps);
+}
+
+/**
+ * The cross-calendar-scheduling workflow (25.4). `validate` runs IN-SANDBOX; `commit` is wired
+ * (the port is optional on {@link CrossCalendarSchedulingDeps} but the activity exists, so this
+ * wrapper always supplies it — a scheduling run may or may not exercise the commit leg, decided
+ * inside the pure driver, not here).
+ */
+export async function crossCalendarSchedulingWorkflow(
+  input: CrossCalendarSchedulingInput,
+): Promise<CrossCalendarSchedulingOutcome> {
+  const gather: GatherAvailabilityPort = {
+    gather: (ctx) => outputWorkflowActivities.crossCalendarGatherAvailability(ctx),
+  };
+  const agent: ProposeWindowsAgentPort = {
+    run: (ctx) => outputWorkflowActivities.crossCalendarProposeWindowsAgent(ctx),
+  };
+  const validate: ValidateProposalPort = {
+    validate: (proposal) =>
+      crossCalendarValidator.validate(proposal) as ReturnType<ValidateProposalPort["validate"]>,
+  };
+  const buildOutputs: BuildSchedulingOutputsPort = {
+    build: (validated, organizerWorkspaceId) =>
+      outputWorkflowActivities.crossCalendarBuildOutputs(validated, organizerWorkspaceId),
+  };
+  const classify: ClassifyActionPort = {
+    classify: (action, organizerWorkspaceId) =>
+      outputWorkflowActivities.crossCalendarClassifyAction(action, organizerWorkspaceId),
+  };
+  const autoCreate: AutoCreateEventPort = {
+    create: (action, env) => outputWorkflowActivities.crossCalendarAutoCreateEvent(action, env),
+  };
+  const routeToApproval: RouteToApprovalPort = {
+    route: (action, env) => outputWorkflowActivities.crossCalendarRouteToApproval(action, env),
+  };
+  const commit: CommitSchedulingNotePort = {
+    commit: (plan) => outputWorkflowActivities.crossCalendarCommitNote(plan),
+  };
+  const health: SchedulingHealthSink = {
+    surface: (failure: SchedulingWorkflowFailure) => outputWorkflowActivities.crossCalendarSurfaceFailure(failure),
+  };
+
+  const deps: CrossCalendarSchedulingDeps = {
+    gather,
+    agent,
+    validate,
+    buildOutputs,
+    classify,
+    autoCreate,
+    routeToApproval,
+    commit,
+    health,
+    runs: sandboxRunRepo(),
+    clock: workflowClock,
+  };
+
+  return runCrossCalendarScheduling(input, deps);
 }

@@ -19,6 +19,9 @@ import {
   gateIngestionTriageSchedule,
   buildIngestionTriageScheduleSpec,
   INGESTION_TRIAGE_SCHEDULE_ID,
+  gateProjectSyncSchedule,
+  buildProjectSyncScheduleSpec,
+  PROJECT_SYNC_SCHEDULE_ID,
   type ScheduleClientPort,
   type TemporalScheduleSpec,
 } from "../../src/temporal/scheduleRegistrar";
@@ -162,5 +165,45 @@ describe("gateIngestionTriageSchedule — 25.5 default-OFF, strict === true armi
     expect(spec?.action.workflowType).toBe("ingestionTriageWorkflow");
     expect(spec?.action.taskQueue).toBe("sow-control-plane");
     expect(spec?.intervalMs).toBe(base.intervalMs);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 25.3 — the projectSync schedule spec + its default-OFF arming gate
+// ---------------------------------------------------------------------------
+
+describe("gateProjectSyncSchedule — 25.3 default-OFF, strict === true arming gate", () => {
+  const base = { taskQueue: "sow-control-plane" as const, intervalMs: 3_600_000 };
+
+  it("is undefined by default (enabled: false) — no spec, no schedule attachable", () => {
+    expect(gateProjectSyncSchedule({ ...base, enabled: false })).toBeUndefined();
+  });
+
+  it("is undefined for a truthy-but-not-literal-true value — strict === true, never a coercion", () => {
+    const hostile = { ...base, enabled: "true" as unknown as boolean };
+    expect(gateProjectSyncSchedule(hostile)).toBeUndefined();
+  });
+
+  it("returns the durable project-sync schedule spec only when enabled === true", () => {
+    const spec = gateProjectSyncSchedule({ ...base, enabled: true });
+    expect(spec).toBeDefined();
+    expect(spec).toEqual(buildProjectSyncScheduleSpec(base));
+    expect(spec?.scheduleId).toBe(PROJECT_SYNC_SCHEDULE_ID);
+    expect(spec?.action.workflowType).toBe("projectSyncWorkflow");
+    expect(spec?.action.taskQueue).toBe("sow-control-plane");
+    expect(spec?.intervalMs).toBe(base.intervalMs);
+  });
+
+  it("ensure() over the gated spec creates a NEW schedule paused:true — the schedule stays inert end to end", async () => {
+    const spec = gateProjectSyncSchedule({ ...base, enabled: true });
+    expect(spec).toBeDefined();
+    const client = fakeClient();
+    const registrar = createTemporalScheduleRegistrar({ client });
+
+    const r = await registrar.ensure(spec as TemporalScheduleSpec);
+
+    expect(isOk(r)).toBe(true);
+    expect(client.calls.create).toHaveLength(1);
+    expect(client.calls.create[0]?.opts).toEqual({ paused: true });
   });
 });
