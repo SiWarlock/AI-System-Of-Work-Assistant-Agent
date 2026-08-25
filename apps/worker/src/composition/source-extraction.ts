@@ -86,6 +86,15 @@ export interface SourceJobInputs {
 }
 
 /**
+ * 24.22 — the classification `ctx.source.routingHints["trustLevel"]` resolves to, as read by
+ * {@link SourceRunAgentJobDeps.onTrustClassification}. `"trusted"` / `"untrusted"` mirror the two
+ * values a connector adapter actually stamps (`capture-source.ts`'s verified-origin capture,
+ * `gmail-source.ts`'s unconditional untrusted); `"unspecified"` covers every other connector
+ * (file/podcast/web/youtube), which stamps no `trustLevel` key at all today.
+ */
+export type SourceTrustClassification = "trusted" | "untrusted" | "unspecified";
+
+/**
  * Injected deps for the source broker-routing leg. The Broker + the per-workspace assemblers for the
  * EgressPolicy / ProviderMatrix / workspace posture the Broker request carries, the
  * candidate→extraction mapper (the concrete source-processing output-schema shape is a §9 arch_gap —
@@ -106,6 +115,20 @@ export interface SourceRunAgentJobDeps {
   readonly mapRejection?: (outcome: BrokerOutcome) => SourceAgentFailureCode;
   /** ING-7 admission predicate override (default: @sow/policy `admitJob`). */
   readonly admit?: (job: AgentJob) => PolicyDecision<AgentJob>;
+  /**
+   * 24.22 — a REAL reader for `ctx.source.routingHints["trustLevel"]` (the channel a connector
+   * adapter stamps — `capture-source.ts:115,132`, `gmail-source.ts`'s unconditional untrusted),
+   * invoked ONCE per `run()` with the resolved {@link SourceTrustClassification}, BEFORE the job is
+   * built. Closes the "produced-and-dropped signal" gap this leg's own header names: previously
+   * NOTHING on the extraction path ever read this field, so a future trust-propagation slice would
+   * have found a channel that had never once been consulted, with no test pinning what reading it
+   * should mean. READ-ONLY / OBSERVABILITY ONLY — it does NOT influence `job.trustLevel` below,
+   * which stays the fail-safe `"untrusted"` constant regardless of what this reports (ING-7/inv-2:
+   * imported source content is always untrusted for THIS leg, independent of any upstream
+   * classification). Best-effort (§16/L25): a throwing observer is swallowed, never breaks `run()`.
+   * OPTIONAL — every existing caller/fake stays valid without supplying it.
+   */
+  readonly onTrustClassification?: (classification: SourceTrustClassification) => void;
 }
 
 /** The safe DEFAULT: a READ-ONLY, non-mutating ToolPolicy for the untrusted imported source (ING-7). */
@@ -144,6 +167,16 @@ export function createSourceAgentBrokerRouting(
       ctx: SourceIngestionContext,
     ): Promise<Result<AgentExtraction, SourceAgentFailure>> {
       const i = deps.inputs;
+      // 24.22 — the REAL reader for `ctx.source.routingHints["trustLevel"]` (best-effort, §16/L25;
+      // never influences `job.trustLevel` below — see the deps field's own doc for the full reasoning).
+      try {
+        const raw = (ctx.source.routingHints as Record<string, unknown> | undefined)?.["trustLevel"];
+        const classification: SourceTrustClassification =
+          raw === "trusted" ? "trusted" : raw === "untrusted" ? "untrusted" : "unspecified";
+        deps.onTrustClassification?.(classification);
+      } catch {
+        /* an observer fault must never break the extraction leg (§16). */
+      }
       // WS-8 (rule 4): bind the workspace from the ROUTING-BOUND ctx, NEVER from a source content
       // field (`ctx.source.workspaceId` is attacker-influenceable imported content — ignored).
       const workspaceId = ctx.workspaceId;

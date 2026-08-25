@@ -192,6 +192,74 @@ describe("createSourceAgentBrokerRouting — route the source through the broker
   });
 });
 
+// ── 24.22: routingHints.trustLevel gets a REAL reader on the extraction path ──
+// The `AgentJob.trustLevel` hardcode at source-extraction.ts:173 is fail-safe and NOT the
+// defect (ING-7/inv-2: imported source content is always untrusted). The defect this closes is
+// that the UPSTREAM classification a connector adapter stamps onto `routingHints.trustLevel`
+// (capture-source.ts's "trusted"/"untrusted", gmail-source.ts's unconditional "untrusted") had
+// NO reader anywhere on the extraction path — a produced-and-dropped signal (contracts L106).
+describe("source-extraction — 24.22: routingHints.trustLevel gets a REAL reader (fail-safe posture unchanged)", () => {
+  it("reads ctx.source.routingHints.trustLevel and reports 'unspecified' when the key is absent (today's non-capture connectors) — the built AgentJob.trustLevel stays hardcoded 'untrusted' regardless", async () => {
+    const broker = brokerSpy(acceptedOutcome);
+    const seen: string[] = [];
+    const res = await routing(broker, {
+      onTrustClassification: (c: string) => seen.push(c),
+    }).run(ctx()); // ctx().source.routingHints ({workspaceHint:"acme"}) has no trustLevel key
+    expect(isOk(res)).toBe(true);
+    expect(seen).toEqual(["unspecified"]);
+  });
+
+  it("reports 'trusted' when ctx.source.routingHints.trustLevel === 'trusted' — and the built AgentJob.trustLevel STILL stays 'untrusted' (fail-safe posture unchanged, ING-7/inv-2)", async () => {
+    const broker = brokerSpy(acceptedOutcome);
+    const seen: string[] = [];
+    let captured: AgentJob | undefined;
+    const res = await routing(broker, {
+      onTrustClassification: (c: string) => seen.push(c),
+      admit: (job: AgentJob) => {
+        captured = job;
+        return { decision: "allow", value: job, audit: {} as never };
+      },
+    }).run(
+      ctx({
+        source: { ...validSourceEnvelope, workspaceId: WS_SMUGGLED, routingHints: { trustLevel: "trusted" } },
+      }),
+    );
+    expect(isOk(res)).toBe(true);
+    expect(seen).toEqual(["trusted"]);
+    expect(captured?.trustLevel).toBe("untrusted"); // fail-safe — unmoved by the upstream classification
+  });
+
+  it("reports 'untrusted' when ctx.source.routingHints.trustLevel === 'untrusted' (e.g. gmail-source.ts's unconditional stamp)", async () => {
+    const broker = brokerSpy(acceptedOutcome);
+    const seen: string[] = [];
+    const res = await routing(broker, {
+      onTrustClassification: (c: string) => seen.push(c),
+    }).run(
+      ctx({
+        source: { ...validSourceEnvelope, workspaceId: WS_SMUGGLED, routingHints: { trustLevel: "untrusted" } },
+      }),
+    );
+    expect(isOk(res)).toBe(true);
+    expect(seen).toEqual(["untrusted"]);
+  });
+
+  it("a THROWING onTrustClassification observer never breaks run() (best-effort, §16 — no observer fault crosses the boundary)", async () => {
+    const broker = brokerSpy(acceptedOutcome);
+    const res = await routing(broker, {
+      onTrustClassification: () => {
+        throw new Error("observer fault");
+      },
+    }).run(ctx());
+    expect(isOk(res)).toBe(true);
+  });
+
+  it("onTrustClassification OMITTED (the default) — run() succeeds byte-equivalently (backward-compatible, no existing caller need supply it)", async () => {
+    const broker = brokerSpy(acceptedOutcome);
+    const res = await routing(broker).run(ctx());
+    expect(isOk(res)).toBe(true);
+  });
+});
+
 // ── the reused candidate-data gate over the SOURCE extraction (rule 2 + REQ-F-017) ──
 describe("source extraction candidate-data gate — reused MeetingSchemaGate + validateNoInference (18.4)", () => {
   const gate = createMeetingExtractionSchemaGate();
