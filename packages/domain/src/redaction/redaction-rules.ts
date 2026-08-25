@@ -68,6 +68,26 @@ const MARKER_LITERALS: readonly string[] = [
 // FAIL it (they are members of a pattern's alphabet and would BRIDGE two fragments
 // into a match); deleting the marker outright fails it too, and so does a space —
 // the incumbent is itself a member of `private[_ -]?key`'s alphabet.
+//
+// ⛔⛔ task 24.129 — A CONSTRAINT ON EVERY FUTURE NET, STATED HERE BECAUSE
+// `CREDENTIAL_NETS` IS WHERE A NET GETS ADDED: `redactString` (`redact.ts`)
+// scrubs a value, then RE-CHECKS the scrubbed result with `looksUnsafe` for
+// idempotency/fail-safe purposes — and `looksUnsafe` strips every frozen marker
+// literal to THIS filler before testing any net. If a net's OWN value class
+// matches `"^"` (bare, or in a way that lets it complete a match at the
+// position a marker would occupy), a successfully-scrubbed
+// `REDACTED_CREDENTIAL` marker RE-TRIPS that net on the re-check pass, and
+// `redactString` drops the whole field to `REDACTED_FIELD` instead of leaving
+// the already-safe scrubbed marker in place. ⚠ THE DIRECTION IS AVAILABILITY,
+// NOT LEAK: nothing is exposed — MORE content is dropped than necessary,
+// destroying `redactString`'s own successfully-scrubbed output. ⇒ NO net whose
+// value class admits the literal character `^` may be promoted into
+// `CREDENTIAL_NETS`. Do NOT "fix" a violating net with a lookahead exclusion —
+// that treats a structural incompatibility as a per-net patch, which invites
+// the next promotion to reintroduce it; reject the promotion itself, or choose
+// a different value-class definition that does not admit `^`. Checkable in
+// place: every net in `CREDENTIAL_NETS` is pinned against the bare filler in
+// `test/redaction/marker-filler-property.test.ts`.
 export const SPAN_PRESERVING_FILLER = "^";
 
 // The historical substitute. RETAINED AS A SECOND ARM below, not replaced: on its

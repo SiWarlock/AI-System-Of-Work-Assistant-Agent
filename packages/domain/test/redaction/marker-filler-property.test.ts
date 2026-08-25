@@ -247,6 +247,49 @@ describe("P1' + P1'' — the filler must never match where an opaque token would
   });
 });
 
+// task 24.129 — `redact.ts`'s `redactString` scrubs a value, then RE-CHECKS the
+// scrubbed result with `looksUnsafe` (idempotency / fail-safe). `looksUnsafe`
+// strips every frozen marker to `SPAN_PRESERVING_FILLER` before testing, so if a
+// net's OWN value class admits the bare filler character, a successfully-scrubbed
+// `REDACTED_CREDENTIAL` marker re-trips that net on the re-check pass and
+// `redactString` drops the whole field to `REDACTED_FIELD` — DESTROYING its own
+// successfully-scrubbed output. ⚠ THE DIRECTION IS AVAILABILITY, NOT LEAK: no
+// secret is exposed by this failure mode — strictly MORE content is dropped than
+// necessary. See `SPAN_PRESERVING_FILLER`'s own comment in `redaction-rules.ts`
+// for the full constraint this pin enforces: no net whose value class admits `^`
+// may ever be promoted into `CREDENTIAL_NETS`.
+describe("24.129 — no net may have a value class that admits the bare span-preserving filler", () => {
+  it("no net in the canonical CREDENTIAL_NETS list matches the bare filler", () => {
+    // Sharper than the P1'/P1'' suite above: it reds the MOMENT a violating net is
+    // added to `CREDENTIAL_NETS`, with zero exemplar authoring required — the
+    // P1'/P1'' suite only exercises a net once someone has written its exemplars
+    // into `NET_EXEMPLARS`.
+    for (const net of CREDENTIAL_NETS) {
+      expect(
+        net.test(SPAN_PRESERVING_FILLER),
+        `${net.source} matches the bare span-preserving filler "${SPAN_PRESERVING_FILLER}" — a net whose value class admits this character must NOT be promoted into @sow/domain's CREDENTIAL_NETS (AVAILABILITY-direction hazard: see SPAN_PRESERVING_FILLER's comment in redaction-rules.ts)`,
+      ).toBe(false);
+    }
+  });
+
+  it("a synthetic filler-admitting net fails this pin's own predicate — the discrimination check", () => {
+    // Never trust a preventive pin that has never been observed to fail
+    // (contracts L90 / this project's own positive-control discipline). This
+    // asserts the DISCRIMINATION directly (the same predicate the pin above runs,
+    // applied to a net that DOES admit the filler) rather than merely trusting the
+    // pin reads correctly — a standing-in synthetic net, never added to the real
+    // `CREDENTIAL_NETS`. The pin above was additionally hand-verified during
+    // authoring by temporarily inserting this exact net into the real loop and
+    // observing it RED, then reverting (recorded in the task's commit, not kept as
+    // a permanent test — a mutated `CREDENTIAL_NETS` has no place in a unit test).
+    const hypotheticalFutureNet = /\^/;
+    expect(
+      hypotheticalFutureNet.test(SPAN_PRESERVING_FILLER),
+      "the synthetic net must itself admit the filler, or this discrimination check proves nothing",
+    ).toBe(true);
+  });
+});
+
 describe("the fourth marker vocabulary", () => {
   // `packages/providers/src/redaction/provider-log-redaction.ts` and
   // `packages/integrations/src/redaction/gateway-log-redaction.ts` both export
