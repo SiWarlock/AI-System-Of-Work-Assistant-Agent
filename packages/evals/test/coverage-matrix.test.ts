@@ -230,9 +230,11 @@ describe("registry integrity", () => {
   // `it.todo` stubs is a coverage CLAIM with nothing behind it; adding a stub `it()` here to silence a
   // failure — rather than a real assertion, or an entry in this ratchet — is the exact defect this
   // tripwire exists to catch.
-  const KNOWN_HOLLOW_SUITES: readonly string[] = [
-    "OPEN_SOURCE_INSTALL", // suites/clean-install/clean-install.test.ts — 3 it.todo, 0 executing (Phase-11 / live-install gated)
-  ];
+  // task 11.7 (2026-08-25): suites/clean-install/clean-install.test.ts now has EXECUTING tests
+  // (the single-owner-lock mechanism leg + explicit-skip legs always run; the SOW_DOCTOR_REAL/
+  // SOW_API-gated real-integration legs run when opted in) — OPEN_SOURCE_INSTALL is no longer
+  // hollow. Empty, not deleted: the ratchet below asserts non-vacuously against this list.
+  const KNOWN_HOLLOW_SUITES: readonly string[] = [];
 
   it("every declared .test.ts suite contains at least one EXECUTING test (hollow-coverage ratchet)", () => {
     // Restricted to `.test.ts` deliberately, and pinned so a later tightening can't silently break it:
