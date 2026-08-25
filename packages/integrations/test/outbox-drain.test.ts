@@ -10,11 +10,14 @@
 //     double-applies nothing (an already-receipt_recorded entry is a no-op).
 //   • BOUNDED BACKOFF — a still-unreachable entry is re-held with a bumped attempt
 //     count + a nextAttemptAt computed from the injected backoff (never spins).
-//   • Returns { drained, reused, held, failed } counts.
+//   • Returns { drained, reused, held, failed, skipped } counts.
 //   • Is callable as the §9 workflow entry-point (a clean deps-injected signature).
+//   • SINGLE-WORKSPACE-SCOPED (task 24.50) — see the last describe block: every
+//     `DrainDeps` caller now states the workspace its bound posture resolves for,
+//     and an entry from any OTHER workspace is skipped rather than mis-evaluated.
 import { describe, it, expect } from "vitest";
-import type { Result, WriteReceipt } from "@sow/contracts";
-import { ok, err, isOk } from "@sow/contracts";
+import type { Result, WriteReceipt, ProposedAction } from "@sow/contracts";
+import { ok, err, isOk, defaultWorkspace } from "@sow/contracts";
 import { drainOutbox } from "../src/tools/outbox-drain";
 import { holdWrite } from "../src/tools/outbox";
 import type {
@@ -23,6 +26,8 @@ import type {
   AdapterError,
 } from "../src/tools/adapter-port";
 import type { ExternalWriteDeps } from "../src/tools/gateway";
+import { requiresApproval, resolveWorkspacePolicy, isAllow } from "@sow/policy";
+import type { ResolvedWorkspacePolicy } from "@sow/policy";
 import {
   InMemoryOutbox,
   InMemoryReceiptStore,
@@ -105,6 +110,7 @@ describe("drainOutbox — reconnect drain", () => {
       limit: 100,
       backoffCfg,
       clock,
+      workspaceId: "employer-work",
     });
 
     expect(createCalls.n).toBe(1);
@@ -141,6 +147,7 @@ describe("drainOutbox — reconnect drain", () => {
       limit: 100,
       backoffCfg,
       clock,
+      workspaceId: "employer-work",
     });
 
     expect(createCalls.n).toBe(0); // NO duplicate external action
@@ -167,6 +174,7 @@ describe("drainOutbox — reconnect drain", () => {
       limit: 100,
       backoffCfg,
       clock,
+      workspaceId: "employer-work",
     };
 
     // First drain: both go online, 2 creates.
@@ -207,6 +215,7 @@ describe("drainOutbox — reconnect drain", () => {
       limit: 100,
       backoffCfg,
       clock,
+      workspaceId: "employer-work",
     });
 
     expect(createCalls.n).toBe(0);
@@ -234,6 +243,7 @@ describe("drainOutbox — reconnect drain", () => {
       limit: 100,
       backoffCfg,
       clock,
+      workspaceId: "employer-work",
     });
 
     expect(createCalls.n).toBe(0);
@@ -270,6 +280,7 @@ describe("drainOutbox — reconnect drain", () => {
       limit: 100,
       backoffCfg,
       clock,
+      workspaceId: "employer-work",
     });
 
     expect(result.failed).toBe(1);
@@ -347,6 +358,7 @@ describe("drainOutbox — reconnect drain", () => {
       limit: 100,
       backoffCfg,
       clock,
+      workspaceId: "personal-life",
     });
 
     // Drained straight through — no approval_pending detour, no held bucket.
@@ -378,6 +390,7 @@ describe("drainOutbox — reconnect drain", () => {
       limit: 100,
       backoffCfg,
       clock,
+      workspaceId: "employer-work",
     });
 
     // Regression pin: the fix must not over-correct into under-gating (rule-3).
@@ -412,6 +425,8 @@ describe("drainOutbox — reconnect drain", () => {
       limit: 100,
       backoffCfg,
       clock,
+      // makeOutboxEntry defaults workspaceId to "employer-work" — see fakes.ts.
+      workspaceId: "employer-work",
     });
 
     // Fail-safe default: an absent original policy must gate, never auto-allow.
@@ -419,7 +434,7 @@ describe("drainOutbox — reconnect drain", () => {
     expect(result.held).toBe(1);
   });
 
-  it("returns { drained, reused, held, failed } and drives entries through the SAME dispatch pipeline", async () => {
+  it("returns { drained, reused, held, failed, skipped } and drives entries through the SAME dispatch pipeline", async () => {
     const outbox = new InMemoryOutbox();
     const receiptStore = new InMemoryReceiptStore();
     await seedHeld(outbox, "idem_mix_ok", "outbox_mix_ok");
@@ -448,12 +463,204 @@ describe("drainOutbox — reconnect drain", () => {
       limit: 100,
       backoffCfg,
       clock,
+      workspaceId: "employer-work",
     });
 
     expect(result.drained).toBe(1);
     expect(result.reused).toBe(1);
     expect(result.held).toBe(0);
     expect(result.failed).toBe(0);
+    // REGRESSION PIN (task 24.50): an all-in-workspace batch skips nothing — the
+    // four pre-existing counters are unaffected by the new counter's existence.
+    expect(result.skipped).toBe(0);
     expect(createCalls.n).toBe(1); // only the novel one hit create
+  });
+});
+
+// task 24.50 (§8/§9/§20.1, safety rule 4): `rebuildAction`/`rebuildEnvelope`
+// carried NO workspaceId, and `listDue` does not filter by workspace — so a drain
+// pass over a MIXED-WORKSPACE outbox evaluated every entry against ONE bound
+// posture (`deps.gatewayDeps.requireApproval`, captured once at bind time —
+// apps/worker/src/composition/backends.ts:567's "resolved workspace posture is
+// captured at bind time"). An entry from workspace A, redriven under workspace
+// B's posture, could be auto-allowed (or wrongly gated) by the WRONG workspace's
+// rules — safety rule 4's "no raw cross-workspace retrieval" / "0 raw
+// Employer-Work content surfaces in Personal outputs absent an approved link" is
+// about DATA; this is the analogous hole on the WRITE side: a workspace's own
+// posture governing a write it never actually owns.
+//
+// Fix is STRUCTURAL, not a threading fix: `DrainDeps.workspaceId` (required) now
+// names the workspace `gatewayDeps` was bound for, and `drainOutbox` skips (never
+// evaluates, never mutates) any due entry whose OWN `workspaceId` disagrees —
+// making a cross-workspace mix unrepresentable at the drain rather than trusting
+// every caller to thread a workspace argument through
+// `ExternalWriteDeps.requireApproval` (out of this package's ownership — see the
+// brief). A mixed outbox is drained by ONE PASS PER WORKSPACE.
+//
+// This suite binds the REAL `@sow/policy` predicate (`requiresApproval` +
+// `resolveWorkspacePolicy`), wrapped exactly as the composition root's
+// `makeRequireApproval` does — not a fake that merely happens to agree with it.
+describe("drainOutbox — cross-workspace redrive is structurally unrepresentable (task 24.50)", () => {
+  // A real, schema-validated Workspace (§3/§6) — NOT a hand-rolled policy object.
+  // `defaultWorkspace` (personal_life, no override) yields the exact posture the
+  // real `requiresApproval` auto-allow narrow-allow-list requires alongside the
+  // action's own two conjuncts: dataOwner "user", defaultVisibility "isolated"
+  // (packages/policy/src/approval-policy.ts:169-174).
+  function resolvedPolicyFor(workspaceId: string): ResolvedWorkspacePolicy {
+    const workspace = defaultWorkspace({
+      id: workspaceId,
+      name: `workspace ${workspaceId}`,
+      type: "personal_life",
+      markdownRepoPath: `/workspaces/${workspaceId}`,
+      gbrainBrainId: `brain_${workspaceId}`,
+    });
+    return resolveWorkspacePolicy(workspace);
+  }
+
+  // Wraps @sow/policy's REAL `requiresApproval` exactly as the composition root
+  // does (apps/worker/src/composition/backends.ts:562-567's `makeRequireApproval`)
+  // — a policy DENY fails closed to requiresApproval:true, never an auto-apply.
+  function makeRealRequireApproval(
+    resolved: ResolvedWorkspacePolicy,
+  ): (action: ProposedAction) => { requiresApproval: boolean; card?: unknown } {
+    return (action: ProposedAction) => {
+      const d = requiresApproval(action, resolved);
+      return isAllow(d) ? d.value : { requiresApproval: true };
+    };
+  }
+
+  // `targetSystem: "calendar"` is the SOLE AUTO_ALLOW_ELIGIBLE target and
+  // `approvalPolicy: "auto_private"` the SOLE auto-eligible token — combined with
+  // `resolvedPolicyFor`'s posture, the REAL `requiresApproval` auto-allows this
+  // fixture with NO approval detour, so a wrongly-bound pass would dispatch it
+  // straight through rather than merely mis-classifying it into a held/approval
+  // bucket — the sharpest possible demonstration of the mis-binding.
+  async function seedAutoEligible(
+    outbox: InMemoryOutbox,
+    workspaceId: string,
+    idempotencyKey: string,
+    outboxId: string,
+  ): Promise<void> {
+    await holdWrite(
+      {
+        env: makeEnvelope({
+          idempotencyKey,
+          canonicalObjectKey: `cok_${idempotencyKey}`,
+          targetSystem: "calendar",
+        }),
+        action: makeProposedAction({
+          idempotencyKey,
+          canonicalObjectKey: `cok_${idempotencyKey}`,
+          targetSystem: "calendar",
+          approvalPolicy: "auto_private",
+        }),
+        reason: "unreachable",
+        workspaceId,
+      },
+      outbox,
+      { clock, outboxId: () => outboxId },
+    );
+  }
+
+  it("MIS-BOUND POSTURE: an entry from a DIFFERENT workspace than the bound posture is skipped — zero adapter.create, zero store mutation, no attempts bump", async () => {
+    const outbox = new InMemoryOutbox();
+    const receiptStore = new InMemoryReceiptStore();
+    await seedAutoEligible(outbox, "ws-employer", "idem_mixed", "outbox_mixed");
+
+    const before = await outbox.get("outbox_mixed");
+    expect(isOk(before)).toBe(true);
+    if (!isOk(before)) return;
+
+    const resolved = resolvedPolicyFor("ws-personal");
+    // The mis-binding is REAL, not merely asserted by construction (the exact gap
+    // task 24.15 left open): the entry's own workspace differs from the posture
+    // this drain pass is bound to.
+    expect(resolved.workspaceId).not.toBe(before.value.workspaceId);
+
+    const createCalls = { n: 0 };
+    const adapter = makeAdapter({ createCalls });
+    const gatewayDeps: ExternalWriteDeps = {
+      adapter,
+      receiptStore,
+      requireApproval: makeRealRequireApproval(resolved),
+      recordPendingApproval: async () => ok(undefined),
+      isApproved: async () => true,
+      audit: async () => undefined,
+      clock,
+    };
+
+    const result = await drainOutbox(outbox, {
+      gatewayDeps,
+      now: clock(),
+      limit: 100,
+      backoffCfg,
+      clock,
+      workspaceId: "ws-personal",
+    });
+
+    // Never reached the (mis-bound) real predicate or the gateway at all — this
+    // is what "structurally unrepresentable" means: no dispatch, not a dispatch
+    // that happens to come back gated.
+    expect(createCalls.n).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.drained).toBe(0);
+    expect(result.reused).toBe(0);
+    expect(result.held).toBe(0);
+    expect(result.failed).toBe(0);
+
+    // Untouched: a skip is not an attempt and must not consume backoff, so a
+    // later CORRECTLY-scoped pass still drains it exactly as if this pass never
+    // ran.
+    const after = await outbox.get("outbox_mixed");
+    expect(isOk(after)).toBe(true);
+    if (!isOk(after)) return;
+    expect(after.value.status).toBe(before.value.status);
+    expect(after.value.attempts).toBe(before.value.attempts);
+    expect(after.value.attempts).toBe(0);
+    expect(after.value.nextAttemptAt).toBeUndefined();
+    expect(after.value.updatedAt).toBe(before.value.updatedAt);
+  });
+
+  it("POSITIVE CONTROL: a matching-workspace entry under the SAME real predicate DOES dispatch and drains", async () => {
+    // Without this control, the MIS-BOUND test above would pass equally for a
+    // drain that skips EVERYTHING regardless of workspace — a construction-side
+    // assertion alone cannot distinguish a mis-bound posture from a correctly-
+    // bound one (precisely why 24.15's construction-side check was insufficient).
+    const outbox = new InMemoryOutbox();
+    const receiptStore = new InMemoryReceiptStore();
+    await seedAutoEligible(outbox, "ws-personal", "idem_matched", "outbox_matched");
+
+    const resolved = resolvedPolicyFor("ws-personal");
+    expect(resolved.workspaceId).toBe("ws-personal");
+
+    const createCalls = { n: 0 };
+    const adapter = makeAdapter({ createCalls });
+    const gatewayDeps: ExternalWriteDeps = {
+      adapter,
+      receiptStore,
+      requireApproval: makeRealRequireApproval(resolved),
+      recordPendingApproval: async () => ok(undefined),
+      isApproved: async () => true,
+      audit: async () => undefined,
+      clock,
+    };
+
+    const result = await drainOutbox(outbox, {
+      gatewayDeps,
+      now: clock(),
+      limit: 100,
+      backoffCfg,
+      clock,
+      workspaceId: "ws-personal",
+    });
+
+    expect(createCalls.n).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(result.drained).toBe(1);
+
+    const entry = await outbox.get("outbox_matched");
+    expect(isOk(entry)).toBe(true);
+    if (!isOk(entry)) return;
+    expect(entry.value.status).toBe("receipt_recorded");
   });
 });

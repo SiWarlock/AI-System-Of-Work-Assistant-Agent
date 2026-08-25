@@ -19,7 +19,34 @@
 //
 // §9 WORKFLOW ENTRY-POINT: `drainOutbox(outbox, deps)` is a clean deps-injected
 // signature callable as a Temporal activity — all effects (adapter, stores, clock,
-// backoff) are injected; no real network/clock/randomness in the module.
+// backoff) are injected; no real network/clock/randomness in the module. Task
+// 21.4a — `deps.dispatch` is the injectable ROUTED-DISPATCH seam: when BOUND, the
+// drain re-drives each held entry through it instead of the raw
+// `dispatchExternalWrite` import, so the drain shares the SAME target-routing
+// decision as the live dispatch path (the worker binds
+// `dispatch: (e,a,d) => dispatchRouted(backends.writeAdapters, e, a, d)` — the
+// identical expression already bound to `propose`/`dispatchApproved` at the
+// composition root, `buildActivities.ts:669`/`:749`). An ABSENT `dispatch` keeps
+// the pre-21.4 behavior BYTE-EQUIVALENT: `dispatchExternalWrite` is called
+// directly, unrouted, exactly as before this field existed.
+//
+// SINGLE-WORKSPACE-SCOPED (task 24.50, safety rule 4). `deps.gatewayDeps` carries
+// ONE bound approval posture — `requireApproval` closes over a `ResolvedWorkspacePolicy`
+// captured once, at bind time (see `apps/worker/src/composition/backends.ts`'s
+// `makeRequireApproval`: "the resolved workspace posture is captured at bind
+// time"). `OutboxRepository.listDue` does NOT filter by workspace, so a drain pass
+// over a mixed-workspace outbox would otherwise evaluate every entry — regardless
+// of which workspace it actually belongs to — against that ONE bound posture: a
+// structural cross-workspace mis-evaluation on the WRITE side, the write-path
+// analogue of safety rule 4's raw cross-workspace read veto. The fix is
+// structural, not a threading fix: `deps.workspaceId` names the workspace
+// `gatewayDeps` was bound for, and the drain SKIPS (no dispatch, no store
+// mutation, no attempts bump) any due entry whose OWN `workspaceId` disagrees —
+// making a cross-workspace mix unrepresentable at the drain rather than widening
+// `ExternalWriteDeps.requireApproval`'s signature (owned by apps/worker /
+// packages/workflows / packages/evals, outside this package). A mixed outbox is
+// drained by ONE PASS PER WORKSPACE, each with its own correctly-bound
+// `gatewayDeps` + matching `workspaceId`.
 //
 // §16: async, returns typed counts, NEVER throws.
 import { isOk } from "@sow/contracts";
@@ -64,6 +91,11 @@ const REDRIVE_APPROVAL_POLICY = "queued" as const;
  * original token (task 24.15) — or, for any entry with no persisted value (a
  * pre-24.35 legacy row, or a future producer bypassing `holdWrite`), the
  * fail-safe `REDRIVE_APPROVAL_POLICY` fallback (never auto-eligible). Pure.
+ *
+ * `entry.workspaceId` is deliberately NOT threaded onto the reconstructed
+ * `ProposedAction` (no such field exists there) — the workspace-scope check
+ * (task 24.50) reads `entry.workspaceId` directly in `drainOutbox`'s loop,
+ * BEFORE this reconstruction runs, so a mis-scoped entry never reaches here.
  */
 function rebuildAction(entry: OutboxEntry): ProposedAction {
   return {
@@ -103,11 +135,37 @@ function rebuildEnvelope(entry: OutboxEntry): ExternalWriteEnvelope {
  */
 export interface DrainDeps {
   readonly gatewayDeps: ExternalWriteDeps;
+  /**
+   * 24.50 — the workspace `gatewayDeps.requireApproval`'s bound posture was
+   * RESOLVED FOR (see the module header). REQUIRED, deliberately: every caller
+   * must state its scope — there is no safe default that wouldn't silently
+   * re-open the mis-binding this field exists to close. A due entry whose
+   * PERSISTED `OutboxEntry.workspaceId` disagrees with this value is skipped by
+   * `drainOutbox` (see `counts.skipped`) rather than evaluated against the wrong
+   * workspace's posture. A mixed-workspace outbox is drained by one pass per
+   * workspace, each binding both `gatewayDeps` AND this field to the SAME
+   * workspace.
+   */
+  readonly workspaceId: string;
   readonly now: string;
   readonly limit: number;
   readonly backoffCfg: BackoffConfig;
   readonly clock: () => string;
   readonly jitter?: (baseDelayMs: number) => number;
+  /**
+   * 21.4a — the injectable ROUTED-DISPATCH seam. OPTIONAL: absent ⇒ byte-
+   * equivalent to pre-21.4 behavior (`dispatchExternalWrite` is called directly).
+   * Bound, the drain re-drives each entry through THIS function instead — the
+   * worker binds it to `dispatchRouted` over the write-adapter registry, the SAME
+   * expression already used by the live `propose`/`dispatchApproved` paths — so
+   * a held write reaches the correct per-vendor adapter instead of whatever
+   * (possibly fail-closed sentinel) adapter sits on `gatewayDeps.adapter`.
+   */
+  readonly dispatch?: (
+    env: ExternalWriteEnvelope,
+    action: ProposedAction,
+    deps: ExternalWriteDeps,
+  ) => Promise<ExternalWriteResult>;
 }
 
 /** The typed outcome counts of a drain pass (§16 — enumerable, never throws). */
@@ -120,6 +178,13 @@ export interface DrainResult {
   readonly held: number;
   /** Entries the vendor rejected/conflicted — terminal-rejected (typed drop). */
   readonly failed: number;
+  /**
+   * 24.50 — entries SKIPPED because `entry.workspaceId !== deps.workspaceId`:
+   * the cross-workspace-mismatch guard fired. NOT an attempt (attempts is NOT
+   * bumped, no `nextAttemptAt` is set, no store write happens at all) — the
+   * entry is left exactly as it was for a later, correctly-scoped pass to drain.
+   */
+  readonly skipped: number;
 }
 
 /**
@@ -205,12 +270,21 @@ async function applyOutcome(
  * dispatch pipeline (replay-safe, zero duplicate external writes) and fold each
  * outcome back onto the entry. Idempotent across crashes (terminal entries are
  * excluded by `listDue`). Callable as the §9 workflow entry-point. Never throws.
+ *
+ * SINGLE-WORKSPACE-SCOPED (task 24.50): `listDue` does not filter by workspace,
+ * so `deps.workspaceId` must name the workspace `deps.gatewayDeps` was bound for
+ * — a due entry whose OWN `workspaceId` disagrees is skipped, never evaluated
+ * against the wrong posture. Drain a mixed-workspace outbox with one pass per
+ * workspace.
  */
 export async function drainOutbox(
   outbox: OutboxRepository,
   deps: DrainDeps,
 ): Promise<DrainResult> {
-  const counts = { drained: 0, reused: 0, held: 0, failed: 0 };
+  const counts = { drained: 0, reused: 0, held: 0, failed: 0, skipped: 0 };
+  // 21.4a: an injected `dispatch` shares the live path's target-routing decision;
+  // absent, fall back to the pre-21.4 direct call (byte-equivalent).
+  const dispatch = deps.dispatch ?? dispatchExternalWrite;
 
   const due = await outbox.listDue(deps.now, deps.limit);
   if (!isOk(due)) {
@@ -219,12 +293,24 @@ export async function drainOutbox(
   }
 
   for (const entry of due.value) {
+    // 24.50 STRUCTURAL cross-workspace guard: `gatewayDeps.requireApproval`'s
+    // posture is bound for `deps.workspaceId` ONLY (see module header +
+    // `DrainDeps.workspaceId`'s docblock). An entry from any OTHER workspace is
+    // SKIPPED before it reaches the (wrongly-bound) predicate or the gateway at
+    // all — no dispatch, no store write, no attempts bump, no nextAttemptAt. The
+    // entry is left exactly as it was so a later pass, correctly scoped to ITS
+    // workspace, still drains it (held items still never silently expire).
+    if (entry.workspaceId !== deps.workspaceId) {
+      counts.skipped += 1;
+      continue;
+    }
+
     // Reconstruct the linked envelope + action from the persisted entry and
     // re-drive through the identical dispatch pipeline (existence check + replay
     // gate → no duplicate create).
     const env = rebuildEnvelope(entry);
     const action = rebuildAction(entry);
-    const outcome = await dispatchExternalWrite(env, action, deps.gatewayDeps);
+    const outcome = await dispatch(env, action, deps.gatewayDeps);
     const bucket = await applyOutcome(outbox, entry, outcome, deps);
     counts[bucket] += 1;
   }
