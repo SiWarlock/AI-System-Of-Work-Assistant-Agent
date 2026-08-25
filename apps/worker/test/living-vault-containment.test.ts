@@ -17,8 +17,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isOk } from "@sow/contracts";
 import type { KnowledgeMutationPlan, WorkspaceId } from "@sow/contracts";
-import { createLivingVaultPort, createLivingVaultActivity } from "../src/composition/living-vault";
+import {
+  createLivingVaultPort,
+  createLivingVaultActivity,
+  buildIngestRewriteDeps,
+} from "../src/composition/living-vault";
 import type { ValidatedExtraction, SourceNoteIdentity } from "@sow/workflows/ports/sourceIngestion";
+import type { EntityGbrainReadPort, SynthesisReasonPort } from "@sow/knowledge";
 
 const WS = "ws-employer" as WorkspaceId;
 const SOURCE: SourceNoteIdentity = { sourceId: "src-1" as never, contentHash: "hash-1" };
@@ -205,5 +210,106 @@ describe("createLivingVaultPort — realpath containment (13.8d)", () => {
 
     expect(isOk(result)).toBe(false);
     if (!isOk(result)) expect(result.error.code).toBe("rewrite_failed");
+  });
+});
+
+// ── ARM-RESEARCH-3 (worker half) — buildIngestRewriteDeps constructs the real clock/id/sections/
+// structural ports over a REAL vault root; gbrain/reason stay injected (provider-territory, no
+// production mapping exists anywhere in the repo to construct `findCandidates` from a raw gbrain
+// client — see the module's own note on `buildIngestRewriteDeps`). ─────────────────────────────────
+describe("buildIngestRewriteDeps — ARM-RESEARCH-3 (worker half)", () => {
+  const fakeGbrain: EntityGbrainReadPort = {
+    workspaceId: WS,
+    findCandidates: () => Promise.resolve({ ok: true, value: [] }),
+  };
+  const fakeReason: SynthesisReasonPort = {
+    reason: () => Promise.reject(new Error("not exercised by this suite")),
+  };
+
+  it("mints_distinct_real_ids — newPlanId/newRunId are real (non-empty, distinct across calls)", () => {
+    const deps = buildIngestRewriteDeps({ gbrain: fakeGbrain, reason: fakeReason, vaultRoot });
+
+    const planA = deps.newPlanId();
+    const planB = deps.newPlanId();
+    const runA = deps.newRunId();
+
+    expect(planA.length).toBeGreaterThan(0);
+    expect(planA).not.toBe(planB);
+    expect(runA.length).toBeGreaterThan(0);
+    expect(runA).not.toBe(planA);
+  });
+
+  it("gbrain_and_reason_pass_through_unchanged — provider-territory ports are injected verbatim, never rebuilt", () => {
+    const deps = buildIngestRewriteDeps({ gbrain: fakeGbrain, reason: fakeReason, vaultRoot });
+
+    expect(deps.gbrain).toBe(fakeGbrain);
+    expect(deps.reason).toBe(fakeReason);
+  });
+
+  it("sections_describe_reads_real_region_ids_from_a_real_note", () => {
+    writeFileSync(
+      join(vaultRoot, "notes", "regions.md"),
+      "before\n<!-- kw:region:summary -->\nbody\n<!-- /kw:region:summary -->\nafter\n",
+    );
+    const deps = buildIngestRewriteDeps({ gbrain: fakeGbrain, reason: fakeReason, vaultRoot });
+
+    const described = deps.sections.describe("notes/regions.md");
+
+    expect(described.generatedRegionIds).toEqual(["summary"]);
+  });
+
+  it("sections_describe_degrades_to_empty_on_a_missing_note — fail-closed, never throws", () => {
+    const deps = buildIngestRewriteDeps({ gbrain: fakeGbrain, reason: fakeReason, vaultRoot });
+
+    expect(() => deps.sections.describe("notes/does-not-exist.md")).not.toThrow();
+    expect(deps.sections.describe("notes/does-not-exist.md")).toEqual({ generatedRegionIds: [] });
+  });
+
+  it("sections_describe_degrades_to_empty_on_a_traversal_attempt — fail-closed, never reads outside the vault root", () => {
+    const deps = buildIngestRewriteDeps({ gbrain: fakeGbrain, reason: fakeReason, vaultRoot });
+
+    expect(deps.sections.describe("../outside.md")).toEqual({ generatedRegionIds: [] });
+  });
+
+  it("structural_build_emits_a_real_op_log_patch_when_paths_touched_and_a_date_is_supplied", () => {
+    const deps = buildIngestRewriteDeps({ gbrain: fakeGbrain, reason: fakeReason, vaultRoot });
+
+    const mutations = deps.structural.build({
+      workspaceId: WS,
+      touchedPaths: ["notes/a.md", "notes/b.md"],
+      runId: "run-xyz",
+      date: "2026-08-24",
+    });
+
+    expect(mutations.patches).toBeDefined();
+    expect(mutations.patches!.length).toBeGreaterThan(0);
+    const paths = mutations.patches!.map((p) => p.path);
+    expect(paths).toContain("Logs/2026-08-24.md");
+    expect(paths).toContain("log.md");
+  });
+
+  it("structural_build_emits_nothing_when_no_paths_were_touched — additive-only, never a spurious mutation", () => {
+    const deps = buildIngestRewriteDeps({ gbrain: fakeGbrain, reason: fakeReason, vaultRoot });
+
+    const mutations = deps.structural.build({
+      workspaceId: WS,
+      touchedPaths: [],
+      runId: "run-xyz",
+      date: "2026-08-24",
+    });
+
+    expect(mutations.patches ?? []).toHaveLength(0);
+  });
+
+  it("structural_build_emits_nothing_without_a_date — fail-closed, never fabricates a date", () => {
+    const deps = buildIngestRewriteDeps({ gbrain: fakeGbrain, reason: fakeReason, vaultRoot });
+
+    const mutations = deps.structural.build({
+      workspaceId: WS,
+      touchedPaths: ["notes/a.md"],
+      runId: "run-xyz",
+    });
+
+    expect(mutations.patches ?? []).toHaveLength(0);
   });
 });

@@ -24,12 +24,25 @@
 // same role `projections/noteSlug.ts` plays for the meeting/project paths. It cannot live in
 // `runSourceIngestion`: that driver is Temporal workflow-sandbox code, where an `fs` call is a
 // determinism violation as well as a layering one.
-import { realpathSync } from "node:fs";
+import { realpathSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, resolve, sep } from "node:path";
 import { ok, err, isOk } from "@sow/contracts";
 import type { KnowledgeMutationPlan, Result, WorkspaceId } from "@sow/contracts";
-import { rewriteVaultForSource } from "@sow/knowledge";
-import type { IngestRewriteDeps, GroundedPathRefusal, WithheldReason, EntityCandidate } from "@sow/knowledge";
+import { rewriteVaultForSource, listRegionIds, buildOpLogMutations } from "@sow/knowledge";
+import type {
+  IngestRewriteDeps,
+  GroundedPathRefusal,
+  WithheldReason,
+  EntityCandidate,
+  EntityGbrainReadPort,
+  SynthesisReasonPort,
+  SynthesisSectionPort,
+  NoteRegionDescriptor,
+  StructuralFileWriterPort,
+  StructuralContext,
+  StructuralMutations,
+} from "@sow/knowledge";
 import type {
   SourceLivingVaultPort,
   LivingVaultFailure,
@@ -492,5 +505,100 @@ export function createProposeKnowledgeApprovalPort(
         });
       }
     },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// ARM-RESEARCH-3 (worker half) — buildIngestRewriteDeps: construct the real IngestRewriteDeps.
+//
+// `gbrain`/`reason` are ACCEPTED, not built here. Building a real `gbrain` requires mapping a raw
+// GBrain read (`GbrainReadAdapter.search`/`.graph`) onto `EntityGbrainReadPort.findCandidates` — a
+// non-trivial, undocumented mapping with ZERO existing implementation anywhere in this repo to safely
+// mirror (verified: `findCandidates(` has exactly one match repo-wide, the interface declaration
+// itself), and GBrain provisioning (the MCP grant/transport) is the knowledge track's territory, not
+// this composition module's. Building `reason` for real means dispatching a real model call through
+// the Broker — providers-integrations territory. Guessing either mapping risks a SILENTLY WRONG entity
+// resolution or a fabricated model call, not merely a style defect — so both stay caller-supplied,
+// real-typed (never a fake in production), reducing what the boot call site must assemble to just
+// these two provider-shaped ports + a vault root, instead of all six `IngestRewriteDeps` fields.
+//
+// What IS built for real here, using EXISTING @sow/knowledge pure builders (no invented business
+// logic): `newPlanId`/`newRunId` (real `node:crypto` ids), `sections` (a real, SYNCHRONOUS —
+// `SynthesisSectionPort.describe` is not async — reader over the vault root, reusing this file's own
+// `isContained` realpath-safety check), and `structural` (a real op-log/day-log parity writer via
+// `buildOpLogMutations`). `structural` deliberately does NOT regenerate `index.md` — `buildIndexSectionPatches`
+// needs a `changed: IndexSection[]` describing WHICH catalog sections changed and what they contain, a
+// business decision about the index's organization that is undocumented anywhere in the codebase;
+// inventing one here would be a guess, not a construction. That gap is a NAMED residual, not a silent one.
+
+/** Fail-closed SYNTHESIS section reader over a real vault root (`SynthesisSectionPort.describe` is
+ *  SYNCHRONOUS, so this uses `readFileSync`, mirroring this file's own `realpathSync` containment
+ *  discipline — never an async vault port). Reuses {@link isContained} against the SAME resolved root
+ *  {@link createLivingVaultPort} enforces containment with. Any fault (missing note, traversal
+ *  attempt, malformed region markers, unresolvable root) degrades to an EMPTY region list — the same
+ *  fail-closed posture `planner.ts`'s own `safeDescribe` documents for a throwing/malformed port. */
+function createVaultSectionPort(vaultRoot: string): SynthesisSectionPort {
+  let rootReal: string | null;
+  try {
+    rootReal = realpathSync(resolve(vaultRoot));
+  } catch {
+    rootReal = null;
+  }
+  return {
+    describe(notePath: string): NoteRegionDescriptor {
+      if (rootReal === null || typeof notePath !== "string" || !isContained(rootReal, notePath)) {
+        return { generatedRegionIds: [] };
+      }
+      try {
+        const content = readFileSync(resolve(rootReal, notePath), "utf8");
+        const ids = listRegionIds(content);
+        return { generatedRegionIds: isOk(ids) ? ids.value : [] };
+      } catch {
+        return { generatedRegionIds: [] };
+      }
+    },
+  };
+}
+
+/** Real KN-12 structural-parity writer: emits the op-log day-log + pointer patches for a run's touched
+ *  paths via `buildOpLogMutations` (the existing pure builder — no invented format). Additive-only:
+ *  no touched paths, or no injected `date`, ⇒ zero mutations (never a spurious write, never a
+ *  fabricated date — REQ-F-017 posture extended to this seam). `index.md` regeneration is a NAMED
+ *  residual (see the module comment above) — this writer never touches it. */
+function createStructuralFileWriter(): StructuralFileWriterPort {
+  return {
+    build(ctx: StructuralContext): StructuralMutations {
+      if (typeof ctx?.date !== "string" || ctx.date.length === 0) return {};
+      if (!Array.isArray(ctx.touchedPaths) || ctx.touchedPaths.length === 0) return {};
+      const entry = `Ingested ${ctx.touchedPaths.length} note(s) (run ${ctx.runId}): ${ctx.touchedPaths.join(", ")}`;
+      const { patches } = buildOpLogMutations({ date: ctx.date, entry });
+      return { patches };
+    },
+  };
+}
+
+/** Deps to {@link buildIngestRewriteDeps}. `gbrain`/`reason` are real provider-territory ports the
+ *  caller supplies (see the module comment above); `vaultRoot` is the SAME configured vault root
+ *  {@link createLivingVaultPort} enforces containment against. */
+export interface BuildIngestRewriteDepsInput {
+  readonly gbrain: EntityGbrainReadPort;
+  readonly reason: SynthesisReasonPort;
+  readonly vaultRoot: string;
+}
+
+/**
+ * Construct the real {@link IngestRewriteDeps} the ingest-rewrite planner needs. `gbrain`/`reason`
+ * cross through UNCHANGED (provider-territory — see the module comment above); `sections`/`structural`/
+ * `newPlanId`/`newRunId` are built for real here from existing @sow/knowledge pure functions. Reduces
+ * the boot call site (PKG-W1's hand-off) to three inputs instead of assembling all six fields itself.
+ */
+export function buildIngestRewriteDeps(input: BuildIngestRewriteDepsInput): IngestRewriteDeps {
+  return {
+    gbrain: input.gbrain,
+    reason: input.reason,
+    sections: createVaultSectionPort(input.vaultRoot),
+    structural: createStructuralFileWriter(),
+    newPlanId: (): string => randomUUID(),
+    newRunId: (): string => randomUUID(),
   };
 }
