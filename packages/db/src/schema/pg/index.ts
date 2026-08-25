@@ -12,6 +12,9 @@ export * from "./event-log";
 export * from "./audit";
 export * from "./approvals";
 export * from "./outboxes";
+// §6 / §16 — the durable GBrain post-commit sync outbox (task 19.1, DISTINCT from the
+// §8/§9 external-write outbox above — see gbrain-sync-outbox.ts header).
+export * from "./gbrain-sync-outbox";
 // §13.10a — the pending-KMP store (the semantic-write sibling of the outbox).
 export * from "./pending-kmp";
 // §6 / §16 — the durable KnowledgeWriter idempotent-replay index (task 11.1).

@@ -249,8 +249,9 @@ function defineLifecycleSuite<H>(fix: LifecycleFixture<H>): void {
         // (§4/§19.2/§9 — the parked-source-of-record + re-enter store CREATE TABLE) + 0012_outbox_approval_policy
         // (§8 task 24.35 — additive nullable OutboxEntry.approvalPolicy column) + 0013_task_table
         // (§4/§6 — the durable typed-Task rollup index CREATE TABLE, task 13.15's migration that
-        // was never generated; 24.39), all applied from empty.
-        expect(r.value.applied).toBe(14);
+        // was never generated; 24.39) + 0014_gbrain_sync_outbox (§6/§16 task 19.1 — the durable
+        // GBrain post-commit sync outbox CREATE TABLE), all applied from empty.
+        expect(r.value.applied).toBe(15);
         expect(r.value.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
         expect(r.value.backup.dialect).toBe(fix.dialect);
 
