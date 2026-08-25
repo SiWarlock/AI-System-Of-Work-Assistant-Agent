@@ -1,0 +1,1 @@
+ALTER TABLE "health_items" ADD COLUMN "lastReadAt" text;

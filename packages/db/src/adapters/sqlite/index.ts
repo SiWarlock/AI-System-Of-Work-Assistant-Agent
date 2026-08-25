@@ -1461,6 +1461,44 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
           .all();
         return ok(rows.map(toHealthItem));
       }),
+    markRead: (dedupeKey, readAt) =>
+      run(() => {
+        // Task 24.3 — FIRST-WRITE-WINS (mirrors ApprovalRepository.applyTransition's
+        // select-then-conditional-write shape above): a row that already carries a
+        // stamp is an idempotent no-op returning the ORIGINAL stamp.
+        const current = db
+          .select({ lastReadAt: schema.healthItems.lastReadAt })
+          .from(schema.healthItems)
+          .where(eq(schema.healthItems.dedupeKey, dedupeKey))
+          .get();
+        if (!current) return err(notFound(`health item ${dedupeKey}`));
+        if (current.lastReadAt !== null) return ok(current.lastReadAt);
+        const rows = db
+          .update(schema.healthItems)
+          .set({ lastReadAt: readAt })
+          .where(and(eq(schema.healthItems.dedupeKey, dedupeKey), isNull(schema.healthItems.lastReadAt)))
+          .returning({ lastReadAt: schema.healthItems.lastReadAt })
+          .all();
+        const stamped = rows[0]?.lastReadAt;
+        if (stamped !== null && stamped !== undefined) return ok(stamped);
+        // A concurrent writer won the conditional UPDATE between our SELECT and this
+        // UPDATE (WHERE-guard matched 0 rows) — re-read to return the honest winner.
+        const after = db
+          .select({ lastReadAt: schema.healthItems.lastReadAt })
+          .from(schema.healthItems)
+          .where(eq(schema.healthItems.dedupeKey, dedupeKey))
+          .get();
+        return after?.lastReadAt ? ok(after.lastReadAt) : err(notFound(`health item ${dedupeKey}`));
+      }),
+    getReadCursor: (dedupeKey) =>
+      run(() => {
+        const row = db
+          .select({ lastReadAt: schema.healthItems.lastReadAt })
+          .from(schema.healthItems)
+          .where(eq(schema.healthItems.dedupeKey, dedupeKey))
+          .get();
+        return row ? ok(row.lastReadAt ?? undefined) : err(notFound(`health item ${dedupeKey}`));
+      }),
   };
 
   // Phase-10: durable-schedule bookkeeping store (LIFE-5).

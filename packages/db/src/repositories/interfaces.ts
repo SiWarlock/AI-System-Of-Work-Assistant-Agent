@@ -920,6 +920,21 @@ export interface HealthItemRepository {
   put(item: HealthItem, dedupeKey: string, subjectRef: string, lastSeen: string): DbResult<void>;
   /** The dashboard set — every item, most-recently-seen first. */
   list(): DbResult<HealthItem[]>;
+  /**
+   * Task 24.3 — the operator read-cursor: FIRST-WRITE-WINS. Stamps `lastReadAt =
+   * readAt` on the row at `dedupeKey` ONLY if it has never been read before; a later
+   * call is an idempotent no-op that returns the ORIGINAL stamp (mirrors this
+   * package's other first-write-wins primitives, e.g. `WriteReceiptRepository.reserve`).
+   * `not_found` when the dedupeKey does not exist. OPTIONAL (added without breaking
+   * existing implementers/fakes outside this package — see `getReadCursor`).
+   */
+  markRead?(dedupeKey: string, readAt: string): DbResult<string>;
+  /**
+   * Task 24.3 — read the current cursor for `dedupeKey`: `ok(undefined)` when the
+   * item exists but has never been read, `ok(string)` once `markRead` has stamped it,
+   * `not_found` when the dedupeKey does not exist. OPTIONAL, mirrors `markRead`.
+   */
+  getReadCursor?(dedupeKey: string): DbResult<string | undefined>;
 }
 
 /**

@@ -53,4 +53,10 @@ export const healthItems = sqliteTable("health_items", {
   lastSeen: text().notNull(),
   // Incremented on every dedupe hit (recurrences since openedAt).
   occurrenceCount: integer().notNull(),
+  // Task 24.3 — the operator read-cursor axis (persistence-only; not in the frozen
+  // model). NULL ⇒ never read. Set via `HealthItemRepository.markRead`; UNTOUCHED by
+  // the §10.3 dedupe upsert in `put()` (a recurring failure does not itself clear it —
+  // read-vs-unread policy on recurrence is a worker-layer call, out of this store's
+  // scope). ISO-8601 string, mirrors every other timestamp column in this table.
+  lastReadAt: text(),
 });

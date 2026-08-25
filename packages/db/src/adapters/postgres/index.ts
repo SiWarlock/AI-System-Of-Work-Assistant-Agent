@@ -1524,6 +1524,46 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
           .orderBy(desc(schema.healthItems.lastSeen), asc(schema.healthItems.dedupeKey));
         return ok(rows.map(toHealthItem));
       }),
+    markRead: (dedupeKey, readAt) =>
+      run(async () => {
+        // Task 24.3 — FIRST-WRITE-WINS (mirrors ApprovalRepository.applyTransition's
+        // select-then-conditional-write shape above): a row that already carries a
+        // stamp is an idempotent no-op returning the ORIGINAL stamp.
+        const currentRows = await db
+          .select({ lastReadAt: schema.healthItems.lastReadAt })
+          .from(schema.healthItems)
+          .where(eq(schema.healthItems.dedupeKey, dedupeKey))
+          .limit(1);
+        const current = currentRows[0];
+        if (!current) return err(notFound(`health item ${dedupeKey}`));
+        if (current.lastReadAt !== null) return ok(current.lastReadAt);
+        const rows = await db
+          .update(schema.healthItems)
+          .set({ lastReadAt: readAt })
+          .where(and(eq(schema.healthItems.dedupeKey, dedupeKey), isNull(schema.healthItems.lastReadAt)))
+          .returning({ lastReadAt: schema.healthItems.lastReadAt });
+        const stamped = rows[0]?.lastReadAt;
+        if (stamped !== null && stamped !== undefined) return ok(stamped);
+        // A concurrent writer won the conditional UPDATE between our SELECT and this
+        // UPDATE (WHERE-guard matched 0 rows) — re-read to return the honest winner.
+        const afterRows = await db
+          .select({ lastReadAt: schema.healthItems.lastReadAt })
+          .from(schema.healthItems)
+          .where(eq(schema.healthItems.dedupeKey, dedupeKey))
+          .limit(1);
+        const after = afterRows[0];
+        return after?.lastReadAt ? ok(after.lastReadAt) : err(notFound(`health item ${dedupeKey}`));
+      }),
+    getReadCursor: (dedupeKey) =>
+      run(async () => {
+        const rows = await db
+          .select({ lastReadAt: schema.healthItems.lastReadAt })
+          .from(schema.healthItems)
+          .where(eq(schema.healthItems.dedupeKey, dedupeKey))
+          .limit(1);
+        const row = rows[0];
+        return row ? ok(row.lastReadAt ?? undefined) : err(notFound(`health item ${dedupeKey}`));
+      }),
   };
 
   // Phase-10: durable-schedule bookkeeping store (LIFE-5).

@@ -250,8 +250,10 @@ function defineLifecycleSuite<H>(fix: LifecycleFixture<H>): void {
         // (§8 task 24.35 — additive nullable OutboxEntry.approvalPolicy column) + 0013_task_table
         // (§4/§6 — the durable typed-Task rollup index CREATE TABLE, task 13.15's migration that
         // was never generated; 24.39) + 0014_gbrain_sync_outbox (§6/§16 task 19.1 — the durable
-        // GBrain post-commit sync outbox CREATE TABLE), all applied from empty.
-        expect(r.value.applied).toBe(15);
+        // GBrain post-commit sync outbox CREATE TABLE) + 0015_cost_ledger (§16 task 19.11 — the
+        // durable cross-run cost/budget ledger CREATE TABLE) + 0016_health_items_last_read_at
+        // (task 24.3 — the operator read-cursor ALTER TABLE ADD COLUMN), all applied from empty.
+        expect(r.value.applied).toBe(17);
         expect(r.value.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
         expect(r.value.backup.dialect).toBe(fix.dialect);
 

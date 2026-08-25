@@ -1921,6 +1921,52 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(got.state).toBe("resolved");
       expect(got.resolvedAt).toBe("2026-06-30T01:00:00.000Z");
     });
+
+    // ── task 24.3 — the operator read-cursor (lastReadAt), persistence-only ──────
+    describe("markRead / getReadCursor (task 24.3 read-cursor)", () => {
+      it("getReadCursor on a freshly-put item is ok(undefined) — present but never read", async () => {
+        unwrap(await repos.healthItems.put(health({ id: "h1" }), "k-fresh", "s-fresh", "2026-06-30T00:00:01.000Z"));
+        expect(unwrap(await repos.healthItems.getReadCursor!("k-fresh"))).toBeUndefined();
+      });
+
+      it("getReadCursor / markRead on an unseen dedupeKey is a typed not_found (never throws)", async () => {
+        expect(unwrapErr(await repos.healthItems.getReadCursor!("never")).code).toBe("not_found");
+        expect(unwrapErr(await repos.healthItems.markRead!("never", "2026-06-30T00:05:00.000Z")).code).toBe(
+          "not_found",
+        );
+      });
+
+      it("markRead stamps lastReadAt; getReadCursor then round-trips it", async () => {
+        unwrap(await repos.healthItems.put(health({ id: "h1" }), "k-mr", "s-mr", "2026-06-30T00:00:01.000Z"));
+        const stamped = unwrap(await repos.healthItems.markRead!("k-mr", "2026-06-30T00:05:00.000Z"));
+        expect(stamped).toBe("2026-06-30T00:05:00.000Z");
+        expect(unwrap(await repos.healthItems.getReadCursor!("k-mr"))).toBe("2026-06-30T00:05:00.000Z");
+      });
+
+      it("markRead is FIRST-WRITE-WINS: a second call with a LATER timestamp does not move the cursor", async () => {
+        unwrap(await repos.healthItems.put(health({ id: "h1" }), "k-fww", "s-fww", "2026-06-30T00:00:01.000Z"));
+        unwrap(await repos.healthItems.markRead!("k-fww", "2026-06-30T00:05:00.000Z"));
+        const second = unwrap(await repos.healthItems.markRead!("k-fww", "2026-06-30T00:10:00.000Z"));
+        expect(second).toBe("2026-06-30T00:05:00.000Z"); // unchanged — original stamp wins
+        expect(unwrap(await repos.healthItems.getReadCursor!("k-fww"))).toBe("2026-06-30T00:05:00.000Z");
+      });
+
+      it("a recurring §10.3 dedupe upsert (put) does not disturb an already-stamped read cursor", async () => {
+        const key = "k-recur";
+        unwrap(await repos.healthItems.put(health({ id: "h1", state: "open" }), key, "s-recur", "2026-06-30T00:00:01.000Z"));
+        unwrap(await repos.healthItems.markRead!(key, "2026-06-30T00:05:00.000Z"));
+        // Same failure class recurs — the §10.3 dedupe UPSERT advances the item.
+        unwrap(
+          await repos.healthItems.put(
+            health({ id: "h1", state: "acknowledged" }),
+            key,
+            "s-recur",
+            "2026-06-30T00:09:00.000Z",
+          ),
+        );
+        expect(unwrap(await repos.healthItems.getReadCursor!(key))).toBe("2026-06-30T00:05:00.000Z");
+      });
+    });
   });
 
   // ── schedule bookkeeping (LIFE-5: last-run wall + clock-jump-safe monotonic) ──

@@ -29,4 +29,7 @@ export const healthItems = pgTable("health_items", {
   // --- dedupe bookkeeping (persistence-only; not in the model) ---
   lastSeen: text().notNull(),
   occurrenceCount: integer().notNull(),
+  // Task 24.3 — the operator read-cursor axis (persistence-only; NULL ⇒ never read).
+  // See `../health-items.ts` for the full rationale.
+  lastReadAt: text(),
 });
