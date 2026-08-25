@@ -48,6 +48,7 @@ import { assertLoopbackBind } from "./auth/loopbackBind";
 import type { ApiContext } from "./trpc";
 import type { AuthInterceptor, AuthInterceptorInput } from "./auth/interceptor";
 import type { StreamPublisher } from "./stream/eventClasses";
+import { runStreamHandshake } from "./stream/handshake";
 
 /** The loopback host the transport binds to (127.0.0.1 only — REQ-NF-004). */
 export const LOOPBACK_HOST = "127.0.0.1" as const;
@@ -135,24 +136,28 @@ function makeHttpContext(
 /**
  * Build the WS `createContext`: the token rides the FIRST-message
  * `info.connectionParams` (NEVER a URL); the Origin/Host come from the UPGRADE
- * request headers. Runs the SAME interceptor so the handshake is gated pre-stream.
- * Typed against the ws adapter's own `CreateWSSContextFnOptions` (`{ req, res, info }`
- * where `info.connectionParams: Dict<string> | null`).
+ * request headers. Typed against the ws adapter's own `CreateWSSContextFnOptions`
+ * (`{ req, res, info }` where `info.connectionParams: Dict<string> | null`).
+ *
+ * R10-a1: converged onto {@link runStreamHandshake} (stream/handshake.ts) — the
+ * ONE handshake implementation, rather than re-deriving the token extraction +
+ * interceptor call inline here. `runStreamHandshake`'s own auth/interceptor
+ * behavior (token-first, then Origin/Host, redaction-safe, token-never-from-URL,
+ * never-throws defense-in-depth) is pinned by its existing suite
+ * (test/api/stream/pushStream.test.ts's `runStreamHandshake` describe block) —
+ * this convergence inherits that pin rather than duplicating a second surface a
+ * future auth change could silently diverge from.
  */
-function makeWsContext(
+export function makeWsContext(
   interceptor: AuthInterceptor,
 ): (opts: CreateWSSContextFnOptions) => ApiContext {
-  return ({ req, info }): ApiContext => {
-    const params = info.connectionParams;
-    const token =
-      params !== null && typeof params.token === "string" ? params.token : undefined;
-    const input: AuthInterceptorInput = {
-      token,
+  return ({ req, info }): ApiContext => ({
+    auth: runStreamHandshake(interceptor, {
+      connectionParams: info.connectionParams,
       origin: headerValue(req.headers.origin),
       host: headerValue(req.headers.host),
-    };
-    return { auth: interceptor(input) };
-  };
+    }),
+  });
 }
 
 /**
