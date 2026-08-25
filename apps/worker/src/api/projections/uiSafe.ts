@@ -16,6 +16,7 @@
 import type {
   Approval,
   HealthItem,
+  TargetSystem,
   WorkflowRunRef,
   GclProjection,
   SourceEnvelope,
@@ -49,12 +50,29 @@ function assignIfDefined<T extends object, K extends keyof T>(
 /**
  * Project an {@link Approval} to a {@link UiSafeApproval}. Copies ONLY the
  * allowlisted names (`id`, `actionRef?`, `subjectKind`, `status`, `channel`,
- * `snoozeUntil?`, `expiresAt?`). DROPS `actor` (approving-principal identity),
- * `payloadHash` (content-derived hash), and `planRef` (the opaque semantic subject
- * ref) — and any other field present on the record. Branded ids are narrowed to
- * plain strings for the renderer.
+ * `snoozeUntil?`, `expiresAt?`, `targetSystem?`, `workspaceId`). DROPS `actor`
+ * (approving-principal identity), `payloadHash` (content-derived hash), and
+ * `planRef` (the opaque semantic subject ref) — and any other field present on
+ * the record. Branded ids are narrowed to plain strings for the renderer.
+ *
+ * §9.8 enrichment:
+ *   - `workspaceId` — server-set attribution ALREADY on the Approval record
+ *     itself (WS-4/WS-7 — `approval.ts`'s own header: bound at record time,
+ *     never a client/model value). Copied through UNCONDITIONALLY; every
+ *     Approval carries one.
+ *   - `targetSystem` — the external system an `external_action` card's BOUND
+ *     `ProposedAction` writes to. `Approval` itself carries only `actionRef`
+ *     (a ref), not the `ProposedAction` record the ref points to, so this pure
+ *     projector cannot resolve `targetSystem` on its own — the CALLER supplies
+ *     it (resolved from the bound ProposedAction store; additive-optional
+ *     parameter, so every existing single-arg call site stays valid and keeps
+ *     omitting it). Gated on `subjectKind === "external_action"`, not merely
+ *     the caller's own discipline: a `semantic_mutation` card has NO
+ *     `ProposedAction` to resolve one from, so a caller-supplied value is
+ *     dropped defensively for that subject kind — "absent for
+ *     semantic_mutation" is a guarantee of THIS function, not a convention.
  */
-export function toUiSafeApproval(approval: Approval): UiSafeApproval {
+export function toUiSafeApproval(approval: Approval, targetSystem?: TargetSystem): UiSafeApproval {
   const out: UiSafeApproval = {
     id: approval.id,
     // §13.10a Slice H — the card discriminator (external_action vs semantic_mutation): a frozen
@@ -62,6 +80,7 @@ export function toUiSafeApproval(approval: Approval): UiSafeApproval {
     subjectKind: approval.subjectKind,
     status: approval.status,
     channel: approval.channel,
+    workspaceId: approval.workspaceId,
   };
   // §13.10a — actionRef is optional (present for an external_action card, absent for a
   // semantic_mutation card, which carries a planRef that is NOT surfaced — planRef is an opaque
@@ -69,6 +88,9 @@ export function toUiSafeApproval(approval: Approval): UiSafeApproval {
   assignIfDefined(out, "actionRef", approval.actionRef);
   assignIfDefined(out, "snoozeUntil", approval.snoozeUntil);
   assignIfDefined(out, "expiresAt", approval.expiresAt);
+  if (approval.subjectKind === "external_action") {
+    assignIfDefined(out, "targetSystem", targetSystem);
+  }
   return out;
 }
 

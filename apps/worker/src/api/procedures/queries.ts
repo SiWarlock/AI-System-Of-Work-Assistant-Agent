@@ -342,11 +342,16 @@ function projectCards(
   return r.ok ? ok(r.value.map(toUiSafeDashboardCard)) : r;
 }
 
-/** Map a port's approval `Result` through the UI-safe approval projector. */
+/** Map a port's approval `Result` through the UI-safe approval projector.
+ *  9.8 — wrapped in an arrow (never bare `.map(toUiSafeApproval)`): `toUiSafeApproval` now takes an
+ *  optional second `targetSystem` param, and `Array.prototype.map`'s callback receives `(value,
+ *  index, array)` — a bare reference would positionally forward the array INDEX into
+ *  `targetSystem`. This queue has no ProposedAction lookup to resolve one from anyway, so every
+ *  card here omits it, exactly as before this slice (byte-equivalent). */
 function projectApprovals(
   r: Result<readonly Approval[], FailureVariant>,
 ): Result<readonly UiSafeApproval[], FailureVariant> {
-  return r.ok ? ok(r.value.map(toUiSafeApproval)) : r;
+  return r.ok ? ok(r.value.map((a) => toUiSafeApproval(a))) : r;
 }
 
 /** Map a port's workflow-run `Result` through the UI-safe workflow-run projector. */

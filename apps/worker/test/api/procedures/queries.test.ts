@@ -560,7 +560,10 @@ describe("buildQueryRouter — UI-safe read-model serving (§10/§13)", () => {
 
   it("query.taskRollup fails closed on an UNKNOWN workspace (typed err — WS-8, no rows)", async () => {
     const res = await makeCaller(fakePort()).query.taskRollup({ workspaceId: "ws-unknown" });
+    // 24.101 — cause code, not bare falsity: matches this describe block's sibling ingestion-inbox
+    // pin above, which already asserts WORKSPACE_NOT_FOUND for the identical unknown-workspace shape.
     expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
   });
 
   it("approval inbox returns UI-safe Approval cards only", async () => {
@@ -757,7 +760,10 @@ describe("buildQueryRouter — unknown / out-of-scope workspace fails closed (§
       workspaceId: UNKNOWN_WORKSPACE,
       projectId: "proj_1",
     });
+    // 24.101 — cause code, not bare falsity: matches this describe block's sibling ingestion-inbox
+    // pin above.
     expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
   });
 });
 
@@ -1027,6 +1033,56 @@ describe("buildQueryRouter — auth gate + §16 boundary", () => {
       expect(res.error.kind).toBe("degraded_unavailable");
       // redaction-safe: the raw thrown message never crosses the boundary
       expect(res.error.message).not.toContain("boom");
+    }
+  });
+});
+
+// ── task R10-a2 (safety rule 7) — a workspaceId on a GET query string ─────────
+//
+// FINDING: the GET binding is real, not hypothetical. `mount.ts`'s `createHTTPHandler`
+// (`@trpc/server/adapters/standalone`) is explicitly "httpBatchLink-compatible" — under
+// tRPC's standard httpBatchLink/httpLink transport, EVERY `.query()` procedure's input
+// (including `workspaceId`, on nearly every procedure in THIS router) is sent as an HTTP
+// GET request with the input JSON-serialized into the URL query string. That is not a bug
+// in this codebase; it is how tRPC's `.query()` convention works, and this worker's own
+// `mount.ts` header names the compatibility deliberately.
+//
+// RESOLVED (not left open): the risk this task names — that workspaceId reaches a rule-7
+// LOG SINK via that URL — does not hold TODAY. Verified with a positive-controlled search:
+// (a) the tRPC standalone/node-http adapter source this worker actually loads
+//     (`@trpc/server/dist/adapters/standalone.mjs` + the node-http core it re-exports)
+//     contains ZERO `console.` calls — grepped directly, 0 matches;
+// (b) this worker's own transport-adjacent files (`api/mount.ts`, `api/server.ts`,
+//     `boot.ts`) contain no `req.url` / `request.url` read at all — pinned below;
+// (c) POSITIVE CONTROL, so (b)'s zero-match result means "absent," not "the search is
+//     mis-instrumented": `boot.ts` DOES carry two `console.error` calls (an unrelated,
+//     already-redaction-safe event+code log) — the same grep methodology finds THOSE, so
+//     an empty result for `req.url`/`request.url` is a genuine absence.
+// ⇒ no log sink in this codebase consumes a raw request URL today, so there is nothing to
+// redact FROM. Moving every `.query()` procedure to a POST body — the alternative this
+// task names — would be a router-wide wire-protocol change touching the desktop renderer's
+// client too (both outside this file's/this package's territory) for a residual that is
+// currently unreachable; NOT done here. Should a future request-logger ever read `req.url`/
+// `request.url` anywhere in this worker, it MUST redact `workspaceId` before that sink —
+// the test below reds the moment such a read is added, so that obligation is not silent.
+// Safety rule 7 — flagged to the lead per the escalation taxonomy regardless of this
+// closure, since the underlying GET-carries-workspaceId transport fact is real.
+describe("R10-a2 — no request-URL log sink exists to leak a GET-carried workspaceId (safety rule 7)", () => {
+  const workerSrcDir = resolvePath(dirname(fileURLToPath(import.meta.url)), "../../../src");
+  function readWorkerSrc(relPath: string): string {
+    return readFileSync(resolvePath(workerSrcDir, relPath), "utf8");
+  }
+
+  it("positive control: the grep-style scan DOES find a real, known console call in boot.ts (proves an empty result elsewhere is absence, not a mis-instrumented search)", () => {
+    const bootSrc = readWorkerSrc("boot.ts");
+    expect(bootSrc.includes("console.error")).toBe(true);
+  });
+
+  it("no transport-adjacent worker file reads req.url / request.url — nothing here could log a raw request URL", () => {
+    for (const rel of ["api/mount.ts", "api/server.ts", "boot.ts"]) {
+      const src = readWorkerSrc(rel);
+      expect(src.includes("req.url")).toBe(false);
+      expect(src.includes("request.url")).toBe(false);
     }
   });
 });
