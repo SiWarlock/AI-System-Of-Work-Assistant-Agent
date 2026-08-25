@@ -30,21 +30,26 @@ export function createAsanaConnector(transport: ConnectorTransport): ConnectorPo
 // owner arming binding:
 //   { data: Task[], next_page?: { offset: string, path, uri } | null },  Task = { gid: string, modified_at?: string, … }
 // Parsed FAIL-CLOSED: a missing / renamed field ⇒ a `TransportFailure`, never a false page.
-// ARMING-era GAPS (Context7-cited, NAMED not built — cannot complete now):
+// ARMING-era GAP (Context7-cited, NAMED not built — cannot complete now; PKG-INT-5 · 23.4 item 12 FENCE):
 //   • REQUIRED SCOPE: GET /tasks 400s unless the query carries `project`|`tag` OR `assignee`+`workspace` — the
-//     owner's project/workspace GID is injected at the arming binding (not knowable now).
-//   • INGESTION RICHNESS: `opt_fields=name,modified_at` below requests `modified_at` (the change token the
-//     contentHash requires) plus `name` (a minimal human-readable ingestion field, not part of the change
-//     token); richer fields (notes/assignee/due_on/…) are an arming-era ingestion-richness call.
+//     owner's project/workspace GID is injected at the arming binding (not knowable now). Do NOT invent one,
+//     do not add a default — a fabricated GID would silently scope every read to the wrong (or a
+//     nonexistent) project/workspace. This is an owner-decision residual, not a build gap.
+// INGESTION RICHNESS (PKG-INT-5 · 23.4 item 11, DONE): `opt_fields` below now requests the richer read set —
+// `modified_at` (the change token `asanaContentHash` requires), `name` (human-readable), plus
+// `notes`/`completed`/`due_on`/`assignee.name`/`projects.name` (ingestion-richness fields, no effect on the
+// dedupe hash — `asanaContentHash` reads only `{gid, modified_at}` off the raw record, so a record that
+// carries only the old fields still hashes identically to before this widening).
 
 const ASANA_BASE_URL = "https://app.asana.com/api/1.0";
 const ASANA_ALLOWED_HOSTS: readonly string[] = ["app.asana.com"];
 const ASANA_PAGE_LIMIT = 100; // Context7: limit must be 1..100.
 // Context7 (GET /tasks): the list returns COMPACT records (gid + name) by default — `modified_at` (the change
 // token `asanaContentHash` requires) is returned ONLY when named in `opt_fields`, else the dedupe hash
-// silently degrades to the token-less raw record. `modified_at` realizes the change token; `name` is a
-// minimal human-readable ingestion field.
-const ASANA_OPT_FIELDS = "name,modified_at";
+// silently degrades to the token-less raw record. `modified_at` realizes the change token; the rest are
+// ingestion-richness fields (23.4 leg 3 widening — `assignee.name`/`projects.name` are dotted nested-field
+// selectors, Asana's documented syntax for requesting a sub-field of a compact-expanded association).
+const ASANA_OPT_FIELDS = "name,modified_at,notes,completed,due_on,assignee.name,projects.name";
 
 /**
  * Cursor→query (per-connector paging): `?limit=<n>&opt_fields=<…>` on the first page, `&offset=<cursor>` when
