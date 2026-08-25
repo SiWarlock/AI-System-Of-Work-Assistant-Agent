@@ -121,6 +121,9 @@ describe("createNoteExistsProbe (gate-1 create-clobber guard — keys on REAL ex
   it("FAILS CLOSED (err, not 'free') on a non-string, non-undefined read — a create-clobber guard must not overwrite on ambiguity", async () => {
     const probe = createNoteExistsProbe((async () => Buffer.from("x")) as unknown as WorkspaceNoteRead);
     const r = await probe("p", WS);
+    // 24.101 — matches the sibling read-fault test above: proves this ambiguity ALSO maps to the
+    // SAME typed §16 fault contract (not a different, unaccounted-for error shape).
     expect(isErr(r)).toBe(true); // NOT ok(false) — reporting "free" here would allow an overwrite
+    if (isErr(r)) expect(r.error.cause).toEqual({ code: "NOTE_PROJECT_ID_READ_FAULT" });
   });
 });

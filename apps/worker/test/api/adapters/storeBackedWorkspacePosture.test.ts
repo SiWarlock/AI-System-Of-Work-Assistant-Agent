@@ -7,7 +7,7 @@
 // FAIL-CLOSED (typed err, mirrors `createLocalWorkspacePosture`'s miss) — NEVER a
 // synthesized ack=true posture.
 import { describe, it, expect } from "vitest";
-import { isOk, ok } from "@sow/contracts";
+import { isErr, isOk, ok } from "@sow/contracts";
 import type { Result, Workspace, WorkspaceType } from "@sow/contracts";
 import { defaultWorkspace } from "@sow/contracts";
 import type { WorkspaceConfigRepository, DbResult } from "@sow/db";
@@ -64,7 +64,11 @@ describe("§5 createStoreBackedWorkspacePosture — durable ack read, fail-close
       repoGetting(() => Promise.resolve({ ok: false, error: { code: "not_found", message: "no workspace" } })),
     );
     const p = await r.resolve("ws-missing");
-    expect(isOk(p)).toBe(false); // fail closed — no posture crosses, no default-true
+    // 24.101 — CAUSE CODE, not bare falsity: proves this is `unknownWorkspace()`'s generic
+    // WORKSPACE_NOT_FOUND, not merely "some failure occurred" (which a bare `isOk===false` can't
+    // distinguish from, say, a thrown/degraded fault or the WS-8 re-gate below).
+    expect(isErr(p)).toBe(true);
+    if (isErr(p)) expect(p.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
   });
 
   it("resolver_store_fault_fails_closed — ANY get fault ⇒ err (fault ≠ benign absence, still no default-true)", async () => {
@@ -72,7 +76,13 @@ describe("§5 createStoreBackedWorkspacePosture — durable ack read, fail-close
       repoGetting(() => Promise.resolve({ ok: false, error: { code: "unavailable", message: "db down" } })),
     );
     const p = await r.resolve(WS);
-    expect(isOk(p)).toBe(false);
+    // 24.101 — deliberately the SAME code as the absence case above (a generic store fault
+    // collapses into `unknownWorkspace()` too, per this resolver's own header — "any store fault");
+    // the assertion still discriminates a WORKSPACE_NOT_FOUND-shaped failure from any other kind
+    // (a thrown exception, a degraded_unavailable, or the WS-8 mismatch below), which bare falsity
+    // could not.
+    expect(isErr(p)).toBe(true);
+    if (isErr(p)) expect(p.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
   });
 
   it("resolver_stored_row_schema_violation_fails_closed — task 9.36's new DbErrorCode is ALREADY covered by the existing any-fault fail-closed (no code change needed here)", async () => {
@@ -87,7 +97,12 @@ describe("§5 createStoreBackedWorkspacePosture — durable ack read, fail-close
       ),
     );
     const p = await r.resolve(WS);
-    expect(isOk(p)).toBe(false);
+    // 24.101 — same rationale as resolver_store_fault_fails_closed above: a schema violation is
+    // ANOTHER store-fault variant, so it collapses to the SAME WORKSPACE_NOT_FOUND by design (this
+    // test's own title already says "no code change needed here" — the assertion below confirms
+    // it, rather than merely confirming SOME failure happened).
+    expect(isErr(p)).toBe(true);
+    if (isErr(p)) expect(p.error.cause?.code).toBe("WORKSPACE_NOT_FOUND");
   });
 
   it("resolver_foreign_readback_fails_closed — a store row whose id ≠ the requested id is REJECTED (WS-8 re-gate)", async () => {
@@ -95,6 +110,15 @@ describe("§5 createStoreBackedWorkspacePosture — durable ack read, fail-close
     const foreign = defaultWorkspace({ id: "ws-other", name: "Other", type: "personal_business", markdownRepoPath: "/v", gbrainBrainId: "b" });
     const r = createStoreBackedWorkspacePosture(repoGetting(() => Promise.resolve(ok(foreign))));
     const p = await r.resolve(WS); // requested id ("ws-employer") ≠ returned row id ("ws-other")
-    expect(isOk(p)).toBe(false); // fail closed — no foreign posture crosses into the veto
+    // 24.101 — THE discriminating assertion this test previously couldn't make: a bare
+    // `isOk(p)===false` cannot tell "the WS-8 re-gate caught a foreign row" apart from "the
+    // workspace simply doesn't exist" (resolver_absence_fails_closed above) or any other failure.
+    // The resolver now emits a DISTINCT cause code for exactly this branch — asserting it here
+    // proves the re-gate fired, not merely that resolution failed for some unspecified reason.
+    expect(isErr(p)).toBe(true);
+    if (isErr(p)) {
+      expect(p.error.cause?.code).toBe("WORKSPACE_READBACK_MISMATCH");
+      expect(p.error.cause?.code).not.toBe("WORKSPACE_NOT_FOUND"); // discriminates from the absence case
+    }
   });
 });

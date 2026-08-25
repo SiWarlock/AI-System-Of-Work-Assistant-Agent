@@ -116,14 +116,24 @@ describe("§13.16 task-rollup read-model producer (WS-8 / REQ-F-017 / L77)", () 
   it("producer_fail_safe_never_throws — a listByWorkspace fault → typed Err with NO put (never partial, never blocks, never throws)", async () => {
     const { repo, puts } = fakeReadModels();
     const r = await refreshTaskRollup({ workspaceId: WS_A }, { tasks: fakeTasks([], { fault: true }), readModels: repo, now: () => NOW });
+    // 24.101 — `RefreshTaskRollupError` is a SINGLE-code taxonomy (only "task_rollup_write_failed"
+    // exists), so a `.error.code` check would be vacuous here. `puts.length===0` is the discriminant
+    // that actually proves fail-CLOSED: the fake's `put` records every ATTEMPT (even a faulting one,
+    // see fakeReadModels), so a genuine zero means `readModels.put` was never even CALLED — this is
+    // specifically a source-fault short-circuit, not a swallowed put failure.
     expect(isErr(r)).toBe(true);
     expect(puts.length).toBe(0); // no write on a source fault
   });
 
   it("producer_fail_safe_put_fault — a readModels.put fault → typed Err (never throws, L77)", async () => {
-    const { repo } = fakeReadModels(true);
+    const { repo, puts } = fakeReadModels(true);
     const r = await refreshTaskRollup({ workspaceId: WS_A }, { tasks: fakeTasks([row({ taskId: "a1" })]), readModels: repo, now: () => NOW });
     expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.code).toBe("task_rollup_write_failed"); // 24.101 — proves the typed §16 boundary shape
+    // 24.101 — the COMPLEMENT of the sibling above: here `puts.length` IS 1 (the fake records the
+    // ATTEMPT before applying the fault), proving this test exercises the PUT-FAULT branch
+    // specifically, not the earlier source-fault short-circuit (which would leave puts empty).
+    expect(puts.length).toBe(1);
   });
 
   it("cap_at_200 — >200 active tasks are capped to 200 (flood-bound, mirrors UiSafeTaskRollupSchema.max(200))", async () => {

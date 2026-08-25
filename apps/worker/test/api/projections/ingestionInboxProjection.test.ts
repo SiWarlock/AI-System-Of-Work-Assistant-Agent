@@ -142,13 +142,22 @@ describe("createIngestionInboxProjectionPort — recordPark", () => {
     const repo = fakeReadModels({ failPut: { code: "unavailable", message: "db down" } });
     const port = createIngestionInboxProjectionPort({ readModels: repo, now: () => NOW });
     const r = await port.recordPark({ workspaceId: "ws-A", source: sourceEnvelope() });
+    // 24.101 — matches the get-fault sibling above: proves the RETURN is specifically the typed
+    // ProjErr contract (never a raw thrown/mistyped error slipping past the §16 boundary), not
+    // merely "isErr happened to be true."
     expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.code).toBe("ingestion_inbox_write_failed");
   });
 
   it("rejects a park with an empty workspaceId (fail-closed, no write)", async () => {
     const repo = fakeReadModels();
     const port = createIngestionInboxProjectionPort({ readModels: repo, now: () => NOW });
     const r = await port.recordPark({ workspaceId: "", source: sourceEnvelope() });
+    // 24.101 — `IngestionInboxProjectionError` is a SINGLE-code taxonomy (only
+    // "ingestion_inbox_write_failed" exists — grep-verified), so a `.error.code` check here would be
+    // a vacuous restatement of the type, never able to discriminate this cause from any other. The
+    // REAL discriminant for THIS test is the side effect: `repo.rows.size===0` proves the rejection
+    // is genuinely fail-CLOSED (no write happened), not merely "some error object came back."
     expect(isErr(r)).toBe(true);
     expect(repo.rows.size).toBe(0);
   });
@@ -162,6 +171,9 @@ describe("createIngestionInboxProjectionPort — recordPark", () => {
       workspaceId: "ws-A",
       source: sourceEnvelope({ workspaceId: "ws-OTHER" as SourceEnvelope["workspaceId"] }),
     });
+    // 24.101 — same reasoning as the empty-workspaceId test above: the single-code taxonomy makes a
+    // `.error.code` check vacuous here; `repo.rows.size===0` is the discriminant that actually proves
+    // the WS-8 mis-attribution guard fired fail-closed (no item written to EITHER workspace).
     expect(isErr(r)).toBe(true);
     expect(repo.rows.size).toBe(0);
   });
@@ -199,7 +211,9 @@ describe("createIngestionInboxProjectionPort — recordDisposition", () => {
     const repo = fakeReadModels({ failGet: { code: "unavailable", message: "db down" } });
     const port = createIngestionInboxProjectionPort({ readModels: repo, now: () => NOW });
     const r = await port.recordDisposition("ws-A", "src_1");
+    // 24.101 — matches the get-fault sibling in the recordPark suite above.
     expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.code).toBe("ingestion_inbox_write_failed");
   });
 
   it("a readModels.put fault while REMOVING an item ⇒ typed err (§16 symmetry — dispose writes on removal)", async () => {

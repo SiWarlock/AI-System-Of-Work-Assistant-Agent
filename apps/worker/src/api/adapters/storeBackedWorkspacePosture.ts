@@ -11,11 +11,30 @@
 // The resolver is async, dropping into the existing `MaybeAsyncResult` seam
 // (`WorkspacePostureResolver.resolve`, copilot.ts) with no interface change; the consumer already
 // awaits it.
-import { ok, err, isOk } from "@sow/contracts";
+import { ok, err, isOk, failure } from "@sow/contracts";
 import type { Result, WorkspaceId, FailureVariant } from "@sow/contracts";
 import type { WorkspaceConfigRepository } from "@sow/db";
 import type { WorkspacePosture, WorkspacePostureResolver } from "../procedures/copilot";
 import { unknownWorkspace } from "../procedures/copilot";
+
+/**
+ * Task 24.101 — the WS-8 read-back re-gate firing gets its OWN cause code, distinct from
+ * `unknownWorkspace()`'s generic `WORKSPACE_NOT_FOUND`. Before this, a store returning a FOREIGN
+ * workspace's row for the requested id (a mis-filtered/tampered read — the most safety-critical of
+ * this resolver's three failure paths per this file's own header) collapsed into the SAME code as
+ * "the workspace genuinely doesn't exist" / "the store faulted." A caller (or a test) reading only
+ * the cause code could never tell "the re-gate caught something" from "there was nothing to find" —
+ * exactly the defect `storeBackedWorkspacePosture.test.ts`'s `resolver_foreign_readback_fails_closed`
+ * exists to catch, and previously could not, since bare `isOk(...)===false` doesn't discriminate
+ * either. `not_found` and any OTHER store fault (incl. `stored_row_schema_violation`) deliberately
+ * stay collapsed into `unknownWorkspace()` — that collapse is intentional (mirrors
+ * `createLocalWorkspacePosture`'s miss), only the WS-8 identity mismatch is split out.
+ */
+function readBackIdentityMismatch(): FailureVariant {
+  return failure("validation_rejected", "workspace read-back identity mismatch", {
+    cause: { code: "WORKSPACE_READBACK_MISMATCH" },
+  });
+}
 
 /**
  * Build a {@link WorkspacePostureResolver} backed by the durable `WorkspaceConfigRepository`.
@@ -36,7 +55,7 @@ export function createStoreBackedWorkspacePosture(
       // resolved posture MUST be bound to the REQUESTED workspace. A buggy/malicious adapter returning a
       // FOREIGN (possibly more-permissive) row would otherwise feed a foreign posture straight into the
       // egress veto — the most safety-critical input. Fail closed on any id mismatch.
-      if (String(ws.id) !== workspaceId) return err(unknownWorkspace());
+      if (String(ws.id) !== workspaceId) return err(readBackIdentityMismatch());
       return ok({ type: ws.type, dataOwner: ws.dataOwner, egress: ws.egressPolicy });
     },
   };
