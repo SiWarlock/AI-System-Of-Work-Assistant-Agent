@@ -2,10 +2,9 @@
 // KnowledgeWriter stamps it (G1d-2) is re-hydrated + admitted as TRUSTED by the serving gate; an unstamped note
 // is withheld. This is the load-bearing integration that the whole gate-4 arc exists to make true.
 import { describe, it, expect } from "vitest";
-import { ok, err, isOk } from "@sow/contracts";
+import { ok, err, isOk, workspaceId } from "@sow/contracts";
 import type {
   Result,
-  WorkspaceId,
   RevisionId,
   FactIdentity,
   MdContentSha,
@@ -31,7 +30,7 @@ import {
 } from "../src/gbrain/serving/rehydration-gate";
 import { createQuarantineLedger } from "../src/gbrain/serving/quarantine-ledger";
 
-const WS = "ws-personal" as WorkspaceId;
+const WS = workspaceId("ws-personal"); // 24.92: real branded constructor, not an anonymous cast
 const REV = "rev-1" as RevisionId;
 const KEY = new Uint8Array(32).fill(9);
 const REF = "kw-key";

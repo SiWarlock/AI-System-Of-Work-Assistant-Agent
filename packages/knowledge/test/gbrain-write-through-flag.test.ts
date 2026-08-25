@@ -11,11 +11,10 @@ import { describe, it, expect } from "vitest";
 import type {
   GbrainPin,
   ParityReport,
-  WorkspaceId,
   RevisionId,
   AuditId,
 } from "@sow/contracts";
-import { HealthItemSchema, GbrainPinSchema, ParityReportSchema } from "@sow/contracts";
+import { HealthItemSchema, GbrainPinSchema, ParityReportSchema, workspaceId } from "@sow/contracts";
 import {
   evaluateEnablementGate,
   resolveWriteThrough,
@@ -26,7 +25,7 @@ import {
   type WriteThroughResolveInput,
 } from "../src/gbrain/enablement/write-through-flag";
 
-const WS = "ws-employer" as WorkspaceId;
+const WS = workspaceId("ws-employer"); // 24.92: real branded constructor, not an anonymous cast
 const REV = "rev-current" as RevisionId;
 
 /** All-green enablement conditions (the 12.22 GO gate fully satisfied LIVE). */
@@ -186,7 +185,10 @@ describe("resolveWriteThrough — auto-revert to Markdown-provenanced-only (fail
   });
 
   it("a ParityReport for a DIFFERENT workspace does not count as containment (treated absent)", () => {
-    const foreign = cleanReport({ workspaceId: "ws-other" as unknown as WorkspaceId });
+    // 24.92: a real branded constructor — the previous `as unknown as WorkspaceId` double-cast was
+    // redundant, not load-bearing: "ws-other" is a benign different-workspace fixture (WS-8
+    // isolation), never a value the brand would reject.
+    const foreign = cleanReport({ workspaceId: workspaceId("ws-other") });
     const r = resolveWriteThrough(baseInput({ latestParityReport: foreign }), ctx);
     expect(r.active).toBe(false);
     expect(r.reason).toBe("parity_report_absent");

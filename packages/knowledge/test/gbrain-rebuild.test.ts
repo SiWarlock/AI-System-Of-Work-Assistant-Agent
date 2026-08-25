@@ -9,8 +9,8 @@
 // stale snapshot, a derive failure, or a client fault all yield a typed error +
 // a distinct rebuild_divergence System-Health item. Never throws across the boundary.
 import { describe, it, expect } from "vitest";
-import { HealthItemSchema } from "@sow/contracts";
-import type { WorkspaceId, RevisionId, Result } from "@sow/contracts";
+import { HealthItemSchema, workspaceId } from "@sow/contracts";
+import type { RevisionId, Result } from "@sow/contracts";
 import { computeRevisionId } from "../src/knowledge-writer/revision";
 import type { CanonicalVaultSnapshot } from "../src/gbrain/derive/canonical-fact-deriver";
 import { deriveCanonicalFacts } from "../src/gbrain/derive/canonical-fact-deriver";
@@ -24,7 +24,7 @@ import {
 } from "../src/gbrain/rebuild";
 
 const NOW = "2026-07-01T00:00:00.000Z";
-const WS = "ws-1" as WorkspaceId;
+const WS = workspaceId("ws-1"); // 24.92: real branded constructor, not an anonymous cast
 
 function snapshot(files: Record<string, string>): CanonicalVaultSnapshot {
   const map = new Map(Object.entries(files));

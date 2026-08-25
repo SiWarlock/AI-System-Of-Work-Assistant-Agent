@@ -5,7 +5,8 @@
 // or cross-brain grant is refused at construction (no write/admin token reaches
 // the runtime).
 import { describe, it, expect, vi } from "vitest";
-import type { GbrainReadGrant, WorkspaceId, BrainId } from "@sow/contracts";
+import { workspaceId } from "@sow/contracts";
+import type { GbrainReadGrant, BrainId } from "@sow/contracts";
 import {
   createGbrainReadAdapter,
   type GbrainReadClient,
@@ -16,7 +17,7 @@ const SHA40 = "3933eb6a3933eb6a3933eb6a3933eb6a3933eb6a";
 
 function makeGrant(overrides: Partial<GbrainReadGrant> = {}): GbrainReadGrant {
   return {
-    workspaceId: "ws-001" as WorkspaceId,
+    workspaceId: workspaceId("ws-001"), // 24.92: real branded constructor, not an anonymous cast
     brainId: "brain-acme" as BrainId,
     transport: "http",
     scope: ["read"],

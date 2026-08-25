@@ -6,8 +6,8 @@
 import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { ok, LIST_VALUED_EXTRACTION_FIELDS } from "@sow/contracts";
-import type { WorkspaceId, ProvenanceOrigin } from "@sow/contracts";
+import { ok, LIST_VALUED_EXTRACTION_FIELDS, workspaceId } from "@sow/contracts";
+import type { ProvenanceOrigin } from "@sow/contracts";
 import type { EntityCandidate, EntityGbrainReadPort } from "../src/synthesis/entity-resolver";
 import type { SynthesisCandidate, SynthesisSectionPort } from "../src/synthesis/planner";
 import { rewriteVaultForMeeting, MAX_ENTITY_REFS, type MeetingRewriteDeps } from "../src/synthesis/meeting-rewrite";
@@ -212,7 +212,7 @@ describe("normalizeAttendees — no-inference, total, bounded (REQ-F-017 / L11 /
 
 describe("normalizeAttendees — WS-8 and the 13.8f-A producer contract", () => {
   it("identifier_only_refs_resolve_but_never_stub — an unmatched address produces NO note (Q1 = b′)", async () => {
-    const WS_A = "ws-a" as WorkspaceId;
+    const WS_A = workspaceId("ws-a"); // 24.92: real branded constructor, not an anonymous cast
     // A person note that carries the address as an ALIAS — the case passing the address verbatim buys.
     const aliased: EntityCandidate = {
       path: "people/jane-doe.md",
@@ -252,7 +252,7 @@ describe("normalizeAttendees — WS-8 and the 13.8f-A producer contract", () => 
   });
 
   it("named_ref_behavior_is_unchanged — omitting identifierOnlyRefs is byte-identical to before", async () => {
-    const WS_A = "ws-a" as WorkspaceId;
+    const WS_A = workspaceId("ws-a"); // 24.92: real branded constructor, not an anonymous cast
     const deps: MeetingRewriteDeps = {
       gbrain: { workspaceId: WS_A, findCandidates: async () => ok([]) },
       reason: { reason: async () => ({}) },
@@ -284,7 +284,7 @@ describe("normalizeAttendees — WS-8 and the 13.8f-A producer contract", () => 
   });
 
   it("feeds_the_planner_unmassaged — the refs drive 13.8f-A grounding with no adaptation", async () => {
-    const WS_A = "ws-a" as WorkspaceId;
+    const WS_A = workspaceId("ws-a"); // 24.92: real branded constructor, not an anonymous cast
     const janeNote: EntityCandidate = { path: "people/jane-doe.md", slug: "jane-doe", title: "Jane Doe", workspaceId: WS_A };
     const gbrain: EntityGbrainReadPort = {
       workspaceId: WS_A,

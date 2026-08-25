@@ -12,8 +12,8 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve, join } from "node:path";
-import { ok } from "@sow/contracts";
-import type { WorkspaceId, ProvenanceOrigin, KnowledgeMutationPlan } from "@sow/contracts";
+import { ok, workspaceId } from "@sow/contracts";
+import type { ProvenanceOrigin, KnowledgeMutationPlan } from "@sow/contracts";
 import { admitGroundedPath } from "../src/synthesis/grounded-path";
 import { rewriteVaultForSource } from "../src/synthesis/ingest-rewrite";
 import { rewriteVaultForMeeting } from "../src/synthesis/meeting-rewrite";
@@ -230,7 +230,7 @@ describe("the grounded-path invariant has a SINGLE enforcement point (13.8k)", (
 
 describe("the grounded-path invariant holds across BOTH synthesis paths (13.8l)", () => {
   const OWNED = [STRUCTURAL_INDEX_PATH, STRUCTURAL_LOG_POINTER_PATH, `${STRUCTURAL_LOGS_DIR}/2026-07-26.md`];
-  const WS = "ws-a" as WorkspaceId;
+  const WS = workspaceId("ws-a"); // 24.92: real branded constructor, not an anonymous cast
 
   const planTargets = (plans: readonly KnowledgeMutationPlan[]): string[] =>
     plans.flatMap((p) => [

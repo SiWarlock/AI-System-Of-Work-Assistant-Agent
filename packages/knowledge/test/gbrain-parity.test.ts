@@ -14,8 +14,9 @@ import {
   ParityReportSchema,
   HealthItemSchema,
   factIdentity,
+  workspaceId,
 } from "@sow/contracts";
-import type { WorkspaceId, RevisionId } from "@sow/contracts";
+import type { RevisionId } from "@sow/contracts";
 import { computeRevisionId } from "../src/knowledge-writer/revision";
 import {
   deriveCanonicalFacts,
@@ -32,7 +33,7 @@ import {
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
 const NOW = "2026-07-01T00:00:00.000Z";
-const WS = "ws-1" as WorkspaceId;
+const WS = workspaceId("ws-1"); // 24.92: real branded constructor, not an anonymous cast
 
 function idMinter(prefix: string): () => string {
   let n = 0;

@@ -7,8 +7,8 @@
 // reappears in committed Markdown is caught + surfaced (content-independent, so a
 // one-byte re-introduction cannot evade the block). A derive failure fails closed.
 import { describe, it, expect } from "vitest";
-import type { QuarantineRecord, AuditId, FactIdentity, WorkspaceId } from "@sow/contracts";
-import { factIdentity, HealthItemSchema } from "@sow/contracts";
+import type { QuarantineRecord, AuditId, FactIdentity } from "@sow/contracts";
+import { factIdentity, HealthItemSchema, workspaceId } from "@sow/contracts";
 import { createQuarantineLedger } from "../src/gbrain/serving/quarantine-ledger";
 import type { CanonicalVaultSnapshot } from "../src/gbrain/derive/canonical-fact-deriver";
 import { deriveCanonicalFacts } from "../src/gbrain/derive/canonical-fact-deriver";
@@ -17,11 +17,12 @@ import {
   type CrashRecoveryDeps,
 } from "../src/gbrain/enablement/crash-recovery-reconciler";
 
-const WS = "ws-employer";
+// 24.92: a real branded constructor, cast ONCE here rather than at every use site.
+const WS = workspaceId("ws-employer");
 
 function snapshot(files: Record<string, string>): CanonicalVaultSnapshot {
   return {
-    workspaceId: WS as WorkspaceId,
+    workspaceId: WS,
     revisionId: "rev-current" as CanonicalVaultSnapshot["revisionId"],
     files: new Map(Object.entries(files)),
   };
@@ -40,7 +41,7 @@ function quarantineRecord(
 ): QuarantineRecord {
   return {
     factIdentity: id as FactIdentity,
-    workspaceId: WS as WorkspaceId,
+    workspaceId: WS,
     divergenceRef: "div-1",
     divergenceClass: "db_only",
     capturedDbDigest: "digest-abc",
@@ -150,7 +151,7 @@ describe("recoverServingState — never resurrects a quarantined fact", () => {
     const alphaPage = factIdentity({ kind: "page", slug: "alpha" }) as string;
     const foreign: QuarantineRecord = {
       ...quarantineRecord(alphaPage, "purged"),
-      workspaceId: "ws-personal" as WorkspaceId,
+      workspaceId: workspaceId("ws-personal"), // 24.92: real branded constructor, not an anonymous cast
     };
     const r = recoverServingState(
       { snapshot: snap, quarantine: createQuarantineLedger([foreign]) },

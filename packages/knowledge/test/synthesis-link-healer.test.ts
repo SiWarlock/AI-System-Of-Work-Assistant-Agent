@@ -7,13 +7,13 @@
 // (safety rule 1: the sole writer — never a direct Markdown write). PURE, deterministic, never-throws;
 // reuses the 13.8a faithful-match discipline (fold em/en dashes; spaces≠hyphens).
 import { describe, it, expect } from "vitest";
-import { LinkMutationSchema } from "@sow/contracts";
-import type { WorkspaceId } from "@sow/contracts";
+import { LinkMutationSchema, workspaceId } from "@sow/contracts";
 import type { EntityCandidate } from "../src/synthesis/entity-resolver";
 import { healLinks, type LinkHeal } from "../src/synthesis/link-healer";
 
-const WS_A = "ws-a" as WorkspaceId;
-const WS_B = "ws-b" as WorkspaceId;
+// 24.92: real branded constructors, not anonymous casts.
+const WS_A = workspaceId("ws-a");
+const WS_B = workspaceId("ws-b");
 const SRC = "notes/2026-07-25-standup.md";
 
 const cand = (o: Partial<EntityCandidate> & Pick<EntityCandidate, "path" | "slug">): EntityCandidate => ({

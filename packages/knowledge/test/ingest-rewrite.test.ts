@@ -6,8 +6,8 @@ import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { classifyImporterSource, scanProductionImporters, ungatedImporters } from "./support/dormancy-pin";
-import { ok } from "@sow/contracts";
-import type { Result, WorkspaceId, ProvenanceOrigin } from "@sow/contracts";
+import { ok, workspaceId } from "@sow/contracts";
+import type { Result, ProvenanceOrigin } from "@sow/contracts";
 import type { EntityCandidate, EntityGbrainReadPort, EntityReadFault } from "../src/synthesis/entity-resolver";
 import type { SynthesisCandidate, SynthesisSectionPort, NoteRegionDescriptor } from "../src/synthesis/planner";
 import {
@@ -18,7 +18,7 @@ import {
   type StructuralMutations,
 } from "../src/synthesis/ingest-rewrite";
 
-const WS_A = "ws-a" as WorkspaceId;
+const WS_A = workspaceId("ws-a"); // 24.92: real branded constructor, not an anonymous cast
 const cand = (o: Partial<EntityCandidate> & Pick<EntityCandidate, "path" | "slug">): EntityCandidate => ({ workspaceId: WS_A, ...o });
 
 function fakeGbrain(byName: Record<string, () => Result<readonly EntityCandidate[], EntityReadFault>>): EntityGbrainReadPort {

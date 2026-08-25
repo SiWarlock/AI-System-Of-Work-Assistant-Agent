@@ -7,8 +7,8 @@
 // Degraded coverage (dirty/failed ParityReport, pin mismatch, oracle-build fail) →
 // direct committed-Markdown only. Design doc invariants (i)/(v). Deterministic → TDD.
 import { describe, it, expect } from "vitest";
+import { workspaceId } from "@sow/contracts";
 import type {
-  WorkspaceId,
   RevisionId,
   MdContentSha,
   FactIdentity,
@@ -56,7 +56,7 @@ const KEY = new TextEncoder().encode(SECRET_MARKER);
 const REF: SecretRef = "keychain:sow.kw.provenance-signing-key";
 
 // ── fixture vocabulary ────────────────────────────────────────────────────────
-const WS = "ws-emp" as WorkspaceId;
+const WS = workspaceId("ws-emp"); // 24.92: real branded constructor, not an anonymous cast
 const REV = "rev-001" as RevisionId;
 const SHA_AUTH = "a".repeat(64) as MdContentSha;
 const SHA_OTHER = "b".repeat(64) as MdContentSha;
@@ -351,7 +351,7 @@ describe("admitForServing — fail-closed on key resolution (§16 / safety rule 
 describe("admitForServing — hard wiring errors return a typed Result error", () => {
   it("errs on a workspace mismatch between the request and the allow-set (safety rule 4)", async () => {
     const res = await admitForServing(
-      request({ allowSet: { workspaceId: "ws-personal" as WorkspaceId, revisionId: REV, facts: [] } }),
+      request({ allowSet: { workspaceId: workspaceId("ws-personal"), revisionId: REV, facts: [] } }), // 24.92
       deps(),
     );
     expect(res.ok).toBe(false);

@@ -43,8 +43,7 @@ import type {
   LinkMutation,
   FrontmatterPatch,
 } from "@sow/contracts";
-import { renderGeneratedRegion } from "../markdown-vault/sections";
-import { resolveEntity, stubNotePathFor, type EntityRef, type EntityCandidate, type EntityGbrainReadPort } from "./entity-resolver";
+import { resolveEntity, mintEntityStub, type EntityRef, type EntityCandidate, type EntityGbrainReadPort, type WithheldReason } from "./entity-resolver";
 import { planSynthesis, type SynthesisReasonPort, type SynthesisSectionPort } from "./planner";
 import { admitGroundedPath, rebuildPlanWithMutations, type GroundedPathRefusal } from "./grounded-path";
 
@@ -127,6 +126,35 @@ export interface MeetingRewriteReceipt {
    * loop) are already transitively bounded by `MAX_ENTITY_REFS` — length can never exceed 1 + 200.
    */
   readonly refusals: readonly GroundedPathRefusal[];
+  /**
+   * Per-code count of EVERY `WithheldReason` this run's own DIRECT `resolveEntity` call site produced
+   * (13.23-C — this channel's analog of `planner.ts`'s `entityRefsWithheldByReason`, tracked there as
+   * "leg C"). Code-ONLY (rule 7: never a ref/name/path/slug). SPARSE, not exhaustive: an absent key
+   * means that code never fired this run; a present key its fired count. Built via a `Map` and
+   * converted to the plain-object shape ONLY once via `Object.fromEntries` (mirrors
+   * `planner.ts`'s `collectEntities` — `Object.fromEntries` defines OWN properties, so a
+   * `WithheldReason` member spelled `"__proto__"`/`"constructor"`/`"toString"` still lands as a
+   * harmless own key rather than touching the object's prototype).
+   *
+   * ⛔ DELIBERATELY NAMED DIFFERENTLY FROM `planner.ts`'s `entityRefsWithheldByReason` — a
+   * `MeetingRewriteReceipt` structurally carries no field of THAT name
+   * (`the_meeting_rewrite_direct_call_site_does_NOT_flow_through_this_channel`,
+   * synthesis-planner.test.ts). That pin asserts a DIFFERENT channel (the MODEL-supplied
+   * `candidate.entityRefs` `collectEntities` sees) never reaches this receipt; reusing its field name
+   * here for a field that DOES exist would have made that assertion pass for the wrong reason (name
+   * collision, not absence) the moment this field landed.
+   *
+   * ⛔ SCOPE: covers ONLY the direct loop over `input.entityRefs`/`identifierOnlyRefs` — the
+   * counterpart gap `planner.ts`'s own doc comment names. `ws_scope_mismatch` is embedded in the type
+   * for exhaustiveness but is STRUCTURALLY UNREACHABLE via a well-behaved port on this call site: the
+   * outer WS-8 gate above already requires `deps.gbrain.workspaceId === input.workspaceId` before this
+   * loop is ever entered, so `resolveEntity`'s OWN internal re-gate can only fire here via a hostile
+   * double-read `workspaceId` getter (pinned, not merely asserted unreachable).
+   *
+   * ⛔ DORMANT, PRODUCER-ONLY — same as `refusals` immediately above: no meeting-path worker consumer
+   * exists yet.
+   */
+  readonly directEntityRefsWithheldByReason: Readonly<Partial<Record<WithheldReason, number>>>;
 }
 
 interface Muts {
@@ -157,6 +185,9 @@ export async function rewriteVaultForMeeting(
   // throwing port becomes byte-identical to a benign empty one — destroying exactly the distinction
   // this channel exists to create.
   const refusals: GroundedPathRefusal[] = [];
+  // 13.23-C: hoisted alongside `refusals`, for the SAME reason (see above) — a fault after some
+  // withholds have already tallied must not discard what was already observed.
+  const directWithheldByReason = new Map<WithheldReason, number>();
   const empty = (): MeetingRewriteReceipt => ({
     runId,
     plans: [],
@@ -166,6 +197,9 @@ export async function rewriteVaultForMeeting(
     meetingNoteLinkMutations: [],
     groundedPaths: [],
     refusals,
+    directEntityRefsWithheldByReason: Object.fromEntries(directWithheldByReason) as Readonly<
+      Partial<Record<WithheldReason, number>>
+    >,
   });
   try {
     // Every guard lives INSIDE the try so the total-function claim holds even for a null/hostile
@@ -223,13 +257,16 @@ export async function rewriteVaultForMeeting(
           // (ambiguous/lossy_match/gbrain_unavailable/malformed_entity/ws_scope_mismatch) are not this
           // channel's concern and are left alone, exactly as before.
           const { reason } = resolution;
+          // 13.23-C: EVERY withheld reason on this DIRECT call site is tallied here — unlike
+          // `refusals` immediately below, which only ever carries the two GroundedPathRefusal codes.
+          directWithheldByReason.set(reason, (directWithheldByReason.get(reason) ?? 0) + 1);
           if (reason === "structural_surface" || reason === "unsafe_shape") refusals.push(reason);
         } else if (allowStub) {
-          // 13.8j: namespaced by the ONE shared derivation (never built inline), so an untrusted
-          // attendee name can't mint a root structural surface. `null` ⇒ not a mintable stub.
-          const stubPath = stubNotePathFor(resolution, ref?.kind);
-          if (stubPath !== null && admitInto(stubPath, grounded, groundedPaths)) {
-            stubCreates.push({ path: stubPath, body: renderGeneratedRegion("stub", "") });
+          // 13.8j/13-residual-1: namespaced by the ONE shared derivation (never built inline), so an
+          // untrusted attendee name can't mint a root structural surface. `null` ⇒ not mintable.
+          const stub = mintEntityStub(resolution, ref?.kind);
+          if (stub !== null && admitInto(stub.path, grounded, groundedPaths)) {
+            stubCreates.push(stub);
           }
         }
         // a stub-suppressed no-match ⇒ nothing grounded, nothing to report — a create_stub with
@@ -298,6 +335,9 @@ export async function rewriteVaultForMeeting(
       meetingNoteLinkMutations,
       groundedPaths,
       refusals,
+      directEntityRefsWithheldByReason: Object.fromEntries(directWithheldByReason) as Readonly<
+        Partial<Record<WithheldReason, number>>
+      >,
     };
   } catch {
     return empty(); // keeps any refusals accumulated before the fault

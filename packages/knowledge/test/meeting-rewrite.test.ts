@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { ok, err } from "@sow/contracts";
+import { ok, err, workspaceId } from "@sow/contracts";
 import type { Result, WorkspaceId, ProvenanceOrigin } from "@sow/contracts";
 import { TBD } from "@sow/domain";
 import type { EntityCandidate, EntityGbrainReadPort, EntityReadFault, EntityRef } from "../src/synthesis/entity-resolver";
@@ -22,8 +22,9 @@ import {
 } from "../src/synthesis/meeting-rewrite";
 import { classifyImporterSource, scanProductionImporters, ungatedImporters } from "./support/dormancy-pin";
 
-const WS_A = "ws-a" as WorkspaceId;
-const WS_B = "ws-b" as WorkspaceId;
+// 24.92: real branded constructors, not anonymous casts.
+const WS_A = workspaceId("ws-a");
+const WS_B = workspaceId("ws-b");
 const MEETING = "meetings/2026-07-26-standup.md";
 
 const cand = (o: Partial<EntityCandidate> & Pick<EntityCandidate, "path" | "slug">): EntityCandidate => ({ workspaceId: WS_A, ...o });
@@ -532,7 +533,9 @@ describe("rewriteVaultForMeeting — a refusal is observable and carries no cont
 
   it("refusals_is_required_on_the_receipt — the field cannot be omitted (contracts L103)", () => {
     // @ts-expect-error — omitting `refusals` must fail to type-check; an UNUSED directive here (TS2578)
-    // is the pin failing, not passing (worker L80's proven pin, applied here).
+    // is the pin failing, not passing (worker L80's proven pin, applied here). Every OTHER required
+    // field — including the 13.23-C tally added after this pin was written — is present, so the
+    // directive isolates exactly `refusals`'s omission rather than a compound one.
     const literal: MeetingRewriteReceipt = {
       runId: "run-1",
       plans: [],
@@ -541,8 +544,144 @@ describe("rewriteVaultForMeeting — a refusal is observable and carries no cont
       proposeCount: 0,
       meetingNoteLinkMutations: [],
       groundedPaths: [],
+      directEntityRefsWithheldByReason: {},
     };
     // Reference `literal` so it's not reported as an unused local by a stricter lint config someday.
     expect(literal.runId).toBe("run-1");
+  });
+});
+
+// ── 13.23-C — every WithheldReason reaches the meeting receipt as a per-code tally ────────────────
+//
+// `resolveEntity`'s direct call site in the per-ref loop above only ever surfaced TWO of the seven
+// `WithheldReason` codes into an observable channel (`refusals`, and only its two `GroundedPathRefusal`
+// members). The other five — ambiguous/lossy_match/gbrain_unavailable/malformed_entity/
+// ws_scope_mismatch — were discarded silently. `directEntityRefsWithheldByReason` closes that gap,
+// mirroring `planner.ts`'s `entityRefsWithheldByReason` (Map-accumulated, `Object.fromEntries`-converted
+// once, so a future `WithheldReason` member named `"__proto__"`/`"constructor"`/`"toString"` still lands
+// as a harmless own key).
+
+describe("rewriteVaultForMeeting — every WithheldReason reaches the receipt as a per-code tally (13.23-C)", () => {
+  it("every_withheld_reason_reaches_the_meeting_receipt_as_a_per_code_count", async () => {
+    // Six of the seven codes are reachable through an ordinary (non-hostile) port on THIS direct call
+    // site, one entity ref per code:
+    const dup = [cand({ path: "a/dup.md", slug: "dup", title: "Ambiguous" }), cand({ path: "b/dup.md", slug: "dup2", title: "Ambiguous" })];
+    const deps = mkDeps({
+      gbrain: fakeGbrain({
+        Ambiguous: () => ok(dup), // 2 distinct faithful matches ⇒ ambiguous
+        "C++": () => ok([cand({ path: "concepts/c.md", slug: "c", title: "C" })]), // lossy collision ⇒ lossy_match
+        GbrainDown: () => err({ code: "read_fault" }), // ⇒ gbrain_unavailable
+        Ghost1: () => ok([cand({ path: "/etc/passwd.md", slug: "ghost1", title: "Ghost1" })]), // absolute ⇒ unsafe_shape
+        Ghost2: () => ok([cand({ path: "index.md", slug: "ghost2", title: "Ghost2" })]), // ⇒ structural_surface
+      }),
+    });
+    const receipt = await rewriteVaultForMeeting(
+      baseInput({
+        entityRefs: [
+          { name: "   ", kind: "person" }, // no usable slug anchor ⇒ malformed_entity, no read issued
+          { name: "Ambiguous", kind: "person" },
+          { name: "C++", kind: "concept" },
+          { name: "GbrainDown", kind: "person" },
+          { name: "Ghost1", kind: "person" },
+          { name: "Ghost2", kind: "project" },
+        ],
+      }),
+      deps,
+    );
+    expect(receipt.directEntityRefsWithheldByReason).toEqual({
+      malformed_entity: 1,
+      ambiguous: 1,
+      lossy_match: 1,
+      gbrain_unavailable: 1,
+      unsafe_shape: 1,
+      structural_surface: 1,
+    });
+
+    // The seventh code, `ws_scope_mismatch`, is STRUCTURALLY UNREACHABLE on this call site through any
+    // well-behaved port: `rewriteVaultForMeeting` already gates `deps.gbrain.workspaceId ===
+    // input.workspaceId` ONCE, before the per-ref loop is even entered (mirrors
+    // `ws8_never_reads_across_workspaces` above) — so a genuinely foreign-workspace port short-circuits
+    // to an empty receipt with ZERO queries, never reaching this loop at all (the same fact
+    // `synthesis-planner.test.ts`'s `the_meeting_rewrite_direct_call_site_does_NOT_flow_through_this_channel`
+    // already established for this exact call site, using "ambiguous" as ITS stand-in for precisely
+    // this reason). The only way to observe the tally handle `ws_scope_mismatch` here is a HOSTILE
+    // double-read `workspaceId` getter — matching values on the outer gate's read, then a DIFFERENT
+    // value on `resolveEntity`'s own internal re-gate a moment later (the same TOCTOU shape
+    // `entity-resolver.ts`'s `meetingNotePath` guard defends against). Driven for real, not merely
+    // asserted unreachable:
+    let reads = 0;
+    const hostilePort: EntityGbrainReadPort = {
+      get workspaceId() {
+        reads++;
+        return reads === 1 ? WS_A : WS_B;
+      },
+      findCandidates: async () => ok([]),
+    };
+    const mismatchReceipt = await rewriteVaultForMeeting(
+      baseInput({ entityRefs: [{ name: "Whoever", kind: "person" }] }),
+      mkDeps({ gbrain: hostilePort }),
+    );
+    expect(mismatchReceipt.directEntityRefsWithheldByReason).toEqual({ ws_scope_mismatch: 1 });
+  });
+
+  it("absent_reasons_are_absent_keys_not_zeroes — a sparse tally, never a zero-padded exhaustive one", async () => {
+    const deps = mkDeps({
+      gbrain: fakeGbrain({
+        Ambiguous: () => ok([cand({ path: "a/dup.md", slug: "dup", title: "Ambiguous" }), cand({ path: "b/dup.md", slug: "dup2", title: "Ambiguous" })]),
+      }),
+    });
+    const receipt = await rewriteVaultForMeeting(baseInput({ entityRefs: [{ name: "Ambiguous", kind: "person" }] }), deps);
+    expect(receipt.directEntityRefsWithheldByReason).toEqual({ ambiguous: 1 });
+    // the other six codes are ABSENT keys, not present with value 0 — `Object.keys` length pins it,
+    // because `toEqual({ambiguous: 1})` alone would already fail on an extra `foo: 0` key too, but this
+    // makes the sparse intent explicit and named rather than an implicit side effect of `toEqual`.
+    expect(Object.keys(receipt.directEntityRefsWithheldByReason)).toEqual(["ambiguous"]);
+  });
+
+  it("the_tally_carries_no_name_path_or_slug — code-only, rule 7", async () => {
+    const sentinelName = "TOTALLY-SECRET-EMPLOYER-CODENAME-Q3";
+    const deps = mkDeps({
+      gbrain: fakeGbrain({
+        [sentinelName]: () =>
+          ok([
+            cand({ path: "a/dup.md", slug: "dup", title: sentinelName }),
+            cand({ path: "b/dup.md", slug: "dup2", title: sentinelName }),
+          ]),
+      }),
+    });
+    const receipt = await rewriteVaultForMeeting(
+      baseInput({ entityRefs: [{ name: sentinelName, kind: "person" }] }),
+      deps,
+    );
+    // non-vacuity first — the withhold really fired, so an empty tally isn't satisfying the exclusion
+    // check for free.
+    expect(receipt.directEntityRefsWithheldByReason).toEqual({ ambiguous: 1 });
+    expect(JSON.stringify(receipt.directEntityRefsWithheldByReason)).not.toContain(sentinelName);
+    expect(JSON.stringify(receipt.directEntityRefsWithheldByReason)).not.toContain("SECRET");
+  });
+
+  it("existing_refusals_channel_is_unchanged — the tally is ADDITIVE, never a replacement for `refusals`", async () => {
+    // The exact fixture `refusal_carries_no_path_or_title_text` above already pins `refusals` against
+    // — reused so a divergence between the two channels on the SAME run is directly comparable.
+    const deps = mkDeps({
+      gbrain: fakeGbrain({
+        Ghost1: () => ok([cand({ path: "/employer-internal/secret.md", slug: "ghost1", title: "Ghost1" })]),
+        Ghost2: () => ok([cand({ path: "index.md", slug: "ghost2", title: "Ghost2" })]),
+      }),
+    });
+    const receipt = await rewriteVaultForMeeting(
+      baseInput({
+        entityRefs: [
+          { name: "Ghost1", kind: "person" },
+          { name: "Ghost2", kind: "project" },
+        ],
+      }),
+      deps,
+    );
+    // unchanged: still exactly the two GroundedPathRefusal codes, same order, same values as before
+    // this slice — the OLD channel's own test (line ~460 above) pins the identical fixture's shape.
+    expect(receipt.refusals).toEqual(["unsafe_shape", "structural_surface"]);
+    // NEW: the tally observes the SAME two withholds too — additive, not a fork of the decision.
+    expect(receipt.directEntityRefsWithheldByReason).toEqual({ unsafe_shape: 1, structural_surface: 1 });
   });
 });

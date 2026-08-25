@@ -9,9 +9,9 @@ import { describe, it, expect, vi } from "vitest";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { ok, err, KnowledgeMutationPlanSchema, EntityRefSchema } from "@sow/contracts";
+import { ok, err, KnowledgeMutationPlanSchema, EntityRefSchema, workspaceId } from "@sow/contracts";
 import { TBD } from "@sow/domain";
-import type { Result, WorkspaceId, ProvenanceOrigin, KnowledgeMutationPlan } from "@sow/contracts";
+import type { Result, ProvenanceOrigin, KnowledgeMutationPlan } from "@sow/contracts";
 import type { EntityCandidate, EntityGbrainReadPort, EntityReadFault, EntityRef, EntityKind } from "../src/synthesis/entity-resolver";
 import { rewriteVaultForMeeting } from "../src/synthesis/meeting-rewrite";
 // ⚠ Deliberate exception to this package's "import the module under test directly, not the barrel"
@@ -32,7 +32,7 @@ import {
   type SynthesisError,
 } from "../src/synthesis/planner";
 
-const WS_A = "ws-a" as WorkspaceId;
+const WS_A = workspaceId("ws-a"); // 24.92: real branded constructor, not an anonymous cast
 
 // ── fakes ─────────────────────────────────────────────────────────────────────────
 const cand = (o: Partial<EntityCandidate> & Pick<EntityCandidate, "path" | "slug">): EntityCandidate => ({ workspaceId: WS_A, ...o });
@@ -611,7 +611,7 @@ describe("planSynthesis — EntityRefSchema gates model-supplied entityRefs at t
 // resolveEntity still withholds correctly; only the SIGNAL that it did is new. DORMANT: leg B (worker)
 // is the consumer (System Health via deps.health.surface); nothing reads this map yet.
 
-const WS_B = "ws-b" as WorkspaceId;
+const WS_B = workspaceId("ws-b"); // 24.92: real branded constructor, not an anonymous cast
 
 describe("planSynthesis — a withheld WithheldReason reaches SynthesisOutcome as a per-code count (13.23 leg A)", () => {
   it("withheld_ws_scope_mismatch_reaches_the_outcome_as_a_per_code_count — the WS-8 signal is individually distinguishable", async () => {

@@ -6,14 +6,15 @@ import { describe, it, expect } from "vitest";
 import type {
   QuarantineRecord,
   FactIdentity,
-  WorkspaceId,
   AuditId,
   RemediationState,
 } from "@sow/contracts";
+import { workspaceId } from "@sow/contracts";
 import { createQuarantineLedger } from "../src/gbrain/serving/quarantine-ledger";
 
-const WS_A = "ws-emp" as WorkspaceId;
-const WS_B = "ws-personal" as WorkspaceId;
+// 24.92: real branded constructors, not anonymous casts.
+const WS_A = workspaceId("ws-emp");
+const WS_B = workspaceId("ws-personal");
 const ID_AUTH = "page:acme/auth" as FactIdentity;
 const ID_OTHER = "page:acme/other" as FactIdentity;
 
