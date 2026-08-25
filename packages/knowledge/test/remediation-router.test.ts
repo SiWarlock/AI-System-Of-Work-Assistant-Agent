@@ -6,6 +6,9 @@
 // review (auto-purge requires POSITIVE proof of non-derivability, not merely an
 // absent stamp). Pure/deterministic, typed Result — never throws across the boundary.
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { isOk, isErr, DivergenceSchema } from "@sow/contracts";
 import type { Divergence, DivergenceClass } from "@sow/contracts";
 import {
@@ -15,6 +18,7 @@ import {
   type PurgeOnlyToken,
   type NonDerivabilityProof,
 } from "../src/gbrain/remediation/router";
+import { scanProductionImporters } from "./support/dormancy-pin";
 
 const WS = "ws-employer";
 const SHA = "0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d";
@@ -188,5 +192,73 @@ describe("RemediationRouter — unstamped: never auto-purge on merely-absent-sta
     expect(isErr(r)).toBe(true);
     if (!isErr(r)) return;
     expect(r.error.code).toBe("purge_requires_positive_proof");
+  });
+});
+
+// ── `### 24.109` — the four AuditSignal channels' claims are DISPOSITIONED INDIVIDUALLY ───────────
+//
+// All four (router.ts, generative-proposal-intake.ts, writer.ts, provenance-stamp.ts) previously
+// carried the IDENTICAL sentence ("Signal is produced and gated; NO ADAPTER PERSISTS IT — ### 24.109")
+// even though they are not the same case: three refuse ROW CANDIDATE DATA, while provenance-stamp.ts's
+// `stamp_invalid` refuses INTERNALLY-MINTED data (a contract-drift bug, never a row). This slice is
+// in-file disposition only — no port/adapter/store binds here (24.45/24.52/24.53/24.64's unbounded-
+// serial-write hazard applies the moment one does; out of scope).
+
+describe("### 24.109 — the four AuditSignal producers' claims are dispositioned individually", () => {
+  const readSrc = (rel: string) => readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), rel), "utf8");
+
+  /** The claim paragraph around the FIRST `24.109` marker in a file — generous window either side so
+   *  the extraction is robust to minor future reflow without accidentally spilling into an unrelated
+   *  paragraph two sections away. */
+  function claimAround(src: string): string {
+    const lines = src.split("\n");
+    const idx = lines.findIndex((l) => l.includes("24.109"));
+    expect(idx, "no ### 24.109 marker found in this file").toBeGreaterThan(-1);
+    return lines.slice(Math.max(0, idx - 6), idx + 9).join(" ").replace(/\s+/g, " ");
+  }
+
+  it("the_four_audit_signal_claims_are_dispositioned_individually", () => {
+    const claims = {
+      router: claimAround(readSrc("../src/gbrain/remediation/router.ts")),
+      intake: claimAround(readSrc("../src/gbrain/remediation/generative-proposal-intake.ts")),
+      writer: claimAround(readSrc("../src/knowledge-writer/writer.ts")),
+      stamp: claimAround(readSrc("../src/knowledge-writer/provenance-stamp.ts")),
+    };
+
+    // pairwise distinct — the four no longer carry the SAME sentence.
+    const distinct = new Set(Object.values(claims));
+    expect(distinct.size, "expected 4 distinct claims, found fewer").toBe(4);
+
+    // each of the three ROW-CANDIDATE channels says so, in its own words — each names what IT
+    // refuses, distinctly from a bare repetition of the other three's sentence.
+    expect(claims.router).toContain("ROW");
+    expect(claims.router).toContain("CANDIDATE");
+    expect(claims.intake).toContain("ROW CANDIDATE data");
+    expect(claims.writer).toContain("LIVE sole-writer gate");
+
+    // stamp_invalid's claim EXPLICITLY names the internally-minted distinction — the one open clause
+    // the brief calls out by name.
+    expect(claims.stamp.toLowerCase()).toContain("internally-minted");
+    expect(claims.stamp).toContain("contract-drift bug");
+    expect(claims.stamp).toContain("EXPLICITLY DISTINGUISHED");
+  });
+
+  it("no_adapter_persists_an_audit_signal — a repo-scan zero-consumer pin so a future binding cannot land silently", () => {
+    // `kwSchemaRejectedSignal` (writer.ts) and `planInvalidSignal` (router.ts) are exported "FOR
+    // PINNING" ONLY — no production caller should ever import either; only the producer's own
+    // internal call site and the test suite's pins do. `proposalRejectedSignal`
+    // (generative-proposal-intake.ts) and provenance-stamp.ts's inline construction are NOT exported
+    // at all, so they are structurally unreachable from outside their own module — scanning for them
+    // would be vacuous by construction, not a meaningful check, so this scans the two that COULD be
+    // reached.
+    const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+    const bySignal = scanProductionImporters("kwSchemaRejectedSignal", repoRoot);
+    const byPlanInvalid = scanProductionImporters("planInvalidSignal", repoRoot);
+    expect(bySignal, "a production file imports kwSchemaRejectedSignal").toEqual([]);
+    expect(byPlanInvalid, "a production file imports planInvalidSignal").toEqual([]);
+    // non-vacuity: the SAME scan mechanism, aimed at a symbol with a REAL (arming-gated) production
+    // importer, finds one — proving an empty result above reflects the population, not a broken scan.
+    const control = scanProductionImporters("rewriteVaultForMeeting", repoRoot);
+    expect(control.length, "the scan's own positive control found no importer — the instrument is dead").toBeGreaterThan(0);
   });
 });

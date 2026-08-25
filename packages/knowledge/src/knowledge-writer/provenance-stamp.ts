@@ -139,7 +139,15 @@ export interface VerifyInputs extends SignedTuple {
  * when someone adds a signal here. That is the build-time hazard; no row can reach this today.
  * ⛔ `sow:signed-provenance-stamp` has NO free-form-key region on either validator surface
  * (measured), so its cut is the empty set and no row-key pin is possible — recorded, not faked.
- * ⚠ Signal is produced and gated; NO ADAPTER PERSISTS IT — `### 24.109`.
+ * ⚠ `### 24.109` DISPOSITIONED, EXPLICITLY DISTINGUISHED FROM THE OTHER THREE SITES (router.ts /
+ * generative-proposal-intake.ts / writer.ts): those three refuse ROW CANDIDATE DATA reaching a
+ * candidate-data gate; THIS ONE refuses a stamp THIS PACKAGE ITSELF MINTED failing its OWN frozen
+ * contract — a contract-drift bug, never row data (the paragraph immediately above). Signal is
+ * produced and gated; NO ADAPTER PERSISTS IT either — but unlike the other three, a future consumer
+ * here could not key by a row identity: the cut being the empty set (above) means there is no
+ * row-key to pin. It would need the four content-binding fields instead (`workspaceId` /
+ * `factIdentity` / `originPath` / `mdContentSha` — `SignedTuple`), since those are what a
+ * contract-drift bug traces back to, not a "row".
  */
 export interface StampInvalid extends IssueCarryingRefusal {
   readonly code: "stamp_invalid";

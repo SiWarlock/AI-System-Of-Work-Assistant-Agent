@@ -111,7 +111,14 @@ export type RemediationError =
   // `### 24.103` — extends the shared `IssueCarryingRefusal`, so `audit` is REQUIRED and the compiler
   // enumerates all three `materialize` construction sites. The union keeps its OWN vocabulary
   // (`plan_invalid`, not `schema_rejected`): the shape is shared, the unions are not merged.
-  // ⚠ Signal is produced and gated; NO ADAPTER PERSISTS IT — `### 24.109`.
+  // ⚠ `### 24.109` DISPOSITIONED (not merely flagged): this channel refuses a `materialize` ROW
+  // CANDIDATE — a remediation-proposed `KnowledgeMutationPlan`, re-validated through the FULL writer
+  // pipeline (this module's own header). Signal is produced and gated; NO ADAPTER PERSISTS IT. A
+  // future consumer would key a persisted signal by the candidate's own `planId` (or the source
+  // divergence's `factIdentity`) to correlate a later human review. Distinct from the other three
+  // `### 24.109` sites: `generative-proposal-intake.ts` refuses ROW candidates from TWO schemas,
+  // `writer.ts` is the LIVE, highest-traffic channel, and `provenance-stamp.ts`'s `stamp_invalid`
+  // refuses INTERNALLY-MINTED data — never a row.
   | ({
       readonly code: "plan_invalid";
       readonly stage: "ajv" | "zod" | "scoped";

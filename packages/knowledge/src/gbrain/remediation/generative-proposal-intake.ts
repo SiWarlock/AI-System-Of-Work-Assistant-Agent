@@ -106,7 +106,14 @@ export type IntakeError =
   // `### 24.103`'s ORIGINALLY NAMED TARGET. ⚠ The census found this channel is the DORMANT one
   // (zero production callers) and that the LIVE risk was `writer.ts`, which the entry never
   // mentioned — recorded here so the asymmetry is not re-discovered.
-  // ⚠ Signal is produced and gated; NO ADAPTER PERSISTS IT — `### 24.109`.
+  // ⚠ `### 24.109` DISPOSITIONED: this channel refuses ROW CANDIDATE data too, but from TWO
+  // DIFFERENT schemas depending on `code` (see the second echoing member below) — the model's own
+  // `GBrainProposedFact` proposal (`schema_rejected`, here) or the `KnowledgeMutationPlan` this
+  // module derives from it (`plan_invalid`, below). Signal is produced and gated; NO ADAPTER
+  // PERSISTS IT. A future consumer would key by whichever candidate's own identity — the proposal's
+  // scratch origin, or the derived plan's `planId` — produced THIS rejection. Distinct from
+  // `router.ts`/`writer.ts` (a single schema each) and from `provenance-stamp.ts`'s internally-minted
+  // `stamp_invalid` (never a row).
   | ({
       readonly code: "schema_rejected";
       readonly stage: "ajv" | "zod";

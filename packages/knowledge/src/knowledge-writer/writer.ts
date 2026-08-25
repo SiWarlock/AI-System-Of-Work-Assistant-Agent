@@ -282,13 +282,35 @@ export type WriteFailure =
  * pipeline + invariants. Returns the committed revision + its AuditRecord, or a
  * typed `WriteFailure`.
  *
- * ⛔ THIS FUNCTION CONTAINS NO `try` ANYWHERE, so the §16 never-throw promise is not total AT THIS
- * FUNCTION, and the old "for well-typed deps" qualifier did not save it (measured, 24.67). Every
- * `await` on injected substrate can reject out of it:
+ * ⛔ (`### 24.116`) `applyPlan` CONTAINS EXACTLY TWO `try` BLOCKS, NOT ZERO — stated as a CHECKABLE
+ * claim, not the blanket zero-`try` universal this docblock asserted here once and got wrong,
+ * falsified by this same function's own body 300+ lines below: `validation-refusal.ts` copied that
+ * universal, security review caught it there ("an auditor greps `try`, finds hits inside `applyPlan`,
+ * and concludes the whole argument is stale"), and the copy got fixed while the original stayed
+ * wrong. Named so a future `try` addition without a comment update is checkable,
+ * not merely re-assertable: both wrap a POST-COMMIT recording write (24.72 — typed, not thrown) — the
+ * `try` at `:624` wraps `deps.audit.append`, folding a throw to `audit_record_failed`; the `try` at
+ * `:646` wraps `deps.revisions.record`, folding a throw to `revision_record_failed`. ⚠ THESE TWO
+ * NUMBERS ARE THE CHECKABLE PART, NOT DECORATION: `writer.test.ts`'s
+ * `applyPlan_docblock_makes_no_false_universal_try_claim` extracts them from this very paragraph and
+ * cross-checks them against a live scan of the function body, so a future `try` block added — or
+ * these two moved — without updating this comment reds the suite rather than going silently stale
+ * the way the sentence this replaces did.
+ * The candidate-data GATE CALL (`runGate`, step 2, long before either try block opens) sits OUTSIDE
+ * both — not because it was overlooked, but because it runs structurally EARLIER, before the commit
+ * even begins: a throw from deep inside it (e.g. `structuralPathOnly`/`cutWithCompiled` while
+ * assembling a refusal's `AuditSignal`) propagates out of `applyPlan` UNCAUGHT, which is exactly why
+ * `structuralPathOnly`'s own never-throw property (`src/audit/validation-refusal.ts`) is a measured
+ * constraint there, not a style choice. So the §16 never-throw promise is not total AT THIS FUNCTION,
+ * and the old "for well-typed deps" qualifier did not save it (measured, 24.67). Every OTHER `await`
+ * on injected substrate — i.e. every one NOT inside the two try blocks named above — can still reject
+ * out of it:
  *   PRE-COMMIT (nothing written yet) — `deps.revisions.getByIdempotencyKey` (step 1); `readSnapshot`
  *     → `deps.vault.list`/`.read` (step 3); and inside `atomicCommit` the priors-capture `fs.read`
  *     (`../markdown-vault/atomic-write.ts`), which sits OUTSIDE both of that function's try blocks.
- *   POST-COMMIT (Markdown already durable) — `deps.now()`, `deps.audit.append`, `deps.revisions.record`.
+ *   POST-COMMIT (Markdown already durable), NOT covered by either try block above — `deps.now()`.
+ *     `deps.audit.append`/`deps.revisions.record` are NOT on this list any more: the two try blocks
+ *     above are precisely what now catches them (24.72), which is the correction this note makes.
  *   ⚠ A deps object cast past the type system with a required field missing is the SAME class
  *     reached the same way — not a separate mechanism.
  *
@@ -641,8 +663,15 @@ export async function applyPlan(
 // material ONLY — the closed `stage` literal, issue PATHS cut at this schema's free-form-key regions,
 // and counts. `issues[].message` is EXCLUDED CATEGORICALLY; the predicate and the reason it is not
 // negotiable live in `src/audit/validation-refusal.ts`, stated once rather than copied here.
-// ⚠ CONSUMER STATUS, STATED SCOPED BECAUSE THE UNQUALIFIED VERSION WOULD BE FALSE: the signal is
-// produced and gated; NO ADAPTER PERSISTS IT — see `### 24.109`. This gate is not "now audited".
+// ⚠ CONSUMER STATUS, STATED SCOPED BECAUSE THE UNQUALIFIED VERSION WOULD BE FALSE, AND `### 24.109`
+// DISPOSITIONS IT AGAINST THE OTHER THREE SITES RATHER THAN REPEATING THEIR SENTENCE: this is the
+// LIVE sole-writer gate's own `KnowledgeMutationPlan` candidate — the highest-traffic of the four
+// `### 24.109` channels (router.ts/generative-proposal-intake.ts/provenance-stamp.ts are dormant or
+// lower-traffic). Signal is produced and gated; NO ADAPTER PERSISTS IT. This gate is not "now
+// audited". A future consumer would key by the candidate's `planId` — present on every rejected
+// plan, even an invalid one, since `planId` sits outside every free-form-key region and so is never
+// cut. `provenance-stamp.ts`'s `stamp_invalid` is the one of the four that refuses
+// INTERNALLY-MINTED data instead of a row — never conflate the two.
 const KW_GATE_ACTOR = "knowledge:kw-gate" as const;
 // A payloadHash-shaped decision marker — a fixed constant, never a hash of the candidate.
 const KW_SCHEMA_REJECTED_PAYLOAD_MARKER = "knowledge:kw-schema-rejection" as const;

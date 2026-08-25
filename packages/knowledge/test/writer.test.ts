@@ -1,6 +1,9 @@
 // spec(§6) — KnowledgeWriter core: composed gate, atomic commit, compare-revision,
 // revision/audit recording, idempotent replay, typed failure variants (task 4.1)
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { ok, err, isOk, isErr, validKnowledgeMutationPlan } from "@sow/contracts";
 import type { KnowledgeMutationPlan, WorkflowRunRef, Result, FactIdentity, MdContentSha } from "@sow/contracts";
 import { applyPlan } from "../src/knowledge-writer/writer";
@@ -473,5 +476,57 @@ describe("KnowledgeWriterDeps.workspacePathCheck is REQUIRED (24.26 step 3)", ()
         now: () => "2026-07-01T00:00:00.000Z",
       });
     expect(typeof neverInvoked).toBe("function");
+  });
+});
+
+// ── `### 24.116` — `applyPlan`'s docblock made a FALSE universal claim ("THIS FUNCTION CONTAINS NO
+// `try` ANYWHERE"), directly contradicted by its own body 300+ lines below. Replaced with a CHECKABLE
+// claim naming the two real try blocks — checkable meaning a test can (and does) cross-check the
+// cited line numbers against a live scan, so a future `try` added without a comment update reds here
+// instead of going silently stale the way the original sentence did.
+describe("applyPlan's docblock makes a CHECKABLE claim about its own try/catch coverage (24.116)", () => {
+  it("applyPlan_docblock_makes_no_false_universal_try_claim", () => {
+    const srcPath = resolve(dirname(fileURLToPath(import.meta.url)), "../src/knowledge-writer/writer.ts");
+    const source = readFileSync(srcPath, "utf8");
+    const lines = source.split("\n");
+
+    const fnLineIdx = lines.findIndex((l) => l.startsWith("export async function applyPlan("));
+    expect(fnLineIdx, "applyPlan declaration not found — has it moved or been renamed?").toBeGreaterThan(-1);
+
+    // Walk BACKWARD from the declaration to the docblock immediately preceding it.
+    let closeIdx = fnLineIdx - 1;
+    while (closeIdx >= 0 && lines[closeIdx]!.trim() === "") closeIdx--;
+    expect(lines[closeIdx]!.trim(), "no docblock immediately precedes applyPlan").toBe("*/");
+    let openIdx = closeIdx;
+    while (openIdx >= 0 && lines[openIdx]!.trim() !== "/**") openIdx--;
+    expect(openIdx, "docblock opening /** not found").toBeGreaterThanOrEqual(0);
+    const docblock = lines.slice(openIdx, closeIdx + 1).join("\n");
+
+    // 1. NO FALSE UNIVERSAL — the exact defect shape this task removes (tolerant of backtick
+    //    placement around `try`). Non-vacuity: this regex DOES match the original sentence.
+    const FALSE_UNIVERSAL = /no\s*`?try`?\s*anywhere/i;
+    expect(FALSE_UNIVERSAL.test("THIS FUNCTION CONTAINS NO `try` ANYWHERE")).toBe(true);
+    expect(FALSE_UNIVERSAL.test(docblock), "the false universal claim is still present").toBe(false);
+
+    // 2. The docblock NAMES both real try-block line numbers (`` `:NNN` `` citations) — and they are
+    //    CROSS-CHECKED against a LIVE SCAN of the function body, not merely present as SOME numbers.
+    const citedLineNumbers = [...docblock.matchAll(/`:(\d+)`/g)].map((m) => Number(m[1])).sort((a, b) => a - b);
+    expect(citedLineNumbers.length, "the docblock names no `:NNN`-style try line citations").toBeGreaterThan(0);
+
+    // The function's real closing brace: the first column-0 `}` after the declaration — this file's
+    // own convention for every exported top-level function.
+    let bodyEndIdx = fnLineIdx + 1;
+    while (bodyEndIdx < lines.length && lines[bodyEndIdx] !== "}") bodyEndIdx++;
+    expect(bodyEndIdx, "applyPlan's closing brace not found").toBeLessThan(lines.length);
+
+    const realTryLineNumbers = lines
+      .slice(fnLineIdx, bodyEndIdx + 1)
+      .map((l, i) => ({ l, lineNo: fnLineIdx + i + 1 })) // 1-indexed file line number
+      .filter(({ l }) => l.trim() === "try {")
+      .map(({ lineNo }) => lineNo)
+      .sort((a, b) => a - b);
+
+    expect(realTryLineNumbers.length, "expected exactly two try blocks in applyPlan's body").toBe(2);
+    expect(citedLineNumbers).toEqual(realTryLineNumbers);
   });
 });
