@@ -7,12 +7,12 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { ok, err, isOk, isErr } from "@sow/contracts";
 import type { Approval } from "@sow/contracts";
-import type { DbError, DbResult, PendingKnowledgeMutation, PendingKnowledgeMutationRepository } from "@sow/db";
+import type { AuditRepository, DbError, DbResult, PendingKnowledgeMutation, PendingKnowledgeMutationRepository } from "@sow/db";
 import type { ApplyPlanFn } from "@sow/workflows";
-import type { WriteSuccess, VaultFs, KnowledgeWriterDeps } from "@sow/knowledge";
+import type { WriteSuccess, VaultFs, KnowledgeWriterDeps, KnowledgeRevisionStore, CommittedRevision, StamperDeps } from "@sow/knowledge";
 import type { KnowledgeMutationPlan } from "@sow/contracts";
 import { LEGACY_UNPREFIXED_WORKSPACE_ID } from "../../src/composition/legacy-workspace";
-import { readVaultHeadRevision } from "@sow/knowledge";
+import { readVaultHeadRevision, readStampField, KW_STAMP_FRONTMATTER_KEY } from "@sow/knowledge";
 import { payloadHash } from "@sow/integrations";
 import { buildSemanticApprovalDispatch } from "../../src/composition/semanticApprovalDispatch";
 
@@ -247,5 +247,161 @@ describe("buildSemanticApprovalDispatch — exempt workspace id from the composi
     expect(src).toContain('from "./legacy-workspace"');
     // Non-vacuity control: the anchor is only meaningful if the surrounding key is present.
     expect(src).toContain("workspacePathCheck:");
+  });
+});
+
+// --- task 22.4/20.2 — the KnowledgeWriter provenance-signing dep, closes the CONFIRMED verification
+// finding "boot never passes `signing` to the semantic dispatch": these tests exercise the REAL
+// `@sow/knowledge` writer (via the default `applyPlan`, never the recording fake above), over a REAL
+// in-memory `KnowledgeRevisionStore` + `AuditRepository`, so a genuine `SignedProvenanceStamp` is
+// minted, embedded in the committed frontmatter, and read back — not merely observed at the deps
+// boundary. `signing` present ⇒ a stamp; absent (the shipped default) ⇒ byte-identical to pre-20.2.
+describe("buildSemanticApprovalDispatch — provenance-signing seam (task 22.4)", () => {
+  /** A REAL in-memory KnowledgeRevisionStore (the writer's own idempotency guard reads/writes it). */
+  function memRevisionStore(): KnowledgeRevisionStore {
+    const byKey = new Map<string, CommittedRevision>();
+    return {
+      getByIdempotencyKey: (k) => Promise.resolve(byKey.get(k)),
+      record: (rev) => {
+        byKey.set(rev.idempotencyKey, rev);
+        return Promise.resolve();
+      },
+    };
+  }
+
+  /** A REAL in-memory AuditRepository (the writer appends one AuditRecord per commit). */
+  function memAuditRepository(): AuditRepository {
+    return {
+      append: () => Promise.resolve(ok(undefined)),
+      query: () => Promise.resolve(ok([])),
+    };
+  }
+
+  // A REAL, well-formed WorkflowRunRef — NOT the bare `"run-1" as never` shortcut the recording-fake
+  // tests above use. That shortcut is harmless there (the recording fake never reads `.workflowId`),
+  // but the REAL writer's `buildCommitAuditRecord` folds `workflowRunRef.workflowId` into the
+  // AuditRecord's `refs` array — a bare string cast leaves that `.workflowId` read `undefined`, which
+  // trips an UNRELATED pre-existing crash in the redaction-safety scan
+  // (`packages/domain/src/redaction/redaction-rules.ts`'s `stripMarkers` calls `.split()` on the
+  // unguarded value) — a genuine out-of-territory defect (flagged separately), not something these
+  // tests should paper over by continuing to use a malformed fixture.
+  const REAL_RUN_REF = {
+    workflowId: "wf-run-1",
+    trigger: "owner_action",
+    state: "running",
+    idempotencyKey: "run:1",
+    auditRefs: [],
+  } as never;
+
+  /** A fake StamperDeps: resolves a fixed 32-byte key, never touches a real Keychain. */
+  function fakeSigning(): StamperDeps {
+    return {
+      secrets: {
+        resolveSigningKey: () => Promise.resolve(ok(new Uint8Array(32).fill(7))),
+      },
+      signingKeyRef: "keychain://test/kw-signing-key",
+    };
+  }
+
+  /** Build over the REAL writer (`applyPlan` OMITTED ⇒ defaults to the real `@sow/knowledge` writer). */
+  function buildReal(
+    vault: VaultFs,
+    over: { readonly signing?: StamperDeps } = {},
+  ): { dispatch: ReturnType<typeof buildSemanticApprovalDispatch>; kmp: ReturnType<typeof fakePendingKmp> } {
+    const kmp = fakePendingKmp(mkRow());
+    const dispatch = buildSemanticApprovalDispatch({
+      vault,
+      pendingKmp: kmp.repo,
+      revisions: memRevisionStore(),
+      audit: memAuditRepository(),
+      now: () => NOW,
+      commit: { actor: "copilot-approval", sourceEventRef: "copilot.propose_knowledge", workflowRunRef: REAL_RUN_REF },
+      ...(over.signing !== undefined ? { signing: over.signing } : {}),
+    });
+    return { dispatch, kmp };
+  }
+
+  it("WITH a fake stamper: one real KnowledgeWriter commit whose bytes carry a SignedProvenanceStamp", async () => {
+    const vault = memVault({});
+    const { dispatch, kmp } = buildReal(vault, { signing: fakeSigning() });
+    const r = await dispatch(mkApproval());
+    expect(isOk(r)).toBe(true);
+    expect(kmp.store.get("plan-g4-1")?.status).toBe("committed");
+    const content = await vault.read("projects/personal-business/acme.md");
+    expect(content).toBeDefined();
+    const stamp = readStampField(content!);
+    expect(stamp).not.toBeNull();
+    expect(stamp?.writerActor).toBe("KnowledgeWriter");
+    expect(typeof stamp?.sig).toBe("string");
+    expect(stamp?.sig.length).toBeGreaterThan(0);
+    // Non-vacuity: the raw serialized stamp key is really present on disk (not just parsed back true).
+    expect(content).toContain(KW_STAMP_FRONTMATTER_KEY);
+  });
+
+  it("re-approval (stranded-card re-drive) is idempotent via the writer's kw:commit:<planId> key — no second commit, no re-stamp", async () => {
+    // Simulates the §13.10a hardening-residual #1 scenario the reconciler exists for: a PRIOR run's
+    // KnowledgeWriter commit landed (its idempotencyKey is durably recorded in `revisions`) but the
+    // pending-KMP row's status-advance did not (crash between them) — so a stranded row is still
+    // "pending" and a re-approval/re-drive dispatches AGAIN for the SAME plan. Pre-seed `revisions`
+    // with the record a first successful commit would have left, and leave the vault EMPTY (nothing
+    // this run has written yet) — the writer's `getByIdempotencyKey` check runs PRE-COMMIT (before any
+    // vault I/O, writer.ts's own "nothing written yet" note), so a genuine replay must return `ok`
+    // WITHOUT ever touching the vault. That is the load-bearing, directly observable proof of
+    // idempotency: a re-approval that actually re-executed the commit would write the note (and mint a
+    // SECOND stamp); a replay leaves the vault exactly as it found it.
+    const vault = memVault({});
+    const revisions = memRevisionStore();
+    await revisions.record({
+      revisionId: "rev:prior",
+      baseRevisionId: await readVaultHeadRevision(vault),
+      idempotencyKey: "kw:commit:plan-g4-1",
+      planId: "plan-g4-1" as never,
+      actor: "copilot-approval",
+      sourceEventRef: "copilot.propose_knowledge#approval:appr-1",
+      workflowRunRef: REAL_RUN_REF,
+      auditRecord: {} as never,
+      committedAt: NOW,
+    });
+    const kmp = fakePendingKmp(mkRow());
+    const dispatch = buildSemanticApprovalDispatch({
+      vault,
+      pendingKmp: kmp.repo,
+      revisions,
+      audit: memAuditRepository(),
+      now: () => NOW,
+      commit: { actor: "copilot-approval", sourceEventRef: "copilot.propose_knowledge", workflowRunRef: REAL_RUN_REF },
+      signing: fakeSigning(),
+    });
+    const r = await dispatch(mkApproval());
+    expect(isOk(r)).toBe(true);
+    // The replay short-circuited BEFORE any vault write — the note was never created by THIS dispatch.
+    expect(await vault.read("projects/personal-business/acme.md")).toBeUndefined();
+    // The row is still marked committed (step 9 of the executor advances status on any `ok` outcome,
+    // replay included) — the operational-truth layer sees a settled card either way.
+    expect(kmp.store.get("plan-g4-1")?.status).toBe("committed");
+  });
+
+  it("with NO signing key (the shipped default): no stamp, and the committed bytes are the same as an unsigned commit", async () => {
+    const vault = memVault({});
+    const { dispatch, kmp } = buildReal(vault); // signing OMITTED
+    const r = await dispatch(mkApproval());
+    expect(isOk(r)).toBe(true);
+    expect(kmp.store.get("plan-g4-1")?.status).toBe("committed");
+    const content = await vault.read("projects/personal-business/acme.md");
+    expect(content).toBeDefined();
+    expect(readStampField(content!)).toBeNull();
+    expect(content).not.toContain(KW_STAMP_FRONTMATTER_KEY);
+  });
+
+  it("signing present vs absent produce DIFFERENT committed bytes (the stamp is really embedded, not a no-op)", async () => {
+    const vaultSigned = memVault({});
+    const vaultUnsigned = memVault({});
+    await buildReal(vaultSigned, { signing: fakeSigning() }).dispatch(mkApproval());
+    await buildReal(vaultUnsigned).dispatch(mkApproval());
+    const signedContent = await vaultSigned.read("projects/personal-business/acme.md");
+    const unsignedContent = await vaultUnsigned.read("projects/personal-business/acme.md");
+    expect(signedContent).toBeDefined();
+    expect(unsignedContent).toBeDefined();
+    expect(signedContent).not.toBe(unsignedContent);
   });
 });
