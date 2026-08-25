@@ -63,8 +63,15 @@ export interface WakeDrainDeps {
   readonly drainDeps: DrainDeps;
 }
 
-/** Zero-count result for a wake that decided NOT to drain. */
-const NO_DRAIN: DrainResult = { drained: 0, reused: 0, held: 0, failed: 0 };
+/**
+ * Zero-count result for a wake that decided NOT to drain.
+ *
+ * `skipped` carries the 24.50 workspace-mismatch count. It is 0 here for a reason worth stating:
+ * this constant means "no drain pass ran at all", which is NOT the same fact as "a pass ran and
+ * skipped every entry". Both surface as `drained: 0`, so a reader who conflates them would see a
+ * wake that swept nothing and conclude the outbox was empty.
+ */
+const NO_DRAIN: DrainResult = { drained: 0, reused: 0, held: 0, failed: 0, skipped: 0 };
 
 /**
  * Run the wake response: decide (planWake), then — if draining — re-drive the held

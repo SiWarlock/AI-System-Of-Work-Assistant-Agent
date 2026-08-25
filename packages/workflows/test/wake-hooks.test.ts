@@ -99,6 +99,11 @@ describe("spec(§8, LIFE-6) runWakeDrain — wake triggers a replay-safe outbox 
           audit: () => Promise.resolve(),
           clock: () => "2026-07-02T09:00:00.000Z",
         },
+        // 24.50 — DrainDeps.workspaceId is REQUIRED and must match the entry being re-driven.
+        // Bound to heldEntry.workspaceId on purpose: a wake drain that swept a DIFFERENT
+        // workspace would return drained:0 / skipped:1, which reads identically to "the outbox
+        // was empty". The `skipped: 0` assertions below are what tell those two apart.
+        workspaceId: heldEntry.workspaceId,
         now: "2026-07-02T09:00:00.000Z",
         limit: 50,
         backoffCfg: { baseMs: 1000, maxMs: 60000, maxAttempts: 5 },
@@ -116,6 +121,9 @@ describe("spec(§8, LIFE-6) runWakeDrain — wake triggers a replay-safe outbox 
 
     const res = await runWakeDrain(event, makeDrainDeps(outbox, adapterCreate));
     expect(res.drained).toBe(1);
+    // discriminates "re-drove the held entry" from "swept a different workspace and skipped it" —
+    // both of which would otherwise present as a drained count that failed to reach 1.
+    expect(res.skipped).toBe(0);
     expect(outbox.listDue).toHaveBeenCalled();
     expect(adapterCreate).toHaveBeenCalledTimes(1);
   });
@@ -144,6 +152,10 @@ describe("spec(§8, LIFE-6) runWakeDrain — wake triggers a replay-safe outbox 
     const event: WakeEvent = { reason: "power_resume", now: "2026-07-02T09:00:00.000Z" };
     const res = await runWakeDrain(event, deps);
     expect(res.reused).toBe(1);
+    // same discriminator as above: a workspace-skipped entry also yields reused:0 and an
+    // un-called adapter, which is precisely the shape this test is trying to PROVE is safe.
+    // Without this, the idempotency claim would pass for the wrong reason.
+    expect(res.skipped).toBe(0);
     expect(adapterCreate).not.toHaveBeenCalled();
   });
 });
