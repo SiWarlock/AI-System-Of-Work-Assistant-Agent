@@ -158,7 +158,7 @@ function makeDeps(
   const { port } = pollReturning({});
   return {
     poll: port,
-    wakeDrain: { drain: vi.fn(() => Promise.resolve(ok({ drained: 0, reused: 0, held: 0, failed: 0 }))) },
+    wakeDrain: { drain: vi.fn(() => Promise.resolve(ok({ drained: 0, reused: 0, held: 0, failed: 0, skipped: 0 }))) },
     health: makeHealthSink().sink,
     runs: makeRuns(),
     schedule: makeSchedule(),
@@ -348,7 +348,7 @@ describe("spec(LIFE-2) missed poll collapses to one run", () => {
 
 describe("spec(LIFE-6) reconnect wake — drains held work before polling", () => {
   it("a connector_event (wake) trigger runs the outbox drain before polling", async () => {
-    const drain = vi.fn(() => Promise.resolve(ok({ drained: 2, reused: 1, held: 0, failed: 0 })));
+    const drain = vi.fn(() => Promise.resolve(ok({ drained: 2, reused: 1, held: 0, failed: 0, skipped: 0 })));
     const { port, calls } = pollReturning({
       todoist: ok({ connectorId: "todoist", status: "advanced", processed: 1, cursorAdvanced: true }),
     });
@@ -362,7 +362,7 @@ describe("spec(LIFE-6) reconnect wake — drains held work before polling", () =
   });
 
   it("a scheduled trigger does NOT run the wake drain", async () => {
-    const drain = vi.fn(() => Promise.resolve(ok({ drained: 0, reused: 0, held: 0, failed: 0 })));
+    const drain = vi.fn(() => Promise.resolve(ok({ drained: 0, reused: 0, held: 0, failed: 0, skipped: 0 })));
     await runConnectorSyncHealth(baseInput(), makeDeps({ wakeDrain: { drain } }));
     expect(drain).not.toHaveBeenCalled();
   });
