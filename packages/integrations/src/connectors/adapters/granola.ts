@@ -15,6 +15,9 @@ import {
   transportFailure,
   type ConnectorHttpSpec,
   type ConnectorHttpTransportDeps,
+  type HttpTransport,
+  type SecretsAccessor,
+  type SecretUnavailable,
 } from "./http-transport";
 import type { ConnectorPort } from "../port";
 import type { ConnectorTransport, ConnectorTransportResult, TransportItem, TransportRequest } from "../transport";
@@ -125,4 +128,180 @@ const GRANOLA_HTTP_SPEC: ConnectorHttpSpec = {
  */
 export function createGranolaHttpTransport(deps: ConnectorHttpTransportDeps): ConnectorTransport {
   return createConnectorHttpTransport(GRANOLA_HTTP_SPEC, deps);
+}
+
+// ── Granola /v1/notes/{id} second-hop HYDRATION (LEG 2 — PKG-INT-5 · 23.4) ─────────────────────────────────
+// SAME shape as the Gmail `messages.get` fan-out (see gmail.ts's hydration section) — SEPARATE from the
+// `ConnectorHttpSpec`/template above. GET `/v1/notes/{id}` against `GRANOLA_ALLOWED_HOSTS`.
+// CONTEXT7-GROUNDED (`/websites/granola_ai`, `GET /v1/notes/{note_id}`, round-1 confirmed): the note-detail
+// envelope carries the note's REAL content — `summary_markdown` (nullable)/`summary_text`, `transcript`,
+// `attendees`, … — well beyond the list-stage's bare metadata ({id, title, owner, created_at, updated_at}).
+// A body-less note (both `summary_markdown` and `summary_text` missing/empty) FAILS CLOSED to a typed
+// fault — never an empty-but-successful hydration (an empty note is indistinguishable from a fetch that
+// silently dropped its content, so it must never look like a success).
+// AUTH: the SAME static `grn_` key (no refresh here — PKG-INT-4 owns key rotation).
+// ⚠ ING-7 HARD: a hydrated note body is UNTRUSTED external content (attendee-authored transcript/summary) —
+// any agent consuming it MUST be admitted read-only, no mutating tools. The returned `Hydrator` enforces
+// this BY CONSTRUCTION: it exposes exactly one method (`hydrate`) and every dispatched request is a GET.
+import { isAllowedRemoteEndpoint, endpointHostRef } from "@sow/policy";
+import { isErr } from "@sow/contracts";
+import type { Result } from "@sow/contracts";
+import { nextDelayMs, type BackoffConfig } from "../backoff";
+
+/** Hydrator deps — DI-injected (mirrors `ConnectorHttpTransportDeps` + the pure backoff seam). `sleep` and
+ *  `backoff` are injected so retry timing stays deterministic/testable — never a real timer literal. */
+export interface HydratorDeps {
+  readonly transport: HttpTransport;
+  readonly secrets: SecretsAccessor;
+  readonly tokenRef: string;
+  readonly maxConcurrent: number;
+  readonly backoff: BackoffConfig;
+  readonly sleep: (ms: number) => Promise<void>;
+}
+
+/** One hydrated note. `hash` is CONTENT-DERIVED (`payloadHash` of the fetched note-detail body). */
+export interface HydrationSuccess {
+  readonly ok: true;
+  readonly id: string;
+  readonly hash: string;
+  readonly raw: unknown;
+}
+
+/** A typed per-id hydration fault — redaction-safe BY CONSTRUCTION (status/reason/host-ref only; never the
+ *  body or the token, safety rule 7). */
+export interface HydrationFault {
+  readonly ok: false;
+  readonly id: string;
+  readonly code: "unreachable" | "rate_limited" | "auth_locked" | "unknown";
+  readonly message: string;
+}
+
+export type HydrationOutcome = HydrationSuccess | HydrationFault;
+
+/** The closed batch result: EVERY id resolves to exactly one outcome, split into `succeeded`/`faults` — a
+ *  fault on one id never drops or blocks the others (partial-failure semantics, mirrors leg 1). */
+export interface HydrationBatchResult {
+  readonly succeeded: readonly HydrationSuccess[];
+  readonly faults: readonly HydrationFault[];
+}
+
+/** The hydrator surface — ING-7 HARD: exactly one method, no mutating surface to misuse. */
+export interface Hydrator {
+  hydrate(ids: readonly string[]): Promise<HydrationBatchResult>;
+}
+
+/** Bounded-concurrency pool runner: at most `limit` `worker` calls in flight at once (fixed lanes, each
+ *  pulling the next unclaimed index as it frees up). Pure scheduling — no timers, no retries (those live in
+ *  `worker`). */
+async function runPool(size: number, limit: number, worker: (index: number) => Promise<void>): Promise<void> {
+  const bounded = Math.max(1, Math.floor(limit));
+  let next = 0;
+  async function lane(): Promise<void> {
+    while (next < size) {
+      const i = next;
+      next += 1;
+      await worker(i);
+    }
+  }
+  const lanes = Array.from({ length: Math.min(bounded, size) }, () => lane());
+  await Promise.all(lanes);
+}
+
+/** The note-detail BODY TEXT, or `undefined` when the note is genuinely body-less (the fail-closed
+ *  trigger). Prefers `summary_markdown` (richer); falls back to `summary_text`. */
+function granolaNoteBodyText(json: Record<string, unknown>): string | undefined {
+  const markdown = json.summary_markdown;
+  if (typeof markdown === "string" && markdown.length > 0) return markdown;
+  const text = json.summary_text;
+  if (typeof text === "string" && text.length > 0) return text;
+  return undefined;
+}
+
+/**
+ * Build the Granola `/v1/notes/{id}` note hydration fan-out. DORMANT — the same real-transport/secrets/key
+ * arming gate as `createGranolaHttpTransport` (real external network I/O = HARD LINE); tests inject fakes.
+ */
+export function createGranolaNoteHydrator(deps: HydratorDeps): Hydrator {
+  const { transport, secrets, tokenRef, maxConcurrent, backoff, sleep } = deps;
+
+  async function hydrateOne(id: string): Promise<HydrationOutcome> {
+    const url = `${GRANOLA_BASE_URL}/v1/notes/${encodeURIComponent(id)}`;
+    const hostRef = endpointHostRef(url);
+    // (1) SSRF guard FIRST — off-guard ⇒ zero token read, zero dispatch (mirrors http-transport / leg 1).
+    if (!isAllowedRemoteEndpoint(url, GRANOLA_ALLOWED_HOSTS)) {
+      return { ok: false, id, code: "unreachable", message: `endpoint refused (${hostRef})` };
+    }
+    // (2) Resolve the bearer token ONCE per id — fail-closed on a typed-unavailable AND a throwing accessor.
+    let secret: Result<string, SecretUnavailable>;
+    try {
+      secret = await secrets.getSecret(tokenRef);
+    } catch {
+      return { ok: false, id, code: "auth_locked", message: "token unavailable" };
+    }
+    if (isErr(secret)) {
+      return { ok: false, id, code: "auth_locked", message: `token unavailable (${secret.error.reason})` };
+    }
+    const authHeader = `Bearer ${secret.value}`;
+    // (3) At most 2 attempts: the 2nd is the ONE bounded 429 retry — a second 429 stops here (rate_limited).
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      let response;
+      try {
+        response = await transport.send({
+          url,
+          method: "GET",
+          headers: { accept: "application/json", Authorization: authHeader },
+        });
+      } catch {
+        return { ok: false, id, code: "unreachable", message: `transport error (${hostRef})` };
+      }
+      if (response.status === 429) {
+        if (attempt === 1) {
+          const delay = nextDelayMs(1, backoff);
+          if (delay === "exhausted") {
+            return { ok: false, id, code: "rate_limited", message: `HTTP 429 (${hostRef})` };
+          }
+          await sleep(delay);
+          continue; // exactly one bounded retry
+        }
+        return { ok: false, id, code: "rate_limited", message: `HTTP 429 (${hostRef})` };
+      }
+      if (!Number.isInteger(response.status) || response.status < 200 || response.status >= 300) {
+        const code = response.status === 401 || response.status === 403 ? "auth_locked" : "unreachable";
+        return { ok: false, id, code, message: `HTTP ${response.status} (${hostRef})` };
+      }
+      let json: unknown;
+      try {
+        json = JSON.parse(response.body) as unknown;
+      } catch {
+        return { ok: false, id, code: "unknown", message: `malformed body (${hostRef})` };
+      }
+      if (typeof json !== "object" || json === null) {
+        return { ok: false, id, code: "unknown", message: `malformed body (${hostRef})` };
+      }
+      const record = json as Record<string, unknown>;
+      // FAIL CLOSED on a body-less note — never an empty-but-successful hydration.
+      if (granolaNoteBodyText(record) === undefined) {
+        return { ok: false, id, code: "unknown", message: `note body missing (${hostRef})` };
+      }
+      return { ok: true, id, hash: payloadHash(record), raw: record };
+    }
+    // Unreachable in practice (the loop above always returns) — a terminal fallback for TS exhaustiveness.
+    return { ok: false, id, code: "unknown", message: `retry loop exhausted (${hostRef})` };
+  }
+
+  return {
+    async hydrate(ids: readonly string[]): Promise<HydrationBatchResult> {
+      const outcomes: HydrationOutcome[] = new Array(ids.length);
+      await runPool(ids.length, maxConcurrent, async (i) => {
+        outcomes[i] = await hydrateOne(ids[i]!);
+      });
+      const succeeded: HydrationSuccess[] = [];
+      const faults: HydrationFault[] = [];
+      for (const outcome of outcomes) {
+        if (outcome.ok) succeeded.push(outcome);
+        else faults.push(outcome);
+      }
+      return { succeeded, faults };
+    },
+  };
 }
