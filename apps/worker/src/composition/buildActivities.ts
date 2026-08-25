@@ -70,6 +70,11 @@ import {
 import { dispatchRouted, createUnroutedWriteAdapter } from "@sow/integrations";
 import type { ExternalWriteDeps, ExternalWriteResult, WriteSecretsAccessor } from "@sow/integrations";
 
+// task 21.4/24.8 — the write-outbox DRAIN-ON-WAKE (buildDrainDeps/buildWakeDrainHook had ZERO
+// production importers; see outboxDrainBind.ts's module header). Bound below, mirroring THIS
+// file's own established drain-on-wake idiom (the 19.1 GBrain-sync-outbox drain a few lines down).
+import { buildDrainDeps, buildWakeDrainHook } from "./outboxDrainBind";
+
 // 21.8 — PROV-3's default-OFF card-transport owner gate (@sow/integrations/tools/cards). Deep
 // subpath import (explicit /index — the package's "./*" export map is file-literal, no directory
 // resolution): the main @sow/integrations barrel does not re-export this module (its own header
@@ -896,6 +901,36 @@ export function buildProofSpineActivities(
   };
   const dispatchApproved: DispatchApprovedActionPort =
     createDispatchApprovedActivity(approvedGateway);
+
+  // task 21.4/24.8 — the write-outbox DRAIN-ON-WAKE: give buildDrainDeps/buildWakeDrainHook
+  // (composition/outboxDrainBind.ts, previously ZERO production importers) a real caller. This factory
+  // runs once per Temporal (re)connect (boot.ts's registerHook fires on `onConnected`), so binding the
+  // drain HERE mirrors BOTH this file's own established drain-on-wake idiom (compare the 19.1
+  // GBrain-sync-outbox drain a few lines up) AND matches LIFE-6's `network_reconnect` wake reason
+  // exactly — a genuine reconnect trigger, not an invented one. `gatewayDeps` REUSES the SAME
+  // `externalWriteDeps` bundle `propose`/`dispatchApproved` dispatch through (never a second
+  // construction — no drift), so a re-driven held entry reaches the IDENTICAL routing decision
+  // (dispatchRouted over `backends.writeAdapters`). `workspaceId` is threaded from
+  // `params.meetingJobInputs.workspaceId` (task 24.50, safety rule 4) — a due entry for any OTHER
+  // workspace is skipped, never evaluated against this posture. Fire-and-forget + swallowed: this
+  // factory is SYNCHRONOUS (no `await` here, mirrors every other construction step in this function)
+  // and a drain fault must never block/fail activity construction (§16, mirrors the 19.1 drain's own
+  // discipline). SAFE, evidence: `backends.writeAdapters` (backends.ts) is
+  // `buildWriteAdapterRegistry({ transport: selectAdapterTransport(config.writeTransport), ... })` —
+  // with `config.writeTransport` unset (the shipped default, never set by any production BootConfig
+  // caller) `selectAdapterTransport` ALWAYS returns the in-memory `createStubAdapterTransport()`, never
+  // a real vendor client, so this drain reaches no real vendor until the owner explicitly arms
+  // `config.writeTransport` (§ARM-21).
+  const drainOnWakeDeps = buildDrainDeps({
+    gatewayDeps: externalWriteDeps,
+    workspaceId: String(params.meetingJobInputs.workspaceId),
+    writeAdapters: backends.writeAdapters,
+    clock: now,
+  });
+  const wakeDrainOnConnect = buildWakeDrainHook({ outbox: backends.repos.outbox, drainDeps: drainOnWakeDeps });
+  void wakeDrainOnConnect({ reason: "network_reconnect", now: now() }).catch(() => {
+    /* fail-SAFE: a drain-on-wake fault must never block activity construction (§16) */
+  });
 
   // ── ingestion-triage ───────────────────────────────────────────────────────
 

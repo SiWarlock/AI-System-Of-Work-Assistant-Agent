@@ -14,8 +14,11 @@
 //   • `limit` clamps a non-positive value UP to `DEFAULT_WAKE_LIMIT`, never drops
 //     work to a zero-width sweep.
 //   • no `Math.random()` anywhere in the module — jitter is strictly injected.
-//   • DORMANCY: neither factory has a call-site in any of the four composition-
-//     root files this slice deliberately leaves untouched (PROV-6's territory).
+//   • REMAINING DORMANCY: `backends.ts`, `boot.ts`, and
+//     `apps/worker/src/temporal/workflows.ts` still carry zero call-sites. Task
+//     21.4/24.8 BOUND `buildActivities.ts` (the file this slice's own "Files"
+//     list named as the drain-on-wake site) — the scan below no longer includes
+//     it; see `outboxDrainOnWake.test.ts` for that production-caller pin.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
@@ -419,10 +422,9 @@ describe("outboxDrainBind — no Math.random anywhere; jitter is strictly inject
   });
 });
 
-describe("outboxDrainBind — DORMANCY: zero call-sites in the four composition-root files", () => {
-  it("buildDrainDeps and buildWakeDrainHook appear in none of buildActivities.ts / backends.ts / boot.ts / workflows.ts", () => {
+describe("outboxDrainBind — DORMANCY: zero call-sites in the REMAINING composition-root files", () => {
+  it("buildDrainDeps and buildWakeDrainHook appear in none of backends.ts / boot.ts / workflows.ts (task 21.4/24.8 bound buildActivities.ts — see outboxDrainOnWake.test.ts)", () => {
     const relPaths = [
-      "../../src/composition/buildActivities.ts",
       "../../src/composition/backends.ts",
       "../../src/boot.ts",
       "../../src/temporal/workflows.ts",
