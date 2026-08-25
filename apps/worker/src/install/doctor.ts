@@ -24,6 +24,20 @@ import {
   diagnoseGbrainMount,
   diagnoseStrayGbrainProcess,
 } from "./checks/posture";
+import { diagnoseSingleOwnerLock } from "./lock/singleOwnerLockDoctorCheck";
+import type { SingleOwnerLockProbe } from "./lock/singleOwnerLockDoctorCheck";
+
+/**
+ * `ProbeSnapshot` extended with the REQ-D-005 single-owner-lock probe (task 24.1 / 11.1, safety rule 1).
+ * `../probe-snapshot.ts` is OUT OF THIS SLICE'S DECLARED TERRITORY (packages/contracts + this one file
+ * only) — this LOCAL extension lets `runDoctor` consume the probe today without touching that file. Every
+ * field on both types is optional, so a bare `ProbeSnapshot` is still STRUCTURALLY ASSIGNABLE here — this
+ * only WIDENS what `runDoctor` can accept, never what an existing caller (`probe-collectors.ts`, every
+ * pre-existing test) must supply; they keep compiling byte-unchanged. Cross-territory follow-up: fold
+ * `singleOwnerLock?: SingleOwnerLockProbe` directly into `ProbeSnapshot` (retiring this shim) once a boot-time
+ * collector exists to populate it — see the wiring note atop `./lock/singleOwnerLockDoctorCheck.ts`.
+ */
+export type ProbeSnapshotWithLock = ProbeSnapshot & { readonly singleOwnerLock?: SingleOwnerLockProbe };
 
 /** Run one check, folding ANY throw (a malformed probe) to a fail-closed `probe_error` finding (§16 no-throw). */
 export function safeCheck(check: DoctorCheckId, run: () => DoctorCheckResult): DoctorCheckResult {
@@ -36,11 +50,12 @@ export function safeCheck(check: DoctorCheckId, run: () => DoctorCheckResult): D
 
 /**
  * Run the install doctor over an injected probe snapshot. PURE + NEVER throws. The report lists every prerequisite
- * check in a fixed order with a distinct repair per failure, and a worst-of `overall` — the 7 environment checks
- * then the 3 write-through one-writer POSTURE checks (REQ-S-NEW-008), each fail-closed to `finding`.
+ * check in a fixed order with a distinct repair per failure, and a worst-of `overall` — the 7 environment checks,
+ * the 3 write-through one-writer POSTURE checks (REQ-S-NEW-008), then the REQ-D-005 single-owner-lock check (task
+ * 24.1 / 11.1) — each fail-closed to `finding`.
  */
-export function runDoctor(snapshot: ProbeSnapshot): DoctorReport {
-  const s: ProbeSnapshot = snapshot ?? {};
+export function runDoctor(snapshot: ProbeSnapshotWithLock): DoctorReport {
+  const s: ProbeSnapshotWithLock = snapshot ?? {};
   const checks: DoctorCheckResult[] = [
     safeCheck("node_pnpm", () => diagnoseNodePnpm(s.nodePnpm)),
     safeCheck("filevault", () => diagnoseFilevault(s.filevault)),
@@ -53,6 +68,8 @@ export function runDoctor(snapshot: ProbeSnapshot): DoctorReport {
     safeCheck("vault_acl", () => diagnoseVaultAcl(s.vaultAcl)),
     safeCheck("gbrain_readonly_mount", () => diagnoseGbrainMount(s.gbrainMount)),
     safeCheck("stray_gbrain_process", () => diagnoseStrayGbrainProcess(s.strayGbrainProcess)),
+    // ── REQ-D-005 single-owner advisory-lock (task 24.1 / 11.1, safety rule 1) — fail-closed to `finding` ──
+    safeCheck("single_owner_lock", () => diagnoseSingleOwnerLock(s.singleOwnerLock)),
   ];
   return { checks, overall: rollUpStatus(checks.map((c) => c.status)) };
 }

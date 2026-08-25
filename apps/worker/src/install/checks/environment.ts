@@ -32,6 +32,13 @@ export const DOCTOR_REPAIRS: Readonly<Record<DoctorFailureVariant, string>> = {
     "Re-mount the gbrain brain READ-ONLY at the canonical path (a writable/mispointed mount re-opens GO #1).",
   stray_gbrain_writer_detected:
     "Stop the stray write-capable gbrain process(es) bound to the canonical brain (one-writer; else GO #1 re-opens).",
+  // task 24.1 / 11.1 (REQ-D-005, safety rule 1) — mechanically required by the packages/contracts
+  // DoctorFailureVariant widening (this map's type spans the full closed enum). Text mirrors
+  // ../lock/singleOwnerLockDoctorCheck.ts's own `REPAIR` constant, the actual source `diagnoseSingleOwnerLock`
+  // returns at runtime (it does not call `findingResult`/this map) — kept in lockstep by matching wording.
+  single_owner_lock_not_held:
+    "Another process holds the canonical brain/vault lock, or this worker never acquired it. Ensure no " +
+    "other SoW worker instance (or a stray gbrain process) is running against this vault/brain, then restart.",
   probe_error:
     "The probe could not be read (malformed/unavailable); re-run the doctor once the probe collector is available.",
 };

@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import { doctorReportSchema } from "@sow/contracts";
 import type { DoctorReport, DoctorCheckId } from "@sow/contracts";
 import { runDoctor } from "../../src/install/doctor";
-import type { ProbeSnapshot } from "../../src/install/probe-snapshot";
+import type { ProbeSnapshotWithLock } from "../../src/install/doctor";
 
 const ENV_CHECKS: readonly DoctorCheckId[] = [
   "node_pnpm",
@@ -20,8 +20,9 @@ const ENV_CHECKS: readonly DoctorCheckId[] = [
 
 const find = (r: DoctorReport, id: DoctorCheckId) => r.checks.find((c) => c.check === id);
 
-/** A fully-green snapshot (all 10 probes healthy — posture fields harmless here, consumed once posture is wired). */
-const greenSnapshot = (): ProbeSnapshot => ({
+/** A fully-green snapshot (all 11 probes healthy — posture + single_owner_lock fields exercised by the sibling
+ *  `doctor-posture.test.ts`, kept green here only so THIS file's overall-status assertions stay `ok`). */
+const greenSnapshot = (): ProbeSnapshotWithLock => ({
   nodePnpm: { nodeSatisfied: true, pnpmSatisfied: true },
   filevault: { enabled: true },
   keychain: { reachable: true },
@@ -32,6 +33,7 @@ const greenSnapshot = (): ProbeSnapshot => ({
   vaultAcl: { workerIsSoleWritePrincipal: true },
   gbrainMount: { readOnly: true, mountPointCanonical: true },
   strayGbrainProcess: { strayProcesses: [] },
+  singleOwnerLock: { acquired: true },
 });
 
 describe("runDoctor — environment checks (task 11.5, §13)", () => {
@@ -47,7 +49,7 @@ describe("runDoctor — environment checks (task 11.5, §13)", () => {
   });
 
   it("each_env_failure_variant_has_distinct_repair", () => {
-    const failing: ProbeSnapshot = {
+    const failing: ProbeSnapshotWithLock = {
       nodePnpm: { nodeSatisfied: false, pnpmSatisfied: true },
       filevault: { enabled: false },
       keychain: { reachable: false },
@@ -100,7 +102,7 @@ describe("runDoctor — environment checks (task 11.5, §13)", () => {
 
   it("engine_never_throws", () => {
     // a MALFORMED / partial snapshot — wrong-typed probes that would throw on property access
-    const malformed = { loopbackPorts: "nope", nodePnpm: 42, gitRemotes: null } as unknown as ProbeSnapshot;
+    const malformed = { loopbackPorts: "nope", nodePnpm: 42, gitRemotes: null } as unknown as ProbeSnapshotWithLock;
     expect(() => runDoctor(malformed)).not.toThrow();
     const r = runDoctor(malformed);
     for (const id of ENV_CHECKS) {

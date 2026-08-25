@@ -7,12 +7,12 @@ import { describe, it, expect } from "vitest";
 import { doctorReportSchema } from "@sow/contracts";
 import type { DoctorReport, DoctorCheckId } from "@sow/contracts";
 import { runDoctor } from "../../src/install/doctor";
-import type { ProbeSnapshot } from "../../src/install/probe-snapshot";
+import type { ProbeSnapshotWithLock } from "../../src/install/doctor";
 
 const POSTURE_CHECKS: readonly DoctorCheckId[] = ["vault_acl", "gbrain_readonly_mount", "stray_gbrain_process"];
 const find = (r: DoctorReport, id: DoctorCheckId) => r.checks.find((c) => c.check === id);
 
-const greenSnapshot = (): ProbeSnapshot => ({
+const greenSnapshot = (): ProbeSnapshotWithLock => ({
   nodePnpm: { nodeSatisfied: true, pnpmSatisfied: true },
   filevault: { enabled: true },
   keychain: { reachable: true },
@@ -23,20 +23,21 @@ const greenSnapshot = (): ProbeSnapshot => ({
   vaultAcl: { workerIsSoleWritePrincipal: true },
   gbrainMount: { readOnly: true, mountPointCanonical: true },
   strayGbrainProcess: { strayProcesses: [] },
+  singleOwnerLock: { acquired: true },
 });
 
 describe("runDoctor — one-writer posture (REQ-S-NEW-008, safety rule 1)", () => {
   it("all_green_snapshot_reports_all_ok", () => {
     const r = runDoctor(greenSnapshot());
-    expect(r.checks).toHaveLength(10); // every named check present
+    expect(r.checks).toHaveLength(11); // every named check present (task 24.1 / 11.1 adds single_owner_lock)
     for (const c of r.checks) expect(c.status, `check ${c.check}`).toBe("ok");
     expect(r.overall).toBe("ok");
     expect(doctorReportSchema.safeParse(r).success).toBe(true);
   });
 
   it("all_failing_repairs_are_pairwise_distinct", () => {
-    // every one of the 10 checks fails ⇒ 10 DISTINCT repair strings (no shared/generic catch-all anywhere)
-    const allFailing: ProbeSnapshot = {
+    // every one of the 11 checks fails ⇒ 11 DISTINCT repair strings (no shared/generic catch-all anywhere)
+    const allFailing: ProbeSnapshotWithLock = {
       nodePnpm: { nodeSatisfied: false, pnpmSatisfied: false },
       filevault: { enabled: false },
       keychain: { reachable: false },
@@ -47,12 +48,13 @@ describe("runDoctor — one-writer posture (REQ-S-NEW-008, safety rule 1)", () =
       vaultAcl: { workerIsSoleWritePrincipal: false },
       gbrainMount: { readOnly: false, mountPointCanonical: false },
       strayGbrainProcess: { strayProcesses: [{ op: "serve" }] },
+      singleOwnerLock: { acquired: false },
     };
     const r = runDoctor(allFailing);
-    expect(r.checks).toHaveLength(10);
+    expect(r.checks).toHaveLength(11);
     const repairs = r.checks.map((c) => c.repair);
     for (const rep of repairs) expect(rep).toBeTruthy();
-    expect(new Set(repairs).size).toBe(10); // ALL pairwise-distinct
+    expect(new Set(repairs).size).toBe(11); // ALL pairwise-distinct
     expect(r.checks.every((c) => c.status !== "ok")).toBe(true);
     expect(r.overall).toBe("finding");
   });
@@ -94,7 +96,7 @@ describe("runDoctor — one-writer posture (REQ-S-NEW-008, safety rule 1)", () =
 
   it("posture_absent_probe_fails_closed_to_finding", () => {
     // absent posture probes
-    const absent: ProbeSnapshot = {
+    const absent: ProbeSnapshotWithLock = {
       ...greenSnapshot(),
       vaultAcl: undefined,
       gbrainMount: undefined,
@@ -110,7 +112,7 @@ describe("runDoctor — one-writer posture (REQ-S-NEW-008, safety rule 1)", () =
       vaultAcl: {},
       gbrainMount: "nope",
       strayGbrainProcess: { strayProcesses: "not-an-array" },
-    } as unknown as ProbeSnapshot;
+    } as unknown as ProbeSnapshotWithLock;
     expect(() => runDoctor(malformed)).not.toThrow();
     const rMal = runDoctor(malformed);
     for (const id of POSTURE_CHECKS) {
@@ -123,11 +125,34 @@ describe("runDoctor — one-writer posture (REQ-S-NEW-008, safety rule 1)", () =
       vaultAcl: null,
       gbrainMount: null,
       strayGbrainProcess: null,
-    } as unknown as ProbeSnapshot;
+    } as unknown as ProbeSnapshotWithLock;
     expect(() => runDoctor(nulls)).not.toThrow();
     const rNull = runDoctor(nulls);
     expect(find(rNull, "vault_acl")?.failureVariant).toBe("vault_acl_not_worker_exclusive");
     expect(find(rNull, "gbrain_readonly_mount")?.failureVariant).toBe("gbrain_mount_writable_or_mispointed");
     expect(find(rNull, "stray_gbrain_process")?.failureVariant).toBe("stray_gbrain_writer_detected");
+  });
+});
+
+describe("runDoctor — REQ-D-005 single-owner-lock check WIRING (task 24.1 / 11.1, safety rule 1)", () => {
+  it("single_owner_lock_wired_ok_only_on_acquired_true", () => {
+    const r = runDoctor({ ...greenSnapshot(), singleOwnerLock: { acquired: true } });
+    expect(find(r, "single_owner_lock")?.status).toBe("ok");
+    expect(r.overall).toBe("ok");
+  });
+
+  it("single_owner_lock_wired_fails_closed_when_absent_from_the_snapshot", () => {
+    const withoutLock: ProbeSnapshotWithLock = { ...greenSnapshot(), singleOwnerLock: undefined };
+    const r = runDoctor(withoutLock);
+    expect(find(r, "single_owner_lock")?.status).toBe("finding");
+    expect(find(r, "single_owner_lock")?.failureVariant).toBe("single_owner_lock_not_held");
+    expect(r.overall).toBe("finding"); // NEVER ok — an unconfirmed lock hold re-opens GO #1
+  });
+
+  it("single_owner_lock_wired_fails_closed_when_acquired_false", () => {
+    const r = runDoctor({ ...greenSnapshot(), singleOwnerLock: { acquired: false, holderPid: 4242 } });
+    expect(find(r, "single_owner_lock")?.status).toBe("finding");
+    expect(find(r, "single_owner_lock")?.repair).toBeTruthy();
+    expect(doctorReportSchema.safeParse(r).success).toBe(true);
   });
 });
