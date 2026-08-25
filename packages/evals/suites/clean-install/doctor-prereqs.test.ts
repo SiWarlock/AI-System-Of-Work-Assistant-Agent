@@ -11,11 +11,12 @@ import { DOCTOR_CHECK_IDS } from "@sow/contracts";
 import type { DoctorReport, DoctorStatus, DoctorCheckId, DoctorCheckResult } from "@sow/contracts";
 import { runDoctor } from "@sow/worker/install/doctor";
 import type { ProbeSnapshot } from "@sow/worker/install/probe-snapshot";
+import type { ProbeSnapshotWithLock } from "@sow/worker/install/doctor";
 import { scoreById } from "../../src/harness/runner";
 import { criterionById } from "../../src/harness/criteria-registry";
 
 // A fully-green snapshot — every prerequisite confirmed (the positive anchor, L7 non-vacuity).
-const ALL_OK: ProbeSnapshot = {
+const ALL_OK: ProbeSnapshotWithLock = {
   nodePnpm: { nodeSatisfied: true, pnpmSatisfied: true },
   filevault: { enabled: true },
   keychain: { reachable: true },
@@ -26,6 +27,10 @@ const ALL_OK: ProbeSnapshot = {
   vaultAcl: { workerIsSoleWritePrincipal: true },
   gbrainMount: { readOnly: true, mountPointCanonical: true },
   strayGbrainProcess: { strayProcesses: [] },
+  // task 24.1 / 11.1: `single_owner_lock` joined the frozen DOCTOR_CHECK_IDS enum, and this suite
+  // derives its expected check list FROM that enum (see :72) — so a newly-registered check that
+  // nothing reports correctly fails here. That is the enum doing its job, not a broken fixture.
+  singleOwnerLock: { acquired: true },
 };
 
 const checkOf = (r: DoctorReport, id: DoctorCheckId): DoctorCheckResult | undefined =>
