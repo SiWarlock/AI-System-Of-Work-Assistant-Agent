@@ -38,6 +38,7 @@
 // the minimal contract the real transport must satisfy (mirroring gbrain's read-op output); pinning that
 // contract (esp. a POSITIVE completeness token + the exact paging signal) is the piece-D binding slice's job.
 import { isOk, err, factKindSchema } from "@sow/contracts";
+import type { GbrainReadGrant } from "@sow/contracts";
 import type {
   GbrainReadAdapter,
   GbrainReadResult,
@@ -45,6 +46,19 @@ import type {
   DbFact,
   ReconcilerDbProjection,
 } from "@sow/knowledge";
+import { createGbrainReadAdapter } from "@sow/knowledge";
+// 19.5 — NOT re-exported from the @sow/knowledge barrel (index.ts has no
+// `export * from "./gbrain/gbrain-http-read-client"`); a subpath import via the package's own
+// `"./*"` export map, mirroring the `@sow/workflows/ports/operational` convention elsewhere in
+// this codebase. The barrel addition is a cross-territory need (knowledge's file) — request it,
+// do not add it here.
+import {
+  createGbrainHttpReadClient,
+  type HttpTransport,
+  type HttpTransportRequest,
+  type HttpTransportResponse,
+} from "@sow/knowledge/gbrain/gbrain-http-read-client";
+import { buildKeychainSecrets, type KeychainSecretsGate } from "../secrets/keychain-boot";
 
 /** Optional opaque payloads forwarded to the gbrain reads (revision/paging filter). Real shapes owner-gated. */
 export interface ReconcilerReadParams {
@@ -205,4 +219,80 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** A resolved read value is Result-shaped iff it has a boolean `ok` discriminant (so isOk/isErr are safe). */
 function isResult(value: unknown): value is GbrainReadResult {
   return isRecord(value) && typeof value.ok === "boolean";
+}
+
+// ── 19.5 — the OWNER-GATED real GbrainReadAdapter factory (the one missing "boot.ts:2386
+//    makeDbAdapter: () => undefined" replacement) ─────────────────────────────────────────
+//
+// Composes createGbrainReadAdapter(createGbrainHttpReadClient({...})) over a REAL Node HTTP
+// transport (the global `fetch`, Node 22), the existing Keychain-backed SecretsAccessor
+// (`buildKeychainSecrets`, apps/worker/src/secrets/keychain-boot.ts — reused, NOT rebuilt), and
+// the loopback endpoint the `gbrain serve --http` transport reuses `@sow/policy`'s
+// `isLoopbackEndpoint` to guard (inside `createGbrainHttpReadClient` itself).
+//
+// ⛔ KEEP UNBOUND AS THE SHIPPED DEFAULT: `buildRealGbrainReadAdapterFactory` returns a THUNK
+// (`() => GbrainReadAdapter | undefined`) — exactly the `makeDbAdapter` shape
+// `buildDegradableDbProjectionReader` (./reconcileTrigger.ts, 19.4) already consumes. The thunk
+// constructs NOTHING until called; when called, it constructs NOTHING further unless
+// `config.keychainGate` is present (the SAME owner-provisioning gate `buildKeychainSecrets`
+// already uses elsewhere in this codebase — no new gate invented). Absent gate ⇒ `undefined` ⇒
+// byte-identical to the current `() => undefined` hardcode — pinned by a factory-spy test
+// (zero HTTP/Keychain construction on the OFF path).
+//
+// arch_gap (Lesson 21, gbrain-http-read-client.ts:23-28): the op→path wire-map is a documented
+// CANDIDATE, confirmed against the real gbrain 0.35.1.0 serve surface at BIND time — not here.
+
+/** A real Node HTTP transport over the global `fetch` (Node 22) — no interpretation beyond the
+ *  status + raw body text; `createGbrainHttpReadClient` owns every safety/redaction decision. */
+function createNodeHttpTransport(): HttpTransport {
+  return {
+    async send(req: HttpTransportRequest): Promise<HttpTransportResponse> {
+      const res = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body });
+      const body = await res.text();
+      return { status: res.status, body };
+    },
+  };
+}
+
+/** Inputs to the owner-gated real adapter factory. Everything except `keychainGate` is
+ *  provisioning-time CONFIG (never probed/inferred, no ambient secret/host — L2). */
+export interface RealGbrainReadAdapterConfig {
+  /** The read-only GbrainReadGrant (workspace-scoped, generation-disabled — REQ-S per `@sow/contracts`). */
+  readonly grant: GbrainReadGrant;
+  /** The loopback `gbrain serve --http` base URL. */
+  readonly endpoint: string;
+  /** The explicit endpoint allowlist (defense-in-depth over the loopback predicate). */
+  readonly allowedEndpoints: readonly string[];
+  /** The Keychain owner-provisioning gate (`buildKeychainSecrets`'s own gate type). ABSENT ⇒ this
+   *  factory's returned thunk always resolves `undefined` — the byte-equivalent shipped default. */
+  readonly keychainGate?: KeychainSecretsGate;
+}
+
+/**
+ * Build the owner-gated real `GbrainReadAdapter` factory: a THUNK matching
+ * `buildDegradableDbProjectionReader`'s `makeDbAdapter` seam. Calling the returned thunk with no
+ * `keychainGate` configured constructs NOTHING (no HTTP transport, no Keychain backend, no
+ * adapter) and returns `undefined` — byte-equivalent to boot.ts's current hardcoded
+ * `makeDbAdapter: () => undefined`. With a gate configured, it builds the real Keychain secrets
+ * facade, the real HTTP transport, the HTTP read client, and — ONLY if the grant passes the
+ * read-only invariant check (`createGbrainReadAdapter`'s `isReadOnlyGrant`) — the adapter.
+ */
+export function buildRealGbrainReadAdapterFactory(
+  config: RealGbrainReadAdapterConfig,
+): () => GbrainReadAdapter | undefined {
+  return (): GbrainReadAdapter | undefined => {
+    const keychain = buildKeychainSecrets(config.keychainGate);
+    if (keychain === undefined) return undefined; // OFF-lock: no gate ⇒ nothing constructed further
+
+    const client = createGbrainHttpReadClient({
+      transport: createNodeHttpTransport(),
+      secrets: keychain.getSecret,
+      tokenRef: config.grant.tokenRef,
+      endpoint: config.endpoint,
+      allowedEndpoints: config.allowedEndpoints,
+    });
+    const adapterResult = createGbrainReadAdapter(config.grant, client);
+    if (!isOk(adapterResult)) return undefined; // a non-read-only grant degrades, never constructs
+    return adapterResult.value;
+  };
 }
