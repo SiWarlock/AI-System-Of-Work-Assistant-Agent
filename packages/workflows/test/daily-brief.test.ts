@@ -557,7 +557,7 @@ describe("createBuildGclProjectionActivity — leakage gate (inv-3)", () => {
       },
       gate: {
         // The real gate admits a clean candidate unchanged.
-        admit: (c) => ok({ ...c, sourceRefs: [...c.sourceRefs] }),
+        admit: (c) => Promise.resolve(ok({ ...c, sourceRefs: [...c.sourceRefs] })),
       },
     });
 
@@ -589,9 +589,11 @@ describe("createBuildGclProjectionActivity — leakage gate (inv-3)", () => {
       gate: {
         // The real @sow/knowledge admitProjection rejects a raw-content-shaped key.
         admit: (c) =>
-          JSON.stringify(c.sanitizedPayload).includes(RAW_EMPLOYER_SECRET)
-            ? err({ reason: "raw_content_present" })
-            : ok({ ...c, sourceRefs: [...c.sourceRefs] }),
+          Promise.resolve(
+            JSON.stringify(c.sanitizedPayload).includes(RAW_EMPLOYER_SECRET)
+              ? err({ reason: "raw_content_present" })
+              : ok({ ...c, sourceRefs: [...c.sourceRefs] }),
+          ),
       },
     });
 
