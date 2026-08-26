@@ -323,3 +323,37 @@ describe("createOutputWorkflowActivities — the flat factory surface (Phase 25)
     );
   });
 });
+
+// task 24.105 — the binding-site precondition guard's non-vacuity test for THIS factory's
+// `createCommitActivity` site (outputWorkflows.ts:353 — the FOURTH production site the task names,
+// distinct from apps/worker's buildActivities.ts pair and semanticApprovalDispatch.ts). The raw
+// `CommitKnowledgePort` the local `commitActivity` const wraps must NEVER itself be a member of the
+// object this factory returns — only through a plain-async WRAPPER function (`dailyBriefCommit` etc.
+// below). A bare prohibition invites its own deletion (`L82`); this pins it executably, mirroring
+// apps/worker/test/proof-spine-composition.test.ts's sibling pin for the other three sites.
+describe("createOutputWorkflowActivities — task 24.105: the raw commit PORT is never a registered activity member", () => {
+  it('no "commit" key exists at all, and every commit-bearing member carries no nested .commit method', () => {
+    const activities = createOutputWorkflowActivities(makeDeps());
+    const record = activities as unknown as Record<string, unknown>;
+    // The LOCAL const is named `commitActivity`, but no registered member is literally named
+    // "commit" — a `"commit"` key would mean the raw port (or a mis-wired duplicate) leaked into
+    // the returned surface under its own name.
+    expect("commit" in record).toBe(false);
+    // All four commit-bearing members exist and are plain functions — the flat shape this file's
+    // header requires and Temporal's `Worker.create({activities})` expects...
+    const commitMembers = [
+      "dailyBriefCommit",
+      "periodReviewCommit",
+      "projectSyncCommitStatus",
+      "crossCalendarCommitNote",
+    ] as const;
+    for (const name of commitMembers) {
+      expect(typeof record[name], name).toBe("function");
+      // ...never the raw CommitKnowledgePort OBJECT (which carries a nested `.commit` method) — a
+      // regression that spread `{...commitActivity}` into the returned literal instead of wrapping
+      // it would put a `.commit` property on the exposed value; this proves it was WRAPPED, not
+      // aliased.
+      expect((record[name] as { readonly commit?: unknown }).commit, `${name}.commit`).toBeUndefined();
+    }
+  });
+});

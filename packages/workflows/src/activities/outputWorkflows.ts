@@ -350,6 +350,24 @@ export function createOutputWorkflowActivities(
     gate: gclGate,
   });
   const refreshConnectorsActivity = createRefreshConnectorsActivity(deps.refreshConnectors);
+  // task 24.105 — binding-site precondition guard (the FOURTH `createCommitActivity` site named by
+  // that task; the other three are apps/worker/src/composition/buildActivities.ts:717/:1246 and
+  // semanticApprovalDispatch.ts:103). `commitActivity.commit(plan)` returns the RAW `CommitKnowledgePort`
+  // Result verbatim: a rejection carries `cause: result.error` — the WHOLE `WriteFailure`, validator-
+  // authored messages included, constructed at `commitKnowledge.ts:164` (secret-scan/workspace-path/
+  // ownership rejection detail). That full Result is exactly what `dailyBriefCommit`, `periodReviewCommit`,
+  // `projectSyncCommitStatus` and `crossCalendarCommitNote` below return as their Temporal ACTIVITY
+  // result — so once the composition root registers this factory's members as real Temporal activities
+  // (the task 25.1 registration this precondition gates), that unredacted `cause` lands in workflow
+  // history BY CONSTRUCTION, with no drop anywhere on this path.
+  // ⛔ NEVER expose this raw `commitActivity` PORT OBJECT itself as a member of the returned
+  // `OutputWorkflowActivities` literal — only ever through the plain-async WRAPPER functions below
+  // (`dailyBriefCommit:` etc.). Spreading `commitActivity` directly (e.g. a future `{...commitActivity}`
+  // shorthand) would put a `CommitKnowledgePort`-shaped object — with a nested `.commit` method — under a
+  // Temporal activity key; this file's own header requires a FLAT plain-async-function object. A bare
+  // prohibition invites its own deletion (`L82`) — factory.test.ts's task-24.105 suite pins that no
+  // `"commit"` key exists on the returned object and that every commit-bearing member is a bare function
+  // with no nested `.commit`.
   const commitActivity = createCommitActivity(deps.commit);
   const proposeActivity = createProposeActivity(deps.propose);
   const dashboardActivity = createDashboardUpdateActivity(deps.dashboard);
