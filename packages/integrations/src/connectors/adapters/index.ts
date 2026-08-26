@@ -35,7 +35,12 @@ export { createGranolaConnector } from "./granola";
 export { createDriveConnector } from "./drive";
 export { createGithubConnector } from "./github";
 export { createGmailConnector } from "./gmail";
-export { createTelegramCaptureConnector, createTelegramCaptureHttpTransport } from "./telegram-capture";
+export {
+  createTelegramCaptureConnector,
+  createTelegramCaptureHttpTransport,
+  buildTelegramCapture,
+} from "./telegram-capture";
+export type { TelegramReceiveError } from "./telegram-capture";
 export { createUrlSourceConnector } from "./url-source";
 // §13.4 read-only Obsidian-vault MCP tool surface (shape (A): a read-tool-descriptor surface, not a
 // ConnectorPort — registers only the 5 read tools; the 3 write tools are NOT registered, KN-4/KN-9).
