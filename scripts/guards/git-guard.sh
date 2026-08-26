@@ -12,6 +12,24 @@
 # mechanism, until proven otherwise (open decision: docs/codex/team-overlay.md §7). No signal found =>
 # solo/bootstrap session (or an unconfirmed Codex build) => rule 2 is a no-op — fails open, never closed.
 # Exit 2 blocks the tool call; the stderr message reaches the agent.
+#
+# 24.125 FIX — the guard used to string-match the WHOLE raw command text, so it could not tell an
+# executed command from a document quoting it (a heredoc body naming the banned form — this repo's
+# own commit-message convention, root CLAUDE.md: "Always pass the commit message via a HEREDOC"), and
+# separately could not tell `git push` from an unrelated subcommand that merely contains the word
+# (`git stash push`). Two independent, falsifiable-in-place narrowings (`L216`) — check them by
+# running `bash scripts/guards/git-guard.test.sh`:
+#   (a) HEREDOC BODIES ARE STRIPPED before either pattern is tested (`strip_heredocs` inline below),
+#       for any of the `<<WORD` / `<<-WORD` / `<<'WORD'` / `<<"WORD"` forms. NOT covered: a banned
+#       literal quoted inside a `-m "..."` string, `$'...'`, or a non-heredoc `$(...)` substitution —
+#       those still match, unchanged from before this fix.
+#   (b) Rule 2's pattern now requires `push` to be the actual git SUBCOMMAND: only dash-prefixed,
+#       single-token flags may sit between `git` and `push` (`git --no-pager push`, `git push origin
+#       main` still match). A bareword subcommand first (`git stash push`) no longer does. NOT
+#       covered, and a real narrowing versus before: a two-token global option ahead of push
+#       (`git -c foo=bar push`, `git -C dir push`) now passes through unblocked. Rule 1 (`add -A` /
+#       `add .`) is untouched by this narrowing — it was not the source of the stash-push false
+#       positive and keeps its prior, more permissive `git...add` matching.
 
 set -euo pipefail
 command -v jq >/dev/null 2>&1 || exit 0   # never hard-fail the harness on a missing dep
@@ -23,14 +41,43 @@ payload=$(cat)
 cmd=$(printf '%s' "$payload" | jq -r '.tool_input.command // empty' 2>/dev/null) || true
 [ -n "$cmd" ] || exit 0
 
+# Drop heredoc BODY lines (everything strictly between an opening `<<[-]['"]?WORD['"]?` marker and the
+# line that is exactly WORD, tabs stripped first for the `<<-` form) before either rule scans the text.
+# The marker line itself is kept (it carries no banned literal on its own); only the quoted prose/body
+# in between is removed. State machine, one active delimiter at a time — sufficient for the reproduced
+# shapes (a heredoc building a doc or a commit message), not a full shell parser.
+scan_cmd=$(printf '%s\n' "$cmd" | awk '
+  in_here {
+    check = $0
+    if (strip_tabs) sub(/^\t+/, "", check)
+    if (check == delim) { in_here = 0; delim = "" }
+    next
+  }
+  {
+    line = $0
+    if (match(line, /<<-?[[:space:]]*[^[:space:]]+/)) {
+      tok = substr(line, RSTART, RLENGTH)
+      strip_tabs = (tok ~ /^<<-/)
+      d = tok
+      sub(/^<<-?[[:space:]]*/, "", d)
+      gsub(/["'"'"']/, "", d)
+      delim = d
+      in_here = 1
+    }
+    print line
+  }
+')
+
 # 1. blanket-stage ban (all roles)
-if printf '%s' "$cmd" | grep -qE 'git[^|;&]*[[:space:]]add[[:space:]]+(-A\b|--all\b|\.([[:space:]]|$|/))'; then
+if printf '%s' "$scan_cmd" | grep -qE 'git[^|;&]*[[:space:]]add[[:space:]]+(-A\b|--all\b|\.([[:space:]]|$|/))'; then
   echo "BLOCKED (git-guard): 'git add -A' / 'git add .' is banned — stage files explicitly (root CLAUDE.md commit rules; /orchestrate-end and /session-end both show the explicit-add form)." >&2
   exit 2
 fi
 
-# 2. implementer never pushes
-if printf '%s' "$cmd" | grep -qE '(^|[^a-z])git[^|;&]*[[:space:]]push\b'; then
+# 2. implementer never pushes — `push` must be the actual git SUBCOMMAND (only dash-prefixed
+# single-token flags may intervene), so `git stash push` / similar are not misread as `git push`
+# (### 24.125 witness 3).
+if printf '%s' "$scan_cmd" | grep -qE '(^|[^a-zA-Z0-9_])git([[:space:]]+-[A-Za-z0-9=_-]+)*[[:space:]]+push\b'; then
   sid=$(printf '%s' "$payload" | jq -r '.session_id // empty')
   role=""
   [ -n "$sid" ] && [ -f "$HOME/.claude/team-registry/${sid}.json" ] \
