@@ -226,12 +226,19 @@ import {
   makeProofSpineRegisterHook,
   PROOF_SPINE_TASK_QUEUE,
 } from "./temporal/registerWorker";
-// task 25.5 — the 25.SCHED leg-1 durable schedule registrar + the ingestion-triage default-OFF gate.
-// scheduleRegistrar.ts's own header: "wiring this gate into bootWorker ... is PKG-W1's boot.ts,
-// outside this package's territory" — this IS that wiring.
+// tasks 25.2/25.3/25.4/25.5 — the 25.SCHED leg-1 durable schedule registrar + each output
+// workflow's default-OFF gate. scheduleRegistrar.ts's own header: "wiring this gate into
+// bootWorker ... is PKG-W1's boot.ts, outside this package's territory" — this IS that wiring,
+// for every gate the module exports (25.5 landed ingestionTriage first; this wave adds the
+// remaining five).
 import {
   createTemporalScheduleRegistrar,
   gateIngestionTriageSchedule,
+  gateProjectSyncSchedule,
+  gateDailyBriefSchedule,
+  gatePeriodReviewWeeklySchedule,
+  gatePeriodReviewMonthlySchedule,
+  gateCrossCalendarSchedulingSchedule,
   type ScheduleClientPort,
   type TemporalScheduleSpec,
 } from "./temporal/scheduleRegistrar";
@@ -319,6 +326,46 @@ export interface BootConfig extends BackendsConfig {
   readonly ingestionTriageSchedule?: {
     readonly enabled?: boolean;
     /** The re-surface cadence. Defaults to 6 hours if armed without an override. */
+    readonly intervalMs?: number;
+  };
+  /**
+   * task 25.3 — owner opt-in for the project-sync DURABLE schedule. Same shape + same
+   * never-arms-live guarantee as {@link BootConfig.ingestionTriageSchedule} above (strict
+   * `=== true`, `ensure()` can only create-paused/converge, never unpause).
+   */
+  readonly projectSyncSchedule?: {
+    readonly enabled?: boolean;
+    /** The sync cadence. Defaults to 1 hour if armed without an override. */
+    readonly intervalMs?: number;
+  };
+  /**
+   * task 25.2 — owner opt-in for the daily-brief DURABLE schedule. Same shape + same
+   * never-arms-live guarantee as {@link BootConfig.ingestionTriageSchedule} above.
+   */
+  readonly dailyBriefSchedule?: {
+    readonly enabled?: boolean;
+    /** The brief cadence. Defaults to 24 hours if armed without an override. */
+    readonly intervalMs?: number;
+  };
+  /**
+   * task 25.2 — owner opt-in for the period-review DURABLE schedules (weekly AND monthly — ONE
+   * flip arms BOTH cadences, no split-brain between them). Same never-arms-live guarantee as
+   * {@link BootConfig.ingestionTriageSchedule} above.
+   */
+  readonly periodReviewSchedule?: {
+    readonly enabled?: boolean;
+    /** The weekly-cadence review interval. Defaults to 7 days if armed without an override. */
+    readonly weeklyIntervalMs?: number;
+    /** The monthly-cadence review interval. Defaults to 30 days if armed without an override. */
+    readonly monthlyIntervalMs?: number;
+  };
+  /**
+   * task 25.4 — owner opt-in for the cross-calendar-scheduling DURABLE schedule. Same shape +
+   * same never-arms-live guarantee as {@link BootConfig.ingestionTriageSchedule} above.
+   */
+  readonly crossCalendarSchedulingSchedule?: {
+    readonly enabled?: boolean;
+    /** The scheduling-sweep cadence. Defaults to 1 hour if armed without an override. */
     readonly intervalMs?: number;
   };
   /** Loopback bind host — defaults to 127.0.0.1 (a non-loopback host is REFUSED). */
@@ -3435,21 +3482,75 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     });
   }
 
-  // task 25.5 — the ingestion-triage DURABLE schedule (default-OFF, strict `=== true`). Mirrors the
-  // GBrain version-pin verify's own FIRE-AND-FORGET + DEGRADED-SAFE discipline just above (never blocks
-  // boot, never crashes it — §16) AND the vault-watcher's LAZY-connect discipline (a down Temporal
-  // degrades to a warned no-op, no boot-time connect stall). ⛔ NOTHING ARMS: `gateIngestionTriageSchedule`
-  // returns undefined unless the owner has flipped `config.ingestionTriageSchedule.enabled` to the
-  // STRICT literal `true`, and even on the ON path `ensure()` can only create/converge a PAUSED schedule
-  // (scheduleRegistrar.ts's own structural guarantee) — no code path here or in that module can start a
-  // LIVE (actively firing) schedule; an operator unpauses it by hand, outside this process entirely.
+  // tasks 25.2/25.3/25.4/25.5 — the output-workflow DURABLE schedules (each default-OFF, strict
+  // `=== true`). Mirrors the GBrain version-pin verify's own FIRE-AND-FORGET + DEGRADED-SAFE
+  // discipline just above (never blocks boot, never crashes it — §16) AND the vault-watcher's
+  // LAZY-connect discipline (a down Temporal degrades to a warned no-op, no boot-time connect
+  // stall). ⛔ NOTHING ARMS: every `gate*Schedule` call below returns undefined unless the owner
+  // has flipped ITS OWN config flag to the STRICT literal `true` (each an independent AND-lock —
+  // arming one schedule never arms another), and even on an armed path `ensure()` can only
+  // create/converge a PAUSED schedule (scheduleRegistrar.ts's own structural guarantee) — no code
+  // path here or in that module can start a LIVE (actively firing) schedule; an operator unpauses
+  // one by hand, outside this process entirely. Every gated spec is collected FIRST, then — only
+  // if at least one armed — registered over ONE lazily-connected, always-closed Temporal client
+  // (amortizing the connect rather than opening one per schedule; 25.5's own per-schedule
+  // fire-and-forget/degraded-safe/lazy-connect/always-closed properties all hold identically per
+  // spec inside the shared loop).
+  const outputWorkflowScheduleSpecs: TemporalScheduleSpec[] = [];
+
   const ingestionTriageScheduleSpec = gateIngestionTriageSchedule({
     enabled: config.ingestionTriageSchedule?.enabled === true,
     taskQueue: PROOF_SPINE_TASK_QUEUE,
     intervalMs: config.ingestionTriageSchedule?.intervalMs ?? 6 * 60 * 60 * 1000,
   });
-  if (ingestionTriageScheduleSpec !== undefined) {
-    const spec = ingestionTriageScheduleSpec;
+  if (ingestionTriageScheduleSpec !== undefined) outputWorkflowScheduleSpecs.push(ingestionTriageScheduleSpec);
+
+  // task 25.3 — projectSync. `gateProjectSyncSchedule` + its spec builder landed at `1322f74d`;
+  // this is the remaining boot-level wiring named as this package's own crossTerritoryNeed.
+  const projectSyncScheduleSpec = gateProjectSyncSchedule({
+    enabled: config.projectSyncSchedule?.enabled === true,
+    taskQueue: PROOF_SPINE_TASK_QUEUE,
+    intervalMs: config.projectSyncSchedule?.intervalMs ?? 60 * 60 * 1000,
+  });
+  if (projectSyncScheduleSpec !== undefined) outputWorkflowScheduleSpecs.push(projectSyncScheduleSpec);
+
+  // task 25.2 — dailyBrief (daily cadence).
+  const dailyBriefScheduleSpec = gateDailyBriefSchedule({
+    enabled: config.dailyBriefSchedule?.enabled === true,
+    taskQueue: PROOF_SPINE_TASK_QUEUE,
+    intervalMs: config.dailyBriefSchedule?.intervalMs ?? 24 * 60 * 60 * 1000,
+  });
+  if (dailyBriefScheduleSpec !== undefined) outputWorkflowScheduleSpecs.push(dailyBriefScheduleSpec);
+
+  // task 25.2 — periodReview, weekly AND monthly cadences. ONE owner flag
+  // (`config.periodReviewSchedule.enabled`) arms BOTH — two independent schedule specs (distinct
+  // scheduleId, SAME workflowType), never collapsed into one.
+  const periodReviewWeeklyScheduleSpec = gatePeriodReviewWeeklySchedule({
+    enabled: config.periodReviewSchedule?.enabled === true,
+    taskQueue: PROOF_SPINE_TASK_QUEUE,
+    intervalMs: config.periodReviewSchedule?.weeklyIntervalMs ?? 7 * 24 * 60 * 60 * 1000,
+  });
+  if (periodReviewWeeklyScheduleSpec !== undefined) outputWorkflowScheduleSpecs.push(periodReviewWeeklyScheduleSpec);
+
+  const periodReviewMonthlyScheduleSpec = gatePeriodReviewMonthlySchedule({
+    enabled: config.periodReviewSchedule?.enabled === true,
+    taskQueue: PROOF_SPINE_TASK_QUEUE,
+    intervalMs: config.periodReviewSchedule?.monthlyIntervalMs ?? 30 * 24 * 60 * 60 * 1000,
+  });
+  if (periodReviewMonthlyScheduleSpec !== undefined) outputWorkflowScheduleSpecs.push(periodReviewMonthlyScheduleSpec);
+
+  // task 25.4 — crossCalendarScheduling.
+  const crossCalendarSchedulingScheduleSpec = gateCrossCalendarSchedulingSchedule({
+    enabled: config.crossCalendarSchedulingSchedule?.enabled === true,
+    taskQueue: PROOF_SPINE_TASK_QUEUE,
+    intervalMs: config.crossCalendarSchedulingSchedule?.intervalMs ?? 60 * 60 * 1000,
+  });
+  if (crossCalendarSchedulingScheduleSpec !== undefined) {
+    outputWorkflowScheduleSpecs.push(crossCalendarSchedulingScheduleSpec);
+  }
+
+  if (outputWorkflowScheduleSpecs.length > 0) {
+    const specs = outputWorkflowScheduleSpecs;
     void (async (): Promise<void> => {
       let closeConnection: (() => Promise<void>) | undefined;
       try {
@@ -3463,20 +3564,24 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
             (e): boolean => e instanceof ScheduleNotFoundError,
           ),
         });
-        const outcome = await registrar.ensure(spec);
-        if (isErr(outcome)) {
-          backends.logger.warn("schedule.ingestion_triage.ensure_failed", {
-            fields: { code: outcome.error.code },
-          });
-        } else {
-          backends.logger.info("schedule.ingestion_triage.ensured", {
-            fields: { action: outcome.value.action },
-          });
+        // Sequential, not Promise.all — a single shared connection is reused per-call; failures
+        // are isolated per scheduleId (one schedule's fault never aborts the others' ensure()).
+        for (const spec of specs) {
+          const outcome = await registrar.ensure(spec);
+          if (isErr(outcome)) {
+            backends.logger.warn("schedule.ensure_failed", {
+              fields: { code: outcome.error.code, scheduleId: spec.scheduleId },
+            });
+          } else {
+            backends.logger.info("schedule.ensured", {
+              fields: { action: outcome.value.action, scheduleId: spec.scheduleId },
+            });
+          }
         }
       } catch {
         // A client-build/connect fault degrades to a warned no-op — never crashes boot (§16), mirrors
         // the vault-watcher's own client_build_failed discipline above.
-        backends.logger.warn("schedule.ingestion_triage.client_unavailable", {
+        backends.logger.warn("schedule.client_unavailable", {
           fields: { code: "client_build_failed" },
         });
       } finally {

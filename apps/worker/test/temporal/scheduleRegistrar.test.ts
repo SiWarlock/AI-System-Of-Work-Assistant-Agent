@@ -22,6 +22,18 @@ import {
   gateProjectSyncSchedule,
   buildProjectSyncScheduleSpec,
   PROJECT_SYNC_SCHEDULE_ID,
+  gateDailyBriefSchedule,
+  buildDailyBriefScheduleSpec,
+  DAILY_BRIEF_SCHEDULE_ID,
+  gatePeriodReviewWeeklySchedule,
+  buildPeriodReviewWeeklyScheduleSpec,
+  PERIOD_REVIEW_WEEKLY_SCHEDULE_ID,
+  gatePeriodReviewMonthlySchedule,
+  buildPeriodReviewMonthlyScheduleSpec,
+  PERIOD_REVIEW_MONTHLY_SCHEDULE_ID,
+  gateCrossCalendarSchedulingSchedule,
+  buildCrossCalendarSchedulingScheduleSpec,
+  CROSS_CALENDAR_SCHEDULING_SCHEDULE_ID,
   type ScheduleClientPort,
   type TemporalScheduleSpec,
 } from "../../src/temporal/scheduleRegistrar";
@@ -48,16 +60,19 @@ function fakeClient(overrides: Partial<ScheduleClientPort> = {}): ScheduleClient
   readonly calls: FakeClientCalls;
 } {
   const calls: FakeClientCalls = { describe: [], create: [], update: [] };
-  let existing: { paused: boolean } | undefined;
+  // Keyed by scheduleId (not a single shared slot) — the real ScheduleClientPort tracks each
+  // schedule independently; a test driving TWO scheduleIds through the SAME fake must not have
+  // the second collide with the first's existing-state.
+  const existingById = new Map<string, { paused: boolean }>();
   return {
     calls,
     async describe(scheduleId) {
       calls.describe.push(scheduleId);
-      return existing;
+      return existingById.get(scheduleId);
     },
     async create(spec, opts) {
       calls.create.push({ spec, opts });
-      existing = { paused: opts.paused };
+      existingById.set(spec.scheduleId, { paused: opts.paused });
     },
     async update(spec) {
       calls.update.push(spec);
@@ -196,6 +211,145 @@ describe("gateProjectSyncSchedule — 25.3 default-OFF, strict === true arming g
 
   it("ensure() over the gated spec creates a NEW schedule paused:true — the schedule stays inert end to end", async () => {
     const spec = gateProjectSyncSchedule({ ...base, enabled: true });
+    expect(spec).toBeDefined();
+    const client = fakeClient();
+    const registrar = createTemporalScheduleRegistrar({ client });
+
+    const r = await registrar.ensure(spec as TemporalScheduleSpec);
+
+    expect(isOk(r)).toBe(true);
+    expect(client.calls.create).toHaveLength(1);
+    expect(client.calls.create[0]?.opts).toEqual({ paused: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 25.2 — the dailyBrief schedule spec + its default-OFF arming gate
+// ---------------------------------------------------------------------------
+
+describe("gateDailyBriefSchedule — 25.2 default-OFF, strict === true arming gate", () => {
+  const base = { taskQueue: "sow-control-plane" as const, intervalMs: 86_400_000 };
+
+  it("is undefined by default (enabled: false) — no spec, no schedule attachable", () => {
+    expect(gateDailyBriefSchedule({ ...base, enabled: false })).toBeUndefined();
+  });
+
+  it("is undefined for a truthy-but-not-literal-true value — strict === true, never a coercion", () => {
+    const hostile = { ...base, enabled: "true" as unknown as boolean };
+    expect(gateDailyBriefSchedule(hostile)).toBeUndefined();
+  });
+
+  it("returns the durable daily-brief schedule spec only when enabled === true", () => {
+    const spec = gateDailyBriefSchedule({ ...base, enabled: true });
+    expect(spec).toBeDefined();
+    expect(spec).toEqual(buildDailyBriefScheduleSpec(base));
+    expect(spec?.scheduleId).toBe(DAILY_BRIEF_SCHEDULE_ID);
+    expect(spec?.action.workflowType).toBe("dailyBriefWorkflow");
+    expect(spec?.action.taskQueue).toBe("sow-control-plane");
+    expect(spec?.intervalMs).toBe(base.intervalMs);
+  });
+
+  it("ensure() over the gated spec creates a NEW schedule paused:true — the schedule stays inert end to end", async () => {
+    const spec = gateDailyBriefSchedule({ ...base, enabled: true });
+    expect(spec).toBeDefined();
+    const client = fakeClient();
+    const registrar = createTemporalScheduleRegistrar({ client });
+
+    const r = await registrar.ensure(spec as TemporalScheduleSpec);
+
+    expect(isOk(r)).toBe(true);
+    expect(client.calls.create).toHaveLength(1);
+    expect(client.calls.create[0]?.opts).toEqual({ paused: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 25.2 — the periodReview WEEKLY + MONTHLY schedule specs + their default-OFF
+// arming gates (two independent cadences over the SAME workflow)
+// ---------------------------------------------------------------------------
+
+describe("gatePeriodReviewWeeklySchedule / gatePeriodReviewMonthlySchedule — 25.2 default-OFF, strict === true arming gates", () => {
+  const base = { taskQueue: "sow-control-plane" as const, intervalMs: 604_800_000 };
+
+  it("weekly is undefined by default (enabled: false)", () => {
+    expect(gatePeriodReviewWeeklySchedule({ ...base, enabled: false })).toBeUndefined();
+  });
+
+  it("monthly is undefined by default (enabled: false)", () => {
+    expect(gatePeriodReviewMonthlySchedule({ ...base, enabled: false })).toBeUndefined();
+  });
+
+  it("weekly is undefined for a truthy-but-not-literal-true value — strict === true, never a coercion", () => {
+    const hostile = { ...base, enabled: "true" as unknown as boolean };
+    expect(gatePeriodReviewWeeklySchedule(hostile)).toBeUndefined();
+  });
+
+  it("monthly is undefined for a truthy-but-not-literal-true value — strict === true, never a coercion", () => {
+    const hostile = { ...base, enabled: "true" as unknown as boolean };
+    expect(gatePeriodReviewMonthlySchedule(hostile)).toBeUndefined();
+  });
+
+  it("weekly returns a durable period-review spec distinct from monthly's (different scheduleId, SAME workflowType)", () => {
+    const weekly = gatePeriodReviewWeeklySchedule({ ...base, enabled: true });
+    const monthly = gatePeriodReviewMonthlySchedule({ ...base, enabled: true });
+    expect(weekly).toBeDefined();
+    expect(monthly).toBeDefined();
+    expect(weekly).toEqual(buildPeriodReviewWeeklyScheduleSpec(base));
+    expect(monthly).toEqual(buildPeriodReviewMonthlyScheduleSpec(base));
+    expect(weekly?.scheduleId).toBe(PERIOD_REVIEW_WEEKLY_SCHEDULE_ID);
+    expect(monthly?.scheduleId).toBe(PERIOD_REVIEW_MONTHLY_SCHEDULE_ID);
+    // distinct schedule ids ⇒ distinct workflow ids too (ensure() never collides the two cadences)
+    expect(weekly?.action.workflowId).not.toBe(monthly?.action.workflowId);
+    expect(weekly?.action.workflowType).toBe("periodReviewWorkflow");
+    expect(monthly?.action.workflowType).toBe("periodReviewWorkflow");
+  });
+
+  it("ensure() over EITHER gated spec creates a NEW schedule paused:true, and the two cadences register as TWO independent schedules", async () => {
+    const weekly = gatePeriodReviewWeeklySchedule({ ...base, enabled: true });
+    const monthly = gatePeriodReviewMonthlySchedule({ ...base, intervalMs: 2_592_000_000, enabled: true });
+    expect(weekly).toBeDefined();
+    expect(monthly).toBeDefined();
+    const client = fakeClient();
+    const registrar = createTemporalScheduleRegistrar({ client });
+
+    const rWeekly = await registrar.ensure(weekly as TemporalScheduleSpec);
+    const rMonthly = await registrar.ensure(monthly as TemporalScheduleSpec);
+
+    expect(isOk(rWeekly)).toBe(true);
+    expect(isOk(rMonthly)).toBe(true);
+    expect(client.calls.create).toHaveLength(2); // two DISTINCT scheduleIds, never collapsed to one
+    expect(client.calls.create.every((c) => c.opts.paused === true)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 25.4 — the crossCalendarScheduling schedule spec + its default-OFF arming gate
+// ---------------------------------------------------------------------------
+
+describe("gateCrossCalendarSchedulingSchedule — 25.4 default-OFF, strict === true arming gate", () => {
+  const base = { taskQueue: "sow-control-plane" as const, intervalMs: 3_600_000 };
+
+  it("is undefined by default (enabled: false) — no spec, no schedule attachable", () => {
+    expect(gateCrossCalendarSchedulingSchedule({ ...base, enabled: false })).toBeUndefined();
+  });
+
+  it("is undefined for a truthy-but-not-literal-true value — strict === true, never a coercion", () => {
+    const hostile = { ...base, enabled: "true" as unknown as boolean };
+    expect(gateCrossCalendarSchedulingSchedule(hostile)).toBeUndefined();
+  });
+
+  it("returns the durable cross-calendar-scheduling schedule spec only when enabled === true", () => {
+    const spec = gateCrossCalendarSchedulingSchedule({ ...base, enabled: true });
+    expect(spec).toBeDefined();
+    expect(spec).toEqual(buildCrossCalendarSchedulingScheduleSpec(base));
+    expect(spec?.scheduleId).toBe(CROSS_CALENDAR_SCHEDULING_SCHEDULE_ID);
+    expect(spec?.action.workflowType).toBe("crossCalendarSchedulingWorkflow");
+    expect(spec?.action.taskQueue).toBe("sow-control-plane");
+    expect(spec?.intervalMs).toBe(base.intervalMs);
+  });
+
+  it("ensure() over the gated spec creates a NEW schedule paused:true — the schedule stays inert end to end", async () => {
+    const spec = gateCrossCalendarSchedulingSchedule({ ...base, enabled: true });
     expect(spec).toBeDefined();
     const client = fakeClient();
     const registrar = createTemporalScheduleRegistrar({ client });

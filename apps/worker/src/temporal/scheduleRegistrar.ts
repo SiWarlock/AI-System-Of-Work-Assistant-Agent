@@ -265,3 +265,200 @@ export function gateProjectSyncSchedule(opts: {
   if (opts.enabled !== true) return undefined;
   return buildProjectSyncScheduleSpec(opts);
 }
+
+// ---------------------------------------------------------------------------
+// (4) 25.2 — the dailyBrief schedule spec + its default-OFF arming gate
+// ---------------------------------------------------------------------------
+
+/**
+ * The registered sandbox workflow type name `dailyBriefWorkflow` runs under
+ * (temporal/workflows.ts — a complete, registered bundle entry point as of task 25.1; this module
+ * does NOT rebuild it, only attaches a durable schedule spec pointed at it).
+ */
+export const DAILY_BRIEF_WORKFLOW_TYPE = "dailyBriefWorkflow" as const;
+
+/** The durable schedule id the 25.2 daily-brief tick registers under. */
+export const DAILY_BRIEF_SCHEDULE_ID = "daily-brief" as const;
+
+/**
+ * arch_gap (Phase 25, flagged not silently assumed — mirrors {@link buildIngestionTriageScheduleSpec}'s
+ * own note above): `dailyBriefWorkflow`'s input is a full `DailyBriefInput` (`run`, `scheduleId`,
+ * `globalWorkspaceId`, `context`, …) — there is no per-tick input for a periodic schedule to supply, so
+ * this spec's `args: []` is a PLACEHOLDER action shape, not a functioning daily brief. Defining the
+ * real per-tick input construction (resolving the owner's registered workspaces + the Global
+ * coordination target) is a follow-up once the composition-root binds `OutputWorkflowActivities`
+ * (task 25.2's own cited crossTerritoryNeed); this function's job is the DORMANT schedule-attachment
+ * machinery + the default-OFF gate, per the 25.SCHED leg-1 brief. Never armed by this package.
+ */
+export function buildDailyBriefScheduleSpec(opts: {
+  readonly taskQueue: SowTaskQueue;
+  readonly intervalMs: number;
+}): TemporalScheduleSpec {
+  return {
+    scheduleId: DAILY_BRIEF_SCHEDULE_ID,
+    intervalMs: opts.intervalMs,
+    action: {
+      workflowType: DAILY_BRIEF_WORKFLOW_TYPE,
+      workflowId: `${DAILY_BRIEF_SCHEDULE_ID}-workflow`,
+      taskQueue: opts.taskQueue,
+      args: [],
+    },
+  };
+}
+
+/**
+ * The 25.2 arming gate (same shape as {@link gateIngestionTriageSchedule} / {@link gateProjectSyncSchedule}:
+ * worker LESSONS §2's `gate(opts) → wiring | undefined`, default-OFF, strict `=== true`). Returns the
+ * durable daily-brief schedule spec ONLY when the owner armed it; otherwise `undefined` — a
+ * truthy-but-not-boolean-`true` value does NOT arm (no coercion). NOTHING in this package ever calls
+ * {@link TemporalScheduleRegistrar.ensure} with this spec — wiring this gate into `bootWorker` is
+ * PKG-W1's `boot.ts`, outside this package's territory, same as the gates above.
+ */
+export function gateDailyBriefSchedule(opts: {
+  readonly enabled: boolean;
+  readonly taskQueue: SowTaskQueue;
+  readonly intervalMs: number;
+}): TemporalScheduleSpec | undefined {
+  if (opts.enabled !== true) return undefined;
+  return buildDailyBriefScheduleSpec(opts);
+}
+
+// ---------------------------------------------------------------------------
+// (5) 25.2 — the periodReview WEEKLY + MONTHLY schedule specs + their
+// default-OFF arming gates (two independent cadences over ONE workflow)
+// ---------------------------------------------------------------------------
+
+/**
+ * The registered sandbox workflow type name `periodReviewWorkflow` runs under
+ * (temporal/workflows.ts — a complete, registered bundle entry point as of task 25.1). BOTH cadences
+ * below point at this SAME workflow type — `PeriodReviewInput.period` (`"weekly" | "monthly"`)
+ * distinguishes them at invocation, not the workflow type name.
+ */
+export const PERIOD_REVIEW_WORKFLOW_TYPE = "periodReviewWorkflow" as const;
+
+/** The durable schedule id the 25.2 weekly period-review tick registers under. */
+export const PERIOD_REVIEW_WEEKLY_SCHEDULE_ID = "period-review-weekly" as const;
+
+/** The durable schedule id the 25.2 monthly period-review tick registers under. */
+export const PERIOD_REVIEW_MONTHLY_SCHEDULE_ID = "period-review-monthly" as const;
+
+/**
+ * arch_gap (Phase 25, flagged not silently assumed — mirrors {@link buildDailyBriefScheduleSpec}'s own
+ * note above): `periodReviewWorkflow`'s input is a full `PeriodReviewInput` (`run`, `scheduleId`,
+ * `period`, `globalWorkspaceId`, `context`, …) — there is no per-tick input for a periodic schedule to
+ * supply, so BOTH cadences' `args: []` are PLACEHOLDER action shapes, not a functioning review.
+ * Deferred to the same composition-root follow-up as {@link buildDailyBriefScheduleSpec}. Never armed
+ * by this package.
+ */
+function buildPeriodReviewScheduleSpec(opts: {
+  readonly scheduleId: typeof PERIOD_REVIEW_WEEKLY_SCHEDULE_ID | typeof PERIOD_REVIEW_MONTHLY_SCHEDULE_ID;
+  readonly taskQueue: SowTaskQueue;
+  readonly intervalMs: number;
+}): TemporalScheduleSpec {
+  return {
+    scheduleId: opts.scheduleId,
+    intervalMs: opts.intervalMs,
+    action: {
+      workflowType: PERIOD_REVIEW_WORKFLOW_TYPE,
+      workflowId: `${opts.scheduleId}-workflow`,
+      taskQueue: opts.taskQueue,
+      args: [],
+    },
+  };
+}
+
+/** The weekly-cadence period-review schedule spec. See {@link buildPeriodReviewScheduleSpec}. */
+export function buildPeriodReviewWeeklyScheduleSpec(opts: {
+  readonly taskQueue: SowTaskQueue;
+  readonly intervalMs: number;
+}): TemporalScheduleSpec {
+  return buildPeriodReviewScheduleSpec({ ...opts, scheduleId: PERIOD_REVIEW_WEEKLY_SCHEDULE_ID });
+}
+
+/** The monthly-cadence period-review schedule spec. See {@link buildPeriodReviewScheduleSpec}. */
+export function buildPeriodReviewMonthlyScheduleSpec(opts: {
+  readonly taskQueue: SowTaskQueue;
+  readonly intervalMs: number;
+}): TemporalScheduleSpec {
+  return buildPeriodReviewScheduleSpec({ ...opts, scheduleId: PERIOD_REVIEW_MONTHLY_SCHEDULE_ID });
+}
+
+/**
+ * The 25.2 weekly arming gate (same shape as {@link gateDailyBriefSchedule}: default-OFF, strict
+ * `=== true`). Independent of the monthly gate below — each cadence is its own AND-lock, but a
+ * caller may choose to key both off the same owner config field (boot.ts's own composition
+ * decision, not this module's).
+ */
+export function gatePeriodReviewWeeklySchedule(opts: {
+  readonly enabled: boolean;
+  readonly taskQueue: SowTaskQueue;
+  readonly intervalMs: number;
+}): TemporalScheduleSpec | undefined {
+  if (opts.enabled !== true) return undefined;
+  return buildPeriodReviewWeeklyScheduleSpec(opts);
+}
+
+/** The 25.2 monthly arming gate. See {@link gatePeriodReviewWeeklySchedule}. */
+export function gatePeriodReviewMonthlySchedule(opts: {
+  readonly enabled: boolean;
+  readonly taskQueue: SowTaskQueue;
+  readonly intervalMs: number;
+}): TemporalScheduleSpec | undefined {
+  if (opts.enabled !== true) return undefined;
+  return buildPeriodReviewMonthlyScheduleSpec(opts);
+}
+
+// ---------------------------------------------------------------------------
+// (6) 25.4 — the crossCalendarScheduling schedule spec + its default-OFF
+// arming gate
+// ---------------------------------------------------------------------------
+
+/**
+ * The registered sandbox workflow type name `crossCalendarSchedulingWorkflow` runs under
+ * (temporal/workflows.ts — a complete, registered bundle entry point as of task 25.1; this module
+ * does NOT rebuild it, only attaches a durable schedule spec pointed at it).
+ */
+export const CROSS_CALENDAR_SCHEDULING_WORKFLOW_TYPE = "crossCalendarSchedulingWorkflow" as const;
+
+/** The durable schedule id the 25.4 cross-calendar-scheduling tick registers under. */
+export const CROSS_CALENDAR_SCHEDULING_SCHEDULE_ID = "cross-calendar-scheduling" as const;
+
+/**
+ * arch_gap (Phase 25, flagged not silently assumed — mirrors {@link buildDailyBriefScheduleSpec}'s own
+ * note above): `crossCalendarSchedulingWorkflow`'s input is a full `CrossCalendarSchedulingInput` —
+ * there is no per-tick input for a periodic schedule to supply, so this spec's `args: []` is a
+ * PLACEHOLDER action shape, not a functioning periodic scheduling sweep. Deferred to the same
+ * composition-root follow-up as {@link buildDailyBriefScheduleSpec}. Never armed by this package.
+ */
+export function buildCrossCalendarSchedulingScheduleSpec(opts: {
+  readonly taskQueue: SowTaskQueue;
+  readonly intervalMs: number;
+}): TemporalScheduleSpec {
+  return {
+    scheduleId: CROSS_CALENDAR_SCHEDULING_SCHEDULE_ID,
+    intervalMs: opts.intervalMs,
+    action: {
+      workflowType: CROSS_CALENDAR_SCHEDULING_WORKFLOW_TYPE,
+      workflowId: `${CROSS_CALENDAR_SCHEDULING_SCHEDULE_ID}-workflow`,
+      taskQueue: opts.taskQueue,
+      args: [],
+    },
+  };
+}
+
+/**
+ * The 25.4 arming gate (same shape as {@link gateIngestionTriageSchedule} / {@link gateProjectSyncSchedule}:
+ * worker LESSONS §2's `gate(opts) → wiring | undefined`, default-OFF, strict `=== true`). Returns the
+ * durable cross-calendar-scheduling schedule spec ONLY when the owner armed it; otherwise `undefined`
+ * — a truthy-but-not-boolean-`true` value does NOT arm (no coercion). NOTHING in this package ever
+ * calls {@link TemporalScheduleRegistrar.ensure} with this spec — wiring this gate into `bootWorker`
+ * is PKG-W1's `boot.ts`, outside this package's territory, same as the gates above.
+ */
+export function gateCrossCalendarSchedulingSchedule(opts: {
+  readonly enabled: boolean;
+  readonly taskQueue: SowTaskQueue;
+  readonly intervalMs: number;
+}): TemporalScheduleSpec | undefined {
+  if (opts.enabled !== true) return undefined;
+  return buildCrossCalendarSchedulingScheduleSpec(opts);
+}
