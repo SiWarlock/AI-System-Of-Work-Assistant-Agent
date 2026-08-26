@@ -17,7 +17,7 @@
 // §16: `ground` returns a typed Result; nothing throws across the boundary.
 // The failure set is closed + enumerable; every `message` is a FIXED safe
 // literal (rule 7) — never note content, question text, or a credential.
-import type { Result } from "@sow/contracts";
+import type { AgentJob, DataOwner, EgressPolicy, Result, WorkspaceType } from "@sow/contracts";
 
 /**
  * One caller-supplied note admitted to the grounding upload. Each note carries
@@ -36,12 +36,20 @@ export interface NotebookGroundNote {
  * — any note in `notes` from a different workspace is excluded before upload.
  * `project` (+ the implementation's fixed operation label) build the stable
  * canonicalObjectKey / idempotencyKey the upload dispatches under.
+ *
+ * `job`/`egress`/`workspace` are the REAL rule-5 `egressVeto` inputs (13.9 —
+ * mirrors `free-source-aggregator.ts`'s `ResearchContext`): NotebookLM is a
+ * cloud processor, so every grounding call self-runs the real `@sow/policy`
+ * veto over these caller-supplied facts BEFORE any upload/transport call.
  */
 export interface NotebookGroundRequest {
   readonly workspaceId: string;
   readonly project: string;
   readonly question: string;
   readonly notes: readonly NotebookGroundNote[];
+  readonly job: AgentJob;
+  readonly egress: EgressPolicy;
+  readonly workspace: { readonly type: WorkspaceType; readonly dataOwner: DataOwner };
 }
 
 /**
@@ -82,9 +90,10 @@ export interface NotebookGroundTransport {
 /**
  * The closed, enumerable failure set (§16).
  *
- * - `egress_denied` — the injected egress-ack predicate returned false for the
- *   target workspace (safety rule 5). Fail-closed: zero transport calls, zero
- *   dispatch calls, no cloud fallback, no retry.
+ * - `egress_denied` — the real rule-5 `@sow/policy` `egressVeto` denied the
+ *   request's `{job, egress, workspace}` over the NotebookLM cloud-processor
+ *   route (safety rule 5). Fail-closed: zero transport calls, zero dispatch
+ *   calls, no cloud fallback, no retry.
  * - `gate_rejected` — the upload's envelope failed the candidate gate before
  *   any external call was issued.
  * - `dispatch_failed` — the upload's `dispatchExternalWrite` returned neither

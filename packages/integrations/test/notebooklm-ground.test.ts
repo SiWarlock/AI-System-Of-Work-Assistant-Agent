@@ -16,12 +16,22 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
-import { ok, err } from "@sow/contracts";
-import type { Result, WriteReceipt, AuditRecord } from "@sow/contracts";
+import { ok, err, validAgentJob, processorId } from "@sow/contracts";
+import type {
+  AgentJob,
+  DataOwner,
+  EgressPolicy,
+  Result,
+  WriteReceipt,
+  AuditRecord,
+  WorkspaceType,
+} from "@sow/contracts";
+import { processorOfRoute, denyDecision, buildAuditSignal } from "@sow/policy";
 import type { TargetWriteAdapter, ExistingObject, AdapterError } from "../src/tools/adapter-port";
 import type { ExternalWriteDeps } from "../src/tools/gateway";
 import {
   createNotebookLmGround,
+  NOTEBOOKLM_EGRESS_ROUTE,
   type NotebookGroundDeps,
 } from "../src/notebook/notebooklm-ground";
 import type {
@@ -37,6 +47,28 @@ import { InMemoryReceiptStore } from "./support/fakes";
 
 const FIXED_CLOCK = (): string => "2026-07-01T00:00:00.000Z";
 
+// 13.9 — the REAL rule-5 `@sow/policy` egressVeto's inputs (mirrors
+// free-source-aggregator.test.ts's fixtures). NOTEBOOKLM_PROC is the
+// processor identity the real `processorOfRoute` derives from
+// NOTEBOOKLM_EGRESS_ROUTE's `runtime` key.
+const NOTEBOOKLM_PROC = processorId("notebooklm-ground");
+const PERSONAL: { type: WorkspaceType; dataOwner: DataOwner } = { type: "personal_business", dataOwner: "user" };
+const EMPLOYER: { type: WorkspaceType; dataOwner: DataOwner } = { type: "employer_work", dataOwner: "employer" };
+
+function egressPolicy(over: Partial<EgressPolicy> = {}): EgressPolicy {
+  return {
+    workspaceId: validAgentJob.workspaceId,
+    allowedProcessors: [NOTEBOOKLM_PROC],
+    rawContentAllowedProcessors: [NOTEBOOKLM_PROC],
+    employerRawEgressAcknowledged: true,
+    ...over,
+  };
+}
+
+function jobWith(over: Partial<AgentJob> = {}): AgentJob {
+  return { ...validAgentJob, carriesRawContent: true, trustLevel: "trusted", ...over };
+}
+
 function note(workspaceId: string, noteId: string, body = "note body"): NotebookGroundNote {
   return { workspaceId, noteId, body };
 }
@@ -47,6 +79,9 @@ function makeRequest(overrides: Partial<NotebookGroundRequest> = {}): NotebookGr
     project: "proj_alpha",
     question: "what changed this week?",
     notes: [note("ws-a", "n1"), note("ws-a", "n2")],
+    job: jobWith(),
+    egress: egressPolicy(),
+    workspace: PERSONAL,
     ...overrides,
   };
 }
@@ -120,7 +155,6 @@ function makeDeps(overrides: {
   adapter?: TargetWriteAdapter;
   store?: InMemoryReceiptStore;
   transport?: NotebookGroundTransport;
-  egressAck?: (workspaceId: string) => boolean;
 } = {}): { deps: NotebookGroundDeps; adapter: ReturnType<typeof makeFakeAdapter>; store: InMemoryReceiptStore } {
   const fake = overrides.adapter ? { adapter: overrides.adapter, createCalls: () => 0 } : makeFakeAdapter();
   const store = overrides.store ?? new InMemoryReceiptStore();
@@ -129,7 +163,6 @@ function makeDeps(overrides: {
   const deps: NotebookGroundDeps = {
     gateway,
     transport: overrides.transport ?? transport,
-    egressAck: overrides.egressAck ?? (() => true),
     approvalPolicy: "auto_allowed",
     clock: FIXED_CLOCK,
   };
@@ -191,17 +224,22 @@ describe("createNotebookLmGround — workspace scoping (WS-8)", () => {
   });
 });
 
-// --- 2. egress ack fail-closed (safety rule 5) --------------------------------
+// --- 2. egress veto fail-closed (safety rule 5, the REAL @sow/policy egressVeto) ---
 
-describe("createNotebookLmGround — egress ack fail-closed (safety rule 5)", () => {
-  it("a false egress ack yields a typed err with ZERO transport calls and ZERO dispatch (adapter) calls", async () => {
+describe("createNotebookLmGround — egress veto fail-closed (safety rule 5, REAL @sow/policy egressVeto)", () => {
+  it("employer-work raw content + ack OFF yields a typed err with ZERO transport calls and ZERO dispatch (adapter) calls", async () => {
     const { adapter, createCalls } = makeFakeAdapter();
     const existenceSpy = adapter.existenceCheck as ReturnType<typeof vi.fn>;
     const { transport, ground, deleteStore } = makeFakeTransport();
-    const { deps } = makeDeps({ adapter, transport, egressAck: () => false });
+    const { deps } = makeDeps({ adapter, transport });
     const port = createNotebookLmGround(deps);
 
-    const res = await port.ground(makeRequest());
+    const res = await port.ground(
+      makeRequest({
+        workspace: EMPLOYER,
+        egress: egressPolicy({ employerRawEgressAcknowledged: false, rawContentAllowedProcessors: [] }),
+      }),
+    );
 
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error.code).toBe("egress_denied");
@@ -211,6 +249,52 @@ describe("createNotebookLmGround — egress ack fail-closed (safety rule 5)", ()
     // ZERO transport calls — no ground, no delete, no cloud fallback, no retry.
     expect(ground.mock.calls.length).toBe(0);
     expect(deleteStore.mock.calls.length).toBe(0);
+  });
+
+  it("POSITIVE CONTROL: the SAME notes/job through a personal workspace ALLOWS through (the veto discriminates, not a blanket deny)", async () => {
+    const { deps } = makeDeps();
+    const port = createNotebookLmGround(deps);
+    const res = await port.ground(makeRequest({ workspace: PERSONAL }));
+    expect(res.ok).toBe(true);
+  });
+
+  it("employer-work with ack ON allows through — the veto re-evaluates per call, not a one-way lock", async () => {
+    const { deps } = makeDeps();
+    const port = createNotebookLmGround(deps);
+    const res = await port.ground(
+      makeRequest({ workspace: EMPLOYER, egress: egressPolicy({ employerRawEgressAcknowledged: true }) }),
+    );
+    expect(res.ok).toBe(true);
+  });
+
+  it("the synthetic egress route classifies as EGRESS (processorOfRoute !== null) — no fail-open", () => {
+    // If the synthetic route were non-egress (proc === null), the employer-raw veto
+    // would fall through to ALLOW — a silent rule-5 fail-open. Pin it egress-classed.
+    expect(processorOfRoute(NOTEBOOKLM_EGRESS_ROUTE)).not.toBeNull();
+    expect(NOTEBOOKLM_EGRESS_ROUTE.egressClass).toBe("cloud");
+  });
+
+  it("a caller-injected fake egressVeto is honored (the OPTIONAL testing seam), still zero-transport on deny", async () => {
+    const denyingVeto: NotebookGroundDeps["egressVeto"] = () =>
+      denyDecision(
+        "EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED",
+        "fake deny",
+        buildAuditSignal({
+          actor: "test",
+          event: "egress.denied",
+          refs: [],
+          payloadHash: "policy:egress-decision",
+          beforeSummary: "n/a",
+          afterSummary: "fake deny",
+        }),
+      );
+    const { transport, ground } = makeFakeTransport();
+    const { deps } = makeDeps({ transport });
+    const port = createNotebookLmGround({ ...deps, egressVeto: denyingVeto });
+    const res = await port.ground(makeRequest());
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error.code).toBe("egress_denied");
+    expect(ground.mock.calls.length).toBe(0);
   });
 });
 
@@ -388,10 +472,15 @@ describe("createNotebookLmGround — rule 7: no fault leaks note content / quest
   }
 
   it("egress_denied carries no sentinel content", async () => {
-    const { deps } = makeDeps({ egressAck: () => false });
+    const { deps } = makeDeps();
     const port = createNotebookLmGround(deps);
     const res = await port.ground(
-      makeRequest({ question: SENTINEL_QUESTION, notes: [note("ws-a", "n1", SENTINEL_NOTE_CONTENT)] }),
+      makeRequest({
+        question: SENTINEL_QUESTION,
+        notes: [note("ws-a", "n1", SENTINEL_NOTE_CONTENT)],
+        workspace: EMPLOYER,
+        egress: egressPolicy({ employerRawEgressAcknowledged: false, rawContentAllowedProcessors: [] }),
+      }),
     );
     expect(res.ok).toBe(false);
     const serialized = allErrorsFrom(!res.ok ? res.error : undefined);

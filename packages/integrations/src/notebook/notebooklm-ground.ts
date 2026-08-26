@@ -17,9 +17,11 @@
 // writer; the caller is responsible for routing the candidate through the
 // JSON-Schema gate + validator before it ever reaches KnowledgeWriter.
 //
-// EGRESS (safety rule 5): `egressAck(workspaceId)` is checked BEFORE any
-// transport or dispatch call. A false ack fails closed — zero transport
-// calls, zero dispatchExternalWrite calls, no cloud fallback, no retry.
+// EGRESS (safety rule 5): the REAL `@sow/policy` `egressVeto` is run over a
+// synthetic cloud-classed NotebookLM route (mirrors
+// `free-source-aggregator.ts`'s self-run pattern) BEFORE any transport or
+// dispatch call. A DENY fails closed — zero transport calls, zero
+// dispatchExternalWrite calls, no cloud fallback, no retry.
 //
 // WORKSPACE ISOLATION (safety rule 4 / WS-8): the upload set is built ONLY
 // from notes whose `workspaceId` matches the grounding request's
@@ -40,8 +42,9 @@
 // Every fault message is a FIXED safe literal (rule 7) — never note content,
 // question text, or a credential.
 import { ok, err, actionId } from "@sow/contracts";
-import type { ProposedAction, Result } from "@sow/contracts";
+import type { ProposedAction, ProviderRoute, Result } from "@sow/contracts";
 import { buildCanonicalObjectKey, buildIdempotencyKey } from "@sow/domain";
+import { egressVeto, isDeny } from "@sow/policy";
 import { dispatchExternalWrite, type ExternalWriteDeps } from "../tools/gateway";
 import { buildEnvelopeFromAction } from "../tools/envelope";
 import type {
@@ -58,21 +61,38 @@ import type {
 const GROUND_OPERATION = "notebooklm.ground" as const;
 
 /**
+ * The synthetic route the veto runs over (mirrors `free-source-aggregator.ts`'s
+ * `FREE_SOURCE_EGRESS_ROUTE`): `egressClass: "cloud"` classifies it as a
+ * distinct EGRESS processor (`processorOfRoute !== null`), which is what makes
+ * the employer-work veto FIRE — a non-egress route would fall through to
+ * ALLOW (a silent rule-5 fail-open). NotebookLM IS a cloud processor, so this
+ * is honest; this module self-runs the veto rather than routing through the
+ * broker, so this route is a pure veto INPUT, never dispatched to.
+ */
+export const NOTEBOOKLM_EGRESS_ROUTE: ProviderRoute = {
+  runtime: "notebooklm-ground",
+  model: "notebooklm-ground",
+  endpoint: "https://notebooklm.egress.example",
+  egressClass: "cloud",
+};
+
+/**
  * Injected deps (§16 — no real network/clock/randomness in this module).
  * `gateway` — the fully-wired Tool-Gateway `ExternalWriteDeps` (adapter +
  * receipt store + approval verdict + audit/log sinks + clock) the upload
  * dispatches against; its bound `adapter.targetSystem` supplies the envelope's
  * `TargetSystem` (no new contract added here). `transport` — the injected
  * NotebookLM grounding transport (dormant; see notebook-ground-port.ts).
- * `egressAck` — the fail-closed egress predicate for the target workspace
- * (safety rule 5). `approvalPolicy` — the recorded `ProposedAction.
- * approvalPolicy` label. `clock` — injected ISO clock (no direct system-clock
- * read anywhere in src).
+ * `egressVeto` — INJECTABLE only for testing; production uses the REAL
+ * `@sow/policy` `egressVeto` (safety rule 5), run over the request's
+ * `{job, egress, workspace}` + {@link NOTEBOOKLM_EGRESS_ROUTE}.
+ * `approvalPolicy` — the recorded `ProposedAction.approvalPolicy` label.
+ * `clock` — injected ISO clock (no direct system-clock read anywhere in src).
  */
 export interface NotebookGroundDeps {
   readonly gateway: ExternalWriteDeps;
   readonly transport: NotebookGroundTransport;
-  readonly egressAck: (workspaceId: string) => boolean;
+  readonly egressVeto?: typeof egressVeto;
   readonly approvalPolicy: string;
   readonly clock: () => string;
 }
@@ -115,6 +135,7 @@ async function forceDeleteStore(
  * throws.
  */
 export function createNotebookLmGround(deps: NotebookGroundDeps): NotebookGroundPort {
+  const veto = deps.egressVeto ?? egressVeto;
   return {
     async ground(
       req: NotebookGroundRequest,
@@ -123,10 +144,13 @@ export function createNotebookLmGround(deps: NotebookGroundDeps): NotebookGround
       // the one being grounded BEFORE it ever reaches the upload payload.
       const scopedNotes = req.notes.filter((n) => n.workspaceId === req.workspaceId);
 
-      // safety rule 5: egress ack checked BEFORE any transport or dispatch
-      // call. A false ack fails closed — zero transport calls, zero dispatch
-      // calls, no cloud fallback, no retry.
-      if (!deps.egressAck(req.workspaceId)) {
+      // safety rule 5: the REAL egress veto runs BEFORE any transport or
+      // dispatch call, over the request's own {job, egress, workspace} facts
+      // and the synthetic cloud-classed NotebookLM route. A DENY fails
+      // closed — zero transport calls, zero dispatch calls, no cloud
+      // fallback, no retry.
+      const decision = veto(req.job, NOTEBOOKLM_EGRESS_ROUTE, req.egress, req.workspace);
+      if (isDeny(decision)) {
         return err({ code: "egress_denied", message: "egress not acknowledged for this workspace" });
       }
 
