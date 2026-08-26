@@ -687,6 +687,12 @@ describe("workspace-config writer census — the 9.29 tripwire", () => {
         // Workspace. Neither binds work to a vault path — which is the only thing this pin is about.
         "packages/db/src/repositories/interfaces.ts",
         "packages/contracts/src/fixtures/valid.ts",
+        // 13.1 gate (b), added 2026-08-25. The osb egress-leakage eval CORPUS declares a source
+        // `Workspace` literal (`OSB_SOURCE_WORKSPACE`), exactly like `fixtures/valid.ts` above — it
+        // constructs the field, it never READS it to bind work to a vault. Same class, same reason.
+        // ⚠ Narrow FILE-level exemption on purpose: `packages/evals/src/` stays scanned, so a real
+        // consumer appearing anywhere else under it still fires this pin.
+        "packages/evals/src/osb/egress-leakage.ts",
       ];
       if (EXEMPT.includes(p)) return false;
       try {
