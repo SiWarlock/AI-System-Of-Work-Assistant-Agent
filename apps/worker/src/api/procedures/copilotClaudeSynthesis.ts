@@ -53,6 +53,8 @@ import {
 import type { GbrainQueryExec } from "./copilotGbrainSubprocess";
 import { createProvenanceStampingRetrieval } from "./copilotProvenanceStamp";
 import type { CopilotServingOracle } from "./copilotProvenanceStamp";
+import { createVaultPassageRetrieval } from "./copilotVaultPassageRetrieval";
+import type { CommittedVaultReader } from "./servingContextLoader";
 
 /**
  * The governed Copilot system prompt. Encodes the grounding contract: answer ONLY from the supplied
@@ -483,6 +485,16 @@ export interface CopilotDepsOptions {
    * `GovernedCopilotSynthesisDeps.auditPersist` below.
    */
   readonly auditPersist: AuditPersistPort;
+  /**
+   * OPTIONAL (§9.6 — the passage read-model) a real {@link CommittedVaultReader} (the existing C5.4b
+   * seam, servingContextLoader.ts). When present, it REPLACES the always-empty per-workspace fixture
+   * as the non-gbrain retrieval — `createVaultPassageRetrieval` reads ALREADY-COMMITTED vault Markdown
+   * instead of answering from nothing. UNGATED (a pure local read, no egress, no secret — unlike the
+   * gbrain path this needs no owner crossing), but boot does not yet construct the real fs-backed
+   * reader (`createCommittedVaultReader({resolveVault})`; the workspaceId→VaultFs mapping is boot's,
+   * outside this package's api/ territory) — so it ships UNBOUND, byte-equivalent to today.
+   */
+  readonly readCommittedVault?: CommittedVaultReader;
 }
 
 /**
@@ -505,6 +517,15 @@ export function buildCopilotDeps(opts: CopilotDepsOptions): AuditPersisting<Copi
   // branch; the multi-served branch holds WS-8 by its mandatory per-request filter (`### 24.79`).
   // The factory is invoked at most once, only when that branch is taken (the CLI is never constructed off-path).
   const fixtureRetrieval = createFixtureRetrieval(fixtures);
+  // §9.6 — when a real committed-vault reader is bound, it REPLACES the always-empty fixture as the
+  // non-gbrain retrieval everywhere the fixture was the fallback (below AND the two gbrain-branch
+  // `fallback:` params). Absent (today's shipped default — boot has no real reader to hand it yet)
+  // ⇒ `nonGbrainRetrieval` IS `fixtureRetrieval` by reference, so every existing call site is
+  // byte-equivalent to before this slice.
+  const nonGbrainRetrieval: CopilotRetrievalPort =
+    opts.readCommittedVault !== undefined
+      ? createVaultPassageRetrieval({ readCommittedVault: opts.readCommittedVault })
+      : fixtureRetrieval;
   const servedGbrainWorkspaceId = opts.gbrainWorkspaceId ?? DEFAULT_GBRAIN_COPILOT_WORKSPACE;
   // Retrieval selection (the `gbrainExec()` factory is invoked at most once, only on a gbrain path):
   //   - gbrain OFF (no exec / not real) ⇒ the fixture stub.
@@ -524,15 +545,15 @@ export function buildCopilotDeps(opts: CopilotDepsOptions): AuditPersisting<Copi
             exec: opts.gbrainExec(),
             registry: opts.gbrainWorkspaceScope.registry,
             policy: opts.gbrainWorkspaceScope.policy,
-            fallback: fixtureRetrieval,
+            fallback: nonGbrainRetrieval,
           })
         : createGbrainSubprocessRetrieval({
             exec: opts.gbrainExec(),
             servedWorkspaceId: servedGbrainWorkspaceId,
-            fallback: fixtureRetrieval,
+            fallback: nonGbrainRetrieval,
           });
   } else {
-    retrieval = fixtureRetrieval;
+    retrieval = nonGbrainRetrieval;
   }
   // C5.4b: on the real path WITH a serving-oracle factory, wrap the chosen retrieval in the provenance-
   // stamping decorator so a source is stamped `knowledge_writer` ONLY when the oracle admits it. Absent ⇒
