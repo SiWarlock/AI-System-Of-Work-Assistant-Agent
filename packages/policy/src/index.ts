@@ -19,6 +19,9 @@ export * from "./visibility";
 
 // Provider-matrix route resolution + route→processor identity + egress veto.
 export * from "./provider-matrix";
+// §5/§7 task 9.32: the ProviderMatrix producer (certify-then-admit over an
+// injected, arming-gated certifier port — never bound to a real one here).
+export * from "./provider-matrix-producer";
 export * from "./processors";
 export * from "./egress";
 
