@@ -335,6 +335,11 @@ export function App(): ReactElement {
           // Enabled only over a REAL live worker (the decision needs the CAS); no worker
           // (incl. the dev-seed demo) → disabled buttons, never a silently no-op control.
           onDecide={hasLiveWorker ? onDecideApproval : undefined}
+          // 9.42 — the navigation-target half: a `{ surface: "approvals", approvalId }` route
+          // (route.ts) marks that card current + scrolls to it. No producer supplies a real id
+          // yet (the producer leg is blocked — see route.ts's header note); this only wires the
+          // target side of the type-narrowed route so it is ready once one does.
+          focusedApprovalId={state.route.approvalId}
         />
       ) : state.route.surface === "ingestion" ? (
         <IngestionInbox

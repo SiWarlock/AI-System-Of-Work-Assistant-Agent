@@ -8,13 +8,15 @@
 // workspace's read-models hydrate — Today AND Projects both read scope-hydrated state),
 // ROUTE selects the SURFACE. Switching scope never changes the route; navigating never
 // changes the scope. A project detail is addressed by `projectId`; its ABSENCE = the
-// list view.
+// list view. A specific approval is addressed by `approvalId` (task 9.42 — the
+// navigation-target half of "a Copilot answer implying an action leads the owner to
+// Approvals"); its ABSENCE = the list view — same convention as `projectId`.
 
 export type Route =
   | { readonly surface: "today" }
   | { readonly surface: "projects"; readonly projectId?: string }
   | { readonly surface: "calendar" }
-  | { readonly surface: "approvals" }
+  | { readonly surface: "approvals"; readonly approvalId?: string }
   | { readonly surface: "ingestion" }
   | { readonly surface: "connectors" }
   | { readonly surface: "system-health" }
@@ -28,11 +30,14 @@ export type Route =
  */
 export const DEFAULT_ROUTE: Route = Object.freeze({ surface: "today" });
 
-/** Structural route equality — same surface AND (for projects) the same selected projectId. */
+/** Structural route equality — same surface AND (for projects/approvals) the same selected id. */
 export function routeEquals(a: Route, b: Route): boolean {
   if (a.surface !== b.surface) return false;
   if (a.surface === "projects" && b.surface === "projects") {
     return a.projectId === b.projectId;
+  }
+  if (a.surface === "approvals" && b.surface === "approvals") {
+    return a.approvalId === b.approvalId;
   }
   return true;
 }

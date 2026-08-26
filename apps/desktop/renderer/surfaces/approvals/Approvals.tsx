@@ -18,7 +18,7 @@
 //     honest, not a dead control that silently no-ops.
 // NEVER import electron, node, or @sow/worker from a renderer file.
 
-import { useState, type ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import type { UiSafeApproval } from "@sow/contracts/api/ui-safe";
 import type { ApprovalDecision } from "../../lib/approval-decision";
 
@@ -43,6 +43,15 @@ export interface ApprovalsProps {
    * it issues the SAME `onDecide(id, "edit")` call as the other three, no extra payload on the wire.
    */
   readonly onDecide?: (approvalId: string, decision: ApprovalDecision) => Promise<ApprovalDecisionOutcome>;
+  /**
+   * Task 9.42 — the navigation TARGET a `{ surface: "approvals", approvalId }` route points at
+   * (route.ts). Marks the matching card (pending OR snoozed — the target may be deferred)
+   * `aria-current="true"` + a focus class and scrolls it into view on mount. Absent (the default
+   * list view) or matching no rendered card is inert — never throws, marks nothing. No producer
+   * supplies a real id yet (9.42's producer leg is blocked — see route.ts); this only builds the
+   * target side so the affordance has somewhere real to land once one does.
+   */
+  readonly focusedApprovalId?: string;
 }
 
 /** The four decisions offered on a pending item — each a legal `pending -> …` transition. `edit`
@@ -67,6 +76,31 @@ function dayOf(iso: string): string {
  */
 function cardSubject(a: UiSafeApproval): string {
   return a.subjectKind === "semantic_mutation" ? "Proposed note write (Copilot)" : (a.actionRef ?? "External action");
+}
+
+/** 9.42 — the CSS class marking a card as the route's `approvalId` target. */
+const FOCUSED_CARD_CLASS = "sow-approval-card--focused";
+
+/**
+ * 9.42 — a card ref that scrolls itself into view on mount IFF it is the route's
+ * focused target. `scrollIntoView` is guarded (not every DOM implementation
+ * provides it — e.g. some jsdom configurations) so a missing method is inert,
+ * never a throw; a real browser gets the real scroll.
+ */
+function useFocusedCardRef(focused: boolean | undefined): React.RefObject<HTMLLIElement> {
+  const ref = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (focused !== true) return;
+    const el = ref.current;
+    if (el !== null && typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ block: "center" });
+    }
+    // Intentionally re-fires only when `focused` flips true→true is a no-op re-render skip via the
+    // dep array below — the scroll should happen once when this card BECOMES the target, not on
+    // every unrelated re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focused]);
+  return ref;
 }
 
 /** Deterministic id for a card's edit-form region — links the `Edit` toggle's `aria-controls`
@@ -118,11 +152,15 @@ function EditForm({
 function PendingCard({
   approval,
   onDecide,
+  focused,
 }: {
   readonly approval: UiSafeApproval;
   readonly onDecide?: (approvalId: string, decision: ApprovalDecision) => Promise<ApprovalDecisionOutcome>;
+  /** 9.42 — true iff the route's `approvalId` names this card. */
+  readonly focused?: boolean;
 }): ReactElement {
   const disabled = onDecide === undefined;
+  const cardRef = useFocusedCardRef(focused);
   const semantic = approval.subjectKind === "semantic_mutation";
   // The most recent non-"applied" outcome — a real transition ("applied") clears it and the item
   // drops out of the pending list on the parent's next render, so there is nothing left to show.
@@ -137,10 +175,12 @@ function PendingCard({
   };
   return (
     <li
-      className={`sow-approval-card${semantic ? " sow-approval-card--semantic" : ""}`}
+      ref={cardRef}
+      className={`sow-approval-card${semantic ? " sow-approval-card--semantic" : ""}${focused === true ? ` ${FOCUSED_CARD_CLASS}` : ""}`}
       role="listitem"
       data-approval-id={approval.id}
       data-subject-kind={approval.subjectKind}
+      aria-current={focused === true ? "true" : undefined}
     >
       <div className="sow-approval-head">
         <span className="sow-approval-action">{cardSubject(approval)}</span>
@@ -190,14 +230,24 @@ function PendingCard({
 }
 
 /** A snoozed (deferred) approval card — DISPLAY-ONLY; it re-surfaces to pending on snooze expiry. */
-function SnoozedCard({ approval }: { readonly approval: UiSafeApproval }): ReactElement {
+function SnoozedCard({
+  approval,
+  focused,
+}: {
+  readonly approval: UiSafeApproval;
+  /** 9.42 — true iff the route's `approvalId` names this card (a deferred item can be the target too). */
+  readonly focused?: boolean;
+}): ReactElement {
   const semantic = approval.subjectKind === "semantic_mutation";
+  const cardRef = useFocusedCardRef(focused);
   return (
     <li
-      className={`sow-approval-card sow-approval-card--snoozed${semantic ? " sow-approval-card--semantic" : ""}`}
+      ref={cardRef}
+      className={`sow-approval-card sow-approval-card--snoozed${semantic ? " sow-approval-card--semantic" : ""}${focused === true ? ` ${FOCUSED_CARD_CLASS}` : ""}`}
       role="listitem"
       data-approval-id={approval.id}
       data-subject-kind={approval.subjectKind}
+      aria-current={focused === true ? "true" : undefined}
     >
       <div className="sow-approval-head">
         <span className="sow-approval-action">{cardSubject(approval)}</span>
@@ -212,7 +262,7 @@ function SnoozedCard({ approval }: { readonly approval: UiSafeApproval }): React
 }
 
 export function Approvals(props: ApprovalsProps): ReactElement {
-  const { approvals, onDecide } = props;
+  const { approvals, onDecide, focusedApprovalId } = props;
   // Only pending items are actionable; deferred items are snoozed (display-only). Terminal
   // items (approved/edited/rejected/expired) drop out of the inbox — they're resolved.
   const pending = approvals.filter((a) => a.status === "pending");
@@ -241,7 +291,7 @@ export function Approvals(props: ApprovalsProps): ReactElement {
           {pending.length > 0 ? (
             <ul className="sow-approval-list" role="list" aria-label="Pending approvals">
               {pending.map((a) => (
-                <PendingCard key={a.id} approval={a} onDecide={onDecide} />
+                <PendingCard key={a.id} approval={a} onDecide={onDecide} focused={a.id === focusedApprovalId} />
               ))}
             </ul>
           ) : null}
@@ -250,7 +300,7 @@ export function Approvals(props: ApprovalsProps): ReactElement {
               <div className="sow-approval-section-label">Snoozed</div>
               <ul className="sow-approval-list" role="list" aria-label="Snoozed approvals">
                 {snoozed.map((a) => (
-                  <SnoozedCard key={a.id} approval={a} />
+                  <SnoozedCard key={a.id} approval={a} focused={a.id === focusedApprovalId} />
                 ))}
               </ul>
             </div>

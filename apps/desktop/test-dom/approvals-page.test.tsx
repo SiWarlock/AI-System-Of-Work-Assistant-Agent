@@ -240,4 +240,42 @@ describe("Approvals surface (§9.8) — edit payload-editing form", () => {
     const card = screen.getByText("action:a1").closest("li") as HTMLElement;
     expect((within(card).getByRole("button", { name: "Edit" }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  // Task 9.42 — the navigation TARGET half (§9.42 point (e)): `focusedApprovalId` marks the card a
+  // `{ surface: "approvals", approvalId }` route points at. No producer exists yet to supply a real
+  // id (see route.ts / App.tsx comments) — this is exercised with a synthetic id, independent of
+  // any producer.
+  describe("focusedApprovalId (task 9.42 navigation target)", () => {
+    it("marks the matching pending card as current — aria-current + a focus class", () => {
+      render(<Approvals approvals={[apr("a1"), apr("a2")]} focusedApprovalId="a2" onDecide={() => Promise.resolve("applied" as const)} />);
+      const a1 = screen.getByText("action:a1").closest("li") as HTMLElement;
+      const a2 = screen.getByText("action:a2").closest("li") as HTMLElement;
+      expect(a2.getAttribute("aria-current")).toBe("true");
+      expect(a2.className).toContain("sow-approval-card--focused");
+      expect(a1.getAttribute("aria-current")).toBeNull();
+      expect(a1.className).not.toContain("sow-approval-card--focused");
+    });
+
+    it("marks the matching SNOOZED card too — the target may be deferred, not only pending", () => {
+      render(<Approvals approvals={[apr("a1", { status: "deferred" })]} focusedApprovalId="a1" />);
+      const card = screen.getByText("action:a1").closest("li") as HTMLElement;
+      expect(card.getAttribute("aria-current")).toBe("true");
+      expect(card.className).toContain("sow-approval-card--focused");
+    });
+
+    it("no id matches any card when absent (the default list view — never a fabricated focus)", () => {
+      render(<Approvals approvals={[apr("a1")]} onDecide={() => Promise.resolve("applied" as const)} />);
+      const card = screen.getByText("action:a1").closest("li") as HTMLElement;
+      expect(card.getAttribute("aria-current")).toBeNull();
+      expect(card.className).not.toContain("sow-approval-card--focused");
+    });
+
+    it("an id that matches no rendered card is inert — never throws, nothing marked", () => {
+      expect(() =>
+        render(<Approvals approvals={[apr("a1")]} focusedApprovalId="does-not-exist" onDecide={() => Promise.resolve("applied" as const)} />),
+      ).not.toThrow();
+      const card = screen.getByText("action:a1").closest("li") as HTMLElement;
+      expect(card.getAttribute("aria-current")).toBeNull();
+    });
+  });
 });

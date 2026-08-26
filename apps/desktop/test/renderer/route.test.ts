@@ -81,4 +81,30 @@ describe("route model (§9.5 routing foundation — surface selection, independe
     expect(routeEquals({ surface: "approvals" }, { surface: "today" })).toBe(false);
     expect(routeEquals({ surface: "projects" }, { surface: "approvals" })).toBe(false);
   });
+
+  it("approvals accepts an optional approvalId — absence = the list view (mirrors projects/projectId, task 9.42)", () => {
+    // Absence = list view, same convention as `{ surface: "projects" }`.
+    const list = navigate(initialStoreState, { surface: "approvals" });
+    expect(list.route).toEqual({ surface: "approvals" });
+
+    // A specific approval is a distinct, addressable route.
+    const focused = navigate(list, { surface: "approvals", approvalId: "appr-1" });
+    expect(focused).not.toBe(list);
+    expect(focused.route).toEqual({ surface: "approvals", approvalId: "appr-1" });
+
+    // Ref-stable no-op on re-navigate to the same id.
+    expect(navigate(focused, { surface: "approvals", approvalId: "appr-1" })).toBe(focused);
+
+    // A different id is a real change; de-selecting (back to the list) is also a real change.
+    const other = navigate(focused, { surface: "approvals", approvalId: "appr-2" });
+    expect(other).not.toBe(focused);
+    const backToList = navigate(focused, { surface: "approvals" });
+    expect(backToList).not.toBe(focused);
+    expect(backToList.route).toEqual({ surface: "approvals" });
+
+    // routeEquals: same surface AND same selected approvalId (mirrors the projects/projectId assertions above).
+    expect(routeEquals({ surface: "approvals", approvalId: "a1" }, { surface: "approvals", approvalId: "a1" })).toBe(true);
+    expect(routeEquals({ surface: "approvals", approvalId: "a1" }, { surface: "approvals", approvalId: "a2" })).toBe(false);
+    expect(routeEquals({ surface: "approvals" }, { surface: "approvals", approvalId: "a1" })).toBe(false);
+  });
 });
