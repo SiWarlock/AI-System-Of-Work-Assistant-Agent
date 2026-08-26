@@ -71,6 +71,7 @@ export * from "./synthesis/entity-resolver";
 export * from "./synthesis/link-healer";
 export * from "./synthesis/planner";
 export * from "./synthesis/ingest-rewrite";
+export * from "./synthesis/research-propagation";
 export * from "./synthesis/meeting-rewrite";
 export * from "./synthesis/attendee-refs";
 export * from "./synthesis/grounded-path";
