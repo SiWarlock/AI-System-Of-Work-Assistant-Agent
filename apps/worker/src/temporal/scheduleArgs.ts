@@ -160,3 +160,44 @@ export const DAILY_BRIEF_SCHEDULED_WORKFLOW_TYPE = "dailyBriefScheduledWorkflow"
 export const PERIOD_REVIEW_SCHEDULED_WORKFLOW_TYPE = "periodReviewScheduledWorkflow" as const;
 export const CROSS_CALENDAR_SCHEDULING_SCHEDULED_WORKFLOW_TYPE =
   "crossCalendarSchedulingScheduledWorkflow" as const;
+
+// ---------------------------------------------------------------------------
+// (4) the DURABLE in-sandbox runtime activity names
+// ---------------------------------------------------------------------------
+
+/**
+ * ⛔ THE SECOND AND THIRD DEFECTS UNDER THE PHASE-25 SCHEDULES, both of which
+ * `args: []` was hiding. `workflows.ts` binds `sandboxRunRepo()` — whose
+ * `getByIdempotencyKey` ALWAYS returns `not_found` and whose `create` persists
+ * nothing — and `sandboxScheduleStoreStub()`, whose `getBookkeeping` ALWAYS
+ * returns `undefined`. Both are honest stubs (their own doc comments say so), but
+ * together they mean that in the REGISTERED bundle:
+ *
+ *   • `resolveRun` can never report `reused: true` ⇒ the 7.4 idempotency seam is
+ *     inert, and a retried occurrence admits a SECOND run.
+ *   • every tick reads as a first run ⇒ the LIFE-2 catch-up collapse is inert,
+ *     so N missed occurrences fan out into N runs instead of collapsing to one.
+ *
+ * 25.2's Done-when ("a missed occurrence collapses to one run on wake") is
+ * therefore unmeetable while these stubs are bound, no matter what `args` carry.
+ * These names are the durable replacements: plain activity proxies over the real
+ * `@sow/db` repositories, bound at the composition root.
+ *
+ * The names are declared HERE rather than in either consumer because the sandbox
+ * wrapper (which proxies them) and the composition root (which registers them)
+ * must agree exactly — a typo in one is an "activity not registered" fault that
+ * only surfaces against a live server, never at typecheck.
+ */
+export const SCHEDULED_RUNTIME_ACTIVITY_NAMES = {
+  runCreate: "scheduledRunCreate",
+  runGet: "scheduledRunGet",
+  runGetByIdempotencyKey: "scheduledRunGetByIdempotencyKey",
+  runUpdateState: "scheduledRunUpdateState",
+  runAppendAuditRef: "scheduledRunAppendAuditRef",
+  scheduleGetBookkeeping: "scheduledScheduleGetBookkeeping",
+  schedulePut: "scheduledSchedulePut",
+} as const;
+
+/** The activity-name union the composition root must register in full. */
+export type ScheduledRuntimeActivityName =
+  (typeof SCHEDULED_RUNTIME_ACTIVITY_NAMES)[keyof typeof SCHEDULED_RUNTIME_ACTIVITY_NAMES];
