@@ -23,8 +23,9 @@
 | **Lint** | 11/11, exit 0 (real ESLint — stood up THIS round) |
 | **plan-lint** | 0 violations, 4 pre-existing warnings |
 
-**Plan state:** `DONE 348 · PARTIAL 59 · OPEN 27 · OWNER-GATED 18 · DEFERRED 4` (456 total).
+**Plan state:** `DONE 362 · PARTIAL 50 · OPEN 23 · OWNER-GATED 18 · DEFERRED 3` (456 total).
 Round start was `DONE 297 · PARTIAL 20 · OPEN 115`.
+*(Post-`fd599cd9`, the final evidence-first reconcile — see §10.)*
 
 ⛔ **DERIVE EVERY COUNT. Never restate one from this file.**
 `/usr/bin/git rev-list --count pre-autobuild-2026-08-24..HEAD`
@@ -265,5 +266,45 @@ bash scripts/plan-lint.sh           # 0 violations
    live**: `signal.event` cannot carry non-literal content on the GCL path (traced at source). A
    WIRING PRECONDITION on binding the GCL port at Phase 25.2/25.4.
    ⚠ The plan's cited `:593`/`:599` are STALE — the file moved.
-5. **`FINAL-reconcile` never returned** (workflow `wf_cd759ceb-911`, 2 of 3 agents). The tracker may
-   lag the last two waves. Re-run an evidence-first reconciliation before trusting any checkbox.
+5. **⛔ THE PHASE-25 SCHEDULES ARE REGISTERED BUT INERT — see §10.** This is the largest real gap
+   this round produced, and it was reported to the owner as "landed" before the final reconcile
+   caught it.
+
+---
+
+## 10. ⭐ The final reconcile caught what the build reported as done
+
+`fd599cd9` re-derived **36 task states** against each task's own Done-when at HEAD. A commit naming
+an id was treated as a pointer, never as evidence; every empty grep carried a named positive control.
+
+⛔ **SEVEN items reported CLOSED did not meet their Done-when and were held back:**
+
+1. ⛔⛔ **`25.2` / `25.3` / `25.4` / `25.5` — REGISTERED BUT INERT.** The registration story is
+   genuinely fixed, but **every schedule spec emits `action.args: []`**, which the source itself
+   calls a placeholder — *"not a functioning periodic re-surface"*, *"not a functioning daily
+   brief"*. **A registered-but-inert schedule is not a schedule that runs.** These were reported to
+   the owner as landed. They are not. This is the round's biggest overclaim and the first real work
+   for a successor.
+2. **`24.1`** — `boot.ts`'s own comment says the lock is an ACQUISITION, not a physical write block;
+   the Done-when demands "physically blocked, not just reported". Stays open.
+3. **`24.69`** — no artifact anywhere in the tree. Stays OPEN.
+4. **`24.101`** — 85 census candidates undispositioned; the three new out-of-territory hits are new
+   code written TO the rule, not dispositions of the existing population.
+
+**Three were stale in the OTHER direction** — already satisfied in code while sitting OPEN for up to
+two weeks: `24.65` (landed `ba0deb1b`, 2026-08-13), `24.72`, `24.76`. `24.72`'s coupled Claim-2
+re-derivation is recorded in production source at `sourceIngestion.ts:384-410` — where its Done-when
+required it, not in a message.
+
+**Two moved out of terminal-looking states** because work had quietly landed under them: `9.32`
+(DEFERRED → PARTIAL) and `9.42` (OPEN → PARTIAL). Both would otherwise have hidden shipped machinery.
+
+**Dormancy discipline:** `19.4`, `21.4`, `13.23` are `DONE · dormant` — in all three the OFF gate is
+pre-existing and the task's own text anticipates it. Nothing armed, no default changed. Every arming
+flip is named in the closure prose as the owner's crossing. **`24.118`'s lead HOLD was not read for
+disposition and not ticked.**
+
+⇒ **THE TRANSFERABLE LESSON:** the build agents' self-reports were honest but incomplete — they
+reported what they BUILT, and the Done-when asked for something slightly larger. An evidence-first
+reconcile against the task's own criteria is not bookkeeping; it is the control that catches
+"registered" being sold as "running".
