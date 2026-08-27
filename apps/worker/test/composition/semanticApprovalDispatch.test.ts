@@ -190,6 +190,12 @@ describe("buildSemanticApprovalDispatch — exempt workspace id from the composi
     // workspaces proves the SUPPLIED value is the one in effect and carries the right id. This
     // is what catches a factory wired with the WRONG id — the failure the identical-string
     // coincidence hides from every end-to-end assertion.
+    //
+    // ⭐ ALSO CLOSES 24.61's supply-site half at THIS site: this exercises the actual factory
+    // instance built from `LEGACY_UNPREFIXED_WORKSPACE_ID` at semanticApprovalDispatch.ts's own
+    // `workspacePathCheck:` line, so a hidden blank/Cf-corrupting transform between the import and
+    // the factory call would flip the exempt-path assertion below to a violation too — not only the
+    // wrong-id assertion this test was written for.
     const cap = capturingApplyPlan();
     const { dispatch } = build(memVault({}), cap.fn);
     await dispatch(mkApproval());
@@ -237,6 +243,11 @@ describe("buildSemanticApprovalDispatch — exempt workspace id from the composi
     // type-checks PRESENCE, never the string. So a source pin anchored on the shared const is
     // the cheapest thing that reds on a weakened id (worker L28's precedent for exactly this
     // shape — a site with no runtime seam).
+    //
+    // ⭐ ALSO CLOSES 24.61's supply-site half at buildActivities.ts: the exact-string match below
+    // proves NO transform sits between the import and the factory call at that site, so the
+    // factory's own Cf/blank throw (24.61's remedy, packages/knowledge's workspace-path-guard.ts)
+    // applies to whatever this site supplies, unconditionally.
     const src = readFileSync(
       new URL("../../src/composition/buildActivities.ts", import.meta.url),
       "utf8",

@@ -712,6 +712,40 @@ export function buildProofSpineActivities(
     // SUPPLIED STRING is the right one — a required parameter type-checks PRESENCE, never the value
     // (`worker L28`). The boundary pins in `test/composition/semanticApprovalDispatch.test.ts` carry
     // that reasoning in full.
+    //
+    // ⭐ 24.75 ENUMERATION METHOD + BOUNDARY (its Done-when's 2nd clause): "sites supplying the exempt
+    // id" are derived by TYPE (every production `KnowledgeWriterDeps` object-literal construction) and
+    // CALL PATH (every production call to `makeEnforceWorkspacePathScope`) — never by grepping
+    // `LEGACY_UNPREFIXED_WORKSPACE_ID`'s spelling, which a renamed/aliased import would silently miss.
+    // Both derivations return the SAME two sites, exhaustively: this one, and
+    // `semanticApprovalDispatch.ts`'s — re-confirmed at this writing (`grep -rn`, excluding test/dist,
+    // for `': KnowledgeWriterDeps = {'` and separately for `'makeEnforceWorkspacePathScope('`, over
+    // `apps` + `packages`, each returns exactly these two non-test hits). Both are pinned: this site by
+    // the exact-source-text pin below (worker L28), the sibling by its own runtime differential — both
+    // in `semanticApprovalDispatch.test.ts`.
+    //
+    // ⚠ 24.61 — THE OTHER AXIS THE TYPE SYSTEM ALSO CANNOT REACH, and this comment is what the guard's
+    // own Done-when calls "the composition root" — a BLANK id, or one built entirely from Cf zero-width/
+    // format code points (U+200B/U+200C/U+2060/U+180E). `makeEnforceWorkspacePathScope`
+    // (`packages/knowledge/src/knowledge-writer/workspace-path-guard.ts`) throws on either, and its OWN
+    // docstring is explicit about what that throw does NOT guarantee: it is a MISCONFIGURATION
+    // TRIPWIRE, not validation that the supplied string is a LEGITIMATE workspace id — a well-formed
+    // but WRONG id sails through untouched (that residual is 24.75, immediately above). Closing THAT
+    // class needs validating the supplied id against the known workspace set, which the guard's own
+    // docstring names as "a composition-root change, outside this module's territory" — i.e. HERE.
+    // ⛔ NOT ADDED, and per the guard's own documented PRECONDITION it is not yet OWED here either: "a
+    // hardcoded literal … does NOT make the residual reachable" — what makes it reachable is sourcing
+    // the id from anything other than a compile-time constant (env, settings, a DB row, a user-editable
+    // file). `LEGACY_UNPREFIXED_WORKSPACE_ID` (`./legacy-workspace.ts`) is exactly such a constant, so
+    // the trigger has not fired. ⭐ IF YOU ARE HERE CHANGING THIS ARGUMENT TO A CONFIG READ: that change
+    // IS the trigger, and known-workspace-set validation (or an equivalent construction) becomes owed
+    // at that moment, not before.
+    // ⭐ WHAT IS ALREADY PROVEN, so this residual isn't standing on faith: the exact-source-text pin
+    // immediately below (`semanticApprovalDispatch.test.ts`, "buildActivities' literal supplies the
+    // check from the SAME shared const") asserts the LITERAL source text
+    // `makeEnforceWorkspacePathScope(LEGACY_UNPREFIXED_WORKSPACE_ID)` — no intervening transform of the
+    // constant — so whatever reaches the factory here is the raw, untouched import, and the factory's
+    // own Cf/blank throw (24.61's remedy, landed in the guard module) applies to it unconditionally.
     workspacePathCheck: makeEnforceWorkspacePathScope(LEGACY_UNPREFIXED_WORKSPACE_ID),
     // task 19.2 — the provenance-signing dep, NESTED inside this SAME dormancy gate (conditional-
     // spread: the key is ABSENT, not `undefined`-valued, when `params.signing` is unset) so the

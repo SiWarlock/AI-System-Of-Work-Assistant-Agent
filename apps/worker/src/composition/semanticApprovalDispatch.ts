@@ -86,6 +86,17 @@ export function buildSemanticApprovalDispatch(deps: SemanticApprovalDispatchDeps
     // `?? enforceWorkspacePathScope` fallback is DELETED, so this line is the sole enforcement of the
     // rule-4 / WS-8 path guard on the approval-driven commit path. ⚠ It read "behaviourally inert until
     // step 3" until step 3 landed — true when written, falsified from another package with nothing red.
+    //
+    // ⭐ 24.75 (enumeration method + boundary): this is one of exactly TWO production sites, derived by
+    // TYPE + CALL PATH, not by grepping the constant's spelling — full statement + re-confirmation at
+    // the matching site in `buildActivities.ts`, not restated here.
+    // ⚠ 24.61 (full reasoning at the matching site in `buildActivities.ts`) — the blank/Cf-zero-width
+    // throw inside `makeEnforceWorkspacePathScope` is a misconfiguration tripwire, not known-workspace-
+    // set validation; closing that class is an owed composition-root change only once this argument
+    // stops being a compile-time constant (still `LEGACY_UNPREFIXED_WORKSPACE_ID` today — not owed yet).
+    // The differential test below ("the supplied check carries the exempt id") already exercises the
+    // value the factory receives HERE unmodified: a hidden transform at this site would flip its
+    // "exempt commits unprefixed" assertion to a violation, not just the wrong-id one it was written for.
     workspacePathCheck: makeEnforceWorkspacePathScope(LEGACY_UNPREFIXED_WORKSPACE_ID),
     // task 20.2 — the provenance-signing dep, same conditional-spread idiom as buildActivities.ts's
     // sibling site (task 19.2): the key is ABSENT, not `undefined`-valued, when `deps.signing` is
