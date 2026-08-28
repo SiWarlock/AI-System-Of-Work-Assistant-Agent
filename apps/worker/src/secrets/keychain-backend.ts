@@ -66,11 +66,29 @@ function stripOneTrailingNewline(bytes: Uint8Array): Uint8Array {
  *     or reordered the case degrades to `backend_error` — never to a confidently wrong `locked`. Note what the
  *     mocked tests could and could not do here: they pin "44 ⇒ not_found" (they FEED the 44); only the live
  *     probe pins "macOS actually returns 44".
- *   • STILL UNMEASURED: `locked` and `denied`. Reaching them means locking the operator's login keychain or
- *     denying an ACL, which a test must not do to someone's machine — so the stderr token sets remain
- *     ASSUMPTIONS. Verify them by hand at owner-provisioning. ⛔ `locked` is the direction that matters:
- *     gateway.ts treats it as RETRYABLE, so a mis-classification there retries forever instead of telling the
- *     owner to fix a credential.
+ *   • ✅ `locked` NOW MEASURED (2026-08-28) — AND THE ASSUMPTION IT REPLACES WAS WRONG.
+ *     ⛔ This comment used to say `locked` was unreachable because "reaching it means locking the operator's
+ *     login keychain … which a test must not do to someone's machine." ⭐ THAT PREMISE WAS FALSE: a THROWAWAY
+ *     keychain at a temp path, never added to the search list, measures it without touching the operator's
+ *     login keychain at all. The impossibility was assumed, not tested — on the one branch the same comment
+ *     called "the direction that matters".
+ *     MEASURED, macOS Darwin 25.5.0: `create-keychain` → `add-generic-password` (dummy) → `lock-keychain` →
+ *     `find-generic-password -w` ⇒ macOS shows a MODAL UNLOCK DIALOG; dismissed, it exits **128 with EMPTY
+ *     stdout AND stderr**. ⇒ the stderr-pattern branch CANNOT FIRE — there is no stderr — so a locked
+ *     keychain fell through to `backend_error`, which `keychain-boot.ts`'s `mapUnavailableReason` folds to
+ *     `"missing"`. ***The operator was told the credential DID NOT EXIST when it existed and the keychain was
+ *     merely locked*** — and the entire `onKeychainLocked` → keychain-locked HealthItem path (worker L41/L53)
+ *     was UNREACHABLE via the real CLI. Fixed by the `code === 128 && empty stderr` branch below.
+ *   ⚠ OPERATIONAL CONSEQUENCE, measured and NOT fixed here: EVERY `security` CLI path blocks on that modal
+ *     dialog — `show-keychain-info` on a locked keychain hangs too (verified: killed at 8s), so there is NO
+ *     non-prompting lock-state pre-check available from this CLI. In production `createRealExecFile`'s
+ *     `timeout: 5_000` bounds it: the read costs 5s and folds to `backend_error`. ⇒ the 128 branch covers the
+ *     DISMISSED-dialog case; the UNANSWERED case still degrades to `backend_error` by timeout.
+ *   ⚠ BOUNDARY, stated because it decides which branch is right: this was measured in a session WITH a window
+ *     server (how this Electron app actually runs). A true headless/daemon context may instead return
+ *     `errSecInteractionNotAllowed` — the exact string the pattern branch already matches. Both branches are
+ *     therefore live, for different contexts; neither supersedes the other.
+ *   • STILL UNMEASURED: `denied`. It needs a real ACL denial, and its stderr token set remains an ASSUMPTION.
  * The Keychain key-encoding contract is likewise still unverified (it needs a provisioned item).
  */
 function classifyFault(code: number, stderr: string): KeychainBackendError["kind"] {
@@ -79,6 +97,11 @@ function classifyFault(code: number, stderr: string): KeychainBackendError["kind
   // `\blocked\b` (word boundary) matches "…is locked" but NOT "blocked" (no boundary before its `l`).
   if (s.includes("interaction not allowed") || /\blocked\b/.test(s)) return "locked";
   if (s.includes("denied") || s.includes("not authorized") || s.includes("auth failed")) return "denied";
+  // ⛔ MEASURED (2026-08-28) — a LOCKED keychain reaches here with NOTHING to pattern-match: exit 128,
+  // empty stdout AND stderr. Requiring EMPTY stderr is load-bearing: `locked` is RETRYABLE, so a
+  // blanket `128 ⇒ locked` would make a genuinely terminal 128 retry forever — the hazard this
+  // function's own comment names. A 128 that carries a message is still classified by that message.
+  if (code === 128 && stderr.trim().length === 0) return "locked";
   return "backend_error";
 }
 

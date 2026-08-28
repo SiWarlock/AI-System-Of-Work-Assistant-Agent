@@ -16,10 +16,25 @@
 //
 // ⛔ WHAT THIS DELIBERATELY DOES NOT DO. It never provisions (`add-generic-password`),
 // never deletes, and never reads a real secret — it looks up a pair that does not exist.
-// Provisioning IS the `§ARM-17` crossing and belongs to the owner. So `locked` and
-// `denied` stay UNMEASURED: reaching them means locking the operator's login keychain or
-// denying an ACL, which a test must not do to someone's machine. That is stated here
-// rather than papered over — this pin narrows the gap, it does not close it.
+// Provisioning IS the `§ARM-17` crossing and belongs to the owner.
+//
+// ⛔⛔ CORRECTED 2026-08-28 — THIS FILE'S OWN REASON FOR NOT MEASURING `locked` WAS FALSE.
+// It said `locked` "stays UNMEASURED: reaching it means locking the operator's login keychain
+// … which a test must not do to someone's machine." ⭐ A THROWAWAY keychain at a temp path,
+// never added to the search list, measures it WITHOUT touching the operator's login keychain.
+// The impossibility was ASSUMED, not tested — and it sat on the branch this suite's own last
+// test calls "the dangerous direction".
+// MEASURED (Darwin 25.5.0): a locked keychain exits **128 with EMPTY stdout AND stderr**, which
+// tripped none of the stderr patterns and fell to `backend_error` ⇒ reported to the operator as
+// `"missing"`. Now classified `locked`; pinned at the unit level in `keychain-backend.test.ts`
+// ("a LOCKED keychain — exit 128, EMPTY stderr").
+//
+// ⚠ WHY THE `locked` PIN IS A UNIT TEST AND NOT A LIVE ONE HERE: every `security` CLI path against
+// a locked keychain BLOCKS ON A MODAL UNLOCK DIALOG (`show-keychain-info` hangs too — verified,
+// killed at 8s). A live test would pop a system dialog on whoever runs the suite and then hang
+// until the exec timeout. The measurement is recorded; the pin is at the layer that can hold it.
+//
+// `denied` REMAINS UNMEASURED — it needs a real ACL denial. Stated rather than papered over.
 //
 // MEASURED 2026-08-28, macOS Darwin 25.5.0:
 //   exit 44, stderr "security: SecKeychainSearchCopyNext: The specified item could not be

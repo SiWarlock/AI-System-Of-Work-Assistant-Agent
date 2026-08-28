@@ -144,6 +144,41 @@ describe("createSecurityCliKeychainBackend — fault mapping (typed, never throw
     if (isErr(r)) expect(r.error.kind).toBe("not_found");
   });
 
+  it("a LOCKED keychain — exit 128, EMPTY stderr — maps `locked`, not `backend_error` (§ARM-17, MEASURED)", async () => {
+    // ⛔⛔ THE ASSUMPTION THIS REPLACES WAS WRONG, and it was wrong on the path the classifier's own
+    // comment called "the direction that matters". Both this file and the live-classifier suite
+    // recorded `locked` as UNMEASURED because "reaching it means locking the operator's login
+    // keychain, which a test must not do to someone's machine."
+    // ⭐ That premise was FALSE: a THROWAWAY keychain at a temp path, never added to the search
+    // list, measures it without touching the operator's login keychain at all.
+    //
+    // MEASURED 2026-08-28, macOS Darwin 25.5.0, against the real `/usr/bin/security`:
+    //   create-keychain → add-generic-password (dummy) → lock-keychain → find-generic-password -w
+    //   ⇒ macOS shows a MODAL UNLOCK DIALOG. Dismissed, it exits **128 with EMPTY stdout AND stderr**.
+    //
+    // ⇒ the stderr-pattern branch cannot fire — there is no stderr — so a locked keychain fell to
+    // `backend_error`, which `mapUnavailableReason` folds to `"missing"`. The operator was told the
+    // credential DID NOT EXIST when it existed and the keychain was merely locked, and the whole
+    // `onKeychainLocked` → keychain-locked HealthItem path (worker L41/L53) was unreachable on the
+    // real CLI.
+    const r = await createSecurityCliKeychainBackend({
+      exec: fakeExec({ code: 128, stdout: "", stderr: "" }).exec,
+    }).read(SVC, ACCT);
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.kind).toBe("locked");
+  });
+
+  it("NON-VACUITY: a 128 that DOES carry stderr is still classified by its stderr, not blanket-locked", async () => {
+    // The new branch requires EMPTY stderr on purpose. Without that, any 128 would be relabelled
+    // `locked` — which is RETRYABLE — and a genuinely terminal fault would retry forever, the exact
+    // hazard the classifier's own comment names.
+    const r = await createSecurityCliKeychainBackend({
+      exec: fakeExec({ code: 128, stderr: "security: something else went wrong" }).exec,
+    }).read(SVC, ACCT);
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.kind).toBe("backend_error");
+  });
+
   it("locked_and_denied_signals_map_typed", async () => {
     const rl = await createSecurityCliKeychainBackend({
       exec: fakeExec({ code: 128, stderr: "SecKeychain: interaction not allowed" }).exec,
