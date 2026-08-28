@@ -144,6 +144,24 @@ describe("createSecurityCliKeychainBackend — fault mapping (typed, never throw
     if (isErr(r)) expect(r.error.kind).toBe("not_found");
   });
 
+  it("KEY-ENCODING: a printable-ASCII (base64) key round-trips byte-exact — the provisioning contract", async () => {
+    // ⛔ WHY THIS PIN EXISTS. `security find-generic-password -w` returns the value as LOWERCASE HEX
+    // whenever it contains ANY non-printable byte, with NO marker. MEASURED 2026-08-28 on a throwaway
+    // keychain: `abc\n` → "6162630a", `a\tb` → "610962", `abcé` → "616263c3a9"; printable ASCII and
+    // base64 come back RAW.
+    // ⇒ a RAW-BINARY HMAC key at `sow/kw-signing` would reach `createHmac("sha256", key)` as its HEX
+    // ASCII — wrong bytes, double length — and would stamp AND verify SELF-CONSISTENTLY. It would look
+    // like it works, and break only on rotation or cross-tool verification.
+    // ⛔ No reader can detect this: the hex of `abc\n` is byte-identical to the literal string
+    // "6162630a". The ambiguity is irreducible at read time, so the contract is a PROVISIONING rule and
+    // this test pins the shape that satisfies it.
+    const b64 = "yuC3kA3C4BIun8NoHmZA/5e0Ua15Qx3inPSUJUPVgcE=";
+    const be = createSecurityCliKeychainBackend({ exec: fakeExec({ code: 0, stdout: `${b64}\n` }).exec });
+    const r = await be.read(SVC, ACCT);
+    expect(isOk(r)).toBe(true);
+    if (isOk(r)) expect(new TextDecoder().decode(r.value)).toBe(b64);
+  });
+
   it("a LOCKED keychain — exit 128, EMPTY stderr — maps `locked`, not `backend_error` (§ARM-17, MEASURED)", async () => {
     // ⛔⛔ THE ASSUMPTION THIS REPLACES WAS WRONG, and it was wrong on the path the classifier's own
     // comment called "the direction that matters". Both this file and the live-classifier suite

@@ -89,7 +89,29 @@ function stripOneTrailingNewline(bytes: Uint8Array): Uint8Array {
  *     `errSecInteractionNotAllowed` — the exact string the pattern branch already matches. Both branches are
  *     therefore live, for different contexts; neither supersedes the other.
  *   • STILL UNMEASURED: `denied`. It needs a real ACL denial, and its stderr token set remains an ASSUMPTION.
- * The Keychain key-encoding contract is likewise still unverified (it needs a provisioned item).
+ * ⛔⛔ KEY-ENCODING CONTRACT — MEASURED 2026-08-28, AND IT IS A REAL HAZARD, NOT A CONFIRMATION.
+ * This line used to read "likewise still unverified (it needs a provisioned item)". A DUMMY item on a
+ * throwaway keychain was a provisioned item, and the answer matters:
+ *
+ *   `security find-generic-password -w` RETURNS THE VALUE AS LOWERCASE HEX whenever it contains ANY
+ *   non-printable byte — and gives NO MARKER distinguishing that from a raw value.
+ *
+ * MEASURED (Darwin 25.5.0): `sk-ant-api03-AbCdEf123` → raw · `hello-world_123.=+/` → raw ·
+ * `abc\n` → `6162630a` · `abc\xc3\xa9` → `616263c3a9` · `a\tb` → `610962`. A base64 key
+ * (`yuC3kA3C4BIun8NoHmZA/5e0Ua15Qx3inPSUJUPVgcE=`) round-trips BYTE-EXACT.
+ *
+ * ⛔ WHY THIS IS DANGEROUS AND NOT MERELY ANNOYING: `resolveSigningKey` feeds `createHmac("sha256", key)`
+ * (`provenance-stamp.ts`). A RAW-BINARY HMAC key provisioned at `sow/kw-signing` would be read back as
+ * its HEX ASCII — different bytes, double length — and would then stamp AND verify SELF-CONSISTENTLY
+ * with the wrong key. ⇒ ***it would look like it works.*** The defect surfaces only when the key is
+ * rotated, re-provisioned, or verified by anything that reads the keychain differently.
+ *
+ * ⛔ NO RUNTIME GUARD IS POSSIBLE, and that is a conclusion rather than an omission: `security` DESTROYS
+ * the distinction. A value that is legitimately the string `"6162630a"` is byte-identical to the hex
+ * rendering of raw `abc\n`, so no reader can tell them apart. The ambiguity is irreducible AT READ TIME,
+ * which is exactly why the contract has to be enforced at PROVISIONING time.
+ * ⇒ **THE CONTRACT: every keychain-stored key MUST be printable ASCII — base64 for anything binary.**
+ * `§ARM-17`'s provisioning instruction states it; this comment is the measurement behind it.
  */
 function classifyFault(code: number, stderr: string): KeychainBackendError["kind"] {
   if (code === 44) return "not_found";
