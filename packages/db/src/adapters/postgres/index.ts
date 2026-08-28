@@ -725,6 +725,21 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
   // Source-disposition store (task 15.5). json column round-trips lossless; park first-write-wins;
   // getBy* ok(undefined) on miss / err on fault (L3); recordDisposition CAS first-write-wins on the
   // disposition key via `.returning()` (0 rows ⇒ conflict/not_found). Async.
+/**
+ * Row → the contract shape. The ONLY transformation is DB `null` → absent for the
+ * optional `workspaceId` (task 7.19): the column is nullable so pre-column rows can
+ * exist, but `SourceDispositionRow.workspaceId` is `?: string`, and returning `null`
+ * where the contract says "absent" makes a round-trip comparison fail and pushes the
+ * null into every consumer. Normalize at the boundary that owns the dialect.
+ */
+function toSourceDisposition(row: Record<string, unknown>): SourceDispositionRow {
+  const { workspaceId, ...rest } = row as { workspaceId: string | null };
+  return {
+    ...(rest as unknown as SourceDispositionRow),
+    ...(workspaceId !== null && workspaceId !== undefined ? { workspaceId } : {}),
+  };
+}
+
   const sourceDisposition: SourceDispositionRepository = {
     park: (row) =>
       run(async () => {
@@ -738,7 +753,7 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
           .from(schema.sourceDisposition)
           .where(eq(schema.sourceDisposition.sourceId, sourceId))
           .limit(1);
-        return ok(rows[0] as SourceDispositionRow | undefined);
+        return ok(rows[0] === undefined ? undefined : toSourceDisposition(rows[0] as Record<string, unknown>));
       }),
     getByDispositionKey: (key) =>
       run(async () => {
@@ -747,7 +762,21 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
           .from(schema.sourceDisposition)
           .where(eq(schema.sourceDisposition.dispositionKey, key))
           .limit(1);
-        return ok(rows[0] as SourceDispositionRow | undefined);
+        return ok(rows[0] === undefined ? undefined : toSourceDisposition(rows[0] as Record<string, unknown>));
+      }),
+    listByWorkspace: (workspaceId, limit) =>
+      run(async () => {
+        // 7.19 — SCOPED AT THE QUERY (WS-8), PARITY with the SQLite adapter. A NULL
+        // `workspaceId` (a row parked before the column existed) is excluded by the
+        // equality itself — excluding costs a stale row that is never pruned, which is
+        // recoverable; including one would prune it under the wrong workspace.
+        const rows = await db
+          .select()
+          .from(schema.sourceDisposition)
+          .where(eq(schema.sourceDisposition.workspaceId, workspaceId))
+          .orderBy(asc(schema.sourceDisposition.parkedAt))
+          .limit(limit);
+        return ok(rows.map((r) => toSourceDisposition(r as Record<string, unknown>)));
       }),
     recordDisposition: (sourceId, dispositionKey, auditRef, at) =>
       run(async () => {

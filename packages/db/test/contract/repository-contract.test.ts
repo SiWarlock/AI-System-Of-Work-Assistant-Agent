@@ -1054,6 +1054,47 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       ...over,
     });
 
+    // ── 7.19 — SCOPED ENUMERATION (WS-8). The retention prune's candidate source.
+    //    The table is deliberately PRE-workspace for its lookup paths, so this column
+    //    + query exist specifically so a sweep can list ONE workspace without pulling
+    //    foreign-workspace envelopes into memory and filtering them in app code.
+    it("listByWorkspace returns only the named workspace's rows, oldest first", async () => {
+      unwrap(await repos.sourceDisposition.park(sdRow({ sourceId: "w-a2", workspaceId: "ws-a", parkedAt: "2026-07-15T02:00:00.000Z" })));
+      unwrap(await repos.sourceDisposition.park(sdRow({ sourceId: "w-a1", workspaceId: "ws-a", parkedAt: "2026-07-15T01:00:00.000Z" })));
+      unwrap(await repos.sourceDisposition.park(sdRow({ sourceId: "w-b1", workspaceId: "ws-b", parkedAt: "2026-07-15T00:30:00.000Z" })));
+
+      const listed = unwrap(await repos.sourceDisposition.listByWorkspace!("ws-a", 100));
+      expect(listed.map((r) => r.sourceId)).toEqual(["w-a1", "w-a2"]); // oldest first
+      // WS-8: the other workspace's row is not merely filtered later — it never comes back.
+      expect(listed.every((r) => r.workspaceId === "ws-a")).toBe(true);
+    });
+
+    it("a row with NO workspaceId is EXCLUDED — never swept under a guessed workspace", async () => {
+      // Rows parked before the column existed carry none. Excluding costs a stale row
+      // that is never pruned (recoverable); including one would prune it under the
+      // wrong workspace (not).
+      unwrap(await repos.sourceDisposition.park(sdRow({ sourceId: "legacy", workspaceId: undefined })));
+      unwrap(await repos.sourceDisposition.park(sdRow({ sourceId: "scoped", workspaceId: "ws-a" })));
+      const listed = unwrap(await repos.sourceDisposition.listByWorkspace!("ws-a", 100));
+      expect(listed.map((r) => r.sourceId)).toEqual(["scoped"]);
+    });
+
+    it("listByWorkspace honours the limit", async () => {
+      for (let i = 0; i < 5; i += 1) {
+        unwrap(
+          await repos.sourceDisposition.park(
+            sdRow({ sourceId: `lim-${i}`, workspaceId: "ws-a", parkedAt: `2026-07-15T0${i}:00:00.000Z` }),
+          ),
+        );
+      }
+      expect(unwrap(await repos.sourceDisposition.listByWorkspace!("ws-a", 2))).toHaveLength(2);
+    });
+
+    it("an unknown workspace lists NOTHING — an empty sweep, never every row", async () => {
+      unwrap(await repos.sourceDisposition.park(sdRow({ sourceId: "only", workspaceId: "ws-a" })));
+      expect(unwrap(await repos.sourceDisposition.listByWorkspace!("ws-nope", 100))).toEqual([]);
+    });
+
     it("park → getBySourceId round-trips the parked SourceEnvelope + idempotencyKey (json lossless)", async () => {
       expect(isOk(await repos.sourceDisposition.park(sdRow()))).toBe(true);
       const got = unwrap(await repos.sourceDisposition.getBySourceId("src-1"));

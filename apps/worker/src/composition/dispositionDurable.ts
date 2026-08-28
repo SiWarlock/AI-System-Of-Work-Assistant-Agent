@@ -260,6 +260,11 @@ export function createDurableMeetingParkPort(deps: DurableMeetingParkDeps): Meet
         // operational truth) DETERMINISTIC in the source identity (sourceId + idempotencyKey), so a re-driven /
         // replayed low-confidence meeting mints the SAME ref and first-write-wins keeps ONE row (rule 3 / L36).
         auditRef: makeAuditId(`meeting-park:${String(source.sourceId)}:${idempotencyKey}`),
+        // 7.19 — DENORMALIZE the WS-8 scoping key at park time so a retention sweep can
+        // enumerate one workspace without reading foreign rows. Taken from the envelope
+        // this row already stores, so it can never disagree with it; a row parked before
+        // this column existed carries none and is EXCLUDED from a scoped query.
+        workspaceId: String(source.workspaceId),
         parkedAt: deps.now(),
         dispositionedAt: null,
       };

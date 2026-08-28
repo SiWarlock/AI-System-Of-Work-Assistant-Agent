@@ -258,7 +258,9 @@ function defineLifecycleSuite<H>(fix: LifecycleFixture<H>): void {
         // idempotencyKey, so it structurally cannot answer "was THIS envelope applied?"
         // once updates exist; see docs/findings/external-write-update-path.md),
         // all applied from empty.
-        expect(r.value.applied).toBe(18);
+        // + 0018_source_disposition_workspace (task 7.19 — the WS-8 scoping column that
+        // lets a retention sweep enumerate ONE workspace without reading foreign rows).
+        expect(r.value.applied).toBe(19);
         expect(r.value.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
         expect(r.value.backup.dialect).toBe(fix.dialect);
 

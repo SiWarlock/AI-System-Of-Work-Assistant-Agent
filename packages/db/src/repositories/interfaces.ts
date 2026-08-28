@@ -536,6 +536,12 @@ export interface SourceDispositionRow {
   /** The channel-free disposition key — null until the owner records a disposition (CAS, inv-A/inv-B). */
   readonly dispositionKey: string | null;
   readonly auditRef: string | null;
+  /**
+   * Task 7.19 — the WS-8 scoping key, denormalized from `sourceEnvelope.workspaceId`
+   * at park time. OPTIONAL: rows parked before this column existed carry none, and a
+   * scoped enumeration EXCLUDES them rather than guessing (see the schema file).
+   */
+  readonly workspaceId?: string;
   readonly parkedAt: string;
   readonly dispositionedAt: string | null;
 }
@@ -559,6 +565,22 @@ export interface SourceDispositionRepository {
    * `not_found`. Returns the updated row.
    */
   recordDisposition(sourceId: string, dispositionKey: string, auditRef: string, dispositionedAt: string): DbResult<SourceDispositionRow>;
+  /**
+   * Task 7.19 — ENUMERATE parked rows for ONE workspace, oldest first, capped by
+   * `limit`. The retention prune's candidate source.
+   *
+   * ⛔ SCOPED AT THE QUERY, not in app code. Listing everything and filtering on
+   * `sourceEnvelope.workspaceId` afterwards would pull foreign-workspace envelopes
+   * into memory on every prune pass — the shape WS-8 exists to discourage, even
+   * though nothing surfaces. A row with NO `workspaceId` (parked before the column
+   * existed) is EXCLUDED: excluding costs a stale row that is never pruned, which is
+   * recoverable; including one would prune it under the wrong workspace, which is not.
+   *
+   * OPTIONAL (additive — existing implementers and fakes stay valid; the
+   * `getReadCursor`/`markRead` convention). Absent ⇒ no enumeration is possible and
+   * the caller must say so rather than silently sweeping nothing.
+   */
+  listByWorkspace?(workspaceId: string, limit: number): DbResult<SourceDispositionRow[]>;
 }
 
 /**

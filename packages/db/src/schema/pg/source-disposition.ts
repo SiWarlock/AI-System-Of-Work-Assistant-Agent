@@ -12,6 +12,11 @@ export const sourceDisposition = pgTable("source_disposition", {
   state: text().$type<SourceDispositionRow["state"]>().notNull(),
   dispositionKey: text().$type<SourceDispositionRow["dispositionKey"]>(),
   auditRef: text().$type<SourceDispositionRow["auditRef"]>(),
+  /** Task 7.19 — the WS-8 scoping column, denormalized from `sourceEnvelope.workspaceId`
+   *  at park time so a retention sweep can enumerate ONE workspace without reading
+   *  foreign rows. NULLABLE: pre-column rows are EXCLUDED from a scoped query rather
+   *  than guessed (see ../source-disposition.ts for the full rationale). */
+  workspaceId: text(),
   parkedAt: text().$type<SourceDispositionRow["parkedAt"]>().notNull(),
   dispositionedAt: text().$type<SourceDispositionRow["dispositionedAt"]>(),
 });

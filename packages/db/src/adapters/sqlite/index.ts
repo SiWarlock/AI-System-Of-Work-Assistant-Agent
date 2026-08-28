@@ -705,6 +705,21 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
   // absence) / err on a driver fault (L3). `recordDisposition` is CAS first-write-wins on the
   // disposition key (WHERE dispositionKey IS NULL): 0 changes ⇒ conflict (already dispositioned) or
   // not_found (absent).
+/**
+ * Row → the contract shape. The ONLY transformation is DB `null` → absent for the
+ * optional `workspaceId` (task 7.19): the column is nullable so pre-column rows can
+ * exist, but `SourceDispositionRow.workspaceId` is `?: string`, and returning `null`
+ * where the contract says "absent" makes a round-trip comparison fail and pushes the
+ * null into every consumer. Normalize at the boundary that owns the dialect.
+ */
+function toSourceDisposition(row: Record<string, unknown>): SourceDispositionRow {
+  const { workspaceId, ...rest } = row as { workspaceId: string | null };
+  return {
+    ...(rest as unknown as SourceDispositionRow),
+    ...(workspaceId !== null && workspaceId !== undefined ? { workspaceId } : {}),
+  };
+}
+
   const sourceDisposition: SourceDispositionRepository = {
     park: (row) =>
       run(() => {
@@ -718,7 +733,7 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
           .from(schema.sourceDisposition)
           .where(eq(schema.sourceDisposition.sourceId, sourceId))
           .get();
-        return ok(row as SourceDispositionRow | undefined);
+        return ok(row === undefined ? undefined : toSourceDisposition(row as Record<string, unknown>));
       }),
     getByDispositionKey: (key) =>
       run(() => {
@@ -727,7 +742,22 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
           .from(schema.sourceDisposition)
           .where(eq(schema.sourceDisposition.dispositionKey, key))
           .get();
-        return ok(row as SourceDispositionRow | undefined);
+        return ok(row === undefined ? undefined : toSourceDisposition(row as Record<string, unknown>));
+      }),
+    listByWorkspace: (workspaceId, limit) =>
+      run(() => {
+        // 7.19 — SCOPED AT THE QUERY (WS-8). A NULL `workspaceId` (a row parked before
+        // the column existed) is excluded by the equality itself: excluding costs a
+        // stale row that is never pruned, which is recoverable; including one would
+        // prune it under the wrong workspace, which is not.
+        const rows = db
+          .select()
+          .from(schema.sourceDisposition)
+          .where(eq(schema.sourceDisposition.workspaceId, workspaceId))
+          .orderBy(schema.sourceDisposition.parkedAt)
+          .limit(limit)
+          .all();
+        return ok(rows.map((r) => toSourceDisposition(r as Record<string, unknown>)));
       }),
     recordDisposition: (sourceId, dispositionKey, auditRef, at) =>
       run(() => {
@@ -743,7 +773,7 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
           .get();
         if (!row) return err(notFound(`source disposition ${sourceId}`));
         if (info.changes === 0) return err(conflict(`source ${sourceId} already dispositioned`));
-        return ok(row as SourceDispositionRow);
+        return ok(toSourceDisposition(row as Record<string, unknown>));
       }),
   };
 

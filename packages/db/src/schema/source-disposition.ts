@@ -29,6 +29,24 @@ export const sourceDisposition = sqliteTable("source_disposition", {
   // The channel-free disposition key — set on the owner's record (CAS first-write-wins; inv-A/inv-B).
   dispositionKey: text().$type<SourceDispositionRow["dispositionKey"]>(),
   auditRef: text().$type<SourceDispositionRow["auditRef"]>(),
+  /**
+   * Task 7.19 — the WS-8 scoping column, DENORMALIZED from `sourceEnvelope.workspaceId`
+   * at park time.
+   *
+   * ⛔ WHY IT EXISTS, since this table's header says the row is deliberately
+   * "PRE-workspace (keyed by sourceId)": that is right for the LOOKUP paths
+   * (`getBySourceId` / `getByDispositionKey`), which name one row. It is wrong for
+   * ENUMERATION. The retention prune must list assistant-held records for ONE
+   * workspace, and without this column the only way is to read every row and filter on
+   * the json in app code — pulling foreign-workspace envelopes into memory on every
+   * pass, which is the shape WS-8 exists to discourage even though nothing surfaces.
+   *
+   * NULLABLE on purpose: rows parked before this column existed have no value, and a
+   * scoped query must therefore EXCLUDE them rather than guess. Excluding costs a
+   * stale row that is never pruned (recoverable); including one would prune under the
+   * wrong workspace (not).
+   */
+  workspaceId: text(),
   parkedAt: text().$type<SourceDispositionRow["parkedAt"]>().notNull(),
   dispositionedAt: text().$type<SourceDispositionRow["dispositionedAt"]>(),
 });
