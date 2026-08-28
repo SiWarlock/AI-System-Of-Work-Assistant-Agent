@@ -43,7 +43,38 @@ export interface FileChange {
 /** Typed failure of an atomic commit (never thrown, §16). */
 export type AtomicError =
   | { readonly code: "stage_failed"; readonly path: string; readonly cause: unknown }
-  | { readonly code: "commit_failed"; readonly path: string; readonly cause: unknown };
+  | { readonly code: "commit_failed"; readonly path: string; readonly cause: unknown }
+  /**
+   * REQ-S-NEW-008 / safety rule 1 — the OS one-writer WRITE FENCE is BREACHED, so
+   * this process is not provably the sole writer of the vault. Refused BEFORE a
+   * single byte is staged.
+   *
+   * `reasons` is the closed `WriteFenceAlarm` reason set (never free text, never a
+   * pid — rule 7); the full alarms, with their HealthItems, stay with the caller
+   * that evaluated the fence.
+   */
+  | { readonly code: "write_fence_breached"; readonly reasons: readonly string[] };
+
+/**
+ * The injected one-writer WRITE FENCE (REQ-S-NEW-008). Returns the closed breach
+ * reasons when the fence is down, or `undefined` when it is intact.
+ *
+ * ⛔ WHY IT LIVES HERE, at the write primitive. Task 24.1's Done-when is that a
+ * non-sole-writer is "denied at the OS layer … PHYSICALLY blocked, not just
+ * reported". Before this, the OS lock was genuinely ACQUIRED at boot but nothing
+ * consulted it on the write path, so a worker that lost (or never won) the lock
+ * still wrote canonical Markdown — the fence was detective, not preventive, which
+ * is the exact distinction `write-fence.ts` exists to erase.
+ *
+ * Evaluated PER COMMIT rather than once at boot: the lock can be lost while the
+ * process runs, and a fence checked only at startup would authorize every later
+ * write on a fact that has since expired.
+ *
+ * OPTIONAL: absent ⇒ no gate, byte-identical to before this parameter existed
+ * (every existing caller and test stays valid). A worker that HAS the fact should
+ * always bind it — an unbound fence is not a safe fence, merely an unchecked one.
+ */
+export type WriteFenceProbe = () => readonly string[] | undefined;
 
 const tempPath = (path: string, token: string): string => `${path}.${token}.kwtmp`;
 
@@ -60,9 +91,18 @@ export async function atomicCommit(
   fs: VaultFs,
   changes: readonly FileChange[],
   token: string,
+  fence?: WriteFenceProbe,
 ): Promise<Result<void, AtomicError>> {
   if (changes.length === 0) {
     return ok(undefined);
+  }
+
+  // REQ-S-NEW-008 — the one-writer fence, checked BEFORE any staging so a breach
+  // costs zero filesystem effect. This is the physical block: not a report, not a
+  // health item, a refusal to write.
+  const breach = fence?.();
+  if (breach !== undefined && breach.length > 0) {
+    return err({ code: "write_fence_breached", reasons: breach });
   }
 
   // Phase 1 — stage every change to a temp file. Any failure aborts before a

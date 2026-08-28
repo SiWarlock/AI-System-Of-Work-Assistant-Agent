@@ -109,6 +109,10 @@ describe("Result<T,E> envelope (1.1)", () => {
     const good: Result<number, string> = ok(42);
     const bad: Result<number, string> = err("boom");
     expect(isOk(good)).toBe(true);
+    // `bad` is a literal `err("boom")`, not the output of a fallible function
+    // with an error union — there is only one way for it to be an Err, and the
+    // bare isErr check is already paired with a value discriminant below
+    // (`bad.error`), so it is not a bare-falsity pin (task 24.101).
     expect(isErr(bad)).toBe(true);
     if (isOk(good)) expect(good.value).toBe(42);
     if (isErr(bad)) expect(bad.error).toBe("boom");

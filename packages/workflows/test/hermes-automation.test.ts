@@ -330,6 +330,8 @@ const EXPECTED_COMMIT_FAILURE_CLASS: Record<KnowledgeCommitFailureCode, FailureC
   // failures); does NOT close it (the two still share a class with each other).
   audit_record_failed: "db_unavailable",
   revision_record_failed: "db_unavailable",
+  // REQ-S-NEW-008 — the one-writer fence GATE held the write; nothing was attempted.
+  write_fence_breached: "write_through_blocked",
 };
 
 const ALL_COMMIT_FAILURE_CODES = Object.keys(

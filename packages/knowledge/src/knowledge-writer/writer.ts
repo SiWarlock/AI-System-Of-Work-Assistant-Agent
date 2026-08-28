@@ -47,7 +47,7 @@ import {
 import { validate, ruleScopedMutation } from "@sow/domain";
 import type { SchemaRegistry } from "@sow/contracts/schema/registry";
 import type { AuditRepository } from "@sow/db";
-import { atomicCommit } from "../markdown-vault/atomic-write";
+import { atomicCommit, type WriteFenceProbe } from "../markdown-vault/atomic-write";
 import type { FileChange, VaultFs } from "../markdown-vault/atomic-write";
 import {
   buildCommitAuditRecord,
@@ -163,6 +163,21 @@ export interface KnowledgeWriteCommand {
 
 export interface KnowledgeWriterDeps {
   readonly vault: VaultFs;
+  /**
+   * REQ-S-NEW-008 / safety rule 1 — the OS ONE-WRITER FENCE, evaluated per commit.
+   * Returns the closed breach reasons when this process is not provably the sole
+   * writer of the vault, or `undefined` when the fence is intact; a breach REFUSES
+   * the commit before a single byte is staged.
+   *
+   * Per-commit rather than once at boot on purpose: the advisory lock can be lost
+   * while the process runs, and a fence checked only at startup would authorize
+   * every later write on a fact that has since expired.
+   *
+   * OPTIONAL: absent ⇒ ungated, byte-identical to before this field existed. The
+   * composition root binds it from the real `acquireSingleOwnerLock` outcome.
+   */
+  readonly writeFence?: WriteFenceProbe;
+
   readonly revisions: KnowledgeRevisionStore;
   readonly audit: AuditRepository;
   /** Injected clock (ISO-8601). Keeps the writer deterministic under test. */
@@ -262,7 +277,29 @@ export interface RevisionRecordFailed {
  * the only two members that describe a state in which the Markdown write SUCCEEDED. Every other
  * member means nothing was committed.
  */
+/**
+ * REQ-S-NEW-008 / safety rule 1 — the OS one-writer WRITE FENCE was BREACHED, so this
+ * process is not provably the sole writer of the vault. NOTHING was written; the
+ * refusal happens before a single byte is staged.
+ *
+ * ⛔ WHY NOT `commit_failed`. That code is the RETRYABLE infrastructure-fault route (a
+ * filesystem fault mid-commit), and this is the opposite: re-running it changes
+ * nothing, because the machine is not the sole writer and will not become one by
+ * being asked again. Reporting a permanent refusal as a transient fault is the
+ * retry-forever inversion the sibling doc comments above already argue against, in
+ * the other direction — and it is the same defect class this repo has now found on
+ * the external-write path (a terminal condition mapped onto a retryable one).
+ *
+ * `reasons` is the closed `WriteFenceAlarm` reason set — never free text, never the
+ * other holder's pid (rule 7).
+ */
+export interface WriteFenceBreachedFailure {
+  readonly code: "write_fence_breached";
+  readonly reasons: readonly string[];
+}
+
 export type WriteFailure =
+  | WriteFenceBreachedFailure
   | SchemaRejected
   | WriteConflict
   | OwnershipViolation
@@ -367,8 +404,8 @@ function sanitizeCommitAuditRecordForAppend(record: AuditRecord): AuditRecord {
  * and concludes the whole argument is stale"), and the copy got fixed while the original stayed
  * wrong. Named so a future `try` addition without a comment update is checkable,
  * not merely re-assertable: both wrap a POST-COMMIT recording write (24.72 — typed, not thrown) — the
- * `try` at `:721` wraps `deps.audit.append`, folding a throw to `audit_record_failed`; the `try` at
- * `:743` wraps `deps.revisions.record`, folding a throw to `revision_record_failed`. ⚠ THESE TWO
+ * `try` at `:764` wraps `deps.audit.append`, folding a throw to `audit_record_failed`; the `try` at
+ * `:786` wraps `deps.revisions.record`, folding a throw to `revision_record_failed`. ⚠ THESE TWO
  * NUMBERS ARE THE CHECKABLE PART, NOT DECORATION: `writer.test.ts`'s
  * `applyPlan_docblock_makes_no_false_universal_try_claim` extracts them from this very paragraph and
  * cross-checks them against a live scan of the function body, so a future `try` block added — or
@@ -656,8 +693,14 @@ export async function applyPlan(
     deps.vault,
     committedChanges,
     tokenOf(newRevision),
+    deps.writeFence,
   );
   if (!committed.ok) {
+    // A FENCE BREACH is not an infra fault: nothing was staged, and retrying cannot
+    // help until the operator restores sole-writer posture. It keeps its own code.
+    if (committed.error.code === "write_fence_breached") {
+      return err({ code: "write_fence_breached", reasons: committed.error.reasons });
+    }
     // Both atomic phases (stage_failed / commit_failed) roll the vault back to the
     // prior revision; surface either as the single typed infra-fault variant.
     return err({

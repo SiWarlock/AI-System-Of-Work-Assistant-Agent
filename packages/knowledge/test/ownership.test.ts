@@ -99,6 +99,10 @@ describe("checkOwnership — human-owned content is protected", () => {
     const next = `intro\n<!-- kw:region:r -->\nunclosed body\ntail`;
     const r = checkOwnership(ctx(prior, next, planPatching("r")));
     expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    // `code` is always the constant "ownership_violation" — `reason` is what actually
+    // discriminates a malformed-marker rejection from the other 4 rejection conditions.
+    expect(r.error.reason).toBe("malformed_marker:unclosed_region");
   });
 });
 

@@ -49,6 +49,7 @@ import type {
   WorkflowRunRef,
   GbrainPin,
   ContextRef,
+  BrainId,
 } from "@sow/contracts";
 import { descriptorFor, isZeroEgressOnlyWorkspace, toAuditRecordInput, isRedactionSafe } from "@sow/policy";
 import type { SessionToken, LegacyContentPolicy, CopilotWorkspaceScope, ResolvedWorkspacePolicy } from "@sow/policy";
@@ -144,6 +145,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 // task 11.1/24.1 (REQ-D-005, safety rule 1) — the REAL OS-atomic single-owner lock primitive.
 import { acquireSingleOwnerLock, type LockAcquireResult } from "./install/lock/singleOwnerLock";
+import { createWriteFenceProbe } from "./install/lock/writeFenceProbe";
 import { createFsVaultReadFileExec, createFsRealpath } from "./api/procedures/copilotVaultRead";
 import {
   createAgentRuntimeCopilotSynthesis,
@@ -1938,6 +1940,30 @@ export function withDurableRevisions(
 }
 
 /**
+ * Task 24.1 / REQ-S-NEW-008 — attach the OS ONE-WRITER FENCE probe so the
+ * KnowledgeWriter REFUSES a commit whenever this process is not provably the sole
+ * writer of the vault.
+ *
+ * ⛔ THIS IS WHAT MAKES THE LOCK PREVENTIVE. `bootWorker` has acquired the
+ * single-owner lock since `68ec73c9`, but nothing consulted it on the write path, so
+ * a worker that lost (or never won) the lock still wrote canonical Markdown — the
+ * fence was DETECTIVE, which is exactly the distinction `write-fence.ts` exists to
+ * erase. The probe is evaluated PER COMMIT at `atomicCommit`, before a byte is
+ * staged; a boot-time decision would authorize every later write on a fact that can
+ * expire while the process runs.
+ *
+ * Same `undefined` passthrough as every other `with*` rebind. On the absent path
+ * nothing is attached and commits are ungated, byte-identical to before.
+ */
+export function withWriteFence(
+  proofSpineParams: ProofSpineParams | undefined,
+  writeFence: () => readonly string[] | undefined,
+): ProofSpineParams | undefined {
+  if (proofSpineParams === undefined) return undefined;
+  return { ...proofSpineParams, writeFence };
+}
+
+/**
  * Task 19.1 — attach the REAL file-backed {@link GbrainSyncOutboxBinding} (built over
  * `backendsConfig.dbPath`, so it shares the SAME durable file the operational store uses) so the
  * commit-triggered sync — `withGbrainSync` inside `buildProofSpineActivities` — persists across a
@@ -2291,6 +2317,10 @@ export function buildBackendsConfig(config: BootConfig): BackendsConfig {
  * (often concurrently) with no `dbPath` configured, and a single SHARED default lock path would make
  * them all spuriously refuse each other.
  */
+/** The canonical brain the one-writer fence guards. A single-user install has exactly
+ *  one canonical brain; the fence uses this only to key its alarms. */
+const SOW_CANONICAL_BRAIN_ID = "sow-canonical" as BrainId;
+
 export function deriveSingleOwnerLockPath(config: Pick<BootConfig, "dbPath">): string {
   if (config.dbPath !== undefined && config.dbPath !== ":memory:") {
     return `${config.dbPath}.single-owner.lock`;
@@ -3398,7 +3428,30 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     now: backends.now,
     newAuditId: (): string => auditId(`entity-ref-signals-audit:${(entityRefSignalsAuditSeq += 1)}`),
   });
-  const proofSpineParams = withLivingVaultRewrite(
+  // 24.1 / REQ-S-NEW-008 — the OS ONE-WRITER FENCE probe, built from the REAL
+  //   `acquireSingleOwnerLock` outcome captured at step 0.99 and consulted PER COMMIT
+  //   by the KnowledgeWriter. This is the piece boot.ts previously recorded as MISSING
+  //   ("the OS lock is a real ACQUISITION but not yet the thing that would make a
+  //   refused write PHYSICALLY blocked"): with it bound, a worker that lost or never
+  //   won the lock cannot write canonical Markdown at all — `atomicCommit` refuses
+  //   before staging a byte.
+  //   ⚠ `workerIsSoleVaultWriter` is stated, not probed: no filesystem-ACL prober
+  //   exists in this repo, so it is `true` here (this worker owns its vault directory
+  //   by construction in the shipped single-user posture) and the LOCK is the fact
+  //   actually being enforced. Named rather than implied — see writeFenceProbe.ts's
+  //   header for the full scope, including the absent stray-writer sweep.
+  const writeFenceProbe = createWriteFenceProbe({
+    lockResult: singleOwnerLockResult,
+    // The fence keys its alarms by brain. No BrainId constructor is exported
+    // (zod-brands.ts:211), so the canonical id is branded by cast, matching the
+    // repo's existing convention for this brand.
+    canonicalBrainId: SOW_CANONICAL_BRAIN_ID,
+    workerIsSoleVaultWriter: true,
+    now: backends.now,
+    auditRef: auditId("write-fence-boot"),
+  });
+  const proofSpineParams = withWriteFence(
+    withLivingVaultRewrite(
     withCardTransport(
       withWriteSecretsAccessor(
         withProposeKnowledgeApproval(
@@ -3424,6 +3477,8 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     { livingVaultRewrite: config.livingVaultRewrite, vaultRoot: config.vaultRoot },
     config.livingVaultProviders,
     recordEntityRefSignalsHealth,
+    ),
+    writeFenceProbe,
   );
 
   // 1.5) DEV data-unlock (OFF by default). When dev-provision specs are supplied, turn

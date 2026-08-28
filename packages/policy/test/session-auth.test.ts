@@ -85,6 +85,10 @@ describe("verifySessionToken", () => {
 
   it("fail-closed on a malformed expected token", () => {
     const d = verifySessionToken("whatever", null as unknown as SessionToken);
+    // Bare isDeny is sufficient here: every verifySessionToken deny path (malformed
+    // input, length mismatch, content mismatch) returns the single code
+    // AUTH_TOKEN_INVALID (see denyAuth in session-auth.ts) — there is no second
+    // reason this could fail for.
     expect(isDeny(d)).toBe(true);
   });
 
@@ -141,7 +145,15 @@ describe("isOriginAllowed", () => {
   });
 
   it("fail-closed on empty origin or empty host", () => {
-    expect(isDeny(isOriginAllowed("", "localhost:8787", allowlist))).toBe(true);
-    expect(isDeny(isOriginAllowed("http://localhost:5173", "", allowlist))).toBe(true);
+    // isOriginAllowed can deny for two distinct reasons (MALFORMED_POLICY_INPUT vs
+    // ORIGIN_NOT_ALLOWED) — assert the specific code so this pins "treated as
+    // not-on-the-allowlist" rather than merely "denied for some reason".
+    const emptyOrigin = isOriginAllowed("", "localhost:8787", allowlist);
+    expect(isDeny(emptyOrigin)).toBe(true);
+    if (isDeny(emptyOrigin)) expect(emptyOrigin.reason).toBe("ORIGIN_NOT_ALLOWED");
+
+    const emptyHost = isOriginAllowed("http://localhost:5173", "", allowlist);
+    expect(isDeny(emptyHost)).toBe(true);
+    if (isDeny(emptyHost)) expect(emptyHost.reason).toBe("ORIGIN_NOT_ALLOWED");
   });
 });

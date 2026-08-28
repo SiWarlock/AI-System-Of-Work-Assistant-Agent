@@ -99,6 +99,11 @@ export function mapWriteFailure(failure: WriteFailure): KnowledgeCommitFailureCo
       return "audit_record_failed";
     case "revision_record_failed":
       return "revision_record_failed";
+    // REQ-S-NEW-008 — identity mapping, same rule as every case above. The fence
+    // breach is PERMANENT (retrying cannot make this process the sole writer);
+    // folding it onto `commit_failed` would advertise it as retryable infra.
+    case "write_fence_breached":
+      return "write_fence_breached";
     default: {
       // A new WriteFailure member reaches here as a non-`never` type → tsc error,
       // forcing a deliberate mapping above. Never a `default:` that silently

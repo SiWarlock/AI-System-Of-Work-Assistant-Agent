@@ -297,6 +297,16 @@ export interface SourceIngestionParams {
 }
 
 export interface ProofSpineParams {
+  /**
+   * 24.1 / REQ-S-NEW-008 — the OS ONE-WRITER FENCE probe, evaluated PER COMMIT by the
+   * KnowledgeWriter. A breach REFUSES the commit before a byte is staged, which is
+   * what makes the OS lock PREVENTIVE rather than merely acquired.
+   *
+   * OPTIONAL: absent ⇒ ungated, byte-identical to before this field existed. Boot
+   * supplies it from the real `acquireSingleOwnerLock` outcome
+   * (`install/lock/writeFenceProbe.ts`).
+   */
+  readonly writeFence?: () => readonly string[] | undefined;
   /** The resolved workspace posture the fail-closed approval unwrap reads. */
   readonly resolved: ResolvedWorkspacePolicy;
   /** The correlation signals the (stub) correlator resolves — inv-1 threshold-gated. */
@@ -766,6 +776,9 @@ export function buildProofSpineActivities(
     revisions: params.revisions,
     audit: backends.repos.audit,
     now,
+    // 24.1 — the one-writer fence. Conditional spread (key ABSENT, never
+    // `undefined`-valued) so an unbound fence is byte-identical to before.
+    ...(params.writeFence !== undefined ? { writeFence: params.writeFence } : {}),
     // ownershipCheck + secretScan LEFT UNSET → applyPlan uses the real
     // enforceHumanOwnership + scanForSecrets defaults (secure-by-default, safety rule
     // 1/7). We must NEVER pass a pass-through here.

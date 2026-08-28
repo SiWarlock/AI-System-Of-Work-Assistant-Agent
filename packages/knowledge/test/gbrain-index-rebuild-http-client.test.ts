@@ -226,6 +226,9 @@ describe("createGbrainHttpIndexRebuildClient — redacted fault mapping (rule 7)
     const result = await neverRejects(client.rebuildFromMarkdown(request));
     expect(isErr(result)).toBe(true);
     if (!isErr(result)) return;
+    // pin the fault fired for the intended reason (transport throw), not e.g. a redacted
+    // rebuild_failed from a different branch — the union has more than one code.
+    expect(result.error.code).toBe("gbrain_unavailable");
     const dump = dumpRebuildError(result.error);
     expect(dump).not.toContain(TOKEN);
     expect(dump).not.toContain(sentinel);

@@ -111,6 +111,8 @@ describe("24.72 — a post-commit recording fault is a typed failure, not a reje
 
     expect(isOk(result)).toBe(false);
     if (isOk(result)) return;
+    // discriminate WHICH post-commit fault fired — the union also carries "revision_record_failed"
+    expect(result.error.code).toBe("audit_record_failed");
     // ⛔ THE COMMIT STANDS — pinned on CONTENT, not merely presence, so a fix that wrote something
     // else would still red.
     expect(vault.snapshot()[PATH]).toContain(BODY);
@@ -122,6 +124,9 @@ describe("24.72 — a post-commit recording fault is a typed failure, not a reje
     });
 
     expect(isOk(result)).toBe(false);
+    if (isOk(result)) return;
+    // discriminate WHICH post-commit fault fired — the union also carries "revision_record_failed"
+    expect(result.error.code).toBe("audit_record_failed");
     expect(vault.snapshot()[PATH]).toContain(BODY);
   });
 
@@ -131,6 +136,9 @@ describe("24.72 — a post-commit recording fault is a typed failure, not a reje
     });
 
     expect(isOk(result)).toBe(false);
+    if (isOk(result)) return;
+    // discriminate WHICH post-commit fault fired — the union also carries "audit_record_failed"
+    expect(result.error.code).toBe("revision_record_failed");
     expect(vault.snapshot()[PATH]).toContain(BODY);
   });
 
@@ -148,6 +156,11 @@ describe("24.72 — a post-commit recording fault is a typed failure, not a reje
     expect(isOk(auditFault.result)).toBe(false);
     expect(isOk(revisionFault.result)).toBe(false);
     if (isOk(auditFault.result) || isOk(revisionFault.result)) return;
+    // pin each fault to ITS OWN code, not just "different from the other" — an inverted mapping
+    // (audit fault reported as revision_record_failed and vice versa) would still pass a bare
+    // `.not.toBe` check.
+    expect(auditFault.result.error.code).toBe("audit_record_failed");
+    expect(revisionFault.result.error.code).toBe("revision_record_failed");
     expect(auditFault.result.error.code).not.toBe(
       revisionFault.result.error.code,
     );
@@ -161,6 +174,8 @@ describe("24.72 — a post-commit recording fault is a typed failure, not a reje
     });
     expect(isOk(result)).toBe(false);
     if (isOk(result)) return;
+    // discriminate WHICH post-commit fault fired before trusting its revisionId
+    expect(result.error.code).toBe("audit_record_failed");
     expect(
       String((result.error as { revisionId?: string }).revisionId ?? ""),
     ).toMatch(/^rev:/);

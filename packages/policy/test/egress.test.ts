@@ -342,6 +342,12 @@ describe("egressVeto — fail-closed on malformed input (never fail-open)", () =
     const d = egressVeto(baseJob({ carriesRawContent: true }), route, egressPolicy(), employerWs);
     expect(isAllow(d)).toBe(false);
     expect(isDeny(d)).toBe(true);
+    // egressVeto has 3 deny codes — pin the CODE, not just the direction: the
+    // blank identity classifies as MALFORMED_ROUTE_PROCESSOR (proc !== null), and
+    // the employer-raw-unacked veto (step 2) bites before the dedicated
+    // unclassifiable-route deny (step 2b) is ever reached, exactly as in the
+    // blank-provider-identity sibling test above.
+    if (isDeny(d)) expect(d.reason).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
     expectAuditable(d);
   });
 
@@ -421,7 +427,11 @@ describe("embeddingEgressVeto — §19 embedding-backend egress (safety rule 5)"
       { providerId: "ollama", egressClass: "cloud" },
       employerRawUnackedWs,
     );
+    // embeddingEgressVeto has 2 deny codes (EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED vs
+    // MALFORMED_POLICY_INPUT) — pin the code so a regression that reclassified this
+    // as a malformed-input deny (instead of the veto correctly firing) still fails.
     expect(isDeny(mismatched)).toBe(true);
+    if (isDeny(mismatched)) expect(mismatched.reason).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
   });
 
   it("malformed_backend_or_workspace_denies", () => {

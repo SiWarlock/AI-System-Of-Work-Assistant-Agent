@@ -307,12 +307,16 @@ export function runSingleOwnerLockLeg(root: IsolatedInstallRoot): SingleOwnerLoc
  *  silently absorbed into a passing report (§7 DoD — an acceptance suite must not falsely
  *  certify capability it has not proven). */
 export const KNOWN_GAPS: readonly string[] = [
-  "11.1: bootWorker DOES acquire the single-owner lock at boot (bound live at `68ec73c9`, worker " +
-    "track, during this slice — verified via lockAcquiredAtBoot in the boot-to-serving leg). What " +
-    "remains open: DOCTOR_CHECK_IDS (packages/contracts territory) has no single_owner_lock member, " +
-    "so the install-doctor (leg 1) never surfaces a lock finding even on a genuine refusal, and " +
-    "resolvePgliteLockHolder is not bound to packages/knowledge's evaluateWriteFence anywhere in " +
-    "this repo — the OS lock is a real acquisition, not yet a physically-enforced write fence.",
+  "11.1: bootWorker DOES acquire the single-owner lock at boot (bound live at `68ec73c9`) AND, as " +
+    "of task 24.1, that lock is now a PHYSICALLY-ENFORCED write fence: boot builds a per-commit " +
+    "probe (install/lock/writeFenceProbe.ts) from the real acquire outcome, threads it through " +
+    "ProofSpineParams.writeFence into KnowledgeWriterDeps, and atomicCommit REFUSES the commit " +
+    "with `write_fence_breached` before staging a byte when the fence is down. What remains open " +
+    "here is narrower and named: (a) `workerIsSoleVaultWriter` is a STATED fact, not a probed one " +
+    "— no filesystem-ACL prober exists in this repo; and (b) the CONTINUOUS stray-writer sweep " +
+    "(a ps/lsof scan feeding scanForStrayWriters) does not exist, so an empty process set is " +
+    "passed and a stray write-capable gbrain process is not yet DETECTED. The lock half is " +
+    "enforced; those two are not.",
   "11.6: no gbrain subprocess spawn is wired into bootWorker/boot.ts — createGbrainServeSupervisor " +
     "(apps/worker/src/gbrainServeSupervisor.ts) is never invoked from the install/boot path, so this " +
     "harness cannot exercise a supervised `gbrain serve` subprocess as part of the install.",

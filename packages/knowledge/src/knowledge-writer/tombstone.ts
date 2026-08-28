@@ -39,7 +39,7 @@
 import { ok, err } from "@sow/contracts";
 import type { Result, AuditRecord, WorkflowRunRef } from "@sow/contracts";
 import type { AuditRepository } from "@sow/db";
-import { atomicCommit } from "../markdown-vault/atomic-write";
+import { atomicCommit, type WriteFenceProbe } from "../markdown-vault/atomic-write";
 import type { FileChange, VaultFs } from "../markdown-vault/atomic-write";
 import {
   parseSections,
@@ -55,7 +55,7 @@ import {
   type RevisionId,
   type VaultSnapshot,
 } from "./revision";
-import type { WriteConflict, CommitFailed } from "./writer";
+import type { WriteConflict, CommitFailed, WriteFenceBreachedFailure } from "./writer";
 import { KW_AUDIT_REF_REDACTED_PLACEHOLDER } from "./writer";
 import { isRedactionSafe, type AuditSignal } from "@sow/policy";
 import type {
@@ -113,6 +113,21 @@ export type PostCommitGbrainPurgeTrigger = (
 
 export interface TombstoneDeps {
   readonly vault: VaultFs;
+  /**
+   * REQ-S-NEW-008 / safety rule 1 — the OS ONE-WRITER FENCE, evaluated per commit.
+   * Returns the closed breach reasons when this process is not provably the sole
+   * writer of the vault, or `undefined` when the fence is intact; a breach REFUSES
+   * the commit before a single byte is staged.
+   *
+   * Per-commit rather than once at boot on purpose: the advisory lock can be lost
+   * while the process runs, and a fence checked only at startup would authorize
+   * every later write on a fact that has since expired.
+   *
+   * OPTIONAL: absent ⇒ ungated, byte-identical to before this field existed. The
+   * composition root binds it from the real `acquireSingleOwnerLock` outcome.
+   */
+  readonly writeFence?: WriteFenceProbe;
+
   readonly revisions: KnowledgeRevisionStore;
   readonly audit: AuditRepository;
   /** Injected clock (ISO-8601) — keeps the primitive deterministic under test. */
@@ -168,7 +183,13 @@ export interface TombstoneRejected {
 }
 
 /** Enumerable, never-silent failure surface (§16). */
-export type TombstoneFailure = TombstoneRejected | WriteConflict | CommitFailed;
+export type TombstoneFailure =
+  | TombstoneRejected
+  | WriteConflict
+  | CommitFailed
+  /** REQ-S-NEW-008 — the one-writer fence was breached; NOTHING was written. A
+   *  refusal, not a retryable fault (see writer.ts's `WriteFenceBreachedFailure`). */
+  | WriteFenceBreachedFailure;
 
 // ── 24.64 (knowledge leg) — commit AuditRecord redaction sanitiser ──────────
 //
@@ -332,8 +353,13 @@ export async function applyTombstone(
   // 6 — atomic all-or-nothing commit (temp-write+rename). The new revision id is
   //     the deterministic staging token — no clock/random enters the primitive.
   const newRevision = computeRevisionId(next);
-  const committed = await atomicCommit(deps.vault, changes, tokenOf(newRevision));
+  const committed = await atomicCommit(deps.vault, changes, tokenOf(newRevision), deps.writeFence);
   if (!committed.ok) {
+    // A fence breach is a REFUSAL, not a retryable infra fault — see writer.ts's
+    // `WriteFenceBreachedFailure`. Nothing was staged.
+    if (committed.error.code === "write_fence_breached") {
+      return err({ code: "write_fence_breached", reasons: committed.error.reasons });
+    }
     return err({
       code: "commit_failed",
       path: committed.error.path,

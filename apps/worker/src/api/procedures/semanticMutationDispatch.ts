@@ -231,6 +231,19 @@ function commitFailureToVariant(f: KnowledgeCommitFailure): FailureVariant {
         retryable: false,
         cause: { code: "SEMANTIC_DISPATCH_COMMIT_REVISION_RECORD_FAILED" },
       });
+    // REQ-S-NEW-008 — the OS one-writer fence refused the write; NOTHING was staged.
+    // ⛔ `retryable: false` DELIBERATELY, and for the opposite reason to `commit_failed`
+    // directly above: that one is a transient filesystem fault worth re-driving, while
+    // this process is not the sole writer of the vault and cannot become one by being
+    // asked again. Only an operator restoring sole-writer posture clears it, so a
+    // retryable variant would spin against a condition no re-drive can change.
+    // A REJECTION rather than a degraded fault would also be wrong: nothing about the
+    // PLAN was refused — the machine was.
+    case "write_fence_breached":
+      return failure("degraded_unavailable", "semantic dispatch: write fence breached", {
+        retryable: false,
+        cause: { code: "SEMANTIC_DISPATCH_COMMIT_WRITE_FENCE_BREACHED" },
+      });
     default: {
       // A new KnowledgeCommitFailureCode member reaches here as a non-`never`
       // type → tsc error, forcing a deliberate variant above. Never a `default:`

@@ -252,6 +252,9 @@ describe("createGbrainHttpIndexApplyClient — redacted fault mapping (rule 7)",
     const result = await neverRejects(client.applyRevision(request));
     expect(isErr(result)).toBe(true);
     if (!isErr(result)) return;
+    // pin the fault fired for the intended reason (transport throw), not e.g. a redacted
+    // apply_failed from a different branch — the union has more than one code.
+    expect(result.error.code).toBe("gbrain_unavailable");
     const dump = dumpApplyError(result.error);
     expect(dump).not.toContain(TOKEN);
     expect(dump).not.toContain(sentinel);

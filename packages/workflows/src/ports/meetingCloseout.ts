@@ -452,7 +452,15 @@ export type KnowledgeCommitFailureCode =
   | "workspace_path_violation"
   | "commit_failed"
   | "audit_record_failed"
-  | "revision_record_failed";
+  | "revision_record_failed"
+  /**
+   * REQ-S-NEW-008 / safety rule 1 — the OS ONE-WRITER FENCE was breached, so NOTHING
+   * was written. Its OWN code, for the same reason every other member has one:
+   * `commit_failed` is the RETRYABLE infrastructure-fault route, and this is
+   * permanent until an operator restores sole-writer posture. Collapsing it there
+   * would tell a caller to retry a write that cannot succeed.
+   */
+  | "write_fence_breached";
 
 export interface KnowledgeCommitFailure {
   readonly code: KnowledgeCommitFailureCode;

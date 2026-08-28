@@ -302,6 +302,13 @@ export function commitFailureClass(code: KnowledgeCommitFailureCode): FailureCla
       return "db_unavailable";
     case "revision_record_failed":
       return "db_unavailable";
+    // REQ-S-NEW-008 — the one-writer fence GATE held the write. `write_through_blocked`
+    // is that class by its own definition ("a PRECONDITION/gate HOLDS the write-through
+    // … blocked = never attempted"), and it is precisely what happened: the refusal
+    // lands before a byte is staged. NOT `write_through_failed`, which means the write
+    // ATTEMPT errored — nothing was attempted here.
+    case "write_fence_breached":
+      return "write_through_blocked";
     default: {
       // A new KnowledgeCommitFailureCode member reaches here as a non-`never`
       // type → tsc error, forcing a deliberate class above. Never a `default:`
@@ -430,6 +437,11 @@ function commitFailureState(code: KnowledgeCommitFailureCode): SourceState {
     case "audit_record_failed":
       return "failed_terminal";
     case "revision_record_failed":
+      return "failed_terminal";
+    // TERMINAL: retrying cannot make this process the sole writer of the vault. Only
+    // an operator restoring sole-writer posture can, so a retryable state here would
+    // spin forever against a condition no re-drive can change.
+    case "write_fence_breached":
       return "failed_terminal";
     default: {
       // A new KnowledgeCommitFailureCode member reaches here as a non-`never`

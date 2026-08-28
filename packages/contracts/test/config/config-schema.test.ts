@@ -214,8 +214,14 @@ describe("secretShapeGuard — CREDENTIAL_VALUE_SHAPE anchors `sk-` on a word bo
   it("still rejects 'sk-' at a genuine word boundary (start of string / after a separator)", () => {
     const r1 = secretShapeGuard({ ...minimalConfig, temporalAddress: "sk-ABCDEFGHIJKLMNOP" });
     expect(isErr(r1)).toBe(true);
+    // ConfigLoadError.kind is "secret_in_config" | "invalid_config" — assert the
+    // specific code so this pin fails if the word-boundary regex stops matching
+    // (isErr would still be true if the config were rejected for an unrelated
+    // structural reason).
+    if (isErr(r1)) expect(r1.error.kind).toBe("secret_in_config");
     const r2 = secretShapeGuard({ ...minimalConfig, temporalAddress: "prefix sk-ABCDEFGHIJKLMNOP" });
     expect(isErr(r2)).toBe(true);
+    if (isErr(r2)) expect(r2.error.kind).toBe("secret_in_config");
   });
 });
 
