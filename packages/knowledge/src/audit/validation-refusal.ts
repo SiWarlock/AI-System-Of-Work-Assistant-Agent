@@ -16,6 +16,30 @@
 // weaken a check. IT DELETES THE ENUMERATION, and the four gates go back to being silently
 // signal-less with the suite fully green, which is the exact state this task was filed about.
 //
+// ⛔⛔ COVERED ≠ LIVE — THE REACHABILITY SPLIT, BECAUSE "all four channels now emit a signal" READS
+// AS "all four channels are live" AND TWO OF THEM ARE NOT (`### 24.115`).
+// RE-MEASURED 2026-08-28 at HEAD — ⚠ re-MEASURED, not re-read: `### 24.109` has landed since the
+// split was first recorded, and a dormancy fact is a claim about the day it was taken (`L143`).
+// Instrument: `rg` for each channel's entry symbol across `--type ts` excluding test files, with a
+// positive control on the total reference count so an empty result is distinguishable from a
+// mis-typed pattern.
+//   LIVE (2):
+//     * `writer.ts` `SchemaRejected` — `applyPlan`, reached from
+//       `packages/workflows/src/activities/commitKnowledge.ts:161` and
+//       `apps/worker/src/composition/living-vault-synthesis.ts:189`.
+//     * `provenance-stamp.ts` `StampInvalid` — `stampProvenance`, reached from `writer.ts:960`.
+//   DORMANT (2):
+//     * `gbrain/remediation/router.ts` — `routeRemediation` has NO production caller. 20 references
+//       repo-wide, ALL of them in `router.ts` itself plus two of its own suites.
+//     * `gbrain/remediation/generative-proposal-intake.ts` — `intakeGenerativeProposal` and
+//       `runGenerativeProposal` likewise. The one non-test hit is a COMMENT in
+//       `packages/domain/src/validation/block-provenance.ts:9` saying exactly this.
+// ⇒ the split is UNCHANGED by `### 24.109`, which bound a consumer for the SIGNAL — a different
+// question from whether the CHANNEL runs.
+// ⭐ `L106`: a capability is not a guarantee, and a signal on a dormant channel is a capability
+// twice over. Re-measure this block rather than trusting it whenever either dormant channel gains a
+// caller; the shape of the mistake is reading a dated measurement as a standing fact.
+//
 // ⛔⛔ AND THE SECOND ONE, BECAUSE THE WRONG EDIT HAPPENS AT A DIFFERENT SITE (`contracts L187`):
 // `structuralPathOnly` TAKES A SCHEMA ID, NOT A REGION ARRAY, AND THAT SIGNATURE IS THE GUARD.
 // ⚠ THE REFACTOR THAT DESTROYS IT LOOKS LIKE A FAVOUR — *"let callers pass their own regions"* /
