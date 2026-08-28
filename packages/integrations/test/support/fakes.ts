@@ -24,6 +24,7 @@ import type {
   ReceiptStore,
   ReceiptRecord,
   ReceiptReservation,
+  ReceiptLookup,
 } from "../../src/ports/persistence";
 
 // Typed `not_found` DbError for an empty lookup — matches the sqlite adapter
@@ -65,9 +66,32 @@ export class InMemoryReceiptStore implements ReceiptStore {
   // dispatches can both observe the object un-reserved. The production adapter
   // backs this with a unique-constraint insert for cross-process atomicity.
   private readonly reserved = new Set<string>();
+  // ⛔ THE APPLIED-WRITE LEDGER — a SEPARATE, ACCUMULATING map, and the separation is
+  // the entire point. `byObject` above models `write_receipts` (ONE row per object,
+  // the newer key EVICTS the older); this models `write_applications` (one immutable
+  // row per APPLIED envelope, nothing ever evicted).
+  //
+  // Note the irony worth not repeating: the old broken fake accumulated keys in a
+  // second index and that was WRONG, because it made `getByIdempotencyKey` answer a
+  // question the shipped store could not. The accumulation is CORRECT here, for a
+  // table that genuinely accumulates. Same data structure, opposite verdict — which
+  // is why the two must never be merged back into one map.
+  private readonly applications = new Map<string, ReceiptRecord>();
 
   private static objectKey(targetSystem: TargetSystem, k: string): string {
     return `${targetSystem}|${k}`;
+  }
+
+  async recordApplication(r: ReceiptRecord): Promise<void> {
+    // FIRST-WRITE-WINS, mirroring the adapters' `onConflictDoNothing`.
+    if (!this.applications.has(r.idempotencyKey)) this.applications.set(r.idempotencyKey, r);
+  }
+
+  async getApplication(idempotencyKey: string): Promise<ReceiptLookup> {
+    const rec = this.applications.get(idempotencyKey);
+    // This fake cannot simulate a store fault, so it never returns `fault` — the
+    // safe direction for a fake (see ReceiptLookup's doc comment).
+    return rec === undefined ? { kind: "miss" } : { kind: "hit", record: rec };
   }
 
   async getByIdempotencyKey(k: string): Promise<ReceiptRecord | undefined> {

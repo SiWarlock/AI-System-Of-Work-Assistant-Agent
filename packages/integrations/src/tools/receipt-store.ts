@@ -42,6 +42,19 @@ export async function recordReceipt(
   clock: () => string,
 ): Promise<ReceiptRecord> {
   const record = buildReceiptRecord(env, receipt, clock);
+  // LEDGER FIRST, then the object row — the order is deliberate, not incidental.
+  //
+  // Both writes are needed and neither is transactional with the other, so a crash
+  // between them must leave the SAFE half persisted. The ledger is the durable
+  // proof-of-application: with it present, a replay of this envelope is recognised
+  // and reuses the receipt. Persisting the object row first and dying would leave
+  // the ledger without this key, and the replay would fall through to the
+  // object-key arm — still safe here (it finds the row and reuses), but it depends
+  // on a SECOND mechanism rather than the one that owns the question.
+  //
+  // Write the proof that the vendor was touched before the bookkeeping about what
+  // is current. A no-op if the store predates the ledger (create-only ⇒ correct).
+  await store.recordApplication?.(record);
   await store.put(record);
   return record;
 }

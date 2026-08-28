@@ -2,9 +2,12 @@
 // 2: NO DUPLICATE EXTERNAL WRITE). Before any create the Tool Gateway calls
 // `resolveExisting`, which probes in a FIXED order and returns a typed outcome:
 //
-//   (a) receiptStore.getByIdempotencyKey(env.idempotencyKey)  → 'replay'
+//   (a) the APPLIED-WRITE LEDGER (`getApplication`), else
+//       receiptStore.getByIdempotencyKey(env.idempotencyKey)  → 'replay'
 //       (a retried/replayed envelope reuses the stored receipt, NEVER a second
-//        create — the §20.1 replay gate).
+//        create — the §20.1 replay gate). The ledger is preferred because the
+//        receipt row holds only the key CURRENTLY on the object, which stops being
+//        the same question once an object can be UPDATED.
 //   (b) receiptStore.getByCanonicalObjectKey(sys, cok)        → 'existing' (receipt)
 //       (a prior write to the SAME object already committed → reuse it).
 //   (c) adapter.existenceCheck(cok, env)                      → 'existing' (object)
@@ -58,6 +61,35 @@ export async function resolveExisting(
   // retry. `unreachable` is the right adapter code for it — a DB blip is transient,
   // so this must retry rather than terminate (see the retryable/terminal split in
   // gateway.ts step 3).
+  //
+  // THE LEDGER IS THE AUTHORITATIVE SOURCE when the store has one. The receipt-row
+  // lookups below can only report the key CURRENTLY on the object's single row, so
+  // once an object can be updated they answer a question this gate did not ask (see
+  // `ReceiptStore.recordApplication`). The ledger records every applied envelope
+  // independently, so a superseded key is still recognised as a replay.
+  //
+  // Ordered FIRST because it is strictly more informative: on a create-only store
+  // the two agree by construction (one application per object), so this changes
+  // nothing until updates exist — and is already correct when they do.
+  if (receiptStore.getApplication !== undefined) {
+    const applied = await receiptStore.getApplication(env.idempotencyKey);
+    if (applied.kind === "fault") {
+      return {
+        kind: "error",
+        error: { code: "unreachable", message: `applied-write ledger lookup failed (${applied.code})` },
+      };
+    }
+    if (applied.kind === "hit") return { kind: "replay", receipt: applied.record.receipt };
+    // ⛔ A LEDGER MISS IS NOT AUTHORITATIVE, AND ASSUMING IT WAS WAS A REGRESSION.
+    // The ledger only knows writes recorded THROUGH `recordReceipt`. A receipt put
+    // into the store by any other path — a direct `store.put`, a seeded fixture, a
+    // row written before this table existed — has no ledger entry, and treating the
+    // miss as final DROPPED a replay the pre-ledger gate recognised. (Caught by
+    // existence-check.test.ts: two replay pins went `existing` instead of `replay`.)
+    //
+    // The ledger ADDS recall; it must never SUBTRACT it. So fall through to the
+    // receipt-row lookup below, which is the pre-ledger behaviour verbatim.
+  }
   if (receiptStore.getByIdempotencyKeyChecked !== undefined) {
     const checked = await receiptStore.getByIdempotencyKeyChecked(env.idempotencyKey);
     if (checked.kind === "fault") {

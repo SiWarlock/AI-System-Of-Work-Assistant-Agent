@@ -553,6 +553,46 @@ export function createReceiptStoreAdapter(repo: WriteReceiptRepository): Receipt
       const record = rowToReceiptRecord(r.value);
       return record === undefined ? { kind: "miss" } : { kind: "hit", record };
     },
+    // ── THE APPLIED-WRITE LEDGER (safety rule 3, C1) ─────────────────────────
+    // Bound only when the repo implements it (the methods are OPTIONAL, so an older
+    // repo/fake stays valid and the gateway falls back to the receipt-row lookups —
+    // exactly correct while writes are create-only).
+    ...(repo.recordApplication !== undefined && repo.getApplication !== undefined
+      ? {
+          async recordApplication(r: ReceiptRecord): Promise<void> {
+            await repo.recordApplication!({
+              idempotencyKey: r.idempotencyKey,
+              targetSystem: String(r.targetSystem),
+              canonicalObjectKey: r.canonicalObjectKey,
+              payloadHash: r.payloadHash,
+              receipt: r.receipt,
+              appliedAt: r.recordedAt,
+            });
+          },
+          async getApplication(idempotencyKey: string): Promise<ReceiptLookup> {
+            const r = await repo.getApplication!(idempotencyKey);
+            if (isErr(r)) {
+              // Same fail-closed split as the `*Checked` pair above: only
+              // `not_found` means "never applied"; anything else is the store
+              // failing to answer, and MUST NOT read as permission to write again.
+              return r.error.code === "not_found" ? { kind: "miss" } : { kind: "fault", code: r.error.code };
+            }
+            // A ledger row always carries a receipt (no reserved state), so unlike
+            // the receipt-row lookups there is no undefined-to-miss step here.
+            return {
+              kind: "hit",
+              record: {
+                idempotencyKey: r.value.idempotencyKey,
+                targetSystem: r.value.targetSystem as TargetSystem,
+                canonicalObjectKey: r.value.canonicalObjectKey,
+                payloadHash: r.value.payloadHash,
+                receipt: r.value.receipt,
+                recordedAt: r.value.appliedAt,
+              },
+            };
+          },
+        }
+      : {}),
     async reserve(
       targetSystem: TargetSystem,
       canonicalObjectKey: string,

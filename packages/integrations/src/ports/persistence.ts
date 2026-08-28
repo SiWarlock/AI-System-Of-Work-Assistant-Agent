@@ -115,6 +115,34 @@ export interface ReceiptStore {
     targetSystem: TargetSystem,
     k: string,
   ): Promise<ReceiptLookup>;
+  /**
+   * APPLIED-WRITE LEDGER (@sow/db `write_applications`) — append proof that THIS
+   * envelope actually reached the vendor, independent of the object's current state.
+   *
+   * ⛔ WHY `put` IS NOT ENOUGH. `put` keeps ONE row per OBJECT and overwrites its
+   * `idempotencyKey`. That answers "what is applied to this object now?" — not "was
+   * THIS envelope ever applied?". A create-only world conflates the two because an
+   * object is created exactly once, so its single row IS its whole history. The
+   * moment an object can be UPDATED, recording the new receipt EVICTS the old replay
+   * key, and a replay of the already-committed envelope is no longer recognised —
+   * which is permission to write to the vendor AGAIN (safety rule 3).
+   *
+   * FIRST-WRITE-WINS: re-recording a seen key is a no-op. The first application is
+   * what a replay is entitled to get back.
+   *
+   * OPTIONAL (additive — every existing implementor stays valid and byte-equivalent;
+   * worker LESSONS §13). Absent ⇒ the replay gate falls back to the receipt-row
+   * lookups, which is exactly correct while writes are create-only.
+   */
+  recordApplication?(r: ReceiptRecord): Promise<void>;
+  /**
+   * The DURABLE replay gate: was this envelope ever applied? Returns a
+   * {@link ReceiptLookup} rather than `undefined` so a store fault can never be read
+   * as "no prior write" — the same fail-closed distinction the `*Checked` pair above
+   * exists for, built in from the start here. OPTIONAL, mirrors
+   * {@link ReceiptStore.recordApplication}.
+   */
+  getApplication?(idempotencyKey: string): Promise<ReceiptLookup>;
   reserve(targetSystem: TargetSystem, canonicalObjectKey: string): Promise<ReceiptReservation>;
   release(targetSystem: TargetSystem, canonicalObjectKey: string): Promise<void>;
   put(r: ReceiptRecord): Promise<void>;
