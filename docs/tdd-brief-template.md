@@ -301,7 +301,15 @@ The implementer reuses its session across a round's slices — it's already orie
 
 ### Pitfall — the brief's PREMISE is a hypothesis; an implementer contradicting it from the code is doing the job right
 
-Twice in one round an implementer invalidated a brief premise by reading the source: the flag case above, and a brief that said "let the resolver withhold on a no-match" when `EntityResolver` actually returns `create_stub` — following it would have minted machine-named person notes. **Write briefs so premises are checkable** (cite `file:line` for every claimed behavior, so a wrong premise is cheap to falsify), pre-load a Step-2.5 question wherever a premise is load-bearing, and treat a premise correction at Step 2.5 as a success of the process rather than friction. An orchestrator's brief is a hypothesis to be checked, not an instruction to be obeyed.
+Twice in one round an implementer invalidated a brief premise by reading the source: the flag case above, and a brief that said "let the resolver withhold on a no-match" when `EntityResolver` actually returns `create_stub` — following it would have minted machine-named person notes. **Write briefs so premises are checkable** — cite **`file` + `SYMBOL`** for every claimed behaviour (`apps/worker/src/boot.ts` → `createAuditPersistPort`), so a wrong premise is cheap to falsify.
+
+> ⛔⛔ **NOT `file:line` — AMENDED 2026-08-28 (task `### 24.71`), and this sentence used to say the opposite.** ***A LINE NUMBER ROTS SILENTLY; A SYMBOL NAME FAILS LOUDLY.*** A stale line still resolves — it lands on *something*, and the reader has no signal it is the wrong something. A stale symbol produces zero matches, which is a question the reader cannot miss.
+>
+> ⭐ **MEASURED, on this repo's own worst case: eleven citations across eight artifacts point at `apps/worker/src/boot.ts:588` / `:578-592`. At HEAD `boot.ts` is 4611 lines and NOT ONE of those cited lines resolves to the code it names** — `failClosedEgress` has moved to `:771`, `createAuditPersistPort` to `:930`, `isZeroEgressOnlyWorkspace`'s call site to `:1099`, `gateCopilotVaultReadDeps` to `:1128`. **Drift of 228–619 lines**, against the ~53–90 recorded when the defect was filed.
+>
+> ⛔⛔ **AND THE FAILURE MODE IS THE WORST AVAILABLE: every one of those line numbers now lands in COMMENT PROSE about an unrelated subject** — living-vault rewrite gating, the gbrain proxy, Copilot content trust. ⇒ ***a reader following the citation arrives somewhere plausible, reads confident-sounding text, and has no signal at all that they are in the wrong place.*** A citation that fails loudly costs a minute; one that fails quietly costs the conclusion built on it.
+>
+> **A line number is fine as a CONVENIENCE beside the symbol** (`boot.ts:930` `createAuditPersistPort`) — the symbol is what makes it checkable, so put the symbol first and let the number rot harmlessly., pre-load a Step-2.5 question wherever a premise is load-bearing, and treat a premise correction at Step 2.5 as a success of the process rather than friction. An orchestrator's brief is a hypothesis to be checked, not an instruction to be obeyed.
 
 <!-- ▲ END EXAMPLE BLOCK [id=project-specific-pitfalls] ▲ -->
 
