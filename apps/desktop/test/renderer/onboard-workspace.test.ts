@@ -56,7 +56,9 @@ describe("createOnboardWorkspace", () => {
       ),
     );
     const r = await onboard(INPUT);
-    expect(r.ok).toBe(false);
+    // Discriminant: exact-shape, not just `.ok` — proves a store fault (a DIFFERENT degraded_unavailable
+    // cause than ONBOARDING_PARTIAL_SCAFFOLD) does NOT also pick up the widened `reason: "partial_scaffold"`.
+    expect(r).toEqual({ ok: false });
   });
 
   it("folds a malformed ok (missing / non-string workspaceId) to { ok: false } (defense-in-depth)", async () => {
@@ -64,7 +66,7 @@ describe("createOnboardWorkspace", () => {
       fakeClient(() => Promise.resolve({ ok: true, value: { registryMember: true, preset: "professional" } })),
     );
     const r = await onboard(INPUT);
-    expect(r.ok).toBe(false);
+    expect(r).toEqual({ ok: false });
   });
 
   it("folds a transport throw to { ok: false } (never surfaces a partial / raw failure)", async () => {
@@ -72,7 +74,7 @@ describe("createOnboardWorkspace", () => {
       fakeClient(() => Promise.reject(new Error("loopback down"))),
     );
     const r = await onboard(INPUT);
-    expect(r.ok).toBe(false);
+    expect(r).toEqual({ ok: false });
   });
 
   // Task 9.21-B — widen the fold by EXACTLY one case: worker's ONBOARDING_PARTIAL_SCAFFOLD

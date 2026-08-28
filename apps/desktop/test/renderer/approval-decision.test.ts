@@ -58,17 +58,19 @@ describe("createApprovalDecision", () => {
         Promise.resolve({ ok: false, error: { kind: "write_conflict", cause: { code: "APPROVAL_CAS_CONFLICT" } } }),
       ),
     );
-    expect((await decide("apr_1", "approve")).ok).toBe(false);
+    // Discriminant: the exact reason, not just `.ok` — a CAS conflict (the exactly-once loser) must
+    // fold to "already_resolved", never the generic "unavailable" a different failure gets.
+    expect(await decide("apr_1", "approve")).toEqual({ ok: false, reason: "already_resolved" });
   });
 
   it("folds a thrown transport error to { ok: false } (fail closed)", async () => {
     const decide = createApprovalDecision(fakeClient(() => Promise.reject(new Error("socket down"))));
-    expect((await decide("apr_1", "reject")).ok).toBe(false);
+    expect(await decide("apr_1", "reject")).toEqual({ ok: false, reason: "unavailable" });
   });
 
   it("folds a malformed ok-without-approval to { ok: false }", async () => {
     const decide = createApprovalDecision(fakeClient(() => Promise.resolve({ ok: true, value: { applied: true } })));
-    expect((await decide("apr_1", "approve")).ok).toBe(false);
+    expect(await decide("apr_1", "approve")).toEqual({ ok: false, reason: "unavailable" });
   });
 
   it("§9.8 a write_conflict err (the CAS's exactly-once loser) folds to { ok: false, reason: \"already_resolved\" } — client-visible, distinct from a transport failure", async () => {

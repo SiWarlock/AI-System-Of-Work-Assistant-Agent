@@ -79,7 +79,16 @@ describe("checkModelAvailability — malformed probe fails closed", () => {
   it("DENIES a null / malformed probe (never proceeds on unknown input)", () => {
     const r = checkModelAvailability(ROUTE, JOB, null as unknown as ModelAvailabilityProbe);
     expect(isErr(r)).toBe(true);
-    if (isErr(r)) expect(r.error.reason).toBe("provider_unavailable");
+    if (isErr(r)) {
+      expect(r.error.reason).toBe("provider_unavailable");
+      // 24.101 — cause code, not bare falsity: `.reason` is the SAME literal for the
+      // absent-model and non-conformant denials above, so it alone cannot tell a
+      // malformed-probe rejection apart from either sibling. `healthSignalClass` is
+      // the discriminant the OTHER two tests in this file already assert — pin it
+      // here too so a regression that reclassifies this branch (e.g. to
+      // MODEL_UNAVAILABLE_HEALTH_CLASS) reds instead of passing for the wrong reason.
+      expect(r.error.audit.healthSignalClass).toBe(PROVIDER_NONCONFORMANT_HEALTH_CLASS);
+    }
   });
 });
 

@@ -128,12 +128,22 @@ describe("FactIdentitySchema (content-INDEPENDENT structured string)", () => {
     expect(FactIdentitySchema.parse("tag:notes/x:urgent")).toBe("tag:notes/x:urgent");
   });
 
+  // FACT_IDENTITY_RE is a 4-way alternation (page|link|timeline|tag), each
+  // arm its own independent reason a string can be rejected. "" and
+  // "frob:nope" fail every arm at once and so discriminate none of them;
+  // the remaining four fixtures below each isolate exactly one arm's own
+  // well-formedness rule (task 24.101 — an alternation arm with no fixture
+  // exercising its OWN shape requirement is indistinguishable from an arm
+  // silently loosened or dropped).
   it("rejects unstructured / empty / wrong-kind strings", () => {
     expect(FactIdentitySchema.safeParse("")).toMatchObject({ success: false });
     expect(FactIdentitySchema.safeParse("page:")).toMatchObject({ success: false });
     expect(FactIdentitySchema.safeParse("frob:nope")).toMatchObject({ success: false });
     expect(FactIdentitySchema.safeParse("link:a:b")).toMatchObject({ success: false });
     expect(FactIdentitySchema.safeParse("timeline:onlyone")).toMatchObject({ success: false });
+    // tag:<page>:<tag> requires a second colon-separated part — mirrors the
+    // timeline case above; this arm had no malformed-form witness before.
+    expect(FactIdentitySchema.safeParse("tag:onlyone")).toMatchObject({ success: false });
   });
 
   it("the factIdentity builder produces parseable identities", () => {

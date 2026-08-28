@@ -239,12 +239,14 @@ describe("performVaultAction — true Open-in-Obsidian via obsidian:// + reveal,
 
   it("reveal maps a showInFolder throw to { ok:false } and NEVER throws (§16)", async () => {
     // spec(§16) — the reveal branch's own shell fault folds to { ok:false }, never a propagated throw.
-    const res = await performVaultAction("reveal", "global", [ROOT], seams({
-      showInFolder: () => {
-        throw new Error("finder boom");
-      },
-    }));
+    const showInFolder = vi.fn(() => {
+      throw new Error("finder boom");
+    });
+    const res = await performVaultAction("reveal", "global", [ROOT], seams({ showInFolder }));
     expect(res).toEqual({ ok: false });
+    // Discriminant: proves the false came from THIS catch (showInFolder was actually reached with
+    // the resolved root), not from an earlier guard/target rejection that would ALSO read { ok: false }.
+    expect(showInFolder).toHaveBeenCalledWith(ROOT);
   });
 
   it("an ARBITRARY PATH or unknown value as the target FAILS CLOSED — NO obsidian:// opened, zero shell calls (§5)", async () => {
@@ -295,19 +297,26 @@ describe("performVaultAction — true Open-in-Obsidian via obsidian:// + reveal,
   });
 
   it("the A2 fallback maps a shell error / throw to { ok:false } and NEVER throws (rule 7 / §16)", async () => {
-    const openExternal = async (): Promise<void> => {
+    const openExternal = vi.fn(async (): Promise<void> => {
       throw new Error("obsidian fail");
-    };
+    });
     // fallback openPath returns a non-empty error string (may echo the path) ⇒ bare { ok:false }, never surfaced
-    const r1 = await performVaultAction("open", "workspace", [ROOT], seams({ openExternal, openPath: async () => "EACCES: /vault" }));
+    const openPath1 = vi.fn(async () => "EACCES: /vault");
+    const r1 = await performVaultAction("open", "workspace", [ROOT], seams({ openExternal, openPath: openPath1 }));
     expect(r1).toEqual({ ok: false });
+    // Discriminant: proves the A2 fallback branch was actually reached (obsidian:// was tried AND
+    // openPath ran on the resolved root) — not an earlier guard rejection that would ALSO read { ok: false }.
+    expect(openExternal).toHaveBeenCalledWith(`obsidian://open?path=${encodeURIComponent(ROOT)}`);
+    expect(openPath1).toHaveBeenCalledWith(ROOT);
     // fallback openPath itself throws ⇒ still { ok:false }, never a propagated throw
+    const openPath2 = vi.fn(async () => {
+      throw new Error("boom");
+    });
     const r2 = await performVaultAction("open", "workspace", [ROOT], seams({
       openExternal,
-      openPath: async () => {
-        throw new Error("boom");
-      },
+      openPath: openPath2,
     }));
     expect(r2).toEqual({ ok: false });
+    expect(openPath2).toHaveBeenCalledWith(ROOT);
   });
 });

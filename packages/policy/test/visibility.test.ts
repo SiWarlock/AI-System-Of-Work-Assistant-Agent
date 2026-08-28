@@ -169,7 +169,16 @@ describe("validateProjectionVisibility", () => {
     } as unknown as GclProjection;
     const d = validateProjectionVisibility(p, w);
     expect(d.decision).toBe("deny");
-    if (d.decision === "deny") expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
+    if (d.decision === "deny") {
+      expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
+      // task 24.101: `MALFORMED_POLICY_INPUT` alone does not distinguish WHY — an
+      // undefined `wsId` also trips the sibling `typeof wsId !== "string"` guard AND
+      // the `wsId !== srcId` mismatch guard a few lines down (undefined !== "ws-1"),
+      // so a bare reason check can pass even with THIS specific "omits workspaceId"
+      // branch deleted (mutation-verified: it does). The `message` is the one field
+      // that differs per branch — pin it so this fix can actually fail.
+      expect(d.message).toBe("projection omits workspaceId");
+    }
   });
 
   it("denies MALFORMED_POLICY_INPUT when projection.workspaceId !== sourceWorkspace.id", () => {

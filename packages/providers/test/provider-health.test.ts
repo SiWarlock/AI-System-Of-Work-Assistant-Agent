@@ -74,7 +74,17 @@ describe("checkProviderHealth — malformed probe fails closed", () => {
   it("DENIES an unrecognized/malformed health state (never proceeds)", () => {
     const r = checkProviderHealth(ROUTE, JOB, { state: "bogus" } as unknown as ProviderHealthProbe);
     expect(isErr(r)).toBe(true);
-    if (isErr(r)) expect(r.error.reason).toBe("provider_unavailable");
+    if (isErr(r)) {
+      expect(r.error.reason).toBe("provider_unavailable");
+      // 24.101 — cause code, not bare falsity: `.reason` is the SAME literal for the
+      // unreachable and keychain-locked/denied denials above, so it alone cannot tell
+      // a malformed-state rejection apart from either sibling. `healthSignalClass` is
+      // the discriminant the OTHER tests in this file already assert — pin it here
+      // too so a regression that reclassifies this branch (e.g. to
+      // PROVIDER_SECRET_UNAVAILABLE_HEALTH_CLASS) reds instead of passing for the
+      // wrong reason.
+      expect(r.error.audit.healthSignalClass).toBe(PROVIDER_UNREACHABLE_HEALTH_CLASS);
+    }
   });
 });
 

@@ -125,11 +125,15 @@ it("readOnDiskSchema returns a typed err (never throws) on a real read fault", a
   const engine = createSqliteMigrationEngine(conn);
   conn.close(); // force a read fault: operations on a closed better-sqlite3 handle throw
   const r = await engine.readOnDiskSchema();
-  // Bare falsity is sufficient here: readOnDiskSchema's ENTIRE implementation is
-  // `try { ok(...) } catch (cause) { err(toDbError(cause)) }` — one catch-all, no other
-  // err() branch — so there is no second, differently-caused failure this could be
-  // confused with; the only thing under test is "a driver throw is caught, never re-thrown".
+  // readOnDiskSchema's ENTIRE implementation is `try { ok(...) } catch (cause) { err(toDbError(cause)) }`
+  // — one catch-all, no other err() branch — so a bare isOk/false cannot be confused with a
+  // second, differently-caused failure. But bare falsity alone cannot tell a genuine caught
+  // driver throw apart from a stub that unconditionally returns SOME typed err (task 24.101's
+  // "a fix that cannot fail is not a fix") — so pin the message content too: it must echo the
+  // real better-sqlite3 throw ("The database connection is not open"), proving the read was
+  // actually attempted against the closed handle, not synthesized.
   expect(isOk(r)).toBe(false); // §16: caught + folded to a typed DbError, never thrown
+  if (!isOk(r)) expect(r.error.message).toMatch(/connection is not open/i);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

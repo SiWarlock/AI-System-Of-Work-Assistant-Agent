@@ -167,11 +167,38 @@ describe("SemanticFact contract — spec(§6/§12)", () => {
 
   // ── Conditional invariant: factIdentity prefix must agree with factKind ───
   // Passing direction is covered by the four "accepts a valid <kind> fact"
-  // tests above. The two failing directions:
+  // tests above. The refine checks FACT_KIND_IDENTITY_PREFIX[factKind] against
+  // the identity's prefix for FOUR independent table entries (page/link/
+  // timeline/tag) — each entry is its own reason the refine can reject, so
+  // each needs its own witness (task 24.101: a lookup-table branch with no
+  // fixture exercising it is indistinguishable from a branch that silently
+  // stopped checking). The four failing directions, one per table entry:
   it("rejects factKind === page WITH a non-page (link) factIdentity (prefix mismatch)", () => {
     const bad = SemanticFactSchema.safeParse({
       factIdentity: "link:a->b:relatesTo", // structurally valid identity, wrong kind
       factKind: "page",
+      workspaceId: "ws-employer",
+      mdContentSha: SHA,
+      revisionId: "rev-001",
+    });
+    expect(bad.success).toBe(false);
+  });
+
+  it("rejects factKind === link WITH a non-link (page) factIdentity (prefix mismatch)", () => {
+    const bad = SemanticFactSchema.safeParse({
+      factIdentity: "page:acme/auth", // structurally valid identity, wrong kind
+      factKind: "link",
+      workspaceId: "ws-employer",
+      mdContentSha: SHA,
+      revisionId: "rev-001",
+    });
+    expect(bad.success).toBe(false);
+  });
+
+  it("rejects factKind === timeline WITH a non-timeline (link) factIdentity (prefix mismatch)", () => {
+    const bad = SemanticFactSchema.safeParse({
+      factIdentity: "link:a->b:relatesTo", // structurally valid identity, wrong kind
+      factKind: "timeline",
       workspaceId: "ws-employer",
       mdContentSha: SHA,
       revisionId: "rev-001",
