@@ -105,6 +105,43 @@ If this workspace has these tools, **prefer them** — they cut tool calls and c
 - **Code intelligence** (e.g. a CodeGraph MCP / indexed code graph): for "where is X", callers/callees, call-path traces, and impact-of-change, query it **before** falling back to `grep` + read loops; confirm a specific detail with a targeted read.
 - **Library / API docs** (e.g. a Context7 MCP): when you need up-to-date library/framework docs, API references, setup/config steps, or version-correct examples, pull them from the docs MCP rather than relying on memory — **without being asked**.
 
+#### ⛔ …and their KNOWN FAILURE MODES, which travel with the recommendation (task `### 24.87`)
+
+**The instruction above and this block are one unit. A caveat kept somewhere else gets read as absent.**
+
+⭐ **THE OPERATIVE ASYMMETRY, and it holds for every tool named here: _the graph is not a census._
+A HIT is a LEAD. An EMPTY, or an EDGE, is a QUESTION.** Positive answers are cheap to confirm;
+negative ones are the expensive direction, because *"no callers found"* closes a question with a ✅.
+
+⛔ **NEVER conclude _"the tooling is unreliable."*** That discards instruments genuinely better than
+`grep` for every positive question, and is the false-doubt failure in one sentence.
+
+**Measured failure modes — one of each, in a single session:**
+
+| mode | tool | what happened |
+|---|---|---|
+| **False negative** | `codegraph_callers` | a confident *"No callers found"* for a symbol with **two production call sites**, both callback-position. |
+| **False edge** | `graphify` | emitted an `endpointsValid --calls--> revokeLink` edge **that does not exist**. |
+| **Wrong-looking counts** | `grep` | `508 matches in 84 files` for a **single-file** query. ✅ **ATTRIBUTED 2026-08-28** — not a fabrication: bare `grep` resolves through a Claude shell-snapshot function to **`ugrep`**, whose summary line reads `N matches in M files`, and `rtk` (a `PreToolUse` hook) rewrites commands above the shell. See `docs/findings/instrument-anomalies-rtk.md`. |
+
+⛔⛔ **WHAT MAKES THIS ONE FINDING RATHER THAN THREE TOOL BUGS: ALL OF THEM FAIL TOWARD _PLAUSIBLE_.**
+None errors, none returns empty-looking, none looks wrong ⇒ ***a wrong answer is indistinguishable
+from a right one at the point of reading.***
+
+**A FOURTH INSTRUMENT, listed as a PEER and not as their remedy — `tsc` enumeration.** Genuinely
+better than the three (an enumeration BY PROPERTY that no interception can forge), and it answers a
+**narrower** question than we tend to ask of it: ⭐ **the compiler enumerates TYPE-DEPENDENT SITES
+ONLY — a hardcode or a cast is invisible to it.**
+
+**Practice that follows:**
+- ⛔ **A truncated search is NEVER evidence of absence.** `rg … | head -N` output order is not
+  stable; this was hit on 2026-08-28 and nearly filed as a finding. Run unbounded, or count first.
+- **Positive-control every empty result** — search for something you know is there, the same way.
+- Use **absolute paths** (`/usr/bin/git`, `/opt/homebrew/bin/rg`) to bypass the hook rewrite.
+- **Branch on exit codes in the shell; do not parse rendered output.**
+- An **instrument fact expires**: the 50-line `git log` cap no longer reproduces, and `ugrep` has
+  moved 7.5.0 → 7.8.4. State the session with the measurement.
+
 ## Team coordination — shared rules (all roles)
 
 > Claude Code's native agent-teams feature is **experimental and OFF by default** — it requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (set in `settings.json`'s `env` block or your shell environment; takes effect on a fresh session). Without it, `/team-start` cannot spawn real teammates at all — see its prerequisite check. Everything below assumes the flag is set; unset, use the single-operator fallback instead.

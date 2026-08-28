@@ -68,6 +68,7 @@ Don't paste these sections into the prompt. Grep the file:section, read only wha
 <!-- Starts near-empty. Add a row whenever a topic is looked up twice. -->
 
 **Code intelligence & docs (when available):** prefer a code-intelligence MCP / docs MCP over grep+read loops — see root `CLAUDE.md` "Code intelligence & docs."
+⛔ **Read its FAILURE MODES block in the same breath (`### 24.87`) — the instruction and its known failures are one unit.** ⭐ **The asymmetry in one line: _the graph is not a census_ — a HIT is a LEAD, an EMPTY or an EDGE is a QUESTION.** All three tools fail toward PLAUSIBLE, so a wrong answer is indistinguishable from a right one at the point of reading. ⛔ And a TRUNCATED search is never evidence of absence.
 
 ## Stack
 
