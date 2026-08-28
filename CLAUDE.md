@@ -282,6 +282,33 @@ Optional Step-8 review subagents (`code-quality-reviewer`, `security-reviewer`) 
 
 Policy values: `off` · `invariant` (only invariant- or security-touching slices) · `every-slice` · `phase-boundary` (once at the phase-exit gate, dispatched by `/phase-exit`). Per-slice reviews cover the **slice diff**, not whole files. **At `phase-boundary` the review surface is the phase's accumulated branch diff + the trust boundaries it crosses** — for a track's later phases this over-approximates to the accumulated track diff (acceptable; say so in the report). Edit these values any time to tune per-slice cost.
 
+## Requirement ids — which document defines which family (task `### 24.74`)
+
+**A bare id does not say where it comes from, and the families below come from THREE different
+documents.** This map is here, immediately above the safety rules, because that is where a reader
+first meets a bare id.
+
+| family | defined in | how to look one up |
+|---|---|---|
+| `WS-N` · `KN-N` · `ING-N` · `OBS-N` · `LIFE-N` · `RET-N` · `COST-N` | **`system_of_work_assistant_prd_v0_3.md`** (repo root) | by §-anchor — e.g. `§9.1 WS-8`, `§9.2 KN-4` |
+| `REQ-F/S/NF/UX/D/I/T-NNN` | **`ARCHITECTURE.md`** — the requirement spine, stated with its text (e.g. `REQ-F-017` at `:139`) | search `ARCHITECTURE.md` for the id |
+| `GATE-N` · `CP-N` · `§ARM-*` · `§DEC-*` | **`IMPLEMENTATION_PLAN.md`** — project-local, not requirements | search this tracker |
+
+⛔⛔ **THE TRAP THIS MAP EXISTS TO REMOVE, MEASURED 2026-08-28: `REQ-*` IDS APPEAR IN NO PRD VERSION
+AT ALL — v0.1, v0.2 and v0.3 contain ZERO of them.** The safety rules below cite `REQ-S-006` and
+`REQ-F-017` alongside `KN-4`/`KN-9`, and that block names the PRD as the authoritative text **for
+`KN-4`/`KN-9` specifically** ⇒ ***a reader who carries that attribution across to the neighbouring
+`REQ-*` ids will search the PRD and find nothing***, which reads as a dangling id rather than as a
+lookup in the wrong document.
+
+⚠ **`docs/gap-audits/prd-req-coverage.md` is a TRACEABILITY MAP (PRD item → covering `REQ-*`), not a
+definer.** It is the right place to ask *"which REQ covers this PRD requirement?"* and the wrong
+place to ask *"what does this REQ say?"*
+
+⭐ **When you cite an id, carry its meaning inline** — the `REQ-S-006` pattern used throughout the
+safety rules below ("passes the JSON-Schema gate + validator (REQ-S-006)"). A citation whose meaning
+travels with it survives its document being reorganised; a bare id does not.
+
 ## Key safety rules (do not paraphrase — explicit invariants)
 
 <!-- ▼ EXAMPLE BLOCK [id=key-safety-rules]: key safety rules — the load-bearing domain invariants, stated explicitly. These are referenced by name from briefs, tests, and the forbidden-patterns lists. Project examples: "no real-world targets," "agent A cannot do agent B's job," "no autonomous filing of critical findings," "collateral never leaves without an equal claim burned," "settlement is one-time and immutable." If the project has no domain safety invariants, replace this whole section with a short note saying so. ▼ -->
