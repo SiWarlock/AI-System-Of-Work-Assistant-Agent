@@ -43,8 +43,12 @@ export function mapExecResult(
 }
 
 /** The real `execFile` wrapper: NO shell, bounded (short timeout + small maxBuffer — the key is tiny), stdout as a
- *  Buffer (the Slice-2 backend de-aliases it). Built ONLY on the provisioned path. ⚠ GO-LIVE VERIFY: exercised
- *  against the live `security` binary only at owner-provisioning (no test spawns a real process). */
+ *  Buffer (the Slice-2 backend de-aliases it). Built ONLY on the provisioned path.
+ *  ⚠ UPDATED 2026-08-28 — "no test spawns a real process" is no longer true, deliberately.
+ *  `test/secrets/keychain-live-classifier.test.ts` drives THIS wrapper (via `buildKeychainSecrets({})`, no
+ *  injected execFile) against the live `/usr/bin/security`, so the wrapper + `mapExecResult` are exercised for
+ *  real. It stays OUT of the default suite behind `SOW_KEYCHAIN=1`, and it only LOOKS UP a pair that does not
+ *  exist — it never provisions, deletes, or reads a secret. Provisioning remains the owner's `§ARM-17` crossing. */
 function createRealExecFile(): KeychainExec {
   return (file, args) =>
     new Promise((resolve) => {

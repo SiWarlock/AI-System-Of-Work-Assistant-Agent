@@ -49,11 +49,11 @@ points, not three separate decisions.
 
 | # | Crossing | Ledger | Cost tier | Current state |
 |---|---|---|---|---|
-| 1 | Keychain HMAC signing-key provisioning | `§ARM-17` (+ step 2 of `§ARM-GBRAIN`) | **Cheap & safe** — local disk only, no network, no spend | Not yet crossed — smoke test explicitly PENDING |
+| 1 | Keychain HMAC signing-key provisioning | `§ARM-17` (+ step 2 of `§ARM-GBRAIN`) | **Cheap & safe** — local disk only, no network, no spend | Not yet crossed. Smoke test now PARTLY done: the `not_found` path is MEASURED against the live binary (`SOW_KEYCHAIN=1`); `locked`/`denied` + key-encoding still need a provisioned item |
 | 2 | Real model transport under the egress veto | `§ARM-18` | **Consequential** — real cloud egress + real metered spend | **Partially crossed** — source-leg maiden run + auto-ingest Step-A both live; breadth held by owner |
 | 3 | Reconcile / serving-coverage arc | `§ARM-GBRAIN` steps 1–4 | **Moderate, delicate** — read-only gbrain traffic, but a wire-shape slip can manufacture a false "complete" | Not crossed — the read transport is hardwired to a no-op, no trigger exists |
 | 4 | Serving-oracle go-live (trust flip) | `§ARM-GBRAIN` (cont.) | **Moderate → consequential** — no write yet, but this is the gate that makes trust (and therefore writes) possible | Not crossed — depends on 3; rebuild-oracle producer unbuilt |
-| 5 | External-write transport | `§ARM-21` | **Consequential** — the first irreversible write to a third party | Not crossed — no real vendor transport exists in the tree at all |
+| 5 | External-write transport | `§ARM-21` | **Consequential** — the first irreversible write to a third party | Not crossed. ⚠ Corrected 2026-08-28: a real `AdapterTransport` DOES exist (`createWriteHttpTransport`, 21.6a) — dormant + unbound. Missing: a per-vendor `WriteHttpSpec`, a real `HttpTransport`, a bound `WriteTransportGate.make` |
 | 6 | Propose / semantic-write flip | `§ARM-GBRAIN` (cont.) + Phase-22 tasks | **Most consequential in the sequential chain** — the only point where the agent's own output can become a durable change | Not crossed — depends on 3, 4, 5 |
 | 7 | Per-vendor connector enablement | `§ARM-23` | **Consequential, per vendor** — real credentials + real outbound fetch, one vendor at a time | Not crossed — every vendor is adapter-built, transport-unbound; Gmail has no adapter at all |
 | 8 | Research provider go-live + living-vault scheduling | `§ARM-RESEARCH` | **Consequential** — two paid keys + real external fetch of query text (which can carry vault content) | Not crossed — 2 of 8 named preconditions still open, 1 ambiguous (see below) |
@@ -84,7 +84,10 @@ only new runtime behavior is the worker being *able* to run `/usr/bin/security f
 (absolute path, no shell, 5-second timeout, 64 KiB max buffer). This is the correct crossing to do first
 specifically because it is close to free — it is also the first time a real macOS credential store is
 touched, which is why the runbook still calls it a hard line and wants the real exit codes/stderr strings
-verified against the live binary (they have never been exercised outside mocks).
+verified against the live binary. ⚠ Corrected 2026-08-28 — they are no longer wholly unexercised: the
+`not_found` path is now measured against the real binary by a `SOW_KEYCHAIN=1` test (see "Already verified
+for you" below). `locked`, `denied` and the key-encoding round-trip still are, because they need a
+provisioned or locked keychain.
 
 **Note the scope of this specific crossing is narrow.** The `§ARM-17` ledger entry describes a broader
 provisioning bundle — the HMAC key **plus** `providers/{claude,openai,openrouter}` **plus**
@@ -103,6 +106,26 @@ stored value at the CLI; the in-process adapter (`buildKeychainSecrets({})`) res
 `ok(<N bytes>)` with N = stored length − 1 (trailing newline stripped); a bad/missing ref returns a typed
 `secret_unresolved` error carrying only the ref and reason — never the key bytes or raw stderr; grepping
 worker logs, health items, and the renderer for the key value returns zero hits.
+
+**Already verified for you, BEFORE the crossing (2026-08-28).** Run it yourself any time — it provisions
+nothing and reads no secret, so it needs no crossing:
+
+```bash
+SOW_KEYCHAIN=1 node_modules/.bin/vitest run --root apps/worker keychain-live-classifier
+```
+
+It drives the REAL production path (`buildKeychainSecrets({})` ⇒ the real bounded `execFile` ⇒ the real
+`/usr/bin/security`) against a service/account that does not exist, and pins the measured result: exit `44`
+⇒ backend kind `not_found` ⇒ port reason `missing` ⇒ facade `missing`. Until this landed, NO test had ever
+spawned the binary — the whole path's contract with macOS was an assumption.
+
+⚠ **What it does NOT cover, so do check these by hand while provisioning:** the `locked` and `denied`
+classifications are still **assumptions** (reaching them means locking your login keychain or denying an
+ACL — a test must not do that to your machine), and so is the key-ENCODING round-trip, which needs a
+provisioned item. After you add the key, confirm the resolved byte length is exactly the stored length
+minus the trailing newline, then lock the keychain (`security lock-keychain`) once and confirm the fault
+reads `locked` rather than `missing`. `locked` is the one worth checking: it is the only reason treated as
+RETRYABLE, so a mis-classification retries forever instead of surfacing a credential problem.
 
 **How to back out:** remove `keychainSecrets` (and `provenanceServingOracle.signingKeyRef`) from the
 worker-host config and relaunch — `buildKeychainSecrets(undefined)` constructs nothing and boot is

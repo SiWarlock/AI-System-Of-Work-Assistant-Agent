@@ -57,10 +57,21 @@ function stripOneTrailingNewline(bytes: Uint8Array): Uint8Array {
 /**
  * Classify a non-zero exit into a typed `kind`. `44` = errSecItemNotFound (well-known, stable). locked/denied are
  * classified by STDERR PATTERN (case-insensitive) rather than brittle numeric codes, which vary by macOS version.
- * ⚠ GO-LIVE VERIFY: the exact real exit codes, the stderr STRINGS (incl. substring false-positives — the `locked`
- * word-boundary vs `blocked`, the denied token set), AND the Keychain key-encoding contract must all be checked
- * against the live `security` binary when the owner provisions the signing key — the mocked tests pin this
- * CLASSIFIER, not the real codes/strings.
+ * ⚠ GO-LIVE VERIFY — PARTIALLY DISCHARGED 2026-08-28. Split the claim, because the two halves have very
+ * different evidence:
+ *   • MEASURED against the live binary (macOS Darwin 25.5.0), pinned by
+ *     `test/secrets/keychain-live-classifier.test.ts` under `SOW_KEYCHAIN=1`: a missing item really does exit
+ *     `44` with stderr "security: SecKeychainSearchCopyNext: The specified item could not be found in the
+ *     keychain." That string trips NONE of the locked/denied patterns, so if this 44 branch were ever removed
+ *     or reordered the case degrades to `backend_error` — never to a confidently wrong `locked`. Note what the
+ *     mocked tests could and could not do here: they pin "44 ⇒ not_found" (they FEED the 44); only the live
+ *     probe pins "macOS actually returns 44".
+ *   • STILL UNMEASURED: `locked` and `denied`. Reaching them means locking the operator's login keychain or
+ *     denying an ACL, which a test must not do to someone's machine — so the stderr token sets remain
+ *     ASSUMPTIONS. Verify them by hand at owner-provisioning. ⛔ `locked` is the direction that matters:
+ *     gateway.ts treats it as RETRYABLE, so a mis-classification there retries forever instead of telling the
+ *     owner to fix a credential.
+ * The Keychain key-encoding contract is likewise still unverified (it needs a provisioned item).
  */
 function classifyFault(code: number, stderr: string): KeychainBackendError["kind"] {
   if (code === 44) return "not_found";
