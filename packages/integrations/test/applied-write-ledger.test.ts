@@ -241,6 +241,34 @@ describe("applied-write ledger — a superseded replay key is still a replay (C1
     expect(outcome.receipt.externalObjectId).toBe("ext-put-only");
   });
 
+  it("ADOPTION IS NOT AN APPLICATION — a live-probe hit records the object row but NEVER a ledger row", async () => {
+    // The ledger means exactly one thing: "this envelope reached the vendor." Arm (c)
+    // issues NO write — it observes that an object already exists at the vendor. If
+    // adoption minted a ledger row, the ledger would quietly become "objects we know
+    // about", a much weaker claim, and every ordering/ownership decision built on it
+    // afterwards would rest on that weaker claim without saying so.
+    const store = new InMemoryReceiptStore();
+    const adopted: TargetWriteAdapter = {
+      targetSystem: "drive",
+      // The live probe FINDS an object that this system never wrote.
+      existenceCheck: async () => ok({ externalObjectId: "ext-foreign" }),
+      create: async () => {
+        throw new Error("must not create — the object already exists");
+      },
+      update: async () => {
+        throw new Error("must not update");
+      },
+    };
+    const { env, action } = pair("idem-adopt");
+    const outcome = await dispatchExternalWrite(env, action, depsOver(store, adopted));
+    expect(outcome.status).toBe("reused");
+
+    // The object row IS written (so the next dispatch short-circuits)…
+    expect(await store.getByCanonicalObjectKey(env.targetSystem, env.canonicalObjectKey)).toBeDefined();
+    // …but the ledger must NOT claim this envelope was ever applied.
+    expect(await store.getApplication(env.idempotencyKey)).toEqual({ kind: "miss" });
+  });
+
   it("DORMANCY: a store WITHOUT the ledger behaves exactly as before (create-only correctness)", async () => {
     // The methods are optional. A store that predates them must keep working, and on
     // a create-only path the two answers are identical by construction — one

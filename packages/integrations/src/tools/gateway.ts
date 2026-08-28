@@ -41,7 +41,7 @@ import type {
 } from "@sow/contracts";
 import { admitExternalWriteEnvelope } from "../candidate-gate";
 import { resolveExisting } from "./existence-check";
-import { recordReceipt } from "./receipt-store";
+import { recordReceipt, recordAdoptedObject } from "./receipt-store";
 import { buildSafeToolWriteLog, type SafeToolWriteLog } from "../redaction/gateway-log-redaction";
 import type { ReceiptStore } from "../ports/persistence";
 import type { TargetWriteAdapter, AdapterError } from "./adapter-port";
@@ -290,6 +290,13 @@ export async function dispatchExternalWrite(
     // A live vendor object with no local receipt: synthesize + persist a receipt
     // from the vendor identity so the next dispatch short-circuits on the object
     // key (still zero duplicate creates — no create was issued here).
+    //
+    // ⛔ ADOPTION IS NOT AN APPLICATION. This path issued NO write — it observed
+    // that an object exists. It therefore records the object row ONLY, via
+    // `recordAdoptedObject`, and must NEVER reach the applied-write ledger: the
+    // ledger's single meaning is "this envelope reached the vendor", and every
+    // later ordering/ownership decision is built on it. See that helper for the
+    // C4/C5 residual on the payloadHash this row still carries.
     const vendorReceipt: WriteReceipt = {
       externalObjectId: existing.object!.externalObjectId,
       ...(existing.object!.externalUrl !== undefined
@@ -298,7 +305,7 @@ export async function dispatchExternalWrite(
       recordedAt: deps.clock(),
       ...(existing.object!.rawRef !== undefined ? { rawRef: existing.object!.rawRef } : {}),
     };
-    await recordReceipt(deps.receiptStore, env, vendorReceipt, deps.clock);
+    await recordAdoptedObject(deps.receiptStore, env, vendorReceipt, deps.clock);
     return { status: "reused", receipt: vendorReceipt };
   }
   if (existing.kind === "error") {
