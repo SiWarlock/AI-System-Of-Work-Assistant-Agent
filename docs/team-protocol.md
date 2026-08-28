@@ -129,6 +129,20 @@ The lead spawns each teammate with a **brief, focused spawn prompt** carrying th
 
 > **The instance that earned this rule (2026-08-11).** Handoff `021` called itself *"the ONLY resume path"*; its Part-2 spawn table had **five** rows against root `CLAUDE.md`'s **six** areas, and the string `providers-integrations` **did not appear anywhere in the document**. Because `contract` and `eval-security` were classified there as *"deliberately unqueued, not overlooked,"* the fifth absence read as a fifth disposition — and a fresh lead repeated the omission verbatim into a new round. **Three tracked items sat in that area with no owner, one of them on a block-release path.** ⭐ **This is the "tracked work nobody is queued on" defect at AREA level, invisible to the same apparatus for the same reason: nothing enumerates the six areas and asks which have an owner.** The check is one line and nothing requires it — so require it here.
 
+> ⭐⭐ **AND THE CHECK IS NOW RUNNABLE, WHICH IT WAS NOT WHEN THIS RULE WAS WRITTEN (task `### 24.94`, 2026-08-28).** The rule above says *"nothing enumerates the six areas and asks which have an owner"* — that was true because **26 of the then-open tasks declared no `Track:` at all**, so an enumeration had nothing to enumerate. Every open task now carries one (or an explicit `Track: NONE` with a reason, which is a real answer).
+>
+> **RUN IT at `/team-start` and at `/team-end`, and NAME THE RESIDUE:**
+>
+> 1. Group the tracker's OPEN tasks by `Track:`.
+> 2. Put the six code areas — `contract` · `worker` · `providers-integrations` · `knowledge` · `desktop` · `eval-security` — against that grouping.
+> 3. For each area, state *spawn now* / *deliberately unqueued* / *no open work* / *blocked on X*.
+> 4. **State the `Track: NONE` bucket separately** — those are docs, protocol, audits and traps, and they have no implementer by design. ⛔ **Do not let them vanish into a total; an item with no area is not an item with no work.**
+>
+> ⚠ **A cross-area task appears under EVERY area it names, and that is deliberate** — `13.8` counts for four. **The count is of AREAS WITH WORK, never a task total**, and adding the rows will over-count on purpose.
+>
+> ⛔ **A task whose `Track:` reads `CROSS-AREA` is a SPLIT INSTRUCTION, not an assignment.** Producer-first, one implementer per area; never one implementer driving a vertical through four territories.
+
+
 ---
 
 ## Context monitoring + auto-cycle
