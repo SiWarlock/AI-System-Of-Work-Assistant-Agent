@@ -96,6 +96,7 @@ import type {
   WorkflowRunRefRepository,
   WorkspaceConfigRepository,
   WriteReceiptRepository,
+  WriteApplicationRow,
   WriteReceiptRow,
 } from "../../src/repositories/interfaces";
 import { createSqliteRepositories } from "../../src/adapters/sqlite/index";
@@ -211,6 +212,7 @@ const PG_TABLES: readonly PgTable[] = [
   pgSchema.readModels,
   pgSchema.gclProjections,
   pgSchema.writeReceipts,
+  pgSchema.writeApplications,
   pgSchema.healthItems,
   pgSchema.scheduleBookkeeping,
   pgSchema.instanceLeases,
@@ -428,6 +430,20 @@ function writeReceiptRow(
       recordedAt: "2026-06-30T00:00:05.000Z",
     },
     recordedAt: "2026-06-30T00:00:05.000Z",
+    ...over,
+  };
+}
+function writeApplicationRow(
+  over: Partial<WriteApplicationRow> &
+    Pick<WriteApplicationRow, "targetSystem" | "canonicalObjectKey" | "idempotencyKey">,
+): WriteApplicationRow {
+  return {
+    payloadHash: "sha256:deadbeef",
+    receipt: {
+      externalObjectId: `ext-${over.canonicalObjectKey}`,
+      recordedAt: "2026-06-30T00:00:05.000Z",
+    },
+    appliedAt: "2026-06-30T00:00:05.000Z",
     ...over,
   };
 }
@@ -1765,6 +1781,93 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       );
       expect(unwrapErr(await repos.writeReceipts.getByIdempotencyKey("nope")).code).toBe("not_found");
       expect(unwrapErr(await repos.writeReceipts.getByCanonicalObjectKey("github", "nope")).code).toBe("not_found");
+    });
+
+    // ── the APPLIED-WRITE LEDGER (safety rule 3, C1) ────────────────────────
+    // `write_receipts` answers "what is applied to this object NOW?"; the ledger
+    // answers "was THIS envelope EVER applied?". The difference only becomes
+    // visible once an object is written more than once — which is exactly why a
+    // create-only world could ship without it and the update path could not.
+    it("the applied-write ledger round-trips an application; an unseen key is not_found", async () => {
+      unwrap(
+        await repos.writeReceipts.recordApplication!(
+          writeApplicationRow({
+            targetSystem: "drive",
+            canonicalObjectKey: "drive:file:led",
+            idempotencyKey: "idem-led-1",
+          }),
+        ),
+      );
+      const got = unwrap(await repos.writeReceipts.getApplication!("idem-led-1"));
+      expect(got.canonicalObjectKey).toBe("drive:file:led");
+      expect(got.receipt.externalObjectId).toBe("ext-drive:file:led");
+      expect(got.payloadHash).toBe("sha256:deadbeef");
+      expect(unwrapErr(await repos.writeReceipts.getApplication!("never-applied")).code).toBe("not_found");
+    });
+
+    it("recordApplication is FIRST-WRITE-WINS — a re-record of a seen key never overwrites", async () => {
+      // The first application is what a replay is entitled to get back. If a
+      // re-record could overwrite, a later write would silently redefine the
+      // answer a replay receives.
+      unwrap(
+        await repos.writeReceipts.recordApplication!(
+          writeApplicationRow({
+            targetSystem: "drive",
+            canonicalObjectKey: "drive:file:fww",
+            idempotencyKey: "idem-fww",
+            payloadHash: "sha256:first",
+          }),
+        ),
+      );
+      unwrap(
+        await repos.writeReceipts.recordApplication!(
+          writeApplicationRow({
+            targetSystem: "drive",
+            canonicalObjectKey: "drive:file:fww",
+            idempotencyKey: "idem-fww",
+            payloadHash: "sha256:second-must-not-win",
+          }),
+        ),
+      );
+      expect(unwrap(await repos.writeReceipts.getApplication!("idem-fww")).payloadHash).toBe("sha256:first");
+    });
+
+    it("C1 REPRODUCED: `put` EVICTS a prior replay key; the ledger REMEMBERS it", async () => {
+      // This is the whole reason the ledger exists, expressed as a test. Write an
+      // object twice (a create then an update) through the SAME repository.
+      unwrap(await repos.writeReceipts.reserve("drive", "drive:file:c1"));
+      for (const key of ["idem-c1-create", "idem-c1-update"]) {
+        unwrap(
+          await repos.writeReceipts.put(
+            writeReceiptRow({ targetSystem: "drive", canonicalObjectKey: "drive:file:c1", idempotencyKey: key }),
+          ),
+        );
+        unwrap(
+          await repos.writeReceipts.recordApplication!(
+            writeApplicationRow({
+              targetSystem: "drive",
+              canonicalObjectKey: "drive:file:c1",
+              idempotencyKey: key,
+            }),
+          ),
+        );
+      }
+
+      // THE DEFECT, measured: the receipt row now knows ONLY the latest key, so a
+      // replay of the FIRST envelope is no longer recognised — and an unrecognised
+      // replay is permission to write to the vendor AGAIN (safety rule 3).
+      expect(unwrapErr(await repos.writeReceipts.getByIdempotencyKey("idem-c1-create")).code).toBe("not_found");
+      expect(unwrap(await repos.writeReceipts.getByIdempotencyKey("idem-c1-update")).canonicalObjectKey).toBe(
+        "drive:file:c1",
+      );
+
+      // THE FIX: the ledger still has BOTH, so the replay gate can answer for either.
+      expect(unwrap(await repos.writeReceipts.getApplication!("idem-c1-create")).canonicalObjectKey).toBe(
+        "drive:file:c1",
+      );
+      expect(unwrap(await repos.writeReceipts.getApplication!("idem-c1-update")).canonicalObjectKey).toBe(
+        "drive:file:c1",
+      );
     });
 
     it("release frees a still-RESERVED placeholder so a retry can re-reserve", async () => {

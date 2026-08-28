@@ -38,3 +38,23 @@ export const writeReceipts = pgTable(
     pk: primaryKey({ columns: [t.targetSystem, t.canonicalObjectKey] }),
   }),
 );
+
+// ── write_applications — PG-CORE MIRROR of the APPLIED-WRITE LEDGER ───────────
+// PARALLEL dialect of `../write-receipts.ts`'s `writeApplications` (see that
+// header for WHY a second table exists: `write_receipts` holds ONE row per OBJECT
+// and so structurally cannot answer "was THIS envelope ever applied?" once updates
+// make an object's history longer than one row — safety rule 3 / C1).
+// IDENTICAL column names + portable types (text; `receipt` as one `json` column,
+// mirroring write_receipts), PK on the globally-unique `idempotencyKey` — adds NO
+// column, parity holds — for the both-dialect contract suite (REQ-D-003).
+//
+// APPEND-ONLY + IMMUTABLE (first-write-wins). `receipt` is NOT NULL here: there is
+// no reserved state — a row exists only once a write COMMITTED.
+export const writeApplications = pgTable("write_applications", {
+  idempotencyKey: text().primaryKey(),
+  targetSystem: text().notNull(),
+  canonicalObjectKey: text().notNull(),
+  payloadHash: text().notNull(),
+  receipt: json().notNull(),
+  appliedAt: text().notNull(),
+});

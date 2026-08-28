@@ -58,3 +58,57 @@ export const writeReceipts = sqliteTable(
     pk: primaryKey({ columns: [t.targetSystem, t.canonicalObjectKey] }),
   }),
 );
+
+// ── write_applications — the APPLIED-WRITE LEDGER (safety rule 3, C1) ─────────
+//
+// WHY A SECOND TABLE. `write_receipts` above holds ONE ROW PER OBJECT: its PK is
+// the object identity and `put` is an `onConflictDoUpdate` that OVERWRITES
+// `idempotencyKey`. That is exactly right for the questions it answers — "does this
+// object exist?" and "what is currently applied to it?" — and structurally unable
+// to answer the one the replay gate actually asks: **"was THIS envelope ever
+// applied?"**
+//
+// A create-only world never notices, because an object is created once, so the
+// single row IS its whole history. UPDATES make the history longer than one row can
+// hold: recording an update's receipt EVICTS the previous `idempotencyKey`, so a
+// replay of the already-committed envelope stops being recognized as a replay and
+// WRITES AGAIN — a duplicate external write, i.e. safety rule 3 itself. That defect
+// (C1) is why the update path was attempted and reverted twice; see
+// `docs/findings/external-write-update-path.md`.
+//
+// This table is the history `write_receipts` cannot be: one IMMUTABLE row per
+// APPLIED envelope, keyed by the replay key, recorded independently of the object's
+// current state. The replay gate reads it; nothing overwrites it.
+//
+// KEYS:
+//   - PK `idempotencyKey` — deliberately the WHOLE key, not a composite with
+//     `targetSystem`. `write_receipts.idempotencyKey` is documented GLOBALLY UNIQUE
+//     and `getByIdempotencyKey(key)` takes no `targetSystem`; a composite PK here
+//     would silently WIDEN that invariant to per-system uniqueness. Same key, same
+//     meaning, both tables.
+//
+// CLASSIFICATION: OPERATIONAL TRUTH — APPEND-ONLY and IMMUTABLE (first-write-wins;
+// a re-record of a seen key is a no-op, never an update — the FIRST application is
+// the authoritative one for replay). NOT rebuildable: a lost row re-opens a
+// duplicate external write. NOT parity-checked (same rationale as write_receipts).
+//
+// RETENTION: unbounded by design for now — a row is the only proof a given envelope
+// was already applied, so pruning one re-opens a duplicate write for that key.
+// Rows are small and bounded by the number of external writes ever made. A pruning
+// story belongs with the ordering mechanism (Stage 2), where "superseded" first
+// becomes a decidable property; until then, deleting is unsafe and nothing deletes.
+//
+// REQ-S-003 / §16: no secret column — `receipt` is the same redaction-safe vendor
+// proof pointer `write_receipts.receipt` carries.
+export const writeApplications = sqliteTable("write_applications", {
+  // The §8 replay key — PK. One row per envelope that actually reached the vendor.
+  idempotencyKey: text().primaryKey(),
+  targetSystem: text().notNull(),
+  canonicalObjectKey: text().notNull(),
+  // The payload this application actually wrote (NOT necessarily what is current).
+  payloadHash: text().notNull(),
+  // The vendor proof this application produced. NOT NULL: unlike write_receipts,
+  // there is no "reserved" state here — a row exists only once a write COMMITTED.
+  receipt: text({ mode: "json" }).notNull(),
+  appliedAt: text().notNull(),
+});

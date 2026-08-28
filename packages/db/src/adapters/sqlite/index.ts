@@ -75,6 +75,7 @@ import type {
   WorkspaceConfigRepository,
   WriteReceiptRepository,
   WriteReceiptRow,
+  WriteApplicationRow,
 } from "../../repositories/interfaces";
 import * as schema from "../../schema/index";
 import {
@@ -305,6 +306,21 @@ function toWriteReceipt(r: WriteReceiptDbRow): WriteReceiptRow {
     payloadHash: r.payloadHash,
     receipt: (r.receipt ?? undefined) as WriteReceiptRow["receipt"],
     recordedAt: r.recordedAt,
+  };
+}
+
+type WriteApplicationDbRow = typeof schema.writeApplications.$inferSelect;
+
+/** Ledger row → the repository contract row. `receipt` is NOT NULL in the ledger
+ *  (no reserved state), so there is no NULL-to-undefined step here. */
+function toWriteApplication(r: WriteApplicationDbRow): WriteApplicationRow {
+  return {
+    idempotencyKey: r.idempotencyKey,
+    targetSystem: r.targetSystem,
+    canonicalObjectKey: r.canonicalObjectKey,
+    payloadHash: r.payloadHash,
+    receipt: r.receipt as WriteApplicationRow["receipt"],
+    appliedAt: r.appliedAt,
   };
 }
 
@@ -1390,6 +1406,38 @@ export function createSqliteRepositories(db: BetterSQLite3Database): SqliteRepos
           })
           .run();
         return ok(undefined);
+      }),
+    // ── APPLIED-WRITE LEDGER (safety rule 3, C1) ─────────────────────────────
+    // Append-only + IMMUTABLE. `onConflictDoNothing` is the first-write-wins rule
+    // from the interface contract, in SQL: a re-record of a seen key must NOT
+    // overwrite, because the FIRST application is what a replay is entitled to get
+    // back. (Contrast `put` above, which deliberately DOES overwrite — it tracks the
+    // object's current state, not its history.)
+    recordApplication: (row) =>
+      run((): Result<void, DbError> => {
+        db.insert(schema.writeApplications)
+          .values({
+            idempotencyKey: row.idempotencyKey,
+            targetSystem: row.targetSystem,
+            canonicalObjectKey: row.canonicalObjectKey,
+            payloadHash: row.payloadHash,
+            receipt: row.receipt,
+            appliedAt: row.appliedAt,
+          })
+          .onConflictDoNothing({ target: schema.writeApplications.idempotencyKey })
+          .run();
+        return ok(undefined);
+      }),
+    getApplication: (idempotencyKey) =>
+      run(() => {
+        const row = db
+          .select()
+          .from(schema.writeApplications)
+          .where(eq(schema.writeApplications.idempotencyKey, idempotencyKey))
+          .get();
+        return row
+          ? ok(toWriteApplication(row))
+          : err(notFound(`write-application ${idempotencyKey}`));
       }),
     release: (targetSystem, canonicalObjectKey) =>
       run((): Result<void, DbError> => {

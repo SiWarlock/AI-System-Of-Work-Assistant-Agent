@@ -120,6 +120,13 @@
       "when": 1787684927315,
       "tag": "0016_health_items_last_read_at",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1787943161462,
+      "tag": "0017_write_applications",
+      "breakpoints": true
     }
   ]
 }

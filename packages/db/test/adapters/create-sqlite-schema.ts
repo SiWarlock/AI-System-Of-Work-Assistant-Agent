@@ -28,6 +28,7 @@ const TABLES: readonly SQLiteTable[] = [
   schema.readModels,
   schema.gclProjections,
   schema.writeReceipts,
+  schema.writeApplications,
   // Phase-10 durability tables (LIFE-1 / LIFE-5 / OBS-2).
   schema.healthItems,
   schema.scheduleBookkeeping,

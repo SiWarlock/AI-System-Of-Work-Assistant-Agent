@@ -187,6 +187,30 @@ export interface WriteReceiptRow {
 }
 
 /**
+ * One APPLIED WRITE — an immutable record that this exact envelope reached the
+ * vendor and what receipt it produced (the `write_applications` ledger).
+ *
+ * Distinct from {@link WriteReceiptRow}, and the distinction is the whole point:
+ * a `WriteReceiptRow` is the object's CURRENT state (one row per object, mutated by
+ * `put`), while a `WriteApplicationRow` is one entry in that object's HISTORY. Once
+ * updates exist, an object has more history than the single receipt row can hold —
+ * which is precisely how the replay gate lost its key. `payloadHash` here is what
+ * THIS application wrote, which after a later update is NOT what is current.
+ *
+ * `receipt` is REQUIRED (no reserved state — a row exists only once a write
+ * committed), and `targetSystem` is an OPEN string at this boundary, matching
+ * `WriteReceiptRow`.
+ */
+export interface WriteApplicationRow {
+  readonly idempotencyKey: string;
+  readonly targetSystem: string;
+  readonly canonicalObjectKey: string;
+  readonly payloadHash: string;
+  readonly receipt: WriteReceipt;
+  readonly appliedAt: string;
+}
+
+/**
  * The outcome of an atomic `reserve` on the write-receipt index (WW-1, §8 / safety
  * rule 3). A CLOSED union that classes what the caller MUST do — this is the
  * cross-process no-duplicate-external-write gate:
@@ -894,6 +918,32 @@ export interface WriteReceiptRepository {
    * a committed row is a safe no-op.
    */
   release(targetSystem: string, canonicalObjectKey: string): DbResult<void>;
+  /**
+   * APPLIED-WRITE LEDGER — append one IMMUTABLE row proving `row.idempotencyKey`
+   * actually reached the vendor, INDEPENDENT of the object's current state.
+   *
+   * WHY IT IS NOT `put`. `put` keeps ONE row per OBJECT and overwrites its
+   * `idempotencyKey`, so once an object can be UPDATED, recording the new receipt
+   * EVICTS the old replay key and a replay of the already-committed envelope writes
+   * AGAIN (safety rule 3). `put` answers "what is applied to this object now?"; this
+   * answers "was THIS envelope ever applied?" — two different questions that a
+   * create-only world conflates because an object is created exactly once.
+   *
+   * FIRST-WRITE-WINS: re-recording a seen key is a NO-OP, never an update. The FIRST
+   * application is the authoritative one for replay — overwriting it would let a
+   * later write silently redefine what a replay returns.
+   *
+   * OPTIONAL (additive — existing implementers/fakes outside this package stay
+   * valid; see `getReadCursor`). Absent ⇒ callers fall back to the pre-ledger
+   * `getByIdempotencyKey` path, which is exactly correct while writes are
+   * create-only.
+   */
+  recordApplication?(row: WriteApplicationRow): DbResult<void>;
+  /**
+   * APPLIED-WRITE LEDGER lookup — the durable replay gate. `not_found` when this
+   * envelope has never been applied. OPTIONAL, mirrors `recordApplication`.
+   */
+  getApplication?(idempotencyKey: string): DbResult<WriteApplicationRow>;
 }
 
 /**

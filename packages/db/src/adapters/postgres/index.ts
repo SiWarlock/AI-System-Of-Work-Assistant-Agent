@@ -85,6 +85,7 @@ import type {
   WorkspaceConfigRepository,
   WriteReceiptRepository,
   WriteReceiptRow,
+  WriteApplicationRow,
 } from "../../repositories/interfaces";
 import * as schema from "../../schema/pg/index";
 import {
@@ -321,6 +322,21 @@ function toWriteReceipt(r: WriteReceiptDbRow): WriteReceiptRow {
 }
 
 /** A stored receipt row is COMMITTED iff its `receipt` proof is present (§8). */
+type WriteApplicationDbRow = typeof schema.writeApplications.$inferSelect;
+
+/** Ledger row → the repository contract row. `receipt` is NOT NULL in the ledger
+ *  (no reserved state), so there is no NULL-to-undefined step here. */
+function toWriteApplication(r: WriteApplicationDbRow): WriteApplicationRow {
+  return {
+    idempotencyKey: r.idempotencyKey,
+    targetSystem: r.targetSystem,
+    canonicalObjectKey: r.canonicalObjectKey,
+    payloadHash: r.payloadHash,
+    receipt: r.receipt as WriteApplicationRow["receipt"],
+    appliedAt: r.appliedAt,
+  };
+}
+
 function receiptPresent(r: WriteReceiptDbRow): boolean {
   return r.receipt !== null && r.receipt !== undefined;
 }
@@ -1450,6 +1466,39 @@ export function createPostgresRepositories<TQueryResult extends PgQueryResultHKT
             },
           });
         return ok(undefined);
+      }),
+    // ── APPLIED-WRITE LEDGER (safety rule 3, C1) ─────────────────────────────
+    // Append-only + IMMUTABLE. `onConflictDoNothing` is the first-write-wins rule
+    // from the interface contract, in SQL: a re-record of a seen key must NOT
+    // overwrite, because the FIRST application is what a replay is entitled to get
+    // back. (Contrast `put` above, which deliberately DOES overwrite — it tracks the
+    // object's current state, not its history.)
+    recordApplication: (row) =>
+      run(async (): Promise<Result<void, DbError>> => {
+        await db
+          .insert(schema.writeApplications)
+          .values({
+            idempotencyKey: row.idempotencyKey,
+            targetSystem: row.targetSystem,
+            canonicalObjectKey: row.canonicalObjectKey,
+            payloadHash: row.payloadHash,
+            receipt: row.receipt,
+            appliedAt: row.appliedAt,
+          })
+          .onConflictDoNothing({ target: schema.writeApplications.idempotencyKey });
+        return ok(undefined);
+      }),
+    getApplication: (idempotencyKey) =>
+      run(async () => {
+        const rows = await db
+          .select()
+          .from(schema.writeApplications)
+          .where(eq(schema.writeApplications.idempotencyKey, idempotencyKey))
+          .limit(1);
+        const row = rows[0];
+        return row
+          ? ok(toWriteApplication(row))
+          : err(notFound(`write-application ${idempotencyKey}`));
       }),
     release: (targetSystem, canonicalObjectKey) =>
       run(async (): Promise<Result<void, DbError>> => {
