@@ -50,7 +50,13 @@ describe("DegradedModeController — DB-unavailable degraded mode (2.8)", () => 
 
     // (a) distinct, audit-linked System Health item for the DB-unavailable class
     expect(t.availability).toBe("degraded");
-    expect(t.healthItem.failureClass).toBe(DB_UNAVAILABLE_FAILURE_CLASS);
+    // ⛔ THE LITERAL, not just the constant. `toBe(DB_UNAVAILABLE_FAILURE_CLASS)` alone is
+    // TAUTOLOGICAL — it compares the emitted value to the very constant that produced it, so it
+    // holds for ANY value the constant takes and pinned nothing about WHICH class is emitted.
+    // That is how `worker_down` survived here for a month after `### 13.15` (`54b052a7`,
+    // 2026-07-25) added the dedicated `db_unavailable` member to the frozen enum.
+    expect(t.healthItem.failureClass).toBe("db_unavailable");
+    expect(DB_UNAVAILABLE_FAILURE_CLASS).toBe("db_unavailable");
     expect(t.healthItem.state).toBe("open");
     expect(t.healthItem.auditRef).toBe("audit-degraded-1");
     expect(t.healthItem.message.length).toBeGreaterThan(0);

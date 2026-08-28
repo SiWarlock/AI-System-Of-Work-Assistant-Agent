@@ -21,15 +21,26 @@ import { auditId, err, HealthItemSchema, ok } from "@sow/contracts";
 import type { AuditId, FailureClass, HealthItem, Result } from "@sow/contracts";
 import type { DbError } from "../repositories/interfaces";
 
-// arch_gap: §16's OBS-2 `failureClass` enum has NO dedicated `db_unavailable`
-// member — the closest analog is `worker_down` (the worker's operational
-// persistence being unreachable IS the worker being unable to function; cf.
-// connector_unreachable which is reserved for the §8 Connector Gateway, and the
-// Keychain/Temporal degraded modes which have their own distinct surfaces). The
-// DB-unavailable item is kept distinct from those by its `subjectRef` + message,
-// not by a separate failure class. Flagged: a `db_unavailable` OBS-2 class would
-// be the precise fit.
-export const DB_UNAVAILABLE_FAILURE_CLASS: FailureClass = "worker_down";
+// ✅ THE arch_gap IS CLOSED — and it was closed a month before this line moved.
+//
+// ⛔ THIS COMMENT USED TO SAY: "§16's OBS-2 `failureClass` enum has NO dedicated
+// `db_unavailable` member ... Flagged: a `db_unavailable` OBS-2 class would be the precise
+// fit." That was true when written and FALSE from `### 13.15` (`54b052a7`, 2026-07-25),
+// which added `db_unavailable` (with `provider_routing_unavailable` / `outbox_blocked` /
+// `write_through_blocked`) to the frozen enum — `shared-enums.ts:156`. The precise fit
+// arrived; the consumer never moved to it, so DB-unavailable kept minting `worker_down`.
+//
+// ⚠ WHY NOTHING CAUGHT IT: the pin in `degraded.test.ts` asserted the emitted class equals
+// `DB_UNAVAILABLE_FAILURE_CLASS` — the constant that produces it. TAUTOLOGICAL: green for
+// any value. It now asserts the LITERAL as well.
+//
+// ⚠ §10.3 CONSEQUENCE, stated because it is a real behaviour change: dedupe identity is
+// (failureClass, subjectRef), so an item minted before this change (`worker_down` /
+// `operational-db`) will not dedupe against one minted after. A one-time double-surface on a
+// REBUILDABLE health surface, in exchange for an operator seeing the actual condition instead
+// of a generic worker fault. `db_unavailable` was already live from `retentionPrune.ts:407`
+// and `sourceIngestion.ts:284`, so this introduces no value a consumer has not already seen.
+export const DB_UNAVAILABLE_FAILURE_CLASS: FailureClass = "db_unavailable";
 
 /** Stable subject the dedupe identity (failureClass, subjectRef) keys on (§10.3). */
 export const DB_UNAVAILABLE_SUBJECT = "operational-db" as const;
