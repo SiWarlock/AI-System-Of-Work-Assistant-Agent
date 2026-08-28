@@ -302,8 +302,13 @@ the first time the machine can act on the outside world.
   interface and the factory), a real `HttpTransport` (Node `fetch`) implementation, and a bound
   `WriteTransportGate.make` (the gate ships UNBOUND). Plus, if the approval-card path is the trigger,
   replacing the currently no-op `dispatchApproval` stub.
-  ⛔ Read `docs/findings/external-write-update-path.md` before crossing: the UPDATE path is broken and was
-  twice reverted, and it is a fix-BEFORE-`§ARM-21` item. A doc-pack re-sync is exactly that path.
+  ✅ **The fix-BEFORE-`§ARM-21` item on the UPDATE path is now DONE** (2026-08-28, six staged commits —
+  `docs/findings/external-write-update-path.md`). `TargetWriteAdapter.update` had zero callers, so a re-sync
+  with changed content wrote nothing and reported success; that is fixed, with the replay-gate eviction (C1),
+  the stale-re-drive content revert (C3) and the foreign-object clobber (C4/C5) each guarded and
+  mutation-proved. Concurrency (C2) is last-writer-wins and is documented as such rather than claimed fixed —
+  two concurrent updates both reach the vendor. Worth knowing before you cross: it means a doc-pack re-sync
+  now genuinely updates, and that two racing syncs converge to one of the two payloads (re-sync fixes it).
 - Phase 2 (auto-ingest) ON — the propose activity that carries `dispatchExternalWrite` is only registered
   under Temporal when `proofSpineParams` exists, which requires auto-ingest + a vault root.
 - The operational store is durable (a real `dbPath`, never `:memory:`) — the exactly-once receipt store is
