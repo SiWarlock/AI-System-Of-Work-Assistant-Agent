@@ -1,29 +1,44 @@
-# The external-write UPDATE path — why two attempts were reverted
+# The external-write UPDATE path — RESOLVED (third attempt)
 
-**Status:** IN PROGRESS (third attempt, staged). C1's mechanism is BUILT and WIRED;
-C2/C3 and the `update` wiring itself are still open.
+**Status:** ✅ **CLOSED 2026-08-28.** `update` is wired and all four hazards are
+guarded. Two prior attempts landed as one large change and were reverted; this one
+landed in six verifiable stages, each green and mutation-proved before the next.
+
+**Reachability:** still DORMANT — the write transport is default-OFF until `§ARM-21`.
+This is now a *fix-before-arming* item that has been DONE, not one still owed.
 
 | Stage | What | Commit |
 |---|---|---|
-| 1 | `write_applications` — the applied-write ledger (schema, both dialects, contract suite). No callers. | `8851034f` |
-| 2 | Wired into the replay gate (`recordReceipt` appends; `resolveExisting` arm (a) consults it). `update` still unwired. | `392457aa` |
-| 3 | Re-drive enumeration CLOSED (three paths, not two) + three more closed-union `default:` arms dropped. | `eff5a113` |
-| 4 | Adoption split out of the ledger (`recordAdoptedObject`) — a defect stage 2 introduced. | `3fe68ec4` |
-| 5 | **NEXT** — C4/C5 adoption-distinguishability, then C3 ordering, then C2, then the `update` wiring itself. | — |
+| 1 | `write_applications` — the applied-write ledger. Schema, both dialects, contract suite (incl. a test that REPRODUCES C1). No callers. | `8851034f` |
+| 2 | Ledger wired into the replay gate. | `392457aa` |
+| 3 | Re-drive enumeration CLOSED — **three** paths, not two + three closed-union `default:` arms dropped. | `eff5a113` |
+| 4 | Adoption split out of the ledger — a defect stage 2 introduced. | `3fe68ec4` |
+| 5 | `update` WIRED, all four hazards guarded, 19 tests. | `1915e033` |
+| 6 | C3 closed on all three paths + the fixed-arity lambdas that dropped the argument. | `963ca26c` |
 
-⚠ Two lessons already paid for in stage 2, recorded so attempt 4 does not repeat them:
-- **The ledger must ADD recall, never SUBTRACT it.** Treating a ledger MISS as
-  authoritative broke two long-standing replay pins — the ledger only knows writes
-  made through `recordReceipt`, so a receipt from a direct `put`/fixture/legacy row
-  stopped being recognised. A miss now falls through to the receipt-row lookup.
-- **Arm (b) currently MASKS C1.** A test asserting "a superseded replay issues no
-  second create" PASSES with the ledger disabled, because `getByCanonicalObjectKey`
-  short-circuits any dispatch for an existing object. Assert the outcome KIND
-  (`replay` vs `existing`), not the status. That same short-circuit is *also* why
-  `update` never happens — and stage 3 must move it, which is what finally exposes
-  C1 for real.
-**Reachability:** DORMANT — the write transport is default-OFF until `§ARM-21`.
-**⛔ Fix BEFORE arming `§ARM-21`, not after.**
+## How each hazard ended up
+
+| # | Hazard | Resolution |
+|---|---|---|
+| C1 | Replay-gate eviction | **FIXED** — the applied-write ledger records every applied envelope independently of the object row, so a superseded key is still a replay. |
+| C2 | Concurrency | **ACCEPTED + PINNED HONESTLY.** `reserve` guards CREATE only, so two concurrent updates both reach the vendor and the last wins. The outcome is ONE object carrying one of two legitimate payloads — recoverable — unlike the create path's duplicate-OBJECT hazard. A test pins the real behaviour; attempt 2 documented a limit materially narrower than this. |
+| C3 | Ordering / stale re-drive | **FIXED** on all three re-drive paths via a dispatch-time `intentCreatedAt`. No frozen contract amended. |
+| C4/C5 | Adoption laundering ownership | **FIXED** — authorship is decided by the LEDGER, not by the object row's payloadHash (which for an adopted row is merely the payload we intended). Fails closed on a missing ledger and on a ledger fault. |
+
+## ⭐ The two findings worth keeping
+
+**There is a THIRD re-drive path, and it is the worst one.** The APPROVAL path
+dispatches `input.context.envelope` — durable Temporal workflow input held across a
+HUMAN decision, for days by design. Neither reverted attempt named it, and attempt
+2's defence (stripping grants inside `outbox-drain.ts`) structurally could never have
+covered it, because that envelope never goes near the drain.
+
+**A guard is worthless until something feeds it.** The live approval wiring was
+`(action, env) => dispatch(action, env)` — a fixed-arity lambda that silently dropped
+the new third argument. The guard existed, was tested at the gateway, and would have
+received a value from nowhere in production. It was found by MUTATION: deleting the
+forward changed nothing in 2669 worker tests, and that silence was the finding. Every
+such forward is now `(...args) => …`, and each link has a test that REDs without it.
 
 ## The bug
 
