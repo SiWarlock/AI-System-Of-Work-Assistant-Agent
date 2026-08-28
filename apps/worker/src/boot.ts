@@ -3184,6 +3184,15 @@ export function buildOutputWorkflowScheduleSpecs(
  * controller, and exposes a `connectTemporal()` that drives `bootstrapWorker` with
  * the proof-spine register hook. See the header for the Phase-9/11 residual deferrals.
  */
+/**
+ * Task 10.6 — how often a backup is DUE (24h), and how often boot re-asks (1h).
+ * The two differ on purpose: the cadence is the real policy and is enforced against
+ * the persisted marker, while the check interval only decides how promptly a
+ * long-running session notices. A cheap "not due" no-op is the common case.
+ */
+const BACKUP_CADENCE_MS = 24 * 60 * 60 * 1000;
+const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+
 export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // 0.99) task 11.1/24.1 (REQ-D-005, safety rule 1) — ACQUIRE the real OS-atomic single-owner lock
   //   BEFORE the operational store opens (`assembleBackends` below), so a second worker instance
@@ -4185,11 +4194,43 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     );
   }
 
-  // 5) The operational-backup service — WIRED but NOT scheduled (the CRON is Phase-11).
+  // 5) The operational-backup service — WIRED **AND NOW SCHEDULED** (task 10.6).
+  //   Ports come from the caller when supplied (the test seam), else from `backends`,
+  //   which builds them over the live connection for a DURABLE store only. An
+  //   in-memory store yields neither, so the shipped default for `:memory:` is
+  //   byte-equivalent to before.
+  const resolvedBackupPorts = config.backupPorts ?? backends.backupPorts;
   const backupService =
-    config.backupPorts !== undefined
-      ? createOperationalBackupService(config.backupPorts.opDb, config.backupPorts.temporal)
+    resolvedBackupPorts !== undefined
+      ? createOperationalBackupService(resolvedBackupPorts.opDb, resolvedBackupPorts.temporal)
       : undefined;
+
+  // 5a) THE CADENCE. `boot.ts` used to say "service wired, CRON deferred", and the
+  //   consequence was that the non-rebuildable operational truth (audit / approvals /
+  //   outbox) was NEVER backed up in production.
+  //
+  //   The cadence check lives in `runOperationalBackup` and reads the PERSISTED
+  //   last-run marker, so it is correct to simply ASK on every boot and again on a
+  //   long-running interval: "is one due?" A run that is not due is a cheap no-op.
+  //   That is why there is no CRON state to keep — the artifacts on disk ARE the
+  //   schedule, and it survives a restart for free.
+  //
+  //   FIRE-AND-FORGET + swallowed: a backup must never delay or fail boot (§16). A
+  //   failure is visible in the artifact list not advancing; the ports themselves fail
+  //   CLOSED with typed errors rather than reporting a success they did not achieve.
+  const runBackupIfDue = (): void => {
+    if (backupService === undefined) return;
+    void backupService
+      .run({ intervalMs: BACKUP_CADENCE_MS, now: new Date() })
+      .catch(() => {
+        /* best-effort: never block or fail the worker on a backup */
+      });
+  };
+  runBackupIfDue();
+  const backupTimer: ReturnType<typeof setInterval> | undefined =
+    backupService !== undefined ? setInterval(runBackupIfDue, BACKUP_CHECK_INTERVAL_MS) : undefined;
+  // Never hold the process open for a backup check.
+  backupTimer?.unref?.();
 
   // task 19.2/22.4 — `signing` (the KnowledgeWriter provenance-signing dep) is now computed EARLIER
   // (see its construction site right after `provenanceBundle`, above) so BOTH production supply sites —
@@ -4502,6 +4543,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
         // Best-effort — a dispatch-Connection close fault must not block shutdown.
       }
     }
+    if (backupTimer !== undefined) clearInterval(backupTimer);
     await api.close();
     backends.close();
   };

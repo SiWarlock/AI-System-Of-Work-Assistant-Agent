@@ -127,6 +127,8 @@ import {
   createInstanceLeaseStoreAdapter,
 } from "./store-adapters";
 import { createLogger, type Logger, type LogSink } from "../observability/logger";
+import { createOperationalBackupPorts } from "../backup/backup-ports";
+import type { OpDbBackupPort, TemporalPersistenceBackupPort } from "../backup/operational-backup";
 import { selectProviderRunner, selectHealthSources, type ProviderTransportGate } from "./provider-runner";
 import {
   createLedgeredBudgetGate,
@@ -857,6 +859,23 @@ export interface ProofSpineBackends {
   readonly localConfig: LocalProviderConfig;
   /** Injected wall clock (ISO-8601). */
   readonly now: () => string;
+  /**
+   * Task 10.6 — the operational-backup PORTS, built over the live connection.
+   *
+   * Built HERE rather than exposed as a raw driver handle: `assembleBackends` is the
+   * only place that legitimately holds the better-sqlite3 connection, and widening
+   * `OpenDatabase.conn` to leak it would hand every consumer a driver. A typed port
+   * keeps the encapsulation and gives boot exactly what it needs.
+   *
+   * ABSENT for an in-memory store (`:memory:`, every default test boot): there is no
+   * directory to write to and nothing durable to protect, so backups are not
+   * applicable rather than broken — which also keeps the shipped default
+   * byte-equivalent.
+   */
+  readonly backupPorts?: {
+    readonly opDb: OpDbBackupPort;
+    readonly temporal: TemporalPersistenceBackupPort;
+  };
   /** A close handle for the sqlite connection (test teardown). */
   readonly close: () => void;
 }
@@ -898,6 +917,8 @@ export async function assembleBackends(
   const scheduleStore = createScheduleStoreAdapter(opened.repos.scheduleBookkeeping);
   const instanceLeaseStore = createInstanceLeaseStoreAdapter(opened.repos.instanceLeases);
   const receiptStore = createReceiptStoreAdapter(opened.repos.writeReceipts);
+  // 10.6 — the real op-DB backup port over the live connection (undefined for :memory:).
+  const backupPorts = createOperationalBackupPorts(opened.conn, config.dbPath);
 
   const localConfig: LocalProviderConfig = {
     allowedLocalEndpoints:
@@ -971,6 +992,9 @@ export async function assembleBackends(
     indexClient,
     localConfig,
     now,
+    // 10.6 — conditional spread: absent for an in-memory store, so the key is ABSENT
+    // rather than `undefined`-valued and the prior shape is byte-identical.
+    ...(backupPorts !== undefined ? { backupPorts } : {}),
     close: () => {
       try {
         opened.conn.close();
