@@ -324,6 +324,14 @@ export async function dispatchExternalWrite(
     // (notebooklm-sync.ts's per-slot `not_found` → reattach) branch on the
     // failure kind without parsing this string. That reattach path reads
     // `adapterCode`, NOT `status`, so it is unaffected by the switch.
+    //
+    // ⛔ NO `default:` ARM. `AdapterError.code` is a CLOSED union, and a `default`
+    // on a closed union is the `branch`/`stage` defect in another costume: it
+    // makes the compiler accept a NEW member silently, and the member inherits
+    // whichever disposition the catch-all happens to have. Here the catch-all
+    // would be TERMINAL, so a future retryable code would be permanently
+    // rejected. Listing every member instead — with the `never` binding below —
+    // turns adding one into a COMPILE error at both fault arms.
     const existenceFaultReason = `existence-check ${existing.error.code}: ${existing.error.message}`;
     switch (existing.error.code) {
       case "unreachable":
@@ -333,9 +341,14 @@ export async function dispatchExternalWrite(
       case "rejected":
       case "unknown":
       case "not_found":
-      default:
         return { status: "rejected", reason: existenceFaultReason, adapterCode: existing.error.code };
     }
+    // Unreachable by the type system (the switch is total over the union). Kept as
+    // a runtime backstop because falling out of this `if` block would continue to
+    // the RESERVE + CREATE path — i.e. an unhandled code would fail OPEN into the
+    // one side effect this whole function exists to guard. Fail closed instead.
+    const unhandledExistenceCode: never = existing.error.code;
+    return { status: "rejected", reason: `existence-check ${String(unhandledExistenceCode)}` };
   }
 
   // 3.5 RESERVE — atomically claim the exclusive right to create THIS object
@@ -379,6 +392,9 @@ export async function dispatchExternalWrite(
   // `held` arm above and is retried.) `adapterCode` also rides its own field for
   // callers that must branch (never parse `reason`).
   await deps.receiptStore.release(env.targetSystem, env.canonicalObjectKey);
+  // No `default:` arm here either, for the reason given at the existence-probe
+  // switch above: on a closed union it converts "a new code appeared" from a
+  // compile error into a silent terminal classification.
   const createFaultReason = `create fault (${created.error.code}): ${created.error.message}`;
   switch (created.error.code) {
     case "conflict":
@@ -388,7 +404,9 @@ export async function dispatchExternalWrite(
     case "rejected":
     case "unknown":
     case "not_found":
-    default:
       return { status: "rejected", reason: createFaultReason, adapterCode: created.error.code };
   }
+  // Unreachable by the type system; a fail-closed runtime backstop (see above).
+  const unhandledCreateCode: never = created.error.code;
+  return { status: "rejected", reason: `create fault (${String(unhandledCreateCode)})` };
 }

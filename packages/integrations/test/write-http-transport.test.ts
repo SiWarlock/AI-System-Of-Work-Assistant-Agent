@@ -27,11 +27,10 @@ import {
   type WriteSecretsAccessor,
   type WriteSecretUnavailable,
 } from "../src/tools/adapters/adapter-core";
-import type {
-  AdapterTransport,
-  AdapterTransportRequest,
-  TransportFaultDetail,
-} from "../src/tools/adapters/transport";
+import type { AdapterTransport, AdapterTransportRequest } from "../src/tools/adapters/transport";
+// Value import: `TransportFaultDetail` is a const array AND the type derived from
+// it (declaration-merged), so this one binding serves both uses.
+import { TransportFaultDetail } from "../src/tools/adapters/transport";
 import type { TargetWriteAdapter } from "../src/tools/adapter-port";
 import { dispatchExternalWrite, type ExternalWriteDeps } from "../src/tools/gateway";
 import { buildEnvelopeFromAction } from "../src/tools/envelope";
@@ -475,7 +474,9 @@ describe("write-http-transport.ts — no shell-out, no credential-exec backend",
 //     them; before this round no producing site did, so the "distinction is
 //     restored" doc comments were false. These pin the wiring at the ONE real
 //     producer: every statusless fault return of createWriteHttpTransport.
-//     TEN faults ⇒ TEN distinct operator-facing AdapterError.message strings. ──
+//     NINE return sites ⇒ ELEVEN tokens (the credential-unavailable return fans
+//     out over its three reasons) ⇒ ELEVEN distinct operator-facing
+//     AdapterError.message strings. ──
 describe("createWriteHttpTransport — every statusless fault SETS a closed faultDetail (the producer)", () => {
   const testClock = (): string => "2026-07-01T00:00:00.000Z";
 
@@ -571,6 +572,20 @@ describe("createWriteHttpTransport — every statusless fault SETS a closed faul
         createWriteHttpTransport(CORE_SPEC, depsWith({ http: fakeHttp({ throw: new Error("ECONNRESET") }) })),
     },
     {
+      // A response DID arrive, but its status is not an integer — so there is no
+      // `httpStatus` to carry, and without a token this reads exactly like a
+      // malformed body or a throwing mapResponse.
+      name: "a non-integer HTTP status",
+      token: "malformed_status",
+      code: "unknown",
+      message: "unclassified adapter fault (malformed_status)",
+      transport: () =>
+        createWriteHttpTransport(
+          CORE_SPEC,
+          depsWith({ http: fakeHttp({ response: { status: Number.NaN, body: '{"id":"x"}' } }) }),
+        ),
+    },
+    {
       name: "a malformed 2xx body",
       token: "malformed_body",
       code: "unknown",
@@ -605,8 +620,9 @@ describe("createWriteHttpTransport — every statusless fault SETS a closed faul
       const res = await c.transport()(CREATE_REQ);
       expect(res.ok).toBe(false);
       if (res.ok) throw new Error("expected a fault");
-      // The statusless invariant: no HTTP response was ever received, so there is
-      // no httpStatus — faultDetail is the ONLY thing that can separate these.
+      // The statusless invariant: no usable HTTP status exists (no response
+      // arrived, or its status was not an integer), so there is no httpStatus —
+      // faultDetail is the ONLY thing that can separate these.
       expect(res.httpStatus).toBeUndefined();
       expect(res.faultDetail).toBe(c.token);
     },
@@ -627,7 +643,7 @@ describe("createWriteHttpTransport — every statusless fault SETS a closed faul
     },
   );
 
-  it("all TEN statusless faults produce TEN DISTINCT AdapterError.message strings", async () => {
+  it("all ELEVEN statusless faults produce ELEVEN DISTINCT AdapterError.message strings", async () => {
     const env = makeEnvelope({ targetSystem: "drive", canonicalObjectKey: CREATE_REQ.canonicalObjectKey });
     const messages: string[] = [];
     for (const c of CASES) {
@@ -635,8 +651,16 @@ describe("createWriteHttpTransport — every statusless fault SETS a closed faul
       expect(res.ok).toBe(false);
       if (!res.ok) messages.push(res.error.message);
     }
-    expect(messages).toHaveLength(10);
-    expect(new Set(messages).size).toBe(10);
+    expect(messages).toHaveLength(11);
+    expect(new Set(messages).size).toBe(11);
+  });
+
+  it("the CASES set covers EVERY member of the closed TransportFaultDetail union — a new token cannot be added unwired", () => {
+    // The union is the contract; this list is the proof the producer honours it.
+    // Without this, adding a token to transport.ts and forgetting the producing
+    // site would leave the suite green — the exact shape of the original
+    // built-but-unwired defect.
+    expect(new Set(CASES.map((c) => c.token))).toEqual(new Set(TransportFaultDetail));
   });
 
   it("a LOCKED Keychain does not read the same as an SSRF-BLOCKED host (the named regression)", async () => {
@@ -657,10 +681,10 @@ describe("createWriteHttpTransport — every statusless fault SETS a closed faul
     expect(ssrf.error.message).toBe("request rejected (ssrf_blocked)");
   });
 
-  it("W1c — a malformed 2xx body, a throwing buildRequest and a throwing mapResponse no longer all read 'unclassified adapter fault'", async () => {
+  it("W1c — a malformed 2xx body, a throwing buildRequest, a non-integer status and a throwing mapResponse no longer all read 'unclassified adapter fault'", async () => {
     const env = makeEnvelope({ targetSystem: "drive", canonicalObjectKey: CREATE_REQ.canonicalObjectKey });
     const unknowns = CASES.filter((c) => c.code === "unknown");
-    expect(unknowns).toHaveLength(3);
+    expect(unknowns).toHaveLength(4);
     const messages: string[] = [];
     for (const c of unknowns) {
       const res = await adapterOver(c.transport()).create(env, { title: "x" });
@@ -668,7 +692,7 @@ describe("createWriteHttpTransport — every statusless fault SETS a closed faul
       expect(res.error.code).toBe("unknown");
       messages.push(res.error.message);
     }
-    expect(new Set(messages).size).toBe(3);
+    expect(new Set(messages).size).toBe(4);
   });
 });
 
@@ -726,6 +750,39 @@ describe("createWriteHttpTransport — status classification: retryable vs termi
     [600, "unknown"],
   ])("HTTP %s (out of every classified range) ⇒ unknown, which is TERMINAL", async (status, expected) => {
     expect(await faultFor(status)).toBe(expected);
+  });
+
+  it("status 0 ⇒ unreachable — the client convention for 'no response obtained', not an unknown code", async () => {
+    expect(await faultFor(0)).toBe("unreachable");
+  });
+
+  it("status 0 and a THROWN send are the SAME event, so they get the SAME disposition", async () => {
+    // This is the whole argument for the special case: 0 is what an injected
+    // client that CATCHES a network failure reports instead of throwing. If the
+    // two encodings classified differently, the write's fate would depend on how
+    // the injected HttpTransport was written rather than on what happened.
+    const returned = await createWriteHttpTransport(
+      CORE_SPEC,
+      depsWith({ http: fakeHttp({ response: { status: 0, body: "" } }) }),
+    )(CREATE_REQ);
+    const thrown = await createWriteHttpTransport(
+      CORE_SPEC,
+      depsWith({ http: fakeHttp({ throw: new Error("ECONNRESET") }) }),
+    )(CREATE_REQ);
+    if (returned.ok || thrown.ok) throw new Error("expected two faults");
+    expect(returned.fault).toBe(thrown.fault);
+    expect(returned.fault).toBe("unreachable");
+    // They stay TELLABLE APART: the returned one carries the vendor-reported
+    // status, the thrown one carries the closed transport_error token.
+    expect(returned.httpStatus).toBe(0);
+    expect(thrown.httpStatus).toBeUndefined();
+    expect(thrown.faultDetail).toBe("transport_error");
+  });
+
+  it("only 0 is carved out below 200 — 1/99/199 stay unknown/terminal", async () => {
+    for (const status of [1, 99, 199]) {
+      expect(await faultFor(status)).toBe("unknown");
+    }
   });
 
   it("the retryable set is exactly {408, 425, 429} — every OTHER 4xx terminates", async () => {

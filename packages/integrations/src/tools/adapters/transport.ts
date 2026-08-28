@@ -66,32 +66,37 @@ export interface AdapterTransportRequest {
 export type TransportFault = "unreachable" | "conflict" | "rejected" | "unknown";
 
 /**
- * The CLOSED sub-reason set for a STATUSLESS fault — one that never received an
- * HTTP response, so it carries no `httpStatus` to distinguish it.
+ * The CLOSED sub-reason set for a STATUSLESS fault — one that carries no usable
+ * `httpStatus` to distinguish it, because either no HTTP response was ever
+ * received or the response's status was not an integer.
  *
  * WHY IT EXISTS. The §S fix (adapter-core.ts's `faultToError`) closed a real
  * leak channel — a transport's free-text `detail` reaching
  * `AdapterError.message` — with an instrument broader than the channel. With
- * `detail` barred and no status to fall back on, the TEN statusless faults the
- * real write-side HTTP transport can return (write-http-transport.ts) collapsed
- * into THREE strings: six `rejected` faults (an SSRF/allowlist block, a throwing
- * credential accessor, and a missing / locked / denied / empty credential) ALL
- * rendered byte-identically as `"request rejected"`; three `unknown` faults (a
- * throwing `buildRequest`, a malformed 2xx body, a throwing `mapResponse`) as
- * `"unclassified adapter fault"`; and the network-outage fault alone as
- * `"target system unreachable"`. "Your Keychain is locked" and "an SSRF guard
- * blocked this host" became the same sentence for the operator.
+ * `detail` barred and no status to fall back on, the ELEVEN statusless faults
+ * the real write-side HTTP transport can return (write-http-transport.ts)
+ * collapsed into THREE strings: six `rejected` faults (an SSRF/allowlist block, a
+ * throwing credential accessor, and a missing / locked / denied / empty
+ * credential) ALL rendered byte-identically as `"request rejected"`; four
+ * `unknown` faults (a throwing `buildRequest`, a non-integer status, a malformed
+ * 2xx body, a throwing `mapResponse`) as `"unclassified adapter fault"`; and the
+ * network-outage fault alone as `"target system unreachable"`. "Your Keychain is
+ * locked" and "an SSRF guard blocked this host" became the same sentence for the
+ * operator.
  *
  * WHAT MAKES THE DISTINCTION REAL — A PRODUCER, NOT THE UNION. A token here only
  * separates anything if a transport actually SETS it. `createWriteHttpTransport`
  * (write-http-transport.ts) — the real write-side HTTP transport, and the
- * producer of all ten faults above — sets one at EVERY statusless fault return,
- * which is what makes the ten distinguishable end-to-end. That is pinned by
- * test, not asserted here: write-http-transport.test.ts drives each of the ten
- * through `makeTargetWriteAdapter` and requires ten distinct
- * `AdapterError.message` strings. The claim is scoped to that transport — the
- * field stays OPTIONAL, and a test fake or a per-vendor `mapResponse` that omits
- * it renders exactly as it did before the field existed.
+ * producer of all eleven faults above — sets one at EVERY statusless fault
+ * return, which is what makes the eleven distinguishable end-to-end. COUNT THE
+ * TWO SEPARATELY: there are NINE such `return` sites, and they yield ELEVEN
+ * tokens, because the credential-unavailable return fans out over the three
+ * `WriteSecretUnavailableReason` values. That is pinned by test, not asserted
+ * here: write-http-transport.test.ts drives each of the eleven through
+ * `makeTargetWriteAdapter` and requires eleven distinct `AdapterError.message`
+ * strings. The claim is scoped to that transport — the field stays OPTIONAL, and
+ * a test fake or a per-vendor `mapResponse` that omits it renders exactly as it
+ * did before the field existed.
  *
  * WHY THIS DOES NOT REOPEN THE LEAK CHANNEL. These are module-local literals,
  * not transport-supplied text. A per-vendor `mapResponse` (the ONE genuinely
@@ -109,6 +114,7 @@ export const TransportFaultDetail = [
   "credential_denied",
   "credential_empty",
   "transport_error",
+  "malformed_status",
   "malformed_body",
   "map_error",
 ] as const;
@@ -133,23 +139,26 @@ export interface TransportObject {
  * send-once): the SAME object without a second real post. `ok:false` — a typed
  * vendor fault. Never throws for a normal fault.
  *
- * `httpStatus` — set ONLY when the fault came from an actual HTTP response (an
- * integer status code, e.g. `404`); a caller (`adapter-core.ts`'s
- * `faultToError`, `drive.ts`'s 404→`not_found` promotion) branches on THIS
- * numeric field, never on `detail`'s string shape (§S — a prior round matched
- * `detail === "HTTP 404"` and silently broke when the format changed). Absent
- * when no HTTP response was ever received (an SSRF-block, a credential fault, a
- * network-level outage) — those faults have no vendor status to report.
+ * `httpStatus` — set ONLY when the fault came from an actual HTTP response AND
+ * that response's status was an INTEGER (e.g. `404`); a caller
+ * (`adapter-core.ts`'s `faultToError`, `drive.ts`'s 404→`not_found` promotion)
+ * branches on THIS numeric field, never on `detail`'s string shape (§S — a prior
+ * round matched `detail === "HTTP 404"` and silently broke when the format
+ * changed). Absent when no HTTP response was ever received (an SSRF-block, a
+ * credential fault, a network-level outage) and when the response carried a
+ * non-integer status — neither has a vendor status worth branching on.
  *
  * `faultDetail` — the CLOSED sub-reason for exactly those statusless faults (see
  * `TransportFaultDetail`). It is what an operator reads to tell a locked Keychain
  * apart from an SSRF-blocked host, both of which are `fault:"rejected"` with no
  * `httpStatus`. That reading only works where a transport SETS the field:
- * `createWriteHttpTransport` sets it at all ten of its statusless fault returns,
- * so for the real HTTP write path the distinction holds; for any other transport
- * it holds exactly as far as that transport populates it. OPTIONAL by design — a
- * transport that omits it renders exactly as before the field existed. `detail`
- * is unchanged and still never reaches `AdapterError.message`.
+ * `createWriteHttpTransport` sets it at every one of its nine statusless fault
+ * returns (eleven tokens — the credential-unavailable return fans out over the
+ * three unavailability reasons), so for the real HTTP write path the distinction
+ * holds; for any other transport it holds exactly as far as that transport
+ * populates it. OPTIONAL by design — a transport that omits it renders exactly as
+ * before the field existed. `detail` is unchanged and still never reaches
+ * `AdapterError.message`.
  */
 export type TransportResponse =
   | { readonly ok: true; readonly object: TransportObject | null; readonly deduped?: boolean }

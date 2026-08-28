@@ -348,11 +348,13 @@ describe("6.4 adapters — targetSystem identity + §16 total (no throw)", () =>
 
 // F2 (this round) — the §S fix above closed a real leak channel with an instrument
 // far broader than the channel. `faultToError` built `message` from the fault code
-// alone whenever no `httpStatus` was present, and EIGHT distinct statusless
-// real-transport failures (an SSRF/allowlist block, a missing / locked / denied /
-// empty credential, a throwing credential accessor, a request-build error, a map
-// error) collapsed into THREE strings — six of them byte-identical. "Your Keychain
-// is locked" and "an SSRF guard blocked this host" rendered the same.
+// alone whenever no `httpStatus` was present, so the statusless real-transport
+// failures (an SSRF/allowlist block, a missing / locked / denied / empty
+// credential, a throwing credential accessor, a request-build error, a
+// non-integer status, a malformed body, a network outage, a map error) collapsed
+// into THREE strings — six of them byte-identical. "Your Keychain is locked" and
+// "an SSRF guard blocked this host" rendered the same. (For the exact count, the
+// producer's own suite is authoritative: write-http-transport.test.ts.)
 //
 // The fix reopens the DISTINCTION without reopening the CHANNEL: `faultDetail` is a
 // closed union of module-local literals in transport.ts. A hostile or buggy
@@ -460,5 +462,64 @@ describe("6.4 adapter-core — a CLOSED faultDetail distinguishes statusless fau
     if (res.ok) return;
     expect(res.error.message).toBe("target system unreachable");
     expect(res.error.faultDetail).toBeUndefined();
+  });
+});
+
+// ── drive.ts's `promoteNotFound` — a PASS-THROUGH wrapper, not a re-constructor.
+//    It used to rebuild the promoted error as `{code, message, httpStatus}`, which
+//    dropped `faultDetail` on the floor and would drop any field added to
+//    `AdapterError` later. Inert on today's real transport (a 404 carries an
+//    httpStatus, so it never carries a faultDetail), but a per-vendor
+//    `mapResponse` can return both, and "a wrapper where new fields go to die" is
+//    the built-but-unwired shape one layer down. Spreading is the fix; these pin
+//    it in BOTH directions — what the promotion changes, and what it must not. ──
+describe("6.4 drive — promoteNotFound changes ONLY the code", () => {
+  const notFoundFault: TransportResponse = {
+    ok: false,
+    fault: "rejected",
+    detail: "HTTP 404",
+    httpStatus: 404,
+    faultDetail: "credential_locked",
+  };
+
+  it("promotes a 404 `rejected` to `not_found` while PRESERVING faultDetail, httpStatus and message", async () => {
+    const { transport } = makeTransport({ create: async () => notFoundFault });
+    const adapter = createDriveWriteAdapter({ transport, clock });
+    const res = await adapter.create(makeEnvelope({ targetSystem: "drive" }), { title: "x" });
+
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error.code).toBe("not_found"); // the ONE intended change
+    expect(res.error.httpStatus).toBe(404);
+    expect(res.error.faultDetail).toBe("credential_locked");
+    expect(res.error.message).toBe("HTTP 404");
+  });
+
+  it("the promotion is exactly a code swap — every other key is byte-identical to the unpromoted error", async () => {
+    // Non-vacuity for the pin above: compare the promoted error against the SAME
+    // fault run through an adapter with no promotion wrapper. Any field the
+    // wrapper adds, drops or rewrites shows up here, including fields added to
+    // AdapterError after this test was written.
+    const { transport: promotingTransport } = makeTransport({ create: async () => notFoundFault });
+    const { transport: plainTransport } = makeTransport({ create: async () => notFoundFault });
+    const env = makeEnvelope({ targetSystem: "drive" });
+    const promoted = await createDriveWriteAdapter({ transport: promotingTransport, clock }).create(env, { title: "x" });
+    const plain = await createCalendarWriteAdapter({ transport: plainTransport, clock }).create(env, { title: "x" });
+
+    if (promoted.ok || plain.ok) throw new Error("expected two faults");
+    expect({ ...promoted.error, code: plain.error.code }).toEqual({ ...plain.error });
+  });
+
+  it("a NON-404 rejected fault is not promoted and is passed through untouched", async () => {
+    const forbidden: TransportResponse = { ok: false, fault: "rejected", detail: "HTTP 403", httpStatus: 403 };
+    const { transport } = makeTransport({ create: async () => forbidden });
+    const res = await createDriveWriteAdapter({ transport, clock }).create(
+      makeEnvelope({ targetSystem: "drive" }),
+      { title: "x" },
+    );
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error.code).toBe("rejected");
+    expect(res.error.httpStatus).toBe(403);
   });
 });

@@ -31,27 +31,32 @@
 //       fault:"unreachable" }` with the raw cause DISCARDED — `unreachable` is the
 //       outbox-hold signal (see outbox-drain.ts's module header).
 //   (5) POSITIVE 2xx gate — a non-integer / <200 / ≥300 status is a fault, NEVER a
-//       success. 409/412 ⇒ `"conflict"` (a stale precondition — NEVER a blind
-//       overwrite); 408/425/429 ⇒ `"unreachable"` — the vendor said "later", not
-//       "no" (see `RETRYABLE_4XX`); other 4xx ⇒ `"rejected"` (terminal); 5xx ⇒
-//       `"unreachable"`; anything else (1xx/3xx/NaN/out-of-range) ⇒ `"unknown"`.
-//       `detail` carries ONLY the safe
+//       success. Status `0` ⇒ `"unreachable"` (the client convention for "no
+//       response obtained" — the same event as step 4's throw; see
+//       `statusToFault`); 409/412 ⇒ `"conflict"` (a stale precondition — NEVER a
+//       blind overwrite); 408/425/429 ⇒ `"unreachable"` — the vendor said
+//       "later", not "no" (see `RETRYABLE_4XX`); other 4xx ⇒ `"rejected"`
+//       (terminal); 5xx ⇒ `"unreachable"`; anything else (1xx/3xx/NaN/
+//       out-of-range) ⇒ `"unknown"`. `detail` carries ONLY the safe
 //       status number in prose (`"HTTP <n>"`); `httpStatus` carries the SAME
 //       number as a structured field (§S) — the one a caller must branch on
 //       (adapter-core.ts's `faultToError`, drive.ts's 404 promotion), never
-//       `detail`'s string shape.
+//       `detail`'s string shape. A NON-INTEGER status has no `httpStatus` to
+//       carry, so it takes a `faultDetail: "malformed_status"` token instead.
 //   (6) Parse the 2xx body; a parse failure (including an EMPTY 204 body) ⇒ a
 //       redacted `"unknown"` fault — the raw body is NEVER echoed.
 //   (7) Map via the per-vendor CANDIDATE `spec.mapResponse` — wrapped so a throw
 //       (which could embed raw response content) becomes a redacted `"unknown"`
 //       fault, never propagating.
 //
-// EVERY statusless fault this template returns (one that never received an HTTP
-// response, so it carries no `httpStatus`) ALSO carries a closed
-// `TransportFaultDetail` token. This template is the PRODUCER that makes
-// transport.ts's `faultDetail` field mean something: without it the six
-// statusless `rejected` faults below (SSRF-block, four credential reasons, a
-// throwing accessor) render byte-identically downstream as "request rejected".
+// EVERY statusless fault this template returns (one that carries no usable
+// `httpStatus` — either no HTTP response arrived, or its status was not an
+// integer) ALSO carries a closed `TransportFaultDetail` token. This template is
+// the PRODUCER that makes transport.ts's `faultDetail` field mean something:
+// without it the six statusless `rejected` faults below (SSRF-block, four
+// credential reasons, a throwing accessor) render byte-identically downstream as
+// "request rejected". NINE return sites, ELEVEN tokens — the credential-
+// unavailable return fans out over the three `WriteSecretUnavailableReason`s.
 //
 // DORMANT + UNBOUND: no production call-site. The worker's `WriteTransportGate`
 // (backends.ts) stays unset; `selectAdapterTransport` keeps returning the
@@ -169,12 +174,28 @@ function trimTrailingSlash(endpoint: string): string {
  */
 const RETRYABLE_4XX: ReadonlySet<number> = new Set([408, 425, 429]);
 
-/** Positive-2xx-gate status→fault map (step 5). 409/412 ⇒ conflict (a stale
- *  precondition — NEVER a blind overwrite); a RETRYABLE_4XX ⇒ unreachable (the
- *  vendor said "later"); other 4xx ⇒ rejected (terminal); 5xx ⇒ unreachable
- *  (the outbox-hold signal); anything else (1xx/3xx/NaN/out-of-range, including a
- *  NaN status where every numeric comparison is false) ⇒ unknown. */
+/** Positive-2xx-gate status→fault map (step 5). Status 0 ⇒ unreachable (see
+ *  below); 409/412 ⇒ conflict (a stale precondition — NEVER a blind overwrite);
+ *  a RETRYABLE_4XX ⇒ unreachable (the vendor said "later"); other 4xx ⇒ rejected
+ *  (terminal); 5xx ⇒ unreachable (the outbox-hold signal); anything else
+ *  (1xx/3xx/NaN/out-of-range, including a NaN status where every numeric
+ *  comparison is false) ⇒ unknown.
+ *
+ *  WHY STATUS 0 IS UNREACHABLE, NOT UNKNOWN. `0` is the near-universal client
+ *  convention for "no HTTP response was obtained" — a DNS/TLS/connection failure,
+ *  a timeout, an abort, a blocked cross-origin request. XHR, and the wrappers
+ *  layered on `fetch` that catch a rejection and report a synthetic response,
+ *  all use it. That is the SAME event the step-5 `catch` arm below already
+ *  classifies `unreachable`; the only difference is whether the injected
+ *  `HttpTransport` signalled it by throwing or by returning. Classifying the two
+ *  encodings differently made the disposition depend on an implementation detail
+ *  of the injected client rather than on what happened. The hazard runs both
+ *  ways and was checked: `unreachable` is the retryable arm, so a permanent
+ *  failure mislabelled `0` would be retried — but `outbox-drain.ts`'s backoff is
+ *  bounded, and the opposite error (terminating a transient outage) is the one
+ *  that loses a write outright. */
 function statusToFault(status: number): TransportFault {
+  if (status === 0) return "unreachable";
   if (status === 409 || status === 412) return "conflict";
   if (RETRYABLE_4XX.has(status)) return "unreachable";
   if (status >= 400 && status < 500) return "rejected";
@@ -292,11 +313,19 @@ export function createWriteHttpTransport(spec: WriteHttpSpec, deps: WriteHttpTra
     //     STRUCTURED numeric field (absent for a non-integer status, e.g. NaN) —
     //     a caller branches on this, never on `detail`'s "HTTP <n>" string shape.
     if (!Number.isInteger(response.status) || response.status < 200 || response.status >= 300) {
+      // A non-integer status has no `httpStatus` to carry, so it is STATUSLESS in
+      // the operative sense and needs a `faultDetail` token like every other one:
+      // without it, a NaN status and a garbage 1.5 both render as the bare
+      // `"unclassified adapter fault"` — the same sentence a malformed body and a
+      // throwing `mapResponse` produce.
+      const isInteger = Number.isInteger(response.status);
       return {
         ok: false,
         fault: statusToFault(response.status),
         detail: `HTTP ${response.status}`,
-        ...(Number.isInteger(response.status) ? { httpStatus: response.status } : {}),
+        ...(isInteger
+          ? { httpStatus: response.status }
+          : { faultDetail: "malformed_status" as const }),
       };
     }
 

@@ -92,20 +92,23 @@ export interface ExistingObject {
  * format changed; a typed field cannot drift out from under a string match
  * the same way.
  *
- * `faultDetail` — the closed sub-reason for a STATUSLESS fault (one that never
- * received an HTTP response, so `httpStatus` is absent): an SSRF/allowlist
- * block, a missing/locked/denied/empty write credential, a throwing credential
- * accessor, a network-level outage, a throwing `buildRequest`, a malformed
- * body, a throwing `mapResponse`.
+ * `faultDetail` — the closed sub-reason for a STATUSLESS fault (one with no
+ * usable `httpStatus`, because no HTTP response arrived or its status was not an
+ * integer): an SSRF/allowlist block, a missing/locked/denied/empty write
+ * credential, a throwing credential accessor, a network-level outage, a throwing
+ * `buildRequest`, a non-integer status, a malformed body, a throwing
+ * `mapResponse`.
  *
  * It is what separates the SIX statusless failures that all carry
  * `code:"rejected"` (the SSRF block, the throwing accessor, and the four
  * credential reasons) and would otherwise render one identical sentence — and
- * likewise the three that share `code:"unknown"`. STATE THAT PRECISELY: the
+ * likewise the four that share `code:"unknown"`. STATE THAT PRECISELY: the
  * separation is a property of the TRANSPORT that fills the field, not of this
- * type. `createWriteHttpTransport` sets it at all ten of its statusless fault
- * returns, so on the real HTTP write path a locked Keychain and an SSRF-blocked
- * host do not read alike (pinned end-to-end by write-http-transport.test.ts).
+ * type. `createWriteHttpTransport` sets it at every one of its NINE statusless
+ * fault returns — which yield ELEVEN distinct tokens, the credential-unavailable
+ * return fanning out over its three reasons — so on the real HTTP write path a
+ * locked Keychain and an SSRF-blocked host do not read alike (pinned end-to-end
+ * by write-http-transport.test.ts).
  * A transport that omits it — a test fake, a hand-rolled per-vendor
  * `mapResponse` — renders as it did before the field existed, and this comment
  * claims nothing about it.

@@ -39,9 +39,15 @@ import { makeTargetWriteAdapter } from "./adapter-core";
 // branching on the typed `httpStatus` field — NEVER on `message`'s prose (see
 // module header §S FIX). Every other fault (a different 4xx, a conflict, an
 // outage, unknown) passes through unchanged.
+// SPREAD, don't re-enumerate: this used to rebuild the error as
+// `{code, message, httpStatus}`, which silently DROPPED `faultDetail` (and would
+// drop any field added to `AdapterError` later). Inert today — a 404 carries an
+// `httpStatus`, so it never carries a `faultDetail` — but re-listing the fields
+// makes this wrapper a place a new field goes to die. Promoting the code is the
+// ONLY change this makes.
 function promoteNotFound(error: AdapterError): AdapterError {
   return error.code === "rejected" && error.httpStatus === 404
-    ? { code: "not_found", message: error.message, httpStatus: error.httpStatus }
+    ? { ...error, code: "not_found" }
     : error;
 }
 
