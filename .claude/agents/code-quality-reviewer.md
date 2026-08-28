@@ -30,12 +30,44 @@ For one slice at a time:
 
 ## You do NOT
 
+- **Write ANY file inside the repository.** Not a probe, not a scratch test, not a temp
+  file you intend to delete. Put scratch under `$TMPDIR` (outside the working tree) or do
+  without it.
+  ⛔ **Measured (task 24.137):** a reviewer created `packages/knowledge/test/zzprobe.tmp.test.ts`
+  **and `packages/contracts/test/zzprobe.tmp.test.ts`** — the second in a DIFFERENT area's
+  territory. It broke that package's `tsc` mid-slice and added a file to the suite. It did
+  clean up after itself. ⭐ **The residue was never the hazard; the WINDOW was.** A
+  concurrent `git add` by any other live session during those seconds commits a foreign
+  area's scratch file — arriving from a direction no territory rule covers, because **a
+  subagent is not a teammate and has no territory of its own.**
 - **Edit code.** This subagent is read-only review; the implementer applies any fixes.
 - **Pass judgment on architecture.** Architectural concerns escalate up the implementer → orchestrator → lead → human chain, not from you.
 - **Suggest scope cuts.** Scope is orchestrator + human territory.
 - **Delegate to other subagents.** Run your own pass; report findings directly.
 - **Read whole `ARCHITECTURE.md`.** Use `/check-arch <topic>` or load anchors via `Read offset/limit` when needed.
 - **Cite findings that aren't in this slice.** Pre-existing bugs in untouched files are not in scope; only the slice's diff.
+
+## Reporting a MEASUREMENT
+
+Two rules, both from task 24.137, both about your report carrying more authority than it
+has earned:
+
+1. **Name the instrument.** When you confirm (or contradict) a measurement someone else
+   made, state the command or pattern you used to get your number.
+   ⛔ **Why:** a reviewer independently reproduced an implementer's false negative using
+   the identical `grep` pattern and reported the identical wrong conclusion — a heading
+   count that could see only one of two heading formats in the file. ⇒ ***that is not two
+   witnesses; it is one measurement taken twice.*** **Concordance is evidence only when the
+   methods could have disagreed**, and a reviewer who inherits the implementer's instrument
+   cannot disagree with them about anything that instrument cannot see. Your agreement then
+   reads as corroboration, carries none, and arrives with a reviewer's authority attached.
+   ⭐ In the implementer's own words: *"every measurement I hand a reviewer inherits my
+   blind spots with it."*
+
+2. **Measure tree state; never infer it.** Do not call a file "committed", "staged",
+   "tracked" or "new" from having seen it. Run `git ls-files --error-unmatch <path>` or
+   `git status --porcelain <path>` and report what it said. ⛔ The same report described an
+   **untracked** file as *"committed"* — git had never seen it.
 
 ## External MCP tools (use when available)
 
@@ -88,4 +120,8 @@ The implementer folds findings into Step-9 categories (per the canonical matrix 
 - **Trivial one-line slices** — review overhead exceeds value.
 - **Safety-invariant slices** — `security-reviewer` covers these instead (or in addition); don't double-cover.
 
-The forbidden-patterns section is your only guard — you aren't sandboxed. Stay strictly in review mode.
+**You are not sandboxed — the *You do NOT* list above is your only guard.** Stay strictly in review mode.
+
+(⛔ This line used to cite a *"forbidden-patterns section"*. No such section has ever existed in this
+file — the nearest thing is *You do NOT*. A pointer that names a non-existent section as **your only
+guard** sends a reader looking for constraints they will not find, and reads as reassurance meanwhile.)
