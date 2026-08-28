@@ -146,22 +146,42 @@ export const DEFAULT_PROJECTION_TYPE_VISIBILITY_TAXONOMY: ProjectionTypeVisibili
  *     is `packages/knowledge/test/gcl-projection.test.ts`.
  *   • `serveProjection` ← `createGclProjectionGate` (`packages/workflows/src/activities/
  *     gclProjectionGate.ts`), whose `sourceWorkspace` is `lookupWorkspace(candidate.workspaceId)`
- *     — an INJECTED function bound at exactly one site (`deps.gclProjection.lookupWorkspace`,
- *     `outputWorkflows.ts:347`) inside `createOutputWorkflowActivities`, which itself has ZERO
- *     production callers in `apps/worker/src` (only self-referential mentions inside its own
- *     package; the worker composition root never calls it — its own file names this Phase
- *     25.2/25.4).
+ *     — an INJECTED function bound at exactly one site (`deps.gclProjection.lookupWorkspace`)
+ *     inside `createOutputWorkflowActivities`.
+ *     ⛔⛔ RE-DERIVED 2026-08-28 AND THIS LEG HAS CHANGED — the trigger this note itself names
+ *     ("re-derive this note when that binding lands") HAS FIRED, and nobody ran it until now.
+ *     ~~"which itself has ZERO production callers in `apps/worker/src` … the worker composition
+ *     root never calls it"~~ — STRUCK AND RETAINED. `apps/worker/src/composition/
+ *     buildActivities.ts:1617` NOW CALLS IT, ungated. So this leg reaches a production entry
+ *     point: `serveProjection` ← `createGclProjectionGate` (`outputWorkflows.ts:423`) ←
+ *     `createOutputWorkflowActivities` ← the composition root.
  *   • `serveProjection` ← `resolveApprovedCrossWorkspaceSlice` (`apps/worker/src/composition/
  *     crossWorkspaceRead.ts`), whose `sourceWorkspace` IS a real, wired store read
  *     (`deps.workspaceConfig.get(link.toWorkspaceId)`) — but that function itself has ZERO
  *     production callers (its own module header: "ships behind a reachability waiver until
  *     25.2/25.4"; re-confirmed here, not merely relayed from that comment).
- * ⇒ ABSENCE STATED, not an entry point resolved: `sourceWorkspace` reaches this function via NO
- * production entry point today — the write leg and both read legs each terminate at a function
- * with zero production callers. This does not make the descriptor/`[[Get]]` divergence above
- * safe forever, only unexposed on the chains that exist NOW; the same Phase-25.2/25.4 binding
- * that would arm any of the three chains is what would open one — re-derive this note when that
- * binding lands, don't inherit it as still true.
+ * ⇒ ⛔ THE ABSENCE CONCLUSION IS NO LONGER TRUE, AND THE SAFETY PROPERTY STILL HOLDS — for a
+ * DIFFERENT REASON THAN THIS NOTE GAVE, which is exactly why it had to be re-derived rather
+ * than inherited. ~~"`sourceWorkspace` reaches this function via NO production entry point
+ * today — the write leg and both read legs each terminate at a function with zero production
+ * callers"~~ — STRUCK AND RETAINED (`L194`).
+ *   • WRITE leg (`admitAndPersistProjection`) — still ZERO src call sites. UNCHANGED.
+ *   • READ leg via `resolveApprovedCrossWorkspaceSlice` — still ZERO src call sites of its own.
+ *     UNCHANGED.
+ *   • READ leg via `createGclProjectionGate` — ⛔ NOW LIVE to the composition root (above).
+ * ⭐ WHAT ACTUALLY DEFUSES THE DIVERGENCE IS ALREADY DOCUMENTED TWO PARAGRAPHS UP AND IS
+ * UNAFFECTED: `serveProjection` delegates to `admitProjection` (`projection.ts:227`), whose
+ * `GclProjectionSchema.safeParse` constructs a FRESH plain object before this function sees the
+ * candidate; and both production producers of a `Workspace` terminate in `WorkspaceSchema.parse()`,
+ * so `sourceWorkspace` is a fresh plain object too. ⇒ the gate was never resting on the absence —
+ * it rests on the Zod stages, and the absence was a second, weaker belt that has now gone.
+ * ⚠ THE LESSON, because the note did everything right and still went stale: it named its own
+ * re-derivation trigger, stated its METHOD, and pinned the commit — and the trigger fired
+ * silently anyway, because NOTHING WATCHES A TRIGGER. A re-derivation condition written in prose
+ * is a request, not a mechanism.
+ * ⚠ AND A MEASUREMENT WARNING FROM RE-RUNNING IT: an `rg | head -6` while re-deriving this
+ * returned only comment hits and looked like "the symbol does not exist" — output ORDER is not
+ * stable, so a truncated search is not evidence of absence. Re-run unbounded before concluding.
  * METHOD: `grep -rn "admitAndPersistProjection(\|serveProjection(\|createGclProjectionGate\|
  * resolveApprovedCrossWorkspaceSlice" packages apps --include='*.ts'`, every SRC hit read to
  * classify test vs production caller. BOUNDARY: `packages/knowledge/src`, `packages/workflows/

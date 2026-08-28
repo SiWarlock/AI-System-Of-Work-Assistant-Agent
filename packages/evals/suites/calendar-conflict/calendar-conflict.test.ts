@@ -12,8 +12,19 @@
 //     (src/workflows/crossCalendarScheduling.ts), over inline activity-port fakes +
 //     an inline in-memory WorkflowRun repo + FakeClock (pure literals, no clock/RNG).
 //   • createProposeWindowsActivity / isGenericExplanation / payloadCarriesRawContent —
-//     the REAL deriver + its load-bearing Flow-3 leakage guards
-//     (src/activities/proposeWindows.ts).
+//     the REAL deriver + its Flow-3 leakage guards (src/activities/proposeWindows.ts).
+//     ⛔ TASK `### 24.47` ASKED FOR THE OPPOSITE EDIT, AND ITS PREMISE HAS SINCE INVERTED —
+//     recorded here because following it now would have written a FALSE REASSURANCE onto a
+//     WS-8 / Flow-3 surface. 24.47 says this comment "still calls the guards load-bearing after
+//     `### 24.32` corrected the same claim at its source", and asks that the eval be brought
+//     into line with `proposeWindows.ts`. But `proposeWindows.ts` said "zero production
+//     callers", and re-measured 2026-08-28 that is no longer true: the activity is reached from
+//     `buildActivities.ts:1617` and the workflow is in the registered bundle. The SOURCE was
+//     corrected instead, and this comment now states the same boundary it does.
+//     ⭐ THE PRECISE STATE: BOUND + REGISTERED; the schedule TRIGGER is default-OFF (`### 25.4`).
+//     One arming flip from running — not unreachable, and not unconditionally live either.
+//     ⚠ THE GENERAL POINT: a task that says "make A match B" goes stale when B moves, and it
+//     goes stale INVISIBLY, because the task still reads as a tidy-up. Re-measure both sides.
 //   • crossCalendarSchedulingMachine — the real §9 state machine.
 //
 // §20.1 acceptance bullets exercised (task 12.9):

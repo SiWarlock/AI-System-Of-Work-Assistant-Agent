@@ -77,10 +77,21 @@ export function isGenericExplanation(s: string | undefined): boolean {
  *
  * WHERE this check belongs: it runs over the ACTUALLY-DISPATCHED payload (the
  * object that rides the Tool Gateway onto the external calendar event), never the
- * decoy `genericExplanation` descriptor field alone. It is NOT load-bearing today —
- * `createProposeWindowsActivity` has zero production callers (task 24.32's own
- * reachability establishment, grep-and-classify, every hit read); this is where the
- * Flow-3 leakage check will matter once the activity is wired.
+ * decoy `genericExplanation` descriptor field alone.
+ *
+ * ⛔⛔ RE-MEASURED 2026-08-28 — THE ACTIVITY IS WIRED NOW, AND THIS CLAIM WAS STALE IN THE
+ * REASSURING DIRECTION ON A WS-8 / FLOW-3 LEAKAGE GUARD. ~~"It is NOT load-bearing today —
+ * `createProposeWindowsActivity` has zero production callers"~~ — STRUCK AND RETAINED (`L194`).
+ * It was true when `### 24.32` measured it. At HEAD the chain is:
+ *   `createProposeWindowsActivity` ← `outputWorkflows.ts:488` (inside
+ *   `createOutputWorkflowActivities`) ← `apps/worker/src/composition/buildActivities.ts:1617`,
+ *   ungated; and `crossCalendarSchedulingWorkflow` (`apps/worker/src/temporal/workflows.ts:1130`)
+ *   is in the registered sandbox bundle.
+ * ⚠ STATE THE BOUNDARY PRECISELY RATHER THAN SWAPPING ONE ABSOLUTE FOR ANOTHER: the activity is
+ * BOUND and REGISTERED. What is still off is the TRIGGER — `### 25.4`'s schedule spec is
+ * default-OFF (`scheduleRegistrar.ts:532`). ⇒ this guard is ONE ARMING FLIP from running, which
+ * is a different thing from unreachable, and the difference is the whole reason to correct the
+ * line rather than leave it.
  */
 export { payloadCarriesRawContent };
 
