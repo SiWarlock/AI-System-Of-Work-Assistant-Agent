@@ -402,6 +402,27 @@ export async function runNotebookLmSync(
   const needsReattach = result.reattachRequired.length > 0;
   const heldForOutage = result.heldForRetry.length > 0;
 
+  /**
+   * The operator-facing description of a hold.
+   *
+   * ⛔ This was a fixed literal asserting "Drive outage" for EVERY hold, so a
+   * locked Keychain, a rate limit and a genuine outage produced a BYTE-IDENTICAL
+   * health item — three different remedies (unlock it / wait / investigate) behind
+   * one sentence. The port now carries `heldDetail`, so say what actually happened.
+   *
+   * `heldDetail` is optional on the port, so degrade HONESTLY when it is absent:
+   * name the slots and say the cause is unavailable, rather than asserting a cause
+   * we do not have. Claiming "Drive outage" without evidence is what this fixes.
+   */
+  const describeHeld = (r: NotebookSyncResult): string => {
+    const detail = r.heldDetail;
+    if (detail === undefined || detail.length === 0) {
+      return `notebook slots held for retry (cause unavailable): ${r.heldForRetry.join(", ")}`;
+    }
+    const per = detail.map((d) => `${d.slot} (${d.adapterCode ?? "no adapter code"}: ${d.reason})`);
+    return `notebook slots held for retry: ${per.join("; ")}`;
+  };
+
   // When BOTH a reattach signal and an outage-hold occur, reattach becomes the resting
   // state (it needs operator action) — so the outbox-hold class would otherwise go
   // un-surfaced. Surface it as its own DISTINCT 7.5 item here so both are recorded (inv-5).
@@ -410,7 +431,7 @@ export async function runNotebookLmSync(
     await deps.health.surface({
       failureClass: failureClassFor("outbox_held"),
       subjectRef: input.run.workflowId,
-      message: `notebook slots held in outbox on Drive outage (retry on reconnect): ${result.heldForRetry.join(", ")}`,
+      message: describeHeld(result),
       auditRef: input.run.workflowId as unknown as AuditId,
     });
   }
@@ -430,7 +451,7 @@ export async function runNotebookLmSync(
     state = advance(state, ["outbox_held"]);
     return surface(
       state,
-      `notebook slots held in outbox on Drive outage (retry on reconnect): ${result.heldForRetry.join(", ")}`,
+      describeHeld(result),
       result,
     );
   }

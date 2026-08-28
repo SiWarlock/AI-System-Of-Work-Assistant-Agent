@@ -178,17 +178,49 @@ function emitCommitDiagnostics(
 // never logged, never bound onward, never in a fault (rule 7). A throwing accessor is
 // caught and held (§16 — never propagates). The held reason is CODE-ONLY (the closed-set
 // unavailability code, never the token or the raw keychain ref).
+/**
+ * A credential fault plus its DISPOSITION.
+ *
+ * ⛔ Every verdict used to return `{status: "held"}`, which is the outbox
+ * retry-with-backoff signal — so a permanently DENIED or entirely MISSING
+ * credential was retried forever. Measured: twelve drain passes over a denied
+ * credential left the entry `retry_queued`, and it can never become anything else
+ * (`outbox-drain.ts` returns `backoffCfg.maxMs` on EXHAUSTED rather than a
+ * terminal state), so the operator sees an entry that retries until someone looks.
+ *
+ * The split is whether RETRYING CAN HELP, which is a property of the reason:
+ *   • `locked`  — the Keychain is locked. Unlocking it fixes this, and the retry
+ *                 will then succeed on its own. RETRYABLE.
+ *   • a THROW   — an accessor fault of unknown kind; a retry is cheap and may
+ *                 succeed, so fail SAFE toward retrying. RETRYABLE.
+ *   • `missing` / `denied` / `empty` — no credential is provisioned, or the ACL
+ *                 refuses, or it is blank. No number of retries provisions a
+ *                 secret; this needs an owner. TERMINAL.
+ */
+interface WriteCredentialFault {
+  readonly reason: string;
+  readonly retryable: boolean;
+}
+
 async function resolveWriteCredentialFault(
   secrets: WriteSecretsAccessor,
   targetSystem: ExternalWriteEnvelope["targetSystem"],
-): Promise<string | null> {
+): Promise<WriteCredentialFault | null> {
   try {
     const got = await secrets.getSecret(writeSecretRef(targetSystem));
-    if (!got.ok) return `write credential unavailable: ${got.error.reason}`;
-    if (got.value.trim().length === 0) return "write credential unavailable: empty";
+    if (!got.ok) {
+      return {
+        reason: `write credential unavailable: ${got.error.reason}`,
+        // `locked` is the ONE reason an unattended retry can clear on its own.
+        retryable: got.error.reason === "locked",
+      };
+    }
+    if (got.value.trim().length === 0) {
+      return { reason: "write credential unavailable: empty", retryable: false };
+    }
     return null;
   } catch {
-    return "write credential resolution faulted";
+    return { reason: "write credential resolution faulted", retryable: true };
   }
 }
 
@@ -236,7 +268,12 @@ export async function dispatchExternalWrite(
   if (deps.secrets !== undefined) {
     const credentialFault = await resolveWriteCredentialFault(deps.secrets, env.targetSystem);
     if (credentialFault !== null) {
-      return { status: "held", reason: credentialFault };
+      // Route on whether a retry CAN help (see WriteCredentialFault): a locked
+      // Keychain holds for backoff; a missing/denied/empty credential is terminal
+      // and needs an owner, so parking it in the outbox only hides it.
+      return credentialFault.retryable
+        ? { status: "held", reason: credentialFault.reason }
+        : { status: "rejected", reason: credentialFault.reason };
     }
   }
 

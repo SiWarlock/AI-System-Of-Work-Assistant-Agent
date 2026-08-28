@@ -96,15 +96,35 @@ describe("credential seam — resolve at dispatch, fail closed, token never logg
     expect(getSecret).toHaveBeenCalledWith("keychain://telegram-bot/*");
   });
 
-  it.each(["missing", "locked", "denied"] as const)(
-    "an unavailable accessor (%s) fails the dispatch CLOSED — held, NO existence probe, NO create",
+  // ⛔ WHY THIS SPLIT — the previous single case asserted `held` for ALL THREE
+  // reasons, conflating two different properties under the phrase "fails closed":
+  //   • FAIL CLOSED  = do not proceed to a vendor call. True for all three, and
+  //                    still asserted below for all three.
+  //   • `held`       = enqueue for outbox retry WITH BACKOFF. That is a claim that
+  //                    RETRYING CAN HELP, and it is false for `missing`/`denied`.
+  // Measured consequence of the old behaviour: twelve drain passes over a
+  // permanently-denied credential left the entry `retry_queued`, and it can never
+  // leave that state (`outbox-drain.ts` returns `backoffCfg.maxMs` on EXHAUSTED),
+  // so a credential the owner must fix retried silently until someone looked.
+  it("a LOCKED keychain is HELD — retrying can help once it is unlocked", async () => {
+    const { deps, spies } = makeDeps(unavailable("locked"));
+    const { action, env } = envFor("asana");
+    const out = await dispatchExternalWrite(env, action, deps);
+    expect(out.status).toBe("held");
+    expect(spies.existenceCalls()).toBe(0); // the gate runs BEFORE the vendor existence probe
+    expect(spies.createCalls()).toBe(0); // no unauthenticated write
+  });
+
+  it.each(["missing", "denied"] as const)(
+    "an unavailable accessor (%s) is TERMINAL — no retry can provision a credential",
     async (reason) => {
       const { deps, spies } = makeDeps(unavailable(reason));
       const { action, env } = envFor("asana");
       const out = await dispatchExternalWrite(env, action, deps);
-      expect(out.status).toBe("held");
-      expect(spies.existenceCalls()).toBe(0); // the gate runs BEFORE the vendor existence probe
-      expect(spies.createCalls()).toBe(0); // no unauthenticated write
+      expect(out.status).toBe("rejected");
+      // Unchanged and still load-bearing: fail-closed means no vendor call at all.
+      expect(spies.existenceCalls()).toBe(0);
+      expect(spies.createCalls()).toBe(0);
     },
   );
 
@@ -126,12 +146,14 @@ describe("credential seam — resolve at dispatch, fail closed, token never logg
     expect(serialized.includes(TOKEN)).toBe(false);
   });
 
-  it("a blank / whitespace-only token fails the dispatch CLOSED (empty ≠ authenticated)", async () => {
+  it("a blank / whitespace-only token is TERMINAL (empty ≠ authenticated, and a retry cannot fill it)", async () => {
     for (const blank of ["", "   "]) {
       const { deps, spies } = makeDeps(returning(blank));
       const { action, env } = envFor("asana");
       const out = await dispatchExternalWrite(env, action, deps);
-      expect(out.status).toBe("held");
+      // Was `held`. A blank token is a provisioning defect an owner must fix —
+      // parking it in the retry outbox hid it behind an endless backoff.
+      expect(out.status).toBe("rejected");
       expect(spies.createCalls()).toBe(0); // a blank token is not proof of auth
     }
   });

@@ -323,7 +323,16 @@ describe("createNotebookLmSync — hold-through-outage (§8: a held write is enq
     if (due.ok) expect(due.value).toHaveLength(5);
   });
 
-  it("without an outbox wired, an unreachable hold fails the sync closed (backward-compatible)", async () => {
+  // ⛔ THIS TEST PREVIOUSLY ASSERTED THE DEFECT, and its own name said so:
+  // "an unreachable hold fails the sync closed (backward-compatible)". Whether an
+  // outbox happens to be wired is an AUTO-RETRY CONVENIENCE — it has nothing to do
+  // with whether this particular write can succeed later, so it must not change the
+  // CLASSIFICATION of the fault. Under the old behaviour a Drive 429, a 503 or a
+  // network outage failed the WHOLE five-slot sync closed on any deployment that
+  // had not bound an outbox.
+  // The hold is still not silent: the slot is reported held WITH its cause, it is
+  // simply not retried unattended.
+  it("without an outbox wired, an unreachable hold is still HELD (not a hard failure) and carries its cause", async () => {
     const store = new InMemoryReceiptStore();
     const { deps: gatewayDeps } = makeGatewayDeps(unreachableAdapter, store);
     const port = createNotebookLmSync({
@@ -333,7 +342,14 @@ describe("createNotebookLmSync — hold-through-outage (§8: a held write is enq
     });
 
     const res = await port.sync(makeMapping(), makeBodies());
-    expect(res.ok).toBe(false);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect([...res.value.heldForRetry].sort()).toEqual([...NOTEBOOK_SLOTS].sort());
+    expect(res.value.upserted).toEqual([]);
+    // The cause survives even with no outbox — otherwise an operator sees five
+    // held slots and no way to tell an outage from a locked Keychain.
+    expect(res.value.heldDetail).toHaveLength(5);
+    expect(res.value.heldDetail?.[0]?.adapterCode).toBe("unreachable");
   });
 });
 

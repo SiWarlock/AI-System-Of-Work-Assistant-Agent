@@ -51,10 +51,31 @@ export type ManagedDocBodies = Readonly<Record<NotebookSlot, string>>;
  * outbox; §8 hold-through-outage, never a dropped write). The three lists
  * partition the attempted slots; none hides a slot silently.
  */
+/**
+ * WHY one held slot was held. `heldForRetry` carries slot NAMES only, so a locked
+ * Keychain, a Drive outage and a rate limit were the SAME observation at this
+ * boundary — and the driver, having nothing else, hardcoded "Drive outage" into
+ * the operator's health item for all three. Branch on `adapterCode` (a closed
+ * value); `reason` is the operator diagnostic, redaction-safe at every `held`
+ * site by the gateway's own contract.
+ */
+export interface NotebookHeldDetail {
+  readonly slot: NotebookSlot;
+  readonly reason: string;
+  /** ABSENT when the hold did not originate from an adapter fault. */
+  readonly adapterCode?: string;
+}
+
 export interface NotebookSyncResult {
   readonly upserted: NotebookSlot[];
   readonly reattachRequired: NotebookSlot[];
   readonly heldForRetry: NotebookSlot[];
+  /**
+   * One entry per `heldForRetry` slot, same canonical 00→04 order. OPTIONAL so a
+   * pre-existing implementor stays valid; a consumer that needs the cause must
+   * degrade honestly when it is absent rather than assert one.
+   */
+  readonly heldDetail?: readonly NotebookHeldDetail[];
 }
 
 /**

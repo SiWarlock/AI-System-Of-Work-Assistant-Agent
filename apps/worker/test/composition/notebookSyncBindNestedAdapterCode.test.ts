@@ -233,9 +233,18 @@ describe("notebookSyncBind foldDispatchOutcome — the nested dispatch's real ad
     const res = await port.sync(makeMapping(), makeBodies());
 
     // An `unreachable` nested fault carries NO adapterCode "not_found" signal — it
-    // correctly still routes to a hard failure (no outbox wired on this bind), NOT
-    // a false reattach. The fix widens what SURVIVES the fold; it does not
-    // reclassify every fault as a reattach.
-    expect(res.ok).toBe(false);
+    // correctly does NOT become a false reattach. The fold's fix widens what
+    // SURVIVES it; it does not reclassify every fault as a reattach.
+    //
+    // ⛔ WAS `expect(res.ok).toBe(false)`. That asserted the defect: an
+    // `unreachable` fault is RETRYABLE by definition, and with no outbox wired it
+    // used to fail the WHOLE five-slot sync closed. The presence of an outbox is
+    // an auto-retry convenience and must not change the CLASSIFICATION of a fault,
+    // so the slot is now held (with its cause) instead — still not a reattach,
+    // which is what this test exists to pin.
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.value.reattachRequired).toEqual([]);
+    expect(res.value.heldForRetry).toEqual(["00_brief"]);
   });
 });

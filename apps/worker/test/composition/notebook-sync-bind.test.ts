@@ -383,7 +383,18 @@ describe("buildNotebookSync — an unreachable Drive hold is enqueued to the inj
     if (port === undefined) throw new Error("expected an armed port");
 
     const res = await port.sync(makeMapping(), makeBodies());
-    expect(res.ok).toBe(false);
+    // ⛔ WAS `expect(res.ok).toBe(false)` — this test asserted the defect, and its
+    // own name said so ("fails the sync closed (backward-compatible)").
+    // Whether an outbox is wired is an AUTO-RETRY CONVENIENCE; it says nothing
+    // about whether THIS write can succeed later, so it must not change the
+    // CLASSIFICATION of the fault. Under the old behaviour a Drive 429, a 503 or a
+    // network outage failed the WHOLE five-slot sync closed on any deployment that
+    // had not bound an outbox. The hold is still not silent — the slots are
+    // reported held with their cause; they are just not retried unattended.
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.value.heldForRetry).toHaveLength(5);
+    expect(res.value.upserted).toEqual([]);
   });
 });
 

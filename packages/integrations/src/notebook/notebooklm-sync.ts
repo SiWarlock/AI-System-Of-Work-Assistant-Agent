@@ -30,7 +30,7 @@
 // injected; `buildCanonicalObjectKey` / `buildIdempotencyKey` are pure.
 import { ok, err, isOk, actionId } from "@sow/contracts";
 import type { Result, ProposedAction, NotebookMapping } from "@sow/contracts";
-import { buildCanonicalObjectKey, buildIdempotencyKey } from "@sow/domain";
+import { buildCanonicalObjectKey, buildIdempotencyKey, sha256Hex } from "@sow/domain";
 import {
   dispatchExternalWrite,
   type ExternalWriteDeps,
@@ -216,8 +216,25 @@ function buildSlotAction(
   approvalPolicy: string,
 ): ProposedAction {
   const identity = { project: mapping.projectId, slot };
+  // WHICH OBJECT — stable per slot, and deliberately CONTENT-FREE: the §8 pre-write
+  // existence probe must resolve to the SAME Drive doc on every sync, so an edit
+  // updates that doc in place rather than creating a second one (safety rule 3).
   const canonicalObjectKey = buildCanonicalObjectKey({ targetSystem: "drive", identity });
-  const idempotencyKey = buildIdempotencyKey({ operation: SYNC_OPERATION, identity });
+  // WHICH WRITE — and therefore CONTENT-BEARING. ⛔ This previously keyed on the
+  // identity alone, so every sync of a slot produced the SAME idempotencyKey: the
+  // receipt store replayed the first receipt, the gateway returned `reused`, and
+  // `classifyDispatch` folded that to `upserted`. Measured consequence — a re-sync
+  // whose bodies had CHANGED issued ZERO vendor writes, carried none of the new
+  // content, and still reported `outcome: "synced"`. Edited notes never reached
+  // Drive and the caller was told the vault was in sync.
+  //
+  // Hashing the body makes the key vary with content, which is exactly the
+  // distinction rule 3 wants: an IDENTICAL re-sync is a replay (reuse the receipt,
+  // no duplicate write), a CHANGED body is a new write against the same object.
+  const idempotencyKey = buildIdempotencyKey({
+    operation: SYNC_OPERATION,
+    identity: { ...identity, bodyHash: sha256Hex(body) },
+  });
   return {
     actionId: actionId(`${SYNC_OPERATION}:${mapping.projectId}:${slot}`),
     targetSystem: "drive",
@@ -308,30 +325,36 @@ async function syncSlot(
   // The two non-adapter holds carry no `adapterCode`, so they are correctly never
   // reattach; they are enqueued with the same `"unreachable"` outbox reason,
   // which is the outbox's own retryability label, not a claim about the cause.
-  if (
-    dispatched.status === "held" &&
-    !isReattachResult(dispatched) &&
-    deps.outbox !== undefined
-  ) {
-    const held = await holdWrite(
-      {
-        env: built.value,
-        action,
-        reason: "unreachable",
-        workspaceId: deps.outbox.workspaceId,
-      },
-      deps.outbox.repo,
-      deps.outbox.hold,
-    );
-    if (!isOk(held)) {
-      return {
-        kind: "error",
-        error: {
-          code: "dispatch_failed",
-          slot,
-          message: `slot held but outbox enqueue failed: ${held.error.message}`,
+  if (dispatched.status === "held" && !isReattachResult(dispatched)) {
+    // ⛔ THE OUTBOX IS AN AUTO-RETRY CONVENIENCE, NOT THE DEFINITION OF `held`.
+    // This branch used to require `deps.outbox !== undefined`, so with no outbox
+    // wired a genuinely RETRYABLE hold — a Drive 429, a 503, a network outage, a
+    // locked Keychain — fell through to `classifyDispatch` and failed the WHOLE
+    // five-slot sync closed. Whether the operator happens to have an outbox bound
+    // is unrelated to whether this particular write can succeed later, so it must
+    // not change the CLASSIFICATION of the fault. Without an outbox the slot is
+    // still held; it simply will not be retried unattended.
+    if (deps.outbox !== undefined) {
+      const held = await holdWrite(
+        {
+          env: built.value,
+          action,
+          reason: "unreachable",
+          workspaceId: deps.outbox.workspaceId,
         },
-      };
+        deps.outbox.repo,
+        deps.outbox.hold,
+      );
+      if (!isOk(held)) {
+        return {
+          kind: "error",
+          error: {
+            code: "dispatch_failed",
+            slot,
+            message: `slot held but outbox enqueue failed: ${held.error.message}`,
+          },
+        };
+      }
     }
     // CARRY THE CAUSE. The gateway's typed fault is in hand right here and is the
     // ONLY place it exists — `heldForRetry` is slot names, so dropping it made a
