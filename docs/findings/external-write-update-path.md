@@ -7,7 +7,9 @@ C2/C3 and the `update` wiring itself are still open.
 |---|---|---|
 | 1 | `write_applications` — the applied-write ledger (schema, both dialects, contract suite). No callers. | `8851034f` |
 | 2 | Wired into the replay gate (`recordReceipt` appends; `resolveExisting` arm (a) consults it). `update` still unwired. | `392457aa` |
-| 3 | **NEXT** — enumerate every re-drive path, then ordering (C3), then `update`. | — |
+| 3 | Re-drive enumeration CLOSED (three paths, not two) + three more closed-union `default:` arms dropped. | `eff5a113` |
+| 4 | Adoption split out of the ledger (`recordAdoptedObject`) — a defect stage 2 introduced. | `3fe68ec4` |
+| 5 | **NEXT** — C4/C5 adoption-distinguishability, then C3 ordering, then C2, then the `update` wiring itself. | — |
 
 ⚠ Two lessons already paid for in stage 2, recorded so attempt 4 does not repeat them:
 - **The ledger must ADD recall, never SUBTRACT it.** Treating a ledger MISS as
@@ -96,11 +98,30 @@ Two mechanisms, not one. Attempt 2 rejected the ledger by arguing it does not fi
 1. **Replay (C1):** an applied-write ledger — every applied `idempotencyKey` recorded
    independently of the current-object row. A schema change in `packages/db` plus the
    dual-dialect contract suite, and a pruning story.
-2. **Ordering (C3):** something that makes a superseded envelope identifiable —
-   a monotonic sequence on the envelope, or a vendor precondition. ⚠ Verify first
-   that any field can carry a real version: `ExternalWriteEnvelope.preconditions` is a
-   free-form gate-name list and `WriteReceipt.rawRef` is documented as a
-   redaction-safe POINTER, not an etag.
+2. **Ordering (C3)** — ✅ **DESIGN DERIVED 2026-08-28, no contract change needed.**
+   Verified first, as this section demanded: `ExternalWriteEnvelope` has NO temporal
+   or sequence field (`actionId`, `targetSystem`, `canonicalObjectKey`,
+   `idempotencyKey`, `preconditions`, `payloadHash`), `preconditions` is a free-form
+   gate-name list, and `WriteReceipt.rawRef` is a redaction-safe POINTER, not an etag.
+   So nothing on the envelope can carry a version, and **adding one means amending a
+   FROZEN contract + its schema snapshot** — avoid.
+
+   ⭐ **The ordering data already exists, just not on the envelope.** The receipt row
+   holds the currently-applied `payloadHash` AND its `recordedAt`; and every re-drive
+   path knows when ITS intent was created (`outbox.enqueuedAt`; the approval's
+   creation time; the resume ledger's step time). So pass the intent's creation time
+   as a DISPATCH-TIME parameter rather than an envelope field:
+
+   > superseded ⇔ `current.recordedAt > intentCreatedAt` AND
+   > `current.payloadHash !== env.payloadHash`
+
+   - absent `intentCreatedAt` (a fresh dispatch, never a re-drive) ⇒ no check; it is
+     current by definition.
+   - `current.recordedAt <= intentCreatedAt` ⇒ the intent is newer ⇒ apply.
+   - hashes equal ⇒ already applied ⇒ reuse.
+
+   A superseded envelope is DROPPED with a typed outcome, never applied — which is the
+   decision rule below (prefer stale over a revert) expressed as code.
 3. ~~**Enumerate EVERY re-drive path**~~ — ✅ **DONE 2026-08-28. The list is THREE, and
    attempt 2 knew only two.** A "re-drive path" is a component that dispatches a
    PERSISTED envelope rather than building one from current facts — that is what makes
