@@ -24,6 +24,8 @@
 set -euo pipefail
 
 PLAN="${1:-IMPLEMENTATION_PLAN.md}"
+awk_rc=0
+dup_rc=0
 [[ -f "$PLAN" ]] || { echo "plan-lint: file not found: $PLAN" >&2; exit 2; }
 
 awk '
@@ -138,7 +140,11 @@ END {
   printf "plan-lint: %d violation(s), %d warning(s)\n", violations, warnings
   exit (violations > 0 ? 1 : 0)
 }
-' "$PLAN"
+' "$PLAN" || awk_rc=$?
+
+# ⛔ `set -euo pipefail` is on, so a NON-ZERO awk exit used to abort the script HERE — meaning every
+# check below was SKIPPED exactly when the plan already had a violation. The one condition under which
+# you most want the remaining guards to run was the one that silenced them. Captured, not aborted.
 
 # ---- session-doc duplicate-NNN guard (added 2026-08-18) --------------------------------------------
 # WHY: the numbered-doc convention computes the next NNN as `max+1` from a directory read. That is a
@@ -148,14 +154,23 @@ END {
 # ⛔ DETECTION CURRENTLY SCALES WITH COLLISION MULTIPLICITY, NOT WITH ANY CONTROL — a three-way collision
 # is unmissable, a two-way one is silent. This check is that missing control, and it needs no
 # concurrency assumption at all.
-# WARN not FAIL: `114` is a live pre-existing duplicate whose rename would break inbound links, so
-# failing here would block every tracker commit. Promote to a violation once 114 is dispositioned.
+# PROMOTED WARN -> VIOLATION 2026-08-28 (task 24.107), in the same commit that dispositioned `114`.
+# It shipped as a WARN only because `114` was a live pre-existing duplicate and failing on it would
+# have blocked every tracker commit. That duplicate is now renamed forward (114 -> 190, the doc with
+# ZERO measured inbound links), so the guard has nothing outstanding to forgive.
+# A guard left permanently at warn is a completion badge (`L82`): it makes the problem look handled
+# while allowing the next instance through unchanged.
 if [ -d docs/sessions ]; then
   dup_nnn=$(ls docs/sessions 2>/dev/null | sed -nE 's/^([0-9]{3})-.*/\1/p' | sort | uniq -d)
   if [ -n "$dup_nnn" ]; then
     for n in $dup_nnn; do
-      printf '  warn: docs/sessions/ has DUPLICATE number %s — the max+1 counter is not concurrency-safe (contracts L203)\n' "$n"
+      printf 'FAIL: docs/sessions/ has DUPLICATE number %s — the max+1 counter is not concurrency-safe (contracts L203).\n' "$n"
+      printf '      Rename the copy with NO inbound links FORWARD to the next free number; measure inbound first.\n'
       ls docs/sessions | sed -nE "s/^($n-.*)$/    \1/p"
+      dup_rc=1
     done
   fi
 fi
+
+if [ "$awk_rc" -ne 0 ] || [ "$dup_rc" -ne 0 ]; then exit 1; fi
+exit 0

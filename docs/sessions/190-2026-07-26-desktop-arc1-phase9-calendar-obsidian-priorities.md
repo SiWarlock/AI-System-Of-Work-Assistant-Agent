@@ -1,4 +1,23 @@
-# Session 114 — Desktop ARC-1: Phase-9 completion (isolation specs · open-in-vault · Calendar · Top priorities)
+# Session 190 — Desktop ARC-1: Phase-9 completion (isolation specs · open-in-vault · Calendar · Top priorities)
+
+> ⛔ **RENUMBERED 114 → 190 on 2026-08-28 (task `### 24.107`). The number changed; nothing else did.**
+>
+> Two session docs from two different areas both landed as `114` on 2026-07-26 and stayed
+> duplicated at HEAD for roughly three weeks with nobody noticing. The `max+1` counter that
+> assigns these numbers is a read-modify-write with no lock, so concurrent close-outs compute
+> the same number (`contracts L203`).
+>
+> ⭐ **The silence is the finding, not the collision.** A three-way collision at the 2026-08-18
+> close-out was caught immediately because it was loud; this two-way one was not caught at all.
+> Detection was scaling with collision multiplicity rather than with any control.
+>
+> **THIS doc moved because it had ZERO inbound links — measured, not assumed.** The other `114`
+> (`114-2026-07-26-arc4-living-vault-keystone-13.8bcd-knowledge.md`) is cited as the
+> **Predecessor** of `117-2026-07-26-arc4-keystone-completion-13.8fgjk-knowledge.md`, so moving it
+> would have broken a live chain link. Forward rename only — no history rewrite, no `--amend`.
+>
+> ⚠ **190 is out of chronological order for a 2026-07-26 session, deliberately.** A forward rename
+> into the next free number is the only disposition that cannot collide with an existing doc.
 
 - **Date:** 2026-07-26
 - **Phase:** 9 (desktop completion) + §13.16 renderer leg
