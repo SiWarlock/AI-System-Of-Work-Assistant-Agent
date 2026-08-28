@@ -268,10 +268,19 @@ third-party vendor (a Todoist task is the recommended first vendor) instead of a
 the first time the machine can act on the outside world.
 
 **Preconditions (verifiable):**
-- **Build-first, not yet done at all:** a grep of the whole tree finds **no** real `AdapterTransport`
-  implementation anywhere — only the deterministic stub. This crossing cannot be flag-only; a team build
-  round has to land a real vendor client, a `WriteTransportGate.make` factory, and (if the approval-card
-  path is the trigger) replace the currently no-op `dispatchApproval` stub.
+- **Build-first — still true, but NARROWER than this entry used to say.** ⚠ CORRECTED 2026-08-28: the
+  previous wording claimed "a grep of the whole tree finds **no** real `AdapterTransport` implementation
+  anywhere — only the deterministic stub." That is **false at HEAD**. `createWriteHttpTransport`
+  (`packages/integrations/src/tools/adapters/write-http-transport.ts`, task 21.6a) IS a real
+  `AdapterTransport`: SSRF guard on the final url, header-only token via the 17.4 write-credential seam,
+  positive-2xx gate, redacted faults. It is DORMANT and UNBOUND — which is not the same as absent.
+  The CONCLUSION still holds: **this crossing cannot be flag-only.** Three pieces are genuinely missing,
+  and they are the whole remaining list — a per-vendor `WriteHttpSpec` (none ships in `src`; only the
+  interface and the factory), a real `HttpTransport` (Node `fetch`) implementation, and a bound
+  `WriteTransportGate.make` (the gate ships UNBOUND). Plus, if the approval-card path is the trigger,
+  replacing the currently no-op `dispatchApproval` stub.
+  ⛔ Read `docs/findings/external-write-update-path.md` before crossing: the UPDATE path is broken and was
+  twice reverted, and it is a fix-BEFORE-`§ARM-21` item. A doc-pack re-sync is exactly that path.
 - Phase 2 (auto-ingest) ON — the propose activity that carries `dispatchExternalWrite` is only registered
   under Temporal when `proofSpineParams` exists, which requires auto-ingest + a vault root.
 - The operational store is durable (a real `dbPath`, never `:memory:`) — the exactly-once receipt store is

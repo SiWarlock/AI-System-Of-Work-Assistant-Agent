@@ -69,7 +69,26 @@ export function renderProseLines(fields: readonly ExtractionField<string>[]): st
   return out;
 }
 
-/** The default doc pack: the 5 canonical slots, honestly unlinked/unknown until a Drive connector exists. */
+/**
+ * The default doc pack: the 5 canonical slots, honestly `unlinked`/`unknown`.
+ *
+ * ⚠ THE REASON THIS IS CONSTANT IS NOT "no Drive connector" — that was the comment here
+ * until 2026-08-28 and it is FALSE: both Drive adapters (read + write) exist and the write
+ * one is in the write-adapter registry. The real reason is structural, and it is why this
+ * cannot be improved by building harder:
+ *
+ * `NotebookMapping` requires a `driveFolderId` plus five non-blank `managedDocIds` — DRIVE
+ * OBJECT IDS. Nothing can know them until the folder and the five docs have been CREATED at
+ * Drive, which is the first real external write (`21.9`, ⛔ Owner-Gates §ARM-21). So
+ * `linkState` is downstream of that crossing, not independent of it, and `syncState` is
+ * further downstream still (a fact about syncs that have not run). There is also no
+ * `NotebookMapping` persistence anywhere in `packages/db`, and `resolveMapping` is an
+ * unbound dep.
+ *
+ * ⇒ Do NOT "fix" this by adding a mapping store: nothing would write to it, which is the
+ * built-but-unwired shape this repo keeps finding. Full measurement + the ordered list a
+ * real attempt needs: `docs/findings/doc-pack-live-path.md`.
+ */
 function defaultDocPack(): UiSafeManagedDoc[] {
   return MANAGED_DOC_SLOTS.map((s) => ({
     slot: s.slot,

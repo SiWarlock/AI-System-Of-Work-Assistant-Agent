@@ -397,8 +397,11 @@ export const UiSafeProjectProgressSchema = z
 // document/folder ids + any URL/path (the GCL/#7 precedent — an external id or a Drive path
 // is not UI-safe; the renderer identifies a slot by its enum, never by a Drive handle). The
 // re-add/refresh affordance keys off `slot`; a worker-mediated action resolves the Drive id.
-// `title` is a single-line display label. Until a Drive connector exists every slot is
-// `unlinked`/`unknown` (honest pre-connector state — not a synthetic "synced").
+// `title` is a single-line display label. Every slot is `unlinked`/`unknown` today — an
+// honest pre-arming state, never a synthetic "synced". ⚠ NOT because "a Drive connector does
+// not exist" (the prior wording here, and false — both Drive adapters ship): the mapping's
+// five `managedDocIds` are Drive object ids that cannot exist until the docs are CREATED at
+// Drive, which is task `21.9` behind `§ARM-21`. See `docs/findings/doc-pack-live-path.md`.
 export interface UiSafeManagedDoc {
   slot: "00_brief" | "01_decisions" | "02_meetings" | "03_research" | "04_open_questions";
   title: string;
