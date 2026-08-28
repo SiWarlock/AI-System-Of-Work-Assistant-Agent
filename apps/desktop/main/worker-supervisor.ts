@@ -46,7 +46,13 @@ export interface WorkerHostConnection extends WorkerConnection {
   readonly token: string;
 }
 
-export type WorkerStatus = "starting" | "ready" | "restarting" | "stopped";
+/**
+ * `worker_down` is the CRASH-LOOP terminal state: the supervisor has stopped
+ * respawning because the worker failed too many times inside the rolling window.
+ * Distinct from `stopped` (a deliberate `stop()`), because the operator needs to
+ * tell "I turned it off" apart from "it gave up".
+ */
+export type WorkerStatus = "starting" | "ready" | "restarting" | "stopped" | "worker_down";
 
 export interface SupervisorDeps {
   /** Fork the worker-host child (system node + --conditions + resolve-loader). Injected. */
@@ -59,6 +65,12 @@ export interface SupervisorDeps {
   readonly scheduleRestart: (ms: number, run: () => void) => () => void;
   /** Optional structured log sink (main's redaction-safe logger / console). */
   readonly log?: (event: string, fields?: Record<string, unknown>) => void;
+  /**
+   * Monotonic-ish millisecond clock for the crash-loop window. INJECTED so the guard
+   * is deterministically testable — a wall-clock read here would make the terminal
+   * state untestable without sleeping. Defaults to `Date.now`.
+   */
+  readonly now?: () => number;
 }
 
 export interface WorkerSupervisor {
@@ -71,6 +83,30 @@ export interface WorkerSupervisor {
 
 const RESTART_BASE_MS = 500;
 const RESTART_CAP_MS = 10_000;
+
+/**
+ * CRASH-LOOP GUARD (task 10.4 / LIFE — the infinite-respawn defect).
+ *
+ * ⛔ WHAT WAS WRONG. This supervisor incremented `attempt`, backed off, and respawned
+ * — FOREVER. The backoff caps at 10s, so a worker that can never start (bad config, a
+ * missing binary, a corrupt store) was restarted every 10 seconds for the life of the
+ * app, and the UI never left `restarting`. There was no threshold and no terminal
+ * state: the one condition an operator most needs told them nothing.
+ *
+ * ⚠ DELIBERATE DUPLICATION, and the reason matters. `apps/worker`'s
+ * `decideRestart` (`lifecycle/supervision-policy.ts`) is the canonical statement of
+ * this policy and is a pure function — but Electron MAIN cannot import it: desktop
+ * LESSON 17 keeps `@sow/worker` EXTERNAL from the main bundle, and a runtime
+ * `@sow/worker` import there resolves to raw `.ts` and crashes at load. The same
+ * trade already exists one function down (`restartBackoffMs` mirrors
+ * `supervisionBackoffMs`), so this follows the established precedent rather than
+ * inventing a new one.
+ * ⇒ THE TWO MUST AGREE. Both implement: count crashes strictly INSIDE the rolling
+ * window, and at `>= threshold` stop respawning and report `worker_down`. If either
+ * side's policy changes, change both.
+ */
+const CRASH_LOOP_THRESHOLD = 5;
+const CRASH_LOOP_WINDOW_MS = 60_000;
 
 /** Bounded exponential backoff for restart attempt `attempt` (>= 1). Never 0, never unbounded. */
 export function restartBackoffMs(attempt: number): number {
@@ -90,11 +126,14 @@ function isErrorMessage(msg: unknown): msg is { type: "error"; message: string }
 /** Build the supervisor. `start()` forks + injects config; exits trigger bounded-backoff restarts. */
 export function createWorkerSupervisor(deps: SupervisorDeps): WorkerSupervisor {
   const log = deps.log ?? ((): void => {});
+  const now = deps.now ?? ((): number => Date.now());
   let child: WorkerChild | null = null;
   let stopped = false;
   let attempt = 0;
   let status: WorkerStatus = "stopped";
   let cancelTimer: (() => void) | null = null;
+  /** Crash timestamps inside the rolling window (oldest first). */
+  const crashes: number[] = [];
 
   const spawn = (): void => {
     if (stopped) return;
@@ -116,6 +155,30 @@ export function createWorkerSupervisor(deps: SupervisorDeps): WorkerSupervisor {
       // Ignore a post-stop exit or an exit from a stale (already-replaced) child.
       if (stopped || current !== child) return;
       log("worker.exit", { code });
+
+      // CRASH-LOOP GUARD. Record this crash, drop the ones that have rolled off the
+      // window, and stop respawning once the window holds `CRASH_LOOP_THRESHOLD`.
+      const nowMs = now();
+      crashes.push(nowMs);
+      const windowStart = nowMs - CRASH_LOOP_WINDOW_MS;
+      while (crashes.length > 0 && crashes[0]! <= windowStart) crashes.shift();
+
+      if (crashes.length >= CRASH_LOOP_THRESHOLD) {
+        // TERMINAL: decline to respawn and say so. Previously this branch did not
+        // exist and the worker was restarted forever with the UI stuck on
+        // `restarting` — a permanent failure rendered as a transient one.
+        stopped = true;
+        child = null;
+        status = "worker_down";
+        log("worker.down", {
+          reason: "crash_loop",
+          crashes: crashes.length,
+          windowMs: CRASH_LOOP_WINDOW_MS,
+          threshold: CRASH_LOOP_THRESHOLD,
+        });
+        return;
+      }
+
       attempt += 1;
       status = "restarting";
       cancelTimer = deps.scheduleRestart(restartBackoffMs(attempt), spawn);
@@ -128,6 +191,7 @@ export function createWorkerSupervisor(deps: SupervisorDeps): WorkerSupervisor {
     start(): void {
       stopped = false;
       attempt = 0;
+      crashes.length = 0; // a deliberate restart clears the crash-loop history
       spawn();
     },
     stop(): void {

@@ -43,8 +43,8 @@ function entry(i: number): OutboxEntry {
 function outboxWith(n: number, faulting = false): OutboxRepository {
   return {
     listDue: async () => (faulting ? err({ code: "unavailable", message: "db down" }) : ok(Array.from({ length: n }, (_, i) => entry(i)))),
-    enqueue: async (e) => ok(e),
-    update: async (e) => ok(e),
+    enqueue: async (e: OutboxEntry) => ok(e),
+    update: async (e: OutboxEntry) => ok(e),
     get: async () => err({ code: "not_found", message: "no" }),
   } as unknown as OutboxRepository;
 }
