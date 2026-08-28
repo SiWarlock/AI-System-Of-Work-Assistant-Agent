@@ -193,6 +193,13 @@ export interface DrainResult {
  * `exhausted` we still return a bounded delay (`maxMs`) — a held item never
  * silently expires; exhaustion is surfaced via the depth/health signal, not by
  * dropping the entry. Pure (injected clock/jitter).
+ *
+ * CONSEQUENCE, and the reason it is load-bearing upstream: there is NO terminal
+ * state on this path. Anything that reaches the drain as `held` is re-driven
+ * forever. That is correct for an outage and catastrophic for a permanent
+ * failure, which is why the Tool Gateway — not this function — is responsible
+ * for only ever returning `held` for a genuinely retryable fault (gateway.ts
+ * step 3 / step 5, both switching on the closed `AdapterError.code`).
  */
 function computeNextAttemptAt(
   attempts: number,
@@ -208,6 +215,14 @@ function computeNextAttemptAt(
  * status on a committed/reused/rejected result, or re-hold (bump attempts +
  * backoff) on a still-held result. Persists via `outbox.update`. Returns the
  * bucket the entry falls into so the caller can tally. Never throws.
+ *
+ * SWITCHES ON `status` ONLY — deliberately, do not add an `adapterCode` branch
+ * here. `ExternalWriteResult.status` IS the retryability verdict; re-deriving it
+ * from the adapter code at this consumer would fix one of four consumers of the
+ * same verdict (this drain, `envelopeReuse.ts`, `proposeExternalActions.ts`,
+ * `approvalFlow.ts`) and leave the other three reading the wrong one. When a
+ * permanent fault was arriving here as `held`, the defect was the gateway's, and
+ * that is where it was fixed.
  */
 async function applyOutcome(
   outbox: OutboxRepository,

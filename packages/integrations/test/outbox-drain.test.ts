@@ -664,3 +664,86 @@ describe("drainOutbox — cross-workspace redrive is structurally unrepresentabl
     expect(entry.value.status).toBe("receipt_recorded");
   });
 });
+
+// F4 (this round) — the drain's blindness to the closed adapter code, seen from the
+// consumer end. `applyOutcome` switches on `outcome.status` ONLY; `adapterCode`
+// appears nowhere in outbox-drain.ts. That is CORRECT and stays correct — the fix
+// belongs at the SOURCE (the gateway's existence-fault arm), because three other
+// consumers (envelopeReuse.ts, proposeExternalActions.ts, approvalFlow.ts) read the
+// same wrong `status` and a local patch here would fix one of four.
+//
+// What these pins guard: a PERMANENT existence-probe fault must reach the drain as
+// a terminal status and go terminal on the FIRST pass. Before the gateway fix it
+// arrived as `held`, and since `computeNextAttemptAt` never expires an entry (an
+// EXHAUSTED backoff still returns a bounded `maxMs`), the drain re-held it pass
+// after pass, forever, without ever calling create.
+describe("drainOutbox — a PERMANENT existence-probe fault is terminal on the first pass, never an infinite re-hold", () => {
+  const permanent: ReadonlyArray<AdapterError["code"]> = ["not_found", "rejected", "unknown"];
+
+  for (const code of permanent) {
+    it(`an existence-probe '${code}' fault goes terminal (failed) on pass 1 — no re-hold, no create`, async () => {
+      const outbox = new InMemoryOutbox();
+      const receiptStore = new InMemoryReceiptStore();
+      await seedHeld(outbox, `idem_perm_${code}`, `outbox_perm_${code}`);
+
+      const createCalls = { n: 0 };
+      const adapter = makeAdapter({
+        existence: err<AdapterError>({ code, message: "permanent vendor fault" }),
+        createCalls,
+      });
+      const result = await drainOutbox(outbox, {
+        gatewayDeps: makeGatewayDeps(adapter, receiptStore),
+        now: clock(),
+        limit: 100,
+        backoffCfg,
+        clock,
+        workspaceId: "employer-work",
+      });
+
+      expect(result.failed).toBe(1);
+      expect(result.held).toBe(0);
+      // Fail-closed is preserved: an unconfirmed existence probe still never creates.
+      expect(createCalls.n).toBe(0);
+
+      const entry = await outbox.get(`outbox_perm_${code}`);
+      expect(isOk(entry)).toBe(true);
+      if (!isOk(entry)) return;
+      expect(entry.value.status).toBe("rejected");
+      // Terminal ⇒ excluded from every future listDue: the retry loop is CLOSED.
+      const due = await outbox.listDue("2100-01-01T00:00:00.000Z", 100);
+      expect(isOk(due)).toBe(true);
+      if (!isOk(due)) return;
+      expect(due.value.map((e) => e.idempotencyKey)).not.toContain(`idem_perm_${code}`);
+    });
+  }
+
+  it("REGRESSION PIN: a genuinely unreachable probe is STILL re-held, not terminalised", async () => {
+    // The fix must not over-correct. `unreachable` is the one adapter code that
+    // means "the transport could not reach the vendor AT ALL" — the outbox-hold
+    // signal the whole 6.5 path exists to serve.
+    const outbox = new InMemoryOutbox();
+    const receiptStore = new InMemoryReceiptStore();
+    await seedHeld(outbox, "idem_still_down", "outbox_still_down");
+
+    const createCalls = { n: 0 };
+    const adapter = makeAdapter({
+      existence: err<AdapterError>({ code: "unreachable", message: "still down" }),
+      createCalls,
+    });
+    const result = await drainOutbox(outbox, {
+      gatewayDeps: makeGatewayDeps(adapter, receiptStore),
+      now: clock(),
+      limit: 100,
+      backoffCfg,
+      clock,
+      workspaceId: "employer-work",
+    });
+
+    expect(result.held).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(createCalls.n).toBe(0);
+    const due = await outbox.listDue("2100-01-01T00:00:00.000Z", 100);
+    expect(isOk(due)).toBe(true);
+    if (isOk(due)) expect(due.value.map((e) => e.idempotencyKey)).toContain("idem_still_down");
+  });
+});

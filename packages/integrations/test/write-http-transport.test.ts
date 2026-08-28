@@ -27,9 +27,15 @@ import {
   type WriteSecretsAccessor,
   type WriteSecretUnavailable,
 } from "../src/tools/adapters/adapter-core";
-import type { AdapterTransport, AdapterTransportRequest } from "../src/tools/adapters/transport";
+import type {
+  AdapterTransport,
+  AdapterTransportRequest,
+  TransportFaultDetail,
+} from "../src/tools/adapters/transport";
 import type { TargetWriteAdapter } from "../src/tools/adapter-port";
-import { makeEnvelope } from "./support/fakes";
+import { dispatchExternalWrite, type ExternalWriteDeps } from "../src/tools/gateway";
+import { buildEnvelopeFromAction } from "../src/tools/envelope";
+import { makeEnvelope, InMemoryReceiptStore, makeProposedAction } from "./support/fakes";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
@@ -460,5 +466,392 @@ describe("write-http-transport.ts — no shell-out, no credential-exec backend",
     for (const forbidden of ["child_process", "execFile", "execSync", "security find-generic-password"]) {
       expect(src.includes(forbidden)).toBe(false);
     }
+  });
+});
+
+
+// ── 8. W1a/W1c — the faultDetail PRODUCER. transport.ts's `TransportFaultDetail`
+//     and AdapterError.faultDetail only de-collapse anything if a transport SETS
+//     them; before this round no producing site did, so the "distinction is
+//     restored" doc comments were false. These pin the wiring at the ONE real
+//     producer: every statusless fault return of createWriteHttpTransport.
+//     TEN faults ⇒ TEN distinct operator-facing AdapterError.message strings. ──
+describe("createWriteHttpTransport — every statusless fault SETS a closed faultDetail (the producer)", () => {
+  const testClock = (): string => "2026-07-01T00:00:00.000Z";
+
+  function adapterOver(transport: AdapterTransport): TargetWriteAdapter {
+    return makeTargetWriteAdapter(
+      { targetSystem: "drive", deriveIdentity: () => ({}) },
+      { transport, clock: testClock },
+    );
+  }
+
+  const throwingSecrets: WriteSecretsAccessor = {
+    async getSecret(): Promise<Result<string, WriteSecretUnavailable>> {
+      throw new Error("keychain accessor blew up ACCESSOR_CAUSE_LEAK");
+    },
+  };
+
+  interface Case {
+    readonly name: string;
+    readonly token: TransportFaultDetail;
+    readonly code: string;
+    readonly message: string;
+    readonly transport: () => AdapterTransport;
+  }
+
+  const CASES: readonly Case[] = [
+    {
+      name: "a throwing buildRequest",
+      token: "request_build_error",
+      code: "unknown",
+      message: "unclassified adapter fault (request_build_error)",
+      transport: () =>
+        createWriteHttpTransport(
+          {
+            ...CORE_SPEC,
+            buildRequest: () => {
+              throw new Error("builder blew up BUILD_CAUSE_LEAK");
+            },
+          },
+          depsWith(),
+        ),
+    },
+    {
+      name: "an SSRF/allowlist block",
+      token: "ssrf_blocked",
+      code: "rejected",
+      message: "request rejected (ssrf_blocked)",
+      transport: () => createWriteHttpTransport({ ...CORE_SPEC, baseUrl: "https://evil.com" }, depsWith()),
+    },
+    {
+      name: "a THROWING credential accessor",
+      token: "credential_fault",
+      code: "rejected",
+      message: "request rejected (credential_fault)",
+      transport: () => createWriteHttpTransport(CORE_SPEC, depsWith({ secrets: throwingSecrets })),
+    },
+    {
+      name: "a MISSING write credential",
+      token: "credential_missing",
+      code: "rejected",
+      message: "request rejected (credential_missing)",
+      transport: () =>
+        createWriteHttpTransport(CORE_SPEC, depsWith({ secrets: fakeSecrets(err({ reason: "missing" })) })),
+    },
+    {
+      name: "a LOCKED Keychain",
+      token: "credential_locked",
+      code: "rejected",
+      message: "request rejected (credential_locked)",
+      transport: () =>
+        createWriteHttpTransport(CORE_SPEC, depsWith({ secrets: fakeSecrets(err({ reason: "locked" })) })),
+    },
+    {
+      name: "a DENIED write credential",
+      token: "credential_denied",
+      code: "rejected",
+      message: "request rejected (credential_denied)",
+      transport: () =>
+        createWriteHttpTransport(CORE_SPEC, depsWith({ secrets: fakeSecrets(err({ reason: "denied" })) })),
+    },
+    {
+      name: "a whitespace-only (EMPTY) write credential",
+      token: "credential_empty",
+      code: "rejected",
+      message: "request rejected (credential_empty)",
+      transport: () => createWriteHttpTransport(CORE_SPEC, depsWith({ secrets: fakeSecrets(ok("   ")) })),
+    },
+    {
+      name: "a network-level outage (http.send rejects)",
+      token: "transport_error",
+      code: "unreachable",
+      message: "target system unreachable (transport_error)",
+      transport: () =>
+        createWriteHttpTransport(CORE_SPEC, depsWith({ http: fakeHttp({ throw: new Error("ECONNRESET") }) })),
+    },
+    {
+      name: "a malformed 2xx body",
+      token: "malformed_body",
+      code: "unknown",
+      message: "unclassified adapter fault (malformed_body)",
+      transport: () =>
+        createWriteHttpTransport(
+          CORE_SPEC,
+          depsWith({ http: fakeHttp({ response: { status: 200, body: "<html>NOT_JSON_LEAK</html>" } }) }),
+        ),
+    },
+    {
+      name: "a throwing mapResponse",
+      token: "map_error",
+      code: "unknown",
+      message: "unclassified adapter fault (map_error)",
+      transport: () =>
+        createWriteHttpTransport(
+          {
+            ...CORE_SPEC,
+            mapResponse: () => {
+              throw new Error("mapper blew up MAP_CAUSE_LEAK");
+            },
+          },
+          depsWith({ http: fakeHttp({ response: { status: 200, body: '{"id":"x"}' } }) }),
+        ),
+    },
+  ];
+
+  it.each(CASES.map((c) => [c.name, c] as const))(
+    "%s sets faultDetail on the TransportResponse — no statusless fault is left unwired",
+    async (_name, c) => {
+      const res = await c.transport()(CREATE_REQ);
+      expect(res.ok).toBe(false);
+      if (res.ok) throw new Error("expected a fault");
+      // The statusless invariant: no HTTP response was ever received, so there is
+      // no httpStatus — faultDetail is the ONLY thing that can separate these.
+      expect(res.httpStatus).toBeUndefined();
+      expect(res.faultDetail).toBe(c.token);
+    },
+  );
+
+  it.each(CASES.map((c) => [c.name, c] as const))(
+    "%s reaches AdapterError with the token on its own typed field AND folded into message",
+    async (_name, c) => {
+      const env = makeEnvelope({ targetSystem: "drive", canonicalObjectKey: CREATE_REQ.canonicalObjectKey });
+      const res = await adapterOver(c.transport()).create(env, { title: "x" });
+      expect(res.ok).toBe(false);
+      if (res.ok) throw new Error("expected a fault");
+      expect(res.error.code).toBe(c.code);
+      expect(res.error.faultDetail).toBe(c.token);
+      expect(res.error.message).toBe(c.message);
+      // Still redaction-safe: the closed token is the ONLY new byte in `message`.
+      expect(JSON.stringify(res.error)).not.toContain("LEAK");
+    },
+  );
+
+  it("all TEN statusless faults produce TEN DISTINCT AdapterError.message strings", async () => {
+    const env = makeEnvelope({ targetSystem: "drive", canonicalObjectKey: CREATE_REQ.canonicalObjectKey });
+    const messages: string[] = [];
+    for (const c of CASES) {
+      const res = await adapterOver(c.transport()).create(env, { title: "x" });
+      expect(res.ok).toBe(false);
+      if (!res.ok) messages.push(res.error.message);
+    }
+    expect(messages).toHaveLength(10);
+    expect(new Set(messages).size).toBe(10);
+  });
+
+  it("a LOCKED Keychain does not read the same as an SSRF-BLOCKED host (the named regression)", async () => {
+    const env = makeEnvelope({ targetSystem: "drive", canonicalObjectKey: CREATE_REQ.canonicalObjectKey });
+    const locked = await adapterOver(
+      createWriteHttpTransport(CORE_SPEC, depsWith({ secrets: fakeSecrets(err({ reason: "locked" })) })),
+    ).create(env, { title: "x" });
+    const ssrf = await adapterOver(
+      createWriteHttpTransport({ ...CORE_SPEC, baseUrl: "https://evil.com" }, depsWith()),
+    ).create(env, { title: "x" });
+    if (locked.ok || ssrf.ok) throw new Error("expected two faults");
+    // Same code, same (absent) httpStatus — the ONLY separator is faultDetail.
+    expect(locked.error.code).toBe(ssrf.error.code);
+    expect(locked.error.httpStatus).toBeUndefined();
+    expect(ssrf.error.httpStatus).toBeUndefined();
+    expect(locked.error.message).not.toBe(ssrf.error.message);
+    expect(locked.error.message).toBe("request rejected (credential_locked)");
+    expect(ssrf.error.message).toBe("request rejected (ssrf_blocked)");
+  });
+
+  it("W1c — a malformed 2xx body, a throwing buildRequest and a throwing mapResponse no longer all read 'unclassified adapter fault'", async () => {
+    const env = makeEnvelope({ targetSystem: "drive", canonicalObjectKey: CREATE_REQ.canonicalObjectKey });
+    const unknowns = CASES.filter((c) => c.code === "unknown");
+    expect(unknowns).toHaveLength(3);
+    const messages: string[] = [];
+    for (const c of unknowns) {
+      const res = await adapterOver(c.transport()).create(env, { title: "x" });
+      if (res.ok) throw new Error("expected a fault");
+      expect(res.error.code).toBe("unknown");
+      messages.push(res.error.message);
+    }
+    expect(new Set(messages).size).toBe(3);
+  });
+});
+
+// ── 9. W1b — RETRYABLE 4xx must stay retryable. `rejected` routes TERMINAL at the
+//     gateway, so mapping every 4xx to `rejected` made a 429 (rate limit) and a
+//     408 (request timeout) permanent failures. The classification of the STATUS
+//     is what is fixed — `rejected` itself stays terminal. ────────────────────
+describe("createWriteHttpTransport — status classification: retryable vs terminal", () => {
+  async function faultFor(status: number): Promise<string> {
+    const http = fakeHttp({ response: { status, body: JSON.stringify({ secret_body: "BODY_LEAK" }) } });
+    const res = await createWriteHttpTransport(CORE_SPEC, depsWith({ http }))(CREATE_REQ);
+    if (res.ok) throw new Error(`expected a fault for ${status}`);
+    expect(JSON.stringify(res)).not.toContain("BODY_LEAK");
+    return res.fault;
+  }
+
+  it.each([
+    [408, "unreachable"], // RFC 9110 §15.5.9 — the client MAY repeat the request
+    [425, "unreachable"], // RFC 8470 §5.2 — retry once the handshake completes
+    [429, "unreachable"], // RFC 6585 §4 — a rate limit is temporal, by definition
+  ])("HTTP %s is RETRYABLE ⇒ unreachable (the outbox-hold signal), never terminal", async (status, expected) => {
+    expect(await faultFor(status)).toBe(expected);
+  });
+
+  it.each([
+    [400, "rejected"],
+    [401, "rejected"], // auth: retrying cannot fix a credential, and must not hide it
+    [403, "rejected"],
+    [404, "rejected"], // drive.ts promotes this one to `not_found` — still terminal
+    [422, "rejected"],
+    [423, "rejected"], // Locked: unbounded duration + a never-expiring hold ⇒ terminal
+    [451, "rejected"],
+  ])("HTTP %s is TERMINAL ⇒ rejected — a retry sends the same bytes", async (status, expected) => {
+    expect(await faultFor(status)).toBe(expected);
+  });
+
+  it.each([
+    [409, "conflict"],
+    [412, "conflict"],
+  ])("HTTP %s stays a conflict (NEVER a blind overwrite)", async (status, expected) => {
+    expect(await faultFor(status)).toBe(expected);
+  });
+
+  it.each([
+    [500, "unreachable"],
+    [502, "unreachable"],
+    [503, "unreachable"],
+  ])("HTTP %s stays retryable ⇒ unreachable", async (status, expected) => {
+    expect(await faultFor(status)).toBe(expected);
+  });
+
+  it.each([
+    [100, "unknown"],
+    [301, "unknown"],
+    [600, "unknown"],
+  ])("HTTP %s (out of every classified range) ⇒ unknown, which is TERMINAL", async (status, expected) => {
+    expect(await faultFor(status)).toBe(expected);
+  });
+
+  it("the retryable set is exactly {408, 425, 429} — every OTHER 4xx terminates", async () => {
+    const retryable: number[] = [];
+    for (let status = 400; status < 500; status += 1) {
+      if (status === 409 || status === 412) continue; // conflict, its own disposition
+      if ((await faultFor(status)) === "unreachable") retryable.push(status);
+    }
+    expect(retryable).toEqual([408, 425, 429]);
+  });
+});
+
+// ── 10. W1b end-to-end — the disposition that actually matters. A 429 must reach
+//      the outbox as `held`; a 401 must terminate as `rejected`. Driven through
+//      the REAL transport + the REAL adapter core + the REAL Tool Gateway. ────
+describe("W1b end-to-end — dispatchExternalWrite over the real write transport", () => {
+  const FIXED_CLOCK = (): string => "2026-07-01T00:00:00.000Z";
+
+  // A query MISS on the probe so the pipeline proceeds to the create; the create
+  // then meets the status under test.
+  const GATEWAY_SPEC: WriteHttpSpec = {
+    ...CORE_SPEC,
+    mapResponse: (_status, json, req) => {
+      if (req.op === "query") return { ok: true, object: null };
+      const obj = json as { id?: string };
+      if (typeof obj?.id !== "string") return { ok: false, fault: "unknown", detail: "missing id" };
+      return { ok: true, object: { externalObjectId: obj.id } };
+    },
+  };
+
+  function sequencedHttp(responses: readonly HttpTransportResponse[]): HttpTransport {
+    let i = 0;
+    return {
+      async send() {
+        const r = responses[Math.min(i, responses.length - 1)]!;
+        i += 1;
+        return r;
+      },
+    };
+  }
+
+  function depsFor(responses: readonly HttpTransportResponse[]): ExternalWriteDeps {
+    const transport = createWriteHttpTransport(
+      GATEWAY_SPEC,
+      { http: sequencedHttp(responses), secrets: fakeSecrets() },
+    );
+    return {
+      adapter: makeTargetWriteAdapter(
+        { targetSystem: "drive", deriveIdentity: () => ({}) },
+        { transport, clock: FIXED_CLOCK },
+      ),
+      receiptStore: new InMemoryReceiptStore(),
+      requireApproval: () => ({ requiresApproval: false }),
+      recordPendingApproval: async () => ok(undefined),
+      isApproved: async () => false,
+      audit: async () => {},
+      clock: FIXED_CLOCK,
+    };
+  }
+
+  function envAndAction() {
+    const action = makeProposedAction({ idempotencyKey: "idem_w1b", canonicalObjectKey: "cok_w1b" });
+    const built = buildEnvelopeFromAction(action, { preconditions: ["exists_check"] });
+    if (!built.ok) throw new Error("test envelope failed to build");
+    return { action, env: built.value };
+  }
+
+  const PROBE_MISS: HttpTransportResponse = { status: 200, body: "{}" };
+
+  it("a CREATE that meets HTTP 429 is HELD for retry — a rate limit does not fail the write closed", async () => {
+    const { action, env } = envAndAction();
+    const res = await dispatchExternalWrite(env, action, depsFor([PROBE_MISS, { status: 429, body: "{}" }]));
+    expect(res.status).toBe("held");
+    if (res.status !== "held") throw new Error("unreachable");
+    expect(res.adapterCode).toBe("unreachable");
+    expect(res.reason).toContain("HTTP 429");
+  });
+
+  it("a CREATE that meets HTTP 408 is HELD for retry", async () => {
+    const { action, env } = envAndAction();
+    const res = await dispatchExternalWrite(env, action, depsFor([PROBE_MISS, { status: 408, body: "{}" }]));
+    expect(res.status).toBe("held");
+  });
+
+  it("a CREATE that meets HTTP 401 still TERMINATES as rejected — the cc26027c fix is not undone", async () => {
+    const { action, env } = envAndAction();
+    const res = await dispatchExternalWrite(env, action, depsFor([PROBE_MISS, { status: 401, body: "{}" }]));
+    expect(res.status).toBe("rejected");
+    if (res.status !== "rejected") throw new Error("unreachable");
+    expect(res.adapterCode).toBe("rejected");
+    expect(res.reason).toContain("HTTP 401");
+  });
+
+  it("an EXISTENCE PROBE that meets HTTP 429 is HELD too — both gateway fault arms agree", async () => {
+    const { action, env } = envAndAction();
+    const res = await dispatchExternalWrite(env, action, depsFor([{ status: 429, body: "{}" }]));
+    expect(res.status).toBe("held");
+    if (res.status !== "held") throw new Error("unreachable");
+    expect(res.adapterCode).toBe("unreachable");
+    expect(res.reason).toContain("existence-check");
+  });
+
+  it("an EXISTENCE PROBE that meets HTTP 403 still terminates as rejected", async () => {
+    const { action, env } = envAndAction();
+    const res = await dispatchExternalWrite(env, action, depsFor([{ status: 403, body: "{}" }]));
+    expect(res.status).toBe("rejected");
+  });
+
+  it("a LOCKED Keychain terminates as rejected AND names itself in the operator-facing reason", async () => {
+    const { action, env } = envAndAction();
+    const transport = createWriteHttpTransport(GATEWAY_SPEC, {
+      http: sequencedHttp([PROBE_MISS]),
+      secrets: fakeSecrets(err({ reason: "locked" })),
+    });
+    const deps: ExternalWriteDeps = {
+      ...depsFor([PROBE_MISS]),
+      adapter: makeTargetWriteAdapter(
+        { targetSystem: "drive", deriveIdentity: () => ({}) },
+        { transport, clock: FIXED_CLOCK },
+      ),
+    };
+    const res = await dispatchExternalWrite(env, action, deps);
+    expect(res.status).toBe("rejected");
+    if (res.status !== "rejected") throw new Error("unreachable");
+    // The end-to-end payoff of W1a: this string used to be "request rejected",
+    // identical to an SSRF block.
+    expect(res.reason).toContain("credential_locked");
   });
 });

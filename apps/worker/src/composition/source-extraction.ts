@@ -50,11 +50,14 @@ import type {
 import { admitJob, isDeny } from "@sow/policy";
 import type { PolicyDecision, LocalProviderConfig } from "@sow/policy";
 import type { BrokerJobRequest, BrokerOutcome } from "@sow/providers";
-// The CANONICAL Broker-rejection → failure-code mapping, shared with the two sibling legs
-// (`@sow/workflows`'s runAgentJob.ts + readOnlyAgentJob.ts, where it lives). It reads the
-// rejection's closed `stage`, NOT its `branch`; see BROKER_STAGE_FAILURE_CODE's doc comment for
-// why that distinction is the whole bug. Do NOT re-introduce a local copy.
-import { brokerRejectionFailureCode } from "@sow/workflows";
+// The CANONICAL Broker-rejection → failure-code mapping AND the CANONICAL rule-7 message-swap
+// predicate, both shared with the two sibling legs (`@sow/workflows`'s runAgentJob.ts +
+// readOnlyAgentJob.ts, where they live). The mapping reads the rejection's closed `stage`, NOT its
+// `branch`; see BROKER_STAGE_FAILURE_CODE's doc comment for why that distinction is the whole bug.
+// The predicate replaced this leg's own `rejectionMessageFor`, whose "the two rules differ ONLY on
+// a reason the real Broker never stamps at this stage" claim was FALSE (see
+// SCHEMA_REJECTED_MESSAGE below). Do NOT re-introduce a local copy of either.
+import { brokerRejectionFailureCode, brokerRejectionNeedsFixedMessage } from "@sow/workflows";
 import type {
   RunSourceAgentJobPort,
   SourceAgentFailure,
@@ -154,37 +157,40 @@ const defaultMapSourceRejection: (outcome: BrokerOutcome) => SourceAgentFailureC
   brokerRejectionFailureCode;
 
 /**
- * The ERR-arm message for a Broker rejection. RESTORES forwarding the Broker's own
- * `outcome.error.message` VERBATIM — EXCEPT when the underlying `outcome.error.reason`
- * is `"schema_rejected"`, the one value the real Broker's schema gate
- * (`schema-gate.ts`'s `schemaDeny` / no-inference rejection) ALWAYS stamps on this
- * rejection, whose message folds `no-inference rejection (REQ-F-017): … [<fields>]`
- * quoting MODEL-AUTHORED FIELD NAMES drawn from the untrusted imported source.
+ * The FIXED rejection message that replaces the Broker's raw `outcome.error.message` at the ERR arm
+ * below for the ONE denial {@link brokerRejectionNeedsFixedMessage} selects — `schema-gate.ts`'s
+ * no-inference branch, whose text folds `[<model-chosen field names>]`, drawn from the untrusted
+ * imported source, into itself (SAFETY RULE 7, incidental text, never the payload).
  *
- * KEYED ON `reason`, NOT the derived {@link SourceAgentFailureCode} — retained, but the
- * ORIGINAL REASON FOR IT IS GONE. It was written because `defaultMapSourceRejection`
- * classified on `outcome.error.branch` (the 5-value `JobBranch`), which cannot identify
- * a schema-gate rejection at all: a real no-inference rejection carries
- * `branch: "rejected"`, matched by none of that mapper's substring checks, so it
- * surfaced as `provider_failed` and a code-keyed redaction would have UNDER-redacted
- * the one message that needs it. That mapper now reads the closed `stage`
- * (`brokerRejectionFailureCode`), so `schema_rejected` IS derived correctly here and
- * either key would fire on the leak.
+ * THIS LEG NO LONGER KEEPS A RULE OF ITS OWN. It used to key on `outcome.error.reason ===
+ * "schema_rejected"` and carried a doc comment asserting that its rule and the sibling legs'
+ * "differ ONLY on a reason the real Broker never stamps at this stage".
  *
- * `reason` is kept because it is now the NARROWER of the two, and the narrower one is
- * right for this leg: it replaces exactly the schema gate's own `schema_rejected`
- * denials (the branch that quotes model-authored field names) and leaves the SAME
- * stage's `tool_policy_violation` message — `output-normalizer.ts`'s fixed, SoW-authored
- * "output implies a mutating external action …" sentence — forwarded as the distinct
- * diagnostic it is. NOTE the sibling legs (`runAgentJob.ts` / `readOnlyAgentJob.ts`)
- * key on the derived code instead, i.e. on the whole `schema_gate` STAGE, and so do
- * replace that one extra message; each leg's own doc comment states its choice.
+ * ⚠ THAT ASSERTION WAS FALSE, and it is corrected here rather than re-worded. `broker.ts:383` calls
+ * `lifecycleFault("schema_gate", life.state, audits)` when the job lifecycle cannot advance to
+ * `schema_validated`; the rejection it builds carries `stage: "schema_gate"` with `reason:
+ * "lifecycle_fault"` and the message `broker lifecycle fault at schema_gate`. That is a REAL,
+ * real-Broker-reachable cell on which the three legs genuinely diverged: the two workflow legs
+ * (keyed on the derived `schema_rejected` code, minus a `tool_policy_violation` carve-out) REPLACED
+ * a lifecycle-fault diagnostic with their fixed sentence, while this leg forwarded it. Verified by
+ * reading `broker.ts`, not inferred.
+ *
+ * The fix is ONE shared predicate, imported above and called by all three legs, keyed on the whole
+ * closed-field `BrokerRejection`. It is NARROWER than either previous rule: it fires only on the
+ * schema gate's no-inference branch, so this leg's five other `schema_rejected` denials (ajv
+ * structural, missing model parser, Zod `.refine`, un-normalizable output, §3 universal rule) now
+ * forward too. See its doc comment in `@sow/workflows`'s `readOnlyAgentJob.ts` for the six-branch
+ * enumeration and the residual it deliberately accepts.
+ *
+ * IT NAMES THE BRANCH ON PURPOSE. A bare "failed the schema gate" would tell an operator only what
+ * the closed `code` already tells them, so this sentence carries the REQ-F-017 fact — entirely
+ * SoW-authored — and withholds only the field list.
  *
  * Every OTHER reachable message (`provider-health.ts`, `model-availability.ts`,
  * `budget-enforcer.ts`, `broker.ts`'s own `no eligible provider …` / `broker lifecycle
- * fault …` templates, and every §5 `DenialReason` policy-deny message) is SoW/policy
- * -authored — a fixed template or a closed-code literal interpolated in, never
- * vendor/model/untrusted text — so forwarding it costs nothing at the Temporal
+ * fault …` templates, `schema-gate.ts`'s other denials, and every §5 `DenialReason` policy-deny
+ * message) is SoW/policy-authored — a fixed template or a closed-code literal interpolated in,
+ * never vendor/model/untrusted text — so forwarding it costs nothing at the Temporal
  * workflow-history boundary (ARCHITECTURE.md:155/157) and restores the diagnostic the
  * closed `SourceAgentFailureCode` taxonomy can no longer carry: it has exactly ONE
  * member (`provider_failed`) for every one of `no_eligible_provider` /
@@ -192,12 +198,8 @@ const defaultMapSourceRejection: (outcome: BrokerOutcome) => SourceAgentFailureC
  * `tool_policy_violation`, so the message is the only remaining diagnostic (mirrors the
  * sibling `runAgentJob.ts` / `readOnlyAgentJob.ts` legs' own restore).
  */
-function rejectionMessageFor(reason: string, brokerMessage: string): string {
-  if (reason === "schema_rejected") {
-    return "source-processing broker output failed the candidate-data schema gate";
-  }
-  return brokerMessage;
-}
+const SCHEMA_REJECTED_MESSAGE =
+  "source-processing broker output failed the candidate-data schema gate: REQ-F-017 no-inference rejection (unbacked field names withheld)";
 
 /**
  * Build a {@link RunSourceAgentJobPort} that assembles the read-only untrusted source-processing
@@ -279,13 +281,20 @@ export function createSourceAgentBrokerRouting(
       const outcome = await deps.broker.runJob(req);
       if (!outcome.ok) {
         // gate-on-outcome: a rejection propagates typed — mapCandidate is NOT reached.
-        // SAFETY RULE 7 (incidental, NOT the payload — see rejectionMessageFor's doc
-        // comment): the Broker's `outcome.error.message` is forwarded VERBATIM except
-        // when `outcome.error.reason === "schema_rejected"`, the one path that can carry
-        // untrusted model-authored field names. The closed `code` is still what a
-        // workflow driver switches on and crosses byte-identical.
+        // SAFETY RULE 7 (incidental, NOT the payload — see SCHEMA_REJECTED_MESSAGE's doc
+        // comment): the Broker's `outcome.error.message` is forwarded VERBATIM except on the ONE
+        // denial that can carry untrusted model-authored field names — `schema-gate.ts`'s
+        // no-inference branch. The rule is the SHARED `brokerRejectionNeedsFixedMessage` (imported
+        // from @sow/workflows; this leg no longer keeps a copy), reading the whole closed-field
+        // `BrokerRejection`, NOT the derived `code` — a custom `mapRejection` relabels the failure
+        // for this leg's taxonomy, and relabelling cannot change whether the broker's message
+        // contains model text. The closed `code` is still what a workflow driver switches on and
+        // crosses byte-identical.
         const code = mapRejection(outcome);
-        return err({ code, message: rejectionMessageFor(outcome.error.reason, outcome.error.message) });
+        const message = brokerRejectionNeedsFixedMessage(outcome.error)
+          ? SCHEMA_REJECTED_MESSAGE
+          : outcome.error.message;
+        return err({ code, message });
       }
       // Accepted: map the Broker CANDIDATE → an AgentExtraction (the mapper gates on the accepted
       // outcome + owns the §9 output-schema shape arch_gap).

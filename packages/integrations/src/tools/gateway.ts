@@ -15,8 +15,16 @@
 //   3. pre-write existence check — resolveExisting (safety invariant 2). A replay
 //      hit OR an existing (prior-write receipt / live vendor object) hit ⇒ REUSE
 //      the receipt/object, return {status:'reused'}, NO create — zero duplicate
-//      write. A live-probe FAULT ⇒ {status:'held'} (fail-closed, never create on
-//      an unreachable probe).
+//      write. A live-probe FAULT never creates (fail-closed); its DISPOSITION
+//      branches on the closed AdapterError code, the SAME switch step 5 uses:
+//      'unreachable' ⇒ {status:'held'} (the retryable outbox-hold signal);
+//      'conflict' ⇒ {status:'conflict'}; 'rejected'/'unknown'/'not_found' ⇒
+//      {status:'rejected'} (permanent — terminal, never an infinite re-drive).
+//      NOTE the retryable/terminal split is drawn at the TRANSPORT, by the code
+//      it picks — 'unreachable' spans "never reached the vendor" AND "the vendor
+//      said later" (408/425/429; transport.ts's `TransportFault`). This switch
+//      only honours that choice; widening 'rejected' to retry would restore the
+//      retry-forever bug, so a newly-retryable status is fixed upstream instead.
 //   4. create — adapter.create(env, action.payload). On ok ⇒ persist the receipt
 //      (indexed by both keys) + append an AuditRecord (summaries + payloadHash +
 //      refs, NEVER the raw payload) + emit a safe redacted log ⇒ {status:'created'}.
@@ -98,9 +106,11 @@ export interface ExternalWriteDeps {
  *       boundary where that text enters the system. Discarding the message
  *       here instead would not add safety (the adapter already owns that
  *       duty) — it would only cost every operator the ability to tell WHICH
- *       fault occurred (a 401 vs. a 403 vs. a 429 vs. an SSRF-blocked endpoint
- *       all carry the same `code` — `"rejected"` — and are distinguished ONLY
- *       by `message`).
+ *       fault occurred: a 401, a 403, an SSRF-blocked endpoint and a locked
+ *       Keychain all carry the same `code` — `"rejected"` — and are separated
+ *       ONLY by `message` (built from `httpStatus` for the first two, from the
+ *       closed `faultDetail` token for the last two). A 429 is NOT in that list
+ *       any more: it is `"unreachable"` and holds for retry.
  *
  * The closed `AdapterError.code` ALSO rides its own `adapterCode` field on
  * these three arms. A caller that must BRANCH on the failure kind (e.g.
@@ -256,16 +266,39 @@ export async function dispatchExternalWrite(
   }
   if (existing.kind === "error") {
     // The existence probe could not confirm absence — NEVER create (would risk a
-    // duplicate). Hold for the outbox / retry path. `existing.error.message` is
-    // safe BY CONTRACT (adapter-port.ts's `AdapterError.message` doc comment) —
-    // forwarded alongside the closed `code` (see the `ExternalWriteResult` doc
-    // comment). `adapterCode` lets a caller (notebooklm-sync.ts) branch on the
-    // failure kind without parsing this string.
-    return {
-      status: "held",
-      reason: `existence-check ${existing.error.code}: ${existing.error.message}`,
-      adapterCode: existing.error.code,
-    };
+    // duplicate). Every arm below is fail-closed in that sense; what differs is
+    // the DISPOSITION, and it branches on the closed `AdapterError.code` with the
+    // SAME switch the create-fault arm at step 5 uses.
+    //
+    // WHY THE SWITCH, not an unconditional hold. `held` is the outbox-hold signal
+    // (step 5's comment), and `outbox-drain.ts`'s `computeNextAttemptAt`
+    // deliberately never expires a held entry — an EXHAUSTED backoff still
+    // returns a bounded `maxMs`. So mapping every probe fault to `held` put every
+    // PERMANENT failure (a 401, a 404, an SSRF-blocked host) on a retry loop with
+    // no terminal state, and made adapter-port.ts's `AdapterError` doc block —
+    // "a caller must NOT treat `not_found` as an outbox-hold candidate ... never
+    // 'retry later'" — false of its only caller. Only `unreachable` means "the
+    // transport could not reach the vendor AT ALL"; only it is retryable.
+    //
+    // `reason` + `adapterCode` are IDENTICAL on every arm: `existing.error
+    // .message` is safe BY CONTRACT (adapter-port.ts's `AdapterError.message`
+    // doc comment), forwarded alongside the closed `code` (see the
+    // `ExternalWriteResult` doc comment), and `adapterCode` lets a caller
+    // (notebooklm-sync.ts's per-slot `not_found` → reattach) branch on the
+    // failure kind without parsing this string. That reattach path reads
+    // `adapterCode`, NOT `status`, so it is unaffected by the switch.
+    const existenceFaultReason = `existence-check ${existing.error.code}: ${existing.error.message}`;
+    switch (existing.error.code) {
+      case "unreachable":
+        return { status: "held", reason: existenceFaultReason, adapterCode: existing.error.code };
+      case "conflict":
+        return { status: "conflict", reason: existenceFaultReason, adapterCode: existing.error.code };
+      case "rejected":
+      case "unknown":
+      case "not_found":
+      default:
+        return { status: "rejected", reason: existenceFaultReason, adapterCode: existing.error.code };
+    }
   }
 
   // 3.5 RESERVE — atomically claim the exclusive right to create THIS object
@@ -303,9 +336,11 @@ export async function dispatchExternalWrite(
   // `created.error.message` is safe BY CONTRACT (adapter-port.ts's
   // `AdapterError.message` doc comment) — forwarded alongside the closed code
   // (see the `ExternalWriteResult` doc comment). This is the ONLY thing that
-  // distinguishes, say, a 401 from a 403 from a 429 from an SSRF-blocked
-  // endpoint — all four share `code: "rejected"`. `adapterCode` also rides its
-  // own field for callers that must branch (never parse `reason`).
+  // distinguishes, say, a 401 from a 403 from an SSRF-blocked endpoint from a
+  // locked Keychain — all four share `code: "rejected"` and reach this arm as
+  // {status:'rejected'}. (A 429 does NOT: it is `unreachable`, so it takes the
+  // `held` arm above and is retried.) `adapterCode` also rides its own field for
+  // callers that must branch (never parse `reason`).
   await deps.receiptStore.release(env.targetSystem, env.canonicalObjectKey);
   const createFaultReason = `create fault (${created.error.code}): ${created.error.message}`;
   switch (created.error.code) {

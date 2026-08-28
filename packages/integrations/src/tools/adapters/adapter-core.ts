@@ -41,6 +41,7 @@ import type {
   TransportResponse,
   TransportObject,
   TransportFault,
+  TransportFaultDetail,
 } from "./transport";
 
 /**
@@ -117,18 +118,51 @@ const FAULT_MESSAGE: Readonly<Record<TransportFault, string>> = {
 };
 
 // §S FIX — build `message` from CLOSED inputs only: the fault code (4 fixed
-// values) plus the structured `httpStatus` (a real number, when the transport
-// received one). NEVER the transport's free-text `detail` — a per-vendor
-// `mapResponse` builds `TransportResponse` directly and could put anything in
-// `detail` (a raw vendor body, a token-bearing URL); forwarding it verbatim
-// used to make that string cross the Tool Gateway into `ExternalWriteResult
-// .reason` unredacted. `httpStatus` is a number, not prose, so it cannot carry
-// that kind of payload — safe to fold into the diagnostic message.
-function faultToError(fault: TransportFault, httpStatus?: number): AdapterError {
+// values), the structured `httpStatus` (a real number, when the transport
+// received one), and the closed `faultDetail` token (transport.ts's
+// `TransportFaultDetail`, for a fault that never got an HTTP response). NEVER
+// the transport's free-text `detail` — a per-vendor `mapResponse` builds
+// `TransportResponse` directly and could put anything in `detail` (a raw vendor
+// body, a token-bearing URL); forwarding it verbatim used to make that string
+// cross the Tool Gateway into `ExternalWriteResult.reason` unredacted. Neither a
+// number nor a member of a module-local literal union can carry that kind of
+// payload — safe to fold into the diagnostic message.
+//
+// WHY THE THIRD INPUT EXISTS. Barring `detail` was correct, but on its own it
+// made six distinct statusless failures render byte-identically as "request
+// rejected" — a missing / locked / denied / empty credential, a throwing
+// credential accessor, and an SSRF/allowlist block. Collapsing distinct failures
+// into one string is a real operator cost, so the distinction is re-drawn with a
+// CLOSED sub-reason rather than by reopening free text: a hostile `mapResponse`
+// can SELECT a token, never author one.
+//
+// SCOPE OF THAT CLAIM — THIS FUNCTION RENDERS, IT DOES NOT PRODUCE. `faultToError`
+// can only spend a `faultDetail` some TRANSPORT set; it cannot conjure one. So
+// the six render distinctly exactly where the transport in play populates the
+// field. `createWriteHttpTransport` (write-http-transport.ts, the real write-side
+// HTTP transport) sets it at every statusless fault return, which is what makes
+// the distinction hold on the real path — end-to-end, pinned by
+// write-http-transport.test.ts. A transport that leaves it undefined still
+// collapses onto the bare `FAULT_MESSAGE[fault]` string, exactly as before.
+//
+// `faultDetail` ALSO rides `AdapterError.faultDetail` as its own typed field, for
+// the same reason `httpStatus` does: the moment a machine token is embedded in
+// prose, a caller that must branch will parse the prose. It never has to.
+function faultToError(
+  fault: TransportFault,
+  httpStatus?: number,
+  faultDetail?: TransportFaultDetail,
+): AdapterError {
   return {
     code: fault,
-    message: httpStatus !== undefined ? `HTTP ${httpStatus}` : FAULT_MESSAGE[fault],
+    message:
+      httpStatus !== undefined
+        ? `HTTP ${httpStatus}`
+        : faultDetail !== undefined
+          ? `${FAULT_MESSAGE[fault]} (${faultDetail})`
+          : FAULT_MESSAGE[fault],
     ...(httpStatus !== undefined ? { httpStatus } : {}),
+    ...(faultDetail !== undefined ? { faultDetail } : {}),
   };
 }
 
@@ -225,7 +259,7 @@ export function makeTargetWriteAdapter(
         // A live-probe FAULT is surfaced typed — NEVER collapsed to `null`, which
         // would risk a duplicate create (existence-check.ts holds fail-closed).
         emitSafeLog(deps, env, "existence_probe_fault");
-        return err(faultToError(resp.fault, resp.httpStatus));
+        return err(faultToError(resp.fault, resp.httpStatus, resp.faultDetail));
       }
       if (resp.object === null) return ok(null);
       const existing: ExistingObject = {
@@ -245,7 +279,7 @@ export function makeTargetWriteAdapter(
       const resp = called.value;
       if (!resp.ok) {
         emitSafeLog(deps, env, "create_fault");
-        return err(faultToError(resp.fault, resp.httpStatus));
+        return err(faultToError(resp.fault, resp.httpStatus, resp.faultDetail));
       }
       if (resp.object === null) {
         // A create that reports no object is not proof of a write (fail-closed).
@@ -275,7 +309,7 @@ export function makeTargetWriteAdapter(
       if (!resp.ok) {
         // A stale precondition surfaces as `conflict` — NEVER a blind overwrite.
         emitSafeLog(deps, env, "update_fault");
-        return err(faultToError(resp.fault, resp.httpStatus));
+        return err(faultToError(resp.fault, resp.httpStatus, resp.faultDetail));
       }
       if (resp.object === null) {
         return err<AdapterError>({

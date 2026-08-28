@@ -51,7 +51,41 @@ const WS_BOUND = "ws-routing-bound" as WorkspaceId;
 const POISON_FIELDS = "owner_PZN9F3A1BSECRET-leak";
 const POISON_PATH = "/Users/x/vault/other-workspace/SECRETMARKER.md";
 const POISONED = `no-inference rejection (REQ-F-017): unstated/unbacked fields not coerced [${POISON_FIELDS}] at ${POISON_PATH}`;
-const FIXED_SCHEMA_MESSAGE = "source-processing broker output failed the candidate-data schema gate";
+const FIXED_SCHEMA_MESSAGE =
+  "source-processing broker output failed the candidate-data schema gate: REQ-F-017 no-inference rejection (unbacked field names withheld)";
+
+/** `output-normalizer.ts:132-134`'s fixed literal, verbatim — the ONLY message `toolPolicyDeny`
+ *  can ever carry, because `enforceToolPolicyOnCandidate` is a concrete function, not a seam. */
+const TOOL_POLICY_MESSAGE =
+  "output implies a mutating external action but the job's ToolPolicy forbids mutation (read_only / !allowsMutating) — rejected, not coerced";
+
+/**
+ * `schema-gate.ts` reaches `schemaDeny` from SIX call sites, all stamping the SAME closed
+ * `reason: "schema_rejected"` at the SAME `stage: "schema_gate"`. Exactly ONE — the no-inference
+ * branch — interpolates MODEL-CHOSEN text; the other five interpolate the job's own schema id,
+ * `output-normalizer.ts`'s literal, or `universal-rules.ts`'s fixed domain field names. This leg's
+ * OWN previous rule (`reason === "schema_rejected"`) collapsed all six too — the narrower key it
+ * documented was narrower than the SIBLINGS', not narrow enough to isolate the model-authored one.
+ */
+const SCHEMA_GATE_SOW_AUTHORED_MESSAGES: readonly string[] = [
+  "ajv structural gate rejected output against 'sow:knowledge-mutation-plan' (schema_violation)",
+  "no model parser registered for 'sow:knowledge-mutation-plan'; refusing ajv-alone validation (LESSONS §3)",
+  "model schema parse rejected output against 'sow:knowledge-mutation-plan' (Zod .refine/cross-field)",
+  "output not normalizable to a candidate: no candidate mapping for outputSchemaId 'sow:knowledge-mutation-plan'",
+  "§3 universal rule rejection (unscoped_mutation:workspaceId|sourceRefs)",
+];
+
+/** `broker.ts:383` — `lifecycleFault("schema_gate", …)`. THE CELL THAT DISPROVED THE OLD DOC
+ *  COMMENT: this leg's `rejectionMessageFor` claimed its rule and the siblings' "differ ONLY on a
+ *  reason the real Broker never stamps at this stage". The real Broker stamps exactly this. */
+const SCHEMA_GATE_LIFECYCLE_FAULT_MESSAGE = "broker lifecycle fault at schema_gate";
+
+/** Every token that must never appear in a redacted result, however the message was assembled. */
+function expectNoModelText(serialized: string): void {
+  expect(serialized).not.toContain(POISON_FIELDS);
+  expect(serialized).not.toContain(POISON_PATH);
+  expect(serialized).not.toContain("not coerced [");
+}
 
 const field = (value: unknown, evidenceRef?: string): ExtractionField<unknown> =>
   ({ value, ...(evidenceRef !== undefined ? { evidenceRef } : {}) }) as ExtractionField<unknown>;
@@ -185,10 +219,7 @@ describe("spec(rule 7 / R3) source-extraction — the rejection code is derived 
     expect(isErr(res)).toBe(true);
     if (!isErr(res)) return;
     expect(res.error.code).toBe("schema_rejected");
-    const serialized = JSON.stringify(res);
-    expect(serialized).not.toContain(POISON_FIELDS);
-    expect(serialized).not.toContain(POISON_PATH);
-    expect(serialized).not.toContain("no-inference rejection");
+    expectNoModelText(JSON.stringify(res));
     expect(res.error.message).toBe(FIXED_SCHEMA_MESSAGE);
   });
 
@@ -213,31 +244,91 @@ describe("spec(rule 7 / R3) source-extraction — the rejection code is derived 
     emit: "provider_failed",
   };
 
+  // EVERY stage forwards a SoW-authored diagnostic verbatim — INCLUDING `schema_gate`. The
+  // redaction is keyed on the ONE no-inference message, not on the stage and not on the reason, so
+  // a schema-gate rejection carrying SoW-authored text keeps it. Before this change the
+  // `schema_gate` row here expected the fixed sentence, i.e. it pinned the collapse.
   for (const stage of BrokerStage) {
-    const redacted = REAL_REJECTION[stage].reason === "schema_rejected";
-    it(`stage "${stage}" -> ${EXPECTED_CODE[stage]}${redacted ? " (message replaced)" : " (SoW-authored message forwarded VERBATIM)"}`, async () => {
+    it(`stage "${stage}" -> ${EXPECTED_CODE[stage]} (SoW-authored message forwarded VERBATIM)`, async () => {
       const message = `SoW-authored diagnostic for ${stage}`;
       const res = await routing(rejection(stage, message)).run(ctx());
       expect(isErr(res)).toBe(true);
       if (!isErr(res)) return;
       expect(res.error.code).toBe(EXPECTED_CODE[stage]);
-      expect(res.error.message).toBe(redacted ? FIXED_SCHEMA_MESSAGE : message);
+      expect(res.error.message).toBe(message);
       expect(res.error.message.length).toBeGreaterThan(0);
     });
   }
 
-  it("NO OVER-REDACTION: the schema gate's OTHER denial — `tool_policy_violation`, a fixed SoW-authored sentence with no model text — still forwards VERBATIM, because this leg keys on `reason`, not on the derived code", async () => {
-    const toolPolicyMessage =
-      "output implies a mutating external action but the job's ToolPolicy forbids mutation (read_only / !allowsMutating) — rejected, not coerced";
+  // ── the schema gate's OWN six branches no longer collapse (2026-08-27 (b)) ──
+  it("MUTATION PROOF of the carve-out: all six schema-gate denials render DISTINCTLY, and only the no-inference one is replaced", async () => {
+    const all = [...SCHEMA_GATE_SOW_AUTHORED_MESSAGES, POISONED];
+    const rendered: string[] = [];
+    for (const message of all) {
+      const res = await routing(rejection("schema_gate", message)).run(ctx());
+      expect(isErr(res)).toBe(true);
+      if (!isErr(res)) return;
+      // The closed code cannot separate them — all six are `schema_rejected`…
+      expect(res.error.code).toBe("schema_rejected");
+      rendered.push(res.error.message);
+    }
+    // …so the MESSAGE has to. Widening the predicate back to `reason === "schema_rejected"` (this
+    // leg's OWN previous rule) collapses these six to one string and REDs this line.
+    expect(new Set(rendered).size).toBe(all.length);
+    expect(rendered.filter((m) => m === FIXED_SCHEMA_MESSAGE)).toEqual([FIXED_SCHEMA_MESSAGE]);
+    expect(rendered[rendered.length - 1]).toBe(FIXED_SCHEMA_MESSAGE);
+    expectNoModelText(JSON.stringify(rendered));
+  });
+
+  it("THE CELL THAT DISPROVED THE OLD DOC COMMENT: `schema_gate` + `lifecycle_fault` (broker.ts:383) — a real reason the real Broker DOES stamp at this stage — forwards", async () => {
+    // The removed `rejectionMessageFor` doc asserted this leg and the siblings "differ ONLY on a
+    // reason the real Broker never stamps at this stage". `broker.ts:383` stamps exactly this one,
+    // and the legs genuinely diverged on it: the siblings replaced it, this leg forwarded it. Both
+    // now forward — the message is `broker.ts`'s own template, with zero model text.
     const res = await routing(
-      rejection("schema_gate", toolPolicyMessage, { reason: "tool_policy_violation" }),
+      rejection("schema_gate", SCHEMA_GATE_LIFECYCLE_FAULT_MESSAGE, {
+        reason: "lifecycle_fault",
+        branch: "failed_terminal",
+      }),
+    ).run(ctx());
+    expect(isErr(res)).toBe(true);
+    if (!isErr(res)) return;
+    expect(res.error.code).toBe("schema_rejected");
+    expect(res.error.message).toBe(SCHEMA_GATE_LIFECYCLE_FAULT_MESSAGE);
+    expect(res.error.message).not.toBe(FIXED_SCHEMA_MESSAGE);
+  });
+
+  it("NO OVER-REDACTION: the schema gate's OTHER denial — `tool_policy_violation`, a fixed SoW-authored sentence with no model text — still forwards VERBATIM", async () => {
+    const res = await routing(
+      rejection("schema_gate", TOOL_POLICY_MESSAGE, { reason: "tool_policy_violation" }),
     ).run(ctx());
     expect(isErr(res)).toBe(true);
     if (!isErr(res)) return;
     // Same STAGE, so the same derived code…
     expect(res.error.code).toBe("schema_rejected");
     // …but a different REASON, so the operator keeps the distinct diagnostic.
-    expect(res.error.message).toBe(toolPolicyMessage);
+    expect(res.error.message).toBe(TOOL_POLICY_MESSAGE);
+  });
+
+  it("…and the no-inference message at the SAME stage is still DROPPED — the two schema-gate denials never render identically (all three legs now share ONE predicate)", async () => {
+    // The three legs (`runAgentJob.ts`, `readOnlyAgentJob.ts`, this one) DISAGREED here twice over.
+    // First the siblings keyed on the derived code alone and replaced the tool-policy sentence too.
+    // Then they carved `tool_policy_violation` out — and this leg's doc claimed the remaining
+    // difference was unreachable, which `broker.ts:383`'s `lifecycleFault("schema_gate", …)`
+    // disproves. All three now call the SAME `brokerRejectionNeedsFixedMessage`, so there is no
+    // cell left to diverge on; pin the distinctness here so a future unification cannot quietly
+    // re-collapse it in whichever direction.
+    const toolPolicy = await routing(
+      rejection("schema_gate", TOOL_POLICY_MESSAGE, { reason: "tool_policy_violation" }),
+    ).run(ctx());
+    const noInference = await routing(rejection("schema_gate", POISONED)).run(ctx());
+    expect(isErr(toolPolicy)).toBe(true);
+    expect(isErr(noInference)).toBe(true);
+    if (!isErr(toolPolicy) || !isErr(noInference)) return;
+    expect(noInference.error.message).toBe(FIXED_SCHEMA_MESSAGE);
+    expectNoModelText(JSON.stringify(noInference));
+    expect(toolPolicy.error.code).toBe(noInference.error.code);
+    expect(toolPolicy.error.message).not.toBe(noInference.error.message);
   });
 
   it("a cooperative provider cancel (stage `run`, branch `cancelled_budget`) is `provider_failed`, NOT `budget_exceeded` — the branch names a lifecycle state, not a budget gate", async () => {

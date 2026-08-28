@@ -16,6 +16,7 @@ import type {
   AdapterTransport,
   AdapterTransportRequest,
   TransportResponse,
+  TransportFaultDetail,
 } from "../src/tools/adapters/transport";
 import { createCalendarWriteAdapter } from "../src/tools/adapters/calendar";
 import { createDriveWriteAdapter } from "../src/tools/adapters/drive";
@@ -342,5 +343,122 @@ describe("6.4 adapters — targetSystem identity + §16 total (no throw)", () =>
     const exists = await adapter.existenceCheck(env.canonicalObjectKey, env);
     expect(exists.ok).toBe(false);
     if (!exists.ok) expect(exists.error.code).toBe("unknown");
+  });
+});
+
+// F2 (this round) — the §S fix above closed a real leak channel with an instrument
+// far broader than the channel. `faultToError` built `message` from the fault code
+// alone whenever no `httpStatus` was present, and EIGHT distinct statusless
+// real-transport failures (an SSRF/allowlist block, a missing / locked / denied /
+// empty credential, a throwing credential accessor, a request-build error, a map
+// error) collapsed into THREE strings — six of them byte-identical. "Your Keychain
+// is locked" and "an SSRF guard blocked this host" rendered the same.
+//
+// The fix reopens the DISTINCTION without reopening the CHANNEL: `faultDetail` is a
+// closed union of module-local literals in transport.ts. A hostile or buggy
+// per-vendor `mapResponse` can only SELECT one of those tokens; it cannot
+// contribute a byte. The §S guarantee holds verbatim — `message` is still built
+// from closed inputs only, there are now three of them rather than two.
+describe("6.4 adapter-core — a CLOSED faultDetail distinguishes statusless faults without reopening free text (F2)", () => {
+  it("a statusless fault carrying faultDetail renders the sub-reason; the closed AdapterError.faultDetail field carries it typed", async () => {
+    const { transport } = makeTransport({
+      query: async () => ({
+        ok: false,
+        fault: "rejected",
+        detail: "write credential unavailable: locked",
+        faultDetail: "credential_locked",
+      }),
+    });
+    const adapter = createDriveWriteAdapter({ transport, clock });
+    const env = makeEnvelope({ targetSystem: "drive", canonicalObjectKey: "cok_drive_locked" });
+
+    const res = await adapter.existenceCheck(env.canonicalObjectKey, env);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error.code).toBe("rejected");
+    expect(res.error.message).toBe("request rejected (credential_locked)");
+    // The typed twin, so a caller that must BRANCH never parses the prose — the
+    // same reason `httpStatus` exists alongside the "HTTP <n>" message.
+    expect(res.error.faultDetail).toBe("credential_locked");
+  });
+
+  it("MUTATION PROOF: two statusless faults that share a fault code now render DIFFERENTLY", async () => {
+    const render = async (faultDetail: TransportFaultDetail): Promise<string> => {
+      const { transport } = makeTransport({
+        create: async () => ({
+          ok: false,
+          fault: "rejected",
+          detail: "irrelevant",
+          faultDetail,
+        }),
+      });
+      const adapter = createGithubWriteAdapter({ transport, clock });
+      const env = makeEnvelope({ targetSystem: "github", canonicalObjectKey: "cok_gh_distinct" });
+      const res = await adapter.create(env, { title: "x" });
+      if (res.ok) throw new Error("expected a fault");
+      return res.error.message;
+    };
+
+    const locked = await render("credential_locked");
+    const ssrf = await render("ssrf_blocked");
+    expect(locked).not.toBe(ssrf);
+    expect(locked).toContain("credential_locked");
+    expect(ssrf).toContain("ssrf_blocked");
+  });
+
+  it("faultDetail is IGNORED when the fault carried a real httpStatus (the vendor status stays the diagnostic)", async () => {
+    const { transport } = makeTransport({
+      update: async () => ({
+        ok: false,
+        fault: "conflict",
+        detail: "etag mismatch",
+        httpStatus: 412,
+        faultDetail: "map_error",
+      }),
+    });
+    const adapter = createDriveWriteAdapter({ transport, clock });
+    const env = makeEnvelope({ targetSystem: "drive", canonicalObjectKey: "cok_drive_412" });
+
+    const res = await adapter.update(env, { title: "x" }, "etag-stale");
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error.message).toBe("HTTP 412");
+    expect(res.error.httpStatus).toBe(412);
+  });
+
+  it("a hostile free-text detail STILL never reaches AdapterError.message when faultDetail is also present", async () => {
+    const hostileDetail = "Bearer sk-PZN9F3A1BSECRET-leak https://vendor.example/x?token=sk-PZN9F3A1BSECRET-leak";
+    const { transport } = makeTransport({
+      create: async () => ({
+        ok: false,
+        fault: "unknown",
+        detail: hostileDetail,
+        faultDetail: "map_error",
+      }),
+    });
+    const adapter = createGithubWriteAdapter({ transport, clock });
+    const env = makeEnvelope({ targetSystem: "github", canonicalObjectKey: "cok_github_hostile2" });
+
+    const res = await adapter.create(env, { title: "x" });
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error.message).toBe("unclassified adapter fault (map_error)");
+    expect(res.error.message).not.toContain("sk-PZN9F3A1BSECRET-leak");
+    expect(res.error.message).not.toContain("Bearer");
+    expect(res.error.message).not.toContain("token=");
+  });
+
+  it("REGRESSION PIN: a statusless fault with NO faultDetail renders exactly as before", async () => {
+    const { transport } = makeTransport({
+      query: async () => ({ ok: false, fault: "unreachable", detail: "vendor 503" }),
+    });
+    const adapter = createDriveWriteAdapter({ transport, clock });
+    const env = makeEnvelope({ targetSystem: "drive", canonicalObjectKey: "cok_drive_nodetail" });
+
+    const res = await adapter.existenceCheck(env.canonicalObjectKey, env);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error.message).toBe("target system unreachable");
+    expect(res.error.faultDetail).toBeUndefined();
   });
 });

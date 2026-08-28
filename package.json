@@ -9,6 +9,7 @@
     "build": "turbo run build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:gate": "turbo run test --force --continue",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "format:check": "prettier --check package.json turbo.json eslint.config.js .prettierrc.json \"apps/worker/test/observability/**/*.ts\""

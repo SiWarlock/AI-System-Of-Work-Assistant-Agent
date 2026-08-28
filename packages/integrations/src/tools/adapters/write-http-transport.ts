@@ -32,8 +32,10 @@
 //       outbox-hold signal (see outbox-drain.ts's module header).
 //   (5) POSITIVE 2xx gate — a non-integer / <200 / ≥300 status is a fault, NEVER a
 //       success. 409/412 ⇒ `"conflict"` (a stale precondition — NEVER a blind
-//       overwrite); other 4xx ⇒ `"rejected"`; 5xx ⇒ `"unreachable"`; anything else
-//       (1xx/3xx/NaN/out-of-range) ⇒ `"unknown"`. `detail` carries ONLY the safe
+//       overwrite); 408/425/429 ⇒ `"unreachable"` — the vendor said "later", not
+//       "no" (see `RETRYABLE_4XX`); other 4xx ⇒ `"rejected"` (terminal); 5xx ⇒
+//       `"unreachable"`; anything else (1xx/3xx/NaN/out-of-range) ⇒ `"unknown"`.
+//       `detail` carries ONLY the safe
 //       status number in prose (`"HTTP <n>"`); `httpStatus` carries the SAME
 //       number as a structured field (§S) — the one a caller must branch on
 //       (adapter-core.ts's `faultToError`, drive.ts's 404 promotion), never
@@ -44,6 +46,13 @@
 //       (which could embed raw response content) becomes a redacted `"unknown"`
 //       fault, never propagating.
 //
+// EVERY statusless fault this template returns (one that never received an HTTP
+// response, so it carries no `httpStatus`) ALSO carries a closed
+// `TransportFaultDetail` token. This template is the PRODUCER that makes
+// transport.ts's `faultDetail` field mean something: without it the six
+// statusless `rejected` faults below (SSRF-block, four credential reasons, a
+// throwing accessor) render byte-identically downstream as "request rejected".
+//
 // DORMANT + UNBOUND: no production call-site. The worker's `WriteTransportGate`
 // (backends.ts) stays unset; `selectAdapterTransport` keeps returning the
 // deterministic in-memory `createStubAdapterTransport`. Binding a real
@@ -53,8 +62,19 @@
 // Tests inject fakes only — zero real network/secrets here.
 import type { Result } from "@sow/contracts";
 import { isAllowedRemoteEndpoint, endpointHostRef } from "@sow/policy";
-import type { AdapterTransport, AdapterTransportRequest, TransportFault, TransportResponse } from "./transport";
-import { writeSecretRef, type WriteSecretsAccessor, type WriteSecretUnavailable } from "./adapter-core";
+import type {
+  AdapterTransport,
+  AdapterTransportRequest,
+  TransportFault,
+  TransportFaultDetail,
+  TransportResponse,
+} from "./transport";
+import {
+  writeSecretRef,
+  type WriteSecretsAccessor,
+  type WriteSecretUnavailable,
+  type WriteSecretUnavailableReason,
+} from "./adapter-core";
 
 // ── integrations-local injected seams ──────────────────────────────────────────
 // Mirror the read-side connector template's re-declared shapes (http-transport.ts
@@ -120,16 +140,57 @@ function trimTrailingSlash(endpoint: string): string {
   return endpoint.endsWith("/") ? endpoint.slice(0, -1) : endpoint;
 }
 
+/**
+ * The 4xx statuses that mean "later", not "no" — the vendor received and
+ * understood the request and is asking to be retried, so they map to
+ * `unreachable` (the ONLY retryable fault; gateway.ts routes it to
+ * `{status:"held"}` → the outbox backoff) rather than to the terminal
+ * `rejected`.
+ *
+ *   408 Request Timeout — the server closed an idle/slow connection before the
+ *       request completed. RFC 9110 §15.5.9: the client MAY repeat the request.
+ *   425 Too Early      — the server refuses to risk replaying an early-data
+ *       (TLS 0-RTT) request. RFC 8470 §5.2: retry once the handshake completes.
+ *       Included for completeness; this template never sends early data itself,
+ *       so reaching it requires an injected `HttpTransport` that does.
+ *   429 Too Many Requests — a rate limit. RFC 6585 §4 defines it as temporal
+ *       ("in a given amount of time"). This is the single most common real-world
+ *       external-write failure; terminating on it fails a whole batch closed.
+ *
+ * DELIBERATELY NOT retryable, decided on their merits:
+ *   423 Locked — RFC 4918 §11.3 gives no bound on how long the lock is held, and
+ *       several vendors reuse 423 for a permanently locked ACCOUNT. A held outbox
+ *       entry never expires (outbox-drain.ts's `computeNextAttemptAt` returns a
+ *       bounded `maxMs` even when the backoff is exhausted), so an unbounded
+ *       condition on a never-expiring hold is the retry-forever bug this round
+ *       exists to avoid. It terminates, and the operator sees "HTTP 423".
+ *   401/403 — auth. Retrying cannot fix a credential; retrying forever hides it.
+ *   404/400/422 — the request or target is wrong. A retry sends the same bytes.
+ */
+const RETRYABLE_4XX: ReadonlySet<number> = new Set([408, 425, 429]);
+
 /** Positive-2xx-gate status→fault map (step 5). 409/412 ⇒ conflict (a stale
- *  precondition — NEVER a blind overwrite); other 4xx ⇒ rejected; 5xx ⇒
- *  unreachable (the outbox-hold signal); anything else (1xx/3xx/NaN/out-of-range,
- *  including a NaN status where every numeric comparison is false) ⇒ unknown. */
+ *  precondition — NEVER a blind overwrite); a RETRYABLE_4XX ⇒ unreachable (the
+ *  vendor said "later"); other 4xx ⇒ rejected (terminal); 5xx ⇒ unreachable
+ *  (the outbox-hold signal); anything else (1xx/3xx/NaN/out-of-range, including a
+ *  NaN status where every numeric comparison is false) ⇒ unknown. */
 function statusToFault(status: number): TransportFault {
   if (status === 409 || status === 412) return "conflict";
+  if (RETRYABLE_4XX.has(status)) return "unreachable";
   if (status >= 400 && status < 500) return "rejected";
   if (status >= 500 && status < 600) return "unreachable";
   return "unknown";
 }
+
+/** Map the closed write-credential failure reason (adapter-core.ts) onto the
+ *  closed `TransportFaultDetail` token, so a LOCKED Keychain and a DENIED one do
+ *  not render as the same sentence. Total over the reason union by construction:
+ *  adding a reason without a token is a compile error, not a silent collapse. */
+const CREDENTIAL_FAULT_DETAIL: Readonly<Record<WriteSecretUnavailableReason, TransportFaultDetail>> = {
+  missing: "credential_missing",
+  locked: "credential_locked",
+  denied: "credential_denied",
+};
 
 /**
  * Build the real write-side HTTP {@link AdapterTransport}. DORMANT/unbound — the
@@ -147,7 +208,12 @@ export function createWriteHttpTransport(spec: WriteHttpSpec, deps: WriteHttpTra
     try {
       built = spec.buildRequest(req);
     } catch {
-      return { ok: false, fault: "unknown", detail: `request build error (${endpointHostRef(spec.baseUrl)})` };
+      return {
+        ok: false,
+        fault: "unknown",
+        detail: `request build error (${endpointHostRef(spec.baseUrl)})`,
+        faultDetail: "request_build_error",
+      };
     }
     const fullUrl = `${trimTrailingSlash(spec.baseUrl)}${built.path}`;
     const hostRef = endpointHostRef(fullUrl); // redaction-safe host ref for faults (host only)
@@ -156,7 +222,7 @@ export function createWriteHttpTransport(spec: WriteHttpSpec, deps: WriteHttpTra
     //     smuggled via the path is caught, not just a misconfigured base. Off-guard
     //     ⇒ zero token read, zero dispatch.
     if (!isAllowedRemoteEndpoint(fullUrl, spec.allowedHosts)) {
-      return { ok: false, fault: "rejected", detail: hostRef };
+      return { ok: false, fault: "rejected", detail: hostRef, faultDetail: "ssrf_blocked" };
     }
 
     // (3) Resolve the write-credential — fail-closed on a typed-unavailable Err, a
@@ -166,13 +232,28 @@ export function createWriteHttpTransport(spec: WriteHttpSpec, deps: WriteHttpTra
     try {
       secret = await secrets.getSecret(writeSecretRef(req.targetSystem));
     } catch {
-      return { ok: false, fault: "rejected", detail: "write credential resolution faulted" };
+      return {
+        ok: false,
+        fault: "rejected",
+        detail: "write credential resolution faulted",
+        faultDetail: "credential_fault",
+      };
     }
     if (!secret.ok) {
-      return { ok: false, fault: "rejected", detail: `write credential unavailable: ${secret.error.reason}` };
+      return {
+        ok: false,
+        fault: "rejected",
+        detail: `write credential unavailable: ${secret.error.reason}`,
+        faultDetail: CREDENTIAL_FAULT_DETAIL[secret.error.reason],
+      };
     }
     if (secret.value.trim().length === 0) {
-      return { ok: false, fault: "rejected", detail: "write credential unavailable: empty" };
+      return {
+        ok: false,
+        fault: "rejected",
+        detail: "write credential unavailable: empty",
+        faultDetail: "credential_empty",
+      };
     }
 
     // (4) Build the dispatched request. The token rides ONLY the Authorization
@@ -198,7 +279,12 @@ export function createWriteHttpTransport(spec: WriteHttpSpec, deps: WriteHttpTra
     try {
       response = await http.send(httpRequest);
     } catch {
-      return { ok: false, fault: "unreachable", detail: `transport error (${hostRef})` };
+      return {
+        ok: false,
+        fault: "unreachable",
+        detail: `transport error (${hostRef})`,
+        faultDetail: "transport_error",
+      };
     }
 
     // (6) POSITIVE 2xx gate — a non-integer / <200 / ≥300 status fails closed,
@@ -220,7 +306,7 @@ export function createWriteHttpTransport(spec: WriteHttpSpec, deps: WriteHttpTra
     try {
       json = JSON.parse(response.body) as unknown;
     } catch {
-      return { ok: false, fault: "unknown", detail: `malformed body (${hostRef})` };
+      return { ok: false, fault: "unknown", detail: `malformed body (${hostRef})`, faultDetail: "malformed_body" };
     }
 
     // (8) Map via the per-vendor CANDIDATE wire-mapper — wrapped so a throwing
@@ -228,7 +314,7 @@ export function createWriteHttpTransport(spec: WriteHttpSpec, deps: WriteHttpTra
     try {
       return spec.mapResponse(response.status, json, req);
     } catch {
-      return { ok: false, fault: "unknown", detail: `map error (${hostRef})` };
+      return { ok: false, fault: "unknown", detail: `map error (${hostRef})`, faultDetail: "map_error" };
     }
   };
 }

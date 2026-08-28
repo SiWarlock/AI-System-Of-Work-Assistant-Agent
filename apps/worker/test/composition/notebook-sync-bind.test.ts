@@ -427,3 +427,132 @@ describe("buildNotebookSync — dormancy pin: zero call-sites in the four worker
     expect(scanned).toBe(4);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W2 — the END-TO-END drive: a held slot's cause must survive the bind's EXTRA
+// fold layer, not just `createNotebookLmSync` in isolation.
+//
+// This bind routes every write through a nested `dispatchExternalWrite`, folds
+// that nested outcome back into an `AdapterError` (`foldDispatchOutcome`), and
+// lets the OUTER gateway re-classify it. Two flattenings happen on that path, so
+// "the cause survives" is a claim about the whole chain, not about the integrations
+// module. These tests drive the real chain and assert on what the CALLER receives.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// A Drive target unreachable at both the probe and the create — the §8 outage.
+const W2_OUTAGE_ADAPTER: TargetWriteAdapter = {
+  targetSystem: "drive",
+  existenceCheck: async (): Promise<Result<ExistingObject | null, AdapterError>> =>
+    err<AdapterError>({ code: "unreachable", message: "drive endpoint unreachable" }),
+  create: async (): Promise<Result<WriteReceipt, AdapterError>> =>
+    err<AdapterError>({ code: "unreachable", message: "drive endpoint unreachable" }),
+  update: async (): Promise<Result<WriteReceipt, AdapterError>> =>
+    err<AdapterError>({ code: "unknown", message: "unused" }),
+};
+
+function armedHoldingDeps(
+  routedAdapter: TargetWriteAdapter,
+  secrets?: ExternalWriteDeps["secrets"],
+): { deps: NotebookSyncBindDeps; dispatch: ReturnType<typeof makeRoutedDispatch> } {
+  const dispatch = makeRoutedDispatch(routedAdapter);
+  const store = createInMemoryReceiptStore();
+  const { deps: gatewayBase } = makeGatewayDeps(createUnroutedWriteAdapter(), store);
+  const gateway: ExternalWriteDeps =
+    secrets === undefined ? gatewayBase : { ...gatewayBase, secrets };
+  let n = 0;
+  return {
+    dispatch,
+    deps: baseDeps({
+      gate: { enabled: true },
+      gateway,
+      dispatch,
+      outbox: {
+        repo: makeFakeOutbox(),
+        hold: { clock: FIXED_CLOCK, outboxId: () => `outbox_${n++}` },
+        workspaceId: "personal-business",
+      },
+    }),
+  };
+}
+
+describe("buildNotebookSync — a held slot's CAUSE survives the bind's nested fold (W2)", () => {
+  it("a Drive OUTAGE arrives at the caller with adapterCode `unreachable` and the nested diagnostic intact", async () => {
+    const { deps } = armedHoldingDeps(W2_OUTAGE_ADAPTER);
+    const port = buildNotebookSync(deps);
+    if (port === undefined) throw new Error("expected an armed port");
+
+    const res = await port.sync(makeMapping(), makeBodies());
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+
+    expect(res.value.outcome).toBe("incomplete");
+    expect(res.value.heldDetail.map((h) => h.slot)).toEqual([...res.value.heldForRetry]);
+    expect(res.value.heldDetail).toHaveLength(NOTEBOOK_SLOTS.length);
+    for (const entry of res.value.heldDetail) {
+      expect(entry.adapterCode).toBe("unreachable");
+      // The nested existence-check fault survives BOTH folds: the bind's
+      // `foldDispatchOutcome` re-raises it as an AdapterError, and the outer
+      // gateway wraps it as a create fault.
+      expect(entry.reason).toContain("unreachable");
+    }
+  });
+
+  it("a LOCKED Keychain arrives DISTINGUISHABLY: no adapterCode, the closed lock token intact, and the routed dispatch never invoked", async () => {
+    const { deps, dispatch } = armedHoldingDeps(makeFakeDriveAdapter().adapter, {
+      getSecret: async () => err({ reason: "locked" as const }),
+    });
+    const port = buildNotebookSync(deps);
+    if (port === undefined) throw new Error("expected an armed port");
+
+    const res = await port.sync(makeMapping(), makeBodies());
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+
+    expect(res.value.outcome).toBe("incomplete");
+    expect(res.value.heldDetail).toHaveLength(NOTEBOOK_SLOTS.length);
+    const first = res.value.heldDetail[0];
+    expect(first).toBeDefined();
+    if (first === undefined) return;
+    expect("adapterCode" in first).toBe(false);
+    expect(first.reason).toContain("locked");
+    // Fail-closed: the 21.10 seam holds at the OUTER gateway's step 2.5, before
+    // the routed write is ever attempted. No unauthenticated Drive write.
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("the two causes do not collapse into one another through the bind", async () => {
+    const outagePort = buildNotebookSync(armedHoldingDeps(W2_OUTAGE_ADAPTER).deps);
+    const lockedPort = buildNotebookSync(
+      armedHoldingDeps(makeFakeDriveAdapter().adapter, {
+        getSecret: async () => err({ reason: "locked" as const }),
+      }).deps,
+    );
+    if (outagePort === undefined || lockedPort === undefined) throw new Error("expected armed ports");
+
+    const a = await outagePort.sync(makeMapping(), makeBodies());
+    const b = await lockedPort.sync(makeMapping(), makeBodies());
+    expect(a.ok && b.ok).toBe(true);
+    if (!a.ok || !b.ok) return;
+
+    // Indistinguishable on the pre-W2 surface …
+    expect(a.value.heldForRetry).toEqual(b.value.heldForRetry);
+    // … distinguishable now.
+    expect(a.value.heldDetail).not.toEqual(b.value.heldDetail);
+    expect(a.value.heldDetail[0]?.adapterCode).toBe("unreachable");
+    expect(b.value.heldDetail[0]?.adapterCode).toBeUndefined();
+  });
+
+  it("a clean armed sync through the bind is `synced` with no held entries (non-vacuity control)", async () => {
+    const { adapter } = makeFakeDriveAdapter();
+    const { deps } = armedHoldingDeps(adapter);
+    const port = buildNotebookSync(deps);
+    if (port === undefined) throw new Error("expected an armed port");
+
+    const res = await port.sync(makeMapping(), makeBodies());
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.value.outcome).toBe("synced");
+    expect(res.value.heldDetail).toEqual([]);
+    expect([...res.value.upserted].sort()).toEqual([...NOTEBOOK_SLOTS].sort());
+  });
+});

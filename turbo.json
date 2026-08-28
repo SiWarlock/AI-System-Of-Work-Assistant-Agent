@@ -1,5 +1,12 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": [
+    "tsconfig.base.json",
+    "vitest.workspace.ts",
+    "eslint.config.js",
+    "pnpm-workspace.yaml",
+    "config/**"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

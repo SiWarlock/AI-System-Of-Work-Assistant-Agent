@@ -280,3 +280,68 @@ describe("dispatchExternalWrite — candidate-gate linkage", () => {
     expect(h.spies.adapter.existenceCheck).not.toHaveBeenCalled();
   });
 });
+
+// F3 (this round): the existence-fault arm used to map EVERY adapter fault code to
+// `{status:'held'}`, while the create-fault arm 40 lines below already branched on
+// the SAME closed code. Two arms of one pipeline disagreeing about one closed code
+// is not a style difference: `held` is the outbox-hold signal, and
+// `outbox-drain.ts`'s `computeNextAttemptAt` deliberately NEVER expires a held
+// entry (an exhausted backoff still returns a bounded `maxMs`). So a PERMANENT
+// existence-probe fault — a 401, a 404, an SSRF-blocked host — was routed onto an
+// infinite retry loop, and `adapter-port.ts`'s `AdapterError` doc block ("a caller
+// must NOT treat `not_found` as an outbox-hold candidate ... never 'retry later'")
+// was false of its own only caller.
+//
+// The disposition now branches on the closed `AdapterError.code`, identically to
+// the create-fault arm. `reason` + `adapterCode` are unchanged on every arm.
+describe("dispatchExternalWrite — existence-probe FAULT disposition branches on the closed adapter code", () => {
+  const cases: ReadonlyArray<{
+    readonly code: AdapterError["code"];
+    readonly status: "held" | "conflict" | "rejected";
+  }> = [
+    // Only a genuine "could not reach the vendor AT ALL" is retryable.
+    { code: "unreachable", status: "held" },
+    { code: "conflict", status: "conflict" },
+    // Permanent, per-object or per-request: terminal, never an outbox re-drive.
+    { code: "not_found", status: "rejected" },
+    { code: "rejected", status: "rejected" },
+    { code: "unknown", status: "rejected" },
+  ];
+
+  for (const { code, status } of cases) {
+    it(`an existence-probe '${code}' fault ⇒ {status:'${status}'} (create is NEVER called)`, async () => {
+      const action = makeProposedAction();
+      const env = envFor(action);
+      const h = makeHarness({
+        existence: async () => err<AdapterError>({ code, message: "HTTP 000" }),
+      });
+
+      const res = await dispatchExternalWrite(env, action, h.deps);
+      expect(res.status).toBe(status);
+      // Fail-closed is preserved on EVERY arm: an unconfirmed probe never creates.
+      expect(h.spies.createCalls()).toBe(0);
+      // The operator diagnostic + the machine-readable code are unchanged.
+      if (res.status === "held" || res.status === "conflict" || res.status === "rejected") {
+        expect(res.reason).toBe(`existence-check ${code}: HTTP 000`);
+        expect(res.adapterCode).toBe(code);
+      }
+    });
+  }
+
+  it("the existence-fault arm and the create-fault arm agree on every closed code", async () => {
+    const action = makeProposedAction();
+    for (const { code } of cases) {
+      const existenceRes = await dispatchExternalWrite(
+        envFor(action),
+        action,
+        makeHarness({ existence: async () => err<AdapterError>({ code, message: "m" }) }).deps,
+      );
+      const createRes = await dispatchExternalWrite(
+        envFor(action),
+        action,
+        makeHarness({ create: async () => err<AdapterError>({ code, message: "m" }) }).deps,
+      );
+      expect(existenceRes.status).toBe(createRes.status);
+    }
+  });
+});

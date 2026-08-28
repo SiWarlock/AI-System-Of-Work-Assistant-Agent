@@ -40,7 +40,12 @@ import type {
 } from "@sow/contracts";
 import { admitJob, isDeny } from "@sow/policy";
 import type { PolicyDecision, LocalProviderConfig } from "@sow/policy";
-import type { BrokerJobRequest, BrokerOutcome, BrokerStage } from "@sow/providers";
+import type {
+  BrokerJobRequest,
+  BrokerOutcome,
+  BrokerStage,
+  BrokerRejection,
+} from "@sow/providers";
 import type { ToolPolicy } from "@sow/contracts";
 
 /** The narrow Broker surface this activity dispatches through (injected). */
@@ -207,37 +212,121 @@ export function brokerRejectionFailureCode(outcome: BrokerOutcome): BrokerStageF
 }
 
 /**
- * The FIXED, generic rejection message for a `schema_rejected` Broker outcome — replaces the
- * Broker's raw `outcome.error.message` at the ERR arm below ONLY for this one code (SAFETY RULE
- * 7, incidental text, never the payload: mirrors runAgentJob.ts's identical remedy). The real
- * Broker's schema gate (`schema-gate.ts`) folds a no-inference rejection into its message as
- * `no-inference rejection … [<fields>]`, quoting MODEL-OUTPUT FIELD NAMES — this is the ONE
- * rejection stage whose message can carry foreign (model-authored) text, so it is the ONE stage
- * redacted.
+ * `schema-gate.ts`'s no-inference branch opens its message with THIS fixed, SoW-AUTHORED literal
+ * and interpolates the model-authored field names only into the trailing `[…]`:
  *
- * Every OTHER Broker rejection stage (admission, route resolution, egress veto, health, budget,
- * provider run) emits SoW-authored closed diagnostic text, reached here by all four output-
- * workflow families — an operator needs to tell one failure from another, so those messages
- * cross UNCHANGED below (restored 2026-08-27: an earlier pass over-applied this schema-gate-
- * specific justification to all five failure codes, collapsing every distinct Broker failure
- * onto one fixed sentence per code — CLAUDE.md "THE BAR IS INVERTED: restore unless removal is
- * clearly justified").
+ *   `no-inference rejection (REQ-F-017): unstated/unbacked fields not coerced [${fields}]`
  *
- * REACHABILITY (fixed here): this remedy was DEAD CODE until the rejection mapping was moved off
- * `outcome.error.branch` and onto `outcome.error.stage` — no `JobBranch` member contains the
- * substring "schema", so `schema_rejected` could never be derived and this sentence never once
- * replaced anything. The poisoned no-inference message crossed VERBATIM. See
- * {@link BROKER_STAGE_FAILURE_CODE}.
+ * So the prefix is at index 0 by construction and no model text can reach position 0 of it — which
+ * is what makes an ANCHORED `startsWith` here safe rather than a substring heuristic.
  *
- * SCOPE, stated exactly: the swap is keyed on the derived code, i.e. on the `schema_gate` STAGE —
- * so it also replaces that stage's OTHER denial, `tool_policy_violation`, whose message
- * (`output-normalizer.ts`'s fixed "output implies a mutating external action …" sentence) is
- * SoW-authored and carries no model text. Redacting it is a small, deliberate over-reach kept for
- * the stage-level guarantee: EVERY schema-gate message is replaced, including one from a custom
- * `SchemaGate` injected at a composition root that stamps some other `reason`.
+ * ⚠ THIS CONSTANT DUPLICATES A LITERAL IN A PACKAGE THIS ONE CANNOT TYPE-BIND TO. It is anchored by
+ * a TEST instead, not by the compiler: `read-only-agent-job-broker-rejection-redaction.test.ts`
+ * drives the REAL `createSchemaGate` with a REJECTING `NoInferenceView` and asserts the predicate
+ * below fires on the message it actually produced. Reword `schema-gate.ts`'s template and that test
+ * REDs. Do not "simplify" it to a fixture string.
+ */
+export const NO_INFERENCE_REJECTION_PREFIX = "no-inference rejection (REQ-F-017)";
+
+/**
+ * THE CANONICAL rule for whether a Broker rejection's message must be replaced by the leg's own
+ * fixed sentence (SAFETY RULE 7, incidental text, never the payload). ALL THREE legs call THIS
+ * function — `runAgentJob.ts` and `apps/worker/src/composition/source-extraction.ts` import it, and
+ * none keeps a rule of its own. That is new: source-extraction previously kept a NARROWER
+ * `reason === "schema_rejected"` key, whose doc comment claimed the two rules "differ ONLY on a
+ * reason the real Broker never stamps at this stage". That claim was FALSE — `broker.ts:383` calls
+ * `lifecycleFault("schema_gate", …)`, stamping `stage: "schema_gate"` with `reason:
+ * "lifecycle_fault"`, so a real broker lifecycle fault at the gate was redacted by the two workflow
+ * legs and forwarded by the worker leg. One rule, one answer, no cell left to diverge on.
+ *
+ * THREE CONDITIONS, all read off the rejection's OWN closed fields — the parameter is the whole
+ * {@link BrokerRejection}, never a derived, stringly-typed `code`:
+ *
+ *  - `stage === "schema_gate"` — the closed {@link BrokerStage} the broker stamped. Read from the
+ *    rejection itself, NOT from `mapRejection`'s derived code: a caller-supplied `mapRejection` is
+ *    a caller RELABELLING the failure for its own taxonomy, and relabelling cannot change whether
+ *    the broker's message contains model text.
+ *
+ *  - `reason === "schema_rejected"` — `schema-gate.ts`'s `schemaDeny`. Excludes the same stage's
+ *    `tool_policy_violation` (a fixed SoW-authored `output-normalizer.ts` literal) AND its
+ *    `lifecycle_fault` (`broker lifecycle fault at schema_gate`) — both real, both SoW-authored,
+ *    both previously collapsed.
+ *
+ *  - the message is the NO-INFERENCE one ({@link NO_INFERENCE_REJECTION_PREFIX}). This is the
+ *    condition the previous rule lacked, and it is why four distinct denials used to render
+ *    identically. `schemaDeny` has SIX call sites in `schema-gate.ts` and only ONE of them
+ *    interpolates model-authored text:
+ *
+ *      1. `ajv structural gate rejected output against '<schemaId>' (<ajv code>)`     — SoW-authored
+ *      2. `no model parser registered for '<schemaId>'; refusing ajv-alone …`         — SoW-authored
+ *      3. `model schema parse rejected output against '<schemaId>' (Zod .refine…)`    — SoW-authored
+ *      4. `no-inference rejection (REQ-F-017): … not coerced [<model field names>]`   — ⚠ MODEL TEXT
+ *      5. `output not normalizable to a candidate: <normalizer message>`              — SoW-authored
+ *      6. `§3 universal rule rejection (<code>:<domain field names>)`                 — SoW-authored
+ *
+ *    (5)'s interpolation is `output-normalizer.ts`'s `no candidate mapping for outputSchemaId
+ *    '<id>'` — the job's OWN control-plane-built schema id. (6)'s is `universal-rules.ts`'s fixed
+ *    field literals (`workspaceId` / `sourceRefs` / `canonicalObjectKey` / `idempotencyKey`). Only
+ *    (4) folds `ni.error.map((r) => r.field)` — names the MODEL chose — into the text.
+ *
+ * ⚠ REACHABILITY, STATED HONESTLY — do not read this function as closing a LIVE leak. The only
+ * composition root that builds a schema gate (`apps/worker/src/composition/backends.ts:866`) wires
+ * `createSchemaGate({ modelSchemas: CANDIDATE_MODEL_SCHEMAS })` with NO `noInference` view, and its
+ * own comment says that view "binds with the real extraction leg (18.3/18.4)". So branch (4) — the
+ * ONE that can carry model text — is UNREACHABLE in production today. This rule pins what must hold
+ * WHEN the view is bound. It routes on KIND (safety rule 7), not on when it becomes reachable.
+ *
+ * ⚠ THE RESIDUAL, STATED HONESTLY — do not read this function as a stronger guarantee than it is.
+ * A custom `SchemaGate` injected at a composition root could stamp `schema_rejected` with model
+ * text under some other message shape, and this rule would forward it. That residual is ACCEPTED
+ * here deliberately: the previous stage-level backstop bought it by collapsing five SoW-authored
+ * diagnostics into one sentence, which is the operator-blinding trade root CLAUDE.md forbids ("THE
+ * BAR IS INVERTED: restore unless removal is clearly justified"). The STRUCTURAL fix is a distinct
+ * `BrokerFailureReason` for the no-inference branch (e.g. `no_inference_rejected`) so this rule can
+ * key on a closed field alone — that lives in `packages/providers`, not here.
+ */
+export function brokerRejectionNeedsFixedMessage(rejection: BrokerRejection): boolean {
+  if (rejection.stage !== "schema_gate") return false;
+  if (rejection.reason !== "schema_rejected") return false;
+  // RUNTIME BOUNDARY GUARD, not a type-level default (the same posture as
+  // `brokerRejectionFailureCode`'s `| undefined`): `message` is typed `string`, so what reaches the
+  // non-string arm is data that VIOLATES the contract — a hand-rolled or foreign `BrokerOutcome`.
+  // Such a value has no message to leak and none to forward; `false` is the honest answer.
+  const message: unknown = rejection.message;
+  return typeof message === "string" && message.startsWith(NO_INFERENCE_REJECTION_PREFIX);
+}
+
+/**
+ * The FIXED rejection message that replaces the Broker's raw `outcome.error.message` at the ERR arm
+ * below for the ONE denial {@link brokerRejectionNeedsFixedMessage} selects — `schema-gate.ts`'s
+ * no-inference branch, whose text folds `[<model-chosen field names>]` into itself (SAFETY RULE 7,
+ * incidental text, never the payload: mirrors runAgentJob.ts's identical remedy).
+ *
+ * IT NAMES THE BRANCH ON PURPOSE. A bare "failed the schema gate" would tell an operator only what
+ * the closed `code` already tells them, so this sentence carries the REQ-F-017 fact — entirely
+ * SoW-authored — and withholds only the field list. Restoring, not removing, is the bar.
+ *
+ * Every OTHER Broker rejection — every other stage (admission, route resolution, egress veto,
+ * health, budget, provider run, emit) AND the schema gate's own five other denials (ajv structural,
+ * missing model parser, Zod `.refine`, un-normalizable output, §3 universal rule) AND its
+ * `tool_policy_violation` and `lifecycle_fault` reasons — emits SoW-authored closed diagnostic text
+ * and crosses UNCHANGED below. Two restores landed here, in this order:
+ *   • 2026-08-27 (a): an earlier pass applied this schema-gate justification to all five FAILURE
+ *     CODES, collapsing every Broker failure onto one fixed sentence per code.
+ *   • 2026-08-27 (b), this change: the follow-up still collapsed FOUR of the schema gate's six
+ *     `schema_rejected` branches — an ajv structural rejection and a no-inference rejection
+ *     rendered byte-identically — plus the gate's `lifecycle_fault`. Now exactly one is replaced.
+ * (CLAUDE.md "THE BAR IS INVERTED: restore unless removal is clearly justified".)
+ *
+ * REACHABILITY: this remedy was DEAD CODE until the rejection mapping moved off
+ * `outcome.error.branch` onto `outcome.error.stage` — no `JobBranch` member contains the substring
+ * "schema", so `schema_rejected` could never be derived and this sentence never once replaced
+ * anything. The poisoned no-inference message crossed VERBATIM. See
+ * {@link BROKER_STAGE_FAILURE_CODE}. It is now driven end-to-end against the REAL `createBroker` +
+ * `createSchemaGate` in this activity's sibling test, so the claim rests on a run, not a reading.
  */
 const SCHEMA_REJECTED_MESSAGE =
-  "read-only agent job output failed the candidate-data schema gate";
+  "read-only agent job output failed the candidate-data schema gate: REQ-F-017 no-inference rejection (unbacked field names withheld)";
 
 /**
  * Build a generic `{run(ctx): Promise<Result<Output, ReadOnlyAgentFailure>>}`
@@ -290,12 +379,20 @@ export function createReadOnlyAgentJobActivity<Ctx, Output>(
       if (!outcome.ok) {
         const code = mapRejection(outcome);
         // SAFETY RULE 7 (incidental, NOT the payload — see SCHEMA_REJECTED_MESSAGE's doc
-        // comment): only a schema-gate rejection's message can carry a model-authored field
-        // name (the no-inference branch), so only that one is replaced with a fixed sentence.
-        // Every other code's message is SoW-authored diagnostic text and crosses UNCHANGED so
-        // an operator can tell one failure from another. The closed `code` is what a workflow
-        // driver switches on; it always crosses byte-identical regardless.
-        const message = code === "schema_rejected" ? SCHEMA_REJECTED_MESSAGE : outcome.error.message;
+        // comment): exactly ONE Broker denial's message can carry model-authored text — the schema
+        // gate's no-inference branch — so exactly one is replaced with a fixed sentence. Every
+        // other message, INCLUDING the schema gate's own five other denials and its
+        // `tool_policy_violation` / `lifecycle_fault` reasons, crosses UNCHANGED so an operator can
+        // tell one failure from another. The rule is the shared predicate
+        // `brokerRejectionNeedsFixedMessage`, taking the whole closed-field `BrokerRejection`; the
+        // sibling `runAgentJob.ts` and worker `source-extraction.ts` legs call the SAME function,
+        // so all three cannot drift. NOTE it reads `outcome.error`, NOT the derived `code` — a
+        // custom `mapRejection` relabels the failure for the caller's own taxonomy, and relabelling
+        // cannot change whether the broker's message contains model text. The closed `code` is what
+        // a workflow driver switches on; it always crosses byte-identical regardless.
+        const message = brokerRejectionNeedsFixedMessage(outcome.error)
+          ? SCHEMA_REJECTED_MESSAGE
+          : outcome.error.message;
         return err({ code, message });
       }
       return ok(deps.mapCandidate(outcome));

@@ -18,6 +18,7 @@ import type {
   WriteReceipt,
   ExternalWriteEnvelope,
 } from "@sow/contracts";
+import type { TransportFaultDetail } from "./adapters/transport";
 
 /**
  * A vendor object that already exists for a given `canonicalObjectKey` — the
@@ -32,16 +33,30 @@ export interface ExistingObject {
 }
 
 /**
- * The closed, enumerable adapter failure set (§16). `unreachable` — transport
- * could not reach the vendor (the outbox-hold signal for 6.5). `conflict` — the
- * vendor rejected the write on a precondition/version clash (NEVER a blind
- * overwrite). `rejected` — the vendor refused the request (validation/auth).
+ * The closed, enumerable adapter failure set (§16). `unreachable` — the write
+ * could not be delivered NOW but may succeed LATER (the outbox-hold signal for
+ * 6.5, and the ONLY retryable code). Its membership is defined by that
+ * disposition, not by whether a packet arrived: a network outage, a 5xx, and a
+ * vendor that explicitly said "later" (408/425/429 — write-http-transport.ts's
+ * `RETRYABLE_4XX`) are all `unreachable`. `conflict` — the vendor rejected the
+ * write on a precondition/version clash (NEVER a blind overwrite). `rejected` —
+ * the vendor refused and re-sending the same bytes cannot help (auth,
+ * validation, an SSRF-blocked host, an unresolvable write credential); TERMINAL.
  * `not_found` — the target object (or its containing scope, e.g. a Drive
  * folder) does not exist / is unlinked at the vendor. This is a PER-OBJECT
  * signal, distinct from `unreachable` (the transport could not reach the
  * vendor AT ALL) — a caller must NOT treat `not_found` as an outbox-hold
  * candidate (that is `unreachable`'s job); it means "re-add/re-link this one
  * object", never "retry later". `unknown` — an unclassified fault.
+ *
+ * That `not_found` rule is now TRUE OF THE ONLY CALLER, not merely asserted at
+ * it. Both of the Tool Gateway's adapter-fault arms — the existence-probe arm
+ * and the create arm (gateway.ts) — run the SAME closed switch over this `code`,
+ * and only `unreachable` maps to `{status:'held'}`, the outbox-hold signal.
+ * Until this round the existence-probe arm mapped EVERY code to `held`, so a
+ * `not_found` from a live probe was handed to `outbox-drain.ts` — whose
+ * `computeNextAttemptAt` deliberately never expires an entry — and re-held
+ * forever: literally "retry later", the one disposition this paragraph forbids.
  *
  * `message` is a REQUIRED, redaction-safe diagnostic — not an optional nicety.
  * The Tool Gateway (gateway.ts) forwards this string into `ExternalWriteResult
@@ -57,15 +72,17 @@ export interface ExistingObject {
  * THIS IS NOW ENFORCED BY CONSTRUCTION for every adapter built via
  * `makeTargetWriteAdapter` (adapter-core.ts — every shipped vendor adapter:
  * calendar/todoist/linear/asana/drive/github/telegram, verified 2026-08-27):
- * its `faultToError` builds `message` ONLY from the closed `fault` code plus
- * the structured `httpStatus` below — it never reads a transport's free-text
+ * its `faultToError` builds `message` ONLY from THREE closed inputs — the
+ * `fault` code, the structured `httpStatus` below, and the closed
+ * `faultDetail` token below (transport.ts's `TransportFaultDetail`, a
+ * module-local literal union). It never reads a transport's free-text
  * `detail`, so a misbehaving transport (a bad per-vendor `mapResponse`, a test
- * fake) cannot get arbitrary text into `message` even by accident. Do not
- * overclaim beyond that mechanism: `TargetWriteAdapter` is a plain interface,
- * so a hand-written implementation that bypasses `makeTargetWriteAdapter`
- * could still construct an `AdapterError` with an unsafe `message` directly —
- * the guarantee holds for adapters built on the shared core, not for the type
- * alone.
+ * fake) cannot get arbitrary text into `message` even by accident: it can
+ * SELECT a `faultDetail` token, never author one. Do not overclaim beyond that
+ * mechanism: `TargetWriteAdapter` is a plain interface, so a hand-written
+ * implementation that bypasses `makeTargetWriteAdapter` could still construct
+ * an `AdapterError` with an unsafe `message` directly — the guarantee holds
+ * for adapters built on the shared core, not for the type alone.
  *
  * `httpStatus` — the vendor's HTTP status code, when the fault came from an
  * actual HTTP response (§S), as a real optional field. This is the field a
@@ -74,11 +91,35 @@ export interface ExistingObject {
  * `message === "HTTP 404"` and silently broke the first time the message
  * format changed; a typed field cannot drift out from under a string match
  * the same way.
+ *
+ * `faultDetail` — the closed sub-reason for a STATUSLESS fault (one that never
+ * received an HTTP response, so `httpStatus` is absent): an SSRF/allowlist
+ * block, a missing/locked/denied/empty write credential, a throwing credential
+ * accessor, a network-level outage, a throwing `buildRequest`, a malformed
+ * body, a throwing `mapResponse`.
+ *
+ * It is what separates the SIX statusless failures that all carry
+ * `code:"rejected"` (the SSRF block, the throwing accessor, and the four
+ * credential reasons) and would otherwise render one identical sentence — and
+ * likewise the three that share `code:"unknown"`. STATE THAT PRECISELY: the
+ * separation is a property of the TRANSPORT that fills the field, not of this
+ * type. `createWriteHttpTransport` sets it at all ten of its statusless fault
+ * returns, so on the real HTTP write path a locked Keychain and an SSRF-blocked
+ * host do not read alike (pinned end-to-end by write-http-transport.test.ts).
+ * A transport that omits it — a test fake, a hand-rolled per-vendor
+ * `mapResponse` — renders as it did before the field existed, and this comment
+ * claims nothing about it.
+ *
+ * It rides its own field for exactly the reason `httpStatus` does: `message`
+ * embeds the token as prose for a human, and a caller that must BRANCH reads
+ * the field instead of parsing that prose. Present only when the transport
+ * supplied one.
  */
 export interface AdapterError {
   readonly code: "unreachable" | "conflict" | "rejected" | "unknown" | "not_found";
   readonly message: string;
   readonly httpStatus?: number;
+  readonly faultDetail?: TransportFaultDetail;
 }
 
 /**

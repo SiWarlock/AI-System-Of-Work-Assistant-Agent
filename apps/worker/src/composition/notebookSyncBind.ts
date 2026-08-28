@@ -62,7 +62,7 @@ import { ok, err } from "@sow/contracts";
 import type { ProposedAction, ExternalWriteEnvelope, Result, WriteReceipt } from "@sow/contracts";
 import { createNotebookLmSync } from "@sow/integrations";
 import type {
-  NotebookPort,
+  NotebookSyncDetailPort,
   ExternalWriteDeps,
   ExternalWriteResult,
   TargetWriteAdapter,
@@ -105,7 +105,13 @@ export interface NotebookSyncBindDeps {
     readonly hold: HoldDeps;
     readonly workspaceId: string;
   };
-  readonly registerSchedule?: (port: NotebookPort) => void;
+  /**
+   * Called with the built port ONLY on the armed path. Typed to the DETAIL port
+   * (`NotebookSyncDetailPort`) so a schedule consumer can read `outcome` and the
+   * per-slot `heldDetail` causes rather than only the slot-name lists; a callback
+   * declared against the plain `NotebookPort` remains assignable.
+   */
+  readonly registerSchedule?: (port: NotebookSyncDetailPort) => void;
 }
 
 // A single-use, in-process ReceiptStore for the nested dispatch (see module header
@@ -138,12 +144,61 @@ function createThrowawayReceiptStore(): ReceiptStore {
 // CODE: `outcome.adapterCode` (gateway.ts's `ExternalWriteResult`) is the INNER
 // adapter's own closed code — e.g. a nested existence-check/create fault of
 // `not_found`, which notebooklm-sync.ts's per-slot reattach signal branches on
-// (gateway.ts:105-112's doc comment). Forwarding it here (rather than
-// collapsing every "held"/"rejected" to a fixed `"unreachable"`/`"rejected"`)
-// lets that signal survive this extra fold layer; it is ABSENT only for a
-// failure that never originated from an `AdapterError` (the reservation-
-// in-progress hold, the approval_pending guard below) — those fall back to the
-// closest status-shaped code, matching the PRE-adapterCode behavior exactly.
+// (gateway.ts's `ExternalWriteResult` doc comment). Forwarding it here (rather
+// than collapsing every "held"/"rejected" to a fixed `"unreachable"`/
+// `"rejected"`) lets that signal survive this extra fold layer.
+//
+// ⚠ WHAT "matches the pre-adapterCode behavior" DOES AND DOES NOT MEAN — an
+// earlier version of this comment ended "matching the PRE-adapterCode behavior
+// exactly", which reads as a claim about the fold and is only true of its
+// FALLBACKS. Measured against the pre-adapterCode fold (commit `3fe75d1a`, which
+// returned a FIXED `unreachable`/`conflict`/`rejected` per status):
+//   • `adapterCode` ABSENT ⇒ each `??` fallback yields the SAME code that version
+//     returned for that status. Exact, and that is the whole of the claim.
+//   • `adapterCode` PRESENT ⇒ the forwarded code deliberately DIFFERS from the
+//     fixed one. That divergence IS the change; it is what carries a nested
+//     `not_found` through to the reattach signal. Nothing here is behaviour-
+//     preserving in that case, and it should not be described as if it were.
+//
+// WHERE AN ABSENT `adapterCode` ACTUALLY COMES FROM. It is absent only for a
+// failure that never originated from an `AdapterError`. gateway.ts has three such
+// sites, and their reachability through THIS nested dispatch differs — a prior
+// version of this comment called all of them reachable and said "four sites":
+//   • REACHABLE — the candidate-gate rejection (gateway.ts:215). The nested call
+//     re-admits a RECONSTRUCTED `ProposedAction` (built in `routeWrite` from the
+//     envelope + payload), so it can reject where the outer admission passed.
+//   • NOT REACHABLE — the reservation-in-progress hold (gateway.ts:320). The
+//     nested dispatch runs over `createThrowawayReceiptStore`, whose `reserve`
+//     returns `{kind:"reserved"}` UNCONDITIONALLY (see the module header's "WHY A
+//     THROWAWAY..." — winning trivially is the entire point of that store), so
+//     the `in_progress` arm cannot be entered from here.
+//   • REACHABLE ONLY ON A CHANGED VERDICT — the §21.10 credential-fault hold
+//     (gateway.ts:239). The nested deps are `{...gateway, receiptStore, audit}`,
+//     so `secrets` IS inherited — but the OUTER `dispatchExternalWrite` runs the
+//     SAME credential gate at its own step 2.5, BEFORE `adapter.create`. A stably
+//     faulting accessor therefore holds at the OUTER call and the nested dispatch
+//     is never invoked at all (driven end-to-end and pinned: notebook-sync-bind
+//     .test.ts's locked-Keychain case asserts `dispatch` was not called). It
+//     reaches this fold only if the accessor's verdict CHANGES between the two
+//     resolutions — e.g. the Keychain re-locks mid-sync. Real, but a race, not
+//     the ordinary path.
+// The fourth entry that prior version listed, the `approval_pending` guard below,
+// is not an absent-`adapterCode` fallback at all — it is its own case arm with a
+// hardcoded code. The `?? "conflict"` fallback is likewise dead on this path (the
+// gateway only emits `conflict` from an adapter fault); both are kept as total,
+// fail-closed defence rather than removed.
+//
+// ⚠ KNOWN COST on that changed-verdict path: the credential fault folds to
+// `code: "unreachable"`, so a locked Keychain would be labelled here as a
+// transient outage. The MESSAGE still carries the closed `"locked"`/`"missing"`/
+// `"denied"`/`"empty"` token (see the MESSAGE note below), so the operator signal
+// survives — but the CODE does not distinguish it, and `ExternalWriteResult`
+// exposes no `faultDetail` field to carry that distinction typed (`faultDetail`
+// exists on `AdapterError`, not on the gateway result). Widening
+// `ExternalWriteResult` is a gateway change, not a change this bind can make.
+// On the ORDINARY path the distinction is intact: the outer hold carries no
+// `adapterCode` at all, which is exactly how notebooklm-sync.ts's
+// `NotebookHeldSlot` tells a credential hold from an adapter outage.
 //
 // MESSAGE: `outcome.reason` is forwarded VERBATIM (`message: outcome.reason`)
 // below and needs NO redaction here: the §8 Tool Gateway builds `reason`
@@ -224,8 +279,13 @@ function buildRoutedDriveAdapter(
  * the literal `true` (absent, `1`, `"true"`, `"false"`, `{}`) returns `undefined`
  * — no `NotebookPort` is constructed, no schedule is registered, and the injected
  * `dispatch` is never invoked. Never throws.
+ *
+ * Returns the DETAIL port (`NotebookSyncDetailPort`, a `NotebookPort` whose result
+ * also carries `outcome` + the per-slot `heldDetail` causes), so a held slot's cause is
+ * not flattened away at this bind. See notebooklm-sync.ts's `NotebookHeldSlot` for
+ * what that cause can and cannot distinguish.
  */
-export function buildNotebookSync(deps: NotebookSyncBindDeps): NotebookPort | undefined {
+export function buildNotebookSync(deps: NotebookSyncBindDeps): NotebookSyncDetailPort | undefined {
   if (deps.gate?.enabled !== true) {
     return undefined;
   }
