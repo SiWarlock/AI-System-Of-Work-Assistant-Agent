@@ -66,6 +66,7 @@ import type {
   ReceiptStore,
   ReceiptRecord,
   ReceiptReservation,
+  ReceiptLookup,
 } from "@sow/integrations";
 import {
   buildWriteAdapterRegistry,
@@ -502,6 +503,10 @@ function receiptRecordToRow(rec: ReceiptRecord): WriteReceiptRow {
  */
 export function createReceiptStoreAdapter(repo: WriteReceiptRepository): ReceiptStore {
   return {
+    // ⚠ The two `undefined`-returning lookups below CANNOT distinguish a genuine
+    // miss from a store fault — the port shape has no way to say it. They are kept
+    // byte-identical for any consumer still on that pair; the fault-safe path is
+    // the `*Checked` pair beneath them, which `resolveExisting` prefers.
     async getByIdempotencyKey(k: string): Promise<ReceiptRecord | undefined> {
       const r = await repo.getByIdempotencyKey(k);
       if (isErr(r)) return undefined; // not_found (or any lookup fault) → miss
@@ -514,6 +519,39 @@ export function createReceiptStoreAdapter(repo: WriteReceiptRepository): Receipt
       const r = await repo.getByCanonicalObjectKey(String(targetSystem), k);
       if (isErr(r)) return undefined;
       return rowToReceiptRecord(r.value);
+    },
+    // ⛔ THE FAIL-CLOSED PAIR. `not_found` is the ONLY error code that means "no
+    // such receipt"; every other code is the store failing to answer. Collapsing
+    // those together let a locked DB file or a closed connection read as "no prior
+    // write" on the REPLAY GATE, which is permission to write again — a fail-open
+    // on the mechanism safety rule 3 rests on (`run()` in the sqlite adapter maps a
+    // thrown driver error into exactly such a typed err).
+    async getByIdempotencyKeyChecked(k: string): Promise<ReceiptLookup> {
+      const r = await repo.getByIdempotencyKey(k);
+      if (isErr(r)) {
+        return r.error.code === "not_found" ? { kind: "miss" } : { kind: "fault", code: r.error.code };
+      }
+      // A row that maps to `undefined` is a bare RESERVATION (another worker
+      // mid-write, no receipt yet). That is NOT a committed write, so it is a MISS
+      // — never a hit, which would let the gateway skip the create. See
+      // `rowToReceiptRecord`. It is also not a FAULT: the store answered fine.
+      const record = rowToReceiptRecord(r.value);
+      return record === undefined ? { kind: "miss" } : { kind: "hit", record };
+    },
+    async getByCanonicalObjectKeyChecked(
+      targetSystem: TargetSystem,
+      k: string,
+    ): Promise<ReceiptLookup> {
+      const r = await repo.getByCanonicalObjectKey(String(targetSystem), k);
+      if (isErr(r)) {
+        return r.error.code === "not_found" ? { kind: "miss" } : { kind: "fault", code: r.error.code };
+      }
+      // A row that maps to `undefined` is a bare RESERVATION (another worker
+      // mid-write, no receipt yet). That is NOT a committed write, so it is a MISS
+      // — never a hit, which would let the gateway skip the create. See
+      // `rowToReceiptRecord`. It is also not a FAULT: the store answered fine.
+      const record = rowToReceiptRecord(r.value);
+      return record === undefined ? { kind: "miss" } : { kind: "hit", record };
     },
     async reserve(
       targetSystem: TargetSystem,

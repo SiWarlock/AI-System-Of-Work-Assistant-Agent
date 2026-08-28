@@ -49,18 +49,54 @@ export async function resolveExisting(
   receiptStore: ReceiptStore,
 ): Promise<ExistenceOutcome> {
   // (a) replay gate — a stored receipt on the exact idempotencyKey.
-  const byReplay = await receiptStore.getByIdempotencyKey(env.idempotencyKey);
-  if (byReplay !== undefined) {
-    return { kind: "replay", receipt: byReplay.receipt };
+  //
+  // ⛔ A STORE FAULT IS NOT A MISS. On this gate a miss means "no prior write, go
+  // ahead", so collapsing a fault into `undefined` grants permission to write again
+  // — a fail-OPEN on the mechanism safety rule 3 rests on. When the store can tell
+  // us (the optional `*Checked` variant), a fault becomes a typed `error` outcome,
+  // which the gateway already handles fail-closed: it never creates, and holds for
+  // retry. `unreachable` is the right adapter code for it — a DB blip is transient,
+  // so this must retry rather than terminate (see the retryable/terminal split in
+  // gateway.ts step 3).
+  if (receiptStore.getByIdempotencyKeyChecked !== undefined) {
+    const checked = await receiptStore.getByIdempotencyKeyChecked(env.idempotencyKey);
+    if (checked.kind === "fault") {
+      return {
+        kind: "error",
+        error: { code: "unreachable", message: `receipt store lookup failed (${checked.code})` },
+      };
+    }
+    if (checked.kind === "hit") return { kind: "replay", receipt: checked.record.receipt };
+  } else {
+    const byReplay = await receiptStore.getByIdempotencyKey(env.idempotencyKey);
+    if (byReplay !== undefined) {
+      return { kind: "replay", receipt: byReplay.receipt };
+    }
   }
 
-  // (b) prior-write hit — a stored receipt on the same object identity.
-  const byObject = await receiptStore.getByCanonicalObjectKey(
-    env.targetSystem,
-    env.canonicalObjectKey,
-  );
-  if (byObject !== undefined) {
-    return { kind: "existing", receipt: byObject.receipt };
+  // (b) prior-write hit — a stored receipt on the same object identity. Same
+  // fault-vs-miss distinction: a fault here would let the gateway proceed toward a
+  // create for an object that may already exist — a duplicate write.
+  if (receiptStore.getByCanonicalObjectKeyChecked !== undefined) {
+    const checked = await receiptStore.getByCanonicalObjectKeyChecked(
+      env.targetSystem,
+      env.canonicalObjectKey,
+    );
+    if (checked.kind === "fault") {
+      return {
+        kind: "error",
+        error: { code: "unreachable", message: `receipt store lookup failed (${checked.code})` },
+      };
+    }
+    if (checked.kind === "hit") return { kind: "existing", receipt: checked.record.receipt };
+  } else {
+    const byObject = await receiptStore.getByCanonicalObjectKey(
+      env.targetSystem,
+      env.canonicalObjectKey,
+    );
+    if (byObject !== undefined) {
+      return { kind: "existing", receipt: byObject.receipt };
+    }
   }
 
   // (c) live vendor probe — the object may exist at the vendor without a local

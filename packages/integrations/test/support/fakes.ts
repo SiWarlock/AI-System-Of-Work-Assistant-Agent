@@ -37,8 +37,27 @@ const notFound = (what: string): DbError => ({ code: "not_found", message: `${wh
  * gate) and by `targetSystem\|canonicalObjectKey` (pre-write existence check).
  * Deterministic; a lookup miss returns `undefined` (not an error).
  */
+/**
+ * ⛔ THIS FAKE MODELS THE SHIPPED STORE'S ROW SEMANTICS, AND THAT IS LOAD-BEARING.
+ *
+ * `write_receipts` has a COMPOSITE PRIMARY KEY on `(targetSystem, canonicalObjectKey)`
+ * and `put` is `onConflictDoUpdate` over that target, overwriting the row's
+ * `idempotencyKey` (`packages/db/src/adapters/sqlite/index.ts` ~:1373-1391). So the
+ * production store holds **exactly ONE row per object identity**, and writing a new
+ * receipt for an object EVICTS the previous idempotencyKey from the index.
+ *
+ * This fake previously kept a separate `byIdem` map that ACCUMULATED every historical
+ * key, so a replay of a superseded envelope still found its receipt here and never
+ * would in production. A whole suite (918 tests) passed against that divergence while
+ * a change that broke the §20.1 replay gate — the mechanism safety rule 3 IS — went
+ * undetected. The suite was green because the fake was wrong.
+ *
+ * ⇒ There is now ONE authoritative map, keyed by object identity, and the
+ * idempotency lookup SCANS it. That is O(n) and deliberately so: it makes
+ * "one row per object" true BY CONSTRUCTION rather than by remembering to evict.
+ * Do not reintroduce a second index.
+ */
 export class InMemoryReceiptStore implements ReceiptStore {
-  private readonly byIdem = new Map<string, ReceiptRecord>();
   private readonly byObject = new Map<string, ReceiptRecord>();
   // Uncommitted create-reservations keyed by object identity. A synchronous
   // check-and-set on this Set is the in-process atomicity primitive: because the
@@ -52,7 +71,13 @@ export class InMemoryReceiptStore implements ReceiptStore {
   }
 
   async getByIdempotencyKey(k: string): Promise<ReceiptRecord | undefined> {
-    return this.byIdem.get(k);
+    // Scans the ONE map — mirrors `idempotencyKey` being a COLUMN on the single
+    // per-object row, not an independent index. A key superseded by a later write
+    // to the same object is GONE, exactly as in the shipped store.
+    for (const rec of this.byObject.values()) {
+      if (rec.idempotencyKey === k) return rec;
+    }
+    return undefined;
   }
 
   async getByCanonicalObjectKey(
@@ -87,15 +112,17 @@ export class InMemoryReceiptStore implements ReceiptStore {
 
   async put(r: ReceiptRecord): Promise<void> {
     const key = InMemoryReceiptStore.objectKey(r.targetSystem, r.canonicalObjectKey);
-    this.byIdem.set(r.idempotencyKey, r);
+    // UPSERT on the object identity — the prior row for this object (and therefore
+    // its idempotencyKey) is REPLACED, never kept alongside. This single `set` is
+    // the whole `onConflictDoUpdate` semantic.
     this.byObject.set(key, r);
     // Committing the receipt clears any outstanding reservation for this object.
     this.reserved.delete(key);
   }
 
-  /** Test helper: current record count. */
+  /** Test helper: current ROW count — one per object identity, as in the store. */
   size(): number {
-    return this.byIdem.size;
+    return this.byObject.size;
   }
 }
 
