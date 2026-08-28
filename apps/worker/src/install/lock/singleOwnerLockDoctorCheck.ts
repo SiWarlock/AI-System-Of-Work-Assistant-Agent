@@ -2,18 +2,19 @@
 // single-owner lock (./singleOwnerLock.ts), alongside `diagnoseGbrainMount`/`diagnoseStrayGbrainProcess`
 // (../checks/posture.ts).
 //
-// ⛔ NOT YET WIRED into `runDoctor`'s `checks` array (../doctor.ts) — `DoctorCheckId` and
-// `doctorFailureVariantSchema` are a CLOSED enum frozen in `packages/contracts/src/install/doctor-result.ts`,
-// which is outside this package's territory (a different implementation track owns packages/contracts).
-// Wiring this in is a ONE-LINE addition once that package adds `"single_owner_lock"` to `DOCTOR_CHECK_IDS`
-// and `"single_owner_lock_not_held"` to `doctorFailureVariantSchema` (recorded as a cross-territory need):
+// ✅ WIRED into `runDoctor`'s `checks` array (`../doctor.ts`) at `eed76756`, 2026-08-25.
+// ⛔ THIS HEADER SAID "NOT YET WIRED" FOR THREE DAYS AFTER IT WAS. Corrected 2026-08-28 — and the
+// staleness was not harmless: a reader auditing why `sow-doctor` was red would have concluded the check
+// could not be the cause, because this file says it does not run.
 //
-//   safeCheck("single_owner_lock", () => diagnoseSingleOwnerLock(s.singleOwnerLock))
-//
-// added to the `checks` array in `../doctor.ts`, plus a `singleOwnerLock?: SingleOwnerLockProbe` field on
-// `ProbeSnapshot` (../probe-snapshot.ts). Until then this module is fully built + unit-tested standalone,
-// exactly matching the shape (`check` / `status` / `failureVariant` / `repair`) the real
-// `DoctorCheckResult` will have once the contracts extension lands — so wiring it in later is mechanical.
+// ⚠ AND THE WIRING CARRIED A DEFECT THIS FILE'S FAIL-CLOSED RULE MADE INEVITABLE. The standalone
+// `sow-doctor` CLI is a SEPARATE PROCESS from the worker, so it never supplied `singleOwnerLock`, and
+// the rule below turned that absence into `single_owner_lock_not_held` on EVERY run — a healthy machine
+// included — so the binary exited 1 forever.
+// ⭐ The rule is still right. What was missing is that "not held" and "cannot be observed from here" are
+// DIFFERENT STATES and only one of them is a verdict (worker L79). `runDoctor`'s `lockObservable: false`
+// option now yields `single_owner_lock_not_observable` / `degraded` for a process that cannot take the
+// reading — never `ok` (nothing was proven), never `_not_held` (nothing was measured).
 //
 // FAIL-CLOSED (mirrors ../checks/posture.ts): `ok` ONLY on an explicit `acquired === true`; an absent
 // (undefined) probe or `acquired === false` ⇒ `finding` — an unconfirmed lock hold is never silently `ok`.

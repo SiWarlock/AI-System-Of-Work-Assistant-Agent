@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import { doctorReportSchema } from "@sow/contracts";
 import type { DoctorReport, DoctorCheckId } from "@sow/contracts";
 import { runDoctor } from "../../src/install/doctor";
+import { doctorExitCode } from "../../src/install/doctor-cli";
 import type { ProbeSnapshotWithLock } from "../../src/install/doctor";
 
 const POSTURE_CHECKS: readonly DoctorCheckId[] = ["vault_acl", "gbrain_readonly_mount", "stray_gbrain_process"];
@@ -147,6 +148,40 @@ describe("runDoctor — REQ-D-005 single-owner-lock check WIRING (task 24.1 / 11
     expect(find(r, "single_owner_lock")?.status).toBe("finding");
     expect(find(r, "single_owner_lock")?.failureVariant).toBe("single_owner_lock_not_held");
     expect(r.overall).toBe("finding"); // NEVER ok — an unconfirmed lock hold re-opens GO #1
+  });
+
+  it("single_owner_lock_UNOBSERVABLE_is_degraded_not_a_finding — a standalone process must not assert a verdict it cannot take", () => {
+    // ⛔ THE DEFECT THIS PINS. `sow-doctor` is a SEPARATE PROCESS from the worker, and this probe is
+    // BY DEFINITION the outcome of the worker's BOOT-TIME `acquireSingleOwnerLock` call. A standalone
+    // CLI cannot observe it — and it cannot take it either: acquiring the lock itself would report a
+    // finding exactly when a healthy worker holds it, and ok exactly when none is running. The INVERSE
+    // of the truth.
+    // So the CLI had no value to supply, supplied none, and the fail-closed diagnoser turned the
+    // absence into `single_owner_lock_not_held` — a verdict about the lock that nothing measured.
+    // `degraded` is the honest third state: the app runs, this check could not be taken here.
+    const withoutLock: ProbeSnapshotWithLock = { ...greenSnapshot(), singleOwnerLock: undefined };
+    const r = runDoctor(withoutLock, { lockObservable: false });
+    expect(find(r, "single_owner_lock")?.status).toBe("degraded");
+    // ⛔ A DISTINCT variant, never `single_owner_lock_not_held` — that one asserts a policy verdict this process did
+    // not earn (24.67's reasoning: a failure code must not claim a check that never ran).
+    expect(find(r, "single_owner_lock")?.failureVariant).toBe("single_owner_lock_not_observable");
+    expect(find(r, "single_owner_lock")?.repair).toBeTruthy(); // still tells the operator where to look
+    expect(r.overall).toBe("degraded");
+    expect(doctorExitCode(r.overall)).toBe(0); // THE HEADLINE: a healthy install exits 0
+    expect(doctorReportSchema.safeParse(r).success).toBe(true);
+  });
+
+  it("NON-VACUITY: the same snapshot WITHOUT the flag still fails closed — the boot path is untouched", () => {
+    // Without this, a "fix" that simply stopped failing closed everywhere would pass the pin above
+    // while deleting the guarantee the sibling test exists for. The default is byte-equivalent to
+    // before the option existed.
+    const withoutLock: ProbeSnapshotWithLock = { ...greenSnapshot(), singleOwnerLock: undefined };
+    expect(find(runDoctor(withoutLock), "single_owner_lock")?.status).toBe("finding");
+    expect(find(runDoctor(withoutLock, {}), "single_owner_lock")?.status).toBe("finding");
+    expect(find(runDoctor(withoutLock, { lockObservable: true }), "single_owner_lock")?.status).toBe("finding");
+    // And an OBSERVABLE process with a genuinely unheld lock is still a finding, flag or no flag.
+    const unheld: ProbeSnapshotWithLock = { ...greenSnapshot(), singleOwnerLock: { acquired: false } };
+    expect(find(runDoctor(unheld, { lockObservable: true }), "single_owner_lock")?.status).toBe("finding");
   });
 
   it("single_owner_lock_wired_fails_closed_when_acquired_false", () => {

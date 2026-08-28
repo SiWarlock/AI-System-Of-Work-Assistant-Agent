@@ -62,6 +62,12 @@ export const doctorFailureVariantSchema = z.enum([
   "stray_gbrain_writer_detected",
   // ── REQ-D-005 single-owner advisory-lock (task 24.1 / 11.1, safety rule 1) ──
   "single_owner_lock_not_held",
+  // A process that CANNOT TAKE the boot-scoped lock reading at all — distinct from `_not_held`, which
+  // asserts a verdict. `sow-doctor` runs as a SEPARATE process from the worker and can do neither read
+  // nor substitute: acquiring the lock itself reports a finding exactly when a healthy worker holds it.
+  // Conflating the two made every `sow-doctor` run on a healthy machine emit `_not_held` and exit 1.
+  // ⭐ A taxonomy needs a member per DISTINGUISHABLE STATE, not per failing check (worker L79).
+  "single_owner_lock_not_observable",
   // ── §16: a diagnoser threw over a malformed probe → folded fail-closed ──
   "probe_error",
 ]);

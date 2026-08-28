@@ -265,14 +265,20 @@ export interface SingleOwnerLockLegResult {
   readonly gapNote: string;
 }
 
+// ⛔ CORRECTED 2026-08-28. This note described the OPPOSITE of the shipped behaviour for three days,
+// and it was stale in the reassuring direction twice over — it said the check was missing (it is not)
+// while the real defect was that the check was present and permanently WRONG.
 const SINGLE_OWNER_LOCK_GAP_NOTE =
-  "task 11.1: bootWorker DOES call acquireSingleOwnerLock as of `68ec73c9` (leg 2's " +
-  "lockAcquiredAtBoot observes it for real) — but DOCTOR_CHECK_IDS (a closed enum owned by " +
-  "packages/contracts) STILL has no single_owner_lock member, so leg 1's install-doctor never " +
-  "reports a lock finding even on a genuine refusal (singleOwnerLockDoctorCheck.ts's own header " +
-  "records this as a cross-territory need). This leg exercises the lock MECHANISM " +
-  "(acquireSingleOwnerLock + diagnoseSingleOwnerLock) over its OWN isolated lockfile path, " +
-  "independent of boot — it complements leg 2 rather than substituting for it.";
+  "task 11.1: bootWorker calls acquireSingleOwnerLock as of `68ec73c9` (leg 2's lockAcquiredAtBoot " +
+  "observes it for real). DOCTOR_CHECK_IDS gained its single_owner_lock member at `eed76756` " +
+  "(2026-08-25) and runDoctor wires the check — this note previously said otherwise and was stale. " +
+  "The real gap that followed: the standalone sow-doctor CLI never supplied the probe, so the " +
+  "fail-closed diagnoser reported single_owner_lock_not_held on EVERY run and exited 1 even on a " +
+  "healthy machine. Fixed by the runDoctor `lockObservable: false` scope — a standalone process " +
+  "reports single_owner_lock_not_observable/degraded rather than asserting a verdict it cannot take. " +
+  "This leg still exercises the lock MECHANISM (acquireSingleOwnerLock + diagnoseSingleOwnerLock) " +
+  "over its OWN isolated lockfile path, independent of boot — it complements leg 2 rather than " +
+  "substituting for it.";
 
 /** Runs the REAL `acquireSingleOwnerLock` over the isolated lockfile path, in-process only —
  *  pure fs, no shell-out, no socket, no env gate needed. Always releases before returning. */

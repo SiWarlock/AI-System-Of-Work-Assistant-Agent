@@ -36,6 +36,13 @@ export const DOCTOR_REPAIRS: Readonly<Record<DoctorFailureVariant, string>> = {
   // DoctorFailureVariant widening (this map's type spans the full closed enum). Text mirrors
   // ../lock/singleOwnerLockDoctorCheck.ts's own `REPAIR` constant, the actual source `diagnoseSingleOwnerLock`
   // returns at runtime (it does not call `findingResult`/this map) — kept in lockstep by matching wording.
+  // ⭐ The `_not_observable` sibling exists because "not held" and "cannot be read from here" are
+  // DIFFERENT STATES and only the first is a verdict (worker L79). Conflating them made every
+  // standalone `sow-doctor` run report `_not_held` on a healthy machine and exit 1. Text mirrors
+  // ../doctor.ts's `LOCK_UNOBSERVABLE`, the actual source returned at runtime.
+  single_owner_lock_not_observable:
+    "This check is scoped to the worker's boot and cannot be taken from a standalone process. " +
+    "Check the running worker's System Health for its single-owner-lock item instead.",
   single_owner_lock_not_held:
     "Another process holds the canonical brain/vault lock, or this worker never acquired it. Ensure no " +
     "other SoW worker instance (or a stray gbrain process) is running against this vault/brain, then restart.",

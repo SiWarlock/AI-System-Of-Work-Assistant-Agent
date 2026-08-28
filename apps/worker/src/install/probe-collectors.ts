@@ -257,5 +257,7 @@ export async function runPrerequisiteDoctor(input: InstallDoctorInput): Promise<
       workerPrincipal: input.workerPrincipal,
     }),
   ]);
-  return runDoctor({ ...prerequisite, ...security, ...posture });
+  // `lockObservable: false` — same reason as `runInstallDoctor`: this is a standalone prerequisite
+  // sweep, not the worker's boot, so the boot-scoped lock reading is not available to it.
+  return runDoctor({ ...prerequisite, ...security, ...posture }, { lockObservable: false });
 }

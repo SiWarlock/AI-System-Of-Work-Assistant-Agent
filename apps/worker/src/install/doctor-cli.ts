@@ -104,6 +104,8 @@ export async function runInstallDoctor(deps: InstallDoctorDeps): Promise<number>
   // A stable dir for the once-run vault-INDEPENDENT collectors (their vault-scoped fields are discarded).
   const anchorVault = vaultDirs[0] ?? "";
 
+  // (The snapshot is 10 fields; `singleOwnerLock` is the 11th check and is deliberately NOT one of them —
+  // see the `lockObservable` note at the `runDoctor` call below.)
   // The vault-INDEPENDENT probes run EXACTLY ONCE — node/pnpm, temporal, gbrain-startable, loopback
   // (bound once ⇒ no cross-vault self-collision), filevault, keychain, gbrain-mount, stray. The
   // vault-scoped fields these collectors also carry (prereq.gitRemotes, posture.vaultAcl) are
@@ -135,7 +137,11 @@ export async function runInstallDoctor(deps: InstallDoctorDeps): Promise<number>
     vaultAcl: { workerIsSoleWritePrincipal: vaultAclSole },
     gitRemotes: { hasRemote: hasRemoteAll, localBackupAccepted },
   };
-  const report = runDoctor(snapshot);
+  // `lockObservable: false` — `sow-doctor` is a SEPARATE PROCESS from the worker, so it cannot take
+  // the boot-scoped single-owner-lock reading. Without this it reported `single_owner_lock_not_held` on
+  // EVERY run, including a perfectly healthy machine, and `doctorExitCode` returned 1 forever — breaking
+  // exactly the install-script gating this file's own header promises.
+  const report = runDoctor(snapshot, { lockObservable: false });
   deps.write(renderDoctorReport(report));
   return doctorExitCode(report.overall);
 }

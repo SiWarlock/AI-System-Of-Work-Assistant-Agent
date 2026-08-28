@@ -107,6 +107,28 @@ describe("doctor-cli — runInstallDoctor composition (fast unit, no subprocess)
     expect(code).not.toBe(0);
   });
 
+  it("standalone_CLI_never_asserts_the_boot_scoped_lock — it renders degraded, never a finding", async () => {
+    // ⛔ THE DEFECT. `single_owner_lock` was registered in `runDoctor`'s check array on 2026-08-25;
+    // this composition root has not been touched since 2026-07-11 and never supplied the probe. Every
+    // field on `ProbeSnapshot` is optional, so `Partial<ProbeSnapshot>` type-checked fine and nothing
+    // caught the omission. The fail-closed diagnoser then made EVERY `sow-doctor` run emit
+    // `[finding] single_owner_lock` and exit 1 — on a perfectly healthy machine — permanently breaking
+    // any install script gating on the exit code, which is the one thing this file's header promises.
+    //
+    // ⚠ WHY THIS ASSERTS THE CHECK AND NOT A GREEN EXIT: with the `notFound` run fake the other checks
+    // fail for their own honest reasons, so the exit code here is 1 either way and could not
+    // discriminate. The headline consequence — an otherwise-healthy machine exits 0 — is pinned at the
+    // engine layer, where the machine can be held green (`doctor-posture.test.ts`,
+    // `single_owner_lock_UNOBSERVABLE_is_degraded_not_a_finding`). This one pins that the CLI actually
+    // passes the flag; together they cover it, and neither covers it alone.
+    let out = "";
+    await runInstallDoctor(deps({ run: () => Promise.resolve(notFound), write: (o) => (out += o) }));
+    expect(out).toContain("single_owner_lock"); // POSITIVE control: the check IS in the report
+    expect(out).not.toContain("[finding] single_owner_lock");
+    expect(out).toContain("[degraded] single_owner_lock");
+    expect(out).not.toContain("single_owner_lock_not_held"); // never the verdict it did not earn
+  });
+
   it("report_only_no_mutation — the injected run sees ONLY the fixed READ commands; no mutation/repair command is issued — spec(§13 report-only)", async () => {
     const calls: CommandRequest[] = [];
     const run: RunCommand = (req) => {
