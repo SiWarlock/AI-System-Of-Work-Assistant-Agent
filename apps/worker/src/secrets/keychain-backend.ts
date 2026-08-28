@@ -27,6 +27,11 @@ export type KeychainExec = (
 /** The macOS `security` binary — ABSOLUTE so `exec` never does a PATH lookup (no binary-hijack). */
 export const SECURITY_BIN = "/usr/bin/security";
 
+/** Sentinel exit for "the exec was killed by its own timeout" — see `classifyFault`.
+ *  Defined HERE, not in `keychain-boot.ts`, because boot imports this module: putting it there
+ *  and importing it back would create a cycle. `mapExecResult` re-exports it for its callers. */
+export const TIMED_OUT_EXIT = -2;
+
 const NEWLINE = 0x0a;
 const DETAIL_MAX = 200;
 /** Max RAW code-0 stdout length (bytes, any trailing newline INCLUDED — the guard checks the raw value before
@@ -124,6 +129,13 @@ function classifyFault(code: number, stderr: string): KeychainBackendError["kind
   // blanket `128 ⇒ locked` would make a genuinely terminal 128 retry forever — the hazard this
   // function's own comment names. A 128 that carries a message is still classified by that message.
   if (code === 128 && stderr.trim().length === 0) return "locked";
+  // ⛔ TIMED_OUT_EXIT (-2) — the exec was killed by its own timeout. On macOS that means a keychain
+  // dialog is waiting (locked, or an ACL the operator has not authorised); a genuinely absent item
+  // returns 44 instantly. `locked` is the right disposition for BOTH: it is retryable once the operator
+  // acts, and it routes to `onKeychainLocked` (worker L41), which tells them to deal with the keychain.
+  // ⚠ It may in truth be `denied` — a timeout cannot distinguish the two, and that is stated rather than
+  // guessed. What matters is that it is no longer reported as `"missing"`.
+  if (code === TIMED_OUT_EXIT) return "locked";
   return "backend_error";
 }
 

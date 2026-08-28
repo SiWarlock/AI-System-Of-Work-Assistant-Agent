@@ -13,7 +13,9 @@ import type { ProviderId, Result } from "@sow/contracts";
 import type { SecretsPort } from "@sow/knowledge";
 import type { SecretsAccessor, SecretUnavailable, SecretUnavailableReason } from "@sow/providers";
 import { createKeychainSecretsAdapter } from "./keychain-adapter";
-import { createSecurityCliKeychainBackend, type KeychainExec } from "./keychain-backend";
+import { createSecurityCliKeychainBackend, TIMED_OUT_EXIT, type KeychainExec } from "./keychain-backend";
+
+export { TIMED_OUT_EXIT };
 
 /** The owner-provisioning gate. PRESENCE (any object) provisions the Keychain path; ABSENT ⇒ inert. An injected
  *  `execFile` is for tests; production omits it ⇒ the real bounded wrapper is used. */
@@ -29,12 +31,22 @@ export interface KeychainSecretsGate {
  * / signal (string `code` like ENOENT, or none) ⇒ `-1` ⇒ the backend classifies it `backend_error`.
  */
 export function mapExecResult(
-  error: (Error & { code?: unknown }) | null,
+  error: (Error & { code?: unknown; killed?: unknown }) | null,
   stdout: unknown,
   stderr: unknown,
 ): { readonly code: number; readonly stdout: Uint8Array; readonly stderr: string } {
   const errCode = error?.code;
-  const code = error === null ? 0 : typeof errCode === "number" ? errCode : -1;
+  // ⛔ A TIMEOUT IS NOT A GENERIC FAULT ON THIS PATH, and conflating them told operators the wrong thing.
+  // MEASURED 2026-08-28 on throwaway keychains: BOTH a locked keychain AND an ACL-denied item block
+  // `security find-generic-password` on a MODAL DIALOG instead of returning an error — each ran to my
+  // probe's cap with empty stdout AND stderr. `createRealExecFile`'s `timeout: 5_000` then kills it.
+  // Folding that to -1 ⇒ `backend_error` ⇒ `"missing"` reported "the credential does not exist" for a
+  // keychain the operator merely needs to unlock or authorise. ⭐ A genuinely absent item returns 44
+  // INSTANTLY, so a timeout on this command is NEVER "missing".
+  // `killed` + a signal is Node's timeout signature; ENOENT and other spawn failures keep -1, because
+  // mapping a MISSING BINARY to a retryable class would retry forever.
+  const timedOut = error !== null && error.killed === true && typeof errCode !== "number";
+  const code = error === null ? 0 : timedOut ? TIMED_OUT_EXIT : typeof errCode === "number" ? errCode : -1;
   return {
     code,
     stdout: stdout instanceof Uint8Array ? stdout : new TextEncoder().encode(String(stdout ?? "")),

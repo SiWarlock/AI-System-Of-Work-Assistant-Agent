@@ -11,6 +11,7 @@ import {
   buildKeychainSecrets,
   createLockRoutingSecretsAccessor,
   mapExecResult,
+  TIMED_OUT_EXIT,
   type KeychainLockRouter,
 } from "../../src/secrets/keychain-boot";
 import type { KeychainExec } from "../../src/secrets/keychain-backend";
@@ -39,6 +40,23 @@ describe("mapExecResult — execFile callback → KeychainExec result (no spawn)
       mapExecResult(Object.assign(new Error("enoent"), { code: "ENOENT" }), Buffer.from(""), Buffer.from("")).code,
     ).toBe(-1);
     expect(mapExecResult(new Error("killed"), Buffer.from(""), Buffer.from("")).code).toBe(-1);
+  });
+
+  it("a TIMEOUT is distinguished from a spawn failure — on macOS it means a keychain dialog is waiting", () => {
+    // ⛔ MEASURED 2026-08-28 on throwaway keychains: BOTH a locked keychain AND an ACL-denied item block
+    // `security find-generic-password` on a MODAL DIALOG rather than returning an error — each was killed
+    // at my probe's cap (8s / 10s) with empty stdout AND stderr. In production `createRealExecFile`'s
+    // `timeout: 5_000` kills it, and a timeout used to fold to -1 ⇒ `backend_error` ⇒ `"missing"`.
+    // ⇒ the operator was told the credential DID NOT EXIST, when the truth is that keychain access is
+    // blocked pending their interaction. A genuinely absent item returns 44 INSTANTLY — a timeout is
+    // never "missing".
+    const timedOut = Object.assign(new Error("killed"), { killed: true, signal: "SIGTERM" });
+    expect(mapExecResult(timedOut, Buffer.from(""), Buffer.from("")).code).toBe(TIMED_OUT_EXIT);
+    // NON-VACUITY: a spawn failure is NOT a timeout and must stay -1 → backend_error. Mapping ENOENT to
+    // `locked` would make a MISSING BINARY retry forever.
+    expect(
+      mapExecResult(Object.assign(new Error("enoent"), { code: "ENOENT" }), Buffer.from(""), Buffer.from("")).code,
+    ).toBe(-1);
   });
 
   it("a_fault_can_NEVER_map_to_code_0_even_with_partial_stdout", () => {
