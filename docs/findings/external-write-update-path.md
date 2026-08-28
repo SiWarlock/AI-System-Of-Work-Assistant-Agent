@@ -1,6 +1,25 @@
 # The external-write UPDATE path — why two attempts were reverted
 
-**Status:** OPEN. Blocked on a design that does not exist yet.
+**Status:** IN PROGRESS (third attempt, staged). C1's mechanism is BUILT and WIRED;
+C2/C3 and the `update` wiring itself are still open.
+
+| Stage | What | Commit |
+|---|---|---|
+| 1 | `write_applications` — the applied-write ledger (schema, both dialects, contract suite). No callers. | `8851034f` |
+| 2 | Wired into the replay gate (`recordReceipt` appends; `resolveExisting` arm (a) consults it). `update` still unwired. | `392457aa` |
+| 3 | **NEXT** — enumerate every re-drive path, then ordering (C3), then `update`. | — |
+
+⚠ Two lessons already paid for in stage 2, recorded so attempt 4 does not repeat them:
+- **The ledger must ADD recall, never SUBTRACT it.** Treating a ledger MISS as
+  authoritative broke two long-standing replay pins — the ledger only knows writes
+  made through `recordReceipt`, so a receipt from a direct `put`/fixture/legacy row
+  stopped being recognised. A miss now falls through to the receipt-row lookup.
+- **Arm (b) currently MASKS C1.** A test asserting "a superseded replay issues no
+  second create" PASSES with the ledger disabled, because `getByCanonicalObjectKey`
+  short-circuits any dispatch for an existing object. Assert the outcome KIND
+  (`replay` vs `existing`), not the status. That same short-circuit is *also* why
+  `update` never happens — and stage 3 must move it, which is what finally exposes
+  C1 for real.
 **Reachability:** DORMANT — the write transport is default-OFF until `§ARM-21`.
 **⛔ Fix BEFORE arming `§ARM-21`, not after.**
 
@@ -82,8 +101,35 @@ Two mechanisms, not one. Attempt 2 rejected the ledger by arguing it does not fi
    that any field can carry a real version: `ExternalWriteEnvelope.preconditions` is a
    free-form gate-name list and `WriteReceipt.rawRef` is documented as a
    redaction-safe POINTER, not an etag.
-3. **Enumerate EVERY re-drive path** before relying on stripping any of them. Known:
-   `outbox-drain.ts`, `envelopeReuse.ts`. Prove the list is closed.
+3. ~~**Enumerate EVERY re-drive path**~~ — ✅ **DONE 2026-08-28. The list is THREE, and
+   attempt 2 knew only two.** A "re-drive path" is a component that dispatches a
+   PERSISTED envelope rather than building one from current facts — that is what makes
+   a stale `payloadHash` reachable.
+
+   | # | Path | How the envelope is persisted |
+   |---|---|---|
+   | 1 | `outbox-drain.ts` | the outbox row (`idempotencyKey`, `canonicalObjectKey`, `payloadHash`, payload) |
+   | 2 | `envelopeReuse.ts` (`reuseExternalWriteOnResume`), called from `apps/worker/src/lifecycle/recovery.ts` | `RecoverableWrite.envelope`, from the resume ledger |
+   | 3 | ⭐ **the APPROVAL path** — `approvalFlow.ts` dispatches `input.context.envelope` via `dispatchApproved` | **durable Temporal workflow input**, held across a HUMAN decision |
+
+   ⭐ **#3 is new, and it is the worst of the three for C3.** The other two re-drive
+   within minutes; an approval can sit pending for days by design. Approve it after a
+   newer sync has landed and it writes the OLD payload back — the content revert, via
+   a path neither reverted attempt named. It is also the one path a "strip the grants
+   in the drain" defence (attempt 2's design) could never have covered, because the
+   stripping happens in `outbox-drain.ts` and this envelope never goes near it.
+
+   **Why the list is closed.** Every production caller of `dispatchExternalWrite` /
+   the routed `dispatch` was classified. The rest build a FRESH envelope from current
+   facts (`notebooklm-sync.ts`, `notebooklm-ground.ts`), are pass-through routers
+   (`write-adapter-registry.ts`), or are a different `dispatch` concept entirely and
+   never touch the external-write envelope (`vaultWatcher.ts` source-ingestion,
+   `commands.ts` triage re-enter, `temporal-unavailable.ts` job dispatch,
+   `gbrain-sync-trigger.ts` index sync).
+
+   ⚠ A partial ordering defence already exists at ONE boundary and is worth reusing
+   rather than reinventing: `copilotProposeSink.ts`'s `reconcileExisting` REJECTS a
+   same-id approval whose `payloadHash` diverges (first-write-wins).
 4. **Concurrency (C2):** `receiptStore.reserve` is the exclusive-right-to-CREATE guard
    and returns `committed` for an object that already has a receipt, so it cannot
    serialize two updates as-is. Either extend it or document last-writer-wins

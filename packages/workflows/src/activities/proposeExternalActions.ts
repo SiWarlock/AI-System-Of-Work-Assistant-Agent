@@ -71,10 +71,17 @@ export function createProposeActivity(deps: ProposeActivityDeps): ProposeActions
           return err(proposeError("held", outcome.reason));
         case "conflict":
           return err(proposeError("conflict", outcome.reason));
+        // No `default:` — `ExternalWriteResult.status` is a CLOSED union, and a
+        // catch-all on one makes a NEW status compile silently into whichever
+        // disposition the fallthrough happens to have (here: terminal `rejected`).
+        // A new retryable status would be permanently failed. Same defect class as
+        // the `branch`/`stage` bug; the `never` binding below turns it into a
+        // compile error instead.
         case "rejected":
-        default:
           return err(proposeError("rejected", outcome.reason));
       }
+      const unhandled: never = outcome;
+      return err(proposeError("rejected", `unhandled dispatch status: ${String(unhandled)}`));
     },
   };
 }

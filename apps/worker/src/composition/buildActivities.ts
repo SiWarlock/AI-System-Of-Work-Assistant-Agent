@@ -1038,10 +1038,13 @@ export function buildProofSpineActivities(
         // out of scope for the above).
         case "approval_pending":
           return err({ code: "rejected", message: "external write awaits approval" });
+        // No `default:` — see proposeExternalActions.ts: a catch-all on the closed
+        // `ExternalWriteResult` union silently absorbs a new status into `rejected`.
         case "rejected":
-        default:
           return err({ code: "rejected", message: outcome.reason });
       }
+      const unhandled: never = outcome;
+      return err({ code: "rejected", message: `unhandled dispatch status: ${String(unhandled)}` });
     },
   };
   const dispatchApproved: DispatchApprovedActionPort =

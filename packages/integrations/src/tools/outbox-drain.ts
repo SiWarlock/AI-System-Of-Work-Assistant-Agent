@@ -264,9 +264,11 @@ async function applyOutcome(
       });
       return "held";
     }
+    // No `default:` — a catch-all on the closed `ExternalWriteResult` union would
+    // make a NEW status terminal-reject silently. Exhaustive + a `never` backstop
+    // after the switch instead (see proposeExternalActions.ts).
     case "conflict":
-    case "rejected":
-    default: {
+    case "rejected": {
       // A typed terminal failure — mark rejected (NEVER a silent drop, NEVER a
       // blind overwrite). The reason is already redaction-safe from the gateway.
       await outbox.update({
@@ -278,6 +280,19 @@ async function applyOutcome(
       return "failed";
     }
   }
+  // Unreachable by the type system (the switch is total over the closed union).
+  // Kept as a runtime backstop that reproduces the pre-exhaustiveness behaviour
+  // EXACTLY — terminal-reject, never a silent drop and never a fallthrough that
+  // leaves the entry in its old state.
+  const unhandled: never = outcome;
+  void unhandled;
+  await outbox.update({
+    ...entry,
+    status: "rejected",
+    attempts: entry.attempts + 1,
+    updatedAt: now,
+  });
+  return "failed";
 }
 
 /**
