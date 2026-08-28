@@ -360,6 +360,9 @@ describe("copilotQaMachine", () => {
     expect(isOk(answered)).toBe(true);
     const illegal = copilotQaMachine.transition("received", "answered");
     expect(isOk(illegal)).toBe(false);
+    // "received" is non-terminal, so a rejected edge here is specifically
+    // illegal_transition, never terminal_state (24.101: discriminate the code).
+    if (!isOk(illegal)) expect(illegal.error.code).toBe("illegal_transition");
     // terminal `answered` -> `done` legal; done has no outgoing edge.
     expect(isOk(copilotQaMachine.transition("answered", "done"))).toBe(true);
   });

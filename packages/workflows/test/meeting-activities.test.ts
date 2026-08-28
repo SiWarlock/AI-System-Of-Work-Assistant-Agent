@@ -348,6 +348,10 @@ describe("spec(§9 inv-3) validateCloseout activity — no-inference + schema ha
     });
     const res = port.validate(makeAgentExtraction({ fields: { owner: { value: "Alice" } } }));
     expect(isErr(res)).toBe(true);
+    // 24.101: bare falsity is sufficient here — schemaGate above is mocked to
+    // always return ok(undefined), so the only reachable failure in this fixture
+    // is the no-inference hard-reject; gateCalled === false is the discriminant
+    // proving specifically that no-inference short-circuited BEFORE the gate ran.
     // The no-inference hard-reject short-circuits — no partial validation state.
     expect(gateCalled).toBe(false);
   });

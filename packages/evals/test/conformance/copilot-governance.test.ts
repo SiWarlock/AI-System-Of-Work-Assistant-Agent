@@ -263,6 +263,9 @@ describe("Copilot governance — no raw-content SHAPE survives the UI-safe gate 
   for (const c of REJECT_CASES) {
     it(`REJECTS: ${c.name}`, () => {
       // 9.27 — the notice param is now required; an explicit decline preserves this assertion exactly.
+      // toUiSafeCopilotAnswer has exactly one error path (the schema-gate branch, always
+      // failure("schema_rejected", …, {cause:{code:"COPILOT_ANSWER_REJECTED"}})) — single-code
+      // taxonomy, so bare falsity already pins the only way this can fail.
       expect(isErr(toUiSafeCopilotAnswer(c.candidate, { kind: "none" }))).toBe(true);
     });
   }

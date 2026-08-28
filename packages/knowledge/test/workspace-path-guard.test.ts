@@ -192,6 +192,9 @@ describe("applyPlan — foreign-workspace path consistency (24.12 remedy, constr
     const r = await applyPlan(cmd(plan), d);
     expect(isOk(r)).toBe(false);
     if (isOk(r)) return;
+    // applyPlan's error union has many codes (schema_rejected, secret_found, write_conflict, ...) —
+    // pin the specific one this fixture intends before trusting the shape/redaction checks below.
+    expect(r.error.code).toBe("workspace_path_violation");
     expect(Object.keys(r.error).sort()).toEqual(["code", "path"]);
     expect(JSON.stringify(r.error)).not.toContain("secret-looking");
   });
@@ -261,6 +264,14 @@ describe("applyPlan — foreign-workspace path consistency (24.12 remedy, constr
   });
 });
 
+// RETAIN NOTE (bare isErr in this block): `guard`'s Result error is `WorkspacePathViolation`
+// (`workspace-path-guard.ts`'s `violation()`), which carries a `code` that is ALWAYS the constant
+// "workspace_path_violation" — there is no second code/reason value it could ever be. The failure
+// taxonomy here is genuinely single-code, so `isErr(r).toBe(true)` already proves the guard fired;
+// a `.error.code` assertion would be redundant (always true whenever isErr is true) and would add no
+// discriminating signal. Distinguishing WHICH branch of the guard fired for `guard(ctx(...))` is not
+// this block's job — `applyPlan`'s own tests (which DO discriminate against a multi-code union)
+// cover that at the writer level.
 describe("the built check — the pure predicate (unit level, for branches applyPlan's own schema gate makes unreachable in practice)", () => {
   const ctx = (path: string, workspaceId: unknown): WorkspacePathContext => ({
     path,
@@ -358,6 +369,8 @@ describe("makeEnforceWorkspacePathScope — the exempt workspace id is a require
   it("changes ONLY the exempt id — every other branch of the predicate is byte-identical on a custom instance", () => {
     // Non-vacuity partner: proves the factory is the SAME predicate parameterised, not a second
     // implementation that happens to agree on the exemption. Mirrors the shipped const's own pins.
+    // RETAIN NOTE (bare isErr below): same single-code taxonomy as the block above — `code` is always
+    // the constant "workspace_path_violation", so no `.error.code` assertion adds discriminating signal.
     const check = makeEnforceWorkspacePathScope("some-other-workspace");
     expect(isOk(check(ctx("index.md", FOREIGN)))).toBe(true); // KN-12 structural, exempt for every ws
     expect(isOk(check(ctx("employer-work/projects/acme.md", FOREIGN)))).toBe(

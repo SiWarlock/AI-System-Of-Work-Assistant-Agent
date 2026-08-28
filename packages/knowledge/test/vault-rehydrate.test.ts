@@ -2,7 +2,7 @@
 // KnowledgeWriter stamps it (G1d-2) is re-hydrated + admitted as TRUSTED by the serving gate; an unstamped note
 // is withheld. This is the load-bearing integration that the whole gate-4 arc exists to make true.
 import { describe, it, expect } from "vitest";
-import { ok, err, isOk, workspaceId } from "@sow/contracts";
+import { ok, err, isOk, isErr, workspaceId } from "@sow/contracts";
 import type {
   Result,
   RevisionId,
@@ -105,11 +105,19 @@ describe("createVaultRehydrate — the production RehydrateFn (gate 4 G1e-1)", (
     const allow = deriveCanonicalFacts(snapshot);
     if (!isOk(allow)) return;
     const rehydrate = createVaultRehydrate((p) => snapshot.files.get(p), allow.value);
-    expect(isOk(rehydrate("page:acme"))).toBe(false); // present but UNSTAMPED → no_stamp
-    expect(isOk(rehydrate("page:ghost"))).toBe(false); // not in the allow-set
+    // `code` is always the constant "rehydrate_failed" — `reason` is what actually discriminates
+    // the 5 distinct fail-closed branches, so pin it for each of the 3 scenarios below.
+    const acme = rehydrate("page:acme");
+    expect(isOk(acme)).toBe(false); // present but UNSTAMPED → no_stamp
+    if (isErr(acme)) expect(acme.error.reason).toBe("no_stamp");
+    const ghost = rehydrate("page:ghost");
+    expect(isOk(ghost)).toBe(false); // not in the allow-set
+    if (isErr(ghost)) expect(ghost.error.reason).toBe("not_in_allow_set");
     // a note the allow-set references but the reader can't find → note_unreadable
     const rehydrateBlind = createVaultRehydrate(() => undefined, allow.value);
-    expect(isOk(rehydrateBlind("page:acme"))).toBe(false);
+    const blind = rehydrateBlind("page:acme");
+    expect(isOk(blind)).toBe(false);
+    if (isErr(blind)) expect(blind.error.reason).toBe("note_unreadable");
   });
 });
 

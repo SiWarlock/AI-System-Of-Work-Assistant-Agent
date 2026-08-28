@@ -64,6 +64,11 @@ describe("createProjectSyncOutputsProjection", () => {
   it("WS-8: a projectId that sanitizes to empty (all punctuation) FAILS CLOSED (no unsafe path)", () => {
     const r = run({}, { ...identity, projectId: "../.." });
     expect(isOk(r)).toBe(false);
+    // BuildSyncOutputsFailure is "unmappable_progress" | "build_failed"; the
+    // dashboard-servability check runs first and passes for this fixture (only
+    // the path-safety check rejects "../.."), so this is specifically build_failed
+    // (24.101: discriminate the code).
+    if (!isOk(r)) expect(r.error.code).toBe("build_failed");
   });
 
   it("WS-8 (defense-in-depth): a workspaceId SEGMENT carrying a separator or `..` FAILS CLOSED (no escape from projects/)", () => {
@@ -219,5 +224,10 @@ describe("createProjectSyncOutputsProjection — create-vs-patch (§13.5)", () =
   it("WS-8 holds on the re-sync patch too: a projectId with no safe anchor FAILS CLOSED (no unsafe patch path)", () => {
     const r = run({}, { ...identity, projectId: "../.." }, progress, WS, true);
     expect(isOk(r)).toBe(false);
+    // BuildSyncOutputsFailure is "unmappable_progress" | "build_failed"; the
+    // dashboard-servability check runs first and passes for this fixture (only
+    // the path-safety check rejects "../.."), so this is specifically build_failed
+    // (24.101: discriminate the code).
+    if (!isOk(r)) expect(r.error.code).toBe("build_failed");
   });
 });

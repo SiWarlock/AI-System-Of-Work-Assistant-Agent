@@ -332,6 +332,8 @@ describe("24.77 — a retry must not record an AuditRecord describing a diff aga
     const base1 = await readVaultHeadRevision(vault); // the PRE-mutation head
     const attempt1 = await applyPlan(cmd(mutatingPlan, String(base1), key), deps);
     expect(isOk(attempt1)).toBe(false); // fault fired, Markdown is durable, no audit row landed
+    // discriminate WHICH post-commit fault fired — the union also carries "revision_record_failed"
+    if (!isOk(attempt1)) expect(attempt1.error.code).toBe("audit_record_failed");
 
     audit.failAppend = false;
     // Deliberately re-submit against `base1` — the STALE base, not the moved head the existing pins

@@ -308,6 +308,9 @@ describe("spec(§9 task 7.14) deletionSagaMachine — pure/total, ordered, compe
   it("FORBIDS teleporting past the commit point (plan_built → deleted is illegal)", () => {
     const step = deletionSagaMachine.transition("plan_built", "deleted");
     expect(isOk(step)).toBe(false);
+    // "plan_built" is non-terminal, so this is specifically illegal_transition,
+    // never terminal_state (24.101: discriminate the code).
+    if (!isOk(step)) expect(step.error.code).toBe("illegal_transition");
   });
 
   it("post-commit steps can only reach a downstream step OR compensating (never rollback)", () => {
@@ -694,6 +697,10 @@ describe("spec(§9 task 7.14 inv-2) createBuildDeletionPlanActivity — derive +
     ]);
     const insideRes = await inside.build(verifiedIntent, DEFAULT_RETENTION_POLICY);
     expect(isOk(insideRes)).toBe(false);
+    // BuildDeletionPlanFailure is "human_owned_only" | "retention_blocked"; this
+    // single non-human-owned region inside its window can only produce
+    // retention_blocked (24.101: discriminate the code).
+    if (!isOk(insideRes)) expect(insideRes.error.code).toBe("retention_blocked");
 
     const after = buildPortFor([
       { path: "n.md", regionId: "raw-doc", humanOwned: false, contentClass: "raw", ageDays: 45, contentHash: "h-doc-1" },

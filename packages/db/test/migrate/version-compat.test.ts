@@ -60,7 +60,11 @@ describe("2.7 assertSchemaCompatible — compatible pairings", () => {
     const genesis = APP_SCHEMA_COMPAT_TABLE[0];
     expect(genesis).toBeDefined();
     if (!genesis) return;
-    expect(isOk(assertSchemaCompatible(genesis.appVersion, CURRENT_SCHEMA_VERSION))).toBe(false);
+    const r = assertSchemaCompatible(genesis.appVersion, CURRENT_SCHEMA_VERSION);
+    expect(isOk(r)).toBe(false);
+    // A bare isOk/false is ambiguous among the 4-member SCHEMA_COMPAT_REASONS union — pin the
+    // specific reason this test's title claims (schema_ahead_of_app), not just "some refusal".
+    if (!isOk(r)) expect(r.error.reason).toBe("schema_ahead_of_app");
   });
 });
 

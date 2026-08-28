@@ -104,6 +104,9 @@ describe("spec(§9) resolveRun — the idempotency seam (no duplicate runs)", ()
 
     // And the second workflowId was NEVER persisted → no duplicate run.
     const dupLookup = await repo.get(workflowId("wf-2-would-be-dup"));
+    // 24.101: bare falsity is sufficient — InMemoryWorkflowRunRepo.get() (fakes.ts)
+    // has exactly one failure branch (not_found on a missing id); it never returns
+    // "conflict" (that code is only produced by create()).
     expect(isErr(dupLookup)).toBe(true);
   });
 
@@ -190,6 +193,8 @@ describe("spec(§9) resolveRun — the idempotency seam (no duplicate runs)", ()
 
     // B's candidate workflowId was NEVER persisted.
     const loser = await repo.get(workflowId("wf-racer-b"));
+    // 24.101: bare falsity is sufficient — get()'s only failure branch is
+    // not_found (fakes.ts); "conflict" is never returned by get().
     expect(isErr(loser)).toBe(true);
 
     // The repo holds exactly ONE run for that idempotency key.
@@ -217,6 +222,8 @@ describe("spec(§9) resolveRun — the idempotency seam (no duplicate runs)", ()
     expect(res.error.code).toBe("unscoped_run");
     // Nothing was persisted under that key.
     const byKey = await repo.getByIdempotencyKey("novel-unscoped");
+    // 24.101: bare falsity is sufficient — getByIdempotencyKey()'s only failure
+    // branch is not_found (fakes.ts); no other code is reachable from this method.
     expect(isErr(byKey)).toBe(true);
   });
 });

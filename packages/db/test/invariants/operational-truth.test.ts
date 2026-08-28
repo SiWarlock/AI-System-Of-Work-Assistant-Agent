@@ -293,6 +293,10 @@ describe("invariantToDbErrorCode — adapter wiring to the §16 DbError taxonomy
 
   it("a violation carries a non-empty human message", () => {
     const r = assertAppendOnly("delete");
+    // Bare falsity is sufficient here: assertAppendOnly is single-code — any op !== "append"
+    // returns the identical fixed { code: "append_only_violation", domain: "event_log" } (see
+    // the ":49"/":58" cases above, which already pin that code); this test's own subject is
+    // the message field, not the code, so there is no "wrong reason" this could pass for.
     expect(isErr(r)).toBe(true);
     if (isErr(r)) {
       const v: InvariantViolation = r.error;

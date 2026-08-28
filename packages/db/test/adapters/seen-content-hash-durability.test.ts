@@ -85,6 +85,7 @@ describe("15.4 SeenContentHashRepository — durable across a worker restart (§
     expect(isErr(hasRes)).toBe(true); // a fault, NOT a masked false (which would re-dispatch)
     if (isErr(hasRes)) expect(hasRes.error.code).not.toBe("not_found");
     expect(isErr(recRes)).toBe(true); // a fault, NOT a masked ok (which would silently lose the dedupe)
+    if (isErr(recRes)) expect(recRes.error.code).not.toBe("not_found");
   });
 
   it("first_write_wins_preserves_original_seenAt: re-recording the same key is idempotent and does NOT overwrite the first-seen timestamp", async () => {

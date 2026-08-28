@@ -73,6 +73,13 @@ export interface BuildDrainDepsArgs {
   readonly backoffCfg?: BackoffConfig;
   /** Optional injected jitter. Absent ⇒ no jitter (no built-in randomness is called here). */
   readonly jitter?: (baseDelayMs: number) => number;
+  /**
+   * Task 24.8 / REQ-NF-006 — the OBS-2 outbox-depth sink. Forwarded verbatim to
+   * `DrainDeps.health`, which classifies the pass's due depth and hands the verdict
+   * here. The caller binds this to a DURABLE health surface; absent ⇒ no probe, no
+   * extra work, byte-identical to before.
+   */
+  readonly health?: NonNullable<DrainDeps["health"]>;
 }
 
 /**
@@ -106,6 +113,7 @@ export function buildDrainDeps(args: BuildDrainDepsArgs): DrainDeps {
       opts?: DispatchOptions,
     ): Promise<ExternalWriteResult> => dispatchRouted(args.writeAdapters, env, action, deps, undefined, opts),
     ...(args.jitter !== undefined ? { jitter: args.jitter } : {}),
+    ...(args.health !== undefined ? { health: args.health } : {}),
   };
 }
 

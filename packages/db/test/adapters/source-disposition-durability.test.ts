@@ -88,10 +88,26 @@ describe("15.5 SourceDispositionRepository — durable across a worker restart (
     const repos = createSqliteRepositories(drizzle(sqlite));
     sqlite.close(); // the operational store goes unreachable mid-run
 
-    expect(isErr(await repos.sourceDisposition.park(row()))).toBe(true); // never a masked ok
+    const parkRes = await repos.sourceDisposition.park(row());
+    expect(isErr(parkRes)).toBe(true); // never a masked ok
+    if (isErr(parkRes)) expect(parkRes.error.code).not.toBe("not_found");
     const getRes = await repos.sourceDisposition.getBySourceId("src-durable");
     expect(isErr(getRes)).toBe(true); // a fault, NOT a masked ok(undefined) (not-parked)
     if (isErr(getRes)) expect(getRes.error.code).not.toBe("not_found");
-    expect(isErr(await repos.sourceDisposition.recordDisposition("src-durable", "k", "a", "2026-07-15T00:00:00.000Z"))).toBe(true);
+    const recordRes = await repos.sourceDisposition.recordDisposition(
+      "src-durable",
+      "k",
+      "a",
+      "2026-07-15T00:00:00.000Z",
+    );
+    expect(isErr(recordRes)).toBe(true);
+    // recordDisposition has two OTHER legitimate err() branches (not_found: row missing;
+    // conflict: already dispositioned) reachable under normal, non-faulted operation — a bare
+    // isErr would still pass if a regression routed through one of those instead of the
+    // intended store-unreachable fault, so rule both out explicitly.
+    if (isErr(recordRes)) {
+      expect(recordRes.error.code).not.toBe("not_found");
+      expect(recordRes.error.code).not.toBe("conflict");
+    }
   });
 });

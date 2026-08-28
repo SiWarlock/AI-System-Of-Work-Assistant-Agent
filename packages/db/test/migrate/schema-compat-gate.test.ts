@@ -125,6 +125,10 @@ it("readOnDiskSchema returns a typed err (never throws) on a real read fault", a
   const engine = createSqliteMigrationEngine(conn);
   conn.close(); // force a read fault: operations on a closed better-sqlite3 handle throw
   const r = await engine.readOnDiskSchema();
+  // Bare falsity is sufficient here: readOnDiskSchema's ENTIRE implementation is
+  // `try { ok(...) } catch (cause) { err(toDbError(cause)) }` — one catch-all, no other
+  // err() branch — so there is no second, differently-caused failure this could be
+  // confused with; the only thing under test is "a driver throw is caught, never re-thrown".
   expect(isOk(r)).toBe(false); // §16: caught + folded to a typed DbError, never thrown
 });
 

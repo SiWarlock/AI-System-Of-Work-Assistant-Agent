@@ -376,6 +376,9 @@ describe("Phase-13 §13.1 gate (a) — config/osb.pin parser", () => {
       status: "s",
       validationRef: "r",
     };
+    // validateOsbPin has exactly one error code (invalid_value — both the blank-required-
+    // field loop and the subtree_sha shape check return it) — single-code taxonomy, so
+    // bare falsity already pins the only way this can fail.
     expect(isErr(validateOsbPin(bad))).toBe(true);
   });
 
@@ -387,6 +390,7 @@ describe("Phase-13 §13.1 gate (a) — config/osb.pin parser", () => {
       status: "s",
       validationRef: "r",
     };
+    // Same single-code (invalid_value) taxonomy as above.
     expect(isErr(validateOsbPin({ ...base, status: "" }))).toBe(true);
     expect(isErr(validateOsbPin({ ...base, validationRef: "   " }))).toBe(true);
   });

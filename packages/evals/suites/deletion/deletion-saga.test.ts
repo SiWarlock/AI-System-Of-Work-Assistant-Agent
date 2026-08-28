@@ -24,7 +24,7 @@
 //       resurrected index entry, no double-tombstone).
 //   (d) deletion requires a VALIDATED, EXPLICIT user intent before ANY tombstone.
 import { describe, it, expect } from "vitest";
-import { isOk, ok, workspaceId, sourceId } from "@sow/contracts";
+import { isOk, isErr, ok, workspaceId, sourceId } from "@sow/contracts";
 import type { Result, KnowledgeMutationPlan, WorkflowRunRef } from "@sow/contracts";
 import {
   runDeletionSaga,
@@ -334,9 +334,16 @@ describe("§20.1 Retention purge — (a) ordered, per-step-idempotent cross-stor
     }
     expect(cursor).toBe("deleted");
     // Teleporting plan_built → deleted (skipping the commit + downstream steps) is refused.
-    expect(isOk(deletionSagaMachine.transition("plan_built", "deleted"))).toBe(false);
+    const teleport = deletionSagaMachine.transition("plan_built", "deleted");
+    expect(isOk(teleport)).toBe(false);
+    // TransitionError has two possible codes (illegal_transition | terminal_state) — pin
+    // the specific one so a future edge added FROM plan_built can't silently swap which
+    // guard is firing.
+    if (isErr(teleport)) expect(teleport.error.code).toBe("illegal_transition");
     // Post-commit, there is NO rollback edge back to plan_built (durable tombstone stands).
-    expect(isOk(deletionSagaMachine.transition("markdown_tombstoned", "plan_built"))).toBe(false);
+    const rollback = deletionSagaMachine.transition("markdown_tombstoned", "plan_built");
+    expect(isOk(rollback)).toBe(false);
+    if (isErr(rollback)) expect(rollback.error.code).toBe("illegal_transition");
   });
 
   it("re-running a COMPLETED deletion is a whole-saga no-op — no second write to any store", async () => {

@@ -328,7 +328,12 @@ describe("validateProjectionVisibility — audit refs never carry an unvalidated
     // fixing the PRODUCER rather than tightening the heuristic (route (a) rejected
     // — it would invert secret-scan.ts's contentContainsSecret repo-wide).
     expect(d.decision).toBe("deny");
-    if (d.decision === "deny") expect(isRedactionSafe(d.audit)).toBe(true);
+    if (d.decision === "deny") {
+      // Same fixture as the mismatch test above (:289) — pin the reason too so this
+      // isn't just "still denies for some reason" once isRedactionSafe passes.
+      expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
+      expect(isRedactionSafe(d.audit)).toBe(true);
+    }
   });
 
   // The over-tight-fix controls (`L80`). Both post-equality paths are pinned, not just
@@ -484,6 +489,14 @@ describe("validateProjectionVisibility — own-data-property reads (task 24.65 /
     const proto = Object.create({ id: "ws-1", defaultVisibility: "full" }) as Workspace;
     const d = validateProjectionVisibility(projection("ws-1", "isolated"), proto);
     expect(d.decision).toBe("deny");
+    // MALFORMED_POLICY_INPUT is shared by five branches (see :295) — pin the message
+    // too: an inherited `id` reads as absent, so `srcId` is `undefined` and this
+    // takes the referential-mismatch branch specifically, not e.g. a different
+    // malformed-input branch that would also leave `decision` at "deny".
+    if (d.decision === "deny") {
+      expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
+      expect(d.message).toBe("projection workspaceId does not match source workspace");
+    }
   });
 
   it("the ALLOW-side control: a real workspace differing ONLY in own-vs-inherited still allows [spec(§5)]", () => {
@@ -529,34 +542,63 @@ describe("validateProjectionVisibility — own-data-property reads (task 24.65 /
   it("throwing_id_getter_on_source_workspace_returns_typed_denial [spec(§16)]", () => {
     const w = { get id() { return thrower(); }, defaultVisibility: "full" } as unknown as Workspace;
     expect(() => validateProjectionVisibility(projection("ws-1", "isolated"), w)).not.toThrow();
-    expect(validateProjectionVisibility(projection("ws-1", "isolated"), w).decision).toBe("deny");
+    const d = validateProjectionVisibility(projection("ws-1", "isolated"), w);
+    expect(d.decision).toBe("deny");
+    // MALFORMED_POLICY_INPUT is shared by five branches — pin the message so this
+    // stays pointed at the referential-mismatch branch specifically (an accessor
+    // `id` has no own `value`, so `srcId` reads as absent, same as the inherited-
+    // property case above), not merely "denied for some reason".
+    if (d.decision === "deny") {
+      expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
+      expect(d.message).toBe("projection workspaceId does not match source workspace");
+    }
   });
 
   it("throwing_default_visibility_getter_on_source_workspace_returns_typed_denial [spec(§16)]", () => {
     const w = { id: "ws-1", get defaultVisibility() { return thrower(); } } as unknown as Workspace;
     expect(() => validateProjectionVisibility(projection("ws-1", "isolated"), w)).not.toThrow();
-    expect(validateProjectionVisibility(projection("ws-1", "isolated"), w).decision).toBe("deny");
+    const d = validateProjectionVisibility(projection("ws-1", "isolated"), w);
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") {
+      expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
+      expect(d.message).toBe("source workspace defaultVisibility is unrecognized");
+    }
   });
 
   it("throwing_workspace_id_getter_on_projection_returns_typed_denial [spec(§16)]", () => {
     const p = { get workspaceId() { return thrower(); }, visibilityLevel: "isolated",
       projectionType: "summary", sanitizedPayload: {}, sourceRefs: [] } as unknown as GclProjection;
     expect(() => validateProjectionVisibility(p, realWs())).not.toThrow();
-    expect(validateProjectionVisibility(p, realWs()).decision).toBe("deny");
+    const d = validateProjectionVisibility(p, realWs());
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") {
+      expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
+      expect(d.message).toBe("projection omits workspaceId");
+    }
   });
 
   it("throwing_visibility_level_getter_on_projection_returns_typed_denial [spec(§16)]", () => {
     const p = { workspaceId: "ws-1", get visibilityLevel() { return thrower(); },
       projectionType: "summary", sanitizedPayload: {}, sourceRefs: [] } as unknown as GclProjection;
     expect(() => validateProjectionVisibility(p, realWs())).not.toThrow();
-    expect(validateProjectionVisibility(p, realWs()).decision).toBe("deny");
+    const d = validateProjectionVisibility(p, realWs());
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") {
+      expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
+      expect(d.message).toBe("projection omits visibilityLevel");
+    }
   });
 
   it("throwing_projection_type_getter_on_projection_returns_typed_denial [spec(§16)]", () => {
     const p = { workspaceId: "ws-1", visibilityLevel: "isolated",
       get projectionType() { return thrower(); }, sanitizedPayload: {}, sourceRefs: [] } as unknown as GclProjection;
     expect(() => validateProjectionVisibility(p, realWs())).not.toThrow();
-    expect(validateProjectionVisibility(p, realWs()).decision).toBe("deny");
+    const d = validateProjectionVisibility(p, realWs());
+    expect(d.decision).toBe("deny");
+    if (d.decision === "deny") {
+      expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
+      expect(d.message).toBe("projection projectionType is not a string");
+    }
   });
 
   it("throwing_taxonomy_getter_is_ignored_and_never_throws — the SIXTH shape, in the sibling guard [spec(§16)]", () => {
@@ -608,13 +650,26 @@ describe("validateProjectionVisibility — own-data-property reads (task 24.65 /
   it("a hostile getOwnPropertyDescriptor trap on the WORKSPACE returns a typed denial [spec(§16)]", () => {
     const ws = hostileTrap({ id: "ws-1", defaultVisibility: "full" }) as unknown as Workspace;
     expect(() => validateProjectionVisibility(projection("ws-1", "isolated"), ws)).not.toThrow();
-    expect(validateProjectionVisibility(projection("ws-1", "isolated"), ws).decision).toBe("deny");
+    const d = validateProjectionVisibility(projection("ws-1", "isolated"), ws);
+    expect(d.decision).toBe("deny");
+    // The trap throws on every own-property read, so `id` reads as absent — same
+    // referential-mismatch branch as the other id-unreadable shapes above.
+    if (d.decision === "deny") {
+      expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
+      expect(d.message).toBe("projection workspaceId does not match source workspace");
+    }
   });
 
   it("a hostile getOwnPropertyDescriptor trap on the PROJECTION returns a typed denial [spec(§16)]", () => {
     const p = hostileTrap(projection("ws-1", "isolated") as object) as unknown as GclProjection;
     expect(() => validateProjectionVisibility(p, realWs())).not.toThrow();
-    expect(validateProjectionVisibility(p, realWs()).decision).toBe("deny");
+    const d = validateProjectionVisibility(p, realWs());
+    expect(d.decision).toBe("deny");
+    // The trap throws on every own-property read, so `workspaceId` reads as absent.
+    if (d.decision === "deny") {
+      expect(d.reason).toBe("MALFORMED_POLICY_INPUT");
+      expect(d.message).toBe("projection omits workspaceId");
+    }
   });
 
   it("a hostile getOwnPropertyDescriptor trap on the TAXONOMY never throws [spec(§16)]", () => {

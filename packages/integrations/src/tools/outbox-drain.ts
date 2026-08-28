@@ -63,6 +63,18 @@ import {
   type DispatchOptions,
 } from "./gateway";
 import { nextDelayMs, EXHAUSTED, type BackoffConfig } from "../connectors/backoff";
+import { classifyOutboxDepth, OUTBOX_PROBE_FAILED_REASON, type OutboxHealthProbe } from "./outbox";
+
+/** Hand a depth verdict to the injected sink, never throwing — a health probe must
+ *  never fail a drain (mirrors `outbox.ts`'s `runHealthProbe`). No-op when unbound. */
+function reportDepth(deps: DrainDeps, probe: OutboxHealthProbe): void {
+  if (deps.health === undefined) return;
+  try {
+    deps.health.sink(probe);
+  } catch {
+    // swallowed by design
+  }
+}
 
 // The precondition marker every held envelope carries. `preconditions` must be a
 // non-empty array of non-empty strings (schema `z.array(z.string().min(1))`); the
@@ -168,6 +180,26 @@ export interface DrainDeps {
     deps: ExternalWriteDeps,
     opts?: DispatchOptions,
   ) => Promise<ExternalWriteResult>;
+  /**
+   * OBS-2 DEPTH SIGNAL (task 24.8, REQ-NF-006). Reports this pass's due-entry depth
+   * so a blocked write-through backlog reaches System Health.
+   *
+   * ⛔ WHY IT BELONGS ON THE DRAIN. `outboxHealth` existed but was reachable ONLY
+   * from `holdWrite`, and holds are dormant until `§ARM-21` — so outbox depth reached
+   * NO surface on the path that actually runs, while Phase 6's acceptance text
+   * asserted OBS-2 as delivered. The drain already lists the due set every pass, so
+   * the number is in hand: classifying it costs one pure call and no extra store read.
+   *
+   * Called ONCE per pass, AFTER the list and BEFORE any dispatch — a backlog is worth
+   * surfacing even if the drain then fails. A throwing sink is swallowed: a health
+   * probe must never fail a drain.
+   *
+   * OPTIONAL: absent ⇒ zero extra work, byte-identical to before this field existed.
+   */
+  readonly health?: {
+    readonly depthThreshold: number;
+    readonly sink: (probe: OutboxHealthProbe) => void;
+  };
 }
 
 /** The typed outcome counts of a drain pass (§16 — enumerable, never throws). */
@@ -336,7 +368,17 @@ export async function drainOutbox(
   const due = await outbox.listDue(deps.now, deps.limit);
   if (!isOk(due)) {
     // A store fault on the list is fail-closed: nothing drained, nothing dropped.
+    // The operator still learns the probe could not answer — silence here would be
+    // indistinguishable from a healthy empty queue (the tri-state exists for this).
+    reportDepth(deps, { kind: "probe_failed", reason: OUTBOX_PROBE_FAILED_REASON });
     return counts;
+  }
+  // OBS-2 depth, from the list we already have (no second read). Classified INSIDE
+  // the bound-check so the dormant path does no work at all — `classifyOutboxDepth`
+  // allocates a health signal on a breach, and "byte-identical when unbound" has to
+  // be true, not nearly true.
+  if (deps.health !== undefined) {
+    reportDepth(deps, classifyOutboxDepth(due.value.length, deps.health.depthThreshold));
   }
 
   for (const entry of due.value) {

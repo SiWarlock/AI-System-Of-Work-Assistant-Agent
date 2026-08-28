@@ -609,6 +609,13 @@ describe("runCrossCalendarScheduling — generic explanation only (Flow 3)", () 
     const validated: ValidatedProposal = { validated: true, fields: {}, windows: [] };
     const built = await port.build(validated, ORG_WS);
     expect(isOk(built)).toBe(false);
+    // 24.101: BuildSchedulingFailureCode is "unmappable_proposal" | "build_failed",
+    // and all three internal leakage guards in proposeWindows.ts share the single
+    // "build_failed" code — so the code alone can't tell WHICH guard fired. Assert
+    // the message, which is unique per guard, to pin that THIS test exercises the
+    // genericExplanation shape guard specifically (not the allowlist or the
+    // dispatched-payload raw-content guard).
+    if (!isOk(built)) expect(built.error.message).toContain("derived conflict explanation is raw-content-shaped");
   });
 
   it("[deriver] raw cross-workspace detail in the DISPATCHED payload is REFUSED even when genericExplanation is clean", async () => {
@@ -652,6 +659,19 @@ describe("runCrossCalendarScheduling — generic explanation only (Flow 3)", () 
     const validated: ValidatedProposal = { validated: true, fields: {}, windows: [] };
     const built = await port.build(validated, ORG_WS);
     // Fail-closed: raw content in the dispatched payload → rejected, NOT dispatched.
+    // 24.101 FINDING (not fixed here — a bare-falsity discriminant was not added
+    // because it would misrepresent this test): measured (built as !isOk).error.message
+    // for this exact fixture — it reads `dispatched calendar payload carries an
+    // unrecognized key "conflictDetail"` (the CALENDAR_PAYLOAD_KEYS allowlist guard),
+    // NOT the raw-content-shape guard this test's name/comment claims to exercise.
+    // "conflictDetail" is not in CALENDAR_PAYLOAD_KEYS ({"start","end",
+    // "genericExplanation"}), so the allowlist check rejects it before
+    // payloadCarriesRawContent ever runs. As written, this test would still pass
+    // green even if the dispatched-payload raw-content guard were deleted — it does
+    // not currently prove that guard exists. Reproducing the raw-content guard
+    // specifically needs the raw value on an ALLOWLISTED key (e.g. a multi-line
+    // `start`/`end`), which changes the fixture — out of scope for a bare-falsity
+    // pin and left for the test's owner.
     expect(isOk(built)).toBe(false);
   });
 

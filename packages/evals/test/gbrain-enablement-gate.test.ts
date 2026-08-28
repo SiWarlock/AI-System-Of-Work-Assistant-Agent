@@ -130,6 +130,7 @@ describe.skipIf(!LIVE)("12.22 — write-through enablement gate: LIVE HTTP OAuth
       // via the production exec too: still fails closed (isErr), same generic code either way.
       const r = await exec()(`${MCP_PREFIX}${op}`, {});
       expect(isErr(r)).toBe(true);
+      if (isErr(r)) expect(r.error.cause?.code).toBe("GBRAIN_HTTP_TOOL_ERROR");
     },
   );
 
@@ -151,6 +152,10 @@ describe.skipIf(!LIVE)("12.22 — write-through enablement gate: LIVE HTTP OAuth
     for (const name of mutating) {
       const r = await exec()(`${MCP_PREFIX}${name}`, {});
       expect(isErr(r), name).toBe(true);
+      // Distinguishes a real tool-level scope rejection from an unrelated protocol-level
+      // fault (GBRAIN_HTTP_MALFORMED / GBRAIN_HTTP_MCP_ERROR are the other two codes
+      // extractMcpResultEnvelope can produce).
+      if (isErr(r)) expect(r.error.cause?.code, name).toBe("GBRAIN_HTTP_TOOL_ERROR");
     }
   }, 30_000);
 

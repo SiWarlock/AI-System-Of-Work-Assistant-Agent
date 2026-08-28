@@ -195,16 +195,35 @@ export async function outboxHealth(
   if (!isOk(due)) {
     return { kind: "probe_failed", reason: OUTBOX_HEALTH_PROBE_FAILED_REASON };
   }
-  const depth = due.value.length;
-  if (depth <= deps.depthThreshold) {
+  return classifyOutboxDepth(due.value.length, deps.depthThreshold);
+}
+
+/**
+ * The PURE depth verdict, split out of {@link outboxHealth} so a caller that has
+ * ALREADY listed the due entries can classify without a second store read.
+ *
+ * ⛔ WHY THAT MATTERS (task 24.8). The probe above is only reachable from the HOLD
+ * path, and holds are dormant until `§ARM-21`; the DRAIN — which IS bound in
+ * production (drain-on-wake) — lists the due set on every pass and threw the depth
+ * away. Re-calling `outboxHealth` from the drain would re-query the same rows for a
+ * number already in hand, and the two reads could disagree. Sharing the classifier
+ * keeps ONE definition of "breach" for both callers.
+ *
+ * Pure: no store, no clock.
+ */
+export function classifyOutboxDepth(depth: number, depthThreshold: number): OutboxHealthProbe {
+  if (depth <= depthThreshold) {
     return { kind: "ok" };
   }
   return {
     kind: "breach",
     signal: buildToolWriteHealthSignal({
       subjectRef: "outbox",
-      reason: `outbox depth ${depth} exceeds threshold ${deps.depthThreshold}`,
+      reason: `outbox depth ${depth} exceeds threshold ${depthThreshold}`,
       kind: "outbox_blocked",
     }),
   };
 }
+
+/** The fixed, redaction-safe reason a depth probe reports when the store read faulted. */
+export const OUTBOX_PROBE_FAILED_REASON = OUTBOX_HEALTH_PROBE_FAILED_REASON;

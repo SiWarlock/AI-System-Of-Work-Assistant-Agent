@@ -37,7 +37,7 @@
 // needed), so a mock-backed run is BOTH functionally- AND DoD-passing (the runner's
 // dodValid holds because no real integration is required). This is asserted below.
 import { describe, it, expect } from "vitest";
-import { isOk, ok, err, actionId, planId, sourceId, workflowId } from "@sow/contracts";
+import { isOk, isErr, ok, err, actionId, planId, sourceId, workflowId } from "@sow/contracts";
 import type {
   Result,
   WorkspaceId,
@@ -513,6 +513,9 @@ describe("calendar-conflict — generic conflict explanations only, no raw leak 
     const validated: ValidatedProposal = { validated: true, fields: {}, windows: [] };
     const built = await port.build(validated, ORG_WS);
     expect(isOk(built)).toBe(false);
+    // BuildSchedulingFailureCode is unmappable_proposal | build_failed — pin build_failed
+    // so this proves the descriptor guard fired, not an unrelated projection rejection.
+    if (isErr(built)) expect(built.error.code).toBe("build_failed");
   });
 
   it("the real deriver REFUSES raw cross-workspace detail in the DISPATCHED payload even when the decoy field is clean (WS-8 fail-closed)", async () => {
@@ -547,6 +550,9 @@ describe("calendar-conflict — generic conflict explanations only, no raw leak 
     const validated: ValidatedProposal = { validated: true, fields: {}, windows: [] };
     const built = await port.build(validated, ORG_WS);
     expect(isOk(built)).toBe(false);
+    // Same 2-code union as above — pin build_failed so this proves the dispatched-payload
+    // leakage guard fired, not an unrelated projection rejection.
+    if (isErr(built)) expect(built.error.code).toBe("build_failed");
   });
 
   it("a clean generic-only payload PASSES and stamps the BOUND workspace (WS-2/WS-4)", async () => {

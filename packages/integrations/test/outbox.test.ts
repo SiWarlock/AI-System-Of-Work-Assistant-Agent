@@ -197,6 +197,10 @@ describe("holdWrite — hold-through-outage", () => {
       { clock, outboxId: () => "occupied" },
     );
     expect(isErr(res)).toBe(true);
+    // DbError.code is a multi-value closed set — pin the SPECIFIC store fault this
+    // test forces (a pre-occupied outboxId under a different idempotencyKey), so a
+    // future change that returns a different fault code here is still caught.
+    if (isErr(res)) expect(res.error.code).toBe("conflict");
   });
 });
 

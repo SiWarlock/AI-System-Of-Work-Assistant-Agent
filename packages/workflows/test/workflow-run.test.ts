@@ -66,6 +66,8 @@ describe("spec(§9) createWorkflowRun — admission + workspace binding (WS-2)",
     expect(res.error.code).toBe("unscoped_run");
     // Nothing was persisted.
     const found = await repo.getByIdempotencyKey("idem-b");
+    // 24.101: bare falsity is sufficient — getByIdempotencyKey()'s only failure
+    // branch is not_found (fakes.ts); no other code is reachable from this method.
     expect(isErr(found)).toBe(true);
   });
 

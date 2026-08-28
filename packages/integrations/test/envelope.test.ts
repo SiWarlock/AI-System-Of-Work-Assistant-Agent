@@ -51,5 +51,9 @@ describe("buildEnvelopeFromAction", () => {
     const action = makeProposedAction({ idempotencyKey: "" });
     const res = buildEnvelopeFromAction(action, { preconditions: [] });
     expect(isErr(res)).toBe(true);
+    // Distinguishes the candidate-gate's two failure codes (MALFORMED vs
+    // LINKAGE_MISMATCH) — a tampered/empty key is a MALFORMED rejection, never
+    // a linkage mismatch (candidate-gate.ts's §3 external-write-keys rule).
+    if (isErr(res)) expect(res.error.code).toBe("MALFORMED");
   });
 });

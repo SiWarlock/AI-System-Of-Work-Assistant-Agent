@@ -123,6 +123,9 @@ describe("projectSyncMachine — legal + total", () => {
   it("rejects an illegal edge without throwing (§16 total)", () => {
     const step = projectSyncMachine.transition("scheduled", "done");
     expect(isOk(step)).toBe(false);
+    // "scheduled" is non-terminal, so this is specifically illegal_transition,
+    // never terminal_state (24.101: discriminate the code).
+    if (!isOk(step)) expect(step.error.code).toBe("illegal_transition");
   });
 });
 

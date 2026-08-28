@@ -248,6 +248,9 @@ describe("surfaceWorkflowFailure — SAFETY RULE 7: no raw cause crosses the reg
     );
     expect(isOk(res)).toBe(false);
     if (isOk(res)) return;
+    // SurfaceErrorCode is "surface_failed" | "outbox_failed" (24.101); this
+    // fixture targets the outbox sink specifically.
+    expect(res.error.code).toBe("outbox_failed");
     expectNoPoison(JSON.stringify(res));
   });
 
@@ -281,6 +284,9 @@ describe("surfaceWorkflowFailure — SAFETY RULE 7: no raw cause crosses the reg
     );
     expect(isOk(res)).toBe(false);
     if (isOk(res)) return;
+    // SurfaceErrorCode is "surface_failed" | "outbox_failed" (24.101); this
+    // fixture targets the health store's `put` specifically.
+    expect(res.error.code).toBe("surface_failed");
     expectNoPoison(JSON.stringify(res));
   });
 });
@@ -403,6 +409,10 @@ describe("createApplyTransitionActivity — SAFETY RULE 7: the nested DbError.ca
     const res = await apply.apply(pending, { decision: "approved", channel: "mac", actor: "user:alice" });
     expect(isOk(res)).toBe(false);
     if (isOk(res)) return;
+    // ApplyTransitionErrorCode also has "conflicting_approval" | "stale_card"
+    // (24.101); foldApplyDbError's default branch (a DbError code that is
+    // neither "conflict" nor "not_found", as here) folds to apply_failed.
+    expect(res.error.code).toBe("apply_failed");
     expectNoPoison(JSON.stringify(res));
   });
 

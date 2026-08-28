@@ -141,6 +141,9 @@ describe("upsertRegionBody — stable IDs across successive rewrites", () => {
   it("refuses to upsert into a malformed document", () => {
     const r = upsertRegionBody(`${regionOpenMarker("x")}\nunclosed`, "x", "b");
     expect(isErr(r)).toBe(true);
+    if (!isErr(r)) return;
+    // SectionParseError carries 5 possible reasons — pin the one this malformed input triggers
+    expect(r.error.reason).toBe("unclosed_region");
   });
 });
 

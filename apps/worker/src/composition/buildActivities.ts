@@ -22,7 +22,7 @@
 // ownership+secret defaults, the fail-closed approval unwrap, the always-supplied
 // broker localConfig, the faithful ReceiptStore mapping) live in backends.ts and are
 // threaded here unchanged.
-import { ok, err, isOk, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID } from "@sow/contracts";
+import { ok, err, isOk, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID, auditId } from "@sow/contracts";
 import type {
   Result,
   WorkspaceId,
@@ -74,6 +74,16 @@ import type { ExternalWriteDeps, ExternalWriteResult, WriteSecretsAccessor } fro
 // production importers; see outboxDrainBind.ts's module header). Bound below, mirroring THIS
 // file's own established drain-on-wake idiom (the 19.1 GBrain-sync-outbox drain a few lines down).
 import { buildDrainDeps, buildWakeDrainHook } from "./outboxDrainBind";
+import { createHealthSurface } from "../health/surface";
+import { createPersistentHealthSurfaceStore } from "./store-adapters";
+
+/**
+ * Task 24.8 — the due-entry count above which the outbox backlog is operator-
+ * actionable. A held write that was never attempted is a different condition from a
+ * single failed attempt, so the threshold is deliberately low: at personal scale a
+ * handful of stuck writes already means something upstream is wrong.
+ */
+const OUTBOX_DEPTH_THRESHOLD = 5;
 
 // 21.8 — PROV-3's default-OFF card-transport owner gate (@sow/integrations/tools/cards). Deep
 // subpath import (explicit /index — the package's "./*" export map is file-literal, no directory
@@ -1098,11 +1108,46 @@ export function buildProofSpineActivities(
   // caller) `selectAdapterTransport` ALWAYS returns the in-memory `createStubAdapterTransport()`, never
   // a real vendor client, so this drain reaches no real vendor until the owner explicitly arms
   // `config.writeTransport` (§ARM-21).
+  // task 24.8 / REQ-NF-006 — bind the OBS-2 depth signal to the DURABLE health store.
+  //   The probe existed but was reachable only from `holdWrite` (dormant until
+  //   §ARM-21), so outbox depth reached NO surface on the path that actually runs
+  //   while Phase 6's acceptance text asserted OBS-2 as delivered. The drain already
+  //   lists the due set each pass, so this costs one pure classification and no extra
+  //   read. Both non-ok verdicts materialize: a BREACH is the backlog itself, and a
+  //   PROBE_FAILED is the store refusing to answer — silence there is
+  //   indistinguishable from a healthy empty queue, which is exactly the ambiguity the
+  //   tri-state exists to remove. Fail-SAFE: the sink swallows its own faults and the
+  //   drain swallows a throwing sink, so health can never fail a drain.
+  const outboxDepthSurface = createHealthSurface(createPersistentHealthSurfaceStore(backends.healthItems));
   const drainOnWakeDeps = buildDrainDeps({
     gatewayDeps: externalWriteDeps,
     workspaceId: String(params.meetingJobInputs.workspaceId),
     writeAdapters: backends.writeAdapters,
     clock: now,
+    health: {
+      depthThreshold: OUTBOX_DEPTH_THRESHOLD,
+      sink: (probe): void => {
+        if (probe.kind === "ok") return;
+        const failure =
+          probe.kind === "breach"
+            ? {
+                failureClass: probe.signal.failureClass,
+                subjectRef: probe.signal.subjectRef,
+                severity: probe.signal.severity,
+                message: probe.signal.message,
+              }
+            : {
+                failureClass: "outbox_blocked" as const,
+                subjectRef: "outbox",
+                message: probe.reason,
+              };
+        void outboxDepthSurface
+          .record({ ...failure, auditRef: auditId(`outbox-depth:${now()}`), now: now() })
+          .catch(() => {
+            /* fail-SAFE: a health mint must never fail the drain (§16) */
+          });
+      },
+    },
   });
   const wakeDrainOnConnect = buildWakeDrainHook({ outbox: backends.repos.outbox, drainDeps: drainOnWakeDeps });
   void wakeDrainOnConnect({ reason: "network_reconnect", now: now() }).catch(() => {

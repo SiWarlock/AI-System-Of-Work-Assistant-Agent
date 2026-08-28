@@ -153,7 +153,10 @@ describe("DegradedModeController — DB-unavailable degraded mode (2.8)", () => 
     const rec = c.recover();
     expect(isErr(rec)).toBe(true);
     if (!isErr(rec)) throw new Error("expected err");
-    expect(typeof rec.error.code).toBe("string");
+    // `typeof === "string"` alone accepts ANY DbErrorCode — pin the specific reason
+    // (recover() has a second, distinct err() branch for a resolveHealthItem failure;
+    // "not_found" is the one this "called while not degraded" scenario must produce).
+    expect(rec.error.code).toBe("not_found");
     expect(rec.error.message.length).toBeGreaterThan(0);
   });
 });

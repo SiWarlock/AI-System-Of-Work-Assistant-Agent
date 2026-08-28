@@ -158,6 +158,8 @@ describe("runWakeReconcile — LIFE-6 ordering", () => {
       }),
     );
     expect(isErr(out)).toBe(true);
+    // side-effect discriminant: `order` proves the fault came from applyPendingWrites (drainIndexJobs
+    // never ran), distinguishing it from a drain fault — runWakeReconcile can fail from either step.
     expect(order).toEqual(["applyPendingWrites"]); // drain never reached
   });
 });

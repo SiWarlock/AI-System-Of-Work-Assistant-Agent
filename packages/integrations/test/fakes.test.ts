@@ -104,6 +104,7 @@ describe("InMemoryOutbox (implements OutboxRepository)", () => {
     const outbox = new InMemoryOutbox();
     const missing = await outbox.update(makeOutboxEntry());
     expect(isErr(missing)).toBe(true);
+    if (isErr(missing)) expect(missing.error.code).toBe("not_found");
 
     await outbox.enqueue(makeOutboxEntry());
     const updated = await outbox.update(makeOutboxEntry({ status: "dispatched", attempts: 1 }));
@@ -118,6 +119,7 @@ describe("InMemoryConnectorCursors (implements ConnectorCursorRepository)", () =
     const cursors: ConnectorCursorRepository = new InMemoryConnectorCursors();
     const miss = await cursors.get("todoist", "employer-work");
     expect(isErr(miss)).toBe(true);
+    if (isErr(miss)) expect(miss.error.code).toBe("not_found");
 
     await cursors.upsert(makeCursorRecord({ cursor: "cur_1" }));
     const got = await cursors.get("todoist", "employer-work");

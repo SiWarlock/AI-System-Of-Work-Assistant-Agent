@@ -83,7 +83,11 @@ describe("assessDashboardWarmLoad — spec(§12)", () => {
   });
 
   it("returns a typed Err on a non-finite / negative sample", () => {
-    expect(isErr(assessDashboardWarmLoad([-1]))).toBe(true);
+    const neg = assessDashboardWarmLoad([-1]);
+    expect(isErr(neg)).toBe(true);
+    // The error union also has empty_samples — pin invalid_sample so this proves the
+    // negative-value guard fired, not a coincidence of the (non-empty) input shape.
+    if (isErr(neg)) expect(neg.error.code).toBe("invalid_sample");
     const nan = assessDashboardWarmLoad([Number.NaN]);
     expect(isErr(nan)).toBe(true);
     if (!isErr(nan)) return;
@@ -140,6 +144,11 @@ describe("makeDashboardServeProbe — serves THROUGH buildQueryRouter (§10 quer
     });
     const r = await probe();
     expect(isErr(r)).toBe(true);
+    // The probe's error is either "dashboard_serve_err:<kind>" (the read-model failed
+    // closed as DATA) or the fixed "dashboard_serve_threw" (an unexpected throw) — pin
+    // the prefix so this proves the graceful-degrade path fired, matching the test's own
+    // "never throws" claim, not the catch-block fallback.
+    if (isErr(r)) expect(r.error.startsWith("dashboard_serve_err:")).toBe(true);
   });
 });
 

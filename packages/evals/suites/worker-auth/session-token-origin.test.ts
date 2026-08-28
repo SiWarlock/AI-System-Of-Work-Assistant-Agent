@@ -91,11 +91,15 @@ describe("§5 — the session token is required on the request path, even from l
   it("a missing token from an allowlisted loopback origin is REJECTED (loopback binding ≠ authentication)", () => {
     const r = INTERCEPTOR({ token: undefined, origin: GOOD_ORIGIN, host: GOOD_HOST });
     expect(isErr(r)).toBe(true);
+    // The interceptor can reject as "unauthenticated" (token) OR "origin not allowed"
+    // (origin) — pin the message so this proves the TOKEN gate fired, not a coincidence.
+    if (isErr(r)) expect(r.error.message).toBe("unauthenticated");
   });
 
   it("a wrong (equal-length) token is REJECTED via the constant-time compare", () => {
     const r = INTERCEPTOR({ token: WRONG.value, origin: GOOD_ORIGIN, host: GOOD_HOST });
     expect(isErr(r)).toBe(true);
+    if (isErr(r)) expect(r.error.message).toBe("unauthenticated");
   });
 
   it("the valid token + an allowlisted origin/host is ADMITTED (no false-reject)", () => {
@@ -154,12 +158,19 @@ const SPOOF_VECTORS: readonly OriginVector[] = [...ORIGIN_RAW_MATCH_VECTORS, ...
 describe("§5 — the strict Origin/Host allowlist rejects the anti-DNS-rebind spoof vectors", () => {
   for (const v of SPOOF_VECTORS) {
     it(`${v.id}: checkOrigin rejects (fail-closed)`, () => {
+      // checkOrigin has exactly one error path (the local `rejected()` helper, always
+      // failure("validation_rejected", "origin not allowed")) — single-code taxonomy,
+      // so bare falsity already pins the only way this can fail.
       expect(isErr(checkOrigin(v.origin, v.host, ALLOWLIST))).toBe(true);
     });
 
     it(`${v.id}: the composed interceptor rejects even an AUTHENTICATED caller`, () => {
       const r = INTERCEPTOR({ token: EXPECTED.value, origin: v.origin, host: v.host });
       expect(isErr(r)).toBe(true);
+      // A valid token is supplied, so a bare isErr can't tell "the origin gate fired"
+      // apart from "the token gate spuriously rejected a valid token" — pin the message
+      // to prove it's specifically the origin/host allowlist doing the rejecting.
+      if (isErr(r)) expect(r.error.message).toBe("origin not allowed");
     });
   }
 
@@ -176,6 +187,9 @@ describe("§5 — the stream handshake requires the token (from connectionParams
   it("a null connectionParams (no token) is REJECTED pre-subscription", () => {
     const hs = runStreamHandshake(INTERCEPTOR, { connectionParams: null, origin: GOOD_ORIGIN, host: GOOD_HOST });
     expect(isErr(hs)).toBe(true);
+    // runStreamHandshake surfaces the same 2-reason interceptor Result — pin the message
+    // so this proves the MISSING TOKEN was the cause, not a coincidental origin reject.
+    if (isErr(hs)) expect(hs.error.message).toBe("unauthenticated");
   });
 
   it("a token smuggled in a `url` field (not `token`) is treated as ABSENT ⇒ REJECTED", () => {
@@ -185,6 +199,7 @@ describe("§5 — the stream handshake requires the token (from connectionParams
       host: GOOD_HOST,
     });
     expect(isErr(hs)).toBe(true);
+    if (isErr(hs)) expect(hs.error.message).toBe("unauthenticated");
   });
 
   it("a valid token in connectionParams but a SPOOFED origin is REJECTED (allowlist applies at the handshake)", () => {
@@ -194,6 +209,9 @@ describe("§5 — the stream handshake requires the token (from connectionParams
       host: GOOD_HOST,
     });
     expect(isErr(hs)).toBe(true);
+    // A valid token rides connectionParams here — pin the message to prove the ORIGIN
+    // allowlist caught the spoof, not a spurious token-gate rejection.
+    if (isErr(hs)) expect(hs.error.message).toBe("origin not allowed");
   });
 
   it("a valid token in connectionParams + an allowlisted origin/host is ADMITTED (positive control)", () => {
@@ -211,6 +229,9 @@ describe("§5 — the stream handshake requires the token (from connectionParams
 // ===========================================================================
 describe("§5 — loopback-only bind (loopback binding is not, by itself, authentication)", () => {
   it("a remotely-reachable bind address is REFUSED", () => {
+    // assertLoopbackBind has exactly one error path (the local `refused()` helper, always
+    // failure("validation_rejected", "non-loopback bind refused")) — single-code
+    // taxonomy, so bare falsity already pins the only way this can fail.
     expect(isErr(assertLoopbackBind("0.0.0.0"))).toBe(true);
     expect(isErr(assertLoopbackBind("192.168.1.10"))).toBe(true);
     expect(isErr(assertLoopbackBind("127.0.0.1.evil.com"))).toBe(true); // loopback-suffix spoof
