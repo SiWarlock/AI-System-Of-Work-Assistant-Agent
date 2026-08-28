@@ -3,11 +3,18 @@
 // `workspaceId` — `persistDenial`'s SECOND data channel — unscanned:
 //   const record = { ...toAuditRecordInput(signal, deps.now()), workspaceId };
 // The knowledge-side sibling (`persistDenialAudit`, `packages/knowledge/src/gcl/projection.ts`, task
-// 24.62, `92595096`) closed the identical gap by reusing `auditFieldContainsSecret`
-// (`packages/knowledge/src/knowledge-writer/secret-scan.ts`) — the same package's own "would this be
-// safe as an AUDIT FIELD?" predicate for a bare string (distinct from that package's COMMIT-granularity
-// `contentContainsSecret`, task 24.123). This suite pins the SAME predicate applied here, so the two
-// implementations agree.
+// 24.62, `92595096`) closed the identical gap; both sinks then rode `auditFieldContainsSecret`
+// (`packages/knowledge/src/knowledge-writer/secret-scan.ts`), the "would this be safe as an AUDIT
+// FIELD?" predicate.
+//
+// ⛔ PREDICATE CORRECTED (task 24.130 deposit 2) — knowledge side at `c0909f98`, this side after it.
+// BOTH sinks now use `@sow/domain`'s `looksLikeCredentialShape`: the same credential-SHAPE nets with
+// `SENSITIVE_KEYWORD` excluded. A `workspaceId` is a human-chosen NAME, and the keyword arm refused
+// `acme-credential-review` — an audit row lost to a WORD. The two implementations still agree; the
+// agreement moved to the predicate that fits the field.
+// ⚠ WHAT THAT MEANS FOR THIS SUITE: the three credential-SHAPE assertions below pass under BOTH
+// predicates and therefore could not have detected the change. The `acme-credential-review` case is
+// the only discriminator, and it was observed RED before the swap.
 //
 // SEVERITY, established by tracing rather than assumption: on the GCL path `signal.event` cannot carry
 // non-literal content (see boot.ts:840-845's own call-path enumeration of `event`'s three reachable
@@ -61,6 +68,10 @@ const safeSignal = buildAuditSignal({
   afterSummary: "egress denied",
 });
 
+/** A workspace a person could legitimately name — carries the WORD "credential", carries no
+ *  credential. Refused by the audit-granularity predicate, admitted by the identifier one. */
+const KEYWORD_NAMED_WS = "acme-credential-review";
+
 /** Capture `console.error` for the duration of one call; always restores. Non-string args are
  *  `JSON.stringify`d (not `String()`d) so a future structured-arg log line does not silently escape a
  *  `not.toContain` assertion — mirrors the existing 24.62 test file's own helper. */
@@ -78,7 +89,7 @@ async function captureConsoleError(run: () => Promise<void>): Promise<string[]> 
   return lines;
 }
 
-describe("DOD-worker-boot 1 — createAuditPersistPort gates the workspaceId channel through auditFieldContainsSecret (24.62)", () => {
+describe("DOD-worker-boot 1 — createAuditPersistPort gates the workspaceId channel through looksLikeCredentialShape (24.62, predicate corrected by 24.130 deposit 2)", () => {
   it("REFUSES to persist when workspaceId is credential-shaped, even though the signal itself is redaction-safe", async () => {
     const mem = memAuditQueryable();
     const port = createAuditPersistPort({ audit: mem.repo, now: () => NOW });
@@ -101,6 +112,30 @@ describe("DOD-worker-boot 1 — createAuditPersistPort gates the workspaceId cha
     const queried = await mem.repo.query({ workspaceId: userinfoWorkspaceId }, 10);
     expect(isOk(queried)).toBe(true);
     if (isOk(queried)) expect(queried.value.length).toBe(0);
+  });
+
+  it("a workspace NAMED for credential work still persists — the availability half of 24.130 deposit 2", async () => {
+    // ⛔ THIS IS THE ASSERTION THE PREDICATE SWAP EXISTS FOR, and it went RED before the swap.
+    // A workspaceId is a HUMAN-CHOSEN NAME, not a machine-generated audit ref. Under the
+    // audit-granularity predicate (`auditFieldContainsSecret`, `SENSITIVE_KEYWORD` included) a
+    // person who names their workspace `acme-credential-review` loses the audit row entirely —
+    // a refusal caused by the WORD, with no credential anywhere in it.
+    // The identifier-granularity predicate (`looksLikeCredentialShape`, shape nets only) admits
+    // it. The knowledge-side sibling `persistDenialAudit` was corrected the same way at
+    // `c0909f98`; this closes 24.130's remaining "#2's WIRING AT THE WORKER SINK".
+    // ⚠ The three shape assertions in this file all pass under BOTH predicates, so none of them
+    // could detect this change. This one is the discriminator.
+    const mem = memAuditQueryable();
+    const port = createAuditPersistPort({ audit: mem.repo, now: () => NOW });
+
+    await port.persistDenial(safeSignal, KEYWORD_NAMED_WS);
+
+    const queried = await mem.repo.query({ workspaceId: KEYWORD_NAMED_WS }, 10);
+    expect(isOk(queried)).toBe(true);
+    if (isOk(queried)) {
+      expect(queried.value.length).toBe(1);
+      expect(queried.value[0]?.workspaceId).toBe(KEYWORD_NAMED_WS);
+    }
   });
 
   it("a non-credential-shaped workspaceId still persists — the gate discriminates, it does not deny-all (non-vacuity control)", async () => {

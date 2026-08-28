@@ -58,7 +58,7 @@ import type { SessionToken, LegacyContentPolicy, CopilotWorkspaceScope, Resolved
 // `export * from "./audit-signal"` stays untouched to avoid a merge collision with a
 // concurrent wave-1 slice; the package's `exports` map carries the `./*` wildcard.
 import { firstUnsafeAuditField } from "@sow/policy/audit-signal-field";
-import { TBD } from "@sow/domain";
+import { TBD, looksLikeCredentialShape } from "@sow/domain";
 import type { MeetingJobInputs, AgentExtraction, HealthItemStore, SowTaskQueue } from "@sow/workflows";
 
 import {
@@ -299,7 +299,7 @@ import {
 } from "./watch/vaultWatcher";
 // §13 task 11.3-b — the GBrain version-pin BOOT verify step (closes the 11.3-a reachability waiver).
 import { readFile } from "node:fs/promises";
-import { createGbrainVersionProbe, computeRevisionId, auditFieldContainsSecret, type GbrainVersionProbe, type KnowledgeRevisionStore, type CommittedRevision, type SecretsPort, type SecretRef, type SecretUnresolved, type StamperDeps, type RunningGbrainVersion, type VaultFs, type GbrainReadAdapter, type ReconcilerDbProjection, type IndexRebuildClient, type EntityGbrainReadPort, type SynthesisReasonPort } from "@sow/knowledge";
+import { createGbrainVersionProbe, computeRevisionId, type GbrainVersionProbe, type KnowledgeRevisionStore, type CommittedRevision, type SecretsPort, type SecretRef, type SecretUnresolved, type StamperDeps, type RunningGbrainVersion, type VaultFs, type GbrainReadAdapter, type ReconcilerDbProjection, type IndexRebuildClient, type EntityGbrainReadPort, type SynthesisReasonPort } from "@sow/knowledge";
 import { gbrainStartupVerify } from "./gbrainStartupVerify";
 
 // ── config ────────────────────────────────────────────────────────────────────
@@ -933,16 +933,24 @@ export function createAuditPersistPort(deps: {
 }): AuditPersistPort {
   return {
     persistDenial: async (signal, workspaceId): Promise<void> => {
-      // ⛔⛔ CLOSED (DOD-worker-boot task 1, 2026-08-25) — THE SECOND CHANNEL IS NOW GATED. `workspaceId`
-      // rides `auditFieldContainsSecret` (`@sow/knowledge`, `knowledge-writer/secret-scan.ts`) — the SAME
-      // predicate the knowledge-side sibling `persistDenialAudit` uses for its own bare-string
-      // `workspaceId` channel (`packages/knowledge/src/gcl/projection.ts`, task 24.62, `92595096`) — so
-      // the two implementations agree rather than diverging on what "safe as an audit field" means. This
+      // ⛔⛔ CLOSED (DOD-worker-boot task 1, 2026-08-25) — THE SECOND CHANNEL IS GATED. `workspaceId`
+      // rides `looksLikeCredentialShape` (`@sow/domain`) — the IDENTIFIER-granularity predicate: the
+      // credential-SHAPE nets only, `SENSITIVE_KEYWORD` deliberately excluded.
+      //
+      // ⛔ CORRECTED (task 24.130 deposit 2, the WORKER-SINK half). This used to ride
+      // `auditFieldContainsSecret` (`@sow/knowledge`), which runs the full keyword-inclusive net. A
+      // `workspaceId` is a HUMAN-CHOSEN NAME, not a machine-generated audit ref, so under that
+      // predicate a person who names their workspace `acme-credential-review` LOSES THE AUDIT ROW —
+      // refused by the WORD, with no credential in it anywhere. That is a rule-1-adjacent availability
+      // cost paid on a rule-7 gate, and it bought nothing: the shape nets still catch a real key.
+      // The knowledge-side sibling `persistDenialAudit` was corrected identically at `c0909f98`
+      // (`packages/knowledge/src/gcl/projection.ts:130`), so the two implementations still AGREE — the
+      // agreement just moved to the predicate that fits the field. This
       // does NOT close the "AUDIT boundary — 1 of 17, REJECTED on coverage" measurement above in full: it
       // closes the SHAPE gap at THIS sink specifically (never persist a credential-shaped id), which is
       // independent of the WRITE-boundary / TYPE-boundary remedies discussed above (those constrain what a
       // workspaceId CAN be at its point of origin; this constrains what reaches THIS log/persist sink).
-      if (!isRedactionSafe(signal) || auditFieldContainsSecret(workspaceId)) {
+      if (!isRedactionSafe(signal) || looksLikeCredentialShape(workspaceId)) {
         // eslint-disable-next-line no-console -- deliberate visibility; 9.33's house rule — DENY the
         // persist, never throw. ⛔ THE NOTICE CARRIES NOTHING DERIVED FROM THE SIGNAL, AND THAT IS THE
         // SAFETY PROPERTY, NOT AN OVERSIGHT (task 24.62). A refusal means at least one of the six
@@ -976,12 +984,12 @@ export function createAuditPersistPort(deps: {
         // (event · denialCode · workspaceId, three separate mutations) — an unobserved pin is unproven.
         // The 24.70 field-NAME POSITIVE assertion added to that same block was mutation-proved RED the
         // same way before this line started interpolating it.
-        // `auditFieldContainsSecret(workspaceId)` is checked FIRST so the field name reported is honest
+        // `looksLikeCredentialShape(workspaceId)` is checked FIRST so the field name reported is honest
         // when workspaceId is the one that tripped: `firstUnsafeAuditField` only ever inspects `signal`'s
         // six fields and would report "unknown" for a signal that itself passed. "workspaceId" here is a
         // fixed literal (a channel NAME, not the value — same rule-7 discipline task 24.70 established for
         // the six signal fields), so naming it leaks nothing.
-        const unsafeField = auditFieldContainsSecret(workspaceId) ? "workspaceId" : firstUnsafeAuditField(signal);
+        const unsafeField = looksLikeCredentialShape(workspaceId) ? "workspaceId" : firstUnsafeAuditField(signal);
         console.error(
           `[copilot.denial-audit] REFUSED to persist — a denial signal failed the redaction-safety gate (9.33) — unsafe field: ${unsafeField ?? "unknown"}`,
         );
