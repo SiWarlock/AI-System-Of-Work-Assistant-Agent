@@ -39,8 +39,13 @@ export function createDashboardUpdateActivity(deps: {
       try {
         await deps.store.put(payload);
         return ok(undefined);
-      } catch (cause) {
-        return err({ code: "dashboard_failed", message: "dashboard read-model update failed", cause });
+      } catch {
+        // SAFETY RULE 7 — the store's thrown value is DROPPED, never forwarded. `store` is an injected
+        // read-model sink (a real @sow/db-backed store in production); once this activity is registered as a
+        // real Temporal activity (task 25.1), an unredacted thrown value would land durably in workflow
+        // history. `message` is already a FIXED generic string — it carries no payload-derived detail either
+        // way — so the redaction here is purely "never populate `cause`."
+        return err({ code: "dashboard_failed", message: "dashboard read-model update failed" });
       }
     },
   };

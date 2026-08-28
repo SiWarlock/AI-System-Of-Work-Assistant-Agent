@@ -25,13 +25,47 @@ import { validate, ruleExternalWriteKeys } from "@sow/domain";
 /** Closed, enumerable rejection reasons for the §8 candidate gate. */
 export type CandidateGateCode = "MALFORMED" | "LINKAGE_MISMATCH";
 
-/** A gate outcome: the branded value on admit, or an enumerable rejection. */
+/**
+ * A gate outcome: the branded value on admit, or an enumerable rejection.
+ * `message` is REDACTION-SAFE BY CONSTRUCTION — built only from closed codes
+ * (`structural.error.code`, a Zod issue's `.code` + schema field path) and the
+ * fixed `canonicalObjectKey`/`idempotencyKey` field-name literals (never Zod's
+ * `.message`, which echoes the received value on enum/literal mismatches, and
+ * never candidate-authored text). `debugDetail`, when present, carries that
+ * richer Zod issue text for IN-PROCESS debugging of a malformed envelope only —
+ * it is NOT part of the safe surface and must never be forwarded into a log, an
+ * audit record, or an `ExternalWriteResult`/workflow-return value (the Tool
+ * Gateway does not read it — see `gateway.ts`'s `ExternalWriteResult` doc
+ * comment).
+ */
 export type AdmitResult<T> =
   | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly code: CandidateGateCode; readonly message: string };
+  | {
+      readonly ok: false;
+      readonly code: CandidateGateCode;
+      readonly message: string;
+      readonly debugDetail?: string;
+    };
 
-function malformed<T>(message: string): AdmitResult<T> {
-  return { ok: false, code: "MALFORMED", message };
+function malformed<T>(message: string, debugDetail?: string): AdmitResult<T> {
+  return debugDetail === undefined
+    ? { ok: false, code: "MALFORMED", message }
+    : { ok: false, code: "MALFORMED", message, debugDetail };
+}
+
+// Summarize a Zod issue WITHOUT touching `.message` — Zod echoes the received
+// value into `.message` on enum/literal mismatches (e.g. "... received
+// 'PZN9F3A1BSECRET-leak'"), which would put candidate-authored text into a
+// value this gate's callers may carry forward (e.g. `envelope.ts`'s
+// `EnvelopeBuildError.message`). `.code` is a closed `ZodIssueCode`; `.path` is
+// the SCHEMA's own field-name segments (never candidate data) — both safe to
+// name.
+function safeZodIssueSummary(
+  issue: { readonly code: string; readonly path: readonly (string | number)[] } | undefined,
+): string {
+  if (issue === undefined) return "invalid";
+  const path = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+  return `${issue.code} at ${path}`;
 }
 
 /**
@@ -49,7 +83,8 @@ export function admitProposedAction(candidate: unknown): AdmitResult<ProposedAct
   // (2) Zod refine/branding layer (catches what ajv drops).
   const parsed = ProposedActionSchema.safeParse(candidate);
   if (!parsed.success) {
-    return malformed(`proposed-action zod rejection: ${parsed.error.issues[0]?.message ?? "invalid"}`);
+    const issue = parsed.error.issues[0];
+    return malformed(`proposed-action zod rejection: ${safeZodIssueSummary(issue)}`, issue?.message);
   }
   const action = parsed.data;
   // (3) §3 universal external-write rule (trimmed-non-empty keys).
@@ -79,8 +114,10 @@ export function admitExternalWriteEnvelope(
   // (2) Zod refine/branding layer.
   const parsed = ExternalWriteEnvelopeSchema.safeParse(candidate);
   if (!parsed.success) {
+    const issue = parsed.error.issues[0];
     return malformed(
-      `external-write-envelope zod rejection: ${parsed.error.issues[0]?.message ?? "invalid"}`,
+      `external-write-envelope zod rejection: ${safeZodIssueSummary(issue)}`,
+      issue?.message,
     );
   }
   const envelope = parsed.data;

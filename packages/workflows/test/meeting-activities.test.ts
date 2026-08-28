@@ -42,6 +42,7 @@ import type {
   ValidatedExtraction,
   MeetingVaultRewritePort,
   MeetingVaultRewriteResult,
+  ProposeActionsPort,
 } from "../src/ports/meetingCloseout";
 import { sourceId } from "@sow/contracts";
 import type { SourceRef } from "@sow/contracts";
@@ -69,7 +70,21 @@ import type { GbrainReindexClient } from "../src/activities/reindexGbrain";
 
 import type { BrokerOutcome, BrokerAccepted } from "@sow/providers";
 import type { WriteSuccess, WriteFailure } from "@sow/knowledge";
-import type { ExternalWriteResult } from "@sow/integrations";
+import { dispatchExternalWrite, createTodoistWriteAdapter } from "@sow/integrations";
+import type {
+  ExternalWriteResult,
+  ExternalWriteDeps,
+  TargetWriteAdapter,
+  ExistingObject,
+  AdapterError,
+  ReceiptStore,
+  ReceiptRecord,
+  ReceiptReservation,
+  AdapterTransport,
+  TransportResponse,
+  TransportFault,
+  TransportOp,
+} from "@sow/integrations";
 
 // ---------------------------------------------------------------------------
 // correlateMeeting — inv-1
@@ -135,6 +150,34 @@ describe("spec(§9 inv-1) correlateMeeting activity — low confidence routes to
     expect(isErr(res)).toBe(true);
     if (!isErr(res)) return;
     expect(res.error.code).toBe("correlation_source_unavailable");
+  });
+
+  it("R3 (24.73 restore round): forwards a resolveSignals failure verbatim — NOT redacted", async () => {
+    // A prior round added `redactCorrelateError` here on top of a redaction the bound
+    // producer (`createCorrelationSignalProducer`, apps/worker/composition/content-
+    // project-resolver.ts) already does — a DOUBLE redaction that stripped a message
+    // that was already safe, for zero incremental safety, while costing the operator
+    // the real diagnostic. This pins the restore: message/cause now cross verbatim.
+    const port = createCorrelateActivity({
+      resolveSignals: () =>
+        Promise.resolve(
+          err({
+            code: "correlation_source_unavailable",
+            message: "calendar down: auth token expired, re-authenticate the connector",
+            cause: { httpStatus: 401 },
+          }),
+        ),
+      threshold: 0.7,
+    });
+    const res = await port.correlate(makeMeetingContext());
+    expect(isErr(res)).toBe(true);
+    if (!isErr(res)) return;
+    expect(res.error.code).toBe("correlation_source_unavailable");
+    // RESTORED: the injected dependency's own diagnostic message crosses verbatim —
+    // a mutation-proof pin (a re-added redaction would replace this with a fixed
+    // literal, failing the assertion below).
+    expect(res.error.message).toBe("calendar down: auth token expired, re-authenticate the connector");
+    expect(res.error.cause).toEqual({ httpStatus: 401 });
   });
 });
 
@@ -963,6 +1006,201 @@ describe("spec(§9 inv-5) proposeExternalActions activity — Tool Gateway envel
       if (!isErr(res)) continue;
       expect(res.error.code).toBe(c.code);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §S SPEC CHANGE (owner directive, 2026-08-27) — THESE THREE TESTS WERE
+// DELIBERATELY REWRITTEN. The reason matters more than the rewrite.
+//
+// THE OLD SPEC was blanket absence: NO adapter-authored text may reach the
+// activity result. `createProposeActivity` satisfied it by collapsing every
+// held/conflict/rejected `reason` to a fixed `GENERIC_PROPOSE_REASON` sentence.
+// That collapse was a confirmed FUNCTIONAL BREAK on this exact port (the one
+// backing the registered `meetingPropose` / `sourcePropose` activities): it also
+// erased the §21.10 credential-fault token and made two genuinely different
+// failures render identically to an operator. The owner ruled: "it's better to
+// be a little looser than to break app functionality."
+//
+// THE SPEC IS NOW: a STRUCTURED, SoW-AUTHORED diagnostic DOES cross — a 401, a
+// 403 and a 429 all carry `code: "rejected"`, so `message` is the only thing
+// that tells an operator which one happened — while the vendor's FREE TEXT never
+// does. That property is established at the ADAPTER, not here:
+// `makeTargetWriteAdapter`'s `faultToError`
+// (packages/integrations/src/tools/adapters/adapter-core.ts) composes
+// `AdapterError.message` from the closed 4-value `TransportFault` code plus the
+// NUMERIC `httpStatus`, and never reads the transport's free-text `detail`.
+//
+// SO THE HARNESS CHANGED TOO. An earlier version faked the `dispatch` fn itself;
+// the version before this one hand-wrote an `AdapterError` with poisoned
+// `message` — which BYPASSES `makeTargetWriteAdapter`, so it pinned a
+// consumer-side redaction step rather than the mechanism that actually holds.
+// These drive the REAL SHIPPED ADAPTER (`createTodoistWriteAdapter`) over a
+// hostile transport whose `detail` carries a live-looking secret, through the
+// REAL gateway (`dispatchExternalWrite`, not a mock), into this activity. Every
+// test asserts BOTH directions, so each still FAILS if real vendor text starts
+// crossing.
+// ---------------------------------------------------------------------------
+
+const POISON_MARKER = "PZN9F3A1BSECRET-leak";
+const POISON_URL = `https://api.vendor.com/v1?token=${POISON_MARKER}`;
+const POISON_BODY = `Bearer sk-${POISON_MARKER}`;
+/** A hostile transport `detail` — exactly what a sloppy per-vendor `mapResponse` could hand back. */
+const POISON_DETAIL = `vendor response: GET ${POISON_URL} -> 401 {"auth":"${POISON_BODY}"}`;
+
+// Minimal ReceiptStore driving the REAL dispatchExternalWrite for this suite
+// (mirrors envelope-reuse.test.ts's FakeReceiptStore).
+class M1ReceiptStore implements ReceiptStore {
+  getByIdempotencyKey(): Promise<ReceiptRecord | undefined> {
+    return Promise.resolve(undefined);
+  }
+  getByCanonicalObjectKey(): Promise<ReceiptRecord | undefined> {
+    return Promise.resolve(undefined);
+  }
+  reserve(): Promise<ReceiptReservation> {
+    return Promise.resolve({ kind: "reserved" });
+  }
+  release(): Promise<void> {
+    return Promise.resolve();
+  }
+  put(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
+/**
+ * The REAL shipped Todoist adapter (`makeTargetWriteAdapter` under the hood) over a
+ * transport that faults on ONE op with poisoned free text. Non-faulting ops succeed so
+ * the gateway pipeline reaches the op under test.
+ */
+function poisonedAdapter(
+  faultOn: TransportOp,
+  fault: TransportFault,
+  httpStatus: number,
+): TargetWriteAdapter {
+  const transport: AdapterTransport = (req) => {
+    const resp: TransportResponse =
+      req.op === faultOn
+        ? { ok: false, fault, detail: POISON_DETAIL, httpStatus }
+        : req.op === "query"
+          ? { ok: true, object: null }
+          : { ok: true, object: { externalObjectId: "ext-ok" } };
+    return Promise.resolve(resp);
+  };
+  return createTodoistWriteAdapter({ transport, clock: () => "2026-07-01T00:00:00.000Z" });
+}
+
+function m1Adapter(overrides: Partial<TargetWriteAdapter> = {}): TargetWriteAdapter {
+  return {
+    targetSystem: "todoist",
+    existenceCheck: () => Promise.resolve(ok<ExistingObject | null>(null)),
+    create: () =>
+      Promise.resolve(ok<WriteReceipt>({ externalObjectId: "ext-m1", recordedAt: "2026-07-01T00:00:00.000Z" })),
+    update: () =>
+      Promise.resolve(ok<WriteReceipt>({ externalObjectId: "ext-m1-upd", recordedAt: "2026-07-01T00:00:00.000Z" })),
+    ...overrides,
+  };
+}
+
+function m1RealDeps(adapter: TargetWriteAdapter, secrets?: ExternalWriteDeps["secrets"]): ExternalWriteDeps {
+  return {
+    adapter,
+    receiptStore: new M1ReceiptStore(),
+    requireApproval: () => ({ requiresApproval: false }),
+    recordPendingApproval: () => Promise.resolve(ok(undefined)),
+    isApproved: () => Promise.resolve(true),
+    audit: () => Promise.resolve(),
+    clock: () => "2026-07-01T00:00:00.000Z",
+    ...(secrets !== undefined ? { secrets } : {}),
+  };
+}
+
+/** The free-text direction that must NEVER cross, whatever else changes. */
+function expectNoVendorFreeText(serialized: string): void {
+  expect(serialized).not.toContain(POISON_MARKER);
+  expect(serialized).not.toContain("api.vendor.com");
+  expect(serialized).not.toContain("Bearer sk-");
+  expect(serialized).not.toContain(POISON_DETAIL);
+}
+
+function proposeWith(adapter: TargetWriteAdapter): ReturnType<ProposeActionsPort["propose"]> {
+  const port = createProposeActivity({ dispatch: dispatchExternalWrite, deps: m1RealDeps(adapter) });
+  const { action, env } = proposal();
+  return port.propose(action, env);
+}
+
+describe("spec(§S) proposeExternalActions activity — a structured diagnostic crosses; the vendor's free text does not", () => {
+  it("status 'held' (existence-check fault): the transport's poisoned `detail` is absent, but the closed code + HTTP status still identify the fault", async () => {
+    const res = await proposeWith(poisonedAdapter("query", "unreachable", 503));
+
+    expect(isErr(res)).toBe(true);
+    if (!isErr(res)) return;
+    expect(res.error.code).toBe("held");
+
+    expectNoVendorFreeText(JSON.stringify(res));
+    // RESTORE direction — the operator-facing signal the blanket collapse destroyed.
+    expect(res.error.message).toContain("existence-check");
+    expect(res.error.message).toContain("unreachable");
+    expect(res.error.message).toContain("HTTP 503");
+  });
+
+  it("status 'conflict' (create fault): poisoned `detail` absent; the conflict is still identifiable as a 409", async () => {
+    const res = await proposeWith(poisonedAdapter("create", "conflict", 409));
+
+    expect(isErr(res)).toBe(true);
+    if (!isErr(res)) return;
+    expect(res.error.code).toBe("conflict");
+
+    expectNoVendorFreeText(JSON.stringify(res));
+    expect(res.error.message).toContain("conflict");
+    expect(res.error.message).toContain("HTTP 409");
+  });
+
+  it("status 'rejected' (create fault): poisoned `detail` absent, AND a 401 does not render identically to a 403", async () => {
+    const unauthorized = await proposeWith(poisonedAdapter("create", "rejected", 401));
+    const forbidden = await proposeWith(poisonedAdapter("create", "rejected", 403));
+
+    expect(isErr(unauthorized)).toBe(true);
+    expect(isErr(forbidden)).toBe(true);
+    if (!isErr(unauthorized) || !isErr(forbidden)) return;
+    expect(unauthorized.error.code).toBe("rejected");
+    expect(forbidden.error.code).toBe("rejected");
+
+    expectNoVendorFreeText(JSON.stringify(unauthorized));
+    expectNoVendorFreeText(JSON.stringify(forbidden));
+
+    // RESTORE direction — both share `code: "rejected"`, so `message` is the ONLY thing
+    // that distinguishes them. Two different failures rendering identically is the exact
+    // regression class this round exists to undo.
+    expect(unauthorized.error.message).toContain("HTTP 401");
+    expect(forbidden.error.message).toContain("HTTP 403");
+    expect(unauthorized.error.message).not.toBe(forbidden.error.message);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R2 — THE SAFE DIRECTION THAT REGRESSED. This is the CONFIRMED break: a
+// locked Mac Keychain drove `meetingPropose`/`sourcePropose` (both built on
+// `createProposeActivity`) to report a fixed generic sentence instead of the
+// §21.10 credential-fault token, while the sibling `approvalDispatchApproved`
+// path (a different activity, same gateway) still reported "locked"
+// correctly — the SAME underlying failure reporting two different things
+// depending on the path. Pins that a locked accessor's message still
+// contains "locked" through this exact port.
+// ---------------------------------------------------------------------------
+
+describe("spec(safety rule 7 / §21.10) proposeExternalActions activity — the credential-fault signal survives, not just the poison-absence", () => {
+  it("a locked WriteSecretsAccessor holds the write closed; the returned message still contains 'locked'", async () => {
+    const adapter = m1Adapter();
+    const deps = m1RealDeps(adapter, { getSecret: () => Promise.resolve(err({ reason: "locked" })) });
+    const port = createProposeActivity({ dispatch: dispatchExternalWrite, deps });
+    const { action, env } = proposal();
+    const res = await port.propose(action, env);
+
+    expect(isErr(res)).toBe(true);
+    if (!isErr(res)) return;
+    expect(res.error.code).toBe("held");
+    expect(res.error.message).toContain("locked");
   });
 });
 

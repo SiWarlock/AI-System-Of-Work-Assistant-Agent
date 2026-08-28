@@ -70,10 +70,18 @@ export interface TransportObject {
  * gateway may proceed to create). `deduped:true` — an idempotent echo (telegram
  * send-once): the SAME object without a second real post. `ok:false` — a typed
  * vendor fault. Never throws for a normal fault.
+ *
+ * `httpStatus` — set ONLY when the fault came from an actual HTTP response (an
+ * integer status code, e.g. `404`); a caller (`adapter-core.ts`'s
+ * `faultToError`, `drive.ts`'s 404→`not_found` promotion) branches on THIS
+ * numeric field, never on `detail`'s string shape (§S — a prior round matched
+ * `detail === "HTTP 404"` and silently broke when the format changed). Absent
+ * when no HTTP response was ever received (an SSRF-block, a credential fault, a
+ * network-level outage) — those faults have no vendor status to report.
  */
 export type TransportResponse =
   | { readonly ok: true; readonly object: TransportObject | null; readonly deduped?: boolean }
-  | { readonly ok: false; readonly fault: TransportFault; readonly detail: string };
+  | { readonly ok: false; readonly fault: TransportFault; readonly detail: string; readonly httpStatus?: number };
 
 /**
  * The injected transport seam. ONE async fn drives all three ops. No real

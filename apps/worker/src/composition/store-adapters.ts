@@ -58,9 +58,21 @@ function isMiss(error: DbError): boolean {
  * channel). The message keeps the enumerable `DbError.code` so a caller's redacted
  * log line carries the fault class; the opaque driver `cause` is NOT attached (it may
  * carry raw content — safety rule 7). Never called for a `not_found` miss.
+ *
+ * W1 addendum — the thrown `Error`'s OWN standard `.cause` (a different field from the
+ * `DbError.cause` this function already keeps off; do not conflate the two) is set to a
+ * PLAIN `{ code: error.code }` literal — nothing else. This exists so a catching composition-
+ * root activity binding (buildActivities.ts's `scheduleGetBookkeeping`/`schedulePut`
+ * registrations, `scheduleStoreFaultCode`) can recover the closed, enumerable `DbErrorCode`
+ * without ever re-reading this function's own thrown `.message` (which DOES interpolate the
+ * driver-authored `error.message` above and is NOT safe to re-surface). The literal is
+ * constructed fresh from ONLY `error.code` — never `error.cause`, never `error.message` — so
+ * this addition cannot itself become a second leak path.
  */
 function faultRejection(op: string, error: DbError): Error {
-  return new Error(`operational-store ${op} failed (${error.code}): ${error.message}`);
+  return new Error(`operational-store ${op} failed (${error.code}): ${error.message}`, {
+    cause: { code: error.code },
+  });
 }
 
 // ---------------------------------------------------------------------------

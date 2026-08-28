@@ -23,6 +23,7 @@ import { ok, err } from "@sow/contracts";
 import type { AuditId, FailureClass, HealthItem, Result } from "@sow/contracts";
 import type { Clock, HealthItemStore, OutboxEntry } from "../ports/operational";
 import { materializeHealthItem } from "../activities/healthItem";
+import { dropCause } from "../activities/redaction";
 
 // --- injected ports ---------------------------------------------------------
 
@@ -78,14 +79,30 @@ export type SurfaceErrorCode =
 export interface SurfaceError {
   readonly code: SurfaceErrorCode;
   readonly message: string;
+  /**
+   * NEVER populated by this file (safety rule 7 — see {@link fail}). Kept on the
+   * type only because `outputHealthSink.ts`'s four *HealthSink port families
+   * structurally declare the same optional `cause?` field; `fail` never sets it.
+   */
   readonly cause?: unknown;
 }
 
-const fail = (
-  code: SurfaceErrorCode,
-  message: string,
-  cause?: unknown,
-): Result<never, SurfaceError> => err({ code, message, cause });
+/**
+ * Build a typed {@link SurfaceError}. SAFETY RULE 7: `surfaceWorkflowFailure`
+ * backs FIVE registered activity names (`surfaceFailure` + the four
+ * `*SurfaceFailure` sinks routed through `createOutputWorkflowHealthSink`,
+ * buildActivities.ts) — its Result becomes durable, REPLAYED Temporal workflow
+ * history. `fail` takes NO `cause` parameter on purpose: every call site below
+ * already reduces its failure to the stable `code` + a message built ONLY from
+ * closed-taxonomy fields (see each call site's own comment) — never a raw
+ * upstream `cause` (a provider/HTTP error's URL+token, a DB driver's DSN, an
+ * fs error's absolute vault path). `dropCause` (shared with connectorPoll.ts /
+ * approvalTransition.ts — the other two boundary-redaction sites this package
+ * owns) is what the surrounding call sites route an upstream failure THROUGH
+ * before it ever reaches here.
+ */
+const fail = (code: SurfaceErrorCode, message: string): Result<never, SurfaceError> =>
+  err({ code, message });
 
 // --- surfaceWorkflowFailure -------------------------------------------------
 
@@ -111,7 +128,16 @@ export async function surfaceWorkflowFailure(
       await deps.outbox.enqueueRetry(failure.retry);
       routedToOutbox = true;
     } catch (cause) {
-      return fail("outbox_failed", "failed to enqueue the retry on the outbox", cause);
+      // SAFETY RULE 7: `cause` is bound (so it stays visible to a maintainer
+      // reading this catch — a future debugging pass should not have to
+      // rediscover that a rejection reason existed here) but deliberately
+      // never READ or forwarded: the raw thrown value from the injected
+      // outbox sink can be a provider/HTTP rejection (a request URL with a
+      // token, a Bearer auth header) or a DB/fs error (a DSN, an absolute
+      // vault path). Only the stable code + a fixed message cross this
+      // registered activity's boundary.
+      void cause;
+      return fail("outbox_failed", "failed to enqueue the retry on the outbox");
     }
   }
 
@@ -127,10 +153,26 @@ export async function surfaceWorkflowFailure(
     deps.health,
   );
   if (!materialized.ok) {
+    // SAFETY RULE 7: `materialized.error` is a `HealthActivityError`
+    // (activities/healthItem.ts) that MAY itself carry a raw `cause` — a store's
+    // thrown driver/fs error, or a ZodError on a malformed candidate. Route it
+    // through the shared `dropCause` (never read `.cause` directly here) so the
+    // hazardous part — the raw `cause` — never reaches this returned failure.
+    // `dropCause` leaves `.message` untouched, and this file is one of the
+    // documented sites (redaction.ts) whose message IS provably safe as-is: a
+    // `HealthActivityError.message` is either a fixed SoW literal ("failed to
+    // read/persist the health item") or, for `invalid_item`, a ZodError message
+    // describing which field of an internally-built candidate failed the frozen
+    // schema — never adapter/vendor/DSN/fs-path text. Surfacing it (not just the
+    // bare `code`) is the whole diagnostic point of this sink: `systemHealthSurfacing`
+    // backs FIVE registered activity names and is the operator's primary tool, so a
+    // health-store READ fault ("failed to read the current health item"), a WRITE
+    // fault ("failed to persist the health item"), and a malformed-candidate fault
+    // (the ZodError detail) must render as three DIFFERENT sentences, not one.
+    const inner = dropCause(materialized.error);
     return fail(
       "surface_failed",
-      `failed to surface the health item for a ${failure.failureClass} failure: ${materialized.error.message}`,
-      materialized.error,
+      `failed to surface the health item for a ${failure.failureClass} failure: ${inner.message}`,
     );
   }
 

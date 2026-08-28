@@ -257,6 +257,68 @@ describe("6.4 telegram — idempotent send (no double-post)", () => {
   });
 });
 
+describe("6.4 drive — 404 promotion reads the STRUCTURED httpStatus, never message prose (§S)", () => {
+  it("MUTATION PROOF: a 404 status promotes to 'not_found' even when the transport's free-text detail says nothing like '404'", async () => {
+    const { transport } = makeTransport({
+      create: async () => ({
+        ok: false,
+        fault: "rejected",
+        detail: "totally different wording — not the old 'HTTP 404' shape at all",
+        httpStatus: 404,
+      }),
+    });
+    const adapter = createDriveWriteAdapter({ transport, clock });
+    const env = makeEnvelope({ targetSystem: "drive", canonicalObjectKey: "cok_drive_404_fmt" });
+
+    const res = await adapter.create(env, { title: "x" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error.code).toBe("not_found");
+  });
+
+  it("MUTATION PROOF: text that LOOKS like the old 'HTTP 404' shape does NOT promote when httpStatus says otherwise", async () => {
+    const { transport } = makeTransport({
+      create: async () => ({ ok: false, fault: "rejected", detail: "HTTP 404", httpStatus: 403 }),
+    });
+    const adapter = createDriveWriteAdapter({ transport, clock });
+    const env = makeEnvelope({ targetSystem: "drive", canonicalObjectKey: "cok_drive_403_fake404" });
+
+    const res = await adapter.create(env, { title: "x" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error.code).toBe("rejected"); // NEVER promoted — the status, not the prose, governs.
+  });
+
+  it("a 404-ish message with NO httpStatus at all does not promote (no string fallback exists)", async () => {
+    const { transport } = makeTransport({
+      create: async () => ({ ok: false, fault: "rejected", detail: "blocked host, mentions 404 in passing" }),
+    });
+    const adapter = createDriveWriteAdapter({ transport, clock });
+    const env = makeEnvelope({ targetSystem: "drive", canonicalObjectKey: "cok_drive_no_status" });
+
+    const res = await adapter.create(env, { title: "x" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error.code).toBe("rejected");
+  });
+});
+
+describe("6.4 adapter-core — AdapterError.message is built from CLOSED inputs, never the transport's free-text detail (§S)", () => {
+  it("a hostile free-text detail (a bearer token, a token-bearing URL) never reaches AdapterError.message", async () => {
+    const hostileDetail = "Bearer sk-PZN9F3A1BSECRET-leak https://vendor.example/x?token=sk-PZN9F3A1BSECRET-leak";
+    const { transport } = makeTransport({
+      create: async () => ({ ok: false, fault: "rejected", detail: hostileDetail }),
+    });
+    const adapter = createGithubWriteAdapter({ transport, clock });
+    const env = makeEnvelope({ targetSystem: "github", canonicalObjectKey: "cok_github_hostile" });
+
+    const res = await adapter.create(env, { title: "x" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error.message).not.toContain("sk-PZN9F3A1BSECRET-leak");
+      expect(res.error.message).not.toContain("Bearer");
+      expect(res.error.message).not.toContain("token=");
+    }
+  });
+});
+
 describe("6.4 adapters — targetSystem identity + §16 total (no throw)", () => {
   it("each adapter reports its own targetSystem", () => {
     const { transport } = makeTransport({});

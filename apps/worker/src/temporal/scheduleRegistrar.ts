@@ -13,12 +13,46 @@
 // in dispatchSourceIngestion.ts: the injected port is the seam, a concrete
 // SDK-backed adapter is a separate, later concern).
 //
-// ⛔ NOTHING ARMS HERE. Three independent facts keep this package's machinery
-// inert:
+// ⛔ NOTHING ARMS HERE. Two independent facts keep this package's machinery
+// inert (facts 1 and 3 below); fact 2 sits between them as necessary context,
+// not a third independent reason — by its own text it does NOT establish
+// pause-safety on its own:
 //   1. `ensure` ALWAYS creates a NEW schedule PAUSED (`{ paused: true }`) — there
-//      is no code path in this module that can create (or leave) a schedule live.
-//   2. `update` never carries a `paused` field at all — re-`ensure`-ing an
-//      existing schedule can converge its spec/action but can NEVER unpause it.
+//      is no code path in this module that can CREATE a schedule live. That
+//      WIRE property holds only because the real adapter
+//      (`createRealScheduleClientPort.create`, apps/worker/src/boot.ts:2386-2393)
+//      forwards `state: { paused: opts.paused }` verbatim onto the SDK's create
+//      call — the exact same "the type alone proves nothing, the adapter's
+//      forwarding does" pattern fact 2 below names for `update`; this module's
+//      own type (`opts: { readonly paused: true }`) only fixes what a CALLER
+//      can ask for at this seam, same caveat as fact 2's port-type observation.
+//      That is the full claim, no stronger: a CONVERGE of an EXISTING schedule (fact 2,
+//      `update`) is a DIFFERENT code path that does not go through `create` at
+//      all, and by design PRESERVES whatever pause state the schedule already
+//      had — so a converge over a schedule the owner (or the adapter) left
+//      unpaused correctly LEAVES IT LIVE; that is intended behavior, pinned by
+//      schedule-update-preserves-pause.test.ts, not a gap. "Nothing arms here"
+//      describes what this module's own code can newly SET IN MOTION (a fresh
+//      schedule is always born paused) — it is not a claim that a live
+//      schedule can never be observed after a converge.
+//   2. `update` never carries a `paused` field at all in this PORT'S TYPE — but
+//      that fact, by itself, does NOT establish pause-safety. Port shape only
+//      binds what a CALLER can ask for at this seam; it says nothing about what
+//      the ADAPTER underneath does with an absent field on the wire. This exact
+//      inference — "the type has no paused field, therefore nothing here can
+//      unpause a schedule" — was WRONG and produced a live CRITICAL bug (task
+//      F2): the real `@temporalio/client` schedule update is a full REPLACE, not
+//      a merge, so proto3 fills an absent `paused` with its zero-value
+//      (`false`). MEASURED against a real ephemeral server, twice independently:
+//        UNPAUSE_PROBE afterCreate.paused=true afterUpdate.paused=false
+//      Every second boot of an armed config was silently turning a deliberately-
+//      paused schedule live. Pause-safety through this module rests on the
+//      ADAPTER, not on the port's missing field: the real adapter
+//      (`createRealScheduleClientPort.update`, apps/worker/src/boot.ts) closes
+//      the gap by reading back `previous.state.paused` from the schedule's
+//      current description and echoing it into the replacement — never
+//      hardcoding either direction. General lesson: an absence in a port's TYPE
+//      is not an absence on the WIRE.
 //   3. The registrar is constructed ONLY when a caller supplies a real
 //      {@link ScheduleClientPort}. Nothing in this package constructs one or
 //      calls `ensure` with a real client — that wiring is a boot-level decision
@@ -31,8 +65,18 @@
 // strict `=== true`, returning `undefined` on anything else (including a
 // truthy-but-not-boolean value — no coercion).
 import { ok, err } from "@sow/contracts";
-import type { Result } from "@sow/contracts";
+import type { Result, WorkspaceId } from "@sow/contracts";
 import type { SowTaskQueue } from "@sow/workflows/runtime/taskQueue";
+import {
+  DAILY_BRIEF_SCHEDULED_WORKFLOW_TYPE,
+  PERIOD_REVIEW_SCHEDULED_WORKFLOW_TYPE,
+  CROSS_CALENDAR_SCHEDULING_SCHEDULED_WORKFLOW_TYPE,
+  type DailyBriefScheduleArgs,
+  type PeriodReviewScheduleArgs,
+  type CrossCalendarSchedulingScheduleArgs,
+  type ScheduledWorkspaceScope,
+  type ScheduledAvailabilitySource,
+} from "./scheduleArgs";
 
 // ---------------------------------------------------------------------------
 // (1) the schedule spec + the injected ScheduleClient-shaped port
@@ -76,9 +120,18 @@ export interface ScheduleClientPort {
    */
   create(spec: TemporalScheduleSpec, opts: { readonly paused: true }): Promise<void>;
   /**
-   * Converge an EXISTING schedule's spec/action. Deliberately carries NO
-   * `paused` field — `ensure` can update spec/action but can never unpause (or
-   * re-pause) a schedule through this seam.
+   * Converge an EXISTING schedule's spec/action. This port's TYPE carries no
+   * `paused` field — `ensure` (the sole caller) can never ASK to unpause or
+   * re-pause a schedule through this seam. That constrains what `ensure` can
+   * REQUEST; it does not, by itself, guarantee the schedule's pause state
+   * SURVIVES a converge on the wire. The real SDK's update is a full REPLACE:
+   * an implementation that forwards an absent `paused` verbatim gets it zeroed
+   * to `false` (proto3's absent-bool default), silently unpausing a paused
+   * schedule — see the module header for the measured transcript (task F2).
+   * Every implementation of this method MUST read the schedule's own current
+   * pause state and echo it back explicitly; this type alone cannot enforce
+   * that. The production adapter (`createRealScheduleClientPort.update`,
+   * apps/worker/src/boot.ts) does exactly this.
    */
   update(spec: TemporalScheduleSpec): Promise<void>;
 }
@@ -101,9 +154,15 @@ export interface EnsureOutcome {
 export interface TemporalScheduleRegistrar {
   /**
    * Idempotent create-or-update: an UNKNOWN scheduleId is CREATED (always
-   * paused); a KNOWN scheduleId is UPDATED (spec/action converges; pause state
-   * is never touched by this call). A client fault at any step folds to a typed
-   * `err` — never a throw across the boundary (§16).
+   * paused); a KNOWN scheduleId is UPDATED (spec/action converges). This call
+   * never ASKS to change pause state — the port's `update` carries no `paused`
+   * field for it to set — but whether pause state actually SURVIVES the
+   * converge is decided by the injected {@link ScheduleClientPort}
+   * implementation, not by this method: a real adapter's wire encoding can turn
+   * an absent field into an unpause (see the module header, task F2). The
+   * production adapter (`createRealScheduleClientPort`, apps/worker/src/boot.ts)
+   * preserves pause state by echoing it back explicitly. A client fault at any
+   * step folds to a typed `err` — never a throw across the boundary (§16).
    */
   ensure(spec: TemporalScheduleSpec): Promise<Result<EnsureOutcome, ScheduleRegistrarError>>;
 }
@@ -114,8 +173,9 @@ export interface CreateTemporalScheduleRegistrarDeps {
 
 /**
  * Build the durable Temporal schedule registrar over an injected
- * {@link ScheduleClientPort}. See the module header for the three independent
- * reasons nothing arms through this constructor.
+ * {@link ScheduleClientPort}. See the module header for the two independent
+ * facts (plus the pause-safety caveat between them) that keep nothing arming
+ * through this constructor.
  */
 export function createTemporalScheduleRegistrar(
   deps: CreateTemporalScheduleRegistrarDeps,
@@ -281,27 +341,45 @@ export const DAILY_BRIEF_WORKFLOW_TYPE = "dailyBriefWorkflow" as const;
 export const DAILY_BRIEF_SCHEDULE_ID = "daily-brief" as const;
 
 /**
- * arch_gap (Phase 25, flagged not silently assumed — mirrors {@link buildIngestionTriageScheduleSpec}'s
- * own note above): `dailyBriefWorkflow`'s input is a full `DailyBriefInput` (`run`, `scheduleId`,
- * `globalWorkspaceId`, `context`, …) — there is no per-tick input for a periodic schedule to supply, so
- * this spec's `args: []` is a PLACEHOLDER action shape, not a functioning daily brief. Defining the
- * real per-tick input construction (resolving the owner's registered workspaces + the Global
- * coordination target) is a follow-up once the composition-root binds `OutputWorkflowActivities`
- * (task 25.2's own cited crossTerritoryNeed); this function's job is the DORMANT schedule-attachment
- * machinery + the default-OFF gate, per the 25.SCHED leg-1 brief. Never armed by this package.
+ * 25.2 — emits the REAL per-tick args for a scheduled `dailyBrief` occurrence, closing the gap the
+ * prior `args: []` placeholder left (see the module header + `./scheduleArgs`'s header for the full
+ * story). `action.args` carries exactly ONE {@link DailyBriefScheduleArgs} envelope — the STATIC
+ * per-schedule configuration (`catchUpWindowMs` for the LIFE-2 collapse, the WS-2 `scopes`, the Global
+ * `globalWorkspaceId` target) the frozen contract defines; it is byte-identical on every occurrence,
+ * exactly as `action.args` must be.
+ *
+ * `action.workflowType` points at the SCHEDULED entry point {@link DAILY_BRIEF_SCHEDULED_WORKFLOW_TYPE}
+ * — NOT {@link DAILY_BRIEF_WORKFLOW_TYPE} (the direct-start type, which stays exported unchanged for
+ * owner-triggered starts elsewhere). The scheduled entry point takes this static envelope and derives
+ * the occurrence's own run identity in-sandbox via `deriveScheduledRunInput` — per-occurrence identity
+ * (the `resolveRun` idempotency key) is NEVER carried here, because `action.args` cannot vary tick to
+ * tick; see `./scheduleArgs`'s header for the MEASURED fact (`workflowInfo().workflowId` gets Temporal's
+ * scheduled-time suffix) that derivation rests on. Composing the SCHEDULED entry point itself
+ * (`dailyBriefScheduledWorkflow`, which reads this envelope and calls the existing `dailyBriefWorkflow`
+ * driver body) is the next-stage task this builder's output now makes possible, not this function's job.
  */
 export function buildDailyBriefScheduleSpec(opts: {
   readonly taskQueue: SowTaskQueue;
   readonly intervalMs: number;
+  readonly catchUpWindowMs: number;
+  readonly globalWorkspaceId: WorkspaceId;
+  readonly scopes: readonly ScheduledWorkspaceScope[];
 }): TemporalScheduleSpec {
+  const args: DailyBriefScheduleArgs = {
+    scheduleId: DAILY_BRIEF_SCHEDULE_ID,
+    intervalMs: opts.intervalMs,
+    catchUpWindowMs: opts.catchUpWindowMs,
+    globalWorkspaceId: opts.globalWorkspaceId,
+    scopes: opts.scopes,
+  };
   return {
     scheduleId: DAILY_BRIEF_SCHEDULE_ID,
     intervalMs: opts.intervalMs,
     action: {
-      workflowType: DAILY_BRIEF_WORKFLOW_TYPE,
+      workflowType: DAILY_BRIEF_SCHEDULED_WORKFLOW_TYPE,
       workflowId: `${DAILY_BRIEF_SCHEDULE_ID}-workflow`,
       taskQueue: opts.taskQueue,
-      args: [],
+      args: [args],
     },
   };
 }
@@ -318,6 +396,9 @@ export function gateDailyBriefSchedule(opts: {
   readonly enabled: boolean;
   readonly taskQueue: SowTaskQueue;
   readonly intervalMs: number;
+  readonly catchUpWindowMs: number;
+  readonly globalWorkspaceId: WorkspaceId;
+  readonly scopes: readonly ScheduledWorkspaceScope[];
 }): TemporalScheduleSpec | undefined {
   if (opts.enabled !== true) return undefined;
   return buildDailyBriefScheduleSpec(opts);
@@ -343,26 +424,45 @@ export const PERIOD_REVIEW_WEEKLY_SCHEDULE_ID = "period-review-weekly" as const;
 export const PERIOD_REVIEW_MONTHLY_SCHEDULE_ID = "period-review-monthly" as const;
 
 /**
- * arch_gap (Phase 25, flagged not silently assumed — mirrors {@link buildDailyBriefScheduleSpec}'s own
- * note above): `periodReviewWorkflow`'s input is a full `PeriodReviewInput` (`run`, `scheduleId`,
- * `period`, `globalWorkspaceId`, `context`, …) — there is no per-tick input for a periodic schedule to
- * supply, so BOTH cadences' `args: []` are PLACEHOLDER action shapes, not a functioning review.
- * Deferred to the same composition-root follow-up as {@link buildDailyBriefScheduleSpec}. Never armed
- * by this package.
+ * 25.2 — emits the REAL per-tick args for a scheduled `periodReview` occurrence (both cadences),
+ * closing the gap the prior `args: []` placeholder left (see {@link buildDailyBriefScheduleSpec}'s own
+ * note above, which this mirrors). `action.args` carries exactly ONE {@link PeriodReviewScheduleArgs}
+ * envelope per cadence — the STATIC per-schedule configuration, INCLUDING `period` (`"weekly" |
+ * "monthly"`) so the scheduled entry point can tell the two cadences apart from a byte-identical-per-tick
+ * args shape without inspecting the scheduleId string.
+ *
+ * `action.workflowType` points at the SCHEDULED entry point {@link PERIOD_REVIEW_SCHEDULED_WORKFLOW_TYPE}
+ * — NOT {@link PERIOD_REVIEW_WORKFLOW_TYPE} (the direct-start type, unchanged, still exported for
+ * owner-triggered starts). BOTH cadences point at the SAME scheduled entry point, same as they did at
+ * the direct-start type — `args[0].period` is what distinguishes them, not the type name. Per-occurrence
+ * identity is derived in-sandbox, never carried in `args`; see {@link buildDailyBriefScheduleSpec}'s note
+ * (and `./scheduleArgs`'s header) for why.
  */
 function buildPeriodReviewScheduleSpec(opts: {
   readonly scheduleId: typeof PERIOD_REVIEW_WEEKLY_SCHEDULE_ID | typeof PERIOD_REVIEW_MONTHLY_SCHEDULE_ID;
+  readonly period: PeriodReviewScheduleArgs["period"];
   readonly taskQueue: SowTaskQueue;
   readonly intervalMs: number;
+  readonly catchUpWindowMs: number;
+  readonly globalWorkspaceId: WorkspaceId;
+  readonly scopes: readonly ScheduledWorkspaceScope[];
 }): TemporalScheduleSpec {
+  const args: PeriodReviewScheduleArgs = {
+    scheduleId: opts.scheduleId,
+    period: opts.period,
+    intervalMs: opts.intervalMs,
+    catchUpWindowMs: opts.catchUpWindowMs,
+    globalWorkspaceId: opts.globalWorkspaceId,
+    scopes: opts.scopes,
+  };
   return {
     scheduleId: opts.scheduleId,
     intervalMs: opts.intervalMs,
     action: {
-      workflowType: PERIOD_REVIEW_WORKFLOW_TYPE,
+      workflowType: PERIOD_REVIEW_SCHEDULED_WORKFLOW_TYPE,
       workflowId: `${opts.scheduleId}-workflow`,
       taskQueue: opts.taskQueue,
-      args: [],
+      args: [args],
     },
   };
 }
@@ -371,16 +471,30 @@ function buildPeriodReviewScheduleSpec(opts: {
 export function buildPeriodReviewWeeklyScheduleSpec(opts: {
   readonly taskQueue: SowTaskQueue;
   readonly intervalMs: number;
+  readonly catchUpWindowMs: number;
+  readonly globalWorkspaceId: WorkspaceId;
+  readonly scopes: readonly ScheduledWorkspaceScope[];
 }): TemporalScheduleSpec {
-  return buildPeriodReviewScheduleSpec({ ...opts, scheduleId: PERIOD_REVIEW_WEEKLY_SCHEDULE_ID });
+  return buildPeriodReviewScheduleSpec({
+    ...opts,
+    scheduleId: PERIOD_REVIEW_WEEKLY_SCHEDULE_ID,
+    period: "weekly",
+  });
 }
 
 /** The monthly-cadence period-review schedule spec. See {@link buildPeriodReviewScheduleSpec}. */
 export function buildPeriodReviewMonthlyScheduleSpec(opts: {
   readonly taskQueue: SowTaskQueue;
   readonly intervalMs: number;
+  readonly catchUpWindowMs: number;
+  readonly globalWorkspaceId: WorkspaceId;
+  readonly scopes: readonly ScheduledWorkspaceScope[];
 }): TemporalScheduleSpec {
-  return buildPeriodReviewScheduleSpec({ ...opts, scheduleId: PERIOD_REVIEW_MONTHLY_SCHEDULE_ID });
+  return buildPeriodReviewScheduleSpec({
+    ...opts,
+    scheduleId: PERIOD_REVIEW_MONTHLY_SCHEDULE_ID,
+    period: "monthly",
+  });
 }
 
 /**
@@ -393,6 +507,9 @@ export function gatePeriodReviewWeeklySchedule(opts: {
   readonly enabled: boolean;
   readonly taskQueue: SowTaskQueue;
   readonly intervalMs: number;
+  readonly catchUpWindowMs: number;
+  readonly globalWorkspaceId: WorkspaceId;
+  readonly scopes: readonly ScheduledWorkspaceScope[];
 }): TemporalScheduleSpec | undefined {
   if (opts.enabled !== true) return undefined;
   return buildPeriodReviewWeeklyScheduleSpec(opts);
@@ -403,6 +520,9 @@ export function gatePeriodReviewMonthlySchedule(opts: {
   readonly enabled: boolean;
   readonly taskQueue: SowTaskQueue;
   readonly intervalMs: number;
+  readonly catchUpWindowMs: number;
+  readonly globalWorkspaceId: WorkspaceId;
+  readonly scopes: readonly ScheduledWorkspaceScope[];
 }): TemporalScheduleSpec | undefined {
   if (opts.enabled !== true) return undefined;
   return buildPeriodReviewMonthlyScheduleSpec(opts);
@@ -424,24 +544,38 @@ export const CROSS_CALENDAR_SCHEDULING_WORKFLOW_TYPE = "crossCalendarSchedulingW
 export const CROSS_CALENDAR_SCHEDULING_SCHEDULE_ID = "cross-calendar-scheduling" as const;
 
 /**
- * arch_gap (Phase 25, flagged not silently assumed — mirrors {@link buildDailyBriefScheduleSpec}'s own
- * note above): `crossCalendarSchedulingWorkflow`'s input is a full `CrossCalendarSchedulingInput` —
- * there is no per-tick input for a periodic schedule to supply, so this spec's `args: []` is a
- * PLACEHOLDER action shape, not a functioning periodic scheduling sweep. Deferred to the same
- * composition-root follow-up as {@link buildDailyBriefScheduleSpec}. Never armed by this package.
+ * 25.4 — emits the REAL per-tick args for a scheduled `crossCalendarScheduling` occurrence, closing the
+ * gap the prior `args: []` placeholder left (mirrors {@link buildDailyBriefScheduleSpec}'s own note
+ * above). `action.args` carries exactly ONE {@link CrossCalendarSchedulingScheduleArgs} envelope — the
+ * STATIC `sources` set REQ-F-009 requires be read across (an unread source is a typed gather failure,
+ * never an empty/free assumption) and the `organizerWorkspaceId` a WS-2 auto-created event belongs to;
+ * byte-identical on every occurrence, as `action.args` must be.
+ *
+ * `action.workflowType` points at the SCHEDULED entry point
+ * {@link CROSS_CALENDAR_SCHEDULING_SCHEDULED_WORKFLOW_TYPE} — NOT
+ * {@link CROSS_CALENDAR_SCHEDULING_WORKFLOW_TYPE} (the direct-start type, unchanged, still exported for
+ * owner-triggered starts). Per-occurrence identity is derived in-sandbox, never carried in `args`; see
+ * {@link buildDailyBriefScheduleSpec}'s note (and `./scheduleArgs`'s header) for why.
  */
 export function buildCrossCalendarSchedulingScheduleSpec(opts: {
   readonly taskQueue: SowTaskQueue;
   readonly intervalMs: number;
+  readonly organizerWorkspaceId: WorkspaceId;
+  readonly sources: readonly ScheduledAvailabilitySource[];
 }): TemporalScheduleSpec {
+  const args: CrossCalendarSchedulingScheduleArgs = {
+    scheduleId: CROSS_CALENDAR_SCHEDULING_SCHEDULE_ID,
+    organizerWorkspaceId: opts.organizerWorkspaceId,
+    sources: opts.sources,
+  };
   return {
     scheduleId: CROSS_CALENDAR_SCHEDULING_SCHEDULE_ID,
     intervalMs: opts.intervalMs,
     action: {
-      workflowType: CROSS_CALENDAR_SCHEDULING_WORKFLOW_TYPE,
+      workflowType: CROSS_CALENDAR_SCHEDULING_SCHEDULED_WORKFLOW_TYPE,
       workflowId: `${CROSS_CALENDAR_SCHEDULING_SCHEDULE_ID}-workflow`,
       taskQueue: opts.taskQueue,
-      args: [],
+      args: [args],
     },
   };
 }
@@ -458,6 +592,8 @@ export function gateCrossCalendarSchedulingSchedule(opts: {
   readonly enabled: boolean;
   readonly taskQueue: SowTaskQueue;
   readonly intervalMs: number;
+  readonly organizerWorkspaceId: WorkspaceId;
+  readonly sources: readonly ScheduledAvailabilitySource[];
 }): TemporalScheduleSpec | undefined {
   if (opts.enabled !== true) return undefined;
   return buildCrossCalendarSchedulingScheduleSpec(opts);

@@ -34,7 +34,10 @@
 //       success. 409/412 ⇒ `"conflict"` (a stale precondition — NEVER a blind
 //       overwrite); other 4xx ⇒ `"rejected"`; 5xx ⇒ `"unreachable"`; anything else
 //       (1xx/3xx/NaN/out-of-range) ⇒ `"unknown"`. `detail` carries ONLY the safe
-//       status number.
+//       status number in prose (`"HTTP <n>"`); `httpStatus` carries the SAME
+//       number as a structured field (§S) — the one a caller must branch on
+//       (adapter-core.ts's `faultToError`, drive.ts's 404 promotion), never
+//       `detail`'s string shape.
 //   (6) Parse the 2xx body; a parse failure (including an EMPTY 204 body) ⇒ a
 //       redacted `"unknown"` fault — the raw body is NEVER echoed.
 //   (7) Map via the per-vendor CANDIDATE `spec.mapResponse` — wrapped so a throw
@@ -199,9 +202,16 @@ export function createWriteHttpTransport(spec: WriteHttpSpec, deps: WriteHttpTra
     }
 
     // (6) POSITIVE 2xx gate — a non-integer / <200 / ≥300 status fails closed,
-    //     NEVER treated as success.
+    //     NEVER treated as success. `httpStatus` carries the same status as a
+    //     STRUCTURED numeric field (absent for a non-integer status, e.g. NaN) —
+    //     a caller branches on this, never on `detail`'s "HTTP <n>" string shape.
     if (!Number.isInteger(response.status) || response.status < 200 || response.status >= 300) {
-      return { ok: false, fault: statusToFault(response.status), detail: `HTTP ${response.status}` };
+      return {
+        ok: false,
+        fault: statusToFault(response.status),
+        detail: `HTTP ${response.status}`,
+        ...(Number.isInteger(response.status) ? { httpStatus: response.status } : {}),
+      };
     }
 
     // (7) Parse the 2xx body; a parse failure (including an EMPTY body — e.g. a

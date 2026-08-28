@@ -322,6 +322,28 @@ describe("createDeterministicProgressActivity — deterministic checkbox parse",
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("parse_failed");
   });
+
+  it("R3 (24.73 restore round): forwards a reader failure's message + cause verbatim — NOT redacted", async () => {
+    // The only production-bound reader (buildActivities.ts's `projectSyncParse.reader`)
+    // is a hardcoded fixed-literal stub today, so a redaction here guards nothing
+    // while costing the operator the real diagnostic once a real reader is wired.
+    const reader: RawProgressReader = {
+      read(): Promise<Result<readonly RawProgressSource[], ParseProgressError>> {
+        return Promise.resolve(
+          rErr({ code: "parse_failed", message: "plan.md is not valid UTF-8", cause: { byteOffset: 512 } }),
+        );
+      },
+    };
+    const activity = createDeterministicProgressActivity({ reader });
+    const result = await activity.parse(makeProjectSyncContext());
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("parse_failed");
+      // RESTORED: a mutation-proof pin — a re-added redaction would replace these.
+      expect(result.error.message).toBe("plan.md is not valid UTF-8");
+      expect(result.error.cause).toEqual({ byteOffset: 512 });
+    }
+  });
 });
 
 // --- typed failure states → 7.5 -------------------------------------------

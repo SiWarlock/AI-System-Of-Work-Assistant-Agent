@@ -7,8 +7,15 @@
 //     not-found → undefined mapping, create/update's exact forwarded shape) over a FAKE
 //     RealScheduleClientSurface — no real Temporal server, matching scheduleRegistrar.test.ts's own
 //     fake-port-only discipline;
-//   • update() NEVER carries a `paused` key (mirrors scheduleRegistrar.ts's own structural guarantee —
-//     this adapter cannot be the seam that unpauses a schedule);
+//   • update() ALWAYS carries a `paused` key, but the value is the schedule's EXISTING pause state
+//     read back from `previous.state.paused` and echoed verbatim — never hardcoded either direction
+//     (task F2's fix). ⛔ "update() never carries a `paused` key, so this adapter cannot unpause" is
+//     FALSE and was the reasoning behind a live CRITICAL bug: the real SDK update is a full REPLACE,
+//     and the PRIOR shape's absent `paused` field let proto3 fill its zero-value (`false`), silently
+//     unpausing an owner-paused schedule on every second boot (MEASURED against a real ephemeral
+//     server: `afterCreate.paused=true` → `afterUpdate.paused=false`). An absence in a port's TYPE is
+//     not an absence on the WIRE — pause-safety holds because THIS adapter reads back and re-sends
+//     the current state, not because the shape omits a field;
 //   • boot.ts's config→gate threading is strict `=== true` (a truthy non-boolean never arms) — proven
 //     both by a source-scan pin (a "real production caller" pin, mirroring this session's other bind
 //     tasks) and by driving `gateIngestionTriageSchedule` with the SAME expression boot.ts uses.
@@ -51,7 +58,10 @@ function makeFakeClient(over: Partial<RealScheduleClientSurface> = {}): RealSche
           throw new FakeNotFoundError("no such schedule");
         },
         update: async (updateFn) => {
-          const built = updateFn(undefined);
+          // task F2 — the real SDK always supplies the schedule's CURRENT description to the
+          // update callback; this default fake's "current" state is an already-paused schedule
+          // (the common real-world case a converge runs against, and the one the F2 bug got wrong).
+          const built = updateFn({ state: { paused: true } });
           calls.update.push(built);
         },
       };
@@ -123,22 +133,41 @@ describe("createRealScheduleClientPort — the ScheduleClientPort CONTRACT over 
     expect(call.state.paused).toBe(true);
   });
 
-  it("update(): forwards the converged spec/action but state carries NO paused key at all (never {}.paused, not even false)", async () => {
-    const fake = makeFakeClient();
-    const port = createRealScheduleClientPort(fake, (e) => e instanceof FakeNotFoundError);
+  it("update(): forwards the converged spec/action AND ECHOES the schedule's existing pause state — task F2 fix (never a hardcoded value, never an absent key)", async () => {
+    // ⛔ task F2 — the PRIOR shape sent `state: {}` unconditionally, which the real SDK's proto3
+    // encoding of an absent `paused` field UNPAUSES on an already-paused schedule (MEASURED live —
+    // see schedule-update-preserves-pause.test.ts). A fake port can't reproduce THAT wire-encoding
+    // defect (this suite's own fake just forwards whatever object the adapter builds), but it CAN
+    // pin the adapter's obligation: read `previous.state.paused` and put it straight back, for
+    // BOTH values — proving the adapter never hardcodes either direction (a hardcoded `true` would
+    // silently re-pause an owner-unpaused schedule; a hardcoded `false`, or the old absent-key
+    // shape, silently unpauses a paused one).
+    for (const existingPaused of [true, false]) {
+      let built: unknown;
+      const fake = makeFakeClient({
+        getHandle: () => ({
+          describe: async () => {
+            throw new FakeNotFoundError("no such schedule");
+          },
+          update: async (updateFn) => {
+            built = updateFn({ state: { paused: existingPaused } });
+          },
+        }),
+      });
+      const port = createRealScheduleClientPort(fake, (e) => e instanceof FakeNotFoundError);
 
-    await port.update(SPEC);
+      await port.update(SPEC);
 
-    expect(fake.calls.update).toHaveLength(1);
-    const call = fake.calls.update[0] as {
-      spec: { intervals: { every: number }[] };
-      action: { workflowType: string };
-      state: Record<string, unknown>;
-    };
-    expect(call.spec.intervals).toEqual([{ every: 3600_000 }]);
-    expect(call.action.workflowType).toBe("ingestionTriageWorkflow");
-    expect("paused" in call.state).toBe(false); // the load-bearing assertion — proves NO paused key rides along
-    expect(Object.keys(call.state)).toHaveLength(0);
+      const call = built as {
+        spec: { intervals: { every: number }[] };
+        action: { workflowType: string };
+        state: { paused: boolean };
+      };
+      expect(call.spec.intervals).toEqual([{ every: 3600_000 }]);
+      expect(call.action.workflowType).toBe("ingestionTriageWorkflow");
+      // ⛔ THE LOAD-BEARING ASSERTION — the update echoes the PREVIOUS pause state verbatim.
+      expect(call.state.paused).toBe(existingPaused);
+    }
   });
 });
 

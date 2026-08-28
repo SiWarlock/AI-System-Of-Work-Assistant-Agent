@@ -11,6 +11,7 @@ import type {
   ValidatedNarrative,
   DeterministicProgress,
   BuildSyncOutputsFailure,
+  NoteExistsReader,
 } from "../src/ports/projectSync";
 import { FakeNoteExistsReader } from "./support/project-sync-fakes";
 
@@ -121,6 +122,39 @@ describe("createBuildSyncOutputsActivity — create-vs-patch routing (§13.5)", 
     const r = await port.build(validated, progress, WS, identity, AT);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.code).toBe("build_failed");
+  });
+
+  it("R3 (24.73 restore round): the probe's own `.message` now crosses (restored, not `.code`); `.cause` STAYS dropped (KEPT)", async () => {
+    // `NoteExistsErrorCode` is a SINGLE-member union ("read_failed"), so the prior
+    // `${existsRes.error.code}` interpolation rendered the SAME text on every
+    // failure regardless of cause — no more informative than the bare
+    // `build_failed` code already surfaced. `.message` is a fixed, SoW-authored
+    // literal built by the bound reader's own composition wrapper (never raw fs
+    // text) — safe to forward. `.cause` is a DIFFERENT field: it can be a raw Node
+    // fs error object (absolute vault path + a stack trace) — this activity's own
+    // comment says it stays dropped, and this pins that it actually does.
+    const hostileReader: NoteExistsReader = {
+      exists: () =>
+        Promise.resolve({
+          ok: false,
+          error: {
+            code: "read_failed",
+            message: "project note-exists probe: vault read failed",
+            cause: { path: "/Users/x/vault/projects/personal-business/x.md", stack: "Error: ENOENT\n at ..." },
+          },
+        }),
+    };
+    const port = createBuildSyncOutputsActivity({ ...deps, noteExists: hostileReader });
+    const r = await port.build(validated, progress, WS, identity, AT);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error.code).toBe("build_failed");
+      // RESTORED: the probe's own message now distinguishes this failure.
+      expect(r.error.message).toBe("note-exists probe failed (fail-closed): project note-exists probe: vault read failed");
+      // KEPT: cause never crosses — no vault path / stack trace in the result.
+      expect(JSON.stringify(r)).not.toContain("/Users/x/vault");
+      expect(JSON.stringify(r)).not.toContain("stack");
+    }
   });
 
   it("fail-closed: a projectId with NO safe path anchor → build_failed (never an unsafe note path, WS-8)", async () => {

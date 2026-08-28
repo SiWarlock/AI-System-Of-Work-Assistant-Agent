@@ -105,9 +105,31 @@ export function writeSecretRef(targetSystem: TargetSystem): string {
     : `keychain://connector-write/${targetSystem}`;
 }
 
-// A transport fault code maps 1:1 onto the port's AdapterError code.
-function faultToError(fault: TransportFault, detail: string): AdapterError {
-  return { code: fault, message: detail };
+// Fixed, closed-set diagnostic text for a fault that carried no `httpStatus`
+// (no HTTP response was ever received — an SSRF-block, a credential fault, a
+// network-level outage). Distinct per fault code so an operator can still tell
+// these apart without any transport-supplied text.
+const FAULT_MESSAGE: Readonly<Record<TransportFault, string>> = {
+  unreachable: "target system unreachable",
+  conflict: "write conflict (stale precondition)",
+  rejected: "request rejected",
+  unknown: "unclassified adapter fault",
+};
+
+// §S FIX — build `message` from CLOSED inputs only: the fault code (4 fixed
+// values) plus the structured `httpStatus` (a real number, when the transport
+// received one). NEVER the transport's free-text `detail` — a per-vendor
+// `mapResponse` builds `TransportResponse` directly and could put anything in
+// `detail` (a raw vendor body, a token-bearing URL); forwarding it verbatim
+// used to make that string cross the Tool Gateway into `ExternalWriteResult
+// .reason` unredacted. `httpStatus` is a number, not prose, so it cannot carry
+// that kind of payload — safe to fold into the diagnostic message.
+function faultToError(fault: TransportFault, httpStatus?: number): AdapterError {
+  return {
+    code: fault,
+    message: httpStatus !== undefined ? `HTTP ${httpStatus}` : FAULT_MESSAGE[fault],
+    ...(httpStatus !== undefined ? { httpStatus } : {}),
+  };
 }
 
 // A vendor id is proof of a write ONLY if it is non-empty AND non-whitespace
@@ -203,7 +225,7 @@ export function makeTargetWriteAdapter(
         // A live-probe FAULT is surfaced typed — NEVER collapsed to `null`, which
         // would risk a duplicate create (existence-check.ts holds fail-closed).
         emitSafeLog(deps, env, "existence_probe_fault");
-        return err(faultToError(resp.fault, resp.detail));
+        return err(faultToError(resp.fault, resp.httpStatus));
       }
       if (resp.object === null) return ok(null);
       const existing: ExistingObject = {
@@ -223,7 +245,7 @@ export function makeTargetWriteAdapter(
       const resp = called.value;
       if (!resp.ok) {
         emitSafeLog(deps, env, "create_fault");
-        return err(faultToError(resp.fault, resp.detail));
+        return err(faultToError(resp.fault, resp.httpStatus));
       }
       if (resp.object === null) {
         // A create that reports no object is not proof of a write (fail-closed).
@@ -253,7 +275,7 @@ export function makeTargetWriteAdapter(
       if (!resp.ok) {
         // A stale precondition surfaces as `conflict` — NEVER a blind overwrite.
         emitSafeLog(deps, env, "update_fault");
-        return err(faultToError(resp.fault, resp.detail));
+        return err(faultToError(resp.fault, resp.httpStatus));
       }
       if (resp.object === null) {
         return err<AdapterError>({

@@ -36,11 +36,49 @@ export interface ExistingObject {
  * could not reach the vendor (the outbox-hold signal for 6.5). `conflict` — the
  * vendor rejected the write on a precondition/version clash (NEVER a blind
  * overwrite). `rejected` — the vendor refused the request (validation/auth).
- * `unknown` — an unclassified fault. `message` is a redaction-safe diagnostic.
+ * `not_found` — the target object (or its containing scope, e.g. a Drive
+ * folder) does not exist / is unlinked at the vendor. This is a PER-OBJECT
+ * signal, distinct from `unreachable` (the transport could not reach the
+ * vendor AT ALL) — a caller must NOT treat `not_found` as an outbox-hold
+ * candidate (that is `unreachable`'s job); it means "re-add/re-link this one
+ * object", never "retry later". `unknown` — an unclassified fault.
+ *
+ * `message` is a REQUIRED, redaction-safe diagnostic — not an optional nicety.
+ * The Tool Gateway (gateway.ts) forwards this string into `ExternalWriteResult
+ * .reason` VERBATIM (see that type's doc comment): it does NOT re-sanitize it,
+ * because sanitizing vendor-originated text is THIS boundary's job, the one
+ * place raw vendor content enters the system. CONSEQUENCE of violating this:
+ * the message crosses the Tool Gateway unchanged, rides `ExternalWriteResult
+ * .reason` across a Temporal activity boundary into durable, replayed workflow
+ * history (ARCHITECTURE.md:155/157), and is read verbatim by a human operator
+ * — an adapter that embeds raw vendor/secret text here leaks it for every
+ * caller of that adapter, not just this one call.
+ *
+ * THIS IS NOW ENFORCED BY CONSTRUCTION for every adapter built via
+ * `makeTargetWriteAdapter` (adapter-core.ts — every shipped vendor adapter:
+ * calendar/todoist/linear/asana/drive/github/telegram, verified 2026-08-27):
+ * its `faultToError` builds `message` ONLY from the closed `fault` code plus
+ * the structured `httpStatus` below — it never reads a transport's free-text
+ * `detail`, so a misbehaving transport (a bad per-vendor `mapResponse`, a test
+ * fake) cannot get arbitrary text into `message` even by accident. Do not
+ * overclaim beyond that mechanism: `TargetWriteAdapter` is a plain interface,
+ * so a hand-written implementation that bypasses `makeTargetWriteAdapter`
+ * could still construct an `AdapterError` with an unsafe `message` directly —
+ * the guarantee holds for adapters built on the shared core, not for the type
+ * alone.
+ *
+ * `httpStatus` — the vendor's HTTP status code, when the fault came from an
+ * actual HTTP response (§S), as a real optional field. This is the field a
+ * caller must branch machine logic on (e.g. `drive.ts`'s 404→`not_found`
+ * promotion) — NEVER `message`'s prose. A prior round matched
+ * `message === "HTTP 404"` and silently broke the first time the message
+ * format changed; a typed field cannot drift out from under a string match
+ * the same way.
  */
 export interface AdapterError {
-  readonly code: "unreachable" | "conflict" | "rejected" | "unknown";
+  readonly code: "unreachable" | "conflict" | "rejected" | "unknown" | "not_found";
   readonly message: string;
+  readonly httpStatus?: number;
 }
 
 /**

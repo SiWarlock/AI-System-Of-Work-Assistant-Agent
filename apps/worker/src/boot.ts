@@ -58,7 +58,7 @@ import type { SessionToken, LegacyContentPolicy, CopilotWorkspaceScope, Resolved
 // concurrent wave-1 slice; the package's `exports` map carries the `./*` wildcard.
 import { firstUnsafeAuditField } from "@sow/policy/audit-signal-field";
 import { TBD } from "@sow/domain";
-import type { MeetingJobInputs, AgentExtraction, HealthItemStore } from "@sow/workflows";
+import type { MeetingJobInputs, AgentExtraction, HealthItemStore, SowTaskQueue } from "@sow/workflows";
 
 import {
   assembleBackends,
@@ -91,7 +91,7 @@ import {
 import { createDurableParkedReader } from "./composition/dispositionDurable";
 import type { WorkerOriginAllowlist } from "./api/auth/originAllowlist";
 import { startApiServer, type RunningApiServer } from "./api/mount";
-import { createDbReadModelQueryPort } from "./api/adapters/readModel";
+import { createDbReadModelQueryPort, READ_MODEL_KEYS } from "./api/adapters/readModel";
 import {
   createDbApprovalCommandPort,
   createDbTriagePort,
@@ -239,9 +239,20 @@ import {
   gatePeriodReviewWeeklySchedule,
   gatePeriodReviewMonthlySchedule,
   gateCrossCalendarSchedulingSchedule,
+  INGESTION_TRIAGE_SCHEDULE_ID,
+  PROJECT_SYNC_SCHEDULE_ID,
+  DAILY_BRIEF_SCHEDULE_ID,
+  PERIOD_REVIEW_WEEKLY_SCHEDULE_ID,
+  PERIOD_REVIEW_MONTHLY_SCHEDULE_ID,
+  CROSS_CALENDAR_SCHEDULING_SCHEDULE_ID,
   type ScheduleClientPort,
   type TemporalScheduleSpec,
+  type ScheduleRegistrarErrorCode,
+  type EnsureOutcome,
 } from "./temporal/scheduleRegistrar";
+// WP5 — the static per-schedule envelope shapes (`scopes`/`sources`/`globalWorkspaceId`/
+// `organizerWorkspaceId`/`catchUpWindowMs`) `buildOutputWorkflowScheduleSpecs` composes below.
+import type { ScheduledWorkspaceScope, ScheduledAvailabilitySource } from "./temporal/scheduleArgs";
 import type { ProofSpineParams } from "./composition/buildActivities";
 // 21.10/21.8 — the credential-seam accessor + card-transport gate types `proofSpineParams` carries.
 // Deep subpath import: the main @sow/integrations barrel does not re-export tools/cards (its own
@@ -268,7 +279,7 @@ import { evaluateWriteThroughEnablement, surfaceEnablementDecision } from "./com
 // C5.4b B4 — the durable ParityReportStore read-adapter, bound into the serving-coverage reader inside the
 // triple-locked loaderBackedServingOracle branch (closes the B2 store-consuming reachability waiver).
 import { createParityReportStoreAdapter } from "./composition/parityReportStore";
-import type { KnowledgeRevisionRepository, AuditRepository } from "@sow/db";
+import type { KnowledgeRevisionRepository, AuditRepository, ReadModelRepository } from "@sow/db";
 // §9 make-it-real C3b — the local-vault file-watcher capture trigger + its degraded-safe
 // dispatch. The Temporal Client's first real caller (deferred to here from C3a).
 import { createFileReadTransport } from "@sow/integrations/connectors/adapters/file-read-transport";
@@ -318,10 +329,16 @@ export interface BootConfig extends BackendsConfig {
    * task 25.5 — owner opt-in for the ingestion-triage DURABLE schedule (default absent ⇒ no schedule
    * registered; byte-equivalent). Strict `=== true` — a truthy non-boolean never arms (mirrors every
    * other gate in this file, worker LESSONS §2). Even armed, `ensure()` can only CREATE a schedule
-   * PAUSED or converge an EXISTING one's spec/cadence — it can NEVER unpause one
-   * (`scheduleRegistrar.ts`'s own structural guarantee: `create` always `{paused: true}`, `update`
-   * never carries a `paused` field at all) — so this flag can never create a LIVE (actively firing)
-   * schedule, only a durably-registered-but-paused one an operator later unpauses by hand.
+   * PAUSED or converge an EXISTING one's spec/cadence — it can NEVER unpause one. ⛔ D2a — this is
+   * NOT because `scheduleRegistrar.ts`'s narrow `ScheduleClientPort.update` omits a `paused` field
+   * (it does, but that fact alone guarantees nothing — MEASURED FALSE: the prior real-adapter
+   * shape also omitted one and it still unpaused a schedule, `afterCreate.paused=true` →
+   * `afterUpdate.paused=false`, task F2). The REAL guarantee lives in THIS file's own adapter,
+   * {@link createRealScheduleClientPort}`.update` — it reads the schedule's CURRENT
+   * `previous.state.paused` back from the real SDK and echoes it into the replace-semantics update
+   * call (see that function's own doc for the full proto3 zero-value mechanism this closes). A
+   * converge preserves whatever pause state the schedule already had; only a human operator
+   * flipping it outside this process (`tctl`/the Temporal UI) ever unpauses one — never this code.
    */
   readonly ingestionTriageSchedule?: {
     readonly enabled?: boolean;
@@ -346,6 +363,24 @@ export interface BootConfig extends BackendsConfig {
     readonly enabled?: boolean;
     /** The brief cadence. Defaults to 24 hours if armed without an override. */
     readonly intervalMs?: number;
+    /**
+     * WP5 — the LIFE-2 catch-up collapse window. Defaults to 2x the resolved `intervalMs` if
+     * armed without an override, so a missed occurrence up to two cadences late still collapses
+     * to one run on wake.
+     */
+    readonly catchUpWindowMs?: number;
+    /**
+     * WP5 — the Global/Coordination workspace this run's global brief commits to. Defaults to
+     * `DEFAULT_GLOBAL_COORDINATION_WORKSPACE_ID` if armed without an override — see that
+     * constant's own doc for why it, not a fresh id, is the default.
+     */
+    readonly globalWorkspaceId?: string;
+    /**
+     * WP5 — the WS-2 authorized workspace set this run reads over. Defaults to the composition
+     * root's own workspace registry (`loadRegisteredWorkspaceScopes`) if omitted; an explicit
+     * list here overrides the registry derivation entirely (never merged).
+     */
+    readonly scopes?: readonly ScheduledWorkspaceScope[];
   };
   /**
    * task 25.2 — owner opt-in for the period-review DURABLE schedules (weekly AND monthly — ONE
@@ -358,6 +393,16 @@ export interface BootConfig extends BackendsConfig {
     readonly weeklyIntervalMs?: number;
     /** The monthly-cadence review interval. Defaults to 30 days if armed without an override. */
     readonly monthlyIntervalMs?: number;
+    /**
+     * WP5 — the LIFE-2 catch-up collapse window shared by BOTH cadences when explicitly set;
+     * absent, each cadence defaults independently to 2x ITS OWN resolved interval (so the
+     * monthly schedule doesn't inherit the weekly cadence's much-shorter default window).
+     */
+    readonly catchUpWindowMs?: number;
+    /** WP5 — same default convention as {@link BootConfig.dailyBriefSchedule}'s own field. */
+    readonly globalWorkspaceId?: string;
+    /** WP5 — same default convention as {@link BootConfig.dailyBriefSchedule}'s own field. */
+    readonly scopes?: readonly ScheduledWorkspaceScope[];
   };
   /**
    * task 25.4 — owner opt-in for the cross-calendar-scheduling DURABLE schedule. Same shape +
@@ -367,6 +412,22 @@ export interface BootConfig extends BackendsConfig {
     readonly enabled?: boolean;
     /** The scheduling-sweep cadence. Defaults to 1 hour if armed without an override. */
     readonly intervalMs?: number;
+    /**
+     * WP5 — the WS-2 workspace an auto-created cross-calendar event belongs to. Defaults to
+     * `DEFAULT_GLOBAL_COORDINATION_WORKSPACE_ID` if armed without an override.
+     */
+    readonly organizerWorkspaceId?: string;
+    /**
+     * WP5 — the FULL set of calendar sources REQ-F-009 requires be read across. No workspace-
+     * registry enumeration exists for connector source ids at this point in boot (arch_gap,
+     * flagged not silently assumed — the registry holds bare workspace ids, not per-workspace
+     * connector sources), so an owner must list them explicitly. Defaults to `[]` if armed
+     * without an override: an armed-but-sourceless schedule reads across nothing until an owner
+     * supplies sources — never a guessed or hardcoded one. (A FRESH one is also created paused;
+     * a converge PRESERVES whatever pause state the schedule already had, so this sentence is
+     * about the create branch only — see {@link createRealScheduleClientPort}`.update`.)
+     */
+    readonly sources?: readonly ScheduledAvailabilitySource[];
   };
   /** Loopback bind host — defaults to 127.0.0.1 (a non-loopback host is REFUSED). */
   readonly apiHost?: string;
@@ -2270,14 +2331,24 @@ function toRealScheduleAction(action: TemporalScheduleSpec["action"]): RealSched
 export interface RealScheduleClientSurface {
   getHandle(scheduleId: string): {
     describe(): Promise<{ readonly state: { readonly paused: boolean } }>;
+    /**
+     * ⛔ task F2 — MEASURED against a real ephemeral Temporal server (twice, independently):
+     * `afterCreate.paused=true` → `afterUpdate.paused=false` on the prior `state: {}` shape below.
+     * The real `@temporalio/client` `ScheduleHandle.update` (`node_modules/.pnpm/@temporalio+
+     * client@1.19.0/…/src/schedule-client.ts:74` — `updateFn: (previous: ScheduleDescription) =>
+     * ScheduleUpdateOptions<…>`) calls `updateFn` with the schedule's CURRENT description and then
+     * REPLACES the whole server-side schedule with whatever `updateFn` returns — there is no
+     * partial-merge. proto3 encodes an ABSENT `paused` as its zero-value (`false`), so a `state: {}`
+     * update UNPAUSES a paused schedule. `createRealScheduleClientPort.update` (below) reads
+     * `previous.state.paused` and echoes it back — a converge PRESERVES whatever pause state the
+     * schedule already had; it must never hardcode `true` (would silently RE-PAUSE a schedule the
+     * owner had deliberately unpaused) or `false` (this bug, reversed).
+     */
     update(
-      updateFn: (previous: unknown) => {
+      updateFn: (previous: { readonly state: { readonly paused: boolean } }) => {
         spec: { intervals: { every: number }[] };
         action: RealScheduleAction;
-        // REQUIRED by the real SDK's update-options shape, but ALWAYS `{}` here — never a `paused`
-        // key — mirrors scheduleRegistrar.ts's own structural guarantee that `update` can never
-        // touch pause state.
-        state: Record<string, never>;
+        state: { paused: boolean };
       },
     ): Promise<void>;
   };
@@ -2321,17 +2392,759 @@ export function createRealScheduleClientPort(
       });
     },
     async update(spec: TemporalScheduleSpec) {
-      // `update`'s NEW spec/action NEVER carries `paused` — mirrors scheduleRegistrar.ts's own
-      // structural guarantee (a converge can change cadence/action, never pause state). `state: {}` is
-      // the REQUIRED-but-empty shape the real SDK's update-options type demands — no `paused` key ever
-      // rides along.
-      await client.getHandle(spec.scheduleId).update(() => ({
+      // ⛔ task F2 fix — PRESERVE the existing pause state across a converge, never send an empty
+      // `state`. The real SDK's update-options shape is a full REPLACE, not a merge (see
+      // RealScheduleClientSurface's doc above): a `state: {}` update gets proto3's absent-bool
+      // zero-value, silently UNPAUSING a paused schedule on the very next `ensure()` (i.e. the
+      // SECOND boot of an armed config). Echoing `previous.state.paused` back keeps an
+      // already-paused schedule paused and an already-running one running — never a hardcoded
+      // value in either direction (that would fight whatever state the OTHER direction left it in).
+      await client.getHandle(spec.scheduleId).update((previous) => ({
         spec: { intervals: [{ every: spec.intervalMs }] },
         action: toRealScheduleAction(spec.action),
-        state: {},
+        state: { paused: previous.state.paused },
       }));
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// WP5 — the static schedule envelopes: registry-derived scopes + the pure spec builder
+// ---------------------------------------------------------------------------
+
+/**
+ * WP5 — the Global/Coordination workspace identity the dailyBrief/periodReview/
+ * crossCalendarScheduling static envelopes target absent an owner override. No production
+ * Global/Coordination `WorkspaceId` constant exists yet in this codebase to reuse verbatim —
+ * the Global/Coordination REPO is a vault SUBTREE the desktop app resolves under the
+ * configured vault root (`apps/desktop/main/index.ts`'s own "a single root covers it" note;
+ * IMPLEMENTATION_PLAN.md `4815` confirms it is a SoW-managed product repo, not this
+ * checkout, and groups it with the WORKSPACE repos rather than a registered `Workspace`
+ * row). The closest EXISTING convention is the literal identity this codebase's own
+ * daily-brief / period-review workflow test fixtures already use for this exact concept
+ * (`packages/workflows/test/support/{daily-brief,period-review}-fakes.ts`'s
+ * `GLOBAL_WS = workspaceId("ws-global-coordination")`) — reused here rather than minting a
+ * DIFFERENT one. An owner overrides per-schedule via `globalWorkspaceId` / `organizerWorkspaceId`.
+ */
+export const DEFAULT_GLOBAL_COORDINATION_WORKSPACE_ID: WorkspaceId = workspaceId("ws-global-coordination");
+
+/**
+ * WP5 — read the WS-2 workspace registry (`READ_MODEL_KEYS.registry`, task 14.1's fail-closed
+ * known-workspace union — the SAME row `resolveKnownWorkspace` reads) and project it to the
+ * `ScheduledWorkspaceScope[]` shape the dailyBrief/periodReview static envelopes carry.
+ * `brainId` is left unset on every scope — the registry holds only bare workspace ids, never a
+ * per-workspace GBrain brain id; an owner who needs one supplies `scopes` explicitly via config
+ * instead (see {@link buildOutputWorkflowScheduleSpecs}, which prefers an explicit config list
+ * over this derivation).
+ *
+ * Fails CLOSED to `[]` on any fault, absent registry, or malformed payload — never throws. A
+ * single malformed entry is skipped rather than fatal to the rest of the set (never invents an
+ * id, never drops every OTHER already-valid one for one bad row). A degrade to `[]` cannot
+ * itself cause an unscoped write: an empty `scopes` authorizes nothing, so the schedule reads
+ * across nothing regardless of its pause state, until the owner populates the registry or an
+ * explicit override.
+ *
+ * ⛔ This deliberately does NOT lean on "it registers paused." That would be an overclaim on the
+ * converge branch — a re-`ensure()` PRESERVES the existing pause state, so converging over a
+ * schedule an operator unpaused leaves it live. The safety here comes from the EMPTY SCOPE SET
+ * authorizing nothing, which holds on both branches. (Pause state itself is preserved by THIS
+ * file's {@link createRealScheduleClientPort}`.update`, not by `scheduleRegistrar.ts`'s port
+ * shape — see task F2.)
+ */
+export async function loadRegisteredWorkspaceScopes(
+  readModels: ReadModelRepository,
+): Promise<readonly ScheduledWorkspaceScope[]> {
+  try {
+    const result = await readModels.get(READ_MODEL_KEYS.registry, null);
+    if (isErr(result)) return [];
+    const data = result.value.data;
+    if (typeof data !== "object" || data === null) return [];
+    const ids = (data as Record<string, unknown>)["workspaceIds"];
+    if (!Array.isArray(ids)) return [];
+    const scopes: ScheduledWorkspaceScope[] = [];
+    for (const raw of ids) {
+      if (typeof raw !== "string" || raw.length === 0) continue;
+      try {
+        scopes.push({ workspaceId: workspaceId(raw) });
+      } catch {
+        // A malformed registry entry is skipped — never fatal to the rest of the set.
+      }
+    }
+    return scopes;
+  } catch {
+    // A store fault degrades to no authorized scopes — never throws, never invents (§16 / rule 2).
+    return [];
+  }
+}
+
+/**
+ * ⛔ task F3 — the closed set of families whose static envelope carries an owner-configurable
+ * `WorkspaceId` override (`globalWorkspaceId`/`organizerWorkspaceId`). Reported to an injected
+ * `onSkip` hook (see {@link buildOutputWorkflowScheduleSpecs}) when that override fails to brand.
+ */
+export type OutputWorkflowScheduleSkipFamily =
+  | "ingestionTriage"
+  | "projectSync"
+  | "dailyBrief"
+  | "periodReviewWeekly"
+  | "periodReviewMonthly"
+  | "crossCalendarScheduling";
+
+/**
+ * ⛔ task F3 — a family's envelope was skipped rather than built; see {@link resolveScheduleWorkspaceId}.
+ * ⛔ task D2b extends the closed code set beyond the workspace-id override: `intervalMs` /
+ * `catchUpWindowMs` (validated by {@link resolveScheduleDurationMs}) and `scopes` / `sources`
+ * (validated by {@link resolveScheduleScopes} / {@link resolveScheduleSources}) get the SAME
+ * fail-closed skip treatment — the whole config block is one envelope, so every field that can
+ * reach a durable schedule unvalidated needs the same standard, not just the id.
+ * ⛔ task M3c extends it once more: `config_access_threw` covers a family whose `*Schedule` config
+ * BLOCK itself raised while being read (a hostile/proxied object — a throwing `enabled`/`intervalMs`
+ * getter, or a throwing `workspaceId` getter on a `scopes` entry — none reachable from a JSON config
+ * file today, so this is defense-in-depth, not a live gap). Every OTHER code names a specific field
+ * that failed VALIDATION; this one names a family whose config could not even be READ — the two are
+ * kept distinct rather than folding the throw into e.g. `invalid_interval_ms`, since at the point the
+ * catch fires this function cannot know which accessor threw.
+ */
+export interface OutputWorkflowScheduleSkip {
+  readonly family: OutputWorkflowScheduleSkipFamily;
+  readonly code:
+    | "invalid_workspace_id"
+    | "invalid_interval_ms"
+    | "invalid_catch_up_window_ms"
+    | "invalid_scopes"
+    | "invalid_sources"
+    | "config_access_threw";
+}
+
+/**
+ * ⛔ task W3b — the accurate, operator-facing message PER skip code. A single hardcoded string
+ * ("workspace-id override is malformed") used to fire for all five {@link OutputWorkflowScheduleSkip}
+ * codes once task D2b widened the closed set beyond the workspace-id override — naming the WRONG
+ * config field for four of them (an `invalid_interval_ms` skip told the operator to fix a workspace
+ * id). A closed `Record` keyed by the skip code — TypeScript enforces every code has an entry — so a
+ * future sixth code fails to compile rather than silently inheriting the wrong message. No free-text
+ * interpolation of owner-supplied config values anywhere (rule 7 — the raw configured value is never
+ * named, only which STATIC field failed).
+ */
+const SCHEDULE_SKIP_MESSAGE: Record<OutputWorkflowScheduleSkip["code"], string> = {
+  invalid_workspace_id:
+    "An owner-configured schedule workspace-id override is malformed — this schedule family " +
+    "registers no durable schedule until the id is corrected (rule 7 — the raw configured id is " +
+    "never logged).",
+  invalid_interval_ms:
+    "An owner-configured schedule interval (intervalMs) is not a safely-representable positive " +
+    "integer millisecond count — this schedule family registers no durable schedule until the " +
+    "value is corrected (rule 7 — the raw configured value is never logged).",
+  invalid_catch_up_window_ms:
+    "An owner-configured schedule catch-up window (catchUpWindowMs) is not a safely-representable " +
+    "positive integer millisecond count — this schedule family registers no durable schedule until " +
+    "the value is corrected (rule 7 — the raw configured value is never logged).",
+  invalid_scopes:
+    "An owner-configured schedule scopes override is malformed — this schedule family registers " +
+    "no durable schedule until the value is corrected (rule 7 — the raw configured value is never " +
+    "logged).",
+  invalid_sources:
+    "An owner-configured schedule sources override is malformed — this schedule family registers " +
+    "no durable schedule until the value is corrected (rule 7 — the raw configured value is never " +
+    "logged).",
+  config_access_threw:
+    "An owner-configured schedule config block raised an unexpected error while being read (a " +
+    "hostile or proxied config object) — this schedule family registers no durable schedule until " +
+    "the config is corrected (rule 7 — no raw error detail is logged).",
+};
+
+/** The operator-facing message for one skip code — see {@link SCHEDULE_SKIP_MESSAGE}. */
+export function scheduleSkipHealthMessage(code: OutputWorkflowScheduleSkip["code"]): string {
+  return SCHEDULE_SKIP_MESSAGE[code];
+}
+
+// ⛔ task W3c — a redaction-SAFE representation of an {@link OutputWorkflowScheduleSkip} for the
+// structured log line. @sow/domain's field-level redactor (packages/domain/src/redaction) admits a
+// `fields.<name>` value ONLY when `<name>` is on its closed field-name allowlist AND the value is a
+// PROVABLE member of that field's own frozen vocabulary — this file cannot extend either (both live
+// in a package outside this task's owned files). Measured against the ORIGINAL shape
+// (`fields: { code: skip.code, family: skip.family }`): `family` is not an allowlisted field name at
+// all ⇒ dropped whole (`REDACTED_FIELD`); `code` IS allowlisted, but its vocabulary for the `code`
+// field accepts only a `STRUCTURED_CODE`-shaped UPPER_SNAKE token (e.g. `REVISION_STALE`) or a known
+// enum member — `skip.code`'s lower_snake literals (`invalid_workspace_id`) match neither ⇒
+// `REDACTED_RAW`. Both fields vanish; an operator sees N identical warn lines.
+//
+// The fix reuses that SAME already-established `code`/STRUCTURED_CODE pass-through — no redactor
+// change — by folding BOTH the family and the reason into ONE UPPER_SNAKE `code` value (e.g.
+// `DAILY_BRIEF_INVALID_WORKSPACE_ID`). `skip.code`/`skip.family` themselves are UNCHANGED (other
+// suites pin their literal lower_snake/camelCase values); this mapping exists only at the log
+// boundary. A bare `family` field is deliberately NOT sent — it would still be silently dropped by
+// the allowlist gate, so sending it would only add a confusing always-`[REDACTED:field-dropped]` key.
+const SCHEDULE_SKIP_FAMILY_LOG_PREFIX: Record<OutputWorkflowScheduleSkipFamily, string> = {
+  ingestionTriage: "INGESTION_TRIAGE",
+  projectSync: "PROJECT_SYNC",
+  dailyBrief: "DAILY_BRIEF",
+  periodReviewWeekly: "PERIOD_REVIEW_WEEKLY",
+  periodReviewMonthly: "PERIOD_REVIEW_MONTHLY",
+  crossCalendarScheduling: "CROSS_CALENDAR_SCHEDULING",
+};
+
+const SCHEDULE_SKIP_CODE_LOG_SUFFIX: Record<OutputWorkflowScheduleSkip["code"], string> = {
+  invalid_workspace_id: "INVALID_WORKSPACE_ID",
+  invalid_interval_ms: "INVALID_INTERVAL_MS",
+  invalid_catch_up_window_ms: "INVALID_CATCH_UP_WINDOW_MS",
+  invalid_scopes: "INVALID_SCOPES",
+  invalid_sources: "INVALID_SOURCES",
+  config_access_threw: "CONFIG_ACCESS_THREW",
+};
+
+/**
+ * Build the redaction-safe combined `code` for one skip (see the block comment above). Both maps
+ * are closed, hand-written UPPER_SNAKE literals with no owner-supplied input, so the concatenation
+ * is guaranteed BY CONSTRUCTION — not by a runtime regex test here — to match
+ * `@sow/domain`'s `STRUCTURED_CODE`; that guarantee is pinned directly against the real redactor in
+ * outputWorkflowSchedulesBind.test.ts.
+ */
+export function scheduleSkipLogCode(skip: OutputWorkflowScheduleSkip): string {
+  return `${SCHEDULE_SKIP_FAMILY_LOG_PREFIX[skip.family]}_${SCHEDULE_SKIP_CODE_LOG_SUFFIX[skip.code]}`;
+}
+
+// ⛔ task M3a — the SAME `code`/STRUCTURED_CODE pass-through fixes the registrar-side log sites
+// (`schedule.ensure_failed` / `schedule.ensured`) that `scheduleSkipLogCode` above already gave the
+// builder-side skip. Measured against the ORIGINAL shape (`fields: { code: outcome.error.code,
+// scheduleId: spec.scheduleId }` / `fields: { action: outcome.value.action, scheduleId:
+// spec.scheduleId } }`): `scheduleId` and `action` are not on @sow/domain's field-name allowlist AT
+// ALL ⇒ dropped whole (`REDACTED:field-dropped`) regardless of value; `code`'s frozen vocabulary for
+// the `code` field only admits an UPPER_SNAKE `STRUCTURED_CODE` token (or a known enum member) —
+// `outcome.error.code` (`"schedule_client_fault"`, lower_snake) matches neither ⇒
+// `REDACTED:raw`. An operator watching these two lines could not tell WHICH schedule succeeded,
+// failed, or why.
+//
+// Fold `scheduleId` + the reason (the registrar's error code, or the create/update action) into ONE
+// UPPER_SNAKE `code` value, exactly as `scheduleSkipLogCode` does for family+code. `scheduleId`/
+// `action`/`ScheduleRegistrarErrorCode` themselves are UNCHANGED — this mapping exists only at the
+// log boundary. A bare `scheduleId` field is deliberately NOT also sent (same reasoning as the bare
+// `family` field above: the allowlist drops it unconditionally, so sending it only adds a confusing
+// always-redacted key).
+//
+// `spec.scheduleId`'s CONTRACT TYPE ({@link TemporalScheduleSpec.scheduleId}) is a plain `string`,
+// not a literal union — this file's OWN builder only ever constructs one of the six SCHEDULE_ID
+// constants below, but that is a fact about THIS file's callers, not a compile-time guarantee at
+// this function's boundary. So the id→token lookup is a runtime `Map` with a fail-CLOSED fallback
+// (`UNKNOWN_SCHEDULE`) for anything outside the closed six — never a pass-through of an arbitrary
+// scheduleId string, which (unlike the six hand-written constants) is not provably owner-data-free.
+const SCHEDULE_ID_LOG_TOKEN: ReadonlyMap<string, string> = new Map([
+  [INGESTION_TRIAGE_SCHEDULE_ID, "INGESTION_TRIAGE"],
+  [PROJECT_SYNC_SCHEDULE_ID, "PROJECT_SYNC"],
+  [DAILY_BRIEF_SCHEDULE_ID, "DAILY_BRIEF"],
+  [PERIOD_REVIEW_WEEKLY_SCHEDULE_ID, "PERIOD_REVIEW_WEEKLY"],
+  [PERIOD_REVIEW_MONTHLY_SCHEDULE_ID, "PERIOD_REVIEW_MONTHLY"],
+  [CROSS_CALENDAR_SCHEDULING_SCHEDULE_ID, "CROSS_CALENDAR_SCHEDULING"],
+]);
+
+/** Fail-closed token for a `scheduleId` outside the known six — never the raw id (rule 7). */
+const SCHEDULE_ID_LOG_TOKEN_UNKNOWN = "UNKNOWN_SCHEDULE";
+
+function scheduleIdLogToken(scheduleId: string): string {
+  return SCHEDULE_ID_LOG_TOKEN.get(scheduleId) ?? SCHEDULE_ID_LOG_TOKEN_UNKNOWN;
+}
+
+// A closed `Record` keyed by the registrar's own closed error-code union — TypeScript enforces every
+// member has an UPPER_SNAKE log token, so a future new `ScheduleRegistrarErrorCode` member fails to
+// compile here rather than silently falling through to nothing.
+const SCHEDULE_REGISTRAR_ERROR_CODE_LOG_SUFFIX: Record<ScheduleRegistrarErrorCode, string> = {
+  schedule_client_fault: "SCHEDULE_CLIENT_FAULT",
+};
+
+/**
+ * Build the redaction-safe combined `code` for a `schedule.ensure_failed` log line — folds WHICH
+ * schedule (by its closed identity token) and WHY (the registrar's own closed error-code union)
+ * into one UPPER_SNAKE token that survives `@sow/domain`'s field-level redactor under `code`.
+ */
+export function scheduleEnsureFailedLogCode(scheduleId: string, code: ScheduleRegistrarErrorCode): string {
+  return `${scheduleIdLogToken(scheduleId)}_${SCHEDULE_REGISTRAR_ERROR_CODE_LOG_SUFFIX[code]}`;
+}
+
+// A closed `Record` keyed by the registrar's own closed action union (`"created" | "updated"`) —
+// same exhaustiveness guarantee as the error-code map above.
+const SCHEDULE_ENSURE_ACTION_LOG_SUFFIX: Record<EnsureOutcome["action"], string> = {
+  created: "CREATED",
+  updated: "UPDATED",
+};
+
+/**
+ * Build the redaction-safe combined `code` for a `schedule.ensured` log line — folds WHICH schedule
+ * and the create/update action into one UPPER_SNAKE token, mirroring
+ * {@link scheduleEnsureFailedLogCode} exactly.
+ */
+export function scheduleEnsuredLogCode(scheduleId: string, action: EnsureOutcome["action"]): string {
+  return `${scheduleIdLogToken(scheduleId)}_${SCHEDULE_ENSURE_ACTION_LOG_SUFFIX[action]}`;
+}
+
+/**
+ * ⛔ task F3 fix — resolve a schedule family's optional `WorkspaceId` override WITHOUT ever
+ * branding a malformed id on the DISARMED path. The prior shape evaluated
+ * `workspaceId(config.X.globalWorkspaceId)` as an ARGUMENT expression feeding the `gate*Schedule`
+ * call — JS evaluates every object-literal property before the function itself runs, and the
+ * gate's own `enabled !== true` early return lives INSIDE the gate, one level too late — so a
+ * `enabled: false` config carrying a malformed override string still threw `InvalidIdError` and
+ * crashed `bootWorker()` (measured for `""`, whitespace-only, `"Not A Slug!"`, a `../../etc`
+ * traversal string, and a 500-char id, across all three id-bearing families).
+ *
+ * `enabled !== true` short-circuits BEFORE `workspaceId()` ever runs — a disarmed family's
+ * envelope is never branded (mirrors the gate's own `enabled !== true → undefined` guard rather
+ * than diverging from it). On the ARMED path a malformed override folds to a typed `{ ok: false }`
+ * instead of throwing (§16 — degrade and surface, never crash; worker LESSONS §52) — the caller
+ * skips that family's spec (contributing zero schedules for it, not for the others) and reports
+ * the skip via the injected `onSkip` hook rather than letting the whole collected build blow up.
+ */
+function resolveScheduleWorkspaceId(
+  enabled: boolean,
+  configured: string | undefined,
+  fallback: WorkspaceId,
+): { readonly ok: true; readonly value: WorkspaceId } | { readonly ok: false } {
+  if (enabled !== true || configured === undefined) return { ok: true, value: fallback };
+  try {
+    return { ok: true, value: workspaceId(configured) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
+ * ⛔ task D2b fix — resolve a schedule family's `intervalMs`/`catchUpWindowMs` (the SAME numeric
+ * shape — both feed a durable schedule's cadence, `intervalMs` directly and `catchUpWindowMs` as
+ * the LIFE-2 collapse window) with the identical fail-closed discipline
+ * {@link resolveScheduleWorkspaceId} already applies to a workspace-id override: disarmed ⇒ the
+ * OWNER-supplied `configured` value is never inspected (mirrors `resolveScheduleWorkspaceId`'s own
+ * "never brand on the disarmed path" discipline — a disarmed family's config is never even
+ * inspected); armed with an explicit override ⇒ anything other than a finite, positive `number`
+ * folds to a typed `{ ok: false }` instead of reaching `spec.intervals[0].every` (the real Temporal
+ * schedule's tick cadence) or a derived `catchUpWindowMs` as durable garbage. MEASURED at the real
+ * `bootWorker`: `NaN`, `-1`, and `"abc"` (TypeScript's compile-time `number` type is not a runtime
+ * guarantee once a config is assembled from parsed/external input, same class of gap F3 closed for
+ * the workspace-id override) each previously registered a schedule with a nonsense cadence,
+ * silently.
+ *
+ * ⛔ task W3d — bounded to a SAFELY-REPRESENTABLE integer-millisecond range. Temporal encodes a
+ * Duration as an int64 count of NANOSECONDS; converting a millisecond `number` to nanoseconds
+ * multiplies by 1e6, and JS represents an integer EXACTLY only up to `Number.MAX_SAFE_INTEGER`
+ * (2^53-1) — past {@link MAX_REPRESENTABLE_SCHEDULE_DURATION_MS} the ms→ns conversion itself loses
+ * precision, and far past it (MEASURED: `intervalMs: Number.MAX_VALUE`) overflows int64 outright,
+ * registering a durable spec of `{ every: 1.7976931348623157e+308 }` — ~290 orders of magnitude past
+ * representable. `Number.isSafeInteger` also rejects a fractional millisecond (MEASURED: `1.5`,
+ * `0.0001` previously registered unchanged) — this unit has no sub-millisecond representation here.
+ *
+ * ⛔ task M3b fix — the FALLBACK is validated by the SAME rule, not returned verbatim. The prior
+ * shape validated `configured` but returned `fallback` UNCHECKED whenever `configured` was absent —
+ * `fallback` is caller-computed, not owner-supplied, but that does not make it automatically safe:
+ * the dailyBrief/periodReview call sites below derive their `catchUpWindowMs` fallback as
+ * `2 * <this family's own resolved intervalMs>`, so an ARMED family whose resolved `intervalMs`
+ * lands in `(MAX_REPRESENTABLE_SCHEDULE_DURATION_MS / 2, MAX_REPRESENTABLE_SCHEDULE_DURATION_MS]`
+ * derives a doubled fallback catch-up window PAST the very bound this function exists to enforce —
+ * the bound-check on `configured` alone did nothing to stop that, since `catchUpWindowMs` was never
+ * configured at all on that path. `candidate` below selects `configured` ONLY when armed AND an
+ * override is present — the disarmed short-circuit itself is UNCHANGED, so a disarmed family's
+ * hostile `configured` is still never inspected (pinned by
+ * scheduleFieldValidation.test.ts's mutation-proven disarmed-path invariant); only the value this
+ * function is ABOUT TO RETURN is now always checked against the same bound.
+ */
+const MAX_REPRESENTABLE_SCHEDULE_DURATION_MS = Math.floor(Number.MAX_SAFE_INTEGER / 1_000_000);
+
+function resolveScheduleDurationMs(
+  enabled: boolean,
+  configured: number | undefined,
+  fallback: number,
+): { readonly ok: true; readonly value: number } | { readonly ok: false } {
+  const candidate = enabled === true && configured !== undefined ? configured : fallback;
+  if (
+    typeof candidate !== "number" ||
+    !Number.isSafeInteger(candidate) ||
+    candidate <= 0 ||
+    candidate > MAX_REPRESENTABLE_SCHEDULE_DURATION_MS
+  ) {
+    return { ok: false };
+  }
+  return { ok: true, value: candidate };
+}
+
+/**
+ * ⛔ task D2b fix — resolve the dailyBrief/periodReview families' `scopes` override with the same
+ * discipline as {@link resolveScheduleWorkspaceId}: disarmed ⇒ never validated (fallback
+ * verbatim); armed ⇒ anything other than an array of well-formed {@link ScheduledWorkspaceScope}
+ * entries folds to a typed `{ ok: false }` rather than reaching the durable schedule's
+ * `action.args` envelope as-is (MEASURED: `scopes: "not-an-array"` reached it unfiltered). Each
+ * entry's `workspaceId` is re-branded through the SAME `workspaceId()` guard
+ * {@link loadRegisteredWorkspaceScopes} already uses — one malformed entry invalidates the WHOLE
+ * override (never a silent partial drop like the registry reader's own best-effort skip; an
+ * owner-supplied override is presumed deliberate, so a bad entry inside it is a config error worth
+ * surfacing, not quietly discarding).
+ */
+function resolveScheduleScopes(
+  enabled: boolean,
+  configured: readonly ScheduledWorkspaceScope[] | undefined,
+  fallback: readonly ScheduledWorkspaceScope[],
+): { readonly ok: true; readonly value: readonly ScheduledWorkspaceScope[] } | { readonly ok: false } {
+  if (enabled !== true || configured === undefined) return { ok: true, value: fallback };
+  if (!Array.isArray(configured)) return { ok: false };
+  const scopes: ScheduledWorkspaceScope[] = [];
+  for (const raw of configured) {
+    if (raw === null || typeof raw !== "object") return { ok: false };
+    const candidate = raw as Record<string, unknown>;
+    const candidateWorkspaceId = candidate["workspaceId"];
+    const candidateBrainId = candidate["brainId"];
+    if (typeof candidateWorkspaceId !== "string") return { ok: false };
+    if (candidateBrainId !== undefined && typeof candidateBrainId !== "string") return { ok: false };
+    try {
+      scopes.push(
+        candidateBrainId === undefined
+          ? { workspaceId: workspaceId(candidateWorkspaceId) }
+          : { workspaceId: workspaceId(candidateWorkspaceId), brainId: candidateBrainId },
+      );
+    } catch {
+      return { ok: false };
+    }
+  }
+  return { ok: true, value: scopes };
+}
+
+/**
+ * ⛔ task D2b fix — resolve the crossCalendarScheduling family's `sources` override. Same
+ * discipline as {@link resolveScheduleScopes} (disarmed ⇒ never validated; armed ⇒ a non-array or
+ * a malformed entry folds to `{ ok: false }` rather than reaching `action.args` as-is — MEASURED:
+ * `sources: "nope"` reached it unfiltered).
+ */
+function resolveScheduleSources(
+  enabled: boolean,
+  configured: readonly ScheduledAvailabilitySource[] | undefined,
+  fallback: readonly ScheduledAvailabilitySource[],
+): { readonly ok: true; readonly value: readonly ScheduledAvailabilitySource[] } | { readonly ok: false } {
+  if (enabled !== true || configured === undefined) return { ok: true, value: fallback };
+  if (!Array.isArray(configured)) return { ok: false };
+  const sources: ScheduledAvailabilitySource[] = [];
+  for (const raw of configured) {
+    if (raw === null || typeof raw !== "object") return { ok: false };
+    const candidate = raw as Record<string, unknown>;
+    const candidateSourceId = candidate["sourceId"];
+    const candidateWorkspaceId = candidate["workspaceId"];
+    if (typeof candidateSourceId !== "string" || candidateSourceId.length === 0) return { ok: false };
+    if (typeof candidateWorkspaceId !== "string") return { ok: false };
+    try {
+      sources.push({ sourceId: candidateSourceId, workspaceId: workspaceId(candidateWorkspaceId) });
+    } catch {
+      return { ok: false };
+    }
+  }
+  return { ok: true, value: sources };
+}
+
+/**
+ * tasks 25.2/25.3/25.4/25.5 (WP5) — pure builder for the collected output-workflow schedule
+ * spec set. Each family reads its OWN independent `gate*Schedule` AND-lock (strict `=== true`,
+ * worker LESSONS §2/§28) so arming one family never arms another — this function performs NO
+ * I/O and constructs nothing beyond what each gate itself decides to build on its own armed
+ * path. Extracted as a PURE, side-effect-free function (worker LESSONS §23 — "split the pure
+ * helper from the composition-root edit") so the "0 schedules on an unconfigured boot" and "an
+ * armed family's static envelope matches config" invariants are unit-testable WITHOUT booting
+ * the whole worker (no DB / vault / Temporal connect needed) — `bootWorker` calls this ONCE and
+ * only performs the I/O (the `registrar.ensure` loop) over whatever this returns.
+ *
+ * `registryScopes` is the WS-2 authorized workspace set the composition root's own workspace
+ * registry already holds (see {@link loadRegisteredWorkspaceScopes}) — the DEFAULT `scopes` for
+ * the dailyBrief/periodReview families absent an explicit owner override. It is NOT read here
+ * (I/O stays in `bootWorker`); this function only composes the already-resolved value.
+ *
+ * `onSkip` (task F3, OPTIONAL — this function stays pure; the hook itself may do I/O, but calling
+ * it is a synchronous notification, not a fetch/await this function performs) is invoked once per
+ * family whose envelope could not be built because ONE OF ITS CONFIG FIELDS failed validation —
+ * originally just the workspace-id override (see {@link resolveScheduleWorkspaceId}), task D2b
+ * extends this to every field that can reach a durable schedule unvalidated: `intervalMs` /
+ * `catchUpWindowMs` ({@link resolveScheduleDurationMs}) and `scopes` / `sources`
+ * ({@link resolveScheduleScopes} / {@link resolveScheduleSources}). Omitted ⇒ the skip is silent
+ * but the function still never throws and still contributes zero schedules for that family.
+ *
+ * ⛔ task M3c — "never throws" is enforced BY the per-family `try`/`catch` wrapping each block
+ * below, not merely by the validation helpers' own discipline: `config.<x>Schedule?.<field>` are
+ * plain property reads this function does not control, so a hostile/proxied `BootConfig` (a
+ * throwing `enabled`/`intervalMs` getter, or a throwing `workspaceId` getter on a `scopes` entry)
+ * would otherwise escape past every helper's own never-throwing contract and abort this function —
+ * and every family queued AFTER the one that threw — entirely. Each family's catch reports
+ * `config_access_threw` for THAT family only and lets the remaining families proceed, mirroring the
+ * per-family isolation every other D2b skip already gives a malformed (non-throwing) VALUE. Not
+ * reachable from a JSON config file today (defense-in-depth), but this function's own doc claimed
+ * "never throws" before this existed, so the claim is now backed by an actual mechanism rather than
+ * "no test has found a throw yet."
+ *
+ * The `ingestionTriage`/`projectSync` gate calls below still build NO static envelope (WP5's scope
+ * deliberately excludes those two families — each needs a per-tick fan-out workflow that does not
+ * exist yet) — only their `intervalMs` gained D2b's fail-closed validation, same as every other
+ * family; the gate calls themselves and their `args: []` shape are otherwise untouched.
+ */
+export function buildOutputWorkflowScheduleSpecs(
+  config: BootConfig,
+  taskQueue: SowTaskQueue,
+  registryScopes: readonly ScheduledWorkspaceScope[],
+  onSkip?: (skip: OutputWorkflowScheduleSkip) => void,
+): TemporalScheduleSpec[] {
+  const specs: TemporalScheduleSpec[] = [];
+
+  // task 25.5 — ingestionTriage. ⛔ task D2b — intervalMs now gets the SAME fail-closed validation
+  // the workspace-id override already had (F3): a non-finite/non-positive/non-number value SKIPS
+  // this family (typed onSkip) instead of reaching `spec.intervals[0].every` as durable garbage.
+  // ⛔ task M3c — the WHOLE block is wrapped: `config.ingestionTriageSchedule?.enabled`/`.intervalMs`
+  // are plain property reads, not calls this function controls — a hostile config object (a throwing
+  // getter) would otherwise escape this function entirely (§16), aborting every family that runs
+  // AFTER it too. A caught throw here degrades to a typed skip for THIS family only; siblings are
+  // unaffected (same per-family isolation every other D2b skip already gives a malformed VALUE).
+  try {
+    const ingestionTriageEnabled = config.ingestionTriageSchedule?.enabled === true;
+    const ingestionTriageIntervalMs = resolveScheduleDurationMs(
+      ingestionTriageEnabled,
+      config.ingestionTriageSchedule?.intervalMs,
+      6 * 60 * 60 * 1000,
+    );
+    if (!ingestionTriageIntervalMs.ok) {
+      onSkip?.({ family: "ingestionTriage", code: "invalid_interval_ms" });
+    } else {
+      const ingestionTriageScheduleSpec = gateIngestionTriageSchedule({
+        enabled: ingestionTriageEnabled,
+        taskQueue,
+        intervalMs: ingestionTriageIntervalMs.value,
+      });
+      if (ingestionTriageScheduleSpec !== undefined) specs.push(ingestionTriageScheduleSpec);
+    }
+  } catch {
+    onSkip?.({ family: "ingestionTriage", code: "config_access_threw" });
+  }
+
+  // task 25.3 — projectSync. `gateProjectSyncSchedule` + its spec builder landed at `1322f74d`;
+  // untouched by WP5 (out of scope this wave, per this function's own header). Same D2b interval
+  // validation as ingestionTriage above.
+  // ⛔ task M3c — same per-family throw containment as ingestionTriage above.
+  try {
+    const projectSyncEnabled = config.projectSyncSchedule?.enabled === true;
+    const projectSyncIntervalMs = resolveScheduleDurationMs(
+      projectSyncEnabled,
+      config.projectSyncSchedule?.intervalMs,
+      60 * 60 * 1000,
+    );
+    if (!projectSyncIntervalMs.ok) {
+      onSkip?.({ family: "projectSync", code: "invalid_interval_ms" });
+    } else {
+      const projectSyncScheduleSpec = gateProjectSyncSchedule({
+        enabled: projectSyncEnabled,
+        taskQueue,
+        intervalMs: projectSyncIntervalMs.value,
+      });
+      if (projectSyncScheduleSpec !== undefined) specs.push(projectSyncScheduleSpec);
+    }
+  } catch {
+    onSkip?.({ family: "projectSync", code: "config_access_threw" });
+  }
+
+  // task 25.2 — dailyBrief (daily cadence). WP5: real `catchUpWindowMs`/`globalWorkspaceId`/
+  // `scopes` feed the static envelope (§16 frozen contract, scheduleArgs.ts). ⛔ task D2b —
+  // `intervalMs`/`catchUpWindowMs`/`scopes` now get the SAME fail-closed validation
+  // `globalWorkspaceId` already had (F3) — the four fields are one config envelope; validating
+  // only the id left a typo in any of the other three silently registering a durable schedule with
+  // a garbage cadence or a malformed `action.args` (MEASURED: NaN/-1/"abc" intervalMs, a
+  // non-array scopes).
+  // ⛔ task M3c — the WHOLE dailyBrief block is wrapped: this also contains the ONLY call site in
+  // this function where a hostile `scopes` ENTRY (a throwing `workspaceId`/`brainId` getter) can
+  // surface — `resolveScheduleScopes` iterates the array and reads those properties synchronously,
+  // so a throw there propagates up through this same try, caught here rather than escaping the
+  // function (no separate wrap needed inside `resolveScheduleScopes` itself).
+  try {
+    const dailyBriefEnabled = config.dailyBriefSchedule?.enabled === true;
+    const dailyBriefIntervalMs = resolveScheduleDurationMs(
+      dailyBriefEnabled,
+      config.dailyBriefSchedule?.intervalMs,
+      24 * 60 * 60 * 1000,
+    );
+    // ⛔ task F3 — resolved BEFORE the gate call so a malformed override on a DISARMED family is
+    // never branded (see resolveScheduleWorkspaceId's own doc).
+    const dailyBriefGlobalWorkspaceId = resolveScheduleWorkspaceId(
+      dailyBriefEnabled,
+      config.dailyBriefSchedule?.globalWorkspaceId,
+      DEFAULT_GLOBAL_COORDINATION_WORKSPACE_ID,
+    );
+    // `catchUpWindowMs`'s own default rides the RESOLVED interval (2x) — only computable once
+    // `dailyBriefIntervalMs` itself resolved ok; a bad interval short-circuits catchUpWindowMs
+    // resolution too rather than defaulting off a garbage base.
+    const dailyBriefCatchUpWindowMs: { readonly ok: true; readonly value: number } | { readonly ok: false } =
+      dailyBriefIntervalMs.ok
+        ? resolveScheduleDurationMs(
+            dailyBriefEnabled,
+            config.dailyBriefSchedule?.catchUpWindowMs,
+            2 * dailyBriefIntervalMs.value,
+          )
+        : { ok: false };
+    const dailyBriefScopes = resolveScheduleScopes(
+      dailyBriefEnabled,
+      config.dailyBriefSchedule?.scopes,
+      registryScopes,
+    );
+
+    if (!dailyBriefIntervalMs.ok) {
+      onSkip?.({ family: "dailyBrief", code: "invalid_interval_ms" });
+    } else if (!dailyBriefGlobalWorkspaceId.ok) {
+      onSkip?.({ family: "dailyBrief", code: "invalid_workspace_id" });
+    } else if (!dailyBriefCatchUpWindowMs.ok) {
+      onSkip?.({ family: "dailyBrief", code: "invalid_catch_up_window_ms" });
+    } else if (!dailyBriefScopes.ok) {
+      onSkip?.({ family: "dailyBrief", code: "invalid_scopes" });
+    } else {
+      const dailyBriefScheduleSpec = gateDailyBriefSchedule({
+        enabled: dailyBriefEnabled,
+        taskQueue,
+        intervalMs: dailyBriefIntervalMs.value,
+        catchUpWindowMs: dailyBriefCatchUpWindowMs.value,
+        globalWorkspaceId: dailyBriefGlobalWorkspaceId.value,
+        scopes: dailyBriefScopes.value,
+      });
+      if (dailyBriefScheduleSpec !== undefined) specs.push(dailyBriefScheduleSpec);
+    }
+  } catch {
+    onSkip?.({ family: "dailyBrief", code: "config_access_threw" });
+  }
+
+  // task 25.2 — periodReview, weekly AND monthly cadences. ONE owner flag
+  // (`config.periodReviewSchedule.enabled`) arms BOTH — two independent schedule specs (distinct
+  // scheduleId, SAME workflowType), never collapsed into one; each cadence's own catch-up window
+  // defaults off ITS OWN resolved interval, never the other cadence's (WP5). ⛔ task D2b — same
+  // 4-field validation as dailyBrief; EACH cadence resolves its OWN `intervalMs`
+  // (`weeklyIntervalMs`/`monthlyIntervalMs` — a bad one skips ONLY that cadence, the two are
+  // independent AND-locks per the module's own doc), while `catchUpWindowMs`/`globalWorkspaceId`/
+  // `scopes` are SHARED — a malformed shared field skips BOTH cadences (mirrors F3's existing
+  // `globalWorkspaceId` behavior).
+  // ⛔ task M3c — the WHOLE periodReview block is wrapped. A shared-config throw skips BOTH
+  // cadences (mirroring how a shared `invalid_workspace_id`/`invalid_scopes` already skips both
+  // above) — the two `onSkip` calls in the `catch` are unconditional rather than trying to guess
+  // which cadence's own accessor threw, matching this block's existing shared-field convention.
+  try {
+    const periodReviewEnabled = config.periodReviewSchedule?.enabled === true;
+    const periodReviewWeeklyIntervalMs = resolveScheduleDurationMs(
+      periodReviewEnabled,
+      config.periodReviewSchedule?.weeklyIntervalMs,
+      7 * 24 * 60 * 60 * 1000,
+    );
+    const periodReviewMonthlyIntervalMs = resolveScheduleDurationMs(
+      periodReviewEnabled,
+      config.periodReviewSchedule?.monthlyIntervalMs,
+      30 * 24 * 60 * 60 * 1000,
+    );
+    // ⛔ task F3 — BOTH cadences share this one resolved id; a malformed override skips BOTH specs
+    // (they'd otherwise disagree on which workspace the review targets).
+    const periodReviewGlobalWorkspaceId = resolveScheduleWorkspaceId(
+      periodReviewEnabled,
+      config.periodReviewSchedule?.globalWorkspaceId,
+      DEFAULT_GLOBAL_COORDINATION_WORKSPACE_ID,
+    );
+    const periodReviewScopes = resolveScheduleScopes(
+      periodReviewEnabled,
+      config.periodReviewSchedule?.scopes,
+      registryScopes,
+    );
+
+    if (!periodReviewGlobalWorkspaceId.ok) {
+      onSkip?.({ family: "periodReviewWeekly", code: "invalid_workspace_id" });
+      onSkip?.({ family: "periodReviewMonthly", code: "invalid_workspace_id" });
+    } else if (!periodReviewScopes.ok) {
+      onSkip?.({ family: "periodReviewWeekly", code: "invalid_scopes" });
+      onSkip?.({ family: "periodReviewMonthly", code: "invalid_scopes" });
+    } else {
+      if (!periodReviewWeeklyIntervalMs.ok) {
+        onSkip?.({ family: "periodReviewWeekly", code: "invalid_interval_ms" });
+      } else {
+        const periodReviewWeeklyCatchUpWindowMs = resolveScheduleDurationMs(
+          periodReviewEnabled,
+          config.periodReviewSchedule?.catchUpWindowMs,
+          2 * periodReviewWeeklyIntervalMs.value,
+        );
+        if (!periodReviewWeeklyCatchUpWindowMs.ok) {
+          onSkip?.({ family: "periodReviewWeekly", code: "invalid_catch_up_window_ms" });
+        } else {
+          const periodReviewWeeklyScheduleSpec = gatePeriodReviewWeeklySchedule({
+            enabled: periodReviewEnabled,
+            taskQueue,
+            intervalMs: periodReviewWeeklyIntervalMs.value,
+            catchUpWindowMs: periodReviewWeeklyCatchUpWindowMs.value,
+            globalWorkspaceId: periodReviewGlobalWorkspaceId.value,
+            scopes: periodReviewScopes.value,
+          });
+          if (periodReviewWeeklyScheduleSpec !== undefined) specs.push(periodReviewWeeklyScheduleSpec);
+        }
+      }
+
+      if (!periodReviewMonthlyIntervalMs.ok) {
+        onSkip?.({ family: "periodReviewMonthly", code: "invalid_interval_ms" });
+      } else {
+        const periodReviewMonthlyCatchUpWindowMs = resolveScheduleDurationMs(
+          periodReviewEnabled,
+          config.periodReviewSchedule?.catchUpWindowMs,
+          2 * periodReviewMonthlyIntervalMs.value,
+        );
+        if (!periodReviewMonthlyCatchUpWindowMs.ok) {
+          onSkip?.({ family: "periodReviewMonthly", code: "invalid_catch_up_window_ms" });
+        } else {
+          const periodReviewMonthlyScheduleSpec = gatePeriodReviewMonthlySchedule({
+            enabled: periodReviewEnabled,
+            taskQueue,
+            intervalMs: periodReviewMonthlyIntervalMs.value,
+            catchUpWindowMs: periodReviewMonthlyCatchUpWindowMs.value,
+            globalWorkspaceId: periodReviewGlobalWorkspaceId.value,
+            scopes: periodReviewScopes.value,
+          });
+          if (periodReviewMonthlyScheduleSpec !== undefined) specs.push(periodReviewMonthlyScheduleSpec);
+        }
+      }
+    }
+  } catch {
+    onSkip?.({ family: "periodReviewWeekly", code: "config_access_threw" });
+    onSkip?.({ family: "periodReviewMonthly", code: "config_access_threw" });
+  }
+
+  // task 25.4 — crossCalendarScheduling. WP5: real `organizerWorkspaceId`/`sources` feed the
+  // static envelope. ⛔ task D2b — `intervalMs`/`sources` now get the SAME fail-closed validation
+  // `organizerWorkspaceId` already had (F3).
+  // ⛔ task M3c — the WHOLE crossCalendarScheduling block is wrapped, same containment as every
+  // other family above.
+  try {
+    const crossCalendarSchedulingEnabled = config.crossCalendarSchedulingSchedule?.enabled === true;
+    const crossCalendarSchedulingIntervalMs = resolveScheduleDurationMs(
+      crossCalendarSchedulingEnabled,
+      config.crossCalendarSchedulingSchedule?.intervalMs,
+      60 * 60 * 1000,
+    );
+    const crossCalendarSchedulingOrganizerWorkspaceId = resolveScheduleWorkspaceId(
+      crossCalendarSchedulingEnabled,
+      config.crossCalendarSchedulingSchedule?.organizerWorkspaceId,
+      DEFAULT_GLOBAL_COORDINATION_WORKSPACE_ID,
+    );
+    const crossCalendarSchedulingSources = resolveScheduleSources(
+      crossCalendarSchedulingEnabled,
+      config.crossCalendarSchedulingSchedule?.sources,
+      [],
+    );
+
+    if (!crossCalendarSchedulingIntervalMs.ok) {
+      onSkip?.({ family: "crossCalendarScheduling", code: "invalid_interval_ms" });
+    } else if (!crossCalendarSchedulingOrganizerWorkspaceId.ok) {
+      onSkip?.({ family: "crossCalendarScheduling", code: "invalid_workspace_id" });
+    } else if (!crossCalendarSchedulingSources.ok) {
+      onSkip?.({ family: "crossCalendarScheduling", code: "invalid_sources" });
+    } else {
+      const crossCalendarSchedulingScheduleSpec = gateCrossCalendarSchedulingSchedule({
+        enabled: crossCalendarSchedulingEnabled,
+        taskQueue,
+        intervalMs: crossCalendarSchedulingIntervalMs.value,
+        organizerWorkspaceId: crossCalendarSchedulingOrganizerWorkspaceId.value,
+        sources: crossCalendarSchedulingSources.value,
+      });
+      if (crossCalendarSchedulingScheduleSpec !== undefined) {
+        specs.push(crossCalendarSchedulingScheduleSpec);
+      }
+    }
+  } catch {
+    onSkip?.({ family: "crossCalendarScheduling", code: "config_access_threw" });
+  }
+
+  return specs;
 }
 
 /**
@@ -3394,7 +4207,12 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     } catch {
       // A client-build fault degrades to startRun=undefined ⇒ each capture fails CLOSED via
       // the degraded dispatch below. Never a crash (§16).
-      backends.logger.warn("vault.watch.temporal_client_unavailable", { fields: { code: "client_build_failed" } });
+      // task M3a follow-up — UPPER_SNAKE, not lower_snake: a lower_snake `code` value fails
+      // @sow/domain's `code`-field STRUCTURED_CODE vocabulary (measured — the exact gap M3a
+      // fixed at the three registrar-ensure-loop sites + the `schedule.client_unavailable`
+      // sibling below) and renders `[REDACTED:raw]`, dropping this fixed, owner-data-free
+      // literal for no reason. This is the ONE site that follow-up missed.
+      backends.logger.warn("vault.watch.temporal_client_unavailable", { fields: { code: "CLIENT_BUILD_FAILED" } });
     }
     const vaultDispatchHealth: DispatchHealthSink = async ({
       failureClass,
@@ -3488,66 +4306,68 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // LAZY-connect discipline (a down Temporal degrades to a warned no-op, no boot-time connect
   // stall). ⛔ NOTHING ARMS: every `gate*Schedule` call below returns undefined unless the owner
   // has flipped ITS OWN config flag to the STRICT literal `true` (each an independent AND-lock —
-  // arming one schedule never arms another), and even on an armed path `ensure()` can only
-  // create/converge a PAUSED schedule (scheduleRegistrar.ts's own structural guarantee) — no code
-  // path here or in that module can start a LIVE (actively firing) schedule; an operator unpauses
-  // one by hand, outside this process entirely. Every gated spec is collected FIRST, then — only
+  // arming one schedule never arms another), and even on an armed path `ensure()` never ASKS to
+  // start a live schedule: it CREATES paused, and a converge PRESERVES whatever pause state the
+  // schedule already had.
+  // ⛔ Read that second half precisely — a converge over a schedule an operator UNPAUSED leaves it
+  // LIVE, by design. So the honest claim is "this code never TRANSITIONS a schedule to live",
+  // NOT "no schedule here can be live". Only a human operator makes one live, outside this
+  // process; from then on a converge keeps it that way.
+  // ⛔ And the guarantee is NOT `scheduleRegistrar.ts`'s port shape. That port omits a `paused`
+  // field, and that fact alone guarantees NOTHING — it was MEASURED FALSE (`afterCreate.paused=true`
+  // → `afterUpdate.paused=false`, task F2): the SDK's update is a full REPLACE, so proto3 filled the
+  // absent bool with `false` and silently unpaused the schedule on the second boot. What actually
+  // preserves pause state is THIS file's {@link createRealScheduleClientPort}`.update`, which reads
+  // `previous.state.paused` back and echoes it. An absence in a port's TYPE is not an absence on
+  // the WIRE. Every gated spec is collected FIRST, then — only
   // if at least one armed — registered over ONE lazily-connected, always-closed Temporal client
   // (amortizing the connect rather than opening one per schedule; 25.5's own per-schedule
   // fire-and-forget/degraded-safe/lazy-connect/always-closed properties all hold identically per
   // spec inside the shared loop).
-  const outputWorkflowScheduleSpecs: TemporalScheduleSpec[] = [];
+  // WP5 — the registered-workspace scopes the composition root's own registry holds, used as
+  // the DEFAULT `scopes` for the dailyBrief/periodReview families (an explicit owner `scopes`
+  // override on either config block takes precedence inside buildOutputWorkflowScheduleSpecs).
+  // Only fetched when one of the two scope-consuming families is actually armed —
+  // crossCalendarScheduling/projectSync/ingestionTriage need no registry read, so a fully-OFF
+  // default boot performs NEITHER this read NOR any construction beyond the pure builder below
+  // (byte-equivalent, mirrors the OFF-guard-first discipline every gate here already follows).
+  const dailyOrPeriodReviewArmed =
+    config.dailyBriefSchedule?.enabled === true || config.periodReviewSchedule?.enabled === true;
+  const registryWorkspaceScopes: readonly ScheduledWorkspaceScope[] = dailyOrPeriodReviewArmed
+    ? await loadRegisteredWorkspaceScopes(backends.repos.readModels)
+    : [];
 
-  const ingestionTriageScheduleSpec = gateIngestionTriageSchedule({
-    enabled: config.ingestionTriageSchedule?.enabled === true,
-    taskQueue: PROOF_SPINE_TASK_QUEUE,
-    intervalMs: config.ingestionTriageSchedule?.intervalMs ?? 6 * 60 * 60 * 1000,
-  });
-  if (ingestionTriageScheduleSpec !== undefined) outputWorkflowScheduleSpecs.push(ingestionTriageScheduleSpec);
-
-  // task 25.3 — projectSync. `gateProjectSyncSchedule` + its spec builder landed at `1322f74d`;
-  // this is the remaining boot-level wiring named as this package's own crossTerritoryNeed.
-  const projectSyncScheduleSpec = gateProjectSyncSchedule({
-    enabled: config.projectSyncSchedule?.enabled === true,
-    taskQueue: PROOF_SPINE_TASK_QUEUE,
-    intervalMs: config.projectSyncSchedule?.intervalMs ?? 60 * 60 * 1000,
-  });
-  if (projectSyncScheduleSpec !== undefined) outputWorkflowScheduleSpecs.push(projectSyncScheduleSpec);
-
-  // task 25.2 — dailyBrief (daily cadence).
-  const dailyBriefScheduleSpec = gateDailyBriefSchedule({
-    enabled: config.dailyBriefSchedule?.enabled === true,
-    taskQueue: PROOF_SPINE_TASK_QUEUE,
-    intervalMs: config.dailyBriefSchedule?.intervalMs ?? 24 * 60 * 60 * 1000,
-  });
-  if (dailyBriefScheduleSpec !== undefined) outputWorkflowScheduleSpecs.push(dailyBriefScheduleSpec);
-
-  // task 25.2 — periodReview, weekly AND monthly cadences. ONE owner flag
-  // (`config.periodReviewSchedule.enabled`) arms BOTH — two independent schedule specs (distinct
-  // scheduleId, SAME workflowType), never collapsed into one.
-  const periodReviewWeeklyScheduleSpec = gatePeriodReviewWeeklySchedule({
-    enabled: config.periodReviewSchedule?.enabled === true,
-    taskQueue: PROOF_SPINE_TASK_QUEUE,
-    intervalMs: config.periodReviewSchedule?.weeklyIntervalMs ?? 7 * 24 * 60 * 60 * 1000,
-  });
-  if (periodReviewWeeklyScheduleSpec !== undefined) outputWorkflowScheduleSpecs.push(periodReviewWeeklyScheduleSpec);
-
-  const periodReviewMonthlyScheduleSpec = gatePeriodReviewMonthlySchedule({
-    enabled: config.periodReviewSchedule?.enabled === true,
-    taskQueue: PROOF_SPINE_TASK_QUEUE,
-    intervalMs: config.periodReviewSchedule?.monthlyIntervalMs ?? 30 * 24 * 60 * 60 * 1000,
-  });
-  if (periodReviewMonthlyScheduleSpec !== undefined) outputWorkflowScheduleSpecs.push(periodReviewMonthlyScheduleSpec);
-
-  // task 25.4 — crossCalendarScheduling.
-  const crossCalendarSchedulingScheduleSpec = gateCrossCalendarSchedulingSchedule({
-    enabled: config.crossCalendarSchedulingSchedule?.enabled === true,
-    taskQueue: PROOF_SPINE_TASK_QUEUE,
-    intervalMs: config.crossCalendarSchedulingSchedule?.intervalMs ?? 60 * 60 * 1000,
-  });
-  if (crossCalendarSchedulingScheduleSpec !== undefined) {
-    outputWorkflowScheduleSpecs.push(crossCalendarSchedulingScheduleSpec);
-  }
+  const outputWorkflowScheduleSpecs: TemporalScheduleSpec[] = buildOutputWorkflowScheduleSpecs(
+    config,
+    PROOF_SPINE_TASK_QUEUE,
+    registryWorkspaceScopes,
+    // ⛔ task F3 — an ARMED family whose owner-configured workspace-id override is malformed lands
+    // here instead of throwing: a warned log line + a best-effort HealthItem (never blocks boot,
+    // §16 — mirrors the single-owner-lock refusal mint above). That family registers zero
+    // schedules this boot; sibling families are unaffected (per-family isolation in the builder).
+    (skip) => {
+      // task W3c — a combined UPPER_SNAKE code (family + reason) survives the field-level redactor
+      // via its EXISTING `code`/STRUCTURED_CODE pass-through; see scheduleSkipLogCode's own doc.
+      backends.logger.warn("schedule.envelope_invalid", {
+        fields: { code: scheduleSkipLogCode(skip) },
+      });
+      backends.healthItems
+        .put({
+          id: `schedule-envelope:${skip.family}:${backends.now()}`,
+          failureClass: "worker_down",
+          severity: "warn",
+          // task W3b — the message is accurate PER CODE (a closed map), not a single hardcoded
+          // workspace-id string that named the wrong field for four of the five skip codes.
+          message: scheduleSkipHealthMessage(skip.code),
+          auditRef: auditId(`worker-boot:schedule-envelope:${skip.family}`),
+          openedAt: backends.now(),
+          state: "open",
+        })
+        .catch(() => {
+          /* best-effort — a health-mint fault must never block boot (§16) */
+        });
+    },
+  );
 
   if (outputWorkflowScheduleSpecs.length > 0) {
     const specs = outputWorkflowScheduleSpecs;
@@ -3569,20 +4389,31 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
         for (const spec of specs) {
           const outcome = await registrar.ensure(spec);
           if (isErr(outcome)) {
+            // task M3a — folds scheduleId+error-code into ONE redaction-safe `code` (see
+            // scheduleEnsureFailedLogCode's own doc) — a bare `scheduleId`/raw `code` here would
+            // both be silently dropped by the real redactor (measured, task M3a).
             backends.logger.warn("schedule.ensure_failed", {
-              fields: { code: outcome.error.code, scheduleId: spec.scheduleId },
+              fields: { code: scheduleEnsureFailedLogCode(spec.scheduleId, outcome.error.code) },
             });
           } else {
+            // task M3a — same fold for the success path (see scheduleEnsuredLogCode's own doc).
             backends.logger.info("schedule.ensured", {
-              fields: { action: outcome.value.action, scheduleId: spec.scheduleId },
+              fields: { code: scheduleEnsuredLogCode(spec.scheduleId, outcome.value.action) },
             });
           }
         }
       } catch {
-        // A client-build/connect fault degrades to a warned no-op — never crashes boot (§16), mirrors
-        // the vault-watcher's own client_build_failed discipline above.
+        // A client-build/connect fault degrades to a warned no-op — never crashes boot (§16),
+        // mirrors the vault-watcher's own CLIENT_BUILD_FAILED discipline above (both sites now
+        // agree — a prior round's M3a follow-up fixed this site's casing but missed the
+        // vault-watcher one, leaving two neighbouring sites disagreeing on redactor survival).
+        // ⛔ task M3a — UPPER_SNAKE: lower_snake does NOT match @sow/domain's `code`-field
+        // `STRUCTURED_CODE` vocabulary (measured — it fails the same as the three sibling sites
+        // above), so it would render `[REDACTED:raw]` same as the sites this task fixes. This is
+        // a fixed literal carrying no owner data either way; only the casing needed to change to
+        // survive the redactor.
         backends.logger.warn("schedule.client_unavailable", {
-          fields: { code: "client_build_failed" },
+          fields: { code: "CLIENT_BUILD_FAILED" },
         });
       } finally {
         try {

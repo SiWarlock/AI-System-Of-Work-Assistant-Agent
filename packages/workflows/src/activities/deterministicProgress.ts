@@ -162,6 +162,11 @@ export function createDeterministicProgressActivity(
       ctx: ProjectSyncContext,
     ): Promise<Result<DeterministicProgress, ParseProgressError>> {
       const read = await deps.reader.read(ctx);
+      // R3 (24.73 restore round): NOT redacted — the only production-bound reader
+      // (buildActivities.ts's `projectSyncParse.reader`) is a hardcoded literal
+      // ("no plan/provider progress source wired yet") today, so a redaction here
+      // guards nothing while costing the operator the real diagnostic once a real
+      // reader is wired. Forward verbatim.
       if (!read.ok) return err(read.error);
 
       const sources = read.value;
@@ -337,10 +342,23 @@ export function createBuildSyncOutputsActivity(
       if (!existsRes.ok) {
         // Fail CLOSED under uncertainty — NEVER guess create-vs-patch (a wrong NoteCreate over an existing
         // note blindly overwrites human scaffold; a wrong NotePatch over a missing note writes a markers-only file).
+        //
+        // SAFETY RULE 7 (KEPT) — `existsRes.error.cause` is still DROPPED, never forwarded. `noteExists` is a
+        // WS-8-scoped probe over a REAL vault-backed reader in production (this port's own doc: "e.g.
+        // meetingNoteExists"), so `cause` can be a raw Node fs error object carrying an absolute vault path + a
+        // stack trace — exactly the log-sink hazard rule 7 forbids.
+        //
+        // R3 (24.73 restore round) — the message now interpolates `.message`, NOT `.code`.
+        // `NoteExistsErrorCode` is a SINGLE-member union (`"read_failed"`), so the prior `${existsRes.error.code}`
+        // rendered the SAME text on every failure regardless of cause — no more informative than the bare
+        // `build_failed` code already surfaced. `.message` is a fixed, SoW-authored literal built by the bound
+        // reader's own composition wrapper (e.g. "project note-exists probe: vault read failed" /
+        // "meeting note-exists probe: vault read failed" — apps/worker/src/composition/projectRegistry.ts,
+        // buildActivities.ts) — never raw fs text — so it is safe to forward and actually distinguishes this
+        // probe failure from every other `build_failed` branch in this activity.
         return err({
           code: "build_failed",
-          message: `note-exists probe failed (fail-closed): ${existsRes.error.code}`,
-          cause: existsRes.error.cause,
+          message: `note-exists probe failed (fail-closed): ${existsRes.error.message}`,
         });
       }
 

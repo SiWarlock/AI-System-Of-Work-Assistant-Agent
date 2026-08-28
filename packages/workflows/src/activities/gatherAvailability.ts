@@ -125,17 +125,34 @@ export function createGatherAvailabilityActivity(
           // Fail-closed: a source that cannot be read is NEVER assumed free —
           // the whole gather fails, carrying the sources read so far (for the
           // health item), rather than a silently-partial result.
+          //
+          // R3 (24.73 restore round) — `queried.error.message` is RESTORED (a prior
+          // round dropped it in favor of interpolating only `.code`). `query` is
+          // THIS PACKAGE's own typed `AvailabilitySourceQuery` port, not a raw
+          // provider/driver error — the real bound query in production
+          // (buildActivities.ts's `crossCalendarGather.query`) builds its message
+          // from a fixed literal, and every other operator-facing message in this
+          // activity (below, and in the sibling gate-rejection reason) already
+          // forwards the injected dependency's own text. `queried.error.cause`
+          // stays DROPPED (never read here) — that is the field that can carry a
+          // raw fs/provider object, not `message`.
           return err({
             code: "calendar_unreachable",
             message: `availability source ${source.sourceId} unreachable: ${queried.error.message}`,
             readSources,
-            cause: queried.error,
           });
         }
 
         for (const candidate of queried.value) {
           const admitted = await deps.gate.admit(candidate, ctx.organizerWorkspaceId);
           if (!admitted.ok) {
+            // R3 (24.73 restore round) — `admitted.error.reason` is RESTORED. This
+            // file's own header names TWO very different gate-rejection causes —
+            // an unauthorized cross-workspace read (the fix: get an approved link)
+            // vs raw content present (the fix: fix the source) — and a fixed
+            // generic message made them indistinguishable to the operator. Per the
+            // owner directive, an over-broad reason string is an acceptable cost;
+            // collapsing two actionably-different failures into one message is not.
             return err({
               code: "gate_rejected",
               message: `availability source ${source.sourceId} rejected by the visibility gate: ${admitted.error.reason}`,

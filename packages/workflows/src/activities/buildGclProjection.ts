@@ -114,6 +114,11 @@ export function createBuildGclProjectionActivity(
       const candidates = await deps.source.project(ctx);
       if (!candidates.ok) {
         // Stale / unfreshable source — fail-closed (no partial projection set).
+        // R3 (24.73 restore round): NOT redacted — this activity's port is DORMANT
+        // (this file's own header: zero production callers, no real ProjectionSource
+        // bound anywhere), so a redaction here guards nothing today while costing
+        // the diagnostic. Restored for consistency with the sibling gate-rejection
+        // branch below, which already forwards `decision.error.reason` unredacted.
         return err(candidates.error);
       }
 

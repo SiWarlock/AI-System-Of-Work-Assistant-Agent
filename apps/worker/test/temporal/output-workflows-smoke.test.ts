@@ -22,6 +22,16 @@
 //       the activity-name string only workflows.ts owns would surface as an
 //       "activity not registered" fault here, not at typecheck time).
 //
+// (WP2 addition) — the SAME three proofs, for the SCHEDULED entry points
+// (dailyBriefScheduledWorkflow / periodReviewScheduledWorkflow /
+// crossCalendarSchedulingScheduledWorkflow): each resolves its TYPE NAME to a real
+// export (a mismatch with scheduleArgs.ts's DAILY_BRIEF_SCHEDULED_WORKFLOW_TYPE etc.
+// fails to START, not silently), and each reaches its family's first refused activity
+// ONLY after successfully driving the DURABLE `SCHEDULED_RUNTIME_ACTIVITY_NAMES`
+// proxies (resolveRun's idempotency lookup+create, and — for dailyBrief/periodReview —
+// the LIFE-2 catch-up bookkeeping read) — proving those proxy names are exactly what
+// the composition root must register, not a typo only surfacing live.
+//
 // GATED: `describe.skipIf(!SOW_TEMPORAL)` — the default suite must never need a live
 // Temporal server (mirrors test/integration/proof-spine.test.ts's own gating exactly).
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -43,6 +53,17 @@ import {
   PROOF_SPINE_IGNORE_MODULES,
   proofSpineWebpackConfigHook,
 } from "../../src/temporal/registerWorker";
+import {
+  SCHEDULED_RUNTIME_ACTIVITY_NAMES,
+  DAILY_BRIEF_SCHEDULED_WORKFLOW_TYPE,
+  PERIOD_REVIEW_SCHEDULED_WORKFLOW_TYPE,
+  CROSS_CALENDAR_SCHEDULING_SCHEDULED_WORKFLOW_TYPE,
+} from "../../src/temporal/scheduleArgs";
+import type {
+  DailyBriefScheduleArgs,
+  PeriodReviewScheduleArgs,
+  CrossCalendarSchedulingScheduleArgs,
+} from "../../src/temporal/scheduleArgs";
 
 const TASK_QUEUE = "sow-control-plane";
 const WS = workspaceId("ws-output-smoke");
@@ -71,6 +92,21 @@ const fakeActivities = {
   crossCalendarGatherAvailability: () =>
     Promise.resolve(err({ code: "calendar_unreachable", message: "smoke: no real calendar source" })),
   crossCalendarSurfaceFailure: () => Promise.resolve(ok({ routedToHealth: true, routedToOutbox: false })),
+
+  // (WP2 addition) the DURABLE run-repo + schedule-store activities the THREE
+  // scheduled entry points drive via resolveRun (7.4) + the LIFE-2 catch-up check —
+  // BEFORE reaching each family's first refused activity above. Keyed off the SAME
+  // frozen SCHEDULED_RUNTIME_ACTIVITY_NAMES constant workflows.ts's `scheduledRunRepo`/
+  // `scheduledScheduleStore` proxy against: a name here drifted from that constant
+  // would surface as an "activity not registered" fault, which is exactly what this
+  // smoke test exists to catch (see proof (3) in the module header).
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runGetByIdempotencyKey]: () =>
+    Promise.resolve(err({ code: "not_found", message: "smoke: novel idempotency key" })),
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runCreate]: (ref: unknown) => Promise.resolve(ok(ref)),
+  // First-run bookkeeping (undefined) — the LIFE-2 catch-up treats it as due and lets
+  // the daily-brief/period-review driver proceed to its first refused activity, same
+  // as the direct-start smoke cases above.
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.scheduleGetBookkeeping]: () => Promise.resolve(undefined),
 };
 
 interface Rig {
@@ -178,6 +214,65 @@ describe.skipIf(!SOW_TEMPORAL)("25.1 output-workflow bundle — smoke start reso
       "crossCalendarSchedulingWorkflow",
       "wf-cal-smoke",
       input,
+    );
+    expect(outcome.state).toBe("calendar_unreachable");
+    expect(outcome.surfaced).toBeDefined();
+  });
+
+  // (WP2 addition) — the SCHEDULED entry points. Each takes the STATIC *ScheduleArgs
+  // envelope (never a pre-built *Input — that is exactly the point: the scheduled
+  // wrapper derives `run` in-sandbox from `workflowInfo().workflowId`, see
+  // scheduleArgs.ts's header), drives the durable run-repo/schedule-store proxies
+  // registered above, and rests at the SAME failure/park state as its direct-start
+  // sibling once it reaches the family's first refused activity — proving the whole
+  // durable seam (resolveRun + LIFE-2 bookkeeping where applicable) actually ran
+  // rather than being skipped or silently failing to start.
+
+  it("dailyBriefScheduledWorkflow starts and resolves (parks on the refused connector refresh)", async () => {
+    const args: DailyBriefScheduleArgs = {
+      scheduleId: "smoke-daily-brief-scheduled",
+      intervalMs: 86_400_000,
+      catchUpWindowMs: 3_600_000,
+      globalWorkspaceId: WS,
+      scopes: [],
+    };
+    const outcome = await getRig().execute<DailyBriefOutcome>(
+      DAILY_BRIEF_SCHEDULED_WORKFLOW_TYPE,
+      "wf-brief-scheduled-smoke",
+      args,
+    );
+    expect(outcome.state).toBe("connector_stale");
+    expect(outcome.surfaced).toBeDefined();
+  });
+
+  it("periodReviewScheduledWorkflow starts and resolves (parks on the refused connector refresh)", async () => {
+    const args: PeriodReviewScheduleArgs = {
+      scheduleId: "smoke-period-review-scheduled",
+      period: "weekly",
+      intervalMs: 604_800_000,
+      catchUpWindowMs: 3_600_000,
+      globalWorkspaceId: WS,
+      scopes: [],
+    };
+    const outcome = await getRig().execute<PeriodReviewOutcome>(
+      PERIOD_REVIEW_SCHEDULED_WORKFLOW_TYPE,
+      "wf-review-scheduled-smoke",
+      args,
+    );
+    expect(outcome.state).toBe("connector_stale");
+    expect(outcome.surfaced).toBeDefined();
+  });
+
+  it("crossCalendarSchedulingScheduledWorkflow starts and resolves (parks on the refused availability gather)", async () => {
+    const args: CrossCalendarSchedulingScheduleArgs = {
+      scheduleId: "smoke-cross-calendar-scheduled",
+      organizerWorkspaceId: WS,
+      sources: [],
+    };
+    const outcome = await getRig().execute<CrossCalendarSchedulingOutcome>(
+      CROSS_CALENDAR_SCHEDULING_SCHEDULED_WORKFLOW_TYPE,
+      "wf-cal-scheduled-smoke",
+      args,
     );
     expect(outcome.state).toBe("calendar_unreachable");
     expect(outcome.surfaced).toBeDefined();

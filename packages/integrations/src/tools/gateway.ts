@@ -36,7 +36,7 @@ import { resolveExisting } from "./existence-check";
 import { recordReceipt } from "./receipt-store";
 import { buildSafeToolWriteLog, type SafeToolWriteLog } from "../redaction/gateway-log-redaction";
 import type { ReceiptStore } from "../ports/persistence";
-import type { TargetWriteAdapter } from "./adapter-port";
+import type { TargetWriteAdapter, AdapterError } from "./adapter-port";
 import { writeSecretRef, type WriteSecretsAccessor } from "./adapters/adapter-core";
 
 /**
@@ -77,14 +77,53 @@ export interface ExternalWriteDeps {
   readonly secrets?: WriteSecretsAccessor;
 }
 
-/** The closed, enumerable dispatch outcome set (§16). */
+/**
+ * `reason` is a redaction-safe OPERATOR DIAGNOSTIC for the held/conflict/
+ * rejected arms, fed by two provenances:
+ *
+ *   (1) SAFE BY CONSTRUCTION — a closed code interpolated into a fixed
+ *       template, or a Zod-issue summary built ONLY from `.code`/`.path`
+ *       (never Zod's value-echoing `.message`): the candidate-gate rejection
+ *       (`admitted.message` — see candidate-gate.ts's `safeZodIssueSummary`,
+ *       which never touches raw Zod `.message`), the credential-fault reason
+ *       (21.10 — the closed `"locked"`/`"empty"`/fault-code tokens, worker
+ *       LESSONS §41), and the reservation-conflict literal.
+ *   (2) SAFE BY CONTRACT — an adapter's own `AdapterError.message`
+ *       (`existing.error.message` / `created.error.message`). adapter-port.ts's
+ *       `AdapterError.message` doc comment REQUIRES every adapter to hand back
+ *       a structured, SoW-authored diagnostic here — never a raw vendor body,
+ *       URL, token, or driver/fs detail. This gateway forwards that message
+ *       VERBATIM (paired with the closed `code`) rather than re-sanitizing it:
+ *       sanitizing vendor-originated text is the ADAPTER's job, at the ONE
+ *       boundary where that text enters the system. Discarding the message
+ *       here instead would not add safety (the adapter already owns that
+ *       duty) — it would only cost every operator the ability to tell WHICH
+ *       fault occurred (a 401 vs. a 403 vs. a 429 vs. an SSRF-blocked endpoint
+ *       all carry the same `code` — `"rejected"` — and are distinguished ONLY
+ *       by `message`).
+ *
+ * The closed `AdapterError.code` ALSO rides its own `adapterCode` field on
+ * these three arms. A caller that must BRANCH on the failure kind (e.g.
+ * notebooklm-sync.ts's per-slot `not_found` → reattach signal) reads
+ * `adapterCode` — never parses `reason`, which is prose for a human, not a
+ * control-flow token (a prior round broke exactly this by regex-matching
+ * `reason`). `adapterCode` is absent when the failure did not originate from
+ * an `AdapterError` (a candidate-gate rejection, a credential fault, a
+ * reservation conflict).
+ *
+ * Temporal workflow history is a durable, replayed store (ARCHITECTURE.md:
+ * 155/157) and `reason` is what an activity returns into it; every consumer
+ * (a Temporal activity, a composition-root fold, a log sink) may forward it
+ * verbatim — the redaction-or-safe-contract already happened here or one
+ * layer down at the adapter boundary.
+ */
 export type ExternalWriteResult =
   | { readonly status: "created"; readonly receipt: WriteReceipt }
   | { readonly status: "reused"; readonly receipt: WriteReceipt }
   | { readonly status: "approval_pending" }
-  | { readonly status: "conflict"; readonly reason: string }
-  | { readonly status: "held"; readonly reason: string }
-  | { readonly status: "rejected"; readonly reason: string };
+  | { readonly status: "conflict"; readonly reason: string; readonly adapterCode?: AdapterError["code"] }
+  | { readonly status: "held"; readonly reason: string; readonly adapterCode?: AdapterError["code"] }
+  | { readonly status: "rejected"; readonly reason: string; readonly adapterCode?: AdapterError["code"] };
 
 // --- helpers -----------------------------------------------------------------
 
@@ -158,6 +197,11 @@ export async function dispatchExternalWrite(
   //    side effect, existence probe, or create.
   const admitted = admitExternalWriteEnvelope(env, action);
   if (!admitted.ok) {
+    // `admitted.message` is safe BY CONSTRUCTION (candidate-gate.ts builds it
+    // from a Zod issue's `.code`/`.path` or a fixed literal — never Zod's
+    // value-echoing `.message`; see the `ExternalWriteResult` doc comment).
+    // There are only two `CandidateGateCode` values, so the code alone cannot
+    // say WHICH field was bad — forward the message, not just the code.
     return { status: "rejected", reason: admitted.message };
   }
 
@@ -212,8 +256,16 @@ export async function dispatchExternalWrite(
   }
   if (existing.kind === "error") {
     // The existence probe could not confirm absence — NEVER create (would risk a
-    // duplicate). Hold for the outbox / retry path.
-    return { status: "held", reason: `existence-check ${existing.error.code}: ${existing.error.message}` };
+    // duplicate). Hold for the outbox / retry path. `existing.error.message` is
+    // safe BY CONTRACT (adapter-port.ts's `AdapterError.message` doc comment) —
+    // forwarded alongside the closed `code` (see the `ExternalWriteResult` doc
+    // comment). `adapterCode` lets a caller (notebooklm-sync.ts) branch on the
+    // failure kind without parsing this string.
+    return {
+      status: "held",
+      reason: `existence-check ${existing.error.code}: ${existing.error.message}`,
+      adapterCode: existing.error.code,
+    };
   }
 
   // 3.5 RESERVE — atomically claim the exclusive right to create THIS object
@@ -248,15 +300,23 @@ export async function dispatchExternalWrite(
 
   // 5. create fault — release the reservation, then return a typed hold/conflict/
   //    rejected. Nothing persisted; NEVER a blind overwrite, NEVER a silent drop.
+  // `created.error.message` is safe BY CONTRACT (adapter-port.ts's
+  // `AdapterError.message` doc comment) — forwarded alongside the closed code
+  // (see the `ExternalWriteResult` doc comment). This is the ONLY thing that
+  // distinguishes, say, a 401 from a 403 from a 429 from an SSRF-blocked
+  // endpoint — all four share `code: "rejected"`. `adapterCode` also rides its
+  // own field for callers that must branch (never parse `reason`).
   await deps.receiptStore.release(env.targetSystem, env.canonicalObjectKey);
+  const createFaultReason = `create fault (${created.error.code}): ${created.error.message}`;
   switch (created.error.code) {
     case "conflict":
-      return { status: "conflict", reason: created.error.message };
+      return { status: "conflict", reason: createFaultReason, adapterCode: created.error.code };
     case "unreachable":
-      return { status: "held", reason: created.error.message };
+      return { status: "held", reason: createFaultReason, adapterCode: created.error.code };
     case "rejected":
     case "unknown":
+    case "not_found":
     default:
-      return { status: "rejected", reason: created.error.message };
+      return { status: "rejected", reason: createFaultReason, adapterCode: created.error.code };
   }
 }

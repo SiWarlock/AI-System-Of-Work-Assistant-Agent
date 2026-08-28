@@ -131,20 +131,48 @@ function createThrowawayReceiptStore(): ReceiptStore {
 
 // Fold a nested dispatch outcome onto the TargetWriteAdapter.create/update return
 // shape. created/reused both carry a receipt the outer call can record; every
-// other status folds to the matching AdapterError code so the outer §8 pipeline's
-// own fault handling (held→outbox-hold-eligible, conflict→never-overwrite,
+// other status folds to an AdapterError so the outer §8 pipeline's own fault
+// handling (held→outbox-hold-eligible, conflict→never-overwrite,
 // rejected→typed reject) runs unchanged.
+//
+// CODE: `outcome.adapterCode` (gateway.ts's `ExternalWriteResult`) is the INNER
+// adapter's own closed code — e.g. a nested existence-check/create fault of
+// `not_found`, which notebooklm-sync.ts's per-slot reattach signal branches on
+// (gateway.ts:105-112's doc comment). Forwarding it here (rather than
+// collapsing every "held"/"rejected" to a fixed `"unreachable"`/`"rejected"`)
+// lets that signal survive this extra fold layer; it is ABSENT only for a
+// failure that never originated from an `AdapterError` (the reservation-
+// in-progress hold, the approval_pending guard below) — those fall back to the
+// closest status-shaped code, matching the PRE-adapterCode behavior exactly.
+//
+// MESSAGE: `outcome.reason` is forwarded VERBATIM (`message: outcome.reason`)
+// below and needs NO redaction here: the §8 Tool Gateway builds `reason`
+// REDACTION-SAFE BY CONSTRUCTION at every site (packages/integrations/src/tools/
+// gateway.ts:81-119's `ExternalWriteResult` doc comment) — a closed code or a
+// fixed literal, never adapter/vendor/Zod free text — with the ONE deliberate
+// exception being the credential-fault reason (21.10), which carries the closed
+// `"locked"`/`"empty"`/fault-code tokens an operator needs (worker LESSONS §41)
+// to distinguish "your keychain is locked" from "the vendor rejected the
+// write". This nested `AdapterError` itself then re-enters the OUTER
+// `dispatchExternalWrite` call as an `adapter.create`/`update` fault (module
+// header), which folds it through the SAME gateway construction sites
+// (gateway.ts:310, `create fault (${code}): ${message}`) — so a redaction here
+// would be not only redundant but WRONG twice over: it never reaches an
+// activity boundary carrying the original text anyway.
+// ⛔ DO NOT add a fixed-message redaction to this fold — see buildActivities.ts's
+// matching comment at its `approvedGateway.dispatch` switch for the invariant this
+// protects.
 function foldDispatchOutcome(outcome: ExternalWriteResult): Result<WriteReceipt, AdapterError> {
   switch (outcome.status) {
     case "created":
     case "reused":
       return ok(outcome.receipt);
     case "held":
-      return err({ code: "unreachable", message: outcome.reason });
+      return err({ code: outcome.adapterCode ?? "unreachable", message: outcome.reason });
     case "conflict":
-      return err({ code: "conflict", message: outcome.reason });
+      return err({ code: outcome.adapterCode ?? "conflict", message: outcome.reason });
     case "rejected":
-      return err({ code: "rejected", message: outcome.reason });
+      return err({ code: outcome.adapterCode ?? "rejected", message: outcome.reason });
     case "approval_pending":
       // Should not occur: by the time create/update runs, the OUTER call's own
       // approval step already granted this exact action. Total + fail-closed.

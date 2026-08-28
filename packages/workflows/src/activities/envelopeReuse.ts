@@ -80,3 +80,58 @@ export async function reuseExternalWriteOnResume(
       return err({ code: "rejected", reason: outcome.reason });
   }
 }
+
+// R2/§S — WHY `outcome.reason` IS FORWARDED VERBATIM HERE.
+//
+// An earlier round collapsed the `held`/`conflict`/`rejected` reason into a
+// fixed `GENERIC_REUSE_REASON` sentence at this consumer. That was a
+// REGRESSION: it destroyed the §21.10 credential-fault signal (a locked /
+// missing / denied Keychain accessor yields a `reason` CONTAINING the closed
+// token `"locked"` — how an operator tells "your Mac Keychain is locked" apart
+// from "the vendor rejected the write", worker LESSONS §41), the same break
+// already confirmed on the sibling `propose()` path
+// (activities/proposeExternalActions.ts).
+//
+// PRECISELY WHAT MAKES THAT SAFE — and do NOT restate it more strongly than
+// the mechanism supports. The gateway does NOT build `reason` "from a closed
+// code only": on the held/conflict/rejected arms it INTERPOLATES the adapter's
+// `AdapterError.message` (gateway.ts ~:266 / ~:310). `reason` is redaction-safe
+// by TWO different provenances:
+//
+//   (1) GATEWAY-AUTHORED — a closed code in a fixed template, a Zod-issue
+//       summary built ONLY from `.code`/`.path` (candidate-gate.ts's
+//       `safeZodIssueSummary`, never Zod's value-echoing `.message`), the
+//       §21.10 credential-fault token, the reservation-conflict literal.
+//   (2) ADAPTER-AUTHORED — `AdapterError.message`, safe because the ADAPTER
+//       builds it from CLOSED inputs. Every shipped vendor adapter
+//       (calendar/todoist/linear/asana/drive/github/telegram) is produced by
+//       `makeTargetWriteAdapter` (tools/adapters/adapter-core.ts), whose
+//       `faultToError` composes `message` from the 4-value closed
+//       `TransportFault` code plus the NUMERIC `httpStatus` — it never reads
+//       the transport's free-text `detail`, so a misbehaving per-vendor
+//       `mapResponse` cannot get a raw vendor body or a token-bearing URL in.
+//
+// RESIDUAL, stated honestly: `TargetWriteAdapter` is a plain interface, so a
+// hand-written adapter that BYPASSES `makeTargetWriteAdapter` could construct
+// an `AdapterError` with arbitrary `message` text and this path would forward
+// it. The guarantee holds for adapters built on the shared core — not for the
+// type alone. Close that residual, if it ever needs closing, AT THE ADAPTER
+// BOUNDARY (adapter-core.ts) — the one place vendor text enters the system.
+//
+// DO NOT re-add a redaction layer at this consumer — that is exactly the
+// mistake that caused the sibling regression, and it would silently re-strip
+// the provenance-(1) credential-fault signal. If a future change reopens a real
+// leak, fix it AT THE SOURCE it came from (adapter-core.ts for adapter text,
+// gateway.ts for gateway text) and in that package's own suite
+// (packages/integrations/test/gateway-reason-redaction.test.ts).
+//
+// The one real downstream caller, apps/worker/src/lifecycle/recovery.ts, folds
+// this `reason` into an operator-facing `worker_down` HealthItem message — a
+// DIFFERENT file this track does not own — and now gets the SAME value this
+// activity receives, never less informative.
+//
+// CONTROL FLOW NEVER READS THIS STRING. A caller that must branch on the
+// failure kind reads the typed `EnvelopeReuseError.code` (or, one layer down,
+// the gateway's `adapterCode` / `AdapterError.httpStatus`) — never a regex or a
+// substring match on `reason`. Four separate breaks in this area all came from
+// reading a machine decision out of a human-readable string.

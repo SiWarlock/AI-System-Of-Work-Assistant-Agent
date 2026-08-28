@@ -144,6 +144,27 @@ export function createContentProjectClassify(deps: {
         ...(signals.reason !== undefined ? { reason: signals.reason } : {}),
       });
     } catch (cause) {
+      // §16 — a typed `route_failed` err with `cause` BOUND (RouteError.cause is a
+      // declared optional field, sourceIngestion.ts:344). This is safe to restore:
+      // the ONLY caller that ever reaches a Temporal activity/log sink with this
+      // Result is `createRouteSourceActivity` (routeSource.ts), whose `route()`
+      // wraps every ERR arm in the shared `dropCause` helper
+      // (packages/workflows/src/activities/redaction.ts) — it keeps `code` +
+      // `message` (both already safe: `message` is this fixed literal) and
+      // UNCONDITIONALLY strips `cause` before anything crosses the activity
+      // boundary into durable, replayed workflow history (ARCHITECTURE.md:
+      // 155/157; pinned end-to-end by contentProjectResolverRedaction.test.ts's
+      // poison-cause probe — the `sourceRoute` case). So binding `cause` here
+      // costs nothing at that log sink and restores the diagnostic for any other
+      // consumer (tests, a future direct caller) that reads the Result before
+      // `dropCause` runs. The `code` alone is still what a driver switches on.
+      //
+      // ⚠ ASYMMETRIC WITH THE CORRELATE CATCH BELOW ON PURPOSE — see that catch's
+      // comment: `correlateMeeting.ts`'s sibling activity does NOT wrap its ERR arm
+      // in `dropCause` (a parallel 24.73 restore round forwards it verbatim, having
+      // verified `createCorrelationSignalProducer`'s catch builds a fixed literal
+      // with no `cause`), so THAT catch must never bind `cause` into its returned
+      // error the way this one does.
       return err({ code: "route_failed", message: "content classifier faulted", cause });
     }
   };
@@ -200,8 +221,26 @@ export function createCorrelationSignalProducer(deps: {
         confidence: s.confidence,
         ...(s.reason !== undefined ? { reason: s.reason } : {}),
       });
-    } catch (cause) {
-      return err({ code: "correlation_failed", message: "correlation producer faulted", cause });
+    } catch {
+      // §16 — a typed `correlation_failed` err. UNLIKE the classify catch above,
+      // this one does NOT bind/forward `cause`, even though CorrelateError.cause
+      // is a declared optional field (meetingCloseout.ts:159) — deliberately
+      // asymmetric. `createCorrelateActivity` (correlateMeeting.ts) forwards its
+      // ERR arm VERBATIM (a parallel 24.73 restore round removed its
+      // `dropCause`-style guard there, on the verified premise that THIS
+      // producer's catch already returns a fixed, cause-free literal — see that
+      // file's own comment). So there is no downstream site left that strips
+      // `cause` before it crosses the `meetingCorrelate` activity boundary into
+      // durable, replayed workflow history (ARCHITECTURE.md:155/157) — a raw
+      // thrown value here (a provider/HTTP error with a token-bearing URL, a DB
+      // driver DSN, an fs error with an absolute vault path) would leak
+      // end-to-end. Per this round's own guidance ("if any path could carry a raw
+      // fs/driver object, keep a redacted CODE rather than the raw object"): this
+      // is that path, so `cause` stays dropped and only the closed `code` +
+      // fixed `message` cross (pinned end-to-end by
+      // contentProjectResolverRedaction.test.ts's poison-cause probe — the
+      // `meetingCorrelate` case).
+      return err({ code: "correlation_failed", message: "correlation producer faulted" });
     }
   };
 }

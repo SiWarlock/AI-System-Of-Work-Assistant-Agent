@@ -357,3 +357,71 @@ describe("createOutputWorkflowActivities — task 24.105: the raw commit PORT is
     }
   });
 });
+
+// task 24.105 — the raw WriteFailure `cause` (secret-scan detail, workspace-path detail,
+// ownership-rejection detail, and any other validator-authored substance) must be DROPPED at the
+// activity boundary, while the stable `code` every workflow driver reads still crosses UNCHANGED.
+// Each poison fixture below plants a DIFFERENT detectable substring in `cause` — a bare object
+// value (never a string containing the substring, so a naive `JSON.stringify` scan is honest about
+// what it is proving) — and the assertion serializes the WHOLE activity result and checks none of
+// the three poison substrings appear anywhere in it.
+describe("createOutputWorkflowActivities — task 24.105: cause is dropped at the activity boundary", () => {
+  const POISON_SECRET = "leak-secret-9f3c";
+  const POISON_PATH = "sources/other-workspace/x.md";
+  const POISON_DSN = "leak-dsn-a71b";
+
+  function makeDepsWithPoisonedCommit(): OutputWorkflowActivitiesDeps {
+    const deps = makeDeps();
+    return {
+      ...deps,
+      commit: {
+        ...deps.commit,
+        // A hostile `applyPlan` rejecting with a `WriteFailure` whose `cause`-reachable fields
+        // carry the three poison markers — mirroring the shape commitKnowledge.ts's own
+        // `err({ code, message, cause: result.error })` puts under `cause` on a real
+        // ownership/secret/workspace-path rejection (commitKnowledge.ts:160-166).
+        applyPlan: (() =>
+          Promise.resolve(
+            err({
+              code: "secret_found" as const,
+              message: "fake commit failure carrying poisoned detail",
+              cause: {
+                secret: POISON_SECRET,
+                path: POISON_PATH,
+                dsn: POISON_DSN,
+                issues: [
+                  { message: `secret match: ${POISON_SECRET}` },
+                  { message: `workspace path violation: ${POISON_PATH}` },
+                  { message: `dsn leaked: ${POISON_DSN}` },
+                ],
+              },
+            }),
+          )) as unknown as OutputWorkflowActivitiesDeps["commit"]["applyPlan"],
+      },
+    };
+  }
+
+  const COMMIT_CASES = [
+    { member: "dailyBriefCommit", call: (a: OutputWorkflowActivities) => a.dailyBriefCommit(validKnowledgeMutationPlan) },
+    { member: "periodReviewCommit", call: (a: OutputWorkflowActivities) => a.periodReviewCommit(validKnowledgeMutationPlan) },
+    { member: "projectSyncCommitStatus", call: (a: OutputWorkflowActivities) => a.projectSyncCommitStatus(validKnowledgeMutationPlan) },
+    { member: "crossCalendarCommitNote", call: (a: OutputWorkflowActivities) => a.crossCalendarCommitNote(validKnowledgeMutationPlan) },
+  ] as const;
+
+  it("no poison substring (secret, cross-workspace path, dsn) survives into the serialized activity result, while `code` crosses unchanged", async () => {
+    const activities = createOutputWorkflowActivities(makeDepsWithPoisonedCommit());
+    for (const { member, call } of COMMIT_CASES) {
+      const result = await call(activities);
+      const serialized = JSON.stringify(result);
+      expect(serialized, `${member}: must not contain the poisoned secret`).not.toContain(POISON_SECRET);
+      expect(serialized, `${member}: must not contain the poisoned cross-workspace path`).not.toContain(POISON_PATH);
+      expect(serialized, `${member}: must not contain the poisoned dsn`).not.toContain(POISON_DSN);
+      // No `cause` key at all — an explicit `cause: undefined` would still be a live field a future
+      // change could populate; the wrapper must OMIT the key entirely.
+      expect(serialized, `${member}: must carry no cause key`).not.toContain("cause");
+      const r = result as { readonly ok: boolean; readonly error?: { readonly code?: unknown } };
+      expect(r.ok, `${member}: ok must be false`).toBe(false);
+      expect(r.error?.code, `${member}: the stable code must still cross`).toBe("secret_found");
+    }
+  });
+});

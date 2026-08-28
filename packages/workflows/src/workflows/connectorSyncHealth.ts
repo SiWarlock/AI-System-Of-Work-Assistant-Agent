@@ -130,6 +130,42 @@ export interface ConnectorTarget {
 }
 
 /**
+ * The CLOSED set of causes a non-advanced (or coverage-degraded) poll can carry.
+ *
+ * WHY THIS EXISTS AS A TYPED FIELD: the §16 `FailureClass` this outcome maps onto is
+ * frozen and coarse — EVERY held/degraded connector poll lands on
+ * `connector_unreachable`, so a locked/expired credential, a consumer-side write
+ * rejection, a vendor 429, a transport outage and a malformed vendor payload all
+ * produced the byte-identical health item. Those are five different operator
+ * remedies. The cause is the discriminator the class cannot carry.
+ *
+ * It is an ENUM, not a parsed string. {@link ConnectorPollResult.healthReason} renders
+ * the same fact for a human; control flow reads THIS field. Four live breaks in this
+ * subsystem came from reading a machine decision out of a human-readable string —
+ * never re-derive a cause by matching on `healthReason`.
+ *
+ * Members map to the closed `ConnectorError` codes the §8 gateway classifies, plus
+ * the two outcomes that carry no fetch error at all:
+ *   • `consumer_rejected`     — the fetch SUCCEEDED; the downstream consumer
+ *                               (`onRecords`) rejected the page, so the pass held.
+ *   • `coverage_incomplete`   — 16.4: the pass ADVANCED but corpus coverage was partial.
+ *   • the rest                — the connector's own `ConnectorError.code` for the fetch
+ *                               failure that produced the gateway's verdict.
+ */
+export const CONNECTOR_POLL_CAUSES = [
+  "consumer_rejected",
+  "auth_locked",
+  "rate_limited",
+  "transport_unreachable",
+  "malformed_response",
+  "unknown_fetch_error",
+  "coverage_incomplete",
+] as const;
+
+/** A poll cause (element of {@link CONNECTOR_POLL_CAUSES}). */
+export type ConnectorPollCause = (typeof CONNECTOR_POLL_CAUSES)[number];
+
+/**
  * The typed outcome of ONE connector poll — a driver-facing projection of the §8
  * `ConnectorSyncResult` the {@link ConnectorPollPort} activity produced by driving
  * `runConnectorSync`. It carries the ACTUAL reachability verdict + cursor progress:
@@ -151,9 +187,22 @@ export interface ConnectorPollResult {
   readonly cursorAdvanced: boolean;
   readonly cursor?: string;
   /**
-   * Redaction-safe reason from the §8 health signal — present on a held/degraded
-   * outcome, AND on an 'advanced' outcome that carries a coverage-degrade signal
-   * (16.4 fail-VISIBLE: records committed, cursor advanced, partiality announced).
+   * The MACHINE discriminator (see {@link ConnectorPollCause}): what actually stopped
+   * (or degraded) this pass, when the activity could determine it from closed-taxonomy
+   * inputs. Absent on a clean advanced pass, and absent when the gateway reported a
+   * non-reachable verdict with no observable `ConnectorError` behind it.
+   */
+  readonly cause?: ConnectorPollCause;
+  /**
+   * The HUMAN reason string — present on a held/degraded outcome, AND on an 'advanced'
+   * outcome that carries a coverage-degrade signal (16.4 fail-VISIBLE: records
+   * committed, cursor advanced, partiality announced). Built from closed-taxonomy
+   * inputs + SoW-authored phrases only (see the M2 block in
+   * src/activities/connectorPoll.ts) — never adapter/vendor text.
+   *
+   * ⛔ FOR HUMANS ONLY. Never branch on it, never regex it, never compare it — read
+   * {@link cause} instead. Every break this subsystem has shipped came from control
+   * flow reading a machine decision out of a rendered string.
    */
   readonly healthReason?: string;
 }

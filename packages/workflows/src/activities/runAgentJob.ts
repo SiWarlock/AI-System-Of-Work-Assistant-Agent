@@ -125,6 +125,25 @@ function defaultMapRejection(outcome: BrokerOutcome): MeetingAgentFailureCode {
 }
 
 /**
+ * The FIXED, generic rejection message for a `schema_rejected` Broker outcome — replaces the
+ * Broker's raw `outcome.error.message` at the ERR arm below ONLY for this one code (SAFETY RULE
+ * 7, incidental text, never the payload). The real Broker's schema gate (`schema-gate.ts`) folds
+ * a no-inference rejection into its message as `no-inference rejection … [<fields>]`, quoting
+ * MODEL-OUTPUT FIELD NAMES drawn from the untrusted transcript — this is the ONE rejection stage
+ * whose message can carry foreign (model-authored) text, so it is the ONE stage redacted.
+ *
+ * Every OTHER Broker rejection stage (admission, route resolution, egress veto, health,
+ * budget, provider run) emits SoW-authored closed diagnostic text — an operator needs to tell
+ * "no eligible provider for route claude/opus" from a provider timeout from a locked Keychain,
+ * so those messages cross UNCHANGED below (restored 2026-08-27: an earlier pass over-applied
+ * this schema-gate-specific justification to all five failure codes, collapsing every distinct
+ * Broker failure onto one fixed sentence per code — CLAUDE.md "THE BAR IS INVERTED: restore
+ * unless removal is clearly justified").
+ */
+const SCHEMA_REJECTED_MESSAGE =
+  "meeting.close broker output failed the candidate-data schema gate";
+
+/**
  * Build a {@link RunMeetingAgentJobPort} that assembles the read-only untrusted
  * meeting.close job, ADMITS it (ING-7), then dispatches through the Broker (inv-2).
  * A mutating-tool declaration is refused BEFORE the Broker runs. Never throws.
@@ -176,10 +195,15 @@ export function createRunAgentJobActivity(
       };
       const outcome = await deps.broker.runJob(req);
       if (!outcome.ok) {
-        return err({
-          code: mapRejection(outcome),
-          message: outcome.error.message,
-        });
+        const code = mapRejection(outcome);
+        // SAFETY RULE 7 (incidental, NOT the payload — see SCHEMA_REJECTED_MESSAGE's doc
+        // comment): only a schema-gate rejection's message can carry a model-authored field
+        // name (the no-inference branch), so only that one is replaced with a fixed sentence.
+        // Every other code's message is SoW-authored diagnostic text and crosses UNCHANGED so
+        // an operator can tell one failure from another. The closed `code` is what a workflow
+        // driver switches on; it always crosses byte-identical regardless.
+        const message = code === "schema_rejected" ? SCHEMA_REJECTED_MESSAGE : outcome.error.message;
+        return err({ code, message });
       }
       // Accepted: map the Broker CANDIDATE → an AgentExtraction (the mapper owns the
       // §9 output-schema shape arch_gap).

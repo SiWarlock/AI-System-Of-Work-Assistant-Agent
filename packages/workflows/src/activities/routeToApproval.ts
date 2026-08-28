@@ -50,6 +50,13 @@ export function createRouteToApprovalActivity(
       env: ExternalWriteEnvelope,
     ): Promise<Result<RouteToApprovalResult, RouteToApprovalError>> {
       const reserved = await deps.gateway.reservePending(action, env);
+      // R3 (24.73 restore round): NOT redacted — the real bound gateway
+      // (buildActivities.ts's `crossCalendarRouteToApproval.gateway`) already
+      // builds a safe message (`pending approval record failed: ${code}`,
+      // interpolating only the closed DbErrorCode) and never attaches `cause`,
+      // so a second redaction here stripped a message that was already safe,
+      // for zero incremental safety, while costing the operator the real
+      // diagnostic. Forward verbatim.
       if (!reserved.ok) return err(reserved.error);
       return ok(reserved.value);
     },

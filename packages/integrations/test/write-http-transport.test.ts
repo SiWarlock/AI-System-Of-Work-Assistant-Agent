@@ -21,8 +21,15 @@ import {
   type HttpTransportRequest,
   type HttpTransportResponse,
 } from "../src/tools/adapters/write-http-transport";
-import { writeSecretRef, type WriteSecretsAccessor, type WriteSecretUnavailable } from "../src/tools/adapters/adapter-core";
-import type { AdapterTransportRequest } from "../src/tools/adapters/transport";
+import {
+  writeSecretRef,
+  makeTargetWriteAdapter,
+  type WriteSecretsAccessor,
+  type WriteSecretUnavailable,
+} from "../src/tools/adapters/adapter-core";
+import type { AdapterTransport, AdapterTransportRequest } from "../src/tools/adapters/transport";
+import type { TargetWriteAdapter } from "../src/tools/adapter-port";
+import { makeEnvelope } from "./support/fakes";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
@@ -352,6 +359,56 @@ describe("createWriteHttpTransport — worked example (drive vendor spec, test-o
     await transport(queryReq);
     expect(http.calls[0]!.method).toBe("GET");
     expect(http.calls[0]!.body).toBeUndefined();
+  });
+});
+
+// ── 6.5 §S — the full pipeline still yields FIVE DISTINCT operator-facing
+//     messages, now built from {fault, httpStatus} instead of forwarded prose ──
+describe("createWriteHttpTransport + makeTargetWriteAdapter — 401 / 403 / 429 / outage / SSRF-block stay distinguishable (§S)", () => {
+  const testClock = (): string => "2026-07-01T00:00:00.000Z";
+
+  function adapterOver(transport: AdapterTransport): TargetWriteAdapter {
+    return makeTargetWriteAdapter(
+      { targetSystem: "drive", deriveIdentity: () => ({}) },
+      { transport, clock: testClock },
+    );
+  }
+
+  it("401 / 403 / 429 / a transport outage / an SSRF-block produce FIVE DISTINCT AdapterError.message strings", async () => {
+    const env = makeEnvelope({ targetSystem: "drive", canonicalObjectKey: CREATE_REQ.canonicalObjectKey });
+    const messages: string[] = [];
+
+    for (const status of [401, 403, 429]) {
+      const http = fakeHttp({ response: { status, body: "{}" } });
+      const transport = createWriteHttpTransport(CORE_SPEC, depsWith({ http }));
+      const res = await adapterOver(transport).create(env, { title: "x" });
+      expect(res.ok).toBe(false);
+      if (!res.ok) messages.push(res.error.message);
+    }
+
+    // Outage: the injected http.send rejects — no HTTP response is EVER received,
+    // so there is no httpStatus to report.
+    {
+      const http = fakeHttp({ throw: new Error("ECONNRESET") });
+      const transport = createWriteHttpTransport(CORE_SPEC, depsWith({ http }));
+      const res = await adapterOver(transport).create(env, { title: "x" });
+      expect(res.ok).toBe(false);
+      if (!res.ok) messages.push(res.error.message);
+    }
+
+    // SSRF-block: an off-allowlist host is rejected before any dispatch — also no
+    // httpStatus, but a DIFFERENT fault code (`rejected`, not `unreachable`) from
+    // the outage above.
+    {
+      const spec: WriteHttpSpec = { ...CORE_SPEC, baseUrl: "https://evil.com" };
+      const transport = createWriteHttpTransport(spec, depsWith());
+      const res = await adapterOver(transport).create(env, { title: "x" });
+      expect(res.ok).toBe(false);
+      if (!res.ok) messages.push(res.error.message);
+    }
+
+    expect(messages).toHaveLength(5);
+    expect(new Set(messages).size).toBe(5);
   });
 });
 

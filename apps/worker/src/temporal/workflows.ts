@@ -31,7 +31,7 @@
 //      the driver's resolveRun seam (see the note on the repo below);
 //   4. RUNS the pure driver (return runMeetingCloseout(input, deps) etc.) inside the
 //      sandbox and returns its Outcome.
-import { proxyActivities } from "@temporalio/workflow";
+import { proxyActivities, workflowInfo } from "@temporalio/workflow";
 
 // DEEP, LEAF-PURE value imports — NOT the package barrels. The @sow/contracts barrel
 // (index.ts) `export *`s schema/registry.ts, whose top-level `import { readdirSync }
@@ -238,6 +238,23 @@ import type {
 // violation (it would drag @sow/db et al. into the bundle).
 import type { ProofSpineActivities } from "../composition/buildActivities";
 
+// The FROZEN per-tick schedule-argument contract (scheduleArgs.ts — read its header
+// in full before touching anything below). `deriveScheduledRunInput` +
+// `SCHEDULED_RUNTIME_ACTIVITY_NAMES` are PURE value imports — scheduleArgs.ts itself
+// imports only @sow/contracts + @sow/workflows TYPES, no @temporalio/node:crypto/
+// node:fs — sandbox-safe exactly like `createMeetingExtractionSchemaGate` above.
+// scheduleRegistrar.ts (the OTHER consumer of this same frozen contract) already
+// points every schedule's `action.workflowType` at these three SCHEDULED type names
+// — the exports below are what makes those specs resolve instead of failing to
+// start against a live server.
+import { deriveScheduledRunInput, SCHEDULED_RUNTIME_ACTIVITY_NAMES } from "./scheduleArgs";
+import type {
+  ScheduledWorkflowIdentity,
+  DailyBriefScheduleArgs,
+  PeriodReviewScheduleArgs,
+  CrossCalendarSchedulingScheduleArgs,
+} from "./scheduleArgs";
+
 // ---------------------------------------------------------------------------
 // The typed activity proxies (the ONLY side-effect surface a workflow may touch)
 // ---------------------------------------------------------------------------
@@ -405,6 +422,97 @@ function sandboxScheduleStoreStub(): ScheduleStore {
   return {
     getBookkeeping: () => Promise.resolve(undefined),
     put: () => Promise.resolve(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 25.2/25.4 — the DURABLE run-repo + schedule-store activity proxies (the
+// scheduleArgs.ts-frozen "second and third defect" fix)
+// ---------------------------------------------------------------------------
+
+/**
+ * ⛔ THE FIX for the two inert stubs above, bound ONLY into the SCHEDULED entry
+ * points below (never the direct-start wrappers — see {@link buildDailyBriefDeps}'s
+ * own doc comment for why). `sandboxRunRepo()` always reports `not_found` and
+ * persists nothing; `sandboxScheduleStoreStub()` always reports `undefined`
+ * bookkeeping. Both are honest, documented stubs, but bound into a FIRING schedule
+ * they make the 7.4 idempotency seam and the LIFE-2 catch-up collapse INERT — a
+ * retried occurrence would admit a second run, and N missed occurrences would fan
+ * out into N runs instead of collapsing to one. These proxies are the durable
+ * replacements, over the EXACT activity names {@link SCHEDULED_RUNTIME_ACTIVITY_NAMES}
+ * declares (the frozen contract the composition root must register against verbatim).
+ *
+ * TYPO-SAFETY: each member is a COMPUTED key
+ * (`[SCHEDULED_RUNTIME_ACTIVITY_NAMES.xxx]`), and every call site below indexes the
+ * proxy object the SAME way — so a drift between this interface and the frozen
+ * constant is a TYPECHECK failure (the bracket-indexed key stops existing on the
+ * type), not a silent "activity not registered" fault that only surfaces against a
+ * live server. Each signature is lifted via indexed access off the
+ * ALREADY-IMPORTED {@link WorkflowRunRefRepository} / {@link ScheduleStore} port
+ * types (never re-declared), so a port signature change cannot silently drift from
+ * what these proxies promise to deliver.
+ */
+interface ScheduledRunActivities {
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runCreate]: WorkflowRunRefRepository["create"];
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runGet]: WorkflowRunRefRepository["get"];
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runGetByIdempotencyKey]: WorkflowRunRefRepository["getByIdempotencyKey"];
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runUpdateState]: WorkflowRunRefRepository["updateState"];
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runAppendAuditRef]: WorkflowRunRefRepository["appendAuditRef"];
+}
+
+/** Same TYPO-SAFETY shape as {@link ScheduledRunActivities}, for the 2 schedule-bookkeeping members. */
+interface ScheduledScheduleActivities {
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.scheduleGetBookkeeping]: ScheduleStore["getBookkeeping"];
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.schedulePut]: ScheduleStore["put"];
+}
+
+// Same retry/timeout policy as `activities`/`outputWorkflowActivities` above (§16
+// default — every underlying activity is idempotent: `create` is first-write-wins on
+// idempotencyKey, `put` is a fixed-clock-reading upsert, inv-5).
+const scheduledRunActivityProxy = proxyActivities<ScheduledRunActivities>({
+  startToCloseTimeout: "1 minute",
+  retry: {
+    initialInterval: "1 second",
+    maximumInterval: "30 seconds",
+    backoffCoefficient: 2,
+    maximumAttempts: 5,
+  },
+});
+const scheduledScheduleActivityProxy = proxyActivities<ScheduledScheduleActivities>({
+  startToCloseTimeout: "1 minute",
+  retry: {
+    initialInterval: "1 second",
+    maximumInterval: "30 seconds",
+    backoffCoefficient: 2,
+    maximumAttempts: 5,
+  },
+});
+
+/**
+ * The DURABLE `WorkflowRunRefRepository` the SCHEDULED entry points bind. Every
+ * method is a plain delegate onto the proxy above — nothing is derived or cached
+ * here, so a replay re-issues the exact same activity calls (deterministic).
+ */
+function scheduledRunRepo(): WorkflowRunRefRepository {
+  return {
+    getByIdempotencyKey: (idempotencyKey) =>
+      scheduledRunActivityProxy[SCHEDULED_RUNTIME_ACTIVITY_NAMES.runGetByIdempotencyKey](idempotencyKey),
+    create: (ref) => scheduledRunActivityProxy[SCHEDULED_RUNTIME_ACTIVITY_NAMES.runCreate](ref),
+    get: (workflowId) => scheduledRunActivityProxy[SCHEDULED_RUNTIME_ACTIVITY_NAMES.runGet](workflowId),
+    updateState: (workflowId, state) =>
+      scheduledRunActivityProxy[SCHEDULED_RUNTIME_ACTIVITY_NAMES.runUpdateState](workflowId, state),
+    appendAuditRef: (workflowId, auditRef) =>
+      scheduledRunActivityProxy[SCHEDULED_RUNTIME_ACTIVITY_NAMES.runAppendAuditRef](workflowId, auditRef),
+  };
+}
+
+/** The DURABLE `ScheduleStore` the SCHEDULED daily-brief/period-review entry points bind. */
+function scheduledScheduleStore(): ScheduleStore {
+  return {
+    getBookkeeping: (scheduleId) =>
+      scheduledScheduleActivityProxy[SCHEDULED_RUNTIME_ACTIVITY_NAMES.scheduleGetBookkeeping](scheduleId),
+    put: (bookkeeping) =>
+      scheduledScheduleActivityProxy[SCHEDULED_RUNTIME_ACTIVITY_NAMES.schedulePut](bookkeeping),
   };
 }
 
@@ -699,10 +807,18 @@ export async function connectorSyncHealthWorkflow(
 // ---------------------------------------------------------------------------
 //
 // Same thin-wrapper shape as every driver above: adapt the activity proxies onto the driver's
-// Deps port set, run the pure driver inside the sandbox. NONE of these four has a production
-// dispatcher yet (no scheduler calls `client.workflow.start(...)` for them — that is 25.2-25.5's
-// scheduling leg, gated default-OFF where built), so exposing them here only WIDENS the bundle;
-// it changes no shipped behavior (NOTHING ARMS).
+// Deps port set, run the pure driver inside the sandbox. `projectSyncWorkflow` still has no
+// production dispatcher (25.3's scheduling leg is deferred, gated default-OFF where built), so
+// exposing it only WIDENS the bundle — it changes no shipped behavior.
+//
+// dailyBrief/periodReview/crossCalendarScheduling now ALSO export a SCHEDULED entry point
+// (`*ScheduledWorkflow`) — the workflow TYPE scheduleRegistrar.ts's `build*ScheduleSpec` builders
+// already point their `action.workflowType` at (Defect A: a schedule's `action.args` is static, so
+// per-occurrence run identity is derived in-sandbox from `workflowInfo().workflowId` instead — see
+// scheduleArgs.ts's header for the MEASURED fact that rests on). NOTHING ARMS from this alone:
+// `TemporalScheduleRegistrar.ensure` (the only thing that could START a schedule pointed at these
+// new type names) is still never called with a real client anywhere in this package — that wiring
+// is boot.ts's job, outside this file's + this package's territory, same as before this slice.
 
 const dailyBriefValidator = createFieldsValidateActivity<BriefDraft>();
 const reviewValidator = createFieldsValidateActivity<ReviewDraft>();
@@ -712,11 +828,22 @@ const crossCalendarValidator = createFieldsValidateActivity<
 const projectSyncValidator = createValidateNarrativePort();
 
 /**
- * The daily-brief workflow (25.2). `validate` runs IN-SANDBOX (see the module-level import note);
- * every other port proxies through `outputWorkflowActivities`; `schedule` is the dormant
- * {@link sandboxScheduleStoreStub} (Phase-23 TODO — LIFE-2 catch-up bookkeeping is not yet durable).
+ * The daily-brief pipeline's shared port-wiring body (25.1/25.2). `validate` runs IN-SANDBOX (see
+ * the module-level import note); every other port proxies through `outputWorkflowActivities`.
+ * `runs`/`schedule` are INJECTED — never hardcoded — so ONE implementation serves BOTH entry points
+ * below:
+ *   • {@link dailyBriefWorkflow} (direct owner-triggered start) keeps the dormant in-sandbox stubs
+ *     ({@link sandboxRunRepo} / {@link sandboxScheduleStoreStub}) UNCHANGED. The 25.1 smoke test
+ *     registers only a MINIMAL fake activities object for the direct-start type name; swapping in
+ *     the durable proxies here would CALL an activity that test never registers — an "activity not
+ *     registered" fault, not a silent no-op. An owner-triggered start is also inherently a single,
+ *     deliberate run, so it never needed LIFE-2 catch-up in the first place.
+ *   • {@link dailyBriefScheduledWorkflow} (the SCHEDULED entry point Temporal starts on each
+ *     occurrence — Defect A) binds the DURABLE `scheduledRunRepo()` / `scheduledScheduleStore()`
+ *     proxies (Defect B), so a retried occurrence reuses its run (7.4) and a missed occurrence
+ *     collapses to one (LIFE-2) — the whole point of exposing a scheduled entry point at all.
  */
-export async function dailyBriefWorkflow(input: DailyBriefInput): Promise<DailyBriefOutcome> {
+function buildDailyBriefDeps(runs: WorkflowRunRefRepository, schedule: ScheduleStore): DailyBriefDeps {
   const refreshConnectors: RefreshConnectorsPort = {
     refresh: (ctx) => outputWorkflowActivities.dailyBriefRefreshConnectors(ctx),
   };
@@ -749,7 +876,7 @@ export async function dailyBriefWorkflow(input: DailyBriefInput): Promise<DailyB
     surface: (failure: DailyBriefFailure) => outputWorkflowActivities.dailyBriefSurfaceFailure(failure),
   };
 
-  const deps: DailyBriefDeps = {
+  return {
     refreshConnectors,
     updateProjections,
     agent,
@@ -760,19 +887,50 @@ export async function dailyBriefWorkflow(input: DailyBriefInput): Promise<DailyB
     dashboard,
     notify,
     health,
-    runs: sandboxRunRepo(),
-    schedule: sandboxScheduleStoreStub(),
+    runs,
+    schedule,
     clock: workflowClock,
   };
-
-  return runDailyBrief(input, deps);
 }
 
 /**
- * The period-review workflow (25.2, weekly/monthly). Same shape as {@link dailyBriefWorkflow};
- * `validate` runs IN-SANDBOX; `schedule` is the same dormant stub.
+ * The daily-brief workflow (25.2, direct owner-triggered start). See {@link buildDailyBriefDeps}
+ * for why this keeps the dormant sandbox stubs — UNCHANGED signature + behavior from before this
+ * slice.
  */
-export async function periodReviewWorkflow(input: PeriodReviewInput): Promise<PeriodReviewOutcome> {
+export async function dailyBriefWorkflow(input: DailyBriefInput): Promise<DailyBriefOutcome> {
+  return runDailyBrief(input, buildDailyBriefDeps(sandboxRunRepo(), sandboxScheduleStoreStub()));
+}
+
+/**
+ * 25.2 — the SCHEDULED entry point: the workflow TYPE a `dailyBrief` Schedule's `action` actually
+ * starts (Defect A). `args` is the STATIC per-schedule configuration (scheduleArgs.ts's header
+ * explains why it must be byte-identical every occurrence); the per-occurrence run identity is
+ * DERIVED in-sandbox from `workflowInfo().workflowId` via {@link deriveScheduledRunInput} — never
+ * taken from `args`, which cannot carry it. Binds the DURABLE run-repo + schedule-store proxies
+ * (Defect B) via {@link buildDailyBriefDeps} so a retried occurrence reuses its run and a missed
+ * occurrence collapses to one (LIFE-2).
+ */
+export async function dailyBriefScheduledWorkflow(args: DailyBriefScheduleArgs): Promise<DailyBriefOutcome> {
+  const identity: ScheduledWorkflowIdentity = { workflowId: workflowInfo().workflowId };
+  const input: DailyBriefInput = {
+    run: deriveScheduledRunInput(identity, args.globalWorkspaceId),
+    scheduleId: args.scheduleId,
+    intervalMs: args.intervalMs,
+    catchUpWindowMs: args.catchUpWindowMs,
+    globalWorkspaceId: args.globalWorkspaceId,
+    context: { scopes: args.scopes },
+  };
+  return runDailyBrief(input, buildDailyBriefDeps(scheduledRunRepo(), scheduledScheduleStore()));
+}
+
+/**
+ * The period-review pipeline's shared port-wiring body (25.1/25.2). Same shape + same reason as
+ * {@link buildDailyBriefDeps} — see that doc comment for why `runs`/`schedule` are injected rather
+ * than hardcoded (direct-start keeps the dormant stubs byte-equivalent; the scheduled entry point
+ * binds the durable proxies).
+ */
+function buildPeriodReviewDeps(runs: WorkflowRunRefRepository, schedule: ScheduleStore): PeriodReviewDeps {
   const refreshConnectors: ReviewRefreshConnectorsPort = {
     refresh: (ctx) => outputWorkflowActivities.periodReviewRefreshConnectors(ctx),
   };
@@ -806,7 +964,7 @@ export async function periodReviewWorkflow(input: PeriodReviewInput): Promise<Pe
     surface: (failure: PeriodReviewFailure) => outputWorkflowActivities.periodReviewSurfaceFailure(failure),
   };
 
-  const deps: PeriodReviewDeps = {
+  return {
     refreshConnectors,
     updateProjections,
     agent,
@@ -817,12 +975,39 @@ export async function periodReviewWorkflow(input: PeriodReviewInput): Promise<Pe
     dashboard,
     notify,
     health,
-    runs: sandboxRunRepo(),
-    schedule: sandboxScheduleStoreStub(),
+    runs,
+    schedule,
     clock: workflowClock,
   };
+}
 
-  return runPeriodReview(input, deps);
+/**
+ * The period-review workflow (25.2, weekly/monthly, direct owner-triggered start). See
+ * {@link buildPeriodReviewDeps} — UNCHANGED signature + behavior from before this slice.
+ */
+export async function periodReviewWorkflow(input: PeriodReviewInput): Promise<PeriodReviewOutcome> {
+  return runPeriodReview(input, buildPeriodReviewDeps(sandboxRunRepo(), sandboxScheduleStoreStub()));
+}
+
+/**
+ * 25.2 — the SCHEDULED entry point for BOTH the weekly and monthly cadence (they share one
+ * workflow type; `args.period` distinguishes them — see scheduleRegistrar.ts's
+ * `buildPeriodReviewScheduleSpec`). Same Defect A/B shape as {@link dailyBriefScheduledWorkflow}.
+ */
+export async function periodReviewScheduledWorkflow(
+  args: PeriodReviewScheduleArgs,
+): Promise<PeriodReviewOutcome> {
+  const identity: ScheduledWorkflowIdentity = { workflowId: workflowInfo().workflowId };
+  const input: PeriodReviewInput = {
+    run: deriveScheduledRunInput(identity, args.globalWorkspaceId),
+    scheduleId: args.scheduleId,
+    period: args.period,
+    intervalMs: args.intervalMs,
+    catchUpWindowMs: args.catchUpWindowMs,
+    globalWorkspaceId: args.globalWorkspaceId,
+    context: { scopes: args.scopes },
+  };
+  return runPeriodReview(input, buildPeriodReviewDeps(scheduledRunRepo(), scheduledScheduleStore()));
 }
 
 /**
@@ -879,14 +1064,17 @@ export async function projectSyncWorkflow(input: ProjectSyncInput): Promise<Proj
 }
 
 /**
- * The cross-calendar-scheduling workflow (25.4). `validate` runs IN-SANDBOX; `commit` is wired
- * (the port is optional on {@link CrossCalendarSchedulingDeps} but the activity exists, so this
- * wrapper always supplies it — a scheduling run may or may not exercise the commit leg, decided
- * inside the pure driver, not here).
+ * The cross-calendar-scheduling pipeline's shared port-wiring body (25.1/25.4). `validate` runs
+ * IN-SANDBOX; `commit` is wired (the port is optional on {@link CrossCalendarSchedulingDeps} but
+ * the activity exists, so this always supplies it — a scheduling run may or may not exercise the
+ * commit leg, decided inside the pure driver, not here). `runs` is INJECTED for the same reason as
+ * {@link buildDailyBriefDeps} — this family has no `schedule`/LIFE-2 leg at all (the frozen
+ * `CrossCalendarSchedulingScheduleArgs` carries no `intervalMs`/`catchUpWindowMs`), so only the
+ * run-repo needs swapping between the direct-start stub and the scheduled durable proxy.
  */
-export async function crossCalendarSchedulingWorkflow(
-  input: CrossCalendarSchedulingInput,
-): Promise<CrossCalendarSchedulingOutcome> {
+function buildCrossCalendarSchedulingDeps(
+  runs: WorkflowRunRefRepository,
+): CrossCalendarSchedulingDeps {
   const gather: GatherAvailabilityPort = {
     gather: (ctx) => outputWorkflowActivities.crossCalendarGatherAvailability(ctx),
   };
@@ -918,7 +1106,7 @@ export async function crossCalendarSchedulingWorkflow(
     surface: (failure: SchedulingWorkflowFailure) => outputWorkflowActivities.crossCalendarSurfaceFailure(failure),
   };
 
-  const deps: CrossCalendarSchedulingDeps = {
+  return {
     gather,
     agent,
     validate,
@@ -928,9 +1116,38 @@ export async function crossCalendarSchedulingWorkflow(
     routeToApproval,
     commit,
     health,
-    runs: sandboxRunRepo(),
+    runs,
     clock: workflowClock,
   };
+}
 
-  return runCrossCalendarScheduling(input, deps);
+/**
+ * The cross-calendar-scheduling workflow (25.4, direct owner-triggered start). See
+ * {@link buildCrossCalendarSchedulingDeps} — UNCHANGED signature + behavior from before this slice.
+ */
+export async function crossCalendarSchedulingWorkflow(
+  input: CrossCalendarSchedulingInput,
+): Promise<CrossCalendarSchedulingOutcome> {
+  return runCrossCalendarScheduling(input, buildCrossCalendarSchedulingDeps(sandboxRunRepo()));
+}
+
+/**
+ * 25.4 — the SCHEDULED entry point: the workflow TYPE a `crossCalendarScheduling` Schedule's
+ * `action` actually starts (Defect A). Same Defect A/B shape as {@link dailyBriefScheduledWorkflow}
+ * — `args` is static, per-occurrence run identity is derived in-sandbox, and the durable run-repo
+ * proxy (Defect B) replaces the inert stub. `organizerWorkspaceId` is the bound workspace both the
+ * derived run identity (WS-2) and the auto-created event target.
+ */
+export async function crossCalendarSchedulingScheduledWorkflow(
+  args: CrossCalendarSchedulingScheduleArgs,
+): Promise<CrossCalendarSchedulingOutcome> {
+  const identity: ScheduledWorkflowIdentity = { workflowId: workflowInfo().workflowId };
+  const input: CrossCalendarSchedulingInput = {
+    run: deriveScheduledRunInput(identity, args.organizerWorkspaceId),
+    context: {
+      sources: args.sources,
+      organizerWorkspaceId: args.organizerWorkspaceId,
+    },
+  };
+  return runCrossCalendarScheduling(input, buildCrossCalendarSchedulingDeps(scheduledRunRepo()));
 }

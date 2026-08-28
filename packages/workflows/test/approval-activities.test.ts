@@ -170,6 +170,75 @@ describe("createRecordPendingActivity — idempotent record", () => {
     expect(isOk(res)).toBe(false);
     if (!isOk(res)) expect(res.error.code).toBe("precondition_failed");
   });
+
+  it("R3 (24.73 restore round): forwards a gateway failure verbatim — NOT redacted", async () => {
+    // The deleted `redactRecordPendingGatewayError`'s own comment conceded it guards
+    // nothing today (the bound gateway, buildActivities.ts's `recordPendingGateway`,
+    // always returns `ok`), while costing the operator a real diagnostic if that
+    // binding ever fails closed — e.g. a locked-Keychain message on a future
+    // credential-backed reservation. This pins the restore.
+    const approvals = new InMemoryApprovalRepo();
+    const gateway: RecordPendingGateway = {
+      reservePending() {
+        return Promise.resolve(
+          err({ code: "record_failed", message: "keychain locked: unlock it and retry" }),
+        );
+      },
+    };
+    const record = createRecordPendingActivity({
+      gateway,
+      approvals,
+      now: NOW,
+      expiresAt: EXPIRES_AT,
+      actor: "user:alice",
+      seedChannel: "mac",
+    });
+    const res = await record.record(makeApprovalContext());
+    expect(isOk(res)).toBe(false);
+    if (isOk(res)) return;
+    expect(res.error.code).toBe("record_failed");
+    // RESTORED: the gateway's own diagnostic message crosses verbatim — a
+    // mutation-proof pin (a re-added redaction would replace this with a fixed
+    // literal, failing this assertion).
+    expect(res.error.message).toBe("keychain locked: unlock it and retry");
+  });
+
+  it("R3 (24.73 restore round): KEEP — a create() DbError's raw `cause` never crosses (record_failed)", async () => {
+    // Distinct from the gateway-forward test above: this pins the OTHER dropCause
+    // site in this file — deps.approvals.create()'s DbError. Unlike the gateway
+    // failure (never populates cause in practice), a real DbError's `cause` can be
+    // the raw driver throw (a DSN, a stack) per this file's own comment on the
+    // dropCause call site — it must NEVER cross. Re-read also fails (not_found) so
+    // the activity actually reaches the dropCause branch, not the re-read-reuse one.
+    const poisonedCause = { dsn: "postgres://u:SECRET-DSN@h/db" };
+    const approvals: ApprovalRepository = {
+      create: () =>
+        Promise.resolve(
+          err({ code: "constraint_violation", message: "db said no", cause: poisonedCause } satisfies DbError),
+        ),
+      get: () => Promise.resolve(err({ code: "not_found", message: "no such id" } satisfies DbError)),
+      listByStatus: () => Promise.resolve(ok([])),
+      listByStatusAndWorkspace: () => Promise.resolve(ok([])),
+      applyTransition: () => Promise.resolve(err({ code: "not_found", message: "n/a" } satisfies DbError)),
+    };
+    const record = createRecordPendingActivity({
+      gateway: okGateway,
+      approvals,
+      now: NOW,
+      expiresAt: EXPIRES_AT,
+      actor: "user:alice",
+      seedChannel: "mac",
+    });
+    const res = await record.record(makeApprovalContext());
+    expect(isOk(res)).toBe(false);
+    if (isOk(res)) return;
+    expect(res.error.code).toBe("record_failed");
+    // The message interpolates only the CLOSED DbErrorCode — never driver text.
+    expect(res.error.message).toBe("pending approval create failed: constraint_violation");
+    // KEPT: cause is stripped — the DSN never crosses.
+    expect(res.error.cause).toBeUndefined();
+    expect(JSON.stringify(res)).not.toContain("SECRET-DSN");
+  });
 });
 
 // --- surface activity (parity) ---------------------------------------------
@@ -316,6 +385,39 @@ describe("createApplyTransitionActivity — EXACTLY-ONCE CAS", () => {
       expect(res.value.approval.status).toBe("deferred");
       expect(res.value.approval.snoozeUntil).toBe(SNOOZE_UNTIL);
     }
+  });
+
+  it("R3 (24.73 restore round): KEEP — the CAS DbError's raw `cause` never crosses (apply_failed)", async () => {
+    // Mirrors the record-activity pin above for THIS file's other DbError dropCause
+    // site: applyTransition's own DbError (any non-conflict code folds to
+    // apply_failed via foldApplyDbError's default arm). `cause` can be a raw driver
+    // throw (a DSN, a stack) — it must never cross; only the stable folded code +
+    // a message built from the CLOSED DbErrorCode do.
+    const poisonedCause = { dsn: "postgres://u:SECRET-DSN-2@h/db" };
+    const approvals: ApprovalRepository = {
+      create: () => Promise.resolve(ok(makeApproval())),
+      get: () => Promise.resolve(err({ code: "not_found", message: "n/a" } satisfies DbError)),
+      listByStatus: () => Promise.resolve(ok([])),
+      listByStatusAndWorkspace: () => Promise.resolve(ok([])),
+      applyTransition: () =>
+        Promise.resolve(
+          err({ code: "unavailable", message: "db down", cause: poisonedCause } satisfies DbError),
+        ),
+    };
+    const apply = createApplyTransitionActivity({
+      approvals,
+      now: NOW,
+      snoozeUntil: SNOOZE_UNTIL,
+      expiresAt: EXPIRES_AT,
+    });
+    const pending = makeApproval({ status: "pending" });
+    const res = await apply.apply(pending, { decision: "approved", channel: "mac", actor: "user:alice" });
+    expect(isOk(res)).toBe(false);
+    if (isOk(res)) return;
+    expect(res.error.code).toBe("apply_failed");
+    expect(res.error.message).toBe("apply transition failed: unavailable");
+    expect(res.error.cause).toBeUndefined();
+    expect(JSON.stringify(res)).not.toContain("SECRET-DSN-2");
   });
 });
 

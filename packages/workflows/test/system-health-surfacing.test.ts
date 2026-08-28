@@ -176,6 +176,78 @@ describe("spec(§16) surfaceWorkflowFailure — nothing fails silently (outbox O
     if (!isErr(res)) return;
     expect(res.error.code).toBe("surface_failed");
   });
+
+  // R2 restore (24.73 census): a health-store READ fault (the dedupe lookup) and a
+  // WRITE fault (the persist) previously rendered as ONE indistinguishable sentence
+  // (a bare `(${code})`, both `persist_failed`). The operator — the PRIMARY consumer
+  // of this sink — cannot act on "surface_failed" alone: a full disk, a closed
+  // connection, and a bad-shape candidate call for different responses. Restored:
+  // the two arms must render DIFFERENT messages.
+  it("a READ fault (dedupe lookup) and a WRITE fault (persist) render DIFFERENTLY diagnosable messages", async () => {
+    const outbox = new InMemoryOutboxSink();
+    const clock = new FakeClock({ now: T0 });
+
+    const readFaultHealth = {
+      getByDedupeKey(): Promise<HealthItem | undefined> {
+        return Promise.reject(new Error("connection closed"));
+      },
+      put(): Promise<void> {
+        throw new Error("unreachable: put must not be called after a read fault");
+      },
+      list(): Promise<HealthItem[]> {
+        return Promise.resolve([]);
+      },
+    };
+    const writeFaultHealth = {
+      getByDedupeKey(): Promise<HealthItem | undefined> {
+        return Promise.resolve(undefined);
+      },
+      put(): Promise<void> {
+        return Promise.reject(new Error("disk full"));
+      },
+      list(): Promise<HealthItem[]> {
+        return Promise.resolve([]);
+      },
+    };
+
+    const readRes = await surfaceWorkflowFailure(
+      {
+        failureClass: "worker_down",
+        subjectRef: "worker-1",
+        message: "down",
+        auditRef: auditId("audit-1"),
+      },
+      { health: readFaultHealth, outbox, clock },
+    );
+    const writeRes = await surfaceWorkflowFailure(
+      {
+        failureClass: "worker_down",
+        subjectRef: "worker-1",
+        message: "down",
+        auditRef: auditId("audit-1"),
+      },
+      { health: writeFaultHealth, outbox, clock },
+    );
+
+    expect(isErr(readRes)).toBe(true);
+    expect(isErr(writeRes)).toBe(true);
+    if (!isErr(readRes) || !isErr(writeRes)) return;
+
+    // Both share the same closed `code` (every consumer switches on it)…
+    expect(readRes.error.code).toBe("surface_failed");
+    expect(writeRes.error.code).toBe("surface_failed");
+    // …but the MESSAGE — what an operator actually reads — must differ: a read
+    // fault is not a write fault. Mutation-kill: a collapse back to a bare
+    // `(${code})` (or any other shared string) fails this.
+    expect(readRes.error.message).not.toBe(writeRes.error.message);
+    expect(readRes.error.message).toContain("failed to read the current health item");
+    expect(writeRes.error.message).toContain("failed to persist the health item");
+
+    // No raw cause ever crosses (rule 7 stays intact — only the safe fixed
+    // message strings, never the thrown Error object's stack/detail).
+    expect(JSON.stringify(readRes)).not.toContain("connection closed");
+    expect(JSON.stringify(writeRes)).not.toContain("disk full");
+  });
 });
 
 describe("spec(§10/§11) projectSystemHealth — read-model projection shape", () => {

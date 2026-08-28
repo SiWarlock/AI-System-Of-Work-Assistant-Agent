@@ -43,6 +43,42 @@ export interface ReindexActivityDeps {
 }
 
 /**
+ * SAFETY RULE 7 — redact an injected {@link GbrainReindexClient}'s failure before it
+ * crosses the `meetingReindex` activity boundary. `client` wraps the @sow/knowledge
+ * index-sync dispatcher (out of this package's territory), so neither `cause` NOR
+ * `message` can be established safe: `cause` may be a raw GBrain/HTTP rejection
+ * object, and `message` may just as plausibly embed provider-formatted detail (a
+ * request URL, an auth header, a response-body fragment) — nothing in
+ * {@link GbrainReindexClient}'s contract forbids it. Once `meetingReindex` runs as a
+ * real Temporal activity, either would land durably in workflow history. Mirrors
+ * `redactConnectorRefreshError` (activities/refreshConnectors.ts): switch on the
+ * closed `code`, build a FRESH literal — never read `.cause`, never forward
+ * `.message`. The `code` itself crosses byte-identically (every consumer switches
+ * on it).
+ *
+ * `revision_unavailable` HERE is a DIFFERENT state than the pre-flight guard below
+ * (`createReindexActivity`'s empty-`revisionId` early return — same `code`, same
+ * enum member): this branch fires only when the CLIENT reports `revision_unavailable`
+ * — i.e. `reindex` was called with a non-empty revisionId (a commit already
+ * happened) and the index client still could not find/act on it. The pre-flight
+ * message ("reindex requires a committed revisionId…") is true only for the
+ * pre-flight case; reusing it here would tell the operator no commit landed when the
+ * opposite is true (the Markdown commit succeeded and the INDEXING is what failed)
+ * — worse than a generic message, because it is actively misleading.
+ */
+function redactReindexError(error: ReindexError): ReindexError {
+  switch (error.code) {
+    case "reindex_failed":
+      return { code: "reindex_failed", message: "gbrain reindex failed" };
+    case "revision_unavailable":
+      return {
+        code: "revision_unavailable",
+        message: "gbrain reindex failed: the index client reported the committed revision unavailable",
+      };
+  }
+}
+
+/**
  * Build a {@link ReindexGbrainPort} over the injected client (inv-4). It requires a
  * non-empty revisionId (i.e. a commit already happened) — an empty one fails closed
  * without calling the client. It is idempotent and never rolls back the commit.
@@ -62,7 +98,10 @@ export function createReindexActivity(deps: ReindexActivityDeps): ReindexGbrainP
       const result = await deps.client.reindex(revisionId);
       if (!result.ok) {
         // A reindex failure is surfaced typed — it NEVER rolls the commit back.
-        return err(result.error);
+        // SAFETY RULE 7 — see `redactReindexError` above: neither the client's raw
+        // `cause` nor its raw `message` crosses; only the stable `code` + a fixed,
+        // safe message do.
+        return err(redactReindexError(result.error));
       }
       return ok(undefined);
     },

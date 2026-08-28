@@ -76,6 +76,60 @@ describe("spec(§9) registerSource activity — register-then-dedupe, folds to t
     if (!isOk(result)) expect(result.error.code).toBe("malformed_source");
   });
 
+  it("restores the §8 gate's diagnostic message (SoW-authored: every SourceEnvelope field is an open string/branded-id check, never an enum a Zod issue could echo)", async () => {
+    const registerSource = (
+      _input: RegisterSourceInput,
+      _deps: RegisterSourceDeps,
+    ): Promise<RegisterSourceResult> =>
+      Promise.resolve({
+        outcome: "rejected",
+        code: "MALFORMED",
+        message: "source-envelope zod rejection: workspaceId: String must contain at least 1 character(s)",
+      });
+    const port = createRegisterSourceActivity({ registerSource, seenContentHash: noDedupe });
+
+    const result = await port.register(makeSourceContext());
+
+    expect(isOk(result)).toBe(false);
+    if (isOk(result)) return;
+    // code crosses byte-identically — the driver switches on it.
+    expect(result.error.code).toBe("malformed_source");
+    // Restored (2026-08-27): SourceEnvelopeSchema's fields are all `.string().min(1)` /
+    // branded ids (packages/contracts/src/models/source-envelope.ts), never a z.enum/z.literal,
+    // so this gate's message never carries candidate-controlled content — an operator needs the
+    // real reason to fix the offending source.
+    expect(result.error.message).toBe(
+      "source registration rejected: source-envelope zod rejection: workspaceId: String must contain at least 1 character(s)",
+    );
+  });
+
+  it("two distinct malformed-source rejections render distinct messages (mutation-provable: a fixed literal would collapse both to one string)", async () => {
+    const rejecting = (message: string) => (
+      _input: RegisterSourceInput,
+      _deps: RegisterSourceDeps,
+    ): Promise<RegisterSourceResult> =>
+      Promise.resolve({ outcome: "rejected", code: "MALFORMED", message });
+
+    const portA = createRegisterSourceActivity({
+      registerSource: rejecting("source-envelope zod rejection: contentHash: String must contain at least 1 character(s)"),
+      seenContentHash: noDedupe,
+    });
+    const portB = createRegisterSourceActivity({
+      registerSource: rejecting("source-envelope schema violation (additionalProperties)"),
+      seenContentHash: noDedupe,
+    });
+
+    const resultA = await portA.register(makeSourceContext());
+    const resultB = await portB.register(makeSourceContext());
+
+    expect(isOk(resultA)).toBe(false);
+    expect(isOk(resultB)).toBe(false);
+    if (isOk(resultA) || isOk(resultB)) return;
+    expect(resultA.error.code).toBe("malformed_source");
+    expect(resultB.error.code).toBe("malformed_source");
+    expect(resultA.error.message).not.toBe(resultB.error.message);
+  });
+
   it("maps the context source VERBATIM into the register input (no inference)", async () => {
     let captured: RegisterSourceInput | undefined;
     const registerSource = (
@@ -173,6 +227,42 @@ describe("spec(§9 inv-1) routeSource activity — never auto-routes below thres
     const result = await port.route(makeSourceContext());
     expect(isOk(result)).toBe(false);
     if (!isOk(result)) expect(result.error.code).toBe("route_failed");
+  });
+
+  it("R3 (24.73 restore round): the classifier's own `message` crosses, but `cause` stays dropped (narrower restore than the sibling activities)", async () => {
+    // Unlike correlateMeeting.ts/routeToApproval.ts/deterministicProgress.ts/
+    // buildGclProjection.ts (fully restored — their bound producers never carry a
+    // real `cause`), routeSource.ts's real bound classifier
+    // (`createContentProjectClassify`, apps/worker/composition/content-project-
+    // resolver.ts) explicitly BINDS a raw thrown value as `cause` on its own fault
+    // path, relying on THIS activity to strip it (its own comment names this
+    // exact site) — a live safety property apps/worker's
+    // contentProjectResolverRedaction.test.ts pins end-to-end. So only the
+    // over-corrected `message` is restored here (via `dropCause`); `cause` is a
+    // KEPT drop, same discipline as the DbError sites in approvalTransition.ts.
+    const SECRET_POISON = "PZN9F3A1BSECRET-leak";
+    const DSN_POISON = `postgres://u:${SECRET_POISON}@h/db`;
+    const failure: RouteError = {
+      code: "route_failed",
+      message: "content classifier faulted",
+      cause: { dsn: DSN_POISON },
+    };
+    const port = createRouteSourceActivity({
+      classify: (): Promise<Result<RouteSignals, RouteError>> =>
+        Promise.resolve({ ok: false, error: failure }),
+    });
+    const result = await port.route(makeSourceContext());
+    expect(isOk(result)).toBe(false);
+    if (isOk(result)) return;
+    // code crosses byte-identically — the driver switches on it.
+    expect(result.error.code).toBe("route_failed");
+    // RESTORED: the classifier's own message crosses verbatim (mutation-proof —
+    // a re-added full redaction would replace this with a different fixed literal).
+    expect(result.error.message).toBe("content classifier faulted");
+    // KEPT: cause is still dropped entirely (not merely emptied) and no poison
+    // rides `message` — this is the real leak the sibling apps/worker pin guards.
+    expect(Object.keys(result.error).sort()).toEqual(["code", "message"]);
+    expect(JSON.stringify(result.error)).not.toContain(SECRET_POISON);
   });
 
   it("uses the default 0.7 threshold when none is injected", async () => {

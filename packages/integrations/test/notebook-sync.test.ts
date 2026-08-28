@@ -65,8 +65,10 @@ function makeBodies(): ManagedDocBodies {
 
 // A fake Drive adapter: a Map keyed by canonicalObjectKey. `create` returns a
 // vendor id and remembers it (so a live existence probe on the SAME key hits);
-// `existenceCheck` reports the hit. A per-key 404 opt-in makes existence + create
-// return an "unlinked source" fault (the reattach signal).
+// `existenceCheck` reports the hit. A per-key 404 opt-in makes existence +
+// create return the closed `not_found` code (R1: the real Drive adapter
+// promotes a structured 404 to this same code — drive.ts — so the fake models
+// the PORT's contract directly rather than re-deriving the promotion).
 function makeFakeDriveAdapter(opts: { notFoundKeys?: ReadonlySet<string> } = {}): {
   adapter: TargetWriteAdapter;
   createCalls: () => number;
@@ -81,7 +83,7 @@ function makeFakeDriveAdapter(opts: { notFoundKeys?: ReadonlySet<string> } = {})
       canonicalObjectKey: string;
     }): Promise<Result<WriteReceipt, AdapterError>> => {
       if (notFound.has(env.canonicalObjectKey)) {
-        return err<AdapterError>({ code: "rejected", message: "drive 404: managed doc not found / source unlinked" });
+        return err<AdapterError>({ code: "not_found", message: "drive 404: managed doc not found / source unlinked" });
       }
       const id = `drive_obj_${nextId++}`;
       objects.set(env.canonicalObjectKey, id);
@@ -100,7 +102,7 @@ function makeFakeDriveAdapter(opts: { notFoundKeys?: ReadonlySet<string> } = {})
         canonicalObjectKey: string,
       ): Promise<Result<ExistingObject | null, AdapterError>> => {
         if (notFound.has(canonicalObjectKey)) {
-          return err<AdapterError>({ code: "rejected", message: "drive 404: source unlinked" });
+          return err<AdapterError>({ code: "not_found", message: "drive 404: source unlinked" });
         }
         const hit = objects.get(canonicalObjectKey);
         return ok(hit === undefined ? null : { externalObjectId: hit, externalUrl: `https://drive/${hit}` });
@@ -244,6 +246,33 @@ describe("createNotebookLmSync — reattach_required (missing / unlinked source)
     expect([...res.value.upserted].sort()).toEqual(
       NOTEBOOK_SLOTS.filter((s) => s !== "02_meetings").sort(),
     );
+  });
+
+  it("a non-404 rejected CREATE fault still fails the sync closed — discriminates on the closed code, not free text", async () => {
+    // The vendor refuses the write (e.g. an expired/invalid credential) — a
+    // `rejected` AdapterError that is NOT `not_found`. This must NOT be
+    // mistaken for a reattach signal: isReattachReason matches ONLY the exact
+    // closed `not_found` code, so a plain `rejected` reason
+    // (`create fault (rejected)`) fails the whole sync closed, exactly as a
+    // non-404 vendor refusal should.
+    const rejectingAdapter: TargetWriteAdapter = {
+      targetSystem: "drive",
+      existenceCheck: async (): Promise<Result<ExistingObject | null, AdapterError>> => ok(null),
+      create: async (): Promise<Result<WriteReceipt, AdapterError>> =>
+        err<AdapterError>({ code: "rejected", message: "invalid_grant: credential expired" }),
+      update: async (): Promise<Result<WriteReceipt, AdapterError>> =>
+        err<AdapterError>({ code: "unknown", message: "unused" }),
+    };
+    const store = new InMemoryReceiptStore();
+    const { deps: gatewayDeps } = makeGatewayDeps(rejectingAdapter, store);
+    const port = createNotebookLmSync({
+      gateway: gatewayDeps,
+      approvalPolicy: "auto_allowed",
+      clock: FIXED_CLOCK,
+    });
+
+    const res = await port.sync(makeMapping(), makeBodies());
+    expect(res.ok).toBe(false);
   });
 });
 

@@ -35,6 +35,38 @@ export interface RefreshConnectorsActivityDeps {
 }
 
 /**
+ * SAFETY RULE 7 — redact an injected {@link ConnectorRefresher}'s failure before it crosses the
+ * activity boundary. `refresher` wraps the Connector Gateway (out of this package's territory), so
+ * neither `cause` nor `message` can be established safe: `cause` may be a raw provider error object,
+ * and `message` may embed connector-formatted detail (auth/URL/cursor text). Once this activity is
+ * registered as a real Temporal activity (task 25.1), either would land durably in workflow history.
+ * Mirrors `commitFailureToVariant` (apps/worker/src/api/procedures/semanticMutationDispatch.ts:203):
+ * switch on the closed `code`, build a FRESH literal — never read `.cause`, never forward `.message`.
+ * The `code` itself crosses byte-identically (every consumer switches on it).
+ *
+ * `connectorId` DOES cross, unlike `.cause`/`.message`: it is the caller-supplied,
+ * workspace-configured identifier this activity already iterates over (`deps.connectorIds`),
+ * never adapter/vendor content. With several connectors configured, a fixed message
+ * naming only the failure class (no id) leaves the operator unable to tell WHICH
+ * connector needs re-auth/reconnecting — the id is what makes this diagnostic
+ * actionable rather than merely safe.
+ */
+function redactConnectorRefreshError(
+  connectorId: string,
+  error: ConnectorRefreshError,
+): ConnectorRefreshError {
+  switch (error.code) {
+    case "connector_unreachable":
+      return {
+        code: "connector_unreachable",
+        message: `connector refresh: ${connectorId} unreachable`,
+      };
+    case "connector_stale":
+      return { code: "connector_stale", message: `connector refresh: ${connectorId} stale` };
+  }
+}
+
+/**
  * Build a generic `{refresh(ctx): Promise<Result<{refreshedConnectors}, ConnectorRefreshError>>}`
  * activity. `ctx` is accepted but never read (both families' contexts already
  * carry the workspace/brain binding the ports operate over; the connector SET is
@@ -47,7 +79,7 @@ export function createRefreshConnectorsActivity(deps: RefreshConnectorsActivityD
     async refresh(_ctx: unknown) {
       for (const id of deps.connectorIds) {
         const result = await deps.refresher.refresh(id);
-        if (!result.ok) return err(result.error);
+        if (!result.ok) return err(redactConnectorRefreshError(id, result.error));
       }
       return ok({ refreshedConnectors: deps.connectorIds });
     },

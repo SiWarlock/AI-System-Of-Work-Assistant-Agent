@@ -66,6 +66,15 @@ export function createCorrelateActivity(deps: CorrelateActivityDeps): CorrelateP
     ): Promise<Result<CorrelationOutcome, CorrelateError>> {
       const resolved = await deps.resolveSignals(ctx);
       if (!resolved.ok) {
+        // R3 (24.73 restore round): NOT redacted here — a prior round added a
+        // second redaction on top of one the bound producer already does. The
+        // real `resolveSignals` binding (`createCorrelationSignalProducer`,
+        // apps/worker/src/composition/content-project-resolver.ts) already
+        // rebuilds a FRESH fixed literal (`"correlation producer faulted"`) on
+        // any producer fault before this ever sees it — so redacting a second
+        // time here stripped a message that was already safe, for zero
+        // incremental safety, while costing the operator the real diagnostic
+        // (which signal source failed, and why). Forward verbatim.
         return err(resolved.error);
       }
       const signals = resolved.value;

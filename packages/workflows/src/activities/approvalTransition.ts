@@ -55,6 +55,7 @@ import type {
   DispatchApprovedError,
   ApprovalFlowContext,
 } from "../ports/approvalFlow";
+import { dropCause } from "./redaction";
 
 // ---------------------------------------------------------------------------
 // (1) RecordPendingActivity — the Tool Gateway records the pending action + card
@@ -105,6 +106,15 @@ export function createRecordPendingActivity(
       ctx: ApprovalFlowContext,
     ): Promise<Result<RecordPendingResult, RecordPendingError>> {
       const reserved = await deps.gateway.reservePending(ctx.envelope, ctx.action);
+      // R3 (24.73 restore round): NOT redacted — the real bound gateway
+      // (buildActivities.ts's `recordPendingGateway`) always returns `ok` today
+      // (its own comment concedes this), so a redaction here guards nothing while
+      // costing the operator a real diagnostic if that binding ever fails closed —
+      // e.g. a locked-Keychain message on a future credential-backed reservation.
+      // Distinct from this file's OTHER `dropCause` sites below (kept as-is):
+      // those forward a real `DbError` whose `cause` is a raw driver throw
+      // (a DSN, a stack) — a genuinely unsafe field this site's `RecordPendingError`
+      // does carry too, but which the bound gateway never populates in practice.
       if (!isOk(reserved)) return err(reserved.error);
 
       // The pending Approval's stable id is DERIVED from the envelope's
@@ -144,11 +154,22 @@ export function createRecordPendingActivity(
         // A create conflict on the same id is a concurrent replay — re-read + reuse.
         const reRead = await deps.approvals.get(id);
         if (isOk(reRead)) return ok({ approval: reRead.value, created: false });
-        return err({
-          code: "record_failed",
-          message: `pending approval create failed: ${created.error.code}`,
-          cause: created.error,
-        });
+        // SAFETY RULE 7: this activity is REGISTERED (`approvalRecordPending`,
+        // buildActivities.ts) — its Result becomes durable, replayed Temporal
+        // workflow history. `created.error` is a real `DbError` whose own `cause`
+        // is the RAW driver throw (packages/db — a postgres DatabaseError's own
+        // enumerable severity/detail/where/routine fields, or a connection fault
+        // carrying the DSN), attached verbatim. `dropCause` strips it; only the
+        // stable `record_failed` code + a message built from the CLOSED
+        // `DbErrorCode` (never `created.error.message`, which is driver-authored
+        // free text) cross.
+        return err(
+          dropCause({
+            code: "record_failed",
+            message: `pending approval create failed: ${created.error.code}`,
+            cause: created.error,
+          }),
+        );
       }
       return ok({ approval: created.value, created: true });
     },
@@ -259,11 +280,19 @@ export function createApplyTransitionActivity(
       // An `expired` from-state is terminal — a move to approved can never happen.
       const code: ApplyTransitionErrorCode =
         from === "expired" && to === "approved" ? "expired" : "illegal_transition";
-      return err({
-        code,
-        message: `illegal approval edge ${from} → ${to}`,
-        cause: edge.error,
-      });
+      // SAFETY RULE 7: this activity is REGISTERED (`approvalApply`,
+      // buildActivities.ts). `edge.error` is domain-authored (no I/O) so it is
+      // lower-risk than a driver cause, but it is still an unowned forwarded
+      // object — dropped via `dropCause` for the same reason every other
+      // boundary in this file is: `from`/`to` are the closed
+      // ApprovalStatus/ApprovalState enums, safe to interpolate into `message`.
+      return err(
+        dropCause({
+          code,
+          message: `illegal approval edge ${from} → ${to}`,
+          cause: edge.error,
+        }),
+      );
     }
 
     // 2. CAS on expectedFromStatus — EXACTLY-ONCE, decided ATOMICALLY by the repo.
@@ -316,11 +345,19 @@ export function createApplyTransitionActivity(
         });
       }
     }
-    return err({
-      code: foldApplyDbError(res.error),
-      message: `apply transition failed: ${res.error.code}`,
-      cause: res.error,
-    });
+    // SAFETY RULE 7: this activity is REGISTERED (`approvalApply`,
+    // buildActivities.ts). `res.error` is the same real `DbError` shape as the
+    // record-activity site above — its own `cause` is the raw driver throw
+    // (a postgres DatabaseError's own enumerable fields, or a connection fault
+    // carrying the DSN). `dropCause` strips it; only the stable folded code +
+    // a message built from the CLOSED `DbErrorCode` cross.
+    return err(
+      dropCause({
+        code: foldApplyDbError(res.error),
+        message: `apply transition failed: ${res.error.code}`,
+        cause: res.error,
+      }),
+    );
   };
 
   return {

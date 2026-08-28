@@ -174,6 +174,22 @@ import type {
 } from "@sow/workflows";
 import type { BrokerOutcome } from "@sow/providers";
 
+// WP4 (task 25.1's crossTerritoryNeed close-out) — the output-workflow (dailyBrief/periodReview/
+// projectSync/crossCalendarScheduling) activity-adapter factory + the projectSync registry
+// resolver + the frozen scheduled-runtime activity-name contract. See the big doc comment at this
+// module's binding site (below, inside buildProofSpineActivities) for the full picture; this block
+// is just the import surface.
+import { createOutputWorkflowActivities } from "@sow/workflows";
+import type { OutputWorkflowActivities, ProjectSyncContext, ProjectRegistryEntry, ResolveRegistryError, WorkflowRunRefRepository, ScheduleBookkeeping } from "@sow/workflows";
+// W1 (§16/rule 7) — the closed `DbError`/`DbErrorCode` taxonomy (only the `code` half is a real
+// type here; `DbError` itself is referenced only in comments below) the durable scheduled-runtime
+// activities (`SCHEDULED_RUNTIME_ACTIVITY_NAMES`) redact down to before returning/throwing across
+// the Temporal activity boundary. See `redactDbError`'s doc comment (small pure helpers, below) for
+// why a `DbError.message` needs this treatment and a `WriteFailure.message` does not.
+import type { DbErrorCode } from "@sow/db";
+import { createProjectRegistryResolvePort } from "./projectRegistry";
+import { SCHEDULED_RUNTIME_ACTIVITY_NAMES } from "../temporal/scheduleArgs";
+
 import type {
   ProofSpineBackends,
   ResolvedWorkspacePolicy,
@@ -409,11 +425,65 @@ export interface ProofSpineParams {
 // ---------------------------------------------------------------------------
 
 /**
+ * 25.2/25.4/WP4 — the durable scheduled-runtime activity NAMES (scheduleArgs.ts's frozen
+ * contract). TYPO-SAFETY: mirrors temporal/workflows.ts's `ScheduledRunActivities`/
+ * `ScheduledScheduleActivities` EXACTLY — each member is a COMPUTED key off the SAME frozen
+ * `SCHEDULED_RUNTIME_ACTIVITY_NAMES` constant the sandbox proxies against, and each signature is
+ * lifted via indexed access off the REAL `@sow/db`-backed port types (never re-declared), so a
+ * drift between the sandbox's proxy and this registration is a TYPECHECK failure — never a silent
+ * "activity not registered" fault that only surfaces against a live server.
+ */
+export interface ScheduledRuntimeActivities {
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runCreate]: WorkflowRunRefRepository["create"];
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runGet]: WorkflowRunRefRepository["get"];
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runGetByIdempotencyKey]: WorkflowRunRefRepository["getByIdempotencyKey"];
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runUpdateState]: WorkflowRunRefRepository["updateState"];
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runAppendAuditRef]: WorkflowRunRefRepository["appendAuditRef"];
+  // W1b (§16/rule 7) — UNLIKE the five run-repo members above (already `Result`-shaped at the
+  // `WorkflowRunRefRepository` port), the underlying `ScheduleStore` port (@sow/workflows/ports/
+  // operational, unowned by this track) is a THROW-shaped bare-Promise port BY DESIGN
+  // (store-adapters.ts's "FAIL-CLOSED CONTRACT" doc: a genuine `DbError` fault REJECTS the
+  // promise). Registering `ScheduleStore["getBookkeeping"]`/`["put"]` VERBATIM as Temporal
+  // activities (the shape this interface declared before this fix) meant a real store fault
+  // THREW straight across the activity boundary — landing the raw, driver-authored
+  // `DbError.message` (interpolated into `faultRejection`'s thrown text, store-adapters.ts) in
+  // durable, replayed workflow history. So these two members are typed `Result`-shaped HERE,
+  // deliberately diverging from the bare-Promise `ScheduleStore` shape: the activity binding
+  // below (`scheduledScheduleGetBookkeeping`/`scheduledSchedulePut`) catches the adapter's throw
+  // and folds it to `err(redactDbError(...))` rather than ever re-throwing (small pure helpers,
+  // below).
+  //
+  // ⚠ CROSS-FILE NOTE (flagged, not silently left inconsistent): `apps/worker/src/temporal/
+  // workflows.ts`'s `ScheduledScheduleActivities` (a DIFFERENT track's file, not owned here)
+  // independently declares its OWN mirror of this interface for its `proxyActivities<>()` stub,
+  // and that mirror STILL types both members against the old bare-Promise `ScheduleStore` shape.
+  // The two interfaces are never a shared type (each side declares its own, matched only by
+  // convention/comment — see that file's own doc note), so this compiles clean on BOTH sides
+  // today. But the two are now WIRE-INCOMPATIBLE on a fault (this side resolves `err(...)`; that
+  // side's caller — `createScheduleRegistry`/`dailyBrief.ts`/`periodReview.ts`/etc. — expects a
+  // REJECTED promise) — safe only because hard rule #4 holds (`dailyBrief`/`periodReview`'s
+  // SCHEDULED entry points stay default-OFF; nothing arms). The mirror needs a matching
+  // Result-aware update on the calling side before this leg is ever armed.
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.scheduleGetBookkeeping]: (
+    scheduleId: string,
+  ) => Promise<Result<ScheduleBookkeeping | undefined, { readonly code: DbErrorCode; readonly message: string }>>;
+  [SCHEDULED_RUNTIME_ACTIVITY_NAMES.schedulePut]: (
+    bookkeeping: ScheduleBookkeeping,
+  ) => Promise<Result<void, { readonly code: DbErrorCode; readonly message: string }>>;
+}
+
+/**
  * The proof-spine activities as PLAIN ASYNC FUNCTIONS — the shape @temporalio/worker
  * registers. The Spine phase passes this object to `Worker.create({ activities })`.
  * Names are stable, flow-prefixed, and 1:1 with a port method.
+ *
+ * WP4 — extends {@link OutputWorkflowActivities} (packages/workflows/src/activities/
+ * outputWorkflows.ts's flat dailyBrief/periodReview/projectSync/crossCalendarScheduling surface)
+ * and {@link ScheduledRuntimeActivities} (the durable scheduled-runtime activities above), plus the
+ * projectSync registry-resolution member below — closing task 25.1's own named
+ * crossTerritoryNeed ("the composition-root binding ... is a NAMED, NOT-YET-LANDED follow-up").
  */
-export interface ProofSpineActivities {
+export interface ProofSpineActivities extends OutputWorkflowActivities, ScheduledRuntimeActivities {
   // ── meeting-closeout ──
   meetingCorrelate(ctx: MeetingCloseoutContext): Promise<ReturnType<CorrelatePort["correlate"]> extends Promise<infer R> ? R : never>;
   meetingRunAgentJob(ctx: MeetingCloseoutContext): Promise<Awaited<ReturnType<RunMeetingAgentJobPort["run"]>>>;
@@ -524,6 +594,18 @@ export interface ProofSpineActivities {
   // ── infra ports the pure drivers need ──
   /** Route a cross-subsystem failure through health+outbox (inv-5; never silent). */
   surfaceFailure(failure: WorkflowFailure): Promise<Awaited<ReturnType<typeof surfaceWorkflowFailure>>>;
+
+  // ── projectSync registry resolution (WP4 / 25.1 crossTerritoryNeed close-out) ──
+  /**
+   * The PRODUCTION project-registry resolver (task 14.6's `createProjectRegistryResolvePort`) —
+   * the exact member temporal/workflows.ts's `projectSyncRegistryActivities` proxy names as its
+   * wiring point ("`registry` stays INJECTED ... a matching-named `projectSyncResolveRegistry`
+   * function added at the composition root"). DELIBERATELY not part of `OutputWorkflowActivities`
+   * (that factory's own doc comment: "the composition root supplies it directly").
+   */
+  projectSyncResolveRegistry(
+    ctx: ProjectSyncContext,
+  ): Promise<Result<ProjectRegistryEntry, ResolveRegistryError>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -753,21 +835,27 @@ export function buildProofSpineActivities(
     // `deps.signing !== undefined`).
     ...(params.signing !== undefined ? { signing: params.signing } : {}),
   };
-  // task 24.105 — binding-site precondition guard. `commit`'s `.commit(plan)` returns the RAW
-  // `CommitKnowledgePort` Result — a rejection carries `cause: result.error`, the WHOLE `WriteFailure`
-  // with validator-authored messages constructed at `packages/workflows/src/activities/commitKnowledge.ts:164`
-  // (e.g. the secret-scan/workspace-path/ownership rejection detail). That full Result — cause included —
-  // IS the value `meetingCommit` below returns verbatim as its Temporal ACTIVITY result, so it lands in
-  // WORKFLOW HISTORY by construction on every failed commit, with no drop on that path (this is the
-  // existing, deliberate shape: the workflow needs the writer's specific failure to branch on). ⛔ NEVER
-  // expose this raw `commit` PORT OBJECT itself as a registered Temporal activity VALUE — only ever
-  // through the plain-async WRAPPER function (`meetingCommit:` below). Spreading `commit` directly into
+  // task 24.105 — binding-site precondition guard, RESOLVED. `commit`'s `.commit(plan)` returns the
+  // RAW `CommitKnowledgePort` Result — a rejection carries `cause: result.error`, the WHOLE
+  // `WriteFailure` with validator-authored messages constructed at
+  // `packages/workflows/src/activities/commitKnowledge.ts:164` (e.g. the secret-scan/workspace-path/
+  // ownership rejection detail). That raw `cause` is exactly what must never become this activity's
+  // Temporal result: the `meetingCommit:` wrapper below (the ONLY place this `commit` instance's
+  // Result crosses into a registered activity) redacts the `err` arm via `dropCommitFailureCause`
+  // (small pure helpers, near the bottom of this file) before returning — the closed `code` still
+  // crosses (every downstream `.error.code` consumer keeps switching identically) but `cause` never
+  // does, so a failed commit no longer lands raw in WORKFLOW HISTORY. ⛔ NEVER expose this raw
+  // `commit` PORT OBJECT itself as a registered Temporal activity VALUE — only ever through the
+  // plain-async WRAPPER function (`meetingCommit:` below), and never let that wrapper return `result`
+  // verbatim on the `err` arm. Spreading `commit` directly into
   // the returned activities literal (e.g. a future `{...commit, ...}` shorthand) would register a
   // `CommitKnowledgePort`-shaped OBJECT (with a `.commit` method) under a Temporal activity key — this
   // module's own header requires PLAIN ASYNC FUNCTIONS, and Temporal's `Worker.create({activities})`
   // expects each member directly invocable, not a nested method. A prohibition alone invites its own
   // deletion — `proof-spine-composition.test.ts` pins that every exposed commit-bearing activity is a
-  // bare function with no nested `.commit`, never this port spread in.
+  // bare function with no nested `.commit`, never this port spread in; the `cause`-redaction itself is
+  // pinned in `test/composition/commitCauseRedaction.test.ts` (hostile-fixture `cause` never crosses,
+  // `code` still does; the `ok` arm still reaches `withGbrainSync` unredacted).
   const commit: CommitKnowledgePort = createCommitActivity({
     applyPlan,
     deps: knowledgeWriterDeps,
@@ -916,20 +1004,43 @@ export function buildProofSpineActivities(
             status: outcome.status,
             envelope: { ...envelope, writeReceipt: outcome.receipt },
           });
+        // I1 (SUPERSEDED) — this switch used to fold `outcome.reason` through
+        // `redactDispatchApprovedError` to a fixed code-keyed string. That collapse was a
+        // REGRESSION: it stripped the §21.10 credential-fault token (`"locked"`/`"empty"`/the
+        // fault code) an operator NEEDS to tell "your Mac Keychain is locked" from "the vendor
+        // rejected the write" (worker LESSONS §41). `outcome.reason` is now forwarded VERBATIM.
+        //
+        // Do NOT restate the safety property more strongly than the mechanism supports: the
+        // gateway does not build `reason` "from a closed code only" — on these arms it
+        // INTERPOLATES the adapter's `AdapterError.message` (gateway.ts ~:266 / ~:310). `reason`
+        // is safe by TWO provenances: (1) GATEWAY-AUTHORED text (a closed code in a fixed
+        // template, a `.code`/`.path`-only Zod-issue summary, the §21.10 token, the reservation
+        // literal); and (2) ADAPTER-AUTHORED `AdapterError.message`, safe because the ADAPTER
+        // builds it from CLOSED inputs — every shipped vendor adapter comes from
+        // `makeTargetWriteAdapter` (packages/integrations/src/tools/adapters/adapter-core.ts),
+        // whose `faultToError` composes `message` from the 4-value closed `TransportFault` code
+        // plus the NUMERIC `httpStatus`, never the transport's free-text `detail`. RESIDUAL,
+        // honestly: `TargetWriteAdapter` is a plain interface, so a hand-written adapter that
+        // bypasses that core could still put arbitrary text in `message` and this path would
+        // forward it — the guarantee is by the shared core, not by the type.
+        //
+        // `code` crosses UNCHANGED, and the workflow driver
+        // (packages/workflows/src/workflows/approvalFlow.ts:412-440) branches ONLY on
+        // `.error.code` — never on this prose.
+        // ⛔ DO NOT re-add a message redaction here. It would buy no safety (the residual above
+        // lives at the ADAPTER boundary, which is where it must be closed) and would re-strip the
+        // credential-fault signal, which is provenance (1) and never adapter text at all.
         case "conflict":
           return err({ code: "conflict", message: outcome.reason });
         case "held":
           return err({ code: "held", message: outcome.reason });
+        // "approval_pending" keeps its own pre-existing fixed literal (never gateway-sourced, so
+        // out of scope for the above).
         case "approval_pending":
+          return err({ code: "rejected", message: "external write awaits approval" });
         case "rejected":
         default:
-          return err({
-            code: "rejected",
-            message:
-              outcome.status === "approval_pending"
-                ? "external write awaits approval"
-                : (outcome as { reason?: string }).reason ?? "external write rejected",
-          });
+          return err({ code: "rejected", message: outcome.reason });
       }
     },
   };
@@ -1312,12 +1423,18 @@ export function buildProofSpineActivities(
   //     inside `createCommitActivity` (§16) — never a silent proceed / re-commit.
   // Metadata is the proof-spine run context (`params.commit` — derived, not caller-supplied → honest audit).
   //
-  // task 24.105 — the SAME binding-site precondition guard as `commit`'s site above (its own comment
-  // carries the full reasoning): a rejection's `cause: result.error` — the WHOLE `WriteFailure` with
-  // validator-authored messages (`commitKnowledge.ts:164`) — is what the `sourceCommit:` wrapper below
-  // returns verbatim as its Temporal activity result, landing in WORKFLOW HISTORY by construction. NEVER
-  // expose this `sourceCommit` PORT OBJECT itself as a registered activity value — only through the
-  // wrapper function. Pinned in `proof-spine-composition.test.ts`.
+  // task 24.105 — the SAME binding-site precondition guard as `commit`'s site above, RESOLVED (its own
+  // comment carries the full reasoning): a rejection's `cause: result.error` — the WHOLE `WriteFailure`
+  // with validator-authored messages (`commitKnowledge.ts:164`) — is what the `sourceCommit:` wrapper
+  // below now REDACTS (via `dropCommitFailureCause`, small pure helpers below) before returning it as
+  // its Temporal activity result; the closed `code` still crosses, `cause` never does, so it no longer
+  // lands in WORKFLOW HISTORY. `sourceCommit` is the higher-risk of the two commit sites — source-
+  // ingestion note paths derive from user-dropped/imported (untrusted) files, so a leaked `.path` would
+  // be attacker-influenced by design. NEVER expose this `sourceCommit` PORT OBJECT itself as a
+  // registered activity value — only through the wrapper function, and never let that wrapper return
+  // `result` verbatim on the `err` arm. The shape (no nested `.commit`) is pinned in
+  // `proof-spine-composition.test.ts`; the `cause`-redaction itself is pinned in
+  // `test/composition/commitCauseRedaction.test.ts`.
   const sourceCommit: CommitKnowledgePort = createCommitActivity({
     applyPlan,
     deps: knowledgeWriterDeps,
@@ -1365,6 +1482,304 @@ export function buildProofSpineActivities(
     }),
   });
 
+  // ── output workflows (WP4 — task 25.1's crossTerritoryNeed close-out) ────────
+  //
+  // Task 25.1 wired FOUR sandbox workflow wrappers (dailyBrief/periodReview/projectSync/
+  // crossCalendarScheduling) + their SCHEDULED entry points, but temporal/workflows.ts's own
+  // header names the exact gap this closes: "the composition-root binding that spreads
+  // createOutputWorkflowActivities(...)'s real backends into the registered activities object is a
+  // NAMED, NOT-YET-LANDED follow-up." Until this bound, EVERY scheduled dailyBrief / periodReview /
+  // projectSync / crossCalendarScheduling occurrence would fail on its FIRST activity call with
+  // "activity not registered" — nothing in Phase 25 could run.
+  //
+  // WHAT IS REAL vs HONEST-DORMANT below: `commit` (the SOLE KnowledgeWriter path, reusing the
+  // SAME `knowledgeWriterDeps`/`applyPlan` this function already built for meeting/source),
+  // `propose` (the SAME §8 Tool-Gateway `dispatchRouted` binding), `health` (the SAME 7.5
+  // `surfaceDeps` sink), the projectSync `noteExists` probe (the SAME real vault-backed
+  // `meetingNoteExists`), the crossCalendar `classify` policy lookup (the SAME `params.resolved`
+  // posture already resolved for this worker's single bound workspace), and the crossCalendar
+  // `routeToApproval` gateway (a REAL pending Approval recorded via `backends.repos.approvals`,
+  // get-before-create idempotent — Lesson 30) are ALL genuine reuse of backends this file already
+  // assembled. Every OTHER leg below (the per-workspace GCL summary producer, the plan/PM progress
+  // reader, the calendar-availability connector, the brief/review/sync note projections, the
+  // dashboard read-model sink, the connector-refresh set) has NO real business-logic producer wired
+  // anywhere in this codebase yet (arch_gap — each family's own port doc names its own "Phase
+  // 25.2/25.4, deferred, zero production callers" gap explicitly). WP4's job is REGISTRATION
+  // correctness, not inventing that business logic — reuse existing wiring, do NOT invent new
+  // backends — so every such leg is an HONEST, ALWAYS FAIL-CLOSED (or, where "nothing to
+  // refresh"/"no candidates" IS the honest answer, an ALWAYS-EMPTY) placeholder: it can only ever
+  // return a typed failure or an empty result, NEVER a guessed/fabricated value (REQ-F-017) and
+  // NEVER a partial/duplicate write (§16). A real producer for each such leg is a separate, later,
+  // named follow-up — clearly marked below, never silently papered over.
+  //
+  // ⛔ SAFETY RULE 7 / task 24.105 — WHY THIS IS SAFE TO REGISTER AT ALL. Every one of
+  // `dailyBriefCommit`/`periodReviewCommit`/`projectSyncCommitStatus`/`crossCalendarCommitNote`
+  // below carries a REAL KnowledgeWriter commit RESULT as its Temporal ACTIVITY return value — and
+  // a commit REJECTION's `cause` is the WHOLE `WriteFailure` (validator-authored secret-scan /
+  // workspace-path / ownership detail, commitKnowledge.ts:161-165). Registering a member that
+  // returned that `cause` verbatim would put it into WORKFLOW HISTORY by construction the moment
+  // Temporal calls it — the exact defect task 24.105 filed as a PRECONDITION blocking this exact
+  // registration. It is safe here ONLY because `outputWorkflows.ts`'s own `commitWithRedactedFailure`
+  // (that file's §2.5) already drops `cause` — via `dropCommitFailureCause` — on the `err` arm of
+  // EVERY commit-bearing member `createOutputWorkflowActivities` returns, BEFORE this function ever
+  // sees the Result. This binding does not re-derive that redaction (there is nothing to add) — it
+  // DEPENDS on it: if a future edit to `outputWorkflows.ts` ever stopped redacting `cause`, the
+  // `...outputWorkflowActivities` spread below would silently start leaking validator detail into
+  // workflow history again. See that file's own §2.5 comment for the full mapping. ⛔ NEVER expose a
+  // raw `CommitKnowledgePort`-shaped object (a `.commit` method) as a registered activity value here
+  // — `outputWorkflowActivities`'s commit-bearing members are ALREADY bare plain-async functions
+  // (verified at their construction site, outputWorkflows.ts's own §2.5 wrapper), so spreading the
+  // object below is safe; `test/composition/outputWorkflowActivities.test.ts` pins the non-vacuity
+  // property (no `"commit"` key, no nested `.commit`) the same way `proof-spine-composition.test.ts`
+  // already pins it for `meetingCommit`/`sourceCommit`.
+  const outputWorkflowJobIdentity = {
+    workflowRunId: params.meetingJobInputs.workflowRunId,
+    workspaceId: params.meetingJobInputs.workspaceId,
+    maxRuntimeSeconds: params.meetingJobInputs.maxRuntimeSeconds,
+  };
+  const outputWorkflowActivities: OutputWorkflowActivities = createOutputWorkflowActivities({
+    // ── shared across all four families (REAL — reuses this function's own existing wiring) ──
+    commit: {
+      applyPlan,
+      deps: knowledgeWriterDeps,
+      actor: params.commit.actor,
+      sourceEventRef: params.commit.sourceEventRef,
+      workflowRunRef: params.commit.workflowRunRef,
+      // Same live-head resolver as `sourceCommit` above: these are periodic auto-commits (not a
+      // single fixed-base run), so a fixed base would spuriously write_conflict.
+      expectedBaseRevision: () => readVaultHeadRevision(backends.vault),
+      deriveIdempotencyKey: (plan) => `kw:commit:${String(plan.planId)}`,
+    },
+    propose: {
+      dispatch: (env, action, deps) => dispatchRouted(backends.writeAdapters, env, action, deps),
+      deps: externalWriteDeps,
+    },
+    // No real dashboard read-model sink is wired at the composition root yet (arch_gap — the
+    // DashboardReadModelStore port carries no workspaceId/key at all, so a single shared sink would
+    // conflate all four families' payloads under one row; a real per-family key convention is a
+    // separate, later, named follow-up). Honest no-op: never throws, never fabricates a stored row.
+    dashboard: { store: { put: async (): Promise<void> => { /* no-op — see arch_gap note above */ } } },
+    health: surfaceDeps,
+
+    // ── the GLOBAL/Coordination leg (dailyBrief + periodReview) ──
+    // No real per-workspace GCL summary producer exists yet (arch_gap — ports/dailyBrief.ts's own
+    // UpdateProjectionsPort doc names this exact gap + "Phase 25.2/25.4" as the wiring point, with
+    // zero production callers as of this writing). ALWAYS zero candidates — never guessed, never
+    // raw — so the global brief/review always renders with ZERO cross-workspace context until a real
+    // producer lands. Because there are never any candidates, `lookupWorkspace` is never actually
+    // invoked; it stays fail-closed (mirrors createGclProjectionGate's own posture on an unresolved
+    // workspace) rather than a guessed default.
+    gclProjection: {
+      source: { project: async () => ok([]) },
+      lookupWorkspace: () => undefined,
+    },
+    // No real connector-refresh producer exists yet either (distinct from the 16.2 `connectorPoll`
+    // engine above, which drives a DIFFERENT capability). `connectorIds: []` is the SAME "zero
+    // enabled instances" shipped default `connectorPollPort` uses above — the refresher below is
+    // therefore never invoked. `composeConnectors()` (this file, above) is the real substrate to
+    // bind a refresher over once this is armed.
+    refreshConnectors: {
+      connectorIds: [],
+      refresher: { refresh: async () => ok(undefined) },
+    },
+
+    // ── per-family model-synthesis legs (REAL broker + REAL egress/matrix/workspace posture — the
+    //    SAME reuse `runAgentJob`/`sourceAgent` above already make; a KMP-stand-in outputSchemaId
+    //    per Lesson 44, since no real output schema is registered for these worker-internal
+    //    capabilities yet — `mapCandidate` below is therefore unreachable in practice until one is,
+    //    Lesson 64: the broker's own schema gate rejects first) ──
+    dailyBriefAgent: {
+      broker: { runJob: (req, signal) => backends.broker.runJob(req, signal) },
+      inputs: {
+        ...outputWorkflowJobIdentity,
+        capability: "daily_brief.synthesize",
+        outputSchemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
+        idempotencyKey: `job:daily-brief:${String(params.meetingJobInputs.workspaceId)}`,
+      },
+      buildEgress: () => params.resolved.egressPolicy,
+      buildMatrix: () => params.resolved.providerMatrix,
+      buildWorkspace: () => ({ type: params.resolved.type, dataOwner: params.resolved.dataOwner }),
+      // Honest EMPTY brief (zero extraction fields) — never a fabricated field (REQ-F-017).
+      mapCandidate: () => ({ global: { fields: {} }, workspaceDrafts: {} }),
+      localConfig: backends.localConfig,
+    },
+    periodReviewAgent: {
+      broker: { runJob: (req, signal) => backends.broker.runJob(req, signal) },
+      inputs: {
+        ...outputWorkflowJobIdentity,
+        capability: "period_review.synthesize",
+        outputSchemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
+        idempotencyKey: `job:period-review:${String(params.meetingJobInputs.workspaceId)}`,
+      },
+      buildEgress: () => params.resolved.egressPolicy,
+      buildMatrix: () => params.resolved.providerMatrix,
+      buildWorkspace: () => ({ type: params.resolved.type, dataOwner: params.resolved.dataOwner }),
+      mapCandidate: () => ({ global: { fields: {} }, workspaceDrafts: {} }),
+      localConfig: backends.localConfig,
+    },
+    projectSyncSynthesize: {
+      broker: { runJob: (req, signal) => backends.broker.runJob(req, signal) },
+      inputs: {
+        ...outputWorkflowJobIdentity,
+        capability: "project_sync.synthesize",
+        outputSchemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
+        idempotencyKey: `job:project-sync:${String(params.meetingJobInputs.workspaceId)}`,
+      },
+      buildEgress: () => params.resolved.egressPolicy,
+      buildMatrix: () => params.resolved.providerMatrix,
+      buildWorkspace: () => ({ type: params.resolved.type, dataOwner: params.resolved.dataOwner }),
+      // No numeric progress here (REQ-F-011 — the deterministic parser is the sole source); an
+      // empty prose-only draft is the honest mapping.
+      mapCandidate: () => ({ fields: {} }),
+      localConfig: backends.localConfig,
+    },
+    crossCalendarProposeAgent: {
+      broker: { runJob: (req, signal) => backends.broker.runJob(req, signal) },
+      inputs: {
+        ...outputWorkflowJobIdentity,
+        capability: "cross_calendar.propose_windows",
+        outputSchemaId: KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
+        idempotencyKey: `job:cross-calendar:${String(params.meetingJobInputs.workspaceId)}`,
+      },
+      buildEgress: () => params.resolved.egressPolicy,
+      buildMatrix: () => params.resolved.providerMatrix,
+      buildWorkspace: () => ({ type: params.resolved.type, dataOwner: params.resolved.dataOwner }),
+      // Zero proposed windows — never a fabricated interval.
+      mapCandidate: () => ({ fields: {}, windows: [] }),
+      localConfig: backends.localConfig,
+    },
+
+    // ── per-family derive-from-validated legs ──
+    dailyBriefOutputs: {
+      globalProjection: {
+        project: () =>
+          err({
+            code: "build_failed",
+            message: "no daily-brief global projection wired yet (WP4: activity-registration scope only)",
+          }),
+      },
+      workspaceProjection: {
+        project: () =>
+          err({
+            code: "build_failed",
+            message: "no daily-brief workspace projection wired yet (WP4: activity-registration scope only)",
+          }),
+      },
+      sourceRef: params.sourceRef,
+      planIdentitySeed: JSON.stringify(params.planIdentity),
+    },
+    periodReviewOutputs: {
+      globalProjection: {
+        project: () =>
+          err({
+            code: "build_failed",
+            message: "no period-review global projection wired yet (WP4: activity-registration scope only)",
+          }),
+      },
+      workspaceProjection: {
+        project: () =>
+          err({
+            code: "build_failed",
+            message: "no period-review workspace projection wired yet (WP4: activity-registration scope only)",
+          }),
+      },
+      sourceRef: params.sourceRef,
+      planIdentitySeed: JSON.stringify(params.planIdentity),
+    },
+    projectSyncParse: {
+      reader: {
+        read: async () =>
+          err({
+            code: "parse_failed",
+            message: "no plan/provider progress source wired yet (WP4: activity-registration scope only)",
+          }),
+      },
+    },
+    projectSyncBuildOutputs: {
+      projection: {
+        project: () =>
+          err({
+            code: "build_failed",
+            message: "no project-sync outputs projection wired yet (WP4: activity-registration scope only)",
+          }),
+      },
+      sourceRef: params.sourceRef,
+      planIdentity: params.planIdentity,
+      // REAL — reuses the SAME vault-backed `meetingNoteExists` probe this function already built.
+      noteExists: meetingNoteExists,
+    },
+    crossCalendarGather: {
+      query: {
+        query: async () =>
+          err({
+            code: "calendar_unreachable",
+            message: "no availability-source connector wired yet (WP4: activity-registration scope only)",
+          }),
+      },
+      gate: {
+        admit: async () =>
+          err({ reason: "no availability visibility gate wired yet (WP4: activity-registration scope only)" }),
+      },
+    },
+    crossCalendarBuildOutputs: {
+      projection: {
+        project: () =>
+          err({
+            code: "build_failed",
+            message: "no cross-calendar scheduling projection wired yet (WP4: activity-registration scope only)",
+          }),
+      },
+      sourceRef: params.sourceRef,
+      planIdentity: params.planIdentity,
+    },
+    // REAL — reuses the SAME `params.resolved` single-bound-workspace posture the meeting leg
+    // resolves above (mirrors ClassifyActionActivityDeps's own "boot-resolved, not per-call I/O"
+    // doc comment).
+    crossCalendarClassify: {
+      resolvePolicy: (workspaceId) =>
+        workspaceId === params.meetingJobInputs.workspaceId ? params.resolved : undefined,
+    },
+    // REAL — a genuine pending Approval, get-before-create idempotent (Lesson 30), over the SAME
+    // `backends.repos.approvals` the meeting/approval-flow legs above already use.
+    crossCalendarRouteToApproval: {
+      gateway: {
+        async reservePending(action, env) {
+          const approvalRef = makeApprovalIdFromEnvelope(env);
+          const existing = await backends.repos.approvals.get(approvalRef);
+          if (existing.ok) {
+            return ok({ approvalRef, created: false });
+          }
+          const approval: Approval = {
+            id: approvalRef,
+            actionRef: action.actionId,
+            subjectKind: "external_action",
+            // Single-workspace-per-worker proof-spine (matches every other static-identity field in
+            // this function) — the port carries no workspaceId param to bind per-call.
+            workspaceId: params.meetingJobInputs.workspaceId,
+            status: "pending",
+            actor: params.commit.actor,
+            channel: "mac",
+            payloadHash: env.payloadHash,
+          };
+          const created = await backends.repos.approvals.create(approval);
+          if (!created.ok) {
+            return err({ code: "route_failed", message: `pending approval record failed: ${created.error.code}` });
+          }
+          return ok({ approvalRef, created: true });
+        },
+      },
+    },
+  });
+
+  // The PRODUCTION projectSync registry resolver (task 14.6) — the SAME real @sow/db-backed port
+  // temporal/workflows.ts's `projectSyncRegistryActivities` proxy names as its wiring point
+  // ("crossTerritoryNeed, apps/worker/src/composition/buildActivities.ts"). Reuses the durable
+  // ProjectRegistryRepository + the 14.1 WS-8 workspace registry already assembled in `backends`.
+  const projectSyncRegistryPort = createProjectRegistryResolvePort({
+    repo: backends.repos.projectRegistry,
+    readModels: backends.repos.readModels,
+  });
+
   // ── the plain-async-function object Temporal registers ───────────────────────
   return {
     // meeting-closeout
@@ -1375,8 +1790,16 @@ export function buildProofSpineActivities(
       buildOutputs.build(validated, workspaceId),
     meetingCommit: async (plan) => {
       const result = await commit.commit(plan);
+      // task 24.105 — `withGbrainSync` gets the FULL unredacted `result` (it only ever reads
+      // `result.value.revisionId` on its own `isOk` early-return, never `.error`/`.cause`, but is
+      // handed the real Result regardless — an in-process consumer is not the boundary this
+      // redacts). Redaction happens ONLY on what this function RETURNS, below.
       await withGbrainSync(plan, result);
-      return result;
+      // task 24.105 — redact the `err` arm before it crosses into the Temporal ACTIVITY result
+      // (workflow history is a log sink, rule 7): drop `cause` via `dropCommitFailureCause`
+      // (small pure helpers, below) — `code`/`message` cross unchanged, `cause` never does. The
+      // `ok` arm is untouched.
+      return isOk(result) ? result : err(dropCommitFailureCause(result.error));
     },
     meetingPropose: (action, env) => propose.propose(action, env),
     meetingReindex: (revisionId) => reindex.reindex(revisionId),
@@ -1450,8 +1873,15 @@ export function buildProofSpineActivities(
         }
       }
       // 19.1 — same fail-SAFE post-commit hook as the meeting path (see `withGbrainSync` above).
+      // task 24.105 — this in-process call, like `refreshRecentChanges` above, gets the FULL
+      // unredacted `result` (`withGbrainSync` reads `result.value.revisionId` on its own `isOk`
+      // early-return only). Redaction happens ONLY on what this function RETURNS, below.
       await withGbrainSync(plan, result);
-      return result;
+      // task 24.105 — redact the `err` arm before it crosses into the Temporal ACTIVITY result
+      // (workflow history is a log sink, rule 7): drop `cause` via `dropCommitFailureCause`
+      // (small pure helpers, below) — `code`/`message` cross unchanged, `cause` never does. The
+      // `ok` arm is untouched.
+      return isOk(result) ? result : err(dropCommitFailureCause(result.error));
     },
     sourcePropose: (action, env) => propose.propose(action, env),
     sourceIndex: (revisionId) => sourceIndexPort.index(revisionId),
@@ -1466,12 +1896,229 @@ export function buildProofSpineActivities(
     // 16.2 — poll one connector (dormant in the shipped default; the resolve binds the real 16.1 adapters).
     connectorPoll: (connector) => connectorPollPort.poll(connector),
     surfaceFailure: (failure) => surfaceWorkflowFailure(failure, surfaceDeps),
+
+    // ── output workflows (WP4) — see the big doc comment above this function's `return` for the
+    //    full real-vs-honest-dormant breakdown and the SAFETY RULE 7 / task 24.105 reasoning this
+    //    spread depends on. Every member here is ALREADY a bare plain-async function (verified at
+    //    outputWorkflowActivities's own construction site) — never a raw port object.
+    ...outputWorkflowActivities,
+    // ── projectSync registry resolution (WP4 / 25.1 crossTerritoryNeed close-out) ──
+    projectSyncResolveRegistry: (ctx) => projectSyncRegistryPort.resolve(ctx),
+
+    // ── 25.2/25.4 — the durable scheduled-runtime activities (scheduleArgs.ts's frozen contract) ──
+    // Thin adapters over the REAL @sow/db `WorkflowRunRefRepository` + the REAL durable
+    // `ScheduleStore` already assembled in `backends` (backends.ts's `createScheduleStoreAdapter`)
+    // — replacing the sandbox's inert `sandboxRunRepo`/`sandboxScheduleStoreStub` on the SCHEDULED
+    // entry points only (temporal/workflows.ts binds these ONLY into
+    // `dailyBriefScheduledWorkflow`/`periodReviewScheduledWorkflow`/
+    // `crossCalendarSchedulingScheduledWorkflow` — never the direct-start wrappers, and NEVER
+    // starts a Schedule pointed at them on its own). Computed keys off the SAME frozen
+    // `SCHEDULED_RUNTIME_ACTIVITY_NAMES` constant the sandbox proxies against, so a drift between
+    // the two is a TYPECHECK failure here, never a silent "activity not registered" fault that only
+    // surfaces against a live server.
+    //
+    // W1a (§16/rule 7) — the five run-repo members below were BARE pass-throughs of the REAL
+    // `WorkflowRunRefRepository`'s `Result<T, DbError>` — returning the raw `DbError` VERBATIM on a
+    // fault, including its opaque driver `.cause` UNCHANGED (packages/db/src/adapters/{sqlite,
+    // postgres}/errors.ts's `toDbError` sets `cause` to the caught driver throw as-is — a Postgres
+    // connection fault's cause can carry a DSN, a driver can throw a bare plain object, etc.).
+    // Redacted here exactly like the `meetingCommit`/`sourceCommit` wrappers below (task 24.105):
+    // `code` (the closed, enumerable `DbErrorCode` taxonomy) crosses UNCHANGED so a downstream
+    // `.error.code` switch keeps matching; `message` is replaced with a FIXED generic string keyed
+    // off `code` (see `redactDbError`'s doc comment, small pure helpers below, for why a
+    // `DbError.message` — unlike the `WriteFailure.message` `dropCommitFailureCause` passes through
+    // verbatim — is NOT provably safe); `cause` is dropped.
+    [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runCreate]: async (ref) => {
+      const result = await backends.repos.workflowRunRefs.create(ref);
+      return isOk(result) ? result : err(redactDbError(result.error));
+    },
+    [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runGet]: async (workflowId) => {
+      const result = await backends.repos.workflowRunRefs.get(workflowId);
+      return isOk(result) ? result : err(redactDbError(result.error));
+    },
+    [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runGetByIdempotencyKey]: async (idempotencyKey) => {
+      const result = await backends.repos.workflowRunRefs.getByIdempotencyKey(idempotencyKey);
+      return isOk(result) ? result : err(redactDbError(result.error));
+    },
+    [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runUpdateState]: async (workflowId, state) => {
+      const result = await backends.repos.workflowRunRefs.updateState(workflowId, state);
+      return isOk(result) ? result : err(redactDbError(result.error));
+    },
+    [SCHEDULED_RUNTIME_ACTIVITY_NAMES.runAppendAuditRef]: async (workflowId, auditRef) => {
+      const result = await backends.repos.workflowRunRefs.appendAuditRef(workflowId, auditRef);
+      return isOk(result) ? result : err(redactDbError(result.error));
+    },
+    // W1b (§16/rule 7, CRITICAL) — `backends.scheduleStore` (store-adapters.ts's
+    // `createScheduleStoreAdapter`) is a THROW-shaped port BY DESIGN (see that file's "FAIL-CLOSED
+    // CONTRACT" doc — a genuine `DbError` fault REJECTS via `faultRejection`, never a silent wrong
+    // answer). `faultRejection` interpolates the driver-authored `DbError.message` straight into the
+    // thrown `Error.message` (`operational-store ${op} failed (${error.code}): ${error.message}`),
+    // and these two members previously let that THROW cross the Temporal ACTIVITY boundary
+    // verbatim — a §16 violation (every other member of this whole activities object already avoids
+    // throwing) AND a rule-7 leak (the interpolated message is not provably safe — see
+    // `redactDbError`'s doc comment).
+    //
+    // `createScheduleStoreAdapter` ITSELF is left UNCHANGED (its declared return type, `ScheduleStore`
+    // — @sow/workflows/ports/operational, unowned by this track — is throw-shaped, and the ONLY other
+    // reachable reference to it is `apps/worker/src/lifecycle/last-run.ts`'s RE-EXPORT of the same
+    // symbol; `createLastRunService` in that file binds the raw `ScheduleBookkeepingRepository`
+    // directly, never this adapter, so nothing there is actually CALLING it either — confirmed via
+    // `rg -n "createScheduleStoreAdapter" apps/worker/src`: its only construction call site is
+    // `backends.ts`'s `createScheduleStoreAdapter(opened.repos.scheduleBookkeeping)`, and that single
+    // `scheduleStore` instance is consumed ONLY by these two activities). With no OTHER in-process
+    // caller depending on its throw, the fix still lands at the ACTIVITY BINDING (here) rather than
+    // widening the shared adapter's contract, matching the same catch-and-redact shape as the run-repo
+    // members above — `faultRejection`'s thrown `Error` also now carries a SAFE `{ code }` hint on its
+    // own `.cause` (store-adapters.ts) purely so this catch can recover the closed `DbErrorCode`
+    // without ever re-reading the unsafe interpolated `.message`.
+    [SCHEDULED_RUNTIME_ACTIVITY_NAMES.scheduleGetBookkeeping]: async (scheduleId) => {
+      try {
+        return ok(await backends.scheduleStore.getBookkeeping(scheduleId));
+      } catch (thrown) {
+        return err(redactDbError({ code: scheduleStoreFaultCode(thrown) }));
+      }
+    },
+    [SCHEDULED_RUNTIME_ACTIVITY_NAMES.schedulePut]: async (bookkeeping) => {
+      try {
+        await backends.scheduleStore.put(bookkeeping);
+        return ok(undefined);
+      } catch (thrown) {
+        return err(redactDbError({ code: scheduleStoreFaultCode(thrown) }));
+      }
+    },
   };
 }
 
 // ---------------------------------------------------------------------------
 // small pure helpers
 // ---------------------------------------------------------------------------
+
+// task 24.105 — drop the raw KnowledgeWriter `cause` at the ACTIVITY BOUNDARY, before a commit
+// rejection can cross into Temporal workflow history (safety rule 7 — secrets/raw-content never
+// reach a log sink, and workflow history is exactly such a sink once `meetingCommit`/`sourceCommit`
+// are registered real activities).
+//
+// `commit.commit(plan)` / `sourceCommit.commit(plan)` (createCommitActivity,
+// packages/workflows/src/activities/commitKnowledge.ts) return the RAW `CommitKnowledgePort`
+// Result: a rejection's `cause` is either the WHOLE @sow/knowledge `WriteFailure` (commitKnowledge.ts
+// :164 — validator-authored `issues[]`/`path`/`kind` detail: secret-scan matches, workspace-path
+// detail, ownership-rejection detail) or an arbitrary thrown value (:134-139/:157-158, an infra
+// fault caught at that boundary). Either would land in workflow history verbatim if returned as-is
+// — an adversarial pass demonstrated exactly this leak live (`cause:{code:"workspace_path_violation",
+// path:"notes/…SECRET-leak.md"}`, `cause:{code:"secret_found", path:"…", kind:"credential_shaped"}`).
+//
+// `message` crosses UNCHANGED, not merely for convenience: commitKnowledge.ts is the SOLE producer
+// of every commit failure this helper redacts, and its own `message` construction (:137/:158/:163)
+// only ever interpolates a fixed string or the CLOSED `WriteFailure.code` — never `.message` or
+// `.issues[]` — so `message` never carries the validator-authored detail `cause` does. `code` is
+// UNCHANGED too, so every downstream `.error.code` consumer (the meeting/source workflow drivers,
+// which branch on the closed `KnowledgeCommitFailureCode` set) keeps switching identically — only
+// `cause` is dropped.
+//
+// Mirrors the discipline `commitFailureToVariant` already applies to the OTHER commit-consuming path
+// (apps/worker/src/api/procedures/semanticMutationDispatch.ts:203 — switches on the failure's stable
+// `code`, builds a FRESH literal, never reads `.cause`) and the identically-named/-shaped helper
+// `packages/workflows/src/activities/outputWorkflows.ts` carries for its own four commit-bearing
+// members (`dropCommitFailureCause`/`commitWithRedactedFailure`, that file's §2.5). Built LOCAL here
+// rather than imported: this track does not own `packages/workflows`, and single-sourcing the mapping
+// would mean reaching outside these owned files to export it from there — flagged, not silently
+// duplicated-without-comment (the two definitions are structurally identical by construction, so a
+// future single-source pass is a pure mechanical move, not a behavior change).
+//
+// W1 (this round) GENERALIZES this helper with an OPTIONAL `safeMessage` override rather than
+// growing a fourth near-identical `{code, message}`-shaping copy in this file. The two existing
+// callers (`meetingCommit`/`sourceCommit` above) omit it — their `failure.message` is PROVEN safe
+// by the analysis above, so they keep crossing it UNCHANGED, byte-for-byte identical to before this
+// round. `redactDbError` (below) is the ONE caller that supplies an override: a `DbError.message` is
+// a DIFFERENT, NOT-provably-safe case (see that helper's own doc comment) — never assume "this
+// helper already drops `cause`" also means "any `.message` it's given is safe to keep." A guarantee
+// proven for one producer (`commitKnowledge.ts`) does not transfer to a different producer (a DB
+// driver) just because both happen to flow through the same generic plumbing.
+function dropCommitFailureCause<
+  F extends { readonly code: string; readonly message: string; readonly cause?: unknown },
+>(failure: F, safeMessage?: string): { readonly code: F["code"]; readonly message: string } {
+  return { code: failure.code, message: safeMessage ?? failure.message };
+}
+
+// W1 — a fixed, code-keyed generic message for every closed `DbErrorCode` (packages/db/src/
+// repositories/interfaces.ts). Used ONLY by `redactDbError` below, which every DbError-sourced
+// scheduled-runtime activity (W1a's five run-repo members, W1b's two schedule-store members) routes
+// through before returning/throwing across the Temporal activity boundary.
+//
+// WHY a fixed table instead of passing `error.message` through (the way `dropCommitFailureCause`'s
+// two ORIGINAL callers do for `WriteFailure.message`): `DbError.message` is NOT provably safe.
+// BOTH dialect adapters (packages/db/src/adapters/sqlite/errors.ts AND .../postgres/errors.ts,
+// `toDbError`) copy the RAW DRIVER `Error.message` VERBATIM whenever the caught cause is an `Error`
+// instance (`message: cause instanceof Error ? cause.message : ...`) — a Postgres connection/auth
+// failure's message can embed a DSN/host/user, a driver can throw a plain object whose OWN
+// `.message` field echoes caller-supplied content, and neither adapter sanitizes that text before
+// building the `DbError`. So unlike `commitKnowledge.ts` (proven above to interpolate only a fixed
+// string or the closed `WriteFailure.code`), a `DbError.message` carries the SAME class of risk its
+// `.cause` does — both must be kept off the crossing, not just `.cause`.
+const DB_ERROR_SAFE_MESSAGE: Record<DbErrorCode, string> = {
+  not_found: "record not found",
+  conflict: "conflicting write",
+  constraint_violation: "constraint violation",
+  serialization_failure: "transient store contention",
+  unavailable: "operational store unavailable",
+  stored_row_schema_violation: "stored row failed validation",
+  unknown: "operational store operation failed",
+};
+
+/**
+ * Redact a `DbError`-class fault crossing an ACTIVITY boundary down to `{code, message}` — reuses
+ * `dropCommitFailureCause`'s drop-`cause` discipline, generalized with its `safeMessage` override.
+ * `code` (the closed, enumerable `DbErrorCode` taxonomy) crosses UNCHANGED so a downstream
+ * `.error.code` switch keeps matching; `message` is always the FIXED generic string
+ * `DB_ERROR_SAFE_MESSAGE` keys off `code` — never the caller's own `.message` (see that table's doc
+ * comment for why). The parameter type is narrowed to `{ code }` ONLY — no `message`/`cause` — so a
+ * caller structurally CANNOT thread the raw driver detail through even by accident; a real `DbError`
+ * (which does carry `.cause`) is still a valid argument (its extra fields are simply never read).
+ */
+function redactDbError(error: {
+  readonly code: DbErrorCode;
+}): { readonly code: DbErrorCode; readonly message: string } {
+  const safeMessage = DB_ERROR_SAFE_MESSAGE[error.code];
+  return dropCommitFailureCause({ code: error.code, message: safeMessage }, safeMessage);
+}
+
+// I1 (SUPERSEDED) — this file used to fold every `approvalDispatchApproved` conflict/held/rejected
+// fault through a fixed code-keyed generic message (`DISPATCH_APPROVED_SAFE_MESSAGE` +
+// `redactDispatchApprovedError`, mirroring `redactDbError` below). That blanket collapse silently
+// stripped the §21.10 credential-fault token (`"locked"`/`"empty"`/the fault code) an operator needs
+// (worker LESSONS §41) to distinguish "your keychain is locked" from "the vendor rejected the
+// write" — so the helper is deleted and `approvedGateway.dispatch` (above) forwards
+// `outcome.reason` VERBATIM.
+//
+// The safety property is NOT "the gateway builds `reason` from a closed code only" — it interpolates
+// the adapter's `AdapterError.message` on those arms. It is that BOTH provenances of that string are
+// built from closed inputs: gateway-authored text (a closed code in a fixed template, a
+// `.code`/`.path`-only Zod-issue summary, the §21.10 token, the reservation literal), and
+// adapter-authored `AdapterError.message`, which every SHIPPED vendor adapter derives via
+// `makeTargetWriteAdapter`'s `faultToError` (packages/integrations/src/tools/adapters/adapter-core.ts)
+// from the closed `TransportFault` code plus the NUMERIC `httpStatus`, never the transport's
+// free-text `detail`. That second guarantee is by the shared core, not by the `TargetWriteAdapter`
+// type — a hand-written adapter bypassing the core could still emit unsafe `message` text. See the
+// dispatch site above and `ExternalWriteResult`'s doc comment (gateway.ts:81-101).
+// ⛔ DO NOT reintroduce a fixed-message table for `DispatchApprovedErrorCode` here. The residual
+// above must be closed at the ADAPTER boundary, where vendor text enters; re-adding a blanket
+// collapse here would buy nothing there and would re-break the credential-fault signal, which is
+// gateway-authored and never adapter text at all.
+
+/**
+ * Recover the `DbErrorCode` `faultRejection` (composition/store-adapters.ts) attaches to a thrown
+ * `ScheduleStore` fault's OWN `Error.cause` as `{ code }` — store-adapters.ts extends `faultRejection`
+ * for exactly this purpose (a SAFE, code-only hint; never the opaque driver `cause` that function
+ * already keeps off, and never read from the thrown `Error.message`, which is the UNSAFE
+ * driver-interpolated text `redactDbError`/`DB_ERROR_SAFE_MESSAGE` exist to avoid re-surfacing).
+ * Fails closed to the catch-all `"unknown"` code for anything that isn't EXACTLY that shape — a
+ * rogue/foreign throw, a non-Error value, a tampered `.cause` — never guessed, never a crash.
+ */
+function scheduleStoreFaultCode(thrown: unknown): DbErrorCode {
+  const cause = thrown instanceof Error ? thrown.cause : undefined;
+  const code = (cause as { readonly code?: unknown } | undefined)?.code;
+  return typeof code === "string" && code in DB_ERROR_SAFE_MESSAGE ? (code as DbErrorCode) : "unknown";
+}
 
 /** Derive a stable Approval id from the envelope's idempotencyKey (idempotent record). */
 function makeApprovalIdFromEnvelope(env: ExternalWriteEnvelope): Approval["id"] {

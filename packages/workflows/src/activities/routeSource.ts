@@ -24,6 +24,7 @@ import type {
   RouteOutcome,
   SourceIngestionContext,
 } from "../ports/sourceIngestion";
+import { dropCause } from "./redaction";
 
 /**
  * The raw routing signals the injected classifier resolves from the source's
@@ -70,7 +71,20 @@ export function createRouteSourceActivity(
     ): Promise<Result<RouteOutcome, RouteError>> {
       const resolved = await deps.classify(ctx);
       if (!resolved.ok) {
-        return err(resolved.error);
+        // R3 (24.73 restore round) — narrower than the sibling correlateMeeting.ts
+        // restore, DELIBERATELY: `message` is restored (the real bound classifier,
+        // `createContentProjectClassify` / apps/worker/composition/content-project-
+        // resolver.ts, already builds it from a closed set of fixed literals — a
+        // second redaction here only replaced one safe fixed string with another,
+        // costing nothing to restore). `cause` stays DROPPED via `dropCause`,
+        // unlike the sibling: that same classifier's `catch` block explicitly BINDS
+        // the raw thrown value as `cause` (its own comment names this exact
+        // downstream `dropCause` as the reason doing so is safe), and this classify
+        // dep is a REAL, live-wired production path (not a dormant stub) with an
+        // armable real-registry resolver still to come — a full unredacted forward
+        // here would reopen the leak apps/worker/test/composition/
+        // contentProjectResolverRedaction.test.ts exists to pin closed.
+        return err(dropCause(resolved.error));
       }
       const signals = resolved.value;
       // HIGH: threshold cleared AND a concrete workspace was resolved (WS-2 bind).

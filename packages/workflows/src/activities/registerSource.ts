@@ -92,6 +92,15 @@ export function createRegisterSourceActivity(
           return ok({ outcome: "dedupe_hit", contentHash: result.contentHash });
         case "rejected":
         default:
+          // Restored 2026-08-27 (CLAUDE.md "THE BAR IS INVERTED"): `result.message` is built
+          // by the §8 register gate (packages/integrations/src/connectors/source-register.ts)
+          // from ajv structural codes / Zod issue text over `SourceEnvelopeSchema`
+          // (packages/contracts/src/models/source-envelope.ts) — every field there is an open
+          // `.string().min(1)` or a branded-id check, never a `z.enum`/`z.literal`, so Zod's
+          // default issue message never echoes candidate content on this schema. The message
+          // is SoW-authored diagnostic text (which field, which check) an operator needs to
+          // fix the offending source, so it crosses; only the stable `malformed_source` code
+          // is what every driver actually switches on.
           return err({
             code: "malformed_source",
             message: `source registration rejected: ${result.message}`,

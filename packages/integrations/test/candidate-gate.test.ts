@@ -60,6 +60,23 @@ describe("admitProposedAction", () => {
     const r = admitProposedAction({ ...goodAction, sneaky: true });
     expect(r.ok).toBe(false);
   });
+
+  it("a Zod-only rejection (ajv passes, the branded-id refine fails) builds `message` from the issue's code+path, never its raw text — the raw text survives ONLY in `debugDetail`", () => {
+    // A whitespace-only actionId passes ajv (any non-empty-shaped string) but
+    // fails the ActionIdSchema brand's `.refine((s) => s.trim().length > 0, ...)`
+    // — the one Zod-only check `zod-to-json-schema` cannot see (LESSONS §3).
+    const r = admitProposedAction({ ...goodAction, actionId: "   " });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.code).toBe("MALFORMED");
+    // Code-only summary: names the Zod issue code + the field path, never the
+    // raw refine message ("empty/whitespace").
+    expect(r.message).toContain("custom");
+    expect(r.message).toContain("actionId");
+    expect(r.message).not.toContain("empty/whitespace");
+    // The richer detail is still available IN-PROCESS for debugging.
+    expect(r.debugDetail).toBe("empty/whitespace");
+  });
 });
 
 describe("admitExternalWriteEnvelope", () => {
@@ -101,5 +118,16 @@ describe("admitExternalWriteEnvelope", () => {
     const r = admitExternalWriteEnvelope(42);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe("MALFORMED");
+  });
+
+  it("a Zod-only rejection (whitespace-only actionId) builds `message` from the issue's code+path, never the raw refine text", () => {
+    const r = admitExternalWriteEnvelope({ ...goodEnvelope, actionId: "   " });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.code).toBe("MALFORMED");
+    expect(r.message).toContain("custom");
+    expect(r.message).toContain("actionId");
+    expect(r.message).not.toContain("empty/whitespace");
+    expect(r.debugDetail).toBe("empty/whitespace");
   });
 });

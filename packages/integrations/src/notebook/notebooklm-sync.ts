@@ -71,14 +71,36 @@ export interface NotebookSyncDeps {
   };
 }
 
-/** A `reattach_required` reason surfaced by the gateway = a 404 / not-found /
- * unlinked-source fault on the Drive doc. Matched case-insensitively against the
- * gateway's redaction-safe `reason` string (which carries only the adapter's
- * diagnostic — never raw content). */
-const REATTACH_SIGNAL = /\b404\b|not[_\s-]?found|unlinked|missing/i;
+/**
+ * R2 FIX: a `reattach_required` outcome is discriminated by the closed
+ * `AdapterError.code` riding `ExternalWriteResult.adapterCode` — a real FIELD,
+ * never by parsing the human-readable `reason` string. Control flow must never
+ * depend on parsing a redaction-safe diagnostic meant for an operator's eyes.
+ *
+ * PRIOR BUGS (both were free-text matching over `reason`, in two shapes):
+ *   R1 — a regex (`/\b404\b|not[_\s-]?found|unlinked|missing/i`) matched
+ *        DESCRIPTIVE fault text that a later redaction pass removed, so a
+ *        Drive 404 (`existence-check fault (rejected)` / `create fault
+ *        (rejected)`) never matched and failed the WHOLE five-slot sync
+ *        closed instead of yielding a per-slot reattach.
+ *   R1.5 — the follow-up fix swapped the regex for `reason.endsWith("(" +
+ *        REATTACH_CODE + ")")`: tidier, but STILL string-matching a value
+ *        whose exact shape is gateway-internal formatting, not a contract.
+ *        The moment the gateway's `reason` format changed shape again (to
+ *        restore the adapter's diagnostic message alongside the code — see
+ *        gateway.ts's `ExternalWriteResult` doc comment) this `endsWith`
+ *        check broke a second time, silently.
+ * The fix: read `result.adapterCode` directly. It is a real field, set from
+ * `AdapterError.code` at every gateway construction site that originates from
+ * an adapter fault (existence-check / create), and it is untouched by any
+ * change to `reason`'s prose. This cannot break the same way again.
+ */
+const REATTACH_CODE = "not_found" as const;
 
-function isReattachReason(reason: string): boolean {
-  return REATTACH_SIGNAL.test(reason);
+function isReattachResult(
+  result: Extract<ExternalWriteResult, { status: "conflict" | "held" | "rejected" }>,
+): boolean {
+  return result.adapterCode === REATTACH_CODE;
 }
 
 // The result of dispatching one slot: upserted (created/reused), reattach
@@ -121,9 +143,10 @@ function buildSlotAction(
 }
 
 // Map the gateway's ExternalWriteResult onto a slot outcome. created/reused →
-// upserted (idempotent in-place, no duplicate Drive doc). A 404/not-found/
-// unlinked reason (on any typed hold/conflict/reject) → reattach. Anything else →
-// a hard failure (fail-closed; never reported as a clean upsert).
+// upserted (idempotent in-place, no duplicate Drive doc). A closed `not_found`
+// adapterCode (on any typed held/conflict/rejected status — see
+// isReattachResult) → reattach. Anything else → a hard failure (fail-closed;
+// never reported as a clean upsert).
 function classifyDispatch(slot: NotebookSlot, result: ExternalWriteResult): SlotOutcome {
   switch (result.status) {
     case "created":
@@ -139,7 +162,7 @@ function classifyDispatch(slot: NotebookSlot, result: ExternalWriteResult): Slot
     case "conflict":
     case "held":
     case "rejected":
-      return isReattachReason(result.reason)
+      return isReattachResult(result)
         ? { kind: "reattach" }
         : {
             kind: "error",
@@ -181,7 +204,7 @@ async function syncSlot(
   // the fail-closed classifier (backward-compatible).
   if (
     dispatched.status === "held" &&
-    !isReattachReason(dispatched.reason) &&
+    !isReattachResult(dispatched) &&
     deps.outbox !== undefined
   ) {
     const held = await holdWrite(

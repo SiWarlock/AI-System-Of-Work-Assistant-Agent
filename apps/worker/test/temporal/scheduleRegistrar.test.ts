@@ -10,10 +10,29 @@
 //       update — never a second create (idempotent, safe to call every boot);
 //   (c) a client fault (describe/create/update all throw) folds to a typed
 //       refusal — never a throw across the boundary (§16).
-// NOTHING here unpauses a schedule — `update` never carries a `paused` field, so
-// there is no code path in this module that can flip one to live.
+// NOTHING here ASKS to unpause a schedule — `update` never carries a `paused`
+// field, so `ensure` cannot REQUEST a pause-state change through this seam.
+// That is not the same as a guarantee that pause state survives on the wire:
+// the fake port below is intentionally NAIVE about `update` (it never touches
+// `existingById`'s `paused` key), which is exactly why every assertion here
+// checks `create`'s `paused: true`, never a live "still paused after update"
+// claim against this fake. The real adapter's wire encoding is what actually
+// decides whether an update preserves pause state — see
+// apps/worker/src/temporal/scheduleRegistrar.ts's module header (task F2: a
+// real SDK update is a full REPLACE, so a naive absent-`paused` forward
+// silently unpauses; `createRealScheduleClientPort.update` in boot.ts fixes it
+// by echoing `previous.state.paused` back) and boot.ts's own adapter tests for
+// that guarantee — it is NOT provable from this port-shape alone, and this
+// module's tests do not claim it is.
+//
+// WP1 (25.2/25.4): dailyBrief/periodReview/crossCalendarScheduling now emit REAL
+// per-tick `args` (a single frozen-contract envelope from `./scheduleArgs`) and
+// point `action.workflowType` at the SCHEDULED entry-point name, not the
+// direct-start one. `ingestionTriage`/`projectSync` are DELIBERATELY untouched —
+// the `args: []`-length + direct-start-workflowType assertions on those two
+// families are POSITIVE CONTROLS proving this slice's scope stayed narrow.
 import { describe, it, expect } from "vitest";
-import { isOk, isErr } from "@sow/contracts";
+import { isOk, isErr, workspaceId } from "@sow/contracts";
 import {
   createTemporalScheduleRegistrar,
   gateIngestionTriageSchedule,
@@ -25,18 +44,32 @@ import {
   gateDailyBriefSchedule,
   buildDailyBriefScheduleSpec,
   DAILY_BRIEF_SCHEDULE_ID,
+  DAILY_BRIEF_WORKFLOW_TYPE,
   gatePeriodReviewWeeklySchedule,
   buildPeriodReviewWeeklyScheduleSpec,
   PERIOD_REVIEW_WEEKLY_SCHEDULE_ID,
   gatePeriodReviewMonthlySchedule,
   buildPeriodReviewMonthlyScheduleSpec,
   PERIOD_REVIEW_MONTHLY_SCHEDULE_ID,
+  PERIOD_REVIEW_WORKFLOW_TYPE,
   gateCrossCalendarSchedulingSchedule,
   buildCrossCalendarSchedulingScheduleSpec,
   CROSS_CALENDAR_SCHEDULING_SCHEDULE_ID,
+  CROSS_CALENDAR_SCHEDULING_WORKFLOW_TYPE,
   type ScheduleClientPort,
   type TemporalScheduleSpec,
 } from "../../src/temporal/scheduleRegistrar";
+import {
+  type DailyBriefScheduleArgs,
+  type PeriodReviewScheduleArgs,
+  type CrossCalendarSchedulingScheduleArgs,
+  type ScheduledWorkspaceScope,
+  type ScheduledAvailabilitySource,
+} from "../../src/temporal/scheduleArgs";
+
+const GLOBAL_WS = workspaceId("ws-global");
+const SCOPE_WS = workspaceId("ws-scope-1");
+const ORGANIZER_WS = workspaceId("ws-organizer");
 
 const SPEC: TemporalScheduleSpec = {
   scheduleId: "sched-1",
@@ -93,8 +126,13 @@ describe("createTemporalScheduleRegistrar — idempotent create-or-update (25.SC
     expect(client.calls.describe).toEqual(["sched-1"]);
     expect(client.calls.create).toHaveLength(1);
     expect(client.calls.update).toHaveLength(0);
-    // The load-bearing invariant: every create is paused. NOTHING in this
-    // package ever unpauses a schedule.
+    // The load-bearing invariant THIS ASSERTION checks, no broader: every
+    // `create` call this FAKE port received carries `paused: true`. That is a
+    // claim about `create` only, against a fake — it does NOT establish
+    // "nothing in this package ever unpauses a schedule" (see the file
+    // header above: whether a `paused` state SURVIVES an `update`/converge on
+    // the real wire is the adapter's job, not provable from this port-shape
+    // alone, and this file's tests do not claim it is).
     expect(client.calls.create[0]?.opts).toEqual({ paused: true });
     expect(client.calls.create[0]?.spec).toEqual(SPEC);
   });
@@ -177,9 +215,23 @@ describe("gateIngestionTriageSchedule — 25.5 default-OFF, strict === true armi
     expect(spec).toBeDefined();
     expect(spec).toEqual(buildIngestionTriageScheduleSpec(base));
     expect(spec?.scheduleId).toBe(INGESTION_TRIAGE_SCHEDULE_ID);
+    // Literal, deliberately — comparing against the module's own constant is
+    // tautological (a corrupted constant would still equal itself). The literal
+    // pins the WIRE NAME independently: it must match the real registered
+    // export `ingestionTriageWorkflow` (temporal/workflows.ts:650), which a
+    // renamed constant can silently drift away from without failing typecheck.
     expect(spec?.action.workflowType).toBe("ingestionTriageWorkflow");
     expect(spec?.action.taskQueue).toBe("sow-control-plane");
     expect(spec?.intervalMs).toBe(base.intervalMs);
+  });
+
+  // POSITIVE CONTROL (WP1 scope): ingestionTriage is DELIBERATELY untouched by the
+  // WP1 real-args slice — it still emits the args:[] placeholder shape. If a later
+  // change accidentally extends the WP1 pattern to this family, this assertion is
+  // the tripwire that catches it.
+  it("WP1 positive control: STILL emits args:[] — this family is out of WP1 scope", () => {
+    const spec = gateIngestionTriageSchedule({ ...base, enabled: true });
+    expect(spec?.action.args).toEqual([]);
   });
 });
 
@@ -204,22 +256,46 @@ describe("gateProjectSyncSchedule — 25.3 default-OFF, strict === true arming g
     expect(spec).toBeDefined();
     expect(spec).toEqual(buildProjectSyncScheduleSpec(base));
     expect(spec?.scheduleId).toBe(PROJECT_SYNC_SCHEDULE_ID);
+    // Literal, deliberately — see the ingestionTriage positive control above for
+    // why a constant-to-constant comparison is a tautology. Must match the real
+    // registered export `projectSyncWorkflow` (temporal/workflows.ts:1019).
     expect(spec?.action.workflowType).toBe("projectSyncWorkflow");
     expect(spec?.action.taskQueue).toBe("sow-control-plane");
     expect(spec?.intervalMs).toBe(base.intervalMs);
   });
 
-  it("ensure() over the gated spec creates a NEW schedule paused:true — the schedule stays inert end to end", async () => {
+  // POSITIVE CONTROL (WP1 scope): projectSync is DELIBERATELY untouched by the WP1
+  // real-args slice — see the ingestionTriage positive control above for why.
+  it("WP1 positive control: STILL emits args:[] — this family is out of WP1 scope", () => {
+    const spec = gateProjectSyncSchedule({ ...base, enabled: true });
+    expect(spec?.action.args).toEqual([]);
+  });
+
+  it("ensure() over the gated spec creates a NEW schedule paused:true, then a repeat ensure() converges via update — never a second create", async () => {
     const spec = gateProjectSyncSchedule({ ...base, enabled: true });
     expect(spec).toBeDefined();
     const client = fakeClient();
     const registrar = createTemporalScheduleRegistrar({ client });
 
-    const r = await registrar.ensure(spec as TemporalScheduleSpec);
+    const first = await registrar.ensure(spec as TemporalScheduleSpec);
+    const second = await registrar.ensure(spec as TemporalScheduleSpec);
 
-    expect(isOk(r)).toBe(true);
-    expect(client.calls.create).toHaveLength(1);
+    expect(isOk(first)).toBe(true);
+    expect(isOk(second)).toBe(true);
+    if (isOk(first)) expect(first.value.action).toBe("created");
+    if (isOk(second)) expect(second.value.action).toBe("updated");
+    // The load-bearing invariant THIS ASSERTION checks, no broader: across a
+    // create-then-converge round trip through the REAL gated builder output,
+    // `create` fires exactly once (carrying `paused: true`) and a repeat
+    // `ensure()` takes the converge branch — never a second create. That is a
+    // call-count claim against this FAKE port; it does NOT establish that a
+    // paused state SURVIVES the real wire on converge (see the file header
+    // above and scheduleRegistrar.ts's module header, task F2: that guarantee
+    // lives in the adapter, pinned by schedule-update-preserves-pause.test.ts,
+    // not here).
+    expect(client.calls.create).toHaveLength(1); // never re-created on converge
     expect(client.calls.create[0]?.opts).toEqual({ paused: true });
+    expect(client.calls.update).toHaveLength(1);
   });
 });
 
@@ -228,7 +304,14 @@ describe("gateProjectSyncSchedule — 25.3 default-OFF, strict === true arming g
 // ---------------------------------------------------------------------------
 
 describe("gateDailyBriefSchedule — 25.2 default-OFF, strict === true arming gate", () => {
-  const base = { taskQueue: "sow-control-plane" as const, intervalMs: 86_400_000 };
+  const SCOPES: readonly ScheduledWorkspaceScope[] = [{ workspaceId: SCOPE_WS, brainId: "brain-scope-1" }];
+  const base = {
+    taskQueue: "sow-control-plane" as const,
+    intervalMs: 86_400_000,
+    catchUpWindowMs: 3_600_000,
+    globalWorkspaceId: GLOBAL_WS,
+    scopes: SCOPES,
+  };
 
   it("is undefined by default (enabled: false) — no spec, no schedule attachable", () => {
     expect(gateDailyBriefSchedule({ ...base, enabled: false })).toBeUndefined();
@@ -239,27 +322,75 @@ describe("gateDailyBriefSchedule — 25.2 default-OFF, strict === true arming ga
     expect(gateDailyBriefSchedule(hostile)).toBeUndefined();
   });
 
+  // Extends the truthy-not-true pin onto the WP1-widened opts shape (catchUpWindowMs/
+  // globalWorkspaceId/scopes now present alongside enabled) — a numeric 1 must not
+  // arm either, on the SAME strict `=== true` guard.
+  it("is undefined for a truthy-not-boolean 1 on the WP1-widened opts shape — strict === true survives the widening", () => {
+    const hostile = { ...base, enabled: 1 as unknown as boolean };
+    expect(gateDailyBriefSchedule(hostile)).toBeUndefined();
+  });
+
   it("returns the durable daily-brief schedule spec only when enabled === true", () => {
     const spec = gateDailyBriefSchedule({ ...base, enabled: true });
     expect(spec).toBeDefined();
     expect(spec).toEqual(buildDailyBriefScheduleSpec(base));
     expect(spec?.scheduleId).toBe(DAILY_BRIEF_SCHEDULE_ID);
-    expect(spec?.action.workflowType).toBe("dailyBriefWorkflow");
     expect(spec?.action.taskQueue).toBe("sow-control-plane");
     expect(spec?.intervalMs).toBe(base.intervalMs);
   });
 
-  it("ensure() over the gated spec creates a NEW schedule paused:true — the schedule stays inert end to end", async () => {
+  // WP1 — the args-content assertion. Mutation-proved: swapping `catchUpWindowMs:
+  // opts.catchUpWindowMs` for a different field value in buildDailyBriefScheduleSpec
+  // was verified to turn this RED before being reverted (see WP1 verification notes).
+  it("WP1: emits action.args of length 1 whose element deep-equals the expected DailyBriefScheduleArgs envelope", () => {
+    const spec = gateDailyBriefSchedule({ ...base, enabled: true });
+    const expected: DailyBriefScheduleArgs = {
+      scheduleId: DAILY_BRIEF_SCHEDULE_ID,
+      intervalMs: base.intervalMs,
+      catchUpWindowMs: base.catchUpWindowMs,
+      globalWorkspaceId: base.globalWorkspaceId,
+      scopes: base.scopes,
+    };
+    expect(spec?.action.args).toHaveLength(1);
+    expect(spec?.action.args[0]).toEqual(expected);
+  });
+
+  it("WP1: action.workflowType is the SCHEDULED entry-point name, never the direct-start type", () => {
+    const spec = gateDailyBriefSchedule({ ...base, enabled: true });
+    // Literal, deliberately — a constant-to-constant comparison against
+    // DAILY_BRIEF_SCHEDULED_WORKFLOW_TYPE would be tautological (the builder and
+    // this test import the SAME constant from ./scheduleArgs, so a corrupted
+    // constant still equals itself here). The literal pins the WIRE NAME to the
+    // real registered export `dailyBriefScheduledWorkflow` (temporal/workflows.ts:914).
+    expect(spec?.action.workflowType).toBe("dailyBriefScheduledWorkflow");
+    expect(spec?.action.workflowType).not.toBe(DAILY_BRIEF_WORKFLOW_TYPE);
+  });
+
+  it("ensure() over the gated spec creates a NEW schedule paused:true, then a repeat ensure() converges via update — never a second create", async () => {
     const spec = gateDailyBriefSchedule({ ...base, enabled: true });
     expect(spec).toBeDefined();
     const client = fakeClient();
     const registrar = createTemporalScheduleRegistrar({ client });
 
-    const r = await registrar.ensure(spec as TemporalScheduleSpec);
+    const first = await registrar.ensure(spec as TemporalScheduleSpec);
+    const second = await registrar.ensure(spec as TemporalScheduleSpec);
 
-    expect(isOk(r)).toBe(true);
-    expect(client.calls.create).toHaveLength(1);
+    expect(isOk(first)).toBe(true);
+    expect(isOk(second)).toBe(true);
+    if (isOk(first)) expect(first.value.action).toBe("created");
+    if (isOk(second)) expect(second.value.action).toBe("updated");
+    // The load-bearing invariant THIS ASSERTION checks, no broader: across a
+    // create-then-converge round trip through the REAL gated builder output,
+    // `create` fires exactly once (carrying `paused: true`) and a repeat
+    // `ensure()` takes the converge branch — never a second create. That is a
+    // call-count claim against this FAKE port; it does NOT establish that a
+    // paused state SURVIVES the real wire on converge (see the file header
+    // above and scheduleRegistrar.ts's module header, task F2: that guarantee
+    // lives in the adapter, pinned by schedule-update-preserves-pause.test.ts,
+    // not here).
+    expect(client.calls.create).toHaveLength(1); // never re-created on converge
     expect(client.calls.create[0]?.opts).toEqual({ paused: true });
+    expect(client.calls.update).toHaveLength(1);
   });
 });
 
@@ -269,7 +400,14 @@ describe("gateDailyBriefSchedule — 25.2 default-OFF, strict === true arming ga
 // ---------------------------------------------------------------------------
 
 describe("gatePeriodReviewWeeklySchedule / gatePeriodReviewMonthlySchedule — 25.2 default-OFF, strict === true arming gates", () => {
-  const base = { taskQueue: "sow-control-plane" as const, intervalMs: 604_800_000 };
+  const SCOPES: readonly ScheduledWorkspaceScope[] = [{ workspaceId: SCOPE_WS, brainId: "brain-scope-1" }];
+  const base = {
+    taskQueue: "sow-control-plane" as const,
+    intervalMs: 604_800_000,
+    catchUpWindowMs: 3_600_000,
+    globalWorkspaceId: GLOBAL_WS,
+    scopes: SCOPES,
+  };
 
   it("weekly is undefined by default (enabled: false)", () => {
     expect(gatePeriodReviewWeeklySchedule({ ...base, enabled: false })).toBeUndefined();
@@ -289,7 +427,18 @@ describe("gatePeriodReviewWeeklySchedule / gatePeriodReviewMonthlySchedule — 2
     expect(gatePeriodReviewMonthlySchedule(hostile)).toBeUndefined();
   });
 
-  it("weekly returns a durable period-review spec distinct from monthly's (different scheduleId, SAME workflowType)", () => {
+  // Extends the truthy-not-true pin onto the WP1-widened opts shape for BOTH cadences.
+  it("weekly is undefined for a truthy-not-boolean 1 on the WP1-widened opts shape", () => {
+    const hostile = { ...base, enabled: 1 as unknown as boolean };
+    expect(gatePeriodReviewWeeklySchedule(hostile)).toBeUndefined();
+  });
+
+  it("monthly is undefined for a truthy-not-boolean 1 on the WP1-widened opts shape", () => {
+    const hostile = { ...base, enabled: 1 as unknown as boolean };
+    expect(gatePeriodReviewMonthlySchedule(hostile)).toBeUndefined();
+  });
+
+  it("weekly returns a durable period-review spec distinct from monthly's (different scheduleId, SAME scheduled workflowType)", () => {
     const weekly = gatePeriodReviewWeeklySchedule({ ...base, enabled: true });
     const monthly = gatePeriodReviewMonthlySchedule({ ...base, enabled: true });
     expect(weekly).toBeDefined();
@@ -300,8 +449,46 @@ describe("gatePeriodReviewWeeklySchedule / gatePeriodReviewMonthlySchedule — 2
     expect(monthly?.scheduleId).toBe(PERIOD_REVIEW_MONTHLY_SCHEDULE_ID);
     // distinct schedule ids ⇒ distinct workflow ids too (ensure() never collides the two cadences)
     expect(weekly?.action.workflowId).not.toBe(monthly?.action.workflowId);
-    expect(weekly?.action.workflowType).toBe("periodReviewWorkflow");
-    expect(monthly?.action.workflowType).toBe("periodReviewWorkflow");
+    // WP1: both cadences point at the SCHEDULED entry point, never the direct-start type —
+    // args[0].period is what distinguishes them (asserted below), not the type name.
+    // Literal, deliberately — see the dailyBrief positive control above for why a
+    // constant-to-constant comparison is a tautology. Must match the real registered
+    // export `periodReviewScheduledWorkflow` (temporal/workflows.ts:997).
+    expect(weekly?.action.workflowType).toBe("periodReviewScheduledWorkflow");
+    expect(monthly?.action.workflowType).toBe("periodReviewScheduledWorkflow");
+    expect(weekly?.action.workflowType).not.toBe(PERIOD_REVIEW_WORKFLOW_TYPE);
+    expect(monthly?.action.workflowType).not.toBe(PERIOD_REVIEW_WORKFLOW_TYPE);
+  });
+
+  // WP1 — the args-content assertion for BOTH cadences. Mutation-proved: swapping
+  // `period: opts.period` for a hardcoded wrong literal in buildPeriodReviewScheduleSpec
+  // was verified to turn this RED before being reverted (see WP1 verification notes).
+  it("WP1: weekly emits args of length 1 deep-equaling its PeriodReviewScheduleArgs envelope with period:\"weekly\"", () => {
+    const weekly = gatePeriodReviewWeeklySchedule({ ...base, enabled: true });
+    const expected: PeriodReviewScheduleArgs = {
+      scheduleId: PERIOD_REVIEW_WEEKLY_SCHEDULE_ID,
+      period: "weekly",
+      intervalMs: base.intervalMs,
+      catchUpWindowMs: base.catchUpWindowMs,
+      globalWorkspaceId: base.globalWorkspaceId,
+      scopes: base.scopes,
+    };
+    expect(weekly?.action.args).toHaveLength(1);
+    expect(weekly?.action.args[0]).toEqual(expected);
+  });
+
+  it("WP1: monthly emits args of length 1 deep-equaling its PeriodReviewScheduleArgs envelope with period:\"monthly\"", () => {
+    const monthly = gatePeriodReviewMonthlySchedule({ ...base, enabled: true });
+    const expected: PeriodReviewScheduleArgs = {
+      scheduleId: PERIOD_REVIEW_MONTHLY_SCHEDULE_ID,
+      period: "monthly",
+      intervalMs: base.intervalMs,
+      catchUpWindowMs: base.catchUpWindowMs,
+      globalWorkspaceId: base.globalWorkspaceId,
+      scopes: base.scopes,
+    };
+    expect(monthly?.action.args).toHaveLength(1);
+    expect(monthly?.action.args[0]).toEqual(expected);
   });
 
   it("ensure() over EITHER gated spec creates a NEW schedule paused:true, and the two cadences register as TWO independent schedules", async () => {
@@ -327,7 +514,16 @@ describe("gatePeriodReviewWeeklySchedule / gatePeriodReviewMonthlySchedule — 2
 // ---------------------------------------------------------------------------
 
 describe("gateCrossCalendarSchedulingSchedule — 25.4 default-OFF, strict === true arming gate", () => {
-  const base = { taskQueue: "sow-control-plane" as const, intervalMs: 3_600_000 };
+  const SOURCES: readonly ScheduledAvailabilitySource[] = [
+    { sourceId: "cal-1", workspaceId: SCOPE_WS },
+    { sourceId: "cal-2", workspaceId: ORGANIZER_WS },
+  ];
+  const base = {
+    taskQueue: "sow-control-plane" as const,
+    intervalMs: 3_600_000,
+    organizerWorkspaceId: ORGANIZER_WS,
+    sources: SOURCES,
+  };
 
   it("is undefined by default (enabled: false) — no spec, no schedule attachable", () => {
     expect(gateCrossCalendarSchedulingSchedule({ ...base, enabled: false })).toBeUndefined();
@@ -338,26 +534,69 @@ describe("gateCrossCalendarSchedulingSchedule — 25.4 default-OFF, strict === t
     expect(gateCrossCalendarSchedulingSchedule(hostile)).toBeUndefined();
   });
 
+  // Extends the truthy-not-true pin onto the WP1-widened opts shape (organizerWorkspaceId/
+  // sources now present alongside enabled).
+  it("is undefined for a truthy-not-boolean 1 on the WP1-widened opts shape — strict === true survives the widening", () => {
+    const hostile = { ...base, enabled: 1 as unknown as boolean };
+    expect(gateCrossCalendarSchedulingSchedule(hostile)).toBeUndefined();
+  });
+
   it("returns the durable cross-calendar-scheduling schedule spec only when enabled === true", () => {
     const spec = gateCrossCalendarSchedulingSchedule({ ...base, enabled: true });
     expect(spec).toBeDefined();
     expect(spec).toEqual(buildCrossCalendarSchedulingScheduleSpec(base));
     expect(spec?.scheduleId).toBe(CROSS_CALENDAR_SCHEDULING_SCHEDULE_ID);
-    expect(spec?.action.workflowType).toBe("crossCalendarSchedulingWorkflow");
     expect(spec?.action.taskQueue).toBe("sow-control-plane");
     expect(spec?.intervalMs).toBe(base.intervalMs);
   });
 
-  it("ensure() over the gated spec creates a NEW schedule paused:true — the schedule stays inert end to end", async () => {
+  // WP1 — the args-content assertion. Mutation-proved: swapping `sources: opts.sources`
+  // for a differently-ordered/truncated array in buildCrossCalendarSchedulingScheduleSpec
+  // was verified to turn this RED before being reverted (see WP1 verification notes).
+  it("WP1: emits args of length 1 whose element deep-equals the expected CrossCalendarSchedulingScheduleArgs envelope", () => {
+    const spec = gateCrossCalendarSchedulingSchedule({ ...base, enabled: true });
+    const expected: CrossCalendarSchedulingScheduleArgs = {
+      scheduleId: CROSS_CALENDAR_SCHEDULING_SCHEDULE_ID,
+      organizerWorkspaceId: base.organizerWorkspaceId,
+      sources: base.sources,
+    };
+    expect(spec?.action.args).toHaveLength(1);
+    expect(spec?.action.args[0]).toEqual(expected);
+  });
+
+  it("WP1: action.workflowType is the SCHEDULED entry-point name, never the direct-start type", () => {
+    const spec = gateCrossCalendarSchedulingSchedule({ ...base, enabled: true });
+    // Literal, deliberately — see the dailyBrief positive control above for why a
+    // constant-to-constant comparison is a tautology. Must match the real registered
+    // export `crossCalendarSchedulingScheduledWorkflow` (temporal/workflows.ts:1141).
+    expect(spec?.action.workflowType).toBe("crossCalendarSchedulingScheduledWorkflow");
+    expect(spec?.action.workflowType).not.toBe(CROSS_CALENDAR_SCHEDULING_WORKFLOW_TYPE);
+  });
+
+  it("ensure() over the gated spec creates a NEW schedule paused:true, then a repeat ensure() converges via update — never a second create", async () => {
     const spec = gateCrossCalendarSchedulingSchedule({ ...base, enabled: true });
     expect(spec).toBeDefined();
     const client = fakeClient();
     const registrar = createTemporalScheduleRegistrar({ client });
 
-    const r = await registrar.ensure(spec as TemporalScheduleSpec);
+    const first = await registrar.ensure(spec as TemporalScheduleSpec);
+    const second = await registrar.ensure(spec as TemporalScheduleSpec);
 
-    expect(isOk(r)).toBe(true);
-    expect(client.calls.create).toHaveLength(1);
+    expect(isOk(first)).toBe(true);
+    expect(isOk(second)).toBe(true);
+    if (isOk(first)) expect(first.value.action).toBe("created");
+    if (isOk(second)) expect(second.value.action).toBe("updated");
+    // The load-bearing invariant THIS ASSERTION checks, no broader: across a
+    // create-then-converge round trip through the REAL gated builder output,
+    // `create` fires exactly once (carrying `paused: true`) and a repeat
+    // `ensure()` takes the converge branch — never a second create. That is a
+    // call-count claim against this FAKE port; it does NOT establish that a
+    // paused state SURVIVES the real wire on converge (see the file header
+    // above and scheduleRegistrar.ts's module header, task F2: that guarantee
+    // lives in the adapter, pinned by schedule-update-preserves-pause.test.ts,
+    // not here).
+    expect(client.calls.create).toHaveLength(1); // never re-created on converge
     expect(client.calls.create[0]?.opts).toEqual({ paused: true });
+    expect(client.calls.update).toHaveLength(1);
   });
 });

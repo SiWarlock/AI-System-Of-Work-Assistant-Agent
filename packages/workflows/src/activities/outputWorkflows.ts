@@ -50,6 +50,7 @@
 // gatherAvailability.ts, proposeWindows.ts, classifyAction.ts,
 // routeToApproval.ts, outputHealthSink.ts, refreshConnectors.ts) — this file
 // composes them, it does not re-implement them.
+import { err } from "@sow/contracts";
 import type { Result } from "@sow/contracts";
 
 import type {
@@ -329,6 +330,81 @@ export interface OutputWorkflowActivities {
 }
 
 // ---------------------------------------------------------------------------
+// (2.5) task 24.105 — drop the raw KnowledgeWriter `cause` at the ACTIVITY
+//       BOUNDARY, before a commit rejection can cross into Temporal workflow
+//       history (safety rule 7 — secrets/raw-content never reach a log sink,
+//       and workflow history is exactly such a sink once these members are
+//       registered as real activities, the task 25.1 registration this
+//       precondition gates).
+// ---------------------------------------------------------------------------
+
+/**
+ * `commitActivity.commit(plan)` (activities/commitKnowledge.ts) returns the RAW
+ * `CommitKnowledgePort` Result verbatim on rejection: `cause: result.error` at
+ * commitKnowledge.ts:161-165 is the WHOLE @sow/knowledge `WriteFailure`,
+ * including its `issues[]` with validator-authored detail (secret-scan
+ * matches, workspace-path detail, ownership-rejection detail). All four
+ * commit-bearing wrappers below (`dailyBriefCommit`, `periodReviewCommit`,
+ * `projectSyncCommitStatus`, `crossCalendarCommitNote`) return that Result as
+ * their Temporal ACTIVITY result — so an unredacted `cause` would land in
+ * workflow history BY CONSTRUCTION the moment this factory's members are
+ * registered as real activities, with no drop anywhere else on the path.
+ *
+ * Mirrors the discipline `commitFailureToVariant` already applies to the
+ * OTHER commit-consuming path (apps/worker/src/api/procedures/
+ * semanticMutationDispatch.ts:203 — switches on the failure's stable `code`,
+ * builds a FRESH literal, never reads `.cause`) — but does NOT remap `code`:
+ * every existing workflow driver (workflows/dailyBrief.ts etc.) reads
+ * `.error.code` against the closed KnowledgeCommitFailureCode set, which each
+ * family's own Failure type widens to match EXACTLY (BriefCommitFailureCode /
+ * ReviewCommitFailureCode / StatusCommitFailureCode /
+ * SchedulingCommitFailureCode — see ports/dailyBrief.ts's own widening note
+ * at :410-418), so a code remap here would silently break every consumer's
+ * switch identically. Only `cause` is dropped.
+ *
+ * `message` crosses UNCHANGED — not merely for convenience: commitKnowledge.ts
+ * is the SOLE producer of every commit failure this helper redacts, and its
+ * own `message` construction (mapWriteFailure's caller, commitKnowledge.ts
+ * :134-139/:157-158/:161-165) only ever interpolates a fixed string or the
+ * CLOSED `WriteFailure.code` — never `WriteFailure.message` or `issues[]` — so
+ * `message` never carries the validator-authored detail `cause` does.
+ *
+ * Built LOCAL to this file per the brief: the four families' Failure types
+ * differ only in their `code` union's nominal name, not its members, so one
+ * structural helper (generic over the port's own `plan`/success/failure
+ * shapes) covers all four without reaching into a file this track does not
+ * own to single-source the mapping.
+ */
+function dropCommitFailureCause<
+  F extends { readonly code: string; readonly message: string; readonly cause?: unknown },
+>(failure: F): { readonly code: F["code"]; readonly message: string } {
+  return { code: failure.code, message: failure.message };
+}
+
+/**
+ * Wrap a commit-bearing port's raw Result at the activity boundary. The `ok`
+ * arm passes through UNCHANGED (task 24.105 — never touch the success case);
+ * an `err` arm is redacted via {@link dropCommitFailureCause} before it
+ * crosses. Generic over the plan/success/failure shapes so it serves all four
+ * commit ports (`CommitBriefPort`, `CommitReviewPort`, `CommitStatusPort`,
+ * `CommitSchedulingNotePort`) without importing any of their concrete types.
+ */
+async function commitWithRedactedFailure<
+  P,
+  S,
+  F extends { readonly code: string; readonly message: string; readonly cause?: unknown },
+>(
+  commit: (plan: P) => Promise<Result<S, F>>,
+  plan: P,
+): Promise<Result<S, { readonly code: F["code"]; readonly message: string }>> {
+  const result = await commit(plan);
+  if (!result.ok) {
+    return err(dropCommitFailureCause(result.error));
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // (3) The factory
 // ---------------------------------------------------------------------------
 
@@ -350,16 +426,18 @@ export function createOutputWorkflowActivities(
     gate: gclGate,
   });
   const refreshConnectorsActivity = createRefreshConnectorsActivity(deps.refreshConnectors);
-  // task 24.105 — binding-site precondition guard (the FOURTH `createCommitActivity` site named by
-  // that task; the other three are apps/worker/src/composition/buildActivities.ts:717/:1246 and
-  // semanticApprovalDispatch.ts:103). `commitActivity.commit(plan)` returns the RAW `CommitKnowledgePort`
-  // Result verbatim: a rejection carries `cause: result.error` — the WHOLE `WriteFailure`, validator-
-  // authored messages included, constructed at `commitKnowledge.ts:164` (secret-scan/workspace-path/
-  // ownership rejection detail). That full Result is exactly what `dailyBriefCommit`, `periodReviewCommit`,
-  // `projectSyncCommitStatus` and `crossCalendarCommitNote` below return as their Temporal ACTIVITY
-  // result — so once the composition root registers this factory's members as real Temporal activities
-  // (the task 25.1 registration this precondition gates), that unredacted `cause` lands in workflow
-  // history BY CONSTRUCTION, with no drop anywhere on this path.
+  // task 24.105 — binding-site precondition, RESOLVED (the FOURTH `createCommitActivity` site named
+  // by that task; the other three are apps/worker/src/composition/buildActivities.ts:717/:1246 and
+  // semanticApprovalDispatch.ts:103). `commitActivity.commit(plan)` still returns the RAW
+  // `CommitKnowledgePort` Result verbatim on rejection — a rejection carries `cause: result.error`,
+  // the WHOLE `WriteFailure` with validator-authored detail (secret-scan/workspace-path/ownership
+  // rejection text), constructed at commitKnowledge.ts:161-165. That is exactly why NONE of
+  // `dailyBriefCommit`, `periodReviewCommit`, `projectSyncCommitStatus` or `crossCalendarCommitNote`
+  // below call `commitActivity.commit` directly any more: each routes through
+  // {@link commitWithRedactedFailure} (§2.5 above), which drops `cause` on the `err` arm before the
+  // Result crosses into what becomes the Temporal ACTIVITY result — so the composition root may now
+  // register this factory's members as real Temporal activities (task 25.1) without an unredacted
+  // `cause` landing in workflow history.
   // ⛔ NEVER expose this raw `commitActivity` PORT OBJECT itself as a member of the returned
   // `OutputWorkflowActivities` literal — only ever through the plain-async WRAPPER functions below
   // (`dailyBriefCommit:` etc.). Spreading `commitActivity` directly (e.g. a future `{...commitActivity}`
@@ -423,7 +501,9 @@ export function createOutputWorkflowActivities(
     dailyBriefBuildWorkspace: (validated, workspaceId) =>
       dailyBriefWorkspaceOutputs.build(validated, workspaceId),
     dailyBriefCommit: (plan) =>
-      commitActivity.commit(plan) as Promise<Awaited<ReturnType<CommitBriefPort["commit"]>>>,
+      commitWithRedactedFailure(commitActivity.commit, plan) as Promise<
+        Awaited<ReturnType<CommitBriefPort["commit"]>>
+      >,
     dailyBriefUpdateDashboard: (payload) =>
       dashboardActivity.update(payload) as Promise<Awaited<ReturnType<UpdateDashboardPort["update"]>>>,
     dailyBriefNotify: (action, env) =>
@@ -442,7 +522,9 @@ export function createOutputWorkflowActivities(
     periodReviewBuildWorkspace: (validated, window, workspaceId) =>
       periodReviewWorkspaceOutputs.build(validated, window, workspaceId),
     periodReviewCommit: (plan) =>
-      commitActivity.commit(plan) as Promise<Awaited<ReturnType<CommitReviewPort["commit"]>>>,
+      commitWithRedactedFailure(commitActivity.commit, plan) as Promise<
+        Awaited<ReturnType<CommitReviewPort["commit"]>>
+      >,
     periodReviewUpdateDashboard: (payload) =>
       dashboardActivity.update(payload) as Promise<Awaited<ReturnType<ReviewUpdateDashboardPort["update"]>>>,
     periodReviewNotify: (action, env) =>
@@ -457,7 +539,9 @@ export function createOutputWorkflowActivities(
     projectSyncBuildOutputs: (validated, progress, workspaceId, identity, updatedAt) =>
       projectSyncBuildOutputsActivity.build(validated, progress, workspaceId, identity, updatedAt),
     projectSyncCommitStatus: (plan) =>
-      commitActivity.commit(plan) as Promise<Awaited<ReturnType<CommitStatusPort["commit"]>>>,
+      commitWithRedactedFailure(commitActivity.commit, plan) as Promise<
+        Awaited<ReturnType<CommitStatusPort["commit"]>>
+      >,
     projectSyncUpdateDashboard: (payload) =>
       dashboardActivity.update(payload) as Promise<
         Awaited<ReturnType<ProjectSyncUpdateDashboardPort["update"]>>
@@ -482,7 +566,9 @@ export function createOutputWorkflowActivities(
       proposeActivity.propose(action, env) as Promise<Awaited<ReturnType<AutoCreateEventPort["create"]>>>,
     crossCalendarRouteToApproval: (action, env) => crossCalendarRouteActivity.route(action, env),
     crossCalendarCommitNote: (plan) =>
-      commitActivity.commit(plan) as Promise<Awaited<ReturnType<CommitSchedulingNotePort["commit"]>>>,
+      commitWithRedactedFailure(commitActivity.commit, plan) as Promise<
+        Awaited<ReturnType<CommitSchedulingNotePort["commit"]>>
+      >,
     crossCalendarSurfaceFailure: (failure) =>
       healthSink.surface(failure) as Promise<Awaited<ReturnType<SchedulingHealthSink["surface"]>>>,
   };

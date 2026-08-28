@@ -47,3 +47,24 @@ packages/domain/test/redaction/identifier-benign-keyword.test.ts:generic-api-key
 #    notes are genuinely benign, not because the predicate is inert) ──
 packages/domain/test/redaction/synthetic-note-corpus-false-positive-rate.test.ts:jwt:159
 packages/domain/test/redaction/synthetic-note-corpus-false-positive-rate.test.ts:private-key:162
+
+# ── Phase-25 / rule-7 restore arc: hostile-fixture poison markers ──
+#    Every value below is a SYNTHETIC marker invented for these suites — each is a
+#    made-up token whose own text says POISON / LEAK / CENSUS (the literals are not
+#    repeated here, because quoting them would make THIS file a finding, which it
+#    did on the first attempt). None is a real credential; none was ever issued by
+#    any provider. They exist to PROVE a secret-shaped string does NOT cross a
+#    Temporal activity boundary into durable workflow history (safety rule 7):
+#    each suite drives a failure with the marker on the error, then asserts it is
+#    absent from JSON.stringify of the whole activity result.
+#    ⇒ Deleting these fixtures would silently retire the redaction proofs.
+apps/worker/test/composition/contentProjectResolverRedaction.test.ts:generic-api-key:35
+apps/worker/test/composition/approvalDispatchApprovedRedaction.test.ts:generic-api-key:72
+apps/worker/test/composition/approvalDispatchApprovedRedaction.test.ts:generic-api-key:74
+packages/integrations/test/tool-adapters.test.ts:generic-api-key:305
+packages/workflows/test/connector-poll-ok-arm-redaction.test.ts:generic-api-key:32
+packages/workflows/test/connector-poll-ok-arm-redaction.test.ts:generic-api-key:33
+packages/workflows/test/source-activities.test.ts:generic-api-key:243
+packages/workflows/test/output-activities/cause-redaction-boundary.test.ts:generic-api-key:40
+packages/workflows/test/redaction-boundary-r7-round2.test.ts:generic-api-key:58
+packages/workflows/test/redaction-boundary-r7.test.ts:generic-api-key:49
