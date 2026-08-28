@@ -37,7 +37,10 @@ export interface EnvelopeReuseDeps {
  * carry the authoritative write receipt.
  */
 export interface EnvelopeReuseSuccess {
-  readonly status: "created" | "reused";
+  /** `updated` — an IN-PLACE update of an object this system already authored (the
+   *  §8 update path). Distinct from `created`: no new vendor object came into
+   *  existence, so anything counting objects must not double-count it. */
+  readonly status: "created" | "updated" | "reused";
   readonly receipt: WriteReceipt;
 }
 
@@ -67,8 +70,16 @@ export async function reuseExternalWriteOnResume(
   const outcome = await dispatchExternalWrite(env, action, deps.gatewayDeps);
   switch (outcome.status) {
     case "created":
+    case "updated":
     case "reused":
       return ok({ status: outcome.status, receipt: outcome.receipt });
+    case "superseded":
+      // C3 — a newer payload is already applied and THIS resumed step predates it.
+      // Nothing was written, deliberately. Terminal, NOT `held`: re-driving cannot
+      // make a stale intent fresher, and re-holding it would spin forever. Surfaced
+      // with its reason rather than silently succeeding, because the caller asked to
+      // re-drive a write that did not happen.
+      return err({ code: "rejected", reason: outcome.reason });
     case "approval_pending":
       return err({ code: "approval_pending", reason: "external write awaits approval" });
     case "held":

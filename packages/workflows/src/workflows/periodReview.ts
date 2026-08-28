@@ -405,7 +405,10 @@ export interface ReviewUpdateDashboardPort {
 // --- (B9) ReviewNotifyPort — Tool Gateway telegram summary, envelope reuse -------
 
 export interface ReviewNotifyResult {
-  readonly status: "created" | "reused";
+  /** `updated` — an IN-PLACE update of an object this system already authored (the
+   *  §8 update path). Distinct from `created`: no new vendor object came into
+   *  existence, so anything counting objects must not double-count it. */
+  readonly status: "created" | "updated" | "reused";
   readonly envelope: ExternalWriteEnvelope;
 }
 export type ReviewNotifyErrorCode = "held" | "approval_pending" | "conflict" | "rejected";

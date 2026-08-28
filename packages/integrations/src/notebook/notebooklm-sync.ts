@@ -259,8 +259,23 @@ function buildSlotAction(
 function classifyDispatch(slot: NotebookSlot, result: ExternalWriteResult): SlotOutcome {
   switch (result.status) {
     case "created":
+    case "updated":
     case "reused":
+      // `updated` is a real in-place write of THIS body — the whole point of the
+      // sync — so it counts as upserted exactly like `created`. (Before the update
+      // path existed, a changed body silently took the `reused` arm and reported
+      // "synced" while writing nothing; that was the bug.)
       return { kind: "upserted" };
+    case "superseded":
+      // Unreachable on this path today: `superseded` requires an `intentCreatedAt`,
+      // which only a RE-DRIVE supplies, and this is always a fresh dispatch. If it
+      // ever arrives, a fresh intent being called out-of-date is a contradiction —
+      // fail CLOSED and surface it rather than silently counting a slot that was
+      // never written.
+      return {
+        kind: "error",
+        error: { code: "dispatch_failed", slot, message: `superseded: ${result.reason}` },
+      };
     case "approval_pending":
       // Approval-gated: the doc is NOT yet written. Not a reattach; the sync
       // fails closed so the caller does not treat a pending write as synced.

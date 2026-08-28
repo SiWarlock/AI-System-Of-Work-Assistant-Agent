@@ -999,6 +999,7 @@ export function buildProofSpineActivities(
       const outcome = await dispatchRouted(backends.writeAdapters, envelope, action, externalWriteDeps);
       switch (outcome.status) {
         case "created":
+        case "updated":
         case "reused":
           return ok({
             status: outcome.status,
@@ -1038,6 +1039,11 @@ export function buildProofSpineActivities(
         // out of scope for the above).
         case "approval_pending":
           return err({ code: "rejected", message: "external write awaits approval" });
+        case "superseded":
+          // C3 — a newer payload is already applied and this intent predates it, so
+          // nothing was written. Terminal: `held` would re-drive a stale intent
+          // forever. The reason is gateway-authored and redaction-safe.
+          return err({ code: "rejected", message: outcome.reason });
         // No `default:` — see proposeExternalActions.ts: a catch-all on the closed
         // `ExternalWriteResult` union silently absorbs a new status into `rejected`.
         case "rejected":

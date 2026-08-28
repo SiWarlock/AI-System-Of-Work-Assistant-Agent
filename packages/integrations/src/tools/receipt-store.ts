@@ -108,3 +108,42 @@ export async function findByObjectKey(
 ): Promise<ReceiptRecord | undefined> {
   return store.getByCanonicalObjectKey(env.targetSystem, env.canonicalObjectKey);
 }
+
+/**
+ * Did THIS SYSTEM author the content currently on `record`'s object?
+ *
+ * ⛔ THIS IS THE C4/C5 GUARD, and it needs no new column. After the adoption split
+ * (`recordAdoptedObject`), the two ways an object row can come to exist are
+ * distinguishable by construction:
+ *   • AUTHORED — written by `recordReceipt`, which appends an applied-write LEDGER
+ *     row for the envelope that produced it.
+ *   • ADOPTED  — written by `recordAdoptedObject` from a live-probe hit. No ledger
+ *     row, because no write was ever issued.
+ * So authorship is exactly "a ledger row exists for the object row's CURRENT
+ * idempotencyKey". The ledger's meaning — "this envelope reached the vendor" — is
+ * what makes the answer trustworthy, which is why adoption had to be kept out of it
+ * before this could be asked at all.
+ *
+ * FAILS CLOSED, deliberately, in both uncertain directions:
+ *   • no ledger on the store (an older/legacy store) ⇒ `false` — unknown authorship
+ *     is not authorship.
+ *   • a ledger FAULT ⇒ `false` — a store that cannot answer must not be read as
+ *     "yes, we own this".
+ * Refusing to update an object we might not own costs a STALE document, which a
+ * re-sync fixes. Updating one we do not own clobbers a stranger's content, which
+ * nothing fixes.
+ *
+ * ⚠ Consequence worth naming: an object authored BEFORE the ledger existed reads as
+ * unauthored and can never be updated in place. That is vacuous today — the write
+ * transport is dormant (`§ARM-21` unarmed), so no real vendor object has ever been
+ * written by this system — and it self-heals the first time a write goes through
+ * `recordReceipt`.
+ */
+export async function isAuthoredByThisSystem(
+  store: ReceiptStore,
+  record: ReceiptRecord,
+): Promise<boolean> {
+  if (store.getApplication === undefined) return false;
+  const applied = await store.getApplication(record.idempotencyKey);
+  return applied.kind === "hit";
+}

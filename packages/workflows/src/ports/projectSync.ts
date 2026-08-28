@@ -538,7 +538,10 @@ export interface ProjectSyncUpdateDashboardPort {
 
 /** The proof an external write was applied (or reused on replay). */
 export interface ProjectSyncProposeResult {
-  readonly status: "created" | "reused";
+  /** `updated` — an IN-PLACE update of an object this system already authored (the
+   *  §8 update path). Distinct from `created`: no new vendor object came into
+   *  existence, so anything counting objects must not double-count it. */
+  readonly status: "created" | "updated" | "reused";
   readonly envelope: ExternalWriteEnvelope;
 }
 

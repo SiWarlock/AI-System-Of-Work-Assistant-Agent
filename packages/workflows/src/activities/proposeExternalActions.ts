@@ -60,6 +60,7 @@ export function createProposeActivity(deps: ProposeActivityDeps): ProposeActions
       const outcome = await deps.dispatch(env, action, deps.deps);
       switch (outcome.status) {
         case "created":
+        case "updated":
         case "reused":
           return ok({
             status: outcome.status,
@@ -67,6 +68,10 @@ export function createProposeActivity(deps: ProposeActivityDeps): ProposeActions
           });
         case "approval_pending":
           return err(proposeError("approval_pending", "external write awaits approval"));
+        case "superseded":
+          // Unreachable on a fresh propose (no `intentCreatedAt` is supplied), but
+          // total by construction. Terminal, never retried.
+          return err(proposeError("rejected", outcome.reason));
         case "held":
           return err(proposeError("held", outcome.reason));
         case "conflict":

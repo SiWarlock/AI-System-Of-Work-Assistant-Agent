@@ -60,6 +60,7 @@ import {
   dispatchExternalWrite,
   type ExternalWriteDeps,
   type ExternalWriteResult,
+  type DispatchOptions,
 } from "./gateway";
 import { nextDelayMs, EXHAUSTED, type BackoffConfig } from "../connectors/backoff";
 
@@ -165,6 +166,7 @@ export interface DrainDeps {
     env: ExternalWriteEnvelope,
     action: ProposedAction,
     deps: ExternalWriteDeps,
+    opts?: DispatchOptions,
   ) => Promise<ExternalWriteResult>;
 }
 
@@ -232,6 +234,7 @@ async function applyOutcome(
 ): Promise<keyof DrainResult> {
   const now = deps.clock();
   switch (outcome.status) {
+    case "updated":
     case "created": {
       await outbox.update({
         ...entry,
@@ -249,6 +252,20 @@ async function applyOutcome(
         updatedAt: now,
       });
       return "reused";
+    }
+    case "superseded": {
+      // C3 — a newer payload is already applied and THIS entry predates it, so it
+      // was deliberately not written. Close it TERMINALLY: re-driving cannot make a
+      // stale intent fresher, and re-holding it would spin the entry forever (the
+      // backoff never expires). Distinct from `rejected` in the reason only; the
+      // entry is closed either way, never silently dropped.
+      await outbox.update({
+        ...entry,
+        status: "rejected",
+        attempts: entry.attempts + 1,
+        updatedAt: now,
+      });
+      return "failed";
     }
     case "held":
     case "approval_pending": {
@@ -340,7 +357,14 @@ export async function drainOutbox(
     // gate → no duplicate create).
     const env = rebuildEnvelope(entry);
     const action = rebuildAction(entry);
-    const outcome = await dispatch(env, action, deps.gatewayDeps);
+    // C3 ORDERING: this is a RE-DRIVE of an intent created when the entry was
+    // ENQUEUED, which may be long before now. Handing that time to the gateway is
+    // what lets it drop the envelope instead of writing a stale payload back over a
+    // fresher one. Without it the gateway cannot tell a held update from a current
+    // one — the content-revert half of the twice-reverted update path.
+    const outcome = await dispatch(env, action, deps.gatewayDeps, {
+      intentCreatedAt: entry.enqueuedAt,
+    });
     const bucket = await applyOutcome(outbox, entry, outcome, deps);
     counts[bucket] += 1;
   }

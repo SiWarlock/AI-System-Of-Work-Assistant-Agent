@@ -220,8 +220,13 @@ function createThrowawayReceiptStore(): ReceiptStore {
 function foldDispatchOutcome(outcome: ExternalWriteResult): Result<WriteReceipt, AdapterError> {
   switch (outcome.status) {
     case "created":
+    case "updated":
     case "reused":
       return ok(outcome.receipt);
+    case "superseded":
+      // A nested dispatch is never handed an `intentCreatedAt`, so this cannot
+      // occur today; total + fail-closed rather than assumed away.
+      return err({ code: "rejected", message: `superseded: ${outcome.reason}` });
     case "held":
       return err({ code: outcome.adapterCode ?? "unreachable", message: outcome.reason });
     case "conflict":

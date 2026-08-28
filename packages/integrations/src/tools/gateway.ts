@@ -41,7 +41,7 @@ import type {
 } from "@sow/contracts";
 import { admitExternalWriteEnvelope } from "../candidate-gate";
 import { resolveExisting } from "./existence-check";
-import { recordReceipt, recordAdoptedObject } from "./receipt-store";
+import { recordReceipt, recordAdoptedObject, isAuthoredByThisSystem } from "./receipt-store";
 import { buildSafeToolWriteLog, type SafeToolWriteLog } from "../redaction/gateway-log-redaction";
 import type { ReceiptStore } from "../ports/persistence";
 import type { TargetWriteAdapter, AdapterError } from "./adapter-port";
@@ -129,6 +129,21 @@ export interface ExternalWriteDeps {
  */
 export type ExternalWriteResult =
   | { readonly status: "created"; readonly receipt: WriteReceipt }
+  /** An IN-PLACE update of an object this system already authored. Distinct from
+   *  `created` because no new vendor object came into existence, and callers that
+   *  count objects must not double-count. */
+  | { readonly status: "updated"; readonly receipt: WriteReceipt }
+  /**
+   * The envelope was DROPPED as out-of-date and NOTHING was written (C3). A newer
+   * payload is already applied to this object and this intent predates it — the
+   * classic case being a held/pending envelope re-driven after a fresher sync
+   * landed. Applying it would REVERT the object.
+   *
+   * Terminal and deliberately NOT retryable: re-driving it later cannot make it
+   * fresher. The cost is a stale intent silently not applied, which a re-sync fixes;
+   * the alternative is a content revert, which nothing fixes.
+   */
+  | { readonly status: "superseded"; readonly reason: string }
   | { readonly status: "reused"; readonly receipt: WriteReceipt }
   | { readonly status: "approval_pending" }
   | { readonly status: "conflict"; readonly reason: string; readonly adapterCode?: AdapterError["code"] }
@@ -230,10 +245,29 @@ async function resolveWriteCredentialFault(
  * The ONLY external-write entry (see module header for the fixed pipeline). Pure
  * apart from injected deps; never throws. Fail-closed at every step.
  */
+export interface DispatchOptions {
+  /**
+   * When THIS INTENT was created (ISO-8601) — supplied by a RE-DRIVE path so the
+   * gateway can tell a stale envelope from a fresh one (C3).
+   *
+   * The envelope itself cannot carry this: `ExternalWriteEnvelope` is a FROZEN
+   * contract with no temporal or sequence field, and amending it would mean
+   * re-cutting its schema snapshot. It is not needed — each re-drive path already
+   * knows its own intent time (`outbox.enqueuedAt`, the approval's creation time,
+   * the resume ledger's step time), so the ordering fact travels beside the
+   * envelope rather than inside it.
+   *
+   * OMITTED for a fresh dispatch, which is current by definition and skips the
+   * ordering check entirely.
+   */
+  readonly intentCreatedAt?: string;
+}
+
 export async function dispatchExternalWrite(
   env: ExternalWriteEnvelope,
   action: ProposedAction,
   deps: ExternalWriteDeps,
+  opts: DispatchOptions = {},
 ): Promise<ExternalWriteResult> {
   // 1. candidate-gate + linkage pin (safety invariant 1 + 3). Reject before any
   //    side effect, existence probe, or create.
@@ -285,7 +319,69 @@ export async function dispatchExternalWrite(
   }
   if (existing.kind === "existing") {
     if (existing.receipt !== undefined) {
-      return { status: "reused", receipt: existing.receipt };
+      const current = existing.record;
+      // SAME CONTENT (or an unknown-content adopted hit) ⇒ nothing to do. This is
+      // also the whole of the pre-update behaviour, kept verbatim as the default.
+      if (current === undefined || current.payloadHash === env.payloadHash) {
+        return { status: "reused", receipt: existing.receipt };
+      }
+
+      // ── The object exists and the payload DIFFERS: an UPDATE intent. ──────────
+      // Three guards, in this order, each refusing in the direction that costs a
+      // STALE document rather than an unrecoverable one (see the decision rule in
+      // docs/findings/external-write-update-path.md).
+
+      // (i) ORDERING (C3) — is this intent OLDER than what is already applied?
+      // Only a re-drive supplies `intentCreatedAt`; a fresh dispatch is current by
+      // definition. ⚠ This closes the SEQUENTIAL case (a held/pending envelope
+      // drained after a fresher write landed), which is the real C3 scenario. It is
+      // NOT a concurrency guard — see (iii).
+      if (opts.intentCreatedAt !== undefined && current.recordedAt > opts.intentCreatedAt) {
+        return {
+          status: "superseded",
+          reason: "a newer payload is already applied to this object; this intent predates it",
+        };
+      }
+
+      // (ii) AUTHORSHIP (C4/C5) — did WE write what is there now? An ADOPTED object
+      // (found by the live probe, never written by us) carries a payloadHash we
+      // merely INTENDED, so a hash mismatch against it proves nothing about
+      // ownership. Updating it would clobber a stranger's content.
+      if (!(await isAuthoredByThisSystem(deps.receiptStore, current))) {
+        return {
+          status: "rejected",
+          reason: "object not authored by this system; refusing an in-place update",
+        };
+      }
+
+      // (iii) CONCURRENCY (C2) — HONESTLY UNGUARDED, stated rather than implied.
+      // `receiptStore.reserve` is the exclusive-right-to-CREATE guard and returns
+      // `committed` for an object that already has a receipt, so it cannot serialize
+      // two updates. Two concurrent updates therefore both reach the vendor and the
+      // LAST one wins; with (i), a re-drive that starts before a fresher write
+      // COMMITS can still land after it. That is last-writer-wins, and it is
+      // accepted here on the decision rule: the outcome is one object carrying one
+      // of two legitimate payloads — recoverable by re-sync — whereas the create
+      // path's duplicate-object hazard is not. Do NOT read (i) as a total ordering.
+      const updated = await deps.adapter.update(env, action.payload, env.preconditions.join(","));
+      if (updated.ok) {
+        await recordReceipt(deps.receiptStore, env, updated.value, deps.clock);
+        await emitCommitDiagnostics(env, updated.value, deps);
+        return { status: "updated", receipt: updated.value };
+      }
+      const updateFaultReason = `update fault (${updated.error.code}): ${updated.error.message}`;
+      switch (updated.error.code) {
+        case "conflict":
+          return { status: "conflict", reason: updateFaultReason, adapterCode: updated.error.code };
+        case "unreachable":
+          return { status: "held", reason: updateFaultReason, adapterCode: updated.error.code };
+        case "rejected":
+        case "unknown":
+        case "not_found":
+          return { status: "rejected", reason: updateFaultReason, adapterCode: updated.error.code };
+      }
+      const unhandledUpdateCode: never = updated.error.code;
+      return { status: "rejected", reason: `update fault (${String(unhandledUpdateCode)})` };
     }
     // A live vendor object with no local receipt: synthesize + persist a receipt
     // from the vendor identity so the next dispatch short-circuits on the object

@@ -20,7 +20,7 @@
 // would risk a duplicate create (fail-closed: the gateway must hold, not create).
 // §16: async, returns a typed union, never throws.
 import type { ExternalWriteEnvelope, WriteReceipt } from "@sow/contracts";
-import type { ReceiptStore } from "../ports/persistence";
+import type { ReceiptStore, ReceiptRecord } from "../ports/persistence";
 import type {
   TargetWriteAdapter,
   ExistingObject,
@@ -36,7 +36,19 @@ import type {
  */
 export type ExistenceOutcome =
   | { readonly kind: "replay"; readonly receipt: WriteReceipt }
-  | { readonly kind: "existing"; readonly receipt?: WriteReceipt; readonly object?: ExistingObject }
+  | {
+      readonly kind: "existing";
+      readonly receipt?: WriteReceipt;
+      /**
+       * The FULL stored record behind `receipt`, when the hit came from the receipt
+       * index (arms b). Carries `payloadHash` + `idempotencyKey`, which the caller
+       * needs to tell a repeat of the SAME content from an UPDATE with new content,
+       * and to ask whether this system authored what is currently there. Absent on a
+       * live-vendor (`object`) hit — nothing is known about that object's content.
+       */
+      readonly record?: ReceiptRecord;
+      readonly object?: ExistingObject;
+    }
   | { readonly kind: "none" }
   | { readonly kind: "error"; readonly error: AdapterError };
 
@@ -120,14 +132,16 @@ export async function resolveExisting(
         error: { code: "unreachable", message: `receipt store lookup failed (${checked.code})` },
       };
     }
-    if (checked.kind === "hit") return { kind: "existing", receipt: checked.record.receipt };
+    if (checked.kind === "hit") {
+      return { kind: "existing", receipt: checked.record.receipt, record: checked.record };
+    }
   } else {
     const byObject = await receiptStore.getByCanonicalObjectKey(
       env.targetSystem,
       env.canonicalObjectKey,
     );
     if (byObject !== undefined) {
-      return { kind: "existing", receipt: byObject.receipt };
+      return { kind: "existing", receipt: byObject.receipt, record: byObject };
     }
   }
 
