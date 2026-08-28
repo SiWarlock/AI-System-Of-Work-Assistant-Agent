@@ -50,6 +50,11 @@ import type {
 import { admitJob, isDeny } from "@sow/policy";
 import type { PolicyDecision, LocalProviderConfig } from "@sow/policy";
 import type { BrokerJobRequest, BrokerOutcome } from "@sow/providers";
+// The CANONICAL Broker-rejection → failure-code mapping, shared with the two sibling legs
+// (`@sow/workflows`'s runAgentJob.ts + readOnlyAgentJob.ts, where it lives). It reads the
+// rejection's closed `stage`, NOT its `branch`; see BROKER_STAGE_FAILURE_CODE's doc comment for
+// why that distinction is the whole bug. Do NOT re-introduce a local copy.
+import { brokerRejectionFailureCode } from "@sow/workflows";
 import type {
   RunSourceAgentJobPort,
   SourceAgentFailure,
@@ -139,17 +144,14 @@ const READ_ONLY_TOOL_POLICY: ToolPolicy = {
   allowsMutating: false,
 };
 
-/** Default Broker-rejection → source-agent-failure mapping (mirrors the meeting leg's mapper). */
-function defaultMapSourceRejection(outcome: BrokerOutcome): SourceAgentFailureCode {
-  if (outcome.ok) return "provider_failed";
-  // The Broker's schema/tool-policy gate rejection folds onto schema_rejected; the egress-veto /
-  // budget branches carry their own codes; everything else (route/health/run) is a provider failure.
-  const branch = String(outcome.error.branch);
-  if (branch.includes("schema")) return "schema_rejected";
-  if (branch.includes("egress")) return "egress_vetoed";
-  if (branch.includes("budget")) return "budget_exceeded";
-  return "provider_failed";
-}
+/** Default Broker-rejection → source-agent-failure mapping: the SHARED, stage-keyed
+ * `brokerRejectionFailureCode` (imported above), identical to the meeting + read-only legs'. Its
+ * `BrokerStageFailureCode` return is a strict subset of {@link SourceAgentFailureCode}, which this
+ * alias's type pins — if the union ever drops a member, this line REDs rather than the mapping
+ * silently mis-coding. `injection_detected` / `unsupported_type` are NOT derivable from a Broker
+ * rejection at all; they stay reachable only through a custom `mapRejection` override. */
+const defaultMapSourceRejection: (outcome: BrokerOutcome) => SourceAgentFailureCode =
+  brokerRejectionFailureCode;
 
 /**
  * The ERR-arm message for a Broker rejection. RESTORES forwarding the Broker's own
@@ -159,17 +161,24 @@ function defaultMapSourceRejection(outcome: BrokerOutcome): SourceAgentFailureCo
  * rejection, whose message folds `no-inference rejection (REQ-F-017): … [<fields>]`
  * quoting MODEL-AUTHORED FIELD NAMES drawn from the untrusted imported source.
  *
- * KEYED ON `reason`, NOT the derived {@link SourceAgentFailureCode} — deliberately.
- * `defaultMapSourceRejection` below classifies on `outcome.error.branch` (the 5-value
- * `JobBranch`), which does NOT reliably identify a schema-gate rejection: a real
- * no-inference rejection carries `branch: "rejected"`, a value shared with
- * `tool_policy_violation` and matched by NONE of `defaultMapSourceRejection`'s
- * substring checks, so it falls through to the generic `provider_failed` code. Keying
- * redaction off that lossy derived code would therefore UNDER-redact the one message
- * that actually needs it (a real no-inference rejection would surface as
- * `provider_failed`, not `schema_rejected`) — the exact leak this fn exists to close.
- * `reason` is the one field the schema gate reliably stamps `"schema_rejected"` on,
- * independent of the branch-mapping bug, so it is the safe signal to redact on.
+ * KEYED ON `reason`, NOT the derived {@link SourceAgentFailureCode} — retained, but the
+ * ORIGINAL REASON FOR IT IS GONE. It was written because `defaultMapSourceRejection`
+ * classified on `outcome.error.branch` (the 5-value `JobBranch`), which cannot identify
+ * a schema-gate rejection at all: a real no-inference rejection carries
+ * `branch: "rejected"`, matched by none of that mapper's substring checks, so it
+ * surfaced as `provider_failed` and a code-keyed redaction would have UNDER-redacted
+ * the one message that needs it. That mapper now reads the closed `stage`
+ * (`brokerRejectionFailureCode`), so `schema_rejected` IS derived correctly here and
+ * either key would fire on the leak.
+ *
+ * `reason` is kept because it is now the NARROWER of the two, and the narrower one is
+ * right for this leg: it replaces exactly the schema gate's own `schema_rejected`
+ * denials (the branch that quotes model-authored field names) and leaves the SAME
+ * stage's `tool_policy_violation` message — `output-normalizer.ts`'s fixed, SoW-authored
+ * "output implies a mutating external action …" sentence — forwarded as the distinct
+ * diagnostic it is. NOTE the sibling legs (`runAgentJob.ts` / `readOnlyAgentJob.ts`)
+ * key on the derived code instead, i.e. on the whole `schema_gate` STAGE, and so do
+ * replace that one extra message; each leg's own doc comment states its choice.
  *
  * Every OTHER reachable message (`provider-health.ts`, `model-availability.ts`,
  * `budget-enforcer.ts`, `broker.ts`'s own `no eligible provider …` / `broker lifecycle

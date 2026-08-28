@@ -47,6 +47,12 @@ import type {
   BrokerJobRequest,
   BrokerOutcome,
 } from "@sow/providers";
+// The CANONICAL Broker-rejection → failure-code mapping lives in `readOnlyAgentJob.ts` (the
+// generic read-only core) and is shared by all three legs — this one, the read-only families, and
+// apps/worker's `composition/source-extraction.ts`. It reads the rejection's closed `stage`, NOT
+// its `branch`; see BROKER_STAGE_FAILURE_CODE's doc comment for why that distinction is the whole
+// bug. Do NOT re-introduce a local copy.
+import { brokerRejectionFailureCode } from "./readOnlyAgentJob";
 import type {
   RunMeetingAgentJobPort,
   MeetingAgentFailure,
@@ -111,18 +117,12 @@ const READ_ONLY_TOOL_POLICY: ToolPolicy = {
   allowsMutating: false,
 };
 
-/** Default Broker-rejection → meeting-agent-failure mapping. */
-function defaultMapRejection(outcome: BrokerOutcome): MeetingAgentFailureCode {
-  if (outcome.ok) return "provider_failed";
-  // The Broker's schema/tool-policy gate rejection folds onto schema_rejected;
-  // everything else (route/health/run) is a provider failure. Egress-veto /
-  // budget branches carry their own codes.
-  const branch = String(outcome.error.branch);
-  if (branch.includes("schema")) return "schema_rejected";
-  if (branch.includes("egress")) return "egress_vetoed";
-  if (branch.includes("budget")) return "budget_exceeded";
-  return "provider_failed";
-}
+/** Default Broker-rejection → meeting-agent-failure mapping: the SHARED, stage-keyed
+ * `brokerRejectionFailureCode` (imported above). Its `BrokerStageFailureCode` return is a strict
+ * subset of {@link MeetingAgentFailureCode}, which this alias's type pins — if the union ever
+ * drops a member, this line REDs rather than the mapping silently mis-coding. */
+const defaultMapRejection: (outcome: BrokerOutcome) => MeetingAgentFailureCode =
+  brokerRejectionFailureCode;
 
 /**
  * The FIXED, generic rejection message for a `schema_rejected` Broker outcome — replaces the
@@ -139,6 +139,19 @@ function defaultMapRejection(outcome: BrokerOutcome): MeetingAgentFailureCode {
  * this schema-gate-specific justification to all five failure codes, collapsing every distinct
  * Broker failure onto one fixed sentence per code — CLAUDE.md "THE BAR IS INVERTED: restore
  * unless removal is clearly justified").
+ *
+ * REACHABILITY (fixed here): this remedy was DEAD CODE until the rejection mapping was moved off
+ * `outcome.error.branch` and onto `outcome.error.stage` — no `JobBranch` member contains the
+ * substring "schema", so `schema_rejected` could never be derived and this sentence never once
+ * replaced anything. The poisoned no-inference message crossed VERBATIM out of `meetingRunAgentJob`.
+ * See `readOnlyAgentJob.ts`'s BROKER_STAGE_FAILURE_CODE.
+ *
+ * SCOPE, stated exactly: the swap is keyed on the derived code, i.e. on the `schema_gate` STAGE —
+ * so it also replaces that stage's OTHER denial, `tool_policy_violation`, whose message
+ * (`output-normalizer.ts`'s fixed "output implies a mutating external action …" sentence) is
+ * SoW-authored and carries no model text. Redacting it is a small, deliberate over-reach kept for
+ * the stage-level guarantee: EVERY schema-gate message is replaced, including one from a custom
+ * `SchemaGate` injected at a composition root that stamps some other `reason`.
  */
 const SCHEMA_REJECTED_MESSAGE =
   "meeting.close broker output failed the candidate-data schema gate";

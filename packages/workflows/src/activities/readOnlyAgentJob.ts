@@ -40,7 +40,7 @@ import type {
 } from "@sow/contracts";
 import { admitJob, isDeny } from "@sow/policy";
 import type { PolicyDecision, LocalProviderConfig } from "@sow/policy";
-import type { BrokerJobRequest, BrokerOutcome } from "@sow/providers";
+import type { BrokerJobRequest, BrokerOutcome, BrokerStage } from "@sow/providers";
 import type { ToolPolicy } from "@sow/contracts";
 
 /** The narrow Broker surface this activity dispatches through (injected). */
@@ -123,14 +123,87 @@ const DEFAULT_ROUTE = {
   egressClass: "local_zero_egress",
 } as unknown as ProviderRoute;
 
-/** Default Broker-rejection → failure-code mapping (mirrors runAgentJob.ts). */
-function defaultMapRejection(outcome: BrokerOutcome): ReadOnlyAgentFailureCode {
+// ── THE CANONICAL Broker-rejection → failure-code mapping ───────────────────
+// This module is the ONE home of the table. `runAgentJob.ts` (the meeting leg) and
+// `apps/worker/src/composition/source-extraction.ts` (the source leg) both import
+// `brokerRejectionFailureCode` from here rather than keeping their own copy — the
+// three hand-written copies that preceded it drifted into the same wrong-field bug
+// and only one of them was ever noticed.
+
+/**
+ * The failure codes a Broker rejection can derive to. A strict SUBSET of every
+ * consuming leg's own closed union ({@link ReadOnlyAgentFailureCode},
+ * `MeetingAgentFailureCode`, `SourceAgentFailureCode`) — the `mapRejection` seam at
+ * each leg is what pins the subset relation, and REDs if a union ever drops a member.
+ * `admission_rejected` is deliberately NOT here: every leg denies ING-7 admission
+ * itself BEFORE dispatch and returns that code from its own pre-Broker arm.
+ */
+export type BrokerStageFailureCode =
+  | "provider_failed"
+  | "schema_rejected"
+  | "egress_vetoed"
+  | "budget_exceeded";
+
+/**
+ * {@link BrokerStage} → the failure code that stage's rejection derives to.
+ *
+ * READ THE `stage`, NEVER THE `branch`. A {@link BrokerRejection} carries BOTH, and
+ * they answer different questions: `stage` is WHERE in the pipeline the job died
+ * (`packages/providers/src/broker/broker.ts`'s `BrokerStage`); `branch` is WHICH
+ * terminal lifecycle state the domain machine landed in (`agent-job-machine.ts`'s
+ * `JobBranch` — `accepted | rejected | cancelled_budget | failed_retryable |
+ * failed_terminal`). "schema" and "egress" are stage concepts; NO `JobBranch` member
+ * contains either substring, so the substring-over-`branch` mapping this replaced
+ * could never produce `schema_rejected` or `egress_vetoed` at all, and produced
+ * `budget_exceeded` only where the branch happened to be spelled `cancelled_budget`.
+ *
+ * The table is TOTAL over the closed `BrokerStage` union by its
+ * `Record<BrokerStage, …>` type: a tenth stage added upstream makes this literal miss
+ * a key and FAILS THE TYPECHECK. There is deliberately no default clause — a default
+ * would swallow a new stage into a silent wrong answer, which is the class of bug
+ * this replaces.
+ *
+ * `cancelled_budget` (a BRANCH) is NOT consulted, on purpose. Two stages reach it in
+ * the real broker: `budget_post` (a genuine cap breach — `budget-enforcer.ts`'s
+ * `post`, reason `budget_exceeded`) and `run` (a cooperatively-cancelled provider
+ * result — `broker.ts`'s run arm, reason `provider_cancelled`). Only the first is a
+ * budget event; the second is a provider event that merely lands in the one cancel
+ * terminal the frozen domain machine offers. Deriving "budget cap breached" from the
+ * NAME of that state would be the same read-a-decision-out-of-a-string mistake, so
+ * `run` maps to `provider_failed` and the broker's own message ("provider run
+ * cancelled; output discarded before any hand-off") crosses to say which it was.
+ */
+export const BROKER_STAGE_FAILURE_CODE: Readonly<Record<BrokerStage, BrokerStageFailureCode>> = {
+  admission: "provider_failed",
+  route_resolution: "provider_failed",
+  egress_veto: "egress_vetoed",
+  health: "provider_failed",
+  budget_pre: "budget_exceeded",
+  run: "provider_failed",
+  budget_post: "budget_exceeded",
+  schema_gate: "schema_rejected",
+  emit: "provider_failed",
+};
+
+/**
+ * The DEFAULT Broker-rejection → failure-code mapping for every leg. Total, pure, and
+ * driven off the closed {@link BrokerStage}. An `ok` outcome is not a rejection at all
+ * — callers only reach this on the ERR arm — so it folds to `provider_failed` rather
+ * than widening the return type.
+ */
+export function brokerRejectionFailureCode(outcome: BrokerOutcome): BrokerStageFailureCode {
   if (outcome.ok) return "provider_failed";
-  const branch = String(outcome.error.branch);
-  if (branch.includes("schema")) return "schema_rejected";
-  if (branch.includes("egress")) return "egress_vetoed";
-  if (branch.includes("budget")) return "budget_exceeded";
-  return "provider_failed";
+  // The `| undefined` is a RUNTIME BOUNDARY GUARD, not a type-level default, and the distinction
+  // is the whole point: `stage` is typed `BrokerStage`, so a legal NEW stage can never reach the
+  // fallback — the table above would have failed the typecheck first (a default clause on the
+  // table is what would swallow it, reproducing the bug this replaces). What reaches the fallback
+  // is data that VIOLATES the contract: a hand-rolled or foreign `BrokerOutcome` with `stage`
+  // absent or unrecognized. For that, the coarse catch-all is the honest answer — it forwards the
+  // Broker's message rather than asserting a gate decision nothing supports. NOTE the limit: such
+  // a rejection's message is NOT redacted, exactly as before this fix; the real broker always
+  // stamps a `stage`, and rule-7 redaction here rests on that.
+  const code: BrokerStageFailureCode | undefined = BROKER_STAGE_FAILURE_CODE[outcome.error.stage];
+  return code ?? "provider_failed";
 }
 
 /**
@@ -149,6 +222,19 @@ function defaultMapRejection(outcome: BrokerOutcome): ReadOnlyAgentFailureCode {
  * specific justification to all five failure codes, collapsing every distinct Broker failure
  * onto one fixed sentence per code — CLAUDE.md "THE BAR IS INVERTED: restore unless removal is
  * clearly justified").
+ *
+ * REACHABILITY (fixed here): this remedy was DEAD CODE until the rejection mapping was moved off
+ * `outcome.error.branch` and onto `outcome.error.stage` — no `JobBranch` member contains the
+ * substring "schema", so `schema_rejected` could never be derived and this sentence never once
+ * replaced anything. The poisoned no-inference message crossed VERBATIM. See
+ * {@link BROKER_STAGE_FAILURE_CODE}.
+ *
+ * SCOPE, stated exactly: the swap is keyed on the derived code, i.e. on the `schema_gate` STAGE —
+ * so it also replaces that stage's OTHER denial, `tool_policy_violation`, whose message
+ * (`output-normalizer.ts`'s fixed "output implies a mutating external action …" sentence) is
+ * SoW-authored and carries no model text. Redacting it is a small, deliberate over-reach kept for
+ * the stage-level guarantee: EVERY schema-gate message is replaced, including one from a custom
+ * `SchemaGate` injected at a composition root that stamps some other `reason`.
  */
 const SCHEMA_REJECTED_MESSAGE =
   "read-only agent job output failed the candidate-data schema gate";
@@ -166,7 +252,7 @@ export function createReadOnlyAgentJobActivity<Ctx, Output>(
   deps: ReadOnlyAgentJobDeps<Ctx, Output>,
 ): { run(ctx: Ctx): Promise<Result<Output, ReadOnlyAgentFailure>> } {
   const admit = deps.admit ?? admitJob;
-  const mapRejection = deps.mapRejection ?? defaultMapRejection;
+  const mapRejection = deps.mapRejection ?? brokerRejectionFailureCode;
   return {
     async run(ctx: Ctx): Promise<Result<Output, ReadOnlyAgentFailure>> {
       const i = deps.inputs;
