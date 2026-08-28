@@ -90,3 +90,54 @@ first.** Before characterizing a tool, check whether something rewrote the comma
 
 ⚠ And the reason the cap not reproducing matters: a recorded instrument fact is a claim
 about the session that took it. This one has already expired once.
+
+---
+
+# Addendum: the `grep` contradiction is a RESOLUTION-PATH difference, not a session difference
+
+**Closes `### 24.131`**, which recorded two sessions on one machine getting two different
+answers for `grep --version` — `ugrep 7.5.0` versus `BSD grep (GNU compatible)
+2.6.0-FreeBSD` — called it *"currently the most interesting open datum in the toolchain
+family"*, and wrote down the obvious test **UNRUN**.
+
+## Measured, 2026-08-28, both in the SAME session, seconds apart
+
+```
+type grep            → grep is a shell function from
+                       /Users/dreddy/.claude/shell-snapshots/snapshot-zsh-1787951049382-h1t32e.sh
+grep --version       → ugrep 7.8.4 aarch64-apple-macosx
+/usr/bin/grep --version → grep (BSD grep, GNU compatible) 2.6.0-FreeBSD
+```
+
+⇒ **Both recorded answers are true at once, on one machine, in one session.** Which one you
+get depends entirely on whether the command resolves through the shell-snapshot function or
+goes straight to the binary.
+
+## What this establishes, and what it does not
+
+**Established:** a bare-vs-absolute path difference is *sufficient* to produce the entire
+contradiction. No session-scoped tool identity is required to explain it, and the simpler
+explanation is now demonstrated rather than hypothesised.
+
+⚠ **Not established:** which form the second session actually ran. I cannot know that, so
+this does not *prove* the reconciliation for that specific instance — it removes the need
+for an exotic one. The entry was right to refuse to reconcile the two readings on the
+evidence it had.
+
+⭐ **New datum:** `ugrep` has moved **7.5.0 → 7.8.4** since the lead's reading. Even the
+same resolution path does not return a stable answer over time — so "state your session"
+was not conservatism, and the version belongs in the statement too.
+
+## ⭐ The same shape as the rtk finding above
+
+Both are one structure: **two true answers at different layers, read as a contradiction.**
+
+- `git` is genuinely unwrapped *and* the command is rewritten — the rewrite is above the shell.
+- `grep` is genuinely `ugrep` *and* genuinely BSD grep — different resolution paths.
+
+⇒ When two careful measurements of "the same thing" disagree, the first question is not
+*which is wrong* but **whether they are measuring the same thing at all.** In both cases
+here, they were not, and in both cases the search stalled while everyone assumed they were.
+
+Enforcement is unchanged and never depended on the answer: absolute paths, `awk`/`sed` with
+`FNR`, positive-control every empty result, branch on exit codes.
