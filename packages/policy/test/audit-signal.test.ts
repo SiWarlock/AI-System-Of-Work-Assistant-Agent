@@ -81,9 +81,14 @@ describe("isRedactionSafe — the heuristic's stated limits (task 24.45)", () =>
       refs: ["ref:workspace:ws-employer-projectatlas-acquisition"],
     });
     // GREEN by design, before and after. Documents WHY the remedy is validate-at-the-
-    // producer, not a tighter heuristic: a shape allowlist here would invert
-    // packages/knowledge secret-scan.ts's contentContainsSecret (`!isRedactionSafe`),
-    // which gates the KnowledgeWriter pre-commit scan on the sole-writer path.
+    // producer, not a tighter heuristic.
+    // ⛔ REASON CORRECTED (24.123): this used to say a shape allowlist here would invert
+    // `contentContainsSecret` on the sole-writer path. That stopped being true at
+    // `19802240` — the granularity split moved the pre-commit scan onto the two
+    // credential-SHAPE nets and off `isRedactionSafe` entirely. The live consumer of an
+    // allowlist here is `auditFieldContainsSecret` (audit granularity, keyword arm
+    // retained), reached from `apps/worker/src/boot.ts:945`. The assertion below is
+    // unchanged and was never wrong — only the reason attached to it was.
     expect(isRedactionSafe(sig)).toBe(true);
   });
 
@@ -337,7 +342,10 @@ describe("isRedactionSafe — the credential net is case-insensitive (task 24.11
       // ⛔ NOT A PASSING GRADE. This pins a REAL leak-direction gap. An AIza-shaped Google API
       // key riding in this signal's refs/summaries is judged SAFE by BOTH @sow/domain and
       // packages/policy, so it does NOT trip the KnowledgeWriter's BLOCKING pre-commit secret
-      // scan (packages/knowledge secret-scan.ts's `contentContainsSecret = !isRedactionSafe`)
+      // scan (packages/knowledge secret-scan.ts's `contentContainsSecret`, which since
+      // `19802240` runs `CREDENTIAL_PREFIX` + `URL_USERINFO_CREDENTIAL` directly rather
+      // than `!isRedactionSafe` — the CONCLUSION is unchanged, since `CREDENTIAL_PREFIX`
+      // is the very net that carries no AIza alternative, but the derivation was stale)
       // and does NOT trip this signal's own redaction-safety guard — on the sole-writer path
       // (rule 1 by reach) and the secret-redaction floor (rule 7).
       //

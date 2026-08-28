@@ -9,11 +9,21 @@
 // scanned `content` is the whole rendered file, frontmatter and link mutations
 // are covered, not only the note body.
 //
-// Detection REUSES the @sow/policy redaction predicate (`isRedactionSafe`) —
-// the SAME credential-prefix + URL-userinfo + sensitive-keyword patterns that
-// keep audit signals log-safe. Single source of truth ⇒ no pattern drift: a
-// string is unsafe to commit iff it would be unsafe as an audit field. The
-// matched value is NEVER carried in the typed error or the rejection audit
+// Detection runs the two credential-SHAPE nets — `CREDENTIAL_PREFIX` and
+// `URL_USERINFO_CREDENTIAL`, imported from `@sow/domain` so there is still exactly
+// ONE source per net (24.127's drift rule).
+//
+// ⛔ THIS FILE USED TO SAY: "reuses `isRedactionSafe` … a string is unsafe to commit
+// IFF it would be unsafe as an audit field." ⭐ THAT IFF IS EXACTLY THE COLLAPSE
+// 24.123 REMOVED, and it is corrected here rather than softened, because a reader who
+// believes it will re-collapse the two granularities — the header would then be the
+// instruction for reintroducing the defect. The commit path does NOT call
+// `isRedactionSafe` and does NOT carry the keyword arm; see the granularity-split
+// block below for the measurement that forced the split, and
+// {@link auditFieldContainsSecret} for the predicate that still answers the audit
+// question.
+//
+// The matched value is NEVER carried in the typed error or the rejection audit
 // (§16 redaction): the error holds only `path` + a fixed, keyword-free `kind`.
 import { ok, err } from "@sow/contracts";
 import type { Result, FailureClass } from "@sow/contracts";
@@ -82,9 +92,17 @@ const PROBE_EVENT = "scan.probe";
 const PROBE_HASH = "sha256:scan";
 
 /**
- * True iff `value` carries a credential-shaped token (provider/cloud key
- * prefix, PEM block, JWT, URL userinfo credential, or a sensitive keyword).
- * Pure; reuses the @sow/policy redaction patterns via `isRedactionSafe`.
+ * True iff `value` carries a credential SHAPE — a provider/cloud key prefix, a PEM
+ * block, a JWT, or a URL userinfo credential. COMMIT granularity: this is the
+ * predicate the sole-writer pre-commit scan runs over a whole rendered file.
+ *
+ * ⛔ NOT a keyword net, and NOT `isRedactionSafe`. This docstring previously claimed
+ * both ("or a sensitive keyword … reuses the @sow/policy redaction patterns via
+ * `isRedactionSafe`") and was left stale by 24.123's granularity split, which is the
+ * one direction a stale claim here must never point: it describes the scan as STRICTER
+ * than it is, so a reader auditing the sole-writer path would tick off a keyword
+ * defence that is not there. For the keyword-inclusive audit question use
+ * {@link auditFieldContainsSecret}.
  */
 export function contentContainsSecret(value: string): boolean {
   return CONTENT_CREDENTIAL_NETS.some((net) => net.test(value));

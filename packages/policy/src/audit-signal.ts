@@ -262,13 +262,26 @@ function looksUnsafe(s: string): boolean {
  * and permanently, where a doc comment only misleads a reader** — which is why home 3 was
  * the load-bearing one, not this file.
  *
- * ⚠ EXTERNAL CONSUMER — DO NOT TIGHTEN THIS INTO AN ALLOWLIST WITHOUT READING IT FIRST:
- * `packages/knowledge/src/knowledge-writer/secret-scan.ts` implements
- * `contentContainsSecret(value)` as `!isRedactionSafe(probe)` over arbitrary content, and
- * wires it as the KnowledgeWriter's **blocking pre-commit secret scan**. An allowlist here
- * would make that predicate true for essentially all content ⇒ **every KnowledgeWriter
- * commit rejected, on the sole-writer path.** The inversion is the reason `24.45` fixed
- * the producer instead of this heuristic.
+ * ⛔⛔ THIS PREDICTION FIRED. It is rewritten in the PAST tense on purpose — it stood here
+ * in the un-fired tense for months after the thing it warned about had already happened,
+ * and a warning that cannot tell you it came true is the failure `24.84` paid for.
+ *
+ * WHAT IT PREDICTED: that this heuristic, applied at CONTENT granularity, would refuse
+ * essentially everything on the sole-writer path.
+ * WHAT HAPPENED: `24.123` measured it at **219 of 668 tracked `.md` files (32.8%)**, with
+ * **218 of the 219 driven by the keyword arm alone** and every one of the 14 documents
+ * over 40 KB refused. Not a latent risk — a realized one nobody had measured.
+ * WHAT CLOSED IT: `19802240` split the granularities. The KnowledgeWriter's blocking
+ * pre-commit scan (`contentContainsSecret`) now runs the two credential-SHAPE nets
+ * DIRECTLY from `@sow/domain` and **no longer calls `isRedactionSafe` at all** — 3.0% on
+ * the same corpus.
+ *
+ * ⚠ SO THE MECHANISM NAMED BELOW IS DEAD, AND THE CAUTION IS NOT. An allowlist here can no
+ * longer reject every commit, because the commit path no longer reads this function. It
+ * still reaches `auditFieldContainsSecret` — the retained keyword-inclusive predicate —
+ * which `apps/worker/src/boot.ts:945` uses to gate the audit `workspaceId` channel. Read
+ * that consumer before tightening; do not read this note as an all-clear just because the
+ * scarier consumer moved away.
  */
 export function isRedactionSafe(signal: AuditSignal): boolean {
   const scanned: readonly string[] = [

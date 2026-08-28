@@ -334,8 +334,12 @@ describe("validateProjectionVisibility — audit refs never carry an unvalidated
     const w = wsWithDefault("full");
     const d = validateProjectionVisibility(projection(FOREIGN_SENSITIVE_WS_ID, "isolated"), w);
     // GREEN before and after the fix. This is the characterization that justifies
-    // fixing the PRODUCER rather than tightening the heuristic (route (a) rejected
-    // — it would invert secret-scan.ts's contentContainsSecret repo-wide).
+    // fixing the PRODUCER rather than tightening the heuristic.
+    // ⛔ REASON CORRECTED (24.123): route (a) was rejected because tightening here would
+    // invert `contentContainsSecret` repo-wide. Since `19802240` that specific coupling is
+    // gone (the pre-commit scan no longer calls `isRedactionSafe`); the rejection still
+    // stands on the producer argument and on `auditFieldContainsSecret`, which does still
+    // read this predicate.
     expect(d.decision).toBe("deny");
     if (d.decision === "deny") {
       // Same fixture as the mismatch test above (:289) — pin the reason too so this
