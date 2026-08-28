@@ -32,6 +32,7 @@ import { createGithubWriteAdapter } from "./adapters/github";
 import { createTelegramWriteAdapter } from "./adapters/telegram";
 import {
   dispatchExternalWrite,
+  type DispatchOptions,
   type ExternalWriteDeps,
   type ExternalWriteResult,
 } from "./gateway";
@@ -129,6 +130,9 @@ export async function dispatchRouted(
   action: ProposedAction,
   deps: ExternalWriteDeps,
   dispatch: typeof dispatchExternalWrite = dispatchExternalWrite,
+  /** C3 ordering — forwarded verbatim to the gateway (see `DispatchOptions`). A
+   *  re-drive path supplies it; a fresh dispatch omits it. */
+  opts?: DispatchOptions,
 ): Promise<ExternalWriteResult> {
   // Defense-in-depth: the adapter is selected by `action.targetSystem`, but the downstream
   // write (existence probe + receipt-store key) is namespaced by `env.targetSystem`.
@@ -146,5 +150,5 @@ export async function dispatchRouted(
       reason: "unregistered target system: no write adapter registered",
     };
   }
-  return dispatch(env, action, { ...deps, adapter: selected.value });
+  return dispatch(env, action, { ...deps, adapter: selected.value }, opts);
 }

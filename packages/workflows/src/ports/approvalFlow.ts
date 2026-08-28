@@ -77,6 +77,23 @@ export interface ApprovalFlowContext {
   readonly envelope: ExternalWriteEnvelope;
   /** The approval record once recorded (present after the record stage). */
   readonly approval?: Approval;
+  /**
+   * C3 ORDERING — when this approval's INTENT was created (ISO-8601).
+   *
+   * ⛔ WHY THIS PATH NEEDS IT MOST. An approval is the third and worst re-drive
+   * path: its envelope is durable workflow input held across a HUMAN decision, for
+   * days by design. If a fresher write lands while the card sits pending, dispatching
+   * on approval writes the OLD payload back — a content revert. The gateway can
+   * decide that, but only if it is told how old this intent is.
+   *
+   * It does NOT come from the `Approval` record: that model has `expiresAt` and
+   * `snoozeUntil` but NO creation time, and it is a FROZEN contract — so the fact
+   * travels on this (workflows-owned) context instead of amending Appendix A.
+   *
+   * OPTIONAL: absent ⇒ the gateway skips the ordering check, exactly as before this
+   * field existed. A caller that knows when the intent was formed should supply it.
+   */
+  readonly intentCreatedAt?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,6 +285,8 @@ export interface DispatchApprovedActionPort {
   dispatch(
     action: ProposedAction,
     env: ExternalWriteEnvelope,
+    /** C3 — see `ApprovalFlowContext.intentCreatedAt`. Absent ⇒ no ordering check. */
+    intentCreatedAt?: string,
   ): Promise<Result<DispatchApprovedResult, DispatchApprovedError>>;
 }
 

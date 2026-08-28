@@ -310,3 +310,95 @@ describe("approvalDispatchApproved — task I1: the §8 gateway's vendor-authore
     expect(res.value.envelope.writeReceipt?.externalObjectId).toBe("vendor-obj-1");
   });
 });
+
+// ── C3 — the registered activity must FORWARD `intentCreatedAt` to the gateway ──
+//
+// ⛔ THIS PINS A REAL BREAK, not a hypothetical. The production wiring was
+// `approvalDispatchApproved: (action, env) => dispatchApproved.dispatch(action, env)`
+// — a fixed-arity lambda that SILENTLY DROPPED the third argument the moment C3
+// added one. The ordering guard existed, was tested at the gateway, and would have
+// received a value from nowhere on the live approval path: a guard wired to nothing.
+// Every other test still passed, because nothing else observed the argument.
+//
+// The approval path is the one that needs it most — its envelope waits on a HUMAN,
+// so a fresher write landing meanwhile is the ordinary case, not the exotic one.
+
+/** A transport that succeeds: query misses, create/update return a vendor object. */
+function fakeTransportOk(): AdapterTransport {
+  return (req: AdapterTransportRequest): Promise<TransportResponse> =>
+    Promise.resolve(
+      req.op === "query"
+        ? { ok: true, object: null }
+        : { ok: true, object: { externalObjectId: "ext-c3" } },
+    );
+}
+
+/** Two envelopes for the SAME object with DIFFERENT payload hashes — i.e. an update. */
+function sameObjectPair(
+  key: string,
+  hash: string,
+): { action: ProposedAction; envelope: ExternalWriteEnvelope } {
+  const action: ProposedAction = {
+    actionId: actionId(`act-c3-${key}`),
+    targetSystem: "calendar",
+    canonicalObjectKey: "cal:c3-shared-object",
+    payload: { title: `probe ${key}` },
+    approvalPolicy: "auto",
+    idempotencyKey: `idem:c3-${key}`,
+  };
+  return {
+    action,
+    envelope: {
+      actionId: action.actionId,
+      targetSystem: action.targetSystem,
+      canonicalObjectKey: action.canonicalObjectKey,
+      idempotencyKey: action.idempotencyKey,
+      preconditions: [],
+      payloadHash: hash,
+    },
+  };
+}
+
+describe("approvalDispatchApproved — forwards the C3 intentCreatedAt end-to-end", () => {
+  it("a STALE approval (intent older than the applied payload) is refused, and NOTHING is written", async () => {
+    const b = await backendsWithFakeTransport(fakeTransportOk());
+    const acts = buildProofSpineActivities(b, paramsFor());
+
+    // First approval lands and becomes the applied payload for this object.
+    const first = sameObjectPair("first", "hash:v1");
+    await preApprove(b, first.envelope);
+    expect((await acts.approvalDispatchApproved(first.action, first.envelope)).ok).toBe(true);
+
+    // A SECOND approval for the SAME object with DIFFERENT content, whose intent
+    // predates the write above. Without the forward this updates (reverting the
+    // document); with it, the gateway refuses.
+    const stale = sameObjectPair("stale", "hash:v0-stale");
+    await preApprove(b, stale.envelope);
+    const res = await acts.approvalDispatchApproved(
+      stale.action,
+      stale.envelope,
+      "2000-01-01T00:00:00.000Z", // unambiguously older than anything applied
+    );
+
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error.code).toBe("rejected");
+    expect(res.error.message).toContain("predates");
+  });
+
+  it("NON-VACUITY: the same second approval with NO intent time is not refused for staleness", async () => {
+    // Proves the refusal above comes from the FORWARDED ARGUMENT, not from some
+    // other property of the second dispatch.
+    const b = await backendsWithFakeTransport(fakeTransportOk());
+    const acts = buildProofSpineActivities(b, paramsFor());
+    const first = sameObjectPair("first", "hash:v1");
+    await preApprove(b, first.envelope);
+    await acts.approvalDispatchApproved(first.action, first.envelope);
+
+    const second = sameObjectPair("second", "hash:v2");
+    await preApprove(b, second.envelope);
+    const res = await acts.approvalDispatchApproved(second.action, second.envelope);
+
+    if (!res.ok) expect(res.error.message).not.toContain("predates");
+  });
+});

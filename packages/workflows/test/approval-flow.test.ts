@@ -673,3 +673,30 @@ describe("spec(§9) Approval contract drift guard", () => {
     expect([...APPROVAL_STATES]).toEqual([...ApprovalStatus]);
   });
 });
+
+// ── C3 ORDERING on the APPROVAL path — the third re-drive, and the worst one ──
+//
+// An approval's envelope is durable workflow input held across a HUMAN decision —
+// days, by design. If a fresher write lands while the card sits pending, dispatching
+// on approval writes the OLD payload back: a content revert. The gateway can decide
+// that, but ONLY if the driver hands it the intent's age. These pin the forwarding,
+// because a guard the driver never feeds is a guard that does nothing.
+describe("approval flow — forwards intentCreatedAt to the dispatch port (C3)", () => {
+  it("forwards the context's intentCreatedAt verbatim on an approved dispatch", async () => {
+    const dispatch = new FakeDispatchApprovedPort();
+    const input = makeInput({
+      context: makeApprovalContext({ workspaceId: WS, intentCreatedAt: "2026-06-30T12:00:00.000Z" }),
+    });
+    const outcome = await runApprovalFlow(input, makeDeps({ dispatch }));
+
+    expect(outcome.state).toBe("approved");
+    expect(dispatch.intentTimes).toEqual(["2026-06-30T12:00:00.000Z"]);
+  });
+
+  it("omits it when the context carries none — no ordering check, prior behaviour", async () => {
+    const dispatch = new FakeDispatchApprovedPort();
+    const outcome = await runApprovalFlow(makeInput(), makeDeps({ dispatch }));
+    expect(outcome.state).toBe("approved");
+    expect(dispatch.intentTimes).toEqual([undefined]);
+  });
+});

@@ -24,7 +24,7 @@ import type {
   ProposedAction,
   ExternalWriteEnvelope,
 } from "@sow/contracts";
-import type { ExternalWriteDeps, ExternalWriteResult } from "@sow/integrations";
+import type { ExternalWriteDeps, ExternalWriteResult, DispatchOptions } from "@sow/integrations";
 import type {
   ProposeActionsPort,
   ProposeResult,
@@ -37,6 +37,10 @@ export type DispatchExternalWriteFn = (
   env: ExternalWriteEnvelope,
   action: ProposedAction,
   deps: ExternalWriteDeps,
+  /** C3 ordering — forwarded verbatim to the gateway. A propose is a FRESH dispatch
+   *  and omits it; the parameter exists so a binding that DOES have an intent time
+   *  (a re-drive wired through this same seam) cannot be silently truncated. */
+  opts?: DispatchOptions,
 ) => Promise<ExternalWriteResult>;
 
 /** Injected deps for the propose activity: the gateway dispatch fn + its dep bundle. */
@@ -58,6 +62,8 @@ export function createProposeActivity(deps: ProposeActivityDeps): ProposeActions
       env: ExternalWriteEnvelope,
     ): Promise<Result<ProposeResult, ProposeError>> {
       const outcome = await deps.dispatch(env, action, deps.deps);
+      // NOTE: a propose is always a FRESH intent, so no `intentCreatedAt` is passed —
+      // it is current by definition and must never be judged out-of-date.
       switch (outcome.status) {
         case "created":
         case "updated":

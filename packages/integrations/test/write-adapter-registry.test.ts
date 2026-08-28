@@ -287,3 +287,41 @@ describe("dispatchRouted — select by action.targetSystem, override deps.adapte
     expect(out.status).toBe("rejected");
   });
 });
+
+// ── C3 — dispatchRouted must FORWARD DispatchOptions to the gateway ───────────
+//
+// The routed path is what the worker's approved-dispatch and outbox drain actually
+// call, so if `opts` stops here the ordering guard is silently dead everywhere it
+// matters most — the approval path included. A dropped forward is invisible: every
+// other test still passes, because nothing else observes it. Hence this pin.
+describe("dispatchRouted — forwards DispatchOptions (C3 ordering)", () => {
+  const { transport } = makeStubTransport();
+  const registry = buildWriteAdapterRegistry(stubDeps(transport));
+
+  function spyDispatch() {
+    const seen: (unknown | undefined)[] = [];
+    const fn = (async (_env, _action, _deps, opts) => {
+      seen.push(opts);
+      return { status: "reused", receipt: { externalObjectId: "x", recordedAt: clock() } };
+    }) as typeof dispatchRouted extends never ? never : Parameters<typeof dispatchRouted>[4];
+    return { fn, seen };
+  }
+
+  it("passes `intentCreatedAt` straight through to the injected dispatch", async () => {
+    const action = makeProposedAction({ targetSystem: "drive" });
+    const env = makeEnvelope({ targetSystem: "drive", canonicalObjectKey: action.canonicalObjectKey });
+    const spy = spyDispatch();
+    await dispatchRouted(registry, env, action, makeRoutingDeps(registry.drive), spy.fn, {
+      intentCreatedAt: "2026-06-30T00:00:00.000Z",
+    });
+    expect(spy.seen).toEqual([{ intentCreatedAt: "2026-06-30T00:00:00.000Z" }]);
+  });
+
+  it("passes `undefined` when no options are given — a fresh dispatch is never ordered", async () => {
+    const action = makeProposedAction({ targetSystem: "drive" });
+    const env = makeEnvelope({ targetSystem: "drive", canonicalObjectKey: action.canonicalObjectKey });
+    const spy = spyDispatch();
+    await dispatchRouted(registry, env, action, makeRoutingDeps(registry.drive), spy.fn);
+    expect(spy.seen).toEqual([undefined]);
+  });
+});

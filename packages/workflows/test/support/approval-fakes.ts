@@ -335,6 +335,10 @@ export interface FakeDispatchApprovedConfig {
 export class FakeDispatchApprovedPort implements DispatchApprovedActionPort {
   /** Number of DISTINCT external creates (a reuse does NOT bump this). */
   createCount = 0;
+  /** Every `intentCreatedAt` this port was handed, in call order (C3 ordering —
+   *  the approval path is the third and worst re-drive path, so a test must be able
+   *  to prove the driver actually FORWARDS the intent age rather than dropping it). */
+  readonly intentTimes: (string | undefined)[] = [];
   private readonly byKey = new Map<string, WriteReceipt>();
 
   constructor(private readonly config: FakeDispatchApprovedConfig = {}) {}
@@ -342,7 +346,9 @@ export class FakeDispatchApprovedPort implements DispatchApprovedActionPort {
   dispatch(
     action: ProposedAction,
     env: ExternalWriteEnvelope,
+    intentCreatedAt?: string,
   ): Promise<Result<DispatchApprovedResult, DispatchApprovedError>> {
+    this.intentTimes.push(intentCreatedAt);
     if (this.config.failWith !== undefined) {
       return Promise.resolve(
         err({

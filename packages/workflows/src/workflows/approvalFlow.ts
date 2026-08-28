@@ -408,6 +408,10 @@ export async function runApprovalFlow(
   const dispatched = await deps.dispatch.dispatch(
     input.context.action,
     input.context.envelope,
+    // C3: this envelope has been sitting since the card was raised. Handing its age
+    // to the gateway is what lets a stale approval be DROPPED rather than reverting
+    // a document written while the human was deciding.
+    input.context.intentCreatedAt,
   );
   if (!isOk(dispatched)) {
     const code = dispatched.error.code;

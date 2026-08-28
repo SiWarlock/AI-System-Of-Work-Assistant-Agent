@@ -66,8 +66,20 @@ export async function reuseExternalWriteOnResume(
   env: ExternalWriteEnvelope,
   action: ProposedAction,
   deps: EnvelopeReuseDeps,
+  /**
+   * C3 ORDERING — when the ORIGINAL step formed this intent (ISO-8601). A resume
+   * re-drives an envelope built on a previous run, so if a fresher write landed in
+   * between, applying it would revert the object. Supplying this lets the gateway
+   * drop it as `superseded` instead. Absent ⇒ no ordering check (prior behaviour).
+   */
+  intentCreatedAt?: string,
 ): Promise<Result<EnvelopeReuseSuccess, EnvelopeReuseError>> {
-  const outcome = await dispatchExternalWrite(env, action, deps.gatewayDeps);
+  const outcome = await dispatchExternalWrite(
+    env,
+    action,
+    deps.gatewayDeps,
+    intentCreatedAt !== undefined ? { intentCreatedAt } : {},
+  );
   switch (outcome.status) {
     case "created":
     case "updated":

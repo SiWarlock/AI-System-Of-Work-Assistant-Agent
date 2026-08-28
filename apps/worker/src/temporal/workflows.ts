@@ -616,7 +616,9 @@ export async function approvalFlowWorkflow(
       }),
   };
   const dispatch: DispatchApprovedActionPort = {
-    dispatch: (action, env) => activities.approvalDispatchApproved(action, env),
+    // SPREAD, never a fixed arity — see buildActivities.ts's matching comment: a
+    // two-arg lambda here silently dropped the C3 `intentCreatedAt` argument.
+    dispatch: (...args) => activities.approvalDispatchApproved(...args),
   };
   const health: ApprovalHealthSink = {
     surface: (failure: ApprovalWorkflowFailure) => activities.surfaceFailure(failure),

@@ -64,6 +64,14 @@ export interface RecoverableWrite {
   readonly stepId: string;
   readonly envelope: ExternalWriteEnvelope;
   readonly action: ProposedAction;
+  /**
+   * C3 ORDERING — when the ORIGINAL run formed this intent (ISO-8601). A recovery
+   * sweep re-drives a write built on a PREVIOUS run; if a fresher payload landed on
+   * the same object meanwhile, re-driving would revert it. Supplying this lets the
+   * gateway drop the stale step as `superseded` rather than write it back. Absent ⇒
+   * no ordering check, exactly as before this field existed.
+   */
+  readonly intentCreatedAt?: string;
 }
 
 /** Injected effects for recovery (all fakeable; no Date.now(), no network here). */
@@ -163,7 +171,14 @@ export async function recoverRun(
     const write = writeByStep.get(planned.step.stepId);
     if (write === undefined) continue; // nothing to drive for this step id
 
-    const res = await reuseExternalWriteOnResume(write.envelope, write.action, envelopeReuse);
+    // C3: forward the ORIGINAL intent time so a step whose payload has since been
+    // superseded is dropped rather than written back over the fresher one.
+    const res = await reuseExternalWriteOnResume(
+      write.envelope,
+      write.action,
+      envelopeReuse,
+      write.intentCreatedAt,
+    );
     if (!res.ok) {
       // A held/conflict/rejected re-drive FAILED CLOSED (no create issued). Record
       // the first such step for the surfaced health item, but CONTINUE driving the

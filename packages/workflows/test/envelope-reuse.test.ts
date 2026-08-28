@@ -356,3 +356,58 @@ describe("spec(safety rule 7 / §21.10) reuseExternalWriteOnResume — the crede
     expect(adapter.create).not.toHaveBeenCalled();
   });
 });
+
+// ── C3 ORDERING on the RESUME path (the second re-drive) ─────────────────────
+//
+// A resume re-drives an envelope built on a PREVIOUS run. If a fresher payload
+// landed on the same object meanwhile, re-driving writes the old bytes back — a
+// content revert. `reuseExternalWriteOnResume` now forwards the original intent's
+// age so the gateway can drop the stale step instead.
+describe("reuseExternalWriteOnResume — C3 ordering (a stale resumed step never reverts)", () => {
+  it("a resumed step whose intent PREDATES the applied payload is dropped, and NOTHING is written", async () => {
+    const store = new FakeReceiptStore();
+    const env = makeEnvelope();
+    // The object already carries a NEWER payload, applied after this step's intent.
+    store.seed({
+      idempotencyKey: "idem-newer",
+      canonicalObjectKey: env.canonicalObjectKey,
+      targetSystem: env.targetSystem,
+      payloadHash: "sha256:NEWER",
+      receipt: { externalObjectId: "ext-obj", recordedAt: "2026-07-02T00:00:00.000Z" },
+      recordedAt: "2026-07-02T00:00:00.000Z",
+    });
+    const adapter = makeAdapter();
+
+    const res = await reuseExternalWriteOnResume(
+      env,
+      makeAction(),
+      makeDeps(adapter, store),
+      "2026-07-01T00:00:00.000Z", // this step's intent — OLDER than the applied write
+    );
+
+    // Terminal, surfaced, and NOT `held`: re-driving cannot make a stale intent
+    // fresher, and re-holding it would spin forever.
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error.code).toBe("rejected");
+    expect(res.error.reason).toContain("predates");
+  });
+
+  it("omitting the intent time keeps the pre-C3 behaviour exactly", async () => {
+    const store = new FakeReceiptStore();
+    const env = makeEnvelope();
+    store.seed({
+      idempotencyKey: "idem-newer",
+      canonicalObjectKey: env.canonicalObjectKey,
+      targetSystem: env.targetSystem,
+      payloadHash: "sha256:NEWER",
+      receipt: { externalObjectId: "ext-obj", recordedAt: "2026-07-02T00:00:00.000Z" },
+      recordedAt: "2026-07-02T00:00:00.000Z",
+    });
+    const res = await reuseExternalWriteOnResume(env, makeAction(), makeDeps(makeAdapter(), store));
+    // No ordering check ⇒ it proceeds down the update path as before.
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error.reason).not.toContain("predates");
+  });
+});

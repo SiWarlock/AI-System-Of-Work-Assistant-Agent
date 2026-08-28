@@ -403,6 +403,8 @@ export interface ApprovedDispatchGateway {
   dispatch(
     action: ProposedAction,
     envelope: ExternalWriteEnvelope,
+    /** C3 ordering — see `ApprovalFlowContext.intentCreatedAt`. */
+    intentCreatedAt?: string,
   ): Promise<Result<DispatchApprovedResult, DispatchApprovedError>>;
 }
 
@@ -417,8 +419,8 @@ export function createDispatchApprovedActivity(
   gateway: ApprovedDispatchGateway,
 ): DispatchApprovedActionPort {
   return {
-    dispatch(action, env) {
-      return gateway.dispatch(action, env);
+    dispatch(action, env, intentCreatedAt) {
+      return gateway.dispatch(action, env, intentCreatedAt);
     },
   };
 }

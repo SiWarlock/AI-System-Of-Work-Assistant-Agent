@@ -994,9 +994,19 @@ export function buildProofSpineActivities(
     async dispatch(
       action: ProposedAction,
       envelope: ExternalWriteEnvelope,
+      intentCreatedAt?: string,
     ): Promise<Result<DispatchApprovedResult, DispatchApprovedError>> {
       // 21.1/2 binding: route the approved dispatch by `action.targetSystem` through the registry too.
-      const outcome = await dispatchRouted(backends.writeAdapters, envelope, action, externalWriteDeps);
+      // `intentCreatedAt` (C3) rides through so a card approved AFTER a fresher write
+      // landed is dropped as `superseded` rather than reverting the document.
+      const outcome = await dispatchRouted(
+        backends.writeAdapters,
+        envelope,
+        action,
+        externalWriteDeps,
+        undefined, // keep the default dispatch fn
+        intentCreatedAt !== undefined ? { intentCreatedAt } : undefined,
+      );
       switch (outcome.status) {
         case "created":
         case "updated":
@@ -1560,7 +1570,10 @@ export function buildProofSpineActivities(
       deriveIdempotencyKey: (plan) => `kw:commit:${String(plan.planId)}`,
     },
     propose: {
-      dispatch: (env, action, deps) => dispatchRouted(backends.writeAdapters, env, action, deps),
+      // Spread the tail so a future DispatchOptions argument cannot be truncated
+      // here the way the approval forward silently was.
+      dispatch: (env, action, deps, opts) =>
+        dispatchRouted(backends.writeAdapters, env, action, deps, undefined, opts),
       deps: externalWriteDeps,
     },
     // No real dashboard read-model sink is wired at the composition root yet (arch_gap — the
@@ -1810,7 +1823,7 @@ export function buildProofSpineActivities(
       // `ok` arm is untouched.
       return isOk(result) ? result : err(dropCommitFailureCause(result.error));
     },
-    meetingPropose: (action, env) => propose.propose(action, env),
+    meetingPropose: (...args) => propose.propose(...args), // spread — see approvalDispatchApproved
     meetingReindex: (revisionId) => reindex.reindex(revisionId),
     meetingPark: (source, idempotencyKey) => meetingParkPort.park(source, idempotencyKey),
     // 13.8i-B — the meeting-path leg. SAME `params.proposeKnowledgeApproval` instance as the source leg
@@ -1822,7 +1835,11 @@ export function buildProofSpineActivities(
     approvalRecordPending: (ctx) => recordPending.record(ctx),
     approvalSurfaceCard: (approval) => surfaceCard.surface(approval),
     approvalApply: (approval, decision) => applyTransition.apply(approval, decision),
-    approvalDispatchApproved: (action, env) => dispatchApproved.dispatch(action, env),
+    // SPREAD, never a fixed arity: this used to be `(action, env) => …`, which
+    // silently DROPPED the C3 `intentCreatedAt` third argument the moment it was
+    // added — the guard would have existed and never received a value. Forwarding
+    // all args makes a future parameter impossible to truncate here.
+    approvalDispatchApproved: (...args) => dispatchApproved.dispatch(...args),
 
     // ingestion-triage
     triageRecordDisposition: async (disposition) => {
@@ -1892,7 +1909,7 @@ export function buildProofSpineActivities(
       // `ok` arm is untouched.
       return isOk(result) ? result : err(dropCommitFailureCause(result.error));
     },
-    sourcePropose: (action, env) => propose.propose(action, env),
+    sourcePropose: (...args) => propose.propose(...args), // spread — see approvalDispatchApproved
     sourceIndex: (revisionId) => sourceIndexPort.index(revisionId),
     // 13.8d — the living-vault leg. `params.livingVault` is supplied ONLY by the boot-level
     // `gateLivingVaultRewrite` (strict `=== true` + a vaultRoot); absent ⇒ the delegate is inert and

@@ -30,6 +30,7 @@ import type {
   DrainResult,
   ExternalWriteDeps,
   ExternalWriteResult,
+  DispatchOptions,
   OutboxRepository,
   WriteAdapterRegistry,
 } from "@sow/integrations";
@@ -94,11 +95,16 @@ export function buildDrainDeps(args: BuildDrainDepsArgs): DrainDeps {
     limit,
     backoffCfg: args.backoffCfg ?? DEFAULT_DRAIN_BACKOFF,
     clock: args.clock,
+    // `opts` (C3 `intentCreatedAt`) is supplied by the DRAIN, which knows each
+    // entry's `enqueuedAt`. Declaring and forwarding it is load-bearing: a
+    // fixed-arity lambda here silently drops the ordering fact, and a stale held
+    // entry then writes its old payload back over a fresher one.
     dispatch: (
       env: ExternalWriteEnvelope,
       action: ProposedAction,
       deps: ExternalWriteDeps,
-    ): Promise<ExternalWriteResult> => dispatchRouted(args.writeAdapters, env, action, deps),
+      opts?: DispatchOptions,
+    ): Promise<ExternalWriteResult> => dispatchRouted(args.writeAdapters, env, action, deps, undefined, opts),
     ...(args.jitter !== undefined ? { jitter: args.jitter } : {}),
   };
 }
