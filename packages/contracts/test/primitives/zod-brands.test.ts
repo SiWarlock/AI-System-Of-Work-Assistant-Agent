@@ -142,6 +142,46 @@ const factoryBrandEntries = (): ReadonlyArray<readonly [string, Parseable]> =>
   );
 
 describe("WorkspaceIdSchema own shape — spec(§5) spec(§16)", () => {
+  it("rejects a ZERO-WIDTH-only id — the brand IS the backstop task 24.61 said it was not", () => {
+    // ⛔ WHY THIS EXISTS AS ITS OWN TEST. Task `### 24.61` records that U+200B / U+200C / U+2060 /
+    // U+180E construct successfully past a `.trim()` blank-check AND "clear `WorkspaceIdSchema`,
+    // which applies the SAME `.trim()` test, so the branded type is not a backstop."
+    //
+    // ⭐ THAT IS NO LONGER TRUE. `### 24.84` narrowed `WorkspaceIdSchema` off the generic
+    // `brandedIdSchema` onto its own bounded slug pattern, and a `Cf` code point cannot clear a
+    // positive `[a-z0-9-]` shape. The brand became a real backstop as a SIDE EFFECT of an unrelated
+    // task, so nothing named the property and nothing would notice it going away.
+    //
+    // ⚠ This is the direction that goes stale QUIETLY: a security note saying "there is no backstop"
+    // stays believed long after one appears, and the next reader either rebuilds it or over-guards
+    // elsewhere on its authority. Pinned here so the property has an owner.
+    // ⛔ NOT a claim that 24.61 is closed — its Done-when is composition-root validation of the
+    // exempt id against the KNOWN WORKSPACE SET, which this does not provide and cannot.
+    for (const zw of ["\u200B", "\u200C", "\u2060", "\u180E", "\u200B\u200C", " \u200B "]) {
+      expect(WorkspaceIdSchema.safeParse(zw).success, `zero-width-only: ${JSON.stringify(zw)}`).toBe(false);
+    }
+    // NON-VACUITY: an id merely CONTAINING nothing exotic still accepts, so the case above is not
+    // passing because the schema rejects everything.
+    expect(WorkspaceIdSchema.safeParse("employer-work").success).toBe(true);
+
+    // ⭐⭐ DISCRIMINATING CONTROL, and it carries a real finding rather than just proving the test
+    // works: the OTHER brands still ride the generic `brandedIdSchema`, whose blank-check is a bare
+    // `.trim()`. So they DO accept a zero-width-only id — which is both the proof that 24.61's
+    // mechanism is real (this test would be red for `WorkspaceIdSchema` too if 24.84 had not given
+    // it a bounded shape) AND a live statement of scope: `WorkspaceId` is a backstop, the rest are
+    // not. ⛔ Recorded as MEASURED SCOPE, not filed as a defect — no path this repo has is known to
+    // route a zero-width-only id into one of them, and asserting the exposure without a reachable
+    // caller is the overclaim this codebase corrects repeatedly.
+    const generic = Object.entries(brands).filter(
+      ([n, v]) => n.endsWith("Schema") && n !== "WorkspaceIdSchema" && typeof (v as { safeParse?: unknown })?.safeParse === "function",
+    );
+    expect(generic.length).toBeGreaterThan(3); // the control itself is not vacuous
+    const acceptingZeroWidth = generic.filter(
+      ([, v]) => (v as { safeParse: (x: unknown) => { success: boolean } }).safeParse("\u200B").success,
+    );
+    expect(acceptingZeroWidth.length).toBeGreaterThan(0);
+  });
+
   it("rejects out-of-shape values", () => {
     for (const [value, why] of OUT_OF_SHAPE) {
       expect(WorkspaceIdSchema.safeParse(value).success, `${why}: ${JSON.stringify(value)}`).toBe(
