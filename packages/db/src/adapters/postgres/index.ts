@@ -774,7 +774,9 @@ function toSourceDisposition(row: Record<string, unknown>): SourceDispositionRow
           .select()
           .from(schema.sourceDisposition)
           .where(eq(schema.sourceDisposition.workspaceId, workspaceId))
-          .orderBy(asc(schema.sourceDisposition.parkedAt))
+          // PK TIEBREAK — same-millisecond `parkedAt` would otherwise order arbitrarily, and with a
+          // LIMIT that changes WHICH rows return at the boundary (`worker L12`). Must match SQLite.
+          .orderBy(asc(schema.sourceDisposition.parkedAt), asc(schema.sourceDisposition.sourceId))
           .limit(limit);
         return ok(rows.map((r) => toSourceDisposition(r as Record<string, unknown>)));
       }),

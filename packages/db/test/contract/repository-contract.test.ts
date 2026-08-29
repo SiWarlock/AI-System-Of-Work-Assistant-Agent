@@ -1069,6 +1069,25 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(listed.every((r) => r.workspaceId === "ws-a")).toBe(true);
     });
 
+    it("SAME-millisecond parkedAt ties break DETERMINISTICALLY on sourceId — identical on both dialects", async () => {
+      // ⛔ THE DEFECT THIS PINS, found reviewing this session's own change. `parkedAt` is a
+      // timestamp, so rows parked in the SAME millisecond had no defined order — and this query
+      // carries a LIMIT, so the tie decides WHICH rows come back at the boundary. Two dialects
+      // could then return different sets while this suite stayed green, and a prune could skip a
+      // row indefinitely (`worker L12`: no dialect-arbitrary same-timestamp winner).
+      // ⚠ The pre-existing cases all used DISTINCT timestamps, so none of them could see it.
+      const t = "2026-07-15T03:00:00.000Z";
+      for (const id of ["tie-c", "tie-a", "tie-b"]) {
+        unwrap(await repos.sourceDisposition.park(sdRow({ sourceId: id, workspaceId: "ws-tie", parkedAt: t })));
+      }
+      const listed = unwrap(await repos.sourceDisposition.listByWorkspace!("ws-tie", 100));
+      expect(listed.map((r) => r.sourceId)).toEqual(["tie-a", "tie-b", "tie-c"]);
+
+      // …and the LIMIT boundary is stable too — the half that actually bites a prune sweep.
+      const firstTwo = unwrap(await repos.sourceDisposition.listByWorkspace!("ws-tie", 2));
+      expect(firstTwo.map((r) => r.sourceId)).toEqual(["tie-a", "tie-b"]);
+    });
+
     it("a row with NO workspaceId is EXCLUDED — never swept under a guessed workspace", async () => {
       // Rows parked before the column existed carry none. Excluding costs a stale row
       // that is never pruned (recoverable); including one would prune it under the

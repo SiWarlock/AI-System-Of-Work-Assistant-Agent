@@ -754,7 +754,12 @@ function toSourceDisposition(row: Record<string, unknown>): SourceDispositionRow
           .select()
           .from(schema.sourceDisposition)
           .where(eq(schema.sourceDisposition.workspaceId, workspaceId))
-          .orderBy(schema.sourceDisposition.parkedAt)
+          // ⛔ EXPLICIT asc + a PK TIEBREAK. `parkedAt` is a timestamp, so two rows parked in the
+          // same millisecond order ARBITRARILY — and with a LIMIT that decides WHICH rows come
+          // back at the boundary, dialect-by-dialect. A prune could then skip a row indefinitely
+          // while the contract suite stayed green (`worker L12`: no dialect-arbitrary same-timestamp
+          // winner). The bare column also relied on Drizzle's implicit ASC; stated now.
+          .orderBy(asc(schema.sourceDisposition.parkedAt), asc(schema.sourceDisposition.sourceId))
           .limit(limit)
           .all();
         return ok(rows.map((r) => toSourceDisposition(r as Record<string, unknown>)));
