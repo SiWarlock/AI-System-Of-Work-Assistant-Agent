@@ -932,11 +932,36 @@ function failClosedEgress(workspaceId: string): UiSafeEgressStatus {
  *           read "the class fix landed" as "a credential cannot be a workspace id"; it cannot be a
  *           credential *whose shape needs `_`, `=`, uppercase or whitespace*, which is a strictly
  *           smaller claim and the only one the regex supports.
- *       (ii) **PRE-EXISTING rows** — a read-time concern; `packages/db`'s workspace `get` is still an
- *           unchecked `row as Workspace` cast.
+ *       (ii) ~~**PRE-EXISTING rows** — a read-time concern; `packages/db`'s workspace `get` is still
+ *           an unchecked `row as Workspace` cast.~~
+ *           ⛔⛔ **RETRACTED WITHIN THE HOUR IT WAS WRITTEN (2026-08-28) — THE STRUCK SENTENCE IS
+ *           FALSE, AND IT IS THIS ERRATUM'S OWN DEFECT CLASS COMMITTED INSIDE THE ERRATUM.** Retained
+ *           struck, not deleted, because the fact that it shipped is the evidence.
+ *           ⭐ MEASURED at source: BOTH dialect adapters' `workspaceConfig.get` return
+ *           `parseStoredWorkspace(row)` (`packages/db/src/adapters/{sqlite,postgres}/index.ts`), and
+ *           `parseStoredWorkspace` (`packages/db/src/adapters/workspace-read-gate.ts`, task `9.36`)
+ *           runs the FULL `WorkspaceSchema.safeParse`, returning `stored_row_schema_violation` —
+ *           *"never coerced, never normalised"*. `WorkspaceSchema.id` **IS** `WorkspaceIdSchema`, so
+ *           the tightened slug shape is re-applied on EVERY read. ⇒ a pre-brand row FAILS CLOSED and
+ *           is **never served**; it cannot reach this audit sink or the renderer through `get`.
+ *           ⛔ **`as Workspace` appears NOWHERE in `packages/db/src` except two comments describing
+ *           the PRE-9.36 state — which is almost certainly where I lifted the phrase from, and I
+ *           wrote it in the PRESENT TENSE.** (`packages/db`'s own contract suite carries a
+ *           mutation-verified census that reds if such a cast returns.)
+ *           ⚠ **THE RESIDUAL IS REAL BUT POINTS THE OPPOSITE WAY — AVAILABILITY, NOT LEAK**, and the
+ *           read-gate's own DISPOSITION says so: a population-(ii) row strands `egressRevoke.ts`'s
+ *           `revokeEgressAck`, whose GET reads through this gate before its upsert, **leaving that
+ *           workspace's emergency egress-off control unusable** until task `24.106` lands (open,
+ *           owner-deprioritised; rule-5-ADJACENT, not rule-7).
+ *           ⭐ **WHY IT SURVIVED REVIEW: it errs toward UNDERSTATING the runtime's protection**, and
+ *           every reflex in this repo is tuned for the overstating direction. **An understated guard
+ *           is not harmless — it tells the next reader not to expect protection there, so a genuine
+ *           regression in the read gate would look like the documented state.**
  *       (iii) the **2 of 17 models that do not reference the brand**, still unidentified.
- *     ⇒ the AUDIT-boundary and RENDERER sinks stay open questions on those three narrow grounds, not
- *     on the general one this bullet used to describe.
+ *     ⇒ the AUDIT-boundary and RENDERER sinks stay open questions on grounds (i) and (iii) ONLY.
+ *     ⛔ **(ii) DOES NOT SUPPORT THAT CONCLUSION** — it is a fail-closed availability residual, not a
+ *     path by which a non-conforming id reaches either sink. The struck sentence was load-bearing for
+ *     the "three grounds" phrasing, which is why the retraction has to fix this line too.
  *     ⭐ **WHY THIS ERRATUM EARNS ITS SPACE, measured 2026-08-28:** an adversarial reviewer read the
  *     stale sentence and derived a HIGH rule-7 finding — a workspaceId of `api_key=<16-char-synthetic>`
  *     reaching the durable audit record through `looksLikeCredentialShape`'s keyword-free nets. The
