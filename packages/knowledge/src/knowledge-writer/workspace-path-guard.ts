@@ -58,6 +58,7 @@
 // PURE; TOTAL never-throws; fail-closed (a malformed/absent plan.workspaceId is rejected, never
 // silently admitted).
 import { ok, err } from "@sow/contracts";
+import type { Result } from "@sow/contracts";
 import type { WorkspacePathCheck, WorkspacePathContext, WorkspacePathViolation } from "./writer";
 import { isStructuralSurface, hasNoTraversalSegments } from "../synthesis/grounded-path";
 
@@ -151,7 +152,51 @@ const ZERO_WIDTH_FORMAT_CHARS = /[\u200B\u200C\u2060\u180E]/g;
  * land safely and a config change months later could open the class with nobody re-reading `24.26`.
  * If you are here changing this argument from a constant to a config read, THIS is the obligation.
  */
-export function makeEnforceWorkspacePathScope(exemptWorkspaceId: string): WorkspacePathCheck {
+/**
+ * The exempt workspace id, as a BRAND that only {@link asExemptWorkspaceId} can mint (24.61/24.86).
+ *
+ * ⛔ WHY A BRAND AND NOT A `string`. The blank-check below is a MISCONFIGURATION TRIPWIRE, not id
+ * validation — a well-formed but WRONG id (a typo, a stale value, one workspace's id where
+ * another's belongs) is non-blank and sails through, silently exempting the WRONG workspace from
+ * rule-4 path prefixing. A brand moves that from "a rule someone must remember" to "the compiler
+ * will stop you".
+ *
+ * ⭐⭐ AND IT MAKES 24.61'S OWN TRIGGER MECHANICAL. That entry says the residual "bites the moment
+ * the exempt id moves to CONFIG" — a condition written in PROSE, and ***a prose trigger is a
+ * request, not a mechanism*** (`### 24.140`). Whoever moves this to config now CANNOT pass the
+ * runtime string without going through the validator below, and the known-workspace-set check has
+ * a single home waiting for it.
+ *
+ * ⚠ WHY NOT VALIDATE AGAINST THE KNOWN SET UNCONDITIONALLY — the Done-when's FIRST option, and a
+ * design call rather than laziness: neither composition-root call site has a workspace registry in
+ * scope (measured — `buildActivities.ts` and `semanticApprovalDispatch.ts` carry no workspace
+ * repo). Threading one in would add a dependency edge whose only job is to check a COMPILE-TIME
+ * CONSTANT against a runtime set, and it could fail at boot if the registry is not yet populated —
+ * converting a non-issue into a boot failure.
+ */
+export type ExemptWorkspaceId = string & { readonly __exemptWorkspaceId: unique symbol };
+
+/**
+ * Mint an {@link ExemptWorkspaceId}. Rejects blank / whitespace / zero-width ids, and — when
+ * `known` is supplied — any id outside that set.
+ *
+ * ⚠ WITHOUT `known` THIS IS ONLY A SHAPE CHECK, stated rather than implied: the brand's value is
+ * that it is the ONE place a set can be enforced once a caller has one, not that it knows the set
+ * today. Never throws.
+ */
+export function asExemptWorkspaceId(
+  raw: string,
+  known?: readonly string[],
+): Result<ExemptWorkspaceId, { readonly code: "blank" | "unknown_workspace" }> {
+  if (typeof raw !== "string" || raw.replace(ZERO_WIDTH_FORMAT_CHARS, "").trim().length === 0) {
+    // Names the failure, never echoes the value — this module's standing discipline.
+    return err({ code: "blank" as const });
+  }
+  if (known !== undefined && !known.includes(raw)) return err({ code: "unknown_workspace" as const });
+  return ok(raw as ExemptWorkspaceId);
+}
+
+export function makeEnforceWorkspacePathScope(exemptWorkspaceId: ExemptWorkspaceId): WorkspacePathCheck {
   // ⚠ The `typeof` half is UNREACHABLE from TypeScript (the parameter is typed `string`) and is kept
   // deliberately, mirroring the same defensive shape at the plan-workspaceId check below: the supplier
   // is a composition root, and a JS caller or an `as`-cast reaches this with anything. Without it,
@@ -181,7 +226,11 @@ export function makeEnforceWorkspacePathScope(exemptWorkspaceId: string): Worksp
     if (isStructuralSurface(path)) return ok(undefined);
     const workspaceId = ctx?.plan?.workspaceId;
     if (typeof workspaceId !== "string" || workspaceId.length === 0) return err(violation(path)); // fail closed on a malformed plan
-    if (workspaceId === exemptWorkspaceId) return ok(undefined);
+    // Compared as STRINGS on purpose: `plan.workspaceId` is the `WorkspaceId` brand and the exempt id
+    // is the `ExemptWorkspaceId` brand, so `===` on the branded types is a tsc error (they do not
+    // overlap). ⭐ That error is the BRAND WORKING — it caught the one place the two namespaces meet.
+    // The comparison is intentional and the widening is local to it, not to the parameter.
+    if (workspaceId === (exemptWorkspaceId as string)) return ok(undefined);
     const segments = path.split("/");
     if (segments[0] === workspaceId) return ok(undefined);
     if (segments[0] === SOURCE_NOTE_SUBTREE && segments[1] === workspaceId) return ok(undefined);

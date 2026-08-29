@@ -43,7 +43,12 @@ export * from "./knowledge-writer/tombstone";
 //     `export *` would publish `SOURCE_NOTE_SUBTREE`, a value duplicated from `apps/worker` as DATA
 //     and not a symbol any consumer should bind. Widen this line only for something a composition
 //     root must actually construct.
-export { makeEnforceWorkspacePathScope } from "./knowledge-writer/workspace-path-guard";
+export { makeEnforceWorkspacePathScope, asExemptWorkspaceId } from "./knowledge-writer/workspace-path-guard";
+// ⚠ The TYPE ships with the constructor deliberately: a consumer that can mint an `ExemptWorkspaceId`
+// but cannot NAME it has to infer it, and `### 24.135` is this repo's record of a symbol that was
+// implemented, unit-tested, and simply omitted from this barrel — invisible until a cross-package
+// consumer went looking.
+export type { ExemptWorkspaceId } from "./knowledge-writer/workspace-path-guard";
 
 // ── fs-watch: out-of-band writer detection + reconciliation ─────────────────────
 export * from "./fs-watch/vault-watcher";

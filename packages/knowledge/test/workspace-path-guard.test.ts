@@ -34,10 +34,10 @@ import type { WorkspacePathCheck } from "../src/knowledge-writer/writer";
 // `apps/worker/src/composition/legacy-workspace.ts`, and a test asserting the guard's behaviour has
 // no business importing production's copy of a value it is free to choose.
 // ⚠ ONE literal, at module scope — not one per call site. Re-pointing the four pure-predicate calls
-// at four separate `makeEnforceWorkspacePathScope("personal-business")` literals would have traded a
+// at four separate `makeEnforceWorkspacePathScope(exempt("personal-business"))` literals would have traded a
 // deleted module-level home for four scattered ones.
 const EXEMPT_WS = "personal-business";
-const guard = makeEnforceWorkspacePathScope(EXEMPT_WS);
+const guard = makeEnforceWorkspacePathScope(exempt(EXEMPT_WS));
 
 const wf: WorkflowRunRef = {
   workflowId: "wf-24-12" as WorkflowRunRef["workflowId"],
@@ -350,7 +350,7 @@ describe("makeEnforceWorkspacePathScope — the exempt workspace id is a require
   it("exempts the workspace it was GIVEN, not some other instance's id", () => {
     // The whole point of the factory: this fails if the returned predicate ignored its argument and
     // closed over anything else.
-    const check = makeEnforceWorkspacePathScope(FOREIGN);
+    const check = makeEnforceWorkspacePathScope(exempt(FOREIGN));
     const r = check(ctx("projects/acme.md", FOREIGN)); // unprefixed, but THIS instance's exempt ws
     expect(isOk(r)).toBe(true);
   });
@@ -359,7 +359,7 @@ describe("makeEnforceWorkspacePathScope — the exempt workspace id is a require
     // Test above passes even if the factory exempted BOTH its argument and some other id. Only this
     // one proves nothing else is consulted; a closure bug that ORs two ids is the realistic failure
     // mode and the positive test cannot see it.
-    const check = makeEnforceWorkspacePathScope(FOREIGN);
+    const check = makeEnforceWorkspacePathScope(exempt(FOREIGN));
     const r = check(ctx("projects/acme.md", EXEMPT_WS));
     expect(isErr(r)).toBe(true);
     if (!isErr(r)) return;
@@ -371,7 +371,7 @@ describe("makeEnforceWorkspacePathScope — the exempt workspace id is a require
     // implementation that happens to agree on the exemption. Mirrors the shipped const's own pins.
     // RETAIN NOTE (bare isErr below): same single-code taxonomy as the block above — `code` is always
     // the constant "workspace_path_violation", so no `.error.code` assertion adds discriminating signal.
-    const check = makeEnforceWorkspacePathScope("some-other-workspace");
+    const check = makeEnforceWorkspacePathScope(exempt("some-other-workspace"));
     expect(isOk(check(ctx("index.md", FOREIGN)))).toBe(true); // KN-12 structural, exempt for every ws
     expect(isOk(check(ctx("employer-work/projects/acme.md", FOREIGN)))).toBe(
       true,
@@ -409,13 +409,13 @@ describe("makeEnforceWorkspacePathScope — the exempt workspace id is a require
       42 as unknown as string,
     ];
     for (const blank of blanks) {
-      expect(() => makeEnforceWorkspacePathScope(blank)).toThrow(
+      expect(() => makeEnforceWorkspacePathScope(blank as ExemptWorkspaceId)).toThrow(
         /exemptWorkspaceId must be a non-blank string/,
       );
     }
     // Non-vacuity partner: a real id does NOT throw, so the assertion above is discriminating
     // rather than "this factory always throws."
-    expect(() => makeEnforceWorkspacePathScope(FOREIGN)).not.toThrow();
+    expect(() => makeEnforceWorkspacePathScope(exempt(FOREIGN))).not.toThrow();
     // ⛔ 24.61 CLOSED THE RESIDUAL THIS COMMENT USED TO RECORD AS DELIBERATELY UNASSERTED — see the
     // dedicated test below (`construction FAILS FAST on a ZERO-WIDTH/format-only exempt id too`).
     // `.trim()` alone covers the ECMAScript whitespace class only; it does not follow that this test
@@ -441,7 +441,7 @@ describe("makeEnforceWorkspacePathScope — the exempt workspace id is a require
       "\u2060\u180E", // more than one, still nothing but non-content
     ];
     for (const blank of zeroWidthOnly) {
-      expect(() => makeEnforceWorkspacePathScope(blank)).toThrow(
+      expect(() => makeEnforceWorkspacePathScope(blank as ExemptWorkspaceId)).toThrow(
         /exemptWorkspaceId must be a non-blank string/,
       );
     }
@@ -451,7 +451,9 @@ describe("makeEnforceWorkspacePathScope — the exempt workspace id is a require
     // and it is still NOT validation that the surviving content is a legitimate workspace id (brief
     // `271` option (c), composition-root territory, remains the only thing that closes that class).
     expect(() =>
-      makeEnforceWorkspacePathScope(`personal-business\u200B`),
+      // Cast on purpose: a zero-width id can no longer be MINTED (the constructor rejects it), so
+      // reaching the factory's defensive branch requires the same cast a JS caller would make.
+      makeEnforceWorkspacePathScope(`personal-business\u200B` as ExemptWorkspaceId),
     ).not.toThrow();
   });
 });
@@ -460,14 +462,14 @@ describe("makeEnforceWorkspacePathScope — the exempt workspace id is a require
 describe("workspacePathCheck is REQUIRED — the supplied id is load-bearing, and omission is no longer safe", () => {
   it("applyPlan_uses_the_SUPPLIED_exempt_id: a different id changes behaviour, which it could not before step 3", async () => {
     // ⭐ THE PIN THAT MAKES THE WHOLE SEQUENCE MEAN SOMETHING. At step 2 both worker literals passed
-    // `makeEnforceWorkspacePathScope(LEGACY_UNPREFIXED_WORKSPACE_ID)` while writer.ts still had
+    // `makeEnforceWorkspacePathScope(exempt(LEGACY_UNPREFIXED_WORKSPACE_ID))` while writer.ts still had
     // `?? enforceWorkspacePathScope` — the SAME factory over the SAME string. Supplying a wrong id
     // was therefore indistinguishable from supplying the right one, and no test could tell. With the
     // fallback deleted, the supplied value is the only source, so it is finally observable.
     const vault = new MemoryVaultFs();
     const d = {
       ...deps(vault),
-      workspacePathCheck: makeEnforceWorkspacePathScope("some-other-workspace"),
+      workspacePathCheck: makeEnforceWorkspacePathScope(exempt("some-other-workspace")),
     };
     // `EXEMPT_WS` is exempt under the file's own instance; under THIS instance it is not.
     const plan = planWithCreate(EXEMPT_WS, "projects/acme.md");
@@ -616,5 +618,82 @@ describe("24.67 — the guard runs BEFORE any vault write (the NO-GUARD decision
     // (3) Non-vacuity partner for (2): the vault is non-empty AFTER the call, so "0 at check time"
     // is an ordering fact and not just "this plan never wrote".
     expect(Object.keys(vault.snapshot()).length).toBeGreaterThan(0);
+  });
+});
+
+// ── 24.61 / 24.86 — the exempt id becomes UNREPRESENTABLE-if-illegitimate ──────────────────────
+//
+// ⛔ THE RESIDUAL THESE CLOSE. `makeEnforceWorkspacePathScope` took a bare `string`. Its blank-check
+// is a MISCONFIGURATION TRIPWIRE, not id validation: a well-formed but WRONG id — a typo, a stale
+// value, one workspace's id where another's belongs — is non-blank and sails straight through,
+// silently exempting the wrong workspace from rule-4 path prefixing.
+//
+// ⚠ WHY NOT "VALIDATE AGAINST THE KNOWN WORKSPACE SET" — the Done-when's first option — AND WHY
+// THAT IS A DESIGN CALL RATHER THAN LAZINESS: neither composition-root call site has a workspace
+// registry in scope (measured: `buildActivities.ts` and `semanticApprovalDispatch.ts` carry no
+// workspace repo). Threading one in would add a dependency edge whose ONLY job is to check a
+// COMPILE-TIME CONSTANT against a runtime set — and it could fail at boot if the registry is not
+// yet populated, converting a non-issue into a boot failure. ⇒ the Done-when's SECOND option — "an
+// equivalent construction that makes an illegitimate id unrepresentable" — is both stronger and
+// cheaper here.
+//
+// ⭐⭐ AND IT MAKES 24.61'S OWN TRIGGER MECHANICAL. That entry says the residual "bites the moment
+// the exempt id moves to CONFIG" — a condition written in PROSE, which is a request, not a
+// mechanism (the lesson banked at `### 24.140`). A brand turns it into a compiler error: whoever
+// moves this to config CANNOT pass the runtime string without going through the validator, and the
+// known-set check has a single home waiting for it when a set is available.
+import { asExemptWorkspaceId, type ExemptWorkspaceId } from "../src/knowledge-writer/workspace-path-guard";
+
+/** Mint an `ExemptWorkspaceId` for a fixture. Uses the REAL constructor so these tests exercise
+ *  the same validation production does — never a cast, which would hollow out the brand. */
+function exempt(raw: string): ExemptWorkspaceId {
+  const r = asExemptWorkspaceId(raw);
+  if (!r.ok) throw new Error(`test fixture: not a legal exempt id`);
+  return r.value;
+}
+
+
+describe("exempt workspace id — illegitimate values are unrepresentable (24.61/24.86)", () => {
+  it("a RAW STRING no longer type-checks — the guarantee is the compiler's, not a convention", () => {
+    // ⛔ THE LOAD-BEARING ASSERTION IN THIS BLOCK, and it is checked by `tsc`, not by vitest: if the
+    // parameter is ever widened back to `string`, this directive goes UNUSED and typecheck fails
+    // with TS2578. That is the same mechanism desktop L20 / worker L31 use — make the unsafe state
+    // unrepresentable rather than merely forbidden.
+    // @ts-expect-error a bare string is not an ExemptWorkspaceId
+    makeEnforceWorkspacePathScope("personal-business");
+  });
+
+  it("the constructor accepts a legitimate id and the guard behaves EXACTLY as before", () => {
+    const id = asExemptWorkspaceId("personal-business");
+    expect(id.ok).toBe(true);
+    if (!id.ok) return;
+    const check = makeEnforceWorkspacePathScope(id.value);
+    // Byte-equivalent behaviour on the path that matters: the exempt workspace may commit unprefixed.
+    expect(check({ path: "notes/a.md", plan: { workspaceId: "personal-business" } } as never).ok).toBe(true);
+  });
+
+  it("blank / whitespace / ZERO-WIDTH ids are rejected AT CONSTRUCTION, not at first use", () => {
+    // Previously these threw from the factory; now they never become an ExemptWorkspaceId at all.
+    for (const bad of ["", "   ", "​", "‌⁠", " ᠎ "]) {
+      expect(asExemptWorkspaceId(bad).ok, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it("24.86 — a WELL-FORMED but WRONG id fails when a known set is supplied", () => {
+    // ⛔ THIS IS THE SUBJECT 24.86 ASKS FOR: a pin whose subject is the VALUE, not the shape.
+    // `employer-work` is a perfectly well-formed workspace id — and exempting IT from rule-4 path
+    // prefixing would be a WS-8 failure, not a misconfiguration.
+    const known = ["personal-business", "employer-work", "personal-life"] as const;
+    expect(asExemptWorkspaceId("personal-business", known).ok).toBe(true);
+    expect(asExemptWorkspaceId("employer-work", known).ok).toBe(true); // in the set ⇒ shape-legal
+    expect(asExemptWorkspaceId("personal-buisness", known).ok).toBe(false); // typo — NOT in the set
+    expect(asExemptWorkspaceId("does-not-exist", known).ok).toBe(false);
+  });
+
+  it("NON-VACUITY: with NO known set the constructor cannot judge membership, and says so by accepting", () => {
+    // Stated rather than hidden: without a set this is still only a SHAPE check. The brand's value
+    // is that it is the ONE place a set can be enforced once a caller has one — not that it
+    // magically knows the set today.
+    expect(asExemptWorkspaceId("does-not-exist").ok).toBe(true);
   });
 });

@@ -39,4 +39,41 @@
  * The one legacy workspace exempt from vault-path prefixing (safety rule 4 / WS-8).
  * Supplied to `makeEnforceWorkspacePathScope` at both worker composition sites.
  */
-export const LEGACY_UNPREFIXED_WORKSPACE_ID = "personal-business";
+import { asExemptWorkspaceId, type ExemptWorkspaceId } from "@sow/knowledge";
+
+const LEGACY_UNPREFIXED_WORKSPACE_ID_RAW = "personal-business";
+
+/**
+ * ⛔ BRANDED AT ITS SINGLE HOME (24.61/24.86) — minted through the REAL validator, once, here.
+ *
+ * `makeEnforceWorkspacePathScope` used to take a bare `string`, so its blank-check was a
+ * MISCONFIGURATION TRIPWIRE and nothing stopped a well-formed but WRONG id — a typo, a stale
+ * value, another workspace's id — from silently exempting the wrong workspace from rule-4 path
+ * prefixing. The parameter is now an `ExemptWorkspaceId` that only `asExemptWorkspaceId` can mint.
+ *
+ * ⭐⭐ AND THAT MAKES 24.61'S TRIGGER MECHANICAL RATHER THAN REMEMBERED. The block above says the
+ * residual "changes the moment anyone moves this to config" — a condition written in PROSE, and
+ * ***a prose trigger is a request, not a mechanism*** (`### 24.140`). Whoever moves this to config
+ * now CANNOT hand a runtime string to the guard: the compiler stops them at the mint, which is
+ * also the one place a KNOWN-WORKSPACE-SET check belongs once a caller has a set to pass.
+ *
+ * ⚠ THROWS AT MODULE LOAD if this constant is ever edited to something illegal. Deliberate and
+ * safe: the value is a compile-time literal, so the outcome is deterministic rather than
+ * environment-dependent — there is no boot-ordering hazard — and a blank exempt id is a
+ * misconfiguration that must fail LOUDLY, not degrade into exempting nothing (or everything).
+ */
+const minted = asExemptWorkspaceId(LEGACY_UNPREFIXED_WORKSPACE_ID_RAW);
+if (!minted.ok) {
+  throw new Error(
+    "legacy-workspace: LEGACY_UNPREFIXED_WORKSPACE_ID is not a legal exempt workspace id",
+  );
+}
+
+/**
+ * The one legacy workspace exempt from vault-path prefixing (safety rule 4 / WS-8).
+ * Supplied to `makeEnforceWorkspacePathScope` at both worker composition sites.
+ */
+export const LEGACY_UNPREFIXED_WORKSPACE_ID: ExemptWorkspaceId = minted.value;
+
+/** The unbranded spelling, for the places that compare or log the VALUE rather than supply it. */
+export const LEGACY_UNPREFIXED_WORKSPACE_ID_STRING: string = LEGACY_UNPREFIXED_WORKSPACE_ID_RAW;

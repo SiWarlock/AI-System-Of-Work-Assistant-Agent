@@ -33,9 +33,19 @@ import type {
 } from "../src/knowledge-writer/writer";
 import { makeEnforceWorkspacePathScope } from "../src/knowledge-writer/workspace-path-guard";
 import { MemoryAuditRepo, MemoryRevisionStore, MemoryVaultFs } from "./helpers";
+import { asExemptWorkspaceId, type ExemptWorkspaceId } from "../src/knowledge-writer/workspace-path-guard";
+
+/** Mint an `ExemptWorkspaceId` for a fixture. Uses the REAL constructor so these tests exercise
+ *  the same validation production does — never a cast, which would hollow out the brand. */
+function exempt(raw: string): ExemptWorkspaceId {
+  const r = asExemptWorkspaceId(raw);
+  if (!r.ok) throw new Error(`test fixture: not a legal exempt id`);
+  return r.value;
+}
+
 
 const WS = "personal-business";
-const guard = makeEnforceWorkspacePathScope(WS);
+const guard = makeEnforceWorkspacePathScope(exempt(WS));
 const KEY = "idem-24-77";
 const wf: WorkflowRunRef = {
   workflowId: "wf-24-77" as WorkflowRunRef["workflowId"],
