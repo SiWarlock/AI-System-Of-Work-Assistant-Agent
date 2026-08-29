@@ -882,7 +882,9 @@ While verifying #41's leads, an implementer mutated `budget-enforcer.ts`'s `bran
 
 **2026-07-27 · 9.23 · generalized at the lead's request beyond the slice that surfaced it**
 
-`packages/db`'s workspace `get` returns `row as Workspace` — an **unchecked cast, no Zod on the read path**. That is invisible and harmless while a stored row is only *read*. It stops being harmless the moment a value read that way is carried into a **write**, which is exactly what 9.23's fix does when it carries `existing.value.egressPolicy` forward.
+⛔ **READ THE 2026-08-24 AMENDMENT BELOW BEFORE TREATING THIS PARAGRAPH AS CURRENT — the `Workspace` INSTANCE is CLOSED; only the CLASS survives.** *(Pointer added 2026-08-28: the amendment was correctly filed at the BOTTOM of this entry, and a reader stopping at this opening sentence — the likeliest reader — got the retracted state. That is exactly how it re-entered `apps/worker/src/boot.ts` the same day.)*
+
+`packages/db`'s workspace `get` **returned** `row as Workspace` — an **unchecked cast, no Zod on the read path**. That is invisible and harmless while a stored row is only *read*. It stops being harmless the moment a value read that way is carried into a **write**, which is exactly what 9.23's fix does when it carries `existing.value.egressPolicy` forward.
 
 At that point the re-parse (`WorkspaceSchema.parse` on the reassembled aggregate) is not a formality or belt-and-braces — **it is the only validation the stored blob ever receives before re-crossing into a write.** It catches a foreign `egressPolicy.workspaceId` (the identity refine), a contradictory `acknowledgedAt`-without-ack, a non-array allowlist, and any unknown key. Narrowing it to a hand-written id comparison — which reads like a tidy simplification — would silently drop all of that.
 
