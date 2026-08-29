@@ -197,9 +197,39 @@ describe("createSecurityCliKeychainBackend — fault mapping (typed, never throw
     if (isErr(r)) expect(r.error.kind).toBe("backend_error");
   });
 
+  it("errSecInteractionNotAllowed maps to `locked` — against the string macOS ACTUALLY emits", async () => {
+    // ⛔ THE DEFECT THIS PINS. The branch read `s.includes("interaction not allowed")`, and macOS
+    // emits "User interaction **is** not allowed." — the contiguous literal never occurs, so the
+    // disjunct was DEAD for the very OSStatus it was written for.
+    // ⭐ MEASURED (Darwin 25.5.0), by `/usr/bin/security error <code>`:
+    //     -25308 (0xFFFF9D24) → "User interaction is not allowed."
+    //     -25315 (0xFFFF9D1D) → "User interaction is required, but is currently not allowed."
+    //   An exhaustive scan of the keychain block -25000..-26000 finds NO message containing the
+    //   literal "interaction not allowed" — the pattern could not fire on any real macOS string.
+    // ⚠ `security`'s exit code is the OSStatus truncated to 8 bits, confirmed with two live points
+    //   (-25300 → 44, -25294 → 50) ⇒ -25308 → 36 and -25315 → 29. Neither is 44, neither is 128,
+    //   neither is TIMED_OUT_EXIT — so no other branch caught them either: they fell through to
+    //   `backend_error`, which `mapUnavailableReason` folds to "missing".
+    // ⇒ ***the headless/daemon path reproduced the exact "told the credential does not exist when
+    //   it exists" defect the 128 branch was written to eliminate*** — while the file's own header
+    //   asserted this direction was already covered.
+    for (const [code, stderr] of [
+      [36, "security: SecKeychainSearchCopyNext: User interaction is not allowed."],
+      [29, "security: SecKeychainSearchCopyNext: User interaction is required, but is currently not allowed."],
+    ] as const) {
+      const r = await createSecurityCliKeychainBackend({ exec: fakeExec({ code, stderr }).exec }).read(SVC, ACCT);
+      expect(isErr(r)).toBe(true);
+      if (isErr(r)) expect(r.error.kind).toBe("locked");
+    }
+  });
+
   it("locked_and_denied_signals_map_typed", async () => {
+    // ⚠ This fixture used to read `{ code: 128, stderr: "SecKeychain: interaction not allowed" }` —
+    // a string macOS does NOT produce, invented to match the pattern rather than measured from the
+    // tool. That is exactly how the dead disjunct above read as covered for a whole round: the only
+    // test exercising it fed it an input reality never generates. Now the measured wording + exit.
     const rl = await createSecurityCliKeychainBackend({
-      exec: fakeExec({ code: 128, stderr: "SecKeychain: interaction not allowed" }).exec,
+      exec: fakeExec({ code: 36, stderr: "security: SecKeychainSearchCopyNext: User interaction is not allowed." }).exec,
     }).read(SVC, ACCT);
     expect(isErr(rl)).toBe(true);
     if (isErr(rl)) expect(rl.error.kind).toBe("locked");

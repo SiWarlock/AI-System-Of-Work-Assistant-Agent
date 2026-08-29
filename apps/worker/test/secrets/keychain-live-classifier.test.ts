@@ -150,7 +150,12 @@ describe.skipIf(!SOW_KEYCHAIN)("live security(1) — the not_found classificatio
     const stderr =
       "security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.";
     const s = stderr.toLowerCase();
-    expect(s.includes("interaction not allowed")).toBe(false);
+    // ⚠ MIRRORS THE CLASSIFIER'S PREDICATE, AND IT DRIFTED ONCE — this line read
+    // `s.includes("interaction not allowed")`, the contiguous literal the classifier used before
+    // it was measured to match NOTHING macOS emits. As a NEGATIVE assertion it stayed green
+    // throughout, because a predicate that matches nothing trivially fails to match this string
+    // too ⇒ it could not have reported the divergence in the direction that mattered.
+    expect(s.includes("interaction") && s.includes("not allowed")).toBe(false);
     expect(/\blocked\b/.test(s)).toBe(false);
     expect(s.includes("denied")).toBe(false);
     expect(s.includes("not authorized")).toBe(false);
@@ -161,5 +166,19 @@ describe.skipIf(!SOW_KEYCHAIN)("live security(1) — the not_found classificatio
     // matches nothing).
     expect(/\blocked\b/.test("the user interaction is not allowed; keychain is locked")).toBe(true);
     expect(/\blocked\b/.test("the request was blocked")).toBe(false);
+
+    // ⭐ Positive control for the INTERACTION disjunct, against the strings macOS actually emits —
+    // measured live with `/usr/bin/security error <code>`. Without this, the negative assertion
+    // above passes for a predicate that fires on nothing, which is the state this file was in.
+    // ⚠ Note the control above cannot serve: it contains "locked", so it is satisfied by the
+    // word-boundary regex whatever the interaction disjunct does.
+    for (const real of [
+      "user interaction is not allowed.", // errSecInteractionNotAllowed (-25308)
+      "user interaction is required, but is currently not allowed.", // -25315
+    ]) {
+      expect(real.includes("interaction") && real.includes("not allowed")).toBe(true);
+      // …and the retired literal matches NEITHER — the measurement that made this a defect.
+      expect(real.includes("interaction not allowed")).toBe(false);
+    }
   });
 });

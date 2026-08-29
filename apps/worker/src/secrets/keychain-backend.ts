@@ -93,6 +93,24 @@ function stripOneTrailingNewline(bytes: Uint8Array): Uint8Array {
  *     server (how this Electron app actually runs). A true headless/daemon context may instead return
  *     `errSecInteractionNotAllowed` — the exact string the pattern branch already matches. Both branches are
  *     therefore live, for different contexts; neither supersedes the other.
+ *     ⛔⛔ ERRATUM (2026-08-28, same session) — THE SENTENCE ABOVE IS FALSE AND IT WAS MINE, written in the
+ *     round that fixed the 128 branch. Retained per the erratum discipline: it is the reasoning that
+ *     motivated the pattern, and deleting it would erase the evidence that a false coverage claim shipped.
+ *     ⭐ MEASURED via `/usr/bin/security error <code>`: `errSecInteractionNotAllowed` (-25308) prints
+ *     **"User interaction is not allowed."** and -25315 prints "User interaction is required, but is
+ *     currently not allowed." The pattern was the CONTIGUOUS literal `"interaction not allowed"`, which
+ *     occurs in NEITHER — nor in any message in the keychain block -25000..-26000. ⇒ ***the branch was
+ *     DEAD for the one OSStatus it was written for, and "both branches are live" asserted coverage that
+ *     did not exist.*** `security`'s exit is the OSStatus truncated to 8 bits (confirmed live: -25300 → 44,
+ *     -25294 → 50), so -25308 → 36 and -25315 → 29 — neither 44, nor 128, nor `TIMED_OUT_EXIT` — meaning no
+ *     other branch caught them either: they fell through to `backend_error` ⇒ `"missing"`, reproducing on
+ *     the headless path the exact defect this whole block was written to eliminate.
+ *     ⇒ FIXED below (two substrings, not one literal) and pinned against the MEASURED strings. ⚠ The unit
+ *     test had pinned it to `"SecKeychain: interaction not allowed"` — a string macOS does not produce —
+ *     which is precisely why a dead branch read as covered; that fixture is now the measured wording.
+ *     ⭐ The neighbouring `STILL UNMEASURED: denied` line is the honest posture this one should have taken:
+ *     it flags an assumption instead of asserting coverage, so it invites the next check rather than
+ *     closing it.
  *   • STILL UNMEASURED: `denied`. It needs a real ACL denial, and its stderr token set remains an ASSUMPTION.
  * ⛔⛔ KEY-ENCODING CONTRACT — MEASURED 2026-08-28, AND IT IS A REAL HAZARD, NOT A CONFIRMATION.
  * This line used to read "likewise still unverified (it needs a provisioned item)". A DUMMY item on a
@@ -122,7 +140,17 @@ function classifyFault(code: number, stderr: string): KeychainBackendError["kind
   if (code === 44) return "not_found";
   const s = stderr.toLowerCase();
   // `\blocked\b` (word boundary) matches "…is locked" but NOT "blocked" (no boundary before its `l`).
-  if (s.includes("interaction not allowed") || /\blocked\b/.test(s)) return "locked";
+  // ⛔ TWO SUBSTRINGS, NOT ONE CONTIGUOUS LITERAL — and that is the fix, not a style choice. This
+  // read `s.includes("interaction not allowed")`, which macOS NEVER emits: the real strings are
+  // "User interaction **is** not allowed." (-25308) and "User interaction is required, but is
+  // currently not allowed." (-25315), both measured via `/usr/bin/security error <code>`. The
+  // literal is absent from every message in the keychain block -25000..-26000, so the disjunct was
+  // DEAD for the exact OSStatus it was written for, and those faults fell through to
+  // `backend_error` ⇒ `"missing"` — the defect the 128 branch below exists to eliminate.
+  // ⭐ Erring LOOSE is deliberate: an over-match lands on `locked`, which is retryable and routes to
+  // `onKeychainLocked`, telling the operator to deal with the keychain. The failure it replaces
+  // tells them a credential that EXISTS does not.
+  if ((s.includes("interaction") && s.includes("not allowed")) || /\blocked\b/.test(s)) return "locked";
   if (s.includes("denied") || s.includes("not authorized") || s.includes("auth failed")) return "denied";
   // ⛔ MEASURED (2026-08-28) — a LOCKED keychain reaches here with NOTHING to pattern-match: exit 128,
   // empty stdout AND stderr. Requiring EMPTY stderr is load-bearing: `locked` is RETRYABLE, so a
