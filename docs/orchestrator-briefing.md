@@ -12,6 +12,14 @@
   contextually in the messaging budget section.
 -->
 
+> ⛔⛔ **DORMANT AS OF 2026-08-29 — THIS PROJECT RUNS SOLO.** The owner's decision is that solo
+> autonomous is the way forward; the agent-teams pattern is not in use. **Do not follow this file's
+> role handoffs, messaging budget, or Step-9 routing-to-an-orchestrator as live instructions.**
+> The live workflow is root `CLAUDE.md` "Solo autonomous operation — the live mode".
+> ⭐ Kept intact, not deleted: it is the record of how the team pattern worked, and it is directly
+> reusable if a team round is ever run again.
+
+
 # Orchestrator Session Briefing — System of Work Assistant
 
 > Loaded by `/orchestrate-start`. Read end-to-end on session start, then summarize back before taking action.
