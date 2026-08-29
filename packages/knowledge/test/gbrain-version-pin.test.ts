@@ -122,3 +122,100 @@ describe("isPendingSentinel", () => {
     expect(isPendingSentinel("2026-06-30")).toBe(false);
   });
 });
+
+// ── 24.142 — the pin could never PASS, because gbrain reports no SHA ─────────────────────
+//
+// ⛔ MEASURED 2026-08-28 against the installed `gbrain 0.35.1.0` — the exact version `### 12.7`
+// names. NO surface emits a commit SHA: `--version` and `version` give the tag only,
+// `doctor --json --fast` gives `{"schema_version":2,"status":…,"health_score":…,"checks":[…]}`,
+// and `check-update` is not a command in this build.
+// ⇒ `RunningGbrainVersion.sha` was a REQUIRED string whose docstring named `doctor --json` as its
+// source, so `resolveRunning` could only ever return `undefined` and the pin could only ever
+// DEGRADE. ***The one check standing between an unpinned gbrain build and the serving surface was
+// structurally unable to pass.***
+//
+// ⛔ THE FIX DOES NOT DELETE THE SHA AXIS — the entry forbids that, and rightly: the pin exists so
+// an unpinned build cannot serve. Instead the SHA becomes OPTIONAL, an explicitly WEAKER
+// tag-identity fallback is available, and the fallback is OFF BY DEFAULT so the shipped behaviour
+// is byte-equivalent until an owner flips it.
+// ⭐ The weakening is STRUCTURAL, not a comment: `VersionPinServing.identity` says which pin was
+// actually satisfied, so a consumer cannot mistake a tag match for a SHA match.
+describe("24.142 — SHA optional, tag fallback OFF by default", () => {
+  it("a build reporting NO sha degrades `sha_unreported` — distinct from `gbrain_unavailable`", () => {
+    // The taxonomy point (worker L79): "gbrain never answered" and "gbrain answered but reports no
+    // SHA" are DIFFERENT states with different operator actions. Collapsing them would tell the
+    // owner their brain is unreachable when it is running fine.
+    const r = checkVersionPin(makePin(), { tag: "0.35.1.0", indexSchemaVersion: 2 }, ctx);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.reason).toBe("sha_unreported");
+    expect(r.error.mode).toBe("read_only_index_only");
+    expect(HealthItemSchema.safeParse(r.error.healthItem).success).toBe(true);
+  });
+
+  it("with the fallback ON, a matching TAG + schema serves — and says the identity was `tag`", () => {
+    const r = checkVersionPin(
+      makePin(),
+      { tag: "0.35.1.0", indexSchemaVersion: 2 },
+      ctx,
+      { allowTagFallback: true },
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // ⭐ THE WEAKENING IS VISIBLE IN THE RESULT. A consumer that requires a real SHA pin can branch
+    // on this; a comment could not have given them that.
+    expect(r.value.identity).toBe("tag");
+    expect(r.value.mode).toBe("serving");
+  });
+
+  it("with the fallback ON, a MISMATCHED tag still degrades — the fallback is weaker, not absent", () => {
+    const r = checkVersionPin(
+      makePin(),
+      { tag: "0.34.0.0", indexSchemaVersion: 2 },
+      ctx,
+      { allowTagFallback: true },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.reason).toBe("sha_mismatch");
+  });
+
+  it("with the fallback ON but NO tag reported either, it degrades — never serves on nothing", () => {
+    const r = checkVersionPin(makePin(), { indexSchemaVersion: 2 }, ctx, { allowTagFallback: true });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.reason).toBe("sha_mismatch");
+  });
+
+  it("a REAL sha still wins and still reports identity `sha` — the strong path is untouched", () => {
+    const r = checkVersionPin(makePin(), { sha: SHA40, indexSchemaVersion: 2 }, ctx, { allowTagFallback: true });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.identity).toBe("sha");
+  });
+
+  it("NON-VACUITY: a real sha that MISMATCHES is still a mismatch even with the fallback ON", () => {
+    // Without this, `allowTagFallback` could be read as "accept anything" — it must never rescue a
+    // build whose SHA is present and wrong.
+    const r = checkVersionPin(
+      makePin(),
+      { sha: "0000000000000000000000000000000000000000", tag: "0.35.1.0", indexSchemaVersion: 2 },
+      ctx,
+      { allowTagFallback: true },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.reason).toBe("sha_mismatch");
+  });
+
+  it("SHIPPED DEFAULT IS BYTE-EQUIVALENT: omitted opts and `{}` behave identically", () => {
+    const running: RunningGbrainVersion = { tag: "0.35.1.0", indexSchemaVersion: 2 };
+    const a = checkVersionPin(makePin(), running, ctx);
+    const b = checkVersionPin(makePin(), running, ctx, {});
+    expect(a.ok).toBe(false);
+    expect(b.ok).toBe(false);
+    if (a.ok || b.ok) return;
+    expect(a.error.reason).toBe(b.error.reason);
+    expect(a.error.reason).toBe("sha_unreported");
+  });
+});

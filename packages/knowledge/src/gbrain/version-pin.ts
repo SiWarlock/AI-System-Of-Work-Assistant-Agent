@@ -37,10 +37,44 @@ export function isPendingSentinel(validatedOn: string): boolean {
 /** What the running gbrain reports about itself (via `gbrain doctor --json`),
  *  probed by the caller. `undefined` = gbrain unavailable / unreachable. */
 export interface RunningGbrainVersion {
-  /** Full or abbreviated (≥7 char) lowercase-hex commit SHA of the running build. */
-  readonly sha: string;
+  /**
+   * Full or abbreviated (≥7 char) lowercase-hex commit SHA of the running build.
+   *
+   * ⛔ OPTIONAL SINCE `### 24.142`, AND THE REASON IS MEASURED, NOT DEFENSIVE. This field was
+   * REQUIRED, with a docstring naming `gbrain doctor --json` as its source — and that probe
+   * emits NO SHA. Measured 2026-08-28 against the installed `gbrain 0.35.1.0` (the exact
+   * version `### 12.7` names): `--version`/`version` give the tag only, `doctor --json --fast`
+   * gives `{"schema_version":2,"status":…,"health_score":…,"checks":[…]}`, and `check-update`
+   * is not a command in this build. ⇒ `resolveRunning` could only ever return `undefined`, so
+   * ***the pin could never MATCH — only DEGRADE.*** The one check standing between an unpinned
+   * gbrain build and the serving surface was structurally unable to pass.
+   */
+  readonly sha?: string;
+  /**
+   * Human-readable release tag the build DOES report (e.g. `"0.35.1.0"`). A strictly WEAKER
+   * identity than the SHA — it is what the binary claims about itself, with no commit behind it
+   * — and it is used ONLY when {@link VersionPinOptions.allowTagFallback} is explicitly on.
+   */
+  readonly tag?: string;
   /** `doctor` index `schema_version`; omitted when the build does not report it. */
   readonly indexSchemaVersion?: number;
+}
+
+/**
+ * Opt-in relaxations for {@link checkVersionPin}. Omitted ⇒ the shipped default, byte-equivalent
+ * to before this existed.
+ */
+export interface VersionPinOptions {
+  /**
+   * Accept a matching `tag` as the build identity when the running build reports NO SHA.
+   *
+   * ⛔ DEFAULT OFF, and it must stay an OWNER decision: this trades a commit-exact pin for the
+   * build's own self-reported label. It does NOT delete the SHA axis — a build that DOES report a
+   * SHA is still held to it, and a MISMATCHED tag still degrades. It only decides what happens
+   * when the SHA is absent: degrade (default), or serve on the weaker identity (opt-in).
+   * ⭐ Whichever is chosen, {@link VersionPinServing.identity} records which pin was satisfied.
+   */
+  readonly allowTagFallback?: boolean;
 }
 
 /** Injected surroundings for building the degradation HealthItem — no ambient
@@ -61,7 +95,14 @@ export type VersionPinDegradeReason =
   | "sha_mismatch"
   | "index_schema_mismatch"
   | "pending_validation"
-  | "gbrain_unavailable";
+  | "gbrain_unavailable"
+  /**
+   * gbrain ANSWERED but reports no commit SHA, and the tag fallback is off.
+   * ⭐ DISTINCT from `gbrain_unavailable` on purpose (worker `L79`): "never answered" and
+   * "answered without a SHA" are different states with different operator actions — collapsing
+   * them would tell an owner their brain is unreachable while it runs fine.
+   */
+  | "sha_unreported";
 
 /** Pin matched + LIVE-validated: the read/index surface serves against the
  *  pinned build. `writeThroughEligible` is `pin.writeThroughEnabled` (the
@@ -71,6 +112,13 @@ export interface VersionPinServing {
   readonly pinnedSha: string;
   readonly indexSchemaVersion: number;
   readonly writeThroughEligible: boolean;
+  /**
+   * WHICH identity actually satisfied the pin — `"sha"` (commit-exact) or `"tag"` (the weaker
+   * self-reported label, only reachable via `allowTagFallback`).
+   * ⭐ STRUCTURAL, not a comment: a consumer that requires a commit-exact pin can branch on this,
+   * and a tag match can never be mistaken for a SHA match by a reader who skipped the docs.
+   */
+  readonly identity: "sha" | "tag";
 }
 
 /** Fail-closed degradation: read-only/index-only + a System Health item. */
@@ -89,6 +137,9 @@ const REASON_FAILURE_CLASS: Record<VersionPinDegradeReason, FailureClass> = {
   pending_validation: "write_through_failed",
   // gbrain isn't answering at all.
   gbrain_unavailable: "connector_unreachable",
+  // The build is reachable and its index is fine; what is missing is the IDENTITY evidence, so
+  // this belongs with the other pin failures, not with unreachability.
+  sha_unreported: "write_through_failed",
 };
 
 const REASON_MESSAGE: Record<VersionPinDegradeReason, string> = {
@@ -100,6 +151,9 @@ const REASON_MESSAGE: Record<VersionPinDegradeReason, string> = {
     "GbrainPin.validatedOn is a PENDING sentinel (LIVE validation owed); degraded to read-only/index-only",
   gbrain_unavailable:
     "gbrain is unavailable; degraded to read-only/index-only",
+  sha_unreported:
+    "running gbrain reports no commit SHA, so the pinned SHA cannot be verified; degraded to " +
+    "read-only/index-only (a tag-identity fallback exists and is off by default)",
 };
 
 /** Case-insensitive SHA equality that also accepts an abbreviated (≥7 char) SHA
@@ -138,12 +192,24 @@ export function checkVersionPin(
   pin: GbrainPin,
   running: RunningGbrainVersion | undefined,
   ctx: VersionPinContext,
+  opts?: VersionPinOptions,
 ): Result<VersionPinServing, VersionPinDegraded> {
   if (running === undefined) {
     return degrade("gbrain_unavailable", ctx);
   }
-  if (!shaMatches(pin.gbrainSha, running.sha)) {
-    return degrade("sha_mismatch", ctx);
+  // IDENTITY, in strict order of strength. A reported SHA is ALWAYS authoritative — the fallback
+  // can never rescue a build whose SHA is present and wrong.
+  let identity: "sha" | "tag";
+  if (running.sha !== undefined) {
+    if (!shaMatches(pin.gbrainSha, running.sha)) return degrade("sha_mismatch", ctx);
+    identity = "sha";
+  } else if (opts?.allowTagFallback === true) {
+    // STRICT equality on the tag: it is already a weak identity, and a prefix/loose compare would
+    // make `0.3` accept `0.35.1.0`. An absent tag serves nothing.
+    if (running.tag === undefined || running.tag !== pin.gbrainTag) return degrade("sha_mismatch", ctx);
+    identity = "tag";
+  } else {
+    return degrade("sha_unreported", ctx);
   }
   if (
     running.indexSchemaVersion !== undefined &&
@@ -159,5 +225,6 @@ export function checkVersionPin(
     pinnedSha: pin.gbrainSha,
     indexSchemaVersion: pin.indexSchemaVersion,
     writeThroughEligible: pin.writeThroughEnabled,
+    identity,
   });
 }

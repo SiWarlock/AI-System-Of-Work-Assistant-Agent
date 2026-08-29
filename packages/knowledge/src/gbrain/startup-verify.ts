@@ -79,9 +79,15 @@ function extractJsonObject(stdout: string): Record<string, unknown> | undefined 
 /**
  * PURE fail-closed parser: `gbrain doctor --json` stdout → RunningGbrainVersion | undefined.
  *
- * Returns `undefined` (NEVER throws) on non-JSON / non-object / absent-or-malformed sha /
- * present-but-malformed `schema_version` — a fail-closed "unavailable" that `checkVersionPin`
- * degrades (no fabricated version). `indexSchemaVersion` is read from the top-level
+ * Returns `undefined` (NEVER throws) on non-JSON / non-object / present-but-malformed
+ * `schema_version` — a fail-closed "unavailable" that `checkVersionPin` degrades (no fabricated
+ * version).
+ *
+ * ⛔ AN ABSENT SHA IS NO LONGER `undefined` (`### 24.142`). `gbrain 0.35.1.0`'s `doctor --json`
+ * emits no sha, so treating that as "unavailable" reported an UNREACHABLE brain for one that was
+ * running fine — and hid the pin's actual failure mode. The parse now returns the partial and
+ * `checkVersionPin` distinguishes it as `sha_unreported`. ⭐ Both still DEGRADE: the diagnosis
+ * changed, the safety outcome did not. `indexSchemaVersion` is read from the top-level
  * `schema_version` — the value the current `config/gbrain.pin` stores as `index_schema_ver`,
  * so matching against it avoids a false `index_schema_mismatch`. (The doctor JSON also carries
  * a per-check `schema_version` = the DB/index migration version, distinct from this top-level
@@ -93,7 +99,12 @@ export function parseGbrainDoctorJson(stdout: string): RunningGbrainVersion | un
   const obj = extractJsonObject(stdout);
   if (obj === undefined) return undefined;
 
-  // Required: a commit SHA. Absent/malformed ⇒ fail-closed undefined (never fabricate one).
+  // A commit SHA if the build reports one. ⛔ NO LONGER REQUIRED (`### 24.142`): measured against
+  // `gbrain 0.35.1.0`, `doctor --json` emits NO sha at all, so requiring it here collapsed
+  // "answered, but reports no SHA" into `undefined` ⇒ `gbrain_unavailable` — telling an owner their
+  // brain was UNREACHABLE while it was running fine, and making the pin's real failure mode
+  // undiagnosable. ⭐ Both states still DEGRADE, so this changes the DIAGNOSIS, never the safety
+  // outcome: `checkVersionPin` now returns the distinct `sha_unreported`.
   let sha: string | undefined;
   for (const k of SHA_KEYS) {
     const v = obj[k];
@@ -102,14 +113,13 @@ export function parseGbrainDoctorJson(stdout: string): RunningGbrainVersion | un
       break;
     }
   }
-  if (sha === undefined) return undefined;
 
   // Optional: the index schema_version. Absent ⇒ omit (checkVersionPin skips the compare);
   // PRESENT-but-not-a-nonneg-integer ⇒ fail-closed undefined (don't trust a malformed report).
   const rawSchema = obj["schema_version"];
-  if (rawSchema === undefined) return { sha };
+  if (rawSchema === undefined) return sha === undefined ? {} : { sha };
   if (typeof rawSchema === "number" && Number.isInteger(rawSchema) && rawSchema >= 0) {
-    return { sha, indexSchemaVersion: rawSchema };
+    return sha === undefined ? { indexSchemaVersion: rawSchema } : { sha, indexSchemaVersion: rawSchema };
   }
   return undefined;
 }

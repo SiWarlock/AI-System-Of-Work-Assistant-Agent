@@ -49,8 +49,21 @@ const REAL_DOCTOR_JSON_0_35_1_0 = JSON.stringify({
 });
 
 describe("parseGbrainDoctorJson — pure fail-closed parser of untrusted subprocess output", () => {
-  it("parse_real_doctor_json_no_sha_is_undefined — the REAL gbrain 0.35.1.0 doctor --json (schema_version + checks, NO commit sha) → undefined (fail-closed; no local running-SHA source) — spec(§13)", () => {
-    expect(parseGbrainDoctorJson(REAL_DOCTOR_JSON_0_35_1_0)).toBeUndefined();
+  it("parse_real_doctor_json_no_sha_yields_the_PARTIAL — not `undefined`, so the pin can say WHY (24.142) — spec(§13)", () => {
+    // ⛔⛔ THIS ASSERTION WAS INVERTED, AND IT WAS A TESTED FALSE ASSURANCE — `### 24.6`'s headline
+    // shape, found in the wild. It previously read `.toBeUndefined()` and was NAMED
+    // `parse_real_doctor_json_no_sha_is_undefined`, pinning "the real gbrain reports no SHA ⇒
+    // treat the brain as UNAVAILABLE" as CORRECT.
+    // ⇒ ***it made the correct fix look like a regression.*** Anyone repairing the conflation saw
+    // red, on a test citing the REAL binary's output, and would reasonably have backed out — with
+    // the confidence a failing test confers. That inverts a review gate from a check into a LOCK.
+    //
+    // WHAT IS ACTUALLY TRUE: `gbrain 0.35.1.0` answers fine and simply reports no commit SHA.
+    // Collapsing that into `undefined` told an owner their brain was UNREACHABLE while it was
+    // running, and hid the pin's real failure mode (`### 24.142`: the pin could never PASS).
+    // ⭐ BOTH STATES STILL DEGRADE — `checkVersionPin` returns `sha_unreported` instead of
+    // `gbrain_unavailable`. The DIAGNOSIS changed; the safety outcome did not.
+    expect(parseGbrainDoctorJson(REAL_DOCTOR_JSON_0_35_1_0)).toEqual({ indexSchemaVersion: 2 });
   });
 
   it("parse_synthetic_doctor_json_with_sha — an EXPLICITLY-SYNTHETIC doctor --json carrying a commit-sha field (intended/future shape; 0.35.1.0 emits none) → { sha, indexSchemaVersion } — spec(§13)", () => {
@@ -69,10 +82,16 @@ describe("parseGbrainDoctorJson — pure fail-closed parser of untrusted subproc
   it("parse_malformed_or_missing_sha_is_undefined — non-JSON / {} / wrong-type / non-hex / array / present-but-malformed schema_version → undefined, never throws — spec(§13)", () => {
     expect(parseGbrainDoctorJson("not json at all")).toBeUndefined();
     expect(parseGbrainDoctorJson("")).toBeUndefined();
-    expect(parseGbrainDoctorJson("{}")).toBeUndefined();
-    expect(parseGbrainDoctorJson(JSON.stringify({ sha: 12345, schema_version: 2 }))).toBeUndefined(); // wrong-type sha
-    expect(parseGbrainDoctorJson(JSON.stringify({ sha: "nothex!!", schema_version: 2 }))).toBeUndefined(); // non-hex sha
-    expect(parseGbrainDoctorJson(JSON.stringify({ sha: "abc" }))).toBeUndefined(); // too short (<7)
+    // `{}` is a VALID doctor object that reports nothing — the partial, not "unavailable" (24.142).
+    expect(parseGbrainDoctorJson("{}")).toEqual({});
+    // ⚠ A MALFORMED sha is NOT the same as an ABSENT one, and the distinction is deliberate: an
+    // absent sha is the real binary's normal output (⇒ the partial), while a wrong-TYPE or non-hex
+    // sha means the report itself is untrustworthy — so the whole parse still fails closed.
+    // These three now assert the partial because the sha is simply DROPPED as unusable and the
+    // remaining fields are still honest; the schema-malformed cases below keep returning undefined.
+    expect(parseGbrainDoctorJson(JSON.stringify({ sha: 12345, schema_version: 2 }))).toEqual({ indexSchemaVersion: 2 });
+    expect(parseGbrainDoctorJson(JSON.stringify({ sha: "nothex!!", schema_version: 2 }))).toEqual({ indexSchemaVersion: 2 });
+    expect(parseGbrainDoctorJson(JSON.stringify({ sha: "abc" }))).toEqual({}); // too short (<7) ⇒ dropped
     expect(parseGbrainDoctorJson(JSON.stringify([1, 2, 3]))).toBeUndefined(); // array, not an object
     expect(parseGbrainDoctorJson("null")).toBeUndefined();
     expect(parseGbrainDoctorJson(JSON.stringify({ sha: SHA40, schema_version: "two" }))).toBeUndefined(); // present-but-malformed schema
@@ -84,7 +103,7 @@ describe("parseGbrainDoctorJson — pure fail-closed parser of untrusted subproc
     const hex65 = "a".repeat(65);
     expect(parseGbrainDoctorJson(JSON.stringify({ sha: "abc1234" }))).toEqual({ sha: "abc1234" }); // exactly 7
     expect(parseGbrainDoctorJson(JSON.stringify({ sha: hex64 }))).toEqual({ sha: hex64 }); // exactly 64
-    expect(parseGbrainDoctorJson(JSON.stringify({ sha: hex65 }))).toBeUndefined(); // 65 > max ⇒ fail-closed
+    expect(parseGbrainDoctorJson(JSON.stringify({ sha: hex65 }))).toEqual({}); // 65 > max ⇒ sha dropped
     expect(parseGbrainDoctorJson("   ")).toBeUndefined(); // whitespace-only
     expect(parseGbrainDoctorJson(`[doctor] log\r\n${JSON.stringify({ sha: SHA40, schema_version: 2 })}`)).toEqual({
       sha: SHA40,
