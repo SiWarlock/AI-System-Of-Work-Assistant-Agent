@@ -172,5 +172,36 @@ if [ -d docs/sessions ]; then
   fi
 fi
 
+# ---- stale-parent guard: a `[ ]` parent with NO actionable sub-slice (added 2026-08-28) -------
+# WHY: four tasks were found marked `[ ]` OPEN while shipped, deferred, or owner-gated — 12.22,
+# 24.4, 19.8 and 13.8. ⛔ 13.8 was the worst shape: a 15-slice arc where FOURTEEN sub-slices had
+# shipped and the fifteenth was owner-gated, while the parent still advertised the whole thing as
+# unstarted. A reader scanning for available work cannot see that without opening every sub-slice.
+#
+# ⭐ THE PREMISE IS "NO SUB-SLICE IS ACTIONABLE", NOT "ALL ARE DONE" — and that distinction was
+# found by POSITIVE-CONTROLLING the first draft, which asserted all-done and therefore did NOT fire
+# on 13.8, the very instance that motivated it. A guard that cannot flag its own founding case is
+# worse than none: it reports a clean plan and reads as coverage.
+#
+# ⚠ WHAT IT CANNOT CATCH, stated because implying broader coverage is this repo's recurring defect:
+# the other three. 19.8 was shipped and LIVE with no sub-slices at all — only tracing the code found
+# it, and no linter would have.
+#
+# WARN, not FAIL: a parent may legitimately hold residual work its sub-slices do not represent.
+# It flags for a human; it does not decide.
+if [ -f "$PLAN" ]; then
+  /usr/bin/awk '
+    /^### [0-9]+\.[0-9]+ / { cur=$2; next }
+    /^#### [0-9]+\.[0-9]+[a-zA-Z-]+ / { sub_of=$2; parentof[sub_of]=cur; subs[cur]++; expect=1; next }
+    expect && /\*\*State:\*\*/ { p=parentof[sub_of]; if ($0 ~ /DONE|OWNER-GATED|DEFERRED|BLOCKED/) settled[p]++; expect=0; next }
+    { if (cur!="" && $0 ~ /^- \[ \]/ && !seenbox[cur]++) isopen[cur]=1 }
+    END {
+      for (t in subs)
+        if (isopen[t] && subs[t] > 0 && subs[t] == settled[t])
+          printf "  warn: task %s is [ ] OPEN but NONE of its %d sub-slices is actionable (all DONE / owner-gated / deferred) — the parent is probably stale\n", t, subs[t]
+    }
+  ' "$PLAN"
+fi
+
 if [ "$awk_rc" -ne 0 ] || [ "$dup_rc" -ne 0 ]; then exit 1; fi
 exit 0
