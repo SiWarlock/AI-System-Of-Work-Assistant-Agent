@@ -265,6 +265,20 @@ Between events the lead is silent. Visibility comes from the free idle-notificat
 
 **The Parallelization plan's Track map drives worktrees proactively.** When the Phase/Track DAG has ≥2 parallel-eligible tracks, each track runs in its **own git worktree** (`git worktree add ../SoW-build-<track> track/<track>`, provisioned by that track's `/team-start <track>` Step 2.5) with its **own team** (lead + orch + per-area implementer). Single-working-tree is the fallback for a single-track (serial) plan, or a DAG that never branches. ("Explicit `git add <path>`, never `git add -A`" matters more than ever with parallel worktrees.)
 
+⛔⛔ **A HOLD DEFERS THE COMMIT, NOT THE EFFECT — AND A PARKED RED MUST BE PUBLISHED (task `### 24.56`).**
+In a SHARED tree, work that a ruling parks *uncommitted* is still **in the tree everyone else is
+building on**. ⇒ ***"we held that commit" does not mean the tree is clean*** — the effect is live
+for every session sharing the checkout, and only the COMMIT was deferred.
+
+⭐ **THEREFORE: whenever a ruling parks work uncommitted, PUBLISH the known-red** — which suite,
+which file, and that it is deliberate. A red nobody announced is indistinguishable from a
+regression someone just caused, and the next person to run the suite will either waste a session
+bisecting it or, worse, "fix" it back.
+
+⚠ **This is the same class as the crossed-approval failure the magic-words rule addresses** (root
+`CLAUDE.md`): both are cases where **the STATE a teammate is acting on is not the state that
+exists**, and in both the cheap control is to say what you actually observed.
+
 **Cross-worktree coordination (multi-track only):**
 
 1. **Shared root docs have one owning checkout.** `IMPLEMENTATION_PLAN.md` + `ARCHITECTURE.md` live in the **integration checkout** (the root tree), not in any track worktree. A track that needs to edit the plan or the contract (a Step-9 cross-doc-invariant change, a new phase) **routes the edit to the integration owner** rather than editing its own branch's copy — a per-worktree edit guarantees a merge conflict. (This is the multi-track extension of the orchestrator's normal ownership of those files.)

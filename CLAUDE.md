@@ -228,6 +228,36 @@ Messages auto-deliver as a turn and **wake** an idle teammate, so **never nag or
 
 Answer any open questions in the body. No ambiguous "looks good, just check the X."
 
+⛔⛔ **EVERY APPROVAL CITES THE STATE IT APPROVES — BARE APPROVALS ARE INVALID (task `### 24.56`).**
+`APPROVED.` / `Ship it` / `TWEAK:` / `ADD:` MUST carry the artifact they were issued against: the
+brief's spec-lint stamp, a commit hash, a test count, or the specific message being answered.
+A recipient receiving a bare approval treats it as **not yet answered** and asks what it was
+issued against — that is diligence, not obstruction.
+
+> ⭐⭐ **WHY, and it is an OBSERVED failure rather than a precaution.** Handoff `026` measured six
+> lead↔orchestrator message crossings. Four alarmed that work was MISSING when it had landed —
+> and named that direction **SELF-CORRECTING**, because an alarm makes someone re-check. It then
+> named the direction that would NOT self-correct — ***a crossed message asserting something IS
+> done / IS approved when it is not, because nobody re-checks a reassurance*** — recorded that it
+> had not yet happened, and that nothing structural prevented it.
+>
+> ⛔ **IT HAPPENED THE NEXT DAY.** An `APPROVED. / Ship it` for `### 24.45` crossed a Step-7.5
+> report of an OPEN cross-package break ⇒ **an authorization issued against stale state.**
+>
+> ⛔⛔ **AND IT DID NOT SELF-CORRECT — IT WAS REFUSED.** The implementer declined an explicit ship
+> authorization from their own orchestrator and said why. ⇒ ***the defence was a PERSON, not a
+> control.*** ⭐ **An APPROVAL is harder to refuse than a CLAIM, because refusing it looks like
+> insubordination rather than diligence** — so the social cost falls on exactly the person doing
+> the right thing. It was caught only because that implementer had ALREADY measured the tree, so
+> the reassurance CONTRADICTED something they knew rather than filling a gap they did not.
+> ⚠ **Had the crossing arrived BEFORE they ran the suite, nothing would have caught it.**
+>
+> ⚠ **THE FAILURE MODE THIS RULE CREATES FOR ITSELF, named so it is not discovered later: a
+> COPIED-FORWARD STAMP.** Citing a hash or a test count you did not just re-read is a bare
+> approval wearing evidence. **The citation must be the state you actually observed when you
+> wrote the approval** — if you are quoting the message you are answering, quote it; if you are
+> citing a suite, cite the run you saw.
+
 ### Canonical context source — NO self-reporting
 
 **The ONLY canonical source of any teammate's context usage is `/context-check`** (which reads heartbeats written by the status line script). **No agent self-reports context %.** Self-reporting is unreliable, creates dual sources of truth, and wastes context narrating internal state.
