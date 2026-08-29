@@ -1140,6 +1140,37 @@ describe.each(ADAPTERS)("repository contract :: $name", (adapter) => {
       expect(byKey?.sourceId).toBe("src-1");
     });
 
+    it("recordDisposition's RETURNED row is normalized — a NULL workspaceId comes back ABSENT, identically on both dialects", async () => {
+      // ⛔ THE DEFECT THIS PINS, found reviewing this session's OWN change. `toSourceDisposition`
+      // (DB `null` → absent `workspaceId`) was wired into `getBySourceId`, `getByDispositionKey`
+      // and `listByWorkspace` on BOTH dialects, and into SQLite's `recordDisposition` — and
+      // Postgres's `recordDisposition` was left returning `updated[0] as SourceDispositionRow`
+      // straight off `.returning()`. ⭐ THE `as` CAST IS WHAT HID IT: it ASSERTS the contract shape
+      // rather than producing it, so `tsc` had nothing to say and the dialects disagreed silently.
+      // ⚠ WHY THE PRE-EXISTING CASE ABOVE COULD NOT SEE IT: it asserts three fields individually,
+      // so a FOURTH field arriving as `null` is outside what it looks at. This asserts the whole
+      // row, which is the actual contract (`SourceDispositionRow.workspaceId` is `?: string`,
+      // never `null`).
+      unwrap(await repos.sourceDisposition.park(sdRow()));
+      const recorded = unwrap(
+        await repos.sourceDisposition.recordDisposition("src-1", "dkey-1", "audit:disp:1", "2026-07-15T01:00:00.000Z"),
+      );
+      expect("workspaceId" in recorded).toBe(false);
+      // …and it must agree with what a subsequent READ returns. The two paths disagreeing is the
+      // shape of the defect: one normalized, one not, both reporting success.
+      expect(recorded).toEqual(unwrap(await repos.sourceDisposition.getBySourceId("src-1")));
+    });
+
+    it("recordDisposition PRESERVES a present workspaceId — the allow-side control for the normalizer", async () => {
+      // Non-vacuity for the case above: without this, a `recordDisposition` that simply DELETED
+      // `workspaceId` unconditionally would satisfy it. The normalizer must drop only `null`.
+      unwrap(await repos.sourceDisposition.park(sdRow({ sourceId: "src-ws", workspaceId: "ws-a" })));
+      const recorded = unwrap(
+        await repos.sourceDisposition.recordDisposition("src-ws", "dkey-ws", "audit:disp:ws", "2026-07-15T01:00:00.000Z"),
+      );
+      expect(recorded.workspaceId).toBe("ws-a");
+    });
+
     it("getBySourceId / getByDispositionKey on a miss return ok(undefined) — a benign absence, NOT a fault", async () => {
       expect(unwrap(await repos.sourceDisposition.getBySourceId("nope"))).toBeUndefined();
       expect(unwrap(await repos.sourceDisposition.getByDispositionKey("nope"))).toBeUndefined();

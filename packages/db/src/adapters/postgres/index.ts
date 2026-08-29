@@ -787,7 +787,11 @@ function toSourceDisposition(row: Record<string, unknown>): SourceDispositionRow
           .set({ state: "dispositioned", dispositionKey, auditRef, dispositionedAt: at })
           .where(and(eq(schema.sourceDisposition.sourceId, sourceId), isNull(schema.sourceDisposition.dispositionKey)))
           .returning();
-        if (updated.length > 0) return ok(updated[0] as SourceDispositionRow);
+        // ⛔ NORMALIZE THE `.returning()` ROW — do NOT cast it. `updated[0] as SourceDispositionRow`
+        // was a type ASSERTION over a raw DB row, so it silently returned `workspaceId: null` where
+        // the contract says absent, and SQLite's sibling returned it absent. The `as` is precisely
+        // why `tsc` could not see the divergence.
+        if (updated.length > 0) return ok(toSourceDisposition(updated[0] as Record<string, unknown>));
         const rows = await db
           .select()
           .from(schema.sourceDisposition)
