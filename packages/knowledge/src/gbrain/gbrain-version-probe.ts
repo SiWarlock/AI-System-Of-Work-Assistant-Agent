@@ -27,9 +27,15 @@ export const DEFAULT_GBRAIN_PROBE_TIMEOUT_MS = 15_000;
 export const DEFAULT_GBRAIN_PROBE_MAX_BUFFER = 4 * 1024 * 1024;
 
 /**
- * A REAL local `gbrain doctor --json` probe. Fixed argv, `shell:false` (no injection surface),
- * bounded timeout + output cap; every fault (nonzero exit / ENOENT / timeout / malformed
- * output) folds to `undefined`. LOCAL-ONLY; never throws.
+ * A REAL local gbrain probe: `doctor --json` for the index schema (and a SHA if a future build
+ * reports one), then `--version` for the build TAG. Fixed argv, `shell:false` (no injection
+ * surface), bounded timeout + output cap; every fault (nonzero exit / ENOENT / timeout /
+ * malformed output) folds to `undefined`. LOCAL-ONLY; never throws.
+ *
+ * ⛔ THE SECOND EXEC EXISTS BECAUSE `doctor --json` REPORTS NEITHER A SHA NOR A TAG (`### 24.142`,
+ * measured against `gbrain 0.35.1.0`). `gbrain --version` is the only surface that reports a build
+ * identity at all. The tag is a strictly WEAKER identity than a commit SHA and is consumed only
+ * when the owner opts in via `VersionPinOptions.allowTagFallback`.
  */
 export function createGbrainVersionProbe(opts?: {
   readonly timeoutMs?: number;
@@ -48,10 +54,48 @@ export function createGbrainVersionProbe(opts?: {
         shell: false,
         windowsHide: true,
       });
-      return parseGbrainDoctorJson(stdout);
+      const parsed = parseGbrainDoctorJson(stdout);
+      if (parsed === undefined) return undefined;
+      // ⭐ SECOND EXEC, and it is the PRODUCER half of `### 24.142` — without it the tag fallback
+      // would be a consumer with nothing feeding it. `doctor --json` carries NO tag either
+      // (measured: `{"schema_version":2,"status":…,"health_score":…,"checks":[…]}`), so the only
+      // surface reporting a build identity at all is `gbrain --version` → `gbrain 0.35.1.0`.
+      // ⚠ BEST-EFFORT BY DESIGN: a failing/absent `--version` omits `tag`, which makes the
+      // fallback degrade — never a fabricated identity, and never a reason to discard the
+      // doctor result we already have.
+      if (parsed.tag !== undefined) return parsed;
+      const tag = await probeTag(bin, timeout, maxBuffer);
+      return tag === undefined ? parsed : { ...parsed, tag };
     } catch {
       // nonzero exit / ENOENT / timeout / maxBuffer overflow / any fault ⇒ fail-closed.
       return undefined;
     }
   };
+}
+
+/** `gbrain 0.35.1.0` → `"0.35.1.0"`. Anything else ⇒ `undefined` (never fabricate an identity). */
+export function parseGbrainVersionLine(stdout: string): string | undefined {
+  // Anchored and narrow on purpose: a build identity is exactly the kind of value that must not
+  // be scavenged out of arbitrary output. Only the documented `gbrain <version>` line matches.
+  const m = /^\s*gbrain\s+([0-9][0-9A-Za-z.\-+]*)\s*$/m.exec(stdout);
+  return m?.[1];
+}
+
+/** Exec `gbrain --version`; every fault folds to `undefined`. Never throws. */
+async function probeTag(
+  bin: string,
+  timeout: number,
+  maxBuffer: number,
+): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync(bin, ["--version"], {
+      timeout,
+      maxBuffer,
+      shell: false,
+      windowsHide: true,
+    });
+    return parseGbrainVersionLine(stdout);
+  } catch {
+    return undefined;
+  }
 }

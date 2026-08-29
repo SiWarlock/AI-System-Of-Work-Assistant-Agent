@@ -194,3 +194,29 @@ describe("createGbrainVersionProbe — real LOCAL gbrain doctor --json adapter (
     expect(() => HealthItemSchema.parse(r.error.healthItem)).not.toThrow();
   });
 });
+
+// ── 24.142 — the PRODUCER half: `gbrain --version` is the only build-identity surface ─────────
+import { parseGbrainVersionLine } from "../src/gbrain/gbrain-version-probe";
+
+describe("parseGbrainVersionLine — the tag producer (24.142)", () => {
+  it("parses the REAL binary's output", () => {
+    // MEASURED 2026-08-28: `gbrain --version` → `gbrain 0.35.1.0`, and that is the ONLY surface
+    // reporting a build identity — `doctor --json` carries neither a sha nor a tag.
+    expect(parseGbrainVersionLine("gbrain 0.35.1.0\n")).toBe("0.35.1.0");
+    expect(parseGbrainVersionLine("gbrain 0.35.1.0")).toBe("0.35.1.0"); // no trailing newline
+    expect(parseGbrainVersionLine("some log line\ngbrain 1.2.3-rc1\n")).toBe("1.2.3-rc1"); // preamble
+  });
+
+  it("refuses to SCAVENGE an identity out of arbitrary output", () => {
+    // ⛔ Anchored and narrow ON PURPOSE. A build identity gates whether a pinned brain may serve,
+    // so a loose parse that picked up any number from any line would manufacture a pin match out
+    // of log noise. Every one of these yields `undefined` ⇒ the tag is omitted ⇒ the fallback
+    // degrades, which is the safe direction.
+    expect(parseGbrainVersionLine("not a version")).toBeUndefined();
+    expect(parseGbrainVersionLine("gbrain\n")).toBeUndefined(); // name with no version
+    expect(parseGbrainVersionLine("")).toBeUndefined();
+    expect(parseGbrainVersionLine("0.35.1.0\n")).toBeUndefined(); // version with no name
+    expect(parseGbrainVersionLine("notgbrain 0.35.1.0\n")).toBeUndefined(); // must be the whole token
+    expect(parseGbrainVersionLine("gbrain v0.35.1.0\n")).toBeUndefined(); // must start with a digit
+  });
+});
