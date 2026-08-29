@@ -133,8 +133,16 @@ function classifyFault(code: number, stderr: string): KeychainBackendError["kind
   // dialog is waiting (locked, or an ACL the operator has not authorised); a genuinely absent item
   // returns 44 instantly. `locked` is the right disposition for BOTH: it is retryable once the operator
   // acts, and it routes to `onKeychainLocked` (worker L41), which tells them to deal with the keychain.
-  // ⚠ It may in truth be `denied` — a timeout cannot distinguish the two, and that is stated rather than
-  // guessed. What matters is that it is no longer reported as `"missing"`.
+  // ⚠ TWO CONFLATIONS RIDE THIS BRANCH; BOTH ARE MEASURED AND STATED RATHER THAN GUESSED:
+  //   (a) it may in truth be `denied` — a timeout cannot separate a LOCKED keychain from an
+  //       ACL-DENIED item, because BOTH block on the same modal dialog;
+  //   (b) `TIMED_OUT_EXIT` cannot separate OUR timeout from an EXTERNAL SIGTERM — Node reports
+  //       both as `{ code: null, killed: true, signal: "SIGTERM" }` (see `keychain-boot.ts`'s
+  //       `mapExecResult`, where the measurement is recorded).
+  // ⭐ Neither is a leak and neither is a retry-forever: both land on `locked`, which is retryable
+  // and routes to `onKeychainLocked`, and the only other producer of (b)'s shape is a shutdown
+  // SIGTERM against a process that is going away. What matters is that none of them is reported
+  // as `"missing"` any more.
   if (code === TIMED_OUT_EXIT) return "locked";
   return "backend_error";
 }

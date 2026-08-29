@@ -43,8 +43,18 @@ export function mapExecResult(
   // Folding that to -1 ⇒ `backend_error` ⇒ `"missing"` reported "the credential does not exist" for a
   // keychain the operator merely needs to unlock or authorise. ⭐ A genuinely absent item returns 44
   // INSTANTLY, so a timeout on this command is NEVER "missing".
-  // `killed` + a signal is Node's timeout signature; ENOENT and other spawn failures keep -1, because
-  // mapping a MISSING BINARY to a retryable class would retry forever.
+  // ⚠ THE DISCRIMINATOR IS NOT EXACT, AND SAYING SO IS THE POINT — MEASURED (Node 22, macOS):
+  //   timeout      → { code: null, killed: true,      signal: "SIGTERM" }
+  //   EXTERNAL kill → { code: null, killed: true,      signal: "SIGTERM" }   ⇐ IDENTICAL
+  //   ENOENT       → { code: "ENOENT", killed: undefined, signal: undefined }
+  // ⇒ `killed` + a signal is Node's KILLED-BY-SIGNAL signature, of which our own timeout is ONE
+  // cause — not a timeout signature. An earlier draft of this comment claimed the latter, which
+  // asserted a precision the runtime does not provide.
+  // ⭐ THE CONFLATION IS ACCEPTED DELIBERATELY, because the only other producer of this shape here
+  // is someone SIGTERM-ing the worker (shutdown), and classifying a shutdown-time secret read as
+  // `locked` costs at most one retry against a process that is going away. ⛔ ENOENT and other
+  // spawn failures are distinguishable and DO keep -1 — mapping a MISSING BINARY to a retryable
+  // class would retry forever, which is the hazard `classifyFault`'s own comment names.
   const timedOut = error !== null && error.killed === true && typeof errCode !== "number";
   const code = error === null ? 0 : timedOut ? TIMED_OUT_EXIT : typeof errCode === "number" ? errCode : -1;
   return {
