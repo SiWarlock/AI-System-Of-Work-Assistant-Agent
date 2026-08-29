@@ -222,6 +222,7 @@ import {
   type OpDbBackupPort,
   type TemporalPersistenceBackupPort,
 } from "./backup/operational-backup";
+import { createPeriodicBackupTick } from "./backup/backup-ports";
 import { bootstrapWorker, decideBootstrap } from "./temporal/worker";
 import type { BootstrapReady, BootstrapDegraded } from "./temporal/worker";
 import {
@@ -4226,14 +4227,15 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   //   FIRE-AND-FORGET + swallowed: a backup must never delay or fail boot (§16). A
   //   failure is visible in the artifact list not advancing; the ports themselves fail
   //   CLOSED with typed errors rather than reporting a success they did not achieve.
-  const runBackupIfDue = (): void => {
-    if (backupService === undefined) return;
-    void backupService
-      .run({ intervalMs: BACKUP_CADENCE_MS, now: new Date() })
-      .catch(() => {
-        /* best-effort: never block or fail the worker on a backup */
-      });
-  };
+  // ⛔ GUARDED — an unguarded fire-and-forget tick could start a SECOND concurrent backup while the
+  // first was still running (a backup slower than the check interval has not written its artifact
+  // yet, so the next tick still reads the old timestamp and still sees "due"). The guard lives in
+  // `createPeriodicBackupTick` with its own tests; see there for why it SKIPS rather than queues.
+  const runBackupIfDue = createPeriodicBackupTick({
+    service: backupService,
+    cadenceMs: BACKUP_CADENCE_MS,
+    now: () => new Date(),
+  });
   runBackupIfDue();
   const backupTimer: ReturnType<typeof setInterval> | undefined =
     backupService !== undefined ? setInterval(runBackupIfDue, BACKUP_CHECK_INTERVAL_MS) : undefined;

@@ -156,3 +156,56 @@ export function createOperationalBackupPorts(
   if (dir === undefined) return undefined;
   return { opDb: createOpDbBackupPort(conn, dir), temporal: createUnavailableTemporalBackupPort() };
 }
+
+/** A backup service as the periodic tick consumes it — narrowed so the tick needs no more. */
+export interface PeriodicBackupRunner {
+  run(input: { readonly intervalMs: number; readonly now: Date }): Promise<unknown>;
+}
+
+/**
+ * Build the periodic backup tick, with an IN-FLIGHT GUARD.
+ *
+ * ⛔ WHY THE GUARD EXISTS — a defect found reviewing this session's OWN change. `bootWorker`
+ * schedules this on a 1-hour `setInterval` and the call is fire-and-forget (`void …catch()`), so
+ * nothing prevented a second run starting while the first was still going.
+ *
+ * ⚠ IT IS NOT UNREACHABLE, and the reachable path is specific: the service decides "due" by reading
+ * the NEWEST ARTIFACT'S timestamp. A backup that outlives the check interval has not written its
+ * artifact yet ⇒ the next tick still reads the OLD timestamp ⇒ still due ⇒ ***it starts a second
+ * concurrent backup against the same sink***, where they race on retention pruning (`keep`) and on
+ * `backupId` (`op-<ISO-with-ms>-<digest>`). Needs a backup slower than the interval — implausible
+ * at personal scale, entirely possible on a stalled fs or a network volume.
+ *
+ * ⭐ SKIP, never queue: a skipped tick costs nothing (the next one is an hour away and the cadence
+ * is a day), while queueing would convert a slow backup into a growing backlog of them.
+ * The guard clears in `finally`, so a REJECTED run never wedges the tick permanently.
+ */
+export function createPeriodicBackupTick(deps: {
+  readonly service: PeriodicBackupRunner | undefined;
+  readonly cadenceMs: number;
+  readonly now: () => Date;
+  /** Optional observer — invoked with `"skipped"` when a tick lands while one is in flight. */
+  readonly onTick?: (outcome: "ran" | "skipped" | "no_service") => void;
+}): () => void {
+  let inFlight = false;
+  return (): void => {
+    if (deps.service === undefined) {
+      deps.onTick?.("no_service");
+      return;
+    }
+    if (inFlight) {
+      deps.onTick?.("skipped");
+      return;
+    }
+    inFlight = true;
+    deps.onTick?.("ran");
+    void deps.service
+      .run({ intervalMs: deps.cadenceMs, now: deps.now() })
+      .catch(() => {
+        /* best-effort: never block or fail the worker on a backup */
+      })
+      .finally(() => {
+        inFlight = false;
+      });
+  };
+}

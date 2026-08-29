@@ -150,3 +150,63 @@ describe("the PORT always captures — the cadence lives one layer up", () => {
     }
   });
 });
+
+// ── the periodic tick's IN-FLIGHT GUARD — a defect found reviewing this session's own change ────
+import { createPeriodicBackupTick } from "../../src/backup/backup-ports";
+
+describe("createPeriodicBackupTick — a slow backup must not start a second one", () => {
+  it("SKIPS a tick that lands while a run is still in flight", async () => {
+    // ⛔ THE DEFECT. `bootWorker` schedules this on a 1-hour interval, fire-and-forget. The service
+    // decides "due" from the NEWEST ARTIFACT'S timestamp — so a backup that outlives the interval
+    // has not written its artifact yet, the next tick still reads the OLD timestamp, still sees
+    // "due", and starts a SECOND concurrent backup against the same sink. They then race on
+    // retention pruning and on `backupId` (`op-<ISO-with-ms>-<digest>`).
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const outcomes: string[] = [];
+    const tick = createPeriodicBackupTick({
+      service: { run: async () => { calls += 1; await gate; return undefined; } },
+      cadenceMs: 1000,
+      now: () => new Date("2026-08-28T00:00:00.000Z"),
+      onTick: (o) => outcomes.push(o),
+    });
+
+    tick();               // starts, blocks on `gate`
+    tick(); tick();       // land while in flight
+    expect(calls).toBe(1);
+    expect(outcomes).toEqual(["ran", "skipped", "skipped"]);
+
+    release();
+    await gate;
+    await Promise.resolve(); await Promise.resolve(); // let `.finally` clear the flag
+
+    tick();               // the gate is clear ⇒ a new run is allowed
+    expect(calls).toBe(2);
+  });
+
+  it("a REJECTED run clears the guard — a failure must not wedge the tick permanently", async () => {
+    // ⭐ The `finally` is load-bearing: without it one rejected backup would silently disable every
+    // future backup for the life of the process, which is strictly worse than the overlap the
+    // guard exists to prevent.
+    let calls = 0;
+    const tick = createPeriodicBackupTick({
+      service: { run: async () => { calls += 1; throw new Error("sink exploded"); } },
+      cadenceMs: 1000,
+      now: () => new Date("2026-08-28T00:00:00.000Z"),
+    });
+    tick();
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    tick();
+    expect(calls).toBe(2);
+  });
+
+  it("no service ⇒ inert, and it never throws", () => {
+    const outcomes: string[] = [];
+    const tick = createPeriodicBackupTick({
+      service: undefined, cadenceMs: 1000, now: () => new Date(), onTick: (o) => outcomes.push(o),
+    });
+    expect(() => tick()).not.toThrow();
+    expect(outcomes).toEqual(["no_service"]);
+  });
+});
