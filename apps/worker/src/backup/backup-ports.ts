@@ -162,6 +162,17 @@ export interface PeriodicBackupRunner {
   run(input: { readonly intervalMs: number; readonly now: Date }): Promise<unknown>;
 }
 
+/** The periodic tick plus the handle a shutdown needs to wait on it. */
+export interface PeriodicBackupTick {
+  /** Run a tick now. Skips (never queues) if a run is already in flight. Never throws. */
+  readonly tick: () => void;
+  /**
+   * Resolves once no run is in flight — the handle `bootWorker`'s `close()` awaits BEFORE it
+   * severs the store connection. Resolves (never rejects) whatever the run did.
+   */
+  readonly settled: () => Promise<void>;
+}
+
 /**
  * Build the periodic backup tick, with an IN-FLIGHT GUARD.
  *
@@ -179,6 +190,16 @@ export interface PeriodicBackupRunner {
  * ⭐ SKIP, never queue: a skipped tick costs nothing (the next one is an hour away and the cadence
  * is a day), while queueing would convert a slow backup into a growing backlog of them.
  * The guard clears in `finally`, so a REJECTED run never wedges the tick permanently.
+ *
+ * ⛔⛔ AND IT SERIALIZES TICK-AGAINST-TICK ONLY — WHICH IS WHY `settled()` EXISTS. The guard above
+ * says nothing about SHUTDOWN. `bootWorker`'s `close()` does `clearInterval(backupTimer)`, which
+ * stops FUTURE ticks and not the running one, and then closes the store connection this engine
+ * reads through. Fire-and-forget left `close()` with no signal that a backup was mid-read, so a
+ * restart during a deploy could sever the connection under it — and the tick's `.catch(() => {})`
+ * swallows the result, so the outcome is either a backup that silently vanished exactly when it
+ * mattered most, or a partially-written artifact that restore later trusts as complete.
+ * ⇒ `close()` awaits `settled()` before `backends.close()`. The same overlap hazard as the
+ * tick-vs-tick race, racing shutdown instead of the next tick.
  */
 export function createPeriodicBackupTick(deps: {
   readonly service: PeriodicBackupRunner | undefined;
@@ -186,26 +207,44 @@ export function createPeriodicBackupTick(deps: {
   readonly now: () => Date;
   /** Optional observer — invoked with `"skipped"` when a tick lands while one is in flight. */
   readonly onTick?: (outcome: "ran" | "skipped" | "no_service") => void;
-}): () => void {
-  let inFlight = false;
-  return (): void => {
-    if (deps.service === undefined) {
+}): PeriodicBackupTick {
+  // The in-flight RUN itself, not a boolean — a flag can say "busy" but cannot be awaited, and
+  // `settled()` needs something to wait on. `undefined` IS the idle state (one source of truth).
+  let current: Promise<void> | undefined;
+  const tick = (): void => {
+    const service = deps.service;
+    if (service === undefined) {
       deps.onTick?.("no_service");
       return;
     }
-    if (inFlight) {
+    if (current !== undefined) {
       deps.onTick?.("skipped");
       return;
     }
-    inFlight = true;
     deps.onTick?.("ran");
-    void deps.service
-      .run({ intervalMs: deps.cadenceMs, now: deps.now() })
-      .catch(() => {
-        /* best-effort: never block or fail the worker on a backup */
-      })
+    let started: Promise<unknown>;
+    try {
+      started = service.run({ intervalMs: deps.cadenceMs, now: deps.now() });
+    } catch {
+      // ⚠ A SYNCHRONOUS throw from `run`. The previous shape set the flag BEFORE the call, so this
+      // left it stuck `true` and silently disabled every future backup for the life of the process
+      // — worse than the overlap the guard prevents, and it reports nothing. Nothing started, so
+      // there is nothing to record: leave `current` undefined and let the next tick run.
+      return;
+    }
+    current = started
+      .then(
+        () => undefined,
+        () => undefined, // best-effort: never block or fail the worker on a backup
+      )
       .finally(() => {
-        inFlight = false;
+        current = undefined;
       });
   };
+  const settled = async (): Promise<void> => {
+    // A loop, not a single await: a tick landing while we wait would otherwise slip past. In
+    // `close()` the interval is already cleared, so this terminates after at most one run.
+    while (current !== undefined) await current;
+  };
+  return { tick, settled };
 }

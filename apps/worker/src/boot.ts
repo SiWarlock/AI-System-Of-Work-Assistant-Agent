@@ -4231,14 +4231,14 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // first was still running (a backup slower than the check interval has not written its artifact
   // yet, so the next tick still reads the old timestamp and still sees "due"). The guard lives in
   // `createPeriodicBackupTick` with its own tests; see there for why it SKIPS rather than queues.
-  const runBackupIfDue = createPeriodicBackupTick({
+  const backupTick = createPeriodicBackupTick({
     service: backupService,
     cadenceMs: BACKUP_CADENCE_MS,
     now: () => new Date(),
   });
-  runBackupIfDue();
+  backupTick.tick();
   const backupTimer: ReturnType<typeof setInterval> | undefined =
-    backupService !== undefined ? setInterval(runBackupIfDue, BACKUP_CHECK_INTERVAL_MS) : undefined;
+    backupService !== undefined ? setInterval(backupTick.tick, BACKUP_CHECK_INTERVAL_MS) : undefined;
   // Never hold the process open for a backup check.
   backupTimer?.unref?.();
 
@@ -4554,6 +4554,13 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
       }
     }
     if (backupTimer !== undefined) clearInterval(backupTimer);
+    // ⛔ `clearInterval` stops FUTURE ticks and says NOTHING about the one that may be running.
+    // `backends.close()` below severs the very connection the backup engine reads through, so
+    // without this await a restart-during-deploy could close the store under a live backup — the
+    // moment a pre-shutdown backup matters most. The tick swallows its own errors, so the result
+    // would be a silently-lost backup or a half-written artifact restore later trusts.
+    // Resolves immediately when idle, so an idle shutdown is not delayed.
+    await backupTick.settled();
     await api.close();
     backends.close();
   };
