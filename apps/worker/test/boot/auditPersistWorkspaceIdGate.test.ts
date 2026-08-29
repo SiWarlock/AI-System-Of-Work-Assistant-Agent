@@ -22,7 +22,8 @@
 // Phase 25.2/25.4 (the same "reachability-waivered" framing `persistDenialAudit`'s own header uses),
 // never a fix for an in-production exploit.
 import { describe, it, expect, vi } from "vitest";
-import { isOk } from "@sow/contracts";
+import { isOk, WorkspaceIdSchema } from "@sow/contracts";
+import { looksLikeCredentialShape } from "@sow/domain";
 import type { AuditRecord } from "@sow/contracts";
 import type { AuditRepository, AuditQuery, DbResult, DbError } from "@sow/db";
 import { buildAuditSignal } from "@sow/policy";
@@ -165,5 +166,48 @@ describe("DOD-worker-boot 1 — createAuditPersistPort gates the workspaceId cha
     expect(notice).toContain("REFUSED");
     expect(notice).toContain("workspaceId"); // POSITIVE: the channel NAME appears
     expect(notice).not.toContain(SECRET_WS); // NEGATIVE: the tripped VALUE never does
+  });
+});
+
+// ── the narrowing's soundness rests on the CHARSET, not on the nets (measured 2026-08-28) ─────────
+//
+// `### 24.130` deposit 2 narrowed this gate from the keyword-INCLUSIVE `CREDENTIAL_NETS` to the
+// shape-only `IDENTIFIER_CREDENTIAL_NETS`, and `boot.ts` justified it as *"it bought nothing: the
+// shape nets still catch a real key."*
+//
+// ⛔ THAT CLAUSE IS AN OVERCLAIM IN GENERAL, and an adversarial reviewer produced the counter-example:
+// `api_key=<16-char-synthetic>` is keyword-labelled, matches NO prefix net, and would reach the durable
+// audit record. Under the OLD predicate the keyword arm refused it; under the new one nothing does.
+//
+// ⭐ WHAT ACTUALLY MAKES THE TRADE SOUND IS `WORKSPACE_ID_RE` — that value cannot BE a workspaceId.
+// ⇒ the justification is a JOINT property of the gate AND the charset, and the charset lives in
+// another package. `boot.ts` says "re-measure before widening it", and a prose trigger is a REQUEST,
+// not a MECHANISM (this session's own dominant finding). This is the mechanism: widen the charset to
+// admit `_` or `=` and the first case below goes RED, in the consumer whose reasoning depends on it.
+describe("24.130 deposit 2 — the dropped keyword arm is safe ONLY while the slug charset holds", () => {
+  it("a keyword-labelled credential is UNREPRESENTABLE as a workspaceId — so the apparent leak cannot occur", () => {
+    // ⛔ THE GUARD. If this goes green->red, the shape-only predicate above is no longer sufficient
+    // and the keyword arm must come back for this channel. Do not "fix" it by relaxing the assertion.
+    for (const notASlug of ["api_key=AbCdEf1234567890", "password=hunter2", "MY_SECRET", "bearer token"]) { // gitleaks:allow -- synthetic TDD vectors, never real credentials
+      expect(WorkspaceIdSchema.safeParse(notASlug).success, notASlug).toBe(false);
+    }
+  });
+
+  it("every credential shape that CAN be a workspaceId is still refused by the shape nets", () => {
+    // The allow-side control for the case above: without it, a charset that rejected EVERYTHING would
+    // satisfy the guard. These ARE valid slugs — the schema is deliberately not a credential detector
+    // (`zod-brands.test.ts` pins that acceptance) — and the gate is what stops them.
+    for (const cred of ["sk-ant-api03-abc123def456", "akiaiosfodnn7example"]) {
+      expect(WorkspaceIdSchema.safeParse(cred).success, cred).toBe(true);
+      expect(looksLikeCredentialShape(cred), cred).toBe(true);
+    }
+  });
+
+  it("a legitimate keyword-bearing NAME is admitted — the availability the narrowing actually bought", () => {
+    // The class `24.130` deposit 2 existed to stop losing: a workspace named for a project ABOUT
+    // credentials, carrying no credential. Under the old keyword-inclusive predicate this lost its
+    // audit row; a rule-1-adjacent availability cost paid on a rule-7 gate.
+    expect(WorkspaceIdSchema.safeParse("acme-credential-review").success).toBe(true);
+    expect(looksLikeCredentialShape("acme-credential-review")).toBe(false);
   });
 });

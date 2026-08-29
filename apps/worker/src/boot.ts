@@ -912,6 +912,38 @@ function failClosedEgress(workspaceId: string): UiSafeEgressStatus {
  *     it**. One site, complete-by-construction, inherited by models not yet written. ⛔ NOT worker
  *     territory: it needs its OWN schema rather than a tightened shared factory (which would silently
  *     re-shape `AgentJobId`, `ActionId`, every brand) ⇒ a FROZEN-CONTRACT change, filed separately.
+ *     ⛔⛔ **ERRATUM (2026-08-28) — THE FIRST SENTENCE IS NOW FALSE AND THE "FILED SEPARATELY" WORK IS
+ *     DONE.** Retained per the erratum discipline (it is the reasoning that SELECTED this remedy), but
+ *     it is no longer a description of the brand. `WorkspaceIdSchema`
+ *     (`packages/contracts/src/primitives/zod-brands.ts:133-138`) is **NOT** `brandedIdSchema<WorkspaceId>()`
+ *     any more — it is its own schema carrying `.max(WORKSPACE_ID_MAX)` **and**
+ *     `.regex(WORKSPACE_ID_RE)`, where `WORKSPACE_ID_RE` is `/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/` —
+ *     **byte-identical to the slug charset this very block proposes ~10 lines below.** Verified by
+ *     reading the current source, not inferred from the task tick.
+ *     ⇒ the class fix LANDED: an id containing `_`, `=`, uppercase, whitespace or `/` is
+ *     UNREPRESENTABLE rather than detected, at the type boundary AND at the write boundary
+ *     (`parseCreateWorkspace` calls `WorkspaceIdSchema.safeParse`, the erratum above).
+ *     ⚠ **WHAT THIS DOES *NOT* CLOSE, stated so the narrowing is not read as an all-clear:**
+ *       (i) ⛔ **THE CHARSET IS NOT A CREDENTIAL DETECTOR, AND ITS OWN SUITE PINS THAT** —
+ *           `packages/contracts/test/primitives/zod-brands.test.ts` asserts that LOWERCASE
+ *           credential-shaped strings (`sk-ant-api03-…`, a 32-char lowercase hex, …) **ACCEPT**, so
+ *           the limitation stays stated rather than assumed away. Such an id is caught, if at all,
+ *           by `looksLikeCredentialShape`'s PREFIX nets below — never by the slug rule. ⭐ Do not
+ *           read "the class fix landed" as "a credential cannot be a workspace id"; it cannot be a
+ *           credential *whose shape needs `_`, `=`, uppercase or whitespace*, which is a strictly
+ *           smaller claim and the only one the regex supports.
+ *       (ii) **PRE-EXISTING rows** — a read-time concern; `packages/db`'s workspace `get` is still an
+ *           unchecked `row as Workspace` cast.
+ *       (iii) the **2 of 17 models that do not reference the brand**, still unidentified.
+ *     ⇒ the AUDIT-boundary and RENDERER sinks stay open questions on those three narrow grounds, not
+ *     on the general one this bullet used to describe.
+ *     ⭐ **WHY THIS ERRATUM EARNS ITS SPACE, measured 2026-08-28:** an adversarial reviewer read the
+ *     stale sentence and derived a HIGH rule-7 finding — a workspaceId of `api_key=<16-char-synthetic>`
+ *     reaching the durable audit record through `looksLikeCredentialShape`'s keyword-free nets. The
+ *     mechanism is right and the input is **unrepresentable**: `=` and `_` fail `WORKSPACE_ID_RE` at
+ *     both boundaries. ⇒ ***a stale claim in a safety-reasoning comment does not merely misinform —
+ *     it MANUFACTURES plausible findings against correct code***, and each one costs a full
+ *     investigation to refute.
  *
  * ⛔ AND THE DEFINITION QUESTION HAS A THIRD DOOR — do NOT try to define "credential-shaped". We cannot
  * detect a credential reliably: `isRedactionSafe`'s own doc concedes a codename or a person's name
@@ -944,6 +976,19 @@ export function createAuditPersistPort(deps: {
       // predicate a person who names their workspace `acme-credential-review` LOSES THE AUDIT ROW —
       // refused by the WORD, with no credential in it anywhere. That is a rule-1-adjacent availability
       // cost paid on a rule-7 gate, and it bought nothing: the shape nets still catch a real key.
+      // ⚠ THAT LAST CLAUSE IS AN OVERCLAIM AS WRITTEN, AND WHAT RESCUES IT IS THE CHARSET, NOT THE
+      // NETS. In general a keyword-labelled secret matching no prefix net would slip — an adversarial
+      // reviewer raised exactly that, with `api_key=<16-char-synthetic>`. ⭐ MEASURED 2026-08-28 against
+      // both nets and `WORKSPACE_ID_RE`, which is what makes the trade sound HERE specifically:
+      //   `api_key=<16-char-synthetic>`  slug=FALSE  — unrepresentable as a workspaceId at all
+      //   `sk-ant-api03-abc123def456` slug=true   prefix-net=TRUE  ⇒ still refused
+      //   `akiaiosfodnn7example`      slug=true   prefix-net=TRUE  ⇒ still refused (the `/i` flag works)
+      //   `acme-credential-review`    slug=true   prefix-net=false keyword-net=TRUE ⇒ the ONLY class the
+      //                                dropped arm still reaches: a legitimate human-chosen name.
+      // ⇒ given the slug charset, every input the KEYWORD arm can still see is a name, and every
+      // credential shape that can BE a workspace id is caught by a PREFIX net. The availability gain is
+      // real and the leak it appears to open is unrepresentable — but the reason is the charset, so
+      // ⛔ this justification DIES if `WORKSPACE_ID_RE` is ever widened. Re-measure before widening it.
       // The knowledge-side sibling `persistDenialAudit` was corrected identically at `c0909f98`
       // (`packages/knowledge/src/gcl/projection.ts:130`), so the two implementations still AGREE — the
       // agreement just moved to the predicate that fits the field. This
