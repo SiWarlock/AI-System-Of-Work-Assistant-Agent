@@ -155,10 +155,10 @@ See `.claude/agents/README.md` for the canonical inventory + integration points.
 
 The full prose for each lesson lives in `packages/providers/LESSONS.md`. This index is the compact orientation surface.
 
-⭐ **NOT THE WHOLE SET — the PROJECT-WIDE ledger is `packages/contracts/LESSONS.md`** (index: `packages/contracts/CLAUDE.md`), designated by root `CLAUDE.md`; cross-area rules are banked there, never here. ⛔ **Until 2026-07-31 this file pointed only DOWN at its own ledger and nothing pointed back UP** — so an implementer orienting off this doc (what the launch protocol tells you to load) had no path to the project-wide ledger at all. **Read both.**
+⭐ **NOT THE WHOLE SET — the PROJECT-WIDE ledger is `packages/contracts/LESSONS.md`** (index: `packages/contracts/LESSONS-INDEX.md` — the FULL 256-row table; `packages/contracts/CLAUDE.md` keeps only an always-on 20-rule core, moved 2026-08-29 for context cost), designated by root `CLAUDE.md`; cross-area rules are banked there, never here. ⛔ **Until 2026-07-31 this file pointed only DOWN at its own ledger and nothing pointed back UP** — so an implementer orienting off this doc (what the launch protocol tells you to load) had no path to the project-wide ledger at all. **Read both.**
 ⚠ **CITATION CONVENTION (adopted 2026-07-31): a bare `LNN` means THIS area's ledger; a cross-area citation CARRIES the ledger name — `contracts L39`, never bare `L39`.** Load-bearing because **every area ledger starts at §1**: `L39` names two different lessons and `L3` names four. *A dangling citation gets investigated; an ambiguous one gets believed.*
 
-**Lesson numbers are stable IDs** — once assigned, they don't change. New lessons get the next sequential number. `/session-end` proposes additions when it detects them; the user approves before the entry is written and a row is added here.
+**Lesson numbers are stable IDs** — once assigned, they don't change. New lessons get the next sequential number. `/session-end` proposes additions when it detects them; the user approves before the entry is written and its row is added to that area's `LESSONS-INDEX.md` **in the same commit** — the row is the copy that gets paraphrased into code comments, and letting it drift is a measured defect (`### 24.147`).
 
 Lessons start at §1.
 
