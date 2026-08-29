@@ -938,6 +938,31 @@ function toSourceDisposition(row: Record<string, unknown>): SourceDispositionRow
         // APPEND-ONLY heap with no updates/deletes (which audit is, by §4) `ctid` ==
         // insertion order, matching the SQLite adapter's forward scan. The
         // dialect-agnostic forward order remains under-specified until 2.9 names it.
+        // ⛔⛔ THE JUSTIFICATION ABOVE IS TOO STRONG — IT COVERS WRITES AND NOT MAINTENANCE
+        // (narrowed 2026-08-28, `### 24.148`; the arch_gap itself is unchanged and still 2.9's).
+        // The append-only premise WAS re-measured and HOLDS: zero UPDATE/DELETE against
+        // `auditRecords` anywhere in `packages/db/src`, `apps/worker/src` or
+        // `packages/workflows/src` (control: 4 files reference the table, so the search saw it).
+        // ⛔ BUT `ctid` IS NOT STABLE UNDER ROUTINE MAINTENANCE, and PostgreSQL says so outright —
+        // §5.5 System Columns (PG17 docs, `ddl-system-columns.html`, retrieved 2026-08-28):
+        //   "a row's ctid changes when it is updated OR MOVED BY OPERATIONS LIKE VACUUM FULL …
+        //    it should not be used as a long-term row identifier; a primary key should be used"
+        // ⇒ a `VACUUM FULL` / `CLUSTER` / `pg_repack` rewrites the heap and can reorder tuples on a
+        // table that was never updated. "Append-only" therefore does NOT imply "ctid == insertion
+        // order" — it only removes ONE of the two ways ctid moves.
+        // ⚠ WHY IT MATTERS HERE SPECIFICALLY, and it is the same shape as `### 24.146`'s `parkedAt`
+        // tiebreak: the scan is bounded (`matched.slice(0, limit)` below), so the ORDER decides
+        // WHICH rows come back at the boundary — not merely how they are arranged. After a heap
+        // rewrite this dialect can return a DIFFERENT SUBSET of the durable audit record than
+        // SQLite does for identical data, with nothing reporting it.
+        // ⚠ THE SQLITE SIDE IS AN OPEN QUESTION, NOT A CLEAN BILL — stated rather than assumed
+        // (`contracts L100`): `audit` has NO primary key at all (verified: `pgTable("audit", …)`
+        // declares none), so SQLite's `rowid` is IMPLICIT rather than an INTEGER-PRIMARY-KEY alias.
+        // Whether SQLite's own `VACUUM` may renumber an implicit rowid was NOT established here —
+        // the docs lookup did not answer it, and it is not asserted in either direction.
+        // ⇒ NOT FIXED HERE ON PURPOSE: choosing the dialect-agnostic ordering key is exactly what
+        // 2.9 owns, and inventing one in a comment-correction slice would pre-empt that decision on
+        // the durable audit read path. This narrows the recorded gap; it does not close it.
         const rows = (await db
           .select()
           .from(schema.auditRecords)
