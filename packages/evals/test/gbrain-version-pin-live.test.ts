@@ -94,9 +94,9 @@ describe.skipIf(!LIVE)("12.7 startup version-pin check — LIVE against the real
   });
 
   it(
-    "verifyGbrainStartup against the REAL createGbrainVersionProbe() degrades (documented Finding, task 11.3-a: " +
-      "gbrain 0.35.1.0 exposes NO commit SHA via `doctor --json`, so the real probe returns sha=undefined and " +
-      "this ALWAYS fails closed to gbrain_unavailable on this build — re-verified live, not assumed)",
+    "verifyGbrainStartup against the REAL createGbrainVersionProbe() degrades as `sha_unreported` — the build " +
+      "ANSWERS and reports no commit SHA, which `### 24.142` made distinguishable from never answering " +
+      "(re-verified live against gbrain 0.35.1.0, not assumed)",
     async () => {
       const text = await readFile(PIN_PATH, "utf8");
       const parsed = parseGbrainPinFile(text);
@@ -106,10 +106,24 @@ describe.skipIf(!LIVE)("12.7 startup version-pin check — LIVE against the real
       const probe = createGbrainVersionProbe();
       const r = await verifyGbrainStartup({ pin: parsed.value, probe, ctx });
 
-      // The real 0.35.1.0 binary reports no SHA ⇒ the composition MUST fail closed, never serve.
+      // ⛔ CORRECTED 2026-08-29 — THIS ASSERTED `gbrain_unavailable` AND WAS RED, BEHIND ITS OWN GATE.
+      // `### 24.142` (`69dd1b54` + `be07d0ba`) made `sha` OPTIONAL and added `sha_unreported`
+      // precisely to separate *"answered, but reports no SHA"* from *"never answered"*. It changed
+      // the behaviour this file drives and did not touch this file, so the assertion kept pinning
+      // the PRE-fix reason. Measured at HEAD, 3 consecutive runs: the real probe PARSES
+      // (`doctor --json` exits 0 with 358 bytes of clean JSON on stdout — the `[ai.gateway]` warning
+      // goes to STDERR) and returns `{indexSchemaVersion: 2, tag: "0.35.1.0"}`, so the identity axis
+      // yields `sha_unreported`, NOT `gbrain_unavailable`.
+      // ⭐⭐ WHY IT WAS INVISIBLE, and it is the transferable part: this suite is gated on
+      // `SOW_GBRAIN_LIVE=1`, so `turbo test` NEVER RUNS IT. The repo was 20/20 green all session
+      // while this was red. A gated test is a test nothing watches (`contracts L144` — the artifact
+      // that VERIFIES and the artifact that SHIPS must be the same object).
+      // ⚠ AND THE SAFETY OUTCOME IS UNCHANGED — both reasons degrade to `read_only_index_only`, which
+      // is why nothing else caught it. What changed is the DIAGNOSIS, which is exactly what 24.142
+      // set out to fix, so pinning the old reason was pinning the defect (`contracts L69`).
       expect(r.ok).toBe(false);
       if (r.ok) return;
-      expect(r.error.reason).toBe("gbrain_unavailable");
+      expect(r.error.reason).toBe("sha_unreported");
       expect(r.error.mode).toBe("read_only_index_only");
       expect(() => HealthItemSchema.parse(r.error.healthItem)).not.toThrow();
     },
@@ -130,7 +144,12 @@ describe.skipIf(!LIVE)("12.7 startup version-pin check — LIVE against the real
     };
     await expect(gbrainStartupVerify(deps)).resolves.toBeUndefined(); // never throws
     expect(surfaced).toHaveLength(1);
-    expect(surfaced[0]?.id).toBe("gbrain-version-pin:gbrain_unavailable");
+    // Same `### 24.142` correction as above: the boot wiring surfaces the reason it was GIVEN, so the
+    // HealthItem id moves with it. ⭐ This is the assertion that makes the degrade DIAGNOSABLE — an
+    // operator reading `gbrain-version-pin:sha_unreported` learns the brain answered and this build
+    // publishes no SHA; `:gbrain_unavailable` would have told them it was unreachable, which is false
+    // and would send them to restart a healthy process.
+    expect(surfaced[0]?.id).toBe("gbrain-version-pin:sha_unreported");
   }, 20_000);
 
   it("gbrain --version reports the SAME release tag the pin records (0.35.1.0)", async () => {
