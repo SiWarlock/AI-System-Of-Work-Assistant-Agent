@@ -76,7 +76,7 @@ KnowledgeWriter-authored — nothing is signed, verified, or served differently 
 **Preconditions (verifiable):**
 - macOS with `/usr/bin/security` present (true on every Mac) and the login keychain unlocked.
 - Phases 0–2 of the runbook complete (worker boots; read/ingest healthy).
-- You have decided the `service`/`account` naming (`keychain://sow-provenance-signing/hmac-key` is the
+- ⛔ **RESOLVED 2026-08-29 — the naming is `keychain://sow/kw-signing`** (evidence: the secret-ref convention module, `ARCHITECTURE.md §19.4` and `IMPLEMENTATION_PLAN.md` §ARM-17 all say so; this runbook and `turn-on-and-smoke-test-runbook.md` were the outliers and both are now aligned). ⚠ **Nothing validates the provisioned pair against the convention — `parseSecretRef` has ZERO callers — so the two names could drift indefinitely without any failure, which is how they did.** ~~You have decided the `service`/`account` naming (`keychain://sow-provenance-signing/hmac-key` is the
   runbook's recommendation) and generated a ≥32-byte-entropy key at provisioning time.
 
 **Real-world cost:** effectively none. No network call, no external API spend, no Markdown write. The
@@ -398,7 +398,7 @@ a real network call to that vendor using a real least-privilege read credential.
   — the only real transport in existence is the local-filesystem vault watcher. Each vendor needs its own
   build round (the adapter, gate, and KnowledgeWriter path are already built and shared; only the transport
   is missing).
-- **Gmail specifically has no adapter file at all** — it needs an adapter built from scratch before any
+- ~~**Gmail specifically has no adapter file at all** — it needs an adapter built from scratch before any~~ ⛔ **FALSE AT HEAD (verified 2026-08-29): `packages/integrations/src/connectors/adapters/gmail.ts` (309 lines) AND `gmail-source.ts` both exist, with `test/gmail-source.test.ts` beside them.** The tracker reconciled the `gmail-source.ts` half on 2026-08-28 with a positive control; **this runbook did not move** — the same correction-reaches-one-channel failure the tracker itself keeps recording. What is TRUE is that the adapters are UNBOUND (no real transport wired), which is a different claim and the one Crossing 7 actually rests on. ~~before any
   transport work, distinct from the other seven which are adapter-built/transport-unbound.
 - A least-privilege READ-ONLY credential provisioned per vendor via Keychain (never a write scope).
 - The vendor's wire shape is a documented Context7-grounded *candidate*, not yet live-verified — task 23.7

@@ -650,7 +650,7 @@ The Keychain is mandatory because **config/env cannot hold the key**: `load-conf
 - **Owner present and explicitly authorizing this crossing** (hard line).
 - **macOS** with `/usr/bin/security` present (it is, on every macOS) and the **login keychain unlocked** for the smoke tests.
 - Phases 1–2 of this runbook complete (worker boots; read/ingest path healthy). Propose/serving stays OFF through this phase.
-- Decide the `service`/`account` naming up front. They must satisfy the adapter's ref charset (`keychain-adapter.ts:54-60`): each segment matches `^[A-Za-z0-9_.][A-Za-z0-9_.-]*$`, no leading `-`, no whitespace/`/`/shell metacharacters, not `.`/`..`, whole ref ≤ 512 chars. Recommended: `service = sow-provenance-signing`, `account = hmac-key` → ref `keychain://sow-provenance-signing/hmac-key`.
+- Decide the `service`/`account` naming up front. They must satisfy the adapter's ref charset (`keychain-adapter.ts:54-60`): each segment matches `^[A-Za-z0-9_.][A-Za-z0-9_.-]*$`, no leading `-`, no whitespace/`/`/shell metacharacters, not `.`/`..`, whole ref ≤ 512 chars. ⛔ **RESOLVED 2026-08-29 — USE `service = sow`, `account = kw-signing` (ref `keychain://sow/kw-signing`).** ~~Recommended: `service = sow-provenance-signing`, `account = hmac-key` → ref `keychain://sow/kw-signing`.~~ **This runbook previously recommended `sow-provenance-signing` / `hmac-key` and every command below has been updated.** The resolution is EVIDENCE, not preference: THREE sources say `sow`/`kw-signing` (the secret-ref convention module's `HMAC_SERVICE`/`HMAC_ACCOUNT`, `ARCHITECTURE.md §19.4`, and `IMPLEMENTATION_PLAN.md` §ARM-17); only this runbook and `owner-arming-inventory.md` said otherwise. ⚠ **BOTH WORK MECHANICALLY — and that is the hazard, not a reassurance:** the HMAC ref is CONFIG-SUPPLIED via `signingKeyRef` and **`parseSecretRef` has ZERO callers**, so nothing validates the provisioned pair against the convention. **Two names for one item can therefore drift indefinitely without anything failing** — which is exactly what happened. Whichever pair you provision, `signingKeyRef` MUST match it byte-for-byte.
 - A high-entropy key value (≥ 32 bytes of entropy). Generate it *at provisioning time*; never commit or log it.
 
 ### Activation steps
@@ -663,8 +663,8 @@ There is **no `SOW_*` env toggle** for the Keychain gate — the worker never re
    ```bash
    KEY=$(openssl rand -base64 48)
    security add-generic-password \
-     -s sow-provenance-signing \
-     -a hmac-key \
+     -s sow \
+     -a kw-signing \
      -w "$KEY"
    unset KEY
    ```
@@ -672,7 +672,7 @@ There is **no `SOW_*` env toggle** for the Keychain gate — the worker never re
 
 3. **Verify the stored value round-trips at the raw CLI** (this is the exact command the backend runs; prints the key — run it in a private shell, then clear scrollback):
    ```bash
-   security find-generic-password -w -s sow-provenance-signing -a hmac-key
+   security find-generic-password -w -s sow -a kw-signing
    ```
    Exit 0 + the base64 string you stored ⇒ the encoding contract holds for the real binary.
 
@@ -685,7 +685,7 @@ There is **no `SOW_*` env toggle** for the Keychain gate — the worker never re
 5. **Point the serving oracle's ref at the provisioned key.** In the same config, set `provenanceServingOracle.signingKeyRef` to the ref (`boot.ts:378-383,1167`):
    ```ts
    provenanceServingOracle: {
-     signingKeyRef: "keychain://sow-provenance-signing/hmac-key",
+     signingKeyRef: "keychain://sow/kw-signing",
      // secrets: <omit> — boot sources it from the Keychain adapter via `keychainSecrets?.secrets ?? …` (boot.ts:1166)
      pin: <gbrainPin>,                 // Phase-4 concern; can be a placeholder here
      resolveRunning: <accessor>,       // Phase-4 concern
@@ -700,27 +700,28 @@ There is **no `SOW_*` env toggle** for the Keychain gate — the worker never re
 Because the real serve-time call site (`servingContextLoader.ts:170`) is not reachable until Phase 4 arms the oracle, these tests exercise the backend/adapter **directly against the live binary**. Steps 1–4 use the raw `security` CLI; step 5 exercises the actual adapter code via the built worker dist. **None of these ever print the key value** — only byte lengths and typed error tokens.
 
 1. **Happy path — key resolves.**
-   **Action:** `security find-generic-password -w -s sow-provenance-signing -a hmac-key | wc -c`.
+   **Action:** `security find-generic-password -w -s sow -a kw-signing | wc -c`.
    **Expected:** exit 0; a byte count > 0 (≈ 65 for a 48-byte base64 + newline).
    **Proves:** the exact argv the backend runs (`keychain-backend.ts:92-99`) returns the stored value on the real binary — the encoding round-trip holds.
 
 2. **In-process adapter — ok(bytes).**
    **Action:** run the real adapter against the live Keychain via the built dist (byte length only, never the value):
    ```bash
-   node -e 'const {buildKeychainSecrets}=require("./apps/worker/dist/secrets/keychain-boot.js");(async()=>{const s=buildKeychainSecrets({});const r=await s.secrets.resolveSigningKey("keychain://sow-provenance-signing/hmac-key");console.log(r.ok?("ok:"+r.value.length+" bytes"):("err:"+JSON.stringify(r.error)));})()'
+   ⛔ MEASURED BROKEN 2026-08-29 — `apps/worker/package.json` is `"type": "module"`, so `require` throws here; and the ESM form ALSO fails because the built `dist` emits extensionless relative specifiers (`ERR_MODULE_NOT_FOUND`). Smoke-test steps that depend on this snippet cannot run as written. Use the shipped `sow-doctor` binary instead (it carries the loader + `--conditions=sow-built` precisely because this class of invocation does not work — see `### 24.143`). Snippet retained as the record of what was tried:
+   node -e 'const {buildKeychainSecrets}=require("./apps/worker/dist/secrets/keychain-boot.js");(async()=>{const s=buildKeychainSecrets({});const r=await s.secrets.resolveSigningKey("keychain://sow/kw-signing");console.log(r.ok?("ok:"+r.value.length+" bytes"):("err:"+JSON.stringify(r.error)));})()'
    ```
    **Expected:** `ok:<N> bytes` where N = the stored key length **minus one** (exactly one trailing `\n` stripped — `keychain-backend.ts:48-51`).
    **Proves:** `buildKeychainSecrets({})` constructs the adapter (`keychain-boot.ts:92-96`), spawns the real `/usr/bin/security`, and `resolveSigningKey` returns `ok(Uint8Array)` — the end-to-end provisioned path works and de-aliases the buffer.
 
 3. **Missing key — typed ref-only error, never key bytes/stderr.**
-   **Action:** rerun step 2 with a ref to a non-existent account, e.g. `keychain://sow-provenance-signing/does-not-exist`.
-   **Expected:** `err:{"code":"secret_unresolved","ref":"keychain://sow-provenance-signing/does-not-exist","reason":"missing"}` — the ref echoed, `reason:"missing"`, and **nothing else** (no key bytes, no raw stderr, no `detail`).
+   **Action:** rerun step 2 with a ref to a non-existent account, e.g. `keychain://sow/does-not-exist`.
+   **Expected:** `err:{"code":"secret_unresolved","ref":"keychain://sow/does-not-exist","reason":"missing"}` — the ref echoed, `reason:"missing"`, and **nothing else** (no key bytes, no raw stderr, no `detail`).
    **Proves:** exit 44 → `not_found` → `missing` (`keychain-backend.ts:62`, `keychain-adapter.ts:82-84,103`), and the error carries only the fixed class token + ref (safety rule 7; the adapter drops `detail`).
 
 4. **Locked Keychain — typed `locked` fault.**
    **Action:** `security lock-keychain login.keychain-db` (or `security lock-keychain`), then rerun step 2 against the real ref. (Then `security unlock-keychain` to restore, or cancel the GUI unlock prompt to keep it locked.)
    **Expected:** `err:{…"reason":"locked"}` (or a GUI unlock prompt on first access; if you cancel/deny it, expect `"locked"` or `"denied"` — never `ok`, never a throw).
-   **Proves:** the stderr-pattern classifier (`interaction not allowed` / `\blocked\b` → `locked`; `denied`/`not authorized`/`auth failed` → `denied` — `keychain-backend.ts:61-68`) maps the live stderr correctly. **This is the core GO-LIVE VERIFY: confirm the real macOS stderr string actually matches a pattern.** If it lands as `backend_error` instead, the classifier's strings have drifted on this macOS version — record the exact stderr and flag it (it still fail-closes safely; it just mis-labels the fault).
+   **Proves:** the stderr-pattern classifier ~~(`interaction not allowed`~~ ⛔ **CORRECTED 2026-08-29: that contiguous literal matches NO macOS message and was replaced on 2026-08-28 (`64bccc9d`) — the real strings are *"User interaction **is** not allowed."* (-25308) and *"...is required, but is currently not allowed."* (-25315). The branch now tests TWO substrings (`interaction` AND `not allowed`), plus a `code === 128 && empty stderr` branch. ⚠ In the SHIPPING config both stderr-pattern branches are believed UNREACHABLE — a locked or ACL-denied read blocks on a modal dialog and surfaces as the 128 or timeout branch instead.** (`interaction`+`not allowed` / `\blocked\b` → `locked`; `denied`/`not authorized`/`auth failed` → `denied` — `keychain-backend.ts:61-68`) maps the live stderr correctly. **This is the core GO-LIVE VERIFY: confirm the real macOS stderr string actually matches a pattern.** If it lands as `backend_error` instead, the classifier's strings have drifted on this macOS version — record the exact stderr and flag it (it still fail-closes safely; it just mis-labels the fault).
 
 5. **Secret never leaks — log/error/renderer audit.**
    **Action:** grep the worker logs and any surfaced health items / renderer state produced during steps 1–4 for the stored key value.
@@ -755,7 +756,7 @@ Fully reversible; no durable side effects beyond the Keychain item itself.
 1. **Disarm the gate:** remove `keychainSecrets` (and the `provenanceServingOracle.signingKeyRef` you added) from the worker-host config and relaunch. `buildKeychainSecrets(undefined)` then constructs nothing (`keychain-boot.ts:92`) — boot returns byte-equivalent to Phase 2, no `security` process ever spawns (verify via smoke test 7).
 2. **Remove the key from the Keychain** (only if you want the secret gone entirely):
    ```bash
-   security delete-generic-password -s sow-provenance-signing -a hmac-key
+   security delete-generic-password -s sow -a kw-signing
    ```
 3. **Confirm inert:** rerun smoke tests 2 and 7 → step 2 now `err:{…"missing"}` (key gone) and step 7 confirms nothing constructs on the default path.
 
