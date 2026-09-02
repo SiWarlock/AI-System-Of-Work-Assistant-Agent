@@ -43,6 +43,27 @@ import {
   type SecretRef,
 } from "@sow/knowledge";
 
+/**
+ * The KnowledgeWriter provenance-signing key's Keychain ref (task 20.1 / §ARM-17).
+ *
+ * ⛔ `service = sow`, `account = kw-signing`. RESOLVED 2026-08-29 against the two runbooks that said
+ * `sow-provenance-signing/hmac-key`: three sources — the secret-ref convention module,
+ * `ARCHITECTURE.md §19.4`, and `IMPLEMENTATION_PLAN.md` §ARM-17 — say `sow`/`kw-signing`, and both
+ * runbooks are now aligned to it.
+ * ⚠ NOTHING VALIDATES THIS AGAINST THE CONVENTION AT RUNTIME — `parseSecretRef` has ZERO callers —
+ * so this ref and the provisioned item can drift silently, which is exactly how the two names
+ * diverged in the first place. **If you provision a different pair, THIS CONSTANT MOVES WITH IT.**
+ *
+ * ⛔ THE VALUE MUST BE STORED AS PRINTABLE ASCII — BASE64 FOR THIS ONE. It is an HMAC key, i.e. the
+ * binary case: `security find-generic-password -w` returns lowercase HEX for any non-printable byte
+ * with NO marker, so a raw-binary key would stamp AND verify SELF-CONSISTENTLY with the wrong bytes
+ * and break only on rotation. Measured 2026-08-28.
+ *
+ * ⭐ Lives HERE rather than in the desktop host so the convention has ONE home, beside the code that
+ * consumes it (`contracts L39`) — and so the host needs no `@sow/knowledge` dependency to name it.
+ */
+export const KW_SIGNING_REF = "keychain://sow/kw-signing" as SecretRef;
+
 /** The bundle `BootConfig.provenanceServingOracle` expects, built only when everything resolves. */
 export interface ProvenanceServingOracleBundle {
   readonly secrets: SecretsPort;

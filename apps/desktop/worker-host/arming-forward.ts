@@ -57,3 +57,38 @@ export function gbrainStartupVerifyForward(
     ? { gbrainStartupVerify: { pinPath: config.gbrainPinPath } }
     : {};
 }
+
+// ── task 20.1 — the provenance-bundle forward: PROVISIONING IS THE ARMING ACT ─────────────────────
+//
+// ⭐ Owner directive (2026-08-29): the CODE must not be the bottleneck. The owner provisions the
+// Keychain item and drops `config/gbrain.pin`; nothing else arms this — no flag, no rebuild.
+//
+// ⛔ PURE, and it takes the ALREADY-DECIDED outcome rather than deciding anything itself. The
+// decision — which requires actually RESOLVING the signing key, not merely constructing a port —
+// lives in `@sow/worker`'s `resolveProvenanceArming`, with its own tests and its own mutation proof.
+// This function only shapes the `BootConfig` fragment, so it stays testable without a Keychain.
+//
+// ⛔⛔ ALL THREE FIELDS MOVE TOGETHER OR NONE DO, and that is load-bearing rather than tidy.
+// `copilotProvenanceStamping` + `provenanceServingOracle` are what CONSTRUCT the loader-backed
+// oracle; `copilotServingOracleGoLive` is what SELECTS it. Forwarding a subset would produce a
+// half-armed state that `bootWorker`'s own OFF-locks are written to treat as OFF — inert, but it
+// would report a DIFFERENT `gateProposeArming` precondition set than the operator expects, which is
+// the split-brain shape `worker L52` names.
+//
+// ⚠ NOT ARMED ⇒ `{}` — byte-equivalent to today's shipped boot. The unarmed path forwards nothing,
+// constructs nothing, and is indistinguishable from this code not existing.
+export function provenanceArmForward(outcome: {
+  readonly armed: boolean;
+  readonly bundle?: unknown;
+}): Record<string, unknown> {
+  if (!outcome.armed || outcome.bundle === undefined) return {};
+  return {
+    // OFF-lock 2's supplier — the REAL Keychain adapter, built inside bootWorker.
+    keychainSecrets: {},
+    provenanceServingOracle: outcome.bundle,
+    // OFF-lock 3 (construction) and OFF-lock 1 (selection). See the block comment above for why
+    // these cannot be forwarded independently.
+    copilotProvenanceStamping: true,
+    copilotServingOracleGoLive: true,
+  };
+}

@@ -21,7 +21,19 @@ import {
   temporalManagementPlan,
   type TemporalSupervisor,
 } from "./temporal-supervisor";
-import { subscriptionArmForward, buildAutoIngestGateOpts, gbrainStartupVerifyForward } from "./arming-forward";
+import {
+  subscriptionArmForward,
+  buildAutoIngestGateOpts,
+  gbrainStartupVerifyForward,
+  provenanceArmForward,
+} from "./arming-forward";
+import { readFile } from "node:fs/promises";
+import { buildKeychainSecrets } from "@sow/worker/secrets/keychain-boot";
+import {
+  resolveProvenanceArming,
+  describeProvenanceArming,
+  KW_SIGNING_REF,
+} from "@sow/worker/composition/provenanceArming";
 
 // Option A (app-managed serve): worker-host owns the local `gbrain serve --http --enable-dcr` lifecycle so the
 // agentic Copilot tools + the http retrieval transport share ONE server (one PGlite connection — no CLI/serve
@@ -49,6 +61,8 @@ const GBRAIN_SERVE_READINESS_TIMEOUT_MS = 10_000;
 const TEMPORAL_DEV_ADDRESS = "127.0.0.1:7233";
 /** Bound the boot wait for Temporal-ready so a failed spawn degrades in seconds, not the 30s default. */
 const TEMPORAL_READINESS_TIMEOUT_MS = 10_000;
+
+// 20.1 — the signing ref is defined ONCE, in the worker beside its consumer (see KW_SIGNING_REF).
 
 /** The launch config main injects over the child IPC channel. Exported so the IPC mirror can be
  *  compile-time sync-pinned against main/worker-supervisor.ts's copy (18.32). */
@@ -143,6 +157,49 @@ async function start(config: WorkerHostConfig): Promise<void> {
       await temporalSupervisor.start();
     }
 
+    // ── task 20.1 — PROVISIONING IS THE ARMING ACT ───────────────────────────────────────────────
+    //
+    // ⭐ Owner directive (2026-08-29): the CODE must not be the bottleneck. The owner provisions
+    // `keychain://sow/kw-signing` and ships `config/gbrain.pin`; NOTHING ELSE arms the provenance
+    // bundle — no flag to flip afterwards, no rebuild, no second deliberate step.
+    //
+    // ⛔⛔ WHY THIS PROBES INSTEAD OF JUST FORWARDING A GATE. `bootWorker` binds its `signing` dep on
+    // CONSTRUCTION, and `gateProposeArming` reads precondition (3) as `signingKeyResolved: signing
+    // !== undefined` — a name about RESOLUTION measuring CONSTRUCTION. Passing `keychainSecrets: {}`
+    // plus a bundle would report that precondition TRUE **with no key in the Keychain at all**, and
+    // the first symptom would be a provenance stamp failing at commit, long after propose armed on
+    // the strength of it. `resolveProvenanceArming` RESOLVES the key first, so the precondition's
+    // name is true. Its own tests carry the mutation proof.
+    //
+    // ⛔ RULE 7: the key is proof-of-resolution only — resolved, checked, discarded. Nothing here
+    // holds, logs or forwards key material; the bundle carries the opaque ref and the port.
+    //
+    // ⚠ SCOPE — this satisfies `gateProposeArming` preconditions (1), (3) and (5) ONLY. (2) needs
+    // `autoIngest`; (4) `writeTransportArmed` needs a REAL external-write transport (Phase 21 + a
+    // vendor credential) and is the remaining blocker. **Propose stays OFF until all five hold.**
+    // Separately, SERVING still withholds regardless while `oracleBuildOk` and `pinValid` are
+    // structurally false (`### 20.1`, `### 24.142`) — arming this does not make the app serve.
+    // ⚠ BEHAVIOUR CHANGE, STATED BECAUSE IT IS REAL AND NOT FREE: on a boot where the pin file
+    // EXISTS, this shells out to `/usr/bin/security` once. Ordering is what bounds it — the pin
+    // check runs FIRST, so an install with no `config/gbrain.pin` never touches the Keychain at
+    // all. Where the pin does exist (this repo in dev), an UNLOCKED keychain answers instantly
+    // (exit 44 when the item is absent), but a LOCKED one BLOCKS ON A MODAL UNLOCK DIALOG and is
+    // bounded only by `createRealExecFile`'s 5s timeout — measured 2026-08-28. So on a locked
+    // keychain, boot costs ~5s and the operator sees a prompt. That is the price of making
+    // provisioning the arming act, and it is paid ONLY by installs that ship a pin.
+    const provenanceArming = await resolveProvenanceArming({
+      readPinText: async (): Promise<string | undefined> =>
+        config.gbrainPinPath === undefined ? undefined : await readFile(config.gbrainPinPath, "utf8"),
+      // The real Keychain-backed port. `buildKeychainSecrets({})` constructs the adapter; it does NOT
+      // assert anything exists — the resolve below is what decides.
+      secrets: buildKeychainSecrets({})?.secrets,
+      signingKeyRef: KW_SIGNING_REF,
+    });
+    // Operator-visible and redaction-safe by construction (a closed reason token, never a value).
+    // A NOT-ARMED boot is the shipped default, so this is information, not an error.
+    // eslint-disable-next-line no-console -- deliberate startup visibility, mirrors the lines above
+    console.error(`[worker-host] ${describeProvenanceArming(provenanceArming)}`);
+
     booted = await boot.bootWorker({
       sessionToken: { value: config.token as SessionTokenValue, launchId: config.launchId },
       allowlist: { origins: config.origins, hosts: config.hosts },
@@ -229,6 +286,9 @@ async function start(config: WorkerHostConfig): Promise<void> {
       // 11.3a — the GBrain version-pin STARTUP verify (degraded-safe, fire-and-forget; §13 task 11.3-b is the
       // production consumer). Unset gbrainPinPath ⇒ omitted ⇒ byte-equivalent (verify never runs, today's boot).
       ...gbrainStartupVerifyForward(config),
+      // 20.1 — armed IFF the pin parsed AND the signing key actually resolved (see above).
+      // NOT armed ⇒ `{}` ⇒ byte-equivalent to today's shipped boot.
+      ...provenanceArmForward(provenanceArming),
       // No-op dispatch stubs — a first render triggers neither path (no jobs/approvals yet).
       triageDispatch: (input) =>
         Promise.resolve({ ok: true, value: { idempotencyKey: input.idempotencyKey } }),

@@ -3,6 +3,7 @@ import {
   subscriptionArmForward,
   buildAutoIngestGateOpts,
   gbrainStartupVerifyForward,
+  provenanceArmForward,
 } from "../../worker-host/arming-forward";
 import type { WorkerHostConfig as MainInjectedConfig } from "../../main/worker-supervisor";
 import type { WorkerHostConfig as HostReceivedConfig } from "../../worker-host/index";
@@ -90,5 +91,40 @@ const INTERFACES_IN_SYNC: TypeEquals<MainInjectedConfig, HostReceivedConfig> = t
 describe("WorkerHostConfig IPC mirror", () => {
   it("both interfaces stay structurally in sync (compile-time pin)", () => {
     expect(INTERFACES_IN_SYNC).toBe(true);
+  });
+});
+
+// ── task 20.1 — provenanceArmForward ─────────────────────────────────────────────────────────────
+describe("provenanceArmForward — all three fields move together, or none do", () => {
+  const BUNDLE = { signingKeyRef: "keychain://sow/kw-signing", pin: { gbrainTag: "0.35.1.0" } };
+
+  it("NOT ARMED ⇒ {} — byte-equivalent to today's shipped boot", () => {
+    // The unarmed path must be indistinguishable from this code not existing: no fields, no
+    // construction, nothing for bootWorker to react to.
+    expect(provenanceArmForward({ armed: false })).toStrictEqual({});
+    // Defensive: armed-but-no-bundle is not a state `resolveProvenanceArming` can produce, but a
+    // forwarder that trusted the flag alone would emit `provenanceServingOracle: undefined` and
+    // change the shipped shape.
+    expect(provenanceArmForward({ armed: true })).toStrictEqual({});
+  });
+
+  it("ARMED ⇒ all four fields, together", () => {
+    // ⛔ THE PROPERTY. `copilotProvenanceStamping` + `provenanceServingOracle` CONSTRUCT the
+    // loader-backed oracle; `copilotServingOracleGoLive` SELECTS it; `keychainSecrets` supplies
+    // OFF-lock 2. Forwarding a subset yields a half-armed state that bootWorker treats as OFF while
+    // reporting a different precondition set than the operator expects (`worker L52` split-brain).
+    expect(provenanceArmForward({ armed: true, bundle: BUNDLE })).toStrictEqual({
+      keychainSecrets: {},
+      provenanceServingOracle: BUNDLE,
+      copilotProvenanceStamping: true,
+      copilotServingOracleGoLive: true,
+    });
+  });
+
+  it("forwards the bundle BY REFERENCE — never a reconstruction", () => {
+    // A forwarder that rebuilt the bundle could silently drop `resolveRunning` or `secrets`, which
+    // are optional on the boot type and would fail SILENTLY (`contracts L15`).
+    const out = provenanceArmForward({ armed: true, bundle: BUNDLE });
+    expect(out["provenanceServingOracle"]).toBe(BUNDLE);
   });
 });
