@@ -319,7 +319,12 @@ async function syncSlot(
     };
   }
 
-  const dispatched = await dispatchExternalWrite(built.value, action, deps.gateway);
+  // RULE 4 — scope the write credential to the workspace this sync belongs to. `deps.outbox
+  // .workspaceId` is the SAME value this function already persists on a held outbox entry a few
+  // lines below, so the credential and the queued re-drive can never disagree about the workspace.
+  const dispatched = await dispatchExternalWrite(built.value, action, deps.gateway, {
+    workspaceId: deps.outbox?.workspaceId,
+  });
 
   // §8 HOLD-THROUGH-OUTAGE: a held write that is NOT a reattach is enqueued to the
   // write outbox for a replay-safe drain later, rather than dropped or failed.

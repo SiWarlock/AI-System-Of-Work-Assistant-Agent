@@ -88,6 +88,18 @@ function depsWith(overrides: Partial<WriteHttpTransportDeps> = {}): WriteHttpTra
   return { http: fakeHttp(), secrets: fakeSecrets(), ...overrides };
 }
 
+// `workspaceId` is REQUIRED IN EFFECT even though optional in the type: the transport refuses to
+// resolve a credential without one (rule 4 — personal and employer must never share a write token).
+// Omitting it here would make every case below fail `workspace_unscoped` instead of what it tests.
+const REQ_WS = "personal-business";
+/**
+ * `dispatchExternalWrite` with this suite's workspace supplied. Rule 4: the credential seam refuses
+ * a dispatch that cannot name its workspace, so every end-to-end case here must pass one or it
+ * fails `workspace_unscoped` instead of exercising the fault it is actually about.
+ */
+const dispatchExternalWriteWs: typeof dispatchExternalWrite = (env, action, deps, opts = {}) =>
+  dispatchExternalWrite(env, action, deps, { workspaceId: REQ_WS, ...opts });
+
 const CREATE_REQ: AdapterTransportRequest = {
   op: "create",
   targetSystem: "drive",
@@ -95,6 +107,7 @@ const CREATE_REQ: AdapterTransportRequest = {
   idempotencyKey: "idem-1",
   identity: { docKey: "123" },
   payload: { title: "Doc" },
+  workspaceId: REQ_WS,
 };
 
 // ── 1. SSRF guard runs FIRST (before token + dispatch) ─────────────────────────
@@ -198,12 +211,34 @@ describe("createWriteHttpTransport — write credential fail-closed, redaction-s
     expect(http.calls).toHaveLength(0);
   });
 
-  it("resolves the token via writeSecretRef(targetSystem) — the 17.4 keychain ref, not a raw token param", async () => {
+  it("⛔ RULE 4 — a request with NO workspace resolves NO credential and dispatches NOTHING", async () => {
+    // The fail-closed half that makes an OPTIONAL `workspaceId` safe. `writeSecretRef` requires a
+    // workspace so personal and employer never share a token; a request that cannot name one must
+    // REFUSE, never fall back to an unscoped key. Assert zero secret reads AND zero http calls —
+    // "rejected" alone would still pass if the token had been read first.
+    const http = fakeHttp();
+    const secrets = fakeSecrets();
+    const transport = createWriteHttpTransport(CORE_SPEC, { http, secrets });
+    const { workspaceId: _omitted, ...noWorkspace } = CREATE_REQ;
+    const res = await transport(noWorkspace);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.fault).toBe("rejected");
+    expect(secrets.refs).toHaveLength(0);
+    expect(http.calls).toHaveLength(0);
+    // Positive control: the SAME request WITH a workspace does reach the accessor, so the zeros
+    // above measure the guard and not a broken harness (`contracts L90`).
+    const ctlHttp = fakeHttp();
+    const ctlSecrets = fakeSecrets();
+    await createWriteHttpTransport(CORE_SPEC, { http: ctlHttp, secrets: ctlSecrets })(CREATE_REQ);
+    expect(ctlSecrets.refs).toHaveLength(1);
+  });
+
+  it("resolves the token via writeSecretRef(targetSystem, workspaceId) — the 17.4 keychain ref, not a raw token param", async () => {
     const http = fakeHttp();
     const secrets = fakeSecrets();
     const transport = createWriteHttpTransport(CORE_SPEC, { http, secrets });
     await transport(CREATE_REQ);
-    expect(secrets.refs).toEqual([writeSecretRef(CREATE_REQ.targetSystem)]);
+    expect(secrets.refs).toEqual([writeSecretRef(CREATE_REQ.targetSystem, REQ_WS)]);
   });
 });
 
@@ -375,7 +410,7 @@ describe("createWriteHttpTransport + makeTargetWriteAdapter — 401 / 403 / 429 
   function adapterOver(transport: AdapterTransport): TargetWriteAdapter {
     return makeTargetWriteAdapter(
       { targetSystem: "drive", deriveIdentity: () => ({}) },
-      { transport, clock: testClock },
+      { transport, clock: testClock, workspaceId: REQ_WS },
     );
   }
 
@@ -483,7 +518,7 @@ describe("createWriteHttpTransport — every statusless fault SETS a closed faul
   function adapterOver(transport: AdapterTransport): TargetWriteAdapter {
     return makeTargetWriteAdapter(
       { targetSystem: "drive", deriveIdentity: () => ({}) },
-      { transport, clock: testClock },
+      { transport, clock: testClock, workspaceId: REQ_WS },
     );
   }
 
@@ -832,7 +867,7 @@ describe("W1b end-to-end — dispatchExternalWrite over the real write transport
     return {
       adapter: makeTargetWriteAdapter(
         { targetSystem: "drive", deriveIdentity: () => ({}) },
-        { transport, clock: FIXED_CLOCK },
+        { transport, clock: FIXED_CLOCK, workspaceId: REQ_WS },
       ),
       receiptStore: new InMemoryReceiptStore(),
       requireApproval: () => ({ requiresApproval: false }),
@@ -854,7 +889,7 @@ describe("W1b end-to-end — dispatchExternalWrite over the real write transport
 
   it("a CREATE that meets HTTP 429 is HELD for retry — a rate limit does not fail the write closed", async () => {
     const { action, env } = envAndAction();
-    const res = await dispatchExternalWrite(env, action, depsFor([PROBE_MISS, { status: 429, body: "{}" }]));
+    const res = await dispatchExternalWriteWs(env, action, depsFor([PROBE_MISS, { status: 429, body: "{}" }]));
     expect(res.status).toBe("held");
     if (res.status !== "held") throw new Error("unreachable");
     expect(res.adapterCode).toBe("unreachable");
@@ -863,13 +898,13 @@ describe("W1b end-to-end — dispatchExternalWrite over the real write transport
 
   it("a CREATE that meets HTTP 408 is HELD for retry", async () => {
     const { action, env } = envAndAction();
-    const res = await dispatchExternalWrite(env, action, depsFor([PROBE_MISS, { status: 408, body: "{}" }]));
+    const res = await dispatchExternalWriteWs(env, action, depsFor([PROBE_MISS, { status: 408, body: "{}" }]));
     expect(res.status).toBe("held");
   });
 
   it("a CREATE that meets HTTP 401 still TERMINATES as rejected — the cc26027c fix is not undone", async () => {
     const { action, env } = envAndAction();
-    const res = await dispatchExternalWrite(env, action, depsFor([PROBE_MISS, { status: 401, body: "{}" }]));
+    const res = await dispatchExternalWriteWs(env, action, depsFor([PROBE_MISS, { status: 401, body: "{}" }]));
     expect(res.status).toBe("rejected");
     if (res.status !== "rejected") throw new Error("unreachable");
     expect(res.adapterCode).toBe("rejected");
@@ -878,7 +913,7 @@ describe("W1b end-to-end — dispatchExternalWrite over the real write transport
 
   it("an EXISTENCE PROBE that meets HTTP 429 is HELD too — both gateway fault arms agree", async () => {
     const { action, env } = envAndAction();
-    const res = await dispatchExternalWrite(env, action, depsFor([{ status: 429, body: "{}" }]));
+    const res = await dispatchExternalWriteWs(env, action, depsFor([{ status: 429, body: "{}" }]));
     expect(res.status).toBe("held");
     if (res.status !== "held") throw new Error("unreachable");
     expect(res.adapterCode).toBe("unreachable");
@@ -887,7 +922,7 @@ describe("W1b end-to-end — dispatchExternalWrite over the real write transport
 
   it("an EXISTENCE PROBE that meets HTTP 403 still terminates as rejected", async () => {
     const { action, env } = envAndAction();
-    const res = await dispatchExternalWrite(env, action, depsFor([{ status: 403, body: "{}" }]));
+    const res = await dispatchExternalWriteWs(env, action, depsFor([{ status: 403, body: "{}" }]));
     expect(res.status).toBe("rejected");
   });
 
@@ -901,10 +936,10 @@ describe("W1b end-to-end — dispatchExternalWrite over the real write transport
       ...depsFor([PROBE_MISS]),
       adapter: makeTargetWriteAdapter(
         { targetSystem: "drive", deriveIdentity: () => ({}) },
-        { transport, clock: FIXED_CLOCK },
+        { transport, clock: FIXED_CLOCK, workspaceId: REQ_WS },
       ),
     };
-    const res = await dispatchExternalWrite(env, action, deps);
+    const res = await dispatchExternalWrite(env, action, deps, { workspaceId: REQ_WS });
     expect(res.status).toBe("rejected");
     if (res.status !== "rejected") throw new Error("unreachable");
     // The end-to-end payoff of W1a: this string used to be "request rejected",

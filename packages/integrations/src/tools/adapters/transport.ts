@@ -41,6 +41,15 @@ export interface AdapterTransportRequest {
   readonly identity: Readonly<Record<string, string>>;
   readonly payload?: Record<string, unknown>;
   readonly expectedPrecondition?: string;
+  /**
+   * The workspace this write is made on behalf of — the rule-4 scoping input for the write
+   * credential (`writeSecretRef(target, workspaceId)`), threaded from `DispatchOptions.workspaceId`.
+   *
+   * ⛔ OPTIONAL IN THE TYPE, FAIL-CLOSED IN EFFECT. Optional so existing request builders still
+   * compile; but a transport that needs a credential and has no workspace REFUSES rather than
+   * resolving an unscoped one. Absence can only deny a write, never widen one.
+   */
+  readonly workspaceId?: string;
 }
 
 /**

@@ -271,9 +271,21 @@ export function createWriteHttpTransport(spec: WriteHttpSpec, deps: WriteHttpTra
     // (3) Resolve the write-credential — fail-closed on a typed-unavailable Err, a
     //     THROWING accessor, AND a whitespace-only token (not proof of auth). The
     //     ref itself (`keychain://…`) and the resolved value NEVER reach a fault.
+    // ⛔ RULE 4 — refuse before resolving anything when the write cannot name its workspace.
+    // `writeSecretRef` requires one so that personal and employer never share a credential; a
+    // request that has none must not fall back to an unscoped key. Zero token read, zero dispatch.
+    const reqWorkspaceId = req.workspaceId;
+    if (reqWorkspaceId === undefined || reqWorkspaceId.trim().length === 0) {
+      return {
+        ok: false,
+        fault: "rejected",
+        detail: "write credential unavailable: workspace_unscoped",
+        faultDetail: "credential_fault",
+      };
+    }
     let secret: Result<string, WriteSecretUnavailable>;
     try {
-      secret = await secrets.getSecret(writeSecretRef(req.targetSystem));
+      secret = await secrets.getSecret(writeSecretRef(req.targetSystem, reqWorkspaceId));
     } catch {
       return {
         ok: false,

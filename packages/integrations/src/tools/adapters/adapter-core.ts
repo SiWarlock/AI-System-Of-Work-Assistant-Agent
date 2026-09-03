@@ -61,6 +61,18 @@ export interface AdapterDeps {
   readonly clock: () => string;
   /** Optional redaction-safe log sink; only ever receives a `SafeToolWriteLog`. */
   readonly logSink?: (rec: SafeToolWriteLog) => void;
+  /**
+   * The workspace this adapter writes on behalf of — stamped onto every `AdapterTransportRequest`
+   * it builds, so a credential-resolving transport can scope its lookup (rule 4).
+   *
+   * ⭐ BOUND AT CONSTRUCTION rather than derived from the envelope, because `ExternalWriteEnvelope`
+   * carries no workspace and adding one would re-cut a frozen schema across 93 files. An adapter is
+   * already built per routed dispatch, so construction is exactly where the workspace is known.
+   *
+   * ⛔ Optional in the type, fail-closed in effect: an unbound adapter simply omits the field, and a
+   * transport that needs a credential then REFUSES rather than resolving an unscoped one.
+   */
+  readonly workspaceId?: string;
 }
 
 /** The per-target spec the shared core is parameterized by. */
@@ -94,16 +106,28 @@ export interface WriteSecretsAccessor {
 }
 
 /**
- * Derive the 17.4 `keychain://<service>/<account>` write-token ref for a target. Object
- * targets (calendar/todoist/linear/asana/drive/github) resolve a `connector-write:<vendor>`
- * token; telegram resolves the `telegram-bot:*` token (the concrete bot account is bound
- * at §ARM-21 arming). PURE — no I/O, no secret; the real Keychain resolution + ref parse
- * happen in the worker-bound accessor.
+ * Derive the 17.4 `keychain://<service>/<account>` write-token ref for a target, SCOPED BY
+ * WORKSPACE. Object targets (calendar/todoist/linear/asana/drive/github) resolve
+ * `connector-write/<workspace>/<vendor>`; telegram resolves `telegram-bot/<workspace>/*` (the
+ * concrete bot account is bound at §ARM-21 arming — the workspace is not the account, so scoping
+ * it is orthogonal to that and does not wait for it). PURE — no I/O, no secret; the real Keychain
+ * resolution + ref parse happen in the worker-bound accessor.
+ *
+ * ⛔⛔ `workspaceId` IS REQUIRED, AND THAT IS THE SAFETY PROPERTY (rule 4), NOT AN ERGONOMIC CHOICE.
+ * This derivation used to key on the VENDOR ALONE, so `personal-business` and `employer-work`
+ * resolved THE SAME Keychain item — two workspaces the system keeps rigorously apart everywhere
+ * else sharing one external-write credential. Making the parameter required means a call site that
+ * cannot name a workspace cannot obtain a credential at all: **the unsafe state is unrepresentable
+ * rather than merely discouraged** (the `contracts L118` / desktop `L20` family).
+ *
+ * ⭐ The identity was never missing, only DROPPED — `copilotPropose.ts` carries a SERVER-BOUND
+ * `WorkspaceId` for exactly this rule, and `outbox.workspaceId` is `NOT NULL`. It was discarded in
+ * one in-memory hop between them. Callers thread it back; they do not invent it.
  */
-export function writeSecretRef(targetSystem: TargetSystem): string {
+export function writeSecretRef(targetSystem: TargetSystem, workspaceId: string): string {
   return targetSystem === "telegram"
-    ? "keychain://telegram-bot/*"
-    : `keychain://connector-write/${targetSystem}`;
+    ? `keychain://telegram-bot/${workspaceId}/*`
+    : `keychain://connector-write/${workspaceId}/${targetSystem}`;
 }
 
 // Fixed, closed-set diagnostic text for a fault that carried no `httpStatus`
@@ -238,11 +262,17 @@ export function makeTargetWriteAdapter(
 ): TargetWriteAdapter {
   const baseReq = (
     env: ExternalWriteEnvelope,
-  ): Pick<AdapterTransportRequest, "targetSystem" | "canonicalObjectKey" | "idempotencyKey" | "identity"> => ({
+  ): Pick<
+    AdapterTransportRequest,
+    "targetSystem" | "canonicalObjectKey" | "idempotencyKey" | "identity" | "workspaceId"
+  > => ({
     targetSystem: spec.targetSystem,
     canonicalObjectKey: env.canonicalObjectKey,
     idempotencyKey: env.idempotencyKey,
     identity: spec.deriveIdentity(env),
+    // Conditional spread — an UNBOUND adapter omits the key entirely rather than setting
+    // `undefined`, so the request stays byte-identical to today's for every existing caller.
+    ...(deps.workspaceId !== undefined ? { workspaceId: deps.workspaceId } : {}),
   });
 
   return {

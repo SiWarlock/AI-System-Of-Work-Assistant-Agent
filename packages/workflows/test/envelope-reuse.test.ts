@@ -345,7 +345,13 @@ describe("spec(safety rule 7 / §21.10) reuseExternalWriteOnResume — the crede
       getSecret: () => Promise.resolve(err({ reason: "locked" })),
     };
 
-    const res = await reuseExternalWriteOnResume(env, makeAction(), makeDeps(adapter, store, secrets));
+    // The credential seam is workspace-scoped (rule 4), so a resume must name its workspace or
+    // the gateway refuses TERMINALLY (`workspace_unscoped`) and never reaches the `locked` hold
+    // this case is about.
+    const res = await reuseExternalWriteOnResume(env, makeAction(), {
+      ...makeDeps(adapter, store, secrets),
+      workspaceId: "personal-business",
+    });
 
     expect(res.ok).toBe(false);
     if (res.ok) return;

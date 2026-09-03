@@ -938,7 +938,13 @@ export function buildProofSpineActivities(
       env: ExternalWriteEnvelope,
       action: ProposedAction,
       deps: ExternalWriteDeps,
-    ): Promise<ExternalWriteResult> => dispatchRouted(backends.writeAdapters, env, action, deps),
+    ): Promise<ExternalWriteResult> =>
+      // RULE 4 — the credential seam is workspace-scoped, so the proposing workspace rides through.
+      // Same `params.meetingJobInputs.workspaceId` the outbox drain already uses for its task-24.50
+      // scope check, so a proposal and its later re-drive resolve the SAME credential.
+      dispatchRouted(backends.writeAdapters, env, action, deps, undefined, {
+        workspaceId: String(params.meetingJobInputs.workspaceId),
+      }),
     deps: externalWriteDeps,
   });
 
@@ -1028,7 +1034,11 @@ export function buildProofSpineActivities(
         action,
         externalWriteDeps,
         undefined, // keep the default dispatch fn
-        intentCreatedAt !== undefined ? { intentCreatedAt } : undefined,
+        {
+          ...(intentCreatedAt !== undefined ? { intentCreatedAt } : {}),
+          // RULE 4 — scope the write credential to this job's workspace (see the propose binding).
+          workspaceId: String(params.meetingJobInputs.workspaceId),
+        },
       );
       switch (outcome.status) {
         case "created":

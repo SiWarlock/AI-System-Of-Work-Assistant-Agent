@@ -220,9 +220,19 @@ interface WriteCredentialFault {
 async function resolveWriteCredentialFault(
   secrets: WriteSecretsAccessor,
   targetSystem: ExternalWriteEnvelope["targetSystem"],
+  workspaceId: string | undefined,
 ): Promise<WriteCredentialFault | null> {
+  // ⛔⛔ FAIL CLOSED ON AN ABSENT WORKSPACE — this is what makes an OPTIONAL `DispatchOptions` field
+  // a safety control rather than a hole. `writeSecretRef` REQUIRES a workspace (rule 4: personal and
+  // employer must never resolve one shared credential), so a dispatch that cannot name its workspace
+  // gets NO CREDENTIAL and therefore NO WRITE — never an unscoped fallback.
+  // ⭐ TERMINAL, not retryable: no number of retries supplies a workspace the caller never had. It
+  // needs a code fix at the dispatch site, so it must surface rather than park in the outbox.
+  if (workspaceId === undefined || workspaceId.trim().length === 0) {
+    return { reason: "write credential unavailable: workspace_unscoped", retryable: false };
+  }
   try {
-    const got = await secrets.getSecret(writeSecretRef(targetSystem));
+    const got = await secrets.getSecret(writeSecretRef(targetSystem, workspaceId));
     if (!got.ok) {
       return {
         reason: `write credential unavailable: ${got.error.reason}`,
@@ -261,6 +271,24 @@ export interface DispatchOptions {
    * ordering check entirely.
    */
   readonly intentCreatedAt?: string;
+
+  /**
+   * The workspace this write is being made ON BEHALF OF — the input to the rule-4 scoping of the
+   * write credential (`writeSecretRef(target, workspaceId)`).
+   *
+   * ⭐ TRAVELS BESIDE THE ENVELOPE, FOR THE SAME REASON `intentCreatedAt` DOES: `ExternalWriteEnvelope`
+   * is a FROZEN contract with no workspace field, and amending it would mean re-cutting its schema
+   * snapshot across the 93 files that reference it. It is not needed there — every dispatch path
+   * already knows its workspace (`copilotPropose` carries a SERVER-BOUND `WorkspaceId` naming rule 4
+   * as the reason; the outbox persists `workspaceId NOT NULL`), so the fact travels with the call.
+   *
+   * ⛔⛔ OPTIONAL IN THE TYPE, FAIL-CLOSED IN EFFECT — and the two are not in tension. It is optional
+   * so the ~186 existing dispatch sites still compile; but when the credential seam is ARMED and this
+   * is absent, `resolveWriteCredentialFault` returns a TERMINAL fault and no write occurs. ⇒ omitting
+   * it cannot yield an unscoped credential — the worst it can do is refuse. **Absence fails, it never
+   * shares.**
+   */
+  readonly workspaceId?: string;
 }
 
 export async function dispatchExternalWrite(
@@ -300,7 +328,11 @@ export async function dispatchExternalWrite(
   //     (byte-equivalent; the stub transport needs no auth — the real accessor arms
   //     with the real transport at §ARM-21). The token value is never read here.
   if (deps.secrets !== undefined) {
-    const credentialFault = await resolveWriteCredentialFault(deps.secrets, env.targetSystem);
+    const credentialFault = await resolveWriteCredentialFault(
+      deps.secrets,
+      env.targetSystem,
+      opts.workspaceId,
+    );
     if (credentialFault !== null) {
       // Route on whether a retry CAN help (see WriteCredentialFault): a locked
       // Keychain holds for backoff; a missing/denied/empty credential is terminal

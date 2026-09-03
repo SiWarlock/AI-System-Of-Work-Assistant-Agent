@@ -1128,7 +1128,7 @@ function expectNoVendorFreeText(serialized: string): void {
 }
 
 function proposeWith(adapter: TargetWriteAdapter): ReturnType<ProposeActionsPort["propose"]> {
-  const port = createProposeActivity({ dispatch: dispatchExternalWrite, deps: m1RealDeps(adapter) });
+  const port = createProposeActivity({ dispatch: dispatchExternalWrite, deps: m1RealDeps(adapter), workspaceId: "personal-business" });
   const { action, env } = proposal();
   return port.propose(action, env);
 }
@@ -1197,7 +1197,7 @@ describe("spec(safety rule 7 / §21.10) proposeExternalActions activity — the 
   it("a locked WriteSecretsAccessor holds the write closed; the returned message still contains 'locked'", async () => {
     const adapter = m1Adapter();
     const deps = m1RealDeps(adapter, { getSecret: () => Promise.resolve(err({ reason: "locked" })) });
-    const port = createProposeActivity({ dispatch: dispatchExternalWrite, deps });
+    const port = createProposeActivity({ dispatch: dispatchExternalWrite, deps, workspaceId: "personal-business" });
     const { action, env } = proposal();
     const res = await port.propose(action, env);
 

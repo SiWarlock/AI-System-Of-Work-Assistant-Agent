@@ -29,6 +29,15 @@ import type { ExternalWriteDeps } from "@sow/integrations";
 /** Injected deps for the reuse activity — the SAME dep bundle the live gateway uses. */
 export interface EnvelopeReuseDeps {
   readonly gatewayDeps: ExternalWriteDeps;
+  /**
+   * The workspace this resumed write belongs to — scopes the write credential (rule 4), so a
+   * re-drive authenticates as the workspace that formed the original intent rather than through a
+   * credential shared across workspaces.
+   *
+   * ⛔ Optional in the type, fail-closed in effect: absent ⇒ the gateway resolves NO credential and
+   * the write is refused, never sent with an unscoped token.
+   */
+  readonly workspaceId?: string;
 }
 
 /**
@@ -78,7 +87,10 @@ export async function reuseExternalWriteOnResume(
     env,
     action,
     deps.gatewayDeps,
-    intentCreatedAt !== undefined ? { intentCreatedAt } : {},
+    {
+      ...(intentCreatedAt !== undefined ? { intentCreatedAt } : {}),
+      ...(deps.workspaceId !== undefined ? { workspaceId: deps.workspaceId } : {}),
+    },
   );
   switch (outcome.status) {
     case "created":

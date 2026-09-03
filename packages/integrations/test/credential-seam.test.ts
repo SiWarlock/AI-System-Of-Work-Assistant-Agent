@@ -65,15 +65,22 @@ const returning = (token: string): WriteSecretsAccessor => ({ getSecret: async (
 const unavailable = (reason: WriteSecretUnavailable["reason"]): WriteSecretsAccessor => ({ getSecret: async () => err({ reason }) });
 const throwing = (): WriteSecretsAccessor => ({ getSecret: async () => { throw new Error("keychain backend fault"); } });
 
-describe("writeSecretRef — the 17.4 keychain ref convention per vendor", () => {
-  it("derives connector-write:<vendor> for object targets and telegram-bot:* for telegram", () => {
-    expect(writeSecretRef("asana")).toBe("keychain://connector-write/asana");
-    expect(writeSecretRef("calendar")).toBe("keychain://connector-write/calendar");
-    expect(writeSecretRef("todoist")).toBe("keychain://connector-write/todoist");
-    expect(writeSecretRef("linear")).toBe("keychain://connector-write/linear");
-    expect(writeSecretRef("drive")).toBe("keychain://connector-write/drive");
-    expect(writeSecretRef("github")).toBe("keychain://connector-write/github");
-    expect(writeSecretRef("telegram")).toBe("keychain://telegram-bot/*");
+// ⛔ AMENDED 2026-09-03 — these assertions PINNED THE DEFECT. They asserted an UNSCOPED ref
+// (`keychain://connector-write/linear`), which is exactly the bug: `personal-business` and
+// `employer-work` resolved ONE shared external-write credential, breaking safety rule 4. The
+// vendor mapping they cover is still worth pinning; the missing workspace segment was not.
+// ⭐ Scoping itself is pinned in `write-credential-workspace-scope.test.ts` — this block keeps only
+// the VENDOR half so the two suites do not restate one property in two places.
+const WS = "personal-business";
+describe("writeSecretRef — the 17.4 keychain ref convention per vendor (workspace-scoped)", () => {
+  it("derives connector-write/<ws>/<vendor> for object targets and telegram-bot/<ws>/* for telegram", () => {
+    expect(writeSecretRef("asana", WS)).toBe(`keychain://connector-write/${WS}/asana`);
+    expect(writeSecretRef("calendar", WS)).toBe(`keychain://connector-write/${WS}/calendar`);
+    expect(writeSecretRef("todoist", WS)).toBe(`keychain://connector-write/${WS}/todoist`);
+    expect(writeSecretRef("linear", WS)).toBe(`keychain://connector-write/${WS}/linear`);
+    expect(writeSecretRef("drive", WS)).toBe(`keychain://connector-write/${WS}/drive`);
+    expect(writeSecretRef("github", WS)).toBe(`keychain://connector-write/${WS}/github`);
+    expect(writeSecretRef("telegram", WS)).toBe(`keychain://telegram-bot/${WS}/*`);
   });
 });
 
@@ -82,8 +89,8 @@ describe("credential seam — resolve at dispatch, fail closed, token never logg
     const getSecret = vi.fn(async (_ref: string): Promise<Result<string, WriteSecretUnavailable>> => ok("faketoken-xyz"));
     const { deps, spies } = makeDeps({ getSecret });
     const { action, env } = envFor("drive");
-    const out = await dispatchExternalWrite(env, action, deps);
-    expect(getSecret).toHaveBeenCalledWith("keychain://connector-write/drive");
+    const out = await dispatchExternalWrite(env, action, deps, { workspaceId: WS });
+    expect(getSecret).toHaveBeenCalledWith(`keychain://connector-write/${WS}/drive`);
     expect(out.status).toBe("created");
     expect(spies.createCalls()).toBe(1);
   });
@@ -92,8 +99,8 @@ describe("credential seam — resolve at dispatch, fail closed, token never logg
     const getSecret = vi.fn(async (_ref: string): Promise<Result<string, WriteSecretUnavailable>> => ok("t"));
     const { deps } = makeDeps({ getSecret });
     const { action, env } = envFor("telegram");
-    await dispatchExternalWrite(env, action, deps);
-    expect(getSecret).toHaveBeenCalledWith("keychain://telegram-bot/*");
+    await dispatchExternalWrite(env, action, deps, { workspaceId: WS });
+    expect(getSecret).toHaveBeenCalledWith(`keychain://telegram-bot/${WS}/*`);
   });
 
   // ⛔ WHY THIS SPLIT — the previous single case asserted `held` for ALL THREE
@@ -109,7 +116,7 @@ describe("credential seam — resolve at dispatch, fail closed, token never logg
   it("a LOCKED keychain is HELD — retrying can help once it is unlocked", async () => {
     const { deps, spies } = makeDeps(unavailable("locked"));
     const { action, env } = envFor("asana");
-    const out = await dispatchExternalWrite(env, action, deps);
+    const out = await dispatchExternalWrite(env, action, deps, { workspaceId: WS });
     expect(out.status).toBe("held");
     expect(spies.existenceCalls()).toBe(0); // the gate runs BEFORE the vendor existence probe
     expect(spies.createCalls()).toBe(0); // no unauthenticated write
@@ -120,7 +127,7 @@ describe("credential seam — resolve at dispatch, fail closed, token never logg
     async (reason) => {
       const { deps, spies } = makeDeps(unavailable(reason));
       const { action, env } = envFor("asana");
-      const out = await dispatchExternalWrite(env, action, deps);
+      const out = await dispatchExternalWrite(env, action, deps, { workspaceId: WS });
       expect(out.status).toBe("rejected");
       // Unchanged and still load-bearing: fail-closed means no vendor call at all.
       expect(spies.existenceCalls()).toBe(0);
@@ -131,7 +138,7 @@ describe("credential seam — resolve at dispatch, fail closed, token never logg
   it("a THROWING accessor fails closed (held) and never throws, NO create", async () => {
     const { deps, spies } = makeDeps(throwing());
     const { action, env } = envFor("asana");
-    const out = await dispatchExternalWrite(env, action, deps);
+    const out = await dispatchExternalWrite(env, action, deps, { workspaceId: WS });
     expect(out.status).toBe("held");
     expect(spies.createCalls()).toBe(0);
   });
@@ -140,7 +147,7 @@ describe("credential seam — resolve at dispatch, fail closed, token never logg
     const TOKEN = "SUPER-SECRET-TOKEN-abc123XYZ";
     const { deps, logs, audits } = makeDeps(returning(TOKEN));
     const { action, env } = envFor("drive");
-    const out = await dispatchExternalWrite(env, action, deps);
+    const out = await dispatchExternalWrite(env, action, deps, { workspaceId: WS });
     expect(out.status).toBe("created");
     const serialized = JSON.stringify({ out, logs, audits });
     expect(serialized.includes(TOKEN)).toBe(false);
@@ -150,7 +157,7 @@ describe("credential seam — resolve at dispatch, fail closed, token never logg
     for (const blank of ["", "   "]) {
       const { deps, spies } = makeDeps(returning(blank));
       const { action, env } = envFor("asana");
-      const out = await dispatchExternalWrite(env, action, deps);
+      const out = await dispatchExternalWrite(env, action, deps, { workspaceId: WS });
       // Was `held`. A blank token is a provisioning defect an owner must fix —
       // parking it in the retry outbox hid it behind an endless backoff.
       expect(out.status).toBe("rejected");
@@ -172,7 +179,7 @@ describe("credential seam — resolve at dispatch, fail closed, token never logg
       secrets: { getSecret },
     };
     const { action, env } = envFor("asana");
-    const out = await dispatchExternalWrite(env, action, deps);
+    const out = await dispatchExternalWrite(env, action, deps, { workspaceId: WS });
     expect(out.status).toBe("approval_pending");
     expect(getSecret).not.toHaveBeenCalled(); // the seam sits AFTER approval
   });
@@ -180,7 +187,7 @@ describe("credential seam — resolve at dispatch, fail closed, token never logg
   it("the held reason is code-only — never echoes the token or the raw keychain ref", async () => {
     const { deps } = makeDeps(unavailable("locked"));
     const { action, env } = envFor("asana");
-    const out = await dispatchExternalWrite(env, action, deps);
+    const out = await dispatchExternalWrite(env, action, deps, { workspaceId: WS });
     expect(out.status).toBe("held");
     if (out.status === "held") {
       expect(out.reason.includes("locked")).toBe(true); // the closed-set code is fine
@@ -193,7 +200,7 @@ describe("credential seam — dormant (byte-equivalent when the accessor is abse
   it("ABSENT accessor ⇒ the existing dispatch behavior is unchanged (writes proceed to the stub)", async () => {
     const { deps, spies } = makeDeps(); // no secrets
     const { action, env } = envFor("drive");
-    const out = await dispatchExternalWrite(env, action, deps);
+    const out = await dispatchExternalWrite(env, action, deps, { workspaceId: WS });
     expect(out.status).toBe("created");
     expect(spies.createCalls()).toBe(1);
   });

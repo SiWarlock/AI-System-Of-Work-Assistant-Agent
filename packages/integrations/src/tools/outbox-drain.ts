@@ -406,6 +406,14 @@ export async function drainOutbox(
     // one — the content-revert half of the twice-reverted update path.
     const outcome = await dispatch(env, action, deps.gatewayDeps, {
       intentCreatedAt: entry.enqueuedAt,
+      // RULE 4 — the workspace whose credential this re-drive may use. `entry.workspaceId` is the
+      // PERSISTED value (`outbox.workspaceId NOT NULL`), and the task-24.50 scope check above has
+      // already skipped any entry whose own workspace disagrees with `deps.workspaceId`, so by here
+      // the two are equal and either would do. ⭐ Passing the ENTRY's is still the right call: it
+      // keeps the credential bound to the workspace that actually enqueued the write, so if that
+      // scope check is ever relaxed this does not silently start signing one workspace's writes
+      // with another's token.
+      workspaceId: entry.workspaceId,
     });
     const bucket = await applyOutcome(outbox, entry, outcome, deps);
     counts[bucket] += 1;

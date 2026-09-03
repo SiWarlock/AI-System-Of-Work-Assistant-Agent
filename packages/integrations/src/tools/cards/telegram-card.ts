@@ -52,9 +52,16 @@ function telegramIdempotencyKey(approval: Approval, channel: Approval["channel"]
  */
 async function resolveTelegramToken(
   secrets: WriteSecretsAccessor,
+  workspaceId: string | undefined,
 ): Promise<Result<string, string>> {
+  // ⛔ RULE 4 — same fail-closed shape as `resolveWriteCredentialFault`: a card that cannot name
+  // its workspace gets no bot token. A shared unscoped token would let an employer-workspace card
+  // send through a personal bot, and vice versa.
+  if (workspaceId === undefined || workspaceId.trim().length === 0) {
+    return err("write credential unavailable: workspace_unscoped");
+  }
   try {
-    const got = await secrets.getSecret(writeSecretRef("telegram"));
+    const got = await secrets.getSecret(writeSecretRef("telegram", workspaceId));
     if (!got.ok) {
       return err(`write credential unavailable: ${got.error.reason}`);
     }
@@ -79,7 +86,11 @@ async function resolveTelegramToken(
 export function createTelegramCardTransport(deps: TelegramCardDeps): CardRendererLike {
   return {
     async render(approval, channel) {
-      const token = await resolveTelegramToken(deps.secrets);
+      // ⭐ `approval.workspaceId` is the RIGHT source and not merely a convenient one: the model
+      // documents it as set at record time from `ApprovalFlowContext.workspaceId` / the server-bound
+      // Copilot sink — NEVER a client or model value. So the rule-4 scoping input inherits the
+      // approval's own server-bound provenance rather than introducing a new, weaker one.
+      const token = await resolveTelegramToken(deps.secrets, approval.workspaceId);
       if (!token.ok) {
         return err({ message: token.error });
       }

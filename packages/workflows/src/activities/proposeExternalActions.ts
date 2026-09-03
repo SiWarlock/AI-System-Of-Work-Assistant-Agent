@@ -47,6 +47,14 @@ export type DispatchExternalWriteFn = (
 export interface ProposeActivityDeps {
   readonly dispatch: DispatchExternalWriteFn;
   readonly deps: ExternalWriteDeps;
+  /**
+   * The proposing workspace — scopes the external-write credential (rule 4), so personal and
+   * employer proposals never authenticate with the same vendor token.
+   *
+   * ⛔ Optional in the type, fail-closed in effect: absent ⇒ no credential resolves and the write
+   * is refused. Omitting it can only deny a write, never widen one.
+   */
+  readonly workspaceId?: string;
 }
 
 /**
@@ -61,7 +69,11 @@ export function createProposeActivity(deps: ProposeActivityDeps): ProposeActions
       action: ProposedAction,
       env: ExternalWriteEnvelope,
     ): Promise<Result<ProposeResult, ProposeError>> {
-      const outcome = await deps.dispatch(env, action, deps.deps);
+      // RULE 4 — scope the write credential to the proposing workspace. Absent ⇒ the gateway
+      // refuses rather than falling back to a credential shared across workspaces.
+      const outcome = await deps.dispatch(env, action, deps.deps, {
+        ...(deps.workspaceId !== undefined ? { workspaceId: deps.workspaceId } : {}),
+      });
       // NOTE: a propose is always a FRESH intent, so no `intentCreatedAt` is passed —
       // it is current by definition and must never be judged out-of-date.
       switch (outcome.status) {

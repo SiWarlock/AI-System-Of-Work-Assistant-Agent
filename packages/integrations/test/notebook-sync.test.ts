@@ -710,7 +710,10 @@ function driveAdapterOverStatus(status: number): TargetWriteAdapter {
     http,
     secrets: { getSecret: async () => ok("write-token") },
   });
-  return createDriveWriteAdapter({ transport, clock: FIXED_CLOCK });
+  // Bound to the same workspace the sync's outbox uses — the transport refuses to resolve a
+  // credential for an unscoped request (rule 4), so an unbound adapter would fail
+  // `workspace_unscoped` instead of exercising the HTTP status this helper is built to test.
+  return createDriveWriteAdapter({ transport, clock: FIXED_CLOCK, workspaceId: "personal-business" });
 }
 
 describe("createNotebookLmSync — a vendor 429 reaches the outbox; a 403 still fails closed", () => {

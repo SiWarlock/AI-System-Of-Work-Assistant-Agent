@@ -181,7 +181,12 @@ export function createNotebookLmGround(deps: NotebookGroundDeps): NotebookGround
         });
       }
 
-      const dispatched = await dispatchExternalWrite(built.value, action, deps.gateway);
+      // RULE 4 — the same `req.workspaceId` already used above to exclude notes from any other
+      // workspace now also scopes the write credential, so the upload is authenticated as the
+      // workspace whose notes it carries rather than through a shared vendor token.
+      const dispatched = await dispatchExternalWrite(built.value, action, deps.gateway, {
+        workspaceId: req.workspaceId,
+      });
       if (dispatched.status !== "created" && dispatched.status !== "reused") {
         return err({
           code: "dispatch_failed",

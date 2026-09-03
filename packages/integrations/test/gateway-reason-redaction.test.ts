@@ -108,7 +108,7 @@ describe("dispatchExternalWrite — safe-BY-CONSTRUCTION reason sites", () => {
     const mismatchedAction = { ...action, canonicalObjectKey: "cok_drive_OTHER" };
     const h = makeHarness();
 
-    const res = await dispatchExternalWrite(env, mismatchedAction, h.deps);
+    const res = await dispatchExternalWrite(env, mismatchedAction, h.deps, { workspaceId: "personal-business" });
     expect(res.status).toBe("rejected");
     if (res.status !== "rejected") throw new Error("expected rejected");
     expect(res.reason).toBe(
@@ -126,7 +126,7 @@ describe("dispatchExternalWrite — safe-BY-CONSTRUCTION reason sites", () => {
     };
     const h = makeHarness({ secrets });
 
-    const res = await dispatchExternalWrite(env, action, h.deps);
+    const res = await dispatchExternalWrite(env, action, h.deps, { workspaceId: "personal-business" });
     expect(res.status).toBe("held");
     if (res.status !== "held") throw new Error("expected held");
     expect(res.reason).toBe("write credential unavailable: locked");
@@ -146,7 +146,7 @@ describe("dispatchExternalWrite — safe-BY-CONTRACT sites forward the adapter's
       existence: async () => err<AdapterError>({ code: "unreachable", message: "HTTP 503" }),
     });
 
-    const res = await dispatchExternalWrite(env, action, h.deps);
+    const res = await dispatchExternalWrite(env, action, h.deps, { workspaceId: "personal-business" });
     expect(res.status).toBe("held");
     if (res.status !== "held") throw new Error("expected held");
     expect(res.reason).toBe("existence-check unreachable: HTTP 503");
@@ -160,7 +160,7 @@ describe("dispatchExternalWrite — safe-BY-CONTRACT sites forward the adapter's
       create: async () => err<AdapterError>({ code: "conflict", message: "HTTP 409" }),
     });
 
-    const res = await dispatchExternalWrite(env, action, h.deps);
+    const res = await dispatchExternalWrite(env, action, h.deps, { workspaceId: "personal-business" });
     expect(res.status).toBe("conflict");
     if (res.status !== "conflict") throw new Error("expected conflict");
     expect(res.reason).toBe("create fault (conflict): HTTP 409");
@@ -174,7 +174,7 @@ describe("dispatchExternalWrite — safe-BY-CONTRACT sites forward the adapter's
       create: async () => err<AdapterError>({ code: "unreachable", message: "HTTP 503" }),
     });
 
-    const res = await dispatchExternalWrite(env, action, h.deps);
+    const res = await dispatchExternalWrite(env, action, h.deps, { workspaceId: "personal-business" });
     expect(res.status).toBe("held");
     if (res.status !== "held") throw new Error("expected held");
     expect(res.reason).toBe("create fault (unreachable): HTTP 503");
@@ -188,7 +188,7 @@ describe("dispatchExternalWrite — safe-BY-CONTRACT sites forward the adapter's
       create: async () => err<AdapterError>({ code: "rejected", message: "HTTP 400" }),
     });
 
-    const res = await dispatchExternalWrite(env, action, h.deps);
+    const res = await dispatchExternalWrite(env, action, h.deps, { workspaceId: "personal-business" });
     expect(res.status).toBe("rejected");
     if (res.status !== "rejected") throw new Error("expected rejected");
     expect(res.reason).toBe("create fault (rejected): HTTP 400");
@@ -208,7 +208,7 @@ describe("dispatchExternalWrite — five distinct failures render five DISTINCT,
     }): Promise<{ status: string; reason?: string; adapterCode?: string }> {
       const env = envFor(action);
       const h = makeHarness(opts);
-      const res = await dispatchExternalWrite(env, action, h.deps);
+      const res = await dispatchExternalWrite(env, action, h.deps, { workspaceId: "personal-business" });
       return res as { status: string; reason?: string; adapterCode?: string };
     }
 
