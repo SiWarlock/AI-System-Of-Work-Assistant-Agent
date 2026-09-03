@@ -364,6 +364,14 @@ export function App(): ReactElement {
         <Calendar entries={state.schedule} />
       ) : state.route.surface === "connectors" ? (
         <Connectors
+          // The one-way credential-provisioning bridge (owner-authorized 2026-09-03). Folds any
+          // failure to `{ok:false}` — the surface shows a fixed string, never a Keychain diagnostic
+          // (rule 7). A missing bridge (never in a real launch; possible in a bare render) reports
+          // failure rather than silently pretending the key was stored.
+          onProvisionCredential={(ref, value) =>
+            window.sow?.secrets?.provision(ref, value).catch(() => ({ ok: false })) ??
+            Promise.resolve({ ok: false })
+          }
           workspaceId={connectorsWorkspaceId}
           instances={scopedConnectors}
           onRegister={onRegisterConnector}

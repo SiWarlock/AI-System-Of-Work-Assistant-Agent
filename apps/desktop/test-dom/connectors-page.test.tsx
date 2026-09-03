@@ -23,6 +23,7 @@ function renderConnectors(over: Partial<ConnectorsProps> = {}): ConnectorsProps 
     onRegister: vi.fn().mockResolvedValue(OK()),
     onSetState: vi.fn().mockResolvedValue(OK({ state: "enabled" })),
     onSetCadence: vi.fn().mockResolvedValue(OK({ cadence: "@hourly" })),
+    onProvisionCredential: vi.fn().mockResolvedValue({ ok: true }),
     ...over,
   };
   render(<Connectors {...props} />);

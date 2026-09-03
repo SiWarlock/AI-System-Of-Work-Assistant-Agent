@@ -1,6 +1,7 @@
 import { app, ipcMain, shell } from "electron";
 import { realpath as fsRealpath, stat as fsStat } from "node:fs/promises";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
 import { sessionToken } from "./session-token";
 import { getWorkerEndpoint } from "./worker-holder";
 import { getVaultRoots } from "./vault-roots";
@@ -12,6 +13,11 @@ import {
   type FirstRunStatus,
 } from "./first-run";
 import { getFirstRunMarkerPath } from "./first-run-holder";
+import {
+  provisionCredential,
+  type CredentialExec,
+  type CredentialProvisionResult,
+} from "./credential-provision";
 
 // The real fs + shell seams for the path-scoped vault handlers (9.12). Kept OUT of open-in-vault.ts so that
 // module stays electron-free + unit-testable under the DOM-less node tsconfig (desktop LESSONS §2/§3); the
@@ -33,6 +39,37 @@ const firstRunSeams: FirstRunDeps = {
   readFile: (p) => readFileSync(p, "utf8"),
   writeFile: (p, d) => writeFileSync(p, d),
 };
+
+/**
+ * The real `security(1)` seam for one-way credential provisioning (§14.2, owner-authorized
+ * 2026-09-03). Kept OUT of credential-provision.ts so that module stays electron-free + node-testable
+ * under the DOM-less node tsconfig (desktop LESSONS §3); bound HERE, where node already lives.
+ *
+ * ⛔ `execFile` with a DISCRETE ARGS ARRAY and NO `shell` option — a shell is structurally impossible,
+ * so a service/account/value can never be re-read as a command (mirrors the worker's Keychain
+ * backend). Absolute path so a PATH-shadowed `security` cannot be substituted.
+ * ⚠ BOUNDED: a locked Keychain makes `security` block on a modal dialog rather than erroring, so an
+ * unbounded call would hang the handler — and with it the user's click — indefinitely.
+ * ⛔ RULE 7: stdout/stderr are DISCARDED. Only the exit code is read. `security` can echo item
+ * attributes on failure, and nothing here may carry that back toward the renderer.
+ */
+const SECURITY_BIN = "/usr/bin/security";
+const CREDENTIAL_EXEC_TIMEOUT_MS = 10_000;
+const credentialExec: CredentialExec = (args) =>
+  new Promise((resolve) => {
+    execFile(
+      SECURITY_BIN,
+      [...args],
+      { timeout: CREDENTIAL_EXEC_TIMEOUT_MS, maxBuffer: 1024 * 64 },
+      (error) => {
+        // A non-zero exit, a timeout, and a spawn fault all mean "not stored". The code is the ONLY
+        // thing read; `error.message` can quote argv and must never travel (rule 7).
+        if (error === null) return resolve({ code: 0 });
+        const code = typeof error.code === "number" ? error.code : 1;
+        resolve({ code: code === 0 ? 1 : code });
+      },
+    );
+  });
 
 // Main-side handlers for the enumerated preload channels. Every channel exposed
 // by preload/bridge.ts must have exactly one handler here.
@@ -62,6 +99,24 @@ export function registerIpcHandlers(): void {
   // in startWorker); the handlers read it lazily. A path still unset (pre-boot) or an fs fault is treated as
   // INCONCLUSIVE — a typed err the renderer gate maps to the registry-derived fallback (never a lock-out).
   // Gates ONLY the onboarding mount, never the WS-8 predicate.
+  // ⛔⛔ THE ONE CHANNEL THAT CARRIES A SECRET, owner-authorized 2026-09-03 with the cost stated.
+  // WRITE-ONLY BY CONSTRUCTION: there is no read counterpart and none may be added — a compromised
+  // renderer can overwrite a credential, never exfiltrate one. That asymmetry is the entire
+  // mitigation for letting a vendor key transit the renderer at all, and it is pinned by
+  // `test/security/preload-inventory.snapshot.test.ts`.
+  // ⚠ Both args arrive as `unknown` from an UNTRUSTED renderer: the bridge authenticates the CHANNEL,
+  // never the VALUES (desktop L16). Non-string input is refused here, before `provisionCredential`
+  // does its own ref-charset validation in front of the exec.
+  ipcMain.handle(
+    "secret:provision",
+    async (_event, ref: unknown, value: unknown): Promise<CredentialProvisionResult> => {
+      if (typeof ref !== "string" || typeof value !== "string") {
+        return { ok: false, reason: "invalid_ref" };
+      }
+      return provisionCredential(ref, value, credentialExec);
+    },
+  );
+
   ipcMain.handle("lifecycle:firstRunStatus", (): FirstRunStatus => {
     const path = getFirstRunMarkerPath();
     if (path === null) return { ok: false, error: "read_fault" };

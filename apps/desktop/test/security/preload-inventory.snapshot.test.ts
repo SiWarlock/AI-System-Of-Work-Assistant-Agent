@@ -31,13 +31,50 @@ describe("preload API inventory (§5/§11 — privileged-surface drift guard)", 
     expect([...PRELOAD_CHANNELS].sort()).toEqual([...inventory.channels].sort());
   });
 
-  it("exposes no database / filesystem / secrets / connector channels", () => {
+  // ⛔⛔ ONE NAMED EXCEPTION, ADDED 2026-09-03 BY EXPLICIT OWNER DECISION, WITH THE COST STATED
+  // BEFORE THE DECISION WAS TAKEN. Recorded here in full because a bare allowlist entry would read
+  // like an oversight to the next person, and this is the opposite of an oversight.
+  //
+  // `secret:provision` stores a VENDOR write-credential in the Keychain from the Connectors surface.
+  // It is deliberately named to TRIP the regex below rather than dodge it: a name like
+  // `credential:store` would slip the pattern untouched, and evading a security guard by wordplay is
+  // strictly worse than amending it in the open, where it is reviewable.
+  //
+  // WHAT THE OWNER ACCEPTED: a vendor credential now transits the RENDERER process. This app renders
+  // imported/untrusted content (the reason ING-7 exists), so a renderer compromise that previously
+  // could not yield a vendor credential now can.
+  // ⭐ WHAT MAKES IT SURVIVABLE, and the ONLY reason this exception is narrow enough to grant:
+  // ***THE CHANNEL IS WRITE-ONLY.*** There is no read counterpart and none may be added. A
+  // compromised renderer can OVERWRITE a credential; it cannot EXFILTRATE one. That asymmetry is the
+  // whole mitigation — the moment a `secret:read`/`secret:list` channel appears, the residual the
+  // owner accepted is no longer the residual that exists, and this exception must be revisited.
+  const ALLOWED_SECRET_CHANNELS = ["secret:provision"] as const;
+
+  it("exposes no database / filesystem / secrets / connector channels, except the one named write-only exception", () => {
     const forbidden = /db|sql|drizzle|fs|file|secret|keychain|connector|exec|shell/i;
-    const offenders = inventory.channels.filter((c) => forbidden.test(c));
+    const offenders = inventory.channels
+      .filter((c) => forbidden.test(c))
+      .filter((c) => !(ALLOWED_SECRET_CHANNELS as readonly string[]).includes(c));
     expect(offenders).toEqual([]);
   });
 
-  it("the ONLY token-bearing channel is the audited per-launch session token", () => {
+  it("⛔ the secrets exception is EXACTLY the write-only provisioning channel — no read counterpart", () => {
+    // The guard on the exception itself. `secret:provision` is tolerable ONLY because nothing can
+    // read a credential back; this fails the moment a second secrets channel appears, whatever it is
+    // called, so the exception cannot quietly widen from one write into a read surface.
+    const forbidden = /secret|keychain|credential/i;
+    expect(inventory.channels.filter((c) => forbidden.test(c))).toEqual(["secret:provision"]);
+  });
+
+  it("the only token-bearing channel NAMED as such is the audited per-launch session token", () => {
+    // ⚠ AMENDED 2026-09-03 — the old title claimed this was "the ONLY token-bearing channel", and
+    // that became FALSE when `secret:provision` started carrying a vendor API key. The regex does not
+    // match it, so this assertion stayed green while its own sentence stopped being true.
+    // ⭐ That is precisely the defect class this project keeps finding: a guard whose CLAIM rots while
+    // its CHECK still passes. The check below is still worth keeping — it pins that no NEW
+    // token-NAMED channel appears — but it no longer proves what its old title asserted, and the
+    // title now says only what it actually measures. Direction of travel matters: a guard that
+    // overstates its coverage is worse than one with a known, stated gap (`contracts L89`).
     const tokenChannels = inventory.channels.filter((c) => /token/i.test(c));
     expect(tokenChannels).toEqual(["session:getToken"]);
   });

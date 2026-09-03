@@ -18,6 +18,7 @@ export type { FirstRunStatus } from "../main/first-run";
 // it so the renderer imports it from the preload layer it already depends on. Type-only ⇒ erased at runtime, so the
 // bridge stays electron-free for the security snapshot test.
 import type { VaultRepoTarget } from "../main/open-in-vault";
+import type { CredentialProvisionResult } from "../main/credential-provision";
 export type { VaultRepoTarget } from "../main/open-in-vault";
 
 /** The non-secret loopback worker endpoint the renderer's tRPC client targets. */
@@ -58,6 +59,23 @@ export interface SowBridge {
     /** Reveal a repo (by the same closed target) in the OS file manager (Finder); main resolves the path. */
     readonly reveal: (target: VaultRepoTarget) => Promise<{ ok: boolean }>;
   };
+  readonly secrets: {
+    /**
+     * Store a vendor write-credential in the login Keychain at `ref` (§14.2 / owner-authorized
+     * 2026-09-03). ONE-WAY: the value goes in and there is NO channel to read one back.
+     *
+     * ⛔⛔ THIS IS THE ONE PLACE A SECRET CROSSES THE PRELOAD BRIDGE, AND IT WAS A DELIBERATE OWNER
+     * DECISION TAKEN WITH THE COST STATED. Before it, the inventory guard forbade any
+     * secrets-shaped channel outright. It is still forbidden in general; this single channel is an
+     * explicit, named exception in `test/security/preload-inventory.snapshot.test.ts`.
+     * ⭐ DIRECTIONALITY IS THE WHOLE MITIGATION AND MUST NEVER BE RELAXED: a compromised renderer
+     * can OVERWRITE a credential; it cannot READ one. Adding any read counterpart here would end
+     * that property, and it is the property the owner accepted the residual on.
+     * ⚠ Resolves a closed `{ ok, reason? }` — the reason is one of a fixed token set, never the
+     * value, the ref, or `security`'s output (rule 7).
+     */
+    readonly provision: (ref: string, value: string) => Promise<CredentialProvisionResult>;
+  };
   readonly lifecycle: {
     /**
      * The durable first-run marker status (9.17 / §11). Main owns the marker under app-data; the renderer
@@ -88,6 +106,10 @@ export function buildSowBridge(invoke: InvokeFn): SowBridge {
       open: (target) => invoke("vault:open", target) as Promise<{ ok: boolean }>,
       reveal: (target) => invoke("vault:reveal", target) as Promise<{ ok: boolean }>,
     },
+    secrets: {
+      provision: (ref, value) =>
+        invoke("secret:provision", ref, value) as Promise<CredentialProvisionResult>,
+    },
     lifecycle: {
       firstRunStatus: () => invoke("lifecycle:firstRunStatus") as Promise<FirstRunStatus>,
       markOnboarded: () => invoke("lifecycle:markOnboarded") as Promise<FirstRunStatus>,
@@ -104,6 +126,7 @@ export const PRELOAD_CHANNELS = [
   "worker:getConnection",
   "vault:open",
   "vault:reveal",
+  "secret:provision",
   "lifecycle:firstRunStatus",
   "lifecycle:markOnboarded",
 ] as const;
