@@ -27,6 +27,7 @@ import { setFirstRunMarkerPath } from "./first-run-holder";
 import { readWorkerArmingEnv } from "./worker-arming-env";
 import { loadAllowlistedDotenv } from "./dotenv-allowlist";
 import { resolveGbrainPinPath } from "./gbrain-pin-path";
+import { resolveDotenvPath } from "./dotenv-path";
 
 const isDev = typeof process.env["ELECTRON_RENDERER_URL"] === "string";
 
@@ -70,13 +71,24 @@ let supervisor: WorkerSupervisor | null = null;
  * process.env value wins (a real shell/CI export beats .env). Replaces dev.sh's blanket `source .env`.
  */
 function hydrateAllowlistedDotenv(): void {
+  // ⛔ CORRECTED 2026-09-03 — THIS READ `join(process.cwd(), ".env")` UNDER A COMMENT CLAIMING cwd IS
+  // "the repo root under `pnpm dev`". IT IS NOT, and never was once dev.sh's `cd` + `source .env` went
+  // away: `pnpm --filter @sow/desktop exec pwd` is `<repo>/apps/desktop` (measured), and electron-vite
+  // spawns Electron with no cwd override, so the process inherits it. There is no `apps/desktop/.env`
+  // ⇒ ***the repo-root `.env` was NEVER OPENED***, and `SOW_MANAGE_TEMPORAL` / `SOW_VAULT_ROOT` /
+  // `SOW_INGEST_WATCH` set there were silently inert on every launch.
+  // ⭐ It warned about nothing, because the skipped-key warnings only fire for keys the parser SAW —
+  // an unopened file parses to empty and prints the identical console to a clean load. Anchoring on
+  // `app.getAppPath()` (the same anchor `resolveGbrainPinPath` uses) removes the mode; see
+  // `test/main/dotenv-path.test.ts`.
+  const dotenvPath = resolveDotenvPath({ packaged: app.isPackaged, appPath: app.getAppPath() });
   let contents: string | undefined;
   try {
-    // The `.env` in the launch cwd — the repo root under `pnpm dev` / the old dev.sh (which cd'd there).
-    // In a packaged app cwd is not the repo, so there's no `.env` and this no-ops (a dev-only convenience).
-    contents = readFileSync(join(process.cwd(), ".env"), "utf8");
+    // `undefined` ⇒ packaged: skip entirely rather than risk reading an unrelated project's `.env`
+    // from whatever directory the user launched the app in.
+    contents = dotenvPath === undefined ? undefined : readFileSync(dotenvPath, "utf8");
   } catch {
-    contents = undefined; // missing/unreadable/EISDIR ⇒ no-op (today's default: no repo .env)
+    contents = undefined; // missing/unreadable/EISDIR ⇒ no-op (a dev-only convenience)
   }
   const { hydrate, skipped } = loadAllowlistedDotenv(contents, process.env);
   for (const [key, value] of Object.entries(hydrate)) process.env[key] = value;
