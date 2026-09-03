@@ -912,3 +912,65 @@ describe("W1b end-to-end — dispatchExternalWrite over the real write transport
     expect(res.reason).toContain("credential_locked");
   });
 });
+
+// ── AUTH SCHEME — an ADDITIVE mode, because Linear personal keys are not Bearer ───────────────────
+//
+// ⛔ THE VENDOR FACT THIS EXISTS FOR, grounded on Linear's own docs (Context7, 2026-08-29), not
+// memory: the Linear GraphQL API takes OAuth2 tokens as `Authorization: Bearer <token>` but a
+// PERSONAL API KEY as a RAW `Authorization: <key>` with NO `Bearer` prefix. The transport hardcoded
+// Bearer, so a personal key would have been rejected by Linear — and the repo's own connector-side
+// `linear.ts` had already recorded this as an unresolved auth arch_gap.
+//
+// ⭐ EXTENDED, NOT FORKED (`integrations L43`): a second bespoke client would fork the SSRF guard,
+// the token-read fail-closed path and the redaction discipline. One additive field on the existing
+// per-vendor spec keeps all of that single-sourced.
+//
+// ⚠ NEITHER SCHEME IS THE "SAFE" ONE — sending the wrong scheme fails auth, and both directions fail
+// CLOSED (the write is rejected, nothing is written). So the default is chosen for BYTE-EQUIVALENCE
+// with every already-shipped adapter, not for safety.
+describe("createWriteHttpTransport — authScheme (additive; Linear personal keys are not Bearer)", () => {
+  it("DEFAULT (field absent) ⇒ `Bearer <token>` — every existing adapter is byte-equivalent", async () => {
+    const http = fakeHttp();
+    const transport = createWriteHttpTransport(CORE_SPEC, { http, secrets: fakeSecrets() });
+    await transport(CREATE_REQ);
+    expect(http.calls[0]?.headers?.["Authorization"]).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it('authScheme: "raw" ⇒ the bare token, with NO `Bearer ` prefix', async () => {
+    // ⛔ THE PROPERTY. Linear rejects `Bearer lin_api_…` on a personal key.
+    const http = fakeHttp();
+    const transport = createWriteHttpTransport(
+      { ...CORE_SPEC, authScheme: "raw" },
+      { http, secrets: fakeSecrets() },
+    );
+    await transport(CREATE_REQ);
+    const auth = http.calls[0]?.headers?.["Authorization"];
+    expect(auth).toBe(TOKEN);
+    expect(auth).not.toContain("Bearer");
+  });
+
+  it('authScheme: "bearer" explicitly ⇒ identical to the default — the allow-side control', async () => {
+    // Non-vacuity: without this, an implementation that ALWAYS sent raw would still satisfy the
+    // case above, and the default case would be the only thing holding Bearer in place.
+    const http = fakeHttp();
+    const transport = createWriteHttpTransport(
+      { ...CORE_SPEC, authScheme: "bearer" },
+      { http, secrets: fakeSecrets() },
+    );
+    await transport(CREATE_REQ);
+    expect(http.calls[0]?.headers?.["Authorization"]).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it("the token still rides ONLY the Authorization header under `raw` — never url or body", async () => {
+    // The raw scheme must not weaken the rule-7 property the Bearer path already holds.
+    const http = fakeHttp();
+    const transport = createWriteHttpTransport(
+      { ...CORE_SPEC, authScheme: "raw" },
+      { http, secrets: fakeSecrets() },
+    );
+    await transport(CREATE_REQ);
+    const call = http.calls[0];
+    expect(call?.url).not.toContain(TOKEN);
+    expect(call?.body ?? "").not.toContain(TOKEN);
+  });
+});

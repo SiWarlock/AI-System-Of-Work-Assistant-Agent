@@ -126,6 +126,28 @@ export interface HttpTransport {
 export interface WriteHttpSpec {
   readonly baseUrl: string;
   readonly allowedHosts: readonly string[];
+  /**
+   * How the resolved credential binds to the `Authorization` header.
+   *
+   * - `"bearer"` (DEFAULT, and what every already-shipped adapter gets) — `Authorization: Bearer <t>`
+   * - `"raw"` — `Authorization: <t>`, no prefix
+   *
+   * ⛔ WHY THIS EXISTS, grounded on Linear's own docs (2026-08-29) rather than memory: the Linear
+   * GraphQL API takes an OAuth2 token as `Bearer <token>` but a **PERSONAL API KEY as a RAW
+   * `Authorization: <key>` with no prefix**. This transport hardcoded Bearer, so a personal key was
+   * simply not usable — a gap the connector-side `linear.ts` had already recorded as an unresolved
+   * auth arch_gap and which would otherwise have surfaced as an opaque 401 at the first real write.
+   *
+   * ⭐ EXTENDED, NOT FORKED (`integrations L43`): a second bespoke client would fork the SSRF guard,
+   * the fail-closed credential read and the redaction discipline. One additive field keeps all three
+   * single-sourced, and every existing spec is byte-equivalent because the field is absent.
+   *
+   * ⚠ NEITHER VALUE IS THE "SAFE" ONE — the wrong scheme fails authentication, and BOTH directions
+   * fail CLOSED (the write is rejected; nothing is written, nothing leaks). The default is chosen
+   * for byte-equivalence with the shipped adapters, NOT as a safety posture. Stated because a
+   * reader who assumes a safe default would pick wrongly for a new vendor.
+   */
+  readonly authScheme?: "bearer" | "raw";
   readonly buildRequest: (
     req: AdapterTransportRequest,
   ) => { readonly method: "GET" | "POST" | "PATCH"; readonly path: string; readonly body?: string };
@@ -283,7 +305,10 @@ export function createWriteHttpTransport(spec: WriteHttpSpec, deps: WriteHttpTra
     //     `redirect` is fixed `"manual"` (see module header point 3).
     const headers: Record<string, string> = {
       accept: "application/json",
-      Authorization: `Bearer ${secret.value}`,
+      // `=== "raw"` is STRICT on purpose: an absent, misspelled or malformed `authScheme` falls to
+      // Bearer, which is what every shipped adapter already sends. See the field's own doc for why
+      // that default is about byte-equivalence and NOT about one scheme being safer.
+      Authorization: spec.authScheme === "raw" ? secret.value : `Bearer ${secret.value}`,
       ...(built.body !== undefined ? { "content-type": "application/json" } : {}),
     };
     const httpRequest: HttpTransportRequest = {
