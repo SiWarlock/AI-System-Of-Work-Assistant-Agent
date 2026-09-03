@@ -74,13 +74,13 @@ const throwing = (): WriteSecretsAccessor => ({ getSecret: async () => { throw n
 const WS = "personal-business";
 describe("writeSecretRef — the 17.4 keychain ref convention per vendor (workspace-scoped)", () => {
   it("derives connector-write/<ws>/<vendor> for object targets and telegram-bot/<ws>/* for telegram", () => {
-    expect(writeSecretRef("asana", WS)).toBe(`keychain://connector-write/${WS}/asana`);
-    expect(writeSecretRef("calendar", WS)).toBe(`keychain://connector-write/${WS}/calendar`);
-    expect(writeSecretRef("todoist", WS)).toBe(`keychain://connector-write/${WS}/todoist`);
-    expect(writeSecretRef("linear", WS)).toBe(`keychain://connector-write/${WS}/linear`);
-    expect(writeSecretRef("drive", WS)).toBe(`keychain://connector-write/${WS}/drive`);
-    expect(writeSecretRef("github", WS)).toBe(`keychain://connector-write/${WS}/github`);
-    expect(writeSecretRef("telegram", WS)).toBe(`keychain://telegram-bot/${WS}/*`);
+    expect(writeSecretRef("asana", WS)).toBe(`keychain://connector-write.${WS}/asana`);
+    expect(writeSecretRef("calendar", WS)).toBe(`keychain://connector-write.${WS}/calendar`);
+    expect(writeSecretRef("todoist", WS)).toBe(`keychain://connector-write.${WS}/todoist`);
+    expect(writeSecretRef("linear", WS)).toBe(`keychain://connector-write.${WS}/linear`);
+    expect(writeSecretRef("drive", WS)).toBe(`keychain://connector-write.${WS}/drive`);
+    expect(writeSecretRef("github", WS)).toBe(`keychain://connector-write.${WS}/github`);
+    expect(writeSecretRef("telegram", WS)).toBe(`keychain://telegram-bot.${WS}/bot`);
   });
 });
 
@@ -90,7 +90,7 @@ describe("credential seam — resolve at dispatch, fail closed, token never logg
     const { deps, spies } = makeDeps({ getSecret });
     const { action, env } = envFor("drive");
     const out = await dispatchExternalWrite(env, action, deps, { workspaceId: WS });
-    expect(getSecret).toHaveBeenCalledWith(`keychain://connector-write/${WS}/drive`);
+    expect(getSecret).toHaveBeenCalledWith(`keychain://connector-write.${WS}/drive`);
     expect(out.status).toBe("created");
     expect(spies.createCalls()).toBe(1);
   });
@@ -100,7 +100,7 @@ describe("credential seam — resolve at dispatch, fail closed, token never logg
     const { deps } = makeDeps({ getSecret });
     const { action, env } = envFor("telegram");
     await dispatchExternalWrite(env, action, deps, { workspaceId: WS });
-    expect(getSecret).toHaveBeenCalledWith(`keychain://telegram-bot/${WS}/*`);
+    expect(getSecret).toHaveBeenCalledWith(`keychain://telegram-bot.${WS}/bot`);
   });
 
   // ⛔ WHY THIS SPLIT — the previous single case asserted `held` for ALL THREE

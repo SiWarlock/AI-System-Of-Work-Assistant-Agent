@@ -35,13 +35,13 @@ import { writeSecretRef } from "../src/tools/adapters/adapter-core";
 describe("writeSecretRef — the credential ref is SCOPED BY WORKSPACE (safety rule 4)", () => {
   it("derives connector-write/<workspace>/<vendor> — the workspace is IN the key", () => {
     expect(writeSecretRef("linear", "personal-business")).toBe(
-      "keychain://connector-write/personal-business/linear",
+      "keychain://connector-write.personal-business/linear",
     );
     expect(writeSecretRef("todoist", "personal-life")).toBe(
-      "keychain://connector-write/personal-life/todoist",
+      "keychain://connector-write.personal-life/todoist",
     );
     expect(writeSecretRef("drive", "employer-work")).toBe(
-      "keychain://connector-write/employer-work/drive",
+      "keychain://connector-write.employer-work/drive",
     );
   });
 
@@ -60,8 +60,8 @@ describe("writeSecretRef — the credential ref is SCOPED BY WORKSPACE (safety r
   it("scopes the telegram bot ref too — the account wildcard stays, the workspace leads it", () => {
     // telegram's account is bound at §ARM-21, hence the `*`. The WORKSPACE is not the account, so
     // scoping it is orthogonal to that arming and must not wait for it.
-    expect(writeSecretRef("telegram", "personal-life")).toBe("keychain://telegram-bot/personal-life/*");
-    expect(writeSecretRef("telegram", "employer-work")).toBe("keychain://telegram-bot/employer-work/*");
+    expect(writeSecretRef("telegram", "personal-life")).toBe("keychain://telegram-bot.personal-life/bot");
+    expect(writeSecretRef("telegram", "employer-work")).toBe("keychain://telegram-bot.employer-work/bot");
   });
 
   it("⛔ never emits an UNSCOPED ref for any target in the closed set", () => {
@@ -72,6 +72,12 @@ describe("writeSecretRef — the credential ref is SCOPED BY WORKSPACE (safety r
       const ref = writeSecretRef(t, "employer-work");
       expect(ref, `${t} must carry the workspace`).toContain("employer-work");
       expect(ref, `${t} must not be the legacy unscoped ref`).not.toBe(`keychain://connector-write/${t}`);
+      // ⛔ AND IT MUST STILL PARSE. The first cut of this scoping put the workspace in a THIRD path
+      // segment, which the resolver's two-segment parser rejects — every ref failed closed, silently,
+      // and this suite was green throughout because it only compared strings. Two segments, checked
+      // structurally here; the cross-package guard lives in
+      // `apps/worker/test/secrets/write-ref-resolvability.test.ts`.
+      expect(ref.slice("keychain://".length).split("/"), `${t} must be exactly 2 segments`).toHaveLength(2);
     }
     // Positive control on the loop itself — if `targets` were empty the assertions above would
     // vacuously pass and this suite would be green while checking nothing (`contracts L90`).

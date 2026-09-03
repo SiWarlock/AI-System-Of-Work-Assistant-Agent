@@ -216,7 +216,7 @@ async function freshBackends(): Promise<ProofSpineBackends> {
 }
 
 // A "todoist" external-write action/envelope pair — todoist is the exact vendor
-// `writeSecretRef`'s test-list item 2 pins (`keychain://connector-write/<workspace>/todoist`).
+// `writeSecretRef`'s test-list item 2 pins (`keychain://connector-write.<workspace>/todoist`).
 function todoistActionAndEnvelope(idSuffix: string): { action: ProposedAction; envelope: ExternalWriteEnvelope } {
   const action: ProposedAction = {
     actionId: actionId(`act:cred:${idSuffix}`),
@@ -288,7 +288,7 @@ describe("21.10 — externalWriteDeps.secrets: dormant-by-default, consulted whe
     // workspace segment (`ws-emp`, this fixture's job workspace) proves the scoping survives the
     // REAL worker composition — `buildProofSpineActivities` → `dispatchRouted` → the gateway seam —
     // and not merely the pure derivation, which its own suite already covers.
-    expect(getSecret).toHaveBeenCalledWith("keychain://connector-write/ws-emp/todoist");
+    expect(getSecret).toHaveBeenCalledWith("keychain://connector-write.ws-emp/todoist");
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value.status).toBe("created");
   });

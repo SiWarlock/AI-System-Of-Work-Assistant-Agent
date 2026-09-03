@@ -125,9 +125,25 @@ export interface WriteSecretsAccessor {
  * one in-memory hop between them. Callers thread it back; they do not invent it.
  */
 export function writeSecretRef(targetSystem: TargetSystem, workspaceId: string): string {
+  // ⛔⛔ THE WORKSPACE GOES IN THE **SERVICE** SEGMENT, NOT A THIRD PATH SEGMENT. Corrected the same
+  // day it shipped: the first cut emitted `keychain://connector-write/<ws>/<vendor>`, and the
+  // resolver's own `parseKeychainRef` requires EXACTLY TWO `/`-separated segments — so ALL 21
+  // (target × workspace) refs returned `null` and every write credential failed closed, silently.
+  // ⭐ Nothing caught it because every credential-seam suite injects a FAKE accessor that returns a
+  // token for any string: they proved the ref was derived, threaded and passed correctly, and could
+  // not observe that it is unresolvable. A green end-to-end test over a FAKE boundary measures the
+  // plumbing, never the contract on the far side. Guard now at
+  // `apps/worker/test/secrets/write-ref-resolvability.test.ts`, which parses what this composes.
+  // ⚠ Segment charset is `/^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/` — `.` and `-` are legal, `/` and `*`
+  // are not. `.` separates the prefix from the workspace so a hyphenated id (`employer-work`) stays
+  // unambiguous, and the `/` still separates service from account, which keeps the two workspaces in
+  // DIFFERENT parsed (service, account) pairs rather than merely different strings.
   return targetSystem === "telegram"
-    ? `keychain://telegram-bot/${workspaceId}/*`
-    : `keychain://connector-write/${workspaceId}/${targetSystem}`;
+    ? // ⚠ The account was `*` before this change, which ALSO never parsed (`*` is outside the
+      // segment charset) — a PRE-EXISTING defect, not a regression from scoping. `bot` is a
+      // placeholder concrete account; §ARM-21 binds the real one and should revisit this name.
+      `keychain://telegram-bot.${workspaceId}/bot`
+    : `keychain://connector-write.${workspaceId}/${targetSystem}`;
 }
 
 // Fixed, closed-set diagnostic text for a fault that carried no `httpStatus`
