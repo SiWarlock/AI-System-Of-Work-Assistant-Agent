@@ -47,6 +47,23 @@ export interface OnboardingCommandPort {
   provisionWorkspace(
     spec: ProvisionWorkspaceSpec,
   ): Promise<Result<ProvisionedWorkspace, ProvisionWorkspaceError>>;
+  /**
+   * The ONBOARDED workspaces, projected UI-safe. OPTIONAL so a port that cannot answer (a test fake)
+   * stays valid — and the procedure then returns a typed err, never a fabricated empty list.
+   * `err(null)` = the store could not answer (the fault's detail is deliberately not carried).
+   */
+  listWorkspaces?(): Promise<Result<readonly UiSafeOnboardedWorkspace[], null>>;
+}
+
+/**
+ * One onboarded workspace as the renderer may see it (§19.1 / WS-8). A FIELD ALLOWLIST: `Workspace`
+ * also carries `markdownRepoPath` (a filesystem path — §5 forbids it in the renderer), `gbrainBrainId`,
+ * and the full egress policy. None of those cross.
+ */
+export interface UiSafeOnboardedWorkspace {
+  readonly workspaceId: string;
+  readonly name: string;
+  readonly type: WorkspaceType;
 }
 
 /** Dependencies for {@link buildOnboardingRouter}. */
@@ -68,6 +85,22 @@ export interface UiSafeProvisionedWorkspace {
 export function createProvisionWorkspacePort(deps: ProvisionWorkspaceDeps): OnboardingCommandPort {
   return {
     provisionWorkspace: (spec) => provisionWorkspace(deps, spec),
+    // ⭐ Reads `workspace_config` — the SAME table the store-backed egress-posture resolver reads and
+    // fails closed on. NOT the `workspace_registry` read model: measured 2026-09-21, the registry held
+    // an id (`personal-business`, demo-seed residue) with NO config row, so hydrating from it would make
+    // a workspace selectable that every posture check then rejects. Same source ⇒ "selectable" and
+    // "has a posture" cannot disagree (WS-8).
+    listWorkspaces: async () => {
+      const listed = await deps.workspaceConfig.list();
+      if (!listed.ok) return err(null); // redaction: the DbError's detail never leaves this line
+      return ok(
+        listed.value
+          .map((w) => ({ workspaceId: String(w.id), name: w.name, type: w.type }))
+          // Deterministic order, so the renderer's one-workspace-per-bucket recording is stable across
+          // launches rather than depending on row order.
+          .sort((a, b) => (a.workspaceId < b.workspaceId ? -1 : a.workspaceId > b.workspaceId ? 1 : 0)),
+      );
+    },
   };
 }
 
@@ -212,6 +245,38 @@ function provisionErrorToFailure(e: ProvisionWorkspaceError): FailureVariant {
 export function buildOnboardingRouter(deps: OnboardingDeps) {
   const { onboarding } = deps;
   return router({
+    /**
+     * The onboarded workspaces (§19.1 / WS-8) — what the renderer rebuilds its selectable scopes from
+     * on EVERY launch. ⛔ Before this existed the renderer's onboarded set had one writer, the wizard's
+     * completion callback, so after the first restart every workspace read as "not onboarded" and
+     * every scoped surface was dead (owner report 2026-09-21).
+     * ⚠ A port that cannot list returns a typed err — NEVER an empty ok, which would be a false claim
+     * that nothing is onboarded rather than an honest "cannot say".
+     */
+    listWorkspaces: publicProcedure.query(
+      authedResolver<undefined, readonly UiSafeOnboardedWorkspace[]>(
+        async (): Promise<Result<readonly UiSafeOnboardedWorkspace[], FailureVariant>> => {
+          if (onboarding.listWorkspaces === undefined) {
+            return err(
+              failure("degraded_unavailable", "workspace list unavailable", {
+                retryable: false,
+                cause: { code: "ONBOARDING_LIST_UNBOUND" },
+              }),
+            );
+          }
+          const listed = await onboarding.listWorkspaces();
+          if (!listed.ok) {
+            return err(
+              failure("degraded_unavailable", "onboarding store unavailable", {
+                retryable: true,
+                cause: { code: "ONBOARDING_STORE_UNAVAILABLE" },
+              }),
+            );
+          }
+          return ok(listed.value);
+        },
+      ),
+    ),
     /**
      * Create a workspace (§19.1 onboarding; §11 WS-6 first-run). Validates the candidate
      * input, provisions via the injected port (upsert config + fail-closed registry

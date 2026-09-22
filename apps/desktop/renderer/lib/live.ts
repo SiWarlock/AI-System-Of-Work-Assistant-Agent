@@ -41,6 +41,7 @@ import {
   type RerouteTarget,
 } from "./triage-disposition";
 import { createOnboardWorkspace, type OnboardWorkspaceInput, type OnboardResult } from "./onboard-workspace";
+import { hydrateOnboarded } from "./hydrate-onboarded";
 import { createPresetPreview, type PresetPreviewResult } from "./preset-preview";
 import {
   createRegisterConnector,
@@ -256,6 +257,11 @@ async function hydrate(
   client: CreateTRPCClient<AppRouter>,
   store: Store<UiSafeStoreState>,
 ): Promise<void> {
+  // ⛔ FIRST, and the order is load-bearing: the inbox + task-rollup loads below resolve the ACTIVE
+  // scope to a real workspace id through the onboarded set, so they must run after it exists. Before
+  // this, nothing rebuilt that set on launch and every scope read as "not onboarded" after a restart
+  // (owner report 2026-09-21). Total — a fault leaves the store unchanged.
+  await hydrateOnboarded(client, store);
   try {
     const [cardsR, healthR, globalR] = await Promise.all([
       client.query.dashboard.query(),
