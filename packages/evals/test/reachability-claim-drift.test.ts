@@ -164,6 +164,16 @@ const CLAIMS: readonly Claim[] = [
       "packages/integrations/src/tools/adapters/write-http-transport.ts (header) + apps/worker/src/composition/backends.ts (WriteTransportGate) + apps/worker/src/composition/buildActivities.ts (the outbox drain's SAFE grading)",
     says: "ONE production binding of a real write sender (Linear only), in the desktop worker host, off unless SOW_LINEAR_WRITES is on and a key resolves",
   },
+  {
+    // Added 2026-09-22 (review of 6b7d0c32, upheld 3/3): the header below claimed "Every other vendor
+    // stays unbound … Pinned by" this file, but the only row counted `resolveLinearWriteArming`, which a
+    // second vendor's binding would not move. This row makes the claim commensurate: the real sender
+    // factory itself has exactly one production call (plus its import), inside linearWriteTransport.ts.
+    symbol: "createWriteHttpTransport",
+    sites: 2,
+    claimedAt: "packages/integrations/src/tools/adapters/write-http-transport.ts (header: ONE PRODUCTION CALL SITE, every other vendor unbound)",
+    says: "the real write sender is built in exactly one production place — the Linear route in apps/worker/src/composition/linearWriteTransport.ts",
+  },
 ];
 
 describe("reachability-claim drift guard", () => {

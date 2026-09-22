@@ -69,7 +69,11 @@
 // desktop worker host passes that gate to `bootWorker` when `SOW_LINEAR_WRITES` is on AND a
 // workspace's Linear key resolves. Switch off (the shipped default) ⇒ no gate ⇒ the in-memory stub.
 // Every other vendor stays unbound (the router refuses it with `target_not_armed`). Pinned by
-// packages/evals/test/reachability-claim-drift.test.ts. Tests here inject fakes only.
+// packages/evals/test/reachability-claim-drift.test.ts, which counts THIS function's production call
+// sites (one import + one call): binding it for a second vendor anywhere in production source reds
+// the guard. ⚠ A sender built WITHOUT this function would not be seen (corrected 2026-09-22 — the
+// first cut of this sentence cited a row that counted `resolveLinearWriteArming` instead, which a
+// second vendor would not move). Tests here inject fakes only.
 import type { Result } from "@sow/contracts";
 import { isAllowedRemoteEndpoint, endpointHostRef } from "@sow/policy";
 import type {
@@ -270,9 +274,10 @@ const CREDENTIAL_FAULT_DETAIL: Readonly<Record<WriteSecretUnavailableReason, Tra
 };
 
 /**
- * Build the real write-side HTTP {@link AdapterTransport}. DORMANT/unbound — the
- * owner's arming crossing supplies a real `HttpTransport` + Keychain-backed
- * `WriteSecretsAccessor` + a per-vendor `WriteHttpSpec`.
+ * Build the real write-side HTTP {@link AdapterTransport}. Bound in production for LINEAR
+ * ONLY and off by default — see this file's header (corrected 2026-09-22: this said
+ * "DORMANT/unbound" after that stopped being true). The arming crossing supplies a real
+ * `HttpTransport` + Keychain-backed `WriteSecretsAccessor` + a per-vendor `WriteHttpSpec`.
  */
 export function createWriteHttpTransport(spec: WriteHttpSpec, deps: WriteHttpTransportDeps): AdapterTransport {
   const { http, secrets } = deps;

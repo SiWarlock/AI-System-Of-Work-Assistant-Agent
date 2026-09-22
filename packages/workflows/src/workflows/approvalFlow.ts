@@ -416,8 +416,12 @@ export async function runApprovalFlow(
   if (!isOk(dispatched)) {
     const code = dispatched.error.code;
     // The approval STANDS as approved (the human decision landed + is audited); the
-    // external write failed downstream. Surface a distinct health item (inv-5): a
-    // `held` is retryable (outbox re-drive), a conflict/rejected is a review.
+    // external write failed downstream. Surface a distinct health item (inv-5); a
+    // conflict/rejected is a review. ⛔ CORRECTED 2026-09-22: this said a `held` "is
+    // retryable (outbox re-drive)". Nothing enqueues it: the surface below carries no
+    // `retry`, and no other production code writes a held external write to the outbox
+    // (`holdWrite`'s only caller is notebook sync). So a held write is LOST, not retried.
+    // Linear slice 3 must make it durable.
     await deps.health.surface({
       failureClass: failureClassFor(
         code === "held"

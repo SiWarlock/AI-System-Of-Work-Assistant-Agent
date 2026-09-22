@@ -1,14 +1,19 @@
 // spec(§8) spec(§5) spec(§16) — 21.6a: the real write-side HTTP AdapterTransport
-// (createWriteHttpTransport), DORMANT + UNBOUND. Mirrors the proven read-side
+// (createWriteHttpTransport). Mirrors the proven read-side
 // createConnectorHttpTransport template (connector-http-transport.test.ts): SSRF
 // guard FIRST on the FINAL url (zero token read, zero dispatch) · the token
 // resolved via the injected WriteSecretsAccessor + writeSecretRef (header-only,
 // fail-closed even on a THROWING accessor and on a whitespace-only "token") · a
 // redacted typed TransportFault behind a positive-2xx gate · a "drive" vendor
 // spec as the worked example (test-only — no vendor spec ships in src). Tested
-// ENTIRELY over fakes — zero real network/secrets. Also proves DORMANCY: no
-// production call-site references createWriteHttpTransport, and the worker's
+// ENTIRELY over fakes — zero real network/secrets. Also proves the worker's generic
+// composition (backends.ts) never names createWriteHttpTransport, and that
 // selectAdapterTransport still defaults to the in-memory stub for an unset gate.
+// ⛔ CORRECTED 2026-09-22: this used to say "DORMANT + UNBOUND … no production call-site
+// references createWriteHttpTransport". Since a1d24153 one does — the Linear-only, off-by-default
+// binding in apps/worker/src/composition/linearWriteTransport.ts. Section 7 only ever scanned
+// backends.ts, so it stayed green while the claim went false; the cross-repo count lives in
+// packages/evals/test/reachability-claim-drift.test.ts.
 import { describe, it, expect } from "vitest";
 import { ok, err } from "@sow/contracts";
 import type { Result } from "@sow/contracts";
@@ -452,8 +457,8 @@ describe("createWriteHttpTransport + makeTargetWriteAdapter — 401 / 403 / 429 
   });
 });
 
-// ── 7. Dormancy — no production call-site, arming stays closed ─────────────────
-describe("dormant — no production call-site", () => {
+// ── 7. The generic composition stays generic; arming stays closed by default ──────
+describe("backends.ts never binds a real sender; an unset gate stays on the stub", () => {
   const backendsSrc = readFileSync(
     join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "apps", "worker", "src", "composition", "backends.ts"),
     "utf8",
