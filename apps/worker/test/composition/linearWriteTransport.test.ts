@@ -1,34 +1,52 @@
 // The real HTTP client and the owner switch for Linear writes. Linear slice 2 of 6, part 2.
 //
 // ⛔ OFF UNLESS THE OWNER TURNS IT ON, and off again if anything it needs is missing. The switch
-// (`SOW_LINEAR_WRITES`) only BUILDS a gate; `selectAdapterTransport` still requires `enabled === true`
-// AND a factory, and nothing is constructed until the gate is used. With no credential source there is
-// no gate at all — a switch that is on but cannot authenticate must not look armed.
+// (`SOW_LINEAR_WRITES`) arms only when a workspace's Linear key actually RESOLVES from the Keychain.
+// An accessor that merely exists is not proof of a key: the first cut checked construction, so the
+// switch reported ARMED with no key at all (review, 2026-09-21, upheld 3/3).
 //
 // ⚠ Arming this alone still creates NO Linear issue: nothing proposes one yet, and approving an
 // external write in the Approvals screen goes to a no-op (slices 3 and 5). This slice makes the SENDER
 // correct and switchable; it does not make anything send.
 import { describe, it, expect, vi } from "vitest";
-import { ok } from "@sow/contracts";
-import type { AdapterTransportRequest } from "@sow/integrations";
+import { ok, err } from "@sow/contracts";
+import type { AdapterTransportRequest, WriteSecretsAccessor } from "@sow/integrations";
 import type { HttpTransport, HttpTransportRequest } from "@sow/integrations/tools/adapters/write-http-transport";
-import { createFetchHttpTransport, buildLinearWriteTransportGate } from "../../src/composition/linearWriteTransport";
+import {
+  createFetchHttpTransport,
+  resolveLinearWriteArming,
+  describeLinearWriteArming,
+  LINEAR_ARMING_WORKSPACES,
+} from "../../src/composition/linearWriteTransport";
 import { selectAdapterTransport } from "../../src/composition/backends";
 
 function req(targetSystem: AdapterTransportRequest["targetSystem"], op: AdapterTransportRequest["op"] = "query"): AdapterTransportRequest {
   return { op, targetSystem, canonicalObjectKey: "cok", idempotencyKey: "idem", identity: {}, workspaceId: "employer-work" };
 }
-const secrets = { getSecret: vi.fn(async () => ok("lin_api_FAKE")) };
+
+const KEY = "lin_api_FAKE";
+/** A Keychain fake holding a Linear key for exactly the named workspaces, and nothing else. */
+function keychainWith(workspaces: readonly string[]): WriteSecretsAccessor & { getSecret: ReturnType<typeof vi.fn> } {
+  return {
+    getSecret: vi.fn(async (ref: string) =>
+      workspaces.some((ws) => ref === `keychain://connector-write.${ws}/linear`) ? ok(KEY) : err({ reason: "missing" as const }),
+    ),
+  };
+}
+const WORKSPACES = ["employer-work", "personal-business", "personal-life"] as const;
 
 describe("createFetchHttpTransport — the real client, over an injected fetch", () => {
   it("sends url, method, headers and body, with redirects NOT followed, and returns status + text", async () => {
     const fetchImpl = vi.fn(async (_url: string, _init: RequestInit) => new Response('{"a":1}', { status: 201 }));
     const http = createFetchHttpTransport({ fetchImpl: fetchImpl as unknown as typeof fetch });
-    const out = await http.send({ url: "https://api.linear.app/graphql", method: "POST", headers: { "content-type": "application/json" }, body: "{}", redirect: "manual" });
+    const headers = { "content-type": "application/json", Authorization: "lin_api_FAKE" };
+    const out = await http.send({ url: "https://api.linear.app/graphql", method: "POST", headers, body: "{}", redirect: "manual" });
     expect(out).toEqual({ status: 201, body: '{"a":1}' });
     const [url, init] = fetchImpl.mock.calls[0] ?? [];
     expect(url).toBe("https://api.linear.app/graphql");
     expect(init?.method).toBe("POST");
+    // ⛔ The Authorization header must reach fetch: dropping it would turn every live write into a 401.
+    expect(init?.headers).toEqual(headers);
     expect(init?.redirect).toBe("manual"); // a cross-origin 3xx would re-send the Authorization header
     expect(init?.body).toBe("{}");
   });
@@ -42,22 +60,80 @@ describe("createFetchHttpTransport — the real client, over an injected fetch",
   });
 });
 
-describe("buildLinearWriteTransportGate — the owner switch", () => {
-  it("is ABSENT when the switch is off or unset — nothing armed, nothing built", () => {
-    expect(buildLinearWriteTransportGate({ enabled: undefined, secrets })).toBeUndefined();
-    expect(buildLinearWriteTransportGate({ enabled: false, secrets })).toBeUndefined();
+describe("LINEAR_ARMING_WORKSPACES — where the switch looks for a key", () => {
+  it("is the three scopes onboarding can create (the wizard sets id = scope for the type)", () => {
+    expect([...LINEAR_ARMING_WORKSPACES].sort()).toEqual([...WORKSPACES].sort());
   });
+});
 
-  it("⛔ is ABSENT when on but there is NO credential source — a switch that cannot authenticate must not look armed", () => {
-    expect(buildLinearWriteTransportGate({ enabled: true, secrets: undefined })).toBeUndefined();
-  });
-
-  it("builds NOTHING until used — the factory is lazy", () => {
-    const http: HttpTransport = { send: vi.fn(async () => ({ status: 200, body: "{}" })) };
-    const gate = buildLinearWriteTransportGate({ enabled: true, secrets, http });
-    expect(gate?.enabled).toBe(true);
-    expect(http.send).not.toHaveBeenCalled();
+describe("resolveLinearWriteArming — the owner switch, armed only by a key that RESOLVES", () => {
+  it("is NOT ARMED when the switch is off or unset — and reads no credential", async () => {
+    const secrets = keychainWith(WORKSPACES);
+    for (const enabled of [undefined, false]) {
+      expect(await resolveLinearWriteArming({ enabled, secrets, workspaceIds: WORKSPACES })).toEqual({ armed: false, reason: "switch_off" });
+    }
     expect(secrets.getSecret).not.toHaveBeenCalled();
+  });
+
+  it("is NOT ARMED when on but there is no credential source", async () => {
+    expect(await resolveLinearWriteArming({ enabled: true, secrets: undefined, workspaceIds: WORKSPACES })).toEqual({
+      armed: false,
+      reason: "no_secrets_gate",
+    });
+  });
+
+  it("⛔ is NOT ARMED when on with a credential source but NO workspace's Linear key resolves — construction is not resolution", async () => {
+    const empty = keychainWith([]);
+    expect(await resolveLinearWriteArming({ enabled: true, secrets: empty, workspaceIds: WORKSPACES })).toEqual({
+      armed: false,
+      reason: "no_credential_resolved",
+    });
+    expect(empty.getSecret).toHaveBeenCalledTimes(WORKSPACES.length); // it LOOKED, per workspace
+
+    const locked: WriteSecretsAccessor = { getSecret: async () => err({ reason: "locked" as const }) };
+    const throwing: WriteSecretsAccessor = { getSecret: async () => { throw new Error("boom"); } };
+    const blank: WriteSecretsAccessor = { getSecret: async () => ok("   ") };
+    for (const secrets of [locked, throwing, blank]) {
+      expect(await resolveLinearWriteArming({ enabled: true, secrets, workspaceIds: WORKSPACES })).toEqual({
+        armed: false,
+        reason: "no_credential_resolved",
+      });
+    }
+  });
+
+  it("⛔ another vendor's key for the workspace does not arm Linear", async () => {
+    const todoistOnly: WriteSecretsAccessor = {
+      getSecret: async (ref) => (ref === "keychain://connector-write.employer-work/todoist" ? ok(KEY) : err({ reason: "missing" as const })),
+    };
+    const out = await resolveLinearWriteArming({ enabled: true, secrets: todoistOnly, workspaceIds: WORKSPACES });
+    expect(out).toEqual({ armed: false, reason: "no_credential_resolved" });
+  });
+
+  it("is ARMED when one workspace's key resolves, and names only the workspaces that have a key", async () => {
+    const out = await resolveLinearWriteArming({ enabled: true, secrets: keychainWith(["employer-work"]), workspaceIds: WORKSPACES });
+    expect(out.armed).toBe(true);
+    if (!out.armed) return;
+    expect(out.workspaces).toEqual(["employer-work"]);
+    expect(out.gate.enabled).toBe(true);
+    expect(typeof out.gate.make).toBe("function");
+  });
+
+  it("⛔ rule 7: neither the outcome nor its description carries the key", async () => {
+    const armed = await resolveLinearWriteArming({ enabled: true, secrets: keychainWith(["employer-work"]), workspaceIds: WORKSPACES });
+    const notArmed = await resolveLinearWriteArming({ enabled: true, secrets: keychainWith([]), workspaceIds: WORKSPACES });
+    for (const o of [armed, notArmed]) {
+      expect(JSON.stringify(o)).not.toContain(KEY);
+      expect(describeLinearWriteArming(o)).not.toContain(KEY);
+    }
+    expect(describeLinearWriteArming(armed)).toContain("employer-work");
+    expect(describeLinearWriteArming(notArmed)).toContain("NOT ARMED");
+  });
+
+  it("builds no sender until used — resolving reads the key but sends nothing", async () => {
+    const http: HttpTransport = { send: vi.fn(async () => ({ status: 200, body: "{}" })) };
+    const out = await resolveLinearWriteArming({ enabled: true, secrets: keychainWith(["employer-work"]), workspaceIds: WORKSPACES, http });
+    expect(out.armed).toBe(true);
+    expect(http.send).not.toHaveBeenCalled();
   });
 
   it("once selected, sends Linear writes to api.linear.app with the RAW key, and refuses every other service", async () => {
@@ -68,11 +144,12 @@ describe("buildLinearWriteTransportGate — the owner switch", () => {
         return { status: 200, body: JSON.stringify({ data: { issues: { nodes: [] } } }) };
       },
     };
-    const transport = selectAdapterTransport(buildLinearWriteTransportGate({ enabled: true, secrets, http }));
+    const out = await resolveLinearWriteArming({ enabled: true, secrets: keychainWith(["employer-work"]), workspaceIds: WORKSPACES, http });
+    const transport = selectAdapterTransport(out.armed ? out.gate : undefined);
     const linear = await transport(req("linear"));
     expect(linear).toEqual({ ok: true, object: null }); // a clean MISS from the filter probe
     expect(calls[0]?.url).toBe("https://api.linear.app/graphql");
-    expect(calls[0]?.headers["Authorization"]).toBe("lin_api_FAKE"); // raw, no Bearer
+    expect(calls[0]?.headers["Authorization"]).toBe(KEY); // raw, no Bearer
     const todoist = await transport(req("todoist"));
     expect(!todoist.ok && todoist.faultDetail).toBe("target_not_armed");
     expect(calls).toHaveLength(1); // the refused service never reached the network

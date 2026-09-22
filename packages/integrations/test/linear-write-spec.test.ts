@@ -41,6 +41,13 @@ describe("linearIssueId — a stable, UUID-v4-shaped id from (workspace, canonic
     expect(linearIssueId("employer-work", COK)).not.toBe(linearIssueId("personal-life", COK));
     expect(linearIssueId(WS, "cok_a")).not.toBe(linearIssueId(WS, "cok_b"));
   });
+
+  it("⛔ never changes for the same input — a changed id makes a replay create a SECOND issue (rule 3)", () => {
+    // Golden value computed outside this code (Python: sha256 of workspace + the zero character +
+    // key, first 128 bits, version and variant bits set). Pinned when the separator stopped being a
+    // literal zero byte in the source: the character did not change, so the id must not either.
+    expect(linearIssueId(WS, COK)).toBe("2d155dad-870f-49f6-b05d-5df259534e13");
+  });
 });
 
 describe("LINEAR_WRITE_SPEC — wire shape", () => {

@@ -153,7 +153,10 @@ import {
  * ({@link createStubAdapterTransport}) — so the shipped default (this field unset) is
  * BYTE-EQUIVALENT and fully dormant, and a real external write can be enabled ONLY by
  * deliberate owner config, never by editing a hardcoded call site (§8 external-write
- * envelope; root CLAUDE.md safety rule 3). The real factory ships UNBOUND.
+ * envelope; root CLAUDE.md safety rule 3). One real factory exists, for Linear only, and it is
+ * built only when the owner switch is on AND a Linear key resolves (`resolveLinearWriteArming`,
+ * linearWriteTransport.ts; corrected 2026-09-21 — this said "ships UNBOUND" after that stopped being
+ * true).
  */
 export interface WriteTransportGate {
   /** STRICT `=== true` to arm the real transport; anything else ⇒ stub. */
@@ -192,7 +195,7 @@ export interface BackendsConfig {
    * Default-OFF owner gate for the outbound external-write {@link AdapterTransport}.
    * UNSET (the shipped default) ⇒ the deterministic stub — byte-equivalent + dormant.
    * A real vendor transport is selectable ONLY by deliberate owner config satisfying
-   * BOTH locks (see {@link WriteTransportGate}); the real factory ships UNBOUND.
+   * BOTH locks (see {@link WriteTransportGate}); the one real factory (Linear) is off by default.
    */
   readonly writeTransport?: WriteTransportGate;
   /**

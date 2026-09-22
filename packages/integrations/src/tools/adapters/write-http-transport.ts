@@ -62,13 +62,14 @@
 // "request rejected". NINE return sites, ELEVEN tokens — the credential-
 // unavailable return fans out over the three `WriteSecretUnavailableReason`s.
 //
-// DORMANT + UNBOUND: no production call-site. The worker's `WriteTransportGate`
-// (backends.ts) stays unset; `selectAdapterTransport` keeps returning the
-// deterministic in-memory `createStubAdapterTransport`. Binding a real
-// `HttpTransport` (Node `fetch`) + a Keychain-backed `WriteSecretsAccessor` +
-// `gate.make: () => createWriteHttpTransport(vendorSpec, { http, secrets })` into
-// `WriteTransportGate` is the owner's ARMING crossing (§ARM-21) — NOT this slice.
-// Tests inject fakes only — zero real network/secrets here.
+// ONE PRODUCTION CALL SITE, OFF BY DEFAULT. ⛔ CORRECTED 2026-09-21 (review, upheld 3/3): this used to
+// say "DORMANT + UNBOUND: no production call-site", which stopped being true at `a1d24153`.
+// `resolveLinearWriteArming` (apps/worker/src/composition/linearWriteTransport.ts) binds a real
+// fetch-backed `HttpTransport` + the Keychain accessor into `gate.make` for LINEAR ONLY, and the
+// desktop worker host passes that gate to `bootWorker` when `SOW_LINEAR_WRITES` is on AND a
+// workspace's Linear key resolves. Switch off (the shipped default) ⇒ no gate ⇒ the in-memory stub.
+// Every other vendor stays unbound (the router refuses it with `target_not_armed`). Pinned by
+// packages/evals/test/reachability-claim-drift.test.ts. Tests here inject fakes only.
 import type { Result } from "@sow/contracts";
 import { isAllowedRemoteEndpoint, endpointHostRef } from "@sow/policy";
 import type {

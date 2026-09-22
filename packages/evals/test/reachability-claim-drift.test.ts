@@ -43,6 +43,9 @@ const SRC_ROOTS = [
   "apps/desktop/main",
   "apps/desktop/preload",
   "apps/desktop/renderer",
+  // The forked worker host is where real senders get bound (`a1d24153`). Left out, the guard could not
+  // see the call site that falsified three "unbound" claims (review, 2026-09-21, upheld 3/3).
+  "apps/desktop/worker-host",
   "apps/worker/src",
   "packages/contracts/src",
   "packages/db/src",
@@ -154,6 +157,13 @@ const CLAIMS: readonly Claim[] = [
     claimedAt: "packages/policy/src/visibility.ts",
     says: "the single event that falsified all three claims — it IS called from buildActivities.ts",
   },
+  {
+    symbol: "resolveLinearWriteArming",
+    sites: 2,
+    claimedAt:
+      "packages/integrations/src/tools/adapters/write-http-transport.ts (header) + apps/worker/src/composition/backends.ts (WriteTransportGate) + apps/worker/src/composition/buildActivities.ts (the outbox drain's SAFE grading)",
+    says: "ONE production binding of a real write sender (Linear only), in the desktop worker host, off unless SOW_LINEAR_WRITES is on and a key resolves",
+  },
 ];
 
 describe("reachability-claim drift guard", () => {
@@ -166,9 +176,10 @@ describe("reachability-claim drift guard", () => {
     // that silently stopped after the first root would red here.
     const spread = new Set(productionCallSites("serveProjection").map((s) => s.split("/")[0]));
     expect(spread.size).toBeGreaterThan(1);
-    // ⚠ `bootWorker` was this control's first draft and it measures ZERO — correctly: it is an
-    // exported entry point whose callers are the host/bin, outside these SRC roots. Recorded
-    // because it looks like a scan failure and is not, and the next person will reach for it.
+    // ⚠ `bootWorker` was this control's first draft and it measured ZERO — correctly, while its
+    // production caller (the desktop worker host) sat outside these SRC roots. Since 2026-09-21 the
+    // host is a root and calls it as `boot.bootWorker(…)`, so it no longer measures zero. Recorded
+    // because a zero here looked like a scan failure and was not.
   });
 
   it("INSTRUMENT CONTROL: a symbol that does not exist scans to zero", () => {

@@ -29,7 +29,11 @@ import {
 } from "./arming-forward";
 import { readFile } from "node:fs/promises";
 import { buildKeychainSecrets } from "@sow/worker/secrets/keychain-boot";
-import { buildLinearWriteTransportGate } from "@sow/worker/composition/linearWriteTransport";
+import {
+  resolveLinearWriteArming,
+  describeLinearWriteArming,
+  LINEAR_ARMING_WORKSPACES,
+} from "@sow/worker/composition/linearWriteTransport";
 import {
   resolveProvenanceArming,
   describeProvenanceArming,
@@ -206,19 +210,22 @@ async function start(config: WorkerHostConfig): Promise<void> {
 
     // Linear slice 2 — the owner switch for REAL Linear writes (`SOW_LINEAR_WRITES`). The factory is
     // built HERE because a function cannot cross the fork IPC channel (desktop L14); only the flag did.
-    // Switch on but no credential source ⇒ no gate, so the sender is never half-armed.
+    // ⛔ ARMED ONLY WHEN A KEY RESOLVES. `buildKeychainSecrets({})` constructs an accessor and proves
+    // nothing, so `resolveLinearWriteArming` looks up each workspace's Linear key first — the same
+    // construction-vs-resolution rule as the provenance block above (corrected 2026-09-21; the first cut
+    // reported ARMED with no key). Switch off ⇒ no Keychain read at all.
     // ⚠ "ARMED" means the SENDER is live. It does not mean anything is writing: nothing proposes a
     // Linear issue yet, and Approvals-screen dispatch is still the no-op below (slices 3 and 5).
     const linearOn = config.linearWrites?.enabled === true;
-    const linearWriteGate = buildLinearWriteTransportGate({
+    const linearArming = await resolveLinearWriteArming({
       enabled: linearOn,
       secrets: linearOn ? buildKeychainSecrets({})?.getSecret : undefined,
+      workspaceIds: LINEAR_ARMING_WORKSPACES,
     });
+    const linearWriteGate = linearArming.armed ? linearArming.gate : undefined;
     if (linearOn) {
       // eslint-disable-next-line no-console -- deliberate startup visibility, mirrors the lines above
-      console.error(
-        `[worker-host] linear writes: ${linearWriteGate !== undefined ? "SENDER ARMED (nothing proposes Linear issues yet)" : "NOT ARMED (no credential source)"}`,
-      );
+      console.error(`[worker-host] ${describeLinearWriteArming(linearArming)}`);
     }
 
     booted = await boot.bootWorker({
@@ -310,7 +317,7 @@ async function start(config: WorkerHostConfig): Promise<void> {
       // 20.1 — armed IFF the pin parsed AND the signing key actually resolved (see above).
       // NOT armed ⇒ `{}` ⇒ byte-equivalent to today's shipped boot.
       ...provenanceArmForward(provenanceArming),
-      // Linear slice 2 — absent unless the owner switch is on AND a credential source exists.
+      // Linear slice 2 — absent unless the owner switch is on AND a workspace's Linear key resolved.
       ...(linearWriteGate !== undefined ? { writeTransport: linearWriteGate } : {}),
       // No-op dispatch stubs — a first render triggers neither path (no jobs/approvals yet).
       triageDispatch: (input) =>

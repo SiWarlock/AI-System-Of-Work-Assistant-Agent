@@ -1113,11 +1113,18 @@ export function buildProofSpineActivities(
   // factory is SYNCHRONOUS (no `await` here, mirrors every other construction step in this function)
   // and a drain fault must never block/fail activity construction (§16, mirrors the 19.1 drain's own
   // discipline). SAFE, evidence: `backends.writeAdapters` (backends.ts) is
-  // `buildWriteAdapterRegistry({ transport: selectAdapterTransport(config.writeTransport), ... })` —
-  // with `config.writeTransport` unset (the shipped default, never set by any production BootConfig
-  // caller) `selectAdapterTransport` ALWAYS returns the in-memory `createStubAdapterTransport()`, never
-  // a real vendor client, so this drain reaches no real vendor until the owner explicitly arms
-  // `config.writeTransport` (§ARM-21).
+  // `buildWriteAdapterRegistry({ transport: selectAdapterTransport(config.writeTransport), ... })`.
+  // With `config.writeTransport` unset (the shipped default) that is the in-memory
+  // `createStubAdapterTransport()`. ⛔ RE-DERIVED 2026-09-21 (review, upheld 3/3): this used to say
+  // `config.writeTransport` is "never set by any production BootConfig caller", which stopped being true
+  // at `a1d24153` — the desktop worker host now sets it when `SOW_LINEAR_WRITES` is on AND a Linear key
+  // resolves. Then a re-driven held LINEAR entry DOES reach api.linear.app. That is the outbox's purpose
+  // and stays rule-3 safe for the same reason the first dispatch is: the drain re-enters the SAME
+  // gateway envelope (stored-receipt replay gate + pre-write existence probe on the stable issue id),
+  // so a retry reuses the receipt or finds the issue it already created instead of making a second
+  // one. ⚠ That the probe finds it on REAL Linear is not yet measured — slice 6's live test checks it
+  // (outbox-drain.ts, `drainOutbox`, is the re-drive path). Every other vendor is refused
+  // (`target_not_armed`), never faked. Pinned by packages/evals/test/reachability-claim-drift.test.ts.
   // task 24.8 / REQ-NF-006 — bind the OBS-2 depth signal to the DURABLE health store.
   //   The probe existed but was reachable only from `holdWrite` (dormant until
   //   §ARM-21), so outbox depth reached NO surface on the path that actually runs
