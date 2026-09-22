@@ -215,7 +215,7 @@ async function start(config: WorkerHostConfig): Promise<void> {
     // construction-vs-resolution rule as the provenance block above (corrected 2026-09-21; the first cut
     // reported ARMED with no key). Switch off ⇒ no Keychain read at all.
     // ⚠ "ARMED" means the SENDER is live. It does not mean anything is writing: nothing proposes a
-    // Linear issue yet, and Approvals-screen dispatch is still the no-op below (slices 3 and 5).
+    // Linear issue yet (slice 5). Approving one does send it (slice 3+4, bootWorker's real dispatcher).
     const linearOn = config.linearWrites?.enabled === true;
     const linearArming = await resolveLinearWriteArming({
       enabled: linearOn,
@@ -319,10 +319,12 @@ async function start(config: WorkerHostConfig): Promise<void> {
       ...provenanceArmForward(provenanceArming),
       // Linear slice 2 — absent unless the owner switch is on AND a workspace's Linear key resolved.
       ...(linearWriteGate !== undefined ? { writeTransport: linearWriteGate } : {}),
-      // No-op dispatch stubs — a first render triggers neither path (no jobs/approvals yet).
+      // No-op triage dispatch stub — a first render triggers no ingestion re-entry.
       triageDispatch: (input) =>
         Promise.resolve({ ok: true, value: { idempotencyKey: input.idempotencyKey } }),
-      dispatchApproval: () => Promise.resolve({ ok: true, value: undefined }),
+      // ⛔ `dispatchApproval` is deliberately NOT passed (Linear slice 3+4). Until then it was a no-op here, so
+      // approving an external action sent nothing in every configuration. Absent ⇒ bootWorker binds the REAL
+      // guarded dispatcher, which refuses without writing (never a fabricated receipt) while writes are off.
       ...(config.dbPath !== undefined ? { dbPath: config.dbPath } : {}),
       ...(config.vaultRoot !== undefined ? { vaultRoot: config.vaultRoot } : {}),
       // Path-β subscription-extraction arming (18.32): forward the plain-data arm (unset ⇒ key OMITTED ⇒

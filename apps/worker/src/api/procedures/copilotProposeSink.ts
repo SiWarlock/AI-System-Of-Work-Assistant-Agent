@@ -33,7 +33,7 @@ import type {
 } from "@sow/contracts";
 import type { ApprovalRepository, DbError, OutboxRepository, WorkspaceConfigRepository } from "@sow/db";
 import { holdWrite } from "@sow/integrations";
-import { approvalIdFor } from "@sow/domain";
+import { approvalIdFor, approvalOutboxId } from "@sow/domain";
 import type { CopilotProposeReceipt, CopilotProposeSink } from "./copilotPropose";
 
 /** The SERVER-side actor recorded on a Copilot proposal card — never a model value. */
@@ -141,12 +141,13 @@ export function createApprovalsProposeSink(deps: ApprovalsProposeSinkDeps): Copi
       // owner's approval rebuilds the write from this entry, so a card must never exist without it: a save
       // failure returns BEFORE `approvals.create`. `not_approved` ⇒ status `proposed` — awaiting approval,
       // never dispatched from here. The entry carries the CARD's workspace (rule 4). `holdWrite` reuses an
-      // entry already saved under this idempotencyKey, so a re-drive never saves a second one. The id is
-      // derived from the replay key: deterministic, no clock or RNG.
+      // entry already saved under this idempotencyKey, so a re-drive never saves a second one. The entry's id
+      // is derived from the CARD's id (`approvalOutboxId`), so the dispatch can find it from the approval
+      // alone; deterministic, no clock or RNG.
       const saved = await holdWrite(
         { env: envelope, action, reason: "not_approved", workspaceId: String(workspaceId) },
         deps.outbox,
-        { clock: deps.now, outboxId: () => `ob_${envelope.idempotencyKey}` },
+        { clock: deps.now, outboxId: () => approvalOutboxId(id) },
       );
       if (!isOk(saved)) {
         return err(

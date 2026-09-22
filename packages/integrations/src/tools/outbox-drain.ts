@@ -110,7 +110,7 @@ const REDRIVE_APPROVAL_POLICY = "queued" as const;
  * (task 24.50) reads `entry.workspaceId` directly in `drainOutbox`'s loop,
  * BEFORE this reconstruction runs, so a mis-scoped entry never reaches here.
  */
-function rebuildAction(entry: OutboxEntry): ProposedAction {
+export function rebuildAction(entry: OutboxEntry): ProposedAction {
   return {
     actionId: entry.actionRef as ProposedAction["actionId"],
     targetSystem: entry.targetSystem as TargetSystem,
@@ -127,7 +127,7 @@ function rebuildAction(entry: OutboxEntry): ProposedAction {
  * re-driven envelope passes the candidate-gate AND the `envelopeMatchesAction`
  * linkage pin against the reconstructed action. Pure.
  */
-function rebuildEnvelope(entry: OutboxEntry): ExternalWriteEnvelope {
+export function rebuildEnvelope(entry: OutboxEntry): ExternalWriteEnvelope {
   return {
     actionId: entry.actionRef as ExternalWriteEnvelope["actionId"],
     targetSystem: entry.targetSystem as TargetSystem,
@@ -235,9 +235,12 @@ export interface DrainResult {
  * for only ever returning `held` for a genuinely retryable fault (gateway.ts
  * step 3 / step 5, both switching on the closed `AdapterError.code`).
  */
+/** The slice of {@link DrainDeps} the outcome fold reads — also supplied by the approval-path dispatch. */
+export type OutcomeFoldDeps = Pick<DrainDeps, "now" | "clock" | "backoffCfg" | "jitter">;
+
 function computeNextAttemptAt(
   attempts: number,
-  deps: DrainDeps,
+  deps: OutcomeFoldDeps,
 ): string {
   const delay = nextDelayMs(attempts, deps.backoffCfg, deps.jitter);
   const delayMs = delay === EXHAUSTED ? deps.backoffCfg.maxMs : delay;
@@ -258,11 +261,11 @@ function computeNextAttemptAt(
  * permanent fault was arriving here as `held`, the defect was the gateway's, and
  * that is where it was fixed.
  */
-async function applyOutcome(
+export async function applyOutcome(
   outbox: OutboxRepository,
   entry: OutboxEntry,
   outcome: ExternalWriteResult,
-  deps: DrainDeps,
+  deps: OutcomeFoldDeps,
 ): Promise<keyof DrainResult> {
   const now = deps.clock();
   switch (outcome.status) {

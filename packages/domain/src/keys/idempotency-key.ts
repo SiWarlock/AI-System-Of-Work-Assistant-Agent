@@ -70,3 +70,12 @@ export function approvalIdFor(input: { idempotencyKey: string; workspace: string
     }),
   );
 }
+
+/**
+ * The outbox id of the action + envelope saved for a pending external-action card. Derived from the card's
+ * own id, so the Approvals-screen dispatch finds the saved entry FROM THE APPROVAL ALONE — an approval
+ * carries its id, not the envelope's replay key (Linear slice 3+4).
+ */
+export function approvalOutboxId(approval: ApprovalId | string): string {
+  return `ob_${String(approval)}`;
+}

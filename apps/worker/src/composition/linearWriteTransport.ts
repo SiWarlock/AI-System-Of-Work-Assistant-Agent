@@ -14,8 +14,9 @@
 // plus a factory, and constructs nothing until the gate is used.
 //
 // ⚠ ARMING THIS ALONE CREATES NO LINEAR ISSUE. It satisfies `gateProposeArming` precondition (4)
-// (`writeTransportArmed`), but nothing proposes a Linear issue yet and approving an external write in the
-// Approvals screen goes to a no-op dispatch (slices 3 and 5). Do not read "armed" as "writing".
+// (`writeTransportArmed`), and since Linear slice 3+4 approving an external write in the Approvals screen
+// really sends it (`externalApprovalDispatch.ts`). But nothing proposes a Linear issue yet (slice 5), so there
+// is nothing to approve. Do not read "armed" as "writing".
 import { writeSecretRef, type WriteSecretsAccessor } from "@sow/integrations";
 import {
   createWriteHttpTransport,

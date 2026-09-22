@@ -301,7 +301,8 @@ the first time the machine can act on the outside world.
   and they are the whole remaining list — a per-vendor `WriteHttpSpec` (none ships in `src`; only the
   interface and the factory), a real `HttpTransport` (Node `fetch`) implementation, and a bound
   `WriteTransportGate.make` (the gate ships UNBOUND). Plus, if the approval-card path is the trigger,
-  replacing the currently no-op `dispatchApproval` stub.
+  replacing the currently no-op `dispatchApproval` stub. ⛔ UPDATED 2026-09-22: that stub is gone — boot now
+  binds the real guarded dispatcher (`externalApprovalDispatch.ts`, Linear slice 3+4).
   ✅ **The fix-BEFORE-`§ARM-21` item on the UPDATE path is now DONE** (2026-08-28, six staged commits —
   `docs/findings/external-write-update-path.md`). `TargetWriteAdapter.update` had zero callers, so a re-sync
   with changed content wrote nothing and reported success; that is fixed, with the replay-gate eviction (C1),

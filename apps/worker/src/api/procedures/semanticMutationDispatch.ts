@@ -43,10 +43,12 @@
 // stable cause code + static message — never a raw DbError, WriteFailure cause, path, or
 // content. Never throws across the boundary (§16).
 //
-// DORMANT. Nothing wires this live yet: prod `dispatchApproval` is a no-op stub
-// (apps/desktop/worker-host). The live wiring (route the router into `dispatchApproval`
-// behind a boot flag) lands with Slice G's runner + is GATED on the §13.10a go-live gates
-// (see the notes below). This slice is the pure, unit-tested executor.
+// DORMANT until a semantic card exists (propose is OFF). boot.ts routes an approved
+// `semantic_mutation` card here via `createApprovalDispatchRouter` when the KnowledgeWriter path is
+// provisioned (`proofSpineParams`). ⛔ CORRECTED 2026-09-22: this used to say prod `dispatchApproval`
+// is a no-op stub; since Linear slice 3+4 the desktop host passes none, and boot binds the real
+// external dispatcher (`externalApprovalDispatch.ts`) for `external_action` cards. The §13.10a go-live
+// gates (see the notes below) still govern this executor.
 import { ok, err, isOk } from "@sow/contracts";
 import type { Approval, KnowledgeMutationPlan, Result, FailureVariant, WorkspaceId } from "@sow/contracts";
 import { KnowledgeMutationPlanSchema } from "@sow/contracts";

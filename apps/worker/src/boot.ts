@@ -209,6 +209,11 @@ import type {
 import type { Logger } from "./observability/logger";
 import { createHealthSurface, type HealthSurface, type HealthFailure } from "./health/surface";
 import { createPersistentHealthSurfaceStore } from "./composition/store-adapters";
+import {
+  createExternalApprovalDispatch,
+  resolveExternalApprovalDispatch,
+  externalApprovalFailureToHealth,
+} from "./composition/externalApprovalDispatch";
 import { provisionDevWorkspace, type DevProvisionSpec } from "./composition/provisionDev";
 import { maybeSeedDemoData } from "./composition/demoSeed";
 import {
@@ -446,8 +451,14 @@ export interface BootConfig extends BackendsConfig {
   readonly proofSpineParams?: ProofSpineParams;
   /** The ingestion re-entry dispatch (Temporal / Tool-Gateway) — replay-safe (ING-4). */
   readonly triageDispatch: TriageDispatchFn;
-  /** The approved-approval downstream dispatch (drives the side effect of an APPLIED approval). */
-  readonly dispatchApproval: DispatchApprovalFn;
+  /**
+   * OPTIONAL override for the approved-approval downstream dispatch of an `external_action` card. Absent (the
+   * desktop host, since Linear slice 3+4) ⇒ boot binds the REAL guarded dispatcher
+   * (`createExternalApprovalDispatch`): it sends the write the proposer saved, through the Tool Gateway, in
+   * the approval's own workspace, and refuses without writing when no real sender is armed. Tests supply a
+   * no-op or a recorder here. A `semantic_mutation` card is routed separately below either way.
+   */
+  readonly dispatchApproval?: DispatchApprovalFn;
   /** Op-DB + Temporal-persistence backup ports (service wired; the CRON is Phase-11). */
   readonly backupPorts?: {
     readonly opDb: OpDbBackupPort;
@@ -4060,10 +4071,35 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
 
   // §13.10a G4a — route an APPROVED approval to its subject-specific side effect. A `semantic_mutation`
   // card commits its referenced KMP through KnowledgeWriter (`buildSemanticApprovalDispatch`); everything
-  // else (external_action) keeps the injected `config.dispatchApproval`. The semantic branch is wired ONLY
+  // else (external_action) goes to `externalApprovalDispatch` above. The semantic branch is wired ONLY
   // when the KnowledgeWriter durable path is provisioned (`config.proofSpineParams` carries the
   // KnowledgeRevisionStore + commit metadata) — the default/Temporal-degraded boot has no writer to commit
   // through, so it stays external-only. Dormant regardless until a semantic card exists (propose is OFF).
+  // Linear slice 3+4 — the REAL external-action dispatch, unless the caller supplied an override. It reads the
+  // action + envelope the proposer saved with the card, sends them through the Tool Gateway in the APPROVAL's
+  // workspace (rule 4), folds the outcome onto the saved entry (a held write is kept for retry, not lost), and
+  // refuses as `writes_off` — no receipt, never the stub's fabricated one — when no real sender is armed
+  // (owner decision 2026-09-22). Failures reach System Health over the same persistent store.
+  const approvalDispatchHealth: HealthSurface = createHealthSurface(
+    createPersistentHealthSurfaceStore(backends.healthItems),
+  );
+  const externalApprovalDispatch: DispatchApprovalFn = resolveExternalApprovalDispatch(config.dispatchApproval, () =>
+    createExternalApprovalDispatch({
+      armed: backends.writeTransportArmed,
+      outbox: backends.repos.outbox,
+      workspaceConfig: backends.repos.workspaceConfig,
+      receiptStore: backends.receiptStore,
+      writeAdapters: backends.writeAdapters,
+      audit: async (rec): Promise<void> => {
+        await backends.repos.audit.append(rec);
+      },
+      clock: backends.now,
+      ...(keychainSecrets !== undefined ? { secrets: toWriteSecretsAccessor(keychainSecrets.getSecret) } : {}),
+      onFailure: async (f): Promise<void> => {
+        await approvalDispatchHealth.record(externalApprovalFailureToHealth(f, backends.now()));
+      },
+    }),
+  );
   const dispatchApproval: DispatchApprovalFn =
     proofSpineParams !== undefined
       ? createApprovalDispatchRouter({
@@ -4093,9 +4129,9 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
             // key-absence explicit + consistent with every other conditional-attach in this file).
             ...(signing !== undefined ? { signing } : {}),
           }),
-          external: config.dispatchApproval,
+          external: externalApprovalDispatch,
         })
-      : config.dispatchApproval;
+      : externalApprovalDispatch;
 
   // 2b) §13.10a hardening residual #1 — approve→dispatch RECOVERY sweep. `decideApprovalCommand` applies the
   //     approval CAS then dispatches in the SAME call; a crash between them can strand an APPROVED semantic card

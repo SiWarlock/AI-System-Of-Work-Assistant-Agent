@@ -174,6 +174,15 @@ const CLAIMS: readonly Claim[] = [
     claimedAt: "packages/integrations/src/tools/adapters/write-http-transport.ts (header: ONE PRODUCTION CALL SITE, every other vendor unbound)",
     says: "the real write sender is built in exactly one production place — the Linear route in apps/worker/src/composition/linearWriteTransport.ts",
   },
+  {
+    // Added 2026-09-22 (Linear slice 3+4): until then the desktop host passed a no-op `dispatchApproval`, so
+    // approving an external action sent nothing in every configuration. This pins the real dispatcher's ONE
+    // binding (an import + a call in bootWorker), so it cannot be dropped — or bound twice — in silence.
+    symbol: "createExternalApprovalDispatch",
+    sites: 2,
+    claimedAt: "apps/worker/src/boot.ts (external_action binding) + apps/desktop/worker-host/index.ts (no override passed) + docs/runbooks/turn-on-and-smoke-test-runbook.md",
+    says: "bootWorker binds the REAL guarded external-approval dispatcher when the host supplies no override",
+  },
 ];
 
 describe("reachability-claim drift guard", () => {

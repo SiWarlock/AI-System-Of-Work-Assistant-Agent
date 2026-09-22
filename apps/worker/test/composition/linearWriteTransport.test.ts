@@ -5,9 +5,9 @@
 // An accessor that merely exists is not proof of a key: the first cut checked construction, so the
 // switch reported ARMED with no key at all (review, 2026-09-21, upheld 3/3).
 //
-// ⚠ Arming this alone still creates NO Linear issue: nothing proposes one yet, and approving an
-// external write in the Approvals screen goes to a no-op (slices 3 and 5). This slice makes the SENDER
-// correct and switchable; it does not make anything send.
+// ⚠ Arming this alone still creates NO Linear issue: nothing proposes one yet (slice 5). Approving an
+// external write in the Approvals screen does send it since slice 3+4, but there is nothing to approve.
+// This file pins the SENDER and the switch; it does not make anything send.
 import { describe, it, expect, vi } from "vitest";
 import { ok, err } from "@sow/contracts";
 import type { AdapterTransportRequest, WriteSecretsAccessor } from "@sow/integrations";

@@ -797,6 +797,18 @@ export function selectAdapterTransport(gate?: WriteTransportGate): AdapterTransp
 }
 
 /**
+ * Is a REAL write sender selected? The SAME two locks {@link selectAdapterTransport} applies. The expression
+ * is repeated rather than shared because a source-scan test in packages/integrations pins the locks inside
+ * `selectAdapterTransport`'s own body; `backends-armed-agreement.test.ts` pins that the two never disagree,
+ * malformed input included. `false` ⇒ every write goes to the stub,
+ * which FABRICATES success receipts — so a path that must never record a fake write (the owner-approved
+ * Approvals-screen dispatch, Linear slice 3+4) reads this and refuses instead.
+ */
+export function isWriteTransportArmed(gate?: WriteTransportGate): boolean {
+  return gate?.enabled === true && typeof gate.make === "function";
+}
+
+/**
  * A deterministic {@link IndexApplyClient} (the write-side GBrain index seam). It
  * ACKs every apply idempotently (per (workspaceId, revisionId)) with no duplicate
  * nodes, so the reindex activity has a real, deterministic index client behind it.
@@ -856,6 +868,11 @@ export interface ProofSpineBackends {
   readonly broker: Broker;
   /** The per-target write adapter (deterministic transport). */
   readonly writeAdapters: WriteAdapterRegistry;
+  /**
+   * `true` only when `writeAdapters` sit over a REAL sender ({@link isWriteTransportArmed}); `false` means they
+   * sit over the stub, which fabricates success receipts. Linear slice 3+4.
+   */
+  readonly writeTransportArmed: boolean;
   /** The GBrain index client (deterministic transport). */
   readonly indexClient: IndexApplyClient;
   /** The local-provider config ALWAYS handed to the broker (never undefined). */
@@ -992,6 +1009,7 @@ export async function assembleBackends(
     logger,
     broker,
     writeAdapters,
+    writeTransportArmed: isWriteTransportArmed(config.writeTransport),
     indexClient,
     localConfig,
     now,
