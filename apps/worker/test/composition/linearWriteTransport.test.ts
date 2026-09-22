@@ -115,6 +115,7 @@ describe("resolveLinearWriteArming — the owner switch, armed only by a key tha
     if (!out.armed) return;
     expect(out.workspaces).toEqual(["employer-work"]);
     expect(out.gate.enabled).toBe(true);
+    expect(out.gate.targets).toEqual(["linear"]); // only Linear is real: every other system's writes wait
     expect(typeof out.gate.make).toBe("function");
   });
 

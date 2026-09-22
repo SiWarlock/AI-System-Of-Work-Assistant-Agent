@@ -36,6 +36,7 @@ import {
   KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID,
   PROPOSED_ACTION_SCHEMA_ID,
   AGENT_EXTRACTION_SCHEMA_ID,
+  TargetSystem as TargetSystemValues,
 } from "@sow/contracts";
 import type {
   ProposedAction,
@@ -163,6 +164,12 @@ export interface WriteTransportGate {
   readonly enabled?: boolean;
   /** Owner-provisioned real-transport factory; unbound ⇒ stub (never invoked on OFF). */
   readonly make?: () => AdapterTransport;
+  /**
+   * The systems this sender REALLY serves (Linear slice 3+4). The Linear gate declares `["linear"]`; its router
+   * refuses every other system. Absent on an armed gate ⇒ every system (a test's fake sender serves them all).
+   * Read through {@link armedWriteTargets}, never directly.
+   */
+  readonly targets?: readonly TargetSystem[];
 }
 
 /**
@@ -809,6 +816,17 @@ export function isWriteTransportArmed(gate?: WriteTransportGate): boolean {
 }
 
 /**
+ * The systems that have a REAL sender: empty unless {@link isWriteTransportArmed}; then the gate's declared
+ * `targets`, or every system when it declares none. A write for a system NOT in this set must refuse or wait —
+ * never go out, because on that path it would be the stub or a terminal `target_not_armed` refusal (owner
+ * decision 2026-09-22: refuse and stay retryable, never fake).
+ */
+export function armedWriteTargets(gate?: WriteTransportGate): ReadonlySet<TargetSystem> {
+  if (!isWriteTransportArmed(gate)) return new Set();
+  return new Set(gate?.targets ?? TargetSystemValues);
+}
+
+/**
  * A deterministic {@link IndexApplyClient} (the write-side GBrain index seam). It
  * ACKs every apply idempotently (per (workspaceId, revisionId)) with no duplicate
  * nodes, so the reindex activity has a real, deterministic index client behind it.
@@ -869,10 +887,11 @@ export interface ProofSpineBackends {
   /** The per-target write adapter (deterministic transport). */
   readonly writeAdapters: WriteAdapterRegistry;
   /**
-   * `true` only when `writeAdapters` sit over a REAL sender ({@link isWriteTransportArmed}); `false` means they
-   * sit over the stub, which fabricates success receipts. Linear slice 3+4.
+   * The systems whose writes go to a REAL sender ({@link armedWriteTargets}). Empty ⇒ `writeAdapters` sit over the
+   * stub, which fabricates success receipts. Linear slice 3+4: every owner-approved write checks its own system
+   * here and refuses or waits when it is absent.
    */
-  readonly writeTransportArmed: boolean;
+  readonly armedTargets: ReadonlySet<TargetSystem>;
   /** The GBrain index client (deterministic transport). */
   readonly indexClient: IndexApplyClient;
   /** The local-provider config ALWAYS handed to the broker (never undefined). */
@@ -1009,7 +1028,7 @@ export async function assembleBackends(
     logger,
     broker,
     writeAdapters,
-    writeTransportArmed: isWriteTransportArmed(config.writeTransport),
+    armedTargets: armedWriteTargets(config.writeTransport),
     indexClient,
     localConfig,
     now,

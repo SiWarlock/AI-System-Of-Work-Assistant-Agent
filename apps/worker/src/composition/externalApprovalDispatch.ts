@@ -12,16 +12,26 @@
 // never executes).
 //
 // ⛔ OWNER DECISION (2026-09-22): WRITES OFF ⇒ REFUSE, NEVER FAKE. With no real sender selected, the write
-// adapters sit over the in-memory stub, which fabricates success receipts. So when `armed` is false this
-// refuses as `writes_off` BEFORE the gateway: no receipt, and the saved entry stays `proposed` so the card can
-// be sent once the switch is on.
+// adapters sit over the in-memory stub, which fabricates success receipts. So when the card's OWN system has no
+// real sender (`armedTargets`) this refuses as `writes_off` BEFORE the gateway: no receipt, and the saved entry
+// stays `proposed`. It can be sent later by re-running this dispatch once that system is armed (the Approvals
+// screen's "Send now", step 4); nothing else re-drives it on a desktop install, where the wake drain does not run.
 //
 // ⭐ THE GATEWAY'S APPROVAL HOOKS ARE FIXED HERE, NOT RE-DERIVED. This runs only for a card the owner has
 // already approved, and only after the saved entry is proven to be that card's (same id, workspace and
 // payload). So `requireApproval` is always true (the stricter verdict; never the auto-allow branch), and
 // `isApproved` compares the envelope to THIS entry. `recordPendingApproval` refuses: a dispatch never creates a
 // card, so it can never create a duplicate one.
-import { ok, err, auditId, type Approval, type AuditRecord, type FailureVariant, type Result } from "@sow/contracts";
+import {
+  ok,
+  err,
+  auditId,
+  type Approval,
+  type AuditRecord,
+  type FailureVariant,
+  type Result,
+  type TargetSystem,
+} from "@sow/contracts";
 import { approvalIdFor, approvalOutboxId } from "@sow/domain";
 import type { OutboxRepository, WorkspaceConfigRepository } from "@sow/db";
 import { UNASSIGNED_WORKSPACE } from "@sow/db/schema/approvals";
@@ -67,8 +77,12 @@ export interface ExternalApprovalFailure {
 }
 
 export interface ExternalApprovalDispatchDeps {
-  /** A REAL sender is selected (`backends.writeTransportArmed`). `false` ⇒ refuse as `writes_off`, never stub. */
-  readonly armed: boolean;
+  /**
+   * The systems with a REAL sender (`backends.armedTargets`). A card for a system NOT in it is refused as
+   * `writes_off` and its saved entry is left untouched, so it can still be sent once that system is armed —
+   * never stubbed, and never closed as rejected by a router that does not serve it.
+   */
+  readonly armedTargets: ReadonlySet<TargetSystem>;
   readonly outbox: OutboxRepository;
   readonly workspaceConfig: WorkspaceConfigRepository;
   readonly receiptStore: ReceiptStore;
@@ -132,7 +146,7 @@ async function decideAndSend(approval: Approval, deps: ExternalApprovalDispatchD
   if (entry.payloadHash !== approval.payloadHash) return { kind: "refused", reason: "payload_mismatch" };
   if (TERMINAL.has(entry.status)) return { kind: "already_done" };
 
-  if (!deps.armed) return { kind: "refused", reason: "writes_off" };
+  if (!deps.armedTargets.has(entry.targetSystem as TargetSystem)) return { kind: "refused", reason: "writes_off" };
 
   const env = rebuildEnvelope(entry);
   const action = rebuildAction(entry);

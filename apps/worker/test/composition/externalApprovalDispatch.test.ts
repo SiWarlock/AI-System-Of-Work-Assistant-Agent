@@ -99,7 +99,7 @@ async function proposeAndApprove(b: ProofSpineBackends, key: string, ws: Workspa
 
 function depsFor(b: ProofSpineBackends, failures: ExternalApprovalFailure[] = []): ExternalApprovalDispatchDeps {
   return {
-    armed: b.writeTransportArmed,
+    armedTargets: b.armedTargets,
     outbox: b.repos.outbox,
     workspaceConfig: b.repos.workspaceConfig,
     receiptStore: b.receiptStore,
@@ -259,7 +259,7 @@ describe("dispatchExternalApproval — refuses WITHOUT writing when anything doe
 describe("⛔ OWNER DECISION — writes OFF: approving sends nothing and fakes nothing", () => {
   it("with no real sender armed: refused as writes_off, NO receipt, the entry stays retryable", async () => {
     const b = await backends(); // no writeTransport ⇒ the stub would be selected for everything else
-    expect(b.writeTransportArmed).toBe(false);
+    expect(b.armedTargets.size).toBe(0);
     const approval = await proposeAndApprove(b, "off");
     const out = await dispatchExternalApproval(approval, depsFor(b));
     expect(out).toEqual({ kind: "refused", reason: "writes_off" });
@@ -268,6 +268,33 @@ describe("⛔ OWNER DECISION — writes OFF: approving sends nothing and fakes n
     expect(entry.writeReceipt).toBeUndefined();
     const receipt = await b.repos.writeReceipts.getByIdempotencyKey("idem:off");
     expect(receipt.ok).toBe(false); // the stub never got the chance to fabricate one
+  });
+});
+
+describe("⛔ OWNER DECISION, per system: only Linear has a real sender", () => {
+  it("a non-Linear card approved while ONLY Linear is armed is refused as writes_off and stays retryable — never closed", async () => {
+    const v = vendor();
+    const b = await assembleBackends(
+      { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT], writeTransport: { enabled: true, targets: ["linear"], make: () => v.transport } },
+      { candidateOutput: {} },
+    );
+    open.push(b);
+    const up = await b.repos.workspaceConfig.upsert(
+      defaultWorkspace({ id: WS, name: "ws", type: "employer_work", markdownRepoPath: "/tmp/ws", gbrainBrainId: "ws" }),
+    );
+    expect(up.ok).toBe(true);
+    const sink = createApprovalsProposeSink({ approvals: b.repos.approvals, workspaceConfig: b.repos.workspaceConfig, outbox: b.repos.outbox, now: () => NOW });
+    const { action, envelope } = linearIssue("todo");
+    const todo = { ...action, targetSystem: "todoist" as const };
+    const rec = await sink.record({ action: todo, envelope: { ...envelope, targetSystem: "todoist" }, workspaceId: WS });
+    if (!rec.ok) throw new Error("propose failed");
+    const card = await b.repos.approvals.get(rec.value.approvalRef as Approval["id"]);
+    if (!card.ok) throw new Error("card missing");
+    await b.repos.approvals.applyTransition(card.value.id, "pending", { ...card.value, status: "approved" });
+    const out = await dispatchExternalApproval({ ...card.value, status: "approved" }, depsFor(b));
+    expect(out).toEqual({ kind: "refused", reason: "writes_off" });
+    expect(v.calls).toHaveLength(0);
+    expect((await entryFor(b, "todo")).status).toBe("proposed");
   });
 });
 

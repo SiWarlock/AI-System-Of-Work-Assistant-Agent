@@ -26,6 +26,7 @@ import { ok, err, isOk, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID, auditId } from "@sow/
 import { approvalIdFor } from "@sow/domain";
 import type {
   Result,
+  TargetSystem,
   WorkspaceId,
   SourceRef,
   WorkflowRunRef,
@@ -926,12 +927,12 @@ export function buildProofSpineActivities(
       // honours cards approved in the Approvals screen, so it must check two more things. (1) rule 3: the
       // APPROVED payload is the one being sent — the card is approved for its payloadHash, not for any payload
       // under the same replay key. (2) owner decision: never "approve" a write that would go to the stub,
-      // which fabricates receipts — with no real sender armed, the card simply waits.
+      // which fabricates receipts — with no real sender for this card's SYSTEM, the card simply waits.
       return (
         got.ok &&
         got.value.status === "approved" &&
         got.value.payloadHash === env.payloadHash &&
-        backends.writeTransportArmed
+        backends.armedTargets.has(env.targetSystem)
       );
     },
     audit: async (rec): Promise<void> => {
@@ -1126,8 +1127,8 @@ export function buildProofSpineActivities(
   // discipline). SAFE, evidence: `backends.writeAdapters` (backends.ts) is
   // `buildWriteAdapterRegistry({ transport: selectAdapterTransport(config.writeTransport), ... })`.
   // With `config.writeTransport` unset (the shipped default) that is the in-memory
-  // `createStubAdapterTransport()` — and since 2026-09-22 the drain does not run at all in that case (see
-  // the `writeTransportArmed` gate at the drain's call site below), so the stub cannot fabricate a receipt. ⛔ RE-DERIVED 2026-09-21 (review, upheld 3/3): this used to say
+  // `createStubAdapterTransport()` — and since 2026-09-22 the drain skips every entry whose system has no real
+  // sender (`shouldDrive`, bound below), so the stub cannot fabricate a receipt. ⛔ RE-DERIVED 2026-09-21 (review, upheld 3/3): this used to say
   // `config.writeTransport` is "never set by any production BootConfig caller", which stopped being true
   // at `a1d24153` — the desktop worker host now sets it when `SOW_LINEAR_WRITES` is on AND a Linear key
   // resolves. IF a Linear entry is in the outbox, a re-drive then reaches api.linear.app, and that is
@@ -1155,6 +1156,8 @@ export function buildProofSpineActivities(
   //   drain swallows a throwing sink, so health can never fail a drain.
   const outboxDepthSurface = createHealthSurface(createPersistentHealthSurfaceStore(backends.healthItems));
   const drainOnWakeDeps = buildDrainDeps({
+    // Linear slice 3+4 review: drive only entries whose system has a REAL sender (see the call site below).
+    shouldDrive: (entry): boolean => backends.armedTargets.has(entry.targetSystem as TargetSystem),
     gatewayDeps: externalWriteDeps,
     workspaceId: String(params.meetingJobInputs.workspaceId),
     writeAdapters: backends.writeAdapters,
@@ -1184,17 +1187,16 @@ export function buildProofSpineActivities(
       },
     },
   });
-  // ⛔ ONLY WHEN A REAL SENDER IS ARMED (owner decision 2026-09-22, Linear slice 3+4). Unarmed, the write
-  // adapters sit over the in-memory stub, which FABRICATES success receipts — and since step 2 this outbox
-  // holds the saved action of every approved Approvals-screen card, so an unarmed drain would mark an
-  // approved card "sent" when nothing was sent. Unarmed ⇒ the entries simply wait; once the owner arms the
-  // sender, the next wake re-drives them for real. (Task 21.4 originally drained to the stub until armed.)
-  if (backends.writeTransportArmed) {
-    const wakeDrainOnConnect = buildWakeDrainHook({ outbox: backends.repos.outbox, drainDeps: drainOnWakeDeps });
-    void wakeDrainOnConnect({ reason: "network_reconnect", now: now() }).catch(() => {
-      /* fail-SAFE: a drain-on-wake fault must never block activity construction (§16) */
-    });
-  }
+  // ⛔ An entry is DRIVEN only when its own system has a REAL sender (`shouldDrive` above; owner decision
+  // 2026-09-22, Linear slice 3+4). Otherwise it is skipped untouched: the write adapters for that system sit over
+  // the in-memory stub, which FABRICATES success receipts, or over a router that would close it as
+  // `target_not_armed` — and since step 2 this outbox holds the saved action of every approved Approvals-screen
+  // card. The pass itself always runs, so the OBS-2 depth probe keeps reporting while writes are off (review
+  // 2026-09-22: `4b76b2bf` had gated the whole pass and silenced it). Task 21.4 originally drained to the stub.
+  const wakeDrainOnConnect = buildWakeDrainHook({ outbox: backends.repos.outbox, drainDeps: drainOnWakeDeps });
+  void wakeDrainOnConnect({ reason: "network_reconnect", now: now() }).catch(() => {
+    /* fail-SAFE: a drain-on-wake fault must never block activity construction (§16) */
+  });
 
   // ── ingestion-triage ───────────────────────────────────────────────────────
 

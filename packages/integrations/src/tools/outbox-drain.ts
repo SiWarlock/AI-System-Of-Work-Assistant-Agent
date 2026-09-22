@@ -166,6 +166,14 @@ export interface DrainDeps {
   readonly clock: () => string;
   readonly jitter?: (baseDelayMs: number) => number;
   /**
+   * OPTIONAL per-entry filter, applied after the workspace scope check. `false` ⇒ the entry is SKIPPED exactly
+   * like a foreign-workspace one: no dispatch, no store write, no attempts bump. Absent ⇒ every in-scope entry
+   * is driven (byte-equivalent). The worker binds it to "this entry's system has a REAL sender", so an entry is
+   * never driven through the in-memory stub, which fabricates receipts (owner decision 2026-09-22), while the
+   * depth probe above still runs on every pass.
+   */
+  readonly shouldDrive?: (entry: OutboxEntry) => boolean;
+  /**
    * 21.4a — the injectable ROUTED-DISPATCH seam. OPTIONAL: absent ⇒ byte-
    * equivalent to pre-21.4 behavior (`dispatchExternalWrite` is called directly).
    * Bound, the drain re-drives each entry through THIS function instead — the
@@ -393,6 +401,10 @@ export async function drainOutbox(
     // entry is left exactly as it was so a later pass, correctly scoped to ITS
     // workspace, still drains it (held items still never silently expire).
     if (entry.workspaceId !== deps.workspaceId) {
+      counts.skipped += 1;
+      continue;
+    }
+    if (deps.shouldDrive !== undefined && !deps.shouldDrive(entry)) {
       counts.skipped += 1;
       continue;
     }

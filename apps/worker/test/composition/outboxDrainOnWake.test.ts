@@ -185,7 +185,7 @@ describe("buildProofSpineActivities — the write-outbox drain-on-wake (task 21.
     );
     backendsRevisionsRepo = backends.repos.knowledgeRevisions;
     try {
-      expect(backends.writeTransportArmed).toBe(false);
+      expect(backends.armedTargets.size).toBe(0);
       await backends.repos.outbox.enqueue(makeDueEntry());
       buildProofSpineActivities(backends, baseParams());
       await flush();
@@ -238,9 +238,38 @@ describe("buildProofSpineActivities — the write-outbox drain-on-wake (task 21.
     }
   });
 
-  it("an empty outbox is a no-op — construction never throws when there is nothing to drain", async () => {
+  it("OBS-2 still reports outbox depth while UNARMED, though nothing is driven (review 2026-09-22)", async () => {
     const backends = await assembleBackends(
       { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT], dbPath: tempDbPath() },
+      { candidateOutput: {} },
+    );
+    backendsRevisionsRepo = backends.repos.knowledgeRevisions;
+    try {
+      for (let i = 0; i < 6; i += 1) {
+        await backends.repos.outbox.enqueue(
+          makeDueEntry({ outboxId: `ob_depth_${i}`, idempotencyKey: `idem_depth_${i}`, canonicalObjectKey: `cok_depth_${i}` }),
+        );
+      }
+      buildProofSpineActivities(backends, baseParams());
+      await flush();
+      const items = await backends.healthItems.list();
+      expect(items.some((h) => h.failureClass === "outbox_blocked")).toBe(true); // depth 6 > threshold 5
+      const one = await backends.repos.outbox.get("ob_depth_0");
+      expect(one.ok && one.value.status).toBe("retry_queued"); // still undriven
+    } finally {
+      backends.close();
+      backendsRevisionsRepo = undefined;
+    }
+  });
+
+  it("an empty outbox is a no-op — construction never throws when there is nothing to drain (ARMED)", async () => {
+    const backends = await assembleBackends(
+      {
+        now: () => NOW,
+        allowedLocalEndpoints: [LOCAL_ENDPOINT],
+        dbPath: tempDbPath(),
+        writeTransport: { enabled: true, make: () => REAL_VENDOR },
+      },
       { candidateOutput: {} },
     );
     backendsRevisionsRepo = backends.repos.knowledgeRevisions;

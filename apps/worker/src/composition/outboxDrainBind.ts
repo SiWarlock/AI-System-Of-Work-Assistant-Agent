@@ -31,6 +31,7 @@ import type {
   ExternalWriteDeps,
   ExternalWriteResult,
   DispatchOptions,
+  OutboxEntry,
   OutboxRepository,
   WriteAdapterRegistry,
 } from "@sow/integrations";
@@ -80,6 +81,8 @@ export interface BuildDrainDepsArgs {
    * extra work, byte-identical to before.
    */
   readonly health?: NonNullable<DrainDeps["health"]>;
+  /** Forwarded verbatim to `DrainDeps.shouldDrive` (Linear slice 3+4): skip entries with no real sender. */
+  readonly shouldDrive?: (entry: OutboxEntry) => boolean;
 }
 
 /**
@@ -114,6 +117,7 @@ export function buildDrainDeps(args: BuildDrainDepsArgs): DrainDeps {
     ): Promise<ExternalWriteResult> => dispatchRouted(args.writeAdapters, env, action, deps, undefined, opts),
     ...(args.jitter !== undefined ? { jitter: args.jitter } : {}),
     ...(args.health !== undefined ? { health: args.health } : {}),
+    ...(args.shouldDrive !== undefined ? { shouldDrive: args.shouldDrive } : {}),
   };
 }
 

@@ -96,6 +96,29 @@ async function seedHeld(
   );
 }
 
+describe("drainOutbox — shouldDrive: an entry whose system has no real sender is left untouched", () => {
+  it("skips it (no dispatch, no store write, no attempts bump) and still drives the others", async () => {
+    const outbox = new InMemoryOutbox();
+    const receiptStore = new InMemoryReceiptStore();
+    await seedHeld(outbox, "idem_skip", "outbox_skip");
+    const createCalls = { n: 0 };
+    const result = await drainOutbox(outbox, {
+      gatewayDeps: makeGatewayDeps(makeAdapter({ createCalls }), receiptStore),
+      now: clock(),
+      limit: 100,
+      backoffCfg,
+      clock,
+      workspaceId: "employer-work",
+      shouldDrive: () => false,
+    });
+    expect(createCalls.n).toBe(0);
+    expect(result.skipped).toBe(1);
+    const entry = await outbox.get("outbox_skip");
+    expect(isOk(entry) && entry.value.status).toBe("retry_queued");
+    expect(isOk(entry) && entry.value.attempts).toBe(0);
+  });
+});
+
 describe("drainOutbox — reconnect drain", () => {
   it("drains a held entry back online: create is issued once, receipt recorded, entry terminal", async () => {
     const outbox = new InMemoryOutbox();
