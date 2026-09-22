@@ -145,8 +145,28 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
   // global → UiSafeGclProjection (all server-projected), so each folds in directly.
   void hydrate(live.client, store);
 
+  // Rebuild the onboarded-workspace set, RETRYING until the worker answers (owner report 2026-09-21:
+  // nothing rebuilt it on launch, so every scope read as "not onboarded" after a restart). Runs
+  // ALONGSIDE the cold load rather than ahead of it: the worker may take ~20s to bind during boot, and
+  // blocking every other load behind that would trade one dead screen for all of them.
+  // ⚠ The cost of running alongside: the loads that DEPEND on this set already ran against it EMPTY —
+  // the approvals inbox fans out per onboarded workspace, and the active scope's reads resolve through
+  // it. `onLoaded` re-runs exactly those. Both are keyed upserts, so a re-run cannot duplicate a row.
+  let stopped = false;
+  void hydrateOnboarded(live.client, store, {
+    isStopped: () => stopped,
+    onLoaded: () => {
+      void hydrateApprovalInbox(live.client, store);
+      const scope = store.getSnapshot().scope;
+      if (resolveOnboardedWorkspaceId(store.getSnapshot(), scope) !== null) {
+        void hydrateScope(live.client, store, scope);
+      }
+    },
+  });
+
   return {
     stop: (): void => {
+      stopped = true;
       stream.stop();
       live.close();
     },
@@ -257,11 +277,6 @@ async function hydrate(
   client: CreateTRPCClient<AppRouter>,
   store: Store<UiSafeStoreState>,
 ): Promise<void> {
-  // ⛔ FIRST, and the order is load-bearing: the inbox + task-rollup loads below resolve the ACTIVE
-  // scope to a real workspace id through the onboarded set, so they must run after it exists. Before
-  // this, nothing rebuilt that set on launch and every scope read as "not onboarded" after a restart
-  // (owner report 2026-09-21). Total — a fault leaves the store unchanged.
-  await hydrateOnboarded(client, store);
   try {
     const [cardsR, healthR, globalR] = await Promise.all([
       client.query.dashboard.query(),

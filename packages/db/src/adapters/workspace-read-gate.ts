@@ -85,10 +85,18 @@ export function parseStoredWorkspace(row: unknown): Result<Workspace, DbError> {
 
 /**
  * Re-gate a LIST of stored workspace rows. Rejects the WHOLE call on the first inconsistent row
- * (task 9.36 Step-2.5 design question 2) rather than silently dropping/flagging it — there is
- * ZERO production consumer of `WorkspaceConfigRepository.list()` today (verified repo-wide), so
- * there is no live behavior to weigh a per-row alternative against, and "drop the bad row" is not
- * a universal default (contracts L44): a caller counting the returned set would silently undercount.
+ * (task 9.36 Step-2.5 design question 2) rather than silently dropping/flagging it — "drop the bad
+ * row" is not a universal default (contracts L44): a caller counting the returned set would silently
+ * undercount.
+ *
+ * ⛔ AMENDED 2026-09-21 — this used to also say there was "ZERO production consumer of
+ * `WorkspaceConfigRepository.list()` today", and that was part of the case for rejecting the whole
+ * list. It is no longer true: `onboarding.listWorkspaces` (apps/worker/src/api/procedures/onboarding.ts)
+ * now calls it on every launch to rebuild the renderer's onboarded set. So the trade-off now has a
+ * live cost to weigh: ONE bad row (for example a legacy id written before `### 24.84` tightened
+ * `WorkspaceIdSchema`) makes EVERY workspace unselectable, not just the bad one. That fails closed,
+ * which is why it was kept rather than changed in the same commit — but it is a real availability
+ * cost now, not a hypothetical one. Measured on the owner's install 2026-09-21: both rows pass.
  */
 export function parseStoredWorkspaceList(rows: readonly unknown[]): Result<Workspace[], DbError> {
   const out: Workspace[] = [];

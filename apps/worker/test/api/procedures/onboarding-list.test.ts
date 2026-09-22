@@ -7,12 +7,18 @@
 // restart every scope resolved to "not onboarded": Connectors, Copilot, egress, projects — all
 // fail-closed, on an install with two real workspaces in `workspace_config`.
 //
-// ⭐ SOURCE OF TRUTH, chosen on measurement: `workspace_config`, NOT the `workspace_registry` read
-// model. On the owner's machine the registry listed THREE ids and `workspace_config` held TWO —
-// `personal-business` existed only in the registry (demo-seed residue). The store-backed egress-posture
-// resolver reads `workspace_config` and fails closed on an absent row, so hydrating from the registry
-// would make a workspace SELECTABLE that every posture check then rejects. Reading the same table the
-// isolation checks read keeps "selectable" and "has a posture" identical by construction (WS-8).
+// ⭐ SOURCE OF TRUTH: `workspace_config` AND the `workspace_registry` read model — BOTH, intersected.
+// ⛔ CORRECTED 2026-09-21, same day: the first cut read `workspace_config` ALONE, and an adversarial
+// review (upheld 3/3) showed why that is wrong. The registry is the SOLE WS-8 visibility authority
+// (`provisionWorkspace.ts:9-11`); a config row is data ABOUT a registered workspace. A PARTIAL SCAFFOLD
+// (task 9.21-A: config row written, registry union failed) has a config row and no registry
+// membership. Config-alone made it selectable, which then backfilled the first-run marker, which hid
+// the wizard — the ONLY path that re-runs the registry union. A designed, resumable state became a
+// stranded one. Each source alone is wrong in its own direction, measured on the owner's machine:
+//   • registry alone lists `personal-business`, which has NO config row, so every posture check rejects it;
+//   • config alone would list a partial scaffold that every registry-gated call rejects.
+// ⇒ Onboarded = has a config row AND is a registry member. Then "selectable", "has a posture" and
+// "registry-visible" all agree by construction.
 //
 // ⛔ RULE 7 / §5 — a FIELD ALLOWLIST, not a pass-through. `Workspace` carries `markdownRepoPath` (a
 // filesystem path the renderer must never learn), `gbrainBrainId`, and the full egress policy. Only
@@ -20,7 +26,7 @@
 import { describe, it, expect } from "vitest";
 import { isErr, isOk, ok, err, type Result } from "@sow/contracts";
 import type { Workspace } from "@sow/contracts";
-import type { DbError, WorkspaceConfigRepository } from "@sow/db";
+import type { DbError, ReadModelRepository, WorkspaceConfigRepository } from "@sow/db";
 import { createCallerFactory, router, type ApiContext } from "../../../src/api/trpc";
 import {
   buildOnboardingRouter,
@@ -59,10 +65,27 @@ function repoListing(result: Result<Workspace[], DbError>): WorkspaceConfigRepos
   return { list: async () => result } as unknown as WorkspaceConfigRepository;
 }
 
-function realPort(repo: WorkspaceConfigRepository): OnboardingCommandPort {
+/** A ReadModelRepository whose `get` answers for the registry key only. */
+function registry(
+  answer: { readonly ids: readonly string[] } | "not_found" | "fault",
+): ReadModelRepository {
+  return {
+    get: async (key: string) => {
+      if (key !== "workspace_registry") return err({ code: "not_found", message: "n/a" } as unknown as DbError);
+      if (answer === "not_found") return err({ code: "not_found", message: "absent" } as unknown as DbError);
+      if (answer === "fault") return err({ code: "io", message: "SQLITE_BUSY at /secret/registry.db" } as unknown as DbError);
+      return ok({ readModelKey: key, workspaceId: null, data: { workspaceIds: answer.ids }, rebuiltAt: "t" });
+    },
+  } as unknown as ReadModelRepository;
+}
+
+/** The owner's measured registry: three ids, one of which has no config row. */
+const OWNER_REGISTRY = registry({ ids: ["personal-life", "employer-work", "personal-business"] });
+
+function realPort(repo: WorkspaceConfigRepository, readModels: ReadModelRepository = OWNER_REGISTRY): OnboardingCommandPort {
   return createProvisionWorkspacePort({
     workspaceConfig: repo,
-    readModels: {} as never,
+    readModels,
     now: () => "2026-09-21T00:00:00.000Z",
   });
 }
@@ -118,6 +141,41 @@ describe("onboarding.listWorkspaces — the renderer's onboarded set, rebuilt on
     const bare: OnboardingCommandPort = { provisionWorkspace: async () => ({ ok: false, error: {} as never }) };
     const res = await caller(bare).onboarding.listWorkspaces();
     expect(isErr(res)).toBe(true);
+  });
+
+  it("⛔ a PARTIAL SCAFFOLD (config row, no registry membership) is NOT listed — the wizard's resume path survives", async () => {
+    // The review's scenario: `insertIfAbsent` wrote the row, `registerWorkspace` then faulted. Listing
+    // it would make it selectable, backfill the first-run marker, and hide the only UI path that
+    // re-runs the registry union.
+    const port = realPort(
+      repoListing(ok([ws("employer-work", "Main-Test", "employer_work"), ws("personal-life", "Test", "personal_life")])),
+      registry({ ids: ["employer-work"] }), // personal-life's registry union never landed
+    );
+    const res = await caller(port).onboarding.listWorkspaces();
+    expect(isOk(res) && res.value.map((w) => w.workspaceId)).toEqual(["employer-work"]);
+  });
+
+  it("a registry id with NO config row is NOT listed (the owner's `personal-business`)", async () => {
+    const port = realPort(repoListing(ok([ws("employer-work", "Main-Test", "employer_work")])));
+    const res = await caller(port).onboarding.listWorkspaces();
+    expect(isOk(res) && res.value.map((w) => w.workspaceId)).toEqual(["employer-work"]);
+  });
+
+  it("an ABSENT registry means nothing is registry-visible — an authoritative empty list", async () => {
+    // `not_found` is the fresh-install state (nothing ever unioned), not a fault: every scoped read
+    // would reject every workspace, so listing any of them would be the partial-scaffold bug again.
+    const port = realPort(repoListing(ok([ws("employer-work", "Main-Test", "employer_work")])), registry("not_found"));
+    const res = await caller(port).onboarding.listWorkspaces();
+    expect(isOk(res) && res.value).toEqual([]);
+  });
+
+  it("a registry store FAULT is a typed err, never a fold-to-empty, and its detail never crosses", async () => {
+    // Folding a fault to empty would be a false claim that nothing is visible. Fail loudly instead,
+    // matching `registerWorkspace`'s own discipline.
+    const port = realPort(repoListing(ok([ws("employer-work", "Main-Test", "employer_work")])), registry("fault"));
+    const res = await caller(port).onboarding.listWorkspaces();
+    expect(isErr(res)).toBe(true);
+    expect(JSON.stringify(res)).not.toContain("SQLITE_BUSY");
   });
 
   it("requires auth — an unauthenticated caller gets the gate's err, and the store is never read", async () => {

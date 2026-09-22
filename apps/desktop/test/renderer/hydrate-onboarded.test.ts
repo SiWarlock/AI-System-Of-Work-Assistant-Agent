@@ -87,8 +87,91 @@ describe("hydrateOnboarded — the scope becomes selectable again after a restar
     for (const q of [async () => { throw new Error("socket closed"); }, async () => ({ ok: false, error: {} })]) {
       const store = createStore<UiSafeStoreState>({ ...INITIAL_STATE });
       const before = store.getSnapshot();
-      await expect(hydrateOnboarded(fakeClient(q), store)).resolves.toBeUndefined();
+      let attempts = 0;
+      // Stop after the first attempt so this pins "a failure changes nothing" without the retry loop.
+      const opts = { isStopped: () => attempts > 0, sleep: async () => { attempts += 1; } };
+      await expect(hydrateOnboarded(fakeClient(q), store, opts)).resolves.toBeUndefined();
       expect(store.getSnapshot()).toBe(before);
     }
+  });
+});
+
+// ⛔ THE HIGH-SEVERITY REVIEW FINDING (upheld 3/3, 2026-09-21): the first cut asked ONCE, at startLive.
+// Electron opens the window before the worker's HTTP server is bound — the worker-host waits up to
+// ~10s for `gbrain serve`, then ~10s for Temporal — so that single request met connection-refused, was
+// swallowed, and nothing ever asked again. On a NORMAL launch the owner would still have seen
+// "Select an onboarded workspace". The fix had to survive the boot it runs during.
+describe("hydrateOnboarded — keeps asking until the worker is up", () => {
+  const refused = (): Promise<unknown> => Promise.reject(new Error("ECONNREFUSED 127.0.0.1:47100"));
+
+  it("⛔ retries through connection-refused, then records the list once the worker answers", async () => {
+    const store = createStore<UiSafeStoreState>({ ...INITIAL_STATE, scope: "employer-work" });
+    let calls = 0;
+    const delays: number[] = [];
+    await hydrateOnboarded(
+      fakeClient(() => (++calls <= 3 ? refused() : Promise.resolve(WIRE_OK))),
+      store,
+      { sleep: async (ms) => { delays.push(ms); } },
+    );
+    expect(calls).toBe(4);
+    expect(resolveOnboardedWorkspaceId(store.getSnapshot(), "employer-work")).toBe("employer-work");
+    // Backoff grows — a booting worker is not hammered.
+    expect(delays).toEqual([250, 500, 1000]);
+  });
+
+  it("also retries a typed err (the worker is up but its store faulted — transient)", async () => {
+    const store = createStore<UiSafeStoreState>({ ...INITIAL_STATE });
+    let calls = 0;
+    await hydrateOnboarded(
+      fakeClient(async () => (++calls === 1 ? { ok: false, error: { kind: "degraded_unavailable" } } : WIRE_OK)),
+      store,
+      { sleep: async () => {} },
+    );
+    expect(calls).toBe(2);
+    expect(resolveOnboardedWorkspaceId(store.getSnapshot(), "personal-life")).toBe("personal-life");
+  });
+
+  it("the backoff CAPS at its last step rather than growing without bound", async () => {
+    const store = createStore<UiSafeStoreState>({ ...INITIAL_STATE });
+    let calls = 0;
+    const delays: number[] = [];
+    await hydrateOnboarded(fakeClient(() => (++calls <= 7 ? refused() : Promise.resolve(WIRE_OK))), store, {
+      sleep: async (ms) => { delays.push(ms); },
+    });
+    expect(delays).toEqual([250, 500, 1000, 2000, 5000, 5000, 5000]);
+  });
+
+  it("stops retrying once the live session is stopped — no orphan loop after the window closes", async () => {
+    const store = createStore<UiSafeStoreState>({ ...INITIAL_STATE });
+    let calls = 0;
+    let stopped = false;
+    await hydrateOnboarded(fakeClient(() => { calls += 1; return refused(); }), store, {
+      isStopped: () => stopped,
+      sleep: async () => { if (calls >= 2) stopped = true; },
+    });
+    expect(calls).toBe(2);
+  });
+
+  it("onLoaded fires ONCE after a successful non-empty load, so dependent loads can re-run", async () => {
+    // The approvals inbox fans out per onboarded workspace and the active scope's reads resolve
+    // through this set; both ran against an EMPTY set during boot and must re-run now.
+    const store = createStore<UiSafeStoreState>({ ...INITIAL_STATE });
+    let loaded = 0;
+    let calls = 0;
+    await hydrateOnboarded(fakeClient(() => (++calls === 1 ? refused() : Promise.resolve(WIRE_OK))), store, {
+      sleep: async () => {},
+      onLoaded: () => { loaded += 1; },
+    });
+    expect(loaded).toBe(1);
+  });
+
+  it("onLoaded does NOT fire for an authoritative empty list — nothing became resolvable", async () => {
+    const store = createStore<UiSafeStoreState>({ ...INITIAL_STATE });
+    let loaded = 0;
+    await hydrateOnboarded(fakeClient(async () => ({ ok: true, value: [] })), store, {
+      sleep: async () => {},
+      onLoaded: () => { loaded += 1; },
+    });
+    expect(loaded).toBe(0);
   });
 });

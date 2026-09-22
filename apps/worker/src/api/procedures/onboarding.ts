@@ -28,6 +28,7 @@ import {
   type ProvisionedWorkspace,
   type ProvisionWorkspaceDeps,
 } from "../../composition/provisionWorkspace";
+import { readRegisteredWorkspaceIds } from "../../composition/workspaceRegistry";
 
 /**
  * The frozen onboarding preset set — the four §11 first-run presets. Used at the
@@ -85,16 +86,24 @@ export interface UiSafeProvisionedWorkspace {
 export function createProvisionWorkspacePort(deps: ProvisionWorkspaceDeps): OnboardingCommandPort {
   return {
     provisionWorkspace: (spec) => provisionWorkspace(deps, spec),
-    // ⭐ Reads `workspace_config` — the SAME table the store-backed egress-posture resolver reads and
-    // fails closed on. NOT the `workspace_registry` read model: measured 2026-09-21, the registry held
-    // an id (`personal-business`, demo-seed residue) with NO config row, so hydrating from it would make
-    // a workspace selectable that every posture check then rejects. Same source ⇒ "selectable" and
-    // "has a posture" cannot disagree (WS-8).
+    // ⭐ ONBOARDED = has a `workspace_config` row AND is a `workspace_registry` member. BOTH.
+    // ⛔ CORRECTED 2026-09-21, same day: the first cut read `workspace_config` ALONE. An adversarial
+    // review (upheld 3/3) showed that strands a PARTIAL SCAFFOLD (task 9.21-A: config written, registry
+    // union failed): config-alone made it selectable, which backfilled the first-run marker, which hid
+    // the wizard — the only path that re-runs the union. The registry is the SOLE WS-8 visibility
+    // authority (`provisionWorkspace.ts:9-11`); a config row is data ABOUT a registered workspace. Each
+    // source alone is wrong in its own direction, both measured on the owner's machine: the registry
+    // alone lists `personal-business` (no config row ⇒ every posture check rejects it), and config alone
+    // lists a partial scaffold (no membership ⇒ every registry-gated call rejects it). Intersected,
+    // "selectable", "has a posture" and "registry-visible" agree by construction.
     listWorkspaces: async () => {
       const listed = await deps.workspaceConfig.list();
       if (!listed.ok) return err(null); // redaction: the DbError's detail never leaves this line
+      const members = await readRegisteredWorkspaceIds(deps.readModels);
+      if (!members.ok) return err(null); // a registry FAULT is not "nothing visible" — fail loudly
       return ok(
         listed.value
+          .filter((w) => members.value.has(String(w.id)))
           .map((w) => ({ workspaceId: String(w.id), name: w.name, type: w.type }))
           // Deterministic order, so the renderer's one-workspace-per-bucket recording is stable across
           // launches rather than depending on row order.

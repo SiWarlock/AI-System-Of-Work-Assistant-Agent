@@ -28,6 +28,24 @@ function readWorkspaceIds(data: unknown): readonly string[] {
 }
 
 /**
+ * READ the registry's member set — the SOLE WS-8 visibility authority. Same fail-closed discipline as
+ * the union below: a benign `not_found` (nothing ever registered) is an authoritative EMPTY set, and a
+ * GENUINE store fault is a typed err — NEVER a fold-to-empty, which would falsely claim that nothing is
+ * visible. Lives here so the registry's read rules and write rules share one module.
+ */
+export async function readRegisteredWorkspaceIds(
+  readModels: ReadModelRepository,
+): Promise<Result<ReadonlySet<string>, RegistryUnionError>> {
+  const existing = await readModels.get(READ_MODEL_KEYS.registry, null);
+  if (isErr(existing)) {
+    return existing.error.code === "not_found"
+      ? ok(new Set<string>())
+      : err({ code: "store_fault", message: "workspace registry get failed" });
+  }
+  return ok(new Set(readWorkspaceIds(existing.value.data)));
+}
+
+/**
  * UNION `workspaceId` into the global fail-closed workspace registry (`{ workspaceIds }`).
  * Idempotent: re-registering an already-known workspace is a no-op set. This is what makes
  * a workspace-scoped query resolve (WS-8: absent from the registry → the query fails closed).

@@ -54,25 +54,59 @@ export function parseOnboardedList(raw: unknown): readonly OnboardedWorkspace[] 
   return out;
 }
 
+/** Backoff between attempts; the LAST step repeats. Loopback calls, so the cap is cheap. */
+const RETRY_DELAYS_MS: readonly number[] = [250, 500, 1000, 2000, 5000];
+
+export interface HydrateOnboardedOptions {
+  /** True once the live session has stopped — ends the retry loop (no orphan after the window closes). */
+  readonly isStopped?: () => boolean;
+  /** Injected wait, so tests do not sleep. */
+  readonly sleep?: (ms: number) => Promise<void>;
+  /** Called ONCE after a successful non-empty load, so loads that ran against the empty set can re-run. */
+  readonly onLoaded?: () => void;
+}
+
+const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
- * Load the onboarded workspaces and record each into the store. TOTAL — never throws: a transport
- * fault or a typed err leaves the store exactly as it was, because this runs on connect and a throw
- * would abort the rest of the cold load.
+ * Load the onboarded workspaces and record each into the store, RETRYING until the worker answers.
  *
+ * ⛔ WHY IT RETRIES — an adversarial review finding (HIGH, upheld 3/3, 2026-09-21) against the first
+ * cut, which asked ONCE. Electron opens the window before the worker's HTTP server is bound: the worker
+ * host waits up to ~10s for `gbrain serve`, then ~10s for Temporal. That single request met
+ * connection-refused, was swallowed, and nothing asked again — so on a NORMAL launch the owner would
+ * still have seen "Select an onboarded workspace". The loader has to survive the boot it runs during.
+ *
+ * A typed err is retried too (the worker is up but its store faulted — transient). The loop ends on
+ * the first parseable answer (an empty list included: that is authoritative), or when `isStopped()`.
+ *
+ * TOTAL — never throws; a failed attempt leaves the store exactly as it was.
  * ⚠ MERGES rather than replaces: a workspace onboarded in this session a moment before the list
  * arrives must not be erased by a list read that started earlier.
  */
 export async function hydrateOnboarded(
   client: CreateTRPCClient<AppRouter>,
   store: Store<UiSafeStoreState>,
+  opts: HydrateOnboardedOptions = {},
 ): Promise<void> {
-  let raw: unknown;
-  try {
-    raw = await client.onboarding.listWorkspaces.query();
-  } catch {
-    return;
+  const isStopped = opts.isStopped ?? ((): boolean => false);
+  const sleep = opts.sleep ?? defaultSleep;
+  for (let attempt = 0; !isStopped(); attempt += 1) {
+    let raw: unknown;
+    try {
+      raw = await client.onboarding.listWorkspaces.query();
+    } catch {
+      raw = undefined; // connection-refused while the worker boots — parses to null below
+    }
+    const list = parseOnboardedList(raw);
+    if (list !== null) {
+      if (list.length > 0) {
+        store.dispatch((s) => list.reduce((acc, ow) => recordOnboardedWorkspace(acc, ow), s));
+        opts.onLoaded?.();
+      }
+      return;
+    }
+    const delay = RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)] ?? 5000;
+    await sleep(delay);
   }
-  const list = parseOnboardedList(raw);
-  if (list === null || list.length === 0) return;
-  store.dispatch((s) => list.reduce((acc, ow) => recordOnboardedWorkspace(acc, ow), s));
 }
