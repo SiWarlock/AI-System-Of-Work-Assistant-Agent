@@ -39,6 +39,10 @@ describe("createUnsentApprovals / createSendNow", () => {
       ok: true,
       result: { approvalId: "a", sendState: "sent" },
     });
+    expect(await createSendNow(client({ sendNow: { ok: true, value: { approvalId: "a", sendState: "sent", payload: "x" } } }))("ws", "a")).toEqual({
+      ok: false,
+    });
+    expect(await createSendNow(client({ sendNow: { ok: true, value: { approvalId: "a", sendState: "launched" } } }))("ws", "a")).toEqual({ ok: false });
     expect(await createSendNow(client({ throws: true }))("ws", "a")).toEqual({ ok: false });
   });
 });

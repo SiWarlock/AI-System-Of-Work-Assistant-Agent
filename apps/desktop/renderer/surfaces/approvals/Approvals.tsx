@@ -63,6 +63,8 @@ export interface ApprovalsProps {
   readonly onOpenDetail?: (approvalId: string) => Promise<ApprovalDetailResult>;
   /** The active workspace's approved external cards whose write has not gone out. */
   readonly unsent?: readonly UiSafeApproval[];
+  /** The list could not be loaded for the active workspace and there is none to show: the screen says so. */
+  readonly unsentLoadFailed?: boolean;
   /** Re-run the guarded dispatch for one approved card. Absent (no live worker) ⇒ the button is disabled. */
   readonly onSendNow?: (approvalId: string) => Promise<SendNowResult>;
 }
@@ -174,9 +176,10 @@ function detailsId(approvalId: string): string {
 
 /**
  * Linear slice 3+4 — the "Details" disclosure. Offered ONLY when the card's own workspace is the ACTIVE one (WS-8:
- * the details are the action's own content); otherwise a hint says to switch. Loads ON OPEN, once. A result that
- * arrives after this card unmounts (e.g. the active workspace changed — the parent re-keys cards by it) is dropped.
- * Every line is rendered as TEXT.
+ * the details are the action's own content); otherwise a hint says to switch. Loads on EVERY open, so an
+ * "unavailable" answer can be retried and a state is never older than the open. Only the answer to the latest open
+ * is shown, only while this card is mounted (the parent re-keys cards by the active workspace), and only if it is
+ * about THIS approval. Every line is rendered as TEXT.
  */
 function DetailsDisclosure({
   approval,
@@ -188,14 +191,17 @@ function DetailsDisclosure({
   readonly onOpenDetail?: (approvalId: string) => Promise<ApprovalDetailResult>;
 }): ReactElement | null {
   const [open, setOpen] = useState(false);
-  const [detail, setDetail] = useState<UiSafeApprovalDetail | "loading" | "unavailable" | undefined>(undefined);
+  const [detail, setDetail] = useState<UiSafeApprovalDetail | "loading" | "unavailable">("loading");
   const alive = useRef(true);
-  useEffect(
-    () => () => {
+  const openSeq = useRef(0);
+  // Set back to true in the effect BODY: StrictMode (the dev build) mounts, cleans up and mounts again, and a flag
+  // set only by the cleanup stays false for the card's whole life (every answer was dropped — step-5 review).
+  useEffect(() => {
+    alive.current = true;
+    return () => {
       alive.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
   if (onOpenDetail === undefined || approval.subjectKind === "semantic_mutation") return null;
   if (approval.workspaceId === undefined || approval.workspaceId !== activeWorkspaceId) {
     return <div className="sow-approval-hint">Switch to its workspace to see details</div>;
@@ -203,13 +209,13 @@ function DetailsDisclosure({
   const toggle = (): void => {
     const next = !open;
     setOpen(next);
-    if (next && detail === undefined) {
-      setDetail("loading");
-      void onOpenDetail(approval.id).then((r) => {
-        if (!alive.current) return;
-        setDetail(r.ok ? r.detail : "unavailable");
-      });
-    }
+    const seq = ++openSeq.current;
+    if (!next) return;
+    setDetail("loading");
+    void onOpenDetail(approval.id).then((r) => {
+      if (!alive.current || seq !== openSeq.current) return;
+      setDetail(r.ok && r.detail.approvalId === approval.id ? r.detail : "unavailable");
+    });
   };
   return (
     <>
@@ -224,7 +230,7 @@ function DetailsDisclosure({
       </button>
       {open ? (
         <div id={detailsId(approval.id)} className="sow-approval-details" role="group" aria-label="Approval details">
-          {detail === "loading" || detail === undefined ? (
+          {detail === "loading" ? (
             <div className="sow-approval-details-meta">Loading…</div>
           ) : detail === "unavailable" ? (
             <div className="sow-approval-details-meta">Details unavailable</div>
@@ -251,9 +257,11 @@ function DetailsDisclosure({
 
 /**
  * Linear slice 3+4 — an APPROVED external card whose write has not gone out. Shows the system, the Details
- * disclosure, and "Send now", which re-runs the SAME guarded dispatch. The button is disabled while a send is in
- * flight (a second click does nothing) and when there is no live worker; the result line is the worker's re-read
- * state, never a guess.
+ * disclosure, and "Send now", which re-runs the SAME guarded dispatch. Send now does nothing while a send is in
+ * flight (the button is disabled, and a ref catches a second click that lands before the re-render), when there is
+ * no live worker, and once the write is sent. The result line is the worker's re-read state, never a guess, and a
+ * send closes an open Details panel so it never shows the state from before the send. ⚠ The screen guards are
+ * per mount (a scope switch remounts the card); the rule-3 guard is the worker's single-flight sender.
  */
 function UnsentCard({
   approval,
@@ -267,39 +275,50 @@ function UnsentCard({
   readonly onSendNow?: (approvalId: string) => Promise<SendNowResult>;
 }): ReactElement {
   const [sending, setSending] = useState(false);
-  const [result, setResult] = useState<string | undefined>(undefined);
+  const [result, setResult] = useState<{ readonly label: string; readonly sent: boolean } | undefined>(undefined);
+  const [detailsKey, setDetailsKey] = useState(0);
   const inFlight = useRef(false);
   const alive = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    alive.current = true; // in the BODY — see DetailsDisclosure (StrictMode)
+    return () => {
       alive.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
+  const sent = result?.sent === true;
   const send = (): void => {
-    if (onSendNow === undefined || inFlight.current) return;
+    if (onSendNow === undefined || inFlight.current || sent) return;
     inFlight.current = true;
     setSending(true);
     void onSendNow(approval.id).then((r) => {
       inFlight.current = false;
       if (!alive.current) return;
       setSending(false);
-      setResult(r.ok ? sendStateLabel(r.result.sendState, approval.targetSystem, r.result.refusal) : "Couldn't send — try again");
+      setDetailsKey((k) => k + 1);
+      setResult(
+        r.ok
+          ? { label: sendStateLabel(r.result.sendState, approval.targetSystem, r.result.refusal), sent: r.result.sendState === "sent" }
+          : { label: "Couldn't send — try again", sent: false },
+      );
     });
   };
   return (
     <li className="sow-approval-card sow-approval-card--notsent" role="listitem" data-approval-id={approval.id}>
       <div className="sow-approval-head">
         <span className="sow-approval-action">{cardSubject(approval)}</span>
-        <span className="sow-approval-status sow-approval-status--notsent">not sent</span>
+        {sent ? (
+          <span className="sow-approval-status sow-approval-status--sent">sent</span>
+        ) : (
+          <span className="sow-approval-status sow-approval-status--notsent">not sent</span>
+        )}
       </div>
       <div className="sow-approval-meta">to {systemName(approval.targetSystem)}</div>
       <div className="sow-approval-actions">
-        <DetailsDisclosure approval={approval} activeWorkspaceId={activeWorkspaceId} onOpenDetail={onOpenDetail} />
+        <DetailsDisclosure key={detailsKey} approval={approval} activeWorkspaceId={activeWorkspaceId} onOpenDetail={onOpenDetail} />
         <button
           type="button"
           className="sow-approval-btn sow-approval-btn--send"
-          disabled={onSendNow === undefined || sending}
+          disabled={onSendNow === undefined || sending || sent}
           onClick={send}
           title={onSendNow === undefined ? "Connect the worker to send" : undefined}
         >
@@ -308,7 +327,7 @@ function UnsentCard({
       </div>
       {result !== undefined ? (
         <div className="sow-approval-sendstate" role="status">
-          {result}
+          {result.label}
         </div>
       ) : null}
     </li>
@@ -473,7 +492,7 @@ function SnoozedCard({
 }
 
 export function Approvals(props: ApprovalsProps): ReactElement {
-  const { approvals, onDecide, focusedApprovalId, activeWorkspaceId, onOpenDetail, unsent = [], onSendNow } = props;
+  const { approvals, onDecide, focusedApprovalId, activeWorkspaceId, onOpenDetail, unsent = [], unsentLoadFailed = false, onSendNow } = props;
   // Cards are keyed by the ACTIVE workspace too, so a scope change remounts them: every open detail is cleared and
   // a late answer for the old scope is dropped (WS-8 — no employer content lingers under a personal scope).
   const scopeKey = activeWorkspaceId ?? "global";
@@ -528,9 +547,14 @@ export function Approvals(props: ApprovalsProps): ReactElement {
           ) : null}
         </>
       )}
-      {unsent.length > 0 ? (
+      {unsent.length > 0 || unsentLoadFailed ? (
         <div className="sow-approval-notsent">
           <div className="sow-approval-section-label">Not sent</div>
+          {unsentLoadFailed ? (
+            <div className="sow-approval-notsent-error" role="status">
+              Couldn't load the Not sent list
+            </div>
+          ) : null}
           <ul className="sow-approval-list" role="list" aria-label="Approved but not sent">
             {unsent.map((a) => (
               <UnsentCard

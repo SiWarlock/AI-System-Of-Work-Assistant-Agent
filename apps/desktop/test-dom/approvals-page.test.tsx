@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { StrictMode } from "react";
 import { render, screen, cleanup, fireEvent, within, act } from "@testing-library/react";
 import { Approvals } from "../renderer/surfaces/approvals/Approvals";
 import type { UiSafeApproval } from "@sow/contracts/api/ui-safe";
@@ -282,7 +283,8 @@ describe("Approvals surface (§9.8) — edit payload-editing form", () => {
 
 // Linear slice 3+4, step 5 (owner decisions 2026-09-22): details load ON OPEN and only for a card in the ACTIVE
 // workspace; approved cards whose write has not gone out stay visible with their real state; Send now re-runs the
-// guarded dispatch and cannot double-fire. The screen never passes a workspace — the App resolves the active one.
+// guarded dispatch, and the screen does not fire it twice (the worker's single-flight sender is the rule-3 guard).
+// The screen never passes a workspace — the App resolves the active one.
 describe("Approvals — details on open, Not sent, Send now (Linear slice 3+4)", () => {
   const EMP = "employer-work";
   const card = apr("e1", { workspaceId: EMP, targetSystem: "linear", subjectKind: "external_action" });
@@ -331,7 +333,7 @@ describe("Approvals — details on open, Not sent, Send now (Linear slice 3+4)",
     expect(screen.getByRole("button", { name: "Details" }).getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("lists approved-but-unsent cards under 'Not sent', and Send now fires ONCE while in flight", async () => {
+  it("lists approved-but-unsent cards under 'Not sent', and Send now fires once for two clicks", async () => {
     const unsentCard = apr("u1", { status: "approved", workspaceId: EMP, targetSystem: "linear", subjectKind: "external_action" });
     let finish: (v: { ok: true; result: { approvalId: string; sendState: "sent" } }) => void = () => {};
     const onSendNow = vi.fn(() => new Promise<{ ok: true; result: { approvalId: string; sendState: "sent" } }>((r) => (finish = r)));
@@ -366,5 +368,129 @@ describe("Approvals — details on open, Not sent, Send now (Linear slice 3+4)",
     expect(screen.queryByRole("button", { name: "Details" })).toBeNull();
     const send = screen.queryByRole("button", { name: "Send now" }) as HTMLButtonElement | null;
     expect(send === null || send.disabled).toBe(true);
+  });
+});
+
+// Step-5 review (2026-09-22). Each test here pins ONE guard on its own; the review showed that overlapping guards
+// let a test pass with any single one removed.
+describe("Approvals — step-5 review fixes", () => {
+  const EMP = "employer-work";
+  const card = apr("e1", { workspaceId: EMP, targetSystem: "linear", subjectKind: "external_action" });
+  const unsentCard = apr("u1", { status: "approved", workspaceId: EMP, targetSystem: "linear", subjectKind: "external_action" });
+  const detail = { approvalId: "e1", sendState: "awaiting_approval" as const, targetSystem: "linear" as const, title: "Fix the login bug" };
+  const decide = async () => "applied" as const;
+
+  it("⛔ under StrictMode (the dev build the owner runs), opening Details shows the content", async () => {
+    render(
+      <StrictMode>
+        <Approvals approvals={[card]} onDecide={decide} activeWorkspaceId={EMP} onOpenDetail={async () => ({ ok: true as const, detail })} />
+      </StrictMode>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(await screen.findByText("Fix the login bug")).toBeTruthy();
+  });
+
+  it("⛔ under StrictMode, Send now shows its result and can be pressed again", async () => {
+    const onSendNow = vi.fn(async () => ({ ok: true as const, result: { approvalId: "u1", sendState: "writes_off" as const } }));
+    render(
+      <StrictMode>
+        <Approvals approvals={[]} unsent={[unsentCard]} activeWorkspaceId={EMP} onSendNow={onSendNow} onDecide={decide} />
+      </StrictMode>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    expect(await screen.findByText("Not sent: writes to Linear are off")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Send now" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("Details loads again on every open, so an 'unavailable' answer can be retried", async () => {
+    const answers: ({ ok: false } | { ok: true; detail: typeof detail })[] = [{ ok: false }, { ok: true, detail }];
+    const onOpenDetail = vi.fn(async (_id: string) => answers.shift() ?? { ok: false as const });
+    render(<Approvals approvals={[card]} onDecide={decide} activeWorkspaceId={EMP} onOpenDetail={onOpenDetail} />);
+    const btn = screen.getByRole("button", { name: "Details" });
+    fireEvent.click(btn);
+    expect(await screen.findByText("Details unavailable")).toBeTruthy();
+    fireEvent.click(btn); // close
+    fireEvent.click(btn); // open again
+    expect(await screen.findByText("Fix the login bug")).toBeTruthy();
+    expect(onOpenDetail).toHaveBeenCalledTimes(2);
+  });
+
+  it("an answer about a DIFFERENT approval is not shown", async () => {
+    render(
+      <Approvals
+        approvals={[card]}
+        onDecide={decide}
+        activeWorkspaceId={EMP}
+        onOpenDetail={async () => ({ ok: true as const, detail: { ...detail, approvalId: "other" } })}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(await screen.findByText("Details unavailable")).toBeTruthy();
+    expect(screen.queryByText("Fix the login bug")).toBeNull();
+  });
+
+  it("the Send now button is disabled while a send is in flight", async () => {
+    let finish: (v: { ok: true; result: { approvalId: string; sendState: "writes_off" } }) => void = () => {};
+    const onSendNow = vi.fn(() => new Promise<{ ok: true; result: { approvalId: string; sendState: "writes_off" } }>((r) => (finish = r)));
+    render(<Approvals approvals={[]} unsent={[unsentCard]} activeWorkspaceId={EMP} onSendNow={onSendNow} onDecide={decide} />);
+    const btn = screen.getByRole("button", { name: "Send now" }) as HTMLButtonElement;
+    fireEvent.click(btn);
+    expect(btn.disabled).toBe(true);
+    await act(async () => finish({ ok: true, result: { approvalId: "u1", sendState: "writes_off" } }));
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("two clicks before the screen re-renders still send once (the in-flight guard, on its own)", async () => {
+    const onSendNow = vi.fn(() => new Promise<never>(() => {}));
+    render(<Approvals approvals={[]} unsent={[unsentCard]} activeWorkspaceId={EMP} onSendNow={onSendNow} onDecide={decide} />);
+    const btn = screen.getByRole("button", { name: "Send now" }) as HTMLButtonElement;
+    act(() => {
+      btn.click();
+      btn.click(); // same act: React has not re-rendered, so the button is not disabled yet
+    });
+    expect(onSendNow).toHaveBeenCalledTimes(1);
+  });
+
+  it("once a write is SENT, the card says so and Send now is no longer offered as a working control", async () => {
+    render(
+      <Approvals
+        approvals={[]}
+        unsent={[unsentCard]}
+        activeWorkspaceId={EMP}
+        onSendNow={async () => ({ ok: true as const, result: { approvalId: "u1", sendState: "sent" as const } })}
+        onDecide={decide}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    expect(await screen.findByText("Sent")).toBeTruthy();
+    const li = screen.getByRole("button", { name: "Send now" }).closest("li") as HTMLElement;
+    expect(within(li).getByText("sent")).toBeTruthy();
+    expect(within(li).queryByText("not sent")).toBeNull();
+    expect((screen.getByRole("button", { name: "Send now" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("after Send now, an open Details panel closes, so it never shows the state from before the send", async () => {
+    const unsentDetail = { approvalId: "u1", sendState: "writes_off" as const, targetSystem: "linear" as const, title: "Old state title" };
+    render(
+      <Approvals
+        approvals={[]}
+        unsent={[unsentCard]}
+        activeWorkspaceId={EMP}
+        onOpenDetail={async () => ({ ok: true as const, detail: unsentDetail })}
+        onSendNow={async () => ({ ok: true as const, result: { approvalId: "u1", sendState: "sent" as const } })}
+        onDecide={decide}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(await screen.findByText("Old state title")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    expect(await screen.findByText("Sent")).toBeTruthy();
+    expect(screen.queryByText("Old state title")).toBeNull();
+    expect(screen.getByRole("button", { name: "Details" }).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("a failed load of the Not sent list is SAID, not shown as an empty list", () => {
+    render(<Approvals approvals={[]} unsent={[]} unsentLoadFailed activeWorkspaceId={EMP} onDecide={decide} />);
+    expect(screen.getByText("Couldn't load the Not sent list")).toBeTruthy();
   });
 });

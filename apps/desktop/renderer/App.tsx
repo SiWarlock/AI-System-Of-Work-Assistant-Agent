@@ -180,40 +180,58 @@ export function App(): ReactElement {
     if (handle === null) return Promise.resolve("unavailable");
     return handle.decideApproval(approvalId, decision).then((r) => {
       if (!r.ok) return r.reason;
+      // An approval may now be a card that was NOT sent (e.g. writes off). The fold changes the approved set, which
+      // refreshes the Not sent list (the effect below) — the same path an approval from Telegram takes.
       store.dispatch((s) => hydrateApprovals(s, [r.approval]));
-      // An approval may now be a card that was NOT sent (e.g. writes off): refresh the active scope's list.
-      if (r.applied && decision === "approve") refreshUnsent();
       return r.applied ? "applied" : "already_resolved";
     });
   };
 
   // Linear slice 3+4 — the Approvals screen's send surface. ⛔ WS-8: every request is made with the ACTIVE scope's
-  // onboarded workspace id — NEVER a card's own (every card carries one). The worker serves an approval's details
-  // only for the workspace it is asked about, and it cannot see the screen's scope, so this is where "employer
-  // content never reaches a personal scope" is decided. Global / no onboarded workspace / no live worker ⇒ nothing
-  // is requested. Pinned by test-dom/app-approval-scope.test.tsx.
+  // onboarded workspace id, not a card's own (every card carries one). The worker serves an approval's details only
+  // for the workspace it is asked about, and it cannot see the screen's scope, so this is where "employer content
+  // never reaches a personal scope" is decided. Global / no onboarded workspace / no live worker ⇒ nothing is
+  // requested. test-dom/app-approval-scope.test.tsx pins that the active scope's id is what is asked; a card's own
+  // workspace can only equal it where a request is possible (Details is offered only for a same-workspace card, and
+  // the Not sent list is filtered to the active workspace), and that test's header says why that is not a pin.
   const activeWorkspaceId = resolveOnboardedWorkspaceId(state, state.scope);
-  const [unsent, setUnsent] = useState<{ readonly workspaceId: string | null; readonly approvals: readonly UiSafeApproval[] }>({
-    workspaceId: null,
-    approvals: [],
-  });
+  const [unsent, setUnsent] = useState<{
+    readonly workspaceId: string | null;
+    readonly approvals: readonly UiSafeApproval[];
+    readonly loadFailed: boolean;
+  }>({ workspaceId: null, approvals: [], loadFailed: false });
+  const unsentSeq = useRef(0);
   const refreshUnsent = (): void => {
     const workspaceId = resolveOnboardedWorkspaceId(store.getSnapshot(), store.getSnapshot().scope);
     const handle = liveRef.current;
     if (workspaceId === null || handle === null) return;
+    const seq = ++unsentSeq.current;
     void handle.unsentApprovals(workspaceId).then((r) => {
-      // Keep the previous list on a failure (a wrong "not sent" list is worse than a stale one), and drop a late
-      // answer for a scope that is no longer active.
-      if (!r.ok) return;
+      // Only the NEWEST request writes: an older answer that arrives last would put back a card that has since been
+      // sent. And only while its scope is still the active one.
+      if (seq !== unsentSeq.current) return;
       if (resolveOnboardedWorkspaceId(store.getSnapshot(), store.getSnapshot().scope) !== workspaceId) return;
-      setUnsent({ workspaceId, approvals: r.approvals });
+      if (!r.ok) {
+        // Keep a list already shown for this workspace (a stale list beats a wrong one); with none, SAY it failed —
+        // an empty list would read as "everything was sent".
+        setUnsent((prev) => (prev.workspaceId === workspaceId ? prev : { workspaceId, approvals: [], loadFailed: true }));
+        return;
+      }
+      setUnsent({ workspaceId, approvals: r.approvals, loadFailed: false });
     });
   };
   const onApprovalsSurface = state.route.surface === "approvals";
+  // An approval from ANY path (this screen, Telegram over the push stream, a retry that finds it already approved)
+  // can leave a write not sent, so the list also refreshes whenever the set of approved cards changes.
+  const approvedKey = [...state.approvals.values()]
+    .filter((a) => a.status === "approved")
+    .map((a) => a.id)
+    .sort()
+    .join(",");
   useEffect(() => {
     if (onApprovalsSurface && hasLiveWorker) refreshUnsent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onApprovalsSurface, hasLiveWorker, activeWorkspaceId]);
+  }, [onApprovalsSurface, hasLiveWorker, activeWorkspaceId, approvedKey]);
   const onOpenApprovalDetail = (approvalId: string): Promise<ApprovalDetailResult> => {
     const handle = liveRef.current;
     if (activeWorkspaceId === null || handle === null) return Promise.resolve({ ok: false });
@@ -222,10 +240,9 @@ export function App(): ReactElement {
   const onSendNow = (approvalId: string): Promise<SendNowResult> => {
     const handle = liveRef.current;
     if (activeWorkspaceId === null || handle === null) return Promise.resolve({ ok: false });
-    return handle.sendNow(activeWorkspaceId, approvalId).then((r) => {
-      refreshUnsent();
-      return r;
-    });
+    // No list refresh here: the card keeps the worker's re-read state on screen (a sent card would otherwise
+    // vanish with its "Sent" line). It leaves the list at the next refresh.
+    return handle.sendNow(activeWorkspaceId, approvalId);
   };
 
   // §9.7 triage disposition: REQUEST the worker's replay-safe pipeline re-entry (deterministic
@@ -388,8 +405,10 @@ export function App(): ReactElement {
           focusedApprovalId={state.route.approvalId}
           activeWorkspaceId={activeWorkspaceId}
           onOpenDetail={hasLiveWorker ? onOpenApprovalDetail : undefined}
-          // Only the list for the scope being VIEWED — a list fetched for the previous scope is never shown.
-          unsent={unsent.workspaceId === activeWorkspaceId ? unsent.approvals : []}
+          // Only the list for the workspace being VIEWED, and only its own rows: a list fetched for the previous
+          // scope is never shown, nor a row the worker should not have returned.
+          unsent={unsent.workspaceId === activeWorkspaceId ? unsent.approvals.filter((a) => a.workspaceId === activeWorkspaceId) : []}
+          unsentLoadFailed={unsent.workspaceId === activeWorkspaceId && unsent.loadFailed}
           onSendNow={hasLiveWorker ? onSendNow : undefined}
         />
       ) : state.route.surface === "ingestion" ? (
