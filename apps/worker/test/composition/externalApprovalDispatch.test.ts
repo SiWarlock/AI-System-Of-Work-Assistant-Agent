@@ -188,13 +188,24 @@ describe("dispatchExternalApproval — an approved card's write is SENT through 
 });
 
 describe("dispatchExternalApproval — refuses WITHOUT writing when anything does not line up", () => {
-  it("does nothing for a card that is not approved (the port fires on edit and defer too; reject closes — see below)", async () => {
+  it("does nothing for a card that is still open (the port fires on defer too; reject and edit close — see below)", async () => {
     const v = vendor();
     const b = await backends(v.transport);
     const approval = await proposeAndApprove(b, "st");
-    for (const status of ["edited", "deferred", "pending"] as const) {
+    for (const status of ["deferred", "pending"] as const) {
       expect(await dispatchExternalApproval({ ...approval, status }, depsFor(b))).toEqual({ kind: "skipped", reason: "not_approved" });
     }
+    expect(v.calls).toHaveLength(0);
+  });
+
+  it("⛔ an EDITED card closes its saved entry too — edited is terminal, so the original will never be sent", async () => {
+    // Review 2026-09-22 (critic, measured): an edited card's entry stayed `proposed`, and an armed drain re-drove
+    // it on every pass (approval_pending, attempts+1), forever.
+    const v = vendor();
+    const b = await backends(v.transport);
+    const card = await proposeAndApprove(b, "edit-close");
+    expect(await dispatchExternalApproval({ ...card, status: "edited" }, depsFor(b))).toEqual({ kind: "closed" });
+    expect((await entryFor(b, "edit-close")).status).toBe("rejected");
     expect(v.calls).toHaveLength(0);
   });
 
@@ -333,8 +344,13 @@ describe("⛔ OWNER DECISION — REFUSE AND SAY SO: every approved card that is 
   });
 });
 
-describe("⛔ OWNER DECISION — STAYS RETRYABLE: refused while off, sent once the switch is on", () => {
-  it("the same saved entry is sent after a restart with the sender armed", async () => {
+// ⚠ WHAT THIS PINS, stated because the first version overclaimed it (review 2026-09-22): the DISPATCHER keeps a
+// writes_off card sendable — the saved entry survives, and a later dispatch with the sender armed sends it once.
+// It does NOT show that anything in production calls that later dispatch: the decide command dispatches only on
+// a real transition, so an already-approved card is never re-dispatched until the Approvals screen's "Send now"
+// (step 4) exists. On a desktop install nothing else re-drives it.
+describe("⛔ OWNER DECISION — STAYS RETRYABLE (the dispatcher's half): refused while off, sendable once armed", () => {
+  it("the same saved entry is sent by a later dispatch after a restart with the sender armed", async () => {
     const dbPath = join(mkdtempSync(join(tmpdir(), "sow-retry-")), "ops.db");
     const off = await assembleBackends({ now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT], dbPath }, { candidateOutput: {} });
     await off.repos.workspaceConfig.upsert(

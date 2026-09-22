@@ -97,10 +97,11 @@ async function seedHeld(
 }
 
 describe("drainOutbox — shouldDrive: an entry whose system has no real sender is left untouched", () => {
-  it("skips it (no dispatch, no store write, no attempts bump) and still drives the others", async () => {
+  it("skips it (no dispatch, no attempts bump, status unchanged) and still drives a drivable one in the same pass", async () => {
     const outbox = new InMemoryOutbox();
     const receiptStore = new InMemoryReceiptStore();
     await seedHeld(outbox, "idem_skip", "outbox_skip");
+    await seedHeld(outbox, "idem_drive", "outbox_drive");
     const createCalls = { n: 0 };
     const result = await drainOutbox(outbox, {
       gatewayDeps: makeGatewayDeps(makeAdapter({ createCalls }), receiptStore),
@@ -109,13 +110,42 @@ describe("drainOutbox — shouldDrive: an entry whose system has no real sender 
       backoffCfg,
       clock,
       workspaceId: "employer-work",
-      shouldDrive: () => false,
+      shouldDrive: (e) => e.idempotencyKey === "idem_drive",
     });
-    expect(createCalls.n).toBe(0);
+    expect(createCalls.n).toBe(1);
     expect(result.skipped).toBe(1);
-    const entry = await outbox.get("outbox_skip");
-    expect(isOk(entry) && entry.value.status).toBe("retry_queued");
-    expect(isOk(entry) && entry.value.attempts).toBe(0);
+    const skipped = await outbox.get("outbox_skip");
+    expect(isOk(skipped) && skipped.value.status).toBe("retry_queued");
+    expect(isOk(skipped) && skipped.value.attempts).toBe(0);
+  });
+
+  it("⛔ a pass full of skipped entries cannot starve a drivable one: a skipped entry is pushed back (review 2026-09-22)", async () => {
+    // listDue returns the OLDEST due entries first, up to `limit`. If skipped entries stayed due, the same ones
+    // would fill every pass and a drivable entry behind them would never be reached (measured by the review).
+    const outbox = new InMemoryOutbox();
+    const receiptStore = new InMemoryReceiptStore();
+    await seedHeld(outbox, "idem_a1", "a_skip_1");
+    await seedHeld(outbox, "idem_a2", "a_skip_2");
+    await seedHeld(outbox, "idem_z", "z_drive");
+    const createCalls = { n: 0 };
+    const pass = () =>
+      drainOutbox(outbox, {
+        gatewayDeps: makeGatewayDeps(makeAdapter({ createCalls }), receiptStore),
+        now: clock(),
+        limit: 2,
+        backoffCfg,
+        clock,
+        workspaceId: "employer-work",
+        shouldDrive: (e) => e.idempotencyKey === "idem_z",
+      });
+    await pass();
+    expect(createCalls.n).toBe(0); // the window was full of skipped entries
+    await pass();
+    expect(createCalls.n).toBe(1); // …which were pushed back, so the drivable one is now reached
+    const skipped = await outbox.get("a_skip_1");
+    expect(isOk(skipped) && skipped.value.status).toBe("retry_queued"); // never dropped, never expired
+    expect(isOk(skipped) && skipped.value.attempts).toBe(0);
+    expect(isOk(skipped) && skipped.value.nextAttemptAt !== undefined && skipped.value.nextAttemptAt > clock()).toBe(true);
   });
 });
 

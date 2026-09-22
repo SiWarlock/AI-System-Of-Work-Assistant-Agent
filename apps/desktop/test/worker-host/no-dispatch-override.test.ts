@@ -20,7 +20,11 @@ describe("worker host → bootWorker: no dispatchApproval override", () => {
     expect(codeLines.some((l) => l.includes("boot.bootWorker("))).toBe(true);
   });
 
-  it("passes no `dispatchApproval` key (a comment may mention it; code may not)", () => {
-    expect(codeLines.filter((l) => /\bdispatchApproval\s*:/.test(l))).toEqual([]);
+  it("passes no `dispatchApproval` key — explicit (`dispatchApproval: …`) or shorthand (`dispatchApproval,`)", () => {
+    // ⚠ A textual check cannot see a key returned by a spread helper defined in ANOTHER module (the config also
+    // spreads `…ArmForward(config)` helpers). Those helpers are data-only arming forwards today; one that ever
+    // returned a dispatch function would slip past this test. (Review 2026-09-22.)
+    expect(codeLines.filter((l) => /\bdispatchApproval\b\s*[:,}]/.test(l))).toEqual([]);
+    expect(codeLines.filter((l) => /\bdispatchApproval\b/.test(l))).toEqual([]); // not even referenced in code
   });
 });

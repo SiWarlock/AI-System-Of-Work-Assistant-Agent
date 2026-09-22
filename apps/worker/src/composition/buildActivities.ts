@@ -1142,7 +1142,7 @@ export function buildProofSpineActivities(
   // Approvals-screen dispatch (`externalApprovalDispatch.ts`) folds a HELD outcome back onto that entry as
   // `retry_queued` — so an approved write that is held is kept, not lost. ⚠ But this drain only runs where the
   // proof spine does (auto-ingest on), and only for ITS workspace; on a desktop install nothing re-drives a held
-  // or writes-off entry until the owner uses "Send now" (step 4). The Temporal `runApprovalFlow` path still
+  // or writes-off entry — "Send now" (step 4, not built yet) is what will. The Temporal `runApprovalFlow` path still
   // drops a `held` dispatch (approvalFlow.ts); it has no production driver. (An earlier cut of this comment said
   // "nothing puts a held external write in the outbox today", which slice 3+4 made false.)
   // task 24.8 / REQ-NF-006 — bind the OBS-2 depth signal to the DURABLE health store.
@@ -1189,7 +1189,8 @@ export function buildProofSpineActivities(
     },
   });
   // ⛔ An entry is DRIVEN only when its own system has a REAL sender (`shouldDrive` above; owner decision
-  // 2026-09-22, Linear slice 3+4). Otherwise it is skipped untouched: the write adapters for that system sit over
+  // 2026-09-22, Linear slice 3+4). Otherwise it is skipped — not driven, status and attempts unchanged, only pushed back in time so it cannot starve
+  // entries behind it: the write adapters for that system sit over
   // the in-memory stub, which FABRICATES success receipts, or over a router that would close it as
   // `target_not_armed` — and since step 2 this outbox holds the saved action of every approved Approvals-screen
   // card. The pass itself always runs, so the OBS-2 depth probe keeps reporting while writes are off (review

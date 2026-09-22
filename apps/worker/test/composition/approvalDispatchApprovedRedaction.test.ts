@@ -516,6 +516,31 @@ describe("the proof-spine gateway's approval check — review follow-ups (rules 
     expect(creates).toHaveLength(0);
   });
 
+  it("⛔ per system: with ONLY Linear armed, an approved Todoist card is not sent (it would be closed by the Linear router)", async () => {
+    const creates: AdapterTransportRequest[] = [];
+    const b = await assembleBackends(
+      {
+        now: () => NOW,
+        allowedLocalEndpoints: [LOCAL_ENDPOINT],
+        writeTransport: {
+          enabled: true,
+          targets: ["linear"],
+          make: () => (req) => {
+            if (req.op !== "query") creates.push(req);
+            return Promise.resolve(req.op === "query" ? { ok: true, object: null } : { ok: true, object: { externalObjectId: "x" } });
+          },
+        },
+      },
+      { candidateOutput: {} },
+    );
+    openBackends.push(b);
+    const { action, envelope } = linearPair("todo-only-linear", "hash:T");
+    await approvedCard(b, envelope, "hash:T");
+    const res = await buildProofSpineActivities(b, paramsFor()).approvalDispatchApproved(action, envelope);
+    expect(res.ok).toBe(false);
+    expect(creates).toHaveLength(0);
+  });
+
   it("⛔ owner decision: with NO real sender armed, an approved card is never sent through the stub", async () => {
     const b = await assembleBackends({ now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT] }, { candidateOutput: {} });
     openBackends.push(b);

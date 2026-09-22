@@ -166,9 +166,10 @@ export interface DrainDeps {
   readonly clock: () => string;
   readonly jitter?: (baseDelayMs: number) => number;
   /**
-   * OPTIONAL per-entry filter, applied after the workspace scope check. `false` ⇒ the entry is SKIPPED exactly
-   * like a foreign-workspace one: no dispatch, no store write, no attempts bump. Absent ⇒ every in-scope entry
-   * is driven (byte-equivalent). The worker binds it to "this entry's system has a REAL sender", so an entry is
+   * OPTIONAL per-entry filter, applied after the workspace scope check. `false` ⇒ the entry is SKIPPED: no
+   * dispatch, no attempts bump, status unchanged — but its `nextAttemptAt` is pushed out by the maximum backoff so
+   * skipped entries cannot starve drivable ones behind them in `listDue`'s oldest-first window. Absent ⇒ every
+   * in-scope entry is driven (byte-equivalent). The worker binds it to "this entry's system has a REAL sender", so an entry is
    * never driven through the in-memory stub, which fabricates receipts (owner decision 2026-09-22), while the
    * depth probe above still runs on every pass.
    */
@@ -405,7 +406,17 @@ export async function drainOutbox(
       continue;
     }
     if (deps.shouldDrive !== undefined && !deps.shouldDrive(entry)) {
+      // ⛔ PUSH IT BACK, don't leave it due (review 2026-09-22, measured): `listDue` returns the OLDEST due entries
+      // first, up to `limit`, so entries that are skipped but stay due would fill every pass and starve a drivable
+      // entry behind them forever. Moving `nextAttemptAt` out by the maximum backoff lets later entries through.
+      // Status and attempts are unchanged — it is waiting for its system to be armed, not failing — and it is
+      // never dropped or expired. (The foreign-workspace skip above keeps its own "no store write" contract.)
       counts.skipped += 1;
+      await outbox.update({
+        ...entry,
+        nextAttemptAt: new Date(new Date(deps.now).getTime() + deps.backoffCfg.maxMs).toISOString(),
+        updatedAt: deps.clock(),
+      });
       continue;
     }
 

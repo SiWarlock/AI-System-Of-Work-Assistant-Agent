@@ -36,6 +36,13 @@ describe("bootWorker's external-approval dispatch binding", () => {
     }
   });
 
+  it("⛔ binds the 'say so' reporter: every unsent approved card is recorded in System Health", () => {
+    // Review 2026-09-22 (measured): deleting this binding left the whole suite green, and the owner's
+    // "refuse AND say so" would have gone silent in production.
+    expect(bindingBlock()).toContain("await approvalDispatchHealth.record(externalApprovalFailureToHealth(f, backends.now()));");
+    expect(BOOT).toContain("const approvalDispatchHealth: HealthSurface = createHealthSurface(");
+  });
+
   it("is used in BOTH routing arms (with and without the proof-spine path)", () => {
     expect(BOOT).toContain("external: externalApprovalDispatch,");
     expect(BOOT).toMatch(/:\s*externalApprovalDispatch;/);

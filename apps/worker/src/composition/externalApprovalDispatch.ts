@@ -4,7 +4,8 @@
 // proposer saved with the card (`approvalOutboxId`, step 2), checks that they still match the approval, and
 // dispatches them through the Tool Gateway — the only external-write path (rule 3) — scoped to the APPROVAL's
 // own workspace (rule 4). The outcome is folded onto the saved entry with the drain's own `applyOutcome`, so a
-// HELD write is kept for the wake drain to retry instead of being lost.
+// HELD write is kept (`retry_queued`) instead of being lost. ⚠ Kept is not retried: the wake drain that re-drives
+// it runs only where the proof spine does (auto-ingest on); on a desktop install it waits for "Send now" (step 4).
 //
 // ⛔ EVERY REFUSAL SENDS NOTHING. The guards run before the gateway and each one is a reason the write must not
 // go out: not approved, not an external action, no onboarded workspace, nothing saved, a saved entry for a
@@ -14,8 +15,9 @@
 // ⛔ OWNER DECISION (2026-09-22): WRITES OFF ⇒ REFUSE, NEVER FAKE. With no real sender selected, the write
 // adapters sit over the in-memory stub, which fabricates success receipts. So when the card's OWN system has no
 // real sender (`armedTargets`) this refuses as `writes_off` BEFORE the gateway: no receipt, and the saved entry
-// stays `proposed`. It can be sent later by re-running this dispatch once that system is armed (the Approvals
-// screen's "Send now", step 4); nothing else re-drives it on a desktop install, where the wake drain does not run.
+// stays `proposed`, so a LATER dispatch can still send it once that system is armed. ⚠ Nothing in production makes
+// that later dispatch yet: the decide command dispatches only on a real transition, so an already-approved card is
+// not re-dispatched. The Approvals screen's "Send now" (step 4, not built yet) is what will.
 //
 // ⭐ THE GATEWAY'S APPROVAL HOOKS ARE FIXED HERE, NOT RE-DERIVED. This runs only for a card the owner has
 // already approved, and only after the saved entry is proven to be that card's (same id, workspace and
@@ -63,7 +65,7 @@ export type ExternalApprovalRefusal =
 
 export type ExternalApprovalOutcome =
   | { readonly kind: "skipped"; readonly reason: "not_external" | "not_approved" }
-  /** A rejected or expired card's saved entry was closed, so nothing can re-drive it. */
+  /** A rejected or edited card's saved entry was closed, so nothing can re-drive it. */
   | { readonly kind: "closed" }
   | { readonly kind: "refused"; readonly reason: ExternalApprovalRefusal }
   | { readonly kind: "already_done" }
@@ -131,7 +133,9 @@ export async function dispatchExternalApproval(
 
 async function decideAndSend(approval: Approval, deps: ExternalApprovalDispatchDeps): Promise<ExternalApprovalOutcome> {
   if (approval.subjectKind === "semantic_mutation") return { kind: "skipped", reason: "not_external" };
-  if (approval.status === "rejected" || approval.status === "expired") return closeSavedEntry(approval, deps);
+  if (approval.status === "rejected" || approval.status === "edited" || approval.status === "expired") {
+    return closeSavedEntry(approval, deps);
+  }
   if (approval.status !== "approved") return { kind: "skipped", reason: "not_approved" };
 
   const ws = String(approval.workspaceId);
@@ -177,9 +181,11 @@ async function decideAndSend(approval: Approval, deps: ExternalApprovalDispatchD
 }
 
 /**
- * A rejected or expired card will never be sent, so close its saved entry. Otherwise the entry stays
- * `proposed` — "due" to the wake drain — and an armed drain would re-drive it forever (review 2026-09-22).
- * Touches only an entry that is provably this card's; anything else is left alone.
+ * A rejected or EDITED card will never be sent (both are terminal), so close its saved entry. Otherwise the entry
+ * stays `proposed` — "due" to the wake drain — and an armed drain would re-drive it forever (review 2026-09-22;
+ * `edited` added the same day after the critic measured it). `expired` is handled the same way for completeness,
+ * but nothing that sets `expired` calls this port today (the decide command has no expire decision; only the
+ * never-started approval-flow workflow expires cards). Touches only an entry that is provably this card's.
  */
 async function closeSavedEntry(approval: Approval, deps: ExternalApprovalDispatchDeps): Promise<ExternalApprovalOutcome> {
   const saved = await deps.outbox.get(approvalOutboxId(approval.id));

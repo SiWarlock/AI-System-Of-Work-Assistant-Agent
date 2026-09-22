@@ -178,7 +178,7 @@ describe("buildProofSpineActivities — the write-outbox drain-on-wake (task 21.
     }
   });
 
-  it("⛔ UNARMED: the drain does not run — the entry is untouched and the stub fabricates NO receipt", async () => {
+  it("⛔ UNARMED: the entry is not driven — status and attempts unchanged — and the stub fabricates NO receipt", async () => {
     const backends = await assembleBackends(
       { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT], dbPath: tempDbPath() },
       { candidateOutput: {} },
