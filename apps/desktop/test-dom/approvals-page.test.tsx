@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, screen, cleanup, fireEvent, within } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, within, act } from "@testing-library/react";
 import { Approvals } from "../renderer/surfaces/approvals/Approvals";
 import type { UiSafeApproval } from "@sow/contracts/api/ui-safe";
 
@@ -277,5 +277,94 @@ describe("Approvals surface (§9.8) — edit payload-editing form", () => {
       const card = screen.getByText("action:a1").closest("li") as HTMLElement;
       expect(card.getAttribute("aria-current")).toBeNull();
     });
+  });
+});
+
+// Linear slice 3+4, step 5 (owner decisions 2026-09-22): details load ON OPEN and only for a card in the ACTIVE
+// workspace; approved cards whose write has not gone out stay visible with their real state; Send now re-runs the
+// guarded dispatch and cannot double-fire. The screen never passes a workspace — the App resolves the active one.
+describe("Approvals — details on open, Not sent, Send now (Linear slice 3+4)", () => {
+  const EMP = "employer-work";
+  const card = apr("e1", { workspaceId: EMP, targetSystem: "linear", subjectKind: "external_action" });
+  const detail = {
+    approvalId: "e1",
+    sendState: "awaiting_approval" as const,
+    targetSystem: "linear" as const,
+    title: "Fix the login bug",
+    descriptionLines: ["<img src=x onerror=alert(1)>", "second line"],
+    priority: 2,
+  };
+
+  it("offers Details only for a card in the ACTIVE workspace; another workspace's card says to switch", () => {
+    const onOpenDetail = vi.fn(async () => ({ ok: true as const, detail }));
+    const { rerender } = render(
+      <Approvals approvals={[card]} onDecide={async () => "applied" as const} activeWorkspaceId="personal-life" onOpenDetail={onOpenDetail} />,
+    );
+    expect(screen.queryByRole("button", { name: "Details" })).toBeNull();
+    expect(screen.getByText(/switch to its workspace to see details/i)).toBeTruthy();
+    rerender(<Approvals approvals={[card]} onDecide={async () => "applied" as const} activeWorkspaceId={EMP} onOpenDetail={onOpenDetail} />);
+    expect(screen.getByRole("button", { name: "Details" })).toBeTruthy();
+    expect(onOpenDetail).not.toHaveBeenCalled(); // on OPEN, not on render
+  });
+
+  it("opening Details shows the title, the priority and each line as TEXT (never as markup)", async () => {
+    render(<Approvals approvals={[card]} onDecide={async () => "applied" as const} activeWorkspaceId={EMP} onOpenDetail={async () => ({ ok: true as const, detail })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(await screen.findByText("Fix the login bug")).toBeTruthy();
+    expect(screen.getByText("Priority: High")).toBeTruthy();
+    expect(screen.getByText("<img src=x onerror=alert(1)>")).toBeTruthy();
+    expect(document.querySelector("img")).toBeNull();
+    expect(screen.getByText("second line")).toBeTruthy();
+  });
+
+  it("⛔ an open detail is cleared when the active workspace changes, and a late answer is dropped", async () => {
+    let answer: (v: { ok: true; detail: typeof detail }) => void = () => {};
+    const slow = () => new Promise<{ ok: true; detail: typeof detail }>((r) => (answer = r));
+    const { rerender } = render(<Approvals approvals={[card]} onDecide={async () => "applied" as const} activeWorkspaceId={EMP} onOpenDetail={slow} />);
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    rerender(<Approvals approvals={[card]} onDecide={async () => "applied" as const} activeWorkspaceId="personal-life" onOpenDetail={slow} />);
+    await act(async () => answer({ ok: true, detail }));
+    expect(screen.queryByText("Fix the login bug")).toBeNull();
+    // …and switching BACK does not resurrect it: the disclosure starts closed, and the late answer was dropped.
+    rerender(<Approvals approvals={[card]} onDecide={async () => "applied" as const} activeWorkspaceId={EMP} onOpenDetail={slow} />);
+    expect(screen.queryByText("Fix the login bug")).toBeNull();
+    expect(screen.getByRole("button", { name: "Details" }).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("lists approved-but-unsent cards under 'Not sent', and Send now fires ONCE while in flight", async () => {
+    const unsentCard = apr("u1", { status: "approved", workspaceId: EMP, targetSystem: "linear", subjectKind: "external_action" });
+    let finish: (v: { ok: true; result: { approvalId: string; sendState: "sent" } }) => void = () => {};
+    const onSendNow = vi.fn(() => new Promise<{ ok: true; result: { approvalId: string; sendState: "sent" } }>((r) => (finish = r)));
+    render(<Approvals approvals={[]} unsent={[unsentCard]} activeWorkspaceId={EMP} onSendNow={onSendNow} onDecide={async () => "applied" as const} />);
+    expect(screen.getByText("Not sent")).toBeTruthy();
+    const btn = screen.getByRole("button", { name: "Send now" });
+    fireEvent.click(btn);
+    fireEvent.click(btn);
+    expect(onSendNow).toHaveBeenCalledTimes(1);
+    await act(async () => finish({ ok: true, result: { approvalId: "u1", sendState: "sent" } }));
+    expect(await screen.findByText("Sent")).toBeTruthy();
+  });
+
+  it("says honestly why a card was not sent", async () => {
+    const unsentCard = apr("u2", { status: "approved", workspaceId: EMP, targetSystem: "linear", subjectKind: "external_action" });
+    render(
+      <Approvals
+        approvals={[]}
+        unsent={[unsentCard]}
+        activeWorkspaceId={EMP}
+        onSendNow={async () => ({ ok: true as const, result: { approvalId: "u2", sendState: "writes_off" as const } })}
+        onDecide={async () => "applied" as const}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    expect(await screen.findByText("Not sent: writes to Linear are off")).toBeTruthy();
+  });
+
+  it("without a live worker, Details and Send now are not offered as working controls", () => {
+    const unsentCard = apr("u3", { status: "approved", workspaceId: EMP, targetSystem: "linear", subjectKind: "external_action" });
+    render(<Approvals approvals={[card]} unsent={[unsentCard]} activeWorkspaceId={EMP} />);
+    expect(screen.queryByRole("button", { name: "Details" })).toBeNull();
+    const send = screen.queryByRole("button", { name: "Send now" }) as HTMLButtonElement | null;
+    expect(send === null || send.disabled).toBe(true);
   });
 });

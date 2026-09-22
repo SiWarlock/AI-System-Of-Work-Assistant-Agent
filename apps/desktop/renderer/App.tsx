@@ -37,6 +37,8 @@ import { startLive, type StartLiveHandle } from "./lib/live";
 import type { AskResult } from "./lib/copilot-ask";
 import type { AuditDrillResult } from "./lib/audit-drill";
 import type { ApprovalDecision } from "./lib/approval-decision";
+import type { ApprovalDetailResult, SendNowResult } from "./lib/approval-send";
+import type { UiSafeApproval } from "@sow/contracts/api/ui-safe";
 import type { TriageDisposition, RerouteTarget } from "./lib/triage-disposition";
 import { reroutePickerOptions } from "./lib/reroute-picker";
 import { shouldShowOnboarding, shouldBackfillMarker, type FirstRunSignal } from "./lib/first-run-gate";
@@ -179,7 +181,50 @@ export function App(): ReactElement {
     return handle.decideApproval(approvalId, decision).then((r) => {
       if (!r.ok) return r.reason;
       store.dispatch((s) => hydrateApprovals(s, [r.approval]));
+      // An approval may now be a card that was NOT sent (e.g. writes off): refresh the active scope's list.
+      if (r.applied && decision === "approve") refreshUnsent();
       return r.applied ? "applied" : "already_resolved";
+    });
+  };
+
+  // Linear slice 3+4 — the Approvals screen's send surface. ⛔ WS-8: every request is made with the ACTIVE scope's
+  // onboarded workspace id — NEVER a card's own (every card carries one). The worker serves an approval's details
+  // only for the workspace it is asked about, and it cannot see the screen's scope, so this is where "employer
+  // content never reaches a personal scope" is decided. Global / no onboarded workspace / no live worker ⇒ nothing
+  // is requested. Pinned by test-dom/app-approval-scope.test.tsx.
+  const activeWorkspaceId = resolveOnboardedWorkspaceId(state, state.scope);
+  const [unsent, setUnsent] = useState<{ readonly workspaceId: string | null; readonly approvals: readonly UiSafeApproval[] }>({
+    workspaceId: null,
+    approvals: [],
+  });
+  const refreshUnsent = (): void => {
+    const workspaceId = resolveOnboardedWorkspaceId(store.getSnapshot(), store.getSnapshot().scope);
+    const handle = liveRef.current;
+    if (workspaceId === null || handle === null) return;
+    void handle.unsentApprovals(workspaceId).then((r) => {
+      // Keep the previous list on a failure (a wrong "not sent" list is worse than a stale one), and drop a late
+      // answer for a scope that is no longer active.
+      if (!r.ok) return;
+      if (resolveOnboardedWorkspaceId(store.getSnapshot(), store.getSnapshot().scope) !== workspaceId) return;
+      setUnsent({ workspaceId, approvals: r.approvals });
+    });
+  };
+  const onApprovalsSurface = state.route.surface === "approvals";
+  useEffect(() => {
+    if (onApprovalsSurface && hasLiveWorker) refreshUnsent();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onApprovalsSurface, hasLiveWorker, activeWorkspaceId]);
+  const onOpenApprovalDetail = (approvalId: string): Promise<ApprovalDetailResult> => {
+    const handle = liveRef.current;
+    if (activeWorkspaceId === null || handle === null) return Promise.resolve({ ok: false });
+    return handle.approvalDetail(activeWorkspaceId, approvalId);
+  };
+  const onSendNow = (approvalId: string): Promise<SendNowResult> => {
+    const handle = liveRef.current;
+    if (activeWorkspaceId === null || handle === null) return Promise.resolve({ ok: false });
+    return handle.sendNow(activeWorkspaceId, approvalId).then((r) => {
+      refreshUnsent();
+      return r;
     });
   };
 
@@ -341,6 +386,11 @@ export function App(): ReactElement {
           // yet (the producer leg is blocked — see route.ts's header note); this only wires the
           // target side of the type-narrowed route so it is ready once one does.
           focusedApprovalId={state.route.approvalId}
+          activeWorkspaceId={activeWorkspaceId}
+          onOpenDetail={hasLiveWorker ? onOpenApprovalDetail : undefined}
+          // Only the list for the scope being VIEWED — a list fetched for the previous scope is never shown.
+          unsent={unsent.workspaceId === activeWorkspaceId ? unsent.approvals : []}
+          onSendNow={hasLiveWorker ? onSendNow : undefined}
         />
       ) : state.route.surface === "ingestion" ? (
         <IngestionInbox

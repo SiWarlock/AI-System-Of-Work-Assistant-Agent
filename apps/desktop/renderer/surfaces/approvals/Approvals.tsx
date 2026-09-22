@@ -5,10 +5,11 @@
 // semantic_mutation (a Markdown/note write) — the card branches on `subjectKind`.
 //
 // Invariants:
-//   - WS-8: the inbox is safe cross-scope by construction — `UiSafeApproval` carries
-//     only ids + status + channel + timing (no raw workspace content, no actor/payloadHash),
-//     so ONE global inbox leaks nothing. (No scope prop: approvals carry no workspaceId to
-//     scope by — a workspace-labelled/filtered inbox is the contract-enrichment follow-up.)
+//   - WS-8: the inbox LIST is safe cross-scope by construction — `UiSafeApproval` carries only ids + status +
+//     channel + timing + the closed target system + its workspace id (no raw content, no actor/payloadHash), so
+//     ONE global inbox leaks nothing. An approval's DETAILS are content, so (Linear slice 3+4, owner decision
+//     2026-09-22) they load ON OPEN and are offered ONLY for a card whose workspace is the ACTIVE one; this
+//     surface never passes a workspace — the App resolves the active scope's (App.tsx), and the worker re-checks.
 //   - State machine (packages/domain approvalMachine): only a PENDING item is actionable
 //     (pending -> approved|edited|rejected|deferred). A DEFERRED item can only transition
 //     to pending|expired (the snooze-expiry workflow re-surfaces it), so it is DISPLAY-ONLY
@@ -19,8 +20,9 @@
 // NEVER import electron, node, or @sow/worker from a renderer file.
 
 import { useEffect, useRef, useState, type ReactElement } from "react";
-import type { UiSafeApproval } from "@sow/contracts/api/ui-safe";
+import type { UiSafeApproval, UiSafeApprovalDetail, ApprovalSendState, ApprovalSendRefusal } from "@sow/contracts/api/ui-safe";
 import type { ApprovalDecision } from "../../lib/approval-decision";
+import type { ApprovalDetailResult, SendNowResult } from "../../lib/approval-send";
 
 /**
  * The client-visible result of a decision request (§9.8). `"already_resolved"` covers BOTH wire
@@ -52,6 +54,17 @@ export interface ApprovalsProps {
    * target side so the affordance has somewhere real to land once one does.
    */
   readonly focusedApprovalId?: string;
+  /**
+   * Linear slice 3+4 — the ACTIVE scope's onboarded workspace id (null in Global). Details are offered only for a
+   * card whose own workspace equals it; a change of it resets every open detail.
+   */
+  readonly activeWorkspaceId?: string | null;
+  /** Load one approval's details (the App asks with the ACTIVE workspace). Absent (no live worker) ⇒ not offered. */
+  readonly onOpenDetail?: (approvalId: string) => Promise<ApprovalDetailResult>;
+  /** The active workspace's approved external cards whose write has not gone out. */
+  readonly unsent?: readonly UiSafeApproval[];
+  /** Re-run the guarded dispatch for one approved card. Absent (no live worker) ⇒ the button is disabled. */
+  readonly onSendNow?: (approvalId: string) => Promise<SendNowResult>;
 }
 
 /** The four decisions offered on a pending item — each a legal `pending -> …` transition. `edit`
@@ -109,6 +122,199 @@ function editFormId(approvalId: string): string {
   return `sow-approval-edit-${approvalId}`;
 }
 
+const SYSTEM_NAME: Readonly<Record<string, string>> = {
+  linear: "Linear", todoist: "Todoist", calendar: "Calendar", asana: "Asana", drive: "Drive", github: "GitHub", telegram: "Telegram",
+};
+function systemName(target: string | undefined): string {
+  return target === undefined ? "this system" : (SYSTEM_NAME[target] ?? target);
+}
+
+/** Linear's priority scale (0 none … 4 low), shown because Linear sends it. */
+const PRIORITY_LABEL: readonly string[] = ["No priority", "Urgent", "High", "Medium", "Low"];
+
+const REFUSAL_LABEL: Readonly<Record<ApprovalSendRefusal, string>> = {
+  payload_mismatch: "its saved write no longer matches what was approved",
+  workspace_mismatch: "its saved write belongs to another workspace",
+  not_this_cards_action: "its saved write belongs to another card",
+  unknown_workspace: "its workspace is not set up here",
+  unassigned_workspace: "it has no workspace",
+};
+
+/** The honest, one-line send state of an external card (Linear slice 3+4). */
+export function sendStateLabel(state: ApprovalSendState, target?: string, refusal?: ApprovalSendRefusal): string {
+  switch (state) {
+    case "awaiting_approval":
+      return "Waiting for your approval";
+    case "not_approved":
+      return "Not approved — it will not be sent";
+    case "writes_off":
+      return `Not sent: writes to ${systemName(target)} are off`;
+    case "ready":
+      return "Not sent yet — ready to send";
+    case "held":
+      return "Held: not sent yet";
+    case "sent":
+      return "Sent";
+    case "rejected":
+      return "Not sent: the write was refused";
+    case "expired":
+      return "Not sent: expired";
+    case "refused":
+      return `Not sent: ${refusal !== undefined ? REFUSAL_LABEL[refusal] : "it failed a safety check"}`;
+    case "no_send_record":
+      return "No send record here";
+    default:
+      return "Send state unknown";
+  }
+}
+
+function detailsId(approvalId: string): string {
+  return `sow-approval-details-${approvalId}`;
+}
+
+/**
+ * Linear slice 3+4 — the "Details" disclosure. Offered ONLY when the card's own workspace is the ACTIVE one (WS-8:
+ * the details are the action's own content); otherwise a hint says to switch. Loads ON OPEN, once. A result that
+ * arrives after this card unmounts (e.g. the active workspace changed — the parent re-keys cards by it) is dropped.
+ * Every line is rendered as TEXT.
+ */
+function DetailsDisclosure({
+  approval,
+  activeWorkspaceId,
+  onOpenDetail,
+}: {
+  readonly approval: UiSafeApproval;
+  readonly activeWorkspaceId: string | null | undefined;
+  readonly onOpenDetail?: (approvalId: string) => Promise<ApprovalDetailResult>;
+}): ReactElement | null {
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState<UiSafeApprovalDetail | "loading" | "unavailable" | undefined>(undefined);
+  const alive = useRef(true);
+  useEffect(
+    () => () => {
+      alive.current = false;
+    },
+    [],
+  );
+  if (onOpenDetail === undefined || approval.subjectKind === "semantic_mutation") return null;
+  if (approval.workspaceId === undefined || approval.workspaceId !== activeWorkspaceId) {
+    return <div className="sow-approval-hint">Switch to its workspace to see details</div>;
+  }
+  const toggle = (): void => {
+    const next = !open;
+    setOpen(next);
+    if (next && detail === undefined) {
+      setDetail("loading");
+      void onOpenDetail(approval.id).then((r) => {
+        if (!alive.current) return;
+        setDetail(r.ok ? r.detail : "unavailable");
+      });
+    }
+  };
+  return (
+    <>
+      <button
+        type="button"
+        className="sow-approval-btn sow-approval-btn--details"
+        aria-expanded={open}
+        aria-controls={detailsId(approval.id)}
+        onClick={toggle}
+      >
+        Details
+      </button>
+      {open ? (
+        <div id={detailsId(approval.id)} className="sow-approval-details" role="group" aria-label="Approval details">
+          {detail === "loading" || detail === undefined ? (
+            <div className="sow-approval-details-meta">Loading…</div>
+          ) : detail === "unavailable" ? (
+            <div className="sow-approval-details-meta">Details unavailable</div>
+          ) : (
+            <>
+              {detail.title !== undefined ? <div className="sow-approval-details-title">{detail.title}</div> : null}
+              {detail.priority !== undefined ? (
+                <div className="sow-approval-details-meta">Priority: {PRIORITY_LABEL[detail.priority] ?? detail.priority}</div>
+              ) : null}
+              {(detail.descriptionLines ?? []).map((line, i) => (
+                <p key={i} className="sow-approval-details-line">
+                  {line}
+                </p>
+              ))}
+              {detail.descriptionTruncated === true ? <div className="sow-approval-details-meta">(more not shown)</div> : null}
+              <div className="sow-approval-sendstate">{sendStateLabel(detail.sendState, detail.targetSystem, detail.refusal)}</div>
+            </>
+          )}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * Linear slice 3+4 — an APPROVED external card whose write has not gone out. Shows the system, the Details
+ * disclosure, and "Send now", which re-runs the SAME guarded dispatch. The button is disabled while a send is in
+ * flight (a second click does nothing) and when there is no live worker; the result line is the worker's re-read
+ * state, never a guess.
+ */
+function UnsentCard({
+  approval,
+  activeWorkspaceId,
+  onOpenDetail,
+  onSendNow,
+}: {
+  readonly approval: UiSafeApproval;
+  readonly activeWorkspaceId: string | null | undefined;
+  readonly onOpenDetail?: (approvalId: string) => Promise<ApprovalDetailResult>;
+  readonly onSendNow?: (approvalId: string) => Promise<SendNowResult>;
+}): ReactElement {
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState<string | undefined>(undefined);
+  const inFlight = useRef(false);
+  const alive = useRef(true);
+  useEffect(
+    () => () => {
+      alive.current = false;
+    },
+    [],
+  );
+  const send = (): void => {
+    if (onSendNow === undefined || inFlight.current) return;
+    inFlight.current = true;
+    setSending(true);
+    void onSendNow(approval.id).then((r) => {
+      inFlight.current = false;
+      if (!alive.current) return;
+      setSending(false);
+      setResult(r.ok ? sendStateLabel(r.result.sendState, approval.targetSystem, r.result.refusal) : "Couldn't send — try again");
+    });
+  };
+  return (
+    <li className="sow-approval-card sow-approval-card--notsent" role="listitem" data-approval-id={approval.id}>
+      <div className="sow-approval-head">
+        <span className="sow-approval-action">{cardSubject(approval)}</span>
+        <span className="sow-approval-status sow-approval-status--notsent">not sent</span>
+      </div>
+      <div className="sow-approval-meta">to {systemName(approval.targetSystem)}</div>
+      <div className="sow-approval-actions">
+        <DetailsDisclosure approval={approval} activeWorkspaceId={activeWorkspaceId} onOpenDetail={onOpenDetail} />
+        <button
+          type="button"
+          className="sow-approval-btn sow-approval-btn--send"
+          disabled={onSendNow === undefined || sending}
+          onClick={send}
+          title={onSendNow === undefined ? "Connect the worker to send" : undefined}
+        >
+          Send now
+        </button>
+      </div>
+      {result !== undefined ? (
+        <div className="sow-approval-sendstate" role="status">
+          {result}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
 /**
  * §9.8 — the `edit` payload-editing form. There is no raw action payload on the UI-safe wire
  * (rule 2/7: candidate/action content never crosses to the renderer — only an opaque
@@ -153,11 +359,15 @@ function PendingCard({
   approval,
   onDecide,
   focused,
+  activeWorkspaceId,
+  onOpenDetail,
 }: {
   readonly approval: UiSafeApproval;
   readonly onDecide?: (approvalId: string, decision: ApprovalDecision) => Promise<ApprovalDecisionOutcome>;
   /** 9.42 — true iff the route's `approvalId` names this card. */
   readonly focused?: boolean;
+  readonly activeWorkspaceId?: string | null;
+  readonly onOpenDetail?: (approvalId: string) => Promise<ApprovalDetailResult>;
 }): ReactElement {
   const disabled = onDecide === undefined;
   const cardRef = useFocusedCardRef(focused);
@@ -205,6 +415,7 @@ function PendingCard({
             {d.label}
           </button>
         ))}
+        <DetailsDisclosure approval={approval} activeWorkspaceId={activeWorkspaceId} onOpenDetail={onOpenDetail} />
       </div>
       {editing ? (
         <EditForm
@@ -262,7 +473,10 @@ function SnoozedCard({
 }
 
 export function Approvals(props: ApprovalsProps): ReactElement {
-  const { approvals, onDecide, focusedApprovalId } = props;
+  const { approvals, onDecide, focusedApprovalId, activeWorkspaceId, onOpenDetail, unsent = [], onSendNow } = props;
+  // Cards are keyed by the ACTIVE workspace too, so a scope change remounts them: every open detail is cleared and
+  // a late answer for the old scope is dropped (WS-8 — no employer content lingers under a personal scope).
+  const scopeKey = activeWorkspaceId ?? "global";
   // Only pending items are actionable; deferred items are snoozed (display-only). Terminal
   // items (approved/edited/rejected/expired) drop out of the inbox — they're resolved.
   const pending = approvals.filter((a) => a.status === "pending");
@@ -291,7 +505,14 @@ export function Approvals(props: ApprovalsProps): ReactElement {
           {pending.length > 0 ? (
             <ul className="sow-approval-list" role="list" aria-label="Pending approvals">
               {pending.map((a) => (
-                <PendingCard key={a.id} approval={a} onDecide={onDecide} focused={a.id === focusedApprovalId} />
+                <PendingCard
+                  key={`${a.id}:${scopeKey}`}
+                  approval={a}
+                  onDecide={onDecide}
+                  focused={a.id === focusedApprovalId}
+                  activeWorkspaceId={activeWorkspaceId}
+                  onOpenDetail={onOpenDetail}
+                />
               ))}
             </ul>
           ) : null}
@@ -307,6 +528,22 @@ export function Approvals(props: ApprovalsProps): ReactElement {
           ) : null}
         </>
       )}
+      {unsent.length > 0 ? (
+        <div className="sow-approval-notsent">
+          <div className="sow-approval-section-label">Not sent</div>
+          <ul className="sow-approval-list" role="list" aria-label="Approved but not sent">
+            {unsent.map((a) => (
+              <UnsentCard
+                key={`${a.id}:${scopeKey}`}
+                approval={a}
+                activeWorkspaceId={activeWorkspaceId}
+                onOpenDetail={onOpenDetail}
+                onSendNow={onSendNow}
+              />
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </main>
   );
 }

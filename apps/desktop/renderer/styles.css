@@ -1653,6 +1653,8 @@ body {
 .sow-approval-actions {
   margin-top: 9px;
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 7px;
 }
 
@@ -1710,6 +1712,72 @@ body {
   margin-top: 9px;
   display: flex;
   gap: 7px;
+}
+
+/* Linear slice 3+4 — details on open (same workspace only), the "Not sent" section, and Send now. */
+.sow-approval-hint {
+  font-size: 12px;
+  color: var(--label-3);
+  align-self: center;
+}
+
+.sow-approval-btn--details {
+  margin-left: auto;
+}
+
+.sow-approval-details {
+  flex: 0 0 100%;
+  margin-top: 2px;
+  padding: 9px 11px;
+  border: 0.5px solid var(--hairline, rgba(0, 0, 0, 0.08));
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sow-approval-details-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--label-1, inherit);
+}
+
+.sow-approval-details-line {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--label-2, inherit);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sow-approval-details-meta {
+  font-size: 12px;
+  color: var(--label-3);
+}
+
+.sow-approval-sendstate {
+  margin-top: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--label-2, inherit);
+}
+
+.sow-approval-notsent {
+  margin-top: 18px;
+}
+
+.sow-approval-card--notsent {
+  border-left: 3px solid rgba(255, 159, 10, 0.55);
+}
+
+.sow-approval-status--notsent {
+  color: var(--warn-ink, #b25e00);
+  background: rgba(255, 159, 10, 0.14);
+}
+
+.sow-approval-btn--send {
+  font-weight: 600;
 }
 
 .sow-approval-snoozed {

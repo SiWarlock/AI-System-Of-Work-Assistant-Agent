@@ -58,6 +58,14 @@ import {
   type CrossWorkspaceLinkResult,
 } from "./cross-workspace-link";
 import { createEgressStatus, createRevokeEgressAck, type EgressStatusResult } from "./egress-status";
+import {
+  createApprovalDetail,
+  createUnsentApprovals,
+  createSendNow,
+  type ApprovalDetailResult,
+  type UnsentApprovalsResult,
+  type SendNowResult,
+} from "./approval-send";
 
 /** The live-session handle: stop the stream + drill-down (§9.4) + scope-aware re-hydrate (§9.5). */
 export interface StartLiveHandle {
@@ -102,6 +110,15 @@ export interface StartLiveHandle {
   /** Revoke a workspace's employer raw-egress ack (9.10-C, wired to egressCommand.revokeEgressAck —
    *  ⚠ rule 5, the audited fail-SAFE OFF direction; there is NO ack-ON counterpart). Fails closed. */
   readonly revokeEgressAck: (workspaceId: string) => Promise<EgressStatusResult>;
+  /**
+   * Linear slice 3+4 — an approval's details (wired to approvalSend.detail). The worker serves them only for the
+   * workspace it is asked about; the App passes the ACTIVE scope's workspace, never the card's. Fails closed.
+   */
+  readonly approvalDetail: (workspaceId: string, approvalId: string) => Promise<ApprovalDetailResult>;
+  /** The active workspace's approved-but-unsent external cards (wired to approvalSend.unsent). Fails closed. */
+  readonly unsentApprovals: (workspaceId: string) => Promise<UnsentApprovalsResult>;
+  /** Re-run the guarded dispatch for one approved card (wired to approvalSend.sendNow). Fails closed. */
+  readonly sendNow: (workspaceId: string, approvalId: string) => Promise<SendNowResult>;
 }
 
 // Connect the UI-safe store to the LIVE worker over the §10 push stream (9.4b E).
@@ -186,6 +203,9 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
     revokeCrossWorkspaceLink: revokeCrossWorkspaceLink(live.client),
     egressStatus: createEgressStatus(live.client),
     revokeEgressAck: createRevokeEgressAck(live.client),
+    approvalDetail: createApprovalDetail(live.client),
+    unsentApprovals: createUnsentApprovals(live.client),
+    sendNow: createSendNow(live.client),
   };
 }
 

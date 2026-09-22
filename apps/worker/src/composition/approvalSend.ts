@@ -5,8 +5,9 @@
 // workspace, and a foreign card answers EXACTLY like a missing one, so this surface cannot be used to learn
 // whether a card exists in another workspace. ⚠ The worker cannot see the screen's scope — it only compares the
 // workspace it is ASKED about with the card's own. So the renderer must ask with the ACTIVE scope's workspace, never
-// with the card's (which every UiSafeApproval carries): that obligation lands, and is pinned by an App test, with the
-// Approvals screen work (step 5). Until then no renderer calls this surface.
+// with the card's (which every UiSafeApproval carries). The renderer does so since step 5 (apps/desktop/renderer/
+// App.tsx resolves the active scope; the screen offers Details only for an active-workspace card), pinned by
+// apps/desktop/test-dom/app-approval-scope.test.tsx.
 import { err, ok, failure } from "@sow/contracts";
 import type { Approval, FailureVariant, Result, TargetSystem, UiSafeApproval, UiSafeApprovalDetail, UiSafeSendNowResult } from "@sow/contracts";
 import type { ApprovalRepository, OutboxRepository, WorkspaceConfigRepository } from "@sow/db";
