@@ -462,3 +462,67 @@ describe("the approval id is ONE derivation — a card recorded by the propose s
     }
   });
 });
+
+// Review of the slice 3+4 core (2026-09-22, measured by the finder): since the approval id was unified, the
+// proof-spine gateway (which the wake drain also uses) honours cards approved in the Approvals screen. Two
+// things it must therefore never do.
+describe("the proof-spine gateway's approval check — review follow-ups (rules 3 + owner decision)", () => {
+  function linearPair(key: string, payloadHash: string): { action: ProposedAction; envelope: ExternalWriteEnvelope } {
+    const action: ProposedAction = {
+      actionId: actionId(`act-${key}`),
+      targetSystem: "todoist",
+      canonicalObjectKey: `todo:${key}`,
+      payload: { title: `payload for ${payloadHash}` },
+      approvalPolicy: "required",
+      idempotencyKey: `idem:${key}`,
+    };
+    return {
+      action,
+      envelope: {
+        actionId: action.actionId,
+        targetSystem: action.targetSystem,
+        canonicalObjectKey: action.canonicalObjectKey,
+        idempotencyKey: action.idempotencyKey,
+        preconditions: [],
+        payloadHash,
+      },
+    };
+  }
+  async function approvedCard(b: ProofSpineBackends, env: ExternalWriteEnvelope, payloadHash: string): Promise<void> {
+    const created = await b.repos.approvals.create({
+      id: approvalIdFor({ idempotencyKey: env.idempotencyKey, workspace: String(meetingJobInputs.workspaceId) }),
+      actionRef: env.actionId,
+      subjectKind: "external_action",
+      workspaceId: meetingJobInputs.workspaceId,
+      status: "approved",
+      actor: "worker:test",
+      channel: "mac",
+      payloadHash,
+    });
+    expect(created.ok).toBe(true);
+  }
+
+  it("⛔ rule 3: a card approved for payload A' does not let payload A through (no payload swap)", async () => {
+    const creates: AdapterTransportRequest[] = [];
+    const b = await backendsWithFakeTransport((req) => {
+      if (req.op === "query") return Promise.resolve({ ok: true, object: null });
+      creates.push(req);
+      return Promise.resolve({ ok: true, object: { externalObjectId: "x-1" } });
+    });
+    const { action, envelope } = linearPair("swap", "hash:A");
+    await approvedCard(b, envelope, "hash:A-PRIME"); // the owner approved A', the saved write is A
+    const res = await buildProofSpineActivities(b, paramsFor()).approvalDispatchApproved(action, envelope);
+    expect(res.ok).toBe(false);
+    expect(creates).toHaveLength(0);
+  });
+
+  it("⛔ owner decision: with NO real sender armed, an approved card is never sent through the stub", async () => {
+    const b = await assembleBackends({ now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT] }, { candidateOutput: {} });
+    openBackends.push(b);
+    const { action, envelope } = linearPair("unarmed", "hash:U");
+    await approvedCard(b, envelope, "hash:U");
+    const res = await buildProofSpineActivities(b, paramsFor()).approvalDispatchApproved(action, envelope);
+    expect(res.ok).toBe(false);
+    expect(await b.receiptStore.getByIdempotencyKey("idem:unarmed")).toBeUndefined(); // no fabricated receipt
+  });
+});

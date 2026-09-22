@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { ok, err, isOk, isErr, approvalId as makeApprovalId } from "@sow/contracts";
 import type { Approval, ProposedAction, ExternalWriteEnvelope, WorkspaceId, Workspace } from "@sow/contracts";
 import type { ApprovalRepository, WorkspaceConfigRepository, OutboxRepository, OutboxEntry, DbError, DbResult } from "@sow/db";
-import { buildIdempotencyKey } from "@sow/domain";
+import { buildIdempotencyKey, approvalIdFor, approvalOutboxId } from "@sow/domain";
 import {
   createApprovalsProposeSink,
   COPILOT_PROPOSE_ACTOR,
@@ -212,10 +212,15 @@ describe("createApprovalsProposeSink — record a pending Approval (direct repos
   });
 
   it("(a) two DIFFERENT workspaces derive DIFFERENT approval ids for the same envelope (no cross-workspace bleed)", async () => {
+    // Each workspace gets its OWN outbox here. With ONE shared outbox the second workspace is now REFUSED
+    // (review 2026-09-22, pinned by the rule-4 test below): the Copilot keys are not workspace-scoped yet, so
+    // it would get a card with nothing of its own to send. Workspace-scoped proposal keys land with the
+    // Copilot proposer rework (Linear slice 5b); then this test can share one outbox again.
     const a = fakeApprovals();
     const sink = makeSink(a.repo);
     await sink.record({ action: fx.action, envelope: fx.envelope, workspaceId: WS });
-    const other = await sink.record({ action: fx.action, envelope: fx.envelope, workspaceId: "personal-life" as WorkspaceId });
+    const otherSink = makeSink(a.repo, true, fakeOutbox().repo);
+    const other = await otherSink.record({ action: fx.action, envelope: fx.envelope, workspaceId: "personal-life" as WorkspaceId });
     expect(isOk(other)).toBe(true);
     if (!isOk(other)) return;
     // a second, DISTINCT card (different derived id) — not deduped against the first workspace's card.
@@ -294,6 +299,35 @@ describe("createApprovalsProposeSink — saves the action + envelope for a later
     expect(isErr(r)).toBe(true);
     expect(a.createCalls()).toBe(0);
     expect(JSON.stringify(r)).not.toContain("/Users/secret/path"); // rule 7: a bounded code, never the driver text
+  });
+
+  it("⛔ rule 3: a saved entry left by a failed earlier attempt with a DIFFERENT payload is never adopted — no card", async () => {
+    const out = fakeOutbox();
+    const stale = { ...fx.envelope, payloadHash: "sha256:an-older-payload" };
+    // An earlier attempt saved its entry, then failed to create the card. Its payload differs.
+    await out.repo.enqueue({
+      // The SAME card's id (an earlier attempt of THIS proposal), so only the payload check can refuse it.
+      outboxId: approvalOutboxId(approvalIdFor({ idempotencyKey: stale.idempotencyKey, workspace: String(WS) })), actionRef: String(fx.action.actionId), workspaceId: String(WS), targetSystem: stale.targetSystem,
+      canonicalObjectKey: stale.canonicalObjectKey, idempotencyKey: stale.idempotencyKey, payloadHash: stale.payloadHash,
+      status: "proposed", payload: { title: "older" }, approvalPolicy: "required", attempts: 0, enqueuedAt: NOW, updatedAt: NOW,
+    } as OutboxEntry);
+    const a = fakeApprovals();
+    const r = await makeSink(a.repo, true, out.repo).record({ action: fx.action, envelope: fx.envelope, workspaceId: WS });
+    expect(isErr(r)).toBe(true);
+    expect(a.createCalls()).toBe(0); // a card for payload A' over a saved payload A would let A be sent
+  });
+
+  it("⛔ rule 4: a saved entry belonging to ANOTHER workspace is never adopted — no card", async () => {
+    const out = fakeOutbox();
+    await makeSink(fakeApprovals().repo, true, out.repo).record({ action: fx.action, envelope: fx.envelope, workspaceId: WS });
+    const b = fakeApprovals();
+    const r = await makeSink(b.repo, true, out.repo).record({
+      action: fx.action,
+      envelope: fx.envelope,
+      workspaceId: "employer-work" as WorkspaceId,
+    });
+    expect(isErr(r)).toBe(true);
+    expect(b.createCalls()).toBe(0); // the second workspace's card would have NOTHING of its own to send
   });
 
   it("an UNKNOWN workspace saves nothing either", async () => {

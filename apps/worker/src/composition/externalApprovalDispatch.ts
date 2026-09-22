@@ -53,6 +53,8 @@ export type ExternalApprovalRefusal =
 
 export type ExternalApprovalOutcome =
   | { readonly kind: "skipped"; readonly reason: "not_external" | "not_approved" }
+  /** A rejected or expired card's saved entry was closed, so nothing can re-drive it. */
+  | { readonly kind: "closed" }
   | { readonly kind: "refused"; readonly reason: ExternalApprovalRefusal }
   | { readonly kind: "already_done" }
   | { readonly kind: "dispatched"; readonly status: ExternalWriteResult["status"] };
@@ -111,6 +113,7 @@ export async function dispatchExternalApproval(
 
 async function decideAndSend(approval: Approval, deps: ExternalApprovalDispatchDeps): Promise<ExternalApprovalOutcome> {
   if (approval.subjectKind === "semantic_mutation") return { kind: "skipped", reason: "not_external" };
+  if (approval.status === "rejected" || approval.status === "expired") return closeSavedEntry(approval, deps);
   if (approval.status !== "approved") return { kind: "skipped", reason: "not_approved" };
 
   const ws = String(approval.workspaceId);
@@ -153,6 +156,25 @@ async function decideAndSend(approval: Approval, deps: ExternalApprovalDispatchD
     backoffCfg: deps.backoffCfg ?? DEFAULT_DRAIN_BACKOFF,
   });
   return { kind: "dispatched", status: result.status };
+}
+
+/**
+ * A rejected or expired card will never be sent, so close its saved entry. Otherwise the entry stays
+ * `proposed` — "due" to the wake drain — and an armed drain would re-drive it forever (review 2026-09-22).
+ * Touches only an entry that is provably this card's; anything else is left alone.
+ */
+async function closeSavedEntry(approval: Approval, deps: ExternalApprovalDispatchDeps): Promise<ExternalApprovalOutcome> {
+  const saved = await deps.outbox.get(approvalOutboxId(approval.id));
+  if (!saved.ok) return { kind: "skipped", reason: "not_approved" };
+  const entry = saved.value;
+  const ours =
+    entry.workspaceId === String(approval.workspaceId) &&
+    String(approvalIdFor({ idempotencyKey: entry.idempotencyKey, workspace: entry.workspaceId })) === String(approval.id);
+  if (!ours) return { kind: "skipped", reason: "not_approved" };
+  if (!TERMINAL.has(entry.status)) {
+    await deps.outbox.update({ ...entry, status: "rejected", updatedAt: deps.clock() });
+  }
+  return { kind: "closed" };
 }
 
 function failureOf(outcome: ExternalApprovalOutcome, approvalId: string): ExternalApprovalFailure | undefined {

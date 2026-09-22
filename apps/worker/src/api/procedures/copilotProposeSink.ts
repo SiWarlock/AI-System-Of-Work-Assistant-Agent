@@ -156,6 +156,27 @@ export function createApprovalsProposeSink(deps: ApprovalsProposeSinkDeps): Copi
           }),
         );
       }
+      // ⛔ `holdWrite` REUSES any entry already saved under this idempotencyKey, without comparing it. Adopt it
+      // only if it is THIS card's: same outbox id (so the same workspace, rule 4) and the same payload (rule 3).
+      // Otherwise refuse and create NO card. Found by review 2026-09-22 (measured): an earlier attempt that saved
+      // payload A and then failed to create its card, followed by a proposal of A', produced a card approved for
+      // A' over a saved A — and the armed drain sent A. The Copilot keys are not workspace-scoped (they hash the
+      // operation + identity only), so the same proposal in a second workspace would otherwise get a card with
+      // nothing of its own to send.
+      if (saved.value.payloadHash !== envelope.payloadHash) {
+        return err(
+          failure("write_conflict", "copilot propose: a different proposal is already saved for this object", {
+            cause: { code: "COPILOT_PROPOSE_PAYLOAD_CONFLICT" },
+          }),
+        );
+      }
+      if (saved.value.outboxId !== approvalOutboxId(id)) {
+        return err(
+          failure("write_conflict", "copilot propose: this proposal is already saved for another card", {
+            cause: { code: "COPILOT_PROPOSE_SAVED_FOR_OTHER_CARD" },
+          }),
+        );
+      }
 
       const pending: Approval = {
         id,

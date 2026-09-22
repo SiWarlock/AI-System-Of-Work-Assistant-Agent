@@ -147,6 +147,14 @@ export async function holdWrite(
 
   const enqueued = await outbox.enqueue(entry);
   if (!isOk(enqueued)) {
+    // A concurrent hold of the SAME idempotencyKey can win the race between the replay gate above and this
+    // enqueue. Re-read: if the winner saved this key, reuse its entry (rule 3 — one entry per key), exactly
+    // as the replay gate would have. Any other fault — including a conflict on an id held by a DIFFERENT
+    // key — still returns the typed error.
+    if (enqueued.error.code === "conflict") {
+      const winner = await outbox.getByIdempotencyKey(env.idempotencyKey);
+      if (isOk(winner)) return ok(winner.value);
+    }
     return err(enqueued.error);
   }
   if (deps.health) {

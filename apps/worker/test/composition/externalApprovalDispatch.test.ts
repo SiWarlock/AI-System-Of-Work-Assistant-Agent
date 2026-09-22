@@ -184,13 +184,23 @@ describe("dispatchExternalApproval — an approved card's write is SENT through 
 });
 
 describe("dispatchExternalApproval — refuses WITHOUT writing when anything does not line up", () => {
-  it("does nothing for a card that is not approved (the port fires on reject, edit and defer too)", async () => {
+  it("does nothing for a card that is not approved (the port fires on edit and defer too; reject closes — see below)", async () => {
     const v = vendor();
     const b = await backends(v.transport);
     const approval = await proposeAndApprove(b, "st");
-    for (const status of ["rejected", "edited", "deferred", "pending"] as const) {
+    for (const status of ["edited", "deferred", "pending"] as const) {
       expect(await dispatchExternalApproval({ ...approval, status }, depsFor(b))).toEqual({ kind: "skipped", reason: "not_approved" });
     }
+    expect(v.calls).toHaveLength(0);
+  });
+
+  it("⛔ a REJECTED card closes its saved entry, so nothing can ever re-drive it", async () => {
+    const v = vendor();
+    const b = await backends(v.transport);
+    const card = await proposeAndApprove(b, "rej-close");
+    const out = await dispatchExternalApproval({ ...card, status: "rejected" }, depsFor(b));
+    expect(out).toEqual({ kind: "closed" });
+    expect((await entryFor(b, "rej-close")).status).toBe("rejected");
     expect(v.calls).toHaveLength(0);
   });
 

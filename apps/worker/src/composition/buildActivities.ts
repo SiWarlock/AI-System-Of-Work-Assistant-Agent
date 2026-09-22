@@ -922,7 +922,17 @@ export function buildProofSpineActivities(
     isApproved: async (env): Promise<boolean> => {
       const id = approvalIdFor({ idempotencyKey: env.idempotencyKey, workspace: String(params.meetingJobInputs.workspaceId) });
       const got = await backends.repos.approvals.get(id);
-      return got.ok && got.value.status === "approved";
+      // ⛔ Review of the slice 3+4 core (2026-09-22, measured): since the approval id was unified this also
+      // honours cards approved in the Approvals screen, so it must check two more things. (1) rule 3: the
+      // APPROVED payload is the one being sent — the card is approved for its payloadHash, not for any payload
+      // under the same replay key. (2) owner decision: never "approve" a write that would go to the stub,
+      // which fabricates receipts — with no real sender armed, the card simply waits.
+      return (
+        got.ok &&
+        got.value.status === "approved" &&
+        got.value.payloadHash === env.payloadHash &&
+        backends.writeTransportArmed
+      );
     },
     audit: async (rec): Promise<void> => {
       await backends.repos.audit.append(rec);

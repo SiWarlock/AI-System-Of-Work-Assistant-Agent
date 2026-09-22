@@ -35,7 +35,7 @@ import type { ResolvedWorkspacePolicy } from "@sow/policy";
 import type { AgentExtraction, MeetingJobInputs } from "@sow/workflows";
 import type { CommittedRevision, KnowledgeRevisionStore } from "@sow/knowledge";
 import { computeRevisionId } from "@sow/knowledge";
-import type { WriteSecretsAccessor, WriteSecretUnavailable } from "@sow/integrations";
+import type { AdapterTransport, WriteSecretsAccessor, WriteSecretUnavailable } from "@sow/integrations";
 import type { CardTransportGate } from "@sow/integrations/tools/cards/index";
 import type { CardRendererLike, CardSend, CardSendRequest, CardPayload } from "@sow/integrations/tools/cards/card-port";
 import { createMacCardTransport } from "@sow/integrations/tools/cards/mac-card";
@@ -206,9 +206,20 @@ afterEach(() => {
   for (const b of openBackends.splice(0)) b.close();
 });
 
+// ARMED with a fake REAL sender (the probe misses; a create succeeds). These tests exercise the credential
+// check on a real dispatch. Since the slice 3+4 core-review follow-ups, the proof-spine gateway never approves
+// a write that would go to the stub (owner decision 2026-09-22: refuse, never fake), so an unarmed backend
+// would leave every approved card waiting and the credential seam would never be reached.
+const FAKE_REAL_SENDER: AdapterTransport = (req) =>
+  Promise.resolve(req.op === "query" ? { ok: true, object: null } : { ok: true, object: { externalObjectId: "todo-real-1" } });
+
 async function freshBackends(): Promise<ProofSpineBackends> {
   const b = await assembleBackends(
-    { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT] },
+    {
+      now: () => NOW,
+      allowedLocalEndpoints: [LOCAL_ENDPOINT],
+      writeTransport: { enabled: true, make: () => FAKE_REAL_SENDER },
+    },
     { candidateOutput: validKnowledgeMutationPlan },
   );
   openBackends.push(b);

@@ -202,6 +202,34 @@ describe("holdWrite — hold-through-outage", () => {
     // future change that returns a different fault code here is still caught.
     if (isErr(res)) expect(res.error.code).toBe("conflict");
   });
+
+  it("⛔ rule 3: a LOST enqueue race for the SAME idempotencyKey reuses the winner's entry instead of failing", async () => {
+    // Two identical holds race: both miss the replay gate, the other one enqueues first, ours conflicts.
+    class RacingOutbox extends InMemoryOutbox {
+      private missedOnce = false;
+      override async getByIdempotencyKey(k: string): ReturnType<InMemoryOutbox["getByIdempotencyKey"]> {
+        if (!this.missedOnce) {
+          this.missedOnce = true;
+          return err<DbError>({ code: "not_found", message: "novel (the race window)" });
+        }
+        return super.getByIdempotencyKey(k);
+      }
+    }
+    const racing = new RacingOutbox();
+    await racing.enqueue(makeOutboxEntry({ outboxId: "ob_same", idempotencyKey: "idem_race" }));
+    const res = await holdWrite(
+      {
+        env: makeEnvelope({ idempotencyKey: "idem_race" }),
+        action: makeProposedAction({ idempotencyKey: "idem_race" }),
+        reason: "not_approved",
+        workspaceId: "employer-work",
+      },
+      racing,
+      { clock, outboxId: () => "ob_same" },
+    );
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) expect(res.value.outboxId).toBe("ob_same");
+  });
 });
 
 describe("toOutboxStatus — machine-state mapping", () => {
