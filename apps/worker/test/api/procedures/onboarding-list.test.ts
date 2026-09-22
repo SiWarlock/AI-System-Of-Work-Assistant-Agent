@@ -143,16 +143,32 @@ describe("onboarding.listWorkspaces — the renderer's onboarded set, rebuilt on
     expect(isErr(res)).toBe(true);
   });
 
-  it("⛔ a PARTIAL SCAFFOLD (config row, no registry membership) is NOT listed — the wizard's resume path survives", async () => {
-    // The review's scenario: `insertIfAbsent` wrote the row, `registerWorkspace` then faulted. Listing
-    // it would make it selectable, backfill the first-run marker, and hide the only UI path that
-    // re-runs the registry union.
+  it("⛔ a PARTIAL SCAFFOLD (config row, no registry membership) is NOT listed alongside a registered one", async () => {
+    // `insertIfAbsent` wrote personal-life's row, then `registerWorkspace` faulted. It must not be
+    // selectable, because every registry-gated call would reject it.
+    // ⚠ AMENDED 2026-09-21 (review, upheld 2/3): this title used to claim "the wizard's resume path
+    // survives". In THIS fixture it does not — employer-work is listed, so the wizard is hidden and
+    // the marker backfilled regardless. What this pins is that "selectable" matches "registry-visible".
+    // The wizard-survives property holds only when the partial scaffold is the SOLE workspace; see
+    // the next test and the absent-registry test.
     const port = realPort(
       repoListing(ok([ws("employer-work", "Main-Test", "employer_work"), ws("personal-life", "Test", "personal_life")])),
       registry({ ids: ["employer-work"] }), // personal-life's registry union never landed
     );
     const res = await caller(port).onboarding.listWorkspaces();
     expect(isOk(res) && res.value.map((w) => w.workspaceId)).toEqual(["employer-work"]);
+  });
+
+  it("the SOLE workspace as a partial scaffold lists NOTHING — so the wizard stays reachable to resume it", async () => {
+    // The case where the intersection actually protects the 9.21-B resume path: the registry exists
+    // (some earlier union succeeded) but does not contain the only config row. An empty list keeps
+    // the renderer's onboarded set empty, so the wizard mounts and a resubmit re-runs the union.
+    const port = realPort(
+      repoListing(ok([ws("employer-work", "Main-Test", "employer_work")])),
+      registry({ ids: ["some-other-id"] }),
+    );
+    const res = await caller(port).onboarding.listWorkspaces();
+    expect(isOk(res) && res.value).toEqual([]);
   });
 
   it("a registry id with NO config row is NOT listed (the owner's `personal-business`)", async () => {

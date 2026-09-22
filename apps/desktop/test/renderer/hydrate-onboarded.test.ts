@@ -81,6 +81,11 @@ describe("hydrateOnboarded — the scope becomes selectable again after a restar
     const store = createStore<UiSafeStoreState>({ ...INITIAL_STATE });
     await hydrateOnboarded(fakeClient(async () => WIRE_OK), store);
     expect(resolveOnboardedWorkspaceId(store.getSnapshot(), "personal-business")).toBeNull();
+    // ⚠ POSITIVE CONTROL — without it this test is VACUOUS: a no-op loader also leaves
+    // personal-business null, so the assertion above would pass on code that does nothing (review
+    // finding, upheld 3/3). Proving the same run DID record the listed workspaces is what makes the
+    // null above mean "not invented" rather than "nothing happened".
+    expect(resolveOnboardedWorkspaceId(store.getSnapshot(), "employer-work")).toBe("employer-work");
   });
 
   it("a transport throw or a typed err leaves the store UNCHANGED (never throws)", async () => {
