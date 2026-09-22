@@ -134,6 +134,11 @@ body {
   padding-right: 14px;
 
   position: relative;
+  /* Must rank ABOVE the body panels. `backdrop-filter` makes this toolbar its own stacking context,
+     so the scope pull-down's `z-index: 50` only counts INSIDE it; the sidebar and content are also
+     stacking contexts and come later in the DOM, so at `auto` they painted over the open menu (only a
+     5px strip showed). Pinned by test/renderer/toolbar-stacking.test.ts. */
+  z-index: 20;
   height: 52px;
   flex: 0 0 52px;
   display: flex;
