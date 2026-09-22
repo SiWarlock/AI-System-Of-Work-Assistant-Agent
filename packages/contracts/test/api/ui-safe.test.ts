@@ -24,6 +24,9 @@ import {
   UiSafeScheduleSchema,
   UiSafeTaskRollupItemSchema,
   UiSafeTaskRollupSchema,
+  UiSafeApprovalDetailSchema,
+  UiSafeSendNowResultSchema,
+  splitToSummaryLines,
   collapseToSummaryLine,
   UI_SAFE_ALLOWLIST,
 } from "../../src/api/ui-safe";
@@ -64,6 +67,9 @@ const PROJECTIONS = [
   // 13.16 — the priority/due-ranked UI-safe task rollup (workspace-scoped, priority-unset-representable).
   ["taskRollupItem", UiSafeTaskRollupItemSchema, UI_SAFE_ALLOWLIST.taskRollupItem] as const,
   ["taskRollup", UiSafeTaskRollupSchema, UI_SAFE_ALLOWLIST.taskRollup] as const,
+  // Linear slice 3+4 — an approval's details, served ONLY in its own workspace, and the result of "Send now".
+  ["approvalDetail", UiSafeApprovalDetailSchema, UI_SAFE_ALLOWLIST.approvalDetail] as const,
+  ["sendNowResult", UiSafeSendNowResultSchema, UI_SAFE_ALLOWLIST.sendNowResult] as const,
 ] as const;
 
 describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage gate)", () => {
@@ -770,5 +776,52 @@ describe("UI-safe bounding uniformity sweep — spec(§11)", () => {
   it("the freeze still holds — recentChange + dashboardCard keep EXACTLY their prior field names", () => {
     expect(Object.keys(UiSafeRecentChangeSchema.shape).sort()).toEqual([...UI_SAFE_ALLOWLIST.recentChange].sort());
     expect(Object.keys(UiSafeDashboardCardSchema.shape).sort()).toEqual([...UI_SAFE_ALLOWLIST.dashboardCard].sort());
+  });
+});
+
+// Linear slice 3+4 (owner decision 2026-09-22): an approval's details load ON OPEN, only in the approval's own
+// workspace. The title and description are the action's own content — shown to the owner on purpose — so the
+// contract bounds their SHAPE (single lines, a line cap, no extra keys) rather than their text.
+describe("UiSafeApprovalDetail / UiSafeSendNowResult — Linear slice 3+4", () => {
+  const ok = { approvalId: "idem_abc", sendState: "writes_off", targetSystem: "linear", title: "Fix the login bug", descriptionLines: ["line one", "line two"] };
+
+  it("parses a same-workspace detail", () => {
+    expect(UiSafeApprovalDetailSchema.safeParse(ok).success).toBe(true);
+  });
+
+  it("⛔ never carries the raw payload or any key/hash/owner field — the allowlist is exact", () => {
+    for (const forbidden of ["payload", "payloadHash", "idempotencyKey", "canonicalObjectKey", "writeReceipt", "teamId", "workspaceId", "actor", "assignee", "dueDate"]) {
+      expect(UI_SAFE_ALLOWLIST.approvalDetail as readonly string[]).not.toContain(forbidden);
+      expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, [forbidden]: "x" }).success).toBe(false); // .strict()
+    }
+  });
+
+  it("rejects a multi-line title, more than 40 description lines, and an unknown send state", () => {
+    expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, title: "two\nlines" }).success).toBe(false);
+    expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, descriptionLines: Array.from({ length: 41 }, (_, i) => `l${i}`) }).success).toBe(false);
+    expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, sendState: "delivered" }).success).toBe(false);
+  });
+
+  it("the send-now result carries only the id, the state and a closed refusal reason", () => {
+    expect(UiSafeSendNowResultSchema.safeParse({ approvalId: "idem_abc", sendState: "sent" }).success).toBe(true);
+    expect(UiSafeSendNowResultSchema.safeParse({ approvalId: "idem_abc", sendState: "refused", refusal: "payload_mismatch" }).success).toBe(true);
+    expect(UiSafeSendNowResultSchema.safeParse({ approvalId: "idem_abc", sendState: "refused", refusal: "because" }).success).toBe(false);
+  });
+});
+
+describe("splitToSummaryLines — a description as single lines (the same newline family the gate rejects)", () => {
+  it("splits on CR/LF and on NEL, LS and PS — a plain \\n split would miss those", () => {
+    const text = ["a", "b", "c", "d", "e"].join(String.fromCharCode(0x0a)).replace("b" + String.fromCharCode(0x0a), "b" + String.fromCharCode(0x85))
+      .replace("c" + String.fromCharCode(0x0a), "c" + String.fromCharCode(0x2028)).replace("d" + String.fromCharCode(0x0a), "d" + String.fromCharCode(0x2029));
+    expect(splitToSummaryLines(text)).toEqual({ lines: ["a", "b", "c", "d", "e"], truncated: false });
+  });
+  it("drops blank lines and collapses whitespace inside a line", () => {
+    expect(splitToSummaryLines("  one   two  \n\n   \nthree")).toEqual({ lines: ["one two", "three"], truncated: false });
+  });
+  it("caps the number of lines and says it truncated; every line passes the single-line gate", () => {
+    const out = splitToSummaryLines(Array.from({ length: 50 }, (_, i) => `line ${i}`).join("\n"), 40);
+    expect(out.lines).toHaveLength(40);
+    expect(out.truncated).toBe(true);
+    expect(UiSafeApprovalDetailSchema.safeParse({ approvalId: "x", sendState: "ready", descriptionLines: out.lines }).success).toBe(true);
   });
 });

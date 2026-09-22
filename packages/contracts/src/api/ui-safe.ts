@@ -103,6 +103,29 @@ export function collapseToSummaryLine(s: string): string {
   return out.trim().slice(0, 1024);
 }
 
+/**
+ * Split free text into SINGLE lines the summary-line gate accepts (Linear slice 3+4: an approval's description,
+ * shown in its details). Splits on the SAME newline family the gate rejects (CR, LF, VT, FF, NEL, LS, PS — a
+ * plain `\n` split misses NEL/LS/PS), collapses whitespace inside each line via {@link collapseToSummaryLine},
+ * drops blank lines, and caps the count at `max`, saying so via `truncated`.
+ */
+export function splitToSummaryLines(s: string, max = 40): { lines: string[]; truncated: boolean } {
+  const newline = new Set([0x0d, 0x0a, 0x0b, 0x0c, 0x85, 0x2028, 0x2029]);
+  const lines: string[] = [];
+  let current = "";
+  const flush = (): void => {
+    const line = collapseToSummaryLine(current);
+    if (line.length > 0) lines.push(line);
+    current = "";
+  };
+  for (const ch of s) {
+    if (newline.has(ch.codePointAt(0) ?? 0)) flush();
+    else current += ch;
+  }
+  flush();
+  return { lines: lines.slice(0, max), truncated: lines.length > max };
+}
+
 
 // An OPAQUE canonical reference id: a short scheme:token-style handle with NO path, URL, or
 // whitespace characters — so a projector cannot smuggle a filesystem path (`/Users/…`) or URL
@@ -667,6 +690,79 @@ export const UiSafeTaskRollupSchema = z
   })
   .strict();
 
+// ── Linear slice 3+4 — an external-action approval's send state and details ──
+// The CLOSED, content-free state of the write an external_action card stands for. The worker derives it from the
+// card, its saved action (the outbox entry) and whether its system has a real sender in its workspace.
+export const ApprovalSendState = [
+  "awaiting_approval", // the card is still open
+  "not_approved", // rejected or edited: it will never be sent
+  "writes_off", // approved, but no real sender for its system in its workspace yet
+  "ready", // approved, and sendable now (e.g. the switch was turned on after approving)
+  "held", // approved, tried, and held (e.g. a rate limit): not sent yet
+  "sent", // the vendor accepted it; a receipt exists
+  "rejected", // closed without a write: refused by the vendor or its sender (the reason is not stored)
+  "expired",
+  "refused", // an integrity check failed; see `refusal`
+  "no_send_record", // no saved action for this card (it came from another path)
+  "unknown", // a saved-action status this version does not recognise — never sent from here
+] as const;
+export const approvalSendStateSchema = z.enum(ApprovalSendState);
+export type ApprovalSendState = z.infer<typeof approvalSendStateSchema>;
+
+export const ApprovalSendRefusal = [
+  "unassigned_workspace",
+  "unknown_workspace",
+  "workspace_mismatch",
+  "not_this_cards_action",
+  "payload_mismatch",
+] as const;
+export const approvalSendRefusalSchema = z.enum(ApprovalSendRefusal);
+export type ApprovalSendRefusal = z.infer<typeof approvalSendRefusalSchema>;
+
+/**
+ * An external_action approval's details, loaded ON OPEN (owner decision 2026-09-22). ⛔ The worker serves this
+ * ONLY when the requested workspace equals the approval's own (WS-8): `title` and `descriptionLines` are the
+ * action's own content, shown to the owner on purpose, so this contract bounds their SHAPE (single lines, ≤ 40
+ * lines, no extra keys) — the workspace check is what keeps employer content out of a personal scope. Never
+ * carries the payload, a key, a hash, an owner or a date.
+ */
+export interface UiSafeApprovalDetail {
+  approvalId: string;
+  sendState: ApprovalSendState;
+  refusal?: ApprovalSendRefusal;
+  targetSystem?: TargetSystem;
+  title?: string;
+  descriptionLines?: readonly string[];
+  descriptionTruncated?: boolean;
+}
+
+export const UiSafeApprovalDetailSchema = z
+  .object({
+    approvalId: z.string().min(1),
+    sendState: approvalSendStateSchema,
+    refusal: approvalSendRefusalSchema.optional(),
+    targetSystem: targetSystemSchema.optional(),
+    title: uiSafeSummaryLine.optional(),
+    descriptionLines: z.array(uiSafeSummaryLine).max(40).readonly().optional(),
+    descriptionTruncated: z.boolean().optional(),
+  })
+  .strict();
+
+/** The result of "Send now": the card's send state, re-read after the attempt. Content-free. */
+export interface UiSafeSendNowResult {
+  approvalId: string;
+  sendState: ApprovalSendState;
+  refusal?: ApprovalSendRefusal;
+}
+
+export const UiSafeSendNowResultSchema = z
+  .object({
+    approvalId: z.string().min(1),
+    sendState: approvalSendStateSchema,
+    refusal: approvalSendRefusalSchema.optional(),
+  })
+  .strict();
+
 // ── Schema ⇄ interface parity guards (compile-time; erased at runtime) ───────
 // Each asserts the schema's inferred output EXACTLY equals its standalone
 // interface — so the interface and the runtime validator can never drift apart.
@@ -688,7 +784,9 @@ const _uiSafeParity: [
   Exact<z.infer<typeof UiSafeScheduleSchema>, UiSafeSchedule>,
   Exact<z.infer<typeof UiSafeTaskRollupItemSchema>, UiSafeTaskRollupItem>,
   Exact<z.infer<typeof UiSafeTaskRollupSchema>, UiSafeTaskRollup>,
-] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+  Exact<z.infer<typeof UiSafeApprovalDetailSchema>, UiSafeApprovalDetail>,
+  Exact<z.infer<typeof UiSafeSendNowResultSchema>, UiSafeSendNowResult>,
+] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
 void _uiSafeParity;
 
 // ── Checked-in allowlist — THE source of truth ───────────────────────────────
@@ -725,4 +823,6 @@ export const UI_SAFE_ALLOWLIST = {
   schedule: ["entries"],
   taskRollupItem: ["dueDate", "priority", "projectRef", "status", "taskId", "title"],
   taskRollup: ["items"],
+  approvalDetail: ["approvalId", "descriptionLines", "descriptionTruncated", "refusal", "sendState", "targetSystem", "title"],
+  sendNowResult: ["approvalId", "refusal", "sendState"],
 } as const;
