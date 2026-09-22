@@ -44,7 +44,7 @@ import { resolveExisting } from "./existence-check";
 import { recordReceipt, recordAdoptedObject, isAuthoredByThisSystem } from "./receipt-store";
 import { buildSafeToolWriteLog, type SafeToolWriteLog } from "../redaction/gateway-log-redaction";
 import type { ReceiptStore } from "../ports/persistence";
-import type { TargetWriteAdapter, AdapterError } from "./adapter-port";
+import type { TargetWriteAdapter, AdapterError, AdapterCallContext } from "./adapter-port";
 import { writeSecretRef, type WriteSecretsAccessor } from "./adapters/adapter-core";
 
 /**
@@ -345,7 +345,11 @@ export async function dispatchExternalWrite(
 
   // 3. MANDATORY pre-write existence check (safety invariant 2). Any hit ⇒ reuse,
   //    never a duplicate create. A live-probe fault ⇒ hold (fail-closed).
-  const existing = await resolveExisting(env, deps.adapter, deps.receiptStore);
+  // RULE 4 — the dispatch's workspace rides with EVERY adapter call, so the transport scopes its
+  // credential per dispatch. It used to stop at the pre-check above: the shared boot-built adapter
+  // then sent no workspace and a real transport refused every write (found 2026-09-21).
+  const adapterCtx: AdapterCallContext = opts.workspaceId !== undefined ? { workspaceId: opts.workspaceId } : {};
+  const existing = await resolveExisting(env, deps.adapter, deps.receiptStore, adapterCtx);
   if (existing.kind === "replay") {
     return { status: "reused", receipt: existing.receipt };
   }
@@ -395,7 +399,7 @@ export async function dispatchExternalWrite(
       // accepted here on the decision rule: the outcome is one object carrying one
       // of two legitimate payloads — recoverable by re-sync — whereas the create
       // path's duplicate-object hazard is not. Do NOT read (i) as a total ordering.
-      const updated = await deps.adapter.update(env, action.payload, env.preconditions.join(","));
+      const updated = await deps.adapter.update(env, action.payload, env.preconditions.join(","), adapterCtx);
       if (updated.ok) {
         await recordReceipt(deps.receiptStore, env, updated.value, deps.clock);
         await emitCommitDiagnostics(env, updated.value, deps);
@@ -509,7 +513,7 @@ export async function dispatchExternalWrite(
   // 4. create — we hold the reservation and the object does not exist. Issue
   //    EXACTLY ONE create. On success, recording the receipt commits the
   //    reservation; on fault, release it so a retry / outbox drain can re-claim.
-  const created = await deps.adapter.create(env, action.payload);
+  const created = await deps.adapter.create(env, action.payload, adapterCtx);
   if (created.ok) {
     await recordReceipt(deps.receiptStore, env, created.value, deps.clock);
     await emitCommitDiagnostics(env, created.value, deps);

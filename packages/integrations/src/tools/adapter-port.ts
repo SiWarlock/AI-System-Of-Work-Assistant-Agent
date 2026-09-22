@@ -136,14 +136,32 @@ export interface TargetWriteAdapter {
   existenceCheck(
     canonicalObjectKey: string,
     env: ExternalWriteEnvelope,
+    ctx?: AdapterCallContext,
   ): Promise<Result<ExistingObject | null, AdapterError>>;
   create(
     env: ExternalWriteEnvelope,
     payload: Record<string, unknown>,
+    ctx?: AdapterCallContext,
   ): Promise<Result<WriteReceipt, AdapterError>>;
   update(
     env: ExternalWriteEnvelope,
     payload: Record<string, unknown>,
     expectedPrecondition?: string,
+    ctx?: AdapterCallContext,
   ): Promise<Result<WriteReceipt, AdapterError>>;
+}
+
+/**
+ * Per-CALL facts an adapter needs that the frozen `ExternalWriteEnvelope` cannot carry.
+ *
+ * ⛔ WHY PER CALL AND NOT PER ADAPTER (rule 4): the production write registry is built ONCE, at boot,
+ * and shared by every dispatch. A workspace fixed at construction cannot be right for a shared adapter,
+ * and before this existed the dispatch's workspace (`DispatchOptions.workspaceId`) stopped at the
+ * gateway: a real transport refused every write as `workspace_unscoped` (found 2026-09-21; pinned by
+ * `test/write-workspace-per-dispatch.test.ts`, which uses the production arrangement).
+ *
+ * Optional, so adapters that make no vendor call (the unrouted and notebook stubs) need not take it.
+ */
+export interface AdapterCallContext {
+  readonly workspaceId?: string;
 }

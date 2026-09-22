@@ -1643,6 +1643,11 @@ export function buildProofSpineActivities(
       dispatch: (env, action, deps, opts) =>
         dispatchRouted(backends.writeAdapters, env, action, deps, undefined, opts),
       deps: externalWriteDeps,
+      // RULE 4 — the output workflows' writes (daily brief, period review, project sync, cross-
+      // calendar) name their workspace. ⛔ This site was MISSED on 2026-09-03 when the workspace was
+      // threaded everywhere else: `proposeExternalActions` adds it only when this field is set, so
+      // every one of these writes would have failed the credential pre-check (found 2026-09-21).
+      workspaceId: String(params.meetingJobInputs.workspaceId),
     },
     // No real dashboard read-model sink is wired at the composition root yet (arch_gap — the
     // DashboardReadModelStore port carries no workspaceId/key at all, so a single shared sink would

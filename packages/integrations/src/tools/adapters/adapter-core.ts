@@ -30,6 +30,7 @@ import type {
   TargetWriteAdapter,
   ExistingObject,
   AdapterError,
+  AdapterCallContext,
 } from "../adapter-port";
 import {
   buildSafeToolWriteLog,
@@ -62,15 +63,17 @@ export interface AdapterDeps {
   /** Optional redaction-safe log sink; only ever receives a `SafeToolWriteLog`. */
   readonly logSink?: (rec: SafeToolWriteLog) => void;
   /**
-   * The workspace this adapter writes on behalf of — stamped onto every `AdapterTransportRequest`
-   * it builds, so a credential-resolving transport can scope its lookup (rule 4).
+   * A FALLBACK workspace for an adapter built for exactly one workspace. The primary source is the
+   * PER-CALL `AdapterCallContext.workspaceId`, which the gateway passes from `DispatchOptions`.
    *
-   * ⭐ BOUND AT CONSTRUCTION rather than derived from the envelope, because `ExternalWriteEnvelope`
-   * carries no workspace and adding one would re-cut a frozen schema across 93 files. An adapter is
-   * already built per routed dispatch, so construction is exactly where the workspace is known.
+   * ⛔ CORRECTED 2026-09-21. This comment used to say the workspace was "BOUND AT CONSTRUCTION" and
+   * that "an adapter is already built per routed dispatch". BOTH WERE FALSE: the production registry
+   * is built ONCE at boot with `{ transport, clock }` and shared by every dispatch, so this field was
+   * never set and a real transport refused every write as `workspace_unscoped`. The per-call context
+   * exists because of that.
    *
-   * ⛔ Optional in the type, fail-closed in effect: an unbound adapter simply omits the field, and a
-   * transport that needs a credential then REFUSES rather than resolving an unscoped one.
+   * ⛔ Optional, fail-closed: with neither source present the request omits the field, and a transport
+   * that needs a credential REFUSES rather than resolving an unscoped one.
    */
   readonly workspaceId?: string;
 }
@@ -108,10 +111,14 @@ export interface WriteSecretsAccessor {
 /**
  * Derive the 17.4 `keychain://<service>/<account>` write-token ref for a target, SCOPED BY
  * WORKSPACE. Object targets (calendar/todoist/linear/asana/drive/github) resolve
- * `connector-write/<workspace>/<vendor>`; telegram resolves `telegram-bot/<workspace>/*` (the
- * concrete bot account is bound at §ARM-21 arming — the workspace is not the account, so scoping
- * it is orthogonal to that and does not wait for it). PURE — no I/O, no secret; the real Keychain
- * resolution + ref parse happen in the worker-bound accessor.
+ * `keychain://connector-write.<workspace>/<vendor>`; telegram resolves
+ * `keychain://telegram-bot.<workspace>/bot` (the concrete bot account is bound at §ARM-21 arming, and
+ * `bot` is a placeholder for it). PURE — no I/O, no secret; the real Keychain resolution + ref parse
+ * happen in the worker-bound accessor.
+ * ⚠ AMENDED 2026-09-21: this docblock still described the RETRACTED three-segment form
+ * (`connector-write/<workspace>/<vendor>`, `telegram-bot/<workspace>/*`) after `2f4ea8aa` corrected
+ * the code and the inline comment below. A correction that moves the code but not the docblock above
+ * it leaves the two disagreeing, and the docblock is the part a reader copies.
  *
  * ⛔⛔ `workspaceId` IS REQUIRED, AND THAT IS THE SAFETY PROPERTY (rule 4), NOT AN ERGONOMIC CHOICE.
  * This derivation used to key on the VENDOR ALONE, so `personal-business` and `employer-work`
@@ -278,6 +285,7 @@ export function makeTargetWriteAdapter(
 ): TargetWriteAdapter {
   const baseReq = (
     env: ExternalWriteEnvelope,
+    ctx?: AdapterCallContext,
   ): Pick<
     AdapterTransportRequest,
     "targetSystem" | "canonicalObjectKey" | "idempotencyKey" | "identity" | "workspaceId"
@@ -286,10 +294,13 @@ export function makeTargetWriteAdapter(
     canonicalObjectKey: env.canonicalObjectKey,
     idempotencyKey: env.idempotencyKey,
     identity: spec.deriveIdentity(env),
-    // Conditional spread — an UNBOUND adapter omits the key entirely rather than setting
-    // `undefined`, so the request stays byte-identical to today's for every existing caller.
-    ...(deps.workspaceId !== undefined ? { workspaceId: deps.workspaceId } : {}),
+    // The PER-CALL workspace (from `DispatchOptions` via the gateway) wins; the construction-time
+    // `deps.workspaceId` is only a fallback for an adapter built for one workspace. Neither present ⇒
+    // the key is omitted, and a credential-resolving transport then refuses (fail closed, rule 4).
+    ...(workspaceIdFor(ctx) !== undefined ? { workspaceId: workspaceIdFor(ctx) } : {}),
   });
+
+  const workspaceIdFor = (ctx?: AdapterCallContext): string | undefined => ctx?.workspaceId ?? deps.workspaceId;
 
   return {
     targetSystem: spec.targetSystem,
@@ -297,8 +308,9 @@ export function makeTargetWriteAdapter(
     async existenceCheck(
       _canonicalObjectKey: string,
       env: ExternalWriteEnvelope,
+      ctx?: AdapterCallContext,
     ): Promise<Result<ExistingObject | null, AdapterError>> {
-      const called = await callTransport(deps, { op: "query", ...baseReq(env) });
+      const called = await callTransport(deps, { op: "query", ...baseReq(env, ctx) });
       if (!called.ok) return called;
       const resp = called.value;
       if (!resp.ok) {
@@ -319,8 +331,9 @@ export function makeTargetWriteAdapter(
     async create(
       env: ExternalWriteEnvelope,
       payload: Record<string, unknown>,
+      ctx?: AdapterCallContext,
     ): Promise<Result<WriteReceipt, AdapterError>> {
-      const called = await callTransport(deps, { op: "create", ...baseReq(env), payload });
+      const called = await callTransport(deps, { op: "create", ...baseReq(env, ctx), payload });
       if (!called.ok) return called;
       const resp = called.value;
       if (!resp.ok) {
@@ -343,10 +356,11 @@ export function makeTargetWriteAdapter(
       env: ExternalWriteEnvelope,
       payload: Record<string, unknown>,
       expectedPrecondition?: string,
+      ctx?: AdapterCallContext,
     ): Promise<Result<WriteReceipt, AdapterError>> {
       const called = await callTransport(deps, {
         op: "update",
-        ...baseReq(env),
+        ...baseReq(env, ctx),
         payload,
         ...(expectedPrecondition !== undefined ? { expectedPrecondition } : {}),
       });

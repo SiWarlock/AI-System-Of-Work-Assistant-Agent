@@ -24,8 +24,7 @@ import type { ReceiptStore, ReceiptRecord } from "../ports/persistence";
 import type {
   TargetWriteAdapter,
   ExistingObject,
-  AdapterError,
-} from "./adapter-port";
+  AdapterError, AdapterCallContext } from "./adapter-port";
 
 /**
  * The typed outcome of the pre-write existence check. `replay` — a stored receipt
@@ -62,6 +61,8 @@ export async function resolveExisting(
   env: ExternalWriteEnvelope,
   adapter: TargetWriteAdapter,
   receiptStore: ReceiptStore,
+  /** Per-call facts for the live probe — the dispatch's workspace (rule 4). */
+  ctx?: AdapterCallContext,
 ): Promise<ExistenceOutcome> {
   // (a) replay gate — a stored receipt on the exact idempotencyKey.
   //
@@ -147,7 +148,7 @@ export async function resolveExisting(
 
   // (c) live vendor probe — the object may exist at the vendor without a local
   // receipt. A fault here is a typed error (never collapsed to 'none').
-  const live = await adapter.existenceCheck(env.canonicalObjectKey, env);
+  const live = await adapter.existenceCheck(env.canonicalObjectKey, env, ctx);
   if (!live.ok) {
     return { kind: "error", error: live.error };
   }

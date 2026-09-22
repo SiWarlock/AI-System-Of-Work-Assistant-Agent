@@ -31,7 +31,7 @@
 // transport sets alongside the fault — never on `message`'s prose.
 import { err } from "@sow/contracts";
 import type { Result, WriteReceipt, ExternalWriteEnvelope } from "@sow/contracts";
-import type { TargetWriteAdapter, AdapterError, ExistingObject } from "../adapter-port";
+import type { TargetWriteAdapter, AdapterError, ExistingObject, AdapterCallContext } from "../adapter-port";
 import type { AdapterDeps } from "./adapter-core";
 import { makeTargetWriteAdapter } from "./adapter-core";
 
@@ -73,16 +73,18 @@ export function createDriveWriteAdapter(deps: AdapterDeps): TargetWriteAdapter {
     async existenceCheck(
       canonicalObjectKey: string,
       env: ExternalWriteEnvelope,
+      ctx?: AdapterCallContext,
     ): Promise<Result<ExistingObject | null, AdapterError>> {
-      const result = await base.existenceCheck(canonicalObjectKey, env);
+      const result = await base.existenceCheck(canonicalObjectKey, env, ctx);
       return result.ok ? result : err(promoteNotFound(result.error));
     },
 
     async create(
       env: ExternalWriteEnvelope,
       payload: Record<string, unknown>,
+      ctx?: AdapterCallContext,
     ): Promise<Result<WriteReceipt, AdapterError>> {
-      const result = await base.create(env, payload);
+      const result = await base.create(env, payload, ctx);
       return result.ok ? result : err(promoteNotFound(result.error));
     },
 
@@ -90,8 +92,11 @@ export function createDriveWriteAdapter(deps: AdapterDeps): TargetWriteAdapter {
       env: ExternalWriteEnvelope,
       payload: Record<string, unknown>,
       expectedPrecondition?: string,
+      ctx?: AdapterCallContext,
     ): Promise<Result<WriteReceipt, AdapterError>> {
-      const result = await base.update(env, payload, expectedPrecondition);
+      // ⚠ Forward the per-call context: a wrapper that dropped it would silently re-open the
+      // workspace_unscoped gap for Drive alone (rule 4).
+      const result = await base.update(env, payload, expectedPrecondition, ctx);
       return result.ok ? result : err(promoteNotFound(result.error));
     },
   };

@@ -43,7 +43,10 @@ export interface AdapterTransportRequest {
   readonly expectedPrecondition?: string;
   /**
    * The workspace this write is made on behalf of — the rule-4 scoping input for the write
-   * credential (`writeSecretRef(target, workspaceId)`), threaded from `DispatchOptions.workspaceId`.
+   * credential (`writeSecretRef(target, workspaceId)`). It travels `DispatchOptions.workspaceId` →
+   * the gateway → `AdapterCallContext` on each adapter call → here.
+   * ⚠ AMENDED 2026-09-21: this said "threaded from DispatchOptions.workspaceId" on 2026-09-03, when
+   * nothing did — the chain stopped at the gateway. It is true now because `AdapterCallContext` exists.
    *
    * ⛔ OPTIONAL IN THE TYPE, FAIL-CLOSED IN EFFECT. Optional so existing request builders still
    * compile; but a transport that needs a credential and has no workspace REFUSES rather than
