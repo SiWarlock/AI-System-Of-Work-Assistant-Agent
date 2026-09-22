@@ -23,6 +23,7 @@
 // broker localConfig, the faithful ReceiptStore mapping) live in backends.ts and are
 // threaded here unchanged.
 import { ok, err, isOk, KNOWLEDGE_MUTATION_PLAN_SCHEMA_ID, auditId } from "@sow/contracts";
+import { approvalIdFor } from "@sow/domain";
 import type {
   Result,
   WorkspaceId,
@@ -904,7 +905,7 @@ export function buildProofSpineActivities(
       // Record a pending Approval so an approval-required action is never lost. The
       // pending record's id is derived from the envelope's idempotencyKey (idempotent).
       const approval: Approval = {
-        id: makeApprovalIdFromEnvelope(env),
+        id: approvalIdFor({ idempotencyKey: env.idempotencyKey, workspace: String(params.meetingJobInputs.workspaceId) }),
         actionRef: action.actionId,
         // §13.10a — a Tool-Gateway external write is an external_action subject (actionRef only).
         subjectKind: "external_action",
@@ -919,7 +920,7 @@ export function buildProofSpineActivities(
       return created.ok ? ok(created.value) : err(created.error);
     },
     isApproved: async (env): Promise<boolean> => {
-      const id = makeApprovalIdFromEnvelope(env);
+      const id = approvalIdFor({ idempotencyKey: env.idempotencyKey, workspace: String(params.meetingJobInputs.workspaceId) });
       const got = await backends.repos.approvals.get(id);
       return got.ok && got.value.status === "approved";
     },
@@ -1852,7 +1853,7 @@ export function buildProofSpineActivities(
     crossCalendarRouteToApproval: {
       gateway: {
         async reservePending(action, env) {
-          const approvalRef = makeApprovalIdFromEnvelope(env);
+          const approvalRef = approvalIdFor({ idempotencyKey: env.idempotencyKey, workspace: String(params.meetingJobInputs.workspaceId) });
           const existing = await backends.repos.approvals.get(approvalRef);
           if (existing.ok) {
             return ok({ approvalRef, created: false });
@@ -2232,11 +2233,10 @@ function scheduleStoreFaultCode(thrown: unknown): DbErrorCode {
   return typeof code === "string" && code in DB_ERROR_SAFE_MESSAGE ? (code as DbErrorCode) : "unknown";
 }
 
-/** Derive a stable Approval id from the envelope's idempotencyKey (idempotent record). */
-function makeApprovalIdFromEnvelope(env: ExternalWriteEnvelope): Approval["id"] {
-  // Not node:crypto — a deterministic, human-legible id keyed to the replay key.
-  return `approval:${env.idempotencyKey}` as Approval["id"];
-}
+// ⛔ `makeApprovalIdFromEnvelope` (the `approval:<idempotencyKey>` form, no workspace) was REMOVED in Linear
+// slice 3: it disagreed with the `idem_` fold the approval-flow activity and the propose sink used, so the
+// gateway could not see their approved cards and recorded a second pending card. Every site above now uses
+// `approvalIdFor` (@sow/domain), folding the card's own workspace (rule 3, rule 4).
 
 /** Add `hours` to an ISO instant, returning an ISO instant. Pure. */
 function addHours(iso: string, hours: number): string {

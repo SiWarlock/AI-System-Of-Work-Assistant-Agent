@@ -40,7 +40,7 @@
 // an earlier bare-filename citation here sent a reader auditing the locked-Keychain positive
 // control looking in the wrong directory, where they found nothing.
 import { describe, it, expect, afterEach } from "vitest";
-import { workspaceId, workflowId, sourceId, actionId } from "@sow/contracts";
+import { workspaceId, workflowId, sourceId, actionId, defaultWorkspace } from "@sow/contracts";
 import type {
   WorkspaceId,
   WorkflowRunRef,
@@ -60,6 +60,8 @@ import { assembleBackends, type ProofSpineBackends } from "../../src/composition
 import { buildProofSpineActivities, type ProofSpineParams } from "../../src/composition/buildActivities";
 import type { KnowledgeRevisionStore, CommittedRevision } from "@sow/knowledge";
 import { computeRevisionId } from "@sow/knowledge";
+import { createApprovalsProposeSink } from "../../src/api/procedures/copilotProposeSink";
+import { approvalIdFor } from "@sow/domain";
 
 const NOW = "2026-08-27T00:00:00.000Z";
 const LOCAL_ENDPOINT = "http://127.0.0.1:11434";
@@ -205,13 +207,13 @@ function actionAndEnvelope(key: string): { action: ProposedAction; envelope: Ext
   return { action, envelope };
 }
 
-/** Pre-seed an ALREADY-APPROVED Approval matching the envelope's idempotencyKey (the exact id
- * convention `makeApprovalIdFromEnvelope` uses, buildActivities.ts) so `dispatchExternalWrite`'s
- * approval-before-dispatch step (gateway.ts step 2) clears without going through the full
- * recordPending/applyTransition cycle — this test targets the DISPATCH leg only. */
+/** Pre-seed an ALREADY-APPROVED Approval under the ONE approval-id minter (`approvalIdFor`, @sow/domain —
+ * the id the gateway's `isApproved` looks up) so `dispatchExternalWrite`'s approval-before-dispatch step
+ * (gateway.ts step 2) clears without going through the full recordPending/applyTransition cycle — this
+ * test targets the DISPATCH leg only. (It hand-seeded the retired `approval:<key>` form until slice 3.) */
 async function preApprove(backends: ProofSpineBackends, envelope: ExternalWriteEnvelope): Promise<void> {
   const approval: Approval = {
-    id: `approval:${envelope.idempotencyKey}` as Approval["id"],
+    id: approvalIdFor({ idempotencyKey: envelope.idempotencyKey, workspace: String(meetingJobInputs.workspaceId) }),
     actionRef: envelope.actionId,
     subjectKind: "external_action",
     workspaceId: meetingJobInputs.workspaceId,
@@ -400,5 +402,63 @@ describe("approvalDispatchApproved — forwards the C3 intentCreatedAt end-to-en
     const res = await acts.approvalDispatchApproved(second.action, second.envelope);
 
     if (!res.ok) expect(res.error.message).not.toContain("predates");
+  });
+});
+
+// Linear slice 3, step 1 — ONE approval id (rule 3). Before this, the gateway looked a card up as
+// `approval:<idempotencyKey>` while the propose sink (and the approval-flow activity) recorded it as the
+// `idem_` fold over { key, workspace }. The gateway could not see the sink's approved card, so it
+// recorded a SECOND pending card and refused the write as "awaits approval".
+describe("the approval id is ONE derivation — a card recorded by the propose sink clears the gateway (rule 3)", () => {
+  it("an approved sink-recorded card lets the write through, and no second card is ever recorded", async () => {
+    const key = "one-id";
+    const action: ProposedAction = {
+      actionId: actionId(`act-${key}`),
+      targetSystem: "todoist", // not calendar: the only system that may auto-allow (approval-policy.ts)
+      canonicalObjectKey: `todo:${key}`,
+      payload: { title: "probe task" },
+      approvalPolicy: "required",
+      idempotencyKey: `idem:${key}`,
+    };
+    const envelope: ExternalWriteEnvelope = {
+      actionId: action.actionId,
+      targetSystem: action.targetSystem,
+      canonicalObjectKey: action.canonicalObjectKey,
+      idempotencyKey: action.idempotencyKey,
+      preconditions: [],
+      payloadHash: `hash:${key}`,
+    };
+    const creates: AdapterTransportRequest[] = [];
+    const transport: AdapterTransport = (req) => {
+      if (req.op === "query") return Promise.resolve({ ok: true, object: null });
+      creates.push(req);
+      return Promise.resolve({ ok: true, object: { externalObjectId: "todo-1" } });
+    };
+    const b = await backendsWithFakeTransport(transport);
+    const ws = await b.repos.workspaceConfig.upsert(
+      defaultWorkspace({ id: WS, name: "probe", type: "personal_business", markdownRepoPath: "/tmp/probe", gbrainBrainId: "probe" }),
+    );
+    expect(ws.ok).toBe(true);
+
+    // Record the pending card the way a real proposer does, then approve it as the Approvals screen does.
+    const sink = createApprovalsProposeSink({ approvals: b.repos.approvals, workspaceConfig: b.repos.workspaceConfig, now: () => NOW });
+    const recorded = await sink.record({ action, envelope, workspaceId: WS });
+    expect(recorded.ok).toBe(true);
+    const pending = await b.repos.approvals.listByStatus("pending");
+    if (!pending.ok) throw new Error("pending list failed");
+    expect(pending.value).toHaveLength(1);
+    const card = pending.value[0] as Approval;
+    const approved = await b.repos.approvals.applyTransition(card.id, "pending", { ...card, status: "approved" });
+    expect(approved.ok).toBe(true);
+
+    const res = await buildProofSpineActivities(b, paramsFor()).approvalDispatchApproved(action, envelope);
+
+    expect(res).toEqual({ ok: true, value: expect.anything() }); // NOT { code: "rejected", "awaits approval" }
+    expect(creates).toHaveLength(1);
+    for (const status of ["pending", "approved"] as const) {
+      const listed = await b.repos.approvals.listByStatus(status);
+      if (!listed.ok) throw new Error("list failed");
+      expect(listed.value, `approvals in ${status}`).toHaveLength(status === "approved" ? 1 : 0);
+    }
   });
 });

@@ -21,7 +21,7 @@
 //       the driver's raw message/cause). The sink NEVER throws (typed Result), NEVER calls
 //       applyTransition/dispatch (no auto-apply — the owner drives that via the §9.8 command path), and
 //       DELIBERATELY skips the §8 receipt-store reserve (reservation belongs at dispatch-after-approval).
-import { ok, err, isOk, failure, approvalId as makeApprovalId } from "@sow/contracts";
+import { ok, err, isOk, failure } from "@sow/contracts";
 import type {
   Approval,
   ExternalWriteEnvelope,
@@ -31,7 +31,7 @@ import type {
   WorkspaceId,
 } from "@sow/contracts";
 import type { ApprovalRepository, DbError, WorkspaceConfigRepository } from "@sow/db";
-import { buildIdempotencyKey } from "@sow/domain";
+import { approvalIdFor } from "@sow/domain";
 import type { CopilotProposeReceipt, CopilotProposeSink } from "./copilotPropose";
 
 /** The SERVER-side actor recorded on a Copilot proposal card — never a model value. */
@@ -122,14 +122,10 @@ export function createApprovalsProposeSink(deps: ApprovalsProposeSinkDeps): Copi
           }),
         );
       }
-      // Derive the stable id EXACTLY as createRecordPendingActivity — workspace folded in (no cross-ws bleed);
-      // an in-process record and any Temporal re-drive collide on ONE row.
-      const id = makeApprovalId(
-        buildIdempotencyKey({
-          operation: "approval.pending",
-          identity: { idempotencyKey: envelope.idempotencyKey, workspace: String(workspaceId) },
-        }),
-      );
+      // The ONE approval-id minter (`approvalIdFor`) — shared with createRecordPendingActivity and the gateway's
+      // own lookup, so an in-process record, a Temporal re-drive and the gateway all resolve ONE row (rule 3).
+      // Workspace folded in (no cross-ws bleed).
+      const id = approvalIdFor({ idempotencyKey: envelope.idempotencyKey, workspace: String(workspaceId) });
       // (b) get-then-create: a hit is first-write-wins / divergence-reject.
       const existing = await deps.approvals.get(id);
       if (isOk(existing)) return reconcileExisting(existing.value, envelope);

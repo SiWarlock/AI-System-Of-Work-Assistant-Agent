@@ -25,7 +25,7 @@
 // the edge — `expired` is terminal).
 //
 // §16: every method returns a typed Result — never throws.
-import { ok, err, isOk, approvalId as makeApprovalId } from "@sow/contracts";
+import { ok, err, isOk } from "@sow/contracts";
 import type {
   Result,
   Approval,
@@ -36,7 +36,7 @@ import type {
 import type { ApprovalRepository, DbError } from "@sow/db";
 import { approvalMachine } from "@sow/domain";
 import type { ApprovalState } from "@sow/domain";
-import { buildIdempotencyKey } from "@sow/domain";
+import { approvalIdFor } from "@sow/domain";
 import type {
   RecordPendingPort,
   RecordPendingResult,
@@ -118,16 +118,10 @@ export function createRecordPendingActivity(
       if (!isOk(reserved)) return err(reserved.error);
 
       // The pending Approval's stable id is DERIVED from the envelope's
-      // idempotencyKey so a re-drive resolves to the SAME approval id (idempotent
-      // record — no duplicate card). node:crypto lives in buildIdempotencyKey.
-      const idKey = buildIdempotencyKey({
-        operation: "approval.pending",
-        identity: {
-          idempotencyKey: ctx.envelope.idempotencyKey,
-          workspace: String(ctx.workspaceId),
-        },
-      });
-      const id = makeApprovalId(idKey);
+      // idempotencyKey + workspace so a re-drive resolves to the SAME approval id
+      // (idempotent record — no duplicate card). `approvalIdFor` is the ONE minter
+      // every producer and lookup shares (rule 3, Linear slice 3).
+      const id = approvalIdFor({ idempotencyKey: ctx.envelope.idempotencyKey, workspace: String(ctx.workspaceId) });
 
       // Idempotent create: if the approval already exists (a replay), reuse it.
       const existing = await deps.approvals.get(id);

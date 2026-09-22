@@ -32,6 +32,7 @@
 // `node:crypto`) so this module stays reachable from the @sow/domain barrel
 // without dragging a Node built-in into it — see that module's header for why
 // the hash lives there instead of a standalone file.
+import { approvalId, type ApprovalId } from "@sow/contracts";
 import { normalizeIdentity, sha256Hex } from "./canonical-key";
 
 const IDEMPOTENCY_KEY_VERSION = "sow.idem.v1";
@@ -48,4 +49,24 @@ export function buildIdempotencyKey(input: {
   const entries = normalizeIdentity(input.identity);
   const preimage = JSON.stringify([IDEMPOTENCY_KEY_VERSION, operation, entries]);
   return `idem_${sha256Hex(preimage)}`;
+}
+
+/**
+ * The ONE id of the pending external-action approval for an envelope in a workspace.
+ *
+ * ⛔ Every producer and every lookup of an `external_action` card derives its id HERE (rule 3). Two
+ * derivations used to coexist — `approval:<idempotencyKey>` (no workspace) in the proof-spine gateway,
+ * and this `idem_` fold in the approval-flow activity and the Copilot propose sink — so a card recorded
+ * by one was invisible to a lookup by the other, and the gateway would record a SECOND card for it.
+ * The workspace is folded in so the same envelope key in two workspaces can never share a card (rule 4).
+ * The `approval.pending` operation label is the one the approval-flow activity always used, so ids it
+ * already minted are unchanged.
+ */
+export function approvalIdFor(input: { idempotencyKey: string; workspace: string }): ApprovalId {
+  return approvalId(
+    buildIdempotencyKey({
+      operation: "approval.pending",
+      identity: { idempotencyKey: input.idempotencyKey, workspace: input.workspace },
+    }),
+  );
 }
