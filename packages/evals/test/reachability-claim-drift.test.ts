@@ -183,6 +183,14 @@ const CLAIMS: readonly Claim[] = [
     claimedAt: "apps/worker/src/boot.ts (external_action binding) + apps/desktop/worker-host/index.ts (no override passed) + docs/runbooks/turn-on-and-smoke-test-runbook.md",
     says: "bootWorker binds the REAL guarded external-approval dispatcher when the host supplies no override",
   },
+  {
+    // Added 2026-09-22 (Linear slice 3+4, step 4d): the Approvals screen's details / unsent / Send-now surface.
+    // Absent from boot, the API mounts the fail-closed UNAVAILABLE port and the screen shows nothing — silently.
+    symbol: "createApprovalSendPort",
+    sites: 2,
+    claimedAt: "apps/worker/src/boot.ts (approvalSend binding) + apps/worker/src/api/server.ts (mounted under approvalSend)",
+    says: "bootWorker binds the real approval send port (one import + one call) and passes it to the API server",
+  },
 ];
 
 describe("reachability-claim drift guard", () => {

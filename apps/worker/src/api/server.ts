@@ -47,6 +47,11 @@ import {
   type EgressCommandPort,
 } from "./procedures/egressCommands";
 import {
+  buildApprovalSendRouter,
+  UNAVAILABLE_APPROVAL_SEND_PORT,
+  type ApprovalSendPort,
+} from "./procedures/approvalSend";
+import {
   buildOnboardingRouter,
   type OnboardingCommandPort,
 } from "./procedures/onboarding";
@@ -106,6 +111,11 @@ export interface ApiServerDeps {
   readonly crossWorkspaceLink: CrossWorkspaceLinkCommandPort;
   /** The egress-ack owner-revoke port (9.10-B) — the fail-SAFE OFF command for employer raw-cloud egress (rule 5). */
   readonly egressCommand: EgressCommandPort;
+  /**
+   * The Approvals screen's send surface (Linear slice 3+4): details (own workspace only), the unsent list, and
+   * "Send now". Optional: absent ⇒ every call fails closed as unavailable (never a faked state or send).
+   */
+  readonly approvalSend?: ApprovalSendPort;
   readonly streamPublisherOptions?: StreamPublisherOptions;
 }
 
@@ -138,6 +148,7 @@ function composeAppRouter(deps: ApiServerDeps, pushStream: PushStream) {
     connectorConfig: buildConnectorConfigRouter({ connectorConfig: deps.connectorConfig }),
     crossWorkspaceLink: buildCrossWorkspaceLinkRouter({ crossWorkspaceLink: deps.crossWorkspaceLink }),
     egressCommand: buildEgressCommandRouter({ egressCommand: deps.egressCommand }),
+    approvalSend: buildApprovalSendRouter({ approvalSend: deps.approvalSend ?? UNAVAILABLE_APPROVAL_SEND_PORT }),
     presetProfiles: buildPresetProfilesRouter(),
     stream: pushStream.router,
   });

@@ -216,6 +216,8 @@ import {
   externalApprovalFailureToHealth,
   type ExternalApprovalSender,
 } from "./composition/externalApprovalDispatch";
+import { createApprovalSendPort } from "./composition/approvalSend";
+import type { ApprovalSendPort } from "./api/procedures/approvalSend";
 import { provisionDevWorkspace, type DevProvisionSpec } from "./composition/provisionDev";
 import { maybeSeedDemoData } from "./composition/demoSeed";
 import {
@@ -4105,6 +4107,16 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   const externalApprovalDispatch: DispatchApprovalFn = resolveExternalApprovalDispatch(config.dispatchApproval, () =>
     createExternalApprovalDispatch(externalApprovalSender),
   );
+  // Linear slice 3+4 step 4d — the Approvals screen's send surface (details on open, own workspace only; the
+  // unsent list; "Send now"). "Send now" uses the SAME single-flight sender, and only when no dispatch override is
+  // bound: an override means this worker is not the one sending, so Send now answers "unavailable", never a fake.
+  const approvalSend: ApprovalSendPort = createApprovalSendPort({
+    approvals: backends.repos.approvals,
+    outbox: backends.repos.outbox,
+    workspaceConfig: backends.repos.workspaceConfig,
+    armedFor: backends.armedFor,
+    ...(config.dispatchApproval === undefined ? { sender: externalApprovalSender } : {}),
+  });
   const dispatchApproval: DispatchApprovalFn =
     proofSpineParams !== undefined
       ? createApprovalDispatchRouter({
@@ -4188,6 +4200,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     connectorConfig,
     crossWorkspaceLink,
     egressCommand,
+    approvalSend,
     now: backends.now,
     ...(config.apiHost !== undefined ? { host: config.apiHost } : {}),
     ...(config.apiPort !== undefined ? { port: config.apiPort } : {}),
