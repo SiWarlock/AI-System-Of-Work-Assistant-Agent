@@ -27,8 +27,12 @@ import type {
   UiSafeGclProjection,
   UiSafeIngestionItem,
   UiSafeScheduleEntry,
+  UiSafeApprovalDetail,
+  UiSafeSendNowResult,
+  ApprovalSendState,
+  ApprovalSendRefusal,
 } from "@sow/contracts";
-import { collapseToSummaryLine, UiSafeScheduleEntrySchema } from "@sow/contracts";
+import { collapseToSummaryLine, splitToSummaryLines, targetSystemSchema, UiSafeScheduleEntrySchema } from "@sow/contracts";
 import { permitsRawDrillDown } from "@sow/policy";
 
 /**
@@ -289,4 +293,57 @@ export function toUiSafeScheduleEntry(window: ScheduleWindowSource): UiSafeSched
   //     holds by construction here (busy is always `true`).
   if (Date.parse(window.start) > Date.parse(window.end)) return null;
   return out;
+}
+
+/**
+ * The NAMED inputs of an external_action approval's details (Linear slice 3+4). The port (step 4d) builds it —
+ * and decides whether to build it at all: details are served ONLY when the requested workspace equals the
+ * approval's own (WS-8). `title` / `description` are the action's own content, typed `unknown` because they come
+ * from a saved payload; they are narrowed here, never trusted.
+ */
+export interface ApprovalDetailSource {
+  approvalId: string;
+  sendState: ApprovalSendState;
+  refusal?: ApprovalSendRefusal;
+  targetSystem?: string;
+  title?: unknown;
+  description?: unknown;
+}
+
+/**
+ * Project an {@link ApprovalDetailSource} to a {@link UiSafeApprovalDetail}. Copies ONLY the allowlisted names,
+ * each explicitly — no spread, so the raw payload, a team, an assignee, a due date or a key on the source can
+ * never cross. Narrows: `targetSystem` to the closed enum; `title` to ONE summary line; `description` to at most 40
+ * single lines (`splitToSummaryLines`), flagging truncation. ⛔ A `refused` state carries NO content: the saved
+ * action failed an integrity check, so it is not provably this card's.
+ */
+export function toUiSafeApprovalDetail(src: ApprovalDetailSource): UiSafeApprovalDetail {
+  const out: UiSafeApprovalDetail = { approvalId: src.approvalId, sendState: src.sendState };
+  if (src.refusal !== undefined) out.refusal = src.refusal;
+  const target = targetSystemSchema.safeParse(src.targetSystem);
+  if (target.success) out.targetSystem = target.data;
+  if (src.sendState === "refused") return out;
+  if (typeof src.title === "string") {
+    const title = collapseToSummaryLine(src.title);
+    if (title.length > 0) out.title = title;
+  }
+  if (typeof src.description === "string") {
+    const { lines, truncated } = splitToSummaryLines(src.description, 40);
+    if (lines.length > 0) out.descriptionLines = lines;
+    if (truncated) out.descriptionTruncated = true;
+  }
+  return out;
+}
+
+/** Project a "Send now" result: the id, the re-read send state and a closed refusal reason — nothing else. */
+export function toUiSafeSendNowResult(src: {
+  approvalId: string;
+  sendState: ApprovalSendState;
+  refusal?: ApprovalSendRefusal;
+}): UiSafeSendNowResult {
+  return {
+    approvalId: src.approvalId,
+    sendState: src.sendState,
+    ...(src.refusal !== undefined ? { refusal: src.refusal } : {}),
+  };
 }

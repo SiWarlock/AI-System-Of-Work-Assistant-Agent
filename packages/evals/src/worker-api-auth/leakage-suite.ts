@@ -31,6 +31,9 @@ import {
   toUiSafeHealthItem,
   toUiSafeWorkflowRunRef,
   toUiSafeDashboardCard,
+  toUiSafeApprovalDetail,
+  toUiSafeSendNowResult,
+  type ApprovalDetailSource,
 } from "@sow/worker/api/projections/uiSafe";
 import { createStreamPublisher } from "@sow/worker/api/stream/eventClasses";
 import {
@@ -38,6 +41,8 @@ import {
   taintedHealthItem,
   taintedWorkflowRunRef,
   taintedDashboardCard,
+  taintedApprovalDetailSource,
+  taintedSendNowSource,
   findLeakedSentinel,
   DROPPED_FIELD_NAMES,
 } from "./fixtures";
@@ -142,6 +147,24 @@ export function runLeakageSuite(): SuiteResult {
         toUiSafeDashboardCard(taintedDashboardCard()),
         UI_SAFE_ALLOWLIST.dashboardCard,
         DROPPED_FIELD_NAMES.dashboardCard,
+      ),
+    );
+    // Linear slice 3+4 — an approval's details and a "Send now" result (see taintedApprovalDetailSource for what
+    // this can and cannot prove about the title and description).
+    cases.push(
+      ...assertProjectionSafe(
+        "leak.query.approvalDetail",
+        toUiSafeApprovalDetail(taintedApprovalDetailSource() as unknown as ApprovalDetailSource),
+        UI_SAFE_ALLOWLIST.approvalDetail,
+        DROPPED_FIELD_NAMES.approvalDetail,
+      ),
+    );
+    cases.push(
+      ...assertProjectionSafe(
+        "leak.query.sendNowResult",
+        toUiSafeSendNowResult(taintedSendNowSource() as unknown as Parameters<typeof toUiSafeSendNowResult>[0]),
+        UI_SAFE_ALLOWLIST.sendNowResult,
+        DROPPED_FIELD_NAMES.sendNowResult,
       ),
     );
   } catch {

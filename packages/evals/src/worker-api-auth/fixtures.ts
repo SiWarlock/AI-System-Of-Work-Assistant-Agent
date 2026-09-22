@@ -159,4 +159,35 @@ export const DROPPED_FIELD_NAMES = {
   healthItem: ["message", "auditRef", "parityReportRef", "factIdentity"],
   workflowRunRef: ["auditRefs"],
   dashboardCard: [] as string[],
+  approvalDetail: ["payload", "teamId", "assigneeId", "dueDate", "workspaceId", "idempotencyKey", "payloadHash"],
+  sendNowResult: ["payload", "workspaceId"],
 } as const;
+
+/**
+ * A tainted approval-details source (Linear slice 3+4). ⚠ The sentinels ride ONLY in keys the projector must not
+ * read. `title` / `description` are the action's own content BY DESIGN — shown to the owner in the approval's own
+ * workspace — so this suite cannot police their text; the worker's same-workspace check (WS-8) is what protects
+ * them. What this suite CAN prove is that nothing beyond the allowlisted names leaves the source.
+ */
+export function taintedApprovalDetailSource(): Record<string, unknown> {
+  return {
+    approvalId: "idem_leak_probe",
+    sendState: "writes_off",
+    targetSystem: "linear",
+    title: "Probe issue title",
+    description: "Probe description",
+    payload: { teamId: SENTINEL_SECRET, note: SENTINEL_EMPLOYER_RAW },
+    teamId: SENTINEL_SECRET,
+    assigneeId: SENTINEL_EMPLOYER_RAW,
+    dueDate: SENTINEL_AGENT_LOG,
+    workspaceId: SENTINEL_KEYCHAIN_REF,
+    idempotencyKey: SENTINEL_PROVIDER_PROMPT,
+    payloadHash: SENTINEL_SECRET,
+    ...TAINT,
+  };
+}
+
+/** A tainted "Send now" result source — sentinels ride only in keys the projector must not read. */
+export function taintedSendNowSource(): Record<string, unknown> {
+  return { approvalId: "idem_leak_probe", sendState: "sent", payload: SENTINEL_EMPLOYER_RAW, workspaceId: SENTINEL_KEYCHAIN_REF, ...TAINT };
+}

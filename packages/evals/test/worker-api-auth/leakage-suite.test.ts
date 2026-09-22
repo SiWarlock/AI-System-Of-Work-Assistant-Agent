@@ -29,7 +29,7 @@ describe("§12 UI-SAFE LEAKAGE suite — worker-api-auth.ui-safe-leakage", () =>
     const result = runLeakageSuite();
     const ids = result.cases.map((c) => c.id);
     // Query (projector) surface.
-    for (const kind of ["approval", "health", "workflow", "dashboard"]) {
+    for (const kind of ["approval", "health", "workflow", "dashboard", "approvalDetail", "sendNowResult"]) {
       expect(ids.some((id) => id.startsWith(`leak.query.${kind}.`))).toBe(true);
     }
     // Stream surface (all 4 event classes) + the strict-schema re-validation.
