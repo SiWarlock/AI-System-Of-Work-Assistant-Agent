@@ -695,7 +695,18 @@ describe("createWriteHttpTransport — every statusless fault SETS a closed faul
     // Without this, adding a token to transport.ts and forgetting the producing
     // site would leave the suite green — the exact shape of the original
     // built-but-unwired defect.
-    expect(new Set(CASES.map((c) => c.token))).toEqual(new Set(TransportFaultDetail));
+    //
+    // ⚠ AMENDED 2026-09-21: a token may also come from a DIFFERENT producer, listed here BY NAME with
+    // the test that pins it. `target_not_armed` is produced by `createRoutedAdapterTransport` (a
+    // service with no real sender armed), not by this HTTP transport, and is pinned in
+    // `routed-transport.test.ts`. The guard's intent is unchanged: every token must be produced
+    // somewhere named — a token in the union and in neither list still fails here.
+    const OTHER_PRODUCERS: Readonly<Record<string, string>> = {
+      target_not_armed: "createRoutedAdapterTransport — test/routed-transport.test.ts",
+    };
+    const httpTokens = new Set(CASES.map((c) => c.token));
+    for (const t of Object.keys(OTHER_PRODUCERS)) expect(httpTokens.has(t as never), `${t} listed twice`).toBe(false);
+    expect(new Set([...httpTokens, ...Object.keys(OTHER_PRODUCERS)])).toEqual(new Set(TransportFaultDetail));
   });
 
   it("a LOCKED Keychain does not read the same as an SSRF-BLOCKED host (the named regression)", async () => {

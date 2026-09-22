@@ -129,6 +129,11 @@ export const TransportFaultDetail = [
   "malformed_status",
   "malformed_body",
   "map_error",
+  // Added 2026-09-21 (Linear slice 2). NOT produced by `createWriteHttpTransport`, so the "NINE
+  // return sites, ELEVEN tokens" count above is unchanged: its producer is
+  // `createRoutedAdapterTransport` (routed-transport.ts), which refuses a write for a service that has
+  // no real sender armed rather than let it fall through to a stub that fakes success.
+  "target_not_armed",
 ] as const;
 export type TransportFaultDetail = (typeof TransportFaultDetail)[number];
 

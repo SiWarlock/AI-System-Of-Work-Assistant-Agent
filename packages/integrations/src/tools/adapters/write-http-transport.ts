@@ -14,14 +14,17 @@
 //       vetted `isAllowedRemoteEndpoint` on that FINAL url. An off-guard url
 //       (or a smuggled authority in the path) ⇒ `{ ok:false, fault:"rejected",
 //       detail: endpointHostRef(finalUrl) }` — ZERO token read, ZERO dispatch.
-//   (2) Token — resolved via `deps.secrets.getSecret(writeSecretRef(req.targetSystem))`
-//       (the 17.4 ref derivation; never a raw token parameter). A typed-unavailable
+//   (2) Token — resolved via `deps.secrets.getSecret(writeSecretRef(req.targetSystem, req.workspaceId))`
+//       (the 17.4 ref derivation, SCOPED BY WORKSPACE; never a raw token parameter). A request
+//       with no workspace is refused before any lookup (rule 4). [amended 2026-09-21: this line
+//       predated the workspace scoping and omitted it] A typed-unavailable
 //       Err, a THROWING accessor, AND a whitespace-only token (not proof of auth —
 //       mirrors `isRealVendorId` / `resolveWriteCredentialFault`) all fail closed to
 //       `{ ok:false, fault:"rejected" }` carrying ONLY the closed-set reason token —
 //       never the token value, never the `keychain://` ref.
-//   (3) BIND the token to the request as `Authorization: Bearer <token>` — header
-//       ONLY. Never the url, the body, a fault, or a log. `redirect` is fixed to
+//   (3) BIND the token to the request as `Authorization: Bearer <token>`, or as the bare
+//       `Authorization: <token>` when the spec sets `authScheme: "raw"` (Linear personal keys) —
+//       header ONLY. [amended 2026-09-21: `authScheme` shipped in 513f47a6 without this line] Never the url, the body, a fault, or a log. `redirect` is fixed to
 //       `"manual"` on every dispatched request (mirrors
 //       providers/src/model/real-http-transport.ts's header: a cross-origin 3xx
 //       would re-send the Authorization header verbatim), and the headers map is a
@@ -36,7 +39,8 @@
 //       `statusToFault`); 409/412 ⇒ `"conflict"` (a stale precondition — NEVER a
 //       blind overwrite); 408/425/429 ⇒ `"unreachable"` — the vendor said
 //       "later", not "no" (see `RETRYABLE_4XX`); other 4xx ⇒ `"rejected"`
-//       (terminal); 5xx ⇒ `"unreachable"`; anything else (1xx/3xx/NaN/
+//       (terminal) — EXCEPT a non-auth 4xx the spec's `retryableBody` explicitly declares
+//       retryable (Linear's HTTP-400 rate limit), which becomes `"unreachable"`; 5xx ⇒ `"unreachable"`; anything else (1xx/3xx/NaN/
 //       out-of-range) ⇒ `"unknown"`. `detail` carries ONLY the safe
 //       status number in prose (`"HTTP <n>"`); `httpStatus` carries the SAME
 //       number as a structured field (§S) — the one a caller must branch on
@@ -152,6 +156,15 @@ export interface WriteHttpSpec {
     req: AdapterTransportRequest,
   ) => { readonly method: "GET" | "POST" | "PATCH"; readonly path: string; readonly body?: string };
   readonly mapResponse: (status: number, json: unknown, req: AdapterTransportRequest) => TransportResponse;
+  /**
+   * OPTIONAL vendor declaration that a specific non-2xx reply means "try again later". Consulted
+   * ONLY for a 4xx that would otherwise be the terminal `rejected`, and NEVER for 401/403 (a
+   * credential cannot be retried into working) — so it can only RELAX `rejected` to `unreachable`
+   * (held, bounded backoff), never touch `conflict`, never tighten a retryable 5xx. A throw, a
+   * non-JSON body, or any answer but `true` leaves the terminal default: fail safe.
+   * Exists for Linear, whose rate limit is HTTP 400 + `errors[].extensions.code = "RATELIMITED"`.
+   */
+  readonly retryableBody?: (status: number, json: unknown) => boolean;
 }
 
 /** The injected deps. `secrets` resolves the write-credential via the 17.4
@@ -193,6 +206,12 @@ function trimTrailingSlash(endpoint: string): string {
  *       exists to avoid. It terminates, and the operator sees "HTTP 423".
  *   401/403 — auth. Retrying cannot fix a credential; retrying forever hides it.
  *   404/400/422 — the request or target is wrong. A retry sends the same bytes.
+ *     ⚠ AMENDED 2026-09-21 — ONE exception, and only by explicit vendor declaration: a spec's
+ *     `retryableBody` may mark a specific non-auth 4xx reply retryable. Linear reports a RATE LIMIT
+ *     as HTTP 400 + `RATELIMITED`, so "a retry sends the same bytes" is false for that reply — the
+ *     same bytes succeed once the window resets. Without the hook a rate-limited Linear write was
+ *     dropped for good. The hook can only relax `rejected` to `unreachable`; 401/403 and 409/412 are
+ *     out of its reach (see `retryableBody` on `WriteHttpSpec`).
  */
 const RETRYABLE_4XX: ReadonlySet<number> = new Set([408, 425, 429]);
 
@@ -223,6 +242,20 @@ function statusToFault(status: number): TransportFault {
   if (status >= 400 && status < 500) return "rejected";
   if (status >= 500 && status < 600) return "unreachable";
   return "unknown";
+}
+
+/**
+ * `statusToFault`, then the spec's narrow `retryableBody` exception (see `WriteHttpSpec`). Only a
+ * would-be `rejected` non-auth 4xx is ever reconsidered, and only a literal `true` changes it.
+ */
+function vendorAdjustedFault(spec: WriteHttpSpec, status: number, body: string): TransportFault {
+  const fault = statusToFault(status);
+  if (fault !== "rejected" || status === 401 || status === 403 || spec.retryableBody === undefined) return fault;
+  try {
+    return spec.retryableBody(status, JSON.parse(body) as unknown) === true ? "unreachable" : fault;
+  } catch {
+    return fault; // non-JSON body or a throwing classifier — keep the terminal default
+  }
 }
 
 /** Map the closed write-credential failure reason (adapter-core.ts) onto the
@@ -358,7 +391,7 @@ export function createWriteHttpTransport(spec: WriteHttpSpec, deps: WriteHttpTra
       const isInteger = Number.isInteger(response.status);
       return {
         ok: false,
-        fault: statusToFault(response.status),
+        fault: vendorAdjustedFault(spec, response.status, response.body),
         detail: `HTTP ${response.status}`,
         ...(isInteger
           ? { httpStatus: response.status }
