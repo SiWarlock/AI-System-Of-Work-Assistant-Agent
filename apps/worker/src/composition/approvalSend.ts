@@ -3,7 +3,10 @@
 //
 // ⛔ WS-8. Details and Send now are served only when the requested workspace equals the approval's OWN stored
 // workspace, and a foreign card answers EXACTLY like a missing one, so this surface cannot be used to learn
-// whether a card exists in another workspace. The renderer sends the ACTIVE scope's workspace, never the card's.
+// whether a card exists in another workspace. ⚠ The worker cannot see the screen's scope — it only compares the
+// workspace it is ASKED about with the card's own. So the renderer must ask with the ACTIVE scope's workspace, never
+// with the card's (which every UiSafeApproval carries): that obligation lands, and is pinned by an App test, with the
+// Approvals screen work (step 5). Until then no renderer calls this surface.
 import { err, ok, failure } from "@sow/contracts";
 import type { Approval, FailureVariant, Result, TargetSystem, UiSafeApproval, UiSafeApprovalDetail, UiSafeSendNowResult } from "@sow/contracts";
 import type { ApprovalRepository, OutboxRepository, WorkspaceConfigRepository } from "@sow/db";
@@ -28,29 +31,38 @@ const STORE_UNAVAILABLE: Result<never, FailureVariant> = err(
   failure("degraded_unavailable", "approval send state unavailable", { retryable: true, cause: { code: "APPROVAL_SEND_STORE_UNAVAILABLE" } }),
 );
 
-/** The card, only if it exists AND belongs to the requested workspace — else the SAME not-found either way. */
-async function ownCard(deps: ApprovalSendPortDeps, input: ApprovalRefInput): Promise<Approval | undefined> {
+/**
+ * The card, only if it exists AND belongs to the requested workspace — else the SAME not-found either way (so a
+ * foreign card cannot be told apart from a missing one). A STORE FAULT is different: it does not depend on the
+ * card's workspace, so it is reported as "unavailable, retry" rather than as "no such card" (review 2026-09-22).
+ */
+async function ownCard(deps: ApprovalSendPortDeps, input: ApprovalRefInput): Promise<Approval | undefined | "store_fault"> {
   const got = await deps.approvals.get(input.approvalId as Approval["id"]);
-  if (!got.ok || String(got.value.workspaceId) !== input.workspaceId) return undefined;
+  if (!got.ok) return got.error.code === "not_found" ? undefined : "store_fault";
+  if (String(got.value.workspaceId) !== input.workspaceId) return undefined;
   return got.value;
 }
 
 /**
- * The action's own content for its details — only for Linear, whose write sends exactly `title` and `description`
- * (linear-write-spec.ts), and only when the saved action is provably this card's.
+ * The action's own content for its details — only for Linear, and only when the saved action is provably this
+ * card's (same workspace, same id, and a payload that re-hashes to the approved hash). Linear's write sends
+ * `title`, `description`, `priority` and `teamId` (linear-write-spec.ts); the first three are shown. ⚠ The TEAM is
+ * NOT shown yet — there is no team-name source until the team picker (slice 5), and a raw team id tells the owner
+ * nothing. Corrected 2026-09-22 (review): this used to claim Linear sends "exactly title and description".
  */
-function contentOf(check: SavedActionCheck): { title?: unknown; description?: unknown } {
+function contentOf(check: SavedActionCheck): { title?: unknown; description?: unknown; priority?: unknown } {
   if (check.kind !== "verified" || check.entry.targetSystem !== "linear") return {};
   const payload = check.entry.payload;
   if (typeof payload !== "object" || payload === null) return {};
   const p = payload as Record<string, unknown>;
-  return { title: p["title"], description: p["description"] };
+  return { title: p["title"], description: p["description"], priority: p["priority"] };
 }
 
 export function createApprovalSendPort(deps: ApprovalSendPortDeps): ApprovalSendPort {
   return {
     async detail(input): Promise<Result<UiSafeApprovalDetail, FailureVariant>> {
       const card = await ownCard(deps, input);
+      if (card === "store_fault") return STORE_UNAVAILABLE;
       if (card === undefined) return NOT_FOUND;
       if (card.subjectKind === "semantic_mutation") {
         return err(failure("validation_rejected", "not an external action", { cause: { code: "APPROVAL_DETAIL_UNSUPPORTED" } }));
@@ -78,17 +90,27 @@ export function createApprovalSendPort(deps: ApprovalSendPortDeps): ApprovalSend
       }
       const approved = await deps.approvals.listByStatusAndWorkspace("approved", input.workspaceId as Approval["workspaceId"]);
       if (!approved.ok) return STORE_UNAVAILABLE;
-      const rows: { card: UiSafeApproval; updatedAt: string }[] = [];
+      const rows: { card: UiSafeApproval; refused: boolean; updatedAt: string }[] = [];
       for (const card of approved.value) {
         if (card.subjectKind === "semantic_mutation") continue;
         const check = await checkSavedAction(card, deps);
         const st = sendStateOf(card, check, deps.armedFor);
-        if (st === "store_fault") return STORE_UNAVAILABLE; // a wrong list is worse than none; the screen keeps the last one
+        if (st === "store_fault") return STORE_UNAVAILABLE; // a wrong list is worse than none
         if (st.state === "sent" || st.state === "no_send_record") continue;
         const target = check.kind === "verified" ? (check.entry.targetSystem as TargetSystem) : undefined;
-        rows.push({ card: toUiSafeApproval(card, target), updatedAt: check.kind === "verified" ? check.entry.updatedAt : "" });
+        rows.push({
+          card: toUiSafeApproval(card, target),
+          refused: st.state === "refused",
+          updatedAt: check.kind === "verified" ? check.entry.updatedAt : "",
+        });
       }
-      rows.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+      // ORDER: integrity-refused cards FIRST (the owner most needs to see a card whose saved write no longer matches
+      // what they approved), then the rest by their saved entry's last update, newest first. ⚠ "Last update" is not
+      // "newest card": where the proof-spine drain runs, a skipped entry's timestamp moves too. The cap is SILENT —
+      // the contract carries no truncation flag — so more than 100 unsent cards shows only the first 100.
+      rows.sort((a, b) =>
+        a.refused !== b.refused ? (a.refused ? -1 : 1) : a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0,
+      );
       return ok(rows.slice(0, MAX_UNSENT).map((r) => r.card));
     },
 
@@ -97,6 +119,7 @@ export function createApprovalSendPort(deps: ApprovalSendPortDeps): ApprovalSend
         return err(failure("degraded_unavailable", "send now is unavailable here", { cause: { code: "SEND_NOW_UNAVAILABLE" } }));
       }
       const card = await ownCard(deps, input);
+      if (card === "store_fault") return STORE_UNAVAILABLE;
       if (card === undefined) return NOT_FOUND;
       if (card.subjectKind === "semantic_mutation") {
         return err(failure("validation_rejected", "not an external action", { cause: { code: "SEND_NOW_NOT_EXTERNAL" } }));

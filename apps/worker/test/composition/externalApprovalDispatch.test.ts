@@ -14,7 +14,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Approval, ProposedAction, ExternalWriteEnvelope, WorkspaceId } from "@sow/contracts";
-import type { AdapterTransport, AdapterTransportRequest, TransportResponse } from "@sow/integrations";
+import { payloadHash, type AdapterTransport, type AdapterTransportRequest, type TransportResponse } from "@sow/integrations";
 import { assembleBackends, type ProofSpineBackends } from "../../src/composition/backends";
 import { createApprovalsProposeSink } from "../../src/api/procedures/copilotProposeSink";
 import {
@@ -87,7 +87,7 @@ function linearIssue(key: string): { action: ProposedAction; envelope: ExternalW
     canonicalObjectKey: action.canonicalObjectKey,
     idempotencyKey: action.idempotencyKey,
     preconditions: [],
-    payloadHash: `hash:${key}`,
+    payloadHash: payloadHash(action.payload), // a REAL hash, as production computes it
   };
   return { action, envelope };
 }
@@ -539,6 +539,12 @@ describe("sendStateOf / checkSavedAction — one state, shared by the dispatcher
     expect(state({ ...card, status: "deferred" })).toBe("awaiting_approval");
     expect(state({ ...card, status: "rejected" })).toBe("not_approved");
     expect(state({ ...card, status: "edited" })).toBe("not_approved");
+    // ⛔ …even once the dispatch has CLOSED the saved entry (status "rejected"): the owner said no, the vendor
+    // did not. Review 2026-09-22 (measured): the entry's status was checked first, so it read "refused by the vendor".
+    const closed = { kind: "verified" as const, entry: { ...(check.kind === "verified" ? check.entry : ({} as never)), status: "rejected" } };
+    expect(sendStateOf({ ...card, status: "rejected" }, closed, b.armedFor)).toEqual({ state: "not_approved" });
+    expect(sendStateOf({ ...card, status: "edited" }, closed, b.armedFor)).toEqual({ state: "not_approved" });
+    expect(sendStateOf(card, closed, b.armedFor)).toEqual({ state: "rejected" }); // approved + closed = the write was refused
     expect(sendStateOf(card, check, () => false)).toEqual({ state: "writes_off" });
     expect(sendStateOf(card, { kind: "no_saved_action" }, b.armedFor)).toEqual({ state: "no_send_record" });
     expect(sendStateOf(card, { kind: "refused", reason: "payload_mismatch" }, b.armedFor)).toEqual({ state: "refused", refusal: "payload_mismatch" });
@@ -553,6 +559,20 @@ describe("sendStateOf / checkSavedAction — one state, shared by the dispatcher
     expect(await checkSavedAction(card, faulty)).toEqual({ kind: "store_fault" });
     expect(await dispatchExternalApproval(card, faulty)).toEqual({ kind: "refused", reason: "store_unavailable" });
     expect(v.calls).toHaveLength(0);
+  });
+});
+
+describe("onSent — a write that goes out closes its own 'not sent' report (review 2026-09-22)", () => {
+  it("is called once the write is sent, and never on a refusal", async () => {
+    const off = await backends();
+    const sentIds: string[] = [];
+    const card = await proposeAndApprove(off, "resolves");
+    await dispatchExternalApproval(card, { ...depsFor(off), onSent: async (id) => void sentIds.push(id) });
+    expect(sentIds).toEqual([]); // writes off: refused, still not sent
+    const on = await backends(vendor().transport);
+    const card2 = await proposeAndApprove(on, "resolves2");
+    await dispatchExternalApproval(card2, { ...depsFor(on), onSent: async (id) => void sentIds.push(id) });
+    expect(sentIds).toEqual([String(card2.id)]);
   });
 });
 

@@ -734,6 +734,8 @@ export interface UiSafeApprovalDetail {
   title?: string;
   descriptionLines?: readonly string[];
   descriptionTruncated?: boolean;
+  /** Linear's priority (0 none … 4 low) — Linear sends it, so the owner must see it before approving. */
+  priority?: number;
 }
 
 export const UiSafeApprovalDetailSchema = z
@@ -745,6 +747,7 @@ export const UiSafeApprovalDetailSchema = z
     title: uiSafeSummaryLine.optional(),
     descriptionLines: z.array(uiSafeSummaryLine).max(40).readonly().optional(),
     descriptionTruncated: z.boolean().optional(),
+    priority: z.number().int().min(0).max(4).optional(),
   })
   .strict();
 
@@ -823,6 +826,6 @@ export const UI_SAFE_ALLOWLIST = {
   schedule: ["entries"],
   taskRollupItem: ["dueDate", "priority", "projectRef", "status", "taskId", "title"],
   taskRollup: ["items"],
-  approvalDetail: ["approvalId", "descriptionLines", "descriptionTruncated", "refusal", "sendState", "targetSystem", "title"],
+  approvalDetail: ["approvalId", "descriptionLines", "descriptionTruncated", "priority", "refusal", "sendState", "targetSystem", "title"],
   sendNowResult: ["approvalId", "refusal", "sendState"],
 } as const;

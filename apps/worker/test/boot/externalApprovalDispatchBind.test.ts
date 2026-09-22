@@ -43,6 +43,20 @@ describe("bootWorker's external-approval dispatch binding", () => {
     expect(BOOT).toContain("const approvalDispatchHealth: HealthSurface = createHealthSurface(");
   });
 
+  it("⛔ closes the 'not sent' report once a write goes out (else System Health shows a failure for a sent write)", () => {
+    expect(bindingBlock()).toContain("await approvalDispatchHealth.resolve({");
+  });
+
+  it("⛔ the Approvals send surface is bound with the SAME sender and per-workspace arming, and reaches the API server", () => {
+    const start = BOOT.indexOf("createApprovalSendPort({");
+    expect(start).toBeGreaterThan(-1);
+    const block = BOOT.slice(start, BOOT.indexOf("\n  });", start));
+    expect(block).toContain("armedFor: backends.armedFor,");
+    expect(block).toContain("sender: externalApprovalSender");
+    const api = BOOT.slice(BOOT.indexOf("const api = await startApiServer({"));
+    expect(api.slice(0, api.indexOf("\n  });"))).toContain("    approvalSend,\n");
+  });
+
   it("the decide command's port wraps that ONE shared sender", () => {
     expect(BOOT).toContain("createExternalApprovalDispatch(externalApprovalSender)");
   });

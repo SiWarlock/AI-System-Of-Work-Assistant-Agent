@@ -308,6 +308,7 @@ export interface ApprovalDetailSource {
   targetSystem?: string;
   title?: unknown;
   description?: unknown;
+  priority?: unknown;
 }
 
 /**
@@ -331,6 +332,9 @@ export function toUiSafeApprovalDetail(src: ApprovalDetailSource): UiSafeApprova
     const { lines, truncated } = splitToSummaryLines(src.description, 40);
     if (lines.length > 0) out.descriptionLines = lines;
     if (truncated) out.descriptionTruncated = true;
+  }
+  if (typeof src.priority === "number" && Number.isInteger(src.priority) && src.priority >= 0 && src.priority <= 4) {
+    out.priority = src.priority;
   }
   return out;
 }

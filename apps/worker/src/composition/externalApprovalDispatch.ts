@@ -4,8 +4,9 @@
 // proposer saved with the card (`approvalOutboxId`, step 2), checks that they still match the approval, and
 // dispatches them through the Tool Gateway — the only external-write path (rule 3) — scoped to the APPROVAL's
 // own workspace (rule 4). The outcome is folded onto the saved entry with the drain's own `applyOutcome`, so a
-// HELD write is kept (`retry_queued`) instead of being lost. ⚠ Kept is not retried: the wake drain that re-drives
-// it runs only where the proof spine does (auto-ingest on); on a desktop install it waits for "Send now" (step 4).
+// HELD write is kept (`retry_queued`) instead of being lost. ⚠ Kept is not retried automatically everywhere: the
+// wake drain that re-drives it runs only where the proof spine does (auto-ingest on); on a desktop install it waits
+// for the owner's "Send now" (`approvalSend.sendNow`).
 //
 // ⛔ EVERY REFUSAL SENDS NOTHING. The guards run before the gateway and each one is a reason the write must not
 // go out: not approved, not an external action, no onboarded workspace, nothing saved, a saved entry for a
@@ -16,9 +17,9 @@
 // adapters sit over the in-memory stub, which fabricates success receipts. So when the card's OWN system, in the
 // card's OWN workspace, has no real sender (`armedFor`) this refuses as `writes_off` BEFORE the gateway: no receipt,
 // and the saved entry
-// stays `proposed`, so a LATER dispatch can still send it once that system is armed. ⚠ Nothing in production makes
-// that later dispatch yet: the decide command dispatches only on a real transition, so an already-approved card is
-// not re-dispatched. The Approvals screen's "Send now" (step 4, not built yet) is what will.
+// stays `proposed`, so a LATER dispatch can still send it once that system is armed. The decide command dispatches
+// only on a real transition, so an already-approved card is re-dispatched by "Send now" (`approvalSend.sendNow`,
+// step 4d), which uses this same single-flight sender — or, where the proof spine runs, by the wake drain.
 //
 // ⭐ THE GATEWAY'S APPROVAL HOOKS ARE FIXED HERE, NOT RE-DERIVED. This runs only for a card the owner has
 // already approved, and only after the saved entry is proven to be that card's (same id, workspace and
@@ -42,6 +43,7 @@ import { UNASSIGNED_WORKSPACE } from "@sow/db/schema/approvals";
 import {
   applyOutcome,
   createUnroutedWriteAdapter,
+  payloadHash,
   dispatchRouted,
   rebuildAction,
   rebuildEnvelope,
@@ -101,6 +103,12 @@ export interface ExternalApprovalDispatchDeps {
   readonly backoffCfg?: BackoffConfig;
   /** Reports a held, rejected, conflicting or mismatched write (boot binds System Health). Must not throw. */
   readonly onFailure?: (f: ExternalApprovalFailure) => Promise<void>;
+  /**
+   * Called once an approval's write has gone out (a receipt was recorded or reused). Boot binds it to RESOLVE the
+   * approval's earlier "not sent" / "held" System Health item — otherwise Health keeps showing an open failure for
+   * a write that was sent (review 2026-09-22). Must not throw.
+   */
+  readonly onSent?: (approvalId: string) => Promise<void>;
 }
 
 const TERMINAL = new Set(["receipt_recorded", "rejected", "expired"]);
@@ -135,6 +143,14 @@ export async function checkSavedAction(
     return { kind: "refused", reason: "not_this_cards_action" };
   }
   if (entry.payloadHash !== approval.payloadHash) return { kind: "refused", reason: "payload_mismatch" };
+  // ⛔ RULE 3 — re-hash the payload that will actually be SENT (and shown), not just compare two stored hash
+  // columns. Review 2026-09-22 (critic, measured): with only the column compare, an entry whose payload was changed
+  // out of band — hash column untouched — was shown as verified and sent. Same defence-in-depth as the semantic
+  // path's `payloadHash(row.plan) !== approval.payloadHash` (semanticMutationDispatch.ts).
+  const payload = entry.payload;
+  if (typeof payload !== "object" || payload === null || payloadHash(payload as Record<string, unknown>) !== approval.payloadHash) {
+    return { kind: "refused", reason: "payload_mismatch" };
+  }
   return { kind: "verified", entry };
 }
 
@@ -143,8 +159,8 @@ export const DISPATCHABLE: ReadonlySet<ApprovalSendState> = new Set<ApprovalSend
 
 /**
  * The card's send state, from the card, its saved-action check, and whether its system has a real sender in its
- * workspace. PURE. Order: integrity refusal → nothing saved → a finished entry (sent / rejected / expired) → the
- * card's own state → writes off → the entry's retry state. `store_fault` is returned as-is so a caller can fail
+ * workspace. PURE. Order: integrity refusal → nothing saved → the owner's own "no" (rejected / edited / expired
+ * card) → a finished entry (sent / rejected / expired) → a still-open card → writes off → the entry's retry state. `store_fault` is returned as-is so a caller can fail
  * the request instead of showing a false state.
  */
 export function sendStateOf(
@@ -156,6 +172,9 @@ export function sendStateOf(
   if (check.kind === "refused") return { state: "refused", refusal: check.reason };
   if (check.kind === "no_saved_action") return { state: "no_send_record" };
   const entry = check.entry;
+  // The owner's own "no" first: a rejected or edited card closes its entry as "rejected", which must read as "not
+  // approved", never as "refused by the vendor" (review 2026-09-22, measured).
+  if (approval.status === "rejected" || approval.status === "edited" || approval.status === "expired") return { state: "not_approved" };
   if (entry.status === "receipt_recorded") return { state: "sent" };
   if (entry.status === "rejected") return { state: "rejected" };
   if (entry.status === "expired") return { state: "expired" };
@@ -187,6 +206,15 @@ export async function dispatchExternalApproval(
   if (failure !== undefined && deps.onFailure !== undefined) {
     try {
       await deps.onFailure(failure);
+    } catch {
+      /* reporting must never fail the dispatch */
+    }
+  }
+  const sent =
+    outcome.kind === "dispatched" && (outcome.status === "created" || outcome.status === "updated" || outcome.status === "reused");
+  if (sent && deps.onSent !== undefined) {
+    try {
+      await deps.onSent(String(approval.id));
     } catch {
       /* reporting must never fail the dispatch */
     }

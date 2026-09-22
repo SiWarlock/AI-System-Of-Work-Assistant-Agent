@@ -402,6 +402,10 @@ export async function drainOutbox(
     // entry is left exactly as it was so a later pass, correctly scoped to ITS
     // workspace, still drains it (held items still never silently expire).
     if (entry.workspaceId !== deps.workspaceId) {
+      // ⚠ KNOWN LIMIT (review 2026-09-22, measured; dormant — needs the proof-spine drain AND Copilot propose): this
+      // skip writes nothing, so due entries of OTHER workspaces stay due and can fill the oldest-first `limit` window
+      // on every pass, starving this workspace's entries behind them. The per-system skip below pushes its entries
+      // back; this one keeps its 24.50 no-write contract until a per-workspace listDue exists.
       counts.skipped += 1;
       continue;
     }

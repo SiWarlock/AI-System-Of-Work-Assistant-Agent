@@ -1142,7 +1142,7 @@ export function buildProofSpineActivities(
   // Approvals-screen dispatch (`externalApprovalDispatch.ts`) folds a HELD outcome back onto that entry as
   // `retry_queued` — so an approved write that is held is kept, not lost. ⚠ But this drain only runs where the
   // proof spine does (auto-ingest on), and only for ITS workspace; on a desktop install nothing re-drives a held
-  // or writes-off entry — "Send now" (step 4, not built yet) is what will. The Temporal `runApprovalFlow` path still
+  // or writes-off entry — the owner's "Send now" (`approvalSend.sendNow`, step 4d) does. The Temporal `runApprovalFlow` path still
   // drops a `held` dispatch (approvalFlow.ts); it has no production driver. (An earlier cut of this comment said
   // "nothing puts a held external write in the outbox today", which slice 3+4 made false.)
   // task 24.8 / REQ-NF-006 — bind the OBS-2 depth signal to the DURABLE health store.

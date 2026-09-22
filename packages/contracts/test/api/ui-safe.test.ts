@@ -796,6 +796,12 @@ describe("UiSafeApprovalDetail / UiSafeSendNowResult — Linear slice 3+4", () =
     }
   });
 
+  it("carries a Linear priority as an integer 0–4 only", () => {
+    expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, priority: 2 }).success).toBe(true);
+    expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, priority: 5 }).success).toBe(false);
+    expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, priority: 1.5 }).success).toBe(false);
+  });
+
   it("rejects a multi-line title, more than 40 description lines, and an unknown send state", () => {
     expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, title: "two\nlines" }).success).toBe(false);
     expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, descriptionLines: Array.from({ length: 41 }, (_, i) => `l${i}`) }).success).toBe(false);

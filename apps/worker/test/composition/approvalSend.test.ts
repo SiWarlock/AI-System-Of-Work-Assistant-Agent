@@ -79,8 +79,56 @@ describe("detail — ONLY in the approval's own workspace (WS-8)", () => {
   });
 });
 
+describe("review follow-ups (2026-09-22) — the payload sent is the payload approved, and the state is honest", () => {
+  it("⛔ rule 3: a saved payload changed out of band (hash column untouched) is refused — never shown, never sent", async () => {
+    const v = vendor();
+    const b = await backends(open, { enabled: true, make: () => v.transport });
+    const card = await propose(b, "swap-body");
+    const saved = await b.repos.outbox.getByIdempotencyKey("idem:swap-body");
+    if (!saved.ok) throw new Error("no saved entry");
+    await b.repos.outbox.update({ ...saved.value, payload: { teamId: "team-1", title: "SWAPPED TITLE", description: "SWAPPED BODY" } });
+    const input = { workspaceId: String(WS), approvalId: String(card.id) };
+    const detail = await portFor(b).detail(input);
+    expect(detail).toEqual(ok({ approvalId: String(card.id), sendState: "refused", refusal: "payload_mismatch" }));
+    expect(JSON.stringify(detail)).not.toContain("SWAPPED");
+    expect(await portFor(b).sendNow(input)).toEqual(ok({ approvalId: String(card.id), sendState: "refused", refusal: "payload_mismatch" }));
+    expect(v.calls.filter((c) => c.op === "create")).toHaveLength(0);
+  });
+
+  it("⛔ a card the owner REJECTED reads 'not approved' — not 'refused by the vendor' — after its entry is closed", async () => {
+    const b = await backends(open);
+    const card = await propose(b, "said-no", { status: "rejected" });
+    await createExternalApprovalSender({
+      armedFor: b.armedFor, outbox: b.repos.outbox, workspaceConfig: b.repos.workspaceConfig, receiptStore: b.receiptStore,
+      writeAdapters: b.writeAdapters, audit: async () => {}, clock: () => NOW,
+    })(card); // the decide command's dispatch closes the saved entry
+    const res = await portFor(b).detail({ workspaceId: String(WS), approvalId: String(card.id) });
+    expect(res.ok && res.value.sendState).toBe("not_approved");
+  });
+
+  it("a store fault reading the CARD is 'unavailable, retry' — never 'the card does not exist'", async () => {
+    const b = await backends(open);
+    const card = await propose(b, "busy");
+    const faulty = createApprovalSendPort({
+      approvals: { ...b.repos.approvals, get: async () => err({ code: "unavailable" as const, message: "busy" }) },
+      outbox: b.repos.outbox,
+      workspaceConfig: b.repos.workspaceConfig,
+      armedFor: b.armedFor,
+    });
+    const res = await faulty.detail({ workspaceId: String(WS), approvalId: String(card.id) });
+    expect(res.ok === false && res.error.kind).toBe("degraded_unavailable");
+  });
+
+  it("shows the priority too — Linear sends it, so the owner must see it before approving", async () => {
+    const b = await backends(open);
+    const card = await propose(b, "prio", { payload: { priority: 2 } });
+    const res = await portFor(b).detail({ workspaceId: String(WS), approvalId: String(card.id) });
+    expect(res.ok && res.value.priority).toBe(2);
+  });
+});
+
 describe("unsent — approved external cards whose write has not gone out", () => {
-  it("lists writes-off and refused cards; not sent, pending, other-workspace or unknown-workspace ones", async () => {
+  it("lists writes-off and refused cards (refused FIRST); not sent, pending, other-workspace or unknown-workspace ones", async () => {
     const v = vendor();
     const b = await backends(open, { enabled: true, targets: ["linear"], workspaces: [String(WS)], make: () => v.transport });
     const port = portFor(b);
@@ -94,10 +142,16 @@ describe("unsent — approved external cards whose write has not gone out", () =
       status: "approved", actor: "owner", channel: "mac", payloadHash: "hash:x",
     });
     const listWs = await port.unsent({ workspaceId: String(WS) });
-    const listOther = await port.unsent({ workspaceId: String(OTHER_WS) });
     expect(listWs).toEqual(ok([]));
-    expect(listOther.ok && listOther.value.map((a) => a.id)).toEqual([waiting.id]);
-    expect(listOther.ok && listOther.value[0]?.targetSystem).toBe("linear");
+    // A refused card (its saved write no longer matches) in the same workspace: listed, and FIRST.
+    const refused = await propose(b, "u-refused", { ws: OTHER_WS });
+    const saved = await b.repos.outbox.getByIdempotencyKey("idem:u-refused");
+    if (!saved.ok) throw new Error("no saved entry");
+    await b.repos.outbox.update({ ...saved.value, payload: { title: "changed" } });
+    const listOther = await port.unsent({ workspaceId: String(OTHER_WS) });
+    expect(listOther.ok && listOther.value.map((a) => a.id)).toEqual([refused.id, waiting.id]);
+    expect(listOther.ok && listOther.value[1]?.targetSystem).toBe("linear"); // the waiting card names its system…
+    expect(listOther.ok && listOther.value[0]?.targetSystem).toBeUndefined(); // …the refused one shows nothing from its saved write
     const unknown = await port.unsent({ workspaceId: "personal-business" });
     expect(unknown.ok).toBe(false);
   });
@@ -163,6 +217,24 @@ describe("the router — authed, and malformed input is refused before the port"
     calls.length = 0;
     await expect(authed.approvalSend.detail({ workspaceId: "", approvalId: "a" } as never)).rejects.toThrow();
     expect(calls).toEqual([]);
+  });
+
+  it("⛔ a port output that breaks its contract (an extra key) never crosses: APPROVAL_SEND_UNSERVABLE", async () => {
+    const leaky: ApprovalSendPort = {
+      detail: async () => ok({ approvalId: "a", sendState: "ready", payload: { secret: "x" } } as never),
+      unsent: async () => ok([{ id: "a", status: "approved", channel: "mac", payload: "x" }] as never),
+      sendNow: async () => ok({ approvalId: "a", sendState: "sent", workspaceId: "employer-work" } as never),
+    };
+    const caller = createCallerFactory(router({ approvalSend: buildApprovalSendRouter({ approvalSend: leaky }) }))({
+      auth: ok<AuthedContext>({ authenticated: true }),
+    } as ApiContext);
+    for (const res of [
+      await caller.approvalSend.detail({ workspaceId: "w", approvalId: "a" }),
+      await caller.approvalSend.unsent({ workspaceId: "w" }),
+      await caller.approvalSend.sendNow({ workspaceId: "w", approvalId: "a" }),
+    ]) {
+      expect(res.ok === false && res.error.cause).toEqual({ code: "APPROVAL_SEND_UNSERVABLE" });
+    }
   });
 
   it("an authed, well-formed call reaches the port and its output is re-checked by the contract", async () => {

@@ -1,7 +1,7 @@
 // Shared harness for the Linear slice 3+4 approval tests: REAL backends, the REAL propose sink, a fake vendor only.
 import { workspaceId, actionId, defaultWorkspace } from "@sow/contracts";
 import type { Approval, ProposedAction, ExternalWriteEnvelope, WorkspaceId } from "@sow/contracts";
-import type { AdapterTransport, AdapterTransportRequest, TransportResponse } from "@sow/integrations";
+import { payloadHash, type AdapterTransport, type AdapterTransportRequest, type TransportResponse } from "@sow/integrations";
 import { assembleBackends, type ProofSpineBackends, type WriteTransportGate } from "../../src/composition/backends";
 import { createApprovalsProposeSink } from "../../src/api/procedures/copilotProposeSink";
 
@@ -51,7 +51,9 @@ export function linearIssue(key: string, over: Partial<ProposedAction["payload"]
     canonicalObjectKey: action.canonicalObjectKey,
     idempotencyKey: action.idempotencyKey,
     preconditions: [],
-    payloadHash: `hash:${key}`,
+    // A REAL hash of the payload, as production's buildEnvelopeFromAction computes it — so a test can tell a
+    // payload that no longer matches its approval (review 2026-09-22: fake `hash:<key>` values hid that).
+    payloadHash: payloadHash(action.payload),
   };
   return { action, envelope };
 }

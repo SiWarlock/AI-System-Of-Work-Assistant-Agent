@@ -4103,6 +4103,10 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     onFailure: async (f): Promise<void> => {
       await approvalDispatchHealth.record(externalApprovalFailureToHealth(f, backends.now()));
     },
+    // A write that goes out closes its earlier "not sent" / "held" item (both are `write_through_failed`).
+    onSent: async (approvalId): Promise<void> => {
+      await approvalDispatchHealth.resolve({ failureClass: "write_through_failed", subjectRef: approvalId, now: backends.now() });
+    },
   });
   const externalApprovalDispatch: DispatchApprovalFn = resolveExternalApprovalDispatch(config.dispatchApproval, () =>
     createExternalApprovalDispatch(externalApprovalSender),
